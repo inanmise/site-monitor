@@ -104,14 +104,58 @@ public class ScriptedCheckerService {
                                  Integer checksPassed, Integer checksFailed, Long iterationMs,
                                  Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
                                  String outputTail, String error, boolean viaProxy, Phases phases,
-                                 String k6Version) {
+                                 String k6Version, RunDetails details) {
         /** Sürümsüz kurucu (2026-10-29 öncesi çağıranlar ve testler) — {@code k6Version = null}. */
         public ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
                               Integer checksPassed, Integer checksFailed, Long iterationMs,
                               Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
                               String outputTail, String error, boolean viaProxy, Phases phases) {
             this(status, ok, durationMs, exitCode, checksPassed, checksFailed, iterationMs, httpReqAvgMs, httpReqP95Ms,
-                    checksJson, outputTail, error, viaProxy, phases, null);
+                    checksJson, outputTail, error, viaProxy, phases, null, null);
+        }
+
+        /** Koşum verisiz kurucu (2026-10-31 öncesi çağıranlar ve testler) — {@code details = null}. */
+        public ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
+                              Integer checksPassed, Integer checksFailed, Long iterationMs,
+                              Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
+                              String outputTail, String error, boolean viaProxy, Phases phases,
+                              String k6Version) {
+            this(status, ok, durationMs, exitCode, checksPassed, checksFailed, iterationMs, httpReqAvgMs, httpReqP95Ms,
+                    checksJson, outputTail, error, viaProxy, phases, k6Version, null);
+        }
+
+        /** Aynı sonuç, başka koşum verisiyle (değişmez kopya). */
+        public ScriptedResult withDetails(RunDetails d) {
+            return new ScriptedResult(status, ok, durationMs, exitCode, checksPassed, checksFailed, iterationMs,
+                    httpReqAvgMs, httpReqP95Ms, checksJson, outputTail, error, viaProxy, phases, k6Version, d);
+        }
+
+        /** Sınıflandırılmış neden kodu (yoksa null). */
+        public String failureReason() {
+            return details == null ? null : details.failureReason();
+        }
+    }
+
+    /**
+     * Koşum VERİSİ (2026-10-31, k6 inceleme D1) — {@code scripted_checks} yeni kolonlarının kaynağı. Hepsi kayıt biçiminde
+     * (snake_case JSON metni) ve MASKELİ; null = o bilgi yok (eski koşum, k6 koşmadı, okunamadı).
+     *
+     * @param stepsJson      adımlar (k6 group) — {@code [{name, duration_ms, requests, failed_requests, p95_ms,
+     *                       checks_passed, checks_failed, error_code}]}
+     * @param stepsTruncated {@code --out json} çıktısı sınıra takıldı (adımlar eksik olabilir)
+     * @param thresholdsJson {@code [{metric, expr, ok}]}
+     * @param tlsJson        {@code [{host, tls_version, requests}]} — sertifika durumu OKUMA anında eklenir
+     * @param failureReason  {@link com.sitemonitor.service.failure.CheckFailureReason} kodu; PASS'te null
+     * @param failureDetail  küçük JSON nesnesi (adım, hata kodu, eşik, check …)
+     * @param contextJson    {@code {process_budget_s, request_timeout_s, egress, corporate_ca, inverted_budget}}
+     */
+    public record RunDetails(String stepsJson, boolean stepsTruncated, String thresholdsJson, String tlsJson,
+                             String failureReason, String failureDetail, String contextJson) {
+        /** Yalnız neden kodu taşıyan ayrıntı (k6 koşmadı / ön kontrol). */
+        static RunDetails reasonOnly(com.sitemonitor.service.failure.CheckFailureReason reason) {
+            if (reason == null) return null;
+            var f = com.sitemonitor.service.failure.CheckFailure.of(reason);
+            return new RunDetails(null, false, null, null, f.code(), f.json(), null);
         }
     }
 
@@ -133,12 +177,52 @@ public class ScriptedCheckerService {
         }
     }
 
+    /**
+     * İşlem sertleştirmesi (2026-10-31, A2) — İSTEĞE BAĞLI alan enjeksiyonu: {@code @RequiredArgsConstructor}'ı büyütmez
+     * (testler hizmeti elle kurar); yoksa sertleştirme ve {@code oom_score_adj} adımı atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScriptedProcessHardening hardening;
+
+    /** Test kancası (paket-özel). */
+    void setHardeningForTest(ScriptedProcessHardening h) { this.hardening = h; }
+
+    /** Havuz boyutu ayarı — CANLI (2026-10-31, A5): ayar olayıyla izinler yeniden boyutlanır. */
+    public static final String POOL_SIZE_KEY = "site.monitor.scripted.pool-size";
+
+    /**
+     * Küçültülebilir ADİL semafor (2026-10-31, A5). {@code fair = true}: yoğunlukta izin sırası korunur — eskiden bazı
+     * koşumlar aç kalıp {@code maxWaitSeconds} payına takılabiliyordu. {@link #resize} artırırken izin bırakır, azaltırken
+     * {@code reducePermits} çağırır (sayaç eksiye düşebilir — çalışan koşumlar biter, yeni izin verilmez).
+     */
+    static final class ResizableSemaphore extends Semaphore {
+        private int size;
+
+        ResizableSemaphore(int size) {
+            super(size, true);
+            this.size = size;
+        }
+
+        synchronized int size() { return size; }
+
+        synchronized void resize(int newSize) {
+            int delta = newSize - size;
+            if (delta > 0) release(delta);
+            else if (delta < 0) reducePermits(-delta);
+            size = newSize;
+        }
+    }
+
     @PostConstruct
     public void init() {
-        int pool = Math.max(1, appSettings.getInt("site.monitor.scripted.pool-size", 2));
-        permits = new Semaphore(pool);
+        // İşlem sertleştirmesi İLK k6 sürecinden (aşağıdaki probeK6 → "k6 version") ÖNCE.
+        if (hardening != null) {
+            try { hardening.apply(); } catch (Exception e) { log.warn("[K6] İşlem sertleştirmesi çalıştırılamadı: {}", e.toString()); }
+        }
+        int pool = Math.max(1, Math.min(MAX_POOL_SIZE, appSettings.getInt(POOL_SIZE_KEY, 2)));
+        permits = new ResizableSemaphore(pool);
         poolSize = pool;
-        manualSlots = new Semaphore(Math.max(1, pool - 1));   // pool=1: tek elle koşum, o da yalnız havuz boşken
+        manualSlots = new ResizableSemaphore(Math.max(1, pool - 1));   // pool=1: tek elle koşum, o da yalnız havuz boşken
         execPool = Executors.newVirtualThreadPerTaskExecutor();
         Gauge.builder("scripted.k6.active", active, AtomicInteger::get)
                 .description("Şu an çalışan k6 alt süreç sayısı").register(registry);
@@ -327,10 +411,12 @@ public class ScriptedCheckerService {
         if (engine == null || !engine.available() || script == null || script.isBlank()) {
             return new ArchiveCheck(ArchiveKind.NOT_RUN, null);
         }
-        Path scriptFile = null, archiveFile = null, caFile = null;
+        Path runDir = null, scriptFile = null, archiveFile = null, caFile = null;
         try {
-            scriptFile = Files.createTempFile("k6-script-", ".js");
-            archiveFile = Files.createTempFile("k6-archive-", ".tar");
+            // Koşum başına özel dizin (2026-10-31, A7) — archive de başlangıç kodunu çalıştırır; çalışma dizini burası.
+            runDir = createRunDir();
+            scriptFile = Files.createTempFile(runDir, "k6-script-", ".js");
+            archiveFile = Files.createTempFile(runDir, "k6-archive-", ".tar");
             Files.writeString(scriptFile, script);
 
             // DİKKAT: `--no-usage-report` YALNIZ `k6 run`'da var; `archive`'a verilirse komut
@@ -346,7 +432,7 @@ public class ScriptedCheckerService {
             // Doğrulama da uzak import indirebiliyor ⇒ koşumla AYNI ağ duruşu (vekil + kurumsal CA);
             // aksi halde geçerli bir script vekil ardında "derlenemedi" görünürdü. env VERİLMEZ:
             // secret'lar bu yola hiç girmez (sınıf sözleşmesi) — ortam da izole edilir.
-            caFile = writeCaBundle();
+            caFile = writeCaBundle(runDir);
             // Monitörün env'i VERİLMEZ (secret'lar bu yola hiç girmez), AMA vekil kimliği env'e
             // giriyor ve k6 hata metninde vekil URL'ini basabiliyor ("proxyconnect tcp: ...").
             // secretValues bu yüzden GERÇEK bir listeye toplanır — çöpe atılırsa aşağıdaki
@@ -368,6 +454,7 @@ public class ScriptedCheckerService {
             deleteQuiet(scriptFile);
             deleteQuiet(archiveFile);
             deleteQuiet(caFile);
+            deleteTree(runDir);
         }
     }
 
@@ -470,13 +557,15 @@ public class ScriptedCheckerService {
      * {@code http.get(base + '/x', …)} satırındaki {@code __ENV.X} kaybolup "tanımlı ama
      * kullanılmıyor" uyarısı üretilir. (Bu testte yakalandı, sahada değil.)
      *
-     * <p>Bilinen sınır: string literal içindeki gerçek {@code //} (URL dışı) yine yorum sanılır —
-     * uyarı üreten bir sezgisel için kabul edilebilir.
+     * <p>DOĞRUSAL (2026-10-31, k6 inceleme A3): eskiden blok yorumu tembel {@code [\s\S]*?} ile siliyordu — kapanmamış
+     * {@code /*} yığını uzadıkça tarama O(n²) büyüyordu (32 K → 2 sn, 512 K → ≈ 10 dk; Java düzenli ifadesi kesilemez)
+     * ve her kayıt / test / başarısız koşum bunu birkaç kez çağırıyordu. Artık
+     * {@link #stripJsComments(String, boolean, boolean)} tek geçişte tarar: metin dizgeleri korunur (dizge içindeki
+     * {@code //} yorum sayılmaz), dizge DIŞINDAKİ {@code ://} de korunur (eski davranış). Eski ifade testte kehanet olarak
+     * durur ({@code ScriptedStripCommentsTest}).
      */
     static String stripComments(String script) {
-        return script
-                .replaceAll("/\\*[\\s\\S]*?\\*/", " ")     // blok yorum
-                .replaceAll("(?m)(?<!:)//[^\n]*", " ");    // satır yorumu — `://` hariç
+        return stripJsComments(script, false, true);
     }
 
     /**
@@ -721,6 +810,7 @@ public class ScriptedCheckerService {
     @org.springframework.context.event.EventListener
     public void onSettingsChanged(AppSettingsChangedEvent event) {
         if (event == null) return;
+        if (event.touches(POOL_SIZE_KEY)) resizePool();
         if (!event.touches(K6_BIN_KEY) && !event.touches(K6_BIN_ROLLBACK_KEY) && !event.touches(K6_BIN_CANDIDATE_KEY)) {
             return;
         }
@@ -731,6 +821,25 @@ public class ScriptedCheckerService {
                 log.warn("[K6] ayar değişiminden sonra yeniden yoklama başarısız: {}", e.toString());
             }
         });
+    }
+
+    /** Havuz boyutu üst sınırı (yanlış ayarla yüzlerce k6 süreci açılmasın). */
+    static final int MAX_POOL_SIZE = 64;
+
+    /**
+     * {@code pool-size} CANLI uygulanır (2026-10-31, A5; {@code ExecutorTuningService} deseni): izin sayısı ve elle koşum
+     * payı yeni boyuta çekilir. Azaltmada ÇALIŞAN koşumlar biter, yeni izin verilmez; artırmada bekleyenler hemen alır.
+     */
+    synchronized void resizePool() {
+        if (!(permits instanceof ResizableSemaphore p) || !(manualSlots instanceof ResizableSemaphore m)) return;
+        int pool = Math.max(1, Math.min(MAX_POOL_SIZE, appSettings.getInt(POOL_SIZE_KEY, 2)));
+        if (pool == p.size()) return;
+        int old = p.size();
+        p.resize(pool);
+        m.resize(Math.max(1, pool - 1));
+        poolSize = pool;
+        log.info("[K6] Senaryo havuzu yeniden boyutlandı: {} → {} eşzamanlı k6 süreci (elle koşum payı {})",
+                old, pool, Math.max(1, pool - 1));
     }
 
     /**
@@ -893,10 +1002,17 @@ public class ScriptedCheckerService {
     }
 
     private ScriptedResult runManual(ScriptedMonitor m, int queueWaitSec) {
-        int timeoutSec = clampTimeout(m.getTimeoutSeconds());
-        List<EnvVar> env = monitorEnv(m);
-        ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
-        if (!k6Available) return err(unavailableText());
+        return runManualRaw(m.getScript(), monitorEnv(m), clampTimeout(m.getTimeoutSeconds()),
+                proxyUseFor(m.getUseProxy()), queueWaitSec);
+    }
+
+    /**
+     * Elle kotadan koşum — kayıtlı izleme ("Şimdi kontrol et") ve kaydetmeden deneme ({@link #testRun}, 2026-10-31 A4)
+     * aynı yolu kullanır: havuzun SON izni zamanlanmış koşumlara kalır.
+     */
+    private ScriptedResult runManualRaw(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy,
+                                        int queueWaitSec) {
+        if (!k6Available) return err(unavailableText(), unavailableReasonCode());
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(queueWaitSec);
         boolean slot = false, acquired = false;
         queued.incrementAndGet();
@@ -915,7 +1031,7 @@ public class ScriptedCheckerService {
             if (!slot || !acquired) return err(MANUAL_POOL_BUSY);
             active.incrementAndGet();
             try {
-                return runProcess(m.getScript(), env, timeoutSec, viaProxy);
+                return runProcess(script, env, timeoutSec, viaProxy);
             } finally {
                 active.decrementAndGet();
             }
@@ -1078,7 +1194,18 @@ public class ScriptedCheckerService {
 
     /** Kaydetmeden tek seferlik test — env JSON ham (secret değerleri düz gelir, henüz şifreli değil). */
     public ScriptedResult test(String script, String envJson, Integer timeoutSeconds, String useProxy) {
-        return runGuarded(script, parseEnv(envJson, false), clampTimeout(timeoutSeconds), proxyUseFor(useProxy));
+        return testRun(script, parseEnv(envJson, false), timeoutSeconds, useProxy);
+    }
+
+    /**
+     * Kaydetmeden deneme ("Test Çalıştır") — ELLE KOTADAN koşar (2026-10-31, k6 inceleme A4): eskiden izleme havuzunun
+     * izinlerini alıyordu; birkaç eşzamanlı test havuzu 180 sn doldurup zamanlanmış kontrolleri SKIPPED'e düşürebiliyordu.
+     * {@code env} değerleri çözülmüş düz metindir; {@code secret} işaretli olanlar çıktıda maskelenir.
+     */
+    public ScriptedResult testRun(String script, List<EnvVar> env, Integer timeoutSeconds, String useProxy) {
+        int timeoutSec = clampTimeout(timeoutSeconds);
+        List<EnvVar> clean = ScriptedEnvPolicy.forRuntime(env == null ? List.of() : env, "test");
+        return runManualRaw(script, clean, timeoutSec, proxyUseFor(useProxy), manualQueueWaitSeconds(timeoutSec));
     }
 
     /**
@@ -1146,6 +1273,11 @@ public class ScriptedCheckerService {
      * @return yazılan dosya; ayar boşsa ya da yazılamazsa {@code null} (çağıran değişkeni koymaz)
      */
     private Path writeCaBundle() {
+        return writeCaBundle(null);
+    }
+
+    /** @param dir dosyanın yazılacağı dizin (koşum dizini, 2026-10-31); null = sistem geçici dizini. */
+    private Path writeCaBundle(Path dir) {
         String pem = appSettings.getString(TrustEvaluator.CA_BUNDLE_KEY, "");
         if (pem == null || pem.isBlank()) return null;
         try {
@@ -1157,7 +1289,7 @@ public class ScriptedCheckerService {
             else log.warn("[K6] Sistem CA paketi bulunamadı; SSL_CERT_FILE yalnız kurumsal kökü taşıyacak "
                     + "(public CA'lı hedefler doğrulanamayabilir).");
             sb.append(pem.strip()).append('\n');
-            Path f = Files.createTempFile("k6-ca-", ".pem");
+            Path f = dir == null ? Files.createTempFile("k6-ca-", ".pem") : Files.createTempFile(dir, "k6-ca-", ".pem");
             Files.writeString(f, sb.toString());
             return f;
         } catch (java.io.IOException e) {
@@ -1188,8 +1320,14 @@ public class ScriptedCheckerService {
         if (allowed != null) {
             for (EnvVar v : allowed) {
                 if (v.name() == null || v.name().isBlank()) continue;
-                env.put(v.name(), v.value() == null ? "" : v.value());
-                if (v.secret() && v.value() != null && !v.value().isBlank()) secretValues.add(v.value());
+                // NUL (2026-10-31, A7): ProcessBuilder NUL içeren değerde istisna fırlatıp koşumu düşürür. Kayıt bunu artık
+                // reddeder (ScriptedEnvPolicy); saklı eski değer koşumda ayıklanır + bir kez WARN.
+                String value = stripNul(v.name(), v.value());
+                env.put(v.name(), value);
+                if (v.secret() && !value.isBlank()) {
+                    secretValues.add(value);
+                    if (v.value() != null && !v.value().equals(value)) secretValues.add(v.value());
+                }
             }
         }
         // Kurumsal çıkış vekili: Go/k6 bu üç değişkeni okur.
@@ -1224,10 +1362,14 @@ public class ScriptedCheckerService {
         // `put` (2026-10-08; eskiden putIfAbsent): SERT tavan kullanıcı env'iyle kaldırılamaz — tavanın tek amacı
         // bir izlemenin diğer tüm kontrolleri aç bırakmasını engellemek; kullanıcının ezebildiği tavan tavan değildir.
         // Yönetici tavanı ayarlardan değiştirir (0/boş ⇒ tavan yok).
-        String maxProcs = appSettings.getString("site.monitor.scripted.max-procs", "1");
-        if (!maxProcs.isBlank() && !"0".equals(maxProcs.trim())) env.put("GOMAXPROCS", maxProcs.trim());
-        String memLimit = appSettings.getString("site.monitor.scripted.mem-limit", "256MiB");
-        if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.put("GOMEMLIMIT", memLimit.trim());
+        // Bozuk kayıtlı değer (2026-10-31, A5) ortama KONMAZ: Go "512MB" gibi bir değerde açılışta düşer ve her koşum ERROR
+        // olurdu. Kayıt doğrulaması bunu artık reddeder; burası eski kayıtlar için ikinci kemer (pod başına bir kez WARN).
+        String maxProcs = ScriptedResourceLimits.effectiveMaxProcs(
+                appSettings.getString(ScriptedResourceLimits.KEY_MAX_PROCS, "1"));
+        if (maxProcs != null) env.put("GOMAXPROCS", maxProcs);
+        String memLimit = ScriptedResourceLimits.effectiveMemLimit(
+                appSettings.getString(ScriptedResourceLimits.KEY_MEM_LIMIT, "256MiB"));
+        if (memLimit != null) env.put("GOMEMLIMIT", memLimit);
         // Güvenlik ortamı (2026-10-29, k6 2.x): sistem değerleri HER çağrıda, kullanıcı env'inden SONRA (put) — kullanıcı
         // K6_* adlarını zaten veremez (ScriptedEnvPolicy), bu ikinci kemerdir.
         env.putAll(systemK6Env());
@@ -1235,6 +1377,19 @@ public class ScriptedCheckerService {
         String godebug = K6EngineSettings.effectiveGodebug(appSettings.getString(K6EngineSettings.KEY_GODEBUG, ""));
         if (!godebug.isEmpty()) env.put("GODEBUG", godebug);
         return env;
+    }
+
+    private static final java.util.Set<String> NUL_WARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Değerdeki NUL karakterlerini ayıklar (yoksa aynı nesne); ad başına bir kez WARN — değer ASLA loglanmaz. */
+    static String stripNul(String name, String value) {
+        if (value == null) return "";
+        if (value.indexOf('\0') < 0) return value;
+        if (NUL_WARNED.size() < 1000 && NUL_WARNED.add(String.valueOf(name))) {
+            log.warn("[K6] Ortam değişkeni '{}' değeri NUL karakteri içeriyor — koşumda ayıklandı. Değeri izleme formundan "
+                    + "yeniden girin.", name);
+        }
+        return value.replace("\0", "");
     }
 
     /**
@@ -1317,7 +1472,7 @@ public class ScriptedCheckerService {
      * @param withCa    kurumsal CA paketi k6'ya verilsin mi (false ⇒ Go yalnız kendi köklerine bakar)
      */
     public ScriptedResult probe(String url, boolean viaProxy, boolean withCa) {
-        if (!k6Available) return err(unavailableText());
+        if (!k6Available) return err(unavailableText(), unavailableReasonCode());
         boolean acquired = false;
         try {
             acquired = diagPermits.tryAcquire(30, TimeUnit.SECONDS);
@@ -1338,7 +1493,7 @@ public class ScriptedCheckerService {
     }
 
     private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
-        if (!k6Available) { queued.decrementAndGet(); return err(unavailableText()); }
+        if (!k6Available) { queued.decrementAndGet(); return err(unavailableText(), unavailableReasonCode()); }
         boolean acquired = false;
         try {
             acquired = permits.tryAcquire(timeoutSec + PERMIT_WAIT_MARGIN_SEC, TimeUnit.SECONDS);
@@ -1363,7 +1518,8 @@ public class ScriptedCheckerService {
         // kaydetmeden deneme) buradan geçer. Sonuç "yürütülmedi" (SKIPPED): kayıt / alarm üretmez.
         if (fileReadBlocking()) {
             List<String> hits = scanFileReads(script);
-            if (!hits.isEmpty()) return err(FILE_READ_BLOCKED_MSG + " (" + String.join(", ", hits) + ")");
+            if (!hits.isEmpty()) return err(FILE_READ_BLOCKED_MSG + " (" + String.join(", ", hits) + ")",
+                    com.sitemonitor.service.failure.CheckFailureReason.SCRIPT_FILE_READ_BLOCKED);
         }
         return execute(script, env, timeoutSec, viaProxy);
     }
@@ -1382,21 +1538,53 @@ public class ScriptedCheckerService {
 
     /** {@code open(…)} ve isteğe bağlı çağrı {@code open?.(…)} (inceleme 2026-10-30, L4); başka nesnenin {@code x.open} metodu değil. */
     private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*(?:\\?\\.\\s*)?\\(");
-    private static final Pattern FR_OPEN_INDIRECT = Pattern.compile("\\[\\s*['\"`]open['\"`]\\s*\\]");
+    /**
+     * DOLAYLI {@code open} (2026-10-31, k6 inceleme A1 — bulgu adı {@code open-indirect}): küresel nesne üzerinden
+     * ({@code globalThis.open}, {@code this.open}, {@code self.open}) ya da {@code open} tanıtıcısının ÇAĞRISIZ kullanımı
+     * ({@code const f = open; f(…)}). Dizge içerikleri maskelenmiş kodda aranır; nesne anahtarı ({@code open:}) ve başka
+     * bir nesnenin özelliği ({@code x.open}) sayılmaz.
+     */
+    private static final Pattern FR_OPEN_GLOBAL = Pattern.compile("\\b(?:globalThis|this|self|window)\\s*+\\.\\s*+open\\b");
+    private static final Pattern FR_OPEN_REF = Pattern.compile("(?<![\\w$.])open(?![\\w$])(?!\\s*+[(:])(?!\\s*+\\?\\.)");
     private static final Pattern FR_FS_MODULE = Pattern.compile("['\"`]k6/(?:experimental/)?fs['\"`]");
     private static final Pattern FR_LOCAL_IMPORT =
             Pattern.compile("(?:\\bfrom|\\brequire\\s*\\(|\\bimport)\\s*['\"`](?:/|\\.{1,2}/|file:)");
-    private static final Pattern FR_SYSTEM_PATH =
-            Pattern.compile("['\"`]/(?:proc|etc|sys|root|home|var/run/secrets|run/secrets|tmp|app)(?:/|['\"`])");
+    private static final Pattern FR_SYSTEM_PATH = Pattern.compile(
+            "['\"`]/(?:proc|etc|sys|root|home|var/run/secrets|var/log|var/lib|run/secrets|tmp|app|dev)(?:/|['\"`])");
+    /**
+     * {@code handleSummary} (2026-10-31, A1): k6 bu fonksiyonun döndürdüğü nesnenin HER anahtarını dosya yolu sayıp
+     * DİSKE YAZAR ({@code { '/var/log/x': … }}). Tanıtıcının dizge dışında geçmesi yeterli (dışa aktarma biçimi önemsiz).
+     */
+    private static final Pattern FR_HANDLE_SUMMARY = Pattern.compile("(?<![\\w$])handleSummary(?![\\w$])");
+    /** {@code k6/net/grpc} modülü + {@code .load(}/{@code .loadProtoset(} — proto dosyasını DİSKTEN okur (A1, {@code grpc-proto}). */
+    private static final Pattern FR_GRPC_MODULE = Pattern.compile("['\"`]k6/net/grpc['\"`]");
+    private static final Pattern FR_GRPC_LOAD = Pattern.compile("\\.\\s*+load(?:Protoset)?\\s*+\\(");
 
-    /** Ayar BLOCK mu? (varsayılan REPORT — yalnız raporla). */
+    /** Bulgu adları (rapor ucu, kayıt iletisi ve testler bunları kullanır). */
+    public static final String FR_HIT_OPEN = "open()";
+    public static final String FR_HIT_OPEN_INDIRECT = "open-indirect";
+    public static final String FR_HIT_FS = "k6/fs";
+    public static final String FR_HIT_LOCAL_IMPORT = "yerel dosya importu";
+    public static final String FR_HIT_SYSTEM_PATH = "sistem dosya yolu";
+    public static final String FR_HIT_HANDLE_SUMMARY = "handleSummary";
+    public static final String FR_HIT_GRPC_PROTO = "grpc-proto";
+
+    /** Varsayılan politika (2026-10-31, kullanıcı kararı: BLOCK; kayıtlı bir REPORT değeri korunur). */
+    public static final String FILE_READ_POLICY_DEFAULT = "BLOCK";
+
+    /** Ayar BLOCK mu? (varsayılan BLOCK — 2026-10-31; yönetici bilinçli olarak REPORT seçebilir). */
     public boolean fileReadBlocking() {
-        return "BLOCK".equalsIgnoreCase(appSettings.getString(FILE_READ_POLICY_KEY, "REPORT"));
+        return "BLOCK".equalsIgnoreCase(appSettings.getString(FILE_READ_POLICY_KEY, FILE_READ_POLICY_DEFAULT));
     }
 
     /**
-     * Betikteki dosya okuma yapıları — bulunanların kısa adları (içerik değil). Yorumlar atlanır; metin içindeki
+     * Betikteki dosya okuma / yazma yapıları — bulunanların kısa adları (içerik değil). Yorumlar atlanır; metin içindeki
      * {@code //} (ör. {@code 'https://…'}) yorum SAYILMAZ, aksi hâlde aynı satıra yazılmış {@code open()} gizlenirdi.
+     *
+     * <p>Sezgiseldir (bilinen sınırlar {@code ScriptedFileReadScanTest}'te belgeli): yerel bir değişkene {@code open}
+     * adı vermek {@code open-indirect} sayılır (yanlış pozitif); {@code Reflect.get(globalThis, 'o'+'pen')} gibi
+     * hesaplanmış erişim yakalanmaz (yanlış negatif). Kalıcı savunma işlem düzeyindedir (dump-edilemez JVM + okunamaz k6
+     * ikilisi, bkz. {@link ScriptedProcessHardening}).
      */
     public static List<String> scanFileReads(String script) {
         List<String> hits = new ArrayList<>();
@@ -1404,11 +1592,117 @@ public class ScriptedCheckerService {
         String code = stripJsComments(script, false);
         // open( çağrısı metin İÇERİĞİ maskelenmiş kodda aranır: check(r, {'kapı open (200)': …}) gibi bir ad yakalanmasın.
         String bare = stripJsComments(script, true);
-        if (FR_OPEN.matcher(bare).find() || FR_OPEN_INDIRECT.matcher(code).find()) hits.add("open()");
-        if (FR_FS_MODULE.matcher(code).find()) hits.add("k6/fs");
-        if (FR_LOCAL_IMPORT.matcher(code).find()) hits.add("yerel dosya importu");
-        if (FR_SYSTEM_PATH.matcher(code).find()) hits.add("sistem dosya yolu");
+        if (FR_OPEN.matcher(bare).find()) hits.add(FR_HIT_OPEN);
+        if (FR_OPEN_GLOBAL.matcher(bare).find() || FR_OPEN_REF.matcher(bare).find() || bracketOpenAccess(code)) {
+            hits.add(FR_HIT_OPEN_INDIRECT);
+        }
+        if (FR_FS_MODULE.matcher(code).find()) hits.add(FR_HIT_FS);
+        if (FR_LOCAL_IMPORT.matcher(code).find()) hits.add(FR_HIT_LOCAL_IMPORT);
+        if (FR_SYSTEM_PATH.matcher(code).find()) hits.add(FR_HIT_SYSTEM_PATH);
+        if (FR_HANDLE_SUMMARY.matcher(bare).find()) hits.add(FR_HIT_HANDLE_SUMMARY);
+        if (FR_GRPC_MODULE.matcher(code).find() && FR_GRPC_LOAD.matcher(bare).find()) hits.add(FR_HIT_GRPC_PROTO);
         return hits;
+    }
+
+    // ── Uzak import SSRF denetimi (2026-10-31, k6 inceleme A6) ─────────────────────────────────────────
+    //
+    // k6 uzak modülü (yalnız https — v2.3.0 http'yi reddediyor) init bağlamında KENDİ HTTP istemcisiyle indirir ve bu
+    // indirme --blacklist-ip'e TABİ DEĞİL (gerçek k6 ile ölçüldü: kara listedeki 127.0.0.1'e TLS el sıkışması denendi;
+    // K6RealContractTest.remoteImportIgnoresBlacklist). Bu yüzden import hostları Java SsrfGuard ile kayıtta / testte
+    // (400) ve koşumda (ERROR + SSRF_BLOCKED) denetlenir. Bilinen sınırlar: k6 yönlendirmeyi izlerse açık bir hosttan iç
+    // adrese yönlenme yakalanmaz; DNS denetim ile koşum arasında değişebilir (k6 kendi çözer).
+
+    private static final Pattern REMOTE_IMPORT = Pattern.compile(
+            "(?:\\bfrom|\\brequire\\s*+\\(|\\bimport\\s*+\\(?)\\s*+['\"`](https?://[^'\"`\\s]{1,2048})");
+    /** Denetlenen en çok farklı import adresi (her biri bir DNS çözümü). */
+    static final int MAX_REMOTE_IMPORTS = 20;
+
+    /** Betikteki uzak import / require adresleri (yorumlar atlanır), sırayla, tekil, en çok {@link #MAX_REMOTE_IMPORTS}. */
+    public static List<String> remoteImportUrls(String script) {
+        if (script == null || script.isBlank()) return List.of();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        var m = REMOTE_IMPORT.matcher(stripJsComments(script, false));
+        while (m.find() && out.size() < MAX_REMOTE_IMPORTS) out.add(m.group(1));
+        return List.copyOf(out);
+    }
+
+    /**
+     * Engelli (özel / döngü / link-local / bulut meta veri — {@link SsrfGuard#validate}) bir hosta giden uzak import varsa
+     * "host (neden)" metni; yoksa null. Çözülemeyen host engel sayılmaz (k6 indiremez, derleme uyarısı verir). SsrfGuard
+     * yoksa (elle kurulan testler) denetim yapılmaz.
+     */
+    public String blockedRemoteImport(String script) {
+        return remoteImportBlock(script);
+    }
+
+    String remoteImportBlock(String script) {
+        if (ssrfGuard == null) return null;
+        for (String url : remoteImportUrls(script)) {
+            String host;
+            try {
+                host = java.net.URI.create(url).getHost();
+            } catch (Exception e) {
+                continue;
+            }
+            if (host == null || host.isBlank()) continue;
+            try {
+                ssrfGuard.validate(host);
+            } catch (SsrfGuard.UnresolvableHostException u) {
+                // çözülemeyen ad engel değil
+            } catch (SsrfGuard.BlockedException b) {
+                return host + " (" + b.getMessage() + ")";
+            } catch (Exception e) {
+                log.debug("Uzak import denetlenemedi ({}): {}", host, e.toString());
+            }
+        }
+        return null;
+    }
+
+    /** Köşeli parantez içi en çok bu kadar karakter incelenir — her {@code [} için sınırlı ileri tarama (doğrusal). */
+    private static final int BRACKET_SCAN_MAX = 200;
+
+    /**
+     * {@code ['open']}, {@code ["op" + 'en']}, {@code [`o` + `pen`]} — köşeli parantez İÇİ yalnız metin dizgeleri ve
+     * {@code +}'dan oluşuyor ve birleşimi {@code open} ise true. Şablon dizgesinde {@code ${…}} varsa çözülmez (atlanır).
+     * Her {@code [} için en çok {@link #BRACKET_SCAN_MAX} karakter taranır.
+     */
+    static boolean bracketOpenAccess(String code) {
+        if (code == null) return false;
+        int n = code.length();
+        for (int i = code.indexOf('['); i >= 0; i = code.indexOf('[', i + 1)) {
+            int limit = Math.min(n, i + 1 + BRACKET_SCAN_MAX);
+            StringBuilder acc = new StringBuilder();
+            int p = i + 1;
+            boolean expectLiteral = true;
+            boolean ok = true;
+            while (p < limit) {
+                char c = code.charAt(p);
+                if (Character.isWhitespace(c)) { p++; continue; }
+                if (expectLiteral && (c == '\'' || c == '"' || c == '`')) {
+                    int close = p + 1;
+                    StringBuilder lit = new StringBuilder();
+                    while (close < limit && code.charAt(close) != c) {
+                        char d = code.charAt(close);
+                        if (d == '\\' && close + 1 < limit) { lit.append(code.charAt(close + 1)); close += 2; continue; }
+                        if (c == '`' && d == '$' && close + 1 < limit && code.charAt(close + 1) == '{') { ok = false; break; }
+                        lit.append(d);
+                        close++;
+                    }
+                    if (!ok || close >= limit) { ok = false; break; }
+                    acc.append(lit);
+                    if (acc.length() > 4) { ok = false; break; }
+                    p = close + 1;
+                    expectLiteral = false;
+                    continue;
+                }
+                if (!expectLiteral && c == '+') { expectLiteral = true; p++; continue; }
+                if (!expectLiteral && c == ']') break;
+                ok = false;
+                break;
+            }
+            if (ok && !expectLiteral && p < limit && code.charAt(p) == ']' && "open".contentEquals(acc)) return true;
+        }
+        return false;
     }
 
     static String stripJsComments(String s) { return stripJsComments(s, false); }
@@ -1418,6 +1712,15 @@ public class ScriptedCheckerService {
      * İÇERİKLERİ boşlukla değiştirilir (tırnaklar kalır) — çağrı aramasını metinlerdeki benzer sözcüklerden ayırmak için.
      */
     static String stripJsComments(String s, boolean maskStrings) {
+        return stripJsComments(s, maskStrings, false);
+    }
+
+    /**
+     * @param keepUrlSlashes true ise dizge DIŞINDA {@code :} ile başlayan {@code //} satır yorumu sayılmaz
+     *                       ({@link #stripComments} sözleşmesi: {@code base + "://"} gibi kurgular kaybolmasın).
+     */
+    static String stripJsComments(String s, boolean maskStrings, boolean keepUrlSlashes) {
+        if (s == null) return null;
         StringBuilder out = new StringBuilder(s.length());
         char quote = 0;
         int i = 0, n = s.length();
@@ -1435,7 +1738,7 @@ public class ScriptedCheckerService {
                 continue;
             }
             if (c == '\'' || c == '"' || c == '`') { quote = c; out.append(c); i++; continue; }
-            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '/') {
+            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '/' && !(keepUrlSlashes && i > 0 && s.charAt(i - 1) == ':')) {
                 while (i < n && s.charAt(i) != '\n') i++;
                 continue;
             }
@@ -1483,8 +1786,22 @@ public class ScriptedCheckerService {
         // Koşamayan motor (yok / çalışmıyor / desteklenmeyen sürüm) KOŞTURULMAZ (inceleme 2026-10-30, L2): giriş noktaları
         // k6Available'a bakar ama currentProfile() ayar değişince yeniden yoklar — o anda gelen eski / eksik bir ikili
         // komutla çalıştırılmamalı. archiveCheck'in kuralıyla aynı.
-        if (engine == null || !engine.available()) return err(unavailableText(engine));
-        Path scriptFile = null, summaryFile = null, caFile = null;
+        if (engine == null || !engine.available()) return err(unavailableText(engine), unavailableReasonCode());
+        // Uzak import SSRF denetimi (2026-10-31, A6): k6 modül indirmesi --blacklist-ip'e TABİ DEĞİL (v2.3.0 ile ölçüldü —
+        // kara listedeki 127.0.0.1'e TLS el sıkışması denendi). Engelli bir hosta giden import koşturulmaz; kayıt YAZILIR
+        // (ERROR + SSRF_BLOCKED) — saklı eski betik sessizce "yürütülmedi"de kalmasın.
+        String importBlock = remoteImportBlock(script);
+        if (importBlock != null) {
+            String error = "Betik engelli bir adresten modül içe aktarıyor — koşturulmadı: " + importBlock;
+            RunDetails d = new RunDetails(null, false, null, null,
+                    com.sitemonitor.service.failure.CheckFailureReason.SSRF_BLOCKED.name(),
+                    com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.SSRF_BLOCKED)
+                            .with("import", importBlock).json(),
+                    contextJsonFor(script, timeoutSec, viaProxy, false));
+            return new ScriptedResult("ERROR", false, null, -1, null, null, null, null, null, null, null,
+                    error, viaProxy.on(), Phases.EMPTY, null, d);
+        }
+        Path runDir = null, caFile = null;
         String engineVersion = engine.version();
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
@@ -1492,11 +1809,15 @@ public class ScriptedCheckerService {
         String output = null;           // DAİMA maskeli — asla ham r.output() değil
         Long durationMs = null;         // null ⇒ koşum gerçekleşmedi (record sözleşmesi, satır 62-63)
         try {
-            scriptFile = Files.createTempFile("k6-script-", ".js");
-            summaryFile = Files.createTempFile("k6-summary-", ".json");
+            // Koşum başına ÖZEL dizin (2026-10-31, A7): betik, özet, --out json ve CA paketi burada; k6'nın çalışma dizini
+            // de burası — handleSummary'nin GÖRELİ yazımları buraya düşer ve finally'de dizinle birlikte silinir.
+            runDir = createRunDir();
+            Path scriptFile = Files.createTempFile(runDir, "k6-script-", ".js");
+            Path summaryFile = runDir.resolve(SUMMARY_FILE);
+            Path outFile = runDir.resolve(OUT_JSON_FILE);
             Files.writeString(scriptFile, script == null ? "" : script);
 
-            caFile = withCa ? writeCaBundle() : null;
+            caFile = withCa ? writeCaBundle(runDir) : null;
             Map<String, String> env = buildProcessEnv(envVars, viaProxy, caFile, secretValues);
             // Yönetici User-Agent'ı (2026-10-29; boş = k6'nın kendi varsayılanı). Betik options.userAgent tanımlamışsa
             // VERİLMEZ: ortam değişkeni betik seçeneğini ezerdi.
@@ -1504,9 +1825,12 @@ public class ScriptedCheckerService {
             if (!ua.isEmpty() && !scriptDefinesUserAgent(script)) env.put("K6_USER_AGENT", ua);
 
             String bin = engine.bin();
+            // Özet ve --out json çalışma dizinine GÖRELİ yazılır (Windows sürücü harfli yolda "json=C:\…" ayrıştırma
+            // belirsizliği de olmaz).
             List<String> args = new ArrayList<>(List.of(
                     bin, "run", "--quiet", "--no-usage-report",
-                    "--summary-export=" + summaryFile.toAbsolutePath(),
+                    "--summary-export=" + SUMMARY_FILE,
+                    "--out", "json=" + OUT_JSON_FILE,
                     "--vus", "1", "--iterations", "1"));
             // --address VERİLMEZ (2026-10-30): k6 2.0+ REST API'yi zaten açmaz, bayrak onu AÇARDI.
             // ── L2 sert tavan: istek/sn ────────────────────────────────────────────────────
@@ -1521,34 +1845,57 @@ public class ScriptedCheckerService {
 
             int tailBytes = appSettings.getInt("site.monitor.scripted.output-tail-bytes", 8192);
             long t0 = System.currentTimeMillis();
-            r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeoutSec, true, tailBytes, true);
+            ScriptedProcessHardening h = hardening;
+            r = ProcessProbe.run(args, env, runDir.toFile(), timeoutSec, true, tailBytes, true,
+                    h == null ? null : h::afterStart);
             // durationMs YALNIZ süreç gerçekten koştuysa set edilir; aksi halde "temp dosya
             // yazılamadı, 3 ms" gibi anlamsız bir süre uptime grafiğine girerdi.
             durationMs = System.currentTimeMillis() - t0;
-            output = SecretMask.maskValues(r.output(), secretValues);
+            // Kayıtlı gizli değerler + koşumda üretilen jetonlar (2026-10-31, A7: maskTokens maskValues'tan SONRA).
+            java.util.function.UnaryOperator<String> mask = t -> SecretMask.maskTokens(SecretMask.maskValues(t, secretValues));
+            output = mask.apply(r.output());
 
             Summary s = safeParseSummary(summaryFile);
             // Kontrol ADLARI da maskelenir (2026-10-16): `check(r, { [__ENV.X]: … })` ile ad gizli değeri taşıyabilir ve
             // checks_json izlemeyi gören herkese gider (paylaşımla görenler dahil)
-            if (s != null && s.checksJson != null) s.checksJson = SecretMask.maskValues(s.checksJson, secretValues);
+            if (s.checksJson != null) s.checksJson = mask.apply(s.checksJson);
+            List<com.sitemonitor.service.scripted.ScriptedRunData.Threshold> thresholds = new ArrayList<>();
+            for (var t : s.thresholds) {
+                thresholds.add(new com.sitemonitor.service.scripted.ScriptedRunData.Threshold(
+                        com.sitemonitor.service.scripted.ScriptedRunData.fitThresholdText(mask.apply(t.metric())),
+                        com.sitemonitor.service.scripted.ScriptedRunData.fitThresholdText(mask.apply(t.expr())), t.ok()));
+            }
+            com.sitemonitor.service.scripted.K6OutputParser.Parsed parsed = parseOutJson(outFile, mask);
 
             // ── Katman 2: yorumlama guard'ı ──
             String status;
             String error;
+            boolean scriptCrashed = false;
+            com.sitemonitor.service.failure.CheckFailureReason override = null;
             try {
+                if (r.interrupted()) {
+                    // Kesinti (2026-10-31, A7): pod kapanışı / iş iptali — "süre aşımı" DEĞİL (bütçe dolmadı).
+                    String msg = SCRIPT_INTERRUPTED_MSG + "\n" + runContextNote(script, timeoutSec, viaProxy, caFile != null);
+                    return buildResult("ERROR", durationMs, r, s, output, msg, viaProxy.on(), engineVersion)
+                            .withDetails(details("ERROR", r, false, s, thresholds, parsed, null, script, timeoutSec,
+                                    viaProxy, caFile != null));
+                }
                 if (s.unrecognizedSchema && !r.timedOut()) {
                     // Özet dosyası YENİ makine-okunur biçimde (2026-10-29): sessizce "metrik yok" deyip NO_CHECKS / PASS
                     // üretmek yerine açık ERROR — karar verilecek veri okunamadı. Sistem K6_NEW_MACHINE_READABLE_SUMMARY=false
                     // verdiği için olmamalı; olursa k6 sürümü bu değişkeni artık tanımıyordur.
                     return buildResult("ERROR", durationMs, r, s, output, SUMMARY_SCHEMA_UNRECOGNIZED + "\n"
-                            + runContextNote(script, timeoutSec, viaProxy, caFile != null), viaProxy.on(), engineVersion);
+                            + runContextNote(script, timeoutSec, viaProxy, caFile != null), viaProxy.on(), engineVersion)
+                            .withDetails(details("ERROR", r, false, s, thresholds, parsed,
+                                    com.sitemonitor.service.failure.CheckFailureReason.UNKNOWN, script, timeoutSec,
+                                    viaProxy, caFile != null));
                 }
                 // Hata satırı ayıklaması iki işe yarıyor: mesajı zenginleştirmek VE "script patladı mı"
                 // sinyalini üretmek (k6 iterasyon istisnasında yine 0 ile çıkıyor).
                 // DAR sinyal (hasScriptCrash), extractErrorLines DEĞİL: ikincisi başarısız bir
                 // İSTEĞİN uyarı satırını da yakalıyor ve statüye taşınsaydı her gerçek arıza
                 // FAIL yerine ERROR görünürdü (bkz. decideStatus sıra tablosu).
-                boolean scriptCrashed = hasScriptCrash(output);
+                scriptCrashed = hasScriptCrash(output);
                 boolean anyTraffic = s.dataSent != null && s.dataSent > 0;
                 String raw = decideStatus(r.exitCode(), r.timedOut(), s.checksPassed, s.checksFailed,
                         s.hasThresholds, scriptCrashed, anyTraffic);
@@ -1565,6 +1912,7 @@ public class ScriptedCheckerService {
                 log.error("Senaryo sonucu yorumlanamadı (exit={} timedOut={})", r.exitCode(), r.timedOut(), ie);
                 status = r.timedOut() ? "TIMEOUT" : "ERROR";
                 error = "sonuç yorumlanamadı: " + safeMsg(ie, secretValues);
+                override = com.sitemonitor.service.failure.CheckFailureReason.UNKNOWN;
             }
             // TIMEOUT DIŞINDA: süreci biz öldürdüğümüzde k6 `--summary-export`u zaten yazamaz —
             // "k6 özeti okunamadı" demek her zaman aşımına, sebebin YANINA, yanlış bir iz ekliyordu
@@ -1581,16 +1929,97 @@ public class ScriptedCheckerService {
                 String ctx = runContextNote(script, timeoutSec, viaProxy, caFile != null);
                 error = (error == null ? "" : error + "\n") + ctx;
             }
-            return buildResult(status, durationMs, r, s, output, error, viaProxy.on(), engineVersion);
+            return buildResult(status, durationMs, r, s, output, error, viaProxy.on(), engineVersion)
+                    .withDetails(details(status, r, scriptCrashed, s, thresholds, parsed, override, script, timeoutSec,
+                            viaProxy, caFile != null));
         } catch (Exception e) {
             // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
             log.error("Senaryo koşumu beklenmeyen istisnayla bitti", e);
             return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy.on(),
                     r == null ? null : engineVersion);
         } finally {
-            deleteQuiet(scriptFile);
-            deleteQuiet(summaryFile);
             deleteQuiet(caFile);
+            deleteTree(runDir);
+        }
+    }
+
+    /** Kesinti iletisi (2026-10-31, A7) — kayıt metni (Türkçe). */
+    static final String SCRIPT_INTERRUPTED_MSG =
+            "Koşum kesintiye uğradı (pod kapanıyor ya da iş iptal edildi) — sonuç ölçülemedi";
+
+    /** Koşum dizinindeki dosya adları (göreli). */
+    static final String SUMMARY_FILE = "summary.json";
+    static final String OUT_JSON_FILE = "out.json";
+
+    /** Koşum verisi + sınıflandırma — asla fırlatmaz (üst veri). */
+    private RunDetails details(String status, ProcessProbe.Result r, boolean scriptCrashed, Summary s,
+                               List<com.sitemonitor.service.scripted.ScriptedRunData.Threshold> thresholds,
+                               com.sitemonitor.service.scripted.K6OutputParser.Parsed parsed,
+                               com.sitemonitor.service.failure.CheckFailureReason override,
+                               String script, int timeoutSec, ProxyUse viaProxy, boolean withCa) {
+        try {
+            var f = com.sitemonitor.service.scripted.ScriptedRunData.classify(
+                    new com.sitemonitor.service.scripted.ScriptedRunData.Input(status, r.exitCode(), r.timedOut(),
+                            r.interrupted(), scriptCrashed, s == null ? null : s.checksFailed, thresholds, parsed, override));
+            return new RunDetails(
+                    com.sitemonitor.service.scripted.ScriptedRunData.stepsJson(parsed == null ? null : parsed.steps()),
+                    parsed != null && parsed.truncated(),
+                    com.sitemonitor.service.scripted.ScriptedRunData.thresholdsJson(thresholds),
+                    com.sitemonitor.service.scripted.ScriptedRunData.tlsJson(parsed == null ? null : parsed.tls()),
+                    f == null ? null : f.code(), f == null ? null : f.json(),
+                    contextJsonFor(script, timeoutSec, viaProxy, withCa));
+        } catch (Exception e) {
+            log.debug("Senaryo koşum verisi üretilemedi: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** Koşum bağlamı JSON'u ({@code run_context}) — {@link #runContextNote} ile aynı bilgiler, yapılandırılmış. */
+    private String contextJsonFor(String script, int timeoutSec, ProxyUse viaProxy, boolean withCa) {
+        Integer reqSec = maxRequestTimeoutSeconds(script);
+        return com.sitemonitor.service.scripted.ScriptedRunData.contextJson(
+                new com.sitemonitor.service.scripted.ScriptedRunData.RunContext(timeoutSec, reqSec, viaProxy.on(), withCa,
+                        reqSec != null && reqSec >= timeoutSec));
+    }
+
+    /** {@code --out json} çıktısını sınırlı ayrıştırır; dosya yok / okunamıyor → boş sonuç. */
+    private static com.sitemonitor.service.scripted.K6OutputParser.Parsed parseOutJson(
+            Path outFile, java.util.function.UnaryOperator<String> mask) {
+        if (outFile == null || !Files.isRegularFile(outFile)) return com.sitemonitor.service.scripted.K6OutputParser.Parsed.EMPTY;
+        try (var in = Files.newInputStream(outFile)) {
+            return com.sitemonitor.service.scripted.K6OutputParser.parse(in, mask);
+        } catch (Exception e) {
+            log.debug("k6 --out json okunamadı: {}", e.toString());
+            return com.sitemonitor.service.scripted.K6OutputParser.Parsed.EMPTY;
+        }
+    }
+
+    /** Koşum dizini — POSIX'te 0700 (başka kullanıcı göremez); Windows'ta varsayılan izinler. */
+    static Path createRunDir() throws java.io.IOException {
+        try {
+            return Files.createTempDirectory("k6-run-", java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")));
+        } catch (UnsupportedOperationException e) {
+            return Files.createTempDirectory("k6-run-");
+        }
+    }
+
+    /** Dizin silme sınırları — betiğin bıraktığı dosyalar yüzünden finally sonsuza uzamasın. */
+    static final int DELETE_MAX_DEPTH = 8;
+    static final int DELETE_MAX_ENTRIES = 10_000;
+
+    /** Koşum dizinini ÖZYİNELİ siler (sınırlı derinlik + dosya sayısı); hiçbir koşulda fırlatmaz. */
+    static void deleteTree(Path dir) {
+        if (dir == null) return;
+        try {
+            List<Path> all = new ArrayList<>();
+            try (var walk = Files.walk(dir, DELETE_MAX_DEPTH)) {
+                walk.limit(DELETE_MAX_ENTRIES).forEach(all::add);
+            }
+            for (int i = all.size() - 1; i >= 0; i--) deleteQuiet(all.get(i));
+            if (Files.exists(dir)) log.debug("k6 koşum dizini tamamen silinemedi: {}", dir);
+        } catch (Exception e) {
+            log.debug("k6 koşum dizini silinemedi ({}): {}", dir, e.toString());
         }
     }
 
@@ -1641,26 +2070,22 @@ public class ScriptedCheckerService {
      * kapatılmış bir kurulumda kara liste vekili de keser ve "vekili açtım ama yine çalışmıyor"
      * durumu doğar — üstelik hata mesajı hedefi işaret ettiği için teşhisi zor.
      *
-     * <p>Muafiyet YALNIZ vekilin kendi adresini kapsayan aralığa uygulanır; hedeflere yönelik SSRF
-     * koruması aynen sürer (script hâlâ 169.254.169.254'e gidemez).
+     * <p>Muafiyet YALNIZ vekilin kendi ADRESİNE uygulanır (2026-10-31, k6 inceleme A6): vekili kapsayan aralık, vekilin
+     * /32 (/128) adresini dışlayan alt bloklara bölünür ({@link com.sitemonitor.service.scripted.CidrBlocks}). Eskiden
+     * aralığın TAMAMI düşüyordu — vekil 10.x ise bütün 10.0.0.0/8 açılıyor, betik iç ağın tamamına gidebiliyordu.
+     * Hedeflere yönelik SSRF koruması aynen sürer (script hâlâ 169.254.169.254'e gidemez).
      */
     List<String> blacklistFor(boolean viaProxy) {
         List<String> cidrs = ssrfGuard.blacklistCidrs();
         if (!viaProxy) return cidrs;
         InetAddress[] proxyAddrs = proxySettings.resolveProxyAddresses();
         if (proxyAddrs.length == 0) return cidrs;
-        List<String> out = new ArrayList<>();
-        for (String cidr : cidrs) {
-            boolean coversProxy = false;
-            for (InetAddress a : proxyAddrs) {
-                if (cidrContains(cidr, a)) { coversProxy = true; break; }
-            }
-            if (coversProxy) {
-                log.info("[K6] Vekil ({}) kara liste aralığı {} içinde — bu aralık koşum için düşürüldü",
-                        proxySettings.displayTarget(), cidr);
-            } else {
-                out.add(cidr);
-            }
+        List<byte[]> addrs = new ArrayList<>();
+        for (InetAddress a : proxyAddrs) addrs.add(a.getAddress());
+        List<String> out = com.sitemonitor.service.scripted.CidrBlocks.excludeAll(cidrs, addrs);
+        if (!out.equals(cidrs)) {
+            log.debug("[K6] Vekil ({}) kara liste aralığı içinde — yalnız vekil adresi koşum için açıldı",
+                    proxySettings.displayTarget());
         }
         return out;
     }
@@ -1686,10 +2111,22 @@ public class ScriptedCheckerService {
         }
     }
 
+    /** Özet dosyası tavanı (2026-10-31, A7) — handleSummary / binlerce check ile şişen özet belleği doldurmasın. */
+    static final long MAX_SUMMARY_BYTES = 1024L * 1024;
+
     /** Özet dosyasını güvenle ayrıştırır; okunamazsa {@code parsed=false} ile boş özet döner (sessiz DEĞİL). */
     private Summary safeParseSummary(Path summaryFile) {
         try {
-            if (Files.size(summaryFile) > 0) return parseSummary(Files.readString(summaryFile), mapper);
+            if (!Files.exists(summaryFile)) {
+                log.debug("k6 özet dosyası yok: {}", summaryFile);
+                return new Summary();
+            }
+            long size = Files.size(summaryFile);
+            if (size > MAX_SUMMARY_BYTES) {
+                log.warn("k6 özet dosyası çok büyük ({} bayt; tavan {}) — ayrıştırılmadı", size, MAX_SUMMARY_BYTES);
+                return new Summary();
+            }
+            if (size > 0) return parseSummary(Files.readString(summaryFile), mapper);
             log.debug("k6 özet dosyası boş: {}", summaryFile);
         } catch (Exception e) {
             log.warn("k6 özet dosyası okunamadı ({}): {}", summaryFile, e.toString());
@@ -1732,9 +2169,20 @@ public class ScriptedCheckerService {
     static final String STATUS_SKIPPED = "SKIPPED";
 
     private ScriptedResult err(String message) {
-        skipped.increment();
+        return err(message, null);
+    }
+
+    /** {@link #err(String)} + sınıflandırma kodu (2026-10-31, D1) — kayıt yazılmaz, test / elle tetik yanıtında görünür. */
+    private ScriptedResult err(String message, com.sitemonitor.service.failure.CheckFailureReason reason) {
+        if (skipped != null) skipped.increment();
         return new ScriptedResult(STATUS_SKIPPED, false, null, -1,
-                null, null, null, null, null, null, null, message, false, Phases.EMPTY);
+                null, null, null, null, null, null, null, message, false, Phases.EMPTY, null,
+                RunDetails.reasonOnly(reason));
+    }
+
+    /** k6 koşamıyor — neden kodu (bulunamadı ya da desteklenmeyen sürüm, ikisi de "k6 kullanılamıyor"). */
+    private static com.sitemonitor.service.failure.CheckFailureReason unavailableReasonCode() {
+        return com.sitemonitor.service.failure.CheckFailureReason.K6_UNAVAILABLE;
     }
 
     /** Sonuç "kontrol yürütülemedi" mi? (Kaydetme/alarm/rollup yollarının hepsi buna bakar.) */
@@ -1756,9 +2204,11 @@ public class ScriptedCheckerService {
                                           boolean viaProxy, String k6Version) {
         String status = (r != null && r.timedOut()) ? "TIMEOUT" : "ERROR";
         Integer exitCode = r != null ? r.exitCode() : -1;
-        String out = SecretMask.maskValues(maskedOutput, secretValues);
+        // Dış catch yolu da koşumda üretilen jetonları maskeler (k6r inceleme L2 — ana yol maskValues'tan SONRA maskTokens).
+        String out = SecretMask.maskTokens(SecretMask.maskValues(maskedOutput, secretValues));
+        String msg = SecretMask.maskTokens(message);
         return new ScriptedResult(status, false, durationMs, exitCode,
-                null, null, null, null, null, null, out, message, viaProxy, Phases.EMPTY, k6Version);
+                null, null, null, null, null, null, out, msg, viaProxy, Phases.EMPTY, k6Version);
     }
 
     /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */
@@ -2062,6 +2512,8 @@ public class ScriptedCheckerService {
     private static final int ERR_MAX_ENTRIES = 3;        // kaç k6 log satırı (çözülmeden önce)
     private static final int ERR_MAX_TOTAL_LINES = 14;   // çözüldükten sonra toplam metin satırı
     private static final int ERR_MAX_LINE_CHARS = 300;
+    /** Yol temizliğinin uygulandığı en uzun satır (desen {@code [^\s"']*…} uzun tek parçada karesel). */
+    private static final int SANITIZE_LINE_MAX = 2000;
     private static final int ERR_MAX_TOTAL_CHARS = 1500;
 
     /**
@@ -2215,6 +2667,10 @@ public class ScriptedCheckerService {
                 String f = frag.stripTrailing();
                 if (f.isBlank()) continue;
                 if (isInternalStackFrame(f)) { hiddenFrames++; continue; }
+                // Geçici dosya yolu KIRPMADAN ÖNCE "script"e çevrilir (2026-10-31): koşum başına dizinle yol uzadı ve k6 2.x
+                // yolu satırda üç kez basıyor — kırpma "Line 4:1" konumunu kesip sözdizimi hatasını "sonuçsuz" gösteriyordu
+                // (Windows'ta K6RealContractTest.syntaxErrorBlocks). Tavan: yol deseni satır uzunluğunda karesel olabilir.
+                if (f.length() <= SANITIZE_LINE_MAX) f = sanitizeScriptPath(f);
                 if (f.length() > ERR_MAX_LINE_CHARS) f = f.substring(0, ERR_MAX_LINE_CHARS) + "…";
                 if (picked.size() >= ERR_MAX_TOTAL_LINES || total + f.length() > ERR_MAX_TOTAL_CHARS) break outer;
                 picked.add(f);
@@ -2272,6 +2728,8 @@ public class ScriptedCheckerService {
          * sessizce "metrik yok" demek yerine koşum açık ERROR olur.
          */
         boolean unrecognizedSchema;
+        /** Eşikler (2026-10-31, D1) — {@code metrics.<metric>.thresholds = {"<ifade>": aşıldı mı}}; ok = !aşıldı. */
+        List<com.sitemonitor.service.scripted.ScriptedRunData.Threshold> thresholds = new ArrayList<>();
     }
 
     /**
@@ -2288,11 +2746,30 @@ public class ScriptedCheckerService {
      * adı farklı gruplarda tekrarlanabildiği için ayrım şart.
      */
     private static void collectChecks(JsonNode group, String prefix, List<Map<String, Object>> out) {
+        collectChecks(group, prefix, out, new int[]{0}, 0);
+    }
+
+    /** {@code checks_json} en çok bu kadar check adı (2026-10-31, A7) — fazlası sayılır, yazılmaz. */
+    static final int MAX_CHECK_NAMES = 500;
+    /** Tek check adı tavanı. */
+    static final int MAX_CHECK_NAME_CHARS = 200;
+    /** {@code checks_json} karakter tavanı — aşarsa sondan kırpılır + {@code {"truncated":true,"omitted":N}}. */
+    static final int MAX_CHECKS_JSON_CHARS = 64 * 1024;
+    /** Grup iç içeliği tavanı (özyineleme derinliği). */
+    private static final int MAX_GROUP_DEPTH = 32;
+
+    /** @param omitted [0] = tavan yüzünden yazılmayan check sayısı (çıkış parametresi) */
+    private static void collectChecks(JsonNode group, String prefix, List<Map<String, Object>> out, int[] omitted,
+                                      int depth) {
+        if (depth > MAX_GROUP_DEPTH) return;
         JsonNode checks = group.path("checks");
         if (checks.isObject()) {
             checks.fields().forEachRemaining(e -> {
+                if (out.size() >= MAX_CHECK_NAMES) { omitted[0]++; return; }
                 Map<String, Object> row = new LinkedHashMap<>();
-                row.put("name", prefix == null ? e.getKey() : prefix + " › " + e.getKey());
+                String name = prefix == null ? e.getKey() : prefix + " › " + e.getKey();
+                if (name.length() > MAX_CHECK_NAME_CHARS) name = name.substring(0, MAX_CHECK_NAME_CHARS - 1) + "…";
+                row.put("name", name);
                 row.put("passed", e.getValue().path("fails").asInt(0) == 0);
                 out.add(row);
             });
@@ -2300,8 +2777,37 @@ public class ScriptedCheckerService {
         JsonNode groups = group.path("groups");
         if (groups.isObject()) {
             groups.fields().forEachRemaining(g ->
-                    collectChecks(g.getValue(), prefix == null ? g.getKey() : prefix + " › " + g.getKey(), out));
+                    collectChecks(g.getValue(), prefix == null ? g.getKey() : prefix + " › " + g.getKey(), out, omitted,
+                            depth + 1));
         }
+    }
+
+    /**
+     * {@code checks_json} (2026-10-31, A7): {@link #MAX_CHECKS_JSON_CHARS} karakteri aşarsa sondan eleman düşer ve dizinin
+     * SONUNA {@code {"truncated":true,"omitted":N}} eklenir (N = yazılmayan check sayısı, ad tavanından düşenler dahil).
+     * Okuyucular adı olmayan bu elemanı check saymamalı.
+     */
+    static String checksJsonOf(List<Map<String, Object>> list, int omitted, ObjectMapper mapper) throws Exception {
+        if (list.isEmpty() && omitted == 0) return null;
+        List<Map<String, Object>> rows = new ArrayList<>(list);
+        int dropped = omitted;
+        String json = mapper.writeValueAsString(withMarker(rows, dropped));
+        while (json.length() > MAX_CHECKS_JSON_CHARS && !rows.isEmpty()) {
+            int remove = Math.max(1, rows.size() / 10);
+            for (int i = 0; i < remove && !rows.isEmpty(); i++) { rows.remove(rows.size() - 1); dropped++; }
+            json = mapper.writeValueAsString(withMarker(rows, dropped));
+        }
+        return json;
+    }
+
+    private static List<Map<String, Object>> withMarker(List<Map<String, Object>> rows, int dropped) {
+        if (dropped <= 0) return rows;
+        List<Map<String, Object>> out = new ArrayList<>(rows);
+        Map<String, Object> marker = new LinkedHashMap<>();
+        marker.put("truncated", true);
+        marker.put("omitted", dropped);
+        out.add(marker);
+        return out;
     }
 
     /** Trend metriğinin ortalaması (ms). Metrik HİÇ yoksa null — özet okunamadı demektir
@@ -2328,10 +2834,19 @@ public class ScriptedCheckerService {
             // Threshold VARLIĞI (gerçek 0.49 çıktısı: metrics.<ad>.thresholds = {"p(95)<10000": false}).
             // Yalnız varlığa bakılır — boolean'ın anlamı yanıltıcı (yukarıdaki örnekte eşik GEÇTİ).
             if (metrics.isObject()) {
-                for (JsonNode m : metrics) {
-                    if (m.path("thresholds").isObject() && !m.path("thresholds").isEmpty()) {
-                        s.hasThresholds = true;
-                        break;
+                var it = metrics.fields();
+                while (it.hasNext()) {
+                    var me = it.next();
+                    JsonNode th = me.getValue().path("thresholds");
+                    if (!th.isObject() || th.isEmpty()) continue;
+                    s.hasThresholds = true;
+                    // Koşum verisi (2026-10-31, D1): true = AŞILDI (düştü) — "avg<1": true ölçüldü, çıkış 99.
+                    var te = th.fields();
+                    while (te.hasNext()
+                            && s.thresholds.size() < com.sitemonitor.service.scripted.ScriptedRunData.MAX_THRESHOLDS) {
+                        var t = te.next();
+                        s.thresholds.add(new com.sitemonitor.service.scripted.ScriptedRunData.Threshold(
+                                me.getKey(), t.getKey(), !t.getValue().asBoolean(false)));
                     }
                 }
             }
@@ -2359,8 +2874,9 @@ public class ScriptedCheckerService {
             s.httpReqs     = countOf(metrics, "http_reqs");
             // Per-check adları — grupların İÇİ DÂHİL (bkz. collectChecks).
             List<Map<String, Object>> list = new ArrayList<>();
-            collectChecks(root.path("root_group"), null, list);
-            if (!list.isEmpty()) s.checksJson = mapper.writeValueAsString(list);
+            int[] omitted = {0};
+            collectChecks(root.path("root_group"), null, list, omitted, 0);
+            s.checksJson = checksJsonOf(list, omitted[0], mapper);
         } catch (Exception e) {
             // Sessiz DEĞİL: bozuk özet ile hiç özet arasındaki fark tanı için önemli.
             log.debug("k6 özeti ayrıştırılamadı: {}", e.toString());

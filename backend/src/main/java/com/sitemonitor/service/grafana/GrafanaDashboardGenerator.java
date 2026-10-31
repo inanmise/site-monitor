@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 10;
+    public static final int DASHBOARD_REVISION = 12;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1406,6 +1406,56 @@ public final class GrafanaDashboardGenerator {
             volume.target("sum by (type) (" + agg(MonitoringMetricNames.MONITORS_FAILED, MC) + ")", t("{{type}} başarısız", "{{type}} failed"), false);
             volume.timeseries("short", false, "line");
             add(volume);
+
+            scriptedRuns();
+        }
+
+        /**
+         * Sentetik (k6) koşumları (revizyon 11, 2026-10-31 — k6r D3; 12: teyit / kurtarma yeniden kontrolleri sayılmaz): son 24
+         * saatte ZAMANLANMIŞ koşumların sonuca göre dağılımı ve k6 sürüm dağılımı (KÜME aileleri; pod'lar arası {@code max}).
+         * Takım / tür süzgecinden bağımsızdır (kurum geneli sayım).
+         */
+        void scriptedRuns() {
+            String runs = MonitoringMetricNames.SCRIPTED_RUNS;
+            String vers = MonitoringMetricNames.SCRIPTED_K6_VERSIONS;
+            Panel result = new Panel("piechart", t("Sentetik koşum sonuçları (24 sa)", "Synthetic run results (24 h)"),
+                    t("Son 24 saatte ZAMANLANMIŞ sentetik (k6) koşumlarının sonuca göre dağılımı — kurum geneli, takım süzgecinden "
+                            + "bağımsız; elle \"Şimdi kontrol et\", form testi ve teyit / kurtarma zincirinin yeniden kontrolleri sayılmaz. "
+                            + "PASS: geçti · FAIL: doğrulama ya da eşik düştü · ERROR: betik / altyapı hatası (sözdizimi, k6 başlatılamadı) · "
+                            + "TIMEOUT: süreç bütçesi aşıldı · NO_CHECKS: koştu ama hiçbir şey doğrulamadı. Havuz dolduğu için yürütülemeyen "
+                            + "koşum kaydedilmez, burada görünmez. Veri yoksa kaynak okunamadı (0 sayılmaz).",
+                            "Distribution of SCHEDULED synthetic (k6) runs in the last 24 hours by result — organisation-wide, independent of "
+                                    + "the team filter; manual \"Check now\" runs, form tests and confirmation / recovery rechecks are not "
+                                    + "counted. PASS: passed · FAIL: a check or threshold failed · ERROR: script / infrastructure error "
+                                    + "(syntax, k6 could not start) · TIMEOUT: the process budget ran out · NO_CHECKS: ran but verified nothing. "
+                                    + "A run that could not start because the pool was full is not recorded and does not show here. "
+                                    + "No data means the source could not be read (not 0)."));
+            result.w = 12; result.h = 9;
+            String[][] rs = {{"PASS", t("Geçti", "Passed"), GREEN}, {"FAIL", t("Başarısız", "Failed"), RED},
+                    {"ERROR", t("Hata", "Error"), PURPLE}, {"TIMEOUT", t("Zaman aşımı", "Timeout"), AMBER},
+                    {"NO_CHECKS", t("Doğrulama yok", "No checks"), YELLOW}};
+            Map<String, String> rc = new LinkedHashMap<>();
+            for (String[] r : rs) {
+                result.target(guard("max(" + metric(runs, "status=\"" + r[0] + "\"") + ")", "scripted_runs"), r[1], true);
+                rc.put(r[1], r[2]);
+            }
+            result.options(pieOptions());
+            result.fixedColors(rc);
+            add(result);
+
+            Panel versions = new Panel("piechart", t("k6 sürüm dağılımı", "k6 version distribution"),
+                    t("Son 24 saatte zamanlanmış sentetik koşumların hangi k6 sürümüyle koştuğu (pod başına imajdaki ikili). Bir k6 "
+                            + "yükseltmesinden sonra eski sürümün dilimi 24 saat içinde kaybolmalı; kalıyorsa eski imajla koşan bir pod "
+                            + "vardır. \"unknown\": sürümü kaydedilmemiş (eski) koşumlar. Veri yoksa son 24 saatte koşum yok ya da kaynak "
+                            + "okunamadı.",
+                            "Which k6 version ran the scheduled synthetic runs of the last 24 hours (the binary in each pod's image). After a "
+                                    + "k6 upgrade the old version's slice should disappear within 24 hours; if it stays, a pod still runs the "
+                                    + "old image. \"unknown\": runs without a recorded version (older runs). No data means no run in the "
+                                    + "last 24 hours or the source could not be read."));
+            versions.w = 12; versions.h = 9;
+            versions.target("max by (version) (" + metric(vers) + ")", "{{version}}", true);
+            versions.options(pieOptions());
+            add(versions);
         }
 
         // ── Sertifikalar ve alan adları ──────────────────────────────────────────────────────────────────

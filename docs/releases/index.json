@@ -1,9 +1,121 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-31T13:03:33Z",
+  "generatedAt": "2026-10-31T18:14:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 798,
+  "count": 799,
   "releases": [
+    {
+      "version": "20.178.0",
+      "tag": "v20.178.0",
+      "releasedAt": "2026-10-31T18:14:43Z",
+      "commit": "c16428ac6b6da55d7e66fc66ea015c92f95fe76a",
+      "prevVersion": "20.177.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 5,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 1,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c16428ac",
+          "subject": "k6r — adım trendi teyit yeniden kontrollerini saymaz; belgeler son inceleme düzeltmeleriyle güncellendi (recheck kolonu, gecikmiş kuralı, pano revizyonu 12)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2922bdf1",
+          "subject": "k6r be2 inceleme düzeltmeleri — teyit yeniden kontrolü seriye girmez, geçici atlama geri verilir, koşmayan zamanlamalı senaryo gecikmiş görünür"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b2e132bb",
+          "subject": "sentetik izleme formu inceleme düzeltmeleri — zamanlama anahtarları, test odağı, yeniden adlandırılan gizli değer"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b44b46ac",
+          "subject": "k6r ön yüz inceleme düzeltmeleri (fe2) — sürüm bandı geç yanıt koruması, trendde tek nokta + seri seçimi sıfırlama, şablon editörü yeniden okumaz, doğrulama adı ayrıntıda, hedef önbelleği"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "8879c76e",
+          "subject": "k6r son inceleme notları — oom_score_adj sınırı, sürüm geçişinde çift koşum, dosya okuma raporu adımı"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "1b46cfa2",
+          "subject": "sentetik izleme (k6) inceleme paketleri — CLAUDE.md, RUNBOOK, yayın kontrol listesi, kılavuz (TR / EN) ve PDF'ler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0ef3c5b4",
+          "subject": "k6r entegrasyon — ScriptedProcessHardening Spring kurucusu işaretli (bağlam açılmıyordu), scripted zamanlama önizlemesi denetim istisnası, kırpılmış checks_json öğesi durma noktasında sayılmaz, hata …"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "c3b86523",
+          "subject": "senaryo (k6) motoru — güvenlik sertleştirmesi ve koşum verisi"
+        },
+        {
+          "type": "refactor",
+          "scope": null,
+          "breaking": false,
+          "sha": "27ffaee0",
+          "subject": "sentetik bağlam çipleri tek bileşende (test paneli ayrıntıdaki RunContextChips'i kullanır), yinelenen StepList içe aktarımı kaldırıldı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1aae4ca2",
+          "subject": "sentetik izleme formu ve ilk kurulum — bölümlü form, kayıtlı gizli değerle test, zamanlama düzenleyicisi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f511aa94",
+          "subject": "sentetik kart zamanlama çipi, B4 kart / şablon testleri ve ayrıntı e2e'si"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "e3bcfdd7",
+          "subject": "sentetik izlemede zamanlama penceresi / cron, anomali korumasında açık kesinti istisnası, atlanan dönemin geri verilmesi, Grafana koşum aileleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7986afc4",
+          "subject": "sentetik izleme koşum ayrıntısı — adımlar, eşikler, TLS, hata sınıfı, bağlam çipleri, adım trendi, \"bu sürüm bozdu\" bandı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.177.0",
       "tag": "v20.177.0",

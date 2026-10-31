@@ -426,3 +426,21 @@ describe('K6EngineSettings — sonuçlar', () => {
     await waitFor(() => expect(slot('k6e-detail')).not.toBeNull())
   })
 })
+
+describe('K6EngineSettings — E10 (2026-10-31)', () => {
+  it('sıfır değerli fark kutucukları NÖTR; sayısı olan kendi tonunda; tarama seçici sarılır (yerel <select> değil)', async () => {
+    await mount()
+    const tone = (key) => document.querySelector(`[data-slot="stat-item"][data-key="${key}"]`).getAttribute('data-tone')
+    expect(tone('REGRESSION')).toBe('critical')   // 1 gerileme
+    expect(tone('FLAKY')).toBe('total')            // 0 → nötr (amber değil)
+    expect(tone('NOT_RUN')).toBe('total')
+    const pick = slot('k6e-scan-pick')
+    expect(pick.querySelector('select')).toBeNull()
+    expect(pick.querySelector('[role="combobox"]')).not.toBeNull()
+  })
+
+  it('giriş metni yaşlanmaz: belirli bir geçişi "tamamlandı" diye anlatmaz', async () => {
+    await mount()
+    expect(document.body.textContent).not.toMatch(/0\.49 → 2\.3 geçişi tamamlandı/)
+  })
+})

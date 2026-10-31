@@ -73,6 +73,13 @@ public class HolidayCalendarController {
                 log.warn("Tatil takvimi değişikliği sorgu izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
                         e.getClass().getSimpleName());
             }
+            // k6r D2 (2026-10-31): tatile bakan zamanlamalı sentetik izlemeler de aynı kuralla yeniden planlanır
+            try {
+                if (scheduler != null) scheduler.scriptedCalendarChanged();
+            } catch (RuntimeException e) {
+                log.warn("Tatil takvimi değişikliği senaryo izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                        e.getClass().getSimpleName());
+            }
         }
         return ok(view(session));
     }
@@ -112,6 +119,13 @@ public class HolidayCalendarController {
                 if (scheduler != null) scheduler.dbQueryCalendarChanged();
             } catch (RuntimeException e) {
                 log.warn("Tatil takvimi değişikliği sorgu izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                        e.getClass().getSimpleName());
+            }
+            // k6r D2 (2026-10-31): tatile bakan zamanlamalı sentetik izlemeler de aynı kuralla yeniden planlanır
+            try {
+                if (scheduler != null) scheduler.scriptedCalendarChanged();
+            } catch (RuntimeException e) {
+                log.warn("Tatil takvimi değişikliği senaryo izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
                         e.getClass().getSimpleName());
             }
         }

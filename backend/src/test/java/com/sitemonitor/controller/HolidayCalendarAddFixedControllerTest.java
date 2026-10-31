@@ -85,6 +85,7 @@ class HolidayCalendarAddFixedControllerTest {
         verify(auditService, times(1)).recordAction(eq("HOLIDAY_CALENDAR_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 eq("HOLIDAY_CALENDAR"), eq("holidays"), contains("add_fixed"), isNull());
         verify(scheduler, times(1)).dbQueryCalendarChanged();
+        verify(scheduler, times(1)).scriptedCalendarChanged();   // k6r D2: zamanlamalı sentetik izlemeler de
 
         when(holidays.addFixed(2028, "Global Yönetici")).thenReturn(0);
         mvc.perform(post("/api/admin/holidays/add-fixed").param("year", "2028").session(session("ADMIN", null)))
@@ -93,5 +94,6 @@ class HolidayCalendarAddFixedControllerTest {
         verify(auditService, times(1)).recordAction(anyString(), any(jakarta.servlet.http.HttpSession.class), anyString(), anyString(),
                 anyString(), isNull());
         verify(scheduler, times(1)).dbQueryCalendarChanged();
+        verify(scheduler, times(1)).scriptedCalendarChanged();   // k6r D2: zamanlamalı sentetik izlemeler de
     }
 }

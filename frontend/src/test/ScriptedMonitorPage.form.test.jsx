@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags, act } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ScriptedMonitorPage, { invalidNumericField, SCRIPTED_NUM_FIELDS }
   from '../components/ScriptedMonitorPage.jsx'
@@ -22,6 +22,21 @@ import { api } from '../api/client'
 import { resetScriptedMocks } from './helpers/scriptedHarness.jsx'
 
 beforeEach(() => resetScriptedMocks(api))
+
+/**
+ * Kaynak değişimi onayı (H1, 2026-10-31): elle değişmiş betik ya da düzenlemede izlemenin kendi betiğinden ayrılmak
+ * onay ister — env birleştirilir, betik değişir.
+ */
+async function confirmSourceChange() {
+  const btn = await screen.findByRole('button', { name: /^(kaynağı değiştir|change source)$/i })
+  await act(async () => { fireEvent.click(btn) })
+}
+
+/** "Zamanlama ve alarm" bölümü varsayılanla KAPALI (k6r C) — içindeki alanlara erişmeden önce açılır. */
+function openTimingSection() {
+  const trigger = document.querySelector('[role="dialog"] [data-slot="sc-timing"] button[aria-expanded]')
+  if (trigger && trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
+}
 
 describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
@@ -82,6 +97,8 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       restoredFrom: null, // eski sürümden yüklenmediyse null
       env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
             { name: 'PASSWORD', secret: true }],   // gizli değer taşınmaz → kullanıcı yeniden girer
+      // Zamanlama (k6r D2): kaynak satırı alan taşımıyor (eski sunucu) → varsayılan INTERVAL, pencere yok
+      schedule_mode: 'INTERVAL', cron_expression: '', windows: [], blackouts: [], skip_holidays: false, skip_dates: [],
     })
   })
 
@@ -257,6 +274,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(inModal('[data-slot="test-run"]')).not.toBeNull()
 
       pickSource(/smoke/i)
+      await confirmSourceChange()   // düzenlemede kendi betiğinden ayrılmak onay ister (H1)
 
       expect(inModal('[data-slot="test-run"]')).toBeNull()
       // Şablonun GÖVDESİ liste yanıtında gelmez (bilinçli), tekil uçtan asenkron çekilir → bekle.
@@ -266,6 +284,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
       await openEditFor(FAILING)
       pickSource(/smoke/i)
+      await confirmSourceChange()
       expect(inModal('[data-slot="test-run"]')).toBeNull()
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
 
@@ -436,6 +455,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         }
         fireEvent.mouseDown([...document.querySelectorAll('[role="listbox"] [role="option"]')]
           .find(o => /OAuth2/i.test(o.textContent)))
+        await confirmSourceChange()   // betik elle yazılmıştı ('x') → onay
         const secretInput = screen.getByRole('dialog').querySelector('[data-slot="env-row"] input[type="password"]')
         if (secretInput) fireEvent.change(secretInput, { target: { value: 'COK-GIZLI' } })
         await vi.advanceTimersByTimeAsync(1600)
@@ -693,6 +713,8 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
     fireEvent.click(within(container).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i }))
+    await screen.findByRole('dialog')
+    openTimingSection()
 
     const thresholdInput = await waitFor(() => {
       const el = document.querySelector('input[type="number"][max="180000"]')
@@ -741,14 +763,17 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
     fireEvent.click(within(container).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i }))
+    await screen.findByRole('dialog')
+    openTimingSection()   // yavaş alarm "Zamanlama ve alarm" bölümünde (varsayılanla kapalı, k6r C)
 
     const slow = await screen.findByRole('checkbox', { name: /yavaş koşum alarmı|slow-run alert/i })
     expect(slow.closest('[data-slot="field"]').dataset.orientation).toBe('horizontal')
 
-    // Izgaranın DOĞRUDAN hücreleri: env satırlarındaki kendi düzeni olan kutular ve ortak
+    // Izgaraların DOĞRUDAN hücreleri: env satırlarındaki kendi düzeni olan kutular ve ortak
     // bildirim bloğunun (NotifyChannels) döşemeleri kapsam dışı — onlar ızgara hücresi değil.
-    const grid = screen.getByRole('dialog').querySelector('[data-slot="form-grid"]')
-    const gridCheckboxCells = [...grid.children].filter(c => c.querySelector(':scope > [role="checkbox"]'))
+    // Form bölümlere ayrıldı (Genel / Senaryo / Zamanlama / Bildirimler) → her bölümün kendi ızgarası taranır.
+    const grids = [...screen.getByRole('dialog').querySelectorAll('[data-slot="form-grid"]')]
+    const gridCheckboxCells = grids.flatMap(grid => [...grid.children]).filter(c => c.querySelector(':scope > [role="checkbox"]'))
     // B1: e-posta ve webhook kutuları ortak bildirim bloğuna (NotifyChannels) taşındı, artık
     // ızgara hücresi değiller. KURAL değişmedi — ızgaradaki her kutu paylaşılan deseni taşır;
     // taban yalnız "seçici boşa düşmesin" güvencesi olarak kalıyor (yavaş alarm + aktif).

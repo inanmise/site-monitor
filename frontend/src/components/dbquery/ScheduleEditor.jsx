@@ -56,14 +56,17 @@ const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
  * alt sınırı (`/monitoring/defaults` `min_interval_seconds`): ipucu, hata metni ve hazır aralıklar ona uyar (DÜŞÜK 9);
  * `canEditHolidays` — global yönetici: tatil takvimi ayar bağlantısı yalnız ona; diğerleri günleri pencere içinde salt
  * okunur görür (O4).
+ *
+ * `previewApi` (isteğe bağlı, 2026-10-31 — Sentetik İzleme aynı düzenleyiciyi kullanır): önizleme çağrısı
+ * `(gövde, { signal }) => Promise<yanıt>`; verilmezse `api.monitoring.dbQuerySchedulePreview` (bugünkü davranış).
  */
-export default function ScheduleEditor({ value, onChange, fieldErrors, disabled = false, minIntervalSeconds, canEditHolidays = false }) {
+export default function ScheduleEditor({ value, onChange, fieldErrors, disabled = false, minIntervalSeconds, canEditHolidays = false, previewApi }) {
   const t = useT()
   const { lang } = useLanguage()
   const v = value || {}
   const mode = v.schedule_mode === 'CRON' ? 'CRON' : 'INTERVAL'
   const minInterval = effectiveMinInterval(minIntervalSeconds)
-  const preview = useSchedulePreview(v, minInterval)
+  const preview = useSchedulePreview(v, minInterval, previewApi)
   const codes = preview.codes || {}
   // Önizlemenin "hiç çalışmaz" ve "kip geçersiz" iletileri kendi yerlerinde çizilir — alan altında tekrarlanmaz
   const own = {}
@@ -108,11 +111,13 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
   )
 }
 
-/** Canlı önizleme durumu — idle | loading | ok | unknown. */
-function useSchedulePreview(v, minInterval) {
+/** Canlı önizleme durumu — idle | loading | ok | unknown. `previewApi` ref'te: her çizimde yeni işlev etkiyi tetiklemez. */
+function useSchedulePreview(v, minInterval, previewApi) {
   const body = previewBody(v)
   const key = JSON.stringify(body)
   const seq = useRef(0)
+  const apiRef = useRef(previewApi)
+  apiRef.current = previewApi
   const [state, setState] = useState({ state: 'idle', reason: null, data: null, errors: null, codes: null, message: null })
   useEffect(() => {
     const n = ++seq.current
@@ -129,7 +134,8 @@ function useSchedulePreview(v, minInterval) {
     const timer = setTimeout(async () => {
       let next
       try {
-        const res = await api.monitoring.dbQuerySchedulePreview(body, { signal: ctrl.signal })
+        const call = typeof apiRef.current === 'function' ? apiRef.current : api.monitoring.dbQuerySchedulePreview
+        const res = await call(body, { signal: ctrl.signal })
         if (n !== seq.current || ctrl.signal.aborted) return
         if (res?.success && res.data && typeof res.data === 'object') {
           const errors = {}

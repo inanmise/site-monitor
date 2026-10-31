@@ -100,6 +100,51 @@ class ScriptedAnomalyGuardStaleEntityTest {
         assertThat(row.getName()).isEqualTo("Giriş akışı (düzeltildi)");
     }
 
+    private void row(Long monitorId, String checkedAt, Boolean manual, Boolean recheck) {
+        ScriptedCheck c = new ScriptedCheck();
+        c.setMonitorId(monitorId);
+        c.setOk(false);
+        c.setStatus("TIMEOUT");
+        c.setDurationMs(180_000L);
+        c.setManual(manual);
+        c.setRecheck(recheck);
+        c.setCheckedAt(checkedAt);
+        checkRepo.save(c);
+    }
+
+    @Test
+    @DisplayName("inceleme #1: confirm-attempts=4 — zamanlanmış TIMEOUT + 4 teyit yeniden kontrolü TIMEOUT, zincir sürerken 5. TIMEOUT kapatmaz")
+    void confirmationChainRechecks_doNotFillTheStreak() {
+        ScriptedMonitor m = new ScriptedMonitor();
+        m.setName("Teyit zinciri");
+        m.setTeamId(3L);
+        m.setActive(true);
+        m.setScript("export default function () {}");
+        m.setTimeoutSeconds(60);
+        m.setCreatedAt("2026-10-01T10:00:00");
+        m = monitorRepo.save(m);
+        Long id = m.getId();
+        row(id, "2026-10-31T10:00:00", false, null);                           // zamanlanmış koşum (zinciri başlattı)
+        for (int i = 1; i <= 4; i++) row(id, "2026-10-31T10:00:" + (10 * i), false, Boolean.TRUE);   // teyit adımları
+        row(id, "2026-10-31T10:01:00", Boolean.TRUE, null);                    // araya giren elle koşum
+
+        // seri yalnız zamanlanmış satırları görür
+        assertThat(checkRepo.findRecentScheduledByMonitorId(id, 5)).hasSize(1);
+
+        ScriptedAnomalyGuard g = guard();
+        assertThat(g.evaluate(m, timeout(), false, true)).as("4. teyit adımının sonucu").isNull();
+        row(id, "2026-10-31T10:05:00", false, null);                           // zincir sürerken sıradaki zamanlanmış koşum
+        assertThat(g.evaluate(m, timeout(), false, false)).as("5. zaman aşımı").isNull();
+        ScriptedMonitor after = monitorRepo.findById(id).orElseThrow();
+        assertThat(after.getActive()).isTrue();
+        assertThat(after.getDisabledReason()).isNull();
+
+        // karşı kanıt: beş ZAMANLANMIŞ zaman aşımı bugünkü gibi kapatır
+        for (int i = 0; i < 3; i++) row(id, "2026-10-31T10:1" + i + ":00", false, Boolean.FALSE);
+        assertThat(checkRepo.findRecentScheduledByMonitorId(id, 5)).hasSize(5);
+        assertThat(g.evaluate(monitorRepo.findById(id).orElseThrow(), timeout(), false, false)).contains("süre aşımı");
+    }
+
     @Test
     @DisplayName("Kullanıcı arada kendisi kapatmış → guard 0 satır günceller, 'kapattım' demez")
     void userAlreadyPaused_noDisable() {

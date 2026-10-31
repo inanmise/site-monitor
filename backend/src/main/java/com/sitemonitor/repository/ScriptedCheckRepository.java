@@ -43,9 +43,13 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    /** Yalnız ZAMANLANMIŞ koşumlar (manual NULL/false), en yeni önce — anomali guard'ının zaman aşımı serisi (2026-09-29). */
+    /**
+     * Yalnız ZAMANLANMIŞ koşumlar (manual NULL/false), en yeni önce — anomali guard'ının zaman aşımı serisi (2026-09-29).
+     * Teyit / kurtarma zincirinin yeniden kontrolleri ({@code recheck = true}, 2026-10-31 k6r inceleme #1) de DIŞARIDA: alarm
+     * zincirin sonunda açılır; zincir adımları seriye girerse alarm açılmadan seri dolup izleme kapanırdı.
+     */
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND (r.manual IS NULL OR r.manual = false) "
-            + "ORDER BY r.checkedAt DESC LIMIT :limit")
+            + "AND (r.recheck IS NULL OR r.recheck = false) ORDER BY r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentScheduledByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
@@ -92,4 +96,15 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
          + "FROM ScriptedCheck c WHERE c.monitorId = :id AND c.scriptVersion IS NOT NULL "
          + "GROUP BY c.scriptVersion")
     List<Object[]> runStatsByScriptVersion(@Param("id") Long id);
+
+    /**
+     * Adım trendi (2026-10-31, k6 inceleme D1): [checked_at, steps_json] — yalnız ZAMANLANMIŞ koşumlar (elle koşum ve
+     * teyit / kurtarma yeniden kontrolü trendi bozmasın), adım verisi olanlar, yeniden eskiye, tavanlı (çağıran tavan + 1 ister → "kırpıldı" bilgisi).
+     */
+    @Query("SELECT r.checkedAt, r.stepsJson FROM ScriptedCheck r "
+         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.manual IS NULL OR r.manual = false) AND (r.recheck IS NULL OR r.recheck = false) "
+         + "AND r.stepsJson IS NOT NULL ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<Object[]> stepSeriesRaw(@Param("id") Long id, @Param("from") String from,
+                                 @Param("to") String to, @Param("limit") int limit);
 }

@@ -6696,7 +6696,7 @@ class MonitoringControllerTest {
                             .content("{\"script\":\"export default function(){}\",\"env\":[{\"name\":\"GOMAXPROCS\",\"value\":\"8\"}]}"))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.fields.env").exists());
-            verify(scriptedChecker, never()).test(any(), any(), any(), any());
+            verify(scriptedChecker, never()).testRun(any(), any(), any(), any());
         }
 
         // ── Ping ──
@@ -7823,5 +7823,303 @@ class MonitoringControllerTest {
                 .andExpect(status().is(429))
                 .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
                 .andExpect(header().exists("Retry-After"));
+    }
+
+    // ── Sentetik izleme sürümü (2026-10-31, k6 inceleme A1 / A4 / A6 / B1 / D1) ─────────────────────────────────
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Senaryo test + koşum verisi 2026-10-31")
+    class ScriptedRunData20261031 {
+
+        private static final String JSON = "application/json";
+        private final String okScript = "import http from 'k6/http';\\nexport default function () { http.get('https://example.com/'); }";
+
+        /** Her test kendi kullanıcısıyla — denetleyicideki "dakikada 6 test" sınırı testler arasında paylaşılır. */
+        private MockHttpSession user(String name) {
+            MockHttpSession s = session("ADMIN");
+            s.setAttribute("username", name);
+            return s;
+        }
+
+        private com.sitemonitor.service.ScriptedCheckerService.ScriptedResult pass(
+                com.sitemonitor.service.ScriptedCheckerService.RunDetails d) {
+            return new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult("PASS", true, 120L, 0, 2, 0, 100L, 40L,
+                    55L, "[]", "", null, false, null, "v2.3.0", d);
+        }
+
+        private void stubRunnable() {
+            when(scriptedChecker.isAvailable()).thenReturn(true);
+            when(scriptedChecker.validateScript(anyString(), any(), any()))
+                    .thenReturn(new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics(null, List.of("uyarı-1")));
+            when(scriptedChecker.testRun(anyString(), any(), any(), any())).thenReturn(pass(
+                    new com.sitemonitor.service.ScriptedCheckerService.RunDetails(
+                            "[{\"name\":\"Giriş\",\"duration_ms\":36,\"requests\":1,\"failed_requests\":0,\"p95_ms\":15,"
+                                    + "\"checks_passed\":1,\"checks_failed\":0,\"error_code\":null}]", false,
+                            "[{\"metric\":\"checks\",\"expr\":\"rate>0.9\",\"ok\":true}]",
+                            "[{\"host\":\"a.example\",\"tls_version\":\"tls1.3\",\"requests\":1}]", null, null,
+                            "{\"process_budget_s\":130,\"request_timeout_s\":null,\"egress\":\"direct\",\"corporate_ca\":true,"
+                                    + "\"inverted_budget\":false}")));
+        }
+
+        @Test
+        @DisplayName("Test yanıtı koşum verisini taşır (steps / thresholds / tls / run_context), kept_secrets her zaman; "
+                + "denetim betiğin SHA-256 özetini yazar, gövdesini yazmaz")
+        void test_returnsRunFields_auditsHash() throws Exception {
+            stubRunnable();
+            when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of());
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-fields")).contentType(JSON)
+                            .content("{\"script\":\"" + okScript + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.status").value("PASS"))
+                    .andExpect(jsonPath("$.data.steps[0].name").value("Giriş"))
+                    .andExpect(jsonPath("$.data.steps_truncated").value(false))
+                    .andExpect(jsonPath("$.data.thresholds[0].ok").value(true))
+                    .andExpect(jsonPath("$.data.tls[0].cert_state").value("untracked"))
+                    .andExpect(jsonPath("$.data.run_context.egress").value("direct"))
+                    .andExpect(jsonPath("$.data.kept_secrets").isArray())
+                    .andExpect(jsonPath("$.data.warnings[0]").value("uyarı-1"))
+                    .andExpect(jsonPath("$.data.failure_reason").doesNotExist());
+            org.mockito.ArgumentCaptor<String> captor = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(auditService).recordAction(eq("MONITOR_TEST"), any(), eq("SCRIPTED_MONITOR"), eq("test"), captor.capture(), any());
+            String detail = String.valueOf(captor.getValue());
+            assertThat(detail).contains("script_sha256").doesNotContain("example.com");
+        }
+
+        @Test
+        @DisplayName("Boyut tavanı: tavanı aşan betik 400 alan script — tarama / k6 çalışmaz")
+        void test_sizeCap() throws Exception {
+            stubRunnable();
+            String big = "x".repeat(com.sitemonitor.service.ScriptedSafetyRules.MAX_SCRIPT_CHARS + 1);
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-size")).contentType(JSON)
+                            .content("{\"script\":\"" + big + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.script").exists());
+            verify(scriptedChecker, never()).testRun(anyString(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("BLOCK: dosya okuyan betik 400 VALIDATION_FAILED + file_reads (yürütülmez)")
+        void test_fileReadBlocked() throws Exception {
+            stubRunnable();
+            when(scriptedChecker.fileReadBlocking()).thenReturn(true);
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-fr")).contentType(JSON)
+                            .content("{\"script\":\"const d = open('/proc/1/environ');\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.fields.script").exists())
+                    .andExpect(jsonPath("$.file_reads[0]").value("open()"));
+            verify(scriptedChecker, never()).testRun(anyString(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Uzak import engelli hosta gidiyorsa 400 alan script (k6'nın kara listesi indirmeyi kapsamaz)")
+        void test_remoteImportBlocked() throws Exception {
+            stubRunnable();
+            when(scriptedChecker.blockedRemoteImport(anyString())).thenReturn("127.0.0.1 (döngü adresi)");
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-imp")).contentType(JSON)
+                            .content("{\"script\":\"import x from 'https://127.0.0.1/m.js';\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.script").exists());
+            verify(scriptedChecker, never()).testRun(anyString(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Kayıt kuralları: validateScript engelleyici bulgu → 400 alan script")
+        void test_validateScriptBlocking() throws Exception {
+            stubRunnable();
+            when(scriptedChecker.validateScript(anyString(), any(), any()))
+                    .thenReturn(new com.sitemonitor.service.ScriptedCheckerService.ScriptDiagnostics("Satır 2: sözdizimi", List.of()));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-val")).contentType(JSON)
+                            .content("{\"script\":\"" + okScript + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.script").value("Satır 2: sözdizimi"));
+        }
+
+        @Test
+        @DisplayName("Kullanıcı başına dakikada 6 test — 7. istek 429 RATE_LIMITED + Retry-After; başka kullanıcı etkilenmez")
+        void test_rateLimited() throws Exception {
+            stubRunnable();
+            when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of());
+            for (int i = 0; i < com.sitemonitor.service.scripted.ScriptedTestLimiter.PER_MINUTE; i++) {
+                mvc.perform(post("/api/monitoring/scripted/test").session(user("t-rate")).contentType(JSON)
+                                .content("{\"script\":\"" + okScript + "\"}"))
+                        .andExpect(status().isOk());
+            }
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-rate")).contentType(JSON)
+                            .content("{\"script\":\"" + okScript + "\"}"))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(header().exists("Retry-After"));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-rate-2")).contentType(JSON)
+                            .content("{\"script\":\"" + okScript + "\"}"))
+                    .andExpect(status().isOk());
+        }
+
+        private com.sitemonitor.model.ScriptedMonitor secretMonitor(long id, long team) {
+            com.sitemonitor.model.ScriptedMonitor m = k6Monitor(id, team);
+            m.setEnvJson("[{\"name\":\"TOKEN\",\"secret\":true,\"value\":\"enc:v1:AAAA\"}]");
+            when(scriptedMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+            return m;
+        }
+
+        private String keepBody(Object monitorId) {
+            return "{\"script\":\"" + okScript + "\",\"monitorId\":" + monitorId
+                    + ",\"env\":[{\"name\":\"TOKEN\",\"value\":\"\",\"secret\":true,\"keep\":true}]}";
+        }
+
+        @Test
+        @DisplayName("Kayıtlı gizli değerle test (B1): değer sunucuda çözülür, gizli işaretli koşar; yanıt kept_secrets")
+        void test_keepSecret_ok() throws Exception {
+            stubRunnable();
+            when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of());
+            com.sitemonitor.model.ScriptedMonitor m = secretMonitor(91L, 5L);
+            when(scriptedChecker.revealSecret(m, "TOKEN")).thenReturn(new com.sitemonitor.service.ScriptedCheckerService.SecretLookup(
+                    com.sitemonitor.service.ScriptedCheckerService.SecretLookup.Status.OK, "çözülmüş-değer"));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-keep")).contentType(JSON).content(keepBody(91)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.kept_secrets[0]").value("TOKEN"));
+            @SuppressWarnings("unchecked")
+            org.mockito.ArgumentCaptor<List<com.sitemonitor.service.ScriptedCheckerService.EnvVar>> env =
+                    org.mockito.ArgumentCaptor.forClass(List.class);
+            verify(scriptedChecker).testRun(anyString(), env.capture(), any(), any());
+            assertThat(env.getValue()).singleElement().satisfies(v -> {
+                assertThat(v.name()).isEqualTo("TOKEN");
+                assertThat(v.value()).isEqualTo("çözülmüş-değer");
+                assertThat(v.secret()).isTrue();
+            });
+        }
+
+        @Test
+        @DisplayName("Kayıtlı gizli değer: izleme yok → 404, düzenleyemeyen → 403, ad yok → 400 env, çözülemedi → 409")
+        void test_keepSecret_refusals() throws Exception {
+            stubRunnable();
+            when(scriptedMonitorRepo.findById(404L)).thenReturn(Optional.empty());
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-k1")).contentType(JSON).content(keepBody(404)))
+                    .andExpect(status().isNotFound());
+
+            com.sitemonitor.model.ScriptedMonitor m = secretMonitor(92L, 5L);
+            MockHttpSession viewer = k6GranteeOf5(SessionScope.ATTR_GRANT_VIEW);
+            viewer.setAttribute("username", "t-k2");
+            mvc.perform(post("/api/monitoring/scripted/test").session(viewer).contentType(JSON).content(keepBody(92)))
+                    .andExpect(status().isForbidden());
+
+            when(scriptedChecker.revealSecret(m, "TOKEN")).thenReturn(new com.sitemonitor.service.ScriptedCheckerService.SecretLookup(
+                    com.sitemonitor.service.ScriptedCheckerService.SecretLookup.Status.NOT_FOUND, null));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-k3")).contentType(JSON).content(keepBody(92)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.env").exists());
+
+            when(scriptedChecker.revealSecret(m, "TOKEN")).thenReturn(new com.sitemonitor.service.ScriptedCheckerService.SecretLookup(
+                    com.sitemonitor.service.ScriptedCheckerService.SecretLookup.Status.UNREADABLE, null));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-k4")).contentType(JSON).content(keepBody(92)))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("SECRET_UNREADABLE"));
+
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-k5")).contentType(JSON).content(keepBody("null")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.env").exists());
+            verify(scriptedChecker, never()).testRun(anyString(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Elle kota dolu → skipped_code MANUAL_POOL_BUSY; sınıflandırılmış neden yanıtta")
+        void test_manualPoolBusyCode() throws Exception {
+            stubRunnable();
+            when(scriptedChecker.testRun(anyString(), any(), any(), any())).thenReturn(
+                    new com.sitemonitor.service.ScriptedCheckerService.ScriptedResult("SKIPPED", false, null, null, null, null,
+                            null, null, null, null, null, com.sitemonitor.service.ScriptedCheckerService.MANUAL_POOL_BUSY, false,
+                            null, null, null));
+            mvc.perform(post("/api/monitoring/scripted/test").session(user("t-busy")).contentType(JSON)
+                            .content("{\"script\":\"" + okScript + "\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_code").value("MANUAL_POOL_BUSY"));
+        }
+
+        @Test
+        @DisplayName("Kontrol geçmişi satırı: ayrıştırılmış alanlar (ham *_json yok), TLS sertifika durumu kapsama göre")
+        void history_rowCarriesParsedRunFields() throws Exception {
+            com.sitemonitor.model.ScriptedMonitor m = k6Monitor(1L, 5L);
+            when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+            com.sitemonitor.model.ScriptedCheck c = new com.sitemonitor.model.ScriptedCheck();
+            c.setId(500L); c.setMonitorId(1L); c.setOk(false); c.setStatus("FAIL"); c.setCheckedAt("2026-10-31T10:00:00");
+            c.setStepsJson("[{\"name\":\"Ödeme\",\"duration_ms\":40,\"failed_requests\":1}]");
+            c.setThresholdsJson("[{\"metric\":\"http_req_duration\",\"expr\":\"p(95)<500\",\"ok\":false}]");
+            c.setTlsJson("[{\"host\":\"shop.example.com\",\"tls_version\":\"tls1.3\",\"requests\":2},"
+                    + "{\"host\":\"gizli.example.org\",\"tls_version\":\"tls1.2\",\"requests\":1}]");
+            c.setFailureReason("HTTP_STATUS");
+            c.setFailureDetail("{\"phase\":\"RESPONSE\",\"error_code\":1404,\"http_status\":404}");
+            c.setContextJson("{\"process_budget_s\":130,\"egress\":\"proxy\"}");
+            when(scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(eq(1L), anyString(), anyString(), any()))
+                    .thenReturn(histPage(List.of(c), 1));
+            CertificateInventory own = inv("shop.example.com"); own.setTeamId(5L);
+            CertificateInventory foreign = inv("gizli.example.org"); foreign.setTeamId(77L);
+            when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(own, foreign));
+            LatestCheck lc = new LatestCheck(); lc.setDomain("shop.example.com"); lc.setDaysRemaining(12); lc.setStatus("warning");
+            when(latestCheckRepo.findByDomainIn(any())).thenReturn(List.of(lc));
+
+            MockHttpSession scoped = session("USER");
+            scoped.setAttribute("teamId", 5L);
+            scoped.setAttribute("viewTeamIds", List.of(5L));
+            scoped.setAttribute("memberTeamIds", List.of(5L));
+            String body = mvc.perform(get("/api/monitoring/scripted/1/history").param("days", "7").session(scoped))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[0].steps[0].name").value("Ödeme"))
+                    .andExpect(jsonPath("$.data.items[0].thresholds[0].ok").value(false))
+                    .andExpect(jsonPath("$.data.items[0].failure_reason").value("HTTP_STATUS"))
+                    .andExpect(jsonPath("$.data.items[0].failure_detail.http_status").value(404))
+                    .andExpect(jsonPath("$.data.items[0].run_context.egress").value("proxy"))
+                    .andExpect(jsonPath("$.data.items[0].steps_truncated").value(false))
+                    .andExpect(jsonPath("$.data.items[0].tls[0].cert_state").value("tracked"))
+                    .andExpect(jsonPath("$.data.items[0].tls[0].cert.days_remaining").value(12))
+                    .andExpect(jsonPath("$.data.items[0].tls[1].cert_state").value("unknown"))
+                    .andExpect(jsonPath("$.data.items[0].tls[1].cert").doesNotExist())
+                    .andExpect(jsonPath("$.data.items[0].status").value("FAIL"))
+                    .andExpect(jsonPath("$.data.items[0].checked_at").value("2026-10-31T10:00:00"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("steps_json").doesNotContain("context_json").doesNotContain("tls_json");
+        }
+
+        @Test
+        @DisplayName("Liste satırı: last_http_req_p95_ms + son koşumun koşum verisi alanları")
+        void list_carriesP95AndRunFields() throws Exception {
+            when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(k6Monitor(1L, 5L)));
+            com.sitemonitor.model.ScriptedCheck latest = new com.sitemonitor.model.ScriptedCheck();
+            latest.setMonitorId(1L); latest.setOk(false); latest.setStatus("FAIL");
+            latest.setHttpReqP95Ms(845L);
+            latest.setFailureReason("SCRIPT_CHECK_FAILED");
+            latest.setStepsJson("[{\"name\":\"Giriş\",\"duration_ms\":12}]");
+            when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latest));
+            when(scriptedChecker.isAvailable()).thenReturn(true);
+            mvc.perform(get("/api/monitoring/scripted").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.monitors[0].last_http_req_p95_ms").value(845))
+                    .andExpect(jsonPath("$.data.monitors[0].failure_reason").value("SCRIPT_CHECK_FAILED"))
+                    .andExpect(jsonPath("$.data.monitors[0].steps[0].name").value("Giriş"));
+        }
+
+        @Test
+        @DisplayName("Adım trendi: zamanlanmış satırlardan adım başına seri; gün 1–30'a kırpılır; görünmeyen takım 403")
+        void stepSeries() throws Exception {
+            com.sitemonitor.model.ScriptedMonitor m = k6Monitor(1L, 5L);
+            when(scriptedMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+            List<Object[]> rows = new java.util.ArrayList<>();
+            rows.add(new Object[]{"2026-10-31T10:05:00", "[{\"name\":\"Giriş\",\"duration_ms\":50,\"failed_requests\":1}]"});
+            rows.add(new Object[]{"2026-10-31T10:00:00", "[{\"name\":\"Giriş\",\"duration_ms\":36,\"failed_requests\":0}]"});
+            when(scriptedCheckRepo.stepSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(rows);
+            mvc.perform(get("/api/monitoring/scripted/1/step-series").param("days", "99").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.days").value(30))
+                    .andExpect(jsonPath("$.data.truncated").value(false))
+                    .andExpect(jsonPath("$.data.steps[0].name").value("Giriş"))
+                    .andExpect(jsonPath("$.data.steps[0].points[0].ts").value("2026-10-31T10:00:00"))
+                    .andExpect(jsonPath("$.data.steps[0].points[1].failed").value(true));
+            MockHttpSession other = session("USER");
+            other.setAttribute("viewTeamIds", List.of(9L));
+            mvc.perform(get("/api/monitoring/scripted/1/step-series").session(other))
+                    .andExpect(status().isForbidden());
+            when(scriptedMonitorRepo.findById(2L)).thenReturn(Optional.empty());
+            mvc.perform(get("/api/monitoring/scripted/2/step-series").session(session("ADMIN")))
+                    .andExpect(status().isNotFound());
+        }
     }
 }

@@ -2420,7 +2420,14 @@ export const api = {
     deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
     // withStatus: kayıt sonrası doğrulama bandı bekleme süresini (429) hata tostundan AYIRIR (ScriptedMonitorPage.runSmokeCheck)
     triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST', withStatus: true }),
-    testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
+    // withStatus (2026-10-31): 403 / 404 / 409 SECRET_UNREADABLE / 429 ret gövdeleri (`field`, `file_reads`, `code`)
+    // test panelinde ayrı anlatılır. Gövde: script, timeoutSeconds, useProxy, env [{name, value, secret, keep?}],
+    // monitorId (düzenlemede — `keep` satırları izlemenin kayıtlı şifreli değeriyle koşar).
+    testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
+    // Zamanlama önizlemesi (dbquery ile aynı gövde / yanıt; en kısa aralık sentetik izlemeninki)
+    scriptedSchedulePreview: (schedule, { signal } = {}) => request('/monitoring/scripted/schedule-preview', {
+      method: 'POST', body: JSON.stringify(schedule), withStatus: true, ...(signal ? { signal } : {}),
+    }),
     // Bağlantı teşhisi: aynı hedefe vekil/CA kombinasyonlarıyla k6 sondası — "Java çekiyor,
     // k6 çekmiyor" ayrımını ÖLÇER. İzleme havuzunu tüketmez (ayrı semafor), bacaklar sırayla koşar.
     diagnoseScripted:      (id, url) => request(`/monitoring/scripted/${id}/diagnose`,
@@ -2468,6 +2475,10 @@ export const api = {
       ).toString()
       return request(`/monitoring/scripted/${id}/response-series${q ? `?${q}` : ''}`)
     },
+    // Adım (k6 group) süre trendi (2026-10-31, k6r D4): yalnız zamanlanmış koşumlar, en sık ≤ 15 adım.
+    // withStatus: eski sunucunun 404/405'i "bu sürüm desteklemiyor" diye ayrılır (okuma hatasından AYRI durum).
+    scriptedStepSeries:    (id, days = 7) => request(`/monitoring/scripted/${id}/step-series?days=${encodeURIComponent(days)}`,
+                             { withStatus: true }),
 
     // Şablon kütüphanesi — Genel (teamId null) + Takım katmanları.
     // Yanıt satır başına can_edit/can_delete/can_promote/... taşır; UI yetkiyi YENİDEN HESAPLAMAZ.

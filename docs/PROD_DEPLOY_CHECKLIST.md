@@ -459,6 +459,20 @@ kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu 
       sayılır; birkaç satır fark olabilir). `seq_bir ≤ 1` → yeniden başlatma YAZILMAZ ve işaret (marker) de yazılmaz (beklenen;
       her açılışta iki satırlık bir yoklama yapılır).
 
+### Sentetik izleme (k6) sertleştirmesi — bir kerelik
+- [ ] **Dosya okuyan betikler:** genel yönetici oturumuyla `GET /api/admin/scripted/file-read-report` → `monitors` ve
+      `templates` listesi boş mu? Bu sürümle varsayılan BLOCK: listedeki izlemeler (dosya okuma, `handleSummary`, yerel
+      import, sistem yolu) KOŞMAZ — yalnız `console` için `handleSummary` kullanan ya da bir değişkenine `open` adını
+      veren betik de listede çıkar (sezgisel tarama). Liste boş değilse: betikleri sahip takımlarla düzeltin (dosya okumak
+      yerine değer ortam değişkeniyle gelsin; `handleSummary` kaldırılsın) YA DA bilinçli karar olarak env
+      `SCRIPTED_FILE_READ_POLICY=REPORT` verin (Helm `config.extraEnv`) — bu durumda betiklerin pod dosyalarını okuma riski
+      sürer (işlem sertleştirmesi sırları yine korur).
+- [ ] **Kayıtlı bellek sınırı:** `SELECT setting_value FROM app_settings WHERE setting_key = 'site.monitor.scripted.mem-limit';`
+      — Go biçiminde değilse (`512MB` gibi) yeni sürüm onu k6'ya VERMEZ (WARN) ve kayıt ekranı düzeltmeyi ister.
+- [ ] **Sonrası:** tüm pod'ların günlüğünde "[K6] İşlem sertleştirmesi uygulandı" satırı ve "restricted method" uyarısının
+      YOKLUĞU (`kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -iE "sertleştirme|restricted method"`).
+      Bir sentetik izlemede "Şimdi kontrol et" normal sonuç vermeli. `jcmd` artık bağlanmaz — iş parçacığı dökümü `kill -3 1`.
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.

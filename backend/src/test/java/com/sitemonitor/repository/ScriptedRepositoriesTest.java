@@ -316,4 +316,46 @@ class ScriptedRepositoriesTest {
 
         draftRepo.deleteAll();
     }
+
+    /**
+     * Adım trendi (2026-10-31, k6 inceleme D1): yalnız ZAMANLANMIŞ ve adım verisi olan satırlar, yeniden eskiye, tavanlı
+     * ({@code LIMIT :limit} — HQL 6); yeni koşum verisi kolonları kalıcı.
+     */
+    @Test
+    @DisplayName("stepSeriesRaw: elle koşum, yeniden kontrol ve adımsız satır dışarıda, DESC, limit; koşum verisi kolonları yazılır / okunur")
+    void stepSeriesRaw_scheduledOnlyDescLimited() {
+        ScriptedCheck a = check(77L, true, 100, "2026-10-31T10:00:00");
+        a.setStepsJson("[{\"name\":\"Giriş\",\"duration_ms\":36}]");
+        a.setStepsTruncated(true);
+        a.setThresholdsJson("[{\"metric\":\"checks\",\"expr\":\"rate>0.9\",\"ok\":true}]");
+        a.setTlsJson("[{\"host\":\"a.example\",\"tls_version\":\"tls1.3\",\"requests\":1}]");
+        a.setFailureReason("SCRIPT_CHECK_FAILED");
+        a.setFailureDetail("{\"phase\":\"SCRIPT\"}");
+        a.setContextJson("{\"process_budget_s\":130}");
+        ScriptedCheck b = check(77L, false, 200, "2026-10-31T10:05:00");
+        b.setStepsJson("[{\"name\":\"Giriş\",\"duration_ms\":50}]");
+        ScriptedCheck manual = check(77L, true, 50, "2026-10-31T10:06:00");
+        manual.setManual(true);
+        manual.setStepsJson("[{\"name\":\"Giriş\"}]");
+        ScriptedCheck noSteps = check(77L, true, 50, "2026-10-31T10:07:00");
+        ScriptedCheck other = check(78L, true, 50, "2026-10-31T10:08:00");
+        other.setStepsJson("[]");
+        // Teyit / kurtarma yeniden kontrolü (k6r son inceleme) trende girmez — kesinti sırasında 4× sayılırdı
+        ScriptedCheck recheck = check(77L, false, 70, "2026-10-31T10:09:00");
+        recheck.setRecheck(true);
+        recheck.setStepsJson("[{\"name\":\"Giriş\"}]");
+        checkRepo.saveAll(List.of(a, b, manual, noSteps, other, recheck));
+
+        List<Object[]> rows = checkRepo.stepSeriesRaw(77L, "2026-10-31T00:00:00", "2026-10-31T23:59:59", 10);
+        assertThat(rows).extracting(r -> r[0]).containsExactly("2026-10-31T10:05:00", "2026-10-31T10:00:00");
+        assertThat(checkRepo.stepSeriesRaw(77L, "2026-10-31T00:00:00", "2026-10-31T23:59:59", 1)).hasSize(1);
+        assertThat(checkRepo.stepSeriesRaw(77L, "2026-11-01T00:00:00", "2026-11-02T00:00:00", 10)).isEmpty();
+
+        ScriptedCheck back = checkRepo.findById(a.getId()).orElseThrow();
+        assertThat(back.getStepsTruncated()).isTrue();
+        assertThat(back.getFailureReason()).isEqualTo("SCRIPT_CHECK_FAILED");
+        assertThat(back.getTlsJson()).contains("tls1.3");
+        assertThat(back.getContextJson()).contains("process_budget_s");
+        checkRepo.deleteAll();
+    }
 }

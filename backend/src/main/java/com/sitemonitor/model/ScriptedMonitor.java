@@ -72,8 +72,44 @@ public class ScriptedMonitor implements MonitorAlertPrefs, MonitorSchedule, NocT
     @Column(nullable = false)
     private Boolean active = true;
 
+    /** Düz aralık; zamanlama CRON ise ETKİN aralık (sonraki tetiklerin medyanı — genel bakış / "bugün" paneli için). */
     @Column(name = "interval_seconds")
     private Integer intervalSeconds = 300;
+
+    // ── Zamanlama penceresi / cron (2026-10-31, k6r D2 — dbquery ile AYNI kolon adları ve kural: DbQuerySchedule) ─────
+    // Hepsi null = düz aralık (bugünkü yol; plan yok, next_run_at okunmaz). Biçim ve anlam: DbQueryMonitor'daki eşleri.
+
+    /** {@code INTERVAL} | {@code CRON}; null = INTERVAL. */
+    @Column(name = "schedule_mode", length = 10)
+    private String scheduleMode;
+
+    /** CRON kipinde 5 / 6 alanlı ifade ya da makro (@hourly, @daily, @weekly, @monthly). */
+    @Column(name = "cron_expression", length = 120)
+    private String cronExpression;
+
+    /** İzinli pencereler JSON {@code [{"days":[1..7],"from":"HH:mm","to":"HH:mm"}]}; null = her an. */
+    @Column(name = "windows_json", columnDefinition = "TEXT")
+    private String windowsJson;
+
+    /** Yasak pencereler JSON (aynı biçim). */
+    @Column(name = "blackout_json", columnDefinition = "TEXT")
+    private String blackoutJson;
+
+    /** Tatil takviminde (holiday_days) yer alan günlerde koşma; null = false. */
+    @Column(name = "skip_holidays")
+    private Boolean skipHolidays;
+
+    /** Ek koşulmayacak tarihler JSON {@code ["2026-12-31", …]}. */
+    @Column(name = "skip_dates_json", columnDefinition = "TEXT")
+    private String skipDatesJson;
+
+    /**
+     * Bir sonraki planlı koşum (UTC ISO) — YALNIZ zamanlayıcının hedefli UPDATE'i yazar ({@code updatable = false}: varlık
+     * kaydı bayat okumayla planı geri yazmasın). Yalnız zamanlamalı izlemede anlamlıdır; zamanlama değişince sıfırlama
+     * {@code SchedulerService.scriptedScheduleChanged}.
+     */
+    @Column(name = "next_run_at", length = 30, updatable = false)
+    private String nextRunAt;
 
     /** Per-monitor teyit: alarm öncesi ardışık başarısızlık (doğrulama denemesi) sayısı — "N ardışık başarısızlık" eşiği. */
     @Column(name = "confirm_attempts")

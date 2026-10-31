@@ -38,8 +38,11 @@ describe('bildirim bloğu standardı', () => {
   it('dokuz form da ORTAK aralık çubuğunu kullanır', () => {
     // Veritabanı sorgusu (11. tür) aralık çubuğu değil zamanlama düzenleyicisi taşır: aralık + cron + izinli / yasak pencere +
     // tatil — tek bir aralık seçimi o kipi ifade edemez. Kural "kendi çubuğunu yazma" olarak kalır (aşağıdaki kapı).
-    const missing = MONITOR_FORMS.filter(f => f !== 'DbQueryMonitorPage' && !/<IntervalSlider/.test(read(f)))
+    // Sentetik İzleme (2026-10-31, k6r D2) de aynı ortak zamanlama düzenleyicisini taşır (aralık + cron + pencereler).
+    const SCHEDULE_FORMS = ['DbQueryMonitorPage', 'ScriptedMonitorPage']
+    const missing = MONITOR_FORMS.filter(f => !SCHEDULE_FORMS.includes(f) && !/<IntervalSlider/.test(read(f)))
     expect(missing).toEqual([])
+    expect(read('ScriptedMonitorPage'), 'sentetik izleme: ortak zamanlama düzenleyicisi (ScheduleEditor) yok').toMatch(/<ScheduleEditor\b/)
     expect(read('DbQueryMonitorPage') + fs.readFileSync(path.join(COMPONENTS, 'dbquery', 'DbQueryMonitorForm.jsx'), 'utf8'),
       'veritabanı sorgusu: ortak zamanlama düzenleyicisi (ScheduleEditor) yok').toMatch(/<ScheduleEditor\b|<ScheduleSection\b/)
   })

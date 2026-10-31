@@ -425,23 +425,35 @@ const SCRIPTED_TR = `
 
 Çok adımlı akışları (OIDC/Keycloak login, API zincirleri) k6 script'i ile uçtan uca sentetik olarak izler.
 
-Sağ üstteki **+ Yeni Monitör** ile formu açın.
+Sağ üstteki **+ Yeni Monitör** ile formu açın (izleme yoksa boş ekrandaki **Şablondan başla** da olur). Form dört
+bölümdür: **Genel** → **Senaryo** → **Zamanlama ve alarm** → **Bildirimler**. Asıl iş Senaryo'dadır; zamanlama ve
+alarm ayarları varsayılanlarla kapalı gelir (özet satırı başlıkta) — hatalı bir alan varsa kaydederken kendiliğinden açılır.
 
-### Zorunlu alanlar
-- **Ad** — Tanınır bir ad (ör. "İnternet Şubesi login akışı").
+### Genel (zorunlu alanlar)
+- **Ad** — Tanınır bir ad (ör. "İnternet Şubesi login akışı"). Boş bırakıp şablon seçerseniz şablonun adı önerilir.
 - **Takım** ve **Grup** — İzlemenin sahibi ekip ve grubu. **İkisi de zorunludur.** Grup için var olan gruptan seçin veya yeni ad yazın.
-- **k6 Script** — Çalıştırılacak JavaScript. Bir **Şablon** seçerek başlamanız önerilir: smoke, JSON sağlık ucu (Actuator), OAuth2 client_credentials, API zinciri, çok adımlı kullanıcı yolculuğu, yanıt süresi SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. Şablonu seçtiğinizde altında **ne zaman kullanılacağı** ve gereken env'ler yazar; script + env alanları hazır dolar.
+- **Açıklama**, **Etiketler** (zorunlu), **Aktif** — standart.
 
-### Diğer alanlar
-- **Açıklama** — Sentetik testin ne doğruladığına dair kısa not.
-- **Çalıştırma sıklığı** — İki koşu arası süre (kaydırıcı; varsayılan 5 dk).
+### Senaryo
+- **Script kaynağı** — Bir **Şablon** seçerek başlamanız önerilir: smoke, JSON sağlık ucu (Actuator), OAuth2 client_credentials, API zinciri, çok adımlı kullanıcı yolculuğu, yanıt süresi SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. Listede her şablonun ne yaptığı ikinci satırda yazar; seçince **ne zaman kullanılacağı**, script ve gereken değişkenler gelir.
+- Kaynağı değiştirmek **betiği** değiştirir ama **ortam değişkenlerinizi korur**: aynı adlı değişkenin değeri ve gizli işareti kalır, yalnız eksikler eklenir, hiçbiri silinmez. Betikte elle değişiklik yaptıysanız ya da kayıtlı izlemenin kendi betiğinden ayrılıyorsanız önce onay sorulur.
+- **k6 Script** — Çalıştırılacak JavaScript. Kaydetmede ya da testte sözdizimi hatası satır numarasıyla gelir; **"N. satıra git"** düğmesi editörde o satırı seçer. Editörde Tab girinti ekler; editörden çıkmak için Esc, sonra Tab.
+- **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz. Şablonun değişken açıklaması satırın altında, \`BASE_URL\` / \`*_URL\` için "Hedef: host" önizlemesi görünür.
+- **Betik ve değişkenler** denetimi yazarken çalışır: betiğin okuduğu ama tanımlı olmayan değişken (**Değişken ekle**), tanımlı ama okunmayan değişken ve gizli olması gerekirken işaretlenmemiş parola / belirteç adı (**Gizli yap**). Hiçbiri kaydı engellemez.
+- **Test Çalıştır** — Kaydetmeden tek koşum yapar; sonuç düğmenin altında açılır: adım adım süre ve ✓/✗, senaryo yarıda kaldıysa **hangi adımdan sonra durduğu**, hata sınıfı ve koşum bağlamı (süreç bütçesi, istek zaman aşımı, çıkış yolu, kurumsal CA). Değeri boş değişkenler için uyarı çıkar (engellemez).
+- **Kayıtlı izlemede test kayıtlı gizli değerleri kullanır**: değerini boş bıraktığınız gizli değişkenin yanında "Kayıtlı değerle" yazar ve test o değişkeni izlemenin kayıtlı (şifreli) değeriyle koşturur. Yeni izlemede ve kopyada gizli değerleri girmeniz gerekir.
+
+### Zamanlama ve alarm
+- **Zamanlama** — **Aralıkla** (en az 1 dk; hazır değerler ya da özel) ya da **Cron ifadesiyle** (ör. \`0 9 * * 1-5\` = iş günleri 09:00). **İzinli pencereler** (yalnız bu saatlerde), **yasak pencereler** (bu saatlerde hiç), **tatil takviminde çalışma** ve **ek tarihler**. Saat dilimi İstanbul; "Sonraki 10 çalışma" canlı önizlenir.
 - **Süreç timeout (sn)** — k6 koşusunun üst süresi (5–180, varsayılan 60). Aşılırsa süreç sonlandırılır ⇒ TIMEOUT.
 - **Ardışık başarısızlık eşiği** — Alarm için gereken üst üste başarısızlık (0–10, varsayılan 3).
-- **Yavaş koşum alarmı** + **Yavaşlık eşiği (ms)** — Opsiyonel. Açılırsa senaryo GEÇTİĞİ hâlde toplam koşum süresi eşiği aşarsa ayrı bir “yavaş” alarmı açılır; kesinti alarmından bağımsızdır ve aynı doğrulama/kurtarma sayılarını kullanır. Login akışının çalışıyor ama yavaşlamış olması — sessiz bozulma — ancak böyle görünür olur.
 - **Kurtarma kontrolü** — "Düzeldi" demek için gereken başarılı koşu (1–10, varsayılan 3).
-- **Ortam Değişkenleri** — Script'in \`__ENV\` ile okuduğu değerler. **Değişken Ekle** ile satır ekleyin: AD + değer + **Gizli**. Sırları (parola/secret) **script gövdesine YAZMAYIN**; "Gizli" işaretleyin — şifreli saklanır, çıktı/loglarda maskelenir, geri okunamaz.
+- **Yavaş koşum alarmı** + **Yavaşlık eşiği (ms)** — Opsiyonel. Açılırsa senaryo GEÇTİĞİ hâlde toplam koşum süresi eşiği aşarsa ayrı bir “yavaş” alarmı açılır; kesinti alarmından bağımsızdır ve aynı doğrulama/kurtarma sayılarını kullanır. Login akışının çalışıyor ama yavaşlamış olması — sessiz bozulma — ancak böyle görünür olur.
 - **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`example.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
-- **E-posta bildirimi gönder**, **Aktif** — standart.
+- Sayı alanındaki hata alanın altında yazar; Kaydet'e basınca ilk hatalı alana gidilir.
+
+### Bildirimler
+- **E-posta / webhook bildirimi**, alarm seviyesi, bildirim grubu ve **7/24 izleme ekibi** — standart.
 
 ### Desteklenen JavaScript
 Bu ortamdaki k6 (2.x) script'i **doğrudan modern JavaScript olarak** derler — eski transpiler (Babel) ve
@@ -462,7 +474,7 @@ Kaydetme sırasında script derlenmeye çalışılır; sözdizimi hatası varsa 
 birlikte engellenir — hatalı script'i saatlerce koşturmazsınız.
 
 ### İpuçları
-- Kaydetmeden önce **Test Çalıştır** ile script'i anında deneyin; geçen/başarısız check sayısı ve k6 çıktısı görünür.
+- Kaydetmeden önce **Test Çalıştır** ile script'i anında deneyin; adım adım sonuç, geçen/başarısız check sayısı ve k6 çıktısı görünür. Kayıtlı izlemede test, değerini boş bıraktığınız gizli değişkenleri kayıtlı değerleriyle koşturur.
 - İzleme için **ayrı bir servis hesabı** kullanın; gerçek kullanıcı hesabıyla otomatik login yapmayın.
 - Sonuç: k6 check'i başarısız/exit 99 ⇒ FAIL, zaman aşımı ⇒ TIMEOUT, diğer hatalar ⇒ ERROR, aksi ⇒ PASS.
 - Script hiç \`check()\` çalıştırmazsa sonuç **NO_CHECKS** olur (koştu ama hiçbir şey doğrulanmadı) —
@@ -483,23 +495,36 @@ const SCRIPTED_EN = `
 
 Synthetically monitors multi-step flows (OIDC/Keycloak login, API chains) end to end via a k6 script.
 
-Open the form with **+ New Monitor** (top right).
+Open the form with **+ New Monitor** (top right) — or with **Start from a template** on the empty screen. The form has
+four sections: **General** → **Scenario** → **Schedule and alerting** → **Notifications**. The real work is in Scenario;
+the schedule and alerting settings start collapsed with their defaults (a summary line in the header) and open by
+themselves on save when a field there is invalid.
 
-### Required
-- **Name** — A recognizable name (e.g. "Online banking login flow").
+### General (required)
+- **Name** — A recognizable name (e.g. "Online banking login flow"). Leave it empty and pick a template to get the template's name suggested.
 - **Team** and **Group** — The owning team and group. **Both are required.** For Group pick an existing one or type a new name.
-- **k6 Script** — The JavaScript to run. Starting from a **Template** is recommended: smoke, JSON health endpoint (Actuator), OAuth2 client_credentials, API chain, multi-step user journey, response-time SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. Picking one shows **when to use it** plus the env it needs, and fills the script + env fields for you.
+- **Description**, **Tags** (required), **Active** — standard.
 
-### Other fields
-- **Description** — A short note on what the synthetic check validates.
-- **Run interval** — Time between runs (slider; default 5m).
+### Scenario
+- **Script source** — Starting from a **Template** is recommended: smoke, JSON health endpoint (Actuator), OAuth2 client_credentials, API chain, multi-step user journey, response-time SLA (threshold), SOAP/XML, OIDC/Keycloak, form login, mTLS, GraphQL. The list shows what each template does on a second line; picking one brings **when to use it**, the script and the variables it needs.
+- Changing the source replaces the **script** but **keeps your environment variables**: a variable with the same name keeps its value and secret flag, only missing ones are added and none are removed. If you edited the script by hand, or you are leaving a saved monitor's own script, you are asked first.
+- **k6 Script** — The JavaScript to run. A syntax error on save or in a test comes with its line number; the **"Go to line N"** button selects that line in the editor. In the editor Tab inserts an indent; to leave it press Esc, then Tab.
+- **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back. The template's description of a variable shows under its row, and \`BASE_URL\` / \`*_URL\` show a "Target: host" preview.
+- The **Script and variables** check runs as you type: a variable the script reads but that is not defined (**Add variable**), a variable that is defined but never read, and a password / token name that is not marked secret (**Make secret**). None of them blocks saving.
+- **Test Run** — Runs once without saving; the result opens under the button: duration and ✓/✗ per step, **the step it stopped after** when the scenario broke off, the failure class and the run context (process budget, request timeout, egress, corporate CA). Variables with no value get a warning (not blocking).
+- **On a saved monitor the test uses the saved secret values**: a secret variable you left empty shows "Uses saved value" and the test runs it with the monitor's saved (encrypted) value. On a new monitor and on a copy you need to enter the secret values.
+
+### Schedule and alerting
+- **Schedule** — **Interval** (at least 1 min; presets or custom) or **Cron expression** (e.g. \`0 9 * * 1-5\` = weekdays 09:00). **Allowed windows** (only at these times), **blocked windows** (never at these times), **skip days in the holiday calendar** and **extra dates**. Time zone Istanbul; the "Next 10 runs" preview updates live.
 - **Process timeout (s)** — Max k6 run time (5–180, default 60). Exceeded ⇒ the process is killed ⇒ TIMEOUT.
 - **Consecutive-failure threshold** — Failures in a row before alerting (0–10, default 3).
-- **Slow-run alert** + **Slow threshold (ms)** — Optional. When enabled, a run that PASSES but exceeds the threshold raises a separate “slow” alert, independent of the outage alert and using the same confirm/recovery counts. A login flow that still works but got slower — silent degradation — only becomes visible this way.
 - **Recovery checks** — Successful runs to declare "recovered" (1–10, default 3).
-- **Environment variables** — Values the script reads via \`__ENV\`. Use **Add variable** for a row: NAME + value + **Secret**. Do **NOT** put secrets in the script body; mark them "Secret" — stored encrypted, masked in output/logs, never readable back.
+- **Slow-run alert** + **Slow threshold (ms)** — Optional. When enabled, a run that PASSES but exceeds the threshold raises a separate “slow” alert, independent of the outage alert and using the same confirm/recovery counts. A login flow that still works but got slower — silent degradation — only becomes visible this way.
 - **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`example.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.
-- **Send email notification**, **Active** — standard.
+- An invalid number shows under its field; pressing Save takes you to the first invalid field.
+
+### Notifications
+- **Email / webhook notification**, alert level, notification group and the **24/7 monitoring team** — standard.
 
 ### Supported JavaScript
 The k6 in this environment (2.x) compiles scripts **directly as modern JavaScript** — there is no old transpiler
@@ -520,7 +545,7 @@ The script is compiled at save time; a syntax error is rejected with its line an
 leave a broken script running for hours.
 
 ### Tips
-- Use **Test Run** before saving to try the script instantly; passed/failed checks and k6 output are shown.
+- Use **Test Run** before saving to try the script instantly; the per-step result, passed/failed checks and k6 output are shown. On a saved monitor the test runs the secret variables you left empty with their saved values.
 - Use a **dedicated service account**; don't automate login with a real user account.
 - Result: failed k6 check / exit 99 ⇒ FAIL, timeout ⇒ TIMEOUT, other errors ⇒ ERROR, otherwise ⇒ PASS.
 - If the script never runs a \`check()\`, the result is **NO_CHECKS** (it ran but verified nothing) —

@@ -335,4 +335,30 @@ class SettingsScopedAdminGateTest {
             RequestContextHolder.resetRequestAttributes();
         }
     }
+
+    @Test
+    @DisplayName("2026-10-31 (k6 inceleme A5): senaryo kurum geneli tavanları GLOBAL_ONLY — kapsamlı müdür gevşetemez")
+    void scriptedLimits_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.scripted.max-rps",
+                "site.monitor.scripted.max-procs",
+                "site.monitor.scripted.mem-limit",
+                "site.monitor.scripted.max-requests-per-run",
+                "site.monitor.scripted.anomaly.enabled",
+                "site.monitor.scripted.anomaly.timeout-streak",
+                "site.monitor.scripted.pool-size",
+                "site.monitor.scripted.max-timeout-seconds",
+                "site.monitor.scripted.default-timeout-seconds",
+                "site.monitor.scripted.output-tail-bytes",
+                "site.monitor.scripted.syntax-check-policy",
+                "site.monitor.scripted.validate-timeout-seconds",
+                "site.monitor.scripted.no-checks-policy",
+                "site.monitor.scripted.manual-cooldown-seconds",
+                "site.monitor.scripted.manual-wait-seconds",
+                "site.monitor.scripted.file-read-policy");
+        // takımların kendi işi olan anahtarlar açık kalır
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).doesNotContain(
+                "site.monitor.scripted.alert-enabled",
+                "site.monitor.scripted.slow-threshold-ms");
+    }
 }

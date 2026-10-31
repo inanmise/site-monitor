@@ -89,6 +89,7 @@ class HolidayCalendarControllerTest {
                 eq("HOLIDAY_CALENDAR"), eq("holidays"), anyString(), isNull());
         // Takvim değişti: tatile bakan sorgu izlemelerinin planı yeniden kurulur
         verify(scheduler, times(1)).dbQueryCalendarChanged();
+        verify(scheduler, times(1)).scriptedCalendarChanged();   // k6r D2: zamanlamalı sentetik izlemeler de
 
         when(holidays.replaceAll(any(), any())).thenReturn(new HolidayCalendarService.Change(0, 0, 0, 1));
         mvc.perform(put("/api/admin/holidays").session(session("ADMIN", null))
@@ -97,6 +98,7 @@ class HolidayCalendarControllerTest {
         verify(auditService, times(1)).recordAction(eq("HOLIDAY_CALENDAR_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 anyString(), anyString(), anyString(), any());
         verify(scheduler, times(1)).dbQueryCalendarChanged();   // değişiklik yoksa plan da yeniden kurulmaz
+        verify(scheduler, times(1)).scriptedCalendarChanged();   // k6r D2: zamanlamalı sentetik izlemeler de
     }
 
     @Test

@@ -100,6 +100,12 @@ public final class MonitoringMetricNames {
     public static final String PUSH_CIRCUIT = "sitemonitor.push.circuit.open";
     public static final String PUSH_ENABLED = "sitemonitor.push.enabled";
 
+    // ── Sentetik izleme koşumları (2026-10-31, k6r D3) — KÜME; tek gruplu sorgu, yalnız kurum ailelerini yayan pod okur ───
+    /** Son 24 sa zamanlanmış sentetik (k6) koşum sayısı, sonuca göre ({@code PASS | FAIL | ERROR | TIMEOUT | NO_CHECKS}; sıfırlar dahil). */
+    public static final String SCRIPTED_RUNS = "sitemonitor.scripted.runs.24h";
+    /** Son 24 sa zamanlanmış sentetik koşum sayısı, koşumu yapan k6 sürümüne göre ({@code unknown} = kayıtta sürüm yok). */
+    public static final String SCRIPTED_K6_VERSIONS = "sitemonitor.scripted.k6.versions.24h";
+
     // ── SiteMonitor'ün kendi sağlığı ─────────────────────────────────────────────────────────────────────────
     public static final String WATCHDOG_STATUS = "sitemonitor.watchdog.status";
     public static final String WATCHDOG_CHECK = "sitemonitor.watchdog.check.status";
@@ -252,6 +258,13 @@ public final class MonitoringMetricNames {
         l.add(new Def(PUSH_STUCK, Scope.CLUSTER, List.of(), "Pending push rows that are more than 10 minutes overdue"));
         l.add(new Def(PUSH_CIRCUIT, Scope.POD, List.of(), "1 while the push gateway circuit breaker is open on this pod"));
         l.add(new Def(PUSH_ENABLED, Scope.CLUSTER, List.of(), "1 when personal push notifications are enabled"));
+        // Sentetik izleme koşumları (k6r D3)
+        l.add(new Def(SCRIPTED_RUNS, Scope.CLUSTER, List.of("status"),
+                "Scheduled synthetic (k6) runs in the last 24 hours by result (PASS, FAIL, ERROR, TIMEOUT, NO_CHECKS; zeros included; "
+                        + "manual runs and confirmation / recovery rechecks excluded)"));
+        l.add(new Def(SCRIPTED_K6_VERSIONS, Scope.CLUSTER, List.of("version"),
+                "Scheduled synthetic (k6) runs in the last 24 hours by the k6 version that ran them (unknown = not recorded; "
+                        + "manual runs and confirmation / recovery rechecks excluded)"));
         // Kendi sağlığı
         l.add(new Def(WATCHDOG_STATUS, Scope.CLUSTER, List.of(),
                 "Self-monitoring overall state: 0 up, 1 degraded, 2 down, 3 disabled, 4 never evaluated"));

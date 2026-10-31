@@ -82,10 +82,51 @@ public final class DbQuerySchedule {
     /** Kayıtlı izlemenin tanımı (JSON kolonları gevşek okunur). */
     public static Spec of(DbQueryMonitor m) {
         if (m == null) return new Spec(MODE_INTERVAL, 300, null, List.of(), List.of(), false, List.of());
-        String mode = normMode(m.getScheduleMode());
-        return new Spec(mode == null ? MODE_INTERVAL : mode, m.getIntervalSeconds(), m.getCronExpression(),
-                windowsFromJson(m.getWindowsJson()), windowsFromJson(m.getBlackoutJson()),
-                Boolean.TRUE.equals(m.getSkipHolidays()), datesFromJson(m.getSkipDatesJson()));
+        return ofColumns(m.getScheduleMode(), m.getIntervalSeconds(), m.getCronExpression(), m.getWindowsJson(),
+                m.getBlackoutJson(), m.getSkipHolidays(), m.getSkipDatesJson());
+    }
+
+    /**
+     * Saklı kolonlardan tanım (gevşek okuma) — {@link #of(DbQueryMonitor)} ile AYNI kural; zamanlamayı aynı kolon adlarıyla
+     * saklayan öteki türler (sentetik izleme, 2026-10-31) bu kurucuyu kullanır, hesap kopyalanmaz.
+     */
+    public static Spec ofColumns(String scheduleMode, Integer intervalSeconds, String cronExpression, String windowsJson,
+                                 String blackoutJson, Boolean skipHolidays, String skipDatesJson) {
+        String mode = normMode(scheduleMode);
+        return new Spec(mode == null ? MODE_INTERVAL : mode, intervalSeconds, cronExpression,
+                windowsFromJson(windowsJson), windowsFromJson(blackoutJson),
+                Boolean.TRUE.equals(skipHolidays), datesFromJson(skipDatesJson));
+    }
+
+    /**
+     * Kayda yazılacak kolon değerleri ({@link #apply} ile aynı kural — etkin aralık dahil). Öteki türler (sentetik izleme)
+     * kendi varlığına bunu yazar.
+     */
+    public record Columns(String scheduleMode, String cronExpression, int intervalSeconds, String windowsJson,
+                          String blackoutJson, boolean skipHolidays, String skipDatesJson) {}
+
+    /** {@code spec} geçersizse de fırlatmaz (doğrulama ayrı); null → null. */
+    public static Columns columns(Spec spec, Instant now, Set<LocalDate> holidays) {
+        if (spec == null) return null;
+        String mode = normMode(spec.mode());
+        boolean cron = MODE_CRON.equals(mode);
+        return new Columns(cron ? MODE_CRON : MODE_INTERVAL, cron && spec.cron() != null ? spec.cron().trim() : null,
+                (int) Math.min(Integer.MAX_VALUE, effectiveIntervalSeconds(spec, now, holidays)),
+                windowsToJson(spec.windows()), windowsToJson(spec.blackouts()), spec.skipHolidays(),
+                spec.skipDates() == null || spec.skipDates().isEmpty() ? null : toJson(spec.skipDates()));
+    }
+
+    /**
+     * Tanım bir FİLTRE ya da cron taşıyor mu — CRON kipi, izinli / yasak pencere, tatil atlama ya da ek tarih. false =
+     * düz aralık (vade yalnız aralıktan; plan gerekmez).
+     */
+    public static boolean hasPlan(Spec spec) {
+        if (spec == null) return false;
+        return MODE_CRON.equals(normMode(spec.mode()))
+                || (spec.windows() != null && !spec.windows().isEmpty())
+                || (spec.blackouts() != null && !spec.blackouts().isEmpty())
+                || spec.skipHolidays()
+                || (spec.skipDates() != null && !spec.skipDates().isEmpty());
     }
 
     /** API gövdesinden (schedule_mode, interval_seconds, cron_expression, windows, blackouts, skip_holidays, skip_dates). */
@@ -105,15 +146,14 @@ public final class DbQuerySchedule {
     /** Kaydı izlemeye yazar (JSON kolonları, kip, aralık / cron) — ETKİN aralığı da {@code intervalSeconds}'a koyar. */
     public static void apply(Spec spec, DbQueryMonitor m, Instant now, Set<LocalDate> holidays) {
         if (spec == null || m == null) return;
-        String mode = normMode(spec.mode());
-        boolean cron = MODE_CRON.equals(mode);
-        m.setScheduleMode(cron ? MODE_CRON : MODE_INTERVAL);
-        m.setCronExpression(cron && spec.cron() != null ? spec.cron().trim() : null);
-        m.setIntervalSeconds((int) Math.min(Integer.MAX_VALUE, effectiveIntervalSeconds(spec, now, holidays)));
-        m.setWindowsJson(windowsToJson(spec.windows()));
-        m.setBlackoutJson(windowsToJson(spec.blackouts()));
-        m.setSkipHolidays(spec.skipHolidays());
-        m.setSkipDatesJson(spec.skipDates() == null || spec.skipDates().isEmpty() ? null : toJson(spec.skipDates()));
+        Columns c = columns(spec, now, holidays);
+        m.setScheduleMode(c.scheduleMode());
+        m.setCronExpression(c.cronExpression());
+        m.setIntervalSeconds(c.intervalSeconds());
+        m.setWindowsJson(c.windowsJson());
+        m.setBlackoutJson(c.blackoutJson());
+        m.setSkipHolidays(c.skipHolidays());
+        m.setSkipDatesJson(c.skipDatesJson());
     }
 
     // ── Doğrulama ────────────────────────────────────────────────────────────

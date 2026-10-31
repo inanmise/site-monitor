@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
-import { formatPercent } from '../i18n/dateLocale.js'
+import { formatRatePercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
@@ -13,12 +13,25 @@ import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
-import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
 import ScriptedTemplateInfo from './scripted/ScriptedTemplateInfo.jsx'
 import { useScriptedTemplates } from '../hooks/useScriptedTemplates.js'
-import { buildScriptSourceOptions, resolveTemplate } from '../utils/scriptSourceOptions.js'
-import { FlaskConical, Play, Plus, Trash2, Eye, EyeOff, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2, Copy } from 'lucide-react'
+import { buildScriptSourceOptions, resolveTemplate, templateLabel } from '../utils/scriptSourceOptions.js'
+import { FlaskConical, Play, Plus, Trash2, Eye, EyeOff, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, ChevronDown, Terminal, FileCode2, Copy, IdCard, Bell } from 'lucide-react'
+// Sentetik İzleme formu + ilk kurulum (2026-10-31, k6r fe1): saf model + sunum parçaları + ortak zamanlama düzenleyicisi
+import ScheduleEditor from './dbquery/ScheduleEditor.jsx'
+import { durationText as schedDurationText, intervalProblem, windowProblems } from './dbquery/scheduleModel.js'
+import { scheduleSummary, serverFieldErrors } from './dbquery/dbqueryPageModel.js'
+import {
+  DEFAULT_SCRIPTED_SCHEDULE, DRAFT_EXCLUDED_KEYS, draftForm, emptyEnvNames, hasSavedSecret, hasTimingError,
+  keptSecretsIgnored, looksSecretName, mergeEnv, savedSecretNames, scheduleBodyKeys, scheduleEditorValue, scheduleErrorsOf,
+  scheduleFromScriptedRow, scheduleProblems, SCHEDULE_ERROR_KEYS, stopPoint, targetHostOf, templateEnvDescs,
+  testEnvPayload, testResultMayTakeFocus, TIMING_SECTION_KEYS, usesSavedSecret,
+} from './scripted/scriptedFormModel.js'
+import {
+  EmptyEnvWarning, EnvLintChips, EnvRowNotes, FormBlock, GotoLineButton, InlineCodeText,
+  ScriptedEmptyState, TimingBlock, useEnvLint,
+} from './scripted/ScriptedFormParts.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -42,12 +55,11 @@ import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
-import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
 import HintPopover from './ui/HintPopover.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, readPhases, formatBytes,
-  checksSummary, stuckLabel } from './scriptedExitCodes.js'
+  checksSummary, stuckLabel, stripRunContext } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
@@ -76,30 +88,20 @@ import { TabsContent } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import ScriptedMonitorCard from './scripted/ScriptedMonitorCard.jsx'
+// Koşum ayrıntısı (2026-10-31, k6r D4): adımlar, eşikler, TLS, hata sınıfı, bağlam çipleri, "bu sürüm bozdu" bandı
+import StepList from './scripted/StepList.jsx'
+import { RunContextChips, ScriptedFailureClass, ThresholdList, TlsList, VersionRegressionBand } from './scripted/RunDetailParts.jsx'
+import { historyDetailText, runContextOf, stepsOf, stepsTruncated, thresholdsOf, tlsOf } from './scripted/runDetailModel.js'
+import { scenarioTarget } from './scripted/scriptedCardModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import { MonitorFormModal, FormGrid, FormField, CheckField, FormSection } from './monitoring/MonitorForm.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Adım trendi de recharts kullanır — yalnız Grafik sekmesi açılınca yüklenir.
+const StepTrend = lazy(() => import('./scripted/StepTrend.jsx'))
 
-// Ortak IntervalSlider `labelKey` bekliyor; senaryo kodu calistiran bu turde taban 1 dk
-// (her kosum bir alt surec baslatir) — ust sinir digerleriyle hizalandi.
-const INTERVALS = [
-  { value: 60,    labelKey: 'notify.iv1m'  },
-  { value: 300,   labelKey: 'notify.iv5m'  },
-  { value: 600,   labelKey: 'notify.iv10m' },
-  { value: 900,   labelKey: 'notify.iv15m' },
-  { value: 1800,  labelKey: 'notify.iv30m' },
-  { value: 3600,  labelKey: 'notify.iv1h'  },
-  { value: 43200, labelKey: 'notify.iv12h' },
-  { value: 86400, labelKey: 'notify.iv24h' },
-]
-function intervalIdx(secs) {
-  let idx = 0, best = Infinity
-  INTERVALS.forEach((iv, i) => { const d = Math.abs(iv.value - secs); if (d < best) { best = d; idx = i } })
-  return idx
-}
 const REFRESH_INTERVAL = 60
 
 const emptyForm = {
@@ -108,6 +110,10 @@ const emptyForm = {
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true, script: '', env: [], template: '',
   slowResponseEnabled: false, slowThresholdMs: 15000,
   useProxy: 'AUTO',
+  // Zamanlama (2026-10-31, k6r D2): dbquery ScheduleEditor değer adlarıyla; aralık yukarıdaki `intervalSeconds`
+  schedule: { ...DEFAULT_SCRIPTED_SCHEDULE },
+  // Kaynaktan yüklenen betiğin ilk hâli (kaynak değişiminde "elle değişti mi?" sorusu) ve şablondan önerilen ad
+  scriptBase: '', nameAuto: '',
 }
 
 /** Otomatik taslak aralıkları — WeeklyReportsPage ile aynı büyüklük sınıfı (1,5 sn yazım sonrası, periyodik ağ yazımı). */
@@ -153,20 +159,32 @@ function K6VersionBadge({ t, version, withSyntaxNote = false }) {
       </HintPopover>
       {withSyntaxNote && (
         <span data-slot="k6-syntax-note" data-level="modern" className="text-[11px] font-normal text-muted-foreground">
-          {t('scripted.k6ModernSyntax')}
+          {/* Metindeki `?.` gibi parçalar kod olarak çizilir — ters tırnak düz metinde görünmesin (E4) */}
+          <InlineCodeText text={t('scripted.k6ModernSyntax')} />
         </span>
       )}
     </span>
   )
 }
 
-/** Backend çok satırlı hata döndürdüyse bu bir k6/Babel kod çerçevesidir (hizalı caret taşır). */
-function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
+/**
+ * Hata metni bir KOD ÇERÇEVESİ mi (hizalı `^` caret satırı taşır)? 2026-10-31 (O3): eskiden "çok satırlı = çerçeve"
+ * sayılıyordu; k6 2.x'te Babel çerçevesi yok ama sunucu "etiket:\nsebep\nbağlam" biçiminde çok satırlı hata yazıyor —
+ * hepsi `whitespace-pre` + yatay kaydırmayla basılıyor, telefonda cümle sonları kesik kalıyordu. Artık YALNIZ bir satırı
+ * boşluk / `|` ve `^` işaretlerinden oluşan metin çerçevedir (caret hizası korunmalı); diğerleri sarılır.
+ * Satır başına 400 karakter sınırı: düzenli ifade uzun satırda koşmaz.
+ */
+const CARET_LINE = /^[\s|]*\^+\s*$/
+export function isCodeFrame(error) {
+  if (typeof error !== 'string' || !error.includes('\n')) return false
+  return error.split('\n').some((line) => line.length <= 400 && CARET_LINE.test(line))
+}
 
 /**
- * Hata metni (eski .sc-err-msg / --frame). Çok satırlı hata = k6/Babel kod çerçevesi: caret (^) bir
- * üstteki satırla SÜTUN SÜTUN hizalı, sarma onu kaydırır → sarma yerine yatay kaydırma + eş aralıklı
- * yazı tipi. Tek satırlı hata normal sarılır. Test kancası: data-slot="error-text" + data-frame.
+ * Hata metni (eski .sc-err-msg / --frame). Kod çerçevesi ({@link isCodeFrame}: caret satırı var): caret (^) bir
+ * üstteki satırla SÜTUN SÜTUN hizalı, sarma onu kaydırır → sarma yerine yatay kaydırma + eş aralıklı yazı tipi.
+ * Diğer her hata (çok satırlı "etiket:\nsebep" dahil) satır sonlarını koruyarak SARILIR (O3, 2026-10-31).
+ * Test kancası: data-slot="error-text" + data-frame.
  */
 function ErrorText({ text }) {
   const frame = isCodeFrame(text)
@@ -226,6 +244,52 @@ export function invalidNumericField(form) {
     if (!Number.isFinite(n) || n < f.min || n > f.max) return f
   }
   return null
+}
+
+/**
+ * Sayısal alanların HEPSİNİN hata haritası (D3, 2026-10-31): hata tostta değil ALANIN ALTINDA görünür
+ * (`useFormErrors`); Kaydet pasifleşmez — basınca ilk hatalı alana gidilir. Kural `invalidNumericField` ile aynı.
+ * @returns {Object<string, string|false>}
+ */
+export function numericFieldErrors(form, t) {
+  const out = {}
+  for (const f of SCRIPTED_NUM_FIELDS) {
+    if (f.when && !f.when(form || {})) { out[f.key] = false; continue }
+    const raw = form?.[f.key]
+    const n = Number(raw)
+    const bad = raw === '' || raw == null || !Number.isFinite(n) || n < f.min || n > f.max
+    out[f.key] = bad && t('scripted.numRange', t(f.labelKey), f.min, f.max)
+  }
+  return out
+}
+
+/** Sentetik izlemenin en kısa çalıştırma aralığı (sn) — sunucu önizlemesi ve kaydı aynı tabanı uygular. */
+const SCRIPTED_MIN_INTERVAL = 60
+
+/** Zamanlama sorun kodu → alan altı metni (`dbq.sched.v.*` ve sentetik izlemenin "cron zorunlu"u). */
+function scheduleErrorMap(form, t) {
+  const codes = scheduleProblems(form, { intervalProblem, windowProblems, minInterval: SCRIPTED_MIN_INTERVAL })
+  const out = {}
+  for (const [k, code] of Object.entries(codes)) {
+    out[k] = code === 'cron_required' ? t('scripted.f.cronRequired') : t(`dbq.sched.v.${code}`, schedDurationText(SCRIPTED_MIN_INTERVAL, t))
+  }
+  return out
+}
+
+/** Sunucu ret alanı → form hata anahtarı (yalnız formda yeri olanlar; kalanı kalıcı bantta / tostta). */
+const SERVER_FIELD_KEYS = {
+  name: 'name', teamId: 'teamId', team_id: 'teamId', groupName: 'groupName', group_name: 'groupName', tags: 'tags',
+  env: 'env', intervalSeconds: 'interval_seconds', timeoutSeconds: 'timeoutSeconds', timeout_seconds: 'timeoutSeconds',
+  confirmAttempts: 'confirmAttempts', recoveryChecks: 'recoveryChecks', slowThresholdMs: 'slowThresholdMs',
+  ...Object.fromEntries(SCHEDULE_ERROR_KEYS.map(k => [k, k])),
+}
+function mapServerFields(fields) {
+  const out = {}
+  for (const [k, v] of Object.entries(fields || {})) {
+    const key = SERVER_FIELD_KEYS[k] || (k.startsWith('windows[') ? 'windows' : k.startsWith('blackouts[') ? 'blackouts' : null)
+    if (key && v && !out[key]) out[key] = v
+  }
+  return out
 }
 
 /**
@@ -310,6 +374,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const testSeq = useRef(0)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
+  // Ekran okuyucuya test sonucunun kısa özeti (aria-live) — panel görünür alana kayar, özet duyurulur (2026-10-31)
+  const [testLive, setTestLive] = useState('')
+  // "Zamanlama ve alarm" bölümü: varsayılanlarla KAPALI; içindeki bir alan hatalıysa kaydet anında açılır
+  const [timingOpen, setTimingOpen] = useState(false)
+  // Değeri boş değişkenler — Test / Kaydet'e basınca uyarı (engellemez); boş dizi = uyarı yok
+  const [envWarnNames, setEnvWarnNames] = useState([])
   const [saveWarnings, setSaveWarnings] = useState([])   // kaydetme sonrası engellemeyen uyarılar
   // Kaydetmeyi ENGELLEYEN sözdizimi hatası — kalıcı gösterilir ve satırı cetvelde işaretlenir.
   const [saveError, setSaveError] = useState(null)
@@ -499,6 +569,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
    * Liste backend'de görme yetkisiyle süzülü olduğundan başka takımın script'i sızmaz.
    * Sıra: düzenlenen/kopyalanan monitör başta (kullanıcı kendi script'ini aramasın), sonra ada göre.
    */
+  // İzlemenin sunucuda değeri kayıtlı gizli değişken ADLARI (inceleme 2026-10-31): "kayıtlı değerle" rozeti, test
+  // `keep` satırı ve boş değer uyarısı ADA göre karar verir — adı değiştirilen satır kayıtlı değer taşımaz.
+  const savedSecrets = useMemo(() => savedSecretNames(modal?.id != null ? modal.env : null), [modal])
+
   const savedScripts = useMemo(() => {
     const withScript = monitors.filter(m => {
       if (!(m.script || '').trim()) return false
@@ -542,16 +616,19 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
-    return matchesSearchText(search, [m.name, m.group_name])
+    // Kartta görünen HEDEF host ve açıklama da aranır (2026-10-31, E8) — hedef yalnız arama varken hesaplanır
+    return matchesSearchText(search, [m.name, m.group_name, m.description, search ? scenarioTarget(m)?.host : null])
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, up: 0, down: 0, alarm: 0, unacked: 0, paused: 0 }
     for (const m of scoped) {
-      if (isPass(m.status)) c.up++
+      // Duraklatılmış ya da sistemin kapattığı (anomali koruması — `active=false`) izleme son koşumuna bakılarak
+      // "çalışıyor" / "arızalı" SAYILMAZ (2026-10-31, D6): yalnız "duraklatılan"da görünür.
+      if (m.active === false) c.paused++
+      else if (isPass(m.status)) c.up++
       else if (isFailLike(m.status)) c.down++
       if (m.active_alarm) { c.alarm++; if (!m.alarm_acknowledged) c.unacked++ }
-      if (m.active === false) c.paused++
     }
     return c
   }, [scoped])
@@ -559,8 +636,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const displayMonitors = useMemo(() => {
     if (!statFilter || statFilter === 'total') return scoped
     const pred = {
-      up:      m => isPass(m.status),
-      down:    m => isFailLike(m.status),
+      up:      m => m.active !== false && isPass(m.status),
+      down:    m => m.active !== false && isFailLike(m.status),
       alarm:   m => m.active_alarm,
       unacked: m => m.active_alarm && !m.alarm_acknowledged,
       paused:  m => m.active === false,
@@ -618,21 +695,28 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     return {
       status: m.status, error: m.error, exit_code: m.exit_code, output_tail: m.output_tail,
       checks_passed: m.checks_passed, checks_failed: m.checks_failed, duration_ms: m.duration_ms,
+      // Son koşumun zengin alanları (2026-10-31, k6r D1) — eski sunucuda / eski satırda yoktur, panel o zaman çizmez
+      checks_json: m.checks_json, steps: m.steps, steps_truncated: m.steps_truncated, failure_reason: m.failure_reason,
+      run_context: m.run_context,
       _source: 'lastCheck', _checkedAt: m.checked_at, _monitorName: m.name,
     }
   }
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
-  function cancelTest() { testSeq.current++; setTesting(false) }
+  function cancelTest() { testSeq.current++; setTesting(false); setTestLive('') }
+
+  /** Form açılışında kurulum durumları sıfırlanır: bölüm kapalı, boş-değişken uyarısı yok. */
+  function resetSetupState() { setTimingOpen(false); setEnvWarnNames([]) }
 
   function openNew() {
     cancelTest()
     smokeSeq.current++   // önceki formun uçuşan doğrulama koşumu bu formu DOLDURMASIN
     setForm({ ...emptyForm, teamId: isAdminish ? '' : defaultTeam,
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
-      timeoutSeconds: defaults?.timeoutSeconds ?? emptyForm.timeoutSeconds })
+      timeoutSeconds: defaults?.timeoutSeconds ?? emptyForm.timeoutSeconds,
+      schedule: { ...DEFAULT_SCRIPTED_SCHEDULE } })
     setTestResult(null); setSaveWarnings([]); setSaveError(null); setDupSource(null); setModal({})
-    setDraftSavedAt(null); setBumpType('patch')
+    setDraftSavedAt(null); setBumpType('patch'); resetSetupState()
     // Yarım kalmış "new" taslağı VARSA sorulur — openEdit ile aynı sözleşme. Eskiden hiç
     // sorulmuyordu: form doğar doğmaz 1,5 sn'lik otomatik yazım aynı 'new' anahtarına basıp
     // saatlerce yazılmış yarım script'i geri dönülmez biçimde eziyordu.
@@ -651,6 +735,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       useProxy: m.use_proxy || 'AUTO',
       // env: secret satırlar value_set taşır (değer geri okunamaz); non-secret value taşır
       env: (m.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: e.secret ? '' : (e.value || ''), value_set: !!e.value_set })),
+      // Zamanlama (k6r D2): eski sunucunun satırı alan taşımaz → INTERVAL (her aralıkta) — bugünkü davranış
+      schedule: scheduleFromScriptedRow(m),
+      scriptBase: m.script || '', nameAuto: '',
     }
   }
   function openEdit(row) {
@@ -663,7 +750,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     // neyi düzeltmesi gerektiğini modal açılır açılmaz görür (eskiden panel boş açılıyordu).
     setForm({ ...formFrom(m), template: `saved:${m.id}` })
     setTestResult(lastCheckResult(m)); setSaveWarnings([]); setSaveError(null); setDupSource(null); setModal(m)
-    setDraftSavedAt(null); setBumpType('patch')
+    setDraftSavedAt(null); setBumpType('patch'); resetSetupState()
     // Kaydedilmemiş taslak varsa OTOMATİK uygulanmaz — kullanıcıya sorulur; aksi halde
     // kaydedilmiş sürümün üstüne sessizce eski bir taslak biner.
     setPendingDraft(drafts.find(d => d.monitor_key === String(m.id)) || null)
@@ -679,8 +766,28 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       env: base.env.map(e => e.secret ? { ...e, value: '', value_set: false } : e) })
     // Kopya kaynağın script'iyle doğar → panel de kaynağın son kontrolünü gösterir (aynı script).
     setTestResult(lastCheckResult(m)); setSaveWarnings([]); setSaveError(null); setDupSource(m); setModal({})
-    setDraftSavedAt(null); setBumpType('patch')
+    setDraftSavedAt(null); setBumpType('patch'); resetSetupState()
     setPendingDraft(newDraft || null)   // bkz. openNew — kopya da 'new' anahtarını kullanıyor
+  }
+
+  /**
+   * "Bu sürümü editöre yükle" (D2, 2026-10-31): betik + ortam değişkeni ADLARI. Eskiden yalnız betik yükleniyordu;
+   * sürüm farkı env değişikliğini gösterirken geri yükleme onu atlıyordu. Kural kaynak değişimiyle aynı (mergeEnv):
+   * formdaki aynı adlı satır olduğu gibi kalır (değer / `value_set` / gizli işareti), sürümde olup formda olmayan ad
+   * eklenir — gizlinin değeri taşınmaz (yeniden girilir), gizli olmayanın kayıtlı değeri gelir; fazlalar silinmez.
+   * Geri dönüş "tek tıkla geri al" DEĞİL: kullanıcı görür / test eder, kaydedince YENİ sürüm olur. Sürümler sekmesi ve
+   * ayrıntıdaki "bu sürüm bozdu" bandı (k6r D4) AYNI işleyiciyi çağırır.
+   */
+  function loadVersionIntoEditor(m, v, detail) {
+    closeDetail()
+    openEdit(m)
+    setTimeout(() => {
+      const cur = liveRef.current.form || form
+      const { added } = mergeEnv(cur.env, detail?.env, { withValues: true })
+      setForm(f => ({ ...f, script: detail?.script || '', restoredFrom: v.version,
+        env: mergeEnv(f.env, detail?.env, { withValues: true }).env }))
+      toast.success(added.length ? t('scripted.f.versionLoadedEnv', v.version, added.join(', ')) : t('scripted.versionLoaded', v.version))
+    }, 0)
   }
   /**
    * @param skipDraft Kapanışta taslak YAZILMASIN. Kaydetme ve silme sonrası ŞART: React state
@@ -703,9 +810,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   /** Formun kaydedilebilir hâli — secret env DEĞERLERİ taslağa YAZILMAZ (düz metin saklanmasın). */
   function draftPayload() {
-    const f = liveRef.current.form || form
-    const safe = { ...f, env: (f.env || []).map(e => (e.secret ? { ...e, value: '' } : e)) }
-    return JSON.stringify(safe)
+    // `scriptBase` (betiğin ikinci kopyası) ve `nameAuto` taslağa yazılmaz — yük iki katına çıkıyordu (inceleme 2026-10-31)
+    return JSON.stringify(draftForm(liveRef.current.form || form))
   }
 
   /** Sunucuya taslak yaz (sessiz: otomatik kayıt kullanıcıya hata kusmamalı). */
@@ -743,6 +849,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   function applyDraft(draft) {
     try {
       const parsed = JSON.parse(draft.form_json || '{}')
+      // Eski taslaklar bu alanları taşıyabilir: formun kendi tabanı geçerli kalır (taslağın betiği "elle değişmiş" sayılır)
+      for (const k of DRAFT_EXCLUDED_KEYS) delete parsed[k]
       setForm(f => {
         const next = { ...emptyForm, ...f, ...parsed }
         // Kilitli formda (yalnız paylaşımla yazılan kayıt / paylaşılan takıma yeni kayıt) taslak bildirim yönlendirmesini
@@ -782,9 +890,18 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     setTimeout(() => applyDraft(draft), 0)   // openNew formu sıfırladıktan SONRA uygula
   }
 
-  function setEnvRow(i, patch) { setForm(f => ({ ...f, env: f.env.map((e, j) => j === i ? { ...e, ...patch } : e) })) }
+  function setEnvRow(i, patch) { setForm(f => ({ ...f, env: f.env.map((e, j) => j === i ? { ...e, ...patch } : e) })); fe.clear('env') }
   function addEnvRow() { setForm(f => ({ ...f, env: [...f.env, { name: '', secret: false, value: '' }] })) }
   function delEnvRow(i) { setForm(f => ({ ...f, env: f.env.filter((_, j) => j !== i) })) }
+  /** Canlı `__ENV` denetiminin "Değişken ekle"si: betiğin okuduğu tanımsız ad satır olur (parola benzeri ad gizli doğar). */
+  function addEnvNamed(name) {
+    setForm(f => (f.env.some(e => (e.name || '').trim() === name) ? f
+      : { ...f, env: [...f.env, { name, secret: looksSecretName(name), value: '' }] }))
+  }
+  /** "Gizli yap": değeri KORUNUR (F3 kuralı) — yalnız işaret değişir. */
+  function markEnvSecret(name) {
+    setForm(f => ({ ...f, env: f.env.map(e => ((e.name || '').trim() === name ? { ...e, secret: true } : e)) }))
+  }
 
   /**
    * Script kaynağı seçimi — TEK giriş noktası (`saved:<id>` | `tpl:<id>` | '').
@@ -795,57 +912,113 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
    *   - kayıtlı script → o monitörün son kontrolü panele konur (hata/çıkış kodu geri gelir)
    *   - şablon        → panel temizlenir (şablonun koşum geçmişi yoktur)
    * Elle yazım paneli ETKİLEMEZ (bilinçli): kullanıcı hatayı okurken düzeltme yapabilsin.
+   *
+   * VERİ KORUMA (H1, 2026-10-31): eskiden kaynak değişimi betiği ve TÜM env'i (gizliler dahil) onaysız siliyordu.
+   * Artık env BİRLEŞTİRİLİR (`mergeEnv`: aynı adlı satır olduğu gibi kalır, yalnız eksikler eklenir, fazlalar
+   * silinmez) ve betik kaybedilecekse (elle değişmiş betik ya da düzenlemede izlemenin kendi betiğinden ayrılmak) önce
+   * onay istenir — pencere kaç değişkenin ekleneceğini ve kaçının gizli olduğunu söyler. Okuma `liveRef`'ten: şablon
+   * kütüphanesinden "bu şablonla başla" yolu bu işlevi `openNew` sonrası bir zamanlayıcıdan çağırır.
    */
-  function selectScriptSource(value) {
+  async function selectScriptSource(value) {
+    const cur = liveRef.current.form || form
+    const curModal = liveRef.current.modal || modal
+    const next = value || ''
+    if ((cur.template || '') === next) return
+    const editId = curModal?.id ?? null
+
+    // Gelecek env tanımları (onay metni + birleştirme için)
+    let src = null, tplRow = null, incoming = []
+    if (next.startsWith('saved:')) {
+      src = monitors.find(x => String(x.id) === next.slice(6))
+      if (!src) return
+      incoming = formFrom(src).env
+    } else if (next.startsWith('tpl:')) {
+      tplRow = resolveTemplate(scriptTemplates, next.slice(4))
+      incoming = tplRow?.env || []
+    }
+    // Gizli değerler BAŞKA izlemeden taşınmaz (sunucu yalnız düzenlenen izlemenin kayıtlı değerini korur): "ayarlı"
+    // görünmesin — yalnız kendi kaydına dönülüyorsa ayarlı kalır
+    const keepSecret = () => !!src && src.id === editId
+    const preview = mergeEnv(cur.env, incoming, { withValues: !!src, keepSecret })
+    const dirtyScript = !!(cur.script || '').trim() && cur.script !== (cur.scriptBase ?? '')
+    const leavingOwn = editId != null && cur.template === `saved:${editId}`
+    if (dirtyScript || leavingOwn) {
+      const lines = [next ? t('scripted.f.srcConfirmScript') : t('scripted.f.srcConfirmClear'), t('scripted.f.srcConfirmEnvKept')]
+      if (preview.added.length) lines.push(t('scripted.f.srcConfirmEnvAdded', preview.added.length, preview.added.join(', ')))
+      if (preview.addedSecret.length) lines.push(t('scripted.f.srcConfirmSecretAdded', preview.addedSecret.length))
+      const ok = await showConfirm({
+        title: t('scripted.f.srcConfirmTitle'), message: lines.join('\n'),
+        confirmText: t('scripted.f.srcConfirmOk'), cancelText: t('scripted.cancel'), variant: 'warning',
+      })
+      if (!ok) return
+    }
+
     cancelTest()   // uçuşan test ÖNCEKİ kaynağın script'ine ait — sonucu yeni seçimin paneline düşmesin
     setSaveWarnings([]); setSaveError(null)
-    if (!value) {                                   // yalnız yeni monitörde gösterilir
-      setForm(f => ({ ...f, template: '', script: '', env: [] }))
+    if (!next) {                                    // yalnız yeni monitörde gösterilir — env korunur (fazlalar silinmez)
+      setForm(f => ({ ...f, template: '', script: '', scriptBase: '' }))
       setTestResult(null)
       return
     }
-    if (value.startsWith('saved:')) {
-      const src = monitors.find(x => String(x.id) === value.slice(6))
-      if (!src) return
+    if (src) {
       const base = formFrom(src)
-      // Gizli değerler BAŞKA izlemeden taşınmaz (sunucu yalnız düzenlenen izlemenin kayıtlı değerini korur): "ayarlı"
-      // görünmesin — yalnız kendi kaydına dönülüyorsa ayarlı kalır
-      const env = base.env.map(e => (e.secret && src.id !== modal?.id ? { ...e, value: '', value_set: false } : e))
-      setForm(f => ({ ...f, template: value, script: base.script, env }))
+      setForm(f => ({ ...f, template: next, script: base.script, scriptBase: base.script,
+        env: mergeEnv(f.env, base.env, { withValues: true, keepSecret }).env }))
       setTestResult(lastCheckResult(src))
       return
     }
-    setForm(f => ({ ...f, template: value }))
-    applyTemplate(value.slice(4))
+    setForm(f => ({ ...f, template: next }))
+    applyTemplate(next.slice(4))
     setTestResult(null)
   }
 
   /**
    * `tpl:<token>` seçimini forma uygular.
    *
-   * Şablon env TANIMI taşır, DEĞER taşımaz — `value: ''` bilinçli: gizli bilgiyi kullanıcı
-   * kendi girer, kütüphane asla taşımaz. Şablon satırı silinmişse sessizce hiçbir şey yapılmaz
-   * (form kullanıcının yazdığını korur).
+   * Şablon env TANIMI taşır, DEĞER taşımaz — eklenen satırın değeri boş: gizli bilgiyi kullanıcı kendi girer,
+   * kütüphane asla taşımaz. Formdaki satırlar BİRLEŞTİRİLİR (H1 — aynı adlı satırın değeri korunur). Şablon satırı
+   * silinmişse sessizce hiçbir şey yapılmaz (form kullanıcının yazdığını korur).
+   *
+   * Ad boşsa (yeni izleme / kopya) şablonun adı önerilir — kullanıcı değiştirirse dokunulmaz; önceki öneri hâlâ
+   * duruyorsa yeni şablonunkiyle değişir. Düzenlemede ad ASLA değişmez (alarm anahtarı addır).
    */
   async function applyTemplate(token) {
     const tpl = resolveTemplate(scriptTemplates, token)
     if (!tpl) return
+    const label = templateLabel(tpl, lang)
+    const editing = (liveRef.current.modal || modal)?.id != null
     // Env TANIMLARI liste yanıtında GELİR, script GÖVDESİ gelmez (yüzlerce şablonda yanıt
     // şişmesin diye bilinçli). Gövde tekil uçtan çekilir — yoksa şablon seçmek env'i doldurup
     // editörü boş bırakırdı ve kullanıcı "şablon çalışmıyor" derdi.
-    setForm(f => ({
-      ...f,
-      env: (tpl.env || []).map(e => ({ name: e.name, secret: !!e.secret, value: '' })),
-    }))
+    setForm(f => {
+      const suggest = !editing && label && (!(f.name || '').trim() || f.name === f.nameAuto)
+      return { ...f, env: mergeEnv(f.env, tpl.env, {}).env, ...(suggest ? { name: label, nameAuto: label } : {}) }
+    })
+    if (!editing) fe.clear('name')
     let script = tpl.script
     if (!script) {
-      const res = await api.monitoring.getScriptedTemplate(tpl.id)
+      let res
+      try { res = await api.monitoring.getScriptedTemplate(tpl.id) } catch (e) { res = { success: false, error: e?.message } }
       if (!res?.success) { toast.error(res?.error || t('tpl.loadError')); return }
       script = res.data?.script || ''
     }
     // Geç dönen gövde ARTIK seçili olmayan şablona aitse yazma: kullanıcı beklerken başka bir
     // kaynağa (kayıtlı script / boş) geçmiş olabilir — o seçimin script'ini ezmek veri kaybıdır.
-    setForm(f => (f.template === `tpl:${token}` ? { ...f, script: script || f.script } : f))
+    setForm(f => (f.template === `tpl:${token}` ? { ...f, script: script || f.script, scriptBase: script || f.script } : f))
+  }
+
+  /**
+   * Boş durumun "Şablondan başla"sı: şablon kütüphanesini görebilen kullanıcı kütüphaneye gider (açıklamalı kartlar,
+   * "Bu şablonla başla"); göremeyen yeni formu açar ve betik kaynağı seçicisine odaklanır.
+   */
+  function startFromTemplateEmpty() {
+    if (canViewTemplates) { setView('templates'); return }
+    openNew()
+    setTimeout(() => {
+      const trigger = document.querySelector('[role="dialog"] .sc-source-select [role="combobox"]')
+      trigger?.scrollIntoView?.({ block: 'center' })
+      trigger?.focus?.()
+    }, 0)
   }
 
   /** Şablon kütüphanesinden "Bu şablonla monitör oluştur": monitör görünümüne dön ve formu doldur. */
@@ -868,15 +1041,25 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   async function save() {
     // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
-    if (fe.check({
+    // Sıra formdaki sırayla aynı (Genel → zamanlama → sayısal alanlar): odak ilk hatalı alana gider. Sayısal alan
+    // hatası da artık alanın altında (D3, 2026-10-31 — eskiden yalnız tostta); Kaydet hiçbir alan yüzünden
+    // pasifleşmez, basınca neyin eksik olduğunu gösterir.
+    // Önceki kaydın sözdizimi bandı (+ "Satır N'e git", cetvel işareti) bu denemede geçersiz — alan hatası dalında kalmasın
+    setSaveError(null)
+    const errs = {
       name: !form.name.trim() && t('scripted.nameRequired'),
       teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
       groupName: !form.groupName.trim() && t('scripted.groupRequired'),
       tags: !form.tags?.trim() && t('mon.tagsRequired'),   // etiket zorunlu (2026-09-18)
-    })) return
-    // Boş/aralık dışı sayısal alan SESSİZCE kaydedilmesin (bkz. invalidNumericField).
-    const bad = invalidNumericField(form)
-    if (bad) { toast.error(t('scripted.numRange', t(bad.labelKey), bad.min, bad.max)); return }
+      ...scheduleErrorMap(form, t),
+      // Boş/aralık dışı sayısal alan SESSİZCE kaydedilmesin (bkz. invalidNumericField).
+      ...numericFieldErrors(form, t),
+    }
+    // "Zamanlama ve alarm" kapalıyken içindeki alan hatalıysa önce açılır — odak ve hata metni görünür olsun
+    if (hasTimingError(errs)) setTimingOpen(true)
+    if (fe.check(errs)) return
+    // Değeri boş değişkenler: uyarı (engellemez) — betik onları boş okur
+    setEnvWarnNames(emptyEnvNames(form.env, savedSecrets))
     setSaving(true)
     try {
       const payload = {
@@ -893,6 +1076,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         slowResponseEnabled: !!form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
         active: form.active, script: form.script, env: envPayload(),
         useProxy: form.useProxy || 'AUTO',
+        // Zamanlama (k6r D2): kip, cron, izinli / yasak pencereler, tatil, ek tarihler — snake_case (dbquery ile aynı).
+        // YALNIZ yeni kayıtta, satır alanları taşıyorsa ya da kullanıcı değiştirdiyse: eski pod satırında alan yoktur,
+        // dokunulmadan kaydedilen form kayıtlı CRON / pencereleri silmesin (inceleme 2026-10-31).
+        ...scheduleBodyKeys({ row: modal, schedule: form.schedule }),
         // Sürüm YALNIZ içerik değiştiyse yazılır; bump türü o zaman uygulanır (varsayılan yama).
         bumpType,
         // Eski sürümden yüklendiyse yeni sürüm RESTORE olarak işaretlenir ve notuna kaynağı yazılır.
@@ -952,7 +1139,15 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // `white-space` ayarı olmadığı için `\n`'ler eziliyor, kod çerçevesi ve caret hizası
         // tamamen kayboluyordu — kullanıcı 5 sn sonra elinde hiçbir iz kalmadan modalda kalıyordu.
         // Artık KALICI: hizayı koruyan çerçeveyle basılır ve satır numarası cetvelde işaretlenir.
-        setSaveError(res?.error || null)
+        // Sunucunun alan hataları (ad, zamanlama, env, sayısal) alanın ALTINA gider (2026-10-31); yeri olmayan ret
+        // (betik / sözdizimi) eskisi gibi kalıcı bantta.
+        const mapped = mapServerFields(serverFieldErrors(res).fields)
+        if (Object.keys(mapped).length) {
+          if (hasTimingError(mapped)) setTimingOpen(true)
+          fe.check(mapped)
+        } else {
+          setSaveError(res?.error || null)
+        }
         toast.error(res?.error || t('scripted.saveError'))
       }
     } finally {
@@ -1089,21 +1284,52 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     else toast.error(res?.error || t('scripted.deleteError'))
   }
 
+  /**
+   * Form "Test Çalıştır" — kaydetmeden, formdaki betik + env ile tek koşum.
+   *
+   * KAYITLI GİZLİ DEĞERLER (B1, 2026-10-31): düzenleme formunda gizli satırların değeri boştur (geri okunamaz) ve test
+   * eskiden onları BOŞ gönderiyordu — gizli değerli her kayıtlı senaryoda sahte 401 / boş parola hatası. Artık
+   * değeri boş + `value_set` gizli satır `keep: true` ile, gövdede `monitorId` ile gider; sunucu izlemenin GÜNCEL
+   * env'indeki şifreli değeri kullanır (aynı düzenleme kapısı). Yanıtta `kept_secrets` yoksa (eski pod) panel
+   * "kayıtlı gizli değerler teste gönderilemedi" der. Yeni izlemede / kopyada `keep` gönderilmez.
+   *
+   * Ret (403 / 404 / 400 alan / 409 SECRET_UNREADABLE / 429) test panelinde "Test başlatılamadı" bandıyla anlatılır;
+   * ağ hatası da (eskiden yakalanmıyordu) aynı yoldan. Sonuç gelince panel görünür alana kayar ve özet duyurulur.
+   */
   async function runTest() {
     if (!form.script.trim()) { toast.error(t('scripted.scriptRequired')); return }
+    const editMode = modal?.id != null
+    const { env, kept } = testEnvPayload(form.env, { editMode, savedNames: savedSecrets })
+    // Değeri boş değişkenler: uyarı (engellemez) — test yine koşar
+    setEnvWarnNames(emptyEnvNames(form.env, savedSecrets))
     const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
-    setTesting(true); setTestResult(null)
+    setTesting(true); setTestResult(null); setTestLive('')
+    const finish = (data) => {
+      // Odak yalnız "Test Çalıştır" çubuğunda / body'de iken panele geçer (kullanıcı başka alana yazıyorsa çalınmaz).
+      // Panel odak alırsa özeti kendi adıyla okunur; canlı bölge AYRICA duyurmaz (iki kez okuma yok — inceleme 2026-10-31).
+      const focus = testResultMayTakeFocus()
+      setTestResult({ ...data, _source: 'test', _runId: my, _focus: focus })
+      setTestLive(focus ? '' : (data._refused ? t('scripted.f.testRefusedLive') : t('scripted.f.testDone', statusLabel(t, data.status))))
+    }
     try {
       const res = await api.monitoring.testScripted({
         script: form.script, timeoutSeconds: Number(form.timeoutSeconds),
         // Test koşumu da formdaki vekil tercihini kullanır; aksi halde "Test Çalıştır" yeşil,
         // kaydedilen monitör kırmızı olur ve aradaki fark görünmez.
         useProxy: form.useProxy || 'AUTO',
-        env: form.env.filter(e => (e.name || '').trim()).map(e => ({ name: e.name.trim(), value: e.value || '' })),
+        env,
+        ...(editMode ? { monitorId: modal.id } : {}),
       })
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
-      const data = res?.success ? res.data : { status: 'ERROR', error: res?.error || t('scripted.testError') }
-      setTestResult({ ...data, _source: 'test' })
+      if (res?.success) {
+        finish({ ...(res.data || {}), _keptSent: kept, _keptIgnored: keptSecretsIgnored(kept, res.data) })
+      } else {
+        finish({ status: 'ERROR', error: res?.error || t('scripted.testError'), _refused: true,
+          file_reads: Array.isArray(res?.file_reads) ? res.file_reads : null,
+          warnings: Array.isArray(res?.warnings) ? res.warnings : null })
+      }
+    } catch (e) {
+      if (my === testSeq.current) finish({ status: 'ERROR', error: e?.message || t('scripted.testError'), _refused: true })
     } finally {
       if (my === testSeq.current) setTesting(false)
     }
@@ -1151,10 +1377,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     })
   }
 
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
+    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin,
+      testLive, timingOpen, setTimingOpen, envWarnNames, addEnvNamed, markEnvSecret, savedSecrets }} />
   )
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1253,9 +1481,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         </AlertBanner>
       ) : monitors.length === 0 ? (
         /* Boş durum: eskiden LoadingBlock ile (dönen spinner) gösteriliyordu — "yükleniyor" ile
-           "hiç kayıt yok" görsel olarak ayrışmıyordu. */
-        <StatusBlock icon={FlaskConical}
-          title={k6.canManage ? t('scripted.noMonitorsAdmin') : t('scripted.noMonitors')} />
+           "hiç kayıt yok" görsel olarak ayrışmıyordu. 2026-10-31: "Şablondan başla" + "Kılavuz" düğmeleri. */
+        <ScriptedEmptyState t={t} canWrite={k6.canManage && k6.available} onStartFromTemplate={startFromTemplateEmpty} />
       ) : (
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="SCRIPTED"
@@ -1325,7 +1552,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             const driftHint = drift ? t('scripted.verDriftHint', selected.run_script_version) : null
             return (
               <DetailSummary items={[
-                { key: 'uptime', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—',
+                // Yerel ondalık ayırıcı (D4, 2026-10-31): "%96.5" değil "%96,53" — aynı penceredeki kutucukla aynı biçim
+                { key: 'uptime', value: summary.total > 0 ? formatRatePercent((summary.total - summary.down) * 100 / summary.total) : '—',
                   label: `${t('scripted.sumUptime')}${summary.total > 0 ? ` · ${summary.total - summary.down}/${summary.total}` : ''}`,
                   hint: t('scripted.sumUptimeHint') },
                 { key: 'total', value: summary.total, label: t('scripted.sumTotal'), hint: t('scripted.sumTotalHint') },
@@ -1333,7 +1561,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                 selected.duration_ms != null && { key: 'dur', value: `${selected.duration_ms}ms`, label: t('scripted.lastDuration') },
                 selected.script_version && { key: 'ver',
                   value: <>v{selected.script_version}{drift && (
-                    <HintPopover content={driftHint} triggerClassName="ml-1.5 align-baseline">
+                    <HintPopover content={driftHint} triggerClassName="ml-1.5 align-baseline pointer-coarse:min-h-10 pointer-coarse:min-w-10">
                       <span data-slot="version-drift" className="text-xs font-bold text-amber-700 dark:text-amber-300">
                         <span aria-hidden="true">≠</span><span className="sr-only">{driftHint}</span>
                       </span>
@@ -1370,6 +1598,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             )}
 
             <TabsContent value="control">
+              {/* "Bu sürüm bozdu" (2026-10-31, k6r D4): sürüm geçmişi en yeni sürümün belirgin kötüleştiğini söylüyorsa uyarı +
+                  önceki sürümü editöre yükleme (Sürümler sekmesiyle aynı işleyici). Karar yoksa hiçbir şey çizilmez. */}
+              <VersionRegressionBand monitor={selected} canEdit={canManageRow(selected)}
+                onLoad={(v, detail) => loadVersionIntoEditor(selected, v, detail)} />
               {/* gridClass ZORUNLU: sürüm kolonuyla birlikte 5 kolon olduk, ortak `.upt-rt-grid`
                   tabanı ise 4 kolonluk. Kendi şablonumuzu geçmezsek 5. hücre taşar — ve tabanı
                   değiştirmek CheckHistoryTab'ı paylaşan diğer 9 izleme sayfasını bozardı. */}
@@ -1392,9 +1624,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         olurdu; diğer hücreler yalnız fare kolaylığı. Hücre kabı ızgara hücresi
                         (`upt-rt-time`) olarak kalır — düğmeye legacy sınıf konmaz. */}
                     <span className="upt-rt-time">
+                      {/* Dokunmatikte 40 px hedef (E2, 2026-10-31) — fare görünümü değişmez */}
                       <Button type="button" variant="ghost" size="xs" onClick={toggle} aria-expanded={isSel}
                         aria-label={`${formatDateSec(c.checked_at)} · ${statusLabel(t, c.status)} — ${t('scripted.rowOpenAria')}`}
-                        className="h-auto justify-start rounded-sm px-0 py-0 font-mono font-normal text-muted-foreground hover:bg-transparent hover:text-foreground hover:underline dark:hover:bg-transparent">
+                        className="h-auto justify-start rounded-sm px-0 py-0 font-mono font-normal text-muted-foreground hover:bg-transparent hover:text-foreground hover:underline dark:hover:bg-transparent pointer-coarse:min-h-10">
                         {formatDateSec(c.checked_at)}
                       </Button>
                     </span>
@@ -1413,12 +1646,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         kodu etiketi, faz kırılımı, k6 çıktısı) satıra tıklayınca açılan
                         CheckDetail panelinde. Eskiden burada ham `error` basılıyordu: backend bu
                         metni 14 satır / 1500 karaktere kadar üretiyor (ERR_MAX_*) ve tek satır
-                        ekranı dolduruyordu. Hücre ilk satırı gösterir; tam metin `title`'da
-                        (kırpılan metnin tamamı — MonitorCardTitle ile aynı desen). */}
+                        ekranı dolduruyordu. Hücre TEK satırlık NEDENİ gösterir (O4, 2026-10-31: kartın neden satırıyla
+                        aynı kural — düşen doğrulamanın adı / zaman aşımı / düşen eşik / hatanın özü; eskiden FAIL'de iki
+                        nokta ile biten etiket satırıydı); tam metin `title`'da (MonitorCardTitle ile aynı desen). */}
                     {c.error
                       ? <span className="upt-rt-error cursor-pointer" title={c.error}
                           onClick={toggle}>
-                          {firstLine(c.error)}
+                          {historyDetailText(t, c) || firstLine(c.error)}
                           {stuckLabel(t, c) && (
                             <Badge variant="outline" data-slot="stuck-chip"
                               className="ml-1.5 px-[7px] py-0 align-baseline text-[.92em] font-normal text-muted-foreground">
@@ -1430,9 +1664,17 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         ? <span className="upt-rt-ms cursor-pointer"
                             onClick={toggle}><ChecksSummary t={t} check={c} /></span>
                         : <span className="upt-rt-ms">—</span>}
+                    {/* Satır içi koşum ayrıntısı (2026-10-31, k6r D4): sütun sayısını aşan hücre CheckHistoryTab'da satırın
+                        ALTINDA tam genişlikte çizilir (tabloda ek satır, telefonda kartın sonu) — eskiden liste ve
+                        sayfalayıcının altında, tıklanan satırdan uzakta açılıyordu. `w-0 min-w-full`: içerik tablonun
+                        asgari genişliğini büyütmez (uzun hata / çerçeve tabloyu yatay taşırmaz). */}
+                    {isSel && (
+                      <div className="w-0 min-w-full text-sm" data-slot="inline-run-detail">
+                        <CheckDetail t={t} check={c} monitor={selected} />
+                      </div>
+                    )}
                   </>)
                 }} />
-              {selCheck && <CheckDetail t={t} check={selCheck} />}
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.name} types={alertTypesFor('scripted')} /></TabsContent>
@@ -1441,21 +1683,15 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
             <TabsContent value="versions">
               <ScriptedVersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}
-                onLoadIntoEditor={(v, detail) => {
-                  // Geri dönüş "tek tıkla geri al" DEĞİL: sürüm editöre yüklenir, kullanıcı
-                  // görür/test eder, kaydedince YENİ sürüm olur — geçmiş asla ezilmez.
-                  closeDetail()
-                  openEdit(selected)
-                  setTimeout(() => {
-                    setForm(f => ({ ...f, script: detail.script, restoredFrom: v.version }))
-                    toast.success(t('scripted.versionLoaded', v.version))
-                  }, 0)
-                }} />
+                // Betik + env adları (D2) — bkz. loadVersionIntoEditor
+                onLoadIntoEditor={(v, detail) => loadVersionIntoEditor(selected, v, detail)} />
             </TabsContent>
 
             <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="scripted" slowThreshold={selected.slow_response_enabled ? selected.slow_threshold_ms : null} />
+                {/* Adım (k6 group) süre trendi — 2026-10-31, k6r D4 */}
+                <StepTrend monitorId={selected.id} />
               </Suspense>
             </TabsContent>
 
@@ -1533,7 +1769,8 @@ function RequestPhases({ t, check, viaProxy }) {
   return (
     <Card data-request-phases="true" className="mt-2.5 gap-2 rounded-lg bg-muted/30 px-3 py-2.5 shadow-none">
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-[.92em] font-semibold">{t('scripted.phasesTitle')}</span>
+        {/* "Nerede takıldı?" yalnız takılma noktası olan koşumda; her faz tamamsa nötr "İstek fazları" (E7, 2026-10-31) */}
+        <span className="text-[.92em] font-semibold">{stuckAt ? t('scripted.phasesTitle') : t('scripted.phasesTitleOk')}</span>
         {viaProxy != null && (
           <Badge variant="outline" data-slot="phases-proxy" className="font-normal text-muted-foreground">
             {viaProxy ? t('scripted.viaProxyYes') : t('scripted.viaProxyNo')}
@@ -1666,52 +1903,60 @@ function ChecksSummary({ t, check }) {
   )
 }
 
-function CheckDetail({ t, check }) {
+/**
+ * Koşum ayrıntısı (2026-10-31 genişleme, k6r D4): ADIMLAR (k6 group — StepList; eski satırda doğrulama listesi), EŞİKLER,
+ * hata bandı (bağlam satırı yapılandırılmış `run_context` varsa metinden atılır ve arayüz dilinde ÇİP olur), HATA SINIFI
+ * paneli (ortak CheckFailurePanel), faz kırılımı, eriştiği hostların TLS sürümü / sertifika durumu ve katlı k6 çıktısı.
+ * Yeni alanlar yoksa (eski satır / eski sunucu) bugünkü görünüm: doğrulama listesi + hata bandı + fazlar + çıktı.
+ */
+function CheckDetail({ t, check, monitor = null }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  let checks = []
   // API snake_case; savunmacı çift-okuma.
   const checksJson = check.checks_json ?? check.checksJson
   const outputTail = check.output_tail ?? check.outputTail
   const exitCode = check.exit_code ?? check.exitCode
-  try { if (checksJson) checks = JSON.parse(checksJson) } catch { /* bozuk json → boş liste */ }
+  const steps = stepsOf(check)
+  const thresholds = thresholdsOf(check)
+  const tls = tlsOf(check)
+  const runContext = runContextOf(check)
 
-  const label = exitLabel(t, exitCode)
+  // Süreç zaman aşımında çıkış etiketi ("Süreç başlatılamadı veya sonlandırıldı · exit -1") basılmaz (O6, 2026-10-31):
+  // süreç bilinçli sonlandırıldı, "başlatılamadı" yanıltıcıydı — kartın kuralıyla aynı.
+  const label = check.status === 'TIMEOUT' ? null : exitLabel(t, exitCode)
   const hint = exitHint(t, exitCode)
   const engineHint = diagnosisHint(t, check)
   const tone = isPass(check.status) ? 'success' : isWarnLike(check.status) ? 'warning' : 'danger'
+  // Bağlam çip olarak çizilecekse Türkçe "süreç bütçesi=…" satırı tekrar basılmaz (tanı ipuçları ham metne bakar).
+  const errorShown = runContext && check.error ? stripRunContext(check.error) : check.error
   const lines = outputTail ? outputTail.split('\n') : []
   const CLAMP = 12
   const clamped = !showAll && lines.length > CLAMP
   const shown = clamped ? lines.slice(0, CLAMP).join('\n') : outputTail
 
   return (
-    <div data-slot="check-detail" className="mt-3">
-      {checks.length > 0 && (
-        <ul className="m-0 mb-2.5 list-none p-0">
-          {checks.map((c, i) => (
-            <li key={i} className="border-b border-border py-1 text-[.92em]">
-              <span className={cn('font-bold', c.passed ? 'text-success' : 'text-destructive')}>{c.passed ? '✓' : '✗'}</span> {c.name}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div data-slot="check-detail" className="mt-3 flex min-w-0 flex-col gap-3">
+      <StepList steps={steps} truncated={stepsTruncated(check)} checksJson={checksJson} status={check.status} />
+      <ThresholdList thresholds={thresholds} />
 
-      {(check.error || label) && (
-        <AlertBanner tone={tone} title={t('scripted.errTitle')}>
-          {/* Çok satırlı hata = k6/Babel kod çerçevesi → monospace + yatay kaydırma, yoksa caret kayar. */}
-          {check.error && <ErrorText text={check.error} />}
+      {(errorShown || label) && (
+        <AlertBanner tone={tone} title={t('scripted.errTitle')} className="mb-0">
+          {/* Kod çerçevesi (caret satırı) → monospace + yatay kaydırma, yoksa caret kayar; diğer hatalar sarılır. */}
+          {errorShown && <ErrorText text={errorShown} />}
           {label && <div data-slot="exit-label" className="mt-1 text-[.9em] opacity-85">{label}{exitCode != null ? ` · exit ${exitCode}` : ''}</div>}
           {hint && <ErrHint>{hint}</ErrHint>}
           {engineHint && <ErrHint>{engineHint}</ErrHint>}
         </AlertBanner>
       )}
+      <RunContextChips context={runContext} />
+      <ScriptedFailureClass check={check} monitor={monitor} />
 
       <RequestPhases t={t} check={check} viaProxy={check.via_proxy ?? check.viaProxy ?? null} />
+      <TlsList tls={tls} />
 
       {outputTail && (
         // Katlanan teknik detay (eski .mhow-toggle aç-kapa) — shadcn Collapsible; kapalıyken içerik DOM'da yok.
-        <Collapsible open={openTech} onOpenChange={setOpenTech} className="mt-2.5">
+        <Collapsible open={openTech} onOpenChange={setOpenTech}>
           <CollapsibleTrigger asChild>
             <Button type="button" variant="ghost" className="w-full justify-start gap-2 px-3 font-semibold">
               <Terminal size={15} aria-hidden="true" className="text-violet-600 dark:text-violet-400" />
@@ -1739,7 +1984,16 @@ function CheckDetail({ t, check }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
+/**
+ * Ekle / Düzenle formu.
+ *
+ * DÜZEN (2026-10-31, k6r C — ilk kurulum): üstte kısa "Genel" (ad, takım, grup, açıklama, etiket), sonra "Senaryo"
+ * (kaynak / şablon → betik → ortam değişkenleri → Test + sonuç), katlanabilir "Zamanlama ve alarm" (aralık / cron /
+ * pencereler, zaman aşımı, teyit, kurtarma, yavaş alarm, vekil — varsayılanlarla KAPALI, içinde hatalı alan varsa
+ * açılır) ve en sonda bildirimler. Eskiden asıl iş formun en altındaydı: telefonda şablon seçiciye 4–5 ekran
+ * kaydırılıyordu. `useFormErrors` sırası bu düzene uyar (save()).
+ */
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, testLive = '', saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, addEnvNamed, markEnvSecret, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false, timingOpen = false, setTimingOpen, envWarnNames = [], savedSecrets = null }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1747,6 +2001,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
   const selectedTeamLabel =
     (teamSelectOptions || []).find(o => String(o.value) === String(form.teamId))?.label
     || teamName || t('app.noTeam')
+  const editMode = modal?.id != null
 
   // Gizli değeri gösterilebilecek değişken adları (2026-10-19): yalnız KAYITLI izlemede, sunucu satırı `can_reveal`
   // diyorsa ve değişken izlemenin GÜNCEL env'inde gizli + değeri kayıtlıysa (sunucu da yalnız güncel env'i çözer).
@@ -1756,10 +2011,11 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
       ? (modal.env || []).filter(e => e && e.secret && e.value_set && e.name).map(e => e.name)
       : []), [modal])
 
-  // Seçili kayıtlı script'in adı — "hangi monitörden yüklendi" notu için.
-  const selectedSavedName = form.template?.startsWith('saved:')
-    ? savedScripts.find(s => `saved:${s.id}` === form.template)?.name
-    : null
+  // Seçili kayıtlı script — "hangi monitörden yüklendi" notu YALNIZ BAŞKA izlemeden yüklemede (D1): düzenlenen izlemenin
+  // kendi gizli değerleri korunur, "taşınmaz" demek yanlış olurdu.
+  const selectedSaved = form.template?.startsWith('saved:')
+    ? savedScripts.find(s => `saved:${s.id}` === form.template) : null
+  const savedFromOther = selectedSaved && selectedSaved.id !== modal?.id ? selectedSaved : null
 
   // Cetvelde işaretlenecek satırlar: engelleyen hata + uyarılar + son koşum hatası.
   // k6 satır bilgisini ayrı bir alanda DÖNDÜRMÜYOR, metnin içinde geçiyor (bkz. utils/k6Errors).
@@ -1768,13 +2024,24 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
     [saveError, saveWarnings, testResult])
   const errorLines = useMemo(
     () => markers.filter(m => m.type === 'error').map(m => m.line), [markers])
+  // "N. satıra git" (hata metnindeki satır:sütun → düzenleyicide satırı seçer). Sıra numarası her basışta artar.
+  const [editorGoto, setEditorGoto] = useState(null)
+  const gotoLine = useCallback((line) => setEditorGoto(g => ({ line, seq: (g?.seq || 0) + 1 })), [])
+  const editorHintId = useId()
 
   // Seçici seçenekleri: kapsam grupları + yerleşiklerin kategori dalları, tek listede
   // (SearchableSelect `group` ile başlıklara böler, `collapsibleGroups` ile katlar).
   // Grup SIRASI çağıranın sorumluluğu — başlıklar bitişikliğe göre basılıyor (bkz. utils).
+  // Seçenekler açıklamayı (`hint`) da taşır ve sarar (`wrapLabels`): seçmeden ne işe yaradığı görünür (C).
   const scriptSourceOptions = buildScriptSourceOptions({
     savedScripts, templates, savedSourceId: savedSource?.id, lang, t,
   })
+
+  // Şablon değişken sihirbazı: seçili şablonun değişken açıklamaları satırların altında (C)
+  const selectedTpl = form.template?.startsWith('tpl:') ? resolveTemplate(templates, form.template.slice(4)) : null
+  const envDescs = useMemo(() => templateEnvDescs(selectedTpl, lang), [selectedTpl, lang])
+  // Canlı __ENV denetimi (istemcide, debounce)
+  const lint = useEnvLint(form.script, form.env)
 
   // Kurumsal vekilin ETKİN kararı — alanın ipucuna eklenir (aria-describedby ile bağlı kalır).
   // "AUTO seçtim, vekilden geçiyordur" varsayımı sahada dört sürüm boyunca yanlış teşhise sebep
@@ -1786,14 +2053,39 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
       ? <span className="mt-1 block">{t('scripted.useProxyEffectiveDirect')} <code className="text-[.95em] [word-break:break-all]">NO_PROXY={proxy.noProxy}</code></span>
       : null
 
+  // Zamanlama düzenleyicisi (dbquery ScheduleEditor — aynı bileşen, sentetik izlemenin önizleme ucuyla)
+  const scheduleValue = useMemo(() => scheduleEditorValue(form), [form.schedule, form.intervalSeconds])   // eslint-disable-line react-hooks/exhaustive-deps
+  const scheduleFieldErrors = scheduleErrorsOf(fe.errors)
+  const onScheduleChange = (patch) => {
+    setForm(f => {
+      const { interval_seconds: iv, ...rest } = patch || {}
+      const next = { ...f }
+      if ('interval_seconds' in (patch || {})) next.intervalSeconds = iv
+      if (Object.keys(rest).length) next.schedule = { ...(f.schedule || DEFAULT_SCRIPTED_SCHEDULE), ...rest }
+      return next
+    })
+    for (const k of SCHEDULE_ERROR_KEYS) fe.clear(k)
+  }
+  const timingErrorCount = TIMING_SECTION_KEYS.filter(k => fe.errors?.[k]).length
+  const timingSummary = [
+    scheduleSummary(scheduleValue, t),
+    t('scripted.f.sumTimeout', form.timeoutSeconds),
+    Number(form.confirmAttempts) > 0 ? t('scripted.f.sumConfirm', form.confirmAttempts) : t('scripted.f.sumNoConfirm'),
+    form.slowResponseEnabled ? t('scripted.f.sumSlow', form.slowThresholdMs) : null,
+    form.useProxy === 'ON' ? t('scripted.useProxyOn') : form.useProxy === 'OFF' ? t('scripted.useProxyOff') : null,
+  ].filter(Boolean).join(' · ')
+
+  // Sayısal alan: değişince kendi hatası kalkar
+  const numField = (key, patchValue) => { setForm(f => ({ ...f, [key]: patchValue })); fe.clear(key) }
+
   return (
-    <MonitorFormModal onClose={closeEdit} icon={FlaskConical} width={860}
+    <MonitorFormModal onClose={closeEdit} icon={FlaskConical} width={860} wrapTitle
       title={<>
         {modal.id ? t('scripted.modalEdit') : t('scripted.modalNew')}
         {modal.script_version && <VersionChip className="ml-2 align-middle">v{modal.script_version}</VersionChip>}
-        {/* Otomatik kayıt göstergesi: kullanıcı "kaydettim mi?" diye tereddüt etmesin. */}
+        {/* Otomatik kayıt göstergesi: kullanıcı "kaydettim mi?" diye tereddüt etmesin. Telefonda sarar (E9). */}
         {draftSavedAt && (
-          <span data-slot="draft-saved" className="ml-2.5 text-[11px] font-semibold text-success">
+          <span data-slot="draft-saved" className="ml-2.5 inline-block text-[11px] font-semibold whitespace-normal text-success">
             ✓ {t('scripted.autoSaved')} {draftSavedAt.toLocaleTimeString(lang === 'tr' ? 'tr-TR' : 'en-GB')}
           </span>
         )}
@@ -1803,13 +2095,11 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
       busyLabel={saving ? t('mon.saving') : testing ? t('scripted.testing') : null}
       footer={<>
         <div className="mr-auto flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={runTest} disabled={testing} aria-busy={testing || undefined}>
-            {testing ? <Spinner size={14} inline decorative /> : <FlaskConical size={14} aria-hidden="true" />}
-            {t('scripted.testRun')}</Button>
           {modal.id && canDelete && <Button variant="destructive" onClick={del}><Trash2 size={14} aria-hidden="true" />{t('scripted.delete')}</Button>}
         </div>
         <Button variant="secondary" onClick={closeEdit}>{t('scripted.cancel')}</Button>
-        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.name.trim() || !form.teamId || !form.groupName.trim()}>{t('scripted.save')}</Button>
+        {/* Kaydet alan yüzünden pasifleşmez (D3): basınca eksik / hatalı alanlar altında görünür, ilkine gidilir. */}
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving}>{t('scripted.save')}</Button>
       </>}>
       {dupSource && <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>}
 
@@ -1824,16 +2114,15 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
         </AlertBanner>
       )}
 
+      <div data-slot="sc-form" className="flex min-w-0 flex-col gap-6">
+      {/* ── Genel ── */}
+      <FormBlock title={t('scripted.f.secGeneral')} icon={IdCard} slot="sc-sec-general">
       <FormGrid>
-        <FormField full label={t('scripted.name')} required {...fe.fieldProps('name')}>
-          {({ id }) => (
-            <Input id={id} value={form.name} autoFocus={!!dupSource}
+        <FormField full label={t('scripted.name')} required {...fe.fieldProps('name')}
+          hint={form.nameAuto && form.name === form.nameAuto ? t('scripted.f.nameFromTemplate') : undefined}>
+          {({ id, describedBy, invalid }) => (
+            <Input id={id} value={form.name} autoFocus={!!dupSource} aria-describedby={describedBy} aria-invalid={invalid}
               onChange={e => { setForm(f => ({ ...f, name: e.target.value })); fe.clear('name') }} />
-          )}
-        </FormField>
-        <FormField full label={t('scripted.description')}>
-          {({ id }) => (
-            <Input id={id} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           )}
         </FormField>
 
@@ -1857,60 +2146,10 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
               placeholder={t('scripted.groupPick')} />
           )}
         </FormField>
-        <NotifyChannels locked={routingLock}
-          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-          onChange={patch => setForm(f => ({ ...f, ...patch }))}
-          teamLabel={selectedTeamLabel} teamId={form.teamId}
-          groupId={form.notificationGroupId}
-          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-        <NocNotifyField disabled={routingLock} type="SCRIPTED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={canOpenSettings}
-          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
 
-        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-        <FormField label={t('scripted.timeout')} hint={t('scripted.timeoutHint')}>
-          {({ id, describedBy }) => (
-            <Input id={id} aria-describedby={describedBy} type="number" min="5" max="180" value={form.timeoutSeconds}
-              onChange={e => setForm(f => ({ ...f, timeoutSeconds: e.target.value }))} />
-          )}
-        </FormField>
-        <FormField label={t('scripted.confirmAttempts')} hint={t('scripted.confirmHint')}>
-          {({ id, describedBy }) => (
-            <Input id={id} aria-describedby={describedBy} type="number" min="0" max="10" value={form.confirmAttempts}
-              onChange={e => setForm(f => ({ ...f, confirmAttempts: e.target.value }))} />
-          )}
-        </FormField>
-        <FormField label={t('scripted.recoveryChecks')} hint={t('scripted.recoveryHint')}>
-          {({ id, describedBy }) => (
-            <Input id={id} aria-describedby={describedBy} type="number" min="1" max="10" value={form.recoveryChecks}
-              onChange={e => setForm(f => ({ ...f, recoveryChecks: e.target.value }))} />
-          )}
-        </FormField>
-
-        {/* Yavaş koşum alarmı (SCRIPTED_SLOW) — opt-in. Senaryo GEÇİYOR ama yavaşlıyorsa
-            kesinti alarmı hiç açılmaz; bu eşik o sessiz bozulmayı görünür kılar. Teyit/kurtarma
-            sayıları kesinti alarmıyla ORTAKTIR (aynı 3× doğrulama üssel zinciri). */}
-        <CheckField full checked={!!form.slowResponseEnabled}
-          onCheckedChange={v => setForm(f => ({ ...f, slowResponseEnabled: v }))} label={t('scripted.slowEnabled')} />
-        <FormField label={t('scripted.slowThreshold')} hint={t('scripted.slowThresholdHint')}>
-          {({ id, describedBy }) => (
-            <Input id={id} aria-describedby={describedBy} type="number" min="500" max="180000" step="500" value={form.slowThresholdMs}
-              disabled={!form.slowResponseEnabled}
-              onChange={e => setForm(f => ({ ...f, slowThresholdMs: e.target.value }))} />
-          )}
-        </FormField>
-
-        {/* Kurumsal vekil — k6 alt süreci uzun süre vekil ayarlarını HİÇ almıyordu; vekil zorunlu
-            ortamda her koşum sebepsiz "request timeout" ile düşüyordu. */}
-        <FormField label={t('scripted.useProxy')} hint={<>{t('scripted.useProxyHint')}{proxyNote}</>}>
-          {({ id, describedBy }) => (
-            <NativeSelect id={id} aria-describedby={describedBy} value={form.useProxy || 'AUTO'}
-              onChange={e => setForm(f => ({ ...f, useProxy: e.target.value }))}>
-              <NativeSelectOption value="AUTO">{t('scripted.useProxyAuto')}</NativeSelectOption>
-              <NativeSelectOption value="ON">{t('scripted.useProxyOn')}</NativeSelectOption>
-              <NativeSelectOption value="OFF">{t('scripted.useProxyOff')}</NativeSelectOption>
-            </NativeSelect>
+        <FormField full label={t('scripted.description')}>
+          {({ id }) => (
+            <Input id={id} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
           )}
         </FormField>
 
@@ -1919,6 +2158,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
           <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('scripted.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
+        <CheckField full checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('scripted.active')} />
+      </FormGrid>
+      </FormBlock>
+
+      {/* ── Senaryo: kaynak → betik → değişkenler → Test + sonuç ── */}
+      <FormBlock title={t('scripted.f.secScenario')} icon={FileCode2} description={t('scripted.f.secScenarioHint')} slot="sc-sec-scenario">
+      <FormGrid>
         {/* Script kaynağı — KAYITLI script'ler ve ŞABLONLAR ayrı gruplarda; ikisi karışmasın.
             Kayıtlı script'ler sayfada zaten yüklü listeden gelir (ek API yok) ve liste görme
             yetkisiyle süzülüdür. Boş seçenek YALNIZ yeni monitörde: düzenleme modunda
@@ -1938,12 +2184,12 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
               options={scriptSourceOptions}
               placeholder={t('scripted.templatePick')}
               collapsibleGroups
+              wrapLabels
             />
           </div>
-          {form.template?.startsWith('tpl:') &&
-            <ScriptedTemplateInfo tpl={resolveTemplate(templates, form.template.slice(4))} lang={lang} t={t} />}
-          {form.template?.startsWith('saved:') && selectedSavedName &&
-            <FieldDescription className="text-xs">{t('scripted.srcFromMonitor', selectedSavedName)}</FieldDescription>}
+          {selectedTpl && <ScriptedTemplateInfo tpl={selectedTpl} lang={lang} t={t} />}
+          {savedFromOther &&
+            <FieldDescription className="text-xs">{t('scripted.srcFromMonitor', savedFromOther.name)}</FieldDescription>}
         </FormSection>
 
         {/* Script editörü — sürüm rozeti başlığın YANINDA: kullanıcı sözdizimini seçerken görsün. */}
@@ -1954,68 +2200,53 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
                 (kaydırma + seçimi kaçırma). Boşken düğme HİÇ çizilmez: copyText('') zaten
                 false döner ve onay ikonu hiç gelmez — ölü bir düğme bırakmayalım. */}
             {(form.script || '').trim() &&
-              <CopyButton value={form.script} variant="secondary"
+              <CopyButton value={form.script} variant="secondary" className="pointer-coarse:size-10"
                 label={t('scripted.scriptCopy')} copiedLabel={t('scripted.scriptCopied')} />}
           </>}>
           <CodeEditor value={form.script} onChange={code => setForm(f => ({ ...f, script: code }))}
-            placeholder={t('scripted.scriptPlaceholder')} markers={markers} revealMarkers />
-          <FieldDescription className="text-xs">{t('scripted.scriptHint')}</FieldDescription>
+            placeholder={t('scripted.scriptPlaceholder')} markers={markers} revealMarkers
+            ariaLabel={t('scripted.f.editorLabel')} ariaDescribedBy={editorHintId} gotoLine={editorGoto} />
+          <FieldDescription id={editorHintId} className="text-xs">{t('scripted.scriptHint')} {t('scripted.f.editorKeys')}</FieldDescription>
+          {/* Kaydetmeyi ENGELLEYEN hata: kod çerçevesi hizasını koruyan çerçeveyle KALICI, betiğin hemen altında.
+              Eskiden yalnız 5 sn'lik toast'taydı ve `\n`'ler ezildiği için caret hizası kayboluyordu. */}
+          {saveError &&
+            <AlertBanner className="mb-0" tone="danger" title={t('scripted.saveBlockedTitle')}>
+              <ErrorText text={saveError} />
+              {errorLines.length > 0 &&
+                <ErrHint>{t('scripted.saveBlockedLine', errorLines.join(', '))}</ErrHint>}
+              <GotoLineButton t={t} text={saveError} onGoto={gotoLine} />
+            </AlertBanner>}
+          {/* Kaydetme uyarıları — inline ve KALICI (toast değil): kullanıcı düzeltene kadar durmalı. */}
+          {saveWarnings?.length > 0 &&
+            <AlertBanner className="mb-0" tone="warning" title={t('scripted.saveWarnTitle')}>
+              <ul className="m-0 list-disc pl-4">{saveWarnings.map((w, i) => <li key={i} className="my-0.5 [overflow-wrap:anywhere]">{w}</li>)}</ul>
+            </AlertBanner>}
         </FormSection>
 
-        {/* Koşum sonucu — script bloğunun HEMEN ALTINDA: "üstte seçili script → altında ona ait
-            sonuç" bağı görünür olsun. Eskiden formun en altındaydı; kullanıcı script'i
-            değiştirdiğinde bayat panel çoğu zaman ekranın dışında kalıyordu.
-            Kaynak etiketi ŞART: "az önce test mi koşturdum, kayıtlı son kontrol mü?" ayrımı. */}
-        {testResult &&
-          <div data-slot="test-run" className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <Badge variant="outline" data-slot="run-source"
-                className="bg-muted/60 text-[10.5px] font-bold tracking-[.04em] text-muted-foreground uppercase">
-                {testResult._source === 'lastCheck' ? t('scripted.runSourceLast')
-                  : testResult._source === 'smoke' ? t('scripted.runSourceSmoke')
-                  : t('scripted.runSourceTest')}
-              </Badge>
-              <span data-slot="run-status" className={cn('font-bold', STATUS_TONE[testResult.status])}>
-                {statusLabel(t, testResult.status)}</span>
-              {checksSummary(t, testResult) &&
-                <span className="text-[.9em] text-muted-foreground"><ChecksSummary t={t} check={testResult} /></span>}
-              {testResult.duration_ms != null && <span className="text-[.9em] text-muted-foreground">· {testResult.duration_ms} ms</span>}
-              {exitLabel(t, testResult.exit_code) &&
-                <span className="text-[.9em] text-muted-foreground">· {exitLabel(t, testResult.exit_code)}</span>}
-              {testResult._checkedAt &&
-                <span className="text-[.9em] text-muted-foreground">· {formatDateSec(testResult._checkedAt)}</span>}
-              {testResult.output_tail &&
-                <CopyButton value={testResult.output_tail} label={t('scripted.errCopy')} copiedLabel={t('scripted.errCopied')} />}
-            </div>
-            {testResult.error &&
-              <AlertBanner className="mb-0" tone={isPass(testResult.status) ? 'success' : isWarnLike(testResult.status) ? 'warning' : 'danger'}>
-                <ErrorText text={testResult.error} />
-                {exitHint(t, testResult.exit_code) && <ErrHint>{exitHint(t, testResult.exit_code)}</ErrHint>}
-                {/* Kaydetmeden ÖNCE görülmeli: sözdizimi duvarına çarpan kullanıcı burada anlasın. */}
-                {diagnosisHint(t, testResult) &&
-                  <ErrHint>{diagnosisHint(t, testResult)}</ErrHint>}
-              </AlertBanner>}
-            <RequestPhases t={t} check={testResult} viaProxy={testResult.via_proxy ?? null} />
-            {testResult.output_tail && <pre className={cn(OUTPUT_PRE, 'max-h-[260px]')}>{testResult.output_tail}</pre>}
-          </div>}
-
-        {/* Env değişkenleri */}
-        <FormSection title={t('scripted.env')}>
+        {/* Env değişkenleri — şablonun değişken açıklamaları, "Hedef: host" önizlemesi, "kayıtlı değerle" rozeti satırın
+            altında; betik ↔ değişken denetimi çipleri listenin altında. */}
+        <FormSection title={t('scripted.env')} {...fe.fieldProps('env')}>
           {form.env.length > 0 &&
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {form.env.map((e, i) => (
                 <EnvRow key={i} t={t} row={e} onPatch={patch => setEnvRow(i, patch)} onDelete={() => delEnvRow(i)}
-                  reveal={e.secret && revealNames.has(e.name) ? { monitorId: modal.id, name: e.name } : null} />
+                  secretSet={hasSavedSecret(e, savedSecrets ?? undefined)}
+                  reveal={e.secret && revealNames.has(e.name) ? { monitorId: modal.id, name: e.name } : null}
+                  notes={{
+                    desc: envDescs.get((e.name || '').trim()) || null,
+                    host: e.secret ? null : targetHostOf(e.name, e.value),
+                    savedValue: usesSavedSecret(e, editMode, savedSecrets ?? undefined),
+                  }} />
               ))}
             </div>}
-          <Button type="button" variant="secondary" size="sm" className="self-start" onClick={addEnvRow}>
+          <Button type="button" variant="secondary" size="sm" className="self-start pointer-coarse:h-10" onClick={addEnvRow}>
             <Plus size={13} aria-hidden="true" /> {t('scripted.envAdd')}
           </Button>
+          <EnvLintChips t={t} lint={lint} onAdd={addEnvNamed} onMakeSecret={markEnvSecret} />
+          <EmptyEnvWarning t={t} names={envWarnNames.filter(n => form.env.some(e => (e.name || '').trim() === n && !(e.value || '').trim() && !hasSavedSecret(e, savedSecrets ?? undefined)))} />
           <FieldDescription className="text-xs">{t('scripted.envHint')}</FieldDescription>
           {revealNames.size > 0 && <FieldDescription className="text-xs" data-slot="env-reveal-hint">{t('scripted.envRevealHint')}</FieldDescription>}
         </FormSection>
-
-        <CheckField full checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('scripted.active')} />
 
         {/* Sürüm artışı — YALNIZ mevcut monitörde anlamlı (yeni kayıt daima 1.0.0 ile doğar). */}
         {modal.id && (
@@ -2030,20 +2261,22 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
           </FormField>
         )}
 
-        {/* Kaydetme uyarıları — inline ve KALICI (toast değil): kullanıcı düzeltene kadar durmalı. */}
-        {/* Kaydetmeyi ENGELLEYEN hata: kod çerçevesi hizasını koruyan çerçeveyle KALICI.
-            Eskiden yalnız 5 sn'lik toast'taydı ve `\n`'ler ezildiği için caret hizası kayboluyordu. */}
-        {saveError &&
-          <AlertBanner className="mb-0 sm:col-span-2" tone="danger" title={t('scripted.saveBlockedTitle')}>
-            <ErrorText text={saveError} />
-            {errorLines.length > 0 &&
-              <ErrHint>{t('scripted.saveBlockedLine', errorLines.join(', '))}</ErrHint>}
-          </AlertBanner>}
+        {/* Test — senaryonun içinde, değişkenlerin hemen altında: "doldur → dene" akışı tek yerde. */}
+        <div data-slot="sc-test-bar" className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={runTest} disabled={testing} aria-busy={testing || undefined} className="pointer-coarse:h-10">
+              {testing ? <Spinner size={14} inline decorative /> : <FlaskConical size={14} aria-hidden="true" />}
+              {t('scripted.testRun')}</Button>
+            <span className="min-w-0 flex-1 basis-56 text-xs text-muted-foreground">
+              {editMode ? t('scripted.f.testHintEdit') : t('scripted.f.testHintNew')}
+            </span>
+          </div>
+          <p className="sr-only" aria-live="polite" data-slot="test-live">{testLive}</p>
+        </div>
 
-        {saveWarnings?.length > 0 &&
-          <AlertBanner className="mb-0 sm:col-span-2" tone="warning" title={t('scripted.saveWarnTitle')}>
-            <ul className="m-0 list-disc pl-4">{saveWarnings.map((w, i) => <li key={i} className="my-0.5">{w}</li>)}</ul>
-          </AlertBanner>}
+        {/* Koşum sonucu — test düğmesinin HEMEN ALTINDA. Kaynak etiketi ŞART: "az önce test mi koşturdum,
+            kayıtlı son kontrol mü?" ayrımı. */}
+        {testResult && <TestRunPanel t={t} result={testResult} onGoto={gotoLine} />}
 
         {/* Kaydetme sonrası doğrulama koşumu. Sürüm ZATEN kaydedildi — metin bunu söylüyor
             ve "Kapat" her an açık: koşum sunucuda sürer, sonucu Kontrol Geçmişi'ne düşer. */}
@@ -2064,26 +2297,236 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
           </AlertBanner>
         )}
       </FormGrid>
+      </FormBlock>
+
+      {/* ── Zamanlama ve alarm (katlanabilir; hatalı alan varsa açılır) ── */}
+      <TimingBlock title={t('scripted.f.secTiming')} summary={timingSummary}
+        open={timingOpen} onOpenChange={setTimingOpen}
+        errorCount={timingErrorCount} invalidText={t('scripted.f.secInvalid', timingErrorCount)}>
+      <FormGrid>
+        {/* Aralık / cron + izinli / yasak pencereler + tatil + ek tarihler + canlı önizleme (dbquery ile aynı bileşen) */}
+        <div data-slot="sc-schedule" className="min-w-0 sm:col-span-2">
+          <ScheduleEditor value={scheduleValue} onChange={onScheduleChange} fieldErrors={scheduleFieldErrors}
+            minIntervalSeconds={SCRIPTED_MIN_INTERVAL} canEditHolidays={canOpenSettings}
+            previewApi={api.monitoring.scriptedSchedulePreview} />
+        </div>
+        <FormField label={t('scripted.timeout')} hint={t('scripted.timeoutHint')} {...fe.fieldProps('timeoutSeconds')}>
+          {({ id, describedBy, invalid }) => (
+            <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" min="5" max="180" value={form.timeoutSeconds}
+              onChange={e => numField('timeoutSeconds', e.target.value)} />
+          )}
+        </FormField>
+        <FormField label={t('scripted.confirmAttempts')} hint={t('scripted.confirmHint')} {...fe.fieldProps('confirmAttempts')}>
+          {({ id, describedBy, invalid }) => (
+            <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" min="0" max="10" value={form.confirmAttempts}
+              onChange={e => numField('confirmAttempts', e.target.value)} />
+          )}
+        </FormField>
+        <FormField label={t('scripted.recoveryChecks')} hint={t('scripted.recoveryHint')} {...fe.fieldProps('recoveryChecks')}>
+          {({ id, describedBy, invalid }) => (
+            <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" min="1" max="10" value={form.recoveryChecks}
+              onChange={e => numField('recoveryChecks', e.target.value)} />
+          )}
+        </FormField>
+
+        {/* Yavaş koşum alarmı (SCRIPTED_SLOW) — opt-in. Senaryo GEÇİYOR ama yavaşlıyorsa
+            kesinti alarmı hiç açılmaz; bu eşik o sessiz bozulmayı görünür kılar. Teyit/kurtarma
+            sayıları kesinti alarmıyla ORTAKTIR (aynı 3× doğrulama üssel zinciri). */}
+        <CheckField full checked={!!form.slowResponseEnabled}
+          onCheckedChange={v => { setForm(f => ({ ...f, slowResponseEnabled: v })); fe.clear('slowThresholdMs') }} label={t('scripted.slowEnabled')} />
+        <FormField label={t('scripted.slowThreshold')} hint={t('scripted.slowThresholdHint')} {...fe.fieldProps('slowThresholdMs')}>
+          {({ id, describedBy, invalid }) => (
+            <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" min="500" max="180000" step="500" value={form.slowThresholdMs}
+              disabled={!form.slowResponseEnabled}
+              onChange={e => numField('slowThresholdMs', e.target.value)} />
+          )}
+        </FormField>
+
+        {/* Kurumsal vekil — k6 alt süreci uzun süre vekil ayarlarını HİÇ almıyordu; vekil zorunlu
+            ortamda her koşum sebepsiz "request timeout" ile düşüyordu. */}
+        <FormField label={t('scripted.useProxy')} hint={<>{t('scripted.useProxyHint')}{proxyNote}</>}>
+          {({ id, describedBy }) => (
+            <NativeSelect id={id} aria-describedby={describedBy} value={form.useProxy || 'AUTO'}
+              onChange={e => setForm(f => ({ ...f, useProxy: e.target.value }))}>
+              <NativeSelectOption value="AUTO">{t('scripted.useProxyAuto')}</NativeSelectOption>
+              <NativeSelectOption value="ON">{t('scripted.useProxyOn')}</NativeSelectOption>
+              <NativeSelectOption value="OFF">{t('scripted.useProxyOff')}</NativeSelectOption>
+            </NativeSelect>
+          )}
+        </FormField>
+      </FormGrid>
+      </TimingBlock>
+
+      {/* ── Bildirimler ── */}
+      <FormBlock title={t('scripted.f.secNotify')} icon={Bell} slot="sc-sec-notify">
+      <FormGrid>
+        <NotifyChannels locked={routingLock}
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField disabled={routingLock} type="SCRIPTED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={canOpenSettings}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+      </FormGrid>
+      </FormBlock>
+      </div>
     </MonitorFormModal>
+  )
+}
+
+/** Hata sınıfı kodunun kısa metni (`chkfail.<kod>.short`); sözlükte yoksa (eski istemci / yeni kod) hiçbir şey. */
+function failureReasonText(t, code) {
+  if (!code || typeof code !== 'string') return null
+  const key = `chkfail.${code}.short`
+  const text = t(key)
+  return text && text !== key ? text : null
+}
+
+/**
+ * Formdaki koşum sonucu paneli (Test / son kontrol / kayıt sonrası doğrulama).
+ *
+ * 2026-10-31 (k6r C): sonuç gelince panel görünür alana kayar ve odak alır (telefonda kullanıcı düğmeye basıp "hiçbir
+ * şey olmadı" sanıyordu); adım listesi (yanıtta `steps` varsa adım adım süre + ✓/✗, yoksa `checks_json` listesi —
+ * paylaşılan StepList); ERROR / TIMEOUT'ta "senaryo şu adımdan sonra durdu"; hata sınıfı (`failure_reason`,
+ * `chkfail.*`, dil doğru); koşum bağlamı çipleri (`run_context` — varsa hata metnindeki Türkçe bağlam satırı
+ * düşer); sözdizimi hatasında "N. satıra git". Kayıtlı gizli değerle test: kullanılan adlar / eski pod notu.
+ */
+function TestRunPanel({ t, result, onGoto }) {
+  const ref = useRef(null)
+  const runId = result?._runId
+  // Yalnız YENİ test sonucu kaydırır / odaklar (düzenleme açılışındaki "son kontrol" paneli kaydırma çalmaz)
+  useEffect(() => {
+    if (runId == null || result?._source !== 'test' || !result?._focus) return
+    const el = ref.current
+    if (!el) return
+    try {
+      const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+      el.scrollIntoView?.({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
+    } catch { /* jsdom */ }
+    try { el.focus?.({ preventScroll: true }) } catch { /* odaklanamaz */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId])
+
+  const refused = !!result._refused
+  // Yapılandırılmış bağlam varsa Türkçe bağlam satırı + ters bütçe cümlesi düşer (çipler söyler) — ayrıntı penceresiyle
+  // aynı kural (fe2 `stripRunContext`); bağlam yoksa (eski sunucu) metin AYNEN kalır.
+  const shownError = result.run_context && result.error ? stripRunContext(result.error) : result.error
+  // Yeni test sonucu odak alırsa ekran okuyucu paneli bu adla okur (canlı bölge o durumda boş kalır)
+  const focusName = result._source === 'test' && result._focus
+    ? (refused ? t('scripted.f.testRefusedLive') : t('scripted.f.testDone', statusLabel(t, result.status))) : undefined
+  const reason = failureReasonText(t, result.failure_reason)
+  // Adım listesi (`steps`) varsa "şu adımdan sonra durdu" notunu paylaşılan StepList yazar; burada yalnız
+  // adımsız (eski sunucu / `checks_json`) sonuçta gösterilir — aynı not iki kez çıkmasın.
+  const stepRows = Array.isArray(result.steps) && result.steps.length > 0
+  const stop = stepRows ? null : stopPoint(result)
+  const stepName = (n) => (n ? n : t('scripted.f.stepRoot'))
+  const hasSteps = Array.isArray(result.steps) || !!(result.checks_json ?? result.checksJson)
+  // TIMEOUT'ta çıkış etiketi ("Süreç başlatılamadı…") yanıltıcı — kartla aynı kural, gösterilmez
+  const exit = result.status !== 'TIMEOUT' ? exitLabel(t, result.exit_code) : null
+  const fileReads = Array.isArray(result.file_reads) ? result.file_reads.filter(Boolean) : []
+  const warnings = Array.isArray(result.warnings) ? result.warnings.filter(w => typeof w === 'string' && w) : []
+  const kept = Array.isArray(result.kept_secrets) ? result.kept_secrets.filter(Boolean) : []
+
+  return (
+    <div ref={ref} tabIndex={-1} data-slot="test-run" data-refused={refused ? 'true' : undefined}
+      role={focusName ? 'group' : undefined} aria-label={focusName}
+      className="flex min-w-0 flex-col gap-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:col-span-2">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Badge variant="outline" data-slot="run-source"
+          className="bg-muted/60 text-[10.5px] font-bold tracking-[.04em] text-muted-foreground uppercase">
+          {result._source === 'lastCheck' ? t('scripted.runSourceLast')
+            : result._source === 'smoke' ? t('scripted.runSourceSmoke')
+            : t('scripted.runSourceTest')}
+        </Badge>
+        {refused
+          ? <span data-slot="run-status" className="font-bold text-destructive">{t('scripted.f.testRefused')}</span>
+          : <span data-slot="run-status" className={cn('font-bold', STATUS_TONE[result.status])}>{statusLabel(t, result.status)}</span>}
+        {!refused && checksSummary(t, result) &&
+          <span className="text-[.9em] text-muted-foreground"><ChecksSummary t={t} check={result} /></span>}
+        {result.duration_ms != null && <span className="text-[.9em] text-muted-foreground">· {result.duration_ms} ms</span>}
+        {exit && <span className="text-[.9em] text-muted-foreground">· {exit}</span>}
+        {result._checkedAt &&
+          <span className="text-[.9em] text-muted-foreground">· {formatDateSec(result._checkedAt)}</span>}
+        {reason && (
+          <Badge variant="outline" data-slot="run-failure-reason"
+            className="h-auto rounded-md overflow-visible font-normal whitespace-normal [overflow-wrap:anywhere]">
+            {t('scripted.f.failureReason', reason)}
+          </Badge>
+        )}
+        {result.output_tail &&
+          <CopyButton value={result.output_tail} label={t('scripted.errCopy')} copiedLabel={t('scripted.errCopied')} className="pointer-coarse:size-10" />}
+      </div>
+
+      {/* Kayıtlı gizli değerle test (B1): kullanılan adlar; yanıt alanı tanımıyorsa (eski pod) değerler gitmedi */}
+      {result._keptIgnored && (
+        <AlertBanner className="mb-0" tone="warning">
+          <span data-slot="kept-ignored">{t('scripted.f.keptIgnored')}</span>
+        </AlertBanner>
+      )}
+      {!result._keptIgnored && kept.length > 0 && (
+        <p data-slot="kept-used" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('scripted.f.keptUsed', kept.join(', '))}</p>
+      )}
+
+      {result.error &&
+        <AlertBanner className="mb-0" title={refused ? t('scripted.f.testRefusedTitle') : undefined}
+          tone={isPass(result.status) ? 'success' : isWarnLike(result.status) ? 'warning' : 'danger'}>
+          <ErrorText text={shownError} />
+          {!refused && exitHint(t, result.exit_code) && <ErrHint>{exitHint(t, result.exit_code)}</ErrHint>}
+          {/* Kaydetmeden ÖNCE görülmeli: sözdizimi duvarına çarpan kullanıcı burada anlasın. */}
+          {!refused && diagnosisHint(t, result) &&
+            <ErrHint>{diagnosisHint(t, result)}</ErrHint>}
+          {fileReads.length > 0 &&
+            <ErrHint><span data-slot="file-reads">{t('scripted.f.fileReads', fileReads.join(', '))}</span></ErrHint>}
+          <GotoLineButton t={t} text={result.error} onGoto={onGoto} />
+        </AlertBanner>}
+
+      {warnings.length > 0 && (
+        <AlertBanner className="mb-0" tone="warning" title={t('scripted.f.testWarnTitle')}>
+          <ul data-slot="test-warnings" className="m-0 list-disc pl-4">{warnings.map((w, i) => <li key={i} className="my-0.5 [overflow-wrap:anywhere]">{w}</li>)}</ul>
+        </AlertBanner>
+      )}
+
+      {stop && (stop.after != null || stop.at != null) && (
+        <p data-slot="stop-point" className="m-0 text-sm [overflow-wrap:anywhere]">
+          {stop.after != null && <span>{t('scripted.f.stopAfter', stepName(stop.after))}</span>}
+          {stop.after != null && stop.at != null && ' · '}
+          {stop.at != null && <span>{t('scripted.f.stopAt', stepName(stop.at))}</span>}
+        </p>
+      )}
+
+      <RunContextChips context={result.run_context} />
+
+      {/* Adım listesi — paylaşılan bileşen (CheckDetail ile aynı): `steps` yoksa `checks_json` listesi */}
+      {hasSteps && (
+        <StepList steps={Array.isArray(result.steps) ? result.steps : undefined} truncated={!!result.steps_truncated}
+          checksJson={result.checks_json ?? result.checksJson} status={result.status} />
+      )}
+
+      <RequestPhases t={t} check={result} viaProxy={result.via_proxy ?? null} />
+      {result.output_tail && <pre className={cn(OUTPUT_PRE, 'max-h-[260px]')}>{result.output_tail}</pre>}
+    </div>
   )
 }
 
 /**
  * Tek env satırı: ad + değer + "gizli" kutusu + sil (şablon editöründeki EnvRow'un DEĞERLİ kardeşi).
  * shadcn Input / Checkbox + Label / ikon Button (ipucu Tooltip). Test kancası: data-slot="env-row".
+ * Satırın altında notlar (2026-10-31): şablonun değişken açıklaması, "Hedef: host", "kayıtlı değerle" rozeti.
  */
-function EnvRow({ t, row, onPatch, onDelete, reveal = null }) {
+function EnvRow({ t, row, onPatch, onDelete, reveal = null, notes = null, secretSet = undefined }) {
   const secretId = useId()
   // Gizli değeri göster (2026-10-19): yalnız sunucunun izin verdiği, değeri KAYITLI gizli satırda; değer forma girmez
   const secret = useSecretReveal(reveal)
   // Mobil-önce: telefonda ad TEK satırı kaplar, değer + "Gizli" + sil alt satırda; sm ve üstünde tek satır.
   return (
-    <>
+    <div className="flex min-w-0 flex-col gap-1.5">
     <div data-slot="env-row" className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
       <Input className="w-full min-w-0 sm:w-auto sm:flex-1" placeholder={t('scripted.envName')} aria-label={t('scripted.envName')} value={row.name}
         onChange={ev => onPatch({ name: ev.target.value })} />
       <Input className="min-w-0 flex-[2]" type={row.secret ? 'password' : 'text'} autoComplete="new-password"
-        placeholder={row.secret ? (row.value_set ? t('scripted.envSecretSet') : t('scripted.envSecretEmpty')) : t('scripted.envValue')}
+        placeholder={row.secret ? ((secretSet ?? row.value_set) ? t('scripted.envSecretSet') : t('scripted.envSecretEmpty')) : t('scripted.envValue')}
         aria-label={t('scripted.envValue')} value={row.value} onChange={ev => onPatch({ value: ev.target.value })} />
       <div className="flex shrink-0 items-center gap-1.5">
         {/* Değer KORUNUR. Eskiden `value: ''` yazılıyordu: kullanıcı 200 karakterlik bir token
@@ -2092,7 +2535,7 @@ function EnvRow({ t, row, onPatch, onDelete, reveal = null }) {
             env sunucuda BOŞ kalıyor, script `__ENV.X = undefined` ile 401 alıyordu. Gizlilik zaten
             gösterimde (`type=password`) ve saklamada (şifreli) sağlanıyor. */}
         <Checkbox id={secretId} checked={!!row.secret} onCheckedChange={v => onPatch({ secret: v === true })} />
-        <Label htmlFor={secretId} className="gap-1 text-xs font-semibold whitespace-nowrap text-muted-foreground">
+        <Label htmlFor={secretId} className="gap-1 text-xs font-semibold whitespace-nowrap text-muted-foreground pointer-coarse:min-h-10">
           {row.secret ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}{t('scripted.envSecret')}
         </Label>
       </div>
@@ -2100,12 +2543,13 @@ function EnvRow({ t, row, onPatch, onDelete, reveal = null }) {
       <SimpleTooltip content={t('scripted.delete')}>
         {/* Dokunma hedefi telefonda 40 px (RESPONSIVE.md §4), masaüstünde sıkı 32 px. */}
         <Button type="button" variant="outline" size="icon"
-          className="size-10 shrink-0 hover:border-destructive hover:bg-destructive/10 hover:text-destructive sm:size-8"
+          className="size-10 shrink-0 hover:border-destructive hover:bg-destructive/10 hover:text-destructive sm:size-8 pointer-coarse:sm:size-10"
           aria-label={t('a11y.rowAction', row.name || t('scripted.envName'), t('scripted.delete'))}
           onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></Button>
       </SimpleTooltip>
     </div>
+    {notes && <EnvRowNotes t={t} desc={notes.desc} host={notes.host} savedValue={notes.savedValue} />}
     {reveal && <SecretRevealPanel t={t} name={row.name} state={secret.state} onHide={secret.hide} />}
-    </>
+    </div>
   )
 }

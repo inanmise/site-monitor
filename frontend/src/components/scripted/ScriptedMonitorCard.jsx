@@ -50,7 +50,10 @@ export default function ScriptedMonitorCard({
   const paused = m.active === false
   const compact = density === 'compact'
   const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length)
-  const alarmLabel = `${t('scripted.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
+  // Ekran okuyucu etiketi seviyenin ADINI söyler ("Açık alarm — Yüksek"), ham kodu değil (E1, 2026-10-31)
+  const levelKey = m.alarm_level ? `notify.level.${m.alarm_level}` : null
+  const levelName = levelKey && t(levelKey) !== levelKey ? t(levelKey) : m.alarm_level
+  const alarmLabel = `${t('scripted.activeAlarm')}${levelName ? ' — ' + levelName : ''}`
   return (
     <MonitorCard status={status} density={density} running={running} alarm={alarm} inactive={paused}
       noc={{ type: 'SCRIPTED', monitor: m, rowLabel: m.name, canEdit }}

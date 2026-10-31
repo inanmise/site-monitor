@@ -600,6 +600,44 @@ public final class MonitoringMetricsModel {
         for (Map.Entry<String, Long> e : agg.entrySet()) f.add(MonitoringMetricNames.PUSH_DELIVERIES, e.getValue(), "status", e.getKey());
     }
 
+    // ── Sentetik izleme koşumları (k6r D3, 2026-10-31) ──────────────────────────────────────────────────────
+
+    /** Sonuç sınıfları (sıfırlar dahil yazılır); tanınmayan durum {@code OTHER} (yalnız varsa). */
+    static final List<String> SCRIPTED_RUN_STATUSES = List.of("PASS", "FAIL", "ERROR", "TIMEOUT", "NO_CHECKS");
+    /** k6 sürümü etiketi tavanı — en çok koşanlar ayrı, kalanı {@code other} (etiket patlaması yok). */
+    static final int MAX_K6_VERSIONS = 20;
+
+    /**
+     * Son 24 sa zamanlanmış sentetik koşumlar — satırlar {@code [durum, k6 sürümü, sayı]} (tek gruplu sorgu). İki aile: sonuca
+     * göre ({@link MonitoringMetricNames#SCRIPTED_RUNS}, beş sınıf sıfırlar dahil) ve sürüme göre
+     * ({@link MonitoringMetricNames#SCRIPTED_K6_VERSIONS}; sürümsüz = {@code unknown}, en çok {@link #MAX_K6_VERSIONS} sürüm).
+     */
+    public static void scriptedRuns(Families f, List<Object[]> rows) {
+        Map<String, Long> byStatus = new LinkedHashMap<>();
+        for (String s : SCRIPTED_RUN_STATUSES) byStatus.put(s, 0L);
+        Map<String, Long> byVersion = new TreeMap<>();
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            if (r == null || r.length < 3) continue;
+            long n = asLongOr(r[2], 0);
+            if (n <= 0) continue;
+            String st = str(r[0]);
+            String status = st == null ? "OTHER" : st.trim().toUpperCase(java.util.Locale.ROOT);
+            if (!SCRIPTED_RUN_STATUSES.contains(status)) status = "OTHER";
+            byStatus.merge(status, n, Long::sum);
+            String v = str(r[1]);
+            byVersion.merge(v == null || v.isBlank() ? "unknown" : label(v.trim()), n, Long::sum);
+        }
+        for (Map.Entry<String, Long> e : byStatus.entrySet()) f.add(MonitoringMetricNames.SCRIPTED_RUNS, e.getValue(), "status", e.getKey());
+        List<Map.Entry<String, Long>> versions = new ArrayList<>(byVersion.entrySet());
+        versions.sort((a, b) -> b.getValue().compareTo(a.getValue()) != 0 ? b.getValue().compareTo(a.getValue()) : a.getKey().compareTo(b.getKey()));
+        long rest = 0;
+        for (int i = 0; i < versions.size(); i++) {
+            if (i < MAX_K6_VERSIONS) f.add(MonitoringMetricNames.SCRIPTED_K6_VERSIONS, versions.get(i).getValue(), "version", versions.get(i).getKey());
+            else rest += versions.get(i).getValue();
+        }
+        if (rest > 0) f.add(MonitoringMetricNames.SCRIPTED_K6_VERSIONS, rest, "version", "other");
+    }
+
     // ── Zamanlayıcı kilitleri ────────────────────────────────────────────────────────────────────────────
 
     /** Kilit satırları {@code [ad, locked_until]} → tutulan kilitler; {@code ad:anahtar} biçimi {@code ad:*}'a katlanır. */

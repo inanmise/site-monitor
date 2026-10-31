@@ -969,6 +969,56 @@ WAF için User-Agent ayarı aynen geçerlidir.
   penceresinde uyarıdır — "temiz" denmez. Tarama 2 sa 50 dk'yı aşarsa kendisi durur (kilit tavanı 3 sa); kalanları seçerek
   yeniden tarayın. Aday tanımlı değilse (bu sürümün varsayılanı) tarama başlamaz (`K6_CANDIDATE_NOT_SET`).
 
+## Sentetik İzleme (k6) güvenliği ve koşum verisi
+
+**Dosya okuma artık varsayılan olarak ENGELLİ (2026-10-31).** `open()`, dolaylı `open`, `k6/fs`, yerel import, `handleSummary`
+(k6 dönüş anahtarlarını DOSYA olarak yazar), gRPC proto okuma ve sistem yolları içeren betik kaydedilmez, test edilmez ve
+kayıtlı ise koşturulmaz (SKIPPED). Hangi izleme ve şablonların etkilendiği: `GET /api/admin/scripted/file-read-report`
+(genel yönetici). Bilinçli olarak eski davranış gerekirse: Ayarlar → Sentetik → "Betikte dosya okuma" = REPORT ya da env
+`SCRIPTED_FILE_READ_POLICY=REPORT`.
+
+**İşlem sertleştirmesi.** JVM açılışta kendini dump-edilemez yapar (`prctl(PR_SET_DUMPABLE, 0)`), k6 ikilisi root sahipli
+`0111`'dir: k6 betiği `/proc/1/environ` (pod sırları) ve kardeş k6 süreçlerinin ortamını (başka takımların gizli değerleri)
+okuyamaz. Açılış günlüğünde "[K6] İşlem sertleştirmesi uygulandı" satırı görünür. Yan etkiler:
+- `kubectl exec … -- jcmd 1 …` bağlanamaz. İş parçacığı dökümü: `kubectl exec <pod> -- kill -3 1` (döküm uygulama
+  günlüğüne düşer). Bellek dökümü yalnız `HeapDumpOnOutOfMemoryError` ile.
+- Çekirdek dökümü üretilmez.
+- Kapatmak (yalnız teşhis için, geçici): env `SCRIPTED_PROCESS_HARDENING=false` + yeniden başlatma.
+- k6 süreçleri de dump-edilemez olduğu için `/proc/<k6>/oom_score_adj` yazılamaz: bellek dolunca çekirdeğin JVM yerine k6'yı
+  seçmesi sağlanamaz (ayrıcalıklı yardımcı ya da ayrı bellek cgroup'u gerekir). Bellek sınırı (`mem-limit`) ve istek tavanları
+  bu yüzden önemlidir.
+- openssl / ping / dig / traceroute gibi tanı araçları artık en küçük ortamla çalışır (PATH, HOME, LANG, TZ); bu araçlar
+  için `OPENSSL_CONF` / `SSL_CERT_FILE` gibi değişkenlere dayanıyorsanız etkilenir.
+
+**Uzak import.** Betikteki `https://…` import hedefi kayıtta, testte ve her koşumdan önce erişim kurallarıyla (iç ağ,
+loopback, meta veri adresleri engelli) denetlenir; engelli hedefte koşum ERROR + "SSRF_BLOCKED" olur. k6'nın kendi modül
+indirmesi `--blacklist-ip`'e TABİ DEĞİLDİR (ölçüldü) — denetim bu yüzden uygulamada. Bilinen açık: k6'nın izlediği yönlendirme
+ve denetim ile koşum arasındaki DNS değişimi.
+
+**Kurum geneli k6 ayarları** (istek / sn, bellek, süreç, havuz, zaman aşımı, anomali …) yalnız genel yöneticiye açıktır.
+Bellek sınırı Go biçiminde yazılır: `256MiB` (`512MB` reddedilir); `0` / `off` / boş = sınır yok. Havuz boyutu
+(`pool-size`) yeniden başlatmadan uygulanır.
+
+**Test Çalıştır** kayıtla aynı kurallardan geçer; kullanıcı başına aynı anda bir, dakikada en çok 6 test; elle koşum kotasından
+koşar (zamanlanmış kontrolleri geciktirmez). Kayıtlı bir izlemede gizli değerler sunucuda doldurulur (düzenleme yetkisi
+gerekir); denetim kaydına betiğin SHA-256'sı yazılır.
+
+**Anomali koruması** art arda zaman aşımında izlemeyi kapatır — ama izlemenin kendi kesinti alarmı açıkken ya da alarm
+okunamıyorken KAPATMAZ (gerçek bir kesintide izleme kör kalmasın). İstek tavanı aşımında yine kapatır.
+
+**Koşum verisi.** Her koşum adım (k6 group) başına süre / p95 / doğrulamalar, düşen eşikler, HTTPS hedeflerinin TLS sürümü ve
+hatanın sınıfı (DNS, bağlantı reddi, TLS güveni, zaman aşımı, check, eşik …) ile saklanır; ayrıntıda adım trendi var.
+Bu sürümden önceki satırlarda bu alanlar yoktur.
+
+**Zamanlama.** Sentetik izlemede de cron, izinli / yasak saatler, tatil ve atlanacak günler tanımlanabilir (veritabanı sorgu
+izlemesiyle aynı kurallar); hiçbir zamanlama ayarı yoksa izleme eskisi gibi her aralıkta koşar. Tatil takvimi değişince
+cron + tatil atlayan izlemelerin planı yenilenir.
+
+**Sürüm geçişi.** Eski pod varsayılan olarak REPORT çalışır (dosya okuyan betikler orada koşmaya devam eder), `keep`'i
+bilmez, zamanlamalı izlemeyi düz aralıkla koşar; liderlik eski ve yeni pod arasında el değiştirirse zamanlamalı bir izleme aynı
+aralıkta iki kez koşabilir (eski podun vade anahtarı ile yeni podun planı ayrı hesaplanır). Hepsi yeni sürüme geçince fark
+kapanır — zamanlama penceresi / cron'u geçiş bitince tanımlayın.
+
 ## Çok pod
 
 > Çok pod sürüm 1 (2026-10-21). Aynı imaj N replikada koşar; kullanıcı istekleri bütün pod'lara dağılır, **izleme işi

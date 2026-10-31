@@ -46,6 +46,14 @@ export const DIFF_TILE = {
   SAME_FAIL: 'paused', SAME_PASS: 'valid', NO_BASELINE: 'paused', NOT_RUN: 'alert',
 }
 
+/**
+ * Kutucuk tonu: sayı 0 ya da bilinmiyorsa NÖTR (`total`) — "0 Dalgalı / 0 Yeni hata" boyalı görünüp sorun varmış izlenimi
+ * vermesin (E10, 2026-10-31); sayı > 0 ise fark türünün tonu.
+ */
+export function diffTileTone(diff, count) {
+  return Number(count) > 0 ? (DIFF_TILE[diff] || 'total') : 'total'
+}
+
 /** Hata sınıfları — `K6CompatScanService.classify` dönüşleriyle aynı küme. */
 export const ERROR_CLASSES = ['SYNTAX', 'MODULE', 'TLS', 'DNS', 'CONNECT', 'TIMEOUT', 'CHECK', 'SCRIPT', 'OTHER']
 /** Koşum durumları (aday ve gerçek kontrol). */

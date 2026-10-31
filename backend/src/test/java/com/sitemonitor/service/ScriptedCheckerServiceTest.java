@@ -361,7 +361,9 @@ class ScriptedCheckerServiceTest {
                 + "\\n\\tat <internal/k6/compiler/lib/babel.min.js>:7:10099(24)"
                 + "\\n\\tat bound  (native)\"\n";
         String lines = ScriptedCheckerService.extractErrorLines(out);
-        assertThat(lines).contains("k6-script-42.js:17:9");   // kullanıcının satırı = asıl aranan bilgi
+        // kullanıcının satırı = asıl aranan bilgi; geçici dosya yolu `script` olarak temizlenir (k6r — koşum dizini yolu
+        // uzayınca Windows'ta satır:sütun kırpılıyordu) — ön yüzün `script:a:b` ayrıştırıcısıyla aynı biçim
+        assertThat(lines).contains("script:17:9").doesNotContain("/tmp/");
         assertThat(lines).doesNotContain("babel.min.js").doesNotContain("(native)");
         assertThat(lines).contains("2 k6 iç yığın satırı gizlendi");
     }

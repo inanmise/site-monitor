@@ -118,6 +118,7 @@ public final class ScriptedEnvPolicy {
             if (!known && reservedName(name)) throw reserved(name);
             Object val = e.get("value");
             String value = val == null ? "" : val.toString();
+            rejectNul(name, value);
             if (value.length() > MAX_VALUE_CHARS) {
                 boolean secret = Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret")));
                 boolean unchanged = known && !secret && value.equals(old.get(name));
@@ -144,6 +145,21 @@ public final class ScriptedEnvPolicy {
             Object nm = e.get("name");
             if (nm == null || nm.toString().isBlank()) continue;
             rejectIfDropped(nm.toString().trim());
+            Object val = e.get("value");
+            if (val != null) rejectNul(nm.toString().trim(), val.toString());
+        }
+    }
+
+    /**
+     * Değerde NUL (2026-10-31, k6 inceleme A7): {@code ProcessBuilder} NUL içeren ortam değerinde istisna fırlatıp koşumu
+     * düşürür — kayıtta 400. Koşum saklı eski değeri ayıklar ({@code ScriptedCheckerService.stripNul}). Değer iletiye
+     * yazılmaz.
+     */
+    private static void rejectNul(String name, String value) {
+        if (value != null && value.indexOf('\0') >= 0) {
+            throw fail(Msg.t(
+                    "'" + shown(name) + "' ortam değişkeninin değeri geçersiz bir karakter (NUL) içeriyor. Değeri yeniden yazın.",
+                    "The value of the '" + shown(name) + "' environment variable contains an invalid character (NUL). Re-enter the value."));
         }
     }
 
