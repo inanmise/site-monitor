@@ -310,6 +310,31 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/page-resource-scan-r177-${vp.name}.png`, fullPage: false })
     })
 
+    test('r177 O-4: paylaşılan bağlantı + GEÇ gelen izleme listesi → seçili analiz ve karşılaştırma açılır', async ({ page }) => {
+      test.setTimeout(90_000)
+      await routes(page)
+      await page.route((u) => new URL(u).pathname === '/api/monitoring/page/100/resource-scans', json({ success: true, data: v2(scanHistory()) }))
+      // izleme listesi 1,5 sn gecikir (gerçek ağ + tembel parça): URL senkronunun 300 ms'si çoktan geçer
+      await page.route((u) => new URL(u).pathname === '/api/monitoring/page', async (route) => {
+        await new Promise((r) => { setTimeout(r, 1500) })
+        await route.fallback()
+      })
+      await page.goto('/?tab=page&monitor=100&mtab=resources&prs=9&prs_v=compare&prs_b=12')
+      await page.waitForTimeout(800)
+      await expect(page).toHaveURL(/prs=9/)
+      await expect(page).toHaveURL(/prs_v=compare/)
+      await expect(page).toHaveURL(/prs_b=12/)
+      const dlg = page.locator(DIALOG)
+      const root = dlg.locator(ROOT)
+      await expect(root.locator('[data-slot="prs-cmp-body"]')).toBeVisible({ timeout: 20_000 })
+      await expect(root.locator('[data-slot="prs-cmp-a"]')).toHaveValue('9')
+      await expect(root.locator('[data-slot="prs-cmp-b"]')).toHaveValue('12')
+      await expect(root.locator('[data-slot="prs-cmp-objects"]')).toBeVisible()
+      await expect(page).toHaveURL(/prs=9&.*prs_v=compare|prs_v=compare.*prs=9/)
+      await expect(page).toHaveURL(/prs_b=12/)
+      await checker(page, dlg)('paylaşılan karşılaştırma')
+    })
+
     test('r177: süren analiz — iptal onayı, "İptal ediliyor"; sığar', async ({ page }) => {
       test.setTimeout(90_000)
       const state = await routes(page, { runningForever: true })

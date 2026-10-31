@@ -396,14 +396,54 @@ describe('iptal, bitiş bildirimi, ilerleme', () => {
     await waitFor(() => expect(slot('prs-running')).toBeNull())
   })
 
-  it('eski sunucu (404 NOT_FOUND / 405): iptal düğmesi gizlenir, analiz izlenmeye devam eder', async () => {
+  it('eski sunucu (genel NOT_FOUND 404 ama izlemenin geçmişi okunuyor): iptal düğmesi gizlenir, analiz izlenir', async () => {
     runningSetup({ cancel: { success: false, status: 404, code: 'NOT_FOUND', error: 'Bulunamadı' } })
     await mountDone()
     fireEvent.click(slot('prs-cancel'))
     fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
     await waitFor(() => expect(slot('prs-cancel')).toBeNull())
+    expect(api.monitoring.resourceScans).toHaveBeenCalledWith(100, 1)   // izleme yerinde mi yoklaması
     expect(slot('prs-running')).not.toBeNull()
     expect(await screen.findByText(/iptalini desteklemiyor/)).toBeInTheDocument()
+  })
+
+  it.each([
+    ['405', { success: false, status: 405, error: 'Method Not Allowed' }],
+    ['kodsuz 404', { success: false, status: 404, error: 'Not Found' }],
+  ])('eski sunucu (%s): yoklamadan düğme gizlenir', async (_n, cancel) => {
+    runningSetup({ cancel })
+    await mountDone()
+    const before = api.monitoring.resourceScans.mock.calls.length
+    fireEvent.click(slot('prs-cancel'))
+    fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
+    await waitFor(() => expect(slot('prs-cancel')).toBeNull())
+    expect(api.monitoring.resourceScans.mock.calls.length).toBe(before)
+  })
+
+  it('izleme silinmiş / görme yetkisi kalkmış (NOT_FOUND 404, geçmiş de 404): düğme GİZLENMEZ, geçmiş yenilenir (D-2)', async () => {
+    runningSetup({ cancel: { success: false, status: 404, code: 'NOT_FOUND',
+      error: 'Sayfa Bütünlüğü izlemesi bulunamadı ya da görüntüleme yetkiniz yok.' } })
+    await mountDone()
+    api.monitoring.resourceScans.mockResolvedValue({ success: false, status: 404, code: 'NOT_FOUND',
+      error: 'Sayfa Bütünlüğü izlemesi bulunamadı ya da görüntüleme yetkiniz yok.' })
+    fireEvent.click(slot('prs-cancel'))
+    fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
+    expect(await screen.findByText(/izlemesi bulunamadı ya da görüntüleme yetkiniz yok/)).toBeInTheDocument()
+    await waitFor(() => expect(api.monitoring.resourceScans).toHaveBeenCalledWith(100, 200))   // geçmiş yenilendi
+    expect(slot('prs-cancel')).not.toBeNull()
+    expect(screen.queryByText(/iptalini desteklemiyor/)).toBeNull()
+  })
+
+  it('analiz kaydı yok (RESOURCE_SCAN_NOT_FOUND): düğme gizlenmez, "zaten bitmiş" der ve geçmiş yenilenir', async () => {
+    runningSetup({ cancel: { success: false, status: 404, code: 'RESOURCE_SCAN_NOT_FOUND', error: 'Kaynak analizi kaydı bulunamadı' } })
+    await mountDone()
+    const before = api.monitoring.resourceScans.mock.calls.length
+    fireEvent.click(slot('prs-cancel'))
+    fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
+    expect(await screen.findByText(/Analiz zaten bitmiş/)).toBeInTheDocument()
+    await waitFor(() => expect(api.monitoring.resourceScans.mock.calls.length).toBeGreaterThan(before))
+    expect(api.monitoring.resourceScans).not.toHaveBeenCalledWith(100, 1)
+    expect(screen.queryByText(/iptalini desteklemiyor/)).toBeNull()
   })
 
   it('iptal edilen analiz: "Analiz iptal edildi" (yarıda kaldı değil); geçmişte "İptal edildi"', async () => {

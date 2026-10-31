@@ -23908,6 +23908,7 @@ export const EN = {
   "prs.cancel.notSentText": "The cancel request could not be sent. Check your connection and try again; the analysis may still be running.",
   "prs.cancel.unsupported": "This server version does not support cancelling; the analysis will finish on its own.",
   "prs.cancel.notRunning": "The analysis has already finished; showing the result.",
+  "prs.cancel.monitorGone": "The monitor was not found or you can no longer view it; the analysis history was reloaded.",
   "prs.cancelled.title": "Analysis cancelled",
   "prs.cancelled.body": "The analysis was stopped at a user's request; no result was saved. You can analyse again.",
   "prs.old.body": "Showing an older analysis from {0}.",
