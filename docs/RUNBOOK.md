@@ -264,7 +264,7 @@ Ekran: Ayarlar → Anahtar Çözümleme → **Anahtar döndürme** (aynı yetki:
 
 Konumlar (tek kaynak `SecretRotationService.LOCATIONS`, kapı `SecretLocationsGateTest`): LDAP bind parolası, SMTP parolası,
 HTTP / Sayfa Hızı Basic Auth parolası ve özel başlıkları, Anahtar Kelime özel başlıkları, senaryo env sırları + senaryo sürüm
-geçmişi, kişisel push başlık sırları. "Okunamayan" = hiçbir ayarlı anahtarla çözülmeyen değer: eski anahtar elinizdeyse önceki
+geçmişi, kişisel push başlık sırları, veritabanı sorgu izlemesi bağlantı parolaları. "Okunamayan" = hiçbir ayarlı anahtarla çözülmeyen değer: eski anahtar elinizdeyse önceki
 anahtar olarak verin, yoksa ekrandaki kayıt listesinde değeri yeniden girin. Giriş kodları (OTP) yeniden şifrelenmez: süreleri
 ≤ 5 dk ve doğrulama önceki anahtarın alt anahtarıyla alınan özeti de kabul eder.
 
@@ -383,6 +383,82 @@ başına son 20 çalıştırmada tutulur; özetler (not, süre, boyut — tarih 
 - *Nesneler "kırık" görünüyor ama tarayıcıda açılıyor:* ölçüm pod'dan yapılır (izlemenin vekil kararıyla). Pod'un çıkışını
   kontrol edin (`scripts/multipod-egress-check.sh`); iç ağ / döngü adresleri güvenlik kuralına takılır (`BLOCKED`).
 - Denetim: her başlatma `PAGE_RESOURCE_SCAN_RUN` (İzleme kategorisi) olarak yazılır.
+
+## Veritabanı sorgu izleme
+
+11. izleme türü (`?tab=dbquery`, 2026-10-31): kayıtlı bir veritabanı bağlantısında (PostgreSQL, Microsoft SQL Server,
+Oracle) **yalnız okuyan** bir SELECT çalıştırır, sonucu kurallara göre değerlendirir; kural ihlalinde (uyarı / kritik) ya da
+sorgu çalıştırılamadığında alarm üretir. Alarm türleri: `DBQUERY_FAIL` (bağlantı / kimlik / sorgu hatası, zaman aşımı —
+kesinti), `DBQUERY_THRESHOLD` (kural ihlali — iş alarmı, kesinti değil), `DBQUERY_SLOW` (sorgu süresi eşiği). Taramaları
+yalnız tarama lideri koşar (dağıtık kontrollere dahil değil).
+
+**Bağlantı hesabı (ZORUNLU ön koşul).** İzleme bağlantısında **en az ayrıcalıklı, salt-okur** bir veritabanı hesabı kullanın:
+yalnız izlenecek tablo / görünümlerde SELECT; EXECUTE, DML, DDL ve yönetici rolü YOK. Sorgu güvenlik denetimi ve salt-okur
+oturum (PostgreSQL `READ ONLY` işlem + `statement_timeout` / `lock_timeout`, MSSQL `READ UNCOMMITTED` + `LOCK_TIMEOUT`, Oracle
+`SET TRANSACTION READ ONLY`) çok katmanlı korumadır, ama veritabanında **önceden var olan** bir fonksiyonun yan etkisini
+bilemez: Oracle'da `PRAGMA AUTONOMOUS_TRANSACTION` ile yazan bir fonksiyon salt-okur işleme tabi değildir. Asıl güvence
+hesabın yetkileridir.
+
+**Sorgu kuralları (kayıtta, denemede ve her çalıştırmadan önce denetlenir).** Tek ifade; yalnız `SELECT` / `WITH`; DDL / DML /
+DCL / TCL, `SELECT … INTO`, `FOR UPDATE`, kilit ipuçları, veri değiştiren CTE, uzak nesne (Oracle dblink, MSSQL dört parçalı
+ad), tehlikeli fonksiyonlar (`pg_sleep`, `pg_read_file`, `dblink`, `xp_*`, `sp_*`, `OPENROWSET`, `DBMS_*`, `UTL_*`, `WAITFOR`,
+sıra / sequence …), kullanıcı / paket fonksiyonu çağrıları ve JDBC `{…}` kaçışları reddedilir. **MSSQL'de her tablo
+`WITH (NOLOCK)` taşımalıdır** (yalnız NOLOCK / READUNCOMMITTED ipucu kabul). Ayrıştırılamayan sorgu kaydedilmez (KATI).
+Sorgu ≤ 10 000 karakter. Red iletisi nedeni ve düzeltmeyi söyler (`dbq.guard.<KOD>`).
+
+**Veri görünürlüğü.** Sorgunun sonuç satırları arayüzde hiçbir yerde gösterilmez ("Sorguyu dene" yalnız durum, süre, satır
+sayısı, kolon adları ve kural sonucu döndürür); yalnız alarm anındaki satırlar (≤ 50 × 20, hücre ≤ 200 karakter, maskeli
+kolonlar `••••`) alarm maili ve alarm ayrıntısında görünür, erişim paylaşımıyla okuyana gösterilmez. DB hata iletilerindeki
+veri değerleri (dönüşüm hatası vb.) temizlenir. **Kabul edilen kalıcı risk:** bir kural tek bir sayıyı (ölçülen değer,
+satır sayısı) ölçer ve grafikte gösterir — bu, eşik izlemenin doğasıdır; hassas tabloları izleme hesabından gizleyin.
+
+**Bağlantılar** takım belgesidir (Veritabanı Sorgu İzleme → Bağlantılar): yalnız sahip takım görür ve kullanır, erişim
+paylaşımı açmaz; izleme düzenleyebilen takım üyesi yönetir. Parola şifreli saklanır (`SITE_MONITOR_SECRET_KEY`, anahtar
+döndürme konumu `dbquery_connection_password`) ve asla geri gösterilmez; sunucu / port / veritabanı / kullanıcı değişince ya da
+güvenlik gevşetilince parola yeniden istenir. Ana makine SSRF kuralından geçer ve doğrulanan IP'ye bağlanılır. Kullanan izleme
+varken bağlantı silinemez (409). Sağlık paneli son denemeyi, son kullanımı, son hatayı ve kullanan izlemeleri gösterir.
+
+**Çıkış (egress).** İzlemenin çalıştığı pod (tarama lideri; her pod lider olabilir) izlenen veritabanının portuna erişebilmeli
+(varsayılan PostgreSQL 5432, MSSQL 1433, Oracle 1521). Çok pod'da her düğümde doğrulayın:
+`NS=… REL=… TARGETS="db1.kurum:1433 db2.kurum:1521" bash scripts/multipod-egress-check.sh <düğüm…>`.
+
+**Zamanlama.** Aralık (60 sn – 7 gün) ya da cron (5 / 6 alan, `@hourly` / `@daily` / `@weekly` / `@monthly`, Europe/Istanbul;
+ardışık iki tetik ≥ `min-interval-seconds`); izinli pencereler, yasak pencereler, tatil takvimi (Ayarlar → Platform → Tatil
+takvimi, global yönetici; ilk açılışta 2026–2027 resmî tatilleri tohumlanır — dini bayram tarihlerini doğrulayın) ve ek
+tarihler. 15 dakikadan fazla geciken cron tetiği (lider yoktu, pod yeniden başladı) kaçırılmış sayılır, geç çalıştırılmaz.
+
+**Ayarlar** (Ayarlar → Genel → Veritabanı Sorgu İzleme; çoğu GLOBAL_ONLY, canlı):
+
+| Anahtar (`site.monitor.dbquery.` öneki) | Varsayılan | Not |
+|---|---|---|
+| `alert-enabled` | true | Tür alarmlarını kapatır (açık alarmlar sessiz kapanır) |
+| `max-concurrency` / `per-connection-concurrency` | 4 / 2 | Pod / bağlantı başına eşzamanlı sorgu; dolu → o tur atlanır (DB_BUSY) |
+| `max-timeout-seconds` | 60 | İzleme zaman aşımı tavanı (5–60) |
+| `max-rows-cap` | 5000 | Okunacak satır tavanı |
+| `mail-max-rows` / `mail-max-columns` | 50 / 20 | Alarm satırı sınırları |
+| `min-interval-seconds` | 60 | En sık çalışma |
+| `plan-check-mode` | WARN | Kayıtta maliyet ön kontrolü (PG + MSSQL EXPLAIN): OFF / WARN / BLOCK |
+| `max-plan-cost` / `max-plan-rows` | 1 000 000 / 10 000 000 | BLOCK / WARN eşikleri |
+| `manual-cooldown-seconds` | 20 | "Şimdi kontrol et" beklemesi |
+
+Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları `site.monitor.dbquery.alert-rows.retention-days`
+(90; açık alarmın satırı silinmez). Yeniden uyarı: `site.monitor.realert.dbquery-minutes` (0 = genel aralık). Tarama tıkı
+`site.monitor.dbquery.interval-ms` (30000, açılışta).
+
+**Sorun giderme (kontrol geçmişindeki neden kodu).**
+- `DB_UNREACHABLE` / `DB_DNS` / `DB_TIMEOUT`: pod'dan veritabanına ulaşılamıyor ya da sorgu zaman aşımına uğradı — çıkış
+  kuralı, port, ad çözümleme; zaman aşımı sürüyorsa sorguyu daraltın (indeks, WHERE, TOP / FETCH FIRST) ya da zaman aşımını artırın.
+- `DB_AUTH`: kullanıcı / parola reddedildi — bağlantıyı düzenleyip parolayı yeniden girin.
+- `DB_SQL_ERROR`: sorgu veritabanında hata verdi (kolon / tablo yok, yetki yok, tür dönüşümü).
+- `DB_GUARD_REJECTED`: kayıtlı sorgu güncel güvenlik kurallarına takıldı (sürüm sonrası daha katı kural) — sorguyu düzeltin.
+- `DB_BLOCKED`: ana makine iç ağ / meta veri kuralına takıldı (`site.monitor.ssrf.*`).
+- `DB_PROFILE_MISSING` / `DB_PROFILE_OTHER_TEAM` / `DB_SECRET_UNREADABLE`: bağlantı silinmiş, başka takımda ya da parola
+  çözülemiyor (anahtar değişti — parolayı yeniden girin).
+- `DB_BUSY` (kayıt yazılmaz): eşzamanlılık sınırı doldu; sık görülüyorsa `max-concurrency` / `per-connection-concurrency`.
+- Ağır sorgu uyarısı (plan maliyeti): `plan-check-mode=BLOCK` ile kaydı engelleyin; çalışmada zaman aşımı + satır sınırı +
+  iptal bekçisi (zaman aşımı + 5 sn `cancel`, + 15 sn `abort`) sınırlar.
+- Denetim: `MONITOR_*` (kaynak `DBQUERY_MONITOR`), `DBQUERY_CONNECTION_CREATE|UPDATE|DELETE|TEST`,
+  `DBQUERY_TEMPLATE_CREATE|UPDATE|DELETE`, `HOLIDAY_CALENDAR_SAVE`. Sorgu metni ve parola denetime ve istek günlüğüne girmez.
 
 ## Merkezi izleme alarm akışı
 
@@ -662,6 +738,7 @@ groups:
   | Değişken | Neden |
   |---|---|
   | `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` | Uygulama izlenen sitelere (HTTP / Keyword / Sayfa / Sayfa hızı, HSTS, OCSP/CRL, RDAP, web-WHOIS) ve webhook / push / GeoIP servislerine `java.net.http` ve `HttpURLConnection` ile gider. Ajan bu istemcileri izlerse her isteğe `traceparent` ekler (izlenen siteye iç iz kimliğimiz gider, bazı WAF'lar tanımadığı başlığı reddedebilir) ve her kontrol için bir istemci span'ı üretir (saatte binlerce). SMTP, LDAP ve DNS ajan tarafından zaten izlenmiyor; ham soket kontrolleri (port, TLS profili, ham HTTP tanılama) da. |
+  | (değişken yok — bilgi) Veritabanı sorgu izlemesi | İzlenen veritabanlarına giden JDBC çağrıları ajanın JDBC enstrümantasyonuyla span üretir (izleme başına çalıştırma başına bir span, `db.statement` ajanın varsayılan temizlemesiyle sabitlerden arındırılmış sorgu). Uygulamanın kendi veritabanı izlemesi için JDBC enstrümantasyonu açık kalır; izlenen veritabanı span'larının iz arka ucunda görünmesi istenmiyorsa `OTEL_INSTRUMENTATION_JDBC_ENABLED=false` (`config.otel.agent.extraEnv`) — kendi veritabanı span'ları da kapanır. |
   | `OTEL_METRICS_EXPORTER=none` | Metrikler Prometheus'ta (`/metrics`, `/metrics/sitemonitor`); ajanın OTLP metrikleri ikinci bir kaynak olurdu. |
   | `OTEL_SERVICE_NAME` | `config.otel.agent.serviceName`, boşsa Deployment adı. |
   | `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` | Boot ajanın değişkenlerini kendi dışa aktarıcısına eşlemesin (eski sürümlerde açılışı düşüren şey; uygulama bunu kendisi de yapar). |
