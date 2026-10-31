@@ -31,6 +31,8 @@ class PageResourceScanPostgresTest {
         JdbcTemplate jdbc = PostgresIt.app().jdbc();
         long mon = 9_870_001L;
         jdbc.update("DELETE FROM page_resource_scans WHERE monitor_id BETWEEN ? AND ?", mon, mon + 10);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'ux_prs_one_running'", Integer.class))
+                .as("kısmi benzersiz indeks yamayla kuruldu").isEqualTo(1);
 
         // 1) Döngü adresi varsayılan ayarda güvenlik kuralına takılır → hiç ağ işi olmadan FAILED / PAGE_BLOCKED
         PageMonitor m = new PageMonitor();
@@ -90,7 +92,15 @@ class PageResourceScanPostgresTest {
                 Integer.class, mon + 3)).isEqualTo(20);
         assertThat((List<?>) svc.list(mon + 3, 200).get("items")).hasSize(22);
 
-        for (long k = 0; k <= 3; k++) svc.deleteForMonitor(mon + k);
+        // 5) İki pod yarışı: aynı izleme için ikinci RUNNING satırı PostgreSQL'de benzersiz indekse takılır
+        long t = System.currentTimeMillis();
+        String ins = "INSERT INTO page_resource_scans (monitor_id, url, status, started_at, started_ms, heartbeat_ms, "
+                + "progress_done, progress_total, capped, items_kept) VALUES (?, 'x', 'RUNNING', ?, ?, ?, 0, 0, FALSE, FALSE)";
+        jdbc.update(ins, mon + 4, PageResourceScanService.iso(t), t, t);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update(ins, mon + 4, PageResourceScanService.iso(t), t, t))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        for (long k = 0; k <= 4; k++) svc.deleteForMonitor(mon + k);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM page_resource_scans WHERE monitor_id BETWEEN ? AND ?",
                 Integer.class, mon, mon + 3)).isZero();
     }

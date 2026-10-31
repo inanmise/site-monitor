@@ -17,7 +17,7 @@ import ResourceScanObjects from './ResourceScanObjects.jsx'
 import ResourceScanHistory from './ResourceScanHistory.jsx'
 import {
   DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedMs, formatMs, formatNumber, isRunning, pickDefaultScan, plural, pollCapMs,
-  previousDone, progressPct,
+  pollCapReached, previousDone, problemText, progressPct,
 } from './resourceScanModel.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -36,7 +36,10 @@ import { cn } from '@/lib/utils'
  * açılır. 409 RESOURCE_SCAN_RUNNING → yanıttaki koşu izlenir; 429 → sunucunun metni. Geçmiş okunamazsa "okunamadı" +
  * yeniden dene (asla "analiz yok"). Dışa aktarım (Excel / PDF) tıklanınca tembel yüklenir.
  */
-export default function ResourceScanTab({ monitor, pollMs = POLL_MS }) {
+/** Monoton saat (ms) — duvar saati ileri / geri atlasa da izleme süresi doğru ölçülür. */
+const monoNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now())
+
+export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap }) {
   const t = useT()
   const locale = useDateLocale()
   const toast = useToast()
@@ -136,7 +139,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS }) {
     let stop = false
     let timer = null
     let failures = 0
-    const cap = pollCapMs(limits)
+    // Tavan BU istemcinin izlemeye başladığı andan ölçülür (Sürdür / yeni koşu sıfırlar) — sunucunun `started_at`
+    // damgası tarayıcı saatiyle kıyaslanmaz (saat ileri olan tarayıcıda izleme hemen dururdu; 2026-10-31 inceleme).
+    const cap = pollCap ?? pollCapMs(limits)
+    const pollStartedAt = monoNow()
     const tick = async () => {
       let res = null
       try { res = await api.monitoring.resourceScan(monitorId, runningId) } catch { res = null }
@@ -152,7 +158,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS }) {
       if (isRunning(scan)) {
         setRunning(scan)
         setHist((h) => (h.data ? { ...h, data: { ...h.data, running: scan, items: h.data.items.map((s) => (s.id === scan.id ? scan : s)) } } : h))
-        if ((elapsedMs(scan) ?? 0) > cap) { setPollState('capped'); return }
+        if (pollCapReached(pollStartedAt, monoNow(), cap)) { setPollState('capped'); return }
         timer = setTimeout(tick, pollMs)
         return
       }
@@ -169,7 +175,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS }) {
     timer = setTimeout(tick, pollMs)
     return () => { stop = true; clearTimeout(timer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monitorId, runningId, pollState, pollNonce, pollMs])
+  }, [monitorId, runningId, pollState, pollNonce, pollMs, pollCap])
 
   async function start() {
     if (starting || running) return
@@ -465,10 +471,17 @@ function SelectedView({ detail, selectedId, t, canRun, running, onRetryDetail, o
     </Button>
   )
   if (scan?.status === 'FAILED') {
+    // Sayfaya ulaşılamadıysa (PAGE_FAILED) sunucu nedeni ham kod olarak gönderir — çevrilmiş metin gösterilir
+    const failCause = scan.error_reason ? problemText(scan.error_reason, t) : ''
     return (
       <div data-slot="prs-failed">
         <StatusBlock tone="danger" icon={CircleAlert} title={t('prs.runFail.title')} className={compact ? 'py-6' : undefined}
-          description={scan.error || t('prs.runFail.body')} actions={retry || undefined} />
+          description={failCause ? (
+            <>
+              <span className="block">{scan.error || t('prs.runFail.body')}</span>
+              <span data-slot="prs-failed-cause" className="mt-1 block font-medium text-foreground">{t('prs.runFail.cause', failCause)}</span>
+            </>
+          ) : (scan.error || t('prs.runFail.body'))} actions={retry || undefined} />
       </div>
     )
   }

@@ -11,7 +11,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, OBJECTS_TABLE_MIN_PX, SCOPES, SORTS, STATUS_FILTERS, TEXT_CATEGORIES,
   activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, formatBytesExact, formatMs,
-  formatNumber, formatSize, isFailed, isPageLoad, plural, sizeBucket, sortItems, statusText, waterfallBar, waterfallTotal,
+  formatNumber, formatSize, isFailed, isPageLoad, plural, problemText, sizeBucket, sortItems, statusText, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -265,7 +265,7 @@ function ObjectRow({ item, total, t, locale }) {
           <span className={cn('text-[11px] text-muted-foreground', WRAP)}>
             {[item.content_type, dim ? t('prs.img.dims', dim) : null].filter(Boolean).join(' · ')}
           </span>
-          {item.error && <span className={cn('text-[11px] text-destructive', WRAP)}>{item.error}</span>}
+          {item.error && <span data-slot="prs-obj-problem" className={cn('text-[11px] text-destructive', WRAP)}>{problemText(item.error, t)}</span>}
           <Flags item={item} t={t} locale={locale} />
         </div>
       </TableCell>
@@ -315,7 +315,7 @@ function ObjectCard({ item, t, locale }) {
         </div>
       </div>
       {item.content_type && <span className={cn('text-[11px] text-muted-foreground', WRAP)}>{item.content_type}</span>}
-      {item.error && <span className={cn('text-xs text-destructive', WRAP)}>{item.error}</span>}
+      {item.error && <span data-slot="prs-obj-problem" className={cn('text-xs text-destructive', WRAP)}>{problemText(item.error, t)}</span>}
       <Flags item={item} t={t} locale={locale} />
     </li>
   )

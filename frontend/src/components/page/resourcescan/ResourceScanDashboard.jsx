@@ -5,9 +5,9 @@ import ToneBadge from '../../admin/ToneBadge.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock, ProgressBar } from '../../ui/Progress.jsx'
 import {
-  SEVERITIES, SEVERITY_TONE, categoryLabel, categoryRows, delta, dimensionsText, estImageMs, formatBytesExact, formatMs,
-  formatNumber, formatPct, formatScoreValue, formatSize, gradeLetter, gradeTone, noteRows, plural, recHostList, recItemUrls,
-  recSaving, recTextKey, recommendationArgs, scoreLabelKey, scoreRows, sortRecommendations, TOP_IMAGES_MAX,
+  SEVERITIES, SEVERITY_TONE, categoryLabel, categoryRows, delta, deltasComparable, dimensionsText, estImageMs, formatBytesExact,
+  formatMs, formatNumber, formatPct, formatScoreValue, formatSize, gradeLetter, isCapped, noteRows, plural, recHostList,
+  recItemUrls, recSaving, recTextKey, recommendationArgs, scanTone, scoreLabelKey, scoreRows, sortRecommendations, TOP_IMAGES_MAX,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, DeltaChip, Section, signed, TONE_BAR, TONE_STROKE, TONE_TEXT, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -50,7 +50,7 @@ export default function ResourceScanDashboard({
 }
 
 /** Not halkası (0–100) — ortadaki sayı HTML; renk notun tonundan. Bilinmeyen not soluk ("—"), asla yeşil değil. */
-function GradeRing({ grade, letter, tone, t }) {
+function GradeRing({ grade, letter, tone, partial, t }) {
   const size = 112
   const stroke = 10
   const r = (size - stroke) / 2
@@ -59,9 +59,11 @@ function GradeRing({ grade, letter, tone, t }) {
   const dash = (v / 100) * circ
   const c = size / 2
   return (
-    <div data-slot="prs-grade" data-tone={tone} data-letter={letter || undefined} className="relative size-28 shrink-0">
+    <div data-slot="prs-grade" data-tone={tone} data-letter={letter || undefined} data-partial={partial ? 'true' : undefined}
+      className="relative size-28 shrink-0">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" className="block"
-        aria-label={grade == null ? t('prs.gradeUnknownAria') : t('prs.gradeAria', grade, letter || '—')}>
+        aria-label={grade == null ? t('prs.gradeUnknownAria')
+          : partial ? t('prs.gradeAriaPartial', grade, letter || '—') : t('prs.gradeAria', grade, letter || '—')}>
         <circle cx={c} cy={c} r={r} fill="none" stroke="var(--border)" strokeWidth={stroke} />
         {grade != null && (
           <circle cx={c} cy={c} r={r} fill="none" stroke={TONE_STROKE[tone] || TONE_STROKE.muted} strokeWidth={stroke}
@@ -91,14 +93,17 @@ function GradeHero({ scan, prev, t, locale }) {
   const s = scan || {}
   const grade = s.grade ?? null
   const letter = gradeLetter(s.grade, s.grade_letter)
-  const tone = gradeTone(letter)
+  // Sınırlı (kısmi) ölçüm: not soluk, asla yeşil; önceki koşuyla fark yalnız İKİSİ de tam ölçümse (kural 5)
+  const partial = isCapped(s)
+  const tone = scanTone(s)
   const p = prev || null
+  const cmp = deltasComparable(s, p)
   const sr = (key, amount) => t('prs.delta.sr', t(key), amount)
-  const dGrade = p ? delta(s.grade, p.grade, { lowerIsBetter: false }) : null
-  const dLoad = p ? delta(s.load_ms, p.load_ms) : null
-  const dSize = p ? delta(s.page_bytes, p.page_bytes) : null
-  const dReq = p ? delta(s.request_count, p.request_count) : null
-  const dImg = p ? delta(s.image_bytes, p.image_bytes) : null
+  const dGrade = cmp ? delta(s.grade, p.grade, { lowerIsBetter: false }) : null
+  const dLoad = cmp ? delta(s.load_ms, p.load_ms) : null
+  const dSize = cmp ? delta(s.page_bytes, p.page_bytes) : null
+  const dReq = cmp ? delta(s.request_count, p.request_count) : null
+  const dImg = cmp ? delta(s.image_bytes, p.image_bytes) : null
   const fmtMs = (v) => formatMs(v, locale)
   const fmtSize = (v) => formatSize(v, { locale })
   const fmtNum = (v) => formatNumber(v, locale)
@@ -107,18 +112,26 @@ function GradeHero({ scan, prev, t, locale }) {
   return (
     <Section slot="prs-hero" contentClassName="gap-4">
       <div className="flex min-w-0 flex-col items-start gap-4 sm:flex-row sm:items-center">
-        <GradeRing grade={grade} letter={letter} tone={tone} t={t} />
+        <GradeRing grade={grade} letter={letter} tone={tone} partial={partial} t={t} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <span className="text-xs font-semibold tracking-[.04em] text-muted-foreground uppercase">{t('prs.grade')}</span>
           <div className="flex flex-wrap items-center gap-2">
-            <span data-slot="prs-verdict" data-tone={tone} className={cn('text-xl leading-tight font-bold', TONE_TEXT[tone])}>
+            <span data-slot="prs-verdict" data-tone={tone} data-partial={partial ? 'true' : undefined}
+              className={cn('text-xl leading-tight font-bold', TONE_TEXT[tone])}>
               {letter ? t(`prs.verdict.${letter}`) : t('prs.verdict.unknown')}
             </span>
             <DeltaChip d={dGrade} text={dGrade ? t('prs.delta.points', signed(dGrade.diff, fmtNum)) : ''}
               srText={dGrade ? sr('prs.grade', t('prs.delta.points', signed(dGrade.diff, fmtNum))) : ''} sameText={t('prs.delta.same')} />
           </div>
+          {partial && (
+            <p data-slot="prs-partial-note" className="m-0 flex items-start gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-300">
+              <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              <span className={WRAP}>{t('prs.grade.partial')}</span>
+            </p>
+          )}
           <p className="m-0 text-sm text-muted-foreground">{plural(t, 'prs.hero.lead', s.request_count, fmtMs(s.load_ms), fmtSize(s.page_bytes), fmtNum(s.request_count))}</p>
           {!p && <p data-slot="prs-no-prev" className="m-0 text-xs text-muted-foreground">{t('prs.delta.noPrev')}</p>}
+          {p && !cmp && <p data-slot="prs-not-compared" className="m-0 text-xs text-muted-foreground">{t('prs.delta.notCompared')}</p>}
         </div>
       </div>
       <div data-slot="prs-kpis" className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
@@ -127,7 +140,8 @@ function GradeHero({ scan, prev, t, locale }) {
         <Kpi k="size" t={t} label={t('prs.kpi.size')} value={fmtSize(s.page_bytes)} sub={formatBytesExact(s.page_bytes, locale)}
           d={dSize} deltaText={dSize ? signed(dSize.diff, fmtSize) : ''} srDelta={dSize ? sr('prs.kpi.size', signed(dSize.diff, fmtSize)) : ''} />
         <Kpi k="requests" t={t} label={t('prs.kpi.requests')} value={fmtNum(s.request_count)}
-          sub={Number(s.failed_count) > 0 ? plural(t, 'prs.kpi.brokenSub', s.failed_count, fmtNum(s.failed_count)) : t('prs.kpi.noBroken')}
+          sub={Number(s.failed_count) > 0 ? plural(t, 'prs.kpi.brokenSub', s.failed_count, fmtNum(s.failed_count))
+            : t(partial ? 'prs.kpi.noBrokenCapped' : 'prs.kpi.noBroken')}
           d={dReq} deltaText={dReq ? signed(dReq.diff, fmtNum) : ''} srDelta={dReq ? sr('prs.kpi.requests', signed(dReq.diff, fmtNum)) : ''} />
         <Kpi k="images" t={t} label={t('prs.kpi.images')} value={fmtSize(s.image_bytes)}
           sub={imgShare ? plural(t, 'prs.kpi.imagesSub', s.image_count, fmtNum(s.image_count), imgShare)

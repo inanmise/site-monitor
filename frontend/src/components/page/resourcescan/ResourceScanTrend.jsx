@@ -166,7 +166,8 @@ function TrendTooltip({ active, payload, t, locale }) {
   if (!active || !Array.isArray(payload) || payload.length === 0) return null
   const p = payload.find((x) => x?.payload)?.payload
   if (!p) return null
-  const tone = gradeTone(p.letter)
+  // Sınırlı ölçüm notu soluk (asla yeşil değil) ve ipucunda söylenir
+  const tone = p.capped ? 'muted' : gradeTone(p.letter)
   return (
     <div data-slot="prs-trend-tooltip" className="grid w-max max-w-[17rem] min-w-[11rem] gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs shadow-xl">
       <div className="font-semibold text-foreground tabular-nums">{formatDate(p.ts)}</div>
@@ -182,6 +183,7 @@ function TrendTooltip({ active, payload, t, locale }) {
               <ToneBadge tone={tone} className="font-bold tabular-nums">{p.grade}{p.letter ? ` · ${p.letter}` : ''}</ToneBadge>
             </div>
           )}
+          {p.capped && <div data-slot="prs-trend-tip-capped" className="text-muted-foreground">{t('prs.trend.tipCapped')}</div>}
         </div>
       )}
     </div>

@@ -3,9 +3,9 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, KB, MB, NOTE_ARGS, NOTE_PLURAL, REC_CODES, REC_PLURAL, SCORE_KEYS, SORTS, activeFilterCount, cacheState,
-  categoryRows, countsBy, delta, elapsedMs, estImageMs, exportFileName, filterItems, formatBytesExact, formatMs, formatPct, formatSize,
-  formatTtl, gradeLetter, gradeTone, imageSheetRows, isFailed, isPageLoad, noteRows, objectSheetRows, pickDefaultScan, plural, pluralKey, pollCapMs,
-  previousDone, progressPct, recHostList, recItemUrls, recSaving, recTextKey, recommendationArgs, recommendationSheetRows, scoreLabelKey, scoreRows, scoreTone,
+  categoryRows, countsBy, delta, deltasComparable, elapsedMs, estImageMs, exportFileName, filterItems, formatBytesExact, formatMs, formatPct, formatSize,
+  formatTtl, gradeLetter, gradeTone, imageSheetRows, isCapped, isFailed, isPageLoad, noteRows, objectSheetRows, pickDefaultScan, plural, pluralKey,
+  pollCapMs, pollCapReached, previousDone, problemText, progressPct, scanTone, recHostList, recItemUrls, recSaving, recTextKey, recommendationArgs, recommendationSheetRows, scoreLabelKey, scoreRows, scoreTone,
   sizeBucket, slugify, sortItems, sortRecommendations, summarySheetRows, trendDomain, trendPoints, waterfallBar, waterfallTotal,
   weightPct,
 } from '../components/page/resourcescan/resourceScanModel.js'
@@ -286,7 +286,7 @@ describe('dışa aktarım', () => {
     const link = rows.find((r) => r[0] === 'https://ex.com/about')
     expect(link[3]).toBe('prs.obj.transport')
     expect(link[10]).toBe('prs.export.no')
-    expect(link[20]).toBe('timeout')
+    expect(link[20]).toBe('prs.objProblem.connection')   // ham kod / metin asla sütuna yazılmaz
     const lazy = rows.find((r) => r[0] === 'https://ex.com/lazy.png')
     expect(lazy[18]).toBe('prs.export.yes')
   })
@@ -404,5 +404,84 @@ describe('İngilizce tekil biçim (sayı tam 1 → `.one`)', () => {
       ...Object.keys(NOTE_PLURAL).map((c) => `prs.note.${c}.one`),
     ]
     for (const k of needed) expect(ones, k).toContain(k)
+  })
+})
+
+describe('sınırlı (kısmi) ölçüm, sorun kodları ve izleme tavanı (2026-10-31 son inceleme)', () => {
+  const tOf = (dict) => (k, ...a) => a.reduce((str, v, i) => str.split(`{${i}}`).join(String(v)), dict[k] ?? k)
+  const tTr = tOf(TR)
+  const tEn = tOf(EN)
+
+  it('sınırlı koşunun notu asla başarı tonu almaz; tam ölçüm harf notunun tonunu alır', () => {
+    expect(isCapped({ capped: true })).toBe(true)
+    expect(isCapped({ capped: 'true' })).toBe(false)
+    expect(isCapped(null)).toBe(false)
+    expect(scanTone({ grade: 96, grade_letter: 'A', capped: true })).toBe('muted')
+    expect(scanTone({ grade: 96, grade_letter: 'A', capped: false })).toBe('success')
+    expect(scanTone({ grade: 40, capped: true })).toBe('muted')
+    expect(scanTone({ grade: 40 })).toBe('danger')
+    expect(scanTone(null)).toBe('muted')
+  })
+
+  it('fark yalnız iki tam ölçüm arasında: biri sınırlıysa ya da önceki yoksa gösterilmez', () => {
+    expect(deltasComparable({ capped: false }, { capped: false })).toBe(true)
+    expect(deltasComparable({ capped: true }, { capped: false })).toBe(false)
+    expect(deltasComparable({ capped: false }, { capped: true })).toBe(false)
+    expect(deltasComparable({ capped: false }, null)).toBe(false)
+    expect(deltasComparable(null, { capped: false })).toBe(false)
+  })
+
+  it('grafik noktası sınırlı koşuyu işaretler; özet sayfası notun kısmi olduğunu yazar', () => {
+    const pts = trendPoints([
+      { id: 2, status: 'DONE', started_at: '2026-10-31T10:00:00', load_ms: 2000, page_bytes: MB, grade: 90, capped: true },
+      { id: 1, status: 'DONE', started_at: '2026-10-30T10:00:00', load_ms: 2100, page_bytes: MB, grade: 88 },
+      { id: 0, status: 'FAILED', started_at: '2026-10-29T10:00:00', capped: true },
+    ])
+    expect(pts.find((p) => p.id === 2).capped).toBe(true)
+    expect(pts.find((p) => p.id === 1).capped).toBe(false)
+    expect(pts.find((p) => p.id === 0).capped).toBe(false)   // tamamlanmamış koşu boşluk, "sınırlı" değil
+    const sum = summarySheetRows({ name: 'X' }, { grade: 90, grade_letter: 'A', capped: true }, null, tTr, TRL)
+    expect(sum.find((r) => r[0] === TR['prs.grade'])[1]).toBe(`90 / 100 (A) · ${TR['prs.grade.partial']}`)
+    const full = summarySheetRows({ name: 'X' }, { grade: 90, grade_letter: 'A', capped: false }, null, tTr, TRL)
+    expect(full.find((r) => r[0] === TR['prs.grade'])[1]).toBe('90 / 100 (A)')
+  })
+
+  it('sorun kodu çevrilir: BLOCKED güvenlik kuralı, bilinen kod kısa metni, TRANSPORT_ERROR / bilinmeyen genel metin', () => {
+    expect(problemText('BLOCKED', tTr)).toBe('Güvenlik kuralı engelledi')
+    expect(problemText('BLOCKED', tEn)).toBe('Blocked by a security rule')
+    expect(problemText('READ_TIMEOUT', tEn)).toBe(EN['chkfail.READ_TIMEOUT.short'])
+    expect(problemText('CONNECT_REFUSED', tTr)).toBe(TR['chkfail.CONNECT_REFUSED.short'])
+    expect(problemText(' TLS_TRUST ', tEn)).toBe(EN['chkfail.TLS_TRUST.short'])
+    expect(problemText('TRANSPORT_ERROR', tTr)).toBe('Bağlantı hatası')
+    expect(problemText('TRANSPORT_ERROR', tEn)).toBe('Connection error')
+    expect(problemText('YENI_BILINMEYEN_KOD', tEn)).toBe('Connection error')
+    // adlı yer tutuculu kısa metinler ({status}, {broken} …) ve UNKNOWN nesne bağlamında anlamsız → genel metin
+    for (const c of ['HTTP_STATUS', 'RESOURCES_BROKEN', 'RESOURCES_TIMEOUT', 'MIXED_CONTENT', 'UNKNOWN']) {
+      expect(problemText(c, tEn), c).toBe('Connection error')
+    }
+    expect(problemText('', tEn)).toBe('')
+    expect(problemText(null, tEn)).toBe('')
+    expect(problemText(42, tEn)).toBe('')
+  })
+
+  it('Excel "sorun" sütunu ham kodu değil çevrilmiş metni yazar', () => {
+    const rows = objectSheetRows([
+      { url: 'https://ex.com/a.png', category: 'IMAGE', status: 0, error: 'BLOCKED' },
+      { url: 'https://ex.com/b.png', category: 'IMAGE', status: 0, error: 'READ_TIMEOUT' },
+      { url: 'https://ex.com/c.png', category: 'IMAGE', status: 0, error: 'TRANSPORT_ERROR' },
+      { url: 'https://ex.com/d.png', category: 'IMAGE', status: 200, error: null },
+    ], tEn, ENL)
+    expect(rows.slice(1).map((r) => r[20])).toEqual([
+      'Blocked by a security rule', EN['chkfail.READ_TIMEOUT.short'], 'Connection error', '',
+    ])
+    for (const r of rows.slice(1)) expect(r[20]).not.toMatch(/BLOCKED|READ_TIMEOUT|TRANSPORT_ERROR/)
+  })
+
+  it('izleme tavanı bu istemcinin başladığı andan ölçülür (sunucu saati karışmaz)', () => {
+    expect(pollCapReached(1_000, 1_000 + 600_000, 600_000)).toBe(false)
+    expect(pollCapReached(1_000, 1_000 + 600_001, 600_000)).toBe(true)
+    expect(pollCapReached(5_000, 4_000, 600_000)).toBe(false)
+    expect(pollCapReached(null, 10, 5)).toBe(false)
+    expect(pollCapReached(0, 10, null)).toBe(false)
   })
 })

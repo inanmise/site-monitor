@@ -199,7 +199,15 @@ public class PageResourceScanService {
             boolean handedOff = false;
             try {
                 boolean viaProxy = proxyPolicy != null && proxyPolicy.decide(m.getUrl(), m.getUseProxy()).viaProxy();
-                Long id = insert(m, viaProxy, now, requestedBy);
+                Long id;
+                try {
+                    id = insert(m, viaProxy, now, requestedBy);
+                } catch (org.springframework.dao.DataIntegrityViolationException dup) {
+                    // ux_prs_one_running (PostgreSQL): başka pod aynı anda başlattı → onun satırını izle
+                    List<Map<String, Object>> other = jdbc.query(SQL_RUNNING, this::summaryRow, m.getId());
+                    if (!other.isEmpty()) return new Start(Outcome.RUNNING, other.get(0), 0);
+                    throw dup;
+                }
                 // İki pod aynı anda başlattıysa: küçük kimlik kazanır, büyük olan kendini siler.
                 List<Map<String, Object>> after = jdbc.query(SQL_RUNNING, this::summaryRow, m.getId());
                 if (!after.isEmpty() && !id.equals(((Number) after.get(0).get("id")).longValue())) {
@@ -394,6 +402,8 @@ public class PageResourceScanService {
         m.put("capped", rs.getBoolean("capped"));
         String code = rs.getString("error");
         m.put("error_code", code == null ? null : code.split(":", 2)[0]);
+        // Ulaşılamama nedeni (CheckFailureReason adı) — arayüz kendi diline çevirir; ham kod metne konmaz
+        m.put("error_reason", code != null && code.startsWith("PAGE_FAILED:") ? code.substring("PAGE_FAILED:".length()) : null);
         m.put("error", errorText(code));
         m.put("items_kept", rs.getBoolean("items_kept"));
         return m;
@@ -407,8 +417,8 @@ public class PageResourceScanService {
         return switch (p[0]) {
             case "PAGE_HTTP" -> Msg.t("Sayfa HTTP " + arg + " döndürdü; analiz yapılamadı. Sayfanın açıldığını kontrol edip yeniden deneyin.",
                     "The page returned HTTP " + arg + "; the analysis could not run. Check that the page opens and try again.");
-            case "PAGE_FAILED" -> Msg.t("Sayfaya ulaşılamadı (" + arg + "); analiz yapılamadı. Ağ erişimini kontrol edip yeniden deneyin.",
-                    "The page could not be reached (" + arg + "); the analysis could not run. Check network access and try again.");
+            case "PAGE_FAILED" -> Msg.t("Sayfaya ulaşılamadı; analiz yapılamadı. Ağ erişimini kontrol edip yeniden deneyin.",
+                    "The page could not be reached; the analysis could not run. Check network access and try again.");
             case "PAGE_BLOCKED" -> Msg.t("Sayfanın adresi güvenlik kuralına takıldı (iç / yasaklı adres); analiz yapılmadı.",
                     "The page address was blocked by a security rule (internal / forbidden address); the analysis did not run.");
             case "PAGE_EMPTY" -> Msg.t("Sayfanın içeriği okunamadı; analiz yapılamadı.",
@@ -433,9 +443,11 @@ public class PageResourceScanService {
         final PageResourceDiscovery.Candidate c;
         final Planned parent;
         final int depth;
-        // Ölçüm görevleri (sanal iş parçacıkları) yazar, tarama iş parçacığı okur
+        // Ölçüm görevleri (sanal iş parçacıkları) yazar, tarama iş parçacığı okur. Stil gövdesi TUTULMAZ: ölçen görev
+        // başvuruları hemen çıkarır (açılmış gövde 20 MB'a kadar olabilir — yüzlerce stil dalga sonuna dek bellekte kalırsa
+        // pod taşar; inceleme 2026-10-31).
         volatile ScanItem item;
-        volatile String cssBody;
+        volatile List<PageResourceDiscovery.Candidate> cssRefs;
 
         Planned(int order, PageResourceDiscovery.Candidate c, Planned parent, int depth) {
             this.order = order;
@@ -455,7 +467,11 @@ public class PageResourceScanService {
         final AtomicInteger done = new AtomicInteger();
         final AtomicInteger total = new AtomicInteger();
         volatile boolean timeCapped, bytesCapped;
-        boolean objectsCapped;
+        /** Satır artık RUNNING değil (başka okuyucu eskimiş sayıp kapattı ya da izleme silindi) — ölçüm bırakılır. */
+        volatile boolean lost;
+        volatile boolean objectsCapped;
+        final AtomicInteger cssRefsRetained = new AtomicInteger();
+        int excludedExtra;
         long lastBeat;
         String ua;
         String rootHost;
@@ -468,15 +484,20 @@ public class PageResourceScanService {
         }
 
         boolean halted() {
-            return stopping || Thread.currentThread().isInterrupted();
+            return stopping || lost || Thread.currentThread().isInterrupted();
         }
 
+        /** Kalp atışı + ilerleme; 0 satır = satır artık bu taramanın değil → {@link #lost}. */
         void beat(boolean force) {
             long now = clock.getAsLong();
             if (!force && now - lastBeat < HEARTBEAT_MS) return;
             lastBeat = now;
             try {
-                jdbc.update(SQL_PROGRESS, done.get(), total.get(), now, s.id());
+                if (jdbc.update(SQL_PROGRESS, done.get(), total.get(), now, s.id()) == 0) {
+                    lost = true;
+                    log.info("Sayfa kaynak analizi {} artık çalışıyor görünmüyor (yarıda kaldı sayıldı / silindi) — ölçüm bırakılıyor",
+                            s.id());
+                }
             } catch (RuntimeException e) {
                 log.debug("Kaynak analizi ilerlemesi yazılamadı: {}", e.getMessage());
             }
@@ -491,8 +512,13 @@ public class PageResourceScanService {
             run.ua = pageChecker.effectiveUserAgent();
             run.total.set(1);
             run.beat(true);
-            PageFetchCore.MetaFetch main = core.fetchWithMeta(s.url(), "GET",
-                    new PageFetchCore.FetchOptions(c.requestTimeoutMs(), run.ua, null, true, true, s.viaProxy()), 0);
+            // Ana sayfa (yönlendirmelerle birlikte dakikalar sürebilir) ölçülürken de kalp atışı yazılır — yoksa okuyucular
+            // canlı taramayı "eskidi" sayıp kapatırdı (inceleme 2026-10-31).
+            CompletableFuture<PageFetchCore.MetaFetch> mainF = CompletableFuture.supplyAsync(() -> core.fetchWithMeta(s.url(),
+                    "GET", new PageFetchCore.FetchOptions(c.requestTimeoutMs(), run.ua, null, true, true, s.viaProxy()), 0),
+                    core.executor());
+            PageFetchCore.MetaFetch main = awaitBeating(run, mainF);
+            if (main == null || run.halted()) { end(s.id(), INTERRUPTED, "SHUTDOWN", null); return; }
             html = item(new PageResourceDiscovery.Candidate(s.url(), PageResourceDiscovery.HTML, true, false, false),
                     main, null);
             html.seq = 0;
@@ -518,10 +544,10 @@ public class PageResourceScanService {
             List<Planned> all = new ArrayList<>();
             AtomicInteger order = new AtomicInteger(1);
             List<Planned> phase = new ArrayList<>();
-            for (PageResourceDiscovery.Candidate cand : found.pageLoad()) plan(run, all, phase, known, order, cand, null, 0);
+            for (PageResourceDiscovery.Candidate cand : found.pageLoad()) plan(run, all, phase, known, order, cand, null, 0, null);
             for (String inline : found.inlineCss()) {
                 for (PageResourceDiscovery.Candidate cand : PageResourceDiscovery.cssRefs(inline, base)) {
-                    plan(run, all, phase, known, order, cand, null, 0);
+                    plan(run, all, phase, known, order, cand, null, 0, exclude);
                 }
             }
             // Sayfanın yükledikleri; stil gövdelerinden bulunanlar sonraki dalgada (en çok CSS_DEPTH kat)
@@ -529,19 +555,18 @@ public class PageResourceScanService {
                 measure(run, phase);
                 List<Planned> next = new ArrayList<>();
                 for (Planned p : phase) {
-                    if (p.cssBody == null || p.item == null || p.depth >= CSS_DEPTH) continue;
-                    for (PageResourceDiscovery.Candidate cand : PageResourceDiscovery.cssRefs(p.cssBody, p.item.url)) {
-                        plan(run, all, next, known, order, cand, p, p.depth + 1);
-                    }
-                    p.cssBody = null;
+                    List<PageResourceDiscovery.Candidate> refs = p.cssRefs;
+                    p.cssRefs = null;
+                    if (refs == null || p.item == null || p.depth >= CSS_DEPTH) continue;
+                    for (PageResourceDiscovery.Candidate cand : refs) plan(run, all, next, known, order, cand, p, p.depth + 1, exclude);
                 }
                 phase = next;
             }
             List<Planned> docs = new ArrayList<>();
-            for (PageResourceDiscovery.Candidate cand : found.documents()) plan(run, all, docs, known, order, cand, null, 0);
+            for (PageResourceDiscovery.Candidate cand : found.documents()) plan(run, all, docs, known, order, cand, null, 0, null);
             measure(run, docs);
             List<Planned> links = new ArrayList<>();
-            for (PageResourceDiscovery.Candidate cand : found.links()) plan(run, all, links, known, order, cand, null, 0);
+            for (PageResourceDiscovery.Candidate cand : found.links()) plan(run, all, links, known, order, cand, null, 0, null);
             measure(run, links);
 
             if (run.halted()) { end(s.id(), INTERRUPTED, "SHUTDOWN", html); return; }
@@ -562,7 +587,7 @@ public class PageResourceScanService {
                 p.item.parent = p.parent == null ? 0 : pos.getOrDefault(p.parent.order, 0);
             }
             PageResourceAnalyzer.Limits lim = new PageResourceAnalyzer.Limits(run.objectsCapped, c.maxObjects(),
-                    run.timeCapped, c.maxSeconds(), run.bytesCapped, c.maxTotalMb(), found.excluded());
+                    run.timeCapped, c.maxSeconds(), run.bytesCapped, c.maxTotalMb(), found.excluded() + run.excludedExtra);
             PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, lim);
             finishDone(s, run, items, r);
         } catch (Throwable t) {
@@ -577,11 +602,19 @@ public class PageResourceScanService {
         }
     }
 
-    /** Adayı plana alır (tekil URL, nesne tavanı). */
+    /**
+     * Adayı plana alır (tekil URL, nesne tavanı). {@code exclude}: stilden / satır içi stilden bulunanlara izlemenin hariç
+     * tutma desenleri burada uygulanır (HTML'dekiler keşifte elendi) ve sayılır.
+     */
     private static void plan(Run run, List<Planned> all, List<Planned> phase, Set<String> known, AtomicInteger order,
-                             PageResourceDiscovery.Candidate cand, Planned parent, int depth) {
+                             PageResourceDiscovery.Candidate cand, Planned parent, int depth, Predicate<String> exclude) {
         String k = PageResourceDiscovery.key(cand.url());
         if (!known.add(k)) return;
+        if (exclude != null) {
+            boolean ex;
+            try { ex = exclude.test(cand.url()); } catch (RuntimeException e) { ex = false; }
+            if (ex) { run.excludedExtra++; return; }
+        }
         if (all.size() + 1 >= run.c.maxObjects()) {   // +1: HTML satırı
             run.objectsCapped = true;
             return;
@@ -638,6 +671,20 @@ public class PageResourceScanService {
         }
     }
 
+    /** Tek bir işi kalp atışı yazarak bekler; kapanış / kayıp satır → null (iş iptal). İşin kendi zaman aşımları sınırlıdır. */
+    private <T> T awaitBeating(Run run, CompletableFuture<T> f) throws InterruptedException {
+        while (true) {
+            if (run.halted()) { f.cancel(true); return null; }
+            try {
+                return f.get(HEARTBEAT_MS, TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                run.beat(false);
+            } catch (java.util.concurrent.ExecutionException e) {
+                throw new IllegalStateException(e.getCause() == null ? e : e.getCause());
+            }
+        }
+    }
+
     private boolean admit(Run run) {
         if (run.halted()) return false;
         if (clock.getAsLong() > run.deadline) { run.timeCapped = true; return false; }
@@ -654,7 +701,19 @@ public class PageResourceScanService {
         PageFetchCore.MetaFetch mf = core.fetchWithMeta(p.c.url(), "GET", o, image ? ImageDimensions.HEAD_BYTES : 0);
         run.spent.addAndGet(Math.max(0, mf.fetch().bytes()));
         ScanItem it = item(p.c, mf, run.rootHost);
-        if (css && mf.fetch().body() != null && it.ok()) p.cssBody = decodeText(mf.fetch().body(), mf.meta().contentType());
+        if (css && p.depth < CSS_DEPTH && mf.fetch().body() != null && it.ok()) {
+            // Başvurular HEMEN çıkarılır, gövde atılır; göreli adresler tarayıcı gibi yönlendirme SONRASI adrese göre çözülür.
+            String base = mf.meta() != null && mf.meta().finalUrl() != null ? mf.meta().finalUrl() : p.c.url();
+            List<PageResourceDiscovery.Candidate> refs =
+                    PageResourceDiscovery.cssRefs(decodeText(mf.fetch().body(), mf.meta().contentType()), base);
+            // Bekleyen (henüz planlanmamış) başvuru sayısı nesne tavanıyla sınırlı — fazlası zaten planlanamaz.
+            int room = run.c.maxObjects() - run.cssRefsRetained.getAndAdd(refs.size());
+            if (room < refs.size()) {
+                run.objectsCapped = true;
+                refs = room <= 0 ? List.of() : List.copyOf(refs.subList(0, room));
+            }
+            p.cssRefs = refs;
+        }
         p.item = it;
         run.done.incrementAndGet();
     }
@@ -674,7 +733,7 @@ public class PageResourceScanService {
         it.ttfbMs = Math.max(0, f.ttfbMs());
         it.durationMs = Math.max(0, f.durationMs());
         Long len = meta.contentLength();
-        if (f.truncated() && len != null && len > f.bytes()) {
+        if (f.truncated() && len != null && len > f.bytes() && len <= MAX_HEADER_SIZE) {
             it.bytes = len;
             it.sizeSource = "header";
             it.truncated = false;
@@ -722,6 +781,9 @@ public class PageResourceScanService {
         }
         return cat;
     }
+
+    /** Başlıktan kabul edilen en büyük boyut (1 TB) — saçma / taşan bir Content-Length toplamları bozmasın. */
+    static final long MAX_HEADER_SIZE = 1L << 40;
 
     static String contentType(String raw) {
         if (raw == null) return null;
@@ -776,7 +838,8 @@ public class PageResourceScanService {
                 try { cs = Charset.forName(name); } catch (RuntimeException ignore) { /* bilinmeyen kodlama → UTF-8 */ }
             }
         }
-        return new String(body, cs);
+        int n = Math.min(body.length, PageResourceDiscovery.MAX_CSS_CHARS);
+        return new String(body, 0, n, cs);
     }
 
     // ── Bitiş ───────────────────────────────────────────────────────────────────────────────

@@ -294,3 +294,135 @@ describe('ResourceScanTab — geçmiş, eski ve başarısız analiz, dışa akta
     expect(screen.queryByText('Invalid array length')).toBeNull()
   })
 })
+
+describe('ResourceScanTab — sınırlı ölçüm, sorun kodları, izleme tavanı (2026-10-31 son inceleme)', () => {
+  /** Geçmişte en yeni analiz (12) `over` ile değişir; ayrıntısı da aynı özetle döner. */
+  function withLatest(over, { prev = {}, items } = {}) {
+    const hist = scanHistory()
+    hist.items[0] = { ...hist.items[0], ...over }
+    hist.items[2] = { ...hist.items[2], ...prev }
+    api.monitoring.resourceScans.mockResolvedValue(ok(hist))
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId === 12) return Promise.resolve(ok(scanDetail(12, { scan: over, rest: items ? { items } : {} })))
+      return Promise.resolve(ok(scanDetail(scanId)))
+    })
+  }
+
+  it('sınırlı ölçüm: A notu bile yeşil değil, kısmi not uyarısı, fark yok, "ölçülen nesnelerin hepsi açıldı"', async () => {
+    withLatest({ capped: true, grade: 96, grade_letter: 'A', failed_count: 0 })
+    await mountDone()
+    expect(slot('prs-grade').getAttribute('data-tone')).toBe('muted')
+    expect(slot('prs-grade').getAttribute('data-partial')).toBe('true')
+    expect(slot('prs-verdict').getAttribute('data-tone')).toBe('muted')
+    expect(slot('prs-partial-note').textContent).toBe('Ölçüm sınırlı — not kısmi ölçüme göre')
+    expect(slots('prs-delta', slot('prs-hero'))).toHaveLength(0)
+    expect(slot('prs-not-compared')).not.toBeNull()
+    const req = slots('prs-kpi').find((k) => k.getAttribute('data-key') === 'requests')
+    expect(req.textContent).toMatch(/Ölçülen nesnelerin hepsi açıldı/)
+    expect(req.textContent).not.toMatch(/Tüm nesneler açıldı/)
+    expect(slot('prs-capped')).not.toBeNull()
+  })
+
+  it('önceki analiz sınırlıysa da fark gösterilmez; şimdiki tam ölçümün tonu normal', async () => {
+    withLatest({ capped: false, grade: 96, grade_letter: 'A', failed_count: 0 }, { prev: { capped: true } })
+    await mountDone()
+    expect(slot('prs-grade').getAttribute('data-tone')).toBe('success')
+    expect(slot('prs-partial-note')).toBeNull()
+    expect(slots('prs-delta', slot('prs-hero'))).toHaveLength(0)
+    expect(slot('prs-not-compared')).not.toBeNull()
+    const req = slots('prs-kpi').find((k) => k.getAttribute('data-key') === 'requests')
+    expect(req.textContent).toMatch(/Tüm nesneler açıldı/)
+  })
+
+  it('iki tam ölçüm: farklar görünür, "karşılaştırılmadı" notu yok', async () => {
+    withLatest({ capped: false, grade: 96, grade_letter: 'A', failed_count: 0 })
+    await mountDone()
+    expect(slots('prs-delta', slot('prs-hero')).length).toBeGreaterThan(0)
+    expect(slot('prs-not-compared')).toBeNull()
+  })
+
+  it('geçmişte sınırlı analiz "Sınırlı" rozeti taşır ve notu yeşil değil', async () => {
+    withLatest({ capped: true, grade: 96, grade_letter: 'A' })
+    await mountDone()
+    openTab(/Geçmiş/)
+    await waitFor(() => expect(slot('prs-history')).not.toBeNull())
+    const rows = slots('prs-history-row')
+    expect(slot('prs-history-capped', rows[0])?.textContent).toBe('Sınırlı')
+    expect(slot('prs-history-grade', rows[0]).getAttribute('data-tone')).toBe('muted')
+    expect(slot('prs-history-capped', rows[2])).toBeNull()
+  })
+
+  it('nesne sorun kodları çevrilir (BLOCKED, bilinen kod, TRANSPORT_ERROR, bilinmeyen) — ham kod görünmez', async () => {
+    const base = { content_type: 'image/png', bytes: null, truncated: false, size_source: 'body', ttfb_ms: null, duration_ms: 100, start_ms: 10,
+      third_party: false, compressed: null, cache_ttl_s: null, width: null, height: null, redirects: 0, from_css: false, page_load: true, lazy: false }
+    withLatest({}, { items: [
+      { ...base, url: 'https://www.example.com/a.png', category: 'IMAGE', status: 0, error: 'BLOCKED' },
+      { ...base, url: 'https://www.example.com/b.png', category: 'IMAGE', status: 0, error: 'READ_TIMEOUT' },
+      { ...base, url: 'https://www.example.com/c.png', category: 'IMAGE', status: 0, error: 'TRANSPORT_ERROR' },
+      { ...base, url: 'https://www.example.com/d.png', category: 'IMAGE', status: 0, error: 'YENI_KOD_2027' },
+    ] })
+    await mountDone()
+    openTab(/Nesneler/)
+    await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
+    const texts = slots('prs-obj-problem').map((n) => n.textContent)
+    expect(texts).toEqual(expect.arrayContaining(['Güvenlik kuralı engelledi', 'Yanıt zaman aşımı', 'Bağlantı hatası']))
+    expect(texts.filter((x) => x === 'Bağlantı hatası')).toHaveLength(2)
+    expect(slot('prs-objects').textContent).not.toMatch(/BLOCKED|READ_TIMEOUT|TRANSPORT_ERROR|YENI_KOD_2027/)
+  })
+
+  it('sayfaya ulaşılamayan başarısız analiz: sunucu metninin altında çevrilmiş neden', async () => {
+    const hist = scanHistory()
+    hist.items[1] = { ...hist.items[1], error_code: 'PAGE_FAILED', error_reason: 'CONNECT_REFUSED',
+      error: 'Sayfaya ulaşılamadı; analiz yapılamadı. Ağ erişimini kontrol edip yeniden deneyin.' }
+    api.monitoring.resourceScans.mockResolvedValue(ok(hist))
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => (scanId === 11
+      ? Promise.resolve(ok({ scan: hist.items[1], analysis: null, items: null, items_kept: false }))
+      : Promise.resolve(ok(scanDetail(scanId)))))
+    await mountDone()
+    openTab(/Geçmiş/)
+    await waitFor(() => expect(slot('prs-history')).not.toBeNull())
+    fireEvent.click(slots('prs-history-row')[1])
+    await waitFor(() => expect(slot('prs-failed')).not.toBeNull())
+    expect(slot('prs-failed').textContent).toMatch(/Sayfaya ulaşılamadı/)
+    expect(slot('prs-failed-cause').textContent).toBe('Neden: Bağlantı reddedildi')
+    expect(slot('prs-failed').textContent).not.toMatch(/CONNECT_REFUSED|PAGE_FAILED/)
+  })
+
+  it('tarayıcı saati sunucudan ilerideyse (eski başlangıç damgası) izleme durmaz, analiz bitince pano açılır', async () => {
+    // sunucu damgası tarayıcı saatine göre 3 saat önce: eski kural (now − started_at > 10 dk) ilk sorguda dururdu
+    const running = scanSummary(40, { status: 'RUNNING', progress: { done: 3, total: 9 }, grade: null, started_at: '2020-01-01T00:00:00',
+      finished_at: null })
+    api.monitoring.resourceScans.mockResolvedValue(ok(scanHistory({ running })))
+    let polls = 0
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId !== 40) return Promise.resolve(ok(scanDetail(scanId)))
+      polls += 1
+      if (polls < 4) return Promise.resolve(ok({ scan: { ...running, progress: { done: 3 + polls, total: 9 } }, analysis: null, items: null, items_kept: true }))
+      return Promise.resolve(ok(scanDetail(40)))
+    })
+    render(<ResourceScanTab monitor={MONITOR} pollMs={15} />)
+    await waitFor(() => expect(slot('prs-running')).not.toBeNull())
+    await waitFor(() => expect(polls).toBeGreaterThanOrEqual(4))
+    await waitFor(() => expect(slot('prs-running')).toBeNull())
+    expect(slot('prs-poll-stopped')).toBeNull()
+    await waitFor(() => expect(slot('prs-hero')).not.toBeNull())
+  })
+
+  it('izleme tavanı bu istemcinin izleme süresinden; "İzlemeyi sürdür" süreyi sıfırlayıp izlemeyi yeniden başlatır', async () => {
+    const running = scanSummary(41, { status: 'RUNNING', progress: { done: 1, total: 9 }, grade: null, finished_at: null })
+    api.monitoring.resourceScans.mockResolvedValue(ok(scanHistory({ running })))
+    let polls = 0
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId !== 41) return Promise.resolve(ok(scanDetail(scanId)))
+      polls += 1
+      return Promise.resolve(ok({ scan: running, analysis: null, items: null, items_kept: true }))
+    })
+    render(<ResourceScanTab monitor={MONITOR} pollMs={15} pollCap={60} />)
+    await waitFor(() => expect(slot('prs-running')?.getAttribute('data-poll')).toBe('capped'))
+    const before = polls
+    fireEvent.click(within(slot('prs-poll-stopped')).getByRole('button', { name: /İzlemeyi sürdür/ }))
+    expect(slot('prs-running').getAttribute('data-poll')).toBe('ok')
+    await waitFor(() => expect(polls).toBeGreaterThan(before))
+    await waitFor(() => expect(slot('prs-running')?.getAttribute('data-poll')).toBe('capped'))
+  })
+})

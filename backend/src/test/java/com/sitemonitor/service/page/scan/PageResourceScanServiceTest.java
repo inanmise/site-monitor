@@ -93,6 +93,22 @@ class PageResourceScanServiceTest {
                 case "/files/r.pdf" -> { body = new byte[3000]; ct = "application/pdf"; }
                 case "/about" -> { body = "<html>about</html>".getBytes(StandardCharsets.UTF_8); ct = "text/html"; }
                 case "/broken" -> { body = "nope".getBytes(); status = 500; ct = "text/plain"; }
+                case "/redir-page" -> {
+                    body = ("<html><head><link rel=\"stylesheet\" href=\"/old/s.css\"></head><body>"
+                            + "<div style=\"background:url(/skip/inline.png)\"></div></body></html>").getBytes(StandardCharsets.UTF_8);
+                    ct = "text/html";
+                }
+                case "/old/s.css" -> {
+                    ex.getResponseHeaders().add("Location", "/v42/css/s.css");
+                    ex.sendResponseHeaders(302, -1);
+                    ex.close();
+                    return;
+                }
+                case "/v42/css/s.css" -> {
+                    body = "a{background:url(../img/bg.png)} b{background:url(/skip/x.png)}".getBytes(StandardCharsets.UTF_8);
+                    ct = "text/css";
+                }
+                case "/v42/img/bg.png" -> { body = img; ct = "image/png"; }
                 default -> { body = "missing".getBytes(); status = 404; ct = "text/plain"; }
             }
             ex.getResponseHeaders().add("Content-Type", ct);
@@ -326,6 +342,70 @@ class PageResourceScanServiceTest {
         assertThat(one.get("items")).isNull();
         assertThat(svc.one(oldest, 9)).as("başka izlemenin taraması okunmaz").isNull();
         assertThat(svc.deleteForMonitor(8)).isEqualTo(23);
+    }
+
+    @Test
+    @DisplayName("stil yönlendirmesi: url() SON adrese göre çözülür; stilden / satır içi stilden bulunanlara hariç tutma uygulanır")
+    void cssFinalUrlAndExcludes() throws Exception {
+        PageResourceScanService.Start st = svc.start(monitor(20, "/redir-page"), "u:20", "H");
+        Map<String, Object> one = awaitEnd(20, ((Number) st.scan().get("id")).longValue());
+        List<Map<String, Object>> items = get(one, "items");
+        assertThat(items).extracting(i -> (String) i.get("url")).anyMatch(u -> u.endsWith("/v42/img/bg.png"))
+                .noneMatch(u -> u.endsWith("/img/bg.png") && !u.contains("/v42/"))
+                .noneMatch(u -> u.contains("/skip/"));
+        Map<String, Object> bg = items.stream().filter(i -> ((String) i.get("url")).endsWith("/v42/img/bg.png")).findFirst().orElseThrow();
+        assertThat(bg.get("status")).isEqualTo(200);
+        Map<String, Object> analysis = get(one, "analysis");
+        List<Map<String, Object>> notes = get(analysis, "notes");
+        Map<String, Object> ex = notes.stream().filter(n -> "EXCLUDES_APPLIED".equals(n.get("code"))).findFirst().orElseThrow();
+        Map<String, Object> exParams = get(ex, "params");
+        assertThat(exParams.get("count")).as("satır içi + stilden").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("satır başka okuyucu tarafından kapatıldıysa (eskimiş sayıldı) tarama ölçümü bırakır ve hiçbir şey yazmaz")
+    void lostRowStopsTheRun() throws Exception {
+        slowPage();
+        PageResourceScanService.Start st = svc.start(monitor(21, "/slowpage"), "u:21", "I");
+        long id = ((Number) st.scan().get("id")).longValue();
+        Thread.sleep(300);
+        jdbc.update("UPDATE page_resource_scans SET status = 'INTERRUPTED', error = 'STALE' WHERE id = ?", id);
+        long until = System.currentTimeMillis() + 4_000;
+        // ölçüm kalp atışında kaybı görür; satır INTERRUPTED / STALE kalır (DONE yazılmaz)
+        while (System.currentTimeMillis() < until) {
+            Thread.sleep(200);
+            Map<String, Object> scan = get(svc.one(id, 21), "scan");
+            assertThat(scan.get("status")).isEqualTo("INTERRUPTED");
+        }
+        Map<String, Object> scan = get(svc.one(id, 21), "scan");
+        assertThat(scan.get("error_code")).isEqualTo("STALE");
+        assertThat(scan.get("grade")).isNull();
+    }
+
+    @Test
+    @DisplayName("ulaşılamayan sayfa: metin ham kod içermez, neden ayrı alanda; başlıktaki saçma boyut kabul edilmez")
+    void failedReasonAndHeaderClamp() throws Exception {
+        PageMonitor m = monitor(22, "/");
+        m.setUrl("http://127.0.0.1:1/");   // kapalı port → bağlantı reddi
+        PageResourceScanService.Start st = svc.start(m, "u:22", "J");
+        Map<String, Object> scan = get(awaitEnd(22, ((Number) st.scan().get("id")).longValue()), "scan");
+        assertThat(scan.get("status")).isEqualTo("FAILED");
+        assertThat(scan.get("error_code")).isEqualTo("PAGE_FAILED");
+        assertThat(scan.get("error_reason")).isNotNull();
+        assertThat((String) scan.get("error")).doesNotContain((String) scan.get("error_reason"));
+
+        PageFetchCore.Fetch cut = new PageFetchCore.Fetch(200, 5, 9, 10L * 1024 * 1024, null, null, false, true);
+        PageFetchCore.Meta huge = new PageFetchCore.Meta("https://a/", 0, "video/mp4", null, Long.MAX_VALUE / 2, null, null, null, null);
+        ScanItem it = svc.item(new PageResourceDiscovery.Candidate("https://a/v.mp4", "MEDIA", true, true, false),
+                new PageFetchCore.MetaFetch(cut, huge), "a");
+        assertThat(it.bytes).isEqualTo(10L * 1024 * 1024);
+        assertThat(it.truncated).isTrue();
+        assertThat(it.sizeSource).isEqualTo("body");
+        PageFetchCore.Meta real = new PageFetchCore.Meta("https://a/", 0, "video/mp4", null, 50L * 1024 * 1024, null, null, null, null);
+        ScanItem ok = svc.item(new PageResourceDiscovery.Candidate("https://a/v.mp4", "MEDIA", true, true, false),
+                new PageFetchCore.MetaFetch(cut, real), "a");
+        assertThat(ok.bytes).isEqualTo(50L * 1024 * 1024);
+        assertThat(ok.sizeSource).isEqualTo("header");
     }
 
     @Test

@@ -1,5 +1,6 @@
 import { toUtc } from '../../../utils/localDay.js'
 import { foldSearchText, matchesSearchText } from '../../../utils/monitorFilters.js'
+import { CHECK_FAILURE_SET } from '../../checks/checkFailureCodes.js'
 
 /**
  * Sayfa bütünlüğü → "Kaynak analizi" (2026-10-31, kullanıcı isteği: "sayfanın tüm nesnelerini tara, kategorize et, boyut ve
@@ -358,6 +359,43 @@ export function gradeTone(letter) {
   return 'muted'
 }
 
+/** Ölçüm sınırına takılmış (kısmi) koşu mu — sunucunun `capped` bayrağı; yalnız açık `true` sayılır. */
+export const isCapped = (scan) => scan?.capped === true
+
+/**
+ * Koşunun not tonu: sınırlı (kısmi) ölçüm notu ASLA başarı rengi almaz — soluk (CLAUDE.md "Before a feature counts as
+ * done" kural 5: kısmi veriden yeşil türetilmez). Aksi hâlde harf notunun tonu.
+ */
+export function scanTone(scan) {
+  if (isCapped(scan)) return 'muted'
+  return gradeTone(gradeLetter(scan?.grade, scan?.grade_letter))
+}
+
+/** Önceki koşuyla fark gösterilir mi: ikisi de var ve HİÇBİRİ sınırlı ölçüm değil (kısmi sayıyla kıyas yanıltır). */
+export function deltasComparable(scan, prev) {
+  return !!scan && !!prev && !isCapped(scan) && !isCapped(prev)
+}
+
+/** Kısa metinleri adlı yer tutucu taşıyan (nesne bağlamında anlamsız) kodlar — genel "bağlantı hatası" metnine düşer. */
+const GENERIC_PROBLEM_CODES = new Set(['UNKNOWN', 'HTTP_STATUS', 'RESOURCES_BROKEN', 'RESOURCES_TIMEOUT', 'MIXED_CONTENT'])
+
+/**
+ * Sunucunun nesne / sayfa sorun KODU → kullanıcı metni (ham kod asla gösterilmez). `BLOCKED` → güvenlik kuralı;
+ * `CheckFailureReason` kodları → `chkfail.<KOD>.short`; `TRANSPORT_ERROR`, bilinmeyen kod ve metni olmayan kod →
+ * genel "Bağlantı hatası". Boş kod → ''.
+ */
+export function problemText(code, t) {
+  const c = typeof code === 'string' ? code.trim() : ''
+  if (!c) return ''
+  if (c === 'BLOCKED') return t('prs.objProblem.blocked')
+  if (CHECK_FAILURE_SET.has(c) && !GENERIC_PROBLEM_CODES.has(c)) {
+    const key = `chkfail.${c}.short`
+    const text = t(key)
+    if (typeof text === 'string' && text !== '' && text !== key && !/\{[a-z]/i.test(text)) return text
+  }
+  return t('prs.objProblem.connection')
+}
+
 /** Alt puan tonu (0–100). */
 export function scoreTone(score) {
   const s = num(score)
@@ -427,6 +465,18 @@ export function pollCapMs(limits) {
   return Math.max(POLL_MIN_CAP_MS, max !== null ? max * 1000 + POLL_GRACE_MS : 0)
 }
 
+/**
+ * İzleme tavanı aşıldı mı — süre BU istemcinin izlemeye başladığı andan ölçülür (`startedMs`, monoton saat), sunucunun
+ * `started_at` damgasından değil: tarayıcı saati sunucudan ilerideyse izleme hemen durmasın (2026-10-31 inceleme).
+ */
+export function pollCapReached(startedMs, nowMs, cap) {
+  const s = num(startedMs)
+  const n = num(nowMs)
+  const c = num(cap)
+  if (s === null || n === null || c === null) return false
+  return n - s > c
+}
+
 // ── Grafik ───────────────────────────────────────────────────────────────────
 
 /**
@@ -446,6 +496,7 @@ export function trendPoints(items) {
         size: done ? num(s.page_bytes) : null,
         grade: done ? num(s.grade) : null,
         letter: done ? gradeLetter(s.grade, s.grade_letter) : null,
+        capped: done && isCapped(s),
         gap: !done,
       }
     })
@@ -672,7 +723,7 @@ export function objectSheetRows(items, t, locale) {
       num(it.bytes), formatSize(it.bytes, { truncated: it.truncated === true, locale }), bucket ? t(`prs.bucket.${bucket}`) : '',
       num(it.ttfb_ms), num(it.duration_ms), num(it.start_ms), yesNo(isPageLoad(it), t), yesNo(it.third_party, t),
       yesNo(it.compressed, t), cacheText(it, t, locale), num(it.width), num(it.height), num(it.redirects),
-      yesNo(it.from_css, t), yesNo(it.lazy, t), yesNo(it.truncated, t), it.error ?? '',
+      yesNo(it.from_css, t), yesNo(it.lazy, t), yesNo(it.truncated, t), problemText(it.error, t),
     ]
   })
   return [head, ...rows]
@@ -690,7 +741,8 @@ export function summarySheetRows(monitor, scan, analysis, t, locale, fmtDate = (
     [t('prs.export.finishedAt'), s.finished_at ? fmtDate(s.finished_at) : ''],
     [t('prs.export.requestedBy'), s.requested_by || ''],
     [t('prs.export.via'), s.via === 'proxy' ? t('prs.via.proxy') : s.via === 'direct' ? t('prs.via.direct') : ''],
-    [t('prs.grade'), num(s.grade) !== null ? `${num(s.grade)} / 100${letter ? ` (${letter})` : ''}` : ''],
+    [t('prs.grade'), num(s.grade) !== null
+      ? `${num(s.grade)} / 100${letter ? ` (${letter})` : ''}${isCapped(s) ? ` · ${t('prs.grade.partial')}` : ''}` : ''],
     [t('prs.kpi.load'), formatMs(s.load_ms, locale)],
     [t('prs.kpi.ttfb'), formatMs(s.html_ttfb_ms, locale)],
     [t('prs.kpi.htmlTime'), formatMs(s.html_ms, locale)],

@@ -41,6 +41,8 @@ public final class PageResourceDiscovery {
     static final int MAX_CSS_REFS = 500;
     /** Taranacak azami CSS metni (karakter) — gövde zaten {@link PageFetchCore#MAX_BODY_BYTES} ile sınırlı. */
     static final int MAX_CSS_CHARS = 2_000_000;
+    /** Daha uzun adresler atlanır (gerçek nesne adresi değil; bellek ve satır boyutu korunur). */
+    static final int MAX_URL_CHARS = 4096;
 
     private static final Set<String> FONT_EXT = Set.of("woff", "woff2", "ttf", "otf", "eot");
     private static final Set<String> IMAGE_EXT =
@@ -244,16 +246,17 @@ public final class PageResourceDiscovery {
         if (raw == null) return;
         String low = raw.toLowerCase(Locale.ROOT);
         if (low.startsWith("data:") || low.startsWith("#") || low.startsWith("about:") || low.startsWith("javascript:")) return;
+        if (raw.length() > MAX_URL_CHARS) return;
         String u = PageFetchCore.normalizeUrl(PageFetchCore.resolve(base, PageFetchCore.normalizeUrl(raw)));
-        if (!PageFetchCore.isHttp(u)) return;
+        if (!PageFetchCore.isHttp(u) || u.length() > MAX_URL_CHARS) return;
         seen.putIfAbsent(key(u), new Candidate(u, cat, true, false, true));
     }
 
     private static void add(Map<String, Candidate> out, String url, String cat, boolean pageLoad, boolean lazy,
                             boolean fromCss, String self, Predicate<String> exclude, int[] excluded) {
-        if (url == null || url.isBlank()) return;
+        if (url == null || url.isBlank() || url.length() > MAX_URL_CHARS) return;
         String u = PageFetchCore.normalizeUrl(url);
-        if (!PageFetchCore.isHttp(u)) return;
+        if (!PageFetchCore.isHttp(u) || u.length() > MAX_URL_CHARS) return;
         String k = key(u);
         if (k.equalsIgnoreCase(self)) return;   // sayfanın kendisi (HTML satırı ayrıca eklenir)
         if (out.containsKey(k)) return;

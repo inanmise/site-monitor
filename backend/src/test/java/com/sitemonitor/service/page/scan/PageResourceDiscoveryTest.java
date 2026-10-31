@@ -151,6 +151,17 @@ class PageResourceDiscoveryTest {
     }
 
     @Test
+    @DisplayName("çok uzun adresler (> 4096) hem HTML'de hem CSS'te atlanır")
+    void longUrlsSkipped() {
+        String longPath = "/x/" + "a".repeat(5000) + ".png";
+        String html = "<html><body><img src=\"" + longPath + "\"><img src=\"/ok.png\"></body></html>";
+        PageResourceDiscovery.Found f = PageResourceDiscovery.discover(html.getBytes(StandardCharsets.UTF_8), BASE, null);
+        assertThat(f.pageLoad()).extracting(PageResourceDiscovery.Candidate::url).containsExactly("https://ornek.com.tr/ok.png");
+        assertThat(PageResourceDiscovery.cssRefs("a{background:url(" + longPath + ")} b{background:url(/k.png)}", BASE))
+                .extracting(PageResourceDiscovery.Candidate::url).containsExactly("https://ornek.com.tr/k.png");
+    }
+
+    @Test
     @DisplayName("bozuk / boş HTML boş sonuç verir; uzantı yardımcı")
     void edgeCases() {
         PageResourceDiscovery.Found f = PageResourceDiscovery.discover(null, BASE, null);

@@ -3,7 +3,7 @@ import { formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
-import { formatMs, formatNumber, formatSize, gradeLetter, gradeTone, plural } from './resourceScanModel.js'
+import { formatMs, formatNumber, formatSize, gradeLetter, isCapped, plural, scanTone } from './resourceScanModel.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
@@ -30,13 +30,16 @@ export default function ResourceScanHistory({ items, selectedId, onSelect, limit
             const sel = s.id === selectedId
             const letter = gradeLetter(s.grade, s.grade_letter)
             const done = s.status === 'DONE'
+            const capped = done && isCapped(s)
             const when = s.started_at ? formatDate(s.started_at) : '—'
             const objects = done ? (Number(s.request_count) || 0) + (Number(s.document_count) || 0) + (Number(s.link_count) || 0) : null
             return (
               <li key={s.id}>
                 <Button type="button" variant={sel ? 'secondary' : 'ghost'} data-slot="prs-history-row" data-id={s.id}
                   data-status={s.status} aria-current={sel ? 'true' : undefined} onClick={() => onSelect?.(s.id)}
-                  aria-label={t('prs.hist.openFor', when, s.status === 'DONE' ? t('prs.hist.gradeShort', s.grade ?? '—') : t(`prs.status.run.${STATUS_TONE[s.status] ? s.status : 'UNKNOWN'}`))}
+                  aria-label={t('prs.hist.openFor', when, s.status === 'DONE'
+                    ? (capped ? t('prs.hist.gradeShortCapped', s.grade ?? '—') : t('prs.hist.gradeShort', s.grade ?? '—'))
+                    : t(`prs.status.run.${STATUS_TONE[s.status] ? s.status : 'UNKNOWN'}`))}
                   className={cn('h-auto w-full justify-start border px-3 py-2 text-left font-normal whitespace-normal',
                     sel ? 'border-primary/40' : 'border-border', TOUCH)}>
                   <span className="grid w-full min-w-0 grid-cols-1 gap-1.5 sm:grid-cols-[minmax(0,1.4fr)_auto_minmax(0,1fr)] sm:items-center sm:gap-3">
@@ -48,7 +51,7 @@ export default function ResourceScanHistory({ items, selectedId, onSelect, limit
                     </span>
                     <span className="flex flex-wrap items-center gap-1.5">
                       {done ? (
-                        <ToneBadge tone={gradeTone(letter)} className={cn(CHIP, 'font-bold tabular-nums')} data-slot="prs-history-grade">
+                        <ToneBadge tone={scanTone(s)} className={cn(CHIP, 'font-bold tabular-nums')} data-slot="prs-history-grade">
                           {s.grade ?? '—'}{letter ? ` · ${letter}` : ''}
                         </ToneBadge>
                       ) : (
@@ -57,6 +60,7 @@ export default function ResourceScanHistory({ items, selectedId, onSelect, limit
                           {t(`prs.status.run.${STATUS_TONE[s.status] ? s.status : 'UNKNOWN'}`)}
                         </ToneBadge>
                       )}
+                      {capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-history-capped">{t('prs.hist.capped')}</ToneBadge>}
                       {sel && <ToneBadge tone="info" className={CHIP}>{t('prs.hist.showing')}</ToneBadge>}
                     </span>
                     <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums sm:justify-end">

@@ -157,7 +157,7 @@ class PageResourceAnalyzerTest {
         PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items,
                 new PageResourceAnalyzer.Limits(true, 1500, false, 300, false, 200, 3));
         assertThat(r.grade()).isLessThan(60);
-        assertThat(r.failedCount()).as("kırık nesne + kırık bağlantı").isEqualTo(2);
+        assertThat(r.failedCount()).as("yalnız sayfa nesneleri (kırık bağlantı BROKEN_LINKS önerisinde)").isEqualTo(1);
         assertThat(r.capped()).isTrue();
         List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
         List<Object> codes = recs.stream().map(m -> m.get("code")).toList();
@@ -195,6 +195,23 @@ class PageResourceAnalyzerTest {
         Map<String, Object> timing = get(r.analysis(), "timing");
         assertThat(timing.get("parallel")).isEqualTo(6);
         assertThat(timing.get("load_ms")).isEqualTo(r.loadMs());
+    }
+
+    @Test
+    @DisplayName("sınırlı (kısmi) ölçümde sorun bulunmasa da ALL_GOOD yok — ölçülmeyen nesneler bilinmiyor")
+    void cappedNeverAllGood() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 300, 30 * KB));
+        PageResourceAnalyzer.Result clean = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        List<Map<String, Object>> recs = get(clean.analysis(), "recommendations");
+        assertThat(recs).extracting(m -> m.get("code")).containsExactly("ALL_GOOD");
+        List<ScanItem> again = new ArrayList<>();
+        again.add(html(120, 300, 30 * KB));
+        PageResourceAnalyzer.Result capped = PageResourceAnalyzer.analyze(again,
+                new PageResourceAnalyzer.Limits(false, 0, true, 60, false, 0, 0));
+        List<Map<String, Object>> none = get(capped.analysis(), "recommendations");
+        assertThat(none).isEmpty();
+        assertThat(capped.capped()).isTrue();
     }
 
     @Test

@@ -121,7 +121,8 @@ public final class PageResourceAnalyzer {
         List<ScanItem> images = page.stream().filter(PageResourceAnalyzer::isImage).toList();
         long imageBytes = sum(images);
         int pageFailed = (int) page.stream().filter(ScanItem::failed).count();
-        int failed = (int) items.stream().filter(ScanItem::failed).count();
+        // Özet "açılmayan nesne" = sayfa nesneleri (istek kutucuğu ve hatalar puanıyla aynı); kırık belge / bağlantı ayrı öneri.
+        int failed = pageFailed;
 
         // ── Alt puanlar ─────────────────────────────────────────────────────────────────
         List<ScanItem> largeImages = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
@@ -219,7 +220,7 @@ public final class PageResourceAnalyzer {
         Map<String, Object> analysis = new LinkedHashMap<>();
         analysis.put("scores", scores);
         analysis.put("categories", categories);
-        analysis.put("recommendations", recommendations(html, page, images, docs, links, pageBytes, loadMs));
+        analysis.put("recommendations", recommendations(html, page, images, docs, links, pageBytes, loadMs, lim.capped()));
         analysis.put("images", img);
         analysis.put("timing", timing);
         analysis.put("notes", notes(lim));
@@ -264,7 +265,7 @@ public final class PageResourceAnalyzer {
 
     private static List<Map<String, Object>> recommendations(ScanItem html, List<ScanItem> page, List<ScanItem> images,
                                                              List<ScanItem> docs, List<ScanItem> links, long pageBytes,
-                                                             long loadMs) {
+                                                             long loadMs, boolean capped) {
         List<Map<String, Object>> out = new ArrayList<>();
 
         List<ScanItem> broken = page.stream().filter(ScanItem::failed).toList();
@@ -367,7 +368,8 @@ public final class PageResourceAnalyzer {
             out.add(rec("LARGE_DOCUMENTS", "low", params("count", bigDocs.size(), "bytes", sum(bigDocs)), null, null, bigDocs));
         }
 
-        if (out.isEmpty()) out.add(rec("ALL_GOOD", "low", new LinkedHashMap<>(), null, null, List.of()));
+        // Kısmi (sınırlı) ölçümde "sorun yok" denmez — ölçülmeyen nesneler hakkında bir şey bilinmiyor
+        if (out.isEmpty() && !capped) out.add(rec("ALL_GOOD", "low", new LinkedHashMap<>(), null, null, List.of()));
         out.sort(Comparator.comparingInt((Map<String, Object> m) -> severityRank((String) m.get("severity")))
                 .thenComparing((Map<String, Object> m) -> -longOr(m.get("saving_bytes")))
                 .thenComparing((Map<String, Object> m) -> (String) m.get("code")));
