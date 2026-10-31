@@ -139,11 +139,14 @@ describe('ScriptedMonitorPage — takım erişim paylaşımı', () => {
     expect(dialog().querySelector('[data-slot="noc-notify-field"] [role="switch"]')).toBeDisabled()
   })
 
-  it('başka izlemenin kayıtlı betiği seçilince GİZLİ değişkenler "ayarlı" görünmez; kendi kaydına dönülünce ayarlı kalır', async () => {
+  it('başka izlemenin kayıtlı betiği seçilince EKLENEN gizli değişkenler "ayarlı" görünmez; izlemenin kendi gizlisi korunur', async () => {
+    // 2026-10-31 (H1): kaynak değişimi env'i BİRLEŞTİRİR — aynı adlı satır (bu izlemenin kayıtlı TOKEN'ı) olduğu gibi kalır,
+    // başka izlemeden yalnız EKSİK ad eklenir ve onun gizli değeri taşınmaz. Kendi betiğinden ayrılmak onay ister.
     const env = [{ name: 'TOKEN', secret: true, value_set: true }]
     renderWith([
       row({ id: 1, can_check: true, can_edit: true, shared_access: true, routing_locked: true, env }),
-      row({ id: 2, name: 'Kaynak 2', team_id: 9, team_name: 'Takım B', can_check: true, can_edit: true, env }),
+      row({ id: 2, name: 'Kaynak 2', team_id: 9, team_name: 'Takım B', can_check: true, can_edit: true,
+        env: [...env, { name: 'DIGER_GIZLI', secret: true, value_set: true }] }),
     ])
     const footer = await footerOf('Senaryo 1')
     await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
@@ -151,7 +154,10 @@ describe('ScriptedMonitorPage — takım erişim paylaşımı', () => {
     await waitFor(() => expect(secretInputs()).toHaveLength(1))
     expect(secretInputs()[0].getAttribute('placeholder')).not.toMatch(SECRET_EMPTY)
     pickSource(/Kaynak 2/)
-    await waitFor(() => expect(secretInputs()[0].getAttribute('placeholder')).toMatch(SECRET_EMPTY))
+    fireEvent.click(await screen.findByRole('button', { name: /^(kaynağı değiştir|change source)$/i }))
+    await waitFor(() => expect(secretInputs()).toHaveLength(2))
+    expect(secretInputs()[0].getAttribute('placeholder')).not.toMatch(SECRET_EMPTY)   // kendi TOKEN'ı korundu
+    expect(secretInputs()[1].getAttribute('placeholder')).toMatch(SECRET_EMPTY)       // başka izlemenin gizlisi taşınmaz
     pickSource(/Senaryo 1/)
     await waitFor(() => expect(secretInputs()[0].getAttribute('placeholder')).not.toMatch(SECRET_EMPTY))
   })

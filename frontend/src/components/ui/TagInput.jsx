@@ -155,7 +155,8 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
           {tags.map(tag => {
             const h = hues[tag] ?? tagHue(tag)
             return (
-              <Badge key={tag} variant="outline" className="gap-1 px-2.5 font-semibold"
+              // overflow-visible: kaldır düğmesinin dokunmatik alanı (::after, 40 px) rozetin dışına taşabilsin (2026-10-31)
+              <Badge key={tag} variant="outline" className="gap-1 overflow-visible px-2.5 font-semibold"
                 style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
                 {tag}
                 {/* Ad hem çevrilir hem ETİKETİ taşır: sabit "remove" 8 etiketli bir kayıtta
@@ -163,7 +164,7 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
                     arayüzde İngilizce okunuyordu. */}
                 {!disabled && (
                   <Button type="button" variant="ghost" size="icon-xs" aria-label={t('tag.removeTag', tag)}
-                    className="-mr-1 size-4 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent"
+                    className="relative -mr-1 size-4 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent pointer-coarse:after:absolute pointer-coarse:after:-inset-3"
                     style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>
                     <X aria-hidden="true" />
                   </Button>

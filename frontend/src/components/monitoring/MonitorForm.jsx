@@ -39,6 +39,9 @@ const WIDTH = {
 export function MonitorFormModal({
   open = true, onClose, icon, title, duplicate = false, busy = false, busyLabel = null,
   width = 720, footer, children,
+  // true (2026-10-31): başlık kırpılmaz, sarar — başlıkta ek durum metni taşıyan formlar (Sentetik İzleme "taslak
+  // kaydedildi HH:MM" telefonda "Taslak kay…" diye kesiliyordu). Varsayılan eski görünüm (tek satır, kırpılır).
+  wrapTitle = false,
 }) {
   const t = useT()
   const scrollHint = useModalScrollHint()
@@ -54,7 +57,7 @@ export function MonitorFormModal({
       bodyRef={scrollHint.ref}
       className={WIDTH[width] ?? WIDTH[720]}
       title={<>
-        <span className="min-w-0 truncate">{title}</span>
+        <span className={wrapTitle ? 'min-w-0 [overflow-wrap:anywhere]' : 'min-w-0 truncate'}>{title}</span>
         {duplicate && <Badge variant="secondary" data-slot="duplicate-badge" className="shrink-0">{t('mon.duplicateBadge')}</Badge>}
       </>}
       headerExtra={busyLabel

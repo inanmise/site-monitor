@@ -132,6 +132,8 @@ describe('ScriptedMonitorPage — k6 Test sırası', () => {
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await openNewWithScript()
     pickSource(/smoke/i)
+    // Elle yazılmış betik kaynak değişiminde onay ister (H1, 2026-10-31) — env birleştirilir, betik değişir
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /^change source$/i })) })
     await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
 
     await act(async () => { d.resolve({ success: true, data: LATE }) })

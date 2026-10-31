@@ -41,6 +41,16 @@ describe('ScheduleEditor — önizleme', () => {
     expect(screen.getByText(/Saatler İstanbul saatidir/)).toBeInTheDocument()
   })
 
+  it('previewApi verilirse önizleme ONU çağırır (Sentetik İzleme, 2026-10-31); verilmezse dbquery ucu', async () => {
+    const own = vi.fn(() => Promise.resolve({ success: true, data: { valid: true, errors: [], next: NEXT, effective_interval_seconds: 300 } }))
+    render(<Harness previewApi={own} />)
+    await waitFor(() => expect(preview().getAttribute('data-state')).toBe('ok'), { timeout: 2000 })
+    expect(own).toHaveBeenCalledTimes(1)
+    expect(own.mock.calls[0][0]).toMatchObject({ schedule_mode: 'INTERVAL', interval_seconds: 300 })
+    expect(own.mock.calls[0][1].signal).toBeDefined()
+    expect(api.monitoring.dbQuerySchedulePreview).not.toHaveBeenCalled()
+  })
+
   it('sunucu hataları alanın altında (ileti sunucudan), çağıranın hatası önceliklidir', async () => {
     api.monitoring.dbQuerySchedulePreview.mockResolvedValue({ success: true, data: {
       valid: false, never_runs: false, next: [], effective_interval_seconds: null,
