@@ -169,6 +169,8 @@ function EditView({ tpl, onCancel, onSaved, dirtyRef }) {
   useEffect(() => {
     if (dirtyRef) dirtyRef.current = dirty
   }, [dirty, dirtyRef])
+  // Görünüm kapanınca (kayıt, geri, silinmiş kayıt) bayrak iner — yöneticinin sonraki kapatması boşuna onay sormasın
+  useEffect(() => () => { if (dirtyRef) dirtyRef.current = false }, [dirtyRef])
   const [errors, setErrors] = useState({})
   const [violations, setViolations] = useState(null)
   const [banner, setBanner] = useState(null)

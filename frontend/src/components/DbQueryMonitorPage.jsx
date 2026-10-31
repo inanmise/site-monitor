@@ -577,12 +577,14 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
-  const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dbq.form.noTeam') }] : []),
-    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   // Yalnız paylaşımla yazılan takımlar (`grant: true`) yeni izleme / kopya seçicisinde ve bağlantı / şablon yöneticisinde
-  // yer almaz (O5, K2): bağlantılar ve şablonlar takımın kendi belgesidir, paylaşımla açılmaz.
+  // yer almaz (O5, K2): bağlantılar ve şablonlar takımın kendi belgesidir, paylaşımla açılmaz. Düzenlemede seçeneklerin
+  // tamamı formTeamSelect'e gider (kilitli satırda kayıtlı takım adıyla görünür; kendi kaydında paylaşım takımı zaten düşer).
   const grantTeamIds = useMemo(() => new Set(pickTeams.filter(tm => tm?.grant === true).map(tm => String(tm.id))), [pickTeams])
-  const newTeamOptions = useMemo(() => teamSelectOptions.filter(o => !grantTeamIds.has(String(o.value))), [teamSelectOptions, grantTeamIds])
+  const allTeamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dbq.form.noTeam') }] : []),
+    ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
+  const teamSelectOptions = useMemo(() => (modal === 'new'
+    ? allTeamSelectOptions.filter(o => !grantTeamIds.has(String(o.value))) : allTeamSelectOptions), [modal, allTeamSelectOptions, grantTeamIds])
   const teamNameById = useMemo(() => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   const managerTeams = useMemo(() => (isAdmin && teams.length ? teams : pickTeams)
     .filter(tm => !grantTeamIds.has(String(tm.id))).map(tm => ({ id: tm.id, name: tm.name })), [isAdmin, teams, pickTeams, grantTeamIds])
@@ -729,8 +731,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             </FormField>
             <FormField label={t('dbq.form.team')} required {...fe.fieldProps('team_id')}>
               {({ id }) => canPickTeam
-                ? <SearchableSelect id={id} value={form.teamId} onChange={onTeamChange} searchThreshold={2}
-                    {...(modal === 'new' ? { options: newTeamOptions } : formTeamSelect(modal, teamSelectOptions, pickTeams))} />
+                ? <SearchableSelect id={id} value={form.teamId} onChange={onTeamChange} {...formTeamSelect(modal, teamSelectOptions, pickTeams)} searchThreshold={2} />
                 : <Input id={id} value={fixedTeamName || t('dbq.form.noTeam')} disabled />}
             </FormField>
             <FormField full label={t('dbq.form.group')} required {...fe.fieldProps('group_name')}>

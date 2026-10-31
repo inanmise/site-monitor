@@ -416,6 +416,20 @@ describe('DbQueryMonitorPage — ayrıntı', () => {
     expect(document.querySelector('[data-slot="dbq-health"]').textContent).toMatch(/could not be read/)
   })
 
+  it('tanınmayan sağlık durumu "Bilinmiyor" (asla "Denenmedi" ya da yeşil değil — DÜŞÜK 12); saatler İstanbul (16); sorgu bloğu klavyeyle kaydırılır (10b)', async () => {
+    api.monitoring.dbConnections.mockResolvedValue({ success: true, data: [{ id: 3, health: { state: 'bambaşka' } }] })
+    window.history.replaceState({}, '', '/?tab=dbquery&monitor=1')
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-health"]')).toHaveAttribute('data-state', 'unknown'))
+    expect(document.querySelector('[data-slot="dbq-health"]').textContent).toContain('Unknown')
+    expect(document.querySelector('[data-slot="dbq-detail-tz"]').textContent).toMatch(/Istanbul/)
+    // Son çalışma da İstanbul saatiyle (10:00 UTC → 13:00)
+    expect(document.querySelector('[data-slot="dbq-detail-run"]').textContent).toMatch(/13:00:00/)
+    const sql = document.querySelector('[data-slot="dbq-detail-sql-scroll"]')
+    expect(sql).toHaveAttribute('role', 'region')
+    expect(sql).toHaveAttribute('tabindex', '0')
+  })
+
   it('FAIL satırı: hata metni + neden açıklaması ve ne yapılacağı', async () => {
     api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: true, data: [row({ status: 'FAIL', error: 'password authentication failed', failure_reason: 'DB_AUTH' })] })
     window.history.replaceState({}, '', '/?tab=dbquery&monitor=1')
@@ -553,6 +567,13 @@ describe('DbQueryMonitorPage — inceleme düzeltmeleri (2026-10-31)', () => {
     render(<DbQueryMonitorPage {...props} />)
     fireEvent.click(await screen.findByRole('button', { name: /^Sipariş kuyruğu — check now$/i }))
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Çok sık kontrol; 7 sn sonra yeniden deneyin.'))
+  })
+
+  it('DÜŞÜK 16: karttaki "sonraki çalışma" alt satırı İstanbul saati olduğunu söyler', async () => {
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(titles()).toHaveLength(1))
+    const next = document.querySelector('[data-slot="dbq-metric"][data-metric="next"]')
+    expect(next.textContent).toMatch(/13:05 \(Istanbul\)/)
   })
 
   it('O6: toplu işlem çubuğunda takım değiştir YOK — yerinde bilgi satırı (bağlantı seçimi gerekir)', async () => {

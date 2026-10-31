@@ -442,6 +442,8 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved, onNoCh
   useEffect(() => {
     if (dirtyRef) dirtyRef.current = dirty
   }, [dirty, dirtyRef])
+  // Görünüm kapanınca (kayıt, geri, silinmiş kayıt) bayrak iner — yöneticinin sonraki kapatması boşuna onay sormasın
+  useEffect(() => () => { if (dirtyRef) dirtyRef.current = false }, [dirtyRef])
   const shownErrors = Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, client[k] && !server[k] ? t(`dbq.conn.v.${v}`) : v]))
 
   const onChange = (next) => {
