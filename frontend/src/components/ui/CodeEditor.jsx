@@ -45,10 +45,16 @@ const GUTTER_W = 44
  * @param markers `[{line, type, message}]` — cetvelde işaretlenecek satırlar (k6 hata satırı).
  * @param revealMarkers ilk hata satırını görünür alana kaydır.
  * @param showLineNumbers GERİ ALMA ANAHTARI: false ⇒ bileşen bugünküyle BİREBİR aynı DOM'u üretir.
+ * @param ariaLabel textarea'nın erişilebilir adı (2026-10-31): kütüphane textarea'ya `aria-*` geçirmiyor, etiketsiz
+ *   kod alanı ekran okuyucuda "düzenlenebilir metin" diye okunuyordu. Verilmezse öznitelik yazılmaz (bugünkü DOM).
+ * @param ariaDescribedBy textarea'yı ipucu metnine bağlar (Tab / Esc kullanımı) — isteğe bağlı.
+ * @param gotoLine `{ line, seq }` — dışarıdan "N. satıra git" isteği (hata metnindeki satır:sütun): `seq` her
+ *   değiştiğinde satır seçilir, odak alır ve görünür alana kaydırılır. Verilmezse hiçbir şey olmaz.
  */
 export default function CodeEditor({ value, onChange, placeholder, readOnly = false, minHeight = 280,
                                      textareaId = 'k6-script-editor', showLineNumbers = true,
-                                     markers = [], revealMarkers = false }) {
+                                     markers = [], revealMarkers = false,
+                                     ariaLabel, ariaDescribedBy, gotoLine = null }) {
   const wrapRef = useRef(null)
   const [active, setActive] = useState([0, 0])   // 1-tabanlı [ilk, son] vurgulu satır
 
@@ -108,6 +114,31 @@ export default function CodeEditor({ value, onChange, placeholder, readOnly = fa
     if (!wrap || !row) return
     wrap.scrollTop = Math.max(0, row.offsetTop - wrap.clientHeight / 3)
   }, [showLineNumbers, revealMarkers, firstMarker])
+
+  // Erişilebilir ad / açıklama — kütüphane bu öznitelikleri textarea'ya iletmiyor, doğrudan yazılır.
+  useEffect(() => {
+    const ta = textarea()
+    if (!ta) return
+    if (ariaLabel) ta.setAttribute('aria-label', ariaLabel)
+    else ta.removeAttribute('aria-label')
+    if (ariaDescribedBy) ta.setAttribute('aria-describedby', ariaDescribedBy)
+    else ta.removeAttribute('aria-describedby')
+  }, [ariaLabel, ariaDescribedBy, textarea])
+
+  // "N. satıra git": yalnız istek sıra numarası değişince (her çizimde değil). Satır sayısını aşan istek son satıra.
+  const gotoSeq = gotoLine?.seq
+  useEffect(() => {
+    const n = Number(gotoLine?.line)
+    if (gotoSeq == null || !Number.isInteger(n) || n < 1) return
+    const target = Math.min(n, lines.length)
+    selectLine(target)
+    const wrap = wrapRef.current
+    const row = wrap?.querySelector(`.cg-row[data-line="${target}"]`)
+    if (wrap && row) wrap.scrollTop = Math.max(0, row.offsetTop - wrap.clientHeight / 3)
+    try { wrap?.scrollIntoView?.({ block: 'nearest' }) } catch { /* jsdom */ }
+    // yalnız yeni istek — satır/seçim değişimi kendi başına kaydırma çalmaz
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gotoSeq])
 
   const [first, last] = active
 

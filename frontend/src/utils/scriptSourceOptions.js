@@ -54,7 +54,20 @@ export function templateValue(tpl) {
 }
 
 /**
- * @param savedScripts  [{ id, name }] — kayıtlı monitör script'leri
+ * Seçenek ipucu (SearchableSelect `hint`, ikinci satır — 2026-10-31): açıklamanın ilk cümlesi, en çok 140 karakter.
+ * Seçmeden önce şablonun ne yaptığı görünsün (eskiden açıklama ancak seçimden SONRA görünüyordu); liste şişmesin
+ * diye kısaltılır. Açıklama yoksa ipucu yok.
+ */
+export function optionHint(text, max = 140) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!s) return undefined
+  const dot = s.indexOf('. ')
+  const first = dot > 0 && dot < max ? s.slice(0, dot + 1) : s
+  return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first
+}
+
+/**
+ * @param savedScripts  [{ id, name, description? }] — kayıtlı monitör script'leri
  * @param templates     sunucudan gelen şablon satırları ({ scope, builtin, select_token, … })
  * @param savedSourceId düzenlenen monitörün id'si (varsa "(bu monitör)" çapası)
  * @param t             i18n fonksiyonu
@@ -72,6 +85,7 @@ export function buildScriptSourceOptions({ savedScripts = [], templates = [], sa
     opts.push({
       value: `saved:${s.id}`,
       label: s.id === savedSourceId ? `${s.name} ${t('scripted.srcThisMonitor')}` : s.name,
+      hint: optionHint(s.description),
       group: t('scripted.srcGroupSaved'),
       groupOpen: true,
     })
@@ -83,7 +97,8 @@ export function buildScriptSourceOptions({ savedScripts = [], templates = [], sa
 
   const push = (rows, group, groupOpen = false) => {
     for (const tpl of rows) {
-      opts.push({ value: templateValue(tpl), label: templateLabel(tpl, lang), group, groupOpen })
+      opts.push({ value: templateValue(tpl), label: templateLabel(tpl, lang), group, groupOpen,
+        hint: optionHint(pickLang(tpl.description, tpl.description_en, lang)) })
     }
   }
   push(team,    t('scripted.srcGroupMyTeam'),  true)

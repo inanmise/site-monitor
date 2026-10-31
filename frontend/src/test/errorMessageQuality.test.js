@@ -68,7 +68,7 @@ const ALLOW = {
       'loginAnomaly.inc.errorTitle', 'loginAnomaly.saveFailedTitle', 'modal.errorMsg', 'mw.saveError',
       'mypush.hist.error', 'ng.histError', 'noc.cfgLoadError', 'noc.con.loadError', 'noc.con.sheet.loadError',
       'noc.groupsLoadError', 'noc.loadError', 'page.testError', 'ping.testError', 'pspd.testError', 'releases.loadError',
-      'rtc.error', 'scripted.testError', 'secret.infoError', 'settings.loadError', 'sml.byErrorClass',
+      'rtc.error', 'secret.infoError', 'settings.loadError', 'sml.byErrorClass',
       'sql.diag.loadError', 'sql.ex.loadError', 'sql.td.loadError', 'sslv.loadFailed', 'sslv.m.loadFailed',
       'sysmaint.err.generic', 'sysmaint.err.load', 'thr.previewError', 'thr.saveError', 'tpl.loadError',
       'ued.saveFailed', 'waLogs.detail.failed', 'waLogs.detail.loadError',
