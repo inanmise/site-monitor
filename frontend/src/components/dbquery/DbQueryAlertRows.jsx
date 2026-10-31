@@ -25,6 +25,18 @@ const SECTION = 'mt-5 mb-2 text-xs font-bold tracking-wide text-muted-foreground
  *   • okunamadı       → hata + tekrar dene (asla "satır yok" denmez)
  * DBQUERY dışı alarmda hiçbir şey çizmez, istek de atmaz.
  */
+/**
+ * Satır yokken sunucunun söylediği neden (ek alan `reason`; eski sunucu göndermez → bugünkü "kayıtlı satır yok"):
+ * `rows_disabled` = izlemede "satırları maile ekle" kapalı, `unavailable` = izleme ayarı okunamadı / izleme silinmiş —
+ * bilinmeyen durum "satır yok" diye yazılmaz.
+ */
+export function noneState(res) {
+  const reason = res?.reason ?? res?.data?.reason
+  if (reason === 'rows_disabled') return 'disabled'
+  if (reason === 'unavailable') return 'unavailable'
+  return 'none'
+}
+
 export default function DbQueryAlertRows({ alertId, alertType }) {
   const t = useT()
   const { lang } = useLanguage()
@@ -38,7 +50,7 @@ export default function DbQueryAlertRows({ alertId, alertType }) {
     try {
       const res = await api.monitoring.dbQueryAlertRows(alertId)
       if (n !== seq.current) return
-      if (res?.success) setState({ state: res.data == null ? 'none' : (res.data.hidden ? 'hidden' : 'ok'), data: res.data ?? null, message: null })
+      if (res?.success) setState({ state: res.data == null ? noneState(res) : (res.data.hidden ? 'hidden' : 'ok'), data: res.data ?? null, message: null })
       else setState({ state: 'error', data: null, message: res?.error || res?.message || null })
     } catch (e) {
       if (n !== seq.current) return
@@ -77,6 +89,17 @@ export default function DbQueryAlertRows({ alertId, alertType }) {
 
       {state.state === 'none' && (
         <p data-slot="dbq-alert-rows-none" className="m-0 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('dbq.rows.none')}</p>
+      )}
+
+      {state.state === 'disabled' && (
+        <p data-slot="dbq-alert-rows-disabled" className="m-0 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('dbq.rows.disabled')}</p>
+      )}
+
+      {state.state === 'unavailable' && (
+        <AlertBanner tone="warning" title={t('dbq.rows.unavailableTitle')} className="mb-0"
+          actions={<Button type="button" variant="outline" size="sm" onClick={load} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" />{t('dbq.rows.retry')}</Button>}>
+          {t('dbq.rows.unavailableBody')}
+        </AlertBanner>
       )}
 
       {state.state === 'hidden' && (

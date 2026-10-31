@@ -83,6 +83,20 @@ describe('DbQueryAlertRows', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-alert-rows-none"]')).not.toBeNull())
   })
 
+  it('neden: rows_disabled → "satırları maile ekle kapalı"; unavailable → bilinmiyor uyarısı + tekrar dene (asla "satır yok" değil)', async () => {
+    api.monitoring.dbQueryAlertRows.mockResolvedValueOnce({ success: true, data: null, reason: 'rows_disabled' })
+    const { unmount } = render(<DbQueryAlertRows alertId={10} alertType="DBQUERY_THRESHOLD" />)
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-alert-rows-disabled"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="dbq-alert-rows-none"]')).toBeNull()
+    unmount()
+    api.monitoring.dbQueryAlertRows.mockResolvedValueOnce({ success: true, data: null, reason: 'unavailable' })
+    render(<DbQueryAlertRows alertId={11} alertType="DBQUERY_THRESHOLD" />)
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-alert-rows"]').getAttribute('data-state')).toBe('unavailable'))
+    expect(document.querySelector('[data-slot="dbq-alert-rows-none"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Tekrar dene' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-alert-rows"]').getAttribute('data-state')).toBe('ok'))
+  })
+
   it('okunamazsa hata + tekrar dene (asla "satır yok" denmez)', async () => {
     api.monitoring.dbQueryAlertRows.mockResolvedValueOnce({ success: false, error: 'Yetki doğrulanamadı (503)' })
     render(<DbQueryAlertRows alertId={9} alertType="DBQUERY_THRESHOLD" />)
