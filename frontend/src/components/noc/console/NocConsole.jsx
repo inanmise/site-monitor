@@ -32,7 +32,7 @@ import { Toggle } from '@/components/shadcn/toggle'
 /** İzleme ailesi → menüdeki tür adı (Alarm Geçmişi kategori süzgeciyle aynı adlar). */
 const FAMILY_KEY = {
   http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon', keyword: 'nav.keyword',
-  page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', cert: 'nav.groupCertificates', other: 'noc.con.family.other',
+  page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', dbquery: 'nav.dbquery', cert: 'nav.groupCertificates', other: 'noc.con.family.other',
 }
 const familyLabel = (t, key) => t(FAMILY_KEY[key] || 'noc.con.family.other')
 

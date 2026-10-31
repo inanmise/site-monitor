@@ -8,7 +8,7 @@ import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import InboxBell from './InboxBell.jsx'
 import {
   LayoutDashboard, LayoutGrid, ShieldCheck, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
-  Activity, Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
+  Activity, Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, DatabaseSearch,
   BellRing, TriangleAlert, Siren, Wrench, History, Headset,
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
@@ -100,6 +100,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         { id: 'page',      Icon: FileCheck,     labelKey: 'nav.page',      show: true },
         { id: 'pagespeed', Icon: Gauge,         labelKey: 'nav.pagespeed', show: true },
         { id: 'scripted',  Icon: Workflow,      labelKey: 'nav.scripted',  show: true },
+        // Veritabanı Sorgu İzleme (11. tür, 2026-10-31): iş kuralını veritabanından ölçer — kendi ara başlığı
+        { id: 'dbquery',   Icon: DatabaseSearch, labelKey: 'nav.dbquery', show: true, section: 'nav.secData' },
       ],
     },
     {

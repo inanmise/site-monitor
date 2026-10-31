@@ -44,6 +44,7 @@ export const NOC_TYPE_ICON = {
   DNS: TAB_META.dns.Icon,
   PORT: TAB_META.port.Icon,
   DOMAIN: TAB_META.domain.Icon,
+  DBQUERY: TAB_META.dbquery.Icon,
 }
 
 /** Tür etiketi (kısa) — `noc.type.<TÜR>`. */

@@ -44,6 +44,8 @@ const MON_TYPES = [
   // olan yalnız bu listeydi, bu yüzden planlı kesintide sentetik monitörler susturulamıyor,
   // tek çare "tüm monitörler" bayrağıyla her şeyi birden susturmaktı.
   ['scripted', 'getScriptedMonitors', m => m.name, d => d?.monitors || []],
+  // Veritabanı sorgusu (11. tür): alarm anahtarı izlemenin ADI (k6 emsali) — bakım hedefi de ad.
+  ['dbquery', 'getDbQueryMonitors', m => m.name],
 ]
 
 const VIEWS = ['list', 'agenda', 'calendar']

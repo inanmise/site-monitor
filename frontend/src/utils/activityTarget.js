@@ -5,7 +5,7 @@
  *
  * Tek kaynak (2026-10-13): Etkinlik sayfası ve Kişisel Panom'un "Son etkinlik" kutusu aynı hedefi kullanır.
  */
-const MONITOR_TABS = { DOMAIN: 'domain', HTTP: 'http', PORT: 'port', PING: 'ping', DNS: 'dns', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted' }
+const MONITOR_TABS = { DOMAIN: 'domain', HTTP: 'http', PORT: 'port', PING: 'ping', DNS: 'dns', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DBQUERY: 'dbquery' }
 
 export function activityTarget(row) {
   if (!row) return null

@@ -93,4 +93,4 @@ export const CHECKLIST_ITEMS = [
 /** Sekme ziyaretinden türeyen liste maddeleri (tab → key). */
 export const CHECKLIST_BY_TAB = Object.fromEntries(CHECKLIST_ITEMS.filter((i) => i.tab && i.visit !== false).map((i) => [i.tab, i.key]))
 // İzleme sekmelerinin hepsi "monitor" maddesini tamamlar
-for (const tb of ['domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'uptime']) CHECKLIST_BY_TAB[tb] = 'monitor'
+for (const tb of ['domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'dbquery', 'uptime']) CHECKLIST_BY_TAB[tb] = 'monitor'

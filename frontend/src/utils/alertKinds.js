@@ -9,7 +9,7 @@
  * Kanonik liste EscalationService.TYPE_* — yeni bir "_DOWN"/"_FAIL" türü buraya da eklenmeli.
  */
 export const OUTAGE_ALERT_TYPES = new Set([
-  'ACCESSIBILITY', 'HTTP_DOWN', 'PORT_DOWN', 'PING_DOWN', 'DNS_FAILURE', 'KEYWORD', 'PAGE_DOWN', 'SCRIPTED_FAIL', 'PAGESPEED_DOWN',
+  'ACCESSIBILITY', 'HTTP_DOWN', 'PORT_DOWN', 'PING_DOWN', 'DNS_FAILURE', 'KEYWORD', 'PAGE_DOWN', 'SCRIPTED_FAIL', 'PAGESPEED_DOWN', 'DBQUERY_FAIL',
 ])
 
 export function isOutageAlert(type) {

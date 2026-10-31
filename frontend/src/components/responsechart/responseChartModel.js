@@ -88,12 +88,16 @@ const KINDS = {
   ssl:       { titleKey: 'rtc.title.ssl', aux: 'days' },
   page:      { titleKey: 'rtc.title.page', unit: '' },
   pagespeed: { titleKey: 'pspd.metricLoad' },
+  dbquery:   { titleKey: 'dbq.detail.metricDuration' },
 }
 const PAGESPEED_TITLES = { load: 'pspd.metricLoad', ttfb: 'pspd.metricTtfb', size: 'pspd.metricSize', requests: 'pspd.metricRequests' }
+/** Veritabanı sorgusu (11. tür): süre (varsayılan) · ölçülen değer · dönen satır — sunucu `?metric=` ile projekte eder. */
+const DBQUERY_TITLES = { duration: 'dbq.detail.metricDuration', value: 'dbq.detail.metricValue', rows: 'dbq.detail.metricRows' }
 
 export function kindMeta(kind, metric) {
   const k = KINDS[kind] ?? KINDS.http
-  const titleKey = kind === 'pagespeed' ? (PAGESPEED_TITLES[metric] ?? PAGESPEED_TITLES.load) : k.titleKey
+  const titleKey = kind === 'pagespeed' ? (PAGESPEED_TITLES[metric] ?? PAGESPEED_TITLES.load)
+    : kind === 'dbquery' ? (DBQUERY_TITLES[metric] ?? DBQUERY_TITLES.duration) : k.titleKey
   return { titleKey, aux: k.aux ?? null, defaultUnit: k.unit ?? 'ms' }
 }
 

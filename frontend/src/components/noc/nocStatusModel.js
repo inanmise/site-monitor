@@ -120,7 +120,7 @@ export const NOC_LEVEL_PHRASE = Object.freeze({
 /** Tür anahtarı → izleme sekmesi (derin bağlantı). SSL = Pano (sertifika kartı kendi düzenleme yolunu verir). */
 export const NOC_STATUS_TAB = Object.freeze({
   PING: 'ping', HTTP: 'http', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed',
-  SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain',
+  SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain', DBQUERY: 'dbquery',
 })
 
 /**

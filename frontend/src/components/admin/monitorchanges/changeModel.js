@@ -12,7 +12,7 @@ import { toCsv } from '../../../utils/csvExport.js'
 
 /** Konsolun tanıdığı kaynak türleri — `change-kinds-sync` kapısı backend listesiyle karşılaştırır. */
 export const KINDS = ['port', 'dns', 'keyword', 'http', 'page', 'pagespeed', 'scripted', 'domain',
-  'ping', 'inventory', 'group', 'maintenance']
+  'ping', 'dbquery', 'inventory', 'group', 'maintenance']
 
 /**
  * Olay süzgecinin değerleri. PAUSE / RESUME ayrı olay tipi DEĞİL: `active` alanını çeviren güncelleme — sunucu
@@ -33,7 +33,7 @@ export const RANGE_KEYS = ['all', 'today', '7', '15', '30', '45', '60', '90', 'c
  */
 export const TAB_BY_KIND = {
   port: 'port', dns: 'dns', keyword: 'keyword', http: 'http', page: 'page',
-  pagespeed: 'pagespeed', scripted: 'scripted', domain: 'domain', ping: 'ping',
+  pagespeed: 'pagespeed', scripted: 'scripted', domain: 'domain', ping: 'ping', dbquery: 'dbquery',
 }
 
 /**

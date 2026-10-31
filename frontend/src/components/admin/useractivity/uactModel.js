@@ -39,7 +39,7 @@ export function rowMatches(row, f) {
 export const TAB_LABEL_KEYS = Object.freeze({
   dashboard: 'nav.dashboard', mydash: 'nav.myDashboard', all: 'nav.all', domains: 'nav.domains', manualcerts: 'nav.manualCerts', uptime: 'nav.uptime', monitoring: 'nav.monitoringOverview', status: 'nav.statusPage', storms: 'nav.storms', forecast: 'nav.forecast',
   renewal: 'nav.renewal', 'renewal-guide': 'nav.renewalGuide', http: 'nav.http', domain: 'nav.domainmon', port: 'nav.port',
-  dns: 'nav.dns', keyword: 'nav.keyword', ping: 'nav.ping', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted',
+  dns: 'nav.dns', keyword: 'nav.keyword', ping: 'nav.ping', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', dbquery: 'nav.dbquery',
   warnings: 'nav.warnings', incidents: 'nav.incidents', maintenance: 'nav.maintenance', alerthistory: 'nav.alertHistory', noc: 'nav.noc',
   stats: 'nav.stats', weakalgo: 'nav.weakAlgo', weeklyreports: 'nav.weeklyReports', 'incident-history': 'nav.incidentHistory', executive: 'nav.executiveSummary', dataquality: 'nav.dataQuality', channelreports: 'nav.channelReports',
   activity: 'nav.activity', myactivity: 'nav.myActivity', system: 'nav.system', monitorchanges: 'nav.monitorChanges',

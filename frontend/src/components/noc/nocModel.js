@@ -10,7 +10,7 @@
 import { DEEP_OPEN, DEEP_OPEN_PARAM, tabDeepLink } from '../../utils/monitorDeepLink.js'
 
 /** Tür anahtarları — sözleşmedeki sıra (Ayarlar anahtarları ve tür başına kapsam bu sırayla çizilir). */
-export const NOC_TYPES = ['SSL', 'PING', 'HTTP', 'KEYWORD', 'PAGE', 'PAGESPEED', 'SCRIPTED', 'DNS', 'PORT', 'DOMAIN']
+export const NOC_TYPES = ['SSL', 'PING', 'HTTP', 'KEYWORD', 'PAGE', 'PAGESPEED', 'SCRIPTED', 'DNS', 'PORT', 'DOMAIN', 'DBQUERY']
 /** Kapsanmama nedenleri — liste sırası = eylem önceliği (kullanıcının kendisinin düzeltebileceği önce). */
 export const NOC_REASONS = ['MONITOR_OFF', 'TYPE_DISABLED', 'NO_ACTIVE_GROUP', 'PAUSED']
 /** En düşük seviye seçenekleri (proje alarm seviyeleri, en katıdan gevşeğe). */
@@ -33,7 +33,7 @@ export const STATUS_KEYS = ['covered', 'not_covered', 'paused']
 /** Tür → izleme sekmesi (derin bağlantı `?tab=<sekme>&monitor=<id>`). SSL sertifika envanteridir: Pano + sertifika penceresi. */
 export const NOC_TYPE_TAB = {
   PING: 'ping', HTTP: 'http', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed',
-  SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain',
+  SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain', DBQUERY: 'dbquery',
 }
 
 /**

@@ -4,7 +4,7 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import LoginHelpDialog from '../components/issues/report/LoginHelpDialog.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound, IdCard } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, DatabaseSearch, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound, IdCard } from 'lucide-react'
 import { isAccountInactivePayload, resetAccountInactiveSignal } from '../utils/accountInactive.js'
 import { isUsernamePrefixPayload, prefixesOf } from '../utils/usernamePrefix.js'
 import { isMaintenancePayload, lastWindow, resetMaintenanceSignal } from '../utils/systemMaintenance.js'
@@ -156,6 +156,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
         { Icon: FlaskConical, key: 'login.capScripted', desc: 'login.capScriptedDesc', tint: '#c084fc' },
         // Ikon Zap: bu vitrinde Gauge uptime'a ait, sayfa hizi onunla karismasin.
         { Icon: Zap,         key: 'login.capPagespeed', desc: 'login.capPagespeedDesc', tint: '#fb923c' },
+        { Icon: DatabaseSearch, key: 'login.capDbquery', desc: 'login.capDbqueryDesc', tint: '#38bdf8' },
         { Icon: Gauge,       key: 'login.capUptime',  desc: 'login.capUptimeDesc',  tint: '#818cf8' },
       ],
     },

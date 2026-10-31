@@ -190,7 +190,7 @@ export function isAuthEvent(row) {
  * Kayıt → ilgili ekran (ActivityLog#activityTarget ile aynı kural). Silinen kayda bağlantı yok.
  * Bilinmeyen tür → null (bağlantı çizilmez).
  */
-const MONITOR_TABS = { HTTP: 'http', PORT: 'port', DNS: 'dns', KEYWORD: 'keyword', PING: 'ping', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DOMAIN: 'domain' }
+const MONITOR_TABS = { HTTP: 'http', PORT: 'port', DNS: 'dns', KEYWORD: 'keyword', PING: 'ping', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DOMAIN: 'domain', DBQUERY: 'dbquery' }
 export function recordLink(row) {
   const type = String(row?.event_type || '').toUpperCase()
   if (!row?.resource_id || type.endsWith('_DELETE') || type.endsWith('_PURGE')) return null

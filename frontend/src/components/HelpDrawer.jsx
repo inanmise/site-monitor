@@ -22,7 +22,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 export const TAB_HELP_SECTION = {
   dashboard: '14.4', stats: '14.6', warnings: '14.7', all: '14.8', renewal: '14.9', 'renewal-guide': '14.10', forecast: '14.11',
   domains: '14.12', weakalgo: '14.13',
-  uptime: '14.14', http: '14.14', domain: '14.14', port: '14.14', dns: '14.14', keyword: '14.14', ping: '14.14', page: '14.14', pagespeed: '14.14', scripted: '14.14',
+  uptime: '14.14', http: '14.14', domain: '14.14', port: '14.14', dns: '14.14', keyword: '14.14', ping: '14.14', page: '14.14', pagespeed: '14.14', scripted: '14.14', dbquery: '14.14',
   incidents: '14.15', maintenance: '14.16', alerthistory: '14.17', weeklyreports: '14.18', 'incident-history': '14.19',
   activity: '14.20', myactivity: '14.21', system: '14.22', 'login-issues': '14.23', admin: '14.24', permissions: '14.25',
   settings: '14.26', health: '14.27', sqlplayground: '14.28', help: '14.29', monitorchanges: '14.14', noc: '14.31',

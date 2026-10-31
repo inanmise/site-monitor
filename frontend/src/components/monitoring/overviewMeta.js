@@ -1,7 +1,7 @@
 // İzleme Panosu — tür ve durum tanımları (2026-10-01 yeniden tasarım: sayfa parçalara bölündü; tanımlar TEK yerde).
 // Sayfa (`MonitoringOverviewPage.jsx`) bunları aynı adlarla yeniden dışa aktarır — testler ve diğer dosyalar oradan alır.
 import {
-  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
+  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, DatabaseSearch,
   PauseCircle, CircleAlert, Clock, HelpCircle, CheckCircle2, Trash2,
 } from 'lucide-react'
 
@@ -16,6 +16,7 @@ export const TYPE_META = {
   page:      { Icon: FileCheck,     labelKey: 'nav.page',      tab: 'page' },
   pagespeed: { Icon: Gauge,         labelKey: 'nav.pagespeed', tab: 'pagespeed' },
   scripted:  { Icon: Workflow,      labelKey: 'nav.scripted',  tab: 'scripted' },
+  dbquery:   { Icon: DatabaseSearch, labelKey: 'nav.dbquery',  tab: 'dbquery' },
 }
 export const TYPE_ORDER = Object.keys(TYPE_META)
 

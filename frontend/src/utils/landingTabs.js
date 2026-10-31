@@ -26,6 +26,7 @@ export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'page', labelKey: 'nav.page' },
   { id: 'pagespeed', labelKey: 'nav.pagespeed' },
   { id: 'scripted', labelKey: 'nav.scripted' },
+  { id: 'dbquery', labelKey: 'nav.dbquery' },
   { id: 'warnings', labelKey: 'nav.warnings' },
   { id: 'incidents', labelKey: 'nav.incidents' },
   { id: 'maintenance', labelKey: 'nav.maintenance' },
