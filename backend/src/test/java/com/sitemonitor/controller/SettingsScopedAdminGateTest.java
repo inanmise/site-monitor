@@ -281,7 +281,7 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
-    @DisplayName("2026-10-31: veritabanı sorgu izlemesi kapasite / güvenlik sınırları GLOBAL_ONLY; alarm aç/kapa ve elle bekleme müdüre açık")
+    @DisplayName("2026-10-31: veritabanı sorgu izlemesi kapasite / güvenlik sınırları, alarm aç/kapa, elle bekleme ve saatlik deneme sınırı GLOBAL_ONLY")
     void dbQueryLimits_globalOnly() {
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
                 "site.monitor.dbquery.max-concurrency",
@@ -294,12 +294,14 @@ class SettingsScopedAdminGateTest {
                 "site.monitor.dbquery.plan-check-mode",
                 "site.monitor.dbquery.max-plan-cost",
                 "site.monitor.dbquery.max-plan-rows",
+                // İnceleme 2026-10-31 (D7): alarm anahtarı kontrolün KENDİSİNİ atlar (tüm takımlar), elle bekleme izlenen
+                // veritabanını korur; saatlik deneme sınırı (K3) veri çekme sınırıdır — kapsamlı müdür değiştiremez
+                "site.monitor.dbquery.alert-enabled",
+                "site.monitor.dbquery.manual-cooldown-seconds",
+                "site.monitor.dbquery.test-per-hour",
                 // saklama anahtarları otomatik GLOBAL_ONLY (RetentionCatalog)
                 "site.monitor.metrics.dbquery.retention-days",
                 "site.monitor.dbquery.alert-rows.retention-days");
-        // Türün alarm anahtarı öteki türlerle aynı kapsamda (müdür kendi takımı için değil, ama global de değil — mevcut kural)
-        assertThat(AppSettingsCatalog.GLOBAL_ONLY).doesNotContain("site.monitor.dbquery.alert-enabled",
-                "site.monitor.dbquery.manual-cooldown-seconds");
     }
 
     @Test

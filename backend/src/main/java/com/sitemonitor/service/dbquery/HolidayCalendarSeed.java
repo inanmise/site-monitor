@@ -91,7 +91,11 @@ public class HolidayCalendarSeed {
     @Scheduled(initialDelayString = "${site.monitor.dbquery.holiday-seed.initial-delay-ms:180000}", fixedDelay = 3_600_000L)
     public void run() {
         if (doneSeen || failures.get() >= MAX_ATTEMPTS) return;
-        if (done()) { doneSeen = true; return; }
+        // Okunamayan nişan "bitti" SAYILMAZ (inceleme 2026-10-31, D6): eskiden tek bir geçici DB hatası doneSeen'i kalıcı
+        // açıp bu pod'da tohumu bir daha hiç denetmiyordu. Bilinmiyor → bu tur atlanır, saat sonra yeniden bakılır.
+        Boolean d = markerState();
+        if (d == null) return;
+        if (d) { doneSeen = true; return; }
         SchedulerService s = scheduler.getIfAvailable();
         if (s == null) return;
         try {
@@ -106,21 +110,27 @@ public class HolidayCalendarSeed {
         }
     }
 
-    /** Nişan yazılmış mı; okunamazsa "evet" (bu tur koşmaz, sonraki tur yeniden bakar). */
-    boolean done() {
+    /**
+     * Nişan durumu — ÜÇ durumlu: {@code TRUE} yazılmış, {@code FALSE} yazılmamış, {@code null} okunamadı (bilinmiyor; çağıran
+     * karar VERMEZ — ne "bitti" der ne tohum yazar).
+     */
+    Boolean markerState() {
         try {
             jdbc.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
             Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class, KEY);
             return n != null && n > 0;
         } catch (RuntimeException e) {
             log.debug("Tatil takvimi tohum nişanı okunamadı: {}", e.getMessage());
-            return true;
+            return null;
         }
     }
 
     /** Kilit altında: tablo boşsa tohum günlerini yazar, sonra nişanı. Dönüş: yazılan gün sayısı (0 = tablo doluydu). */
     Integer seedLocked() {
-        if (done()) return 0;
+        // Kilit içinde YENİDEN okunur; okunamazsa hata (deneme sayılır, saat sonra yeniden) — ne tohum ne nişan yazılır
+        Boolean marker = markerState();
+        if (marker == null) throw new IllegalStateException("tatil takvimi tohum nişanı okunamadı");
+        if (marker) { doneSeen = true; return 0; }
         Integer existing = jdbc.queryForObject("SELECT COUNT(*) FROM holiday_days", Integer.class);
         int written = 0;
         if (existing == null || existing == 0) {

@@ -42,6 +42,15 @@ public interface DbConnectionProfileRepository extends JpaRepository<DbConnectio
          + "p.lastError = :error WHERE p.id = :id")
     int recordUseError(@Param("id") Long id, @Param("at") String at, @Param("ms") Integer ms, @Param("error") String error);
 
+    /**
+     * Parola değişimi (yeni değer ya da temizleme) — {@code password_enc} varlıkta {@code updatable = false} (inceleme
+     * 2026-10-31, D4): düzenleme okunduğu andaki şifreli metni geri yazıp anahtar döndürmenin yeniden şifrelemesini ezmesin.
+     */
+    @Transactional
+    @Modifying
+    @Query("UPDATE DbConnectionProfile p SET p.passwordEnc = :enc WHERE p.id = :id")
+    int updatePasswordEnc(@Param("id") Long id, @Param("enc") String enc);
+
     /** Takım taşıma (TeamAdminService.moveAll) — bağlantılar izlemelerle birlikte taşınır. Çağıranda @Transactional. */
     @Modifying
     @Query("UPDATE DbConnectionProfile p SET p.teamId = :to WHERE p.teamId = :from")

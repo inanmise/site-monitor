@@ -115,6 +115,28 @@ class DbQueryAlertRowsControllerTest {
     }
 
     @Test
+    @DisplayName("İnceleme K4: 7/24 operatörü alarmı okur ama satırları GÖRMEZ (hidden + sayı); kendi takımının alarmında tam; sahipsiz alarmda gizli")
+    void nocOperator_hiddenUnlessOwnTeam() {
+        var noc = mock(com.sitemonitor.service.noc.NocCallLogService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(ctl, "nocCallLog", noc);
+        MockHttpSession op = user(5L, null);
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        op.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, List.of(5L));
+        when(noc.seesAllAlerts(op)).thenReturn(true);
+
+        // Başka takımın alarmı: erişim var (alarm okunur), satır verisi YOK
+        when(alerts.findById(8L)).thenReturn(Optional.of(alarm(8L, EscalationService.TYPE_DBQUERY_THRESHOLD, 9L)));
+        assertThat(data(ctl.rows(8L, op))).containsEntry("hidden", true).containsEntry("row_count", 25)
+                .doesNotContainKeys("rows", "columns", "masked");
+        // Operatörün KENDİ takımının alarmı: kendi kapsamı → tam
+        when(alerts.findById(9L)).thenReturn(Optional.of(alarm(9L, EscalationService.TYPE_DBQUERY_THRESHOLD, 5L)));
+        assertThat(data(ctl.rows(9L, op))).containsEntry("hidden", false);
+        // Sahipsiz (takımsız) alarm: yalnız global görüntüleyici tam görür
+        when(alerts.findById(10L)).thenReturn(Optional.of(alarm(10L, EscalationService.TYPE_DBQUERY_FAIL, null)));
+        assertThat(data(ctl.rows(10L, op))).containsEntry("hidden", true);
+    }
+
+    @Test
     @DisplayName("global görüntüleyici (AUDIT) tüm alarmların satırlarını görür")
     void globalViewer_seesAll() {
         when(alerts.findById(7L)).thenReturn(Optional.of(alarm(7L, EscalationService.TYPE_DBQUERY_THRESHOLD, 99L)));

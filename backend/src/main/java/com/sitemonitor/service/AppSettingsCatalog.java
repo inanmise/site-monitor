@@ -229,6 +229,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.dbquery.max-plan-cost",              "dbquery", Type.INT),
         new Setting("site.monitor.dbquery.max-plan-rows",              "dbquery", Type.INT),
         new Setting("site.monitor.dbquery.manual-cooldown-seconds",    "dbquery", Type.INT),
+        // "Sorguyu dene" + "Maliyeti denetle" kullanıcı başına saatlik küme sınırı (inceleme 2026-10-31, K3; DbQueryTestQuota).
+        new Setting("site.monitor.dbquery.test-per-hour",              "dbquery", Type.INT),
         // Saklama (RetentionCatalog dbquery-checks / dbquery-alert-rows) — saklama anahtarı olarak kendiliğinden GLOBAL_ONLY.
         new Setting("site.monitor.metrics.dbquery.retention-days",     "dbquery", Type.INT),
         new Setting("site.monitor.dbquery.alert-rows.retention-days",  "dbquery", Type.INT),
@@ -842,7 +844,13 @@ public final class AppSettingsCatalog {
         "site.monitor.dbquery.min-interval-seconds",
         "site.monitor.dbquery.plan-check-mode",
         "site.monitor.dbquery.max-plan-cost",
-        "site.monitor.dbquery.max-plan-rows"
+        "site.monitor.dbquery.max-plan-rows",
+        // İnceleme 2026-10-31 (D7, K3): türün alarm anahtarı ve elle kontrol beklemesi de kurum geneli — kapsamlı müdür tüm
+        // takımların sorgu izlemesini durduramaz (alarm-enabled kontrolün KENDİSİNİ atlar) ya da beklemeyi 1 sn'ye indirip izlenen
+        // veritabanlarını yoramaz; deneme sınırı da veri çekme sınırıdır.
+        "site.monitor.dbquery.alert-enabled",
+        "site.monitor.dbquery.manual-cooldown-seconds",
+        "site.monitor.dbquery.test-per-hour"
     ));
 
     /**

@@ -26,11 +26,14 @@ public interface DbQueryMonitorRepository extends JpaRepository<DbQueryMonitor, 
     List<DbQueryMonitor> findByProfileId(Long profileId);
     long countByProfileId(Long profileId);
 
-    /** Aynı ad (büyük-küçük harf duyarsız) + takım için (kendisi hariç) başka izleme var mı — ad alarm anahtarıdır. */
-    @Query("SELECT COUNT(m) > 0 FROM DbQueryMonitor m WHERE LOWER(m.name) = LOWER(:name) AND "
-         + "((:teamId IS NULL AND m.teamId IS NULL) OR m.teamId = :teamId) AND "
+    /**
+     * Aynı ad (büyük-küçük harf duyarsız, kırpılmış) ile (kendisi hariç) başka izleme var mı — TÜM takımlarda (inceleme
+     * 2026-10-31, K1): ad alarm anahtarıdır; alarm geçmişi / rehber / bastırma adla eşlenir. PostgreSQL'de yarışı
+     * {@code ux_dbqm_name_lower} tekil indeksi keser ({@code DbQueryMonitorSchemaPatch}).
+     */
+    @Query("SELECT COUNT(m) > 0 FROM DbQueryMonitor m WHERE LOWER(TRIM(m.name)) = LOWER(TRIM(:name)) AND "
          + "(:excludeId IS NULL OR m.id <> :excludeId)")
-    boolean existsDuplicate(@Param("name") String name, @Param("teamId") Long teamId, @Param("excludeId") Long excludeId);
+    boolean existsDuplicateName(@Param("name") String name, @Param("excludeId") Long excludeId);
 
     /** [teamId, grup adı, sayı] — takım bazlı grup listesi (boş / null hariç). */
     @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM DbQueryMonitor m "

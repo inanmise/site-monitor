@@ -64,15 +64,18 @@ class DbQueryApiRepositoriesTest {
     }
 
     @Test
-    @DisplayName("izleme: ad takımda tekil (büyük-küçük harf duyarsız, kendisi hariç); bağlantıyı kullananlar")
+    @DisplayName("izleme: ad TÜM takımlarda tekil (büyük-küçük harf / kenar boşluğu duyarsız, kendisi hariç); bağlantıyı kullananlar")
     void monitorDuplicateAndUsers() {
         DbConnectionProfile p = conn(1L, "Sipariş DB");
-        DbQueryMonitor a = mon(1L, "Bekleyen Siparişler", p.getId());
-        mon(2L, "Bekleyen Siparişler", null);
-        assertThat(monitors.existsDuplicate("bekleyen siparişler", 1L, null)).isTrue();
-        assertThat(monitors.existsDuplicate("Bekleyen Siparişler", 1L, a.getId())).isFalse();
-        assertThat(monitors.existsDuplicate("Bekleyen Siparişler", 3L, null)).isFalse();
-        assertThat(monitors.findByProfileId(p.getId())).extracting(DbQueryMonitor::getName).containsExactly("Bekleyen Siparişler");
+        DbQueryMonitor a = mon(1L, "Bekleyen Siparisler", p.getId());
+        mon(2L, "Başka izleme", null);
+        assertThat(monitors.existsDuplicateName("bekleyen siparisler", null)).isTrue();
+        assertThat(monitors.existsDuplicateName("  BEKLEYEN SIPARISLER ", null)).isTrue();
+        // Başka takımdan sorulsa da aynı ad çakışır (K1: takım parametresi YOK)
+        assertThat(monitors.existsDuplicateName("Başka izleme", a.getId())).isTrue();
+        assertThat(monitors.existsDuplicateName("Bekleyen Siparisler", a.getId())).isFalse();
+        assertThat(monitors.existsDuplicateName("Yeni ad", null)).isFalse();
+        assertThat(monitors.findByProfileId(p.getId())).extracting(DbQueryMonitor::getName).containsExactly("Bekleyen Siparisler");
         assertThat(monitors.findAllByOrderByNameAsc()).hasSize(2);
     }
 

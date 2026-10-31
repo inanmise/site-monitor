@@ -526,6 +526,8 @@ public class TeamAdminService {
     /**
      * Veritabanı sorgu izlemesi taşımasının ön denetimi (2026-10-31): hedef takımda aynı adlı izleme (ad alarm anahtarıdır),
      * bağlantı ya da şablon varsa, ya da şablon kitaplığı sınırı aşılırsa 409 — hiçbir şey taşınmaz (işlem geri alınır).
+     * İzleme adı inceleme 2026-10-31'den (K1) beri TÜM takımlarda tekil: taşıma adı değiştirmediği için yeni çift üretemez; bu
+     * denetim yalnız kural öncesinden kalan çift adlarda (PostgreSQL'de {@code ux_dbqm_name_lower} kurulamamışken) taşımayı keser.
      */
     private void planDbQueryMove(Long from, Long to) {
         if (dbQueryRepo != null) {

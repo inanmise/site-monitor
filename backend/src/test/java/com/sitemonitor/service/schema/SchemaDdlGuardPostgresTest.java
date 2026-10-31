@@ -118,7 +118,9 @@ class SchemaDdlGuardPostgresTest {
         Matcher m = literalPatch.matcher(scheduler);
         while (m.find()) out.add(m.group(1));
         for (String f : List.of("src/main/java/com/sitemonitor/service/noc/NocSchemaPatches.java",
-                "src/main/java/com/sitemonitor/service/noc/NocCallLogSchemaPatch.java")) {
+                "src/main/java/com/sitemonitor/service/noc/NocCallLogSchemaPatch.java",
+                // Veritabanı sorgu izlemesi adının tüm takımlarda tekilliği (inceleme 2026-10-31, K1) — ux_dbqm_name_lower
+                "src/main/java/com/sitemonitor/service/dbquery/DbQueryMonitorSchemaPatch.java")) {
             Matcher d = ddlString.matcher(Files.readString(Path.of(f), StandardCharsets.UTF_8));
             while (d.find()) out.add(d.group(1));
         }

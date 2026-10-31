@@ -183,7 +183,11 @@ public class DbConnectionProfileService {
         p.setUpdatedAt(ISO.format(Instant.now()));
         p.setUpdatedBy(actor);
         p.setUpdatedByName(actorName);
-        return new Updated(before, repo.save(p));
+        DbConnectionProfile saved = repo.save(p);
+        // Parola varlık kaydıyla YAZILMAZ (updatable = false, inceleme 2026-10-31 D4) — yalnız gerçekten değiştiyse (yeni değer ya
+        // da temizleme) hedefli UPDATE; değişmediyse araya giren yeniden şifreleme (anahtar döndürme) korunur.
+        if (!Objects.equals(before.getPasswordEnc(), next.getPasswordEnc())) repo.updatePasswordEnc(id, next.getPasswordEnc());
+        return new Updated(before, saved);
     }
 
     /** Güncelleme sonucu: önceki hâl (denetim farkı) + kaydedilen. */
@@ -504,9 +508,9 @@ public class DbConnectionProfileService {
      * Kayıtlı parola YENİ bir hedefe gitmez (güvenlik incelemesi 2026-10-31, YÜKSEK): bağlantının hedefini belirleyen alanlardan
      * biri ({@link #targetChanges}) ya da güvenliği gevşeten bir ayar değiştiyse ve gövdede YENİ parola yoksa 400 (alan
      * {@code password}) — kayıt yapılmaz, deneme çalışmaz. Aksi hâlde düzenleme yetkili biri sunucu adını kendi makinesine
-     * çevirip "Bağlantıyı dene" diyerek arayüzün hiç göstermediği kayıtlı parolayı o makineye gönderebilirdi. Parolasız
-     * bağlantıda, {@code password_clear: true} ile parola silinirken ve yalnız ad / açıklama / zaman aşımı değişince kural
-     * tetiklenmez.
+     * çevirip "Bağlantıyı dene" diyerek arayüzün hiç göstermediği kayıtlı parolayı o makineye gönderebilirdi. Takım değişimi de
+     * aynı kuraldadır (kayıtlı parola yeni takımın üyelerine açılmaz). Parolasız bağlantıda, {@code password_clear: true} ile
+     * parola silinirken ve yalnız ad / açıklama / zaman aşımı değişince kural tetiklenmez.
      */
     static void requirePasswordForNewTarget(DbConnectionProfile before, DbConnectionProfile next, Map<String, Object> body) {
         if (before == null || before.getPasswordEnc() == null || before.getPasswordEnc().isBlank()) return;
@@ -514,8 +518,14 @@ public class DbConnectionProfileService {
         if (pw != null && !pw.toString().isEmpty()) return;          // yeni parola girildi — o kullanılır
         if (Boolean.TRUE.equals(body.get("password_clear"))) return; // parola siliniyor — kayıtlı parola gitmez
         List<String> changed = targetChanges(before, next);
-        if (changed.isEmpty()) return;
-        String msg = Msg.t(
+        // Takım değişimi de yeni bir KİTLE (inceleme 2026-10-31, D3): iki takımın da üyesi olan biri A'nın kimliğini (parolasını
+        // bilmeden) B'nin tüm üyelerinin kullanımına açabiliyordu — kayıtlı parola yeni takıma taşınmaz, yeniden girilir.
+        boolean teamChanged = !Objects.equals(before.getTeamId(), next.getTeamId());
+        if (changed.isEmpty() && !teamChanged) return;
+        String msg = changed.isEmpty() ? Msg.t(
+                "Bağlantı başka bir takıma taşınıyor — güvenlik için parolayı yeniden girin (kayıtlı parola yeni takımın kullanımına açılmaz).",
+                "The connection is moving to another team — re-enter the password for security (the saved password isn't handed to the new team).")
+                : Msg.t(
                 "Bağlantının adresi / kimliği değişti — güvenlik için parolayı yeniden girin (kayıtlı parola yeni hedefe gönderilmez).",
                 "The connection's address / identity changed — re-enter the password for security (the saved password isn't sent to a new target).");
         Map<String, String> f = new LinkedHashMap<>();
@@ -631,7 +641,11 @@ public class DbConnectionProfileService {
         return c;
     }
 
-    /** Düzenlenebilir kolonları yönetilen kayda aktarır (sağlık ve künye kolonlarına dokunulmaz). */
+    /**
+     * Düzenlenebilir kolonları yönetilen kayda aktarır (sağlık ve künye kolonlarına dokunulmaz). Parola da aktarılır (yanıt
+     * {@code password_set} doğru olsun) ama varlık kaydıyla YAZILMAZ ({@code updatable = false}); değişimi {@link #update} hedefli
+     * yazar.
+     */
     private static void copyEditable(DbConnectionProfile from, DbConnectionProfile to) {
         to.setTeamId(from.getTeamId());
         to.setName(from.getName());

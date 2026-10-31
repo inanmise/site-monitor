@@ -350,6 +350,9 @@ public class MonitoringController {
     private DbQueryCheckerService dbQueryChecker;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendar;
+    /** "Sorguyu dene" + "Maliyeti denetle" saatlik KÜME sayacı (inceleme 2026-10-31, K3) — dilimli testlerde yok (sınır yok). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryTestQuota dbQueryTestQuota;
     /** Kontrol Geçmişi v2 ortak motoru (sayfalı aralık + filtre + histogram + alarm eşleme + CSV). */
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.service.CheckHistoryService checkHistoryService;
@@ -684,14 +687,19 @@ public class MonitoringController {
         // sürüm geçmişinden (script versions → RESTORE) geri yüklenir, buradan YAZILMAZ.
         Set<String> skip = new java.util.HashSet<>(MonitorHistoryService.SCRIPTED.equals(resolved) ? RESTORE_SKIP_SCRIPTED : RESTORE_SKIP);
         List<String> routingSkipped = new ArrayList<>();
+        boolean dbqKind = MonitorHistoryService.DBQUERY.equals(resolved);
         if (routingLocked) {
             for (String f : fields) {
-                // Veritabanı sorgu izlemesinin bağlantısı (2026-10-31) takım belgesidir — paylaşımla geri yüklenmez (güncellemeyle aynı)
-                if (SHARED_NOTIFY_KEYS.contains(f) || (MonitorHistoryService.DBQUERY.equals(resolved) && "profileId".equals(f))) {
+                // Veritabanı sorgu izlemesinin bağlantısı, sorgusu, kuralları ve mail içeriği (inceleme 2026-10-31, K2) takım
+                // belgesidir — paylaşımla geri yüklenmez (güncellemeyle aynı küme: DBQUERY_SHARED_LOCKED)
+                if (SHARED_NOTIFY_KEYS.contains(f) || (dbqKind && DBQUERY_SHARED_LOCKED.containsValue(f))) {
                     skip.add(f);
                     // Yalnız kayıttakinden FARKLI olan "geri yüklenmedi" sayılır (inceleme 6): durum kaydı her alanı (null
                     // dâhil) taşıdığı için eskiden her geri yüklemede altı alan "atlandı" deniyordu
-                    if (snapshot.containsKey(f) && !sameNotifyValue(f, snapshot.get(f), before.get(f))) routingSkipped.add(f);
+                    // Kayıplı (512 karakterde kırpılmış / maskeli) değer zaten geri yazılamaz — "paylaşım yüzünden atlandı" denmez
+                    Object snapVal = snapshot.get(f);
+                    boolean lossy = AuditDiff.MASK.equals(snapVal) || AuditDiff.isLossy(snapVal);
+                    if (snapshot.containsKey(f) && !lossy && !sameNotifyValue(f, snapVal, before.get(f))) routingSkipped.add(f);
                 }
             }
         }
@@ -706,7 +714,16 @@ public class MonitoringController {
         Map<String, Object> after = AuditDiff.snapshot(entity, fields);
         String effective = AuditDiff.diff(before, after);
         if (effective == null && !routingSkipped.isEmpty()) {
-            // Tek fark bildirim ayarlarıysa "fark yok" denmez — neden yapılamadığı söylenir
+            // Tek fark bildirim ayarlarıysa "fark yok" denmez — neden yapılamadığı söylenir. Veritabanı sorgu izlemesinde
+            // atlanan alanlar arasında sorgu / bağlantı / kural / mail içeriği varsa ileti onları anar (inceleme 2026-10-31, D5:
+            // yalnız bağlantı farklıyken "fark yalnız bildirim ayarlarında" deniyordu)
+            if (dbqKind && routingSkipped.stream().anyMatch(DBQUERY_SHARED_LOCKED::containsValue)) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu kayıttaki fark yalnız takım erişim paylaşımıyla geri yüklenemeyen alanlarda (sorgu, bağlantı, kurallar, "
+                                + "mail içeriği ya da bildirim ayarları); bunları izlemenin takımı geri yükleyebilir.",
+                        "This entry differs only in fields that can't be restored through team access sharing (query, connection, "
+                                + "rules, mail content or notification settings); the monitor's team can restore them."));
+            }
             throw new SecurityException(com.sitemonitor.util.Msg.t(
                     "Bu kayıttaki fark yalnız bildirim ayarlarında; bildirim ayarları takım erişim paylaşımıyla geri yüklenemez.",
                     "This entry differs only in notification settings, which can't be restored through team access sharing."));
@@ -731,16 +748,27 @@ public class MonitoringController {
             k6.setDisabledAt(null);
         }
 
-        // Veritabanı sorgu izlemesi (2026-10-31): geri yükleme güncellemeyle AYNI kuralları uygular — ad takımda tekil (alarm
-        // anahtarı), bağlantı aynı takımın, sorgu bugünkü güvenlik kurallarından geçmeli (kurallar sıkılaşmış olabilir), zamanlama
+        // Veritabanı sorgu izlemesi (2026-10-31): geri yükleme güncellemeyle AYNI kuralları uygular — ad tekil (alarm
+        // anahtarı, tüm takımlarda), bağlantı aynı takımın, sorgu bugünkü güvenlik kurallarından geçmeli (kurallar sıkılaşmış olabilir), zamanlama
         // geçerli; etkin aralık ve sorgu özeti yeniden hesaplanır. Kırpılmış (uzun) sorgu zaten geri yazılmaz (kayıplı değer).
         DbQueryMonitor dbq = entity instanceof DbQueryMonitor dm ? dm : null;
         String dbqOldName = dbq != null && before.get("name") != null ? before.get("name").toString() : null;
-        if (dbq != null) restoreDbQueryChecks(dbq, before);
+        // Maliyet ön kontrolü (BLOCK → 400) güncellemeyle aynı (inceleme 2026-10-31, D5); WARN / bilinmiyor yanıtta plan_warning
+        DbQueryCheckerService.PlanVerdict dbqPlan = dbq != null ? restoreDbQueryChecks(dbq, before) : null;
+        // Zamanlama alanlarından biri geri döndüyse eski plan (next_run_at) geçersiz (inceleme 2026-10-31, D5 / K6): sıfırlama
+        // zamanlayıcının hedefli yazımıyla yapılır — bağlantı noktası dbqRestoredScheduleChanged.
+        boolean dbqScheduleChanged = dbq != null && applied.stream().anyMatch(DBQUERY_SCHEDULE_PROPS::contains);
         // Geri alma da bir GÜNCELLEMEDİR: kaydın "son değiştiren/son değişiklik" künyesi
         // güncellenmezse kart, geri almayı yapan kişiyi ve zamanı hiç göstermez.
         touchUpdated(entity, session);
-        saveRestored(resolved, entity);
+        if (dbq != null) {
+            // Ad tüm takımlarda tekil (K1): ad geri dönüyorsa denetim + kayıt aynı ad kilidi altında; yarış = 409
+            boolean nameChanged = dbqOldName != null && !dbqOldName.equals(dbq.getName());
+            dbqUniqueSave(dbq.getName(), dbq.getId(), nameChanged, () -> { saveRestored(resolved, entity); return dbq; });
+        } else {
+            saveRestored(resolved, entity);
+        }
+        if (dbqScheduleChanged) dbqRestoredScheduleChanged(dbq);
         if (dbq != null) {
             Map<String, Object> owner = ownerCtx(dbq.getId(), dbq.getTeamId(), null);
             closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, dbq.getActive(),
@@ -773,6 +801,7 @@ public class MonitoringController {
         // Atlananlar SESSİZ kalmamalı: kullanıcı parolanın eski değerine dönmediğini bilmeli.
         out.put("skipped_masked", maskedSkipped);
         if (!routingSkipped.isEmpty()) out.put("skipped_routing", routingSkipped);
+        if (dbqPlan != null) out.put("plan_warning", dbqPlanApi(dbqPlan));
         return ok(out);
     }
 
@@ -854,12 +883,15 @@ public class MonitoringController {
     }
 
     /**
-     * Geri yüklenen veritabanı sorgu izlemesinin doğrulaması (kaydetmeden ÖNCE): ad tekilliği, bağlantının takımı, sorgu güvenliği,
-     * zamanlama. İhlal 400 (geri yükleme yapılmaz); geçerse etkin aralık ve sorgu özeti yeniden hesaplanır.
+     * Geri yüklenen veritabanı sorgu izlemesinin doğrulaması (kaydetmeden ÖNCE): ad tekilliği (tüm takımlarda, K1), bağlantının
+     * takımı, sorgu güvenliği, zamanlama ve maliyet ön kontrolü (BLOCK → 400, güncellemeyle aynı — inceleme 2026-10-31, D5).
+     * İhlal 400 / 409 (geri yükleme yapılmaz); geçerse etkin aralık ve sorgu özeti yeniden hesaplanır.
+     *
+     * @return maliyet uyarısı (WARN / bilinmiyor; sorgu değişmediyse ya da denetim kapalıysa {@code null})
      */
-    private void restoreDbQueryChecks(DbQueryMonitor m, Map<String, Object> before) {
+    private DbQueryCheckerService.PlanVerdict restoreDbQueryChecks(DbQueryMonitor m, Map<String, Object> before) {
         Object oldName = before.get("name");
-        if (oldName != null && !oldName.toString().equals(m.getName()) && dbqRepo().existsDuplicate(m.getName(), m.getTeamId(), m.getId())) {
+        if (oldName != null && !oldName.toString().equals(m.getName()) && dbqRepo().existsDuplicateName(m.getName(), m.getId())) {
             throw dbqDuplicateName();
         }
         DbConnectionProfile p = m.getProfileId() == null ? null : dbQueryConnRepo().findById(m.getProfileId()).orElse(null);
@@ -884,8 +916,24 @@ public class MonitoringController {
             }
             throwDbqErrors(se, null, code);
         }
+        DbQueryCheckerService.PlanVerdict plan = queryChanged ? dbqPlanOnSave(p, m.getSqlText()) : null;
         DbQuerySchedule.apply(spec, m, Instant.now(), dbqHolidays());
         m.setSqlHash(dbqSqlHash(m.getSqlText()));
+        return plan;
+    }
+
+    /** Geri yüklemede değişen zamanlama alanları (varlık özelliği adları — {@code MonitorHistoryService.changedFields}). */
+    private static final Set<String> DBQUERY_SCHEDULE_PROPS = Set.of("scheduleMode", "intervalSeconds", "cronExpression",
+            "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson");
+
+    /**
+     * Geri yükleme bir zamanlama alanını değiştirdi (inceleme 2026-10-31, D5 / K6): eski plan ({@code next_run_at}) geçersizdir.
+     * Sıfırlama zamanlayıcının hedefli yazımıdır ({@code SchedulerService.dbQueryScheduleChanged}, çalışma zamanı ajanının
+     * eklediği metot) — entegratör buraya bağlar. O bağlanana dek plan bir sonraki vade hesabında yenilenir (yeni tanım bir
+     * sonraki planlamada uygulanır).
+     */
+    private void dbqRestoredScheduleChanged(DbQueryMonitor m) {
+        log.debug("Veritabanı sorgu izlemesi #{}: geri yükleme zamanlamayı değiştirdi — plan yeniden kurulmalı", m.getId());
     }
 
     /** Geri almada kimlik + zaman künyesi. {@code setUpdatedAt} olmayan türde sessizce geçer. */
@@ -1292,6 +1340,8 @@ public class MonitoringController {
             case "alertLevel" -> java.util.Objects.equals(com.sitemonitor.model.MonitorAlertPrefs.normalize(sent),
                     com.sitemonitor.model.MonitorAlertPrefs.normalize(stored));
             case "notificationGroupId" -> java.util.Objects.equals(groupIdOf(sent), groupIdOf(stored));
+            // Veritabanı sorgu izlemesinin bağlantısı (geri yükleme karşılaştırması): durum kaydı JSON'u Integer, canlı kayıt Long
+            case "profileId" -> java.util.Objects.equals(groupIdOf(sent), groupIdOf(stored));
             // Kritik gün eşiği: yalnız SAYI uygulanır (applyDomainFields, en az 1) — sayı olmayan gönderim kaydı değiştirmez
             // kayıtlı null = 7 (DomainCheckerService / DomainExpiryReminderService ile aynı; form da `?? 7` gönderir)
             case "criticalDays" -> !(sent instanceof Number n)
@@ -5163,7 +5213,7 @@ public class MonitoringController {
     // Kayıtlı bir bağlantıda (DbConnectionProfile — takım belgesi) YALNIZ okuyan bir SELECT çalıştırır, sonucu kurallarla
     // değerlendirir. Sorgu kayıtta, denemede ve her çalıştırmada DbQuerySqlGuard'dan geçer. Kullanıcı SELECT SONUCUNU arayüzde
     // GÖREMEZ: hiçbir uç satır verisi döndürmez ("Sorguyu dene" yalnız sayı / süre / kural sonucu / kolon adı). Alarm anahtarı
-    // izleme ADIDIR (takımda tekil, k6 emsali): ad değişince açık alarmlar yeni ada taşınır.
+    // izleme ADIDIR (TÜM takımlarda tekil — inceleme 2026-10-31, K1): ad değişince açık alarmlar yeni ada taşınır.
     //
     // Gövde anahtarları sözleşmede (dbquery-api.md §1) snake_case'tir; ortak yardımcılar (bildirim grubu, 7/24, paylaşım koruması,
     // takım çözümü, değişiklik notu) camelCase okur → dbqBody ortak anahtarları camelCase'e çevirir (iki biçim de kabul).
@@ -5242,6 +5292,11 @@ public class MonitoringController {
                 "İzlemeye bir ad verin — alarm ve mail bu adla anılır.", "Give the monitor a name — alarms and mails use this name."));
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
+        // Paylaşımla erişilen takımda YENİ izleme yok (inceleme 2026-10-31, K2): izleme takımın bağlantısıyla çalışır ve
+        // bağlantı takımın kendi belgesidir — Kopyala da bu uçtan geçer (paylaşım takımına kopyalanamaz).
+        if (!SessionScope.canOperateTeamOwn(session, teamId)) throw dbqGrantTeam(com.sitemonitor.util.Msg.t(
+                "Paylaşımla erişilen takımda veritabanı sorgu izlemesi oluşturulamaz — bağlantılar takımın kendi belgesidir.",
+                "A database query monitor can't be created in a team you reach through access sharing — connections belong to the team itself."));
         // Paylaşım takımına YENİ kayıt: bildirim yönlendirmesi varsayılan dışında seçilemez (öteki türlerle aynı kural)
         guardSharedNotificationFields(session, teamId, body, new DbQueryMonitor());
         DbQueryMonitorRepository repo = dbqRepo();
@@ -5256,7 +5311,8 @@ public class MonitoringController {
         DbqSchedule sched = dbqSchedule(m, body, true, errs);
         List<Map<String, Object>> violations = dbqGuard(m, profile, true, errs);
         throwDbqErrors(errs, violations, sched.code());
-        if (repo.existsDuplicate(m.getName(), teamId, null)) throw dbqDuplicateName();
+        // Ad TÜM takımlarda tekil (K1) — erken ret (maliyet ön kontrolüne gitmeden); kesin karar kayıtta ad kilidi altında
+        if (repo.existsDuplicateName(m.getName(), null)) throw dbqDuplicateName();
         DbQueryCheckerService.PlanVerdict plan = dbqPlanOnSave(profile, m.getSqlText());
         if (sched.spec() != null) DbQuerySchedule.apply(sched.spec(), m, Instant.now(), dbqHolidays());
         m.setSqlHash(dbqSqlHash(m.getSqlText()));
@@ -5268,7 +5324,7 @@ public class MonitoringController {
         m.setUpdatedAt(now);
         monitorHistory.stampCreated(m, session);
         monitorHistory.stampUpdated(m, session);
-        DbQueryMonitor saved = repo.save(m);
+        DbQueryMonitor saved = dbqUniqueSave(m.getName(), null, true, () -> repo.save(m));
         activityLog.recordLifecycle(ACT_DBQUERY, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                 AuditDiff.diff(null, AuditDiff.snapshot(saved, DBQUERY_FIELDS)));
@@ -5291,13 +5347,9 @@ public class MonitoringController {
         if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
         Map<String, Object> _before = AuditDiff.snapshot(m, DBQUERY_FIELDS);
         guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
-        // Bağlantı takım belgesidir: paylaşımla yazan kişi onu değiştiremez (yalnız sahip takımın kişisi görür ve seçer).
-        if (!SessionScope.canOperateTeamOwn(session, m.getTeamId()) && dbqHas(body, "profile_id")
-                && !Objects.equals(dbqLong(dbqVal(body, "profile_id")), m.getProfileId())) {
-            throw new SecurityException(com.sitemonitor.util.Msg.t(
-                    "Takım erişim paylaşımıyla izlemenin veritabanı bağlantısı değiştirilemez; bağlantı takımın belgesidir.",
-                    "The monitor's database connection can't be changed through team access sharing; the connection belongs to the team."));
-        }
+        // Bağlantı, sorgu, kurallar ve mail içeriği takım belgesidir (inceleme 2026-10-31, K2): paylaşımla yazan kişi
+        // değiştiremez — aynı değer gövdeden düşer, farklı değer 403 (ad / grup / etiket / zamanlama / amaç serbest).
+        guardSharedDbQueryFields(session, m, body);
         String oldName = m.getName();
         Boolean wasActive = m.getActive();
         String oldSql = m.getSqlText();
@@ -5307,9 +5359,9 @@ public class MonitoringController {
         if (intendedName == null || intendedName.isBlank()) throw DbQueryApiException.field(null, "name", com.sitemonitor.util.Msg.t(
                 "İzlemeye bir ad verin — alarm ve mail bu adla anılır.", "Give the monitor a name — alarms and mails use this name."));
         Long intendedTeam = body.containsKey("teamId") ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
-        // Ad takım içinde TEKİLDİR (alarm anahtarı): yalnız ad ya da takım DEĞİŞİYORSA denetlenir.
-        if ((!intendedName.equals(oldName) || !Objects.equals(intendedTeam, m.getTeamId()))
-                && repo.existsDuplicate(intendedName, intendedTeam, id)) throw dbqDuplicateName();
+        // Ad TÜM takımlarda TEKİLDİR (alarm anahtarı, K1): yalnız ad DEĞİŞİYORSA denetlenir (takım değişimi adı değiştirmez).
+        boolean nameChanged = !intendedName.equals(oldName);
+        if (nameChanged && repo.existsDuplicateName(intendedName, id)) throw dbqDuplicateName();
         m.setName(intendedName);
         if (body.containsKey("teamId")) m.setTeamId(intendedTeam);
         Map<String, String> errs = new LinkedHashMap<>();
@@ -5332,7 +5384,7 @@ public class MonitoringController {
         if (body.get("active") instanceof Boolean b) m.setActive(b);
         m.setUpdatedAt(ISO.format(Instant.now()));
         monitorHistory.stampUpdated(m, session);
-        DbQueryMonitor saved = repo.save(m);
+        DbQueryMonitor saved = dbqUniqueSave(m.getName(), id, nameChanged, () -> repo.save(m));
         // Ad değişti: açık alarm(lar) yeni ada taşınır — YALNIZ bu izlemenin olayı (EscalationService.closableBy)
         if (oldName != null && !oldName.equals(saved.getName())) rekeyDbQueryAlarms(saved, oldName);
         auditService.recordAction("MONITOR_UPDATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),
@@ -5369,6 +5421,7 @@ public class MonitoringController {
         if (dbQueryAlertRowsService != null) dbQueryAlertRowsService.forget(m.getId());   // lider belleğindeki son satırlar
         dbqCheckRepo().deleteByMonitorId(m.getId());
         repo.delete(m);
+        dbQueryManualTriggerAt.remove(m.getId());   // elle kontrol bekleme damgası silinen izlemede kalmasın (inceleme 2026-10-31, D8)
         activityLog.recordLifecycle(ACT_DBQUERY, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
         auditService.recordAction("MONITOR_DELETE", session, "DBQUERY_MONITOR", String.valueOf(m.getId()), m.getName(), null);
         monitorHistory.record(MonitorHistoryService.DBQUERY, m.getId(), m.getName(), m.getTeamId(),
@@ -5415,21 +5468,18 @@ public class MonitoringController {
     /**
      * Kaydetmeden deneme ("Sorguyu dene") — taslağın bağlantısı + sorgusu + kurallarıyla tek çalıştırma; hiçbir şey yazmaz.
      * Yanıtta SATIR VERİSİ YOK (ilke: izleme bir veri çekme aracı değildir): yalnız durum, süre, satır sayısı, kolon ADLARI,
-     * kural sonuçları ve güvenlik denetimi. Oturum başına {@value #DBQUERY_TEST_COOLDOWN_SECONDS} sn bekleme (dakikada ≤ 6).
+     * kural sonuçları ve güvenlik denetimi. Oturum başına {@value #DBQUERY_TEST_COOLDOWN_SECONDS} sn bekleme (dakikada ≤ 6) +
+     * kullanıcı başına KÜME çapında saatlik sınır ({@code site.monitor.dbquery.test-per-hour}, "Maliyeti denetle" ile ortak
+     * sayaç — inceleme 2026-10-31, K3): deneme başına ≤ {@value DbQueryRules#MAX_RULES} kural değeri, saatte N deneme.
      */
     @PostMapping("/dbquery/test")
     public ResponseEntity<Map<String, Object>> testDbQuery(@RequestBody Map<String, Object> raw, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         Map<String, Object> body = dbqBody(raw);
+        // Bağlantı ve (varsa) izleme KENDİ kapsamla kullanılabilmeli (K2): değişim kuralının "önceki çalıştırması" monitor_id'nin
+        // izlemesinden okunur — paylaşımla erişilen izleme 403, görülemeyen 404 (dbqUsableProfile)
         DbConnectionProfile profile = dbqUsableProfile(session, body);
         Long monitorId = dbqLong(dbqVal(body, "monitor_id"));
-        if (monitorId != null) {
-            // Değişim kuralının "önceki çalıştırması" bu izlemeden okunur — izlemeyi düzenleyebilmeli (başka takımın ölçüsü sızmasın)
-            DbQueryMonitor mon = dbqRepo().findById(monitorId).orElse(null);
-            if (mon == null || !canOperateTeam(session, mon.getTeamId())) {
-                return notFound(com.sitemonitor.util.Msg.t("Veritabanı sorgu izlemesi bulunamadı.", "Database query monitor not found."));
-            }
-        }
         DbQueryMonitor draft = new DbQueryMonitor();
         draft.setName("test");
         draft.setTeamId(profile.getTeamId());
@@ -5443,6 +5493,7 @@ public class MonitoringController {
         List<Map<String, Object>> violations = dbqGuard(draft, profile, true, errs);
         throwDbqErrors(errs, violations, null);
         dbqCooldown(session, DBQUERY_TEST_AT, DBQUERY_TEST_COOLDOWN_SECONDS);
+        dbqHourlyQuota(session, DBQUERY_TEST_AT);
         auditService.recordAction("MONITOR_TEST", session, "DBQUERY_MONITOR", "test",
                 AuditDetail.of("kind", "query", "profile_id", profile.getId(), "db_type", profile.getDbType(),
                         "sql_len", draft.getSqlText() == null ? 0 : draft.getSqlText().length(),
@@ -5499,6 +5550,7 @@ public class MonitoringController {
         List<Map<String, Object>> violations = sql.isBlank() ? null : dbqGuard(probe, profile, true, errs);
         throwDbqErrors(errs, violations, null);
         dbqCooldown(session, DBQUERY_PLAN_AT, DBQUERY_PLAN_COOLDOWN_SECONDS);
+        dbqHourlyQuota(session, DBQUERY_PLAN_AT);
         auditService.recordAction("MONITOR_TEST", session, "DBQUERY_MONITOR", "test",
                 AuditDetail.of("kind", "plan", "profile_id", profile.getId(), "db_type", profile.getDbType(),
                         "sql_len", sql.length(), "sql_hash", dbqSqlHash(sql)), null);
@@ -5653,10 +5705,164 @@ public class MonitoringController {
                 "Database query monitoring isn't ready on this server; try again in a few minutes."));
     }
 
-    private static DbQueryApiException dbqDuplicateName() {
+    /**
+     * Ad çakışması (K1, inceleme 2026-10-31): alarm anahtarı izleme ADIDIR ve alarm geçmişi / rehber / bastırma adla eşlenir —
+     * takım içi tekillik başka takımın aynı adlı izlemesinin alarmlarını karıştırıyordu. Ad TÜM takımlarda tekil.
+     */
+    static DbQueryApiException dbqDuplicateName() {
         return DbQueryApiException.conflict("DUPLICATE_RECORD", "name", com.sitemonitor.util.Msg.t(
-                "Bu takımda aynı adlı bir veritabanı sorgu izlemesi zaten var; ad alarm anahtarıdır, başka bir ad seçin.",
-                "This team already has a database query monitor with that name; the name is the alarm key, choose another name."), null);
+                "Bu ad başka bir veritabanı sorgu izlemesinde kullanılıyor — alarmlar adla eşlendiği için ad tüm takımlarda tekil olmalı.",
+                "This name is already used by another database query monitor — alarms are matched by name, so the name must be unique across all teams."), null);
+    }
+
+    /** Paylaşımla erişilen takımda (ya da onun izlemesiyle) bağlantı gerektiren işlem: 403 {@code DBQUERY_GRANT_TEAM} (K2). */
+    static DbQueryApiException dbqGrantTeam(String message) {
+        return new DbQueryApiException(403, "DBQUERY_GRANT_TEAM", message);
+    }
+
+    /** Ad kilidi şeritleri (pod içi yarış; pod'lar arası yarışı PostgreSQL'de {@code ux_dbqm_name_lower} keser). */
+    private static final Object[] DBQ_NAME_LOCKS = new Object[64];
+    static {
+        for (int i = 0; i < DBQ_NAME_LOCKS.length; i++) DBQ_NAME_LOCKS[i] = new Object();
+    }
+
+    /**
+     * Ad tekilliğinin KESİN kararı + kayıt (K1): {@code checkName} ise denetim ve kayıt aynı ad şeridi kilidi altında (aynı pod'da
+     * iki eşzamanlı kayıt → biri 409); veritabanı tekil indeksi ihlali (başka pod, PostgreSQL {@code ux_dbqm_name_lower}) de
+     * AYNI 409'a çevrilir. Ad değişmiyorsa (yalnız başka alan) denetim yok — eski kaydın ilgisiz düzenlemesi reddedilmesin.
+     */
+    private <T> T dbqUniqueSave(String name, Long excludeId, boolean checkName, java.util.function.Supplier<T> save) {
+        if (!checkName || name == null) return dbqTranslateNameViolation(save);
+        String key = name.trim().toLowerCase(java.util.Locale.ROOT);
+        synchronized (DBQ_NAME_LOCKS[Math.floorMod(key.hashCode(), DBQ_NAME_LOCKS.length)]) {
+            if (dbqRepo().existsDuplicateName(name, excludeId)) throw dbqDuplicateName();
+            return dbqTranslateNameViolation(save);
+        }
+    }
+
+    private static <T> T dbqTranslateNameViolation(java.util.function.Supplier<T> save) {
+        try {
+            return save.get();
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            if (dbqNameViolation(e)) throw dbqDuplicateName();
+            throw e;
+        }
+    }
+
+    /**
+     * Tekil indeks ihlali mi ({@code ux_dbqm_name_lower} ya da SQLSTATE 23505 — tabloda birincil anahtar dışında başka tekil kısıt
+     * yok). Neden zinciri sınırlı yürünür ({@code CauseChain.MAX_DEPTH}).
+     */
+    static boolean dbqNameViolation(Throwable t) {
+        Throwable c = t;
+        for (int causeDepth = 0; c != null && causeDepth < com.sitemonitor.util.CauseChain.MAX_DEPTH; causeDepth++, c = c.getCause()) {
+            if (c instanceof org.springframework.dao.DuplicateKeyException) return true;
+            if (c instanceof java.sql.SQLException se && "23505".equals(se.getSQLState())) return true;
+            if (c instanceof org.hibernate.exception.ConstraintViolationException cv
+                    && ("23505".equals(cv.getSQLState()) || dbqNamesIndex(cv.getConstraintName()))) return true;
+            if (dbqNamesIndex(c.getMessage())) return true;
+        }
+        return false;
+    }
+
+    private static boolean dbqNamesIndex(String s) {
+        return s != null && s.toLowerCase(java.util.Locale.ROOT).contains(com.sitemonitor.service.dbquery.DbQueryMonitorSchemaPatch.NAME_INDEX);
+    }
+
+    /**
+     * Paylaşımla (team access grant) yazana KİLİTLİ alanlar (K2): tel adı → varlık özelliği (geri yükleme atlaması). Bağlantı,
+     * sorgu, kurallar (alarm SEVİYESİ kuraldan gelir), maskeleme ve mail içeriği takımın belgesidir; ad / grup / etiket / amaç /
+     * zamanlama / teyit-kurtarma serbest. Standart yönlendirme alanları ayrıca {@link #SHARED_NOTIFY_KEYS} ile kilitli.
+     */
+    static final Map<String, String> DBQUERY_SHARED_LOCKED;
+    static {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("profile_id", "profileId");
+        m.put("sql_text", "sqlText");
+        m.put("rules", "rulesJson");
+        m.put("rule_logic", "ruleLogic");
+        m.put("masked_columns", "maskedColumnsJson");
+        m.put("mail_include_rows", "mailIncludeRows");
+        m.put("mail_columns", "mailColumnsJson");
+        m.put("mail_subject_template", "mailSubjectTemplate");
+        m.put("slow_query_ms", "slowQueryMs");
+        m.put("query_timeout_seconds", "queryTimeoutSeconds");
+        m.put("max_rows", "maxRows");
+        DBQUERY_SHARED_LOCKED = java.util.Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * {@link #guardSharedNotificationFields}'in dbquery karşılığı (K2): yalnız paylaşımla yazan kişide — kilitli alan KAYITLI
+     * değerle aynıysa gövdeden düşer (tam yük gönderen form), farklıysa 403. Kendi kapsamıyla yazanda hiçbir şey değişmez.
+     */
+    void guardSharedDbQueryFields(HttpSession session, DbQueryMonitor m, Map<String, Object> body) {
+        if (body == null || m == null || SessionScope.canOperateTeamOwn(session, m.getTeamId())) return;
+        for (String key : DBQUERY_SHARED_LOCKED.keySet()) {
+            if (!dbqHas(body, key)) continue;
+            if (!dbqSameLocked(key, dbqVal(body, key), m)) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Takım erişim paylaşımıyla veritabanı sorgu izlemesinin bağlantısı, sorgusu, kuralları, sınırları ve mail içeriği "
+                                + "(gösterilen / maskelenen kolonlar, konu) değiştirilemez; bunları izlemenin takımı değiştirebilir.",
+                        "The connection, query, rules, limits and mail content (shown / masked columns, subject) of a database query "
+                                + "monitor can't be changed through team access sharing; the monitor's team can change them."));
+            }
+            body.remove(key);
+            body.remove(dbqCamel(key));
+        }
+    }
+
+    /** Gönderilen değer, uygulanınca kayıtlıyla AYNI sonucu mu verir — uygulama kuralıyla (applyDbQueryFields) aynı normalleştirme. */
+    private boolean dbqSameLocked(String key, Object sent, DbQueryMonitor m) {
+        switch (key) {
+            case "profile_id":
+                return Objects.equals(dbqLong(sent), m.getProfileId());
+            case "sql_text":
+                return Objects.equals(sent == null ? null : sent.toString(), m.getSqlText());
+            case "rules": {
+                if (sent instanceof List<?> l && l.size() > DbQueryRules.MAX_RULES) return false;
+                DbQueryRules.Parsed p = DbQueryRules.fromApi(sent == null ? List.of() : sent);
+                if (p == null || (p.errors() != null && !p.errors().isEmpty())) return false;
+                List<DbQueryRules.Rule> stored = DbQueryRules.fromJson(m.getRulesJson());
+                return Objects.equals(p.rules() == null ? List.of() : p.rules(), stored == null ? List.of() : stored);
+            }
+            case "rule_logic": {
+                String s = sent == null ? DbQueryMonitor.LOGIC_ANY : sent.toString().trim().toUpperCase(java.util.Locale.ROOT);
+                String st = m.getRuleLogic() == null ? DbQueryMonitor.LOGIC_ANY : m.getRuleLogic();
+                return s.equals(st);
+            }
+            case "masked_columns":
+            case "mail_columns": {
+                int max = "masked_columns".equals(key) ? DBQUERY_MASKED_COLUMNS_MAX : DBQUERY_MAIL_COLUMNS_MAX;
+                Map<String, String> e1 = new LinkedHashMap<>();
+                String a = dbqColumnList(sent, max, key, e1);
+                if (!e1.isEmpty()) return false;
+                String storedJson = "masked_columns".equals(key) ? m.getMaskedColumnsJson() : m.getMailColumnsJson();
+                String b = dbqColumnList(storedJson == null ? null : dbqJsonList(storedJson), Integer.MAX_VALUE, key, new LinkedHashMap<>());
+                return Objects.equals(a, b);
+            }
+            case "mail_include_rows":
+                // Yalnız Boolean uygulanır (applyDbQueryFields); başka değer kaydı değiştirmez. Kayıtlı null = açık.
+                return !(sent instanceof Boolean b) || b == !Boolean.FALSE.equals(m.getMailIncludeRows());
+            case "mail_subject_template": {
+                String s = sent == null ? null : sent.toString().trim();
+                if (s != null && s.isEmpty()) s = null;
+                return Objects.equals(s, m.getMailSubjectTemplate());
+            }
+            case "slow_query_ms":
+                return Objects.equals(dbqInt(sent), m.getSlowQueryMs());
+            case "query_timeout_seconds": {
+                int maxTimeout = Math.max(5, Math.min(120, appSettings.getInt("site.monitor.dbquery.max-timeout-seconds", 60)));
+                Integer v = dbqInt(sent);
+                return Objects.equals(v == null ? Integer.valueOf(Math.min(30, maxTimeout)) : v, m.getQueryTimeoutSeconds());
+            }
+            case "max_rows": {
+                int cap = Math.max(1, Math.min(5000, appSettings.getInt("site.monitor.dbquery.max-rows-cap", 5000)));
+                Integer v = dbqInt(sent);
+                return Objects.equals(v == null ? Integer.valueOf(Math.min(1000, cap)) : v, m.getMaxRows());
+            }
+            default:
+                return false;
+        }
     }
 
     /** Ortak anahtarları camelCase'e çevirir (snake gelirse); camel varsa o kazanır. Türe özgü anahtarlara dokunmaz. */
@@ -5754,25 +5960,38 @@ public class MonitoringController {
         return p;
     }
 
-    /** "Sorguyu dene" / "Maliyeti denetle": bağlantı kayıtlı olmalı ve kullanılabilmeli (kendi kapsam) — ya da izlemenin kendi bağlantısı. */
+    /**
+     * "Sorguyu dene" / "Maliyeti denetle": bağlantı kayıtlı olmalı ve KENDİ kapsamla kullanılabilmeli
+     * ({@link DbConnectionProfileService#canWrite}). Paylaşımla düzenleyenin "izlemenin kendi bağlantısıyla" denemesi (eski
+     * {@code viaMonitor} dalı) KALDIRILDI (inceleme 2026-10-31, Y2 / K2): deneme her kural değerini döndürür — paylaşan takımın
+     * veritabanı kimliği başka takımın veri okuma aracına dönüşüyordu. {@code monitor_id} verilirse (değişim kuralının önceki
+     * çalıştırması o izlemeden okunur) izleme de kendi kapsamla işletilebilmeli: görülemiyorsa 404, yalnız paylaşımla
+     * erişiliyorsa 403 {@code DBQUERY_GRANT_TEAM}.
+     */
     private DbConnectionProfile dbqUsableProfile(HttpSession session, Map<String, Object> body) {
+        Long monitorId = dbqLong(dbqVal(body, "monitor_id"));
+        if (monitorId != null) {
+            DbQueryMonitor mon = dbqRepo().findById(monitorId).orElse(null);
+            if (mon == null || !SessionScope.canViewMonitoring(session, mon.getTeamId())) {
+                throw new DbQueryApiException(404, "NOT_FOUND", com.sitemonitor.util.Msg.t(
+                        "Veritabanı sorgu izlemesi bulunamadı.", "Database query monitor not found."));
+            }
+            if (!DbConnectionProfileService.canWrite(session, mon.getTeamId())) throw dbqGrantTeam(com.sitemonitor.util.Msg.t(
+                    "Bu izlemede sorguyu yalnız izlemenin kendi takımı deneyebilir ve maliyetini denetleyebilir — bağlantılar takımın "
+                            + "kendi belgesidir, erişim paylaşımı bunu açmaz. Kayıtlı sorguyu \"Şimdi kontrol et\" ile çalıştırabilirsiniz.",
+                    "Only the monitor's own team can test this query or check its cost — connections belong to the team itself and "
+                            + "access sharing doesn't open them. You can run the saved query with \"Check now\"."));
+        }
         Long pid = dbqLong(dbqVal(body, "profile_id"));
         if (pid == null) throw DbQueryApiException.field(null, "profile_id", com.sitemonitor.util.Msg.t(
                 "Bir veritabanı bağlantısı seçin.", "Choose a database connection."));
         DbConnectionProfile p = dbQueryConnRepo().findById(pid).orElse(null);
-        Long monitorId = dbqLong(dbqVal(body, "monitor_id"));
-        boolean viaMonitor = false;
-        if (p != null && monitorId != null) {
-            // Paylaşımla DÜZENLEYEN kişi izlemenin KENDİ bağlantısıyla deneyebilir (bağlantıyı görmeden / değiştirmeden)
-            DbQueryMonitor mon = dbqRepo().findById(monitorId).orElse(null);
-            viaMonitor = mon != null && pid.equals(mon.getProfileId()) && canOperateTeam(session, mon.getTeamId());
-        }
-        if (p == null || (!viaMonitor && !DbConnectionProfileService.canRead(session, p.getTeamId()))) {
+        if (p == null || !DbConnectionProfileService.canRead(session, p.getTeamId())) {
             throw DbQueryApiException.field(null, "profile_id", com.sitemonitor.util.Msg.t(
                     "Seçilen bağlantı bulunamadı; silinmiş olabilir. Listeden bir bağlantı seçin.",
                     "The selected connection wasn't found; it may have been deleted. Choose a connection from the list."));
         }
-        if (!viaMonitor && !DbConnectionProfileService.canWrite(session, p.getTeamId())) {
+        if (!DbConnectionProfileService.canWrite(session, p.getTeamId())) {
             throw new SecurityException(com.sitemonitor.util.Msg.t(
                     "Bu bağlantıyı kullanma yetkiniz yok — yalnız bağlantının takımı kullanabilir.",
                     "You can't use this connection — only the connection's team can use it."));
@@ -6050,6 +6269,21 @@ public class MonitoringController {
         return m;
     }
 
+    /**
+     * Saatlik KÜME sayacı (K3): oturum beklemesinden SONRA sorulur — sınır aşımında 429 {@code RATE_LIMITED}; o zaman oturum
+     * damgası geri alınır (bir sonraki tıklama saatlik iletiyi görsün, 10 sn'lik "çok sık" iletisini değil). Sayaç bean'i
+     * yokken (dilimli testler) sınır yok.
+     */
+    private void dbqHourlyQuota(HttpSession session, String cooldownKey) {
+        if (dbQueryTestQuota == null) return;
+        try {
+            dbQueryTestQuota.consume(session);
+        } catch (DbQueryApiException e) {
+            session.removeAttribute(cooldownKey);
+            throw e;
+        }
+    }
+
     /** Oturum başına bekleme (Long öznitelik) — 429 RATE_LIMITED + retry_after_seconds. */
     private static void dbqCooldown(HttpSession session, String key, int seconds) {
         long now = System.currentTimeMillis();
@@ -6085,7 +6319,7 @@ public class MonitoringController {
         }
     }
 
-    /** İzleme → açık alarmı (FAIL > THRESHOLD > SLOW, sonra seviye) — tek sorgu; ad takım içinde tekil, sahiplik bağlamdan. */
+    /** İzleme → açık alarmı (FAIL > THRESHOLD > SLOW, sonra seviye) — tek sorgu; ad tüm takımlarda tekil, sahiplik bağlamdan. */
     private Map<Long, AlertEvent> openDbQueryAlarms(List<DbQueryMonitor> monitors) {
         Set<String> names = monitors.stream().map(DbQueryMonitor::getName).filter(Objects::nonNull).collect(Collectors.toSet());
         if (names.isEmpty()) return Map.of();
@@ -6132,12 +6366,13 @@ public class MonitoringController {
     }
 
     /**
-     * Bağlantı ayrıntısı (sunucu / port / veritabanı) yalnız KENDİ kapsamıyla görene ya da kurum geneli okuyana (global
-     * görüntüleyici, 7/24 operatörü); yalnız paylaşımla görene ad + tür (bağlantı takım belgesidir).
+     * Bağlantı ayrıntısı (sunucu / port / veritabanı) bağlantıyı GÖREBİLENE — bağlantı ucuyla TEK kural
+     * ({@link DbConnectionProfileService#canRead}: kendi kapsam ya da global görüntüleyici). 7/24 operatörü ve paylaşım okuyucusu
+     * yalnız ad + tür görür (inceleme 2026-10-31, Y1 / K5: 7/24 operatörü her takımın bağlantı adresini izleme listesinden
+     * okuyordu; bağlantı takım belgesidir, 7/24 de paylaşım da açmaz).
      */
     private static boolean dbqProfileDetail(HttpSession session, Long teamId) {
-        return SessionScope.seesAllMonitoring(session) || SessionScope.canView(session, teamId)
-                || SessionScope.canOperateTeamOwn(session, teamId);
+        return DbConnectionProfileService.canRead(session, teamId);
     }
 
     /** Saklı zamanlama JSON'ları → API biçimi (gevşek okuma; bozuk kolon boş liste). */

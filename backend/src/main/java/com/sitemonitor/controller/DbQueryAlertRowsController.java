@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -28,10 +27,12 @@ import java.util.Set;
  * Veritabanı sorgu alarmının ALARM ANINDAKİ sonuç satırları (2026-10-31, sözleşme §7) — alarm ayrıntısındaki "Alarm
  * anındaki sorgu sonucu" bölümü.
  *
- * <p><b>Okuma kuralı = alarmı okuyabilme kuralı</b> ({@code AdminController.getAlert} ile aynı): {@code alerts.read/view}
- * izni + alarmın takımı oturumun görüş kapsamında (erişim paylaşımı dahil); global görüntüleyici ve 7/24 operatörü tümünü
- * görür. Alarm YALNIZ takım erişim paylaşımıyla (grant) okunuyorsa satırlar GÖSTERİLMEZ — yalnız satır sayısı
- * ({@code hidden: true}); satır verisi iş verisidir, paylaşımla açılmaz (kullanıcı kararı).
+ * <p><b>Erişim kuralı = alarmı okuyabilme kuralı</b> ({@code AdminController.getAlert} ile aynı): {@code alerts.read/view}
+ * izni + alarmın takımı oturumun görüş kapsamında (erişim paylaşımı dahil); global görüntüleyici ve 7/24 operatörü alarmı
+ * okur. <b>Satırların kendisi</b> (iş verisi, kişisel veri olabilir) yalnız izlemenin takımını KENDİ kapsamıyla görebilene
+ * ({@link SessionScope#canView} — üyelik / yönetim / görüş) ya da global görüntüleyiciye açılır; 7/24 operatörü ve paylaşımla
+ * okuyan yalnız satır sayısını alır ({@code hidden: true}) — inceleme 2026-10-31, K4 (eskiden 7/24 operatörü her takımın
+ * alarm anı satırlarını tam görüyordu). Kural alarm maili dışındaki her görünümde aynıdır.
  *
  * <p>Yanıt {@code no-store}; satırlar asla günlüğe / denetime yazılmaz. Kayıt yoksa (sorgu hatası alarmı, satırlar maile
  * eklenmiyor, eski alarm) {@code data: null}.
@@ -70,8 +71,19 @@ public class DbQueryAlertRowsController {
         body.put("success", true);
         Optional<DbQueryAlertRowsService.Rows> rows = EscalationService.isDbQuery(ev.getAlertType())
                 ? alertRows.stored(alertId) : Optional.empty();
-        body.put("data", rows.map(r -> view(r, !seesAll && viaGrantOnly(session, owners))).orElse(null));
+        body.put("data", rows.map(r -> view(r, !fullRows(session, owners))).orElse(null));
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
+    }
+
+    /**
+     * Satırların TAMAMI görülebilir mi (K4): global görüntüleyici ya da alarmın takımını KENDİ görüş kapsamıyla gören
+     * ({@link SessionScope#canView}). 7/24 operatörlüğü ({@code canViewMonitoringOwn}'un 7/24 genişlemesi) ve erişim paylaşımı
+     * satırları AÇMAZ; takımı olmayan (sahipsiz) alarmın satırları yalnız global görüntüleyiciye.
+     */
+    static boolean fullRows(HttpSession session, Set<Long> owners) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        for (Long t : owners) if (SessionScope.canView(session, t)) return true;
+        return false;
     }
 
     /** Alarmın okuma takımları — bağımsız izleme: damgalı takım (sorgu izlemesi envanterden yönlenmez). */
@@ -79,13 +91,6 @@ public class DbQueryAlertRowsController {
         Set<Long> ids = new HashSet<>();
         if (ev.getTeamId() != null) ids.add(ev.getTeamId());
         return ids;
-    }
-
-    /** Alarm YALNIZ erişim paylaşımıyla mı okunuyor (kendi görüş kapsamında değil). Global görüş (null) → hayır. */
-    private static boolean viaGrantOnly(HttpSession session, Set<Long> owners) {
-        List<Long> own = SessionScope.viewTeamIds(session);
-        if (own == null) return false;
-        return !AlertOwnership.ownedByAny(owners, own);
     }
 
     static Map<String, Object> view(DbQueryAlertRowsService.Rows r, boolean hidden) {
