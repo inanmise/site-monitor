@@ -123,3 +123,58 @@ export function scanHistory({ running = null, canRun = true, extra = [] } = {}) 
 }
 
 export { KB, MB, LONG }
+
+// ── r177 (sürüm 2 analiz) — sunucunun yeni alanları: nesne `findings` / `verdict` / `via` / `host` / `found_in` /
+// `final_url` / `headers` / `optimized_bytes`, öneri `item_count`, `third_parties`, puan `full_at` / `zero_at` / `lost`,
+// `algorithm_version` = 2, özet `redirect_count` / `redirect_ms` / `owner_pod`. Eski kayıt = scanDetail (alanlar yok).
+const V2_ITEM = {
+  0: { findings: [], verdict: 'ok', via: 'direct', host: 'www.example.com', found_in: 'page', final_url: null,
+    headers: { content_type: 'text/html; charset=utf-8', content_encoding: 'gzip', cache_control: 'no-cache', server: 'nginx' } },
+  1: { findings: ['LARGE_IMAGES', 'OVERSIZED_IMAGE_DIMENSIONS', 'SLOW_OBJECTS', 'THIRD_PARTY_HEAVY'], verdict: 'ok', via: 'proxy',
+    host: 'cok-uzun-bir-icerik-dagitim-agi-adresi-1.example.test', found_in: 'page', final_url: null, optimized_bytes: 400 * KB,
+    headers: { content_type: 'image/jpeg', cache_control: 'max-age=86400', content_length: String(Math.round(1.6 * MB)), x_cache: 'HIT' } },
+  2: { findings: ['UNCOMPRESSED_TEXT', 'NO_CACHE', 'REDIRECTED_OBJECTS', 'HEAVY_JS'], verdict: 'ok', via: 'direct', host: 'www.example.com',
+    found_in: 'page', final_url: 'https://www.example.com/static/app.bundle.v2.js',
+    headers: { content_type: 'application/javascript', cache_control: 'no-store', server: 'nginx' } },
+  4: { findings: [], verdict: 'ok', via: 'direct', host: 'www.example.com', found_in: 'https://www.example.com/static/site.css', final_url: null,
+    headers: { content_type: 'font/woff2', cache_control: 'max-age=31536000, immutable' } },
+  5: { findings: ['BROKEN_RESOURCES'], verdict: 'broken', via: 'direct', host: 'www.example.com', found_in: 'page', final_url: null, headers: {} },
+  7: { findings: [], verdict: 'unverified', via: 'direct', host: 'www.example.com', found_in: 'page', final_url: null, headers: null },
+}
+
+export function scanItemsV2() {
+  return scanItems().map((it, i) => {
+    const extra = V2_ITEM[i] || { findings: [], verdict: it.status >= 400 || it.status === 0 ? 'broken' : 'ok', via: 'direct',
+      host: (() => { try { return new URL(it.url).host } catch { return null } })(), found_in: 'page', final_url: null, headers: { content_type: it.content_type } }
+    return { ...it, ...extra }
+  })
+}
+
+export function scanAnalysisV2() {
+  const a = scanAnalysis()
+  const lost = { load_time: 9.5, page_weight: 9, requests: 2, server_response: 1, images: 9, compression: 1.5, caching: 2.5, errors: 0.8 }
+  const bounds = {
+    load_time: [1000, 12000], page_weight: [0.5 * MB, 15 * MB], requests: [25, 300], server_response: [200, 3000], images: [0.5 * MB, 8 * MB],
+    compression: [100, 0], caching: [100, 0], errors: [0, 10],
+  }
+  const items = scanItemsV2()
+  return {
+    ...a,
+    algorithm_version: 2,
+    scores: a.scores.map((s) => ({ ...s, lost: lost[s.key], full_at: bounds[s.key][0], zero_at: bounds[s.key][1] })),
+    recommendations: a.recommendations.map((r) => ({ ...r, item_count: items.filter((it) => it.findings.includes(r.code)).length })),
+    images: { ...a.images, saving_measured: true, saving_bytes: Math.round(1.2 * MB), top: [items[1], items[8], items[39]] },
+    third_parties: [
+      { host: 'cok-uzun-bir-icerik-dagitim-agi-adresi-1.example.test', count: 1, bytes: Math.round(1.6 * MB), failed: 0, categories: ['IMAGE'] },
+      { host: 'analytics.example.net', count: 3, bytes: 90 * KB, failed: 1, categories: ['JS', 'IMAGE'] },
+    ],
+  }
+}
+
+/** Sürüm 2 analizin ayrıntısı. */
+export function scanDetailV2(id = 12, over = {}) {
+  return {
+    scan: scanSummary(id, { algorithm_version: 2, redirect_count: 2, redirect_ms: 480, owner_pod: 'site-monitor-7f9c-abcde', ...over.scan }),
+    analysis: scanAnalysisV2(), items: scanItemsV2(), items_kept: true, ...over.rest,
+  }
+}

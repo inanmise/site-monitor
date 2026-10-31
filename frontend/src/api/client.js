@@ -2334,6 +2334,9 @@ export const api = {
     startResourceScan: (id) => request(`/monitoring/page/${id}/resource-scans`, { method: 'POST', withStatus: true }),
     resourceScans: (id, limit = 200) => request(`/monitoring/page/${id}/resource-scans?limit=${encodeURIComponent(limit)}`, { withStatus: true }),
     resourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}`, { withStatus: true }),
+    // İptal (r177): yalnız RUNNING (409 RESOURCE_SCAN_NOT_RUNNING); 404 / 405 kodsuz = eski sunucu → ekran düğmeyi gizler.
+    cancelResourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}/cancel`,
+      { method: 'POST', withStatus: true }),
 
     // Sayfa Hızı (Page Speed)
     getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),

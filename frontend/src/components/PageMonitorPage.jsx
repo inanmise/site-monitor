@@ -202,6 +202,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('issues')
+  // Kaynak analizi sekmesinin bir kez açıldığı izleme (r177 H10) — o izlemede sekme gizlense de bağlı kalır
+  const [resVisited, setResVisited] = useState(null)
   const deepLinkTab = useDeepLinkTab('issues')   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
@@ -728,8 +730,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     mtab: selected && detailTab !== 'issues' ? detailTab : null,
     // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
     pidx: selected && pageDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (pageDx.runId ?? null) : null,
+    // Kaynak analizi (r177): seçili analiz / görünüm / ikinci analiz anahtarlarını sekme KENDİSİ yazar (görünürken);
+    // sekme görünmüyorsa (başka detay sekmesi ya da pencere kapalı) burada silinir — anahtarlar o zaman eşlemeye girer
+    ...(selected && detailTab === 'resources' ? {} : { prs: null, prs_v: null, prs_b: null }),
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
+
+  // Kaynak analizi sekmesi bir kez açılınca o izlemede bağlı kalır (r177 H10); başka izleme açılınca sıfırlanır
+  const selectedId = selected?.id ?? null
+  useEffect(() => {
+    if (selectedId != null && detailTab === 'resources') setResVisited((v) => (v === selectedId ? v : selectedId))
+  }, [selectedId, detailTab])
 
   const statItems = [
     { key: 'total',    Icon: LayoutDashboard, label: t('page.dashTotal'),    value: counts.total,    cls: 'total'    },
@@ -1147,11 +1158,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               )}
             </TabsContent>
 
-            <TabsContent value="resources">
-              {/* Kaynak analizi — izleme başına anahtarlı (başka izlemeye geçince durum ve izleme sorgusu sıfırlanır) */}
-              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <ResourceScanTab key={selected.id} monitor={selected} />
-              </Suspense>
+            {/* Kaynak analizi — izleme başına anahtarlı (başka izlemeye geçince durum ve izleme sorgusu sıfırlanır). İlk açılıştan
+                sonra BAĞLI kalır (r177 H10): "Grafik"e bakıp dönünce seçili analiz / bölüm / süzgeçler kaybolmaz, süren
+                analizin izlemesi sürer; gizliyken `active=false` (URL'e yazmaz, bitişte "Aç" düğmeli tost). */}
+            <TabsContent value="resources" forceMount={resVisited === selected.id || undefined}
+              className={resVisited === selected.id ? 'data-[state=inactive]:hidden' : undefined}>
+              {(detailTab === 'resources' || resVisited === selected.id) && (
+                <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                  <ResourceScanTab key={selected.id} monitor={selected} active={detailTab === 'resources'}
+                    onShow={() => setDetailTab('resources')} />
+                </Suspense>
+              )}
             </TabsContent>
 
             <TabsContent value="chart">
