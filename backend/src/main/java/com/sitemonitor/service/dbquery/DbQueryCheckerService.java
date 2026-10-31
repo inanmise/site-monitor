@@ -78,8 +78,12 @@ public class DbQueryCheckerService {
             KEY_MAX_PLAN_ROWS = "site.monitor.dbquery.max-plan-rows";
 
     static final long SCHEDULED_WAIT_MS = 30_000, INTERACTIVE_WAIT_MS = 10_000;
-    /** Teyit / kurtarma yeniden kontrolünün izin beklemesi (MOS'un paylaşılan teyit / kurtarma havuzunda koşar). */
-    static final long RECHECK_WAIT_MS = 2_000;
+    /**
+     * Teyit / kurtarma yeniden kontrolünün izin beklemesi (MOS'un paylaşılan teyit / kurtarma havuzunda koşar; 2026-10-31
+     * ikinci tur O-1: 2 sn yük altında teyidi ATLATIP alarmı o dönem kaybettiriyordu). Hâlâ izin yoksa zamanlayıcı teyitte
+     * zinciri başlatan zamanlanmış ölçümü kanıt sayar (ölçülemeyen teyit = ilk ölçüm geçerli), kurtarmada "atlandı" der.
+     */
+    static final long RECHECK_WAIT_MS = 10_000;
     /** Zamanlanmış çalıştırma havuzu: iş parçacığı adı öneki (kalıcı — günlük / iş parçacığı dökümü) ve üst sınır. */
     public static final String RUN_THREAD_PREFIX = "dbquery-run-";
     static final int RUN_THREADS = 32, RUN_QUEUE = 256;
@@ -87,16 +91,26 @@ public class DbQueryCheckerService {
     static final long SHUTDOWN_WAIT_MS = 1_000;
 
     /**
-     * Çalıştırmanın türü — değişim kuralının TABANINI belirler (2026-10-31 inceleme Y1).
+     * Çalıştırmanın türü — değişim kuralının TABANINI belirler (2026-10-31 inceleme Y1, ikinci tur O-2 / D-7).
      * <ul>
      *   <li>{@link #SCHEDULED}: önceki zamanlanmış çalıştırma (son zamanlanmış ok satırı).</li>
-     *   <li>{@link #RECHECK} (teyit / kurtarma) ve {@link #MANUAL} ("Şimdi kontrol et"): onaylanan son zamanlanmış
-     *       çalıştırmanın KULLANDIĞI taban (son zamanlanmış satırdan önceki zamanlanmış ok satırı) — ihlal eden satırın
-     *       kendisiyle kıyaslanıp "değişim yok" görünmesin. Bu satırlar bant dışıdır (zamanlayıcı {@code manual} /
-     *       {@code recheck} işaretiyle yazar).</li>
+     *   <li>{@link #RECHECK} (teyit / kurtarma): zinciri BAŞLATAN zamanlanmış çalıştırmanın ({@link Anchor}) KULLANDIĞI
+     *       taban — o satırdan önceki en yeni zamanlanmış ok satırı. Taban zincir boyunca SABİTTİR: zincir sürerken yeni
+     *       zamanlanmış satır yazılsa da değişmez (aralık teyit zincirinden kısaysa ihlal eden satır taban olup "değişim yok"
+     *       görünmesin). Çapa yoksa {@link #MANUAL} kuralı.</li>
+     *   <li>{@link #MANUAL} ("Şimdi kontrol et"): tetikleyen = son zamanlanmış satır; taban = ondan önceki en yeni zamanlanmış
+     *       ok satırı (açık değişim alarmı sahte kapanmasın). Ondan önce satır yoksa (yalnız ilk planlı çalışma koştu) son
+     *       zamanlanmış satırın kendisi — kullanıcı "ilk çalıştırma" görmesin (D-7; o durumda açık değişim alarmı olamaz).</li>
      * </ul>
+     * Teyit / elle satırları bant dışıdır (zamanlayıcı {@code recheck} / {@code manual} işaretiyle yazar, taban olmazlar).
      */
     public enum Run { SCHEDULED, RECHECK, MANUAL }
+
+    /**
+     * Teyit / kurtarma zincirini başlatan zamanlanmış çalıştırma (değişim tabanının çapası): satırın {@code checked_at}'i
+     * (UTC ISO) ve kimliği (aynı saniyedeki satırları ayırır; bilinmiyorsa null).
+     */
+    public record Anchor(String checkedAt, Long checkId) {}
 
     /** Bekletmeden ayrılmış izin ({@link #tryReserve}); {@link #runReserved} bırakır, gönderilemezse çağıran bırakır. */
     public interface Reservation {
@@ -173,9 +187,21 @@ public class DbQueryCheckerService {
         return check(m, manual ? Run.MANUAL : Run.SCHEDULED);
     }
 
-    /** Teyit / kurtarma yeniden kontrolü ({@link Run#RECHECK}): kısa izin beklemesi, onaylanan çalıştırmanın tabanı. */
+    /** Teyit / kurtarma yeniden kontrolü ({@link Run#RECHECK}) çapasız — taban {@link Run#MANUAL} kuralıyla. */
     public Result recheck(DbQueryMonitor m) {
-        return check(m, Run.RECHECK);
+        return recheck(m, null);
+    }
+
+    /**
+     * Teyit / kurtarma yeniden kontrolü ({@link Run#RECHECK}): izin en çok {@value #RECHECK_WAIT_MS} ms beklenir; değişim
+     * tabanı zinciri başlatan çalıştırmaya ({@code anchor}) sabitlenir.
+     */
+    public Result recheck(DbQueryMonitor m, Anchor anchor) {
+        try {
+            return execute(m, m == null ? null : m.getId(), Run.RECHECK, anchor, true, recheckWaitMs, true, null);
+        } catch (RuntimeException e) {
+            return internalError(m, e);
+        }
     }
 
     /** Kayıtlı izlemenin çalıştırması; bağlantı sağlığını yazar. İzin türüne göre beklenir (sınıf belgesi). */
@@ -187,7 +213,7 @@ public class DbQueryCheckerService {
             case SCHEDULED -> scheduledWaitMs;
         };
         try {
-            return execute(m, m == null ? null : m.getId(), kind, true, wait, true, null);
+            return execute(m, m == null ? null : m.getId(), kind, null, true, wait, true, null);
         } catch (RuntimeException e) {
             return internalError(m, e);
         }
@@ -236,7 +262,7 @@ public class DbQueryCheckerService {
                 }
                 Result res;
                 try {
-                    res = execute(m, m == null ? null : m.getId(), Run.SCHEDULED, true, 0, true, lease);
+                    res = execute(m, m == null ? null : m.getId(), Run.SCHEDULED, null, true, 0, true, lease);
                 } catch (RuntimeException e) {
                     res = internalError(m, e);
                 } finally {
@@ -316,7 +342,7 @@ public class DbQueryCheckerService {
      */
     public Result test(DbQueryMonitor draft, Long previousForMonitorId) {
         try {
-            return execute(draft, previousForMonitorId, Run.SCHEDULED, false, interactiveWaitMs, false, null);
+            return execute(draft, previousForMonitorId, Run.SCHEDULED, null, false, interactiveWaitMs, false, null);
         } catch (RuntimeException e) {
             log.warn("Veritabanı sorgusu denenemedi: {}", e.getClass().getSimpleName());
             return skipped(draft, null, DB_INTERNAL, Msg.t("Sorgu denenemedi (iç hata) · Beklenmeyen bir hata oluştu · "
@@ -447,17 +473,17 @@ public class DbQueryCheckerService {
      * @param reserved önceden ayrılmış izin ({@link #tryReserve}) ya da null (izin {@code waitMs} beklenerek alınır); her
      *                 yolda bırakılır
      */
-    private Result execute(DbQueryMonitor m, Long previousForMonitorId, Run run, boolean recordHealth, long waitMs,
-                           boolean selectMailRows, Lease reserved) {
+    private Result execute(DbQueryMonitor m, Long previousForMonitorId, Run run, Anchor anchor, boolean recordHealth,
+                           long waitMs, boolean selectMailRows, Lease reserved) {
         try {
-            return executeBody(m, previousForMonitorId, run, recordHealth, waitMs, selectMailRows, reserved);
+            return executeBody(m, previousForMonitorId, run, anchor, recordHealth, waitMs, selectMailRows, reserved);
         } finally {
             if (reserved != null) reserved.release();
         }
     }
 
-    private Result executeBody(DbQueryMonitor m, Long previousForMonitorId, Run run, boolean recordHealth, long waitMs,
-                               boolean selectMailRows, Lease reserved) {
+    private Result executeBody(DbQueryMonitor m, Long previousForMonitorId, Run run, Anchor anchor, boolean recordHealth,
+                               long waitMs, boolean selectMailRows, Lease reserved) {
         if (m == null) return fail(null, DB_PROFILE_MISSING, msgProfileMissing(), null, null);
         DbConnectionProfile p = m.getProfileId() == null ? null : profiles.findById(m.getProfileId()).orElse(null);
         if (p == null) return fail(m, DB_PROFILE_MISSING, msgProfileMissing(), null, null);
@@ -511,7 +537,7 @@ public class DbQueryCheckerService {
                     List.of(), List.of(), false, List.of(), null, false, qr.error(), qr.failureReason(), at,
                     sqlHash(m.getSqlText()), p.getId(), qr.serverVersion());
 
-        Baseline base = previousMeasures(previousForMonitorId, run);
+        Baseline base = previousMeasures(previousForMonitorId, run, anchor);
         DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base.measures(), "tr",
                 base.unreadable());
         boolean slow = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 && qr.durationMs() >= m.getSlowQueryMs();
@@ -538,17 +564,33 @@ public class DbQueryCheckerService {
     record Baseline(Map<String, Double> measures, boolean unreadable) {}
 
     /**
-     * Değişim kuralının tabanı ({@link Run}): zamanlanmış çalıştırmada son zamanlanmış ok satırı; yeniden kontrol / elle
-     * kontrolde ondan ÖNCEKİ zamanlanmış ok satırı (onaylanan çalıştırmanın kendi tabanı). Satır yoksa boş (ilk
-     * çalıştırma); okunamazsa boş + {@code unreadable} (kural "değerlendirilemedi", D3 — "geçti" sayılmaz).
+     * Değişim kuralının tabanı ({@link Run}): zamanlanmış çalıştırmada son zamanlanmış ok satırı; teyit / kurtarmada
+     * çapadan (zinciri başlatan satır) önceki en yeni zamanlanmış ok satırı; elle kontrolde son zamanlanmış satırdan önceki
+     * zamanlanmış ok satırı, o yoksa son zamanlanmış satırın kendisi (D-7). Satır yoksa boş (ilk çalıştırma); okunamazsa
+     * boş + {@code unreadable} (kural "değerlendirilemedi", D3 — "geçti" sayılmaz).
      */
-    private Baseline previousMeasures(Long monitorId, Run run) {
+    private Baseline previousMeasures(Long monitorId, Run run, Anchor anchor) {
         if (monitorId == null) return new Baseline(Map.of(), false);
         try {
-            List<DbQueryCheck> recent = checks.findRecentScheduledOk(monitorId);
-            int idx = run == Run.SCHEDULED ? 0 : 1;
-            if (recent == null || recent.size() <= idx || recent.get(idx) == null) return new Baseline(Map.of(), false);
-            return new Baseline(DbQueryEvaluator.measuresFromJson(recent.get(idx).getRuleResultsJson()), false);
+            DbQueryCheck base;
+            if (run == Run.SCHEDULED) {
+                List<DbQueryCheck> recent = checks.findRecentScheduledOk(monitorId);
+                base = recent == null || recent.isEmpty() ? null : recent.get(0);
+            } else if (run == Run.RECHECK && anchor != null && anchor.checkedAt() != null) {
+                base = checks.findScheduledOkBefore(monitorId, anchor.checkedAt(),
+                        anchor.checkId() == null ? -1L : anchor.checkId()).orElse(null);
+            } else {
+                DbQueryCheck trigger = checks.findLatestScheduled(monitorId).orElse(null);
+                if (trigger == null) {
+                    base = null;
+                } else {
+                    base = checks.findScheduledOkBefore(monitorId, trigger.getCheckedAt(),
+                            trigger.getId() == null ? -1L : trigger.getId()).orElse(null);
+                    if (base == null && run == Run.MANUAL && Boolean.TRUE.equals(trigger.getOk())) base = trigger;
+                }
+            }
+            if (base == null) return new Baseline(Map.of(), false);
+            return new Baseline(DbQueryEvaluator.measuresFromJson(base.getRuleResultsJson()), false);
         } catch (RuntimeException e) {
             log.warn("Önceki çalıştırma okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
             return new Baseline(Map.of(), true);

@@ -242,6 +242,44 @@ class DbQueryAlertRowsServiceTest {
     }
 
     @Test
+    @DisplayName("D-2: mail kolonlarından sonradan çıkarılan kolon gönderimde düşer — bellekteki ve saklı kopyada da kalmaz")
+    void mailColumnsNarrowedAtSendTime() {
+        svc.remember(5L, result("2026-10-31T09:00:00", List.of("id", "kart", "deger"),
+                List.of(List.of("1", "4111-1111", "v")), List.of("kart"), 1, false, false));
+        svc.capture(200L, 5L);   // ayar yok — açılışta üç kolonla saklandı
+        assertThat(table.get(200L).getRowsJson()).contains("4111-1111");
+
+        com.sitemonitor.model.DbQueryMonitor m = new com.sitemonitor.model.DbQueryMonitor();
+        m.setId(5L);
+        m.setMailColumnsJson("[\"ID\",\"deger\"]");
+        monitors(m);
+
+        // Bellek yolu (yeni alarm): kolon listesi daraltılır, sıra korunur, maskeli listesi süzülür.
+        DbQueryAlertRowsService.Rows out = svc.capture(300L, 5L).orElseThrow();
+        assertThat(out.columns()).containsExactly("id", "deger");
+        assertThat(out.rows()).containsExactly(List.of("1", "v"));
+        assertThat(out.masked()).isEmpty();
+        assertThat(out.truncated()).isTrue();
+        assertThat(table.get(300L).getRowsJson()).doesNotContain("4111");
+
+        // Saklı yol (bellek yok — lider değişti): saklı kopya da daraltılıp yeniden yazılır.
+        svc.forget(5L);
+        assertThat(svc.capture(200L, 5L).orElseThrow().columns()).containsExactly("id", "deger");
+        assertThat(table.get(200L).getRowsJson()).doesNotContain("4111");
+        assertThat(svc.stored(200L).orElseThrow().rows()).containsExactly(List.of("1", "v"));
+
+        // Mail kolonları tümüyle değişti (eski kolonların hiçbiri kalmadı) → satır gönderilmez.
+        m.setMailColumnsJson("[\"tutar\"]");
+        assertThat(svc.capture(200L, 5L)).isEmpty();
+        assertThat(svc.stored(200L)).isEmpty();
+
+        // Liste boş = daraltma yok (kayıtta seçilen kolonlar aynen).
+        m.setMailColumnsJson(null);
+        svc.remember(5L, simple("2026-10-31T10:00:00", "w"));
+        assertThat(svc.capture(400L, 5L).orElseThrow().columns()).containsExactly("id", "deger");
+    }
+
+    @Test
     @DisplayName("D2: izlemenin ayarı okunamazsa satır gönderilmez (doğrulanamayan veri gitmez); izleme silinmişse saklı satır kalır")
     void unreadableSettingsSendNothing() {
         svc.remember(5L, simple("2026-10-31T09:00:00", "v"));

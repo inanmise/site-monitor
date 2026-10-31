@@ -118,18 +118,29 @@ class SchedulerDbQueryReviewFixTest {
             saved.add(x);
             return x;
         });
-        lenient().when(checkRepo.findRecentScheduledOk(anyLong())).thenAnswer(i -> {
-            long id = i.getArgument(0);
-            return saved.stream()
-                    .filter(x -> x.getMonitorId() == id && Boolean.TRUE.equals(x.getOk())
-                            && !Boolean.TRUE.equals(x.getManual()) && !Boolean.TRUE.equals(x.getRecheck()))
-                    .sorted(Comparator.comparing(DbQueryCheck::getCheckedAt).thenComparing(DbQueryCheck::getId).reversed())
-                    .limit(2).toList();
+        lenient().when(checkRepo.findRecentScheduledOk(anyLong())).thenAnswer(i ->
+                scheduledRows(i.getArgument(0), true).limit(2).toList());
+        lenient().when(checkRepo.findLatestScheduled(anyLong())).thenAnswer(i ->
+                scheduledRows(i.getArgument(0), false).findFirst());
+        lenient().when(checkRepo.findScheduledOkBefore(anyLong(), anyString(), anyLong())).thenAnswer(i -> {
+            String at = i.getArgument(1);
+            long before = i.getArgument(2);
+            return scheduledRows(i.getArgument(0), true)
+                    .filter(x -> x.getCheckedAt().compareTo(at) < 0 || (x.getCheckedAt().equals(at) && x.getId() < before))
+                    .findFirst();
         });
         ReflectionTestUtils.setField(scheduler, "dbQueryCheckerService", checker);
         ReflectionTestUtils.setField(scheduler, "dbQueryMonitorRepo", monitorRepo);
         ReflectionTestUtils.setField(scheduler, "dbQueryCheckRepo", checkRepo);
         ReflectionTestUtils.setField(scheduler, "dbQueryAlertRows", mock(DbQueryAlertRowsService.class));
+    }
+
+    /** Depo sorgularının taklidi: izlemenin zamanlanmış satırları (elle / teyit hariç), yeniden yeniye. */
+    java.util.stream.Stream<DbQueryCheck> scheduledRows(long id, boolean okOnly) {
+        return List.copyOf(saved).stream()
+                .filter(x -> x.getMonitorId() == id && (!okOnly || Boolean.TRUE.equals(x.getOk()))
+                        && !Boolean.TRUE.equals(x.getManual()) && !Boolean.TRUE.equals(x.getRecheck()))
+                .sorted(Comparator.comparing(DbQueryCheck::getCheckedAt).thenComparing(DbQueryCheck::getId).reversed());
     }
 
     static void defaults(AppSettingsService s) {
@@ -317,6 +328,239 @@ class SchedulerDbQueryReviewFixTest {
         }
     }
 
+    // ── İkinci tur (2026-10-31) O-1 / O-2 — teyit zinciri (gerçek motor + gerçek MOS) ──────────────────────────────
+
+    @Nested
+    @DisplayName("ikinci tur: teyit zinciri")
+    class ConfirmChain {
+
+        AlertEventRepository alerts;
+        EscalationService esc;
+        MonitoringOutageService mos;
+        DbQueryCheckerService real;
+        final List<Integer> values = new ArrayList<>();
+        final AtomicInteger next = new AtomicInteger();
+        final java.util.ArrayDeque<Runnable> queued = new java.util.ArrayDeque<>();
+
+        void engine(List<Integer> vals, int perConnection) {
+            values.addAll(vals);
+            DbConnectionProfileRepository profiles = mock(DbConnectionProfileRepository.class);
+            DbConnectionProfile p = new DbConnectionProfile();
+            p.setId(3L);
+            p.setTeamId(7L);
+            p.setDbType("POSTGRESQL");
+            p.setHost("db.example");
+            p.setPort(5432);
+            p.setDatabaseName("app");
+            p.setUsername("u");
+            when(profiles.findById(3L)).thenReturn(Optional.of(p));
+            DbQueryRunner runner = mock(DbQueryRunner.class);
+            when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenAnswer(i -> {
+                int v = values.get(Math.min(next.getAndIncrement(), values.size() - 1));
+                return new DbQueryRunner.QueryResult(true, 5, v, false, List.of(new DbQueryRunner.Column("id", "INT")),
+                        List.of(), false, null, null, "PostgreSQL 16");
+            });
+            AppSettingsService es = mock(AppSettingsService.class);
+            defaults(es);
+            lenient().when(es.getInt(eq(DbQueryCheckerService.KEY_PER_CONNECTION), anyInt())).thenReturn(perConnection);
+            real = new DbQueryCheckerService(profiles, checkRepo, mock(SecretCipher.class), runner, es);
+            ReflectionTestUtils.setField(scheduler, "dbQueryCheckerService", real);
+            alerts = mock(AlertEventRepository.class);
+            when(alerts.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+            esc = mock(EscalationService.class);
+            mos = realMos(alerts, esc, settings, mock(com.sitemonitor.repository.NetworkOutageEventRepository.class));
+            ReflectionTestUtils.setField(scheduler, "monitoringOutageService", mos);
+        }
+
+        /** Teyit denemelerini KUYRUKTA tutan yürütücü — test sırayla koşturur (zincir sürerken tarama araya girer). */
+        ScheduledThreadPoolExecutor deferred() {
+            return new ScheduledThreadPoolExecutor(1) {
+                @Override
+                public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+                    queued.add(command);
+                    return null;
+                }
+            };
+        }
+
+        @AfterEach
+        void stopEngine() {
+            if (real != null) real.shutdown();
+        }
+
+        @Test
+        @DisplayName("O-1: bağlantı izni dolu → teyit beklemeden sonra ZAMANLANMIŞ ihlali kanıt sayar, alarm açılır; satır yazılmaz")
+        void permitFullConfirmationUsesScheduledBreach() {
+            engine(List.of(12), 1);
+            ReflectionTestUtils.setField(real, "recheckWaitMs", 150L);   // üretimde RECHECK_WAIT_MS = 10 sn
+            ReflectionTestUtils.setField(scheduler, "dbQueryScheduling", fake(300, new AtomicReference<>(true)));
+            DbQueryMonitor m = monitor(81L, "Bekleyen kuyruk");
+            m.setRulesJson("[{\"id\":\"r\",\"label\":\"Bekleyen kuyruk\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\","
+                    + "\"critical\":10}]");
+            m.setNextRunAt(iso(T0.minusSeconds(5)));
+            DbQueryMonitor sameConnection = monitor(82L, "Aynı bağlantıdaki izleme");
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+            // Teyit adımı koşmadan hemen önce bağlantının TEK iznini başka bir izleme tutar (yük altındaki bağlantı).
+            AtomicReference<DbQueryCheckerService.Reservation> held = new AtomicReference<>();
+            ReflectionTestUtils.setField(mos, "confirmExecutor", new ScheduledThreadPoolExecutor(1) {
+                @Override
+                public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+                    if (held.get() == null) held.set(real.tryReserve(sameConnection));
+                    command.run();
+                    return null;
+                }
+            });
+
+            run();
+
+            assertThat(held.get()).as("izin gerçekten doluydu").isNotNull();
+            verify(esc, times(1)).processConfirmedOutage(eq("Bekleyen kuyruk"), eq(EscalationService.TYPE_DBQUERY_THRESHOLD),
+                    anyString(), any());
+            assertThat(saved).as("ölçülemeyen teyit satır yazmaz (bant dışı satır da yok)").hasSize(1);
+            assertThat(saved.get(0).getRecheck()).isFalse();
+            held.get().release();
+        }
+
+        @Test
+        @DisplayName("O-1: kurtarma adımında izin yoksa 'skipped' kalır (kanıtsız kapanış yok); FAIL teyidinde zamanlanmış hata kanıttır")
+        void recoveryStaysSkippedFailConfirmationUsesEvidence() {
+            ReflectionTestUtils.setField(scheduler, "dbQueryScheduling", fake(300, new AtomicReference<>(true)));
+            DbQueryMonitor m = monitor(84L, "Kurtarma");
+            m.setSlowQueryMs(10);
+            m.setNextRunAt(iso(T0.minusSeconds(5)));
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+            when(checker.check(m, false)).thenReturn(ok());
+            when(checker.recheck(eq(m), any())).thenReturn(skipped());
+            run();
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            ArgumentCaptor<List<MonitoringOutageService.SweepItem>> items = ArgumentCaptor.forClass((Class) List.class);
+            verify(mosMock, times(3)).handleSweepResults(anyString(), items.capture());
+            MonitoringOutageService.SweepItem failUp = items.getAllValues().get(0).get(0);
+            assertThat(failUp.up()).isTrue();
+            assertThat(failUp.recheck().get()).as("kurtarma kanıt ister").containsEntry("status", "skipped");
+            MonitoringOutageService.SweepItem slowDown = items.getAllValues().get(2).get(0);
+            assertThat(slowDown.up()).as("50 ms ≥ 10 ms").isFalse();
+            assertThat(slowDown.recheck().get()).as("yavaş teyidi: zamanlanmış ölçüm kanıt")
+                    .containsEntry("status", "down").containsEntry("duration_ms", 50L).containsEntry("threshold_ms", 10);
+
+            // Sorgu hatası (FAIL) teyidi ölçülemedi → zamanlanmış hata kanıt.
+            DbQueryMonitor f = monitor(85L, "Hatalı sorgu");
+            f.setNextRunAt(iso(T0.minusSeconds(5)));
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(f));
+            when(checker.check(f, false)).thenReturn(new DbQueryCheckerService.Result("FAIL", "NONE", 30_000, null, false,
+                    List.of(), List.of(), List.of(), List.of(), false, List.of(), null, false, "bağlantı kurulamadı",
+                    "DB_UNREACHABLE", iso(T0), "h", 3L, null));
+            when(checker.recheck(eq(f), any())).thenReturn(skipped());
+            clock.addAndGet(400_000);
+            run();
+            verify(mosMock, times(6)).handleSweepResults(anyString(), items.capture());
+            MonitoringOutageService.SweepItem failDown = items.getAllValues().get(items.getAllValues().size() - 3).get(0);
+            assertThat(failDown.up()).isFalse();
+            Map<String, Object> ev = failDown.recheck().get();
+            assertThat(ev).containsEntry("status", "down").containsEntry("error", failDown.error());
+
+            // Elle değerlendirmenin kalemi (zincir başlatan zamanlanmış çalıştırma yok) kanıt kullanmaz.
+            List<MonitoringOutageService.SweepItem> fl = new ArrayList<>(), th = new ArrayList<>(), sl = new ArrayList<>();
+            Map<String, Object> raw = new HashMap<>(Map.of("status", "FAIL", "error", "x", "failure_reason", "DB_UNREACHABLE"));
+            ReflectionTestUtils.invokeMethod(scheduler, "addDbQuerySweepItems", f, raw, fl, th, sl, false);
+            assertThat(fl.get(0).recheck().get()).containsEntry("status", "skipped");
+        }
+
+        @Test
+        @DisplayName("O-2: aralık 60 sn, 3 teyit, %50 artış kuralı — zincir sürerken yeni zamanlanmış satır yazılsa da taban SABİT, alarm açılır")
+        void changeBaselinePinnedAcrossTheChain() {
+            // S1 100, S2 100, S3 200 (+%100 ihlal), teyit-1 200, S4 210 (zincir sürerken), teyit-2 210, teyit-3 215
+            engine(List.of(100, 100, 200, 200, 210, 210, 215), 4);
+            ReflectionTestUtils.setField(mos, "confirmExecutor", deferred());
+            ReflectionTestUtils.setField(scheduler, "dbQueryScheduling", fake(60, new AtomicReference<>(true)));
+            DbQueryMonitor m = monitor(83L, "Bekleyen artış");
+            m.setRulesJson("[{\"id\":\"c\",\"label\":\"Bekleyen artış\",\"kind\":\"CHANGE\",\"operator\":\"GT\","
+                    + "\"warning\":50,\"change\":{\"of\":\"ROW_COUNT\",\"mode\":\"PERCENT\",\"direction\":\"INCREASE\"}}]");
+            m.setConfirmAttempts(3);
+            m.setConfirmIntervalSeconds(30);
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+
+            sweep(m);   // S1 100 — ilk çalıştırma
+            sweep(m);   // S2 100 — değişim yok
+            sweep(m);   // S3 200 — ihlal; zincir başladı (teyit-1 kuyrukta)
+            assertThat(queued).hasSize(1);
+            queued.poll().run();   // teyit-1: 200 vs S2 100 → ihlal (teyit-2 kuyrukta)
+            assertThat(queued).hasSize(1);
+            sweep(m);   // S4 210 — S3'e göre +%5: yeni zincir yok, ama SON zamanlanmış satır artık S4
+            assertThat(saved.get(4).getRecheck()).isFalse();
+            queued.poll().run();   // teyit-2: 210 vs S2 100 (S3 / S4 değil) → ihlal
+            assertThat(queued).as("teyit-2 ihlal gördü — zincir sürüyor, teyit-3 kuyrukta").hasSize(1);
+            queued.poll().run();   // teyit-3: 215 vs S2 100 → ihlal → alarm
+            verify(esc, times(1)).processConfirmedOutage(eq("Bekleyen artış"), eq(EscalationService.TYPE_DBQUERY_THRESHOLD),
+                    anyString(), any());
+            List<DbQueryCheck> rechecks = saved.stream().filter(c -> Boolean.TRUE.equals(c.getRecheck())).toList();
+            assertThat(rechecks).hasSize(3);
+            assertThat(rechecks).allSatisfy(c -> assertThat(c.getStatus()).as("her teyit S2 tabanıyla ihlal").isEqualTo("BREACH"));
+            assertThat(DbQueryEvaluator.fromJson(rechecks.get(1).getRuleResultsJson()).get(0).passed()).isFalse();
+        }
+
+        void sweep(DbQueryMonitor m) {
+            m.setNextRunAt(iso(Instant.ofEpochMilli(clock.get()).minusSeconds(1)));
+            run();
+            clock.addAndGet(60_000);
+        }
+    }
+
+    // ── İkinci tur D-3 / D-6 — satır belleği ve atlama sayacı ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("D-3: satır belleğini YALNIZ zamanlanmış çalıştırma değiştirir — teyit / elle kontrolün sağlıklı sonucu silmez")
+    void onlyScheduledRunTouchesRowMemory() {
+        DbQueryAlertRowsService rows = mock(DbQueryAlertRowsService.class);
+        ReflectionTestUtils.setField(scheduler, "dbQueryAlertRows", rows);
+        DbQueryMonitor m = monitor(91L, "Bellek");
+        DbQueryCheckerService.Result b = breach("Bekleyen", "12 satır");
+        when(checker.check(m, false)).thenReturn(b);
+        when(checker.check(m, true)).thenReturn(ok());
+        when(checker.recheck(eq(m), any())).thenReturn(ok());
+        scheduler.recheckDbQuery(m, DbQueryCheckerService.Run.SCHEDULED);
+        scheduler.recheckDbQuery(m, DbQueryCheckerService.Run.RECHECK, null);
+        scheduler.triggerDbQueryCheck(m);
+        verify(rows, times(1)).remember(91L, b);
+        verify(rows, never()).remember(eq(91L), eq(ok()));
+        assertThat(saved).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("D-6: atlama sayacı elle başarılı kontrolde, zamanlama değişiminde ve duraklat / devamda sıfırlanır")
+    void skipCountersAreClearedOutsideTheSweep() {
+        @SuppressWarnings("unchecked")
+        Map<Long, Integer> retry = (Map<Long, Integer>) ReflectionTestUtils.getField(scheduler, "dbQueryRetry");
+        DbQueryMonitor m = monitor(92L, "Sayaç");
+        m.setSkippedRuns(3);
+        m.setSkippedSince(iso(T0.minusSeconds(900)));
+        retry.put(92L, 2);
+        when(checker.check(m, true)).thenReturn(ok());
+        scheduler.triggerDbQueryCheck(m);
+        verify(monitorRepo).clearDbQuerySkipped(92L);
+        assertThat(m.getSkippedRuns()).isZero();
+        assertThat(m.getSkippedSince()).isNull();
+        assertThat(retry).as("atlanan zamanlanmış dönem yine denenir (elle kontrol alarm açmaz)").containsKey(92L);
+
+        // Çalışamayan elle kontrol (izin yok) sayacı sıfırlamaz.
+        DbQueryMonitor busy = monitor(93L, "Meşgul");
+        busy.setSkippedRuns(2);
+        when(checker.check(busy, true)).thenReturn(skipped());
+        scheduler.triggerDbQueryCheck(busy);
+        verify(monitorRepo, never()).clearDbQuerySkipped(93L);
+
+        scheduler.dbQueryScheduleChanged(94L);
+        verify(monitorRepo).clearDbQuerySkipped(94L);
+
+        retry.put(95L, 1);
+        scheduler.dbQueryActiveChanged(95L);
+        verify(monitorRepo).clearDbQuerySkipped(95L);
+        assertThat(retry).doesNotContainKey(95L);
+
+        when(monitorRepo.clearDbQuerySkipped(96L)).thenThrow(new IllegalStateException("db"));
+        scheduler.dbQueryActiveChanged(96L);   // fırlatmaz
+    }
+
     // ── Y2 — eşik hatası kodlu: "timeout" sözcüklü kurallar toplu kesinti bastırması AÇMAZ ──────────────────────────
 
     @Test
@@ -339,9 +583,9 @@ class SchedulerDbQueryReviewFixTest {
         when(checker.check(a, false)).thenReturn(breach("Ödeme timeout sayısı", "12 satır (timed out)"));
         when(checker.check(b, false)).thenReturn(breach("SMS gateway timeout hataları", "12 satır"));
         when(checker.check(c, false)).thenReturn(breach("Bağlantı reddi (connection refused)", "12 satır"));
-        when(checker.recheck(a)).thenReturn(breach("Ödeme timeout sayısı", "12 satır (timed out)"));
-        when(checker.recheck(b)).thenReturn(breach("SMS gateway timeout hataları", "12 satır"));
-        when(checker.recheck(c)).thenReturn(breach("Bağlantı reddi (connection refused)", "12 satır"));
+        when(checker.recheck(eq(a), any())).thenReturn(breach("Ödeme timeout sayısı", "12 satır (timed out)"));
+        when(checker.recheck(eq(b), any())).thenReturn(breach("SMS gateway timeout hataları", "12 satır"));
+        when(checker.recheck(eq(c), any())).thenReturn(breach("Bağlantı reddi (connection refused)", "12 satır"));
 
         run();
 
@@ -374,7 +618,7 @@ class SchedulerDbQueryReviewFixTest {
         assertThat(slow.up()).isFalse();
         assertThat(slow.error()).isNull();
         // teyit yeniden ölçümü de kodlu "down" döner
-        when(checker.recheck(m)).thenReturn(breach("Kuyruk timeout (connection reset)", "12 satır"));
+        when(checker.recheck(eq(m), any())).thenReturn(breach("Kuyruk timeout (connection reset)", "12 satır"));
         Map<String, Object> r = th.recheck().get();
         assertThat(r).containsEntry("status", "down");
         assertThat(String.valueOf(r.get("error"))).startsWith("[DB_THRESHOLD]");
@@ -394,7 +638,7 @@ class SchedulerDbQueryReviewFixTest {
                 "—", "≤ 10", "NONE", true, false, DbQueryEvaluator.NOTE_COLUMN_MISSING, null, null)), 1.0, false, null, null,
                 iso(T0), "h", 3L, null);
         when(checker.check(m, false)).thenReturn(missing);
-        when(checker.recheck(m)).thenReturn(missing);
+        when(checker.recheck(eq(m), any())).thenReturn(missing);
         run();
         ArgumentCaptor<String> type = ArgumentCaptor.forClass(String.class);
         @SuppressWarnings({"unchecked", "rawtypes"})
@@ -622,6 +866,75 @@ class SchedulerDbQueryReviewFixTest {
             at("2026-11-03T09:00:10");
             run();
             verify(checker, times(2)).check(m, false);
+        }
+
+        DbQueryCheckerService.Result okAt(String checkedAt) {
+            return new DbQueryCheckerService.Result("OK", "NONE", 50, 1, false, List.of(), List.of(), List.of(), List.of(),
+                    false, List.of(), 1.0, false, null, null, checkedAt, "h", 3L, null);
+        }
+
+        @Test
+        @DisplayName("D-1: tetikten 10 sn önce sıfırlanan CRON planı, sonraki tıkta (09:00:15) o tetiği KAYBETMEZ — bir kez çalışır")
+        void cronResetJustBeforeTriggerStillRuns() {
+            DbQueryMonitor m = cron(67L, "0 9 * * *", false);
+            when(checker.check(m, false)).thenReturn(okAt("2026-11-03T06:00:16"));
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+            at("2026-11-03T08:59:30");
+            run();
+            assertThat(m.getNextRunAt()).isEqualTo("2026-11-03T06:00:00");
+            at("2026-11-03T08:59:50");
+            scheduler.dbQueryScheduleChanged(67L);
+            assertThat(m.getNextRunAt()).isNull();
+            at("2026-11-03T09:00:15");
+            run();
+            verify(checker, times(1)).check(m, false);
+            assertThat(m.getNextRunAt()).as("sonraki tetik yarın").isEqualTo("2026-11-04T06:00:00");
+            at("2026-11-03T09:00:45");
+            run();
+            verify(checker, times(1)).check(m, false);
+        }
+
+        @Test
+        @DisplayName("D-1: tetik ZATEN koştuktan sonra sıfırlanan plan aynı tetiği yeniden koşmaz (geri bakış son çalıştırmadan başlar)")
+        void cronResetAfterTriggerRanDoesNotRunTwice() {
+            DbQueryMonitor m = cron(68L, "0 9 * * *", false);
+            when(checker.check(m, false)).thenReturn(okAt("2026-11-03T06:00:06"));
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+            m.setNextRunAt("2026-11-03T06:00:00");
+            at("2026-11-03T09:00:05");
+            run();
+            verify(checker, times(1)).check(m, false);
+            at("2026-11-03T09:00:20");
+            scheduler.dbQueryScheduleChanged(68L);
+            at("2026-11-03T09:00:35");
+            run();
+            verify(checker, times(1)).check(m, false);
+            assertThat(m.getNextRunAt()).isEqualTo("2026-11-04T06:00:00");
+
+            // Son çalıştırma okunamazsa geri bakış YAPILMAZ (çift çalıştırma riskine girilmez).
+            DbQueryMonitor n = cron(70L, "0 9 * * *", false);
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(n));
+            when(checkRepo.findLatestScheduled(70L)).thenThrow(new IllegalStateException("db"));
+            at("2026-11-04T09:00:15");
+            run();
+            verify(checker, never()).check(n, false);
+            assertThat(n.getNextRunAt()).isEqualTo("2026-11-05T06:00:00");
+        }
+
+        @Test
+        @DisplayName("D-6: kaçırılan CRON tetiği (duraklat / devam) eski atlama sayacını sıfırlar")
+        void missedTriggerClearsSkipCounters() {
+            DbQueryMonitor m = cron(69L, "0 9 * * *", false);
+            m.setNextRunAt("2026-11-01T06:00:00");
+            m.setSkippedRuns(4);
+            m.setSkippedSince("2026-11-01T06:00:30");
+            when(monitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+            at("2026-11-03T12:00:00");
+            run();
+            verify(checker, never()).check(m, false);
+            verify(monitorRepo).clearDbQuerySkipped(69L);
+            assertThat(m.getSkippedRuns()).isZero();
+            assertThat(m.getNextRunAt()).isEqualTo("2026-11-04T06:00:00");
         }
 
         @Test

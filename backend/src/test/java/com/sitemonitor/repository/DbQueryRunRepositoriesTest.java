@@ -77,6 +77,36 @@ class DbQueryRunRepositoriesTest {
     }
 
     @Test
+    @DisplayName("O-2 / D-1: son zamanlanmış satır (hatalı da) ve çapadan ÖNCEKİ zamanlanmış ok satırı; aynı saniye kimlikle ayrılır")
+    void anchoredBaselineQueries() {
+        long id = mon("Çapa").getId();
+        check(id, "2026-11-02T06:00:00", true, null, null, "[S1]");
+        DbQueryCheck s2 = check(id, "2026-11-02T06:01:00", true, false, false, "[S2]");
+        DbQueryCheck s2b = check(id, "2026-11-02T06:01:00", true, false, false, "[S2b]");   // aynı saniye
+        check(id, "2026-11-02T06:01:30", true, false, true, "[teyit]");
+        check(id, "2026-11-02T06:01:40", true, true, false, "[elle]");
+        DbQueryCheck s3 = check(id, "2026-11-02T06:02:00", true, false, false, "[S3]");
+        DbQueryCheck s4 = check(id, "2026-11-02T06:03:00", false, false, false, "[S4 hata]");
+
+        assertThat(checks.findLatestScheduled(id)).get().extracting(DbQueryCheck::getId).isEqualTo(s4.getId());
+        assertThat(checks.findLatestScheduled(id + 999)).isEmpty();
+
+        // Çapa S3 → S3'ten önceki en yeni zamanlanmış ok = S2b (teyit / elle satırları atlanır)
+        assertThat(checks.findScheduledOkBefore(id, s3.getCheckedAt(), s3.getId())).get()
+                .extracting(DbQueryCheck::getRuleResultsJson).isEqualTo("[S2b]");
+        // Çapa S2b → aynı saniyedeki daha küçük kimlik (S2)
+        assertThat(checks.findScheduledOkBefore(id, s2b.getCheckedAt(), s2b.getId())).get()
+                .extracting(DbQueryCheck::getRuleResultsJson).isEqualTo("[S2]");
+        // Kimlik bilinmiyor (-1) → yalnız önceki saniyeler: S1
+        assertThat(checks.findScheduledOkBefore(id, s2.getCheckedAt(), -1L)).get()
+                .extracting(DbQueryCheck::getRuleResultsJson).isEqualTo("[S1]");
+        // Hatalı satır taban olmaz: çapa S4 → S3
+        assertThat(checks.findScheduledOkBefore(id, s4.getCheckedAt(), s4.getId())).get()
+                .extracting(DbQueryCheck::getRuleResultsJson).isEqualTo("[S3]");
+        assertThat(checks.findScheduledOkBefore(id, "2026-11-02T06:00:00", 0L)).isEmpty();
+    }
+
+    @Test
     @DisplayName("O5: atlama sayacı hedefli artar / sıfırlanır; ilk atlanma zamanı korunur")
     void skipCounter() {
         long id = mon("Atlanan").getId();
