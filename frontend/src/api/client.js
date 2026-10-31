@@ -2468,6 +2468,10 @@ export const api = {
       ).toString()
       return request(`/monitoring/scripted/${id}/response-series${q ? `?${q}` : ''}`)
     },
+    // Adım (k6 group) süre trendi (2026-10-31, k6r D4): yalnız zamanlanmış koşumlar, en sık ≤ 15 adım.
+    // withStatus: eski sunucunun 404/405'i "bu sürüm desteklemiyor" diye ayrılır (okuma hatasından AYRI durum).
+    scriptedStepSeries:    (id, days = 7) => request(`/monitoring/scripted/${id}/step-series?days=${encodeURIComponent(days)}`,
+                             { withStatus: true }),
 
     // Şablon kütüphanesi — Genel (teamId null) + Takım katmanları.
     // Yanıt satır başına can_edit/can_delete/can_promote/... taşır; UI yetkiyi YENİDEN HESAPLAMAZ.

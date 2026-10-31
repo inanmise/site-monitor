@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
-import { formatPercent } from '../i18n/dateLocale.js'
+import { formatRatePercent } from '../i18n/dateLocale.js'
 import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
@@ -47,7 +47,7 @@ import SimpleTooltip from './ui/SimpleTooltip.jsx'
 import HintPopover from './ui/HintPopover.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { exitLabel, exitHint, diagnosisHint, readPhases, formatBytes,
-  checksSummary, stuckLabel } from './scriptedExitCodes.js'
+  checksSummary, stuckLabel, stripRunContext } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
@@ -76,12 +76,19 @@ import { TabsContent } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import ScriptedMonitorCard from './scripted/ScriptedMonitorCard.jsx'
+// Koşum ayrıntısı (2026-10-31, k6r D4): adımlar, eşikler, TLS, hata sınıfı, bağlam çipleri, "bu sürüm bozdu" bandı
+import StepList from './scripted/StepList.jsx'
+import { RunContextChips, ScriptedFailureClass, ThresholdList, TlsList, VersionRegressionBand } from './scripted/RunDetailParts.jsx'
+import { historyDetailText, runContextOf, stepsOf, stepsTruncated, thresholdsOf, tlsOf } from './scripted/runDetailModel.js'
+import { scenarioTarget } from './scripted/scriptedCardModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import { MonitorFormModal, FormGrid, FormField, CheckField, FormSection } from './monitoring/MonitorForm.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Adım trendi de recharts kullanır — yalnız Grafik sekmesi açılınca yüklenir.
+const StepTrend = lazy(() => import('./scripted/StepTrend.jsx'))
 
 // Ortak IntervalSlider `labelKey` bekliyor; senaryo kodu calistiran bu turde taban 1 dk
 // (her kosum bir alt surec baslatir) — ust sinir digerleriyle hizalandi.
@@ -160,13 +167,24 @@ function K6VersionBadge({ t, version, withSyntaxNote = false }) {
   )
 }
 
-/** Backend çok satırlı hata döndürdüyse bu bir k6/Babel kod çerçevesidir (hizalı caret taşır). */
-function isCodeFrame(error) { return typeof error === 'string' && error.includes('\n') }
+/**
+ * Hata metni bir KOD ÇERÇEVESİ mi (hizalı `^` caret satırı taşır)? 2026-10-31 (O3): eskiden "çok satırlı = çerçeve"
+ * sayılıyordu; k6 2.x'te Babel çerçevesi yok ama sunucu "etiket:\nsebep\nbağlam" biçiminde çok satırlı hata yazıyor —
+ * hepsi `whitespace-pre` + yatay kaydırmayla basılıyor, telefonda cümle sonları kesik kalıyordu. Artık YALNIZ bir satırı
+ * boşluk / `|` ve `^` işaretlerinden oluşan metin çerçevedir (caret hizası korunmalı); diğerleri sarılır.
+ * Satır başına 400 karakter sınırı: düzenli ifade uzun satırda koşmaz.
+ */
+const CARET_LINE = /^[\s|]*\^+\s*$/
+export function isCodeFrame(error) {
+  if (typeof error !== 'string' || !error.includes('\n')) return false
+  return error.split('\n').some((line) => line.length <= 400 && CARET_LINE.test(line))
+}
 
 /**
- * Hata metni (eski .sc-err-msg / --frame). Çok satırlı hata = k6/Babel kod çerçevesi: caret (^) bir
- * üstteki satırla SÜTUN SÜTUN hizalı, sarma onu kaydırır → sarma yerine yatay kaydırma + eş aralıklı
- * yazı tipi. Tek satırlı hata normal sarılır. Test kancası: data-slot="error-text" + data-frame.
+ * Hata metni (eski .sc-err-msg / --frame). Kod çerçevesi ({@link isCodeFrame}: caret satırı var): caret (^) bir
+ * üstteki satırla SÜTUN SÜTUN hizalı, sarma onu kaydırır → sarma yerine yatay kaydırma + eş aralıklı yazı tipi.
+ * Diğer her hata (çok satırlı "etiket:\nsebep" dahil) satır sonlarını koruyarak SARILIR (O3, 2026-10-31).
+ * Test kancası: data-slot="error-text" + data-frame.
  */
 function ErrorText({ text }) {
   const frame = isCodeFrame(text)
@@ -542,16 +560,19 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
     if (matchesGroupOrTagText(m, search)) return true   // grup adı / etiket metni de aranır (2026-09-18)
-    return matchesSearchText(search, [m.name, m.group_name])
+    // Kartta görünen HEDEF host ve açıklama da aranır (2026-10-31, E8) — hedef yalnız arama varken hesaplanır
+    return matchesSearchText(search, [m.name, m.group_name, m.description, search ? scenarioTarget(m)?.host : null])
   }), [monitors, teamFilter, groupFilter, tagFilter, search])
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, up: 0, down: 0, alarm: 0, unacked: 0, paused: 0 }
     for (const m of scoped) {
-      if (isPass(m.status)) c.up++
+      // Duraklatılmış ya da sistemin kapattığı (anomali koruması — `active=false`) izleme son koşumuna bakılarak
+      // "çalışıyor" / "arızalı" SAYILMAZ (2026-10-31, D6): yalnız "duraklatılan"da görünür.
+      if (m.active === false) c.paused++
+      else if (isPass(m.status)) c.up++
       else if (isFailLike(m.status)) c.down++
       if (m.active_alarm) { c.alarm++; if (!m.alarm_acknowledged) c.unacked++ }
-      if (m.active === false) c.paused++
     }
     return c
   }, [scoped])
@@ -559,8 +580,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const displayMonitors = useMemo(() => {
     if (!statFilter || statFilter === 'total') return scoped
     const pred = {
-      up:      m => isPass(m.status),
-      down:    m => isFailLike(m.status),
+      up:      m => m.active !== false && isPass(m.status),
+      down:    m => m.active !== false && isFailLike(m.status),
       alarm:   m => m.active_alarm,
       unacked: m => m.active_alarm && !m.alarm_acknowledged,
       paused:  m => m.active === false,
@@ -1151,6 +1172,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     })
   }
 
+  /**
+   * Bir script SÜRÜMÜNÜ editöre yükler — Sürümler sekmesindeki "Bu sürümü editöre yükle" ve detaydaki "bu sürüm bozdu"
+   * bandının "önceki sürümü editöre yükle"si AYNI işleyiciyi çağırır (2026-10-31, k6r D4). Geri dönüş "tek tıkla geri al"
+   * DEĞİL: sürüm editöre yüklenir, kullanıcı görür/test eder, kaydedince YENİ sürüm olur — geçmiş asla ezilmez.
+   */
+  function loadVersionIntoEditor(m, v, detail) {
+    closeDetail()
+    openEdit(m)
+    setTimeout(() => {
+      setForm(f => ({ ...f, script: detail.script, restoredFrom: v.version }))
+      toast.success(t('scripted.versionLoaded', v.version))
+    }, 0)
+  }
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
@@ -1325,7 +1360,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             const driftHint = drift ? t('scripted.verDriftHint', selected.run_script_version) : null
             return (
               <DetailSummary items={[
-                { key: 'uptime', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—',
+                // Yerel ondalık ayırıcı (D4, 2026-10-31): "%96.5" değil "%96,53" — aynı penceredeki kutucukla aynı biçim
+                { key: 'uptime', value: summary.total > 0 ? formatRatePercent((summary.total - summary.down) * 100 / summary.total) : '—',
                   label: `${t('scripted.sumUptime')}${summary.total > 0 ? ` · ${summary.total - summary.down}/${summary.total}` : ''}`,
                   hint: t('scripted.sumUptimeHint') },
                 { key: 'total', value: summary.total, label: t('scripted.sumTotal'), hint: t('scripted.sumTotalHint') },
@@ -1333,7 +1369,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                 selected.duration_ms != null && { key: 'dur', value: `${selected.duration_ms}ms`, label: t('scripted.lastDuration') },
                 selected.script_version && { key: 'ver',
                   value: <>v{selected.script_version}{drift && (
-                    <HintPopover content={driftHint} triggerClassName="ml-1.5 align-baseline">
+                    <HintPopover content={driftHint} triggerClassName="ml-1.5 align-baseline pointer-coarse:min-h-10 pointer-coarse:min-w-10">
                       <span data-slot="version-drift" className="text-xs font-bold text-amber-700 dark:text-amber-300">
                         <span aria-hidden="true">≠</span><span className="sr-only">{driftHint}</span>
                       </span>
@@ -1370,6 +1406,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             )}
 
             <TabsContent value="control">
+              {/* "Bu sürüm bozdu" (2026-10-31, k6r D4): sürüm geçmişi en yeni sürümün belirgin kötüleştiğini söylüyorsa uyarı +
+                  önceki sürümü editöre yükleme (Sürümler sekmesiyle aynı işleyici). Karar yoksa hiçbir şey çizilmez. */}
+              <VersionRegressionBand monitor={selected} canEdit={canManageRow(selected)}
+                onLoad={(v, detail) => loadVersionIntoEditor(selected, v, detail)} />
               {/* gridClass ZORUNLU: sürüm kolonuyla birlikte 5 kolon olduk, ortak `.upt-rt-grid`
                   tabanı ise 4 kolonluk. Kendi şablonumuzu geçmezsek 5. hücre taşar — ve tabanı
                   değiştirmek CheckHistoryTab'ı paylaşan diğer 9 izleme sayfasını bozardı. */}
@@ -1392,9 +1432,10 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         olurdu; diğer hücreler yalnız fare kolaylığı. Hücre kabı ızgara hücresi
                         (`upt-rt-time`) olarak kalır — düğmeye legacy sınıf konmaz. */}
                     <span className="upt-rt-time">
+                      {/* Dokunmatikte 40 px hedef (E2, 2026-10-31) — fare görünümü değişmez */}
                       <Button type="button" variant="ghost" size="xs" onClick={toggle} aria-expanded={isSel}
                         aria-label={`${formatDateSec(c.checked_at)} · ${statusLabel(t, c.status)} — ${t('scripted.rowOpenAria')}`}
-                        className="h-auto justify-start rounded-sm px-0 py-0 font-mono font-normal text-muted-foreground hover:bg-transparent hover:text-foreground hover:underline dark:hover:bg-transparent">
+                        className="h-auto justify-start rounded-sm px-0 py-0 font-mono font-normal text-muted-foreground hover:bg-transparent hover:text-foreground hover:underline dark:hover:bg-transparent pointer-coarse:min-h-10">
                         {formatDateSec(c.checked_at)}
                       </Button>
                     </span>
@@ -1413,12 +1454,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         kodu etiketi, faz kırılımı, k6 çıktısı) satıra tıklayınca açılan
                         CheckDetail panelinde. Eskiden burada ham `error` basılıyordu: backend bu
                         metni 14 satır / 1500 karaktere kadar üretiyor (ERR_MAX_*) ve tek satır
-                        ekranı dolduruyordu. Hücre ilk satırı gösterir; tam metin `title`'da
-                        (kırpılan metnin tamamı — MonitorCardTitle ile aynı desen). */}
+                        ekranı dolduruyordu. Hücre TEK satırlık NEDENİ gösterir (O4, 2026-10-31: kartın neden satırıyla
+                        aynı kural — düşen doğrulamanın adı / zaman aşımı / düşen eşik / hatanın özü; eskiden FAIL'de iki
+                        nokta ile biten etiket satırıydı); tam metin `title`'da (MonitorCardTitle ile aynı desen). */}
                     {c.error
                       ? <span className="upt-rt-error cursor-pointer" title={c.error}
                           onClick={toggle}>
-                          {firstLine(c.error)}
+                          {historyDetailText(t, c) || firstLine(c.error)}
                           {stuckLabel(t, c) && (
                             <Badge variant="outline" data-slot="stuck-chip"
                               className="ml-1.5 px-[7px] py-0 align-baseline text-[.92em] font-normal text-muted-foreground">
@@ -1430,9 +1472,17 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         ? <span className="upt-rt-ms cursor-pointer"
                             onClick={toggle}><ChecksSummary t={t} check={c} /></span>
                         : <span className="upt-rt-ms">—</span>}
+                    {/* Satır içi koşum ayrıntısı (2026-10-31, k6r D4): sütun sayısını aşan hücre CheckHistoryTab'da satırın
+                        ALTINDA tam genişlikte çizilir (tabloda ek satır, telefonda kartın sonu) — eskiden liste ve
+                        sayfalayıcının altında, tıklanan satırdan uzakta açılıyordu. `w-0 min-w-full`: içerik tablonun
+                        asgari genişliğini büyütmez (uzun hata / çerçeve tabloyu yatay taşırmaz). */}
+                    {isSel && (
+                      <div className="w-0 min-w-full text-sm" data-slot="inline-run-detail">
+                        <CheckDetail t={t} check={c} monitor={selected} />
+                      </div>
+                    )}
                   </>)
                 }} />
-              {selCheck && <CheckDetail t={t} check={selCheck} />}
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.name} types={alertTypesFor('scripted')} /></TabsContent>
@@ -1441,21 +1491,14 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
             <TabsContent value="versions">
               <ScriptedVersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}
-                onLoadIntoEditor={(v, detail) => {
-                  // Geri dönüş "tek tıkla geri al" DEĞİL: sürüm editöre yüklenir, kullanıcı
-                  // görür/test eder, kaydedince YENİ sürüm olur — geçmiş asla ezilmez.
-                  closeDetail()
-                  openEdit(selected)
-                  setTimeout(() => {
-                    setForm(f => ({ ...f, script: detail.script, restoredFrom: v.version }))
-                    toast.success(t('scripted.versionLoaded', v.version))
-                  }, 0)
-                }} />
+                onLoadIntoEditor={(v, detail) => loadVersionIntoEditor(selected, v, detail)} />
             </TabsContent>
 
             <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="scripted" slowThreshold={selected.slow_response_enabled ? selected.slow_threshold_ms : null} />
+                {/* Adım (k6 group) süre trendi — 2026-10-31, k6r D4 */}
+                <StepTrend monitorId={selected.id} />
               </Suspense>
             </TabsContent>
 
@@ -1533,7 +1576,8 @@ function RequestPhases({ t, check, viaProxy }) {
   return (
     <Card data-request-phases="true" className="mt-2.5 gap-2 rounded-lg bg-muted/30 px-3 py-2.5 shadow-none">
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-[.92em] font-semibold">{t('scripted.phasesTitle')}</span>
+        {/* "Nerede takıldı?" yalnız takılma noktası olan koşumda; her faz tamamsa nötr "İstek fazları" (E7, 2026-10-31) */}
+        <span className="text-[.92em] font-semibold">{stuckAt ? t('scripted.phasesTitle') : t('scripted.phasesTitleOk')}</span>
         {viaProxy != null && (
           <Badge variant="outline" data-slot="phases-proxy" className="font-normal text-muted-foreground">
             {viaProxy ? t('scripted.viaProxyYes') : t('scripted.viaProxyNo')}
@@ -1666,52 +1710,60 @@ function ChecksSummary({ t, check }) {
   )
 }
 
-function CheckDetail({ t, check }) {
+/**
+ * Koşum ayrıntısı (2026-10-31 genişleme, k6r D4): ADIMLAR (k6 group — StepList; eski satırda doğrulama listesi), EŞİKLER,
+ * hata bandı (bağlam satırı yapılandırılmış `run_context` varsa metinden atılır ve arayüz dilinde ÇİP olur), HATA SINIFI
+ * paneli (ortak CheckFailurePanel), faz kırılımı, eriştiği hostların TLS sürümü / sertifika durumu ve katlı k6 çıktısı.
+ * Yeni alanlar yoksa (eski satır / eski sunucu) bugünkü görünüm: doğrulama listesi + hata bandı + fazlar + çıktı.
+ */
+function CheckDetail({ t, check, monitor = null }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  let checks = []
   // API snake_case; savunmacı çift-okuma.
   const checksJson = check.checks_json ?? check.checksJson
   const outputTail = check.output_tail ?? check.outputTail
   const exitCode = check.exit_code ?? check.exitCode
-  try { if (checksJson) checks = JSON.parse(checksJson) } catch { /* bozuk json → boş liste */ }
+  const steps = stepsOf(check)
+  const thresholds = thresholdsOf(check)
+  const tls = tlsOf(check)
+  const runContext = runContextOf(check)
 
-  const label = exitLabel(t, exitCode)
+  // Süreç zaman aşımında çıkış etiketi ("Süreç başlatılamadı veya sonlandırıldı · exit -1") basılmaz (O6, 2026-10-31):
+  // süreç bilinçli sonlandırıldı, "başlatılamadı" yanıltıcıydı — kartın kuralıyla aynı.
+  const label = check.status === 'TIMEOUT' ? null : exitLabel(t, exitCode)
   const hint = exitHint(t, exitCode)
   const engineHint = diagnosisHint(t, check)
   const tone = isPass(check.status) ? 'success' : isWarnLike(check.status) ? 'warning' : 'danger'
+  // Bağlam çip olarak çizilecekse Türkçe "süreç bütçesi=…" satırı tekrar basılmaz (tanı ipuçları ham metne bakar).
+  const errorShown = runContext && check.error ? stripRunContext(check.error) : check.error
   const lines = outputTail ? outputTail.split('\n') : []
   const CLAMP = 12
   const clamped = !showAll && lines.length > CLAMP
   const shown = clamped ? lines.slice(0, CLAMP).join('\n') : outputTail
 
   return (
-    <div data-slot="check-detail" className="mt-3">
-      {checks.length > 0 && (
-        <ul className="m-0 mb-2.5 list-none p-0">
-          {checks.map((c, i) => (
-            <li key={i} className="border-b border-border py-1 text-[.92em]">
-              <span className={cn('font-bold', c.passed ? 'text-success' : 'text-destructive')}>{c.passed ? '✓' : '✗'}</span> {c.name}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div data-slot="check-detail" className="mt-3 flex min-w-0 flex-col gap-3">
+      <StepList steps={steps} truncated={stepsTruncated(check)} checksJson={checksJson} status={check.status} />
+      <ThresholdList thresholds={thresholds} />
 
-      {(check.error || label) && (
-        <AlertBanner tone={tone} title={t('scripted.errTitle')}>
-          {/* Çok satırlı hata = k6/Babel kod çerçevesi → monospace + yatay kaydırma, yoksa caret kayar. */}
-          {check.error && <ErrorText text={check.error} />}
+      {(errorShown || label) && (
+        <AlertBanner tone={tone} title={t('scripted.errTitle')} className="mb-0">
+          {/* Kod çerçevesi (caret satırı) → monospace + yatay kaydırma, yoksa caret kayar; diğer hatalar sarılır. */}
+          {errorShown && <ErrorText text={errorShown} />}
           {label && <div data-slot="exit-label" className="mt-1 text-[.9em] opacity-85">{label}{exitCode != null ? ` · exit ${exitCode}` : ''}</div>}
           {hint && <ErrHint>{hint}</ErrHint>}
           {engineHint && <ErrHint>{engineHint}</ErrHint>}
         </AlertBanner>
       )}
+      <RunContextChips context={runContext} />
+      <ScriptedFailureClass check={check} monitor={monitor} />
 
       <RequestPhases t={t} check={check} viaProxy={check.via_proxy ?? check.viaProxy ?? null} />
+      <TlsList tls={tls} />
 
       {outputTail && (
         // Katlanan teknik detay (eski .mhow-toggle aç-kapa) — shadcn Collapsible; kapalıyken içerik DOM'da yok.
-        <Collapsible open={openTech} onOpenChange={setOpenTech} className="mt-2.5">
+        <Collapsible open={openTech} onOpenChange={setOpenTech}>
           <CollapsibleTrigger asChild>
             <Button type="button" variant="ghost" className="w-full justify-start gap-2 px-3 font-semibold">
               <Terminal size={15} aria-hidden="true" className="text-violet-600 dark:text-violet-400" />

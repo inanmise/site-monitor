@@ -112,8 +112,12 @@ export function readPhases(check, passed = false) {
  * "Doğrulama yok" (`scripted.status_NO_CHECKS`) diyor, yani projenin sözlüğünde k6 check'inin
  * karşılığı "doğrulama".
  *
- * Sayı biçimi bilinçli: BAŞARISIZDA "kalan / toplam" gösterilir (kaç tanesinin düştüğü asıl
+ * Sayı biçimi bilinçli: BAŞARISIZDA "başarısız / toplam" gösterilir (kaç tanesinin düştüğü asıl
  * bilgidir), başarılıda yalnız geçen sayısı — "2 / 2" gereksiz gürültü.
+ *
+ * YARIDA KALAN koşum (ERROR / TIMEOUT, 2026-10-31 O5): senaryo bir istisna ya da zaman aşımıyla durduysa koşabilen
+ * doğrulamaların "hepsi geçti" demek yanıltıcıydı (kırmızı "Hata" kartında yeşil "3 doğrulama geçti"). Düşen yoksa ton
+ * NÖTR ve metin "N doğrulama koşabildi — senaryo yarıda kaldı".
  *
  * @returns {{tone:'ok'|'bad'|'none', icon:string, text:string}|null}
  *   null ⇒ sayaç HİÇ yok (koşum olmamış) — çağıran "—" basar; 0/0 ile karıştırılmaz.
@@ -125,6 +129,7 @@ export function checksSummary(t, check) {
   if (passed == null && failed == null) return null
   const p = Number(passed || 0), f = Number(failed || 0)
   if (f > 0) return { tone: 'bad', icon: '✗', text: t('scripted.checksFailed', f, p + f) }
+  if (p > 0 && isHalted(check.status)) return { tone: 'none', icon: '—', text: t('scripted.checksHalted', p) }
   if (p > 0) return { tone: 'ok', icon: '✓', text: t('scripted.checksPassed', p) }
   // Script koştu ama hiçbir şey doğrulamadı — NO_CHECKS statüsünün hücredeki karşılığı.
   return { tone: 'none', icon: '—', text: t('scripted.checksNone') }
@@ -193,6 +198,20 @@ function withoutRunContext(check) {
   const cut = [err.indexOf(RUN_CONTEXT_MARK), err.indexOf(INVERSE_BUDGET_MARK)]
     .filter((i) => i >= 0)
   return (cut.length ? err.slice(0, Math.min(...cut)) : err).trim()
+}
+
+/**
+ * Sunucu hata metninden koşum bağlamı satırını (ve ters bütçe cümlesini) atar — GÖSTERİM içindir: koşum satırı
+ * yapılandırılmış `run_context` taşıyorsa bağlam arayüz dilinde ÇİP olarak çizilir ve Türkçe satır tekrar basılmaz
+ * (2026-10-31, k6r D4 / E5). Tanı kuralları ({@link diagnosisHint}) ham metne bakmaya devam eder.
+ */
+export function stripRunContext(error) {
+  return withoutRunContext({ error })
+}
+
+/** Senaryo yarıda kaldı mı (istisna ya da süreç zaman aşımı)? */
+export function isHalted(status) {
+  return status === 'ERROR' || status === 'TIMEOUT'
 }
 
 /** Bu koşumda ters bütçe (istek timeout'u ≥ süreç bütçesi) tespit edilmiş mi? */

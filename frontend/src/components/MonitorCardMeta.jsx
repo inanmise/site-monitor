@@ -15,6 +15,9 @@ import { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
  * yan yana, dar kartta SARAR. Satır içi stil yerine Tailwind jetonları (koyu tema dâhil). Test kancaları:
  * `data-slot="monitor-card-meta"` ve öğe başına `meta-team` / `meta-group` / `meta-proxy`.
  *
+ * <p>2026-10-31 (O8): takım ve grup adı KESİLMEZ — 60+ karakterlik AD takım adı kartta "…Uzun Adl…" diye kırpılıyordu
+ * (ölçüm: 587 / 274 px, dokuz türün hepsi). Takım rozeti `TeamBadge wrap` (köşeli, taşmasız), grup adı sarar.
+ *
  * @param {{team_id?: number, team_name?: string, group_name?: string, proxy_effective?: string}} monitor
  */
 export default function MonitorCardMeta({ monitor }) {
@@ -25,11 +28,12 @@ export default function MonitorCardMeta({ monitor }) {
   return (
     <div data-slot="monitor-card-meta" className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[.78em] text-muted-foreground">
       {team && (
-        <span data-slot="meta-team" className="flex min-w-0 items-center"><TeamBadge teamId={monitor.team_id} teamName={team} /></span>
+        // Ad KESİLMEZ (2026-10-31, O8 — dokuz türün ortak kartı): uzun AD takım adı satır sonunda sarar
+        <span data-slot="meta-team" className="flex min-w-0 items-center"><TeamBadge teamId={monitor.team_id} teamName={team} wrap /></span>
       )}
       {group && (
-        <span data-slot="meta-group" className="flex min-w-0 items-center gap-[5px]">
-          <Layers size={12} aria-hidden="true" className="shrink-0" /><span className="min-w-0 truncate">{group}</span>
+        <span data-slot="meta-group" className="flex min-w-0 items-start gap-[5px]">
+          <Layers size={12} aria-hidden="true" className="mt-[0.2em] shrink-0" /><span className="min-w-0 [overflow-wrap:anywhere]">{group}</span>
         </span>
       )}
       {/* Vekil rozeti (2026-09-21): yalnız HTTP/Keyword/Sayfa satırları proxy_effective taşır — sertifika kartındaki dil */}

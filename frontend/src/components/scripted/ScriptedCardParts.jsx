@@ -15,6 +15,7 @@ import { exitLabel, stuckLabel } from '../scriptedExitCodes.js'
 import { intervalText } from '../ping/pingCardModel.js'
 import { VersionChip } from './VersionTimeline.jsx'
 import { checkCounts, durationAssessment, humanizeMs, runFailure, versionDrift } from './scriptedCardModel.js'
+import { failureHeadText } from './runDetailModel.js'
 
 /** Kart durum sözlüğü (MonitorCard: up|down|warn|unknown) → sonuç panelinin tonu. */
 const RESULT_TONE = { up: 'ok', down: 'bad', warn: 'warn', unknown: 'none' }
@@ -117,26 +118,23 @@ export function ScenarioChips({ monitor: m, className, warningsOnly = false }) {
 const REASON_ICON = { check: CircleX, timeout: TimerOff, threshold: Gauge, error: CircleAlert, fail: CircleAlert }
 
 /**
- * Nedenin başlık cümlesi (Zengin sonuç paneli ve Kompakt neden satırı AYNI metni kullanır). 'error' için başlık yok —
- * hatanın özü (ör. "TypeError: …") kendisi başlık; çıkış kodu etiketi Zengin'de panelin üst satırında.
+ * Nedenin başlık cümlesi (Zengin sonuç paneli, Kompakt neden satırı ve kontrol geçmişi "Detay" hücresi AYNI metni
+ * kullanır — tek kaynak `runDetailModel.failureHeadText`). 'error' için başlık yok — hatanın özü kendisi başlık.
  */
-function failureHead(t, failure) {
-  if (failure.kind === 'check') return t('scripted.card.failedCheck', failure.name)
-  if (failure.kind === 'timeout') return failure.limit ? t('scripted.card.reasonTimeout', msText(failure.limit * 1000)) : t('scripted.card.reasonTimeoutNoLimit')
-  if (failure.kind === 'threshold') return t('scripted.card.reasonThreshold')
-  if (failure.kind === 'fail') return t('scripted.card.reasonFail')
-  return null
-}
+const failureHead = failureHeadText
 
-/** Başarısız koşumun nedeni — tek satır (en fazla iki satıra sarar); yalnız-hover bilgi yok. */
-function RunFailureLine({ failure }) {
+/**
+ * Başarısız koşumun nedeni — tek satır (en fazla iki satıra sarar); yalnız-hover bilgi yok. `muted`: duraklatılmış
+ * izlemenin ESKİ koşumu — kırmızı alarm dili kullanılmaz (D6).
+ */
+function RunFailureLine({ failure, muted = false }) {
   const t = useT()
   const Icon = REASON_ICON[failure.kind] || CircleAlert
   const head = failureHead(t, failure)
   const detail = failure.kind === 'check' ? null : failure.detail
   return (
     <div data-slot="scripted-reason" data-reason={failure.kind} role="note"
-      className="mt-2 flex min-w-0 items-start gap-1.5 text-xs leading-snug font-medium text-destructive">
+      className={cn('mt-2 flex min-w-0 items-start gap-1.5 text-xs leading-snug font-medium', muted ? 'text-muted-foreground' : 'text-destructive')}>
       <Icon aria-hidden="true" className="mt-px size-3.5 shrink-0" />
       <span className="min-w-0">
         {head && <span className="line-clamp-2 [overflow-wrap:anywhere]">{head}
@@ -158,8 +156,12 @@ function RunFailureLine({ failure }) {
  * Progress → ui/Progress ProgressBar; el yapımı yüzde çubuğu YASAK), üst satırda k6 çıkış etiketi (ör. "Eşikler aşıldı")
  * ve takılınan faz çipleri, başarısızsa NEDEN satırı (düşen check'in adı / zaman aşımı / script hatasının özü).
  * NO_CHECKS: "hiçbir şey doğrulanmadı" cümlesi (amber). Hiç koşmamış: sade "ilk koşusu bekleniyor" paneli.
- * Test kancaları: `data-slot="scripted-result"` + `data-tone` (ok|bad|warn|none), `scripted-checks`, `scripted-exit`,
- * `scripted-stuck`, `scripted-reason` + `data-reason`.
+ * YARIDA KALAN koşum (ERROR / TIMEOUT, düşen doğrulama yok — O5, 2026-10-31): sayaç NÖTR, çubuk yok, metin "N doğrulama
+ * koşabildi · senaryo yarıda kaldı" (eskiden kırmızı "Hata" kartında yeşil "3 / 3 doğrulama geçti" yazıyordu).
+ * DURAKLATILMIŞ izleme (`active === false` — kullanıcı ya da sistem; D6): panel NÖTR — eski koşumun yeşil / kırmızı dili
+ * izleme koşmazken "çalışıyor" / "arızalı" izlenimi vermesin.
+ * Test kancaları: `data-slot="scripted-result"` + `data-tone` (ok|bad|warn|none), `scripted-checks` (+ `data-halted`),
+ * `scripted-exit`, `scripted-stuck`, `scripted-reason` + `data-reason`.
  */
 export function ScriptedRunResult({ monitor: m, status }) {
   const t = useT()
@@ -172,10 +174,13 @@ export function ScriptedRunResult({ monitor: m, status }) {
       </div>
     )
   }
-  const tone = RESULT_TONE[status] ?? 'none'
+  const paused = m.active === false
+  const tone = paused ? 'none' : (RESULT_TONE[status] ?? 'none')
   const counts = checkCounts(m)
   const failure = runFailure(m)
   const passed = m.status === 'PASS'
+  // Düşen doğrulama yokken senaryo istisna / zaman aşımıyla durduysa sayaç "geçti" demez (O5)
+  const halted = (m.status === 'ERROR' || m.status === 'TIMEOUT') && counts && counts.failed === 0
   const exit = !passed && m.status !== 'TIMEOUT' ? exitLabel(t, m.exit_code) : null
   // Takılınan faz yalnız zaman aşımı / hata koşusunda anlamlı: doğrulaması düşen olağan bir koşuda k6 son fazı 0 ms
   // basabilir ve "yanıt alınırken takıldı" diye yanlış teşhis üretirdi (geçmiş tablosu da yalnız hatalı satırda gösterir).
@@ -202,26 +207,35 @@ export function ScriptedRunResult({ monitor: m, status }) {
           </span>
         )}
       </div>
-      {counts && counts.total > 0 && (
+      {counts && counts.total > 0 && halted && (
+        <p data-slot="scripted-checks" data-halted="true" className="mt-1 mb-0.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 tabular-nums">
+          <span aria-hidden="true" className="text-xl leading-tight font-bold text-foreground">{counts.passed}</span>
+          <span aria-hidden="true" className="text-xs font-medium text-foreground">{t('scripted.card.checksRan')}</span>
+          <span aria-hidden="true" className="text-xs font-semibold text-amber-800 dark:text-amber-300">· {t('scripted.card.halted')}</span>
+          <span className="sr-only">{t('scripted.card.checksHaltedSr', counts.passed)}</span>
+        </p>
+      )}
+      {counts && counts.total > 0 && !halted && (
         <>
           <p data-slot="scripted-checks" className="mt-1 mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 tabular-nums">
-            <span aria-hidden="true" className={cn('text-xl leading-tight font-bold', counts.failed ? 'text-destructive' : 'text-success')}>
+            <span aria-hidden="true" className={cn('text-xl leading-tight font-bold', paused ? 'text-foreground' : counts.failed ? 'text-destructive' : 'text-success')}>
               {counts.passed}<span className="text-sm font-semibold text-muted-foreground"> / {counts.total}</span>
             </span>
             <span aria-hidden="true" className="text-xs font-medium text-foreground">{t('scripted.card.checksPassed')}</span>
             {counts.failed > 0 && (
-              <span aria-hidden="true" className="text-xs font-semibold text-destructive">· {t('scripted.card.failedCount', counts.failed)}</span>
+              <span aria-hidden="true" className={cn('text-xs font-semibold', paused ? 'text-muted-foreground' : 'text-destructive')}>· {t('scripted.card.failedCount', counts.failed)}</span>
             )}
             <span className="sr-only">{t('scripted.card.checksOf', counts.passed, counts.total)}</span>
           </p>
-          <ProgressBar size="sm" className="h-1.5" decorative tone={counts.failed ? 'crit' : 'ok'} value={counts.passed} max={counts.total} />
+          {/* Duraklatılmışta çubuk tonsuz (birincil) — eski koşumun yeşil / kırmızısı taşınmaz */}
+          <ProgressBar size="sm" className="h-1.5" decorative tone={paused ? undefined : counts.failed ? 'crit' : 'ok'} value={counts.passed} max={counts.total} />
         </>
       )}
       {noChecks && <p data-slot="scripted-no-checks" className="mt-1 text-xs leading-snug font-medium text-amber-800 dark:text-amber-300">{t('scripted.noChecksHint')}</p>}
       {!noChecks && passed && counts && counts.total === 0 && (
         <p className="mt-1 text-xs leading-snug text-muted-foreground">{t('scripted.card.thresholdsOnly')}</p>
       )}
-      {failure && <RunFailureLine failure={failure} />}
+      {failure && <RunFailureLine failure={failure} muted={paused} />}
     </section>
   )
 }
@@ -248,29 +262,38 @@ export function ScriptedCompactRun({ monitor: m, status }) {
     )
   }
   const counts = checkCounts(m)
-  const dur = durationAssessment(m)
+  const paused = m.active === false
+  const dur = paused ? { tone: 'neutral', limitMs: null } : durationAssessment(m)
   const durParts = humanizeMs(m.duration_ms)
   const failure = runFailure(m)
+  const halted = (m.status === 'ERROR' || m.status === 'TIMEOUT') && counts && counts.failed === 0
   let reason = null
   if (failure) {
     const head = failureHead(t, failure) || exitLabel(t, m.exit_code)
     const more = failure.kind === 'check' && failure.more > 0 ? ` ${t('scripted.card.moreChecks', failure.more)}` : ''
     const detail = failure.kind === 'check' ? null : failure.detail
-    reason = { kind: failure.kind, tone: 'bad', text: [head ? head + more : null, detail].filter(Boolean).join(' — ') }
+    reason = { kind: failure.kind, tone: paused ? 'muted' : 'bad', text: [head ? head + more : null, detail].filter(Boolean).join(' — ') }
   } else if (m.status === 'NO_CHECKS') {
-    reason = { kind: 'no-checks', tone: 'warn', text: t('scripted.noChecksHint') }
+    reason = { kind: 'no-checks', tone: paused ? 'muted' : 'warn', text: t('scripted.noChecksHint') }
   }
   const hasChecks = counts && counts.total > 0
   return (
     <>
       {/* `@container`: dar kartta (Kompakt ızgara tabanı 250 px, 2026-09-27) satır sarar ve süre ikinci satıra iner — ayraç
           nokta o zaman satır başında sarkıyordu ("· 2.4 s"). Nokta yalnız satırın sığdığı genişlikte (≥17rem) çizilir. */}
-      <div data-slot="scripted-compact-run" data-tone={RESULT_TONE[status] ?? 'none'}
+      <div data-slot="scripted-compact-run" data-tone={paused ? 'none' : (RESULT_TONE[status] ?? 'none')}
         className="@container mb-2.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 tabular-nums">
         <span className="shrink-0 text-[10px] font-semibold tracking-[.06em] text-muted-foreground uppercase">{t('scripted.card.lastRun')}</span>
-        {hasChecks && (
+        {hasChecks && halted && (
+          <span data-slot="scripted-compact-checks" data-halted="true" className="flex min-w-0 items-baseline gap-1">
+            <span aria-hidden="true" className="text-base leading-tight font-bold text-foreground">{counts.passed}</span>
+            <span aria-hidden="true" className="text-xs font-medium text-foreground">{t('scripted.card.checksRanHalted')}</span>
+            <span className="sr-only">{t('scripted.card.checksHaltedSr', counts.passed)}</span>
+          </span>
+        )}
+        {hasChecks && !halted && (
           <span data-slot="scripted-compact-checks" className="flex min-w-0 items-baseline gap-1">
-            <span aria-hidden="true" className={cn('text-base leading-tight font-bold', counts.failed ? 'text-destructive' : 'text-success')}>
+            <span aria-hidden="true" className={cn('text-base leading-tight font-bold', paused ? 'text-foreground' : counts.failed ? 'text-destructive' : 'text-success')}>
               {counts.passed}<span className="text-xs font-semibold text-muted-foreground"> / {counts.total}</span>
             </span>
             <span aria-hidden="true" className="truncate text-xs font-medium text-foreground">{t('scripted.card.checksPassed')}</span>
@@ -301,6 +324,7 @@ export function ScriptedCompactRun({ monitor: m, status }) {
 const REASON_TEXT = {
   bad: 'text-destructive hover:text-destructive dark:hover:text-destructive',
   warn: 'text-amber-800 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-300',
+  muted: 'text-muted-foreground hover:text-muted-foreground',
 }
 
 /**
@@ -360,19 +384,22 @@ function MetricTile({ metric, tone, label, parts, verdict, srVerdict, sub }) {
 export function ScriptedMetricTiles({ monitor: m }) {
   const t = useT()
   if (!m.checked_at && m.duration_ms == null) return null
-  const dur = durationAssessment(m)
+  // Duraklatılmış izlemenin eski ölçüsü tonlanmaz (D6) — "yavaş" / "zaman aşımı" rengi koşmayan izlemede yanıltır
+  const dur = m.active === false ? { tone: 'neutral', limitMs: null } : durationAssessment(m)
   const limit = dur.limitMs != null ? msText(dur.limitMs) : null
   const durSub = dur.tone === 'bad' ? (limit ? t('scripted.card.timeoutLimit', limit) : null)
     : dur.tone === 'warn' ? t('scripted.card.overLimit', limit)
     : dur.tone === 'ok' ? t('scripted.card.limit', limit)
     : t('scripted.card.wholeRun')
   const avg = humanizeMs(m.http_req_avg_ms)
+  // Son koşumun p95'i (2026-10-31, k6r D4): liste satırı `last_http_req_p95_ms` taşıyorsa alt satırda; yoksa bugünkü metin
+  const p95 = msText(m.last_http_req_p95_ms)
   return (
     <MonitorCardMetrics className="mb-2.5 grid grid-cols-2 gap-2">
       <MetricTile metric="duration" tone={dur.tone} label={t('scripted.card.duration')} parts={humanizeMs(m.duration_ms)}
         verdict={dur.tone === 'warn' ? t('scripted.card.slow') : null} srVerdict={dur.tone === 'ok' ? t('scripted.card.normal') : null} sub={durSub} />
       <MetricTile metric="request" tone="neutral" label={t('scripted.card.avgRequest')} parts={avg}
-        sub={avg ? t('scripted.card.perRequest') : t('scripted.card.notMeasured')} />
+        sub={p95 ? t('scripted.card.p95', p95) : avg ? t('scripted.card.perRequest') : t('scripted.card.notMeasured')} />
     </MonitorCardMetrics>
   )
 }

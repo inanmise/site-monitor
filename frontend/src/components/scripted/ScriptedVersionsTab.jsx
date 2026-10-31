@@ -10,6 +10,7 @@ import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { VersionChip } from './VersionTimeline.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * Sentetik izleme — "Sürümler" sekmesi.
@@ -158,10 +159,11 @@ function VersionRuns({ t, version }) {
   const fails = Number(version.fail_count || 0)
   return (
     <SimpleTooltip content={t('scripted.verRunsHint')}>
+      {/* Sarılır (E6, 2026-10-31): telefonda tek satır rozet sağdaki aç / kapa okunun üstüne taşıyordu */}
       <Badge variant="secondary" data-slot="version-runs" data-bad={fails > 0 ? 'true' : undefined}
-        className={fails > 0
+        className={cn('h-auto max-w-full overflow-visible rounded-md text-left whitespace-normal [overflow-wrap:anywhere]', fails > 0
           ? 'bg-destructive/10 text-destructive dark:bg-destructive/20'
-          : 'bg-success/15 text-success dark:bg-success/20'}>
+          : 'bg-success/15 text-success dark:bg-success/20')}>
         {fails > 0 ? t('scripted.verRunsBad', runs, fails) : t('scripted.verRunsOk', runs)}
       </Badge>
     </SimpleTooltip>
@@ -179,7 +181,8 @@ function VersionDiff({ t, oldDetail, newDetail }) {
   }
 
   const envNote = (env.added.length > 0 || env.removed.length > 0) && (
-    <div className="sc-diff-env">
+    // Ortam değişkeni farkı notu (E6 / O8, 2026-10-31): sol renk şeridi YOK (kalıcı kural), uzun değişken adları SARAR.
+    <div data-slot="version-diff-env" className="mt-1 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[.8em] text-foreground [overflow-wrap:anywhere]">
       {env.added.length > 0 && <div>{t('scripted.verDiffEnvAdded', env.added.join(', '))}</div>}
       {env.removed.length > 0 && <div>{t('scripted.verDiffEnvRemoved', env.removed.join(', '))}</div>}
     </div>

@@ -19,6 +19,8 @@ import { failureReason as pingFailureReason } from '../ping/pingCardModel.js'
 import { portResult } from '../port/portCardModel.js'
 import { pageFailure } from '../page/pageCardModel.js'
 import { unknownReasonOf } from '../domain/domainCardModel.js'
+import { scenarioTarget } from '../scripted/scriptedCardModel.js'
+import { stripRunContext } from '../scriptedExitCodes.js'
 import {
   CHECK_FAILURE_PHASE, CHECK_FAILURE_PHASES, CHECK_FAILURE_SET, CHECK_FAILURE_WARN_CODES,
 } from './checkFailureCodes.js'
@@ -63,6 +65,8 @@ export function isHealthy(type, row) {
       return s === 'OK' || s === 'WARNING' || s === 'CRITICAL'
     }
     case 'cert': return str(row.status).toLowerCase() !== 'error'
+    // Sentetik (k6): yalnız PASS sağlıklı; durum yoksa (eski / eksik satır) sunucunun `ok` bayrağı
+    case 'scripted': return row.status ? str(row.status).toUpperCase() === 'PASS' : row.ok !== false
     default: return row.ok !== false
   }
 }
@@ -200,8 +204,30 @@ export function certCode(row) {
   return codeFromText(msg) || 'UNKNOWN'
 }
 
+/**
+ * Sentetik (k6) eski satırı (sunucu kodu yok, 2026-10-31 öncesi) → EN YAKIN aday kod. Sıra kartın neden satırıyla
+ * (scriptedCardModel.runFailure) aynı mantık: süreç zaman aşımı, eşik (çıkış 99), düşen doğrulama, doğrulamasız koşum,
+ * betiğin kendini durdurması (108 / 110), ağ hatası metni, istisna. Aday kod katalogda yoksa çağıran UNKNOWN'a düşer
+ * (`failureOf`) — dışa açık olması bu yüzden: testler katalogdan bağımsız sınar.
+ */
+export function scriptedLegacyCode(row) {
+  const r = row || {}
+  const status = str(r.status).toUpperCase()
+  const exit = num(r.exit_code)
+  if (status === 'TIMEOUT') return 'SCRIPT_PROCESS_TIMEOUT'
+  if (exit === 99) return 'SCRIPT_THRESHOLD_FAILED'
+  if ((num(r.checks_failed) ?? 0) > 0) return 'SCRIPT_CHECK_FAILED'
+  if (status === 'NO_CHECKS') return 'SCRIPT_NO_CHECKS'
+  if (exit === 108 || exit === 110) return 'SCRIPT_ABORTED'
+  const net = codeFromText(stripRunContext(r.error))
+  if (net) return net
+  if (status === 'ERROR') return 'SCRIPT_EXCEPTION'
+  return 'UNKNOWN'
+}
+
 function legacyCode(type, row, monitor) {
   switch (type) {
+    case 'scripted': return scriptedLegacyCode(row)
     case 'ping': return legacyPing(row)
     case 'port': return legacyTcp(row, monitor?.protocol || 'TCP', monitor?.expect)
     case 'uptime': return legacyTcp(row, 'TCP', null)
@@ -262,6 +288,7 @@ export function targetOf(type, row, monitor, detail = {}) {
     case 'pagespeed': return hostOfUrl(m.url) || m.url || null
     case 'domain': return m.domain || null
     case 'cert': return row?.domain || m.domain || null
+    case 'scripted': return scenarioTarget(m)?.host || null
     default: return null
   }
 }
@@ -284,6 +311,7 @@ function timeoutOf(type, row, monitor) {
       const s = /timeout after (\d+)\s*s/i.exec(str(row?.error))
       return s ? Number(s[1]) * 1000 : null
     }
+    case 'scripted': return num(m.timeout_seconds) != null ? num(m.timeout_seconds) * 1000 : null
     default: return num(m.timeout_ms)
   }
 }
@@ -418,6 +446,12 @@ export function detailRows(type, row, monitor, t, f) {
     // Hata sınıfı (`error_class`) sertifika ayrıntısının kendi alan listesinde zaten var — burada tekrarlanmaz.
     const stage = str(r.error_stage)
     if (stage) push('errorStage', CERT_STAGES.includes(stage) ? t(`chkhist.stage.${stage}`) : stage)
+  }
+  if (type === 'scripted') {
+    // Sunucunun k6 ayrıntısı: takılan adım, k6 hata kodu, düşen eşik (2026-10-31, k6r D1)
+    push('step', d.step)
+    if (num(d.error_code) != null) push('k6Code', num(d.error_code), { mono: true, tone: 'bad' })
+    push('threshold', d.threshold, { mono: true, tone: 'bad' })
   }
   push('exception', d.exception, { mono: true })
   return out
