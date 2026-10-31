@@ -62,6 +62,12 @@ import java.util.concurrent.TimeoutException;
  * olan sözcükler yalnız KOMUT biçiminde ({@code COMMENT ON}, {@code COPY t TO}, {@code ANALYZE tablo}) reddedilir; tek ifade +
  * SELECT ile başlama + AST zaten komut olarak kullanılmalarını engeller. Diğer sözcükler (INSERT, DELETE, SET, LOCK …) her
  * yerde reddedilir — kolon adıysa tırnak içinde yazılmalıdır.
+ *
+ * <p><b>Bilinen sınır (bağımsız inceleme O4 / O5, 2026-10-31):</b> denetim metni okur, veritabanındaki nesneleri bilemez.
+ * Oracle'da tek parçalı bir kullanıcı fonksiyonu ({@code SELECT kotu_fn() FROM dual}) yerleşik fonksiyondan ayırt edilemez ve
+ * kendi (otonom) işlemiyle yazabilir; sayısal bir ölçüm de az sayıda bit taşıyan bir veri kanalı olabilir. Bu yüzden izleme
+ * hesabı EN AZ AYRICALIKLI, EXECUTE yetkisi OLMAYAN salt-okur bir hesap OLMALIDIR — denetim bu yetki sınırının yerini
+ * tutmaz.
  */
 public final class DbQuerySqlGuard {
 
@@ -179,6 +185,12 @@ public final class DbQuerySqlGuard {
     /** MSSQL'de nitelikli çağrı olarak serbest XML veri türü yöntemleri ({@code col.value('…', 'int')}). */
     private static final Set<String> MSSQL_XML_METHODS = Set.of("VALUE", "QUERY", "EXIST", "NODES");
 
+    /**
+     * MSSQL'de serbest, salt-okur YERLEŞİK tablo değerli fonksiyonlar (yalnız niteliksiz ad): metin / JSON parçalar, tablo
+     * okumaz, NOLOCK gerekmez. {@code OPENROWSET} / {@code OPENQUERY} / {@code OPENDATASOURCE} / {@code OPENXML} yasak kalır.
+     */
+    private static final Set<String> MSSQL_SAFE_TVFS = Set.of("OPENJSON", "STRING_SPLIT");
+
     // ── Önbellek / ayrıştırıcı yürütücüsü ────────────────────────────────────
 
     private static final Map<String, Result> CACHE = new LinkedHashMap<>(64, 0.75f, true) {
@@ -256,6 +268,10 @@ public final class DbQuerySqlGuard {
         final List<int[]> hintRewrites = new ArrayList<>();
         final Set<String> tables = new LinkedHashSet<>();
         int lexicalViolations;
+        /** MSSQL {@code nit.kolon.value(…)} XML yöntemi: niteleyici AST'de sorgunun nesnesi mi diye sonra denetlenir. */
+        record PendingXml(String qualifier, String shown, int start) {}
+        final List<PendingXml> pendingXml = new ArrayList<>();
+        boolean pendingResolved;
 
         Run(String sql, DbType type) {
             this.sql = sql;
@@ -280,6 +296,7 @@ public final class DbQuerySqlGuard {
             } else {
                 astRules();
             }
+            if (!pendingResolved && violations.isEmpty()) rejectPendingXml(null);
             List<Violation> out = List.copyOf(violations);
             return new Result(out.isEmpty(), out, out.isEmpty() || !tables.isEmpty() ? List.copyOf(tables) : List.of());
         }
@@ -421,8 +438,15 @@ public final class DbQuerySqlGuard {
                 add(SQL_FORBIDDEN_FUNCTION, shown, msgFunction(shown, pos(tk.get(j).start())), tk.get(j).start());
                 return;
             }
-            if (parts.size() >= 2 && type == DbType.MSSQL && !MSSQL_XML_METHODS.contains(last)) {
-                add(SQL_FORBIDDEN_FUNCTION, shown, msgMssqlUdf(shown, pos(tk.get(j).start())), tk.get(j).start());
+            if (parts.size() >= 2 && type == DbType.MSSQL) {
+                // XML yöntemi yalnız ÜÇ parçalı biçimde (niteleyici.kolon.yöntem) ve niteleyici sorgunun tablosu / takma adı
+                // ise serbest; iki parçalı dbo.value(x) bir kullanıcı fonksiyonudur (bağımsız inceleme O3)
+                if (MSSQL_XML_METHODS.contains(last) && parts.size() == 3)
+                    pendingXml.add(new PendingXml(lower(parts.get(0)), shown, tk.get(j).start()));
+                else if (MSSQL_XML_METHODS.contains(last))
+                    add(SQL_FORBIDDEN_FUNCTION, shown, msgMssqlXmlQualifier(shown, pos(tk.get(j).start())), tk.get(j).start());
+                else
+                    add(SQL_FORBIDDEN_FUNCTION, shown, msgMssqlUdf(shown, pos(tk.get(j).start())), tk.get(j).start());
             } else if (parts.size() >= 2 && type == DbType.ORACLE) {
                 add(SQL_FORBIDDEN_FUNCTION, shown, msgOraclePackage(shown, pos(tk.get(j).start())), tk.get(j).start());
             }
@@ -435,9 +459,11 @@ public final class DbQuerySqlGuard {
          */
         void mssqlHintGroups() {
             int n = tk.size();
+            int[] openOf = matchingOpens();
             for (int i = 0; i < n; i++) {
                 if (consumed[i]) continue;
                 boolean modern = tk.get(i).isWord("WITH") && i > 0 && i + 1 < n && tk.get(i + 1).isSymbol('(');
+                if (modern && openJsonSchema(i, openOf)) continue;
                 boolean legacy = !modern && tk.get(i).isSymbol('(') && i > 0
                         && (tk.get(i - 1).isName() && !tk.get(i - 1).isWord("WITH")) && tableReferenceBefore(i);
                 if (!modern && !legacy) continue;
@@ -481,6 +507,53 @@ public final class DbQuerySqlGuard {
                     add(SQL_LOCK_HINT, "WITH", msgOtherHint("WITH ( … )", pos(first.start())), first.start());
                 }
             }
+        }
+
+        /** Her kapanan parantezin açılış dizini (-1: eşi yok) — tek geçiş, yığınla. */
+        private int[] matchingOpens() {
+            int n = tk.size();
+            int[] out = new int[n];
+            int[] stack = new int[n];
+            int sp = 0;
+            for (int i = 0; i < n; i++) {
+                out[i] = -1;
+                if (tk.get(i).isSymbol('(')) stack[sp++] = i;
+                else if (tk.get(i).isSymbol(')') && sp > 0) out[i] = stack[--sp];
+            }
+            return out;
+        }
+
+        /**
+         * {@code OPENJSON(…) WITH ( kolon tür ['yol'] [AS JSON], … )} — ipucu değil, sonuç şeması. Yalnız tür bildirimleri
+         * içeriyorsa (sözcük, tırnaklı ad, metin, sayı, virgül, en fazla bir iç parantez düzeyi — {@code nvarchar(50)};
+         * SELECT / FROM / WITH yok) kabul edilir ve ayrıştırıcı metninde boşlukla silinir (JSqlParser bu yan tümceyi tanımaz).
+         * İçindeki belirteçler sözcük kurallarından geçmeye devam eder.
+         */
+        private boolean openJsonSchema(int with, int[] openOf) {
+            int prev = with - 1;
+            if (!tk.get(prev).isSymbol(')')) return false;
+            int o = openOf[prev];
+            if (o < 1 || !tk.get(o - 1).isWord("OPENJSON") || (o >= 2 && tk.get(o - 2).isSymbol('.'))) return false;
+            int open = with + 1, depth = 0, close = -1;
+            boolean any = false;
+            for (int j = open; j < tk.size(); j++) {
+                SqlLexer.Token x = tk.get(j);
+                if (x.isSymbol('(')) { if (++depth > 2) return false; continue; }
+                if (x.isSymbol(')')) { if (--depth == 0) { close = j; break; } continue; }
+                if (x.isSymbol(',')) continue;
+                switch (x.kind()) {
+                    case WORD -> {
+                        if (x.isWord("SELECT") || x.isWord("FROM") || x.isWord("WITH")) return false;
+                        any = true;
+                    }
+                    case QUOTED, STRING, NUMBER -> any = true;
+                    default -> { return false; }
+                }
+            }
+            if (close < 0 || !any) return false;
+            consumed[with] = true;
+            hintRewrites.add(new int[] {tk.get(with).start(), tk.get(close).end(), 2});
+            return true;
         }
 
         /**
@@ -584,13 +657,36 @@ public final class DbQuerySqlGuard {
             if (type == DbType.MSSQL) {
                 for (TableFunction tf : w.functions) {
                     String name = tf.getFunction() == null ? String.valueOf(tf) : tf.getFunction().getName();
+                    if (safeTableFunction(name, w.objectNames)) continue;
                     add(SQL_FORBIDDEN_FUNCTION, name, msgTableFunction(name), null);
                 }
+                rejectPendingXml(w.objectNames);
             }
             for (String alias : w.modifyingCte) add(SQL_NOT_SELECT, alias, msgModifyingCte(alias), null);
             if (type == DbType.ORACLE) oracleQualifiedNames(w.qualifiers);
             if (w.into && lexicalViolations == 0) add(SQL_INTO, "INTO", msgInto(""), null);
             if (w.forUpdate && lexicalViolations == 0) add(SQL_LOCKING_CLAUSE, "FOR UPDATE", msgLocking("FOR UPDATE", ""), null);
+        }
+
+        /**
+         * Serbest tablo değerli fonksiyon: niteliksiz {@code OPENJSON} / {@code STRING_SPLIT}, ya da niteleyicisi sorgunun
+         * nesnesi olan XML {@code t.kolon.nodes('…')}.
+         */
+        private static boolean safeTableFunction(String name, Set<String> objectNames) {
+            if (name == null) return false;
+            List<String> parts = splitName(name);
+            if (parts.size() == 1) return MSSQL_SAFE_TVFS.contains(unquote(parts.get(0)).toUpperCase(Locale.ROOT));
+            return parts.size() == 3 && "NODES".equals(unquote(parts.get(2)).toUpperCase(Locale.ROOT))
+                    && objectNames.contains(lower(unquote(parts.get(0))));
+        }
+
+        /** Bekleyen XML yöntemlerini çözer: {@code known} null ise (AST çalışmadı) hepsi reddedilir. */
+        void rejectPendingXml(Set<String> known) {
+            pendingResolved = true;
+            for (PendingXml p : pendingXml) {
+                if (known != null && known.contains(p.qualifier())) continue;
+                add(SQL_FORBIDDEN_FUNCTION, p.shown(), msgMssqlXmlQualifier(p.shown(), pos(p.start())), p.start());
+            }
         }
 
         /**
@@ -641,7 +737,7 @@ public final class DbQuerySqlGuard {
             while (src < neutral.length) {
                 int[] rw = ri < hintRewrites.size() ? hintRewrites.get(ri) : null;
                 if (rw != null && rw[0] == src) {
-                    String repl = (rw[2] == 1 ? " " : "") + "WITH (NOLOCK)";
+                    String repl = rw[2] == 2 ? "" : (rw[2] == 1 ? " " : "") + "WITH (NOLOCK)";
                     int len = rw[1] - rw[0];
                     StringBuilder r = new StringBuilder(repl);
                     while (r.length() < len) r.append(' ');
@@ -713,6 +809,11 @@ public final class DbQuerySqlGuard {
         final List<String> modifyingCte = new ArrayList<>();
         /** Sorgudaki tablo adı parçaları, takma adlar ve CTE adları (küçük harf) — Oracle nitelikli ad denetimi için. */
         final Set<String> qualifiers = new java.util.HashSet<>();
+        /**
+         * Sorgunun NESNE adları (küçük harf): takma adlar, CTE adları, tablo adlarının SON parçası — şema / veritabanı parçası
+         * değil. MSSQL XML yöntemi niteleyicisi bununla denetlenir ({@code dbo.x.value(…)} veritabanı.şema.fonksiyon olabilir).
+         */
+        final Set<String> objectNames = new java.util.HashSet<>();
         boolean into, forUpdate;
         private final Deque<Frame> frames = new ArrayDeque<>();
 
@@ -759,7 +860,10 @@ public final class DbQuerySqlGuard {
         }
 
         private void alias(net.sf.jsqlparser.expression.Alias a) {
-            if (a != null && a.getName() != null) qualifiers.add(lower(unquote(a.getName())));
+            if (a != null && a.getName() != null) {
+                qualifiers.add(lower(unquote(a.getName())));
+                objectNames.add(lower(unquote(a.getName())));
+            }
         }
 
         @Override
@@ -781,7 +885,10 @@ public final class DbQuerySqlGuard {
         @Override
         public <S> Void visit(WithItem<?> w, S ctx) {
             if (!(w.getParenthesedStatement() instanceof ParenthesedSelect)) modifyingCte.add(w.getAliasName());
-            if (w.getAliasName() != null) qualifiers.add(lower(unquote(w.getAliasName())));
+            if (w.getAliasName() != null) {
+                qualifiers.add(lower(unquote(w.getAliasName())));
+                objectNames.add(lower(unquote(w.getAliasName())));
+            }
             for (Frame f : frames) {
                 int idx = indexOfIdentity(f.items, w);
                 if (idx >= 0) {
@@ -804,7 +911,9 @@ public final class DbQuerySqlGuard {
                 }
             }
             refs.add(new Ref(t, cte));
-            for (String part : splitName(t.getFullyQualifiedName())) qualifiers.add(lower(unquote(part)));
+            List<String> nameParts = splitName(t.getFullyQualifiedName());
+            for (String part : nameParts) qualifiers.add(lower(unquote(part)));
+            if (!nameParts.isEmpty()) objectNames.add(lower(unquote(nameParts.get(nameParts.size() - 1))));
             alias(t.getAlias());
             return super.visit(t, ctx);
         }
@@ -1073,6 +1182,17 @@ public final class DbQuerySqlGuard {
                         + "denetiminden geçemez · Fonksiyonun sorgusunu doğrudan yazın ve tablolarına WITH (NOLOCK) ekleyin.",
                 "'" + clip(fn, 80) + "' is a user-defined function" + at + " · Table reads inside it cannot be checked for "
                         + "NOLOCK · Write the function's query directly and add WITH (NOLOCK) to its tables.");
+    }
+
+    private static String msgMssqlXmlQualifier(String fn, String at) {
+        return Msg.t("'" + clip(fn, 80) + "' XML yöntemi olarak denetlenemedi" + at + " · XML yöntemleri (value, query, "
+                        + "exist, nodes) yalnız sorgunun bir tablosu ya da takma adıyla nitelenmiş kolonda serbesttir; bu biçim "
+                        + "bir kullanıcı fonksiyonu çağrısı olabilir · Kolonu tablonun adı ya da takma adıyla yazın (ör. FROM "
+                        + "dbo.t x WITH (NOLOCK) … x.kolon.value('…', 'int')).",
+                "'" + clip(fn, 80) + "' could not be checked as an XML method" + at + " · XML methods (value, query, exist, "
+                        + "nodes) are allowed only on a column qualified by a table or alias of the query; this form can call a "
+                        + "user-defined function · Qualify the column with the table name or alias (e.g. FROM dbo.t x WITH "
+                        + "(NOLOCK) … x.col.value('…', 'int')).");
     }
 
     private static String msgOraclePackage(String fn, String at) {

@@ -204,7 +204,7 @@ class DbQuerySqlGuardTest {
         assertRejected(ms("SELECT xp_cmdshell('dir')"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
         assertRejected(pg("SELECT benchmark(1000000, md5('x'))"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
         // serbest: yerleşik fonksiyonlar, XML veri türü yöntemleri
-        assertOk(ms("SELECT ISNULL(a, 0), DATEADD(day, -1, GETDATE()), x.value('(/a)[1]', 'int') FROM dbo.t WITH (NOLOCK)"));
+        assertOk(ms("SELECT ISNULL(a, 0), DATEADD(day, -1, GETDATE()), t.x.value('(/a)[1]', 'int') FROM dbo.t WITH (NOLOCK)"));
         assertOk(ora("SELECT NVL(a, 0), TO_CHAR(SYSDATE, 'YYYY'), SYS_CONTEXT('USERENV', 'DB_NAME') FROM dual"));
         assertOk(pg("SELECT lower(a), coalesce(b, 0), pg_catalog.lower(c), length(d) FROM t"));
     }
@@ -361,7 +361,8 @@ class DbQuerySqlGuardTest {
     void mssqlTableFunctionsAndLinkedServers() {
         assertRejected(ms("SELECT * FROM dbo.t WITH (NOLOCK) CROSS APPLY dbo.fn(t.id) f"),
                 DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
-        assertRejected(ms("SELECT * FROM STRING_SPLIT('a,b', ',')"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
+        assertOk(ms("SELECT * FROM STRING_SPLIT('a,b', ',')"));               // salt-okur yerleşik (inceleme düzeltmesi)
+        assertRejected(ms("SELECT * FROM GENERATE_SERIES(1, 10)"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
         assertRejected(ms("SELECT * FROM srv.db.dbo.t WITH (NOLOCK)"), DbQuerySqlGuard.SQL_REMOTE_OBJECT);
         assertRejected(ms("SELECT * FROM [srv].[db].[dbo].[t] WITH (NOLOCK)"), DbQuerySqlGuard.SQL_REMOTE_OBJECT);
         assertOk(ms("SELECT * FROM db.dbo.t WITH (NOLOCK)"));

@@ -59,9 +59,15 @@ final class DbJdbcUrls {
         if (!ssl.equals("disable") && !ssl.equals("prefer") && !ssl.equals("require") && !ssl.equals("verify-full")
                 && !ssl.equals("verify-ca") && !ssl.equals("allow"))
             throw new IllegalArgumentException("geçersiz ssl kipi");
-        String host = ssl.equals("verify-full") ? requireHostName(spec.host()) : hostLiteral(ip);
+        boolean verifyFull = ssl.equals("verify-full");
+        String host = verifyFull ? requireHostName(spec.host()) : hostLiteral(ip);
         String url = "jdbc:postgresql://" + host + ":" + spec.port() + "/"
                 + URLEncoder.encode(db, StandardCharsets.UTF_8);
+        if (verifyFull) {
+            // Ad URL'de kalır (sertifika adı + SNI), ama bağlantı YALNIZ doğrulanmış IP'ye gider — DNS yeniden bağlama kapalı
+            p.setProperty("socketFactory", PinnedAddressSocketFactory.class.getName());
+            p.setProperty(PinnedAddressSocketFactory.ARG, bareAddress(ip));
+        }
         p.setProperty("loginTimeout", String.valueOf(connectSec));
         p.setProperty("connectTimeout", String.valueOf(connectSec));
         p.setProperty("socketTimeout", String.valueOf(readSec));
@@ -110,10 +116,15 @@ final class DbJdbcUrls {
 
     /** IPv6 köşeli parantezle; bölge kimliği atılır. */
     static String hostLiteral(InetAddress ip) {
+        String h = bareAddress(ip);
+        return ip instanceof Inet6Address ? "[" + h + "]" : h;
+    }
+
+    /** Yalın IP yazımı (bölge kimliği yok, köşeli parantez yok). */
+    static String bareAddress(InetAddress ip) {
         String h = ip.getHostAddress();
         int z = h.indexOf('%');
-        if (z >= 0) h = h.substring(0, z);
-        return ip instanceof Inet6Address ? "[" + h + "]" : h;
+        return z >= 0 ? h.substring(0, z) : h;
     }
 
     /** Veritabanı / servis / örnek adı: yalnız {@code [A-Za-z0-9_.$#-]} — URL'e ya da tanımlayıcıya parametre sızamaz. */

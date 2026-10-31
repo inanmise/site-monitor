@@ -297,7 +297,7 @@ final class SqlLexer {
 
     /** Satır sonu dışı her boşluk (sekme, NBSP, U+2007, U+202F, diğer Zs). */
     static boolean isSpace(char c) {
-        if (c == '\n' || c == '\r' || c == ' ' || c == ' ') return false;
+        if (c == '\n' || c == '\r' || c == '\u2028' || c == '\u2029') return false;
         return c == ' ' || c == '\t' || Character.isSpaceChar(c) || (Character.isWhitespace(c) && !isControlOrFormat(c));
     }
 

@@ -51,7 +51,18 @@ import java.util.concurrent.TimeUnit;
  * {@code abort}; (6) en çok {@value #MAX_COLUMNS} kolon, hücre ≤ {@value #MAX_CELL_CHARS} karakter, toplam bellek bütçesi
  * {@value #MEMORY_BUDGET_CHARS} karakter (aşılınca satırlar sayılır ama saklanmaz).
  *
- * <p>Hata metni maskelenir (parola, kullanıcı adı, {@code password=}) ve ≤ 500 karakterdir.
+ * <p>Hata metni maskelenir (parola, kullanıcı adı, {@code password=}) ve ≤ 500 karakterdir. Sorgu hatalarında ayrıca
+ * VERİ temizlenir (bağımsız inceleme Y1): sürücü iletisinin yalnız ilk satırı, PostgreSQL {@code DETAIL / HINT / Where /
+ * Position} satırları atılır, kullanıcının SQL'inde geçmeyen her tırnaklı parça {@code …} olur (ör. {@code CAST((SELECT
+ * gizli) AS integer)} değeri hata metnine taşınamaz), ≤ {@value DbQueryErrors#MAX_QUERY_ERROR_CHARS} karakter; SQLSTATE
+ * korunur.
+ *
+ * <p>PostgreSQL {@code verify-full}: sertifika ana makine ADIYLA doğrulanır ama soket {@link PinnedAddressSocketFactory} ile
+ * SSRF'den geçmiş IP'ye kilitlenir — sürücü adı yeniden çözse de başka adrese gidemez (DNS yeniden bağlama, inceleme O2).
+ *
+ * <p><b>Bilinen sınır (inceleme O4 / O5):</b> salt-okur oturum ve güvenlik denetimi, hesabın EXECUTE edebildiği bir
+ * fonksiyonun kendi (otonom) işlemiyle yazmasını ya da sayısal ölçümün dar bir veri kanalı olarak kullanılmasını tümüyle
+ * engelleyemez. İzleme hesabı EN AZ AYRICALIKLI, EXECUTE yetkisi OLMAYAN salt-okur bir hesap OLMALIDIR.
  */
 @Service
 public class DbQueryRunner {
@@ -169,7 +180,7 @@ public class DbQueryRunner {
         try {
             s = open(spec, timeout);
         } catch (Throwable e) {
-            return failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0);
+            return failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0, sql);
         }
         long t0 = System.nanoTime();
         try {
@@ -188,7 +199,7 @@ public class DbQueryRunner {
                 }
             }
         } catch (Throwable e) {
-            return failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, elapsedMs(t0));
+            return failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, elapsedMs(t0), sql);
         } finally {
             s.close();
         }
@@ -201,7 +212,7 @@ public class DbQueryRunner {
         try {
             s = open(spec, TEST_TIMEOUT_SECONDS);
         } catch (Throwable e) {
-            QueryResult f = failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0);
+            QueryResult f = failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0, null);
             return new ConnectionTest(false, elapsedMs(t0), null, f.error(), f.failureReason());
         }
         try (Statement st = s.conn.createStatement()) {
@@ -213,7 +224,7 @@ public class DbQueryRunner {
             }
             return new ConnectionTest(true, elapsedMs(t0), s.version, null, null);
         } catch (Throwable e) {
-            QueryResult f = failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0);
+            QueryResult f = failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0, null);
             return new ConnectionTest(false, elapsedMs(t0), s.version, f.error(), f.failureReason());
         } finally {
             s.close();
@@ -233,7 +244,7 @@ public class DbQueryRunner {
         try {
             s = open(spec, timeout);
         } catch (Throwable e) {
-            return new PlanResult(true, false, null, null, failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0).error());
+            return new PlanResult(true, false, null, null, failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0, sql).error());
         }
         try {
             String exec = DbQuerySqlGuard.executableSql(sql, spec.type());
@@ -271,7 +282,7 @@ public class DbQueryRunner {
                 }
             }
         } catch (Throwable e) {
-            return new PlanResult(true, false, null, null, failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0).error());
+            return new PlanResult(true, false, null, null, failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0, sql).error());
         } finally {
             s.close();
         }
@@ -602,9 +613,15 @@ public class DbQueryRunner {
 
     // ── Hata ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Hata sonucu. Sürücü / veritabanı iletisi her yolda {@link DbQueryErrors#scrub} ile değerlerinden ayıklanır
+     * (kullanıcının SQL'i + bağlantı tanımı izinli belirteçlerdir) ve SQLSTATE eklenir; sonra parola / kullanıcı maskelenir.
+     */
     private static QueryResult failed(DbConnectionSpec spec, Throwable e, DbQueryErrors.Phase phase, boolean fired,
-                                      long ms) {
+                                      long ms, String sql) {
         DbType type = spec == null ? null : spec.type();
+        String raw = DbQueryErrors.scrub(DbQueryErrors.describe(e), DbQueryErrors.allowTokens(sql, spec),
+                DbQueryErrors.valueBearing(e, type));
         String code = e instanceof DriverUnavailableException || e instanceof InvalidSpecException
                 ? DbQueryErrors.DB_DRIVER : DbQueryErrors.classify(e, phase, fired, type);
         String text = switch (code) {
@@ -620,11 +637,11 @@ public class DbQueryRunner {
                     + "'_', '.', '$', '#', '-' içerebilir · Bağlantıyı düzeltin.", "The connection definition is invalid ("
                     + e.getMessage() + ") · Database / service names may contain only letters, digits, '_', '.', '$', '#', "
                     + "'-' · Fix the connection.")
-                    : Msg.t("Veritabanı sürücüsü çalışmadı (" + DbQueryErrors.describe(e) + ") · Sürücü eksik ya da bağlantı "
+                    : Msg.t("Veritabanı sürücüsü çalışmadı (" + raw + ") · Sürücü eksik ya da bağlantı "
                     + "biçimini kabul etmedi · Yöneticinize bildirin.", "The database driver failed ("
-                    + DbQueryErrors.describe(e) + ") · The driver is missing or rejected the connection format · Tell your "
+                    + raw + ") · The driver is missing or rejected the connection format · Tell your "
                     + "administrator.");
-            default -> DbQueryErrors.describe(e);
+            default -> raw + DbQueryErrors.sqlStateSuffix(e, type);
         };
         if (DbQueryErrors.DB_TIMEOUT.equals(code) && fired) {
             text = Msg.t("Sorgu süre sınırını aştı ve iptal edildi · Veritabanı yanıt vermedi · Sorguyu hızlandırın ya da zaman "

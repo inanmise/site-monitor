@@ -282,6 +282,48 @@ class DbQueryRunnerTest {
     }
 
     @Test
+    void driverMessagesAreScrubbedOnEveryPath() throws Exception {
+        // sorgu: MSSQL dönüşüm hatası değeri taşır → değer silinir, SQLSTATE + hata numarası kalır
+        when(query.executeQuery(anyString())).thenThrow(new SQLException(
+                "Conversion failed when converting the varchar value 'TOPSECRET' to data type int.", "S0001", 245));
+        DbQueryRunner.QueryResult r = runner.run(spec(DbType.MSSQL, "app"),
+                "SELECT CAST(note AS int) FROM dbo.s WITH (NOLOCK)", 10, 5);
+        assertThat(r.failureReason()).isEqualTo("DB_SQL_ERROR");
+        assertThat(r.error()).doesNotContain("TOPSECRET").contains("'…'").contains("SQLSTATE S0001 · 245");
+        // kullanıcının yazdığı tanımlayıcı okunur kalır
+        org.mockito.Mockito.reset(query);
+        when(query.executeQuery(anyString())).thenThrow(new SQLException(
+                "ERROR: column \"musteri_no\" does not exist\n  Hint: Perhaps you meant \"gizli\".\n  Position: 8", "42703"));
+        DbQueryRunner.QueryResult col = runner.run(spec(DbType.POSTGRESQL, "app"), "SELECT musteri_no FROM t", 10, 5);
+        assertThat(col.error()).contains("column \"musteri_no\" does not exist").contains("SQLSTATE 42703")
+                .doesNotContain("gizli").doesNotContain("Position");
+        // plan denetimi
+        when(setup.executeQuery(org.mockito.ArgumentMatchers.startsWith("EXPLAIN"))).thenThrow(new SQLException(
+                "ERROR: invalid input syntax for type integer: \"TOPSECRET\"\n  Position: 9", "22P02"));
+        DbQueryRunner.PlanResult p = runner.plan(spec(DbType.POSTGRESQL, "app"), "SELECT CAST(note AS integer) FROM s", 10);
+        assertThat(p.ok()).isFalse();
+        assertThat(p.error()).doesNotContain("TOPSECRET").doesNotContain("Position").contains("22P02");
+        // bağlantı denemesi (kullanıcı SQL'i yok — yalnız bağlantı tanımının adları izinli)
+        when(setup.executeQuery("SELECT 1")).thenThrow(new SQLException(
+                "ERROR: permission denied for schema \"GIZLI_SEMA\"", "42501"));
+        DbQueryRunner.ConnectionTest t = runner.test(spec(DbType.POSTGRESQL, "app"));
+        assertThat(t.ok()).isFalse();
+        assertThat(t.error()).doesNotContain("GIZLI_SEMA").contains("permission denied");
+    }
+
+    @Test
+    void verifyFullConnectsThroughThePinnedSocketFactory() throws Exception {
+        returns(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("n", Types.INTEGER, 10)), List.<Object[]>of(new Object[] {1})));
+        DbConnectionSpec vf = new DbConnectionSpec(DbType.POSTGRESQL, "db.example", 5432, "app", null, null, "appuser",
+                "S3cr3t!pw", "verify-full", false, false, 5_000);
+        assertThat(runner.run(vf, "SELECT 1 AS n", 10, 5).ok()).isTrue();
+        assertThat(url.get()).isEqualTo("jdbc:postgresql://db.example:5432/app");
+        assertThat(props.get().getProperty("socketFactory")).isEqualTo(PinnedAddressSocketFactory.class.getName());
+        assertThat(props.get().getProperty("socketFactoryArg")).isEqualTo("10.0.0.5");   // SSRF'nin döndürdüğü IP
+        assertThat(props.get().getProperty("sslmode")).isEqualTo("verify-full");
+    }
+
+    @Test
     void realDriversAcceptTheGeneratedTargets() throws Exception {
         // Gerçek sürücüler, kapalı yerel porta: sürücü adres / özellikleri KABUL etmeli → "ulaşılamıyor" (DB_DRIVER değil)
         SsrfGuard local = mock(SsrfGuard.class);

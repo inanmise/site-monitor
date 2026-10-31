@@ -55,6 +55,8 @@ class DbQueryRunnerPostgresTest {
             s.execute("CREATE TABLE dbq_it.t (id int PRIMARY KEY, note text)");
             s.execute("INSERT INTO dbq_it.t SELECT g, 'not ' || g FROM generate_series(1, 50) g");
             s.execute("CREATE SEQUENCE dbq_it.s");
+            s.execute("CREATE TABLE dbq_it.secret (note text)");
+            s.execute("INSERT INTO dbq_it.secret VALUES ('TOPSECRET')");
         }
     }
 
@@ -166,6 +168,73 @@ class DbQueryRunnerPostgresTest {
         assertThat(r.rows().get(0).get(0)).isEqualTo("\\");
         assertThat(r.rows().get(0).get(1)).isEqualTo("'");
         assertThat(DbQuerySqlGuard.check("SELECT '\\' AS b, E'\\'' AS q", DbType.POSTGRESQL).ok()).isTrue();
+    }
+
+    @Test
+    void errorMessagesCarryNoQueryValues() {
+        // Bağımsız inceleme Y1: değer hata iletisine gömülerek sızdırılamaz
+        for (String sql : new String[] {
+                "SELECT CAST((SELECT note FROM dbq_it.secret) AS integer)",
+                "SELECT CAST((SELECT 'TOP' || 'SECRET') AS integer)",
+                "SELECT current_setting((SELECT note FROM dbq_it.secret))",
+                // tırnağı erken kapatıp metin enjekte etme denemesi
+                "SELECT current_setting((SELECT 'x\" ' || note || ' \"y' FROM dbq_it.secret))",
+                "SELECT to_date((SELECT note FROM dbq_it.secret), 'YYYY-MM-DD')",
+                "SELECT (SELECT note FROM dbq_it.secret)::uuid"}) {
+            assertThat(DbQuerySqlGuard.check(sql, DbType.POSTGRESQL).ok()).as(sql).isTrue();
+            DbQueryRunner.QueryResult r = runner.run(spec(), sql, 10, 10);
+            assertThat(r.ok()).as(sql).isFalse();
+            assertThat(r.failureReason()).as(sql).isEqualTo("DB_SQL_ERROR");
+            assertThat(r.error()).as(sql).doesNotContain("TOPSECRET").doesNotContain("SECRET").contains("SQLSTATE");
+        }
+        assertThat(runner.run(spec(), "SELECT CAST((SELECT note FROM dbq_it.secret) AS integer)", 10, 10).error())
+                .contains("22P02").contains("integer");
+        // kullanıcının yazdığı tanımlayıcı okunur kalır
+        DbQueryRunner.QueryResult col = runner.run(spec(), "SELECT musteri_no FROM dbq_it.t", 10, 10);
+        assertThat(col.error()).contains("column \"musteri_no\" does not exist").contains("42703");
+        // plan aşamasında sabit katlama değeri değerlendirir: veri hatası sınıfında kendi sabiti de gösterilmez
+        DbQueryRunner.PlanResult p = runner.plan(spec(), "SELECT CAST('TOPSECRET' AS integer)", 10);
+        assertThat(p.ok()).isFalse();
+        assertThat(p.error()).doesNotContain("TOPSECRET").contains("22P02");
+    }
+
+    @Test
+    void recursiveCteEndsAtMaxRowsOrTimeout() {
+        String rows = "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r";
+        assertThat(DbQuerySqlGuard.check(rows, DbType.POSTGRESQL).ok()).isTrue();
+        long t0 = System.nanoTime();
+        DbQueryRunner.QueryResult r = runner.run(spec(), rows, 2, 50);
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(20_000);
+        if (r.ok()) {
+            assertThat(r.rowCount()).isEqualTo(50);
+            assertThat(r.rowCountCapped()).isTrue();
+        } else {
+            assertThat(r.failureReason()).isEqualTo("DB_TIMEOUT");
+        }
+        // satır döndürmeyen sonsuz özyineleme: statement_timeout keser
+        String agg = "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT count(*) FROM r";
+        long t1 = System.nanoTime();
+        DbQueryRunner.QueryResult a = runner.run(spec(), agg, 2, 50);
+        assertThat((System.nanoTime() - t1) / 1_000_000).isLessThan(20_000);
+        assertThat(a.ok()).isFalse();
+        assertThat(a.failureReason()).isEqualTo("DB_TIMEOUT");
+    }
+
+    @Test
+    void pinnedSocketFactoryWorksWithTheRealDriver() throws Exception {
+        // Bağımsız inceleme O2: URL'de çözülemeyen bir ad olsa da gerçek sürücü kilitli IP'ye bağlanır
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("user", cfg.user());
+        if (cfg.password() != null) p.setProperty("password", cfg.password());
+        p.setProperty("sslmode", "disable");
+        p.setProperty("connectTimeout", "5");
+        p.setProperty("socketFactory", PinnedAddressSocketFactory.class.getName());
+        p.setProperty(PinnedAddressSocketFactory.ARG, host);
+        try (Connection c = DriverManager.getConnection("jdbc:postgresql://pinned.invalid:" + port + "/" + db, p);
+             Statement s = c.createStatement(); ResultSet rs = s.executeQuery("SELECT 41 + 1")) {
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getInt(1)).isEqualTo(42);
+        }
     }
 
     @Test
