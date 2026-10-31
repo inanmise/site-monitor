@@ -207,6 +207,11 @@ public class PageResourceScanService {
         this.proxyPolicy = p;
     }
 
+    /** Testler için: boştaki pod yuvası (uçuştaki işler bitince bırakılır). */
+    int freeSlots() {
+        return podSlots.availablePermits();
+    }
+
     // ── Ayarlar ─────────────────────────────────────────────────────────────────────────────
 
     /** Canlı sınırlar (okunamayan / aralık dışı değer varsayılana döner). */

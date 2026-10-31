@@ -204,4 +204,56 @@ class PageResourceScanControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_NOT_FOUND"));
     }
+
+    // ── İptal (2026-11) ───────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("iptal 200: çalışan tarama INTERRUPTED / CANCELLED özetiyle döner; denetim PAGE_RESOURCE_SCAN_CANCEL (URL sorgusuz)")
+    void cancelOk() throws Exception {
+        Map<String, Object> s = scan(901, "INTERRUPTED");
+        s.put("error_code", "CANCELLED");
+        s.put("cancelled", true);
+        when(scans.cancel(901L, 61L)).thenReturn(new PageResourceScanService.Cancel(PageResourceScanService.CancelOutcome.CANCELLED, s));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/901/cancel").session(session("USER", 5L, 2L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("INTERRUPTED"))
+                .andExpect(jsonPath("$.data.error_code").value("CANCELLED"))
+                .andExpect(jsonPath("$.data.cancelled").value(true));
+        verify(auditService).recordAction(eq("PAGE_RESOURCE_SCAN_CANCEL"), any(HttpSession.class), eq("PAGE_MONITOR"), eq("61"),
+                argThat((String d) -> d.contains("scan_id") && d.contains("901") && !d.contains("GIZLI99")), isNull());
+    }
+
+    @Test
+    @DisplayName("iptal 409: tarama artık çalışmıyor — RESOURCE_SCAN_NOT_RUNNING + güncel özet; 404: tarama yok; denetim yazılmaz")
+    void cancelNotRunningAndNotFound() throws Exception {
+        when(scans.cancel(900L, 61L)).thenReturn(new PageResourceScanService.Cancel(
+                PageResourceScanService.CancelOutcome.NOT_RUNNING, scan(900, "DONE")));
+        when(scans.cancel(999L, 61L)).thenReturn(new PageResourceScanService.Cancel(
+                PageResourceScanService.CancelOutcome.NOT_FOUND, null));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/900/cancel").session(admin()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_NOT_RUNNING"))
+                .andExpect(jsonPath("$.data.status").value("DONE"));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/999/cancel").session(admin()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_NOT_FOUND"));
+        verify(auditService, never()).recordAction(eq("PAGE_RESOURCE_SCAN_CANCEL"), any(HttpSession.class), anyString(),
+                anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("iptal kapıları = çalıştırma kapıları: başka takım 404, AUDIT (çalıştıramaz) 403, izin yok 403 — servis çağrılmaz")
+    void cancelGates() throws Exception {
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/901/cancel").session(session("USER", 9L, 3L)))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/monitoring/page/404/resource-scans/901/cancel").session(admin()))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/901/cancel").session(session("AUDIT", null, 4L)))
+                .andExpect(status().isForbidden());
+        doThrow(new SecurityException("yok")).when(permissionService)
+                .require(any(HttpSession.class), eq("monitoring.trigger"), eq("execute"));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans/901/cancel").session(admin())).andExpect(status().isForbidden());
+        verify(scans, never()).cancel(anyLong(), anyLong());
+    }
 }
