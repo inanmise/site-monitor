@@ -300,4 +300,111 @@ class DbConnectionProfileControllerTest {
         assertThat(DbConnectionProfileService.health(p, true).get("state")).isEqualTo("ok");
         assertThat(DbConnectionProfileService.health(p, false).get("state")).isEqualTo("unused");
     }
+
+    // ── Güvenlik incelemesi 2026-10-31 (YÜKSEK): kayıtlı parola YENİ bir hedefe gönderilmez ─────────────────────────────
+
+    @Test
+    @DisplayName("taslak deneme: sunucu değişti + parola yok → 400 password, çalıştırıcı ÇAĞRILMAZ; aynı + yeni parola → o parolayla denenir")
+    void draftNewTargetNeedsNewPassword() throws Exception {
+        when(repo.findById(5L)).thenReturn(Optional.of(stored(5L, 1L)));
+        mvc.perform(post("/api/monitoring/dbquery/connections/test").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"id\":5,\"host\":\"saldirgan.example\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("password"))
+                .andExpect(jsonPath("$.fields.password").exists());
+        verify(checker, never()).testConnection(any(), any());
+
+        when(checker.testConnection(any(), any())).thenReturn(new DbQueryRunner.ConnectionTest(true, 10L, null, null, null));
+        mvc.perform(post("/api/monitoring/dbquery/connections/test").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"id\":5,\"host\":\"saldirgan.example\",\"password\":\"Yeni\"}"))
+                .andExpect(status().isOk());
+        verify(checker).testConnection(argThat(p -> "saldirgan.example".equals(p.getHost())), eq("Yeni"));
+    }
+
+    @Test
+    @DisplayName("taslak deneme: yalnız ad / zaman aşımı değişti → kayıtlı parolayla denenir (geçersiz kılma yok)")
+    void draftSameTargetUsesStoredPassword() throws Exception {
+        when(repo.findById(5L)).thenReturn(Optional.of(stored(5L, 1L)));
+        when(checker.testConnection(any(), any())).thenReturn(new DbQueryRunner.ConnectionTest(true, 10L, null, null, null));
+        mvc.perform(post("/api/monitoring/dbquery/connections/test").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"id\":5,\"name\":\"Yeni ad\",\"connect_timeout_ms\":5000}"))
+                .andExpect(status().isOk());
+        verify(checker).testConnection(any(), isNull());
+    }
+
+    @Test
+    @DisplayName("güncelleme: port değişti + parola yok → 400 password, kayıt DEĞİŞMEZ; yeni parolayla kaydedilir")
+    void updateNewTargetNeedsNewPassword() throws Exception {
+        DbConnectionProfile p = stored(5L, 1L);
+        when(repo.findById(5L)).thenReturn(Optional.of(p));
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"port\":6543}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("password"));
+        verify(repo, never()).save(any());
+        assertThat(p.getPort()).isEqualTo(5432);
+        assertThat(p.getPasswordEnc()).isEqualTo("enc:v1:ESKI-SIFRELI");
+
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"port\":6543,\"password\":\"Yeni-Parola\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.port").value(6543));
+        assertThat(p.getPasswordEnc()).isNotEqualTo("enc:v1:ESKI-SIFRELI");
+    }
+
+    @Test
+    @DisplayName("güncelleme: SSL gevşetme (prefer → disable) parolasız 400; sıkılaştırma (→ require) serbest; parola silinirken hedef değişebilir")
+    void updateSslWeakeningAndPasswordClear() throws Exception {
+        DbConnectionProfile p = stored(5L, 1L);
+        when(repo.findById(5L)).thenReturn(Optional.of(p));
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ssl_mode\":\"disable\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("password"));
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ssl_mode\":\"require\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ssl_mode").value("require"));
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"host\":\"db-yeni.internal\",\"password_clear\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.password_set").value(false));
+    }
+
+    @Test
+    @DisplayName("parolasız bağlantı: sunucu değişimi kural dışı (gönderilecek kayıtlı parola yok)")
+    void passwordlessConnectionMayChangeTarget() throws Exception {
+        DbConnectionProfile p = stored(5L, 1L);
+        p.setPasswordEnc(null);
+        when(repo.findById(5L)).thenReturn(Optional.of(p));
+        mvc.perform(put("/api/monitoring/dbquery/connections/5").session(user(1L))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"host\":\"db-yeni.internal\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.host").value("db-yeni.internal"));
+    }
+
+    @Test
+    @DisplayName("hedef değişikliği kuralı: tür / sunucu (harf duyarsız) / port / veritabanı / kullanıcı / MSSQL şifreleme kapatma / sertifikaya güven açma")
+    void targetChangesTruthTable() {
+        DbConnectionProfile a = stored(5L, 1L);
+        DbConnectionProfile b = stored(5L, 1L);
+        assertThat(DbConnectionProfileService.targetChanges(a, b)).isEmpty();
+        b.setHost("DB-ORDERS.INTERNAL");
+        b.setName("başka ad"); b.setDescription("x"); b.setConnectTimeoutMs(3000);
+        assertThat(DbConnectionProfileService.targetChanges(a, b)).isEmpty();
+        b.setUsername("sa");
+        b.setDatabaseName("master");
+        assertThat(DbConnectionProfileService.targetChanges(a, b)).containsExactly("database_name", "username");
+
+        DbConnectionProfile m1 = stored(6L, 1L);
+        m1.setDbType("MSSQL"); m1.setSslMode(null); m1.setMssqlEncrypt(true); m1.setMssqlTrustServerCertificate(false);
+        DbConnectionProfile m2 = stored(6L, 1L);
+        m2.setDbType("MSSQL"); m2.setSslMode(null); m2.setMssqlEncrypt(false); m2.setMssqlTrustServerCertificate(true);
+        assertThat(DbConnectionProfileService.targetChanges(m1, m2)).containsExactly("mssql_encrypt", "mssql_trust_server_certificate");
+        // ters yön (sıkılaştırma) değişiklik sayılmaz
+        assertThat(DbConnectionProfileService.targetChanges(m2, m1)).isEmpty();
+        DbConnectionProfile pg = stored(7L, 1L);
+        assertThat(DbConnectionProfileService.targetChanges(pg, m1)).contains("db_type");
+    }
 }

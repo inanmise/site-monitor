@@ -172,6 +172,7 @@ public class DbConnectionProfileService {
         }
         apply(next, body, false);
         validate(next, body, false, before);
+        requirePasswordForNewTarget(before, next, body);
         if (!Objects.equals(before.getDbType(), next.getDbType()) && !users.isEmpty()) {
             requireMonitorsStillValid(users, DbType.parse(next.getDbType()));
         }
@@ -247,6 +248,7 @@ public class DbConnectionProfileService {
         apply(base, body, id == null);
         if (base.getName() == null || base.getName().isBlank()) base.setName("draft");
         validate(base, body, id == null, before);
+        if (before != null) requirePasswordForNewTarget(before, base, body);
         String override = null;
         Object pw = body.get("password");
         if (pw != null && !pw.toString().isEmpty()) override = pw.toString();
@@ -496,6 +498,58 @@ public class DbConnectionProfileService {
             throw DbQueryApiException.validation(Msg.t("Bağlantı kaydedilemedi: işaretli alanları düzeltin.",
                     "The connection couldn't be saved: fix the marked fields."), errs);
         }
+    }
+
+    /**
+     * Kayıtlı parola YENİ bir hedefe gitmez (güvenlik incelemesi 2026-10-31, YÜKSEK): bağlantının hedefini belirleyen alanlardan
+     * biri ({@link #targetChanges}) ya da güvenliği gevşeten bir ayar değiştiyse ve gövdede YENİ parola yoksa 400 (alan
+     * {@code password}) — kayıt yapılmaz, deneme çalışmaz. Aksi hâlde düzenleme yetkili biri sunucu adını kendi makinesine
+     * çevirip "Bağlantıyı dene" diyerek arayüzün hiç göstermediği kayıtlı parolayı o makineye gönderebilirdi. Parolasız
+     * bağlantıda, {@code password_clear: true} ile parola silinirken ve yalnız ad / açıklama / zaman aşımı değişince kural
+     * tetiklenmez.
+     */
+    static void requirePasswordForNewTarget(DbConnectionProfile before, DbConnectionProfile next, Map<String, Object> body) {
+        if (before == null || before.getPasswordEnc() == null || before.getPasswordEnc().isBlank()) return;
+        Object pw = body.get("password");
+        if (pw != null && !pw.toString().isEmpty()) return;          // yeni parola girildi — o kullanılır
+        if (Boolean.TRUE.equals(body.get("password_clear"))) return; // parola siliniyor — kayıtlı parola gitmez
+        List<String> changed = targetChanges(before, next);
+        if (changed.isEmpty()) return;
+        String msg = Msg.t(
+                "Bağlantının adresi / kimliği değişti — güvenlik için parolayı yeniden girin (kayıtlı parola yeni hedefe gönderilmez).",
+                "The connection's address / identity changed — re-enter the password for security (the saved password isn't sent to a new target).");
+        Map<String, String> f = new LinkedHashMap<>();
+        f.put("password", msg);
+        throw DbQueryApiException.validation(msg, f);
+    }
+
+    /**
+     * Hedefi belirleyen ya da güvenliği gevşeten alanlardan kayıtlı değerden farklı olanlar (adları; boş = değişiklik yok).
+     * Hedef: tür, sunucu (büyük-küçük harf duyarsız), port, veritabanı, Oracle kipi, MSSQL örneği, kullanıcı adı. Gevşetme:
+     * PostgreSQL SSL kipinin daha zayıfa inmesi, MSSQL şifrelemenin kapanması, sunucu sertifikasına güvenin açılması.
+     */
+    public static List<String> targetChanges(DbConnectionProfile before, DbConnectionProfile next) {
+        List<String> out = new ArrayList<>();
+        if (!Objects.equals(before.getDbType(), next.getDbType())) out.add("db_type");
+        if (!(before.getHost() == null ? next.getHost() == null : before.getHost().equalsIgnoreCase(next.getHost()))) out.add("host");
+        if (!Objects.equals(before.getPort(), next.getPort())) out.add("port");
+        if (!Objects.equals(before.getDatabaseName(), next.getDatabaseName())) out.add("database_name");
+        if (!Objects.equals(before.getOracleMode(), next.getOracleMode())) out.add("oracle_mode");
+        if (!Objects.equals(before.getMssqlInstance(), next.getMssqlInstance())) out.add("mssql_instance");
+        if (!Objects.equals(before.getUsername(), next.getUsername())) out.add("username");
+        if (sslRank(next.getSslMode()) < sslRank(before.getSslMode())) out.add("ssl_mode");
+        if (!Boolean.FALSE.equals(before.getMssqlEncrypt()) && Boolean.FALSE.equals(next.getMssqlEncrypt())) out.add("mssql_encrypt");
+        if (!Boolean.TRUE.equals(before.getMssqlTrustServerCertificate()) && Boolean.TRUE.equals(next.getMssqlTrustServerCertificate())) {
+            out.add("mssql_trust_server_certificate");
+        }
+        return out;
+    }
+
+    /** PostgreSQL SSL kipinin gücü (disable 0 < prefer 1 < require 2 < verify-full 3); boş / bilinmeyen = prefer (varsayılan). */
+    static int sslRank(String mode) {
+        if (mode == null) return 1;
+        int i = PG_SSL_MODES.indexOf(mode.toLowerCase(Locale.ROOT));
+        return i < 0 ? 1 : i;
     }
 
     /** Tür değişince kullanan her izlemenin sorgusu yeni türle geçerli olmalı (ör. MSSQL'de NOLOCK zorunlu). */
