@@ -40,6 +40,8 @@ vi.mock('../components/admin/ThemeSettings.jsx', () => ({ default: () => <div da
 vi.mock('../components/admin/k6engine/K6EngineSettings.jsx', () => ({ default: () => <div data-testid="sec-k6engine" /> }))
 // Alarm akışı (2026-10-30): yalnız global yönetici — kapsamlı müdürde "kurum geneli" notu, bileşen çizilmez
 vi.mock('../components/admin/alarmfeed/AlarmFeedSettings.jsx', () => ({ default: () => <div data-testid="sec-alarmfeed" /> }))
+// Tatil takvimi (2026-10-31): kapsamlı müdür SALT OKUNUR görür (sunucu GET herkese, PUT global) — kilitli bölüm DEĞİL
+vi.mock('../components/admin/HolidayCalendarSettings.jsx', () => ({ default: ({ readOnly }) => <div data-testid="sec-holidays" data-readonly={String(!!readOnly)} /> }))
 // Emniyet kemeri: bir stub kaçarsa gerçek fetch yerine mock'a düşsün. Yapılandırma sağlığı ucu
 // ELLE: gezintideki durum noktaları ve başlık çipleri bu veriden türer.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -67,14 +69,14 @@ function withTablet(on) {
 describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
   beforeEach(() => setUrl(''))
 
-  it('ARIA sekme deseni: 24 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu; 2026-10-18: + Grafana panosu; 2026-10-29: + k6 motoru; 2026-10-30: + Alarm akışı), tekil aria-selected, panele bağlı', () => {
+  it('ARIA sekme deseni: 24 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu; 2026-10-18: + Grafana panosu; 2026-10-29: + k6 motoru; 2026-10-30: + Alarm akışı; 2026-10-31: + Tatil takvimi), tekil aria-selected, panele bağlı', () => {
     render(<AdminSettings />)
     // shadcn Tabs (Radix) — dikey liste
     const list = screen.getByRole('tablist', { name: /^settings$/i })
     expect(list).toHaveAttribute('data-slot', 'tabs-list')
     expect(list).toHaveAttribute('aria-orientation', 'vertical')
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(24)
+    expect(tabs).toHaveLength(25)
     expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 
     const panel = screen.getByRole('tabpanel')
@@ -238,7 +240,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(screen.getByText(/No matching sections|Eşleşen bölüm yok/)).toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
-    expect(screen.getAllByRole('tab')).toHaveLength(24)
+    expect(screen.getAllByRole('tab')).toHaveLength(25)
   })
 
   it('yapılandırma sağlığı verisi → ilgili sekmede durum noktası (en kötü durum) + başlıkta sayaç çipi; ek istek yok', async () => {
@@ -282,7 +284,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
       expect(list).toHaveAttribute('aria-orientation', 'horizontal')
       expect(list).toHaveAttribute('data-variant', 'line')
       expect(list.closest('[data-slot="settings-rail"]')).not.toBeNull()
-      expect(screen.getAllByRole('tab')).toHaveLength(24)
+      expect(screen.getAllByRole('tab')).toHaveLength(25)
       expect(screen.queryByRole('searchbox')).toBeNull()   // arama kutusu yalnız masaüstü listesinde
       pressMenuTrigger(screen.getByRole('tab', { name: /LDAP/ }))
       expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
@@ -374,6 +376,19 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     setUrl('')
   })
 
+  // Tatil takvimi (2026-10-31): GET herkese açık, PUT global yönetici — müdürde KİLİTLİ değil, salt okunur çizilir; ?sec=holidays açılır
+  it('müdür: Tatil takvimi salt okunur çizilir (kilitli not yok); global yönetici düzenler, ?sec=holidays açılır', () => {
+    const r1 = render(<AdminSettings globalAdmin={false} />)
+    clickTab(/^(Holiday calendar|Tatil takvimi)$/i)
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+    expect(screen.getByTestId('sec-holidays').getAttribute('data-readonly')).toBe('true')
+    r1.unmount()
+    setUrl('tab=settings&sec=holidays')
+    render(<AdminSettings />)
+    expect(screen.getByTestId('sec-holidays').getAttribute('data-readonly')).toBe('false')
+    setUrl('')
+  })
+
   // 20.165.1 (UIA-C1): Haftalık erişilebilirlik + Envanter raporu uçlarının HEPSİ global-yalnız (SystemController.requireAdmin)
   it('müdür: Haftalık erişilebilirlik ve Envanter raporu KİLİTLİ (kurum geneli not), bileşen çizilmez', () => {
     render(<AdminSettings globalAdmin={false} />)
@@ -435,7 +450,7 @@ describe('AdminSettings — telefon bölüm seçicisi', () => {
     expect(screen.queryByRole('tablist')).toBeNull()
     const select = screen.getByRole('combobox', { name: /^settings$/i })
     expect(select).toHaveAttribute('data-slot', 'native-select')
-    expect(select.options).toHaveLength(24)
+    expect(select.options).toHaveLength(25)
     expect(select.querySelectorAll('optgroup')).toHaveLength(5)
     expect([...select.querySelectorAll('optgroup')].map((g) => g.label)).toEqual(
       expect.arrayContaining([expect.stringMatching(/Platform/), expect.stringMatching(/Notifications|Bildirimler/)]))

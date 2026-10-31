@@ -1,7 +1,7 @@
 import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText, CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn, SwatchBook, FileWarning,
-  ChartNoAxesCombined, Cpu, RadioTower,
+  ChartNoAxesCombined, Cpu, RadioTower, CalendarOff,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -37,6 +37,7 @@ import ThemeSettings from './ThemeSettings.jsx'   // Görünüm → Temalar (202
 import GrafanaDashboardSettings from './grafana/GrafanaDashboardSettings.jsx'   // Grafana panosu + ölçüm aktarıcısı (2026-10-18)
 import K6EngineSettings from './k6engine/K6EngineSettings.jsx'   // k6 motoru — 0.49 → 2.3 geçişi, uyumluluk taraması (2026-10-29)
 import AlarmFeedSettings from './alarmfeed/AlarmFeedSettings.jsx'   // Alarm akışı — merkezi izleme ekibinin çektiği herkese açık uç (2026-10-30)
+import HolidayCalendarSettings from './HolidayCalendarSettings.jsx'   // Tatil takvimi — veritabanı sorgu izlemesinin "tatillerde çalışma" günleri (2026-10-31)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -58,6 +59,8 @@ const GROUPS = [
     { id: 'branding', labelKey: 'settings.navBranding', icon: Palette },
     { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups', icon: FolderTree },
     { id: 'platforms', labelKey: 'settings.navPlatforms', icon: Layers },
+    // Tatil takvimi (2026-10-31): kurum geneli tatil / özel günler — global yönetici düzenler, diğer yöneticiler SALT OKUNUR görür
+    { id: 'holidays', labelKey: 'settings.navHolidays', icon: CalendarOff },
     // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): SiteMonitor'ün kendisini bakıma alma — YALNIZ global yönetici
     { id: 'sysmaint', labelKey: 'settings.navSysMaint', icon: ServerCog },
     // Kanal teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı — kapsamlı müdür salt okunur
@@ -302,6 +305,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'branding' && <BrandingSettings />}
           {active === 'monitorgroups' && <MonitorGroups />}
           {active === 'platforms' && <PlatformSettings />}
+          {active === 'holidays' && <HolidayCalendarSettings readOnly={!globalAdmin} />}
           {active === 'sysmaint' && <SystemMaintenanceSettings />}
           {active === 'techerror' && <TechErrorReportSettings readOnly={!globalAdmin} />}
           {active === 'grafana' && <GrafanaDashboardSettings readOnly={!globalAdmin} />}
