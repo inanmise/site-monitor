@@ -97,34 +97,104 @@ class DbQueryCheckerReviewFixTest {
     static final String CHANGE = "[{\"id\":\"c\",\"kind\":\"CHANGE\",\"operator\":\"GT\",\"warning\":100,"
             + "\"change\":{\"of\":\"ROW_COUNT\",\"mode\":\"ABSOLUTE\",\"direction\":\"INCREASE\"}}]";
 
+    private static DbQueryCheck row(long id, String checkedAt, double measure) {
+        DbQueryCheck c = row(measure);
+        c.setId(id);
+        c.setCheckedAt(checkedAt);
+        c.setOk(true);
+        return c;
+    }
+
     @Test
-    @DisplayName("Y1: zamanlanmış çalıştırma son zamanlanmış satırla, teyit / elle kontrol onaylanan çalıştırmanın TABANIYLA kıyaslar")
+    @DisplayName("Y1 / O-2: zamanlanmış çalıştırma son zamanlanmış satırla; teyit ÇAPADAN önceki, elle kontrol son zamanlanmıştan önceki satırla kıyaslar")
     void changeBaselineFollowsRunKind() {
         DbQueryMonitor m = monitor(11L, 7L, CHANGE);
-        // en yeni zamanlanmış satır = ihlal eden çalıştırma (500), ondan önceki = onun tabanı (300)
-        when(checks.findRecentScheduledOk(11L)).thenReturn(List.of(row(500), row(300)));
+        // S2 (300) → S3 (500, ihlal eden çalıştırma); S3'ün tabanı S2
+        DbQueryCheck s2 = row(2L, "2026-11-02T06:00:00", 300), s3 = row(3L, "2026-11-02T06:01:00", 500);
+        when(checks.findRecentScheduledOk(11L)).thenReturn(List.of(s3, s2));
+        when(checks.findLatestScheduled(11L)).thenReturn(Optional.of(s3));
+        when(checks.findScheduledOkBefore(11L, s3.getCheckedAt(), 3L)).thenReturn(Optional.of(s2));
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(500));
 
         DbQueryCheckerService.Result scheduled = svc.check(m, DbQueryCheckerService.Run.SCHEDULED);
         assertThat(scheduled.status()).as("sonraki zamanlanmış: 500 → 500 değişim yok").isEqualTo("OK");
 
-        DbQueryCheckerService.Result recheck = svc.recheck(m);
-        assertThat(recheck.status()).as("teyit: 300 → 500, ihlal sürüyor").isEqualTo("BREACH");
+        DbQueryCheckerService.Result recheck = svc.recheck(m, new DbQueryCheckerService.Anchor(s3.getCheckedAt(), 3L));
+        assertThat(recheck.status()).as("teyit: çapa S3'ün tabanı 300 → 500, ihlal sürüyor").isEqualTo("BREACH");
         assertThat(recheck.ruleResults().get(0).compared()).isEqualTo(200.0);
 
         DbQueryCheckerService.Result manual = svc.check(m, true);
         assertThat(manual.status()).as("elle kontrol açık değişim alarmını sahte kapanışla kapatmaz").isEqualTo("BREACH");
+        assertThat(manual.ruleResults().get(0).compared()).isEqualTo(200.0);
     }
 
     @Test
-    @DisplayName("Y1: tek zamanlanmış satır varken teyit 'ilk çalıştırma' görür (kanıt yok — sahte geçti yok)")
+    @DisplayName("O-2: teyidin tabanı zincir boyunca SABİT — arada yeni zamanlanmış satır yazılsa da çapanın tabanı okunur")
+    void recheckBaselineIsPinnedToTheAnchor() {
+        DbQueryMonitor m = monitor(14L, 7L, CHANGE);
+        DbQueryCheck s2 = row(2L, "2026-11-02T06:00:00", 300), s3 = row(3L, "2026-11-02T06:01:00", 500),
+                s4 = row(4L, "2026-11-02T06:02:00", 520);
+        // S4 zincir sürerken yazıldı: son iki zamanlanmış satır artık S4 / S3 — çapa (S3) yine S2'yi okur
+        when(checks.findRecentScheduledOk(14L)).thenReturn(List.of(s4, s3));
+        when(checks.findLatestScheduled(14L)).thenReturn(Optional.of(s4));
+        when(checks.findScheduledOkBefore(14L, s3.getCheckedAt(), 3L)).thenReturn(Optional.of(s2));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(540));
+        DbQueryCheckerService.Result r = svc.recheck(m, new DbQueryCheckerService.Anchor(s3.getCheckedAt(), 3L));
+        assertThat(r.status()).isEqualTo("BREACH");
+        assertThat(r.ruleResults().get(0).compared()).as("540 − 300 (S2), 540 − 520 değil").isEqualTo(240.0);
+        org.mockito.Mockito.verify(checks, org.mockito.Mockito.never()).findLatestScheduled(14L);
+    }
+
+    @Test
+    @DisplayName("Y1: çapadan önce zamanlanmış satır yoksa teyit 'ilk çalıştırma' görür (kanıt yok — sahte geçti yok)")
     void recheckWithOnlyOneScheduledRowIsFirstRun() {
         DbQueryMonitor m = monitor(12L, 7L, CHANGE);
-        when(checks.findRecentScheduledOk(12L)).thenReturn(List.of(row(500)));
+        DbQueryCheck s1 = row(1L, "2026-11-02T06:00:00", 500);
+        when(checks.findLatestScheduled(12L)).thenReturn(Optional.of(s1));
+        when(checks.findScheduledOkBefore(12L, s1.getCheckedAt(), 1L)).thenReturn(Optional.empty());
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(500));
-        DbQueryCheckerService.Result r = svc.recheck(m);
-        assertThat(r.ruleResults().get(0).evaluated()).isFalse();
-        assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_FIRST_RUN);
+        for (DbQueryCheckerService.Result r : List.of(svc.recheck(m, new DbQueryCheckerService.Anchor(s1.getCheckedAt(), 1L)),
+                svc.recheck(m))) {
+            assertThat(r.ruleResults().get(0).evaluated()).isFalse();
+            assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_FIRST_RUN);
+        }
+    }
+
+    @Test
+    @DisplayName("D-7: ilk zamanlanmış çalıştırmadan sonraki elle kontrol 'ilk çalıştırma' DEMEZ — o çalıştırmayla kıyaslar")
+    void manualAfterFirstScheduledRunIsEvaluated() {
+        DbQueryMonitor m = monitor(15L, 7L, CHANGE);
+        DbQueryCheck s1 = row(1L, "2026-11-02T06:00:00", 300);
+        when(checks.findLatestScheduled(15L)).thenReturn(Optional.of(s1));
+        when(checks.findScheduledOkBefore(15L, s1.getCheckedAt(), 1L)).thenReturn(Optional.empty());
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(340));
+        DbQueryCheckerService.Result r = svc.check(m, true);
+        assertThat(r.ruleResults().get(0).evaluated()).isTrue();
+        assertThat(r.ruleResults().get(0).note()).isNotEqualTo(DbQueryEvaluator.NOTE_FIRST_RUN);
+        assertThat(r.ruleResults().get(0).compared()).isEqualTo(40.0);
+        assertThat(r.status()).isEqualTo("OK");
+
+        // Son zamanlanmış çalıştırma sorgu hatasıyla bittiyse taban o değil (ölçüsü yok) — ondan önceki ok satırı.
+        DbQueryCheck failed = row(2L, "2026-11-02T06:05:00", 0);
+        failed.setOk(false);
+        when(checks.findLatestScheduled(15L)).thenReturn(Optional.of(failed));
+        when(checks.findScheduledOkBefore(15L, failed.getCheckedAt(), 2L)).thenReturn(Optional.of(s1));
+        assertThat(svc.check(m, true).ruleResults().get(0).compared()).as("hatalı satırdan önceki ok satırı").isEqualTo(40.0);
+    }
+
+    @Test
+    @DisplayName("O-1: teyit yeniden kontrolünün izin beklemesi 10 sn")
+    void recheckWaitIsTenSeconds() {
+        assertThat(DbQueryCheckerService.RECHECK_WAIT_MS).isEqualTo(10_000L);
+    }
+
+    @Test
+    @DisplayName("D3: elle kontrolde tetikleyen satır OKUNAMADI → 'prev_unreadable'")
+    void manualUnreadableTrigger() {
+        DbQueryMonitor m = monitor(16L, 7L, CHANGE);
+        when(checks.findLatestScheduled(16L)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(5));
+        assertThat(svc.check(m, true).ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
     }
 
     @Test

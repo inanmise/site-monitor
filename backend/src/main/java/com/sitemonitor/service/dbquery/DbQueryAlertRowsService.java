@@ -42,8 +42,13 @@ import java.util.function.LongSupplier;
  *
  * <p><b>Güncel ayar gönderim anında (2026-10-31 inceleme D2).</b> Satırlar çalıştırma anının maskesiyle tutulur; alarm
  * postası / ayrıntısı İZLEMENİN O ANKİ ayarını uygular: "satırları maile ekle" kapatılmışsa satır dönmez (yazılmaz), sonradan
- * maskelenen kolonun hücreleri "••••" olur (saklı kopya da maskelenerek güncellenir). İzleme okunamazsa satır DÖNMEZ (ayar
- * doğrulanamadan veri gönderilmez); izleme silinmişse saklı satırlar alındıkları maskeyle kalır.
+ * maskelenen kolonun hücreleri "••••" olur, mail kolonlarından çıkarılan kolon düşer (ikinci tur D-2; saklı kopya da aynı
+ * biçimde güncellenir). İzleme okunamazsa satır DÖNMEZ (ayar doğrulanamadan veri gönderilmez); izleme silinmişse saklı
+ * satırlar alındıkları maskeyle kalır.
+ *
+ * <p><b>Belleği yalnız ZAMANLANMIŞ çalıştırma değiştirir (ikinci tur D-3).</b> Zamanlayıcı {@link #remember}'ı yalnız
+ * zamanlanmış çalıştırmadan sonra çağırır: elle kontrolün ya da teyit / kurtarma yeniden kontrolünün sağlıklı sonucu, teyit
+ * sürerken açılış postasının satırlarını silemez.
  *
  * <p>Sınırlar (sözleşme §1): ≤ {@link #MAX_ROWS} satır × {@link #MAX_COLUMNS} kolon, hücre ≤ {@link #MAX_CELL} karakter.
  * Bellek sınırlıdır (2026-10-31 inceleme D1): izleme başına bir giriş, en çok {@link #MAX_REMEMBERED} giriş ve toplam
@@ -174,15 +179,16 @@ public class DbQueryAlertRowsService {
                 if (stored.isEmpty()) return Optional.empty();
                 Rows was = toRows(stored.get());
                 Rows now = policy.apply(was);
-                if (now != was) write(stored.get(), alertEventId, stored.get().getMonitorId(), now);   // yeni maske saklı kopyaya
-                return Optional.of(now);
+                // yeni maske / daraltılan kolon listesi saklı kopyaya da işlenir (çıkarılan kolon veritabanında da kalmaz)
+                if (now != was) write(stored.get(), alertEventId, stored.get().getMonitorId(), now);
+                return present(now);
             }
             Rows out = policy.apply(mem);
             write(stored.orElse(null), alertEventId, monitorId, out);
-            return Optional.of(out);
+            return present(out);
         } catch (Exception e) {
             log.warn("Sorgu alarmı satırları saklanamadı (olay {}): {}", alertEventId, e.getClass().getSimpleName());
-            return mem == null ? Optional.empty() : Optional.of(policy.apply(mem));
+            return mem == null ? Optional.empty() : present(policy.apply(mem));
         }
     }
 
@@ -193,21 +199,60 @@ public class DbQueryAlertRowsService {
         if (row.isEmpty()) return Optional.empty();
         Policy policy = policyOf(row.get().getMonitorId());
         if (!policy.include()) return Optional.empty();
-        return Optional.of(policy.apply(toRows(row.get())));
+        return present(policy.apply(toRows(row.get())));
+    }
+
+    /** Kolonu kalmayan satırlar (ör. mail kolonları tümüyle değişti) "satır yok" sayılır. */
+    private static Optional<Rows> present(Rows r) {
+        return r == null || r.isEmpty() ? Optional.empty() : Optional.of(r);
     }
 
     // ── Güncel ayar (D2) ─────────────────────────────────────────────────────
 
     /**
      * Gönderim anının ayarı: {@code include} = "satırları maile ekle" açık; {@code masked} = maskelenecek kolonlar (küçük
-     * harf). Uygulanmadığında (izleme deposu yok / izleme silinmiş) {@link #NONE}.
+     * harf); {@code columns} = mail kolonları (küçük harf; boş = daraltma yok — kayıtta seçilen ilk N kolon korunur).
+     * Uygulanmadığında (izleme deposu yok / izleme silinmiş) {@link #NONE}.
      */
-    record Policy(boolean include, Set<String> masked) {
-        static final Policy NONE = new Policy(true, Set.of());
-        static final Policy BLOCKED = new Policy(false, Set.of());
+    record Policy(boolean include, Set<String> masked, Set<String> columns) {
+        static final Policy NONE = new Policy(true, Set.of(), Set.of());
+        static final Policy BLOCKED = new Policy(false, Set.of(), Set.of());
 
-        /** Yeni maskeleri işler; değişiklik yoksa AYNI nesne döner. */
+        /** Önce kolon daraltması (2026-10-31 ikinci tur D-2), sonra yeni maskeler; değişiklik yoksa AYNI nesne döner. */
         Rows apply(Rows r) {
+            return mask(narrow(r));
+        }
+
+        /**
+         * Mail kolonlarından çıkarılan kolonlar satırlardan düşer (sıra korunur; maskeli listesi de süzülür). Kolon listesi
+         * boşsa ya da hepsi listedeyse AYNI nesne döner.
+         */
+        private Rows narrow(Rows r) {
+            if (r == null || columns.isEmpty() || r.columns() == null) return r;
+            List<Integer> keep = new ArrayList<>();
+            for (int i = 0; i < r.columns().size(); i++) {
+                String c = r.columns().get(i);
+                if (c != null && columns.contains(c.trim().toLowerCase(Locale.ROOT))) keep.add(i);
+            }
+            if (keep.size() == r.columns().size()) return r;
+            List<String> cols = new ArrayList<>();
+            for (int i : keep) cols.add(r.columns().get(i));
+            List<List<String>> rows = new ArrayList<>();
+            for (List<String> row : r.rows() == null ? List.<List<String>>of() : r.rows()) {
+                List<String> o = new ArrayList<>(keep.size());
+                for (int i : keep) o.add(row != null && i < row.size() ? row.get(i) : null);
+                rows.add(java.util.Collections.unmodifiableList(o));
+            }
+            Set<String> kept = new LinkedHashSet<>();
+            for (String c : cols) kept.add(c.toLowerCase(Locale.ROOT));
+            List<String> maskedOut = new ArrayList<>();
+            if (r.masked() != null) for (String m : r.masked()) if (m != null && kept.contains(m.toLowerCase(Locale.ROOT)))
+                maskedOut.add(m);
+            return new Rows(r.capturedAt(), List.copyOf(cols), List.copyOf(rows), List.copyOf(maskedOut), r.rowCount(),
+                    r.rowCountCapped(), true);
+        }
+
+        private Rows mask(Rows r) {
             if (r == null || masked.isEmpty() || r.columns() == null) return r;
             Set<String> already = new LinkedHashSet<>();
             if (r.masked() != null) for (String m : r.masked()) if (m != null) already.add(m.toLowerCase(Locale.ROOT));
@@ -246,7 +291,10 @@ public class DbQueryAlertRowsService {
             Set<String> masked = new LinkedHashSet<>();
             for (String c : readList(m.get().getMaskedColumnsJson())) if (c != null && !c.isBlank())
                 masked.add(c.trim().toLowerCase(Locale.ROOT));
-            return new Policy(true, Set.copyOf(masked));
+            Set<String> columns = new LinkedHashSet<>();
+            for (String c : readList(m.get().getMailColumnsJson())) if (c != null && !c.isBlank())
+                columns.add(c.trim().toLowerCase(Locale.ROOT));
+            return new Policy(true, Set.copyOf(masked), Set.copyOf(columns));
         } catch (Exception e) {
             log.warn("Sorgu izlemesinin satır ayarı okunamadı (#{}) — satırlar gönderilmiyor: {}", monitorId,
                     e.getClass().getSimpleName());

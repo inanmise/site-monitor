@@ -27,6 +27,28 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
          + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 2")
     List<DbQueryCheck> findRecentScheduledOk(@Param("id") Long monitorId);
 
+    /**
+     * Son ZAMANLANMIŞ satır (sorgusu çalışmış ya da çalışamamış; elle / yeniden kontrol hariç) — elle kontrolün değişim
+     * tabanında "tetikleyen" (2026-10-31 ikinci tur O-2) ve CRON planı sıfırlanınca geri bakışın tabanı (D-1: o tetik
+     * zaten koştuysa yeniden koşmasın).
+     */
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 1")
+    Optional<DbQueryCheck> findLatestScheduled(@Param("id") Long monitorId);
+
+    /**
+     * Çapadan (zinciri başlatan satır: {@code at} + {@code beforeId}) ÖNCEKİ en yeni zamanlanmış ok satırı — teyit /
+     * kurtarmanın değişim tabanı zincir boyunca sabit kalsın (2026-10-31 ikinci tur O-2). Aynı saniyedeki satırlar
+     * kimlikle ayrılır; kimlik bilinmiyorsa {@code beforeId} = -1 (yalnız daha önceki saniyeler).
+     */
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "AND (c.checkedAt < :at OR (c.checkedAt = :at AND c.id < :beforeId)) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 1")
+    Optional<DbQueryCheck> findScheduledOkBefore(@Param("id") Long monitorId, @Param("at") String at,
+                                                 @Param("beforeId") Long beforeId);
+
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
     Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
