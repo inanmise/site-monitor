@@ -319,3 +319,14 @@ export function stepSeriesData(data) {
   const rows = [...byTs.values()].sort((a, b) => a.t - b.t)
   return { series, rows, failed: failedTotal }
 }
+
+/**
+ * Komşusuz tek değer mi (inceleme 7, 2026-10-31): bu satırda değer VAR, önceki ve sonraki satırda bu seri boş. Çizgi iki nokta
+ * ister ve boşluklar birleştirilmez (`connectNulls` kapalı — boşluk "ölçüm yok" demek), bu yüzden böyle bir değer görünmezdi;
+ * nokta olarak çizilir (Metrikler sayfasının `mx-dot` kuralı).
+ */
+export function isLonePoint(rows, key, index) {
+  if (!Array.isArray(rows) || !rows[index]) return false
+  const has = (i) => rows[i] != null && rows[i][key] != null
+  return has(index) && !has(index - 1) && !has(index + 1)
+}

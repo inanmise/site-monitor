@@ -106,7 +106,9 @@ async function routes(page) {
     json({ success: true, data: { id: 32, version: '2.0.0', script: OLD_SCRIPT, env: [] } }))
   await page.route((u) => /^\/api\/monitoring\/scripted\/\d+\/step-series$/.test(new URL(u).pathname), json({ success: true, data: {
     steps: STEPS.map((s, i) => ({ name: s.name, points: Array.from({ length: 12 }, (_, k) => ({
-      ts: iso((12 - k) * HOUR), duration_ms: 300 + i * 200 + k * 20, failed: i === 2 && k % 4 === 0 })) })),
+      ts: iso((12 - k) * HOUR), duration_ms: 300 + i * 200 + k * 20, failed: i === 2 && k % 4 === 0 })) }))
+      // Yalnız BİR kez koşmuş adım: komşusuz tek değer nokta olarak çizilmeli (inceleme 7)
+      .concat([{ name: 'Tek seferlik çıkış adımı', points: [{ ts: iso(6 * HOUR + 30 * MIN), duration_ms: 520, failed: false }] }]),
     truncated: false, from: iso(7 * 24 * HOUR), to: iso(0) } }))
   await page.route((u) => new URL(u).pathname === '/api/monitoring/scripted/templates', json({ success: true, data: {
     templates: TEMPLATES, can_create_general: true, can_view_trash: false, writable_team_ids: [1], k6_version: 'v2.3.0' } }))
@@ -270,8 +272,10 @@ for (const vp of VIEWPORTS) {
       await dlg.getByRole('tab', { name: /süre grafiği|duration chart/i }).click()
       const trend = dlg.locator('[data-slot="step-trend"]')
       await expect(trend).toBeVisible({ timeout: 20_000 })
-      await expect(trend.locator('[data-slot="step-trend-series"] [data-series]')).toHaveCount(3)
+      await expect(trend.locator('[data-slot="step-trend-series"] [data-series]')).toHaveCount(4)
       await expect(trend.locator('[data-slot="step-trend-chart"]')).toBeVisible()
+      await expect(trend.locator('[data-slot="step-trend-lone-dot"]')).toHaveCount(1)
+      await expect(trend.locator('[data-slot="step-trend-fail-dot"]').first()).toBeVisible()
       expect(await page.evaluate(clippedIn, '[data-slot="step-trend"]'), 'trendde kırpılan metin').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="step-trend"]'), '40 px altı hedef (trend)').toEqual([])
       expect(await pageOverflow(page), 'sayfa yatay taşması').toBeLessThanOrEqual(1)

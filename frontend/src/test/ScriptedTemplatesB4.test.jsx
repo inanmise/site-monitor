@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('../components/ui/CodeEditor.jsx', () => ({
@@ -32,6 +32,7 @@ import ScriptedTemplateVersions from '../components/scripted/ScriptedTemplateVer
 
 const t = (k, ...a) => (a.length ? `${k}:${a.join('|')}` : k)
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
+const NL = String.fromCharCode(10)
 const SCRIPT = "import http from 'k6/http';\nexport default function () { http.get('https://a.example.com/', { timeout: '20s' }) }\n"
 
 const row = (over) => ({
@@ -111,25 +112,36 @@ describe('Şablon kütüphanesi — B4 fe2 (D5, O8, görünür "Bu şablonla ba�
     expect(document.querySelector('[data-slot="template-use"]')).toBeNull()
   })
 
-  it('O1: uyarıyla kaydedilip açık kalan YENİ şablonun ikinci Kaydet\'i İKİNCİ şablon OLUŞTURMAZ — güncelleme yapar', async () => {
-    api.monitoring.createScriptedTemplate.mockResolvedValue({ success: true, data: { id: 77, name: 'Yeni', team_id: 5, scope: 'team', warnings: ['3 istek var ama 1 timeout bulundu'] } })
-    api.monitoring.getScriptedTemplate.mockResolvedValue({ success: true, data: { id: 77, name: 'Yeni', team_id: 5, scope: 'team', script: SCRIPT, env: [] } })
-    api.monitoring.updateScriptedTemplate.mockResolvedValue({ success: true, data: { id: 77, name: 'Yeni' } })
+  it('O1 + inceleme 9: uyarıyla kaydedilip açık kalan YENİ şablon — ikinci Kaydet güncelleme yapar; kaydın yanıtı forma konur, yeniden okuma YOK (sonradan yazılan ezilmez)', async () => {
+    api.monitoring.createScriptedTemplate.mockResolvedValue({ success: true, data: {
+      id: 77, name: 'Yeni şablon', script: SCRIPT, team_id: 5, scope: 'team', warnings: ['3 istek var ama 1 timeout bulundu'] } })
+    // Okuma YAPILIRSA formu ezeceği belli olsun diye farklı bir gövde döner
+    api.monitoring.getScriptedTemplate.mockResolvedValue({ success: true, data: { id: 77, name: 'SUNUCUDAN OKUNAN', team_id: 5, scope: 'team', script: '// eski', env: [] } })
+    api.monitoring.updateScriptedTemplate.mockResolvedValue({ success: true, data: { id: 77, name: 'Yeni şablon' } })
     draw()
     fireEvent.click(await screen.findByRole('button', { name: /tpl\.new/ }))
     // Ad alanı pencerenin içinde aranır (sayfanın arama kutusu da bir textbox — ilk eşleşme odur)
-    fireEvent.change(within(await screen.findByRole('dialog')).getByLabelText(/tpl\.name/), { target: { value: 'Yeni' } })
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.change(within(dlg).getByLabelText(/tpl\.name/), { target: { value: 'Yeni şablon ' } })
     fireEvent.change(screen.getByTestId('code-editor'), { target: { value: SCRIPT } })
     fireEvent.click(screen.getByText('tpl.save'))
     await waitFor(() => expect(api.monitoring.createScriptedTemplate).toHaveBeenCalledTimes(1))
     // uyarılar görünür, editör açık; artık KAYITLI şablon düzenleniyor
     expect(await screen.findByText('tpl.saveWarnTitle')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('tpl.modalEdit')).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByTestId('code-editor').value).toBe(SCRIPT))
+    // yanıt forma kondu (sunucunun normalleştirdiği ad); şablon yeniden OKUNMADI
+    expect(within(screen.getByRole('dialog')).getByLabelText(/tpl\.name/).value).toBe('Yeni şablon')
+    expect(api.monitoring.getScriptedTemplate).not.toHaveBeenCalled()
+    // kayıttan sonra yazılan korunur ve ikinci kayıt GÜNCELLEME olarak gider
+    fireEvent.change(screen.getByTestId('code-editor'), { target: { value: SCRIPT + '// ek' + NL } })
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('code-editor').value).toBe(SCRIPT + '// ek' + NL)
     fireEvent.click(screen.getByText('tpl.save'))
     await waitFor(() => expect(api.monitoring.updateScriptedTemplate).toHaveBeenCalledTimes(1))
     expect(api.monitoring.updateScriptedTemplate.mock.calls[0][0]).toBe(77)
+    expect(api.monitoring.updateScriptedTemplate.mock.calls[0][1].script).toBe(SCRIPT + '// ek' + NL)
     expect(api.monitoring.createScriptedTemplate).toHaveBeenCalledTimes(1)
+    expect(api.monitoring.getScriptedTemplate).not.toHaveBeenCalled()
   })
 })
 

@@ -13,7 +13,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { ChartContainer, ChartTooltip, ComposedChart, Line, XAxis, YAxis, CartesianGrid } from '@/components/shadcn/chart'
 import { cn } from '@/lib/utils'
 import { humanizeMs } from './scriptedCardModel.js'
-import { ROOT_STEP, stepSeriesData } from './runDetailModel.js'
+import { ROOT_STEP, isLonePoint, stepSeriesData } from './runDetailModel.js'
 
 /** Aralık seçenekleri (gün) — sunucu 1–30 kabul eder. */
 export const STEP_TREND_DAYS = [1, 7, 30]
@@ -41,7 +41,9 @@ export default function StepTrend({ monitorId }) {
   const summaryId = `st-sum-${uid}`
   const [days, setDays] = useState(7)
   const [state, setState] = useState({ status: 'loading' })
-  const [visible, setVisible] = useState(null)   // null = varsayılan (ilk N seri)
+  // Seri seçimi izleme + gün aralığına BAĞLI (inceleme 7, 2026-10-31): seri anahtarları (s0, s1 …) veriye göre sıralanır;
+  // aralık değişince eski seçim başka adımları işaretlerdi → anahtar uyuşmazsa varsayılana (ilk N seri) döner.
+  const [picked, setPicked] = useState(null)   // { for: 'izleme:gün', keys }
   const [measureRef, width] = useElementWidth()
   const seq = useRef(0)
 
@@ -63,6 +65,9 @@ export default function StepTrend({ monitorId }) {
 
   const data = state.status === 'ok' ? state.data : state.prev
   const shaped = useMemo(() => stepSeriesData(data), [data])
+  const pickKey = `${monitorId}:${days}`
+  const visible = picked?.for === pickKey ? picked.keys : null
+  const setVisible = (keys) => setPicked({ for: pickKey, keys })
   const shown = visible ?? shaped.series.slice(0, STEP_TREND_INITIAL).map((s) => s.key)
   const values = shaped.rows
   const domain = values.length ? [values[0].t, values.at(-1).t] : null
@@ -103,10 +108,18 @@ export default function StepTrend({ monitorId }) {
   } else if (!shaped.series.length || !values.length) {
     body = <div data-slot="step-trend-empty"><StatusBlock tone="neutral" title={t('scripted.trend.empty', days)} description={t('scripted.trend.emptyHint')} className="py-6" /></div>
   } else {
-    const failDot = (key) => function StepDot(props) {
+    // Komşusuz tek değer çizgisiz kalırdı (connectNulls kapalı — boşluk "ölçüm yok" demek) → proje kuralı: NOKTA olarak
+    // çizilir (inceleme 7; Metrikler sayfasının mx-dot deseni). Başarısız nokta her zaman kırmızı.
+    const failDot = (key, color) => function StepDot(props) {
       const { cx, cy, payload, index } = props
-      if (cx == null || cy == null || !payload?.[`${key}f`]) return <g key={`${key}${index}`} />
-      return <circle key={`${key}${index}`} cx={cx} cy={cy} r={4} fill="var(--destructive)" stroke="var(--card)" strokeWidth={1.5} data-slot="step-trend-fail-dot" />
+      if (cx == null || cy == null) return <g key={`${key}${index}`} />
+      if (payload?.[`${key}f`]) {
+        return <circle key={`${key}${index}`} cx={cx} cy={cy} r={4} fill="var(--destructive)" stroke="var(--card)" strokeWidth={1.5} data-slot="step-trend-fail-dot" />
+      }
+      if (isLonePoint(values, key, index)) {
+        return <circle key={`${key}${index}`} cx={cx} cy={cy} r={3} fill={color} stroke="var(--card)" strokeWidth={1.5} data-slot="step-trend-lone-dot" />
+      }
+      return <g key={`${key}${index}`} />
     }
     const slowest = shaped.series
       .map((s) => ({ s, max: Math.max(0, ...values.map((r) => r[s.key] ?? 0)) }))
@@ -138,7 +151,7 @@ export default function StepTrend({ monitorId }) {
                 <ChartTooltip isAnimationActive={false} cursor={{ stroke: 'var(--muted-foreground)', strokeOpacity: 0.35, strokeWidth: 1 }}
                   content={<TrendTooltip t={t} series={shaped.series} nameOf={nameOf} />} />
                 {shaped.series.filter((s) => shown.includes(s.key)).map((s) => (
-                  <Line key={s.key} dataKey={s.key} type="monotone" stroke={s.color} strokeWidth={2} dot={failDot(s.key)}
+                  <Line key={s.key} dataKey={s.key} type="monotone" stroke={s.color} strokeWidth={2} dot={failDot(s.key, s.color)}
                     activeDot={{ r: 3.5, fill: s.color, stroke: 'var(--card)', strokeWidth: 2 }} isAnimationActive={false} connectNulls={false} />
                 ))}
               </ComposedChart>

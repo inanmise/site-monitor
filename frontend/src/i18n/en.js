@@ -19110,6 +19110,7 @@ export const EN = {
   'chkhist.kv.errorStage': 'Stage',
   'chkhist.kv.exception': 'Exception',
   'chkhist.kv.step': 'Step',
+  'chkhist.kv.check': 'Failed check',
   'chkhist.kv.k6Code': 'k6 code',
   'chkhist.kv.threshold': 'Crossed threshold',
   'chkhist.dnsFailTile': 'Failed lookups',

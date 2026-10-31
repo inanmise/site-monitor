@@ -19141,6 +19141,7 @@ export const TR = {
   'chkhist.kv.errorStage': 'Aşama',
   'chkhist.kv.exception': 'İstisna',
   'chkhist.kv.step': 'Adım',
+  'chkhist.kv.check': 'Başarısız doğrulama',
   'chkhist.kv.k6Code': 'k6 kodu',
   'chkhist.kv.threshold': 'Aşılan eşik',
   'chkhist.dnsFailTile': 'Başarısız sorgu',
