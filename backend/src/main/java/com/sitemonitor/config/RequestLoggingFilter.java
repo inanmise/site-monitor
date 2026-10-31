@@ -140,6 +140,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     // taşır) da gövdesiz loglanır.
     private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/", "/api/login/otp/",
             "/api/manual-certs", "/api/admin/ldap", "/api/monitoring/scripted", "/api/admin/user-push",
+            // Veritabanı sorgu izlemesi (2026-10-31): bağlantı gövdesi PAROLA, izleme gövdesi sorgu metni taşır (bağlantılar /
+            // şablonlar / deneme uçları aynı önekin altında)
+            "/api/monitoring/dbquery",
             // Genel ayarlar katalogu ham değerleri genel "value" anahtarıyla taşır (push ağ geçidi URL'si jeton içerir)
             "/api/admin/general/settings",
             // Prometheus kazıması: /metrics/sitemonitor bütün izleme envanterini taşır (2026-10-18). shouldSkip ham URI'ye

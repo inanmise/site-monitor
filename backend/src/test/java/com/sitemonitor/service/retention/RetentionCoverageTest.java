@@ -95,6 +95,8 @@ class RetentionCoverageTest {
             Map.entry("page_monitors", "Monitör tanımı."),
             Map.entry("pagespeed_monitors", "Monitör tanımı."),
             Map.entry("scripted_monitors", "Monitör tanımı."),
+            Map.entry("dbquery_monitors", "Monitör tanımı (veritabanı sorgu izlemesi, 2026-10-31)."),
+            Map.entry("holiday_days", "Kurum tatil takvimi (2026-10-31) — gün başına TEK satır, global yönetici elle yönetir (yılda ~20 gün)."),
             Map.entry("scripted_script_versions",
                     "k6 script sürüm geçmişi — monitör tanımının parçası ve geri dönüş kaynağı; "
                     + "kullanıcı kararıyla süresiz saklanır (metinler KB mertebesinde). "

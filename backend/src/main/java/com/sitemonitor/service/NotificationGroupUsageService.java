@@ -45,6 +45,9 @@ public class NotificationGroupUsageService {
     private final PortMonitorRepository portRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu: elle kurulan testler değişmesin; yokken tür atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DbQueryMonitorRepository dbQueryRepo;
 
     /** Arayüzde gösterilecek tek referans. {@code type} makine anahtarıdır; etiketi frontend çevirir. */
     public record Ref(String type, Long id, String name) { }
@@ -75,6 +78,8 @@ public class NotificationGroupUsageService {
         m.put("page",      id -> refs("page",      pageRepo.findByNotificationGroupId(id),      x -> x.getId(), x -> x.getName()));
         m.put("pagespeed", id -> refs("pagespeed", pageSpeedRepo.findByNotificationGroupId(id), x -> x.getId(), x -> x.getName()));
         m.put("scripted",  id -> refs("scripted",  scriptedRepo.findByNotificationGroupId(id),  x -> x.getId(), x -> x.getName()));
+        if (dbQueryRepo != null)
+            m.put("dbquery", id -> refs("dbquery", dbQueryRepo.findByNotificationGroupId(id), x -> x.getId(), x -> x.getName()));
         m.put("inventory", id -> refs("inventory", inventoryRepo.findByNotificationGroupId(id),
                 CertificateInventory::getId, CertificateInventory::getDomain));
         return m;
@@ -127,6 +132,8 @@ public class NotificationGroupUsageService {
         moved.put("page",      move(pageRepo.findByNotificationGroupId(fromGroupId),      toGroupId, pageRepo::saveAll,      (x, v) -> x.setNotificationGroupId(v)));
         moved.put("pagespeed", move(pageSpeedRepo.findByNotificationGroupId(fromGroupId), toGroupId, pageSpeedRepo::saveAll, (x, v) -> x.setNotificationGroupId(v)));
         moved.put("scripted",  move(scriptedRepo.findByNotificationGroupId(fromGroupId),  toGroupId, scriptedRepo::saveAll,  (x, v) -> x.setNotificationGroupId(v)));
+        if (dbQueryRepo != null)
+            moved.put("dbquery", move(dbQueryRepo.findByNotificationGroupId(fromGroupId), toGroupId, dbQueryRepo::saveAll, (x, v) -> x.setNotificationGroupId(v)));
         moved.put("inventory", move(inventoryRepo.findByNotificationGroupId(fromGroupId), toGroupId, inventoryRepo::saveAll, (x, v) -> x.setNotificationGroupId(v)));
         moved.values().removeIf(v -> v == 0);
         log.info("Bildirim grubu {} referansları {} grubuna taşındı: {}", fromGroupId, toGroupId, moved);

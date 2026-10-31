@@ -31,7 +31,7 @@ public class MonitoringTagService {
     /** tablo → takım kolonu; envanter soft-delete süzgeci ayrıca. */
     static final String[] MONITOR_TABLES = {
             "http_monitors", "keyword_monitors", "page_monitors", "pagespeed_monitors", "ping_monitors",
-            "port_monitors", "dns_monitors", "domain_monitors", "scripted_monitors"
+            "port_monitors", "dns_monitors", "domain_monitors", "scripted_monitors", "dbquery_monitors"
     };
 
     private final JdbcTemplate jdbcTemplate;

@@ -39,7 +39,8 @@ class SecretLocationsGateTest {
             "service/LdapSettingsService.java",         // ldap_bind_password
             "service/SmtpSettingsService.java",         // smtp_password
             "service/SecretCipher.java",                // tanım
-            "service/SecretRotationService.java");      // döndürmenin kendisi
+            "service/SecretRotationService.java",       // döndürmenin kendisi
+            "service/dbquery/DbConnectionProfileService.java");   // dbquery_connection_password (2026-10-31)
 
     private static final Pattern TABLE = Pattern.compile("@Table\\(\\s*name\\s*=\\s*\"([a-z_]+)\"");
     private static final Pattern ENC_COLUMN = Pattern.compile("@Column\\(\\s*name\\s*=\\s*\"([a-z_]+_enc)\"");

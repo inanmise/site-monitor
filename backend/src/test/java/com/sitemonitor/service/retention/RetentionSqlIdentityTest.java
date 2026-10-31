@@ -106,7 +106,8 @@ class RetentionSqlIdentityTest {
                         "activity-log",
                         "pagespeed-checks",    // Sayfa Hızı ölçüm serisi (2026-08)
                         "user-push-deliveries",   // Kişi-webhook teslimat günlüğü (2026-08, 3 yıl saklama)
-                        "alarm-feed-requests");   // Alarm akışı dış çağrı günlüğü (2026-10-30, dakikada bir çağrı)
+                        "alarm-feed-requests",    // Alarm akışı dış çağrı günlüğü (2026-10-30, dakikada bir çağrı)
+                        "dbquery-checks");        // Veritabanı sorgu izlemesi çalıştırma serisi (2026-10-31)
     }
 
     @Test

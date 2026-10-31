@@ -222,6 +222,17 @@ public final class RetentionCatalog {
                 180, 1, true, DataClass.OPERATIONAL,
                 "Sayfa hızı ölçüm serisi (süre/TTFB/bayt/istek özeti)."),
 
+        // ── Veritabanı sorgu izlemesi (2026-10-31): alarm anı satırları + çalıştırma serisi ────────────────────
+        guarded("dbquery-alert-rows", "dbquery_alert_rows", "captured_at", "site.monitor.dbquery.alert-rows.retention-days",
+                90, 1, "{t} AND alert_event_id NOT IN (SELECT id FROM alert_events WHERE resolved = false)", DataClass.PERSONAL,
+                "Veritabanı sorgu alarmının ALARM ANINDAKİ sonuç satırları (≤ 50 satır × 20 kolon, maskeli kolonlar yazılmaz): alarm "
+                + "maili ve alarm ayrıntısında gösterilir. Sorgu sonucu kişisel / iş verisi içerebilir. HÂLÂ AÇIK alarmın satırı "
+                + "SİLİNMEZ (alarm ayrıntısı kanıtını kaybetmesin); izleme silinince aynı işlemde silinir."),
+        age("dbquery-checks", "dbquery_checks", "checked_at", "site.monitor.metrics.dbquery.retention-days",
+                180, 1, true, DataClass.OPERATIONAL,
+                "Veritabanı sorgu izlemesi çalıştırma serisi: durum, süre, satır SAYISI, ölçülen değer, kural sonuçları ve maskeli "
+                + "hata metni — satır verisi YOKTUR (izleme bir veri çekme aracı değildir)."),
+
         new RetentionPolicy("system-heartbeat", "system_heartbeat", "recorded_at", TimeKind.TIMESTAMP,
                 "site.monitor.heartbeat.retention-days", 30, 7, false, "{t}", Mode.AGE, false,
                 DataClass.OPERATIONAL,
@@ -491,6 +502,20 @@ public final class RetentionCatalog {
                 "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "
                 + "kullanıcı kimliği. Kanal başına en çok 100 sürüm (eskiler budanır); kanal silinince aynı işlemde silinir, "
                 + "öksüz satır burada temizlenir."),
+        orphan("dbquery-alert-rows-orphan", "dbquery_alert_rows",
+                "NOT EXISTS (SELECT 1 FROM alert_events e WHERE e.id = dbquery_alert_rows.alert_event_id) "
+                + "OR NOT EXISTS (SELECT 1 FROM dbquery_monitors m WHERE m.id = dbquery_alert_rows.monitor_id)", DataClass.PERSONAL,
+                "Alarm anı sorgu sonucu satırları (2026-10-31): alarmı (alert_events kendi politikasıyla) ya da izlemesi silinmiş "
+                + "satır öksüz kalır ve burada temizlenir (alarm yorumları deseni)."),
+        orphan("db-connection-profiles-orphan", "db_connection_profiles",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = db_connection_profiles.team_id)", DataClass.PERSONAL,
+                "Takımın kayıtlı veritabanı bağlantıları (2026-10-31): sunucu / port / veritabanı / kullanıcı adı, ŞİFRELİ parola ve "
+                + "ekleyen / güncelleyenin adı. Ekip kararıyla silinir (ASLA otomatik değil; kullanan izleme varken silinemez). Takım "
+                + "silme, bağlantısı olan takımı reddeder (önce taşı); takımı yine de yok olmuş satır burada temizlenir."),
+        orphan("dbquery-templates-orphan", "dbquery_templates",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = dbquery_templates.team_id)", DataClass.PERSONAL,
+                "Takımın sorgu şablonları (2026-10-31): takım başına en çok 50 adlandırılmış sorgu + kural kümesi ve ekleyen / "
+                + "güncelleyenin adı. Ekip kararıyla silinir (ASLA otomatik değil); takımı silinmiş satır burada temizlenir."),
         orphan("tech-error-team-templates-orphan", "tech_error_team_templates",
                 "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = tech_error_team_templates.team_id)", DataClass.PERSONAL,
                 "Takımın teknik hata raporu şablon kütüphanesi (2026-10-18): takım başına en çok 20 adlandırılmış şablon "
@@ -631,6 +656,7 @@ public final class RetentionCatalog {
             case "http"      -> "series-http";
             case "page"      -> "page-checks";
             case "pagespeed" -> "pagespeed-checks";
+            case "dbquery"   -> "dbquery-checks";
             case "scripted"  -> "series-scripted";
             case "dns"       -> "series-dns";
             case "domain"    -> "series-domain";

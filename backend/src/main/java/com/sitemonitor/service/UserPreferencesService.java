@@ -82,7 +82,7 @@ public class UserPreferencesService {
 
     /** Favori olabilen izleme türleri — sekme kimlikleriyle aynı (GlobalSearchService.MONITOR_KINDS). */
     public static final Set<String> MONITOR_TYPES =
-            Set.of("http", "ping", "port", "dns", "domain", "keyword", "page", "pagespeed", "scripted");
+            Set.of("http", "ping", "port", "dns", "domain", "keyword", "page", "pagespeed", "scripted", "dbquery");
 
     /**
      * Kullanıcının tema seçimi (2026-10-05, ürün kararı: "kullanıcının şema seçimlerini hatırlayalım, sonraki

@@ -281,6 +281,28 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-31: veritabanı sorgu izlemesi kapasite / güvenlik sınırları GLOBAL_ONLY; alarm aç/kapa ve elle bekleme müdüre açık")
+    void dbQueryLimits_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.dbquery.max-concurrency",
+                "site.monitor.dbquery.per-connection-concurrency",
+                "site.monitor.dbquery.max-timeout-seconds",
+                "site.monitor.dbquery.max-rows-cap",
+                "site.monitor.dbquery.mail-max-rows",
+                "site.monitor.dbquery.mail-max-columns",
+                "site.monitor.dbquery.min-interval-seconds",
+                "site.monitor.dbquery.plan-check-mode",
+                "site.monitor.dbquery.max-plan-cost",
+                "site.monitor.dbquery.max-plan-rows",
+                // saklama anahtarları otomatik GLOBAL_ONLY (RetentionCatalog)
+                "site.monitor.metrics.dbquery.retention-days",
+                "site.monitor.dbquery.alert-rows.retention-days");
+        // Türün alarm anahtarı öteki türlerle aynı kapsamda (müdür kendi takımı için değil, ama global de değil — mevcut kural)
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).doesNotContain("site.monitor.dbquery.alert-enabled",
+                "site.monitor.dbquery.manual-cooldown-seconds");
+    }
+
+    @Test
     @DisplayName("isScopedAdmin / isScopedAdminInRequest: ADMIN + viewTeamIds dolu = müdür; global ADMIN ve USER değil; bağlam yoksa false")
     void scopedAdminDetection() {
         try {

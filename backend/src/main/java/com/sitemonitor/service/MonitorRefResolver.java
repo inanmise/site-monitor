@@ -41,6 +41,9 @@ public class MonitorRefResolver {
     private final PageMonitorRepository pageMonitorRepo;
     private final ScriptedMonitorRepository scriptedMonitorRepo;
     private final PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu: elle kurulan testler değişmesin; yokken aile çözülmez. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
 
     /** @param family cert | http | port | … ; {@code tab} arayüz sekmesi; {@code monitorId} çözülemezse null */
     public record Ref(String name, String family, String tab, Long monitorId) {}
@@ -61,6 +64,8 @@ public class MonitorRefResolver {
         if (fams.contains("page"))      idx.put("page",      index(pageMonitorRepo.findAll(),      m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
         if (fams.contains("scripted"))  idx.put("scripted",  index(scriptedMonitorRepo.findAll(),  m -> m.getName(),   m -> m.getName(), m -> m.getId()));
         if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
+        if (fams.contains("dbquery") && dbQueryMonitorRepo != null)
+            idx.put("dbquery", index(dbQueryMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;
@@ -75,7 +80,8 @@ public class MonitorRefResolver {
         if (ref == null) return p;
         // Genel Bakış canlı sekme geçişinde `domain` paramını uygular (App onNav); `q` yalnız ilk yüklemede okunur (QA ISSUE-001).
         if ("cert".equals(ref.family())) { if (domain != null && !domain.isBlank()) p.put("domain", domain); return p; }
-        if (ref.monitorId() != null && !"scripted".equals(ref.family())) p.put("monitor", ref.monitorId());
+        // Ad anahtarlı aileler (sentetik, veritabanı sorgusu): ad yalnız takım içinde tekil — derin bağlantı kimlikle verilmez
+        if (ref.monitorId() != null && !"scripted".equals(ref.family()) && !"dbquery".equals(ref.family())) p.put("monitor", ref.monitorId());
         return p;
     }
 
@@ -98,6 +104,7 @@ public class MonitorRefResolver {
         if (type.startsWith("PAGESPEED_")) return "pagespeed";   // PAGE_ önekinden ÖNCE: "PAGESPEED_DOWN".startsWith("PAGE_") false ama okunurluk
         if (type.startsWith("PAGE_"))      return "page";
         if (type.startsWith("SCRIPTED_"))  return "scripted";
+        if (type.startsWith("DBQUERY_"))   return "dbquery";
         if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "HTTP_SLOW".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";
     }
@@ -107,6 +114,7 @@ public class MonitorRefResolver {
             case "http" -> "http"; case "port" -> "port"; case "keyword" -> "keyword";
             case "ping" -> "ping"; case "dns" -> "dns";  case "domain" -> "domain";
             case "page" -> "page"; case "scripted" -> "scripted"; case "pagespeed" -> "pagespeed";
+            case "dbquery" -> "dbquery";
             default -> "dashboard";
         };
     }

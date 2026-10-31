@@ -71,6 +71,9 @@ public class MonitoringGroupService {
     private final AuditService auditService;   // rename → audit_log (MONITOR_GROUP_RENAME, eski→yeni)
     private final MonitorHistoryService monitorHistory;   // rename → ürün-görünür geçmiş (grup başına tek satır)
     private final PlatformTransactionManager txManager;   // getOrCreate insert'i REQUIRES_NEW ile izole eder
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu: elle kurulan testler değişmesin; yokken tür atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
 
     public record GroupInfo(Long id, Long teamId, String teamName, String type, String name, int count) {}
 
@@ -138,6 +141,7 @@ public class MonitoringGroupService {
             case "PageMonitor"     -> "page";
             case "ScriptedMonitor" -> "scripted";
             case "PageSpeedMonitor" -> "pagespeed";
+            case "DbQueryMonitor"  -> "dbquery";
             default                -> "";
         };
     }
@@ -176,6 +180,7 @@ public class MonitoringGroupService {
             countInto(counts, "scripted", scriptedRepo.groupCountsByTeam());
             countInto(counts, "page",     pageRepo.groupCountsByTeam());   // aynı eksik "page"de de vardı
             countInto(counts, "pagespeed", pageSpeedRepo.groupCountsByTeam());
+            if (dbQueryRepo != null) countInto(counts, "dbquery", dbQueryRepo.groupCountsByTeam());
         }
 
         Map<Long, String> teamNames = new HashMap<>();
@@ -205,6 +210,7 @@ public class MonitoringGroupService {
             case "scripted"-> scriptedRepo.groupCountsByTeam();
             case "page"    -> pageRepo.groupCountsByTeam();
             case "pagespeed"-> pageSpeedRepo.groupCountsByTeam();
+            case "dbquery"  -> dbQueryRepo == null ? List.of() : dbQueryRepo.groupCountsByTeam();
             default        -> List.of();
         };
     }
@@ -310,6 +316,7 @@ public class MonitoringGroupService {
             case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
             case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
             case "pagespeed"-> pageSpeedRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "dbquery"  -> dbQueryRepo == null ? 0 : dbQueryRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }

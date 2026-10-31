@@ -214,6 +214,24 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
         new Setting("site.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.retention-days",  "monitoring", Type.INT),
+        // Veritabanı Sorgu İzleme (11. tür, 2026-10-31) — hedef veritabanını koruyan tavanlar (eşzamanlılık, zaman aşımı, satır,
+        // maliyet ön kontrolü) kurum geneli karardır → GLOBAL_ONLY (aşağıda). Tarama tıkı (site.monitor.dbquery.interval-ms)
+        // açılışta okunur, katalogda DEĞİL. Okuma: MonitoringController / motor paketi (DbQueryCheckerService).
+        new Setting("site.monitor.dbquery.alert-enabled",              "dbquery", Type.BOOL),
+        new Setting("site.monitor.dbquery.max-concurrency",            "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.per-connection-concurrency", "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.max-timeout-seconds",        "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.max-rows-cap",               "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.mail-max-rows",              "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.mail-max-columns",           "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.min-interval-seconds",       "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.plan-check-mode",            "dbquery", Type.ENUM, List.of("OFF", "WARN", "BLOCK")),
+        new Setting("site.monitor.dbquery.max-plan-cost",              "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.max-plan-rows",              "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.manual-cooldown-seconds",    "dbquery", Type.INT),
+        // Saklama (RetentionCatalog dbquery-checks / dbquery-alert-rows) — saklama anahtarı olarak kendiliğinden GLOBAL_ONLY.
+        new Setting("site.monitor.metrics.dbquery.retention-days",     "dbquery", Type.INT),
+        new Setting("site.monitor.dbquery.alert-rows.retention-days",  "dbquery", Type.INT),
         // Senaryo İzleme (10. tür) — k6 alt süreç havuzu, timeout tavanları, çıktı/güvenlik + saklama.
         new Setting("site.monitor.scripted.enabled",                 "scripted", Type.BOOL),
         new Setting("site.monitor.scripted.alert-enabled",           "scripted", Type.BOOL),
@@ -467,6 +485,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.realert.keyword-minutes",      "realert",    Type.INT),
         new Setting("site.monitor.realert.page-minutes",         "realert",    Type.INT),
         new Setting("site.monitor.realert.pagespeed-minutes",    "realert",    Type.INT),
+        new Setting("site.monitor.realert.dbquery-minutes",      "realert",    Type.INT),
         new Setting("site.monitor.realert.scripted-minutes",     "realert",    Type.INT),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
@@ -811,7 +830,19 @@ public final class AppSettingsCatalog {
         "site.monitor.alarm-feed.block-threshold-per-minute",
         "site.monitor.alarm-feed.block-minutes",
         "site.monitor.alarm-feed.block-escalate",
-        "site.monitor.alarm-feed.block-exempt-ips"
+        "site.monitor.alarm-feed.block-exempt-ips",
+        // Veritabanı sorgu izlemesi (2026-10-31): izlenen veritabanlarını koruyan tavanlar ve mailde gösterilen sonuç satırı
+        // sınırları kurum geneli karar — kapsamlı müdür hedef veritabanına daha fazla yük / veri açamaz.
+        "site.monitor.dbquery.max-concurrency",
+        "site.monitor.dbquery.per-connection-concurrency",
+        "site.monitor.dbquery.max-timeout-seconds",
+        "site.monitor.dbquery.max-rows-cap",
+        "site.monitor.dbquery.mail-max-rows",
+        "site.monitor.dbquery.mail-max-columns",
+        "site.monitor.dbquery.min-interval-seconds",
+        "site.monitor.dbquery.plan-check-mode",
+        "site.monitor.dbquery.max-plan-cost",
+        "site.monitor.dbquery.max-plan-rows"
     ));
 
     /**

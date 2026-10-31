@@ -42,6 +42,7 @@ public class RunbookNoteService {
             case "domain"    -> "DOMAIN";
             case "page"      -> "PAGE";
             case "pagespeed" -> "PAGESPEED";
+            case "dbquery"   -> "DBQUERY";     // hedef = izleme adı (alarm anahtarı, SCRIPTED gibi)
             case "scripted"  -> "SCRIPTED";
             case "port"      -> "PORT";
             default          -> null;   // cert ailesi: rehber yüzeyi yok

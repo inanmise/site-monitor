@@ -60,6 +60,7 @@ class RepositoryWriteTransactionGuardTest {
             "PingMonitorRepository#renameGroupForTeam",
             "PortMonitorRepository#renameGroupForTeam",
             "ScriptedMonitorRepository#renameGroupForTeam",
+            "DbQueryMonitorRepository#renameGroupForTeam",      // veritabanı sorgu izlemesi (2026-10-31) — aynı çağıran
             "AlertEventRepository#renameGroupForTeamAndTypes",
             // Domain yeniden adlandırma — AdminController#updateInventory (@Transactional, satır ~219).
             // Dört tablo aynı anda dönmezse geçmiş eski, envanter yeni domain'i gösterir.
@@ -80,7 +81,11 @@ class RepositoryWriteTransactionGuardTest {
             // touchActiveSession (~257), clearAllActiveSessions (~318).
             "AppUserRepository#bumpFailedLogin",
             "AppUserRepository#adoptSessionIfNone",   // touchActiveSession (@Transactional) — restart sonrası yeniden sahiplenme (QA ISSUE-002, 2026-09-13)
-            "AppUserRepository#clearAllActiveSessions"
+            "AppUserRepository#clearAllActiveSessions",
+            // Takım taşıma — TeamAdminService#moveAll (@Transactional): izlemeler, bağlantılar ve sorgu şablonları birlikte
+            // taşınır (izleme ve bağlantı aynı takımda kalmalı; yarım taşıma izlemeyi başka takımın bağlantısına bağlardı).
+            "DbConnectionProfileRepository#moveTeam",
+            "DbQueryTemplateRepository#moveTeam"
     );
 
     @Test
