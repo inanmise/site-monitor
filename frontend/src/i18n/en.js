@@ -24387,6 +24387,7 @@ export const EN = {
   "dbq.conn.dba.onlyTables": "only the monitored tables",
   "dbq.conn.dba.mssqlNote": "SQL Server has no read-only session — these account permissions are the only safeguard.",
   "dbq.conn.dba.oracleNote": "Grant no EXECUTE and no ANY privilege; the profile limits sessions and per-call load.",
+  "dbq.conn.dba.pgPublicNote": "On PostgreSQL 14 and earlier every role can create tables in the public schema; removing that right affects all roles, so it is the DBA's decision (the check shows it for information only):",
   "dbq.conn.dba.ph.password": "<strong-password>",
   "dbq.conn.dba.ph.database": "<database>",
   "dbq.conn.dba.ph.schema": "<schema>",

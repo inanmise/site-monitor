@@ -24419,6 +24419,7 @@ export const TR = {
   "dbq.conn.dba.onlyTables": "yalnız izlenecek tablolar",
   "dbq.conn.dba.mssqlNote": "SQL Server'da salt okunur oturum yok — güvence yalnız bu hesap yetkileridir.",
   "dbq.conn.dba.oracleNote": "EXECUTE ve ANY yetkisi vermeyin; profil oturum ve çağrı yükünü sınırlar.",
+  "dbq.conn.dba.pgPublicNote": "PostgreSQL 14 ve öncesinde her rol public şemasında tablo oluşturabilir; bu yetki tüm rolleri etkilediği için kaldırma kararı DBA'nındır (denetim bunu yalnız bilgi olarak gösterir):",
   "dbq.conn.dba.ph.password": "<güçlü-parola>",
   "dbq.conn.dba.ph.database": "<veritabani>",
   "dbq.conn.dba.ph.schema": "<sema>",

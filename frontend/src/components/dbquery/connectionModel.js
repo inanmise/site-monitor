@@ -157,6 +157,8 @@ export function readOnlyAccountScript(dbType, t) {
     `GRANT CONNECT ON DATABASE ${db} TO sitemonitor_ro;`,
     `GRANT USAGE ON SCHEMA ${t('dbq.conn.dba.ph.schema')} TO sitemonitor_ro;`,
     `GRANT SELECT ON ${obj} TO sitemonitor_ro;   -- ${only}`,
+    `-- ${t('dbq.conn.dba.pgPublicNote')}`,
+    '-- REVOKE CREATE ON SCHEMA public FROM PUBLIC;',
   ].join('\n')
 }
 
