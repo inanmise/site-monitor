@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-31T18:14:51Z",
+  "generatedAt": "2026-10-31T18:52:59Z",
   "repo": "inanmise/site-monitor",
-  "count": 799,
+  "count": 800,
   "releases": [
+    {
+      "version": "20.178.1",
+      "tag": "v20.178.1",
+      "releasedAt": "2026-10-31T18:52:51Z",
+      "commit": "76ad48bbe7dda1d2a830aa4ee62293163cf17bca",
+      "prevVersion": "20.178.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "76ad48bb",
+          "subject": "imaj açılış denetimi pipefail altında grep -q SIGPIPE yüzünden sertleştirme satırını göremiyordu — here-string ile okunur"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.178.0",
       "tag": "v20.178.0",
