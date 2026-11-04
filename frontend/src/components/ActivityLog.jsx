@@ -1,150 +1,51 @@
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
-import { Fragment, useEffect, useId, useState, useCallback, useMemo, useRef } from 'react'
+import { Suspense, lazy, useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { api, formatDateSec } from '../api/client'
-import { useT } from '../i18n/index.jsx'
+import { useT, useLanguage } from '../i18n/index.jsx'
+import { useBranding } from '../contexts/BrandingProvider.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useServerPagination } from '../hooks/useServerPagination.js'
+import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
 import {
-  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
-  CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink, Filter, Layers, DatabaseSearch } from 'lucide-react'
-import { csvCell } from '../utils/csv.js'
-import { downloadCsv } from '../utils/csvExport.js'
+  Activity, CheckCircle, AlertTriangle, XCircle, ChevronRight, X, RefreshCw, Inbox, ExternalLink, FileSearch, ChartNoAxesGantt,
+  BellRing,
+} from 'lucide-react'
 import { relTimeOrRaw } from '../utils/relativeTime.js'
+import { META_BRAND, applyPageMeta, formatTitle, pageMetaKey, tabMetaKey } from '../utils/pageMeta.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
-import SegmentedControl from './ui/SegmentedControl.jsx'
+import SavedViewsMenu from './ui/SavedViewsMenu.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import { useElementWidthState } from '../hooks/useElementWidth.js'
 import ActivityTimeline from './activity/ActivityTimeline.jsx'
-import { CHIPS_INLINE_MIN_PX, activeChips, pickLayout, removeChip } from './activity/activityModel.js'
+import ActivityFilterBar from './activity/ActivityFilterBar.jsx'
+import ActivityExportMenu from './activity/ActivityExportMenu.jsx'
+import { ReasonBadge, STATUS_META, TypeBadge, isFailure } from './activity/ActivityParts.jsx'
+import {
+  CHIPS_INLINE_MIN_PX, KPI_STATUS, formatMonitorRef, isAlarmAction, isFiltered, istanbulDayStartMs, kpiKeyOf, monitorRefOf,
+  pickLayout, rangeToFromTo, readFilters, readRoute, routeSearch, sameRoute, toApiParams, writeFilters,
+} from './activity/activityModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
-import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
-import { Card, CardContent } from '@/components/shadcn/card'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { cn } from '@/lib/utils'
 import { activityTarget } from '../utils/activityTarget.js'
 
 // Satır → izleme sekmesi hedefi: tek kaynak utils/activityTarget.js (Kişisel Panom da kullanır); testler buradan da alır
 export { activityTarget }
+// Zaman penceresi yardımcıları modele taşındı (2026-11-05); eski içe aktarımlar çalışsın
+export { istanbulDayStartMs, rangeToFromTo }
 
-// Her izleme türünün ayırt edici ikon + rengi (badge).
-const TYPES = [
-  { key: 'CERT',    Icon: Shield,        color: '#7c3aed' },
-  { key: 'DOMAIN',  Icon: CalendarClock, color: '#be123c' },
-  { key: 'HTTP',    Icon: Globe,         color: '#2563eb' },
-  { key: 'UPTIME',  Icon: Activity,      color: '#059669' },
-  { key: 'PORT',    Icon: Server,        color: '#0d9488' },
-  { key: 'PING',    Icon: Radio,         color: '#0891b2' },
-  { key: 'DNS',     Icon: Share2,        color: '#6d28d9' },
-  { key: 'KEYWORD', Icon: Search,        color: '#d97706' },
-  { key: 'PAGE',    Icon: ScanSearch,    color: '#0d9488' },
-  { key: 'PAGESPEED', Icon: Gauge,      color: '#c2410c' },
-  // Backend SCRIPTED kaydi yaziyor (ActivityLogService.SCRIPTED) ama burada karsiligi yoktu:
-  // satirlar gri "?" rozetiyle cikiyor ve tur filtresi cipi hic uretilmiyordu.
-  { key: 'SCRIPTED',Icon: FlaskConical,  color: '#7e22ce' },
-  { key: 'DBQUERY', Icon: DatabaseSearch, color: '#0369a1' },
-]
-const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
+// Ayrıntı sayfası (fe1) ve izleme zaman çizelgesi YALNIZ açılınca yüklenir (lazyChunks kapısı)
+const ActivityDetailPage = lazy(() => import('./activity/detail/ActivityDetailPage.jsx'))
+const MonitorTimelineView = lazy(() => import('./activity/timeline/MonitorTimelineView.jsx'))
 
-// Sonuç durumu → ikon + mürekkep (jeton sınıfı; koyu temada karşılıklı).
-const STATUS_META = {
-  SUCCESS: { Icon: CheckCircle,   ink: 'text-success' },
-  WARNING: { Icon: AlertTriangle, ink: 'text-amber-600 dark:text-amber-400' },
-  ERROR:   { Icon: XCircle,       ink: 'text-destructive' },
-  TIMEOUT: { Icon: XCircle,       ink: 'text-destructive' },
-  UNKNOWN: { Icon: HelpCircle,    ink: 'text-muted-foreground' },
-}
-const UNKNOWN_TYPE = { Icon: HelpCircle, color: '#71717a' }
-
-/** İzleme türü rozeti — türün kalıcı renk kimliği (ikon + ad); zemin rengin %10'u. */
-function TypeBadge({ type }) {
-  const tm = TYPE_MAP[type] || UNKNOWN_TYPE
-  return (
-    <Badge variant="outline" data-type={type} className="shrink-0 gap-1 rounded-full border-transparent px-2 text-[0.72em] font-bold tracking-wide"
-      style={{ color: tm.color, background: tm.color + '18' }}>
-      <tm.Icon aria-hidden="true" /> {type}
-    </Badge>
-  )
-}
-
-/** Sonuç özeti (ikon + yerelleştirilmiş özet). */
-function ResultSummary({ row, t, className }) {
-  const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
-  return (
-    <span data-slot="act-result" className={cn('inline-flex min-w-0 items-center gap-1 font-semibold tabular-nums', sm.ink, className)}>
-      <sm.Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}</span>
-    </span>
-  )
-}
-const STATUSES = ['SUCCESS', 'WARNING', 'ERROR', 'UNKNOWN']
-const RANGES = ['today', '24h', '7d', 'all']
-
-/** İstanbul gününün başlangıcı (ms) — Europe/Istanbul sabit UTC+3, yaz saati yok (2026-10-12: "bugün" ve gün grupları
- *  UTC / tarayıcı gece yarısı değil İstanbul gece yarısı; 00:00–03:00 arası etkinlik "bugün"de). */
-export function istanbulDayStartMs(now = Date.now()) {
-  // formatToParts (inceleme 4): `format()` çıktısının "YYYY-MM-DD" olacağı varsayılmaz — bazı ICU sürümlerinde en-CA
-  // biçimi değişti; Invalid Date `toISOString()`te istisna atıp listeyi düşürürdü. Parçalar eksikse sabit UTC+3 hesabı.
-  try {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit' })
-      .formatToParts(new Date(now))
-    const get = (type) => parts.find((p) => p.type === type)?.value
-    const y = Number(get('year')), m = Number(get('month')), d = Number(get('day'))
-    if (y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= 31) return Date.UTC(y, m - 1, d) - ISTANBUL_OFFSET_MS
-  } catch { /* Intl yok / saat dilimi bilinmiyor → aşağıdaki sabit hesap */ }
-  return Math.floor((now + ISTANBUL_OFFSET_MS) / DAY_MS) * DAY_MS - ISTANBUL_OFFSET_MS
-}
-const ISTANBUL_OFFSET_MS = 3 * 3_600_000
-const DAY_MS = 86_400_000
-
-/** range → {from,to} ISO (UTC, yyyy-MM-ddTHH:mm:ss) — backend string karşılaştırmasıyla uyumlu. Her istekte o anki zamanla
- *  hesaplanır (canlı tazeleme "son 24 saat"i dondurmasın). */
-export function rangeToFromTo(range, now = Date.now()) {
-  const iso = (d) => d.toISOString().slice(0, 19)
-  if (range === 'today') return { from: iso(new Date(istanbulDayStartMs(now))), to: null }
-  if (range === '24h') return { from: iso(new Date(now - 24 * 3600 * 1000)), to: null }
-  if (range === '7d')  return { from: iso(new Date(now - 7 * 24 * 3600 * 1000)), to: null }
-  return { from: null, to: null }
-}
-
-// Filtreler URL query'sine yansır (paylaşılabilir/yenilenebilir); app'in diğer paramları (tab vb.) korunur.
-function readParams() {
-  const p = new URLSearchParams(window.location.search)
-  return {
-    types: (p.get('atype') || '').split(',').filter(Boolean),
-    status: p.get('astatus') || '',
-    range: RANGES.includes(p.get('arange')) ? p.get('arange') : '24h',
-    q: p.get('aq') || '',
-  }
-}
-function writeParams(f) {
-  const p = new URLSearchParams(window.location.search)
-  f.types.length ? p.set('atype', f.types.join(',')) : p.delete('atype')
-  f.status ? p.set('astatus', f.status) : p.delete('astatus')
-  f.range && f.range !== '24h' ? p.set('arange', f.range) : p.delete('arange')
-  f.q ? p.set('aq', f.q) : p.delete('aq')
-  const s = p.toString()
-  window.history.replaceState(null, '', `${window.location.pathname}${s ? '?' + s : ''}`)
-}
-
-function exportCsv(rows) {
-  const header = ['time', 'type', 'name', 'target', 'action', 'status', 'summary', 'error']
-  const lines = [header.join(',')]
-  rows.forEach((r) => lines.push([
-    r.activity_time, r.monitor_type, r.monitor_name, r.target, r.action,
-    r.result_status, r.result_summary, r.error_message,
-  ].map(csvCell).join(',')))
-  // Dosya bugünkü gibi: BOM + LF satır sonu (bilinçli olarak CRLF'e çevrilmedi). İndirme ortak (öneri 29).
-  downloadCsv('activity-log.csv', '﻿' + lines.join('\n'))
-}
+/** App.handleTabChange aynı sekmede param yazınca yayılır (App.jsx TAB_PARAMS_EVENT; App'i içe aktarmamak için yerel). */
+const TAB_PARAMS_EVENT = 'sm:tab-params'
 
 /**
  * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi"); İngilizce arayüzde
@@ -159,20 +60,188 @@ export function localizeSummary(summary, t) {
   return s
 }
 
+/** Sonuç özeti (ikon + yerelleştirilmiş özet). */
+function ResultSummary({ row, t, className }) {
+  const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
+  return (
+    <span data-slot="act-result" className={cn('inline-flex min-w-0 items-center gap-1 font-semibold tabular-nums', sm.ink, className)}>
+      <sm.Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}</span>
+    </span>
+  )
+}
+
+/** Satırın ek rozetleri: alarm olayı, HTTP kodu, hata nedeni (2026-11-05, G). Yoksa hiçbir şey. */
+function RowBadges({ row, t }) {
+  const alarm = row.alert_event_id != null || isAlarmAction(row.action)
+  if (!alarm && row.http_status == null && !row.failure_reason) return null
+  return (
+    <span data-slot="act-badges" className="flex min-w-0 flex-wrap items-center gap-1">
+      {alarm && (
+        <Badge variant="outline" data-slot="act-alarm-badge" className="h-auto gap-1 rounded-md px-1.5 py-0 text-[0.78em] font-medium whitespace-normal">
+          <BellRing aria-hidden="true" className="size-3" />
+          {row.alert_event_id != null ? t('act.alarmNo', row.alert_event_id) : t('act.alarmEvent')}
+        </Badge>
+      )}
+      {row.http_status != null && (
+        <Badge variant="outline" data-slot="act-http" className="h-auto rounded-md px-1.5 py-0 font-mono text-[0.78em]">
+          {t('act.httpCode', row.http_status)}
+        </Badge>
+      )}
+      <ReasonBadge row={row} t={t} />
+    </span>
+  )
+}
+
+/** Belge başlığı / açıklaması — rota değişince. App'in kendi yazımından SONRA (setTimeout) uygulanır (iki yazar sırası). */
+function useRouteMeta(kind) {
+  const t = useT()
+  const { get } = useBranding()
+  const brand = String(get('tab_title', '') || get('app_name', '') || META_BRAND)
+  const key = kind === 'detail' ? pageMetaKey('activityDetail') : kind === 'timeline' ? pageMetaKey('activityTimeline') : tabMetaKey('activity')
+  const rawTitle = t(`${key}.title`)
+  const rawDesc = t(`${key}.description`)
+  const title = formatTitle(rawTitle !== `${key}.title` ? rawTitle : '', brand)
+  const description = rawDesc !== `${key}.description` ? rawDesc : null
+  useEffect(() => {
+    const id = setTimeout(() => applyPageMeta(title, description), 0)
+    return () => clearTimeout(id)
+  }, [title, description])
+}
+
+const scrollEl = () => (typeof document !== 'undefined' ? document.scrollingElement || document.documentElement : null)
+
+/**
+ * Kayıtlar → Aktivite (2026-11-05 zenginleştirme). Rota (URL'de, paylaşılabilir):
+ *   - `?tab=activity&act=<id>` → ayrıntı SAYFASI (fe1 `activity/detail/ActivityDetailPage.jsx`, tembel parça),
+ *   - `?tab=activity&amon=<TYPE>:<id>` → izleme zaman çizelgesi (`activity/timeline/MonitorTimelineView.jsx`, tembel),
+ *   - ikisi de yoksa liste. Liste süzgeçleri URL'de kalır; ayrıntıya geçişte liste SÖKÜLMEZ (gizlenir: veri, sayfa,
+ *     katlama ve kaydırma konumu korunur). "Geri" listeye süzgeçleriyle döner: listeden itilen geçmiş kayıtları
+ *     (`history.state.actDepth`) kadar geri gidilir; doğrudan açılan bağlantıda (derinlik yok) `act` / `amon` silinir.
+ * Tarayıcı Geri / İleri ve aynı sekmeye param yazan gezinme (`sm:tab-params`) rotayı URL'den yeniden okur.
+ */
 export default function ActivityLog({ refreshTrigger }) {
   const t = useT()
+  const [route, setRoute] = useState(() => readRoute(window.location.search))
+  const routeRef = useRef(route)
+  routeRef.current = route
+  const [listMounted, setListMounted] = useState(route.kind === 'list')
+  const [listNonce, setListNonce] = useState(0)
+  const listScroll = useRef(0)
+  useRouteMeta(route.kind)
+
+  useEffect(() => { if (route.kind === 'list') setListMounted(true) }, [route.kind])
+
+  // Listeye dönüşte kaydırma konumu geri gelir; başka rotaya geçişte sayfa başı (ilk açılışta dokunulmaz)
+  const prevKind = useRef(route.kind)
+  useEffect(() => {
+    const was = prevKind.current
+    prevKind.current = route.kind
+    const el = scrollEl()
+    if (!el) return undefined
+    if (route.kind === 'list') {
+      if (was === 'list') return undefined
+      const y = listScroll.current
+      const id = requestAnimationFrame(() => { el.scrollTop = y })
+      return () => cancelAnimationFrame(id)
+    }
+    el.scrollTop = 0
+    return undefined
+  }, [route])
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        if (new URLSearchParams(window.location.search).get('tab') !== 'activity') return
+      } catch { return }
+      const next = readRoute(window.location.search)
+      setRoute((cur) => (sameRoute(cur, next) ? cur : next))
+    }
+    window.addEventListener('popstate', sync)
+    window.addEventListener(TAB_PARAMS_EVENT, sync)
+    return () => { window.removeEventListener('popstate', sync); window.removeEventListener(TAB_PARAMS_EVENT, sync) }
+  }, [])
+
+  const go = useCallback((next) => {
+    if (sameRoute(next, routeRef.current)) return
+    if (routeRef.current.kind === 'list') listScroll.current = scrollEl()?.scrollTop || 0
+    try {
+      const depth = (Number(window.history.state?.actDepth) || 0) + 1
+      const url = window.location.pathname + routeSearch(window.location.search, next) + window.location.hash
+      window.history.pushState({ ...(window.history.state || {}), tab: 'activity', actDepth: depth }, '', url)
+    } catch { /* history yok */ }
+    setRoute(next)
+  }, [])
+
+  const openActivity = useCallback((id) => { if (id != null) go({ kind: 'detail', id: Number(id) }) }, [go])
+  const openTimeline = useCallback((type, id) => { if (type && id != null) go({ kind: 'timeline', type: String(type).toUpperCase(), id: Number(id) }) }, [go])
+
+  const backToList = useCallback(() => {
+    const depth = Number(window.history.state?.actDepth) || 0
+    if (depth > 0 && typeof window.history.go === 'function') {
+      window.history.go(-depth)   // popstate → rota listeye döner (liste girdisinin süzgeçleriyle)
+      return
+    }
+    try {
+      const url = window.location.pathname + routeSearch(window.location.search, { kind: 'list' }) + window.location.hash
+      window.history.replaceState({ ...(window.history.state || {}), actDepth: 0 }, '', url)
+    } catch { /* history yok */ }
+    setRoute({ kind: 'list' })
+  }, [])
+
+  // Zaman çizelgesinden "Bu izlemenin aktiviteleri": liste o izlemeye süzülür (liste URL'den yeniden kurulur)
+  const filterListByMonitor = useCallback((type, id, label) => {
+    try {
+      const base = new URLSearchParams(writeFilters({ ...readFilters(window.location.search), monitor: formatMonitorRef(type, id),
+        monitorLabel: String(label || '').slice(0, 160) }, window.location.search))
+      const url = window.location.pathname + routeSearch(`?${base.toString()}`, { kind: 'list' }) + window.location.hash
+      window.history.pushState({ ...(window.history.state || {}), tab: 'activity', actDepth: 0 }, '', url)
+    } catch { /* history yok */ }
+    listScroll.current = 0
+    setListNonce((n) => n + 1)
+    setRoute({ kind: 'list' })
+  }, [])
+
+  const fallback = <LoadingBlock label={t('act.loading')} fullWidth />
+
+  return (
+    <div data-slot="activity-page" data-route={route.kind} className="min-w-0">
+      {listMounted && (
+        <div hidden={route.kind !== 'list'} className="min-w-0">
+          <ActivityList key={listNonce} refreshTrigger={refreshTrigger} active={route.kind === 'list'}
+            onOpenActivity={openActivity} onOpenTimeline={openTimeline} />
+        </div>
+      )}
+      {route.kind === 'detail' && (
+        <Suspense fallback={fallback}>
+          <ActivityDetailPage key={route.id} id={route.id} onBack={backToList} onOpenActivity={openActivity} onOpenTimeline={openTimeline} />
+        </Suspense>
+      )}
+      {route.kind === 'timeline' && (
+        <Suspense fallback={fallback}>
+          <MonitorTimelineView key={`${route.type}:${route.id}`} type={route.type} id={route.id} onBack={backToList}
+            onOpenActivity={openActivity} onFilterList={filterListByMonitor} />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+/** Aktivite listesi (özet, süzgeçler, akış, sayfalama) — rota liste değilken gizli ama bağlı kalır. */
+function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }) {
+  const t = useT()
+  const { lang } = useLanguage()
   // Tablo ↔ kart KAP genişliğiyle (2026-10-11 yeniden tasarım): 768 px tablette kenar çubuğu açıkken içerik dar.
   // Ölçüm yoksa (jsdom, ilk boyama) görünüm alanı sorgusuna düşer — TEK varyant çizilir.
   const phone = useIsMobile()
-  const uid = useId()
   const [feedWidth, setFeedEl] = useElementWidthState()
   const layout = pickLayout(feedWidth, phone)
   const [filterWidth, setFilterEl] = useElementWidthState()
-  const chipsInline = filterWidth === 0 || filterWidth >= CHIPS_INLINE_MIN_PX
-  const [typesOpen, setTypesOpen] = useState(false)
-  const [filters, setFilters] = useState(readParams)
-  const [qInput, setQInput]   = useState(filters.q)
-  const [data, setData]       = useState([])
+  const compactFilters = filterWidth > 0 && filterWidth < CHIPS_INLINE_MIN_PX
+  const [filters, setFilters] = useState(() => readFilters(window.location.search))
+  const [data, setData] = useState([])
+  const [teams, setTeams] = useState({ status: 'loading', list: [] })
+  const [exportNotice, setExportNotice] = useState(null)   // { format, max } — tavan aşıldı
   // Zaman grupları + ardışık aynı-hedef katlama (2026-09-12, #22). Katlama: aynı monitör türü + hedef, arka
   // arkaya ≥ 3 satır → tek "N kontrol" satırı; kullanıcı açınca (unfolded) satırlar tek tek döner.
   const [unfolded, setUnfolded] = useState(() => new Set())
@@ -205,15 +274,10 @@ export default function ActivityLog({ refreshTrigger }) {
   const [summary, setSummary] = useState(null)
   const [summaryError, setSummaryError] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(false)
-  const [openId, setOpenId]   = useState(null)
-  const [details, setDetails] = useState({})   // id → {data, recent}
+  const [error, setError]     = useState(null)   // null | { message, details } — okuma hatası (sunucunun metni)
 
   // Ortak yardımcı (utils/relativeTime.relTimeOrRaw — öneri 29): boş damga "—", çözülemeyen damga olduğu gibi; çıktı aynı.
   const rel = useCallback((iso) => relTimeOrRaw(iso, t), [t])
-
-  // Aralık (from/to) BURADA değil, her istekte hesaplanır: 30 sn'lik canlı tazeleme ve Yenile hep "şimdi"ye göre süzer.
-  const baseParams = useMemo(() => ({ type: filters.types.join(','), status: filters.status, q: filters.q }), [filters])
 
   // Yarış koruması: sayfa/süzgeç hızlı değişirse yalnız SON isteğin yanıtı uygulanır.
   const loadSeq = useRef(0)
@@ -221,8 +285,9 @@ export default function ActivityLog({ refreshTrigger }) {
   const { apiPage, pageSize } = sp
   const load = useCallback((silent) => {
     const seq = ++loadSeq.current
-    const params = { ...baseParams, ...rangeToFromTo(filters.range) }
-    const key = JSON.stringify([baseParams, filters.range])
+    // Aralık (from/to) her istekte hesaplanır: 30 sn'lik canlı tazeleme ve Yenile hep "şimdi"ye göre süzer.
+    const params = toApiParams(filters)
+    const key = JSON.stringify(filters)
     const filterChanged = summaryKey.current !== key
     summaryKey.current = key
     if (!silent) setLoading(true)
@@ -232,14 +297,14 @@ export default function ActivityLog({ refreshTrigger }) {
       setSummary(null)
       setSummaryError(false)
     }
-    setError(false)
+    setError(null)
     const list = api.getActivity({ ...params, page: apiPage, size: pageSize })
       .then((res) => {
         if (seq !== loadSeq.current) return
         if (res?.success) { setData(res.data); sp.bind(res) }
-        else setError(true)
+        else setError({ message: res?.error || null, details: res })
       })
-      .catch(() => { if (seq === loadSeq.current) setError(true) })
+      .catch((e) => { if (seq === loadSeq.current) setError({ message: e?.message || null, details: e }) })
       .finally(() => { if (seq === loadSeq.current) setLoading(false) })
     // Özet de aynı sıra damgasıyla (2026-10-09): eski süzgecin geç gelen özeti yeni listenin sayaçlarını ezmesin. Hata
     // durumunda sayaçlar "0" değil "—" ve grafik hata satırı gösterir (2026-10-12).
@@ -251,53 +316,69 @@ export default function ActivityLog({ refreshTrigger }) {
       .catch(() => { if (seq === loadSeq.current) setSummaryError(true) })
     // İkisi bitene kadar söz döner: canlı tazeleme (useVisibleInterval) süren istek varken YENİSİNİ başlatmaz
     return Promise.allSettled([list, sum])
-  }, [baseParams, filters.range, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Süzgeç değişince URL'yi güncelle + açık detayı kapat; sayfa sıfırlamasını useServerPagination yapar.
-  useEffect(() => { writeParams(filters); setOpenId(null) }, [filters])
+  // Süzgeç değişince URL'yi güncelle (geçmiş kaydı eklenmez; mevcut kaydın durumu korunur); sayfa sıfırlamasını
+  // useServerPagination yapar. Liste gizliyken (ayrıntı açık) süzgeç değişmez — yazım rota anahtarlarına dokunmaz.
+  useEffect(() => {
+    try {
+      const s = writeFilters(filters, window.location.search)
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${s ? '?' + s : ''}${window.location.hash}`)
+    } catch { /* history yok */ }
+    setExportNotice(null)
+  }, [filters])
   useEffect(() => { load(false) }, [load])
-  useEffect(() => { if (refreshTrigger) load(true) }, [refreshTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (refreshTrigger && active) load(true) }, [refreshTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Görünür sekmede, 1. sayfadayken sessiz otomatik tazeleme (gizli sekmede durur).
-  useVisibleInterval(() => (sp.page === 1 ? load(true) : undefined), 30000, false)
+  // Takım süzgecinin adları (görüş kapsamı sunucuda); okunamazsa seçici "takımlar okunamadı" der, liste etkilenmez
+  useEffect(() => {
+    let alive = true
+    Promise.resolve().then(() => api.teams.directory())
+      .then((res) => { if (alive) setTeams(res?.success ? { status: 'ok', list: Array.isArray(res.data) ? res.data : [] } : { status: 'error', list: [] }) })
+      .catch(() => { if (alive) setTeams({ status: 'error', list: [] }) })
+    return () => { alive = false }
+  }, [])
 
-  const toggleType = (key) =>
-    setFilters((f) => ({ ...f, types: f.types.includes(key) ? f.types.filter((x) => x !== key) : [...f.types, key] }))
-  const applySearch = () => setFilters((f) => ({ ...f, q: qInput.trim() }))
-  const clearAll = () => { setQInput(''); setFilters({ types: [], status: '', range: '24h', q: '' }) }
+  // Görünür sekmede, liste açıkken ve 1. sayfadayken sessiz otomatik tazeleme (gizli sekmede / ayrıntı açıkken durur).
+  useVisibleInterval(() => (active && sp.page === 1 ? load(true) : undefined), 30000, false)
 
-  const openDetail = (row) => {
-    if (openId === row.id) { setOpenId(null); return }
-    setOpenId(row.id)
-    if (!details[row.id] || details[row.id].error) loadDetail(row.id)
-  }
-  // Satır ayrıntısı (mini geçmiş) — okunamazsa "Yükleniyor…" sonsuza dek kalmasın, hata + yeniden dene (2026-10-22, UIM-37)
-  const loadDetail = (id) => {
-    setDetails((d) => (d[id]?.error ? { ...d, [id]: undefined } : d))
-    api.getActivityDetail(id).then((res) => {
-      if (res?.success) setDetails((d) => ({ ...d, [id]: { data: res.data, recent: res.recent || [] } }))
-      else setDetails((d) => ({ ...d, [id]: { error: true } }))
-    }).catch(() => setDetails((d) => ({ ...d, [id]: { error: true } })))
-  }
-
-  const anyFilter = filters.types.length > 0 || filters.status || filters.q || filters.range !== '24h'
+  const anyFilter = isFiltered(filters)
+  const apiParams = useMemo(() => toApiParams(filters), [filters])
+  // Satırların "Ayrıntı" bağlantısı: o anki süzgeçler + `act` (yeni sekmede açılınca Geri aynı listeye döner)
+  const listSearch = useMemo(() => writeFilters(filters, window.location.search), [filters])
+  const detailHref = (id) => `${window.location.pathname}${routeSearch(listSearch ? '?' + listSearch : '', { kind: 'detail', id })}`
 
   // Özet kalemleri = durum süzgeci (MonitorStatsBar). Etkin kart tekrar tıklanınca süzgeç kalkar; "Toplam" temizler.
-  // Ad her zaman etiketi taşır ("Hata — Filtreyi kaldır"): etkin kartın adı yalnız "Filtreyi kaldır" olsaydı hangi
-  // kartın etkin olduğu duyulmazdı.
+  // "Hata" kartı ERROR + TIMEOUT sayar ve İKİSİNİ süzer (2026-11-05, G).
+  const kpiKey = kpiKeyOf(filters.statuses)
   const statItems = [
     ['ALL', summary?.total ?? '—', t('act.sum.total'), Activity, 'total'],
     ['SUCCESS', summary ? summary.success_count ?? 0 : '—', t('act.st.SUCCESS'), CheckCircle, 'valid'],
     ['WARNING', summary ? summary.warning ?? 0 : '—', t('act.st.WARNING'), AlertTriangle, 'warning'],
     ['ERROR', summary ? summary.error ?? 0 : '—', t('act.st.ERROR'), XCircle, 'critical'],
   ].map(([key, value, label, Icon, cls]) => {
-    const on = (filters.status || 'ALL') === key
-    return { key, value, label, Icon, cls, hint: t('act.sumFilterHint'),
+    const on = kpiKey === key
+    return { key, value, label, Icon, cls, hint: key === 'ERROR' ? t('act.sumErrorHint') : t('act.sumFilterHint'),
       tip: on && key !== 'ALL' ? t('a11y.rowAction', label, t('mondash.clearTip')) : t('mondash.filterTip', label) }
   })
-  const onStat = (key) => setFilters((f) => ({ ...f, status: key === 'ALL' || f.status === key ? '' : key }))
+  const onStat = (key) => setFilters((f) => ({ ...f, statuses: key === 'ALL' || kpiKeyOf(f.statuses) === key ? [] : [...KPI_STATUS[key]] }))
 
   const toggleFold = (key) => setUnfolded((u) => { const n = new Set(u); n.add(key); return n })
+  /** Satıra basış: ayrıntı sayfası; Ctrl / ⌘ / orta tuş yeni sekmede (paylaşılabilir adres). */
+  const openRow = (e, row) => {
+    if (e && (e.ctrlKey || e.metaKey || e.button === 1)) {
+      try { window.open(detailHref(row.id), '_blank', 'noopener') } catch { /* açılır pencere engelli */ }
+      return
+    }
+    onOpenActivity(row.id)
+  }
+  /** "Ayrıntı" bağlantısı: düz tık uygulama içinde (geçmiş kaydıyla), değiştiricili tık / orta tuş tarayıcıya bırakılır. */
+  const onDetailLink = (e, row) => {
+    e.stopPropagation()
+    if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    onOpenActivity(row.id)
+  }
   const rowKey = (e, fn) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fn() } }
   const ROW_CLICK = 'cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
   const TH = 'h-9 px-2.5 text-[0.76em] font-semibold tracking-wide text-muted-foreground uppercase'
@@ -305,72 +386,40 @@ export default function ActivityLog({ refreshTrigger }) {
     ? <TeamBadge teamId={r.team_id} teamName={r.team_name} static={isStatic} wrap />
     : <span className="text-muted-foreground">—</span>)
   const time = (iso, label) => <time dateTime={iso} title={formatDateSec(iso)} className="whitespace-nowrap tabular-nums">{label ?? rel(iso)}</time>
-
-  /** Açılan satırın ayrıntısı — masaüstü tablo ve telefon kartı AYNI gövdeyi kullanır. */
-  const detail = (row) => {
-    const d = details[row.id]
-    const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
-    const fact = (label, value) => (
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <dt className="text-[0.8em] tracking-wide text-muted-foreground uppercase">{label}</dt>
-        <dd className="min-w-0 [overflow-wrap:anywhere]">{value}</dd>
-      </div>
-    )
-    return (
-      <div data-slot="act-detail" className="flex min-w-0 flex-col gap-2.5 text-[0.86em]">
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
-          {fact(t('act.d.target'), <span className="font-mono text-xs break-all">{row.target || '—'}</span>)}
-          {fact(t('act.d.status'), <span className={cn('font-semibold', sm.ink)}>{t('act.st.' + row.result_status)}</span>)}
-          {fact(t('act.d.time'), formatDateSec(row.activity_time))}
-          {fact(t('act.d.actor'), <span className="inline-flex items-center gap-1"><User aria-hidden="true" className="size-3" /> {row.actor || 'scheduler'}</span>)}
-          {fact(t('act.d.team'), teamOf(row, false))}
-          {row.response_ms != null && fact(t('act.d.response'), `${row.response_ms} ms`)}
-          {row.days_remaining != null && fact(t('act.d.days'), row.days_remaining)}
-        </dl>
-        {row.error_message && (
-          <AlertBanner tone="danger" icon={XCircle} className="mb-0">
-            {row.error_message}{row.error_class ? ` (${row.error_class})` : ''}
-          </AlertBanner>
-        )}
-        {row.result_detail && (
-          <pre className="m-0 max-h-[200px] overflow-auto rounded-md border bg-background px-2.5 py-2 font-mono text-[0.85em] break-all whitespace-pre-wrap">{row.result_detail}</pre>
-        )}
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-1.5 text-[0.8em] tracking-wide text-muted-foreground uppercase"><Clock aria-hidden="true" className="size-3" /> {t('act.miniHistory')}</div>
-          {d?.error ? (
-            <div data-slot="act-detail-error" className="flex flex-wrap items-center gap-2 text-[0.85em] text-muted-foreground">
-              <span>{t('act.detailLoadFailed')}</span>
-              <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => loadDetail(row.id)}>{t('hist.retry')}</Button>
-            </div>
-          ) : d ? (d.recent.length ? (
-            <ul className="flex list-none flex-col gap-1 p-0">
-              {d.recent.map((h) => {
-                const hs = STATUS_META[h.result_status] || STATUS_META.UNKNOWN
-                return (
-                  <li key={h.id} className="flex min-w-0 items-center gap-2.5">
-                    <hs.Icon aria-hidden="true" className={cn('size-3 shrink-0', hs.ink)} />
-                    <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">{localizeSummary(h.result_summary, t) || h.result_status}</span>
-                    <span className="shrink-0 text-[0.85em] text-muted-foreground">{time(h.activity_time)}</span>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : <p className="text-[0.85em] text-muted-foreground italic">{t('act.noHistory')}</p>)
-            : <p className="text-[0.85em] text-muted-foreground italic">{t('act.loading')}</p>}
-        </div>
-      </div>
-    )
-  }
+  const rowName = (row) => row.monitor_name || row.target || String(row.id)
 
   /** "İzlemeye git" — satırın adı + eylem (satırlar ayırt edilir); telefonda metinli, ≥ 40 px. */
   const goButton = (row, dest, withText = false) => (
     <Button type="button" variant={withText ? 'outline' : 'ghost'} size={withText ? 'sm' : 'icon-sm'}
       className={cn(withText ? 'h-10 shrink-0' : 'text-muted-foreground hover:text-primary')}
-      title={t('act.goMonitor')} aria-label={t('act.goMonitorFor', row.monitor_name || row.target || '')}
+      title={t('act.goMonitor')} aria-label={t('act.goMonitorFor', rowName(row))}
       onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
       <ExternalLink aria-hidden="true" />{withText && <span>{t('act.goMonitor')}</span>}
     </Button>
   )
+  /** "Ayrıntı" — gerçek bağlantı (`<a href>`): yeni sekmede açılabilir, adres paylaşılabilir. */
+  const detailLink = (row, withText = false) => (
+    <Button asChild variant={withText ? 'outline' : 'ghost'} size={withText ? 'sm' : 'icon-sm'}
+      className={cn(withText ? 'h-10 shrink-0' : 'text-muted-foreground hover:text-primary')}>
+      <a href={detailHref(row.id)} data-slot="act-detail-link" title={t('act.openDetail')} aria-label={t('act.openDetailFor', rowName(row))}
+        onClick={(e) => onDetailLink(e, row)} onKeyDown={(e) => e.stopPropagation()}>
+        <FileSearch aria-hidden="true" />{withText && <span>{t('act.openDetail')}</span>}
+      </a>
+    </Button>
+  )
+  /** "Zaman çizelgesi" — yalnız izleme kimliği olan satırda. */
+  const timelineButton = (row, withText = false) => {
+    const ref = monitorRefOf(row)
+    if (!ref) return null
+    return (
+      <Button type="button" variant={withText ? 'outline' : 'ghost'} size={withText ? 'icon' : 'icon-sm'} data-slot="act-timeline-link"
+        className={cn(withText ? 'size-10 shrink-0' : 'text-muted-foreground hover:text-primary')}
+        title={t('act.openTimeline')} aria-label={t('act.openTimelineFor', rowName(row))}
+        onClick={(e) => { e.stopPropagation(); onOpenTimeline(ref.type, ref.id) }}>
+        <ChartNoAxesGantt aria-hidden="true" />
+      </Button>
+    )
+  }
 
   // ── Masaüstü / tablet: hizalı sütunlar (shadcn Table). Düşük öncelikli sütunlar dar ekranda gizli. ──
   const desktopFeed = (
@@ -385,7 +434,7 @@ export default function ActivityLog({ refreshTrigger }) {
             <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('act.d.action')}</TableHead>
             <TableHead className={TH}>{t('act.d.result')}</TableHead>
             <TableHead className={cn(TH, 'text-right')}>{t('act.d.time')}</TableHead>
-            <TableHead className={cn(TH, 'w-10')}><span className="sr-only">{t('act.goMonitor')}</span></TableHead>
+            <TableHead className={cn(TH, 'w-28')}><span className="sr-only">{t('act.d.actions')}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -400,10 +449,10 @@ export default function ActivityLog({ refreshTrigger }) {
                 </TableRow>
               )
             }
-            // Katlanmış ardışık koşu: aynı hedefin peş peşe N kontrolü tek satırda; tıklayınca açılır
+            // Katlanmış ardışık koşu: aynı hedefin peş peşe N kontrolü tek satırda; tıklayınca açılır (içindeki satır sayfaya gider)
             if (entry.kind === 'fold') {
               const r0 = entry.rows[0]
-              const errs = entry.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
+              const errs = entry.rows.filter((r) => isFailure(r.result_status)).length
               const unfold = () => toggleFold(entry.key)
               return (
                 <TableRow key={entry.key} data-slot="act-fold" tabIndex={0} className={cn(ROW_CLICK, 'bg-primary/5 hover:bg-primary/10')}
@@ -426,44 +475,46 @@ export default function ActivityLog({ refreshTrigger }) {
               )
             }
             const row = entry.row
-            const isOpen = openId === row.id
-            const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
+            const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
             const dest = activityTarget(row)
-            const toggle = () => openDetail(row)
             return (
-              <Fragment key={entry.key}>
-                <TableRow data-slot="act-item" data-status={row.result_status} data-state={isOpen ? 'open' : 'closed'}
-                  tabIndex={0} aria-expanded={isOpen}
-                  aria-label={t('a11y.toggleRow', row.monitor_name || row.target || String(row.id))}
-                  className={cn(ROW_CLICK, isError && 'bg-destructive/[0.04]', 'data-[state=open]:bg-primary/5')}
-                  onClick={toggle} onKeyDown={(e) => rowKey(e, toggle)}>
-                  <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown aria-hidden="true" className="size-3.5" /> : <ChevronRight aria-hidden="true" className="size-3.5" />}</TableCell>
-                  <TableCell><TypeBadge type={row.monitor_type} /></TableCell>
-                  <TableCell className="min-w-[12rem] whitespace-normal">
-                    {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar. Ad ve hedef KESİLMEZ, sarar
-                        (2026-10-11 — kural: adlar ve uzun metin kırpılmaz). */}
-                    {dest ? (
-                      <Button type="button" variant="link" size="xs" title={t('act.goMonitor')}
-                        className="h-auto justify-start p-0 text-left text-[1em] font-semibold whitespace-normal text-foreground decoration-dotted underline-offset-[3px] hover:text-primary"
-                        onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
-                        <span className="[overflow-wrap:anywhere]">{row.monitor_name}</span>
-                      </Button>
-                    ) : <span className="block font-semibold [overflow-wrap:anywhere]">{row.monitor_name}</span>}
-                    {/* Hedef adın altında (ayrı sütun olsaydı zaman sütunu 1440 px'te ekran dışına itiliyordu) */}
-                    {row.target && <span className="block font-mono text-xs break-all text-muted-foreground">{row.target}</span>}
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(row)}</TableCell>
-                  <TableCell className="hidden text-[0.9em] whitespace-nowrap text-muted-foreground lg:table-cell">{t('act.ac.' + row.action)}</TableCell>
-                  <TableCell className="min-w-[9rem] whitespace-normal"><ResultSummary row={row} t={t} className="text-[0.95em]" /></TableCell>
-                  <TableCell className="text-right text-[0.9em] text-muted-foreground">{time(row.activity_time)}</TableCell>
-                  <TableCell className="px-1">{dest && goButton(row, dest)}</TableCell>
-                </TableRow>
-                {isOpen && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={8} className="bg-muted/30 px-4 py-3 whitespace-normal sm:pl-10">{detail(row)}</TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
+              <TableRow key={entry.key} data-slot="act-item" data-status={row.result_status} tabIndex={0}
+                aria-label={t('act.openDetailFor', rowName(row))}
+                className={cn(ROW_CLICK, isFailure(row.result_status) && 'bg-destructive/[0.04]')}
+                onClick={(e) => openRow(e, row)} onAuxClick={(e) => { if (e.button === 1) openRow(e, row) }}
+                onKeyDown={(e) => rowKey(e, () => onOpenActivity(row.id))}>
+                <TableCell className={sm.ink}><sm.Icon aria-hidden="true" className="size-3.5" /></TableCell>
+                <TableCell><TypeBadge type={row.monitor_type} /></TableCell>
+                <TableCell className="min-w-[12rem] whitespace-normal">
+                  {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı ayrıntı sayfasını açar. Ad ve hedef KESİLMEZ,
+                      sarar (2026-10-11 — kural: adlar ve uzun metin kırpılmaz). */}
+                  {dest ? (
+                    <Button type="button" variant="link" size="xs" title={t('act.goMonitor')}
+                      className="h-auto justify-start p-0 text-left text-[1em] font-semibold whitespace-normal text-foreground decoration-dotted underline-offset-[3px] hover:text-primary"
+                      onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
+                      <span className="[overflow-wrap:anywhere]">{row.monitor_name}</span>
+                    </Button>
+                  ) : <span className="block font-semibold [overflow-wrap:anywhere]">{row.monitor_name}</span>}
+                  {/* Hedef adın altında (ayrı sütun olsaydı zaman sütunu 1440 px'te ekran dışına itiliyordu) */}
+                  {row.target && <span className="block font-mono text-xs break-all text-muted-foreground">{row.target}</span>}
+                </TableCell>
+                <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(row)}</TableCell>
+                <TableCell className="hidden text-[0.9em] whitespace-nowrap text-muted-foreground lg:table-cell">{t('act.ac.' + row.action)}</TableCell>
+                <TableCell className="min-w-[9rem] whitespace-normal">
+                  <span className="flex min-w-0 flex-col gap-1">
+                    <ResultSummary row={row} t={t} className="text-[0.95em]" />
+                    <RowBadges row={row} t={t} />
+                  </span>
+                </TableCell>
+                <TableCell className="text-right text-[0.9em] text-muted-foreground">{time(row.activity_time)}</TableCell>
+                <TableCell className="px-1">
+                  <span className="flex items-center justify-end gap-0.5">
+                    {detailLink(row)}
+                    {timelineButton(row)}
+                    {dest && goButton(row, dest)}
+                  </span>
+                </TableCell>
+              </TableRow>
             )
           })}
         </TableBody>
@@ -471,9 +522,9 @@ export default function ActivityLog({ refreshTrigger }) {
     </div>
   )
 
-  // ── Telefon: kart listesi — üstte tür + ad + göreli zaman, altında hedef, sonuç + eylem; alt şeritte takım +
-  // "İzlemeye git". Metinler üst üste binmez (min-w-0 + sarma; ad ve hedef kesilmez); sol renk şeridi YOK, hata kartı TÜM
-  // çerçeveyle belirtilir. ──
+  // ── Telefon: kart listesi — üstte tür + ad + göreli zaman, altında hedef, sonuç + eylem + rozetler; alt şeritte takım +
+  // "Ayrıntı" / zaman çizelgesi / "İzlemeye git". Metinler üst üste binmez (min-w-0 + sarma; ad ve hedef kesilmez); sol
+  // renk şeridi YOK, hata kartı TÜM çerçeveyle belirtilir. ──
   const mobileFeed = (
     <ul className="flex list-none flex-col gap-2 p-0">
       {groupedFeed.map((entry) => {
@@ -486,7 +537,7 @@ export default function ActivityLog({ refreshTrigger }) {
         }
         if (entry.kind === 'fold') {
           const r0 = entry.rows[0]
-          const errs = entry.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
+          const errs = entry.rows.filter((r) => isFailure(r.result_status)).length
           return (
             <li key={entry.key} data-slot="act-fold" className="min-w-0 overflow-hidden rounded-lg border border-dashed border-primary/40 bg-primary/5">
               <Button type="button" variant="ghost" onClick={() => toggleFold(entry.key)}
@@ -494,7 +545,7 @@ export default function ActivityLog({ refreshTrigger }) {
                 <span className="flex min-w-0 items-start gap-2">
                   <TypeBadge type={r0.monitor_type} />
                   <span className="min-w-0 flex-1 font-semibold [overflow-wrap:anywhere]">{r0.monitor_name}</span>
-                  <ChevronDown aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <ChevronRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 </span>
                 <span className="text-[0.84em] text-primary">
                   {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
@@ -505,168 +556,97 @@ export default function ActivityLog({ refreshTrigger }) {
           )
         }
         const row = entry.row
-        const isOpen = openId === row.id
-        const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
         const dest = activityTarget(row)
         return (
-          <li key={entry.key} data-slot="act-item" data-status={row.result_status} data-state={isOpen ? 'open' : 'closed'}
-            className={cn('min-w-0 overflow-hidden rounded-lg border bg-card', isError && 'border-destructive/50', isOpen && 'border-primary/60')}>
-            <Button type="button" variant="ghost" aria-expanded={isOpen}
+          <li key={entry.key} data-slot="act-item" data-status={row.result_status}
+            className={cn('min-w-0 overflow-hidden rounded-lg border bg-card', isFailure(row.result_status) && 'border-destructive/50')}>
+            <Button type="button" variant="ghost" aria-label={t('act.openDetailFor', rowName(row))}
               className="h-auto w-full flex-col items-stretch gap-1.5 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal"
-              onClick={() => openDetail(row)}>
+              onClick={(e) => openRow(e, row)}>
               <span className="flex min-w-0 items-start gap-2">
                 <TypeBadge type={row.monitor_type} />
                 <span className="min-w-0 flex-1 font-semibold [overflow-wrap:anywhere]">{row.monitor_name}</span>
                 <span className="shrink-0 text-[0.78em] text-muted-foreground">{time(row.activity_time)}</span>
-                {isOpen ? <ChevronDown aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> : <ChevronRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+                <ChevronRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               </span>
               {row.target && <span className="block min-w-0 font-mono text-[0.78em] break-all text-muted-foreground">{row.target}</span>}
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.84em]">
                 <ResultSummary row={row} t={t} />
                 <span className="text-muted-foreground">· {t('act.ac.' + row.action)}</span>
               </span>
+              <RowBadges row={row} t={t} />
             </Button>
-            <div className="flex min-w-0 items-center justify-between gap-2 border-t px-3 py-1.5">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t px-3 py-1.5">
               <span className="min-w-0" data-col="team">{teamOf(row)}</span>
-              {dest && goButton(row, dest, true)}
+              <span className="flex flex-wrap items-center gap-1.5">
+                {detailLink(row, true)}
+                {timelineButton(row, true)}
+                {dest && goButton(row, dest, true)}
+              </span>
             </div>
-            {isOpen && <div className="border-t bg-muted/30 px-3 py-3">{detail(row)}</div>}
           </li>
         )
       })}
     </ul>
   )
 
-  const typeCounts = summary?.type_counts || null
-  const chips = activeChips(filters)
-  const rangeLabel = (rg) => t('act.range.' + rg)
-  const chipLabel = (c) => (c.kind === 'type' ? c.value : c.kind === 'range' ? rangeLabel(c.value) : `“${c.value}”`)
-
-  /** Tür çipleri — sayı (tür süzgeci hariç diğer süzgeçlerle) görsel + ekran okuyucuya açıklama olarak. */
-  const typeChips = (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('act.typeFilter')} data-slot="act-type-chips">
-      {TYPES.map(({ key, Icon, color }) => {
-        const on = filters.types.includes(key)
-        const count = typeCounts ? (typeCounts[key] ?? 0) : null
-        const cntId = `${uid}-cnt-${key}`
-        return (
-          <Fragment key={key}>
-          <Button type="button" variant="outline" size="sm" aria-pressed={on} onClick={() => toggleType(key)}
-            aria-describedby={count != null ? cntId : undefined} data-type={key}
-            className={cn('h-8 gap-1.5 rounded-full px-2.5 text-[0.8em] font-medium text-muted-foreground pointer-coarse:h-10',
-              count === 0 && !on && 'opacity-60')}
-            style={on ? { borderColor: color, color, background: color + '18' } : undefined}>
-            <Icon aria-hidden="true" className="size-3.5" /> {key}
-            {count != null && (
-              <span aria-hidden="true" data-slot="act-type-count"
-                className="min-w-5 rounded-full bg-muted px-1.5 text-center text-[0.9em] font-semibold text-foreground tabular-nums">{count}</span>
-            )}
-          </Button>
-          {/* Açıklama düğmenin DIŞINDA: içeride olsaydı erişilebilir ada karışırdı ("HTTP 12 kayıt") */}
-          {count != null && <span id={cntId} className="sr-only">{t('act.typeCount', count)}</span>}
-          </Fragment>
-        )
-      })}
-    </div>
-  )
-
   return (
     <div data-slot="activity-log" className="flex min-w-0 flex-col gap-4">
       {/* Özet — tıklanabilir sayım kartları (durum süzgeci) */}
-      <MonitorStatsBar items={statItems} activeFilter={filters.status || 'ALL'} onStatClick={onStat} className="mb-0" />
+      <MonitorStatsBar items={statItems} activeFilter={kpiKey || null} onStatClick={onStat} className="mb-0" />
 
       {/* Zaman çizelgesi — seçili aralıkta sonuç dağılımı + son aktivite + canlı göstergesi */}
       <ActivityTimeline series={summary?.series} loading={!summary && !summaryError} failed={!summary && summaryError} lastActivity={summary?.last_activity}
         live={sp.page === 1 && !error && !(!summary && summaryError)} />
 
-      {/* Süzgeç kartı — aralık / durum / arama + eylemler; tür çipleri (dar kapta katlanır); etkin süzgeç çipleri */}
+      {/* Süzgeç kartı — aralık / arama / eylemler; durum, neden, takım, izleme, kişi; olay grubu ve tür çipleri; etkin süzgeç çipleri */}
       <div ref={setFilterEl} className="min-w-0">
-      <Card data-slot="act-filters" className="min-w-0 gap-0 py-3 shadow-xs">
-        <CardContent className="flex min-w-0 flex-col gap-3 px-3 sm:px-4">
-          <div className="flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
-            <SegmentedControl value={filters.range} onChange={(rg) => setFilters((f) => ({ ...f, range: rg }))}
-              ariaLabel={t('act.rangeFilter')} className="max-w-full flex-wrap"
-              options={RANGES.map((rg) => ({ value: rg, label: rangeLabel(rg) }))} />
-            {/* NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için dış kapta *:w-full */}
-            <div className="w-full *:w-full md:w-44">
-              <NativeSelect value={filters.status} aria-label={t('act.d.status')} className="pointer-coarse:h-10"
-                onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-                <NativeSelectOption value="">{t('act.allStatuses')}</NativeSelectOption>
-                {STATUSES.map((st) => <NativeSelectOption key={st} value={st}>{t('act.st.' + st)}</NativeSelectOption>)}
-              </NativeSelect>
-            </div>
-            <InputGroup className="w-full pointer-coarse:h-11 md:max-w-sm md:flex-1">
-              <InputGroupInput type="search" placeholder={t('act.searchPh')} value={qInput} aria-label={t('act.searchPh')}
-                data-page-search className="pointer-coarse:h-10" onChange={(e) => setQInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
-              <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton size="sm" variant="secondary" onClick={applySearch} className="pointer-coarse:h-10">{t('act.search')}</InputGroupButton>
-              </InputGroupAddon>
-            </InputGroup>
-            <div className="flex flex-wrap items-center gap-2 md:ml-auto">
+        <ActivityFilterBar filters={filters} setFilters={setFilters} compact={compactFilters}
+          typeCounts={summary?.type_counts || null} groupCounts={summary?.group_counts || null} teams={teams}
+          actions={(
+            <>
               <Button type="button" variant="outline" size="icon" onClick={() => load(false)} title={t('act.refresh')} aria-label={t('act.refresh')}
                 className="pointer-coarse:size-10">
                 <RefreshCw aria-hidden="true" />
               </Button>
-              <Button type="button" variant="outline" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}
-                className="pointer-coarse:h-10">
-                <Download aria-hidden="true" /> CSV
-              </Button>
-            </div>
-          </div>
-
-          {chipsInline ? typeChips : (
-            <Collapsible open={typesOpen} onOpenChange={setTypesOpen} className="min-w-0">
-              <CollapsibleTrigger asChild>
-                <Button type="button" variant="outline" data-slot="act-types-toggle"
-                  className="h-10 w-full justify-between font-normal">
-                  <span className="flex items-center gap-2"><Filter aria-hidden="true" className="size-4" /> {t('act.typeFilter')}</span>
-                  <span className="flex items-center gap-1.5">
-                    {filters.types.length > 0 && <Badge variant="secondary" className="tabular-nums">{t('act.typesSelected', filters.types.length)}</Badge>}
-                    <ChevronDown aria-hidden="true" className={cn('size-4 transition-transform', typesOpen && 'rotate-180')} />
-                  </span>
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-2">{typeChips}</CollapsibleContent>
-            </Collapsible>
-          )}
-
-          {(chips.length > 0 || anyFilter) && (
-            <div data-slot="act-active-filters" className="flex min-w-0 flex-wrap items-center gap-1.5 border-t pt-3">
-              <span className="mr-1 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-                <Layers aria-hidden="true" className="size-3.5" /> {t('act.activeFilters')}
-              </span>
-              {chips.map((c) => (
-                <Badge key={c.key} variant="secondary" data-slot="act-chip" data-kind={c.kind}
-                  className="h-auto gap-1 py-0.5 pr-0.5 pl-2 text-xs font-medium whitespace-normal [overflow-wrap:anywhere]">
-                  {chipLabel(c)}
-                  <Button type="button" variant="ghost" size="icon-xs" className="size-6 rounded-full pointer-coarse:size-10"
-                    aria-label={t('act.removeFilter', chipLabel(c))}
-                    onClick={() => { if (c.kind === 'q') setQInput(''); setFilters((f) => removeChip(f, c)) }}>
-                    <X aria-hidden="true" />
-                  </Button>
-                </Badge>
-              ))}
-              <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive pointer-coarse:h-10"
-                onClick={clearAll}>
-                <X aria-hidden="true" /> {t('act.clearFilter')}
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              <ActivityExportMenu params={apiParams} onTruncated={(format, max) => setExportNotice({ format, max })} />
+              <SavedViewsMenu listKey="activity" tab="activity" {...VIEW_SPECS.activity} size="default" className="pointer-coarse:h-10" />
+            </>
+          )} />
       </div>
+
+      {exportNotice && (
+        <div data-slot="act-export-truncated" data-format={exportNotice.format}>
+          <AlertBanner tone="warning" className="mb-0" onDismiss={() => setExportNotice(null)} dismissLabel={t('act.ex.dismiss')}>
+            {t('act.ex.truncated', exportNotice.max.toLocaleString(lang === 'en' ? 'en-GB' : 'tr-TR'))}
+          </AlertBanner>
+        </div>
+      )}
+
+      {filters.monitor && (
+        <div data-slot="act-monitor-scope" className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10"
+            onClick={() => { const r = filters.monitor.split(':'); onOpenTimeline(r[0], Number(r[1])) }}>
+            <ChartNoAxesGantt aria-hidden="true" /> {t('act.openTimelineOf', filters.monitorLabel || filters.monitor)}
+          </Button>
+        </div>
+      )}
 
       {/* Ana liste — yükleme göstergesi yalnız elde veri yokken; sayfa değişiminde liste + çubuk yerinde kalır
           (akış sıfırlanıp çubuk kaybolursa sayfa zıplıyordu) */}
       {loading && data.length === 0 ? (
         <LoadingBlock label={t('act.loading')} fullWidth />
       ) : error ? (
-        <StatusBlock tone="danger" icon={XCircle} title={t('act.error')} role="alert"
+        <StatusBlock tone="danger" icon={XCircle} title={t('act.error')} description={error.message || undefined} role="alert"
+          details={error.details}
           actions={<Button type="button" variant="outline" onClick={() => load(false)}><RefreshCw aria-hidden="true" /> {t('act.refresh')}</Button>} />
       ) : data.length === 0 ? (
-        <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')} />
+        <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')}
+          actions={anyFilter ? (
+            <Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={() => setFilters(readFilters(''))}>
+              <X aria-hidden="true" /> {t('act.clearFilter')}
+            </Button>
+          ) : undefined} />
       ) : (
         <>
           <div ref={setFeedEl} data-slot="act-feed" data-layout={layout} aria-busy={loading || undefined} className={cn('min-w-0', loading && 'opacity-70')}>

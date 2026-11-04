@@ -17,6 +17,9 @@ import { useEffect, useRef } from 'react'
 /** Sekme değişince App.handleTabChange'in temizlediği sayfa-durumu paramları (tek doğruluk kaynağı). */
 export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec', 'view', 'alert', 'type', 'level', 'ack', 'from', 'to',
   'atype', 'astatus', 'arange', 'aq',   // Aktivite Logu süzgeçleri (QA ISSUE-003: sekme değişince başka sekmeye taşınıyordu)
+  // Aktivite zenginleştirmesi (2026-11-05): özel aralık, takım, kişi, olay grubu, hata nedeni, izleme süzgeci + rota
+  // (act = ayrıntı sayfası, amon = izleme zaman çizelgesi, atl* = çizelgenin aralığı) — activityModel LIST/ROUTE_URL_KEYS
+  'afrom', 'ato', 'ateam', 'aactor', 'agroup', 'areason', 'amf', 'amfl', 'act', 'amon', 'atlr', 'atlf', 'atlt',
   'via', 'dq',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
   'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
   'scope',       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli) + Olaylar kapsamı mine|others|all (2026-09-28)
