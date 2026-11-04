@@ -322,6 +322,9 @@ export function pageStatus(page) {
 
 const PAGE_STATUS_TONE = { ok: 'success', failed: 'danger', skipped: 'muted', unknown: 'muted' }
 export const pageStatusTone = (status) => PAGE_STATUS_TONE[status] || 'muted'
+/** Sayfa durumunun metni (`prs.site.status.ok|notOpened|skipped|unknown`). */
+const PAGE_STATUS_KEY = { ok: 'ok', failed: 'notOpened', skipped: 'skipped', unknown: 'unknown' }
+export const pageStatusText = (status, t) => t(`prs.site.status.${PAGE_STATUS_KEY[status] || 'unknown'}`)
 
 /**
  * `analysis.site` → ekran modeli: sayfalar (sunucu sırası = tarama sırası; ilk sayfa izlemenin sayfası), en kötü üç
@@ -836,7 +839,7 @@ export function sitePageSheetRows(model, t) {
     [t('prs.export.col.url'), t('prs.site.col.status'), t('prs.grade'), t('prs.site.col.letter'), t('prs.kpi.load'), t('prs.export.col.bytes'),
       t('prs.kpi.requests'), t('prs.site.score.security'), t('prs.site.score.seo'), t('prs.site.score.a11y'), t('prs.site.col.unique'),
       t('prs.site.col.shared'), t('prs.site.col.recs'), t('prs.site.col.problem')],
-    ...arr(model?.pages).map((p) => [p.url, t(`prs.site.status.${p.status}`), p.grade, p.letter || '', p.load, p.size, p.requests,
+    ...arr(model?.pages).map((p) => [p.url, pageStatusText(p.status, t), p.grade, p.letter || '', p.load, p.size, p.requests,
       p.security, p.seo, p.a11y, p.unique, p.shared, p.recs.map((c) => recShortLabel(c, t)).join(', '), p.error || '']),
   ]
 }

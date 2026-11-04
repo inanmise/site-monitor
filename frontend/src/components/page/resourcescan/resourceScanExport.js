@@ -10,7 +10,7 @@ import {
 // prs3 F3 (fe2): yönetici özeti, A–E sayfaları, çok sayfalı (site) analiz
 import {
   algoChanges, budgetExportRows, categoryBytesChart, categoryScoreRows, categoryScoreText, compareExportRows, deepSheets,
-  executiveSections, executiveSheetRows, priorityActions, actionRow, siteModel, sitePageSheetRows, siteSharedSheetRows,
+  executiveSections, executiveSheetRows, pageStatusText, priorityActions, actionRow, siteModel, sitePageSheetRows, siteSharedSheetRows,
 } from './resourceScanReportModel.js'
 
 /**
@@ -317,7 +317,7 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
     const worst = site.worst.length ? site.worst : site.pages.slice(0, 5)
     doc.lastAutoTable = null
     table([[t('prs.export.col.url'), t('prs.grade'), t('prs.kpi.load'), t('prs.kpi.size')],
-      ...worst.map((p) => [p.url, p.status === 'ok' ? `${p.grade ?? '—'}${p.letter ? ` ${p.letter}` : ''}` : t(`prs.site.status.${p.status}`),
+      ...worst.map((p) => [p.url, p.status === 'ok' ? `${p.grade ?? '—'}${p.letter ? ` ${p.letter}` : ''}` : pageStatusText(p.status, t),
         formatMs(p.load, locale), formatSize(p.size, { locale })])], { startY: y, columnStyles: { 0: { cellWidth: 420 } } })
     after()
   }

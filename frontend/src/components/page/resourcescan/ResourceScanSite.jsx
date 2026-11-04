@@ -7,7 +7,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import { categoryLabel, formatMs, formatNumber, formatSize, gradeTone, isCapped, plural, problemText, scoreTone } from './resourceScanModel.js'
 import {
-  SITE_SORTS, SITE_TABLE_MIN_PX, pageStatusTone, recShortLabel, siteModel, sortSitePages,
+  SITE_SORTS, SITE_TABLE_MIN_PX, pageStatusText, pageStatusTone, recShortLabel, siteModel, sortSitePages,
 } from './resourceScanReportModel.js'
 import { CHIP, Section, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
@@ -44,7 +44,7 @@ export default function ResourceScanSite({ scan, analysis }) {
         description={plural(t, 'prs.site.desc', tt.pages, formatNumber(tt.pages, locale))}>
         <ul data-slot="prs-site-totals" className="m-0 grid min-w-0 list-none grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-5">
           <Tile k="scanned" label={t('prs.site.tile.scanned')} value={`${formatNumber(tt.scanned, locale)} / ${formatNumber(tt.pages, locale)}`} />
-          <Tile k="failed" label={t('prs.site.tile.failed')} value={formatNumber(tt.failed, locale)} tone={tt.failed > 0 ? 'danger' : null} />
+          <Tile k="failed" label={t('prs.site.tile.notOpened')} value={formatNumber(tt.failed, locale)} tone={tt.failed > 0 ? 'danger' : null} />
           <Tile k="avg" label={t('prs.site.tile.avgGrade')} value={tt.avgGrade == null ? '—' : formatNumber(tt.avgGrade, locale)}
             tone={tt.avgGrade == null ? null : scoreTone(tt.avgGrade)} />
           <Tile k="unique" label={t('prs.site.tile.unique')} value={formatSize(tt.uniqueBytes, { locale })} />
@@ -171,7 +171,7 @@ function Tile({ k, label, value, tone }) {
 /** Sayfanın notu (taranmışsa harfle; taranmamış / açılamamış sayfa durum rozeti). */
 function GradeBadge({ p, t }) {
   if (p.status !== 'ok') {
-    return <ToneBadge tone={pageStatusTone(p.status)} className={cn(CHIP, 'shrink-0')} data-slot="prs-site-status">{t(`prs.site.status.${p.status}`)}</ToneBadge>
+    return <ToneBadge tone={pageStatusTone(p.status)} className={cn(CHIP, 'shrink-0')} data-slot="prs-site-status">{pageStatusText(p.status, t)}</ToneBadge>
   }
   return (
     <ToneBadge tone={p.grade == null ? 'muted' : gradeTone(p.letter)} className={cn(CHIP, 'shrink-0 font-bold tabular-nums')} data-slot="prs-site-grade">
@@ -199,7 +199,7 @@ function PageCell({ p, t, locale }) {
         {p.status === 'ok' && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
         {p.status === 'ok' && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
       </span>
-      {p.status === 'failed' && <span data-slot="prs-site-error" className={cn('text-xs text-destructive', WRAP)}>{pageErrorText(p.error, t) || t('prs.site.status.failed')}</span>}
+      {p.status === 'failed' && <span data-slot="prs-site-error" className={cn('text-xs text-destructive', WRAP)}>{pageErrorText(p.error, t) || pageStatusText(p.status, t)}</span>}
       {p.status === 'skipped' && <span className={cn('text-xs text-muted-foreground', WRAP)}>{t('prs.site.skippedBody')}</span>}
     </span>
   )
