@@ -26,9 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -245,6 +243,4 @@ class SchedulerDbQuerySmartRulesTest {
         verify(esc, never()).resolveMonitoringAlertsForDomain(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
         verify(esc, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
     }
-
-    static Map<String, Object> unused() { return new HashMap<>(); }
 }
