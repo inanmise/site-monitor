@@ -109,6 +109,14 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("kaynak analizi bütçesi (2026-11, F1): PAGE_RESOURCE_BUDGET_SAVE katalogda ve İZLEME kategorisinde (tarama türleriyle aynı)")
+    void pageResourceBudgetIsMonitor() {
+        assertThat(AuditEventCatalog.contains("PAGE_RESOURCE_BUDGET_SAVE")).isTrue();
+        assertThat(AuditEventCatalog.categoryOf("PAGE_RESOURCE_BUDGET_SAVE")).isEqualTo(AuditEventCatalog.MONITOR);
+        assertThat(AuditEventCatalog.categoryOf("PAGE_RESOURCE_SCAN_RUN")).isEqualTo(AuditEventCatalog.MONITOR);
+    }
+
+    @Test
     @DisplayName("denetim zinciri yeniden başlatma (2026-10-23): katalogda ve SİSTEM kategorisinde (arayüzdeki ev-system ile aynı)")
     void auditChainRestartIsSystem() {
         assertThat(AuditEventCatalog.contains(AuditService.EVENT_CHAIN_RESTART)).isTrue();

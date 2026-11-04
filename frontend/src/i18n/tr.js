@@ -9874,6 +9874,7 @@ export const TR = {
   'audit.ev.DNS_DIAGNOSTICS_RUN': 'DNS tanılaması çalıştırıldı',
   'audit.ev.PAGE_RESOURCE_SCAN_RUN': 'Sayfa Bütünlüğü kaynak analizi başlatıldı',
   'audit.ev.PAGE_RESOURCE_SCAN_CANCEL': 'Sayfa Bütünlüğü kaynak analizi iptal edildi',
+  'audit.ev.PAGE_RESOURCE_BUDGET_SAVE': 'Sayfa Bütünlüğü kaynak analizi bütçesi kaydedildi',
   'audit.ev.PAGE_DIAGNOSTICS_RUN': 'Sayfa Bütünlüğü tanılaması çalıştırıldı',
   'audit.ev.PAGESPEED_DIAGNOSTICS_RUN': 'Sayfa Hızı tanılaması çalıştırıldı',
   'audit.ev.CERT_MANUAL_UPLOAD': 'Sertifika dosyadan yüklendi',

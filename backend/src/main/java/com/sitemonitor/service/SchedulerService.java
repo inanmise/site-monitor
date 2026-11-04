@@ -977,6 +977,9 @@ public class SchedulerService {
         // bir kez şifreleyip onu NULL'lar.
         patch("ALTER TABLE keyword_monitors ADD COLUMN custom_headers_enc TEXT");
         patch("ALTER TABLE page_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        // Kaynak analizi bütçesi (2026-11, F1) — PageMonitor.resourceBudgetJson (NULL = bütçe yok). Varsayılansız nullable
+        // kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE page_monitors ADD COLUMN resource_budget_json TEXT");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
         // İsteğin faz kırılımı: k6 bunları hep üretiyordu, okunmuyordu — "request timeout"un

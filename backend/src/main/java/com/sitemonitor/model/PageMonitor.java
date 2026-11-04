@@ -170,6 +170,16 @@ public class PageMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarge
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String nocGroupIds;
 
+    /**
+     * Kaynak analizi bütçesi (2026-11, F1) — {@code {"max_page_kb":500,…}}; NULL = bütçe yok. YALNIZ bütçe ucu yazar
+     * ({@code ResourceBudgetService}, koşullu tek kolon UPDATE): izleme düzenlemesi varlığın TAMAMINI kaydettiği için kolon
+     * {@code insertable/updatable=false} — eş zamanlı bir düzenleme okuduğu eski bütçeyi geri yazamaz. Analize ya da alarma
+     * etki etmez; okuma anında analizleri işaretler. JSON'a çıkmaz (liste satırları kendi alanlarını yazar).
+     */
+    @jakarta.persistence.Column(name = "resource_budget_json", columnDefinition = "TEXT", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String resourceBudgetJson;
+
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "PAGE"; }
     @Override public String scheduleTarget() { return url; }

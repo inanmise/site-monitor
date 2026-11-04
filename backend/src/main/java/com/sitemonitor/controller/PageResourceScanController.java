@@ -3,9 +3,13 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.PageMonitor;
 import com.sitemonitor.repository.PageMonitorRepository;
 import com.sitemonitor.service.AuditDetail;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.page.scan.PageResourceScanService;
+import com.sitemonitor.service.page.scan.budget.ResourceBudget;
+import com.sitemonitor.service.page.scan.budget.ResourceBudgetService;
+import com.sitemonitor.service.page.scan.budget.ResourceTrendService;
 import com.sitemonitor.util.MonitorUrls;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpSession;
@@ -14,6 +18,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,6 +28,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -31,7 +39,14 @@ import java.util.Map;
  *   <li>{@code GET  /api/monitoring/page/{id}/resource-scans?limit=} — geçmiş (özetler, 1 yıl) + çalışan tarama + {@code can_run}</li>
  *   <li>{@code GET  /api/monitoring/page/{id}/resource-scans/{scanId}} — tek tarama: özet + analiz + nesneler</li>
  *   <li>{@code POST /api/monitoring/page/{id}/resource-scans/{scanId}/cancel} — çalışan taramayı iptal (2026-11)</li>
+ *   <li>{@code GET  /api/monitoring/page/{id}/resource-scans/trend?days=30|90|365} — eğilim: noktalar + en çok büyüyen nesneler (F2)</li>
+ *   <li>{@code GET / PUT /api/monitoring/page/{id}/resource-budget} — kaynak analizi bütçesi (F1)</li>
  * </ul>
+ *
+ * <p><b>Bütçe</b> (2026-11, F1): okuma = analiz listesiyle aynı kapı; yazma = izlemeyi düzenleme kapısı
+ * ({@code monitoring.crud/edit} + {@link SessionScope#canOperateTeam}, EDIT paylaşımı dahil). Değerlendirme OKUMA anındadır,
+ * GÜNCEL bütçeyle: liste satırları {@code budget_status} / {@code budget_exceeded}, tek analiz {@code budget} taşır — geçmiş
+ * analizler de bugünkü sınırlarla işaretlenir. Alarm / bildirim yok. Denetim {@code PAGE_RESOURCE_BUDGET_SAVE} (fark ile).
  *
  * <p><b>Yetki</b> (kullanıcı kararı): çalıştırmak "Şimdi kontrol et" kuralıdır — {@code monitoring.trigger/execute} + izlemenin
  * takımında ÇALIŞTIRMA kapsamı ({@link SessionScope#canExecuteTeam}, EXECUTE+ paylaşım dahil); okumak izlemeyi görebilen
@@ -50,6 +65,8 @@ public class PageResourceScanController {
     private final PermissionService permissionService;
     private final PageResourceScanService scans;
     private final AuditService auditService;
+    private final ResourceBudgetService budgets;
+    private final ResourceTrendService trends;
 
     @PostMapping("/{id}/resource-scans")
     public ResponseEntity<Map<String, Object>> start(@PathVariable Long id, HttpSession session) {
@@ -140,7 +157,101 @@ public class PageResourceScanController {
         if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
         Map<String, Object> data = new LinkedHashMap<>(scans.list(m.getId(), limit));
         data.put("can_run", canRun(session, m));
+        // Bütçe işaretleri (F1): GÜNCEL bütçeyle, okuma anında; okunamazsa satırlar "bilinmiyor" (asla "geçti")
+        ResourceBudget budget = ResourceBudgetService.budgetOf(m);
+        if (data.get("items") instanceof List<?> items) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) items;
+            if (!budgets.annotate(m.getId(), budget, rows)) data.put("budget_unreadable", true);
+        }
+        data.put("budget", budgetView(budget));
         return ResponseEntity.ok(ok(data));
+    }
+
+    /**
+     * Eğilim (F2): pencerenin bitmiş analizleri (≤ 200, eskiden yeniye) + en çok büyüyen ≤ 20 nesne. {@code days} 30 | 90 | 365;
+     * başka değer 90. Okuma kapısı listeyle aynı.
+     */
+    @GetMapping("/{id}/resource-scans/trend")
+    public ResponseEntity<Map<String, Object>> trend(@PathVariable Long id, @RequestParam(required = false) String days,
+                                                     HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        PageMonitor m = pageMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        return ResponseEntity.ok(ok(trends.trend(m.getId(), ResourceTrendService.days(days), ResourceBudgetService.budgetOf(m))));
+    }
+
+    /** Bütçe (F1): yedi sınır (tanımsız = null) + {@code defined} + {@code can_edit} + alan aralıkları. */
+    @GetMapping("/{id}/resource-budget")
+    public ResponseEntity<Map<String, Object>> getBudget(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        PageMonitor m = pageMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        return ResponseEntity.ok(ok(budgetBody(ResourceBudgetService.budgetOf(m), canEditBudget(session, m), null)));
+    }
+
+    /**
+     * Bütçeyi kaydeder (F1). Gövde düz: {@code max_page_kb}, {@code max_requests}, {@code max_js_kb}, {@code max_image_kb},
+     * {@code max_load_ms}, {@code min_grade}, {@code min_security_score} — hepsi isteğe bağlı; YALNIZ gönderilen anahtar değişir
+     * (null = sınırı kaldır), bilinmeyen anahtar yok sayılır. Geçersiz değer 400 {@code VALIDATION_FAILED} + {@code field}
+     * (hiçbir şey yazılmaz); değişiklik yoksa yazılmaz ve denetlenmez ({@code changed:false}).
+     */
+    @PutMapping("/{id}/resource-budget")
+    public ResponseEntity<Map<String, Object>> putBudget(@PathVariable Long id,
+                                                         @RequestBody(required = false) Map<String, Object> body,
+                                                         HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        PageMonitor m = pageMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        if (!SessionScope.canOperateTeam(session, m.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu takımın izlemesinin kaynak analizi bütçesini değiştiremezsiniz.",
+                    "You cannot change the resource analysis budget of this team's monitor."));
+        }
+        ResourceBudgetService.Save r = budgets.save(m.getId(), m.getResourceBudgetJson(), body == null ? Map.of() : body);
+        return switch (r.outcome()) {
+            case SAVED -> {
+                auditService.recordAction("PAGE_RESOURCE_BUDGET_SAVE", session, "PAGE_MONITOR", String.valueOf(m.getId()),
+                        AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl())),
+                        AuditDiff.diff(r.before().toMap(), r.after().toMap()));
+                yield ResponseEntity.ok(ok(budgetBody(r.after(), true, true)));
+            }
+            case UNCHANGED -> ResponseEntity.ok(ok(budgetBody(r.after(), true, false)));
+            case NOT_FOUND -> notFound();
+            case CONFLICT -> error(409, "CONCURRENT_MODIFICATION", Msg.t(
+                    "Bütçe aynı anda başka biri tarafından değiştiriliyor; kaydedilemedi. Sayfayı yenileyip yeniden deneyin.",
+                    "Someone else is changing the budget at the same time; it was not saved. Refresh the page and try again."));
+        };
+    }
+
+    private boolean canEditBudget(HttpSession session, PageMonitor m) {
+        return permissionService.allows(session, "monitoring.crud", "edit") && SessionScope.canOperateTeam(session, m.getTeamId());
+    }
+
+    /** Bütçe yanıtı: sınırlar + tanımlı mı + düzenlenebilir mi + aralıklar (+ {@code changed} yalnız kaydetmede). */
+    static Map<String, Object> budgetBody(ResourceBudget b, boolean canEdit, Boolean changed) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("budget", b.toMap());
+        out.put("defined", b.defined());
+        out.put("can_edit", canEdit);
+        if (changed != null) out.put("changed", changed);
+        Map<String, Object> ranges = new LinkedHashMap<>();
+        for (ResourceBudget.Field f : ResourceBudget.FIELDS) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("min", f.min());
+            r.put("max", f.max());
+            r.put("unit", f.unit());
+            r.put("kind", f.kind().name().toLowerCase(Locale.ROOT));
+            ranges.put(f.key(), r);
+        }
+        out.put("ranges", ranges);
+        return out;
+    }
+
+    /** Liste yanıtındaki bütçe özeti: yedi sınır + {@code defined}. */
+    private static Map<String, Object> budgetView(ResourceBudget b) {
+        Map<String, Object> m = b.toMap();
+        m.put("defined", b.defined());
+        return m;
     }
 
     @GetMapping("/{id}/resource-scans/{scanId}")
@@ -154,6 +265,9 @@ public class PageResourceScanController {
                     "Kaynak analizi kaydı bulunamadı; silinmiş ya da saklama süresi dolmuş olabilir. Geçmişi yenileyin.",
                     "Resource analysis run not found; it may have been deleted or aged out. Refresh the history."));
         }
+        data = new LinkedHashMap<>(data);
+        // Bütçe (F1): GÜNCEL bütçeyle okuma anında değerlendirilir
+        data.put("budget", budgets.evaluateOne(m.getId(), ResourceBudgetService.budgetOf(m), scanId));
         return ResponseEntity.ok(ok(data));
     }
 
