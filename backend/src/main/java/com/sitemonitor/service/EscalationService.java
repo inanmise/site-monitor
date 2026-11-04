@@ -198,6 +198,36 @@ public class EscalationService {
     }
 
     /**
+     * Alarm olaylarının aktivite akışı satırları (2026-11-05, aktivite zenginleştirmesi B): ilk açılış, seviye yükseltme
+     * talebini kazanan pod, onay, elle / otomatik kapanış (sessiz kapanışı {@link SilentAlarmCloser} yazar). Yazım best-effort
+     * ve sorgusuz eşlemeli ({@link ActivityLogService#recordAlert}); alarm yolunu bozmaz. Alan enjeksiyonu + isteğe bağlı:
+     * elle kurulan birim testlerinde yoktur.
+     */
+    @Autowired(required = false)
+    private ActivityLogService activityLog;
+
+    /** Test dikişi. */
+    void setActivityLog(ActivityLogService activityLog) {
+        this.activityLog = activityLog;
+    }
+
+    /** Tarama bağlamındaki izleme kimliği (sorgu yok) — yoksa null. */
+    private static Long ctxMonitorId(Map<String, Object> ctx) {
+        return ctx != null && ctx.get("monitor_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+    }
+
+    /** Alarm olayı satırı — servis yoksa (elle kurulan test) hiçbir şey; asla fırlatmaz. */
+    private void noteAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note) {
+        ActivityLogService a = activityLog;
+        if (a == null || event == null) return;
+        try {
+            a.recordAlert(event, action, level, monitorId, actor, note);
+        } catch (RuntimeException e) {
+            log.debug("Alarm aktivite satırı atlandı (#{}): {}", event.getId(), e.toString());
+        }
+    }
+
+    /**
      * {@code props} kolonlarını bellekteki değerlerle hedefli yazar ve {@code event}'i döndürür; yazıcı yokken ya da kimliksiz
      * satırda eski yol ({@code save} — dönüşü kullanılır).
      */
@@ -596,6 +626,9 @@ public class EscalationService {
                                 .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
                                 .orElse(null));
                         event = alertEventRepo.save(event);
+                        noteAlert(event, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel,
+                                inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null),
+                                ActivityLogService.SYSTEM_ACTOR, null);
 
                         // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → henüz döngüde kimse yok; sorgu yok).
                         List<EscalationContact> contacts = EscalationDelay.immediateOnly(
@@ -632,6 +665,10 @@ public class EscalationService {
                         String claimAt = now();
                         EscalationUndo undo = EscalationUndo.of(event);
                         if (!claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) continue;
+                        // Aktivite (2026-11-05): talebi KAZANAN pod yazar — tam bir kez (gönderim geri alınsa da terfi denendi).
+                        noteAlert(event, ActivityLogService.ACTION_ALERT_ESCALATED, alertLevel,
+                                inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null),
+                                ActivityLogService.SYSTEM_ACTOR, event.getAlertLevel() + " → " + alertLevel);
                         // Sahiplenme YENİ seviyeyi yazdı: bundan sonraki HER adım (alıcı sorgusu, kayıt, gönderim) düşerse
                         // terfi geri alınır (inceleme N1 — havuz tükenmesinde kayıt / alıcı sorgusu düşünce seviye yükselmiş
                         // kalıyor, sonraki tur terfiyi "yapılmış" görüyor ve ESCALATION hiç gitmiyordu).
@@ -824,7 +861,15 @@ public class EscalationService {
         out.setAcknowledgedBy(by);
         out.setAcknowledgedAt(at);
         if (trimmed != null) out.setAcknowledgedNote(trimmed);
+        // Aktivite (2026-11-05): onay YAZILDI (0 satırda yukarıda fırlatıldı — kapanmış alarmın onayı satır üretmez)
+        noteAlert(out, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED, null, null, actorOr(by), null);
         return out;
+    }
+
+    /** Aktivite satırının aktörü: oturumdaki kullanıcı adı (istek iş parçacığı), yoksa verilen ad. */
+    private static String actorOr(String fallback) {
+        String u = ActivityLogService.currentUser();
+        return u != null ? u : (fallback != null && !fallback.isBlank() ? fallback : ActivityLogService.SYSTEM_ACTOR);
     }
 
     /**
@@ -1898,6 +1943,7 @@ public class EscalationService {
         // Serbest-form izleme (keyword/ping) takımı outageContext.team_id'den gelir
         // (envantere bağlı değil); uptime/port/dns ise domain→envanter eşlemesinden.
         Long domainTeamId, ugTeamId;
+        Long inventoryId = null;   // aktivite satırının izleme kimliği (erişilebilirlik = envanter kaydı); ek sorgu yok
         Object ctxTeam = outageContext != null ? outageContext.get("team_id") : null;
         if (ctxTeam instanceof Number teamNum) {
             domainTeamId = teamNum.longValue();
@@ -1912,6 +1958,8 @@ public class EscalationService {
             var inventoryOpt = inventoryRepo.findByDomain(domain);
             domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+            if (TYPE_ACCESSIBILITY.equals(alertType))
+                inventoryId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null);
         }
         // Standalone izleme (keyword/ping/http/domain) takım-özeldir; AMA KRİTİK domain alarmında müdür de eklenir.
         // Bağlamda team_id damgası = bağımsız izleme (PORT/DNS dâhil — O-1).
@@ -1930,6 +1978,8 @@ public class EscalationService {
             event.setNotificationGroupId(resolveStampFromContext(outageContext, domain));
             event.setContextJson(snapshotContext(outageContext));   // çözüldü mailinde keyword/koşul detayı için
             event = alertEventRepo.save(event);
+            noteAlert(event, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel,
+                    inventoryId != null ? inventoryId : ctxMonitorId(outageContext), ActivityLogService.SYSTEM_ACTOR, null);
 
             // Alarm fırtınası hunisi (bakım + ≥%50 geçitlerinin ALTINDA): eşik+pencere aşıldıysa bireysel
             // bildirim bastırılır → TEK toplu alarm storm üzerinden gider. Storm KAPALI / eşik altı ise
@@ -2054,6 +2104,11 @@ public class EscalationService {
                 String claimAt = now();
                 EscalationUndo undo = EscalationUndo.of(event);
                 if (!stormMember && !claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) return;
+                // Aktivite (2026-11-05): talebi kazanan (fırtına üyesinde talep yok — izleme yolu yalnız tarama liderinde, alarm
+                // anahtarı kilidi altında) yazar.
+                noteAlert(event, ActivityLogService.ACTION_ALERT_ESCALATED, alertLevel,
+                        inventoryId != null ? inventoryId : ctxMonitorId(outageContext), ActivityLogService.SYSTEM_ACTOR,
+                        event.getAlertLevel() + " → " + alertLevel);
                 // Sahiplenme YENİ seviyeyi yazdı: kayıt, alıcı sorgusu ve gönderimden HERHANGİ biri düşerse terfi geri alınır
                 // (inceleme N1 — eskiden yalnız gönderim korunuyordu; havuz tükenmesinde kayıt düşünce seviye yükselmiş kalıyor,
                 // ESCALATION hiç gitmiyor, onaylı alarm sonsuza dek susuyordu).
@@ -2206,6 +2261,8 @@ public class EscalationService {
         event.setNotifiedContacts("[]");
         // lastReAlertAt BİLEREK null: "ilk bildirim yarıda kaldı" dalı pencere bitince INITIAL'ı gönderir.
         AlertEvent saved = alertEventRepo.save(event);
+        noteAlert(saved, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel, ctxMonitorId(ctx),
+                ActivityLogService.SYSTEM_ACTOR, "bakım penceresinde açıldı");
         log.warn("🔧 Değişiklik alarmı bakım penceresinde açıldı (bildirim pencere bitince): {} [{}] olay #{}",
                 domain, alertType, saved == null ? null : saved.getId());
     }
@@ -5330,6 +5387,18 @@ public class EscalationService {
      * {@link AlertEventRepository#markResolvedIfOpen}. 1 = bu çağrı kapattı, 0 = başkası kapatmıştı.
      */
     int markResolvedIfOpenNotify(AlertEvent event, String at, String by, boolean notify) {
+        int n = markResolvedIfOpenNotifyRaw(event, at, by, notify);
+        // Aktivite (2026-11-05): kapanışı GERÇEKTEN yapan çağıran (CAS kazananı) yazar — tam bir kez. "system" = otomatik
+        // kurtarma; başka değer = elle kapatan (ekrandaki ad).
+        if (n == 1) {
+            boolean auto = by == null || "system".equals(by);
+            noteAlert(event, ActivityLogService.ACTION_ALERT_RESOLVED, null, null,
+                    auto ? ActivityLogService.SYSTEM_ACTOR : actorOr(by), auto ? "otomatik" : "elle " + by);
+        }
+        return n;
+    }
+
+    private int markResolvedIfOpenNotifyRaw(AlertEvent event, String at, String by, boolean notify) {
         Long id = event.getId();
         if (notify && jdbcTemplate != null) {
             try {

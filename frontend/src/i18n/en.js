@@ -4428,6 +4428,8 @@ export const EN = {
   'act.ac.PAUSED':          'paused',
   'act.ac.RESUMED':         'resumed',
   'act.ac.ALERT_TRIGGERED': 'alert triggered',
+  'act.ac.ALERT_ESCALATED': 'alert level raised',
+  'act.ac.ALERT_ACKNOWLEDGED': 'alert acknowledged',
   'act.ac.ALERT_RESOLVED':  'alert resolved',
   'act.ac.NOC_CALL_LOGGED': '24/7 call logged',
   'act.ac.NOC_CALL_DELETED': '24/7 call entry deleted',

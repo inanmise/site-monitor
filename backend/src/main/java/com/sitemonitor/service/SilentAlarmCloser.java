@@ -64,6 +64,17 @@ public class SilentAlarmCloser {
     }
 
     /**
+     * Aktivite akışı (2026-11-05, aktivite zenginleştirmesi B): koşullu kapanışı KAZANAN çağrı {@code ALERT_RESOLVED} satırı
+     * yazar (sessiz kapanışların tek yazım noktası). İsteğe bağlı: elle kurulan testlerde yoktur.
+     */
+    private ActivityLogService activityLog;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setActivityLog(ActivityLogService activityLog) {
+        this.activityLog = activityLog;
+    }
+
+    /**
      * Alarmı yalnız hâlâ açıksa sessizce kapatır. {@code true} = bu çağrı kapattı (çözüm push'u kuyruğa girdi); {@code false} =
      * başka yol zaten kapatmıştı ya da yazım düştü (push yok, satıra dokunulmadı).
      */
@@ -109,6 +120,7 @@ public class SilentAlarmCloser {
         closed.setResolvedAt(at);
         closed.setResolvedBy(by);
         if (markSilenced) closed.setResolvedSilently(true);
+        noteResolved(closed, by, markSilenced);
         return closed;
     }
 
@@ -135,6 +147,21 @@ public class SilentAlarmCloser {
             if (closeIfOpen(event, BY_INVENTORY_DEACTIVATE)) closed++;
         }
         return closed;
+    }
+
+    /**
+     * Kapanışın aktivite satırı: susturma (silme / duraklatma / tür kapalı / envanter) "sessiz <neden>", bakımda gerçekten
+     * düzelen "otomatik (bakım penceresi)". Aktör: isteği yapan kullanıcı (ör. izlemeyi duraklatan), yoksa sistem.
+     */
+    private void noteResolved(AlertEvent closed, String by, boolean markSilenced) {
+        ActivityLogService a = activityLog;
+        if (a == null) return;
+        try {
+            a.recordAlert(closed, ActivityLogService.ACTION_ALERT_RESOLVED, null, null, null,
+                    markSilenced ? "sessiz · " + by : "otomatik · " + by);
+        } catch (RuntimeException e) {
+            log.debug("Sessiz kapanış aktivite satırı atlandı (#{}): {}", closed.getId(), e.toString());
+        }
     }
 
     private void enqueueResolvePushQuietly(AlertEvent event) {

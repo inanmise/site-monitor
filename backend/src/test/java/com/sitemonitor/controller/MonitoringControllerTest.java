@@ -3969,8 +3969,33 @@ class MonitoringControllerTest {
                             .content("{\"intervalSeconds\":60,\"timeoutMs\":9000}"))
                     .andExpect(status().isOk());
 
-            verify(activityLog).recordLifecycle(eq("PORT"), eq(7L), anyString(), anyString(),
-                    eq(5L), eq("CONFIG_CHANGED"), any(), eq("intervalSeconds, timeoutMs"));
+            // 2026-11-05 (aktivite zenginleştirmesi C): satır değişiklik kaydının seq'ini + farkı taşır (PAUSED / RESUMED kararı
+            // ActivityLogService.recordConfigChange'te — ActivityLogServiceEnrichmentTest)
+            verify(activityLog).recordConfigChange(eq("PORT"), eq(7L), anyString(), anyString(),
+                    eq(5L), any(), eq("intervalSeconds, timeoutMs"), any(),
+                    eq("{\"intervalSeconds\":{\"from\":300,\"to\":60},\"timeoutMs\":{\"from\":5000,\"to\":9000}}"));
+        }
+
+        @Test
+        @DisplayName("Elle 'Şimdi kontrol et' (port) akışa MANUAL_CHECK + oturumdaki kullanıcı + kontrol satırı bağı yazar")
+        void trigger_writesManualCheckActivityWithUser() throws Exception {
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(livePort()));
+            when(portChecker.check(any(com.sitemonitor.model.PortMonitor.class)))
+                    .thenReturn(new java.util.HashMap<>(java.util.Map.of("open", true, "response_ms", 12)));
+            when(portCheckRepo.save(any(com.sitemonitor.model.PortCheck.class))).thenAnswer(a -> {
+                com.sitemonitor.model.PortCheck c = a.getArgument(0);
+                c.setId(901L);
+                return c;
+            });
+
+            mvc.perform(post("/api/monitoring/port/7/check").session(managerOf(5L)))
+                    .andExpect(status().isOk());
+
+            org.mockito.ArgumentCaptor<com.sitemonitor.service.ActivityLogService.Refs> refs =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.ActivityLogService.Refs.class);
+            verify(activityLog).recordCheck(eq("PORT"), eq(7L), eq("Ödeme portu"), eq("odeme.local:8443"), eq(5L), eq(true),
+                    eq("u"), any(), refs.capture());
+            org.assertj.core.api.Assertions.assertThat(refs.getValue().checkId()).isEqualTo(901L);
         }
 
         @Test
@@ -3988,8 +4013,8 @@ class MonitoringControllerTest {
                             .content("{\"intervalSeconds\":300}"))
                     .andExpect(status().isOk());
 
-            verify(activityLog, never()).recordLifecycle(anyString(), anyLong(), any(), any(),
-                    any(), eq("CONFIG_CHANGED"), any(), any());
+            verify(activityLog, never()).recordConfigChange(anyString(), anyLong(), any(), any(),
+                    any(), any(), any(), any(), any());
         }
 
         @Test
@@ -4006,8 +4031,8 @@ class MonitoringControllerTest {
                             .content("{\"intervalSeconds\":60}"))
                     .andExpect(status().isOk());
 
-            verify(activityLog, never()).recordLifecycle(anyString(), anyLong(), any(), any(),
-                    any(), eq("CONFIG_CHANGED"), any(), any());
+            verify(activityLog, never()).recordConfigChange(anyString(), anyLong(), any(), any(),
+                    any(), any(), any(), any(), any());
         }
     }
 

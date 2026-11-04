@@ -76,6 +76,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("ux_audit_seq", "audit_log(seq) WHERE seq_locked IS NOT NULL");
         // Veritabanı sorgu izlemesi kontrol serisi (2026-10-31, 11. tür): taşınabilir, katalogun sonunda
         EXPECTED.put("idx_dbqc_checked_at", "dbquery_checks(checked_at)");
+        // Aktivite satırlarının alarm bağı (2026-11-05, aktivite zenginleştirmesi B): kısmi PG'de, H2'de sade
+        EXPECTED.put("idx_act_alert", "activity_log(alert_event_id, activity_time) WHERE alert_event_id IS NOT NULL");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");

@@ -285,7 +285,7 @@ class NocCallLogServiceTest {
         assertThat(dto).containsEntry("can_delete", true).containsEntry("delete_until", iso(now.plus(Duration.ofMinutes(15))));
         assertThat(dto.keySet()).noneMatch(k -> k.contains("phone"));
         verify(activity).recordLifecycle(eq("PING"), isNull(), eq("a.example.com"), eq("a.example.com"), eq(TEAM_A),
-                eq("NOC_CALL_LOGGED"), eq("noc2"), contains("Kişi B"));
+                eq("NOC_CALL_LOGGED"), eq("noc2"), contains("Kişi B"), any());
     }
 
     @Test
@@ -324,7 +324,7 @@ class NocCallLogServiceTest {
         svc.delete(alertA, 2L, global());
         verify(repo, times(2)).delete(any(NocCallLog.class));
         verify(activity, times(2)).recordLifecycle(anyString(), isNull(), anyString(), anyString(), eq(TEAM_A),
-                eq("NOC_CALL_DELETED"), anyString(), anyString());
+                eq("NOC_CALL_DELETED"), anyString(), anyString(), any());
 
         NocCallLog other = stored(3, "noc2", now);
         other.setAlertId(51L);

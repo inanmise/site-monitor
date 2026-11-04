@@ -215,6 +215,33 @@ public class ActivityController {
         return ResponseEntity.ok(body);
     }
 
+    // ── be1: ayrıntı sayfası (2026-11-05, aktivite zenginleştirmesi A–C) ─────────────────────────────────────────────
+
+    /** Ayrıntı servisi — alan enjeksiyonu + isteğe bağlı (dar test bağlamında yok → uç 503). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.activity.ActivityDetailService detailService;
+
+    /**
+     * Aktivite ayrıntı sayfası: satır + bağlantı alanları, kontrol satırı (tam / yaklaşık) + önceki / sonraki, ± 24 sa seri,
+     * alarm, değişiklik bağı, derin bağlantılar. Kapı {@code GET /{id}} ile AYNI (görüş kapsamı dışı → 404); {@code /{id}}
+     * yanıtı değişmez.
+     */
+    @GetMapping("/{id}/detail")
+    public ResponseEntity<Map<String, Object>> fullDetail(@PathVariable Long id, HttpSession session) {
+        Optional<ActivityLog> found = repo.findById(id);
+        if (found.isEmpty() || !SessionScope.canViewMonitoring(session, found.get().getTeamId())) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "not_found"));
+        }
+        if (detailService == null) {
+            return ResponseEntity.status(503).body(Map.of("success", false, "error", "unavailable"));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.putAll(detailService.detail(found.get(), session));
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
 
     /** Takım kapsamı — AdminController.listAlerts ile aynı desen. */

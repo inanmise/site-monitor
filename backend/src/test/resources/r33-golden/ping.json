@@ -232,6 +232,15 @@
           "up": true,
           "rtt_ms": 20,
           "packet_loss": 0
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -270,6 +279,15 @@
           "up": true,
           "rtt_ms": 11,
           "packet_loss": 0
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -308,6 +326,15 @@
           "up": false,
           "packet_loss": 100,
           "error": "Yanıt yok (%100 paket kaybı)"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -346,6 +373,15 @@
           "up": false,
           "na": true,
           "error": "ICMP bu ortamda kullanılamıyor (yetki/binary)"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -384,6 +420,15 @@
           "up": true,
           "rtt_ms": 30,
           "packet_loss": 25
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

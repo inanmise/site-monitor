@@ -294,6 +294,56 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("Aktivite (2026-11-05): uptime satırı monitor_id = ENVANTER kimliği + check_id = yazılan uptime_checks satırı")
+    void runUptimeChecks_activityCarriesInventoryAndCheckIds() {
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setId(17L);
+        inv.setDomain("x.example.com");
+        inv.setPort(8443);
+        inv.setTeamId(5L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(uptimeHttpCheckerService.check(eq("x.example.com"), eq(8443), anyInt(), eq(false)))
+                .thenReturn(new java.util.HashMap<>(Map.of("status", "down", "error", "timeout")));
+        when(uptimeCheckRepo.save(any(com.sitemonitor.model.UptimeCheck.class))).thenAnswer(a -> {
+            com.sitemonitor.model.UptimeCheck c = a.getArgument(0);
+            c.setId(321L);
+            return c;
+        });
+
+        scheduler.runUptimeChecks();
+
+        org.mockito.ArgumentCaptor<ActivityLogService.Refs> refs = org.mockito.ArgumentCaptor.forClass(ActivityLogService.Refs.class);
+        verify(activityLog).recordCheck(eq(ActivityLogService.UPTIME), eq(17L), eq("x.example.com"), eq("x.example.com:8443"),
+                eq(5L), eq(false), eq("scheduler"), any(), refs.capture());
+        assertThat(refs.getValue().checkId()).isEqualTo(321L);
+    }
+
+    @Test
+    @DisplayName("Aktivite (2026-11-05): port kontrol satırı yazılan port_checks satırına bağlı (kimlik + satırın neden kodu)")
+    void portSweep_activityCarriesCheckRow() {
+        com.sitemonitor.model.PortMonitor a = new com.sitemonitor.model.PortMonitor();
+        a.setId(11L); a.setHost("a.example.com"); a.setPort(80); a.setProtocol("TCP"); a.setStandalone(true); a.setTeamId(3L);
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(a));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        Map<String, Object> r = new java.util.HashMap<>(Map.of("open", false, "error", "Connection refused"));
+        r.put(com.sitemonitor.service.failure.CheckFailure.KEY_REASON, "CONNECT_REFUSED");
+        when(portCheckerService.check(a)).thenReturn(r);
+        when(portCheckRepo.save(any(com.sitemonitor.model.PortCheck.class))).thenAnswer(i -> {
+            com.sitemonitor.model.PortCheck c = i.getArgument(0);
+            c.setId(654L);
+            return c;
+        });
+
+        scheduler.runPortChecks();
+
+        org.mockito.ArgumentCaptor<ActivityLogService.Refs> refs = org.mockito.ArgumentCaptor.forClass(ActivityLogService.Refs.class);
+        verify(activityLog).recordCheck(eq(ActivityLogService.PORT), eq(11L), any(), eq("a.example.com:80"), eq(3L), eq(false),
+                eq("scheduler"), any(), refs.capture());
+        assertThat(refs.getValue().checkId()).isEqualTo(654L);
+        assertThat(refs.getValue().failureReason()).isEqualTo("CONNECT_REFUSED");
+    }
+
+    @Test
     @DisplayName("runUptimeChecks: outage processing failure does not break the sweep")
     void runUptimeChecks_outageFailure_sweepSurvives() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();

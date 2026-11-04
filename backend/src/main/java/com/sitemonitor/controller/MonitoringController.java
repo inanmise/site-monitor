@@ -162,8 +162,15 @@ public class MonitoringController {
         if (row == null || !MonitorHistoryService.UPDATE.equals(row.getEventType())) return;
         var fields = MonitorHistoryService.changedFields(row.getChanges());
         if (fields.isEmpty()) return;
-        activityLog.recordLifecycle(activityType, row.getResourceId(), row.getResourceName(), target,
-                row.getTeamId(), "CONFIG_CHANGED", actor(session), String.join(", ", fields));
+        // 2026-11-05 (aktivite zenginleştirmesi C): satır değişiklik kaydının seq'ini taşır (ayrıntı sayfası alan bazlı farkı
+        // var olan change ucundan okur); active değiştiyse EK olarak PAUSED / RESUMED satırı.
+        activityLog.recordConfigChange(activityType, row.getResourceId(), row.getResourceName(), target,
+                row.getTeamId(), actor(session), String.join(", ", fields), row.getSeq(), row.getChanges());
+    }
+
+    /** Değişiklik geçmişi satırının seq bağı (yazılmadıysa null). */
+    private static ActivityLogService.Refs changeRefs(com.sitemonitor.model.MonitorChangeLog row) {
+        return row == null || row.getSeq() == null ? null : ActivityLogService.Refs.change(row.getSeq());
     }
 
     /** İzleme güncellemelerinde before/after diff için snapshot alınacak alanlar (tür-üstü superset; olmayan getter → null, gürültü yaratmaz). */
@@ -801,9 +808,21 @@ public class MonitoringController {
         }
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
                 row.getResourceName(), effective);
-        monitorHistory.record(resolved, id, row.getResourceName(), row.getTeamId(),
+        var restoreRow = monitorHistory.record(resolved, id, row.getResourceName(), row.getTeamId(),
                 MonitorHistoryService.RESTORE, before, after,
                 "#" + seq + " numaralı kayda geri döndürüldü" + noteSuffix(body), session);
+        // Aktivite (2026-11-05, aktivite zenginleştirmesi C): geri yükleme bir yapılandırma değişikliğidir — akışta
+        // CONFIG_CHANGED (geri yüklemenin kendi değişiklik kaydına bağlı) + active değiştiyse PAUSED / RESUMED. Eskiden akışta
+        // hiç görünmüyordu. Yalnız izleme türleri (envanter kaydının değişikliği sertifika satırı değil).
+        if (restoreRow != null && restoreRow.getChanges() != null) {
+            String activityType = MonitorHistoryService.INVENTORY.equals(resolved) ? null : resolved;
+            var fieldsChanged = MonitorHistoryService.changedFields(restoreRow.getChanges());
+            if (activityType != null && !fieldsChanged.isEmpty()) {
+                activityLog.recordConfigChange(activityType, id, restoreRow.getResourceName(), restoreRow.getResourceName(),
+                        liveTeam, actor(session), "#" + seq + " geri yüklendi: " + String.join(", ", fieldsChanged),
+                        restoreRow.getSeq(), restoreRow.getChanges());
+            }
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("restored", true);
@@ -2344,14 +2363,14 @@ public class MonitoringController {
         m.setUpdatedAt(now);
         monitorHistory.stampCreated(m, session);
         PortMonitor saved = portMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.PORT, saved.getId(), saved.getName(),
-                saved.getHost() + ":" + saved.getPort(), teamId, "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "PORT_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim kaydı create'te changes=null geçiyor (bilinçli, güvenlik kaydı
         // "ne oldu"yu yazar). Ürün geçmişi ise "hangi değerlerle doğdu" sorusunu cevaplamak
         // zorunda — snapshot BURADA alınır.
-        monitorHistory.record(MonitorHistoryService.PORT, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.PORT, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.PORT, saved.getId(), saved.getName(),
+                saved.getHost() + ":" + saved.getPort(), teamId, "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichPort(saved, null, certificateService.domainTeamNameMap(), teamNameMap(),
                 alertEventRepo.findOpenAlert(saved.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
     }
@@ -2459,12 +2478,12 @@ public class MonitoringController {
                 monitorHistory.stampUpdated(m, session);
                 portMonitorRepo.save(m);
             }
-            activityLog.recordLifecycle(ActivityLogService.PORT, m.getId(), m.getName(),
-                    m.getHost() + ":" + m.getPort(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.PORT, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.PORT, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS),
                     standalone ? "kalıcı silme" : null, session);
+            activityLog.recordLifecycle(ActivityLogService.PORT, m.getId(), m.getName(),
+                    m.getHost() + ":" + m.getPort(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true, "permanent", standalone));
         }).orElse(notFound("Port monitor not found"));
     }
@@ -2515,7 +2534,11 @@ public class MonitoringController {
             // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPort)
             check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
             check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
-            portCheckRepo.save(check);
+            PortCheck savedCheck = portCheckRepo.save(check);
+            // Aktivite (2026-11-05, aktivite zenginleştirmesi): elle kontrol akışa MANUAL_CHECK + oturumdaki kullanıcı +
+            // istek kimliği olarak düşer (eskiden hiç yazılmıyordu). Yalnız satır — alarm kararına dokunmaz.
+            activityLog.recordCheck(ActivityLogService.PORT, m.getId(), m.getName(), m.getHost() + ":" + m.getPort(),
+                    m.getTeamId(), true, actor(session), r, ActivityLogService.refs(savedCheck != null ? savedCheck : check));
             auditService.recordAction("MONITOR_TRIGGER", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
             // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
@@ -2847,13 +2870,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DnsMonitor saved = dnsMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.DNS, saved.getId(), saved.getName(),
-                saved.getDomain() + " " + saved.getRecordType(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "DNS_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.DNS, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.DNS, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.DNS, saved.getId(), saved.getName(),
+                saved.getDomain() + " " + saved.getRecordType(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichDns(saved, null, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(saved.getDomain())));
     }
 
@@ -2990,12 +3013,12 @@ public class MonitoringController {
                 m.setUpdatedAt(ISO.format(Instant.now()));
                 dnsMonitorRepo.save(m);
             }
-            activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
-                    m.getDomain() + " " + m.getRecordType(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.DNS, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.DNS, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS),
                     standalone ? "kalıcı silme" : null, session);
+            activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
+                    m.getDomain() + " " + m.getRecordType(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true, "permanent", standalone));
         }).orElse(notFound("DNS monitor not found"));
     }
@@ -3102,7 +3125,9 @@ public class MonitoringController {
             record.setManual(true);
             // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni — zamanlanmış turla AYNI yardımcı.
             if (!dnsOk) DnsCheckerService.applyFailure(record, r);
-            dnsRecordRepo.save(record);
+            DnsRecord savedRecord = dnsRecordRepo.save(record);
+            activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(), m.getDomain() + " " + m.getRecordType(),
+                    m.getTeamId(), true, actor(session), r, ActivityLogService.refs(savedRecord != null ? savedRecord : record));
             auditService.recordAction("MONITOR_TRIGGER", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
             // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
@@ -3279,13 +3304,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.KEYWORD, saved.getId(), saved.getName(),
-                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "KEYWORD_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.KEYWORD, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.KEYWORD, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.KEYWORD, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichKeyword(saved, null, teamNameMap(), null, SessionScope.isGlobalAdmin(session)));
     }
 
@@ -3353,11 +3378,11 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)",
                     ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1: yalnız bu izlemenin olayı
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
-            activityLog.recordLifecycle(ActivityLogService.KEYWORD, m.getId(), m.getName(),
-                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.KEYWORD, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.KEYWORD, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
+            activityLog.recordLifecycle(ActivityLogService.KEYWORD, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Keyword monitor not found"));
     }
@@ -3418,7 +3443,11 @@ public class MonitoringController {
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
             boolean ok = r.get("error") == null && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
             KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
-            keywordResultRepo.save(res);
+            KeywordResult savedRes = keywordResultRepo.save(res);
+            Map<String, Object> activityResult = new LinkedHashMap<>(r);
+            activityResult.put("ok", ok);   // zamanlanmış turla aynı: aktivite özeti için sağlıklı-mı bayrağı
+            activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(), m.getUrl(), m.getTeamId(), true,
+                    actor(session), activityResult, ActivityLogService.refs(savedRes != null ? savedRes : res));
             auditService.recordAction("MONITOR_TRIGGER", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
             // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
@@ -3986,13 +4015,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         HttpMonitor saved = httpMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.HTTP, saved.getId(), saved.getName(),
-                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.HTTP, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.HTTP, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, httpSnapshot(saved), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.HTTP, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichHttp(saved, null, teamNameMap(), null, null, SessionScope.isGlobalAdmin(session)));
     }
 
@@ -4071,11 +4100,11 @@ public class MonitoringController {
                             EscalationService.TYPE_DOMAIN_EXPIRY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             httpMonitorRepo.delete(m);
-            activityLog.recordLifecycle(ActivityLogService.HTTP, m.getId(), m.getName(),
-                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.HTTP, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.HTTP, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, httpSnapshot(m), null, session);
+            activityLog.recordLifecycle(ActivityLogService.HTTP, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("HTTP monitor not found"));
     }
@@ -4130,7 +4159,9 @@ public class MonitoringController {
             res.setError((String) r.get("error"));
             res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
-            httpCheckRepo.save(res);
+            HttpCheck savedRes = httpCheckRepo.save(res);
+            activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(), m.getUrl(), m.getTeamId(), true,
+                    actor(session), r, ActivityLogService.refs(savedRes != null ? savedRes : res));
             auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
             // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
@@ -4430,13 +4461,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.PageMonitor saved = pageMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.PAGE, saved.getId(), saved.getName(),
-                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "PAGE_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.PAGE, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.PAGE, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.PAGE, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichPage(saved, null, teamNameMap(), null));
     }
 
@@ -4493,11 +4524,11 @@ public class MonitoringController {
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pageMonitorRepo.delete(m);
             if (pageResourceScans != null) pageResourceScans.deleteForMonitor(m.getId());   // nesne adresleri + kişi adı
-            activityLog.recordLifecycle(ActivityLogService.PAGE, m.getId(), m.getName(),
-                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.PAGE, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.PAGE, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
+            activityLog.recordLifecycle(ActivityLogService.PAGE, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Sayfa monitörü bulunamadı"));
     }
@@ -4693,11 +4724,11 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.PAGESPEED, saved.getId(), saved.getName(),
-                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
-        monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, PAGESPEED_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.PAGESPEED, saved.getId(), saved.getName(),
+                saved.getUrl(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichPageSpeed(saved, null, teamNameMap(), null, SessionScope.isGlobalAdmin(session)));
     }
 
@@ -4755,11 +4786,11 @@ public class MonitoringController {
             pageSpeedResourceRepo.deleteByMonitorId(m.getId());
             pageSpeedCheckRepo.deleteByMonitorId(m.getId());
             pageSpeedMonitorRepo.delete(m);
-            activityLog.recordLifecycle(ActivityLogService.PAGESPEED, m.getId(), m.getName(),
-                    m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.PAGESPEED, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, PAGESPEED_FIELDS), null, session);
+            activityLog.recordLifecycle(ActivityLogService.PAGESPEED, m.getId(), m.getName(),
+                    m.getUrl(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
     }
@@ -5358,11 +5389,11 @@ public class MonitoringController {
         monitorHistory.stampUpdated(m, session);
         dbqRequireAccountAllowed(profile);
         DbQueryMonitor saved = dbqUniqueSave(m.getName(), null, true, () -> repo.save(m));
-        activityLog.recordLifecycle(ACT_DBQUERY, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                 AuditDiff.diff(null, AuditDiff.snapshot(saved, DBQUERY_FIELDS)));
-        monitorHistory.record(MonitorHistoryService.DBQUERY, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.DBQUERY, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, DBQUERY_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ACT_DBQUERY, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         Map<String, Object> out = enrichDbQuery(saved, null, teamNameMap(), null, profile, dbqProfileDetail(session, saved.getTeamId()));
         withCheckFlag(session, List.of(out));
         if (plan != null) out.put("plan_warning", dbqPlanApi(plan));
@@ -5465,10 +5496,10 @@ public class MonitoringController {
         dbqCheckRepo().deleteByMonitorId(m.getId());
         repo.delete(m);
         dbQueryManualTriggerAt.remove(m.getId());   // elle kontrol bekleme damgası silinen izlemede kalmasın (inceleme 2026-10-31, D8)
-        activityLog.recordLifecycle(ACT_DBQUERY, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
         auditService.recordAction("MONITOR_DELETE", session, "DBQUERY_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-        monitorHistory.record(MonitorHistoryService.DBQUERY, m.getId(), m.getName(), m.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.DBQUERY, m.getId(), m.getName(), m.getTeamId(),
                 MonitorHistoryService.DELETE, _before, null, null, session);
+        activityLog.recordLifecycle(ACT_DBQUERY, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
         return ok(Map.of("deleted", true));
     }
 
@@ -6787,7 +6818,7 @@ public class MonitoringController {
     }
 
     /** Kontrol geçmişi satırı (dbquery-api.md §1 history) — satır VERİSİ yok. */
-    static Map<String, Object> dbqCheckRow(DbQueryCheck c) {
+    public static Map<String, Object> dbqCheckRow(DbQueryCheck c) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("id", c.getId());
         r.put("checked_at", c.getCheckedAt());
@@ -7076,11 +7107,11 @@ public class MonitoringController {
         saved = scriptedMonitorRepo.save(saved);
         clearDraft(session, String.valueOf(saved.getId()));
         clearDraft(session, "new");                 // "yeni monitör" taslağı artık gerçek kayda dönüştü
-        activityLog.recordLifecycle(ActivityLogService.SCRIPTED, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                 AuditDiff.diff(null, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
-        monitorHistory.record(MonitorHistoryService.SCRIPTED, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.SCRIPTED, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, SCRIPTED_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.SCRIPTED, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         // Uyarılar YANITTA taşınır, istekte değil: kaydetme payload'ının şekli değişmez
         // (frontend testi create payload'ını tam eşitlikle pinliyor).
         Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved, null, teamNameMap(), null));
@@ -7390,12 +7421,12 @@ public class MonitoringController {
             // taşır; öksüz satırlar retention kuralıyla temizlenir.
             try { scriptedDraftRepo.deleteByMonitorId(m.getId()); }
             catch (Exception e) { log.warn("Monitör taslakları silinemedi: {}", e.toString()); }
-            activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // HARD delete: satır gitti ama geçmişi KALIR — silinen bir izlemenin neye benzediği
             // denetim değeri taşır (sürüm geçmişindeki aynı karar). Öksüz satırlar retention'la gider.
-            monitorHistory.record(MonitorHistoryService.SCRIPTED, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.SCRIPTED, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, null, null, session);
+            activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
@@ -7482,16 +7513,26 @@ public class MonitoringController {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Object o : items) {
             if (!(o instanceof com.sitemonitor.model.ScriptedCheck c)) continue;
-            Map<String, Object> row = SCRIPTED_ROW_MAPPER.convertValue(c, LinkedHashMap.class);
-            SCRIPTED_RAW_RUN_COLUMNS.forEach(row::remove);
-            // Teyit / kurtarma yeniden kontrolü (k6r inceleme #1) — alan YALNIZ true iken taşınır (eski / zamanlanmış satır yok)
-            if (!Boolean.TRUE.equals(c.getRecheck())) row.remove("recheck");
-            row.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(c));
-            rows.add(row);
+            rows.add(scriptedHistoryRow(c));
         }
         decorateScriptedTls(rows, session);
         ((Map<String, Object>) data).put("items", rows);
         return resp;
+    }
+
+    /**
+     * Sentetik kontrol geçmişi satırının tel biçimi (ham koşum kolonları yerine ayrıştırılmış alanlar; {@code recheck} yalnız
+     * true iken). Geçmiş ucu ve aktivite ayrıntısı (2026-11-05) AYNI eşleyiciyi kullanır. {@code checks_json} maskelemesi ve
+     * TLS sertifika durumu çağıranın işidir.
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> scriptedHistoryRow(com.sitemonitor.model.ScriptedCheck c) {
+        Map<String, Object> row = SCRIPTED_ROW_MAPPER.convertValue(c, LinkedHashMap.class);
+        SCRIPTED_RAW_RUN_COLUMNS.forEach(row::remove);
+        // Teyit / kurtarma yeniden kontrolü (k6r inceleme #1) — alan YALNIZ true iken taşınır (eski / zamanlanmış satır yok)
+        if (!Boolean.TRUE.equals(c.getRecheck())) row.remove("recheck");
+        row.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(c));
+        return row;
     }
 
     /**
@@ -8501,13 +8542,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         DomainMonitor saved = domainMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.DOMAIN, saved.getId(), saved.getName(),
-                saved.getDomain(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.DOMAIN, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.DOMAIN, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.DOMAIN, saved.getId(), saved.getName(),
+                saved.getDomain(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichDomain(saved, null, teamNameMap(), null));
     }
 
@@ -8581,11 +8622,11 @@ public class MonitoringController {
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             if (domainReminderRepo != null) domainReminderRepo.deleteByMonitorId(m.getId());   // hatırlatma izleri de gider (2026-09-22)
             domainMonitorRepo.delete(m);
-            activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
-                    m.getDomain(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "DOMAIN_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.DOMAIN, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.DOMAIN, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
+            activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
+                    m.getDomain(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Domain monitor not found"));
     }
@@ -8962,13 +9003,13 @@ public class MonitoringController {
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         PingMonitor saved = pingMonitorRepo.save(m);
-        activityLog.recordLifecycle(ActivityLogService.PING, saved.getId(), saved.getName(),
-                saved.getHost(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "PING_MONITOR", String.valueOf(saved.getId()), saved.getName(), null);
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
-        monitorHistory.record(MonitorHistoryService.PING, saved.getId(), saved.getName(), saved.getTeamId(),
+        var lifecycleRow = monitorHistory.record(MonitorHistoryService.PING, saved.getId(), saved.getName(), saved.getTeamId(),
                 MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+        activityLog.recordLifecycle(ActivityLogService.PING, saved.getId(), saved.getName(),
+                saved.getHost(), saved.getTeamId(), "CREATED", actor(session), null, changeRefs(lifecycleRow));
         return ok(enrichPing(saved, null, teamNameMap(), null));
     }
 
@@ -9050,11 +9091,11 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
-            activityLog.recordLifecycle(ActivityLogService.PING, m.getId(), m.getName(),
-                    m.getHost(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            monitorHistory.record(MonitorHistoryService.PING, m.getId(), m.getName(), m.getTeamId(),
+            var lifecycleRow = monitorHistory.record(MonitorHistoryService.PING, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
+            activityLog.recordLifecycle(ActivityLogService.PING, m.getId(), m.getName(),
+                    m.getHost(), m.getTeamId(), "DELETED", actor(session), null, changeRefs(lifecycleRow));
             return ok(Map.of("deleted", true));
         }).orElse(notFound("Ping monitor not found"));
     }
@@ -9107,7 +9148,9 @@ public class MonitoringController {
             // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPing)
             check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
             check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
-            pingCheckRepo.save(check);
+            PingCheck savedCheck = pingCheckRepo.save(check);
+            activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(), m.getHost(), m.getTeamId(), true,
+                    actor(session), r, ActivityLogService.refs(savedCheck != null ? savedCheck : check));
             auditService.recordAction("MONITOR_TRIGGER", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
             // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış

@@ -218,6 +218,15 @@
           "ok": true,
           "http_status": 200,
           "response_ms": 200
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -255,6 +264,15 @@
           "ok": true,
           "http_status": 200,
           "response_ms": 4000
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -293,6 +311,15 @@
           "http_status": 503,
           "response_ms": 80,
           "error": "HTTP 503 Service Unavailable"
+        },
+        {
+          "checkId": null,
+          "httpStatus": 503,
+          "failureReason": "HTTP_STATUS",
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -330,6 +357,15 @@
           "ok": false,
           "error": "URL'de host yok",
           "config_error": true
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": "UNKNOWN",
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -369,6 +405,15 @@
           "response_ms": 60,
           "error": "JSON doğrulaması başarısız: $.status",
           "json_assertion_failed": true
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": "UNKNOWN",
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

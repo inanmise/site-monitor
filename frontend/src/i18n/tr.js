@@ -4431,6 +4431,8 @@ export const TR = {
   'act.ac.PAUSED':          'duraklatıldı',
   'act.ac.RESUMED':         'devam ettirildi',
   'act.ac.ALERT_TRIGGERED': 'alarm tetiklendi',
+  'act.ac.ALERT_ESCALATED': 'alarm seviyesi yükseldi',
+  'act.ac.ALERT_ACKNOWLEDGED': 'alarm onaylandı',
   'act.ac.ALERT_RESOLVED':  'alarm çözüldü',
   'act.ac.NOC_CALL_LOGGED': '7/24 arama kaydı girildi',
   'act.ac.NOC_CALL_DELETED': '7/24 arama kaydı silindi',

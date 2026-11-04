@@ -482,7 +482,7 @@ class DomainCheckerServiceTest {
         assertThat(saved.getValue().getManual()).isTrue();
         org.mockito.Mockito.verify(checkRepo, org.mockito.Mockito.never()).findLatestScheduledWithData(anyLong());
         org.mockito.Mockito.verify(activityLog).recordCheck(anyString(), eq(13L), any(), any(), any(),
-                eq(false), eq("scheduler"), any());
+                eq(false), eq("scheduler"), any(), any());
     }
 
     // ── Ters-DNS süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi) ──

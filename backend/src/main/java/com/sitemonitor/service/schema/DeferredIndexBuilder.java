@@ -229,7 +229,13 @@ public final class DeferredIndexBuilder {
             // dbquery_checks (11. tür, 2026-10-31): saatlik / günlük rollup (WHERE checked_at >= ? AND < ?), filo sparkline'ı
             // ve saklama budaması — entity indeksi (monitor_id, checked_at) zaman aralığına tek başına hizmet etmez.
             // SONA eklendi: katalog sırası testlerde konumla okunur.
-            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dbqc_checked_at ON dbquery_checks(checked_at)"));
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dbqc_checked_at ON dbquery_checks(checked_at)"),
+            // 2026-11-05 (aktivite zenginleştirmesi B): bir alarmın aktivite satırları (ALERT_* + 7/24) — alert_event_id = ?
+            // ORDER BY activity_time. Kısmi indeks yalnız alarm / 7/24 satırlarını taşır (kontrol satırları tablonun büyük
+            // kısmı, kolonları null). H2'de sade hâli.
+            Spec.withFallback(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_alert ON activity_log(alert_event_id, activity_time) WHERE alert_event_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_act_alert ON activity_log(alert_event_id, activity_time)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

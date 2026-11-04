@@ -1,15 +1,30 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.config.CorrelationIdFilter;
 import com.sitemonitor.model.ActivityLog;
+import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.repository.ActivityLogRepository;
+import com.sitemonitor.service.failure.CheckFailure;
+import com.sitemonitor.service.failure.CheckFailureClassifier;
+import com.sitemonitor.service.failure.CheckFailureReason;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Birleşik aktivite akışına (activity_log) kayıt üreten TEK yazım noktası. Her izleme türünün
@@ -33,13 +48,136 @@ public class ActivityLogService {
 
     private final ActivityLogRepository repo;
 
-    /** Bir kontrol sonucunu (checker Map'i) aktiviteye çevirip kaydeder. manual=true → MANUAL_CHECK. */
+    // ── Eylem kodları (KALICI — ön yüz act.action.<KOD> etiketleri) ──────────────────────────────────────────────
+    public static final String ACTION_SCHEDULED_CHECK = "SCHEDULED_CHECK";
+    public static final String ACTION_MANUAL_CHECK = "MANUAL_CHECK";
+    public static final String ACTION_CONFIG_CHANGED = "CONFIG_CHANGED";
+    public static final String ACTION_PAUSED = "PAUSED";
+    public static final String ACTION_RESUMED = "RESUMED";
+    public static final String ACTION_ALERT_TRIGGERED = "ALERT_TRIGGERED";
+    public static final String ACTION_ALERT_ESCALATED = "ALERT_ESCALATED";
+    public static final String ACTION_ALERT_ACKNOWLEDGED = "ALERT_ACKNOWLEDGED";
+    public static final String ACTION_ALERT_RESOLVED = "ALERT_RESOLVED";
+
+    /** Satırın aktörü bilinemediğinde (zamanlanmış iş, alarm motoru). */
+    public static final String SYSTEM_ACTOR = "system";
+
+    /** {@code failure_detail} tavanı — kontrol satırlarındaki {@link CheckFailure#DETAIL_MAX} ile aynı. */
+    static final int FAILURE_DETAIL_MAX = CheckFailure.DETAIL_MAX;
+    /** {@code failure_reason} kolon boyu (kontrol tablolarıyla aynı). */
+    static final int FAILURE_REASON_MAX = 48;
+    /** {@code request_id} kolon boyu. */
+    static final int REQUEST_ID_MAX = 64;
+
+    /**
+     * Aktivite satırının ayrıntı bağlantıları (2026-11-05, aktivite zenginleştirmesi A–C). Her alan isteğe bağlı; null
+     * yazılmaz. Kontrol satırında {@code checkId} + kontrol satırının kendi {@code failure_reason / failure_detail}'i
+     * (çağıran, kalıcılaştırdığı varlıktan verir — "kontrol satırındaki değerin aynısı"); alarm / 7/24 satırında
+     * {@code alertEventId} (+ fırtınada {@code stormId}); yapılandırma satırında {@code changeSeq}.
+     */
+    public record Refs(Long checkId, Integer httpStatus, String failureReason, String failureDetail,
+                       Long alertEventId, Long stormId, Integer changeSeq) {
+        public static final Refs NONE = new Refs(null, null, null, null, null, null, null);
+
+        /** Kontrol satırı bağı. */
+        public static Refs check(Long checkId, Integer httpStatus, String failureReason, String failureDetail) {
+            return new Refs(checkId, httpStatus, failureReason, failureDetail, null, null, null);
+        }
+
+        /** Alarm bağı. */
+        public static Refs alert(Long alertEventId) {
+            return new Refs(null, null, null, null, alertEventId, null, null);
+        }
+
+        /** Fırtına bağı (fırtınanın tetiklediği üyenin alarmıyla). */
+        public static Refs storm(Long alertEventId, Long stormId) {
+            return new Refs(null, null, null, null, alertEventId, stormId, null);
+        }
+
+        /** Değişiklik geçmişi bağı ({@code monitor_change_log.seq}). */
+        public static Refs change(Integer changeSeq) {
+            return new Refs(null, null, null, null, null, null, changeSeq);
+        }
+    }
+
+    // ── Kontrol satırı → bağ (kalıcılaştırılan varlıktan: kimlik + satırın KENDİ neden kodu / ayrıntısı) ──────────────
+    // Varlık null (yazım düştü) → null (bağsız satır). Sahte / kaydedilmemiş varlıkta kimlik null kalır.
+
+    public static Refs refs(com.sitemonitor.model.PortCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.PingCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.DnsRecord c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    /** HTTP: tabloda neden kodu yok — ön yüzün eski satır kodu ({@link #httpFailureReason}); ayrıntı = {@code error_detail}. */
+    public static Refs refs(com.sitemonitor.model.HttpCheck c) {
+        return c == null ? null : Refs.check(c.getId(), c.getHttpStatus(),
+                httpFailureReason(Boolean.TRUE.equals(c.getOk()), c.getError()), c.getErrorDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.KeywordResult c) {
+        return c == null ? null : Refs.check(c.getId(), c.getHttpStatus(), c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.PageCheck c) {
+        return c == null ? null : Refs.check(c.getId(), c.getHttpStatus(), c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.PageSpeedCheck c) {
+        return c == null ? null : Refs.check(c.getId(), c.getStatusCode(), c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.ScriptedCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.DbQueryCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.DomainCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    public static Refs refs(com.sitemonitor.model.UptimeCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
+    }
+
+    /** Sertifika: tabloda neden kodu yok — ön yüzün {@code certCode} aynası ({@link #certFailureReason}). */
+    public static Refs refs(com.sitemonitor.model.CertificateCheck c) {
+        return c == null ? null : Refs.check(c.getId(), null,
+                c.getError() == null && c.getErrorClass() == null ? null
+                        : certFailureReason(c.getErrorClass(), c.getError(), c.getErrorStage()), null);
+    }
+
+    /** Kontrol sonucunu (checker Map'i) aktiviteye çevirip kaydeder. manual=true → MANUAL_CHECK. Bağlantısız (eski imza). */
     public void recordCheck(String type, Long monitorId, String monitorName, String target,
                             Long teamId, boolean manual, String actor, Map<String, Object> result) {
+        recordCheck(type, monitorId, monitorName, target, teamId, manual, actor, result, null);
+    }
+
+    /**
+     * Kontrol sonucunu kontrol satırı bağıyla kaydeder (2026-11-05). {@code refs} null → bugünkü satır (bağsız).
+     * HTTP kodu bağda yoksa sonuç haritasından okunur; neden kodu / ayrıntı yalnız bağdan (kontrol satırının değeri) —
+     * bağ vermeyen çağıran bugünkü satırı yazar.
+     *
+     * <p>Elle kontrolde ({@code manual=true}) aktör verilmemişse ya da yer tutucu "manual" ise oturumdaki kullanıcı adı
+     * yazılır (istek iş parçacığı ya da {@link #captureContext()} ile taşınan bağlam) — yaşam döngüsü satırlarının
+     * aktör kuralıyla aynı; bulunamazsa "manual".
+     */
+    public void recordCheck(String type, Long monitorId, String monitorName, String target,
+                            Long teamId, boolean manual, String actor, Map<String, Object> result, Refs refs) {
         try {
             ActivityLog a = base(type, monitorId, monitorName, target, teamId,
-                    manual ? "MANUAL_CHECK" : "SCHEDULED_CHECK", actor);
+                    manual ? ACTION_MANUAL_CHECK : ACTION_SCHEDULED_CHECK, manual ? manualActor(actor) : actor);
             summarize(type, result, a);
+            applyCheckRefs(a, result, refs);
             repo.save(a);
         } catch (Exception e) {
             log.debug("activity-log kayıt atlandı (type={} target={}): {}", type, target, e.toString());
@@ -59,14 +197,226 @@ public class ActivityLogService {
      */
     public void recordLifecycle(String type, Long monitorId, String monitorName, String target,
                                 Long teamId, String action, String actor, String summary) {
+        recordLifecycle(type, monitorId, monitorName, target, teamId, action, actor, summary, null);
+    }
+
+    /** Bağlantılı yaşam döngüsü / 7/24 olayı (2026-11-05): değişiklik sırası, alarm, fırtına. {@code refs} null = bağsız. */
+    public void recordLifecycle(String type, Long monitorId, String monitorName, String target,
+                                Long teamId, String action, String actor, String summary, Refs refs) {
         try {
             ActivityLog a = base(type, monitorId, monitorName, target, teamId, action, actor);
             a.setResultStatus("SUCCESS");
             if (summary != null && !summary.isBlank()) a.setResultSummary(trim(summary, 500));
+            applyRefs(a, refs);
             repo.save(a);
         } catch (Exception e) {
             log.debug("activity-log lifecycle atlandı (type={} action={}): {}", type, action, e.toString());
         }
+    }
+
+    /**
+     * Yapılandırma değişikliği satırı ({@code CONFIG_CHANGED}, değişiklik kaydının {@code seq}'i ile) ve kullanıcı
+     * {@code active} alanını değiştirdiyse EK olarak {@code PAUSED} / {@code RESUMED} satırı (2026-11-05). Satırların ikisi
+     * de aynı değişiklik kaydına bağlıdır. {@code changesJson} = {@code monitor_change_log.changes} (AuditDiff biçimi).
+     */
+    public void recordConfigChange(String type, Long monitorId, String monitorName, String target, Long teamId,
+                                   String actor, String summary, Integer changeSeq, String changesJson) {
+        Refs refs = changeSeq == null ? null : Refs.change(changeSeq);
+        recordLifecycle(type, monitorId, monitorName, target, teamId, ACTION_CONFIG_CHANGED, actor, summary, refs);
+        Boolean activeTo = activeChangedTo(changesJson);
+        if (activeTo != null) {
+            recordLifecycle(type, monitorId, monitorName, target, teamId,
+                    activeTo ? ACTION_RESUMED : ACTION_PAUSED, actor, null, refs);
+        }
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    /** Değişiklik farkı bu boyu aşarsa {@code active} aranmaz (değişiklik satırı yine yazılır). */
+    private static final int CHANGES_SCAN_MAX = 200_000;
+
+    /**
+     * Değişiklik farkında {@code active} gerçekten değiştiyse YENİ değeri ({@code true} = sürdürüldü, {@code false} =
+     * duraklatıldı); değişmediyse / okunamıyorsa null. Asla fırlatmaz.
+     */
+    public static Boolean activeChangedTo(String changesJson) {
+        if (changesJson == null || changesJson.length() < 3 || changesJson.length() > CHANGES_SCAN_MAX
+                || !changesJson.contains("\"active\"")) return null;
+        try {
+            var root = JSON.readTree(changesJson);
+            var active = root == null ? null : root.get("active");
+            if (active == null || !active.isObject()) return null;
+            var from = active.get("from");
+            var to = active.get("to");
+            if (to == null || !to.isBoolean()) return null;
+            if (from != null && from.isBoolean() && from.booleanValue() == to.booleanValue()) return null;
+            return to.booleanValue();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ── Alarm olayları (2026-11-05, aktivite zenginleştirmesi B) ─────────────────────────────────────────────────
+
+    /**
+     * Alarm olayı satırı: {@code ALERT_TRIGGERED} (ilk açılış), {@code ALERT_ESCALATED} (seviye yükseltme talebini kazanan
+     * pod), {@code ALERT_ACKNOWLEDGED} (onay yazıldı), {@code ALERT_RESOLVED} (kapanışı GERÇEKTEN yapan çağıran). Çağıran
+     * tam bir kez çağırır (talep / CAS kazananı). Alarm yoluna SORGU EKLENMEZ: izleme kimliği çağıranın elindeki değerden
+     * ({@code monitorId}) ya da alarmın bağlam anlık görüntüsünden ({@code context_json.monitor_id}) okunur; eşlenemezse
+     * null + hedef = alarm anahtarı. Yazım alarm yolunu ASLA bozmaz (her şey try/catch).
+     *
+     * @param event     alarm (kimliği dolu olmalı; değilse satır yazılmaz)
+     * @param action    {@code ALERT_*}
+     * @param level     satıra yazılacak seviye (yükseltmede YENİ seviye); null → olayın seviyesi
+     * @param monitorId izleme kimliği (sertifika / erişilebilirlikte envanter kimliği); null → bağlamdan
+     * @param actor     null → oturumdaki kullanıcı (istek iş parçacığı) ya da {@value #SYSTEM_ACTOR}
+     * @param note      özetin sonuna eklenecek kısa açıklama (kapatan / neden); null olabilir
+     */
+    public void recordAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note) {
+        try {
+            if (event == null || event.getId() == null || action == null) return;
+            String lvl = level != null ? level : event.getAlertLevel();
+            String type = alertActivityType(event.getAlertType());
+            Long mid = monitorId != null ? monitorId : monitorIdFromContext(event.getContextJson());
+            String domain = event.getDomain();
+            String resolvedActor = actor != null && !actor.isBlank() ? actor : userOrSystem();
+            ActivityLog a = base(type, mid, monitorNameFromContext(event.getContextJson(), domain), domain,
+                    event.getTeamId(), action, resolvedActor);
+            a.setResultStatus(alertStatus(action, lvl));
+            StringBuilder sum = new StringBuilder(EscalationService.resolvedTypeLabel(event.getAlertType()));
+            if (lvl != null && !lvl.isBlank()) sum.append(" · ").append(lvl);
+            if (note != null && !note.isBlank()) sum.append(" · ").append(note.trim());
+            a.setResultSummary(trim(sum.toString(), 300));
+            a.setAlertEventId(event.getId());
+            if (event.getStormId() != null && ACTION_ALERT_TRIGGERED.equals(action)) a.setStormId(event.getStormId());
+            a.setDaysRemaining(event.getDaysRemaining());
+            repo.save(a);
+        } catch (Exception e) {
+            log.debug("activity-log alarm olayı atlandı (action={} alarm={}): {}", action,
+                    event == null ? null : event.getId(), e.toString());
+        }
+    }
+
+    /** Alarm olayının renk durumu: açılış / yükseltme seviyeye göre (CRITICAL / HIGH → ERROR, diğer → WARNING); onay / kapanış SUCCESS. */
+    static String alertStatus(String action, String level) {
+        if (ACTION_ALERT_ACKNOWLEDGED.equals(action) || ACTION_ALERT_RESOLVED.equals(action)) return "SUCCESS";
+        String l = level == null ? "" : level.toUpperCase(Locale.ROOT);
+        return "CRITICAL".equals(l) || "HIGH".equals(l) ? "ERROR" : "WARNING";
+    }
+
+    /**
+     * Alarm tipi → aktivite türü. Erişilebilirlik (ACCESSIBILITY) envanterin Durum yoklamasıdır → UPTIME (katalogda http
+     * altında görünür ama aktivite akışında UPTIME satırlarıyla aynı tür olmalı); sertifika tipleri CERT; kalanı katalog.
+     * Bilinmeyen tip: ham değer (≤ 20 karakter, kolon boyu).
+     */
+    public static String alertActivityType(String alertType) {
+        if (EscalationService.TYPE_ACCESSIBILITY.equals(alertType)) return UPTIME;
+        String t = MonitorTypeCatalog.typeOfAlert(alertType);
+        if (t != null) return t.toUpperCase(Locale.ROOT);
+        String raw = alertType == null ? CERT : alertType.toUpperCase(Locale.ROOT);
+        return raw.length() > 20 ? raw.substring(0, 20) : raw;
+    }
+
+    private static final Pattern CTX_MONITOR_ID = Pattern.compile("\"monitor_id\"[ ]*:[ ]*\"?([0-9]{1,18})");
+    private static final Pattern CTX_MONITOR_NAME = Pattern.compile("\"monitor_name\"[ ]*:[ ]*\"((?:[^\"\\\\]|\\\\.){1,300})\"");
+    /** Bağlam anlık görüntüsü bu boyu aşıyorsa izleme kimliği / adı aranmaz (düzenli ifade sınırlı girdide koşar). */
+    private static final int CTX_SCAN_MAX = 16_000;
+
+    /** Alarmın bağlam anlık görüntüsündeki {@code monitor_id} (sorgu yok) — yoksa null. */
+    public static Long monitorIdFromContext(String contextJson) {
+        if (contextJson == null || contextJson.isBlank() || contextJson.length() > CTX_SCAN_MAX) return null;
+        try {
+            Matcher m = CTX_MONITOR_ID.matcher(contextJson);
+            return m.find() ? Long.parseLong(m.group(1)) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String monitorNameFromContext(String contextJson, String fallback) {
+        if (contextJson == null || contextJson.isBlank() || contextJson.length() > CTX_SCAN_MAX) return fallback;
+        try {
+            Matcher m = CTX_MONITOR_NAME.matcher(contextJson);
+            if (m.find()) {
+                String v = m.group(1).replace("\\\"", "\"").replace("\\\\", "\\");
+                if (!v.isBlank()) return v;
+            }
+        } catch (Exception ignore) { /* yedek ad */ }
+        return fallback;
+    }
+
+    // ── Aktör / istek bağlamı ───────────────────────────────────────────────────────────────────────────────────
+
+    /** İstek dışı iş parçacığına taşınan bağlam (ör. sentetik elle koşumun sanal iş parçacığı). */
+    public record Context(String actor, String requestId) {
+        /** Gövdeyi bu bağlamla koşar (iş parçacığı yerel değeri, sonunda eski hâline döner). */
+        public <T> T call(Callable<T> body) throws Exception {
+            Context outer = CONTEXT.get();
+            CONTEXT.set(this);
+            try {
+                return body.call();
+            } finally {
+                if (outer == null) CONTEXT.remove();
+                else CONTEXT.set(outer);
+            }
+        }
+    }
+
+    private static final ThreadLocal<Context> CONTEXT = new ThreadLocal<>();
+
+    /**
+     * İstek iş parçacığında çağrılır: oturumdaki kullanıcı adı + istek kimliği. İş başka iş parçacığında koşacaksa
+     * ({@link Context#call}) satır yine kullanıcıyı ve istek kimliğini taşır.
+     */
+    public static Context captureContext() {
+        Context outer = CONTEXT.get();
+        String user = currentSessionUser();
+        String rid = MDC.get(CorrelationIdFilter.MDC_KEY);
+        if (user == null && outer != null) user = outer.actor();
+        if (rid == null && outer != null) rid = outer.requestId();
+        return new Context(user, rid);
+    }
+
+    /** Oturumdaki kullanıcı adı — yalnız istek iş parçacığında (ya da taşınan bağlamda) bilinir; yoksa null. */
+    public static String currentUser() {
+        String u = currentSessionUser();
+        if (u != null) return u;
+        Context c = CONTEXT.get();
+        return c != null ? c.actor() : null;
+    }
+
+    private static String currentSessionUser() {
+        try {
+            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+            if (!(attrs instanceof ServletRequestAttributes sra)) return null;
+            HttpServletRequest req = sra.getRequest();
+            HttpSession s = req.getSession(false);
+            Object u = s == null ? null : s.getAttribute("username");
+            String v = u == null ? null : u.toString().trim();
+            return v == null || v.isEmpty() ? null : v;
+        } catch (Exception e) {   // istek bitmiş / oturum geçersiz
+            return null;
+        }
+    }
+
+    private static String currentRequestId() {
+        String rid = MDC.get(CorrelationIdFilter.MDC_KEY);
+        if (rid == null) {
+            Context c = CONTEXT.get();
+            rid = c != null ? c.requestId() : null;
+        }
+        return rid == null || rid.isBlank() ? null : trim(rid, REQUEST_ID_MAX);
+    }
+
+    /** Elle kontrolün aktörü: verilen gerçek ad; "manual" / boş → oturumdaki kullanıcı, yoksa "manual". */
+    private static String manualActor(String actor) {
+        if (actor != null && !actor.isBlank() && !"manual".equals(actor)) return actor;
+        String u = currentUser();
+        return u != null ? u : "manual";
+    }
+
+    private static String userOrSystem() {
+        String u = currentUser();
+        return u != null ? u : SYSTEM_ACTOR;
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
@@ -82,7 +432,77 @@ public class ActivityLogService {
         a.setAction(action);
         a.setActor(actor != null ? trim(actor, 100) : "scheduler");
         a.setTeamId(teamId);
+        a.setRequestId(currentRequestId());
         return a;
+    }
+
+    /** Kontrol bağı: kontrol kimliği, HTTP kodu (bağ ya da sonuç), neden kodu + ayrıntı (yalnız bağdan). */
+    private static void applyCheckRefs(ActivityLog a, Map<String, Object> result, Refs refs) {
+        Integer http = refs != null && refs.httpStatus() != null ? refs.httpStatus()
+                : result == null ? null : asInt(firstNonNull(result.get("http_status"), result.get("status_code")));
+        if (http != null && http >= 100 && http <= 999) a.setHttpStatus(http);
+        applyRefs(a, refs);
+    }
+
+    private static void applyRefs(ActivityLog a, Refs refs) {
+        if (refs == null) return;
+        if (refs.checkId() != null) a.setCheckId(refs.checkId());
+        if (refs.httpStatus() != null && refs.httpStatus() >= 100 && refs.httpStatus() <= 999) a.setHttpStatus(refs.httpStatus());
+        String reason = refs.failureReason();
+        if (reason != null && !reason.isBlank() && reason.length() <= FAILURE_REASON_MAX) a.setFailureReason(reason);
+        String detail = refs.failureDetail();
+        // Kırpılmaz: yarım JSON okunamaz — tavanı aşan ayrıntı (kontrol satırı da aynı tavanı kullanır) yazılmaz.
+        if (detail != null && !detail.isBlank() && detail.length() <= FAILURE_DETAIL_MAX) a.setFailureDetail(detail);
+        if (refs.alertEventId() != null) a.setAlertEventId(refs.alertEventId());
+        if (refs.stormId() != null) a.setStormId(refs.stormId());
+        if (refs.changeSeq() != null) a.setChangeSeq(refs.changeSeq());
+    }
+
+    /**
+     * Neden kodu kolonu OLMAYAN kontrol tabloları için (HTTP, sertifika) ön yüzün eski satır sınıflandırıcısıyla AYNI
+     * kod — aktivite süzgeci ve ilgili satırlar paneli kodsuz kalmasın. HTTP: hata metninden
+     * ({@link CheckFailureClassifier#fromMessage}, ön yüzdeki {@code codeFromText}'in aynası); sağlıklı satırda null.
+     */
+    public static String httpFailureReason(boolean ok, String error) {
+        if (ok) return null;
+        CheckFailureReason r = CheckFailureClassifier.fromMessage(error);
+        return r == null ? null : r.name();
+    }
+
+    /**
+     * Sertifika kontrolü: ön yüz {@code checkFailureModel.certCode}'un aynası (sunucunun {@code error_class} sınıfı +
+     * ileti + aşama). Hatasız satırda null.
+     */
+    public static String certFailureReason(String errorClass, String error, String stage) {
+        String cls = errorClass == null ? "" : errorClass.trim().toUpperCase(Locale.ROOT);
+        String msg = error == null ? "" : error.trim();
+        if (cls.isEmpty() && msg.isEmpty()) return null;
+        String lower = msg.toLowerCase(Locale.ROOT);
+        switch (cls) {
+            case "DNS" -> { return "DNS_RESOLVE"; }
+            case "BLOCKED" -> { return lower.startsWith("çözümlenemeyen host") ? "DNS_RESOLVE" : "SSRF_BLOCKED"; }
+            case "SSL" -> {
+                if (lower.contains("no name matching") || lower.contains("subject alternative")) return "TLS_HOSTNAME";
+                if (lower.contains("pkix") || lower.contains("certification path") || lower.contains("self signed")
+                        || lower.contains("self-signed") || lower.contains("certificate_unknown")) return "TLS_TRUST";
+                return "TLS_HANDSHAKE";
+            }
+            case "NETWORK" -> {
+                if ("proxy-connect".equals(stage) || lower.contains("vekil") || lower.contains("proxy") || lower.contains("tunnel"))
+                    return "PROXY_ERROR";
+                if (lower.startsWith("connection timeout")) return "tls-handshake".equals(stage) ? "TLS_HANDSHAKE" : "CONNECT_TIMEOUT";
+                if (lower.contains("refused")) return "CONNECT_REFUSED";
+                if (lower.contains("no route") || lower.contains("unreachable")) return "HOST_UNREACHABLE";
+                if (lower.contains("reset") || lower.contains("broken pipe")) return "CONNECTION_RESET";
+                CheckFailureReason r = CheckFailureClassifier.fromMessage(msg);
+                return r == null || r == CheckFailureReason.UNKNOWN ? "CONNECT_TIMEOUT" : r.name();
+            }
+            default -> {
+                if (msg.isEmpty()) return null;
+                CheckFailureReason r = CheckFailureClassifier.fromMessage(msg);
+                return r == null ? CheckFailureReason.UNKNOWN.name() : r.name();
+            }
+        }
     }
 
     /** Checker Map'ini result_status + result_summary + tipli alanlara eşler. Türe özgü. */

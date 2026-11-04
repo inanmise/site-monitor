@@ -289,6 +289,15 @@
           "ttfb_ms": 180,
           "total_bytes": 200000,
           "request_count": 14
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -422,6 +431,15 @@
           "ttfb_ms": 180,
           "total_bytes": 1020000,
           "request_count": 14
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -479,6 +497,15 @@
           "total_bytes": 0,
           "request_count": 14,
           "error": "HTTP 503"
+        },
+        {
+          "checkId": null,
+          "httpStatus": 503,
+          "failureReason": "HTTP_STATUS",
+          "failureDetail": "{\"phase\":\"RESPONSE\",\"http_status\":503,\"target\":\"c.example.com\",\"via\":\"direct\",\"timeout_ms\":10000}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -536,6 +563,15 @@
           "total_bytes": 0,
           "request_count": 14,
           "error": "URL'de host yok"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": "CONFIG_ERROR",
+          "failureDetail": "{\"phase\":\"POLICY\"}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

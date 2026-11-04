@@ -181,4 +181,27 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
             ORDER BY a.monitorId, a.activityTime, a.id
             """)
     List<Object[]> statusSequence(@Param("type") String type, @Param("ids") List<Long> ids, @Param("since") String since);
+
+    // ── be1 (2026-11-05, aktivite ayrıntı sayfası) ────────────────────────────────────────────────────────────────────
+
+    /** Ayrıntı sayfasının ± 24 saatlik serisi: izlemenin kontrol satırları (zaman, ms, durum) — idx_act_type_mon_time. */
+    @Query("""
+            SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId = :monitorId AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :from AND a.activityTime <= :to
+            ORDER BY a.activityTime ASC, a.id ASC
+            """)
+    List<Object[]> seriesForMonitor(@Param("type") String type, @Param("monitorId") Long monitorId,
+                                    @Param("from") String from, @Param("to") String to, Pageable pageable);
+
+    /** Kimliksiz (eski sertifika / erişilebilirlik) satırın serisi — hedef + zaman aralığı (zaman dizini üzerinde ± 24 saat). */
+    @Query("""
+            SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId IS NULL AND a.target = :target
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :from AND a.activityTime <= :to
+            ORDER BY a.activityTime ASC, a.id ASC
+            """)
+    List<Object[]> seriesForTarget(@Param("type") String type, @Param("target") String target,
+                                   @Param("from") String from, @Param("to") String to, Pageable pageable);
 }

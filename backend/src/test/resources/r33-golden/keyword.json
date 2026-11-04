@@ -298,6 +298,15 @@
           "response_ms": 100,
           "snippet": "… Hoş geldiniz …",
           "ok": true
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -350,6 +359,15 @@
           "http_status": 200,
           "response_ms": 900,
           "ok": false
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": "KEYWORD_NOT_FOUND",
+          "failureDetail": "Sayfa yüklendi (HTTP 200, 1 B) ama « Ödeme » hiç bulunamadı. Koşul: en az 1 kez.",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -402,6 +420,15 @@
           "response_ms": 30,
           "error": "HTTP 503",
           "ok": false
+        },
+        {
+          "checkId": null,
+          "httpStatus": 503,
+          "failureReason": "UNKNOWN",
+          "failureDetail": "İstek tamamlanamadı: HTTP 503",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -453,6 +480,15 @@
           "error": "URL'de host yok",
           "config_error": true,
           "ok": false
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": "UNKNOWN",
+          "failureDetail": "İstek tamamlanamadı: URL'de host yok",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -505,6 +541,15 @@
           "http_status": 200,
           "response_ms": 50,
           "ok": false
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": "KEYWORD_COUNT_MISMATCH",
+          "failureDetail": "« zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz » sayfada 2 kez bulundu; koşul en fazla 1 kez (HTTP 200).",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }
