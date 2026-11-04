@@ -1971,6 +1971,16 @@ public class SchedulerService {
         patch("ALTER TABLE page_resource_scans ADD COLUMN redirect_ms BIGINT");
         patch("ALTER TABLE page_resource_scans ADD COLUMN algorithm_version INTEGER");
         patch("ALTER TABLE page_resource_scans ADD COLUMN cancel_requested BOOLEAN");
+        // Kaynak analizi algoritma 3 (2026-11, derin analiz): bayt dökümü, kategori puanları, kapsam (sayfa / site) — NULL = eski
+        // satır. Varsayılansız nullable kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE page_resource_scans ADD COLUMN js_bytes BIGINT");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN css_bytes BIGINT");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN font_bytes BIGINT");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN security_score INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN seo_score INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN a11y_score INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN scope VARCHAR(8)");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN pages_count INTEGER");
         // Anomali konusu görselleri (2026-10-18): yuva kimliği iss:<bölüm>:<konu>:<n> 40 karakteri aşabilir (bölüm + konu
         // kimliği 40'ar) — TechErrorReportImage.slotId 120. PostgreSQL'de VARCHAR büyütmek tabloyu yeniden yazmaz.
         patch("ALTER TABLE tech_error_report_images ALTER COLUMN slot_id TYPE VARCHAR(120)");

@@ -12,6 +12,11 @@ import com.sitemonitor.service.SchedulerService;
 import com.sitemonitor.service.SsrfGuard;
 import com.sitemonitor.service.health.ClusterHealthStore;
 import com.sitemonitor.service.page.PageFetchCore;
+import com.sitemonitor.service.page.scan.deep.AssetSample;
+import com.sitemonitor.service.page.scan.deep.CookieFacts;
+import com.sitemonitor.service.page.scan.deep.DeepContext;
+import com.sitemonitor.service.page.scan.deep.FontFaces;
+import com.sitemonitor.service.page.scan.deep.HtmlFacts;
 import com.sitemonitor.util.Msg;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -86,6 +91,13 @@ import java.util.function.Predicate;
  * satırın artık kendisinin olmadığını görüp durur; aynı pod'daysa hemen. Kapanışta ({@link ContextClosedEvent}) çalışan
  * taramalar ölçümü bırakır ve kendi satırlarını INTERRUPTED yazar.
  *
+ * <p><b>Algoritma 3 (2026-11, derin analiz A–E):</b> HTML tek kez ayrıştırılır ve olguları ({@link HtmlFacts}) çıkarılır;
+ * keşfedilen host'ların bağlantı kurulumu ölçülür (≤ {@value PageResourceAnalyzer#HOST_TIMING_LIMIT}, vekil üzerinden
+ * gidilenler ölçülmez); her nesnenin HTTP sürümü, tel gövdesi özeti, betik örneği (küçültme / kaynak haritası / kütüphane),
+ * {@code Set-Cookie}'leri (DEĞERSİZ) ve ana sayfanın güvenlik başlıkları toplanır; stillerin {@code @font-face}'leri okunur;
+ * açıkta olabilecek kaynak haritaları HEAD ile denetlenir (≤ {@value PageResourceAnalyzer#SOURCE_MAP_LIMIT}). Yeni istekler
+ * aynı SSRF / vekil / iptal / süre kurallarına uyar. JavaScript yine ÇALIŞTIRILMAZ.
+ *
  * <p><b>Saklama:</b> özet {@code site.monitor.page.resource-scan.retention-days} (varsayılan 1 yıl; liste penceresi de bu),
  * nesne ayrıntısı izleme başına son {@value #DETAIL_RUNS} çalıştırma (her bitişte eskilerin {@code items_json}'u NULL'a çekilir).
  */
@@ -111,6 +123,14 @@ public class PageResourceScanService {
     static final long QUIET_WAIT_MS = 5_000L;
     /** Tarama HTML'inin açılmış gövde tavanı (jsoup girdisi; bellek tepesi — inceleme H15). */
     static final int HTML_MAX_DECODED = 8 * 1024 * 1024;
+    /** Host bağlantı ölçümü: eşzamanlılık, adım başına zaman aşımı tavanı ve aşamanın en uzun süresi. */
+    static final int HOST_TIMING_CONCURRENCY = 6;
+    static final int HOST_TIMING_TIMEOUT_MS = 5_000;
+    static final long HOST_TIMING_PHASE_MS = 15_000L;
+    /** Kaynak haritası denetiminin en uzun süresi. */
+    static final long SOURCE_MAP_PHASE_MS = 15_000L;
+    /** Bellekte tutulan en çok çerez / {@code @font-face} / stil başvurusu (tarama başına). */
+    static final int MAX_COOKIES = 200, MAX_FONT_FACES = 1000, MAX_CSS_REFERENCED = 10_000;
 
     // ── Ölçülmüş görsel kazancı (inceleme P11) ──
     static final int OPT_MAX_IMAGES = 20;
@@ -144,11 +164,12 @@ public class PageResourceScanService {
     static final String SUMMARY_COLS = "id, monitor_id, url, status, via, started_at, finished_at, heartbeat_ms, requested_by, "
             + "progress_done, progress_total, grade, grade_letter, load_ms, html_ttfb_ms, html_ms, page_bytes, request_count, "
             + "image_bytes, image_count, document_count, document_bytes, link_count, link_bytes, failed_count, capped, error, "
-            + "items_kept, owner_pod, redirect_count, redirect_ms, algorithm_version, cancel_requested";
+            + "items_kept, owner_pod, redirect_count, redirect_ms, algorithm_version, cancel_requested, "
+            + "js_bytes, css_bytes, font_bytes, security_score, seo_score, a11y_score, scope, pages_count";
 
     static final String SQL_INSERT = "INSERT INTO page_resource_scans (monitor_id, team_id, url, status, via, started_at, "
             + "started_ms, heartbeat_ms, owner_pod, requested_by, progress_done, progress_total, capped, items_kept, "
-            + "algorithm_version) VALUES (?, ?, ?, 'RUNNING', ?, ?, ?, ?, ?, ?, 0, 0, FALSE, FALSE, ?)";
+            + "algorithm_version, scope) VALUES (?, ?, ?, 'RUNNING', ?, ?, ?, ?, ?, ?, 0, 0, FALSE, FALSE, ?, 'page')";
     static final String SQL_RUNNING = "SELECT " + SUMMARY_COLS + " FROM page_resource_scans WHERE monitor_id = ? "
             + "AND status = 'RUNNING' ORDER BY id";
     static final String SQL_SETTLE_STALE = "UPDATE page_resource_scans SET status = 'INTERRUPTED', finished_at = ?, "
@@ -159,7 +180,8 @@ public class PageResourceScanService {
             + "progress_done = ?, progress_total = ?, grade = ?, grade_letter = ?, load_ms = ?, html_ttfb_ms = ?, html_ms = ?, "
             + "page_bytes = ?, request_count = ?, image_bytes = ?, image_count = ?, document_count = ?, document_bytes = ?, "
             + "link_count = ?, link_bytes = ?, failed_count = ?, capped = ?, analysis_json = ?, items_json = ?, items_kept = TRUE, "
-            + "redirect_count = ?, redirect_ms = ? WHERE id = ? AND status = 'RUNNING'";
+            + "redirect_count = ?, redirect_ms = ?, js_bytes = ?, css_bytes = ?, font_bytes = ?, security_score = ?, "
+            + "seo_score = ?, a11y_score = ? WHERE id = ? AND status = 'RUNNING'";
     static final String SQL_END = "UPDATE page_resource_scans SET status = ?, finished_at = ?, heartbeat_ms = ?, error = ?, "
             + "html_ttfb_ms = ?, html_ms = ?, redirect_count = ?, redirect_ms = ? WHERE id = ? AND status = 'RUNNING'";
     /** İptal: tek koşullu yazım — çalışan pod bir sonraki kalp atışında satırın artık RUNNING olmadığını görüp durur. */
@@ -537,6 +559,16 @@ public class PageResourceScanService {
         m.put("ttfb_ms", av != null && av >= 2 ? longObj(rs, "html_ttfb_ms") : null);
         boolean cancelFlag = rs.getBoolean("cancel_requested");
         m.put("cancelled", (!rs.wasNull() && cancelFlag) || "CANCELLED".equals(prefix));
+        // ── algoritma 3 (eski satırda null) ──
+        m.put("js_bytes", longObj(rs, "js_bytes"));
+        m.put("css_bytes", longObj(rs, "css_bytes"));
+        m.put("font_bytes", longObj(rs, "font_bytes"));
+        m.put("security_score", intObj(rs, "security_score"));
+        m.put("seo_score", intObj(rs, "seo_score"));
+        m.put("a11y_score", intObj(rs, "a11y_score"));
+        String scope = rs.getString("scope");
+        m.put("scope", scope == null ? "page" : scope);
+        m.put("pages_count", intObj(rs, "pages_count"));
         return m;
     }
 
@@ -623,7 +655,20 @@ public class PageResourceScanService {
         String ua;
         String rootHost;
         final PageFetchCore.ScanClients clients;
-        final PageFetchCore.ScanTuning htmlTuning, cssTuning, countTuning, probeTuning, imageTuning;
+        final PageFetchCore.ScanTuning htmlTuning, cssTuning, countTuning, jsTuning, probeTuning, imageTuning;
+        // ── algoritma 3: ölçüm görevleri yazar (eşzamanlı), tarama iş parçacığı okur; hepsi sınırlı ──
+        final java.util.Queue<DeepContext.CookieSeen> cookies = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        final AtomicInteger cookieCount = new AtomicInteger();
+        final java.util.Queue<FontFaces.Face> fontFaces = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        final AtomicInteger fontFaceCount = new AtomicInteger();
+        final Set<String> cssReferenced = ConcurrentHashMap.newKeySet();
+        final AtomicInteger samplesUnavailable = new AtomicInteger();
+        final Map<String, DeepContext.HostTiming> hostTimings = new ConcurrentHashMap<>();
+        volatile int hostsNotMeasured;
+        final Map<String, Boolean> sourceMaps = new ConcurrentHashMap<>();
+        volatile int sourceMapsNotChecked;
+        /** Ana sayfa https mi (çerez sorunları için). */
+        volatile boolean httpsPage;
         /** Nesne başına vekil kararı host önbelleği (AUTO kipinde envanter okuması host başına bir kez). */
         final Map<String, Boolean> viaByHost = new ConcurrentHashMap<>();
 
@@ -633,13 +678,16 @@ public class PageResourceScanService {
             this.deadline = start + c.maxSeconds() * 1000L;
             this.budget = c.maxTotalMb() * PageResourceAnalyzer.MB;
             this.clients = clients;
+            // Algoritma 3: gövde özeti her yük nesnesinde; ana sayfada güvenlik başlıkları; betikte çözülmüş örnek
             this.htmlTuning = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING,
-                    PageFetchCore.MAX_BODY_BYTES, HTML_MAX_DECODED);
+                    PageFetchCore.MAX_BODY_BYTES, HTML_MAX_DECODED).capture(true, 0, 0, true);
             this.cssTuning = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING,
+                    PageFetchCore.MAX_BODY_BYTES, PageResourceDiscovery.MAX_CSS_CHARS).capture(true, 0, 0, false);
+            PageFetchCore.ScanTuning count = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING_COUNT,
                     PageFetchCore.MAX_BODY_BYTES, PageResourceDiscovery.MAX_CSS_CHARS);
-            this.countTuning = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING_COUNT,
-                    PageFetchCore.MAX_BODY_BYTES, PageResourceDiscovery.MAX_CSS_CHARS);
-            this.probeTuning = countTuning;
+            this.countTuning = count.capture(true, 0, 0, false);
+            this.jsTuning = count.capture(true, AssetSample.HEAD_CHARS, AssetSample.TAIL_CHARS, false);
+            this.probeTuning = count;
             this.imageTuning = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING, OPT_MAX_BODY, OPT_MAX_BODY);
         }
 
@@ -764,10 +812,20 @@ public class PageResourceScanService {
 
             String base = main.meta().finalUrl() != null ? main.meta().finalUrl() : s.url();
             run.rootHost = PageFetchCore.hostOf(base);
+            run.httpsPage = com.sitemonitor.service.page.scan.deep.DeepUrls.https(base);
+            collectCookies(run, main.meta());
             Predicate<String> exclude = pageChecker.excludePredicate(s.excludes());
-            PageResourceDiscovery.Found found = PageResourceDiscovery.discover(f.body(), base, exclude);
+            // Algoritma 3: HTML TEK kez ayrıştırılır — olgular (A–E) ve keşif aynı belgeden
+            org.jsoup.nodes.Document doc = PageResourceDiscovery.parse(f.body(), base);
+            HtmlFacts facts = doc == null ? null : HtmlFacts.extract(doc, f.body().length);
+            PageResourceDiscovery.Found found = doc == null ? PageResourceDiscovery.discover(f.body(), base, exclude)
+                    : PageResourceDiscovery.discoverParsed(doc, base, exclude);
+            doc = null;   // belge bırakılır (bellek)
             // Satır içi stiller belgenin <base href>'iyle çözülür (HTML öğeleri jsoup'ta zaten öyle — inceleme H12)
             String inlineBase = found.baseUrl() != null && !found.baseUrl().isBlank() ? found.baseUrl() : base;
+            for (String inline : found.inlineCss()) cssFacts(run, inline, inlineBase, base);
+            // Bağlantı kurulum süreleri (keşfedilen host'lar; nesneler çekilmeden — DNS önbelleği soğukken)
+            measureHosts(run, base, found);
 
             Set<String> known = new HashSet<>();
             known.add(PageResourceDiscovery.key(base));
@@ -793,6 +851,8 @@ public class PageResourceScanService {
                 }
                 phase = next;
             }
+            // Açıkta olabilecek kaynak haritaları (HEAD; sayfa yükü bitince, belge / bağlantıdan önce)
+            checkSourceMaps(run, all);
             // Ölçülmüş görsel kazancı: sayfa yükünün en büyük görselleri (belge / bağlantı yoklamasından önce)
             optimizeImages(run, all);
             List<Planned> docs = new ArrayList<>();
@@ -821,7 +881,12 @@ public class PageResourceScanService {
             }
             PageResourceAnalyzer.Limits lim = new PageResourceAnalyzer.Limits(run.objectsCapped, c.maxObjects(),
                     run.timeCapped, c.maxSeconds(), run.bytesCapped, c.maxTotalMb(), found.excluded() + run.excludedExtra);
-            PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, lim);
+            PageFetchCore.ScanMeta mainScan = main.meta() == null ? null : main.meta().scan();
+            DeepContext deep = new DeepContext(facts, mainScan == null ? null : mainScan.pageHeaders(), base,
+                    new ArrayList<>(run.cookies), new ArrayList<>(run.fontFaces), Set.copyOf(run.cssReferenced),
+                    Map.copyOf(run.hostTimings), run.hostsNotMeasured, Map.copyOf(run.sourceMaps), run.sourceMapsNotChecked,
+                    run.samplesUnavailable.get());
+            PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, lim, deep);
             finishDone(s, run, items, r, html);
         } catch (Throwable t) {
             if (t instanceof InterruptedException || run.halted()) {
@@ -949,30 +1014,38 @@ public class PageResourceScanService {
         boolean firstParty = firstParty(host, run.rootHost);
         boolean viaProxy = run.via(p.c.url());
         PageFetchCore.MetaFetch mf = probe ? probeWithRetry(run, p.c.url(), viaProxy, firstParty)
-                : getWithRetry(run, p.c.url(), viaProxy, css, image);
+                : getWithRetry(run, p.c.url(), viaProxy, css, image,
+                        PageResourceDiscovery.JS.equals(cat) || PageResourceDiscovery.JS.equals(category(p.c.url())));
         if (mf == null || run.halted()) return;   // kesilen (iptal / süre dolumu) iş sonuç yazmaz
         ScanItem it = item(p.c, mf, run.rootHost, probe, viaProxy ? "proxy" : "direct", foundIn);
-        if (css && p.depth < CSS_DEPTH && mf.fetch().body() != null && it.ok()) {
+        if (!probe) {
+            collectCookies(run, mf.meta());
+            if (PageResourceDiscovery.JS.equals(it.category) && it.ok()) inspectScript(run, it, mf);
+        }
+        if (css && mf.fetch().body() != null && it.ok()) {
             // Başvurular HEMEN çıkarılır, gövde atılır; göreli adresler tarayıcı gibi yönlendirme SONRASI adrese göre çözülür.
             String base = mf.meta() != null && mf.meta().finalUrl() != null ? mf.meta().finalUrl() : p.c.url();
-            List<PageResourceDiscovery.Candidate> refs =
-                    PageResourceDiscovery.cssRefs(decodeText(mf.fetch().body(), mf.meta().contentType()), base);
-            // Bekleyen (henüz planlanmamış) başvuru sayısı nesne tavanıyla sınırlı — fazlası zaten planlanamaz.
-            int room = run.c.maxObjects() - run.cssRefsRetained.getAndAdd(refs.size());
-            if (room < refs.size()) {
-                run.objectsCapped = true;
-                refs = room <= 0 ? List.of() : List.copyOf(refs.subList(0, room));
+            String text = decodeText(mf.fetch().body(), mf.meta().contentType());
+            List<PageResourceDiscovery.Candidate> refs = cssFacts(run, text, base, p.c.url());
+            inspectStylesheet(it, text, base, mf);
+            if (p.depth < CSS_DEPTH) {
+                // Bekleyen (henüz planlanmamış) başvuru sayısı nesne tavanıyla sınırlı — fazlası zaten planlanamaz.
+                int room = run.c.maxObjects() - run.cssRefsRetained.getAndAdd(refs.size());
+                if (room < refs.size()) {
+                    run.objectsCapped = true;
+                    refs = room <= 0 ? List.of() : List.copyOf(refs.subList(0, room));
+                }
+                p.cssRefs = refs;
             }
-            p.cssRefs = refs;
         }
         p.item = it;
         run.done.incrementAndGet();
     }
 
     /** Sayfa yükü nesnesi: GET + bayt sayımı; tek seferlik hata (zaman aşımı / engel değil) bir kez yeniden denenir. */
-    private PageFetchCore.MetaFetch getWithRetry(Run run, String url, boolean viaProxy, boolean css, boolean image) {
+    private PageFetchCore.MetaFetch getWithRetry(Run run, String url, boolean viaProxy, boolean css, boolean image, boolean js) {
         PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, css, true, viaProxy);
-        PageFetchCore.ScanTuning t = css ? run.cssTuning : run.countTuning;
+        PageFetchCore.ScanTuning t = css ? run.cssTuning : js ? run.jsTuning : run.countTuning;
         int head = image ? ImageDimensions.HEAD_BYTES : 0;
         PageFetchCore.MetaFetch a = core.fetchWithMeta(url, "GET", o, head, t);
         run.spent.addAndGet(Math.max(0, a.fetch().bytes()));
@@ -1099,7 +1172,48 @@ public class PageResourceScanService {
         it.via = via;
         it.foundIn = foundIn;
         it.headers = f.status() > 0 ? headers(meta) : null;
+        // ── algoritma 3 ──
+        PageFetchCore.ScanMeta sm = meta.scan();
+        if (sm != null && f.status() > 0) {
+            it.httpVersion = sm.httpVersion();
+            it.contentHash = probe || it.truncated ? null : sm.contentHash();
+            it.validator = sm.etag() != null || sm.lastModified() != null;
+            it.h3Advertised = sm.altSvc() != null && h3(sm.altSvc());
+        }
+        if (PageResourceDiscovery.IMAGE.equals(it.category) && meta.head() != null) {
+            int frames = ImageDimensions.gifFrames(meta.head());
+            if (frames > 0) it.gifFrames = frames;
+        }
         return it;
+    }
+
+    /** {@code Alt-Svc}'de HTTP/3 duyurusu ({@code h3=} ya da {@code h3-NN=}). */
+    static boolean h3(String altSvc) {
+        String a = altSvc.toLowerCase(Locale.ROOT);
+        int i = a.indexOf("h3");
+        while (i >= 0) {
+            boolean start = i == 0 || a.charAt(i - 1) == ' ' || a.charAt(i - 1) == ',';
+            int j = i + 2;
+            while (j < a.length() && (Character.isDigit(a.charAt(j)) || a.charAt(j) == '-')) j++;
+            if (start && j < a.length() && a.charAt(j) == '=') return true;
+            i = a.indexOf("h3", i + 2);
+        }
+        return false;
+    }
+
+    /** CDN önbellek durumu: x-cache / cf-cache-status içinde HIT / MISS; yoksa null. */
+    static String cdnCache(String xCache, String age) {
+        if (xCache != null) {
+            String x = xCache.toUpperCase(Locale.ROOT);
+            if (x.contains("HIT")) return "hit";
+            if (x.contains("MISS") || x.contains("EXPIRED") || x.contains("BYPASS") || x.contains("DYNAMIC")) return "miss";
+        }
+        if (age != null) {
+            try {
+                if (Long.parseLong(age.trim()) > 0) return "hit";
+            } catch (NumberFormatException ignore) { /* bozuk başlık */ }
+        }
+        return null;
     }
 
     /** İndirilmeyen aday (tarayıcı istemez) — boyutsuz, kararı {@code skipped}. */
@@ -1135,6 +1249,16 @@ public class PageResourceScanService {
         h.put("content_length", meta.contentLength() == null ? null : String.valueOf(meta.contentLength()));
         h.put("server", clipHeader(meta.server()));
         if (meta.xCache() != null) h.put("x_cache", clipHeader(meta.xCache()));
+        // ── algoritma 3 (yalnız varsa) ──
+        PageFetchCore.ScanMeta sm = meta.scan();
+        if (sm != null) {
+            if (sm.etag() != null) h.put("etag", clipHeader(sm.etag()));
+            if (sm.lastModified() != null) h.put("last_modified", clipHeader(sm.lastModified()));
+            if (sm.age() != null) h.put("age", clipHeader(sm.age()));
+            if (sm.altSvc() != null) h.put("alt_svc", clipHeader(sm.altSvc()));
+            String cdn = cdnCache(meta.xCache(), sm.age());
+            if (cdn != null) h.put("cdn_cache", cdn);
+        }
         return h;
     }
 
@@ -1234,6 +1358,179 @@ public class PageResourceScanService {
         }
         int n = Math.min(body.length, PageResourceDiscovery.MAX_CSS_CHARS);
         return new String(body, 0, n, cs);
+    }
+
+    // ── Derin analiz (algoritma 3) yardımcıları ────────────────────────────────────────────
+
+    /** Adresin uzantısından kategori tahmini (çekim ayarı seçimi için; keşif kategorisi ayrıca incelir). */
+    private static String category(String url) {
+        String e = PageResourceDiscovery.ext(url);
+        return e.equals("js") || e.equals("mjs") ? PageResourceDiscovery.JS : "";
+    }
+
+    /** Görülen {@code Set-Cookie}'ler (değer çekirdekte atıldı) — sayfa yükü yanıtlarından, sınırlı. */
+    private void collectCookies(Run run, PageFetchCore.Meta meta) {
+        PageFetchCore.ScanMeta sm = meta == null ? null : meta.scan();
+        if (sm == null || sm.cookies().isEmpty()) return;
+        long now = clock.getAsLong();
+        for (PageFetchCore.SeenCookie sc : sm.cookies()) {
+            if (run.cookieCount.get() >= MAX_COOKIES) return;
+            CookieFacts.Cookie c = CookieFacts.parse(sc.header(), sc.host(), now);
+            if (c == null) continue;
+            run.cookieCount.incrementAndGet();
+            run.cookies.add(new DeepContext.CookieSeen(c, !firstParty(sc.host(), run.rootHost)));
+        }
+    }
+
+    /** Stil metninin olguları: {@code @font-face}'ler ve başvurular (anahtarlar "kullanılmayan önyükleme" için). */
+    private List<PageResourceDiscovery.Candidate> cssFacts(Run run, String css, String base, String cssUrl) {
+        List<PageResourceDiscovery.Candidate> refs = PageResourceDiscovery.cssRefs(css, base);
+        for (PageResourceDiscovery.Candidate r : refs) {
+            if (run.cssReferenced.size() >= MAX_CSS_REFERENCED) break;
+            run.cssReferenced.add(r.url());
+        }
+        for (FontFaces.Face face : FontFaces.scan(css, base, cssUrl)) {
+            if (run.fontFaceCount.incrementAndGet() > MAX_FONT_FACES) break;
+            run.fontFaces.add(face);
+        }
+        return refs;
+    }
+
+    /** Betik örneği: küçültme, kaynak haritası, kütüphane (örnek bellekte kalır, saklanmaz). */
+    private void inspectScript(Run run, ScanItem it, PageFetchCore.MetaFetch mf) {
+        PageFetchCore.ScanMeta sm = mf.meta() == null ? null : mf.meta().scan();
+        String head = sm == null || sm.sampleHead() == null ? null : utf8(sm.sampleHead());
+        String tail = sm == null || sm.sampleTail() == null ? null : utf8(sm.sampleTail());
+        if (head == null) run.samplesUnavailable.incrementAndGet();
+        AssetSample.Result res = AssetSample.inspect(it.url, head, sm != null && sm.sampleComplete() ? null : tail, true);
+        it.minified = res.minified();
+        if (res.library() != null) {
+            it.libraryName = res.library().name();
+            it.libraryVersion = res.library().version();
+        } else {
+            com.sitemonitor.service.page.scan.deep.JsLibraryCatalog.Library byUrl =
+                    com.sitemonitor.service.page.scan.deep.JsLibraryCatalog.detect(it.url, null);
+            if (byUrl != null) { it.libraryName = byUrl.name(); it.libraryVersion = byUrl.version(); }
+        }
+        String base = mf.meta() != null && mf.meta().finalUrl() != null ? mf.meta().finalUrl() : it.url;
+        it.sourceMap = sourceMapUrl(base, sm == null ? null : sm.sourceMapHeader(), res.sourceMap());
+    }
+
+    /** Stil örneği (çözülmüş gövdeden): küçültme ve kaynak haritası. */
+    private void inspectStylesheet(ScanItem it, String text, String base, PageFetchCore.MetaFetch mf) {
+        String head = text.length() > AssetSample.HEAD_CHARS ? text.substring(0, AssetSample.HEAD_CHARS) : text;
+        String tail = text.length() > AssetSample.HEAD_CHARS
+                ? text.substring(Math.max(0, text.length() - AssetSample.TAIL_CHARS)) : null;
+        AssetSample.Result res = AssetSample.inspect(it.url, head, tail, false);
+        it.minified = res.minified();
+        PageFetchCore.ScanMeta sm = mf.meta() == null ? null : mf.meta().scan();
+        it.sourceMap = sourceMapUrl(base, sm == null ? null : sm.sourceMapHeader(), res.sourceMap());
+    }
+
+    /** Kaynak haritası adresi: {@code SourceMap} başlığı önce, yoksa yorum; mutlak http(s), ≤ 4096; değilse null. */
+    static String sourceMapUrl(String base, String header, String comment) {
+        String raw = header != null && !header.isBlank() ? header.trim() : comment;
+        if (raw == null || raw.isBlank() || raw.length() > PageResourceDiscovery.MAX_CSS_CHARS) return null;
+        String u = PageFetchCore.normalizeUrl(PageFetchCore.resolve(base, PageFetchCore.normalizeUrl(raw)));
+        if (!PageFetchCore.isHttp(u) || u.length() > 4096) return null;
+        return PageResourceDiscovery.key(u);
+    }
+
+    private static String utf8(byte[] b) {
+        return new String(b, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Keşfedilen host'ların bağlantı kurulum süresi (DNS / TCP / TLS) — en çok {@value PageResourceAnalyzer#HOST_TIMING_LIMIT}
+     * host (en çok nesnesi olan önce, ana host ilk), {@value #HOST_TIMING_CONCURRENCY} eşzamanlı, en çok
+     * {@value #HOST_TIMING_PHASE_MS} ms. Vekil üzerinden gidilen host ölçülmez ({@code proxy}). İptal / süre dolumunda biten
+     * ölçümler kalır, kalanlar {@code cancelled}.
+     */
+    private void measureHosts(Run run, String base, PageResourceDiscovery.Found found) throws InterruptedException {
+        Map<String, String> sample = new LinkedHashMap<>();   // host → örnek adres
+        Map<String, Integer> counts = new HashMap<>();
+        String mainHost = lowerHost(base);
+        if (mainHost != null) { sample.put(mainHost, base); counts.put(mainHost, Integer.MAX_VALUE); }
+        for (PageResourceDiscovery.Candidate cand : found.pageLoad()) {
+            if (cand.notLoaded()) continue;
+            String h = lowerHost(cand.url());
+            if (h == null) continue;
+            sample.putIfAbsent(h, cand.url());
+            counts.merge(h, 1, (a, b) -> a == Integer.MAX_VALUE ? a : a + b);
+        }
+        List<String> hosts = new ArrayList<>(sample.keySet());
+        hosts.sort(Comparator.comparingInt((String h) -> -counts.getOrDefault(h, 0)).thenComparing(h -> h));
+        int limit = PageResourceAnalyzer.HOST_TIMING_LIMIT;
+        run.hostsNotMeasured = Math.max(0, hosts.size() - limit);
+        if (hosts.size() > limit) hosts = new ArrayList<>(hosts.subList(0, limit));
+        if (run.halted() || hosts.isEmpty()) return;
+        long phaseEnd = Math.min(run.deadline, clock.getAsLong() + HOST_TIMING_PHASE_MS);
+        int timeout = Math.min(HOST_TIMING_TIMEOUT_MS, run.c.requestTimeoutMs());
+        Semaphore gate = new Semaphore(HOST_TIMING_CONCURRENCY);
+        Map<String, Future<DeepContext.HostTiming>> futures = new LinkedHashMap<>();
+        for (String h : hosts) {
+            String url = sample.get(h);
+            futures.put(h, run.submit(() -> {
+                gate.acquire();
+                try {
+                    if (run.halted()) return DeepContext.HostTiming.notMeasured("cancelled");
+                    if (run.via(url)) return DeepContext.HostTiming.notMeasured("proxy");
+                    int port = com.sitemonitor.service.page.scan.deep.DeepUrls.port(url);
+                    boolean tls = com.sitemonitor.service.page.scan.deep.DeepUrls.https(url);
+                    PageFetchCore.HostConnect hc = core.measureConnection(h, port < 0 ? (tls ? 443 : 80) : port, tls, timeout);
+                    return new DeepContext.HostTiming(hc.dnsMs(), hc.connectMs(), hc.tlsMs(), hc.error() == null, hc.error());
+                } finally {
+                    gate.release();
+                }
+            }));
+        }
+        for (Map.Entry<String, Future<DeepContext.HostTiming>> e : futures.entrySet()) {
+            DeepContext.HostTiming t;
+            try {
+                t = awaitBeating(run, e.getValue(), phaseEnd);
+            } catch (IllegalStateException ex) {
+                t = null;
+            }
+            run.hostTimings.put(e.getKey(), t == null ? DeepContext.HostTiming.notMeasured("cancelled") : t);
+        }
+    }
+
+    /**
+     * Açıkta olabilecek kaynak haritaları: betik / stil nesnelerinin {@code sourceMappingURL}'leri HEAD ile denetlenir (en çok
+     * {@value PageResourceAnalyzer#SOURCE_MAP_LIMIT}, {@value #SOURCE_MAP_PHASE_MS} ms). 2xx → açık; 401 / 403 / 404 / 410 →
+     * kapalı; diğerleri (405 / 501 / aktarım hatası / engel) → bilinmiyor (null). Gövde indirilmez.
+     */
+    private void checkSourceMaps(Run run, List<Planned> all) throws InterruptedException {
+        java.util.LinkedHashSet<String> maps = new java.util.LinkedHashSet<>();
+        for (Planned p : all) if (p.item != null && p.item.sourceMap != null) maps.add(p.item.sourceMap);
+        if (maps.isEmpty() || run.halted()) return;
+        List<String> list = new ArrayList<>(maps);
+        int limit = PageResourceAnalyzer.SOURCE_MAP_LIMIT;
+        run.sourceMapsNotChecked = Math.max(0, list.size() - limit);
+        if (list.size() > limit) list = new ArrayList<>(list.subList(0, limit));
+        long phaseEnd = Math.min(run.deadline, clock.getAsLong() + SOURCE_MAP_PHASE_MS);
+        Map<String, Future<Boolean>> futures = new LinkedHashMap<>();
+        for (String u : list) {
+            boolean viaProxy = run.via(u);
+            futures.put(u, run.submit(() -> {
+                PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, false,
+                        false, viaProxy);
+                PageFetchCore.Fetch h = core.fetchWithMeta(u, "HEAD", o, 0, run.probeTuning).fetch();
+                if (h.blocked() || h.status() == 0) return null;
+                if (h.status() >= 200 && h.status() < 300) return Boolean.TRUE;
+                int sc = h.status();
+                return sc == 401 || sc == 403 || sc == 404 || sc == 410 ? Boolean.FALSE : null;
+            }));
+        }
+        for (Map.Entry<String, Future<Boolean>> e : futures.entrySet()) {
+            Boolean v;
+            try {
+                v = awaitBeating(run, e.getValue(), phaseEnd);
+            } catch (IllegalStateException ex) {
+                v = null;
+            }
+            if (v != null) run.sourceMaps.put(e.getKey(), v);
+        }
     }
 
     // ── Ölçülmüş görsel kazancı ─────────────────────────────────────────────────────────────
@@ -1345,14 +1642,15 @@ public class PageResourceScanService {
     private void finishDone(Snapshot s, Run run, List<ScanItem> items, PageResourceAnalyzer.Result r, ScanItem html)
             throws Exception {
         List<Map<String, Object>> rows = new ArrayList<>(items.size());
-        for (ScanItem it : items) rows.add(it.toMap());
+        for (ScanItem it : items) rows.add(it.toDeepMap());
         String analysis = JSON.writeValueAsString(r.analysis());
         String itemsJson = JSON.writeValueAsString(rows);
         long now = clock.getAsLong();
         int n = jdbc.update(SQL_DONE, iso(now), now, run.done.get(), run.total.get(), r.grade(), r.gradeLetter(), r.loadMs(),
                 r.htmlTtfbMs(), r.htmlMs(), r.pageBytes(), r.requestCount(), r.imageBytes(), r.imageCount(), r.documentCount(),
                 r.documentBytes(), r.linkCount(), r.linkBytes(), r.failedCount(), r.capped(), analysis, itemsJson,
-                html.redirects, html.redirectMs, s.id());
+                html.redirects, html.redirectMs, r.jsBytes(), r.cssBytes(), r.fontBytes(), r.securityScore(), r.seoScore(),
+                r.a11yScore(), s.id());
         if (n == 0) {
             log.info("Sayfa kaynak analizi {} bitti ama satır artık çalışıyor değil (yarıda kaldı / iptal edildi) — sonuç yazılmadı",
                     s.id());

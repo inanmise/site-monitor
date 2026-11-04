@@ -125,7 +125,52 @@ public class PageFetchCore {
      * Kaynak analizi çekim ayarı: hangi istemciler, hangi {@code Accept-Encoding}, saklanan gövde ve açılmış gövde tavanı
      * (bellek tepesi: stil gövdesi taramanın karakter sınırına göre açılır — inceleme H15). {@code null} = izleme davranışı.
      */
-    public record ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes) {}
+    public record ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes,
+                             boolean hash, int sampleHead, int sampleTail, boolean pageHeaders) {
+        /** Algoritma 2 ayarı: özet / örnek / sayfa başlığı yakalama yok. */
+        public ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes) {
+            this(clients, acceptEncoding, maxBodyBytes, maxDecodedBytes, false, 0, 0, false);
+        }
+
+        /** Aynı ayar + derin yakalama (algoritma 3): gövde özeti, betik örneği (baş / son bayt), ana sayfa başlıkları. */
+        public ScanTuning capture(boolean hash, int sampleHead, int sampleTail, boolean pageHeaders) {
+            return new ScanTuning(clients, acceptEncoding, maxBodyBytes, maxDecodedBytes, hash, Math.max(0, sampleHead),
+                    Math.max(0, sampleTail), pageHeaders);
+        }
+    }
+
+    /**
+     * Kaynak analizinin derin yakalaması (2026-11, algoritma 3) — YALNIZ ayarlı ({@link ScanTuning}) çekimde dolar; izleme
+     * çekimi bunu hiç üretmez (yolu bayt-özdeş).
+     *
+     * @param httpVersion    son yanıtın HTTP sürümü ({@code 1.1} | {@code 2})
+     * @param contentHash    tel gövdesinin SHA-256'sı (onaltılık); gövde tam okunmadıysa / istenmediyse null
+     * @param sampleHead     çözülmüş gövdenin ilk baytları (betik örneği); istenmediyse / okunamadıysa null
+     * @param sampleTail     çözülmüş gövdenin SON baytları — yalnız gövde sonuna dek çözüldüyse; yoksa null
+     * @param sampleComplete çözülmüş gövdenin TAMAMI {@code sampleHead}'de
+     * @param sampleSkipped  örnek neden yok: {@code encoding} (br / bilinmeyen kodlama), {@code decode} (bozuk akış),
+     *                       {@code truncated} (kesildi); varsa null
+     * @param cookies        tüm adımlardaki {@code Set-Cookie}'ler — DEĞERİ ÇEKİRDEKTE ATILMIŞ ({@code ad=; öznitelikler})
+     * @param pageHeaders    seçili güvenlik başlıkları (küçük harfli ad → değerler); istenmediyse null
+     */
+    public record ScanMeta(String httpVersion, String etag, String lastModified, String age, String altSvc,
+                           String sourceMapHeader, String contentHash, byte[] sampleHead, byte[] sampleTail,
+                           boolean sampleComplete, String sampleSkipped, List<SeenCookie> cookies,
+                           Map<String, List<String>> pageHeaders) {}
+
+    /** Görülen çerez başlığı: hangi host'tan + DEĞERSİZ başlık ({@code ad=; Secure; HttpOnly; …}). */
+    public record SeenCookie(String host, String header) {}
+
+    /** Ana sayfadan yakalanan güvenlik başlıkları (küçük harf). */
+    public static final List<String> PAGE_HEADERS = List.of("content-security-policy", "content-security-policy-report-only",
+            "strict-transport-security", "x-content-type-options", "x-frame-options", "referrer-policy", "permissions-policy",
+            "feature-policy", "cross-origin-opener-policy", "cross-origin-resource-policy", "x-robots-tag");
+    /** Çekim başına tutulan en çok çerez başlığı. */
+    static final int MAX_COOKIES = 50;
+    /** Sayfa başlığı değerinin tavanı (CSP uzun olabilir; yalnız bellekte, değerlendirme için). */
+    static final int PAGE_HEADER_MAX = 8192;
+    /** Örnek için çözülecek en çok bayt (sıkıştırma bombası: bunun ötesi çözülmeden yalnız sayılır). */
+    static final long MAX_SAMPLE_DECODED = 64L * 1024 * 1024;
     /** Bayt SAYARKEN tek kaynaktan okunacak tavan: dev bir dosya (video/ISO) ölçümü kilitlemesin.
      *  Tavana ulaşılırsa sayım burada durur — "en az bu kadar" demektir, truncated bayrağı işaretler. */
     // 1024 tabanlı: arayüz boyutları KB/MB olarak 1024 tabanıyla gösteriyor; ondalık 10.000.000
@@ -204,8 +249,16 @@ public class PageFetchCore {
      */
     public record Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
                        String cacheControl, String expires, String date, byte[] head, String server, String xCache,
-                       long redirectMs, Long finalTtfbMs) {
+                       long redirectMs, Long finalTtfbMs, ScanMeta scan) {
         public static final Meta NONE = new Meta(null, 0, null, null, null, null, null, null, null);
+
+        /** Algoritma 2 alanları (derin yakalama yok). */
+        public Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
+                    String cacheControl, String expires, String date, byte[] head, String server, String xCache,
+                    long redirectMs, Long finalTtfbMs) {
+            this(finalUrl, redirects, contentType, contentEncoding, contentLength, cacheControl, expires, date, head, server,
+                    xCache, redirectMs, finalTtfbMs, null);
+        }
 
         /** Geriye uyum (algoritma 1 alanları): sunucu / önbellek başlığı ve adım süreleri yok. */
         public Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
@@ -227,12 +280,61 @@ public class PageFetchCore {
         byte[] head;
         long redirectMs;
         Long finalTtfbMs;
+        // ── derin yakalama (yalnız ayarlı çekim) ──
+        boolean deep;
+        HttpClient.Version version;
+        String contentHash;
+        byte[] sampleHead, sampleTail;
+        boolean sampleComplete;
+        String sampleSkipped;
+        List<SeenCookie> cookies;
+        Map<String, List<String>> pageHeaders;
 
         MetaSink(int headBytes) { this.headBytes = Math.max(0, headBytes); }
 
+        /** Bir adımın {@code Set-Cookie}'leri — değer HEMEN atılır. */
+        void addCookies(String host, java.net.http.HttpHeaders h) {
+            for (String v : h.allValues("set-cookie")) {
+                if (cookies == null) cookies = new ArrayList<>();
+                if (cookies.size() >= MAX_COOKIES) return;
+                String stripped = stripCookieValue(v);
+                if (stripped != null) cookies.add(new SeenCookie(host == null ? null : host.toLowerCase(Locale.ROOT), stripped));
+            }
+        }
+
+        /** Ana sayfanın güvenlik başlıkları (seçili adlar, değer başına ≤ {@value #PAGE_HEADER_MAX}, ad başına ≤ 5 değer). */
+        void capturePageHeaders(java.net.http.HttpHeaders h) {
+            Map<String, List<String>> m = new LinkedHashMap<>();
+            for (String name : PAGE_HEADERS) {
+                List<String> vals = h.allValues(name);
+                if (vals.isEmpty()) continue;
+                List<String> kept = new ArrayList<>();
+                for (String v : vals) {
+                    if (kept.size() >= 5 || v == null) break;
+                    String t = v.trim();
+                    kept.add(t.length() > PAGE_HEADER_MAX ? t.substring(0, PAGE_HEADER_MAX) : t);
+                }
+                m.put(name, List.copyOf(kept));
+            }
+            pageHeaders = m;
+        }
+
+        ScanMeta scanMeta() {
+            if (!deep) return null;
+            String ver = version == null ? null : version == HttpClient.Version.HTTP_2 ? "2" : "1.1";
+            java.net.http.HttpHeaders h = headers;
+            String sm = h == null ? null : clip(h.firstValue("sourcemap").orElse(h.firstValue("x-sourcemap").orElse(null)));
+            return new ScanMeta(ver, h == null ? null : clip(h.firstValue("etag").orElse(null)),
+                    h == null ? null : clip(h.firstValue("last-modified").orElse(null)),
+                    h == null ? null : clip(h.firstValue("age").orElse(null)),
+                    h == null ? null : clip(h.firstValue("alt-svc").orElse(null)), sm, contentHash, sampleHead, sampleTail,
+                    sampleComplete, sampleSkipped, cookies == null ? List.of() : List.copyOf(cookies), pageHeaders);
+        }
+
         Meta toMeta() {
             if (headers == null) {
-                return new Meta(finalUrl, redirects, null, null, null, null, null, null, head, null, null, redirectMs, finalTtfbMs);
+                return new Meta(finalUrl, redirects, null, null, null, null, null, null, head, null, null, redirectMs, finalTtfbMs,
+                        scanMeta());
             }
             Long len = null;
             String cl = headers.firstValue("content-length").orElse(null);
@@ -249,7 +351,7 @@ public class PageFetchCore {
                     clip(headers.firstValue("content-encoding").orElse(null)), len,
                     clip(headers.firstValue("cache-control").orElse(null)), clip(headers.firstValue("expires").orElse(null)),
                     clip(headers.firstValue("date").orElse(null)), head, clip(headers.firstValue("server").orElse(null)),
-                    xCache, redirectMs, finalTtfbMs);
+                    xCache, redirectMs, finalTtfbMs, scanMeta());
         }
 
         /** Başlık değerleri sınırlı tutulur (dev bir başlık belleği / DB'yi şişirmesin). */
@@ -363,6 +465,62 @@ public class PageFetchCore {
     /** Kaynak doğrulama/ölçüm fan-out'u için paylaşılan sanal-thread executor. */
     public ExecutorService executor() { return resourceExecutor; }
 
+    /**
+     * Bağlantı kurulum ölçümü (2026-11, kaynak analizi algoritma 3 — "host bağlantı süreleri"): DNS çözümü (SSRF muhafızının
+     * çözümüyle — engelli adres hiç bağlanılmaz), doğrulanmış İLK adrese TCP bağlantısı ({@link com.sitemonitor.service.NetworkResolver},
+     * yeniden çözmez → DNS-rebind kapalı) ve istenirse TLS el sıkışması (izleme çekimiyle aynı güven bağlamı, SNI). Her adım
+     * {@code timeoutMs} ile sınırlı; asla fırlatmaz. Vekil kararı ÇAĞIRANDA (vekil üzerinden gidilen host ölçülmez).
+     *
+     * @param error {@code blocked | dns_failed | connect_failed | tls_failed}; başarıda null
+     */
+    public record HostConnect(Long dnsMs, Long connectMs, Long tlsMs, String error) {}
+
+    public HostConnect measureConnection(String host, int port, boolean tls, int timeoutMs) {
+        int t = Math.max(500, timeoutMs);
+        long d0 = System.nanoTime();
+        List<java.net.InetAddress> addrs;
+        try {
+            addrs = ssrfGuard.validate(host);
+        } catch (SsrfGuard.UnresolvableHostException e) {
+            return new HostConnect(null, null, null, "dns_failed");
+        } catch (SsrfGuard.BlockedException e) {
+            return new HostConnect(null, null, null, "blocked");
+        } catch (RuntimeException e) {
+            return new HostConnect(null, null, null, "dns_failed");
+        }
+        long dnsMs = (System.nanoTime() - d0) / 1_000_000L;
+        long c0 = System.nanoTime();
+        java.net.Socket socket;
+        try {
+            socket = com.sitemonitor.service.NetworkResolver.connectFirstReachable(addrs, port, t);
+        } catch (Exception e) {
+            return new HostConnect(dnsMs, null, null, "connect_failed");
+        }
+        long connectMs = (System.nanoTime() - c0) / 1_000_000L;
+        if (!tls) {
+            closeQuietly(socket);
+            return new HostConnect(dnsMs, connectMs, null, null);
+        }
+        long t0 = System.nanoTime();
+        try {
+            socket.setSoTimeout(t);
+            SSLContext ctx = httpClient != null ? httpClient.sslContext() : SSLContext.getDefault();
+            try (javax.net.ssl.SSLSocket ssl = (javax.net.ssl.SSLSocket) ctx.getSocketFactory().createSocket(socket, host, port, true)) {
+                ssl.setSoTimeout(t);
+                ssl.startHandshake();
+            }
+            return new HostConnect(dnsMs, connectMs, (System.nanoTime() - t0) / 1_000_000L, null);
+        } catch (Exception e) {
+            return new HostConnect(dnsMs, connectMs, null, "tls_failed");
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
+    private static void closeQuietly(java.net.Socket s) {
+        try { s.close(); } catch (Exception ignore) { /* kapatma hatası önemsiz */ }
+    }
+
     // ── Manuel redirect takipli fetch (her hop SSRF'den geçer) ───────────────
 
     /**
@@ -411,6 +569,9 @@ public class PageFetchCore {
         // yönlendirmede Authorization düşürmesiyle aynı kural. (Düşürmenin KENDİSİ bu sınıfta
         // bilinçli olarak takip edilmeye devam ediyor — SafeRedirect.isDowngrade javadoc'u.)
         final String originHost = hostOf(url) == null ? "" : hostOf(url);
+        // Derin yakalama YALNIZ ayarlı (kaynak analizi) çekimde; izleme çekiminde hiçbir ek iş yok (bayt-özdeş yol).
+        final boolean deep = sink != null && tuning != null;
+        if (deep) sink.deep = true;
         try {
             for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
                 String host = hostOf(current);
@@ -456,6 +617,7 @@ public class PageFetchCore {
                 long ttfb = Math.max(0L, headersAt - start - guardMs);
                 long hopTtfb = Math.max(0L, headersAt - hopStart - hopGuard);
                 int sc = resp.statusCode();
+                if (deep) sink.addCookies(host, resp.headers());
                 // Gövde SÜRE bütçesi (prod kapısı 2026-09-25, N1): istek zaman aşımı yalnız başlıklara kadar
                 // işliyor; gövdeyi bitirmeyen bir kaynak (MJPEG <img>, SSE) okuyan iş parçacığını ve soketi
                 // süresiz tutuyor, sayfa kontrolünün deadline'ı dolunca da SIZIYORDU. Gövde başlık süresi
@@ -486,7 +648,14 @@ public class PageFetchCore {
                 boolean truncated = false;
                 String encoding = resp.headers().firstValue("content-encoding").orElse(null);
                 if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); sink.finalTtfbMs = hopTtfb; }
-                try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
+                if (deep) {
+                    sink.version = resp.version();
+                    if (tuning.pageHeaders()) sink.capturePageHeaders(resp.headers());
+                }
+                java.security.MessageDigest digest = deep && tuning.hash() ? sha256() : null;
+                try (InputStream bodyIn = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
+                    // Özet istenirse tel baytları akışla özetlenir (gövde tutulmaz); aksi halde aynı akış.
+                    InputStream is = digest == null ? bodyIn : new java.security.DigestInputStream(bodyIn, digest);
                     if (opts.wantBody()) {
                         // SAYIM telden gelen (sıkıştırılmış) bayt üzerinden; GÖVDE ayrıştırmak için açılır.
                         // İkisini karıştırmak iki ayrı hataya yol açardı: sıkıştırılmışı parse etmek
@@ -515,6 +684,16 @@ public class PageFetchCore {
                         }
                         if (headTimedOut) {
                             truncated = true;
+                        } else if (deep && tuning.sampleHead() > 0) {
+                            // Betik örneği: tel akışı sayılırken çözülür; baş ve son baytlar tutulur, gövde tutulmaz.
+                            Sampled sm = sampleAndCount(is, MAX_COUNT_BYTES - count, encoding, tuning.sampleHead(),
+                                    tuning.sampleTail());
+                            count += sm.wire();
+                            truncated = count >= MAX_COUNT_BYTES || sm.timedOut();
+                            sink.sampleHead = sm.head();
+                            sink.sampleTail = truncated ? null : sm.tail();
+                            sink.sampleComplete = !truncated && sm.complete();
+                            sink.sampleSkipped = truncated && sm.skipped() == null ? "truncated" : sm.skipped();
                         } else {
                             Drained d = drain(is, MAX_COUNT_BYTES - count);
                             count += d.bytes();
@@ -526,6 +705,7 @@ public class PageFetchCore {
                         catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException ignore) { /* akış kesildi */ }
                     }
                 }
+                if (digest != null && !truncated && (opts.wantBody() || opts.countBytes())) sink.contentHash = hex(digest.digest());
                 return new Fetch(sc, ttfb, System.currentTimeMillis() - start, count, body, null, false, truncated);
             }
             return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, "çok fazla yönlendirme", false, false,
@@ -569,6 +749,132 @@ public class PageFetchCore {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Örneklenmiş sayım sonucu: tel baytı, baş / son çözülmüş baytlar, tamamı başta mı, neden yok, süre doldu mu. */
+    record Sampled(long wire, byte[] head, byte[] tail, boolean complete, String skipped, boolean timedOut) {}
+
+    /**
+     * Tel akışını tavana kadar SAYARKEN çözer ve baş / son baytları tutar (kaynak analizi, algoritma 3). Çözülebilen kodlama:
+     * kimlik / gzip / deflate; br ve bilinmeyen kodlama → yalnız sayım ({@code skipped=encoding}). Çözme en çok
+     * {@value #MAX_SAMPLE_DECODED} bayt sürer (sıkıştırma bombası), sonra kalan tel baytları çözülmeden sayılır. Bozuk akış
+     * → {@code skipped=decode}, sayım sürer. Bellek: baş + son tampon.
+     */
+    static Sampled sampleAndCount(InputStream in, long cap, String encoding, int headN, int tailN) throws java.io.IOException {
+        CappedCounter wire = new CappedCounter(in, Math.max(0, cap));
+        String enc = encoding == null ? "" : encoding.trim().toLowerCase(Locale.ROOT);
+        byte[] head = new byte[headN];
+        int headLen = 0;
+        byte[] ring = new byte[Math.max(1, tailN)];
+        long total = 0;
+        boolean complete = false, timedOut = false;
+        String skipped = null;
+        InputStream decoded = null;
+        try {
+            if (enc.isEmpty() || enc.equals("identity")) decoded = wire;
+            else if (enc.contains("gzip")) decoded = new java.util.zip.GZIPInputStream(wire, 8192);
+            else if (enc.contains("deflate")) {
+                decoded = new java.util.zip.InflaterInputStream(wire, new java.util.zip.Inflater(true), 8192);
+            } else skipped = "encoding";
+            if (decoded != null) {
+                byte[] buf = new byte[8192];
+                while (total < MAX_SAMPLE_DECODED) {
+                    int n = decoded.read(buf, 0, buf.length);
+                    if (n < 0) { complete = true; break; }
+                    if (headLen < headN) {
+                        int k = Math.min(n, headN - headLen);
+                        System.arraycopy(buf, 0, head, headLen, k);
+                        headLen += k;
+                    }
+                    for (int i = 0; i < n; i++) ring[(int) ((total + i) % ring.length)] = buf[i];
+                    total += n;
+                }
+            }
+        } catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException te) {
+            timedOut = true;
+        } catch (java.io.IOException e) {
+            if (wire.timedOut) timedOut = true;
+            else if (!wire.capped) skipped = "decode";
+        }
+        if (!timedOut) {
+            Drained d = drain(wire, Long.MAX_VALUE);
+            if (d.timedOut()) timedOut = true;
+        }
+        if (wire.capped && skipped == null) skipped = "truncated";
+        boolean full = complete && skipped == null && !timedOut;
+        byte[] headOut = decoded == null || headLen == 0 && !full ? null : java.util.Arrays.copyOf(head, headLen);
+        byte[] tailOut = null;
+        if (full && tailN > 0) {
+            int len = (int) Math.min(total, tailN);
+            tailOut = new byte[len];
+            for (int i = 0; i < len; i++) tailOut[i] = ring[(int) ((total - len + i) % ring.length)];
+        }
+        return new Sampled(wire.count, headOut, tailOut, full && total <= headN, skipped, timedOut);
+    }
+
+    /** Tel sayacı: tavanda EOF döner ({@code capped}); süre aşımını işaretler. */
+    private static final class CappedCounter extends java.io.FilterInputStream {
+        final long cap;
+        long count;
+        boolean capped, timedOut;
+
+        CappedCounter(InputStream in, long cap) {
+            super(in);
+            this.cap = cap;
+        }
+
+        @Override
+        public int read() throws java.io.IOException {
+            byte[] one = new byte[1];
+            int n = read(one, 0, 1);
+            return n <= 0 ? -1 : one[0] & 0xFF;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws java.io.IOException {
+            if (count >= cap) { capped = true; return -1; }
+            int want = (int) Math.min(len, cap - count);
+            int n;
+            try {
+                n = super.read(b, off, want);
+            } catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException te) {
+                timedOut = true;
+                throw te;
+            }
+            if (n > 0) count += n;
+            return n;
+        }
+
+        @Override
+        public long skip(long n) throws java.io.IOException {
+            return 0;
+        }
+    }
+
+    /** Değeri ATILMIŞ çerez başlığı: {@code ad=v; a; b} → {@code ad=; a; b}; adsız → null. Uzunluk sınırlı. */
+    static String stripCookieValue(String setCookie) {
+        if (setCookie == null) return null;
+        String v = setCookie.length() > 4096 ? setCookie.substring(0, 4096) : setCookie;
+        int eq = v.indexOf('=');
+        int semi = v.indexOf(';');
+        if (eq <= 0 || (semi >= 0 && semi < eq)) return null;
+        String name = v.substring(0, eq).trim();
+        if (name.isEmpty()) return null;
+        return semi < 0 ? name + "=" : name + "=" + v.substring(semi);
+    }
+
+    private static java.security.MessageDigest sha256() {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return null;
+        }
+    }
+
+    private static String hex(byte[] d) {
+        StringBuilder sb = new StringBuilder(d.length * 2);
+        for (byte b : d) sb.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        return sb.toString();
     }
 
     /**

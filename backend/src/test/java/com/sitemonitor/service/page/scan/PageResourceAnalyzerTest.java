@@ -84,6 +84,12 @@ class PageResourceAnalyzerTest {
         assertThat(PageResourceAnalyzer.letter(50)).isEqualTo("E");
         assertThat(PageResourceAnalyzer.letter(49)).isEqualTo("F");
         assertThat(PageResourceAnalyzer.WEIGHTS.values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(100);
+        // algoritma 3: oluşturmayı engelleyen bayt (KB) ve sayı eğrileri
+        assertThat(PageResourceAnalyzer.curve(40, PageResourceAnalyzer.RENDER_BLOCKING_CURVE_KB)).isEqualTo(100);
+        assertThat(PageResourceAnalyzer.curve(150, PageResourceAnalyzer.RENDER_BLOCKING_CURVE_KB)).isEqualTo(85);
+        assertThat(PageResourceAnalyzer.curve(3000, PageResourceAnalyzer.RENDER_BLOCKING_CURVE_KB)).isEqualTo(0);
+        assertThat(PageResourceAnalyzer.curve(2, PageResourceAnalyzer.RENDER_BLOCKING_COUNT_CURVE)).isEqualTo(100);
+        assertThat(PageResourceAnalyzer.curve(10, PageResourceAnalyzer.RENDER_BLOCKING_COUNT_CURVE)).isEqualTo(50);
     }
 
     @Test
@@ -112,10 +118,11 @@ class PageResourceAnalyzerTest {
         List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
         assertThat(recs).extracting(m -> m.get("code")).containsExactly("ALL_GOOD");
         List<Map<String, Object>> notes = get(r.analysis(), "notes");
-        assertThat(notes).extracting(m -> m.get("code")).containsExactly("JS_NOT_EXECUTED");
+        assertThat(notes).extracting(m -> m.get("code")).containsExactly("JS_NOT_EXECUTED", "JS_COOKIES_NOT_SEEN",
+                "CONTRAST_NOT_CHECKED");
         List<Map<String, Object>> scores = get(r.analysis(), "scores");
         assertThat(scores).extracting(m -> m.get("key")).containsExactly("load_time", "page_weight", "images", "requests",
-                "server_response", "errors", "compression", "caching");
+                "server_response", "render_blocking", "errors", "compression", "caching");
         List<Map<String, Object>> cats = get(r.analysis(), "categories");
         assertThat(cats).extracting(m -> m.get("category")).containsExactly("HTML", "CSS", "JS", "IMAGE", "DOCUMENT", "LINK");
     }
@@ -190,7 +197,8 @@ class PageResourceAnalyzerTest {
         assertThat(top.get(0).get("width")).isEqualTo(4000);
 
         List<Map<String, Object>> notes = get(r.analysis(), "notes");
-        assertThat(notes).extracting(m -> m.get("code")).containsExactly("JS_NOT_EXECUTED", "CAPPED_OBJECTS", "EXCLUDES_APPLIED");
+        assertThat(notes).extracting(m -> m.get("code")).containsExactly("JS_NOT_EXECUTED", "CAPPED_OBJECTS", "EXCLUDES_APPLIED",
+                "JS_COOKIES_NOT_SEEN", "CONTRAST_NOT_CHECKED");
         assertThat(PageResourceAnalyzer.NOTE_CODES).contains("CAPPED_TIME", "CAPPED_BYTES");
         Map<String, Object> timing = get(r.analysis(), "timing");
         assertThat(timing.get("parallel")).isEqualTo(6);
@@ -235,7 +243,7 @@ class PageResourceAnalyzerTest {
     // ── Algoritma 2 ───────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("algoritma 2: kökte algorithm_version, zamanlamada son adım TTFB + yönlendirme; SLOW_SERVER yalnız son adıma bakar")
+    @DisplayName("algoritma 3: kökte algorithm_version, zamanlamada son adım TTFB + yönlendirme; SLOW_SERVER yalnız son adıma bakar")
     void algorithmVersionAndRedirectSplit() {
         List<ScanItem> items = new ArrayList<>();
         ScanItem h = html(300, 2600, 30 * KB);   // son adımın ilk baytı 300 ms; zincirin tamamı uzun
@@ -243,7 +251,7 @@ class PageResourceAnalyzerTest {
         h.redirectMs = 2000;
         items.add(h);
         PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
-        assertThat(r.analysis().get("algorithm_version")).isEqualTo(2);
+        assertThat(r.analysis().get("algorithm_version")).isEqualTo(3);
         assertThat(r.analysis().keySet().iterator().next()).isEqualTo("algorithm_version");
         Map<String, Object> timing = get(r.analysis(), "timing");
         assertThat(timing).containsEntry("ttfb_ms", 300L).containsEntry("redirect_count", 2).containsEntry("redirect_ms", 2000L);
@@ -262,12 +270,14 @@ class PageResourceAnalyzerTest {
         Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
         for (Map<String, Object> s : scores) by.put((String) s.get("key"), s);
         assertThat(by.get("load_time")).containsEntry("full_at", 1000L).containsEntry("zero_at", 12_000L)
-                .containsEntry("score", 83).containsEntry("lost", 4.3);   // 25 × 17 / 100 = 4,25 → 4,3
+                .containsEntry("score", 83).containsEntry("lost", 3.4);   // algoritma 3: 20 × 17 / 100 = 3,4
         assertThat(by.get("page_weight")).containsEntry("full_at", 512 * KB).containsEntry("zero_at", 15 * MB);
         assertThat(by.get("images")).containsEntry("full_at", 512 * KB).containsEntry("zero_at", 8 * MB);
         assertThat(by.get("requests")).containsEntry("full_at", 25).containsEntry("zero_at", 300);
         assertThat(by.get("server_response")).containsEntry("full_at", 200L).containsEntry("zero_at", 3000L);
         assertThat(by.get("errors")).containsEntry("full_at", 0).containsEntry("zero_at", 10);
+        assertThat(by.get("render_blocking")).containsEntry("full_at", 50 * KB).containsEntry("zero_at", 2 * MB)
+                .containsEntry("weight", 10).containsEntry("unit", "bytes").containsEntry("score", 100);
         assertThat(by.get("compression")).containsEntry("full_at", 100).containsEntry("zero_at", 0).containsEntry("lost", 0.0);
         assertThat(by.get("caching")).containsEntry("full_at", 100).containsEntry("zero_at", 0);
         double lost = scores.stream().mapToDouble(s -> ((Number) s.get("lost")).doubleValue()).sum();

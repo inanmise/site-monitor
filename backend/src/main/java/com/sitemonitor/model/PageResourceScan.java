@@ -149,4 +149,34 @@ public class PageResourceScan {
     /** İptal istendi (iptal ucu yazar; koşan pod kalp atışında satırın artık RUNNING olmadığını görüp durur). */
     @Column(name = "cancel_requested")
     private Boolean cancelRequested;
+
+    // ── Algoritma 3 (2026-11, derin analiz): NULL = eski satır ──
+
+    /** Sayfa yükündeki betik / stil / yazı tipi baytı (eğilim ve bütçe okur). */
+    @Column(name = "js_bytes")
+    private Long jsBytes;
+
+    @Column(name = "css_bytes")
+    private Long cssBytes;
+
+    @Column(name = "font_bytes")
+    private Long fontBytes;
+
+    /** Kategori puanları (0–100); hesaplanamadıysa NULL. */
+    @Column(name = "security_score")
+    private Integer securityScore;
+
+    @Column(name = "seo_score")
+    private Integer seoScore;
+
+    @Column(name = "a11y_score")
+    private Integer a11yScore;
+
+    /** {@code page} | {@code site} (çok sayfalı analiz); NULL = page. */
+    @Column(name = "scope", length = 8)
+    private String scope;
+
+    /** Çok sayfalı analizde taranan sayfa sayısı; tek sayfada NULL. */
+    @Column(name = "pages_count")
+    private Integer pagesCount;
 }
