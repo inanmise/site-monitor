@@ -488,7 +488,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       const el = find()
       if (!el) {
         frames += 1
-        if (frames < 20) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
+        // Ayrıntılı denetim tembel parçada (ilk açılışta indirilir) — hedef ~3 sn beklenir; diğerleri ~20 kare (sınırlı)
+        if (frames < (focusReq.target === 'audit' ? 180 : 20)) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
         return
       }
       // Hedefin bölüm başlığıyla birlikte görünmesi için: sayaç → nesne bölümünün başı; diğerleri kendisi

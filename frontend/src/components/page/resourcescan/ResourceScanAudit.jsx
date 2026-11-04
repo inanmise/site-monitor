@@ -46,7 +46,8 @@ export default function ResourceScanAudit({
 
   if (!deep) {
     return (
-      <div data-slot="prs-audit-old">
+      // Panodan gelince odak buraya (alan başlığı yok) — yalnız programla odaklanır
+      <div data-slot="prs-audit-old" data-focus-target="prs-audit" tabIndex={-1} className="rounded-xl focus-visible:outline-2 focus-visible:outline-ring">
         <StatusBlock tone="neutral" icon={ListChecks} title={t('prs.deep.old.title')} description={t('prs.deep.old.body')}
           actions={canRun && !running ? (
             <Button type="button" variant="outline" className={TOUCH} onClick={onStart} disabled={starting} data-slot="prs-audit-restart">
