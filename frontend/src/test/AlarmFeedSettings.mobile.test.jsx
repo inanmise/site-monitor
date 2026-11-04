@@ -20,7 +20,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const SETTINGS = {
   enabled: true, min_level: 'HIGH', team_ids: [], types: [], resolved_minutes: 15, resolved_mode: 'status', clear_text: 'Clear',
   severity_critical: 'Critical', severity_high: 'Major', severity_warning: 'Warning', rci_mode: 'target', source: 'SiteMonitor',
-  rcitype: '', mail_separator: 'comma', allowed_ips: [IPV6], rate_per_minute: 30, max_rows: 2000, store_body: false,
+  rcitype: '', mail_separator: 'comma', allowed_ips: [IPV6], rate_per_minute: 30, max_rows: 2000, store_body: false, noc_only: true,
 }
 const ROW = {
   CREATEDTIME: '2026-10-30 11:02:00', SEVERITY: 'Major', RCI: 'odeme-api.internal.example.com', RCITYPE: 'HTTP', CATEGORY: 'HTTP',
@@ -53,6 +53,11 @@ describe('AlarmFeedSettings — dar kap (kartlar)', () => {
   it('çağıranlar, günlük ve önizleme kart düzeninde; uzun değerler tam; ayrıntı paneli CSV gövdeyi olduğu gibi gösterir', async () => {
     render(<AlarmFeedSettings />)
     await waitFor(() => expect(document.querySelector('[data-slot="af-root"]')).toHaveAttribute('data-state', 'ok'))
+    // Yalnız 7/24 süzgeci (2026-11-05): anahtar + uzun kural metni ve not dar kapta sarar (kırpılmaz)
+    const noc = document.querySelector('[data-slot="af-f-noc_only"]')
+    expect(within(noc).getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    expect(within(noc).getByText(/7\/24 e-postasıyla aynı kural/).className).toContain('[overflow-wrap:anywhere]')
+    expect(document.querySelector('[data-slot="af-noc-only-note"]')).toHaveTextContent('Kapatınca')
     expect(document.querySelector('[data-slot="af-callers-list"]')).toHaveAttribute('data-layout', 'cards')
     expect(document.querySelector('[data-slot="af-callers-table"]')).toBeNull()
     const caller = document.querySelector('[data-slot="af-caller"]')

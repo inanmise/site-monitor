@@ -537,6 +537,23 @@ alarm da bildirilir (RESOLVEDTIME gerçek kapanış anı), bir yanıt kaybolsa d
 birden çok kapanış varsa en güncel çözülme gönderilir. Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte
 dönmez. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
 
+**Yalnız 7/24'e bildirilen alarmlar (2026-11-05, varsayılan AÇIK).** Ayarlar → Alarm akışı → Kapsam → "Yalnız 7/24'e
+bildirilen alarmlar" (`site.monitor.alarm-feed.noc-only`, env `ALARM_FEED_NOC_ONLY`). Açıkken akışa yalnız 7/24 izleme ekibine
+bildirilecek alarmlar girer — 7/24 e-postasıyla AYNI alarm kuralı: izlemede "7/24 izleme ekibine bildir" açık ve izleme aktif
+(sertifika ve erişilebilirlik alarmında envanter kaydı), Ayarlar → 7/24'te alarmın türü açık ve alarm oradaki en düşük seviyeye
+ulaşıyor (erişim kesintileri her zaman kritik sayılır). 7/24 e-postasının gerçekten gidip gitmediği (aktif 7/24 grubu, bakım
+penceresi, sistem bakımı susturması) bakılmaz: akış ayrı bir kanaldır. Seviye / takım / tür süzgeçleri ayrıca uygulanır.
+Anahtar açılınca ya da bir izlemenin "7/24 izleme ekibine bildir" anahtarı kapatılınca daha önce OPEN gönderilmiş açık
+alarm bir kez "akış kapsamından çıktı" diye `RESOLVED` döner (merkezi ekip olayı kapatır); anahtar kapatılınca 7/24 dışı açık
+alarmlar da OPEN gelmeye başlar. İzleme dizini ya da 7/24 ayarı okunamazsa yanıt **503** olur — bir alarm "7/24 dışı" sayılıp
+yanlışlıkla kapatılmaz. Geçiş sırasında (eski + yeni pod birlikte) eski pod anahtarı bilmez ve bütün alarmları verir: bir 7/24
+dışı alarm çağrıdan çağrıya OPEN / RESOLVED arasında gidip gelebilir (prod tek replika; yalnız geçiş anı).
+
+**Ayar ekranındaki "Önizleme"** kayıtlı ayarlarla şu an dönecek satırları gösterir ama hiçbir kapanışı "gönderildi" işaretlemez:
+henüz teslim edilmemiş bir `RESOLVED` satırı, gerçek bir çağrı onu teslim edene kadar her önizlemede görünür. Bir alarmın
+günler önce çözülmüş olmasına rağmen `RESOLVED` görünmesi bu yüzden normaldir (daha önce OPEN gönderildiyse ilk çağrıya kadar
+bekler; `RESOLVEDTIME` gerçek çözülme anıdır).
+
 **Tek tüketici varsayımı.** Akış tek bir merkezi sisteme göre kurulmuştur: "teslim edildi" işareti uçtan kim çağırırsa
 çağırsın konur. Aynı ucu başka bir sistem de çekiyorsa kapanışlar ilk gönderimden sonra yalnız bir pencere boyunca tekrarlanır
 — ikinci tüketici o pencerede çağırmazsa bir kapanışı kaçırabilir; ikinci tüketici gerekiyorsa ayrı bir uç isteyin.
@@ -584,6 +601,10 @@ bir satır yazar; pod başına dakikada en çok 60 reddedilen çağrı yazılır
 - "403 bu IP adresinin izni yok" → çağrı günlüğünde istemci IP'sine bakın (`forwarded_for` zinciri). Giriş katmanı
   `X-Forwarded-For` yazmıyorsa istemci IP'si giriş katmanı olur — `site.monitor.client-ip.*` ayarlarını kontrol edin.
 - "Arayan sessiz" uyarısı → ekibin işi durmuş olabilir; son çağrı zamanı ve sonucu ayar sayfasındaki "Durum" kartında.
+- Bir alarm akışta yok → "Yalnız 7/24'e bildirilen alarmlar" açıksa: izlemede "7/24 izleme ekibine bildir" açık mı, izleme
+  aktif mi, Ayarlar → 7/24'te tür açık mı, alarm en düşük seviyeye ulaşıyor mu (Önizleme ile doğrulayın).
+- Akış 503 dönüyor ve günlükte "izleme dizini okunamadı" / "7/24 ayarı okunamadı" → veritabanı / tablo okuması geçici olarak
+  başarısız; süzgeç açıkken bilinçli olarak 503 (sahte "çözüldü" yerine). Sürerse süzgeci geçici kapatmak akışı açar.
 - Örnek: `curl -s https://<host>/api/public/alarm-feed | head -c 600`; pandas:
   `pd.DataFrame(requests.get(url, timeout=30).json(), columns=['CREATEDTIME','SEVERITY','RCI','RCITYPE','CATEGORY','FILTERSOURCE','TEXT','BODY','MAILS'])`.
 
