@@ -101,9 +101,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [openItem, setOpenItem] = useState(null)
   const [focusReq, setFocusReq] = useState(null)        // { target, seq } — bölüm geçişinde odak / kaydırma isteği
-  // prs3 F / G (fe2): bütçe penceresi, eğilim görünümü bir kez açıldıysa bağlı kalır, sunucunun site isteğini yok saydığı koşu
+  // prs3 F / G (fe2): bütçe penceresi ve sunucunun site isteğini yok saydığı (eski sunucu) koşu
   const [budgetOpen, setBudgetOpen] = useState(false)
-  const [trendSeen, setTrendSeen] = useState(initSection === 'trend')
   const [siteIgnoredId, setSiteIgnoredId] = useState(null)
   const budget = useResourceBudget(monitorId, monitor?.can_edit === true)
 
@@ -555,7 +554,6 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   function onSectionChange(next) {
     const back = next === 'overview' && section !== 'overview' && dashScroll.current != null
     if (section === 'overview' && next !== 'overview') rememberDash()
-    if (next === 'trend') setTrendSeen(true)
     setSection(next)
     if (back) requestFocus('restoreDash')
   }
@@ -745,7 +743,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
           )}
 
           <TabsContent value="trend" className="min-w-0">
-            {(trendSeen || shownSection === 'trend') && (
+            {shownSection === 'trend' && (
               <Suspense fallback={<LoadingBlock label={t('prs.trend.loading')} />}>
                 <ResourceScanTrendView monitorId={monitorId} items={items} selectedId={selectedId} budget={budget}
                   canEditBudget={budget.canEdit} onEditBudget={() => setBudgetOpen(true)}

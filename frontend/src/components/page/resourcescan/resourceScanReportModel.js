@@ -51,6 +51,7 @@ const int = (v) => {
 /**
  * Sunucu yanıtının `data`'sı → { values, canEdit }. Gövde düz alanlar ya da `{ budget: {…} }` olabilir; tanınmayan şekil
  * (dizi, null) tüm alanları null sayar (= sınır yok) — ama `known: false` döner: çağıran "okunamadı" diyebilsin.
+ * `fields: false` = gövde nesne ama bütçe alanı yok (ör. kayıt yanıtı yalnız `{ saved: true }`).
  * `canEdit` yalnız açık boolean ise; yoksa null (çağıran izleme satırının `can_edit`'ine düşer).
  */
 export function normalizeBudget(data) {
@@ -59,7 +60,9 @@ export function normalizeBudget(data) {
   const values = {}
   for (const f of BUDGET_FIELDS) values[f.key] = int(src[f.key])
   const ce = known ? (typeof data.can_edit === 'boolean' ? data.can_edit : (typeof src.can_edit === 'boolean' ? src.can_edit : null)) : null
-  return { values, canEdit: ce, known }
+  // `fields`: gövde bütçe alanlarından en az birini (null dahil) taşıyor mu — taşımayan kayıt yanıtı değer bildirmez
+  const fields = known && BUDGET_FIELDS.some((f) => Object.prototype.hasOwnProperty.call(src, f.key))
+  return { values, canEdit: ce, known, fields }
 }
 
 /** Kayıtlı değerler → form metinleri (null → ''). */

@@ -71,7 +71,8 @@ export default function ResourceScanTrendView({ monitorId, items, selectedId, on
     })()
   }, [monitorId, days, retry])
 
-  const budgetValues = budget?.status === 'ok' ? budget.values : null
+  // Bütçe çizgileri yalnız EN AZ BİR sınır tanımlıysa (tanımsız bütçe "çizgi yok" — açıklama da yazılmaz)
+  const budgetValues = budget?.status === 'ok' && Object.values(budget.values || {}).some((v) => v != null) ? budget.values : null
   const rangeOptions = TREND_DAYS.map((d) => ({ value: d, label: t(`prs.trend.days.${d}`) }))
   const header = (
     <span data-slot="prs-tv-days" className="w-fit">

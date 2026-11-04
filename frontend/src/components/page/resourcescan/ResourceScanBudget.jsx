@@ -63,8 +63,7 @@ export function useResourceBudget(monitorId, fallbackCanEdit) {
   const applySaved = useCallback((values, data) => {
     seq.current += 1                                   // uçuştaki eski okuma yeni değeri ezmesin
     const b = data ? normalizeBudget(data) : null
-    setSt((s) => ({ status: 'ok', values: b?.known && Object.values(b.values).some((v) => v != null) ? b.values : values,
-      canEdit: b?.canEdit ?? s.canEdit, error: null }))
+    setSt((s) => ({ status: 'ok', values: b?.fields ? b.values : values, canEdit: b?.canEdit ?? s.canEdit, error: null }))
   }, [])
 
   const canEdit = st.canEdit ?? (fallbackCanEdit === true)
