@@ -5820,7 +5820,7 @@ public class MonitoringController {
 
         Instant now = Instant.now();
         Instant from = now.minus(java.time.Duration.ofDays(days));
-        long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules);
+        long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules, mon.getIntervalSeconds());
         String readFrom = ISO.format(from.minusMillis(lookback));
         com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
                 rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
