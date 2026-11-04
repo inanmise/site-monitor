@@ -2,6 +2,7 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.DbConnectionProfile;
 import com.sitemonitor.model.DbQueryMonitor;
+import com.sitemonitor.repository.DbQueryCheckRepository;
 import com.sitemonitor.repository.DbQueryMonitorRepository;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
@@ -9,6 +10,7 @@ import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.dbquery.DbAccountPrivileges;
 import com.sitemonitor.service.dbquery.DbConnectionProfileService;
+import com.sitemonitor.service.dbquery.DbConnectionSteps;
 import com.sitemonitor.service.dbquery.DbQueryCheckerService;
 import com.sitemonitor.service.dbquery.DbQueryRunner;
 import com.sitemonitor.util.Msg;
@@ -55,6 +57,10 @@ public class DbConnectionProfileController {
     /** Bağlantı denemesi — motor paketinin servisi; dilimli testte yoksa deneme 503. */
     @Autowired(required = false)
     private DbQueryCheckerService checker;
+
+    /** Sağlık kartının çalıştırma sayımları (dbq2 A4) — dilimli testte yoksa sağlık ucu 503. */
+    @Autowired(required = false)
+    private DbQueryCheckRepository checkRepo;
 
     @ExceptionHandler(DbQueryApiException.class)
     public ResponseEntity<Map<String, Object>> onApiError(DbQueryApiException e) {
@@ -142,6 +148,21 @@ public class DbConnectionProfileController {
         return ok(testResult(t));
     }
 
+    /**
+     * Bağlantı sağlık kartı (2026-11-05, dbq2 A4): kullanan izlemeler + son durumları, son 24 saatin çalıştırma özeti, son
+     * başarı / hata. Kapı = bağlantıyı GÖREBİLMEK (kendi takım kapsamı; erişim paylaşımı ve 7/24 AÇMAZ) — görülemeyen 404.
+     * Salt okuma, sabit sorgu sayısı ({@link DbConnectionProfileService#healthReport}).
+     */
+    @GetMapping("/{id}/health")
+    public ResponseEntity<Map<String, Object>> health(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        DbConnectionProfile p = profiles.requireReadable(id, session);
+        if (checkRepo == null) throw new DbQueryApiException(503, "DBQUERY_UNAVAILABLE", Msg.t(
+                "Veritabanı sorgu izlemesi bu sunucuda hazır değil; birkaç dakika sonra yeniden deneyin.",
+                "Database query monitoring isn't ready on this server; try again in a few minutes."));
+        return ok(DbConnectionProfileService.healthReport(p, monitorRepo.findByProfileId(id), checkRepo, Instant.now()));
+    }
+
     // ── İç ───────────────────────────────────────────────────────────────────
 
     private Map<String, Object> row(DbConnectionProfile p, HttpSession session) {
@@ -177,6 +198,9 @@ public class DbConnectionProfileController {
         String mode = checker == null ? DbQueryCheckerService.WRITABLE_WARN : checker.writableMode();
         out.put("writable_account_mode", mode);
         out.put("account_blocked", DbQueryCheckerService.WRITABLE_BLOCK.equals(mode) && priv.writable());
+        // dbq2 A3: adım adım teşhis — her zaman altı adım; deneme çalıştırıcıya ulaşmadıysa (meşgul, parola çözülemedi …)
+        // hepsi "atlandı", neden yukarıdaki hata alanlarında
+        out.put("steps", DbConnectionSteps.toApi(t == null ? null : t.steps()));
         return out;
     }
 

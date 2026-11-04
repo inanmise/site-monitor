@@ -3429,6 +3429,17 @@ public class EscalationService {
                 log.debug("Sorgu alarmı postası son çalıştırma okunamadı ({}): {}", monitorId, e.toString());
             }
         }
+        // dbq2 C4: "İlk ihlal", "kaç çalıştırmadır" ve "son değerler" — son zamanlanmış çalıştırmalardan (tek sorgu, yalnız
+        // ölçülen değer / durum; satır verisi YOK). Okunamazsa bölüm yazılmaz, posta yine gider.
+        if (monitorId != null && dbQueryCheckRepo != null
+                && (TYPE_DBQUERY_THRESHOLD.equals(alertType) || TYPE_DBQUERY_FAIL.equals(alertType))) {
+            try {
+                putDbQueryHistory(extra, dbQueryCheckRepo.recentScheduledSummary(monitorId, DBQUERY_HISTORY_READ), alertType,
+                        str(ctx == null ? null : ctx.get("failure_reason")));
+            } catch (Exception e) {
+                log.debug("Sorgu alarmı postası son çalıştırmalar okunamadı ({}): {}", monitorId, e.toString());
+            }
+        }
         com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows = null;
         boolean rowsWanted = m == null || !Boolean.FALSE.equals(m.getMailIncludeRows());
         if (dbQueryAlertRows != null && rowsWanted && !TYPE_DBQUERY_FAIL.equals(alertType)) {
@@ -3444,6 +3455,69 @@ public class EscalationService {
                     dbQuerySubjectValues(view, level));
         }
         return new DbQueryMailParts(extra, rows, subject);
+    }
+
+    /** Sorgu alarmı postası geçmişi (dbq2 C4): okunan son zamanlanmış çalıştırma ve tabloda gösterilen sayısı. */
+    static final int DBQUERY_HISTORY_READ = 100, DBQUERY_HISTORY_SHOWN = 10;
+    /** Bağlam anahtarları (yalnız posta bağlamı — alarm anlık görüntüsüne girmez). */
+    public static final String CTX_DBQUERY_HISTORY = "dbquery_history", CTX_DBQUERY_STREAK = "dbquery_streak",
+            CTX_DBQUERY_STREAK_CAPPED = "dbquery_streak_capped", CTX_DBQUERY_FIRST_PROBLEM = "dbquery_first_problem_at",
+            CTX_DBQUERY_STREAK_KIND = "dbquery_streak_kind";
+
+    /**
+     * Son zamanlanmış çalıştırmalardan (yeniden eskiye: {@code [checkedAt, status, metricValue, ok, breachLevel,
+     * failureReason, slow]}) "son değerler" tablosu (≤ {@value #DBQUERY_HISTORY_SHOWN}), ardışık sorunlu çalıştırma sayısı ve
+     * ilkinin zamanı. Sorunlu = eşik alarmında {@code BREACH}; sorgu hatası alarmında {@code ok = false} — kural
+     * değerlendirilemediği için açılan hata alarmında ({@code DB_RULE_UNEVALUABLE}) {@code UNKNOWN}. Neden bağlamda yoksa en
+     * yeni satırdan okunur. Seri en yeni satırda sorunlu değilse (alarm iyileşmeyi bekliyor) yalnız tablo yazılır. Okunan
+     * satırların hepsi sorunluysa sayı "en az" ve ilk zaman "ya da daha önce" olur.
+     */
+    static void putDbQueryHistory(Map<String, Object> extra, List<Object[]> recent, String alertType, String failureReason) {
+        if (extra == null || recent == null || recent.isEmpty()) return;
+        List<Map<String, Object>> shown = new ArrayList<>();
+        for (Object[] r : recent) {
+            if (r == null || r.length < 5) continue;
+            if (shown.size() >= DBQUERY_HISTORY_SHOWN) break;
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("checked_at", r[0]);
+            h.put("status", r[1]);
+            h.put("metric_value", Boolean.FALSE.equals(r[3]) ? null : r[2]);
+            h.put("breach_level", r[4]);
+            shown.add(h);
+        }
+        if (shown.isEmpty()) return;
+        extra.put(CTX_DBQUERY_HISTORY, shown);
+        // Seri türü: eşik → BREACH; hata → ok=false, ya da (kural değerlendirilemedi) UNKNOWN
+        String kind;
+        if (TYPE_DBQUERY_THRESHOLD.equals(alertType)) {
+            kind = com.sitemonitor.model.DbQueryCheck.STATUS_BREACH;
+        } else {
+            boolean unevaluable = com.sitemonitor.service.dbquery.DbQueryAlarmText.RULE_UNEVALUABLE_CODE.equals(failureReason);
+            if (failureReason == null) {
+                Object[] newest = recent.get(0);
+                unevaluable = newest != null && newest.length > 3 && !Boolean.FALSE.equals(newest[3])
+                        && com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN.equals(newest[1]);
+            }
+            kind = unevaluable ? com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN : com.sitemonitor.model.DbQueryCheck.STATUS_FAIL;
+        }
+        int streak = 0;
+        String firstAt = null;
+        for (Object[] r : recent) {
+            if (r == null || r.length < 5 || !dbQueryProblem(r, kind)) break;
+            streak++;
+            firstAt = r[0] == null ? firstAt : r[0].toString();
+        }
+        if (streak == 0) return;
+        extra.put(CTX_DBQUERY_STREAK, streak);
+        extra.put(CTX_DBQUERY_STREAK_KIND, kind);
+        if (firstAt != null) extra.put(CTX_DBQUERY_FIRST_PROBLEM, firstAt);
+        if (streak >= recent.size() && recent.size() >= DBQUERY_HISTORY_READ) extra.put(CTX_DBQUERY_STREAK_CAPPED, true);
+    }
+
+    private static boolean dbQueryProblem(Object[] r, String kind) {
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(kind))
+            return Boolean.FALSE.equals(r[3]) || com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(r[1]);
+        return kind.equals(r[1]) && !Boolean.FALSE.equals(r[3]);
     }
 
     /** Konu yer tutucu değerleri ({@link com.sitemonitor.service.dbquery.DbQueryMailSubject}). */

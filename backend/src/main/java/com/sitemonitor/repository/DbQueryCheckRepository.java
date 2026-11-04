@@ -114,6 +114,53 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
                                         @Param("from") String from, @Param("to") String to);
 
+    // ── dbq2 (2026-11-05): bağlantı sağlığı, değer eğilimi, alarm postası geçmişi ─────────────────────────────────────
+
+    /**
+     * Bağlantı sağlık kartı: verilen izlemelerin SON çalıştırma durumu — {@code [monitorId, status]} (hiç çalışmamışsa
+     * status null). SELECT listesinde ilişkili alt sorgu: izleme başına tek dizin araması
+     * ({@code idx_dbqc_monitor_checked}), H2 ve PostgreSQL'de aynı (H2 {@code LATERAL} tanımaz).
+     */
+    @Query(value = "SELECT m.id, (SELECT r.status FROM dbquery_checks r WHERE r.monitor_id = m.id "
+         + "ORDER BY r.checked_at DESC, r.id DESC LIMIT 1) FROM dbquery_monitors m "
+         + "WHERE m.id IN (:ids)", nativeQuery = true)
+    List<Object[]> latestStatusFor(@Param("ids") java.util.Collection<Long> ids);
+
+    /** Bağlantı sağlık kartı: {@code since}'ten bu yana TÜM çalıştırmalar — {@code [toplam, ok=false, ort. süre ms]}. */
+    @Query("SELECT COUNT(c), SUM(CASE WHEN c.ok = false THEN 1L ELSE 0L END), AVG(c.durationMs) FROM DbQueryCheck c "
+         + "WHERE c.monitorId IN :ids AND c.checkedAt >= :since")
+    List<Object[]> connectionRunStats(@Param("ids") java.util.Collection<Long> ids, @Param("since") String since);
+
+    /**
+     * Bağlantının son kullanım hatasının KODU: sağlık kolonundaki zaman ({@code last_error_at}) çalıştırma satırının
+     * {@code checked_at}'iyle aynıdır — dizinli eşitlik ({@code monitor_id, checked_at}), tarama yok.
+     */
+    @Query("SELECT c.failureReason FROM DbQueryCheck c WHERE c.monitorId IN :ids AND c.checkedAt = :at AND c.ok = false")
+    List<String> failureReasonsAt(@Param("ids") java.util.Collection<Long> ids, @Param("at") String at);
+
+    /**
+     * Kart değer eğilimi: {@code [monitorId, saat kovası (yyyy-MM-ddTHH, UTC), ortalama metric_value]} — {@code from}'dan bu
+     * yana ZAMANLANMIŞ (elle / yeniden kontrol değil) ve sorgusu çalışmış satırlar; görünen izlemeler için TEK gruplama.
+     * Kova sütunu türetilmiş tabloda adlandırılır (H2 {@code GROUP BY 1, 2}'yi reddeder).
+     */
+    @Query(value = "SELECT t.monitor_id, t.bucket, AVG(t.v) FROM ("
+         + "  SELECT c.monitor_id AS monitor_id, substr(c.checked_at,1,13) AS bucket, c.metric_value AS v "
+         + "    FROM dbquery_checks c WHERE c.monitor_id IN (:ids) AND c.checked_at >= :from "
+         + "     AND c.ok = true AND c.metric_value IS NOT NULL "
+         + "     AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false)"
+         + ") t GROUP BY t.monitor_id, t.bucket", nativeQuery = true)
+    List<Object[]> valueTrendBuckets(@Param("ids") java.util.Collection<Long> ids, @Param("from") String from);
+
+    /**
+     * Alarm postasının "son değerler" / "kaç çalıştırmadır" bölümü: son ZAMANLANMIŞ çalıştırmalar, yeniden eskiye —
+     * {@code [checkedAt, status, metricValue, ok, breachLevel, failureReason, slow]}. Satır VERİSİ yok (kontrol satırında
+     * hiç yok).
+     */
+    @Query("SELECT c.checkedAt, c.status, c.metricValue, c.ok, c.breachLevel, c.failureReason, c.slow FROM DbQueryCheck c "
+         + "WHERE c.monitorId = :id AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT :limit")
+    List<Object[]> recentScheduledSummary(@Param("id") Long monitorId, @Param("limit") int limit);
+
     /** İzleme silinince çalıştırma geçmişini de temizle. */
     @Transactional
     @Modifying

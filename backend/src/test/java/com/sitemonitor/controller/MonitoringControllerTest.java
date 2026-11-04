@@ -6878,6 +6878,162 @@ class MonitoringControllerTest {
         return s;
     }
 
+    // ── dbq2 (be1, 2026-11-05): sql-fix ucu, liste değer eğilimi, grafik alarm / değişiklik ekleri ─────────────────────
+
+    @org.junit.jupiter.api.Nested
+    class Dbq2Be1 {
+
+        @Test
+        @DisplayName("sql-fix: MSSQL NOLOCK önerisi gerçek denetimden geçer; satır sınırı tek başına geçmez → nedenli atlandı; denetim / kota YOK")
+        void sqlFixNolock() throws Exception {
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT COUNT(*) FROM dbo.siparis s WHERE s.durum = 'B'\",\"db_type\":\"mssql\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.db_type").value("MSSQL"))
+                    .andExpect(jsonPath("$.data.row_limit").value(1000))
+                    .andExpect(jsonPath("$.data.fixes.length()").value(1))
+                    .andExpect(jsonPath("$.data.fixes[0].code").value("ADD_NOLOCK"))
+                    .andExpect(jsonPath("$.data.fixes[0].sql").value("SELECT COUNT(*) FROM dbo.siparis s WITH (NOLOCK) WHERE s.durum = 'B'"))
+                    .andExpect(jsonPath("$.data.fixes[0].changed[0]").value("dbo.siparis"))
+                    .andExpect(jsonPath("$.data.fixes[0].edits[0].text").value(" WITH (NOLOCK)"))
+                    .andExpect(jsonPath("$.data.fixes[0].edits[0].line").value(1))
+                    .andExpect(jsonPath("$.data.fixes[0].note").isString())
+                    .andExpect(jsonPath("$.data.skipped[0].code").value("ADD_ROW_LIMIT"))
+                    .andExpect(jsonPath("$.data.skipped[0].reason").value("GUARD_STILL_FAILS"));
+            verify(permissionService, org.mockito.Mockito.atLeastOnce()).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.crud"), eq("edit"));
+            org.mockito.Mockito.verifyNoInteractions(auditService);
+            org.mockito.Mockito.verifyNoInteractions(dbQueryTestQuota);
+            org.mockito.Mockito.verifyNoInteractions(dbQueryChecker);
+        }
+
+        @Test
+        @DisplayName("sql-fix: PG satır sınırı (row_limit) + NOT_MSSQL; aralık dışı satır sınırı / çok uzun sorgu 400 alan hatası")
+        void sqlFixRowLimitAndValidation() throws Exception {
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT id FROM orders ORDER BY id\",\"db_type\":\"POSTGRESQL\",\"row_limit\":250}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.fixes[0].code").value("ADD_ROW_LIMIT"))
+                    .andExpect(jsonPath("$.data.fixes[0].sql").value("SELECT id FROM orders ORDER BY id LIMIT 250"))
+                    .andExpect(jsonPath("$.data.fixes[0].changed[0]").value("LIMIT 250"))
+                    .andExpect(jsonPath("$.data.skipped[0].reason").value("NOT_MSSQL"));
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT 1\",\"db_type\":\"POSTGRESQL\",\"row_limit\":0}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("row_limit"));
+            String huge = "SELECT 1 " + "x".repeat(2 * com.sitemonitor.service.dbquery.DbQuerySqlGuard.MAX_SQL_CHARS);
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"" + huge + "\",\"db_type\":\"POSTGRESQL\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("sql"));
+        }
+
+        @Test
+        @DisplayName("liste: değer eğilimi tek gruplu sorguyla (24 saatlik nokta + yön); değeri olmayan izlemede alan YOK; 60 sn bellek")
+        void listValueTrend() throws Exception {
+            var a = dbqMonitor(41L, 1L, 5L);
+            var b = dbqMonitor(42L, 1L, 5L);
+            when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            java.time.Instant first = com.sitemonitor.service.dbquery.DbQueryValueTrend.firstHour(java.time.Instant.now());
+            String h1 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(20, java.time.temporal.ChronoUnit.HOURS));
+            String h2 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(22, java.time.temporal.ChronoUnit.HOURS));
+            when(dbQueryCheckRepo.valueTrendBuckets(any(), anyString())).thenReturn(List.<Object[]>of(
+                    new Object[] {41L, h1, 100.0}, new Object[] {41L, h2, 150.0}));
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].value_trend.points.length()").value(24))
+                    .andExpect(jsonPath("$.data[0].value_trend.delta_pct").value(50.0))
+                    .andExpect(jsonPath("$.data[0].value_trend.direction").value("up"))
+                    .andExpect(jsonPath("$.data[1].value_trend").doesNotExist());
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L))).andExpect(status().isOk());
+            verify(dbQueryCheckRepo, org.mockito.Mockito.times(1)).valueTrendBuckets(argThat(ids -> ids.containsAll(List.of(41L, 42L))), anyString());
+        }
+
+        @Test
+        @DisplayName("liste: eğilim okunamazsa alan yazılmaz (bilinmiyor ≠ düz), liste yine döner")
+        void listValueTrendUnreadable() throws Exception {
+            var a = dbqMonitor(43L, 1L, 5L);
+            when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a));
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            when(dbQueryCheckRepo.valueTrendBuckets(any(), anyString())).thenThrow(new IllegalStateException("db"));
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].id").value(43))
+                    .andExpect(jsonPath("$.data[0].value_trend").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("grafik: aralıktaki alarm dönemleri (yalnız bu izlemenin — sahiplik) eskiden yeniye + değişiklik işaretleri (yalnız alan ADLARI, değer yok)")
+        void seriesAlarmsAndChanges() throws Exception {
+            var mon = dbqMonitor(95L, 1L, 5L);
+            when(dbQueryMonitorRepo.findById(95L)).thenReturn(Optional.of(mon));
+            when(dbQueryCheckRepo.seriesRaw(eq(95L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+            com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
+            open.setDomain(mon.getName()); open.setAlertType("DBQUERY_THRESHOLD"); open.setAlertLevel("CRITICAL");
+            open.setCreatedAt("2026-11-05T09:00:00"); open.setResolved(false); open.setContextJson("{\"monitor_id\":95}");
+            com.sitemonitor.model.AlertEvent closed = new com.sitemonitor.model.AlertEvent();
+            closed.setDomain(mon.getName()); closed.setAlertType("DBQUERY_FAIL"); closed.setAlertLevel("HIGH");
+            closed.setCreatedAt("2026-11-04T08:00:00"); closed.setResolved(true); closed.setResolvedAt("2026-11-04T08:20:00");
+            closed.setContextJson("{\"monitor_id\":95}");
+            com.sitemonitor.model.AlertEvent foreign = new com.sitemonitor.model.AlertEvent();   // aynı adlı, silinmiş başka izlemenin alarmı
+            foreign.setDomain(mon.getName()); foreign.setAlertType("DBQUERY_FAIL"); foreign.setAlertLevel("HIGH");
+            foreign.setCreatedAt("2026-11-03T08:00:00"); foreign.setResolved(true); foreign.setResolvedAt("2026-11-03T09:00:00");
+            foreign.setContextJson("{\"monitor_id\":7}");
+            when(alertEventRepo.findOverlappingForHistory(eq(mon.getName()), any(), anyString(), anyString()))
+                    .thenReturn(List.of(open, closed, foreign));
+            when(changeLogRepo.changeMarks(eq("DBQUERY"), eq(95L), anyString(), anyString(), eq(200))).thenReturn(List.<Object[]>of(
+                    new Object[] {"2026-11-04T12:00:00", "UPDATE",
+                            "{\"sqlText\":{\"from\":\"SELECT gizli\",\"to\":\"SELECT yeni\"},\"rulesJson\":{\"from\":\"[]\",\"to\":\"[1]\"}}"},
+                    new Object[] {"2026-11-01T10:00:00", "CREATE", null}));
+            String body = mvc.perform(get("/api/monitoring/dbquery/95/response-series").param("metric", "value").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.alarms.length()").value(2))
+                    .andExpect(jsonPath("$.data.alarms[0].from").value("2026-11-04T08:00:00"))
+                    .andExpect(jsonPath("$.data.alarms[0].to").value("2026-11-04T08:20:00"))
+                    .andExpect(jsonPath("$.data.alarms[0].type").value("DBQUERY_FAIL"))
+                    .andExpect(jsonPath("$.data.alarms[1].to").doesNotExist())
+                    .andExpect(jsonPath("$.data.alarms[1].level").value("CRITICAL"))
+                    .andExpect(jsonPath("$.data.changes.length()").value(2))
+                    .andExpect(jsonPath("$.data.changes[0].event").value("CREATE"))
+                    .andExpect(jsonPath("$.data.changes[0].fields.length()").value(0))
+                    .andExpect(jsonPath("$.data.changes[1].at").value("2026-11-04T12:00:00"))
+                    .andExpect(jsonPath("$.data.changes[1].fields[0]").value("sqlText"))
+                    .andExpect(jsonPath("$.data.changes[1].fields[1]").value("rulesJson"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("SELECT gizli").doesNotContain("SELECT yeni");
+        }
+
+        @Test
+        @DisplayName("grafik: alarm / değişiklik okunamazsa alan null (uydurma boş liste değil), seri yine döner")
+        void seriesMarksUnreadable() throws Exception {
+            var mon = dbqMonitor(96L, 1L, 5L);
+            when(dbQueryMonitorRepo.findById(96L)).thenReturn(Optional.of(mon));
+            when(dbQueryCheckRepo.seriesRaw(eq(96L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+            when(alertEventRepo.findOverlappingForHistory(anyString(), any(), anyString(), anyString())).thenThrow(new IllegalStateException("db"));
+            when(changeLogRepo.changeMarks(anyString(), anyLong(), anyString(), anyString(), anyInt())).thenThrow(new IllegalStateException("db"));
+            mvc.perform(get("/api/monitoring/dbquery/96/response-series").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.alarms").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.changes").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.metric").value("duration"));
+        }
+
+        @Test
+        @DisplayName("değişiklik alan adları: üst düzey anahtarlar (≤ 100); nesne değil / bozuk / boş JSON → boş liste")
+        void changedFields() {
+            assertThat(MonitoringController.dbqChangedFields("{\"a\":{\"from\":1,\"to\":2},\"b\":{}}")).containsExactly("a", "b");
+            assertThat(MonitoringController.dbqChangedFields("[1,2]")).isEmpty();
+            assertThat(MonitoringController.dbqChangedFields("{bozuk")).isEmpty();
+            assertThat(MonitoringController.dbqChangedFields(null)).isEmpty();
+            StringBuilder sb = new StringBuilder("{");
+            for (int i = 0; i < 150; i++) sb.append(i == 0 ? "" : ",").append("\"k").append(i).append("\":1");
+            assertThat(MonitoringController.dbqChangedFields(sb.append('}').toString())).hasSize(100);
+        }
+    }
+
     @Test
     @DisplayName("DBQUERY liste: paylaşım okuyucusu bağlantının adını görür, sunucu / veritabanı ayrıntısını GÖRMEZ; parola hiçbir yanıtta yok")
     void dbquery_list_grantReaderSeesProfileSummaryOnly() throws Exception {

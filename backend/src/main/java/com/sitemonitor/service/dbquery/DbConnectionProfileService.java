@@ -412,6 +412,109 @@ public class DbConnectionProfileService {
         return List.copyOf(out);
     }
 
+    // ── Bağlantı sağlık kartı (2026-11-05, dbq2 A4) ────────────────────────────
+
+    /** Sağlık kartında listelenen en çok izleme (toplam {@code monitor_count}'ta). */
+    public static final int HEALTH_MAX_MONITORS = 100;
+    /** Sağlık kartının sayım penceresi. */
+    public static final long HEALTH_WINDOW_SECONDS = 24 * 3600L;
+
+    /**
+     * Bağlantının sağlık kartı ({@code GET …/connections/{id}/health}): onu kullanan izlemeler (≤ {@value #HEALTH_MAX_MONITORS},
+     * ada göre, son çalıştırma durumuyla), son 24 saatin çalıştırma sayısı / başarısızlığı / ortalama süresi, son başarı ve
+     * son hata. SABİT sorgu sayısı (izleme sayısından bağımsız): son durumlar (tek LATERAL), 24 sa toplamı (tek gruplama), son
+     * hatanın kodu (sağlık kolonundaki zamanla EŞİT satır — dizinli eşitlik). İzleme yoksa sorgu yok. Okunamayan parça
+     * {@code null} yazılır — "bilinmiyor" asla "sorun yok" değildir. Satır VERİSİ yok; hata metinleri yazılırken maskelidir.
+     *
+     * @param users bağlantıyı kullanan izlemeler (çağıran tek sorguyla okur)
+     */
+    public static Map<String, Object> healthReport(DbConnectionProfile p, List<DbQueryMonitor> users,
+                                                   com.sitemonitor.repository.DbQueryCheckRepository checks, Instant now) {
+        List<DbQueryMonitor> sorted = new ArrayList<>(users == null ? List.of() : users);
+        sorted.sort(java.util.Comparator.comparing((DbQueryMonitor m) -> m.getName() == null ? "" : m.getName(),
+                String.CASE_INSENSITIVE_ORDER).thenComparing(m -> m.getId() == null ? 0L : m.getId()));
+        List<Long> ids = new ArrayList<>();
+        for (DbQueryMonitor m : sorted) if (m.getId() != null) ids.add(m.getId());
+        Map<Long, String> status = new java.util.HashMap<>();
+        boolean statusRead = true;
+        Long runs = 0L, failed = 0L, avgMs = null;
+        boolean statsRead = true;
+        String runErrorCode = null;
+        if (!ids.isEmpty()) {
+            List<Long> shown = ids.size() > HEALTH_MAX_MONITORS ? ids.subList(0, HEALTH_MAX_MONITORS) : ids;
+            try {
+                for (Object[] r : checks.latestStatusFor(shown)) {
+                    if (r != null && r.length >= 2 && r[0] instanceof Number n) status.put(n.longValue(), r[1] == null ? null : r[1].toString());
+                }
+            } catch (RuntimeException e) {
+                statusRead = false;
+                log.warn("Bağlantı sağlığı: izlemelerin son durumu okunamadı (#{}): {}", p.getId(), e.getClass().getSimpleName());
+            }
+            try {
+                String since = ISO.format(now.minusSeconds(HEALTH_WINDOW_SECONDS));
+                List<Object[]> agg = checks.connectionRunStats(ids, since);
+                Object[] row = agg == null || agg.isEmpty() ? null : agg.get(0);
+                runs = row != null && row[0] instanceof Number n ? n.longValue() : 0L;
+                failed = row != null && row.length > 1 && row[1] instanceof Number n ? n.longValue() : 0L;
+                avgMs = row != null && row.length > 2 && row[2] instanceof Number n ? Math.round(n.doubleValue()) : null;
+            } catch (RuntimeException e) {
+                statsRead = false;
+                log.warn("Bağlantı sağlığı: 24 saatlik çalıştırma özeti okunamadı (#{}): {}", p.getId(), e.getClass().getSimpleName());
+            }
+            if (p.getLastErrorAt() != null) {
+                try {
+                    List<String> codes = checks.failureReasonsAt(ids, p.getLastErrorAt());
+                    if (codes != null) for (String c : codes) if (c != null && !c.isBlank()) { runErrorCode = c; break; }
+                } catch (RuntimeException e) {
+                    log.debug("Bağlantı sağlığı: son hatanın kodu okunamadı (#{}): {}", p.getId(), e.getClass().getSimpleName());
+                }
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (DbQueryMonitor m : sorted) {
+            if (rows.size() >= HEALTH_MAX_MONITORS) break;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("id", m.getId());
+            r.put("name", m.getName());
+            r.put("active", !Boolean.FALSE.equals(m.getActive()));
+            r.put("status", statusRead ? status.get(m.getId()) : null);
+            rows.add(r);
+        }
+        out.put("monitors", rows);
+        out.put("monitor_count", sorted.size());
+        out.put("status_read", statusRead);
+        out.put("runs_24h", statsRead ? runs : null);
+        out.put("failed_24h", statsRead ? failed : null);
+        Double pct = null;
+        if (statsRead && runs != null && runs > 0) pct = Math.round(1000.0 * (runs - failed) / runs) / 10.0;
+        out.put("success_pct", pct);
+        out.put("avg_duration_ms", statsRead && runs != null && runs > 0 ? avgMs : null);
+        // Son başarı: izleme kullanımı ya da başarılı deneme — hangisi yeniyse
+        String lastOk = p.getLastOkAt();
+        if (Boolean.TRUE.equals(p.getLastTestOk()) && p.getLastTestAt() != null
+                && (lastOk == null || p.getLastTestAt().compareTo(lastOk) > 0)) lastOk = p.getLastTestAt();
+        out.put("last_ok_at", lastOk);
+        // Son hata: izleme çalıştırması (kod = kontrol satırının failure_reason'ı) ya da başarısız deneme (kod yok)
+        Map<String, Object> lastError = null;
+        if (p.getLastErrorAt() != null) {
+            lastError = new LinkedHashMap<>();
+            lastError.put("at", p.getLastErrorAt());
+            lastError.put("code", runErrorCode);
+            lastError.put("message", p.getLastError());
+        }
+        if (Boolean.FALSE.equals(p.getLastTestOk()) && p.getLastTestAt() != null
+                && (lastError == null || p.getLastTestAt().compareTo(String.valueOf(lastError.get("at"))) > 0)) {
+            lastError = new LinkedHashMap<>();
+            lastError.put("at", p.getLastTestAt());
+            lastError.put("code", null);
+            lastError.put("message", p.getLastTestError());
+        }
+        out.put("last_error", lastError);
+        out.put("unused", sorted.isEmpty());
+        return out;
+    }
+
     // ── İç ───────────────────────────────────────────────────────────────────
 
     /** Gövdeyi kayda yazar (yalnız GELEN anahtarlar; oluşturmada varsayılanlar). Doğrulama {@link #validate}'te. */

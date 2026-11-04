@@ -5312,7 +5312,65 @@ public class MonitoringController {
                 .map(m -> enrichDbQuery(m, latest.get(m.getId()), teams, alarms.get(m.getId()),
                         profiles.get(m.getProfileId()), dbqProfileDetail(session, m.getTeamId())))
                 .collect(Collectors.toCollection(ArrayList::new));
+        // dbq2 C1: kartın değer eğilimi — görünen izlemeler için tek gruplu sorgu (60 sn bellek); değer yoksa alan yok
+        Map<Long, Map<String, Object>> trends = dbqValueTrends(monitors);
+        for (Map<String, Object> item : result) {
+            Map<String, Object> tr = item.get("id") instanceof Number n ? trends.get(n.longValue()) : null;
+            if (tr != null) item.put("value_trend", tr);
+        }
         return ok(withCheckFlag(session, result));
+    }
+
+    // ── dbq2 C1: kart değer eğilimi (2026-11-05) ─────────────────────────────
+
+    /** İzleme başına değer eğilimi belleği — liste 30 sn'de bir yoklanır, saatlik kovalar yavaş değişir. */
+    private record DbqTrendEntry(long at, Map<String, Object> trend) {}
+    private final java.util.concurrent.ConcurrentHashMap<Long, DbqTrendEntry> dbqTrendCache = new java.util.concurrent.ConcurrentHashMap<>();
+    static final long DBQUERY_TREND_CACHE_MS = 60_000;
+    static final int DBQUERY_TREND_CACHE_MAX = 20_000, DBQUERY_TREND_CHUNK = 500;
+
+    /**
+     * Görünen izlemelerin değer eğilimi ({@link com.sitemonitor.service.dbquery.DbQueryValueTrend}): bellekte tazesi
+     * olmayanlar için TEK gruplu sorgu (500 izleme / parça). Okunamazsa eğilim yazılmaz (bilinmiyor ≠ düz) ve belleğe
+     * girmez. Değeri olmayan izlemenin "yok" sonucu da bellektedir (her yoklamada yeniden sorgulanmasın).
+     */
+    private Map<Long, Map<String, Object>> dbqValueTrends(List<DbQueryMonitor> monitors) {
+        Map<Long, Map<String, Object>> out = new HashMap<>();
+        if (monitors == null || monitors.isEmpty() || dbQueryCheckRepo == null) return out;
+        long nowMs = System.currentTimeMillis();
+        List<Long> stale = new ArrayList<>();
+        for (DbQueryMonitor m : monitors) {
+            if (m.getId() == null) continue;
+            DbqTrendEntry e = dbqTrendCache.get(m.getId());
+            if (e != null && nowMs - e.at() >= 0 && nowMs - e.at() < DBQUERY_TREND_CACHE_MS) {
+                if (e.trend() != null) out.put(m.getId(), e.trend());
+            } else {
+                stale.add(m.getId());
+            }
+        }
+        if (stale.isEmpty()) return out;
+        Instant now = Instant.now();
+        String from = com.sitemonitor.service.dbquery.DbQueryValueTrend.fromIso(now);
+        Map<Long, Map<String, Double>> byMonitor = new HashMap<>();
+        try {
+            for (int i = 0; i < stale.size(); i += DBQUERY_TREND_CHUNK) {
+                List<Long> chunk = stale.subList(i, Math.min(stale.size(), i + DBQUERY_TREND_CHUNK));
+                for (Object[] r : dbQueryCheckRepo.valueTrendBuckets(chunk, from)) {
+                    if (r == null || r.length < 3 || !(r[0] instanceof Number id) || r[1] == null || !(r[2] instanceof Number v)) continue;
+                    byMonitor.computeIfAbsent(id.longValue(), k -> new HashMap<>()).put(r[1].toString(), v.doubleValue());
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi değer eğilimi okunamadı: {}", e.getClass().getSimpleName());
+            return out;
+        }
+        if (dbqTrendCache.size() + stale.size() > DBQUERY_TREND_CACHE_MAX) dbqTrendCache.clear();
+        for (Long id : stale) {
+            Map<String, Object> tr = com.sitemonitor.service.dbquery.DbQueryValueTrend.build(byMonitor.get(id), now);
+            dbqTrendCache.put(id, new DbqTrendEntry(nowMs, tr));
+            if (tr != null) out.put(id, tr);
+        }
+        return out;
     }
 
     @PostMapping("/dbquery")
@@ -5604,6 +5662,63 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /**
+     * Tek tıkla güvenli düzeltme (2026-11-05, dbq2 B2): {@code ADD_NOLOCK} (MSSQL) ve {@code ADD_ROW_LIMIT} önerileri
+     * ({@link com.sitemonitor.service.dbquery.DbQuerySqlFix}). Veritabanına GİTMEZ, saatlik deneme kotasını harcamaz, kayıt
+     * değiştirmez (denetim yok — {@code AuditCoverageTest.EXEMPT}). İzin = deneme ucu izni ({@code monitoring.crud/edit}).
+     * Önerilen her sorgu sunucuda güvenlik denetiminden GEÇER; geçmeyen öneri dönmez ({@code skipped} nedeniyle).
+     */
+    @PostMapping("/dbquery/sql-fix")
+    public ResponseEntity<Map<String, Object>> dbQuerySqlFix(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        Object sqlRaw = body == null ? null : body.get("sql");
+        String sql = sqlRaw == null ? "" : sqlRaw.toString();
+        // Uzunluk çözümlemeden ÖNCE kesilir (CLAUDE.md "no unbounded … on untrusted data")
+        if (sql.length() > 2 * DbQuerySqlGuard.MAX_SQL_CHARS) throw DbQueryApiException.field(null, "sql", com.sitemonitor.util.Msg.t(
+                "Sorgu çok uzun (en çok " + DbQuerySqlGuard.MAX_SQL_CHARS + " karakter).", "The query is too long (at most " + DbQuerySqlGuard.MAX_SQL_CHARS + " characters)."));
+        Integer limit = com.sitemonitor.service.dbquery.DbQuerySqlFix.rowLimitOrNull(body == null ? null : body.get("row_limit"));
+        if (limit == null) throw DbQueryApiException.field(null, "row_limit", com.sitemonitor.util.Msg.t(
+                "Satır sınırı " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MIN_ROW_LIMIT + " ile "
+                        + com.sitemonitor.service.dbquery.DbQuerySqlFix.MAX_ROW_LIMIT + " arasında bir tam sayı olmalı.",
+                "The row limit must be a whole number between " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MIN_ROW_LIMIT
+                        + " and " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MAX_ROW_LIMIT + "."));
+        DbType type = DbType.parse(body == null || body.get("db_type") == null ? null : body.get("db_type").toString());
+        var r = com.sitemonitor.service.dbquery.DbQuerySqlFix.fixes(sql, type == null ? DbType.POSTGRESQL : type, limit);
+        List<Map<String, Object>> fixes = new ArrayList<>();
+        for (var f : r.fixes()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("code", f.code());
+            m.put("sql", f.sql());
+            m.put("changed", f.changed());
+            m.put("note", f.note());
+            List<Map<String, Object>> edits = new ArrayList<>();
+            for (var e : f.edits()) {
+                Map<String, Object> em = new LinkedHashMap<>();
+                em.put("at", e.at());
+                em.put("line", e.line());
+                em.put("column", e.column());
+                em.put("text", e.text());
+                edits.add(em);
+            }
+            m.put("edits", edits);
+            fixes.add(m);
+        }
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (var sk : r.skipped()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("code", sk.code());
+            m.put("reason", sk.reason());
+            m.put("note", sk.note());
+            skipped.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fixes", fixes);
+        out.put("skipped", skipped);
+        out.put("db_type", (type == null ? DbType.POSTGRESQL : type).name());
+        out.put("row_limit", limit);
+        return ok(out);
+    }
+
     /** "Maliyeti denetle" — planı okur, sorguyu ÇALIŞTIRMAZ (PostgreSQL EXPLAIN / MSSQL SHOWPLAN; Oracle desteklenmez). */
     @PostMapping("/dbquery/plan-check")
     public ResponseEntity<Map<String, Object>> dbQueryPlanCheck(@RequestBody Map<String, Object> raw, HttpSession session) {
@@ -5745,7 +5860,89 @@ public class MonitoringController {
         if ("value".equals(m)) out.put("thresholds", dbqSeriesThresholds(mon));
         if ("rows".equals(m)) out.put("unit", "rows");
         else if ("value".equals(m)) out.put("unit", "value");
+        // dbq2 C2: grafikte gölgeli alarm dönemleri + değişiklik işaretleri (okunamazsa null — asla uydurma boş liste)
+        out.put("alarms", dbqSeriesAlarms(mon, range[0], range[1]));
+        out.put("changes", dbqSeriesChanges(mon, range[0], range[1]));
         return ok(out);
+    }
+
+    /** Grafik eklerinin üst sınırı (alarm dönemi / değişiklik işareti). */
+    static final int DBQUERY_SERIES_MARKS_MAX = 200;
+
+    /**
+     * Aralıkla KESİŞEN bu izlemenin DBQUERY_* alarmları ({@code findOverlappingForHistory} — Kontrol Geçmişi ile aynı kural):
+     * {@code [{from, to, level, type}]}, eskiden yeniye, en yeni {@value #DBQUERY_SERIES_MARKS_MAX}. Alarm anahtarı izleme
+     * adıdır; sahiplik bağlamı başka (silinmiş, aynı adlı) izlemenin alarmını eler. {@code to} null = hâlâ açık. Okunamazsa null.
+     */
+    private List<Map<String, Object>> dbqSeriesAlarms(DbQueryMonitor mon, String from, String to) {
+        if (mon.getName() == null) return List.of();
+        try {
+            Map<String, Object> owner = ownerCtx(mon.getId(), mon.getTeamId(), null);
+            List<AlertEvent> rows = new ArrayList<>();
+            for (AlertEvent a : alertEventRepo.findOverlappingForHistory(mon.getName(), DBQUERY_ALERT_TYPES, from, to)) {
+                if (!EscalationService.closableBy(a, owner)) continue;
+                rows.add(a);
+                if (rows.size() >= DBQUERY_SERIES_MARKS_MAX) break;   // sorgu yeniden eskiye — en yeniler kalır
+            }
+            List<Map<String, Object>> out = new ArrayList<>(rows.size());
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                AlertEvent a = rows.get(i);
+                boolean resolved = Boolean.TRUE.equals(a.getResolved());
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("from", a.getCreatedAt());
+                // Kapanmış ama kapanış anı yazılmamış eski satır "hâlâ açık" görünmesin: dönem açılış anında biter
+                r.put("to", resolved ? (a.getResolvedAt() != null ? a.getResolvedAt() : a.getCreatedAt()) : null);
+                r.put("level", a.getAlertLevel());
+                r.put("type", a.getAlertType());
+                out.add(r);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi grafik alarm dönemleri okunamadı (#{}): {}", mon.getId(), e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /**
+     * Aralıktaki değişiklik geçmişi satırları: {@code [{at, event, fields}]}, eskiden yeniye, en yeni
+     * {@value #DBQUERY_SERIES_MARKS_MAX}; {@code fields} = değişen alanların ANAHTARLARI (değer YOK — sorgu metni, kural, parola
+     * izi gönderilmez). Okunamazsa null.
+     */
+    private List<Map<String, Object>> dbqSeriesChanges(DbQueryMonitor mon, String from, String to) {
+        if (mon.getId() == null) return List.of();
+        try {
+            List<Object[]> rows = changeLogRepo.changeMarks(MonitorHistoryService.DBQUERY, mon.getId(), from, to,
+                    DBQUERY_SERIES_MARKS_MAX);
+            List<Map<String, Object>> out = new ArrayList<>(rows.size());
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                Object[] r = rows.get(i);
+                if (r == null || r.length < 3) continue;
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("at", r[0]);
+                c.put("event", r[1]);
+                c.put("fields", dbqChangedFields(r[2] == null ? null : r[2].toString()));
+                out.add(c);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi grafik değişiklik işaretleri okunamadı (#{}): {}", mon.getId(), e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** Değişiklik JSON'unun ({@code {"alan":{"from":…,"to":…}}}) üst düzey anahtarları — en çok 100; çözülemezse boş. */
+    static List<String> dbqChangedFields(String json) {
+        if (json == null || json.isBlank() || json.length() > 500_000) return List.of();
+        try {
+            com.fasterxml.jackson.databind.JsonNode n = SCRIPTED_MAPPER.readTree(json);
+            if (n == null || !n.isObject()) return List.of();
+            List<String> out = new ArrayList<>();
+            java.util.Iterator<String> it = n.fieldNames();
+            while (it.hasNext() && out.size() < 100) out.add(it.next());
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     /** Eşik denemesi: kullanıcı başına (bu pod) son 1 dk'daki başlangıçlar — yük sınırı (veritabanına gitmez). */
