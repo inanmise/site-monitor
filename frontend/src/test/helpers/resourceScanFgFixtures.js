@@ -131,7 +131,7 @@ export function siteBlock() {
 
 /** Çok sayfalı analizin ayrıntısı. */
 export function siteDetail(id = 30, over = {}) {
-  const d = deepDetail(id, { scan: { scope: 'site', pages_count: 5, ...over.scan } })
+  const d = deepDetail(id, { scan: { scope: 'site', pages_count: 5, started_at: '2026-11-01T09:00:00', finished_at: '2026-11-01T09:04:00', ...over.scan } })
   return { ...d, analysis: { ...d.analysis, site: siteBlock() } }
 }
 

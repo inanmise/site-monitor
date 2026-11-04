@@ -292,6 +292,10 @@ describe('sayfalar görünümü (G)', () => {
   it('site analizinde "Sayfalar" sekmesi: toplamlar, en kötü sayfalar, tablo, açılamayan / taranmayan sayfa, ortak kaynaklar', async () => {
     await mount()
     expect(slot('prs-sec-pages')).not.toBeNull()
+    // 5 bölüm → telefonda 3 + 2 (iki satır; 5 eşit sütunda adlar 360 px'te sığmıyordu)
+    const list = document.querySelector('[data-slot="prs-sections"] [role="tablist"]')
+    expect(list.getAttribute('data-count')).toBe('5')
+    expect(list.getAttribute('data-cols')).toBe('3')
     openTab(/^Sayfalar/)
     await waitFor(() => expect(slot('prs-site')).not.toBeNull())
     expect(slot('prs-site').getAttribute('data-state')).toBe('ok')
@@ -325,6 +329,7 @@ describe('sayfalar görünümü (G)', () => {
     await waitFor(() => expect(slot('prs-hero')).not.toBeNull())
     expect(slot('prs-sec-pages')).toBeNull()
     expect(document.querySelector('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-count')).toBe('4')
+    expect(document.querySelector('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-cols')).toBe('4')
   })
 
   it('paylaşılan bağlantı prs_v=pages → sayfalar görünümü açılır', async () => {

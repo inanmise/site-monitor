@@ -122,6 +122,31 @@ describe('Excel A–E ve site sayfaları', () => {
     expect(xl.sheets[1].rows.map((r) => r.join(' | '))).toContain(TR['prs.pdf.deepMissing'])
   })
 
+  it('Nesneler sayfası: algoritma 3 nesnelerinde derin sütunlar SONA eklenir; eski analizde sütun sayısı aynı kalır', () => {
+    const d = deepDetail(12)
+    const items = d.items.map((it, i) => (i === 0
+      ? { ...it, http_version: '2', render_blocking: true, minified: true, integrity: false, library: { name: 'lodash', version: '4.17.20' },
+          source_map: null, third_party_category: 'analytics' }
+      : { ...it, http_version: null, render_blocking: false }))
+    exportResourceScanXlsx({ monitor: MONITOR, ...d, items, t, locale: 'tr-TR' })
+    const obj = xl.sheets.find((s) => s.name === 'Nesneler')
+    const head = obj.rows[0]
+    expect(head.slice(-7)).toEqual(['HTTP sürümü', 'Oluşturmayı engelliyor', 'Küçültülmüş', 'Bütünlük (SRI)', 'Kütüphane', 'Kaynak haritası',
+      'Üçüncü taraf kategorisi'])
+    expect(obj.widths).toHaveLength(head.length)
+    expect(obj.rows.every((r) => r.length === head.length)).toBe(true)
+    const libRow = obj.rows.find((r) => r.includes('lodash 4.17.20'))
+    expect(libRow).toBeTruthy()
+    expect(libRow.slice(-7)).toEqual(['HTTP/2', 'Evet', 'Evet', 'Hayır', 'lodash 4.17.20', '', 'analytics'])
+
+    xl.sheets = null
+    const old = scanDetail(10)
+    exportResourceScanXlsx({ monitor: MONITOR, ...old, t, locale: 'tr-TR' })
+    const oldObj = xl.sheets.find((s) => s.name === 'Nesneler')
+    expect(oldObj.rows[0]).toHaveLength(30)
+    expect(oldObj.rows[0]).not.toContain('HTTP sürümü')
+  })
+
   it('sürüm 3 tek sayfa: A–E var, site yok', () => {
     exportResourceScanXlsx({ monitor: MONITOR, ...deepDetail(12), t, locale: 'tr-TR' })
     const names = xl.sheets.map((s) => s.name)

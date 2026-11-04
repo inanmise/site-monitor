@@ -11,6 +11,7 @@ import {
 import {
   algoChanges, budgetExportRows, categoryBytesChart, categoryScoreRows, categoryScoreText, compareExportRows, deepSheets,
   executiveSections, executiveSheetRows, pageStatusText, priorityActions, actionRow, siteModel, sitePageSheetRows, siteSharedSheetRows,
+  withObjectDeepColumns,
 } from './resourceScanReportModel.js'
 
 /**
@@ -26,6 +27,13 @@ const fmtDate = (v) => formatDate(v)
 const allObjects = (items, locale) => sortItems(filterItems(items || [], { scope: 'all' }), 'size_desc', locale)
 /** Nesne ayrıntısı saklanmayan analizin notu (saklanan analiz sayısı sunucunun `limits.detail_runs` değeri). */
 const notKeptText = (t, n, locale) => plural(t, 'prs.export.notKept', n, formatNumber(n, locale))
+/** Nesneler sayfası: mevcut sütunlar + (algoritma 3 analizinde) derin alan sütunları (prs3, fe2). */
+function objectsSheet(objects, t, locale) {
+  const rows = withObjectDeepColumns(objectSheetRows(objects, t, locale), objects, t)
+  const base = [80, 14, 26, 10, 14, 14, 20, 10, 12, 12, 12, 10, 12, 22, 9, 9, 10, 10, 10, 10, 40, 18, 40, 30, 20, 50, 60, 14, 30, 14]
+  const extra = Math.max(0, (rows[0]?.length || 0) - base.length)
+  return { name: t('prs.export.sheet.objects'), rows, freezeHeader: true, autoFilter: true, widths: [...base, ...Array(extra).fill(18)] }
+}
 /** Ölçüm notları: [metin] satırları. */
 const noteSheetRows = (analysis, t, locale) => [[t('prs.note.title')], ...noteRows(analysis?.notes, locale).map((n) => [t(n.key, ...n.args)])]
 
@@ -42,8 +50,7 @@ export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, loca
     { name: t('prs.export.sheet.categories'), rows: categorySheetRows(analysis?.categories, scan?.page_bytes, t, locale), freezeHeader: true,
       widths: [24, 14, 10, 14, 14, 12] },
     Array.isArray(items)
-      ? { name: t('prs.export.sheet.objects'), rows: objectSheetRows(allObjects(items, locale), t, locale), freezeHeader: true, autoFilter: true,
-          widths: [80, 14, 26, 10, 14, 14, 20, 10, 12, 12, 12, 10, 12, 22, 9, 9, 10, 10, 10, 10, 40, 18, 40, 30, 20, 50, 60, 14, 30, 14] }
+      ? objectsSheet(allObjects(items, locale), t, locale)
       : { name: t('prs.export.sheet.objects'), rows: [[notKeptText(t, detailRuns, locale)]], headerRows: 0, widths: [90] },
     { name: t('prs.export.sheet.recommendations'), rows: recommendationSheetRows(analysis?.recommendations, t, locale, items), freezeHeader: true,
       widths: [12, 44, 90, 24, 80, 10] },

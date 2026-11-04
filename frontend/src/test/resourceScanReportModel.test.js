@@ -5,7 +5,7 @@ import {
   deepSheets, defaultSitePages, executiveSections, executiveSheetRows, formatBudgetActual, formatBudgetLimit, growthRows, hasSeries,
   isBudgetUnsupported, isSiteScan, isTrendUnsupported, normalizeBudget, pageStatus, parseBudgetForm, priorityActions, recShortLabel,
   scanMarkerScores, seriesSummary, siteLimits, siteModel, sitePageChoices, sitePageSheetRows, siteScopeIgnored, siteSharedSheetRows,
-  sortSitePages, trendSeries,
+  sortSitePages, trendSeries, sectionTabCols, OBJECT_DEEP_COLUMNS, httpVersionLabel, objectDeepColumns, tpCategoryLabel, withObjectDeepColumns,
 } from '../components/page/resourcescan/resourceScanReportModel.js'
 import { KB, MB, budgetEval, deepAnalysis, deepDetail, siteBlock, trendData } from './helpers/resourceScanFgFixtures.js'
 import { scanAnalysis, scanSummary } from './helpers/resourceScanFixtures.js'
@@ -78,6 +78,12 @@ describe('F1 bütçe — okuma, form, fark', () => {
     expect(band.exceeded).toBe(2)
     expect(band.unknown).toBe(1)
     expect(band.rows.map((r) => r.key)).toEqual(['max_page_kb', 'max_requests', 'min_grade', 'min_security_score'])
+    // Ölçülemeyen kalem: özet satırında puan olsa da "ölçülen" yazılmaz (rozet "Ölçülemedi" ile çelişmesin)
+    const unk = budgetBand(budgetEval(), scanSummary(1, { grade: 72, security_score: 58 })).rows.find((r) => r.key === 'min_security_score')
+    expect(unk.ok).toBeNull()
+    expect(unk.actual).toBeNull()
+    const okRow = budgetBand(budgetEval(), scanSummary(1, { grade: 72 })).rows.find((r) => r.key === 'min_grade')
+    expect(okRow.actual).toEqual({ value: 72, kind: 'score' })
     const partial = budgetBand({ defined: true, checks: [{ key: 'max_requests', limit: 80, ok: true }, { key: 'min_grade', limit: 80, ok: null }] }, scan)
     expect(partial.state).toBe('partial')
     expect(budgetBand({ defined: true, checks: [{ key: 'max_requests', limit: 80, ok: true }] }, scan).state).toBe('ok')
@@ -319,5 +325,65 @@ describe('tembel yükleme (paket boyutu)', () => {
     expect(tab).not.toMatch(/^import .*ResourceScanTrendView/m)
     const model = fs.readFileSync(path.join(dir, 'resourceScanReportModel.js'), 'utf8')
     expect(model).not.toMatch(/from ['"](recharts|jspdf|jspdf-autotable|@\/components\/shadcn\/chart)['"]/)
+  })
+})
+
+describe('Nesneler sayfası — derin alan sütunları (algoritma 3, fe1 beklentisi)', () => {
+  const deepItem = {
+    url: 'https://cdn.example.net/jquery.js', http_version: '2', render_blocking: true, minified: false, integrity: null,
+    library: { name: 'jQuery', version: '1.12.4' }, source_map: 'https://cdn.example.net/jquery.map', third_party_category: 'cdn',
+  }
+  const plain = { url: 'https://www.example.com/a.css' }
+
+  it('eski analiz (anahtar yok) → sütun eklenmez; dosya bugünküyle aynı', () => {
+    expect(objectDeepColumns([plain, { url: 'b' }], t)).toBeNull()
+    const sheet = [['h1', 'h2'], ['x', 'y'], ['z', 'w']]
+    expect(withObjectDeepColumns(sheet, [plain, plain], t)).toBe(sheet)
+  })
+
+  it('anahtarı taşıyan sütunlar eklenir; sıra objectSheetRows ile aynı; null boş hücre (Hayır değil)', () => {
+    const out = objectDeepColumns([deepItem, plain], t)
+    expect(out.head).toEqual(OBJECT_DEEP_COLUMNS.map(([, k]) => TR[k]))
+    expect(out.rows[0]).toEqual(['HTTP/2', 'Evet', 'Hayır', '', 'jQuery 1.12.4', 'https://cdn.example.net/jquery.map', 'cdn'])
+    expect(out.rows[1]).toEqual(['', '', '', '', '', '', ''])
+    const merged = withObjectDeepColumns([['URL', 'Tür'], ['a', 'JS'], ['b', 'CSS']], [deepItem, plain], t)
+    expect(merged[0]).toEqual(['URL', 'Tür', ...out.head])
+    expect(merged[1].slice(0, 2)).toEqual(['a', 'JS'])
+    expect(merged[1][2]).toBe('HTTP/2')
+    expect(merged.every((r) => r.length === merged[0].length)).toBe(true)
+  })
+
+  it('yalnız bazı anahtarlar varsa yalnız o sütunlar', () => {
+    const out = objectDeepColumns([{ url: 'x', http_version: '1.1' }], t)
+    expect(out.head).toEqual([TR['prs.pdf.ocol.httpVersion']])
+    expect(out.rows).toEqual([['HTTP/1.1']])
+  })
+
+  it('üçüncü taraf kategorisi: fe1 anahtarı varsa etiket, yoksa sunucu kodu; ham anahtar asla basılmaz', () => {
+    const withKey = (k) => (k === 'prs.deep.tpc.analytics' ? 'Analitik' : k)
+    expect(tpCategoryLabel('analytics', withKey)).toBe('Analitik')
+    expect(tpCategoryLabel('tag_manager', withKey)).toBe('tag_manager')
+    expect(tpCategoryLabel('', withKey)).toBe('')
+    expect(tpCategoryLabel(null, withKey)).toBe('')
+    expect(tpCategoryLabel('Weird Code!', withKey)).toBe('Weird Code!')
+  })
+
+  it('HTTP sürümü metni', () => {
+    expect(httpVersionLabel('1.1')).toBe('HTTP/1.1')
+    expect(httpVersionLabel('h2')).toBe('HTTP/h2')
+    expect(httpVersionLabel('HTTP/3')).toBe('HTTP/3')
+    expect(httpVersionLabel(2)).toBe('HTTP/2')
+    expect(httpVersionLabel(null)).toBe('')
+    expect(httpVersionLabel('x'.repeat(40))).toBe('')
+  })
+})
+
+describe('bölüm sekmesi telefon ızgarası', () => {
+  it('en çok 4 tek satır; 5+ iki satır; geçersiz sayı → 4', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map(sectionTabCols)).toEqual([1, 2, 3, 4, 3, 3, 4, 4])
+    expect(sectionTabCols(0)).toBe(4)
+    expect(sectionTabCols(null)).toBe(4)
+    expect(sectionTabCols(2.5)).toBe(4)
+    expect(sectionTabCols(1000)).toBe(6)
   })
 })

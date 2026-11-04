@@ -154,11 +154,18 @@ for (const vp of VIEWPORTS) {
       await expect(band).toHaveAttribute('data-state', 'exceeded')
       await expect(band.locator('[data-slot="prs-budget-row"]')).toHaveCount(4)
       await expect(band.locator('[data-slot="prs-budget-row"][data-ok="unknown"]')).toHaveCount(1)
-      // Bölüm sekmeleri TEK satırda (5 sekme: Sayfalar dahil) ve kırpılmaz
+      // Bölüm sekmeleri (5 sekme: Sayfalar dahil) kırpılmaz: sm+ tek satır; telefonda 3 + 2 iki satır (5+ eşit sütunda
+      // adlar 360 px'te sığmıyordu — sectionTabCols)
       const tabs = root.locator('[data-slot="prs-sections"] [role="tab"]')
       await expect(tabs).toHaveCount(5)
       const tops = await tabs.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
-      expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      const rows = new Set(tops).size
+      if (vp.width >= 640) {
+        expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      } else {
+        expect(rows, `@${vp.name}: telefonda bölüm sekmeleri iki satır olmalı`).toBe(2)
+        expect(tops.filter((v) => v === Math.min(...tops)), `@${vp.name}: ilk satırda 3 sekme`).toHaveLength(3)
+      }
       // Başlık eylemleri (başlat grubu, bağlantı, Excel, PDF) sm+ genişlikte tek satır
       if (vp.width >= 640) {
         const actTops = await root.locator('[data-slot="prs-actions"] > *').evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
@@ -171,7 +178,7 @@ for (const vp of VIEWPORTS) {
       await band.locator('[data-slot="prs-budget-open"]').click()
       const bd = page.locator('[role="dialog"]:has([data-slot="prs-budget-dialog"])')
       await expect(bd.locator('[data-slot="prs-budget-dialog"]')).toHaveAttribute('data-state', 'ok')
-      const pageKb = bd.locator('[data-slot="prs-budget-input"][data-key="max_page_kb"]')
+      const pageKb = bd.locator('input[data-budget-key="max_page_kb"]')
       await expect(pageKb).toHaveValue('2048')
       await pageKb.fill('10')
       await bd.locator('[data-slot="prs-budget-save"]').click()
@@ -204,9 +211,10 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="prs-tv-chart"][data-chart="bytes"] svg').first()).toBeVisible()
       await expect(root.locator('[data-slot="prs-tv-algo-note"]')).toBeVisible()
       await expect(root.locator('[data-slot="prs-tv-growth-row"]')).toHaveCount(2)
-      expect(state.trend).toEqual(['90'])
+      // geliştirme sunucusu StrictMode'da efekti iki kez koşar — yalnız 90 gün istenmiş olmalı
+      expect([...new Set(state.trend)]).toEqual(['90'])
       await root.locator('[data-slot="prs-tv-days"]').getByRole('button', { name: /^(30 gün|30 days)$/ }).click()
-      await expect.poll(() => state.trend).toEqual(['90', '30'])
+      await expect.poll(() => state.trend.at(-1)).toBe('30')
       await expect(root.locator('[data-slot="prs-tv-chart"]')).toHaveCount(4)
       await check('eğilim')
 
@@ -222,6 +230,29 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="prs-cmp-markers"] [data-slot="prs-budget-status"]')).toHaveCount(2)
       await check('karşılaştırma')
       await page.screenshot({ path: `test-results/page-resource-scan-fg-${vp.name}.png`, fullPage: false })
+    })
+
+    test('görsel kayıt (ölçüm yok — ekran görüntüsü dokunmatik öykünmeyi sıfırlar): bant, pencere, sayfalar, eğilim', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=page&monitor=100&mtab=resources')
+      const root = page.locator(DIALOG).locator(ROOT)
+      await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
+      await root.locator('[data-slot="prs-budget-band"]').screenshot({ path: `test-results/prs-fg-budget-band-${vp.name}.png` })
+      await root.locator('[data-slot="prs-budget-open"]').click()
+      await expect(page.locator('[data-slot="prs-budget-dialog"]')).toHaveAttribute('data-state', 'ok')
+      await page.screenshot({ path: `test-results/prs-fg-budget-dialog-${vp.name}.png` })
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-slot="prs-budget-dialog"]')).toHaveCount(0)
+      await root.locator('[data-slot="prs-sections"]').getByRole('tab', { name: /^(Sayfalar|Pages)/ }).click()
+      await root.locator('[data-slot="prs-site-pages"]').screenshot({ path: `test-results/prs-fg-pages-${vp.name}.png` })
+      await root.locator('[data-slot="prs-sections"]').getByRole('tab', { name: /^(Eğilim|Trend)/ }).click()
+      await expect(root.locator('[data-slot="prs-tv-chart"]')).toHaveCount(4)
+      await root.locator('[data-slot="prs-tv"]').screenshot({ path: `test-results/prs-fg-trend-${vp.name}.png` })
+      await root.locator('[data-slot="prs-start-more"]').click()
+      await page.locator('[data-slot="prs-start-site"]').click()
+      await expect(page.locator('[data-slot="prs-site-dialog"]')).toBeVisible()
+      await page.screenshot({ path: `test-results/prs-fg-site-dialog-${vp.name}.png` })
     })
 
     test('site analizi başlatma: bölünmüş düğme → pencere → gövde; koşu kartında site işareti; bitince Sayfalar', async ({ page }) => {

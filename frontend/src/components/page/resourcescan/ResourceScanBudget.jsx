@@ -320,9 +320,10 @@ function BudgetGroup({ title, keys, form, setField, editable, fe, t, locale }) {
           return (
             <Field key={key} label={fieldLabel(key, t)} hint={hint} {...fe.fieldProps(key)} className="mb-2">
               {({ id, describedBy, invalid }) => (
-                <InputGroup className="pointer-coarse:h-10" data-disabled={!editable || undefined}>
+                <InputGroup className="pointer-coarse:h-auto" data-disabled={!editable || undefined}>
                   <InputGroupInput id={id} aria-describedby={describedBy} aria-invalid={invalid} inputMode="numeric" autoComplete="off"
-                    data-slot="prs-budget-input" data-key={key} value={raw} disabled={!editable}
+                    className="pointer-coarse:h-10"
+                    data-budget-key={key} value={raw} disabled={!editable}
                     placeholder={t('prs.budget.placeholder')} onChange={(e) => setField(key, e.target.value)} />
                   <InputGroupAddon align="inline-end"><InputGroupText>{unitText(f.kind, t)}</InputGroupText></InputGroupAddon>
                 </InputGroup>

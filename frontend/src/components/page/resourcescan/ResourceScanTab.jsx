@@ -32,7 +32,7 @@ import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudget.jsx'
 import ResourceScanStart from './ResourceScanStart.jsx'
 import ResourceScanSite from './ResourceScanSite.jsx'
-import { isSiteScan, siteScopeIgnored } from './resourceScanReportModel.js'
+import { isSiteScan, sectionTabCols, siteScopeIgnored } from './resourceScanReportModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
@@ -472,6 +472,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   // prs3 G: "Sayfalar" yalnız çok sayfalı analizde; seçili analiz yüklenmiş ve site değilse görünüm panoya düşer
   const siteAvailable = done && isSiteScan(selScan, sel?.analysis)
   const shownSection = section === 'pages' && sel && !siteAvailable ? 'overview' : section
+  // Görünen bölüm sekmesi sayısı (pano, nesneler, eğilim, geçmiş + site analizinde Sayfalar). Yeni bir bölüm sekmesi
+  // eklenirse BURAYA da eklenir — telefon ızgarası (sectionTabCols) bu sayıya göre satıra böler.
+  const sectionCount = 4 + (siteAvailable ? 1 : 0)
+  const sectionCols = sectionTabCols(sectionCount)
   const view = viewOf(shownSection, objectsMode, historyMode)
   const urlScanId = selectedId != null && selectedId !== running?.id ? selectedId : null
 
@@ -670,10 +674,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
       {hasFinished && (
         <Tabs value={shownSection} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
-          {/* Telefonda tüm bölümler TEK satırda eşit sütunlar (r177 H11); 4–5 bölümde simge üstte, ad altta (prs3: Eğilim,
-              Sayfalar eklendi — 390 px'te yan yana ad sığmıyordu) */}
-          <TabsList data-count={siteAvailable ? 5 : 4} style={{ '--prs-tabs': siteAvailable ? 5 : 4 }}
-            className="grid h-auto w-full grid-cols-[repeat(var(--prs-tabs),minmax(0,1fr))] gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
+          {/* Telefonda bölümler eşit sütunlu ızgara (r177 H11): en çok 4 bölüm tek satır, 5+ iki satır (sectionTabCols);
+              simge üstte, ad altta (prs3: Eğilim, Sayfalar eklendi). sm ve üstü satır içi, sığmazsa sarar (yatay taşma yok). */}
+          <TabsList data-count={sectionCount} data-cols={sectionCols} style={{ '--prs-tabs': sectionCols }}
+            className="grid h-auto w-full grid-cols-[repeat(var(--prs-tabs),minmax(0,1fr))] gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit sm:max-w-full sm:flex-wrap">
             <TabsTrigger value="overview" className={cn(TAB, TOUCH)}><LayoutDashboard aria-hidden="true" />{t('prs.sec.overview')}</TabsTrigger>
             <TabsTrigger value="objects" className={cn(TAB, TOUCH)}>
               <List aria-hidden="true" />{t('prs.sec.objects')}

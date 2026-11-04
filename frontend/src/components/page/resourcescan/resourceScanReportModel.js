@@ -158,10 +158,12 @@ export function budgetBand(budget, scan) {
     return { state: 'none', rows: [], exceeded: 0, unknown: 0 }
   }
   const order = (k) => (BUDGET_KEYS.indexOf(k) < 0 ? 99 : BUDGET_KEYS.indexOf(k))
-  const rows = [...checks].sort((a, b) => order(a.key) - order(b.key)).map((c) => ({
-    key: c.key, known: Boolean(FIELD[c.key]), limit: num(c.limit), actual: budgetActual(c.key, scan, c),
-    ok: c.ok === true ? true : c.ok === false ? false : null,
-  }))
+  // Sunucu kalemi ÖLÇEMEDİYSE (ok null) gerçek değer yalnız sunucunun `actual`'ından — özet satırındaki bir değer
+  // "ölçüldü X" diye "Ölçülemedi" rozetinin yanına yazılmaz (çelişkili görünüyordu).
+  const rows = [...checks].sort((a, b) => order(a.key) - order(b.key)).map((c) => {
+    const ok = c.ok === true ? true : c.ok === false ? false : null
+    return { key: c.key, known: Boolean(FIELD[c.key]), limit: num(c.limit), actual: budgetActual(c.key, ok === null ? null : scan, c), ok }
+  })
   const exceeded = rows.filter((r) => r.ok === false).length || (rows.length ? 0 : Math.max(0, num(budget.exceeded) ?? 0))
   const unknown = rows.filter((r) => r.ok === null).length
   const state = exceeded > 0 ? 'exceeded' : unknown > 0 ? 'partial' : 'ok'
@@ -272,6 +274,16 @@ export function growthRows(growth) {
 export const isTrendUnsupported = (res) => res?.status === 404 || res?.status === 405
 
 // ── G Çok sayfalı (site) analiz ──────────────────────────────────────────────
+
+/**
+ * Bölüm sekmelerinin TELEFON ızgarası (sm altı): en çok 4 bölüm tek satırda eşit sütun; 5 ve üstü İKİ satıra bölünür
+ * (5 → 3 + 2, 6 → 3 + 3, 7 → 4 + 3) — 360–390 px'te 5+ eşit sütunda adlar kırpılıyordu. sm ve üstünde liste satır içi
+ * akar ve gerekirse sarar (bu değer kullanılmaz). Sayı bilinmiyorsa 4.
+ */
+export function sectionTabCols(count) {
+  const n = Number.isInteger(count) && count > 0 ? Math.min(count, 12) : 4
+  return n <= 4 ? n : Math.ceil(n / 2)
+}
 
 /** Sayfa sayısı sınırları (sunucu ayarı `site.monitor.page.resource-scan.max-pages`: 10, 2–20). */
 export const SITE_MIN_PAGES = 2
@@ -722,6 +734,62 @@ export function profileLabel(key, t) {
 const yn = (v, t) => (v === true ? t('prs.export.yes') : v === false ? t('prs.export.no') : '')
 
 /**
+ * Üçüncü taraf kategorisinin etiketi: fe1'in `prs.deep.tpc.<kategori>` anahtarı varsa o, yoksa sunucunun kodu (bilinmeyen
+ * kod uydurulmaz; anahtar adı da asla basılmaz). Kod yalnız küçük harf + alt çizgi kabul edilir.
+ */
+export function tpCategoryLabel(code, t) {
+  const c = typeof code === 'string' ? code.trim() : ''
+  if (!c) return ''
+  if (!/^[a-z0-9_]{1,40}$/.test(c)) return c
+  const key = `prs.deep.tpc.${c}`
+  const v = t(key)
+  return typeof v === 'string' && v && v !== key && !/\{\d\}/.test(v) ? v : c
+}
+
+/** HTTP sürümü metni: "2" → "HTTP/2", "1.1" → "HTTP/1.1"; zaten "HTTP…" ile başlıyorsa olduğu gibi; boş / tanınmayan → ''. */
+export function httpVersionLabel(v) {
+  const s = typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
+  if (!s || s.length > 16) return ''
+  return /^http/i.test(s) ? s.toUpperCase() : `HTTP/${s}`
+}
+
+/**
+ * Nesneler sayfasına eklenen DERİN alan sütunları (sözleşme "Nesne alanları", algoritma 3): HTTP sürümü, oluşturmayı
+ * engelliyor mu, küçültülmüş mü, bütünlük (SRI), kütüphane, kaynak haritası, üçüncü taraf kategorisi. Bir sütun YALNIZ
+ * en az bir nesne o anahtarı taşıyorsa eklenir (eski analizin dosyası aynı kalır). Dönüş `{ head, rows }` — `rows[i]`
+ * giriş dizisindeki i. nesnenin hücreleri (sıra objectSheetRows ile aynı); hiç sütun yoksa `null`. Bilinmeyen (null)
+ * değer boş hücre — "Hayır" değil.
+ */
+export const OBJECT_DEEP_COLUMNS = [
+  ['http_version', 'prs.pdf.ocol.httpVersion', (it) => httpVersionLabel(it.http_version)],
+  ['render_blocking', 'prs.pdf.ocol.renderBlocking', (it, t) => yn(it.render_blocking, t)],
+  ['minified', 'prs.pdf.ocol.minified', (it, t) => yn(it.minified, t)],
+  ['integrity', 'prs.pdf.ocol.integrity', (it, t) => yn(it.integrity, t)],
+  ['library', 'prs.pdf.ocol.library', (it) => (isObj(it.library) && typeof it.library.name === 'string' && it.library.name.trim()
+    ? [it.library.name.trim(), typeof it.library.version === 'string' ? it.library.version.trim() : ''].filter(Boolean).join(' ')
+    : '')],
+  ['source_map', 'prs.pdf.ocol.sourceMap', (it) => (typeof it.source_map === 'string' ? it.source_map : '')],
+  ['third_party_category', 'prs.pdf.ocol.tpCategory', (it, t) => tpCategoryLabel(it.third_party_category, t)],
+]
+export function objectDeepColumns(items, t) {
+  const list = arr(items)
+  const has = (k) => list.some((it) => isObj(it) && Object.prototype.hasOwnProperty.call(it, k))
+  const cols = OBJECT_DEEP_COLUMNS.filter(([k]) => has(k))
+  if (!cols.length) return null
+  return {
+    head: cols.map(([, label]) => t(label)),
+    rows: list.map((it) => cols.map(([, , cell]) => (isObj(it) ? cell(it, t) : ''))),
+  }
+}
+
+/** Nesneler sayfası + derin sütunlar: `objectSheetRows` çıktısının her satırının SONUNA eklenir (sütun sırası değişmez). */
+export function withObjectDeepColumns(sheetRows, items, t) {
+  const extra = objectDeepColumns(items, t)
+  if (!extra || !Array.isArray(sheetRows) || !sheetRows.length) return sheetRows
+  return sheetRows.map((row, i) => (i === 0 ? [...row, ...extra.head] : [...row, ...(extra.rows[i - 1] || extra.head.map(() => ''))]))
+}
+
+/**
  * Excel A–E sayfaları: analizde OLAN her bölüm için bir sayfa; sayfa, alt başlıklı bloklardan oluşur (blok başlığı, sütun
  * başlıkları, satırlar, boş ayraç). Liste sunucuda ≤ 50 satırdır; fazlası `*_total` ile söylenir. Bölüm yoksa sayfa yok.
  */
@@ -811,9 +879,9 @@ export function deepSheets(analysis, t, locale) {
       arr(S.libraries).filter(isObj).map((l) => [l.name ?? '', l.version ?? '', l.url ?? '',
         arr(l.vulns).filter(isObj).map((v) => [v.id, v.severity].filter(Boolean).join(' · ')).join('\n')]))
     block(rows, t('prs.pdf.xl.thirdParty'), [t('prs.pdf.xl.category'), t('prs.pdf.xl.hostsCol'), t('prs.export.col.count'), t('prs.export.col.bytes')],
-      arr(S.third_party_categories).filter(isObj).map((c) => [c.category ?? '', arr(c.hosts).join(', '), num(c.requests), num(c.bytes)]))
+      arr(S.third_party_categories).filter(isObj).map((c) => [tpCategoryLabel(c.category, t), arr(c.hosts).join(', '), num(c.requests), num(c.bytes)]))
     block(rows, t('prs.pdf.xl.tracking'), [t('prs.export.col.host'), t('prs.pdf.xl.category')],
-      arr(S.tracking_on_load).filter(isObj).map((x) => [x.host ?? '', x.category ?? '']))
+      arr(S.tracking_on_load).filter(isObj).map((x) => [x.host ?? '', tpCategoryLabel(x.category, t)]))
     if (S.catalog_date) rows.push([], [t('prs.pdf.xl.catalogDate', String(S.catalog_date))])
     sheets.push({ key: 'security', name: t('prs.pdf.sheet.security'), rows, widths: [40, 30, 60, 50, 12, 12, 30] })
   }
