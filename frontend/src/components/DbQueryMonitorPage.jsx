@@ -703,8 +703,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   }, [scoped])
 
   const displayMonitors = useMemo(() => {
-    if (!statFilter || statFilter === 'total') return scoped
-    const pred = {
+    const pred = !statFilter || statFilter === 'total' ? null : {
       ok: m => m.active !== false && dbqueryStatusKey(m) === 'up',
       warn: m => m.active !== false && dbqueryStatusKey(m) === 'warn',
       down: m => m.active !== false && dbqueryStatusKey(m) === 'down',
