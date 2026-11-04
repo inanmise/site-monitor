@@ -49,20 +49,30 @@ function measure(sel) {
   return { pageOverflow, offenders: out }
 }
 
-function clipped(sel) {
+// `only` verilirse yalnız o seçicilerin kendisi / içi ölçülür (paylaşılan başlık, süzgeç çubuğu ve form çerçevesi kendi
+// e2e'lerinde ölçülür — burada bu sürümün yüzeyleri). page.evaluate yalnız işlevi taşır: yardımcı her işlevin İÇİNDE.
+function clipped(arg) {
+  const scoped = (r, o, q) => (!o ? [...r.querySelectorAll(q)]
+    : o.flatMap((x) => [...r.querySelectorAll(x)].flatMap((el) => [...(el.matches(q) ? [el] : []), ...el.querySelectorAll(q)])))
+  const { sel, only } = typeof arg === 'string' ? { sel: arg, only: null } : arg
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
-  return [...root.querySelectorAll('span, p, li, h2, h3, h4, label, button, dt, dd, code, td, th, a, strong')]
+  if (only && !only.some((o) => root.querySelector(o))) return ['NO_ONLY']
+  return scoped(root, only, 'span, p, li, h2, h3, h4, label, button, dt, dd, code, td, th, a, strong')
     .filter((n) => !n.closest('.sr-only') && !n.closest('select') && !n.closest('svg'))
     .filter((n) => n.childElementCount === 0 && n.textContent.trim().length > 12
       && n.clientWidth > 0 && n.scrollWidth > n.clientWidth + 1).map((n) => n.textContent.slice(0, 40))
 }
 
-function smallTargets(sel) {
+function smallTargets(arg) {
+  const scoped = (r, o, q) => (!o ? [...r.querySelectorAll(q)]
+    : o.flatMap((x) => [...r.querySelectorAll(x)].flatMap((el) => [...(el.matches(q) ? [el] : []), ...el.querySelectorAll(q)])))
+  const { sel, only } = typeof arg === 'string' ? { sel: arg, only: null } : arg
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
+  if (only && !only.some((o) => root.querySelector(o))) return ['NO_ONLY']
   const out = []
-  for (const b of root.querySelectorAll('button, select, input:not([type="hidden"]), [role="combobox"], a[href]')) {
+  for (const b of scoped(root, only, 'button, select, input:not([type="hidden"]), [role="combobox"], a[href]')) {
     const r = b.getBoundingClientRect()
     if (r.width === 0 || r.height === 0 || b.disabled) continue
     const cs = getComputedStyle(b)
@@ -106,14 +116,17 @@ for (const vp of VIEWPORTS) {
   test.describe(`Veritabanı sorgu deneyimi — ${vp.name} ${vp.width}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
 
-    const check = async (page, stage, sel) => {
+    // Taşma TÜM kökte; kırpma ve dokunma hedefi `only` verilirse yalnız bu sürümün yüzeylerinde
+    const check = async (page, stage, sel, only = null) => {
       await page.waitForTimeout(250)
       const m = await page.evaluate(measure, sel)
       expect(m.offenders, `${stage} @${vp.name}: ekran dışına taşan öğe`).toEqual([])
       expect(m.pageOverflow, `${stage} @${vp.name}: sayfa yatay kayıyor`).toBeLessThanOrEqual(1)
-      expect(await page.evaluate(clipped, sel), `${stage} @${vp.name}: kırpılan metin`).toEqual([])
-      if (vp.touch) expect(await page.evaluate(smallTargets, sel), `${stage} @${vp.name}: küçük dokunma hedefi`).toEqual([])
+      expect(await page.evaluate(clipped, { sel, only }), `${stage} @${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, { sel, only }), `${stage} @${vp.name}: küçük dokunma hedefi`).toEqual([])
     }
+    const LIST_OWN = ['[data-slot="dbq-focus-bar"]', '.upt-grid', '[data-slot="dbq-conn-group-head"]', '[data-slot="dbq-focus-empty"]']
+    const RULE_OWN = ['[data-slot="dbq-rule-card"]', '[data-slot="dbq-rule-add"]']
 
     test('liste: değer eğilimi, "Şu an ihlalde" süzgeci, bağlantıya göre gruplar', async ({ page }) => {
       test.setTimeout(120_000)
@@ -127,7 +140,7 @@ for (const vp of VIEWPORTS) {
       await expect(trend).toHaveAttribute('aria-label', /artış, \+%12,5/)
       await expect(card(ROWS[1].name).locator('[data-slot="dbq-value-trend-delta"]')).toHaveText('−%38,2')
       await expect(card(ROWS[3].name).locator('[data-slot="dbq-value-trend"]')).toHaveCount(0)
-      await check(page, 'liste (eğilim)', '.upt-page')
+      await check(page, 'liste (eğilim)', '.upt-page', LIST_OWN)
 
       // "Şu an ihlalde": sayaç + süzgeç + URL
       const focus = page.locator('[data-slot="dbq-focus-breach"]')
@@ -136,7 +149,7 @@ for (const vp of VIEWPORTS) {
       await expect(focus).toHaveAttribute('aria-pressed', 'true')
       await expect(cards).toHaveCount(BREACH_NAMES.length)
       await expect(page).toHaveURL(/dq=breach/)
-      await check(page, 'liste (ihlalde)', '.upt-page')
+      await check(page, 'liste (ihlalde)', '.upt-page', LIST_OWN)
 
       // Bağlantıya göre: gruplar, başlıkta uzun bağlantı adı tam; sağlık rozetleri
       await page.locator('[data-slot="dbq-group-conn"]').click()
@@ -147,7 +160,7 @@ for (const vp of VIEWPORTS) {
       await expect(longHead).toBeVisible()
       await expect(longHead.locator('h3')).toContainText(LONG_CONN)
       await expect(page.locator('[data-slot="dbq-conn-group-health"]').first()).toHaveAttribute('data-state', /ok|failing|untested/)
-      await check(page, 'liste (gruplu + ihlalde)', '.upt-page')
+      await check(page, 'liste (gruplu + ihlalde)', '.upt-page', LIST_OWN)
       // Süzgeç kalkınca tüm izlemeler gruplarda; adres çubuğu sayfa yeniden yüklense de aynı görünümü verir
       await focus.click()
       await expect(page.locator('[data-slot="dbq-conn-group"] [data-monitor-open]')).toHaveCount(6)
@@ -155,7 +168,7 @@ for (const vp of VIEWPORTS) {
       await page.reload()
       await expect(page.locator('[data-slot="dbq-group-conn"]')).toHaveAttribute('aria-pressed', 'true', { timeout: 20_000 })
       await expect(page.locator('[data-slot="dbq-conn-group"]')).toHaveCount(3)
-      await check(page, 'liste (gruplu)', '.upt-page')
+      await check(page, 'liste (gruplu)', '.upt-page', LIST_OWN)
     })
 
     test('ayrıntı grafiği: alarm dönemleri + numaralı değişiklik işaretleri, dokununca açıklama', async ({ page }) => {
@@ -200,7 +213,7 @@ for (const vp of VIEWPORTS) {
       await expect(sug).toHaveAttribute('data-state', 'ok')
       await expect(sug.locator('[data-slot="dbq-suggest-summary"]')).toContainText('UYARI')
       await expect(sug.locator('[data-slot="dbq-suggest-basis"]')).toContainText('ölçüm noktası')
-      await check(page, 'eşik önerisi', dsel)
+      await check(page, 'eşik önerisi', dsel, RULE_OWN)
       await sug.locator('[data-slot="dbq-suggest-apply"]').click()
       await expect(ruleCard.locator('[data-slot="dbq-suggest-applied"]')).toBeVisible()
 
@@ -212,7 +225,7 @@ for (const vp of VIEWPORTS) {
       await ruleCard.getByRole('button', { name: 'Yalnız yüksek' }).click()
       await ruleCard.locator('[data-slot="dbq-rule-season"]').selectOption('daily')
       await expect(ruleCard.locator('[data-slot="dbq-rule-summary"]')).toContainText('önceki 30 günün aynı saati')
-      await check(page, 'olağan dışı değer', dsel)
+      await check(page, 'olağan dışı değer', dsel, RULE_OWN)
 
       // Değer donmuş (ikinci kural)
       await dlg.locator('[data-slot="dbq-rule-add"]').click()
@@ -223,7 +236,7 @@ for (const vp of VIEWPORTS) {
       await expect(second.locator('[data-field="rules[1].runs_critical"]')).toContainText('uyarıdakinden büyük')
       await second.locator('[data-slot="dbq-rule-runs-critical"]').fill('12')
       await expect(second.locator('[data-slot="dbq-rule-summary"]')).toContainText('12 çalıştırma boyunca aynı kalırsa KRİTİK')
-      await check(page, 'değer donmuş', dsel)
+      await check(page, 'değer donmuş', dsel, RULE_OWN)
     })
 
     test('Kişisel Panom: Veri kuralları kutusu → "Şu an ihlalde" süzgeciyle sayfa', async ({ page }) => {
