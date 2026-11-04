@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, RotateCw, WrapText } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, RotateCw, WrapText, Wand2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -13,6 +13,10 @@ import { Spinner } from '../ui/Progress.jsx'
 import {
   MAX_SQL_CHARS, indent, isGuardTimeout, isKnownGuardCode, lineCount, newlineWithIndent, offsetOf,
 } from './sqlEditorModel.js'
+import { hasFixableViolation, rowLimitSuggestable, selectStarFix } from './sqlFix.js'
+
+// Düzeltme penceresi yalnız açılınca yüklenir (B2)
+const SqlFixDialog = lazy(() => import('./SqlFixDialog.jsx'))
 
 /** Canlı denetim bekleme süresi (ms) — yazarken her tuşta istek gitmesin. */
 export const SQL_CHECK_DEBOUNCE_MS = 400
@@ -54,8 +58,12 @@ function tOr(t, key, fallback) {
  *
  * `onGuardChange(result)`: `{ status, ok (true | false | null), violations, tables, message, timeout }` — yalnız durum
  * değişince; `timeout: true` = sunucu ayrıştırma süresi doldu (status 'unknown', ok null, violations boş).
+ *
+ * `fix` (isteğe bağlı, B2 2026-11-05): `{ columns, rowLimit, rules }` verilirse "Düzelt" önerisi açılır — SQL Server'da
+ * NOLOCK eksikliği reddinde ihlal bandında "Düzelt", denetimden geçen sorguda "Düzeltme önerileri" (satır sınırı, son
+ * denemenin kolonlarıyla `SELECT *` yerine kolonlar). Önizleme + Uygula (`onChange` yeni sorguyla; kaydetmez).
  */
-export default function SqlEditor({ value, onChange, dbType, fieldError, violations, disabled = false, onGuardChange }) {
+export default function SqlEditor({ value, onChange, dbType, fieldError, violations, disabled = false, onGuardChange, fix = null }) {
   const t = useT()
   const { lang } = useLanguage()
   const id = useId()
@@ -65,6 +73,8 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   const escTab = useRef(false)
   const seqRef = useRef(0)
   const [recheck, setRecheck] = useState(0)
+  const [fixOpen, setFixOpen] = useState(false)
+  const [fixApplied, setFixApplied] = useState(null)   // son uygulanan düzeltmenin kodu (ekran okuyucu duyurusu)
   // Satır kaydırma (2.C): telefonda varsayılan AÇIK — uzun satır yatayda sona kaymış görünmesin; açıkken satır cetveli
   // gizlenir (kaydırılan satır numarası yanıltırdı), ihlaller "satır N" olarak listelenmeye devam eder
   const [wrap, setWrap] = useState(() => { try { return typeof window !== 'undefined' && window.innerWidth < 768 } catch { return false } })
@@ -198,6 +208,11 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   }
 
   const over = text.length > MAX_SQL_CHARS
+  // Düzeltme (B2): yalnız çağıran `fix` verdiyse ve düzenlenebilirken; ret bandında NOLOCK eksikliği, temiz sorguda öneriler
+  const fixEnabled = !!fix && !disabled && !over && !!text.trim()
+  const fixAvailable = fixEnabled && (shown.status === 'rejected' ? hasFixableViolation(shown.violations) : shown.status === 'ok')
+  const suggestAvailable = fixAvailable && shown.status === 'ok'
+    && ((!!dbType && rowLimitSuggestable(text)) || !!selectStarFix(text, fix?.columns, dbType))
   const counterId = `${id}-count`
   const hintId = `${id}-hint`
   const errId = fieldError ? `${id}-err` : null
@@ -258,7 +273,16 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
       {over && <p className="text-xs font-semibold text-destructive">{t('dbq.sql.tooLong', fmt(MAX_SQL_CHARS))}</p>}
 
       <GuardStatus id={statusId} guard={shown} t={t} onGo={goTo}
-        onRecheck={servedActive || disabled ? null : () => setRecheck((n) => n + 1)} />
+        onRecheck={servedActive || disabled ? null : () => setRecheck((n) => n + 1)}
+        onFix={fixAvailable ? () => setFixOpen(true) : null} canSuggest={suggestAvailable} />
+      {fixApplied && <p data-slot="dbq-sql-fix-applied" className="sr-only" aria-live="polite">{t('dbq.fix.applied', t(`dbq.fix.code.${fixApplied}.title`))}</p>}
+      {fixOpen && (
+        <Suspense fallback={null}>
+          <SqlFixDialog open onClose={() => setFixOpen(false)} sql={text} dbType={dbType || null} rules={fix?.rules || []}
+            columns={fix?.columns || []} rowLimit={fix?.rowLimit ?? null}
+            onApply={(f) => { setFixOpen(false); setFixApplied(f.code); pendingSel.current = null; onChange?.(f.sql) }} />
+        </Suspense>
+      )}
 
       {dbType === 'MSSQL' && (
         <AlertBanner tone="info" icon={Info} title={t('dbq.sql.nolockTitle')} className="mb-0">
@@ -276,7 +300,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
 }
 
 /** Denetim sonucu satırı + ihlal listesi + okunan tablolar. */
-function GuardStatus({ id, guard, t, onGo, onRecheck }) {
+function GuardStatus({ id, guard, t, onGo, onRecheck, onFix = null, canSuggest = false }) {
   const { status } = guard
   const list = guard.violations || []
   const tables = guard.tables || []
@@ -289,9 +313,17 @@ function GuardStatus({ id, guard, t, onGo, onRecheck }) {
       )}
       {status === 'empty' && <p className="m-0 text-xs text-muted-foreground">{t('dbq.sql.emptyHint')}</p>}
       {status === 'ok' && (
-        <p data-slot="dbq-sql-ok" className="m-0 inline-flex items-center gap-1.5 text-xs font-semibold text-success">
-          <ShieldCheck aria-hidden="true" className="size-4" />{t('dbq.sql.ok')}
-        </p>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <p data-slot="dbq-sql-ok" className="m-0 inline-flex items-center gap-1.5 text-xs font-semibold text-success">
+            <ShieldCheck aria-hidden="true" className="size-4" />{t('dbq.sql.ok')}
+          </p>
+          {onFix && canSuggest && (
+            <Button type="button" variant="ghost" size="sm" onClick={onFix} data-slot="dbq-sql-suggest"
+              className="h-7 gap-1 px-2 text-xs pointer-coarse:h-10">
+              <Wand2 aria-hidden="true" className="size-3.5" />{t('dbq.fix.suggestions')}
+            </Button>
+          )}
+        </div>
       )}
       {status === 'unknown' && (
         <div data-slot="dbq-sql-unknown" data-timeout={guard.timeout ? 'true' : undefined}
@@ -314,10 +346,17 @@ function GuardStatus({ id, guard, t, onGo, onRecheck }) {
       )}
       {status === 'rejected' && (
         <div data-slot="dbq-sql-violations" className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5">
-          <p className="m-0 mb-1.5 inline-flex items-center gap-1.5 text-sm font-semibold text-destructive">
-            <ShieldAlert aria-hidden="true" className="size-4" />
-            {list.length === 1 ? t('dbq.sql.violationsOne') : t('dbq.sql.violations', list.length || 1)}
-          </p>
+          <div className="mb-1.5 flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <p className="m-0 inline-flex items-center gap-1.5 text-sm font-semibold text-destructive">
+              <ShieldAlert aria-hidden="true" className="size-4" />
+              {list.length === 1 ? t('dbq.sql.violationsOne') : t('dbq.sql.violations', list.length || 1)}
+            </p>
+            {onFix && (
+              <Button type="button" size="sm" onClick={onFix} data-slot="dbq-sql-fix" className="gap-1 pointer-coarse:h-10">
+                <Wand2 aria-hidden="true" className="size-3.5" />{t('dbq.fix.button')}
+              </Button>
+            )}
+          </div>
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
             {(list.length ? list : [{ code: 'SQL_UNPARSABLE' }]).map((v, i) => {
               const code = isKnownGuardCode(v.code) ? v.code : 'unknown'

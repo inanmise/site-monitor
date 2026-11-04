@@ -29,7 +29,7 @@ import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
 import {
   Trash2, DatabaseZap, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, Inbox, Copy, Cable,
-  LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat,
+  LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat, Wand2, Layers,
 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -80,6 +80,9 @@ import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import { MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint } from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
+// Hızlı ekle sihirbazı (B1) ve toplu oluşturma penceresi (B4) — yalnız açılınca yüklenir
+const QuickAddWizard = lazy(() => import('./dbquery/wizard/QuickAddWizard.jsx'))
+const BulkCreateDialog = lazy(() => import('./dbquery/BulkCreate.jsx').then((m) => ({ default: m.BulkCreateDialog })))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 30
@@ -227,6 +230,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [connOpen, setConnOpen] = useState(false)
   const [tplOpen, setTplOpen] = useState(false)
   const [advOpen, setAdvOpen] = useState(false)
+  const [wizard, setWizard] = useState(null)       // { key, initialForm } — Hızlı ekle sihirbazı açık
+  const [bulkOpen, setBulkOpen] = useState(null)   // { baseBody, baseName, teamId, dbType, profileId, succeeded } — toplu oluşturma
   const [detailTab, setDetailTab] = useState('summary')
   const deepLinkTab = useDeepLinkTab('summary')
   const [histReload, setHistReload] = useState(0)
@@ -339,9 +344,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   // Yeni izleme / kopya YALNIZ kendi takımlarına (K2): paylaşımla erişilen takımda bağlantı kullanılamaz, sunucu 403
   // DBQUERY_GRANT_TEAM verir. Varsayılan takım bir paylaşım takımıysa (yalnız paylaşımla yazılan tek takım) boş başlar.
   const ownDefaultTeam = defaultTeamId != null && !isGrantTeam(defaultTeamId, pickTeams) ? String(defaultTeamId) : ''
-  /** Yeni izleme formu — `seed` (şablondan oluşturma, 2.C) sorgu / amaç / kurallar / takımı önceden doldurur. */
-  function openNew(seed = null) {
-    openWith({
+  /** Yeni izleme formunun başlangıç değerleri (varsayılanlar uygulanmış) — uzun form ve Hızlı ekle sihirbazı AYNI tabandan. */
+  function newForm(seed = null) {
+    return {
       ...emptyForm, teamId: isAdmin ? '' : ownDefaultTeam,
       schedule: { ...DEFAULT_SCHEDULE, interval_seconds: defaults?.interval_seconds ?? DEFAULT_SCHEDULE.interval_seconds },
       queryTimeoutSeconds: defaults?.query_timeout_seconds ?? emptyForm.queryTimeoutSeconds,
@@ -351,7 +356,42 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       recoveryChecks: defaults?.recovery_checks ?? emptyForm.recoveryChecks,
       recoveryIntervalSeconds: defaults?.recovery_interval_seconds ?? emptyForm.recoveryIntervalSeconds,
       ...(seed || {}),
-    }, 'new')
+    }
+  }
+  /** Yeni izleme formu — `seed` (şablondan oluşturma, 2.C) sorgu / amaç / kurallar / takımı önceden doldurur. */
+  function openNew(seed = null) {
+    openWith(newForm(seed), 'new')
+  }
+  /** "Hızlı ekle" (B1) — adım adım sihirbaz; taban yeni izleme formuyla aynı. */
+  function openWizard() {
+    setWizard({ key: Date.now(), initialForm: newForm() })
+  }
+  /**
+   * Sihirbazdan "Gelişmiş görünüm": değerler uzun forma TAŞINIR; açılış gövdesi boş yeni formunki sayılır — sihirbazda
+   * yazılanlar "kaydedilmemiş değişiklik" olarak korunur (kapatırken onay).
+   */
+  function openAdvancedFromWizard(wizForm) {
+    setWizard(null)
+    openWith(wizForm, 'new')
+    initialBodyRef.current = JSON.stringify(payloadFromForm(newForm()))
+  }
+  /** Sihirbaz kaydı: tek izleme → liste + tost + kayıttan sonra kontrol; toplu → liste + özet tostu (sihirbaz açık kalır). */
+  function onWizardSaved(rows, info = {}) {
+    load()
+    if (Array.isArray(info.bulk)) {
+      const ok = info.bulk.filter((r) => r.status === 'ok').length
+      const failed = info.bulk.filter((r) => r.status === 'error').length
+      if (ok) toast.success(t('dbq.bulk.doneToast', ok, failed))
+      else toast.error(t('dbq.bulk.noneCreated'))
+      return
+    }
+    const row = rows?.[0]
+    toast.success(t('dbq.form.saved'))
+    const warns = warningsOf(info.response)
+    if (warns.length) {
+      toast.info(t('dbq.form.savedWithWarnings', warns.map((w) => (WARNING_CODES.includes(w.code) ? t(`dbq.warn.${w.code}.title`) : (w.message || w.code))).join(' · ')))
+    }
+    if (row && shouldCheckAfterSave('dbquery', { isNew: true, before: null, after: row })) startCheckAfterSave(checkNow, row, { silent: true })
   }
   /**
    * "Bu şablonla izleme oluştur" (2.C): şablon yöneticisi kapanır, yeni izleme formu şablonun sorgu / amaç / kurallarıyla
@@ -367,6 +407,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       sqlText: tpl.sql_text || '', purpose: tpl.purpose || '',
       rules: Array.isArray(tpl.rules) ? tpl.rules : [], ruleLogic: tpl.rule_logic === 'ALL' ? 'ALL' : 'ANY',
       ...(tplTeam ? { teamId: tplTeam } : {}),
+      // DBA şablonunun önerilen aralığı (B5)
+      ...(tpl.interval_seconds > 0 ? { schedule: { ...DEFAULT_SCHEDULE, interval_seconds: tpl.interval_seconds } } : {}),
     })
   }
   function openEdit(row) {
@@ -450,6 +492,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       purpose: f.purpose.trim() ? f.purpose : (tpl.purpose || ''),
       rules: Array.isArray(tpl.rules) ? tpl.rules : f.rules,
       ruleLogic: tpl.rule_logic === 'ALL' ? 'ALL' : (tpl.rule_logic === 'ANY' ? 'ANY' : f.ruleLogic),
+      // DBA şablonunun önerilen aralığı (B5) — yalnız aralık kipindeyse
+      schedule: tpl.interval_seconds > 0 && f.schedule?.schedule_mode !== 'CRON'
+        ? { ...f.schedule, schedule_mode: 'INTERVAL', interval_seconds: tpl.interval_seconds } : f.schedule,
     }))
     setSqlViolations(null); setTestResult(null); setPlanResult(null)
     fe.clear('sql_text'); fe.clear('purpose')
@@ -588,6 +633,29 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     }
   }
 
+  /**
+   * Uzun formdan "Birden çok bağlantı için oluştur" (B4): kaydetmeyle aynı istemci doğrulaması (bağlantı hariç — her satır
+   * kendi bağlantısını alır), sonra formun gövdesiyle toplu oluşturma penceresi.
+   */
+  function openBulkFromForm() {
+    const purposeLen = form.purpose.trim().length
+    if (fe.check({
+      name: !form.name.trim() && t('mon.fieldRequired'),
+      team_id: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      group_name: !form.groupName?.trim() && t('mon.groupRequired'),
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+      purpose: (purposeLen < PURPOSE_MIN || purposeLen > PURPOSE_MAX) && t('dbq.form.purposeLength', PURPOSE_MIN, PURPOSE_MAX),
+      sql_text: !form.sqlText.trim() && t('dbq.form.sqlRequired'),
+    })) return
+    const body = payloadFromForm(form)
+    setBulkOpen({ baseBody: body, baseName: form.name.trim(), teamId: Number(form.teamId), dbType: form.dbType || null, profileId: form.profileId, succeeded: false })
+  }
+  function closeBulk() {
+    const succeeded = !!bulkOpen?.succeeded
+    setBulkOpen(null)
+    if (succeeded) closeEditNow()
+  }
+
   /** Silme — KALICI; onay izlemenin ADIYLA ve geri alınamaz olduğu söylenerek alınır. */
   async function deleteMonitor(m) {
     if (!m || m === 'new') return false
@@ -642,6 +710,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const teamSelectOptions = useMemo(() => (modal === 'new'
     ? allTeamSelectOptions.filter(o => !grantTeamIds.has(String(o.value))) : allTeamSelectOptions), [modal, allTeamSelectOptions, grantTeamIds])
   const teamNameById = useMemo(() => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
+  const wizardTeamOptions = useMemo(() => allTeamSelectOptions.filter(o => o.value !== '' && !grantTeamIds.has(String(o.value))),
+    [allTeamSelectOptions, grantTeamIds])
   const managerTeams = useMemo(() => (isAdmin && teams.length ? teams : pickTeams)
     .filter(tm => !grantTeamIds.has(String(tm.id))).map(tm => ({ id: tm.id, name: tm.name })), [isAdmin, teams, pickTeams, grantTeamIds])
   // Bağlantı / şablon yöneticisinin açılış takımı: takım süzgecindeki takım (ad → kimlik); yoksa kullanıcının varsayılan
@@ -763,6 +833,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         {modal !== 'new' && canDeleteRow(modal) && (
           <Button variant="destructive" className="mr-auto" onClick={del}><Trash2 size={14} />{t('dbq.page.delete')}</Button>
         )}
+        {modal === 'new' && (
+          <Button variant="outline" onClick={openBulkFromForm} disabled={saving || !form.teamId} data-slot="dbq-bulk-open" className="pointer-coarse:h-10">
+            <Layers aria-hidden="true" />{t('dbq.bulk.open')}
+          </Button>
+        )}
         <Button variant="secondary" onClick={closeEdit}>{t('dbq.form.cancel')}</Button>
         <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.teamId}>{t('dbq.form.save')}</Button>
       </>}>
@@ -831,7 +906,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           onPickTemplate={onPickTemplate} onSaveTemplate={() => setSaveTplOpen(true)}
           onTest={runTest} onPlanCheck={runPlanCheck} testing={testing} planChecking={planChecking}
           testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} locked={grantLocked}
-          planAvailable={planCheckAvailable(limits, form.dbType || null)} onColumnAction={onColumnAction} />
+          planAvailable={planCheckAvailable(limits, form.dbType || null)} onColumnAction={onColumnAction}
+          fix={{ columns, rowLimit: form.maxRows, rules: form.rules }} />
 
         <EvaluationSection form={form} setForm={setForm} ruleErrors={ruleErrors} columns={columns}
           slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked}
@@ -891,6 +967,17 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="dbquery-change-note" value={changeNote} onChange={setChangeNote} />
       )}
+      {bulkOpen && (
+        <Suspense fallback={null}>
+          <BulkCreateDialog open onClose={closeBulk} teamId={bulkOpen.teamId} dbType={bulkOpen.dbType} baseBody={bulkOpen.baseBody}
+            baseName={bulkOpen.baseName} initialProfileId={bulkOpen.profileId}
+            onDone={(results) => {
+              load()
+              const ok = results.filter((r) => r.status === 'ok').length
+              if (ok) setBulkOpen((b) => (b ? { ...b, succeeded: true } : b))
+            }} />
+        </Suspense>
+      )}
       {saveTplOpen && (
         <SaveTemplateDialog open={saveTplOpen} onOpenChange={setSaveTplOpen} teamId={formTeamId}
           draft={{ sql_text: form.sqlText, purpose: form.purpose, rules: form.rules, rule_logic: form.ruleLogic, db_type: form.dbType || null }}
@@ -906,6 +993,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         extraActions={<>
+          {canWrite && (
+            <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-quick-add" onClick={openWizard}>
+              <Wand2 aria-hidden="true" className="size-4" />{t('dbq.wiz.open')}
+            </Button>
+          )}
           <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-open-connections" onClick={() => setConnOpen(true)}>
             <Cable aria-hidden="true" className="size-4" />{t('dbq.page.connections')}
           </Button>
@@ -943,7 +1035,12 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('dbq.page.emptyAdmin') : t('dbq.page.empty')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
+        <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('dbq.page.emptyAdmin') : t('dbq.page.empty')} description={canWrite ? t('dbq.wiz.emptyHint') : t('empty.hintMonitors')}
+          actions={canWrite ? (
+            <Button type="button" onClick={openWizard} data-slot="dbq-quick-add-empty" className="pointer-coarse:h-10">
+              <Wand2 aria-hidden="true" />{t('dbq.wiz.open')}
+            </Button>
+          ) : null} />
       ) : (
         <>
         {loadError && (
@@ -1073,7 +1170,20 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
       {connOpen && (
         <ConnectionsManager open={connOpen} onOpenChange={setConnOpen} teamId={managerTeamId}
-          teams={managerTeams} canEdit={canWrite} onChanged={load} />
+          teams={managerTeams} canEdit={canWrite} onChanged={load}
+          onOpenMonitor={(id) => {
+            const m = monitors.find((x) => String(x.id) === String(id))
+            if (!m) { toast.info(t('dbq.conn.monitorNotInList')); return }
+            setConnOpen(false); openDetail(m)
+          }} />
+      )}
+      {wizard && (
+        <Suspense fallback={null}>
+          <QuickAddWizard key={wizard.key} open initialForm={wizard.initialForm} toPayload={payloadFromForm}
+            canPickTeam={canPickTeam} teamOptions={wizardTeamOptions} fixedTeamName={ownDefaultTeam ? defaultTeamName : null}
+            managerTeams={managerTeams} canManageConnections={canWrite} limits={limits} globalAdmin={globalAdmin}
+            onClose={() => setWizard(null)} onSaved={onWizardSaved} onAdvanced={openAdvancedFromWizard} />
+        </Suspense>
       )}
       {tplOpen && (
         <TemplatesManager open={tplOpen} onOpenChange={setTplOpen} teamId={managerTeamId}

@@ -94,11 +94,12 @@ export function GrantLockNote({ children }) {
  * Sorgu bölümü: şablondan başla, sorgu düzenleyicisi (canlı güvenlik denetimi — yapı taşı), "Sorguyu dene" / "Maliyeti
  * denetle" / "Şablon olarak kaydet" ve deneme sonucu (satır verisi YOK). `locked` (K2 — paylaşımla düzenlenen kayıt):
  * sorgu salt okunur, deneme / maliyet / şablon düğmeleri çizilmez (sunucu bunları yalnız takımın kendi kapsamına açar).
+ * `fix` (B2): düzenleyicinin "Düzelt" bağlamı (`{ columns, rowLimit, rules }`); kilitliyken verilmez.
  */
 export function QuerySection({
   form, onSqlChange, sqlError, violations, onGuardChange, teamId, dbType,
   onPickTemplate, onSaveTemplate, onTest, onPlanCheck, testing, planChecking, testResult, planResult,
-  canRun, runHint, disabled = false, locked = false, planAvailable = true, onColumnAction = null,
+  canRun, runHint, disabled = false, locked = false, planAvailable = true, onColumnAction = null, fix = null,
 }) {
   const t = useT()
   return (
@@ -113,7 +114,7 @@ export function QuerySection({
         </div>
       )}
       <SqlEditor value={form.sqlText} onChange={onSqlChange} dbType={dbType} fieldError={sqlError}
-        violations={violations} disabled={disabled || locked} onGuardChange={onGuardChange} />
+        violations={violations} disabled={disabled || locked} onGuardChange={onGuardChange} fix={locked ? null : fix} />
       <FormHint full={false}>
         <ShieldCheck aria-hidden="true" className="mr-1 inline size-3.5 align-[-2px]" />{t('dbq.form.sqlRules')}
       </FormHint>
