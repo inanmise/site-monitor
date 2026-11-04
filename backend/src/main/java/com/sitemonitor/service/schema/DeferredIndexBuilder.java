@@ -229,7 +229,15 @@ public final class DeferredIndexBuilder {
             // dbquery_checks (11. tür, 2026-10-31): saatlik / günlük rollup (WHERE checked_at >= ? AND < ?), filo sparkline'ı
             // ve saklama budaması — entity indeksi (monitor_id, checked_at) zaman aralığına tek başına hizmet etmez.
             // SONA eklendi: katalog sırası testlerde konumla okunur.
-            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dbqc_checked_at ON dbquery_checks(checked_at)"));
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dbqc_checked_at ON dbquery_checks(checked_at)"),
+            // 2026-11-05 (aktivite zenginleştirmesi E): Kayıtlar → Aktivite süzgeçleri. Kapsamlı kullanıcının durum süzgeci
+            // (team_id IN (…) AND result_status IN (…) AND activity_time aralığı / ORDER BY activity_time DESC) —
+            // idx_act_team_time durumu taşımadığından takımın tüm satırları okunup süzülüyordu (ActivityFilter, sayım ve sayfa).
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_team_status_time ON activity_log(team_id, result_status, activity_time)"),
+            // Hata nedeni süzgeci (failure_reason IN (…) [+ zaman]) — 365 günlük tabloda nedensiz satırlar dizine girmez
+            // (kısmi; kolon yalnız başarısız kontrol satırlarında dolu). PostgreSQL'e özgü (H2'de zaman dizini + süzme).
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_reason_time ON activity_log(failure_reason, activity_time)"
+                    + " WHERE failure_reason IS NOT NULL"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

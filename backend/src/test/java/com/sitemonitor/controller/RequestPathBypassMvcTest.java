@@ -7,8 +7,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -46,6 +44,11 @@ class RequestPathBypassMvcTest {
     @MockitoBean com.sitemonitor.service.AuditService auditService;
     @MockitoBean com.sitemonitor.service.HttpMetricsService httpMetricsService;
     @MockitoBean ActivityLogRepository repo;
+    // Aktivite zenginleştirmesi (2026-11-05): liste / özet sorguları + zaman çizelgesi / dışa aktarım / kök neden servisleri
+    @MockitoBean com.sitemonitor.service.activity.ActivityQueryService queries;
+    @MockitoBean com.sitemonitor.service.activity.ActivityTimelineService timelines;
+    @MockitoBean com.sitemonitor.service.activity.ActivityExportService exports;
+    @MockitoBean com.sitemonitor.service.activity.ActivityRelatedService relatedSvc;
 
     /** Ham yolu olduğu gibi taşıyan istek (şablon genişletmesi / yeniden kodlama yok). */
     private static URI raw(String path) {
@@ -69,8 +72,7 @@ class RequestPathBypassMvcTest {
             MvcResult r = mvc.perform(get(raw(p))).andReturn();
             assertThat(r.getResponse().getStatus()).as(p).isEqualTo(400);
         }
-        verify(repo, never()).findFiltered(anyBoolean(), anyList(), anyBoolean(), anyList(), any(), any(), any(),
-                any(), any(), any());
+        verify(queries, never()).list(any(), anyInt(), anyInt());
     }
 
     @Test
@@ -91,12 +93,13 @@ class RequestPathBypassMvcTest {
     @Test
     @DisplayName("Normal yol etkilenmez: oturumsuz 401, oturumlu 200; API dışı yol 400 almaz")
     void normalPaths_unaffected() throws Exception {
-        when(repo.findFiltered(anyBoolean(), anyList(), anyBoolean(), anyList(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+        when(queries.list(any(), anyInt(), anyInt()))
+                .thenReturn(new com.sitemonitor.service.activity.ActivityQueryService.PageResult(List.of(), 0));
 
         mvc.perform(get(raw("/api/activity"))).andExpect(status().isUnauthorized());
         mvc.perform(get(raw("/api/activity")).session(user())).andExpect(status().isOk());
-        mvc.perform(get(raw("/api/activity?q=a;b&from=%2e%2e")).session(user())).andExpect(status().isOk());
+        // from 2026-11-05'ten beri doğrulanan bir zaman: kodlu nokta serbest metin parametresinde (actor) denenir
+        mvc.perform(get(raw("/api/activity?q=a;b&actor=%2e%2e")).session(user())).andExpect(status().isOk());
 
         // Bu dilimde statik kaynak / sağlık ucu yok → 404 beklenir; önemli olan 400 (duvar) OLMAMASI.
         for (String p : new String[]{"/health", "/assets/index-abc123.js", "/"}) {
