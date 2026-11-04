@@ -152,4 +152,20 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
       expect(read(r)).not.toMatch(/nowMs/)
     }
   })
+
+  it('Aktivite ayrıntı sayfası (2026-11-05, act): yalnız import() ile; tanılama pencereleri yalnız düğmeye basılınca', () => {
+    // Sayfa (grafik + alarm zinciri) hiçbir yerden statik içe aktarılmaz — liste rotası `act=<id>` ile tembel yükler
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /detail\/ActivityDetailPage(\.jsx)?$/.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    // Liste (ActivityLog.jsx) sayfayı bağladığında yalnız import() ile
+    if (/ActivityDetailPage/.test(read('components/ActivityLog.jsx'))) {
+      expect(hasDynamic('components/ActivityLog.jsx', /activity\/detail\/ActivityDetailPage\.jsx$/)).toBe(true)
+    }
+    const header = 'components/activity/detail/DetailHeader.jsx'
+    expect(hasStatic(header, /DiagnoseDialog(\.jsx)?$/)).toBe(false)
+    for (const re of [/http\/diagnose\/HttpDiagnoseDialog\.jsx$/, /keyword\/diagnose\/KeywordDiagnoseDialog\.jsx$/,
+      /\/page\/diagnose\/PageDiagnoseDialog\.jsx$/, /pagespeed\/diagnose\/PageSpeedDiagnoseDialog\.jsx$/, /\/diagnose\/NetDiagnoseDialog\.jsx$/]) {
+      expect(hasDynamic(header, re), String(re)).toBe(true)
+    }
+  })
 })
