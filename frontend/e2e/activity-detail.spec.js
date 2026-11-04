@@ -20,9 +20,9 @@ function seriesPoints() {
     const t = anchor + i * 10 * 60_000
     const fail = i >= 0 && i <= 2
     const gap = i > 40 && i < 50
-    pts.push({ t: iso(t), ms: fail || gap ? null : 20 + ((i * 7) % 30), status: fail ? 'ERROR' : gap ? 'UNKNOWN' : (i === -30 ? 'WARNING' : 'SUCCESS') })
+    pts.push({ t: iso(t), ms: fail || gap ? null : 20 + Math.abs((i * 7) % 30), status: fail ? 'ERROR' : gap ? 'UNKNOWN' : (i === -30 ? 'WARNING' : 'SUCCESS') })
   }
-  return pts.filter((_, k) => k % 1 === 0).slice(0, 290)
+  return pts.slice(0, 290)
 }
 
 function detail(id) {
@@ -175,6 +175,10 @@ for (const vp of VIEWPORTS) {
       // Teslimat ayrıntıları (alarmın kendi paneli) açılır, taşma yok
       await root.getByRole('button', { name: /Tüm Bildirim Geçmişi/ }).click()
       await expect(root.locator('[data-slot="act-dt-alarm-chain"]')).toContainText('odeme-ag@example.com')
+      // Teslimat kartı başlığında alıcı adı harf genişliğine ezilmez (dar kapta alt satıra iner)
+      const squeezed = await root.locator('[data-slot="act-dt-deliveries"] [data-notif-head] strong')
+        .evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)).filter((w) => w < 120))
+      expect(squeezed, 'ezilen alıcı adı').toEqual([])
       expect(await page.evaluate(overflowIn, '[data-slot="act-detail-page"]'), 'teslimat açıkken taşma').toEqual([])
       await page.screenshot({ path: `test-results/activity-detail-${vp.name}.png`, fullPage: true })
 

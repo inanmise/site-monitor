@@ -43,6 +43,8 @@ function DetailSkeleton({ label }) {
   )
 }
 
+const LOADING = Object.freeze({ phase: 'loading' })
+
 const MINI_ICON = { SUCCESS: [CheckCircle, 'text-success'], WARNING: [AlertTriangle, 'text-amber-600 dark:text-amber-400'],
   ERROR: [XCircle, 'text-destructive'], TIMEOUT: [XCircle, 'text-destructive'] }
 
@@ -86,25 +88,32 @@ function LegacyRecent({ recent, onOpenActivity }) {
  * @param {() => void} onBack                     listeye dön (süzgeçleriyle — rota sahibi bağlar)
  * @param {(id) => void} onOpenActivity           başka bir aktivitenin sayfası (kıyas, mini geçmiş, kök neden paneli)
  * @param {(type, monitorId) => void} onOpenTimeline   izlemenin zaman çizelgesi görünümü
+ * @param {(title: string|null) => void} [onTitle]   isteğe bağlı: sayfa hazır olunca izleme adı (belge başlığı rota
+ *        sahibinde — usePageMeta); bulunamadı / hata durumunda null
  */
-export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenTimeline }) {
+export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenTimeline, onTitle }) {
   const t = useT()
   const locale = useDateLocale()
-  const [st, setSt] = useState({ phase: 'loading' })
+  // Durum hangi aktiviteye ait (`forId`): id değişince eski ayrıntı bir kare bile yeni adres altında çizilmez ve odak /
+  // başlık bildirimi eski sayfanın başlığına gitmez — ait olmayan durum "yükleniyor" okunur.
+  const [raw, setSt] = useState({ phase: 'loading', forId: id })
+  const st = raw.forId === id ? raw : LOADING
   const [refreshing, setRefreshing] = useState(false)
   const seq = useRef(0)
   const headingRef = useRef(null)
+  const rootRef = useRef(null)
   const focusedFor = useRef(null)
 
   const load = useCallback(async (silent = false) => {
     const my = ++seq.current
     if (silent) setRefreshing(true)
-    else setSt({ phase: 'loading' })
+    else setSt({ phase: 'loading', forId: id })
     try {
       const r = await loadActivityDetail(id)
       if (my !== seq.current) return
       // Sessiz tazelemede okuma hatası eldeki ayrıntıyı silmez — bant söyler; "bulunamadı" (silindi / yetki gitti) gösterilir
-      setSt((prev) => (silent && r.phase === 'error' && prev.phase === 'ready' ? { ...prev, refreshFailed: true } : r))
+      setSt((prev) => (silent && r.phase === 'error' && prev.phase === 'ready' && prev.forId === id
+        ? { ...prev, refreshFailed: true } : { ...r, forId: id }))
     } finally {
       if (my === seq.current) setRefreshing(false)
     }
@@ -120,12 +129,16 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
   useEffect(() => {
     if (st.phase !== 'ready' || focusedFor.current === id) return
     focusedFor.current = id
-    const h = headingRef.current
-    if (h) {
-      try { h.scrollIntoView({ block: 'start' }) } catch { /* eski tarayıcı */ }
-      try { h.focus({ preventScroll: true }) } catch { /* odak yok */ }
-    }
+    // Görünüm sayfanın BAŞINA (geri düğmesi + rozetler görünür kalsın), odak başlığa kaydırmadan
+    try { rootRef.current?.scrollIntoView({ block: 'start' }) } catch { /* eski tarayıcı */ }
+    try { headingRef.current?.focus({ preventScroll: true }) } catch { /* odak yok */ }
   }, [st.phase, id])
+
+  // Belge başlığı rota sahibinde (usePageMeta); ad ona bildirilir — yükleniyorken bildirim yok (eski ad kalmaz diye null)
+  const titleOf = st.phase === 'ready' ? (st.detail?.data?.monitor_name || st.detail?.data?.target || null) : null
+  const onTitleRef = useRef(onTitle)
+  onTitleRef.current = onTitle
+  useEffect(() => { if (st.phase !== 'loading') onTitleRef.current?.(titleOf) }, [st.phase, titleOf])
 
   const detail = st.phase === 'ready' ? st.detail : null
   const a = detail?.data || null
@@ -146,13 +159,15 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
             <RefreshCw aria-hidden="true" className={cn(refreshing && 'animate-spin motion-reduce:animate-none')} />
           </Button>
         )}
-        <CopyLinkButton variant="outline" url={activityDetailHref(id)} className="pointer-coarse:h-10" />
+        {/* Telefonda yalnız ikon (geri düğmesiyle tek satır), geniş ekranda metinli — aynı paylaşılabilir adres */}
+        <CopyLinkButton variant="outline" iconOnly url={activityDetailHref(id)} className="size-9 sm:hidden pointer-coarse:size-10" />
+        <CopyLinkButton variant="outline" url={activityDetailHref(id)} className="hidden sm:inline-flex pointer-coarse:h-10" />
       </div>
     </div>
   )
 
   return (
-    <div data-slot="act-detail-page" data-phase={st.phase} className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-4">
+    <div ref={rootRef} data-slot="act-detail-page" data-phase={st.phase} className="mx-auto flex w-full max-w-6xl min-w-0 scroll-mt-16 flex-col gap-4">
       {topBar}
       {st.phase === 'loading' && <DetailSkeleton label={t('act.dt.loading')} />}
       {st.phase === 'notFound' && (

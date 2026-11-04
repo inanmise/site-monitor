@@ -50,7 +50,7 @@ export default function ActivitySeriesChart({ series, anchorIso, locale }) {
   const domain = [model.from ?? points[0]?.x ?? 0, model.to ?? points.at(-1)?.x ?? 1]
   const maxLabel = model.maxMs != null ? `${Math.round(model.maxMs)} ms` : '0 ms'
   const yWidth = axisWidth([maxLabel, '0 ms'])
-  const plotWidth = Math.max(0, (width || 640) - yWidth - 24)
+  const plotWidth = Math.max(0, (width || 640) - yWidth - 40)
   const { ticks, step, span } = useMemo(() => niceTimeTicks(domain[0], domain[1], maxTicksFor(plotWidth)), [domain[0], domain[1], plotWidth]) // eslint-disable-line react-hooks/exhaustive-deps
   const sparse = points.filter((p) => p.ms != null).length <= SPARSE_POINTS
   const hasFail = counts.fail > 0
@@ -89,7 +89,7 @@ export default function ActivitySeriesChart({ series, anchorIso, locale }) {
           </div>
           <figure className="m-0 min-w-0" aria-describedby={sumId} ref={measureRef}>
             <ChartContainer config={config} data-slot="act-dt-series-chart" className="aspect-auto h-[180px] w-full sm:h-[220px]">
-              <ComposedChart data={points} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <ComposedChart data={points} margin={{ top: 8, right: 28, left: 0, bottom: 0 }}>
                 <CartesianGrid vertical={false} />
                 <XAxis dataKey="x" type="number" scale="time" domain={domain} ticks={ticks} interval={0} allowDataOverflow
                   tickFormatter={(v) => formatTick(v, { step, span })} tickLine={false} axisLine={false} tickMargin={8} tick={{ fontSize: 11 }} />

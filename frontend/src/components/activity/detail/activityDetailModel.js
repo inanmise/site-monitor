@@ -388,6 +388,7 @@ export function transitionOf(before, after) {
 
 /**
  * Kıyas modeli — her hücre `{ key, row, at, health, ms, http, reason, activityId, delta, httpChanged, reasonChanged }`
+ * (`reasonChanged`: iki ardışık SORUNLU kontrolün nedeni farklı — ör. ağ zaman aşımı → HTTP 503)
  * (satır yoksa `row: null`). `delta`: bu hücrenin bir önceki hücreye göre yanıt süresi farkı (ms; önceki hücrede yok).
  * `transition`: önceki → bu; `after`: bu → sonraki.
  */
@@ -407,7 +408,8 @@ export function compareModel({ type, current, currentCell = null, previous, next
     if (!a.row || !b.row) return
     b.delta = a.ms != null && b.ms != null ? b.ms - a.ms : null
     b.httpChanged = a.http != null && b.http != null && a.http !== b.http
-    b.reasonChanged = (a.reason?.code || null) !== (b.reason?.code || null) && (a.reason != null || b.reason != null)
+    // Yalnız İKİ sorunlu kontrolün nedeni farklıysa: sorunun başlaması / düzelmesi zaten geçiş cümlesinde söylenir
+    b.reasonChanged = a.reason != null && b.reason != null && a.reason.code !== b.reason.code
   }
   link(prev, cur)
   link(cur, nxt)

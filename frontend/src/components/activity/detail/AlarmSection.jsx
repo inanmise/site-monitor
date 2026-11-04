@@ -121,11 +121,16 @@ function AlarmChain({ alarmId, locale }) {
         )}
       </ol>
       <h4 className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('act.dt.al.deliveries')}</h4>
-      {showStormPushSection(a, deliveries.loading ? null : deliveries.stormPush) && (
-        <StormPushSection data={deliveries.stormPush} loading={deliveries.loading} />
-      )}
-      <AlertNotificationsPanel history={deliveries.history} loadingHistory={deliveries.loading} loadFailed={deliveries.failed}
-        pushGroups={pushGroups} alertLevel={a.alert_level} />
+      {/* Alarm ayrıntısının teslimat paneli AYNEN. Kart başlığının orta sütunu (`flex-1`, taban 0) dar kapta (telefon,
+          ~340 px) satıra sarmak yerine harf genişliğine eziliyordu — taban 12 rem verilir, sığmazsa alt satıra iner.
+          Kalıcı düzeltme AlertNotifications.jsx `NotifCard` başlığında (alarm ayrıntısı telefonda da aynı). */}
+      <div data-slot="act-dt-deliveries" className="flex min-w-0 flex-col gap-3 [&_[data-notif-head]>div]:basis-48">
+        {showStormPushSection(a, deliveries.loading ? null : deliveries.stormPush) && (
+          <StormPushSection data={deliveries.stormPush} loading={deliveries.loading} />
+        )}
+        <AlertNotificationsPanel history={deliveries.history} loadingHistory={deliveries.loading} loadFailed={deliveries.failed}
+          pushGroups={pushGroups} alertLevel={a.alert_level} />
+      </div>
     </div>
   )
 }

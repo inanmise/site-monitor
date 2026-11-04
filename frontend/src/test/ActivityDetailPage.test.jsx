@@ -99,14 +99,16 @@ afterEach(() => { localStorage.removeItem(LANG_STORAGE_KEY) })
 describe('ActivityDetailPage — tam ayrıntı', () => {
   it('başlık, kontrol teşhisi, kıyas, seri, alarm zinciri ve bağlantılar', async () => {
     api.getActivityFullDetail.mockResolvedValue(fullBody())
-    const { onOpenActivity, onOpenTimeline } = renderPage()
+    const onTitle = vi.fn()
+    const { onOpenActivity, onOpenTimeline } = renderPage({ onTitle })
 
     const heading = await screen.findByRole('heading', { level: 2, name: LONG })
+    expect(onTitle).toHaveBeenLastCalledWith(LONG)   // belge başlığı rota sahibine bildirilir
     await waitFor(() => expect(heading).toHaveFocus())   // sayfa açılınca odak başlıkta
     expect(document.querySelector('[data-slot="act-dt-type"]')).toHaveAttribute('data-type', 'PING')
     expect(document.querySelector('[data-slot="act-dt-status"]')).toHaveAttribute('data-status', 'ERROR')
     expect(screen.getByText('Zamanlayıcı (otomatik)')).toBeInTheDocument()
-    expect(screen.getByText(/13:00:00/)).toBeInTheDocument()   // 10:00 UTC → 13:00 İstanbul
+    expect(within(document.querySelector('[data-slot="act-dt-header"]')).getByText(/13:00:00/)).toBeInTheDocument()   // 10:00 UTC → 13:00 İstanbul
 
     // Kontrol sonucu: kesin eşleşme + türün teşhis paneli
     const check = document.querySelector('[data-slot="act-dt-check"]')
@@ -223,8 +225,10 @@ describe('ActivityDetailPage — durumlar', () => {
   it('404 + temel uç da 404 → "bulunamadı ya da yetkiniz yok" + geri', async () => {
     api.getActivityFullDetail.mockResolvedValue({ success: false, status: 404, error: 'not_found' })
     api.getActivityDetail.mockResolvedValue({ success: false, error: 'not_found' })
-    const { onBack } = renderPage()
+    const onTitle = vi.fn()
+    const { onBack } = renderPage({ onTitle })
     expect(await screen.findByText('Aktivite bulunamadı ya da görme yetkiniz yok')).toBeInTheDocument()
+    expect(onTitle).toHaveBeenLastCalledWith(null)
     const backs = screen.getAllByRole('button', { name: /Aktivite listesine dön/ })
     fireEvent.click(backs[backs.length - 1])
     expect(onBack).toHaveBeenCalled()
@@ -266,13 +270,28 @@ describe('ActivityDetailPage — durumlar', () => {
     expect(screen.getByRole('heading', { level: 2, name: LONG })).toBeInTheDocument()
   })
 
+  it('hazır sayfadan başka aktiviteye geçiş: önce yükleniyor, sonra odak YENİ başlıkta', async () => {
+    api.getActivityFullDetail.mockResolvedValueOnce(fullBody())
+      .mockResolvedValueOnce(fullBody({ data: { ...base, id: 41, monitor_name: 'önceki aktivite' } }))
+    const { rerender } = render(<ActivityDetailPage id={42} onBack={() => {}} />)
+    const first = await screen.findByRole('heading', { level: 2, name: LONG })
+    await waitFor(() => expect(first).toHaveFocus())
+    rerender(<ActivityDetailPage id={41} onBack={() => {}} />)
+    expect(screen.queryByRole('heading', { level: 2, name: LONG })).toBeNull()
+    const next = await screen.findByRole('heading', { level: 2, name: 'önceki aktivite' })
+    await waitFor(() => expect(next).toHaveFocus())
+  })
+
   it('geç yanıt koruması: id değişince eski isteğin yanıtı uygulanmaz', async () => {
     let resolveOld
     api.getActivityFullDetail.mockImplementationOnce(() => new Promise((r) => { resolveOld = r }))
       .mockResolvedValueOnce(fullBody({ data: { ...base, id: 43, monitor_name: 'yeni izleme' } }))
     const { rerender } = render(<ActivityDetailPage id={42} onBack={() => {}} />)
     rerender(<ActivityDetailPage id={43} onBack={() => {}} />)
-    expect(await screen.findByRole('heading', { level: 2, name: 'yeni izleme' })).toBeInTheDocument()
+    // id değişti: eski durumun bir karesi bile yeni adres altında çizilmez
+    expect(document.querySelector('[data-slot="act-detail-page"]')).toHaveAttribute('data-phase', 'loading')
+    const fresh = await screen.findByRole('heading', { level: 2, name: 'yeni izleme' })
+    await waitFor(() => expect(fresh).toHaveFocus())   // odak YENİ sayfanın başlığında (eski başlık değil)
     await act(async () => { resolveOld(fullBody()) })
     expect(screen.getByRole('heading', { level: 2, name: 'yeni izleme' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { level: 2, name: LONG })).toBeNull()

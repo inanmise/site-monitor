@@ -170,7 +170,8 @@ describe('kıyas', () => {
     expect(prev.activityId).toBe(41)
     expect(cur.delta).toBe(450)
     expect(cur.httpChanged).toBe(true)
-    expect(cur.reasonChanged).toBe(true)
+    expect(cur.reasonChanged).toBe(false)   // sorun başladı — geçiş cümlesi söyler, "neden değişti" değil
+    expect(next.reasonChanged).toBe(false)
     expect(next.delta).toBe(-440)
     expect(m.transition).toBe('started')
     expect(m.after).toBe('recovered')
@@ -178,6 +179,18 @@ describe('kıyas', () => {
     expect(formatDelta(-440)).toBe('−440 ms')
     expect(formatDelta(0)).toBe('±0 ms')
     expect(formatDelta(null)).toBe('')
+  })
+
+  it('compareModel: iki sorunlu kontrolün nedeni farklıysa "neden değişti"', () => {
+    const m = compareModel({
+      type: 'http', monitor: null, t,
+      previous: { ok: false, error_detail: { kind: 'CONNECT_TIMEOUT' } },
+      current: { ok: false, http_status: 503 },
+      next: { ok: false, http_status: 503 },
+    })
+    expect(m.cells[1].reasonChanged).toBe(true)
+    expect(m.cells[2].reasonChanged).toBe(false)
+    expect(m.transition).toBe('continues')
   })
 
   it('compareModel: komşu yoksa hücre boş, geçiş yok; kontrol satırı yokken aktiviteden hücre', () => {
