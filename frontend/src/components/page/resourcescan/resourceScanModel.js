@@ -31,8 +31,8 @@ export const NOT_PAGE_LOAD = new Set(['DOCUMENT', 'LINK'])
 /** Metin türleri — sıkıştırılmamış gelmeleri bir bulgu (diğer türlerde sıkıştırma beklenmez). */
 export const TEXT_CATEGORIES = new Set(['HTML', 'CSS', 'JS'])
 
-/** Puan bileşenleri (sunucu `analysis.scores[].key`) — ekrandaki sıra. */
-export const SCORE_KEYS = ['load_time', 'page_weight', 'requests', 'server_response', 'images', 'compression', 'caching', 'errors']
+/** Puan bileşenleri (sunucu `analysis.scores[].key`) — ekrandaki sıra. `render_blocking` algoritma 3'te (prs3) eklendi. */
+export const SCORE_KEYS = ['load_time', 'page_weight', 'requests', 'server_response', 'render_blocking', 'images', 'compression', 'caching', 'errors']
 
 /** Puan bileşeni → i18n anahtarı (`errors` bileşeni "açılmayan nesneler" diye adlanır; bilinmeyen bileşen genel ad). */
 export function scoreLabelKey(key) {
@@ -44,6 +44,10 @@ export function scoreLabelKey(key) {
 export const REC_PARAM_KIND = {
   count: 'count', bytes: 'bytes', limit_kb: 'kb', max_width: 'px', limit_mb: 'mb', limit: 'count', ttfb_ms: 'ms', limit_ms: 'ms',
   share_pct: 'pct', hosts: 'hosts',
+  // ── prs3 (A–E; be1 kod kataloğu) ──
+  est_first_paint_ms: 'ms', host_list: 'hosts', name_list: 'hosts', nodes: 'count', depth: 'count', inline_bytes: 'bytes', min_width: 'px',
+  families: 'count', variants: 'count', active: 'count', keys: 'header_keys', issues: 'csp_issues', categories: 'tp_categories',
+  max_severity: 'severity',
 }
 
 /**
@@ -68,6 +72,39 @@ export const REC_TEXT = {
   REDIRECTED_OBJECTS: { title: ['count'], body: [] },
   LARGE_DOCUMENTS: { title: ['count', 'bytes'], body: [] },
   BROKEN_LINKS: { title: ['count'], body: [] },
+  // ── prs3 (algoritma 3; parametreler be1 kod kataloğundan) — A yükleme ve ağ ──
+  RENDER_BLOCKING_RESOURCES: { title: ['count'], body: ['bytes', 'est_first_paint_ms'] },
+  MISSING_PRECONNECT: { title: ['count'], body: ['host_list'] },
+  UNUSED_PRELOAD: { title: ['count'], body: [] },
+  UNUSED_PRECONNECT: { title: ['count'], body: ['host_list'] },
+  MANY_HOSTS: { title: ['count'], body: ['limit'] },
+  HTTP1_ONLY: { title: ['count'], body: ['host_list'] },
+  // B israf ve önbellek
+  DUPLICATE_RESOURCES: { title: ['count'], body: ['bytes'] },
+  DUPLICATE_LIBRARIES: { title: ['count'], body: ['name_list'] },
+  UNMINIFIED_ASSETS: { title: ['count'], body: ['bytes'] },
+  SOURCE_MAP_EXPOSED: { title: ['count'], body: [] },
+  HEAVY_HTML: { title: ['bytes'], body: ['inline_bytes', 'limit_kb'] },
+  LARGE_DOM: { title: ['nodes'], body: ['depth', 'limit'] },
+  INLINE_DATA_URI: { title: ['count'], body: ['bytes'] },
+  SHORT_CACHE_VERSIONED: { title: ['count'], body: [] },
+  NO_VALIDATOR: { title: ['count'], body: [] },
+  // C görsel ve font
+  IMAGES_WITHOUT_DIMENSIONS: { title: ['count'], body: [] },
+  MISSING_SRCSET: { title: ['count'], body: ['min_width'] },
+  OFFSCREEN_NOT_LAZY: { title: ['count'], body: ['bytes'] },
+  ANIMATED_GIF: { title: ['count'], body: ['bytes'] },
+  FONT_DISPLAY_MISSING: { title: ['count'], body: [] },
+  TOO_MANY_FONTS: { title: ['families'], body: ['variants'] },
+  NON_WOFF2_FONTS: { title: ['count'], body: ['bytes'] },
+  // D güvenlik ve uyumluluk
+  SECURITY_HEADERS_MISSING: { title: ['count'], body: ['keys'] },
+  WEAK_CSP: { title: [], body: ['issues'] },
+  MISSING_SRI: { title: ['count'], body: [] },
+  MIXED_CONTENT: { title: ['count'], body: ['active'] },
+  INSECURE_COOKIES: { title: ['count'], body: ['name_list'] },
+  VULNERABLE_LIBRARY: { title: ['count'], body: ['name_list', 'max_severity'] },
+  TRACKING_ON_LOAD: { title: ['count'], body: ['categories'] },
   ALL_GOOD: { title: [], body: [] },
 }
 export const REC_CODES = Object.keys(REC_TEXT)
@@ -98,6 +135,33 @@ export const REC_PLURAL = {
   REDIRECTED_OBJECTS: { title: 'count' },
   LARGE_DOCUMENTS: { title: 'count' },
   BROKEN_LINKS: { title: 'count', body: 'count' },
+  // ── prs3 (algoritma 3) ──
+  RENDER_BLOCKING_RESOURCES: { title: 'count', body: 'count' },
+  MISSING_PRECONNECT: { title: 'count', body: 'count' },
+  UNUSED_PRELOAD: { title: 'count', body: 'count' },
+  UNUSED_PRECONNECT: { title: 'count', body: 'count' },
+  MANY_HOSTS: { title: 'count' },
+  HTTP1_ONLY: { title: 'count', body: 'count' },
+  DUPLICATE_RESOURCES: { title: 'count', body: 'count' },
+  DUPLICATE_LIBRARIES: { title: 'count', body: 'count' },
+  UNMINIFIED_ASSETS: { title: 'count', body: 'count' },
+  SOURCE_MAP_EXPOSED: { title: 'count', body: 'count' },
+  INLINE_DATA_URI: { title: 'count', body: 'count' },
+  SHORT_CACHE_VERSIONED: { title: 'count', body: 'count' },
+  NO_VALIDATOR: { title: 'count', body: 'count' },
+  IMAGES_WITHOUT_DIMENSIONS: { title: 'count', body: 'count' },
+  MISSING_SRCSET: { title: 'count', body: 'count' },
+  OFFSCREEN_NOT_LAZY: { title: 'count', body: 'count' },
+  ANIMATED_GIF: { title: 'count', body: 'count' },
+  FONT_DISPLAY_MISSING: { title: 'count', body: 'count' },
+  TOO_MANY_FONTS: { title: 'families' },
+  NON_WOFF2_FONTS: { title: 'count', body: 'count' },
+  SECURITY_HEADERS_MISSING: { title: 'count', body: 'count' },
+  MISSING_SRI: { title: 'count', body: 'count' },
+  MIXED_CONTENT: { title: 'count', body: 'count' },
+  INSECURE_COOKIES: { title: 'count', body: 'count' },
+  VULNERABLE_LIBRARY: { title: 'count', body: 'count' },
+  TRACKING_ON_LOAD: { title: 'count', body: 'count' },
 }
 export const SEVERITIES = ['high', 'medium', 'low']
 export const SEVERITY_TONE = { high: 'danger', medium: 'warning', low: 'info' }
@@ -132,8 +196,13 @@ export const DEFAULT_FILTERS = Object.freeze({
  * `item_count`'larını null gönderir; onlar nesne listesine `item_urls` (en çok 10) ile bağlanır.
  */
 export const FINDING_CODES = [
-  'BROKEN_RESOURCES', 'BROKEN_LINKS', 'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'NO_CACHE', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
+  'BROKEN_RESOURCES', 'BROKEN_LINKS',
+  // prs3 (algoritma 3) — güvenlik bulguları kırıklardan hemen sonra
+  'VULNERABLE_LIBRARY', 'MIXED_CONTENT', 'SOURCE_MAP_EXPOSED', 'MISSING_SRI',
+  'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'NO_CACHE', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
   'OVERSIZED_IMAGE_DIMENSIONS', 'REDIRECTED_OBJECTS', 'LARGE_DOCUMENTS', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS',
+  // prs3 — yükleme, israf, görsel / font
+  'RENDER_BLOCKING', 'DUPLICATE', 'UNMINIFIED', 'NO_VALIDATOR', 'MISSING_DIMENSIONS', 'NOT_LAZY', 'ANIMATED_GIF', 'FONT_DISPLAY_MISSING',
 ]
 export const FINDING_SET = new Set(FINDING_CODES)
 /** Bulgu rozetinin tonu — kırık tehlike, düzeltilecek uyarı, katkı / bilgi nötr (bilinmeyen asla yeşil değil). */
@@ -141,6 +210,20 @@ export const FINDING_TONE = {
   BROKEN_RESOURCES: 'danger', BROKEN_LINKS: 'danger', LARGE_IMAGES: 'warning', UNCOMPRESSED_TEXT: 'warning', NO_CACHE: 'warning',
   SLOW_OBJECTS: 'warning', MODERN_IMAGE_FORMAT: 'warning', OVERSIZED_IMAGE_DIMENSIONS: 'warning', REDIRECTED_OBJECTS: 'info',
   LARGE_DOCUMENTS: 'info', HEAVY_JS: 'muted', HEAVY_CSS: 'muted', HEAVY_FONTS: 'muted',
+  // prs3: açıklı kütüphane / karışık içerik / açık kaynak haritası tehlike; düzeltilecekler uyarı; sezgisel olan (geç
+  // yüklenmeyen görsel) ve yinelenen bilgi tonu
+  VULNERABLE_LIBRARY: 'danger', MIXED_CONTENT: 'danger', SOURCE_MAP_EXPOSED: 'danger', MISSING_SRI: 'warning',
+  RENDER_BLOCKING: 'warning', DUPLICATE: 'warning', UNMINIFIED: 'warning', NO_VALIDATOR: 'info', MISSING_DIMENSIONS: 'warning',
+  NOT_LAZY: 'info', ANIMATED_GIF: 'warning', FONT_DISPLAY_MISSING: 'warning',
+}
+/**
+ * Öneri kodu → nesne bulgu kodu (prs3): yeni önerilerin bir kısmı nesneye FARKLI adla yazılır (DUPLICATE_RESOURCES →
+ * DUPLICATE …). Listede olmayan kod için bulgu kodu = öneri kodu (FINDING_SET'teyse). Öneri "Nesneleri göster" bu
+ * eşlemeyle bulgu süzgecine bağlanır; nesne ayrıntısındaki "İlgili öneriye git" ters eşlemeyi kullanır.
+ */
+export const REC_FINDING = {
+  RENDER_BLOCKING_RESOURCES: 'RENDER_BLOCKING', DUPLICATE_RESOURCES: 'DUPLICATE', UNMINIFIED_ASSETS: 'UNMINIFIED',
+  IMAGES_WITHOUT_DIMENSIONS: 'MISSING_DIMENSIONS', OFFSCREEN_NOT_LAZY: 'NOT_LAZY',
 }
 
 /** Sunucu nesne kararı (`verdict`) — Sayfa Bütünlüğü izlemesinin kuralıyla aynı; yalnız `broken` kırık sayılır. */
@@ -154,9 +237,18 @@ export const NOTE_ARGS = {
   CAPPED_TIME: [['seconds', 'count']],
   CAPPED_BYTES: [['mb', 'mb']],
   EXCLUDES_APPLIED: [['count', 'count']],
+  // prs3 (algoritma 3): tarayıcı gerektiren ölçümlerin ve sınırların dürüst notu
+  JS_COOKIES_NOT_SEEN: [],
+  CONTRAST_NOT_CHECKED: [],
+  ASSET_SAMPLES_UNAVAILABLE: [['count', 'count']],
+  HOSTS_NOT_MEASURED: [['count', 'count'], ['limit', 'count']],
+  SOURCE_MAPS_NOT_CHECKED: [['count', 'count'], ['limit', 'count']],
 }
 /** Ölçüm notunun tekil biçimini seçen parametre. */
-export const NOTE_PLURAL = { CAPPED_OBJECTS: 'limit', EXCLUDES_APPLIED: 'count' }
+export const NOTE_PLURAL = {
+  CAPPED_OBJECTS: 'limit', EXCLUDES_APPLIED: 'count', ASSET_SAMPLES_UNAVAILABLE: 'count', HOSTS_NOT_MEASURED: 'count',
+  SOURCE_MAPS_NOT_CHECKED: 'count',
+}
 
 /** Nesne listesinde tablo ↔ kart eşiği (KAP genişliği, px). jsdom 0 → tablo. */
 export const OBJECTS_TABLE_MIN_PX = 900
@@ -348,16 +440,37 @@ export function withFindings(items, recommendations) {
   })
 }
 
+/**
+ * Önerinin nesne bulgu kodu. Algoritma 3 önerisi `finding` alanını kendisi taşır (null = sayfa düzeyi); alan yoksa (eski
+ * analiz) prs3 `REC_FINDING` eşlemesi, o da yoksa kodun kendisi (FINDING_SET'teyse). Argüman öneri nesnesi ya da kod.
+ * Bulgu yoksa null (sayfa düzeyi öneri: nesneye `item_urls` ile bağlanır).
+ */
+export function findingOfRec(recOrCode) {
+  if (recOrCode && typeof recOrCode === 'object') {
+    if (Object.prototype.hasOwnProperty.call(recOrCode, 'finding')) return FINDING_SET.has(recOrCode.finding) ? recOrCode.finding : null
+    return findingOfRec(recOrCode.code)
+  }
+  const code = recOrCode
+  if (Object.prototype.hasOwnProperty.call(REC_FINDING, code)) return REC_FINDING[code]
+  return FINDING_SET.has(code) ? code : null
+}
+
+/** Bulgu koduna bağlı öneri kodları (nesne ayrıntısının "İlgili öneriye git" bağlantısı; öncelik sırası REC_CODES). */
+export function recsOfFinding(finding) {
+  return REC_CODES.filter((c) => findingOfRec(c) === finding)
+}
+
 /** Bir öneriyle eşleşen nesne sayısı: sunucunun `item_count`'u; yoksa nesnelerdeki bulgu; o da yoksa adres sayısı. */
 export function recItemCount(rec, items) {
   const n = num(rec?.item_count)
   if (n !== null) return n
-  if (FINDING_SET.has(rec?.code) && Array.isArray(items)) return items.filter((it) => (it.findings || []).includes(rec.code)).length
+  const f = findingOfRec(rec)
+  if (f && Array.isArray(items)) return items.filter((it) => (it.findings || []).includes(f)).length
   return recItemUrls(rec).length
 }
 
 /** Öneri nesne listesine BULGU süzgeciyle mi (tam liste) yoksa adres listesiyle mi (en çok 10) bağlanır. */
-export const recFiltersByFinding = (rec) => FINDING_SET.has(rec?.code)
+export const recFiltersByFinding = (rec) => findingOfRec(rec) != null
 
 /**
  * Nesnenin bayt sayısı: sunucu boyutu bilemediyse (`size_source=unknown` — HEAD yanıtında Content-Length yok, bytes 0)
@@ -857,6 +970,7 @@ export const SCORE_RECS = {
   images: ['LARGE_IMAGES', 'MODERN_IMAGE_FORMAT', 'OVERSIZED_IMAGE_DIMENSIONS'],
   requests: ['TOO_MANY_REQUESTS'],
   server_response: ['SLOW_SERVER'],
+  render_blocking: ['RENDER_BLOCKING_RESOURCES', 'MISSING_PRECONNECT'],
   compression: ['UNCOMPRESSED_TEXT'],
   caching: ['NO_CACHE'],
   errors: ['BROKEN_RESOURCES'],
@@ -913,14 +1027,29 @@ export function recTextKey(rec, part = 'title') {
   return pluralKey(`prs.rec.${rec.code}.${which}`, Array.isArray(v) ? v.length : v)
 }
 
-/** Öneri metnine (`part`: title | body) giden sıralı parametreler (biçimlenmiş). */
-export function recommendationArgs(rec, locale, part = 'title') {
+/**
+ * Öneri metnine (`part`: title | body) giden sıralı parametreler (biçimlenmiş). `t` verilirse (prs3) kod listeleri
+ * (CSP sorunları, üçüncü taraf kategorileri, önem) çevrilir; verilmezse ham kod GÖSTERİLMEZ — teknik ad / "—".
+ */
+export function recommendationArgs(rec, locale, part = 'title', t = null) {
   const spec = REC_TEXT[rec?.code]?.[part === 'body' ? 'body' : 'title'] || []
   const p = rec?.params || {}
-  return spec.map((name) => formatRecParam(p[name], REC_PARAM_KIND[name] || 'count', locale))
+  return spec.map((name) => formatRecParam(p[name], REC_PARAM_KIND[name] || 'count', locale, t))
 }
 
-function formatRecParam(v, kind, locale) {
+/** Kod listesini (en çok 3 + "+N") ad listesine çevirir; `nameOf(kod)` null dönerse o kod yazılmaz. */
+function codeList(v, nameOf) {
+  const list = (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((x) => typeof x === 'string' && x.trim())
+  const names = list.map(nameOf).filter(Boolean)
+  if (!names.length) return '—'
+  return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ')
+}
+
+function formatRecParam(v, kind, locale, t = null) {
+  if (kind === 'header_keys') return codeList(v, (k) => SECURITY_HEADER_NAMES[k] || null)
+  if (kind === 'csp_issues') return codeList(v, (k) => (t ? t(`prs.check.headerIssue.${headerIssueKey(k)}`) : null))
+  if (kind === 'tp_categories') return codeList(v, (k) => (t ? t(`prs.deep.tpc.${thirdPartyCategoryKey(k)}`) : null))
+  if (kind === 'severity') return typeof v === 'string' && t ? t(`prs.deep.sec.sev.${VULN_SEVERITIES.includes(v) ? v : 'unknown'}`) : '—'
   if (kind === 'hosts') {
     if (Array.isArray(v)) {
       const list = v.filter((x) => typeof x === 'string' && x.trim())
@@ -1051,6 +1180,579 @@ export function thirdPartyRows(analysis, items) {
   return { source: 'client', rows }
 }
 
+// ── Derin analiz (prs3, algoritma 3): A yükleme ve ağ, B israf ve önbellek, C görsel ve font, D güvenlik, E SEO + erişilebilirlik ──
+// Sunucu yine JavaScript ÇALIŞTIRMADAN, sayfanın HTML'i ve yanıt başlıklarından hesaplar; tahmin / sezgisel olanlar ekranda öyle
+// yazılır. ESKİ analiz (algoritma 1 / 2) bu alanları taşımaz → bölüm "bu analizde yok — yeniden analiz edin" der (asla
+// "sorun yok"); sunucu bir bölümü üretemediyse o bölüm de aynı şekilde "yok"tur — değer UYDURULMAZ.
+
+/** Derin analizi taşıyan en küçük algoritma sürümü. */
+export const DEEP_MIN_ALGORITHM = 3
+/** Panodaki kategori puanları (analysis `category_scores`) ve her birinin açtığı denetim alanı. */
+export const CATEGORY_SCORE_KEYS = ['performance', 'security', 'seo', 'accessibility']
+export const CATEGORY_SCORE_AREA = { performance: 'loading', security: 'security', seo: 'seo', accessibility: 'a11y' }
+/** Ayrıntılı denetim alanları (gezinme sırası) ve ait oldukları kategori. */
+export const AUDIT_AREAS = ['loading', 'waste', 'media', 'security', 'seo', 'a11y']
+export const AUDIT_AREA_CATEGORY = {
+  loading: 'performance', waste: 'performance', media: 'performance', security: 'security', seo: 'seo', a11y: 'accessibility',
+}
+export const DEFAULT_AUDIT_AREA = 'loading'
+/** Denetim tabloları ↔ kart eşiği (KAP genişliği, px). jsdom 0 → tablo. */
+export const AUDIT_TABLE_MIN_PX = 640
+/** Uzun listelerin ilk görünen satır sayısı (fazlası "Tümünü göster" ile açılır). */
+export const AUDIT_LIST_PREVIEW = 8
+/** Sunucunun liste tavanı (sözleşme: her liste ≤ 50 satır, aşan `<ad>_total` ile sayılır). */
+export const AUDIT_LIST_MAX = 50
+
+/**
+ * Öneri → denetim alanı: her alanın başında o alanın önerileri gösterilir ve alanın "bulgu" sayısı bunlardan gelir
+ * (SEO / erişilebilirlikte denetim listesinden). Listede olmayan öneri (kırık nesne, belge, ALL_GOOD) bir alana bağlanmaz.
+ */
+export const REC_AREA = {
+  SLOW_SERVER: 'loading', TOO_MANY_REQUESTS: 'loading', REDIRECTED_OBJECTS: 'loading', SLOW_OBJECTS: 'loading', THIRD_PARTY_HEAVY: 'loading',
+  RENDER_BLOCKING_RESOURCES: 'loading', MISSING_PRECONNECT: 'loading', UNUSED_PRELOAD: 'loading', UNUSED_PRECONNECT: 'loading',
+  MANY_HOSTS: 'loading', HTTP1_ONLY: 'loading',
+  UNCOMPRESSED_TEXT: 'waste', NO_CACHE: 'waste', HEAVY_JS: 'waste', HEAVY_CSS: 'waste', OVERSIZED_PAGE: 'waste',
+  DUPLICATE_RESOURCES: 'waste', DUPLICATE_LIBRARIES: 'waste', UNMINIFIED_ASSETS: 'waste', SOURCE_MAP_EXPOSED: 'waste', HEAVY_HTML: 'waste',
+  LARGE_DOM: 'waste', INLINE_DATA_URI: 'waste', SHORT_CACHE_VERSIONED: 'waste', NO_VALIDATOR: 'waste',
+  LARGE_IMAGES: 'media', MODERN_IMAGE_FORMAT: 'media', OVERSIZED_IMAGE_DIMENSIONS: 'media', HEAVY_FONTS: 'media',
+  IMAGES_WITHOUT_DIMENSIONS: 'media', MISSING_SRCSET: 'media', OFFSCREEN_NOT_LAZY: 'media', ANIMATED_GIF: 'media',
+  FONT_DISPLAY_MISSING: 'media', TOO_MANY_FONTS: 'media', NON_WOFF2_FONTS: 'media',
+  SECURITY_HEADERS_MISSING: 'security', WEAK_CSP: 'security', MISSING_SRI: 'security', MIXED_CONTENT: 'security',
+  INSECURE_COOKIES: 'security', VULNERABLE_LIBRARY: 'security', TRACKING_ON_LOAD: 'security',
+}
+/** Önerinin denetim alanı (yoksa null). */
+export const areaOfRec = (code) => (Object.prototype.hasOwnProperty.call(REC_AREA, code) ? REC_AREA[code] : null)
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
+const strOrNull = (v) => (typeof v === 'string' && v.trim() ? v : null)
+const boolOrNull = (v) => (v === true || v === false ? v : null)
+
+/** Analiz derin analiz verisi taşıyor mu (algoritma ≥ 3). Başarısız / analizsiz koşu → false. */
+export function hasDeepAnalysis(analysis, scan) {
+  if (!isObj(analysis)) return false
+  return algorithmVersion(scan, analysis) >= DEEP_MIN_ALGORITHM
+}
+
+/** Denetim alanının sunucu bloğu (yoksa null — sunucu o bölümü üretemedi ya da eski analiz). */
+export function areaData(analysis, area) {
+  if (!isObj(analysis)) return null
+  const pick = {
+    loading: analysis.loading, waste: analysis.waste, media: analysis.media, security: analysis.security,
+    seo: analysis.html_audit?.seo, a11y: analysis.html_audit?.accessibility,
+  }[area]
+  return isObj(pick) ? pick : null
+}
+
+/** Alanın önerileri (önem sırasına göre; ALL_GOOD hariç). */
+export function areaRecs(analysis, area) {
+  return sortRecommendations(analysis?.recommendations).filter((r) => areaOfRec(r.code) === area)
+}
+
+/**
+ * Alanın özeti — gezinme rozeti: `old` (eski analiz), `missing` (bu analizde bölüm yok), `unknown` (veri var ama
+ * değerlendirilemedi — asla yeşil değil), `ok` (sorun yok), `issues` (`count` bulgu). SEO / erişilebilirlikte sayı =
+ * başarısız + uyarılı denetimler; diğer alanlarda alanın öneri sayısı.
+ */
+export function areaSummary(analysis, scan, area) {
+  if (!hasDeepAnalysis(analysis, scan)) return { state: 'old', count: null }
+  const data = areaData(analysis, area)
+  if (!data) return { state: 'missing', count: null }
+  if (area === 'seo' || area === 'a11y') {
+    const c = checkCounts(data)
+    if (!c.total) return { state: 'unknown', count: null }
+    const n = c.fail + c.warn
+    return { state: n > 0 ? 'issues' : 'ok', count: n, fail: c.fail, warn: c.warn }
+  }
+  const n = areaRecs(analysis, area).length
+  return { state: n > 0 ? 'issues' : 'ok', count: n }
+}
+
+/** Alan durumunun rozet tonu: sorun uyarı, sorunsuz başarı; eski / yok / bilinmiyor SOLUK (asla yeşil değil). */
+export const AREA_STATE_TONE = { issues: 'warning', ok: 'success', unknown: 'muted', missing: 'muted', old: 'muted' }
+
+/**
+ * Kategori puanları (pano): performans = sayfanın notu (sunucu `category_scores.performance`, yoksa özetin notu);
+ * güvenlik / SEO / erişilebilirlik yalnız derin analizde (`category_scores`, yoksa özet kolonları). Hesaplanamayan puan
+ * null → "—" (asla 0 ya da 100 uydurulmaz). Sınırlı (kısmi) ölçümde performans ve güvenlik tonu soluk — kısmi veriden
+ * yeşil türetilmez (güvenlik puanı çerez / SRI / kütüphane gibi nesne verisini de kullanır); SEO / erişilebilirlik
+ * yalnız HTML'den, sınırdan etkilenmez.
+ */
+export function categoryScoreRows(scan, analysis) {
+  const deep = hasDeepAnalysis(analysis, scan)
+  const cs = isObj(analysis?.category_scores) ? analysis.category_scores : {}
+  const capped = isCapped(scan)
+  const col = { security: 'security_score', seo: 'seo_score', accessibility: 'a11y_score' }
+  return CATEGORY_SCORE_KEYS.map((key) => {
+    const entry = isObj(cs[key]) ? cs[key] : {}
+    if (key === 'performance') {
+      const score = num(entry.score) ?? num(scan?.grade)
+      const letter = gradeLetter(score, entry.letter ?? scan?.grade_letter)
+      const tone = capped || score === null ? 'muted' : gradeTone(letter)
+      return { key, area: CATEGORY_SCORE_AREA[key], available: score !== null, score, letter, tone, partial: capped }
+    }
+    if (!deep) return { key, area: CATEGORY_SCORE_AREA[key], available: false, old: true, score: null, letter: null, tone: 'muted', partial: false }
+    const score = num(entry.score) ?? num(scan?.[col[key]])
+    const letter = key === 'security' && score !== null ? gradeLetter(score, entry.letter) : null
+    const partial = key === 'security' && capped
+    const tone = score === null || partial ? 'muted' : (letter ? gradeTone(letter) : scoreTone(score))
+    return { key, area: CATEGORY_SCORE_AREA[key], available: true, score, letter, tone, partial }
+  })
+}
+
+/**
+ * Sunucu listesi + toplamı: `obj[key]` dizisi (≤ 50) ve `obj[key + '_total']` (yoksa dizinin uzunluğu). Dizi yoksa null
+ * (bölüm üretilmedi — "yok" değil, "bilinmiyor"). `more` = sunucunun göndermediği satır sayısı.
+ */
+export function listOf(obj, key, totalKey = `${key}_total`) {
+  if (!isObj(obj) || !Array.isArray(obj[key])) return null
+  const all = obj[key].filter((r) => r !== null && r !== undefined)
+  const rows = all.slice(0, AUDIT_LIST_MAX)
+  const total = Math.max(all.length, num(obj[totalKey]) ?? all.length)
+  return { rows, total, more: total - rows.length }
+}
+
+// A — yükleme ve ağ
+
+/** Oluşturmayı engelleyen kaynak türleri ve nedenleri (sunucu sabitleri; bilinmeyen değer genel metin). */
+export const RENDER_BLOCKING_KINDS = ['script', 'stylesheet', 'css_import']
+export const RENDER_BLOCKING_REASONS = ['no_async_defer', 'no_media', 'import']
+
+/** Oluşturmayı engelleyenler: satırlar (bayta göre büyükten küçüğe), sayı, bayt, tahmini ilk boyama. Blok yoksa null. */
+export function renderBlockingView(loading) {
+  const rb = loading?.render_blocking
+  if (!isObj(rb)) return null
+  const list = listOf(rb, 'items', rb.items_total != null ? 'items_total' : 'count')
+  const rows = (list?.rows || []).filter((r) => strOrNull(r?.url)).map((r) => ({
+    url: r.url, kind: RENDER_BLOCKING_KINDS.includes(r.kind) ? r.kind : 'other', bytes: num(r.bytes), durationMs: num(r.duration_ms),
+    reason: RENDER_BLOCKING_REASONS.includes(r.reason) ? r.reason : 'other',
+  })).sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))
+  return {
+    rows, count: num(rb.count) ?? rows.length, bytes: num(rb.bytes), firstPaintMs: num(rb.est_first_paint_ms),
+    more: list ? list.more : 0,
+  }
+}
+
+/** Kaynak ipucu türleri (gösterim sırası). */
+export const HINT_TYPES = ['missing_preconnect', 'preload', 'preconnect', 'dns_prefetch', 'fetchpriority']
+/** İpucu satırının durum tonu: eksik / kullanılmayan uyarı, kullanılan başarı, bilgi (fetchpriority) nötr. */
+export const HINT_STATE_TONE = { missing: 'warning', unused: 'warning', used: 'success', info: 'muted', unknown: 'muted' }
+
+/**
+ * Kaynak ipuçları tek tabloda: `{ type, target, state, as, value, requests, bytes, blocking }`. Sıra: eksik bağlantı
+ * önceden kurma (yapılması gereken), kullanılmayan ön yüklemeler / bağlantılar, sonra kullanılanlar. Blok yoksa null.
+ */
+export function hintRows(loading) {
+  const h = loading?.hints
+  if (!isObj(h)) return null
+  const out = []
+  const used = (v) => (v === true ? 'used' : v === false ? 'unused' : 'unknown')
+  for (const r of Array.isArray(h.missing_preconnect) ? h.missing_preconnect : []) {
+    if (strOrNull(r?.host)) out.push({ type: 'missing_preconnect', target: r.host, state: 'missing', requests: num(r.requests), bytes: num(r.bytes), blocking: r.blocking === true })
+  }
+  for (const r of Array.isArray(h.preload) ? h.preload : []) {
+    if (strOrNull(r?.url)) out.push({ type: 'preload', target: r.url, state: used(r.used), as: strOrNull(r.as) })
+  }
+  for (const r of Array.isArray(h.preconnect) ? h.preconnect : []) {
+    if (strOrNull(r?.host)) out.push({ type: 'preconnect', target: r.host, state: used(r.used) })
+  }
+  for (const r of Array.isArray(h.dns_prefetch) ? h.dns_prefetch : []) {
+    if (strOrNull(r?.host)) out.push({ type: 'dns_prefetch', target: r.host, state: used(r.used) })
+  }
+  for (const r of Array.isArray(h.fetchpriority) ? h.fetchpriority : []) {
+    if (strOrNull(r?.url)) out.push({ type: 'fetchpriority', target: r.url, state: 'info', value: strOrNull(r.value) })
+  }
+  const rank = { missing: 0, unused: 1, unknown: 2, used: 3, info: 4 }
+  return out.map((r, i) => ({ r, i })).sort((a, b) => rank[a.r.state] - rank[b.r.state]
+    || HINT_TYPES.indexOf(a.r.type) - HINT_TYPES.indexOf(b.r.type) || a.i - b.i).map((x) => x.r)
+}
+
+/** İpucu listelerinde sunucunun göndermediği satırların toplamı (her türün `<tür>_total`'ı; be1). */
+export function hintMore(loading) {
+  const h = loading?.hints
+  if (!isObj(h)) return 0
+  return ['missing_preconnect', 'preload', 'preconnect', 'dns_prefetch', 'fetchpriority']
+    .reduce((n, k) => n + (listOf(h, k)?.more || 0), 0)
+}
+
+/** HTTP sürümü metni: "HTTP/1.1", "HTTP/2", "HTTP/3"; bilinmiyorsa null. */
+export function httpVersionText(v) {
+  const s = typeof v === 'string' ? v.trim() : (Number.isFinite(v) ? String(v) : '')
+  if (!s) return null
+  if (/^1(\.1|\.0)?$/.test(s)) return s === '1' ? 'HTTP/1.1' : `HTTP/${s}`
+  if (/^[23](\.0)?$/.test(s)) return `HTTP/${s[0]}`
+  return null
+}
+/** Eski sürüm (HTTP/1.x) mi — tabloda uyarı tonu. */
+export const isHttp1 = (v) => /^HTTP\/1/.test(httpVersionText(v) || '')
+
+/**
+ * Sunucular ve bağlantı maliyeti: istek sayısına (sonra bayt) göre; `totalMs` = ölçülen DNS + TCP + TLS toplamı (hiçbiri
+ * bilinmiyorsa null). Vekilden gidilen / sınıra takılan host `measured: false` + neden. Blok yoksa null.
+ */
+export function hostRows(loading) {
+  const list = listOf(loading, 'hosts')
+  if (!list) return null
+  const rows = list.rows.filter((r) => strOrNull(r?.host)).map((r) => {
+    const parts = [num(r.dns_ms), num(r.connect_ms), num(r.tls_ms)]
+    const known = parts.filter((p) => p !== null)
+    const measured = r.measured !== false
+    return {
+      host: r.host, thirdParty: r.third_party === true, requests: num(r.requests) ?? 0, bytes: num(r.bytes),
+      httpVersion: httpVersionText(r.http_version), h3: r.h3_advertised === true,
+      dnsMs: parts[0], connectMs: parts[1], tlsMs: parts[2], totalMs: measured && known.length ? known.reduce((s, p) => s + p, 0) : null,
+      measured, reason: measured ? null : (strOrNull(r.reason) || 'other'),
+    }
+  }).sort((a, b) => b.requests - a.requests || (b.bytes ?? -1) - (a.bytes ?? -1) || a.host.localeCompare(b.host))
+  return { rows, total: Math.max(list.total, num(loading.hosts_total) ?? 0), more: list.more, http1FirstParty: num(loading.http1_first_party_hosts) }
+}
+/** Ölçülmeyen (ya da kısmen ölçülen) hostun bilinen nedenleri (sunucu `reason`, be1 kataloğu). */
+export const HOST_SKIP_REASONS = ['proxy', 'blocked', 'dns_failed', 'connect_failed', 'tls_failed', 'not_measured', 'cancelled']
+
+/** Ağ profilleri (sunucu sabitleri; gösterim sırası). */
+export const NETWORK_PROFILES = ['fiber', '4g', '3g', 'slow3g']
+
+/** Ağ profili satırları: bilinen profiller sırayla; `bar` = yüklenme süresinin en yavaş profile oranı (0–100). */
+export function profileRows(loading) {
+  if (!isObj(loading) || !Array.isArray(loading.profiles)) return null
+  const by = new Map(loading.profiles.filter((p) => NETWORK_PROFILES.includes(p?.key)).map((p) => [p.key, p]))
+  const rows = NETWORK_PROFILES.filter((k) => by.has(k)).map((k) => {
+    const p = by.get(k)
+    return { key: k, rttMs: num(p.rtt_ms), mbps: num(p.mbps), loadMs: num(p.load_ms), firstPaintMs: num(p.first_paint_ms) }
+  })
+  const max = Math.max(0, ...rows.map((r) => r.loadMs ?? 0))
+  return rows.map((r) => ({ ...r, bar: max > 0 && r.loadMs !== null ? Math.max(2, (r.loadMs / max) * 100) : 0 }))
+}
+
+// B — israf ve önbellek
+
+/** Yinelenen kaynak türleri (`same_content` = aynı içerik farklı adreste; `same_path` = aynı yol farklı sorgu dizesiyle). */
+export const DUPLICATE_KINDS = ['same_content', 'same_path']
+
+const urlsOf = (v) => (Array.isArray(v) ? v.filter((u) => strOrNull(u)) : [])
+
+/** Yinelenenler: israf edilen bayta göre büyükten küçüğe. Blok yoksa null. */
+export function duplicateRows(waste) {
+  const list = listOf(waste, 'duplicates')
+  if (!list) return null
+  return {
+    ...list,
+    rows: list.rows.map((r) => ({ kind: DUPLICATE_KINDS.includes(r?.kind) ? r.kind : 'other', urls: urlsOf(r?.urls), wasted: num(r?.bytes_wasted) }))
+      .filter((r) => r.urls.length).sort((a, b) => (b.wasted ?? -1) - (a.wasted ?? -1)),
+  }
+}
+
+/** Aynı kütüphanenin birden çok sürümü. Blok yoksa null. */
+export function libraryVersionRows(waste) {
+  const list = listOf(waste, 'libraries')
+  if (!list) return null
+  return {
+    ...list,
+    rows: list.rows.filter((r) => strOrNull(r?.name)).map((r) => ({
+      name: r.name, versions: (Array.isArray(r.versions) ? r.versions : []).filter((v) => strOrNull(v)), urls: urlsOf(r.urls),
+    })),
+  }
+}
+
+/** Küçültülmemiş dosyalar (tahmini kazanca göre). Blok yoksa null. */
+export function unminifiedRows(waste) {
+  const list = listOf(waste, 'unminified')
+  if (!list) return null
+  return {
+    ...list,
+    rows: list.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, bytes: num(r.bytes), saving: num(r.est_saving_bytes) }))
+      .sort((a, b) => (b.saving ?? -1) - (a.saving ?? -1)),
+  }
+}
+
+/** Kaynak haritaları: açıkta olanlar (`exposed`) önce. Blok yoksa null. */
+export function sourceMapRows(waste) {
+  const list = listOf(waste, 'source_maps')
+  if (!list) return null
+  const rank = (e) => (e === true ? 0 : e === null ? 1 : 2)
+  return {
+    ...list,
+    rows: list.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, mapUrl: strOrNull(r.map_url), exposed: boolOrNull(r.exposed) }))
+      .sort((a, b) => rank(a.exposed) - rank(b.exposed)),
+  }
+}
+
+/** HTML istatistikleri (sayfa HTML'inin boyutu, satır içi betik / stil, DOM düğümü, derinlik, data URI). Blok yoksa null. */
+export function htmlStats(waste) {
+  const h = waste?.html
+  if (!isObj(h)) return null
+  return {
+    htmlBytes: num(h.html_bytes), inlineScriptBytes: num(h.inline_script_bytes), inlineStyleBytes: num(h.inline_style_bytes),
+    domNodes: num(h.dom_nodes), maxDepth: num(h.max_depth), dataUriCount: num(h.data_uri_count), dataUriBytes: num(h.data_uri_bytes),
+  }
+}
+
+/** Önbellek süresi kovaları (kötüden iyiye) ve tonları — sıralı kalite düzeyi olduğu için durum renkleri. */
+export const CACHE_BUCKETS = ['none', 'lt_1h', 'lt_1d', 'lt_7d', 'ge_7d']
+export const CACHE_BUCKET_TONE = { none: 'danger', lt_1h: 'warning', lt_1d: 'warning', lt_7d: 'info', ge_7d: 'success' }
+
+/**
+ * Önbellek görünümü: kovalar (sayı + pay), doğrulayıcısı (ETag / Last-Modified) olmayan sayısı, sürümlü ama kısa
+ * önbellekli dosyalar, CDN isabet / ıska / bilinmiyor, ikinci ziyaret tahmini (bayt + yüzde). Blok yoksa null.
+ */
+export function cachingView(waste) {
+  const c = waste?.caching
+  if (!isObj(c)) return null
+  const b = isObj(c.buckets) ? c.buckets : {}
+  const counts = CACHE_BUCKETS.map((k) => ({ key: k, count: num(b[k]) }))
+  const total = counts.reduce((s, r) => s + (r.count ?? 0), 0)
+  const buckets = counts.map((r) => ({ ...r, share: total > 0 && r.count !== null ? (r.count / total) * 100 : null }))
+  const cdn = isObj(c.cdn) ? { hit: num(c.cdn.hit), miss: num(c.cdn.miss), unknown: num(c.cdn.unknown) } : null
+  const vs = listOf(c, 'versioned_short')
+  return {
+    buckets, total, noValidator: num(c.no_validator), cdn,
+    versionedShort: vs ? { ...vs, rows: vs.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, ttlS: num(r.ttl_s) })) } : null,
+    repeatBytes: num(c.repeat_visit_bytes), repeatPct: num(c.repeat_visit_pct),
+  }
+}
+
+// C — görsel ve font
+
+/** Görsel sorun grupları (gösterim sırası); `not_lazy` SEZGİSEL (sunucu: DOM'da ilk 4 görselden sonraki içerik görselleri). */
+export const IMAGE_ISSUE_KEYS = ['missing_dimensions', 'missing_srcset', 'not_lazy', 'animated_gif']
+export const HEURISTIC_IMAGE_ISSUES = new Set(['not_lazy'])
+
+/**
+ * Görsel sorunları: her grup `{ key, rows, total, more, heuristic }`; olmayan grup listelenmez. Blok yoksa ya da sunucu
+ * sayfanın HTML'ini ayrıştıramadıysa (`html_checked: false`) null — "yok" değil, "hesaplanamadı".
+ */
+export function imageIssueGroups(media) {
+  const im = media?.images
+  if (!isObj(im) || im.html_checked === false) return null
+  return IMAGE_ISSUE_KEYS.map((key) => {
+    const list = listOf(im, key)
+    if (!list) return null
+    return {
+      key, heuristic: HEURISTIC_IMAGE_ISSUES.has(key), total: list.total, more: list.more,
+      rows: list.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, width: num(r.width), bytes: num(r.bytes), frames: num(r.frames) })),
+    }
+  }).filter(Boolean)
+}
+
+/** WOFF2 olmayan yazı tipi biçimleri (sunucu `non_woff2[].format`); `unknown` çevrilir, diğerleri teknik ad (büyük harf). */
+export const FONT_FORMATS = ['woff', 'ttf', 'otf', 'eot', 'svg', 'unknown']
+
+/** Yazı tipi görünümü: sayı, bayt, ön yüklenen, aileler (dosya sayısına göre), WOFF2 olmayanlar, font-display eksik. */
+export function fontView(media) {
+  const f = media?.fonts
+  if (!isObj(f)) return null
+  const fam = listOf(f, 'families')
+  const nw = listOf(f, 'non_woff2')
+  const md = listOf(f, 'missing_display')
+  return {
+    count: num(f.count), bytes: num(f.bytes), preloaded: num(f.preloaded),
+    families: fam ? { ...fam, rows: fam.rows.filter((r) => strOrNull(r?.family)).map((r) => ({
+      family: r.family, weights: (Array.isArray(r.weights) ? r.weights : []).map((w) => String(w)).filter(Boolean), files: num(r.files),
+    })).sort((a, b) => (b.files ?? 0) - (a.files ?? 0)) } : null,
+    nonWoff2: nw ? { ...nw, rows: nw.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, format: FONT_FORMATS.includes(r.format) ? r.format : 'unknown' })) } : null,
+    missingDisplay: md ? { ...md, rows: md.rows.filter((r) => strOrNull(r?.family)).map((r) => ({ family: r.family, cssUrl: strOrNull(r.css_url) })) } : null,
+  }
+}
+
+// D — güvenlik ve uyumluluk
+
+/** Güvenlik başlıkları (sunucu anahtarları, gösterim sırası) ve durum tonları (bilinmeyen durum soluk). */
+export const SECURITY_HEADER_KEYS = [
+  'csp', 'hsts', 'x_content_type_options', 'frame_protection', 'referrer_policy', 'permissions_policy', 'coop', 'corp',
+]
+export const HEADER_STATUSES = ['missing', 'weak', 'ok']
+export const HEADER_STATUS_TONE = { ok: 'success', weak: 'warning', missing: 'danger', unknown: 'muted' }
+/** Başlığın HTTP adı (teknik sabit — çevrilmez; kullanıcı yanıtta bu adı arar). */
+export const SECURITY_HEADER_NAMES = {
+  csp: 'Content-Security-Policy', hsts: 'Strict-Transport-Security', x_content_type_options: 'X-Content-Type-Options',
+  frame_protection: 'X-Frame-Options / frame-ancestors', referrer_policy: 'Referrer-Policy', permissions_policy: 'Permissions-Policy',
+  coop: 'Cross-Origin-Opener-Policy', corp: 'Cross-Origin-Resource-Policy',
+}
+/**
+ * Başlığın bilinen sorun kodları (sunucu `issue`, be1 kataloğu; `invalid` her başlıkta "geçersiz değer"). Bilinmeyen kod
+ * genel metin — ham kod gösterilmez.
+ */
+export const HEADER_ISSUES = [
+  'unsafe_inline', 'unsafe_eval', 'wildcard_source', 'no_script_policy', 'report_only', 'meta_only',
+  'not_https', 'short_max_age', 'disabled', 'invalid', 'allow_from_deprecated', 'unsafe_url', 'no_referrer_when_downgrade',
+  'legacy_feature_policy', 'unsafe_none',
+]
+export const headerIssueKey = (code) => (HEADER_ISSUES.includes(code) ? code : 'other')
+
+/**
+ * Güvenlik başlığı satırları: bilinen anahtarlar sözleşme sırasıyla, bilinmeyenler sonda (`known: false` — genel ad).
+ * `value` ≤ 300 karakter (sunucu sınırı; burada da kırpılmaz, sarar). Blok yoksa null.
+ */
+export function securityHeaderRows(security) {
+  if (!isObj(security) || !Array.isArray(security.headers)) return null
+  const rows = security.headers.filter((h) => strOrNull(h?.key)).map((h) => ({
+    key: h.key, known: SECURITY_HEADER_KEYS.includes(h.key), status: HEADER_STATUSES.includes(h.status) ? h.status : 'unknown',
+    value: strOrNull(h.value), issue: strOrNull(h.issue),
+  }))
+  const order = (k) => (SECURITY_HEADER_KEYS.indexOf(k) < 0 ? 99 : SECURITY_HEADER_KEYS.indexOf(k))
+  return rows.sort((a, b) => order(a.key) - order(b.key))
+}
+
+/** Başlık durum sayıları (`{ ok, weak, missing, unknown }`). */
+export function headerCounts(rows) {
+  const out = { ok: 0, weak: 0, missing: 0, unknown: 0 }
+  for (const r of rows || []) out[r.status in out ? r.status : 'unknown'] += 1
+  return out
+}
+
+/** Çerez sorunu kodları (sunucu `issues[]`; bilinmeyen kod genel metin). */
+export const COOKIE_ISSUES = ['not_secure', 'no_http_only', 'no_same_site', 'none_without_secure', 'long_lived']
+
+/**
+ * Çerezler — sorunu olanlar önce, sonra ada göre. DEĞER hiçbir zaman gelmez / gösterilmez (yalnız ad ve bayraklar).
+ * `sameSite` = Strict | Lax | None | null (yok). Blok yoksa null.
+ */
+export function cookieRows(security) {
+  const list = listOf(security, 'cookies')
+  if (!list) return null
+  const rows = list.rows.filter((c) => strOrNull(c?.name)).map((c) => ({
+    name: c.name, host: strOrNull(c.host), thirdParty: c.third_party === true, secure: boolOrNull(c.secure), httpOnly: boolOrNull(c.http_only),
+    sameSite: strOrNull(c.same_site), issues: (Array.isArray(c.issues) ? c.issues : []).filter((x) => strOrNull(x)),
+  })).sort((a, b) => (b.issues.length > 0) - (a.issues.length > 0) || a.name.localeCompare(b.name))
+  return { ...list, rows }
+}
+
+/** Açık önem dereceleri (yüksekten düşüğe) ve tonları; açık türleri (sunucu `vulns[].kind`). */
+export const VULN_SEVERITIES = ['critical', 'high', 'medium', 'low']
+export const VULN_KINDS = ['xss', 'prototype_pollution', 'redos', 'code_injection']
+export const VULN_SEVERITY_TONE = { critical: 'danger', high: 'danger', medium: 'warning', low: 'info' }
+const sevRank = (s) => (VULN_SEVERITIES.indexOf(s) < 0 ? 9 : VULN_SEVERITIES.indexOf(s))
+
+/**
+ * Tespit edilen JS kütüphaneleri: bilinen açığı olanlar (en yüksek öneme göre) önce, sonra açığı bilinmeyenler.
+ * `vulns` her satırda öneme göre sıralı. Blok yoksa null.
+ */
+export function vulnLibraryRows(security) {
+  const list = listOf(security, 'libraries')
+  if (!list) return null
+  const rows = list.rows.filter((l) => strOrNull(l?.name)).map((l) => {
+    const vulns = (Array.isArray(l.vulns) ? l.vulns : []).filter((v) => strOrNull(v?.id)).map((v) => ({
+      id: v.id, severity: VULN_SEVERITIES.includes(v.severity) ? v.severity : 'unknown', summary: strOrNull(v.summary),
+      kind: VULN_KINDS.includes(v.kind) ? v.kind : (strOrNull(v.kind) ? 'other' : null),
+    })).sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.id.localeCompare(b.id))
+    return { name: l.name, version: strOrNull(l.version), url: strOrNull(l.url), vulns, maxSeverity: vulns[0]?.severity ?? null }
+  }).sort((a, b) => (b.vulns.length > 0) - (a.vulns.length > 0) || sevRank(a.maxSeverity) - sevRank(b.maxSeverity) || a.name.localeCompare(b.name))
+  return { ...list, rows, catalogDate: strOrNull(security.catalog_date) }
+}
+
+/**
+ * Açık kimliğinin güvenli bağlantısı: CVE → NVD, GHSA → GitHub Advisory; başka biçim bağlanmaz (null). Kimlik sıkı
+ * desenle denetlenir (uzunluk sınırı önce — düzenli ifade sınırsız girdiye uygulanmaz).
+ */
+export function vulnLink(id) {
+  const s = typeof id === 'string' ? id.trim() : ''
+  if (!s || s.length > 40) return null
+  if (/^CVE-\d{4}-\d{4,7}$/i.test(s)) return `https://nvd.nist.gov/vuln/detail/${s.toUpperCase()}`
+  if (/^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$/i.test(s)) return `https://github.com/advisories/${s}`
+  return null
+}
+
+/** Üçüncü taraf kategorileri (sunucu `ThirdPartyCatalog`; gösterim etiketi `prs.deep.tpc.<kategori>`). */
+export const THIRD_PARTY_CATEGORIES = [
+  'analytics', 'advertising', 'tag_manager', 'social', 'cdn', 'fonts', 'video', 'chat', 'ab_testing', 'session_replay', 'payment',
+  'maps', 'captcha', 'other',
+]
+/** Kişisel veri işleyebilen (izleme) kategoriler — sayfa açılışında çalışırsa KVKK / onay açısından işaretlenir. */
+export const TRACKING_CATEGORIES = new Set(['analytics', 'advertising', 'social', 'session_replay'])
+export const thirdPartyCategoryKey = (c) => (THIRD_PARTY_CATEGORIES.includes(c) ? c : 'other')
+
+/** Üçüncü taraf kategorileri satırları (bayta göre büyükten küçüğe). Blok yoksa null. */
+export function thirdPartyCategoryRows(security) {
+  const list = listOf(security, 'third_party_categories')
+  if (!list) return null
+  return {
+    ...list,
+    rows: list.rows.filter((r) => strOrNull(r?.category)).map((r) => ({
+      category: thirdPartyCategoryKey(r.category), hosts: urlsOf(r.hosts), requests: num(r.requests) ?? 0, bytes: num(r.bytes),
+      tracking: TRACKING_CATEGORIES.has(r.category),
+    })).sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1) || b.requests - a.requests),
+  }
+}
+
+/** Sayfa ilk yüklenirken çalışan izleme amaçlı üçüncü taraflar (SEZGİSEL — onay ekranı görülemez). Blok yoksa null. */
+export function trackingRows(security) {
+  const list = listOf(security, 'tracking_on_load')
+  if (!list) return null
+  return { ...list, rows: list.rows.filter((r) => strOrNull(r?.host)).map((r) => ({ host: r.host, category: thirdPartyCategoryKey(r.category) })) }
+}
+
+/** Güvenlik bölümü listeleri: SRI eksik betik / stil, karışık içerik. Blok yoksa null. */
+export function sriRows(security) {
+  const list = listOf(security, 'sri_missing')
+  if (!list) return null
+  return { ...list, rows: list.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, kind: r.kind === 'stylesheet' ? 'stylesheet' : r.kind === 'script' ? 'script' : 'other' })) }
+}
+export function mixedContentRows(security) {
+  const list = listOf(security, 'mixed_content')
+  if (!list) return null
+  return { ...list, rows: list.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url })) }
+}
+
+// E — SEO + erişilebilirlik
+
+/** SEO ve erişilebilirlik denetimleri (sunucu anahtarları; gösterim sırası durumdan sonra bu sıra). */
+export const SEO_CHECK_KEYS = ['title', 'meta_description', 'h1', 'canonical', 'robots', 'lang', 'viewport', 'open_graph', 'structured_data']
+export const A11Y_CHECK_KEYS = ['img_alt', 'form_labels', 'link_names', 'button_names', 'heading_order', 'html_lang', 'duplicate_ids']
+export const CHECK_STATUSES = ['fail', 'warn', 'pass']
+/** Denetim satırının sorun kodları (sunucu `issue`, be1 kataloğu; bilinmeyen kod yazılmaz). */
+export const CHECK_ISSUES = [
+  'missing', 'too_short', 'too_long', 'multiple', 'other_page', 'invalid', 'noindex', 'nofollow', 'no_zoom', 'partial', 'invalid_json',
+  'skipped', 'no_headings',
+]
+export const CHECK_TONE = { fail: 'danger', warn: 'warning', pass: 'success', unknown: 'muted' }
+/** Örnek metinlerin en çoğu (sunucu ≤ 5) ve her birinin en uzun hâli. */
+export const CHECK_SAMPLES_MAX = 5
+export const CHECK_SAMPLE_CHARS = 80
+
+/**
+ * Denetim satırları: başarısız → uyarılı → geçen → bilinmeyen durum; eşitlikte sözleşme sırası, bilinmeyen anahtar
+ * sonda (`known: false`). `samples` ≤ 5 kısa metin (sunucu kişisel veri göndermez). `block` = SEO ya da a11y bloğu.
+ */
+export function checkRows(block, area) {
+  if (!isObj(block) || !Array.isArray(block.checks)) return null
+  const keys = area === 'a11y' ? A11Y_CHECK_KEYS : SEO_CHECK_KEYS
+  const rank = (s) => (CHECK_STATUSES.indexOf(s) < 0 ? 9 : CHECK_STATUSES.indexOf(s))
+  const order = (k) => (keys.indexOf(k) < 0 ? 99 : keys.indexOf(k))
+  return block.checks.filter((c) => strOrNull(c?.key)).map((c) => ({
+    key: c.key, known: keys.includes(c.key), status: CHECK_STATUSES.includes(c.status) ? c.status : 'unknown',
+    value: c.value === null || c.value === undefined || c.value === '' ? null : String(c.value), count: num(c.count),
+    issue: CHECK_ISSUES.includes(c.issue) ? c.issue : null,
+    samples: (Array.isArray(c.samples) ? c.samples : []).filter((s) => strOrNull(s)).slice(0, CHECK_SAMPLES_MAX)
+      .map((s) => (s.length > CHECK_SAMPLE_CHARS ? `${s.slice(0, CHECK_SAMPLE_CHARS)}…` : s)),
+  })).sort((a, b) => rank(a.status) - rank(b.status) || order(a.key) - order(b.key) || a.key.localeCompare(b.key))
+}
+
+/** Denetim sayıları (`{ pass, warn, fail, unknown, total }`); `block` SEO ya da a11y bloğu. */
+export function checkCounts(block) {
+  const out = { pass: 0, warn: 0, fail: 0, unknown: 0, total: 0 }
+  for (const c of Array.isArray(block?.checks) ? block.checks : []) {
+    if (!strOrNull(c?.key)) continue
+    out.total += 1
+    out[CHECK_STATUSES.includes(c.status) ? c.status : 'unknown'] += 1
+  }
+  return out
+}
+
+// Nesne ayrıntısı — derin alanlar
+
+/** Algoritma 3 nesne alanları (sözleşme "Nesne alanları"). Anahtar YOKSA eski analiz → "Bu analizde kaydedilmemiş". */
+export const DEEP_ITEM_KEYS = [
+  'http_version', 'render_blocking', 'content_hash', 'minified', 'library', 'source_map', 'integrity', 'third_party_category',
+]
+/** Nesne derin alanları taşıyor mu (en az biri anahtar olarak var — değeri null olabilir). */
+export const hasDeepItem = (item) => isObj(item) && DEEP_ITEM_KEYS.some((k) => Object.prototype.hasOwnProperty.call(item, k))
+
+/** Nesnenin kütüphanesi `{ name, version }` (yoksa null). */
+export function itemLibrary(item) {
+  const l = item?.library
+  if (!isObj(l) || !strOrNull(l.name)) return null
+  return { name: l.name, version: strOrNull(l.version) }
+}
+
 // ── Seçim, eski analiz, karşılaştırma ───────────────────────────────────────
 
 /** En yeni tamamlanmış analizin kimliği (yoksa null). */
@@ -1142,21 +1844,37 @@ export function compareScans(a, b) {
 // ── URL durumu (paylaşılabilir bağlantı) ────────────────────────────────────
 
 /** Görünümler: pano, nesne listesi, şelale, geçmiş, karşılaştırma (URL `prs_v`; pano varsayılan — yazılmaz). */
-export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare']
+export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare', 'audit']
 export const URL_SCAN = 'prs'
 export const URL_VIEW = 'prs_v'
 export const URL_OTHER = 'prs_b'
+/**
+ * Ayrıntılı denetim (prs3): görünüm `audit`, alan görünüm değerinin sonekinde (`audit-security` …; varsayılan alan
+ * yazılmaz). Ayrı bir adres anahtarı YOK — detay sayfası başka detay sekmesine geçilince `prs_v`'yi zaten siler.
+ */
+export const AUDIT_VIEW = 'audit'
 
-/** Görünüm → üst bölüm (Pano / Nesneler / Geçmiş) ve alt kip. */
+/** Görünüm → üst bölüm (Pano / Nesneler / Denetimler / Geçmiş) ve alt kip. */
 export function sectionOfView(view) {
   if (view === 'objects' || view === 'waterfall') return 'objects'
   if (view === 'history' || view === 'compare') return 'history'
+  if (view === AUDIT_VIEW) return 'audit'
   return 'overview'
 }
 export function viewOf(section, objectsMode, historyMode) {
   if (section === 'objects') return objectsMode === 'waterfall' ? 'waterfall' : 'objects'
   if (section === 'history') return historyMode === 'compare' ? 'compare' : 'history'
+  if (section === 'audit') return AUDIT_VIEW
   return 'dash'
+}
+
+/** `prs_v` değerini görünüm + denetim alanına ayırır (`audit-seo` → { view: 'audit', area: 'seo' }); geçersiz → null. */
+export function parseViewValue(raw) {
+  const v = typeof raw === 'string' ? raw.trim() : ''
+  if (VIEWS.includes(v)) return { view: v, area: v === AUDIT_VIEW ? DEFAULT_AUDIT_AREA : null }
+  const prefix = `${AUDIT_VIEW}-`
+  if (v.startsWith(prefix) && AUDIT_AREAS.includes(v.slice(prefix.length))) return { view: AUDIT_VIEW, area: v.slice(prefix.length) }
+  return null
 }
 
 const posInt = (v) => {
@@ -1164,19 +1882,24 @@ const posInt = (v) => {
   return Number.isInteger(n) && n > 0 ? n : null
 }
 
-/** Adres çubuğundaki durum: `{ scanId, view, otherId }` (geçersiz değer null / `dash`). */
+/** Adres çubuğundaki durum: `{ scanId, view, otherId, area }` (geçersiz değer null / `dash`; `area` yalnız denetimde). */
 export function parseUrlState(search) {
   let p
   try { p = new URLSearchParams(search || '') } catch { p = new URLSearchParams() }
-  const view = p.get(URL_VIEW)
-  return { scanId: posInt(p.get(URL_SCAN)), view: VIEWS.includes(view) ? view : 'dash', otherId: posInt(p.get(URL_OTHER)) }
+  const pv = parseViewValue(p.get(URL_VIEW))
+  return { scanId: posInt(p.get(URL_SCAN)), view: pv ? pv.view : 'dash', otherId: posInt(p.get(URL_OTHER)), area: pv?.area ?? null }
 }
 
-/** URL'e yazılacak değerler (varsayılan görünüm ve karşılaştırma dışı ikinci analiz yazılmaz → null). */
-export function urlStateValues({ scanId, view, otherId }) {
+/**
+ * URL'e yazılacak değerler (varsayılan görünüm ve karşılaştırma dışı ikinci analiz yazılmaz → null). Denetim görünümünde
+ * varsayılan dışı alan `audit-<alan>` olarak yazılır.
+ */
+export function urlStateValues({ scanId, view, otherId, area }) {
+  let v = view && view !== 'dash' && VIEWS.includes(view) ? view : null
+  if (v === AUDIT_VIEW && AUDIT_AREAS.includes(area) && area !== DEFAULT_AUDIT_AREA) v = `${AUDIT_VIEW}-${area}`
   return {
     [URL_SCAN]: scanId ?? null,
-    [URL_VIEW]: view && view !== 'dash' && VIEWS.includes(view) ? view : null,
+    [URL_VIEW]: v,
     [URL_OTHER]: view === 'compare' && otherId != null ? otherId : null,
   }
 }
@@ -1185,12 +1908,12 @@ export function urlStateValues({ scanId, view, otherId }) {
  * Paylaşılabilir mutlak bağlantı: izleme sayfası, detay penceresi bu izlemede, "Kaynak analizi" sekmesi, seçili analiz
  * ve görünüm. (Adres çubuğuna güvenmez — debounce'lu yazım henüz düşmemiş olabilir.)
  */
-export function resourceScanLink({ origin, monitorId, scanId, view, otherId }) {
+export function resourceScanLink({ origin, monitorId, scanId, view, otherId, area }) {
   const p = new URLSearchParams()
   p.set('tab', 'page')
   if (monitorId != null) p.set('monitor', String(monitorId))
   p.set('mtab', 'resources')
-  for (const [k, v] of Object.entries(urlStateValues({ scanId, view, otherId }))) if (v != null) p.set(k, String(v))
+  for (const [k, v] of Object.entries(urlStateValues({ scanId, view, otherId, area }))) if (v != null) p.set(k, String(v))
   return `${origin || ''}/?${p.toString()}`
 }
 
@@ -1377,8 +2100,8 @@ export function recommendationSheetRows(recs, t, locale, items = null) {
     [t('prs.export.col.severity'), t('prs.export.col.recommendation'), t('prs.export.col.detail'), t('prs.export.col.saving'),
       t('prs.export.col.objects'), t('prs.export.col.count')],
     ...sortRecommendations(recs).map((r) => {
-      const args = recommendationArgs(r, locale, 'title')
-      const bodyArgs = recommendationArgs(r, locale, 'body')
+      const args = recommendationArgs(r, locale, 'title', t)
+      const bodyArgs = recommendationArgs(r, locale, 'body', t)
       const sv = recSaving(r, locale)
       const hosts = recHostList(r)
       const urls = recItemUrls(r)

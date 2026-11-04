@@ -76,9 +76,9 @@ describe('bulgular — eski kayıtta sunucu kuralıyla (r177 H2)', () => {
     expect(f(rows, 'cdn.js')).toEqual([])
     rows = withFindings(items, [{ code: 'HEAVY_JS' }, { code: 'THIRD_PARTY_HEAVY' }])
     expect(f(rows, 'r.js')).toContain('HEAVY_JS')
-    // THIRD_PARTY_HEAVY sayfa düzeyi öneri — nesneye bulgu olarak YAZILMAZ (sunucu: 13 nesne kodu)
+    // THIRD_PARTY_HEAVY sayfa düzeyi öneri — nesneye bulgu olarak YAZILMAZ (sunucu r177: 13 nesne kodu; prs3 algoritma 3: +12 = 25)
     expect(f(rows, 'cdn.js')).toEqual(['HEAVY_JS'])
-    expect(FINDING_CODES).toHaveLength(13)
+    expect(FINDING_CODES).toHaveLength(25)
     expect(FINDING_CODES).not.toContain('THIRD_PARTY_HEAVY')
   })
 
@@ -269,9 +269,9 @@ describe('karşılaştırma (istemcide)', () => {
 
 describe('URL durumu (paylaşılabilir bağlantı)', () => {
   it('okuma: geçersiz değerler düşer; görünüm ↔ bölüm', () => {
-    expect(parseUrlState('?prs=12&prs_v=waterfall&prs_b=9')).toEqual({ scanId: 12, view: 'waterfall', otherId: 9 })
-    expect(parseUrlState('?prs=abc&prs_v=bilinmeyen&prs_b=-3')).toEqual({ scanId: null, view: 'dash', otherId: null })
-    expect(VIEWS.map(sectionOfView)).toEqual(['overview', 'objects', 'objects', 'history', 'history'])
+    expect(parseUrlState('?prs=12&prs_v=waterfall&prs_b=9')).toEqual({ scanId: 12, view: 'waterfall', otherId: 9, area: null })
+    expect(parseUrlState('?prs=abc&prs_v=bilinmeyen&prs_b=-3')).toEqual({ scanId: null, view: 'dash', otherId: null, area: null })
+    expect(VIEWS.map(sectionOfView)).toEqual(['overview', 'objects', 'objects', 'history', 'history', 'audit'])
     expect(viewOf('objects', 'waterfall', 'list')).toBe('waterfall')
     expect(viewOf('history', 'list', 'compare')).toBe('compare')
     expect(viewOf('overview', 'waterfall', 'compare')).toBe('dash')

@@ -13,7 +13,7 @@ import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, FINDING_CODES, FINDING_TONE, OBJECTS_TABLE_MIN_PX, SCOPES, SORTS, STATUS_FILTERS,
   activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, findingLabel, formatBytesExact,
   formatMs, formatNumber, isPageLoad, itemBytes, itemSizeText, plural, problemText, recTextKey, recommendationArgs, sizeBucket, sortItems,
-  statusText, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
+  statusText, thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, Section, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -206,7 +206,7 @@ export default function ResourceScanObjects({
         ) : filterRows}
         {rec && (
           <div data-slot="prs-rec-filter" data-code={rec.code} className="flex flex-wrap items-center gap-2 text-xs">
-            <ToneBadge tone="info" className={CHIP}>{t('prs.obj.recFilter', t(recTextKey(rec, 'title'), ...recommendationArgs(rec, locale, 'title')))}</ToneBadge>
+            <ToneBadge tone="info" className={CHIP}>{t('prs.obj.recFilter', t(recTextKey(rec, 'title'), ...recommendationArgs(rec, locale, 'title', t)))}</ToneBadge>
             <Button type="button" variant="ghost" size="sm" className={TOUCH} onClick={() => set({ findings: [], rec: null, urls: [] })}>
               <X aria-hidden="true" />{t('prs.obj.urlsFilterClear')}
             </Button>
@@ -287,7 +287,11 @@ function FilterRow({ label, children }) {
 export function Flags({ item, t, locale }) {
   const findings = Array.isArray(item.findings) ? item.findings : []
   const out = findings.map((c) => [`f-${c}`, FINDING_TONE[c] || 'muted', findingLabel(c, t), c])
-  if (item.third_party === true) out.push(['third', 'muted', t('prs.obj.thirdParty')])
+  // prs3: üçüncü tarafın kategorisi (analitik, reklam, CDN …) biliniyorsa rozette yazılır
+  if (item.third_party === true) {
+    out.push(['third', 'muted', item.third_party_category
+      ? t('prs.deep.thirdPartyCat', t(`prs.deep.tpc.${thirdPartyCategoryKey(item.third_party_category)}`)) : t('prs.obj.thirdParty')])
+  }
   if (item.lazy === true) out.push(['lazy', 'info', t('prs.obj.lazy')])
   if (item.from_css === true) out.push(['css', 'muted', t('prs.obj.fromCss')])
   if (isPageLoad(item) && verdictOf(item) === 'ok' && !findings.includes('NO_CACHE') && cacheState(item.cache_ttl_s) === 'ttl') {

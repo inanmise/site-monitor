@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CircleAlert, FileSpreadsheet, FileText, History, Hourglass, Info, LayoutDashboard, Link2, List, Play, RefreshCw, RotateCw, ScanSearch,
-  Square, TriangleAlert,
+  CircleAlert, FileSpreadsheet, FileText, History, Hourglass, Info, LayoutDashboard, Link2, List, ListChecks, Play, RefreshCw, RotateCw,
+  ScanSearch, Square, TriangleAlert,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -22,9 +22,10 @@ import ResourceScanObjects from './ResourceScanObjects.jsx'
 import ResourceScanHistory from './ResourceScanHistory.jsx'
 import ResourceScanObjectDetail from './ResourceScanObjectDetail.jsx'
 import {
-  DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedAtSighting, filtersForNewScan, formatMs, formatNumber, gradeLetter, isCancelled,
+  AUDIT_AREAS, DEFAULT_AUDIT_AREA, DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedAtSighting, filtersForNewScan, findingOfRec, formatMs,
+  formatNumber, gradeLetter, isCancelled,
   isRunning, latestDoneId, monotonicPct, parseUrlState, pickDefaultScan, plural, pollCapMs, pollCapReached, previousDone, problemText,
-  progressPct, recFiltersByFinding, recItemUrls, resourceScanLink, sectionOfView, urlStateValues, viewOf, withFindings,
+  progressPct, recItemUrls, resourceScanLink, sectionOfView, urlStateValues, viewOf, withFindings,
 } from './resourceScanModel.js'
 import { forgetStarted, handOff, markStartedHere, startedHere, takeBack } from './resourceScanWatcher.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
@@ -32,6 +33,9 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
+
+// Ayrıntılı denetim (prs3) yalnız açılınca iner — sekme parçası küçük kalsın
+const ResourceScanAudit = lazy(() => import('./ResourceScanAudit.jsx'))
 
 /**
  * Sayfa bütünlüğü detayı → "Kaynak analizi" sekmesi (2026-10-31, kullanıcı isteği; r177 yeniden düzen). YALNIZ kullanıcı
@@ -89,6 +93,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const [section, setSection] = useState(initSection)
   const [objectsMode, setObjectsMode] = useState(initialUrl.current.view === 'waterfall' ? 'waterfall' : 'list')
   const [historyMode, setHistoryMode] = useState(initialUrl.current.view === 'compare' ? 'compare' : 'list')
+  // Ayrıntılı denetim alanı (prs3; URL `prs_v=audit-<alan>`)
+  const [area, setArea] = useState(AUDIT_AREAS.includes(initialUrl.current.area) ? initialUrl.current.area : DEFAULT_AUDIT_AREA)
   const [otherId, setOtherId] = useState(initialUrl.current.otherId)
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [openItem, setOpenItem] = useState(null)
@@ -444,7 +450,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const urlScanId = selectedId != null && selectedId !== running?.id ? selectedId : null
 
   // Paylaşılabilir URL (yalnız sekme görünürken; gizliyken detay sayfası kendi anahtarlarını siler)
-  useUrlQuerySync(urlStateValues({ scanId: urlScanId, view, otherId }), { enabled: active && hist.state !== 'loading' })
+  useUrlQuerySync(urlStateValues({ scanId: urlScanId, view, otherId, area }), { enabled: active && hist.state !== 'loading' })
 
   /** Odak / kaydırma isteği (bölüm geçişi): `count`, `hero`, `history`, `running`, `rec:<KOD>`, `restoreDash`. */
   function requestFocus(target) {
@@ -466,6 +472,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       if (tg === 'history') return root.querySelector('[data-focus-target="prs-history"], [data-focus-target="prs-compare"]')
       if (tg === 'running') return root.querySelector('[data-slot="prs-running"]')
       if (tg === 'objects') return root.querySelector('[data-focus-target="prs-objects"]')
+      if (tg === 'audit') return root.querySelector('[data-focus-target="prs-audit"]')
       // Öneri kodları yalnız [A-Z_] — seçicide kaçış gerekmez (jsdom'da CSS.escape yok)
       if (typeof tg === 'string' && tg.startsWith('rec:') && /^[A-Z_]+$/.test(tg.slice(4))) return root.querySelector(`[data-slot="prs-rec"][data-code="${tg.slice(4)}"]`)
       return null
@@ -513,6 +520,28 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     requestFocus('count')
   }
 
+  /** Pano kategori kutucuğundan / öneriden ayrıntılı denetime (prs3): alan seçilir, odak alan başlığına. */
+  function goAudit(next) {
+    rememberDash()
+    setOpenItem(null)
+    if (AUDIT_AREAS.includes(next)) setArea(next)
+    setSection('audit')
+    requestFocus('audit')
+  }
+
+  /** Denetimdeki "Nesneleri göster" — bulgu süzgeciyle TAM nesne listesi (kapsam: tümü). */
+  function showFinding(code) {
+    goObjects({ ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [code] })
+  }
+
+  /** Öneriden nesne listesine: nesne bulgusu olan öneri bulgu süzgeciyle (tam liste), olmayan sunucunun adresleriyle. */
+  function showRecObjects(rec) {
+    const finding = findingOfRec(rec?.code)
+    goObjects(finding
+      ? { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [finding], rec: rec.code }
+      : { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', urls: recItemUrls(rec), rec: rec.code })
+  }
+
   function goRec(code) {
     setOpenItem(null)
     if (section !== 'overview') setSection('overview')
@@ -539,7 +568,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
   function shareLink() {
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    copyLink(resourceScanLink({ origin, monitorId, scanId: urlScanId, view, otherId }))
+    copyLink(resourceScanLink({ origin, monitorId, scanId: urlScanId, view, otherId, area }))
   }
 
   // ── İlk okuma / okunamayan geçmiş ───────────────────────────────────────
@@ -630,15 +659,18 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
       {hasFinished && (
         <Tabs value={section} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
-          {/* Telefonda 3 eşit sütun (r177 H11 — "Geçmiş" alt satıra düşüyordu) */}
-          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
-            <TabsTrigger value="overview" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}><LayoutDashboard aria-hidden="true" />{t('prs.sec.overview')}</TabsTrigger>
-            <TabsTrigger value="objects" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}>
-              <List aria-hidden="true" />{t('prs.sec.objects')}
+          {/* Telefonda 4 eşit sütun, tek satır (r177 H11): ikonlar < sm gizli — dört ad 390 px'e sığsın */}
+          <TabsList className="grid h-auto w-full grid-cols-4 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
+            <TabsTrigger value="overview" className={cn('min-w-0 gap-1.5 px-1 sm:flex-none sm:px-3', TOUCH)}><LayoutDashboard aria-hidden="true" className="max-sm:hidden" />{t('prs.sec.overview')}</TabsTrigger>
+            <TabsTrigger value="objects" className={cn('min-w-0 gap-1.5 px-1 sm:flex-none sm:px-3', TOUCH)}>
+              <List aria-hidden="true" className="max-sm:hidden" />{t('prs.sec.objects')}
               {objectsAvailable && <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(sel.items.length, locale)}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="history" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}>
-              <History aria-hidden="true" />{t('prs.sec.history')}
+            <TabsTrigger value="audit" className={cn('min-w-0 gap-1.5 px-1 sm:flex-none sm:px-3', TOUCH)}>
+              <ListChecks aria-hidden="true" className="max-sm:hidden" />{t('prs.sec.audit')}
+            </TabsTrigger>
+            <TabsTrigger value="history" className={cn('min-w-0 gap-1.5 px-1 sm:flex-none sm:px-3', TOUCH)}>
+              <History aria-hidden="true" className="max-sm:hidden" />{t('prs.sec.history')}
               <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(items.length, locale)}</Badge>
             </TabsTrigger>
           </TabsList>
@@ -661,11 +693,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
                 <ResourceScanDashboard scan={selScan} analysis={sel.analysis} prev={prev} history={items} selectedId={selectedId}
                   objectsAvailable={objectsAvailable} items={enriched}
                   onCategory={(c) => goObjects({ ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', types: [c] })}
-                  onShowObjects={(rec) => goObjects(recFiltersByFinding(rec)
-                    ? { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [rec.code], rec: rec.code }
-                    : { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', urls: recItemUrls(rec), rec: rec.code })}
+                  onShowObjects={showRecObjects}
                   onSelectScan={(id) => { if (id !== selectedId) { select(id); requestFocus('hero') } }}
-                  onGoRec={goRec} />
+                  onGoRec={goRec} onAudit={goAudit}
+                  focusRec={typeof focusReq?.target === 'string' && focusReq.target.startsWith('rec:') ? focusReq.target.slice(4) : null} />
               )}
             </SelectedView>
           </TabsContent>
@@ -678,6 +709,20 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
                 <ResourceScanObjects scanId={selectedId} items={enriched} timing={sel.analysis?.timing} countRef={countRef}
                   itemsKept={objectsAvailable} filters={filters} onFiltersChange={setFilters} detailRuns={hist.data?.limits?.detail_runs ?? 20}
                   recommendations={sel.analysis?.recommendations} mode={objectsMode} onModeChange={setObjectsMode} onOpenItem={setOpenItem} />
+              )}
+            </SelectedView>
+          </TabsContent>
+
+          <TabsContent value="audit" className="min-w-0">
+            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+              onRetryDetail={() => loadDetail(selectedId)} onStart={start} starting={starting} compact
+              latestDone={latestDone} onLatest={() => select(latestDone)}>
+              {done && (
+                <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="py-6" />}>
+                  <ResourceScanAudit scan={selScan} analysis={sel.analysis} items={enriched} area={area} onAreaChange={setArea}
+                    objectsAvailable={objectsAvailable} onShowFinding={showFinding} onShowObjects={showRecObjects} onOpenItem={setOpenItem}
+                    canRun={canRun} running={running} onStart={start} starting={starting} />
+                </Suspense>
               )}
             </SelectedView>
           </TabsContent>
