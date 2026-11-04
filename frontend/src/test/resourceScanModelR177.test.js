@@ -271,7 +271,7 @@ describe('URL durumu (paylaşılabilir bağlantı)', () => {
   it('okuma: geçersiz değerler düşer; görünüm ↔ bölüm', () => {
     expect(parseUrlState('?prs=12&prs_v=waterfall&prs_b=9')).toEqual({ scanId: 12, view: 'waterfall', otherId: 9 })
     expect(parseUrlState('?prs=abc&prs_v=bilinmeyen&prs_b=-3')).toEqual({ scanId: null, view: 'dash', otherId: null })
-    expect(VIEWS.map(sectionOfView)).toEqual(['overview', 'objects', 'objects', 'history', 'history'])
+    expect(VIEWS.map(sectionOfView)).toEqual(['overview', 'objects', 'objects', 'history', 'history', 'trend', 'pages'])
     expect(viewOf('objects', 'waterfall', 'list')).toBe('waterfall')
     expect(viewOf('history', 'list', 'compare')).toBe('compare')
     expect(viewOf('overview', 'waterfall', 'compare')).toBe('dash')
