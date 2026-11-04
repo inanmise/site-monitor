@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { Spinner } from '../ui/Progress.jsx'
-import { RULE_KINDS, validateRules } from './ruleModel.js'
+import { RULE_KINDS, isSmartKind, validateRules } from './ruleModel.js'
 import { countText, istanbulTime, rateLimitText } from './dbqueryPageModel.js'
 
 /** Geriye bakış seçenekleri (sunucu yalnız bunları kabul eder). */
@@ -150,6 +150,10 @@ export default function BacktestPanel({ monitorId, rules, ruleLogic, disabled = 
             </ul>
           )}
           <p className="m-0 text-xs text-muted-foreground">{t('dbq.bt.note')}</p>
+          {/* Akıllı kurallar (dbq2 D) saklı ölçülerle kayan geçmişle yeniden oynatılır; taban kurulurken geçen çalıştırma sayılmaz */}
+          {list.some((r) => isSmartKind(r?.kind)) && (
+            <p data-slot="dbq-backtest-smart-note" className="m-0 text-xs text-muted-foreground">{t('dbq.bt.smartNote')}</p>
+          )}
         </div>
       )}
     </section>

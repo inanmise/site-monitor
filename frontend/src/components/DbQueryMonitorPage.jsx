@@ -29,7 +29,7 @@ import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
 import {
   Trash2, DatabaseZap, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, Inbox, Copy, Cable,
-  LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat,
+  LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat, Network, CircleCheckBig,
 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -44,6 +44,10 @@ import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/rec
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import DbQueryMonitorCard from './dbquery/DbQueryMonitorCard.jsx'
 import DbQueryDetailSummary from './dbquery/DbQueryDetailSummary.jsx'
+import ConnectionGroupHeader, { useGroupHealth } from './dbquery/ConnectionGroupHeader.jsx'
+import {
+  FOCUS_BREACH, GROUP_BY_CONNECTION, flattenGroups, focusFromUrl, groupByConnection, groupTeams, groupingFromUrl, inBreachNow, pageSections,
+} from './dbquery/listViewModel.js'
 import {
   DbqSection, EvaluationSection, FormSectionNav, LimitsSection, MailFields, QuerySection, ScheduleSection,
 } from './dbquery/DbQueryMonitorForm.jsx'
@@ -73,6 +77,7 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { Switch } from '@/components/shadcn/switch'
+import { Toggle } from '@/components/shadcn/toggle'
 import { TabsContent } from '@/components/shadcn/tabs'
 import { Textarea } from '@/components/shadcn/textarea'
 import { cn } from '@/lib/utils'
@@ -92,6 +97,9 @@ const METRICS = [
   { key: 'value', labelKey: 'dbq.detail.metricValue', unit: '' },
   { key: 'rows', labelKey: 'dbq.detail.metricRows', unit: '' },
 ]
+
+/** Odak çubuğu düğmeleri — dokunmatikte 40 px, ad sarar (telefonda alt alta). */
+const FOCUS_TOGGLE = 'h-auto min-h-9 px-3 py-1.5 whitespace-normal pointer-coarse:min-h-10'
 
 /** Durum metin tonu (özet değeri / geçmiş satırı) — kartın durum sözlüğüyle aynı dört ton. */
 const STATUS_TEXT = {
@@ -241,6 +249,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   // Etkin sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm) şeritle AÇIK gelir — süzgeç bandı gizli kalmasın (UIM-20)
   const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
+  // Odak görünümleri (dbq2 C3): "Şu an ihlalde" hızlı süzgeci (`dq=breach`) + bağlantıya göre gruplu liste (`sort=conn`)
+  const [focus, setFocus] = useState(() => focusFromUrl(readUrlParam('dq', null)))
+  const [grouping, setGrouping] = useState(() => groupingFromUrl(readUrlParam('sort', null)))
   const [loadNonce, setLoadNonce] = useState(0)   // başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar
   const [density, setDensity] = useCardDensity('dbquery')
 
@@ -700,13 +711,20 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       alarm: m => m.active_alarm,
       unacked: m => m.active_alarm && !m.alarm_acknowledged,
     }[statFilter]
-    return pred ? scoped.filter(pred) : scoped
-  }, [scoped, statFilter])
+    const byStat = pred ? scoped.filter(pred) : scoped
+    return focus === FOCUS_BREACH ? byStat.filter(inBreachNow) : byStat
+  }, [scoped, statFilter, focus])
+  // "Şu an ihlalde" sayısı — öteki süzgeçler (takım, grup, arama …) uygulanmış listeden; sayım kartı süzgecinden bağımsız
+  const breachCount = useMemo(() => scoped.filter(inBreachNow).length, [scoped])
 
-  // Varsayılan kart sırası: sorunlu önce → grup adı A→Z (grup içinde ad) → grupsuzlar ada göre
-  const orderedMonitors = useMemo(() => sortMonitorsDefault(displayMonitors, 'dbquery'), [displayMonitors])
+  // Varsayılan kart sırası: sorunlu önce → grup adı A→Z (grup içinde ad) → grupsuzlar ada göre. Gruplu görünümde aynı sıra
+  // bağlantı gruplarının İÇİNDE korunur; gruplar en kötü durumdan iyiye (sayfalama bu düz sırayla — grup bölünebilir).
+  const sortedMonitors = useMemo(() => sortMonitorsDefault(displayMonitors, 'dbquery'), [displayMonitors])
+  const connGroups = useMemo(() => (grouping === GROUP_BY_CONNECTION ? groupByConnection(sortedMonitors) : null), [grouping, sortedMonitors])
+  const orderedMonitors = useMemo(() => (connGroups ? flattenGroups(connGroups) : sortedMonitors), [connGroups, sortedMonitors])
+  const groupHealth = useGroupHealth(useMemo(() => groupTeams(connGroups), [connGroups]), !!connGroups)
   const pager = usePagination(orderedMonitors, {
-    listKey: 'dbquery-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, dbFilter, statFilter],
+    listKey: 'dbquery-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, dbFilter, statFilter, focus, grouping],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -717,6 +735,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     db: dbFilter === 'all' ? null : dbFilter,
     q: search.trim() || null,
     stat: statFilter || null,
+    dq: focus || null,
+    sort: grouping || null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
@@ -836,7 +856,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         <EvaluationSection form={form} setForm={setForm} ruleErrors={ruleErrors} columns={columns}
           slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked}
           trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory}
-          backtestMonitorId={modal && modal !== 'new' ? modal.id : null} />
+          backtestMonitorId={modal && modal !== 'new' ? modal.id : null}
+          ruleSuggest={{ testResult, saved: modal && modal !== 'new' ? modal : null, sqlText: form.sqlText }} />
 
         <ScheduleSection value={form.schedule} onChange={onScheduleChange} fieldErrors={scheduleErrors}
           minIntervalSeconds={defaults?.min_interval_seconds} canEditHolidays={globalAdmin} />
@@ -899,6 +920,25 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     </MonitorFormModal>
   )
 
+  /** Tek kart — düz listede ve bağlantı gruplarında aynı (sayfa bayrakları: düzenle / kontrol / sil kapıları). */
+  const renderCard = (m) => (
+    <DbQueryMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={dbqueryStatusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
+      onOpen={() => openDetail(m)}
+      spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+      selection={canManageRow(m) && (
+        <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
+      )}
+      meta={<MonitorCardMeta monitor={m} />}
+      actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (
+        <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.name}
+          running={isRunning(m.id)}
+          onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
+          checkTitle={t('dbq.page.check')} editTitle={t('dbq.page.edit')}
+          onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+          deleting={deleting === m.id} deleteTitle={t('dbq.page.delete')} />
+      )} />
+  )
+
   return (
     <div className="upt-page">
       <MonitorPageHeader type="dbquery" title={t('dbq.page.title')} subtitle={t('dbq.page.subtitle')}
@@ -936,6 +976,23 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
+      {!loading && monitors.length > 0 && (
+        // Odak görünümleri (dbq2 C3): ikisi de basılı düğme (aria-pressed), URL'de tutulur; telefonda alt alta sarar
+        <div data-slot="dbq-focus-bar" role="group" aria-label={t('dbq.focus.barLabel')} className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+          <Toggle variant="outline" pressed={focus === FOCUS_BREACH} data-slot="dbq-focus-breach"
+            onPressedChange={(on) => setFocus(on ? FOCUS_BREACH : null)}
+            className={cn(FOCUS_TOGGLE, 'data-[state=on]:border-destructive/60 data-[state=on]:bg-destructive/10 data-[state=on]:text-destructive')}>
+            <Siren aria-hidden="true" />{t('dbq.focus.breach')}
+            <Badge variant={breachCount > 0 ? 'destructive' : 'secondary'} data-slot="dbq-focus-breach-count"
+              className="ml-0.5 h-auto min-w-5 rounded-md px-1.5 py-0 text-[11px] tabular-nums">{breachCount}</Badge>
+          </Toggle>
+          <Toggle variant="outline" pressed={grouping === GROUP_BY_CONNECTION} data-slot="dbq-group-conn"
+            onPressedChange={(on) => setGrouping(on ? GROUP_BY_CONNECTION : null)}
+            className={cn(FOCUS_TOGGLE, 'data-[state=on]:border-primary/60 data-[state=on]:bg-primary/10 data-[state=on]:text-primary')}>
+            <Network aria-hidden="true" />{t('dbq.focus.groupByConnection')}
+          </Toggle>
+        </div>
+      )}
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
@@ -958,26 +1015,25 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           api={{ update: api.monitoring.updateDbQueryMonitor, remove: api.monitoring.deleteDbQueryMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            <DbQueryMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={dbqueryStatusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
-              onOpen={() => openDetail(m)}
-              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
-              selection={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
-              )}
-              meta={<MonitorCardMeta monitor={m} />}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.name}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('dbq.page.check')} editTitle={t('dbq.page.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={t('dbq.page.delete')} />
-              )} />
-          ))}
-        </div>
+        {displayMonitors.length === 0 && (focus === FOCUS_BREACH && breachCount === 0
+          // "Şu an ihlalde" boş: iyi haber — ama liste okunamadıysa (eski liste) bu da söylenir
+          ? <div data-slot="dbq-focus-empty"><StatusBlock tone="neutral" icon={CircleCheckBig} title={t('dbq.focus.noneTitle')}
+              description={loadError ? t('dbq.focus.noneStale') : t('dbq.focus.noneBody')}
+              actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => setFocus(null)}>{t('dbq.focus.clear')}</Button>} /></div>
+          : <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />)}
+        {connGroups ? (
+          <div data-slot="dbq-conn-groups" className="flex min-w-0 flex-col gap-4">
+            {pageSections(pager.pageItems, connGroups).map((sec, k) => (
+              <section key={`${sec.group.key}-${k}`} data-slot="dbq-conn-group" data-key={sec.group.key} aria-labelledby={`dbq-grp-${k}`}
+                className="flex min-w-0 flex-col gap-2.5">
+                <ConnectionGroupHeader group={sec.group} continued={sec.continued} health={groupHealth(sec.group)} headingId={`dbq-grp-${k}`} />
+                <div className="upt-grid" data-density={density}>{sec.items.map(renderCard)}</div>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div className="upt-grid" data-density={density}>{pager.pageItems.map(renderCard)}</div>
+        )}
         <PaginationBar {...pager} />
         </>
       )}

@@ -1,10 +1,11 @@
 import { CheckCircle2, CircleHelp, Siren, TriangleAlert, CircleSlash, Hourglass } from 'lucide-react'
-import { useT } from '../../i18n/index.jsx'
+import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import ToneBadge from '../admin/ToneBadge.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
-import { RULE_KINDS } from './ruleModel.js'
+import { RULE_KINDS, formatNumber } from './ruleModel.js'
+import { smartResultOf } from './smartResult.js'
 
 /** Tablo ↔ kart eşiği — KAP genişliği (ayrıntı penceresi, kart, deneme paneli farklı genişlikte). */
 export const RESULTS_TABLE_MIN_PX = 560
@@ -14,7 +15,9 @@ export const RESULTS_TABLE_MIN_PX = 560
  * `unknown` (alanlar eksik — asla "geçti" sayılmaz, asla yeşil değil).
  */
 /** Taban kuran notlar (sunucu: ihlal değil, kanıt eksikliği de değil — r177 2. tur) → nötr "taban kuruluyor". */
-export const BASELINE_NOTES = ['first_run', 'baseline_reset', 'no_seasonal_baseline']
+export const BASELINE_NOTES = ['first_run', 'baseline_reset', 'no_seasonal_baseline',
+  // 2026-11-05 (dbq2 D): akıllı kuralın tabanı yeterli örneğe ulaşmadı — ihlal değil, kanıt eksikliği de değil
+  'building_baseline']
 
 export function resultState(r) {
   if (!r) return 'unknown'
@@ -45,7 +48,9 @@ const valueOrDash = (v) => (v == null || v === '' ? '—' : String(v))
 /** Sunucu not kodları (`DbQueryEvaluator.NOTE_*`) — `dbq.rr.note.<kod>` ile çevrilir. */
 export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'first_run', 'prev_zero', 'partial', 'capped', 'query_failed', 'null_value', 'prev_unreadable',
   // 2026-10-31 (r177): sorgu / kural değişti → taban yeniden kuruluyor; mevsimsel taban yok; tazelik kolonu zaman damgası değil
-  'baseline_reset', 'no_seasonal_baseline', 'not_timestamp', 'db_clock_unavailable', 'future_timestamp']
+  'baseline_reset', 'no_seasonal_baseline', 'not_timestamp', 'db_clock_unavailable', 'future_timestamp',
+  // 2026-11-05 (dbq2 D): akıllı kural (olağan dışı / donmuş) tabanı kuruluyor
+  'building_baseline']
 
 /** Not → metin: bilinen kod çevrilir, bilinmeyen not (eski kayıt / serbest metin) olduğu gibi gösterilir. */
 export function resultNoteText(t, note) {
@@ -56,13 +61,65 @@ export function resultNoteText(t, note) {
 }
 
 /**
+ * Akıllı kural sonucunun ek gösterimi (2026-11-05, dbq2 D): olağan aralık (ANOMALY — mini çubuk + "olağan 300–700 · sapma
+ * +9,4σ"), donma sayacı (FROZEN — "aynı değer 7 çalıştırmadır") ya da taban sayacı ("taban kuruluyor: 4 / 10 örnek").
+ * Sunucu ek alanları yoksa (eski satır) hiçbir şey çizilmez. Renk seviyeyi taşır (çubuktaki değer noktası); bant nötr.
+ * Test kancaları: `dbq-rr-smart` (+ `data-kind` band|frozen|building), çubuk `dbq-rr-band`, değer noktası `dbq-rr-band-value`.
+ */
+export function SmartResultDetail({ result, compact = false }) {
+  const t = useT()
+  const { lang } = useLanguage()
+  const d = smartResultOf(result)
+  if (!d) return null
+  const n = (v) => formatNumber(v, lang)
+  if (d.kind === 'building') {
+    const text = d.samples != null && d.minSamples != null ? t('dbq.rr.smart.building', n(d.samples), n(d.minSamples)) : t('dbq.rr.smart.buildingNoCount')
+    return <span data-slot="dbq-rr-smart" data-kind="building" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{text}</span>
+  }
+  if (d.kind === 'frozen') {
+    const text = t(d.atLeast ? 'dbq.rr.smart.frozenAtLeast' : (d.sameRuns <= 1 ? 'dbq.rr.smart.frozenChanged' : 'dbq.rr.smart.frozen'), n(d.sameRuns))
+    return <span data-slot="dbq-rr-smart" data-kind="frozen" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{text}</span>
+  }
+  const band = d.low != null && d.high != null ? t('dbq.rr.smart.band', n(d.low), n(d.high))
+    : d.high != null ? t('dbq.rr.smart.bandUpper', n(d.high)) : t('dbq.rr.smart.bandLower', n(d.low))
+  const dev = d.deviation == null ? null
+    : d.unbounded ? t('dbq.rr.smart.devUnbounded')
+    : t('dbq.rr.smart.dev', `${d.deviation > 0 ? '+' : d.deviation < 0 ? '−' : ''}${n(Math.round(Math.abs(d.deviation) * 10) / 10)}`)
+  const level = result?.level === 'CRITICAL' ? 'critical' : result?.level === 'WARNING' ? 'warning' : 'ok'
+  const dot = { critical: 'bg-destructive', warning: 'bg-amber-500', ok: 'bg-foreground/70' }[level]
+  const pos = d.position
+  return (
+    <span data-slot="dbq-rr-smart" data-kind="band" className="flex min-w-0 flex-col gap-1">
+      {!compact && pos && pos.value != null && (
+        <span data-slot="dbq-rr-band" aria-hidden="true" className="relative block h-2 w-full max-w-56 rounded-full bg-muted">
+          <span className="absolute inset-y-0 rounded-full bg-primary/25"
+            style={{ left: `${Math.max(0, pos.low) * 100}%`, width: `${Math.max(0, Math.min(1, pos.high) - Math.max(0, pos.low)) * 100}%` }} />
+          <span data-slot="dbq-rr-band-value" data-level={level}
+            className={cn('absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-background', dot)}
+            style={{ left: `${Math.max(0, Math.min(1, pos.value)) * 100}%` }} />
+        </span>
+      )}
+      <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        {band}{dev ? ` · ${dev}` : ''}{d.samples != null && !compact ? ` · ${t('dbq.rr.smart.samples', n(d.samples))}` : ''}
+      </span>
+    </span>
+  )
+}
+
+/** Not metni — taban kuruluyorken (akıllı kural) sayaç zaten ek gösterimde: genel not tekrarlanmaz. */
+function shownNote(t, r) {
+  if (r?.note === 'building_baseline' && smartResultOf(r)) return null
+  return resultNoteText(t, r?.note)
+}
+
+/**
  * Kural sonuçları (Veritabanı Sorgu İzleme, 2026-10-31) — kural · beklenen · gelen · seviye (+ not). SATIR VERİSİ YOK:
  * yalnız kuralın ölçtüğü değer ve sunucunun yazdığı beklenen metin. Geniş kapta tablo, dar kapta kart; `compact` kart
  * özeti (izleme kartı): her kural tek satır "ad · gelen · rozet".
  */
 export default function RuleResultsList({ results, compact = false }) {
   const t = useT()
-  const noteOf = (r) => resultNoteText(t, r?.note)
+  const noteOf = (r) => shownNote(t, r)
   const [ref, width] = useElementWidth()
   const list = Array.isArray(results) ? results : []
   const name = (r, i) => (r?.label && String(r.label).trim())
@@ -82,6 +139,7 @@ export default function RuleResultsList({ results, compact = false }) {
             {['unevaluated', 'building'].includes(resultState(r)) && noteOf(r) && (
               <span data-slot="dbq-rr-note" data-note={r.note} className="text-muted-foreground [overflow-wrap:anywhere]">· {noteOf(r)}</span>
             )}
+            <SmartResultDetail result={r} compact />
             <ResultLevelBadge result={r} className="ml-auto text-[11px]" />
           </li>
         ))}
@@ -110,7 +168,10 @@ export default function RuleResultsList({ results, compact = false }) {
                   {noteOf(r) && <span data-slot="dbq-rr-note" data-note={r.note} className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{noteOf(r)}</span>}
                 </TableCell>
                 <TableCell className="align-top text-sm whitespace-normal [overflow-wrap:anywhere]">{valueOrDash(r?.expected)}</TableCell>
-                <TableCell className="align-top text-sm font-semibold whitespace-normal tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</TableCell>
+                <TableCell className="align-top text-sm font-semibold whitespace-normal tabular-nums [overflow-wrap:anywhere]">
+                  {valueOrDash(r?.actual)}
+                  {smartResultOf(r) && <span className="mt-1 block font-normal"><SmartResultDetail result={r} /></span>}
+                </TableCell>
                 <TableCell className="align-top whitespace-normal"><ResultLevelBadge result={r} /></TableCell>
               </TableRow>
             ))}
@@ -128,7 +189,10 @@ export default function RuleResultsList({ results, compact = false }) {
                 <dt className="text-xs text-muted-foreground">{t('dbq.rr.col.expected')}</dt>
                 <dd className="m-0 [overflow-wrap:anywhere]">{valueOrDash(r?.expected)}</dd>
                 <dt className="text-xs text-muted-foreground">{t('dbq.rr.col.actual')}</dt>
-                <dd className="m-0 font-semibold tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</dd>
+                <dd className="m-0 font-semibold tabular-nums [overflow-wrap:anywhere]">
+                  {valueOrDash(r?.actual)}
+                  {smartResultOf(r) && <span className="mt-1 block font-normal"><SmartResultDetail result={r} /></span>}
+                </dd>
               </dl>
               {noteOf(r) && <span data-slot="dbq-rr-note" data-note={r.note} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{noteOf(r)}</span>}
             </li>

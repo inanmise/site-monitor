@@ -17,6 +17,7 @@ import {
 import { NOC_WIDGETS } from './nocWidgets.jsx'
 import { GRID_WIDGETS } from './gridWidgets.jsx'
 import { STAT_WIDGETS } from './statWidgets.jsx'
+import { DATA_RULES_WIDGETS } from './dataRulesWidget.jsx'
 import { useWidgetData } from './useWidgetData.js'
 import {
   WATCHDOG_TONE, alertsSummary, certSummary, formatPct, monitorSummary, oncallRows, qualityTone, statusSummary, stormSummary,
@@ -424,6 +425,7 @@ export const WIDGETS = {
   data_quality:    { Icon: ListChecks,     Component: QualityWidget },
   ...NOC_WIDGETS,
   ...GRID_WIDGETS,
+  ...DATA_RULES_WIDGETS,
   ...STAT_WIDGETS,
 }
 
