@@ -55,6 +55,48 @@ class DbQueryMailMaskTest {
     }
 
     @Test
+    @DisplayName("O1 (hata avı 2026-11-05): değer, henüz değerlendirilmemiş (taban kuruluyor / örnek yetersiz) AKILLI kuraldan "
+            + "geldiyse maske onu görür — motorun seçim kuralıyla aynı (measuresMetric)")
+    void metricMaskedFollowsEngineSelectionForSmartRules() {
+        Map<String, Object> anomaly = res("r1", "ANOMALY", 1234.5, false);
+        anomaly.put("note", DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+        Map<String, Object> fresh = res("r2", "FRESHNESS", 7200.0, true);
+        // Senaryo B: ilk sırada taban kuran akıllı kural (maskeli kolon), sonra maskesiz tazelik kuralı → değer akıllı kuraldan
+        assertThat(DbQueryMailMask.metricMasked(List.of(anomaly, fresh), Set.of("r1"))).isTrue();
+        // Senaryo A: tek kural, örnek yetersiz → değer o kuraldan, maskeli
+        Map<String, Object> insufficient = res("r1", "ANOMALY", 1234.5, false);
+        insufficient.put("note", DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+        assertThat(DbQueryMailMask.metricMasked(List.of(insufficient), Set.of("r1"))).isTrue();
+        // Donmuş değer de akıllı kuraldır; değerlendirilmemiş SIRADAN kural ise değerin kaynağı değildir
+        assertThat(DbQueryMailMask.metricMasked(List.of(res("f", "FROZEN", 5.0, false)), Set.of("f"))).isTrue();
+        assertThat(DbQueryMailMask.metricMasked(List.of(res("c", "COLUMN_VALUE", 5.0, false), fresh), Set.of("c"))).isFalse();
+        // Motor ile maske aynı kaynağı seçer: değerlendiricinin ürettiği metric_value maskeli kuralın değeri
+        DbQueryRules.Rule an = DbQueryRules.fromApi(List.of(Map.of("id", "r1", "kind", "ANOMALY", "column", "tutar",
+                "min_samples", 5))).rules().get(0);
+        DbQueryRules.Rule fr = DbQueryRules.fromApi(List.of(Map.of("id", "r2", "kind", "ROW_COUNT", "operator", "GT",
+                "warning", 0))).rules().get(0);
+        DbQueryEvaluator.Outcome o = DbQueryEvaluator.evaluate(List.of(an, fr), "ANY",
+                new DbQueryRunner.QueryResult(true, 5, 1, false, List.of(new DbQueryRunner.Column("tutar", "NUMERIC")),
+                        List.of(List.<Object>of(1234.5)), false, null, null, null),
+                new DbQueryEvaluator.Baselines(Map.of(), Map.of(), Map.of("r1", DbQueryEvaluator.History.EMPTY)), "tr");
+        assertThat(o.results().get(0).evaluated()).as("taban kuruluyor").isFalse();
+        assertThat(o.metricValue()).as("değer akıllı kuraldan").isEqualTo(1234.5);
+        assertThat(DbQueryMailMask.metricMasked(DbQueryAlarmText.toApi(o.results()), Set.of("r1"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("measuresMetric: değerlendirilmiş ya da akıllı; karşılaştırma değeri şart; metin eşleşmesi asla; tür büyük/küçük harf duyarsız")
+    void measuresMetricRule() {
+        assertThat(DbQueryEvaluator.measuresMetric("COLUMN_VALUE", true, 1.0)).isTrue();
+        assertThat(DbQueryEvaluator.measuresMetric("COLUMN_VALUE", false, 1.0)).isFalse();
+        assertThat(DbQueryEvaluator.measuresMetric("ANOMALY", false, 1.0)).isTrue();
+        assertThat(DbQueryEvaluator.measuresMetric("frozen", false, 1.0)).isTrue();
+        assertThat(DbQueryEvaluator.measuresMetric("ANOMALY", true, null)).isFalse();
+        assertThat(DbQueryEvaluator.measuresMetric("TEXT_MATCH", true, 3.0)).isFalse();
+        assertThat(DbQueryEvaluator.measuresMetric(null, true, 3.0)).isTrue();
+    }
+
+    @Test
     @DisplayName("maskeli sonuç: gelen ••••, ölçü / istatistik alanları atılır; beklenen yalnız yapılandırma türünde açık")
     void maskResults() {
         List<Map<String, Object>> out = DbQueryMailMask.maskResults(

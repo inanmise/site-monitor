@@ -252,14 +252,14 @@ export default function CertNotesTab({ domain, currentUser, isAdmin = false, glo
   } else if (loadError && notes == null) {
     body = (
       <StatusBlock tone="danger" icon={StickyNote} title={t('cnote.loadFailed')} description={loadError}
-        actions={<Button type="button" variant="outline" className="gap-1.5 max-sm:h-10" onClick={loadNotes}><RotateCw aria-hidden="true" className="size-4" />{t('cnote.retry')}</Button>} />
+        actions={<Button type="button" variant="outline" className="gap-1.5 max-sm:h-10 pointer-coarse:h-10" onClick={loadNotes}><RotateCw aria-hidden="true" className="size-4" />{t('cnote.retry')}</Button>} />
     )
   } else if (!notes || notes.length === 0) {
     body = (
       <StatusBlock tone="neutral" icon={StickyNote} title={t('cnote.emptyTitle')}
         description={canWrite ? t('cnote.emptyBody') : t('cnote.emptyReadBody')} className="py-8 md:py-8"
         actions={canWrite ? (
-          <Button type="button" variant="outline" className="gap-1.5 max-sm:h-10" onClick={focusComposer}>
+          <Button type="button" variant="outline" className="gap-1.5 max-sm:h-10 pointer-coarse:h-10" onClick={focusComposer}>
             <PenLine aria-hidden="true" className="size-4" />{t('cnote.writeFirst')}
           </Button>
         ) : null} />
@@ -276,7 +276,7 @@ export default function CertNotesTab({ domain, currentUser, isAdmin = false, glo
               return (
                 <ToggleGroupItem key={c} value={c} data-slot="cert-note-filter" data-count={n}
                   disabled={n === 0 && c !== filter && c !== 'ALL'}
-                  className="gap-1.5 text-[13px] max-sm:h-10 data-[state=on]:border-primary/50 data-[state=on]:bg-primary/10 data-[state=on]:text-primary">
+                  className="gap-1.5 text-[13px] max-sm:h-10 data-[state=on]:border-primary/50 data-[state=on]:bg-primary/10 data-[state=on]:text-primary pointer-coarse:h-10">
                   {Icon && <Icon aria-hidden="true" className="size-3.5" />}
                   {c === 'ALL' ? t('cnote.filterAll') : t(`notes.cat.${c}`)}
                   <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10.5px] tabular-nums">{n}</Badge>
@@ -285,8 +285,8 @@ export default function CertNotesTab({ domain, currentUser, isAdmin = false, glo
             })}
           </ToggleGroup>
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 lg:ml-auto">
-            <InputGroup className="w-full max-sm:h-10 sm:w-64">
-              <InputGroupInput id={searchId} type="text" inputMode="search" enterKeyHint="search" className="max-sm:h-10" value={query} onChange={(e) => setQuery(e.target.value)}
+            <InputGroup className="w-full max-sm:h-10 sm:w-64 pointer-coarse:h-10">
+              <InputGroupInput id={searchId} type="text" inputMode="search" enterKeyHint="search" className="max-sm:h-10 pointer-coarse:h-10" value={query} onChange={(e) => setQuery(e.target.value)}
                 placeholder={t('cnote.searchPlaceholder')} aria-label={t('cnote.searchLabel')} />
               <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
               {query && (
@@ -308,7 +308,7 @@ export default function CertNotesTab({ domain, currentUser, isAdmin = false, glo
 
         {shown.length === 0 ? (
           <StatusBlock tone="neutral" icon={SearchX} title={t('cnote.noMatchTitle')} description={t('notes.emptyForFilter')} className="py-8 md:py-8"
-            actions={<Button type="button" variant="outline" className="max-sm:h-10" onClick={clearFilters}>{t('cnote.clearFilters')}</Button>} />
+            actions={<Button type="button" variant="outline" className="max-sm:h-10 pointer-coarse:h-10" onClick={clearFilters}>{t('cnote.clearFilters')}</Button>} />
         ) : (
           <ol data-slot="cert-note-timeline" aria-label={t('cnote.timelineLabel')} className="flex min-w-0 flex-col">
             {shown.map((n, i) => (

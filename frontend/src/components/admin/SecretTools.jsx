@@ -134,7 +134,7 @@ function SecretRow({ row, left, onToggle, t }) {
             <ItemActions className="shrink-0">
               <Button type="button" variant="outline" size="sm" aria-pressed={open}
                 aria-label={t('a11y.rowAction', open ? t('secret.hide') : t('secret.show'), row.label)}
-                onClick={() => onToggle(row.column)} className="max-sm:h-10 max-sm:flex-1">
+                onClick={() => onToggle(row.column)} className="max-sm:h-10 max-sm:flex-1 pointer-coarse:h-10">
                 {open ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
                 {open ? t('secret.hideShort') : t('secret.showShort')}
               </Button>
@@ -302,7 +302,7 @@ export default function SecretTools() {
         </AlertBanner>
         {infoState === 'error' && (
           <AlertBanner tone="danger" title={t('secret.infoError')} className="mb-0"
-            actions={<Button type="button" variant="outline" size="sm" onClick={loadInfo} className="max-sm:h-10">
+            actions={<Button type="button" variant="outline" size="sm" onClick={loadInfo} className="max-sm:h-10 pointer-coarse:h-10">
               <RefreshCw aria-hidden="true" /> {t('secret.retry')}
             </Button>}>
             {infoError || t('secret.unreachable')}
@@ -319,7 +319,7 @@ export default function SecretTools() {
               <InputGroupInput id={id} aria-describedby={describedBy} type={showKey ? 'text' : 'password'} value={key}
                 autoComplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other"
                 spellCheck={false} autoCapitalize="off" autoCorrect="off" translate="no"
-                placeholder="SITE_MONITOR_SECRET_KEY" className="font-mono max-sm:h-10"
+                placeholder="SITE_MONITOR_SECRET_KEY" className="font-mono max-sm:h-10 pointer-coarse:h-10"
                 onChange={(e) => setKey(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); verify(key) } }} />
               <InputGroupAddon align="inline-end">
@@ -339,12 +339,12 @@ export default function SecretTools() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <Button type="button" onClick={() => verify(key)} disabled={busy || !key.trim()} aria-busy={busy || undefined}
-            className="max-sm:h-10 max-sm:w-full">
+            className="max-sm:h-10 max-sm:w-full pointer-coarse:h-10">
             {busy ? <Spinner size={15} inline decorative /> : <ShieldCheck aria-hidden="true" />}
             {' '}{busy ? t('secret.verifying') : t('secret.verify')}
           </Button>
           {info?.dev_default_key && (
-            <Button type="button" variant="outline" disabled={busy} className="max-sm:h-10 max-sm:w-full"
+            <Button type="button" variant="outline" disabled={busy} className="max-sm:h-10 max-sm:w-full pointer-coarse:h-10"
               onClick={() => verify(info.dev_default_key, { dev: true })}>
               {t('secret.devVerify')}
             </Button>
@@ -365,10 +365,10 @@ export default function SecretTools() {
             {rows?.length > 0 && (
               <div className="flex flex-wrap gap-2 sm:shrink-0 sm:justify-end">
                 <Button type="button" variant="outline" size="sm" disabled={!anyRevealed} onClick={() => setRevealed({})}
-                  className="max-sm:h-10 max-sm:flex-1">
+                  className="max-sm:h-10 max-sm:flex-1 pointer-coarse:h-10">
                   <EyeOff aria-hidden="true" /> {t('secret.hideAll')}
                 </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={clearResults} className="max-sm:h-10 max-sm:flex-1">
+                <Button type="button" variant="ghost" size="sm" onClick={clearResults} className="max-sm:h-10 max-sm:flex-1 pointer-coarse:h-10">
                   <Eraser aria-hidden="true" /> {t('secret.clearResults')}
                 </Button>
               </div>
@@ -397,7 +397,7 @@ export default function SecretTools() {
       <div className="grid grid-cols-1 items-start gap-5 @3xl/secret:grid-cols-2">
         <SettingsSection title={t('secret.genTitle')} description={t('secret.genDesc')} contentClassName="flex flex-col gap-3">
           <div>
-            <Button type="button" variant="outline" onClick={() => setGenKey(generateKey())} className="max-sm:h-10 max-sm:w-full">
+            <Button type="button" variant="outline" onClick={() => setGenKey(generateKey())} className="max-sm:h-10 max-sm:w-full pointer-coarse:h-10">
               <RefreshCw aria-hidden="true" /> {t('secret.gen')}
             </Button>
           </div>

@@ -61,7 +61,7 @@ beforeEach(() => {
 describe('yönetici PDF\'i', () => {
   it('ilk sayfa yönetici özeti: kategori puanları, bütçe, öncelikli eylemler, kategori grafiği, karşılaştırma, A–E, site; sonra ayrıntı', async () => {
     const d = siteDetail(30)
-    await exportResourceScanPdf({ monitor: MONITOR, ...d, t, locale: 'tr-TR', prev: scanSummary(12, { grade: 64, security_score: 50 }) })
+    await exportResourceScanPdf({ monitor: MONITOR, ...d, t, locale: 'tr-TR', prev: scanSummary(12, { grade: 64, security_score: 50, algorithm_version: 3 }) })
     const text = calls.text
     expect(text.indexOf('Yönetici özeti')).toBeGreaterThanOrEqual(0)
     // sıra: yönetici özeti ayrıntıdan önce, ayrıntı yeni sayfada
@@ -84,6 +84,28 @@ describe('yönetici PDF\'i', () => {
     expect(all).not.toMatch(/\bprs\.[a-z]+\.|\{\d\}/)
     expect(dl.triggerDownload).toHaveBeenCalledTimes(1)
     expect(dl.triggerDownload.mock.calls[0][1]).toMatch(/\.pdf$/)
+  })
+
+  it('bh-prs3 D-3 / D-4: önceki analiz başka algoritma sürümü → not satırı yok + uyarı; kısmi iç sayfa tabloda işaretli', async () => {
+    const d = siteDetail(30)
+    d.analysis.site.pages[1] = { ...d.analysis.site.pages[1], capped: true }   // en kötü sayfa (48 F) kısmi
+    await exportResourceScanPdf({ monitor: MONITOR, ...d, t, locale: 'tr-TR', prev: scanSummary(12, { grade: 64, security_score: 50, algorithm_version: 2 }) })
+    const all = allText()
+    expect(all).toContain(t('prs.pdf.compareAlgo', 'v2', 'v3'))
+    expect(all).not.toContain('+8 · iyileşti')
+    const cmpTable = calls.tables.find((o) => o.head?.[0]?.[0] === t('prs.pdf.col.metric'))
+    expect(cmpTable.body.map((r) => r[0])).toEqual([t('prs.pdf.cmp.load'), t('prs.pdf.cmp.size'), t('prs.pdf.cmp.requests')])
+    expect(all).toContain(`48 F (${t('prs.pdf.partialScore')})`)
+    expect(all).not.toMatch(/\bprs\.[a-z]+\.|\{\d\}/)
+  })
+
+  it('bh-prs3 D-4: kısmi analizde karşılaştırma yön söylemez', async () => {
+    const d = siteDetail(30, { scan: { capped: true } })
+    await exportResourceScanPdf({ monitor: MONITOR, ...d, t, locale: 'tr-TR', prev: scanSummary(12, { grade: 64, algorithm_version: 3 }) })
+    const all = allText()
+    expect(all).toContain(t('prs.cmp.capped'))
+    expect(all).toContain(`+8 · ${t('prs.pdf.dir.partial')}`)
+    expect(all).not.toMatch(/iyileşti|kötüleşti/)
   })
 
   it('eski analiz (algoritma 1–2, bütçe alanı yok, önceki yok): bölümler "yok — yeniden analiz edin" der, uydurmaz', async () => {

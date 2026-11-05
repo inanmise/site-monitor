@@ -406,7 +406,7 @@ export default function IncidentHistoryPage() {
   // ── Sonuç bölgesi ──
   const hasFilters = activeFilters(effFilters).length > 0
   const initial = loadedKey == null && !error
-  const retry = <Button type="button" variant="outline" className="max-sm:h-10" onClick={load}><RotateCcw aria-hidden="true" />{t('inc.retry')}</Button>
+  const retry = <Button type="button" variant="outline" className="max-sm:h-10 pointer-coarse:h-10" onClick={load}><RotateCcw aria-hidden="true" />{t('inc.retry')}</Button>
   let results
   if (initial) {
     results = <HistorySkeleton phone={phone} />
@@ -421,11 +421,11 @@ export default function IncidentHistoryPage() {
           hasFilters
             ? (
               <StatusBlock tone="neutral" icon={FilterX} title={t('inc.noMatchTitle')} description={t('inc.noMatchText')} className="rounded-xl border border-dashed py-14"
-                actions={<Button type="button" variant="outline" className="max-sm:h-10" onClick={reset}><FilterX aria-hidden="true" />{t('inc.clearFilters')}</Button>} />
+                actions={<Button type="button" variant="outline" className="max-sm:h-10 pointer-coarse:h-10" onClick={reset}><FilterX aria-hidden="true" />{t('inc.clearFilters')}</Button>} />
             )
             : (
               <StatusBlock tone="neutral" icon={ListChecks} title={t('inc.emptyTitle')} description={t('inc.emptyText')} className="rounded-xl border border-dashed py-14"
-                actions={allowManage ? <Button type="button" className="max-sm:h-10" onClick={openCreate}><Plus aria-hidden="true" />{t('inc.new')}</Button> : null} />
+                actions={allowManage ? <Button type="button" className="max-sm:h-10 pointer-coarse:h-10" onClick={openCreate}><Plus aria-hidden="true" />{t('inc.new')}</Button> : null} />
             )
         ) : (
           <HistoryList rows={rows} phone={phone} allowManage={allowManage} selected={selected} onToggle={toggleSel} onToggleAll={toggleAll}
@@ -469,7 +469,7 @@ export default function IncidentHistoryPage() {
           <span className="text-sm font-bold">{t('inc.selectedN', selected.size)}</span>
           <div className="min-w-0 flex-1 *:w-full sm:flex-none sm:*:w-auto">
             <NativeSelect size="sm" aria-label={t('inc.transferTo')} value={transferTeam} onChange={(e) => setTransferTeam(e.target.value)}
-              className="max-sm:h-10">
+              className="max-sm:h-10 pointer-coarse:h-10">
               <NativeSelectOption value="">{t('inc.transferTo')}</NativeSelectOption>
               {teams.map((tm) => <NativeSelectOption key={tm.id} value={String(tm.id)}>{tm.name}</NativeSelectOption>)}
             </NativeSelect>

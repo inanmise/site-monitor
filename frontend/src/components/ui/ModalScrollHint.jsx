@@ -14,7 +14,7 @@ export default function ModalScrollHint({ show, scrollMore }) {
   if (!show) return null
   return (
     <Button type="button" size="sm" data-slot="modal-scroll-hint" onClick={scrollMore}
-      className="absolute bottom-full left-1/2 z-10 mb-[26px] -translate-x-1/2 animate-bounce rounded-full px-3.5 text-xs font-semibold shadow-md motion-reduce:animate-none">
+      className="absolute bottom-full left-1/2 z-10 mb-[26px] -translate-x-1/2 animate-bounce rounded-full px-3.5 text-xs font-semibold shadow-md motion-reduce:animate-none pointer-coarse:h-10">
       <ChevronDown size={14} aria-hidden="true" />
       <span>{t('mon.scrollForMore')}</span>
     </Button>

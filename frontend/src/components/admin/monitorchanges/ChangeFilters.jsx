@@ -105,7 +105,7 @@ export function ActiveFilterChips({ t, chips, onClearAll, status, statusClassNam
               </Button>
             </Badge>
           ))}
-          <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive max-md:h-10"
+          <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive max-md:h-10 pointer-coarse:h-10"
             onClick={onClearAll}>
             <X aria-hidden="true" /> {t('chg.presetClear')}
           </Button>

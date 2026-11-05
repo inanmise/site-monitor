@@ -268,8 +268,10 @@ public final class DbQueryBacktest {
             DbQueryEvaluator.RuleResult rr = DbQueryRules.KIND_ANOMALY.equals(r.kind())
                     ? DbQueryEvaluator.anomalyAgainst(r, m, h, null, null, "", false)
                     : DbQueryEvaluator.frozenAgainst(r, m, h, null, null, "", false);
-            // "taban kuruluyor" = ihlal değil, kanıt eksikliği değil (canlı değerlendiriciyle aynı)
-            v = rr.evaluated() ? new Verdict(true, rr.passed(), rr.level(), false) : new Verdict(false, true, "NONE", false);
+            // "taban kuruluyor" = ihlal değil, kanıt eksikliği değil; "örnek yetersiz" = kanıt EKSİKLİĞİ — karar verilemez, açık
+            // alarm kapanmaz, sayılmaz (canlı değerlendiriciyle aynı; 2026-11-05 hata avı D1)
+            v = rr.evaluated() ? new Verdict(true, rr.passed(), rr.level(), false)
+                    : new Verdict(false, true, "NONE", DbQueryEvaluator.isInconclusive(rr.kind(), rr.note()));
         }
         // İhlal bayrağı DENEMENİN kendi kararından (Y1 — canlıda saklı sonuçtan; aynı taban kuralı)
         boolean breach = DbQueryRules.KIND_ANOMALY.equals(r.kind()) && v.evaluated() && !v.passed();

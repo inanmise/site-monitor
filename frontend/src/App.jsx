@@ -2287,7 +2287,7 @@ export default function App() {
                 <PageHeader icon={TAB_META.all.Icon} title={t('app.allTitle')} description={t('app.allDesc')}
                   actions={(
                     <>
-                      <Button type="button" variant="secondary" data-tour="check-now" className="h-10 sm:h-9"
+                      <Button type="button" variant="secondary" data-tour="check-now" className="h-10 sm:h-9 pointer-coarse:h-10"
                         onClick={() => setTeamPickerOpen(true)} disabled={refreshing}
                         title={t('app.checkNowTip')} aria-busy={refreshing || undefined}>
                         {refreshing ? <Spinner decorative inline /> : <PlayCircle aria-hidden="true" />}

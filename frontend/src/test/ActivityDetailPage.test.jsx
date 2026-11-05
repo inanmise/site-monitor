@@ -208,6 +208,94 @@ describe('ActivityDetailPage — tam ayrıntı', () => {
     expect(document.querySelector('[data-slot="act-dt-alarm"]')).toBeNull()
   })
 
+  it('hata avı O2: sayfa hızı eşik aşımı (SLOW, ok=true) "Uyarı" + aşılan ölçüler — asla "Sağlıklı"; kıyas "sorun başladı"', async () => {
+    api.getActivityFullDetail.mockResolvedValue(fullBody({
+      data: { ...base, monitor_type: 'PAGESPEED', monitor_id: 3, target: 'https://www.example.com/', result_status: 'WARNING',
+        result_summary: '2400 KB · 80 istek · 6200ms', failure_reason: null, failure_detail: null, error_message: null,
+        response_ms: 6200, alert_event_id: null },
+      check: { type: 'pagespeed', match: 'exact', row: { id: 11, ok: true, breached_metrics: 'LOAD', response_ms: 6200, total_bytes: 2457600, request_count: 80 } },
+      previous_check: { id: 10, ok: true, response_ms: 1800, checked_at: '2026-11-05T09:55:00' },
+      next_check: null, alarm: null,
+    }))
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    const section = document.querySelector('[data-slot="act-dt-check"]')
+    expect(section).toHaveAttribute('data-health', 'warn')
+    expect(within(section).queryByText('Sağlıklı')).toBeNull()
+    const breach = document.querySelector('[data-slot="act-dt-check-breach"]')
+    expect(breach).toHaveTextContent('Yükleme eşiği aşıldı')
+    // ölçüler (teşhis paneli yok — kontrol tamamlandı) görünür
+    expect(document.querySelector('[data-slot="act-dt-measures"]')).toBeInTheDocument()
+    // başlık "Uyarı" (kontrol başarısız sayılmaz), kök neden paneli yok
+    expect(document.querySelector('[data-slot="act-dt-status"]')).toHaveAttribute('data-status', 'WARNING')
+    expect(document.querySelector('[data-slot="act-dt-status"]')).not.toHaveAttribute('data-failed')
+    expect(screen.queryByTestId('related-panel')).toBeNull()
+  })
+
+  it('hata avı D6: sayfa DEGRADED ve alan adı CRITICAL — başlık rozeti ve kök neden paneli satır görünürken ve gizliyken AYNI', async () => {
+    const cases = [
+      { type: 'PAGE', status: 'WARNING', row: { id: 1, status: 'DEGRADED', ok: false, broken_resources: 2 }, failed: false },
+      { type: 'DOMAIN', status: 'ERROR', row: { id: 2, status: 'CRITICAL', days_remaining: 3 }, failed: true },
+    ]
+    for (const c of cases) {
+      for (const hidden of [false, true]) {
+        api.getActivityFullDetail.mockResolvedValueOnce(fullBody({
+          data: { ...base, monitor_type: c.type, target: 'odeme.example.com', result_status: c.status, failure_reason: null,
+            failure_detail: null, error_message: null, error_class: null, alert_event_id: null },
+          check: hidden ? null : { type: c.type.toLowerCase(), match: 'exact', row: c.row },
+          check_hidden: hidden || undefined, check_hidden_reason: hidden ? 'permission' : undefined,
+          previous_check: null, next_check: null, alarm: null,
+        }))
+        const view = renderPage()
+        await screen.findByRole('heading', { level: 2, name: LONG })
+        expect(!!screen.queryByTestId('related-panel'), `${c.type} gizli=${hidden}`).toBe(c.failed)
+        const badge = document.querySelector('[data-slot="act-dt-status"]')
+        expect(badge).toHaveAttribute('data-status', c.status)
+        if (!hidden) {
+          expect(document.querySelector('[data-slot="act-dt-check"]'))
+            .toHaveAttribute('data-health', c.failed ? 'down' : 'warn')
+        }
+        view.unmount()
+      }
+    }
+  })
+
+  it('hata avı D6: kontrol başarısız ama kayıtlı durum ERROR değil (düzeltmeden önceki "Başarılı" keyword koşul hatası) → "Kontrol başarısız"', async () => {
+    api.getActivityFullDetail.mockResolvedValue(fullBody({
+      data: { ...base, monitor_type: 'KEYWORD', monitor_id: 5, target: 'https://www.example.com/', result_status: 'SUCCESS',
+        result_summary: '200 · 90ms', failure_reason: 'KEYWORD_FOUND_FORBIDDEN', failure_detail: null, alert_event_id: null },
+      check: { type: 'keyword', match: 'exact', row: { id: 21, ok: false, found: true, http_status: 200, failure_reason: 'KEYWORD_FOUND_FORBIDDEN' } },
+      previous_check: null, next_check: null, alarm: null,
+    }))
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    const badge = document.querySelector('[data-slot="act-dt-status"]')
+    expect(badge).toHaveAttribute('data-failed', 'true')
+    expect(badge).toHaveTextContent('Kontrol başarısız')
+    expect(screen.getByTestId('related-panel')).toBeInTheDocument()
+  })
+
+  it('hata avı D8: zaman çizelgesi düğmesi yalnız uç kabul edecekse (sunucu can_timeline / izleme gizli takımda değil)', async () => {
+    api.getActivityFullDetail.mockResolvedValueOnce(fullBody())
+    let view = renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    expect(document.querySelector('[data-link="timeline"]')).toBeInTheDocument()
+    view.unmount()
+
+    api.getActivityFullDetail.mockResolvedValueOnce(fullBody({ links: { monitor: null, history: null, changes: null, alert: null, can_diagnose: false, can_timeline: false } }))
+    view = renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    expect(document.querySelector('[data-link="timeline"]')).toBeNull()
+    view.unmount()
+
+    // eski sunucu (alan yok) ama izleme görülemeyen takımda
+    api.getActivityFullDetail.mockResolvedValueOnce(fullBody({ check: null, check_hidden: true, check_hidden_reason: 'team',
+      links: { monitor: null, history: null, changes: null, alert: null, can_diagnose: false } }))
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    expect(document.querySelector('[data-link="timeline"]')).toBeNull()
+  })
+
   it('bilinmeyen sağlık asla yeşil değil', async () => {
     api.getActivityFullDetail.mockResolvedValue(fullBody({
       data: { ...base, result_status: 'UNKNOWN', failure_reason: null },
@@ -334,6 +422,26 @@ describe('ActivityDetailPage — değişiklik ve tanılama', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="act-dt-change"]')).toHaveAttribute('data-state', 'error'))
     fireEvent.click(within(document.querySelector('[data-slot="act-dt-change"]')).getByRole('button', { name: /Yeniden dene/ }))
     await waitFor(() => expect(document.querySelector('[data-slot="act-dt-change"]')).toHaveAttribute('data-state', 'ready'))
+  })
+
+  it('hata avı D7: değişiklik ucu 403 → nötr "izniniz yok" (kırmızı "okunamadı + Yeniden dene" değil)', async () => {
+    api.getActivityFullDetail.mockResolvedValue(changeBody())
+    api.monitoring.getChangeDetail.mockResolvedValue({ success: false, status: 403, error: 'Yetkiniz yok' })
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    const section = document.querySelector('[data-slot="act-dt-change"]')
+    await waitFor(() => expect(section).toHaveAttribute('data-state', 'hidden'))
+    expect(document.querySelector('[data-slot="act-dt-change-hidden"]')).toHaveTextContent('Bu değişikliğin ayrıntısını görme izniniz yok')
+    expect(within(section).queryByRole('button', { name: /Yeniden dene/ })).toBeNull()
+    expect(within(section).queryByRole('alert')).toBeNull()
+  })
+
+  it('hata avı D7: sunucu change_hidden → istek atılmaz, nötr not', async () => {
+    api.getActivityFullDetail.mockResolvedValue(changeBody({ change_hidden: true, links: { monitor: null, changes: null, can_diagnose: false } }))
+    renderPage()
+    await screen.findByRole('heading', { level: 2, name: LONG })
+    await waitFor(() => expect(document.querySelector('[data-slot="act-dt-change"]')).toHaveAttribute('data-state', 'hidden'))
+    expect(api.monitoring.getChangeDetail).not.toHaveBeenCalled()
   })
 
   it('can_diagnose: HTTP tanılama penceresi izlemeyle açılır', async () => {

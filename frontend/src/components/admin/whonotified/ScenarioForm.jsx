@@ -96,7 +96,7 @@ export default function ScenarioForm({
       <CardFooter className="flex flex-col items-stretch gap-3 border-t px-4 pt-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 [.border-t]:pt-4">
         <p className="text-xs text-muted-foreground">{t('wn.autoRun')}</p>
         <Button type="button" onClick={onRun} disabled={!teamId || running} aria-busy={running || undefined}
-          className="h-10 w-full sm:w-auto md:h-9">
+          className="h-10 w-full sm:w-auto md:h-9 pointer-coarse:h-10">
           {running ? <Spinner decorative size={14} /> : <Play aria-hidden="true" />} {t('wn.simulate')}
         </Button>
       </CardFooter>

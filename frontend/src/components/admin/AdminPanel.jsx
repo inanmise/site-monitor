@@ -151,7 +151,7 @@ function GroupedTabStrip({ groups, t }) {
           <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-[3px]">
             {group.tabs.map((tab) => (
               <TabsTrigger key={tab.id} value={tab.id} data-tab={tab.id}
-                className="h-auto min-h-10 flex-auto px-3 py-1 md:min-h-8 data-[state=active]:font-semibold data-[state=active]:text-primary dark:data-[state=active]:bg-input/50 dark:data-[state=active]:text-primary">
+                className="h-auto min-h-10 flex-auto px-3 py-1 md:min-h-8 pointer-coarse:min-h-10 data-[state=active]:font-semibold data-[state=active]:text-primary dark:data-[state=active]:bg-input/50 dark:data-[state=active]:text-primary">
                 {t(tab.labelKey)}
               </TabsTrigger>
             ))}

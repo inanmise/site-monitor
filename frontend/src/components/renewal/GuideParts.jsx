@@ -239,7 +239,7 @@ export function GuideLinkCard({ t, link, isAdmin, onEdit, onDelete }) {
         <div className="min-w-0 flex-1">
           {href ? (
             <a href={href} target="_blank" rel="noopener noreferrer"
-              className="inline-flex max-w-full items-start gap-1.5 leading-snug font-medium text-primary no-underline [overflow-wrap:anywhere] hover:underline">
+              className="relative inline-flex max-w-full items-start gap-1.5 leading-snug font-medium text-primary no-underline [overflow-wrap:anywhere] hover:underline pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:content-['']">
               <span className="min-w-0">{link.title}</span>
               <ExternalLink aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             </a>
@@ -256,7 +256,7 @@ export function GuideLinkCard({ t, link, isAdmin, onEdit, onDelete }) {
         )}
       </div>
       <div className="mt-auto flex min-w-0 items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2.5">
-        <span data-slot="guide-url" title={link.url} className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+        <span data-slot="guide-url" title={link.url} className="min-w-0 flex-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {displayUrl(link.url)}
         </span>
         <CopyButton value={link.url} variant="ghost" buttonSize="icon-sm" className="shrink-0 pointer-coarse:size-10"

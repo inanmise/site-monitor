@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
+import { REPO_ROOT } from './helpers/javaTable.js'
 import {
   CONNECTION_EXAMPLES, EXAMPLE_FIELD_ORDER, RULES, examplesFor, placeholdersFor, valueFitsRule,
 } from '../components/dbquery/connectionExamples.js'
@@ -74,6 +77,36 @@ describe('bağlantı örnekleri', () => {
     expect(valueFitsRule('port', 70000)).toBe(false)
     expect(valueFitsRule('host', 'https://x')).toBe(false)
     expect(RULES.nameMax).toBe(120)
+  })
+
+  it('hata avı D5: kurallar sunucunun KAYIT desenleriyle aynı (DbConnectionProfileService) — örnek adında nokta, sunucu adında _ yok', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT,
+      'backend/src/main/java/com/sitemonitor/service/dbquery/DbConnectionProfileService.java'), 'utf8')
+    const pattern = (name) => {
+      const m = src.match(new RegExp(`\\b${name}\\s*=\\s*Pattern\\.compile\\("([^"]+)"\\)`))
+      expect(m, `${name} deseni`).toBeTruthy()
+      return m[1].replace(/\\\\/g, '\\')
+    }
+    const charClass = (re) => re.match(/\[[^\]]+\]/)[0]
+    expect(`^${pattern('HOSTNAME')}$`).toBe(RULES.host.source)
+    expect(`^${pattern('IPV6')}$`).toBe(RULES.ipv6.source)
+    expect(charClass(pattern('DATABASE'))).toBe(charClass(RULES.objectName.source))
+    expect(charClass(pattern('INSTANCE'))).toBe(charClass(RULES.instance.source))
+    const max = (n) => Number(src.match(new RegExp(`\\b${n}\\s*=\\s*(\\d+)`))[1])
+    expect(RULES.hostMax).toBe(max('MAX_HOST'))
+    expect(RULES.databaseMax).toBe(max('MAX_DATABASE'))
+    expect(RULES.instanceMax).toBe(max('MAX_INSTANCE'))
+    expect(RULES.usernameMax).toBe(max('MAX_USERNAME'))
+    expect(RULES.nameMax).toBe(max('MAX_NAME'))
+    // Sunucunun reddettiği değerleri örnek kapısı da reddeder (gelecekte "SQL.01" / "db_01" örneği eklenirse kapı düşer)
+    expect(valueFitsRule('mssql_instance', 'SQL.01')).toBe(false)
+    expect(valueFitsRule('mssql_instance', 'SQL_01$')).toBe(true)
+    expect(valueFitsRule('host', 'db_01.example.com')).toBe(false)
+    expect(valueFitsRule('host', 'db-01.example.com')).toBe(true)
+    expect(valueFitsRule('host', '-db.example.com')).toBe(false)
+    expect(valueFitsRule('host', 'db..example.com')).toBe(false)
+    expect(valueFitsRule('host', 'fe80::1')).toBe(true)
+    expect(valueFitsRule('database_name', 'ORCLPDB1.example.com')).toBe(true)
   })
 
   it('hiçbir örnek parola ya da gerçek alan adı taşımaz', () => {

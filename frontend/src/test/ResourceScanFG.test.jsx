@@ -207,18 +207,18 @@ describe('performans bütçesi (F1)', () => {
 })
 
 describe('geçmiş ve karşılaştırma işaretleri', () => {
-  it('geçmiş satırı: "Site · 3 sayfa analiz edildi", bütçe aşıldı (2) / içinde / bilinmiyor; bütçesiz satırda işaret yok', async () => {
+  it('geçmiş satırı: "Site · 3 / 5 sayfa analiz edildi" (Sayfalar ile aynı), bütçe aşıldı (2) / içinde / bilinmiyor; bütçesiz satırda işaret yok', async () => {
     await mount()
     openTab(/^Geçmiş/)
     const row = (id) => document.querySelector(`[data-slot="prs-history-row"][data-id="${id}"]`)
     await waitFor(() => expect(row(30)).not.toBeNull())
-    expect(slot('prs-history-scope', row(30)).textContent).toBe('Site · 3 sayfa analiz edildi')
+    expect(slot('prs-history-scope', row(30)).textContent).toBe('Site · 3 / 5 sayfa analiz edildi')
     expect(slot('prs-budget-status', row(30)).textContent).toBe('Bütçe aşıldı (2)')
     expect(slot('prs-budget-status', row(12)).getAttribute('data-status')).toBe('ok')
     expect(slot('prs-budget-status', row(10)).textContent).toBe('Bütçe: bilinmiyor')
     expect(slot('prs-budget-status', row(10)).getAttribute('data-tone')).toBe('muted')
     expect(slot('prs-budget-status', row(9))).toBeNull()
-    expect(row(30).getAttribute('aria-label')).toMatch(/Site · 3 sayfa analiz edildi/)
+    expect(row(30).getAttribute('aria-label')).toMatch(/Site · 3 \/ 5 sayfa analiz edildi/)
   })
 
   it('karşılaştırma: iki tarafın bütçe durumu, site işareti ve kategori puanları', async () => {
@@ -228,7 +228,7 @@ describe('geçmiş ve karşılaştırma işaretleri', () => {
     await waitFor(() => expect(slot('prs-cmp-body')).not.toBeNull())
     const m = slot('prs-cmp-markers')
     expect(slots('prs-budget-status', m).map((b) => b.getAttribute('data-status'))).toEqual(['ok', 'exceeded'])
-    expect(slot('prs-cmp-site', m).textContent).toBe('Site · 3 sayfa analiz edildi')
+    expect(slot('prs-cmp-site', m).textContent).toBe('Site · 3 / 5 sayfa analiz edildi')
     expect(slot('prs-cmp-scores', m).textContent).toMatch(/Güvenlik.*58/)
   })
 })
@@ -353,5 +353,96 @@ describe('dışa aktarım (F3)', () => {
     fireEvent.click(slot('prs-export-xlsx'))
     await waitFor(() => expect(exportMock.exportResourceScanXlsx).toHaveBeenCalled())
     expect(exportMock.exportResourceScanXlsx.mock.calls[0][0].prev?.id).toBe(12)
+  })
+})
+
+// Hata avı bh-prs3 (2026-11-05) — ekran davranışları.
+describe('bh-prs3 hata avı — ekran', () => {
+  it('O-1: eski pod eğilim isteğine 400 INVALID_PARAMETER ("\'scanId\' değeri geçersiz") döner → "desteklemiyor" şeridi, hata değil', async () => {
+    api.monitoring.resourceScanTrend.mockResolvedValue({ success: false, status: 400, code: 'INVALID_PARAMETER',
+      error: "'scanId' değeri geçersiz: 'trend' beklenen biçimde değil (beklenen: sayı). Adresi ya da formu kontrol edip tekrar deneyin." })
+    await mount()
+    openTab(/^Eğilim/)
+    await waitFor(() => expect(slot('prs-tv-unsupported')).not.toBeNull())
+    expect(slot('prs-tv-error')).toBeNull()
+    await waitFor(() => expect(slot('prs-trend')).not.toBeNull())          // geçmişten çizilen yedek grafik
+    expect(document.body.textContent).not.toMatch(/scanId/)
+  })
+
+  it('O-1: yeni sunucunun gerçek 400\'ü (başka parametre) hata olarak kalır', async () => {
+    api.monitoring.resourceScanTrend.mockResolvedValue({ success: false, status: 400, code: 'INVALID_PARAMETER', error: "'id' değeri geçersiz: 'x'" })
+    await mount()
+    openTab(/^Eğilim/)
+    await waitFor(() => expect(slot('prs-tv-error')).not.toBeNull())
+    expect(slot('prs-tv-unsupported')).toBeNull()
+  })
+
+  it('O-2: site koşusunda çubuk sayfa ilerlemesinden — ana sayfa bitince %100\'de takılmaz, geri gitmez', async () => {
+    const run = (progress) => scanSummary(51, { status: 'RUNNING', scope: 'site', pages_count: null, grade: null, finished_at: null, progress })
+    const polls = [
+      run({ done: 30, total: 42, pages_done: 1, pages_total: 5 }),
+      run({ done: 36, total: 48, pages_done: 1, pages_total: 5 }),
+      run({ done: 48, total: 48, pages_done: 2, pages_total: 5 }),
+    ]
+    let n = 0
+    api.monitoring.startResourceScan.mockResolvedValue(ok(run({ done: 27, total: 27, pages_done: 1, pages_total: 5 })))
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId !== 51) return Promise.resolve(detailOf(scanId))
+      const s = polls[Math.min(n, polls.length - 1)]
+      n += 1
+      return Promise.resolve(ok({ scan: s, analysis: null, items: null, items_kept: true }))
+    })
+    await mount()
+    fireEvent.click(slot('prs-start'))
+    const bar = () => within(slot('prs-running')).getByRole('progressbar')
+    await waitFor(() => expect(slot('prs-running')).not.toBeNull())
+    const seen = new Set()
+    await waitFor(() => {
+      seen.add(bar().getAttribute('aria-valuenow'))
+      expect(bar().getAttribute('aria-valuenow')).toBe('40')
+    })
+    // nesne sayacı 27 / 27 (%100) iken bile çubuk 1 / 5 sayfa; hiçbir anda %100 değil
+    expect(seen.has('100')).toBe(false)
+    expect(slot('prs-progress-text').textContent).toMatch(/48/)
+  })
+
+  it('D-3: kısmi ölçülen iç sayfa — not ve güvenlik puanı soluk, "Kısmi ölçüm" rozeti', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId !== 30) return Promise.resolve(detailOf(scanId))
+      const d = siteDetail(30)
+      d.analysis.site.pages[4] = { ...d.analysis.site.pages[4], capped: true }   // /urunler: not 81 (B), güvenlik 58
+      return Promise.resolve(ok(d))
+    })
+    await mount()
+    openTab(/^Sayfalar/)
+    await waitFor(() => expect(slot('prs-site')).not.toBeNull())
+    const row = slots('prs-site-page').find((p) => p.textContent.includes('/urunler'))
+    expect(slot('prs-site-partial', row).textContent).toBe('Kısmi ölçüm — not ve güvenlik puanı kesin değil')
+    expect(slot('prs-site-grade', row).getAttribute('data-tone')).toBe('muted')
+    expect(slot('prs-site-grade', row).getAttribute('data-partial')).toBe('true')
+    expect(row.querySelector('[data-score="security"]').getAttribute('data-tone')).toBe('muted')
+    expect(row.querySelector('[data-score="seo"]').getAttribute('data-tone')).not.toBe('muted')   // SEO yalnız HTML'den
+    // kısmi olmayan sayfada rozet yok
+    const main = slots('prs-site-page').find((p) => p.getAttribute('data-main') === 'true')
+    expect(slot('prs-site-partial', main)).toBeNull()
+  })
+
+  it('D-6: eğilim rozeti algoritma değişiminin önünü / arkasını kıyaslamaz; son nokta kısmiyse yön yok', async () => {
+    const pt = (id, day, over) => ({ scan_id: id, finished_at: `2026-10-${String(day).padStart(2, '0')}T09:01:00`, algorithm_version: 2,
+      grade: 92, load_ms: 3000, page_bytes: 3 * 1024 * 1024, request_count: 50, js_bytes: null, css_bytes: null, image_bytes: null, font_bytes: null,
+      security_score: null, seo_score: null, a11y_score: null, capped: false, ...over })
+    api.monitoring.resourceScanTrend.mockResolvedValueOnce(ok({ points: [pt(6, 3), pt(7, 10, { algorithm_version: 3, grade: 81, load_ms: 2000 })], growth: [] }))
+    await mount()
+    openTab(/^Eğilim/)
+    await waitFor(() => expect(slots('prs-tv-chart')).toHaveLength(4))
+    const chart = (k) => document.querySelector(`[data-slot="prs-tv-chart"][data-chart="${k}"]`)
+    expect(slot('prs-tv-change', chart('grade'))).toBeNull()                 // v2 92 → v3 81: "Kötüleşti" DENMEZ
+    expect(slot('prs-tv-change', chart('load')).getAttribute('data-direction')).toBe('better')
+    // son nokta kısmi: hiçbir kartta yön yok
+    api.monitoring.resourceScanTrend.mockResolvedValueOnce(ok({ points: [pt(6, 3, { algorithm_version: 3 }), pt(7, 10, { algorithm_version: 3, grade: 99, load_ms: 900, capped: true })], growth: [] }))
+    fireEvent.click(within(slot('prs-tv-days')).getByRole('button', { name: '30 gün' }))
+    await waitFor(() => expect(api.monitoring.resourceScanTrend).toHaveBeenLastCalledWith(100, 30))
+    await waitFor(() => expect(slot('prs-trend-view').getAttribute('data-state')).toBe('ok'))
+    await waitFor(() => expect(slots('prs-tv-change')).toHaveLength(0))
   })
 })

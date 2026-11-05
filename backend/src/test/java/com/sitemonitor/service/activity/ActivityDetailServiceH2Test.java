@@ -505,6 +505,55 @@ class ActivityDetailServiceH2Test {
     }
 
     @Test
+    @DisplayName("Hata avı D2 / D7 / D8: monitoring.read yoksa izlemeye derin bağlantı yok (izleme / geçmiş / değişiklikler / "
+            + "tanılama), değişiklik bağı change_hidden; zaman çizelgesi (izin istemez) açık")
+    void permissionHiddenDropsMonitorLinks() {
+        ActivityLog a = act("PORT", 7L, "odeme.local:8443", T, "SCHEDULED_CHECK", "ERROR");
+        Map<String, Object> visible = svc.detail(a, admin());
+        assertThat(m(visible.get("links")).get("monitor")).isNotNull();
+        assertThat(m(visible.get("links"))).containsEntry("can_timeline", true);
+
+        when(perms.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(false);
+        Map<String, Object> d = svc.detail(a, user(5L));
+        assertThat(d).containsEntry("check_hidden_reason", "permission");
+        Map<String, Object> links = m(d.get("links"));
+        assertThat(links.get("monitor")).isNull();
+        assertThat(links.get("history")).isNull();
+        assertThat(links.get("changes")).isNull();
+        assertThat(links).containsEntry("can_diagnose", false).containsEntry("can_timeline", true);
+
+        // Yaşam döngüsü satırı (kontrol kapısı yok): bağ işaretçisi kalır, ama ayrıntısı izinle okunur → change_hidden
+        ActivityLog cfg = act("PORT", 7L, "odeme.local:8443", T, "CONFIG_CHANGED", "SUCCESS");
+        cfg.setChangeSeq(4);
+        Map<String, Object> c = svc.detail(cfg, user(5L));
+        assertThat(m(c.get("change"))).containsEntry("seq", 4);
+        assertThat(c).containsEntry("change_hidden", true);
+        assertThat(m(c.get("links")).get("changes")).isNull();
+        assertThat(m(c.get("links")).get("monitor")).isNull();
+        // izinli oturumda bayrak yok
+        when(perms.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+        assertThat(svc.detail(cfg, user(5L))).doesNotContainKey("change_hidden");
+    }
+
+    @Test
+    @DisplayName("Hata avı D8: izleme görülemeyen takıma taşındıysa zaman çizelgesi bağlantısı yok (uç 404 verirdi); kimliksiz satırda da")
+    void timelineLinkFollowsCurrentTeam() {
+        svc.setTimelines(new ActivityTimelineService(new org.springframework.jdbc.core.JdbcTemplate(dataSource)));
+        com.sitemonitor.model.PortMonitor pm = new com.sitemonitor.model.PortMonitor();
+        pm.setName("Taşınan port");
+        pm.setHost("moved2.local");
+        pm.setPort(9443);
+        pm.setTeamId(9L);
+        pm.setStandalone(true);
+        em.persist(pm);
+        ActivityLog a = act("PORT", pm.getId(), "moved2.local:9443", T, "CONFIG_CHANGED", "SUCCESS");
+        assertThat(m(svc.detail(a, user(5L)).get("links"))).containsEntry("can_timeline", false);
+        assertThat(m(svc.detail(a, user(9L)).get("links"))).containsEntry("can_timeline", true);
+        ActivityLog legacy = act("CERT", null, "x.example.com", T, "SCHEDULED_CHECK", "SUCCESS");
+        assertThat(m(svc.detail(legacy, admin()).get("links"))).containsEntry("can_timeline", false);
+    }
+
+    @Test
     @DisplayName("D4: alerts.read yoksa alarm meta verisi dönmez (alarm null + alarm_hidden), alarm bağlantısı yok")
     void alarmHiddenWithoutAlertsRead() {
         AlertEvent ev = new AlertEvent();

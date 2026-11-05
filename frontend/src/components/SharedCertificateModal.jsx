@@ -124,17 +124,17 @@ export default function SharedCertificateModal({ domain, onClose, onSelectDomain
             onValueChange={(v) => { if (v) setView(v) }} className="w-full sm:w-auto">
             {VIEWS.map(({ v, Icon, label }) => (
               <ToggleGroupItem key={v} value={v} role="button" aria-pressed={view === v} aria-checked={undefined} data-view={v}
-                className="h-10 flex-1 gap-1.5 px-3 text-xs sm:h-8 sm:flex-none">
+                className="h-10 flex-1 gap-1.5 px-3 text-xs sm:h-8 sm:flex-none pointer-coarse:h-10">
                 <Icon aria-hidden="true" className="size-3.5" />{label}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" data-slot="shc-export-pdf" className="h-10 flex-1 sm:h-8 sm:flex-none"
+            <Button type="button" variant="outline" size="sm" data-slot="shc-export-pdf" className="h-10 flex-1 sm:h-8 sm:flex-none pointer-coarse:h-10"
               disabled={peers.length === 0 || !!busy} aria-busy={busy === 'pdf' || undefined} onClick={() => runExport('pdf')}>
               <FileDown aria-hidden="true" />{t('shc.exportPdf')}
             </Button>
-            <Button type="button" variant="outline" size="sm" data-slot="shc-export-xlsx" className="h-10 flex-1 sm:h-8 sm:flex-none"
+            <Button type="button" variant="outline" size="sm" data-slot="shc-export-xlsx" className="h-10 flex-1 sm:h-8 sm:flex-none pointer-coarse:h-10"
               disabled={peers.length === 0 || !!busy} aria-busy={busy === 'xlsx' || undefined} onClick={() => runExport('xlsx')}>
               <FileSpreadsheet aria-hidden="true" />{t('shc.exportXlsx')}
             </Button>

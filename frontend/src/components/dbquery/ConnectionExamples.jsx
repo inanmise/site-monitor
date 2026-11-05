@@ -5,7 +5,7 @@ import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import CopyButton from '../ui/CopyButton.jsx'
 import { cn } from '@/lib/utils'
-import { CONNECT_TIMEOUT, DEFAULT_PORT } from './connectionModel.js'
+import { CONNECT_TIMEOUT, DEFAULT_PORT, ORACLE_TCPS_PORT } from './connectionModel.js'
 import { EXAMPLE_FIELD_ORDER, examplesFor, placeholdersFor } from './connectionExamples.js'
 
 /**
@@ -14,7 +14,7 @@ import { EXAMPLE_FIELD_ORDER, examplesFor, placeholdersFor } from './connectionE
  * tür değişince örnekler de değişir. Örnek değerler gerçek değil (example.com), parola hiçbir örnekte yok. Dizeler
  * "Bağlantı dizesinden doldur" kutusuna yapıştırılabilir (`showPasteHint`). Saf sunum — formu değiştirmez.
  */
-export default function ConnectionExamples({ type, oracleMode = 'SERVICE', showPasteHint = true }) {
+export default function ConnectionExamples({ type, oracleMode = 'SERVICE', oracleTcps = false, showPasteHint = true }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const examples = examplesFor(type)
@@ -36,7 +36,7 @@ export default function ConnectionExamples({ type, oracleMode = 'SERVICE', showP
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {examples.map((ex) => <ExampleCard key={ex.id} ex={ex} type={type} t={t} />)}
         </ul>
-        <FieldGuide type={type} oracleMode={oracleMode} typeLabel={typeLabel} t={t} />
+        <FieldGuide type={type} oracleMode={oracleMode} oracleTcps={oracleTcps} typeLabel={typeLabel} t={t} />
       </CollapsibleContent>
     </Collapsible>
   )
@@ -102,13 +102,17 @@ function ExampleCard({ ex, type, t }) {
   )
 }
 
-/** "Alan alan ne yazılır" — formun alan sırasıyla, türe göre örnek değerler ve sunucu kuralları. */
-function FieldGuide({ type, oracleMode, typeLabel, t }) {
+/**
+ * "Alan alan ne yazılır" — formun alan sırasıyla, türe göre örnek değerler ve sunucu kuralları. Varsayılan port formla aynı:
+ * Oracle TCPS açıkken 2484 (2026-11-05 hata avı D4).
+ */
+function FieldGuide({ type, oracleMode, oracleTcps, typeLabel, t }) {
   const ph = placeholdersFor(type, oracleMode)
+  const defaultPort = type === 'ORACLE' && oracleTcps ? ORACLE_TCPS_PORT : DEFAULT_PORT[type]
   const rows = [
     ['name', t('dbq.conn.name'), t('dbq.conn.guide.name')],
     ['host', t('dbq.conn.host'), t('dbq.conn.guide.host', ph.host)],
-    ['port', t('dbq.conn.port'), t('dbq.conn.guide.port', typeLabel, DEFAULT_PORT[type])],
+    ['port', t('dbq.conn.port'), t('dbq.conn.guide.port', typeLabel, defaultPort)],
     ...(type === 'MSSQL' ? [['mssql_instance', t('dbq.conn.instance'), t('dbq.conn.guide.instance')]] : []),
     ['database_name', exampleFieldLabel('database_name', type, oracleMode, t),
       type === 'ORACLE'

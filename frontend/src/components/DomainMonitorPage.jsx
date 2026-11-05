@@ -911,7 +911,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="outline" disabled={exporting} aria-label={t('inv.export')} title={t('inv.export')}
-                className="h-10 shrink-0 sm:h-9">
+                className="h-10 shrink-0 sm:h-9 pointer-coarse:h-10">
                 <Download aria-hidden="true" /><span className="hidden sm:inline">{t('inv.export')}</span>
                 <ChevronDown aria-hidden="true" className="hidden size-3 opacity-70 sm:inline" />
               </Button>

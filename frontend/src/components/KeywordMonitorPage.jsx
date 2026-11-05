@@ -804,7 +804,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             URL'de yazıldığı için bağlantı URL alanında. */}
         <FormField full label={t('keyword.url')} required {...fe.fieldProps('url')} hint={<>
           {t('keyword.urlHint')}{' '}
-          <Button type="button" variant="link" size="xs" className="h-auto p-0 align-baseline text-xs font-medium"
+          <Button type="button" variant="link" size="xs" className="relative h-auto p-0 align-baseline text-xs font-medium pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']"
             onClick={() => setShowCacheHelp(true)}>
             {t('keyword.cacheBustLink')}
           </Button>

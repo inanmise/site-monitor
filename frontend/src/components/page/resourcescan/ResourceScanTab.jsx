@@ -25,7 +25,7 @@ import {
   AUDIT_AREAS, DEFAULT_AUDIT_AREA, DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedAtSighting, filtersForNewScan, findingOfRec, formatMs,
   formatNumber, gradeLetter, isCancelled,
   isRunning, latestDoneId, monotonicPct, parseUrlState, pickDefaultScan, plural, pollCapMs, pollCapReached, previousDone, problemText,
-  progressPct, recItemUrls, resourceScanLink, sectionOfView, urlStateValues, viewOf, withFindings,
+  recItemUrls, resourceScanLink, runProgressPct, sectionOfView, urlStateValues, viewOf, withFindings,
 } from './resourceScanModel.js'
 import { forgetStarted, handOff, markStartedHere, startedHere, takeBack } from './resourceScanWatcher.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
@@ -33,7 +33,7 @@ import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudget.jsx'
 import ResourceScanStart from './ResourceScanStart.jsx'
 import ResourceScanSite from './ResourceScanSite.jsx'
-import { isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
+import { isEndpointUnsupported, isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
@@ -400,8 +400,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       }
       return
     }
-    // Eski sunucu (uç yok): 405 ya da kodsuz 404 → düğme gizlenir; analiz yine sürer
-    if (res.status === 405 || (res.status === 404 && !res.code)) {
+    // Eski sunucu (uç yok): 405, kodsuz 404 ya da eski pod'un tür uyuşmazlığı 400'ü (bh-prs3 O-1, tek kural
+    // isEndpointUnsupported) → düğme gizlenir; analiz yine sürer
+    if (res.status === 405 || (res.status === 404 && !res.code) || (res.status === 400 && isEndpointUnsupported(res))) {
       setCancelSupported(false)
       toast.info(t('prs.cancel.unsupported'))
       return
@@ -512,6 +513,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (!focusReq) return undefined
     let frames = 0
     let raf = null
+    // İstek bittiğinde (odaklandı / vazgeçildi) temizlenir: kalıcı istek, başka analiz seçilince öneri listesini
+    // kendiliğinden açıyordu (bh-prs3 D-1); aynı öneriye ikinci kez gidiş yeni bir istektir
+    const req = focusReq
+    const finish = () => { if (alive.current) setFocusReq((cur) => (cur === req ? null : cur)) }
     const find = () => {
       const root = rootRef.current
       if (!root) return null
@@ -532,6 +537,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
         const sp = scrollParent(rootRef.current)
         if (sp && dashScroll.current != null) sp.scrollTop = dashScroll.current
         dashScroll.current = null
+        finish()
         return
       }
       const el = find()
@@ -539,12 +545,14 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
         frames += 1
         // Ayrıntılı denetim tembel parçada (ilk açılışta indirilir) — hedef ~3 sn beklenir; diğerleri ~20 kare (sınırlı)
         if (frames < (focusReq.target === 'audit' ? 180 : 20)) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
+        else finish()
         return
       }
       // Hedefin bölüm başlığıyla birlikte görünmesi için: sayaç → nesne bölümünün başı; diğerleri kendisi
       const anchor = focusReq.target === 'count' ? (el.closest('[data-slot="prs-objects"]') || el) : el
       try { anchor.scrollIntoView?.({ block: 'start', behavior: 'auto' }) } catch { /* eski tarayıcı */ }
       try { el.focus?.({ preventScroll: true }) } catch { el.focus?.() }
+      finish()
     }
     raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
     return () => {
@@ -766,7 +774,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
                   onShowObjects={showRecObjects}
                   onSelectScan={(id) => { if (id !== selectedId) { select(id); requestFocus('hero') } }}
                   onGoRec={goRec} onAudit={goAudit}
-                  focusRec={typeof focusReq?.target === 'string' && focusReq.target.startsWith('rec:') ? focusReq.target.slice(4) : null} />
+                  focusRec={typeof focusReq?.target === 'string' && focusReq.target.startsWith('rec:') ? { code: focusReq.target.slice(4), seq: focusReq.seq } : null} />
               )}
             </SelectedView>
           </TabsContent>
@@ -912,11 +920,14 @@ function EmptyState({ canRun, startBtn, t }) {
 
 /** Süren analizin ilerlemesi — sayaç kendi yaprağında (üst bileşen saniyede bir çizilmez). */
 function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel, cancelling, cancelRequested, siteIgnored = false }) {
-  const maxRef = useRef({ id: null, pct: null })
-  if (maxRef.current.id !== scan?.id) maxRef.current = { id: scan?.id, pct: null }
-  // İlerleme geri gitmez (r177 H16): CSS'ten yeni nesne bulundukça toplam büyür; görülen en yüksek değer korunur
-  const pct = monotonicPct(maxRef.current.pct, progressPct(scan))
+  const maxRef = useRef({ id: null, pct: null, memo: null })
+  if (maxRef.current.id !== scan?.id) maxRef.current = { id: scan?.id, pct: null, memo: null }
+  // İlerleme geri gitmez (r177 H16): CSS'ten yeni nesne bulundukça toplam büyür; görülen en yüksek değer korunur. Site
+  // koşusunda yüzde sayfa ilerlemesinden (bh-prs3 O-2 — nesne sayacı site boyunca birikir, ana sayfada %100'e takılıyordu)
+  const run = runProgressPct(scan, maxRef.current.memo)
+  const pct = monotonicPct(maxRef.current.pct, run.pct)
   maxRef.current.pct = pct
+  maxRef.current.memo = run.memo
   const done = scan?.progress?.done ?? 0
   const total = scan?.progress?.total ?? 0
   const stage = total > 0 ? 'measuring' : 'discovering'

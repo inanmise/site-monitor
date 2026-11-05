@@ -929,13 +929,13 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
                     {bad
                       ? <Button type="button" variant="ghost" size="xs" onClick={open} title={c.error || undefined}
-                          className="h-auto min-w-0 justify-between gap-2 px-1.5 py-0.5 text-left font-normal text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          className="h-auto min-w-0 justify-between gap-2 px-1.5 py-0.5 text-left font-normal whitespace-normal text-destructive hover:bg-destructive/10 hover:text-destructive pointer-coarse:min-h-10"
                           /* Erişilebilir ad ZAMANI da taşır: aynı hata art arda tekrarladığında
                              (tipik durum — 32 satırın hepsi "HTTP connect timed out") yalnız hata
                              metniyle satırlar ekran okuyucuda birbirinin aynı okunuyor ve klavye
                              kullanıcısı hangi kontrolde olduğunu ayırt edemiyordu. */
                           aria-label={`${formatDateSec(c.checked_at)} · ${detailText} — ${t('httpdiag.rowOpenAria')}`}>
-                          <span className="min-w-0 truncate">{detailText}</span>
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{detailText}</span>
                           <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold text-primary">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
                         </Button>
                       : <span className="upt-rt-ms">{detailText}</span>}

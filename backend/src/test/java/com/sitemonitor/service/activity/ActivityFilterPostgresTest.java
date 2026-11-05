@@ -149,6 +149,18 @@ class ActivityFilterPostgresTest {
                 id -> true, Instant.parse("2031-03-01T11:00:00Z"));
         assertThat(t.get("checks")).isEqualTo(3);
         assertThat(t.get("outage_count")).isEqualTo(1);
+
+        // Hata avı O1: kesinti kuralının SQL eşi (LEFT / COALESCE) PostgreSQL'de — HTTP WARNING ve senaryo FAIL başarısız,
+        // NO_CHECKS (neden ya da eski özet) ve sorgu ihlali değil
+        long http = row("2031-03-02T10:00:00", "HTTP", 78L, "WARNING").team(TEAM).reason("HTTP_STATUS").http(503).save(jdbc());
+        row("2031-03-02T10:00:10", "HTTP", 79L, "WARNING").team(TEAM).reason("HTTP_STATUS").http(503).save(jdbc());
+        row("2031-03-02T10:00:20", "SCRIPTED", 80L, "WARNING").team(TEAM).reason("SCRIPT_CHECK_FAILED").save(jdbc());
+        row("2031-03-02T10:00:30", "SCRIPTED", 81L, "WARNING").team(TEAM).summary("NO_CHECKS · 0✓/0✗").save(jdbc());
+        row("2031-03-02T10:00:40", "SCRIPTED", 82L, "WARNING").team(TEAM).reason("SCRIPT_NO_CHECKS").save(jdbc());
+        row("2031-03-02T10:00:50", "DBQUERY", 83L, "WARNING").team(TEAM).save(jdbc());
+        Map<String, Object> w = related.related(http, 120, true, List.of(TEAM), id -> true).body();
+        assertThat(((Map<?, ?>) w.get("anchor")).get("failing")).isEqualTo(true);
+        assertThat(w.get("total")).isEqualTo(2);
     }
 
     /** Düz (tam) sıralama düğümü: "Sort  (…" — "Incremental Sort" (dizinden gelen sıranın eşitlerini sıralar) sayılmaz. */

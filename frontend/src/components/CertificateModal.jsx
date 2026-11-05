@@ -470,7 +470,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable] [&_[data-slot=modal-shell-body]]:scroll-pt-14')}
       title={<span data-slot="cert-modal-title" className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         <span className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]" title={domain}>{domain}</span>
+          <span className="min-w-0 text-lg font-bold tracking-[-.02em] [overflow-wrap:anywhere]">{domain}</span>
           {d && (
             <Badge variant="secondary" data-slot="cert-modal-status" data-status={statusK}
               className={cn('shrink-0 font-bold', STATUS_TONE[statusK] ?? STATUS_TONE.valid)}>
@@ -551,7 +551,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           ) : sslError != null ? (
             <StatusBlock tone="danger" icon={ShieldX} title={t(isManual ? 'sslv.m.loadFailed' : 'sslv.loadFailed')} description={sslError || t('sslv.loadFailedHint')}
               actions={(
-                <Button type="button" variant="outline" className="gap-1.5 max-sm:h-10" onClick={() => probeSsl(domain)}>
+                <Button type="button" variant="outline" className="gap-1.5 max-sm:h-10 pointer-coarse:h-10" onClick={() => probeSsl(domain)}>
                   <RefreshCw aria-hidden="true" className="size-4" />{t('sslv.retry')}
                 </Button>
               )} />

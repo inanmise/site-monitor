@@ -100,6 +100,15 @@ export function changeDbType(form, dbType) {
   return { ...next, port: wasDefault ? String(defaultPortOf(next)) : form.port }
 }
 
+/**
+ * SQL Server: örnek adı dolu ama port varsayılan 1433 mü (2026-11-05 hata avı O2) — sunucu sürücüye portu HER ZAMAN verir,
+ * sürücü port verildiğinde örnek adıyla yönlendirmez; bu ayar büyük olasılıkla VARSAYILAN örneğe bağlanır (formda uyarı).
+ */
+export function instanceOnDefaultPort(form) {
+  return form?.db_type === 'MSSQL' && String(form.mssql_instance ?? '').trim() !== ''
+    && String(form.port ?? '').trim() === String(DEFAULT_PORT.MSSQL)
+}
+
 /** Oracle TCPS aç / kapat: port varsayılandaysa 1521 ↔ 2484 (elle yazılan port korunur). */
 export function setOracleTcps(form, on) {
   if (!!form.oracle_tcps === !!on) return form

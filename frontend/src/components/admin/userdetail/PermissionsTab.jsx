@@ -42,7 +42,7 @@ export default function PermissionsTab({ role, section, perms }) {
       </AlertBanner>
 
       <div data-slot="ud-perm-toolbar" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <InputGroup className="h-10 w-full sm:h-9 sm:max-w-xs">
+        <InputGroup className="h-10 w-full sm:h-9 sm:max-w-xs pointer-coarse:h-10">
           <InputGroupInput type="search" value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder={t('perm.searchPlaceholder')} aria-label={t('ud.permSearchLabel')} />
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>

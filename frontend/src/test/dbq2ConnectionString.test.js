@@ -26,11 +26,23 @@ const TABLE = [
   ['MSSQL JDBC tam', 'jdbc:sqlserver://sql01.example.com:1433;databaseName=Sales;encrypt=true;trustServerCertificate=false;user=ro;password=p',
     { ok: true, db_type: 'MSSQL', hadPassword: true,
       fields: { host: 'sql01.example.com', port: 1433, database_name: 'Sales', mssql_encrypt: true, mssql_trust_server_certificate: false, username: 'ro' } }],
-  ['MSSQL örnek adı', 'jdbc:sqlserver://sql01\\RPT;databaseName=Sales', { ok: true, fields: { host: 'sql01', mssql_instance: 'RPT', database_name: 'Sales' }, noFields: ['port'] }],
+  ['MSSQL örnek adı (portsuz → not)', 'jdbc:sqlserver://sql01\\RPT;databaseName=Sales',
+    { ok: true, fields: { host: 'sql01', mssql_instance: 'RPT', database_name: 'Sales' }, noFields: ['port'], notes: ['INSTANCE_NEEDS_PORT'] }],
+  ['MSSQL örnek adı + kendi portu', 'jdbc:sqlserver://sql01\\RPT:14331;databaseName=Sales',
+    { ok: true, fields: { host: 'sql01', mssql_instance: 'RPT', port: 14331 }, noNotes: ['INSTANCE_NEEDS_PORT'] }],
+  ['MSSQL instanceName + portNumber', 'jdbc:sqlserver://sql01;instanceName=RPT;portNumber=14331;databaseName=Sales',
+    { ok: true, fields: { mssql_instance: 'RPT', port: 14331 }, noNotes: ['INSTANCE_NEEDS_PORT'] }],
   ['MSSQL serverName özelliği', 'jdbc:sqlserver://;serverName=sql02;portNumber=1500;database=Ops', { ok: true, fields: { host: 'sql02', port: 1500, database_name: 'Ops' } }],
   ['MSSQL encrypt strict', 'jdbc:sqlserver://s;encrypt=strict', { ok: true, fields: { mssql_encrypt: true } }],
   ['MSSQL bilinmeyen encrypt', 'jdbc:sqlserver://s;encrypt=maybe', { ok: true, notes: ['ENCRYPT_IGNORED'], noFields: ['mssql_encrypt'] }],
-  ['jTDS', 'jdbc:jtds:sqlserver://sql03:1433/Billing;instance=X1;user=a', { ok: true, db_type: 'MSSQL', fields: { host: 'sql03', port: 1433, database_name: 'Billing', mssql_instance: 'X1', username: 'a' } }],
+  ['jTDS örnekli (URL portu örneğin portu değil → yazılmaz + not)', 'jdbc:jtds:sqlserver://sql03:1433/Billing;instance=X1;user=a',
+    { ok: true, db_type: 'MSSQL', fields: { host: 'sql03', database_name: 'Billing', mssql_instance: 'X1', username: 'a' }, noFields: ['port'],
+      notes: ['INSTANCE_NEEDS_PORT'] }],
+  ['jTDS örneksiz', 'jdbc:jtds:sqlserver://sql03:1433/Billing;user=a',
+    { ok: true, fields: { host: 'sql03', port: 1433, database_name: 'Billing' }, noNotes: ['INSTANCE_NEEDS_PORT'] }],
+  ['ADO.NET örnek portsuz', 'Server=sql01.corp\\RAPOR;Database=OdemeDB;User Id=mon_ro',
+    { ok: true, db_type: 'MSSQL', fields: { host: 'sql01.corp', mssql_instance: 'RAPOR', database_name: 'OdemeDB', username: 'mon_ro' },
+      noFields: ['port'], notes: ['INSTANCE_NEEDS_PORT'] }],
   ['Oracle //servis', 'jdbc:oracle:thin:@//ora-scan.example.com:1521/ORCLPDB1',
     { ok: true, db_type: 'ORACLE', fields: { host: 'ora-scan.example.com', port: 1521, database_name: 'ORCLPDB1', oracle_mode: 'SERVICE' } }],
   ['Oracle SID', 'jdbc:oracle:thin:@ora01:1521:ORCL', { ok: true, fields: { host: 'ora01', port: 1521, database_name: 'ORCL', oracle_mode: 'SID' } }],
@@ -78,6 +90,7 @@ describe('parseConnectionString — doğruluk tablosu', () => {
       if (want.fields) expect(r.fields).toMatchObject(want.fields)
       for (const k of want.noFields || []) expect(r.fields, k).not.toHaveProperty(k)
       if (want.notes) expect(r.notes.map((n) => n.code)).toEqual(expect.arrayContaining(want.notes))
+      for (const code of want.noNotes || []) expect(r.notes.map((n) => n.code), code).not.toContain(code)
       // Kesin kural: hiçbir alanda parola yok
       expect(Object.keys(r.fields)).not.toContain('password')
       expect(JSON.stringify(r.fields)).not.toMatch(/s3cret|tiger|password=/)
@@ -168,6 +181,27 @@ describe('Y1 — parola alanlara ve notlara sızmaz', () => {
     expect(parseConnectionString('jdbc:postgresql://db:99999/x').notes.find((n) => n.code === 'PORT_INVALID').value).toBe('99999')
   })
 
+  it('hata avı D3: not değeri YALNIZ güvenliyse gösterilir — port rakamsa, SSL kipi libpq kip adıysa; şifreleme değeri asla', () => {
+    // Kimlik satırı yanlışlıkla yapıştırıldı (`@` yok — parola uyarısı da tetiklenmez): "port" parolanın kendisi
+    const cred = parseConnectionString('app_user:S3cretPass')
+    const portNote = cred.notes.find((n) => n.code === 'PORT_INVALID')
+    expect(portNote).toBeTruthy()
+    expect(portNote.value).toBeNull()
+    expect(JSON.stringify(cred)).not.toContain('S3cretPass')
+    // Parolada `?` + sorguda `@`: yetki bölümü parolanın `?`'inden kesilir, "port" parolanın başı olur
+    const cut = parseConnectionString('postgresql://u:Pa?ss@h/db?user=a@b')
+    for (const n of cut.notes) expect(n.value ?? null, n.code).toBeNull()
+    expect(JSON.stringify(cut.notes)).not.toMatch(/Pa/)
+    // Rakam port değeri gösterilir; libpq SSL kipi adıyla; tanınmayan SSL / şifreleme değeri gösterilmez
+    expect(parseConnectionString('jdbc:postgresql://db:99999/x').notes.find((n) => n.code === 'PORT_INVALID').value).toBe('99999')
+    expect(parseConnectionString('jdbc:postgresql://db/x?sslmode=verify-ca').notes.find((n) => n.code === 'SSL_MODE_IGNORED').value).toBe('verify-ca')
+    expect(parseConnectionString('jdbc:postgresql://db/x?sslmode=Gizli99').notes.find((n) => n.code === 'SSL_MODE_IGNORED').value).toBeNull()
+    expect(parseConnectionString('jdbc:sqlserver://s;encrypt=maybe').notes.find((n) => n.code === 'ENCRYPT_IGNORED').value).toBeNull()
+    // Ayraçsız `;` içeren parolanın parçası şifreleme değeri gibi okunsa da gösterilmez
+    const semi = parseConnectionString('Server=db1;User Id=sa;Password=ab;encrypt=Kuzu2026;Database=Ops')
+    expect(semi.notes.find((n) => n.code === 'ENCRYPT_IGNORED').value).toBeNull()
+  })
+
   it('başarılı ayrıştırmada da parola izi uyarılır (containsPassword her yolda)', () => {
     expect(parseConnectionString('scott/tiger@db1:1521/ORCL').hadPassword).toBe(true)
     expect(parseConnectionString('user@db.example.com:5432/orders')).toMatchObject({ ok: true, hadPassword: false, fields: { username: 'user' } })
@@ -221,6 +255,29 @@ describe('applyConnectionString — forma uygulama', () => {
     expect(out.suggestType).toBe('MSSQL')
     expect(out.form).toMatchObject({ db_type: 'POSTGRESQL', port: '1433', host: 'db.example.com' })
     expect(applySuggestedType(out.form, 'MSSQL')).toMatchObject({ db_type: 'MSSQL', port: '1433' })
+  })
+
+  it('hata avı O2: portsuz adlandırılmış örnek — varsayılan port BOŞALTILIR (kayıt alan hatasıyla durur), elle yazılan port korunur', () => {
+    for (const conn of ['jdbc:sqlserver://db1\\INST2;databaseName=X', 'Server=db1\\INST2;Database=X', 'jdbc:jtds:sqlserver://db1:1433/X;instance=INST2']) {
+      const p = parseConnectionString(conn)
+      expect(p.notes.map((n) => n.code), conn).toContain('INSTANCE_NEEDS_PORT')
+      // PostgreSQL formundan (tür değişir → 1433) ve SQL Server formundan (1433)
+      for (const start of [base, { ...emptyForm(3, 'MSSQL') }]) {
+        const out = applyConnectionString(start, p)
+        expect(out.form.db_type).toBe('MSSQL')
+        expect(out.form.mssql_instance, conn).toBe('INST2')
+        expect(out.form.port, `${conn}: port 1433 sessizce kalmamalı`).toBe('')
+        expect(out.filled).not.toContain('port')
+      }
+      const custom = applyConnectionString({ ...emptyForm(3, 'MSSQL'), port: '14331' }, p)
+      expect(custom.form.port, 'elle yazılan port korunur').toBe('14331')
+    }
+    // Örneğin kendi portu dizede → port yazılır, not yok
+    const withPort = applyConnectionString(base, parseConnectionString('Server=db1\\INST2,14331;Database=X'))
+    expect(withPort.form.port).toBe('14331')
+    // Örneksiz portsuz dize: varsayılan port olduğu gibi (değişmeyen davranış)
+    const plain = applyConnectionString({ ...emptyForm(3, 'MSSQL') }, parseConnectionString('Server=db1;Database=X'))
+    expect(plain.form.port).toBe('1433')
   })
 
   it('başarısız ayrıştırma formu değiştirmez', () => {

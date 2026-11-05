@@ -128,7 +128,7 @@ export default function UserLdapCompare({ user, onResynced, onFieldUnlocked, glo
   // Yalnız bilinen anahtarlar (etiketi olan); eski yanıtta `fields` yok → boş → blok çizilmez.
   const fields = Array.isArray(check?.fields) ? check.fields.filter((f) => f && FIELD_LABEL_KEYS[f.key]) : []
   const unlockButton = (f) => (globalAdmin && f.locked ? (
-    <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" disabled={loading || busy || unlocking != null}
+    <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" disabled={loading || busy || unlocking != null}
       aria-busy={unlocking === f.key || undefined} onClick={() => unlockField(f.key)}>
       <LockOpen aria-hidden="true" />{t('usr.fieldUnlock')}
     </Button>

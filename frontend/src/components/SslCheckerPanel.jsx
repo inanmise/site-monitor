@@ -63,7 +63,7 @@ const VERDICT = {
   fail: { Icon: ShieldX, box: 'border-destructive/50 bg-destructive/5 dark:bg-destructive/10', ink: 'bg-destructive/10 text-destructive dark:bg-destructive/20' },
   unknown: { Icon: ShieldQuestion, box: 'bg-muted/30', ink: 'bg-muted text-muted-foreground' },
 }
-const BTN = 'max-sm:h-10'
+const BTN = 'max-sm:h-10 pointer-coarse:h-10'
 
 function RecheckButton({ onRecheck, rechecking, t, label, upload = false }) {
   if (!onRecheck) return null

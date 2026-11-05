@@ -19,7 +19,7 @@ export default function PermissionToolbar({
   const t = useT()
   return (
     <div data-slot="perm-toolbar" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-      <InputGroup className="h-10 w-full sm:h-9 sm:w-64 lg:w-72">
+      <InputGroup className="h-10 w-full sm:h-9 sm:w-64 lg:w-72 pointer-coarse:h-10">
         <InputGroupInput type="search" value={query} onChange={(e) => onQuery(e.target.value)}
           placeholder={t('perm.searchResources')} aria-label={t('perm.searchLabel')} />
         <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
@@ -36,7 +36,7 @@ export default function PermissionToolbar({
         onValueChange={(v) => { if (v.length) onKinds(v) }}
         className="w-full sm:w-fit">
         {ACTIONS.map(({ key, Icon, labelKey }) => (
-          <ToggleGroupItem key={key} value={key} className="h-10 flex-1 gap-1.5 px-3 text-xs sm:h-9 sm:flex-none">
+          <ToggleGroupItem key={key} value={key} className="h-10 flex-1 gap-1.5 px-3 text-xs sm:h-9 sm:flex-none pointer-coarse:h-10">
             <Icon aria-hidden="true" className="size-3.5" />{t(labelKey)}
           </ToggleGroupItem>
         ))}
@@ -45,20 +45,20 @@ export default function PermissionToolbar({
       <div className="flex flex-wrap items-center gap-2 [&>*]:flex-1 sm:[&>*]:flex-none">
         {canEdit && (
           <Toggle variant="outline" pressed={onlyPending} onPressedChange={onOnlyPending}
-            disabled={!onlyPending && pendingCount === 0} className="h-10 px-3 text-xs sm:h-9">
+            disabled={!onlyPending && pendingCount === 0} className="h-10 px-3 text-xs sm:h-9 pointer-coarse:h-10">
             <CircleDot aria-hidden="true" className="size-3.5" />
             {t('perm.filterPending')}
             {pendingCount > 0 && <Badge variant="warning" className="tabular-nums">{pendingCount}</Badge>}
           </Toggle>
         )}
-        <Toggle variant="outline" pressed={onlySensitive} onPressedChange={onOnlySensitive} className="h-10 px-3 text-xs sm:h-9">
+        <Toggle variant="outline" pressed={onlySensitive} onPressedChange={onOnlySensitive} className="h-10 px-3 text-xs sm:h-9 pointer-coarse:h-10">
           <ShieldAlert aria-hidden="true" className="size-3.5" />
           {t('perm.filterSensitive')}
         </Toggle>
       </div>
 
       <Button type="button" variant="ghost" onClick={onToggleAll} disabled={disableGroups}
-        className="h-10 self-start sm:ml-auto sm:h-9 sm:self-auto">
+        className="h-10 self-start sm:ml-auto sm:h-9 sm:self-auto pointer-coarse:h-10">
         {allOpen ? <ChevronsDownUp aria-hidden="true" /> : <ChevronsUpDown aria-hidden="true" />}
         {allOpen ? t('perm.collapseAll') : t('perm.expandAll')}
       </Button>

@@ -37,8 +37,10 @@ import java.util.TreeSet;
  *
  * <p>Taban sürekliliği: geçmiş yeniden eskiye yürünürken sorgu özeti farklı ({@code sql_hash}) ya da kuralın saklı sonucunun
  * ölçüm tanımı farklı ({@link DbQueryEvaluator#sameMeasureDefinition}) ilk satırda DURULUR (taban sıfırlandı). Kuralın saklı
- * sonucu olmayan satır (eski sürüm pod'unun satırı ya da kural o tarihten sonra eklendi) ATLANIR — tabanı sıfırlamaz (D3).
- * Olağan dışı değerde her satır ihlal bayrağını taşır (saklı sonuç: tür ANOMALY, değerlendirilmiş, geçmemiş — Y1). Saf hesap
+ * sonucu olmayan satır (eski sürüm pod'unun satırı ya da kural o tarihten sonra eklendi) ATLANIR — tabanı sıfırlamaz (D3);
+ * mevsimsiz anomalide yürüyüşün ESKİ ucundaki kesintisiz bu tür satırlar kuralın geçmişinin başlangıcıdır — geçmiş tam
+ * sayılır, "taban kuruluyor" (2026-11-05 hata avı Y1; {@code recentAnomaly}). Olağan dışı değerde her satır ihlal bayrağını
+ * taşır (saklı sonuç: tür ANOMALY, değerlendirilmiş, geçmemiş — Y1). Saf hesap
  * ({@link #plan}, {@link #histories}) veritabanısız sınanır; {@link #read} JDBC.
  */
 public final class DbQueryHistory {
@@ -294,22 +296,34 @@ public final class DbQueryHistory {
     /**
      * Mevsimsiz anomali: en yeni {@code need} satır (kuralın ihtiyacı). Geçmiş TAM = okuma sınırına değilmedi (bütün geçmiş
      * okundu) ve kuralın yürüdüğü kısım hepsini kapsıyor; sıfırlanan geçmiş de tamdır (karşılaştırılabilir geçmiş orada biter).
+     *
+     * <p>Kuralın geçmişinin BAŞLANGICI (2026-11-05 hata avı Y1): yürüyüşün ESKİ ucu kesintisiz kural-sonucu-olmayan satırlarla
+     * (MISSING) bitiyorsa — son değerli / değersiz noktadan sonra yalnız MISSING satırlar kaldıysa ya da hiç nokta yoksa — kural
+     * o satırlardan sonra eklendi (ya da uzun bir eski pod / geri alma penceresi): bu kuralın karşılaştırılabilir geçmişi orada
+     * başlar, geçmiş TAMDIR. Aksi hâlde var olan bir izlemeye yeni eklenen kural (≥ okuma sınırı kadar eski satır) "örnek
+     * yetersiz" (kanıt eksikliği) sayılıp birkaç turda sahte {@code DB_RULE_UNEVALUABLE} alarmı açardı; doğrusu "taban
+     * kuruluyor". ORTADAKİ MISSING satırlar (iki değerli nokta arasında eski pod boşluğu) atlanmaya ve yürüyüş bütçesini
+     * harcamaya devam eder (D3) — kural orada vardı, örnek azsa "yetersiz" doğrudur. Eşik denemesi aynı kuralı izler: MISSING
+     * satır kayan geçmişe hiç girmez, kuyruk dolmadıkça geçmiş tamdır ({@code DbQueryBacktest}).</p>
      */
     private static DbQueryEvaluator.History recentAnomaly(DbQueryRules.Rule r, DbQueryRules.Anomaly a, List<Row> rows,
                                                           int recentLimit, String sqlHash) {
         int need = anomalyRecentNeed(a);
         List<DbQueryEvaluator.Point> points = new ArrayList<>();
         boolean reset = false;
-        int walked = 0;
+        int walked = 0, missingTail = 0;   // missingTail: son noktadan sonra (eskiye doğru) art arda MISSING satır sayısı
         for (int i = 0; i < rows.size() && i < need && i < recentLimit; i++) {
             Row row = rows.get(i);
             Slot s = slot(row, r, sqlHash);
             if (s == Slot.RESET) { reset = true; break; }
             walked++;
-            if (s == Slot.MISSING) continue;   // eski pod satırı / kural sonradan eklendi — atla (D3)
+            if (s == Slot.MISSING) { missingTail++; continue; }   // eski pod satırı / kural sonradan eklendi — atla (D3)
+            missingTail = 0;
             points.add(point(row, r, s));
         }
-        boolean complete = reset || (rows.size() < recentLimit && walked >= rows.size());
+        // Yürüyüşün eski ucu MISSING ile bitti → kuralın geçmişi burada başlıyor (Y1)
+        boolean startsHere = !reset && missingTail > 0;
+        boolean complete = reset || startsHere || (rows.size() < recentLimit && walked >= rows.size());
         return new DbQueryEvaluator.History(points, false, reset, complete);
     }
 

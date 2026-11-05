@@ -46,7 +46,7 @@ const EMPTY = 'p-3 text-[0.88em] text-muted-foreground'
 const MONO = 'font-mono text-[0.9em] text-muted-foreground'
 const LINK = 'h-auto p-0 text-[1em] font-semibold'
 /** Telefonda 40 px dokunma hedefi, ≥ 640 px'te sıkı masaüstü boyu. */
-const TOUCH_BTN = 'h-10 sm:h-8'
+const TOUCH_BTN = 'h-10 sm:h-8 pointer-coarse:h-10'
 const SCORE_BADGE = { high: 'destructive', mid: 'warning', low: 'secondary' }
 
 /** Günlük seri — kıvılcım çubukları; en yoğun gün vurgulu (korunan görselleştirme). */

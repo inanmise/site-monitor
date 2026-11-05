@@ -834,6 +834,35 @@ export function progressPct(scan) {
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)))
 }
 
+/** Site koşusunda geçerli sayfanın payına verilen en çok değer — sayfa bitmeden bir sonrakinin payı verilmez. */
+const SITE_PAGE_SHARE_MAX = 0.99
+
+/**
+ * Süren analizin GENEL ilerleme yüzdesi (bh-prs3 O-2). Tek sayfa analizi = `progressPct`. Çok sayfalı (site) koşuda
+ * sunucunun `progress.done / total` sayacı TÜM site boyunca birikir: ana sayfa bitince ≈ %100 olur, her iç sayfa toplamı
+ * büyütür — nesne oranı sitenin oranı değildir (çubuk %100'de takılıyordu). Bu yüzden yüzde sayfa ilerlemesinden üretilir:
+ * (biten sayfa + geçerli sayfanın payı) / toplam sayfa. Geçerli sayfanın payı, `pages_done` değeri İLK görüldüğündeki ölçülen
+ * nesne sayısından bu yana ölçülenlerin, o andan beri eklenenlere oranıdır (en çok %99; o anda yeni nesne yoksa 0).
+ * Sayfa sayısı henüz bilinmiyorsa (ana sayfa ölçülürken; sunucu toplamı ana sayfa bitince yazar) null = belirsiz — ana
+ * sayfanın nesne oranı gösterilseydi %100'e çıkıp orada kalırdı. Dönen `memo` bileşenin ref'inde tutulup sonraki çağrıya
+ * verilir; "geri gitmez" kuralı (monotonicPct) çağıranda kalır — sayfa sınırında oran hep bir önceki değerden büyüktür.
+ */
+export function runProgressPct(scan, memo = null) {
+  if (scan?.scope !== 'site') return { pct: progressPct(scan), memo: null }
+  const pd = num(scan?.progress?.pages_done)
+  const pt = num(scan?.progress?.pages_total)
+  if (pd === null || pt === null || pt <= 0) return { pct: null, memo: null }
+  const done = num(scan?.progress?.done) ?? 0
+  const total = num(scan?.progress?.total) ?? 0
+  const m = memo && memo.pd === pd && Number.isFinite(memo.base) ? memo : { pd, base: done }
+  const added = total - m.base
+  const share = added > 0 ? Math.max(0, Math.min(SITE_PAGE_SHARE_MAX, (done - m.base) / added)) : 0
+  const finished = Math.max(0, Math.min(pd, pt))
+  // Biten sayfa sayısı toplama ulaşmadıkça en çok %99 (yuvarlama sayfalar bitmeden %100 göstermesin)
+  const pct = finished >= pt ? 100 : Math.min(99, Math.round(((finished + share) / pt) * 100))
+  return { pct: Math.max(0, Math.min(100, pct)), memo: m }
+}
+
 /** İstemci izleme tavanı (ms): sunucunun süre sınırı + pay; en az 10 dk. */
 export function pollCapMs(limits, scan = null) {
   // Çok sayfalı (site) koşu kendi süre bütçesiyle koşar (`site_max_seconds`, sunucu ≤ 900; yoksa 900) — tek sayfa

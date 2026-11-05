@@ -121,8 +121,8 @@ export default function ThresholdEditor({ target, defaultRow, scopeTotal, onClos
   const reAlertOptions = RE_ALERT_PRESETS.includes(reAlert) ? RE_ALERT_PRESETS : [...RE_ALERT_PRESETS, reAlert].sort((a, b) => a - b)
   const footer = (
     <>
-      <Button type="button" variant="outline" className="max-sm:h-10" onClick={onClose} disabled={saving}>{t('thr.cancel')}</Button>
-      <Button type="button" className="max-sm:h-10" onClick={save} disabled={!v.valid || saving} aria-busy={saving || undefined}>
+      <Button type="button" variant="outline" className="max-sm:h-10 pointer-coarse:h-10" onClick={onClose} disabled={saving}>{t('thr.cancel')}</Button>
+      <Button type="button" className="max-sm:h-10 pointer-coarse:h-10" onClick={save} disabled={!v.valid || saving} aria-busy={saving || undefined}>
         {saving && <Spinner size={14} inline decorative />}
         {saving ? t('thr.saving') : t('thr.save')}
       </Button>
@@ -176,7 +176,7 @@ export default function ThresholdEditor({ target, defaultRow, scopeTotal, onClos
                 )}
                 error={fe ? t(fe.key, fe.arg) : undefined}>
                 {({ id, describedBy }) => (
-                  <InputGroup className="h-10 md:h-9">
+                  <InputGroup className="h-10 md:h-9 pointer-coarse:h-10">
                     <InputGroupInput id={id} aria-describedby={describedBy} aria-invalid={invalid || undefined}
                       data-field={k} type="number" inputMode="numeric" min={0} max={MAX_DAYS} step={1}
                       value={raw[k]} disabled={saving}
@@ -213,7 +213,7 @@ export default function ThresholdEditor({ target, defaultRow, scopeTotal, onClos
             label={t('thr.reAlertLabel')} hint={t('thr.reAlertHint')}>
             {({ id, describedBy }) => (
               <NativeSelect id={id} aria-describedby={describedBy} value={String(reAlert)} disabled={saving}
-                onChange={(e) => { setReAlert(Number(e.target.value)); setServerError(null) }} className="h-10 md:h-9">
+                onChange={(e) => { setReAlert(Number(e.target.value)); setServerError(null) }} className="h-10 md:h-9 pointer-coarse:h-10">
                 {reAlertOptions.map(h => <NativeSelectOption key={h} value={String(h)}>{t(...hoursKey(h))}</NativeSelectOption>)}
               </NativeSelect>
             )}

@@ -290,3 +290,70 @@ describe('nesneler ve nesne ayrıntısı — derin alanlar', () => {
     expect(slot('prs-od-http', od)).toBeNull()
   })
 })
+
+// Hata avı bh-prs3 (2026-11-05): "Öneriye git" tekrarı, biçimi bilinmeyen yazı tipi.
+describe('bh-prs3 hata avı — pano ve yazı tipi', () => {
+  /** LARGE_IMAGES düşük önemde → önerilerde ilk 6'nın dışında (16 öneri); "Notu düşüren 3 şey" ona bağlanır. */
+  function lowImagesDetail(scanId) {
+    const d = scanDetailV3(scanId)
+    d.analysis.recommendations = d.analysis.recommendations.map((r) => (r.code === 'LARGE_IMAGES' ? { ...r, severity: 'low', saving_ms: 0, saving_bytes: 0 } : r))
+    return ok(d)
+  }
+
+  it('D-1: aynı öneriye İKİNCİ "Öneriye git" — liste daraltıldıktan sonra yine açılır, öneri görünür ve odaklanır', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 12 ? lowImagesDetail(12) : detail(scanId)))
+    await mountDone()
+    const recIn = () => document.querySelector('[data-slot="prs-recs"] [data-slot="prs-rec"][data-code="LARGE_IMAGES"]')
+    expect(recIn()).toBeNull()                                   // ilk 6'nın dışında
+    const go = () => slots('prs-loss-rec')[0]
+    fireEvent.click(go())
+    await waitFor(() => expect(recIn()).not.toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(recIn()))
+    // kullanıcı listeyi daraltır → aynı düğme yine açar (eskiden sessizce hiçbir şey yapmıyordu)
+    fireEvent.click(slot('prs-recs-more'))
+    await waitFor(() => expect(recIn()).toBeNull())
+    fireEvent.click(go())
+    await waitFor(() => expect(recIn()).not.toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(recIn()))
+  })
+
+  it('D-1: odak isteği bittikten sonra başka analiz seçilince liste kendiliğinden açılmaz', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 12 || scanId === 9 ? lowImagesDetail(scanId) : detail(scanId)))
+    await mountDone()
+    fireEvent.click(slots('prs-loss-rec')[0])
+    await waitFor(() => expect(slot('prs-recs-more').getAttribute('aria-expanded')).toBe('true'))
+    fireEvent.click(slot('prs-recs-more'))
+    await waitFor(() => expect(slot('prs-recs-more').getAttribute('aria-expanded')).toBe('false'))
+    openTab(/^Geçmiş/)
+    await waitFor(() => expect(slot('prs-history-row')).not.toBeNull())
+    fireEvent.click(slots('prs-history-row').find((r) => r.getAttribute('data-id') === '9'))
+    openTab(/^Pano|^Genel bakış|^Özet/)
+    await waitFor(() => expect(slot('prs-recs-more')).not.toBeNull())
+    expect(slot('prs-recs-more').getAttribute('aria-expanded')).toBe('false')
+    expect(slots('prs-rec', slot('prs-recs'))).toHaveLength(6)
+  })
+
+  it('D-7: biçimi bilinmeyen yazı tipi varken "hepsi WOFF2" denmez', async () => {
+    const withFonts = (fonts) => (_id, scanId) => {
+      const d = scanDetailV3(scanId)
+      d.analysis.media = { ...d.analysis.media, fonts }
+      return Promise.resolve(ok(d))
+    }
+    api.monitoring.resourceScan.mockImplementation(withFonts({ count: 2, bytes: 90 * 1024, families: [], non_woff2: [], missing_display: [], preloaded: 0, unknown_format: 1 }))
+    await mountDone()
+    await openAudit('media')
+    expect(slot('prs-c-font-unknown')).not.toBeNull()
+    expect(document.body.textContent).not.toMatch(/Yazı tiplerinin hepsi WOFF2/)
+  })
+
+  it('D-7: biçimi bilinen, sorunsuz yazı tiplerinde "hepsi WOFF2" yine yeşil', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      const d = scanDetailV3(scanId)
+      d.analysis.media = { ...d.analysis.media, fonts: { count: 2, bytes: 90 * 1024, families: [], non_woff2: [], missing_display: [], preloaded: 0, unknown_format: 0 } }
+      return Promise.resolve(ok(d))
+    })
+    await mountDone()
+    await openAudit('media')
+    expect(screen.getByText('Yazı tiplerinin hepsi WOFF2 ve font-display tanımlı.')).toBeInTheDocument()
+  })
+})

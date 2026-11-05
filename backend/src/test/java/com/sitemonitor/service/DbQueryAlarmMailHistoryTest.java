@@ -382,6 +382,39 @@ class DbQueryAlarmMailHistoryTest {
     }
 
     @Test
+    @DisplayName("O1 (hata avı 2026-11-05): değer taban kuran AKILLI kuraldan (maskeli kolon) geldiyse 'Ölçülen Değer', konu "
+            + "ve günlük kopyası ••••; ihlali maskesiz tazelik kuralı yapmış olsa da")
+    void maskedColumnMeasureHiddenForSmartRule() {
+        String rulesJson = "[{\"id\":\"r1\",\"kind\":\"ANOMALY\",\"column\":\"Tutar\",\"aggregate\":\"SUM\"},"
+                + "{\"id\":\"r2\",\"kind\":\"FRESHNESS\",\"column\":\"updated_at\"}]";
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(rulesJson, "[\"tutar\"]")));
+        when(checks.recentScheduledSummary(eq(42L), anyInt())).thenReturn(secretHistory());
+        Map<String, Object> anomaly = rule("r1", "ANOMALY", SECRET, "31415 · taban kuruluyor (3 / 10)", true);
+        anomaly.put("evaluated", false);
+        anomaly.put("note", "building_baseline");
+        Map<String, Object> fresh = rule("r2", "FRESHNESS", 7200.0, "7200 sn", false);
+        Map<String, Object> c = breachCtx(List.of(anomaly, fresh), SECRET);   // motor değeri akıllı kuraldan aldı
+        var parts = esc.dbQueryMailParts(900L, EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", c);
+
+        assertThat(parts.extra()).containsEntry("metric_value", "••••");
+        assertThat(parts.subject()).contains("••••").doesNotContain("31415");
+        for (boolean withRows : new boolean[] {true, false}) {   // gönderilen ve notification_logs kopyası aynı maskeyle
+            assertThat(render("DBQUERY_THRESHOLD", parts.apply(c, withRows))).doesNotContain("31415").doesNotContain("27182");
+        }
+
+        // DBQUERY_FAIL [DB_RULE_UNEVALUABLE] (örnek yetersiz — tek kural): "Ölçülen Değer" yine maskeli
+        Map<String, Object> insufficient = rule("r1", "ANOMALY", SECRET, "31415 · örnek yetersiz (3 / 10)", true);
+        insufficient.put("evaluated", false);
+        insufficient.put("note", "insufficient_samples");
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(ONE_MASKED_RULE.replace("COLUMN_VALUE", "ANOMALY"),
+                "[\"tutar\"]")));
+        Map<String, Object> fc = breachCtx(List.of(insufficient), SECRET);
+        var failParts = esc.dbQueryMailParts(901L, EscalationService.TYPE_DBQUERY_FAIL, "CRITICAL", fc);
+        assertThat(failParts.extra()).containsEntry("metric_value", "••••");
+        assertThat(render("DBQUERY_FAIL", failParts.apply(fc, false))).doesNotContain("31415");
+    }
+
+    @Test
     @DisplayName("D9: postada taban bekleyen kural 'Değerlendirilemedi' yazmaz (nötr metin)")
     void baselineNotesNeutral() {
         Map<String, Object> r = rule("r1", "CHANGE", null, "—", true);

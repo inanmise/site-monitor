@@ -115,11 +115,11 @@ export default function LdapRoleMappingSection({ form, set }) {
             </ol>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" className="max-sm:h-10" disabled={rows.length >= MAX_RULES}
+            <Button type="button" variant="outline" className="max-sm:h-10 pointer-coarse:h-10" disabled={rows.length >= MAX_RULES}
               onClick={() => setRows([...rows, { group: '', role: NEW_ROW_ROLE }])}>
               <Plus aria-hidden="true" /> {t('ldap.addMapping')}
             </Button>
-            <Button type="button" variant={enabled && !previewFresh ? 'default' : 'secondary'} className="max-sm:h-10"
+            <Button type="button" variant={enabled && !previewFresh ? 'default' : 'secondary'} className="max-sm:h-10 pointer-coarse:h-10"
               onClick={runPreview} disabled={previewing} aria-busy={previewing || undefined} data-slot="ldap-rm-preview-btn">
               <Eye aria-hidden="true" /> {t('ldap.rm.preview')}
             </Button>
