@@ -2,12 +2,17 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.ActivityLog;
 import com.sitemonitor.repository.ActivityLogRepository;
+import com.sitemonitor.service.activity.ActivityExportService;
+import com.sitemonitor.service.activity.ActivityFilter;
+import com.sitemonitor.service.activity.ActivityQueryService;
+import com.sitemonitor.service.activity.ActivityRelatedService;
+import com.sitemonitor.service.activity.ActivityTimelineService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,42 +37,59 @@ import java.util.*;
 public class ActivityController {
 
     private final ActivityLogRepository repo;
+    // ── be2 (2026-11-05, aktivite zenginleştirmesi D + E + F) ──
+    private final ActivityQueryService queries;
+    private final ActivityTimelineService timelines;
+    private final ActivityExportService exports;
+    private final ActivityRelatedService relatedSvc;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final int MINI_HISTORY = 6;
 
+    /**
+     * Sayfalı akış. 2026-11-05 (aktivite zenginleştirmesi E) EKLEMELİ süzgeçler: {@code status} CSV, serbest ISO
+     * {@code from} / {@code to}, {@code monitor=TÜR:kimlik}, {@code teamId} (kapsamla kesişir), {@code actor}, {@code group}
+     * CSV, {@code reason} CSV — kural {@link ActivityFilter}. Eski parametreler birebir; hatalı değer 400 {@code VALIDATION_FAILED}.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String type,      // CSV: "CERT,HTTP,PORT"
             @RequestParam(required = false) Long monitorId,
-            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String status,    // CSV: "ERROR,TIMEOUT" (tek değer de geçerli)
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String monitor,   // "HTTP:42"
+            @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String actor,
+            @RequestParam(required = false) String group,     // CSV: check,alarm,notification,change,other
+            @RequestParam(required = false) String reason,    // CSV: hata nedeni kodu ya da class:<ERROR_CLASS>
             HttpSession session) {
 
         int sz = Math.max(1, Math.min(size, 200));
+        int pg = Math.max(0, Math.min(page, MAX_PAGE));
         Scope scope = scope(session);
+        ActivityFilter f = ActivityFilter.parse(new ActivityFilter.Params(type, monitorId, monitor, status, from, to,
+                teamId, actor, group, reason, q), scope.scoped, scope.list);
         if (scope.empty) return ResponseEntity.ok(envelope(List.of(), 0L, 0, sz));
 
-        List<String> types = csvUpper(type);
-        Pageable pageable = PageRequest.of(Math.max(0, page), sz);
-        Page<ActivityLog> result = repo.findFiltered(scope.scoped, scope.list,
-                !types.isEmpty(), types.isEmpty() ? List.of("") : types,
-                monitorId, nil(status) == null ? null : status.trim().toUpperCase(),
-                nil(from), nil(to), like(q), pageable);
-
-        List<Map<String, Object>> data = result.getContent().stream().map(ActivityController::toDto).toList();
-        return ResponseEntity.ok(envelope(data, result.getTotalElements(), result.getNumber(), sz));
+        ActivityQueryService.PageResult result = queries.list(f, pg, sz);
+        List<Map<String, Object>> data = result.rows().stream().map(ActivityController::listDto).toList();
+        return ResponseEntity.ok(envelope(data, result.total(), pg, sz));
     }
+
+    /** Sayfa numarası tavanı (OFFSET taşmasın). */
+    static final int MAX_PAGE = 1_000_000;
 
     /**
      * Özet şerit. 2026-10-11 (aktivite sayfası yeniden tasarımı) EKLEMELİ alanlar: {@code type_counts} (tür çipleri —
      * tür süzgeci hariç, {@code status} dahil) ve {@code series} (zaman çizelgesi: ≤ 48 saatlik pencerede saatlik, daha
-     * uzunda İstanbul günü; aralık yoksa son 30 gün; sıfır dolgulu). Eski alanlar aynı.
+     * uzunda İstanbul günü; aralık yoksa son 30 gün; sıfır dolgulu). 2026-11-05: listeyle AYNI yeni süzgeçler +
+     * {@code group_counts} (olay grubu çipleri — grup süzgeci hariç, tür dahil; beş grup sıfır dolgulu) + {@code timeout}
+     * (yalnız TIMEOUT sayısı; {@code error} eskisi gibi ERROR + TIMEOUT). Eski alanlar aynı; sorgu sayısı 3.
      */
     @GetMapping("/summary")
     public ResponseEntity<Map<String, Object>> summary(
@@ -77,46 +99,45 @@ public class ActivityController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String monitor,
+            @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String actor,
+            @RequestParam(required = false) String group,
+            @RequestParam(required = false) String reason,
             HttpSession session) {
 
+        Scope scope = scope(session);
+        ActivityFilter f = ActivityFilter.parse(new ActivityFilter.Params(type, monitorId, monitor, status, from, to,
+                teamId, actor, group, reason, q), scope.scoped, scope.list);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
-        Scope scope = scope(session);
-        Map<String, Long> counts = new LinkedHashMap<>();
-        long total = 0;
+        Map<String, Long> counts = Map.of();
         String last = null;
         Map<String, Long> typeCounts = new TreeMap<>();
-        Instant seriesTo = parseIso(nil(to), Instant.now());
-        Instant seriesFrom = parseIso(nil(from), seriesTo.minus(SERIES_DEFAULT_DAYS, ChronoUnit.DAYS));
+        Map<String, Long> groupCounts = new LinkedHashMap<>();
+        for (String g : ActivityFilter.GROUPS) groupCounts.put(g, 0L);
+        Instant seriesTo = f.to() == null ? Instant.now() : ActivityFilter.instantOf(f.to());
+        Instant seriesFrom = f.from() == null ? seriesTo.minus(SERIES_DEFAULT_DAYS, ChronoUnit.DAYS) : ActivityFilter.instantOf(f.from());
         if (seriesFrom.isBefore(seriesTo.minus(SERIES_MAX_DAYS, ChronoUnit.DAYS))) seriesFrom = seriesTo.minus(SERIES_MAX_DAYS, ChronoUnit.DAYS);
         List<Object[]> hourRows = List.of();
         if (!scope.empty) {
-            List<String> types = csvUpper(type);
-            boolean tf = !types.isEmpty();
-            List<String> tlist = tf ? types : List.of("");
-            for (Object[] row : repo.countByStatusFiltered(scope.scoped, scope.list, tf, tlist,
-                    monitorId, nil(from), nil(to), like(q))) {
-                String st = String.valueOf(row[0]);
-                long c = ((Number) row[1]).longValue();
-                counts.put(st, c);
-                total += c;
-            }
-            last = repo.maxActivityTimeFiltered(scope.scoped, scope.list, tf, tlist,
-                    monitorId, nil(from), nil(to), like(q));
-            String st = nil(status) == null ? null : status.trim().toUpperCase();
-            for (Object[] row : repo.countByTypeFiltered(scope.scoped, scope.list, monitorId, st, nil(from), nil(to), like(q))) {
-                if (row[0] != null) typeCounts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
-            }
-            hourRows = repo.countByHourAndStatus(scope.scoped, scope.list, tf, tlist, monitorId,
-                    ISO.format(seriesFrom), nil(to), like(q));
+            ActivityQueryService.SummaryData d = queries.summary(f, ISO.format(seriesFrom));
+            counts = d.statusCounts();
+            last = d.lastActivity();
+            typeCounts = d.typeCounts();
+            groupCounts = d.groupCounts();
+            hourRows = d.hourRows();
         }
+        long total = counts.values().stream().mapToLong(Long::longValue).sum();
         body.put("total", total);
         body.put("success_count", counts.getOrDefault("SUCCESS", 0L));
         body.put("warning", counts.getOrDefault("WARNING", 0L));
         body.put("error", counts.getOrDefault("ERROR", 0L) + counts.getOrDefault("TIMEOUT", 0L));
+        body.put("timeout", counts.getOrDefault("TIMEOUT", 0L));
         body.put("unknown", counts.getOrDefault("UNKNOWN", 0L));
         body.put("last_activity", last);
         body.put("type_counts", typeCounts);
+        body.put("group_counts", groupCounts);
         body.put("series", series(hourRows, seriesFrom, seriesTo));
         body.put("timestamp", now());
         return ResponseEntity.ok(body);
@@ -183,13 +204,71 @@ public class ActivityController {
         return ISO.format(h.truncatedTo(ChronoUnit.HOURS)) + "Z";
     }
 
-    private static Instant parseIso(String v, Instant fallback) {
-        if (v == null) return fallback;
-        try {
-            return java.time.LocalDateTime.parse(v.length() > 19 ? v.substring(0, 19) : v).toInstant(ZoneOffset.UTC);
-        } catch (Exception e) {
-            return fallback;
-        }
+    // ── be2 (2026-11-05, aktivite zenginleştirmesi D + E + F): zaman çizelgesi, tam dışa aktarım, kök neden ipuçları ──
+
+    /**
+     * İzleme zaman çizelgesi (D): {@code ?monitor=TÜR:kimlik&from=&to=} (varsayılan son 7 gün, en çok 90). Kapı = izlemenin
+     * takımı ({@code canViewMonitoring}); görülemeyen → 404. Ayrıntı: {@link ActivityTimelineService}.
+     */
+    @GetMapping("/timeline")
+    public ResponseEntity<Map<String, Object>> timeline(
+            @RequestParam(required = false) String monitor,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            HttpSession session) {
+        Scope scope = scope(session);
+        Map<String, Object> data = timelines.timeline(monitor, from, to, scope.scoped, scope.list,
+                team -> SessionScope.canViewMonitoring(session, team), Instant.now());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Tam dışa aktarım (E): {@code ?format=csv|json&<liste süzgeçleri>} — listeyle AYNI süzgeç ve kapsam, tüm sayfalar
+     * (CSV ≤ 50 000, JSON ≤ 20 000 satır). Sınırlar ve biçim: {@link ActivityExportService}.
+     */
+    @GetMapping("/export")
+    public ResponseEntity<?> export(
+            @RequestParam(required = false) String format,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) Long monitorId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String monitor,
+            @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String actor,
+            @RequestParam(required = false) String group,
+            @RequestParam(required = false) String reason,
+            HttpSession session, HttpServletRequest request, HttpServletResponse response) throws java.io.IOException {
+        Scope scope = scope(session);
+        ActivityFilter f = ActivityFilter.parse(new ActivityFilter.Params(type, monitorId, monitor, status, from, to,
+                teamId, actor, group, reason, q), scope.scoped, scope.list);
+        return exports.export(f, format, scope.empty, session, request, response);
+    }
+
+    /**
+     * "Aynı anda ne oldu?" (F): {@code ?window=120} (sn, 30–900). Kapı = {@code GET /{id}} ile aynı (404). Pencere yalnız
+     * görünen kapsamdan; öğeler listeyle aynı satır biçiminde. Ayrıntı: {@link ActivityRelatedService}.
+     */
+    @GetMapping("/{id}/related")
+    public ResponseEntity<Map<String, Object>> related(@PathVariable Long id,
+                                                       @RequestParam(required = false) Integer window,
+                                                       HttpSession session) {
+        Scope scope = scope(session);
+        ActivityRelatedService.Result r = relatedSvc.related(id, window, scope.scoped, scope.list,
+                team -> SessionScope.canViewMonitoring(session, team));
+        Map<String, Object> data = new LinkedHashMap<>(r.body());
+        data.put("items", r.items().stream().map(ActivityController::listDto).toList());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        body.put("timestamp", now());
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping("/{id}")
@@ -267,6 +346,17 @@ public class ActivityController {
         return body;
     }
 
+    /**
+     * Liste ve kök neden satırı (2026-11-05): {@link #toDto} + bağlantı alanları ({@code check_id, http_status,
+     * failure_reason, failure_detail, alert_event_id, storm_id, change_seq, request_id}). {@code GET /{id}} yanıtı
+     * birebir kalsın diye {@code toDto}'ya eklenmez.
+     */
+    private static Map<String, Object> listDto(ActivityLog a) {
+        Map<String, Object> m = toDto(a);
+        com.sitemonitor.service.activity.ActivityDetailService.putRefs(m, a);
+        return m;
+    }
+
     private static Map<String, Object> toDto(ActivityLog a) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", a.getId());
@@ -286,24 +376,6 @@ public class ActivityController {
         m.put("response_ms", a.getResponseMs());
         m.put("days_remaining", a.getDaysRemaining());
         return m;
-    }
-
-    private static List<String> csvUpper(String csv) {
-        if (csv == null || csv.isBlank()) return List.of();
-        List<String> out = new ArrayList<>();
-        for (String s : csv.split(",")) {
-            String t = s.trim().toUpperCase();
-            if (!t.isEmpty()) out.add(t);
-        }
-        return out;
-    }
-
-    private static String nil(String s) { return (s == null || s.isBlank()) ? null : s.trim(); }
-
-    /** Serbest metin → '%aranan%' (lower) veya null. */
-    private static String like(String q) {
-        String v = nil(q);
-        return v == null ? null : "%" + v.toLowerCase() + "%";
     }
 
     private static String now() { return ISO.format(Instant.now()); }

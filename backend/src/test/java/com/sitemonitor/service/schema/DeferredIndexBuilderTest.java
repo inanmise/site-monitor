@@ -78,6 +78,9 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_dbqc_checked_at", "dbquery_checks(checked_at)");
         // Aktivite satırlarının alarm bağı (2026-11-05, aktivite zenginleştirmesi B): kısmi PG'de, H2'de sade
         EXPECTED.put("idx_act_alert", "activity_log(alert_event_id, activity_time) WHERE alert_event_id IS NOT NULL");
+        // Aktivite süzgeçleri (2026-11-05, aktivite zenginleştirmesi E): takım + durum + zaman taşınabilir; neden kısmi, PG'ye özgü
+        EXPECTED.put("idx_act_team_status_time", "activity_log(team_id, result_status, activity_time)");
+        EXPECTED.put("idx_act_reason_time", "activity_log(failure_reason, activity_time) WHERE failure_reason IS NOT NULL");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");
@@ -85,7 +88,7 @@ class DeferredIndexBuilderTest {
     private static final Set<String> POSTGRES_ONLY =
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
                     "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending", "ux_der_mon_exp_thr",
-                    "ux_audit_seq");
+                    "ux_audit_seq", "idx_act_reason_time");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

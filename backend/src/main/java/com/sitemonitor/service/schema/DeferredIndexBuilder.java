@@ -235,7 +235,15 @@ public final class DeferredIndexBuilder {
             // kısmı, kolonları null). H2'de sade hâli.
             Spec.withFallback(
                     "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_alert ON activity_log(alert_event_id, activity_time) WHERE alert_event_id IS NOT NULL",
-                    "CREATE INDEX IF NOT EXISTS idx_act_alert ON activity_log(alert_event_id, activity_time)"));
+                    "CREATE INDEX IF NOT EXISTS idx_act_alert ON activity_log(alert_event_id, activity_time)"),
+            // 2026-11-05 (aktivite zenginleştirmesi E): Kayıtlar → Aktivite süzgeçleri. Kapsamlı kullanıcının durum süzgeci
+            // (team_id IN (…) AND result_status IN (…) AND activity_time aralığı / ORDER BY activity_time DESC) —
+            // idx_act_team_time durumu taşımadığından takımın tüm satırları okunup süzülüyordu (ActivityFilter, sayım ve sayfa).
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_team_status_time ON activity_log(team_id, result_status, activity_time)"),
+            // Hata nedeni süzgeci (failure_reason IN (…) [+ zaman]) — 365 günlük tabloda nedensiz satırlar dizine girmez
+            // (kısmi; kolon yalnız başarısız kontrol satırlarında dolu). PostgreSQL'e özgü (H2'de zaman dizini + süzme).
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_reason_time ON activity_log(failure_reason, activity_time)"
+                    + " WHERE failure_reason IS NOT NULL"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

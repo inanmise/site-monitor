@@ -63,6 +63,7 @@ public final class AuditEventCatalog {
     public static final List<String> TYPES = List.of(
             "ACCESS_DENIED",
             "ACCOUNT_LOCKED",
+            "ACTIVITY_EXPORT",          // Kayıtlar → Aktivite tam dışa aktarımı (CSV / JSON — süzgeç + satır sayısı; 2026-11-05)
             // Merkezi izleme alarm akışı (2026-10-30): reddedilen çağrı (kapalı / IP izni yok / oran sınırı — IP + neden başına
             // 10 dk'da bir), ilk kez görülen çağıran IP, çağrı günlüğü dışa aktarımı, ayar kaydı. Ayrıntı çağrı günlüğünde.
             "ALARM_FEED_ACCESS_DENIED",
