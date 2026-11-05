@@ -1,7 +1,7 @@
 import {
   Globe, ShieldAlert, Network, Plug, Server, Clock, Shuffle, AlertCircle,
   Target, Radio, ScanSearch, FlaskConical, CalendarDays, Link2, Ban, Zap, Gauge, Bell,
-  ListX, DatabaseZap,
+  ListX, DatabaseZap, FileDiff,
 } from 'lucide-react'
 
 /**
@@ -55,6 +55,8 @@ export const ALERT_TYPE_META = {
   KEYWORD_SLOW:          { icon: Gauge,      color: '#a21caf' },
   KEYWORD_SSL:           { icon: ShieldAlert, color: '#9333ea' },
   KEYWORD_DOMAIN_EXPIRY: { icon: CalendarDays, color: '#6d28d9' },
+  // İçerik değişimi (kw 2026-11-05): kesinti değil, içerik olayı — fark ikonu, mor ailenin koyu tonu.
+  KEYWORD_CHANGED:       { icon: FileDiff,   color: '#86198f' },
 
   // ── Ping ──────────────────────────────────────────────────────────────────
   PING_DOWN:         { icon: Radio,        color: '#e11d48' },

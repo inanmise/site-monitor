@@ -510,6 +510,8 @@ public class IncidentsController {
         }
         else if ("PING_DOWN".equals(type) || "ACCESSIBILITY".equals(type)) { code = "DOWN"; cat = "down"; }
         else if ("KEYWORD".equals(type))          { code = "CONTENT"; cat = "content"; }
+        // İçerik değişimi (kw 2026-11-05): sayfa erişilebilir, içerik temelden farklı — kesinti değil, içerik olayı.
+        else if ("KEYWORD_CHANGED".equals(type))  { code = "CHANGED"; cat = "content"; }
         else if ("DNS_FAILURE".equals(type))      { code = "DNS";  cat = "dns_failure"; }
         else if (type.startsWith("DNS_"))         { code = "DNS";  cat = "dns"; }
         else if (type.startsWith("DOMAINMON_"))   { code = "DOMAIN"; cat = "domain"; }

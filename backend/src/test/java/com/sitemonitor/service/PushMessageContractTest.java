@@ -266,6 +266,7 @@ class PushMessageContractTest {
                 Map.entry("DNS_UNEXPECTED", "changed"),
                 Map.entry("DNS_INCONSISTENT", "changed"),
                 Map.entry("DOMAINMON_STATUS", "changed"),
+                Map.entry("KEYWORD_CHANGED", "changed"),   // 2026-11-05: sayfa içeriği temelden farklı
                 // Sertifika kusuru — host ayakta olabilir
                 Map.entry("HTTP_SSL", "cert"),
                 Map.entry("KEYWORD_SSL", "cert"),

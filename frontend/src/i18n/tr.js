@@ -211,6 +211,7 @@ export const TR = {
   'incov.type.PING_SLOW':'Ping Yavaş Yanıt',
   'incov.type.KEYWORD':  'İçerik Doğrulama',
   'incov.type.KEYWORD_SLOW':'İçerik Yavaş Yanıt',
+  'incov.type.KEYWORD_CHANGED':'İçerik Değişikliği',
   'incov.type.KEYWORD_SSL': 'İçerik SSL Sorunu',
   'incov.type.KEYWORD_DOMAIN_EXPIRY':'İçerik Domain Bitişi',
   'incov.type.DNS_FAILURE':'DNS Çözümleme Hatası',

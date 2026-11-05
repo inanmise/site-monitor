@@ -109,6 +109,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `certificate_checks` | 180 gün | 30 g | `site.monitor.series.certificate.retention-days` | `checked_at < ?` | Sertifika kontrol ham serisi. |
 | `port_checks` | 180 gün | 30 g | `site.monitor.series.port.retention-days` | `checked_at < ?` | Port kontrol ham serisi (30 sn kadans). |
 | `keyword_results` | 180 gün | 30 g | `site.monitor.series.keyword.retention-days` | `checked_at < ?` | İçerik kontrol ham serisi (sayfa parçacığı içerebilir). |
+| `keyword_change_baselines` | öksüz temizliği | — | — | `monitor_id NOT IN (SELECT id FROM keyword_monitors)` | İzlemesi silinmiş anahtar kelime içerik değişimi temelleri (2026-11-05). İzleme başına tek satır; izleme silinirken servis siler, silme başarısız olursa öksüz kalan satır burada temizlenir. |
 | `ping_checks` | 180 gün | 30 g | `site.monitor.series.ping.retention-days` | `checked_at < ?` | Ping ham serisi (30 sn kadans). |
 | `dns_records` | 180 gün | 30 g | `site.monitor.series.dns.retention-days` | `checked_at < ? AND monitor_id IN (SELECT id FROM dns_monitors) AND id NOT IN (SELECT MAX(id) FROM dns_recor…` | DNS kayıt serisi. Yaşayan her monitörün EN YENİ satırı baseline'dır (değişiklik tespiti ona bakar) → asla silinmez. |
 | `login_anomaly_ack` | öksüz temizliği | — | — | `audit_id NOT IN (SELECT id FROM audit_log)` | Denetim satırı budanmış anomali onayı damgası (System Health #3). Ebeveyn audit_log yaş kuralına uyar. |

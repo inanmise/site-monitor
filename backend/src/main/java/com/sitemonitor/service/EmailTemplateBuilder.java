@@ -222,6 +222,7 @@ public class EmailTemplateBuilder {
             case "DBQUERY_FAIL" -> "Veritabanı Sorgusu Çalıştırılamadı";
             case "DBQUERY_THRESHOLD" -> "Veritabanı Sorgu Kuralı İhlali";
             case "DBQUERY_SLOW" -> "Veritabanı Yavaş Sorgu";
+            case "KEYWORD_CHANGED" -> "İçerik Değişikliği";
             default -> "İzleme Uyarısı";
         };
     }
@@ -631,6 +632,7 @@ public class EmailTemplateBuilder {
                 case "HTTP_DOWN": return "Adres yeniden yanıt veriyor — alarm otomatik olarak kapandı.";
                 case "HTTP_SLOW": return "Yanıt süresi eşiğin altına indi — alarm otomatik olarak kapandı.";
                 case "HTTP_SSL": return "TLS sertifika sorunu giderildi — alarm otomatik olarak kapandı.";
+                case "KEYWORD_CHANGED": return "Sayfa içeriği temel alınan sürüme döndü — alarm otomatik olarak kapandı.";
                 default: break;
             }
         }
@@ -879,6 +881,12 @@ public class EmailTemplateBuilder {
                         "Alarm amacında tanımlanan iş sürecini (ör. bekleyen kayıtlar, hatalı işlemler) ilgili ekiple kontrol edin",
                         "Kurallar yeniden sağlanınca alarm kendiliğinden kapanır — sonraki çalıştırma zamanlamaya göre yapılır");
             };
+        }
+        if ("KEYWORD_CHANGED".equals(m.alertType())) {   // kw 2026-11-05: içerik değişimi — "erişilebilirlik" adımı değil
+            return List.of(
+                    "Sayfadaki değişikliğin (kaldırılan / eklenen satırlar) planlı olup olmadığını içerik sahibiyle doğrulayın",
+                    "Beklenen bir değişiklikse Site Monitor'de izlemenin İçerik sekmesinden \"Yeni temel al\" ile alarmı kapatın",
+                    "Beklenmeyen bir değişiklikse (yetkisiz içerik, hatalı dağıtım) ilgili ekiple inceleyin — içerik temele dönerse alarm kendiliğinden kapanır");
         }
         if (isPage(m.alertType())) {
             if ("PAGE_DOWN".equals(m.alertType()))

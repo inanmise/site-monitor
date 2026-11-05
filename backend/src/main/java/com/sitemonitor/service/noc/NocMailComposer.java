@@ -74,6 +74,7 @@ public final class NocMailComposer {
             case "PING_DOWN" -> "Ping yanıtı yok";
             case "DNS_FAILURE" -> "DNS çözümlenemiyor";
             case "KEYWORD" -> "İçerik doğrulaması başarısız";
+            case "KEYWORD_CHANGED" -> "İçerik değişti";
             case "PAGE_DOWN" -> "Sayfa yüklenemiyor";
             case "PAGE_INTEGRITY" -> "Sayfada kırık kaynak / karışık içerik";
             case "SCRIPTED_FAIL" -> "Sentetik senaryo başarısız";

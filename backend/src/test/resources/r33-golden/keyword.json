@@ -257,8 +257,12 @@
           "fields": {
             "bodyBytes": null,
             "bodyTruncated": null,
+            "breachLevel": null,
+            "changeSummaryJson": null,
             "charset": null,
             "checkedAt": "<time>",
+            "contentChanged": null,
+            "contentFingerprint": null,
             "contentType": null,
             "decodedCharset": null,
             "error": null,
@@ -276,6 +280,7 @@
             "ok": true,
             "redirectCount": null,
             "responseMs": 100,
+            "ruleResultsJson": null,
             "snippet": "… Hoş geldiniz …",
             "via": null
           }
@@ -321,8 +326,12 @@
           "fields": {
             "bodyBytes": null,
             "bodyTruncated": null,
+            "breachLevel": null,
+            "changeSummaryJson": null,
             "charset": null,
             "checkedAt": "<time>",
+            "contentChanged": null,
+            "contentFingerprint": null,
             "contentType": null,
             "decodedCharset": null,
             "error": null,
@@ -340,6 +349,7 @@
             "ok": false,
             "redirectCount": null,
             "responseMs": 900,
+            "ruleResultsJson": null,
             "snippet": null,
             "via": null
           }
@@ -384,8 +394,12 @@
           "fields": {
             "bodyBytes": null,
             "bodyTruncated": null,
+            "breachLevel": null,
+            "changeSummaryJson": null,
             "charset": null,
             "checkedAt": "<time>",
+            "contentChanged": null,
+            "contentFingerprint": null,
             "contentType": null,
             "decodedCharset": null,
             "error": "HTTP 503",
@@ -403,6 +417,7 @@
             "ok": false,
             "redirectCount": null,
             "responseMs": 30,
+            "ruleResultsJson": null,
             "snippet": null,
             "via": null
           }
@@ -447,8 +462,12 @@
           "fields": {
             "bodyBytes": null,
             "bodyTruncated": null,
+            "breachLevel": null,
+            "changeSummaryJson": null,
             "charset": null,
             "checkedAt": "<time>",
+            "contentChanged": null,
+            "contentFingerprint": null,
             "contentType": null,
             "decodedCharset": null,
             "error": "URL'de host yok",
@@ -466,6 +485,7 @@
             "ok": false,
             "redirectCount": null,
             "responseMs": null,
+            "ruleResultsJson": null,
             "snippet": null,
             "via": null
           }
@@ -509,8 +529,12 @@
           "fields": {
             "bodyBytes": null,
             "bodyTruncated": null,
+            "breachLevel": null,
+            "changeSummaryJson": null,
             "charset": null,
             "checkedAt": "<time>",
+            "contentChanged": null,
+            "contentFingerprint": null,
             "contentType": null,
             "decodedCharset": null,
             "error": null,
@@ -528,6 +552,7 @@
             "ok": false,
             "redirectCount": null,
             "responseMs": 50,
+            "ruleResultsJson": null,
             "snippet": null,
             "via": null
           }
