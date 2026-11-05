@@ -10,6 +10,8 @@ import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import { useCoarsePointer } from '../../hooks/useCoarsePointer.js'
 import NocStatus from '../noc/NocStatus.jsx'
+import MonitorForwardsPill from '../forwards/MonitorForwardsPill.jsx'
+import { forwardTypeKey } from '../forwards/forwardModel.js'
 import FavoriteToggle from './FavoriteToggle.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -37,7 +39,8 @@ import { cn } from '@/lib/utils'
  * `noc` (2026-09-28; eski `nocNotify` rozetinin yerine): `{ type, monitor, canEdit }` — KARTLA AYNI 7/24 göstergesi
  * (noc/NocStatus, Zengin hap): açık / açık · iletilmiyor / kapalı, dokun-gör açıklama + "7/24 ayarını düzenle" ya da
  * "7/24 Kapsamı'nda gör". Kart ile pencere böylece hiç ayrışmaz. Pencere adına (DialogTitle) KARIŞMAZ, başlık satırında
- * eylem grubunun solunda durur.
+ * eylem grubunun solunda durur. Aynı `noc` (tür + izleme kimliği) alarm iletimi rozetini de besler
+ * (forwards/MonitorForwardsPill, 2026-11-05): 7/24 göstergesinin hemen ardında, on türde aynı yer.
  */
 export function MonitorDetailModal({ open = true, onClose, status = 'unknown', badge, title, subtitle, actions, noc = null, className, children }) {
   return (
@@ -70,6 +73,12 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       title={<>{badge}<span data-slot="monitor-detail-title" className="min-w-0 text-lg font-bold tracking-[-.02em] [overflow-wrap:anywhere]">{title}</span></>}
       headerExtra={(actions || noc) ? <>
         {noc && <NocStatus {...noc} />}
+        {/* Alarm iletimi rozeti (2026-11-05) — 7/24 göstergesinin hemen ardında; on türün hepsinde bu tek yerden. Yanıt
+            gelene dek / gizli / eski sunucuda hiçbir şey çizmez. */}
+        {noc?.monitor?.id != null && (
+          <MonitorForwardsPill type={forwardTypeKey(noc.type)} id={noc.monitor.id}
+            rowLabel={typeof title === 'string' ? title : (noc.rowLabel || noc.monitor.name || noc.monitor.url || noc.monitor.host || noc.monitor.domain)} />
+        )}
         {/* Favori yıldızı (2026-10-02, öneri 23) — kartla AYNI anahtar; tercihler hazır değilse çizilmez */}
         {noc?.monitor?.id != null && (
           <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} size="header"

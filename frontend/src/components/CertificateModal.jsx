@@ -17,6 +17,7 @@ import CertCheckHistory from './certmodal/CertCheckHistory.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import ModalShell from './ui/ModalShell.jsx'
 import NocStatus from './noc/NocStatus.jsx'
+import MonitorForwardsPill from './forwards/MonitorForwardsPill.jsx'
 import CertDetailsPanel from './certmodal/CertDetailsPanel.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
@@ -401,6 +402,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const nocIndicator = !previewMode && noc
     ? <NocStatus type="SSL" monitor={noc} rowLabel={domain} canEdit={!!nocEdit} onEdit={nocEdit} />
     : null
+  // Alarm iletimi rozeti (2026-11-05) — izleme detay pencereleriyle AYNI bileşen, 7/24 göstergesinin hemen ardında.
+  // Sertifika (envanter kaydı) alan adıyla sorulur; manuel sertifikada da var, önizlemede (envanterde olmayan alan) yok.
+  const forwardsIndicator = !previewMode && domain
+    ? <MonitorForwardsPill type="cert" domain={domain} rowLabel={domain} />
+    : null
   const headerActions = (
     <div data-slot="cert-modal-actions" className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
       {/* "Kontrol ediliyor… N sn" şeridi — kartlardakiyle AYNI bileşen. */}
@@ -487,7 +493,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         </span>
         {readOnly && <ReadOnlyBadge className="w-full text-sm font-normal sm:w-auto" teamId={readOnlyTeam?.id} teamName={readOnlyTeam?.name} />}
       </span>}
-      headerExtra={<>{nocIndicator}{headerActions}</>}>
+      headerExtra={<>{nocIndicator}{forwardsIndicator}{headerActions}</>}>
 
       {/*
         Sekme çubuğu (2026-09-26 yeniden tasarım — kullanıcı: "menüler sığmıyor, kaydırmak gerekiyor"): YATAY KAYDIRMA YOK.

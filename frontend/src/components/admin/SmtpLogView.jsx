@@ -8,6 +8,7 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQue
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { useGlobalAdmin } from './useGlobalAdmin.js'
 import { triggerText } from './logTriggers.js'
+import { recipientRoleText } from '../forwards/forwardModel.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { navigateTo } from '../../utils/navigate.js'
@@ -521,7 +522,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                 <MetaRow label={t('health.emailDetailFrom')}><span className="text-muted-foreground">{detail.sender_email || '—'}</span></MetaRow>
                 <MetaRow label={t('health.emailDetailTo')}>
                   <span><strong>{detail.recipient_name}</strong>{detail.recipient_email && <span className="text-muted-foreground"> &lt;{detail.recipient_email}&gt;</span>}
-                    {detail.recipient_role && <Badge variant="outline" className="ml-1.5 font-normal text-muted-foreground">{detail.recipient_role}</Badge>}</span>
+                    {detail.recipient_role && <Badge variant="outline" data-slot="sml-recipient-role" className="ml-1.5 font-normal text-muted-foreground">{recipientRoleText(t, detail.recipient_role)}</Badge>}</span>
                 </MetaRow>
                 {detail.cc && <MetaRow label="CC"><span className="text-muted-foreground">{detail.cc}</span></MetaRow>}
                 <MetaRow label={t('health.smtpLogSubject')}><span className="font-semibold">{detail.subject}</span></MetaRow>

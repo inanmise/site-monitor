@@ -82,6 +82,8 @@ const COMMON_KEYS = {
   TEST: 'logtrig.TEST',
   DEPLOYMENT_UPGRADE: 'logtrig.DEPLOYMENT_UPGRADE',
   DEPLOYMENT_ROLLBACK: 'logtrig.DEPLOYMENT_ROLLBACK',
+  // Alarm iletimi (2026-11-05): iletim eklenince alıcılara giden tek seferlik bilgi postası + push
+  ALERT_FORWARD_ADDED: 'userpush.trigger.ALERT_FORWARD_ADDED',
 }
 
 /** Kapının ve süzgeç listelerinin okuduğu bilinen kodlar (her iki görünüm). */

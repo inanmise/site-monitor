@@ -75,6 +75,8 @@ export const PUSH_TYPE_ALIASES = {
   tech_error_report: 'channel_reports',
   weekly_report: 'weekly_report',
   storm: 'storm',
+  // Alarm iletimi (2026-11-05): iletim eklenince alıcı takım / üyelere giden bilgi push'u (tür ALERT_FORWARD)
+  alert_forward: 'alert_forward',
 }
 
 /**
