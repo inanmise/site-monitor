@@ -11,7 +11,7 @@ import { CompactValue, CompactVerdict } from '../ping/PingCardParts.jsx'
 import { urlParts } from '../pagespeed/pageSpeedCardModel.js'
 import { cn } from '@/lib/utils'
 import {
-  LONG_KEYWORD, LONG_SNIPPET, alertTrigger, breachLevel, changeState, highlightParts, httpClass, httpTone, msParts, msText, proxyMode,
+  LONG_KEYWORD, LONG_SNIPPET, alertTrigger, breachLevel, changeNoteOf, changeState, highlightParts, httpClass, httpTone, msParts, msText, proxyMode,
   responseAssessment, ruleLabel, ruleOutcome, ruleSet, sameUrl, sizeRule, statusUnchecked,
 } from './keywordCardModel.js'
 import { describeRule, ruleSetBadge } from './rules/ruleModel.js'
@@ -23,12 +23,17 @@ import { cardReason } from './keywordFailureModel.js'
  * — eski satırda (kod yok) "Sayfa okunamadı". Diğer hükümler değişmedi.
  */
 function resultText(kind, m, t, verdict) {
-  if (kind === 'error') {
+  if (kind === 'error' || kind === 'other') {
     const r = cardReason(m, t)
     if (r && !r.hint) return r.label
   }
   if (kind === 'rulesFail' && verdict?.failed != null) return t('keyword.card.rulesNotMet', verdict.failed, verdict.total)
   return t(RESULT_KEY[kind])
+}
+
+/** Hüküm metni dışarıya (İçerik sekmesinin basit tek kural özeti kartla AYNI sözcükleri kullanır). */
+export function keywordResultText(verdict, m, t) {
+  return resultText(verdict.kind, m, t, verdict)
 }
 
 /**
@@ -38,7 +43,8 @@ function resultText(kind, m, t, verdict) {
  */
 function ReasonChip({ monitor: m, verdict }) {
   const t = useT()
-  if (verdict.kind === 'error' || verdict.kind === 'pending' || verdict.tone !== 'bad') return null
+  // `other`: hüküm satırı nedeni zaten yazıyor (aynı metin ikinci kez çip olmasın)
+  if (verdict.kind === 'error' || verdict.kind === 'other' || verdict.kind === 'pending' || verdict.tone !== 'bad') return null
   const r = cardReason(m, t)
   if (!r) return null
   return (
@@ -60,12 +66,12 @@ const PANEL = {
 const RESULT_TEXT = { ok: 'text-success', bad: 'text-destructive', neutral: 'text-muted-foreground' }
 const RESULT_ICON = {
   found: CircleCheck, absent: CircleCheck, countOk: CircleCheck, rulesOk: CircleCheck,
-  missing: SearchX, forbidden: Ban, countFail: CircleX, rulesFail: CircleX, error: CircleAlert, pending: Hourglass,
+  missing: SearchX, forbidden: Ban, countFail: CircleX, rulesFail: CircleX, error: CircleAlert, other: CircleAlert, pending: Hourglass,
 }
 const RESULT_KEY = {
   found: 'keyword.found', missing: 'keyword.notFound', absent: 'keyword.card.absent', forbidden: 'keyword.card.forbidden',
   countOk: 'keyword.card.countOk', countFail: 'keyword.card.countFail', pending: 'keyword.card.pending', error: 'keyword.card.checkFailed',
-  rulesOk: 'keyword.card.rulesOk', rulesFail: 'keyword.card.countFail',
+  rulesOk: 'keyword.card.rulesOk', rulesFail: 'keyword.card.countFail', other: 'keyword.card.downOther',
 }
 /** Vurgu: yasak kelimede kırmızı (kanıt), diğerlerinde sarı fosfor. */
 const MARK = {
@@ -101,7 +107,7 @@ export function KeywordUrlText({ url }) {
  * URL'yi başka izleme de izliyorsa "Aynı URL" çipi (B6). Alan yoksa (eski sunucu) çip çizilmez.
  *
  * <p>Test kancaları: `data-slot="keyword-panel"` + `data-result` (found|missing|absent|forbidden|countOk|countFail|
- * rulesOk|rulesFail|pending|error) + `data-tone`; `keyword-rule` (`data-rule` contains|absent|count), `keyword-rules-badge`,
+ * rulesOk|rulesFail|other|pending|error) + `data-tone`; `keyword-rule` (`data-rule` contains|absent|count), `keyword-rules-badge`,
  * `keyword-rule-row` (`data-outcome`), `keyword-regex`, `keyword-scope`, `keyword-case`, `keyword-chip`, `keyword-result`,
  * `keyword-count`, `keyword-breach` (`data-level`), `keyword-size`, `keyword-change` (`data-state`), `keyword-status-unchecked`,
  * `keyword-same-url`, `keyword-snippet`, `keyword-reason` (`data-reason`).
@@ -318,12 +324,15 @@ function ChangeChip({ monitor: m, rowLabel }) {
   const state = changeState(m)
   if (!state) return null
   const text = t(`keyword.card.change.${state}`)
+  const note = state === 'skipped' ? changeNoteOf(m.change_note) : null
+  const hint = note ? `${t(`keyword.change.note.${note}`)}\n${t('keyword.card.changeHint')}` : t('keyword.card.changeHint')
   return (
-    <HintPopover content={t('keyword.card.changeHint')} triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, text)}>
-      <Badge variant="outline" data-slot="keyword-change" data-state={state}
+    <HintPopover content={hint} triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, text)}>
+      <Badge variant="outline" data-slot="keyword-change" data-state={state} data-note={note || undefined}
         className={cn(CHIP, state === 'changed'
           ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
-          : 'bg-card font-medium text-muted-foreground')}>
+          : state === 'skipped' ? 'border-dashed bg-card font-medium text-muted-foreground'
+            : 'bg-card font-medium text-muted-foreground')}>
         <FileDiff aria-hidden="true" />{text}
       </Badge>
     </HintPopover>

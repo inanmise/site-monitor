@@ -237,7 +237,7 @@ describe('KeywordMonitorPage', () => {
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
     expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
-    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
+    expect(screen.getByText(/kaynak izlemenin kopyası|a copy of the source monitor/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))

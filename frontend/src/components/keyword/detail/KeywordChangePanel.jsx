@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, ChevronDown, FileDiff, Minus, Plus, RotateCcw, RotateCw } from 'lucide-react'
+import { Camera, ChevronDown, FileDiff, Info, Lock, Minus, Plus, RotateCcw, RotateCw } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useLanguage, useT } from '../../../i18n/index.jsx'
 import { errorInfoOf } from '../../../utils/errorMessages.js'
@@ -13,6 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils'
 import { bytesText, maskList } from '../content/contentChecksModel.js'
 import { changedLineCount, summaryOf } from './contentDetailModel.js'
+import { changeNoteOf } from '../keywordCardModel.js'
 
 const statusOf = (r) => Number(r?.status ?? errorInfoOf(r)?.status)
 const codeOf = (r) => r?.code ?? errorInfoOf(r)?.code
@@ -125,7 +126,10 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
         onChanged?.()
         await load()
       } else if (codeOf(r) === 'KEYWORD_BASELINE_FETCH_FAILED') {
-        setActionError(t('keyword.change.fetchFailed', r?.error || ''))
+        // Sunucu ayrıca NEDEN ölçülemediğini kodla söyler (`change_skipped`) — metnine eklenir, ham kod gösterilmez
+        const note = changeNoteOf(r?.change_skipped ?? r?.data?.change_skipped)
+        const why = note ? ` ${t('keyword.change.notMeasured', t(`keyword.change.note.${note}`))}` : ''
+        setActionError(`${t('keyword.change.fetchFailed', r?.error || '')}${why}`)
       } else {
         setActionError(t('keyword.change.actionFailed', r?.error || ''))
       }
@@ -158,6 +162,11 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
   } else {
     const b = data.baseline && typeof data.baseline === 'object' ? data.baseline : null
     const latest = data.latest && typeof data.latest === 'object' ? data.latest : null
+    // Son kontrolde değişim ÖLÇÜLMEDİ (hata sayfası, boş gövde, seçici öğe bulamadı …): son karşılaştırmadan YENİYSE "temelle
+    // aynıydı" yeşili gösterilmez — nötr not (kw son inceleme O-3 / D-7). Açık "değişti" uyarısı kalır (alarm sürer).
+    const skNote = data.skipped && typeof data.skipped === 'object' ? changeNoteOf(data.skipped.note) : null
+    const sk = skNote ? { checked_at: data.skipped.checked_at, note: skNote } : null
+    const skippedNewer = !!sk && (!latest || !(Date.parse(latest.checked_at) > Date.parse(sk.checked_at)))
     const summary = latest?.summary ?? null
     const n = changedLineCount(summaryOf(summary))
     const masks = maskList(data.mask)
@@ -167,6 +176,13 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
           <p data-slot="kw-change-settings" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {[masks.length ? t('keyword.change.maskOn', masks.map((m) => t(`keyword.content.mask.${m}`)).join(', ')) : null,
               data.selector && String(data.selector).trim() ? t('keyword.change.selectorOn', String(data.selector).trim()) : null].filter(Boolean).join(' · ')}
+          </p>
+        )}
+        {skippedNewer && (
+          <p data-slot="kw-change-skipped" data-note={sk.note} className="m-0 flex min-w-0 items-start gap-1.5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <span>{sk.checked_at ? t('keyword.change.skippedAt', formatDate(sk.checked_at), t(`keyword.change.note.${sk.note}`))
+              : t(`keyword.change.note.${sk.note}`)}</span>
           </p>
         )}
         {!b ? (
@@ -193,12 +209,20 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
                 title={t('keyword.change.latestChanged', formatDate(latest.checked_at))}>
                 <span data-slot="kw-change-latest" data-state="changed">{n != null ? t('keyword.change.changedLines', n) : null}</span>
               </AlertBanner>
-            ) : latest.changed === false ? (
+            ) : latest.changed === false && !skippedNewer ? (
               <p data-slot="kw-change-latest" data-state="same" className="m-0 text-sm text-success">{t('keyword.change.latestSame', formatDate(latest.checked_at))}</p>
+            ) : latest.changed === false ? (
+              <p data-slot="kw-change-latest" data-state="older" className="m-0 text-sm text-muted-foreground">{t('keyword.change.latestSameOlder', formatDate(latest.checked_at))}</p>
             ) : (
               <p data-slot="kw-change-latest" data-state="unknown" className="m-0 text-sm text-muted-foreground">{t('keyword.change.latestUnknown')}</p>
             )}
             {latest?.changed === true && summary != null && <ChangeDiff summary={summary} />}
+            {/* Temel metni yalnız düzenleyebilene döner (sunucu `text: null` + `text_hidden`) — bilinmiyor ≠ boş */}
+            {b.text_hidden === true && (
+              <p data-slot="kw-change-text-hidden" className="m-0 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('keyword.change.textHidden')}
+              </p>
+            )}
             {typeof b.text === 'string' && b.text.length > 0 && (
               <Collapsible open={textOpen} onOpenChange={setTextOpen}>
                 <CollapsibleTrigger asChild>

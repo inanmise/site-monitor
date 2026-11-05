@@ -21,6 +21,11 @@ import { isValidJsonPath } from '../../http/httpAdvancedModel.js'
 import { MAX_COUNT } from '../../../utils/keywordFold.js'
 
 /** Sunucu sınırları (`service/keyword/rules/*`; sözleşme §6.1). */
+/** Sunucunun kural notları (`rule_results[].note`, canlı eşleşmede `rules[].note`) — bilinmeyen not ekrana ham düşmez. */
+export const RULE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'COUNT_CAPPED', 'SCAN_TRUNCATED'])
+/** Sayı bir ALT SINIR olduğunda ("en az N") — tarama bütçesi / sayım tavanı. */
+export const AT_LEAST_NOTES = Object.freeze(['SCAN_TRUNCATED', 'COUNT_CAPPED'])
+
 export const RULE_LIMITS = Object.freeze({
   maxRules: 10,
   textMax: 255,

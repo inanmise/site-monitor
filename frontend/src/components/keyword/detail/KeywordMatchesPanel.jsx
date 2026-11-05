@@ -8,6 +8,10 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { CONTEXT_SOURCES, matchesOf } from './contentDetailModel.js'
+import { AT_LEAST_NOTES } from '../rules/ruleModel.js'
+
+/** Kapsam bulunamadı / geçersiz: eşleşme hiç ARANAMADI — sayı ve "eşleşme yok" gösterilmez, not söyler. */
+const SCOPE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID'])
 
 const statusOf = (r) => Number(r?.status ?? errorInfoOf(r)?.status)
 
@@ -94,17 +98,31 @@ export default function KeywordMatchesPanel({ monitorId, canExecute = false, rul
                         {(r.kind ?? kinds.get(r.id)) === 'REGEX' ? `/${r.patternPreview}/` : `« ${r.patternPreview} »`}
                       </span>
                     )}
-                    {r.count != null && <span className="text-xs text-muted-foreground tabular-nums">{r.count === 1 ? t('keyword.card.match1') : t('keyword.card.matches', r.count)}</span>}
+                    {r.count != null && !SCOPE_NOTES.includes(r.note) && (
+                      <span data-slot="kw-matches-count" data-at-least={AT_LEAST_NOTES.includes(r.note) ? 'true' : undefined}
+                        className="text-xs text-muted-foreground tabular-nums">
+                        {AT_LEAST_NOTES.includes(r.note) ? t('keyword.rule.res.countAtLeast', r.count)
+                          : r.count === 1 ? t('keyword.card.match1') : t('keyword.card.matches', r.count)}
+                      </span>
+                    )}
                   </div>
-                  {r.contexts.length === 0 ? (
+                  {r.note && (
+                    <p data-slot="kw-matches-note" data-note={r.note} className="m-0 text-xs text-amber-700 dark:text-amber-300 [overflow-wrap:anywhere]">
+                      {t(`keyword.rule.note.${r.note}`)}
+                    </p>
+                  )}
+                  {SCOPE_NOTES.includes(r.note) ? null : r.contexts.length === 0 ? (
                     <p data-slot="kw-matches-none" className="m-0 text-xs text-muted-foreground">{t('keyword.matches.none')}</p>
                   ) : (
                     <ul className="m-0 flex list-none flex-col gap-1 p-0">
                       {r.contexts.map((c, j) => (
                         <li key={j} data-slot="kw-matches-context" className="min-w-0 rounded bg-muted/50 px-2 py-1 font-mono text-xs leading-snug whitespace-pre-wrap [overflow-wrap:anywhere]">
                           <span className="text-muted-foreground">{c.before}</span>
-                          <mark className="rounded-[3px] bg-amber-300/60 px-0.5 font-semibold text-foreground dark:bg-amber-400/30">{c.match}</mark>
-                          <span className="text-muted-foreground">{c.after}</span>
+                          {/* Sır sınırı aşan bağlam tek parça gelir (tüm metin `before`'da) — boş vurgu çizilmez */}
+                          {c.match !== '' && (
+                            <mark className="rounded-[3px] bg-amber-300/60 px-0.5 font-semibold text-foreground dark:bg-amber-400/30">{c.match}</mark>
+                          )}
+                          {c.after !== '' && <span className="text-muted-foreground">{c.after}</span>}
                           {CONTEXT_SOURCES.includes(c.source) && (
                             <span className="ml-1.5 font-sans text-[10px] font-semibold tracking-[.04em] text-muted-foreground uppercase">{t(`keyword.matches.source.${c.source}`)}</span>
                           )}

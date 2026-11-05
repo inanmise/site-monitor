@@ -3,6 +3,8 @@
  * değişim özeti (`change_summary`), içerik serisi (`content-series`) ve canlı eşleşme bağlamları.
  */
 
+import { RULE_NOTES } from '../rules/ruleModel.js'
+
 const MAX_DIFF_LINES = 20
 const MAX_LINE = 200
 const MAX_SUMMARY_JSON = 4000 + 64   // sunucu ≤ 4000 karakter yazar; biraz pay
@@ -71,7 +73,32 @@ export function shapeContentSeries(data) {
     })
   }
   rows.sort((a, b) => a.t - b.t)
-  return rows
+  return fillGaps(rows, num(data?.bucket_seconds))
+}
+
+/** Doldurulan boşluk satırı üst sınırı (bozuk kova süresine karşı; 90 gün × saatlik ≈ 2160). */
+const MAX_SERIES_ROWS = 2500
+
+/**
+ * Sunucu yalnız DOLU kovaları döner (kontrolü olmayan saat yok) — iki nokta arasındaki boş kovalar NULL satırla doldurulur;
+ * yoksa çizgi boşluğun üstünden düz geçer ve "o saatlerde kontrol vardı" gibi görünürdü (son inceleme DÜŞÜK-4).
+ * Kova süresi bilinmiyorsa satırlar olduğu gibi kalır.
+ */
+export function fillGaps(rows, bucketSeconds) {
+  const step = Number(bucketSeconds) > 0 ? Number(bucketSeconds) * 1000 : 0
+  if (!step || !Array.isArray(rows) || rows.length < 2) return rows
+  const out = []
+  for (let i = 0; i < rows.length; i++) {
+    out.push(rows[i])
+    const next = rows[i + 1]
+    if (!next) break
+    for (let t = rows[i].t + step; t <= next.t - step / 2 && out.length < MAX_SERIES_ROWS; t += step) {
+      out.push({ t, ts: new Date(t).toISOString(), checks: 0, failed: 0, occAvg: null, occMin: null, occMax: null, occBand: null,
+        bytes: null, changed: false, gap: true })
+    }
+    if (out.length >= MAX_SERIES_ROWS) { out.push(...rows.slice(i + 1)); break }
+  }
+  return out
 }
 
 /** Komşusuz tek değer mi? (çizgi çizilemez → nokta çizilir — Metrikler sayfasının kuralı). */
@@ -121,6 +148,9 @@ export function matchesOf(data) {
     kind: r.kind === 'REGEX' || r.kind === 'TEXT' ? r.kind : null,
     patternPreview: typeof r.pattern_preview === 'string' ? r.pattern_preview : '',
     count: num(r.count),
+    // Kapsam bulunamadı / geçersiz, sayım tavanı, tarama bütçesi (kural sonuçlarıyla aynı notlar): sayı alt sınırdır ya da
+    // eşleşme aranamadı — "eşleşme yok" denmez (son inceleme DÜŞÜK-5)
+    note: RULE_NOTES.includes(r.note) ? r.note : null,
     contexts: (Array.isArray(r.contexts) ? r.contexts : []).filter((c) => c && typeof c === 'object').slice(0, 5).map((c) => ({
       before: String(c.before ?? ''), match: String(c.match ?? ''), after: String(c.after ?? ''),
       source: typeof c.source === 'string' ? c.source.toUpperCase() : null,

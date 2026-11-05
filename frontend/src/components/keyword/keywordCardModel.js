@@ -72,8 +72,21 @@ export function alertTrigger(rule, keyword, t) {
 /** Sonuç türü → panel tonu (ok | bad | neutral). */
 const VERDICT_TONE = {
   found: 'ok', absent: 'ok', countOk: 'ok', rulesOk: 'ok',
-  missing: 'bad', forbidden: 'bad', countFail: 'bad', rulesFail: 'bad', error: 'bad',
+  missing: 'bad', forbidden: 'bad', countFail: 'bad', rulesFail: 'bad', error: 'bad', other: 'bad',
   pending: 'neutral',
+}
+
+/**
+ * Sayfa geldi ve KURAL sağlanmadı — bu kodlarda hüküm kuraldan adlandırılır ("Bulunamadı", "2/3 kural sağlanmadı").
+ * Başka bir kodla (HTTP durumu, son adres, yönlendirme, boyut …) kapalı izlemede kural TUTMUŞ olabilir; hüküm o nedenden
+ * gelir (`other`), eşleşme sayacı gösterilmez (son inceleme O1). Hata modeli de bu kümeyi kullanır.
+ */
+export const CONDITION_CODES = Object.freeze(new Set(['KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH', 'RULES_NOT_MET']))
+
+/** Kapalı izlemenin nedeni kural DIŞI mı (sunucu kodu var ve koşul ailesinden değil)? Kod yoksa (eski satır) false. */
+export function nonRuleFailure(m) {
+  const code = m?.failure_reason
+  return typeof code === 'string' && code !== '' && !CONDITION_CODES.has(code)
 }
 
 /**
@@ -81,7 +94,8 @@ const VERDICT_TONE = {
  * `pending` (hiç kontrol yok) · `error` (sayfa okunamadı: istek hatası, kural değerlendirilmedi) ·
  * `found` / `missing` (içermeli kuralı) · `absent` / `forbidden` (içermemeli kuralı) · `countOk` / `countFail` (adet kuralı) ·
  * `rulesOk` / `rulesFail` (birden çok kural; `failed` / `total` son kontrolün sonuçlarından — kapalı ama hiçbir kural
- * sağlanmamış görünmüyorsa neden kurallar değildir → genel `countFail`).
+ * sağlanmamış görünmüyorsa neden kurallar değildir → genel `countFail`) · `other` (kapalı, sunucu kodu kural DIŞI bir
+ * neden — `code`; sayaç yok).
  * Sağlıklı mı kararı SUNUCUNUNDUR (`status` up) — kart kuralı yeniden değerlendirmez, yalnız adlandırır.
  */
 export function verdictOf(m) {
@@ -92,6 +106,9 @@ export function verdictOf(m) {
   else if (status !== 'up' && status !== 'down') kind = 'pending'
   else {
     const ok = status === 'up'
+    // Kural dışı neden (HTTP_STATUS, FINAL_URL_MISMATCH, REDIRECT_NOT_FOLLOWED, BODY_TOO_* …): kural tutmuş olabilir —
+    // "Bulunamadı · 3 eşleşme" çelişkisi yerine hüküm nedenin kendisi, sayaç yok (O1)
+    if (!ok && nonRuleFailure(m)) return { kind: 'other', tone: VERDICT_TONE.other, count: null, rule, code: m.failure_reason }
     const set = ruleSet(m)
     if (set.multi) {
       const verdict = ok ? 'rulesOk' : set.failed > 0 ? 'rulesFail' : 'countFail'
@@ -270,12 +287,29 @@ export function sameUrl(m) {
 }
 
 /**
- * İçerik değişimi çipi: kapalıysa null; `changed` (son kontrol temelden farklı), `noBaseline` (temel henüz alınmadı),
- * `watching` (izleniyor — son kontrol aynı ya da bilinmiyor).
+ * Değişimin bir kontrolde NEDEN ölçülmediği (sunucu `change_note` / `skipped.note`; kw son inceleme O-3 / D-7): hata sayfası,
+ * boş gövde, tamamlanmayan istek, durum / son adres kuralının reddi, seçicinin öğe bulamaması. Bilinmeyen kod gösterilmez.
+ */
+export const CHANGE_NOTE_CODES = Object.freeze(['HTTP_ERROR', 'EMPTY_BODY', 'INCOMPLETE', 'RULE_REJECTED', 'SELECTOR_NOT_FOUND'])
+
+/**
+ * Satırın / yanıtın değişim notu: bilinen kod; tanınmayan (daha yeni sunucu) dolu kod → `OTHER` (genel metin — ham kod
+ * ekrana ASLA düşmez); yoksa null.
+ */
+export function changeNoteOf(v) {
+  if (typeof v !== 'string' || v.trim() === '') return null
+  return CHANGE_NOTE_CODES.includes(v) ? v : 'OTHER'
+}
+
+/**
+ * İçerik değişimi çipi: kapalıysa null; `changed` (son kontrol temelden farklı), `skipped` (son kontrolde değişim ÖLÇÜLMEDİ —
+ * `change_note`; nötr, asla "değişim yok" değil), `noBaseline` (temel henüz alınmadı), `watching` (izleniyor — son kontrol
+ * aynı ya da bilinmiyor).
  */
 export function changeState(m) {
   if (m?.change_detect !== true) return null
   if (m?.content_changed === true) return 'changed'
+  if (changeNoteOf(m?.change_note)) return 'skipped'
   if (m?.change_baseline == null && 'change_baseline' in (m || {})) return 'noBaseline'
   return 'watching'
 }

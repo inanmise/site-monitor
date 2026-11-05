@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
       keywordChange:        vi.fn(),
       keywordContentSeries: vi.fn(),
       keywordMatches:       vi.fn(),
+      monitorDefaults:      vi.fn(),
     },
     admin: { getTeams: vi.fn() },
   }),
@@ -30,6 +31,14 @@ vi.mock('../api/client', () => ({
 vi.mock('../components/keyword/k6/ConvertToSyntheticDialog.jsx', () => ({
   default: ({ monitor, onClose }) => (
     <div role="dialog" aria-label="k6-convert">convert:{monitor?.id}<button type="button" onClick={onClose}>kapat</button></div>
+  ),
+}))
+// Geri yükleme düğmesi yerine (son inceleme): sayfanın `onRestored` yanıt notlarını tost olarak söylediği sınanır
+vi.mock('../components/history/ChangeHistoryTab.jsx', () => ({
+  default: ({ onRestored }) => (
+    <button type="button" onClick={() => onRestored?.({ fields: ['url'], secrets_cleared: ['basicAuthPass'], skipped_fields: ['rules'] })}>
+      restore-sim
+    </button>
   ),
 }))
 import { api } from '../api/client'
@@ -86,6 +95,7 @@ describe('KeywordMonitorPage — kural / içerik bağlantıları (kw fe2 Aşama 
     api.monitoring.triggerKeywordCheck.mockResolvedValue({ success: true, data: ROW })
     api.monitoring.keywordChange.mockResolvedValue({ success: true, data: { enabled: false } })
     api.monitoring.keywordContentSeries.mockResolvedValue({ success: true, data: { points: [], capped: false } })
+    api.monitoring.monitorDefaults.mockResolvedValue({ success: false })
   })
 
   it('eski izleme tek kuralla açılır; yalnız desen değişince yalnız `keyword` gider (rules gönderilmez)', async () => {
@@ -214,7 +224,7 @@ describe('KeywordMonitorPage — kural / içerik bağlantıları (kw fe2 Aşama 
     const detail = await screen.findByRole('dialog')
     expect(within(detail).getAllByText('2 rules · AND').length).toBeGreaterThan(0)
     fireEvent.mouseDown(within(detail).getByRole('tab', { name: /Content/ }))
-    await waitFor(() => expect(slot('kw-content-tab')).not.toBeNull())
+    await waitFor(() => expect(slot('kw-content-tab')).not.toBeNull(), { timeout: 8000 })
     expect(slots('kw-rule-result', slot('kw-content-tab'))).toHaveLength(2)
     fireEvent.click(slot('kw-k6-convert-open'))
     expect(await screen.findByText('convert:2')).toBeInTheDocument()
@@ -227,5 +237,230 @@ describe('KeywordMonitorPage — kural / içerik bağlantıları (kw fe2 Aşama 
     fireEvent.click(document.querySelector('[data-monitor-open]'))
     await screen.findByRole('dialog')
     expect(slot('kw-k6-convert-open')).toBeNull()
+  })
+  // ── Son inceleme düzeltmeleri (kw-review-fe.md) ───────────────────────────────────────────────────────────────────
+
+  /** Kayıtlı Basic auth parolası + özel başlıkları olan izleme (sırlar API'den hiç dönmez). */
+  const SECRET = { ...ROW, id: 3, name: 'Gizli', url: 'https://secure.example.com/giris', basic_auth_user: 'izleme',
+    has_basic_auth_pass: true, has_custom_headers: true, custom_header_names: ['X-Api-Key'] }
+  const urlInput = (dlg) => within(dlg).getByPlaceholderText('https://example.com')
+  const testBtn = (dlg) => within(dlg).getByRole('button', { name: /^test$/i })
+
+  it('O2: Test — kayıtlı parola YALNIZ kayıtlı adresin sitesine istenir; başka sitede istenmez ve sonuçta söylenir', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [SECRET] })
+    api.monitoring.testKeyword.mockResolvedValue({ success: true, data: { ok: true, occurrences: 1, http_status: 200, used_saved: [] } })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(SECRET.name)
+    // Aynı site, başka yol → istenir; sunucu kullanmadıysa uyarı (DÜŞÜK-6: used_saved hep dizi)
+    fireEvent.change(urlInput(dlg), { target: { value: 'https://secure.example.com/baska' } })
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalledTimes(1))
+    expect(api.monitoring.testKeyword.mock.calls[0][0]).toMatchObject({ monitorId: 3, useSaved: ['basicAuthPass'] })
+    await waitFor(() => expect(document.querySelector('[data-slot="kw-test-extra"] [data-line="notUsed"]')).not.toBeNull())
+    // Başka site → istenmez; test parolasız yapıldı notu
+    fireEvent.change(urlInput(dlg), { target: { value: 'https://evil.example.net/topla' } })
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalledTimes(2))
+    const p2 = api.monitoring.testKeyword.mock.calls[1][0]
+    expect(p2.monitorId).toBe(3)
+    expect(p2).not.toHaveProperty('useSaved')
+    expect(p2).not.toHaveProperty('basicAuthPass')
+    await waitFor(() => expect(document.querySelector('[data-slot="kw-test-extra"] [data-line="blockedPass"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="kw-test-extra"] [data-line="notUsed"]')).toBeNull()
+  })
+
+  it('O2: kayıtlı parola kullanıldıysa "kullanılmadı" uyarısı çıkmaz; sunucu 403 KEYWORD_SAVED_SECRET_ORIGIN → parola alanının altında', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [SECRET] })
+    api.monitoring.testKeyword.mockResolvedValueOnce({ success: true, data: { ok: true, occurrences: 1, used_saved: ['basicAuthPass'] } })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(SECRET.name)
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(document.querySelector('[data-slot="kw-test-extra"] [data-line="pass"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="kw-test-extra"] [data-line="notUsed"]')).toBeNull()
+    api.monitoring.testKeyword.mockResolvedValueOnce({ success: false, code: 'KEYWORD_SAVED_SECRET_ORIGIN',
+      error: 'Kayıtlı parola yalnız kayıtlı adresin sitesine gönderilir.' })
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(field('basicAuthPass')).toHaveTextContent('Kayıtlı parola yalnız kayıtlı adresin sitesine gönderilir.'))
+  })
+
+  it('O2: düzenlemede adres başka siteye → kayıtlı parola yeniden istenir, özel başlıklı izlemeyi yalnız global yönetici taşır (istek gitmez)', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [SECRET] })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(SECRET.name)
+    fireEvent.change(urlInput(dlg), { target: { value: 'https://yeni.example.org/' } })
+    save()
+    await waitFor(() => expect(field('basicAuthPass')).toHaveTextContent('re-enter it or remove it'))
+    expect(field('url')).toHaveTextContent('only a global admin')
+    expect(api.monitoring.updateKeywordMonitor).not.toHaveBeenCalled()
+    // Aynı sitenin başka yolu: kural yok, kayıt gider
+    fireEvent.change(urlInput(dlg), { target: { value: 'https://secure.example.com/yeni-yol' } })
+    save()
+    await waitFor(() => expect(api.monitoring.updateKeywordMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateKeywordMonitor.mock.calls[0][1].url).toBe('https://secure.example.com/yeni-yol')
+  })
+
+  it('O3: saklı "en az 0 kez" kuralı başka alanın kaydını KİLİTLEMEZ (bilgi notu); kurallar değişince hata olur', async () => {
+    const B10 = { ...CUSTOM, id: 4, name: 'Eski', rules: [
+      { id: 'r1', kind: 'TEXT', pattern: 'Sepete ekle', case_sensitive: false, operator: 'GTE', count: 0, critical: null, scope: null, label: null },
+      { id: 'r2', kind: 'TEXT', pattern: 'Hata', case_sensitive: false, operator: 'LTE', count: 0, critical: null, scope: null, label: null },
+    ] }
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [B10] })
+    api.monitoring.updateKeywordMonitor.mockImplementation(async (id, body) => ({ success: true, data: { ...B10, ...body, id } }))
+    api.monitoring.triggerKeywordCheck.mockResolvedValue({ success: true, data: B10 })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(B10.name)
+    // Bilgi notu görünür, hata değil
+    expect(slot('kw-rule-notice', slots('kw-rule-card', dlg)[0])).not.toBeNull()
+    expect(field('rules[0].count').querySelector('[data-slot="field-error"]')).toBeNull()
+    const nameInput = within(dlg).getByPlaceholderText('https://shop.example.com/')
+    fireEvent.change(nameInput, { target: { value: 'Eski (yeni ad)' } })
+    save()
+    await waitFor(() => expect(api.monitoring.updateKeywordMonitor).toHaveBeenCalled())
+    const [, body] = api.monitoring.updateKeywordMonitor.mock.calls[0]
+    expect(body.name).toBe('Eski (yeni ad)')
+    // D-5: kurallar değişmedi → ne liste ne eski koşul alanları gider
+    for (const k of ['rules', 'ruleLogic', 'keyword', 'operator', 'matchCount', 'caseSensitive']) expect(k in body).toBe(false)
+
+    // Kural listesi değişince (ikinci kuralın deseni) B10 artık HATA — kayıt gitmez
+    api.monitoring.updateKeywordMonitor.mockClear()
+    await waitFor(() => expect(screen.queryAllByRole('dialog')).toHaveLength(0))
+    await waitFor(() => expect([...document.querySelectorAll('[data-slot="card"]')].some((c) => c.textContent.includes(B10.name))).toBe(true))
+    const dlg2 = await openEditOf(B10.name)
+    fireEvent.change(slots('kw-rule-pattern', dlg2)[1], { target: { value: 'Hata!' } })
+    expect(slot('kw-rule-notice', dlg2)).toBeNull()
+    save()
+    await waitFor(() => expect(field('rules[0].count').querySelector('[data-slot="field-error"]')).not.toBeNull())
+    expect(api.monitoring.updateKeywordMonitor).not.toHaveBeenCalled()
+  })
+
+  it('O4: genel ayar 1–60 sn dışındaysa yeni form kırpılmış başlar (test gider); sunucunun timeoutMs hatası kaydırıcının altında', async () => {
+    api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { keyword: { timeoutMs: 120000, intervalSeconds: 300 } } })
+    api.monitoring.testKeyword.mockResolvedValue({ success: true, data: { ok: true, occurrences: 1 } })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await waitFor(() => expect(api.monitoring.monitorDefaults).toHaveBeenCalled())
+    await waitFor(() => expect(document.querySelector('[data-monitor-open]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    const dlg = screen.getAllByRole('dialog').at(-1)
+    fireEvent.change(urlInput(dlg), { target: { value: 'https://x.example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'ok' } })
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalled())
+    expect(api.monitoring.testKeyword.mock.calls[0][0].timeoutMs).toBe(60000)
+  })
+
+  it('O4: sunucunun `timeoutMs` alan hatası çizilir (Gelişmiş ayarlar açılır), tostta yutulmaz', async () => {
+    api.monitoring.updateKeywordMonitor.mockResolvedValueOnce({ success: false, code: 'VALIDATION_FAILED', field: 'timeoutMs',
+      error: 'Zaman aşımı 1–60 saniye arasında olmalı (sunucu).' })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(ROW.name)
+    fireEvent.change(within(dlg).getByPlaceholderText(ROW.url), { target: { value: 'Portal 2' } })
+    save()
+    await waitFor(() => expect(field('timeoutMs')).toHaveTextContent('Zaman aşımı 1–60 saniye arasında olmalı (sunucu).'))
+  })
+
+  it('Y1 + DÜŞÜK-2: test başarısız ama neden kural DIŞI → "Kurallar sağlandı (başka neden …)", "alarm yok" yok; kural listesi bir kez', async () => {
+    api.monitoring.testKeyword.mockResolvedValue({ success: true, data: {
+      ok: false, occurrences: 2, http_status: 503, failure_reason: 'HTTP_STATUS', level: 'NONE', size_ok: null,
+      rule_results: [{ id: 'r1', ok: true, count: 2, level: 'NONE' }, { id: 'r-ab12', ok: true, count: 0, level: 'NONE' }],
+    } })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(CUSTOM.name)
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(slot('kw-test-rules')).not.toBeNull())
+    const verdict = slot('kw-rule-results-verdict', slot('kw-test-rules'))
+    expect(verdict.getAttribute('data-verdict')).toBe('other')
+    expect(verdict.textContent).toMatch(/^Rules hold \(other reason: .+\)$/)
+    expect(slot('kw-test-rules').textContent).not.toMatch(/no alarm/i)
+    // Teşhis paneli var ama kural listesini ikinci kez çizmez
+    expect(slot('kw-test-diagnosis')).not.toBeNull()
+    expect(slot('kwfail-rules')).toBeNull()
+    expect(slots('kw-rule-results')).toHaveLength(1)
+  })
+
+  it('DÜŞÜK-1: testte izlemenin alarm seviyesi gider', async () => {
+    api.monitoring.testKeyword.mockResolvedValue({ success: true, data: { ok: true, occurrences: 1 } })
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{ ...CUSTOM, alert_level: 'CRITICAL' }] })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    const dlg = await openEditOf(CUSTOM.name)
+    fireEvent.click(testBtn(dlg))
+    await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalled())
+    expect(api.monitoring.testKeyword.mock.calls[0][0].alertLevel).toBe('CRITICAL')
+  })
+
+  it('DÜŞÜK-3: Kopyala — kayıtlı sır varsa "kopyalanmaz, yeniden girin" uyarısı; anahtar kelimeye özgü ipucu', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [SECRET, ROW] })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await waitFor(() => expect(document.querySelector('[data-monitor-open]')).not.toBeNull())
+    const cardOf = (name) => [...document.querySelectorAll('[data-slot="card"]')].find((c) => c.textContent.includes(name))
+    fireEvent.click(within(cardOf(SECRET.name)).getByRole('button', { name: /duplicate|kopyala/i }))
+    expect(slot('kw-dup-hint')).toHaveTextContent('rules and settings are carried over')
+    expect(slot('kw-dup-secrets')).toHaveTextContent('saved password and custom headers are not copied')
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await waitFor(() => expect(slot('kw-dup-hint')).toBeNull())
+    fireEvent.click(within(cardOf(ROW.name)).getByRole('button', { name: /duplicate|kopyala/i }))
+    expect(slot('kw-dup-hint')).not.toBeNull()
+    expect(slot('kw-dup-secrets')).toBeNull()
+  })
+
+  it('paylaşımla düzenleme: kural kritik eşiği kilitli + not; sunucunun `rules` (403 KEYWORD_SHARED_LOCKED) hatası kural bölümünde', async () => {
+    const LOCKED = { ...CUSTOM, id: 6, name: 'Paylasilan', routing_locked: true, shared_access: true, rules: [
+      { id: 'r1', kind: 'TEXT', pattern: 'Sepete ekle', case_sensitive: false, operator: 'GTE', count: 5, critical: { operator: 'GTE', count: 2 }, scope: null, label: null },
+    ] }
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [LOCKED] })
+    api.monitoring.updateKeywordMonitor.mockResolvedValueOnce({ success: false, code: 'KEYWORD_SHARED_LOCKED', field: 'rules',
+      error: 'Paylaşımla düzenlenen izlemede kritik eşik değiştirilemez.' })
+    render(<KeywordMonitorPage systemRole="USER" teamId={7} teamName="SY-B" myTeams={[{ id: 7, name: 'SY-B' }]} />)
+    const dlg = await openEditOf(LOCKED.name)
+    expect(slot('kw-rule-critical-locked', dlg)).not.toBeNull()
+    expect(slot('kw-rule-critical-toggle', dlg)).toBeDisabled()
+    expect(slot('kw-rule-critical-count', dlg)).toBeDisabled()
+    // Desen yine düzenlenebilir
+    expect(slot('kw-rule-pattern', dlg)).not.toBeDisabled()
+    fireEvent.change(slot('kw-rule-pattern', dlg), { target: { value: 'Sepete ekle!' } })
+    save()
+    await waitFor(() => expect(field('rules')).toHaveTextContent('kritik eşik değiştirilemez'))
+  })
+
+  it('geri yükleme: temizlenen parola ve atlanan kurallar tostla söylenir', async () => {
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await waitFor(() => expect(document.querySelector('[data-monitor-open]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-monitor-open]'))
+    const detail = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(detail).getByRole('tab', { name: /^Changes$/ }))
+    fireEvent.click(await screen.findByText('restore-sim', {}, { timeout: 8000 }))
+    expect(await screen.findByText(/Basic auth password was cleared/)).toBeInTheDocument()
+    expect(await screen.findByText(/The rules were not restored/)).toBeInTheDocument()
+  })
+  it('be2: posta konusu paylaşım kilidi (403 KEYWORD_SHARED_LOCKED, field mailSubjectTemplate) alanın altında', async () => {
+    api.monitoring.updateKeywordMonitor.mockResolvedValueOnce({ success: false, code: 'KEYWORD_SHARED_LOCKED', field: 'mailSubjectTemplate',
+      fields: { mailSubjectTemplate: 'Paylaşımla düzenlenen izlemenin posta konusu değiştirilemez.' },
+      error: 'Paylaşımla düzenlenen izlemenin posta konusu değiştirilemez.' })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await openEditOf(ROW.name)
+    fireEvent.change(field('mailSubjectTemplate').querySelector('input'), { target: { value: '[X] {ad}' } })
+    save()
+    await waitFor(() => expect(field('mailSubjectTemplate')).toHaveTextContent('posta konusu değiştirilemez'))
+  })
+
+  it('be2: geçmiş satırında değişim ölçülmediyse nedeni nötr metinle (tanınmayan kod genel metin, ham kod yok)', async () => {
+    api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: [{ ...ROW, change_detect: true }] })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 11, checked_at: '2026-11-05T08:00:00', ok: true, http_status: 200, occurrences: 1, change_note: 'EMPTY_BODY' },
+        { id: 12, checked_at: '2026-11-05T07:00:00', ok: true, http_status: 200, occurrences: 1, change_note: 'YENI_KOD' },
+        { id: 13, checked_at: '2026-11-05T06:00:00', ok: true, http_status: 200, occurrences: 1, change_note: null },
+      ],
+      counts: { total: 3, fail: 0 }, buckets: [], alerts: [],
+      range: { from: '2026-11-05T00:00:00', to: '2026-11-06T00:00:00' }, total: 3, page: 0, size: 50 } })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    await waitFor(() => expect(document.querySelector('[data-monitor-open]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-monitor-open]'))
+    await screen.findByRole('dialog')
+    await waitFor(() => expect(slots('kw-hist-change-note')).toHaveLength(2), { timeout: 8000 })
+    const [empty, other] = slots('kw-hist-change-note')
+    expect(empty.getAttribute('data-note')).toBe('EMPTY_BODY')
+    expect(empty).toHaveTextContent('Change not measured: the page came back empty.')
+    expect(other.getAttribute('data-note')).toBe('OTHER')
+    expect(other.textContent).not.toContain('YENI_KOD')
   })
 })

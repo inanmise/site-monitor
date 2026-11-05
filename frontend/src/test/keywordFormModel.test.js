@@ -4,6 +4,7 @@ import {
   keywordPayload, keywordTestPayload, matchActiveCount, renderSubject, requestActiveCount, sectionsForErrors,
   serverFieldErrors, stableRules, statusModeOf, statusPatternError, storedSecretsOf, subjectError, subjectParts,
   unknownPlaceholders, userAgentError, validateKeywordForm,
+  hasRenderableField, originChangeProblems, originOf, restoreNotices, sameOrigin, savedSecretsBlocked,
 } from '../components/keyword/keywordFormModel.js'
 
 /**
@@ -168,20 +169,31 @@ describe('keywordTestPayload', () => {
 
   it('dokunulmamış formun yükü bugünkü anahtarlarla; başlık global admin değilse null', () => {
     const p = keywordTestPayload({ ...KW_EMPTY_FORM, url: 'a.example.com', keyword: 'x' })
-    expect(Object.keys(p).sort()).toEqual(['caseSensitive', 'customHeaders', 'keyword', 'matchCount', 'operator', 'timeoutMs', 'url', 'useProxy'].sort())
+    // alertLevel (son inceleme DÜŞÜK-1): genel hüküm ve kural seviyeleri izlemenin seviyesiyle hesaplansın
+    expect(Object.keys(p).sort()).toEqual(['alertLevel', 'caseSensitive', 'customHeaders', 'keyword', 'matchCount', 'operator', 'timeoutMs', 'url', 'useProxy'].sort())
     expect(p.customHeaders).toBeNull()
+    expect(p.alertLevel).toBe('WARNING')
+    expect(keywordTestPayload({ ...KW_EMPTY_FORM, url: 'a.example.com', alertLevel: 'CRITICAL' }).alertLevel).toBe('CRITICAL')
   })
 
   it('kayıtlı izlemede yazılmamış sırlar useSaved ile; yazılan / kaldırılan sır istenmez', () => {
     const stored = storedSecretsOf(ROW)
-    expect(keywordTestPayload(f, { monitorId: 7, stored, globalAdmin: true })).toMatchObject({
+    const storedUrl = ROW.url
+    expect(keywordTestPayload(f, { monitorId: 7, stored, storedUrl, globalAdmin: true })).toMatchObject({
       monitorId: 7, useSaved: ['basicAuthPass', 'customHeaders'], basicAuthUser: 'izleme' })
-    expect(keywordTestPayload({ ...f, basicAuthPass: 'p' }, { monitorId: 7, stored }).useSaved).toBeUndefined()
-    expect(keywordTestPayload({ ...f, basicAuthPass: 'p' }, { monitorId: 7, stored }).basicAuthPass).toBe('p')
-    expect(keywordTestPayload({ ...f, clearBasicAuthPass: true }, { monitorId: 7, stored }).useSaved).toBeUndefined()
+    expect(keywordTestPayload({ ...f, basicAuthPass: 'p' }, { monitorId: 7, stored, storedUrl }).useSaved).toBeUndefined()
+    expect(keywordTestPayload({ ...f, basicAuthPass: 'p' }, { monitorId: 7, stored, storedUrl }).basicAuthPass).toBe('p')
+    expect(keywordTestPayload({ ...f, clearBasicAuthPass: true }, { monitorId: 7, stored, storedUrl }).useSaved).toBeUndefined()
     // Başlık yalnız global admin; kullanıcı adı silinmişse parola istenmez
-    expect(keywordTestPayload(f, { monitorId: 7, stored }).useSaved).toEqual(['basicAuthPass'])
-    expect(keywordTestPayload({ ...f, basicAuthUser: '' }, { monitorId: 7, stored }).useSaved).toBeUndefined()
+    expect(keywordTestPayload(f, { monitorId: 7, stored, storedUrl }).useSaved).toEqual(['basicAuthPass'])
+    expect(keywordTestPayload({ ...f, basicAuthUser: '' }, { monitorId: 7, stored, storedUrl }).useSaved).toBeUndefined()
+    // Son inceleme O2: aynı kaynağın başka yolu sorun değil; başka site / port / şema → kayıtlı sır İSTENMEZ
+    expect(keywordTestPayload({ ...f, url: 'https://WWW.example.com/baska/yol?q=1' }, { monitorId: 7, stored, storedUrl }).useSaved).toEqual(['basicAuthPass'])
+    for (const other of ['https://evil.example.net/', 'https://www.example.com:8443/', 'http://www.example.com/', 'not a url']) {
+      expect(keywordTestPayload({ ...f, url: other }, { monitorId: 7, stored, storedUrl, globalAdmin: true }).useSaved, other).toBeUndefined()
+    }
+    // Kayıtlı adres bilinmiyorsa (çağıran vermedi) sır istenmez — varsayılan güvenli taraf
+    expect(keywordTestPayload(f, { monitorId: 7, stored }).useSaved).toBeUndefined()
     // Kopya / yeni kayıt (monitorId yok) → kayıtlı sır istenmez
     expect(keywordTestPayload(f, { stored })).not.toHaveProperty('monitorId')
   })
@@ -313,5 +325,90 @@ describe('posta konusu (sunucu döngüsünün aynası)', () => {
     const t0 = Date.now()
     expect(renderSubject(big, V).length).toBeLessThanOrEqual(200)
     expect(Date.now() - t0).toBeLessThan(500)
+  })
+})
+
+describe('son inceleme — kaynak (origin) kuralı, geri yükleme notları, "Özel" durum kodu', () => {
+  const stored = { hasPass: true, hasHeaders: true, headerNames: ['X-Api-Key'] }
+  const form = { ...KW_EMPTY_FORM, url: 'https://shop.example.com/a', basicAuthUser: 'izleme' }
+
+  it('originOf / sameOrigin: şema + host + port; varsayılan port ve harf farkı yok sayılır, okunamayan adres hiçbir şeyle aynı değil', () => {
+    expect(originOf('Shop.Example.com/x')).toBe('https://shop.example.com')
+    expect(originOf('https://shop.example.com:443/x')).toBe('https://shop.example.com')
+    expect(originOf('https://shop.example.com/{timestamp}')).toBe('https://shop.example.com')
+    expect(originOf('ftp://shop.example.com/')).toBeNull()
+    expect(sameOrigin('https://shop.example.com/a?x=1', 'https://SHOP.example.com:443/b')).toBe(true)
+    expect(sameOrigin('https://shop.example.com/', 'https://shop.example.com:8443/')).toBe(false)
+    expect(sameOrigin('http://shop.example.com/', 'https://shop.example.com/')).toBe(false)
+    expect(sameOrigin('', '')).toBe(false)
+  })
+
+  it('savedSecretsBlocked: adres başka siteye gittiyse istenecek kayıtlı sırlar listelenir; aynı sitede ya da yeni değer yazıldıysa boş', () => {
+    const opts = { stored, storedUrl: 'https://shop.example.com/', globalAdmin: true }
+    expect(savedSecretsBlocked(form, opts)).toEqual([])
+    expect(savedSecretsBlocked({ ...form, url: 'https://evil.example.net/' }, opts)).toEqual(['basicAuthPass', 'customHeaders'])
+    expect(savedSecretsBlocked({ ...form, url: 'https://evil.example.net/', basicAuthPass: 'yeni' }, opts)).toEqual(['customHeaders'])
+    expect(savedSecretsBlocked({ ...form, url: 'https://evil.example.net/' }, { ...opts, globalAdmin: false })).toEqual(['basicAuthPass'])
+    expect(savedSecretsBlocked({ ...form, url: 'https://evil.example.net/' }, { ...opts, stored: null })).toEqual([])
+  })
+
+  it('originChangeProblems: başka siteye taşımada kayıtlı parola yeniden istenir; özel başlıklı izlemeyi yalnız global yönetici taşır', () => {
+    const opts = { stored, storedUrl: 'https://shop.example.com/' }
+    expect(originChangeProblems(form, opts)).toEqual({})
+    expect(originChangeProblems({ ...form, url: 'https://shop.example.com/baska' }, opts)).toEqual({})
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/' }, opts)).toEqual({ basicAuthPass: true, url: true })
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/' }, { ...opts, globalAdmin: true })).toEqual({ basicAuthPass: true })
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/', basicAuthPass: 'p' }, { ...opts, globalAdmin: true })).toEqual({})
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/', clearBasicAuthPass: true }, { ...opts, globalAdmin: true })).toEqual({})
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/', basicAuthUser: '' }, { ...opts, globalAdmin: true })).toEqual({})
+    // Okunamayan / boş adres: bu kural değil, adres doğrulaması söyler
+    expect(originChangeProblems({ ...form, url: '' }, opts)).toEqual({})
+    expect(originChangeProblems({ ...form, url: 'https://yeni.example.com/' }, { stored: { hasPass: false, hasHeaders: false }, storedUrl: opts.storedUrl })).toEqual({})
+  })
+
+  it('restoreNotices: temizlenen sırlar ve atlanan kurallar ayrı not; bilinmeyen alan yok sayılır', () => {
+    expect(restoreNotices({ secrets_cleared: ['basicAuthPass'], skipped_fields: ['rules'] }))
+      .toEqual(['keyword.restore.passCleared', 'keyword.restore.rulesSkipped'])
+    expect(restoreNotices({ secrets_cleared: ['customHeaders', 'x'] })).toEqual(['keyword.restore.headersCleared'])
+    expect(restoreNotices({})).toEqual([])
+    expect(restoreNotices(null)).toEqual([])
+    expect(restoreNotices({ secrets_cleared: 'basicAuthPass' })).toEqual([])
+    // Paylaşımla geri yüklemede kural listesi atlandıysa (skipped_routing: rulesJson) ayrı not; skipped_fields varken tek not
+    expect(restoreNotices({ skipped_routing: ['notifyEmail', 'rulesJson'] })).toEqual(['keyword.restore.rulesRouting'])
+    expect(restoreNotices({ skipped_fields: ['rules'], skipped_routing: ['rulesJson'] })).toEqual(['keyword.restore.rulesSkipped'])
+  })
+
+  it('"Özel" durum kodu seçili ama boş → zorunlu hatası; ön ayar / dolu özel değer hatasız; saklı özel değer "Özel" açılır', () => {
+    expect(validateKeywordForm({ ...KW_EMPTY_FORM, expectedStatusCustom: true, expectedStatus: '' }).expectedStatus)
+      .toBe('keyword.req.err.statusCustomEmpty')
+    expect(validateKeywordForm({ ...KW_EMPTY_FORM, expectedStatusCustom: true, expectedStatus: '  ' }).expectedStatus)
+      .toBe('keyword.req.err.statusCustomEmpty')
+    expect(validateKeywordForm({ ...KW_EMPTY_FORM, expectedStatusCustom: true, expectedStatus: '200,301' }).expectedStatus).toBeUndefined()
+    expect(validateKeywordForm({ ...KW_EMPTY_FORM, expectedStatusCustom: false, expectedStatus: '' }).expectedStatus).toBeUndefined()
+    expect(keywordFormFrom({ expected_status: '200,404' }).expectedStatusCustom).toBe(true)
+    expect(keywordFormFrom({ expected_status: '200' }).expectedStatusCustom).toBe(false)
+    expect(keywordFormFrom({}).expectedStatusCustom).toBe(false)
+    // Gönderilmez (form içi)
+    expect(keywordPayload({ ...KW_EMPTY_FORM, url: 'a.example.com', expectedStatusCustom: true }, null, { isNew: true })).not.toHaveProperty('expectedStatusCustom')
+  })
+
+  it('D-5: özel kural listesi DEĞİŞMEDİYSE eski koşul alanları tek başına gitmez (ayna bayat olsa bile)', () => {
+    const rules = [{ id: 'r1', kind: 'TEXT', pattern: 'A', case_sensitive: false, operator: 'GTE', count: 0, critical: null, scope: null, label: null },
+      { id: 'r2', kind: 'REGEX', pattern: 'b+', case_sensitive: false, operator: 'LTE', count: 0, critical: null, scope: null, label: null }]
+    const base = { ...KW_EMPTY_FORM, url: 'a.example.com', name: 'x', rules, ruleLogic: 'AND', keyword: 'A', operator: 'GTE', matchCount: 1 }
+    // Sayfanın gönderim biçimi: ayna kural #1'den (count 0) — taban satırın aynası 1 (bayat)
+    const form = { ...base, name: 'y', matchCount: 0 }
+    const out = keywordPayload(form, base, {})
+    expect(out).toEqual({ name: 'y' })
+    // Kurallar değişince liste + mantık gider, ayna yine gitmez
+    const changed = keywordPayload({ ...form, rules: [{ ...rules[0], pattern: 'AA' }, rules[1]] }, base, {})
+    expect(changed.rules).toHaveLength(2)
+    for (const k of ['keyword', 'operator', 'matchCount', 'caseSensitive']) expect(changed).not.toHaveProperty(k)
+  })
+
+  it('hasRenderableField: kural listesinin kendi hatası (`rules` — paylaşım kilidi 403) de alanın altına düşer', () => {
+    expect(hasRenderableField({ rules: 'kilitli' })).toBe(true)
+    expect(hasRenderableField({ 'rules[1].pattern': 'x' })).toBe(true)
+    expect(hasRenderableField({ bilinmeyen: 'x' })).toBe(false)
   })
 })

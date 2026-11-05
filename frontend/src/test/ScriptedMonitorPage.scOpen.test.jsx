@@ -50,6 +50,7 @@ describe('ScriptedMonitorPage — sc_open=draft', () => {
     await renderPage()
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('sc_open')).toBeNull())
     expect(screen.queryByTestId('code-editor')).toBeNull()
+    expect(await screen.findByText(/converted draft was not found/i)).toBeInTheDocument()
   })
 
   it('yetki yoksa taslak beklenmez, form açılmaz, parametre silinir', async () => {
@@ -58,6 +59,8 @@ describe('ScriptedMonitorPage — sc_open=draft', () => {
     await renderPage(false)
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('sc_open')).toBeNull())
     expect(screen.queryByTestId('code-editor')).toBeNull()
+    // Son inceleme DÜŞÜK-10: parametre sessizce silinmez — neden söylenir
+    expect(await screen.findByText(/no permission to manage synthetic monitors/i)).toBeInTheDocument()
   })
 
   it('taslaklar okunamazsa ("taslak yok" sanılmaz) form açılmaz ve sayfa kırılmaz', async () => {
@@ -66,6 +69,9 @@ describe('ScriptedMonitorPage — sc_open=draft', () => {
     await renderPage()
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('sc_open')).toBeNull())
     expect(screen.queryByTestId('code-editor')).toBeNull()
+    // "bulunamadı" değil "okunamadı"
+    expect(await screen.findByText(/converted draft could not be read/i)).toBeInTheDocument()
+    expect(screen.queryByText(/converted draft was not found/i)).toBeNull()
   })
 
   it('parametre yoksa taslak olsa bile form kendiliğinden açılmaz (yalnız "devam et" şeridi)', async () => {
