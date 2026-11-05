@@ -126,6 +126,15 @@ public class KeywordResult {
     @Column(name = "content_changed")
     private Boolean contentChanged;
 
+    /**
+     * Değişimin bu kontrolde NEDEN ölçülmediği (kw son inceleme O-3 / D-7): {@code HTTP_ERROR} | {@code EMPTY_BODY} |
+     * {@code INCOMPLETE} | {@code RULE_REJECTED} | {@code SELECTOR_NOT_FOUND}; ölçüldüyse / değişim kapalıysa NULL. API'de
+     * {@code change_note}.
+     */
+    @Column(name = "change_note", length = 32)
+    @com.fasterxml.jackson.annotation.JsonProperty("change_note")
+    private String changeNote;
+
     /** Değişim özeti JSON'u (≤ 4000, yalnız değişimde); API'de {@code change_summary} nesnesi. */
     @Column(name = "change_summary", columnDefinition = "TEXT")
     @com.fasterxml.jackson.annotation.JsonIgnore

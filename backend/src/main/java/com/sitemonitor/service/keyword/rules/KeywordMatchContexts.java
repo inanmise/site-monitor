@@ -1,9 +1,8 @@
 package com.sitemonitor.service.keyword.rules;
 
-import com.sitemonitor.config.RequestLoggingFilter;
+import com.sitemonitor.service.keyword.KeywordSecretWindow;
 import com.sitemonitor.service.keyword.KeywordBodyAnalyzer;
 import com.sitemonitor.service.keyword.KeywordFold;
-import com.sitemonitor.service.SecretMask;
 import com.google.re2j.Matcher;
 
 import java.util.ArrayList;
@@ -108,20 +107,30 @@ public final class KeywordMatchContexts {
         return out;
     }
 
-    private static Map<String, Object> context(String text, int s, int e, String source, Collection<String> secrets) {
-        int b = Math.max(0, s - RADIUS);
-        int a = Math.min(text.length(), e + RADIUS);
+    /**
+     * Bağlam: maske önce / eşleşme / sonra parçalarının BİRLEŞİMİNE uygulanır, sonra bölünür (kw son inceleme D-9 —
+     * {@link KeywordSecretWindow}); pencere kenarındaki sır tam kapsanacak biçimde genişletilir. Sır parça sınırını aşıyorsa
+     * bağlam tek maskeli parça olarak {@code before}'da döner ({@code match} / {@code after} boş).
+     */
+    static Map<String, Object> context(String text, int s, int e, String source, Collection<String> secrets) {
+        int[] w = KeywordSecretWindow.expand(text, Math.max(0, s - RADIUS), Math.min(text.length(), e + RADIUS), secrets);
+        int b = Math.min(w[0], s);
+        int a = Math.max(w[1], e);
+        KeywordSecretWindow.Pieces p = KeywordSecretWindow.mask(text, b, s, e, a, secrets);
+        String lead = b > 0 ? "…" : "";
+        String tail = a < text.length() ? "…" : "";
         Map<String, Object> c = new LinkedHashMap<>();
-        c.put("before", mask((b > 0 ? "…" : "") + KeywordBodyAnalyzer.collapseWs(text.substring(b, s)), secrets));
-        String match = text.substring(s, e);
-        c.put("match", mask(match.length() > MATCH_MAX ? match.substring(0, MATCH_MAX) + "…" : match, secrets));
-        c.put("after", mask(KeywordBodyAnalyzer.collapseWs(text.substring(e, a)) + (a < text.length() ? "…" : ""), secrets));
+        if (p.joined()) {
+            c.put("before", lead + KeywordBodyAnalyzer.collapseWs(p.before()) + tail);
+            c.put("match", "");
+            c.put("after", "");
+        } else {
+            c.put("before", lead + KeywordBodyAnalyzer.collapseWs(p.before()));
+            String match = p.match();
+            c.put("match", match.length() > MATCH_MAX ? match.substring(0, MATCH_MAX) + "…" : match);
+            c.put("after", KeywordBodyAnalyzer.collapseWs(p.after()) + tail);
+        }
         c.put("source", source);
         return c;
-    }
-
-    private static String mask(String s, Collection<String> secrets) {
-        String t = RequestLoggingFilter.redactSensitiveFields(s);
-        return secrets == null || secrets.isEmpty() ? t : SecretMask.maskValues(t, secrets);
     }
 }

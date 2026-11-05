@@ -735,8 +735,26 @@ public class MonitoringController {
                 }
             }
         }
+        // Anahtar kelime kural listesi (kw son inceleme D-5 / O-2): durum kaydındaki kural listesi KAYIPLIYSA (512 karakterde
+        // kırpılmış) ya da paylaşımla geri yükleyende kritik eşikleri (alarm seviyesi) değiştirecekse kural listesi VE ona aynalı
+        // eski koşul alanları birlikte atlanır — biri yazılıp öteki kalırsa ayna bozulurdu.
+        List<String> skippedFields = new ArrayList<>();
+        if (kwKind && entity instanceof KeywordMonitor kwm && snapshot.containsKey("rulesJson")) {
+            Object snapRules = snapshot.get("rulesJson");
+            boolean lossyRules = AuditDiff.MASK.equals(snapRules) || AuditDiff.isLossy(snapRules);
+            boolean levelLocked = !lossyRules && routingLocked && !keywordCriticalMap(snapRules == null ? null : snapRules.toString())
+                    .equals(keywordCriticalMap(kwm.getRulesJson()));
+            if (lossyRules) {
+                skip.addAll(KEYWORD_RULE_RESTORE_FIELDS);
+                skippedFields.add("rules");
+            } else if (levelLocked) {
+                skip.addAll(KEYWORD_RULE_RESTORE_FIELDS);
+                routingSkipped.add("rulesJson");
+            }
+        }
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
+        if (!skippedFields.isEmpty()) maskedSkipped = maskedSkipped.stream().filter(f -> !"rulesJson".equals(f)).toList();
 
         // "Yazılan alan" ile "DEĞİŞEN alan" aynı şey değil: snapshot güncel değerin aynısını
         // taşıyorsa applySnapshot onu yine yazar. Karar farka bakmalı — aksi halde hiçbir şeyin
@@ -744,6 +762,22 @@ public class MonitoringController {
         // denirdi. Entity bu noktada DETACHED (findById kendi kısa transaction'ında kapandı),
         // yani kaydetmeden dönmek veritabanına hiçbir şey yazmaz.
         Map<String, Object> after = AuditDiff.snapshot(entity, fields);
+        // O-1 (kw son inceleme): geri yükleme izlemenin KAYNAĞINI değiştiriyorsa kayıtlı sırlar yeni sunucuya gitmez — geri yükleme
+        // parola giremez, kayıtlı parola SİLİNİR (yanıtta secrets_cleared, geçmiş / denetimde yalnız "temizlendi" işareti); yöneticinin
+        // özel başlıkları varsa ve geri yükleyen global yönetici değilse 403 (güncellemeyle aynı metin).
+        List<String> secretsCleared = new ArrayList<>();
+        if (entity instanceof KeywordMonitor kwr && before.get("url") != null && kwr.getUrl() != null
+                && !com.sitemonitor.service.keyword.KeywordRequestRules.sameOrigin(before.get("url").toString(), kwr.getUrl())) {
+            if (!SessionScope.isGlobalAdmin(session) && keywordHeaderSecrets.hasHeaders(kwr)) {
+                throw new SecurityException(keywordHeadersMoveMessage());
+            }
+            if (keywordHeaderSecrets.hasBasicAuthPass(kwr)) {
+                keywordHeaderSecrets.clearBasicAuthPass(kwr);
+                secretsCleared.add("basicAuthPass");
+                before.put("basicAuthCleared", false);
+                after.put("basicAuthCleared", true);
+            }
+        }
         String effective = AuditDiff.diff(before, after);
         if (effective == null && !routingSkipped.isEmpty()) {
             // Tek fark bildirim ayarlarıysa "fark yok" denmez — neden yapılamadığı söylenir. Veritabanı sorgu izlemesinde
@@ -755,6 +789,13 @@ public class MonitoringController {
                                 + "mail içeriği ya da bildirim ayarları); bunları izlemenin takımı geri yükleyebilir.",
                         "This entry differs only in fields that can't be restored through team access sharing (query, connection, "
                                 + "rules, mail content or notification settings); the monitor's team can restore them."));
+            }
+            if (kwKind && routingSkipped.contains("rulesJson")) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu kayıttaki fark yalnız takım erişim paylaşımıyla geri yüklenemeyen alanlarda (kuralların kritik eşiği — alarm "
+                                + "seviyesi — ya da bildirim ayarları); bunları izlemenin takımı geri yükleyebilir.",
+                        "This entry differs only in fields that can't be restored through team access sharing (a rule's critical "
+                                + "threshold — the alert level — or notification settings); the monitor's team can restore them."));
             }
             throw new SecurityException(com.sitemonitor.util.Msg.t(
                     "Bu kayıttaki fark yalnız bildirim ayarlarında; bildirim ayarları takım erişim paylaşımıyla geri yüklenemez.",
@@ -863,6 +904,8 @@ public class MonitoringController {
         // Atlananlar SESSİZ kalmamalı: kullanıcı parolanın eski değerine dönmediğini bilmeli.
         out.put("skipped_masked", maskedSkipped);
         if (!routingSkipped.isEmpty()) out.put("skipped_routing", routingSkipped);
+        if (!skippedFields.isEmpty()) out.put("skipped_fields", skippedFields);   // kw D-5: kayıplı kural listesi geri yüklenmedi
+        if (!secretsCleared.isEmpty()) out.put("secrets_cleared", secretsCleared);   // kw O-1: kaynak değişti, parola silindi
         if (dbqPlan != null) out.put("plan_warning", dbqPlanApi(dbqPlan));
         return ok(out);
     }
@@ -3322,6 +3365,7 @@ public class MonitoringController {
         // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.KeywordMonitor());
         guardSharedKeywordFields(session, teamId, body, new com.sitemonitor.model.KeywordMonitor());   // posta konusu (kw §8.3)
+        guardSharedKeywordLevel(session, teamId, rulesPatch, new com.sitemonitor.model.KeywordMonitor());   // kritik eşik (O-2)
         // Mükerrer koruması (diğer türlerle aynı desen): aynılık anahtarı url + keyword + takım —
         // aynı URL'i FARKLI kelimeyle izlemek meşrudur, engellenmez.
         // Şemasız URL kontrol edilemez (host çıkarılamaz) → mükerrer kontrolünden ÖNCE normalize et,
@@ -3384,6 +3428,8 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             guardSharedKeywordFields(session, m.getTeamId(), body, m);        // ... ve posta konusu şablonunu (kw §8.3)
+            guardSharedKeywordLevel(session, m.getTeamId(), rulesPatch, m);  // ... ve kuralların kritik eşiğini (O-2)
+            guardKeywordLegacyOnly(body, rulesPatch, m);                      // D-5: kural listeli izlemede tek başına eski koşul
             String previousUrl = m.getUrl();
             Boolean prevChangeDetect = m.getChangeDetect();
             String prevChangeMask = m.getChangeMask();
@@ -3394,6 +3440,7 @@ public class MonitoringController {
             Long intendedTeam   = body.containsKey("teamId")
                     ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
             if (body.get("url") != null && !MonitorUrls.isCheckable(intendedUrl)) return badRequest(INVALID_URL_MSG);
+            guardKeywordOriginChange(session, m, body, intendedUrl);   // O-1: kayıtlı sırlar yeni sunucuya gitmez
             if (intendedUrl != null && intendedWord != null
                     && keywordMonitorRepo.existsDuplicate(intendedUrl, intendedWord, intendedTeam, id))
                 return badRequest("Bu URL ve anahtar kelime bu takımda zaten izleniyor; mükerrer keyword monitörü oluşturulamaz.");
@@ -3519,7 +3566,8 @@ public class MonitoringController {
                 // kw-be2 Aşama 2 (§10.4) — sona eklenir (sıra korunur); rule_results sıkı JSON
                 new CsvColumn<>("breach_level", KeywordResult::getBreachLevel),
                 new CsvColumn<>("content_changed", KeywordResult::getContentChanged),
-                new CsvColumn<>("rule_results", KeywordResult::getRuleResultsJson)), response);
+                new CsvColumn<>("rule_results", KeywordResult::getRuleResultsJson),
+                new CsvColumn<>("change_note", KeywordResult::getChangeNote)), response);   // kw son inceleme O-3 / D-7 (sona)
     }
 
     @PostMapping("/keyword/{id}/check")
@@ -3603,16 +3651,32 @@ public class MonitoringController {
             if (!canOperateTeam(session, saved.getTeamId())) return forbidden(com.sitemonitor.util.Msg.t(
                     "Bu izlemenin kayıtlı sırlarıyla test yapma yetkiniz yok (izlemeyi düzenleyebilen kullanıcılar kullanabilir).",
                     "You can't test with this monitor's saved secrets (only users who can edit the monitor can)."));
-            if (wantSaved.contains("customHeaders") && customHeaders == null) {
-                if (!admin) return forbidden(com.sitemonitor.util.Msg.t(
-                        "Kayıtlı özel başlıklarla yalnız global yöneticiler test yapabilir.",
-                        "Only global administrators can test with the saved custom headers."));
+            boolean savedHeaders = wantSaved.contains("customHeaders") && customHeaders == null;
+            boolean savedPass = wantSaved.contains("basicAuthPass") && basicAuthPass == null;
+            if (savedHeaders && !admin) return forbidden(com.sitemonitor.util.Msg.t(
+                    "Kayıtlı özel başlıklarla yalnız global yöneticiler test yapabilir.",
+                    "Only global administrators can test with the saved custom headers."));
+            // Y-1 (kw son inceleme): kayıtlı sır YALNIZ izlemenin kendi kaynağına (şema + host + port) gider — test URL'si başka
+            // sunucuya çevrilip kayıtlı parola / başlık oraya gönderilemesin (EDIT paylaşımı ya da takım düzenleyicisi).
+            if ((savedHeaders || savedPass)
+                    && !com.sitemonitor.service.keyword.KeywordRequestRules.sameOrigin(url, saved.getUrl())) {
+                throw new DbQueryApiException(403, KEYWORD_SAVED_SECRET_ORIGIN, com.sitemonitor.util.Msg.t(
+                        "Kayıtlı parola / başlıklar yalnız izlemenin kendi adresine gönderilir — başka adresi denemek için parolayı "
+                                + "yeniden girin.",
+                        "The saved password / headers are only sent to the monitor's own address — to try another address, enter "
+                                + "the password again."));
+            }
+            if (savedHeaders) {
                 customHeaders = keywordHeaderSecrets.effectiveHeaders(saved);
                 if (customHeaders != null) usedSaved.add("customHeaders");
             }
-            if (wantSaved.contains("basicAuthPass") && basicAuthPass == null) {
+            if (savedPass) {
                 basicAuthPass = keywordHeaderSecrets.basicAuthPass(saved);
-                if (basicAuthPass != null) usedSaved.add("basicAuthPass");
+                if (basicAuthPass != null) {
+                    usedSaved.add("basicAuthPass");
+                    // Kayıtlı parola kayıtlı KULLANICI ADIYLA gider (gövdedeki kullanıcı adı yok sayılır — Y-1)
+                    probe.setBasicAuthUser(saved.getBasicAuthUser());
+                }
             }
         }
         // N1: oturum başına tek eşzamanlı test — istek iş parçacığı havuzu tek oturumca tüketilemesin.
@@ -3995,6 +4059,7 @@ public class MonitoringController {
             item.put("breach_level",    latest.getBreachLevel());
             item.put("body_bytes",      latest.getBodyBytes());
             item.put("content_changed", latest.getContentChanged());
+            item.put("change_note", latest.getChangeNote());   // kw son inceleme O-3 / D-7: değişim bu kontrolde neden ölçülmedi
         } else {
             item.put("status", "unknown");
             item.put("found", null); item.put("occurrences", null); item.put("ok", null); item.put("http_status", null);
@@ -4003,6 +4068,7 @@ public class MonitoringController {
             item.put("decoded_charset", null); item.put("final_url", null);
             item.put("rule_results", List.of()); item.put("breach_level", null); item.put("body_bytes", null);
             item.put("content_changed", null);
+            item.put("change_note", null);
         }
         return item;
     }
@@ -4054,6 +4120,118 @@ public class MonitoringController {
     /** Paylaşımla (yalnız erişim izniyle) düzenleyenin DEĞİŞTİREMEDİĞİ keyword alanları (kw §8.3 / §10.7). */
     private static final Set<String> KEYWORD_SHARED_LOCKED = Set.of("mailSubjectTemplate");
 
+    /** Paylaşım kilidinin hata kodu (kw son inceleme O-2) — posta konusu ve kuralların kritik eşiği (alarm seviyesi). */
+    static final String KEYWORD_SHARED_LOCKED_CODE = "KEYWORD_SHARED_LOCKED";
+    /** Kayıtlı sırrın başka kaynağa gönderilmesi reddi (kw son inceleme Y-1). */
+    static final String KEYWORD_SAVED_SECRET_ORIGIN = "KEYWORD_SAVED_SECRET_ORIGIN";
+
+    /**
+     * Kural listesine bağlı (aynalı) eski koşul alanları — geri yüklemede kural listesiyle BİRLİKTE yazılır ya da birlikte atlanır
+     * (kw son inceleme D-5 / O-2: kayıplı ya da kilitli kural listesi atlanıp eski alanlar yazılırsa ayna bozulurdu).
+     */
+    private static final Set<String> KEYWORD_RULE_RESTORE_FIELDS = Set.of("rulesJson", "ruleLogic", "keyword", "matchOperator",
+            "matchCount", "alertCondition", "caseSensitive");
+
+    /** Eski koşul gövde anahtarları (D-5: kural listeli izlemede tek başına gönderilemez). */
+    private static final List<String> KEYWORD_LEGACY_CONDITION_KEYS = List.of("keyword", "operator", "matchCount", "condition",
+            "caseSensitive");
+
+    /** Kuralların kritik eşik eşlemesi: kural kimliği → kritik eşik (yalnız kritik eşiği olan kurallar). */
+    static Map<String, com.sitemonitor.service.keyword.rules.KeywordRule.Threshold> keywordCriticalMap(String rulesJson) {
+        Map<String, com.sitemonitor.service.keyword.rules.KeywordRule.Threshold> out = new java.util.TreeMap<>();
+        if (rulesJson == null || rulesJson.isBlank()) return out;
+        for (com.sitemonitor.service.keyword.rules.KeywordRule r : com.sitemonitor.service.keyword.rules.KeywordRules.readStored(rulesJson)) {
+            if (r != null && r.critical() != null) out.put(r.id(), r.critical());
+        }
+        return out;
+    }
+
+    /**
+     * Paylaşımla yazan alarm SEVİYESİNİ değiştiremez (kw son inceleme O-2): kural kimliği → kritik eşik eşlemesi kayıtlıyla
+     * aynıysa sessizce geçer (kurallar, mantık, desenler paylaşımla düzenlenebilir kalır); ekleme / silme / değer farkı → 403
+     * {@code KEYWORD_SHARED_LOCKED} alan {@code rules}. Kendi kapsamıyla yazanda hiçbir şey denetlenmez. Yeni kayıt (paylaşım
+     * takımına) kayıtlı = kritiksiz kabul edilir.
+     */
+    static void guardSharedKeywordLevel(HttpSession session, Long teamId, KwRulesPatch patch, KeywordMonitor stored) {
+        if (patch == null || stored == null || !patch.rulesPresent() || SessionScope.canOperateTeamOwn(session, teamId)) return;
+        if (keywordCriticalMap(patch.rulesJson()).equals(keywordCriticalMap(stored.getRulesJson()))) return;
+        String msg = com.sitemonitor.util.Msg.t(
+                "Takım erişim paylaşımıyla kuralların kritik eşiği (alarm seviyesi) değiştirilemez; bunu izlemenin takımı değiştirebilir. "
+                        + "Kuralları, mantığı ve desenleri değiştirebilirsiniz.",
+                "A rule's critical threshold (the alert level) can't be changed through team access sharing; the monitor's team "
+                        + "can change it. You can still change the rules, the logic and the patterns.");
+        throw new DbQueryApiException(403, KEYWORD_SHARED_LOCKED_CODE, msg, Map.of("rules", msg), null);
+    }
+
+    /**
+     * D-5 (kw son inceleme): kural listesi kullanan izlemede ({@code rules_json} dolu) gövde {@code rules} taşımadan yalnız eski
+     * koşul alanlarını (kelime, işleç, adet, koşul, harf duyarlılığı) gönderirse: kayıtlı aynayla AYNI değer sessizce düşer (tam
+     * yük gönderen eski form), FARKLI değer 400 {@code VALIDATION_FAILED} alan {@code rules} — değerlendirme kural listesinden
+     * yapıldığı için düzenleme sessizce etkisiz kalırdı (ve mükerrer denetimi bayat aynaya bakardı).
+     */
+    static void guardKeywordLegacyOnly(Map<String, Object> body, KwRulesPatch patch, KeywordMonitor stored) {
+        if (body == null || stored == null || patch == null || patch.rulesPresent()) return;
+        if (stored.getRulesJson() == null || stored.getRulesJson().isBlank()) return;
+        for (String key : KEYWORD_LEGACY_CONDITION_KEYS) {
+            if (!body.containsKey(key)) continue;
+            if (!sameLegacyValue(key, body.get(key), stored)) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("rules", com.sitemonitor.util.Msg.t(
+                        "Bu izleme kural listesi kullanıyor — koşulu kural düzenleyicisinden değiştirin (kelime / işleç / adet tek "
+                                + "başına değiştirilemez).",
+                        "This monitor uses a rule list — change the condition in the rule editor (the keyword / operator / count "
+                                + "can't be changed on their own)."));
+            }
+            body.remove(key);
+        }
+    }
+
+    private static boolean sameLegacyValue(String key, Object sent, KeywordMonitor m) {
+        return switch (key) {
+            case "keyword" -> sent != null && m.getKeyword() != null && sent.toString().trim().equals(m.getKeyword().trim());
+            case "operator" -> {
+                String s = sent == null ? "GTE" : sent.toString().trim().toUpperCase(Locale.ROOT);
+                String st = m.getMatchOperator() == null ? "GTE" : m.getMatchOperator();
+                yield s.equals(st);
+            }
+            case "matchCount" -> {
+                int st = m.getMatchCount() == null ? 1 : m.getMatchCount();
+                yield sent instanceof Number n ? n.intValue() == st : sent == null;
+            }
+            case "condition" -> sent == null || m.getAlertCondition() == null
+                    || sent.toString().trim().equalsIgnoreCase(m.getAlertCondition());
+            case "caseSensitive" -> !(sent instanceof Boolean b) || b == Boolean.TRUE.equals(m.getCaseSensitive());
+            default -> true;
+        };
+    }
+
+    /**
+     * O-1 (kw son inceleme): güncelleme izlemenin KAYNAĞINI (şema + host + port) değiştiriyorsa kayıtlı sırlar yeni sunucuya
+     * gitmez — dbquery emsali: kayıtlı Basic auth parolası varsa ve gövdede yeni parola yoksa (ya da parola / kullanıcı
+     * temizlenmiyorsa) 400 {@code basicAuthPass}; yöneticinin tanımladığı özel başlıklar varsa ve yazan global yönetici değilse
+     * 400 {@code url} (global yöneticide başlıklar kalır).
+     */
+    void guardKeywordOriginChange(HttpSession session, KeywordMonitor m, Map<String, Object> body, String intendedUrl) {
+        if (body.get("url") == null || m.getUrl() == null
+                || com.sitemonitor.service.keyword.KeywordRequestRules.sameOrigin(m.getUrl(), intendedUrl)) return;
+        boolean newPass = body.get("basicAuthPass") instanceof String bp && !bp.isEmpty();
+        boolean clearing = Boolean.TRUE.equals(body.get("clearBasicAuthPass"))
+                || (body.containsKey("basicAuthUser") && kwStr(body.get("basicAuthUser")) == null);
+        if (!newPass && !clearing && keywordHeaderSecrets.hasBasicAuthPass(m)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("basicAuthPass", com.sitemonitor.util.Msg.t(
+                    "Adres başka bir sunucuya değişti — kayıtlı parola yeni adrese gönderilmez, parolayı yeniden girin.",
+                    "The address moved to another server — the saved password is not sent to the new address; enter the password again."));
+        }
+        if (!SessionScope.isGlobalAdmin(session) && keywordHeaderSecrets.hasHeaders(m)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("url", keywordHeadersMoveMessage());
+        }
+    }
+
+    static String keywordHeadersMoveMessage() {
+        return com.sitemonitor.util.Msg.t(
+                "Bu izlemede bir yöneticinin tanımladığı özel başlıklar var; adresi başka sunucuya taşımak için genel yönetici gerekir.",
+                "This monitor has custom headers set by an administrator; moving the address to another server needs a global administrator.");
+    }
+
     /**
      * Keyword'e özgü geçmiş / denetim alanları (B2, kw sözleşmesi §12) — MON_FIELDS'e EKLENİR. Eskiden harf duyarlılığı, yavaşlık
      * eşiği, SSL / alan adı hatırlatmaları ve başlık değişikliği hiçbir yerde iz bırakmıyor, geri de yüklenemiyordu. Sırlar
@@ -4097,9 +4275,10 @@ public class MonitoringController {
             String s2 = stored.getMailSubjectTemplate() == null || stored.getMailSubjectTemplate().isBlank()
                     ? null : stored.getMailSubjectTemplate().trim();
             if (!java.util.Objects.equals(s1, s2)) {
-                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                String msg = com.sitemonitor.util.Msg.t(
                         "Takım erişim paylaşımıyla alarm postasının konu şablonu değiştirilemez; bunu izlemenin takımı değiştirebilir.",
-                        "The alert mail subject template can't be changed through team access sharing; the monitor's team can change it."));
+                        "The alert mail subject template can't be changed through team access sharing; the monitor's team can change it.");
+                throw new DbQueryApiException(403, KEYWORD_SHARED_LOCKED_CODE, msg, Map.of("mailSubjectTemplate", msg), null);
             }
             body.remove("mailSubjectTemplate");
         }
@@ -4323,11 +4502,24 @@ public class MonitoringController {
         }
     }
 
-    /** Aynı URL karşılaştırma anahtarı (kw karar 4): {@code MonitorUrls.normalize} + büyük/küçük harf duyarsız; geçersiz → null. */
+    /**
+     * Aynı URL karşılaştırma anahtarı (kw karar 4): {@code MonitorUrls.normalize}; YALNIZ şema + host küçük harfe çevrilir — yol /
+     * sorgu / parça harfe DUYARLI (kw son inceleme D-6: {@code /Urun} ile {@code /urun} farklı sayfalar olabilir, ikisine yanlış
+     * "aynı URL" uyarısı çıkmasın). Geçersiz → null.
+     */
     static String keywordUrlKey(String url) {
         if (url == null || url.isBlank() || url.length() > 2000) return null;
         String n = MonitorUrls.normalize(url);
-        return MonitorUrls.isCheckable(n) ? n.trim().toLowerCase(Locale.ROOT) : null;
+        if (!MonitorUrls.isCheckable(n)) return null;
+        n = n.trim();
+        int sch = n.indexOf("://");
+        if (sch < 0) return n;
+        int end = n.length();
+        for (int i = sch + 3; i < n.length(); i++) {
+            char c = n.charAt(i);
+            if (c == '/' || c == '?' || c == '#') { end = i; break; }
+        }
+        return n.substring(0, end).toLowerCase(Locale.ROOT) + n.substring(end);
     }
 
     /** İzlemeleri aynı-URL anahtarına göre gruplar (tek okuma; liste ucu ve tek satır yanıtları ortak). */

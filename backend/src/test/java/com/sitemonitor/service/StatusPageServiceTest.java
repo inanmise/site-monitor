@@ -176,6 +176,27 @@ class StatusPageServiceTest {
     }
 
     @Test
+    @DisplayName("kw son inceleme O-6: yalnız içerik değişimi (KEYWORD_CHANGED) açık → en fazla degraded; başka keyword alarmı ya da "
+            + "başarısız son kontrol → kesinti (bugünkü)")
+    void monitorHealth_keywordContentChangeIsNotOutage() {
+        Map<String, Object> change = withAlert(row("keyword", 30, "Kampanya", "https://a", 14L, "SY", null, "up"), "HIGH", ago(5), true);
+        change.put("open_change_only", true);
+        assertThat(monitorHealth(change, false)).isEqualTo(M_DEGRADED);
+        // başka keyword alarmı da açık (alan false) → kesinti
+        Map<String, Object> mixed = withAlert(row("keyword", 31, "Kampanya", "https://a", 14L, "SY", null, "up"), "HIGH", ago(5), true);
+        mixed.put("open_change_only", false);
+        assertThat(monitorHealth(mixed, false)).isEqualTo(M_DOWN);
+        // içerik değişimi açık AMA son kontrol başarısız → kesinti
+        Map<String, Object> failed = withAlert(row("keyword", 32, "Kampanya", "https://a", 14L, "SY", null, "down"), "HIGH", ago(5), false);
+        failed.put("open_change_only", true);
+        assertThat(monitorHealth(failed, false)).isEqualTo(M_DOWN);
+        // başka tür aynı alanı taşısa da etkilenmez
+        Map<String, Object> http = withAlert(row("http", 33, "a", "https://a", 14L, "SY", null, "up"), "HIGH", ago(5), true);
+        http.put("open_change_only", true);
+        assertThat(monitorHealth(http, false)).isEqualTo(M_DOWN);
+    }
+
+    @Test
     @DisplayName("Hizmet durumu: bakım / veri yok / yarıdan fazlası düşük → büyük kesinti, aksi kısmi / bozulmuş / çalışıyor")
     void serviceState_rules() {
         // (aktif, bakım, veri yok, düşük, bozulmuş)

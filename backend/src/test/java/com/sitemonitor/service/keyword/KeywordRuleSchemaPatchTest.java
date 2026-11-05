@@ -27,7 +27,7 @@ class KeywordRuleSchemaPatchTest {
     }
 
     @Test
-    @DisplayName("eski şema: 12 kolon eklenir, ikinci koşu no-op; eski satırlar NULL; tablo yoksa atlar")
+    @DisplayName("eski şema: 13 kolon eklenir, ikinci koşu no-op; eski satırlar NULL; tablo yoksa atlar")
     void addsColumnsIdempotently() {
         KeywordRuleSchemaPatch patch = new KeywordRuleSchemaPatch(mp.jdbc());
         assertThat(patch.apply()).as("tablolar yok").isZero();
@@ -48,15 +48,15 @@ class KeywordRuleSchemaPatchTest {
         // kolon türleri: değer yazılabilir
         mp.jdbc().update("UPDATE keyword_monitors SET rule_logic = 'OR', min_bytes = 10, change_mask = 'DIGITS,DATES', "
                 + "change_selector = '#a' WHERE id = 1");
-        mp.jdbc().update("UPDATE keyword_results SET breach_level = 'CRITICAL', content_fingerprint = ?, change_summary = '{}' "
+        mp.jdbc().update("UPDATE keyword_results SET breach_level = 'CRITICAL', content_fingerprint = ?, change_summary = '{}', change_note = 'SELECTOR_NOT_FOUND' "
                 + "WHERE id = 1", "f".repeat(64));
     }
 
     @Test
-    @DisplayName("12 kolon: 7 keyword_monitors + 5 keyword_results (sözleşme §3.1 / §3.2)")
+    @DisplayName("13 kolon: 7 keyword_monitors + 6 keyword_results (sözleşme §3.1 / §3.2; change_note — kw son inceleme O-3 / D-7)")
     void columnCatalogue() {
         assertThat(KeywordRuleSchemaPatch.COLUMNS).extracting(KeywordRuleSchemaPatch.Col::column).containsExactly(
                 "rules_json", "rule_logic", "min_bytes", "max_bytes", "change_detect", "change_mask", "change_selector",
-                "rule_results_json", "breach_level", "content_fingerprint", "content_changed", "change_summary");
+                "rule_results_json", "breach_level", "content_fingerprint", "content_changed", "change_summary", "change_note");
     }
 }

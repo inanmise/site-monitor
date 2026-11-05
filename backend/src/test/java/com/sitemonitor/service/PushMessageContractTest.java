@@ -336,6 +336,26 @@ class PushMessageContractTest {
         assertThat(msg).doesNotContain("UYARI: example.com");
     }
 
+    @Test
+    @DisplayName("kw son inceleme D-4: KEYWORD_CHANGED push'u anlamlı cümle — '… kapanır. değişti' YOK; NE değişti (içerik, satır)")
+    void keywordChanged_meaningfulSentence() {
+        Map<String, Object> ctx = Map.of("changed_lines", 3);
+        AlertEvent e = event("HIGH", "https://shop.example.com/kampanya",
+                EscalationService.keywordChangedMessage("https://shop.example.com/kampanya", ctx), Instant.now());
+        e.setAlertType(EscalationService.TYPE_KEYWORD_CHANGED);
+        String msg = service.buildMessage(e, "OPEN", ctx);
+        assertThat(msg).contains("İçerik (3 satır) değişti");
+        assertThat(msg).doesNotContain("kapanır. değişti").doesNotContain("kapatın");
+        assertThat(PushText.isChannelSafe(msg)).isTrue();
+        // bağlamda satır yoksa yalnız "İçerik değişti"; İngilizce dilde "Content (1 line) changed"
+        assertThat(service.buildMessage(e, "OPEN", Map.of())).contains("İçerik değişti");
+        assertThat(service.buildMessage(e, "OPEN", Map.of("changed_lines", 1), "en")).contains("Content (1 line) changed");
+        // başka CHANGED türleri bugünkü gibi ({degisen} = iletinin çekirdeği)
+        AlertEvent dns = event("HIGH", "example.com", "UYARI: example.com DNS kaydı değişti — kontrol edin.", Instant.now());
+        dns.setAlertType(EscalationService.TYPE_DNS_CHANGED);
+        assertThat(service.buildMessage(dns, "OPEN", Map.of())).doesNotContain("İçerik");
+    }
+
     // ── Denetim 5. tur, bulgu 5: teslimat damgalari UTC ───────────────────────
     //
     // Damgalar Istanbul yereliyle yaziliyordu; arayuzdeki toUtc zone tasimayan her damgaya 'Z'

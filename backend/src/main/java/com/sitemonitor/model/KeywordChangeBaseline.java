@@ -14,7 +14,7 @@ import org.hibernate.annotations.DynamicUpdate;
  * doğar; ad kalıcıdır.
  *
  * <p>Yazımlar varlık kaydıyla DEĞİL, depodaki koşullu SQL ile ({@code KeywordChangeBaselineService}): otomatik alım
- * insert-if-absent (iki pod aynı anda alırsa tek satır kalır), elle alım upsert, silme izleme silinince / değişim kapatılınca /
+ * insert-or-refresh-stale (iki pod aynı anda alırsa tek satır kalır; eskimiş özetli satır yenilenir), elle alım upsert, silme izleme silinince / değişim kapatılınca /
  * değişim ayarı değişince. {@code spec_hash} güncel ayarın özetiyle uyuşmazsa temel YOK sayılır.
  */
 @Entity

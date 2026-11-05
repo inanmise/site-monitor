@@ -6305,10 +6305,15 @@ public class SchedulerService {
         return keywordOutcome(m, r);
     }
 
-    /** Zamanlanmış kontrolde temel yoksa otomatik temel (insert-if-absent; iki pod → tek satır). Hata turu bozmaz. */
-    private void takeAutoBaseline(KeywordMonitor m, Map<String, Object> r,
-                                  com.sitemonitor.service.keyword.KeywordCheckSpec.ChangeCapture capture) {
+    /**
+     * Zamanlanmış kontrolde temel yoksa (ya da başka ayarla alınmışsa) otomatik temel (iki pod → tek satır; eskimiş ayar özetli
+     * satır yenilenir — kw son inceleme O-4). YALNIZ sağlıklı kontrolden ({@code ok == true}, kw son inceleme O-3): hata / bakım
+     * sayfası, koşulu sağlamayan sayfa temel olmaz. Hata turu bozmaz.
+     */
+    void takeAutoBaseline(KeywordMonitor m, Map<String, Object> r,
+                          com.sitemonitor.service.keyword.KeywordCheckSpec.ChangeCapture capture) {
         if (keywordBaselines == null || capture.snapshot() == null || !Boolean.TRUE.equals(r.get("baseline_missing"))) return;
+        if (!Boolean.TRUE.equals(r.get("ok")) || r.get("error") != null) return;
         try {
             if (keywordBaselines.takeAuto(m.getId(), capture.snapshot(), capture.bytes(), capture.specHash())) {
                 log.info("Anahtar kelime içerik temeli otomatik alındı: {} (#{})", m.getUrl(), m.getId());

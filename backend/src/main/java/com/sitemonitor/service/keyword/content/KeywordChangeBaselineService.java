@@ -19,9 +19,10 @@ import java.util.Optional;
 /**
  * İçerik değişimi temeli servisi (kw sözleşmesi §3.3 / §7.2). Çok pod güvenli:
  * <ul>
- *   <li><b>Otomatik alım</b> ({@link #takeAuto}) — yalnız ZAMANLANMIŞ kontrolde (klasik ya da dağıtık iş), temel yoksa:
- *       insert-if-absent. İki pod aynı anda alırsa TEK satır kalır (PostgreSQL {@code ON CONFLICT DO NOTHING}; taşınabilir yolda
- *       {@code INSERT … WHERE NOT EXISTS} + yarışta birincil anahtar ihlali yakalanır).</li>
+ *   <li><b>Otomatik alım</b> ({@link #takeAuto}) — yalnız ZAMANLANMIŞ ve SAĞLIKLI kontrolde (klasik ya da dağıtık iş), temel
+ *       yoksa ya da başka ayar özetiyle alınmışsa: insert-or-refresh-stale. İki pod aynı anda alırsa TEK satır kalır (PostgreSQL
+ *       {@code ON CONFLICT … DO UPDATE … WHERE spec_hash IS DISTINCT FROM}; taşınabilir yolda koşullu UPDATE + {@code INSERT …
+ *       WHERE NOT EXISTS} + yarışta birincil anahtar ihlali yakalanır).</li>
  *   <li><b>Elle alım</b> ({@link #takeManual}) — upsert, son yazan kazanır.</li>
  *   <li><b>Silme</b> ({@link #delete}) — izleme silinince, değişim kapatılınca ya da değişim ayarı değişince.</li>
  * </ul>
@@ -90,18 +91,25 @@ public class KeywordChangeBaselineService {
     }
 
     /**
-     * Otomatik temel — yoksa ekle. @return bu çağrı satırı EKLEDİYSE true (zaten varsa / yarışı kaybettiyse false).
+     * Otomatik temel (kw son inceleme O-4) — yoksa ekle; varsa yalnız ayar özeti ({@code specHash}) FARKLIYSA yenile (eskimiş
+     * algoritma / maske / seçiciyle alınmış satır, ayar değişimi ile "yeni temel al" yarışı, temel silme hatası "temel bekleniyor"da
+     * takılı bırakmasın). Aynı özette iki pod → tek satır, ikinci çağrı değiştirmez. PostgreSQL {@code ON CONFLICT … DO UPDATE
+     * … WHERE spec_hash IS DISTINCT FROM}; H2 / bilinmeyen lehçe koşullu UPDATE → yoksa {@code INSERT … WHERE NOT EXISTS}.
+     *
+     * @return bu çağrı satırı EKLEDİ ya da YENİLEDİYSE true (aynı özetle zaten varsa / yarışı kaybettiyse false)
      */
     public boolean takeAuto(Long monitorId, KeywordChangeDetector.Snapshot snap, long bytes, String specHash) {
         if (monitorId == null || snap == null) return false;
         String now = ISO.format(clock.instant());
         try {
-            int n = isPostgres()
-                    ? repo.insertIfAbsentPg(monitorId, snap.fingerprint(), specHash, snap.text(), snap.textTruncated(), bytes,
-                            now, SYSTEM_USER, null, SOURCE_AUTO)
-                    : repo.insertIfAbsentPortable(monitorId, snap.fingerprint(), specHash, snap.text(), snap.textTruncated(),
-                            bytes, now, SYSTEM_USER, null, SOURCE_AUTO);
-            return n > 0;
+            if (isPostgres()) {
+                return repo.insertOrRefreshStalePg(monitorId, snap.fingerprint(), specHash, snap.text(), snap.textTruncated(),
+                        bytes, now, SYSTEM_USER, null, SOURCE_AUTO) > 0;
+            }
+            if (repo.refreshIfStale(monitorId, snap.fingerprint(), specHash, snap.text(), snap.textTruncated(), bytes, now,
+                    SYSTEM_USER, null, SOURCE_AUTO) > 0) return true;
+            return repo.insertIfAbsentPortable(monitorId, snap.fingerprint(), specHash, snap.text(), snap.textTruncated(),
+                    bytes, now, SYSTEM_USER, null, SOURCE_AUTO) > 0;
         } catch (DataIntegrityViolationException raced) {
             log.debug("Anahtar kelime içerik temeli yarışı (monitor {}) — öteki pod aldı", monitorId);
             return false;

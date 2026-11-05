@@ -499,6 +499,12 @@ public class MonitoringOverviewService {
             row.put("group_name", groupNameOf(m));
             // Veritabanı sorgusu (2026-10-31 inceleme O4 / O5): açık alarmlardan biri SORGU HATASI mı (durum sayfası yalnız
             // bunu kesinti sayar; kural ihlali / yavaşlık en fazla "degraded") ve art arda atlanan çalıştırma.
+            // Anahtar kelime (kw son inceleme O-6): açık alarmların HEPSİ içerik değişimi (KEYWORD_CHANGED) mi — durum sayfası bunu
+            // kesinti saymaz (sayfa ayakta, içerik farklı; en fazla "degraded"). Pano satır durumu değişmez (dbquery emsali).
+            if (m instanceof com.sitemonitor.model.KeywordMonitor) {
+                row.put("open_change_only", !open.isEmpty() && open.stream().allMatch(e ->
+                        com.sitemonitor.service.EscalationService.TYPE_KEYWORD_CHANGED.equals(e.getAlertType())));
+            }
             if (m instanceof com.sitemonitor.model.DbQueryMonitor dq) {
                 row.put("open_query_failure", open.stream().anyMatch(e ->
                         com.sitemonitor.service.EscalationService.TYPE_DBQUERY_FAIL.equals(e.getAlertType())));

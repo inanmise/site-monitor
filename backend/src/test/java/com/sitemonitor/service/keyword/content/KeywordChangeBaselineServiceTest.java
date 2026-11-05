@@ -52,10 +52,10 @@ class KeywordChangeBaselineServiceTest {
     }
 
     @Test
-    @DisplayName("Otomatik alım insert-if-absent: ilk çağrı ekler, ikincisi eklemez (ilk temel korunur)")
+    @DisplayName("Otomatik alım: ilk çağrı ekler, AYNI ayar özetiyle ikincisi değiştirmez (ilk temel korunur)")
     void autoInsertIfAbsent() {
         assertThat(service.takeAuto(7L, snap("a", "b"), 120, "spec1")).isTrue();
-        assertThat(service.takeAuto(7L, snap("x"), 999, "spec2")).isFalse();
+        assertThat(service.takeAuto(7L, snap("x"), 999, "spec1")).isFalse();
         KeywordChangeBaseline b = repo.findById(7L).orElseThrow();
         assertThat(b.getFingerprint()).isEqualTo(snap("a", "b").fingerprint());
         assertThat(b.getSpecHash()).isEqualTo("spec1");
@@ -67,6 +67,30 @@ class KeywordChangeBaselineServiceTest {
         assertThat(b.getTakenByName()).isNull();
         assertThat(b.getTakenAt()).isEqualTo("2026-11-05T08:00:00");
         assertThat(b.getVersion()).isZero();
+    }
+
+    @Test
+    @DisplayName("kw son inceleme O-4: eskimiş ayar özetli (başka maske / seçici / algoritma) temel otomatik alımda YENİLENİR — "
+            + "\"temel bekleniyor\"da takılı kalmaz; elle alınmış temel de özet farklıysa yenilenir, aynıysa korunur")
+    void autoRefreshesStaleSpec() {
+        assertThat(service.takeAuto(8L, snap("eski"), 10, "specOld")).isTrue();
+        assertThat(service.takeAuto(8L, snap("yeni", "satır"), 20, "specNew")).as("özet farklı → yenilendi").isTrue();
+        KeywordChangeBaseline b = repo.findById(8L).orElseThrow();
+        assertThat(b.getSpecHash()).isEqualTo("specNew");
+        assertThat(b.getText()).isEqualTo("yeni\nsatır");
+        assertThat(b.getBytes()).isEqualTo(20L);
+        assertThat(b.getSource()).isEqualTo("AUTO");
+        assertThat(b.getVersion()).isEqualTo(1L);
+        // aynı özet → değişmez
+        assertThat(service.takeAuto(8L, snap("baska"), 30, "specNew")).isFalse();
+        assertThat(repo.findById(8L).orElseThrow().getText()).isEqualTo("yeni\nsatır");
+        // elle alınmış temel: aynı özet → otomatik alım dokunmaz
+        service.takeManual(9L, snap("elle"), 5, "s1", "ali", "Ali Veli");
+        assertThat(service.takeAuto(9L, snap("oto"), 6, "s1")).isFalse();
+        assertThat(repo.findById(9L).orElseThrow().getSource()).isEqualTo("MANUAL");
+        // elle alınmış temel, ayar özeti artık farklı → otomatik alım yeniler (eski ayarla alınmış temel geçersiz)
+        assertThat(service.takeAuto(9L, snap("oto"), 6, "s2")).isTrue();
+        assertThat(repo.findById(9L).orElseThrow().getSource()).isEqualTo("AUTO");
     }
 
     @Test

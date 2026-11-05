@@ -140,6 +140,32 @@ class SchedulerKeywordChangeTest {
     }
 
     @Test
+    @DisplayName("kw son inceleme O-3: otomatik temel YALNIZ sağlıklı kontrolden — koşulu sağlamayan / hatalı kontrolün anlık görüntüsü "
+            + "temel olmaz; değişim ölçülmediyse (change_skipped) KEYWORD_CHANGED kalemi yok (alarm açılmaz, kapanmaz)")
+    void autoBaselineOnlyFromHealthyCheck() {
+        KeywordMonitor m = monitor();
+        var snap = KeywordChangeDetector.snapshot(List.of("x"), java.util.EnumSet.noneOf(
+                com.sitemonitor.service.keyword.content.ContentMasker.Mask.class), List.of());
+        when(checker.check(any(KeywordCheckSpec.class))).thenAnswer(a -> {
+            KeywordCheckSpec sp = a.getArgument(0);
+            if (sp.changeCapture() != null) sp.changeCapture().put(snap, 77L, "spec1");
+            return raw("ok", false, "found", false, "count", 0, "baseline_missing", true);
+        });
+        ReflectionTestUtils.invokeMethod(scheduler, "recheckKeyword", m, true);
+        verify(baselines, never()).takeAuto(anyLong(), any(), anyLong(), anyString());
+        // hata metni olan "ok" da sağlıklı sayılmaz
+        when(checker.check(any(KeywordCheckSpec.class))).thenAnswer(a -> {
+            KeywordCheckSpec sp = a.getArgument(0);
+            if (sp.changeCapture() != null) sp.changeCapture().put(snap, 77L, "spec1");
+            return raw("ok", true, "found", true, "count", 1, "baseline_missing", true, "error", "HTTP 503");
+        });
+        ReflectionTestUtils.invokeMethod(scheduler, "recheckKeyword", m, true);
+        verify(baselines, never()).takeAuto(anyLong(), any(), anyLong(), anyString());
+        // ölçülmeyen değişim → kalem yok
+        assertThat(scheduler.keywordChangeSweepItem(m, raw("ok", true, "change_skipped", "HTTP_ERROR"))).isNull();
+    }
+
+    @Test
     @DisplayName("Sonuç şekli: seviye, kural özeti, değişim, temel zamanı, tanım özeti taşınır (yalnız varsa — eski ham sonuç bugünkü şekil)")
     void outcomeCarriesBe2Keys() {
         KeywordMonitor m = monitor();
