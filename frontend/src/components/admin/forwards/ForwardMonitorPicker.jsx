@@ -21,10 +21,14 @@ const CHIP_REMOVE = 'relative size-5 rounded-full text-muted-foreground hover:te
  * olmayan satırlar kilitlenir. Listede artık bulunmayan (silinmiş) bir izlemenin öğesi düzenlemede çip olarak kalır ve
  * kaldırılabilir. Okunamayan liste "okunamadı" + yeniden dene — asla "izleme yok".
  *
+ * Erişilebilirlik: seçici bir GRUP'tur (`role="group"`) — adı alanın etiketi (`labelledBy` = `Field` etiket kimliği), ipucu
+ * ve hata metni `aria-describedby` ile gruba bağlı. Onay kutularının her birinin kendi adı var; liste (`ul`) liste olarak
+ * kalır, üzerinde `aria-invalid` YOK (geçersiz bir giriş öğesi değildir — hata grubun açıklamasında okunur).
+ *
  * Props: `status` (loading|ready|error), `items` (normalizeMonitorOptions), `message`, `onRetry`, `value` (seçilenler
- * `[{type,id,name,target,…}]`), `onChange(next)`, `limit`, `t`, `invalid`, `describedBy`.
+ * `[{type,id,name,target,…}]`), `onChange(next)`, `limit`, `t`, `invalid`, `describedBy`, `labelledBy`.
  */
-export default function ForwardMonitorPicker({ status, items = [], message, onRetry, value = [], onChange, limit = 200, t, invalid, describedBy }) {
+export default function ForwardMonitorPicker({ status, items = [], message, onRetry, value = [], onChange, limit = 200, t, invalid, describedBy, labelledBy }) {
   const [type, setType] = useState('')
   const [q, setQ] = useState('')
   const base = useId()
@@ -54,17 +58,20 @@ export default function ForwardMonitorPicker({ status, items = [], message, onRe
     onChange(next)
   }
 
+  const group = { role: 'group', 'aria-labelledby': labelledBy || undefined, 'aria-describedby': describedBy || undefined }
   if (status === 'loading') {
     return (
-      <div className="flex flex-col gap-2" data-slot="fwd-monitor-picker" data-status="loading" role="status" aria-label={t('fwd.mon.loading')}>
-        <Skeleton className="h-10 w-full" />
-        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+      <div {...group} className="flex flex-col gap-2" data-slot="fwd-monitor-picker" data-status="loading">
+        <div className="flex flex-col gap-2" role="status" aria-label={t('fwd.mon.loading')}>
+          <Skeleton className="h-10 w-full" />
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+        </div>
       </div>
     )
   }
   if (status === 'error') {
     return (
-      <div data-slot="fwd-monitor-picker" data-status="error" className="min-w-0">
+      <div {...group} data-slot="fwd-monitor-picker" data-status="error" className="min-w-0">
         <AlertBanner tone="danger" className="mb-0"
           actions={<Button type="button" variant="secondary" size="sm" className="gap-1.5 pointer-coarse:h-10" onClick={onRetry}><RefreshCw aria-hidden="true" />{t('fwd.retry')}</Button>}>
           {message || t('fwd.mon.loadFailed')}
@@ -75,7 +82,7 @@ export default function ForwardMonitorPicker({ status, items = [], message, onRe
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-2" data-slot="fwd-monitor-picker" data-status="ready">
+    <div {...group} className="flex min-w-0 flex-col gap-2" data-slot="fwd-monitor-picker" data-status="ready">
       {items.length === 0 ? (
         <StatusBlock tone="neutral" description={t('fwd.mon.none')} className="my-0 py-4 md:py-4" />
       ) : (
@@ -102,8 +109,8 @@ export default function ForwardMonitorPicker({ status, items = [], message, onRe
               {allShownPicked ? t('fwd.mon.unpickShown') : t('fwd.mon.pickShown', shown.length)}
             </Button>
           </div>
-          <ul className="m-0 flex max-h-72 min-w-0 list-none flex-col gap-0.5 overflow-y-auto rounded-lg border p-1" data-slot="fwd-monitor-list"
-            aria-describedby={describedBy} aria-invalid={invalid || undefined}>
+          <ul className={cn('m-0 flex max-h-72 min-w-0 list-none flex-col gap-0.5 overflow-y-auto rounded-lg border p-1', invalid && 'border-destructive')}
+            data-slot="fwd-monitor-list" data-invalid={invalid || undefined}>
             {shown.map((m, i) => {
               const k = monitorKey(m)
               const on = selected.has(k)

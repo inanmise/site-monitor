@@ -160,7 +160,8 @@ describe('MonitorForwardsPill — iletimler', () => {
     expect(items[0]).toHaveTextContent(LONG_TEAM)
     expect(items[0]).toHaveTextContent(`${EN['fwdx.recipient.team']} · ${EN['fwdx.scope.all']}`)
     expect(items[1]).toHaveTextContent(EN['fwdx.recipient.members'].replace('{0}', '3'))
-    expect(items[1]).toHaveTextContent(EN['fwdx.scope.types'].replace('{0}', `${EN['userpush.type.http']}, ${EN['userpush.type.cert']}`))
+    // "cert" iletimde sertifika + erişilebilirlik alarmlarıdır — yönetim ekranındaki adıyla ("Certificate" değil)
+    expect(items[1]).toHaveTextContent(EN['fwdx.scope.types'].replace('{0}', `${EN['userpush.type.http']}, ${EN['fwd.type.cert']}`))
     expect(items[1].querySelector('[data-slot="monitor-forwards-owner"]')).toHaveTextContent('Uygulama Geliştirme Takımı B')
     expect(items[1].querySelector('[data-slot="monitor-forwards-until"]')).toBeTruthy()
     expect(items[2]).toHaveTextContent(EN['fwdx.recipient.members.one'])
@@ -233,16 +234,52 @@ describe('MonitorForwardsPill — okuma hatası', () => {
 })
 
 describe('MonitorForwardsPill — sertifika ve anahtar değişimi', () => {
-  it('sertifika alan adıyla sorulur; ekleme bağlantısı "cert:<alanadı>"', async () => {
-    respond({ items: [], can_add: true, owner_teams: [{ id: 8, name: 'SY Takımı' }] })
+  /** Rozeti aç, ekleme ve "tümünü yönet" bağlantılarının parametrelerini döndür. */
+  async function links(name) {
+    fireEvent.click(screen.getByRole('button', { name: `${name} — ${EN['fwdx.pill.add']}` }))
+    const dlg = await screen.findByRole('dialog')
+    const href = (a) => new URL(dlg.querySelector(`[data-action="${a}"]`).getAttribute('href'), 'http://x').searchParams
+    return { add: href('monitor-forwards-add'), manage: href('monitor-forwards-manage') }
+  }
+
+  it('sertifika alan adıyla sorulur; ekleme bağlantısı yanıttaki envanter kimliğiyle "cert:<id>"', async () => {
+    respond({ items: [], can_add: true, owner_teams: [{ id: 8, name: 'SY Takımı', can_manage: true }],
+      monitor: { type: 'cert', id: 40, name: 'shop.example.com' } })
     render(<MonitorForwardsPill type="cert" domain="shop.example.com" rowLabel="shop.example.com" />)
     await waitFor(() => expect(pill()).toBeTruthy())
     expect(api.alertForwards.forMonitor).toHaveBeenCalledWith('cert', null, 'shop.example.com')
-    fireEvent.click(screen.getByRole('button', { name: `shop.example.com — ${EN['fwdx.pill.add']}` }))
-    const dlg = await screen.findByRole('dialog')
-    const href = new URL(dlg.querySelector('[data-action="monitor-forwards-add"]').getAttribute('href'), 'http://x')
-    expect(href.searchParams.get('g_fnew')).toBe('cert:shop.example.com')
-    expect(href.searchParams.get('g_fteam')).toBe('8')
+    const { add } = await links('shop.example.com')
+    expect(add.get('g_fnew')).toBe('cert:40')
+    expect(add.get('g_fteam')).toBe('8')
+  })
+
+  it('sertifika dışı türde derin bağ pencerenin izleme kimliğiyle (yanıttaki kimlik yalnız yedek)', async () => {
+    respond({ items: [], can_add: true, monitor: { type: 'http', id: 999, name: 'www.example.com' } })
+    render(<MonitorForwardsPill type="http" id={7} rowLabel="www.example.com" />)
+    await waitFor(() => expect(pill()).toBeTruthy())
+    const { add } = await links('www.example.com')
+    expect(add.get('g_fnew')).toBe('http:7')
+  })
+
+  it('yanıtta izleme kimliği yoksa sertifika alan adıyla "cert:<alanadı>"', async () => {
+    respond({ items: [], can_add: true, owner_teams: [{ id: 8, name: 'SY Takımı' }], monitor: null })
+    render(<MonitorForwardsPill type="cert" domain="shop.example.com" rowLabel="shop.example.com" />)
+    await waitFor(() => expect(pill()).toBeTruthy())
+    const { add } = await links('shop.example.com')
+    expect(add.get('g_fnew')).toBe('cert:shop.example.com')
+    expect(add.get('g_fteam')).toBe('8')
+  })
+
+  it('iki sahipli kayıt: ekleme YÖNETEBİLDİĞİ sahiple (UG); "tümünü yönet" görülen ilk sahiple (SY)', async () => {
+    respond({ items: [], can_add: true, monitor: { type: 'cert', id: 40, name: 'shop.example.com' },
+      owner_teams: [{ id: 8, name: 'SY Takımı', can_manage: false }, { id: 9, name: 'UG Takımı', can_manage: true }] })
+    render(<MonitorForwardsPill type="cert" domain="shop.example.com" rowLabel="shop.example.com" />)
+    await waitFor(() => expect(pill()).toHaveAttribute('data-state', 'add'))
+    const { add, manage } = await links('shop.example.com')
+    expect(add.get('g_fteam')).toBe('9')
+    expect(add.get('g_fnew')).toBe('cert:40')
+    expect(manage.get('g_fteam')).toBe('8')
+    expect(manage.get('g_fnew')).toBeNull()
   })
 
   it('izleme değişince eski yanıt yeni izlemenin rozetini ezmez', async () => {

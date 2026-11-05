@@ -118,7 +118,7 @@ for (const vp of VIEWPORTS) {
     test('izleme detay penceresi: "İletim: 2" rozeti 7/24 göstergesinin ardında; liste uzun adları sarar; ekleme bağlantısı Yönetim\'e', async ({ page }) => {
       test.setTimeout(120_000)
       const calls = await routes(page, { forMonitor: () => ({ success: true, data: { items: ROWS, can_add: true,
-        owner_teams: [{ id: 1, name: 'Takım A' }], monitor: { type: 'http', id: 100, name: 'www.example.com' } } }) })
+        owner_teams: [{ id: 1, name: 'Takım A', can_manage: true }], monitor: { type: 'http', id: 100, name: 'www.example.com' } } }) })
       await page.goto('/?tab=http')
       await page.locator('.upt-grid [data-slot="card"] [data-monitor-open]').first().click({ timeout: 20_000 })
       const dlg = page.locator('[data-slot="dialog-content"]').first()
@@ -160,7 +160,8 @@ for (const vp of VIEWPORTS) {
       await expect(items.nth(0)).toContainText('Tüm takım · Tüm izlemeler')
       await expect(items.nth(1)).toContainText(LONG_TEAM_B)
       await expect(items.nth(1)).toContainText('2 üye')
-      await expect(items.nth(1)).toContainText('Türler: HTTP, Kelime, Sayfa Hızı, Sertifika')
+      // "cert" iletimde sertifika + erişilebilirlik alarmlarıdır — yönetim ekranındaki adıyla
+      await expect(items.nth(1)).toContainText('Türler: HTTP, Kelime, Sayfa Hızı, Sertifika ve erişilebilirlik')
       await expect(items.nth(2)).toContainText('Duraklatıldı')
       expect(await page.evaluate(clipped, '[data-slot="monitor-forwards-detail"]'), `@${vp.name}: kırpılan metin`).toEqual([])
       expect(await page.evaluate(offenders, '[data-slot="hint-popover"]'), `@${vp.name}: liste ekran dışı`).toEqual([])
@@ -183,8 +184,8 @@ for (const vp of VIEWPORTS) {
       let pingFails = true
       await routes(page, { forMonitor: (q) => {
         if (q.type === 'ping') return pingFails ? { status: 500, body: { success: false, error: 'Sunucu yanıt veremedi' } }
-          : { success: true, data: { items: [ROWS[0]], can_add: false, owner_teams: [{ id: 1, name: 'Takım A' }] } }
-        return { success: true, data: { items: [], can_add: false, owner_teams: [{ id: 1, name: 'Takım A' }] } }
+          : { success: true, data: { items: [ROWS[0]], can_add: false, owner_teams: [{ id: 1, name: 'Takım A', can_manage: false }] } }
+        return { success: true, data: { items: [], can_add: false, owner_teams: [{ id: 1, name: 'Takım A', can_manage: false }] } }
       } })
       await page.goto('/?tab=ping')
       await page.locator('.upt-grid [data-slot="card"] [data-monitor-open]').first().click({ timeout: 20_000 })
@@ -209,10 +210,11 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="monitor-forwards"]')).toHaveCount(0)
     })
 
-    test('sertifika penceresi: rozet alan adıyla sorulur, "İletim ekle" (sessiz) → "cert:<alanadı>"', async ({ page }) => {
+    test('sertifika penceresi: rozet alan adıyla sorulur, "İletim ekle" (sessiz) → yönetebildiği sahip + "cert:<envanter kimliği>"', async ({ page }) => {
       test.setTimeout(120_000)
       const calls = await routes(page, { cert: true, forMonitor: () => ({ success: true, data: { items: [], can_add: true,
-        owner_teams: [{ id: 1, name: 'Takım A' }], monitor: { type: 'cert', id: 77, name: CERT_DOMAINS.healthy } } }) })
+        owner_teams: [{ id: 1, name: 'Takım A', can_manage: false }, { id: 2, name: LONG_TEAM, can_manage: true }],
+        monitor: { type: 'cert', id: 77, name: CERT_DOMAINS.healthy } } }) })
       await page.goto('/?tab=dashboard')
       await page.locator(`[data-slot="card"][data-domain="${CERT_DOMAINS.healthy}"] [data-cert-open]`).first().click({ timeout: 20_000 })
       const dlg = page.locator('[data-slot="dialog-content"]').first()
@@ -235,7 +237,13 @@ for (const vp of VIEWPORTS) {
       await expect(detail).toContainText('başka bir takıma iletilmiyor')
       await settleAnimations(page)
       const href = new URL(await detail.locator('[data-action="monitor-forwards-add"]').getAttribute('href'), 'http://x')
-      expect(href.searchParams.get('g_fnew')).toBe(`cert:${CERT_DOMAINS.healthy}`)
+      // Derin bağ yanıttaki envanter kimliğiyle (alan adı yalnız kimlik yoksa); sahip = YÖNETEBİLDİĞİ ilk sahip (UG)
+      expect(href.searchParams.get('g_fnew')).toBe('cert:77')
+      expect(href.searchParams.get('g_fteam')).toBe('2')
+      // "Tümünü yönet" görülen ilk sahiple süzer
+      const manage = new URL(await detail.locator('[data-action="monitor-forwards-manage"]').getAttribute('href'), 'http://x')
+      expect(manage.searchParams.get('g_fteam')).toBe('1')
+      expect(manage.searchParams.get('g_fnew')).toBeNull()
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="monitor-forwards-detail"]'), `@${vp.name}: küçük hedef`).toEqual([])
       await page.screenshot({ path: `test-results/fwd-cert-pill-${vp.name}.png` })
     })

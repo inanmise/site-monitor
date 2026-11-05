@@ -102,6 +102,33 @@ describe('Takım silme etkisi — alarm iletimi', () => {
     render(<TeamDeleteImpactModal team={TEAM} teams={[TEAM]} onClose={() => {}} onDeleted={() => {}} />)
     await screen.findByRole('button', { name: /^Sil$|^Delete$/ })
     expect(document.querySelector('[data-slot="team-impact-fwd-owned"]')).toBeNull()
+    expect(document.querySelector('[data-slot="team-impact-fwd-paused"]')).toBeNull()
+  })
+
+  it('dolu takım: "tüm izlemeler / seçilen türler" kapsamlı iletimler taşınınca duraklatılır — uyarı satırı sayıyla', async () => {
+    api.admin.teamImpact.mockResolvedValueOnce({ success: true, data: { ...base, empty: false, monitors: { count: 1, items: ['x'] },
+      alert_forwards: { owned: 3, incoming: 0, paused_on_move: 2 } } })
+    const { unmount } = render(<TeamDeleteImpactModal team={TEAM} teams={[TEAM, { id: 9, name: 'B' }]} onClose={() => {}} onDeleted={() => {}} />)
+    const paused = await waitFor(() => { const e = document.querySelector('[data-slot="team-impact-fwd-paused"]'); expect(e).not.toBeNull(); return e })
+    expect(paused).toHaveTextContent(EN['fwd.impact.pausedOnMove'].replace('{0}', '2'))
+    unmount()
+    // Tek iletim → tekil metin
+    api.admin.teamImpact.mockResolvedValueOnce({ success: true, data: { ...base, empty: false, monitors: { count: 1, items: ['x'] },
+      alert_forwards: { owned: 1, incoming: 0, paused_on_move: 1 } } })
+    const second = render(<TeamDeleteImpactModal team={TEAM} teams={[TEAM, { id: 9, name: 'B' }]} onClose={() => {}} onDeleted={() => {}} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="team-impact-fwd-paused"]'))
+      .toHaveTextContent(EN['fwd.impact.pausedOnMove.one'].replace('{0}', '1')))
+    second.unmount()
+    // Sıfır / eski sunucu (alan yok) / boş takım (taşıma yok — iletimler takımla silinir) → satır yok
+    for (const data of [{ empty: false, alert_forwards: { owned: 1, incoming: 0, paused_on_move: 0 } },
+      { empty: false, alert_forwards: { owned: 1, incoming: 0 } },
+      { empty: true, alert_forwards: { owned: 2, incoming: 0, paused_on_move: 2 } }]) {
+      api.admin.teamImpact.mockResolvedValueOnce({ success: true, data: { ...base, monitors: { count: data.empty ? 0 : 1, items: ['x'] }, ...data } })
+      const r = render(<TeamDeleteImpactModal team={TEAM} teams={[TEAM, { id: 9, name: 'B' }]} onClose={() => {}} onDeleted={() => {}} />)
+      await waitFor(() => expect(document.querySelector('[data-slot="team-impact-fwd-owned"]')).not.toBeNull())
+      expect(document.querySelector('[data-slot="team-impact-fwd-paused"]')).toBeNull()
+      r.unmount()
+    }
   })
 })
 
@@ -110,6 +137,11 @@ describe('takım taşıma özeti — alarm iletimi', () => {
     const tOf = (d) => (k, ...a) => String(d[k] ?? k).replace(/\{(\d)\}/g, (_, i) => String(a[Number(i)]))
     expect(movedSummary({ monitors: 2, alert_forwards: 3, alert_forwards_removed: 1 }, tOf(EN)))
       .toBe(`Moved: 2 monitors, ${EN['team.mv.alert_forwards'].replace('{0}', '3')}, ${EN['team.mv.alert_forwards_removed'].replace('{0}', '1')}`)
+    // Taşınınca duraklatılanlar ayrıca sayılır ("kapsamı gözden geçirin")
+    expect(movedSummary({ alert_forwards: 3, alert_forwards_paused: 2, alert_forwards_removed: 1 }, tOf(TR)))
+      .toBe(`Taşındı: ${TR['team.mv.alert_forwards'].replace('{0}', '3')}, ${TR['team.mv.alert_forwards_paused'].replace('{0}', '2')}, `
+        + `${TR['team.mv.alert_forwards_removed'].replace('{0}', '1')}`)
+    expect(TR['team.mv.alert_forwards_removed']).toContain('hedef takıma giden')
     expect(movedSummary({ alert_forwards: 0, alert_forwards_removed: 0 }, tOf(TR))).toBe(TR['team.movedNothing'])
   })
 })

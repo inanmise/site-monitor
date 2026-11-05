@@ -94,12 +94,13 @@ describe('metinler', () => {
   it('kapsam: tümü / tür adları (ham anahtar yok) / seçilen N izleme', () => {
     expect(scopeText(t, 'ALL')).toBe(EN['fwdx.scope.all'])
     expect(scopeText(t, undefined)).toBe(EN['fwdx.scope.all'])
-    expect(scopeText(t, 'TYPES', ['cert', 'dbquery'])).toBe(`Types: ${EN['userpush.type.cert']}, ${EN['userpush.type.dbquery']}`)
+    // "cert" iletimde envanter kaydının TÜM alarmları (sertifika + erişilebilirlik) — yönetim ekranındaki adıyla
+    expect(scopeText(t, 'TYPES', ['cert', 'dbquery'])).toBe(`Types: ${EN['fwd.type.cert']}, ${EN['userpush.type.dbquery']}`)
     expect(scopeText(t, 'TYPES', [])).toBe(EN['fwdx.scope.typesNone'])
     expect(scopeText(t, 'MONITORS', null, 3)).toBe('3 selected monitors')
     expect(scopeText(t, 'MONITORS', null, 1)).toBe(EN['fwdx.scope.monitors.one'])
     const tr = tOf(TR)
-    expect(scopeText(tr, 'TYPES', ['cert', 'http'])).toBe('Türler: Sertifika, HTTP')
+    expect(scopeText(tr, 'TYPES', ['cert', 'http'])).toBe('Türler: Sertifika ve erişilebilirlik, HTTP')
   })
 
   it('formatDay: yyyy-MM-dd yerel güne; biçimsiz değer olduğu gibi', () => {
@@ -121,7 +122,7 @@ describe('simAppliesText — "Kim bilgilendirilir?" kapsamı', () => {
     expect(simAppliesText(t, { applies: 'all', scope_kind: 'ALL' })).toBe(EN['fwdx.scope.all'])
     expect(simAppliesText(t, { applies: 'all', scope_kind: 'TYPES', scope_types: ['http'] })).toBe(EN['fwdx.sim.appliesType'])
     expect(simAppliesText(t, { applies: 'types_only', scope_kind: 'TYPES', scope_types: ['ping', 'cert'] }))
-      .toBe(`Only these types: ${EN['userpush.type.ping']}, ${EN['userpush.type.cert']}`)
+      .toBe(`Only these types: ${EN['userpush.type.ping']}, ${EN['fwd.type.cert']}`)
     expect(simAppliesText(t, { applies: 'types_only', scope_types: [] })).toBe(EN['fwdx.scope.typesNone'])
     expect(simAppliesText(t, { applies: 'monitors_only' })).toBe(EN['fwdx.sim.appliesMonitors'])
     expect(simAppliesText(t, { applies: 'weird', scope_types: ['http'] })).toBe(`Only these types: ${EN['userpush.type.http']}`)
@@ -133,11 +134,22 @@ describe('simAppliesText — "Kim bilgilendirilir?" kapsamı', () => {
 })
 
 describe('manageTarget', () => {
-  it('izleme için ekleme: g_fnew "<tür>:<id>", sahip takım g_fteam (ilk)', () => {
+  it('izleme için ekleme: g_fnew "<tür>:<id>", sahip takım g_fteam (eski sunucu: can_manage yok → ilk sahip)', () => {
     expect(manageTarget({ type: 'port', id: 12, ownerTeams: [{ id: 5 }, { id: 6 }], add: true }))
       .toEqual({ tab: 'admin', params: { g_tab: 'forwards', g_fteam: '5', g_fnew: 'port:12' } })
   })
-  it('sertifika alan adıyla "cert:<alanadı>"; tümünü yönet g_fnew taşımaz; sahip yoksa g_fteam yok', () => {
+  it('iki sahipli kayıt: ekleme YÖNETEBİLDİĞİ ilk sahiple; "tümünü yönet" görülen ilk sahiple; hiçbirini yönetemiyorsa g_fteam yok', () => {
+    const owners = [{ id: 5, name: 'SY', can_manage: false }, { id: 6, name: 'UG', can_manage: true }]
+    expect(manageTarget({ type: 'cert', id: 40, ownerTeams: owners, add: true }).params)
+      .toEqual({ g_tab: 'forwards', g_fteam: '6', g_fnew: 'cert:40' })
+    expect(manageTarget({ type: 'cert', id: 40, ownerTeams: owners }).params).toEqual({ g_tab: 'forwards', g_fteam: '5' })
+    const none = [{ id: 5, can_manage: false }, { id: 6, can_manage: false }]
+    expect(manageTarget({ type: 'http', id: 1, ownerTeams: none, add: true }).params).toEqual({ g_tab: 'forwards', g_fnew: 'http:1' })
+    expect(manageTarget({ type: 'http', id: 1, ownerTeams: none }).params).toEqual({ g_tab: 'forwards', g_fteam: '5' })
+  })
+  it('sertifika: kimlik (yanıttaki envanter kimliği) varsa "cert:<id>", yoksa alan adıyla; tümünü yönet g_fnew taşımaz; sahip yoksa g_fteam yok', () => {
+    expect(manageTarget({ type: 'cert', id: 40, domain: 'a.example.com', ownerTeams: [{ id: 2 }], add: true }).params.g_fnew)
+      .toBe('cert:40')
     expect(manageTarget({ type: 'cert', domain: 'a.example.com', ownerTeams: [{ id: 2 }], add: true }).params.g_fnew)
       .toBe('cert:a.example.com')
     expect(manageTarget({ type: 'http', id: 1, ownerTeams: [], add: false }))

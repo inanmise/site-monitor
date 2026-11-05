@@ -296,4 +296,72 @@ describe('AlertForwardDialog — düzenle', () => {
     submit()
     await waitFor(() => expect(onGone).toHaveBeenCalledTimes(2))
   })
+
+  it('aynı takımda "Takımın tamamı" → "Seçilen üyeler" yeni alıcı DEĞİL: bilgi satırı ve erişim kutusu yok; onSaved yeni alıcı yok der', async () => {
+    const team = normalizeForward({ ...ROW_RAW, recipient_kind: 'TEAM', recipient_members: [] })
+    const { onSaved } = renderDialog({ forward: team })
+    await waitFor(() => expect(form()).not.toBeNull())
+    expect(form().querySelector('[data-slot="fwd-info-mail"]')).toBeNull()
+    fireEvent.click(within(form()).getByRole('button', { name: EN['fwd.rcpt.members'] }))
+    const list = await waitFor(() => { const l = form().querySelector('[data-slot="fwd-member-list"]'); expect(l).not.toBeNull(); return l })
+    fireEvent.click(within(list.querySelector('[data-slot="fwd-member-item"]')).getByRole('checkbox'))
+    await waitFor(() => expect(form().querySelectorAll('[data-slot="fwd-member-chip"]')).toHaveLength(1))
+    expect(form().querySelector('[data-slot="fwd-info-mail"]')).toBeNull()
+    expect(form().querySelector('[data-slot="fwd-grant"]')).toBeNull()
+    submit()
+    await waitFor(() => expect(api.alertForwards.update).toHaveBeenCalledWith(7, expect.objectContaining({ recipient_kind: 'MEMBERS' })))
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.anything(), { newRecipients: false }))
+    expect(api.alertForwards.update.mock.calls[0][1]).not.toHaveProperty('grant_view')
+  })
+
+  it('bilgi satırı: duraklatılmış iletim etkinleştirilince "tüm alıcılara"; etkin iletim kapalı kaydedilip üye eklenirse "şimdi gitmez"', async () => {
+    const paused = normalizeForward({ ...ROW_RAW, enabled: false, state: 'paused' })
+    const first = renderDialog({ forward: paused })
+    await waitFor(() => expect(form().querySelector('[data-slot="fwd-enabled"]')).not.toBeNull())
+    expect(form().querySelector('[data-slot="fwd-info-mail"]')).toBeNull()
+    fireEvent.click(within(form().querySelector('[data-slot="fwd-enabled"]')).getByRole('switch'))
+    await waitFor(() => expect(form().querySelector('[data-slot="fwd-info-mail"]')).toHaveTextContent(EN['fwd.f.infoMailEnable']))
+    expect(form().querySelector('[data-slot="fwd-info-mail"]')).toHaveAttribute('data-kind', 'enable')
+    submit()
+    await waitFor(() => expect(api.alertForwards.update).toHaveBeenCalledWith(7, { enabled: true, version: 4 }))
+    await waitFor(() => expect(first.onSaved).toHaveBeenCalledWith(expect.anything(), { newRecipients: false }))
+  })
+
+  it('etkin iletim kapalı kaydedilirken yeni üye eklenirse "bilgi şimdi gitmez, etkinleşince gider"', async () => {
+    renderDialog({ forward: ROW })
+    const list = await waitFor(() => { const l = form().querySelector('[data-slot="fwd-member-list"]'); expect(l).not.toBeNull(); return l })
+    const barış = [...list.querySelectorAll('[data-slot="fwd-member-item"]')].find((i) => i.textContent.includes('Barış'))
+    fireEvent.click(within(barış).getByRole('checkbox'))
+    await waitFor(() => expect(form().querySelector('[data-slot="fwd-info-mail"]')).toHaveTextContent(EN['fwd.f.infoMailNew']))
+    fireEvent.click(within(form().querySelector('[data-slot="fwd-enabled"]')).getByRole('switch'))
+    await waitFor(() => expect(form().querySelector('[data-slot="fwd-info-mail"]')).toHaveTextContent(EN['fwd.f.infoMailPaused']))
+  })
+})
+
+describe('AlertForwardDialog — seçici erişilebilirliği', () => {
+  it('izleme ve üye seçicileri alan etiketiyle adlandırılmış GRUP; hata / ipucu gruba bağlı; listede aria-invalid yok', async () => {
+    renderDialog({ teams: [TEAMS[0]] })
+    fireEvent.click(within(form()).getByRole('radio', { name: new RegExp(EN['fwd.scope.monitors']) }))
+    const mon = await waitFor(() => {
+      const g = form().querySelector('[data-slot="fwd-monitor-picker"][data-status="ready"]'); expect(g).not.toBeNull(); return g
+    })
+    expect(within(form()).getByRole('group', { name: new RegExp(`^${EN['fwd.f.monitors']}`) })).toBe(mon)
+    await chooseRecipientTeam(LONG_TEAM)
+    fireEvent.click(within(form()).getByRole('button', { name: EN['fwd.rcpt.members'] }))
+    const mem = await waitFor(() => {
+      const g = form().querySelector('[data-slot="fwd-member-picker"][data-status="ready"]'); expect(g).not.toBeNull(); return g
+    })
+    expect(within(form()).getByRole('group', { name: new RegExp(`^${EN['fwd.f.members']}`) })).toBe(mem)
+    submit()
+    // Boş seçim → hata metinleri gruba aria-describedby ile bağlı (liste "geçersiz giriş" değildir)
+    await waitFor(() => expect(form().querySelector('[data-field="recipientUserIds"]')).toHaveTextContent(EN['fwd.err.membersRequired']))
+    await waitFor(() => expect(form().querySelector('[data-field="scopeMonitors"]')).toHaveTextContent(EN['fwd.err.monitorsRequired']))
+    for (const [g, key] of [[mon, 'fwd.err.monitorsRequired'], [mem, 'fwd.err.membersRequired']]) {
+      const ids = (g.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+      expect(ids.map((i) => document.getElementById(i)?.textContent || '').join(' ')).toContain(EN[key])
+    }
+    expect(form().querySelector('[data-slot="fwd-monitor-list"]')).not.toHaveAttribute('aria-invalid')
+    expect(form().querySelector('[data-slot="fwd-member-list"]')).not.toHaveAttribute('aria-invalid')
+    expect(form().querySelector('[data-slot="fwd-monitor-list"]')).toHaveAttribute('data-invalid', 'true')
+  })
 })

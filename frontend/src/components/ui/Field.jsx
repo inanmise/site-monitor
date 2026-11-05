@@ -53,10 +53,13 @@ export default function Field({
   const hintId = hint ? `${base}-h` : null
   const errorId = error ? `${base}-e` : null
   const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined
+  // Etiketin kendi kimliği: tek bir kontrol değil bir GRUP (onay kutulu liste) taşıyan alan, grubu bu etiketle adlandırır
+  // (`role="group"` + `aria-labelledby`) — `htmlFor` yalnız tek bir kontrolü bağlayabilir.
+  const labelId = label ? `${base}-l` : undefined
 
   let control
   if (typeof children === 'function') {
-    control = children({ id, describedBy, invalid: error ? true : undefined })
+    control = children({ id, labelId, describedBy, invalid: error ? true : undefined })
   } else {
     if (import.meta.env?.DEV) {
       console.warn('[Field] children bir fonksiyon olmalı — aksi halde etiket/ipucu bağları kurulamaz.')
@@ -72,7 +75,7 @@ export default function Field({
     <ShadcnField role={undefined} data-invalid={error ? true : undefined} data-field={name || undefined}
       className={cn('mb-3.5 gap-1.5', className)}>
       {label && (
-        <FieldLabel htmlFor={id} className="gap-1 font-semibold">
+        <FieldLabel id={labelId} htmlFor={id} className="gap-1 font-semibold">
           {label}{required && <> <span data-slot="field-required" className="text-destructive">*</span></>}
         </FieldLabel>
       )}

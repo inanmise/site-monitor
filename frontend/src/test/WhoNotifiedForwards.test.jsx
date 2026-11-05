@@ -7,6 +7,16 @@ vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
   api: withApiFallback({ noc: { coverage: vi.fn() } }),
 }))
+// "Yönet" düğmesi Alarm iletimi sekmesinin izniyle (`alerts.forwards` görme) çizilir — izin testte değiştirilir
+const perm = vi.hoisted(() => ({ forwardsView: true }))
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({
+    perms: {}, scope: null, loaded: true, failed: false, refresh: () => {},
+    canView: (r) => (r === 'alerts.forwards' ? perm.forwardsView : false),
+    canEdit: () => false, canExecute: () => false,
+  }),
+  PermissionsProvider: ({ children }) => children,
+}))
 import SimResult from '../components/admin/whonotified/SimResult.jsx'
 
 /**
@@ -37,7 +47,7 @@ async function draw(ui) {
 }
 
 describe('SimResult — iletim alıcıları kartı', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => { vi.clearAllMocks(); perm.forwardsView = true })
 
   it('her iletim satırı: takım, alıcı türü, kapsam, adresler; özet tekil adres sayısı', async () => {
     await draw(<SimResult data={{ ...BASE, forwards: FORWARDS }} level="HIGH" kind="MONITOR" />)
@@ -68,6 +78,14 @@ describe('SimResult — iletim alıcıları kartı', () => {
     expect(onNavigate).toHaveBeenCalledWith('forwards', { g_fteam: '7' })
   })
 
+  it('Alarm iletimi sekmesini görme izni (alerts.forwards) yoksa "Yönet" düğmesi çizilmez — kart yine görünür', async () => {
+    perm.forwardsView = false
+    await draw(<SimResult data={{ ...BASE, forwards: FORWARDS }} level="HIGH" kind="MONITOR" onNavigate={vi.fn()} />)
+    expect(card()).toBeTruthy()
+    expect(card().querySelector('[data-action="wn-open-forwards"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: EN['fwdx.sim.manage'] })).toBeNull()
+  })
+
   it('adresi olmayan üye iletimi "yalnız push"; tüm iletimler adressizse özet push der', async () => {
     await draw(<SimResult data={{ ...BASE, forwards: [{ ...FORWARDS[1], emails: [], applies: 'all', scope_kind: 'ALL' }] }} level="HIGH" kind="CERT" />)
     expect(card()).toHaveTextContent(EN['fwdx.sim.noMemberEmail'])
@@ -91,7 +109,7 @@ describe('SimResult — iletim alıcıları kartı', () => {
     expect(row).toHaveAttribute('data-applies', 'types_only')
     const applies = row.querySelector('[data-wn="applies"]')
     expect(applies).toHaveTextContent(EN['fwdx.sim.appliesTypes'].replace('{0}',
-      `${EN['userpush.type.http']}, ${EN['userpush.type.cert']}, ${EN['userpush.type.dbquery']}`))
+      `${EN['userpush.type.http']}, ${EN['fwd.type.cert']}, ${EN['userpush.type.dbquery']}`))
     expect(applies).toHaveAttribute('data-tone', 'warning')
     expect(row.querySelector('[data-slot="wn-forward-partly"]')).toHaveTextContent(EN['fwdx.sim.typesOnlyNote'])
     expect(row).not.toHaveTextContent('dbquery')

@@ -263,6 +263,30 @@ export function ownerTeamOptions(list, manageable) {
   return [...m.entries()].sort((a, b) => collator.compare(a[1], b[1]))
 }
 
+/**
+ * Sahip takım süzgeci değeri seçeneklerde var mı. Yoksa (URL'de görmediği / iletimi kalmayan takım) süzgeç bırakılır —
+ * seçici "Tüm sahip takımlar" derken liste görünmez bir takımla süzülü kalmasın.
+ */
+export function ownerFilterKnown(team, options) {
+  if (!team) return true
+  return (Array.isArray(options) ? options : []).some(([id]) => id === String(team))
+}
+
+/**
+ * Kayıt / duraklat / sürdür yanıtındaki satırı (`data`) listeye hemen yazar: aynı kimlik varsa yerine, yoksa sona. Arka
+ * plandaki yenileme gelmeden ikinci işlem eski sürümle 409 almasın. Kimliksiz / biçimsiz yanıt → liste aynen.
+ */
+export function mergeForwardRow(list, raw) {
+  const items = Array.isArray(list) ? list : []
+  if (!raw || typeof raw !== 'object' || raw.id == null) return items
+  const row = normalizeForward(raw)
+  const i = items.findIndex((f) => idKey(f.id) === idKey(row.id))
+  if (i < 0) return [...items, row]
+  const next = items.slice()
+  next[i] = row
+  return next
+}
+
 /** İzleme öğesinin görünen adı: silinmiş → "Silinmiş izleme (tür)"; dizin okunamadı ve ad yok → "Durumu okunamayan izleme". */
 export function monitorLabel(m, t) {
   if (m?.missing === true) return t('fwd.scope.missingMonitor', typeLabel(m.type, t))
@@ -398,14 +422,33 @@ export function createPayload(form) {
   return out
 }
 
-/** Düzenlemede alıcılar değişti mi (yeni alıcı takım ya da listeye eklenen üye) — bilgi postası / erişim kutusu için. */
+/**
+ * Düzenlemede alıcılar değişti mi (yeni alıcı takım ya da listeye eklenen üye) — bilgi postası / erişim kutusu için.
+ * Aynı takımda "Takımın tamamı" → "Seçilen üyeler" geçişi yeni alıcı DEĞİLDİR: üyeler zaten takımın tamamının içindeydi
+ * (sunucu da bilgi göndermez). Tersi ("Seçilen üyeler" → "Takımın tamamı") takım adresini ve diğer üyeleri ekler — yeni.
+ */
 export function hasNewRecipients(original, form) {
   if (!original) return true
   if (idKey(original.recipientTeamId) !== idKey(form.recipientTeamId)) return true
+  if (original.recipientKind === 'TEAM' && form.recipientKind === 'MEMBERS') return false
   if (original.recipientKind !== form.recipientKind) return true
   if (form.recipientKind !== 'MEMBERS') return false
   const before = new Set(original.recipientMembers.map((m) => idKey(m.userId)))
   return (form.recipientUserIds || []).some((v) => !before.has(idKey(v)))
+}
+
+/**
+ * Bu kayıtta alıcılara bilgi bildirimi gider mi — pencerenin bilgi satırı (ve eski sunucuda yanıt notu) için:
+ * - `new`        : yeni iletim (eklenen herkese);
+ * - `enable`     : duraklatılmış iletim yeniden etkinleştiriliyor (o anki TÜM alıcılara);
+ * - `recipients` : etkin iletime yeni alıcı ekleniyor (yalnız yenilere);
+ * - null         : bilgi gitmez (değişiklik alıcı eklemiyor ya da iletim kapalı kaydediliyor — kapalı iletimde bilgi gitmez).
+ */
+export function infoNoticeKind(original, form) {
+  if (!original) return form?.enabled === false ? null : 'new'
+  if (form?.enabled === false) return null
+  if (original.enabled === false) return 'enable'
+  return hasNewRecipients(original, form) ? 'recipients' : null
 }
 
 /**
@@ -545,16 +588,26 @@ export function filterMemberOptions(list, q) {
     .some((v) => v && foldSearchText(v).includes(needle)))
 }
 
-/** Yanıttaki `grant` / `info` özetinin bildirim metinleri (toast) — `{ ok: [...], warn: [...] }`. */
-export function resultNotes(data, t) {
+/**
+ * Yanıttaki `grant` / `info` özetinin bildirim metinleri (toast) — `{ ok: [...], warn: [...] }`.
+ *
+ * <p>Bilgi bildirimi: sunucu `info = {requested, emails, push, muted}` döner. "Hiç bilgi gitmedi" uyarısı YALNIZ bilgi
+ * gerektiğinde (`requested`), sistem bakımı susturmadıysa (`muted` değil) ve hiçbir e-posta / push kuyruğa girmediyse
+ * gösterilir — yalnız notu değişen düzenleme, duraklatma ya da üyeleri daraltma uyarı vermez. Bakım susturduysa ayrı metin.
+ * Eski sunucu `requested` göndermez: o zaman yalnız yeni kayıtta ya da yeni alıcı eklenince (`ctx.isNew` /
+ * `ctx.newRecipients`) gerekli sayılır.
+ */
+export function resultNotes(data, t, { isNew = false, newRecipients = false } = {}) {
   const ok = []
   const warn = []
   const info = data?.info
   if (info && typeof info === 'object') {
     const emails = Number(info.emails) || 0
     const push = Number(info.push) || 0
+    const requested = typeof info.requested === 'boolean' ? info.requested : (isNew || newRecipients)
     if (emails + push > 0) ok.push(t('fwd.toast.info', emails, push))
-    else warn.push(t('fwd.toast.infoNone'))
+    else if (requested && info.muted === true) warn.push(t('fwd.toast.infoMuted'))
+    else if (requested) warn.push(t('fwd.toast.infoNone'))
   }
   const g = data?.grant
   if (g && typeof g === 'object' && g.requested) {

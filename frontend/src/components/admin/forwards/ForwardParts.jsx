@@ -3,8 +3,10 @@ import {
   CornerDownRight, CalendarClock, CircleAlert, CirclePause, CircleCheck, ShieldCheck, Layers, MailX, UserRound, UsersRound,
   CircleSlash, HelpCircle,
 } from 'lucide-react'
-import { formatDate, formatDateOnly } from '../../../api/client'
+import { formatDate } from '../../../api/client'
+import { useDateLocale } from '../../../i18n/index.jsx'
 import { TYPE_META } from '../../monitoring/overviewMeta.js'
+import { formatDay } from '../../forwards/forwardModel.js'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -56,13 +58,17 @@ export function StateBadge({ f, t }) {
   )
 }
 
-/** Bitiş: "Süresiz" ya da tarih + son günler rozeti. */
+/**
+ * Bitiş: "Süresiz" ya da tarih + son günler rozeti. Bitiş SAF bir gündür ("yyyy-MM-dd", İstanbul günü): yerel tarihe
+ * gün olarak çevrilir (`formatDay`) — UTC gece yarısı sayıp tarayıcı saat dilimine kaydırmak bir gün önceyi gösterirdi.
+ */
 export function Expiry({ f, t }) {
+  const locale = useDateLocale()
   if (!f.expiresOn) return <span className="text-sm text-muted-foreground" data-slot="fwd-expiry">{t('fwd.noExpiry')}</span>
   const d = daysLeft(f.expiresOn)
   return (
     <span className="flex min-w-0 flex-col items-start gap-1" data-slot="fwd-expiry">
-      <span className="text-sm tabular-nums">{t('fwd.until', formatDateOnly(f.expiresOn))}</span>
+      <span className="text-sm tabular-nums">{t('fwd.until', formatDay(f.expiresOn, locale))}</span>
       {expiringSoon(f) && (
         <Badge variant="warning" data-slot="fwd-expiring" className={cn(WRAP_BADGE, 'tabular-nums')}>
           {d <= 0 ? t('fwd.lastDay') : plural(t, 'fwd.daysLeft', d)}

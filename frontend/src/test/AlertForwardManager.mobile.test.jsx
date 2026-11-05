@@ -43,7 +43,8 @@ describe('AlertForwardManager — dar kap', () => {
     expect(flow).toHaveTextContent(OWNER)
     expect(flow).toHaveTextContent(LONG_TEAM)
     expect(card.querySelector('[data-slot="fwd-scope-chip"]')).toHaveTextContent(EN['nav.dbquery'])
-    expect(card.querySelector('[data-slot="fwd-expiry"]')).toHaveTextContent('until 2099-01-01')
+    // Bitiş SAF gün: "yyyy-MM-dd" yerel gün olarak (formatDay) — UTC gece yarısından saat dilimine kaydırılmaz
+    expect(card.querySelector('[data-slot="fwd-expiry"]')).toHaveTextContent('until 1 Jan 2099')
     expect(card).toHaveTextContent('Gece vardiyası')
     expect(card.querySelector('[data-slot="fwd-meta"]')).toHaveTextContent('Added by yonetici')
     expect(card.innerHTML).not.toContain('truncate')
