@@ -1,15 +1,15 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-10-31T16:41:28.487Z",
-  "appVersion": "20.177.0",
+  "generatedAt": "2026-11-05T02:20:44.313Z",
+  "appVersion": "20.178.1",
   "sources": {
     "src/assets/whitepaper.en.md": {
-      "sha256": "6995cbefa15196a97e2f2bf85a3277d6a960aa7ef07d35502fcd280f046aa75e",
-      "bytes": 231704
+      "sha256": "55065329e5033069e18441d6e048bb0edf011edd6e2acd8924cab8cc595fe99a",
+      "bytes": 233846
     },
     "src/assets/whitepaper.md": {
-      "sha256": "2cc6948883e4e2c491c50203c5051ea21fe9a36b8130a0fba4e6c65baac0e21e",
-      "bytes": 256287
+      "sha256": "aa7405d637753d030359e5a8121a5cbcd00ce5109f4da6519b758207197cca59",
+      "bytes": 258620
     }
   },
   "toolchain": {
@@ -20,13 +20,13 @@
   },
   "outputs": {
     "public/whitepaper.en.pdf": {
-      "sha256": "a5165cc19e5a45efc1d8eb525640ac30a279f22778734ec9e447ea4d1efbefe8",
-      "bytes": 1943980,
-      "pages": 71
+      "sha256": "41cffa66c1ccd36ea691e9f6e09cc5d413729779728e7ad72d2673f6c76e1501",
+      "bytes": 1951758,
+      "pages": 72
     },
     "public/whitepaper.tr.pdf": {
-      "sha256": "e73aa7327f04945d7e556c1e2126a317bd11948d5650f3ba8516483fa0574c0b",
-      "bytes": 2298323,
+      "sha256": "3e579cb027514610049a84f0e150ec19e8058ae085c5a776ef95d0ce8683306a",
+      "bytes": 2302713,
       "pages": 73
     }
   }
