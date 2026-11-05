@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpenCheck, ChevronDown, CircleAlert, FileCode2, RefreshCw, Search } from 'lucide-react'
+import { BookOpenCheck, ChevronDown, CircleAlert, Clock, FileCode2, KeyRound, RefreshCw, Search } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -15,7 +15,8 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { DbTypeBadge } from './dbqueryParts.jsx'
 import { ruleSummary } from './ruleModel.js'
 import { foldSearchText } from '../../utils/monitorFilters.js'
-import { builtinTemplates } from './builtinTemplates.js'
+import { builtinTemplates, dbaTemplates } from './builtinTemplates.js'
+import { intervalText } from './dbqueryPageModel.js'
 
 /** Takımın şablonlarını okur (sıra numaralı — geç yanıt düşer). */
 export function useTeamTemplates(teamId, enabled = true) {
@@ -109,6 +110,18 @@ export function TemplateCard({ tpl, dbType, open, onOpenChange, actions, slot = 
               {meta}
             </div>
             {tpl.description && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{tpl.description}</span>}
+            {/* DBA şablonu (B5): gereken yetki ve önerilen aralık açıkça yazılır */}
+            {tpl.privilege && (
+              <span data-slot="dbq-tpl-privilege" className="inline-flex items-start gap-1.5 text-xs [overflow-wrap:anywhere]">
+                <KeyRound aria-hidden="true" className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+                <span><span className="font-semibold">{t('dbq.tpl.privilege')} </span>{tpl.privilege}</span>
+              </span>
+            )}
+            {tpl.interval_seconds > 0 && (
+              <span data-slot="dbq-tpl-interval" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock aria-hidden="true" className="size-3.5 shrink-0" />{t('dbq.tpl.suggestedInterval', intervalText(tpl.interval_seconds, t) || '')}
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <CollapsibleTrigger asChild>
@@ -136,6 +149,8 @@ function PickerDialog({ teamId, dbType, onClose, onPick }) {
   const shown = useMemo(() => load.list.filter((x) => matchTemplate(x, f)), [load.list, f])
   // Yerleşik başlangıç şablonları (2.C) — istemcide sabit, bağlantının türünde SQL (bağlantı yoksa PostgreSQL sürümü)
   const builtins = useMemo(() => builtinTemplates(t, dbType).filter((x) => matchTemplate(x, f)), [t, dbType, f])
+  // Hazır DBA şablonları (B5) — sistem görünümleri; yetki ve aralık kartta
+  const dbas = useMemo(() => dbaTemplates(t, dbType).filter((x) => matchTemplate(x, f)), [t, dbType, f])
 
   const pick = async (tpl) => {
     if (dbType && tpl.db_type && tpl.db_type !== dbType) {
@@ -191,6 +206,24 @@ function PickerDialog({ teamId, dbType, onClose, onPick }) {
           {builtins.length === 0 && <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.noMatch')}</p>}
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {builtins.map((tpl) => (
+              <li key={tpl.id}>
+                <TemplateCard tpl={tpl} dbType={dbType} open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}
+                  actions={(
+                    <Button type="button" size="sm" onClick={() => onPick(tpl)} className="pointer-coarse:h-10" aria-label={t('dbq.tpl.useOf', tpl.name)}>
+                      {t('dbq.tpl.use')}
+                    </Button>
+                  )} />
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section data-slot="dbq-tpl-group" data-group="dba" aria-labelledby="dbq-tpl-dba-h" className="flex min-w-0 flex-col gap-2">
+          <h4 id="dbq-tpl-dba-h" className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('dbq.tpl.groupDba')}</h4>
+          <p className="m-0 text-xs text-muted-foreground">{t('dbq.tpl.dbaHint')}</p>
+          {dbas.length === 0 && <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.noMatch')}</p>}
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {dbas.map((tpl) => (
               <li key={tpl.id}>
                 <TemplateCard tpl={tpl} dbType={dbType} open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}
                   actions={(

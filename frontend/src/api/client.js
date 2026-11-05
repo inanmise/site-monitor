@@ -2395,6 +2395,9 @@ export const api = {
     dbQuerySqlCheck:      (sql, dbType, { signal } = {}) => request('/monitoring/dbquery/sql-check', {
       method: 'POST', body: JSON.stringify({ sql, db_type: dbType }), withStatus: true, ...(signal ? { signal } : {}),
     }),
+    // Güvenli düzeltme önerileri (SQL Server NOLOCK / satır sınırı) — veritabanına gitmez, deneme kotası harcamaz; önerilen
+    // SQL sunucuda güvenlik denetiminden geçmiştir. 404 / 405 = sunucu desteklemiyor (eski sürüm).
+    dbQuerySqlFix:        (body) => request('/monitoring/dbquery/sql-fix', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     dbQueryPlanCheck:     (profileId, sql) => request('/monitoring/dbquery/plan-check', {
       method: 'POST', body: JSON.stringify({ profile_id: profileId, sql }), withStatus: true, timeoutMs: 0,
     }),
@@ -2416,6 +2419,9 @@ export const api = {
     deleteDbConnection:   (id) => request(`/monitoring/dbquery/connections/${id}`, { method: 'DELETE', withStatus: true }),
     testDbConnection:     (id) => request(`/monitoring/dbquery/connections/${id}/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
     testDbConnectionDraft: (data) => request('/monitoring/dbquery/connections/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: 0 }),
+    // Bağlantı sağlık özeti (son 24 sa: çalışma / hata sayısı, kullanan izlemeler) — takım belgesi, paylaşımla açılmaz.
+    // 404 / 405 = sunucu desteklemiyor (eski sürüm).
+    dbConnectionHealth:   (id) => request(`/monitoring/dbquery/connections/${id}/health`, { withStatus: true }),
     // Takım sorgu şablonları
     dbQueryTemplates:      (teamId) => request(`/monitoring/dbquery/templates${teamId != null ? `?team_id=${encodeURIComponent(teamId)}` : ''}`, { withStatus: true }),
     createDbQueryTemplate: (data) => request('/monitoring/dbquery/templates', { method: 'POST', body: JSON.stringify(data), withStatus: true }),

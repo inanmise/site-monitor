@@ -45,6 +45,8 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'service_grid',    size: 'md', tab: 'status',       perm: null },
   { type: 'type_heatmap',    size: 'sm', tab: 'monitoring',   perm: 'monitoring.read' },
   { type: 'team_matrix',     size: 'lg', tab: 'monitoring',   perm: 'monitoring.read' },
+  // Veri kuralları (2026-11-05, dbq2 C5): veritabanı sorgu izlemelerinin ihlal / hata özeti — "Şu an ihlalde" süzgeciyle açar
+  { type: 'data_rules',      size: 'md', tab: 'dbquery',      perm: 'monitoring.read' },
   // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])

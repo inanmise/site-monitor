@@ -111,9 +111,9 @@ public class DbQueryTestQuota {
     static DbQueryApiException limited(int limit, long waitSeconds) {
         long minutes = Math.max(1L, (waitSeconds + 59) / 60);
         return DbQueryApiException.tooMany("RATE_LIMITED", Msg.t(
-                "Saatlik deneme sınırına ulaşıldı (" + limit + "/saat; sorgu denemesi, maliyet denetimi ve elle kontrol birlikte "
-                        + "sayılır) — " + minutes + " dk sonra yeniden deneyin.",
-                "The hourly test limit was reached (" + limit + "/hour; query tests, cost checks and manual checks count together) "
-                        + "— try again in " + minutes + " min."), waitSeconds);
+                "Saatlik deneme sınırına ulaşıldı (" + limit + "/saat; sorgu ve bağlantı denemesi, maliyet denetimi ve elle kontrol "
+                        + "birlikte sayılır) — " + minutes + " dk sonra yeniden deneyin.",
+                "The hourly test limit was reached (" + limit + "/hour; query and connection tests, cost checks and manual checks "
+                        + "count together) — try again in " + minutes + " min."), waitSeconds);
     }
 }

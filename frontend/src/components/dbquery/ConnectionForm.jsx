@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import CopyButton from '../ui/CopyButton.jsx'
 import { cn } from '@/lib/utils'
 import Field from '../ui/Field.jsx'
+import ConnectionStringPaste from './ConnectionStringPaste.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import {
   CONNECT_TIMEOUT, DB_TYPES, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, readOnlyAccountScript, setOracleTcps,
@@ -26,9 +27,9 @@ const GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-2'
  * veritabanı / SSL kipi; SQL Server sunucu / port 1433 / örnek / veritabanı / şifrele / sertifikaya güven; Oracle sunucu /
  * port 1521 / servis adı ya da SID. Ortak: kullanıcı adı, parola (kayıtlıysa "kayıtlı — değiştirmek için yazın"; kayıtlı
  * parola ASLA gösterilmez ya da alana doldurulmaz), bağlanma zaman aşımı, açıklama. Hatalar alanın altında (`errors`).
- * Saf sunum: durumu çağıran tutar (`form`, `onChange(form)`).
+ * Saf sunum: durumu çağıran tutar (`form`, `onChange(form)`). En üstte "Bağlantı dizesinden doldur" (A1; `showPaste`).
  */
-export default function ConnectionForm({ form, onChange, errors = {}, disabled = false, teams = [], showTeam = false }) {
+export default function ConnectionForm({ form, onChange, errors = {}, disabled = false, teams = [], showTeam = false, showPaste = true }) {
   const t = useT()
   const set = (patch) => onChange({ ...form, ...patch })
   const type = form.db_type
@@ -55,6 +56,9 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
           )}
         </Field>
       )}
+
+      {/* Bağlantı dizesinden doldur (A1, 2026-11-05) — istemcide ayrıştırılır; parola forma alınmaz */}
+      {showPaste && <ConnectionStringPaste form={form} onChange={onChange} disabled={disabled} />}
 
       <div className={GRID}>
         {field('name', t('dbq.conn.name'), {}, { required: true })}

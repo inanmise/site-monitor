@@ -6878,6 +6878,278 @@ class MonitoringControllerTest {
         return s;
     }
 
+    // ── dbq2 (be1, 2026-11-05): sql-fix ucu, liste değer eğilimi, grafik alarm / değişiklik ekleri ─────────────────────
+
+    @org.junit.jupiter.api.Nested
+    class Dbq2Be1 {
+
+        @Test
+        @DisplayName("sql-fix: MSSQL NOLOCK önerisi gerçek denetimden geçer; satır sınırı tek başına geçmez → nedenli atlandı; denetim / kota YOK")
+        void sqlFixNolock() throws Exception {
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT COUNT(*) FROM dbo.siparis s WHERE s.durum = 'B'\",\"db_type\":\"mssql\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.db_type").value("MSSQL"))
+                    .andExpect(jsonPath("$.data.row_limit").value(1000))
+                    .andExpect(jsonPath("$.data.fixes.length()").value(1))
+                    .andExpect(jsonPath("$.data.fixes[0].code").value("ADD_NOLOCK"))
+                    .andExpect(jsonPath("$.data.fixes[0].sql").value("SELECT COUNT(*) FROM dbo.siparis s WITH (NOLOCK) WHERE s.durum = 'B'"))
+                    .andExpect(jsonPath("$.data.fixes[0].changed[0]").value("dbo.siparis"))
+                    .andExpect(jsonPath("$.data.fixes[0].edits[0].text").value(" WITH (NOLOCK)"))
+                    .andExpect(jsonPath("$.data.fixes[0].edits[0].line").value(1))
+                    .andExpect(jsonPath("$.data.fixes[0].note").isString())
+                    .andExpect(jsonPath("$.data.skipped[0].code").value("ADD_ROW_LIMIT"))
+                    // D10: COUNT(*) GROUP BY'sız → tek satır, satır sınırı önerilmez
+                    .andExpect(jsonPath("$.data.skipped[0].reason").value("SINGLE_ROW"));
+            verify(permissionService, org.mockito.Mockito.atLeastOnce()).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.crud"), eq("edit"));
+            org.mockito.Mockito.verifyNoInteractions(auditService);
+            org.mockito.Mockito.verifyNoInteractions(dbQueryTestQuota);
+            org.mockito.Mockito.verifyNoInteractions(dbQueryChecker);
+        }
+
+        @Test
+        @DisplayName("sql-fix: PG satır sınırı (row_limit) + NOT_MSSQL; aralık dışı satır sınırı / çok uzun sorgu 400 alan hatası")
+        void sqlFixRowLimitAndValidation() throws Exception {
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT id FROM orders ORDER BY id\",\"db_type\":\"POSTGRESQL\",\"row_limit\":250}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.fixes[0].code").value("ADD_ROW_LIMIT"))
+                    .andExpect(jsonPath("$.data.fixes[0].sql").value("SELECT id FROM orders ORDER BY id LIMIT 250"))
+                    .andExpect(jsonPath("$.data.fixes[0].changed[0]").value("LIMIT 250"))
+                    .andExpect(jsonPath("$.data.skipped[0].reason").value("NOT_MSSQL"));
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT 1\",\"db_type\":\"POSTGRESQL\",\"row_limit\":0}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("row_limit"));
+            String huge = "SELECT 1 " + "x".repeat(2 * com.sitemonitor.service.dbquery.DbQuerySqlGuard.MAX_SQL_CHARS);
+            mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"" + huge + "\",\"db_type\":\"POSTGRESQL\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("sql"));
+        }
+
+        @Test
+        @DisplayName("D10: sql-fix veritabanı türü ZORUNLU — yoksa / tanınmazsa 400 alan db_type (PostgreSQL varsayılmaz)")
+        void sqlFixRequiresDbType() throws Exception {
+            for (String body : new String[] {"{\"sql\":\"SELECT id FROM t\"}", "{\"sql\":\"SELECT id FROM t\",\"db_type\":\"mysql\"}"}) {
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.field").value("db_type"));
+            }
+        }
+
+        @Test
+        @DisplayName("O3: sql-check / sql-fix kapısı — dolu → beklemeden 429 DBQUERY_BUSY + Retry-After; kullanıcı dakikalık sınırı → "
+                + "429 RATE_LIMITED; reddedilen istek ayrıştırmaz")
+        void interactiveGate() throws Exception {
+            MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                    applicationContext.getBean(MonitoringController.class));
+            Object saved = org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbqInteractiveGate");
+            var gate = new com.sitemonitor.service.dbquery.DbQueryInteractiveGate(1, System::currentTimeMillis);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "dbqInteractiveGate", gate);
+            try {
+                var held = gate.tryEnter("baska", com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.CHECK).ticket();
+                long t0 = System.nanoTime();
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\",\"db_type\":\"postgresql\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"))
+                        .andExpect(header().string("Retry-After", "1"));
+                mvc.perform(post("/api/monitoring/dbquery/sql-check").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+                assertThat(java.time.Duration.ofNanos(System.nanoTime() - t0)).isLessThan(java.time.Duration.ofSeconds(2));   // beklemez
+                held.close();
+                for (int i = 0; i < com.sitemonitor.service.dbquery.DbQueryInteractiveGate.FIX_PER_MINUTE; i++)
+                    gate.tryEnter("u", com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.FIX).ticket().close();
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\",\"db_type\":\"postgresql\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                        .andExpect(jsonPath("$.retry_after_seconds").isNumber());
+                // canlı denetimin sınırı ayrı — düzeltme sınırı dolu iken denetim geçer
+                mvc.perform(post("/api/monitoring/dbquery/sql-check").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\"}"))
+                        .andExpect(status().isOk());
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.setField(controller, "dbqInteractiveGate", saved);
+            }
+        }
+
+        @Test
+        @DisplayName("liste: değer eğilimi tek gruplu sorguyla (24 saatlik nokta + yön); değeri olmayan izlemede alan YOK; 60 sn bellek")
+        void listValueTrend() throws Exception {
+            var a = dbqMonitor(41L, 1L, 5L);
+            var b = dbqMonitor(42L, 1L, 5L);
+            when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            java.time.Instant first = com.sitemonitor.service.dbquery.DbQueryValueTrend.firstHour(java.time.Instant.now());
+            String h1 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(20, java.time.temporal.ChronoUnit.HOURS));
+            String h2 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(22, java.time.temporal.ChronoUnit.HOURS));
+            when(dbQueryCheckRepo.valueTrendBuckets(any(), anyString())).thenReturn(List.<Object[]>of(
+                    new Object[] {41L, h1, 100.0}, new Object[] {41L, h2, 150.0}));
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].value_trend.points.length()").value(24))
+                    .andExpect(jsonPath("$.data[0].value_trend.delta_pct").value(50.0))
+                    .andExpect(jsonPath("$.data[0].value_trend.direction").value("up"))
+                    .andExpect(jsonPath("$.data[1].value_trend").doesNotExist());
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L))).andExpect(status().isOk());
+            verify(dbQueryCheckRepo, org.mockito.Mockito.times(1)).valueTrendBuckets(argThat(ids -> ids.containsAll(List.of(41L, 42L))), anyString());
+        }
+
+        @Test
+        @DisplayName("D7: değer eğilimi tek uçuş — eşzamanlı iki liste isteği tek sorgu (ikincisi okumanın bitmesini bekler); okuma "
+                + "bütçeyi aşarsa bekleyen istek eğilimsiz döner (bilinmiyor), takılmaz")
+        void listValueTrendSingleFlight() throws Exception {
+            MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                    applicationContext.getBean(MonitoringController.class));
+            java.util.concurrent.locks.ReentrantLock lock = (java.util.concurrent.locks.ReentrantLock)
+                    org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbqTrendRefresh");
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            java.time.Instant first = com.sitemonitor.service.dbquery.DbQueryValueTrend.firstHour(java.time.Instant.now());
+            String h1 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(20, java.time.temporal.ChronoUnit.HOURS));
+            String h2 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(22, java.time.temporal.ChronoUnit.HOURS));
+            java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                // 1) tek uçuş: ikinci istek kilidi bekler, birincinin okuduğunu bellekten alır
+                when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(dbqMonitor(61L, 1L, 5L)));
+                java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+                when(dbQueryCheckRepo.valueTrendBuckets(argThat(ids -> ids != null && ids.contains(61L)), anyString())).thenAnswer(i -> {
+                    entered.countDown();
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    return List.<Object[]>of(new Object[] {61L, h1, 10.0}, new Object[] {61L, h2, 20.0});
+                });
+                java.util.concurrent.Callable<String> list = () -> mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                        .andReturn().getResponse().getContentAsString();
+                var f1 = ex.submit(list);
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var f2 = ex.submit(list);
+                long until = System.currentTimeMillis() + 10_000;
+                while (!lock.hasQueuedThreads() && System.currentTimeMillis() < until) Thread.onSpinWait();
+                assertThat(lock.hasQueuedThreads()).isTrue();
+                release.countDown();
+                assertThat(f1.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+                assertThat(f2.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+                verify(dbQueryCheckRepo, org.mockito.Mockito.times(1)).valueTrendBuckets(argThat(ids -> ids != null && ids.contains(61L)), anyString());
+
+                // 2) bütçe: okuma bütçeden uzun sürerse bekleyen istek eğilimsiz ve bütçe kadar sonra döner
+                when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(dbqMonitor(63L, 1L, 5L)));
+                java.util.concurrent.CountDownLatch entered2 = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch release2 = new java.util.concurrent.CountDownLatch(1);
+                when(dbQueryCheckRepo.valueTrendBuckets(argThat(ids -> ids != null && ids.contains(63L)), anyString())).thenAnswer(i -> {
+                    entered2.countDown();
+                    release2.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                    return List.<Object[]>of(new Object[] {63L, h1, 10.0}, new Object[] {63L, h2, 20.0});
+                });
+                var slow = ex.submit(list);
+                assertThat(entered2.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                long t0 = System.nanoTime();
+                String waited = ex.submit(list).get(15, java.util.concurrent.TimeUnit.SECONDS);
+                long ms = (System.nanoTime() - t0) / 1_000_000;
+                assertThat(waited).contains("\"id\":63").doesNotContain("value_trend");
+                assertThat(ms).isLessThan(MonitoringController.DBQUERY_TREND_BUDGET_MS + 4_000);
+                release2.countDown();
+                assertThat(slow.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+            } finally {
+                ex.shutdownNow();
+            }
+        }
+
+        @Test
+        @DisplayName("liste: eğilim okunamazsa alan yazılmaz (bilinmiyor ≠ düz), liste yine döner")
+        void listValueTrendUnreadable() throws Exception {
+            var a = dbqMonitor(43L, 1L, 5L);
+            when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a));
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            when(dbQueryCheckRepo.valueTrendBuckets(any(), anyString())).thenThrow(new IllegalStateException("db"));
+            mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].id").value(43))
+                    .andExpect(jsonPath("$.data[0].value_trend").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("grafik: aralıktaki alarm dönemleri (yalnız bu izlemenin — sahiplik) eskiden yeniye + değişiklik işaretleri (yalnız alan ADLARI, değer yok)")
+        void seriesAlarmsAndChanges() throws Exception {
+            var mon = dbqMonitor(95L, 1L, 5L);
+            when(dbQueryMonitorRepo.findById(95L)).thenReturn(Optional.of(mon));
+            when(dbQueryCheckRepo.seriesRaw(eq(95L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+            com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
+            open.setDomain(mon.getName()); open.setAlertType("DBQUERY_THRESHOLD"); open.setAlertLevel("CRITICAL");
+            open.setCreatedAt("2026-11-05T09:00:00"); open.setResolved(false); open.setContextJson("{\"monitor_id\":95}");
+            com.sitemonitor.model.AlertEvent closed = new com.sitemonitor.model.AlertEvent();
+            closed.setDomain(mon.getName()); closed.setAlertType("DBQUERY_FAIL"); closed.setAlertLevel("HIGH");
+            closed.setCreatedAt("2026-11-04T08:00:00"); closed.setResolved(true); closed.setResolvedAt("2026-11-04T08:20:00");
+            closed.setContextJson("{\"monitor_id\":95}");
+            com.sitemonitor.model.AlertEvent foreign = new com.sitemonitor.model.AlertEvent();   // aynı adlı, silinmiş başka izlemenin alarmı
+            foreign.setDomain(mon.getName()); foreign.setAlertType("DBQUERY_FAIL"); foreign.setAlertLevel("HIGH");
+            foreign.setCreatedAt("2026-11-03T08:00:00"); foreign.setResolved(true); foreign.setResolvedAt("2026-11-03T09:00:00");
+            foreign.setContextJson("{\"monitor_id\":7}");
+            when(alertEventRepo.findOverlappingNewest(eq(mon.getName()), any(), anyString(), anyString(), any()))
+                    .thenReturn(List.of(open, closed, foreign));
+            when(changeLogRepo.changeMarks(eq("DBQUERY"), eq(95L), anyString(), anyString(), eq(200))).thenReturn(List.<Object[]>of(
+                    new Object[] {"2026-11-04T12:00:00", "UPDATE",
+                            "{\"sqlText\":{\"from\":\"SELECT gizli\",\"to\":\"SELECT yeni\"},\"rulesJson\":{\"from\":\"[]\",\"to\":\"[1]\"}}"},
+                    new Object[] {"2026-11-01T10:00:00", "CREATE", null}));
+            String body = mvc.perform(get("/api/monitoring/dbquery/95/response-series").param("metric", "value").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.alarms.length()").value(2))
+                    .andExpect(jsonPath("$.data.alarms[0].from").value("2026-11-04T08:00:00"))
+                    .andExpect(jsonPath("$.data.alarms[0].to").value("2026-11-04T08:20:00"))
+                    .andExpect(jsonPath("$.data.alarms[0].type").value("DBQUERY_FAIL"))
+                    .andExpect(jsonPath("$.data.alarms[1].to").doesNotExist())
+                    .andExpect(jsonPath("$.data.alarms[1].level").value("CRITICAL"))
+                    .andExpect(jsonPath("$.data.changes.length()").value(2))
+                    .andExpect(jsonPath("$.data.changes[0].event").value("CREATE"))
+                    .andExpect(jsonPath("$.data.changes[0].fields.length()").value(0))
+                    .andExpect(jsonPath("$.data.changes[1].at").value("2026-11-04T12:00:00"))
+                    .andExpect(jsonPath("$.data.changes[1].fields[0]").value("sqlText"))
+                    .andExpect(jsonPath("$.data.changes[1].fields[1]").value("rulesJson"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("SELECT gizli").doesNotContain("SELECT yeni");
+            // D12: veritabanında sınırlı okuma (en yeni 2 × 200), sınırsız sorgu hiç çağrılmaz
+            verify(alertEventRepo).findOverlappingNewest(eq(mon.getName()), any(), anyString(), anyString(),
+                    argThat(pg -> pg != null && pg.getPageNumber() == 0 && pg.getPageSize() == 2 * MonitoringController.DBQUERY_SERIES_MARKS_MAX));
+            verify(alertEventRepo, never()).findOverlappingForHistory(anyString(), any(), anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("grafik: alarm / değişiklik okunamazsa alan null (uydurma boş liste değil), seri yine döner")
+        void seriesMarksUnreadable() throws Exception {
+            var mon = dbqMonitor(96L, 1L, 5L);
+            when(dbQueryMonitorRepo.findById(96L)).thenReturn(Optional.of(mon));
+            when(dbQueryCheckRepo.seriesRaw(eq(96L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+            when(alertEventRepo.findOverlappingNewest(anyString(), any(), anyString(), anyString(), any())).thenThrow(new IllegalStateException("db"));
+            when(changeLogRepo.changeMarks(anyString(), anyLong(), anyString(), anyString(), anyInt())).thenThrow(new IllegalStateException("db"));
+            mvc.perform(get("/api/monitoring/dbquery/96/response-series").session(dbqUser(1L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.alarms").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.changes").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.metric").value("duration"));
+        }
+
+        @Test
+        @DisplayName("değişiklik alan adları: üst düzey anahtarlar (≤ 100); nesne değil / bozuk / boş JSON → boş liste")
+        void changedFields() {
+            assertThat(MonitoringController.dbqChangedFields("{\"a\":{\"from\":1,\"to\":2},\"b\":{}}")).containsExactly("a", "b");
+            assertThat(MonitoringController.dbqChangedFields("[1,2]")).isEmpty();
+            assertThat(MonitoringController.dbqChangedFields("{bozuk")).isEmpty();
+            assertThat(MonitoringController.dbqChangedFields(null)).isEmpty();
+            StringBuilder sb = new StringBuilder("{");
+            for (int i = 0; i < 150; i++) sb.append(i == 0 ? "" : ",").append("\"k").append(i).append("\":1");
+            assertThat(MonitoringController.dbqChangedFields(sb.append('}').toString())).hasSize(100);
+        }
+    }
+
     @Test
     @DisplayName("DBQUERY liste: paylaşım okuyucusu bağlantının adını görür, sunucu / veritabanı ayrıntısını GÖRMEZ; parola hiçbir yanıtta yok")
     void dbquery_list_grantReaderSeesProfileSummaryOnly() throws Exception {
@@ -7823,6 +8095,86 @@ class MonitoringControllerTest {
                 .andExpect(status().is(429))
                 .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
                 .andExpect(header().exists("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("dbq2 D1: eşik denemesi akıllı kural geri bakışı ÇALIŞTIRMA SAYISIYLA (canlıyla aynı); satır tavanı EN ESKİ kısmı keser")
+    void dbquery_backtest_smartLookbackByRunsAndCapCutsOldest() throws Exception {
+        var mon = dbqMonitor(95L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"window\":10,\"min_samples\":5}]");
+        when(dbQueryMonitorRepo.findById(95L)).thenReturn(Optional.of(mon));
+        when(dbQueryCheckRepo.backtestRunsBefore(eq(95L), anyString(), any())).thenReturn(
+                List.of("2026-09-30T23:55:00", "2026-09-30T23:50:00", "2026-01-02T00:00:00"));
+        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of());
+        when(dbQueryCheckRepo.backtestPage(eq(95L), anyString(), anyLong(), anyInt())).thenReturn(List.of());
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        MockHttpSession owner = dbqUser(1L);
+        owner.setAttribute("username", "dbq2-d1-backtest");
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json).content("{\"days\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.truncated").value(false));
+        // Pencere başından önceki canlı okuma kadar (2 × pencere = 20) zamanlanmış çalıştırma istenir; en eskisinden okunur
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pg =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(dbQueryCheckRepo).backtestRunsBefore(eq(95L), anyString(), pg.capture());
+        assertThat(pg.getValue().getPageSize()).isEqualTo(20);
+        assertThat(pg.getValue().getOffset()).isZero();
+        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-01-02T00:00:00"), eq(0L), anyInt());
+        // Tavan konumu: 150 000. en yeni satır
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> cp =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(dbQueryCheckRepo).backtestNewestFrom(eq(95L), eq("2026-01-02T00:00:00"), cp.capture());
+        assertThat(cp.getValue().getOffset()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_MAX_ROWS - 1L);
+        assertThat(cp.getValue().getPageSize()).isEqualTo(1);
+
+        // Tavandan fazla satır: okuma tavan konumundaki satırdan başlar (EN YENİ satırlar değerlendirilir), truncated
+        org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
+        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of("2026-10-30T12:00:00"));
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json).content("{\"days\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.truncated").value(true));
+        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-10-30T12:00:00"), eq(0L), anyInt());
+
+        // Akıllı kural yoksa sayıyla geri bakış yok
+        org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json)
+                        .content("{\"days\":7,\"rules\":[{\"id\":\"r\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":5}]}"))
+                .andExpect(status().isOk());
+        verify(dbQueryCheckRepo, never()).backtestRunsBefore(anyLong(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("dbq2 O1: hiç dolamayacak taban kayıtta 400 rules[N].min_samples; günü bölmeyen aralık + mevsim → engellemeyen ANOMALY_SEASON_RARE uyarısı")
+    void dbquery_create_smartRuleRetentionAndSeasonWarning() throws Exception {
+        when(appSettings.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));
+        when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(78L);
+            return m;
+        });
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String base = "{\"name\":\"Haftalık sipariş\",\"team_id\":1,\"profile_id\":5,\"group_name\":\"Sipariş\","
+                + "\"tags\":\"veritabanı\",\"purpose\":\"Haftalık sipariş düzeyini izler\","
+                + "\"sql_text\":\"SELECT COUNT(*) AS adet FROM orders\",";
+        // haftalık, en az 26 örnek: 180 gün saklamaya 25 hafta sığar → kaydedilmez
+        mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN")).contentType(json)
+                        .content(base + "\"schedule_mode\":\"INTERVAL\",\"interval_seconds\":3600,"
+                                + "\"rules\":[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"season\":\"weekly\","
+                                + "\"window\":40,\"min_samples\":26}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fields['rules[0].min_samples']").value(org.hamcrest.Matchers.containsString("25 hafta")));
+        verify(dbQueryMonitorRepo, never()).save(any());
+
+        // günlük mevsim + 5 saatlik aralık: kaydedilir, uyarı döner
+        mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN")).contentType(json)
+                        .content(base + "\"schedule_mode\":\"INTERVAL\",\"interval_seconds\":18000,"
+                                + "\"rules\":[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"season\":\"daily\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.warnings[?(@.code == 'ANOMALY_SEASON_RARE')].rule_ids[0]").value("a"))
+                .andExpect(jsonPath("$.data.warnings[?(@.code == 'ANOMALY_SEASON_RARE')].interval_seconds").value(18000));
     }
 
     // ── Sentetik izleme sürümü (2026-10-31, k6 inceleme A1 / A4 / A6 / B1 / D1) ─────────────────────────────────

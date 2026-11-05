@@ -2500,7 +2500,9 @@ public class EscalationService {
                         "Ardışık doğrulama denemeleri başarısız oldu. Sorgu yeniden çalıştığında alarm otomatik kapanacaktır.";
             }
             case TYPE_DBQUERY_THRESHOLD -> {
-                Object summary = ctx.get("rule_summary");
+                // dbq2 inceleme O2: kuralın kolonu maskeliyse özetteki "gelen" değer de maskelenir (posta + saklanan ileti)
+                Object summary = withDbQueryMask(ctx, ctx.get("monitor_id") instanceof Number mid ? mid.longValue() : null)
+                        .get("rule_summary");
                 Object purpose = ctx.get("purpose");
                 return "YÜKSEK: " + domain + " veritabanı sorgusunun sonucu tanımlı kuralı ihlal etti" +
                         (summary != null ? " — " + summary : "") + ". " +
@@ -3396,8 +3398,16 @@ public class EscalationService {
         Long monitorId = ctx != null && ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
         com.sitemonitor.model.DbQueryMonitor m = null;
         com.sitemonitor.model.DbConnectionProfile p = null;
+        boolean monitorUnreadable = false;
         try {
-            if (monitorId != null && dbQueryMonitorRepo != null) m = dbQueryMonitorRepo.findById(monitorId).orElse(null);
+            if (monitorId != null && dbQueryMonitorRepo != null) {
+                try {
+                    m = dbQueryMonitorRepo.findById(monitorId).orElse(null);
+                } catch (RuntimeException e) {
+                    monitorUnreadable = true;
+                    throw e;
+                }
+            }
             if (m != null && m.getProfileId() != null && dbConnectionProfileRepo != null)
                 p = dbConnectionProfileRepo.findById(m.getProfileId()).orElse(null);
         } catch (Exception e) {
@@ -3429,6 +3439,28 @@ public class EscalationService {
                 log.debug("Sorgu alarmı postası son çalıştırma okunamadı ({}): {}", monitorId, e.toString());
             }
         }
+        // dbq2 C4: "İlk ihlal", "kaç çalıştırmadır" ve "son değerler" — son zamanlanmış çalıştırmalardan (tek sorgu, yalnız
+        // ölçülen değer / durum; satır verisi YOK). Okunamazsa bölüm yazılmaz, posta yine gider.
+        if (monitorId != null && dbQueryCheckRepo != null
+                && (TYPE_DBQUERY_THRESHOLD.equals(alertType) || TYPE_DBQUERY_FAIL.equals(alertType))) {
+            try {
+                putDbQueryHistory(extra, dbQueryCheckRepo.recentScheduledSummary(monitorId, DBQUERY_HISTORY_READ), alertType,
+                        dbQueryFailureReason(ctx));
+            } catch (Exception e) {
+                log.debug("Sorgu alarmı postası son çalıştırmalar okunamadı ({}): {}", monitorId, e.toString());
+            }
+        }
+        // dbq2 inceleme O2: kuralın kolonu izlemenin GÜNCEL maske listesindeyse ölçü, "Son Değerler", kural "gelen" değeri ve
+        // ihlal özeti postada (gönderilen + günlük kopyası) maskelenir; izleme okunamadıysa temkinli (her ölçü maskeli).
+        java.util.Set<String> maskedRules = monitorUnreadable ? java.util.Set.of(com.sitemonitor.service.dbquery.DbQueryMailMask.ALL)
+                : m == null ? java.util.Set.of()
+                : com.sitemonitor.service.dbquery.DbQueryMailMask.maskedRuleIds(m.getRulesJson(), m.getMaskedColumnsJson());
+        if (!maskedRules.isEmpty()) {
+            Map<String, Object> view = new LinkedHashMap<>();
+            if (ctx != null) view.putAll(ctx);
+            view.putAll(extra);
+            com.sitemonitor.service.dbquery.DbQueryMailMask.apply(extra, view, maskedRules, CTX_DBQUERY_HISTORY);
+        }
         com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows = null;
         boolean rowsWanted = m == null || !Boolean.FALSE.equals(m.getMailIncludeRows());
         if (dbQueryAlertRows != null && rowsWanted && !TYPE_DBQUERY_FAIL.equals(alertType)) {
@@ -3444,6 +3476,102 @@ public class EscalationService {
                     dbQuerySubjectValues(view, level));
         }
         return new DbQueryMailParts(extra, rows, subject);
+    }
+
+    /**
+     * Alarmın neden kodu bağlamdan: {@code failure_reason}; yoksa (eski anlık görüntü) hata metninin {@code [KOD]} öneki
+     * — "kural değerlendirilemedi" kalemi {@code [DB_RULE_UNEVALUABLE] …} yazar.
+     */
+    static String dbQueryFailureReason(Map<String, Object> ctx) {
+        if (ctx == null) return null;
+        String r = str(ctx.get("failure_reason"));
+        if (r != null) return r;
+        String err = str(ctx.get("error"));
+        String code = com.sitemonitor.service.dbquery.DbQueryAlarmText.RULE_UNEVALUABLE_CODE;
+        return err != null && err.startsWith("[" + code + "]") ? code : null;
+    }
+
+    /** Sorgu alarmı postası geçmişi (dbq2 C4): okunan son zamanlanmış çalıştırma ve tabloda gösterilen sayısı. */
+    static final int DBQUERY_HISTORY_READ = 100, DBQUERY_HISTORY_SHOWN = 10;
+    /** Bağlam anahtarları (yalnız posta bağlamı — alarm anlık görüntüsüne girmez). */
+    public static final String CTX_DBQUERY_HISTORY = "dbquery_history", CTX_DBQUERY_STREAK = "dbquery_streak",
+            CTX_DBQUERY_STREAK_CAPPED = "dbquery_streak_capped", CTX_DBQUERY_FIRST_PROBLEM = "dbquery_first_problem_at",
+            CTX_DBQUERY_STREAK_KIND = "dbquery_streak_kind";
+
+    /**
+     * Son zamanlanmış çalıştırmalardan (yeniden eskiye: {@code [checkedAt, status, metricValue, ok, breachLevel,
+     * failureReason, slow, sqlHash]}) "son değerler" tablosu (≤ {@value #DBQUERY_HISTORY_SHOWN}), ardışık sorunlu çalıştırma
+     * sayısı ve ilkinin zamanı. Sorunlu = eşik alarmında {@code BREACH}; sorgu hatası alarmında {@code ok = false} — kural
+     * değerlendirilemediği için açılan hata alarmında ({@code DB_RULE_UNEVALUABLE}, bağlamdan) {@code UNKNOWN}. Seri türü
+     * YALNIZ alarm türü + bağlamdan karar verilir (dbq2 inceleme D9: en yeni satırdan çıkarılmaz). Seri ve tablo sorgu
+     * değişince kesilir: en yeni satırın {@code sql_hash}'inden farklı ilk satırda durulur (eski sorgunun ölçüsü bu sorgunun
+     * serisi değil). Seri en yeni satırda sorunlu değilse (alarm iyileşmeyi bekliyor) yalnız tablo yazılır. Okunan satırların
+     * hepsi sorunluysa sayı "en az" ve ilk zaman "ya da daha önce" olur.
+     */
+    static void putDbQueryHistory(Map<String, Object> extra, List<Object[]> recent, String alertType, String failureReason) {
+        if (extra == null || recent == null || recent.isEmpty()) return;
+        List<Object[]> same = sameQueryPrefix(recent);
+        if (same.isEmpty()) return;
+        List<Map<String, Object>> shown = new ArrayList<>();
+        for (Object[] r : same) {
+            if (r == null || r.length < 5) continue;
+            if (shown.size() >= DBQUERY_HISTORY_SHOWN) break;
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("checked_at", r[0]);
+            h.put("status", r[1]);
+            h.put("metric_value", Boolean.FALSE.equals(r[3]) ? null : r[2]);
+            h.put("breach_level", r[4]);
+            shown.add(h);
+        }
+        if (shown.isEmpty()) return;
+        extra.put(CTX_DBQUERY_HISTORY, shown);
+        // Seri türü: eşik → BREACH; hata → ok=false, ya da (bağlamda "kural değerlendirilemedi") UNKNOWN
+        String kind;
+        if (TYPE_DBQUERY_THRESHOLD.equals(alertType)) {
+            kind = com.sitemonitor.model.DbQueryCheck.STATUS_BREACH;
+        } else {
+            boolean unevaluable = com.sitemonitor.service.dbquery.DbQueryAlarmText.RULE_UNEVALUABLE_CODE.equals(failureReason);
+            kind = unevaluable ? com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN : com.sitemonitor.model.DbQueryCheck.STATUS_FAIL;
+        }
+        int streak = 0;
+        String firstAt = null;
+        for (Object[] r : same) {
+            if (r == null || r.length < 5 || !dbQueryProblem(r, kind)) break;
+            streak++;
+            firstAt = r[0] == null ? firstAt : r[0].toString();
+        }
+        if (streak == 0) return;
+        extra.put(CTX_DBQUERY_STREAK, streak);
+        extra.put(CTX_DBQUERY_STREAK_KIND, kind);
+        if (firstAt != null) extra.put(CTX_DBQUERY_FIRST_PROBLEM, firstAt);
+        // "en az": okunan pencerenin tamamı aynı sorgunun sorunlu satırı (sorgu değişimiyle kesildiyse kesin sayı)
+        if (streak >= same.size() && same.size() == recent.size() && recent.size() >= DBQUERY_HISTORY_READ)
+            extra.put(CTX_DBQUERY_STREAK_CAPPED, true);
+    }
+
+    /**
+     * Aynı sorgunun satırları (yeniden eskiye, kesintisiz): en yeni satırın {@code sql_hash}'i (8. kolon) referanstır; ondan
+     * farklı ilk satırda kesilir. Kolon yoksa ya da değer boşsa kesilmez (eski çağıranlar / değeri olmayan satır).
+     */
+    static List<Object[]> sameQueryPrefix(List<Object[]> recent) {
+        String ref = null;
+        for (Object[] r : recent) {
+            if (r != null && r.length > 7 && r[7] != null) { ref = r[7].toString(); break; }
+            if (r != null) break;
+        }
+        if (ref == null) return recent;
+        List<Object[]> out = new ArrayList<>(recent.size());
+        for (Object[] r : recent) {
+            if (r != null && r.length > 7 && r[7] != null && !ref.equals(r[7].toString())) break;
+            out.add(r);
+        }
+        return out;
+    }
+
+    private static boolean dbQueryProblem(Object[] r, String kind) {
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(kind))
+            return Boolean.FALSE.equals(r[3]) || com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(r[1]);
+        return kind.equals(r[1]) && !Boolean.FALSE.equals(r[3]);
     }
 
     /** Konu yer tutucu değerleri ({@link com.sitemonitor.service.dbquery.DbQueryMailSubject}). */
@@ -3487,15 +3615,37 @@ public class EscalationService {
         if (ctx == null || dbQueryCheckRepo == null) return ctx;
         Long monitorId = ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
         if (monitorId == null) return ctx;
+        Map<String, Object> out = ctx;
         try {
             var latest = dbQueryCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitorId).orElse(null);
-            if (latest == null) return ctx;
-            Map<String, Object> out = new LinkedHashMap<>(ctx);
-            putDbQueryCheck(out, latest, "resolved_");
-            return out;
+            if (latest != null) {
+                out = new LinkedHashMap<>(ctx);
+                putDbQueryCheck(out, latest, "resolved_");
+            }
         } catch (Exception e) {
-            return ctx;   // zenginleştirilemezse posta sade hâliyle gider
+            out = ctx;   // zenginleştirilemezse posta sade hâliyle gider
         }
+        return withDbQueryMask(out, monitorId);
+    }
+
+    /**
+     * dbq2 inceleme O2: maskeli kolon ölçüsünü çözüm postasında da gizler (alarm anı özeti + güncel değerler); izleme
+     * okunamazsa temkinli (her ölçü maskeli). Maskeli kural yoksa {@code ctx} aynen döner.
+     */
+    private Map<String, Object> withDbQueryMask(Map<String, Object> ctx, Long monitorId) {
+        if (ctx == null || monitorId == null || dbQueryMonitorRepo == null) return ctx;
+        java.util.Set<String> ids;
+        try {
+            ids = dbQueryMonitorRepo.findById(monitorId)
+                    .map(m -> com.sitemonitor.service.dbquery.DbQueryMailMask.maskedRuleIds(m.getRulesJson(), m.getMaskedColumnsJson()))
+                    .orElse(java.util.Set.of());
+        } catch (Exception e) {
+            ids = java.util.Set.of(com.sitemonitor.service.dbquery.DbQueryMailMask.ALL);
+        }
+        if (ids.isEmpty()) return ctx;
+        Map<String, Object> out = new LinkedHashMap<>(ctx);
+        com.sitemonitor.service.dbquery.DbQueryMailMask.apply(out, ctx, ids, CTX_DBQUERY_HISTORY);
+        return out;
     }
 
     private static String str(Object o) {

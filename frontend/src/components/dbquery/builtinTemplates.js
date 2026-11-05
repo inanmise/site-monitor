@@ -1,59 +1,78 @@
-// Veritabanı Sorgu İzleme — YERLEŞİK başlangıç şablonları (2026-10-31, 2.C). İstemcide sabit, salt okunur, veritabanı
-// türüne göre SQL (PostgreSQL / SQL Server / Oracle). Takım şablonlarıyla aynı biçim (`sql_text`, `purpose`, `rules`,
-// `rule_logic`, `db_type`) + `builtin: true`. Ad / açıklama / amaç / kural adı sözlükten (`dbq.btpl.<anahtar>.*`).
+// Veritabanı Sorgu İzleme — YERLEŞİK başlangıç şablonları (2026-10-31, 2.C) ve hazır DBA şablonları (2026-11-05, B5).
+// İstemcide sabit, salt okunur, veritabanı türüne göre SQL (PostgreSQL / SQL Server / Oracle). Takım şablonlarıyla aynı
+// biçim (`sql_text`, `purpose`, `rules`, `rule_logic`, `db_type`) + `builtin: true`. Ad / açıklama / amaç / kural adı
+// sözlükten (`dbq.btpl.<anahtar>.*`).
 //
-// Kurallar: yalnız SELECT, SQL Server'da HER tabloda `WITH (NOLOCK)`, yalnız yerleşik işlevler (güvenlik denetiminden ilk
-// denemede geçer); tablo / kolon adları ÖRNEK — kullanıcı kendi şemasına göre değiştirir (açıklama bunu söyler). Kural
-// biçimi sunucuyla aynı (dbquery-api.md §4); tazelik eşiği SANİYE.
+// SQL metinleri `builtinTemplatesSql.json`'da: aynı dosyayı sunucu testi (`DbQueryBuiltinTemplatesGuardTest`) okuyup HER
+// şablonu her türde gerçek güvenlik denetiminden (`DbQuerySqlGuard`) geçirir — burada yazılan sorgu kayıtta reddedilemez.
+// Kurallar: yalnız SELECT, SQL Server'da HER tablo / sistem görünümünde `WITH (NOLOCK)`, yalnız yerleşik işlevler; tablo /
+// kolon adları ÖRNEK (uygulama şablonları — kullanıcı kendi şemasına göre değiştirir). Kural biçimi sunucuyla aynı
+// (dbquery-api.md §4); tazelik eşiği SANİYE.
+//
+// DBA şablonları (`category: 'dba'`): sistem görünümlerini okur (replikasyon gecikmesi, bloklanan oturum, uzun işlem,
+// veritabanı boyutu, başarısız iş) — her biri gereken yetkiyi (`privilege`, türe göre) ve önerilen çalışma aralığını
+// (`interval_seconds`) açıkça taşır.
+
+import SQL from './builtinTemplatesSql.json'
 
 export const BUILTIN_KEYS = Object.freeze(['recent_problems', 'stuck_queue', 'freshness', 'daily_job'])
+export const DBA_KEYS = Object.freeze(['replica_lag', 'blocked_sessions', 'long_transactions', 'database_size', 'failed_jobs'])
 const DB = ['POSTGRESQL', 'MSSQL', 'ORACLE']
 
-const SQL = {
-  recent_problems: {
-    POSTGRESQL: ['SELECT COUNT(*) AS error_count', 'FROM app_errors', "WHERE created_at >= now() - interval '15 minutes'"],
-    MSSQL: ['SELECT COUNT(*) AS error_count', 'FROM dbo.app_errors WITH (NOLOCK)', 'WHERE created_at >= DATEADD(MINUTE, -15, GETDATE())'],
-    ORACLE: ['SELECT COUNT(*) AS error_count', 'FROM app_errors', "WHERE created_at >= SYSTIMESTAMP - INTERVAL '15' MINUTE"],
-  },
-  stuck_queue: {
-    POSTGRESQL: ['SELECT COUNT(*) AS stuck_count', 'FROM job_queue', "WHERE status = 'PENDING'", "  AND created_at < now() - interval '30 minutes'"],
-    MSSQL: ['SELECT COUNT(*) AS stuck_count', 'FROM dbo.job_queue WITH (NOLOCK)', "WHERE status = 'PENDING'", '  AND created_at < DATEADD(MINUTE, -30, GETDATE())'],
-    ORACLE: ['SELECT COUNT(*) AS stuck_count', 'FROM job_queue', "WHERE status = 'PENDING'", "  AND created_at < SYSTIMESTAMP - INTERVAL '30' MINUTE"],
-  },
-  freshness: {
-    POSTGRESQL: ['SELECT MAX(created_at) AS last_record_at', 'FROM orders'],
-    MSSQL: ['SELECT MAX(created_at) AS last_record_at', 'FROM dbo.orders WITH (NOLOCK)'],
-    ORACLE: ['SELECT MAX(created_at) AS last_record_at', 'FROM orders'],
-  },
-  daily_job: {
-    POSTGRESQL: ['SELECT COUNT(*) AS completed_count', 'FROM batch_runs', "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", "  AND finished_at >= date_trunc('day', now())"],
-    MSSQL: ['SELECT COUNT(*) AS completed_count', 'FROM dbo.batch_runs WITH (NOLOCK)', "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", '  AND finished_at >= CAST(GETDATE() AS date)'],
-    ORACLE: ['SELECT COUNT(*) AS completed_count', 'FROM batch_runs', "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", '  AND finished_at >= TRUNC(SYSDATE)'],
-  },
-}
+/** DBA şablonlarının önerilen çalışma aralığı (saniye). */
+const DBA_INTERVAL = { replica_lag: 300, blocked_sessions: 300, long_transactions: 300, database_size: 3600, failed_jobs: 900 }
 
 /** Şablonun kuralları — kimlikler sabit (`r-b-<anahtar>`); izleme oluşturulunca sunucu aynen saklar. */
-function rulesOf(key, t) {
+function rulesOf(key, t, type) {
   const rule = (over) => ({
     id: `r-b-${key}`, label: t(`dbq.btpl.${key}.rule`), column: null, aggregate: null, operator: 'GT', scope: null,
     warning: null, critical: null, change: null, ...over,
   })
-  if (key === 'recent_problems') return [rule({ kind: 'COLUMN_VALUE', column: 'error_count', aggregate: 'FIRST', warning: 10, critical: 50 })]
-  if (key === 'stuck_queue') return [rule({ kind: 'COLUMN_VALUE', column: 'stuck_count', aggregate: 'FIRST', warning: 0, critical: 25 })]
-  if (key === 'freshness') return [rule({ kind: 'FRESHNESS', column: 'last_record_at', aggregate: 'MAX', warning: 900, critical: 3600 })]
-  return [rule({ kind: 'COLUMN_VALUE', column: 'completed_count', aggregate: 'FIRST', operator: 'LT', critical: 1 })]
+  const value = (column, warning, critical, operator = 'GT') => rule({ kind: 'COLUMN_VALUE', column, aggregate: 'FIRST', operator, warning, critical })
+  switch (key) {
+    case 'recent_problems': return [value('error_count', 10, 50)]
+    case 'stuck_queue': return [value('stuck_count', 0, 25)]
+    case 'freshness': return [rule({ kind: 'FRESHNESS', column: 'last_record_at', aggregate: 'MAX', warning: 900, critical: 3600 })]
+    case 'daily_job': return [value('completed_count', null, 1, 'LT')]
+    case 'replica_lag': {
+      const lag = [value('replica_lag_seconds', 30, 300)]
+      // Oracle Data Guard görünümü tek satır döner (yedekte çalışır) — "bağlı yedek yok" kuralı yalnız birincilde
+      if (type === 'ORACLE') return lag
+      return [...lag, { ...value('replica_count', null, 1, 'LT'), id: 'r-b-replica_lag-count', label: t('dbq.btpl.replica_lag.rule2') }]
+    }
+    case 'blocked_sessions': return [value('blocked_sessions', 2, 10)]
+    case 'long_transactions': return [value('long_tx_count', 0, 5)]
+    case 'database_size': return [value('database_size_mb', 500000, 750000)]
+    case 'failed_jobs': return [value('failed_job_count', 0, 3)]
+    default: return []
+  }
+}
+
+function templateOf(key, t, type, extra = {}) {
+  return {
+    id: `builtin:${key}`, key, builtin: true, can_edit: false,
+    name: t(`dbq.btpl.${key}.name`), description: t(`dbq.btpl.${key}.desc`), purpose: t(`dbq.btpl.${key}.purpose`),
+    db_type: type, sql_text: SQL[key][type].join('\n'), rules: rulesOf(key, t, type), rule_logic: 'ANY', ...extra,
+  }
 }
 
 /**
- * Yerleşik şablonlar — `dbType` verilmezse (bağlantı seçilmedi) PostgreSQL sürümü. Her öğe takım şablonu biçiminde +
- * `builtin: true`, `id: 'builtin:<anahtar>'`, `key`.
+ * Yerleşik başlangıç (uygulama) şablonları — `dbType` verilmezse (bağlantı seçilmedi) PostgreSQL sürümü. Her öğe takım
+ * şablonu biçiminde + `builtin: true`, `id: 'builtin:<anahtar>'`, `key`.
  */
 export function builtinTemplates(t, dbType = null) {
   const type = DB.includes(dbType) ? dbType : 'POSTGRESQL'
-  return BUILTIN_KEYS.map((key) => ({
-    id: `builtin:${key}`, key, builtin: true, can_edit: false,
-    name: t(`dbq.btpl.${key}.name`), description: t(`dbq.btpl.${key}.desc`), purpose: t(`dbq.btpl.${key}.purpose`),
-    db_type: type, sql_text: SQL[key][type].join('\n'), rules: rulesOf(key, t), rule_logic: 'ANY',
+  return BUILTIN_KEYS.map((key) => templateOf(key, t, type))
+}
+
+/**
+ * Hazır DBA şablonları (B5) — sistem görünümlerinden okur. Ek alanlar: `category: 'dba'`, `privilege` (bu türde gereken
+ * yetki — metin), `interval_seconds` (önerilen aralık). `dbType` verilmezse PostgreSQL sürümü.
+ */
+export function dbaTemplates(t, dbType = null) {
+  const type = DB.includes(dbType) ? dbType : 'POSTGRESQL'
+  return DBA_KEYS.map((key) => templateOf(key, t, type, {
+    category: 'dba', privilege: t(`dbq.btpl.${key}.priv.${type}`), interval_seconds: DBA_INTERVAL[key],
   }))
 }
 

@@ -13,7 +13,9 @@ import java.util.Map;
  * Saf, durumsuz; asla fırlatmaz.
  *
  * <p><b>Kural sonucu JSON'u</b> ({@code dbquery_checks.rule_results_json}) API biçimindedir (sözleşme §4 RuleResult):
- * {@code [{id, label, kind, actual, expected, level, passed, evaluated, note, measure, compared}]}. Motor bir sonraki
+ * {@code [{id, label, kind, actual, expected, level, passed, evaluated, note, measure, compared}]} (+ akıllı kurallarda
+ * taban özeti: {@code samples, min_samples, baseline_mean, baseline_sigma, band_low, band_high, deviation, same_runs} —
+ * dbq2 D; yalnız dolu alanlar). Motor bir sonraki
  * çalıştırmanın değişim kuralı için önceki zamanlanmış satırın {@code measure} değerini {@code id} ile okur — biçim
  * kalıcıdır, yalnız EKLENEBİLİR.
  *
@@ -35,22 +37,32 @@ public final class DbQueryAlarmText {
         if (results == null) return out;
         for (DbQueryEvaluator.RuleResult r : results) {
             if (r == null) continue;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", r.id());
-            m.put("label", r.label());
-            m.put("kind", r.kind());
-            m.put("actual", r.actual());
-            m.put("expected", r.expected());
-            m.put("level", r.level());
-            m.put("passed", r.passed());
-            m.put("evaluated", r.evaluated());
-            m.put("note", r.note());
-            m.put("measure", r.measure());
-            m.put("compared", r.compared());
-            if (r.fingerprint() != null) m.put("fingerprint", r.fingerprint());
-            out.add(m);
+            out.add(ruleResultApi(r));
         }
         return out;
+    }
+
+    /**
+     * Tek kural sonucunun API biçimi (sözleşme §4 RuleResult + parmak izi + akıllı kural taban özeti). Kural sonucu döndüren
+     * her uç bunu kullanmalı — alan listesi tek yerde.
+     */
+    public static Map<String, Object> ruleResultApi(DbQueryEvaluator.RuleResult r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (r == null) return m;
+        m.put("id", r.id());
+        m.put("label", r.label());
+        m.put("kind", r.kind());
+        m.put("actual", r.actual());
+        m.put("expected", r.expected());
+        m.put("level", r.level());
+        m.put("passed", r.passed());
+        m.put("evaluated", r.evaluated());
+        m.put("note", r.note());
+        m.put("measure", r.measure());
+        m.put("compared", r.compared());
+        if (r.fingerprint() != null) m.put("fingerprint", r.fingerprint());
+        DbQueryEvaluator.putStats(m, r.stats());
+        return m;
     }
 
     /** Kontrol satırının {@code rule_results_json}'u; boş liste → "[]", yazılamazsa null. */
@@ -118,6 +130,8 @@ public final class DbQueryAlarmText {
             case "TEXT_MATCH" -> "Metin eşleşmesi";
             case "CHANGE" -> "Değişim";
             case "FRESHNESS" -> "Tazelik";
+            case "ANOMALY" -> "Olağan dışı değer";
+            case "FROZEN" -> "Donmuş değer";
             default -> "Kural";
         };
     }
@@ -152,6 +166,9 @@ public final class DbQueryAlarmText {
             case DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE -> "önceki çalıştırma okunamadı";
             case DbQueryEvaluator.NOTE_NO_ROWS -> "sorgu satır döndürmedi";
             case DbQueryEvaluator.NOTE_NULL_VALUE -> "değer boş";
+            case DbQueryEvaluator.NOTE_BUILDING_BASELINE -> "taban kuruluyor (yeterli geçmiş ölçü yok)";
+            case DbQueryEvaluator.NOTE_BASELINE_RESET -> "ölçüm tanımı değişti, taban yeniden kuruluyor";
+            case DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES -> "taban için örnek yetersiz (değeri boş ya da ihlal eden çalıştırmalar)";
             default -> note;
         };
     }
@@ -181,10 +198,19 @@ public final class DbQueryAlarmText {
         };
     }
 
-    /** Kural satırının durum metni (mail kural tablosu "Seviye" kolonu). */
+    /**
+     * Kural satırının durum metni (mail kural tablosu "Seviye" kolonu). Akıllı kuralın taban kurulması (dbq2 D) bir
+     * değerlendirme hatası değildir: "Taban kuruluyor (4 / 10)".
+     */
     public static String ruleStateText(Map<String, Object> r) {
         if (r == null) return "—";
-        if (Boolean.FALSE.equals(r.get("evaluated"))) return "Değerlendirilemedi";
+        if (Boolean.FALSE.equals(r.get("evaluated"))) {
+            if (DbQueryEvaluator.NOTE_BUILDING_BASELINE.equals(text(r.get("note")))) {
+                Integer n = DbQueryRules.intOf(r.get("samples")), min = DbQueryRules.intOf(r.get("min_samples"));
+                return n != null && min != null ? "Taban kuruluyor (" + n + " / " + min + ")" : "Taban kuruluyor";
+            }
+            return "Değerlendirilemedi";
+        }
         if (Boolean.TRUE.equals(r.get("passed"))) return "Sağlandı";
         String lvl = levelText(text(r.get("level")));
         return lvl != null ? lvl + " ihlali" : "İhlal";

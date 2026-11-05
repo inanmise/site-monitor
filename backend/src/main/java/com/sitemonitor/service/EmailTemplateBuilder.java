@@ -716,6 +716,9 @@ public class EmailTemplateBuilder {
             addIf(out, "Süre", dur != null ? dur + " ms" + (th != null ? " (yavaş sorgu eşiği " + th + " ms)" : "") : null);
             addIf(out, "Dönen Satır", dbQueryRowCountText(c));
             addIf(out, "Ölçülen Değer", com.sitemonitor.service.EscalationService.numberText(c == null ? null : c.get("metric_value")));
+            // dbq2 C4: sorun serisinin başlangıcı ve uzunluğu (son zamanlanmış çalıştırmalardan)
+            addIf(out, dbQueryFirstProblemLabel(c), dbQueryFirstProblemText(c));
+            addIf(out, "Kaç Çalıştırmadır", dbQueryStreakText(c));
             if ("DBQUERY_FAIL".equals(m.alertType())) {
                 addIf(out, "Hata Türü", com.sitemonitor.service.dbquery.DbQueryAlarmText.failureLabel(strCtx(c, "failure_reason")));
                 addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
@@ -1143,6 +1146,24 @@ public class EmailTemplateBuilder {
         return out;
     }
 
+    /**
+     * Kural durum metni. Tabanı kurulan kural (ilk çalıştırma, sorgu / kural değişince taban yeniden kuruluyor, mevsimsel
+     * taban yok) "Değerlendirilemedi" yazmaz — bu bir bekleme, kanıt eksikliği değil (dbq2 inceleme D9); diğer durumlar
+     * {@link com.sitemonitor.service.dbquery.DbQueryAlarmText#ruleStateText}.
+     */
+    static String dbQueryRuleState(Map<String, Object> r) {
+        if (r != null && Boolean.FALSE.equals(r.get("evaluated")) && r.get("note") != null) {
+            String note = String.valueOf(r.get("note"));
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_BASELINE_RESET.equals(note))
+                return "Taban yeniden kuruluyor (sorgu ya da kural değişti)";
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_FIRST_RUN.equals(note))
+                return "Taban kuruluyor (ilk çalıştırma)";
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_NO_SEASONAL_BASELINE.equals(note))
+                return "Taban kuruluyor (karşılaştırılacak dönem yok)";
+        }
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r);
+    }
+
     /** Kurallar tablosu (Kural · Beklenen · Gelen · Durum) + sorgu kod bloğu + sonuç satırları. */
     private static void dbQuerySections(MailDoc d, Map<String, Object> c) {
         List<Map<String, Object>> rules = dbQueryRuleResults(c);
@@ -1152,7 +1173,7 @@ public class EmailTemplateBuilder {
             List<List<MailKit.Cell>> rows = new ArrayList<>();
             for (Map<String, Object> r : rules) {
                 boolean violated = Boolean.FALSE.equals(r.get("passed")) && !Boolean.FALSE.equals(r.get("evaluated"));
-                String state = com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r);
+                String state = dbQueryRuleState(r);
                 String color = violated ? ("CRITICAL".equals(String.valueOf(r.get("level"))) ? Tone.DESTRUCTIVE.text : Tone.WARNING.text)
                         : Boolean.FALSE.equals(r.get("evaluated")) ? MailTokens.MUTED : MailTokens.SUCCESS;
                 String label = r.get("label") != null && !String.valueOf(r.get("label")).isBlank() ? String.valueOf(r.get("label"))
@@ -1164,9 +1185,91 @@ public class EmailTemplateBuilder {
             d.heading("Kurallar");
             d.table(cols, rows);
         }
+        dbQueryHistorySection(d, c);
         String sql = strCtx(c, "dbquery_sql");
         if (sql != null) d.pre("Çalıştırılan Sorgu", sql.length() > DBQUERY_SQL_MAX ? sql.substring(0, DBQUERY_SQL_MAX) + "…" : sql);
         dbQueryRowsSection(d, c);
+    }
+
+    // ── dbq2 C4 (2026-11-05): ilk sorun, seri uzunluğu, son değerler — yalnız ölçülen değer / durum, satır verisi YOK ──
+
+    @SuppressWarnings("unchecked")
+    static List<Map<String, Object>> dbQueryHistory(Map<String, Object> c) {
+        Object v = c == null ? null : c.get(com.sitemonitor.service.EscalationService.CTX_DBQUERY_HISTORY);
+        if (!(v instanceof List<?> l)) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : l) if (o instanceof Map<?, ?> m) out.add((Map<String, Object>) m);
+        return out;
+    }
+
+    /** Serinin türüne göre etiket: eşik → "İlk İhlal", hata → "İlk Hata", değerlendirilemeyen → "İlk Değerlendirilemeyen". */
+    static String dbQueryFirstProblemLabel(Map<String, Object> c) {
+        String kind = strCtx(c, com.sitemonitor.service.EscalationService.CTX_DBQUERY_STREAK_KIND);
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(kind)) return "İlk Hata";
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN.equals(kind)) return "İlk Değerlendirilemeyen";
+        return "İlk İhlal";
+    }
+
+    /** "gg.aa.yyyy SS:dd" — okunan pencerenin tamamı sorunluysa "… ya da daha önce"; seri yoksa null. */
+    static String dbQueryFirstProblemText(Map<String, Object> c) {
+        String at = strCtx(c, com.sitemonitor.service.EscalationService.CTX_DBQUERY_FIRST_PROBLEM);
+        if (at == null) return null;
+        return formatHuman(at) + (boolCtx(c, com.sitemonitor.service.EscalationService.CTX_DBQUERY_STREAK_CAPPED) ? " ya da daha önce" : "");
+    }
+
+    /** "3 zamanlanmış çalıştırmadır" / "en az 100 zamanlanmış çalıştırmadır"; seri yoksa null. */
+    static String dbQueryStreakText(Map<String, Object> c) {
+        String n = strCtx(c, com.sitemonitor.service.EscalationService.CTX_DBQUERY_STREAK);
+        if (n == null) return null;
+        return (boolCtx(c, com.sitemonitor.service.EscalationService.CTX_DBQUERY_STREAK_CAPPED) ? "en az " : "") + n
+                + " zamanlanmış çalıştırmadır";
+    }
+
+    /** Geçmiş satırının durum metni (BREACH seviyesiyle; FAIL "Hata"; UNKNOWN "Değerlendirilemedi"). */
+    static String dbQueryHistoryState(Map<String, Object> h) {
+        String st = h == null || h.get("status") == null ? null : String.valueOf(h.get("status"));
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_BREACH.equals(st))
+            return "CRITICAL".equals(String.valueOf(h.get("breach_level"))) ? "İhlal (kritik)" : "İhlal (uyarı)";
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(st)) return "Hata";
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN.equals(st)) return "Değerlendirilemedi";
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_OK.equals(st)) return "Normal";
+        return "—";
+    }
+
+    private static String dbQueryHistoryColor(Map<String, Object> h) {
+        String st = h == null || h.get("status") == null ? null : String.valueOf(h.get("status"));
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_BREACH.equals(st))
+            return "CRITICAL".equals(String.valueOf(h.get("breach_level"))) ? Tone.DESTRUCTIVE.text : Tone.WARNING.text;
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(st)) return Tone.DESTRUCTIVE.text;
+        if (com.sitemonitor.model.DbQueryCheck.STATUS_OK.equals(st)) return MailTokens.SUCCESS;
+        return MailTokens.MUTED;
+    }
+
+    private static String dbQueryHistoryTime(Map<String, Object> h) {
+        Object at = h == null ? null : h.get("checked_at");
+        return at == null ? "—" : formatHuman(String.valueOf(at));
+    }
+
+    private static String dbQueryHistoryValue(Map<String, Object> h) {
+        String v = com.sitemonitor.service.EscalationService.numberText(h == null ? null : h.get("metric_value"));
+        return v == null ? "—" : v;
+    }
+
+    /** "Son Değerler" tablosu (Zaman · Ölçülen Değer · Durum), yeniden eskiye; yoksa hiçbir şey. */
+    private static void dbQueryHistorySection(MailDoc d, Map<String, Object> c) {
+        List<Map<String, Object>> hist = dbQueryHistory(c);
+        if (hist.isEmpty()) return;
+        List<MailKit.Col> cols = List.of(MailKit.Col.nw("Zaman"), MailKit.Col.num("Ölçülen Değer"), MailKit.Col.nw("Durum"));
+        List<List<MailKit.Cell>> rows = new ArrayList<>();
+        for (Map<String, Object> h : hist) {
+            String state = dbQueryHistoryState(h);
+            boolean problem = !"Normal".equals(state) && !"—".equals(state);
+            rows.add(List.of(MailKit.Cell.of(dbQueryHistoryTime(h)), MailKit.Cell.of(dbQueryHistoryValue(h)),
+                    MailKit.Cell.of(state, dbQueryHistoryColor(h), problem)));
+        }
+        d.heading("Son Değerler", "Son " + hist.size() + " zamanlanmış çalıştırma, yeniden eskiye — yalnız ölçülen değer "
+                + "(sorgu sonucu satırları değil)");
+        d.table(cols, rows, true);
     }
 
     private static String nzv(Object o) {
@@ -1251,8 +1354,15 @@ public class EmailTemplateBuilder {
                         : com.sitemonitor.service.dbquery.DbQueryAlarmText.kindLabel(r.get("kind") == null ? null : String.valueOf(r.get("kind")));
                 sb.append("- ").append(label).append(" · Beklenen: ").append(nzv(r.get("expected")))
                   .append(" · Gelen: ").append(nzv(r.get("actual")))
-                  .append(" · Durum: ").append(com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r)).append('\n');
+                  .append(" · Durum: ").append(dbQueryRuleState(r)).append('\n');
             }
+        }
+        List<Map<String, Object>> hist = dbQueryHistory(c);
+        if (!hist.isEmpty()) {
+            sb.append("\nSon Değerler (son ").append(hist.size()).append(" zamanlanmış çalıştırma, yeniden eskiye):\n");
+            for (Map<String, Object> h : hist)
+                sb.append("- ").append(dbQueryHistoryTime(h)).append(" · Ölçülen değer: ").append(dbQueryHistoryValue(h))
+                  .append(" · Durum: ").append(dbQueryHistoryState(h)).append('\n');
         }
         String sql = strCtx(c, "dbquery_sql");
         if (sql != null) sb.append("\nÇalıştırılan Sorgu:\n").append(sql.length() > DBQUERY_SQL_MAX ? sql.substring(0, DBQUERY_SQL_MAX) + "…" : sql).append('\n');

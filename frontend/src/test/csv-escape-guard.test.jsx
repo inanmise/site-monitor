@@ -21,7 +21,10 @@ const SRC = path.resolve(__dirname, '..')
 const OWNER = path.join('utils', 'csv.js')
 
 /** Bilinçli istisnalar — buraya satır eklemek "bu kaçış CSV DEĞİL" taahhüdüdür. */
-const ALLOW = new Map()
+const ALLOW = new Map([
+  // dbquery "SELECT * yerine kolonlar" önerisi: PostgreSQL / Oracle ad tırnaklaması ("a""b") — SQL tanımlayıcısı, CSV hücresi değil.
+  [path.join('components', 'dbquery', 'sqlFix.js'), 'SQL tanımlayıcı tırnaklaması (çift tırnak ikilenir), CSV değil'],
+])
 
 /** CSV tırnak ikileme kalıbı: elle yazılmış bir kaçışın imzası. */
 const HAND_ROLLED = /replace\(\s*\/"\/g\s*,\s*['"`]""['"`]\s*\)/

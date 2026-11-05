@@ -94,11 +94,12 @@ export function GrantLockNote({ children }) {
  * Sorgu bölümü: şablondan başla, sorgu düzenleyicisi (canlı güvenlik denetimi — yapı taşı), "Sorguyu dene" / "Maliyeti
  * denetle" / "Şablon olarak kaydet" ve deneme sonucu (satır verisi YOK). `locked` (K2 — paylaşımla düzenlenen kayıt):
  * sorgu salt okunur, deneme / maliyet / şablon düğmeleri çizilmez (sunucu bunları yalnız takımın kendi kapsamına açar).
+ * `fix` (B2): düzenleyicinin "Düzelt" bağlamı (`{ columns, rowLimit, rules }`); kilitliyken verilmez.
  */
 export function QuerySection({
   form, onSqlChange, sqlError, violations, onGuardChange, teamId, dbType,
   onPickTemplate, onSaveTemplate, onTest, onPlanCheck, testing, planChecking, testResult, planResult,
-  canRun, runHint, disabled = false, locked = false, planAvailable = true, onColumnAction = null,
+  canRun, runHint, disabled = false, locked = false, planAvailable = true, onColumnAction = null, fix = null,
 }) {
   const t = useT()
   return (
@@ -113,7 +114,7 @@ export function QuerySection({
         </div>
       )}
       <SqlEditor value={form.sqlText} onChange={onSqlChange} dbType={dbType} fieldError={sqlError}
-        violations={violations} disabled={disabled || locked} onGuardChange={onGuardChange} />
+        violations={violations} disabled={disabled || locked} onGuardChange={onGuardChange} fix={locked ? null : fix} />
       <FormHint full={false}>
         <ShieldCheck aria-hidden="true" className="mr-1 inline size-3.5 align-[-2px]" />{t('dbq.form.sqlRules')}
       </FormHint>
@@ -144,7 +145,7 @@ export function QuerySection({
 /** Değerlendirme: kural oluşturucu (yapı taşı) + yavaş sorgu eşiği. `locked` (K2): kurallar, birleşim ve eşik salt okunur. */
 export function EvaluationSection({
   form, setForm, ruleErrors, columns, slowError, onRulesChange, clear, disabled: off = false, locked = false,
-  trapIndexes = null, trapColumn = null, newRuleFactory = null, backtestMonitorId = null,
+  trapIndexes = null, trapColumn = null, newRuleFactory = null, backtestMonitorId = null, ruleSuggest = null,
 }) {
   const t = useT()
   const disabled = off || locked
@@ -152,7 +153,7 @@ export function EvaluationSection({
     <DbqSection id="evaluation" icon={ListChecks} title={t('dbq.form.secEvaluation')} hint={t('dbq.form.secEvaluationHint')}>
       {locked && <GrantLockNote>{t('dbq.form.grantLockedRules')}</GrantLockNote>}
       <RuleBuilder rules={form.rules} logic={form.ruleLogic} columns={columns} fieldErrors={ruleErrors} disabled={disabled}
-        trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory}
+        trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory} suggest={ruleSuggest} schedule={form.schedule}
         onChange={onRulesChange} onLogicChange={(logic) => setForm((f) => ({ ...f, ruleLogic: logic }))} />
       {/* Geriye dönük eşik denemesi (2.D) — yalnız kayıtlı izlemede (saklı ölçüm gerekir) ve kurallar düzenlenebilirken */}
       {backtestMonitorId != null && !locked && (

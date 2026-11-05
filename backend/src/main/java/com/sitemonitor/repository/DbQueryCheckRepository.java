@@ -69,6 +69,25 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
     List<Object[]> backtestPage(@Param("id") Long monitorId, @Param("from") String from, @Param("afterId") Long afterId,
                                 @Param("limit") int limit);
 
+    /**
+     * Eşik denemesi (dbq2 inceleme D1): pencere başından ({@code before}) ÖNCEKİ zamanlanmış, sorgusu çalışmış satırların
+     * anları, yeniden eskiye — sayfa boyutu = akıllı kuralların canlıda okuduğu çalıştırma sayısı (geri bakış ZAMANLA değil
+     * çalıştırma SAYISIYLA, canlıyla aynı taban).
+     */
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "AND c.checkedAt < :before ORDER BY c.checkedAt DESC, c.id DESC")
+    List<String> backtestRunsBefore(@Param("id") Long monitorId, @Param("before") String before, Pageable page);
+
+    /**
+     * Eşik denemesi satır tavanı (dbq2 inceleme D1): {@link #backtestPage} kümesinin (zamanlanmış satırlar, hatalı dahil)
+     * YENİDEN ESKİYE sırasında sayfanın konumundaki satırın anı — tavanın EN ESKİ kısmı kesmesi için okumanın başlangıcı.
+     */
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC")
+    List<String> backtestNewestFrom(@Param("id") Long monitorId, @Param("from") String from, Pageable page);
+
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
     Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
@@ -113,6 +132,63 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
          + "GROUP BY r.monitorId")
     List<Object[]> weeklyStatsByMonitor(@Param("ids") java.util.Collection<Long> ids,
                                         @Param("from") String from, @Param("to") String to);
+
+    // ── dbq2 (2026-11-05): bağlantı sağlığı, değer eğilimi, alarm postası geçmişi ─────────────────────────────────────
+
+    /**
+     * Bağlantı sağlık kartı: verilen izlemelerin SON çalıştırma durumu — {@code [monitorId, status]} (hiç çalışmamışsa
+     * status null). Yalnız ZAMANLANMIŞ çalıştırmalar (elle / teyit satırı "son durum" değildir — dbq2 inceleme D4).
+     * SELECT listesinde ilişkili alt sorgu: izleme başına tek dizin araması
+     * ({@code idx_dbqc_monitor_checked}), H2 ve PostgreSQL'de aynı (H2 {@code LATERAL} tanımaz).
+     */
+    @Query(value = "SELECT m.id, (SELECT r.status FROM dbquery_checks r WHERE r.monitor_id = m.id "
+         + "AND (r.manual IS NULL OR r.manual = FALSE) AND (r.recheck IS NULL OR r.recheck = FALSE) "
+         + "ORDER BY r.checked_at DESC, r.id DESC LIMIT 1) FROM dbquery_monitors m "
+         + "WHERE m.id IN (:ids)", nativeQuery = true)
+    List<Object[]> latestStatusFor(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * Bağlantı sağlık kartı: {@code since}'ten bu yana TÜM çalıştırmalar — {@code [toplam, bağlantı sınıfı başarısız,
+     * ort. süre ms, diğer başarısız]}. Bağlantı sınıfı = {@code codes} (ulaşılamadı, DNS, zaman aşımı, kimlik, sürücü,
+     * engellendi); SQL hatası / güvenlik reddi / parola çözülemedi bağlantı sağlamken olur → "diğer" (dbq2 inceleme D4).
+     */
+    @Query("SELECT COUNT(c), SUM(CASE WHEN c.ok = false AND c.failureReason IN :codes THEN 1L ELSE 0L END), AVG(c.durationMs), "
+         + "SUM(CASE WHEN c.ok = false AND (c.failureReason IS NULL OR c.failureReason NOT IN :codes) THEN 1L ELSE 0L END) "
+         + "FROM DbQueryCheck c WHERE c.monitorId IN :ids AND c.checkedAt >= :since")
+    List<Object[]> connectionRunStats(@Param("ids") java.util.Collection<Long> ids, @Param("since") String since,
+                                      @Param("codes") java.util.Collection<String> codes);
+
+    /**
+     * Bağlantının son kullanım hatasının KODU: sağlık kolonundaki zaman ({@code last_error_at}) çalıştırma satırının
+     * {@code checked_at}'iyle aynıdır — dizinli eşitlik ({@code monitor_id, checked_at}), tarama yok.
+     */
+    @Query("SELECT c.failureReason FROM DbQueryCheck c WHERE c.monitorId IN :ids AND c.checkedAt = :at AND c.ok = false")
+    List<String> failureReasonsAt(@Param("ids") java.util.Collection<Long> ids, @Param("at") String at);
+
+    /**
+     * Kart değer eğilimi: {@code [monitorId, saat kovası (yyyy-MM-ddTHH, UTC), ortalama metric_value]} — {@code from}'dan bu
+     * yana ZAMANLANMIŞ (elle / yeniden kontrol değil) ve sorgusu çalışmış satırlar; görünen izlemeler için TEK gruplama.
+     * Kova sütunu türetilmiş tabloda adlandırılır (H2 {@code GROUP BY 1, 2}'yi reddeder).
+     */
+    @Query(value = "SELECT t.monitor_id, t.bucket, AVG(t.v) FROM ("
+         + "  SELECT c.monitor_id AS monitor_id, substr(c.checked_at,1,13) AS bucket, c.metric_value AS v "
+         + "    FROM dbquery_checks c WHERE c.monitor_id IN (:ids) AND c.checked_at >= :from "
+         + "     AND c.ok = true AND c.metric_value IS NOT NULL "
+         + "     AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false)"
+         + ") t GROUP BY t.monitor_id, t.bucket", nativeQuery = true)
+    // İstek iş parçacığında okunur — sorgu 3 sn'de kesilir (dbq2 inceleme D7; çağıran bayat değeri gösterir)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(name = "jakarta.persistence.query.timeout", value = "3000"))
+    List<Object[]> valueTrendBuckets(@Param("ids") java.util.Collection<Long> ids, @Param("from") String from);
+
+    /**
+     * Alarm postasının "son değerler" / "kaç çalıştırmadır" bölümü: son ZAMANLANMIŞ çalıştırmalar, yeniden eskiye —
+     * {@code [checkedAt, status, metricValue, ok, breachLevel, failureReason, slow, sqlHash]}. Satır VERİSİ yok (kontrol
+     * satırında hiç yok); {@code sqlHash} seriyi sorgu değişiminde kesmek için (dbq2 inceleme D9).
+     */
+    @Query("SELECT c.checkedAt, c.status, c.metricValue, c.ok, c.breachLevel, c.failureReason, c.slow, c.sqlHash FROM DbQueryCheck c "
+         + "WHERE c.monitorId = :id AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT :limit")
+    List<Object[]> recentScheduledSummary(@Param("id") Long monitorId, @Param("limit") int limit);
 
     /** İzleme silinince çalıştırma geçmişini de temizle. */
     @Transactional

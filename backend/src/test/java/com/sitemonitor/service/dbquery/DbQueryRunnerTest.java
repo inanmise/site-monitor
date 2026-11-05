@@ -378,6 +378,10 @@ class DbQueryRunnerTest {
         for (DbType type : DbType.values()) {
             DbConnectionSpec s = new DbConnectionSpec(type, "127.0.0.1", 1, type == DbType.ORACLE ? "XE" : "app",
                     "SERVICE", null, "u", "p", null, false, true, 1_000);
+            // dbq2 A3: bağlantı denemesi sürücüden önce TCP adımında durur — sürücünün hedefi kabul ettiği run() ile sınanır
+            DbQueryRunner.QueryResult r = real.run(s, "SELECT 1", 2, 1);
+            assertThat(r.ok()).isFalse();
+            assertThat(r.failureReason()).as(type.name() + ": " + r.error()).isEqualTo("DB_UNREACHABLE");
             DbQueryRunner.ConnectionTest t = real.test(s);
             assertThat(t.ok()).isFalse();
             assertThat(t.failureReason()).as(type.name() + ": " + t.error()).isEqualTo("DB_UNREACHABLE");
