@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T04:29:22Z",
+  "generatedAt": "2026-11-05T06:05:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 803,
+  "count": 804,
   "releases": [
+    {
+      "version": "20.182.0",
+      "tag": "v20.182.0",
+      "releasedAt": "2026-11-05T06:05:07Z",
+      "commit": "88788e6ae27171b9699d1e62bac1eea4dfa1d941",
+      "prevVersion": "20.181.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "88788e6a",
+          "subject": "yönetici özeti sökülen bileşene geç yanıt yazmaz (test ortamı kapanırken setState — CI titrekliği)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5b4f77d0",
+          "subject": "DB sorgu izleme — bağlantı formunda bağlantı örnekleri ve alan alan ne yazılır rehberi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.181.0",
       "tag": "v20.181.0",
