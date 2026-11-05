@@ -263,6 +263,40 @@ class SchedulerDbQuerySmartRulesTest {
     }
 
     @Test
+    @DisplayName("hata avı Y1: geçmişli (sonuçsuz 30 satır) izlemeye olağan dışı değer kuralı eklenir → turlar 'taban kuruluyor', "
+            + "hiçbiri UNKNOWN değil, DB_RULE_UNEVALUABLE alarmı açılmaz; en az örneğe ulaşınca değerlendirilir")
+    void anomalyAddedToExistingMonitorBuildsBaseline() {
+        String name = "Eklenen anomali kuralı";
+        String sql = "SELECT adet FROM kuyruk";
+        // Kural eklenmeden önce yazılmış 30 zamanlanmış satır (okuma sınırı 2 × pencere = 20'yi aşar) — kural "a" sonucu YOK
+        String other = DbQueryEvaluator.toJson(List.of(new DbQueryEvaluator.RuleResult("c", null, "ROW_COUNT", "1", "> 0",
+                "NONE", true, true, null, 1.0, 1.0)));
+        for (int i = 1; i <= 30; i++) {
+            h2.update("INSERT INTO dbquery_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (long) i, 11L,
+                    SchedulerDbQueryReviewFixTest.iso(T0.minusSeconds(300L * (31 - i))), true, false, false,
+                    DbQueryCheckerService.sqlHash(sql), other);
+        }
+        DbQueryMonitor m = monitor(11L, name, "[{\"id\":\"a\",\"label\":\"Bekleyen kuyruk\",\"kind\":\"ANOMALY\","
+                + "\"column\":\"adet\",\"window\":10,\"min_samples\":5}]");
+        m.setSqlText(sql);
+        for (int v : new int[]{100, 102, 98, 101, 99, 100, 101}) values.add(BigDecimal.valueOf(v));
+
+        for (int i = 0; i < 7; i++) sweep(m);
+        verify(esc, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+        assertThat(saved).hasSize(7);
+        for (int i = 0; i < 5; i++) {
+            DbQueryEvaluator.RuleResult rr = DbQueryEvaluator.fromJson(saved.get(i).getRuleResultsJson()).get(0);
+            assertThat(rr.note()).as("%d. tur", i + 1).isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+            assertThat(saved.get(i).getStatus()).as("%d. tur UNKNOWN değil", i + 1).isEqualTo("OK");
+        }
+        assertThat(m.getUnknownRuns() == null ? 0 : m.getUnknownRuns()).as("ardışık değerlendirilemeyen sayacı").isZero();
+        verify(monitorRepo, never()).markDbQueryUnknown(anyLong());
+        DbQueryEvaluator.RuleResult sixth = DbQueryEvaluator.fromJson(saved.get(5).getRuleResultsJson()).get(0);
+        assertThat(sixth.evaluated()).as("6. tur: 5 örnek").isTrue();
+        assertThat(sixth.stats().samples()).isEqualTo(5);
+    }
+
+    @Test
     @DisplayName("geçmiş okunamazsa: kanıt eksikliği — eşik kalemi yok (alarm ne açılır ne kanıtsız kapanır), satır UNKNOWN")
     void unreadableHistoryIsNotOk() {
         String name = "Okunamayan geçmiş";

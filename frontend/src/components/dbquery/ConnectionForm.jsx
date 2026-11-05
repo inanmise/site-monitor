@@ -17,7 +17,8 @@ import ConnectionExamples from './ConnectionExamples.jsx'
 import { placeholdersFor } from './connectionExamples.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import {
-  CONNECT_TIMEOUT, DB_TYPES, DEFAULT_PORT, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, readOnlyAccountScript, setOracleTcps,
+  CONNECT_TIMEOUT, DB_TYPES, DEFAULT_PORT, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, instanceOnDefaultPort,
+  readOnlyAccountScript, setOracleTcps,
 } from './connectionModel.js'
 
 const CONTROL = 'h-9 w-full pointer-coarse:h-10'
@@ -66,7 +67,7 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       {showPaste && <ConnectionStringPaste form={form} onChange={onChange} disabled={disabled} />}
 
       {/* Bağlantı örnekleri + "Alan alan ne yazılır" (2026-11-05) — kapalı başlar, seçili türe göre */}
-      <ConnectionExamples type={type} oracleMode={form.oracle_mode} showPasteHint={showPaste} />
+      <ConnectionExamples type={type} oracleMode={form.oracle_mode} oracleTcps={!!form.oracle_tcps} showPasteHint={showPaste} />
 
       <div className={GRID}>
         {field('name', t('dbq.conn.name'), { placeholder: t('dbq.conn.ph.name') }, { required: true })}
@@ -86,6 +87,15 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       </div>
 
       {type === 'MSSQL' && field('mssql_instance', t('dbq.conn.instance'), { placeholder: ph.mssql_instance }, { hint: t('dbq.conn.instanceHint') })}
+      {instanceOnDefaultPort(form) && (
+        // Adlandırılmış örnek + varsayılan port (2026-11-05 hata avı O2): sunucu portu her zaman kullanır, örnek adıyla
+        // yönlendirmez — bu ayar büyük olasılıkla VARSAYILAN örneğe bağlanır. Uyarı; kayıt engellenmez (örnek 1433'te olabilir).
+        <p data-slot="dbq-conn-instance-port" role="note"
+          className="mb-3.5 mt-0 flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+          <ShieldAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{t('dbq.conn.instancePortWarn')}</span>
+        </p>
+      )}
 
       {type === 'ORACLE' && (
         <div className="mb-3.5 flex flex-col gap-1.5" data-field="oracle_mode">

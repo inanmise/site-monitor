@@ -17,7 +17,8 @@ export const MAX_CONN_STRING = 2000
 /** `UNSAFE`: dize parola içeriyor (ya da içeriyor olabilir) ve parola alanlardan güvenle ayrılamadı — hiçbir alan doldurulmaz. */
 export const PASTE_ERRORS = Object.freeze(['EMPTY', 'TOO_LONG', 'UNRECOGNIZED', 'NO_HOST', 'UNSAFE'])
 /** Not kodları (`dbq.conn.paste.note.<KOD>`) — alan doldurulmadı ya da varsayıma gidildi. */
-export const PASTE_NOTES = Object.freeze(['MULTI_HOST', 'SSL_MODE_IGNORED', 'PORT_INVALID', 'ENCRYPT_IGNORED', 'DESCRIPTION_PARTIAL'])
+export const PASTE_NOTES = Object.freeze(['MULTI_HOST', 'SSL_MODE_IGNORED', 'PORT_INVALID', 'ENCRYPT_IGNORED', 'DESCRIPTION_PARTIAL',
+  'INSTANCE_NEEDS_PORT'])
 /** Değer taşıyan notlar — değer güvenle gösterilemiyorsa (`value` null) metnin değersiz biçimi `dbq.conn.paste.noteNoValue.<KOD>`. */
 export const VALUED_NOTES = Object.freeze(['PORT_INVALID', 'SSL_MODE_IGNORED', 'ENCRYPT_IGNORED'])
 
@@ -48,15 +49,16 @@ function stripQuotes(s) {
 const startsI = (s, prefix) => s.slice(0, prefix.length).toLowerCase() === prefix
 
 /**
- * Notta gösterilecek değer — yalnız kısa, sade bir belirteçse (harf / rakam / `.` `_` `-`). Başka her şey (parola parçası
- * olabilecek `@ / ? : # %` ya da boşluk içeren metin) GÖSTERİLMEZ: not değersiz düşer (Y1, 2026-11-05 inceleme).
+ * Notlarda değer YALNIZ güvenli olduğu kesinse gösterilir (2026-11-05 hata avı D3): port notunda rakam (en çok 5), SSL kipi
+ * notunda libpq'nun tanıdığı bir kip adı. Başka her şey (harfli "port", tanınmayan şifreleme değeri) — kimlik satırı
+ * yanlışlıkla yapıştırıldığında (`app_user:S3cretPass`) ya da parolanın ayracı yanlış yerden kesildiğinde parola parçası
+ * olabilir — GÖSTERİLMEZ: not değersiz düşer (`dbq.conn.paste.noteNoValue.<KOD>`).
  */
-function noteValue(s) {
-  const v = String(s ?? '').trim()
-  return /^[A-Za-z0-9._-]{1,20}$/.test(v) ? v : null
-}
+const SAFE_PORT_NOTE = /^\d{1,5}$/
+/** libpq SSL kipleri — formun desteklemediği (allow, verify-ca) notta adıyla gösterilebilir (sabit sözcük, sır değil). */
+const LIBPQ_SSL_MODES = new Set(['disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'])
 
-/** Port metni → sayı (1–65535) ya da null; geçersizse not düşülür. */
+/** Port metni → sayı (1–65535) ya da null; geçersizse not düşülür (değer yalnız rakamsa gösterilir — D3). */
 function portOf(text, notes) {
   const s = String(text ?? '').trim()
   if (!s) return null
@@ -64,7 +66,7 @@ function portOf(text, notes) {
     const n = Number(s)
     if (n >= 1 && n <= 65535) return n
   }
-  notes.push({ code: 'PORT_INVALID', value: noteValue(s) })
+  notes.push({ code: 'PORT_INVALID', value: SAFE_PORT_NOTE.test(s) ? s : null })
   return null
 }
 
@@ -152,7 +154,8 @@ function boolOf(v, notes) {
   const s = String(v ?? '').trim().toLowerCase()
   if (TRUE_WORDS.has(s)) return true
   if (FALSE_WORDS.has(s)) return false
-  if (s) notes.push({ code: 'ENCRYPT_IGNORED', value: noteValue(s) })
+  // Tanınmayan değer gösterilmez: ayraçsız `;` içeren parolanın parçası olabilir (D3)
+  if (s) notes.push({ code: 'ENCRYPT_IGNORED', value: null })
   return undefined
 }
 
@@ -162,7 +165,7 @@ function sslModeOf(v, notes) {
   if (!s) return undefined
   const norm = s === 'verifyfull' ? 'verify-full' : s
   if (PG_SSL_MODES.includes(norm)) return norm
-  notes.push({ code: 'SSL_MODE_IGNORED', value: noteValue(s) })
+  notes.push({ code: 'SSL_MODE_IGNORED', value: LIBPQ_SSL_MODES.has(norm) ? norm : null })
   return undefined
 }
 
@@ -261,6 +264,21 @@ function applyMssqlProps(p, r) {
   }
 }
 
+/**
+ * Adlandırılmış örnek var ama ÖRNEĞİN KENDİ PORTU yok (2026-11-05 hata avı O2): sunucu sürücüye portu HER ZAMAN verir ve
+ * sürücü port verildiğinde örnek adıyla yönlendirmez (SQL Browser sorulmaz) — formdaki varsayılan 1433 sessizce kalırsa izleme
+ * VARSAYILAN örneğe bağlanır. Not düşülür ve `clearPort` işaretlenir: forma uygulanırken port varsayılandaysa boşaltılır
+ * (kayıt boş portu alan hatasıyla durdurur — kullanıcı örneğin portunu yazar). jTDS'te örnek verilince URL portu yönlendirmede
+ * kullanılmaz (Browser) — o port da örneğin portu sayılmaz.
+ */
+function markInstanceWithoutPort(r, { dropPort = false } = {}) {
+  if (!r.fields.mssql_instance) return
+  if (dropPort) delete r.fields.port
+  if (r.fields.port != null) return
+  r.clearPort = true
+  r.notes.push({ code: 'INSTANCE_NEEDS_PORT' })
+}
+
 /** "h[\örnek][:p]" → alanlara. */
 function applyMssqlServer(server, r, { sep = ':' } = {}) {
   let s = String(server || '').trim()
@@ -291,6 +309,7 @@ function parseMssqlJdbc(rest, r) {
   if (p.portnumber && r.fields.port == null) setIf(r.fields, 'port', portOf(p.portnumber, r.notes))
   applyMssqlProps(p, r)
   if (!r.fields.host) return result({ error: 'NO_HOST', hadPassword: r.hadPassword })
+  markInstanceWithoutPort(r)
   return { ...r, ok: true, db_type: 'MSSQL', typeSource: 'explicit' }
 }
 
@@ -305,6 +324,7 @@ function parseJtds(rest, r) {
   applyMssqlServer(s, r)
   applyMssqlProps(p, r)
   if (!r.fields.host) return result({ error: 'NO_HOST', hadPassword: r.hadPassword })
+  markInstanceWithoutPort(r, { dropPort: true })   // jTDS: örnek verilince URL portu kullanılmaz
   return { ...r, ok: true, db_type: 'MSSQL', typeSource: 'explicit' }
 }
 
@@ -419,6 +439,7 @@ function parseKeyValue(s, r) {
   applyMssqlServer(server, r, { sep: ',' })
   applyMssqlProps(p, r)
   if (!r.fields.host) return result({ error: 'NO_HOST', hadPassword: r.hadPassword })
+  markInstanceWithoutPort(r)
   return { ...r, ok: true, db_type: 'MSSQL', typeSource: 'explicit' }
 }
 
@@ -588,6 +609,12 @@ export function applyConnectionString(form, parsed) {
     filled.push(key)
   }
   // Açık türlü dizede port yoksa ve tür değişmediyse port olduğu gibi kalır (changeDbType varsayılanı zaten taşır)
+  // O2: adlandırılmış örnek portsuz geldi — varsayılan port (örneği değil varsayılan örneği hedefler) BOŞALTILIR; kayıt boş
+  // portu alan hatasıyla durdurur. Elle yazılmış (varsayılan olmayan) port korunur; not yine uyarır.
+  if (parsed.clearPort && type === 'MSSQL' && !('port' in patch)) {
+    const current = String(next.port ?? '').trim()
+    if (!current || current === String(DEFAULT_PORT.MSSQL)) patch.port = ''
+  }
   next = { ...next, ...patch }
   const order = (k) => FILLABLE.indexOf(k)
   return { form: next, filled: [...new Set(filled)].sort((a, b) => order(a) - order(b)), typeChanged, suggestType }
