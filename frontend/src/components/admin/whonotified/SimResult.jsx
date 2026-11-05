@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import { EmailCard, ExcludedList, LevelBadge, WebhookCard } from './ChannelCards.jsx'
 import NocNote from './NocNote.jsx'
+import ForwardsCard from './ForwardsCard.jsx'
 import { PushCard } from './PushDecisions.jsx'
 import { buildView } from './whoNotifiedModel.js'
 
@@ -139,6 +140,10 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
           filter={pushFilter} onFilterChange={setPushFilter} onNavigate={onNavigate} />
         {data?.team_id != null && (
           <NocNote teamId={data.team_id} kind={kind} level={data?.level || level} className="@4xl:col-span-2" />
+        )}
+        {/* Alarm iletimi (2026-11-05): takımın iletim alıcıları — alan yoksa (eski sunucu) ya da iletim yoksa kart yok */}
+        {Array.isArray(data?.forwards) && data.forwards.length > 0 && (
+          <ForwardsCard forwards={data.forwards} teamId={data?.team_id} onNavigate={onNavigate} className="@4xl:col-span-2" />
         )}
       </div>
 

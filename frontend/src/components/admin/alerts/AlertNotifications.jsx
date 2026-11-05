@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon, Wrench, Headset } from 'lucide-react'
+import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon, Wrench, Headset, Forward } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../../utils/mailPreview.js'
 import UserBadge from '../../ui/UserBadge.jsx'
@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 import { fmtStamp, statusLabel, pushPeopleCount, pushHiddenCount, PUSH_SYSTEM_USER } from './alertHistoryModel.js'
 import { clockTime } from './nocCallModel.js'
 import { samePersonText } from '../../../utils/pushPrefs.js'
+import ForwardBadge, { FORWARD_TONE } from '../../forwards/ForwardBadge.jsx'
+import { isForwardLog } from '../../forwards/forwardModel.js'
 
 /**
  * Bildirim teslimatları — e-posta günlüğü (mail önizlemesi sandbox iframe'de) ve webhook (push) partileri.
@@ -79,6 +81,9 @@ export function mailTriggerText(t, trigger) {
   return base ? t(base.textKey) : (trigger || '')
 }
 
+/** Sunucunun iletim postası atlama nedeni (EscalationService — ham metin, `SKIPPED: ` sonrası). */
+const FORWARD_SHARED_SKIP = 'adresler bu alarmın başka bir postasını aldı'
+
 export function EmailStatusBadge({ status }) {
   const t = useT()
   if (!status) return null
@@ -91,6 +96,9 @@ export function EmailStatusBadge({ status }) {
   // "SKIPPED: <neden>" — atlanan e-posta, nedeniyle (alıcı yok / kanal kapalı / fırtına #N / takım yok). 2026-09-30.
   if (status.startsWith('SKIPPED:')) {
     const reason = status.slice('SKIPPED:'.length).trim()
+    // Alarm iletimi (2026-11-05): iletim postasının adresleri bu alarmın başka bir postasını (sahip / önceki iletim) zaten
+    // aldı — çevrilmiş anlamlı metin (ham Türkçe neden İngilizce ekranda basılmasın); ham durum title'da
+    if (reason.startsWith(FORWARD_SHARED_SKIP)) return <ToneBadge tone="warning" title={status} data-slot="notif-skip-shared">{t('fwdx.skip.sharedAddresses')}</ToneBadge>
     return <ToneBadge tone="warning" title={status}>{t('alh.status.skipped')}{reason ? ' — ' + reason : ''}</ToneBadge>
   }
   return <ToneBadge tone="muted">{status}</ToneBadge>
@@ -199,7 +207,11 @@ export function NotifLogCard({ log: l, alertLevel }) {
                 <Headset aria-hidden="true" className="size-3" />{t('alh.noc.delivered', clockTime(l.sent_at, locale))}
               </Badge>
             ))
-          : l.recipient_role && l.recipient_role !== 'COMBINED' && <SystemRoleBadge role={l.recipient_role} className="text-[0.75em]" />}
+          // Alarm iletimi (2026-11-05, `recipient_role = FORWARD`): sahibin alarmı başka takıma AYRI posta olarak iletildi —
+          // kart tonu tetikten (açılış, çözüm …), satır "İletim" rozetiyle ayrılır (ham rol basılmaz)
+          : isForwardLog(l)
+            ? <ForwardBadge data-slot="notif-forward" className="text-[0.75em]" />
+            : l.recipient_role && l.recipient_role !== 'COMBINED' && <SystemRoleBadge role={l.recipient_role} className="text-[0.75em]" />}
         <span className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{l.recipient_email}</span>
       </div>
       <EmailStatusBadge status={l.email_status} />
@@ -244,6 +256,8 @@ export default function AlertNotificationsPanel({ history, loadingHistory, loadF
   const skippedGroups = pushGroups.length - sentGroups
   // 7/24 ekibine giden e-postalar (2026-10-04): bölüm başlığı kapalıyken de "7/24'e iletildi" görünsün
   const nocSent = history.some((l) => isNocLog(l) && nocDelivered(l.email_status))
+  // Alarm iletimi (2026-11-05): başka takıma iletilen posta da başlıktan görünsün (7/24 deseni)
+  const forwardSent = history.some((l) => isForwardLog(l) && nocDelivered(l.email_status))
 
   return (
     <Accordion type="single" collapsible value={openSection} onValueChange={setOpenSection} data-slot="alert-notifications">
@@ -254,6 +268,11 @@ export default function AlertNotificationsPanel({ history, loadingHistory, loadF
           {!loadingHistory && nocSent && (
             <Badge variant="outline" data-slot="notif-noc-summary" className={cn('gap-1 rounded-full font-semibold', NOTIF_TONE.noc.badge)}>
               <Headset aria-hidden="true" className="size-3" />{t('alh.noc.inHistory')}
+            </Badge>
+          )}
+          {!loadingHistory && forwardSent && (
+            <Badge variant="outline" data-slot="notif-forward-summary" className={cn('gap-1 rounded-full font-semibold', FORWARD_TONE)}>
+              <Forward aria-hidden="true" className="size-3" />{t('fwdx.inHistory')}
             </Badge>
           )}
         </AccordionTrigger>
