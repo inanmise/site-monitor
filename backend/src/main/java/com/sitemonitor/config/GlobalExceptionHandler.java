@@ -107,7 +107,22 @@ public class GlobalExceptionHandler {
             msg = Msg.t("Aradığınız kayıt bulunamadı; silinmiş, taşınmış ya da adı değişmiş olabilir. Listeyi yenileyip tekrar deneyin.",
                     "The record you asked for wasn’t found; it may have been deleted, moved or renamed. Refresh the list and try again.");
         } else msg = raw;
-        return respond(404, codeOr(raw, "NOT_FOUND"), msg);
+        String code = e instanceof CodedNotFoundException c && c.getCode() != null ? c.getCode() : codeOr(raw, "NOT_FOUND");
+        return respond(404, code, msg);
+    }
+
+    /**
+     * 404 + ucun KENDİ kararlı kodu (2026-11-05, aktivite kök neden ucu — hata avı D4): genel {@code NOT_FOUND} eski pod'un
+     * eşlemesiz ucuyla (SPA 404 tavsiyesi) aynı koddur; ön yüz "kayıt yok" ile "bu sürümde yok"u bu kodla ayırır. İleti
+     * kullanıcıya gösterilen metindir. {@link NoSuchElementException} alt sınıfı — onu yakalayan eski yollar aynı kalır.
+     */
+    public static class CodedNotFoundException extends NoSuchElementException {
+        private final String code;
+        public CodedNotFoundException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+        public String getCode() { return code; }
     }
 
     // ── 409 ──────────────────────────────────────────────────────────────────

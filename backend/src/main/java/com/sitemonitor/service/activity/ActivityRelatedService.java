@@ -25,8 +25,11 @@ import java.util.function.Predicate;
 /**
  * "Aynı anda ne oldu?" — KÖK NEDEN İPUÇLARI (2026-11-05, aktivite zenginleştirmesi F):
  * {@code GET /api/activity/{id}/related?window=120}. Bir aktivitenin zamanı ± {@code window} saniyesindeki BAŞARISIZ
- * (ERROR / TIMEOUT) kontrol satırlarını toplar; neden / host / takım dağılımını, şüpheli neden kodlarını
- * ({@link #SUSPECT_CODES}) ve satırın izlemesine ait olguları ({@link #FACT_CODES}) döner.
+ * kontrol satırlarını toplar; neden / host / takım dağılımını, şüpheli neden kodlarını ({@link #SUSPECT_CODES}) ve satırın
+ * izlemesine ait olguları ({@link #FACT_CODES}) döner. "Başarısız" = zaman çizelgesinin KESİNTİ kuralı (hata avı O1,
+ * 2026-11-05 — tek kural: {@link ActivityTimelineService#isOutage} / {@link ActivityTimelineService#OUTAGE_SQL}): ERROR /
+ * TIMEOUT ve HTTP / Keyword WARNING (ok=false + HTTP kodu — 503'ler) ile senaryo FAIL (NO_CHECKS hariç). Eskiden yalnız
+ * ERROR / TIMEOUT sayılıyordu; en yaygın HTTP arızasında (aynı WAF arkasında 5 izleme 503) panel "başka hata yok" diyordu.
  *
  * <p><b>Kapı = {@code GET /api/activity/{id}} ile aynı</b> (satırın takımı {@code canViewMonitoring}; değilse 404).
  * Pencere YALNIZ oturumun okuma kapsamındaki satırlardan kurulur: başka takımın satırı, sayısı ya da takım adı hiçbir alanda
@@ -37,7 +40,8 @@ import java.util.function.Predicate;
  * ({@code anchor_in_window}). Şüpheli kodlar tüm satırlardan (bu satır dahil) hesaplanır.
  *
  * <p><b>Sorgu sayısı sabit</b>, satır başına sorgu yok: satırın kendisi (1) + pencere (1) + izlemenin olguları (1, satır
- * başarısızsa seri başlangıcı için +1) + görünen takım adları (≤ 1).
+ * başarısızsa seri başlangıcı için +1) + görünen takım adları (≤ 1) + "hâlâ hata veriyor" adayı için izlemenin künyesi
+ * (≤ 2 — envanter türevi Port / DNS'te envanter de okunur): ≤ 7.
  *
  * <p><b>Eşikler bu sınıfta sabittir</b>; kodlar KALICI (ön yüz {@code act.rel.suspect.<KOD>} / {@code act.rel.fact.<KOD>}
  * anahtarlarına çevirir; JS listesi bu listelerle testte eşitlenir).
@@ -66,9 +70,19 @@ public class ActivityRelatedService {
             List.of(ActivitySignals.DNS, ActivitySignals.NETWORK, ActivitySignals.TLS, ActivitySignals.PROXY);
 
     private final JdbcTemplate jdbc;
+    /** İzlemenin GÜNCEL künyesi (takım + etkinlik) — {@code resolve} kuralı tek kaynak (hata avı D3). */
+    private final ActivityTimelineService monitors;
+    /** "Şimdi" (testlerde sabitlenir) — "hâlâ hata veriyor" yalnız bakış penceresi bugüne uzanırken söylenir. */
+    java.util.function.Supplier<Instant> clock = Instant::now;
 
     public ActivityRelatedService(JdbcTemplate jdbc) {
+        this(jdbc, new ActivityTimelineService(jdbc));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ActivityRelatedService(JdbcTemplate jdbc, ActivityTimelineService monitors) {
         this.jdbc = jdbc;
+        this.monitors = monitors;
     }
 
     /** Satır + hata nedeni (kolon varlıkta henüz yoksa bile adla okunur). */
@@ -80,7 +94,10 @@ public class ActivityRelatedService {
         String host() { return ActivitySignals.hostOf(log.getMonitorType(), log.getTarget()); }
         String reason() { return ActivitySignals.reasonKey(failureReason, log.getErrorClass()); }
         String cls() { return ActivitySignals.classOf(failureReason, log.getErrorClass()); }
-        boolean failing() { return isFailing(log.getResultStatus()); }
+        boolean failing() {
+            return ActivityTimelineService.isOutage(log.getMonitorType(), log.getAction(), log.getResultStatus(), failureReason,
+                    log.getResultSummary());
+        }
         long epoch() { return ActivityTimelineService.epoch(log.getActivityTime()); }
     }
 
@@ -106,7 +123,7 @@ public class ActivityRelatedService {
         // ── Pencere (görünen kapsam) ──
         List<Object> args = new ArrayList<>();
         StringBuilder sql = new StringBuilder("SELECT * FROM activity_log WHERE activity_time >= ? AND activity_time <= ?"
-                + " AND result_status IN ('ERROR', 'TIMEOUT') AND action IN ('SCHEDULED_CHECK', 'MANUAL_CHECK')");
+                + " AND " + ActivityTimelineService.OUTAGE_SQL + " AND action IN ('SCHEDULED_CHECK', 'MANUAL_CHECK')");
         args.add(ActivityFilter.iso(at.minusSeconds(window)));
         args.add(ActivityFilter.iso(at.plusSeconds(window)));
         appendScope(sql, args, scoped, scope);
@@ -135,7 +152,7 @@ public class ActivityRelatedService {
             }
         }
 
-        body.put("facts", facts(anchor, scoped, scope));
+        body.put("facts", facts(anchor, scoped, scope, canView));
 
         // Öğeler: bu satır hariç, zamana yakınlığa göre
         long t0 = anchor.epoch();
@@ -286,7 +303,7 @@ public class ActivityRelatedService {
 
     // ── Olgular (bu izlemenin kontrolleri) ───────────────────────────────────────────────────────────────
 
-    List<Map<String, Object>> facts(Rel anchor, boolean scoped, List<Long> scope) {
+    List<Map<String, Object>> facts(Rel anchor, boolean scoped, List<Long> scope, Predicate<Long> canView) {
         ActivityLog x = anchor.log();
         List<Object> key = new ArrayList<>();
         String keySql;
@@ -314,13 +331,14 @@ public class ActivityRelatedService {
         args.addAll(key);
         args.add(lookFrom);
         args.add(lookTo);
+        String fail = ActivityTimelineService.OUTAGE_SQL;   // başarısız kontrol = zaman çizelgesinin kesinti kuralı (O1)
         StringBuilder sql = new StringBuilder("SELECT"
-                + " SUM(CASE WHEN result_status IN ('ERROR', 'TIMEOUT') AND activity_time >= ? AND activity_time <= ? THEN 1 ELSE 0 END) AS f24,"
+                + " SUM(CASE WHEN " + fail + " AND activity_time >= ? AND activity_time <= ? THEN 1 ELSE 0 END) AS f24,"
                 + " SUM(CASE WHEN result_status = 'TIMEOUT' AND activity_time >= ? AND activity_time <= ? THEN 1 ELSE 0 END) AS t24,"
                 + " MAX(CASE WHEN result_status = 'SUCCESS' AND activity_time < ? THEN activity_time END) AS last_ok,"
                 + " MIN(CASE WHEN result_status = 'SUCCESS' AND activity_time > ? THEN activity_time END) AS next_ok,"
                 + " MAX(CASE WHEN activity_time > ? THEN activity_time END) AS last_after,"
-                + " MAX(CASE WHEN result_status IN ('ERROR', 'TIMEOUT') AND activity_time > ? THEN activity_time END) AS last_fail_after,"
+                + " MAX(CASE WHEN " + fail + " AND activity_time > ? THEN activity_time END) AS last_fail_after,"
                 + " MIN(activity_time) AS earliest"
                 + " FROM activity_log WHERE " + keySql
                 + " AND action IN ('SCHEDULED_CHECK', 'MANUAL_CHECK') AND activity_time >= ? AND activity_time <= ?");
@@ -337,8 +355,8 @@ public class ActivityRelatedService {
             b.add(lookFrom);
             b.add(t);
             StringBuilder sqlB = new StringBuilder("SELECT"
-                    + " MAX(CASE WHEN result_status IN ('ERROR', 'TIMEOUT') AND activity_time < ? THEN activity_time END) AS prev_fail,"
-                    + " MIN(CASE WHEN result_status IN ('ERROR', 'TIMEOUT') AND activity_time > ? AND activity_time <= ? THEN activity_time END) AS streak"
+                    + " MAX(CASE WHEN " + fail + " AND activity_time < ? THEN activity_time END) AS prev_fail,"
+                    + " MIN(CASE WHEN " + fail + " AND activity_time > ? AND activity_time <= ? THEN activity_time END) AS streak"
                     + " FROM activity_log WHERE " + keySql
                     + " AND action IN ('SCHEDULED_CHECK', 'MANUAL_CHECK') AND activity_time >= ? AND activity_time <= ?");
             appendScope(sqlB, b, scoped, scope);
@@ -346,13 +364,33 @@ public class ActivityRelatedService {
             prevFail = str(m.get("prev_fail"));
             streakStart = str(m.get("streak"));
         }
-        return buildFacts(anchor.failing(), x.getActivityTime(), f24, t24, lastOk, nextOk, lastAfter, lastFailAfter,
+        // "Hâlâ hata veriyor" (hata avı D3): yalnız sonrası gerçekten görülebiliyorsa — bakış penceresi BUGÜNE uzanıyor
+        // (çapa son {@code days} gün içinde; daha eskide sonraki satırlar okunmadı) ve izleme HÂLÂ VAR, ETKİN, güncel takımı
+        // görülebilir (duraklatılan / silinen / görülemeyen takıma taşınan izlemenin sonrasında satır olmaması "başarı yok"
+        // demek değildir). Kimliksiz eski satır doğrulanamaz → söylenmez. Künye yalnız aday olduğunda okunur.
+        boolean stillCandidate = anchor.failing() && nextOk == null && (lastAfter == null || lastAfter.equals(lastFailAfter));
+        boolean stillFailing = stillCandidate && x.getMonitorId() != null && !at.plus(Duration.ofDays(days)).isBefore(clock.get())
+                && monitorLive(x.getMonitorType(), x.getMonitorId(), canView);
+        return buildFacts(anchor.failing(), x.getActivityTime(), f24, t24, lastOk, nextOk, stillFailing,
                 earliest, prevFail, streakStart);
     }
 
-    /** Olgu kuralları (saf; birim testi). Zamanlar aktivite biçiminde ({@code yyyy-MM-ddTHH:mm:ss}, UTC). */
+    /** İzleme hâlâ var, etkin (taranıyor) ve güncel takımı görülebilir mi; okunamazsa hayır (asla tahmin yok). */
+    private boolean monitorLive(String type, Long id, Predicate<Long> canView) {
+        try {
+            ActivityTimelineService.MonitorRef ref = monitors.resolve(type == null ? "" : type.toUpperCase(java.util.Locale.ROOT), id);
+            return ref != null && ref.exists() && ref.active() && (canView == null || canView.test(ref.teamId()));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Olgu kuralları (saf; birim testi). Zamanlar aktivite biçiminde ({@code yyyy-MM-ddTHH:mm:ss}, UTC). {@code stillFailing}
+     * çağıranın kararıdır (sonraki satırların hepsi hatalı / yok VE izleme canlı + görülebilir + pencere bugüne uzanıyor).
+     */
     static List<Map<String, Object>> buildFacts(boolean failing, String anchorTime, long f24, long t24, String lastOk,
-                                                String nextOk, String lastAfter, String lastFailAfter, String earliest,
+                                                String nextOk, boolean stillFailing, String earliest,
                                                 String prevFail, String streakStart) {
         Map<String, Map<String, Object>> byCode = new LinkedHashMap<>();
         String start = streakStart != null ? streakStart : anchorTime;
@@ -372,7 +410,7 @@ public class ActivityRelatedService {
             long s = ActivityTimelineService.epoch(nextOk) - ActivityTimelineService.epoch(start);
             byCode.put("RECOVERED_AFTER", fact("RECOVERED_AFTER", "seconds", Math.max(0, s), "at", nextOk));
         }
-        if (failing && nextOk == null && (lastAfter == null || lastAfter.equals(lastFailAfter))) {
+        if (failing && nextOk == null && stillFailing) {
             byCode.put("STILL_FAILING", fact("STILL_FAILING", "since", start));
         }
         List<Map<String, Object>> out = new ArrayList<>();
@@ -381,10 +419,6 @@ public class ActivityRelatedService {
     }
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────────────────────────────
-
-    static boolean isFailing(String status) {
-        return "ERROR".equalsIgnoreCase(status) || "TIMEOUT".equalsIgnoreCase(status);
-    }
 
     private static Rel map(ResultSet rs, int i) throws SQLException {
         ActivityLog a = ActivityQueryService.ROW.mapRow(rs, i);
@@ -458,8 +492,11 @@ public class ActivityRelatedService {
         return o == null ? null : o.toString();
     }
 
+    /** Bu ucun 404 kodu (hata avı D4) — eski pod'un eşlemesiz ucu {@code NOT_FOUND} döner; ön yüz ikisini ayırt eder. */
+    public static final String NOT_FOUND_CODE = "ACTIVITY_NOT_FOUND";
+
     static NoSuchElementException notFound() {
-        return new NoSuchElementException(Msg.t(
+        return new com.sitemonitor.config.GlobalExceptionHandler.CodedNotFoundException(NOT_FOUND_CODE, Msg.t(
                 "Aktivite bulunamadı ya da görme yetkiniz yok. Listeyi yenileyip yeniden deneyin.",
                 "The activity wasn't found, or you can't see it. Refresh the list and try again."));
     }

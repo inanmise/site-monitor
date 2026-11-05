@@ -1,4 +1,4 @@
-import { ClipboardCheck, XCircle, Info, Lock, RefreshCw } from 'lucide-react'
+import { ClipboardCheck, XCircle, Info, Lock, RefreshCw, Gauge } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { CheckFailurePanel } from '../../checks/CheckFailurePanel.jsx'
@@ -8,7 +8,7 @@ import RuleResultsList from '../../dbquery/RuleResultsList.jsx'
 import { Button } from '@/components/shadcn/button'
 import { ApproxBadge, Fact, HealthBadge, SectionCard } from './detailParts.jsx'
 import {
-  FAILURE_PANEL_TYPES, activityFailed, measuresOf, pseudoCheck, rowHealth, rowReason,
+  FAILURE_PANEL_TYPES, PAGESPEED_BREACH, activityFailed, measuresOf, pseudoCheck, rowHealth, rowReason,
 } from './activityDetailModel.js'
 
 /** DB sorgu kural sonuçları — satır dizi ya da JSON metni taşıyabilir. */
@@ -32,8 +32,10 @@ const ACTIVITY_HEALTH = { SUCCESS: 'up', WARNING: 'warn', ERROR: 'down', TIMEOUT
  * <p>Okunamayan / gizli kontrol satırı (inceleme FR Y1 / CT Y2) "bulunamadı" DENMEZ: sunucu `check_hidden` (görme izni
  * yok ya da izleme artık görülemeyen bir takımda) → nötr "izniniz yok" notu, sahte teşhis paneli YOK; `check_error` →
  * "okunamadı" + Yeniden dene. İkisinde de aktivite kaydının kendi ölçüleri ve hata metni gösterilir.
+ * Sayfa hızı eşik aşımı (SLOW) "Uyarı" + aşılan ölçüler bandı (`act-dt-check-breach`) — teşhis paneli yok (kontrol başarılı,
+ * eşik aşıldı); bilinmeyen sağlıkta satır kayıtlı bir neden taşıyorsa (alan adı kaydı okunamadı …) nedeni panel söyler.
  * Test kancaları: `act-dt-check` (`data-match` exact|approximate|none|hidden|error, `data-health`), `act-dt-measures`,
- * `act-dt-check-hidden`, `act-dt-check-error`.
+ * `act-dt-check-hidden`, `act-dt-check-error`, `act-dt-check-breach`.
  */
 export default function CheckResultSection({ detail, type, monitor, onRetry }) {
   const t = useT()
@@ -46,7 +48,8 @@ export default function CheckResultSection({ detail, type, monitor, onRetry }) {
   const subject = row || pseudo
   const health = row ? rowHealth(type, row) : (activityFailed(a) ? 'down' : ACTIVITY_HEALTH[a.result_status] || 'unknown')
   const match = row ? detail.check.match : hidden ? 'hidden' : readError ? 'error' : 'none'
-  const reason = subject && (health === 'down' || health === 'warn') ? rowReason(type, subject, monitor, t) : null
+  const reason = subject && health !== 'up' && (health !== 'unknown' || row) ? rowReason(type, subject, monitor, t) : null
+  const breach = reason?.code === PAGESPEED_BREACH ? reason : null
   const measures = row ? measuresOf(type, row, t) : measuresOf(type, { response_ms: a.response_ms, http_status: a.http_status, days_remaining: a.days_remaining }, t)
   const description = match === 'exact' ? t('act.dt.chk.exact')
     : match === 'approximate' ? t('act.dt.chk.approximate')
@@ -55,7 +58,7 @@ export default function CheckResultSection({ detail, type, monitor, onRetry }) {
           : pseudo ? t('act.dt.chk.fromActivity') : t('act.dt.chk.none')
 
   let panel = null
-  if (reason && subject) {
+  if (reason && subject && !breach) {
     if (FAILURE_PANEL_TYPES.has(type)) {
       panel = <CheckFailurePanel type={type} check={subject} monitor={monitor} className="border-0 bg-transparent p-0 sm:p-0" />
     } else if (type === 'keyword') {
@@ -92,6 +95,11 @@ export default function CheckResultSection({ detail, type, monitor, onRetry }) {
       )}
       {pseudo && (
         <AlertBanner tone="info" icon={Info} className="mb-0">{t('act.dt.chk.pseudoNote')}</AlertBanner>
+      )}
+      {breach && (
+        <div data-slot="act-dt-check-breach">
+          <AlertBanner tone="warning" icon={Gauge} className="mb-0">{t('act.dt.chk.breach', breach.short)}</AlertBanner>
+        </div>
       )}
       {panel}
       {results.length > 0 && <RuleResultsList results={results} />}

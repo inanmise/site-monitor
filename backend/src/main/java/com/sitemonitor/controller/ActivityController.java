@@ -77,7 +77,7 @@ public class ActivityController {
         if (scope.empty) return ResponseEntity.ok(envelope(List.of(), 0L, 0, sz));
 
         ActivityQueryService.PageResult result = queries.list(f, pg, sz);
-        List<Map<String, Object>> data = listDtos(result.rows());
+        List<Map<String, Object>> data = listDtos(result.rows(), checksReadable(session));
         return ResponseEntity.ok(envelope(data, result.total(), pg, sz));
     }
 
@@ -263,7 +263,7 @@ public class ActivityController {
         ActivityRelatedService.Result r = relatedSvc.related(id, window, scope.scoped, scope.list,
                 team -> SessionScope.canViewMonitoring(session, team));
         Map<String, Object> data = new LinkedHashMap<>(r.body());
-        data.put("items", listDtos(r.items()));
+        data.put("items", listDtos(r.items(), checksReadable(session)));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("data", data);
@@ -355,15 +355,27 @@ public class ActivityController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.TeamRepository teamRepo;
 
+    /** İzin denetimi (kontrol ayrıntısı kapısı) — isteğe bağlı: yoksa (dar test bağlamı) izinli. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.PermissionService permissionService;
+
+    /** Kontrol ayrıntısını görme izni — ayrıntı ucuyla TEK kural ({@code ActivityDetailService.checksReadable}). */
+    private boolean checksReadable(HttpSession session) {
+        return com.sitemonitor.service.activity.ActivityDetailService.checksReadable(permissionService, session);
+    }
+
     /**
      * Satırlar + {@code team_name} (sözleşme incelemesi D1: ön yüz okuyordu, üretilmiyordu): sayfa başına TEK takım okuması
-     * ({@code findAllById}); okunamazsa ad null (rozet dizinden çözer).
+     * ({@code findAllById}); okunamazsa ad null (rozet dizinden çözer). {@code checksReadable} değilse satırın kontrol
+     * ayrıntısı ({@code failure_detail} — çözülen IP'ler, vekil, gövde doğrulama iletisi) null: ayrıntı ucu onu
+     * {@code check_hidden} ile gizliyordu, liste ve kök neden satırları açık bırakıyordu (hata avı D1). Neden kodu kalır.
      */
-    private List<Map<String, Object>> listDtos(List<ActivityLog> rows) {
+    private List<Map<String, Object>> listDtos(List<ActivityLog> rows, boolean checksReadable) {
         Map<Long, String> names = teamNames(rows);
         List<Map<String, Object>> out = new java.util.ArrayList<>(rows.size());
         for (ActivityLog a : rows) {
             Map<String, Object> m = listDto(a);
+            if (!checksReadable) m.put("failure_detail", null);
             m.put("team_name", a.getTeamId() == null ? null : names.get(a.getTeamId()));
             out.add(m);
         }

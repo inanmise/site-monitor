@@ -231,7 +231,8 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
                 readError={detail.errors?.alarm === true} hidden={detail.alarmHidden === true} onRetry={refreshAll} refreshNonce={refreshNonce} />
               {detail.errors?.change && !detail.change ? (
                 <UnreadableSection slot="act-dt-change" icon={FileDiff} title={t('act.dt.chg.title')} message={t('act.dt.chg.loadError')} onRetry={refreshAll} />
-              ) : detail.change && <ChangeSection change={detail.change} changesLink={detail.links?.changes} locale={locale} refreshNonce={refreshNonce} />}
+              ) : detail.change && <ChangeSection change={detail.change} changesLink={detail.links?.changes} locale={locale}
+                refreshNonce={refreshNonce} hidden={detail.changeHidden === true} />}
               {isCheck && failed && <RelatedActivityPanel activityId={a.id} onOpenActivity={onOpenActivity} refreshNonce={refreshNonce} />}
             </>
           )}

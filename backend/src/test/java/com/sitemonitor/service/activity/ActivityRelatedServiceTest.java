@@ -2,7 +2,11 @@ package com.sitemonitor.service.activity;
 
 import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.ActivityLog;
+import com.sitemonitor.model.HttpMonitor;
+import com.sitemonitor.model.PingMonitor;
 import com.sitemonitor.model.Team;
+import com.sitemonitor.repository.HttpMonitorRepository;
+import com.sitemonitor.repository.PingMonitorRepository;
 import com.sitemonitor.repository.TeamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +19,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -37,6 +43,8 @@ class ActivityRelatedServiceTest {
 
     @Autowired DataSource dataSource;
     @Autowired TeamRepository teams;
+    @Autowired PingMonitorRepository pings;
+    @Autowired HttpMonitorRepository https;
 
     JdbcTemplate jdbc;
     CountingDataSource counting;
@@ -48,11 +56,32 @@ class ActivityRelatedServiceTest {
         jdbc = new JdbcTemplate(dataSource);
         ActivityRows.extendSchema(jdbc);
         jdbc.update("DELETE FROM activity_log");
+        pings.deleteAll();
+        https.deleteAll();
         teams.deleteAll();
         teamA = teams.save(team("Ödeme")).getId();
         teamB = teams.save(team("Gizli Takım")).getId();
         counting = new CountingDataSource(dataSource);
         svc = new ActivityRelatedService(new JdbcTemplate(counting));
+        svc.clock = () -> Instant.parse("2026-11-05T12:00:00Z");   // "hâlâ hata veriyor" penceresi bugüne uzanır
+    }
+
+    private long ping(Long team, boolean active) {
+        PingMonitor m = new PingMonitor();
+        m.setName("ping-" + System.nanoTime());
+        m.setHost("10.1.1.1");
+        m.setTeamId(team);
+        m.setActive(active);
+        return pings.save(m).getId();
+    }
+
+    private long http(Long team, String url) {
+        HttpMonitor m = new HttpMonitor();
+        m.setName("http-" + System.nanoTime());
+        m.setUrl(url);
+        m.setTeamId(team);
+        m.setActive(true);
+        return https.save(m).getId();
     }
 
     private static Team team(String name) {
@@ -156,10 +185,11 @@ class ActivityRelatedServiceTest {
     @Test
     @DisplayName("olgular: önceki hata 3 gün önce → FIRST_FAILURE_IN_DAYS{3, at_least=false}; toparlanmadı → STILL_FAILING")
     void factsStillFailing() {
-        row("2026-11-02T08:00:00", "PING", 3L, "ERROR").team(teamA).save(jdbc);
-        row("2026-11-02T09:00:00", "PING", 3L, "SUCCESS").team(teamA).save(jdbc);
-        long anchor = row("2026-11-05T10:00:00", "PING", 3L, "ERROR").team(teamA).save(jdbc);
-        row("2026-11-05T10:05:00", "PING", 3L, "ERROR").team(teamA).save(jdbc);
+        long mon = ping(teamA, true);
+        row("2026-11-02T08:00:00", "PING", mon, "ERROR").team(teamA).save(jdbc);
+        row("2026-11-02T09:00:00", "PING", mon, "SUCCESS").team(teamA).save(jdbc);
+        long anchor = row("2026-11-05T10:00:00", "PING", mon, "ERROR").team(teamA).save(jdbc);
+        row("2026-11-05T10:05:00", "PING", mon, "ERROR").team(teamA).save(jdbc);
         List<Map<String, Object>> facts = list(related(anchor, null, Set.of(teamA)).body(), "facts");
         assertThat(facts).extracting(m -> m.get("code"))
                 .containsExactly("FIRST_FAILURE_IN_DAYS", "FAILURES_24H", "LAST_SUCCESS", "STILL_FAILING");
@@ -181,7 +211,8 @@ class ActivityRelatedServiceTest {
         assertThat(a.get("reason_class")).isEqualTo("NETWORK");
         assertThat(a.get("failure_reason")).isNull();
         assertThat(list(b, "by_reason").get(0)).containsEntry("reason", "class:NETWORK").containsEntry("count", 1);
-        assertThat(list(b, "facts")).extracting(m -> m.get("code")).contains("LAST_SUCCESS", "STILL_FAILING");
+        // Hata avı D3: kimliksiz eski satırın izlemesi doğrulanamaz → "hâlâ hata veriyor" denmez (son başarı söylenir)
+        assertThat(list(b, "facts")).extracting(m -> m.get("code")).contains("LAST_SUCCESS").doesNotContain("STILL_FAILING");
     }
 
     @Test
@@ -224,7 +255,129 @@ class ActivityRelatedServiceTest {
         }
         counting.reset();
         related(anchor, null, Set.of(teamA));
-        assertThat(counting.reset()).isEqualTo(few).isLessThanOrEqualTo(5);
+        // satır + pencere + olgular + seri başı + takım adları + (hâlâ hata adayı) izleme künyesi
+        assertThat(counting.reset()).isEqualTo(few).isLessThanOrEqualTo(7);
+    }
+
+    @Test
+    @DisplayName("Hata avı O1: aynı anda 503 dönen 5 HTTP izlemesi (WARNING, HTTP_STATUS) başarısız sayılır — pencere, aynı host, "
+            + "aynı takım, olgular; sayfa hızı / sorgu ihlali / NO_CHECKS uyarısı girmez")
+    void httpWarningChecksAreFailing() {
+        long a = http(teamA, "https://shop.example.com/sepet");
+        long b = http(teamA, "https://shop.example.com/odeme");
+        long c = http(teamA, "https://shop.example.com/");
+        row("2026-11-05T09:58:00", "HTTP", a, "SUCCESS").team(teamA).target("https://shop.example.com/sepet").save(jdbc);
+        long anchor = row("2026-11-05T10:00:00", "HTTP", a, "WARNING").team(teamA).target("https://shop.example.com/sepet")
+                .reason("HTTP_STATUS").http(503).save(jdbc);
+        row("2026-11-05T10:00:10", "HTTP", b, "WARNING").team(teamA).target("https://shop.example.com/odeme").reason("HTTP_STATUS").http(503).save(jdbc);
+        row("2026-11-05T10:00:20", "HTTP", c, "WARNING").team(teamA).target("https://shop.example.com/").reason("HTTP_STATUS").http(503).save(jdbc);
+        row("2026-11-05T10:00:30", "KEYWORD", 41L, "WARNING").team(teamA).target("https://kampanya.example.com/").reason("HTTP_STATUS").http(503).save(jdbc);
+        row("2026-11-05T10:00:40", "HTTP", 42L, "WARNING").team(teamA).target("https://blog.example.com/").reason("BODY_ASSERTION").http(200).save(jdbc);
+        row("2026-11-05T10:00:50", "SCRIPTED", 43L, "WARNING").team(teamA).target("Sepet akışı").reason("SCRIPT_CHECK_FAILED").save(jdbc);
+        // Uyarı kalanlar (zaman çizelgesinde de kesinti değil): girmez
+        row("2026-11-05T10:00:15", "SCRIPTED", 44L, "WARNING").team(teamA).target("Boş senaryo").reason("SCRIPT_NO_CHECKS").save(jdbc);
+        row("2026-11-05T10:00:25", "SCRIPTED", 45L, "WARNING").team(teamA).target("Eski boş").summary("NO_CHECKS · 0✓/0✗").save(jdbc);
+        row("2026-11-05T10:00:35", "PAGESPEED", 46L, "WARNING").team(teamA).target("https://shop.example.com/").save(jdbc);
+        row("2026-11-05T10:00:45", "DBQUERY", 47L, "WARNING").team(teamA).target("Bekleyen siparişler").save(jdbc);
+        row("2026-11-05T10:00:55", "HTTP", 48L, "WARNING").team(teamA).action("ALERT_TRIGGERED").save(jdbc);   // kontrol değil
+        row("2026-11-05T10:01:00", "HTTP", a, "WARNING").team(teamA).target("https://shop.example.com/sepet").reason("HTTP_STATUS").http(503).save(jdbc);
+
+        Map<String, Object> body = related(anchor, 120, Set.of(teamA)).body();
+        assertThat(body.get("total")).as("çapa HARİÇ başarısız kontroller").isEqualTo(6);
+        assertThat(body.get("window_total")).isEqualTo(7);
+        assertThat(body.get("anchor_in_window")).isEqualTo(true);
+        assertThat(((Map<?, ?>) body.get("anchor")).get("failing")).isEqualTo(true);
+        assertThat(codes(body, "suspects")).contains("SAME_HOST", "SAME_TEAM").doesNotContain("SINGLE");
+        Map<?, ?> host = (Map<?, ?>) list(body, "suspects").stream().filter(s -> "SAME_HOST".equals(s.get("code"))).findFirst()
+                .orElseThrow().get("params");
+        assertThat(host.get("host")).isEqualTo("shop.example.com");
+        assertThat(host.get("monitors")).isEqualTo(3);   // pagespeed uyarısı aynı host'ta ama sayılmaz
+        assertThat(list(body, "facts")).extracting(m -> m.get("code"))
+                .containsExactly("FAILURES_24H", "LAST_SUCCESS", "STILL_FAILING");
+        assertThat(((Map<?, ?>) list(body, "facts").get(0).get("params")).get("n")).isEqualTo(1L);   // çapa dahil, sonrası değil
+    }
+
+    @Test
+    @DisplayName("Hata avı O1: kesinti kuralının SQL eşi Java kuralıyla AYNI satırları seçer (doğruluk tablosu, H2)")
+    void outageRuleSqlEqualsJava() {
+        String[][] cases = {
+                // tür, eylem, durum, neden, özet
+                {"HTTP", "SCHEDULED_CHECK", "WARNING", "HTTP_STATUS", "503 · 40ms"},
+                {"HTTP", "MANUAL_CHECK", "WARNING", null, null},
+                {"KEYWORD", "SCHEDULED_CHECK", "WARNING", "KEYWORD_FOUND_FORBIDDEN", "200"},
+                {"SCRIPTED", "SCHEDULED_CHECK", "WARNING", "SCRIPT_CHECK_FAILED", "FAIL · 1✓/2✗"},
+                {"SCRIPTED", "SCHEDULED_CHECK", "WARNING", null, "FAIL · 1✓/2✗"},
+                {"SCRIPTED", "SCHEDULED_CHECK", "WARNING", null, null},
+                {"SCRIPTED", "SCHEDULED_CHECK", "WARNING", "SCRIPT_NO_CHECKS", "NO_CHECKS"},
+                {"SCRIPTED", "SCHEDULED_CHECK", "WARNING", null, "NO_CHECKS · 0✓/0✗"},
+                {"DBQUERY", "SCHEDULED_CHECK", "WARNING", "DB_RULE", null},
+                {"PAGE", "SCHEDULED_CHECK", "WARNING", null, "2 kırık"},
+                {"PAGESPEED", "SCHEDULED_CHECK", "WARNING", null, null},
+                {"DOMAIN", "SCHEDULED_CHECK", "WARNING", null, "20d"},
+                {"PING", "SCHEDULED_CHECK", "ERROR", "ICMP_NO_REPLY", null},
+                {"PORT", "MANUAL_CHECK", "TIMEOUT", null, null},
+                {"PING", "SCHEDULED_CHECK", "UNKNOWN", "ICMP_UNAVAILABLE", null},
+                {"HTTP", "SCHEDULED_CHECK", "SUCCESS", null, "200"},
+        };
+        List<Long> javaIds = new ArrayList<>();
+        int i = 0;
+        for (String[] c : cases) {
+            long id = row("2026-11-05T10:00:" + String.format("%02d", i++), c[0], 100L + i, c[2]).team(teamA).action(c[1])
+                    .reason(c[3]).summary(c[4]).save(jdbc);
+            if (ActivityTimelineService.isOutage(c[0], c[1], c[2], c[3], c[4])) javaIds.add(id);
+        }
+        List<Long> sqlIds = jdbc.queryForList("SELECT id FROM activity_log WHERE " + ActivityTimelineService.OUTAGE_SQL
+                + " AND action IN ('SCHEDULED_CHECK', 'MANUAL_CHECK') ORDER BY id", Long.class);
+        assertThat(sqlIds).containsExactlyElementsOf(javaIds);
+        assertThat(javaIds).hasSize(8);   // HTTP / keyword WARNING (3) + senaryo FAIL (3) + ERROR + TIMEOUT
+    }
+
+    @Test
+    @DisplayName("Hata avı D3: \"hâlâ hata veriyor\" yalnız izleme VAR, ETKİN, görülebilir ve pencere bugüne uzanırken")
+    void stillFailingNeedsLiveVisibleMonitor() {
+        long mon = ping(teamA, true);
+        row("2026-11-05T09:00:00", "PING", mon, "SUCCESS").team(teamA).save(jdbc);
+        long anchor = row("2026-11-05T10:00:00", "PING", mon, "ERROR").team(teamA).reason("ICMP_NO_REPLY").save(jdbc);
+        assertThat(list(related(anchor, null, Set.of(teamA)).body(), "facts")).extracting(m -> m.get("code")).contains("STILL_FAILING");
+
+        // duraklatıldı (sonrasında satır yok)
+        PingMonitor m = pings.findById(mon).orElseThrow();
+        m.setActive(false);
+        pings.save(m);
+        assertThat(list(related(anchor, null, Set.of(teamA)).body(), "facts")).extracting(f -> f.get("code"))
+                .contains("LAST_SUCCESS").doesNotContain("STILL_FAILING");
+
+        // görülemeyen takıma taşındı (sonraki satırlar kapsam dışı)
+        m.setActive(true);
+        m.setTeamId(teamB);
+        pings.save(m);
+        row("2026-11-05T10:05:00", "PING", mon, "SUCCESS").team(teamB).save(jdbc);
+        assertThat(list(related(anchor, null, Set.of(teamA)).body(), "facts")).extracting(f -> f.get("code")).doesNotContain("STILL_FAILING");
+
+        // silindi
+        pings.deleteById(mon);
+        assertThat(list(related(anchor, null, Set.of(teamA)).body(), "facts")).extracting(f -> f.get("code")).doesNotContain("STILL_FAILING");
+
+        // etkin ve görülebilir ama çapa bakış penceresinden eski (sonraki satırlar okunmadı): söylenmez
+        long mon2 = ping(teamA, true);
+        long old = row("2026-11-05T10:00:00", "PING", mon2, "ERROR").team(teamA).save(jdbc);
+        svc.clock = () -> Instant.parse("2026-12-20T00:00:00Z");
+        assertThat(list(related(old, null, Set.of(teamA)).body(), "facts")).extracting(f -> f.get("code")).doesNotContain("STILL_FAILING");
+        svc.clock = () -> Instant.parse("2026-11-05T12:00:00Z");
+        assertThat(list(related(old, null, Set.of(teamA)).body(), "facts")).extracting(f -> f.get("code")).contains("STILL_FAILING");
+
+        // kural: saf fonksiyon çağıranın kararını uygular
+        assertThat(ActivityRelatedService.buildFacts(true, "2026-11-05T10:00:00", 1, 0, null, null, false, null, null, null))
+                .extracting(f -> f.get("code")).doesNotContain("STILL_FAILING");
+    }
+
+    @Test
+    @DisplayName("Hata avı D4: bulunamayan / görülemeyen satır kendi 404 koduyla (eski pod'un NOT_FOUND'undan ayırt edilir)")
+    void notFoundCarriesOwnCode() {
+        assertThatThrownBy(() -> related(99_999_999L, null, Set.of(teamA)))
+                .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.CodedNotFoundException.class)
+                .extracting(e -> ((com.sitemonitor.config.GlobalExceptionHandler.CodedNotFoundException) e).getCode())
+                .isEqualTo("ACTIVITY_NOT_FOUND");
     }
 
     @Test

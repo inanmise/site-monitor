@@ -123,7 +123,9 @@ describe('RelatedActivityPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /^(Retry|Yeniden dene)$/ }))
     await waitFor(() => expect(container.querySelector('[data-slot="act-related"][data-state="ok"]')).not.toBeNull())
     unmount()
-    api.getActivityRelated.mockResolvedValueOnce({ success: false, status: 404, error: 'yok' })
+    // Yeni sunucunun GERÇEK gövdesi (hata avı D4): ucun kendi kodu ACTIVITY_NOT_FOUND (genel NOT_FOUND eski pod'unki)
+    api.getActivityRelated.mockResolvedValueOnce({ success: false, status: 404, code: 'ACTIVITY_NOT_FOUND',
+      error: "The activity wasn't found, or you can't see it. Refresh the list and try again." })
     const second = render(<RelatedActivityPanel activityId={10} onOpenActivity={vi.fn()} />)
     await waitFor(() => expect(second.container.querySelector('[data-slot="act-related"][data-state="notFound"]')).not.toBeNull())
     expect(screen.getByText(EN['act.rel.notFound'])).toBeInTheDocument()
@@ -133,5 +135,20 @@ describe('RelatedActivityPanel', () => {
     const third = render(<RelatedActivityPanel activityId={10} onOpenActivity={vi.fn()} />)
     await waitFor(() => expect(third.container.querySelector('[data-slot="act-related"][data-state="unsupported"]')).not.toBeNull())
     expect(screen.queryByText(EN['act.rel.notFound'])).toBeNull()
+  })
+
+  it('hata avı D9: satır düğmesinin erişilebilir adı İÇERİĞİ taşır (ad, zaman farkı, hedef, neden, takım + "ayrıntı sayfasını aç")', async () => {
+    api.getActivityRelated.mockResolvedValue({ success: true, ...BODY })
+    const { container } = render(<RelatedActivityPanel activityId={10} onOpenActivity={vi.fn()} />)
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="act-rel-item"]')).toHaveLength(2))
+    const btn = within(container.querySelectorAll('[data-slot="act-rel-item"]')[0]).getByRole('button')
+    expect(btn).not.toHaveAttribute('aria-label')
+    const name = btn.textContent
+    expect(name).toContain('Ağ geçidi')
+    expect(name).toContain('+45 sec')
+    expect(name).toContain('10.0.0.1')
+    expect(name).toContain('Ödeme')
+    expect(name).toContain(EN['act.openDetailSr'])
+    expect(within(container).getByRole('button', { name: /Ağ geçidi.*\+45 sec.*open the details page/s })).toBe(btn)
   })
 })

@@ -66,7 +66,8 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity, refre
           const data = unwrapRelated(res)
           setState(data ? { status: 'ok', data, error: null } : { status: 'error', data: null, error: null })
         } else if (res?.status === 404 && res?.code !== 'NOT_FOUND') {
-          // Yeni sunucu: kayıt yok / görme izni yok (`error: "not_found"`, kodsuz)
+          // Yeni sunucu: kayıt yok / görme izni yok — ucun KENDİ kodu `ACTIVITY_NOT_FOUND` (hata avı D4; genel işleyici
+          // eskiden `NOT_FOUND` yolluyordu ve bu dal gerçek sunucuyla hiç çalışmıyordu). Kodsuz 404 de kayıt yok sayılır.
           setState({ status: 'notFound', data: null, error: null })
         } else if (res?.status === 404) {
           // Eski pod: `/related` eşlemesi yok → SPA 404 tavsiyesi (`code: NOT_FOUND`) — "bu sürümde yok"
@@ -203,8 +204,9 @@ function RelatedBody({ data, t, onOpenActivity }) {
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
             {data.items.map((r) => (
               <li key={r.id} data-slot="act-rel-item" className="min-w-0">
+                {/* Erişilebilir ad = düğmenin İÇERİĞİ (tür, ad, zaman farkı, hedef, neden, takım) + "ayrıntı sayfasını aç";
+                    `aria-label` içeriği ekran okuyucudan gizliyordu (hata avı D9 — listedeki telefon kartıyla aynı desen) */}
                 <Button type="button" variant="outline" onClick={() => onOpenActivity?.(r.id)}
-                  aria-label={t('act.openDetailFor', r.monitor_name || r.target || String(r.id))}
                   className="h-auto min-h-11 w-full flex-col items-stretch gap-1 px-3 py-2 text-left font-normal whitespace-normal">
                   <span className="flex min-w-0 items-start gap-2">
                     <TypeBadge type={r.monitor_type} />
@@ -219,6 +221,7 @@ function RelatedBody({ data, t, onOpenActivity }) {
                       {r.team_id != null && <TeamBadge teamId={r.team_id} teamName={r.team_name} static wrap />}
                     </span>
                   )}
+                  <span className="sr-only">{t('act.openDetailSr')}</span>
                 </Button>
               </li>
             ))}

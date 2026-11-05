@@ -62,8 +62,17 @@ public class ActivityTimelineService {
         this.jdbc = jdbc;
     }
 
-    /** İzleme künyesi; {@code exists} = izleme tablosunda bulundu (false → silinmiş, en yeni aktivite satırından). */
-    public record MonitorRef(String type, long id, String name, String target, Long teamId, boolean exists) {}
+    /**
+     * İzleme künyesi; {@code exists} = izleme tablosunda bulundu (false → silinmiş, en yeni aktivite satırından);
+     * {@code active} = izleme etkin ve TARANIYOR (hata avı D3: duraklatılan / silinen izlemede "hâlâ hata veriyor" denmesin —
+     * envanter türevi Port / DNS'te envanter kaydı da etkin olmalı, tarama yalnız etkin envanter host'larını tarar).
+     */
+    public record MonitorRef(String type, long id, String name, String target, Long teamId, boolean exists, boolean active) {
+        /** Etkinliği ayrıca bilinmeyen künye: varsa etkin, silinmişse değil. */
+        public MonitorRef(String type, long id, String name, String target, Long teamId, boolean exists) {
+            this(type, id, name, target, teamId, exists, exists);
+        }
+    }
 
     /** Okunan satır (yalnız gereken kolonlar). */
     record Row(long id, String time, String action, String status, Long ms, String failureReason, String errorClass,
@@ -108,8 +117,8 @@ public class ActivityTimelineService {
         // ── Satırlar (tek sorgu; en yeni MAX_ROWS + 1 → sıra çevrilir) ──
         boolean legacy = ("CERT".equals(type) || "UPTIME".equals(type)) && ref.target() != null;
         List<Object> args = new ArrayList<>();
-        StringBuilder sql = new StringBuilder("SELECT id, activity_time, action, result_status, response_ms, failure_reason,"
-                + " error_class, alert_event_id FROM activity_log WHERE monitor_type = ?");
+        StringBuilder sql = new StringBuilder("SELECT id, activity_time, action, result_status, result_summary, response_ms,"
+                + " failure_reason, error_class, alert_event_id FROM activity_log WHERE monitor_type = ?");
         args.add(type);
         if (legacy) {
             sql.append(" AND (monitor_id = ? OR (monitor_id IS NULL AND target = ?))");
@@ -135,7 +144,8 @@ public class ActivityTimelineService {
         args.add(maxRows + 1);
         List<Row> rows = new ArrayList<>(jdbc.query(sql.toString(), (rs, i) -> new Row(rs.getLong("id"),
                 rs.getString("activity_time"), rs.getString("action"),
-                timelineStatus(type, rs.getString("action"), rs.getString("result_status"), rs.getString("failure_reason")),
+                timelineStatus(type, rs.getString("action"), rs.getString("result_status"), rs.getString("failure_reason"),
+                        rs.getString("result_summary")),
                 (Long) rs.getObject("response_ms", Long.class), rs.getString("failure_reason"), rs.getString("error_class"),
                 (Long) rs.getObject("alert_event_id", Long.class)), args.toArray()));
         boolean truncated = rows.size() > maxRows;
@@ -446,16 +456,50 @@ public class ActivityTimelineService {
      * doğrulaması, anahtar kelime koşulu; yavaş yanıt SUCCESS) → kesinti, eski (nedensiz) satırlarda da; SCRIPTED
      * {@code WARNING} = senaryo FAIL → kesinti, yalnız {@code SCRIPT_NO_CHECKS} (yapılandırma kusuru) uyarı kalır.
      * DBQUERY ihlali, sayfa DEGRADED, sayfa hızı SLOW uyarı kalır. Kontrol olmayan satır (alarm açılışı) dokunulmaz.
+     * Neden kolonu olmadan yazılmış eski senaryo satırı özetinden tanınır: {@code NO_CHECKS · …} uyarı kalır (ön yüz
+     * {@code activityFailed} aynası).
+     *
+     * <p><b>TEK kural</b> (hata avı O1, 2026-11-05): kök neden ucu ({@link ActivityRelatedService}) aynı kuralı
+     * {@link #isOutage} ve SQL eşi {@link #OUTAGE_SQL} ile kullanır — ikisi de aşağıdaki sabitlerden kurulur (H2 doğruluk
+     * tablosu testi ikisini eşitler).
      */
-    static String timelineStatus(String type, String action, String status, String reason) {
+    static String timelineStatus(String type, String action, String status, String reason, String summary) {
         if (!"WARNING".equalsIgnoreCase(status) || !ActivityFilter.CHECK_ACTIONS.contains(action)) return status;
         String t = type == null ? "" : type.toUpperCase(Locale.ROOT);
-        return switch (t) {
-            case "HTTP", "KEYWORD" -> "ERROR";
-            case "SCRIPTED" -> "SCRIPT_NO_CHECKS".equals(reason) ? status : "ERROR";
-            default -> status;
-        };
+        if (OUTAGE_WARNING_TYPES.contains(t)) return "ERROR";
+        if (SCRIPTED.equals(t)) {
+            boolean noChecks = SCRIPT_NO_CHECKS.equals(reason) || (summary != null && summary.startsWith(NO_CHECKS_SUMMARY));
+            return noChecks ? status : "ERROR";
+        }
+        return status;
     }
+
+    /** Özetsiz çağrı (yeni satırların neden kodu var). */
+    static String timelineStatus(String type, String action, String status, String reason) {
+        return timelineStatus(type, action, status, reason, null);
+    }
+
+    /** {@code WARNING} yazılıp kontrol hatası (kesinti) sayılan türler — {@link #timelineStatus}. */
+    static final List<String> OUTAGE_WARNING_TYPES = List.of("HTTP", "KEYWORD");
+    /** Senaryo türü: {@code WARNING} = FAIL (kesinti); yalnız yapılandırma kusuru ({@code NO_CHECKS}) uyarı kalır. */
+    static final String SCRIPTED = "SCRIPTED", SCRIPT_NO_CHECKS = "SCRIPT_NO_CHECKS", NO_CHECKS_SUMMARY = "NO_CHECKS";
+
+    /**
+     * "Başarısız (kesinti) kontrol" — zaman çizelgesinin {@code down} durumu. Kontrol satırında ERROR / TIMEOUT ya da
+     * {@link #timelineStatus}'un kesintiye çevirdiği WARNING; kontrol olmayan satırda (alarm açılışı) yalnız ERROR / TIMEOUT.
+     */
+    public static boolean isOutage(String type, String action, String status, String reason, String summary) {
+        return "down".equals(stateOf(timelineStatus(type, action, status, reason, summary)));
+    }
+
+    /**
+     * {@link #isOutage}'ın SQL eşi — KONTROL eylemi satırları için (çağıran {@code action IN (kontrol eylemleri)} de koşar);
+     * {@code activity_log} kolon adlarıyla. Aynı sabitlerden kurulur; değerler sabit metin (kullanıcı girdisi yok).
+     */
+    public static final String OUTAGE_SQL = "(result_status IN ('ERROR', 'TIMEOUT') OR (result_status = 'WARNING' AND ("
+            + "monitor_type IN (" + String.join(", ", OUTAGE_WARNING_TYPES.stream().map(v -> "'" + v + "'").toList()) + ")"
+            + " OR (monitor_type = '" + SCRIPTED + "' AND COALESCE(failure_reason, '') <> '" + SCRIPT_NO_CHECKS + "'"
+            + " AND COALESCE(LEFT(result_summary, " + NO_CHECKS_SUMMARY.length() + "), '') <> '" + NO_CHECKS_SUMMARY + "'))))";
 
     static String stateOf(String status) {
         if (status == null) return "unknown";
@@ -506,28 +550,29 @@ public class ActivityTimelineService {
     MonitorRef resolve(String type, long id) {
         try {
             return switch (type) {
-                case "HTTP" -> simple(type, id, "SELECT name, url AS target, team_id FROM http_monitors WHERE id = ?");
-                case "KEYWORD" -> simple(type, id, "SELECT name, url AS target, team_id FROM keyword_monitors WHERE id = ?");
-                case "PAGE" -> simple(type, id, "SELECT name, url AS target, team_id FROM page_monitors WHERE id = ?");
-                case "PAGESPEED" -> simple(type, id, "SELECT name, url AS target, team_id FROM pagespeed_monitors WHERE id = ?");
-                case "PING" -> simple(type, id, "SELECT name, host AS target, team_id FROM ping_monitors WHERE id = ?");
-                case "DOMAIN" -> simple(type, id, "SELECT name, domain AS target, team_id FROM domain_monitors WHERE id = ?");
-                case "SCRIPTED" -> simple(type, id, "SELECT name, name AS target, team_id FROM scripted_monitors WHERE id = ?");
-                case "DBQUERY" -> simple(type, id, "SELECT name, name AS target, team_id FROM dbquery_monitors WHERE id = ?");
-                case "PORT" -> jdbc.queryForObject("SELECT name, host, port, team_id, standalone FROM port_monitors WHERE id = ?",
-                        (rs, i) -> new MonitorRef(type, id, rs.getString("name"), rs.getString("host") + ":" + rs.getObject("port"),
-                                effectiveTeam(rs.getString("host"), rs.getObject("standalone", Boolean.class),
-                                        rs.getObject("team_id", Long.class)), true), id);
-                case "DNS" -> jdbc.queryForObject("SELECT name, domain, record_type, team_id, standalone FROM dns_monitors WHERE id = ?",
-                        (rs, i) -> new MonitorRef(type, id, rs.getString("name"), rs.getString("domain") + " " + rs.getString("record_type"),
-                                effectiveTeam(rs.getString("domain"), rs.getObject("standalone", Boolean.class),
-                                        rs.getObject("team_id", Long.class)), true), id);
-                case "CERT", "UPTIME" -> jdbc.queryForObject("SELECT domain, port, team_id FROM certificate_inventory WHERE id = ?",
+                case "HTTP" -> simple(type, id, "SELECT name, url AS target, team_id, active FROM http_monitors WHERE id = ?");
+                case "KEYWORD" -> simple(type, id, "SELECT name, url AS target, team_id, active FROM keyword_monitors WHERE id = ?");
+                case "PAGE" -> simple(type, id, "SELECT name, url AS target, team_id, active FROM page_monitors WHERE id = ?");
+                case "PAGESPEED" -> simple(type, id, "SELECT name, url AS target, team_id, active FROM pagespeed_monitors WHERE id = ?");
+                case "PING" -> simple(type, id, "SELECT name, host AS target, team_id, active FROM ping_monitors WHERE id = ?");
+                case "DOMAIN" -> simple(type, id, "SELECT name, domain AS target, team_id, active FROM domain_monitors WHERE id = ?");
+                case "SCRIPTED" -> simple(type, id, "SELECT name, name AS target, team_id, active FROM scripted_monitors WHERE id = ?");
+                case "DBQUERY" -> simple(type, id, "SELECT name, name AS target, team_id, active FROM dbquery_monitors WHERE id = ?");
+                case "PORT" -> jdbc.queryForObject("SELECT name, host, port, team_id, standalone, active FROM port_monitors WHERE id = ?",
+                        (rs, i) -> derived(type, id, rs.getString("name"), rs.getString("host") + ":" + rs.getObject("port"),
+                                rs.getString("host"), rs.getObject("standalone", Boolean.class), rs.getObject("team_id", Long.class),
+                                rs.getObject("active", Boolean.class)), id);
+                case "DNS" -> jdbc.queryForObject("SELECT name, domain, record_type, team_id, standalone, active FROM dns_monitors WHERE id = ?",
+                        (rs, i) -> derived(type, id, rs.getString("name"), rs.getString("domain") + " " + rs.getString("record_type"),
+                                rs.getString("domain"), rs.getObject("standalone", Boolean.class), rs.getObject("team_id", Long.class),
+                                rs.getObject("active", Boolean.class)), id);
+                case "CERT", "UPTIME" -> jdbc.queryForObject("SELECT domain, port, team_id, active FROM certificate_inventory WHERE id = ?",
                         (rs, i) -> {
                             String d = rs.getString("domain");
                             Object port = rs.getObject("port");
                             String target = "UPTIME".equals(type) ? d + ":" + (port == null ? 443 : port) : d;
-                            return new MonitorRef(type, id, d, target, rs.getObject("team_id", Long.class), true);
+                            return new MonitorRef(type, id, d, target, rs.getObject("team_id", Long.class), true,
+                                    Boolean.TRUE.equals(rs.getObject("active", Boolean.class)));
                         }, id);
                 default -> null;
             };
@@ -538,15 +583,22 @@ public class ActivityTimelineService {
 
     private MonitorRef simple(String type, long id, String sql) {
         return jdbc.queryForObject(sql, (rs, i) -> new MonitorRef(type, id, rs.getString("name"), rs.getString("target"),
-                rs.getObject("team_id", Long.class), true), id);
+                rs.getObject("team_id", Long.class), true, Boolean.TRUE.equals(rs.getObject("active", Boolean.class))), id);
     }
 
-    /** Port / DNS: bağımsız satırın takımı kendisi; envanter türevinin takımı envanterin (yoksa saklanan) — izleme sayfalarıyla aynı. */
-    private Long effectiveTeam(String domain, Boolean standalone, Long stored) {
-        if (Boolean.TRUE.equals(standalone) || domain == null) return stored;
-        List<Long> inv = jdbc.query("SELECT team_id FROM certificate_inventory WHERE domain = ?",
-                (rs, i) -> rs.getObject("team_id", Long.class), domain);
-        return inv.isEmpty() ? stored : inv.get(0);
+    /**
+     * Port / DNS: bağımsız satırın takımı kendisi; envanter türevinin takımı envanterin (yoksa saklanan) — izleme sayfalarıyla
+     * aynı. Türev satır yalnız host'u ETKİN envanterde olduğunda taranır (tarama kuralı) → etkinlik = satır ∧ envanter.
+     */
+    private MonitorRef derived(String type, long id, String name, String target, String domain, Boolean standalone, Long stored,
+                               Boolean rowActive) {
+        boolean active = Boolean.TRUE.equals(rowActive);
+        if (Boolean.TRUE.equals(standalone) || domain == null) return new MonitorRef(type, id, name, target, stored, true, active);
+        List<Object[]> inv = jdbc.query("SELECT team_id, active FROM certificate_inventory WHERE domain = ?",
+                (rs, i) -> new Object[] { rs.getObject("team_id", Long.class), rs.getObject("active", Boolean.class) }, domain);
+        if (inv.isEmpty()) return new MonitorRef(type, id, name, target, stored, true, false);
+        boolean invActive = inv.stream().anyMatch(r -> Boolean.TRUE.equals(r[1]));
+        return new MonitorRef(type, id, name, target, (Long) inv.get(0)[0], true, active && invActive);
     }
 
     /** Silinmiş izleme: en yeni aktivite satırının künyesi. */
