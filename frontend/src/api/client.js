@@ -1227,6 +1227,10 @@ export const api = {
     return request(`/activity${s ? `?${s}` : ''}`)
   },
   getActivityDetail: (id) => request(`/activity/${id}`),
+  // Aktivite AYRINTI SAYFASI (2026-11-05, act fe1): kontrol sonucu + önceki/sonraki + ±24 sa seri + alarm + değişiklik tek
+  // uçtan. `withStatus`: 404/405 gövdeye `status` yazılır — "uç yok (eski sunucu)" ile "kayıt yok / yetki yok" ayrımını
+  // çağıran temel uçla (`getActivityDetail`) yapar (detail/loadActivityDetail.js).
+  getActivityFullDetail: (id) => request(`/activity/${encodeURIComponent(id)}/detail`, { withStatus: true }),
   getActivitySummary: (params = {}) => {
     const qs = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.append(k, v) })

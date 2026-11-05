@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Aktivite AYRINTI SAYFASI izole harness — yalnız Playwright içindir, ürüne GİRMEZ (editor.html ile aynı gerekçe).
+
+      Neden ayrı sayfa: sayfayı `?tab=activity&act=<id>` rotasına liste (ActivityLog.jsx) bağlıyor ve o dosya bu dalın
+      değil (act fe2). Yerleşim (390 / 768 dokunmatik, 1280) gerçek tarayıcıda bileşenin kendisiyle ölçülür; API mock'lu.
+    -->
+    <title>Activity detail harness</title>
+    <style>
+      html, body { margin: 0; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script type="module" src="./activity-detail-harness.jsx"></script>
+  </body>
+</html>
