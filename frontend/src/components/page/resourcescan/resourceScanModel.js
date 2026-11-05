@@ -1843,8 +1843,11 @@ export function compareScans(a, b) {
 
 // ── URL durumu (paylaşılabilir bağlantı) ────────────────────────────────────
 
-/** Görünümler: pano, nesne listesi, şelale, geçmiş, karşılaştırma (URL `prs_v`; pano varsayılan — yazılmaz). */
-export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare', 'audit']
+/**
+ * Görünümler: pano, nesne listesi, şelale, geçmiş, karşılaştırma (URL `prs_v`; pano varsayılan — yazılmaz). prs3:
+ * `audit` (fe1 — ayrıntılı denetim, `audit-<alan>`), `trend` (eğilim) ve `pages` (çok sayfalı analizin sayfaları).
+ */
+export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare', 'audit', 'trend', 'pages']
 export const URL_SCAN = 'prs'
 export const URL_VIEW = 'prs_v'
 export const URL_OTHER = 'prs_b'
@@ -1859,12 +1862,14 @@ export function sectionOfView(view) {
   if (view === 'objects' || view === 'waterfall') return 'objects'
   if (view === 'history' || view === 'compare') return 'history'
   if (view === AUDIT_VIEW) return 'audit'
+  if (view === 'trend' || view === 'pages') return view
   return 'overview'
 }
 export function viewOf(section, objectsMode, historyMode) {
   if (section === 'objects') return objectsMode === 'waterfall' ? 'waterfall' : 'objects'
   if (section === 'history') return historyMode === 'compare' ? 'compare' : 'history'
   if (section === 'audit') return AUDIT_VIEW
+  if (section === 'trend' || section === 'pages') return section
   return 'dash'
 }
 

@@ -7,6 +7,9 @@ import { Spinner } from '../../ui/Progress.jsx'
 import { comparableScans, formatMs, formatNumber, formatSize, gradeLetter, isCancelled, isCapped, plural, scanTone } from './resourceScanModel.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import ResourceScanCompare from './ResourceScanCompare.jsx'
+// prs3 F / G (fe2): bütçe durumu ve çok sayfalı analiz işaretleri
+import { BudgetStatusBadge } from './ResourceScanBudget.jsx'
+import { budgetStatusOf } from './resourceScanReportModel.js'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +64,12 @@ export default function ResourceScanHistory({
   )
 }
 
+/** "Site · 5 sayfa" (sayfa sayısı bilinmiyorsa yalnız "Site"). */
+function siteText(s, t, locale) {
+  const n = Number(s.pages_count)
+  return s.pages_count != null && Number.isFinite(n) && n > 0 ? plural(t, 'prs.site.chip', n, formatNumber(n, locale)) : t('prs.site.chipNoCount')
+}
+
 function HistoryRow({ s, sel, t, locale, onClick }) {
   const letter = gradeLetter(s.grade, s.grade_letter)
   const done = s.status === 'DONE'
@@ -76,8 +85,12 @@ function HistoryRow({ s, sel, t, locale, onClick }) {
       ? [plural(t, 'prs.run.progress', s.progress?.total ?? 0, formatNumber(s.progress?.done ?? 0, locale), formatNumber(s.progress?.total ?? 0, locale))]
       : [s.error || t('prs.hist.noResult')]
   const grade = done ? (capped ? t('prs.hist.gradeShortCapped', s.grade ?? '—') : t('prs.hist.gradeShort', s.grade ?? '—')) : statusText
+  // prs3: çok sayfalı analiz ("Site · 5 sayfa") ve bütçe durumu (yalnız tamamlanmış analizde; bilinmeyen "bilinmiyor")
+  const site = s.scope === 'site' ? siteText(s, t, locale) : null
+  const budget = done ? budgetStatusOf(s) : null
+  const budgetAria = budget ? t(`prs.budget.hist.${budget}`) : null
   // Görünen bilginin tamamı (r177 H15 — eski etiket yalnız tarih + not okuyordu)
-  const aria = [t('prs.hist.openFor', when, grade), by, ...facts, sel ? t('prs.hist.showing') : null].filter(Boolean).join(' · ')
+  const aria = [t('prs.hist.openFor', when, grade), by, site, ...facts, budgetAria, sel ? t('prs.hist.showing') : null].filter(Boolean).join(' · ')
   return (
     <li>
       <Button type="button" variant={sel ? 'secondary' : 'ghost'} data-slot="prs-history-row" data-id={s.id}
@@ -100,6 +113,8 @@ function HistoryRow({ s, sel, t, locale, onClick }) {
               </ToneBadge>
             )}
             {capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-history-capped">{t('prs.hist.capped')}</ToneBadge>}
+            {site && <ToneBadge tone="info" className={CHIP} data-slot="prs-history-scope">{site}</ToneBadge>}
+            {budget && <BudgetStatusBadge row={s} />}
             {sel && <ToneBadge tone="info" className={CHIP}>{t('prs.hist.showing')}</ToneBadge>}
           </span>
           <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums sm:justify-end">

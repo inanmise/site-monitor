@@ -134,11 +134,15 @@ for (const vp of VIEWPORTS) {
       await expect(tiles).toHaveCount(4)
       await expect(tiles.nth(3)).toHaveAttribute('data-tone', 'muted')
       await expect(tiles.nth(3)).toContainText('—')
-      // Bölüm sekmeleri (4) tek satır, hiçbiri kırpılmıyor
+      // Bölüm sekmeleri (5: Denetim + Eğilim dahil) hiçbiri kırpılmıyor; sm+ tek satır, telefonda 3 + 2 (sectionTabCols)
       const secTabs = root.locator('[data-slot="prs-sections"] > [role="tablist"] [role="tab"]')
-      await expect(secTabs).toHaveCount(4)
+      await expect(secTabs).toHaveCount(5)
       const tops = await secTabs.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
-      expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      if (vp.width >= 640) {
+        expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      } else {
+        expect(new Set(tops).size, `@${vp.name}: telefonda bölüm sekmeleri iki satır olmalı`).toBe(2)
+      }
       const tabOverflow = await secTabs.evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent))
       expect(tabOverflow, `@${vp.name}: bölüm sekmesi kırpılıyor`).toEqual([])
       await root.locator('[data-slot="prs-cat-scores"]').scrollIntoViewIfNeeded()

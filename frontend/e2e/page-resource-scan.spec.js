@@ -185,7 +185,7 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="prs-third-row"]')).toHaveCount(2)
       // sm+ (768 / 1280): "Yeniden analiz et / bağlantı / Excel / PDF" TEK satırda — uzun künye düğmeleri alt satıra itmez
       if (vp.width >= 640) {
-        const tops = await root.locator('[data-slot="prs-actions"] > button').evaluateAll((els) =>
+        const tops = await root.locator('[data-slot="prs-actions"] > *').evaluateAll((els) =>
           els.map((el) => Math.round(el.getBoundingClientRect().top)))
         expect(tops.length, `@${vp.name}: başlık eylemleri`).toBe(4)
         expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: başlık eylemleri tek satır değil (${tops.join(', ')})`).toBeLessThanOrEqual(1)
