@@ -13,9 +13,11 @@ import CopyButton from '../ui/CopyButton.jsx'
 import { cn } from '@/lib/utils'
 import Field from '../ui/Field.jsx'
 import ConnectionStringPaste from './ConnectionStringPaste.jsx'
+import ConnectionExamples from './ConnectionExamples.jsx'
+import { placeholdersFor } from './connectionExamples.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import {
-  CONNECT_TIMEOUT, DB_TYPES, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, readOnlyAccountScript, setOracleTcps,
+  CONNECT_TIMEOUT, DB_TYPES, DEFAULT_PORT, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, readOnlyAccountScript, setOracleTcps,
 } from './connectionModel.js'
 
 const CONTROL = 'h-9 w-full pointer-coarse:h-10'
@@ -34,6 +36,9 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
   const set = (patch) => onChange({ ...form, ...patch })
   const type = form.db_type
   const encId = useId(), trustId = useId(), clearId = useId(), tcpsId = useId()
+  // Alan yer tutucuları türe (ve Oracle kipine) göre — örneklerle aynı kaynak (connectionExamples.js)
+  const ph = placeholdersFor(type, form.oracle_mode)
+  const defaultPort = type === 'ORACLE' && form.oracle_tcps ? ORACLE_TCPS_PORT : DEFAULT_PORT[type]
 
   const field = (name, label, props = {}, extra = {}) => (
     <Field label={label} required={extra.required} name={name} error={errors[name]} hint={extra.hint} className={extra.className}>
@@ -60,8 +65,11 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       {/* Bağlantı dizesinden doldur (A1, 2026-11-05) — istemcide ayrıştırılır; parola forma alınmaz */}
       {showPaste && <ConnectionStringPaste form={form} onChange={onChange} disabled={disabled} />}
 
+      {/* Bağlantı örnekleri + "Alan alan ne yazılır" (2026-11-05) — kapalı başlar, seçili türe göre */}
+      <ConnectionExamples type={type} oracleMode={form.oracle_mode} showPasteHint={showPaste} />
+
       <div className={GRID}>
-        {field('name', t('dbq.conn.name'), {}, { required: true })}
+        {field('name', t('dbq.conn.name'), { placeholder: t('dbq.conn.ph.name') }, { required: true })}
         <div className="mb-3.5 flex flex-col gap-1.5" data-field="db_type">
           <span className="text-sm font-semibold">{t('dbq.conn.dbType')} <span data-slot="field-required" className="text-destructive">*</span></span>
           <SegmentedControl value={type} ariaLabel={t('dbq.conn.dbType')} className="w-full" itemClassName="flex-1"
@@ -72,11 +80,12 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       </div>
 
       <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
-        {field('host', t('dbq.conn.host'), { placeholder: 'db01.example.com' }, { required: true, hint: t('dbq.conn.hostHint') })}
-        {field('port', t('dbq.conn.port'), { inputMode: 'numeric' }, { required: true })}
+        {field('host', t('dbq.conn.host'), { placeholder: ph.host }, { required: true, hint: t('dbq.conn.hostHint') })}
+        {field('port', t('dbq.conn.port'), { inputMode: 'numeric', placeholder: defaultPort != null ? String(defaultPort) : undefined },
+          { required: true, hint: defaultPort != null ? t('dbq.conn.portHint', defaultPort) : undefined })}
       </div>
 
-      {type === 'MSSQL' && field('mssql_instance', t('dbq.conn.instance'), { placeholder: 'SQL01' }, { hint: t('dbq.conn.instanceHint') })}
+      {type === 'MSSQL' && field('mssql_instance', t('dbq.conn.instance'), { placeholder: ph.mssql_instance }, { hint: t('dbq.conn.instanceHint') })}
 
       {type === 'ORACLE' && (
         <div className="mb-3.5 flex flex-col gap-1.5" data-field="oracle_mode">
@@ -100,7 +109,7 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       <div className={GRID}>
         {field('database_name',
           type === 'ORACLE' ? t(form.oracle_mode === 'SID' ? 'dbq.conn.sid' : 'dbq.conn.serviceName') : t('dbq.conn.database'),
-          { className: cn(CONTROL, 'font-mono') }, { required: true })}
+          { className: cn(CONTROL, 'font-mono'), placeholder: ph.database_name }, { required: true, hint: t('dbq.conn.databaseHint') })}
         {type === 'POSTGRESQL' && (
           <Field label={t('dbq.conn.sslMode')} name="ssl_mode" error={errors.ssl_mode} hint={t(`dbq.conn.sslHint.${form.ssl_mode}`)} className={FULL_SELECT}>
             {({ id, describedBy, invalid }) => (
@@ -143,7 +152,7 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
       )}
 
       <div className={GRID}>
-        {field('username', t('dbq.conn.username'), {}, { required: true })}
+        {field('username', t('dbq.conn.username'), { placeholder: ph.username }, { required: true, hint: t('dbq.conn.usernameHint') })}
         {/* Parola isteğe bağlı (O1): boş = parolasız bağlantı (yeni) / kayıtlı parola değişmez (düzenleme). Zorunlu yıldızı yok. */}
         <Field label={t('dbq.conn.password')} name="password" error={errors.password}
           hint={form.password_set
@@ -167,13 +176,13 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
 
       <ReadOnlyAccountScript type={type} />
 
-      {field('connect_timeout_ms', t('dbq.conn.timeout'), { inputMode: 'numeric', className: cn(CONTROL, 'tabular-nums sm:w-48') },
+      {field('connect_timeout_ms', t('dbq.conn.timeout'), { inputMode: 'numeric', placeholder: String(CONNECT_TIMEOUT.def), className: cn(CONTROL, 'tabular-nums sm:w-48') },
         { hint: t('dbq.conn.timeoutHint', CONNECT_TIMEOUT.min, CONNECT_TIMEOUT.max, CONNECT_TIMEOUT.def) })}
 
       <Field label={t('dbq.conn.description')} name="description" error={errors.description} className="mb-0">
         {({ id, describedBy, invalid }) => (
           <Textarea id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} rows={2}
-            value={form.description ?? ''} onChange={(e) => set({ description: e.target.value })} />
+            placeholder={t('dbq.conn.ph.description')} value={form.description ?? ''} onChange={(e) => set({ description: e.target.value })} />
         )}
       </Field>
     </div>

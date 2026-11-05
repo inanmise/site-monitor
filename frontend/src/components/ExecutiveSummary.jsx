@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { ArrowUpRight, Gauge, HeartPulse, Minus, Siren, TrendingDown, TrendingUp, Users } from 'lucide-react'
 import { api } from '../api/client'
@@ -31,12 +31,16 @@ export default function ExecutiveSummary({ onOpenTeam }) {
   const t = useT()
   // undefined = yükleniyor · null = uç yanıt vermedi (bölüm çizilmez) · nesne = veri
   const [data, setData] = useState(undefined)
+  // Sökülen bileşene geç yanıt yazılmaz (sayfa / test ortamı kapanırken yanıt gelirse setState ortam dışında koşuyordu)
+  const alive = useRef(true)
+  useEffect(() => () => { alive.current = false }, [])
   const load = useCallback(async () => {
     try {
       const r = await api.getExecutiveStats()
+      if (!alive.current) return
       if (r?.success && r.data) setData(r.data)
       else setData((cur) => cur ?? null)
-    } catch { setData((cur) => cur ?? null) /* özet süs — sayfa onsuz da çalışır */ }
+    } catch { if (alive.current) setData((cur) => cur ?? null) /* özet süs — sayfa onsuz da çalışır */ }
   }, [])
   useVisibleInterval(load, 300_000, true)
   if (data === undefined) {
