@@ -1,6 +1,7 @@
 package com.sitemonitor.service.page.scan.site;
 
 import com.sitemonitor.service.page.scan.PageResourceDiscovery;
+import com.sitemonitor.service.page.scan.ScanItem;
 import com.sitemonitor.service.page.scan.deep.DeepUrls;
 
 import java.net.URI;
@@ -67,6 +68,16 @@ public final class SitePages {
      * @param max      en çok kaç adres (≤ 0 → boş)
      */
     public static List<String> select(List<String> links, String mainUrl, String finalUrl, Predicate<String> exclude, int max) {
+        return select(links, mainUrl, finalUrl, exclude, max, Set.of());
+    }
+
+    /**
+     * {@link #select(List, String, String, Predicate, int)} + ana sayfanın bağlantı denetiminde KIRIK bulunan adresler aday
+     * olmaz ({@code broken} — tekilleştirme biçimiyle eşlenir): bütçe harcamazlar, ana sayfanın sonucunda zaten kırık bağlantı
+     * olarak görünürler ({@link #brokenLink}).
+     */
+    public static List<String> select(List<String> links, String mainUrl, String finalUrl, Predicate<String> exclude, int max,
+                                      Set<String> broken) {
         List<String> out = new ArrayList<>();
         if (links == null || links.isEmpty() || max <= 0) return out;
         Origin origin = Origin.of(finalUrl != null && !finalUrl.isBlank() ? finalUrl : mainUrl);
@@ -74,6 +85,7 @@ public final class SitePages {
         Set<String> seen = new HashSet<>();
         addSelf(seen, mainUrl);
         addSelf(seen, finalUrl);
+        if (broken != null) for (String b : broken) addSelf(seen, b);
         for (String u : links) {
             if (out.size() >= max) break;
             if (u == null || u.isBlank() || u.length() > MAX_URL_CHARS) continue;
@@ -87,6 +99,16 @@ public final class SitePages {
             out.add(k);
         }
         return out;
+    }
+
+    /**
+     * Ana sayfanın bağlantı denetiminde kırık mı: karar {@code broken} (404 / 410 / 5xx, aktarım hatası …) ya da
+     * {@code unverified} ama HTTP 4xx / 5xx (ör. 403, 429, 503). Zaman aşımı / standart dışı kod (999) gibi belirsizler kırık
+     * sayılmaz — sayfa olarak yine denenir.
+     */
+    public static boolean brokenLink(String verdict, int status) {
+        if (ScanItem.BROKEN.equals(verdict)) return true;
+        return ScanItem.UNVERIFIED.equals(verdict) && status >= 400 && status < 600;
     }
 
     private static void addSelf(Set<String> seen, String url) {

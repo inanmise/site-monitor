@@ -84,6 +84,31 @@ class SitePagesTest {
     }
 
     @Test
+    @DisplayName("ana sayfanın kırık bağlantıları aday olmaz (sondaki / farkı dahil); kırık kuralı: broken ya da unverified + 4xx/5xx")
+    void brokenLinksAreNotCandidates() {
+        List<String> links = List.of(
+                "https://shop.example.test/a",
+                "https://shop.example.test/gone",
+                "https://shop.example.test/b",
+                "https://shop.example.test/err/",
+                "https://shop.example.test/c");
+        java.util.Set<String> broken = java.util.Set.of("https://shop.example.test/gone", "https://shop.example.test/err");
+        assertThat(SitePages.select(links, MAIN, null, null, 10, broken))
+                .containsExactly("https://shop.example.test/a", "https://shop.example.test/b", "https://shop.example.test/c");
+        assertThat(SitePages.select(links, MAIN, null, null, 10, null)).hasSize(5);
+
+        assertThat(SitePages.brokenLink("broken", 404)).isTrue();
+        assertThat(SitePages.brokenLink("broken", 0)).as("aktarım hatası").isTrue();
+        assertThat(SitePages.brokenLink("unverified", 403)).isTrue();
+        assertThat(SitePages.brokenLink("unverified", 503)).isTrue();
+        assertThat(SitePages.brokenLink("unverified", 0)).as("zaman aşımı belirsiz").isFalse();
+        assertThat(SitePages.brokenLink("unverified", 999)).as("standart dışı kod belirsiz").isFalse();
+        assertThat(SitePages.brokenLink("ok", 200)).isFalse();
+        assertThat(SitePages.brokenLink("blocked", 0)).as("güvenlik engeli kırık değil").isFalse();
+        assertThat(SitePages.brokenLink(null, 500)).isFalse();
+    }
+
+    @Test
     @DisplayName("seçim: host / şema yönlendirme SONRASI adresten; ikisi de ana sayfa sayılır")
     void selectUsesFinalUrl() {
         List<String> links = List.of("https://www.example.test/home", "https://www.example.test/a", "http://example.test/b");
