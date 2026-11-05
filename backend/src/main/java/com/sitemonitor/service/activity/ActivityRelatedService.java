@@ -32,6 +32,10 @@ import java.util.function.Predicate;
  * Pencere YALNIZ oturumun okuma kapsamındaki satırlardan kurulur: başka takımın satırı, sayısı ya da takım adı hiçbir alanda
  * dönmez — şüpheli eşikleri de görünen satırlarla hesaplanır (gizli bir takımın durumu "yaygın kesinti" diye sızmasın).
  *
+ * <p><b>Sayılar bu satır HARİÇ</b> (2026-11-05 inceleme): {@code total} / {@code monitors} / {@code by_*} penceredeki BAŞKA
+ * hatalı kontrol satırlarıdır ({@code total = 0} → "başka hatalı kontrol yok"); {@code window_total} bu satırı da sayar
+ * ({@code anchor_in_window}). Şüpheli kodlar tüm satırlardan (bu satır dahil) hesaplanır.
+ *
  * <p><b>Sorgu sayısı sabit</b>, satır başına sorgu yok: satırın kendisi (1) + pencere (1) + izlemenin olguları (1, satır
  * başarısızsa seri başlangıcı için +1) + görünen takım adları (≤ 1).
  *
@@ -156,8 +160,26 @@ public class ActivityRelatedService {
         boolean nullTeam = false;
         int nullTeamRows = 0;
         Set<String> nullTeamMon = new HashSet<>();
+        // Şüpheliler penceredeki TÜM hatalı satırlardan (bu satır dahil); dağılımlar ve sayılar yalnız BAŞKA satırlardan
+        // (inceleme ön yüz O3: "başka hatalı kontrol yok" durumu üretilebilsin — öğeler de bu satırı içermez).
+        Map<String, Set<String>> hostAll = new HashMap<>();
+        Map<Long, Set<String>> teamAll = new HashMap<>();
+        Set<String> monitorsAll = new HashSet<>();
+        Long anchorId = anchor.log().getId();
+        boolean anchorIn = false;
+        int others = 0;
         for (Rel r : rows) {
             String key = r.key();
+            monitorsAll.add(key);
+            classMon.computeIfAbsent(r.cls(), k -> new HashSet<>()).add(key);
+            String hostAny = r.host();
+            if (hostAny != null) hostAll.computeIfAbsent(hostAny, k -> new HashSet<>()).add(key);
+            if (r.log().getTeamId() != null) teamAll.computeIfAbsent(r.log().getTeamId(), k -> new HashSet<>()).add(key);
+            if (anchorId != null && anchorId.equals(r.log().getId())) {
+                anchorIn = true;
+                continue;
+            }
+            others++;
             monitors.add(key);
             String reason = r.reason();
             reasonRows.merge(reason == null ? "" : reason, 1, Integer::sum);
@@ -176,7 +198,6 @@ public class ActivityRelatedService {
                 teamRows.merge(team, 1, Integer::sum);
                 teamMon.computeIfAbsent(team, k -> new HashSet<>()).add(key);
             }
-            classMon.computeIfAbsent(r.cls(), k -> new HashSet<>()).add(key);
         }
 
         Map<String, Object> a = new LinkedHashMap<>();
@@ -201,8 +222,10 @@ public class ActivityRelatedService {
         body.put("window_s", window);
         body.put("from", ActivityFilter.iso(at.minusSeconds(window)));
         body.put("to", ActivityFilter.iso(at.plusSeconds(window)));
-        body.put("total", rows.size());
-        body.put("monitors", monitors.size());
+        body.put("total", others);                      // bu satır HARİÇ penceredeki hatalı kontroller
+        body.put("monitors", monitors.size());          // o satırların ayrı izleme sayısı
+        body.put("window_total", rows.size());          // bu satır dahil (pencerede hatalıysa)
+        body.put("anchor_in_window", anchorIn);
         body.put("truncated", truncated);
         List<Map<String, Object>> byReason = new ArrayList<>();
         for (Map.Entry<String, Integer> e : sorted(reasonRows)) {
@@ -230,7 +253,7 @@ public class ActivityRelatedService {
 
         // ── Şüpheliler ──
         List<Map<String, Object>> suspects = new ArrayList<>();
-        int total = monitors.size();
+        int total = monitorsAll.size();
         List<String> order = new ArrayList<>(WIDE_CLASSES);
         if (order.remove(anchor.cls())) order.add(0, anchor.cls());          // satırın kendi sınıfı önce
         for (String cls : order) {
@@ -243,19 +266,18 @@ public class ActivityRelatedService {
         String anchorKey = anchor.key();
         String host = anchor.host();
         if (host != null) {
-            Set<String> s = hostMon.getOrDefault(host, Set.of());
-            Set<String> others = new HashSet<>(s);
-            others.remove(anchorKey);
-            int n = others.size() + (anchor.failing() ? 1 : 0);
-            if (n >= SAME_HOST_MIN_MONITORS && !others.isEmpty()) suspects.add(suspect("SAME_HOST", "host", host, "monitors", n));
+            Set<String> otherMon = new HashSet<>(hostAll.getOrDefault(host, Set.of()));
+            otherMon.remove(anchorKey);
+            int n = otherMon.size() + (anchor.failing() ? 1 : 0);
+            if (n >= SAME_HOST_MIN_MONITORS && !otherMon.isEmpty()) suspects.add(suspect("SAME_HOST", "host", host, "monitors", n));
         }
         Long team = x.getTeamId();
         if (team != null) {
-            Set<String> s = new HashSet<>(teamMon.getOrDefault(team, Set.of()));
+            Set<String> s = new HashSet<>(teamAll.getOrDefault(team, Set.of()));
             if (anchor.failing()) s.add(anchorKey);
             if (s.size() >= SAME_TEAM_MIN_MONITORS) suspects.add(suspect("SAME_TEAM", "team_id", team, "monitors", s.size()));
         }
-        if (anchor.failing() && (monitors.isEmpty() || (monitors.size() == 1 && monitors.contains(anchorKey)))) {
+        if (anchor.failing() && (monitorsAll.isEmpty() || (monitorsAll.size() == 1 && monitorsAll.contains(anchorKey)))) {
             suspects.add(suspect("SINGLE"));
         }
         body.put("suspects", suspects);

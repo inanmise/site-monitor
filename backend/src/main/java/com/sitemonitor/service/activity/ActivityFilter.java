@@ -65,7 +65,13 @@ public record ActivityFilter(
     public static final String CLASS_PREFIX = "class:";
 
     // ── Sınırlar (istek gövdesine düzenli ifade uygulanmadan ÖNCE uzunluk denetlenir) ──
-    static final int MAX_TYPES = 20, MAX_STATUSES = 10, MAX_REASONS = 50, MAX_CSV_CHARS = 2_000;
+    static final int MAX_TYPES = 20, MAX_STATUSES = 10, MAX_CSV_CHARS = 4_000;
+    /**
+     * Neden süzgecinde en çok seçilebilen değer (2026-11-05 inceleme, ön yüz D8). Seçilebilir neden kataloğu (izleme
+     * kontrolü + keyword'e özgü kodlar + eski satırın {@code class:} sınıfları) şimdiden ~60 ve veritabanı sorgusu kodlarıyla
+     * büyüyor: tavan "hepsini seç"i kesmesin diye 100. Ön yüz aynı sayıyı bu sabitten okur (test).
+     */
+    public static final int MAX_REASONS = 100;
     static final int MAX_Q = 200, MAX_ACTOR = 100, MAX_TIME_CHARS = 40;
 
     private static final Pattern TYPE = Pattern.compile("[A-Z][A-Z_]{0,19}");
@@ -157,6 +163,12 @@ public record ActivityFilter(
                 List.copyOf(types), monitorType, monitorId, statuses, from, to, p.teamId(), actor,
                 groups, List.copyOf(new LinkedHashSet<>(reasons)), List.copyOf(new LinkedHashSet<>(classes)),
                 q == null ? null : "%" + q.toLowerCase(Locale.ROOT) + "%");
+    }
+
+    /** Aynı süzgeç, zaman aralığı değiştirilmiş (dışa aktarımın varsayılan / sınırlı aralığı) — {@code yyyy-MM-ddTHH:mm:ss} UTC. */
+    public ActivityFilter withRange(String newFrom, String newTo) {
+        return new ActivityFilter(scoped, scope, types, monitorType, monitorId, statuses, newFrom, newTo, teamId, actor,
+                groups, reasons, reasonClasses, q);
     }
 
     /** Süzgecin SQL hâli: {@code WHERE …} metni + sırayla bağlanacak değerler. */

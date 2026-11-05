@@ -89,8 +89,10 @@ class ActivityRelatedServiceTest {
 
         ActivityRelatedService.Result r = related(anchor, 120, Set.of(teamA));
         Map<String, Object> b = r.body();
-        assertThat(b.get("total")).isEqualTo(4);
-        assertThat(b.get("monitors")).isEqualTo(4);
+        assertThat(b.get("total")).as("bu satır HARİÇ").isEqualTo(3);
+        assertThat(b.get("monitors")).isEqualTo(3);
+        assertThat(b.get("window_total")).isEqualTo(4);
+        assertThat(b.get("anchor_in_window")).isEqualTo(true);
         assertThat(codes(b, "suspects")).containsExactly("DNS_WIDE", "SAME_TEAM");
         Map<?, ?> wide = (Map<?, ?>) list(b, "suspects").get(0).get("params");
         assertThat(wide.get("monitors")).isEqualTo(3);
@@ -98,13 +100,14 @@ class ActivityRelatedServiceTest {
         Map<?, ?> sameTeam = (Map<?, ?>) list(b, "suspects").get(1).get("params");
         assertThat(sameTeam.get("team_name")).isEqualTo("Ödeme");
         assertThat(list(b, "by_team")).hasSize(1);
-        assertThat(list(b, "by_team").get(0)).containsEntry("team_id", teamA).containsEntry("count", 4);
+        assertThat(list(b, "by_team").get(0)).containsEntry("team_id", teamA).containsEntry("count", 3);
         assertThat(String.valueOf(b)).doesNotContain("gizli").doesNotContain("Gizli Takım");
         assertThat(r.items()).extracting(ActivityLog::getMonitorId).containsExactly(2L, 3L, 4L);   // yakınlığa göre, kendisi hariç
         Map<?, ?> anchorMap = (Map<?, ?>) b.get("anchor");
         assertThat(anchorMap.get("host")).isEqualTo("a.example.com");
         assertThat(anchorMap.get("reason_class")).isEqualTo("DNS");
-        assertThat(list(b, "by_reason")).extracting(m -> m.get("reason")).contains("DNS_NXDOMAIN", "CONNECT_REFUSED");
+        assertThat(list(b, "by_reason")).extracting(m -> m.get("reason"))
+                .containsExactlyInAnyOrder("DNS_SERVFAIL", "DNS", "CONNECT_REFUSED");   // çapanın DNS_NXDOMAIN'i dağılımda yok
     }
 
     @Test
@@ -119,7 +122,11 @@ class ActivityRelatedServiceTest {
         assertThat(p.get("monitors")).isEqualTo(2);
 
         long lone = row("2026-11-05T12:00:00", "PING", 9L, "TIMEOUT").team(teamA).target("10.1.1.1").reason("ICMP_NO_REPLY").save(jdbc);
-        assertThat(codes(related(lone, null, Set.of(teamA)).body(), "suspects")).containsExactly("SINGLE");
+        Map<String, Object> single = related(lone, null, Set.of(teamA)).body();
+        assertThat(codes(single, "suspects")).containsExactly("SINGLE");
+        assertThat(single.get("total")).as("'başka hatalı kontrol yok' üretilebilir").isEqualTo(0);
+        assertThat(single.get("window_total")).isEqualTo(1);
+        assertThat(list(single, "by_reason")).isEmpty();
     }
 
     @Test
@@ -167,13 +174,32 @@ class ActivityRelatedServiceTest {
     void legacyRow() {
         row("2026-11-05T09:00:00", "CERT", null, "SUCCESS").team(teamA).target("x.example.com").save(jdbc);
         long anchor = row("2026-11-05T10:00:00", "CERT", null, "ERROR").team(teamA).target("x.example.com").errorClass("NETWORK").save(jdbc);
+        row("2026-11-05T10:00:30", "CERT", null, "ERROR").team(teamA).target("y.example.com").errorClass("NETWORK").save(jdbc);
         Map<String, Object> b = related(anchor, null, Set.of(teamA)).body();
         Map<?, ?> a = (Map<?, ?>) b.get("anchor");
         assertThat(a.get("reason")).isEqualTo("class:NETWORK");
         assertThat(a.get("reason_class")).isEqualTo("NETWORK");
         assertThat(a.get("failure_reason")).isNull();
-        assertThat(list(b, "by_reason").get(0)).containsEntry("reason", "class:NETWORK");
+        assertThat(list(b, "by_reason").get(0)).containsEntry("reason", "class:NETWORK").containsEntry("count", 1);
         assertThat(list(b, "facts")).extracting(m -> m.get("code")).contains("LAST_SUCCESS", "STILL_FAILING");
+    }
+
+    @Test
+    @DisplayName("inceleme O3: total çapa HARİÇ — başarılı çapa pencerede değil (anchor_in_window=false), hatalı çapa sayılmaz")
+    void totalExcludesAnchor() {
+        long ok = row("2026-11-05T10:00:00", "HTTP", 1L, "SUCCESS").team(teamA).save(jdbc);
+        row("2026-11-05T10:00:10", "HTTP", 2L, "ERROR").team(teamA).reason("DNS_NXDOMAIN").save(jdbc);
+        row("2026-11-05T10:00:20", "HTTP", 3L, "ERROR").team(teamA).reason("DNS_NXDOMAIN").save(jdbc);
+        Map<String, Object> b = related(ok, null, Set.of(teamA)).body();
+        assertThat(b.get("total")).isEqualTo(2);
+        assertThat(b.get("window_total")).isEqualTo(2);
+        assertThat(b.get("anchor_in_window")).isEqualTo(false);
+        long failing = row("2026-11-05T10:00:15", "HTTP", 1L, "ERROR").team(teamA).reason("DNS_NXDOMAIN").save(jdbc);
+        Map<String, Object> c = related(failing, null, Set.of(teamA)).body();
+        assertThat(c.get("total")).isEqualTo(2);
+        assertThat(c.get("window_total")).isEqualTo(3);
+        assertThat(c.get("anchor_in_window")).isEqualTo(true);
+        assertThat(list(c, "by_reason").get(0)).containsEntry("reason", "DNS_NXDOMAIN").containsEntry("count", 2);
     }
 
     @Test
