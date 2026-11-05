@@ -256,7 +256,7 @@ export function GuideLinkCard({ t, link, isAdmin, onEdit, onDelete }) {
         )}
       </div>
       <div className="mt-auto flex min-w-0 items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2.5">
-        <span data-slot="guide-url" className="min-w-0 flex-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <span data-slot="guide-url" title={link.url} className="min-w-0 flex-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {displayUrl(link.url)}
         </span>
         <CopyButton value={link.url} variant="ghost" buttonSize="icon-sm" className="shrink-0 pointer-coarse:size-10"
