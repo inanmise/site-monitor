@@ -11,6 +11,7 @@ import { Spinner } from '../ui/Progress.jsx'
 import { dateLocale } from '../../i18n/dateLocale.js'
 import { TooltipCard } from './ChartTooltipCard.jsx'
 import { SeriesKey } from './SeriesKey.jsx'
+import ChartEventList from './ChartEventList.jsx'
 import { axisWidth, formatLoss, formatTick, maxTicksFor, niceTimeTicks } from './responseChartModel.js'
 // Kabın genişliği (ResizeObserver, clientWidth) — x etiket yoğunluğu çizim alanına göre seçilir. Tek kaynak (öneri 29).
 import { useElementWidth } from '../../hooks/useElementWidth.js'
@@ -34,6 +35,7 @@ const SPARSE_POINTS = 60
  */
 export default function ChartPanel({
   t, title, shape, stats, fmt, aux, auxLabel, threshold, thresholdLabel, hidden, onHiddenChange, summary, busy, levels = [],
+  events = null,
 }) {
   const uid = useId().replace(/:/g, '')
   const titleId = `rtc-title-${uid}`
@@ -43,12 +45,18 @@ export default function ChartPanel({
   const [measureRef, width] = useElementWidth()
 
   const failures = stats.failed > 0
+  // Olay katmanı (dbq2 C2 — yalnız veritabanı sorgu izlemesi gönderir): alarm dönemleri + değişiklik işaretleri
+  const evAlarms = Array.isArray(events?.alarms) ? events.alarms : []
+  const evChanges = Array.isArray(events?.changes) ? events.changes : []
+  const alarmColor = evAlarms.some((a) => a.tone === 'critical') ? 'var(--destructive)' : 'var(--warning)'
   const series = [
     shape.hasValues && { key: 'avg', label: t('chart.avg'), shape: 'line', color: 'var(--chart-1)' },
     shape.hasValues && !shape.raw && { key: 'p95', label: t('chart.p95'), shape: 'dashed', color: 'var(--chart-3)' },
     shape.hasValues && !shape.raw && { key: 'band', label: t('chart.minmax'), shape: 'area', color: 'var(--chart-1)' },
     failures && { key: 'down', label: t('rtc.kpi.failed'), shape: 'dot', color: 'var(--destructive)' },
     aux && shape.hasAux && { key: 'aux', label: auxLabel, shape: 'line', color: 'var(--chart-5)' },
+    evAlarms.length > 0 && { key: 'alarms', label: t('chart.ev.alarms'), shape: 'area', color: alarmColor },
+    evChanges.length > 0 && { key: 'changes', label: t('chart.ev.changes'), shape: 'dashed', color: 'var(--muted-foreground)' },
   ].filter(Boolean)
   const visible = series.map((s) => s.key).filter((k) => !hidden.has(k))
   const on = (k) => series.some((s) => s.key === k) && !hidden.has(k)
@@ -163,6 +171,12 @@ export default function ChartPanel({
                 <ReferenceArea key={`r${r.x1}`} yAxisId="v" x1={r.x1} x2={r.x2} fill="var(--color-down)" fillOpacity={0.09}
                   strokeOpacity={0} ifOverflow="hidden" />
               ))}
+              {/* Alarm dönemleri (en altta — çizgiler üstünde kalır); sıfır genişlikli alarm görünsün diye en az çeyrek kova */}
+              {on('alarms') && evAlarms.map((a) => (
+                <ReferenceArea key={a.key} yAxisId="v" x1={a.x1} x2={Math.max(a.x2, a.x1 + shape.bucketMs / 4)} ifOverflow="hidden"
+                  fill={a.tone === 'critical' ? 'var(--destructive)' : 'var(--warning)'} fillOpacity={0.13}
+                  stroke={a.tone === 'critical' ? 'var(--destructive)' : 'var(--warning)'} strokeOpacity={0.45} strokeDasharray="2 3" />
+              ))}
               {xAxis(false)}
               <YAxis yAxisId="v" domain={[0, 'auto']} tickCount={4} width={yWidth} tickLine={false} axisLine={false}
                 tickFormatter={fmt.axis} tick={{ fontSize: 11 }} />
@@ -188,6 +202,11 @@ export default function ChartPanel({
               {levelList.filter((l) => levelInView(l.value)).map((l) => (
                 <ReferenceLine key={l.key} yAxisId="v" y={l.value} ifOverflow="extendDomain" strokeDasharray="5 4" strokeWidth={1.25}
                   stroke={l.level === 'CRITICAL' ? 'var(--destructive)' : 'var(--warning)'} />
+              ))}
+              {/* Değişiklik işaretleri: numaralı kesikli dikey çizgi — numara alttaki olay listesindekiyle aynı */}
+              {on('changes') && evChanges.map((c) => (
+                <ReferenceLine key={c.key} yAxisId="v" x={c.x} ifOverflow="hidden" stroke="var(--muted-foreground)" strokeDasharray="3 3"
+                  strokeWidth={1.25} label={{ value: String(c.n), position: 'insideTopLeft', fill: 'var(--foreground)', fontSize: 10, fontWeight: 600 }} />
               ))}
               {failures && (
                 <Line yAxisId="v" dataKey="downY" hide={hidden.has('down')} stroke="none" dot={downDot} activeDot={false}
@@ -222,6 +241,7 @@ export default function ChartPanel({
             </ChartContainer>
           </div>
         )}
+        <ChartEventList t={t} events={events} showAlarms={on('alarms')} showChanges={on('changes')} />
         <p id={summaryId} data-slot="chart-summary" className="sr-only">{summary}</p>
       </figure>
     </Card>

@@ -109,7 +109,8 @@ export function ruleOptionsFor(column) {
   const kind = columnKind(column?.type)
   if (kind === 'time') return ['FRESHNESS', 'COLUMN_VALUE', 'TEXT_MATCH']
   if (kind === 'text') return ['TEXT_MATCH', 'COLUMN_VALUE']
-  return ['COLUMN_VALUE', 'TEXT_MATCH', 'FRESHNESS']
+  // Sayısal (ya da türü bilinmeyen) kolon: akıllı kurallar da (dbq2 D — olağan dışı değer, değer donmuş) sunulur
+  return ['COLUMN_VALUE', 'ANOMALY', 'FROZEN', 'TEXT_MATCH', 'FRESHNESS']
 }
 
 /** Seçilen kolondan yeni kural (tür RULE_KINDS dışındaysa kolon değeri). */

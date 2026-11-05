@@ -17,6 +17,7 @@ import {
   breachLevelKey, dbTypeLabel, durationText, istanbulTime, metricValueText, rowCountText, scheduleSummary, unevaluatedRules, untilText,
 } from './dbqueryPageModel.js'
 import { resultNoteText } from './RuleResultsList.jsx'
+import ValueTrend from './ValueTrend.jsx'
 
 /**
  * Veritabanı Sorgu İzleme KARTI (11. tür, 2026-10-31) — paylaşılan MonitorCard ailesi üzerinde (shadcn, mobil duyarlı).
@@ -34,6 +35,9 @@ import { resultNoteText } from './RuleResultsList.jsx'
  * <p>Test kancaları: bağlantı `data-slot="dbq-connection"` (+ `data-missing`), amaç `dbq-purpose`, ölçüler `dbq-metrics`
  * (öğe `dbq-metric` + `data-metric` value|rows|duration|next), değer yuvaları `dbq-*-value`, seviye `dbq-level`
  * (+ `data-level`), hata `dbq-error`, bekleme `dbq-pending`, zamanlama `dbq-schedule`, Kompakt özet `dbq-compact`.
+ *
+ * <p>2026-11-05 (dbq2 C1): ölçülen değer kutusunda son 24 saatin DEĞER EĞİLİMİ (`value_trend` — mini grafik + yön + yüzde,
+ * nötr renk; kompakt kartta yalnız ok + yüzde) — `ValueTrend`, kanca `dbq-value-trend`. Alan yoksa bugünkü kutu.
  */
 export default function DbQueryMonitorCard({
   monitor: m, status = 'unknown', badge, onOpen,
@@ -162,7 +166,8 @@ function Metrics({ monitor: m }) {
   const until = m.active === false ? null : untilText(m.next_run_at, t)
   const nextAt = istanbulTime(m.next_run_at)
   const items = [
-    { key: 'value', label: t('dbq.card.value'), value: metricValueText(m.metric_value), Icon: null },
+    // Değer eğilimi (dbq2 C1): son 24 saatin mini grafiği + yön + yüzde — alan yoksa (eski sunucu) bugünkü kutu
+    { key: 'value', label: t('dbq.card.value'), value: metricValueText(m.metric_value), Icon: null, extra: <ValueTrend monitor={m} /> },
     { key: 'rows', label: t('dbq.card.rows'), value: rowCountText(m.row_count, m.row_count_capped), Icon: Rows3 },
     { key: 'duration', label: t('dbq.card.duration'), value: durationText(m.duration_ms, t), Icon: Timer, warn: !!m.slow },
     {
@@ -185,6 +190,7 @@ function Metrics({ monitor: m }) {
               className={cn('mt-1 min-w-0 text-[15px] leading-tight font-semibold text-foreground tabular-nums [overflow-wrap:anywhere]',
                 it.warn && 'text-amber-700 dark:text-amber-400')}>{it.value}</span>
             {it.sub && <span className="mt-0.5 text-[10.5px] leading-tight text-muted-foreground tabular-nums [overflow-wrap:anywhere]">{it.sub}</span>}
+            {it.extra}
             {it.warn && <span className="sr-only">{t('dbq.card.slowSr')}</span>}
           </div>
         ))}
@@ -200,7 +206,10 @@ function CompactSummary({ monitor: m }) {
     <>
       {m.last_check ? (
         <p data-slot="dbq-compact" className="mb-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
-          <span><span className="font-semibold text-foreground">{metricValueText(m.metric_value)}</span> {t('dbq.card.valueShort')}</span>
+          <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+            <span><span className="font-semibold text-foreground">{metricValueText(m.metric_value)}</span> {t('dbq.card.valueShort')}</span>
+            <ValueTrend monitor={m} variant="inline" className="self-center" />
+          </span>
           <span aria-hidden="true">·</span>
           <span>{m.row_count === 1 && !m.row_count_capped ? t('dbq.card.rowsShort.one', '1') : t('dbq.card.rowsShort', rowCountText(m.row_count, m.row_count_capped))}</span>
           <span aria-hidden="true">·</span>

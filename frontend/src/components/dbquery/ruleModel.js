@@ -7,7 +7,7 @@ export const MAX_RULES = 10
 export const MAX_LABEL = 120
 export const MAX_COLUMN = 128
 export const MAX_TEXT = 500
-export const RULE_KINDS = ['ROW_COUNT', 'COLUMN_VALUE', 'TEXT_MATCH', 'CHANGE', 'FRESHNESS']
+export const RULE_KINDS = ['ROW_COUNT', 'COLUMN_VALUE', 'TEXT_MATCH', 'CHANGE', 'FRESHNESS', 'ANOMALY', 'FROZEN']
 export const RULE_LOGICS = ['ANY', 'ALL']
 export const AGGREGATES = ['FIRST', 'MAX', 'MIN', 'SUM', 'AVG', 'COUNT_NONNULL']
 export const NUMERIC_OPERATORS = ['GT', 'GTE', 'LT', 'LTE', 'EQ', 'NEQ', 'BETWEEN', 'OUTSIDE']
@@ -30,6 +30,27 @@ export const AGE_UNITS = Object.freeze([
   { key: 'sec', seconds: 1 }, { key: 'min', seconds: 60 }, { key: 'hour', seconds: 3600 }, { key: 'day', seconds: 86400 },
 ])
 
+/**
+ * Akıllı kurallar (2026-11-05, dbq2 D — `DbQueryRules`): kendi parametreleriyle karar veren türler; işleç / uyarı / kritik
+ * eşiği YOK (sunucu gönderileni yok sayar). ANOMALY "olağan dışı değer": geçmiş ölçümlerin ortalaması ± k·σ dışına çıkınca;
+ * FROZEN "değer donmuş": ölçülen değer ardışık N zamanlanmış çalıştırmada aynı kalınca. Parametre adları sunucuyla tek
+ * sözleşme (düz alanlar): ANOMALY `direction, k_warning, k_critical, window, min_samples, season`; FROZEN `runs_warning,
+ * runs_critical?`. Sınırlar ve varsayılanlar `DbQueryRules.K_* / WINDOW_* / MIN_SAMPLES_* / RUNS_*`.
+ */
+export const SMART_KINDS = ['ANOMALY', 'FROZEN']
+export const ANOMALY_DIRECTIONS = ['both', 'up', 'down']
+export const SEASONS = ['none', 'daily', 'weekly']
+export const ANOMALY_LIMITS = Object.freeze({
+  K_MIN: 1, K_MAX: 10, K_WARNING_DEFAULT: 2.5, K_CRITICAL_DEFAULT: 3.5,
+  WINDOW_MIN: 10, WINDOW_MAX: 200, WINDOW_DEFAULT: 30, MIN_SAMPLES_MIN: 5, MIN_SAMPLES_DEFAULT: 10,
+})
+export const FROZEN_LIMITS = Object.freeze({ RUNS_MIN: 2, RUNS_MAX: 100, RUNS_WARNING_DEFAULT: 6 })
+export const ANOMALY_FIELDS = ['direction', 'k_warning', 'k_critical', 'window', 'min_samples', 'season']
+export const FROZEN_FIELDS = ['runs_warning', 'runs_critical']
+export const isAnomalyKind = (kind) => kind === 'ANOMALY'
+export const isFrozenKind = (kind) => kind === 'FROZEN'
+export const isSmartKind = (kind) => SMART_KINDS.includes(kind)
+
 const RANGE = new Set(['BETWEEN', 'OUTSIDE'])
 const NO_VALUE = new Set(['EMPTY', 'NOT_EMPTY'])
 
@@ -40,15 +61,16 @@ export const isFreshnessKind = (kind) => kind === 'FRESHNESS'
 /** Kolon gerektiren kural mı (COLUMN_VALUE, TEXT_MATCH, kolonun değişimi). */
 export function needsColumn(rule) {
   if (!rule) return false
-  if (rule.kind === 'COLUMN_VALUE' || rule.kind === 'TEXT_MATCH' || rule.kind === 'FRESHNESS') return true
+  if (rule.kind === 'COLUMN_VALUE' || rule.kind === 'TEXT_MATCH' || rule.kind === 'FRESHNESS' || isSmartKind(rule.kind)) return true
   return rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN'
 }
 /** Toplama (FIRST/MAX/…) gerektiren kural mı. */
 export function needsAggregate(rule) {
   if (!rule) return false
-  return rule.kind === 'COLUMN_VALUE' || rule.kind === 'FRESHNESS' || (rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN')
+  return rule.kind === 'COLUMN_VALUE' || rule.kind === 'FRESHNESS' || isSmartKind(rule.kind) || (rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN')
 }
-export const operatorsFor = (kind) => (isTextKind(kind) ? TEXT_OPERATORS : isFreshnessKind(kind) ? FRESHNESS_OPERATORS : NUMERIC_OPERATORS)
+/** Türün işleçleri; akıllı kurallarda işleç yok (boş liste — kartta işleç alanı çizilmez). */
+export const operatorsFor = (kind) => (isSmartKind(kind) ? [] : isTextKind(kind) ? TEXT_OPERATORS : isFreshnessKind(kind) ? FRESHNESS_OPERATORS : NUMERIC_OPERATORS)
 /** Türün toplama seçenekleri (tazelikte yalnız en yeni / en eski / ilk satır). */
 export const aggregatesFor = (kind) => (isFreshnessKind(kind) ? FRESHNESS_AGGREGATES : AGGREGATES)
 
@@ -60,6 +82,13 @@ export function newRuleId(now = Date.now(), rand = Math.random) {
 
 /** Türe göre boş kural (eşikler boş — kullanıcı girer). */
 export function newRule(kind = 'ROW_COUNT', id = newRuleId()) {
+  // Akıllı kurallar düz parametrelerle ve VARSAYILANLARLA başlar (kullanıcı hiçbir şeye dokunmadan kaydedebilir);
+  // işleç / eşik / kapsam / değişim alanları hiç yazılmaz (sunucu da yazmaz — kayıtlıyla karşılaştırma temiz kalsın)
+  if (kind === 'ANOMALY') {
+    return { id, label: '', kind, column: null, aggregate: 'FIRST', direction: 'both', k_warning: ANOMALY_LIMITS.K_WARNING_DEFAULT,
+      k_critical: ANOMALY_LIMITS.K_CRITICAL_DEFAULT, window: ANOMALY_LIMITS.WINDOW_DEFAULT, min_samples: ANOMALY_LIMITS.MIN_SAMPLES_DEFAULT, season: 'none' }
+  }
+  if (kind === 'FROZEN') return { id, label: '', kind, column: null, aggregate: 'FIRST', runs_warning: FROZEN_LIMITS.RUNS_WARNING_DEFAULT }
   const base = { id, label: '', kind, column: null, aggregate: null, operator: 'GT', scope: null, warning: null, critical: null, change: null }
   if (kind === 'COLUMN_VALUE') return { ...base, aggregate: 'FIRST' }
   if (kind === 'TEXT_MATCH') return { ...base, operator: 'CONTAINS', scope: 'ANY_ROW' }
@@ -76,7 +105,9 @@ export function changeKind(rule, kind) {
   if (!rule || rule.kind === kind) return rule
   const fresh = newRule(kind, rule.id)
   // Tazelik eşiği SANİYE (yaş) — satır sayısı / kolon değeri eşiği ile aynı birim değil: geçişte düşer
+  // Akıllı kurallarda eşik yok (kendi parametreleri) — sayısal eşikler bu türlere taşınmaz / onlardan gelmez
   const keepNumbers = !isTextKind(kind) && !isTextKind(rule.kind) && !isFreshnessKind(kind) && !isFreshnessKind(rule.kind)
+    && !isSmartKind(kind) && !isSmartKind(rule.kind)
   const out = { ...fresh, label: rule.label ?? '' }
   if (keepNumbers) {
     out.operator = NUMERIC_OPERATORS.includes(rule.operator) ? rule.operator : fresh.operator
@@ -219,6 +250,10 @@ const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
 
 /** Eşik dolu mu (aralıkta iki uçtan biri yeter — eksik uç ayrıca hata). */
 export function thresholdSet(rule, level) {
+  // Akıllı kurallar: uyarı seviyesi parametresi (k_warning / runs_warning) hep tanımlı sayılır; kritik ANOMALY'de hep var,
+  // FROZEN'da isteğe bağlı (runs_critical)
+  if (isAnomalyKind(rule?.kind)) return !isBlank(rule[level === 'critical' ? 'k_critical' : 'k_warning'])
+  if (isFrozenKind(rule?.kind)) return !isBlank(rule[level === 'critical' ? 'runs_critical' : 'runs_warning'])
   const v = rule?.[level]
   if (isTextKind(rule?.kind)) return v != null && (isNoValueOperator(rule.operator) || !isBlank(v))
   if (Array.isArray(v)) return v.some((x) => !isBlank(x))
@@ -237,6 +272,7 @@ export function validateRule(rule) {
     if (isBlank(rule.column)) out.column = 'column'
     else if (String(rule.column).trim().length > MAX_COLUMN) out.column = 'column_long'
   }
+  if (isSmartKind(rule.kind)) return Object.assign(out, validateSmart(rule))
   const levels = isTextKind(rule.kind) ? [rule.critical != null ? 'critical' : 'warning'] : LEVELS
   for (const lvl of levels) {
     const v = rule[lvl]
@@ -261,6 +297,46 @@ export function validateRule(rule) {
   return out
 }
 
+const isInt = (v) => typeof v === 'number' && Number.isInteger(v)
+
+/**
+ * Akıllı kural parametrelerinin istemci hataları (sunucu `DbQueryRules` ile aynı sınırlar; garanti sunucuda). Boş parametre
+ * hata DEĞİL — sunucu varsayılanı kullanır (yalnız `runs_critical` boşsa kritik seviye yok). Kodlar `dbq.rule.v.<kod>`.
+ */
+export function validateSmart(rule) {
+  const out = {}
+  const L = ANOMALY_LIMITS
+  if (isAnomalyKind(rule.kind)) {
+    if (!isBlank(rule.direction) && !ANOMALY_DIRECTIONS.includes(String(rule.direction).toLowerCase())) out.direction = 'anomaly_direction'
+    if (!isBlank(rule.season) && !SEASONS.includes(String(rule.season).toLowerCase())) out.season = 'anomaly_season'
+    const kw = isBlank(rule.k_warning) ? L.K_WARNING_DEFAULT : rule.k_warning
+    const kc = isBlank(rule.k_critical) ? L.K_CRITICAL_DEFAULT : rule.k_critical
+    if (!isNum(kw)) out.k_warning = 'number'
+    else if (kw < L.K_MIN || kw > L.K_MAX) out.k_warning = 'k_range'
+    if (!isNum(kc)) out.k_critical = 'number'
+    else if (kc < L.K_MIN || kc > L.K_MAX) out.k_critical = 'k_range'
+    else if (isNum(kw) && kc < kw) out.k_critical = 'k_order'
+    const win = isBlank(rule.window) ? L.WINDOW_DEFAULT : rule.window
+    const ms = isBlank(rule.min_samples) ? L.MIN_SAMPLES_DEFAULT : rule.min_samples
+    if (!isInt(win)) out.window = 'int'
+    else if (win < L.WINDOW_MIN || win > L.WINDOW_MAX) out.window = 'window_range'
+    if (!isInt(ms)) out.min_samples = 'int'
+    else if (ms < L.MIN_SAMPLES_MIN || (isInt(win) && ms > win)) out.min_samples = 'min_samples_range'
+    return out
+  }
+  const F = FROZEN_LIMITS
+  const rw = isBlank(rule.runs_warning) ? F.RUNS_WARNING_DEFAULT : rule.runs_warning
+  if (!isInt(rw)) out.runs_warning = 'int'
+  else if (rw < F.RUNS_MIN || rw > F.RUNS_MAX) out.runs_warning = 'runs_range'
+  if (!isBlank(rule.runs_critical)) {
+    const rc = rule.runs_critical
+    if (!isInt(rc)) out.runs_critical = 'int'
+    else if (rc > F.RUNS_MAX) out.runs_critical = 'runs_range'
+    else if (isInt(rw) && rc <= rw) out.runs_critical = 'runs_order'
+  }
+  return out
+}
+
 /**
  * Kural listesinin istemci hataları — sunucu alan adlarıyla (`rules[N].<alt>`). Sayfa kaydetmeden önce çağırabilir;
  * boş liste geçerlidir (kuralsız izleme yalnız hata / yavaşlık alarmı verir).
@@ -277,7 +353,7 @@ export function validateRules(rules) {
 
 /** Sıkılık uyarısı (hata değil): kritik eşik uyarıdan GEVŞEKSE uyarı hiç tetiklenmez — kullanıcıya söylenir. */
 export function strictnessHint(rule) {
-  if (!rule || isTextKind(rule.kind)) return null
+  if (!rule || isTextKind(rule.kind) || isSmartKind(rule.kind)) return null
   // Anlamsız negatif eşik (satır sayısı hiç negatif olmaz; "her iki yönde" değişim mutlak değerle ölçülür)
   const levelValues = LEVELS.flatMap((l) => (Array.isArray(rule[l]) ? rule[l] : [rule[l]])).filter(isNum)
   if (levelValues.some((n) => n < 0)) {
@@ -332,6 +408,7 @@ function numericPhrase(rule, value, t, lang) {
  */
 export function ruleSummary(rule, t, lang = 'tr') {
   if (!rule) return ''
+  if (isSmartKind(rule.kind)) return smartSummary(rule, t, lang)
   const subject = subjectOf(rule, t)
   const hasW = thresholdSet(rule, 'warning')
   const hasC = thresholdSet(rule, 'critical')
@@ -347,6 +424,36 @@ export function ruleSummary(rule, t, lang = 'tr') {
   if (hasW && hasC) return withSuffix(t('dbq.rule.sum.both', subject, numericPhrase(rule, rule.warning, t, lang), numericPhrase(rule, rule.critical, t, lang)))
   if (hasW) return withSuffix(t('dbq.rule.sum.warnOnly', subject, numericPhrase(rule, rule.warning, t, lang)))
   return withSuffix(t('dbq.rule.sum.critOnly', subject, numericPhrase(rule, rule.critical, t, lang)))
+}
+
+/** Akıllı kural parametresi: boşsa sunucu varsayılanı (özet ve görünüm aynı değeri söylesin). */
+export function smartParam(rule, key) {
+  const v = rule?.[key]
+  if (!isBlank(v)) return v
+  const d = { direction: 'both', season: 'none', k_warning: ANOMALY_LIMITS.K_WARNING_DEFAULT, k_critical: ANOMALY_LIMITS.K_CRITICAL_DEFAULT,
+    window: ANOMALY_LIMITS.WINDOW_DEFAULT, min_samples: ANOMALY_LIMITS.MIN_SAMPLES_DEFAULT, runs_warning: FROZEN_LIMITS.RUNS_WARNING_DEFAULT }
+  return d[key] ?? null
+}
+
+/**
+ * Akıllı kuralın özeti: ANOMALY "Kolon değeri (ilk satır) olağan aralığın dışına çıkarsa: ±2,5σ UYARI, ±3,5σ KRİTİK —
+ * taban: son 30 çalıştırma (en az 10 örnek)." · FROZEN "… 6 çalıştırma boyunca aynı kalırsa UYARI, 12 çalıştırma boyunca
+ * aynı kalırsa KRİTİK." Sayı biçimi dile göre; ayrıştırılamayan metin olduğu gibi.
+ */
+function smartSummary(rule, t, lang) {
+  const col = rule.column && String(rule.column).trim() ? String(rule.column).trim() : t('dbq.rule.sum.noColumn')
+  const subject = t(`dbq.rule.sum.subj.agg.${AGGREGATES.includes(rule.aggregate) ? rule.aggregate : 'FIRST'}`, col)
+  const n = (v) => (isNum(v) ? formatNumber(v, lang) : String(v ?? ''))
+  if (isAnomalyKind(rule.kind)) {
+    const dir = ANOMALY_DIRECTIONS.includes(String(smartParam(rule, 'direction')).toLowerCase()) ? String(smartParam(rule, 'direction')).toLowerCase() : 'both'
+    const season = SEASONS.includes(String(smartParam(rule, 'season')).toLowerCase()) ? String(smartParam(rule, 'season')).toLowerCase() : 'none'
+    return t(`dbq.rule.sum.anomaly.${dir}`, subject, n(smartParam(rule, 'k_warning')), n(smartParam(rule, 'k_critical')),
+      t(`dbq.rule.sum.season.${season}`, n(smartParam(rule, 'window'))), n(smartParam(rule, 'min_samples')))
+  }
+  const rw = n(smartParam(rule, 'runs_warning'))
+  return isBlank(rule.runs_critical)
+    ? t('dbq.rule.sum.frozenWarn', subject, rw)
+    : t('dbq.rule.sum.frozenBoth', subject, rw, n(rule.runs_critical))
 }
 
 /** Değişim kuralının tabanı (bilinmeyen / yok → önceki çalışma). */

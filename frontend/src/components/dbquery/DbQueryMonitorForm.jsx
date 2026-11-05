@@ -144,7 +144,7 @@ export function QuerySection({
 /** Değerlendirme: kural oluşturucu (yapı taşı) + yavaş sorgu eşiği. `locked` (K2): kurallar, birleşim ve eşik salt okunur. */
 export function EvaluationSection({
   form, setForm, ruleErrors, columns, slowError, onRulesChange, clear, disabled: off = false, locked = false,
-  trapIndexes = null, trapColumn = null, newRuleFactory = null, backtestMonitorId = null,
+  trapIndexes = null, trapColumn = null, newRuleFactory = null, backtestMonitorId = null, ruleSuggest = null,
 }) {
   const t = useT()
   const disabled = off || locked
@@ -152,7 +152,7 @@ export function EvaluationSection({
     <DbqSection id="evaluation" icon={ListChecks} title={t('dbq.form.secEvaluation')} hint={t('dbq.form.secEvaluationHint')}>
       {locked && <GrantLockNote>{t('dbq.form.grantLockedRules')}</GrantLockNote>}
       <RuleBuilder rules={form.rules} logic={form.ruleLogic} columns={columns} fieldErrors={ruleErrors} disabled={disabled}
-        trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory}
+        trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory} suggest={ruleSuggest}
         onChange={onRulesChange} onLogicChange={(logic) => setForm((f) => ({ ...f, ruleLogic: logic }))} />
       {/* Geriye dönük eşik denemesi (2.D) — yalnız kayıtlı izlemede (saklı ölçüm gerekir) ve kurallar düzenlenebilirken */}
       {backtestMonitorId != null && !locked && (

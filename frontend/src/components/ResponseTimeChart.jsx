@@ -10,6 +10,7 @@ import ChartToolbar from './responsechart/ChartToolbar.jsx'
 import ChartKpis from './responsechart/ChartKpis.jsx'
 import ChartPanel from './responsechart/ChartPanel.jsx'
 import { useResponseSeries } from './responsechart/useResponseSeries.js'
+import { chartEvents, hasEventFields } from './responsechart/chartEvents.js'
 import {
   DEFAULT_PRESET, buildSummary, computeStats, isLiveRange, kindMeta, levelLines, makeFormat, nextWiderPreset, resolveUnit,
   shapeSeries, toIso, validThreshold,
@@ -61,6 +62,8 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit, budge
   const shape = useMemo(() => (view ? shapeSeries(view.data, { aux: meta.aux }) : null), [view, meta.aux])
   // Kural eşiği çizgileri (veritabanı sorgusu "ölçülen değer" — sunucu `thresholds` verirse; yoksa bugünkü grafik)
   const levels = useMemo(() => levelLines(view?.data?.thresholds), [view])
+  // Olay katmanı (veritabanı sorgusu — sunucu `alarms` / `changes` gönderirse; başka türde alan yok → bugünkü grafik)
+  const events = useMemo(() => (shape && hasEventFields(view?.data) ? chartEvents(view.data, shape.domain) : null), [view, shape])
   const stats = useMemo(
     () => (shape ? computeStats(shape, { threshold: shown.threshold, aux: meta.aux }) : null),
     [shape, shown.threshold, meta.aux],
@@ -124,7 +127,7 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit, budge
         data-stale={stale ? 'true' : undefined}>
         <ChartKpis t={t} stats={stats} fmt={fmt} raw={shape.raw} aux={meta.aux} threshold={shown.threshold} />
         <ChartPanel t={t} title={title} shape={shape} stats={stats} fmt={fmt} aux={meta.aux} auxLabel={auxLabel}
-          threshold={shown.threshold} thresholdLabel={shown.thresholdLabel} levels={levels} hidden={hidden} onHiddenChange={setHidden}
+          threshold={shown.threshold} thresholdLabel={shown.thresholdLabel} levels={levels} events={events} hidden={hidden} onHiddenChange={setHidden}
           summary={buildSummary({ t, rangeKey, stats, fmt })} busy={loading && stale} />
       </div>
     )
