@@ -473,6 +473,19 @@ kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu 
       YOKLUĞU (`kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -iE "sertleştirme|restricted method"`).
       Bir sentetik izlemede "Şimdi kontrol et" normal sonuç vermeli. `jcmd` artık bağlanmaz — iş parçacığı dökümü `kill -3 1`.
 
+### Alarm akışı 7/24 süzgeci ve kaynak analizi algoritma 3 — bir kerelik
+- [ ] **Alarm akışı yalnız 7/24 alarmlarını verir (varsayılan AÇIK, `site.monitor.alarm-feed.noc-only`):** dağıtımdan
+      sonraki ilk çağrıda, daha önce akışa OPEN olarak gönderilmiş ama 7/24'e bildirilmeyen (izlemede "7/24 ekibine bildir"
+      kapalı, izleme pasif, 7/24 ayarında türü kapalı ya da 7/24'ün en düşük seviyesinin altında) her açık alarm BİR KEZ
+      RESOLVED (kapsam dışı) olarak gelir; sonra yalnız 7/24 alarmları gelir. Dağıtımdan ÖNCE merkezi izleme ekibine haber
+      verin. Eski davranış gerekirse dağıtımdan sonra Ayarlar → Platform → Alarm akışı → "Yalnız 7/24'e bildirilen alarmlar"
+      kapatılır (ya da env `ALARM_FEED_NOC_ONLY=false`). İzleme listesi ya da 7/24 ayarı okunamazsa akış 503 döner — hiçbir
+      alarm sahte RESOLVED ile kapatılmaz.
+- [ ] **Kaynak analizi:** yeni kolonlar (`page_resource_scans` 8 kolon, `page_monitors.resource_budget_json`) açılışta
+      `patch()` ile eklenir, boş tablo / yedek gerekmez. Analiz yalnız istenince koşar; algoritma 3 tarama sırasında ek ağ
+      isteği yapar (sunucu başına bağlantı ölçümü ≤ 30, kaynak haritası HEAD ≤ 10) — hedef sitelere giden trafik biraz artar.
+      Karışık podlarda eski pod algoritma 2 üretir ve "Siteyi analiz et" isteğini tek sayfa koşar.
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
