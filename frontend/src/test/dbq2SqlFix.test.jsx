@@ -9,7 +9,7 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({ api: withApiFallback({ monitoring: { dbQuerySqlCheck: vi.fn(), dbQuerySqlFix: vi.fn() } }) }))
 import { api } from '../api/client'
-import SqlEditor from '../components/dbquery/SqlEditor.jsx'
+import SqlEditor, { SQL_CHECK_BUSY_RETRIES } from '../components/dbquery/SqlEditor.jsx'
 
 const NOLOCK_SQL = 'SELECT COUNT(*) AS bekleyen\nFROM dbo.Orders\nWHERE status = 0'
 const FIXED_SQL = 'SELECT COUNT(*) AS bekleyen\nFROM dbo.Orders WITH (NOLOCK)\nWHERE status = 0'
@@ -23,6 +23,76 @@ const guard = () => document.querySelector('[data-slot="dbq-sql-guard"]')
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+})
+
+describe('SqlEditor — sunucu "kısa süre bekle" (429, be1)', () => {
+  it('canlı denetim 429 DBQUERY_BUSY: hata DEĞİL — nötr "beklemede" notu (asla yeşil / ret değil), bekleme sonrası kendiliğinden yeniden dener', async () => {
+    api.monitoring.dbQuerySqlCheck
+      .mockResolvedValueOnce({ success: false, status: 429, code: 'DBQUERY_BUSY', error: 'Meşgul', retry_after_seconds: 1 })
+      .mockResolvedValue({ success: true, data: { ok: true, violations: [], tables: ['orders'] } })
+    const states = []
+    function Spy() {
+      const [v, setV] = useState('SELECT id FROM orders')
+      return <SqlEditor value={v} onChange={setV} dbType="POSTGRESQL" onGuardChange={(g) => states.push(g.status)} />
+    }
+    render(<Spy />)
+    const note = await waitFor(() => { const n = document.querySelector('[data-slot="dbq-sql-busy"]'); if (!n) throw new Error('yok'); return n }, { timeout: 2000 })
+    expect(note.textContent).toContain('1 sn')
+    expect(guard().getAttribute('data-status')).toBe('checking')
+    expect(document.querySelector('[data-slot="dbq-sql-unknown"]')).toBeNull()
+    expect(document.querySelector('[data-slot="dbq-sql-ok"]')).toBeNull()
+    await waitFor(() => expect(guard().getAttribute('data-status')).toBe('ok'), { timeout: 4000 })
+    expect(document.querySelector('[data-slot="dbq-sql-busy"]')).toBeNull()
+    expect(api.monitoring.dbQuerySqlCheck).toHaveBeenCalledTimes(2)
+    expect(states).not.toContain('unknown')
+    expect(states).not.toContain('rejected')
+  })
+
+  it('üst üste 429 sınırsız denenmez: SQL_CHECK_BUSY_RETRIES sonra "denetlenemedi" + elle yeniden dene', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      api.monitoring.dbQuerySqlCheck.mockResolvedValue({ success: false, status: 429, code: 'RATE_LIMITED', error: 'Dakikalık sınır', retry_after_seconds: 1 })
+      render(<Harness initial="SELECT id FROM orders" dbType="POSTGRESQL" fix={null} />)
+      for (let i = 0; i < 12; i++) await vi.advanceTimersByTimeAsync(1500)
+      await waitFor(() => expect(guard().getAttribute('data-status')).toBe('unknown'))
+      expect(api.monitoring.dbQuerySqlCheck).toHaveBeenCalledTimes(SQL_CHECK_BUSY_RETRIES + 1)
+      expect(document.querySelector('[data-slot="dbq-sql-recheck"]')).not.toBeNull()
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(api.monitoring.dbQuerySqlCheck).toHaveBeenCalledTimes(SQL_CHECK_BUSY_RETRIES + 1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('düzeltme önerileri 429: bilgi notu + kendiliğinden yeniden istek ("otomatik düzeltme yok" DEĞİL); db_type her zaman gider', async () => {
+    api.monitoring.dbQuerySqlCheck.mockResolvedValue({ success: true, data: { ok: true, violations: [], tables: ['orders'] } })
+    api.monitoring.dbQuerySqlFix
+      .mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED', error: 'Dakikalık sınır', retry_after_seconds: 1 })
+      .mockResolvedValue({ success: true, data: { fixes: [{ code: 'ADD_ROW_LIMIT', sql: 'SELECT id FROM orders\nLIMIT 1000', changed: ['LIMIT 1000'] }],
+        skipped: [{ code: 'ADD_NOLOCK', reason: 'NOT_MSSQL' }] } })
+    render(<Harness initial="SELECT id FROM orders" dbType="POSTGRESQL" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Düzeltme önerileri/ }, { timeout: 2000 }))
+    const busy = await waitFor(() => { const b = document.querySelector('[data-slot="dbq-fix-busy"]'); if (!b) throw new Error('yok'); return b })
+    expect(busy.textContent).toContain('1 sn')
+    expect(document.querySelector('[data-slot="dbq-fix"]').getAttribute('data-state')).toBe('busy')
+    expect(document.querySelector('[data-slot="dbq-fix-none"]')).toBeNull()
+    expect(document.querySelector('[data-slot="dbq-fix-error"]')).toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-fix-item"][data-code="ADD_ROW_LIMIT"]')).not.toBeNull(), { timeout: 4000 })
+    expect(api.monitoring.dbQuerySqlFix).toHaveBeenCalledTimes(2)
+    for (const call of api.monitoring.dbQuerySqlFix.mock.calls) expect(call[0].db_type).toBe('POSTGRESQL')
+  })
+
+  it('yeni önerilmeme nedenleri CHECK_TIMEOUT / SINGLE_ROW okunur metinle', async () => {
+    api.monitoring.dbQuerySqlCheck.mockResolvedValue({ success: true, data: { ok: true, violations: [], tables: ['orders'] } })
+    api.monitoring.dbQuerySqlFix.mockResolvedValue({ success: true, data: { fixes: [], skipped: [
+      { code: 'ADD_ROW_LIMIT', reason: 'SINGLE_ROW' }, { code: 'ADD_NOLOCK', reason: 'CHECK_TIMEOUT' },
+    ] } })
+    render(<Harness initial="SELECT id FROM orders" dbType="POSTGRESQL" />)
+    fireEvent.click(await screen.findByRole('button', { name: /Düzeltme önerileri/ }, { timeout: 2000 }))
+    const sk = await waitFor(() => { const e = document.querySelector('[data-slot="dbq-fix-skipped"]'); if (!e) throw new Error('yok'); return e })
+    expect(sk.querySelector('[data-reason="SINGLE_ROW"]').textContent).toContain('tek satır')
+    expect(sk.querySelector('[data-reason="CHECK_TIMEOUT"]').textContent).toContain('zaman sınırına')
+  })
 })
 
 describe('SqlEditor — güvenli düzeltme', () => {
@@ -64,6 +134,9 @@ describe('SqlEditor — güvenli düzeltme', () => {
     expect(limit.querySelector('[data-slot="dbq-fix-warning"][data-code="ROW_COUNT_AFFECTED"]')).not.toBeNull()
     const cols = document.querySelector('[data-slot="dbq-fix-item"][data-code="SELECT_COLUMNS"]')
     expect(cols).not.toBeNull()
+    // istemci önerisi sunucunun denetiminden geçmedi — uyarı her zaman (O3)
+    expect(cols.querySelector('[data-slot="dbq-fix-warning"][data-code="COLUMNS_FROM_TEST"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="dbq-fix-diff-stats"]').textContent).toMatch(/1 satır (eklendi|çıkarıldı)/)
     fireEvent.click(within(cols).getByRole('button', { name: /Uygula/ }))
     expect(onValue).toHaveBeenCalledWith('SELECT id, status FROM orders WHERE status = 0')
   })

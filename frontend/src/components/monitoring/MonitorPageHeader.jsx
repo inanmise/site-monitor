@@ -119,8 +119,9 @@ export default function MonitorPageHeader({
   ) : null
 
   // Telefonda 40 px dokunma hedefi, ≥640 px'te shadcn varsayılanı (36 px) — Pano başlığıyla aynı boy.
-  const H = 'h-10 sm:h-9'
-  const SQ = 'size-10 sm:size-9'
+  // Dokunmatik ekranda (tablet 768 dahil) 40 px — `sm:h-9` dokunmatik boyu ezmesin diye birleşik çeşit
+  const H = 'h-10 sm:h-9 sm:pointer-coarse:h-10'
+  const SQ = 'size-10 sm:size-9 sm:pointer-coarse:size-10'
 
   const secondaryInline = (
     <>

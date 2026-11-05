@@ -4,6 +4,7 @@
 
 import { validateRules } from '../ruleModel.js'
 import { MAX_SQL_CHARS } from '../sqlEditorModel.js'
+import { SCHEDULE_FIELD_KEYS } from '../dbqueryPageModel.js'
 
 /** Adım sırası — gösterge ve ilerleme bu sırayla. */
 export const WIZ_STEPS = Object.freeze(['connection', 'query', 'test', 'rules', 'schedule', 'summary'])
@@ -30,6 +31,26 @@ export function stepOfField(key) {
   if (typeof key !== 'string' || !key) return 'advanced'
   if (key.startsWith('rules[')) return 'rules'
   return FIELD_STEP[key] || 'advanced'
+}
+
+/**
+ * Adımda bir alanın ALTINDA çizilen hata anahtarları (O4). Adıma eşlenen ama burada olmayan anahtar (bildirim seviyesi,
+ * bildirim / 7/24 grupları, tatil atlama, kural mantığı …) adımın başındaki bantta METİN olarak yazılır — adım göstergesi
+ * "1 hatalı alan" deyip ekranda hiçbir ileti göstermemesin.
+ */
+const RENDERED_KEYS = {
+  connection: ['team_id', 'profile_id'],
+  query: ['sql_text'],
+  rules: ['rules', 'slow_query_ms'],
+  schedule: SCHEDULE_FIELD_KEYS,
+  summary: ['name', 'purpose', 'group_name', 'tags'],
+}
+
+/** Adımın bantta yazılacak hataları → `[[anahtar, ileti]]` (alanının altında çizilmeyenler). */
+export function stepBannerErrors(step, errors) {
+  const rendered = RENDERED_KEYS[step] || []
+  return Object.entries(errors || {}).filter(([k, v]) => v && stepOfField(k) === step
+    && !rendered.includes(k) && !(step === 'rules' && k.startsWith('rules[')))
 }
 
 /** Hata haritasındaki ilk (adım sırasına göre) adım; yalnız gelişmiş alan varsa `advanced`; boşsa null. */

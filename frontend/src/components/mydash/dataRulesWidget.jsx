@@ -22,6 +22,7 @@ const PROBLEM = {
   fail: { tone: 'danger', key: 'mydash.rules.p.fail' },
   critical: { tone: 'danger', key: 'mydash.rules.p.critical' },
   warning: { tone: 'warning', key: 'mydash.rules.p.warning' },
+  slow: { tone: 'warning', key: 'mydash.rules.p.slow' },
   alarm: { tone: 'warning', key: 'mydash.rules.p.alarm' },
   unknown: { tone: 'muted', key: 'mydash.rules.p.unknown' },
 }
@@ -42,6 +43,7 @@ export function DataRulesWidget({ frame, refreshKey }) {
   const toneLabel = s.hidden ? t('mydash.noAccess')
     : s.fail > 0 ? t('mydash.rules.failCount', s.fail)
     : s.breach + s.alarm > 0 ? t('mydash.rules.breachCount', s.breach + s.alarm)
+    : s.slow > 0 ? t('mydash.rules.slowCount', s.slow)
     : s.active === 0 ? t('mydash.rules.none')
     : s.unknown > 0 ? t('mydash.rules.unknownCount', s.unknown)
     : t('mydash.allClear')

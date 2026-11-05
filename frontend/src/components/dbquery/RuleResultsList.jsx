@@ -50,7 +50,10 @@ export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'f
   // 2026-10-31 (r177): sorgu / kural değişti → taban yeniden kuruluyor; mevsimsel taban yok; tazelik kolonu zaman damgası değil
   'baseline_reset', 'no_seasonal_baseline', 'not_timestamp', 'db_clock_unavailable', 'future_timestamp',
   // 2026-11-05 (dbq2 D): akıllı kural (olağan dışı / donmuş) tabanı kuruluyor
-  'building_baseline']
+  'building_baseline',
+  // 2026-11-05 (be2 inceleme): yeterli çalıştırma var ama örnek az (boş değer / tabandan dışlanan ihlal) — KANIT EKSİK
+  // (değerlendirilemedi, kontrol satırı UNKNOWN); BASELINE_NOTES'ta DEĞİL
+  'insufficient_samples']
 
 /** Not → metin: bilinen kod çevrilir, bilinmeyen not (eski kayıt / serbest metin) olduğu gibi gösterilir. */
 export function resultNoteText(t, note) {
@@ -61,8 +64,8 @@ export function resultNoteText(t, note) {
 }
 
 /**
- * Akıllı kural sonucunun ek gösterimi (2026-11-05, dbq2 D): olağan aralık (ANOMALY — mini çubuk + "olağan 300–700 · sapma
- * +9,4σ"), donma sayacı (FROZEN — "aynı değer 7 çalıştırmadır") ya da taban sayacı ("taban kuruluyor: 4 / 10 örnek").
+ * Akıllı kural sonucunun ek gösterimi (2026-11-05, dbq2 D): olağan aralık (ANOMALY — yalnız mini çubuk + örnek sayısı; aralık
+ * ve sapma METNİ sunucunun yöne göre yazdığı `actual`ta), donma sayacı (FROZEN — "aynı değer 7 çalıştırmadır") ya da taban sayacı ("taban kuruluyor: 4 / 10 örnek").
  * Sunucu ek alanları yoksa (eski satır) hiçbir şey çizilmez. Renk seviyeyi taşır (çubuktaki değer noktası); bant nötr.
  * Test kancaları: `dbq-rr-smart` (+ `data-kind` band|frozen|building), çubuk `dbq-rr-band`, değer noktası `dbq-rr-band-value`.
  */
@@ -77,20 +80,23 @@ export function SmartResultDetail({ result, compact = false }) {
     return <span data-slot="dbq-rr-smart" data-kind="building" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{text}</span>
   }
   if (d.kind === 'frozen') {
-    const text = t(d.atLeast ? 'dbq.rr.smart.frozenAtLeast' : (d.sameRuns <= 1 ? 'dbq.rr.smart.frozenChanged' : 'dbq.rr.smart.frozen'), n(d.sameRuns))
+    // "değer değişti" yalnız DEĞERLENDİRİLMİŞ sonuçta (O5) — taban kuruluyorken / sıfırlanmışken söylenmez
+    const key = d.atLeast ? 'dbq.rr.smart.frozenAtLeast'
+      : d.sameRuns <= 1 ? (d.evaluated ? 'dbq.rr.smart.frozenChanged' : null) : 'dbq.rr.smart.frozen'
+    if (!key) return null
+    const text = t(key, n(d.sameRuns))
     return <span data-slot="dbq-rr-smart" data-kind="frozen" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{text}</span>
   }
-  const band = d.low != null && d.high != null ? t('dbq.rr.smart.band', n(d.low), n(d.high))
-    : d.high != null ? t('dbq.rr.smart.bandUpper', n(d.high)) : t('dbq.rr.smart.bandLower', n(d.low))
-  const dev = d.deviation == null ? null
-    : d.unbounded ? t('dbq.rr.smart.devUnbounded')
-    : t('dbq.rr.smart.dev', `${d.deviation > 0 ? '+' : d.deviation < 0 ? '−' : ''}${n(Math.round(Math.abs(d.deviation) * 10) / 10)}`)
+  // Olağan aralık ve sapma METİN olarak yazılmaz (O5): sunucunun `actual` metni kuralın YÖNÜNE göre tek uçlu ("olağan
+  // ≤ 700 · sapma +9,4σ") ve hemen üstte; sonuç öğesi yönü taşımadığı için iki uçlu bant ("300 – 700", σ = 0'da "500 –
+  // 500") onunla çelişirdi. Burada yalnız mini çubuk (konum) ve örnek sayısı.
+  const pos = d.position
+  if (compact || ((!pos || pos.value == null) && d.samples == null)) return null
   const level = result?.level === 'CRITICAL' ? 'critical' : result?.level === 'WARNING' ? 'warning' : 'ok'
   const dot = { critical: 'bg-destructive', warning: 'bg-amber-500', ok: 'bg-foreground/70' }[level]
-  const pos = d.position
   return (
     <span data-slot="dbq-rr-smart" data-kind="band" className="flex min-w-0 flex-col gap-1">
-      {!compact && pos && pos.value != null && (
+      {pos && pos.value != null && (
         <span data-slot="dbq-rr-band" aria-hidden="true" className="relative block h-2 w-full max-w-56 rounded-full bg-muted">
           <span className="absolute inset-y-0 rounded-full bg-primary/25"
             style={{ left: `${Math.max(0, pos.low) * 100}%`, width: `${Math.max(0, Math.min(1, pos.high) - Math.max(0, pos.low)) * 100}%` }} />
@@ -99,9 +105,7 @@ export function SmartResultDetail({ result, compact = false }) {
             style={{ left: `${Math.max(0, Math.min(1, pos.value)) * 100}%` }} />
         </span>
       )}
-      <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-        {band}{dev ? ` · ${dev}` : ''}{d.samples != null && !compact ? ` · ${t('dbq.rr.smart.samples', n(d.samples))}` : ''}
-      </span>
+      {d.samples != null && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('dbq.rr.smart.samples', n(d.samples))}</span>}
     </span>
   )
 }

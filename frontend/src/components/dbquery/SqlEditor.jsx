@@ -13,10 +13,13 @@ import { Spinner } from '../ui/Progress.jsx'
 import {
   MAX_SQL_CHARS, indent, isGuardTimeout, isKnownGuardCode, lineCount, newlineWithIndent, offsetOf,
 } from './sqlEditorModel.js'
-import { hasFixableViolation, rowLimitSuggestable, selectStarFix } from './sqlFix.js'
+import { busyWaitSeconds, hasFixableViolation, rowLimitSuggestable, selectStarFix } from './sqlFix.js'
 
 // Düzeltme penceresi yalnız açılınca yüklenir (B2)
 const SqlFixDialog = lazy(() => import('./SqlFixDialog.jsx'))
+
+/** Üst üste otomatik "bekle, yeniden dene" (429) sayısı — sonra "denetlenemedi" + elle yeniden dene (sonsuz döngü yok). */
+export const SQL_CHECK_BUSY_RETRIES = 6
 
 /** Canlı denetim bekleme süresi (ms) — yazarken her tuşta istek gitmesin. */
 export const SQL_CHECK_DEBOUNCE_MS = 400
@@ -72,6 +75,10 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   const pendingSel = useRef(null)
   const escTab = useRef(false)
   const seqRef = useRef(0)
+  // Son TAMAMLANAN denetim (hangi sorgu + tür için) ve 429 sonrası otomatik yeniden deneme zamanlayıcısı / sayacı
+  const lastDoneRef = useRef(null)
+  const busyTimerRef = useRef(null)
+  const busyTriesRef = useRef(0)
   const [recheck, setRecheck] = useState(0)
   const [fixOpen, setFixOpen] = useState(false)
   const [fixApplied, setFixApplied] = useState(null)   // son uygulanan düzeltmenin kodu (ekran okuyucu duyurusu)
@@ -102,13 +109,25 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
     // Salt okunur görünüm: canlı denetim yok, durum da söylenmez (idle) — sunucu kayıtta zaten denetler
     if (disabled) { setGuard((g) => (g.status === 'idle' ? g : { status: 'idle', violations: [], tables: [], message: null })); return undefined }
     if (!text.trim()) { setGuard({ status: 'empty', violations: [], tables: [], message: null }); return undefined }
-    setGuard((g) => ({ ...g, status: 'checking' }))
+    // 429 beklemesindeki yeniden denemede gösterilen son sonuç yerinde kalır (aynı sorgu); başka sorguda sayaç sıfırlanır
+    setGuard((g) => (g.busy && g.busyFor === text ? g : { ...g, status: 'checking', busy: null, busyFor: null }))
     const ctrl = new AbortController()
     const timer = setTimeout(async () => {
       let next
       try {
         const res = await api.monitoring.dbQuerySqlCheck(text, dbType || null, { signal: ctrl.signal })
         if (seq !== seqRef.current || ctrl.signal.aborted) return
+        // 429 (DBQUERY_BUSY / RATE_LIMITED): HATA değil — son sonuç tutulur, nötr not, bekleme sonrası yeniden denenir
+        const wait = busyWaitSeconds(res)
+        if (wait != null && busyTriesRef.current < SQL_CHECK_BUSY_RETRIES) {
+          busyTriesRef.current += 1
+          const last = lastDoneRef.current
+          const kept = last && last.text === text && last.dbType === (dbType || null) ? last.guard : null
+          setGuard(kept ? { ...kept, busy: wait, busyFor: text } : { status: 'checking', violations: [], tables: [], message: null, busy: wait, busyFor: text })
+          clearTimeout(busyTimerRef.current)
+          busyTimerRef.current = setTimeout(() => { busyTimerRef.current = null; setRecheck((n) => n + 1) }, wait * 1000)
+          return
+        }
         const d = res?.success ? res.data : null
         if (d && typeof d === 'object') {
           const list = Array.isArray(d.violations) ? d.violations : []
@@ -126,10 +145,16 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
         if (seq !== seqRef.current || ctrl.signal.aborted) return
         next = { status: 'unknown', violations: [], tables: [], message: e?.message || null }
       }
+      busyTriesRef.current = 0
+      lastDoneRef.current = { text, dbType: dbType || null, guard: next }
       setGuard(next)
     }, SQL_CHECK_DEBOUNCE_MS)
     return () => { clearTimeout(timer); ctrl.abort() }
   }, [text, dbType, disabled, recheck])
+
+  // Sorgu / tür değişince bekleyen 429 yeniden denemesi iptal, sayaç sıfır; söküldüğünde zamanlayıcı kalmaz
+  useEffect(() => { busyTriesRef.current = 0; clearTimeout(busyTimerRef.current); busyTimerRef.current = null }, [text, dbType])
+  useEffect(() => () => clearTimeout(busyTimerRef.current), [])
 
   const shown = servedActive
     ? (isGuardTimeout(served.list)
@@ -306,7 +331,14 @@ function GuardStatus({ id, guard, t, onGo, onRecheck, onFix = null, canSuggest =
   const tables = guard.tables || []
   return (
     <div id={id} data-slot="dbq-sql-guard" data-status={status} className="flex min-w-0 flex-col gap-2" aria-live="polite">
-      {status === 'checking' && (
+      {/* 429 beklemesi: nötr not (hata değil); son sonuç varsa altında yerinde kalır */}
+      {guard.busy != null && (
+        <p data-slot="dbq-sql-busy" className="m-0 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Info aria-hidden="true" className="size-4 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{t('dbq.sql.busy', guard.busy)}</span>
+        </p>
+      )}
+      {status === 'checking' && guard.busy == null && (
         <p className="m-0 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <Spinner size={14} inline decorative />{t('dbq.sql.checking')}
         </p>

@@ -15,8 +15,9 @@ import {
   FROZEN_FIELDS, FROZEN_LIMITS, MAX_RULES, RULE_KINDS, RULE_LOGICS, SCOPES, SEASONS,
   ageUnitFor, aggregatesFor, changeBaseline, changeKind, changeOperator, formatInputNumber, formatNumber, isAnomalyKind, isFreshnessKind,
   isNoValueOperator, isRangeOperator, isSmartKind, isTextKind, moveRule, needsAggregate, needsColumn, newRule, operatorsFor, parseNumber,
-  ruleSummary, setTextLevel, smartParam, strictnessHint, textLevel, unitSeconds, validateRule,
+  ruleSummary, seasonRareIndexes, setTextLevel, smartParam, strictnessHint, textLevel, unitSeconds, validateRule,
 } from './ruleModel.js'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { toColumnValueRule } from './ruleSuggest.js'
 import ThresholdSuggest from './ThresholdSuggest.jsx'
 
@@ -86,7 +87,7 @@ export function renderedRuleFields(rule) {
  */
 export default function RuleBuilder({
   rules, logic, onChange, onLogicChange, columns, fieldErrors, disabled = false,
-  trapIndexes = null, trapColumn = null, newRuleFactory = null, suggest = null,
+  trapIndexes = null, trapColumn = null, newRuleFactory = null, suggest = null, schedule = null,
 }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -94,6 +95,8 @@ export default function RuleBuilder({
   const errs = fieldErrors || {}
   const atMax = list.length >= MAX_RULES
   const traps = useMemo(() => new Set(trapIndexes ? [...trapIndexes] : []), [trapIndexes])
+  // Mevsimsel taban + günü / haftayı bölmeyen aralık (sunucunun ANOMALY_SEASON_RARE kayıt uyarısının eşi; engellemez)
+  const seasonRare = useMemo(() => seasonRareIndexes(list, schedule), [list, schedule])
 
   const update = useCallback((i, next) => {
     onChange?.(list.map((r, j) => (j === i ? next : r)))
@@ -135,7 +138,7 @@ export default function RuleBuilder({
         {list.map((r, i) => (
           <li key={r.id || `idx-${i}`}>
             <RuleCard rule={r} index={i} count={list.length} columns={columns} disabled={disabled} errs={errs}
-              trap={traps.has(i) && r?.kind === 'ROW_COUNT'} trapColumn={trapColumn} suggest={suggest}
+              trap={traps.has(i) && r?.kind === 'ROW_COUNT'} trapColumn={trapColumn} suggest={suggest} seasonRare={seasonRare.has(i)}
               onChange={(next) => update(i, next)} onRemove={() => remove(i)}
               onMove={(d) => onChange?.(moveRule(list, i, d))} />
           </li>
@@ -155,7 +158,7 @@ export default function RuleBuilder({
 }
 
 /** Tek kural kartı. */
-function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove, trap = false, trapColumn = null, suggest = null }) {
+function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove, trap = false, trapColumn = null, suggest = null, seasonRare = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const client = useMemo(() => validateRule(rule), [rule])
@@ -274,7 +277,7 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
 
       <div className="border-t px-3 py-3 sm:px-4">
         {isSmartKind(rule.kind)
-          ? <SmartFields rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
+          ? <SmartFields rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} seasonRare={seasonRare} />
           : text
           ? <TextThreshold rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} />
           : isFreshnessKind(rule.kind)
@@ -526,7 +529,7 @@ function SmartAbout({ kind }) {
  * sunucu varsayılanı (yer tutucuda yazılı); sayı TR "2,5" / EN "2.5" biçiminde, geçersiz metin kurala metin olarak geçer
  * (alan hatası anında + sunucu da döner). Alan anahtarları sunucuyla aynı (`rules[N].k_warning` …).
  */
-function SmartFields({ rule, index, disabled, err, onChange, lang }) {
+function SmartFields({ rule, index, disabled, err, onChange, lang, seasonRare = false }) {
   const t = useT()
   const set = (k) => (v) => {
     const next = { ...rule }
@@ -588,6 +591,11 @@ function SmartFields({ rule, index, disabled, err, onChange, lang }) {
             </NativeSelect>
           )}
         </Field>
+        {seasonRare && (
+          <AlertBanner tone="warning" icon={TriangleAlert} title={t('dbq.warn.ANOMALY_SEASON_RARE.title')} className="mb-0 sm:col-span-2">
+            <span data-slot="dbq-rule-season-rare" className="[overflow-wrap:anywhere]">{t('dbq.warn.ANOMALY_SEASON_RARE.body')}</span>
+          </AlertBanner>
+        )}
         {numField('window', { label: t(`dbq.rule.anomaly.window.${season}`), hint: t('dbq.rule.anomaly.windowHint', L.WINDOW_MIN, L.WINDOW_MAX),
           placeholder: ph(L.WINDOW_DEFAULT) })}
         {numField('min_samples', { label: t('dbq.rule.anomaly.minSamples'), hint: t('dbq.rule.anomaly.minSamplesHint', L.MIN_SAMPLES_MIN),

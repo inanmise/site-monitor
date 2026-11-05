@@ -61,6 +61,7 @@ import {
 } from './dbquery/dbqueryPageModel.js'
 import { WARNING_CODES, countTrapIndexes, defaultNewRule, primaryValueColumn, ruleFromColumn } from './dbquery/ruleSuggest.js'
 import { MAX_RULES } from './dbquery/ruleModel.js'
+import { bulkCounts, bulkSummaryText, hasUnfinished } from './dbquery/bulkCreateModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
@@ -217,6 +218,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)
   const [form, setForm] = useState(emptyForm)
+  // Sihirbazdan taşınan alan hataları (D8): `useFormErrors` açılışta hataları sıfırlar, bu etki ondan SONRA çalışır
+  useEffect(() => {
+    if (modal !== 'new' || !pendingWizardErrors.current) return
+    const errs = pendingWizardErrors.current
+    pendingWizardErrors.current = null
+    fe.check(errs)
+  }, [modal, fe])
   const initialBodyRef = useRef(null)   // açılıştaki gövde — "kaydedilmemiş değişiklik" onayı
   const [teamGroups, setTeamGroups] = useState([])
   const [teamTags, setTeamTags] = useState([])
@@ -233,6 +241,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [planChecking, setPlanChecking] = useState(false)
   const [planResult, setPlanResult] = useState(null)
   const [columns, setColumns] = useState([])   // son denemenin kolon ADLARI (satır verisi değil)
+  const [columnsFor, setColumnsFor] = useState(null)   // { sql, profileId } — kolonların geldiği deneme (O3)
+  const pendingWizardErrors = useRef(null)   // sihirbazdan gelişmiş görünüme taşınan alan hataları (D8)
+  // "SELECT * yerine kolonlar" önerisi YALNIZ şu anki sorgu + bağlantı denendiyse (O3)
+  const fixColumns = columnsFor && columnsFor.sql === form.sqlText && columnsFor.profileId === form.profileId ? columns : []
   const [sqlViolations, setSqlViolations] = useState(null)
   const [saveTplOpen, setSaveTplOpen] = useState(false)
   const [connOpen, setConnOpen] = useState(false)
@@ -332,7 +344,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   /** Uçuşan deneme VE maliyet isteğini geçersiz kılar (form açılışı / kapanışı, takım / bağlantı değişimi). */
   function cancelTest() { testSeq.current++; planSeq.current++; setTesting(false); setPlanChecking(false) }
   function resetFormSide() {
-    cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setSqlViolations(null)
+    cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setColumnsFor(null); setSqlViolations(null)
     setSaveTplOpen(false); setAdvOpen(false)
   }
 
@@ -381,23 +393,28 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
    * Sihirbazdan "Gelişmiş görünüm": değerler uzun forma TAŞINIR; açılış gövdesi boş yeni formunki sayılır — sihirbazda
    * yazılanlar "kaydedilmemiş değişiklik" olarak korunur (kapatırken onay).
    */
-  function openAdvancedFromWizard(wizForm) {
+  function openAdvancedFromWizard(wizForm, errors = null) {
     setWizard(null)
     openWith(wizForm, 'new')
     initialBodyRef.current = JSON.stringify(payloadFromForm(newForm()))
+    // Sihirbazdaki alan hataları uzun formda da alanların altında görünsün (D8) — form açıldıktan sonra uygulanır
+    pendingWizardErrors.current = errors && Object.values(errors).some(Boolean) ? errors : null
   }
   /** Sihirbaz kaydı: tek izleme → liste + tost + kayıttan sonra kontrol; toplu → liste + özet tostu (sihirbaz açık kalır). */
   function onWizardSaved(rows, info = {}) {
     load()
     if (Array.isArray(info.bulk)) {
-      const ok = info.bulk.filter((r) => r.status === 'ok').length
-      const failed = info.bulk.filter((r) => r.status === 'error').length
-      if (ok) toast.success(t('dbq.bulk.doneToast', ok, failed))
-      else toast.error(t('dbq.bulk.noneCreated'))
+      const counts = bulkCounts(info.bulk)
+      if (!counts.ok && !counts.unknown) toast.error(t('dbq.bulk.noneCreated'))
+      else if (hasUnfinished(info.bulk)) toast.info(bulkSummaryText(t, counts))
+      else toast.success(bulkSummaryText(t, counts))
       return
     }
     const row = rows?.[0]
     toast.success(t('dbq.form.saved'))
+    // Maliyet uyarısı uzun formdaki gibi söylenir (D4)
+    const planWarn = info.response?.plan_warning || info.response?.data?.plan_warning
+    if (planWarn) toast.info(t('dbq.form.planWarnSaved', planWarn.message || ''))
     const warns = warningsOf(info.response)
     if (warns.length) {
       toast.info(t('dbq.form.savedWithWarnings', warns.map((w) => (WARNING_CODES.includes(w.code) ? t(`dbq.warn.${w.code}.title`) : (w.message || w.code))).join(' · ')))
@@ -455,14 +472,16 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   function onTeamChange(v) {
     // Bağlantılar takım belgesi: takım değişince seçili bağlantı ve onun deneme sonucu geçersiz.
-    setForm(f => (String(f.teamId) === String(v) ? f : { ...f, teamId: v, profileId: null, dbType: '' }))
+    // Bildirim grubu ve 7/24 grupları da takım belgesi — eski takımınki sunucuda reddedilir (D7)
+    setForm(f => (String(f.teamId) === String(v) ? f
+      : { ...f, teamId: v, profileId: null, dbType: '', notificationGroupId: '', nocGroupIds: [] }))
     // Uçuşan deneme / maliyet eski takımın bağlantısında koşuyor — yanıtı yeni forma düşmesin (DÜŞÜK 2)
-    cancelTest(); setTestResult(null); setPlanResult(null)
+    cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setColumnsFor(null)
     fe.clear('team_id'); fe.clear('profile_id')
   }
   function onConnectionChange(profileId, profile) {
     setForm(f => ({ ...f, profileId: profileId ?? null, dbType: profile?.db_type || (profileId == null ? '' : f.dbType) }))
-    cancelTest(); setTestResult(null); setPlanResult(null)
+    cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setColumnsFor(null)
     fe.clear('profile_id')
   }
   function onSqlChange(sql) {
@@ -558,12 +577,15 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     setTesting(true); setTestResult(null)
     try {
       const body = payloadFromForm(form)
+      const sentSql = form.sqlText
+      const sentProfile = form.profileId
       if (modal && modal !== 'new') body.monitor_id = modal.id
       const res = await api.monitoring.testDbQuery(body)
       if (my !== testSeq.current) return
       if (res?.success) {
         setTestResult(res.data || {})
         setColumns(columnsFrom(res.data))
+        setColumnsFor({ sql: sentSql, profileId: sentProfile })
         if (Array.isArray(res.data?.guard?.violations) && res.data.guard.violations.length) setSqlViolations(res.data.guard.violations)
       } else {
         if (res?.code === 'DBQUERY_SQL_REJECTED' || res?.code === 'VALIDATION_FAILED') {
@@ -659,12 +681,19 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       sql_text: !form.sqlText.trim() && t('dbq.form.sqlRequired'),
     })) return
     const body = payloadFromForm(form)
-    setBulkOpen({ baseBody: body, baseName: form.name.trim(), teamId: Number(form.teamId), dbType: form.dbType || null, profileId: form.profileId, succeeded: false })
+    setBulkOpen({ baseBody: body, baseName: form.name.trim(), teamId: Number(form.teamId), dbType: form.dbType || null, profileId: form.profileId, results: null })
   }
+  /**
+   * Toplu pencere kapanınca uzun form YALNIZ tüm satırlar oluşturulduysa kapanır; kısmi başarıda form açık kalır (başarısız
+   * bağlantılar için girilenler kaybolmasın) ve oluşturulanların listede olduğu söylenir (O1).
+   */
   function closeBulk() {
-    const succeeded = !!bulkOpen?.succeeded
+    const results = bulkOpen?.results
     setBulkOpen(null)
-    if (succeeded) closeEditNow()
+    if (!Array.isArray(results) || !results.length) return
+    if (!hasUnfinished(results)) { closeEditNow(); return }
+    const counts = bulkCounts(results)
+    if (counts.ok) toast.info(t('dbq.bulk.partialKeepForm', bulkSummaryText(t, counts)))
   }
 
   /** Silme — KALICI; onay izlemenin ADIYLA ve geri alınamaz olduğu söylenerek alınır. */
@@ -844,7 +873,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   const formModal = modal && (
-    <MonitorFormModal onClose={closeEdit} icon={DatabaseZap} width={860}
+    <MonitorFormModal onClose={closeEdit} icon={DatabaseZap} width={860} wrapTitle
       title={modal === 'new' ? t('dbq.form.titleNew') : t('dbq.form.titleEdit')}
       duplicate={!!dupSource} busy={saving}
       busyLabel={saving ? t('mon.saving') : testing ? t('dbq.form.testing') : null}
@@ -926,7 +955,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           onTest={runTest} onPlanCheck={runPlanCheck} testing={testing} planChecking={planChecking}
           testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} locked={grantLocked}
           planAvailable={planCheckAvailable(limits, form.dbType || null)} onColumnAction={onColumnAction}
-          fix={{ columns, rowLimit: form.maxRows, rules: form.rules }} />
+          fix={{ columns: fixColumns, rowLimit: form.maxRows, rules: form.rules }} />
 
         <EvaluationSection form={form} setForm={setForm} ruleErrors={ruleErrors} columns={columns}
           slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked}
@@ -993,8 +1022,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             baseName={bulkOpen.baseName} initialProfileId={bulkOpen.profileId}
             onDone={(results) => {
               load()
-              const ok = results.filter((r) => r.status === 'ok').length
-              if (ok) setBulkOpen((b) => (b ? { ...b, succeeded: true } : b))
+              setBulkOpen((b) => (b ? { ...b, results } : b))
             }} />
         </Suspense>
       )}
@@ -1033,14 +1061,14 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         extraActions={<>
           {canWrite && (
-            <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-quick-add" onClick={openWizard}>
+            <Button type="button" variant="outline" className="h-10 sm:h-9 sm:pointer-coarse:h-10" data-slot="dbq-quick-add" onClick={openWizard}>
               <Wand2 aria-hidden="true" className="size-4" />{t('dbq.wiz.open')}
             </Button>
           )}
-          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-open-connections" onClick={() => setConnOpen(true)}>
+          <Button type="button" variant="outline" className="h-10 sm:h-9 sm:pointer-coarse:h-10" data-slot="dbq-open-connections" onClick={() => setConnOpen(true)}>
             <Cable aria-hidden="true" className="size-4" />{t('dbq.page.connections')}
           </Button>
-          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-open-templates" onClick={() => setTplOpen(true)}>
+          <Button type="button" variant="outline" className="h-10 sm:h-9 sm:pointer-coarse:h-10" data-slot="dbq-open-templates" onClick={() => setTplOpen(true)}>
             <LibraryBig aria-hidden="true" className="size-4" />{t('dbq.page.templates')}
           </Button>
         </>}
@@ -1057,13 +1085,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         shownCount={displayMonitors.length} />
 
       {!loading && monitors.length > 0 && (
-        <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+        <div className="upt-toolbar" data-touch-picker="" style={{ justifyContent: 'flex-end', gap: 8 }}>
           <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {dbTypesSeen.length > 1 && <SearchableSelect value={dbFilter} onChange={setDbFilter} options={dbFilterOptions} ariaLabel={t('dbq.page.dbTypeFilter')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dbq.page.search')} aria-label={t('dbq.page.search')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px] pointer-coarse:h-10" placeholder={t('dbq.page.search')} aria-label={t('dbq.page.search')}
             value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}

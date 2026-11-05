@@ -2,6 +2,8 @@
 // her bağlantı için SIRAYLA mevcut create ucuyla oluşturulur; ad kalıbı `{ad} · {bağlantı}`. İlk hatada DURMAZ: o satır
 // hatalı yazılır, sıradaki denenir (ad çakışması, başka türde reddedilen sorgu …). Sunucu asıl doğrulayıcıdır.
 
+import { countText } from './dbqueryPageModel.js'
+
 /** Tek seferde en çok bağlantı (istek sayısı sınırlı — sonsuz döngü / yığın istek yok). */
 export const MAX_BULK = 50
 export const NAME_MAX = 200
@@ -59,10 +61,25 @@ export function planReady(rows) {
   return Array.isArray(rows) && rows.length > 0 && rows.every((r) => !r.problem)
 }
 
+/** Yanıt alınamayan / ağ geçidinin kestiği istek kodları — istek sunucuda tamamlanmış OLABİLİR (O2). */
+const UNSURE_CODES = new Set(['NETWORK_ERROR', 'OFFLINE', 'TIMEOUT', 'GATEWAY_TIMEOUT', 'NO_RESPONSE'])
+
+/**
+ * Başarısız yanıt "sonuç bilinmiyor" mu: istek atıldı ama yanıt gelmedi (ağ / zaman aşımı) ya da ağ geçidi kesti
+ * (502 / 503 / 504, durum 0). Sunucunun reddi (400 / 403 / 409 …) kesin hatadır.
+ */
+export function isUnsureFailure(res) {
+  if (!res) return true
+  const status = Number(res.status ?? res.errorInfo?.status)
+  if (status === 0 || status === 502 || status === 503 || status === 504) return true
+  return UNSURE_CODES.has(String(res.code || res.errorInfo?.code || ''))
+}
+
 /**
  * Sıralı oluşturma — `create(body)` mevcut create ucu (sunucu yanıtı). Her satır sonucu `onRow` ile bildirilir;
  * `shouldStop()` true dönerse KALAN satırlar `skipped` olur (gönderilen istek beklenir, yarıda kesilmez).
- * Dönüş: `[{ profileId, name, status: 'ok' | 'error' | 'skipped', id?, error?, code? }]`.
+ * Yanıt alınamayan satır `unknown` (sonuç bilinmiyor — izleme oluşmuş olabilir; O2), sunucunun reddi `error`.
+ * Dönüş: `[{ profileId, name, status: 'ok' | 'error' | 'unknown' | 'skipped', id?, error?, code?, warnings?, planWarning? }]`.
  */
 export async function runBulk(rows, baseBody, create, { onRow, shouldStop } = {}) {
   const results = []
@@ -80,20 +97,74 @@ export async function runBulk(rows, baseBody, create, { onRow, shouldStop } = {}
     try {
       res = await create({ ...baseBody, profile_id: profileId, name: r.name })
     } catch (e) {
-      res = { success: false, error: e?.message || null, code: 'NETWORK_ERROR' }
+      res = { success: false, error: e?.message || null, code: 'NETWORK_ERROR', status: 0 }
     }
-    const row = res?.success
-      ? { profileId, name: r.name, status: 'ok', id: res.data?.id ?? null }
-      : { profileId, name: r.name, status: 'error', error: res?.error || res?.message || null, code: res?.code || null }
+    let row
+    if (res?.success) {
+      const warnings = Array.isArray(res.warnings) ? res.warnings.length : (Array.isArray(res.data?.warnings) ? res.data.warnings.length : 0)
+      const planWarning = !!(res.plan_warning || res.data?.plan_warning)
+      row = { profileId, name: r.name, status: 'ok', id: res.data?.id ?? null, warnings, planWarning }
+    } else if (isUnsureFailure(res)) {
+      row = { profileId, name: r.name, status: 'unknown', error: res?.error || res?.message || null, code: res?.code || null }
+    } else {
+      row = { profileId, name: r.name, status: 'error', error: res?.error || res?.message || null, code: res?.code || null }
+    }
     results.push(row)
     onRow?.(i, row)
   }
   return results
 }
 
+/**
+ * Sonucu bilinmeyen satırları izleme listesiyle çözer (O2): aynı adlı izleme listede varsa satır `ok` olur (ad tüm
+ * takımlarda tekil — büyük / küçük harf duyarsız, sunucunun LOWER(ad) kuralı), yoksa `unknown` kalır. Liste okunamadıysa
+ * (`monitors` dizi değil) satırlar değişmez.
+ */
+export function resolveUnknownRows(results, monitors) {
+  if (!Array.isArray(results) || !Array.isArray(monitors)) return results
+  const byName = new Map()
+  for (const m of monitors) if (m?.name) byName.set(String(m.name).toLocaleLowerCase('tr-TR'), m)
+  let changed = false
+  const out = results.map((r) => {
+    if (r?.status !== 'unknown') return r
+    const hit = byName.get(String(r.name || '').toLocaleLowerCase('tr-TR'))
+    if (!hit) return r
+    changed = true
+    return { ...r, status: 'ok', id: hit.id ?? null, resolved: true, error: null, code: null }
+  })
+  return changed ? out : results
+}
+
+/** Yeniden denenecek bağlantılar: reddedilen ve atlanan satırlar (sonucu bilinmeyen satır izleme oluşmuş olabileceği için HARİÇ). */
+export function retryProfileIds(results) {
+  return (results || []).filter((r) => r?.status === 'error' || r?.status === 'skipped').map((r) => r.profileId).filter((id) => id != null)
+}
+
+/**
+ * Sonuç özeti — sayılı parçalar (`dbq.bulk.sum.<durum>` + tekil `.one`; D10), sıfır olan parça yazılmaz (oluşturulan sayısı
+ * her zaman). `"3 izleme oluşturuldu · 1 reddedildi · 1 sonucu bilinmiyor"`.
+ */
+export function bulkSummaryText(t, counts) {
+  const c = counts || {}
+  const parts = [countText(t, 'dbq.bulk.sum.ok', c.ok || 0)]
+  // Hata sayısının anahtarı `rejected` (anahtar adında "error" geçen metin hata iletisi sayılır — kısa sayaç değil)
+  for (const [k, key] of [['error', 'rejected'], ['unknown', 'unknown'], ['skipped', 'skipped']]) if (c[k] > 0) parts.push(countText(t, `dbq.bulk.sum.${key}`, c[k]))
+  return parts.join(' · ')
+}
+
 /** Sonuç sayıları. */
 export function bulkCounts(results) {
-  const c = { ok: 0, error: 0, skipped: 0 }
+  const c = { ok: 0, error: 0, unknown: 0, skipped: 0 }
   for (const r of results || []) if (c[r.status] != null) c[r.status]++
   return c
+}
+
+/** Sonuçta başarılı olmayan (reddedilen / bilinmeyen / atlanan) satır var mı — kapatmada onay gerekir (O1). */
+export function hasUnfinished(results) {
+  return (results || []).some((r) => r?.status === 'error' || r?.status === 'unknown' || r?.status === 'skipped')
+}
+
+/** Koşu ve önizlemenin TEK listesi: takımın bağlantılarının ilk `MAX_BULK` tanesi (O6). */
+export function bulkCandidates(list) {
+  return (Array.isArray(list) ? list : []).slice(0, MAX_BULK)
 }

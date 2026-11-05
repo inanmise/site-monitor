@@ -133,6 +133,36 @@ describe('Akıllı kurallar (D) — kural oluşturucu', () => {
     expect(last(spy)[0]).not.toHaveProperty('runs_critical')
   })
 
+  it('be2: taban saklama süresinde dolmaz → sunucu hatası "en az örnek" alanının altında (DBQUERY_RULE_ANOMALY)', () => {
+    const msg = 'Kural 1 tabanı saklama süresi içinde hiç dolmaz · Kontrol geçmişi 180 gün saklanıyor; bu süreye en çok 25 hafta sığar, en az örnek sayısı 30 · En az örnek sayısını 25 ya da altına indirin (ya da mevsimi / aralığı değiştirin).'
+    render(<RulesHarness initial={[{ ...newRule('ANOMALY', 'r-a'), column: 'adet', season: 'weekly', min_samples: 30, window: 40 }]}
+      fieldErrors={{ 'rules[0].min_samples': msg }} />)
+    const f = card().querySelector('[data-field="rules[0].min_samples"]')
+    expect(f.textContent).toContain('en çok 25 hafta sığar')
+    expect(card().querySelector('[data-slot="dbq-rule-server-errors"]')).toBeNull()
+  })
+
+  it('be2: mevsimsel kural + günü / haftayı bölmeyen aralık → kuralın kartında engellemeyen uyarı bandı; bölen aralıkta yok', () => {
+    const rules = [{ ...newRule('ANOMALY', 'r-a'), column: 'adet', season: 'daily' }, { ...newRule('ANOMALY', 'r-b'), column: 'adet' }]
+    const { unmount } = render(<RulesHarness initial={rules} schedule={{ schedule_mode: 'INTERVAL', interval_seconds: 5 * 3600 }} />)
+    const band = card(0).querySelector('[data-slot="dbq-rule-season-rare"]')
+    expect(band).not.toBeNull()
+    expect(band.closest('[data-slot="alert"]').getAttribute('data-tone')).toBe('warning')
+    expect(card(0).textContent).toContain('Mevsimsel taban çok geç dolar')
+    // Mevsimsiz kural etkilenmez
+    expect(card(1).querySelector('[data-slot="dbq-rule-season-rare"]')).toBeNull()
+    unmount()
+    render(<RulesHarness initial={rules} schedule={{ schedule_mode: 'INTERVAL', interval_seconds: 4 * 3600 }} />)
+    expect(document.querySelector('[data-slot="dbq-rule-season-rare"]')).toBeNull()
+  })
+
+  it('be2: olağan dışı değer açıklaması kontrollü uyumu söyler (ihlal eden çalıştırmalar tabana girmez)', () => {
+    render(<RulesHarness initial={[{ ...newRule('ANOMALY', 'r-a'), column: 'adet' }]} />)
+    const about = card().querySelector('[data-slot="dbq-rule-smart-about"]')
+    expect(about.textContent).toContain('ihlal eden çalıştırmalar tabana girmez')
+    expect(about.textContent).toContain('kontrollü uyum')
+  })
+
   it('sunucu alan hataları akıllı parametrenin altında (kartın başında yetim değil)', () => {
     render(<RulesHarness initial={[{ ...newRule('ANOMALY', 'r-a'), column: 'adet' }]}
       fieldErrors={{ 'rules[0].k_warning': 'Uyarı hassasiyeti 1 ile 10 arasında olmalı (sunucu).', 'rules[0].season': 'Mevsim geçersiz (sunucu).' }} />)
@@ -142,8 +172,23 @@ describe('Akıllı kurallar (D) — kural oluşturucu', () => {
   })
 })
 
+describe('Sonuç listesi — örnek yetersiz (be2)', () => {
+  it('insufficient_samples: "değerlendirilemedi" (asla taban kuruluyor / yeşil değil), bant ya da sayaç çizilmez, not metni', () => {
+    render(<RuleResultsList results={[
+      { id: 'a', kind: 'ANOMALY', label: 'Sipariş adedi', actual: '100 · örnek yetersiz (3 / 5)', expected: 'olağan aralıkta', level: 'NONE',
+        passed: false, evaluated: false, note: 'insufficient_samples', samples: 3, min_samples: 5 },
+    ]} />)
+    const item = document.querySelector('[data-slot="dbq-rr"]')
+    expect(item.querySelector('[data-slot="dbq-rr-level"]').getAttribute('data-state')).toBe('unevaluated')
+    expect(item.querySelector('[data-slot="dbq-rr-smart"]')).toBeNull()
+    expect(item.textContent).toContain('100 · örnek yetersiz (3 / 5)')
+    expect(item.textContent).toContain('Örnek yetersiz')
+    expect(item.textContent).not.toMatch(/Taban kuruluyor/)
+  })
+})
+
 describe('Sonuç listesi — bant / sayaç (D)', () => {
-  it('olağan dışı: olağan aralık + sapma + örnek, mini çubukta değer noktası seviyeyle; taban kuruluyor sayacı; donma sayacı', () => {
+  it('olağan dışı: mini çubukta değer noktası seviyeyle + örnek (aralık / sapma METNİ sunucunun actual\'ında — O5); taban sayacı; donma sayacı', () => {
     render(<RuleResultsList results={[
       { id: 'a', kind: 'ANOMALY', label: 'Sipariş adedi', actual: '1.250 · olağan 300–700', expected: 'olağan aralıkta', level: 'CRITICAL', passed: false, evaluated: true,
         compared: 1250, band_low: 300, band_high: 700, deviation: 9.4, baseline_mean: 500, samples: 28 },
@@ -155,7 +200,9 @@ describe('Sonuç listesi — bant / sayaç (D)', () => {
     const items = document.querySelectorAll('[data-slot="dbq-rr-item"]')
     const band = items[0].querySelector('[data-slot="dbq-rr-smart"]')
     expect(band.getAttribute('data-kind')).toBe('band')
-    expect(band.textContent).toContain('olağan 300 – 700 · sapma +9,4σ · 28 örnek')
+    // İki uçlu bant metni YOK (tek yönlü kuralda sunucunun "olağan ≤ 700" metniyle çelişirdi — O5); yalnız örnek sayısı
+    expect(band.textContent).toBe('28 örnek')
+    expect(band.textContent).not.toMatch(/olağan|sapma/)
     expect(items[0].querySelector('[data-slot="dbq-rr-band-value"]').getAttribute('data-level')).toBe('critical')
     expect(items[1].getAttribute('data-state')).toBe('building')
     expect(items[1].querySelector('[data-slot="dbq-rr-smart"]').textContent).toBe('Taban kuruluyor: 4 / 10 örnek')
@@ -164,20 +211,34 @@ describe('Sonuç listesi — bant / sayaç (D)', () => {
     expect(items[3].querySelector('[data-slot="dbq-rr-smart"]')).toBeNull()
   })
 
-  it('eski satır (ek alan yok) yalnız sunucu metni; sayaçsız taban notu çevrilir; sınırsız sapma', () => {
+  it('tek uçlu bant: metin yok, çubuk var; sayaçsız taban notu çevrilir', () => {
     render(<RuleResultsList results={[
       { id: 'a', kind: 'ANOMALY', actual: '9', level: 'WARNING', evaluated: true, measure: 9, band_high: 5, deviation: 1e9 },
       { id: 'b', kind: 'ANOMALY', actual: '3', evaluated: false, passed: true, note: 'building_baseline' },
     ]} />)
     const items = document.querySelectorAll('[data-slot="dbq-rr-item"]')
-    expect(items[0].querySelector('[data-slot="dbq-rr-smart"]').textContent).toContain('olağan ≤ 5 · sınırsız sapma')
+    expect(items[0].querySelector('[data-slot="dbq-rr-band"]')).not.toBeNull()
+    expect(items[0].querySelector('[data-slot="dbq-rr-smart"]').textContent).not.toMatch(/olağan|sapma/)
     expect(items[1].querySelector('[data-slot="dbq-rr-smart"]').textContent).toContain('Taban kuruluyor —')
   })
 
-  it('kompakt liste (kart / geçmiş): bant metni, çubuk yok', () => {
+  it('kompakt liste (kart / geçmiş): ek gösterim yok — sunucunun actual metni yeter (O5)', () => {
     render(<RuleResultsList compact results={[{ id: 'a', kind: 'ANOMALY', actual: '1250', level: 'WARNING', evaluated: true, compared: 1250, band_low: 300, band_high: 700, deviation: 3 }]} />)
     expect(document.querySelector('[data-slot="dbq-rr-band"]')).toBeNull()
-    expect(document.querySelector('[data-slot="dbq-rr-smart"]').textContent).toContain('olağan 300 – 700')
+    expect(document.querySelector('[data-slot="dbq-rr-smart"]')).toBeNull()
+  })
+
+  it('FROZEN taban sıfırlandı (baseline_reset + same_runs 1): "değer değişti" DEĞİL, taban kuruluyor (O5)', () => {
+    render(<RuleResultsList results={[
+      { id: 'f', kind: 'FROZEN', label: 'ETL', actual: 'taban kuruluyor (0 / 5)', level: 'NONE', passed: true, evaluated: false,
+        note: 'baseline_reset', same_runs: 1, samples: 0, min_samples: 5 },
+      { id: 'g', kind: 'FROZEN', label: 'ETL 2', actual: '42', level: 'NONE', passed: true, evaluated: true, same_runs: 1, samples: 6 },
+    ]} />)
+    const items = document.querySelectorAll('[data-slot="dbq-rr-item"]')
+    expect(items[0].querySelector('[data-slot="dbq-rr-smart"]').getAttribute('data-kind')).toBe('building')
+    expect(items[0].textContent).not.toContain('değer değişti')
+    // değerlendirilmiş sonuçta 1 = değer değişti
+    expect(items[1].querySelector('[data-slot="dbq-rr-smart"]').textContent).toBe('değer değişti')
   })
 })
 

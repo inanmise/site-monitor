@@ -29,7 +29,7 @@ import {
   PG_WEAK_SSL, changedConnectionPayload, copyFormFromProfile, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey, isInfoPrivilege,
   privilegeState, serverFieldErrors, serverLabel, validateConnection,
 } from './connectionModel.js'
-import { countText } from './dbqueryPageModel.js'
+import { countText, rateLimitText } from './dbqueryPageModel.js'
 
 /** Tablo ↔ kart eşiği — KAP genişliği (pencere içinde, kenar çubuğuyla daralmış sayfada farklı). */
 export const CONNECTIONS_TABLE_MIN_PX = 760
@@ -151,6 +151,8 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
   const editing = view.name === 'form' && view.id != null ? byId(view.id) : null
   const copySource = view.name === 'form' && view.id == null && view.copyOf != null ? (byId(view.copyOf) || view.copyFresh || null) : null
   const startCopy = (p) => setView({ name: 'form', id: null, copyOf: p.id, copyFresh: p })
+  // "Bu bağlantıdan yeni" yalnız kullanıcının yazabildiği en az bir takım varken (D2) — kopya o takımlardan birine kaydedilir
+  const canCopy = canEdit && teamList.length > 0
 
   return (
     <ModalShell open={!!open} onClose={close} size="xl" scrollBody dismissOnBackdrop={view.name !== 'form'} dismissOnEscape={view.name !== 'form'}
@@ -160,13 +162,13 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
           <ListView t={t} load={load} teams={teamList} team={team} setTeam={setTeam} canEdit={canEdit} teamName={teamName}
             onReload={reload} onOpen={(p) => setView({ name: 'detail', id: p.id })}
             onEdit={(p) => setView({ name: 'form', id: p.id })} onNew={() => setView({ name: 'form', id: null })}
-            onDelete={remove} editable={editable} onCopy={canEdit ? startCopy : null} />
+            onDelete={remove} editable={editable} onCopy={canCopy ? startCopy : null} />
         )}
         {view.name === 'detail' && (
           detail
             ? <DetailView t={t} p={detail} editable={editable(detail)} inUse={view.inUse} inUseMessage={view.inUseMessage}
                 onBack={() => setView({ name: 'list' })} onEdit={() => setView({ name: 'form', id: detail.id })}
-                onDelete={() => remove(detail)} onTested={reload} onCopy={canEdit ? () => startCopy(detail) : null}
+                onDelete={() => remove(detail)} onTested={reload} onCopy={canCopy ? () => startCopy(detail) : null}
                 onOpenMonitor={onOpenMonitor} />
             : <StatusBlock tone="neutral" title={t('dbq.conn.goneTitle')} description={t('dbq.conn.goneBody')}
                 actions={<Button type="button" variant="outline" onClick={() => setView({ name: 'list' })}>{t('dbq.conn.backToList')}</Button>} />
@@ -323,7 +325,7 @@ function RowActions({ t, p, editable, onOpen, onEdit, onDelete, onCopy }) {
 /** Sağlık paneli + kullananlar + tablolar. */
 function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDelete, onTested, onCopy, onOpenMonitor }) {
   const toast = useToast()
-  const [health, reloadHealth] = useConnectionHealth(p.id)
+  const [health, reloadHealth] = useConnectionHealth(p.id, p.team_id ?? null)
   const [test, setTest] = useState(null)
   const [testing, setTesting] = useState(false)
   const h = p.health || {}
@@ -336,7 +338,7 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
     try { res = await api.monitoring.testDbConnection(p.id) } catch (e) { res = { success: false, error: e?.message } } finally { setTesting(false) }
     setTest(res)
     if (res?.success) { onTested?.(); reloadHealth() }
-    else if (res?.code === 'RATE_LIMITED') toast.info(res.error || t('dbq.conn.testWait', res.retry_after_seconds ?? 5))
+    else if (res?.code === 'RATE_LIMITED') toast.info(rateLimitText(res, t, 'dbq.conn.testWaitBody'))
   }
 
   return (
@@ -528,11 +530,19 @@ function TestOutcome({ t, res }) {
     )
   }
   const d = res?.success ? res.data : null
+  // 429 RATE_LIMITED (saatlik küme deneme kotası): hata değil, bekleme — sunucu metni (yoksa bekleme süresi) düz yazıyla
+  if (res?.code === 'RATE_LIMITED') {
+    return (
+      <AlertBanner tone="info" title={t('dbq.conn.testWaitTitle')} className="mb-0">
+        <span data-slot="dbq-conn-test" data-ok="false" data-wait="true" className="[overflow-wrap:anywhere]">{rateLimitText(res, t, 'dbq.conn.testWaitBody')}</span>
+      </AlertBanner>
+    )
+  }
   const blocked = d?.failure_reason === 'DB_ACCOUNT_WRITABLE' || res?.code === 'DB_ACCOUNT_WRITABLE'
   const msg = d?.error || res?.error || res?.message || t('dbq.conn.testFailedBody')
   return (
-    <AlertBanner tone={res?.code === 'RATE_LIMITED' ? 'info' : 'danger'}
-      title={res?.code === 'RATE_LIMITED' ? t('dbq.conn.testWaitTitle') : blocked ? t('dbq.conn.testBlockedTitle') : t('dbq.conn.testFailTitle')} className="mb-0">
+    <AlertBanner tone="danger"
+      title={blocked ? t('dbq.conn.testBlockedTitle') : t('dbq.conn.testFailTitle')} className="mb-0">
       <span className="flex min-w-0 flex-col gap-1.5">
         <code data-slot="dbq-conn-test" data-ok="false" className="block font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{msg}</code>
         {d?.duration_ms != null && <span className="text-xs">{t('dbq.conn.ms', d.duration_ms)}</span>}
@@ -547,7 +557,7 @@ function TestOutcome({ t, res }) {
 function FormView({ t, team, teams, profile, creating, copyFrom = null, onCancel, onSaved, onNoChanges, dirtyRef }) {
   const toast = useToast()
   // Kopya (A2): kaynak bağlantının alanları, parola boş — kaydedilmemiş değişiklik ölçütü kopyanın kendisi
-  const [baseline] = useState(() => (profile ? formFromProfile(profile) : copyFrom ? copyFormFromProfile(copyFrom, t('dbq.conn.copySuffix')) : emptyForm(team)))
+  const [baseline] = useState(() => (profile ? formFromProfile(profile) : copyFrom ? copyFormFromProfile(copyFrom, t('dbq.conn.copySuffix'), teams.map((tm) => tm.id)) : emptyForm(team)))
   const [form, setForm] = useState(baseline)
   const [server, setServer] = useState({})
   const [client, setClient] = useState({})

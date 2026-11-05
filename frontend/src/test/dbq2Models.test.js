@@ -8,18 +8,20 @@ import {
 } from '../components/dbquery/connectionDiagnosis.js'
 import {
   DIFF_MAX_CELLS, FIX_CODES, diffStats, fixWarnings, hasFixableViolation, lineDiff, maskSqlLiterals, normalizeFixes, quoteColumn,
-  normalizeSkipped, rowLimitSuggestable, selectStarFix, SKIP_REASONS,
+  normalizeSkipped, rowLimitSuggestable, selectStarFix, SKIP_REASONS, busyWaitSeconds, BUSY_MAX_WAIT_S,
 } from '../components/dbquery/sqlFix.js'
 import {
-  WIZ_STEPS, canJump, firstErrorStep, firstInvalidStep, stepErrorCounts, stepOfField, suggestName, translateErrors, validateStep,
+  WIZ_STEPS, canJump, firstErrorStep, firstInvalidStep, stepBannerErrors, stepErrorCounts, stepOfField, suggestName, translateErrors,
+  validateStep,
 } from '../components/dbquery/wizard/wizardModel.js'
 import {
-  MAX_BULK, applyNamePattern, bulkCounts, bulkPlan, patternHasConnection, planReady, runBulk,
+  MAX_BULK, applyNamePattern, bulkCandidates, bulkCounts, bulkPlan, bulkSummaryText, hasUnfinished, isUnsureFailure, patternHasConnection,
+  planReady, resolveUnknownRows, retryProfileIds, runBulk,
 } from '../components/dbquery/bulkCreateModel.js'
 import { CONNECTION_NAME_MAX, copyFormFromProfile } from '../components/dbquery/connectionModel.js'
 import { DBA_KEYS, BUILTIN_KEYS, builtinSql, builtinTemplates, dbaTemplates } from '../components/dbquery/builtinTemplates.js'
-import { validateRules } from '../components/dbquery/ruleModel.js'
-import { PASTE_ERRORS, PASTE_NOTES } from '../components/dbquery/connectionString.js'
+import { smartParam, validateRules, validateSmart } from '../components/dbquery/ruleModel.js'
+import { PASTE_ERRORS, PASTE_NOTES, VALUED_NOTES } from '../components/dbquery/connectionString.js'
 
 const tTR = (k, ...a) => { let s = TR[k] ?? k; a.forEach((v, i) => { s = s.split(`{${i}}`).join(String(v)) }); return s }
 const tEN = (k, ...a) => { let s = EN[k] ?? k; a.forEach((v, i) => { s = s.split(`{${i}}`).join(String(v)) }); return s }
@@ -29,6 +31,11 @@ describe('dinamik i18n anahtarları (A1–B5) iki dilde de var', () => {
   it('yapıştırma hataları / notları, teşhis adımları, çareler, düzeltme kodları, sihirbaz adımları', () => {
     PASTE_ERRORS.forEach((c) => both(`dbq.conn.paste.err.${c}`))
     PASTE_NOTES.forEach((c) => both(`dbq.conn.paste.note.${c}`))
+    VALUED_NOTES.forEach((c) => both(`dbq.conn.paste.noteNoValue.${c}`))
+    ;['ok', 'rejected', 'unknown', 'skipped'].forEach((k) => { both(`dbq.bulk.sum.${k}`); both(`dbq.bulk.sum.${k}.one`) })
+    ;['dbq.bulk.run', 'dbq.bulk.retryFailed', 'dbq.bulk.rowWarnings', 'dbq.conn.usedByMore', 'dbq.fix.diffAdded', 'dbq.fix.diffRemoved',
+      'dbq.wiz.stepInvalid'].forEach((k) => { both(k); both(`${k}.one`) })
+    both('dbq.fix.warn.COLUMNS_FROM_TEST')
     ;['ok', 'fail', 'skip', 'warn', 'unknown'].forEach((s) => both(`dbq.conn.steps.status.${s}`))
     ;[...STEP_KEYS, 'other'].forEach((k) => { both(`dbq.conn.step.${k}`); both(`dbq.conn.stepFix.${k}`) })
     STEP_FIX_CODES.forEach((c) => both(`dbq.conn.fix.${c}`))
@@ -40,7 +47,7 @@ describe('dinamik i18n anahtarları (A1–B5) iki dilde de var', () => {
     WIZ_STEPS.forEach((s) => { both(`dbq.wiz.step.${s}`); both(`dbq.wiz.stepHint.${s}`) })
     ;['WARNING', 'HIGH', 'CRITICAL'].forEach((l) => both(`dbq.wiz.level.${l}`))
     ;['empty', 'tooLong', 'duplicate'].forEach((p) => both(`dbq.bulk.problem.${p}`))
-    ;['ok', 'skipped', 'pending'].forEach((p) => both(`dbq.bulk.status.${p}`))
+    ;['ok', 'okResolved', 'unknown', 'skipped', 'pending'].forEach((p) => both(`dbq.bulk.status.${p}`))
     for (const k of DBA_KEYS) {
       ;['name', 'desc', 'purpose', 'rule', 'priv.POSTGRESQL', 'priv.MSSQL', 'priv.ORACLE'].forEach((f) => both(`dbq.btpl.${k}.${f}`))
     }
@@ -126,6 +133,20 @@ describe('bağlantı teşhisi (A3)', () => {
   })
 })
 
+describe('be1: 429 "kısa süre bekle" (sql-check / sql-fix)', () => {
+  it('yalnız DBQUERY_BUSY / RATE_LIMITED (ya da kodsuz 429) bekleme sayılır; süre 1–60 sn, yoksa varsayılan', () => {
+    expect(busyWaitSeconds({ success: false, status: 429, code: 'DBQUERY_BUSY' })).toBe(2)
+    expect(busyWaitSeconds({ success: false, status: 429, code: 'RATE_LIMITED', retry_after_seconds: 7.2 })).toBe(8)
+    expect(busyWaitSeconds({ success: false, code: 'RATE_LIMITED', retry_after_seconds: 3600 })).toBe(BUSY_MAX_WAIT_S)
+    expect(busyWaitSeconds({ success: false, status: 429 })).toBe(2)
+    expect(busyWaitSeconds({ success: false, status: 429, code: 'PAYLOAD_TOO_LARGE' })).toBeNull()
+    expect(busyWaitSeconds({ success: false, status: 400, code: 'VALIDATION_FAILED' })).toBeNull()
+    expect(busyWaitSeconds({ success: false, status: 503, error: 'x' })).toBeNull()
+    expect(busyWaitSeconds({ success: true, data: {} })).toBeNull()
+    expect(busyWaitSeconds(null)).toBeNull()
+  })
+})
+
 describe('bağlantı sağlık kartı (A4)', () => {
   it('yeşil yalnız çalışma var ve hata yoksa; çalışma yok → nötr; okunamayan alan null (0 değil)', () => {
     expect(healthModel({ runs_24h: 48, failed_24h: 0, success_pct: 100, monitors: [], monitor_count: 2 }).tone).toBe('success')
@@ -146,7 +167,19 @@ describe('bağlantı sağlık kartı (A4)', () => {
     const m = healthModel({ monitors: many, monitor_count: 140, last_error: { at: 'x', code: 'DB_AUTH', message: 'm' } })
     expect(m.monitors).toHaveLength(100)
     expect(m.more).toBe(40)
-    expect(m.lastError).toEqual({ at: 'x', code: 'DB_AUTH', message: 'm' })
+    expect(m.lastError).toEqual({ at: 'x', code: 'DB_AUTH', message: 'm', connectionClass: null })
+  })
+
+  it('be1: failed_24h yalnız bağlantı sınıfı; other_failed_24h ayrı ve tonu düşürmez; son hatanın sınıfı (true / false / bilinmiyor)', () => {
+    const m = healthModel({ runs_24h: 48, failed_24h: 0, other_failed_24h: 7, success_pct: 100,
+      last_error: { at: 'x', code: 'DB_SQL_ERROR', message: 'm', connection_class: false } })
+    expect(m.tone).toBe('success')
+    expect(m.otherFailed).toBe(7)
+    expect(m.lastError.connectionClass).toBe(false)
+    expect(healthModel({ runs_24h: 4, failed_24h: 1, last_error: { at: 'x', code: 'DB_AUTH', connection_class: true } }).lastError.connectionClass).toBe(true)
+    // Eski sunucu / başarısız deneme (kod yok): alan yok → bilinmiyor; okunamayan sayaç 0 değil null
+    expect(healthModel({ runs_24h: 4, failed_24h: 0, last_error: { at: 'x', code: null, connection_class: 'evet' } }).lastError.connectionClass).toBeNull()
+    expect(healthModel({ runs_24h: 4, failed_24h: 0 }).otherFailed).toBeNull()
   })
 
   it('healthMonitorState', () => {
@@ -171,6 +204,14 @@ describe('"Bu bağlantıdan yeni" (A2)', () => {
     const long = copyFormFromProfile({ ...p, name: 'x'.repeat(130) }, ' (kopya)')
     expect(long.name).toHaveLength(CONNECTION_NAME_MAX)
     expect(long.name.endsWith(' (kopya)')).toBe(true)
+  })
+
+  it('kopyanın takımı yazılabilir takımlardan biri: kaynak yazılabilirse o, değilse ilki (D2)', () => {
+    const p = { id: 7, team_id: 3, name: 'X', db_type: 'POSTGRESQL', host: 'h', port: 5432 }
+    expect(copyFormFromProfile(p, ' (k)', [3, 5]).team_id).toBe(3)
+    expect(copyFormFromProfile(p, ' (k)', [5, 9]).team_id).toBe(5)
+    expect(copyFormFromProfile(p, ' (k)', []).team_id).toBe(3)
+    expect(copyFormFromProfile(p, ' (k)').team_id).toBe(3)
   })
 })
 
@@ -213,7 +254,7 @@ describe('güvenli düzeltme (B2)', () => {
     expect(selectStarFix('SELECT * FROM orders WHERE status = 0', cols, 'POSTGRESQL').sql)
       .toBe('SELECT id, durum, "tutar tl" FROM orders WHERE status = 0')
     expect(selectStarFix('SELECT *\nFROM dbo.Orders WITH (NOLOCK)', cols, 'MSSQL').sql)
-      .toBe('SELECT id, durum, [tutar tl]\nFROM dbo.Orders WITH (NOLOCK)')
+      .toBe('SELECT [id], [durum], [tutar tl]\nFROM dbo.Orders WITH (NOLOCK)')
     expect(selectStarFix('SELECT * FROM a JOIN b ON a.id = b.id', cols, 'POSTGRESQL')).toBeNull()
     expect(selectStarFix('SELECT * FROM a, b', cols, 'POSTGRESQL')).toBeNull()
     expect(selectStarFix('SELECT * FROM (SELECT 1 AS x) s', cols, 'POSTGRESQL')).toBeNull()
@@ -224,6 +265,20 @@ describe('güvenli düzeltme (B2)', () => {
     expect(selectStarFix('SELECT * FROM a WHERE x IN (SELECT y FROM b)', cols, 'POSTGRESQL')).toBeNull()
     expect(quoteColumn('a]b', 'MSSQL')).toBe('[a]]b]')
     expect(quoteColumn('a"b', 'ORACLE')).toBe('"a""b"')
+  })
+
+  it('quoteColumn türün kuralıyla (O3): MSSQL hep köşeli; PG yalnız küçük harfli sade ad; Oracle yalnız büyük harfli sade ad; ayrılmış sözcük tırnaklı', () => {
+    expect(quoteColumn('id', 'MSSQL')).toBe('[id]')
+    expect(quoteColumn('customer_id', 'POSTGRESQL')).toBe('customer_id')
+    expect(quoteColumn('CustomerId', 'POSTGRESQL')).toBe('"CustomerId"')
+    expect(quoteColumn('order', 'POSTGRESQL')).toBe('"order"')
+    expect(quoteColumn('user', 'POSTGRESQL')).toBe('"user"')
+    expect(quoteColumn('CREATED_AT', 'ORACLE')).toBe('CREATED_AT')
+    expect(quoteColumn('created_at', 'ORACLE')).toBe('"created_at"')
+    expect(quoteColumn('DATE', 'ORACLE')).toBe('"DATE"')
+    expect(quoteColumn('LEVEL', 'ORACLE')).toBe('"LEVEL"')
+    expect(quoteColumn('id', null)).toBe('id')
+    expect(quoteColumn('select', null)).toBe('"select"')
   })
 
   it('rowLimitSuggestable: sınır yoksa ve tek satırlık özet değilse', () => {
@@ -252,6 +307,8 @@ describe('güvenli düzeltme (B2)', () => {
     expect(fixWarnings({ code: 'ADD_ROW_LIMIT' }, [{ kind: 'ROW_COUNT' }])).toEqual(['ROW_COUNT_AFFECTED'])
     expect(fixWarnings({ code: 'ADD_ROW_LIMIT' }, [{ kind: 'COLUMN_VALUE' }])).toEqual([])
     expect(fixWarnings({ code: 'ADD_NOLOCK' }, [{ kind: 'ROW_COUNT' }])).toEqual([])
+    // istemci önerisi sunucudan geçmedi — her zaman uyarı (O3)
+    expect(fixWarnings({ code: 'SELECT_COLUMNS' }, [])).toEqual(['COLUMNS_FROM_TEST'])
     expect(hasFixableViolation([{ code: 'SQL_MSSQL_NOLOCK_REQUIRED' }])).toBe(true)
     expect(hasFixableViolation([{ code: 'SQL_NOT_SELECT' }])).toBe(false)
   })
@@ -302,6 +359,30 @@ describe('sihirbaz modeli (B1)', () => {
   })
 })
 
+describe('ANOMALY boş kritik katsayı = max(3,5, uyarı) — sunucu kuralı (D1)', () => {
+  it('uyarı 5, kritik boş: hata yok, kritik 5 sayılır', () => {
+    const r = { id: 'a', kind: 'ANOMALY', column: 'x', aggregate: 'FIRST', k_warning: 5, k_critical: '' }
+    expect(validateSmart(r).k_critical).toBeUndefined()
+    expect(smartParam(r, 'k_critical')).toBe(5)
+    expect(smartParam({ ...r, k_warning: 2 }, 'k_critical')).toBe(3.5)
+    expect(smartParam({ ...r, k_warning: '' }, 'k_critical')).toBe(3.5)
+    // açıkça yazılmış küçük kritik yine hata
+    expect(validateSmart({ ...r, k_critical: 4 }).k_critical).toBe('k_order')
+  })
+})
+
+describe('sihirbaz adım bandı (O4)', () => {
+  it('adıma eşlenen ama alanının altında çizilmeyen hatalar banda; çizilenler banda girmez', () => {
+    const errs = { alertLevel: 'Seviye geçersiz', nocGroupIds: '7/24 grubu yok', skip_holidays: 'x', interval_seconds: 'Aralık kısa',
+      rule_logic: 'Mantık geçersiz', 'rules[0].warning': 'Eşik', name: 'Ad', groupName: 'Grup' }
+    expect(stepBannerErrors('schedule', errs).map(([k]) => k)).toEqual(['alertLevel', 'nocGroupIds', 'skip_holidays'])
+    expect(stepBannerErrors('rules', errs).map(([k]) => k)).toEqual(['rule_logic'])
+    expect(stepBannerErrors('summary', errs).map(([k]) => k)).toEqual(['groupName'])
+    expect(stepBannerErrors('query', errs)).toEqual([])
+    expect(stepBannerErrors('connection', null)).toEqual([])
+  })
+})
+
 describe('toplu oluşturma modeli (B4)', () => {
   const P = (id, name) => ({ id, name })
 
@@ -337,16 +418,56 @@ describe('toplu oluşturma modeli (B4)', () => {
     const seen = []
     const res = await runBulk(rows, { sql_text: 'SELECT 1', rules: [] }, create, { onRow: (i, r) => seen.push([i, r.status]) })
     expect(calls.map((b) => [b.profile_id, b.name, b.sql_text])).toEqual([[1, 'A · c1', 'SELECT 1'], [2, 'A · c2', 'SELECT 1'], [3, 'A · c3', 'SELECT 1']])
-    expect(res.map((r) => r.status)).toEqual(['error', 'error', 'ok'])
+    // ağ hatası = sonuç bilinmiyor (izleme oluşmuş olabilir — O2); sunucunun reddi = hata
+    expect(res.map((r) => r.status)).toEqual(['error', 'unknown', 'ok'])
     expect(res[0]).toMatchObject({ error: 'Bu ad zaten kullanılıyor', code: 'DUPLICATE_RECORD' })
     expect(res[1]).toMatchObject({ code: 'NETWORK_ERROR' })
     expect(res[2]).toMatchObject({ id: 99 })
-    expect(seen).toEqual([[0, 'error'], [1, 'error'], [2, 'ok']])
-    expect(bulkCounts(res)).toEqual({ ok: 1, error: 2, skipped: 0 })
+    expect(seen).toEqual([[0, 'error'], [1, 'unknown'], [2, 'ok']])
+    expect(bulkCounts(res)).toEqual({ ok: 1, error: 1, unknown: 1, skipped: 0 })
 
     let n = 0
     const stopAfterOne = await runBulk(rows, {}, async () => ({ success: true, data: { id: ++n } }), { shouldStop: () => n >= 1 })
     expect(stopAfterOne.map((r) => r.status)).toEqual(['ok', 'skipped', 'skipped'])
+  })
+
+  it('isUnsureFailure: yanıt yok / 0 / 502–504 / ağ kodları bilinmiyor; 400 / 403 / 409 kesin hata (O2)', () => {
+    expect(isUnsureFailure(null)).toBe(true)
+    expect(isUnsureFailure({ success: false, status: 504 })).toBe(true)
+    expect(isUnsureFailure({ success: false, status: 502 })).toBe(true)
+    expect(isUnsureFailure({ success: false, code: 'TIMEOUT' })).toBe(true)
+    expect(isUnsureFailure({ success: false, errorInfo: { status: 0 } })).toBe(true)
+    expect(isUnsureFailure({ success: false, status: 409, code: 'DUPLICATE_RECORD' })).toBe(false)
+    expect(isUnsureFailure({ success: false, status: 400, code: 'VALIDATION_FAILED' })).toBe(false)
+  })
+
+  it('bilinmeyen satır listede aynı adla varsa oluşmuştur (büyük / küçük harf duyarsız); liste okunamazsa değişmez (O2)', () => {
+    const rows = [{ profileId: 1, name: 'A · DB1', status: 'unknown' }, { profileId: 2, name: 'A · DB2', status: 'unknown' }, { profileId: 3, name: 'X', status: 'error' }]
+    const out = resolveUnknownRows(rows, [{ id: 41, name: 'a · db1' }])
+    expect(out.map((r) => r.status)).toEqual(['ok', 'unknown', 'error'])
+    expect(out[0]).toMatchObject({ id: 41, resolved: true })
+    expect(resolveUnknownRows(rows, null)).toBe(rows)
+    expect(resolveUnknownRows(rows, [])).toBe(rows)
+  })
+
+  it('yeniden deneme yalnız reddedilen + atlanan; bilinmeyen HARİÇ; kapatma onayı başarısız / bilinmeyen / atlanan varken (O1)', () => {
+    const rows = [{ profileId: 1, status: 'ok' }, { profileId: 2, status: 'error' }, { profileId: 3, status: 'unknown' }, { profileId: 4, status: 'skipped' }]
+    expect(retryProfileIds(rows)).toEqual([2, 4])
+    expect(hasUnfinished(rows)).toBe(true)
+    expect(hasUnfinished([{ status: 'ok' }])).toBe(false)
+    expect(hasUnfinished(null)).toBe(false)
+  })
+
+  it('önizleme ile koşu aynı liste: ilk 50 bağlantı (O6)', () => {
+    const many = Array.from({ length: 60 }, (_, i) => P(i, `c${i}`))
+    expect(bulkCandidates(many)).toHaveLength(MAX_BULK)
+    expect(bulkCandidates(many).some((c) => c.id === 55)).toBe(false)
+    expect(bulkCandidates(null)).toEqual([])
+  })
+
+  it('özet metni sayılı parçalar, tekil biçim (D10)', () => {
+    expect(bulkSummaryText(tEN, { ok: 1, error: 1, unknown: 0, skipped: 2 })).toBe('1 monitor created · 1 rejected · 2 skipped')
+    expect(bulkSummaryText(tTR, { ok: 3, error: 0, unknown: 1, skipped: 0 })).toBe('3 izleme oluşturuldu · 1 sonucu bilinmiyor')
   })
 })
 

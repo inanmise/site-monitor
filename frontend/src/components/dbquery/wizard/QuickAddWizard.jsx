@@ -29,11 +29,12 @@ import { builtinTemplates, dbaTemplates } from '../builtinTemplates.js'
 import { MAX_RULES, ruleSummary } from '../ruleModel.js'
 import { countTrapIndexes, defaultNewRule, primaryValueColumn, ruleFromColumn } from '../ruleSuggest.js'
 import {
-  columnsFrom, dbTypeLabel, rateLimitText, retryAfterOf, scheduleSummary, serverFieldErrors, splitFieldErrors,
+  columnsFrom, countText, dbTypeLabel, rateLimitText, retryAfterOf, scheduleSummary, serverFieldErrors, splitFieldErrors,
 } from '../dbqueryPageModel.js'
-import { bulkPlan, planReady } from '../bulkCreateModel.js'
+import { bulkCandidates, bulkPlan, hasUnfinished, planReady } from '../bulkCreateModel.js'
 import {
-  PURPOSE_MAX, WIZ_STEPS, canJump, firstErrorStep, firstInvalidStep, stepErrorCounts, suggestName, translateErrors, validateStep,
+  PURPOSE_MAX, WIZ_STEPS, canJump, firstErrorStep, firstInvalidStep, stepBannerErrors, stepErrorCounts, suggestName, translateErrors,
+  validateStep,
 } from './wizardModel.js'
 
 const STEP_ICON = {
@@ -76,7 +77,11 @@ export default function QuickAddWizard({
   const [planResult, setPlanResult] = useState(null)
   const [testing, setTesting] = useState(false)
   const [columns, setColumns] = useState([])
+  const [columnsFor, setColumnsFor] = useState(null)   // { sql, profileId } — kolonların geldiği deneme (O3)
+  const advancedErrors = useRef({})   // sihirbazda alanı olmayan sunucu hataları — gelişmiş görünüme taşınır (D8)
+  const stepBannerRef = useRef(null)
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)   // aynı karede iki tıklama iki kayıt göndermesin (D5)
   const [banner, setBanner] = useState(null)   // { message, advanced }
   const [bulkOn, setBulkOn] = useState(false)
   const [teamGroups, setTeamGroups] = useState([])
@@ -115,9 +120,10 @@ export default function QuickAddWizard({
   const dirty = () => JSON.stringify(toPayload(form)) !== initialJson.current
   const close = async () => {
     if (saving || bulk.running) return
-    if (dirty() && !bulk.rows) {
+    const unfinished = !!bulk.rows && hasUnfinished(bulk.rows)
+    if ((dirty() && !bulk.rows) || unfinished) {
       const ok = await showConfirm({
-        title: t('dbq.form.discardTitle'), message: t('dbq.wiz.discardMsg'),
+        title: t('dbq.form.discardTitle'), message: t(unfinished ? 'dbq.wiz.discardBulkMsg' : 'dbq.wiz.discardMsg'),
         confirmText: t('dbq.form.discard'), cancelText: t('dbq.form.keepEditing'), variant: 'danger',
       })
       if (!ok) return
@@ -130,7 +136,8 @@ export default function QuickAddWizard({
     return Object.keys(next).length === Object.keys(e).length ? e : next
   })
   const cancelTest = () => { testSeq.current++; setTesting(false) }
-  const resetTest = () => { cancelTest(); setTestResult(null); setPlanResult(null) }
+  // Bağlantı / takım / şablon değişince eski denemenin kolonları da gider (O3)
+  const resetTest = () => { cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setColumnsFor(null) }
 
   /** Hatalı adıma git + ilk hatalı alana odak. */
   const showErrors = (map, target) => {
@@ -140,7 +147,9 @@ export default function QuickAddWizard({
     if (!first) return
     const focus = () => {
       const root = document.querySelector('[data-slot="dbq-wiz"]')
+      const banner = root?.querySelector('[data-slot="dbq-wiz-step-errors"]')
       const base = first.startsWith('rules[') ? 'rules' : first
+      if (banner && stepBannerErrors(target || step, map).some(([k]) => k === first)) { banner.focus?.(); return }
       const el = root?.querySelector(`[data-field="${base}"] input, [data-field="${base}"] textarea, [data-field="${base}"] [role="combobox"], [data-field="${base}"] button`)
       el?.focus?.()
       try { el?.scrollIntoView?.({ block: 'center' }) } catch { /* jsdom */ }
@@ -149,6 +158,22 @@ export default function QuickAddWizard({
   }
 
   const validateCurrent = (s = step) => translateErrors(validateStep(s, form, ctx), t)
+
+  /**
+   * Sunucu alan hataları: sihirbazda bir adımı olanlar o adıma (alanının altına ya da adımın bandına — O4), olmayanlar bant +
+   * "Gelişmiş görünümde düzelt" (ve gelişmiş görünüme taşınır — D8). En az bir adım hatası varsa true.
+   */
+  const routeServerErrors = (fields) => {
+    const entries = Object.entries(fields || {}).filter(([, v]) => !!v)
+    const hidden = entries.filter(([k]) => firstErrorStep({ [k]: 'x' }) === 'advanced')
+    const visible = Object.fromEntries(entries.filter(([k]) => firstErrorStep({ [k]: 'x' }) !== 'advanced'))
+    advancedErrors.current = Object.fromEntries(hidden)
+    if (hidden.length) setBanner({ message: hidden.map(([, v]) => v).join(' · '), advanced: true })
+    const target = firstErrorStep(visible)
+    if (!target) return false
+    showErrors(visible, target)
+    return true
+  }
 
   const goTo = (target) => {
     const ti = WIZ_STEPS.indexOf(target)
@@ -187,14 +212,21 @@ export default function QuickAddWizard({
     if (keys.length) clearKeys((k) => keys.includes(k))
   }
   const onTeamChange = (v) => {
-    setForm((f) => (String(f.teamId) === String(v) ? f : { ...f, teamId: v, profileId: null, dbType: '', groupName: '' }))
+    setForm((f) => (String(f.teamId) === String(v) ? f
+      : { ...f, teamId: v, profileId: null, dbType: '', groupName: '', notificationGroupId: '', nocGroupIds: [] }))
     setProfile(null); resetTest(); bulk.setSelected(new Set())
     clearKeys((k) => k === 'team_id' || k === 'profile_id')
   }
   const onConnectionChange = (profileId, p) => {
     setForm((f) => ({ ...f, profileId: profileId ?? null, dbType: p?.db_type || (profileId == null ? '' : f.dbType) }))
     setProfile(p || null); resetTest()
-    if (profileId != null) bulk.setSelected((s) => (s.size ? s : new Set([profileId])))
+    const prev = form.profileId
+    bulk.setSelected((s) => {
+      const n = new Set(s)
+      if (prev != null && prev !== profileId) n.delete(prev)
+      if (profileId != null) n.add(profileId)
+      return n
+    })
     clearKeys((k) => k === 'profile_id')
   }
   const onSqlChange = (sql) => {
@@ -236,6 +268,8 @@ export default function QuickAddWizard({
   const runTest = async () => {
     if (!canRun) return
     const my = ++testSeq.current
+    const sentSql = form.sqlText
+    const sentProfile = form.profileId
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testDbQuery(toPayload(form))
@@ -243,10 +277,16 @@ export default function QuickAddWizard({
       if (res?.success) {
         setTestResult(res.data || {})
         setColumns(columnsFrom(res.data))
+        setColumnsFor({ sql: sentSql, profileId: sentProfile })
         if (Array.isArray(res.data?.guard?.violations) && res.data.guard.violations.length) setSqlViolations(res.data.guard.violations)
       } else {
         const limited = res?.code === 'RATE_LIMITED'
         if (res?.code === 'DBQUERY_SQL_REJECTED') { const { violations } = serverFieldErrors(res); if (violations) setSqlViolations(violations) }
+        // Alan hatası (VALIDATION_FAILED …) yalnız panelde kalmasın — ilgili adımın alanına / bandına (D12)
+        if (res?.code === 'VALIDATION_FAILED' || res?.code === 'DBQUERY_SQL_REJECTED') {
+          const { fields } = serverFieldErrors(res)
+          if (fields) routeServerErrors(fields)
+        }
         setTestResult({ error: limited ? rateLimitText(res, t, 'dbq.test.failedGeneric') : (res?.error || t('dbq.test.failedGeneric')),
           code: res?.code || null, retryAfter: limited ? null : retryAfterOf(res) })
       }
@@ -277,10 +317,14 @@ export default function QuickAddWizard({
     [form.rules.length, testResult, columns])
 
   // ── Kaydet ────────────────────────────────────────────────────────────────────────────────────────────────────────
-  const bulkPlanRows = bulkOn ? bulkPlan(bulk.pattern, form.name.trim(), connLoad.list.filter((p) => bulk.selected.has(p.id))) : []
+  // "SELECT * yerine kolonlar" önerisi YALNIZ şu anki sorgu + bağlantı denendiyse (O3) — başka sorgunun kolonları önerilmez
+  const fixColumns = columnsFor && columnsFor.sql === form.sqlText && columnsFor.profileId === form.profileId ? columns : []
+  const stepBanner = stepBannerErrors(step, errors)
+  const bulkPlanRows = bulkOn ? bulkPlan(bulk.pattern, form.name.trim(), bulkCandidates(connLoad.list).filter((p) => bulk.selected.has(p.id))) : []
   const bulkReady = bulkOn && planReady(bulkPlanRows)
 
   const save = async () => {
+    if (savingRef.current) return
     setBanner(null)
     const invalid = firstInvalidStep(form, ctx)
     if (invalid) { showErrors(translateErrors(invalid.errors, t), invalid.step); return }
@@ -289,6 +333,7 @@ export default function QuickAddWizard({
       if (results) onSaved?.(results.filter((r) => r.status === 'ok').map((r) => ({ id: r.id, name: r.name })), { bulk: results })
       return
     }
+    savingRef.current = true
     setSaving(true)
     try {
       const res = await api.monitoring.createDbQueryMonitor(toPayload(form))
@@ -296,23 +341,18 @@ export default function QuickAddWizard({
       const { fields, violations, plan } = serverFieldErrors(res)
       if (violations) setSqlViolations(violations)
       if (plan) setPlanResult(plan)
-      const target = firstErrorStep(fields)
-      if (fields && target && target !== 'advanced') {
-        const visible = Object.fromEntries(Object.entries(fields).filter(([k]) => firstErrorStep({ [k]: 'x' }) !== 'advanced'))
-        const hidden = Object.entries(fields).filter(([k]) => firstErrorStep({ [k]: 'x' }) === 'advanced')
-        if (hidden.length) setBanner({ message: hidden.map(([, v]) => v).join(' · '), advanced: true })
-        showErrors(visible, target)
-        return
-      }
-      setBanner({ message: (fields && Object.values(fields).join(' · ')) || res?.error || t('dbq.form.saveFailed'), advanced: target === 'advanced' })
+      if (fields && routeServerErrors(fields)) return
+      setBanner({ message: (fields && Object.values(fields).join(' · ')) || res?.error || t('dbq.form.saveFailed'), advanced: firstErrorStep(fields) === 'advanced' })
     } catch (e) {
       setBanner({ message: e?.message || t('dbq.form.saveFailed'), advanced: false })
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
 
-  const toAdvanced = () => { if (!saving && !bulk.running) onAdvanced?.(form) }
+  // Gelişmiş görünüme değerlerle birlikte bu sihirbazdaki alan hataları da taşınır (D8)
+  const toAdvanced = () => { if (!saving && !bulk.running) onAdvanced?.(form, { ...errors, ...advancedErrors.current }) }
 
   // ── Görünüm ───────────────────────────────────────────────────────────────────────────────────────────────────────
   const { rules: ruleErrors, schedule: scheduleErrors } = splitFieldErrors(errors)
@@ -324,7 +364,7 @@ export default function QuickAddWizard({
         <PanelsTopLeft aria-hidden="true" />{t('dbq.wiz.advanced')}
       </Button>
       {bulkDone ? (
-        <Button type="button" onClick={() => onClose?.()} data-slot="dbq-wiz-done" className="pointer-coarse:h-10">{t('dbq.bulk.close')}</Button>
+        <Button type="button" onClick={close} data-slot="dbq-wiz-done" className="pointer-coarse:h-10">{t('dbq.bulk.close')}</Button>
       ) : (
         <>
           {bulk.running && <Button type="button" variant="outline" onClick={bulk.stop} className="pointer-coarse:h-10" data-slot="dbq-bulk-stop">{t('dbq.bulk.stop')}</Button>}
@@ -341,7 +381,7 @@ export default function QuickAddWizard({
             <Button type="button" onClick={save} disabled={saving || bulk.running || (bulkOn && !bulkReady)} aria-busy={saving || bulk.running || undefined}
               data-slot="dbq-wiz-save" className="pointer-coarse:h-10">
               {(saving || bulk.running) ? <Spinner size={14} inline decorative /> : (bulkOn ? <Layers aria-hidden="true" /> : <Check aria-hidden="true" />)}
-              {bulkOn ? t('dbq.bulk.run', bulkPlanRows.length) : t('dbq.wiz.save')}
+              {bulkOn ? countText(t, 'dbq.bulk.run', bulkPlanRows.length) : t('dbq.wiz.save')}
             </Button>
           )}
         </>
@@ -369,6 +409,16 @@ export default function QuickAddWizard({
           </AlertBanner>
         )}
 
+        {stepBanner.length > 0 && (
+          <div ref={stepBannerRef} tabIndex={-1} data-slot="dbq-wiz-step-errors" className="outline-none">
+            <AlertBanner tone="danger" icon={CircleAlert} title={t('dbq.wiz.stepErrorsTitle')} className="mb-0">
+              <ul className="m-0 flex list-disc flex-col gap-0.5 pl-5">
+                {stepBanner.map(([k, v]) => <li key={k} data-key={k} className="[overflow-wrap:anywhere]">{v}</li>)}
+              </ul>
+            </AlertBanner>
+          </div>
+        )}
+
         {step === 'connection' && (
           <div className="flex min-w-0 flex-col gap-3">
             <FormGrid>
@@ -393,7 +443,7 @@ export default function QuickAddWizard({
               {templateName && <span data-slot="dbq-wiz-template" className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('dbq.wiz.fromTemplate', templateName)}</span>}
             </div>
             <SqlEditor value={form.sqlText} onChange={onSqlChange} dbType={dbType} fieldError={errors.sql_text}
-              violations={sqlViolations} onGuardChange={setGuard} fix={{ columns, rowLimit: form.maxRows, rules: form.rules }} />
+              violations={sqlViolations} onGuardChange={setGuard} fix={{ columns: fixColumns, rowLimit: form.maxRows, rules: form.rules }} />
           </div>
         )}
 
@@ -422,7 +472,7 @@ export default function QuickAddWizard({
               </div>
             )}
             <RuleBuilder rules={form.rules} logic={form.ruleLogic} columns={columns} fieldErrors={ruleErrors}
-              trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory}
+              trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory} schedule={form.schedule}
               onChange={onRulesChange} onLogicChange={(logic) => set({ ruleLogic: logic })} />
             {form.rules.length === 0 && <FormHint full={false}>{t('dbq.wiz.noRulesHint')}</FormHint>}
             <FormGrid>
@@ -466,7 +516,7 @@ export default function QuickAddWizard({
             onEdit={goTo} bulkOn={bulkOn}
             onBulkOn={(v) => {
               setBulkOn(v)
-              if (v && form.profileId != null) bulk.setSelected((s) => (s.size ? s : new Set([form.profileId])))
+              if (v && form.profileId != null) bulk.setSelected((s) => (s.has(form.profileId) ? s : new Set([...s, form.profileId])))
               if (!v) bulk.reset()
               // açılan panel çoğunlukla ekranın altında kalır — görünür alana getir
               if (v && typeof requestAnimationFrame === 'function') {
@@ -498,7 +548,8 @@ function StepIndicator({ t, step, furthest, counts, onJump, disabled }) {
           <li key={s} data-step={s} data-state={state} aria-current={i === cur ? 'step' : undefined} className="min-w-0">
             <Button type="button" variant={i === cur ? 'default' : 'outline'} disabled={disabled || !reachable}
               onClick={() => onJump(s)} data-errors={n || undefined}
-              aria-label={n ? t('dbq.wiz.stepInvalid', i + 1, t(`dbq.wiz.step.${s}`), n) : t('dbq.wiz.stepNumbered', i + 1, t(`dbq.wiz.step.${s}`))}
+              aria-label={n === 1 ? t('dbq.wiz.stepInvalid.one', i + 1, t(`dbq.wiz.step.${s}`))
+                : n ? t('dbq.wiz.stepInvalid', i + 1, t(`dbq.wiz.step.${s}`), n) : t('dbq.wiz.stepNumbered', i + 1, t(`dbq.wiz.step.${s}`))}
               className={cn('h-auto min-h-9 w-full justify-start gap-1.5 px-2 py-1.5 text-left text-xs whitespace-normal pointer-coarse:min-h-10',
                 n && i !== cur && 'border-destructive/60 text-destructive', state === 'todo' && 'text-muted-foreground')}>
               <span aria-hidden="true" className={cn('inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold tabular-nums',

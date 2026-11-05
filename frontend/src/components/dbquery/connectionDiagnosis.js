@@ -79,11 +79,17 @@ export function healthModel(data) {
   const monitors = (Array.isArray(data.monitors) ? data.monitors : []).slice(0, MAX_MONITORS)
     .filter((m) => m && m.id != null).map((m) => ({ id: m.id, name: String(m.name ?? ''), active: m.active !== false, status: m.status ?? null }))
   const runs = num(data.runs_24h)
+  // failed_24h = yalnız bağlantı sınıfı hatalar (sağlığı belirler); other_failed_24h = bağlantı sağlamken biten hatalar
   const failed = num(data.failed_24h)
+  const otherFailed = num(data.other_failed_24h)
   const count = num(data.monitor_count) ?? (Array.isArray(data.monitors) ? data.monitors.length : null)
   const pct = runs === 0 ? null : num(data.success_pct)
   const lastError = data.last_error && typeof data.last_error === 'object'
-    ? { at: data.last_error.at || null, code: data.last_error.code || null, message: data.last_error.message || null }
+    ? {
+      at: data.last_error.at || null, code: data.last_error.code || null, message: data.last_error.message || null,
+      // true = bağlantı hatası, false = bağlantı dışı (SQL / güvenlik …), null = bilinmiyor (kod yok, ör. başarısız deneme)
+      connectionClass: typeof data.last_error.connection_class === 'boolean' ? data.last_error.connection_class : null,
+    }
     : null
   const unused = typeof data.unused === 'boolean' ? data.unused : count === 0
   let tone = 'neutral'
@@ -94,7 +100,7 @@ export function healthModel(data) {
   return {
     statusRead: data.status_read !== false,
     monitors, monitorCount: count, more: count != null && count > monitors.length ? count - monitors.length : 0,
-    runs, failed, successPct: pct, avgMs: num(data.avg_duration_ms), lastOkAt: data.last_ok_at || null, lastError, unused, tone,
+    runs, failed, otherFailed, successPct: pct, avgMs: num(data.avg_duration_ms), lastOkAt: data.last_ok_at || null, lastError, unused, tone,
   }
 }
 

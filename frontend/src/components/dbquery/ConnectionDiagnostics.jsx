@@ -14,6 +14,7 @@ import {
   healthModel, healthMonitorState, isUnsupportedResponse, normalizeSteps, stepFixKey, stepLabelKey, stepsSummary,
 } from './connectionDiagnosis.js'
 import { PRIVILEGE_CODES, privilegeKey } from './connectionModel.js'
+import { countText } from './dbqueryPageModel.js'
 
 // ── A3: adım adım teşhis ───────────────────────────────────────────────────────────────────────────────────────────
 
@@ -91,8 +92,12 @@ export function ConnectionSteps({ steps }) {
 // ── A4: bağlantı sağlığı (son 24 saat) ──────────────────────────────────────────────────────────────────────────────
 
 
-/** Sağlık ucunu okur (sıra numaralı — geç yanıt düşer). `state`: loading | ok | error | unsupported. */
-export function useConnectionHealth(id) {
+/**
+ * Sağlık ucunu okur (sıra numaralı — geç yanıt düşer). `state`: loading | ok | error | unsupported | notFound. 404 iki anlama
+ * gelir (eski sunucuda uç yok / bağlantı silinmiş ya da görülemiyor) ve ikisinin kodu da `NOT_FOUND`: bağlantının takım
+ * listesi bir kez okunur — bağlantı listede yoksa "bulunamadı", varsa "desteklenmiyor" (D3).
+ */
+export function useConnectionHealth(id, teamId = null) {
   const t = useT()
   const [load, setLoad] = useState({ state: 'loading', model: null, message: null })
   const seq = useRef(0)
@@ -111,11 +116,19 @@ export function useConnectionHealth(id) {
       const model = healthModel(res.data)
       setLoad(model ? { state: 'ok', model, message: null } : { state: 'error', model: null, message: t('dbq.conn.health.readFailed') })
     } else if (isUnsupportedResponse(res)) {
-      setLoad({ state: 'unsupported', model: null, message: null })
+      let gone = false
+      if (res.status === 404 && teamId != null && typeof api.monitoring.dbConnections === 'function') {
+        try {
+          const list = await api.monitoring.dbConnections(teamId)
+          gone = !!(list?.success && Array.isArray(list.data) && !list.data.some((c) => String(c?.id) === String(id)))
+        } catch { /* liste okunamadı — desteklenmiyor varsayılır */ }
+        if (n !== seq.current) return
+      }
+      setLoad({ state: gone ? 'notFound' : 'unsupported', model: null, message: null })
     } else {
       setLoad({ state: 'error', model: null, message: res?.error || res?.message || t('dbq.conn.health.readFailed') })
     }
-  }, [id, t])
+  }, [id, teamId, t])
   useEffect(() => { reload() }, [reload])
   return [load, reload]
 }
@@ -162,6 +175,9 @@ export function ConnectionHealthCard({ load, onRetry }) {
         {load.state === 'unsupported' && (
           <p data-slot="dbq-conn-health-unsupported" className="m-0 text-sm text-muted-foreground">{t('dbq.conn.health.unsupported')}</p>
         )}
+        {load.state === 'notFound' && (
+          <p data-slot="dbq-conn-health-notfound" className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">{t('dbq.conn.health.notFound')}</p>
+        )}
         {load.state === 'error' && (
           <div data-slot="dbq-conn-health-error" className="flex min-w-0 flex-col items-start gap-2 text-sm">
             <span className="inline-flex items-start gap-1.5 text-destructive">
@@ -182,6 +198,12 @@ export function ConnectionHealthCard({ load, onRetry }) {
               <Tile slot="dbq-conn-health-avg" label={t('dbq.conn.health.avg')} value={m.avgMs == null ? dash : t('dbq.conn.ms', fmt(Math.round(m.avgMs)))} />
             </div>
             {m.runs === 0 && <p data-slot="dbq-conn-health-norun" className="m-0 text-xs text-muted-foreground">{t('dbq.conn.health.noRuns')}</p>}
+            {/* Bağlantı sağlamken biten hatalar (SQL hatası, güvenlik reddi …) ayrı söylenir — bağlantı sağlığını düşürmez */}
+            {m.otherFailed != null && m.otherFailed > 0 && (
+              <p data-slot="dbq-conn-health-other" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {countText(t, 'dbq.conn.health.otherFailed', m.otherFailed)}
+              </p>
+            )}
             <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <div className="flex min-w-0 flex-col gap-0.5">
                 <dt className="text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase">{t('dbq.conn.health.lastOk')}</dt>
@@ -195,6 +217,13 @@ export function ConnectionHealthCard({ load, onRetry }) {
                       <span className="flex flex-wrap items-center gap-1.5">
                         {m.lastError.at ? formatDate(m.lastError.at) : dash}
                         {m.lastError.code && <Badge variant="outline" className="h-auto rounded-md font-mono text-[11px] font-normal whitespace-normal">{m.lastError.code}</Badge>}
+                        {m.lastError.connectionClass != null && (
+                          <Badge data-slot="dbq-conn-health-error-class" data-class={m.lastError.connectionClass ? 'connection' : 'other'}
+                            variant={m.lastError.connectionClass ? 'destructive' : 'secondary'}
+                            className="h-auto rounded-md text-[11px] font-normal whitespace-normal">
+                            {t(m.lastError.connectionClass ? 'dbq.conn.health.classConnection' : 'dbq.conn.health.classOther')}
+                          </Badge>
+                        )}
                       </span>
                       {m.lastError.message && (
                         <code className="block rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{m.lastError.message}</code>
@@ -252,7 +281,7 @@ export function ConnectionUsedBy({ profile, health, onOpenMonitor }) {
             })}
           </ul>
         )}
-      {more > 0 && <p className="m-0 text-xs text-muted-foreground">{t('dbq.conn.usedByMore', more)}</p>}
+      {more > 0 && <p className="m-0 text-xs text-muted-foreground">{countText(t, 'dbq.conn.usedByMore', more)}</p>}
     </Card>
   )
 }

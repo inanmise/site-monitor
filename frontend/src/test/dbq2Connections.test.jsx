@@ -90,6 +90,48 @@ describe('A1 — bağlantı dizesi yapıştırma', () => {
   })
 })
 
+describe('A1 — inceleme düzeltmeleri (Y1 / D6)', () => {
+  it('EZConnect kullanıcı/parola@sunucu: parola alınmaz, uyarı verilir, kutu temizlenir; hiçbir alanda parola parçası yok (Y1)', async () => {
+    const form = await newForm()
+    const box = within(form).getByLabelText('Bağlantı dizesinden doldur')
+    pasteInto(box, 'scott/T1ger#2026@ora-prd:1521/FIN')
+    await waitFor(() => expect(form.getAttribute('data-type')).toBe('ORACLE'))
+    expect(within(form).getByLabelText(/^Sunucu(\s*\*)?$/)).toHaveValue('ora-prd')
+    expect(within(form).getByLabelText(/^Parola/)).toHaveValue('')
+    expect(box).toHaveValue('')
+    expect(form.querySelector('[data-slot="dbq-conn-paste-password"]')).not.toBeNull()
+    expect(document.body.innerHTML).not.toContain('T1ger')
+  })
+
+  it('parola güvenle ayrılamayan dize: hiçbir alan dolmaz, UNSAFE iletisi, kutu temizlenir (Y1)', async () => {
+    const form = await newForm()
+    const host = within(form).getByLabelText(/^Sunucu(\s*\*)?$/).value
+    const box = within(form).getByLabelText('Bağlantı dizesinden doldur')
+    pasteInto(box, 'postgres://u:se/cret@')
+    expect(form.querySelector('[data-slot="dbq-conn-paste-error"]').textContent).toContain('güvenle ayrılamadı')
+    expect(box).toHaveValue('')
+    expect(within(form).getByLabelText(/^Sunucu(\s*\*)?$/)).toHaveValue(host)
+    expect(document.body.innerHTML).not.toContain('se/cret')
+  })
+
+  it('parolasız tanınmayan YAPIŞTIRMA kutuda kalır — düzeltilebilir (D6)', async () => {
+    const form = await newForm()
+    const box = within(form).getByLabelText('Bağlantı dizesinden doldur')
+    pasteInto(box, 'bu bir dize değil')
+    expect(form.querySelector('[data-slot="dbq-conn-paste-error"]')).not.toBeNull()
+    expect(box).toHaveValue('bu bir dize değil')
+  })
+
+  it('değeri parola parçası olabilecek geçersiz port notu değersiz metinle yazılır', async () => {
+    const form = await newForm()
+    const box = within(form).getByLabelText('Bağlantı dizesinden doldur')
+    pasteInto(box, 'postgres://app@db1:s3cr%t/x')
+    const note = await waitFor(() => { const n = form.querySelector('[data-slot="dbq-conn-paste-notes"] [data-code="PORT_INVALID"]'); if (!n) throw new Error('yok'); return n })
+    expect(note.textContent).toContain('Dizedeki port geçerli değil')
+    expect(note.textContent).not.toContain('s3cr')
+  })
+})
+
 describe('A3 — adım adım teşhis', () => {
   it('başarısız adım + çare metni, sonrakiler atlandı; eski alanlar aynen', async () => {
     api.monitoring.testDbConnection.mockResolvedValue({ success: true, data: {
@@ -149,6 +191,33 @@ describe('A4 — sağlık kartı', () => {
     expect(onOpenMonitor).toHaveBeenCalledWith(12)
   })
 
+  it('be1: bağlantı dışı hatalar ayrı satırda, sağlığı düşürmez; son sorun "bağlantı dışı hata" rozetiyle', async () => {
+    api.monitoring.dbConnectionHealth.mockResolvedValue({ success: true, data: { ...HEALTH, failed_24h: 0, other_failed_24h: 4, success_pct: 100,
+      last_error: { at: '2026-11-05T08:00:00Z', code: 'DB_SQL_ERROR', message: 'syntax error at or near …', connection_class: false } } })
+    open()
+    fireEvent.click(await screen.findByRole('button', { name: PG.name }))
+    const card = await waitFor(() => { const c = document.querySelector('[data-slot="dbq-conn-health24"][data-state="ok"]'); if (!c) throw new Error('yok'); return c })
+    expect(card.getAttribute('data-tone')).toBe('success')
+    expect(card.querySelector('[data-slot="dbq-conn-health-failed"]').textContent).toContain('Bağlantı hatası')
+    expect(card.querySelector('[data-slot="dbq-conn-health-other"]').textContent).toContain('4 çalıştırma bağlantı dışı')
+    const cls = card.querySelector('[data-slot="dbq-conn-health-error-class"]')
+    expect(cls.getAttribute('data-class')).toBe('other')
+    expect(cls.textContent).toBe('Bağlantı dışı hata')
+  })
+
+  it('be1: bağlantı denemesi saatlik sınırda (429 RATE_LIMITED) → bilgi tonu "Biraz bekleyin" + sunucu metni (hata değil)', async () => {
+    api.monitoring.testDbConnection.mockResolvedValue({ success: false, status: 429, code: 'RATE_LIMITED',
+      error: 'Saatlik bağlantı denemesi sınırına ulaşıldı (60/saat) — 14 dk sonra yeniden deneyin.', retry_after_seconds: 840 })
+    open()
+    fireEvent.click(await screen.findByRole('button', { name: PG.name }))
+    fireEvent.click(screen.getByRole('button', { name: 'Bağlantıyı dene' }))
+    const out = await waitFor(() => { const o = document.querySelector('[data-slot="dbq-conn-test"][data-wait="true"]'); if (!o) throw new Error('yok'); return o })
+    expect(out.textContent).toContain('14 dk sonra')
+    expect(out.closest('[data-tone]')?.getAttribute('data-tone') ?? 'info').toBe('info')
+    expect(document.body.textContent).toContain('Biraz bekleyin')
+    expect(document.body.textContent).not.toContain('Bağlanılamadı')
+  })
+
   it('çalışma yok → nötr + "durum bilinmiyor" notu (asla yeşil değil); kullanılmayan işareti', async () => {
     api.monitoring.dbConnectionHealth.mockResolvedValue({ success: true, data: { monitors: [], monitor_count: 0, runs_24h: 0, failed_24h: 0, success_pct: null, unused: true } })
     open()
@@ -175,6 +244,16 @@ describe('A4 — sağlık kartı', () => {
     expect(document.querySelector('[data-slot="dbq-conn-health24"]').textContent).not.toMatch(/sorun yok/i)
     fireEvent.click(within(err).getByRole('button', { name: 'Tekrar dene' }))
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-health24"][data-state="ok"]')).not.toBeNull())
+  })
+
+  it('404 ve bağlantı takım listesinde yok → "bulunamadı" (silinmiş); listede varsa "desteklemiyor" (D3)', async () => {
+    api.monitoring.dbConnections.mockResolvedValueOnce({ success: true, data: [PG, IDLE] }).mockResolvedValueOnce({ success: true, data: [IDLE] })
+    api.monitoring.dbConnectionHealth.mockResolvedValueOnce({ success: false, status: 404, code: 'NOT_FOUND', error: 'Bulunamadı' })
+    open()
+    fireEvent.click(await screen.findByRole('button', { name: PG.name }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-health-notfound"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="dbq-conn-health-unsupported"]')).toBeNull()
+    expect(api.monitoring.dbConnections).toHaveBeenLastCalledWith(3)
   })
 
   it('listede hiçbir izlemenin kullanmadığı bağlantı "Kullanılmıyor" diye işaretlenir', async () => {
@@ -218,5 +297,21 @@ describe('A2 — "Bu bağlantıdan yeni"', () => {
     open({ canEdit: false })
     fireEvent.click(await screen.findByRole('button', { name: PG.name }))
     expect(document.querySelector('[data-slot="dbq-conn-copy"]')).toBeNull()
+  })
+
+  it('yazılabilir takımı olmayana kopya yok; kaynak takım yazılabilir değilse kopya yazılabilir takıma kaydedilir (D2)', async () => {
+    const { unmount } = open({ teams: [] })
+    fireEvent.click(await screen.findByRole('button', { name: PG.name }))
+    expect(document.querySelector('[data-slot="dbq-conn-copy"]')).toBeNull()
+    unmount()
+    api.monitoring.createDbConnection.mockResolvedValue({ success: true, data: { ...PG, id: 32, team_id: 9 } })
+    open({ teams: [{ id: 9, name: 'Takım B' }] })
+    fireEvent.click(await screen.findByRole('button', { name: PG.name }))
+    fireEvent.click(document.querySelector('[data-slot="dbq-conn-copy"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-form"]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(api.monitoring.createDbConnection).toHaveBeenCalled())
+    expect(api.monitoring.createDbConnection.mock.calls[0][0]).toMatchObject({ team_id: 9 })
+    await act(async () => {})
   })
 })

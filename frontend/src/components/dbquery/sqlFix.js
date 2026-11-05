@@ -120,11 +120,37 @@ const SIMPLE_IDENT = /^[A-Za-z_][A-Za-z0-9_$#]*$/
 const STAR_HEAD = /^(\s*)SELECT(\s+)\*(\s+)FROM\s/i
 const FORBIDDEN_IN_STAR = /\b(JOIN|UNION|INTERSECT|EXCEPT|MINUS|APPLY|PIVOT|UNPIVOT)\b/i
 
-/** Kolon adı → gerekiyorsa türün tırnağıyla (SQL Server köşeli ayraç, diğerleri çift tırnak). */
+/**
+ * Tırnaksız yazılamayan sözcükler (PostgreSQL + Oracle + SQL standardı ayrılmış sözcükleri; büyük harf). Kolon adı bunlardan
+ * biriyse tırnaklanır — tırnaksız `order` / `user` / `date` / `level` sözdizimi hatası ya da başka anlam verir (O3).
+ */
+const RESERVED = new Set(('ACCESS ADD ALL ALTER ANALYSE ANALYZE AND ANY ARRAY AS ASC ASYMMETRIC AUDIT AUTHORIZATION BETWEEN BINARY BOTH BY '
+  + 'CASE CAST CHAR CHECK CLUSTER COLLATE COLLATION COLUMN COMMENT COMPRESS CONCURRENTLY CONNECT CONSTRAINT CREATE CROSS CURRENT '
+  + 'CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER DATE DECIMAL DEFAULT '
+  + 'DEFERRABLE DELETE DESC DISTINCT DO DROP ELSE END EXCEPT EXCLUSIVE EXISTS FALSE FETCH FILE FLOAT FOR FOREIGN FREEZE FROM FULL '
+  + 'GRANT GROUP HAVING IDENTIFIED ILIKE IMMEDIATE IN INCREMENT INDEX INITIAL INITIALLY INNER INSERT INTEGER INTERSECT INTO IS '
+  + 'ISNULL JOIN LATERAL LEADING LEFT LEVEL LIKE LIMIT LOCALTIME LOCALTIMESTAMP LOCK LONG MAXEXTENTS MINUS MLSLABEL MODE MODIFY '
+  + 'NATURAL NOAUDIT NOCOMPRESS NOT NOTNULL NOWAIT NULL NUMBER OF OFFLINE OFFSET ON ONLINE ONLY OPTION OR ORDER OUTER OVERLAPS '
+  + 'PCTFREE PLACING PRIMARY PRIOR PUBLIC RAW REFERENCES RENAME RESOURCE RETURNING REVOKE RIGHT ROW ROWID ROWNUM ROWS SELECT '
+  + 'SESSION SESSION_USER SET SHARE SIMILAR SIZE SMALLINT SOME START SUCCESSFUL SYMMETRIC SYNONYM SYSDATE TABLE TABLESAMPLE THEN '
+  + 'TO TRAILING TRIGGER TRUE UID UNION UNIQUE UPDATE USER USING VALIDATE VALUES VARCHAR VARCHAR2 VARIADIC VERBOSE VIEW WHEN '
+  + 'WHENEVER WHERE WINDOW WITH').split(' '))
+
+/** PostgreSQL tırnaksız adı küçük harfe, Oracle büyük harfe katlar — yalnız katlamayla AYNI kalan ad tırnaksız yazılır. */
+const PG_PLAIN = /^[a-z_][a-z0-9_$]*$/
+const ORACLE_PLAIN = /^[A-Z][A-Z0-9_$#]*$/
+
+/**
+ * Kolon adı → türün kuralıyla (O3): SQL Server HER ZAMAN köşeli ayraç; PostgreSQL yalnız küçük harfli sade ad tırnaksız
+ * (`CustomerId` → `"CustomerId"`); Oracle yalnız büyük harfli sade ad tırnaksız (`created_at` → `"created_at"`); ayrılmış
+ * sözcük her türde tırnaklı. Tür bilinmiyorsa sade ad dışında çift tırnak.
+ */
 export function quoteColumn(name, dbType) {
   const s = String(name)
-  if (SIMPLE_IDENT.test(s)) return s
   if (dbType === 'MSSQL') return `[${s.replace(/]/g, ']]')}]`
+  const reserved = RESERVED.has(s.toUpperCase())
+  const plain = dbType === 'POSTGRESQL' ? PG_PLAIN.test(s) : dbType === 'ORACLE' ? ORACLE_PLAIN.test(s) : SIMPLE_IDENT.test(s)
+  if (plain && !reserved) return s
   return `"${s.replace(/"/g, '""')}"`
 }
 
@@ -168,6 +194,8 @@ export function fixWarnings(fix, rules) {
   const out = []
   const list = Array.isArray(rules) ? rules : []
   if (fix?.code === 'ADD_ROW_LIMIT' && list.some((r) => r?.kind === 'ROW_COUNT')) out.push('ROW_COUNT_AFFECTED')
+  // İstemci önerisi sunucunun denetiminden geçmedi: kolon adları son denemeden — uygulandıktan sonra sorgu yeniden denenmeli (O3)
+  if (fix?.code === 'SELECT_COLUMNS') out.push('COLUMNS_FROM_TEST')
   return out
 }
 
@@ -194,7 +222,29 @@ export function rowLimitSuggestable(sql) {
 
 /** Sunucunun değerlendirip ÖNERMEDİĞİ düzeltmelerin nedenleri (`DbQuerySqlFix.REASONS`; `dbq.fix.reason.<NEDEN>`). */
 export const SKIP_REASONS = Object.freeze(['NOT_MSSQL', 'NOTHING_TO_FIX', 'OTHER_HINT', 'GUARD_STILL_FAILS', 'ALREADY_LIMITED',
-  'NOT_LIMITABLE', 'UNPARSABLE'])
+  'NOT_LIMITABLE', 'UNPARSABLE', 'CHECK_TIMEOUT', 'SINGLE_ROW'])
+
+/** Sunucunun "kısa süre bekle" kodları (sql-check / sql-fix; 429): hata değil, bekleme sonrası yeniden denenir. */
+export const BUSY_CODES = Object.freeze(['DBQUERY_BUSY', 'RATE_LIMITED'])
+/** Bekleme önerisi yoksa (`DBQUERY_BUSY` başlıkla `Retry-After: 1` döner, gövdede saniye yok) varsayılan bekleme, sn. */
+export const BUSY_DEFAULT_WAIT_S = 2
+/** Otomatik yeniden denemenin bekleme üst sınırı, sn (sunucu daha uzun söylese de düzenleyici en geç bu kadar sonra dener). */
+export const BUSY_MAX_WAIT_S = 60
+
+/**
+ * 429 "kısa süre bekle" yanıtı mı → bekleme saniyesi (1–60), değilse null. `DBQUERY_BUSY` (eşzamanlı denetim dolu) ya da
+ * `RATE_LIMITED` (kişi başı dakika sınırı); süre gövdenin `retry_after_seconds`'ından, yoksa varsayılan.
+ */
+export function busyWaitSeconds(res) {
+  if (!res || typeof res !== 'object' || res.success === true) return null
+  const status = Number(res.status ?? res.errorInfo?.status)
+  const code = res.code ?? res.errorInfo?.code ?? null
+  if (status !== 429 && !BUSY_CODES.includes(code)) return null
+  if (status === 429 && code && !BUSY_CODES.includes(code)) return null
+  const raw = Number(res.retry_after_seconds ?? res.retryAfter)
+  const sec = Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : BUSY_DEFAULT_WAIT_S
+  return Math.min(BUSY_MAX_WAIT_S, Math.max(1, sec))
+}
 
 /**
  * Sunucu yanıtının `skipped` listesi → gösterilecek öğeler (yalnız tanınan kod; neden tanınmazsa sunucunun notu, o da yoksa

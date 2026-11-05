@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, CircleAlert, CircleMinus, Layers, RefreshCw, TriangleAlert, XCircle } from 'lucide-react'
+import { CheckCircle2, CircleAlert, CircleHelp, CircleMinus, Layers, RefreshCw, RotateCcw, TriangleAlert, XCircle } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -13,7 +13,11 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
 import { DbTypeBadge, HealthBadge } from './dbqueryParts.jsx'
 import { serverLabel } from './connectionModel.js'
-import { MAX_BULK, bulkCounts, bulkPlan, patternHasConnection, planReady, runBulk } from './bulkCreateModel.js'
+import {
+  MAX_BULK, bulkCandidates, bulkCounts, bulkPlan, bulkSummaryText, patternHasConnection, planReady, resolveUnknownRows, retryProfileIds,
+  runBulk,
+} from './bulkCreateModel.js'
+import { countText } from './dbqueryPageModel.js'
 
 /** Takımın bağlantılarını okur (sıra numaralı) — panel ve koşucu AYNI listeyi kullanır (tek istek). */
 export function useTeamConnections(teamId) {
@@ -38,32 +42,73 @@ export function useTeamConnections(teamId) {
  * Toplu oluşturmanın durumu ve koşucusu: seçili bağlantılar (ilk açılışta formun bağlantısı seçili), ad kalıbı, plan,
  * sıralı oluşturma (ilk hatada DURMAZ), ilerleme ve sonuçlar. `create(body)` mevcut create ucu.
  */
-export function useBulkCreate({ create, baseBody, baseName, initialProfileId, defaultPattern }) {
+export function useBulkCreate({ create, baseBody, baseName, initialProfileId, defaultPattern, listMonitors = api.monitoring.getDbQueryMonitors }) {
   const [selected, setSelected] = useState(() => new Set(initialProfileId != null ? [initialProfileId] : []))
   const [pattern, setPattern] = useState(defaultPattern)
   const [running, setRunning] = useState(false)
   const [rows, setRows] = useState(null)   // sonuç satırları (koşu sırasında doldukça)
   const stopRef = useRef(false)
+  const runningRef = useRef(false)   // aynı karede iki tıklama iki koşu başlatmasın (D5)
+  // Bileşen kapanınca (geri tuşu, sekme değişimi, oturum sonu) kalan satırlar GÖNDERİLMEZ (D5)
+  useEffect(() => () => { stopRef.current = true }, [])
   const run = async (profiles) => {
-    const plan = bulkPlan(pattern, baseName, profiles.filter((p) => selected.has(p.id)))
+    if (runningRef.current) return null
+    // Önizleme ile koşu AYNI listeden (ilk MAX_BULK bağlantı; O6)
+    const plan = bulkPlan(pattern, baseName, bulkCandidates(profiles).filter((p) => selected.has(p.id)))
     if (!planReady(plan)) return null
+    runningRef.current = true
     stopRef.current = false
     setRunning(true)
     setRows(plan.map((r) => ({ profileId: r.profile.id, name: r.name, status: 'pending' })))
     try {
-      return await runBulk(plan, baseBody, create, {
+      let results = await runBulk(plan, baseBody, create, {
         onRow: (i, row) => setRows((cur) => (cur ? cur.map((x, k) => (k === i ? row : x)) : cur)),
         shouldStop: () => stopRef.current,
       })
+      // Yanıtı alınamayan satır: izleme listesinde aynı ad varsa oluşmuştur (O2) — liste okunamazsa "bilinmiyor" kalır
+      if (results.some((r) => r.status === 'unknown') && typeof listMonitors === 'function') {
+        try {
+          const res = await listMonitors()
+          if (res?.success && Array.isArray(res.data)) results = resolveUnknownRows(results, res.data)
+        } catch { /* liste okunamadı — sonuç bilinmiyor kalır */ }
+        setRows(results)
+      }
+      return results
     } finally {
+      runningRef.current = false
       setRunning(false)
     }
   }
-  return { selected, setSelected, pattern, setPattern, running, rows, run, stop: () => { stopRef.current = true }, reset: () => setRows(null) }
+  /** Sonuç ekranından plana dönüş: yalnız reddedilen / atlanan bağlantılar seçili kalır (oluşturulanlar tekrar gönderilmez; O1). */
+  const retryFailed = () => {
+    if (runningRef.current || !rows) return
+    setSelected(new Set(retryProfileIds(rows)))
+    setRows(null)
+  }
+  return {
+    selected, setSelected, pattern, setPattern, running, rows, run, retryFailed,
+    stop: () => { stopRef.current = true }, reset: () => setRows(null),
+  }
 }
 
-const RESULT_ICON = { ok: CheckCircle2, error: XCircle, skipped: CircleMinus, pending: null }
-const RESULT_INK = { ok: 'text-success', error: 'text-destructive', skipped: 'text-muted-foreground', pending: 'text-muted-foreground' }
+const RESULT_ICON = { ok: CheckCircle2, error: XCircle, unknown: CircleHelp, skipped: CircleMinus, pending: null }
+const RESULT_INK = {
+  ok: 'text-success', error: 'text-destructive', unknown: 'text-amber-700 dark:text-amber-300', skipped: 'text-muted-foreground',
+  pending: 'text-muted-foreground',
+}
+
+/** Sonuç satırının açıklaması (durum + varsa sunucu nedeni / uyarılar). */
+function resultText(t, r) {
+  if (r.status === 'error') return r.error || t('dbq.bulk.rowFailed')
+  if (r.status === 'unknown') return t('dbq.bulk.status.unknown')
+  if (r.status === 'ok') {
+    const parts = [t(r.resolved ? 'dbq.bulk.status.okResolved' : 'dbq.bulk.status.ok')]
+    if (r.planWarning) parts.push(t('dbq.bulk.planWarning'))
+    if (r.warnings > 0) parts.push(countText(t, 'dbq.bulk.rowWarnings', r.warnings))
+    return parts.join(' · ')
+  }
+  return t(`dbq.bulk.status.${r.status}`)
+}
 
 /**
  * "Birden çok bağlantı için oluştur" paneli (B4, 2026-11-05) — aynı takımın bağlantılarından çoklu seçim, ad kalıbı
@@ -74,12 +119,14 @@ const RESULT_INK = { ok: 'text-success', error: 'text-destructive', skipped: 'te
 export function BulkCreatePanel({ load, onReload, dbType, baseName, bulk, disabled = false }) {
   const t = useT()
   const reload = onReload
-  const list = load.list.slice(0, MAX_BULK)
+  const list = useMemo(() => bulkCandidates(load.list), [load.list])
+  const truncated = load.list.length > MAX_BULK
   const plan = useMemo(() => bulkPlan(bulk.pattern, baseName, list.filter((p) => bulk.selected.has(p.id))), [bulk.pattern, baseName, list, bulk.selected])
   const toggle = (id, on) => bulk.setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n })
   const results = bulk.rows
   const done = results ? results.filter((r) => r.status !== 'pending').length : 0
   const counts = results ? bulkCounts(results) : null
+  const retryCount = results && !bulk.running ? retryProfileIds(results).length : 0
   const locked = disabled || bulk.running || !!results
   return (
     <div data-slot="dbq-bulk" data-state={results ? (bulk.running ? 'running' : 'done') : 'plan'} className="flex min-w-0 flex-col gap-3">
@@ -97,6 +144,9 @@ export function BulkCreatePanel({ load, onReload, dbType, baseName, bulk, disabl
               </div>
             )}
             {load.state === 'ok' && list.length === 0 && <p className="m-0 text-sm text-muted-foreground">{t('dbq.bulk.noConnections')}</p>}
+            {load.state === 'ok' && truncated && (
+              <p data-slot="dbq-bulk-truncated" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('dbq.bulk.truncated', MAX_BULK, load.list.length)}</p>
+            )}
             {load.state === 'ok' && list.length > 0 && (
               <ul data-slot="dbq-bulk-connections" className="m-0 flex max-h-72 list-none flex-col gap-1 overflow-y-auto rounded-md border p-1.5">
                 {list.map((p) => {
@@ -156,8 +206,16 @@ export function BulkCreatePanel({ load, onReload, dbType, baseName, bulk, disabl
         <div className="flex min-w-0 flex-col gap-2">
           <ProgressBar value={done} max={results.length} label={t('dbq.bulk.progress', done, results.length)} showValue />
           {counts && !bulk.running && (
-            <AlertBanner tone={counts.error ? (counts.ok ? 'warning' : 'danger') : 'success'} icon={Layers} className="mb-0">
-              <span data-slot="dbq-bulk-summary">{t('dbq.bulk.summary', counts.ok, counts.error, counts.skipped)}</span>
+            <AlertBanner icon={Layers} className="mb-0"
+              tone={counts.error || counts.unknown || counts.skipped ? (counts.ok ? 'warning' : (counts.error ? 'danger' : 'warning')) : 'success'}
+              actions={retryCount > 0 && !disabled ? (
+                <Button type="button" variant="outline" size="sm" onClick={bulk.retryFailed} data-slot="dbq-bulk-retry" className="pointer-coarse:h-10">
+                  <RotateCcw aria-hidden="true" />{countText(t, 'dbq.bulk.retryFailed', retryCount)}
+                </Button>
+              ) : null}>
+              <span data-slot="dbq-bulk-summary" className="[overflow-wrap:anywhere]">{bulkSummaryText(t, counts)}</span>
+              {counts.unknown > 0 && <span data-slot="dbq-bulk-unknown-note" className="mt-1 block text-xs [overflow-wrap:anywhere]">{t('dbq.bulk.unknownNote')}</span>}
+              {retryCount > 0 && !disabled && <span className="mt-1 block text-xs [overflow-wrap:anywhere]">{t('dbq.bulk.retryHint')}</span>}
             </AlertBanner>
           )}
           <ol data-slot="dbq-bulk-results" className="m-0 flex list-none flex-col gap-1 p-0" aria-live="polite">
@@ -170,7 +228,7 @@ export function BulkCreatePanel({ load, onReload, dbType, baseName, bulk, disabl
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="font-medium [overflow-wrap:anywhere]">{r.name}</span>
                     <span className={cn('text-xs [overflow-wrap:anywhere]', RESULT_INK[r.status])}>
-                      {r.status === 'error' ? (r.error || t('dbq.bulk.rowFailed')) : t(`dbq.bulk.status.${r.status}`)}
+                      {resultText(t, r)}
                     </span>
                   </span>
                 </li>
@@ -190,7 +248,7 @@ export function defaultBulkPattern(t) {
 
 /**
  * Gelişmiş formun "Birden çok bağlantı için oluştur" penceresi (B4) — formun gövdesi (`baseBody`) aynen, yalnız
- * `profile_id` ve `name` satır başına değişir. Koşu bitince `onDone(results)` (en az bir başarı → çağıran formu kapatır).
+ * `profile_id` ve `name` satır başına değişir. Koşu bitince `onDone(results)` (çağıran yalnız TÜM satırlar başarılıysa formu kapatır — O1).
  */
 export function BulkCreateDialog({ open, onClose, teamId, dbType, baseBody, baseName, initialProfileId, onDone }) {
   const t = useT()
@@ -199,7 +257,7 @@ export function BulkCreateDialog({ open, onClose, teamId, dbType, baseBody, base
   const bulk = useBulkCreate({
     create: api.monitoring.createDbQueryMonitor, baseBody, baseName, initialProfileId, defaultPattern: defaultBulkPattern(t),
   })
-  const plan = bulkPlan(bulk.pattern, baseName, connections.filter((p) => bulk.selected.has(p.id)))
+  const plan = bulkPlan(bulk.pattern, baseName, bulkCandidates(connections).filter((p) => bulk.selected.has(p.id)))
   const ready = planReady(plan)
   const finished = bulk.rows && !bulk.running
   const start = async () => {
@@ -214,7 +272,7 @@ export function BulkCreateDialog({ open, onClose, teamId, dbType, baseBody, base
         <Button type="button" variant="secondary" onClick={onClose} disabled={bulk.running} className="pointer-coarse:h-10" data-slot="dbq-bulk-close">{t(finished ? 'dbq.bulk.close' : 'dbq.form.cancel')}</Button>
         {!finished && (
           <Button type="button" onClick={start} disabled={!ready || bulk.running} aria-busy={bulk.running || undefined}
-            data-slot="dbq-bulk-run" className="pointer-coarse:h-10">{t('dbq.bulk.run', plan.length)}</Button>
+            data-slot="dbq-bulk-run" className="pointer-coarse:h-10">{countText(t, 'dbq.bulk.run', plan.length)}</Button>
         )}
       </>}>
       <div className="flex min-w-0 flex-col gap-3">

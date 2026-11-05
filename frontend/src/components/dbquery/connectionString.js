@@ -14,9 +14,12 @@ import { DEFAULT_PORT, ORACLE_TCPS_PORT, PG_SSL_MODES, changeDbType, setOracleTc
 export const MAX_CONN_STRING = 2000
 
 /** Ayrıştırma hata kodları (`dbq.conn.paste.err.<KOD>`). */
-export const PASTE_ERRORS = Object.freeze(['EMPTY', 'TOO_LONG', 'UNRECOGNIZED', 'NO_HOST'])
+/** `UNSAFE`: dize parola içeriyor (ya da içeriyor olabilir) ve parola alanlardan güvenle ayrılamadı — hiçbir alan doldurulmaz. */
+export const PASTE_ERRORS = Object.freeze(['EMPTY', 'TOO_LONG', 'UNRECOGNIZED', 'NO_HOST', 'UNSAFE'])
 /** Not kodları (`dbq.conn.paste.note.<KOD>`) — alan doldurulmadı ya da varsayıma gidildi. */
 export const PASTE_NOTES = Object.freeze(['MULTI_HOST', 'SSL_MODE_IGNORED', 'PORT_INVALID', 'ENCRYPT_IGNORED', 'DESCRIPTION_PARTIAL'])
+/** Değer taşıyan notlar — değer güvenle gösterilemiyorsa (`value` null) metnin değersiz biçimi `dbq.conn.paste.noteNoValue.<KOD>`. */
+export const VALUED_NOTES = Object.freeze(['PORT_INVALID', 'SSL_MODE_IGNORED', 'ENCRYPT_IGNORED'])
 
 /** Doldurulabilen form alanları — "şunlar dolduruldu" listesinin sırası. */
 export const FILLABLE = Object.freeze(['db_type', 'host', 'port', 'mssql_instance', 'database_name', 'oracle_mode', 'oracle_tcps',
@@ -44,6 +47,15 @@ function stripQuotes(s) {
 /** Büyük / küçük harf duyarsız önek eşleşmesi. */
 const startsI = (s, prefix) => s.slice(0, prefix.length).toLowerCase() === prefix
 
+/**
+ * Notta gösterilecek değer — yalnız kısa, sade bir belirteçse (harf / rakam / `.` `_` `-`). Başka her şey (parola parçası
+ * olabilecek `@ / ? : # %` ya da boşluk içeren metin) GÖSTERİLMEZ: not değersiz düşer (Y1, 2026-11-05 inceleme).
+ */
+function noteValue(s) {
+  const v = String(s ?? '').trim()
+  return /^[A-Za-z0-9._-]{1,20}$/.test(v) ? v : null
+}
+
 /** Port metni → sayı (1–65535) ya da null; geçersizse not düşülür. */
 function portOf(text, notes) {
   const s = String(text ?? '').trim()
@@ -52,7 +64,7 @@ function portOf(text, notes) {
     const n = Number(s)
     if (n >= 1 && n <= 65535) return n
   }
-  notes.push({ code: 'PORT_INVALID', value: s.slice(0, 20) })
+  notes.push({ code: 'PORT_INVALID', value: noteValue(s) })
   return null
 }
 
@@ -89,14 +101,47 @@ function hostPort(text, notes, { sep = ':', multi = ',' } = {}) {
   return { host: hostOf(s), port: null }
 }
 
-/** "a=b&c=d" ya da "a=b;c=d" → { anahtar(küçük harf, boşluksuz): değer }. Değer çözülmez (çağıran karar verir). */
+/**
+ * "a=b&c=d" ya da "a=b;c=d" → { anahtar(küçük harf, boşluksuz): değer }. Değer çözülmez (çağıran karar verir).
+ * `;` ayraçlı (ADO.NET / JDBC özellikleri) değer tırnakla başlıyorsa TIRNAK SONUNA kadar tek değerdir (`""` = tırnak
+ * karakteri; kapanmamış tırnak = dizenin sonuna kadar) — `Password="a;Database=X"` parolanın içindeki `Database=X`'i
+ * alan sanmaz (Y1). Tek geçiş, doğrusal.
+ */
 function params(text, sep) {
   const out = {}
-  for (const part of String(text || '').split(sep)) {
-    const eq = part.indexOf('=')
-    if (eq <= 0) continue
-    const k = part.slice(0, eq).trim().toLowerCase().replace(/\s+/g, '')
-    if (k && !(k in out)) out[k] = part.slice(eq + 1).trim()
+  const s = String(text || '')
+  const n = s.length
+  let i = 0
+  while (i < n) {
+    let j = i
+    while (j < n && s[j] !== '=' && s[j] !== sep) j++
+    if (j >= n || s[j] === sep) { i = j + 1; continue }   // '=' olmayan parça atlanır
+    const key = s.slice(i, j).trim().toLowerCase().replace(/\s+/g, '')
+    let v = j + 1
+    while (v < n && s[v] === ' ') v++
+    let value
+    if (sep === ';' && v < n && (s[v] === '"' || s[v] === "'")) {
+      const quote = s[v]
+      let m = v + 1
+      let buf = ''
+      for (; m < n; m++) {
+        if (s[m] === quote) {
+          if (s[m + 1] === quote) { buf += quote; m++; continue }
+          break
+        }
+        buf += s[m]
+      }
+      value = buf
+      let e = m + 1
+      while (e < n && s[e] !== sep) e++
+      i = e + 1
+    } else {
+      let e = v
+      while (e < n && s[e] !== sep) e++
+      value = s.slice(v, e).trim()
+      i = e + 1
+    }
+    if (key && !(key in out)) out[key] = value
   }
   return out
 }
@@ -107,7 +152,7 @@ function boolOf(v, notes) {
   const s = String(v ?? '').trim().toLowerCase()
   if (TRUE_WORDS.has(s)) return true
   if (FALSE_WORDS.has(s)) return false
-  if (s) notes.push({ code: 'ENCRYPT_IGNORED', value: s.slice(0, 20) })
+  if (s) notes.push({ code: 'ENCRYPT_IGNORED', value: noteValue(s) })
   return undefined
 }
 
@@ -117,7 +162,7 @@ function sslModeOf(v, notes) {
   if (!s) return undefined
   const norm = s === 'verifyfull' ? 'verify-full' : s
   if (PG_SSL_MODES.includes(norm)) return norm
-  notes.push({ code: 'SSL_MODE_IGNORED', value: s.slice(0, 20) })
+  notes.push({ code: 'SSL_MODE_IGNORED', value: noteValue(s) })
   return undefined
 }
 
@@ -125,26 +170,67 @@ function setIf(fields, key, value) {
   if (value !== undefined && value !== null && value !== '') fields[key] = value
 }
 
+/** Bulunan parolayı (ham ve çözülmüş) güvenlik ağına kaydeder — alanlara ASLA yazılmaz, sonuçtan da silinir. */
+function addSecret(r, value) {
+  const v = String(value ?? '')
+  if (!v) return
+  r.hadPassword = true
+  r.secrets?.push(v)
+}
+
+/** Kullanıcı adında olamayacak karakterler: parola ayracı ya da parola kalıntısı belirtisi (Y1). */
+const USER_FROM_INFO_BAD = /[/:@?;=\s]/
+
 // ── PostgreSQL ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Kullanıcı bilgisi (`kullanıcı[:parola]@`) nerede bitiyor? Yüzde kodlaması yapılmamış parolada `/ ? @ :` olabilir, bu yüzden
+ * SON `@` esas alınır (Y1: `app:se/cret@db1` eskiden yolu `/`'tan kesip parolanın kuyruğunu veritabanı adına yazıyordu).
+ * Tek istisna: son `@` sorgu parametresinin DEĞERİNDE ise (`?user=ad@sunucu` — Azure), kullanıcı bilgisi yalnız yetki
+ * bölümünde (ilk `/` ya da `?`'den önce) aranır. Dönen: `{ info | null, rest }` — `rest` = sunucu[:port][/db][?…].
+ */
+function splitUserInfo(body) {
+  const lastAt = body.lastIndexOf('@')
+  if (lastAt < 0) return { info: null, rest: body }
+  const after = body.slice(lastAt + 1)
+  const cut = after.search(/[/?]/)
+  const head = cut >= 0 ? after.slice(0, cut) : after
+  const before = body.slice(0, lastAt)
+  const q = before.lastIndexOf('?')
+  // Son '@' bir sorgu değerinin içinde mi: son '?' (ya da '&') ile '@' arasındaki parça "anahtar=" içeriyor
+  const segStart = Math.max(q, before.lastIndexOf('&'))
+  const inQueryValue = q >= 0 && before.slice(segStart + 1).includes('=')
+  if (!inQueryValue && hostPort(head, []).host) return { info: before, rest: after }
+  // '@' var, sorgu değerinde değil ve ardından geçerli sunucu gelmiyor → nerede bittiği bilinemez (parola parçası alanlara
+  // düşebilir) — hiç ayrıştırılmaz
+  if (!inQueryValue) return { ambiguous: true }
+  const firstSep = body.search(/[/?]/)
+  const authority = firstSep >= 0 ? body.slice(0, firstSep) : body
+  const at = authority.lastIndexOf('@')
+  if (at < 0) return { info: null, rest: body }
+  return { info: authority.slice(0, at), rest: body.slice(at + 1) }
+}
 
 /** "//[kullanıcı[:parola]@]h[:p][/db][?…]" (JDBC ve URI). */
 function parsePgUrl(rest, r) {
   if (!rest.startsWith('//')) return result({ error: 'UNRECOGNIZED' })
-  let s = rest.slice(2)
+  const split = splitUserInfo(rest.slice(2))
+  if (split.ambiguous) return result({ error: 'UNSAFE', hadPassword: true })
+  const { info, rest: target } = split
+  let s = target
   const q = s.indexOf('?')
   const query = q >= 0 ? s.slice(q + 1) : ''
   if (q >= 0) s = s.slice(0, q)
   const slash = s.indexOf('/')
-  const authority = slash >= 0 ? s.slice(0, slash) : s
+  const hp = slash >= 0 ? s.slice(0, slash) : s
   const db = slash >= 0 ? decode(s.slice(slash + 1)) : ''
-  let hp = authority
-  const at = authority.lastIndexOf('@')
-  if (at >= 0) {
-    const info = authority.slice(0, at)
-    hp = authority.slice(at + 1)
+  if (info != null) {
     const colon = info.indexOf(':')
-    if (colon >= 0) r.hadPassword = true
-    setIf(r.fields, 'username', decode(colon >= 0 ? info.slice(0, colon) : info))
+    if (colon >= 0) addSecret(r, info.slice(colon + 1))
+    const user = decode(colon >= 0 ? info.slice(0, colon) : info)
+    // Kullanıcı bilgisinde parola ayracı / kalıntısı → güvenle ayrılamaz
+    if (USER_FROM_INFO_BAD.test(user)) return result({ error: 'UNSAFE', hadPassword: true })
+    setIf(r.fields, 'username', user)
   }
   const { host, port } = hostPort(hp, r.notes)
   if (!host) return result({ error: 'NO_HOST', hadPassword: r.hadPassword })
@@ -152,7 +238,7 @@ function parsePgUrl(rest, r) {
   setIf(r.fields, 'port', port)
   setIf(r.fields, 'database_name', db)
   const p = params(query, '&')
-  if ('password' in p) r.hadPassword = true
+  if ('password' in p) { r.hadPassword = true; addSecret(r, p.password) }
   if (p.user && !r.fields.username) setIf(r.fields, 'username', decode(p.user))
   const ssl = sslModeOf(p.sslmode ? decode(p.sslmode) : '', r.notes)
   if (ssl) r.fields.ssl_mode = ssl
@@ -164,7 +250,7 @@ function parsePgUrl(rest, r) {
 
 /** Ortak MSSQL özellikleri (JDBC / jTDS / ADO.NET) → alanlar. */
 function applyMssqlProps(p, r) {
-  if ('password' in p || 'pwd' in p) r.hadPassword = true
+  if ('password' in p || 'pwd' in p) { r.hadPassword = true; addSecret(r, p.password); addSecret(r, p.pwd) }
   setIf(r.fields, 'database_name', p.databasename ?? p.database ?? p.initialcatalog)
   setIf(r.fields, 'username', p.user ?? p.username ?? p.userid ?? p.uid)
   if (p.instancename ?? p.instance) setIf(r.fields, 'mssql_instance', p.instancename ?? p.instance)
@@ -255,14 +341,27 @@ function parseOracleDescriptor(desc, r) {
   return { ...r, ok: true, db_type: 'ORACLE', typeSource: 'explicit' }
 }
 
+/**
+ * Oracle bağlantı hedefinin (`@`'den sonrası) başladığı yer: `@//`, `@(`, `@tcp(s)://` belirteçlerinin SONUNCUSU, yoksa son
+ * `@`. Parolada `@` olabilir (`scott/p@ss@//h:1521/svc`) — ilk `@` parolanın ortasından keserdi (Y1).
+ */
+function oracleTargetAt(rest) {
+  const lower = rest.toLowerCase()
+  let best = -1
+  for (const marker of ['@//', '@(', '@tcps://', '@tcp://']) best = Math.max(best, lower.lastIndexOf(marker))
+  return best >= 0 ? best : rest.lastIndexOf('@')
+}
+
 function parseOracleThin(rest, r) {
-  const at = rest.indexOf('@')
+  const at = oracleTargetAt(rest)
   if (at < 0) return result({ error: 'UNRECOGNIZED' })
   const cred = rest.slice(0, at)
   if (cred) {
     const slash = cred.indexOf('/')
-    if (slash >= 0) r.hadPassword = true
-    setIf(r.fields, 'username', slash >= 0 ? cred.slice(0, slash) : cred)
+    if (slash >= 0) addSecret(r, cred.slice(slash + 1))
+    const user = slash >= 0 ? cred.slice(0, slash) : cred
+    if (USER_FROM_INFO_BAD.test(user)) return result({ error: 'UNSAFE', hadPassword: true })
+    setIf(r.fields, 'username', user)
   }
   let s = rest.slice(at + 1).trim()
   if (s.startsWith('(')) return parseOracleDescriptor(s, r)
@@ -295,7 +394,7 @@ function parseOracleThin(rest, r) {
 
 function parseKeyValue(s, r) {
   const p = params(s, ';')
-  if ('password' in p || 'pwd' in p) r.hadPassword = true
+  if ('password' in p || 'pwd' in p) { r.hadPassword = true; addSecret(r, p.password); addSecret(r, p.pwd) }
   const server = p.server ?? p.datasource ?? p.address ?? p.addr ?? p.networkaddress
   if (p.host != null) {
     // Npgsql: Host=…;Port=…;Database=…;Username=…;SSL Mode=…
@@ -325,18 +424,51 @@ function parseKeyValue(s, r) {
 
 // ── Türsüz: h:p/db ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** Kimlik bilgisiz dizede kullanıcı adı olabilecek metin (EZConnect / `kullanıcı@sunucu` biçimleri). */
+const BARE_USER_OK = /^[A-Za-z0-9_.$#\\-]{1,128}$/
+
+/**
+ * Türsüz dize: `h:p/db` · `h:p` · `h/db`, ayrıca kimlik bilgili biçimler (Y1):
+ *   • Oracle EZConnect / sqlplus `kullanıcı/parola@h[:p][/servis]` → tür ORACLE (açık), kullanıcı alınır, parola ALINMAZ;
+ *   • `kullanıcı:parola@h[:p][/db]` ve `kullanıcı@h[:p][/db]` → kullanıcı alınır, tür porttan önerilir.
+ * Ayrım SON `@`'ye göredir (parolada `@ / : # ?` ve boşluk olabilir); kullanıcı adı sade değilse dize reddedilir.
+ */
 function parseBare(s, r) {
   let rest = s
+  let user = null
+  let oracle = false
+  const at = rest.lastIndexOf('@')
+  if (at >= 0) {
+    const cred = rest.slice(0, at)
+    rest = rest.slice(at + 1)
+    const slash = cred.indexOf('/')
+    const colon = cred.indexOf(':')
+    if (slash >= 0 && (colon < 0 || slash < colon)) {
+      user = cred.slice(0, slash)
+      addSecret(r, cred.slice(slash + 1))
+      oracle = true
+    } else if (colon >= 0) {
+      user = cred.slice(0, colon)
+      addSecret(r, cred.slice(colon + 1))
+    } else user = cred
+    if (!BARE_USER_OK.test(user)) return result({ error: r.hadPassword ? 'UNSAFE' : 'UNRECOGNIZED', hadPassword: r.hadPassword })
+    if (oracle && rest.startsWith('//')) rest = rest.slice(2)
+  }
   let db = ''
   const q = rest.indexOf('?')
   if (q >= 0) rest = rest.slice(0, q)
   const slash = rest.indexOf('/')
   if (slash >= 0) { db = rest.slice(slash + 1); rest = rest.slice(0, slash) }
-  if (rest.includes('@') || /\s/.test(rest)) return result({ error: 'UNRECOGNIZED' })
+  if (rest.includes('@') || /\s/.test(rest)) return result({ error: 'UNRECOGNIZED', hadPassword: r.hadPassword })
   const { host, port } = hostPort(rest, r.notes)
-  if (!host) return result({ error: 'UNRECOGNIZED' })
+  if (!host) return result({ error: r.hadPassword ? 'UNSAFE' : 'UNRECOGNIZED', hadPassword: r.hadPassword })
   r.fields.host = host
   setIf(r.fields, 'port', port)
+  setIf(r.fields, 'username', user)
+  if (oracle) {
+    if (db) { r.fields.database_name = db; r.fields.oracle_mode = 'SERVICE' }
+    return { ...r, ok: true, db_type: 'ORACLE', typeSource: 'explicit' }
+  }
   setIf(r.fields, 'database_name', db)
   const hinted = port != null ? PORT_TYPE[port] : null
   return { ...r, ok: true, db_type: hinted || null, typeSource: hinted ? 'port' : null }
@@ -346,8 +478,44 @@ function parseBare(s, r) {
 export function containsPassword(text) {
   const s = String(text || '').slice(0, MAX_CONN_STRING)
   if (/(^|[;?&\s])(password|pwd)\s*=/i.test(s)) return true
-  if (/\/\/[^/@\s:]+:[^/@\s]*@/.test(s)) return true
-  return /thin:[^@/\s]+\/[^@\s]+@/i.test(s)
+  if (/\/\/[^/@\s:]+:[^@\s]*@/.test(s)) return true
+  if (/thin:[^@/\s]+\/[^@\s]+@/i.test(s)) return true
+  // EZConnect / sqlplus `kullanıcı/parola@…` ve `kullanıcı:parola@…` (dizenin başında; şemalı dizede değil — `jdbc:…:@//`
+  // parolasız Oracle dizesi yanlışlıkla "parola var" sayılmasın)
+  if (startsI(s, 'jdbc:') || s.includes('://')) return false
+  return /^[^/:@\s]+[/:][^@]*@/.test(s)
+}
+
+/** Parolanın alanlara / notlara sızdığını yakalayan güvenlik ağı için iğneler: parolanın kendisi ve ≥ 4 karakterlik parçaları. */
+const SECRET_SPLIT = /[@/?:;#&=%\\\s"',]+/
+function secretNeedles(secrets) {
+  const out = new Set()
+  for (const raw of secrets || []) {
+    for (const sec of [raw, decode(raw)]) {
+      if (sec.length >= 3) out.add(sec)
+      for (const part of sec.split(SECRET_SPLIT)) if (part.length >= 4) out.add(part)
+    }
+  }
+  return out
+}
+
+/**
+ * Başarılı ayrıştırmanın son denetimi (Y1 güvenlik ağı): bir alan ya da not değeri parolayı ya da parolanın bir parçasını
+ * içeriyorsa, ya da veritabanı / kullanıcı / örnek alanında `@` gibi kimlik bilgisi kalıntısı varsa sonuç KULLANILMAZ.
+ */
+function leaksCredential(out, secrets) {
+  const f = out.fields || {}
+  if (typeof f.database_name === 'string' && /[@]/.test(f.database_name)) return true
+  if (typeof f.mssql_instance === 'string' && /[@/:]/.test(f.mssql_instance)) return true
+  if (typeof f.username === 'string' && /[/:;]/.test(f.username)) return true
+  const values = [
+    ...Object.values(f).filter((v) => typeof v === 'string'),
+    ...(out.notes || []).map((n) => n?.value).filter((v) => typeof v === 'string' && v),
+  ]
+  if (!values.length) return false
+  const needles = secretNeedles(secrets)
+  for (const v of values) for (const nd of needles) if (v.includes(nd)) return true
+  return false
 }
 
 /**
@@ -360,6 +528,8 @@ export function parseConnectionString(raw) {
   const s = stripQuotes(text.replace(/[\r\n\t]+/g, ' ').trim())
   if (!s) return result({ error: 'EMPTY' })
   const r = result()
+  const secrets = []
+  r.secrets = secrets
   let out
   if (startsI(s, 'jdbc:postgresql:')) out = parsePgUrl(s.slice(16), r)
   else if (startsI(s, 'postgresql://')) out = parsePgUrl(s.slice(11), r)
@@ -371,8 +541,14 @@ export function parseConnectionString(raw) {
   else if (startsI(s, 'jdbc:') || s.includes('://')) out = result({ error: 'UNRECOGNIZED' })
   else if (s.includes('=') && (s.includes(';') || /^[A-Za-z ]+=/.test(s))) out = parseKeyValue(s, r)
   else out = parseBare(s, r)
-  if (!out.ok && !out.hadPassword && containsPassword(s)) out = { ...out, hadPassword: true }
-  return out
+  // Parola izi ayrıştırma BAŞARILI olsa da sorulur (uyarı + kutunun temizlenmesi) — Y1
+  if (!out.hadPassword && containsPassword(s)) out = { ...out, hadPassword: true }
+  // Güvenlik ağı: parola (ya da parçası) bir alana / nota sızdıysa sonuç hiç kullanılmaz
+  if (out.ok && leaksCredential(out, secrets)) out = result({ error: 'UNSAFE', hadPassword: true })
+  // Parola metni sonuçta TAŞINMAZ (çağıranın durumuna / belleğine girmesin)
+  const clean = { ...out }
+  delete clean.secrets
+  return clean
 }
 
 /** Alanın hangi türe ait olduğu — türü tutmayan alan uygulanmaz. */

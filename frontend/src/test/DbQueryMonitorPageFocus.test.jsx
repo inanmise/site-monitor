@@ -119,7 +119,7 @@ describe('DbQueryMonitorPage — bağlantıya göre gruplu liste (C3)', () => {
 
   it('bağlantı listesi okunamazsa sağlık "okunamadı" (asla sağlıklı değil); gruplu + ihlal süzgeci birlikte', async () => {
     window.history.replaceState({}, '', '/?tab=dbquery&sort=conn&dq=breach')
-    api.monitoring.dbConnections.mockResolvedValue({ success: false, status: 403, error: 'yok' })
+    api.monitoring.dbConnections.mockResolvedValue({ success: false, status: 500, error: 'yok' })
     render(<DbQueryMonitorPage {...props} />)
     await waitFor(() => expect(document.querySelectorAll('[data-slot="dbq-conn-group"]')).toHaveLength(2))
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-group-health"]')).toHaveAttribute('data-state', 'unreadable'))
@@ -127,6 +127,14 @@ describe('DbQueryMonitorPage — bağlantıya göre gruplu liste (C3)', () => {
     // Başlık özeti TÜM süzülmüş listeden (gruptaki ihlal sayısı)
     const g1 = document.querySelectorAll('[data-slot="dbq-conn-group"]')[1]
     expect(g1.querySelector('[data-kind="total"]')).toHaveTextContent('1')
+  })
+
+  it('bağlantı listesi 403 dönerse "görme yetkiniz yok" (okunamadı değil, asla sağlıklı değil) (D12)', async () => {
+    window.history.replaceState({}, '', '/?tab=dbquery&sort=conn')
+    api.monitoring.dbConnections.mockResolvedValue({ success: false, status: 403, error: 'yok' })
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-group-health"]')).toHaveAttribute('data-state', 'denied'))
+    expect(document.querySelector('[data-slot="dbq-conn-group-health"][data-state="ok"]')).toBeNull()
   })
 
   it('gruplu görünüm kapalıyken bağlantı listesi OKUNMAZ (istek yok)', async () => {

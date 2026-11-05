@@ -5,7 +5,7 @@ import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { cn } from '@/lib/utils'
-import { MAX_CONN_STRING, applyConnectionString, applySuggestedType, parseConnectionString } from './connectionString.js'
+import { MAX_CONN_STRING, VALUED_NOTES, applyConnectionString, applySuggestedType, parseConnectionString } from './connectionString.js'
 
 /** Doldurulan alanın etiket anahtarı (form etiketleriyle aynı metin). */
 const FIELD_LABEL = {
@@ -14,6 +14,9 @@ const FIELD_LABEL = {
   mssql_encrypt: 'dbq.conn.encrypt', mssql_trust_server_certificate: 'dbq.conn.trustCert', oracle_mode: 'dbq.conn.oracleMode',
   oracle_tcps: 'dbq.conn.tcps',
 }
+
+/** Değeri güvenle gösterilemeyen not (`value` null — parola parçası olabilecek metin, Y1) metnin değersiz biçimiyle yazılır. */
+const noteKey = (n) => (VALUED_NOTES.includes(n.code) && !n.value ? `dbq.conn.paste.noteNoValue.${n.code}` : `dbq.conn.paste.note.${n.code}`)
 
 /**
  * "Bağlantı dizesinden doldur" (A1, 2026-11-05) — JDBC / URI / ADO.NET / `sunucu:port/veritabanı` dizesini istemcide
@@ -28,12 +31,14 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState(null)   // { kind, filled, notes, hadPassword, suggestType, error }
 
-  const process = (raw) => {
+  const process = (raw, { fromPaste = false } = {}) => {
     if (disabled) return
     const parsed = parseConnectionString(raw)
     if (!parsed.ok) {
-      // Parola içeren başarısız dize de kutuda KALMAZ
+      // Parola içeren (ya da içerebilecek) başarısız dize kutuda KALMAZ; parolasız başarısız YAPIŞTIRMA kutuya yazılır —
+      // kullanıcı metni düzeltebilsin (D6)
       if (parsed.hadPassword) setText('')
+      else if (fromPaste && String(raw).length <= MAX_CONN_STRING) setText(String(raw))
       setOutcome({ kind: 'error', error: parsed.error, hadPassword: parsed.hadPassword, notes: parsed.notes || [] })
       return
     }
@@ -76,7 +81,7 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
           onChange={(e) => { setText(e.target.value); if (outcome?.kind === 'error') setOutcome(null) }}
           onPaste={(e) => {
             const pasted = e.clipboardData?.getData('text')
-            if (typeof pasted === 'string' && pasted.trim()) { e.preventDefault(); process(pasted) }
+            if (typeof pasted === 'string' && pasted.trim()) { e.preventDefault(); process(pasted, { fromPaste: true }) }
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (text.trim()) process(text) } }} />
         <Button type="button" variant="secondary" disabled={disabled || !text.trim()} onClick={() => process(text)}
@@ -120,7 +125,7 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
             {outcome.notes.map((n, i) => (
               <li key={`${n.code}-${i}`} data-code={n.code} className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
                 <TriangleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
-                <span className="[overflow-wrap:anywhere]">{t(`dbq.conn.paste.note.${n.code}`, n.value ?? '')}</span>
+                <span className="[overflow-wrap:anywhere]">{t(noteKey(n), n.value ?? '')}</span>
               </li>
             ))}
           </ul>

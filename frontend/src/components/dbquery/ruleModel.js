@@ -48,6 +48,28 @@ export const FROZEN_LIMITS = Object.freeze({ RUNS_MIN: 2, RUNS_MAX: 100, RUNS_WA
 export const ANOMALY_FIELDS = ['direction', 'k_warning', 'k_critical', 'window', 'min_samples', 'season']
 export const FROZEN_FIELDS = ['runs_warning', 'runs_critical']
 export const isAnomalyKind = (kind) => kind === 'ANOMALY'
+
+/** Mevsimsel tabanın dönemi, sn (günlük / haftalık); mevsimsiz 0. */
+const SEASON_PERIOD_S = Object.freeze({ daily: 86400, weekly: 7 * 86400 })
+
+/**
+ * Sunucunun `ANOMALY_SEASON_RARE` kayıt uyarısının istemci eşi (`DbQueryRules.smartWarnings`): mevsimsel (günlük /
+ * haftalık) olağan dışı değer kuralı + izleme aralığı 1 saatten uzun VE günü / haftayı tam bölmüyor → önceki günlerin aynı
+ * saatinde çalıştırma çoğu kez yok, taban çok geç dolar. Yalnız aralık kipinde (CRON'un etkin aralığını sunucu hesaplar ve
+ * uyarıyı kayıtta döndürür). Engellemez. → kural sıraları (Set).
+ */
+export function seasonRareIndexes(rules, schedule) {
+  const out = new Set()
+  if (!Array.isArray(rules) || !schedule || schedule.schedule_mode === 'CRON') return out
+  const iv = Number(schedule.interval_seconds)
+  if (!Number.isInteger(iv) || iv <= 3600) return out
+  rules.forEach((r, i) => {
+    if (!r || !isAnomalyKind(r.kind)) return
+    const period = SEASON_PERIOD_S[String(smartParam(r, 'season')).toLowerCase()] || 0
+    if (period > 0 && period % iv !== 0) out.add(i)
+  })
+  return out
+}
 export const isFrozenKind = (kind) => kind === 'FROZEN'
 export const isSmartKind = (kind) => SMART_KINDS.includes(kind)
 
@@ -310,7 +332,8 @@ export function validateSmart(rule) {
     if (!isBlank(rule.direction) && !ANOMALY_DIRECTIONS.includes(String(rule.direction).toLowerCase())) out.direction = 'anomaly_direction'
     if (!isBlank(rule.season) && !SEASONS.includes(String(rule.season).toLowerCase())) out.season = 'anomaly_season'
     const kw = isBlank(rule.k_warning) ? L.K_WARNING_DEFAULT : rule.k_warning
-    const kc = isBlank(rule.k_critical) ? L.K_CRITICAL_DEFAULT : rule.k_critical
+    // Boş kritik = max(3,5, uyarı) — sunucunun `DbQueryRules.parseAnomaly` kuralı (D1); uyarı 5 iken boş kritik hata değil
+    const kc = isBlank(rule.k_critical) ? (isNum(kw) ? Math.max(L.K_CRITICAL_DEFAULT, kw) : L.K_CRITICAL_DEFAULT) : rule.k_critical
     if (!isNum(kw)) out.k_warning = 'number'
     else if (kw < L.K_MIN || kw > L.K_MAX) out.k_warning = 'k_range'
     if (!isNum(kc)) out.k_critical = 'number'
@@ -430,6 +453,11 @@ export function ruleSummary(rule, t, lang = 'tr') {
 export function smartParam(rule, key) {
   const v = rule?.[key]
   if (!isBlank(v)) return v
+  // Boş kritik katsayı sunucuda max(3,5, uyarı) (D1)
+  if (key === 'k_critical') {
+    const kw = smartParam(rule, 'k_warning')
+    return isNum(kw) ? Math.max(ANOMALY_LIMITS.K_CRITICAL_DEFAULT, kw) : ANOMALY_LIMITS.K_CRITICAL_DEFAULT
+  }
   const d = { direction: 'both', season: 'none', k_warning: ANOMALY_LIMITS.K_WARNING_DEFAULT, k_critical: ANOMALY_LIMITS.K_CRITICAL_DEFAULT,
     window: ANOMALY_LIMITS.WINDOW_DEFAULT, min_samples: ANOMALY_LIMITS.MIN_SAMPLES_DEFAULT, runs_warning: FROZEN_LIMITS.RUNS_WARNING_DEFAULT }
   return d[key] ?? null

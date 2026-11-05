@@ -10,22 +10,36 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 /** Sunucunun "sınırsız sapma" işareti (σ = 0) — bu büyüklükte z gösterilmez, "sınırsız" yazılır. */
 export const UNBOUNDED_DEVIATION = 1e8
 
-/** Taban kuruluyor mu (yeni not; eski notlar `RuleResultsList.BASELINE_NOTES`'ta). */
-export const isBuildingBaseline = (r) => r?.note === 'building_baseline'
+/**
+ * Taban kuran notlar — `RuleResultsList.BASELINE_NOTES` ile AYNI küme (O5: FROZEN kuralın sorgusu değişince sunucu
+ * `baseline_reset` + `same_runs: 1` döner ve "taban kuruluyor" der; ön yüz "değer değişti" dememeli).
+ */
+const BASELINE = new Set(['first_run', 'baseline_reset', 'no_seasonal_baseline', 'building_baseline'])
+
+/** Taban kuruluyor mu (sunucunun taban notlarından biri). */
+export const isBuildingBaseline = (r) => BASELINE.has(r?.note)
 
 /**
  * Sonuç → gösterim modeli ya da null (ek alan yok):
  *  - `{ kind: 'building', samples, minSamples }` — taban kuruluyor (sayaç; ikisi de biliniyorsa "4 / 10");
  *  - `{ kind: 'band', value, low, high, mean, deviation, unbounded, samples, position }` — ANOMALY olağan aralık; `position`
  *    [0, 1] ölçeğinde değer / aralık uçları (mini çubuk için; aralık ve değer birlikte sığar);
- *  - `{ kind: 'frozen', sameRuns, samples, atLeast }` — FROZEN sayaç (`atLeast` taban kuruluyorken alt sınır).
+ *  - `{ kind: 'frozen', sameRuns, samples, atLeast, evaluated }` — FROZEN sayaç (`atLeast` taban kuruluyorken alt sınır;
+ *    "değer değişti" yalnız `evaluated` ve `sameRuns <= 1` iken).
  */
 export function smartResultOf(r) {
   if (!r || typeof r !== 'object') return null
+  // Örnek yetersiz (kanıt eksik): bant ya da "taban kuruluyor" sayacı çizilmez — sunucunun `actual` metni ("100 · örnek
+  // yetersiz (3 / 5)") ve not satırı söyler; sonuç "değerlendirilemedi" (asla yeşil / nötr taban değil)
+  if (r.note === 'insufficient_samples') return null
   const samples = num(r.samples)
   const minSamples = num(r.min_samples)
-  if (isBuildingBaseline(r)) {
-    if (r.kind === 'FROZEN' && num(r.same_runs) != null) return { kind: 'frozen', sameRuns: r.same_runs, samples, atLeast: true, minSamples }
+  // Taban notu yalnız akıllı kurallarda (ANOMALY / FROZEN) ek gösterim alır; CHANGE vb. kuralların notu kendi satırında kalır
+  if (isBuildingBaseline(r) && (r.note === 'building_baseline' || r.kind === 'ANOMALY' || r.kind === 'FROZEN')) {
+    // Yalnız birikim notunda donma sayacı alt sınır olarak anlamlı; taban SIFIRLANDIYSA (baseline_reset …) sayaç yok
+    if (r.note === 'building_baseline' && r.kind === 'FROZEN' && num(r.same_runs) != null) {
+      return { kind: 'frozen', sameRuns: r.same_runs, samples, atLeast: true, minSamples, evaluated: false }
+    }
     return { kind: 'building', samples, minSamples }
   }
   if (r.kind === 'ANOMALY') {
@@ -36,7 +50,9 @@ export function smartResultOf(r) {
     const unbounded = dev != null && Math.abs(dev) >= UNBOUNDED_DEVIATION
     return { kind: 'band', value, low, high, mean: num(r.baseline_mean), deviation: dev, unbounded, samples, position: bandPosition(value, low, high) }
   }
-  if (r.kind === 'FROZEN' && num(r.same_runs) != null) return { kind: 'frozen', sameRuns: r.same_runs, samples, atLeast: false }
+  if (r.kind === 'FROZEN' && num(r.same_runs) != null) {
+    return { kind: 'frozen', sameRuns: r.same_runs, samples, atLeast: false, evaluated: r.evaluated === true }
+  }
   return null
 }
 

@@ -6,7 +6,9 @@
 import { RULE_KINDS, changeKind, newRule } from './ruleModel.js'
 
 /** Sunucunun deneme / kayıt uyarı kodları (engellemez). */
-export const WARNING_CODES = Object.freeze(['ROW_COUNT_ON_AGGREGATE', 'SELECT_STAR', 'SENSITIVE_UNMASKED'])
+export const WARNING_CODES = Object.freeze(['ROW_COUNT_ON_AGGREGATE', 'SELECT_STAR', 'SENSITIVE_UNMASKED',
+  // be2 inceleme (2026-11-05): mevsimsel olağan dışı değer kuralı + aralık günü / haftayı tam bölmüyor (kayıt uyarısı)
+  'ANOMALY_SEASON_RARE'])
 
 /** Tür metni ≤ 64 karakter — düzenli ifadeler kısa metinde koşar (doğrusal, sınırlı). */
 const TYPE_MAX = 64

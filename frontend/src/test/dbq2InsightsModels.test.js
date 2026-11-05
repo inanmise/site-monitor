@@ -1,3 +1,6 @@
+import { seasonRareIndexes } from '../components/dbquery/ruleModel.js'
+import { BASELINE_NOTES, RESULT_NOTE_CODES, resultState } from '../components/dbquery/RuleResultsList.jsx'
+import { smartResultOf as smartOfBe2 } from '../components/dbquery/smartResult.js'
 import { describe, it, expect } from 'vitest'
 import { deltaText, sparkGeometry, valueTrendOf, TREND_MAX_POINTS } from '../components/dbquery/valueTrend.js'
 import {
@@ -298,7 +301,16 @@ describe('akıllı kural sonucu (D)', () => {
   })
 
   it('FROZEN sayaç', () => {
-    expect(smartResultOf({ kind: 'FROZEN', same_runs: 7, samples: 6, evaluated: true })).toEqual({ kind: 'frozen', sameRuns: 7, samples: 6, atLeast: false })
+    expect(smartResultOf({ kind: 'FROZEN', same_runs: 7, samples: 6, evaluated: true }))
+      .toEqual({ kind: 'frozen', sameRuns: 7, samples: 6, atLeast: false, evaluated: true })
+  })
+
+  it('taban notlarının hepsi (baseline_reset, first_run …) akıllı kuralda "taban kuruluyor"; öteki kurallarda ek gösterim yok (O5)', () => {
+    expect(smartResultOf({ kind: 'FROZEN', note: 'baseline_reset', same_runs: 1, samples: 0, min_samples: 5 }))
+      .toEqual({ kind: 'building', samples: 0, minSamples: 5 })
+    expect(smartResultOf({ kind: 'ANOMALY', note: 'first_run', samples: 0 })).toMatchObject({ kind: 'building' })
+    expect(smartResultOf({ kind: 'CHANGE', note: 'first_run' })).toBeNull()
+    expect(smartResultOf({ kind: 'FROZEN', same_runs: 1, evaluated: false })).toMatchObject({ kind: 'frozen', evaluated: false })
   })
 })
 
@@ -313,6 +325,14 @@ describe('Panom "Veri kuralları" özeti (C5)', () => {
     expect(s.rows.map((r) => [r.id, r.problem])).toEqual([[3, 'fail'], [5, 'critical'], [2, 'warning'], [4, 'alarm'], [1, 'unknown']])
     expect(s).toMatchObject({ active: 6, paused: 1, fail: 1, breach: 2, alarm: 1, unknown: 1, clean: 1, problems: 5, tone: 'danger' })
     expect(problemOf(m(8, { status: null }))).toBe('unknown')
+  })
+
+  it('yavaş sorgu (OK + slow) ayrı uyarı sınıfı — temiz sayılmaz, kutu yeşil olmaz (D9)', () => {
+    expect(problemOf(m(1, { slow: true }))).toBe('slow')
+    const s = dataRulesSummary([m(1), m(2, { slow: true })])
+    expect(s).toMatchObject({ slow: 1, clean: 1, tone: 'warning', problems: 1 })
+    expect(s.rows.map((r) => r.problem)).toEqual(['slow'])
+    expect(dataRulesSummary([m(1, { slow: true, status: 'BREACH' })]).breach).toBe(1)
   })
 
   it('ton: ihlal turuncu; hepsi temiz yeşil; bilinmeyen / izleme yok / yetki yok gri — asla yeşil değil', () => {
@@ -330,5 +350,29 @@ describe('Panom "Veri kuralları" özeti (C5)', () => {
     const s = dataRulesSummary(Array.from({ length: 8 }, (_, i) => m(i + 1, { status: 'FAIL' })), 5)
     expect(s.rows).toHaveLength(5)
     expect(s.more).toBe(3)
+  })
+})
+
+describe('be2 inceleme düzeltmeleri — istemci eşleri', () => {
+  it('insufficient_samples: not kodu bilinir, taban notu DEĞİL → değerlendirilemedi; akıllı ek gösterim yok', () => {
+    expect(RESULT_NOTE_CODES).toContain('insufficient_samples')
+    expect(BASELINE_NOTES).not.toContain('insufficient_samples')
+    const r = { kind: 'ANOMALY', evaluated: false, passed: false, note: 'insufficient_samples', samples: 3, min_samples: 5, band_low: 1, band_high: 9 }
+    expect(resultState(r)).toBe('unevaluated')
+    expect(smartOfBe2(r)).toBeNull()
+  })
+
+  it('seasonRareIndexes = DbQueryRules.smartWarnings: aralık > 1 sa ve günü / haftayı tam bölmüyor; yalnız mevsimsel olağan dışı değer', () => {
+    const daily = { kind: 'ANOMALY', season: 'daily' }, weekly = { kind: 'ANOMALY', season: 'weekly' }, none = { kind: 'ANOMALY' }
+    const iv = (h) => ({ schedule_mode: 'INTERVAL', interval_seconds: Math.round(h * 3600) })
+    const rows = [
+      [[daily], iv(5), [0]], [[daily], iv(7), [0]], [[daily], iv(4), []], [[daily], iv(1.5), []], [[daily], iv(1), []],
+      [[weekly], iv(5), [0]], [[weekly], iv(6), []], [[weekly], iv(8), []], [[weekly], iv(10), [0]],
+      [[none], iv(5), []], [[{ kind: 'COLUMN_VALUE', season: 'daily' }], iv(5), []],
+      [[none, daily, weekly], iv(5), [1, 2]],
+      [[daily], { schedule_mode: 'CRON', interval_seconds: 5 * 3600 }, []],
+      [[daily], null, []],
+    ]
+    for (const [rules, sch, want] of rows) expect([...seasonRareIndexes(rules, sch)]).toEqual(want)
   })
 })

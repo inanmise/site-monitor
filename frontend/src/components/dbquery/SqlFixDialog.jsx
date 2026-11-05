@@ -10,7 +10,11 @@ import { cn } from '@/lib/utils'
 import ModalShell from '../ui/ModalShell.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { isUnsupportedResponse } from './connectionDiagnosis.js'
-import { diffStats, fixWarnings, lineDiff, normalizeFixes, normalizeSkipped, selectStarFix } from './sqlFix.js'
+import { countText } from './dbqueryPageModel.js'
+import { busyWaitSeconds, diffStats, fixWarnings, lineDiff, normalizeFixes, normalizeSkipped, selectStarFix } from './sqlFix.js'
+
+/** 429 (sunucu kısa süre bekle diyor) sonrası otomatik yeniden deneme sayısı; sonra yalnız elle "Tekrar dene". */
+const FIX_BUSY_RETRIES = 3
 
 const LINE_TONE = {
   add: 'bg-success/10 text-foreground',
@@ -26,9 +30,10 @@ export function SqlDiff({ before, after }) {
   const stats = diffStats(diff)
   return (
     <div data-slot="dbq-fix-diff" className="flex min-w-0 flex-col gap-1">
-      <span className="text-xs text-muted-foreground" data-slot="dbq-fix-diff-stats">{t('dbq.fix.diffStats', stats.add, stats.del)}</span>
-      <div role="group" aria-label={t('dbq.fix.diffLabel')}
-        className="max-h-72 overflow-auto rounded-md border bg-muted/30 py-1 font-mono text-xs leading-5">
+      <span className="text-xs text-muted-foreground" data-slot="dbq-fix-diff-stats">{`${countText(t, 'dbq.fix.diffAdded', stats.add)}, ${countText(t, 'dbq.fix.diffRemoved', stats.del)}`}</span>
+      {/* Kaydırılabilir kutu klavyeyle de kaydırılabilsin (D12) */}
+      <div role="group" aria-label={t('dbq.fix.diffLabel')} tabIndex={0}
+        className="max-h-72 overflow-auto rounded-md border bg-muted/30 py-1 font-mono text-xs leading-5 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
         {diff.map((d, i) => (
           <div key={i} data-type={d.type} className={cn('flex min-w-0 gap-2 px-2', LINE_TONE[d.type])}>
             <span aria-hidden="true" className="w-3 shrink-0 select-none text-center font-bold">{SIGN[d.type]}</span>
@@ -53,10 +58,14 @@ export default function SqlFixDialog({ open, onClose, sql, dbType, rules = [], c
   const t = useT()
   const [load, setLoad] = useState({ state: 'idle', fixes: [], skipped: [], message: null })
   const seq = useRef(0)
+  const busyTimer = useRef(null)
+  const busyTries = useRef(0)
   const clientFix = useMemo(() => selectStarFix(sql, columns, dbType), [sql, columns, dbType])
 
-  const fetchFixes = useCallback(async () => {
+  const fetchFixes = useCallback(async ({ auto = false } = {}) => {
     const n = ++seq.current
+    clearTimeout(busyTimer.current)
+    if (!auto) busyTries.current = 0
     if (!dbType) { setLoad({ state: 'noType', fixes: [], skipped: [], message: null }); return }
     setLoad({ state: 'loading', fixes: [], skipped: [], message: null })
     let res
@@ -67,15 +76,30 @@ export default function SqlFixDialog({ open, onClose, sql, dbType, rules = [], c
       res = { success: false, error: e?.message || null }
     }
     if (n !== seq.current) return
+    // 429 DBQUERY_BUSY / RATE_LIMITED: hata değil — nötr not, bekleme sonrası (en çok FIX_BUSY_RETRIES kez) yeniden denenir
+    const wait = busyWaitSeconds(res)
+    if (wait != null) {
+      const again = busyTries.current < FIX_BUSY_RETRIES
+      if (again) {
+        busyTries.current += 1
+        busyTimer.current = setTimeout(() => { if (n === seq.current) fetchFixesRef.current?.({ auto: true }) }, wait * 1000)
+      }
+      setLoad({ state: 'busy', fixes: [], skipped: [], message: null, wait, again })
+      return
+    }
+    busyTries.current = 0
     if (res?.success) setLoad({ state: 'ok', fixes: normalizeFixes(res.data, sql), skipped: normalizeSkipped(res.data), message: null })
     else if (isUnsupportedResponse(res)) setLoad({ state: 'unsupported', fixes: [], skipped: [], message: null })
     else setLoad({ state: 'error', fixes: [], skipped: [], message: res?.error || res?.message || t('dbq.fix.loadFailed') })
   }, [sql, dbType, rowLimit, t])
+  const fetchFixesRef = useRef(fetchFixes)
+  fetchFixesRef.current = fetchFixes
 
   useEffect(() => {
     if (open) fetchFixes()
-    else seq.current++
+    else { seq.current++; clearTimeout(busyTimer.current) }
   }, [open, fetchFixes])
+  useEffect(() => () => clearTimeout(busyTimer.current), [])
 
   const all = [...load.fixes, ...(clientFix ? [clientFix] : [])]
   const loading = load.state === 'loading'
@@ -87,6 +111,14 @@ export default function SqlFixDialog({ open, onClose, sql, dbType, rules = [], c
         {loading && <div className="flex flex-col gap-2" aria-busy="true"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>}
         {load.state === 'unsupported' && (
           <AlertBanner tone="info" icon={Info} className="mb-0"><span data-slot="dbq-fix-unsupported">{t('dbq.fix.unsupported')}</span></AlertBanner>
+        )}
+        {load.state === 'busy' && (
+          <AlertBanner tone="info" icon={Info} className="mb-0"
+            actions={<Button type="button" variant="outline" size="sm" onClick={() => fetchFixes()} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" />{t('dbq.fix.retry')}</Button>}>
+            <span data-slot="dbq-fix-busy" className="[overflow-wrap:anywhere]">
+              {load.again ? t('dbq.fix.busy', load.wait) : t('dbq.fix.busyManual')}
+            </span>
+          </AlertBanner>
         )}
         {load.state === 'noType' && (
           <AlertBanner tone="info" icon={Info} className="mb-0"><span data-slot="dbq-fix-notype">{t('dbq.fix.needsType')}</span></AlertBanner>
@@ -108,7 +140,7 @@ export default function SqlFixDialog({ open, onClose, sql, dbType, rules = [], c
             ))}
           </ul>
         )}
-        {!loading && all.length === 0 && load.state !== 'error' && (
+        {!loading && all.length === 0 && load.state !== 'error' && load.state !== 'busy' && (
           <p data-slot="dbq-fix-none" className="m-0 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('dbq.fix.none')}</p>
         )}
         <ul className="m-0 flex list-none flex-col gap-3 p-0">

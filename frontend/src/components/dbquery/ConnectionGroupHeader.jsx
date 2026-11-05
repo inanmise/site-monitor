@@ -73,6 +73,9 @@ function HealthBadge({ health }) {
   if (health === 'loading') {
     return <span data-slot="dbq-conn-group-health" data-state="loading" className="text-xs text-muted-foreground">{t('dbq.focus.healthLoading')}</span>
   }
+  if (health === 'denied') {
+    return <span data-slot="dbq-conn-group-health" data-state="denied" className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('dbq.focus.healthDenied')}</span>
+  }
   if (health === 'unreadable') {
     return <span data-slot="dbq-conn-group-health" data-state="unreadable" className="text-xs text-muted-foreground">{t('dbq.focus.healthUnreadable')}</span>
   }
@@ -103,7 +106,9 @@ export function useGroupHealth(teamIds, enabled) {
         .then((res) => {
           if (!alive) return
           const ok = res?.success && Array.isArray(res.data)
-          setByTeam((s) => ({ ...s, [id]: ok ? { state: 'ok', index: healthIndex(res.data) } : { state: 'unreadable' } }))
+          // 403: 7/24 / paylaşım okuyucusu bağlantıları göremez — "okunamadı" değil "görme yetkiniz yok" (D12)
+          const denied = !ok && (res?.status === 403 || res?.errorInfo?.status === 403)
+          setByTeam((s) => ({ ...s, [id]: ok ? { state: 'ok', index: healthIndex(res.data) } : { state: denied ? 'denied' : 'unreadable' } }))
         })
         .catch(() => { if (alive) setByTeam((s) => ({ ...s, [id]: { state: 'unreadable' } })) })
     }

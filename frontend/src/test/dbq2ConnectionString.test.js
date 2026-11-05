@@ -99,6 +99,87 @@ describe('parseConnectionString — doğruluk tablosu', () => {
   })
 })
 
+/**
+ * Y1 (2026-11-05 bağımsız inceleme): yüzde kodlaması yapılmamış parolada / ? @ : # boşluk olabilir; EZConnect / sqlplus
+ * kullanıcı/parola@sunucu biçimi; ADO.NET tırnaklı parolada ;Anahtar= — hiçbirinde parolanın KENDİSİ ya da bir parçası bir
+ * alana ya da not değerine düşmez. [ad, girdi, parola, beklenen (kısmi)]
+ */
+const SECRET_TABLE = [
+  ['EZConnect / sqlplus', 'scott/tiger@db1:1521/ORCL', 'tiger',
+    { ok: true, db_type: 'ORACLE', typeSource: 'explicit', fields: { username: 'scott', host: 'db1', port: 1521, database_name: 'ORCL', oracle_mode: 'SERVICE' } }],
+  ['EZConnect parolada # ve rakam', 'scott/T1ger#2026@ora-prd:1521/FIN', 'T1ger#2026',
+    { ok: true, db_type: 'ORACLE', fields: { username: 'scott', host: 'ora-prd', port: 1521, database_name: 'FIN' } }],
+  ['EZConnect parolada /', 'scott/ti/ger99@ora01:1521/SVC', 'ti/ger99', { ok: true, fields: { username: 'scott', host: 'ora01', database_name: 'SVC' } }],
+  ['PG parolada /', 'postgres://app:se/cret@db1:5432/orders', 'se/cret',
+    { ok: true, db_type: 'POSTGRESQL', fields: { username: 'app', host: 'db1', port: 5432, database_name: 'orders' } }],
+  ['PG parolada ?', 'postgres://app:abc?def@db1.example.com:5432/orders', 'abc?def',
+    { ok: true, fields: { username: 'app', host: 'db1.example.com', port: 5432, database_name: 'orders' } }],
+  ['PG parolada @ ve /', 'postgresql://app:p@ss/w0rd@db1.example.com:5432/orders', 'p@ss/w0rd',
+    { ok: true, fields: { username: 'app', host: 'db1.example.com', port: 5432, database_name: 'orders' } }],
+  ['PG parolada :', 'postgres://app:pa:ss99@db1/orders', 'pa:ss99', { ok: true, fields: { username: 'app', host: 'db1', database_name: 'orders' } }],
+  ['PG parolada #', 'postgres://app:pa#ss99@db1/orders', 'pa#ss99', { ok: true, fields: { username: 'app', host: 'db1', database_name: 'orders' } }],
+  ['PG parolada %40', 'postgres://app:p%40ss99@db1/orders', 'p%40ss99', { ok: true, fields: { username: 'app', host: 'db1', database_name: 'orders' } }],
+  ['PG parolada boşluk', 'postgres://app:pa ss99@db1/orders', 'pa ss99', { ok: true, fields: { username: 'app', host: 'db1', database_name: 'orders' } }],
+  ['JDBC PG parolada / ve sorgu', 'jdbc:postgresql://ro:se/cret?x@pg1.example.com:5432/app?sslmode=require', 'se/cret?x',
+    { ok: true, fields: { username: 'ro', host: 'pg1.example.com', port: 5432, database_name: 'app', ssl_mode: 'require' } }],
+  ['Oracle thin parolada @', 'jdbc:oracle:thin:scott/p@ss99@//ora01:1521/svc', 'p@ss99',
+    { ok: true, db_type: 'ORACLE', fields: { username: 'scott', host: 'ora01', port: 1521, database_name: 'svc' } }],
+  ['ADO.NET tırnaklı parolada ;Anahtar=', 'Server=db1;User Id=sa;Password="a;Database=X";', 'a;Database=X',
+    { ok: true, db_type: 'MSSQL', fields: { host: 'db1', username: 'sa' }, noFields: ['database_name'] }],
+  ['JDBC MSSQL tırnaklı parola', 'jdbc:sqlserver://s:1433;user=sa;password="x;databaseName=Leak";databaseName=Real', 'x;databaseName=Leak',
+    { ok: true, fields: { host: 's', port: 1433, username: 'sa', database_name: 'Real' } }],
+  ['ADO.NET çift tırnaklı tırnak', "Server=db2;Database=Ops;User Id=ro;Password='it''s;Pwd=Leak9'", "it's;Pwd=Leak9",
+    { ok: true, fields: { host: 'db2', database_name: 'Ops', username: 'ro' } }],
+  ['kullanıcı:parola@sunucu (türsüz)', 'reader:Gizli 1@pg.local:5432/app', 'Gizli 1',
+    { ok: true, typeSource: 'port', db_type: 'POSTGRESQL', fields: { username: 'reader', host: 'pg.local', port: 5432, database_name: 'app' } }],
+  ['@ sonrasında sunucu yok → UNSAFE', 'postgres://u:se/cret@', 'se/cret', { ok: false, error: 'UNSAFE' }],
+  ['kullanıcı bilgisi belirsiz → UNSAFE', 'scott:ti@ger/x@', 'ti@ger/x', { ok: false }],
+  ['Azure: kullanıcı adı sorgu değerinde @', 'jdbc:postgresql://h:5432/db?user=admin@srv&password=p@q99', 'p@q99',
+    { ok: true, fields: { host: 'h', port: 5432, username: 'admin@srv', database_name: 'db' } }],
+]
+
+/** Parolanın kendisi ve ≥ 4 karakterlik parçaları — hiçbir alanda / not değerinde olmamalı. */
+const needles = (secret) => [secret, ...secret.split(/[@/?:;#&=%\s"']+/).filter((x) => x.length >= 4)]
+
+describe('Y1 — parola alanlara ve notlara sızmaz', () => {
+  for (const [name, input, secret, want] of SECRET_TABLE) {
+    it(name, () => {
+      const r = parseConnectionString(input)
+      expect(r.ok, JSON.stringify(r)).toBe(want.ok)
+      if ('error' in want) expect(r.error).toBe(want.error)
+      if ('db_type' in want) expect(r.db_type).toBe(want.db_type)
+      if ('typeSource' in want) expect(r.typeSource).toBe(want.typeSource)
+      if (want.fields) expect(r.fields).toMatchObject(want.fields)
+      for (const k of want.noFields || []) expect(r.fields, k).not.toHaveProperty(k)
+      expect(r.hadPassword, 'parola uyarısı').toBe(true)
+      const values = [...Object.values(r.fields).filter((v) => typeof v === 'string'), ...r.notes.map((n) => n.value).filter(Boolean)]
+      for (const v of values) for (const nd of needles(secret)) expect(v, `"${nd}" sızdı`).not.toContain(nd)
+      // parola metni sonuç nesnesinde hiçbir anahtarla taşınmaz
+      expect(r).not.toHaveProperty('secrets')
+      expect(JSON.stringify(r)).not.toContain(secret)
+    })
+  }
+
+  it('geçersiz port notu sade belirteç değilse DEĞERSİZ (parola parçası gösterilmez)', () => {
+    const r = parseConnectionString('postgres://app@db1:s3cr%t/x')
+    const note = r.notes.find((n) => n.code === 'PORT_INVALID')
+    expect(note).toBeTruthy()
+    expect(note.value).toBeNull()
+    expect(parseConnectionString('jdbc:postgresql://db:99999/x').notes.find((n) => n.code === 'PORT_INVALID').value).toBe('99999')
+  })
+
+  it('başarılı ayrıştırmada da parola izi uyarılır (containsPassword her yolda)', () => {
+    expect(parseConnectionString('scott/tiger@db1:1521/ORCL').hadPassword).toBe(true)
+    expect(parseConnectionString('user@db.example.com:5432/orders')).toMatchObject({ ok: true, hadPassword: false, fields: { username: 'user' } })
+    expect(containsPassword('scott/tiger@db1')).toBe(true)
+    expect(containsPassword('reader:x@h')).toBe(true)
+    expect(containsPassword('db.example.com:5432/orders')).toBe(false)
+    // parolasız şemalı dizeler parola sayılmaz
+    expect(parseConnectionString('jdbc:oracle:thin:@//ora01:1521/svc').hadPassword).toBe(false)
+    expect(parseConnectionString('postgres://reader@pg.local/app').hadPassword).toBe(false)
+  })
+})
+
 describe('applyConnectionString — forma uygulama', () => {
   const base = { ...emptyForm(3), password: 'yazilan', password_set: true, password_clear: false }
 

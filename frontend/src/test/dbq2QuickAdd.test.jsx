@@ -42,6 +42,7 @@ vi.mock('../components/dbquery/buildingBlocks.jsx', () => {
       return (
         <div data-field="profile_id" data-slot="t-conn-picker" data-team={String(p.teamId)}>
           <button type="button" onClick={() => p.onChange(3, { id: 3, name: 'Sipariş DB', db_type: 'MSSQL' })}>pick-connection</button>
+          <button type="button" onClick={() => p.onChange(4, { id: 4, name: 'Sipariş DB Yedek', db_type: 'MSSQL' })}>pick-connection-4</button>
           {p.error && <p data-slot="t-conn-error">{p.error}</p>}
         </div>
       )
@@ -260,6 +261,50 @@ describe('Hızlı ekle sihirbazı (B1)', () => {
   })
 })
 
+describe('Sunucu alan hataları ekranda görünür (O4 / D8 / D12)', () => {
+  it('bildirim seviyesi hatası zamanlama adımının BANDINDA metin olarak (adım göstergesi sayar)', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', error: 'Doğrulama',
+      fields: { alertLevel: 'Bu alarm seviyesi bu izleme türünde kullanılamaz.' } })
+    await openWizard()
+    await walkToSummary()
+    const dlg = wiz().closest('[role="dialog"]')
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'dba', root: dlg })
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
+    await waitFor(() => expect(step()).toBe('schedule'))
+    const band = document.querySelector('[data-slot="dbq-wiz-step-errors"]')
+    expect(band.textContent).toContain('Bu alarm seviyesi bu izleme türünde kullanılamaz.')
+    expect(document.querySelector('[data-slot="dbq-wiz-steps"] li[data-step="schedule"] > button').getAttribute('data-errors')).toBe('1')
+  })
+
+  it('deneme ucunun alan hatası ilgili adıma döner (D12)', async () => {
+    api.monitoring.testDbQuery.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', error: 'Doğrulama',
+      fields: { sql_text: 'Sorgu en çok 20000 karakter olabilir.' } })
+    await openWizard()
+    fireEvent.click(screen.getByRole('button', { name: 'pick-connection' }))
+    next()
+    fireEvent.change(screen.getByLabelText('sql'), { target: { value: 'SELECT 1 AS x' } })
+    next()
+    expect(step()).toBe('test')
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-test"]'))
+    await waitFor(() => expect(step()).toBe('query'))
+    expect(document.querySelector('[data-slot="t-sql-error"]').textContent).toBe('Sorgu en çok 20000 karakter olabilir.')
+  })
+
+  it('"Gelişmiş görünümde düzelt": sihirbazdaki alan hatası uzun formda da alanın altında (D8)', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', error: 'Doğrulama',
+      fields: { max_rows: 'En çok 5000 satır olabilir' } })
+    await openWizard()
+    await walkToSummary()
+    const dlg = wiz().closest('[role="dialog"]')
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'dba', root: dlg })
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-wiz-banner"]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Gelişmiş görünümde düzelt' }))
+    const form = await screen.findByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })
+    await waitFor(() => expect(form.querySelector('[data-field="max_rows"]').textContent).toContain('En çok 5000 satır olabilir'))
+  })
+})
+
 describe('Birden çok bağlantı için oluştur (B4)', () => {
   it('Özet adımında: seçili bağlantı hazır gelir; türü farklı bağlantı uyarısı; sıralı oluşturma, ilk hatada durmaz', async () => {
     api.monitoring.createDbQueryMonitor
@@ -288,10 +333,94 @@ describe('Birden çok bağlantı için oluştur (B4)', () => {
     const results = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-bulk"][data-state="done"]'); if (!r) throw new Error('yok'); return r })
     expect([...results.querySelectorAll('[data-slot="dbq-bulk-result"]')].map((r) => r.getAttribute('data-status'))).toEqual(['ok', 'error', 'error'])
     expect(results.textContent).toContain('Bu ad başka bir izlemede kullanılıyor.')
-    expect(results.querySelector('[data-slot="dbq-bulk-summary"]').textContent).toContain('1 izleme oluşturuldu, 2 satır hata verdi')
-    expect(toastMock.success).toHaveBeenCalledWith('1 izleme oluşturuldu, 2 satır hata verdi.')
+    expect(results.querySelector('[data-slot="dbq-bulk-summary"]').textContent).toBe('1 izleme oluşturuldu · 2 reddedildi')
+    expect(toastMock.info).toHaveBeenCalledWith('1 izleme oluşturuldu · 2 reddedildi')
+    expect(document.querySelector('[data-slot="dbq-bulk-retry"]').textContent).toBe('2 bağlantı için yeniden dene')
+    // başarısız satır varken kapatma ONAY ister (O1) — "Düzenlemeye devam et" açık tutar
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-done"]'))
+    expect(await screen.findByText(/Kapatırsanız bu bağlantılar için girdiğiniz sorgu/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Düzenlemeye devam et' }))
+    await act(async () => {})
+    expect(wiz()).not.toBeNull()
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-done"]'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Değişiklikleri at' }))
+    await waitFor(() => expect(wiz()).toBeNull())
+  })
+
+  it('"Başarısızları yeniden dene": yalnız reddedilenler seçili plana döner, alanlar açılır; hepsi başarılıysa onaysız kapanır (O1)', async () => {
+    api.monitoring.createDbQueryMonitor
+      .mockResolvedValueOnce({ success: true, data: { id: 101 } })
+      .mockResolvedValueOnce({ success: false, status: 409, code: 'DUPLICATE_RECORD', error: 'Bu ad başka bir izlemede kullanılıyor.' })
+      .mockResolvedValue({ success: true, data: { id: 102 } })
+    await openWizard()
+    await walkToSummary()
+    const dlg = wiz().closest('[role="dialog"]')
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'dba', root: dlg })
+    fireEvent.click(within(dlg).getByRole('switch', { name: /Birden çok bağlantı için oluştur/ }))
+    const list = await waitFor(() => { const l = document.querySelector('[data-slot="dbq-bulk-connections"]'); if (!l) throw new Error('yok'); return l })
+    fireEvent.click(list.querySelector('[data-id="4"] [role="checkbox"]'))
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"][data-state="done"]')).not.toBeNull())
+    expect(within(dlg).getByLabelText(/^Ad(\s*\*)?$/)).toBeDisabled()
+    fireEvent.click(document.querySelector('[data-slot="dbq-bulk-retry"]'))
+    // plan geri geldi: yalnız reddedilen bağlantı seçili; ad düzenlenebilir
+    const list2 = await waitFor(() => { const l = document.querySelector('[data-slot="dbq-bulk-connections"]'); if (!l) throw new Error('yok'); return l })
+    expect(list2.querySelector('[data-id="3"] [role="checkbox"]')).toHaveAttribute('data-state', 'unchecked')
+    expect(list2.querySelector('[data-id="4"] [role="checkbox"]')).toHaveAttribute('data-state', 'checked')
+    expect(within(dlg).getByLabelText(/^Ad(\s*\*)?$/)).not.toBeDisabled()
+    fireEvent.change(within(dlg).getByLabelText(/^Ad(\s*\*)?$/), { target: { value: 'Kilit izleme' } })
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
+    await waitFor(() => expect(api.monitoring.createDbQueryMonitor).toHaveBeenCalledTimes(3))
+    expect(api.monitoring.createDbQueryMonitor.mock.calls[2][0]).toMatchObject({ profile_id: 4, name: 'Kilit izleme · Sipariş DB Yedek' })
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"][data-state="done"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="dbq-bulk-retry"]')).toBeNull()
     fireEvent.click(document.querySelector('[data-slot="dbq-wiz-done"]'))
     await waitFor(() => expect(wiz()).toBeNull())
+  })
+
+  it('ağ hatası "sonuç bilinmiyor": listede aynı ad varsa oluşturulmuş sayılır, yoksa bilinmiyor kalır ve yeniden denenmez (O2)', async () => {
+    api.monitoring.getDbQueryMonitors.mockReset()
+    api.monitoring.getDbQueryMonitors.mockResolvedValueOnce({ success: true, data: [] })
+      .mockResolvedValue({ success: true, data: [{ id: 300, name: 'bloklanan / kilit bekleyen oturumlar · sipariş db' }] })
+    api.monitoring.createDbQueryMonitor
+      .mockRejectedValueOnce(Object.assign(new Error('Sunucuya ulaşılamadı'), { status: 0 }))
+      .mockResolvedValueOnce({ success: false, status: 504, error: 'Ağ geçidi zaman aşımı' })
+    await openWizard()
+    await walkToSummary()
+    const dlg = wiz().closest('[role="dialog"]')
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'dba', root: dlg })
+    fireEvent.click(within(dlg).getByRole('switch', { name: /Birden çok bağlantı için oluştur/ }))
+    const list = await waitFor(() => { const l = document.querySelector('[data-slot="dbq-bulk-connections"]'); if (!l) throw new Error('yok'); return l })
+    fireEvent.click(list.querySelector('[data-id="4"] [role="checkbox"]'))
+    fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
+    const done = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-bulk"][data-state="done"]'); if (!r) throw new Error('yok'); return r })
+    await waitFor(() => expect([...done.querySelectorAll('[data-slot="dbq-bulk-result"]')].map((r) => r.getAttribute('data-status'))).toEqual(['ok', 'unknown']))
+    expect(done.textContent).toContain('yanıt gelmedi, listede bulundu')
+    expect(done.querySelector('[data-slot="dbq-bulk-summary"]').textContent).toBe('1 izleme oluşturuldu · 1 sonucu bilinmiyor')
+    expect(done.querySelector('[data-slot="dbq-bulk-unknown-note"]')).not.toBeNull()
+    // bilinmeyen satır yeniden denenmez → yeniden dene düğmesi yok
+    expect(document.querySelector('[data-slot="dbq-bulk-retry"]')).toBeNull()
+  })
+
+  it('bağlantı değişince toplu seçimde eski form bağlantısı çıkar, yenisi girer (O6)', async () => {
+    await openWizard()
+    await walkToSummary()
+    const dlg = wiz().closest('[role="dialog"]')
+    fireEvent.click(within(dlg).getByRole('switch', { name: /Birden çok bağlantı için oluştur/ }))
+    let list = await waitFor(() => { const l = document.querySelector('[data-slot="dbq-bulk-connections"]'); if (!l) throw new Error('yok'); return l })
+    expect(list.querySelector('[data-id="3"] [role="checkbox"]')).toHaveAttribute('data-state', 'checked')
+    fireEvent.click(list.querySelector('[data-id="5"] [role="checkbox"]'))
+    // Bağlantı adımına dön, başka bağlantı seç
+    fireEvent.click(within(dlg).getByRole('button', { name: /Düzenle: Bağlantı/ }))
+    expect(step()).toBe('connection')
+    fireEvent.click(screen.getByRole('button', { name: 'pick-connection-4' }))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Adım 6: Özet/ }))
+    expect(step()).toBe('summary')
+    list = await waitFor(() => { const l = document.querySelector('[data-slot="dbq-bulk-connections"]'); if (!l) throw new Error('yok'); return l })
+    expect(list.querySelector('[data-id="3"] [role="checkbox"]')).toHaveAttribute('data-state', 'unchecked')
+    expect(list.querySelector('[data-id="4"] [role="checkbox"]')).toHaveAttribute('data-state', 'checked')
+    // elle eklenen korunur
+    expect(list.querySelector('[data-id="5"] [role="checkbox"]')).toHaveAttribute('data-state', 'checked')
   })
 
   it('kalıpta bağlantı adı yoksa yinelenen adlar gönderilmeden işaretlenir; Kaydet kapalı', async () => {
@@ -335,5 +464,29 @@ describe('Uzun formdan toplu oluşturma (B4)', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"][data-state="done"]')).not.toBeNull())
     fireEvent.click(document.querySelector('[data-slot="dbq-bulk-close"]'))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })).toBeNull())
+  })
+
+  it('kısmi başarıda pencere kapanınca uzun form AÇIK kalır ve neden söylenir (O1)', async () => {
+    api.monitoring.createDbQueryMonitor
+      .mockResolvedValueOnce({ success: true, data: { id: 201 } })
+      .mockResolvedValueOnce({ success: false, status: 400, code: 'DBQUERY_SQL_REJECTED', error: 'Sorgu bu türde reddedildi.' })
+    render(<DbQueryMonitorPage {...userProps} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Yeni İzleme' }, { timeout: 3000 }))
+    const dlg = await screen.findByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })
+    fireEvent.change(within(dlg).getByLabelText(/^Ad/), { target: { value: 'Kuyruk' } })
+    fireEvent.change(within(dlg).getByLabelText(/^Bu alarm ne için\?/), { target: { value: 'Kuyruk birikmesini izler' } })
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'prod', root: dlg })
+    fireEvent.change(within(dlg).getByLabelText('sql'), { target: { value: 'SELECT 1 AS x' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: /Birden çok bağlantı için/ }))
+    const bulk = await waitFor(() => { const b = document.querySelector('[data-slot="dbq-bulk"]'); if (!b) throw new Error('yok'); return b })
+    await waitFor(() => expect(bulk.querySelector('[data-slot="dbq-bulk-connections"]')).not.toBeNull())
+    fireEvent.click(bulk.querySelector('[data-id="3"] [role="checkbox"]'))
+    fireEvent.click(bulk.querySelector('[data-id="5"] [role="checkbox"]'))
+    fireEvent.click(document.querySelector('[data-slot="dbq-bulk-run"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"][data-state="done"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-slot="dbq-bulk-close"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"]')).toBeNull())
+    expect(screen.getByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })).toBeInTheDocument()
+    expect(toastMock.info).toHaveBeenCalledWith(expect.stringContaining('form açık kaldı'))
   })
 })

@@ -123,11 +123,6 @@ function smallTargets(sel) {
     const cs = getComputedStyle(b)
     if (cs.visibility === 'hidden' || cs.display === 'none' || b.getAttribute('aria-hidden') === 'true') continue
     if (b.closest('[hidden]') || b.getAttribute('role') === 'checkbox' || b.closest('[data-slot="dbq-sql-editor"] [data-slot="dbq-sql-rules"]')) continue
-    // Ortak "Bildirimler ve Uyarılar" bloğunun seviye düğmeleri (ui/NotifyChannels, on bir formda aynı, h-8) bu sürümün
-    // dışında — ayrı iş olarak bildirildi; burada yalnız bu sürümün öğeleri ölçülür.
-    if (b.closest('[data-slot="notify-channels"]') && b.getAttribute('data-slot') === 'toggle-group-item') continue
-    // Ortak etiket kutusu (ui/TagInput) — on bir formda aynı, giriş kutusu h-9; aynı gerekçe.
-    if (b.tagName === 'INPUT' && b.closest('[data-field="tags"]')) continue
     let h = r.height
     const role = b.getAttribute('role')
     if (role === 'switch') h = Math.max(h, b.parentElement.getBoundingClientRect().height)
@@ -232,6 +227,23 @@ for (const vp of VIEWPORTS) {
       expect(calls.creates[0]).toMatchObject({ name: 'Bloklanan / kilit bekleyen oturumlar', profile_id: 41, interval_seconds: 300, tags: 'dba',
         groupName: 'Kurumsal Ödeme Sistemleri — Raporlama' })
       expect(calls.creates[0].sql_text).toContain('WITH (NOLOCK)')
+    })
+
+    test('sayfa başlığı + süzgeç çubuğu dokunmatikte ≥ 40 px; düzenleme penceresi başlığı sarar (kırpılmaz)', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=dbquery')
+      const cards = page.locator('.upt-grid > [data-slot="card"]')
+      await expect(cards.first()).toBeVisible({ timeout: 20_000 })
+      await check(page, 'sayfa başlığı', '.app-main [data-slot="page-header"]')
+      await check(page, 'süzgeç çubuğu', '.upt-toolbar')
+      await cards.first().getByRole('button', { name: /— (edit|düzenle)$/i }).first().click()
+      const dsel = '[role="dialog"]:has([data-slot="dbq-form-nav"])'
+      const dlg = page.locator(dsel)
+      await expect(dlg).toBeVisible()
+      await expect(dlg.getByText('Veritabanı sorgu izlemesini düzenle')).toBeVisible()
+      const title = await dlg.getByText('Veritabanı sorgu izlemesini düzenle').evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }))
+      expect(title.sw, `başlık kırpılıyor @${vp.name}`).toBeLessThanOrEqual(title.cw + 1)
     })
 
     test('güvenli düzeltme: NOLOCK reddi → Düzelt → önizleme → Uygula', async ({ page }) => {
