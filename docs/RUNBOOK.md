@@ -590,6 +590,36 @@ Sürüm geçişi: eski pod bu yeni alanları üretmez, `sql-fix` ve `…/health`
 okurken düşürür ve kaydederken reddeder — bu kuralları bütün podlar yeni sürümdeyken tanımlayın. Eski pod bağlantı
 denemesini saatlik haktan düşürmez, etkileşimli denetim kapısı ve postada ölçü maskelemesi yoktur.
 
+## Alarm iletimi
+
+Bir takım (izlemenin sahibi) alarmlarını başka bir takıma ya da o takımın seçilen üyelerine ek alıcı olarak iletebilir
+(Yönetim → Bildirim & Alarmlar → Alarm iletimi). Alıcılar sahip takımın aldığı her bildirimi AYRI bir e-postayla (başta
+"Bu alarm X takımının izlemesine ait…" bandı) ve push ile alır.
+
+**"İletim postası gelmedi" denetimi:**
+
+1. Alarm ayrıntısı → Bildirim geçmişi: iletim satırları **İletim** rozetiyle görünür (`notification_logs.recipient_role = 'FORWARD'`,
+   `recipient_name` = alıcı takım). Satır yoksa iletim o alarma uygulanmadı; satır SKIPPED ise nedeni yazar (kanal kapalı, alıcı yok,
+   adresler zaten başka postayı aldı, elle gönderimde seçilmedi).
+2. İletimin durumu: Alarm iletimi ekranı — Duraklatıldı / Süresi doldu / Alıcı takım pasif / İzleme kalmadı / Alıcı yok.
+3. Kapsam: TYPES iletiminde alarmın türü listede mi ("Sertifika" = envanter kaydının sertifika + erişilebilirlik alarmları);
+   MONITORS iletiminde o izleme seçili mi. Bağlamında izleme kimliği olmayan eski alarmlar yalnız "Tüm izlemeler" ile eşleşir.
+4. Sessiz saat: sahip takım sessiz saatteyse iletim de ertelenir ve sahip özetiyle birlikte özet olarak gider.
+5. Değişiklikler en geç 60 sn'de (her pod'un yerel görüntüsü; diğer pod'lar önbellek yolu ile ~2 sn) geçerli olur. Takım
+   üyeliği, takım e-postası ve bildirim grubu değişiklikleri 60 sn içinde yansır.
+
+```sql
+-- Bir takımın iletimleri (sahip ya da alıcı)
+SELECT id, owner_team_id, scope_kind, scope_types, scope_monitors, recipient_kind, recipient_team_id, enabled, expires_at
+FROM alert_forwards WHERE owner_team_id = :takim OR recipient_team_id = :takim ORDER BY id;
+
+-- Bir alarmın iletim damgası (çözüm postası bu adreslere gider)
+SELECT id, forward_emails FROM alert_events WHERE id = :alarm;
+```
+
+Acil durdurma: ilgili iletimi ekrandan duraklatın (ya da `UPDATE alert_forwards SET enabled = FALSE WHERE id = :id` — 60 sn içinde
+tüm pod'larda geçerli). Yuvarlanan dağıtımda eski sürümlü bir pod'un gönderdiği alarmın iletim kopyası gitmez (kabul).
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker
