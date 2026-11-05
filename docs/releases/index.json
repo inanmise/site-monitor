@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T10:46:38Z",
+  "generatedAt": "2026-11-05T14:13:29Z",
   "repo": "inanmise/site-monitor",
-  "count": 806,
+  "count": 807,
   "releases": [
+    {
+      "version": "20.184.0",
+      "tag": "v20.184.0",
+      "releasedAt": "2026-11-05T14:13:22Z",
+      "commit": "9286900fd4868b94ad0f62d417ce7ed6849cb920",
+      "prevVersion": "20.183.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9286900f",
+          "subject": "İzleme menüsü alt grupları akordeon — Erişilebilirlik, Alan Adı ve DNS, İçerik ve Deneyim, Veri ve iş kuralları ayrı ayrı açılır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.183.0",
       "tag": "v20.183.0",

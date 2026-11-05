@@ -95,7 +95,7 @@ export function OpenAlertBadge({ id, label, summary, onGo, className }) {
       <HoverCardTrigger asChild>
         <Button type="button" variant="ghost" size="sm" data-slot="nav-alert-badge" data-tab={id} data-level={level}
           aria-label={t('nav.openAlertsFor', label, count)} title={t('nav.openAlerts', count)}
-          className={cn('h-7 min-w-7 rounded-full px-0.5 hover:bg-transparent focus-visible:ring-2 pointer-coarse:h-9 pointer-coarse:min-w-9', className)}
+          className={cn('h-7 min-w-7 rounded-full px-0.5 hover:bg-transparent focus-visible:ring-2 pointer-coarse:h-10 pointer-coarse:min-w-10', className)}
           onClick={(e) => { e.stopPropagation(); onGo?.() }}>
           <CountPill count={count} level={level} className="pointer-events-none" />
         </Button>
