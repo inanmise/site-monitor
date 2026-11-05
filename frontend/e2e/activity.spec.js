@@ -46,6 +46,8 @@ async function mock(page) {
     } else if (p === '/api/activity/summary') {
       body = { success: true, total: 3, success_count: 1, warning: 1, error: 1, unknown: 0, last_activity: ROWS[0].activity_time,
         type_counts: { HTTP: 41, CERT: 12, PING: 230, DNS: 0 }, series: series() }
+    } else if (/^\/api\/activity\/\d+\/related$/.test(p)) {
+      body = { success: true, anchor: { id: 1, time: ROWS[0].activity_time }, total: 0, items: [], suspects: [{ code: 'SINGLE', params: {} }], facts: [] }
     } else if (p.startsWith('/api/activity/')) {
       body = { success: true, data: ROWS[0], recent: [] }
     } else if (p === '/api/teams/directory') {
@@ -142,11 +144,14 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="act-active-filters"]')).toHaveCount(0)
       await expect(root.locator('[data-slot="act-item"]')).toHaveCount(3)
 
-      // Satır ayrıntısı açılır
-      if (layout === 'cards') await first.locator('button[aria-expanded]').first().click()
+      // Satır ayrıntı SAYFASINI açar (2026-11-05: satır içi ayrıntı yerine ?act=<id>); tarayıcı Geri listeye döner
+      if (layout === 'cards') await first.locator('button').first().click()
       else await first.click()
-      await expect(page.locator('[data-slot="act-detail"]').first()).toBeVisible()
-      expect(await page.evaluate(overflowIn, '[data-slot="activity-log"]'), 'ayrıntı açıkken taşma').toEqual([])
+      await expect(page).toHaveURL(/[?&]act=1(&|$)/)
+      await expect(page.locator('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'detail')
+      expect(await page.evaluate(overflowIn, '[data-slot="activity-page"]'), 'ayrıntı sayfasında taşma').toEqual([])
+      await page.goBack()
+      await expect(root.locator('[data-slot="act-item"]')).toHaveCount(3)
     })
   })
 }

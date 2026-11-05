@@ -9,4 +9,10 @@ describe('URL ad alanı — Aktivite Logu paramları sayfa durumu sayılır', ()
   it('atype / astatus / arange / aq PAGE_STATE_PARAMS içinde (App.handleTabChange sekme değişince siler)', () => {
     for (const k of ['atype', 'astatus', 'arange', 'aq']) expect(PAGE_STATE_PARAMS).toContain(k)
   })
+
+  it('2026-11-05: yeni süzgeçler (afrom/ato/ateam/aactor/agroup/areason/amf/amfl) ve rota (act/amon/atl*) da sekme değişince silinir', () => {
+    for (const k of ['afrom', 'ato', 'ateam', 'aactor', 'agroup', 'areason', 'amf', 'amfl', 'act', 'amon', 'atlr', 'atlf', 'atlt']) {
+      expect(PAGE_STATE_PARAMS).toContain(k)
+    }
+  })
 })

@@ -157,8 +157,9 @@ async function downloadActivityCsv(qs) {
   const d = new Date()
   const fallback = `aktivite-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
   const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
+  const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
   if (!downloadBlob(name || fallback, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
-  return { success: true, name: name || fallback, truncated }
+  return { success: true, name: name || fallback, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
 }
 
 /**

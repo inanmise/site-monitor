@@ -46,15 +46,17 @@ export function unwrapRelated(res) {
 const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
 
 /**
- * Şüphe parametreleri — sunucunun adlandırması kesinleşmeden (paralel geliştirme) eş adlar da okunur:
- * sayı `count | monitors | n`, oran `pct | percent | ratio (0–1)`, host, takım adı `team_name | team`.
+ * Şüphe parametreleri — be2 `ActivityRelatedService`: `*_WIDE` {monitors, total_monitors, share_pct}, SAME_HOST
+ * {host, monitors}, SAME_TEAM {team_id, team_name, monitors}, SINGLE {}. Eş adlar da okunur (sayı `count | n`, oran
+ * `pct | percent | ratio (0–1)`, takım `team`).
  */
 export function suspectParams(params = {}) {
   const p = params || {}
   const ratio = num(p.ratio)
-  const pct = num(p.pct) ?? num(p.percent) ?? (ratio != null ? (ratio <= 1 ? ratio * 100 : ratio) : null)
+  const pct = num(p.share_pct) ?? num(p.pct) ?? num(p.percent) ?? (ratio != null ? (ratio <= 1 ? ratio * 100 : ratio) : null)
   return {
-    count: num(p.count) ?? num(p.monitors) ?? num(p.n),
+    count: num(p.monitors) ?? num(p.count) ?? num(p.n),
+    total: num(p.total_monitors) ?? num(p.total),
     pct: pct != null ? Math.round(pct) : null,
     host: p.host ?? null,
     team: p.team_name ?? p.team ?? null,
@@ -91,16 +93,25 @@ export function durationText(seconds, t) {
   return `${d} ${t('incov.unit.day')}${h % 24 ? ` ${h % 24} ${t('incov.unit.hour')}` : ''}`
 }
 
-/** Olgu satırı metni. `fmtTime(iso)` zamanı biçimler (İstanbul). Bilinmeyen değer "…" — uydurulmaz. */
+/**
+ * Olgu satırı metni. `fmtTime(iso)` zamanı biçimler (İstanbul). Bilinmeyen değer "…" — uydurulmaz. be2 parametreleri:
+ * FIRST_FAILURE_IN_DAYS {days, at_least} (at_least → "en az N gün"), FAILURES_24H / TIMEOUTS_24H {n}, LAST_SUCCESS {at},
+ * RECOVERED_AFTER {seconds, at}, STILL_FAILING {since} (varsa "… tarihinden beri").
+ */
 export function factText(f, t, fmtTime) {
   const p = f?.params || {}
+  const time = (v) => (v ? (fmtTime ? fmtTime(v) : String(v)) : null)
   const vals = {
     days: num(p.days),
     n: num(p.n) ?? num(p.count),
-    at: p.at ? (fmtTime ? fmtTime(p.at) : String(p.at)) : null,
+    at: time(p.at),
+    since: time(p.since),
     duration: num(p.seconds) != null ? durationText(p.seconds, t) : null,
   }
-  return fill(t(`act.rel.fact.${f.code}`), vals)
+  let key = `act.rel.fact.${f.code}`
+  if (f.code === 'FIRST_FAILURE_IN_DAYS' && p.at_least === true) key += '.atLeast'
+  if (f.code === 'STILL_FAILING' && vals.since) key += '.since'
+  return fill(t(key), vals)
 }
 
 /** ISO (Z'siz = UTC) → ms; geçersiz → NaN. */

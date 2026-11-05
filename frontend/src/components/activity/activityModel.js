@@ -88,16 +88,21 @@ const MAX_Q = 200
 const MAX_ACTOR = 100
 const MAX_LABEL = 160
 const TOKEN_RE = /^[A-Z][A-Z0-9_]*$/
+/** Neden süzgeci değeri: kod ya da eski satırın hata sınıfı `class:<SINIF>` (be2 ActivityFilter.CLASS_PREFIX). */
+const REASON_RE = /^(class:)?[A-Z][A-Z0-9_]*$/
+export const CLASS_PREFIX = 'class:'
+/** Aktivite satırlarında görülen hata sınıfları (eski satırların neden süzgeci) — `act.cls.<SINIF>` etiketleri. */
+export const ERROR_CLASSES = ['NETWORK', 'DNS', 'SSL', 'TIMEOUT', 'BLOCKED', 'CONFIG']
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/
 const ID_RE = /^\d{1,15}$/
 
-function csvTokens(raw, allowed) {
+function csvTokens(raw, allowed, re = TOKEN_RE) {
   if (typeof raw !== 'string' || !raw) return []
   const out = []
   for (const part of raw.slice(0, MAX_LIST * (MAX_TOKEN + 1)).split(',')) {
     const v = part.trim()
     if (!v || v.length > MAX_TOKEN || out.includes(v)) continue
-    if (allowed ? !allowed.includes(v) : !TOKEN_RE.test(v)) continue
+    if (allowed ? !allowed.includes(v) : !re.test(v)) continue
     out.push(v)
     if (out.length >= MAX_LIST) break
   }
@@ -146,7 +151,7 @@ export function readFilters(search) {
     team,
     actor: (p.get('aactor') || '').trim().slice(0, MAX_ACTOR),
     groups: csvTokens(p.get('agroup'), GROUPS),
-    reasons: csvTokens(p.get('areason')),
+    reasons: csvTokens(p.get('areason'), null, REASON_RE),
     monitor: monitorRef ? formatMonitorRef(monitorRef.type, monitorRef.id) : '',
     monitorLabel: monitorRef ? (p.get('amfl') || '').slice(0, MAX_LABEL) : '',
   }
@@ -208,6 +213,23 @@ export function rangeToFromTo(range, now = Date.now(), custom = null) {
   if (range === '7d') return { from: iso(new Date(now - 7 * 24 * 3600 * 1000)), to: null }
   if (range === 'custom') return { from: custom?.from || null, to: custom?.to || null }
   return { from: null, to: null }
+}
+
+/** UTC ISO (Z'siz) → İstanbul "dd.MM.yyyy HH:mm" (çip / özet metni); okunamazsa olduğu gibi. */
+export function istanbulShort(iso, lang = 'tr') {
+  if (!iso) return ''
+  const s = String(iso)
+  const ms = Date.parse(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z')
+  if (!Number.isFinite(ms)) return s
+  try {
+    const parts = new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'tr-TR', {
+      timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(ms))
+    const g = (k) => parts.find((x) => x.type === k)?.value || ''
+    return `${g('day')}.${g('month')}.${g('year')} ${g('hour')}:${g('minute')}`
+  } catch {
+    return s
+  }
 }
 
 /** Özel aralığın sırası doğru mu (ikisi de doluysa başlangıç ≤ bitiş). */
@@ -310,6 +332,20 @@ export function sameRoute(a, b) {
 
 // ── Satır alanları (2026-11-05, G) ─────────────────────────────────────────────────────────────
 
+/**
+ * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi"); İngilizce arayüzde
+ * jetonlar sözlükten çevrilir (QA 2026-09-12, ISSUE-010). Türkçede sözlük değeri = jetonun kendisi.
+ * Liste ve ayrıntı sayfası aynı kuralı kullanır (tek kaynak).
+ */
+const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
+  ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
+export function localizeSummary(summary, t) {
+  if (!summary) return summary
+  let s = String(summary)
+  for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))
+  return s
+}
+
 const ALARM_ACTIONS = new Set(['ALERT_TRIGGERED', 'ALERT_ESCALATED', 'ALERT_ACKNOWLEDGED', 'ALERT_RESOLVED'])
 /** Alarm olayı satırı mı (rozet + "Alarm #id"). */
 export const isAlarmAction = (action) => ALARM_ACTIONS.has(String(action || ''))
@@ -354,6 +390,13 @@ export function fillNamed(template, params = {}) {
 export function reasonLabel(code, t, params = {}) {
   if (!code) return ''
   const c = String(code).slice(0, MAX_TOKEN)
+  // Eski satır: neden kodu yok, hata sınıfı var (`class:NETWORK`) — sınıf adıyla (bilinen sınıf çevrilir)
+  if (c.startsWith(CLASS_PREFIX)) {
+    const cls = c.slice(CLASS_PREFIX.length)
+    const key = `act.cls.${cls}`
+    const v = t(key)
+    return v && v !== key ? v : t('act.cls.any', cls)
+  }
   for (const ns of ['chkfail', 'kwfail']) {
     const key = `${ns}.${c}.short`
     const tpl = t(key)

@@ -11,6 +11,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import AlertBanner from '../../ui/AlertBanner.jsx'
+import { ProgressBar } from '../../ui/Progress.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { ReasonBadge, TypeBadge } from '../ActivityParts.jsx'
@@ -52,7 +53,7 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity }) {
   const load = useCallback(() => {
     const my = ++seq.current
     setState({ status: 'loading', data: null, error: null })
-    return api.getActivityRelated(activityId, windowS)
+    return Promise.resolve().then(() => api.getActivityRelated(activityId, windowS))
       .then((res) => {
         if (my !== seq.current) return
         if (res?.success) {
@@ -225,9 +226,8 @@ function Distribution({ title, kind, items, label, mono = false }) {
                   <span className={cn('min-w-0 [overflow-wrap:anywhere]', mono && 'font-mono text-xs break-all')}>{label(x)}</span>
                   <Badge variant="secondary" className="shrink-0 tabular-nums">{n}</Badge>
                 </span>
-                <span aria-hidden="true" className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                  <span className="block h-full rounded-full bg-destructive/70" style={{ width: `${Math.max(4, (n / max) * 100)}%` }} />
-                </span>
+                {/* Görsel oran (sayı yanında metin olarak) — ekran okuyucuya ikinci kez duyurulmaz */}
+                <ProgressBar value={n} max={max} size="sm" tone="crit" decorative />
               </li>
             )
           })}

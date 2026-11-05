@@ -26,7 +26,7 @@ import ActivityFilterBar from './activity/ActivityFilterBar.jsx'
 import ActivityExportMenu from './activity/ActivityExportMenu.jsx'
 import { ReasonBadge, STATUS_META, TypeBadge, isFailure } from './activity/ActivityParts.jsx'
 import {
-  CHIPS_INLINE_MIN_PX, KPI_STATUS, formatMonitorRef, isAlarmAction, isFiltered, istanbulDayStartMs, kpiKeyOf, monitorRefOf,
+  CHIPS_INLINE_MIN_PX, KPI_STATUS, formatMonitorRef, isAlarmAction, isFiltered, istanbulDayStartMs, kpiKeyOf, localizeSummary, monitorRefOf,
   pickLayout, rangeToFromTo, readFilters, readRoute, routeSearch, sameRoute, toApiParams, writeFilters,
 } from './activity/activityModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -47,18 +47,8 @@ const MonitorTimelineView = lazy(() => import('./activity/timeline/MonitorTimeli
 /** App.handleTabChange aynı sekmede param yazınca yayılır (App.jsx TAB_PARAMS_EVENT; App'i içe aktarmamak için yerel). */
 const TAB_PARAMS_EVENT = 'sm:tab-params'
 
-/**
- * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi"); İngilizce arayüzde
- * jetonlar sözlükten çevrilir (QA 2026-09-12, ISSUE-010). Türkçede sözlük değeri = jetonun kendisi.
- */
-const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
-  ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
-export function localizeSummary(summary, t) {
-  if (!summary) return summary
-  let s = String(summary)
-  for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))
-  return s
-}
+// Sunucu özetinin jeton çevirisi modelde (2026-11-05: ayrıntı sayfası da kullanır); eski içe aktarımlar çalışsın
+export { localizeSummary }
 
 /** Sonuç özeti (ikon + yerelleştirilmiş özet). */
 function ResultSummary({ row, t, className }) {
@@ -93,15 +83,19 @@ function RowBadges({ row, t }) {
   )
 }
 
-/** Belge başlığı / açıklaması — rota değişince. App'in kendi yazımından SONRA (setTimeout) uygulanır (iki yazar sırası). */
-function useRouteMeta(kind) {
+/**
+ * Belge başlığı / açıklaması — rota değişince. App'in kendi yazımından SONRA (setTimeout) uygulanır (iki yazar sırası).
+ * Ayrıntı sayfası izlemenin adını verirse (`onTitle`, fe1) başlık "<ad> — Aktivite ayrıntısı".
+ */
+function useRouteMeta(kind, name) {
   const t = useT()
   const { get } = useBranding()
   const brand = String(get('tab_title', '') || get('app_name', '') || META_BRAND)
   const key = kind === 'detail' ? pageMetaKey('activityDetail') : kind === 'timeline' ? pageMetaKey('activityTimeline') : tabMetaKey('activity')
   const rawTitle = t(`${key}.title`)
   const rawDesc = t(`${key}.description`)
-  const title = formatTitle(rawTitle !== `${key}.title` ? rawTitle : '', brand)
+  const pageTitle = rawTitle !== `${key}.title` ? rawTitle : ''
+  const title = formatTitle(kind === 'detail' && name ? `${name} — ${pageTitle}` : pageTitle, brand)
   const description = rawDesc !== `${key}.description` ? rawDesc : null
   useEffect(() => {
     const id = setTimeout(() => applyPageMeta(title, description), 0)
@@ -128,7 +122,10 @@ export default function ActivityLog({ refreshTrigger }) {
   const [listMounted, setListMounted] = useState(route.kind === 'list')
   const [listNonce, setListNonce] = useState(0)
   const listScroll = useRef(0)
-  useRouteMeta(route.kind)
+  const [detailTitle, setDetailTitle] = useState(null)
+  useEffect(() => { setDetailTitle(null) }, [route])
+  useRouteMeta(route.kind, detailTitle)
+  const onDetailTitle = useCallback((name) => setDetailTitle(name ? String(name).slice(0, 120) : null), [])
 
   useEffect(() => { if (route.kind === 'list') setListMounted(true) }, [route.kind])
 
@@ -214,7 +211,8 @@ export default function ActivityLog({ refreshTrigger }) {
       )}
       {route.kind === 'detail' && (
         <Suspense fallback={fallback}>
-          <ActivityDetailPage key={route.id} id={route.id} onBack={backToList} onOpenActivity={openActivity} onOpenTimeline={openTimeline} />
+          <ActivityDetailPage key={route.id} id={route.id} onBack={backToList} onOpenActivity={openActivity} onOpenTimeline={openTimeline}
+            onTitle={onDetailTitle} />
         </Suspense>
       )}
       {route.kind === 'timeline' && (
@@ -358,7 +356,8 @@ function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }
     ['ERROR', summary ? summary.error ?? 0 : '—', t('act.st.ERROR'), XCircle, 'critical'],
   ].map(([key, value, label, Icon, cls]) => {
     const on = kpiKey === key
-    return { key, value, label, Icon, cls, hint: key === 'ERROR' ? t('act.sumErrorHint') : t('act.sumFilterHint'),
+    const sub = key === 'ERROR' && summary && Number(summary.timeout) > 0 ? t('act.sumTimeoutSub', summary.timeout) : undefined
+    return { key, value, label, Icon, cls, sub, hint: key === 'ERROR' ? t('act.sumErrorHint') : t('act.sumFilterHint'),
       tip: on && key !== 'ALL' ? t('a11y.rowAction', label, t('mondash.clearTip')) : t('mondash.filterTip', label) }
   })
   const onStat = (key) => setFilters((f) => ({ ...f, statuses: key === 'ALL' || kpiKeyOf(f.statuses) === key ? [] : [...KPI_STATUS[key]] }))

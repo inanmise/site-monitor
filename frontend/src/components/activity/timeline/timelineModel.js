@@ -95,6 +95,7 @@ export function unwrapTimeline(res) {
     outages: Array.isArray(body.outages) ? body.outages : [],
     series: Array.isArray(body.series) ? body.series : [],
     truncated: !!body.truncated,
+    periods_merged: !!body.periods_merged,
   }
 }
 

@@ -35,8 +35,9 @@ export default function ActivityExportMenu({ params, disabled = false, onTruncat
     try {
       const res = await api.exportActivity(params, 'csv')
       if (res?.success) {
-        if (res.truncated) onTruncated?.('csv', EXPORT_MAX.csv)
-        toast.success(res.truncated ? t('act.ex.doneTruncated', EXPORT_MAX.csv) : t('act.ex.done'))
+        const max = res.maxRows || EXPORT_MAX.csv
+        if (res.truncated) onTruncated?.('csv', max)
+        toast.success(res.truncated ? t('act.ex.doneTruncated', max) : t('act.ex.done'))
       } else {
         toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('act.ex.downloadFailed') : (res?.error || t('act.ex.failed')), { details: res })
       }
@@ -63,8 +64,9 @@ export default function ActivityExportMenu({ params, disabled = false, onTruncat
         toast.error(t('act.ex.downloadFailed'))
         return
       }
-      if (body.truncated) onTruncated?.('xlsx', EXPORT_MAX.json)
-      toast.success(body.truncated ? t('act.ex.doneTruncated', EXPORT_MAX.json) : t('act.ex.done'))
+      const max = body.maxRows || EXPORT_MAX.json
+      if (body.truncated) onTruncated?.('xlsx', max)
+      toast.success(body.truncated ? t('act.ex.doneTruncated', max) : t('act.ex.done'))
     } catch (e) {
       const f = clientFailure(e, { fallback: t('act.ex.failed'), chunk: t('te.pageUpdated') })
       toast.error(f.message, { details: f.details })

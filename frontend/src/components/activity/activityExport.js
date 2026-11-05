@@ -18,18 +18,28 @@ export const EXCEL_COLUMNS = [
 ]
 
 /**
- * JSON yanıtından satırlar + tavan bilgisi. Biçimler: `{ data: [..] }`, `{ rows: [..] }`, `{ data: { rows: [..] } }`;
- * `truncated` kökte ya da `data` altında. Tanınmayan gövde → null (okunamadı).
+ * JSON yanıtından satırlar + tavan bilgisi. be2 biçimi `{ data: { columns, time_zone, rows: [[…]], row_count, max_rows,
+ * truncated } }` — satır dizileri `columns` adlarıyla nesneye çevrilir (`time` sütunu İstanbul yerel "yyyy-MM-dd HH:mm:ss",
+ * `time_local` olarak taşınır). Nesne satırları (`{ data: [..] }`, `{ rows: [..] }`) da okunur. Tanınmayan → null.
  */
 export function unwrapExportJson(res) {
   if (!res || typeof res !== 'object') return null
+  const body = res.data && typeof res.data === 'object' && !Array.isArray(res.data) ? res.data : res
   let rows = null
   if (Array.isArray(res.data)) rows = res.data
-  else if (Array.isArray(res.rows)) rows = res.rows
-  else if (res.data && typeof res.data === 'object' && Array.isArray(res.data.rows)) rows = res.data.rows
+  else if (Array.isArray(body.rows)) rows = body.rows
   if (!rows) return null
-  const truncated = !!(res.truncated ?? res.data?.truncated)
-  return { rows, truncated }
+  const cols = Array.isArray(body.columns) ? body.columns.map(String) : null
+  const objects = rows.map((r) => {
+    if (!Array.isArray(r)) return r && typeof r === 'object' ? r : {}
+    if (!cols) return {}
+    const o = {}
+    cols.forEach((c, i) => { o[c === 'time' ? 'time_local' : c] = r[i] })
+    return o
+  })
+  const truncated = !!(body.truncated ?? res.truncated)
+  const maxRows = Number(body.max_rows ?? res.max_rows)
+  return { rows: objects, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
 }
 
 /** UTC ISO (Z'siz) → İstanbul "dd.MM.yyyy HH:mm:ss"; okunamazsa olduğu gibi. */
@@ -55,7 +65,7 @@ const label = (t, key, fallback) => {
 /** Satır → Excel hücreleri (metinler kullanıcının dilinde; sayılar sayı hücresi). */
 export function excelRow(r, t, lang = 'tr') {
   return [
-    istanbulTime(r.activity_time, lang),
+    r.time_local != null ? String(r.time_local) : istanbulTime(r.activity_time, lang),
     r.monitor_type || '',
     r.monitor_name || '',
     r.target || '',

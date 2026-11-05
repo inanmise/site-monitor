@@ -3,7 +3,7 @@ import {
   Search, X, Filter, ChevronDown, Layers, ListChecks, CircleAlert, UserSearch, SlidersHorizontal, CalendarRange,
   Activity, BellRing, Send, PencilLine, Shapes,
 } from 'lucide-react'
-import { useT } from '../../i18n/index.jsx'
+import { useT, useLanguage } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent } from '@/components/shadcn/card'
@@ -20,11 +20,13 @@ import { KW_FAILURE_CODES } from '../keyword/diagnose/keywordDiagCodes.js'
 import { TYPES } from './ActivityParts.jsx'
 import MonitorFilterPicker from './MonitorFilterPicker.jsx'
 import {
-  DEFAULT_FILTERS, GROUPS, RANGES, STATUSES, activeChips, customRangeValid, isFiltered, reasonLabel, removeChip,
+  DEFAULT_FILTERS, ERROR_CLASSES, GROUPS, RANGES, STATUSES, activeChips, customRangeValid, isFiltered, istanbulShort, reasonLabel, removeChip,
 } from './activityModel.js'
 
 /** Hata nedeni seçenekleri: kontrol kataloğu + yalnız keyword'e özgü kodlar (sıra katalog sırası). */
-export const REASON_CODES = [...CHECK_FAILURE_CODES, ...KW_FAILURE_CODES.filter((c) => !CHECK_FAILURE_CODES.includes(c))]
+export const REASON_CODES = [...CHECK_FAILURE_CODES, ...KW_FAILURE_CODES.filter((c) => !CHECK_FAILURE_CODES.includes(c)),
+  // Neden kodu yazılmadan önceki satırlar hata sınıfıyla süzülür (be2: `reason=class:<SINIF>`)
+  ...ERROR_CLASSES.map((c) => `class:${c}`)]
 
 const GROUP_ICON = { check: Activity, alarm: BellRing, notification: Send, change: PencilLine, other: Shapes }
 const MAX_ACTOR = 100
@@ -42,6 +44,7 @@ const MAX_ACTOR = 100
  */
 export default function ActivityFilterBar({ filters, setFilters, typeCounts, groupCounts, teams, compact = false, actions }) {
   const t = useT()
+  const { lang } = useLanguage()
   const uid = useId()
   const [qInput, setQInput] = useState(filters.q)
   const [actorInput, setActorInput] = useState(filters.actor)
@@ -84,7 +87,7 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
     if (c.kind === 'type') return c.value
     if (c.kind === 'range') {
       if (c.value !== 'custom') return t('act.range.' + c.value)
-      return t('act.flt.customChip', filters.from ? filters.from.replace('T', ' ').slice(0, 16) : '…', filters.to ? filters.to.replace('T', ' ').slice(0, 16) : t('act.flt.now'))
+      return t('act.flt.customChip', filters.from ? istanbulShort(filters.from, lang) : '…', filters.to ? istanbulShort(filters.to, lang) : t('act.flt.now'))
     }
     if (c.kind === 'q') return `“${c.value}”`
     if (c.kind === 'team') return t('act.flt.teamChip', teamName(c.value) || t('act.flt.teamUnknown'))

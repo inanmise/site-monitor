@@ -72,11 +72,12 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
 
   const load = useCallback(() => {
     const my = ++seq.current
+    const key = `${type}:${id}`
     // Pencere HER istekte o anki zamanla hesaplanır (Yenile "son 7 gün"ü dondurmasın)
     const w = tlWindow(tl)
     if (w.error) return Promise.resolve()
     setState((s) => ({ status: 'loading', data: s.data && s.key === `${type}:${id}` ? s.data : null, error: null, key: `${type}:${id}` }))
-    return api.getActivityTimeline({ monitor: `${type}:${id}`, from: w.from, to: w.to })
+    return Promise.resolve().then(() => api.getActivityTimeline({ monitor: `${type}:${id}`, from: w.from, to: w.to }))
       .then((res) => {
         if (my !== seq.current) return
         if (res?.success) {
@@ -85,10 +86,11 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
         } else if (res?.status === 404 || res?.status === 403) {
           setState({ status: 'notfound', data: null, error: null })
         } else {
-          setState({ status: 'error', data: null, error: res?.error || null })
+          // Yenileme hatası son okunan veriyi SİLMEZ (üstte "yenilenemedi" bandı); ilk okuma hatası tam hata bloğu
+          setState((s) => ({ status: 'error', data: s.key === key ? s.data : null, error: res?.error || null, key }))
         }
       })
-      .catch((e) => { if (my === seq.current) setState({ status: 'error', data: null, error: e?.message || null }) })
+      .catch((e) => { if (my === seq.current) setState((s) => ({ status: 'error', data: s.key === key ? s.data : null, error: e?.message || null, key })) })
   }, [type, id, tl])
 
   useEffect(() => { load() }, [load])
@@ -227,13 +229,16 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
           {t('act.tl.mon.refreshFailed')}
         </AlertBanner>
       )}
+      {data.monitor?.exists === false && (
+        <div data-slot="act-tl-deleted"><AlertBanner tone="info" className="mb-0">{t('act.tl.mon.deleted')}</AlertBanner></div>
+      )}
       {data.truncated && (
         <div data-slot="act-tl-truncated"><AlertBanner tone="warning" className="mb-0">{t('act.tl.mon.truncated')}</AlertBanner></div>
       )}
 
       <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
         <Kpi k="availability" icon={Percent} label={t('act.tl.mon.kpi.availability')} tone={avTone}
-          value={data.availability_pct == null ? '—' : `%${formatPct(data.availability_pct, lang)}`}
+          value={data.availability_pct == null ? '—' : (lang === 'en' ? `${formatPct(data.availability_pct, lang)}%` : `%${formatPct(data.availability_pct, lang)}`)}
           sub={data.availability_pct == null ? t('act.tl.mon.kpi.noScheduled') : t('act.tl.mon.kpi.availabilityHint')} />
         <Kpi k="outages" icon={XCircle} label={t('act.tl.mon.kpi.outages')}
           tone={data.checks ? (data.outage_count > 0 ? 'bad' : 'good') : 'unknown'}
@@ -244,7 +249,7 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
           sub={data.scheduled_checks != null ? t('act.tl.mon.kpi.scheduled', data.scheduled_checks) : null} />
       </div>
 
-      <AvailabilityStrip periods={data.periods} from={data.from || win.from} to={data.to} t={t} />
+      <AvailabilityStrip periods={data.periods} from={data.from || win.from} to={data.to} t={t} merged={data.periods_merged} />
 
       <OutageList outages={data.outages} t={t} onOpenActivity={onOpenActivity} />
 
@@ -254,7 +259,7 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
 }
 
 /** Erişilebilirlik şeridi — dönemler oransal bölümler; seçili dönemin ayrıntısı altında (önceki / sonraki ile gezilir). */
-function AvailabilityStrip({ periods, from, to, t }) {
+function AvailabilityStrip({ periods, from, to, t, merged = false }) {
   const segs = useMemo(() => stripSegments(periods, from, to), [periods, from, to])
   const order = useMemo(() => [...segs].sort((a, b) => a.index - b.index).map((s) => s.index), [segs])
   const defaultSel = useMemo(() => {
@@ -287,7 +292,7 @@ function AvailabilityStrip({ periods, from, to, t }) {
         <CardTitle role="heading" aria-level={3} className="flex items-center gap-1.5 text-sm font-semibold">
           <Activity aria-hidden="true" className="size-4 text-muted-foreground" /> {t('act.tl.mon.strip')}
         </CardTitle>
-        <CardDescription className="text-xs">{t('act.tl.mon.stripHint')}</CardDescription>
+        <CardDescription className="text-xs">{t('act.tl.mon.stripHint')}{merged ? ` ${t('act.tl.mon.merged')}` : ''}</CardDescription>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-3 px-4">
         {segs.length === 0 ? (
@@ -322,7 +327,10 @@ function AvailabilityStrip({ periods, from, to, t }) {
                   </span>
                   <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     {t('act.tl.mon.periodChecks', p.checks ?? 0)}
-                    {p.reason && <ReasonBadge code={p.reason} t={t} />}
+                    {/* NO_DATA = uzun veri boşluğu (state unknown) — hata nedeni değil, nötr metin */}
+                    {p.reason === 'NO_DATA'
+                      ? <span data-slot="act-tl-nodata">· {t('act.tl.mon.noData')}</span>
+                      : p.reason && <ReasonBadge code={p.reason} t={t} />}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -361,7 +369,7 @@ function OutageList({ outages, t, onOpenActivity }) {
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {shown.map((o, i) => {
               const secs = outageSeconds(o)
-              const ongoing = !o.to
+              const ongoing = o.ongoing === true || !o.to
               return (
                 <li key={`${o.from}-${i}`} data-slot="act-tl-outage" data-ongoing={ongoing ? 'true' : undefined}
                   className="flex min-w-0 flex-col gap-2 rounded-lg border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -372,6 +380,7 @@ function OutageList({ outages, t, onOpenActivity }) {
                       {ongoing && <Badge variant="destructive">{t('act.tl.mon.ongoingBadge')}</Badge>}
                     </span>
                     <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      {o.open_start && <Badge variant="outline" className="h-auto rounded-md whitespace-normal" data-slot="act-tl-open-start">{t('act.tl.mon.openStart')}</Badge>}
                       <span>{secs != null ? durationText(secs, t) : '—'}</span>
                       <span aria-hidden="true">·</span>
                       <span>{t('act.tl.mon.periodChecks', o.checks ?? 0)}</span>
