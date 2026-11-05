@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T14:13:29Z",
+  "generatedAt": "2026-11-05T17:34:28Z",
   "repo": "inanmise/site-monitor",
-  "count": 807,
+  "count": 808,
   "releases": [
+    {
+      "version": "20.185.0",
+      "tag": "v20.185.0",
+      "releasedAt": "2026-11-05T17:34:19Z",
+      "commit": "fc24d8e389539a090317dc1e96641ffdf2e6f0e7",
+      "prevVersion": "20.184.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "fc24d8e3",
+          "subject": "alarm akışı — \"yalnız açık alarmlar\" kipi varsayılan (çözülen alarm satırı gönderilmez)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.184.0",
       "tag": "v20.184.0",

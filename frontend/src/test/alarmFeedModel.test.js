@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 import {
   OUTCOMES, OUTCOME_TONE, FORM_FIELDS, activeBlockCount, blockRows, crossFieldErrors, nocOnlySupported, remainingParts,
+  OPEN_ONLY_MODE, RESOLVED_MODES, isOpenOnly, withResolvedMode,
   DEFAULT_LIMITS, FEED_COLUMNS, REQUEST_SIZE_OPTIONS, SILENT_AFTER_MS, bodyFileName, bodyOf, changedSettings, curlSample, feedUrl,
   fmtUtc, forwardedChain, isDirty, isValidIpEntry, isValidIpv4, isValidIpv6, limitsOf, normalizeIds, normalizeIps, numText,
   prettyBody, pyQuote, pythonSample, requestParams, shellQuote, statusModel, toForm, typeLabel, utcMs, validateChanges,
@@ -316,5 +319,62 @@ describe('alarmFeedModel — otomatik IP engeli', () => {
     expect(remainingParts(65 * 60_000)).toEqual({ key: 'af.block.remainingHours', params: [1, 5] })
     expect(remainingParts(0)).toBeNull()
     expect(remainingParts(null)).toBeNull()
+  })
+})
+
+// 2026-11-05 (kullanıcı kararı): "Çözülen alarm gösterilmesin — yalnız açık alarmlar" kipi ('none', VARSAYILAN). Merkezi
+// sistem akışta açık görmediği alarmı kendisi kapatır; bu kipte çözülme penceresi ve kapanış metni kullanılmaz.
+describe('alarmFeedModel — yalnız açık alarmlar kipi', () => {
+  it('kip listesi sunucuyla AYNI ve aynı sırada (Java AlarmFeedSettings.RESOLVED_MODES ↔ JS RESOLVED_MODES); none ilk', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const src = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/service/alarmfeed/AlarmFeedSettings.java'), 'utf8')
+    const openOnly = src.match(/String MODE_OPEN_ONLY = "([a-z_]+)"/)[1]
+    const list = src.match(/List<String> RESOLVED_MODES = List\.of\(([^)]*)\)/)[1]
+    const java = list.split(',').map((x) => x.trim()).map((x) => (x === 'MODE_OPEN_ONLY' ? openOnly : x.replace(/"/g, '')))
+    expect(java).toEqual(RESOLVED_MODES)
+    expect(OPEN_ONLY_MODE).toBe(openOnly)
+    expect(RESOLVED_MODES[0]).toBe('none')
+    // Varsayılan da sunucuda 'none' (defaults())
+    expect(src).toMatch(/new Config\(false, "WARNING", Set\.of\(\), Set\.of\(\), 15, MODE_OPEN_ONLY,/)
+  })
+
+  it('her kipin kart metinleri (başlık, açıklama, örnek) TR ve EN sözlüklerinde var; "(önerilen)" yalnız-açık kartında', () => {
+    for (const m of RESOLVED_MODES) {
+      for (const k of [`af.resolved.${m}`, `af.resolved.${m}Hint`, `af.resolved.${m}Example`]) {
+        expect(TR[k], `TR ${k}`).toBeTruthy()
+        expect(EN[k], `EN ${k}`).toBeTruthy()
+      }
+    }
+    expect(TR['af.resolved.none']).toContain('(önerilen)')
+    expect(EN['af.resolved.none']).toContain('(recommended)')
+    expect(TR['af.resolved.status']).not.toContain('önerilen')
+    expect(EN['af.resolved.status']).not.toContain('recommended')
+  })
+
+  it('isOpenOnly yalnız "none" için doğru; bilinmeyen / boş kip yalnız-açık sayılmaz', () => {
+    expect(isOpenOnly('none')).toBe(true)
+    for (const m of ['status', 'clear', '', null, undefined, 'NONE']) expect(isOpenOnly(m)).toBe(false)
+  })
+
+  it('withResolvedMode: yalnız açık kipe geçince pencere / Clear metni taslağı kayıtlı değere döner; gövde yalnız { resolved_mode }', () => {
+    const saved = toForm(SETTINGS)
+    const edited = { ...saved, resolved_minutes: '0', clear_text: '' }   // pasif kalacak alanlarda geçersiz taslak
+    const next = withResolvedMode(edited, 'none', saved)
+    expect(next.resolved_mode).toBe('none')
+    expect(next.resolved_minutes).toBe('15')
+    expect(next.clear_text).toBe('Clear')
+    expect(edited.resolved_minutes).toBe('0')   // girdi değişmez (saf)
+    const body = changedSettings(saved, next)
+    expect(body).toEqual({ resolved_mode: 'none' })
+    expect(validateChanges(body)).toEqual({})
+    // Diğer kiplere geçiş taslağa dokunmaz
+    expect(withResolvedMode(edited, 'clear', saved)).toMatchObject({ resolved_mode: 'clear', resolved_minutes: '0', clear_text: '' })
+    // Kayıtlı değer yoksa (yükleme öncesi) yalnız kip değişir
+    expect(withResolvedMode(edited, 'none', null)).toMatchObject({ resolved_mode: 'none', resolved_minutes: '0' })
+  })
+
+  it('doğrulama: "none" geçerli seçim; bilinmeyen kip af.v.choice', () => {
+    expect(validateChanges({ resolved_mode: 'none' })).toEqual({})
+    expect(validateChanges({ resolved_mode: 'open' })).toEqual({ resolved_mode: { key: 'af.v.choice', params: [] } })
   })
 })

@@ -61,6 +61,13 @@ import java.util.function.LongSupplier;
  * satırı) DAHİL DEĞİL: akış ayrı bir kanaldır. Daha önce açık gönderilmiş, artık 7/24 dışı kalan alarm bir kez kapsam dışı
  * (SCOPE) "çözüldü" olarak kapanır.
  *
+ * <p><b>Yalnız açık alarmlar kipi</b> ({@code resolved-mode=none}, VARSAYILAN; 2026-11-05 kullanıcı kararı): merkezi sistem
+ * durum tabanlıdır — akışta AÇIK görmediği alarmı kendisi kapatır. Bu kipte yanıtta yalnız STATUS=OPEN satırları vardır:
+ * kapanış (RESOLVED / Clear), hiç bildirilmemiş çözülen alarmın bilgi satırı ve kapsam dışı (SCOPE) kapanışı DÖNMEZ (7/24 dışı
+ * alarmın adı akışta görünmez). Durum tablosu aynen işler; bekleyen kapanışlar o yanıtla teslim edilmiş sayılır
+ * ({@code closure_sent_at} = şimdi), kip sonradan {@code status}'a çevrilirse eski kapanışlar topluca akmaz. Satır sınırı
+ * aşılırsa sınır dışı kalan açık alarm merkezi sistemde kapanmış görünür (saatlik WARN, ekranda uyarı).
+ *
  * <p><b>Bilinmeyen ≠ boş.</b> Alarm, envanter, takım ya da (takım süzgeci ya da 7/24 süzgeci varken) izleme dizini / 7/24
  * ayarı okunamazsa yanıt kurulmaz (istisna → uç 503): boş liste merkezi sistemde "hiç alarm yok", okunamayan 7/24 kararı
  * "7/24 dışı" sanılır ve daha önce gönderilmiş HER açık alarm sahte bir "çözüldü" ile kapanırdı.
@@ -135,6 +142,7 @@ public class AlarmFeedService {
     private volatile Cached cached;
     private volatile long lastPruneMs;
     private volatile long lastUnusableWarnMs;
+    private volatile long lastOpenCapWarnMs;
 
     record Cached(String key, long atMs, Feed feed) {}
 
@@ -395,6 +403,10 @@ public class AlarmFeedService {
         }
         if (!dryRun) runOps(ops);
 
+        // 6b) Yalnız açık alarmlar kipi: kapanış / bilgi satırı YOK. Durum tablosu yukarıda aynen işlendi (anahtarlar
+        //     kaydedildi, kapanışlar oluştu); bekleyen her kapanış bu yanıtla teslim edilmiş sayılır.
+        if (c.openOnly()) return openOnly(c, openRows, state, truncated, now, nowMs, dryRun);
+
         // 7) Kapanış adayları — GÖNDERİLMİŞ kopyalardan. Pencere içinde kapanan, hiç gönderilmemiş ya da İLK gönderiminden
         //    bu yana bir pencere geçmemiş kapanış döner: bir yanıt kaybolsa ya da başka bir çağıran onu "tüketse" de merkezi
         //    sistem sonraki çağrılarda yine alır.
@@ -513,6 +525,47 @@ public class AlarmFeedService {
 
         if (!dryRun) pruneMaybe(nowMs, c);
         return new Feed(List.copyOf(rows), keptOpen.size(), resolvedRows.size(), truncated, now);
+    }
+
+    /**
+     * Yalnız açık alarmlar kipinin yanıtı (2026-11-05): yalnız STATUS=OPEN satırları, bugünkü sırayla (seviye, en yeni açılış).
+     * Merkezi sistem akışta görmediği alarmı kendisi kapatır; bu yüzden durumdaki bekleyen bütün kapanışlar (bu yanıtta
+     * oluşanlar dahil) HEMEN "teslim edildi" işaretlenir — kip sonradan {@code status}'a çevrilirse eski kapanışlar topluca
+     * akmasın. Satır sınırı aşılırsa en önemliler kalır; sınır dışı kalan açık alarm merkezi sistemde kapanmış görünür (saatlik
+     * WARN). Önizleme ({@code dryRun}) hiçbir şey yazmaz.
+     */
+    private Feed openOnly(AlarmFeedSettings.Config c, List<Map<String, Object>> openRows, Map<Long, List<State>> state,
+                          boolean truncated, String now, long nowMs, boolean dryRun) {
+        List<Map<String, Object>> kept = openRows;
+        if (openRows.size() > c.maxRows()) {
+            truncated = true;
+            kept = new ArrayList<>(openRows.subList(0, c.maxRows()));
+            if (!dryRun && nowMs - lastOpenCapWarnMs >= 3600_000L) {
+                lastOpenCapWarnMs = nowMs;
+                log.warn("Alarm akışı satır sınırına ulaştı — yalnız açık kipte sınır dışı kalan alarmlar merkezi sistemde "
+                        + "kapanmış görünür (sınır {}, dışarıda kalan açık alarm {})", c.maxRows(), openRows.size() - c.maxRows());
+            }
+        }
+        if (!dryRun) {
+            List<Object[]> args = new ArrayList<>();
+            for (List<State> rows : state.values()) {
+                for (State s : rows) {
+                    if (s.closedAt == null || s.closureSentAt != null || s.id == null) continue;
+                    s.closureSentAt = now;
+                    args.add(new Object[] {now, s.id});
+                }
+            }
+            for (int i = 0; i < args.size(); i += CHUNK) {
+                try {
+                    jdbc.batchUpdate(SQL_STATE_DELIVERED, args.subList(i, Math.min(args.size(), i + CHUNK)));
+                } catch (Exception ex) {
+                    log.warn("Alarm akışı (yalnız açık kip) kapanış teslim işareti yazılamadı — bir sonraki çağrıda yeniden "
+                            + "denenir: {}", ex.toString());
+                }
+            }
+            pruneMaybe(nowMs, c);
+        }
+        return new Feed(List.copyOf(kept), kept.size(), 0, truncated, now);
     }
 
     static boolean inScope(Item it, AlarmFeedSettings.Config c) {

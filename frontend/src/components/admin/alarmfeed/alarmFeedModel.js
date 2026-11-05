@@ -11,8 +11,29 @@ import { PAGINATION_PRESETS } from '../../../hooks/paginationPresets.js'
 
 /** Asgari seviye seçenekleri (sunucu sırası). */
 export const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
-/** Çözülen alarmın gösterimi: SEVERITY aynı + STATUS kolonu (önerilen) ya da SEVERITY = clear_text. */
-export const RESOLVED_MODES = ['status', 'clear']
+/**
+ * Çözülen alarmın gösterimi (sunucu `AlarmFeedSettings.RESOLVED_MODES` ile aynı sıra): `none` = yalnız açık alarmlar
+ * (önerilen, varsayılan — merkezi sistem akışta görmediği alarmı kendisi kapatır, çözülen alarm satırı gönderilmez) ·
+ * `status` = SEVERITY aynı + STATUS kolonu · `clear` = SEVERITY = clear_text.
+ */
+export const OPEN_ONLY_MODE = 'none'
+export const RESOLVED_MODES = [OPEN_ONLY_MODE, 'status', 'clear']
+
+/** Yalnız açık alarmlar kipi mi (çözülme penceresi ve kapanış metni bu kipte kullanılmaz). */
+export const isOpenOnly = (mode) => mode === OPEN_ONLY_MODE
+
+/**
+ * Kip seçimi. Yalnız açık kipe geçerken bu kipte kullanılmayan alanların (çözülme penceresi, kapanış metni) taslakları
+ * kayıtlı değere döner — pasif alanda kalmış geçersiz bir değer kaydı tıkamasın, kullanılmayan değer de gönderilmesin.
+ */
+export function withResolvedMode(form, mode, saved) {
+  const next = { ...form, resolved_mode: mode }
+  if (isOpenOnly(mode) && saved) {
+    next.resolved_minutes = saved.resolved_minutes
+    next.clear_text = saved.clear_text
+  }
+  return next
+}
 /** RCI: hedef + izleme türü ya da yalnız hedef. */
 export const RCI_MODES = ['target_type', 'target']
 /** MAILS ayırıcısı. */

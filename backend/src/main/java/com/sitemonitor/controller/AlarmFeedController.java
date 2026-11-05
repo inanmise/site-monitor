@@ -36,7 +36,8 @@ import java.util.Map;
  *
  * <p>Biçim: varsayılan JSON DİZİ (pandas: {@code pd.DataFrame(r.json(), columns=[...])}); {@code ?format=csv} → CSV. Bilinmeyen
  * biçim JSON'a düşer. Yanıt başlıkları: {@code X-Feed-Rows}, {@code X-Feed-Open}, {@code X-Feed-Resolved},
- * {@code X-Feed-Truncated}, {@code X-Feed-Generated-At}.
+ * {@code X-Feed-Truncated}, {@code X-Feed-Generated-At}. Yalnız açık alarmlar kipinde ({@code resolved-mode=none}, varsayılan)
+ * satırların hepsi STATUS=OPEN'dır: {@code X-Feed-Resolved: 0}, {@code X-Feed-Open} = satır sayısı.
  */
 @Slf4j
 @RestController

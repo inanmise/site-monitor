@@ -6,7 +6,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
-import { PREVIEW_TABLE_MIN_PX, cellText, fmtUtc, numText, previewColumns, previewRowKey } from './alarmFeedModel.js'
+import { PREVIEW_TABLE_MIN_PX, cellText, fmtUtc, isOpenOnly, numText, previewColumns, previewRowKey } from './alarmFeedModel.js'
 import { CHIP, CopyTextButton, KV, PRE, SectionCard, TOUCH, WRAP } from './AlarmFeedParts.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -169,6 +169,9 @@ export function PreviewCard({ preview, onLoad, lang, dirty }) {
   const data = preview.data
   const rows = Array.isArray(data?.rows) ? data.rows : []
   const columns = previewColumns(data)
+  // Yalnız açık alarmlar kipi (2026-11-05; eski sunucu `resolved_mode` göndermez → eski görünüm): çözülen satır yok,
+  // kırpılma "sınır dışı kalan alarm merkezi sistemde kapanmış görünür" demektir
+  const openOnly = isOpenOnly(data?.resolved_mode)
   const toggle = (key) => setOpen((cur) => {
     const next = new Set(cur)
     if (next.has(key)) next.delete(key); else next.add(key)
@@ -203,22 +206,30 @@ export function PreviewCard({ preview, onLoad, lang, dirty }) {
             {Number(data.count ?? rows.length) === 1 ? t('af.pv.count.one') : t('af.pv.count', numText(data.count ?? rows.length, lang))}
           </Badge>
           <ToneBadge tone="warning" className={CHIP} data-slot="af-pv-open">{t('af.pv.open', numText(data.open, lang))}</ToneBadge>
-          <ToneBadge tone="muted" className={CHIP} data-slot="af-pv-resolved">{t('af.pv.resolvedCount', numText(data.resolved, lang))}</ToneBadge>
+          {!openOnly && (
+            <ToneBadge tone="muted" className={CHIP} data-slot="af-pv-resolved">{t('af.pv.resolvedCount', numText(data.resolved, lang))}</ToneBadge>
+          )}
           {data.generated_at && <span className="text-xs text-muted-foreground">{t('af.pv.generatedAt', fmtUtc(data.generated_at, lang, true))}</span>}
           {rows.length > 0 && (
             <CopyTextButton value={JSON.stringify(rows, null, 2)} className="ms-auto" slot="af-pv-copy-json"
               label={t('af.pv.copyJson')} copiedLabel={t('af.copied')} />
           )}
         </div>
+        {openOnly && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="af-pv-open-only">{t('af.pv.openOnly')}</p>
+        )}
         {data.truncated === true && (
-          <div data-slot="af-pv-truncated">
-            <AlertBanner tone="warning" className="mb-0">{t('af.pv.truncated', numText(data.count ?? rows.length, lang))}</AlertBanner>
+          <div data-slot="af-pv-truncated" data-open-only={openOnly ? 'true' : 'false'}>
+            <AlertBanner tone="warning" className="mb-0">
+              {t(openOnly ? 'af.pv.truncatedOpenOnly' : 'af.pv.truncated', numText(data.count ?? rows.length, lang))}
+            </AlertBanner>
           </div>
         )}
         <div ref={ref} className="flex min-w-0 flex-col gap-2" data-slot="af-pv-list" data-layout={cards ? 'cards' : 'table'}>
           {rows.length === 0 ? (
             <div data-slot="af-pv-empty">
-              <StatusBlock tone="neutral" icon={Inbox} title={t('af.pv.empty')} description={t('af.pv.emptyBody')} className="py-8" />
+              <StatusBlock tone="neutral" icon={Inbox} title={t('af.pv.empty')}
+                description={openOnly ? t('af.pv.emptyBodyOpenOnly') : t('af.pv.emptyBody')} className="py-8" />
             </div>
           ) : cards ? (
             <div className="grid grid-cols-1 gap-2">

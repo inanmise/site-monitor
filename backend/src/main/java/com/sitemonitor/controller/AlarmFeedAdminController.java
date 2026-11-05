@@ -382,8 +382,10 @@ public class AlarmFeedAdminController {
     public ResponseEntity<Map<String, Object>> preview(HttpSession session) {
         requireGlobal(session);
         AlarmFeedService.Feed f;
+        AlarmFeedSettings.Config c;
         try {
-            f = feed.preview(feed.config());
+            c = feed.config();
+            f = feed.preview(c);
         } catch (Exception e) {
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("success", false);
@@ -400,6 +402,8 @@ public class AlarmFeedAdminController {
         out.put("resolved", f.resolved());
         out.put("truncated", f.truncated());
         out.put("generated_at", f.generatedAt());
+        // Ek alan (2026-11-05): önizlemenin kipi — yalnız açık kipte kırpılma "sınır dışı kalan alarm kapanmış görünür" demektir
+        out.put("resolved_mode", c.resolvedMode());
         return ok(out);
     }
 
