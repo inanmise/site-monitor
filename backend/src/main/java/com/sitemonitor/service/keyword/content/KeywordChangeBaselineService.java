@@ -75,10 +75,18 @@ public class KeywordChangeBaselineService {
         return repo.findById(monitorId);
     }
 
+    /** Birden çok izlemenin temelleri (tek okuma) — liste ucu. */
+    public java.util.Map<Long, KeywordChangeBaseline> byMonitorIds(java.util.Collection<Long> ids) {
+        java.util.Map<Long, KeywordChangeBaseline> out = new java.util.HashMap<>();
+        if (ids == null || ids.isEmpty()) return out;
+        for (KeywordChangeBaseline b : repo.findAllById(ids)) if (b != null && b.getMonitorId() != null) out.put(b.getMonitorId(), b);
+        return out;
+    }
+
     /** Karşılaştırma görünümü; temel yoksa {@code null}. */
     public KeywordChangeDetector.BaselineView view(Long monitorId) {
         return find(monitorId).map(b -> new KeywordChangeDetector.BaselineView(b.getFingerprint(), b.getSpecHash(),
-                b.getText(), Boolean.TRUE.equals(b.getTextTruncated()))).orElse(null);
+                b.getText(), Boolean.TRUE.equals(b.getTextTruncated()), b.getTakenAt(), b.getSource())).orElse(null);
     }
 
     /**

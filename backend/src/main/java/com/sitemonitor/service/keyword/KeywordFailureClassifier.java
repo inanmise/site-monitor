@@ -202,12 +202,37 @@ public final class KeywordFailureClassifier {
      * bu sıranın kendi yerlerine ekler.
      */
     public static Reason forCheck(Facts f) {
+        return forCheck(f, null);
+    }
+
+    /**
+     * Kural motoru / boyut gözlemleri (kw sözleşmesi §6.3, be2 Aşama 2). {@code null} = eski tek kelime yolu (bugünkü sıra).
+     *
+     * @param rulesMet     kural birleşimi sağlandı mı
+     * @param multi        birden çok kural mı (ihlalde neden {@link #RULES_NOT_MET})
+     * @param rulesSummary TR kural özeti (çok kuralda ayrıntı metni)
+     * @param scopeNote    tek kuralın bölge notu ({@code SCOPE_NOT_FOUND} / {@code SCOPE_INVALID}) ya da {@code null}
+     * @param sizeOk       boyut kuralı: {@code null} = kapalı, {@code false} = sınır dışı
+     * @param sizeReason   {@link #BODY_TOO_SMALL} / {@link #BODY_TOO_LARGE}
+     * @param sizeDetail   boyut ayrıntısı (TR)
+     */
+    public record RuleFacts(boolean rulesMet, boolean multi, String rulesSummary, String scopeNote, Boolean sizeOk,
+                            String sizeReason, String sizeDetail) {}
+
+    /**
+     * Kontrol sağlıksızken TEK neden — kural / boyut gözlemleriyle (kw sözleşmesi §6.3): yönlendirme (kural tutmadı, kelime yok)
+     * &gt; durum kodu &gt; son URL &gt; boş gövde &gt; boyut &gt; kural kodları (çok kural {@link #RULES_NOT_MET}; tek kuralda bölge notu
+     * {@link #SCOPE_NOT_FOUND} / {@link #SCOPE_INVALID}; değilse bugünkü kelime kodları ve {@link #BODY_TRUNCATED} bugünkü yerinde).
+     * {@code r == null} → bugünkü sıra AYNEN.
+     */
+    public static Reason forCheck(Facts f, RuleFacts r) {
         String kw = "« " + abbreviate(f.keyword() == null ? "" : f.keyword(), 60) + " »";
         String rule = com.sitemonitor.service.KeywordCheckerService.opPhrase(f.op(), f.threshold());
         int status = f.status();
         int count = f.count();
         boolean redirect = status >= 300 && status < 400;
-        if (count <= 0 && redirect) {
+        boolean rulesHeld = r != null && r.rulesMet();
+        if (count <= 0 && redirect && !rulesHeld) {
             if (!f.followRedirects()) {
                 return new Reason(REDIRECT_NOT_FOLLOWED, cap("Yönlendirme takibi kapalı: sunucu HTTP " + status
                         + " (yönlendirme) döndürdü ve bu yanıtın kendisi değerlendirildi; " + kw + " bulunamadı. Koşul: " + rule
@@ -222,13 +247,36 @@ public final class KeywordFailureClassifier {
                     + ". Sayfa kabul edilen bir durum koduyla dönmedi (kelime koşulu " + (holds ? "sağlansa bile" : "da sağlanmadı")
                     + "). Koşul: " + rule + "."));
         }
-        if (f.statusAccepted() == null && count <= 0 && status >= 400) {
+        if (f.statusAccepted() == null && count <= 0 && status >= 400 && !rulesHeld) {
             return new Reason(HTTP_STATUS, cap("Sunucu HTTP " + status + " döndürdü; gelen (büyük olasılıkla hata) sayfada " + kw
                     + " bulunamadı. Koşul: " + rule + "."));
         }
         if (Boolean.FALSE.equals(f.finalUrlOk())) {
             return new Reason(FINAL_URL_MISMATCH, cap("Son adres beklenenle başlamıyor — beklenen: " + nz(f.expectedFinalUrl())
                     + "; gelinen: " + nz(f.finalUrl()) + " (oturum düşüp giriş sayfasına yönlendirilmiş olabilir)."));
+        }
+        if (r == null) return forConditionOnly(status, count, f.op(), f.threshold(), f.bodyBytes(), f.truncated(), kw, rule);
+        // ── kw-be2 Aşama 2 (§6.3): boş gövde > boyut > kural kodları ──
+        if (f.bodyBytes() <= 0 && (!r.rulesMet() || Boolean.FALSE.equals(r.sizeOk()))) {
+            return new Reason(EMPTY_BODY, cap("Sunucu HTTP " + status + " ile BOŞ bir gövde döndürdü; " + kw
+                    + " aranacak içerik yoktu. Koşul: " + rule + "."));
+        }
+        if (Boolean.FALSE.equals(r.sizeOk())) {
+            String code = BODY_TOO_SMALL.equals(r.sizeReason()) ? BODY_TOO_SMALL : BODY_TOO_LARGE;
+            return new Reason(code, cap(r.sizeDetail() == null || r.sizeDetail().isBlank()
+                    ? "Sayfa boyutu beklenen aralıkta değil." : r.sizeDetail()));
+        }
+        if (!r.rulesMet() && r.multi()) {
+            String sum = r.rulesSummary() == null || r.rulesSummary().isBlank() ? "kurallar sağlanmadı" : r.rulesSummary();
+            return new Reason(RULES_NOT_MET, cap("İçerik kuralları sağlanmadı (HTTP " + status + "): " + sum));
+        }
+        if (!r.rulesMet() && SCOPE_NOT_FOUND.equals(r.scopeNote())) {
+            return new Reason(SCOPE_NOT_FOUND, cap("Kuralın aradığı bölge sayfada bulunamadı (CSS seçicisi hiçbir öğe seçmedi ya da JSON "
+                    + "yolu yok); " + kw + " değerlendirilemedi, kural sağlanmadı sayıldı (HTTP " + status + ")."));
+        }
+        if (!r.rulesMet() && SCOPE_INVALID.equals(r.scopeNote())) {
+            return new Reason(SCOPE_INVALID, cap("Kural JSON bölgesinde arıyor ama yanıt gövdesi geçerli JSON değil (HTTP " + status
+                    + "); kural sağlanmadı sayıldı."));
         }
         return forConditionOnly(status, count, f.op(), f.threshold(), f.bodyBytes(), f.truncated(), kw, rule);
     }

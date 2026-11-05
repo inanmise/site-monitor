@@ -39,12 +39,16 @@ public final class KeywordDiagFindings {
     public static final String KEYWORD_SLOW = "KEYWORD_SLOW";
     /** Son (yönlendirmeler sonrası) adres izlemenin beklediği adresle başlamıyor (kw sözleşmesi §10.5). */
     public static final String KEYWORD_FINAL_URL_MISMATCH = "KEYWORD_FINAL_URL_MISMATCH";
+    /** Çoklu kural / desen / bölge kuralları sağlanmadı (kw sözleşmesi §10.5, be2 Aşama 2). */
+    public static final String KEYWORD_RULES_NOT_MET = "KEYWORD_RULES_NOT_MET";
+    /** Sayfa boyutu izlemenin alt / üst sınırının dışında (kw sözleşmesi §10.5, be2 Aşama 2). */
+    public static final String KEYWORD_SIZE_MISMATCH = "KEYWORD_SIZE_MISMATCH";
 
     /** TAM liste — i18n kapısı bunu okur. */
     public static final List<String> CODES = List.of(
             KEYWORD_OK, KEYWORD_NOT_FOUND, KEYWORD_FOUND_FORBIDDEN, KEYWORD_COUNT_MISMATCH, KEYWORD_HTTP_ERROR,
             KEYWORD_EMPTY_BODY, KEYWORD_BODY_TRUNCATED, KEYWORD_REDIRECT_BLOCKED, KEYWORD_BODY_UNREAD, KEYWORD_SLOW,
-            KEYWORD_FINAL_URL_MISMATCH);
+            KEYWORD_FINAL_URL_MISMATCH, KEYWORD_RULES_NOT_MET, KEYWORD_SIZE_MISMATCH);
 
     /** Kontrolün başarısızlık nedeni kodu → tanılama bulgu kodu (koşul aileleri). */
     public static String fromFailureReason(String reason) {
@@ -58,6 +62,11 @@ public final class KeywordDiagFindings {
             case KeywordFailureClassifier.REDIRECT_BLOCKED,
                  KeywordFailureClassifier.REDIRECT_NOT_FOLLOWED -> KEYWORD_REDIRECT_BLOCKED;   // takip kapalı: aynı "yönlendirme" bulgusu
             case KeywordFailureClassifier.FINAL_URL_MISMATCH -> KEYWORD_FINAL_URL_MISMATCH;
+            case KeywordFailureClassifier.RULES_NOT_MET,
+                 KeywordFailureClassifier.SCOPE_NOT_FOUND,
+                 KeywordFailureClassifier.SCOPE_INVALID -> KEYWORD_RULES_NOT_MET;
+            case KeywordFailureClassifier.BODY_TOO_SMALL,
+                 KeywordFailureClassifier.BODY_TOO_LARGE -> KEYWORD_SIZE_MISMATCH;
             default -> KEYWORD_NOT_FOUND;
         };
     }

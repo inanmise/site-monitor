@@ -23,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -51,7 +52,12 @@ import java.util.TreeMap;
  *   <li>{@code GET    /api/monitoring/keyword/{id}/content-series?days=1..90&from=&to=} — eşleşme sayısı (kural #1) / boyut /
  *       değişim kovaları; ham satır tavanı {@value #SERIES_RAW_CAP}; sabit sorgu sayısı</li>
  * </ul>
- * Canlı ölçüm isteyen uçlar ({@code POST …/change/baseline}, {@code POST …/matches}) Aşama 2'de (denetleyici bağlanınca).
+ * <ul>
+ *   <li>{@code POST   /api/monitoring/keyword/{id}/change/baseline} — canlı ölçümle YENİ temel (MANUAL) + açık değişim alarmını
+ *       elle kapatır; oturum başına tek</li>
+ *   <li>{@code POST   /api/monitoring/keyword/{id}/matches} — canlı ölçüm, kural başına ilk ≤ 5 eşleşme bağlamı (maskeli);
+ *       satır / alarm / temel YOK; oturum başına tek + kullanıcı başına dakikada {@value #MATCHES_PER_MINUTE} (pod belleği)</li>
+ * </ul>
  *
  * <p><b>Yetki</b>: okuma = {@code monitoring.read/view} + {@link SessionScope#canViewMonitoring} (takım kapsamı, 7/24, VIEW
  * paylaşımı); temel yönetimi = {@code monitoring.crud/edit} + {@link SessionScope#canOperateTeam} (EDIT paylaşımı dahil).
@@ -80,7 +86,17 @@ public class KeywordContentController {
     private final EscalationService escalationService;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    /** Canlı ölçüm (temel / eşleşmeler) — izlemenin kontrol tanımı zamanlayıcıdan, ölçüm denetleyiciden (aynı yol). */
+    private final com.sitemonitor.service.SchedulerService schedulerService;
+    private final com.sitemonitor.service.KeywordCheckerService keywordChecker;
     private Clock clock = Clock.systemUTC();
+
+    /** Canlı eşleşme ucunun kullanıcı başına dakikalık sınırı (pod belleği — yük sınırı). */
+    static final int MATCHES_PER_MINUTE = 6;
+    /** Oturum başına tek canlı ölçüm (temel / eşleşmeler) — istek iş parçacıkları tek oturumca tüketilmesin. */
+    static final java.util.Set<String> LIVE_IN_FLIGHT = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.ArrayDeque<Long>> matchStarts =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Testler için saat. */
     void setClock(Clock clock) {
@@ -161,6 +177,116 @@ public class KeywordContentController {
             log.warn("İçerik değişimi alarmı kapatılamadı (izleme {}): {}", m.getId(), ex.toString());
         }
         return closed;
+    }
+
+    // ── Yeni temel al (canlı ölçüm) ──────────────────────────────────────────────────────────
+
+    @PostMapping("/{id}/change/baseline")
+    public ResponseEntity<Map<String, Object>> takeBaseline(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        KeywordMonitor m = keywordMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        if (!SessionScope.canOperateTeam(session, m.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu takımın izlemesinin içerik temelini değiştiremezsiniz.",
+                    "You cannot change the content baseline of this team's monitor."));
+        }
+        if (!Boolean.TRUE.equals(m.getChangeDetect())) {
+            return conflict("KEYWORD_CHANGE_DISABLED", Msg.t(
+                    "Bu izlemede içerik değişimi denetimi kapalı; temel alınamaz. Önce izlemede \"İçerik değişimi\" seçeneğini açın.",
+                    "Content change detection is off for this monitor, so no baseline can be taken. Turn on \"Content change\" first."),
+                    null);
+        }
+        String slot = "kw-live:" + session.getId();
+        if (!LIVE_IN_FLIGHT.add(slot)) return busy();
+        try {
+            var capture = new com.sitemonitor.service.keyword.KeywordCheckSpec.ChangeCapture();
+            var spec = schedulerService.keywordCheckSpec(m, false).toBuilder()
+                    .changeDetect(true).baseline(null).changeCapture(capture).diagnose(true).build();
+            Map<String, Object> r = keywordChecker.check(spec);
+            if (capture.snapshot() == null) {
+                Object reason = r.get("failure_reason");
+                Map<String, Object> extra = new LinkedHashMap<>();
+                extra.put("failure_reason", reason);
+                extra.put("http_status", r.get("http_status"));
+                return conflict("KEYWORD_BASELINE_FETCH_FAILED", Msg.t(
+                        "Sayfa okunamadığı (ya da kabul edilen bir yanıtla dönmediği) için yeni temel alınamadı; mevcut temel değişmedi. "
+                                + "Kontrol geçmişindeki nedeni inceleyip yeniden deneyin.",
+                        "The page could not be read (or did not return an accepted response), so no new baseline was taken; the "
+                                + "current one is unchanged. Check the reason in the check history and try again."), extra);
+            }
+            KeywordChangeBaseline b = baselines.takeManual(m.getId(), capture.snapshot(), capture.bytes(), capture.specHash(),
+                    username(session), displayName(session));
+            boolean closed = closeOpenChangeAlarm(m, username(session), NOTE_BASELINE_TAKEN);
+            auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()),
+                    AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "action", "baseline_set",
+                            "bytes", capture.bytes(), "closed_alarm", closed), null);
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("baseline", KeywordChangeBaselineService.toApi(b, true));
+            data.put("closed_alarm", closed);
+            return ResponseEntity.ok(ok(data));
+        } finally {
+            LIVE_IN_FLIGHT.remove(slot);
+        }
+    }
+
+    // ── Canlı eşleşme bağlamları ─────────────────────────────────────────────────────────────
+
+    @PostMapping("/{id}/matches")
+    public ResponseEntity<Map<String, Object>> matches(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        KeywordMonitor m = keywordMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        if (!SessionScope.canExecuteTeam(session, m.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu takımın izlemesini çalıştıramazsınız.", "You cannot run this team's monitor."));
+        }
+        Long wait = matchesRate(username(session));
+        if (wait != null) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("code", "RATE_LIMITED");
+            body.put("error", Msg.t("Çok sık eşleşme sorgusu; " + wait + " sn sonra yeniden deneyin.",
+                    "Too many match lookups; try again in " + wait + " s."));
+            body.put("retry_after_seconds", wait);
+            return ResponseEntity.status(429).header("Retry-After", String.valueOf(wait)).body(body);
+        }
+        String slot = "kw-live:" + session.getId();
+        if (!LIVE_IN_FLIGHT.add(slot)) return busy();
+        try {
+            var spec = schedulerService.keywordCheckSpec(m, false).toBuilder().diagnose(false).build();
+            var detailed = keywordChecker.checkDetailed(spec);
+            Map<String, Object> r = detailed.result();
+            auditService.recordAction("MONITOR_DIAGNOSE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()),
+                    AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "kind", "matches"), null);
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("fetched_at", ISO.format(clock.instant()));
+            data.put("http_status", r.get("http_status"));
+            data.put("final_url", r.get("final_url"));
+            data.put("error", r.get("error"));
+            data.put("failure_reason", r.get("failure_reason"));
+            var v = detailed.verdict();
+            List<Map<String, Object>> rules = v == null || v.evaluation() == null ? List.of()
+                    : com.sitemonitor.service.keyword.rules.KeywordMatchContexts.forRules(spec.rules(), v.evaluation().results(),
+                            v.content(), spec.matchScope(), com.sitemonitor.service.KeywordCheckerService.secretValues(spec));
+            data.put("rules", rules);
+            data.put("truncated", Boolean.TRUE.equals(r.get("body_truncated")));
+            return ResponseEntity.ok(ok(data));
+        } finally {
+            LIVE_IN_FLIGHT.remove(slot);
+        }
+    }
+
+    /** Kullanıcı başına kayan 1 dakika (pod belleği): sınır doluysa beklenecek saniye, değilse {@code null} (sayıldı). */
+    Long matchesRate(String user) {
+        String key = user == null ? "?" : user;
+        long now = clock.millis();
+        java.util.ArrayDeque<Long> q = matchStarts.computeIfAbsent(key, k -> new java.util.ArrayDeque<>());
+        synchronized (q) {
+            while (!q.isEmpty() && now - q.peekFirst() >= 60_000L) q.pollFirst();
+            if (q.size() >= MATCHES_PER_MINUTE) return Math.max(1, (60_000L - (now - q.peekFirst()) + 999) / 1000);
+            q.addLast(now);
+        }
+        if (matchStarts.size() > 10_000) matchStarts.clear();
+        return null;
     }
 
     // ── İçerik serisi ────────────────────────────────────────────────────────────────────────
@@ -291,6 +417,29 @@ public class KeywordContentController {
     private static String username(HttpSession session) {
         Object u = session == null ? null : session.getAttribute("username");
         return u == null ? null : u.toString();
+    }
+
+    private static String displayName(HttpSession session) {
+        Object u = session == null ? null : session.getAttribute("displayName");
+        return u == null || u.toString().isBlank() ? null : u.toString();
+    }
+
+    private static ResponseEntity<Map<String, Object>> busy() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", "RATE_LIMITED");
+        body.put("error", Msg.t("Bu oturumda bir canlı ölçüm zaten sürüyor — bitmesini bekleyin.",
+                "A live measurement is already running in this session — wait for it to finish."));
+        return ResponseEntity.status(429).header("Retry-After", "5").body(body);
+    }
+
+    private static ResponseEntity<Map<String, Object>> conflict(String code, String message, Map<String, Object> extra) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", code);
+        body.put("error", message);
+        if (extra != null) body.putAll(extra);
+        return ResponseEntity.status(409).body(body);
     }
 
     private Map<String, Object> ok(Object data) {

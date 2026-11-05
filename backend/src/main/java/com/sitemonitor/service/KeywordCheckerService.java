@@ -155,6 +155,23 @@ public class KeywordCheckerService {
      * kuralı: null = yok).
      */
     public Map<String, Object> check(KeywordCheckSpec spec) {
+        return run(spec, null);
+    }
+
+    /** Sonuç haritası + kural / boyut kararı (içerik görünümü dahil; istek tamamlanmadıysa {@code verdict == null}). */
+    public record Detailed(Map<String, Object> result, Verdict verdict) {}
+
+    /**
+     * {@link #check(KeywordCheckSpec)} + kararın kendisi — canlı temel ("Yeni temel al") ve canlı eşleşme bağlamları (kw sözleşmesi
+     * §10.3) aynı ölçümün içerik görünümünü kullanır (ikinci istek YOK).
+     */
+    public Detailed checkDetailed(KeywordCheckSpec spec) {
+        Verdict[] holder = new Verdict[1];
+        Map<String, Object> r = run(spec, holder);
+        return new Detailed(r, holder[0]);
+    }
+
+    private Map<String, Object> run(KeywordCheckSpec spec, Verdict[] verdictOut) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         boolean proxied = spec.viaProxy() && proxiedClient != null;
@@ -197,20 +214,23 @@ public class KeywordCheckerService {
                 }
             }
             String contentType = resp.headers().firstValue("content-type").orElse(null);
-            // ── Çözme + görünüm + sayım (kw sözleşmesi §4) ──
+            // ── Çözme + görünüm + karar (kw sözleşmesi §4 / §5.2 / §5.3 / §6 / §7) ──
             KeywordText.Decoded decoded = KeywordText.decode(bytes, contentType);
-            String view = KeywordText.view(decoded.text(), spec.matchScope(), spec.normalizeWs());
-            String needle = KeywordText.needle(spec.keyword(), spec.matchScope(), spec.normalizeWs());
-            KeywordFold.Count c = KeywordFold.count(view, needle, spec.caseSensitive(), KeywordFold.MAX_COUNT);
-            int count = c.count();
-            boolean found = count > 0;
             int status = resp.statusCode();
-
-            result.put("found", found);
+            Boolean statusAccepted = spec.expectedStatus() == null ? null
+                    : HttpCheckerService.matchesStatus(status, spec.expectedStatus());
+            Boolean finalUrlOk = spec.expectedFinalUrl() == null ? null
+                    : KeywordRequestRules.finalUrlMatches(resp.uri(), spec.expectedFinalUrl(), url);
+            Verdict v = evaluateRules(spec, decoded.text(), contentType, bytes.length, truncated, statusAccepted, finalUrlOk);
+            if (verdictOut != null) verdictOut[0] = v;
+            int count = v.count();
+            boolean ok = v.ok();
+            // eski tüketiciler (found / count / occurrences / snippet) = kural #1 (§10.6) — eski izlemede bugünküyle AYNI değerler
+            result.put("found", count > 0);
             result.put("count", count);
             result.put("http_status", status);
             result.put("response_ms", ms);
-            if (found) result.put("snippet", snippet(view, c.firstIndex(), needle.length()));
+            if (v.snippet() != null) result.put("snippet", v.snippet());
             // ── Yanıt meta verisi (2026-10-04) — her yanıtta, ucuz ──
             String finalUrl = KeywordBodyAnalyzer.displayUrl(resp.uri());
             result.put("final_url", finalUrl);
@@ -221,21 +241,17 @@ public class KeywordCheckerService {
             result.put("body_truncated", truncated);
             result.put("charset", KeywordBodyAnalyzer.declaredCharset(contentType, bytes));
             result.put("decoded_charset", decoded.charset());
-            // ── Karar (kw sözleşmesi §5.2 / §5.3) ──
-            Boolean statusAccepted = spec.expectedStatus() == null ? null
-                    : HttpCheckerService.matchesStatus(status, spec.expectedStatus());
-            Boolean finalUrlOk = spec.expectedFinalUrl() == null ? null
-                    : KeywordRequestRules.finalUrlMatches(resp.uri(), spec.expectedFinalUrl(), url);
-            boolean conditionMet = evaluateRules(spec, count);
-            boolean ok = conditionMet && !Boolean.FALSE.equals(statusAccepted) && !Boolean.FALSE.equals(finalUrlOk);
             result.put("status_accepted", statusAccepted);
             result.put("final_url_ok", finalUrlOk);
             result.put("ok", ok);
+            putRuleOutcome(result, spec, v);
+            putChange(result, spec, v, bytes.length, statusAccepted, finalUrlOk);
             // ── Sağlıksızsa: neden + ipuçları + alıntı (yalnız teşhis açıkken; gövde zaten bellekte) ──
             if (!ok && spec.diagnose()) {
                 var reason = KeywordFailureClassifier.forCheck(new KeywordFailureClassifier.Facts(status, count,
                         spec.operator(), spec.threshold(), bytes.length, truncated, spec.keyword(), statusAccepted,
-                        spec.expectedStatus(), finalUrlOk, spec.expectedFinalUrl(), finalUrl, spec.followRedirects()));
+                        spec.expectedStatus(), finalUrlOk, spec.expectedFinalUrl(), finalUrl, spec.followRedirects()),
+                        v.ruleFacts());
                 result.put("failure_reason", reason.code());
                 result.put("failure_detail", reason.detail());
                 var analysis = KeywordBodyAnalyzer.analyze(new KeywordBodyAnalyzer.Input(bytes, contentType, spec.keyword(),
@@ -264,13 +280,146 @@ public class KeywordCheckerService {
         return result;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+    //  kw-be2 Aşama 2 — kural adımı (çoklu kural / REGEX / kapsam / iki eşik) + boyut + içerik değişimi
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+
     /**
-     * Kural adımı — kontrolün içerik koşulu. Aşama 1: eski tek kelime adet koşulu (Türkçe katlamalı sayım çağıranda yapıldı).
-     * kw-be2 Aşama 2: çoklu kural / REGEX / kapsam / iki eşik + boyut + içerik değişimi bu yöntemde bağlanır.
+     * Kural / boyut kararı (kontrol, tanılama ve canlı temel ORTAK — saf).
+     *
+     * @param content     tek kontrolün içerik görünümü (CSS / JSON en çok bir kez ayrıştırılır; değişim satırları da buradan)
+     * @param evaluation  kural değerlendirmesi
+     * @param size        boyut kuralı sonucu ({@code sizeOk == null} = kapalı)
+     * @param rulesMet    kural birleşimi sağlandı mı
+     * @param ok          kontrolün kararı: kurallar ∧ boyut ∧ kabul edilen durum ∧ son URL
+     * @param level       sağlıksızsa alarm seviyesi — yalnız kurallar yüzündense kuralların birleşik seviyesi, değilse izlemenin
+     *                    seviyesi; sağlıklıysa {@code null}
+     * @param breachLevel {@code breach_level}: seviye bir kuralın KENDİ eşiğinden geldiyse (WARNING / CRITICAL), değilse null
+     * @param count       kural #1'in sayımı (eski {@code found} / {@code count} / {@code occurrences})
+     * @param snippet     kural #1'in ilk eşleşmesinden alıntı (yoksa null)
      */
-    // kw-be2 Aşama 2
-    static boolean evaluateRules(KeywordCheckSpec spec, int count) {
-        return evaluate(count, spec.operator(), spec.threshold());
+    public record Verdict(com.sitemonitor.service.keyword.rules.KeywordContent content,
+                          com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.Evaluation evaluation,
+                          com.sitemonitor.service.keyword.content.KeywordSizeCheck.Result size,
+                          boolean rulesMet, boolean ok, String level, String breachLevel, int count, String snippet) {
+
+        /** Sınıflandırıcıya giden kural / boyut gözlemleri. */
+        public KeywordFailureClassifier.RuleFacts ruleFacts() {
+            var ev = evaluation;
+            return new KeywordFailureClassifier.RuleFacts(rulesMet, ev != null && ev.multi(), ev == null ? null : ev.summary(),
+                    ev == null ? null : ev.scopeNote(), size == null ? null : size.sizeOk(),
+                    size == null ? null : size.reason(), size == null ? null : size.detail());
+        }
+    }
+
+    /**
+     * Kural adımı (kw sözleşmesi §6.2 / §7.1): etkin kurallar ({@code rules_json} ya da eski tek kelime alanları) içerik
+     * görünümünde değerlendirilir, boyut kuralı uygulanır, kontrolün kararı verilir. Eski tek kelime izlemesinde sayım, alıntı ve
+     * karar bugünküyle AYNIDIR (aynı görünüm / iğne / katlama — {@link KeywordText#view} / {@link KeywordText#needle}).
+     */
+    public static Verdict evaluateRules(KeywordCheckSpec spec, String decodedText, String contentType, long bodyBytes,
+                                        boolean truncated, Boolean statusAccepted, Boolean finalUrlOk) {
+        String scope = spec.matchScope();
+        boolean visible = KeywordText.SCOPE_VISIBLE.equals(scope);
+        var content = com.sitemonitor.service.keyword.rules.KeywordContent.builder(decodedText == null ? "" : decodedText)
+                .contentType(contentType).bytes(bodyBytes).truncated(truncated)
+                .visibleScope(visible).normalizeWs(spec.normalizeWs())
+                .visibleText(t -> KeywordText.view(t, KeywordText.SCOPE_VISIBLE, false))
+                .normalizer(KeywordText::normalize)
+                .build();
+        java.util.List<com.sitemonitor.service.keyword.rules.KeywordRule> rules = spec.rules();
+        com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.Evaluation ev;
+        boolean rulesMet;
+        int count;
+        String snippet = null;
+        if (rules.isEmpty()) {
+            // Kelimesiz eski kayıt (olağan dışı): bugünkü gibi sayım 0, adet koşulu uygulanır
+            ev = null;
+            count = 0;
+            rulesMet = evaluate(0, spec.operator(), spec.threshold());
+        } else {
+            ev = com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.evaluate(rules, spec.ruleLogic(), content,
+                    spec.monitorLevel());
+            rulesMet = !ev.breached();
+            var p = ev.primary();
+            count = p == null ? 0 : p.count();
+            if (p != null && p.count() > 0 && p.matchStart() >= 0) {
+                String text = content.scope(rules.get(0)).text();
+                snippet = snippet(text, p.matchStart(), Math.max(0, p.matchEnd() - p.matchStart()));
+            }
+        }
+        var size = com.sitemonitor.service.keyword.content.KeywordSizeCheck.evaluate(spec.minBytes(), spec.maxBytes(), bodyBytes,
+                truncated, true);
+        boolean sizeOk = !Boolean.FALSE.equals(size.sizeOk());
+        boolean ok = rulesMet && sizeOk && !Boolean.FALSE.equals(statusAccepted) && !Boolean.FALSE.equals(finalUrlOk);
+        String level = null;
+        String breachLevel = null;
+        if (!ok) {
+            boolean rulesOnly = !rulesMet && sizeOk && !Boolean.FALSE.equals(statusAccepted) && !Boolean.FALSE.equals(finalUrlOk);
+            if (rulesOnly && ev != null && ev.level() != null) {
+                level = ev.level();
+                breachLevel = ev.breachLevel();
+            } else {
+                level = com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.normalizeLevel(spec.monitorLevel());
+            }
+        }
+        return new Verdict(content, ev, size, rulesMet, ok, level, breachLevel, count, snippet);
+    }
+
+    /** Sonuç anahtarları (§10.6): {@code level}, {@code breach_level}, {@code rule_results}, {@code rules_summary}, {@code size_ok}. */
+    private static void putRuleOutcome(Map<String, Object> result, KeywordCheckSpec spec, Verdict v) {
+        if (v.level() != null) result.put("level", v.level());
+        if (v.breachLevel() != null) result.put("breach_level", v.breachLevel());
+        if (v.evaluation() != null) {
+            result.put("rule_results", v.evaluation().resultsApi());
+            if (v.evaluation().summary() != null && !v.rulesMet()) result.put("rules_summary", v.evaluation().summary());
+        }
+        if (v.size() != null && v.size().sizeOk() != null) result.put("size_ok", v.size().sizeOk());
+    }
+
+    /**
+     * İçerik değişimi (kw sözleşmesi §7.2) — yalnız değişim açık ∧ istek tamamlandı ∧ kabul edilen durum (kural açıksa) ∧ son URL
+     * tuttu. Temel yok / başka ayarla alınmış → {@code baseline_missing} (anlık görüntü çağırana {@link
+     * KeywordCheckSpec.ChangeCapture}); temel var → {@code content_changed} (+ değişimde {@code change_summary}).
+     */
+    private static void putChange(Map<String, Object> result, KeywordCheckSpec spec, Verdict v, long bodyBytes,
+                                  Boolean statusAccepted, Boolean finalUrlOk) {
+        if (!spec.changeDetect() || Boolean.FALSE.equals(statusAccepted) || Boolean.FALSE.equals(finalUrlOk)) return;
+        try {
+            var snap = changeSnapshot(spec, v.content());
+            String specHash = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(spec.changeMask(),
+                    spec.changeSelector());
+            result.put("content_fingerprint", snap.fingerprint());
+            var base = spec.baseline();
+            var cmp = com.sitemonitor.service.keyword.content.KeywordChangeDetector.compare(base, snap, specHash);
+            if (cmp.baselineMissing()) {
+                result.put("baseline_missing", true);
+                if (spec.changeCapture() != null) spec.changeCapture().put(snap, bodyBytes, specHash);
+                return;
+            }
+            result.put("content_changed", cmp.changed());
+            if (base.takenAt() != null) result.put("baseline_taken_at", base.takenAt());
+            if (base.source() != null) result.put("baseline_source", base.source());
+            if (Boolean.TRUE.equals(cmp.changed()) && cmp.summary() != null) result.put("change_summary", cmp.summary().toMap());
+        } catch (RuntimeException e) {
+            // Değişim ölçümü kontrolün kararını ASLA bozmaz (değerlendirilmedi = kalem yok)
+            log.debug("Keyword içerik değişimi ölçülemedi: {}", e.getMessage());
+        }
+    }
+
+    /** Değişimin parmak izi alınan anlık görüntüsü: seçici yoksa görünür metin satırları, varsa seçilen öğelerin metni. */
+    public static com.sitemonitor.service.keyword.content.KeywordChangeDetector.Snapshot changeSnapshot(
+            KeywordCheckSpec spec, com.sitemonitor.service.keyword.rules.KeywordContent content) {
+        java.util.List<String> lines;
+        String sel = spec.changeSelector();
+        if (sel == null) {
+            String text = KeywordBodyAnalyzer.visibleLines(content.raw(), KeywordText.VISIBLE_CAP, KeywordText.VISIBLE_CAP);
+            lines = text.isEmpty() ? java.util.List.of() : java.util.Arrays.asList(text.split("\n", -1));
+        } else {
+            lines = content.cssLines(sel);
+        }
+        return com.sitemonitor.service.keyword.content.KeywordChangeDetector.snapshot(lines,
+                com.sitemonitor.service.keyword.content.ContentMasker.parseStored(spec.changeMask()), secretValues(spec));
     }
 
     /** Hop / gövde okuması için süre: izlemenin zaman aşımı, toplam bütçeden kalanla sınırlı (en az 1 ms). */
@@ -320,7 +469,7 @@ public class KeywordCheckerService {
     }
 
     /** Alıntıdan süzülecek sır değerleri: özel başlıklardan sır OLABİLECEK değerler + Basic auth parolası. */
-    static java.util.List<String> secretValues(KeywordCheckSpec spec) {
+    public static java.util.List<String> secretValues(KeywordCheckSpec spec) {
         java.util.List<String> out = secretValues(spec.customHeaders());
         if (spec.basicAuthPass() != null && !spec.basicAuthPass().isBlank()) {
             out.add(spec.basicAuthPass());

@@ -267,6 +267,26 @@ public final class KeywordRuleEvaluator {
         return null;
     }
 
+    /**
+     * API listesi (kontrol sonucu haritasındaki {@code rule_results}, iş JSON'undan da dönebilir) → {@code rule_results_json}
+     * (≤ {@value #RESULTS_JSON_MAX}; sığmazsa önizleme kısalır). Bozuk öğe atlanır; boş → {@code null}. Asla fırlatmaz.
+     */
+    public static String resultsJsonFromApi(Object apiList) {
+        if (!(apiList instanceof List<?> l) || l.isEmpty()) return null;
+        List<RuleResult> rs = new ArrayList<>();
+        for (Object o : l) {
+            if (!(o instanceof Map<?, ?> m)) continue;
+            Object cnt = m.get("count");
+            rs.add(new RuleResult(m.get("id") == null ? null : String.valueOf(m.get("id")),
+                    m.get("kind") == null ? null : String.valueOf(m.get("kind")),
+                    m.get("pattern_preview") == null ? null : String.valueOf(m.get("pattern_preview")),
+                    cnt instanceof Number n ? n.intValue() : 0, Boolean.TRUE.equals(m.get("ok")),
+                    m.get("level") == null ? null : String.valueOf(m.get("level")),
+                    m.get("note") == null ? null : String.valueOf(m.get("note")), null, -1, -1));
+        }
+        return resultsJson(rs);
+    }
+
     /** {@code rule_results_json} → API listesi (bozuk → boş liste). Asla fırlatmaz. */
     public static List<Map<String, Object>> parseResults(String json) {
         if (json == null || json.isBlank()) return List.of();

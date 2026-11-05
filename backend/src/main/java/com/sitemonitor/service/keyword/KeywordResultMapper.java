@@ -51,6 +51,17 @@ public final class KeywordResultMapper {
         // kw sözleşmesi §3.2: çözmede KULLANILAN küme + kapsam (yalnız VISIBLE yazılır — ham kapsam NULL, golden gürültüsü yok)
         res.setDecodedCharset(cap(str(r.get("decoded_charset")), 60));
         res.setMatchScope(KeywordText.SCOPE_VISIBLE.equals(str(r.get("match_scope"))) ? KeywordText.SCOPE_VISIBLE : null);
+        // kw-be2 Aşama 2 (§3.2): kural sonuçları YALNIZ rules_json dolu izlemede (eski izlemenin satırı bugünküyle aynı);
+        // ihlalin kural eşiğinden gelen seviyesi; içerik değişimi (değerlendirilmediyse NULL)
+        if (m.getRulesJson() != null && !m.getRulesJson().isBlank()) {
+            res.setRuleResultsJson(com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.resultsJsonFromApi(r.get("rule_results")));
+        }
+        if (!ok) res.setBreachLevel(breachLevel(r.get("breach_level")));
+        res.setContentFingerprint(cap(str(r.get("content_fingerprint")), 64));
+        res.setContentChanged(r.get("content_changed") instanceof Boolean b ? b : null);
+        if (Boolean.TRUE.equals(res.getContentChanged())) {
+            res.setChangeSummaryJson(com.sitemonitor.service.keyword.content.KeywordChangeDetector.summaryJsonOf(r.get("change_summary")));
+        }
         if (ok) return res;
         // ── Teşhis (yalnız başarısız satır) ──
         String reason = str(r.get("failure_reason"));
@@ -75,6 +86,12 @@ public final class KeywordResultMapper {
         res.setHints(hints(r.get("hints")));
         res.setExcerpt(cap(str(r.get("excerpt")), EXCERPT_CAP));
         return res;
+    }
+
+    /** {@code breach_level}: yalnız WARNING / CRITICAL (kural eşiğinden); başka değer → null. */
+    private static String breachLevel(Object o) {
+        String s = str(o);
+        return "WARNING".equals(s) || "CRITICAL".equals(s) ? s : null;
     }
 
     private static List<String> hints(Object o) {

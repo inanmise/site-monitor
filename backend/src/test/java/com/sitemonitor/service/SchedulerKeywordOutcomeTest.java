@@ -64,7 +64,10 @@ class SchedulerKeywordOutcomeTest {
                 .containsEntry("status_accepted", true)
                 .doesNotContainKey("body_bytes");
         assertThat(SchedulerService.KEYWORD_OUTCOME_EXTRA_KEYS)
-                .containsExactly("failure_reason", "failure_detail", "hints", "excerpt", "final_url", "status_accepted");
+                .containsExactly("failure_reason", "failure_detail", "hints", "excerpt", "final_url", "status_accepted",
+                        // kw-be2 Aşama 2 (§10.6) — sona eklendi (JSON gidiş-dönüş sırası)
+                        "level", "rules_summary", "content_changed", "change_summary", "baseline_taken_at", "baseline_source",
+                        "keyword_spec");
 
         Map<String, Object> legacy = SchedulerService.keywordOutcome(m, raw("found", true, "count", 2, "http_status", 200,
                 "response_ms", 5L, "snippet", "… Sepet …"));

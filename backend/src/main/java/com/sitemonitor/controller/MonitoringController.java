@@ -830,6 +830,13 @@ public class MonitoringController {
             closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k6.getActive(), k6.getName(), k6Types, owner);
         } else {
             applyRestoreAlarmRules(resolved, entity, before);
+            if (entity instanceof KeywordMonitor km) {   // kw-be2 §7.2: geri yükleme güncellemeyle aynı kural
+                Object bu = before.get("url");
+                keywordChangeSettingsChanged(km, before.get("changeDetect") instanceof Boolean bd ? bd : null,
+                        before.get("changeMask") == null ? null : before.get("changeMask").toString(),
+                        before.get("changeSelector") == null ? null : before.get("changeSelector").toString(),
+                        bu != null && !bu.toString().equals(km.getUrl()));
+            }
         }
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
                 row.getResourceName(), effective);
@@ -1798,6 +1805,18 @@ public class MonitoringController {
     }
 
     private void applyKeywordCondition(KeywordMonitor m, Map<String, Object> body) {
+        // B10 (kw sözleşmesi §6.1): anlamsız koşul ("en az 0 kez", "0 kezden az", tavan üstü) kayıtta 400 matchCount — yalnız
+        // DEĞİŞEN koşul denetlenir (saklı eski değer düzenlenebilir kalır ve çalışmada değerlendirilmeye devam eder)
+        if (body.get("operator") != null || body.get("matchCount") instanceof Number) {
+            String newOp = body.get("operator") != null ? body.get("operator").toString().toUpperCase() : m.getMatchOperator();
+            if (newOp == null || !KW_OPERATORS.contains(newOp)) newOp = "GTE";
+            Integer newN = body.get("matchCount") instanceof Number n ? Integer.valueOf(Math.max(0, n.intValue())) : m.getMatchCount();
+            String oldOp = m.getMatchOperator() == null ? "GTE" : m.getMatchOperator();
+            Integer oldN = m.getMatchCount() == null ? Integer.valueOf(1) : m.getMatchCount();
+            if (!newOp.equals(oldOp) || !java.util.Objects.equals(newN == null ? Integer.valueOf(1) : newN, oldN)) {
+                com.sitemonitor.service.keyword.rules.KeywordRules.requireMeaningfulLegacy(newOp, newN);
+            }
+        }
         if (body.get("operator") != null) {
             String op = body.get("operator").toString().toUpperCase();
             m.setMatchOperator(KW_OPERATORS.contains(op) ? op : "GTE");
@@ -3278,9 +3297,11 @@ public class MonitoringController {
                 EscalationService.TYPE_KEYWORD);
         // Aynı URL'yi izleyen diğer izlemeler (kw sözleşmesi karar 4 / B6): tek okumadan, görünür / gizli sayı.
         Map<String, List<KeywordMonitor>> byUrl = keywordUrlGroups(all);
+        // kw-be2 §10.1: içerik değişimi açık izlemelerin temelleri TEK okumada (satır başına sorgu YOK)
+        Map<Long, com.sitemonitor.model.KeywordChangeBaseline> baselineMap = keywordBaselinesFor(monitors);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()), admin,
-                        sameUrlCounts(session, m, byUrl))).toList();
+                        sameUrlCounts(session, m, byUrl), baselineMap)).toList();
         List<Map<String, Object>> rows = withCheckFlag(session, result);
         // can_diagnose (2026-10-04, keyword uçtan uca tanılama): can_check + diagnostics.run/execute — tanılama ucunun
         // (KeywordDiagnosticsController) kapısıyla AYNI kural, HTTP listesiyle aynı desen. EK alan.
@@ -3293,6 +3314,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> createKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         { var _gt = requireGroupAndTags(body, true); if (_gt != null) return _gt; }   // grup + etiket zorunlu (2026-09-18)
+        KwRulesPatch rulesPatch = normalizeKeywordRulesBody(body);   // kw-be2 §6.6: kural listesi + eski alan aynası (gövdeye)
         if (blank(body.get("url")) || blank(body.get("keyword"))) return badRequest("url ve keyword zorunlu");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -3336,6 +3358,8 @@ public class MonitoringController {
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
         applyKeywordFeatureFields(m, body);
         applyKeywordRequestFields(m, body);   // kw §5 / §4.3 / §8.3: kapsam, istek, durum / son URL kuralı, posta konusu
+        applyKeywordRulesPatch(m, rulesPatch);    // kw-be2 §6: kurallar + birleşim
+        applyKeywordContentFields(m, body);       // kw-be2 §7: boyut + içerik değişimi
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         KeywordMonitor saved = keywordMonitorRepo.save(m);
@@ -3354,12 +3378,16 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> updateKeyword(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
+        KwRulesPatch rulesPatch = normalizeKeywordRulesBody(body);   // kw-be2 §6.6: kural listesi + eski alan aynası (gövdeye)
         java.util.Map<String, Object> _before = keywordMonitorRepo.findById(id).map(MonitoringController::keywordSnapshot).orElse(null);
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             guardSharedKeywordFields(session, m.getTeamId(), body, m);        // ... ve posta konusu şablonunu (kw §8.3)
             String previousUrl = m.getUrl();
+            Boolean prevChangeDetect = m.getChangeDetect();
+            String prevChangeMask = m.getChangeMask();
+            String prevChangeSelector = m.getChangeSelector();
             // Edit ile mükerrere dönüşmeyi de engelle (ping PUT'undaki desen; excludeId = kendisi).
             String intendedUrl  = body.get("url")     != null ? MonitorUrls.normalize(body.get("url").toString()) : m.getUrl();
             String intendedWord = body.get("keyword") != null ? body.get("keyword").toString().trim() : m.getKeyword();
@@ -3392,6 +3420,8 @@ public class MonitoringController {
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             applyKeywordFeatureFields(m, body);
             applyKeywordRequestFields(m, body);   // kw §5 / §4.3 / §8.3
+            applyKeywordRulesPatch(m, rulesPatch);    // kw-be2 §6
+            applyKeywordContentFields(m, body);       // kw-be2 §7
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             KeywordMonitor saved = keywordMonitorRepo.save(m);
@@ -3402,6 +3432,10 @@ public class MonitoringController {
                 escalationService.resolveOpenAlertsSilently(previousUrl, KEYWORD_ALERT_TYPES, KEYWORD_URL_CHANGED_BY,
                         ownerCtx(saved.getId(), saved.getTeamId(), null));
             }
+            // kw-be2 §7.2: değişim kapatıldı / maske / seçici değişti (ya da URL değişti) → eski temel geçersiz: silinir, açık
+            // KEYWORD_CHANGED sessizce kapanır; sonraki zamanlanmış kontrol yeni temeli otomatik alır
+            keywordChangeSettingsChanged(saved, prevChangeDetect, prevChangeMask, prevChangeSelector,
+                    previousUrl != null && !previousUrl.equals(saved.getUrl()));
             Map<String, Object> after = keywordSnapshot(saved);
             auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, after));
@@ -3430,6 +3464,7 @@ public class MonitoringController {
                     KEYWORD_ALERT_TYPES, "Sistem (izleme silindi)",
                     ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1: yalnız bu izlemenin olayı
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
+            deleteKeywordBaseline(m.getId());   // kw-be2 §3.3: içerik temeli de (öksüz kuralı yedek)
             auditService.recordAction("MONITOR_DELETE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.KEYWORD, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, keywordSnapshot(m), null, session);
@@ -3480,7 +3515,11 @@ public class MonitoringController {
                 new CsvColumn<KeywordResult>("hints", kr -> String.join(" ", kr.getHints())),
                 // kw sözleşmesi §10.4 — sona eklenir (sıra korunur)
                 new CsvColumn<>("decoded_charset", KeywordResult::getDecodedCharset),
-                new CsvColumn<>("match_scope", KeywordResult::getMatchScope)), response);
+                new CsvColumn<>("match_scope", KeywordResult::getMatchScope),
+                // kw-be2 Aşama 2 (§10.4) — sona eklenir (sıra korunur); rule_results sıkı JSON
+                new CsvColumn<>("breach_level", KeywordResult::getBreachLevel),
+                new CsvColumn<>("content_changed", KeywordResult::getContentChanged),
+                new CsvColumn<>("rule_results", KeywordResult::getRuleResultsJson)), response);
     }
 
     @PostMapping("/keyword/{id}/check")
@@ -3517,6 +3556,7 @@ public class MonitoringController {
     @PostMapping("/keyword/test")
     public ResponseEntity<Map<String, Object>> testKeyword(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
+        KwRulesPatch rulesPatch = normalizeKeywordRulesBody(body);   // kw-be2 §10.2: kurallar kayıtla AYNI doğrulamadan
         String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         String keyword = body.get("keyword") != null ? body.get("keyword").toString() : "";
         if (url.isEmpty() || keyword.isEmpty()) return badRequest("url ve keyword zorunlu");
@@ -3543,6 +3583,9 @@ public class MonitoringController {
         String customErr = com.sitemonitor.service.http.HttpRequestRules.validateHeaders(customHeaders);
         if (customErr != null) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("customHeaders", customErr);
         applyKeywordRequestFieldsTo(probe, body);
+        applyKeywordRulesPatch(probe, rulesPatch);   // kw-be2 §10.2: kurallar + boyut (değişim HARİÇ)
+        applyKeywordSizeFields(probe, body);
+        if (body.containsKey("alertLevel")) probe.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));
         String basicAuthPass = body.get("basicAuthPass") instanceof String bp && !bp.isEmpty() ? bp : null;
         // Kayıtlı sırrı kullanma (kw §10.2 — useSaved ⊆ [basicAuthPass, customHeaders]): istek o sırrı taşımıyorsa ve çağıran
         // izlemeyi DÜZENLEYEBİLİYORSA (başlık için ayrıca global admin) kayıtlı değer kullanılır; düzenleyemiyorsa 403, izleme
@@ -3618,6 +3661,11 @@ public class MonitoringController {
         out.put("status_accepted", r.get("status_accepted"));
         out.put("final_url_ok",    r.get("final_url_ok"));
         out.put("used_saved",      usedSaved);
+        // kw-be2 Aşama 2 (§10.2): kural sonuçları, ihlal seviyesi, boyut kuralı, kural özeti
+        out.put("rule_results",    r.get("rule_results") != null ? r.get("rule_results") : List.of());
+        out.put("level",           r.get("level"));
+        out.put("size_ok",         r.get("size_ok"));
+        out.put("rules_summary",   r.get("rules_summary"));
         if (met) { out.remove("failure_reason"); out.remove("failure_detail"); out.remove("hints"); out.remove("excerpt"); }
         return ok(out);
     }
@@ -3853,8 +3901,10 @@ public class MonitoringController {
         return out;
     }
 
+    /** {@code baselineMap}: liste ucunun önceden okuduğu temeller; {@code null} → tek satır yanıtı, gerekirse tek PK okuması. */
     private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams,
-                                              AlertEvent openAlarm, boolean admin, int[] sameUrl) {
+                                              AlertEvent openAlarm, boolean admin, int[] sameUrl,
+                                              Map<Long, com.sitemonitor.model.KeywordChangeBaseline> baselineMap) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
         item.put("name",             m.getName());
@@ -3909,6 +3959,18 @@ public class MonitoringController {
         item.put("domain_expiry_reminders",   m.getDomainExpiryReminders());
         item.put("ssl_reminder_days",         m.getSslReminderDays());
         item.put("domain_reminder_days",      m.getDomainReminderDays());
+        // ── kw-be2 Aşama 2 (§10.1): ETKİN kurallar (eski izlemede kural #1'den türetilmiş tek kural, id r1), boyut, değişim ──
+        item.put("rules",             com.sitemonitor.service.keyword.rules.KeywordRules.toApi(
+                com.sitemonitor.service.keyword.rules.KeywordRules.effective(m.getRulesJson(), m.getKeyword(), m.getMatchOperator(),
+                        m.getMatchCount(), m.getCaseSensitive())));
+        item.put("rules_custom",      m.getRulesJson() != null && !m.getRulesJson().isBlank());
+        item.put("rule_logic",        com.sitemonitor.service.keyword.rules.KeywordRules.effectiveLogic(m.getRuleLogic()));
+        item.put("min_bytes",         m.getMinBytes());
+        item.put("max_bytes",         m.getMaxBytes());
+        item.put("change_detect",     Boolean.TRUE.equals(m.getChangeDetect()));
+        item.put("change_mask",       com.sitemonitor.service.keyword.content.ContentMasker.toList(m.getChangeMask()));
+        item.put("change_selector",   m.getChangeSelector());
+        item.put("change_baseline",   changeBaselineOf(m, baselineMap));   // anahtar HEP var (null = temel bekleniyor / kapalı)
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
@@ -3929,14 +3991,53 @@ public class MonitoringController {
             item.put("body_truncated", latest.getBodyTruncated());
             item.put("decoded_charset", latest.getDecodedCharset());   // kw §10.1
             item.put("final_url",       latest.getFinalUrl());
+            item.put("rule_results",    latest.getRuleResults());     // kw-be2 §10.1 (eski izlemede boş liste)
+            item.put("breach_level",    latest.getBreachLevel());
+            item.put("body_bytes",      latest.getBodyBytes());
+            item.put("content_changed", latest.getContentChanged());
         } else {
             item.put("status", "unknown");
             item.put("found", null); item.put("occurrences", null); item.put("ok", null); item.put("http_status", null);
             item.put("response_ms", null); item.put("snippet", null); item.put("error", null); item.put("checked_at", null);
             item.put("failure_reason", null); item.put("failure_detail", null); item.put("hints", List.of()); item.put("body_truncated", null);
             item.put("decoded_charset", null); item.put("final_url", null);
+            item.put("rule_results", List.of()); item.put("breach_level", null); item.put("body_bytes", null);
+            item.put("content_changed", null);
         }
         return item;
+    }
+
+    private Map<String, Object> enrichKeyword(KeywordMonitor m, KeywordResult latest, Map<Long, String> teams,
+                                              AlertEvent openAlarm, boolean admin, int[] sameUrl) {
+        return enrichKeyword(m, latest, teams, openAlarm, admin, sameUrl, null);
+    }
+
+    /** Liste ucu için temeller (yalnız değişimi açık izlemeler; okunamazsa boş — satır "temel bekleniyor" der). */
+    private Map<Long, com.sitemonitor.model.KeywordChangeBaseline> keywordBaselinesFor(List<KeywordMonitor> monitors) {
+        if (keywordBaselines == null || monitors == null) return Map.of();
+        List<Long> ids = monitors.stream().filter(k -> Boolean.TRUE.equals(k.getChangeDetect()))
+                .map(KeywordMonitor::getId).filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) return Map.of();
+        try {
+            return keywordBaselines.byMonitorIds(ids);
+        } catch (RuntimeException e) {
+            log.warn("İçerik temelleri okunamadı: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** Satırın {@code change_baseline}'ı: değişim açık ve temel GÜNCEL ayarla alınmışsa {taken_at, taken_by_name, source, bytes}. */
+    private Map<String, Object> changeBaselineOf(KeywordMonitor m, Map<Long, com.sitemonitor.model.KeywordChangeBaseline> preloaded) {
+        if (!Boolean.TRUE.equals(m.getChangeDetect()) || m.getId() == null || keywordBaselines == null) return null;
+        com.sitemonitor.model.KeywordChangeBaseline b;
+        try {
+            b = preloaded != null ? preloaded.get(m.getId()) : keywordBaselines.find(m.getId()).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        String spec = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(m.getChangeMask(), m.getChangeSelector());
+        if (b == null || !spec.equals(b.getSpecHash())) return null;
+        return com.sitemonitor.service.keyword.content.KeywordChangeBaselineService.toApi(b, false);
     }
 
     // ── kw sözleşmesi (2026-11-05) — anahtar kelime izlemesi: istek alanları, paylaşım kilidi, geçmiş, aynı URL ──────────
@@ -4110,10 +4211,116 @@ public class MonitoringController {
         if (error != null) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, error);
     }
 
-    /** Kayıtlı izlemenin kontrol tanımı (tetik / "Şimdi kontrol et") — zamanlanmış turla AYNI kurucu. */
+    /** Kayıtlı izlemenin kontrol tanımı (tetik / "Şimdi kontrol et") — zamanlanmış turla AYNI kurucu. İçerik değişimi açıksa
+     *  temel yüklenir (karşılaştırma — elle kontrol temel ALMAZ, §7.2). */
     private com.sitemonitor.service.keyword.KeywordCheckSpec keywordSpecFor(KeywordMonitor m) {
-        return com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, keywordHeaderSecrets.effectiveHeaders(m),
-                keywordHeaderSecrets.basicAuthPass(m), viaProxy(m.getUrl(), m.getUseProxy())).build();
+        var b = com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, keywordHeaderSecrets.effectiveHeaders(m),
+                keywordHeaderSecrets.basicAuthPass(m), viaProxy(m.getUrl(), m.getUseProxy()));
+        if (Boolean.TRUE.equals(m.getChangeDetect()) && keywordBaselines != null && m.getId() != null) {
+            try {
+                b.baseline(keywordBaselines.view(m.getId()));
+            } catch (Exception e) {
+                log.debug("Keyword içerik temeli okunamadı: {}", e.getMessage());
+            }
+        }
+        return b.build();
+    }
+
+    // ── kw-be2 Aşama 2 (2026-11-05): kurallar, boyut, içerik değişimi ─────────────────────────────────────────────────
+
+    /** İçerik değişimi temeli — alan enjeksiyonu (dilim testlerinde yoksa: temel silme / gösterme atlanır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.keyword.content.KeywordChangeBaselineService keywordBaselines;
+
+    /** Değişim ayarı değişince açık KEYWORD_CHANGED'i kapatan "çözen" damgası (§7.2). */
+    static final String KEYWORD_CHANGE_SETTINGS_BY = "Sistem (değişim ayarı değişti)";
+
+    /** Gövdedeki kural listesinin doğrulanmış hâli: {@code rules} / {@code ruleLogic} anahtarı geldi mi + saklanacak değer. */
+    record KwRulesPatch(boolean rulesPresent, String rulesJson, boolean logicPresent, String logic) {}
+
+    /**
+     * §6.6: {@code rules} gövdede ve dolu → doğrulanır (400 {@code rules[i].x}), kural #1 eski alanlara AYNALANIR (gövdeye
+     * {@code keyword} / {@code operator} / {@code matchCount} / {@code caseSensitive}) — mükerrer kontrolü, alarm metni, eski pod ve
+     * eski istemci tutarlı; basit tek kural (metin, sayfa, kritik yok, etiket yok) → {@code rules_json} NULL. {@code rules} null /
+     * {@code []} → {@code rules_json} temizlenir, eski alanlar gövdeden.
+     */
+    static KwRulesPatch normalizeKeywordRulesBody(Map<String, Object> body) {
+        boolean rulesPresent = body.containsKey("rules");
+        String json = null;
+        if (rulesPresent) {
+            List<com.sitemonitor.service.keyword.rules.KeywordRule> rules = com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(body.get("rules"));
+            if (rules != null && !rules.isEmpty()) {
+                var mirror = com.sitemonitor.service.keyword.rules.KeywordRules.legacyMirror(rules);
+                body.put("keyword", mirror.keyword());
+                body.put("operator", mirror.operator());
+                body.put("matchCount", mirror.matchCount());
+                body.put("caseSensitive", mirror.caseSensitive());
+                body.remove("condition");
+                json = com.sitemonitor.service.keyword.rules.KeywordRules.isSimple(rules) ? null : com.sitemonitor.service.keyword.rules.KeywordRules.toJson(rules);
+            }
+        }
+        boolean logicPresent = body.containsKey("ruleLogic");
+        String logic = logicPresent ? com.sitemonitor.service.keyword.rules.KeywordRules.parseLogic(body.get("ruleLogic")) : null;
+        return new KwRulesPatch(rulesPresent, json, logicPresent, logic);
+    }
+
+    /** Kural listesi + birleşim — "VE" varsayılanı NULL saklanır (NULL = AND, eski pod uyumu). */
+    static void applyKeywordRulesPatch(KeywordMonitor m, KwRulesPatch p) {
+        if (p == null) return;
+        if (p.rulesPresent()) m.setRulesJson(p.rulesJson());
+        if (p.logicPresent()) m.setRuleLogic(com.sitemonitor.service.keyword.rules.KeywordRules.LOGIC_OR.equals(p.logic()) ? com.sitemonitor.service.keyword.rules.KeywordRules.LOGIC_OR : null);
+    }
+
+    /** Boyut sınırları (§7.1): 1 – 2 000 000, min ≤ max — yalnız gelen anahtar değişir, öteki kayıttaki değerle denetlenir. */
+    static void applyKeywordSizeFields(KeywordMonitor m, Map<String, Object> body) {
+        if (!body.containsKey("minBytes") && !body.containsKey("maxBytes")) return;
+        Object min = body.containsKey("minBytes") ? body.get("minBytes") : m.getMinBytes();
+        Object max = body.containsKey("maxBytes") ? body.get("maxBytes") : m.getMaxBytes();
+        var l = com.sitemonitor.service.keyword.content.KeywordSizeCheck.validate(min, max);
+        m.setMinBytes(l.minBytes());
+        m.setMaxBytes(l.maxBytes());
+    }
+
+    /** Boyut + içerik değişimi alanları (§7) — değişim kapalı NULL saklanır; maske kanonik CSV; seçici kayıtta doğrulanır. */
+    static void applyKeywordContentFields(KeywordMonitor m, Map<String, Object> body) {
+        applyKeywordSizeFields(m, body);
+        if (body.containsKey("changeDetect")) m.setChangeDetect(Boolean.TRUE.equals(body.get("changeDetect")) ? Boolean.TRUE : null);
+        if (body.containsKey("changeMask")) m.setChangeMask(com.sitemonitor.service.keyword.content.KeywordChangeSettings.mask(body.get("changeMask")));
+        if (body.containsKey("changeSelector")) {
+            Object raw = body.get("changeSelector");
+            String stored = m.getChangeSelector();
+            // kayıttakiyle aynı gelen seçici yeniden doğrulanmaz (kural sıkılaşsa da eski kayıt düzenlenebilir kalır)
+            if (raw == null || stored == null || !stored.equals(raw.toString().trim())) {
+                m.setChangeSelector(com.sitemonitor.service.keyword.content.KeywordChangeSettings.selector(raw));
+            }
+        }
+    }
+
+    /**
+     * Değişim ayarı değişti (kapatıldı / maske / seçici) ya da URL değişti → temel silinir + bu izlemenin açık KEYWORD_CHANGED'i
+     * sessizce kapanır (§7.2; URL değişiminde eski anahtarınki B7 ile zaten kapandı). Hata kaydı bozmaz.
+     */
+    void keywordChangeSettingsChanged(KeywordMonitor saved, Boolean prevDetect, String prevMask, String prevSelector,
+                                      boolean urlChanged) {
+        boolean changed = com.sitemonitor.service.keyword.content.KeywordChangeSettings.settingsChanged(prevDetect, prevMask,
+                prevSelector, saved.getChangeDetect(), saved.getChangeMask(), saved.getChangeSelector());
+        if (!changed && !(urlChanged && Boolean.TRUE.equals(prevDetect))) return;
+        deleteKeywordBaseline(saved.getId());
+        try {
+            escalationService.resolveOpenAlertsSilently(saved.getUrl(), Set.of(EscalationService.TYPE_KEYWORD_CHANGED),
+                    KEYWORD_CHANGE_SETTINGS_BY, ownerCtx(saved.getId(), saved.getTeamId(), null));
+        } catch (RuntimeException e) {
+            log.warn("İçerik değişimi alarmı kapatılamadı (izleme {}): {}", saved.getId(), e.getMessage());
+        }
+    }
+
+    private void deleteKeywordBaseline(Long monitorId) {
+        if (keywordBaselines == null || monitorId == null) return;
+        try {
+            keywordBaselines.delete(monitorId);
+        } catch (RuntimeException e) {
+            log.warn("İçerik temeli silinemedi (izleme {}): {}", monitorId, e.getMessage());
+        }
     }
 
     /** Aynı URL karşılaştırma anahtarı (kw karar 4): {@code MonitorUrls.normalize} + büyük/küçük harf duyarsız; geçersiz → null. */

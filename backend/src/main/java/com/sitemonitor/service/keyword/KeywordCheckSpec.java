@@ -35,6 +35,17 @@ public final class KeywordCheckSpec {
     private final String expectedStatus;
     private final String expectedFinalUrl;
     private final Boolean followRedirects;
+    // ── kw-be2 Aşama 2: kurallar, boyut, içerik değişimi ──
+    private final String rulesJson;
+    private final String ruleLogic;
+    private final Integer minBytes;
+    private final Integer maxBytes;
+    private final boolean changeDetect;
+    private final String changeMask;
+    private final String changeSelector;
+    private final String monitorLevel;
+    private final com.sitemonitor.service.keyword.content.KeywordChangeDetector.BaselineView baseline;
+    private final ChangeCapture changeCapture;
 
     private KeywordCheckSpec(Builder b) {
         this.url = b.url;
@@ -58,6 +69,37 @@ public final class KeywordCheckSpec {
         this.expectedStatus = b.expectedStatus;
         this.expectedFinalUrl = b.expectedFinalUrl;
         this.followRedirects = b.followRedirects;
+        this.rulesJson = b.rulesJson;
+        this.ruleLogic = b.ruleLogic;
+        this.minBytes = b.minBytes;
+        this.maxBytes = b.maxBytes;
+        this.changeDetect = b.changeDetect;
+        this.changeMask = b.changeMask;
+        this.changeSelector = b.changeSelector;
+        this.monitorLevel = b.monitorLevel;
+        this.baseline = b.baseline;
+        this.changeCapture = b.changeCapture;
+    }
+
+    /**
+     * İçerik değişimi ölçümünün çağırana dönüşü (kw sözleşmesi §7.2 / §13): kontrol temel YAZMAZ (saf kalır, işçide de koşar);
+     * temel yoksa ölçtüğü anlık görüntüyü buraya bırakır, çağıran (zamanlanmış tur) işçi bırakmadıysa otomatik temeli alır.
+     * Sonuç haritasında taşınmaz (JSON'a girmez).
+     */
+    public static final class ChangeCapture {
+        private volatile com.sitemonitor.service.keyword.content.KeywordChangeDetector.Snapshot snapshot;
+        private volatile long bytes;
+        private volatile String specHash;
+
+        public com.sitemonitor.service.keyword.content.KeywordChangeDetector.Snapshot snapshot() { return snapshot; }
+        public long bytes() { return bytes; }
+        public String specHash() { return specHash; }
+
+        public void put(com.sitemonitor.service.keyword.content.KeywordChangeDetector.Snapshot s, long b, String h) {
+            this.snapshot = s;
+            this.bytes = b;
+            this.specHash = h;
+        }
     }
 
     public static Builder builder(String url, String keyword) {
@@ -88,7 +130,16 @@ public final class KeywordCheckSpec {
                 .userAgent(m.getUserAgent())
                 .expectedStatus(m.getExpectedStatus())
                 .expectedFinalUrl(m.getExpectedFinalUrl())
-                .followRedirects(m.getFollowRedirects());
+                .followRedirects(m.getFollowRedirects())
+                // kw-be2 Aşama 2 (§6 / §7): kurallar, boyut, değişim — temel ÇAĞIRANDAN (baseline), anlık görüntü dönüşü isteğe bağlı
+                .rulesJson(m.getRulesJson())
+                .ruleLogic(m.getRuleLogic())
+                .minBytes(m.getMinBytes())
+                .maxBytes(m.getMaxBytes())
+                .changeDetect(Boolean.TRUE.equals(m.getChangeDetect()))
+                .changeMask(m.getChangeMask())
+                .changeSelector(m.getChangeSelector())
+                .monitorLevel(com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
     }
 
     public Builder toBuilder() {
@@ -99,6 +150,9 @@ public final class KeywordCheckSpec {
         b.requestBody = requestBody; b.requestContentType = requestContentType; b.basicAuthUser = basicAuthUser;
         b.basicAuthPass = basicAuthPass; b.userAgentMode = userAgentMode; b.userAgent = userAgent;
         b.expectedStatus = expectedStatus; b.expectedFinalUrl = expectedFinalUrl; b.followRedirects = followRedirects;
+        b.rulesJson = rulesJson; b.ruleLogic = ruleLogic; b.minBytes = minBytes; b.maxBytes = maxBytes;
+        b.changeDetect = changeDetect; b.changeMask = changeMask; b.changeSelector = changeSelector;
+        b.monitorLevel = monitorLevel; b.baseline = baseline; b.changeCapture = changeCapture;
         return b;
     }
 
@@ -137,6 +191,26 @@ public final class KeywordCheckSpec {
     /** Yönlendirmeler takip edilir mi (null = evet, bugünkü). */
     public boolean followRedirects() { return !Boolean.FALSE.equals(followRedirects); }
 
+    /** Saklı kural listesi (JSON); {@code null} = eski tek kelime alanları (kural #1). */
+    public String rulesJson() { return rulesJson; }
+    /** Etkin kural birleşimi: {@code AND} | {@code OR}. */
+    public String ruleLogic() { return com.sitemonitor.service.keyword.rules.KeywordRules.effectiveLogic(ruleLogic); }
+    public Integer minBytes() { return minBytes; }
+    public Integer maxBytes() { return maxBytes; }
+    public boolean changeDetect() { return changeDetect; }
+    public String changeMask() { return changeMask; }
+    public String changeSelector() { return blank(changeSelector) ? null : changeSelector.trim(); }
+    /** İzlemenin etkin alarm seviyesi (kuralın kendi kritik eşiği yoksa ihlalin seviyesi). */
+    public String monitorLevel() { return monitorLevel; }
+    /** Karşılaştırılacak temel (çağıran yükler; {@code null} = yok). */
+    public com.sitemonitor.service.keyword.content.KeywordChangeDetector.BaselineView baseline() { return baseline; }
+    /** Temel yokken ölçülen anlık görüntünün dönüşü ({@code null} = istenmiyor). */
+    public ChangeCapture changeCapture() { return changeCapture; }
+    /** ETKİN kurallar ({@code rules_json} ya da eski tek kelime alanları). */
+    public java.util.List<com.sitemonitor.service.keyword.rules.KeywordRule> rules() {
+        return com.sitemonitor.service.keyword.rules.KeywordRules.effective(rulesJson, keyword, operator, threshold, caseSensitive);
+    }
+
     /** İstek eklentileri HTTP'nin taşıyıcısında (JSON doğrulaması YOK) — {@code HttpRequestRules} ile ortak kurallar. */
     public HttpRequestOptions requestOptions() {
         return new HttpRequestOptions(customHeaders, basicAuthUser, basicAuthPass, requestBody, requestContentType, null, null);
@@ -153,7 +227,9 @@ public final class KeywordCheckSpec {
                 + ", headers=" + (blank(customHeaders) ? "none" : "set")
                 + ", basicAuth=" + (blank(basicAuthUser) ? "none" : "set")
                 + ", body=" + (blank(requestBody) ? "none" : requestBody.length() + " chars")
-                + ", expectedStatus=" + expectedStatus() + ", followRedirects=" + followRedirects() + "]";
+                + ", expectedStatus=" + expectedStatus() + ", followRedirects=" + followRedirects()
+                + ", rules=" + (blank(rulesJson) ? "legacy" : "custom") + ", logic=" + ruleLogic()
+                + ", size=" + minBytes + ".." + maxBytes + ", change=" + changeDetect + "]";
     }
 
     /** Kurucu. */
@@ -179,6 +255,16 @@ public final class KeywordCheckSpec {
         private String expectedStatus;
         private String expectedFinalUrl;
         private Boolean followRedirects;
+        private String rulesJson;
+        private String ruleLogic;
+        private Integer minBytes;
+        private Integer maxBytes;
+        private boolean changeDetect;
+        private String changeMask;
+        private String changeSelector;
+        private String monitorLevel;
+        private com.sitemonitor.service.keyword.content.KeywordChangeDetector.BaselineView baseline;
+        private ChangeCapture changeCapture;
 
         private Builder() {}
 
@@ -203,6 +289,16 @@ public final class KeywordCheckSpec {
         public Builder expectedStatus(String v) { this.expectedStatus = v; return this; }
         public Builder expectedFinalUrl(String v) { this.expectedFinalUrl = v; return this; }
         public Builder followRedirects(Boolean v) { this.followRedirects = v; return this; }
+        public Builder rulesJson(String v) { this.rulesJson = v; return this; }
+        public Builder ruleLogic(String v) { this.ruleLogic = v; return this; }
+        public Builder minBytes(Integer v) { this.minBytes = v; return this; }
+        public Builder maxBytes(Integer v) { this.maxBytes = v; return this; }
+        public Builder changeDetect(boolean v) { this.changeDetect = v; return this; }
+        public Builder changeMask(String v) { this.changeMask = v; return this; }
+        public Builder changeSelector(String v) { this.changeSelector = v; return this; }
+        public Builder monitorLevel(String v) { this.monitorLevel = v; return this; }
+        public Builder baseline(com.sitemonitor.service.keyword.content.KeywordChangeDetector.BaselineView v) { this.baseline = v; return this; }
+        public Builder changeCapture(ChangeCapture v) { this.changeCapture = v; return this; }
 
         public KeywordCheckSpec build() { return new KeywordCheckSpec(this); }
     }

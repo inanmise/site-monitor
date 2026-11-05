@@ -43,6 +43,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -67,6 +68,8 @@ class KeywordContentControllerTest {
     @MockitoBean EscalationService escalationService;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.sitemonitor.service.SchedulerService schedulerService;
+    @MockitoBean com.sitemonitor.service.KeywordCheckerService keywordChecker;
 
     static final String URL = "https://shop.example.test/urun?id=5";
 
@@ -257,5 +260,101 @@ class KeywordContentControllerTest {
         assertThat(s).containsEntry("capped", true).containsEntry("total", 0);
         assertThat(KeywordContentController.parseBound("2026-11-05T10:00", false, "from")).isEqualTo("2026-11-05T10:00:00");
         assertThat(KeywordContentController.parseBound("2026-11-05T10:00:00Z", true, "to")).isEqualTo("2026-11-05T10:00:00");
+    }
+
+    // ── Aşama 2: canlı ölçüm uçları ──────────────────────────────────────────────────────────
+
+    private com.sitemonitor.service.keyword.KeywordCheckSpec liveSpec(KeywordMonitor m) {
+        return com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, null, null, false).build();
+    }
+
+    @Test
+    @DisplayName("POST change/baseline: canlı ölçümle MANUAL temel + açık değişim alarmı 'Yeni içerik temeli alındı' notuyla kapanır; "
+            + "denetim baseline_set; değişim kapalı → 409 KEYWORD_CHANGE_DISABLED; sayfa okunamadı → 409 KEYWORD_BASELINE_FETCH_FAILED")
+    void takeBaselineLive() throws Exception {
+        KeywordMonitor m = keywordMonitorRepo.findById(41L).orElseThrow();
+        when(schedulerService.keywordCheckSpec(any(KeywordMonitor.class), eq(false))).thenAnswer(a -> liveSpec(a.getArgument(0)));
+        var snap = KeywordChangeDetector.snapshot(List.of("Fiyat 12 TL"), java.util.EnumSet.noneOf(
+                com.sitemonitor.service.keyword.content.ContentMasker.Mask.class), List.of());
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenAnswer(a -> {
+            com.sitemonitor.service.keyword.KeywordCheckSpec sp = a.getArgument(0);
+            assertThat(sp.changeDetect()).isTrue();
+            assertThat(sp.baseline()).isNull();
+            sp.changeCapture().put(snap, 900L, "h1");
+            return new java.util.HashMap<>(Map.of("ok", true, "baseline_missing", true));
+        });
+        KeywordChangeBaseline saved = baseline("h1");
+        saved.setSource("MANUAL");
+        when(baselines.takeManual(eq(41L), eq(snap), eq(900L), eq("h1"), eq("user2"), eq("Kullanıcı 2"))).thenReturn(saved);
+        AlertEvent open = new AlertEvent();
+        open.setId(7001L);
+        open.setContextJson("{\"monitor_id\":41}");
+        when(alertEventRepo.findOpenAlerts(URL, EscalationService.TYPE_KEYWORD_CHANGED)).thenReturn(List.of(open));
+        mvc.perform(post("/api/monitoring/keyword/41/change/baseline").session(session("USER", 5L, 2L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.baseline.source").value("MANUAL"))
+                .andExpect(jsonPath("$.data.closed_alarm").value(true));
+        verify(escalationService).resolve(7001L, "user2", "Yeni içerik temeli alındı");
+        verify(auditService).recordAction(eq("MONITOR_UPDATE"), any(HttpSession.class), eq("KEYWORD_MONITOR"), eq("41"),
+                argThat((String d) -> d != null && d.contains("baseline_set")), isNull());
+
+        // sayfa okunamadı → anlık görüntü yok
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
+                .thenReturn(new java.util.HashMap<>(Map.of("ok", false, "failure_reason", "TIMEOUT_READ", "error", "x")));
+        mvc.perform(post("/api/monitoring/keyword/41/change/baseline").session(session("USER", 5L, 2L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("KEYWORD_BASELINE_FETCH_FAILED"))
+                .andExpect(jsonPath("$.failure_reason").value("TIMEOUT_READ"));
+
+        m.setChangeDetect(null);
+        mvc.perform(post("/api/monitoring/keyword/41/change/baseline").session(session("USER", 5L, 2L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("KEYWORD_CHANGE_DISABLED"));
+        // başka takım → 404, okuyabilen ama düzenleyemeyen (AUDIT) → 403
+        mvc.perform(post("/api/monitoring/keyword/41/change/baseline").session(session("USER", 9L, 3L)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST matches: aynı ölçümün içerik görünümünden kural başına ≤ 5 bağlam (maskeli); satır / alarm / temel YOK; "
+            + "denetim MONITOR_DIAGNOSE kind=matches")
+    void liveMatches() throws Exception {
+        when(permissionService.allows(any(HttpSession.class), eq("monitoring.trigger"), eq("execute"))).thenReturn(true);
+        KeywordMonitor m = keywordMonitorRepo.findById(41L).orElseThrow();
+        m.setRulesJson("[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern\":\"fiyat\",\"operator\":\"GTE\",\"count\":1},"
+                + "{\"id\":\"r2\",\"kind\":\"REGEX\",\"pattern\":\"\\\\d+ TL\",\"operator\":\"GTE\",\"count\":1}]");
+        when(schedulerService.keywordCheckSpec(any(KeywordMonitor.class), eq(false))).thenAnswer(a -> liveSpec(a.getArgument(0)));
+        String html = "<p>Fiyat 12 TL</p><p>FİYAT 13 TL</p><p>password=Gizli123</p>";
+        when(keywordChecker.checkDetailed(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenAnswer(a -> {
+            com.sitemonitor.service.keyword.KeywordCheckSpec sp = a.getArgument(0);
+            var v = com.sitemonitor.service.KeywordCheckerService.evaluateRules(sp, html, "text/html", html.length(), false, null, null);
+            return new com.sitemonitor.service.KeywordCheckerService.Detailed(
+                    new java.util.HashMap<>(Map.of("http_status", 200, "final_url", URL, "ok", true)), v);
+        });
+        mvc.perform(post("/api/monitoring/keyword/41/matches").session(session("USER", 5L, 2L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.http_status").value(200))
+                .andExpect(jsonPath("$.data.rules.length()").value(2))
+                .andExpect(jsonPath("$.data.rules[0].kind").value("TEXT"))
+                .andExpect(jsonPath("$.data.rules[0].count").value(2))
+                .andExpect(jsonPath("$.data.rules[0].contexts.length()").value(2))
+                .andExpect(jsonPath("$.data.rules[0].contexts[1].match").value("FİYAT"))
+                .andExpect(jsonPath("$.data.rules[1].contexts[0].match").value("12 TL"))
+                .andExpect(jsonPath("$.data.rules[1].contexts[0].source").value("RAW"))
+                .andExpect(jsonPath("$.data.truncated").value(false));
+        verify(auditService).recordAction(eq("MONITOR_DIAGNOSE"), any(HttpSession.class), eq("KEYWORD_MONITOR"), eq("41"),
+                argThat((String d) -> d != null && d.contains("matches")), isNull());
+        verify(baselines, never()).takeManual(any(), any(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Eşleşme ucu yük sınırı: kullanıcı başına dakikada 6 (pod belleği), 7. istek bekleme süresiyle reddedilir")
+    void matchesRateLimit() {
+        KeywordContentController c = new KeywordContentController(keywordMonitorRepo, contentQueries, baselines, alertEventRepo,
+                escalationService, permissionService, auditService, schedulerService, keywordChecker);
+        c.setClock(java.time.Clock.fixed(java.time.Instant.parse("2026-11-05T09:00:00Z"), java.time.ZoneOffset.UTC));
+        for (int i = 0; i < KeywordContentController.MATCHES_PER_MINUTE; i++) assertThat(c.matchesRate("ayse")).isNull();
+        assertThat(c.matchesRate("ayse")).isBetween(1L, 60L);
+        assertThat(c.matchesRate("mehmet")).isNull();
     }
 }

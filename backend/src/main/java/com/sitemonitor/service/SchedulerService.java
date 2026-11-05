@@ -91,6 +91,9 @@ public class SchedulerService {
     /** Keyword özel başlıklarının şifreli kaynağı — alan enjeksiyonu (constructor/test büyütmemek için). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private KeywordHeaderSecrets keywordHeaderSecrets;
+    /** Anahtar kelime içerik değişimi temeli (kw-be2 Aşama 2, §7.2) — alan enjeksiyonu; yoksa değişim ölçülür ama temel alınmaz. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.keyword.content.KeywordChangeBaselineService keywordBaselines;
     /** HTTP izlemesinin şifreli başlık / Basic auth parolası (2026-10-01) — alan enjeksiyonu (aynı gerekçe); yoksa sırsız. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SecretCipher secretCipher;
@@ -6113,8 +6116,9 @@ public class SchedulerService {
         List<Map.Entry<KeywordMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
             if (!classicCheckDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (R3-3 FX)
-            started.add(Map.entry(m, startNetworkCheck(() -> recheckKeyword(m))));
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckKeyword(m, true))));
         }
+        List<MonitoringOutageService.SweepItem> changeSweep = new ArrayList<>();
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
         for (var entry : started) {
             KeywordMonitor m = entry.getKey();
@@ -6123,12 +6127,14 @@ public class SchedulerService {
                 sweep.add(keywordSweepItem(m, r));
                 MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, r);   // R3-3 B: ayrıştırıldı (D-7: null = kalem yok)
                 if (slow != null) slowSweep.add(slow);
+                MonitoringOutageService.SweepItem change = keywordChangeSweepItem(m, r);   // kw-be2 Aşama 2 (§7.2): null = kalem yok
+                if (change != null) changeSweep.add(change);
                 checked++;
             } catch (Exception e) {
                 log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
             }
         }
-        feedKeywordSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        feedKeywordSweep(sweep, slowSweep, changeSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
         log.debug("Keyword checks complete: {} monitors", checked);
     }
 
@@ -6182,6 +6188,16 @@ public class SchedulerService {
     /** Keyword alarm pipeline'ı (KEYWORD önce, KEYWORD_SLOW sonra; klasik sıra) — hatası taramayı kırmasın. */
     private void feedKeywordSweep(List<MonitoringOutageService.SweepItem> sweep,
                                   List<MonitoringOutageService.SweepItem> slowSweep) {
+        feedKeywordSweep(sweep, slowSweep, List.of());
+    }
+
+    /**
+     * ... + KEYWORD_CHANGED üçüncü (kw-be2 Aşama 2, §7.2). İçerik değişimi açık izleme yoksa (liste boş) HİÇ çağrılmaz — eski
+     * izlemelerin turu bugünküyle aynı kalır.
+     */
+    private void feedKeywordSweep(List<MonitoringOutageService.SweepItem> sweep,
+                                  List<MonitoringOutageService.SweepItem> slowSweep,
+                                  List<MonitoringOutageService.SweepItem> changeSweep) {
         try {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD, sweep);
         } catch (Exception e) {
@@ -6192,6 +6208,63 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Keyword slow outage processing failed: {}", e.getMessage());
         }
+        if (changeSweep == null || changeSweep.isEmpty()) return;
+        try {
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_CHANGED, changeSweep);
+        } catch (Exception e) {
+            log.warn("Keyword content change processing failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * KEYWORD_CHANGED kalemi (kw-be2 Aşama 2, §7.2 — SEVİYE tetikli): yalnız içerik değişimi açık izlemede ve değişim
+     * DEĞERLENDİRİLDİYSE ({@code content_changed} true / false); temel yok / ölçülemedi / kapalı → {@code null} (kalem yok).
+     * Kesinti DEĞİL (hata metni yok → ağ bastırmasına girmez); seviye izlemenin {@code alert_level}'ı.
+     */
+    MonitoringOutageService.SweepItem keywordChangeSweepItem(KeywordMonitor m, Map<String, Object> r) {
+        if (!Boolean.TRUE.equals(m.getChangeDetect()) || !(r.get("content_changed") instanceof Boolean changed)) return null;
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());
+        ctx.put("url", m.getUrl());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        Object summary = r.get("change_summary");
+        if (summary != null) {
+            ctx.put("change_summary", summary);
+            Integer lines = com.sitemonitor.service.keyword.content.KeywordChangeDetector.changedLines(summary);
+            if (lines != null) ctx.put("changed_lines", lines);
+        }
+        if (r.get("baseline_taken_at") != null) ctx.put("baseline_taken_at", r.get("baseline_taken_at"));
+        if (r.get("baseline_source") != null) ctx.put("baseline_source", r.get("baseline_source"));
+        if (m.getChangeMask() != null && !m.getChangeMask().isBlank()) ctx.put("change_mask", m.getChangeMask());
+        if (m.getChangeSelector() != null && !m.getChangeSelector().isBlank()) ctx.put("change_selector", m.getChangeSelector());
+        ctx.put("checked_at", ISO.format(Instant.now()));
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_KEYWORD_CHANGED, m.getUrl(), "içerik",
+                !changed, null,
+                chanCtx(ctx, m), () -> evalKeywordChange(m));
+    }
+
+    /**
+     * KEYWORD_CHANGED teyit / kurtarma yeniden ölçümü (§7.2): taze kontrol, SATIR YAZMAZ, temel ALMAZ; değişim değerlendirilemezse
+     * (temel yok / istek tamamlanmadı / kabul dışı durum) kanıt yok → {@code skipped}.
+     */
+    private Map<String, Object> evalKeywordChange(KeywordMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (!Boolean.TRUE.equals(m.getChangeDetect())) { out.put("status", "up"); return out; }
+        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m, true).toBuilder().diagnose(false).build());
+        if (!(r.get("content_changed") instanceof Boolean changed)) {
+            out.put("status", "skipped");
+            return out;
+        }
+        out.put("status", changed ? "down" : "up");
+        if (r.get("change_summary") != null) out.put("change_summary", r.get("change_summary"));
+        return out;
     }
 
     /** Dağıtık kipte keyword taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
@@ -6200,12 +6273,21 @@ public class SchedulerService {
     }
     // ── /R3-3 B keyword ──────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Keyword check + keyword_results persist'i. Karar ({@code ok}) kontrolde verilir (kw sözleşmesi §2: durum kodu kuralı,
-     *  son URL kuralı, adet koşulu); HTTP hatası → ok=false (down). {"status","error"} döner. */
+    /** Teyit / kurtarma yeniden kontrolü (KEYWORD kaleminin): zamanlanmış DEĞİL — temel almaz (§7.2). */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
+        return recheckKeyword(m, false);
+    }
+
+    /** Keyword check + keyword_results persist'i. Karar ({@code ok}) kontrolde verilir (kw sözleşmesi §2: durum kodu kuralı,
+     *  son URL kuralı, adet koşulu, kurallar, boyut); HTTP hatası → ok=false (down). {"status","error"} döner.
+     *  {@code scheduled}: zamanlanmış tur (klasik ya da dağıtık iş) — içerik değişimi temeli yoksa OTOMATİK alınır (§7.2). */
+    private Map<String, Object> recheckKeyword(KeywordMonitor m, boolean scheduled) {
         // Beklentili kontrol (2026-10-04): koşul sağlanmazsa neden + ipuçları + alıntı da üretilir (ek istek YOK).
-        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m));
+        var capture = scheduled && Boolean.TRUE.equals(m.getChangeDetect())
+                ? new com.sitemonitor.service.keyword.KeywordCheckSpec.ChangeCapture() : null;
+        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m, true).toBuilder().changeCapture(capture).build());
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (capture != null) takeAutoBaseline(m, r, capture);   // §7.2 / §13: işçi bırakmadıysa (satırla aynı kapı)
         boolean ok = keywordOk(m, r);
         KeywordResult written = null;
         try {
@@ -6219,7 +6301,47 @@ public class SchedulerService {
         r.put("ok", ok);   // aktivite özeti için sağlıklı-mı bayrağı (found + adet koşulu)
         activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(written));
+        r.put("keyword_spec", keywordSpecHash(m));   // B13: dağıtık uygulayıcı güncel tanımla karşılaştırır
         return keywordOutcome(m, r);
+    }
+
+    /** Zamanlanmış kontrolde temel yoksa otomatik temel (insert-if-absent; iki pod → tek satır). Hata turu bozmaz. */
+    private void takeAutoBaseline(KeywordMonitor m, Map<String, Object> r,
+                                  com.sitemonitor.service.keyword.KeywordCheckSpec.ChangeCapture capture) {
+        if (keywordBaselines == null || capture.snapshot() == null || !Boolean.TRUE.equals(r.get("baseline_missing"))) return;
+        try {
+            if (keywordBaselines.takeAuto(m.getId(), capture.snapshot(), capture.bytes(), capture.specHash())) {
+                log.info("Anahtar kelime içerik temeli otomatik alındı: {} (#{})", m.getUrl(), m.getId());
+            }
+        } catch (Exception e) {
+            log.warn("Anahtar kelime içerik temeli alınamadı: {} — {}", m.getUrl(), e.getMessage());
+        }
+    }
+
+    /**
+     * Kontrol tanımı özeti (B13, §13) — kural / istek / boyut / değişim ayarlarının ilk 16 onaltılığı. Dağıtık işçinin sonucu
+     * GÜNCEL izlemenin özetiyle uyuşmazsa uygulayıcı düşürür (hedef parmak izi {@code url|keyword} DEĞİŞMEZ).
+     */
+    static String keywordSpecHash(KeywordMonitor m) {
+        StringBuilder b = new StringBuilder();
+        if (m.getRulesJson() != null && !m.getRulesJson().isBlank()) b.append("R:").append(m.getRulesJson());
+        else b.append("L:").append(m.getMatchOperator()).append('|').append(m.getMatchCount()).append('|')
+                .append(Boolean.TRUE.equals(m.getCaseSensitive()));
+        b.append('|').append(com.sitemonitor.service.keyword.rules.KeywordRules.effectiveLogic(m.getRuleLogic()))
+                .append('|').append(com.sitemonitor.service.keyword.KeywordText.scope(m.getMatchScope()))
+                .append('|').append(Boolean.TRUE.equals(m.getNormalizeWs()))
+                .append('|').append(com.sitemonitor.service.keyword.KeywordRequestRules.method(m.getMethod()))
+                .append('|').append(m.getExpectedStatus()).append('|').append(m.getExpectedFinalUrl())
+                .append('|').append(!Boolean.FALSE.equals(m.getFollowRedirects()))
+                .append('|').append(m.getMinBytes()).append('|').append(m.getMaxBytes())
+                .append('|').append(Boolean.TRUE.equals(m.getChangeDetect())).append('|').append(m.getChangeMask())
+                .append('|').append(m.getChangeSelector());
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(h).substring(0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return Integer.toHexString(b.toString().hashCode());
+        }
     }
 
     // ── HTTP / Website monitor sweep (serbest-form; envanter filtresi YOK) ────────
@@ -6409,7 +6531,9 @@ public class SchedulerService {
 
     /** Ham sonuçtan sweep şekline TAŞINAN ek anahtarlar (kw sözleşmesi §8.1 E1 + §5.2) — sırası sabit (JSON gidiş-dönüş). */
     static final java.util.List<String> KEYWORD_OUTCOME_EXTRA_KEYS = java.util.List.of(
-            "failure_reason", "failure_detail", "hints", "excerpt", "final_url", "status_accepted");
+            "failure_reason", "failure_detail", "hints", "excerpt", "final_url", "status_accepted",
+            // kw-be2 Aşama 2 (§10.6): seviye, kural özeti, içerik değişimi, tanım özeti
+            "level", "rules_summary", "content_changed", "change_summary", "baseline_taken_at", "baseline_source", "keyword_spec");
 
     /** Kontrol kararı: ham sonuçta {@code ok} varsa o; yoksa (eski pod / eski ham sonuç) bugünkü hesap (kw sözleşmesi §10.6). */
     public static boolean keywordOk(KeywordMonitor m, Map<String, Object> r) {
@@ -6422,10 +6546,32 @@ public class SchedulerService {
 
     /** İzlemenin kontrol tanımı — zamanlanmış tur, teyit / kurtarma ve yavaşlık yeniden ölçümü AYNI tanımı kurar. */
     private com.sitemonitor.service.keyword.KeywordCheckSpec keywordSpec(KeywordMonitor m) {
+        return keywordSpec(m, false);
+    }
+
+    /**
+     * İzlemenin kontrol tanımı — canlı ölçüm uçları (yeni temel, eşleşme bağlamları) zamanlanmış turla AYNI tanımı kurar (sırlar,
+     * vekil kararı). {@code withBaseline}: değişim açıksa temel yüklenir; {@code false} → değişim ölçülmez (çağıran açabilir).
+     */
+    public com.sitemonitor.service.keyword.KeywordCheckSpec keywordCheckSpec(KeywordMonitor m, boolean withBaseline) {
+        return keywordSpec(m, withBaseline);
+    }
+
+    /** {@code withBaseline}: içerik değişimi açıksa karşılaştırma temeli yüklenir (bir PK okuması; okunamazsa temel yok sayılır). */
+    private com.sitemonitor.service.keyword.KeywordCheckSpec keywordSpec(KeywordMonitor m, boolean withBaseline) {
         String headers = keywordHeaderSecrets == null ? null : keywordHeaderSecrets.effectiveHeaders(m);
         String pass = keywordHeaderSecrets == null ? null : keywordHeaderSecrets.basicAuthPass(m);
-        return com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, headers, pass,
-                viaProxyFor(m.getUrl(), m.getUseProxy())).build();
+        var b = com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, headers, pass,
+                viaProxyFor(m.getUrl(), m.getUseProxy()));
+        if (!withBaseline) b.changeDetect(false);   // temelsiz ölçüm (yavaşlık yeniden ölçümü): değişim parmak izi boşuna hesaplanmasın
+        else if (Boolean.TRUE.equals(m.getChangeDetect()) && keywordBaselines != null && m.getId() != null) {
+            try {
+                b.baseline(keywordBaselines.view(m.getId()));
+            } catch (Exception e) {
+                log.debug("Keyword içerik temeli okunamadı: {} — {}", m.getUrl(), e.getMessage());
+            }
+        }
+        return b.build();
     }
 
     /**
@@ -6478,6 +6624,13 @@ public class SchedulerService {
         for (String k : new String[] { "failure_reason", "failure_detail", "hints", "excerpt", "final_url" }) {
             if (r.get(k) != null) ctx.put(k, r.get(k));
         }
+        // kw-be2 Aşama 2 (§6.4): kural özeti (posta "Kural özeti" satırı) + seviye kuralın KENDİ eşiğinden geldiyse (izleme
+        // seviyesine eşitse yazılmaz — chanCtx zaten aynısını koyar; eski izlemenin bağlamı bugünküyle aynı)
+        if (r.get("rules_summary") != null) ctx.put("rules_summary", r.get("rules_summary"));
+        if (r.get("level") instanceof String lvl
+                && !lvl.equals(com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()))) {
+            ctx.put("alert_level", lvl);
+        }
         if (Boolean.TRUE.equals(r.get(MonitoringOutageService.CTX_CONFIG_ERROR))) ctx.put(MonitoringOutageService.CTX_CONFIG_ERROR, true);   // D-A3-6
         String kw = m.getKeyword() != null ? m.getKeyword() : "";
         return new MonitoringOutageService.SweepItem(
@@ -6496,6 +6649,11 @@ public class SchedulerService {
             Map<String, Object> r = keywordOutcome(m, rawCheckResult);
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_KEYWORD, List.of(keywordSweepItem(m, r)), true);
+            // kw-be2 Aşama 2: içerik temele döndüyse açık değişim alarmı uzlaştırılır (elle kontrol alarm AÇMAZ)
+            MonitoringOutageService.SweepItem change = keywordChangeSweepItem(m, r);
+            if (change != null) {
+                monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_CHANGED, List.of(change), true);
+            }
         } catch (Exception e) {
             log.warn("Manuel keyword değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
         }
@@ -11332,7 +11490,8 @@ public class SchedulerService {
             case com.sitemonitor.service.checks.CheckJobTypes.HTTP ->
                     List.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SLOW);
             case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD ->
-                    List.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW);
+                    List.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW,
+                            EscalationService.TYPE_KEYWORD_CHANGED);
             case com.sitemonitor.service.checks.CheckJobTypes.PAGE ->
                     List.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY);
             case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED ->
@@ -12073,7 +12232,7 @@ public class SchedulerService {
                         .map(m -> withCheckTarget(recheckHttp(m), httpCheckTarget(m))).orElse(null);
                 case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> keywordMonitorRepo.findById(monitorId)
                         .filter(m -> Boolean.TRUE.equals(m.getActive()))
-                        .map(m -> withCheckTarget(recheckKeyword(m), keywordCheckTarget(m))).orElse(null);
+                        .map(m -> withCheckTarget(recheckKeyword(m, true), keywordCheckTarget(m))).orElse(null);
                 case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> pageMonitorRepo.findById(monitorId)
                         .filter(m -> Boolean.TRUE.equals(m.getActive()))
                         .map(m -> withCheckTarget(recheckPage(m, false, "SINGLE_PAGE"), pageCheckTarget(m))).orElse(null);
@@ -12295,20 +12454,30 @@ public class SchedulerService {
                 var entries = resolveCheckResults(rows, keywordMonitorRepo::findAllById, KeywordMonitor::getId,
                         KeywordMonitor::getActive, SchedulerService::keywordCheckTarget, null);
                 if (entries.isEmpty()) return;
-                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>(),
+                        changeSweep = new ArrayList<>();
                 for (var e : entries) {
                     KeywordMonitor m = e.getKey();
+                    // B13 (§12): işçi ESKİ tanımla ölçtüyse (kural / istek / boyut / değişim ayarı arada değişti) sonuç düşer;
+                    // anahtar YOKSA (eski işçi) eşleşmiş sayılır — karışık pod'da eski sonuçlar düşmesin
+                    Object spec = e.getValue().get("keyword_spec");
+                    if (spec != null && !String.valueOf(spec).equals(keywordSpecHash(m))) {
+                        checkResultsDroppedTarget.incrementAndGet();
+                        continue;
+                    }
                     try {
                         sweep.add(keywordSweepItem(m, e.getValue()));
                         MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, e.getValue());
                         if (slow != null) slowSweep.add(slow);
+                        MonitoringOutageService.SweepItem change = keywordChangeSweepItem(m, e.getValue());
+                        if (change != null) changeSweep.add(change);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
                         log.warn("Keyword check failed for {}: {}", m.getUrl(), ex.getMessage());
                     }
                 }
                 noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD);   // R3-3 B-MOS: pencere = klasik
-                feedKeywordSweep(sweep, slowSweep);
+                feedKeywordSweep(sweep, slowSweep, changeSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> {
                 var entries = resolveCheckResults(rows, pageMonitorRepo::findAllById, com.sitemonitor.model.PageMonitor::getId,

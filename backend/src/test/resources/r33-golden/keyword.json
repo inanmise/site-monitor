@@ -304,7 +304,8 @@
           "http_status": 200,
           "response_ms": 100,
           "snippet": "… Hoş geldiniz …",
-          "ok": true
+          "ok": true,
+          "keyword_spec": "4b4b449a431556b9"
         },
         {
           "checkId": null,
@@ -372,7 +373,8 @@
           "count": 0,
           "http_status": 200,
           "response_ms": 900,
-          "ok": false
+          "ok": false,
+          "keyword_spec": "4b4b449a431556b9"
         },
         {
           "checkId": null,
@@ -440,7 +442,8 @@
           "http_status": 503,
           "response_ms": 30,
           "error": "HTTP 503",
-          "ok": false
+          "ok": false,
+          "keyword_spec": "4b4b449a431556b9"
         },
         {
           "checkId": null,
@@ -507,7 +510,8 @@
           "found": false,
           "error": "URL'de host yok",
           "config_error": true,
-          "ok": false
+          "ok": false,
+          "keyword_spec": "4b4b449a431556b9"
         },
         {
           "checkId": null,
@@ -575,7 +579,8 @@
           "count": 2,
           "http_status": 200,
           "response_ms": 50,
-          "ok": false
+          "ok": false,
+          "keyword_spec": "a270b5c9b446d96c"
         },
         {
           "checkId": null,
@@ -594,42 +599,42 @@
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=c-yok, keyword=y, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=c-yok, keyword=y, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=https://a.example.com/, keyword=Hoş geldiniz, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=https://a.example.com/, keyword=Hoş geldiniz, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=https://b.example.com/, keyword=Ödeme, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=https://b.example.com/, keyword=Ödeme, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=https://boom.example.com/, keyword=q, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=https://boom.example.com/, keyword=q, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=https://c.example.com/, keyword=x, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=https://c.example.com/, keyword=x, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "KeywordCheckSpec[url=https://e.example.com/, keyword=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz, condition=LTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
+        "KeywordCheckSpec[url=https://e.example.com/, keyword=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz, condition=LTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true, rules=legacy, logic=AND, size=null..null, change=false]"
       ]
     }
   ]
