@@ -1,9 +1,135 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T02:47:14Z",
+  "generatedAt": "2026-11-05T03:46:41Z",
   "repo": "inanmise/site-monitor",
-  "count": 801,
+  "count": 802,
   "releases": [
+    {
+      "version": "20.180.0",
+      "tag": "v20.180.0",
+      "releasedAt": "2026-11-05T03:46:33Z",
+      "commit": "028bcfe5083c148cf0b91d97a50796ae612a27e7",
+      "prevVersion": "20.179.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "6c6a9265",
+          "subject": "CSV kaçışı kapısı — dbquery SQL tanımlayıcı tırnaklaması gerekçeli istisna"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "10952014",
+          "subject": "dbquery kullanıcı deneyimi — inceleme düzeltmelerinin belgesi (bağlantı denemesi kotası, etkileşimli denetim kapısı, kontrollü uyum, örnek yetersiz)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0002ae65",
+          "subject": "dbquery ön yüz inceleme düzeltmeleri — bağlantı dizesi parolası forma taşınmaz, toplu oluşturmada yeniden deneme ve \"sonuç bilinmiyor\", 429 hata gibi boyanmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2ebc80a5",
+          "subject": "dbquery akıllı kural inceleme düzeltmeleri — ihlal satırları tabandan dışlanır (kontrollü uyum), örnek yetersiz notu, eşik denemesi çalıştırma sayısıyla, saklama denetimi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9e48b129",
+          "subject": "dbquery inceleme düzeltmeleri — maskeli kolon ölçüsü postada gizli, etkileşimli denetim kapısı, bağlantı sağlığı yalnız bağlantı hataları, deneme kotası, eğilim tek uçuş"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "648c8bdb",
+          "subject": "dbquery kullanıcı deneyimi paketleri (bağlantı teşhisi, hızlı ekle, deneyim, akıllı kurallar)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f0e7aa99",
+          "subject": "dbquery hızlı ekleme — dokunma hedefleri, toplu seçim kutusu adı, test ve e2e düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "51b65a62",
+          "subject": "dbquery deneme ucu kural sonucunu ortak eşleyiciden döndürür (parmak izi + akıllı kural taban özeti)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f288a09a",
+          "subject": "dbquery deneyim e2e'si kırpma ve dokunma ölçümünü bu sürümün yüzeyleriyle sınırlar"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "294ba08b",
+          "subject": "dbquery bağlantı testi adımları, bağlantı sağlık ucu, SQL düzeltme önerisi, kart değer eğilimi, grafik işaretleri ve alarm postası geçmişi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7f14e6a2",
+          "subject": "dbquery akıllı kural alarm testinde kullanılmayan yardımcı kaldırıldı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "fbd29d97",
+          "subject": "dbquery akıllı kurallar — olağan dışı değer (ANOMALY) ve donmuş değer (FROZEN) arka ucu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ff867d6b",
+          "subject": "\"Şu an ihlalde\" süzgeci sayım kartı süzgeci yokken de uygulanır"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1b537472",
+          "subject": "dbquery hızlı bağlantı ve hızlı ekleme arayüzü (dizeden doldurma, adım adım teşhis, sağlık kartı, sihirbaz, güvenli düzeltme, toplu izleme, DBA şablonları)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "e239dceb",
+          "subject": "veritabanı sorgu izlemesi deneyimi — değer eğilimi, odak görünümleri, grafik olayları, eşik önerisi, akıllı kurallar, Panom \"Veri kuralları\""
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.179.0",
       "tag": "v20.179.0",
