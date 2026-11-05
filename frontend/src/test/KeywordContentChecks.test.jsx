@@ -23,6 +23,7 @@ describe('contentChecksModel', () => {
   it('birim: KB’ye tam bölünen değer KB görünür; yazılan metin + birim → bayt; geçersiz metin ham kalır', () => {
     expect(unitFor(2000)).toBe('KB')
     expect(unitFor(1500)).toBe('B')
+    expect(unitFor(null)).toBe('KB')   // boş alan KB ile başlar
     expect(sizeText(2000, 'KB')).toBe('2')
     expect(sizeText(1500, 'KB')).toBe('1500')
     expect(parseSize('3', 'KB')).toBe(3000)
@@ -140,7 +141,11 @@ describe('KeywordContentChecks', () => {
     expect(state().minBytes).toBe(5000)
     fireEvent.change(document.querySelector('[data-slot="kw-content-minBytes-unit"]'), { target: { value: 'B' } })
     expect(state().minBytes).toBe(5)
+    // Boş alan KB ile başlar: 3 KB = 3000 > 5 bayt → hata yok; B'ye geçince 3 bayt < 5 bayt → sıra hatası
+    expect(document.querySelector('[data-slot="kw-content-maxBytes-unit"]').value).toBe('KB')
     fireEvent.change(document.querySelector('[data-slot="kw-content-maxBytes"]'), { target: { value: '3' } })
+    expect(state().maxBytes).toBe(3000)
+    fireEvent.change(document.querySelector('[data-slot="kw-content-maxBytes-unit"]'), { target: { value: 'B' } })
     fireEvent.blur(document.querySelector('[data-slot="kw-content-maxBytes"]'))
     expect(document.querySelector('[data-field="maxBytes"]')).toHaveTextContent(/En az değeri en fazla değerinden büyük olamaz/)
   })

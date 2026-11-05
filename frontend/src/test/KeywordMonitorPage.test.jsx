@@ -80,9 +80,12 @@ describe('KeywordMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
 
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
-    // Varsayılan GTE / 1 → "en az 1 kez" (sağlıklı) + "hiç bulunmazsa" (alarm) — artık arayüz dilinde (QA ISSUE-006)
-    expect(screen.getByText(/en az 1 kez|at least 1 times/)).toBeInTheDocument()
-    expect(screen.getByText(/hiç bulunmazsa|does not appear on the page at all/)).toBeInTheDocument()
+    // kw fe2 (Aşama 2): koşul kural kartında — desen yazılana kadar açıklama beklemede, yazınca sağlıklı + alarm cümlesi
+    // (arayüz dilinde, sözlükten — QA ISSUE-006)
+    expect(document.querySelector('[data-slot="kw-rules-editor"]')).not.toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'Hoş geldiniz' } })
+    expect(document.querySelector('[data-slot="kw-rule-desc-healthy"]').textContent).toMatch(/Hoş geldiniz/)
+    expect(document.querySelector('[data-slot="kw-rule-desc-warning"]').textContent).toMatch(/Hoş geldiniz/)
   })
 
   it('Yeni modal: Test butonu testKeyword çağırır ve sonucu gösterir', async () => {

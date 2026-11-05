@@ -476,6 +476,23 @@ export function validateRule(rule, index) {
   return out
 }
 
+/**
+ * Sunucu alan hataları: eski tek kural anahtarları (`keyword`, `matchCount`, `operator`, `caseSensitive`) form artık kural
+ * kartıyla çizildiği için kural #1'in alanına taşınır — `keyword` → `rules[0].pattern`, sayı / işleç → `rules[0].count`
+ * (karttaki karşılık zaten varsa dokunulmaz). Diğer anahtarlar aynen kalır. Saf.
+ */
+export function legacyRuleErrors(errs) {
+  const src = errs && typeof errs === 'object' ? errs : {}
+  const out = {}
+  const MAP = { keyword: 'rules[0].pattern', caseSensitive: 'rules[0].pattern', matchCount: 'rules[0].count', operator: 'rules[0].count' }
+  for (const [k, v] of Object.entries(src)) {
+    if (!v) continue
+    const to = MAP[k]
+    if (to) { if (!out[to] && !src[to]) out[to] = v } else out[k] = v
+  }
+  return out
+}
+
 /** Bütün liste: liste düzeyi (`rules`: boş / çok) + kural alanları + mükerrer kimlik. */
 export function validateRules(rules) {
   const list = Array.isArray(rules) ? rules : []

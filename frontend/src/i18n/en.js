@@ -18118,6 +18118,7 @@ export const EN = {
   'keyword.rule.logic.OR': 'OR — any',
   'keyword.rule.logicShort.AND': 'AND',
   'keyword.rule.logicShort.OR': 'OR',
+  'keyword.rule.rulesLabel': 'Rules',
   'keyword.rule.logicHint.AND': 'Every rule must hold; one failing rule raises the alarm. When several rules fail, the highest level wins.',
   'keyword.rule.logicHint.OR': 'At least one rule must hold; the alarm is raised only when none of them hold. The mildest failure sets the level.',
   'keyword.rule.badge': '{0} rules · {1}',

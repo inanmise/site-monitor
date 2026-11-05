@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   RULE_LIMITS, alarmOf, applyMode, boundary, cleanRule, combinedLevel, criticalPossible, defaultCritical, describeRule, family,
   formPatchFromRules, healthyOf, holds, isSimpleRule, legacyRule, logicOf, modeOf, moveRule, newRule, newRuleId, normalizeRule,
-  cssSelectorProblem, parseCount, regexMatchesEmpty, regexSyntaxError, ruleLevelFor, ruleProblemText, ruleSetBadge, rulesFromForm, rulesFromRow, rulesSignature,
+  cssSelectorProblem, legacyRuleErrors, parseCount, regexMatchesEmpty, regexSyntaxError, ruleLevelFor, ruleProblemText, ruleSetBadge, rulesFromForm, rulesFromRow, rulesSignature,
   toPayload, unsupportedRegex, validateRule, validateRules,
 } from '../components/keyword/rules/ruleModel.js'
 import { TR } from '../i18n/tr.js'
@@ -176,6 +176,14 @@ describe('ruleModel — doğrulama (sunucu aynası)', () => {
   ]
   it.each(okCases.map((r) => [JSON.stringify(r.pattern) + ' ' + r.operator, r]))('geçerli: %s', (_, r) => {
     expect(validateRule(r, 0)).toEqual({})
+  })
+
+  it('sunucu hatası: eski koşul anahtarları kural #1 alanına taşınır; kural anahtarı varsa ezilmez; diğerleri aynen', () => {
+    expect(legacyRuleErrors({ keyword: 'mükerrer', url: 'geçersiz', matchCount: 'çok büyük' }))
+      .toEqual({ 'rules[0].pattern': 'mükerrer', url: 'geçersiz', 'rules[0].count': 'çok büyük' })
+    expect(legacyRuleErrors({ keyword: 'eski', 'rules[0].pattern': 'yeni' })).toEqual({ 'rules[0].pattern': 'yeni' })
+    expect(legacyRuleErrors({ operator: 'x', 'rules[1].scope': 'y', minBytes: '' })).toEqual({ 'rules[0].count': 'x', 'rules[1].scope': 'y' })
+    expect(legacyRuleErrors(null)).toEqual({})
   })
 
   it('liste: boş / 10 üstü / mükerrer kimlik', () => {

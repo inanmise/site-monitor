@@ -35,6 +35,7 @@ export function maskList(raw) {
 
 /** Bayt değeri → görüntü birimi (KB'ye tam bölünüyorsa KB). */
 export function unitFor(bytes) {
+  if (bytes == null || bytes === '') return 'KB'   // boş alan: sayfa boyutları KB ile düşünülür
   return typeof bytes === 'number' && bytes >= 1000 && bytes % 1000 === 0 ? 'KB' : 'B'
 }
 

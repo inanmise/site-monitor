@@ -230,7 +230,7 @@ function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, cl
           {({ id, describedBy, invalid }) => (
             <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} data-slot="kw-rule-pattern"
               className={cn(CONTROL, 'font-mono')} value={rule.pattern ?? ''} autoComplete="off" spellCheck={false}
-              placeholder={rule.kind === 'REGEX' ? 'Sipariş no: \\d{6}' : 'Sepete ekle'}
+              placeholder={rule.kind === 'REGEX' ? 'Sipariş no: \\d{6}' : 'SUCCESS'}
               onChange={(e) => onChange({ ...rule, pattern: e.target.value })} onBlur={blur('pattern')} />
           )}
         </Field>

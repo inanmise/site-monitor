@@ -16,7 +16,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy, Stethoscope } from 'lucide-react'
+import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy, Stethoscope, FileSearch } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -69,6 +69,14 @@ import KeywordRequestSection from './keyword/KeywordRequestSection.jsx'
 import KeywordMatchSection from './keyword/KeywordMatchSection.jsx'
 import KeywordSameUrlNotice from './keyword/KeywordSameUrlNotice.jsx'
 import KeywordMailSubjectField from './keyword/KeywordMailSubjectField.jsx'
+// kw fe2 (Aşama 2): çoklu kural düzenleyici, kural sonuçları, içerik kontrolleri (boyut + değişim)
+import KeywordRulesEditor from './keyword/rules/KeywordRulesEditor.jsx'
+import RuleTestResults, { ruleResultsOf } from './keyword/rules/RuleTestResults.jsx'
+import {
+  legacyRuleErrors, logicOf, ruleProblemText, ruleSetBadge, rulesFromForm, rulesFromRow, toPayload, validateRules,
+} from './keyword/rules/ruleModel.js'
+import KeywordContentChecks from './keyword/content/KeywordContentChecks.jsx'
+import { contentFormFrom, validateContentChecks } from './keyword/content/contentChecksModel.js'
 import {
   KW_EMPTY_FORM, affectsCheck, hasRenderableField, keywordFormFrom, keywordPayload, keywordTestPayload, sectionsForErrors,
   serverFieldErrors, storedSecretsOf, validateKeywordForm,
@@ -82,6 +90,9 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // Keyword uçtan uca tanılama penceresi (2026-10-04) — tembel: yalnız açılınca iner, sayfa paketi büyümez
 const KeywordDiagnoseDialog = lazy(() => import('./keyword/diagnose/KeywordDiagnoseDialog.jsx'))
+// kw fe2: "İçerik" sekmesi (grafik kitaplığı kendi içinde tembel) ve "Sentetik izlemeye dönüştür" penceresi — tembel parçalar
+const KeywordContentTab = lazy(() => import('./keyword/detail/KeywordContentTab.jsx'))
+const ConvertToSyntheticDialog = lazy(() => import('./keyword/k6/ConvertToSyntheticDialog.jsx'))
 /** Kontrol geçmişi tablo ↔ kart eşiği (kap genişliği, px) — açılan teşhis paneli dar kapta kart altına iner. */
 const HISTORY_CARDS_BELOW = 640
 
@@ -104,6 +115,8 @@ const intervalIdx = (secs) => {
   return best
 }
 const REFRESH_INTERVAL = 60
+/** İçerik kontrollerinin form / hata anahtarları (kw fe2). */
+const CONTENT_KEYS = ['minBytes', 'maxBytes', 'changeDetect', 'changeMask', 'changeSelector']
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 // Formun boş hâli keyword/keywordFormModel'de (kw 2026-11-05: eşleşme, gelişmiş istek, posta konusu, fe2 kural alanları).
 // Bildirim grubu + 7/24 alanları BURADA: izleme formu bağlantı kapısı (monitorFormWiring) halkaları sayfa dosyasında arar.
@@ -223,6 +236,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // hatası (istemci ya da sunucu) bir bölümün alanındaysa o bölüm açılır (kapalıyken içerik DOM'da yok, alana kaydırılamaz)
   const [matchOpen, setMatchOpen] = useState(false)
   const [reqOpen, setReqOpen] = useState(false)
+  // kw fe2: kural / içerik kontrollerinin istemci hataları kayıt ya da test denemesinden sonra dokunulmamış alanda da görünür
+  const [rulesTried, setRulesTried] = useState(false)
+  // "Sentetik izlemeye dönüştür" penceresi (kw F1) — açık olduğu izleme
+  const [convertFor, setConvertFor] = useState(null)
   const [saving, setSaving] = useState(false)
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
   // once biten, hala sureni kilitten cikarmasin.
@@ -372,7 +389,28 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids) }
   }
   /** Açılır bölümler her form açılışında kapalı başlar. */
-  function resetSections() { setAdvOpen(false); setMatchOpen(false); setReqOpen(false) }
+  function resetSections() { setAdvOpen(false); setMatchOpen(false); setReqOpen(false); setRulesTried(false) }
+  /**
+   * kw fe2: gönderilecek form — düzenleyicinin kural listesi BASİT TEK KURALA indiyse `rules: null` + eski koşul alanları
+   * (sözleşme §6.6: eski izleme eski biçimde kalır). Düzenleme sırasında `form.rules` dizi olarak tutulur (kart kimliği ve
+   * odak korunur); dönüşüm yalnız kayıt / test anında.
+   */
+  function sendableForm(f) {
+    if (!Array.isArray(f.rules)) return f
+    const p = toPayload(rulesFromForm(f), f.ruleLogic)   // kurallar temizlenir: sayılar sayı, kapsam / etiket kırpılmış
+    if (!p.rules) return { ...f, rules: null, ruleLogic: 'AND', keyword: p.keyword, operator: p.operator, matchCount: p.matchCount, caseSensitive: p.caseSensitive }
+    const first = p.rules[0]
+    return { ...f, rules: p.rules, ruleLogic: p.ruleLogic, keyword: first.pattern, operator: first.operator, matchCount: first.count, caseSensitive: first.case_sensitive }
+  }
+  /** kw fe2: kuralların + içerik kontrollerinin istemci doğrulaması → `{ anahtar: ileti }` (`rules[i].x`, `minBytes` …). */
+  function ruleContentErrors(f) {
+    const out = {}
+    for (const [k, p] of Object.entries(validateRules(rulesFromForm(f)))) out[k] = ruleProblemText(p, t)
+    for (const [k, p] of Object.entries(validateContentChecks(f))) out[k] = t(`keyword.content.v.${p.code}`, ...(p.params || []))
+    return out
+  }
+  /** Sunucu alan hataları: eski koşul anahtarları (`keyword`, `matchCount` …) kural #1'in alanına taşınır. */
+  function remapServerErrors(errs) { return legacyRuleErrors(errs) }
   /** Hata haritasındaki alanların bölümlerini açar (içerik DOM'a girer → ilk hatalı alana kaydırma çalışır). */
   function openSectionsFor(errs) {
     const secs = sectionsForErrors(errs)
@@ -402,16 +440,17 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   // Canlı koşul testi — kaydetmeden formdaki değerlerle URL'yi çekip koşulu değerlendirir.
   async function runTest() {
-    if (!form.url.trim() || !form.keyword.trim()) return
+    if (!form.url.trim()) return
+    setRulesTried(true)
     // Yeni alanların istemci doğrulaması (kw 2026-11-05): hatalı durum kodu / son adres / User-Agent sunucuya gitmeden alanın
     // altında gösterilir (kapalı bölüm açılır).
-    const errs = validateKeywordForm(form, { globalAdmin, t })
+    const errs = { ...validateKeywordForm(form, { globalAdmin, t }), ...ruleContentErrors(form) }
     if (Object.values(errs).some(Boolean)) { openSectionsFor(errs); fe.check(errs); return }
     // Düzenlenen kayıtlı izlemede kutuya yazılmamış sır (Basic auth parolası, global admin'in özel başlıkları) KAYITLI değeriyle
     // denensin (`useSaved` — sunucu düzenleme yetkisini denetler). Özel başlıklar YALNIZ global admin'de (2026-10-22, UIM-15):
     // sunucu kapsamlı yöneticinin başlıklarını yok sayar — gönderilen başlıklar testi yanıltırdı.
     const editing = !!modal && typeof modal === 'object'
-    const payload = keywordTestPayload(form, {
+    const payload = keywordTestPayload(sendableForm(form), {
       globalAdmin, monitorId: editing ? modal.id : null, stored: editing ? storedSecretsOf(modal) : null,
     })
     const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
@@ -421,7 +460,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       if (res?.success) { setTestResult({ ...res.data, requested_saved: payload.useSaved || null }); return }
       // Sunucunun alan hatası (400 VALIDATION_FAILED + field) alanın altına da düşer
-      const fieldErrs = serverFieldErrors(res)
+      const fieldErrs = remapServerErrors(serverFieldErrors(res))
       if (hasRenderableField(fieldErrs)) { openSectionsFor(fieldErrs); fe.check(fieldErrs) }
       setTestResult({ error: res?.error || t('keyword.testError') })
     } finally {
@@ -435,19 +474,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     // aynası da burada; hatalı alan kapalı bir bölümdeyse bölüm açılır.
     const errs = {
       url: !form.url.trim() && t('mon.fieldRequired'),
-      keyword: !form.keyword.trim() && t('mon.fieldRequired'),
       teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
       ...validateKeywordForm(form, { globalAdmin, t }),
-      // kw-fe2: kural doğrulaması
+      // kw-fe2: kural doğrulaması (boş desen kural #1'in alanında — eski "anahtar kelime zorunlu" denetiminin yerine) + içerik kontrolleri
+      ...ruleContentErrors(form),
     }
+    setRulesTried(true)
     if (Object.values(errs).some(Boolean)) { openSectionsFor(errs); fe.check(errs); return }
     const isNew = modal === 'new'
     // Yeni kayıt (Kopyala dahil) TAM yük; düzenleme YALNIZ değişen alanlar (B14, "Before a feature counts as done" madde 9) —
     // aynı izlemeyi açık tutan başka bir yöneticinin o arada kaydettiği alan (toplu duraklatma, taşıma …) geri yazılmaz.
     // Sırlar yalnız yazıldıysa; başlıklar yalnız global admin'den (sunucu: isGlobalAdmin).
-    const payload = keywordPayload(form, isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
+    const payload = keywordPayload(sendableForm(form), isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
     if (!isNew && Object.keys(payload).length === 0) { toast.info(t('keyword.adv.noChanges')); closeEdit(); return }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -459,7 +499,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       await load(); setSaving(false)
       if (!res?.success) {
         // Sunucunun alan hatası (400 VALIDATION_FAILED + field, istek anahtarı = form anahtarı) alanın altına; alana düşmüyorsa tost
-        const fieldErrs = serverFieldErrors(res)
+        const fieldErrs = remapServerErrors(serverFieldErrors(res))
         if (hasRenderableField(fieldErrs)) { openSectionsFor(fieldErrs); fe.check(fieldErrs); return }
         toast.error(res?.error || 'Error'); return
       }
@@ -695,17 +735,6 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   function expectPhrase(op, n) {
     return t(`keyword.expect.${['LTE', 'EQ', 'GT', 'LT'].includes(op) ? op : 'GTE'}`, n)
   }
-  // Alarmın HANGİ durumda tetikleneceği (koşulun sağlanmadığı taraf).
-  function triggerPhrase(op, n, kw) {
-    const k = kw && kw.trim() ? `« ${kw.trim()} »` : t('keyword.theKeyword')
-    switch (op) {
-      case 'LTE': return n === 0 ? t('keyword.trig.LTE0', k) : t('keyword.trig.LTE', k, n)
-      case 'EQ':  return t('keyword.trig.EQ', k, n)
-      case 'GT':  return t('keyword.trig.GT', k, n)
-      case 'LT':  return t('keyword.trig.LT', k, n)
-      default:    return n <= 1 ? t('keyword.trig.GTE1', k) : t('keyword.trig.GTE', k, n)
-    }
-  }
 
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
@@ -717,6 +746,33 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   // Test sonucu: `ok` (kw 2026-11-05 — durum kodu / son adres kuralı dahil karar) yoksa eski `condition_met` (eski sunucu)
   const testOk = !!testResult && !testResult.error && (typeof testResult.ok === 'boolean' ? testResult.ok : !!testResult.condition_met)
+  // Birden çok kural sınandıysa tek kelimelik "« kelime » N bulundu" cümlesi yanıltır — kural listesi gösterilir
+  const testMulti = (ruleResultsOf(testResult?.rule_results)?.length || 0) > 1
+  // kw fe2: düzenleyicinin kural listesi (form değişmedikçe aynı nesne — kart kimliği / odak korunur)
+  const editorRules = useMemo(() => rulesFromForm(form),
+    [form.rules, form.keyword, form.operator, form.matchCount, form.caseSensitive])   // eslint-disable-line react-hooks/exhaustive-deps
+  const ruleErrors = useMemo(() => Object.fromEntries(Object.entries(fe.errors || {})
+    .filter(([k, v]) => v && (k === 'rules' || k.startsWith('rules[')))), [fe.errors])
+  const contentErrors = useMemo(() => Object.fromEntries(Object.entries(fe.errors || {})
+    .filter(([k, v]) => v && CONTENT_KEYS.includes(k))), [fe.errors])
+  /** Kural düzenleyicisi değişti: form alanları + değişen kuralın (sıra değiştiyse hepsinin) eski hata iletisi kalkar. */
+  function onRulesChange(next, logic) {
+    const prev = editorRules
+    const first = next[0] || {}
+    setForm((f) => ({ ...f, rules: next, ruleLogic: logic === 'OR' ? 'OR' : 'AND',
+      keyword: first.pattern ?? '', operator: first.operator || 'GTE', matchCount: first.count, caseSensitive: !!first.case_sensitive }))
+    const reorder = next.length !== prev.length || next.some((r, i) => r?.id !== prev[i]?.id)
+    for (const k of Object.keys(fe.errors || {})) {
+      if (k === 'rules') { fe.clear(k); continue }
+      const m = /^rules\[(\d+)\]/.exec(k)
+      if (m && (reorder || next[Number(m[1])] !== prev[Number(m[1])])) fe.clear(k)
+    }
+  }
+  /** İçerik kontrolleri değişti: alanlar + o alanların eski hata iletisi. */
+  function onContentChange(patch) {
+    setForm((f) => ({ ...f, ...patch }))
+    for (const k of Object.keys(patch || {})) if (CONTENT_KEYS.includes(k)) fe.clear(k)
+  }
 
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
@@ -727,14 +783,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       duplicate={!!dupSource} busy={saving}
       // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
       busyLabel={saving ? t('mon.saving') : testing ? t('keyword.testing') : null}
+      // kw fe2: boş / hatalı desen düğmeyi KAPATMAZ — kayıt / test denemesi hatayı kuralın alanının altında söyler
       footer={<>
         <Button variant="secondary" className="mr-auto" onClick={runTest}
-          aria-busy={testing || undefined} disabled={testing || !form.url.trim() || !form.keyword.trim()}>
+          aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
           <FlaskConical size={14} />{t('keyword.test')}
         </Button>
         {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</Button>}
         <Button variant="secondary" onClick={closeEdit}>{t('keyword.cancel')}</Button>
-        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('keyword.save')}</Button>
       </>}>
       {dupSource
         ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
@@ -761,27 +818,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         {/* Aynı URL'yi izleyen başka izleme (kw kararı 4): alarmlar tek olayı paylaşır — URL yazılırken gecikmeli denetim; düzenlemede
             kaydın kendisi hariç. Okunamazsa "denetlenemedi" (asla "yok"); eski sunucuda (404 / 405) hiçbir şey çizilmez. */}
         <KeywordSameUrlNotice url={form.url} excludeId={modal && typeof modal === 'object' ? modal.id : null} />
-        {/* ── kw-fe2: KURAL BÖLÜMÜ ── */}
-        <FormField label={t('keyword.operator')}>
-          {({ id }) => (
-            <SearchableSelect id={id} value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
-              options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
-                { value: 'EQ', label: t('keyword.opEq') }, { value: 'GT', label: t('keyword.opGt') },
-                { value: 'LT', label: t('keyword.opLt') }]} />
-          )}
-        </FormField>
-        <FormField label={t('keyword.matchCount')}>
-          {({ id }) => <Input id={id} type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} />}
-        </FormField>
-        {/* Koşulun canlı açıklaması — yazdıkça değişir; role="note": canlı bölge DEĞİL (her tuşta duyurulmasın). */}
-        <AlertBanner tone="info" role="note" className="mb-0 sm:col-span-2">
-          <div><Check size={12} aria-hidden="true" className="inline align-[-2px] text-success" /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
-          <div className="mt-1"><AlertTriangle size={12} aria-hidden="true" className="inline align-[-2px] text-destructive" /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
-        </AlertBanner>
-        <FormField label={t('keyword.keyword')} required>
-          {({ id }) => <Input id={id} value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} />}
-        </FormField>
-        <CheckField checked={form.caseSensitive} onCheckedChange={v => setForm(f => ({ ...f, caseSensitive: v }))} label={t('keyword.caseSensitive')} className="self-center" />
+        {/* ── kw-fe2: KURAL BÖLÜMÜ ── çoklu kural (≤ 10, VE / VEYA, metin / düzenli ifade, kapsam, iki eşik); eski izleme tek
+            kuralla açılır. Hatalar `rules[i].x` alanının altında; değişen kuralın eski iletisi kalkar. */}
+        <LabelSlot full>
+          <KeywordRulesEditor rules={editorRules} logic={logicOf(form)} onChange={onRulesChange}
+            errors={ruleErrors} showErrors={rulesTried} monitorLevel={form.alertLevel || 'WARNING'} />
+        </LabelSlot>
         {/* ── /kw-fe2 ── */}
         {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
         <LabelSlot full>
@@ -838,7 +880,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           <FormHint full={false}>{t('keyword.whoisHint')}</FormHint>
         </FormSection>
 
-        {/* ── kw-fe2: İÇERİK KONTROLLERİ ── */}
+        {/* ── kw-fe2: İÇERİK KONTROLLERİ ── sayfa boyutu aralığı + içerik değişimi (düzenlemede değişim ayarı temeli sıfırlarsa söyler) */}
+        <KeywordContentChecks value={form} onChange={onContentChange} errors={contentErrors} showErrors={rulesTried}
+          stored={modal && typeof modal === 'object' ? contentFormFrom(modal) : null} />
 
         {/* kw 2026-11-05: eşleşme kapsamı + normalleştirme, gelişmiş istek (yöntem / gövde / kimlik / UA / durum kodu / son adres /
             yönlendirme), özel posta konusu. İki bölüm varsayılan KAPALI; hatalı alan varken açılır. */}
@@ -899,14 +943,20 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           {testResult.error
             ? testResult.error
             : <>
-                {'« '}{form.keyword}{' » '}{testResult.occurrences} {t('keyword.testFound')} · {t('keyword.testRequired')}: {testResult.phrase}
+                {!testMulti && <>{'« '}{form.keyword}{' » '}{testResult.occurrences} {t('keyword.testFound')} · {t('keyword.testRequired')}: {testResult.phrase}</>}
                 {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
                 {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
                 <KeywordTestExtras result={testResult} expectedStatus={form.expectedStatus} t={t} />
               </>}
         </AlertBanner>
       )}
-      {/* ── kw-fe2: KURAL TEST SONUÇLARI ── */}
+      {/* ── kw-fe2: KURAL TEST SONUÇLARI ── her kuralın sonucu + birleşik seviye + boyut (sunucu `rule_results`, `level`, `size_ok`) */}
+      {testResult && !testResult.error && (ruleResultsOf(testResult.rule_results) || typeof testResult.size_ok === 'boolean') && (
+        <div className="mt-2 min-w-0" data-slot="kw-test-rules">
+          <RuleTestResults results={testResult.rule_results} rules={rulesFromForm(form)} level={testResult.level}
+            sizeOk={typeof testResult.size_ok === 'boolean' ? testResult.size_ok : null} monitorLevel={form.alertLevel || 'WARNING'} />
+        </div>
+      )}
       {/* Test başarısızsa (2026-10-04, kullanıcı isteği): kontrol geçmişindeki teşhis panelinin AYNISI — Neden / Etkisi /
           Ne yapmalı, yanıt bilgisi (son adres, yönlendirme, içerik türü, boyut, karakter kümesi), ipuçları ve maskeli alıntı.
           Kaydedilmemiş formda uçtan uca tanılama yok (izleme kimliği gerekir) — düğme çizilmez. */}
@@ -914,7 +964,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         <div className="mt-2 min-w-0" data-slot="kw-test-diagnosis">
           <KeywordFailurePanel check={{ ...testResult, ok: false }}
             monitor={{ keyword: form.keyword, operator: form.operator, match_count: Number(form.matchCount),
-              case_sensitive: !!form.caseSensitive, url: normalizeUrl(form.url), timeout_ms: Number(form.timeoutMs) }} />
+              case_sensitive: !!form.caseSensitive, url: normalizeUrl(form.url), timeout_ms: Number(form.timeoutMs),
+              rules: Array.isArray(form.rules) ? rulesFromForm(form) : undefined, rule_logic: logicOf(form),
+              alert_level: form.alertLevel }} />
         </div>
       )}
       {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
@@ -1036,6 +1088,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   <Stethoscope size={13} aria-hidden="true" />
                 </Button>
               )}
+              {/* kw F1: anahtar kelime izlemesinden sentetik (k6) izleme taslağı — yalnız düzenleme yetkisinde */}
+              {canManageRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="kw-k6-convert-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => setConvertFor(selected)} title={t('keyword.k6.convert')} aria-label={t('keyword.k6.convert')}>
+                  <FlaskConical size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -1044,7 +1104,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             { key: 'ok', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—', label: t('keyword.sumOk'), hint: t('keyword.sumOkHint') },
             { key: 'total', value: summary.total, label: t('keyword.sumTotal'), hint: t('keyword.sumTotalHint') },
             { key: 'inc', value: summary.down, label: t('keyword.sumIncidents'), hint: t('keyword.sumIncidentsHint') },
-            { key: 'kw', value: selected.keyword, label: t('keyword.keyword') },
+            ruleSetBadge(rulesFromRow(selected), logicOf(selected), t)
+              ? { key: 'kw', value: ruleSetBadge(rulesFromRow(selected), logicOf(selected), t), label: t('keyword.rule.rulesLabel') }
+              : { key: 'kw', value: rulesFromRow(selected)[0]?.kind === 'REGEX' ? `/${rulesFromRow(selected)[0].pattern}/` : selected.keyword, label: t('keyword.keyword') },
             selected.http_status != null && { key: 'http', value: selected.http_status, label: 'HTTP' },
             selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('keyword.lastCheck'), time: true },
           ]} />
@@ -1060,7 +1122,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           ]} />
           <DetailTabs value={detailTab} onValueChange={setDetailTab}
             countsFor={{ kind: 'keyword', monitorId: selected.id, notesType: 'KEYWORD', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
-            tabs={[['control', t('hist.tab')], ['alerts', t('keyword.tabAlerts')], ['chart', t('keyword.tabChart')],
+            tabs={[['control', t('hist.tab')], ['content', t('keyword.tabContent'), { icon: FileSearch }], ['alerts', t('keyword.tabAlerts')], ['chart', t('keyword.tabChart')],
               ['notes', t('keyword.tabGuide')],
               // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
               // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
@@ -1091,10 +1153,19 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                         </span>}
                     {open && (
                       <KeywordFailurePanel check={c} monitor={selected} canDiagnose={canDiagnoseRow(selected)}
-                        onDiagnose={() => openDiagnose(selected)} />
+                        onDiagnose={() => openDiagnose(selected)}
+                        onConvert={canManageRow(selected) ? () => setConvertFor(selected) : undefined} />
                     )}
                   </>)
                 }} />
+            </TabsContent>
+
+            {/* kw fe2: son kural sonuçları, eşleşme / boyut grafiği, içerik değişimi (temel al / sıfırla, fark), canlı eşleşmeler */}
+            <TabsContent value="content">
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <KeywordContentTab monitor={selected} canEdit={canManageRow(selected)} canExecute={canCheckRow(selected)}
+                  onChanged={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('keyword')} /></TabsContent>
@@ -1129,6 +1200,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <KeywordDiagnoseDialog monitor={selected} initialRunId={kwDx.initialRunId}
                 onRunChange={(runId) => setKwDx((cur) => (cur ? { ...cur, runId } : cur))}
                 onClose={() => setKwDx(null)} />
+            </Suspense>
+          )}
+
+          {/* kw F1 / F3: "Sentetik izlemeye dönüştür" — detayın İÇİNDE (iç içe kabuk, Escape yalnız onu kapatır) */}
+          {convertFor && convertFor.id === selected.id && canManageRow(selected) && (
+            <Suspense fallback={null}>
+              <ConvertToSyntheticDialog monitor={selected} onClose={() => setConvertFor(null)} />
             </Suspense>
           )}
 

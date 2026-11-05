@@ -18147,6 +18147,7 @@ export const TR = {
   'keyword.rule.logic.OR': 'VEYA — en az biri',
   'keyword.rule.logicShort.AND': 'VE',
   'keyword.rule.logicShort.OR': 'VEYA',
+  'keyword.rule.rulesLabel': 'Kurallar',
   'keyword.rule.logicHint.AND': 'Her kural sağlanmalı; biri sağlanmazsa alarm açılır. Birden çok kural sağlanmıyorsa en yüksek seviye geçerli olur.',
   'keyword.rule.logicHint.OR': 'En az bir kural sağlanmalı; alarm yalnız hiçbiri sağlanmazsa açılır. Seviyeyi en hafif ihlal belirler.',
   'keyword.rule.badge': '{0} kural · {1}',

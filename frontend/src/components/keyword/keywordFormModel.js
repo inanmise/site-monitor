@@ -528,6 +528,8 @@ export function sectionsForErrors(errs) {
 export const KW_FORM_FIELD_KEYS = Object.freeze([
   'url', 'keyword', 'teamId', 'groupName', 'tags', 'requestBody', 'requestContentType', 'basicAuthUser', 'basicAuthPass',
   'customHeaders', 'userAgent', 'expectedStatus', 'expectedFinalUrl', 'mailSubjectTemplate', 'timeoutMs',
+  // kw fe2 (Aşama 2): içerik kontrolleri (KeywordContentChecks alanları)
+  'minBytes', 'maxBytes', 'changeMask', 'changeSelector',
 ])
 
 /**

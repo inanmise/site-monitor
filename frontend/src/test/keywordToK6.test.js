@@ -105,10 +105,8 @@ describe('keywordToK6 — yardımcılar', () => {
     for (const bad of ['HDR_PROXY_AUTHORIZATION', 'K6_OUT', 'GOMAXPROCS', 'PATH', '1ABC', 'a-b']) expect(validEnvName(bad), bad).toBe(false)
   })
 
-  it('tarayıcı UA sabiti sunucunun KeywordRequestRules.BROWSER_USER_AGENT değeriyle aynı (arka uç birleşince denetlenir)', () => {
-    let src = null
-    try { src = readJavaMain('service/keyword/KeywordRequestRules.java') } catch { src = null }
-    if (!src) return
+  it('tarayıcı UA sabiti sunucunun KeywordRequestRules.BROWSER_USER_AGENT değeriyle aynı', () => {
+    const src = readJavaMain('service/keyword/KeywordRequestRules.java')
     const m = /BROWSER_USER_AGENT\s*=\s*"([^"]+)"/.exec(src)
     expect(m, 'BROWSER_USER_AGENT Java kaynağında').not.toBeNull()
     expect(BROWSER_USER_AGENT).toBe(m[1])

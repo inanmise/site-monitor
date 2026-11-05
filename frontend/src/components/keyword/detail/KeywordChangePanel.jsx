@@ -85,7 +85,9 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
   const [textOpen, setTextOpen] = useState(false)
   const seq = useRef(0)
   const alive = useRef(true)
-  useEffect(() => () => { alive.current = false }, [])
+  // Bağlanınca YENİDEN true: StrictMode (geliştirme) efektleri bağla → sök → yeniden bağla sırasıyla koşar; yalnız sökümde
+  // false yazılsaydı panel sonsuza dek "yükleniyor"da kalırdı (e2e'de yakalandı)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
   const load = useCallback(async () => {
     const my = ++seq.current

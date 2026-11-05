@@ -22,24 +22,19 @@ const INLINE = [
   ['abc', '', 'false', '0', '-1'],
 ]
 
-function javaTable() {
-  try {
-    return javaStringTable(readJavaTest('service/keyword/KeywordFoldTest.java'), 'TABLE')
-  } catch {
-    return null   // arka uç dalı henüz birleşmedi — satır içi tablo yeter
-  }
-}
+// Arka uç birleşti (Aşama 2): tablo Java kaynağından okunur — dosya / tablo yoksa test KIRMIZI (iki taraf ayrışamaz)
+const javaTable = () => javaStringTable(readJavaTest('service/keyword/KeywordFoldTest.java'), 'TABLE')
 
 describe('keywordFold — Java KeywordFold aynası', () => {
   const java = javaTable()
-  const table = java || INLINE
+  const table = java
 
   it.each(table.map((r) => [r.join(' | '), r]))('%s', (_, [hay, needle, cs, count, first]) => {
     expect(countMatches(hay, needle, cs === 'true', MAX_COUNT)).toEqual({ count: Number(count), firstIndex: Number(first) })
   })
 
-  it('Java tablosu varsa sözleşmedeki satırların hepsini içerir (tablo küçülmesin)', () => {
-    if (!java) return
+  it('Java tablosu sözleşmedeki satırların hepsini içerir (tablo küçülmesin)', () => {
+    expect(java.length).toBeGreaterThanOrEqual(INLINE.length)
     const keys = new Set(java.map((r) => r.join('|')))
     for (const r of INLINE) expect(keys.has(r.join('|')), r.join('|')).toBe(true)
   })
