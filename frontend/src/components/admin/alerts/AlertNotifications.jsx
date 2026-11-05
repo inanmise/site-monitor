@@ -173,7 +173,10 @@ export function PushDeliveryGroup({ rows }) {
   return (
     <NotifCard tone={cls} open={open} onOpenChange={setOpen} head={<>
       <ToneBadge tone={statusTone} data-push-status="" title={head.status} className="font-bold">{statusLabel(t, head.status)}</ToneBadge>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {/* Taban genişlik 12rem (2026-11-06): telefonda rozet + durum + tarih satırı doldurunca `flex-1` (taban 0) blok sıfır
+          genişliğe iniyor, alıcı adı / adresi kendi kutusundan taşıyordu (CI Linux yazı tipi) — artık yer yetmezse, telefonda her zaman,
+          kendi satırına iner; kalıtımla gelebilecek `nowrap` kapatılır. */}
+      <div className="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-1.5 whitespace-normal max-sm:basis-full">
         {many ? <strong>{t('alh.push.recipients', uniqueRecipients)}</strong> : who(head)}
       </div>
       <span className="text-[0.78em] text-muted-foreground">{t('userpush.trigger.' + head.trigger)}</span>
@@ -199,7 +202,10 @@ export function NotifLogCard({ log: l, alertLevel }) {
   return (
     <NotifCard tone={trig.cls} open={open} onOpenChange={setOpen} head={<>
       <Badge variant="outline" className={cn('font-bold', tone.badge)}><trig.Icon aria-hidden="true" className="size-3" /> {trig.text}</Badge>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      {/* Taban genişlik 12rem (2026-11-06): telefonda rozet + durum + tarih satırı doldurunca `flex-1` (taban 0) blok sıfır
+          genişliğe iniyor, alıcı adı / adresi kendi kutusundan taşıyordu (CI Linux yazı tipi) — artık yer yetmezse, telefonda her zaman,
+          kendi satırına iner; kalıtımla gelebilecek `nowrap` kapatılır. */}
+      <div className="flex min-w-0 flex-[1_1_12rem] flex-wrap items-center gap-1.5 whitespace-normal max-sm:basis-full">
         <strong className="min-w-0 [overflow-wrap:anywhere]">{l.recipient_name}</strong>
         {isNocLog(l)
           ? (nocDelivered(l.email_status) && (
