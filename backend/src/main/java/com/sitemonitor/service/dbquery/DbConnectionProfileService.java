@@ -414,6 +414,14 @@ public class DbConnectionProfileService {
 
     // ── Bağlantı sağlık kartı (2026-11-05, dbq2 A4) ────────────────────────────
 
+    /**
+     * Bağlantı sağlığını gösteren hata kodları (dbq2 inceleme D4): ulaşılamadı, DNS, zaman aşımı, kimlik, sürücü / protokol,
+     * hedef engellendi. SQL hatası, güvenlik reddi (yazabilen hesap), parola çözülemedi bağlantı başarısızlığı SAYILMAZ.
+     */
+    public static final java.util.Set<String> CONNECTION_CODES = java.util.Set.of(DbQueryErrors.DB_UNREACHABLE,
+            DbQueryErrors.DB_DNS, DbQueryErrors.DB_TIMEOUT, DbQueryErrors.DB_AUTH, DbQueryErrors.DB_DRIVER,
+            DbQueryErrors.DB_BLOCKED);
+
     /** Sağlık kartında listelenen en çok izleme (toplam {@code monitor_count}'ta). */
     public static final int HEALTH_MAX_MONITORS = 100;
     /** Sağlık kartının sayım penceresi. */
@@ -422,7 +430,8 @@ public class DbConnectionProfileService {
     /**
      * Bağlantının sağlık kartı ({@code GET …/connections/{id}/health}): onu kullanan izlemeler (≤ {@value #HEALTH_MAX_MONITORS},
      * ada göre, son çalıştırma durumuyla), son 24 saatin çalıştırma sayısı / başarısızlığı / ortalama süresi, son başarı ve
-     * son hata. SABİT sorgu sayısı (izleme sayısından bağımsız): son durumlar (tek LATERAL), 24 sa toplamı (tek gruplama), son
+     * son hata ("son durum" yalnız zamanlanmış çalıştırmalardan; başarısızlık yalnız bağlantı sınıfı kodlar —
+     * {@link #CONNECTION_CODES}, diğerleri {@code other_failed_24h}). SABİT sorgu sayısı (izleme sayısından bağımsız): son durumlar (tek LATERAL), 24 sa toplamı (tek gruplama), son
      * hatanın kodu (sağlık kolonundaki zamanla EŞİT satır — dizinli eşitlik). İzleme yoksa sorgu yok. Okunamayan parça
      * {@code null} yazılır — "bilinmiyor" asla "sorun yok" değildir. Satır VERİSİ yok; hata metinleri yazılırken maskelidir.
      *
@@ -437,7 +446,7 @@ public class DbConnectionProfileService {
         for (DbQueryMonitor m : sorted) if (m.getId() != null) ids.add(m.getId());
         Map<Long, String> status = new java.util.HashMap<>();
         boolean statusRead = true;
-        Long runs = 0L, failed = 0L, avgMs = null;
+        Long runs = 0L, failed = 0L, avgMs = null, otherFailed = 0L;
         boolean statsRead = true;
         String runErrorCode = null;
         if (!ids.isEmpty()) {
@@ -452,11 +461,12 @@ public class DbConnectionProfileService {
             }
             try {
                 String since = ISO.format(now.minusSeconds(HEALTH_WINDOW_SECONDS));
-                List<Object[]> agg = checks.connectionRunStats(ids, since);
+                List<Object[]> agg = checks.connectionRunStats(ids, since, CONNECTION_CODES);
                 Object[] row = agg == null || agg.isEmpty() ? null : agg.get(0);
                 runs = row != null && row[0] instanceof Number n ? n.longValue() : 0L;
                 failed = row != null && row.length > 1 && row[1] instanceof Number n ? n.longValue() : 0L;
                 avgMs = row != null && row.length > 2 && row[2] instanceof Number n ? Math.round(n.doubleValue()) : null;
+                otherFailed = row != null && row.length > 3 && row[3] instanceof Number n ? n.longValue() : 0L;
             } catch (RuntimeException e) {
                 statsRead = false;
                 log.warn("Bağlantı sağlığı: 24 saatlik çalıştırma özeti okunamadı (#{}): {}", p.getId(), e.getClass().getSimpleName());
@@ -486,6 +496,8 @@ public class DbConnectionProfileService {
         out.put("status_read", statusRead);
         out.put("runs_24h", statsRead ? runs : null);
         out.put("failed_24h", statsRead ? failed : null);
+        // Bağlantı sağlamken biten hatalar (SQL hatası, güvenlik reddi, parola çözülemedi …) — bağlantı başarısızlığı değil
+        out.put("other_failed_24h", statsRead ? otherFailed : null);
         Double pct = null;
         if (statsRead && runs != null && runs > 0) pct = Math.round(1000.0 * (runs - failed) / runs) / 10.0;
         out.put("success_pct", pct);
@@ -502,6 +514,8 @@ public class DbConnectionProfileService {
             lastError.put("at", p.getLastErrorAt());
             lastError.put("code", runErrorCode);
             lastError.put("message", p.getLastError());
+            // Kod biliniyorsa: bağlantı sınıfı mı (false = sorgu / güvenlik hatası, bağlantı sağlam); bilinmiyorsa null
+            lastError.put("connection_class", runErrorCode == null ? null : CONNECTION_CODES.contains(runErrorCode));
         }
         if (Boolean.FALSE.equals(p.getLastTestOk()) && p.getLastTestAt() != null
                 && (lastError == null || p.getLastTestAt().compareTo(String.valueOf(lastError.get("at"))) > 0)) {

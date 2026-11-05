@@ -77,6 +77,26 @@ class DbQueryRunnerStepsTest {
     }
 
     @Test
+    @DisplayName("D8: yetki denetimi fırlatırsa deneme yine başarılı, adımlar tam altı (query bir kez ok, privileges warn CHECK_FAILED)")
+    void privilegeCheckThrows() throws Exception {
+        selectOneReturns();
+        DbQueryRunner r = runner(DbQueryRunner.TcpProbe.ASSUME_OPEN);
+        r.privilegeCheck = (c, type) -> { throw new IllegalStateException("izleyici kesti"); };
+        DbQueryRunner.ConnectionTest t = r.test(spec("require"), true);
+        assertThat(t.ok()).isTrue();
+        assertThat(t.steps()).extracting(DbConnectionSteps.Step::key)
+                .containsExactly("dns", "tcp", "tls", "login", "query", "privileges");
+        assertThat(step(t, "query").status()).isEqualTo("ok");
+        assertThat(step(t, "privileges").status()).isEqualTo("warn");
+        assertThat(step(t, "privileges").code()).isEqualTo("CHECK_FAILED");
+        assertThat(t.privileges().checked()).isTrue();
+        assertThat(t.privileges().readOnly()).isNull();
+
+        r.privilegeCheck = (c, type) -> { throw new AssertionError("beklenmedik"); };   // Error da yakalanır
+        assertThat(r.test(spec("require"), true).steps()).hasSize(6);
+    }
+
+    @Test
     @DisplayName("başarı: altı adım sırayla; DNS IP'yi (+ek adres sayısı), TCP IP:port'u söyler; TLS yapılandırmadan (prefer → uyarı); yetki kapalı → skip NOT_CHECKED")
     void successSteps() throws Exception {
         selectOneReturns();

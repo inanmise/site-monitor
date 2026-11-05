@@ -62,10 +62,12 @@ class DbQueryDbq2PostgresTest {
             assertThat(last).hasSize(1);
             assertThat(last.get(0)[1]).isEqualTo("FAIL");
 
-            Object[] agg = checks.connectionRunStats(List.of(id), "2026-11-05T00:00:00").get(0);
+            Object[] agg = checks.connectionRunStats(List.of(id), "2026-11-05T00:00:00",
+                    com.sitemonitor.service.dbquery.DbConnectionProfileService.CONNECTION_CODES).get(0);
             assertThat(((Number) agg[0]).longValue()).isEqualTo(4);
             assertThat(((Number) agg[1]).longValue()).isEqualTo(1);
             assertThat(((Number) agg[2]).doubleValue()).isEqualTo(162.5);
+            assertThat(((Number) agg[3]).longValue()).isEqualTo(0);
             assertThat(checks.failureReasonsAt(List.of(id), "2026-11-05T09:05:00")).containsExactly("DB_TIMEOUT");
 
             Map<String, Double> byKey = new HashMap<>();

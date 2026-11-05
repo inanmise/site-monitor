@@ -6899,7 +6899,8 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.data.fixes[0].edits[0].line").value(1))
                     .andExpect(jsonPath("$.data.fixes[0].note").isString())
                     .andExpect(jsonPath("$.data.skipped[0].code").value("ADD_ROW_LIMIT"))
-                    .andExpect(jsonPath("$.data.skipped[0].reason").value("GUARD_STILL_FAILS"));
+                    // D10: COUNT(*) GROUP BY'sız → tek satır, satır sınırı önerilmez
+                    .andExpect(jsonPath("$.data.skipped[0].reason").value("SINGLE_ROW"));
             verify(permissionService, org.mockito.Mockito.atLeastOnce()).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.crud"), eq("edit"));
             org.mockito.Mockito.verifyNoInteractions(auditService);
             org.mockito.Mockito.verifyNoInteractions(dbQueryTestQuota);
@@ -6929,6 +6930,57 @@ class MonitoringControllerTest {
         }
 
         @Test
+        @DisplayName("D10: sql-fix veritabanı türü ZORUNLU — yoksa / tanınmazsa 400 alan db_type (PostgreSQL varsayılmaz)")
+        void sqlFixRequiresDbType() throws Exception {
+            for (String body : new String[] {"{\"sql\":\"SELECT id FROM t\"}", "{\"sql\":\"SELECT id FROM t\",\"db_type\":\"mysql\"}"}) {
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content(body))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.field").value("db_type"));
+            }
+        }
+
+        @Test
+        @DisplayName("O3: sql-check / sql-fix kapısı — dolu → beklemeden 429 DBQUERY_BUSY + Retry-After; kullanıcı dakikalık sınırı → "
+                + "429 RATE_LIMITED; reddedilen istek ayrıştırmaz")
+        void interactiveGate() throws Exception {
+            MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                    applicationContext.getBean(MonitoringController.class));
+            Object saved = org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbqInteractiveGate");
+            var gate = new com.sitemonitor.service.dbquery.DbQueryInteractiveGate(1, System::currentTimeMillis);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "dbqInteractiveGate", gate);
+            try {
+                var held = gate.tryEnter("baska", com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.CHECK).ticket();
+                long t0 = System.nanoTime();
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\",\"db_type\":\"postgresql\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"))
+                        .andExpect(header().string("Retry-After", "1"));
+                mvc.perform(post("/api/monitoring/dbquery/sql-check").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+                assertThat(java.time.Duration.ofNanos(System.nanoTime() - t0)).isLessThan(java.time.Duration.ofSeconds(2));   // beklemez
+                held.close();
+                for (int i = 0; i < com.sitemonitor.service.dbquery.DbQueryInteractiveGate.FIX_PER_MINUTE; i++)
+                    gate.tryEnter("u", com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.FIX).ticket().close();
+                mvc.perform(post("/api/monitoring/dbquery/sql-fix").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\",\"db_type\":\"postgresql\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                        .andExpect(jsonPath("$.retry_after_seconds").isNumber());
+                // canlı denetimin sınırı ayrı — düzeltme sınırı dolu iken denetim geçer
+                mvc.perform(post("/api/monitoring/dbquery/sql-check").session(dbqUser(1L)).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content("{\"sql\":\"SELECT id FROM t\"}"))
+                        .andExpect(status().isOk());
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.setField(controller, "dbqInteractiveGate", saved);
+            }
+        }
+
+        @Test
         @DisplayName("liste: değer eğilimi tek gruplu sorguyla (24 saatlik nokta + yön); değeri olmayan izlemede alan YOK; 60 sn bellek")
         void listValueTrend() throws Exception {
             var a = dbqMonitor(41L, 1L, 5L);
@@ -6949,6 +7001,66 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.data[1].value_trend").doesNotExist());
             mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L))).andExpect(status().isOk());
             verify(dbQueryCheckRepo, org.mockito.Mockito.times(1)).valueTrendBuckets(argThat(ids -> ids.containsAll(List.of(41L, 42L))), anyString());
+        }
+
+        @Test
+        @DisplayName("D7: değer eğilimi tek uçuş — eşzamanlı iki liste isteği tek sorgu (ikincisi okumanın bitmesini bekler); okuma "
+                + "bütçeyi aşarsa bekleyen istek eğilimsiz döner (bilinmiyor), takılmaz")
+        void listValueTrendSingleFlight() throws Exception {
+            MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                    applicationContext.getBean(MonitoringController.class));
+            java.util.concurrent.locks.ReentrantLock lock = (java.util.concurrent.locks.ReentrantLock)
+                    org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbqTrendRefresh");
+            when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+            java.time.Instant first = com.sitemonitor.service.dbquery.DbQueryValueTrend.firstHour(java.time.Instant.now());
+            String h1 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(20, java.time.temporal.ChronoUnit.HOURS));
+            String h2 = com.sitemonitor.service.dbquery.DbQueryValueTrend.hourKey(first.plus(22, java.time.temporal.ChronoUnit.HOURS));
+            java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                // 1) tek uçuş: ikinci istek kilidi bekler, birincinin okuduğunu bellekten alır
+                when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(dbqMonitor(61L, 1L, 5L)));
+                java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+                when(dbQueryCheckRepo.valueTrendBuckets(argThat(ids -> ids != null && ids.contains(61L)), anyString())).thenAnswer(i -> {
+                    entered.countDown();
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    return List.<Object[]>of(new Object[] {61L, h1, 10.0}, new Object[] {61L, h2, 20.0});
+                });
+                java.util.concurrent.Callable<String> list = () -> mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                        .andReturn().getResponse().getContentAsString();
+                var f1 = ex.submit(list);
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var f2 = ex.submit(list);
+                long until = System.currentTimeMillis() + 10_000;
+                while (!lock.hasQueuedThreads() && System.currentTimeMillis() < until) Thread.onSpinWait();
+                assertThat(lock.hasQueuedThreads()).isTrue();
+                release.countDown();
+                assertThat(f1.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+                assertThat(f2.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+                verify(dbQueryCheckRepo, org.mockito.Mockito.times(1)).valueTrendBuckets(argThat(ids -> ids != null && ids.contains(61L)), anyString());
+
+                // 2) bütçe: okuma bütçeden uzun sürerse bekleyen istek eğilimsiz ve bütçe kadar sonra döner
+                when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(dbqMonitor(63L, 1L, 5L)));
+                java.util.concurrent.CountDownLatch entered2 = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch release2 = new java.util.concurrent.CountDownLatch(1);
+                when(dbQueryCheckRepo.valueTrendBuckets(argThat(ids -> ids != null && ids.contains(63L)), anyString())).thenAnswer(i -> {
+                    entered2.countDown();
+                    release2.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                    return List.<Object[]>of(new Object[] {63L, h1, 10.0}, new Object[] {63L, h2, 20.0});
+                });
+                var slow = ex.submit(list);
+                assertThat(entered2.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                long t0 = System.nanoTime();
+                String waited = ex.submit(list).get(15, java.util.concurrent.TimeUnit.SECONDS);
+                long ms = (System.nanoTime() - t0) / 1_000_000;
+                assertThat(waited).contains("\"id\":63").doesNotContain("value_trend");
+                assertThat(ms).isLessThan(MonitoringController.DBQUERY_TREND_BUDGET_MS + 4_000);
+                release2.countDown();
+                assertThat(slow.get(10, java.util.concurrent.TimeUnit.SECONDS)).contains("value_trend");
+            } finally {
+                ex.shutdownNow();
+            }
         }
 
         @Test
@@ -6982,7 +7094,7 @@ class MonitoringControllerTest {
             foreign.setDomain(mon.getName()); foreign.setAlertType("DBQUERY_FAIL"); foreign.setAlertLevel("HIGH");
             foreign.setCreatedAt("2026-11-03T08:00:00"); foreign.setResolved(true); foreign.setResolvedAt("2026-11-03T09:00:00");
             foreign.setContextJson("{\"monitor_id\":7}");
-            when(alertEventRepo.findOverlappingForHistory(eq(mon.getName()), any(), anyString(), anyString()))
+            when(alertEventRepo.findOverlappingNewest(eq(mon.getName()), any(), anyString(), anyString(), any()))
                     .thenReturn(List.of(open, closed, foreign));
             when(changeLogRepo.changeMarks(eq("DBQUERY"), eq(95L), anyString(), anyString(), eq(200))).thenReturn(List.<Object[]>of(
                     new Object[] {"2026-11-04T12:00:00", "UPDATE",
@@ -7004,6 +7116,10 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.data.changes[1].fields[1]").value("rulesJson"))
                     .andReturn().getResponse().getContentAsString();
             assertThat(body).doesNotContain("SELECT gizli").doesNotContain("SELECT yeni");
+            // D12: veritabanında sınırlı okuma (en yeni 2 × 200), sınırsız sorgu hiç çağrılmaz
+            verify(alertEventRepo).findOverlappingNewest(eq(mon.getName()), any(), anyString(), anyString(),
+                    argThat(pg -> pg != null && pg.getPageNumber() == 0 && pg.getPageSize() == 2 * MonitoringController.DBQUERY_SERIES_MARKS_MAX));
+            verify(alertEventRepo, never()).findOverlappingForHistory(anyString(), any(), anyString(), anyString());
         }
 
         @Test
@@ -7012,7 +7128,7 @@ class MonitoringControllerTest {
             var mon = dbqMonitor(96L, 1L, 5L);
             when(dbQueryMonitorRepo.findById(96L)).thenReturn(Optional.of(mon));
             when(dbQueryCheckRepo.seriesRaw(eq(96L), anyString(), anyString(), anyInt())).thenReturn(List.of());
-            when(alertEventRepo.findOverlappingForHistory(anyString(), any(), anyString(), anyString())).thenThrow(new IllegalStateException("db"));
+            when(alertEventRepo.findOverlappingNewest(anyString(), any(), anyString(), anyString(), any())).thenThrow(new IllegalStateException("db"));
             when(changeLogRepo.changeMarks(anyString(), anyLong(), anyString(), anyString(), anyInt())).thenThrow(new IllegalStateException("db"));
             mvc.perform(get("/api/monitoring/dbquery/96/response-series").session(dbqUser(1L)))
                     .andExpect(status().isOk())

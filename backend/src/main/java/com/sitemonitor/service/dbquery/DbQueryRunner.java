@@ -549,22 +549,41 @@ public class DbQueryRunner {
             try (ResultSet rs = st.executeQuery(tagged(spec, spec.type() == DbType.ORACLE ? "SELECT 1 FROM dual" : "SELECT 1"))) {
                 rs.next();
             }
-            long ms = elapsedMs(t0);
-            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.QUERY, DbConnectionSteps.OK, elapsedMs(q0), null, null));
-            // 6. Yetki denetimi (ayar kapalıysa atlandı)
-            long p0 = System.nanoTime();
-            DbAccountPrivileges.Result priv = privileges ? DbAccountPrivileges.check(s.conn, spec.type())
-                    : DbAccountPrivileges.Result.NOT_CHECKED;
-            steps.add(DbConnectionSteps.privileges(priv, privileges ? elapsedMs(p0) : null));
-            return new ConnectionTest(true, ms, s.version, null, null, priv, DbConnectionSteps.completed(steps));
         } catch (Throwable e) {
             QueryResult f = failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0, null);
             steps.add(new DbConnectionSteps.Step(DbConnectionSteps.QUERY, DbConnectionSteps.FAIL, elapsedMs(q0), f.failureReason(), f.error()));
+            s.close();
             return stepsFailed(t0, s.version, f, steps);
+        }
+        steps.add(new DbConnectionSteps.Step(DbConnectionSteps.QUERY, DbConnectionSteps.OK, elapsedMs(q0), null, null));
+        long ms = elapsedMs(t0);
+        // 6. Yetki denetimi (ayar kapalıysa atlandı) — AYRI try (dbq2 inceleme D8): denetim beklenmedik biçimde fırlatırsa
+        // deneme yine başarılıdır, adımlar yine tam altı (yetki = uyarı CHECK_FAILED), ikinci bir "query" adımı yazılmaz.
+        long p0 = System.nanoTime();
+        DbAccountPrivileges.Result priv;
+        try {
+            priv = privileges ? privilegeCheck.check(s.conn, spec.type()) : DbAccountPrivileges.Result.NOT_CHECKED;
+            if (priv == null) priv = privileges ? PRIVILEGES_FAILED : DbAccountPrivileges.Result.NOT_CHECKED;
+        } catch (Throwable e) {
+            log.debug("Bağlantı denemesi: yetki denetimi düştü — {}", e.getClass().getSimpleName());
+            priv = PRIVILEGES_FAILED;
         } finally {
             s.close();
         }
+        steps.add(DbConnectionSteps.privileges(priv, privileges ? elapsedMs(p0) : null));
+        return new ConnectionTest(true, ms, s.version, null, null, priv, DbConnectionSteps.completed(steps));
     }
+
+    /** Yetki denetimi düştü: denetlendi, salt-okurluk bilinmiyor ({@code CHECK_FAILED} — engellemez). */
+    static final DbAccountPrivileges.Result PRIVILEGES_FAILED = new DbAccountPrivileges.Result(true, null,
+            List.of(new DbAccountPrivileges.Finding(DbAccountPrivileges.CHECK_FAILED, null)));
+
+    /** Bağlantı denemesinin yetki denetimi (testte değiştirilebilir — düşme yolu). */
+    interface PrivilegeCheck {
+        DbAccountPrivileges.Result check(Connection c, DbType type);
+    }
+
+    PrivilegeCheck privilegeCheck = DbAccountPrivileges::check;
 
     /** TCP adımının bağlantı zaman aşımı — sürücüyle aynı sınır (1–30 sn, varsayılan 10 sn). */
     static int tcpTimeoutMs(DbConnectionSpec spec) {

@@ -31,12 +31,14 @@ class DbQueryDbq2RepositoriesTest {
     @Autowired DbQueryMonitorRepository monitors;
     @Autowired DbQueryCheckRepository checks;
     @Autowired MonitorChangeLogRepository changes;
+    @Autowired AlertEventRepository alerts;
 
     @AfterEach
     void cleanUp() {
         checks.deleteAll();
         monitors.deleteAll();
         changes.deleteAll();
+        alerts.deleteAll();
     }
 
     private DbQueryMonitor mon(String name) {
@@ -65,21 +67,28 @@ class DbQueryDbq2RepositoriesTest {
     }
 
     @Test
-    @DisplayName("sağlık: izleme başına SON çalıştırmanın durumu (ilişkili alt sorgu, hiç çalışmamış → null); 24 sa toplamı (tüm çalıştırmalar); son hatanın kodu eşit zamandan")
+    @DisplayName("sağlık: izleme başına SON ZAMANLANMIŞ çalıştırmanın durumu (elle / teyit hariç, hiç çalışmamış → null); 24 sa toplamı (tüm çalıştırmalar; başarısızlık yalnız bağlantı sınıfı); son hatanın kodu eşit zamandan")
     void connectionHealthQueries() {
         long a = mon("A").getId(), b = mon("B").getId(), c = mon("C").getId();
         check(a, "2026-11-05T08:00:00", "OK", true, 1.0, null, null, 100, null);
         check(a, "2026-11-05T09:00:00", "BREACH", true, 9.0, false, false, 300, null);
         check(b, "2026-11-04T07:00:00", "OK", true, 1.0, null, null, 50, null);           // pencere dışı
-        check(b, "2026-11-05T08:30:00", "FAIL", false, null, true, false, 200, "DB_TIMEOUT");
+        check(b, "2026-11-05T08:30:00", "FAIL", false, null, false, false, 200, "DB_TIMEOUT");
+        check(b, "2026-11-05T08:35:00", "OK", true, 1.0, true, false, 40, null);           // elle — son durum değil
+        check(a, "2026-11-05T09:10:00", "OK", true, 1.0, false, true, 60, null);           // teyit — son durum değil
+        check(c, "2026-11-05T08:20:00", "FAIL", false, null, null, null, 0, "DB_SQL_ERROR"); // bağlantı sağlam, sorgu bozuk
         Map<Long, String> last = new HashMap<>();
         for (Object[] r : checks.latestStatusFor(List.of(a, b, c))) last.put(((Number) r[0]).longValue(), (String) r[1]);
-        assertThat(last).containsEntry(a, "BREACH").containsEntry(b, "FAIL").containsEntry(c, null).hasSize(3);
+        assertThat(last).containsEntry(a, "BREACH").containsEntry(b, "FAIL").containsEntry(c, "FAIL").hasSize(3);
+        long d = mon("D").getId();
+        for (Object[] r : checks.latestStatusFor(List.of(d))) assertThat(r[1]).isNull();   // hiç çalışmamış → null
 
-        Object[] agg = checks.connectionRunStats(List.of(a, b, c), "2026-11-05T00:00:00").get(0);
-        assertThat(((Number) agg[0]).longValue()).isEqualTo(3);
-        assertThat(((Number) agg[1]).longValue()).isEqualTo(1);
-        assertThat(((Number) agg[2]).doubleValue()).isEqualTo(200.0);
+        Object[] agg = checks.connectionRunStats(List.of(a, b, c), "2026-11-05T00:00:00",
+                com.sitemonitor.service.dbquery.DbConnectionProfileService.CONNECTION_CODES).get(0);
+        assertThat(((Number) agg[0]).longValue()).isEqualTo(6);
+        assertThat(((Number) agg[1]).longValue()).isEqualTo(1);    // yalnız DB_TIMEOUT (bağlantı sınıfı)
+        assertThat(((Number) agg[2]).doubleValue()).isEqualTo(116.66666666666667, org.assertj.core.data.Offset.offset(0.01));
+        assertThat(((Number) agg[3]).longValue()).isEqualTo(1);    // DB_SQL_ERROR → diğer
 
         assertThat(checks.failureReasonsAt(List.of(a, b), "2026-11-05T08:30:00")).containsExactly("DB_TIMEOUT");
         assertThat(checks.failureReasonsAt(List.of(a, b), "2026-11-05T09:00:00")).isEmpty();   // ok satırı sayılmaz
@@ -124,6 +133,7 @@ class DbQueryDbq2RepositoriesTest {
         assertThat(rows.get(1)[0]).isEqualTo("2026-11-05T08:05:00");
         assertThat(((Number) rows.get(1)[2]).doubleValue()).isEqualTo(9.0);
         assertThat(rows.get(1)[4]).isEqualTo("WARNING");
+        assertThat(rows.get(0)).hasSize(8);   // 8. kolon sql_hash (dbq2 inceleme D9: seri sorgu değişince kesilir)
     }
 
     @Test
@@ -141,6 +151,34 @@ class DbQueryDbq2RepositoriesTest {
         assertThat(rows.get(0)[2].toString()).contains("sqlText");
         assertThat(rows.get(1)[1]).isEqualTo("CREATE");
         assertThat(changes.changeMarks("DBQUERY", 7L, "2026-11-01T00:00:00", "2026-11-05T00:00:00", 1)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("D12: grafik alarm dönemleri veritabanında sınırlı — en yeni N satır (yeniden eskiye, id eşitlik kırıcı), aralık kuralı aynı")
+    void overlappingNewestIsLimited() {
+        for (int i = 0; i < 5; i++) alert("Bekleyen", "DBQUERY_FAIL", String.format("2026-11-04T0%d:00:00", i), true, String.format("2026-11-04T0%d:30:00", i));
+        alert("Bekleyen", "DBQUERY_FAIL", "2026-11-04T04:00:00", false, null);              // aynı an, daha büyük id
+        alert("Bekleyen", "DBQUERY_FAIL", "2026-11-01T00:00:00", true, "2026-11-01T01:00:00"); // aralık dışı
+        alert("Baska", "DBQUERY_FAIL", "2026-11-04T03:00:00", false, null);                 // başka anahtar
+        List<com.sitemonitor.model.AlertEvent> top = alerts.findOverlappingNewest("Bekleyen", List.of("DBQUERY_FAIL"),
+                "2026-11-03T00:00:00", "2026-11-05T00:00:00", org.springframework.data.domain.PageRequest.of(0, 3));
+        assertThat(top).hasSize(3);
+        assertThat(top).extracting(com.sitemonitor.model.AlertEvent::getCreatedAt)
+                .containsExactly("2026-11-04T04:00:00", "2026-11-04T04:00:00", "2026-11-04T03:00:00");
+        assertThat(top.get(0).getResolved()).isFalse();   // aynı anda açılan iki alarmdan id'si büyük olan önce
+        assertThat(alerts.findOverlappingNewest("Bekleyen", List.of("DBQUERY_FAIL"), "2026-11-03T00:00:00",
+                "2026-11-05T00:00:00", org.springframework.data.domain.PageRequest.of(0, 100))).hasSize(6);
+    }
+
+    private void alert(String domain, String type, String at, boolean resolved, String resolvedAt) {
+        com.sitemonitor.model.AlertEvent a = new com.sitemonitor.model.AlertEvent();
+        a.setDomain(domain);
+        a.setAlertType(type);
+        a.setAlertLevel("HIGH");
+        a.setCreatedAt(at);
+        a.setResolved(resolved);
+        a.setResolvedAt(resolvedAt);
+        alerts.save(a);
     }
 
     private void save(String kind, long id, int seq, String event, String at, String json) {

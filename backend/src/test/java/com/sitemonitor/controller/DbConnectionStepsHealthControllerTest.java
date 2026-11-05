@@ -160,7 +160,7 @@ class DbConnectionStepsHealthControllerTest {
         when(repo.findById(5L)).thenReturn(Optional.of(p));
         when(monitorRepo.findByProfileId(5L)).thenReturn(List.of(mon(12L, "Zeta kuyruğu", true), mon(11L, "Bekleyen siparişler", false)));
         when(checkRepo.latestStatusFor(any())).thenReturn(List.<Object[]>of(new Object[] {11L, "BREACH"}));
-        when(checkRepo.connectionRunStats(any(), anyString())).thenReturn(List.<Object[]>of(new Object[] {200L, 8L, 312.6}));
+        when(checkRepo.connectionRunStats(any(), anyString(), any())).thenReturn(List.<Object[]>of(new Object[] {200L, 8L, 312.6, 5L}));
         when(checkRepo.failureReasonsAt(any(), eq("2026-11-05T08:30:00"))).thenReturn(List.of("DB_TIMEOUT"));
         String body = mvc.perform(get("/api/monitoring/dbquery/connections/5/health").session(user(1L)))
                 .andExpect(status().isOk())
@@ -176,10 +176,32 @@ class DbConnectionStepsHealthControllerTest {
                 .andExpect(jsonPath("$.data.last_ok_at").value("2026-11-05T09:00:00"))
                 .andExpect(jsonPath("$.data.last_error.at").value("2026-11-05T08:30:00"))
                 .andExpect(jsonPath("$.data.last_error.code").value("DB_TIMEOUT"))
+                .andExpect(jsonPath("$.data.last_error.connection_class").value(true))
+                .andExpect(jsonPath("$.data.other_failed_24h").value(5))
                 .andExpect(jsonPath("$.data.unused").value(false))
                 .andReturn().getResponse().getContentAsString();
         assertThat(body).doesNotContain("ESKI-SIFRELI").doesNotContain("ro_monitor");
-        verify(checkRepo).connectionRunStats(argThat(ids -> ids.containsAll(List.of(11L, 12L))), anyString());
+        verify(checkRepo).connectionRunStats(argThat(ids -> ids.containsAll(List.of(11L, 12L))), anyString(),
+                eq(DbConnectionProfileService.CONNECTION_CODES));
+    }
+
+    @Test
+    @DisplayName("D4: bağlantı sağlık kartı — kodlar bağlantı sınıfı (SQL / güvenlik reddi değil); son hata SQL ise connection_class false")
+    void healthConnectionClass() {
+        assertThat(DbConnectionProfileService.CONNECTION_CODES).containsExactlyInAnyOrder("DB_UNREACHABLE", "DB_DNS",
+                "DB_TIMEOUT", "DB_AUTH", "DB_DRIVER", "DB_BLOCKED");
+        DbConnectionProfile p = stored(5L, 1L);
+        p.setLastErrorAt("2026-11-05T08:30:00");
+        p.setLastError("sözdizimi hatası");
+        DbQueryCheckRepository checks = mock(DbQueryCheckRepository.class);
+        when(checks.latestStatusFor(any())).thenReturn(List.of());
+        when(checks.connectionRunStats(any(), anyString(), any())).thenReturn(List.<Object[]>of(new Object[] {10L, 0L, 20.0, 4L}));
+        when(checks.failureReasonsAt(any(), eq("2026-11-05T08:30:00"))).thenReturn(List.of("DB_SQL_ERROR"));
+        Map<String, Object> h = DbConnectionProfileService.healthReport(p, List.of(mon(11L, "A", true)), checks, Instant.now());
+        assertThat(h).containsEntry("failed_24h", 0L).containsEntry("other_failed_24h", 4L).containsEntry("success_pct", 100.0);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> le = (Map<String, Object>) h.get("last_error");
+        assertThat(le).containsEntry("code", "DB_SQL_ERROR").containsEntry("connection_class", false);
     }
 
     @Test
@@ -231,7 +253,7 @@ class DbConnectionStepsHealthControllerTest {
         DbConnectionProfile p = stored(5L, 1L);
         DbQueryCheckRepository broken = mock(DbQueryCheckRepository.class);
         when(broken.latestStatusFor(any())).thenThrow(new IllegalStateException("db"));
-        when(broken.connectionRunStats(any(), anyString())).thenThrow(new IllegalStateException("db"));
+        when(broken.connectionRunStats(any(), anyString(), any())).thenThrow(new IllegalStateException("db"));
         Map<String, Object> h = DbConnectionProfileService.healthReport(p, List.of(mon(11L, "A", true)), broken, Instant.now());
         assertThat(h.get("runs_24h")).isNull();
         assertThat(h.get("failed_24h")).isNull();
@@ -246,7 +268,7 @@ class DbConnectionStepsHealthControllerTest {
         DbConnectionProfile p = stored(5L, 1L);
         DbQueryCheckRepository checks = mock(DbQueryCheckRepository.class);
         when(checks.latestStatusFor(any())).thenReturn(List.of());
-        when(checks.connectionRunStats(any(), anyString())).thenReturn(List.<Object[]>of(new Object[] {0L, null, null}));
+        when(checks.connectionRunStats(any(), anyString(), any())).thenReturn(List.<Object[]>of(new Object[] {0L, null, null, null}));
         List<DbQueryMonitor> many = new ArrayList<>();
         for (long i = 1; i <= 150; i++) many.add(mon(i, String.format("izleme %03d", i), true));
         Map<String, Object> h = DbConnectionProfileService.healthReport(p, many, checks, Instant.now());
@@ -255,7 +277,7 @@ class DbConnectionStepsHealthControllerTest {
         assertThat(h.get("success_pct")).isNull();     // 0 çalıştırma → null
         assertThat(h.get("avg_duration_ms")).isNull();
         verify(checks, times(1)).latestStatusFor(argThat(ids -> ids.size() == 100));
-        verify(checks, times(1)).connectionRunStats(argThat(ids -> ids.size() == 150), anyString());
+        verify(checks, times(1)).connectionRunStats(argThat(ids -> ids.size() == 150), anyString(), any());
         verify(checks, never()).failureReasonsAt(any(), any());   // son hata yok → kod sorgusu yok
     }
 }
