@@ -620,6 +620,24 @@ SELECT id, forward_emails FROM alert_events WHERE id = :alarm;
 Acil durdurma: ilgili iletimi ekrandan duraklatın (ya da `UPDATE alert_forwards SET enabled = FALSE WHERE id = :id` — 60 sn içinde
 tüm pod'larda geçerli). Yuvarlanan dağıtımda eski sürümlü bir pod'un gönderdiği alarmın iletim kopyası gitmez (kabul).
 
+**Takım taşıması sonrası duraklatılan iletimler** (Takımlar → "Tüm varlıkları taşı"): taşınan takımın kapsamı **Tüm izlemeler**
+ya da **Seçilen türler** olan etkin iletimleri hedef takıma **duraklatılarak** geçer — taşınmasalar hedef takımın KENDİ
+izlemelerinin alarmları da habersizce iletilmeye başlardı. Notlarının sonuna "Takım taşıması sonrası duraklatıldı: kapsam hedef
+takımın tüm izlemelerini içerir, gözden geçirip yeniden etkinleştirin." eklenir; taşıma sonucu `alert_forwards_paused` sayısını
+verir, silme / taşıma etki penceresi önceden `paused_on_move` ile söyler. Yapılacak: hedef takımın yöneticisi Alarm iletimi
+ekranında bu iletimleri (durum **Duraklatıldı**) gözden geçirip kapsamı uygunsa yeniden etkinleştirir — etkinleştirme alıcılara
+bilgi postası / push gönderir. **Seçilen izlemeler** kapsamlılar etkin taşınır (seçilen izlemeler taşınan izlemelerdir). Hedefte aynı
+iletim (aynı alıcı + aynı kapsam) zaten varsa taşınan kopya silinir; hedef takıma giden ve taşınan takıma GELEN iletimler silinir.
+
+```sql
+-- Taşımayla duraklatılan iletimler (hedef takım)
+SELECT id, scope_kind, recipient_team_id, note FROM alert_forwards
+WHERE owner_team_id = :hedef AND enabled = FALSE AND note LIKE '%Takım taşıması sonrası duraklatıldı%';
+```
+
+Erişim paylaşımı: iletimle birlikte "görüntüleme erişimi ver" ile açılan VIEW paylaşımı iletim silinince / duraklatılınca GERİ
+ALINMAZ — Yönetim → Erişim paylaşımı ekranından yönetilir.
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker
