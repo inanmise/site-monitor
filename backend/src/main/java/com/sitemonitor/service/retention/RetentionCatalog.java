@@ -525,6 +525,14 @@ public final class RetentionCatalog {
                 "Takımın teknik hata raporu şablon kütüphanesi (2026-10-18): takım başına en çok 20 adlandırılmış şablon "
                 + "(≤ 64 KB), takım varsayılanı işareti ve ekleyen / güncelleyenin adı ve kullanıcı kimliği. Ekip kararıyla "
                 + "silinir (ASLA otomatik değil); takımı silinmiş kütüphane satırı burada temizlenir (kanallarla aynı yol)."),
+        orphan("alert-forwards-orphan", "alert_forwards",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = alert_forwards.owner_team_id) "
+                + "OR NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = alert_forwards.recipient_team_id)", DataClass.PERSONAL,
+                "Alarm iletimleri (2026-11-05): takımın alarmlarını başka takıma ya da o takımın seçilen üyelerine ileten "
+                + "kayıtlar — takım başına en çok 100 satır; kapsam, alıcı takım, seçilen üyelerin kullanıcı kimlikleri, not ve "
+                + "ekleyen / güncelleyenin kullanıcı adı. Takımı yönetenin kararıyla silinir (ASLA otomatik değil); takım silme ve "
+                + "taşıma aynı işlemde siler / taşır, kullanıcı silme üye listesinden çıkarır. Sahibi ya da alıcısı olan takımı "
+                + "yok olmuş satır burada temizlenir."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),

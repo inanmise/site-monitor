@@ -79,6 +79,12 @@ public final class PermissionCatalog {
         // NocCallLogService). Onay/çözüm/yeniden bildirim alerts.actions'tadır; AUDIT'te kapalı kalır. Kapsamlı müdür
         // (rol ADMIN, takım kapsamlı) ADMIN satırından bu izni ALMAZ — kural NocCallLogService.canWrite'ta.
         r("noc_calls.write",    "alerts", EDIT, Set.of(EDIT)),
+        // Alarm iletimi (2026-11-05): takımın alarmlarını başka takıma / üyelerine EK alıcı olarak iletmek. Okuma (liste) ve
+        // yazma (ekle / düzenle / kaldır) ayrı satır — AUDIT'e yazma sızmasın. Uç ayrıca sahip takımı YÖNETMEYİ ister
+        // (SessionScope.canManage) — erişim paylaşımı ve 7/24 genişletmesi bu ekranı açmaz. Varsayılan: TEAM_ADMIN okur ve
+        // yazar, USER ve AUDIT yalnız okur, ADMIN hepsi.
+        r("alerts.forwards",    "alerts", VIEW),
+        r("alerts.forwards",    "alerts", EDIT),
 
         // ── İzleme ────────────────────────────────────────────────────────
         r("system_health.read",          "monitoring", VIEW),
@@ -245,6 +251,7 @@ public final class PermissionCatalog {
             "teams.list", "teams.update", "teams.weekly_notifications",
             "oncall.read", "oncall.manage",   // kendi takımının nöbet çizelgesi (2026-10-11)
             "teams.sharing",   // kendi takımının erişim paylaşımları (2026-10-12)
+            "alerts.forwards", // kendi takımının alarm iletimleri (2026-11-05; uç ayrıca canManage)
             "users.list", "users.crud", "users.actions",
             "alerts.read", "alerts.actions",
             "system_health.read",
@@ -345,10 +352,18 @@ public final class PermissionCatalog {
             "incidents.view", "incidents.manage",
             "maintenance.view"
         );
-        for (Resource r : ALL) putAll(map, r, allowed.contains(r.key));
+        for (Resource r : ALL) {
+            putAll(map, r, allowed.contains(r.key) || (USER_VIEW_ONLY.contains(r.key) && r.actions.contains(VIEW)));
+        }
         for (Resource r : INTERNAL) putAll(map, r, false);
         return map;
     }
+
+    /**
+     * USER'ın YALNIZ okuma satırını aldığı iki satırlı kaynaklar (yazma satırı kapalı). {@code alerts.forwards} (2026-11-05):
+     * takım üyesi kendi takımının alarm iletimlerini ve takımına iletilenleri görür; eklemek / değiştirmek takımı yönetenin işi.
+     */
+    static final Set<String> USER_VIEW_ONLY = Set.of("alerts.forwards");
 
     /**
      * AUDIT'in salt-okunurluk kuralının TEK bilinçli istisna listesi (yazma eylemi taşıyan kaynaklar).

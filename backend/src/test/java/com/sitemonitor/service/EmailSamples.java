@@ -105,6 +105,7 @@ final class EmailSamples {
         noc();
         systemMaintenance();
         loginCode();
+        alertForward();
         addHtml("smtp-test", "smtp", "[Site Monitor] SMTP test e-postası", smtp.buildTestHtml(smtpSettings), "ok");
         return List.copyOf(out);
     }
@@ -120,6 +121,26 @@ final class EmailSamples {
                 UserAgentSummary.labelOf(LONG_UA));
         var m = com.sitemonitor.service.mail.LoginCodeMail.build(info);
         add("login-code", "admin", com.sitemonitor.service.mail.LoginCodeMail.subject(), m.html(), m.text(), "ok");
+    }
+
+    // ── Alarm iletimi bilgi postası (2026-11-05) ────────────────────────────
+
+    /** Seçilen üyelere, çok sayıda izleme (+N), uzun takım / kişi adları ve not. */
+    private void alertForward() {
+        List<String> monitors = new ArrayList<>();
+        for (int i = 1; i <= 24; i++) monitors.add("HTTP/Website: " + (i == 1 ? LONG_HOST : "servis-" + i + ".example.com"));
+        var info = new com.sitemonitor.service.mail.AlertForwardInfoMail.Info(
+                "Sipariş Sistemleri (Dijital Kanallar Uygulama Geliştirme Müdürlüğü)", "Ağ Operasyon (" + TR + ")", false,
+                List.of("Ayşe Yılmaz (Ağ Operasyon / Kıdemli Sistem Uzmanı)", "Mehmet Kaya"), "MONITORS", monitors,
+                "Kişi A (Sipariş / Takım Yöneticisi)", "Gece nöbetinde ağ ekibi de haberdar olsun — " + TR, "2026-12-31", BASE);
+        var m = com.sitemonitor.service.mail.AlertForwardInfoMail.build(info);
+        add("alert-forward-added", "admin", com.sitemonitor.service.mail.AlertForwardInfoMail.subject(info.ownerTeam()),
+                m.html(), m.text(), "ok");
+        var whole = new com.sitemonitor.service.mail.AlertForwardInfoMail.Info("Ödeme", "Güvenlik", true, List.of(), "ALL",
+                List.of(), null, null, null, "");
+        var w = com.sitemonitor.service.mail.AlertForwardInfoMail.build(whole);
+        add("alert-forward-added-team", "admin", com.sitemonitor.service.mail.AlertForwardInfoMail.subject("Ödeme"),
+                w.html(), w.text(), "ok");
     }
 
     // ── Sistem Bakım Modu duyuruları (2026-10-02) ───────────────────────────

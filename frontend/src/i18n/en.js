@@ -6261,6 +6261,7 @@ export const EN = {
   'perm.res.thresholds.edit':      'Edit alert thresholds.',
   'perm.res.alerts.read':          'View alert history.',
   'perm.res.alerts.actions':       'Acknowledge, resolve, re-notify alerts.',
+  'perm.res.alerts.forwards':      'Forward the team’s alerts to another team or its members (alarm forwarding), and see the forwards.',
   'perm.res.noc_calls.write':       '24/7 monitoring team: log calls against an alert (who was called, when, the outcome and a note). Granted by default to global administrators and AUDIT (the 24/7 team works under the AUDIT role); acknowledging and resolving need a separate permission. Sensitive — holders can see alerts for EVERY team. Team-scoped managers never get this.',
   'perm.res.system_health.read':   'Monitor system health metrics.',
   'perm.res.system_health.actions':'Force run, release lock, trigger heartbeat.',

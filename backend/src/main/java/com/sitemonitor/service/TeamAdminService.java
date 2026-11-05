@@ -116,6 +116,16 @@ public class TeamAdminService {
         this.dbQueryTemplateRepo = templates;
     }
 
+    /**
+     * Alarm iletimi (2026-11-05): etki önizlemesi takımın sahibi olduğu ve ona gelen iletimleri BİLGİ olarak sayar (silmeyi
+     * ENGELLEMEZ — takımla birlikte silinir); {@link #moveAll} sahibi olduğu iletimleri hedefe taşır, gelenleri siler. Alan
+     * enjeksiyonu: kurucu ve elle kurulan testler değişmesin; yokken bölüm atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.forward.AlertForwardService alertForwards;
+
+    void setAlertForwards(com.sitemonitor.service.forward.AlertForwardService s) { this.alertForwards = s; }
+
     /** Taşıma çakışması: hedef takımda aynı adlı kanal / şablon ya da hedefin sınırı dolu → 409, HİÇBİR şey taşınmaz. */
     public static class MoveConflictException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
         public MoveConflictException(String code, String message) { super(code, message, null); }
@@ -221,6 +231,14 @@ public class TeamAdminService {
         exec.put("settings", count("SELECT COUNT(*) FROM executive_summary_team_settings WHERE team_id = ?", teamId) > 0);
         exec.put("reports", count("SELECT COUNT(*) FROM executive_summary_team_reports WHERE team_id = ?", teamId));
         out.put("executive_summary", exec);
+        // Alarm iletimi (2026-11-05): BİLGİ (engel değil) — takımla birlikte silinir (sahibi olduğu + ona gelen).
+        if (alertForwards != null) {
+            try {
+                out.put("alert_forwards", alertForwards.impactOf(teamId));
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(TeamAdminService.class).warn("Takımın alarm iletimleri sayılamadı: {}", e.toString());
+            }
+        }
         // AÇIK alarm da bağlı kayıttır (2026-09-28, Y1): damgası bu takımda kalan açık alarmın yeniden uyarısı,
         // eskalasyonu ve çözümü takım silinince hiçbir adrese/kişiye gitmezdi (sessiz susma). "Taşı" açık alarmları da
         // taşır; taşımadan silme 409 alır.
@@ -410,6 +428,13 @@ public class TeamAdminService {
             }
         }
         moved.put("maintenance_windows", n);
+        // Alarm iletimi (2026-11-05): sahibi olduğu iletimler hedefe geçer; GELEN iletimler ve hedefe giden (taşınınca kendi
+        // kendine iletim olurdu) iletimler silinir — aynı işlemde.
+        if (alertForwards != null) {
+            com.sitemonitor.service.forward.AlertForwardService.Moved fw = alertForwards.moveTeam(from, to);
+            moved.put("alert_forwards", fw.moved());
+            moved.put("alert_forwards_removed", fw.removed());
+        }
         return moved;
     }
 

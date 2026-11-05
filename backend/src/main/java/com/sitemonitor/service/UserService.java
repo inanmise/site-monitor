@@ -126,6 +126,17 @@ public class UserService {
     }
 
     /**
+     * Alarm iletimi (2026-11-05): takım silinince sahibi / alıcısı olduğu iletimler, kullanıcı silinince seçilen üye listeleri
+     * AYNI işlemde temizlenir. Alan enjeksiyonu + null-güvenli: yapıcıyla kurulan birim testleri aynen çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.forward.AlertForwardService alertForwards;
+
+    void setAlertForwards(com.sitemonitor.service.forward.AlertForwardService s) {
+        this.alertForwards = s;
+    }
+
+    /**
      * Pasifleştirme anında kullanıcının TÜM hatırlanan girişleri silinir (2026-10-02, kullanıcı kararı). Alan enjeksiyonu
      * + isteğe bağlı: yapıcıyla kurulan birim testleri aynen çalışır (yokken yalnız bu silme atlanır — interceptor pasif
      * hesabın çerezini zaten reddeder).
@@ -1005,6 +1016,7 @@ public class UserService {
             throw new IllegalStateException("Bu takımda hâlâ kullanıcılar var — önce kullanıcıları başka bir takıma taşıyın.");
         if (contactRepo.existsByTeamIdAndActiveTrue(id))
             throw new IllegalStateException("Bu takıma atanmış aktif escalation contact'lar var — önce onları kaldırın veya devre dışı bırakın.");
+        if (alertForwards != null) alertForwards.deleteForTeam(id);   // sahibi ya da alıcısı bu takım olan alarm iletimleri
         teamRepo.deleteById(id);
     }
 
@@ -1577,6 +1589,7 @@ public class UserService {
         }
         userRepo.deleteById(id);
         if (teamSources != null) teamSources.forgetUser(id);   // üyelik kaynak izleri öksüz kalmasın
+        if (alertForwards != null) alertForwards.removeUser(id);   // alarm iletimlerinin seçilen üye listelerinden çıkar
         return new DeleteImpact(leaders, managed, subs);
     }
 

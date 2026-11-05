@@ -6274,6 +6274,7 @@ export const TR = {
   'perm.res.thresholds.edit':      'Alarm eşiklerini düzenleme.',
   'perm.res.alerts.read':          'Alarm geçmişini görüntüleme.',
   'perm.res.alerts.actions':       'Alarmı onaylama, kapatma, yeniden gönderme.',
+  'perm.res.alerts.forwards':      'Takımın alarmlarını başka bir takıma ya da üyelerine iletme (alarm iletimi) ve iletimleri görme.',
   'perm.res.noc_calls.write':       '7/24 izleme ekibi: uyarının üzerinden arama kaydı girme (kim, ne zaman arandı, sonuç, not). Varsayılan: global yönetici ve AUDIT (7/24 ekibi AUDIT rolündedir); onaylama/çözme ayrı izindir. Hassas — izni taşıyan TÜM takımların uyarılarını görür. Kapsamlı müdür bu izni almaz.',
   'perm.res.system_health.read':   'Sistem sağlığı metriklerini izleme.',
   'perm.res.system_health.actions':'Force Run, kilit serbestleştirme, heartbeat tetikleme.',

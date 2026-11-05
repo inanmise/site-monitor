@@ -430,6 +430,24 @@ class CacheBusRegistrationTest {
     }
 
     @Test
+    @DisplayName("Alarm iletimi: pod A'da iletim kaldırıldı → pod B görüntüyü yeniden kurar (kaldırılan alıcıya iletim yok)")
+    void alertForwards() {
+        com.sitemonitor.repository.AlertForwardRepository ra = mock(com.sitemonitor.repository.AlertForwardRepository.class);
+        com.sitemonitor.repository.AlertForwardRepository rb = mock(com.sitemonitor.repository.AlertForwardRepository.class);
+        when(rb.findAllByOrderByIdAsc()).thenReturn(List.of());
+        com.sitemonitor.service.forward.AlertForwardService a = new com.sitemonitor.service.forward.AlertForwardService(ra, mock(TeamRepository.class));
+        com.sitemonitor.service.forward.AlertForwardService b = new com.sitemonitor.service.forward.AlertForwardService(rb, mock(TeamRepository.class));
+        CacheBus busA = bus(), busB = bus();
+        bind(a, busA);
+        bind(b, busB);
+        b.addressCount(1L);
+        b.addressCount(1L);
+        verify(rb, times(1)).findAllByOrderByIdAsc();
+        propagate(busA, busB, CacheBusNames.ALERT_FORWARDS, a::invalidate, () -> b.addressCount(1L),
+                () -> verify(rb, times(2)).findAllByOrderByIdAsc());
+    }
+
+    @Test
     @DisplayName("Veri yolu yoksa (birim testi / eski kurulum) her servis yalnız kendi belleğini boşaltır — istisna yok")
     void withoutBus_localOnly() {
         new TeamQuietHoursService(mock(TeamRepository.class), mock(QuietDigestItemRepository.class)).invalidate();
@@ -437,6 +455,8 @@ class CacheBusRegistrationTest {
         new NocOperatorService(mock(NocSettingsRepository.class), mock(TeamRepository.class), mock(AppUserRepository.class)).invalidate();
         new TeamAccessGrantService(mock(TeamAccessGrantRepository.class), mock(TeamRepository.class), mock(AppUserRepository.class)).invalidate();
         new TechErrorAnalyticsService(mock(TechErrorChannelRepository.class), mock(TechErrorReportRepository.class)).invalidate();
+        new com.sitemonitor.service.forward.AlertForwardService(mock(com.sitemonitor.repository.AlertForwardRepository.class),
+                mock(TeamRepository.class)).invalidate();
         MaintenanceWindowRepository r = mock(MaintenanceWindowRepository.class);
         when(r.findByActiveTrue()).thenReturn(List.of());
         new MaintenanceService(r).refresh();
