@@ -1686,4 +1686,33 @@ class UserPushServiceTest {
         assertThat(out.get("skipped")).isEqualTo(1);
         assertThat(service.insertEventless(new UserPushDelivery() {{ setUsername("N00002"); setDedupeKey("k"); }})).isFalse();
     }
+
+    @Test
+    @DisplayName("iletim önizlemesi: hiç etkin iletim yokken (anyLive=false, yalnız bellek) olay / envanter YENİDEN okunmaz — bugünkü gibi")
+    void preview_noLiveForwards_noExtraQuery() {
+        AlertEvent e = event(1L, "HIGH", "EXPIRY");
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(e));
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SKIPPED_MONITOR_OFF")).thenReturn(false);
+        recipients("N00001");
+        var baseline = service.preview(1L, 5L, List.of());
+        int reads = org.mockito.Mockito.mockingDetails(alertEventRepo).getInvocations().size();
+
+        com.sitemonitor.repository.CertificateInventoryRepository inv = org.mockito.Mockito.mock(
+                com.sitemonitor.repository.CertificateInventoryRepository.class);
+        service.setForwardInventoryRepo(inv);
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        service.setForwardRouting(new com.sitemonitor.service.forward.AlertForwardRouting() {
+            @Override public boolean anyLive() { return false; }
+            @Override public boolean anyFor(java.util.Collection<Long> owners) { asked.incrementAndGet(); return false; }
+            @Override public List<com.sitemonitor.service.forward.ForwardTarget> targetsFor(AlertRef ref) {
+                throw new AssertionError("çağrılmamalı");
+            }
+        });
+        var p = service.preview(1L, 5L, List.of());
+        assertThat(p).isEqualTo(baseline);
+        assertThat(org.mockito.Mockito.mockingDetails(alertEventRepo).getInvocations().size() - reads)
+                .as("önizleme yalnız takım satırları için okudu (iletim için ek okuma yok)").isEqualTo(reads);
+        org.mockito.Mockito.verifyNoInteractions(inv);
+        assertThat(asked.get()).isZero();
+    }
 }

@@ -126,6 +126,17 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("alarm iletimi (2026-11-05): ALERT_FORWARD_* katalogda ve erişim paylaşımıyla aynı (TAKIM) kategoride — ALERT_ (olay) değil")
+    void alertForwardIsTeam() {
+        for (String t : List.of("ALERT_FORWARD_CREATE", "ALERT_FORWARD_UPDATE", "ALERT_FORWARD_DELETE")) {
+            assertThat(AuditEventCatalog.contains(t)).as(t).isTrue();
+            assertThat(AuditEventCatalog.categoryOf(t)).as(t).isEqualTo(AuditEventCatalog.categoryOf("TEAM_ACCESS_GRANT_CREATE"))
+                    .isEqualTo(AuditEventCatalog.TEAM);
+        }
+        assertThat(AuditEventCatalog.categoryOf("ALERT_ACKNOWLEDGE")).isEqualTo(AuditEventCatalog.INCIDENT);
+    }
+
+    @Test
     @DisplayName("katalogdaki hiçbir tür OTHER'da kalmamalı (kural her türü tanımalı)")
     void everyCatalogTypeHasRealCategory() {
         List<String> uncategorised = AuditEventCatalog.TYPES.stream()

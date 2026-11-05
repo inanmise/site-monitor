@@ -132,6 +132,21 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
             + "WHERE d.alertEventId = :eventId AND d.username <> '-'")
     List<Object[]> findPersonEvidenceByEvent(@Param("eventId") Long eventId);
 
+    /**
+     * Sahip fırtına push'unun karar satırları (2026-11-06): anahtar + sistem sicili → {@code [teamId, status]}. Takım başına
+     * karar (fırtına iki dağıtımlıysa SY ve UG ayrı satır yazar) — iletilen fırtına yalnız İLGİLİ sahibin kararıyla susar.
+     */
+    @Query("SELECT d.teamId, d.status FROM UserPushDelivery d WHERE d.dedupeKey = :key AND d.username = :system")
+    List<Object[]> findDecisionRowsByKey(@Param("key") String key, @Param("system") String systemUser);
+
+    /**
+     * Bu fırtınanın iletilen push'unun GÖNDERİLDİĞİ alıcı takımlar (2026-11-06): {@code [teamId, dedupeKey]}, kişi satırları
+     * (sistem sicili hariç), yalnız SENT. {@code prefixPattern} çağıranın kaçırdığı LIKE deseni ({@code \} kaçış, sonda %).
+     */
+    @Query("SELECT DISTINCT d.teamId, d.dedupeKey FROM UserPushDelivery d WHERE d.dedupeKey LIKE :prefixPattern ESCAPE '\\' "
+            + "AND d.status = 'SENT' AND d.username <> :system AND d.teamId IS NOT NULL")
+    List<Object[]> findSentTeamsByKeyPrefix(@Param("prefixPattern") String prefixPattern, @Param("system") String systemUser);
+
     /** Fırtına çözüm push'unun alıcıları: bu fırtınanın bu takıma giden açılış/tekrar satırları (anahtar öneki). */
     List<UserPushDelivery> findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc(String dedupeKeyPrefix, Long teamId,
                                                                                        String status);

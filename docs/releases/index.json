@@ -1,9 +1,163 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T17:34:28Z",
+  "generatedAt": "2026-11-05T23:54:17Z",
   "repo": "inanmise/site-monitor",
-  "count": 808,
+  "count": 809,
   "releases": [
+    {
+      "version": "20.186.0",
+      "tag": "v20.186.0",
+      "releasedAt": "2026-11-05T23:54:10Z",
+      "commit": "a184442a5bcea0b130aab015760f9b24a35615db",
+      "prevVersion": "20.185.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 10,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a184442a",
+          "subject": "bildirim geçmişi kartında alıcı bloğu telefonda sıfır genişliğe inmesin (kendi satırına iner)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "b161e726",
+          "subject": "alarm iletimi — inceleme düzeltmelerinin belgesi (takım taşıma duraklatması, bilgi postası, erişim paylaşımı)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "04f7af38",
+          "subject": "alarm iletimi — inceleme düzeltmeleri (CLAUDE.md, runbook takım taşıma notu)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "077351ff",
+          "subject": "alarm iletimi — bağımsız inceleme düzeltmeleri (arka uç)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "287b3631",
+          "subject": "alarm iletimi ön yüzü — inceleme düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f9c980a9",
+          "subject": "alarm iletimi — kılavuz bölümü, push günlüğü süzgecinde bilgi bildirimi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8561d446",
+          "subject": "alarm iletimi ekranı — süzgeçsiz yeni iletimde sahip takım, dar kap yerleşimi"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "9bc90e8f",
+          "subject": "alarm iletimi — CLAUDE.md ve runbook"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2779c2d1",
+          "subject": "alarm iletimi uçtan uca — gerçek yönlendirme + gerçek gönderim; önizlemede iletim takım adı"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "3c15a31c",
+          "subject": "alarm iletimi yüzeyleri e2e — kırpılma ölçümü yalnız yeniden gönderim penceresinde"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4933269a",
+          "subject": "alarm iletimi yüzeyleri — \"Kim bilgilendirilir?\" types_only kapsamı, iletim atlama nedeni çevirisi, for-monitor 400 = rozet yok; e2e düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9a6fb2c",
+          "subject": "alarm iletimi ekranı — sürüm çakışması, okunamayan izleme dizini, taşıma sayıları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "75321202",
+          "subject": "alarm iletimi yönetimi ve yönlendirme arka ucu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b5230cc6",
+          "subject": "alarm iletimi yönetim ekranı — liste, KPI, süzgeçler, ekle / düzenle penceresi, derin bağ"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f651be7f",
+          "subject": "alarm iletimi — e-posta yolları (ayrı posta + bant, damga, çözüm, özet, fırtına, alarm akışı)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "c15f18ba",
+          "subject": "alarm iletimi — push ayağı (iletim push'u, iletilen fırtına bildirimi, çözüm, önizleme)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "933565c6",
+          "subject": "alarm iletimi — izleme / sertifika penceresi rozeti, yeniden gönderim ve bildirim geçmişi iletim satırları, \"Kim bilgilendirilir?\" iletim alıcıları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "19630ed5",
+          "subject": "alarm iletimi — izleme için iletim sorgusunda alan adı seçeneği"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "d005dc78",
+          "subject": "alarm iletimi iskeleti — model, depo, yönlendirme arayüzleri, istemci uçları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.185.0",
       "tag": "v20.185.0",

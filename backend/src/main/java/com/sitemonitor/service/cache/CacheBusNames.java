@@ -36,8 +36,10 @@ public final class CacheBusNames {
     public static final String USER_GATE = "user-gate";
     /** Tatil / özel gün takvimi (veritabanı sorgu izlemesi "tatillerde çalışma", 2026-10-31) — {@code HolidayCalendarService}. */
     public static final String HOLIDAYS = "holidays";
+    /** Alarm iletimleri (2026-11-05) — {@code AlertForwardService}. */
+    public static final String ALERT_FORWARDS = "alert-forwards";
 
     /** Hepsi (kapı testi: biçim + tekillik). */
     public static final List<String> ALL = List.of(WEAK_ALGO, TECH_ERROR_ANALYTICS, ONCALL, QUIET_HOURS, INACTIVE_RECIPIENTS,
-            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE, USER_GATE, HOLIDAYS);
+            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE, USER_GATE, HOLIDAYS, ALERT_FORWARDS);
 }

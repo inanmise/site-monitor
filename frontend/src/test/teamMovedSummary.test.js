@@ -34,7 +34,7 @@ describe('movedSummary', () => {
 
   it('her anahtarın TR ve EN metni var', () => {
     for (const k of ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
-      'dbq_connections', 'dbq_templates', 'open_alerts']) {
+      'dbq_connections', 'dbq_templates', 'alert_forwards', 'alert_forwards_paused', 'alert_forwards_removed', 'open_alerts']) {
       expect(TR[`team.mv.${k}`]).toBeTruthy()
       expect(EN[`team.mv.${k}`]).toBeTruthy()
     }

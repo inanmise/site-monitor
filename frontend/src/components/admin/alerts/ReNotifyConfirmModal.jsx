@@ -3,6 +3,8 @@ import { useT } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge, { SystemRoleBadge } from '../ToneBadge.jsx'
 import { statusLabel } from './alertHistoryModel.js'
+import ForwardBadge from '../../forwards/ForwardBadge.jsx'
+import { isForwardRow } from '../../forwards/forwardModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
@@ -14,7 +16,8 @@ const EMPTY = 'py-2.5 text-sm text-muted-foreground'
 function RecipientRow({ checked, disabled, onToggle, title, children }) {
   const id = useId()
   return (
-    <div className="flex w-full items-center gap-2 border-b py-1.5 text-sm last:border-b-0" title={title}>
+    // Dokunmatikte satır en az 40 px (2026-11-05): kutu 16 px, dokunma alanı bağlı Label ile satırın tamamı
+    <div className="flex w-full items-center gap-2 border-b py-1.5 text-sm last:border-b-0 pointer-coarse:min-h-10" title={title}>
       <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={onToggle} />
       <Label htmlFor={id} className={cn('flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2 font-normal', disabled && 'cursor-not-allowed opacity-70')}>
         {children}
@@ -26,6 +29,10 @@ function RecipientRow({ checked, disabled, onToggle, title, children }) {
 /**
  * "Tekrar Bildir" onayı: gönderim ÖNCESİ alıcı listesi, KANAL KANAL. E-posta ve webhook alıcıları ayrı ayrı
  * çıkarılabilir; gönderilemeyecek webhook alıcıları da SEBEBİYLE, pasif satır olarak görünür.
+ *
+ * <p>Alarm iletimi (2026-11-05): sunucunun `kind: "FORWARD"` satırları (sahip takımın alarmını alan başka takım / kişiler —
+ * e-postada adres başına, push'ta kişi başına) "İletim · <alıcı takım>" rozetiyle çizilir (ham rol metni yerine); onlar da
+ * tek tek çıkarılabilir ve seçim sayısına girer. Alan yoksa (eski sunucu) bugünkü ekran.
  */
 export default function ReNotifyConfirmModal({ domain, recipients, webhook, emailBlockReason = null, sending, onSend, onClose }) {
   const t = useT()
@@ -67,9 +74,19 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, emai
           ? <div className={EMPTY} data-slot="renotify-email-monitor-off">{t('alh.renotifyModal.emailMonitorOff')}</div>
           : emailRows.length === 0 ? <div className={EMPTY}>{t('alh.renotifyModal.noRecipients')}</div> : emailRows.map((r) => (
           <RecipientRow key={r.email} checked={!uncheckedEmails.has(r.email)} onToggle={() => toggleEmail(r.email)}>
-            <strong>{r.name || r.email}</strong>
-            <SystemRoleBadge role={r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')} />
-            <span className="text-xs text-muted-foreground">{r.email}</span>
+            {isForwardRow(r) ? (
+              // İletim alıcısı: adres + "İletim · <alıcı takım>" (sunucunun Türkçe rol metni basılmaz)
+              <>
+                <strong className="min-w-0 [overflow-wrap:anywhere]">{r.email}</strong>
+                <ForwardBadge teamName={r.team_name || r.name} data-renotify="forward" />
+              </>
+            ) : (
+              <>
+                <strong>{r.name || r.email}</strong>
+                <SystemRoleBadge role={r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')} />
+                <span className="text-xs text-muted-foreground">{r.email}</span>
+              </>
+            )}
           </RecipientRow>
         ))}
       </div>
@@ -83,10 +100,11 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, emai
         ) : pushRows.map((r) => {
           const willSend = r.status === 'PENDING'
           return (
-            <RecipientRow key={r.username} disabled={!willSend} title={willSend ? undefined : r.status}
+            <RecipientRow key={`${isForwardRow(r) ? 'fwd' : 'own'}:${r.username}`} disabled={!willSend} title={willSend ? undefined : r.status}
               checked={willSend && !uncheckedUsers.has(r.username)} onToggle={() => toggleUser(r.username)}>
               <strong>{r.display_name || r.username}</strong>
               <ToneBadge tone={willSend ? 'info' : 'muted'}>{willSend ? t('alh.renotifyModal.willSend') : t('alh.renotifyModal.wontSend')}</ToneBadge>
+              {isForwardRow(r) && <ForwardBadge teamName={r.team_name} data-renotify="forward" />}
               <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{willSend ? r.username : statusLabel(t, r.status)}</span>
               {/* Aynı kişi (2026-10-21): push bu kişinin öbür hesabına gidecek */}
               {r.same_person_of && (

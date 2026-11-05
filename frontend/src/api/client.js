@@ -687,6 +687,21 @@ export const api = {
     // Geçerli paylaşım düzeyleri (/me access_grants ile aynı) — pano veri dalgasında tazelenir (2026-10-12)
     myGrants: () => request('/me/access-grants'),
   },
+  /**
+   * Alarm iletimi (2026-11-05) — sahip takımın alarmlarını başka takıma / üyelerine ek alıcı olarak iletmek.
+   * list: sahip olunan (items) + bize iletilen (incoming); monitors: sahip takımın izlemeleri (seçici); forMonitor: bir izlemeye
+   * uygulanan iletimler (detay penceresi rozeti).
+   */
+  alertForwards: {
+    list: (team) => request(`/alert-forwards${team ? `?team=${encodeURIComponent(team)}` : ''}`, { withStatus: true }),
+    create: (body) => request('/alert-forwards', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    update: (id, body) => request(`/alert-forwards/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    remove: (id) => request(`/alert-forwards/${encodeURIComponent(id)}`, { method: 'DELETE', withStatus: true }),
+    monitors: (team) => request(`/alert-forwards/monitors?team=${encodeURIComponent(team)}`, { withStatus: true }),
+    // cert (envanter kaydı) için kimlik yerine alan adı da verilebilir: forMonitor('cert', null, 'ornek.com')
+    forMonitor: (type, id, domain) => request(`/alert-forwards/for-monitor?type=${encodeURIComponent(type)}${
+      id != null ? `&id=${encodeURIComponent(id)}` : ''}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`, { withStatus: true }),
+  },
   /** Çevrimiçi kullanıcı özeti (2026-10-02) — oturum açmış HERKES; yalnız sayılar (toplam + birincil takıma göre). */
   presence: {
     online: () => request('/presence/online'),

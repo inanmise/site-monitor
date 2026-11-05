@@ -95,6 +95,40 @@ public class QuietDigestService {
 
     void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
 
+    /**
+     * Alarm iletimi (2026-11-05): ertelenen bildirimin iletim alıcıları da özetini alır — sahip takımın iletimleri için alıcı
+     * takım başına AYRI özet (bant), yalnız kendisine iletilen alarmlarla. Sağlayıcı üzerinden çözülür (açılış döngüsü yok);
+     * yokken ya da takımın iletimi yokken özet bayt bayt bugünkü.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.forward.AlertForwardRouting> forwardRoutingProvider;
+    private volatile com.sitemonitor.service.forward.AlertForwardRouting forwardRouting;
+
+    /** Test kancası. */
+    void setForwardRouting(com.sitemonitor.service.forward.AlertForwardRouting r) { this.forwardRouting = r; }
+
+    /**
+     * Envanter — iletim kopyasında alarmın TÜM sahiplerini bulmak için (envanter gibi yönlenen alarmda SY / UG; 2026-11-06).
+     * Yalnız iletim yolunda, takımın iletimi varken okunur; isteğe bağlı (yokken yalnız damga takımı sahip sayılır).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
+
+    /** Test kancası. */
+    void setInventoryRepo(com.sitemonitor.repository.CertificateInventoryRepository r) { this.inventoryRepo = r; }
+
+    private com.sitemonitor.service.forward.AlertForwardRouting forwardRouting() {
+        var r = forwardRouting;
+        if (r != null) return r;
+        try {
+            r = forwardRoutingProvider == null ? null : forwardRoutingProvider.getIfAvailable();
+        } catch (Exception e) {
+            return null;
+        }
+        if (r != null) forwardRouting = r;   // çözülen bean önbelleğe — alarm başına bean araması yok
+        return r;
+    }
+
     /** Tur özeti (log + test). */
     public record RunResult(int items, int mails, int sent) {
         static final RunResult EMPTY = new RunResult(0, 0, 0);
@@ -275,6 +309,8 @@ public class QuietDigestService {
                 } catch (Exception ex) {
                     log.warn("Sessiz saat özeti günlüğe yazılamadı (takım {}): {}", t.getKey(), ex.getMessage());
                 }
+                // Alarm iletimi (2026-11-05): bu özetin alarmlarının iletim alıcılarına ayrı özet kopyaları (yoksa hiçbir şey).
+                forwardDigest(t.getKey(), name, group, events, to, windowLabel);
             }
         }
 
@@ -287,6 +323,146 @@ public class QuietDigestService {
             }
         }
         return new RunResult(owned.size(), mails, sentMails);
+    }
+
+    /** İletim özeti grubu: (alıcı takım, adres kümesi) → alarmlar; {@code reason} doluysa posta yok, yalnız karar satırı. */
+    private static final class ForwardDigestGroup {
+        final com.sitemonitor.service.forward.ForwardTarget target;
+        final List<String> to;
+        final String reason;
+        final List<AlertEvent> events = new ArrayList<>();
+
+        ForwardDigestGroup(com.sitemonitor.service.forward.ForwardTarget target, List<String> to, String reason) {
+            this.target = target;
+            this.to = to;
+            this.reason = reason;
+        }
+    }
+
+    /**
+     * Sessiz saat özetinin iletim kopyaları (2026-11-05): {@code teamId} takımının özetindeki her alarm için o takımın
+     * iletimleri ({@code targetsFor(owners=[takım])}); alıcı takım × adres kümesi başına AYRI özet — yalnız ona iletilen
+     * alarmlar, başta bant, başlıkta sahip takımın adı. Adresler: hedef − sahip özetinin alıcıları − bu alarmı iletimle ZATEN
+     * almış adresler (damga). Alarm başına {@code QUIET_DIGEST} satırı (rol FORWARD, alıcı adı = alıcı takım). Teslim edilen ve
+     * hâlâ açık alarmlar iletim damgasına yazılır (çözüm postası onlara gider). Hata sahip özetini bozmaz.
+     *
+     * <p>Sahipler (2026-11-06, inceleme): alarmın damga takımı + envanter gibi yönleniyorsa envanterin SY / UG takımı; alıcı
+     * takımı bu sahiplerden biri olan hedef ATLANIR (alarmı kendi postasından / özetinden zaten alıyor — anlık gönderim ve fırtına
+     * yoluyla aynı kural). Eskiden yalnız özet takımı sahip sayılıyordu: SY'nin UG'ye iletimi UG'ye ikinci bir kopya
+     * götürüyordu.
+     */
+    private void forwardDigest(Long teamId, String ownerName, List<QuietDigestItem> group, Map<Long, AlertEvent> events,
+                               List<String> ownerTo, String windowLabel) {
+        var routing = forwardRouting();
+        if (routing == null || teamId == null) return;
+        try {
+            if (!routing.anyFor(List.of(teamId))) return;
+            Set<String> ownerKeys = new HashSet<>();
+            for (String a : ownerTo) if (a != null) ownerKeys.add(a.trim().toLowerCase(Locale.ROOT));
+            Map<String, ForwardDigestGroup> groups = new LinkedHashMap<>();
+            Set<Long> seenEvents = new HashSet<>();
+            Map<String, Set<Long>> ownersByDomain = new HashMap<>();
+            for (QuietDigestItem i : group) {
+                AlertEvent e = events.get(i.getAlertEventId());
+                if (e == null || e.getId() == null || !seenEvents.add(e.getId())) continue;
+                var targets = routing.targetsFor(new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(
+                        List.of(teamId), e.getAlertType(), e.getDomain(), EscalationService.contextMonitorId(e)));
+                if (targets == null || targets.isEmpty()) continue;
+                Set<Long> owners = alarmOwners(e, teamId, ownersByDomain);
+                Set<String> already = new HashSet<>();
+                ForwardEmailStamp.of(e).values().forEach(l -> l.forEach(a -> already.add(a.toLowerCase(Locale.ROOT))));
+                for (var t : targets) {
+                    if (t == null || owners.contains(t.recipientTeamId())) continue;
+                    List<String> to = new ArrayList<>();
+                    Set<String> keys = new LinkedHashSet<>();
+                    for (String a : t.emails()) {
+                        String v = a == null ? "" : a.trim();
+                        String k = v.toLowerCase(Locale.ROOT);
+                        if (v.isEmpty() || ownerKeys.contains(k) || already.contains(k) || !keys.add(k)) continue;
+                        to.add(v);
+                    }
+                    String reason = to.isEmpty()
+                            ? (t.emails().isEmpty() ? STATUS_NO_RECIPIENT : EscalationService.STATUS_FORWARD_ALREADY_MAILED)
+                            : null;
+                    String key = t.recipientTeamId() + "|" + (reason != null ? reason : String.join(",", new TreeSet<>(keys)));
+                    groups.computeIfAbsent(key, k -> new ForwardDigestGroup(t, to, reason)).events.add(e);
+                }
+            }
+            for (ForwardDigestGroup g : groups.values()) sendForwardDigest(g, ownerName, windowLabel);
+        } catch (Exception e) {
+            log.warn("Sessiz saat özetinin iletim kopyaları atlandı (takım {}): {}", teamId, e.toString());
+        }
+    }
+
+    /**
+     * Alarmın sahip takımları: özet takımı + damga takımı + (envanter gibi yönleniyorsa) envanterin SY / UG takımı. Envanter
+     * alan adı başına bir kez okunur (tur içi bellek); okunamazsa yalnız özet + damga takımı.
+     */
+    private Set<Long> alarmOwners(AlertEvent e, Long digestTeam, Map<String, Set<Long>> cache) {
+        Set<Long> owners = new LinkedHashSet<>();
+        if (digestTeam != null) owners.add(digestTeam);
+        if (e.getTeamId() != null) owners.add(e.getTeamId());
+        var inv = inventoryRepo;
+        if (inv == null || e.getDomain() == null || !AlertOwnership.routesLikeInventory(e)) return owners;
+        Set<Long> fromInventory = cache.computeIfAbsent(e.getDomain().trim().toLowerCase(Locale.ROOT), k -> {
+            Set<Long> ids = new LinkedHashSet<>();
+            try {
+                inv.findByDomain(e.getDomain()).ifPresent(c -> {
+                    if (c.getTeamId() != null) ids.add(c.getTeamId());
+                    if (c.getUgTeamId() != null) ids.add(c.getUgTeamId());
+                });
+            } catch (Exception ex) {
+                log.debug("Sessiz saat iletim kopyası: envanter sahipleri okunamadı ({}): {}", e.getDomain(), ex.toString());
+            }
+            return ids;
+        });
+        owners.addAll(fromInventory);
+        return owners;
+    }
+
+    /** Bir iletim özeti grubunun postası (ya da karar satırı) + alarm başına satır + açık alarmların damgası. */
+    private void sendForwardDigest(ForwardDigestGroup g, String ownerName, String windowLabel) {
+        String rtName = g.target.recipientTeamName() == null || g.target.recipientTeamName().isBlank()
+                ? "-" : g.target.recipientTeamName().trim();
+        List<EmailNotificationService.QuietDigestRow> rows = new ArrayList<>();
+        for (AlertEvent e : g.events) rows.add(row(e));
+        rows.sort(Comparator.comparing(EmailNotificationService.QuietDigestRow::resolved)
+                .thenComparing(r -> -QuietHours.levelValue(r.level()))
+                .thenComparing(r -> r.openedAt() == null ? "" : r.openedAt()));
+        String subject = EmailNotificationService.quietDigestSubject(ownerName, rows);
+        String html = "";
+        String status;
+        try {
+            String base = emailService.buildQuietDigestHtml(ownerName, windowLabel, rows);
+            var mail = EmailTemplateBuilder.withForwardNote(
+                    new com.sitemonitor.service.mail.MailDoc.Mail(base, com.sitemonitor.service.mail.MailKit.plainTextFor(base)),
+                    EmailTemplateBuilder.forwardNote(List.of(ownerName), g.target.recipientTeamName(), true));
+            html = mail.html() == null ? "" : mail.html();
+            status = g.reason != null ? g.reason
+                    : emailService.sendHtml(g.to.toArray(new String[0]), null, subject, mail.html(), mail.text(),
+                            List.of(), false, null);
+        } catch (Exception ex) {
+            status = "FAILED: " + ex.getMessage();
+        }
+        if (status == null || status.isBlank()) status = "FAILED: boş durum";
+        List<NotificationLog> logs = new ArrayList<>();
+        for (AlertEvent e : g.events) {
+            NotificationLog l = logRow(e.getId(), rtName, String.join(", ", g.to), subject, html, status);
+            l.setRecipientRole(EscalationService.ROLE_FORWARD);
+            logs.add(l);
+        }
+        try {
+            notificationLogRepo.saveAll(logs);
+        } catch (Exception ex) {
+            log.warn("Sessiz saat özetinin iletim satırları yazılamadı (alıcı takım {}): {}", g.target.recipientTeamId(),
+                    ex.getMessage());
+        }
+        if (g.reason == null && !g.to.isEmpty() && EscalationService.mailDelivered(status)) {
+            for (AlertEvent e : g.events) {
+                if (Boolean.TRUE.equals(e.getResolved())) continue;
+                ForwardEmailStamp.stamp(alertEventRepo, e.getId(), Map.of(g.target.recipientTeamId(), g.to));
+            }
+        }
     }
 
     /**

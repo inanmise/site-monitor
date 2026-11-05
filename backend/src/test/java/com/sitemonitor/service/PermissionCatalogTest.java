@@ -83,6 +83,27 @@ class PermissionCatalogTest {
     }
 
     @Test
+    @DisplayName("2026-11-05: alerts.forwards — ADMIN / TEAM_ADMIN okur + yazar; USER ve AUDIT YALNIZ okur; 7/24 operatörüne açılmaz")
+    void alertForwardsDefaults() {
+        assertThat(PermissionCatalog.ALL.stream().filter(r -> r.key.equals("alerts.forwards")).map(r -> r.actions))
+                .as("okuma ve yazma AYRI satır").containsExactly(List.of("view"), List.of("edit"));
+        for (String role : new String[]{"ADMIN", "TEAM_ADMIN"}) {
+            Map<String, Boolean> m = PermissionCatalog.defaultsFor(role).get("alerts.forwards");
+            assertThat(m.get("view")).as(role).isTrue();
+            assertThat(m.get("edit")).as(role).isTrue();
+        }
+        for (String role : new String[]{"USER", "AUDIT"}) {
+            Map<String, Boolean> m = PermissionCatalog.defaultsFor(role).get("alerts.forwards");
+            assertThat(m.get("view")).as(role).isTrue();
+            assertThat(m.get("edit")).as(role + " yazamaz").isFalse();
+        }
+        assertThat(PermissionCatalog.USER_VIEW_ONLY).containsExactly("alerts.forwards");
+        assertThat(PermissionCatalog.NOC_OPERATOR_GRANTS).noneMatch(g -> g.startsWith("alerts.forwards"));
+        // USER'ın diğer kaynakları değişmedi (yalnız okuma istisnası başka satıra sızmaz)
+        assertThat(PermissionCatalog.defaultsFor("USER").get("teams.sharing").get("view")).isFalse();
+    }
+
+    @Test
     @DisplayName("defaultsFor: bilinmeyen rol → boş map (fail-safe), null rol → NPE değil boş davranış")
     void unknownRoleEmpty() {
         assertThat(PermissionCatalog.defaultsFor("WHATEVER")).isEmpty();

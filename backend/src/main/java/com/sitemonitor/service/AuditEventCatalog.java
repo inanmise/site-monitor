@@ -73,6 +73,9 @@ public final class AuditEventCatalog {
             "ALARM_FEED_NEW_CALLER",
             "ALARM_FEED_SETTINGS_SAVE",
             "ALERT_ACKNOWLEDGE",
+            "ALERT_FORWARD_CREATE",     // alarm iletimi eklendi (2026-11-05)
+            "ALERT_FORWARD_DELETE",     // alarm iletimi kaldırıldı (2026-11-05)
+            "ALERT_FORWARD_UPDATE",     // alarm iletimi değişti (2026-11-05)
             "ALERT_BULK_ACKNOWLEDGE",
             "ALERT_BULK_RENOTIFY",
             "ALERT_BULK_RESOLVE",
@@ -441,6 +444,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("NOC_MONITOR_")) return MONITOR;
         if (t.startsWith("NOC_CALL_LIST")) return TEAM;
         if (t.startsWith("ONCALL_")) return TEAM;                   // nöbet çizelgesi (2026-10-11) — takım düzeni
+        // Alarm iletimi (2026-11-05) — erişim paylaşımı (TEAM_ACCESS_GRANT_*) ile aynı kova; ALERT_ (olay) kuralından ÖNCE
+        if (t.startsWith("ALERT_FORWARD_")) return TEAM;
         if (t.startsWith("NOC_CALL_LOG")) return INCIDENT;          // uyarı üzerinden arama kaydı (ALERT_* ile aynı yer)
         // 7/24 izleme ekibi takımları (2026-10-04): kimin TÜM izlemeleri göreceğini belirler — erişim/yetki değişikliği
         if (t.equals("NOC_TEAMS_UPDATE")) return PERMISSION;

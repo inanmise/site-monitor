@@ -116,6 +116,16 @@ public class AlertEvent {
     private String oncallEmails;
 
     /**
+     * Alarm iletimiyle (2026-11-05) açılış / yükselme / hatırlatma / elle gönderim postasını GERÇEKTEN alan adresler — alıcı
+     * takım başına: JSON {@code {"<alıcıTakımId>":["a@x","b@y"]}} (en çok 4000 karakter). Çözüm postası yalnız bunlara gider
+     * (canlı yeniden hesaplama yok — iletim sonradan kaldırılsa da açılışı alan çözümü öğrenir). Yalnız hedefli UPDATE yazar
+     * ({@code AlertEventRepository.setForwardEmails}); varlık kaydı ezmesin diye salt okunur, istemciye gitmez.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "forward_emails", columnDefinition = "TEXT", insertable = false, updatable = false)
+    private String forwardEmails;
+
+    /**
      * Çözüm bildiriminin KALICI işareti (2026-10-21, çok pod R1 / MP-07): {@code PENDING} (çözüm kapısıyla AYNI koşullu
      * UPDATE'te yazılır — bildirim gönderilecek), {@code SENDING} (bir yol sahiplendi, an {@link #resolutionNotifyAt}),
      * {@code DONE} (karar verildi / gönderildi), {@code UNKNOWN} (gönderen pod yarıda durdu — çift gönderim olmasın diye

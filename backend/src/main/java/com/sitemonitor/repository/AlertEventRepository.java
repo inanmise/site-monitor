@@ -167,6 +167,32 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query(value = "UPDATE alert_events SET oncall_emails = :emails WHERE id = :id", nativeQuery = true)
     int setOncallEmails(@Param("id") Long id, @Param("emails") String emails);
 
+    /** Alarm iletimiyle bildirilen adresler (2026-11-05, JSON alıcı takım → adresler) — çözüm postasının iletim alıcıları. */
+    @Query(value = "SELECT forward_emails FROM alert_events WHERE id = :id", nativeQuery = true)
+    String findForwardEmails(@Param("id") Long id);
+
+    /** İletim damgasını yazar — yalnız bu sütun (varlık kaydı onu ezmez: insertable/updatable=false). Koşulsuz (test / araç). */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE alert_events SET forward_emails = :json WHERE id = :id", nativeQuery = true)
+    int setForwardEmails(@Param("id") Long id, @Param("json") String json);
+
+    /**
+     * İletim damgasını KOŞULLU yazar (2026-11-06): yalnız sütun hâlâ okunan değerse ({@code ForwardEmailStamp} birleştirme
+     * yarışı — tutmazsa 0 satır, çağıran yeniden okur). Boş (NULL) damga için {@link #setForwardEmailsIfNull}; iki ayrı sorgu
+     * çünkü PostgreSQL türsüz {@code :eski IS NULL} parametresini çözemez.
+     */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE alert_events SET forward_emails = :json WHERE id = :id AND forward_emails = :old", nativeQuery = true)
+    int setForwardEmailsIfUnchanged(@Param("id") Long id, @Param("json") String json, @Param("old") String old);
+
+    /** {@link #setForwardEmailsIfUnchanged} — damga henüz yokken (NULL). */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE alert_events SET forward_emails = :json WHERE id = :id AND forward_emails IS NULL", nativeQuery = true)
+    int setForwardEmailsIfNull(@Param("id") Long id, @Param("json") String json);
+
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "

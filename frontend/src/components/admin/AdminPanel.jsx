@@ -10,6 +10,8 @@ import TeamManager from './TeamManager'
 import UserManager from './UserManager'
 import AdminOverviewStrip from './AdminOverviewStrip.jsx'
 import TeamAccessManager from './access/TeamAccessManager.jsx'
+import AlertForwardManager from './forwards/AlertForwardManager.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 
 const TAB_GROUPS = [
@@ -25,6 +27,9 @@ const TAB_GROUPS = [
       { id: 'contacts', labelKey: 'admin.tabContacts', adminOnly: false },
       // adminOnly: false — takimin her uyesi kendi takiminin alici listesini yonetir (K2).
       { id: 'notifyGroups', labelKey: 'admin.tabNotifyGroups', adminOnly: false },
+      // Alarm iletimi (2026-11-05): takımın alarmlarını başka takıma / üyelerine de iletme. adminOnly DEĞİL — görünürlük
+      // `alerts.forwards` görüntüleme izni (USER / AUDIT de "Bize iletilenler"i görür); ekleme sahip takımı yönetene açık.
+      { id: 'forwards', labelKey: 'fwd.tab', adminOnly: false, perm: 'alerts.forwards' },
       // "Kim bilgilendirilir?" (2026-09-27, ayrı sekme): kurulan kişi + grup zincirinin DOĞRULAMASI — bu yüzden
       // ikisinin ARDINDAN (kur → doğrula). Görünürlük kişilerle aynı; takım kapsamını sunucu uygular.
       { id: 'whoNotified', labelKey: 'admin.tabWhoNotified', adminOnly: false },
@@ -45,13 +50,22 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
   const defaultTab = isAdmin ? 'thresholds' : 'contacts'
+  // İzinli sekmeler (`perm`, 2026-11-05): izin snapshot'ı henüz gelmediyse (`loaded` false) URL'deki sekme REDDEDİLMEZ —
+  // yenilemede / derin bağda (izleme penceresinden "iletim ekle") sekme kaybolmasın; snapshot gelince izin yoksa varsayılana
+  // iner. Sekme şeridinde izinli sekme yalnız izin varken (ya da o an açıkken) görünür.
+  const { canView, loaded: permsLoaded } = usePermissions()
+  const permitted = (tb) => !tb.perm || canView(tb.perm) || !permsLoaded
   // Alt sekme URL'de (`g_tab`): yenileme/derin bağlantı ilk sekmeye düşmesin (2026-09-20). Bilinmeyen
   // ya da yetkisiz sekme adı varsayılana iner (adminOnly sekmeyi TEAM_ADMIN URL'den açamaz).
   const [activeTab, setActiveTab] = useState(() => {
     const want = readUrlParam('g_tab', null)
     const known = TAB_GROUPS.flatMap(g => g.tabs).find(tb => tb.id === want)
-    return known && (!known.adminOnly || isAdmin) ? want : defaultTab
+    return known && (!known.adminOnly || isAdmin) && permitted(known) ? want : defaultTab
   })
+  // İzin snapshot'ı geldi ve açık sekmenin izni yok → varsayılan sekme (URL'den gelen izinli sekme)
+  const activeKnown = TAB_GROUPS.flatMap(g => g.tabs).find(tb => tb.id === activeTab)
+  const activeAllowed = !activeKnown?.perm || canView(activeKnown.perm) || !permsLoaded
+  useEffect(() => { if (!activeAllowed) setActiveTab(defaultTab) }, [activeAllowed, defaultTab])
   useUrlQuerySync({ g_tab: activeTab === defaultTab ? null : activeTab })
   const [teams, setTeams] = useState([])
 
@@ -64,7 +78,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
   /** Özet şeridinden sekmeye SÜZGEÇLİ atla: g_* paramları URL'e yazılır, sonra sekme mount olup okur (2026-09-20). */
   function jump(id, params) {
     const known = TAB_GROUPS.flatMap(g => g.tabs).find(tb => tb.id === id)
-    if (!known || (known.adminOnly && !isAdmin)) return
+    if (!known || (known.adminOnly && !isAdmin) || !permitted(known)) return
     try {
       const url = new URL(window.location.href)
       for (const k of Array.from(url.searchParams.keys())) if (k.startsWith('g_') && k !== 'g_tab') url.searchParams.delete(k)
@@ -97,7 +111,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
 
   // Görünür gruplar (adminOnly süzgeci) — hem sekme şeridi hem telefon seçicisi aynı listeden çizer.
   const groups = TAB_GROUPS
-    .map((g) => ({ ...g, tabs: g.tabs.filter((tab) => !tab.adminOnly || isAdmin) }))
+    .map((g) => ({ ...g, tabs: g.tabs.filter((tab) => (!tab.adminOnly || isAdmin) && (!tab.perm || canView(tab.perm) || tab.id === activeTab)) }))
     .filter((g) => g.tabs.length > 0)
 
   // Panel ve şerit tam içerik genişliğinde (kullanıcı 2026-09-26: "sayfanın yalnız bir kısmını kullanıyor"):
@@ -112,6 +126,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
           {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
           {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} onOpenSimulator={(params) => jump('whoNotified', params)} />}
           {activeTab === 'notifyGroups' && <NotificationGroups teams={teams} systemRole={systemRole} />}
+          {activeTab === 'forwards'   && activeAllowed && <AlertForwardManager />}
           {activeTab === 'whoNotified' && (
             <RecipientSimulator teams={teams} isAdmin={isAdmin} onNavigate={jump}
               defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
