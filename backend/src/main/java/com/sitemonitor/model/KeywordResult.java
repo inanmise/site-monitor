@@ -89,6 +89,14 @@ public class KeywordResult {
     @Column(name = "via", length = 10)
     private String via;
 
+    /** Gövdeyi çözmede KULLANILAN karakter kümesi (kw sözleşmesi §3.2) — {@code charset} kolonu BİLDİRİLENİ tutmaya devam eder. */
+    @Column(name = "decoded_charset", length = 60)
+    private String decodedCharset;
+
+    /** Kontrolün kullandığı eşleşme kapsamı — yalnız {@code VISIBLE} iken yazılır (ham kapsam NULL). */
+    @Column(name = "match_scope", length = 10)
+    private String matchScope;
+
     /** "Neden bulunamadı" ipucu kodları — küçük JSON dizi ({@code ["CASE_MISMATCH"]}); API'de {@code hints} listesi. */
     @Column(name = "hints", length = 500)
     @com.fasterxml.jackson.annotation.JsonIgnore
@@ -97,6 +105,52 @@ public class KeywordResult {
     /** Görünür metinden ≤ 600 karakterlik alıntı (etiket/betik/stil ayıklanmış, sırlar maskeli) — yalnız başarısızlıkta. */
     @Column(name = "excerpt", columnDefinition = "TEXT")
     private String excerpt;
+
+    // ── Çoklu kural + içerik değişimi (kw sözleşmesi §3.2, 2026-11-05) — hepsi NULLABLE, eski satır NULL ─────────
+
+    /** Kural sonuçları JSON'u (≤ 4000) — YALNIZ {@code rules_json} dolu izlemede yazılır; API'de {@code rule_results} listesi. */
+    @Column(name = "rule_results_json", columnDefinition = "TEXT")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String ruleResultsJson;
+
+    /** İhlalin kural eşiğinden gelen seviyesi: {@code WARNING} | {@code CRITICAL}; ihlal yok ya da izleme seviyesi → NULL. */
+    @Column(name = "breach_level", length = 10)
+    private String breachLevel;
+
+    /** İçerik parmak izi (maskeli metnin SHA-256'sı) — iç kullanım, API'ye çıkmaz. */
+    @Column(name = "content_fingerprint", length = 64)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String contentFingerprint;
+
+    /** İçerik temelden farklı mı; NULL = değerlendirilmedi (değişim kapalı / temel yok / ölçülemedi). */
+    @Column(name = "content_changed")
+    private Boolean contentChanged;
+
+    /**
+     * Değişimin bu kontrolde NEDEN ölçülmediği (kw son inceleme O-3 / D-7): {@code HTTP_ERROR} | {@code EMPTY_BODY} |
+     * {@code INCOMPLETE} | {@code RULE_REJECTED} | {@code SELECTOR_NOT_FOUND}; ölçüldüyse / değişim kapalıysa NULL. API'de
+     * {@code change_note}.
+     */
+    @Column(name = "change_note", length = 32)
+    @com.fasterxml.jackson.annotation.JsonProperty("change_note")
+    private String changeNote;
+
+    /** Değişim özeti JSON'u (≤ 4000, yalnız değişimde); API'de {@code change_summary} nesnesi. */
+    @Column(name = "change_summary", columnDefinition = "TEXT")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String changeSummaryJson;
+
+    /** Kural sonuçları (API) — bozuk / boş JSON → boş liste. Kalıcılığa girmez (varlık alan erişimli). */
+    @com.fasterxml.jackson.annotation.JsonProperty("rule_results")
+    public java.util.List<java.util.Map<String, Object>> getRuleResults() {
+        return com.sitemonitor.service.keyword.rules.KeywordRuleEvaluator.parseResults(ruleResultsJson);
+    }
+
+    /** Değişim özeti (API) — yoksa / bozuksa null. */
+    @com.fasterxml.jackson.annotation.JsonProperty("change_summary")
+    public java.util.Map<String, Object> getChangeSummary() {
+        return com.sitemonitor.service.keyword.content.KeywordChangeDetector.parseSummary(changeSummaryJson);
+    }
 
     /** İpucu kodları (JSON dizisinden). Kodlar {@code [A-Z_]} — basit ayrıştırma yeter, bozuk değer boş liste.
      *  Varlık ALAN erişimli (@Id alanda) — bu yöntem kalıcılığa girmez, yalnız JSON'a. */

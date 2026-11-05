@@ -105,6 +105,65 @@ public class KeywordMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @Column(name = "case_sensitive")
     private Boolean caseSensitive = false;
 
+    // ── Eşleşme kapsamı + gelişmiş istek + posta konusu (kw sözleşmesi §3.1, 2026-11-05) ──────────────────
+    // Hepsi NULLABLE ve başlatıcısız: eski satır NULL = bugünkü davranış (ham HTML, GET, varsayılan UA, durum kodu karara
+    // girmez, yönlendirme takip edilir, standart konu). Kolonlar KeywordSchemaPatch ile de eklenir (ddl-auto'nun atladığı
+    // ortamlar). Eski (20.181) pod bu alanları bilmez; formdan kaydederken UPDATE'e girmezler (etkilenmez).
+
+    /** Eşleşme kapsamı: {@code RAW} (ham HTML, NULL) | {@code VISIBLE} (görünür metin — etiket / betik / stil sayılmaz). */
+    @Column(name = "match_scope", length = 10)
+    private String matchScope;
+
+    /** Ham kapsamda HTML varlıkları + boşluklar normalleştirilsin mi (görünür metin her zaman normalize eder). */
+    @Column(name = "normalize_ws")
+    private Boolean normalizeWs;
+
+    /** İstek yöntemi: {@code GET} (NULL) | {@code POST}. HEAD YOK — anahtar kelime yanıt gövdesinde aranır. */
+    @Column(name = "method", length = 10)
+    private String method;
+
+    /** POST gövdesi (≤ 64 KB UTF-8) — YALNIZ yöntem POST'ken ve yalnız ilk host'a gönderilir. */
+    @Column(name = "request_body", columnDefinition = "TEXT")
+    private String requestBody;
+
+    /** POST gövdesinin içerik türü (NULL = application/json). */
+    @Column(name = "request_content_type", length = 100)
+    private String requestContentType;
+
+    /** HTTP Basic auth kullanıcı adı (yalnız ilk host'a). */
+    @Column(name = "basic_auth_user")
+    private String basicAuthUser;
+
+    /** HTTP Basic auth parolası — ŞİFRELİ ({@code SecretCipher}), write-only (API asla döndürmez; yalnız {@code has_basic_auth_pass}).
+     *  Anahtar döndürme konumu {@code keyword_basic_auth} ({@code SecretRotationService.LOCATIONS}). */
+    @Column(name = "basic_auth_pass_enc", columnDefinition = "TEXT")
+    private String basicAuthPassEnc;
+
+    /** User-Agent kipi: {@code DEFAULT} (NULL — SiteMonitor-KeywordMonitor/1.0) | {@code BROWSER} | {@code CUSTOM}. */
+    @Column(name = "user_agent_mode", length = 10)
+    private String userAgentMode;
+
+    /** Özel User-Agent (yalnız CUSTOM kipinde; yazdırılabilir ASCII). */
+    @Column(name = "user_agent", length = 300)
+    private String userAgent;
+
+    /** Kabul edilen HTTP durum kodları ({@code 2xx}, {@code 200-399}, {@code 200,301}); NULL = KAPALI (durum kodu karara girmez). */
+    @Column(name = "expected_status", length = 100)
+    private String expectedStatus;
+
+    /** Beklenen son URL (önek; mutlak ya da {@code /} ile başlayan yol); NULL = kural yok. */
+    @Column(name = "expected_final_url", length = 2000)
+    private String expectedFinalUrl;
+
+    /** Yönlendirmeler takip edilsin mi (NULL = evet, bugünkü). false → ilk yanıt 3xx olsa da değerlendirilir. */
+    @Column(name = "follow_redirects")
+    private Boolean followRedirects;
+
+    /** Alarm postası ÖZEL konu şablonu (yer tutucular {@code {ad} {url} {kelime} {adet} {neden} {seviye} {durum} {zaman}});
+     *  NULL = standart konu. Çözüm postası standart konuda kalır. */
+    @Column(name = "mail_subject_template", length = 200)
+    private String mailSubjectTemplate;
+
     /**
      * Kurumsal vekil (proxy) tercihi: {@code AUTO} | {@code ON} | {@code OFF} (2026-09-21). AUTO (varsayılan, null da
      * AUTO): <b>envanterle aynı</b> — alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil,
@@ -157,6 +216,39 @@ public class KeywordMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     /** Domain bitişi öncesi hatırlatma gün eşikleri (CSV). */
     @Column(name = "domain_reminder_days")
     private String domainReminderDays = "30,14,7";
+
+    // ── Çoklu kural + içerik kontrolleri (kw sözleşmesi §3.1, 2026-11-05) ─────────────────────────────────────
+    // Hepsi NULLABLE, başlatıcısız: eski satır NULL = bugünkü davranış (tek kelime, boyut / değişim kapalı). Kolonlar
+    // KeywordRuleSchemaPatch ile de eklenir (ddl-auto'nun atladığı ortamlar).
+
+    /** Kurallar (≤ 10, ≤ 16 KB JSON, {@code KeywordRules} biçimi); NULL = eski tek kural (keyword + match_operator + match_count
+     *  + case_sensitive). Doluyken eski alanlar kural #1'in aynasıdır (sunucu yazar). */
+    @Column(name = "rules_json", columnDefinition = "TEXT")
+    private String rulesJson;
+
+    /** Kural birleşimi: {@code AND} (hepsi sağlanmalı) | {@code OR} (en az biri); NULL = AND. */
+    @Column(name = "rule_logic", length = 5)
+    private String ruleLogic;
+
+    /** Sayfa boyutu alt sınırı (bayt, 1 – 2 000 000); NULL = kapalı → altındaysa BODY_TOO_SMALL. */
+    @Column(name = "min_bytes")
+    private Integer minBytes;
+
+    /** Sayfa boyutu üst sınırı (bayt, 1 – 2 000 000, min ≤ max); NULL = kapalı → üstündeyse BODY_TOO_LARGE. */
+    @Column(name = "max_bytes")
+    private Integer maxBytes;
+
+    /** İçerik değişimi tespiti (KEYWORD_CHANGED); NULL = kapalı. */
+    @Column(name = "change_detect")
+    private Boolean changeDetect;
+
+    /** Değişim maskeleri — CSV ⊆ {DIGITS, DATES}; NULL = maske yok. */
+    @Column(name = "change_mask", length = 40)
+    private String changeMask;
+
+    /** Değişimin izlendiği bölge (CSS seçici); NULL = tüm görünür metin. */
+    @Column(name = "change_selector", length = 300)
+    private String changeSelector;
 
     @Column(name = "created_at")
     private String createdAt;

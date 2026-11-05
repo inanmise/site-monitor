@@ -53,7 +53,7 @@ public final class MonitorTypeCatalog {
             Map.entry("http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "HTTP_SLOW", "DOMAIN_EXPIRY")),
             Map.entry("port",     Set.of("PORT_DOWN", "PORT_SLOW")),
             Map.entry("dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT")),
-            Map.entry("keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY")),
+            Map.entry("keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY", "KEYWORD_CHANGED")),
             Map.entry("ping",     Set.of("PING_DOWN", "PING_SLOW")),
             Map.entry("domain",   Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED",
                                "DOMAINMON_TRANSFER_LOCK", "DOMAINMON_BLACKLIST")),

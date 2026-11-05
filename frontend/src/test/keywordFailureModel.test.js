@@ -8,6 +8,26 @@ import {
   KEYWORD_DIAG_PATH, KW_FAILURE_CODES, KW_FINDING_CODES, KW_HINT_CODES,
 } from '../components/keyword/diagnose/keywordDiagCodes.js'
 import { findingText, failureKind } from '../components/http/diagnose/httpDiagnoseModel.js'
+import { suggestsSynthetic } from '../components/keyword/keywordFailureModel.js'
+import { readJavaMain } from './helpers/javaTable.js'
+
+/**
+ * Sunucu kataloğu (`<Sınıf>.CODES = List.of(...)`) — kaynaktan okunur; dosya / liste yoksa null. Liste SABİT ADLARI ya da
+ * dizge sabitleri taşıyabilir: adlar sınıfın `static final String AD = "DEĞER"` satırlarından çözülür (çözülemeyen ad = kendisi).
+ */
+function javaCodes(file) {
+  try {
+    const src = readJavaMain(file)
+    const m = /CODES\s*=\s*List\.of\(([^)]*)\)/.exec(src)
+    if (!m) return null
+    const consts = new Map([...src.matchAll(/static\s+final\s+String\s+([A-Z][A-Z0-9_]*)\s*=\s*"([A-Z0-9_]+)"/g)].map((x) => [x[1], x[2]]))
+    return [...m[1].matchAll(/"([A-Z0-9_]+)"|\b([A-Z][A-Z0-9_]*)\b/g)].map((x) => x[1] ?? consts.get(x[2]) ?? x[2])
+  } catch {
+    return null
+  }
+}
+const javaFailureCodes = () => javaCodes('service/keyword/KeywordFailureClassifier.java')
+const javaFindingCodes = () => javaCodes('service/keyword/diagnose/KeywordDiagFindings.java')
 
 /** useT ile aynı konumsal yer tutucu kuralı ({0}, {1} …) — gerçek sözlükten. */
 const tOf = (dict) => (key, ...args) => {
@@ -95,20 +115,43 @@ describe('keywordFailureModel', () => {
     expect(cardReason({ status: 'up', failure_reason: 'DNS' }, t)).toBeNull()
   })
 
-  it('alıntıda anahtar kelime: harf kuralıyla; boşta null', () => {
+  it('alıntıda anahtar kelime: harf kuralıyla (Türkçe katlama — İ/ı); boşta null', () => {
     expect(excerptHasKeyword('Hoş geldiniz KAMPANYA', 'kampanya')).toBe(true)
     expect(excerptHasKeyword('Hoş geldiniz KAMPANYA', 'kampanya', true)).toBe(false)
+    expect(excerptHasKeyword('İSTANBUL şubesi', 'istanbul')).toBe(true)
+    expect(excerptHasKeyword('ILIK hava', 'ılık')).toBe(true)
     expect(excerptHasKeyword('', 'x')).toBeNull()
   })
 
-  it('kataloglar backend ile aynı boyutta ve her kodun TR + EN metni var', () => {
-    expect(KW_FAILURE_CODES).toHaveLength(21)
+  it('sentetik önerisi (F3): yalnız giriş sayfası / JavaScript ile çizilen ipucunda', () => {
+    expect(suggestsSynthetic({ hints: ['LOGIN_PAGE'] })).toBe(true)
+    expect(suggestsSynthetic({ hints: ['CASE_MISMATCH', 'JS_RENDERED'] })).toBe(true)
+    expect(suggestsSynthetic({ hints: ['WAF_OR_BLOCK_PAGE'] })).toBe(false)
+    expect(suggestsSynthetic({})).toBe(false)
+  })
+
+  it('kataloglar backend ile aynı ve her sunucu kodunun TR + EN metni var', () => {
+    // kw zenginleştirmesi (2026-11-05): 21 + 7 yeni kod (§11.2). Metinleri arka uç ajanı (be1) yazar — sunucu kataloğu
+    // kaynaktan okunur: sunucuda olan her kodun metni ZORUNLU ve ön yüz aynası sunucu kataloğunu tam kapsar; arka uç
+    // birleşmeden önce (yalnız 21 kod) yeni yedi kodun metni henüz yoktur, birleşince kapı kendiliğinden tamamını denetler.
+    expect(KW_FAILURE_CODES).toHaveLength(28)
+    expect(new Set(KW_FAILURE_CODES).size).toBe(28)
     expect(KW_HINT_CODES).toHaveLength(10)
-    expect(KW_FINDING_CODES).toHaveLength(10)
+    // Tanılama bulguları: 10 + be1 (KEYWORD_FINAL_URL_MISMATCH) + be2 Aşama 2 (KEYWORD_RULES_NOT_MET, KEYWORD_SIZE_MISMATCH)
+    expect(KW_FINDING_CODES).toHaveLength(13)
+    expect(new Set(KW_FINDING_CODES).size).toBe(13)
+    const server = javaFailureCodes()
+    expect(server, 'KeywordFailureClassifier.CODES okunamadı').not.toBeNull()
+    // Ön yüz aynası sunucu kataloğuyla BİREBİR (sıra dahil) — 28 kod (Aşama 2: arka uç birleşti)
+    expect(server).toEqual(KW_FAILURE_CODES)
+    const findings = javaFindingCodes()
+    expect(findings, 'KeywordDiagFindings.CODES okunamadı').not.toBeNull()
+    expect(findings.length, 'sunucu bulgu kataloğu boş okundu').toBeGreaterThanOrEqual(10)
+    for (const c of findings) expect(KW_FINDING_CODES, c).toContain(c)
     for (const dict of [TR, EN]) {
-      for (const c of KW_FAILURE_CODES) for (const p of ['short', 'why', 'effect', 'fix']) expect(dict[`kwfail.${c}.${p}`], `kwfail.${c}.${p}`).toBeTruthy()
+      for (const c of server) for (const p of ['short', 'why', 'effect', 'fix']) expect(dict[`kwfail.${c}.${p}`], `kwfail.${c}.${p}`).toBeTruthy()
       for (const c of KW_HINT_CODES) for (const p of ['title', 'cause', 'effect', 'fix']) expect(dict[`kwhint.${c}.${p}`], `kwhint.${c}.${p}`).toBeTruthy()
-      for (const c of KW_FINDING_CODES) for (const p of ['title', 'body']) expect(dict[`kwdx.finding.${c}.${p}`], `kwdx.finding.${c}.${p}`).toBeTruthy()
+      for (const c of findings) for (const p of ['title', 'body']) expect(dict[`kwdx.finding.${c}.${p}`], `kwdx.finding.${c}.${p}`).toBeTruthy()
     }
   })
 

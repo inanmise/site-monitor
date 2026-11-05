@@ -79,16 +79,45 @@ class ScriptedTemplateCatalogTest {
         }
     }
 
+    /**
+     * Kategori başına beklenen şablon sayısı. 10 × 10 = 100 düzeni korunur; TEK bilinçli istisna (kw 2026-11-05, F2): kimlik
+     * kategorisine anahtar kelime izlemesinin köprüsü {@code login-then-keyword} ("giriş + kelime") eklendi → identity 11,
+     * toplam 101. Gerekçe: anahtar kelime izlemesi oturum açmayı gerektiren sayfayı göremez ("Giriş sayfası" ipucu) — kullanıcı
+     * bu şablona yönlendirilir; başka bir kimlik şablonunu çıkarmak eski {@code tpl:<anahtar>} referanslarını bozardı.
+     */
+    private static final java.util.Map<String, Long> EXPECTED_PER_CATEGORY = java.util.Map.of("identity", 11L);
+
     @Test
-    @DisplayName("Katalog: 10 kategorinin HER BİRİNDE tam 10 şablon var")
+    @DisplayName("Katalog: kategori başına 10 şablon (kimlik 11 — F2 'giriş + kelime' köprüsü), toplam 101")
     void catalog_tenPerCategory() {
         java.util.Map<String, Long> byCat = templates.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                         t -> t.path("category").asText(""), java.util.stream.Collectors.counting()));
         for (String c : ScriptedTemplateCategories.ORDER) {
-            assertThat(byCat.getOrDefault(c, 0L)).as("kategori '%s' şablon sayısı", c).isEqualTo(10L);
+            assertThat(byCat.getOrDefault(c, 0L)).as("kategori '%s' şablon sayısı", c)
+                    .isEqualTo(EXPECTED_PER_CATEGORY.getOrDefault(c, 10L));
         }
-        assertThat(templates).as("toplam şablon").hasSize(100);
+        assertThat(templates).as("toplam şablon").hasSize(101);
+    }
+
+    @Test
+    @DisplayName("F2 (kw 2026-11-05): 'login-then-keyword' şablonu — katlamalı kelime, giriş formuna düşmeme denetimi, MFA uyarısı")
+    void loginThenKeywordTemplate() {
+        JsonNode t = templates.stream().filter(x -> "login-then-keyword".equals(key(x))).findFirst().orElseThrow();
+        assertThat(t.path("category").asText()).isEqualTo("identity");
+        assertThat(catalog.path("seedVersion").asInt()).isGreaterThanOrEqualTo(3);
+        List<String> env = new ArrayList<>();
+        t.path("env").forEach(e -> env.add(e.path("name").asText() + (e.path("secret").asBoolean() ? "*" : "")));
+        assertThat(env).containsExactly("LOGIN_URL", "USERNAME", "PASSWORD*", "USERNAME_FIELD", "PASSWORD_FIELD",
+                "TARGET_URL", "KEYWORD");
+        String s = script(t);
+        assertThat(s).contains("submitForm").contains("fold(").contains("'İ'").contains("'ı'")
+                .contains("__ENV.USERNAME_FIELD || 'username'").contains("__ENV.PASSWORD_FIELD || 'password'")
+                .contains("giriş formuna düşmedi");
+        assertThat(t.path("whenToUse").asText()).contains("MFA");
+        assertThat(t.path("whenToUseEn").asText()).contains("MFA");
+        // dosya okuma / özet / uzantı / uzak içe aktarım YOK (sentetik kaydın güvenlik kapıları)
+        assertThat(s).doesNotContain("open(").doesNotContain("handleSummary").doesNotContain("k6/x");
     }
 
     @Test

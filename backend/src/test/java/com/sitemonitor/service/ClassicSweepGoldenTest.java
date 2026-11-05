@@ -347,9 +347,8 @@ class ClassicSweepGoldenTest {
         when(keywordRepo.findByActiveTrue()).thenReturn(all);
         when(keywordRepo.findAll()).thenReturn(all);
         when(keywordHeaders.effectiveHeaders(any(KeywordMonitor.class))).thenReturn(null);
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(),
-                any(KeywordCheckerService.Expectation.class))).thenAnswer(i -> {
-            String url = i.getArgument(0);
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenAnswer(i -> {
+            String url = ((com.sitemonitor.service.keyword.KeywordCheckSpec) i.getArgument(0)).url();
             return switch (url) {
                 case "https://a.example.com/" -> map("found", true, "count", 3, "http_status", 200, "response_ms", 100L,
                         "snippet", "… Hoş geldiniz …");

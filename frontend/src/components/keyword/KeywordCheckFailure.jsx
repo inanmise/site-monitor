@@ -1,5 +1,5 @@
 import {
-  ChevronDown, CircleHelp, Zap, Wrench, Lightbulb, FileSearch, Bug, Stethoscope, ListTree, Info,
+  ChevronDown, CircleHelp, Zap, Wrench, Lightbulb, FileSearch, Bug, Stethoscope, ListTree, Info, FlaskConical,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import ToneBadge from '../admin/ToneBadge.jsx'
@@ -8,7 +8,9 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { CodeBlock, Kv, KvList, SectionTitle } from '../http/diagnose/HttpDiagnoseParts.jsx'
 import { highlightParts } from './keywordCardModel.js'
-import { detailRows, excerptHasKeyword, failureTexts, hintTexts, hintsOf } from './keywordFailureModel.js'
+import { detailRows, excerptHasKeyword, failureTexts, hintTexts, hintsOf, ruleOutcomeOf, suggestsSynthetic } from './keywordFailureModel.js'
+import RuleTestResults, { ruleResultsOf } from './rules/RuleTestResults.jsx'
+import { logicOf, rulesFromRow } from './rules/ruleModel.js'
 
 /**
  * Keyword KONTROL GEÇMİŞİ hata teşhisi (2026-10-04, kullanıcı isteği: "kontrol geçmişinde hata olduğunda herhangi bir
@@ -74,8 +76,10 @@ const KV_TONE = { bad: 'text-destructive', warn: 'text-amber-700 dark:text-amber
  * @param {object}   monitor      izleme satırı (keyword, operator, match_count, case_sensitive, url, timeout_ms)
  * @param {boolean}  canDiagnose  `can_diagnose` — false ise tanılama düğmesi hiç çizilmez
  * @param {Function} onDiagnose   uçtan uca tanılama penceresini aç
+ * @param {Function} onConvert    (kw F3) "Sentetik izleme ile kur" — yalnız düzenleme yetkisinde verilir; ipucu giriş sayfası
+ *                                ya da JavaScript ile çizilen içerik diyorsa düğme çizilir
  */
-export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDiagnose }) {
+export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDiagnose, onConvert, showRules = true }) {
   const t = useT()
   const f = failureTexts(check, monitor, t)
   if (!f) return null
@@ -114,6 +118,14 @@ export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDia
         </KvList>
       </div>
 
+      {/* Form testi kural listesini zaten üstte çiziyor (showRules=false) — aynı liste iki kez çizilmez (DÜŞÜK-2) */}
+      {showRules && ruleResultsOf(check.rule_results) && (
+        <div data-slot="kwfail-rules" className="min-w-0">
+          <RuleTestResults results={check.rule_results} rules={rulesFromRow(monitor)} level={check.breach_level}
+            monitorLevel={monitor?.alert_level || 'WARNING'} logic={logicOf(monitor)} outcome={ruleOutcomeOf(check, monitor, t)} />
+        </div>
+      )}
+
       {hints.length > 0 && (
         <div className="flex min-w-0 flex-col gap-1.5">
           <SectionTitle icon={Lightbulb}>{t('kwhist.hintsTitle')}</SectionTitle>
@@ -129,6 +141,15 @@ export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDia
         <div data-slot="kwfail-technical" className="flex min-w-0 flex-col gap-1.5">
           <SectionTitle icon={Bug}>{t('kwhist.technical')}</SectionTitle>
           <CodeBlock maxH="max-h-40" copy={technical} copyLabel={t('kwhist.copyTechnical')}>{technical}</CodeBlock>
+        </div>
+      )}
+
+      {onConvert && suggestsSynthetic(check) && (
+        <div data-slot="kwfail-synthetic" className="flex min-w-0 flex-col gap-1.5 rounded-md border border-primary/30 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="min-w-0 text-xs [overflow-wrap:anywhere]">{t('keyword.k6.f3Hint')}</span>
+          <Button type="button" size="sm" variant="outline" data-slot="kwfail-convert" onClick={onConvert} className="shrink-0 pointer-coarse:h-10">
+            <FlaskConical aria-hidden="true" /> {t('keyword.k6.setupWithSynthetic')}
+          </Button>
         </div>
       )}
 
@@ -167,14 +188,19 @@ export function HintCard({ code, check, monitor }) {
 function Excerpt({ check, monitor }) {
   const t = useT()
   const cs = !!monitor?.case_sensitive
-  const has = excerptHasKeyword(check.excerpt, monitor?.keyword, cs)
-  const parts = highlightParts(check.excerpt, monitor?.keyword, cs)
+  // Kural #1 düzenli ifadeyse desen metin gibi aranıp vurgulanmaz (yanlış "geçmiyor" demesin) — kw paket C
+  const regex = rulesFromRow(monitor)[0]?.kind === 'REGEX'
+  const kw = regex ? '' : monitor?.keyword
+  const has = excerptHasKeyword(check.excerpt, kw, cs)
+  const parts = highlightParts(check.excerpt, kw, cs)
   return (
     <div data-slot="kwfail-excerpt" data-has-keyword={has == null ? '' : String(has)} className="flex min-w-0 flex-col gap-1.5">
       <SectionTitle icon={FileSearch}>{t('kwhist.excerptTitle')}</SectionTitle>
-      <p className="text-xs text-muted-foreground">
-        {has ? t('kwhist.excerptHas', monitor?.keyword) : t('kwhist.excerptMissing', monitor?.keyword ?? '')}
-      </p>
+      {has != null && (
+        <p className="text-xs text-muted-foreground">
+          {has ? t('kwhist.excerptHas', monitor?.keyword) : t('kwhist.excerptMissing', monitor?.keyword ?? '')}
+        </p>
+      )}
       <pre className="max-h-48 min-w-0 overflow-y-auto rounded-md border bg-muted/50 px-3 py-2 font-sans text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
         {parts.map((p, i) => (p.match
           ? <mark key={i} data-slot="kwfail-mark" className="rounded-sm bg-amber-300/60 px-0.5 text-foreground dark:bg-amber-400/30">{p.text}</mark>

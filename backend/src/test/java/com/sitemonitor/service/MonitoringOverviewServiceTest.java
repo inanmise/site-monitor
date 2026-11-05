@@ -113,6 +113,39 @@ class MonitoringOverviewServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("kw son inceleme O-6: anahtar kelime satırı open_change_only — açık alarmların HEPSİ KEYWORD_CHANGED ise true "
+            + "(durum sayfası kesinti saymaz); KEYWORD de açıksa false; pano satır durumu değişmez (down)")
+    void keywordOpenChangeOnlyFlag() {
+        com.sitemonitor.model.KeywordMonitor a = new com.sitemonitor.model.KeywordMonitor();
+        a.setId(1L); a.setName("Kampanya"); a.setUrl("https://a.example.com/"); a.setTeamId(14L); a.setActive(true); a.setIntervalSeconds(300);
+        com.sitemonitor.model.KeywordMonitor b = new com.sitemonitor.model.KeywordMonitor();
+        b.setId(2L); b.setName("Ödeme"); b.setUrl("https://b.example.com/"); b.setTeamId(14L); b.setActive(true); b.setIntervalSeconds(300);
+        when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+        com.sitemonitor.model.KeywordResult ra = new com.sitemonitor.model.KeywordResult();
+        ra.setMonitorId(1L); ra.setOk(true); ra.setCheckedAt(ago(1));
+        com.sitemonitor.model.KeywordResult rb = new com.sitemonitor.model.KeywordResult();
+        rb.setMonitorId(2L); rb.setOk(true); rb.setCheckedAt(ago(1));
+        when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of(ra, rb));
+        AlertEvent changeA = new AlertEvent(); changeA.setDomain("https://a.example.com/"); changeA.setAlertType("KEYWORD_CHANGED");
+        changeA.setAlertLevel("HIGH"); changeA.setResolved(false);
+        AlertEvent changeB = new AlertEvent(); changeB.setDomain("https://b.example.com/"); changeB.setAlertType("KEYWORD_CHANGED");
+        changeB.setAlertLevel("HIGH"); changeB.setResolved(false);
+        AlertEvent downB = new AlertEvent(); downB.setDomain("https://b.example.com/"); downB.setAlertType("KEYWORD");
+        downB.setAlertLevel("HIGH"); downB.setResolved(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(changeA, changeB, downB));
+
+        Map<String, Object> out = svc.build(team -> true, false, 24);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        Map<String, Object> rowA = rows.stream().filter(r -> "https://a.example.com/".equals(r.get("target"))).findFirst().orElseThrow();
+        assertThat(rowA).containsEntry("status", "down").containsEntry("open_change_only", true);
+        Map<String, Object> rowB = rows.stream().filter(r -> "https://b.example.com/".equals(r.get("target"))).findFirst().orElseThrow();
+        assertThat(rowB).containsEntry("open_change_only", false);
+        assertThat(StatusPageService.monitorHealth(rowA, false)).isEqualTo(StatusPageService.M_DEGRADED);
+        assertThat(StatusPageService.monitorHealth(rowB, false)).isEqualTo(StatusPageService.M_DOWN);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("Veritabanı sorgusu (O4 / O5): uzun süredir atlanan izleme 'gecikmiş'; açık sorgu HATASI alarmı satırda işaretli")
     void dbQuerySkippedIsStaleAndQueryFailureFlag() {
         com.sitemonitor.repository.DbQueryMonitorRepository dqm = mock(com.sitemonitor.repository.DbQueryMonitorRepository.class);

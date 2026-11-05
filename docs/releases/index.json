@@ -1,9 +1,121 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T08:43:17Z",
+  "generatedAt": "2026-11-05T10:46:38Z",
   "repo": "inanmise/site-monitor",
-  "count": 805,
+  "count": 806,
   "releases": [
+    {
+      "version": "20.183.0",
+      "tag": "v20.183.0",
+      "releasedAt": "2026-11-05T10:46:24Z",
+      "commit": "7e7a1591d31d0f0d2374ae580bbb977f54b05047",
+      "prevVersion": "20.182.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 6,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7e7a1591",
+          "subject": "anahtar kelime — testte yinelenen içe aktarım; kılavuzda marka \"Site Monitor\""
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "ca367321",
+          "subject": "anahtar kelime değişim notları sunucu listesiyle eşlik kapısı; kılavuz PDF'i ve kök kopyalar yenilendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "81dfbed5",
+          "subject": "anahtar kelime izleme — son inceleme düzeltmeleri ön yüzde (kural hükmü, kart nedeni, kayıtlı sır kaynağı, değişim notları)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "0ea326af",
+          "subject": "anahtar kelime — kademeli dağıtım cümlesi düzeltildi"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "708dc436",
+          "subject": "anahtar kelime — son inceleme düzeltmeleri CLAUDE.md'ye işlendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "cc3230f3",
+          "subject": "anahtar kelime izleme son inceleme düzeltmeleri — kayıtlı sırrın kaynağı, seviye kilidi, değişim ölçümü, maske"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "e1f09ff9",
+          "subject": "anahtar kelime izleme zenginleştirmesi — CLAUDE.md ve kullanıcı kılavuzu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "264c079f",
+          "subject": "anahtar kelime izleme — kural motoru, boyut ve içerik değişimi kontrol hattına bağlandı (kw-be2 Aşama 2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "848c93e3",
+          "subject": "anahtar kelime izleme — kural düzenleyici, içerik sekmesi ve sentetik köprüsü sayfaya bağlandı (fe2 Aşama 2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f14a4f5b",
+          "subject": "anahtar kelime izleme — kural düzenleyici, içerik sekmesi, kart ve k6'ya dönüştürme (fe2 Aşama 1)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a5325b3f",
+          "subject": "anahtar kelime izleme — Türkçe katlama, karakter kümesi, gelişmiş istek, durum / son URL kuralı, posta nedeni ve konusu (Aşama 1, be1)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9fa2cdb0",
+          "subject": "anahtar kelime izleme — çoklu kural motoru, içerik değişimi temeli ve KEYWORD_CHANGED tesisatı (be2 aşama 1)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "640de6e0",
+          "subject": "keyword formu — eşleşme ayarları, gelişmiş istek, aynı URL uyarısı, posta konusu (kw fe1)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.182.1",
       "tag": "v20.182.1",

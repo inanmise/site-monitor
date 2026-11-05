@@ -7,8 +7,15 @@
  * `slow_threshold_ms`, `timeout_ms`, `interval_seconds`; son sonuç: `status` up|down|error|unknown, `found`,
  * `occurrences`, `ok`, `http_status`, `response_ms`, `snippet` (ilk eşleşmenin ±50 karakterlik çevresi — boşluklar
  * tek boşluğa indirilmiş ham gövde, en fazla 200 karakter; yalnız bulunduysa), `error` (istisna metni), `checked_at`.
- * Sayfa boyutu (içerik uzunluğu) satırda YOK — kart uydurmaz.
+ *
+ * <p>kw zenginleştirmesi (2026-11-05) ek alanları: `rules` (etkin kural listesi — eski izlemede tek kural), `rule_logic`,
+ * `rule_results` / `breach_level` (son kontrol), `min_bytes` / `max_bytes` / `body_bytes` (boyut kuralı), `change_detect` /
+ * `change_baseline` / `content_changed` (içerik değişimi), `expected_status` (kabul edilen durum kodları; boş = kapalı),
+ * `same_url_count` / `same_url_hidden_count`. Alan yoksa (eski sunucu) ilgili çip çizilmez — kart uydurmaz.
  */
+
+import { matchParts } from '../../utils/keywordFold.js'
+import { isSimpleRule, logicOf, rulesFromRow } from './rules/ruleModel.js'
 
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null
@@ -64,15 +71,31 @@ export function alertTrigger(rule, keyword, t) {
 
 /** Sonuç türü → panel tonu (ok | bad | neutral). */
 const VERDICT_TONE = {
-  found: 'ok', absent: 'ok', countOk: 'ok',
-  missing: 'bad', forbidden: 'bad', countFail: 'bad', error: 'bad',
+  found: 'ok', absent: 'ok', countOk: 'ok', rulesOk: 'ok',
+  missing: 'bad', forbidden: 'bad', countFail: 'bad', rulesFail: 'bad', error: 'bad', other: 'bad',
   pending: 'neutral',
+}
+
+/**
+ * Sayfa geldi ve KURAL sağlanmadı — bu kodlarda hüküm kuraldan adlandırılır ("Bulunamadı", "2/3 kural sağlanmadı").
+ * Başka bir kodla (HTTP durumu, son adres, yönlendirme, boyut …) kapalı izlemede kural TUTMUŞ olabilir; hüküm o nedenden
+ * gelir (`other`), eşleşme sayacı gösterilmez (son inceleme O1). Hata modeli de bu kümeyi kullanır.
+ */
+export const CONDITION_CODES = Object.freeze(new Set(['KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH', 'RULES_NOT_MET']))
+
+/** Kapalı izlemenin nedeni kural DIŞI mı (sunucu kodu var ve koşul ailesinden değil)? Kod yoksa (eski satır) false. */
+export function nonRuleFailure(m) {
+  const code = m?.failure_reason
+  return typeof code === 'string' && code !== '' && !CONDITION_CODES.has(code)
 }
 
 /**
  * Son kontrolün HÜKMÜ — kartın kalbi. `{ kind, tone, count, rule }`; `kind`:
  * `pending` (hiç kontrol yok) · `error` (sayfa okunamadı: istek hatası, kural değerlendirilmedi) ·
- * `found` / `missing` (içermeli kuralı) · `absent` / `forbidden` (içermemeli kuralı) · `countOk` / `countFail` (adet kuralı).
+ * `found` / `missing` (içermeli kuralı) · `absent` / `forbidden` (içermemeli kuralı) · `countOk` / `countFail` (adet kuralı) ·
+ * `rulesOk` / `rulesFail` (birden çok kural; `failed` / `total` son kontrolün sonuçlarından — kapalı ama hiçbir kural
+ * sağlanmamış görünmüyorsa neden kurallar değildir → genel `countFail`) · `other` (kapalı, sunucu kodu kural DIŞI bir
+ * neden — `code`; sayaç yok).
  * Sağlıklı mı kararı SUNUCUNUNDUR (`status` up) — kart kuralı yeniden değerlendirmez, yalnız adlandırır.
  */
 export function verdictOf(m) {
@@ -83,6 +106,14 @@ export function verdictOf(m) {
   else if (status !== 'up' && status !== 'down') kind = 'pending'
   else {
     const ok = status === 'up'
+    // Kural dışı neden (HTTP_STATUS, FINAL_URL_MISMATCH, REDIRECT_NOT_FOLLOWED, BODY_TOO_* …): kural tutmuş olabilir —
+    // "Bulunamadı · 3 eşleşme" çelişkisi yerine hüküm nedenin kendisi, sayaç yok (O1)
+    if (!ok && nonRuleFailure(m)) return { kind: 'other', tone: VERDICT_TONE.other, count: null, rule, code: m.failure_reason }
+    const set = ruleSet(m)
+    if (set.multi) {
+      const verdict = ok ? 'rulesOk' : set.failed > 0 ? 'rulesFail' : 'countFail'
+      return { kind: verdict, tone: VERDICT_TONE[verdict], count: null, rule, failed: set.failed, total: set.rules.length }
+    }
     if (rule.kind === 'contains') kind = ok ? 'found' : 'missing'
     else if (rule.kind === 'absent') kind = ok ? 'absent' : 'forbidden'
     else kind = ok ? 'countOk' : 'countFail'
@@ -194,25 +225,100 @@ export const LONG_KEYWORD = 48
 /** Bu uzunluktan uzun eşleşme çevresi kırpılabilir (telefonda iki satır ≈ 60 eş aralıklı karakter) → dokun-gör. */
 export const LONG_SNIPPET = 60
 
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 /**
  * Eşleşme çevresini vurgu parçalarına böler: `[{ text, match }]`. Sunucu çevreyi boşlukları tek boşluğa indirerek
- * verir → aranan metnin boşlukları da indirgenir. Harf duyarsız kuralda eşleşme de duyarsız (sunucuyla aynı).
+ * verir → aranan metnin boşlukları da indirgenir. Harf duyarsız kuralda Türkçe katlama (`utils/keywordFold` — sunucunun
+ * `KeywordFold`'u: İ/I/ı/i aynı harf, uzunluk korunur); `i` bayraklı RegExp KULLANILMAZ (Türkçe İ/ı'yı kaçırıyordu, B3).
+ * Vurgu özgün metinden dilimlenir (yazım biçimi korunur).
  */
 export function highlightParts(text, keyword, caseSensitive = false) {
-  const hay = String(text ?? '')
   const needle = String(keyword ?? '').replace(/\s+/g, ' ').trim()
-  if (!hay) return []
-  if (!needle) return [{ text: hay, match: false }]
-  const re = new RegExp(escapeRe(needle), caseSensitive ? 'g' : 'gi')
-  const out = []
-  let last = 0
-  for (const mt of hay.matchAll(re)) {
-    if (mt.index > last) out.push({ text: hay.slice(last, mt.index), match: false })
-    out.push({ text: mt[0], match: true })
-    last = mt.index + mt[0].length
+  return matchParts(text, needle, caseSensitive)
+}
+
+// ── Çoklu kural / içerik kontrolleri / bilgi çipleri (kw paket C–E, 2026-11-05) ─────────────────────────────────────
+
+/**
+ * Kural özeti: `{ rules, logic, multi, custom, results, failed, evaluated }`. `rules` etkin liste (sunucunun `rules`'u;
+ * eski satırda eski alanlardan tek kural), `custom` = basit tek kural DEĞİL (düzenli ifade / kapsam / kritik / etiket ya da
+ * birden çok kural), `results` son kontrolün `rule_results`'u (yoksa null — bilinmiyor), `failed` sağlanmayan kural sayısı.
+ */
+export function ruleSet(m) {
+  const rules = rulesFromRow(m)
+  const results = Array.isArray(m?.rule_results) ? m.rule_results.filter((r) => r && typeof r === 'object') : null
+  const failed = results ? results.filter((r) => r.ok === false).length : null
+  return {
+    rules, logic: logicOf(m), multi: rules.length > 1, custom: rules.length > 1 || !isSimpleRule(rules[0]),
+    results: results && results.length ? results : null, failed, evaluated: results ? results.length : 0,
   }
-  if (last < hay.length) out.push({ text: hay.slice(last), match: false })
-  return out
+}
+
+/** Kural kimliği → son kontrolün sonucu (true / false / null = bilinmiyor). */
+export function ruleOutcome(set, id) {
+  const r = set?.results?.find((x) => x.id === id)
+  return r ? r.ok === true : null
+}
+
+const BREACH = new Set(['WARNING', 'CRITICAL'])
+
+/** İhlal seviyesi rozeti: yalnız kapalı izlemede ve sunucu kural seviyesi yazdıysa (WARNING | CRITICAL); aksi null. */
+export function breachLevel(m) {
+  if (m?.status !== 'down') return null
+  const lv = String(m?.breach_level || '').toUpperCase()
+  return BREACH.has(lv) ? lv : null
+}
+
+/**
+ * "Durum kodu denetlenmiyor" çipi (B5): izleme SAĞLIKLI ama sayfa HTTP ≥ 400 döndü ve kabul edilen durum kodları kuralı
+ * kapalı (`expected_status` boş — eski sunucuda alan yoktur, o da kapalı demektir). Döner: durum kodu ya da null.
+ */
+export function statusUnchecked(m) {
+  const code = num(m?.http_status)
+  if (m?.status !== 'up' || code == null || code < 400) return null
+  const rule = m?.expected_status
+  return rule == null || String(rule).trim() === '' ? code : null
+}
+
+/** Aynı URL'yi izleyen diğer izlemeler: `{ visible, hidden, total }` ya da null (yok / eski sunucu). */
+export function sameUrl(m) {
+  const visible = Math.max(0, num(m?.same_url_count) ?? 0)
+  const hidden = Math.max(0, num(m?.same_url_hidden_count) ?? 0)
+  return visible + hidden > 0 ? { visible, hidden, total: visible + hidden } : null
+}
+
+/**
+ * Değişimin bir kontrolde NEDEN ölçülmediği (sunucu `change_note` / `skipped.note`; kw son inceleme O-3 / D-7): hata sayfası,
+ * boş gövde, tamamlanmayan istek, durum / son adres kuralının reddi, seçicinin öğe bulamaması. Bilinmeyen kod gösterilmez.
+ */
+export const CHANGE_NOTE_CODES = Object.freeze(['HTTP_ERROR', 'EMPTY_BODY', 'INCOMPLETE', 'RULE_REJECTED', 'SELECTOR_NOT_FOUND'])
+
+/**
+ * Satırın / yanıtın değişim notu: bilinen kod; tanınmayan (daha yeni sunucu) dolu kod → `OTHER` (genel metin — ham kod
+ * ekrana ASLA düşmez); yoksa null.
+ */
+export function changeNoteOf(v) {
+  if (typeof v !== 'string' || v.trim() === '') return null
+  return CHANGE_NOTE_CODES.includes(v) ? v : 'OTHER'
+}
+
+/**
+ * İçerik değişimi çipi: kapalıysa null; `changed` (son kontrol temelden farklı), `skipped` (son kontrolde değişim ÖLÇÜLMEDİ —
+ * `change_note`; nötr, asla "değişim yok" değil), `noBaseline` (temel henüz alınmadı), `watching` (izleniyor — son kontrol
+ * aynı ya da bilinmiyor).
+ */
+export function changeState(m) {
+  if (m?.change_detect !== true) return null
+  if (m?.content_changed === true) return 'changed'
+  if (changeNoteOf(m?.change_note)) return 'skipped'
+  if (m?.change_baseline == null && 'change_baseline' in (m || {})) return 'noBaseline'
+  return 'watching'
+}
+
+/** Boyut kuralı açık mı: `{ min, max, bytes, bad }` ya da null. `bad` = son başarısızlık boyut kaynaklı. */
+export function sizeRule(m) {
+  const min = num(m?.min_bytes)
+  const max = num(m?.max_bytes)
+  if (min == null && max == null) return null
+  const code = m?.failure_reason
+  return { min, max, bytes: num(m?.body_bytes), bad: m?.status !== 'up' && (code === 'BODY_TOO_SMALL' || code === 'BODY_TOO_LARGE') }
 }

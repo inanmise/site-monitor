@@ -464,9 +464,14 @@ describe('KeywordMonitorCard — son başarısızlığın nedeni', () => {
     expect(chip.textContent).toBe('Sign-in page returned')
   })
 
-  it('kural dışı neden (boş yanıt) çipte; ipucusuz "bulunamadı" ve ESKİ satır (kod yok) çipsiz', () => {
+  it('kural dışı neden (boş yanıt) HÜKÜM satırında, sayaç ve çip yok; ipucusuz "bulunamadı" ve ESKİ satır (kod yok) çipsiz', () => {
+    // Son inceleme O1: kural dışı nedenle kapalı izleme "Bulunamadı · 0 eşleşme" demez — hüküm nedenin kendisi
     const empty = renderCard({ status: 'down', http_status: 200, found: false, occurrences: 0, snippet: null, failure_reason: 'EMPTY_BODY' })
-    expect(slot(empty.container, 'keyword-reason-chip').textContent).toBe('Empty response')
+    const panel = slot(empty.container, 'keyword-panel')
+    expect(panel.getAttribute('data-result')).toBe('other')
+    expect(slot(panel, 'keyword-result').textContent).toBe('Empty response')
+    expect(slot(panel, 'keyword-count')).toBeNull()
+    expect(slot(empty.container, 'keyword-reason-chip')).toBeNull()
     empty.unmount()
     const plain = renderCard({ status: 'down', http_status: 200, found: false, occurrences: 0, snippet: null, failure_reason: 'KEYWORD_NOT_FOUND', hints: [] })
     expect(slot(plain.container, 'keyword-reason-chip')).toBeNull()

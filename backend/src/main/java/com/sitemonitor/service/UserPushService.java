@@ -2718,6 +2718,12 @@ public class UserPushService {
         // atlanması telefona "KRİTİK: x - UYARI: x DNS kaydı değişti değişti." düşürüyordu.
         vals.put("degisen", PushText.capitalize(
                 PushText.reasonOf(event.getMessage(), event.getDomain(), reasonMaxChars())));
+        // Sayfa içeriği değişimi (kw son inceleme D-4): alarm iletisi bir CÜMLE ("… farklı. Beklenen bir değişiklikse …
+        // kapanır.") — "changed" şablonu sonuna "değişti" ekleyince telefona "… kapanır. değişti" düşüyordu. NE değiştiği
+        // söylenir: "İçerik (N satır)" → "İçerik (3 satır) değişti".
+        if (EscalationService.TYPE_KEYWORD_CHANGED.equals(event.getAlertType())) {
+            vals.put("degisen", keywordChangedWhat(ctx, lang));
+        }
         vals.put("ip", ctxStr(ctx, "resolved_ip", "-"));
         vals.put("cn", ctxStr(ctx, "subject", "-"));
         vals.put("sure", durationSince(event.getCreatedAt(), lang));
@@ -2726,6 +2732,19 @@ public class UserPushService {
         vals.put("saat", nowClock);
         vals.put("bitis", nowClock);   // çözüm tetiginde "şimdi" = normale dönüş anı
         return fillTemplate(template(templateKeyFor(event.getAlertType(), trigger), lang), vals);
+    }
+
+    /** KEYWORD_CHANGED push'unda {@code {degisen}}: "İçerik" / "Content" + varsa değişen satır sayısı (bağlamdan). */
+    static String keywordChangedWhat(Map<String, Object> ctx, String lang) {
+        Integer n = null;
+        if (ctx != null) {
+            if (ctx.get("changed_lines") instanceof Number num) n = num.intValue();
+            else n = com.sitemonitor.service.keyword.content.KeywordChangeDetector.changedLines(ctx.get("change_summary"));
+        }
+        boolean en = PushI18n.isEn(lang);
+        String what = en ? "Content" : "İçerik";
+        if (n == null || n <= 0) return what;
+        return what + " (" + n + (en ? (n == 1 ? " line" : " lines") : " satır") + ")";
     }
 
     static String fillTemplate(String template, Map<String, String> vals) {

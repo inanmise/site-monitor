@@ -79,6 +79,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.KeywordHeaderSecrets keywordHeaderSecrets;
     @MockitoBean KeywordResultRepository keywordResultRepo;
     @MockitoBean com.sitemonitor.service.KeywordCheckerService keywordChecker;
+    /** kw-be2 Aşama 2: içerik değişimi temeli (alan enjeksiyonu; varsayılan cevaplar = temel yok). */
+    @MockitoBean com.sitemonitor.service.keyword.content.KeywordChangeBaselineService keywordBaselines;
     @MockitoBean PingMonitorRepository pingMonitorRepo;
     @MockitoBean PingCheckRepository pingCheckRepo;
     @MockitoBean com.sitemonitor.service.PingCheckerService pingChecker;
@@ -1066,7 +1068,8 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(cr);   // viaProxy (2026-09-21) + Expectation (2026-10-04)
+        when(keywordChecker.check(argThat((com.sitemonitor.service.keyword.KeywordCheckSpec sp) -> sp != null && "https://x.example.com".equals(sp.url())
+                && "example".equals(sp.keyword())))).thenReturn(cr);   // kw Aşama 1: tek KeywordCheckSpec
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
@@ -1087,10 +1090,9 @@ class MonitoringControllerTest {
         fail.put("hints", java.util.List.of("LOGIN_PAGE")); fail.put("excerpt", "Oturum açın Kullanıcı adı Parola");
         fail.put("final_url", "https://sso.example.com/login"); fail.put("redirect_count", 2);
         fail.put("content_type", "text/html"); fail.put("body_bytes", 4096); fail.put("body_truncated", false); fail.put("charset", "UTF-8");
-        org.mockito.ArgumentCaptor<com.sitemonitor.service.KeywordCheckerService.Expectation> exp =
-                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.KeywordCheckerService.Expectation.class);
-        when(keywordChecker.check(eq("https://kw.example.com"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(), exp.capture()))
-                .thenReturn(fail);
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.keyword.KeywordCheckSpec> exp =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.keyword.KeywordCheckSpec.class);
+        when(keywordChecker.check(exp.capture())).thenReturn(fail);
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
                 .content("{\"url\":\"https://kw.example.com\",\"keyword\":\"Kampanya\",\"operator\":\"GTE\",\"matchCount\":2}"))
@@ -1110,8 +1112,7 @@ class MonitoringControllerTest {
 
         java.util.Map<String, Object> okRes = new java.util.HashMap<>(fail);
         okRes.put("count", 3);
-        when(keywordChecker.check(eq("https://kw.example.com"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
-                .thenReturn(okRes);
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenReturn(okRes);
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
                 .content("{\"url\":\"https://kw.example.com\",\"keyword\":\"Kampanya\",\"operator\":\"GTE\",\"matchCount\":2}"))
@@ -1427,20 +1428,30 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("POST /keyword/test: özel başlık YALNIZ global admin — sıradan kullanıcının gönderdiği başlık isteğe GİRMEZ")
     void testKeyword_customHeaders_onlyGlobalAdmin() throws Exception {
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
-        String body = "{\"url\":\"https://x.example.com\",\"keyword\":\"a\",\"customHeaders\":\"Host: ic.example.local\"}";
+        // Host başlığı izinli değil (kayıtta da reddedilir) — sınama izinli bir başlıkla
+        String body = "{\"url\":\"https://x.example.com\",\"keyword\":\"a\",\"customHeaders\":\"X-Ic-Ortam: test\"}";
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                         .contentType("application/json").content(body))
                 .andExpect(status().isOk());
-        verify(keywordChecker).check(anyString(), anyString(), anyInt(), isNull(), anyBoolean(), anyBoolean(), any());
+        verify(keywordChecker).check(argThat((com.sitemonitor.service.keyword.KeywordCheckSpec sp) -> sp.customHeaders() == null));
 
         org.mockito.Mockito.clearInvocations(keywordChecker);
         mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN"))
                         .contentType("application/json").content(body))
                 .andExpect(status().isOk());
-        verify(keywordChecker).check(anyString(), anyString(), anyInt(), eq("Host: ic.example.local"), anyBoolean(), anyBoolean(), any());
+        verify(keywordChecker).check(argThat((com.sitemonitor.service.keyword.KeywordCheckSpec sp) -> "X-Ic-Ortam: test".equals(sp.customHeaders())));
+
+        // kw §5: kısıtlı başlık (Host) kayıttaki gibi test ucunda da reddedilir — istek atılmaz
+        org.mockito.Mockito.clearInvocations(keywordChecker);
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\",\"customHeaders\":\"Host: ic.example.local\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("customHeaders"));
+        verify(keywordChecker, never()).check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class));
     }
 
     @Test
@@ -5317,21 +5328,31 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("Y-3: POST/PUT /keyword timeoutMs tavanlanır — 2147483647 → 120000, 5 → 1000")
-    void keyword_timeoutClampedOnCreateAndUpdate() throws Exception {
+    @DisplayName("kw §5.1 / B13: POST/PUT /keyword timeoutMs 1–60 sn — dışı 400 timeoutMs (sessiz kırpma yok); kayıtlı eski değer aynen gelirse doğrulanmaz")
+    void keyword_timeoutValidatedOnCreateAndUpdate() throws Exception {
         when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
                 .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); if (k.getId() == null) k.setId(11L); return k; });
         String base = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"teamId\":3,";
-        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":2147483647}")).isEqualTo(120_000);
-        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":5}")).isEqualTo(1_000);
+        for (String bad : new String[] { "2147483647", "60001", "999", "5" }) {
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(base + "\"timeoutMs\":" + bad + "}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("timeoutMs"));
+        }
+        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":60000}")).isEqualTo(60_000);
+        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":1000}")).isEqualTo(1_000);
 
         com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
         m.setId(7L); m.setUrl("https://x.example.com"); m.setKeyword("foo"); m.setActive(true);
+        m.setTimeoutMs(120_000);   // eski sürümün izin verdiği değer
         when(keywordMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
         when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.empty());
-        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":2147483647}")).isEqualTo(120_000);
-        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":5}")).isEqualTo(1_000);
-        // Aralık içi değer aynen korunur (tavan yalnız uçları keser).
+        // form kayıtlı değeri aynen geri gönderir → doğrulanmaz, kayıt korunur (çalışmada 60 sn'ye kırpılır)
+        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":120000}")).isEqualTo(120_000);
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"timeoutMs\":90000}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("timeoutMs"));
         assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":15000}")).isEqualTo(15_000);
     }
 
@@ -5364,13 +5385,14 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk());
         verify(portChecker).check(anyString(), anyInt(), eq(120_000), anyString(), any(), any(), anyString(), anyBoolean());
 
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                         .contentType("application/json")
                         .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\"," + huge + "}"))
                 .andExpect(status().isOk());
-        verify(keywordChecker).check(anyString(), anyString(), eq(120_000), any(), anyBoolean(), anyBoolean(), any());
+        // kw §5.1: anahtar kelime zaman aşımı 1–60 sn (test ucu 120 sn tavanından sonra 60 sn'ye kırpılır)
+        verify(keywordChecker).check(argThat((com.sitemonitor.service.keyword.KeywordCheckSpec sp) -> sp.effectiveTimeoutMs() == 60_000));
 
         when(pingChecker.check(anyString(), anyString(), anyInt(), anyInt())).thenReturn(java.util.Map.of("up", true));
         mvc.perform(post("/api/monitoring/ping/test").session(session("ADMIN"))
@@ -5403,7 +5425,7 @@ class MonitoringControllerTest {
         MockHttpSession s = session("ADMIN");
         when(httpChecker.check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
                 .thenReturn(java.util.Map.of("ok", true, "http_status", 200));
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
 
         MonitoringController.TEST_IN_FLIGHT.add(MonitoringController.testSlot(s, "http"));
@@ -5416,7 +5438,7 @@ class MonitoringControllerTest {
                             .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\"}"))
                     .andExpect(status().isTooManyRequests());
             verify(httpChecker, never()).check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean());
-            verify(keywordChecker, never()).check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean());
+            verify(keywordChecker, never()).check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class));
             // BAŞKA oturum etkilenmez.
             mvc.perform(post("/api/monitoring/http/test").session(session("ADMIN")).contentType("application/json")
                             .content("{\"url\":\"https://x.example.com\"}"))
@@ -6423,8 +6445,7 @@ class MonitoringControllerTest {
         raw.put("content_type", "text/html"); raw.put("body_bytes", 900L); raw.put("body_truncated", false);
         raw.put("failure_reason", "KEYWORD_NOT_FOUND"); raw.put("failure_detail", "Sayfa yüklendi ama « Kampanya » yok");
         raw.put("hints", List.of("LOGIN_PAGE")); raw.put("excerpt", "Oturum aç");
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(),
-                any(com.sitemonitor.service.KeywordCheckerService.Expectation.class))).thenReturn(raw);
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenReturn(raw);
         when(keywordResultRepo.save(any(com.sitemonitor.model.KeywordResult.class))).thenAnswer(a -> a.getArgument(0));
 
         mvc.perform(post("/api/monitoring/keyword/61/check").session(session("ADMIN")))
@@ -6444,8 +6465,8 @@ class MonitoringControllerTest {
         assertThat(saved.getFinalUrl()).isEqualTo("https://kw.example.com/giris");
         assertThat(saved.getRedirectCount()).isEqualTo(1);
         // beklenti izlemenin kuralı
-        verify(keywordChecker).check(eq("https://kw.example.com/"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(),
-                eq(new com.sitemonitor.service.KeywordCheckerService.Expectation("GTE", 1)));
+        verify(keywordChecker).check(argThat((com.sitemonitor.service.keyword.KeywordCheckSpec sp) -> "https://kw.example.com/".equals(sp.url())
+                && "Kampanya".equals(sp.keyword()) && "GTE".equals(sp.operator()) && sp.threshold() == 1 && sp.diagnose()));
         // ELLE kontrol alarm açmaz: yalnız manuel değerlendirme (manual=true yolu SchedulerService'te), sweep/alarm yok
         verify(schedulerService).evaluateKeywordNow(eq(m), any());
         org.mockito.Mockito.verifyNoInteractions(monitoringOutageService);
@@ -8519,6 +8540,953 @@ class MonitoringControllerTest {
             when(scriptedMonitorRepo.findById(2L)).thenReturn(Optional.empty());
             mvc.perform(get("/api/monitoring/scripted/2/step-series").session(session("ADMIN")))
                     .andExpect(status().isNotFound());
+        }
+    }
+
+    // ═══════════ Anahtar kelime izleme zenginleştirmesi — Aşama 1 / be1 (kw sözleşmesi, 2026-11-05) ═══════════
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Keyword Aşama 1: istek alanları, paylaşım kilidi, alarm kapanışları, geçmiş, aynı URL")
+    class KeywordBe1 {
+
+        private static final String JSON = "application/json";
+        private static final String BASE = "{\"name\":\"Sepet\",\"groupName\":\"Grup A\",\"tags\":\"t1\","
+                + "\"url\":\"https://shop.example.com/\",\"keyword\":\"Sepete ekle\",\"teamId\":5,";
+
+        private com.sitemonitor.model.KeywordMonitor stored(long id, long team) {
+            com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+            m.setId(id); m.setName("kw-" + id); m.setUrl("https://shop.example.com/"); m.setKeyword("Sepete ekle");
+            m.setMatchOperator("GTE"); m.setMatchCount(1); m.setActive(true); m.setTeamId(team); m.setIntervalSeconds(300);
+            return m;
+        }
+
+        private void saveEchoes() {
+            when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
+                    .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); if (k.getId() == null) k.setId(71L); return k; });
+        }
+
+        private com.sitemonitor.model.KeywordMonitor lastSaved() {
+            org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordMonitor> cap =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.KeywordMonitor.class);
+            verify(keywordMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+            return cap.getValue();
+        }
+
+        /** Takım 9 üyesi; takım 5'e verilen paylaşım düzeyleri (kümülatif). */
+        private MockHttpSession granteeOf5(String... levels) {
+            MockHttpSession s = sessionWithTeam("USER", 9L);
+            s.setAttribute("viewTeamIds", List.of(9L));
+            s.setAttribute("memberTeamIds", List.of(9L));
+            s.setAttribute("manageTeamIds", List.of());
+            for (String a : levels) s.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+            return s;
+        }
+
+        private MockHttpSession editGranteeOf5() {
+            return granteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT);
+        }
+
+        @Test
+        @DisplayName("§5 / §10.1: geçersiz istek alanı → 400 VALIDATION_FAILED + alan; kayıt yapılmaz")
+        void requestFieldsValidated() throws Exception {
+            saveEchoes();
+            String[][] cases = {
+                    { "\"matchScope\":\"TEXT\"", "matchScope" },
+                    { "\"method\":\"HEAD\"", "method" },
+                    { "\"expectedStatus\":\"6xx\"", "expectedStatus" },
+                    { "\"expectedFinalUrl\":\"//evil.example.com/x\"", "expectedFinalUrl" },
+                    { "\"userAgentMode\":\"ROBOT\"", "userAgentMode" },
+                    { "\"userAgentMode\":\"CUSTOM\"", "userAgent" },
+                    { "\"userAgentMode\":\"CUSTOM\",\"userAgent\":\"Ajan\\r\\nX: y\"", "userAgent" },
+                    { "\"mailSubjectTemplate\":\"a\\nb\"", "mailSubjectTemplate" },
+                    { "\"requestContentType\":\"text/plain\\r\\nX: y\"", "requestContentType" },
+            };
+            for (String[] c : cases) {
+                mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                                .content(BASE + c[0] + "}"))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.field").value(c[1]));
+            }
+            verify(keywordMonitorRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("§3.1: 'bugünkü' değerler NULL saklanır (RAW, GET, varsayılan UA, takip açık, normalize kapalı); ayrılanlar saklanır; "
+                + "durum kodu kuralı kanonik; Basic auth parolası şifreleyiciye gider, yanıtta yalnız has_basic_auth_pass")
+        void requestFieldsStored() throws Exception {
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"matchScope\":\"RAW\",\"method\":\"GET\",\"userAgentMode\":\"DEFAULT\","
+                                    + "\"followRedirects\":true,\"normalizeWs\":false,\"expectedStatus\":\"\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.match_scope").value("RAW"))
+                    .andExpect(jsonPath("$.data.method").value("GET"))
+                    .andExpect(jsonPath("$.data.follow_redirects").value(true))
+                    .andExpect(jsonPath("$.data.expected_status").doesNotExist());
+            com.sitemonitor.model.KeywordMonitor d = lastSaved();
+            assertThat(d.getMatchScope()).isNull();
+            assertThat(d.getMethod()).isNull();
+            assertThat(d.getUserAgentMode()).isNull();
+            assertThat(d.getFollowRedirects()).isNull();
+            assertThat(d.getNormalizeWs()).isNull();
+            assertThat(d.getExpectedStatus()).isNull();
+
+            org.mockito.Mockito.clearInvocations(keywordMonitorRepo, keywordHeaderSecrets);
+            when(keywordHeaderSecrets.hasBasicAuthPass(any())).thenReturn(true);
+            String body = mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"matchScope\":\"visible\",\"normalizeWs\":true,\"method\":\"post\","
+                                    + "\"requestBody\":\"{\\\"q\\\":1}\",\"requestContentType\":\"application/json\","
+                                    + "\"basicAuthUser\":\"izleme\",\"basicAuthPass\":\"Gizli-Parola-77\","
+                                    + "\"userAgentMode\":\"BROWSER\",\"expectedStatus\":\" 2XX , 301 \","
+                                    + "\"expectedFinalUrl\":\"/panel\",\"followRedirects\":false,"
+                                    + "\"mailSubjectTemplate\":\"[{seviye}] {ad}\",\"timeoutMs\":20000}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.match_scope").value("VISIBLE"))
+                    .andExpect(jsonPath("$.data.normalize_ws").value(true))
+                    .andExpect(jsonPath("$.data.method").value("POST"))
+                    .andExpect(jsonPath("$.data.user_agent_mode").value("BROWSER"))
+                    .andExpect(jsonPath("$.data.expected_status").value("2xx,301"))
+                    .andExpect(jsonPath("$.data.expected_final_url").value("/panel"))
+                    .andExpect(jsonPath("$.data.follow_redirects").value(false))
+                    .andExpect(jsonPath("$.data.basic_auth_user").value("izleme"))
+                    .andExpect(jsonPath("$.data.has_basic_auth_pass").value(true))
+                    .andExpect(jsonPath("$.data.mail_subject_template").value("[{seviye}] {ad}"))
+                    .andExpect(jsonPath("$.data.same_url_count").value(0))
+                    .andExpect(jsonPath("$.data.same_url_hidden_count").value(0))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("Gizli-Parola-77");
+            verify(keywordHeaderSecrets).storeBasicAuthPass(any(com.sitemonitor.model.KeywordMonitor.class), eq("Gizli-Parola-77"));
+            com.sitemonitor.model.KeywordMonitor s = lastSaved();
+            assertThat(s.getMatchScope()).isEqualTo("VISIBLE");
+            assertThat(s.getMethod()).isEqualTo("POST");
+            assertThat(s.getFollowRedirects()).isFalse();
+            assertThat(s.getTimeoutMs()).isEqualTo(20_000);
+        }
+
+        @Test
+        @DisplayName("B12: 'hiç geçmemeli' tek kural — LT 1 de CONTAINS (kart / sınıflandırıcı / posta ile aynı); GTE 1 NOT_CONTAINS")
+        void absenceRuleIncludesLtOne() throws Exception {
+            saveEchoes();
+            String[][] cases = { { "LT", "1", "CONTAINS" }, { "LTE", "0", "CONTAINS" }, { "EQ", "0", "CONTAINS" },
+                    { "GTE", "1", "NOT_CONTAINS" }, { "LT", "2", "NOT_CONTAINS" } };
+            for (String[] c : cases) {
+                org.mockito.Mockito.clearInvocations(keywordMonitorRepo);
+                mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                                .content(BASE + "\"operator\":\"" + c[0] + "\",\"matchCount\":" + c[1] + "}"))
+                        .andExpect(status().isOk());
+                assertThat(lastSaved().getAlertCondition()).as(c[0] + " " + c[1]).isEqualTo(c[2]);
+            }
+        }
+
+        @Test
+        @DisplayName("§8.3: paylaşımla (EDIT) düzenleyen posta konusu şablonunu değiştiremez — farklı → 403 (kayıt yok), aynı → düşer; "
+                + "istek alanlarını değiştirebilir")
+        void sharedEditorCannotChangeMailSubject() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(81L, 5L);
+            m.setMailSubjectTemplate("{ad} · {neden}");
+            when(keywordMonitorRepo.findById(81L)).thenReturn(Optional.of(m));
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(81L)).thenReturn(Optional.empty());
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/81").session(editGranteeOf5()).contentType(JSON)
+                            .content("{\"mailSubjectTemplate\":\"Başka konu\"}"))
+                    .andExpect(status().isForbidden());
+            verify(keywordMonitorRepo, never()).save(any());
+            assertThat(m.getMailSubjectTemplate()).isEqualTo("{ad} · {neden}");
+
+            mvc.perform(put("/api/monitoring/keyword/81").session(editGranteeOf5()).contentType(JSON)
+                            .content("{\"mailSubjectTemplate\":\" {ad} · {neden} \",\"expectedStatus\":\"2xx\",\"matchScope\":\"VISIBLE\"}"))
+                    .andExpect(status().isOk());
+            assertThat(m.getMailSubjectTemplate()).isEqualTo("{ad} · {neden}");
+            assertThat(m.getExpectedStatus()).isEqualTo("2xx");
+            assertThat(m.getMatchScope()).isEqualTo("VISIBLE");
+
+            // kendi kapsamıyla düzenleyen değiştirebilir
+            MockHttpSession own = sessionWithTeam("USER", 5L);
+            own.setAttribute("viewTeamIds", List.of(5L));
+            own.setAttribute("memberTeamIds", List.of(5L));
+            mvc.perform(put("/api/monitoring/keyword/81").session(own).contentType(JSON)
+                            .content("{\"mailSubjectTemplate\":\"Yeni {ad}\"}"))
+                    .andExpect(status().isOk());
+            assertThat(m.getMailSubjectTemplate()).isEqualTo("Yeni {ad}");
+        }
+
+        @Test
+        @DisplayName("B7: URL değişince ESKİ anahtarın tüm keyword alarm türleri sessizce kapanır (yalnız bu izlemenin); silme ve "
+                + "duraklatma da TÜM türleri kapatır")
+        void alarmsClosedOnUrlChangeDeleteAndPause() throws Exception {
+            // KEYWORD_CHANGED (kw-be2) da keyword türlerinden: URL / duraklatma / silme onu da kapatır
+            java.util.Set<String> all = java.util.Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY",
+                    "KEYWORD_CHANGED");
+            com.sitemonitor.model.KeywordMonitor m = stored(82L, 5L);
+            when(keywordMonitorRepo.findById(82L)).thenReturn(Optional.of(m));
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(82L)).thenReturn(Optional.empty());
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/82").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com/yeni\"}"))
+                    .andExpect(status().isOk());
+            org.mockito.ArgumentCaptor<java.util.Collection<String>> types = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+            org.mockito.ArgumentCaptor<java.util.Map<String, Object>> owner = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+            verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/"), types.capture(),
+                    eq("Sistem (URL değişti)"), owner.capture());
+            assertThat(types.getValue()).containsExactlyInAnyOrderElementsOf(all);
+            assertThat(owner.getValue()).containsEntry("monitor_id", 82L);
+
+            // URL değişmediyse kapanış yok
+            org.mockito.Mockito.clearInvocations(escalationService);
+            mvc.perform(put("/api/monitoring/keyword/82").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"name\":\"Yeni ad\"}"))
+                    .andExpect(status().isOk());
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(java.util.Collection.class), anyString(), any());
+
+            // duraklatma → tüm türler, "izleme duraklatıldı"
+            mvc.perform(put("/api/monitoring/keyword/82").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"active\":false}"))
+                    .andExpect(status().isOk());
+            verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/yeni"), types.capture(),
+                    eq("Sistem (izleme duraklatıldı)"), any());
+            assertThat(types.getValue()).containsExactlyInAnyOrderElementsOf(all);
+
+            // silme → tüm türler, "izleme silindi"
+            com.sitemonitor.model.KeywordMonitor d = stored(83L, 5L);
+            when(keywordMonitorRepo.findById(83L)).thenReturn(Optional.of(d));
+            mvc.perform(delete("/api/monitoring/keyword/83").session(session("ADMIN"))).andExpect(status().isOk());
+            verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/"), types.capture(),
+                    eq("Sistem (izleme silindi)"), any());
+            assertThat(types.getValue()).containsExactlyInAnyOrderElementsOf(all);
+        }
+
+        @Test
+        @DisplayName("B2: geçmiş anlık görüntüsü keyword alanlarını taşır; şifreli başlık 'customHeadersSecret' adıyla, parola maskeli")
+        void snapshotCarriesKeywordFieldsAndMasksSecrets() {
+            com.sitemonitor.model.KeywordMonitor m = stored(84L, 5L);
+            m.setCaseSensitive(true); m.setSlowThresholdMs(4000); m.setMatchScope("VISIBLE"); m.setExpectedStatus("2xx");
+            m.setUserAgentMode("CUSTOM"); m.setUserAgent("Probe/2"); m.setMailSubjectTemplate("{ad}");
+            m.setCustomHeadersEnc("enc:v1:AAAA"); m.setBasicAuthUser("izleme"); m.setBasicAuthPassEnc("enc:v1:BBBB");
+            java.util.Map<String, Object> s = MonitoringController.keywordSnapshot(m);
+            assertThat(s).containsEntry("caseSensitive", true).containsEntry("slowThresholdMs", 4000)
+                    .containsEntry("matchScope", "VISIBLE").containsEntry("expectedStatus", "2xx")
+                    .containsEntry("userAgent", "Probe/2").containsEntry("mailSubjectTemplate", "{ad}")
+                    .containsEntry("basicAuthUser", "izleme")
+                    .doesNotContainKey("customHeadersEnc").containsKey("customHeadersSecret");
+            // Kalıcı biçim (geçmiş satırı / denetim): sır anahtarları maskeli — şifreli metin bile yazılmaz
+            String persisted = com.sitemonitor.service.AuditDiff.snapshotJson(s);
+            assertThat(persisted).contains("customHeadersSecret").contains("basicAuthPassEnc").contains("Probe/2")
+                    .doesNotContain("AAAA").doesNotContain("BBBB");
+            // değişiklik şifreli metin farkından algılanır, değer sızmaz
+            com.sitemonitor.model.KeywordMonitor m2 = stored(84L, 5L);
+            m2.setCaseSensitive(true); m2.setSlowThresholdMs(4000); m2.setMatchScope("VISIBLE"); m2.setExpectedStatus("2xx");
+            m2.setUserAgentMode("CUSTOM"); m2.setUserAgent("Probe/2"); m2.setMailSubjectTemplate("{ad}");
+            m2.setCustomHeadersEnc("enc:v1:CCCC"); m2.setBasicAuthUser("izleme"); m2.setBasicAuthPassEnc("enc:v1:BBBB");
+            String diff = com.sitemonitor.service.AuditDiff.diff(s, MonitoringController.keywordSnapshot(m2));
+            assertThat(diff).contains("customHeadersSecret").doesNotContain("CCCC").doesNotContain("AAAA");
+        }
+
+        @Test
+        @DisplayName("B2: geri yükleme keyword alanlarını yazar (harf duyarlılığı, kapsam, durum kuralı); sırlar geçmişten yazılmaz")
+        void restoreKeywordFields() throws Exception {
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(1L); r.setResourceKind("KEYWORD"); r.setResourceId(85L); r.setResourceName("kw-85");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L); r.setActor("N1"); r.setActorName("Ada");
+            r.setCreatedAt("2026-11-05T10:00:00");
+            r.setSnapshot("{\"caseSensitive\":true,\"matchScope\":\"VISIBLE\",\"expectedStatus\":\"2xx\","
+                    + "\"basicAuthPassEnc\":\"***\",\"customHeadersSecret\":\"***\"}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 85L, 0)).thenReturn(Optional.of(r));
+            com.sitemonitor.model.KeywordMonitor live = stored(85L, 5L);
+            live.setBasicAuthPassEnc("enc:v1:CANLI");
+            when(keywordMonitorRepo.findById(85L)).thenReturn(Optional.of(live));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/85/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            assertThat(live.getCaseSensitive()).isTrue();
+            assertThat(live.getMatchScope()).isEqualTo("VISIBLE");
+            assertThat(live.getExpectedStatus()).isEqualTo("2xx");
+            assertThat(live.getBasicAuthPassEnc()).isEqualTo("enc:v1:CANLI");
+        }
+
+        @Test
+        @DisplayName("karar 4 / §10.3: aynı URL — görünen izlemeler ad + takım + kelime ile, göremediği takımlardakiler YALNIZ sayı; "
+                + "URL karşılaştırması büyük/küçük harf duyarsız, kendisi hariç; liste satırında sayılar")
+        void sameUrl() throws Exception {
+            com.sitemonitor.model.KeywordMonitor a = stored(91L, 5L);
+            com.sitemonitor.model.KeywordMonitor b = stored(92L, 5L); b.setUrl("HTTPS://Shop.Example.com/"); b.setKeyword("Ödeme");
+            com.sitemonitor.model.KeywordMonitor c = stored(93L, 7L); c.setName("Gizli takımın izlemesi");
+            com.sitemonitor.model.KeywordMonitor other = stored(94L, 5L); other.setUrl("https://baska.example.com/");
+            when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b, c, other));
+            when(keywordMonitorRepo.findAll()).thenReturn(List.of(a, b, c, other));
+            when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of());
+            when(certificateService.teamNamesById()).thenReturn(java.util.Map.of(5L, "Dijital Kanallar"));
+
+            MockHttpSession member = sessionWithTeam("USER", 5L);
+            member.setAttribute("viewTeamIds", List.of(5L));
+            member.setAttribute("memberTeamIds", List.of(5L));
+            String body = mvc.perform(get("/api/monitoring/keyword/same-url").session(member)
+                            .param("url", "https://shop.example.com/").param("excludeId", "91"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.monitors.length()").value(1))
+                    .andExpect(jsonPath("$.data.monitors[0].id").value(92))
+                    .andExpect(jsonPath("$.data.monitors[0].keyword").value("Ödeme"))
+                    .andExpect(jsonPath("$.data.monitors[0].team_name").value("Dijital Kanallar"))
+                    .andExpect(jsonPath("$.data.hidden_count").value(1))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("Gizli takımın izlemesi");
+
+            mvc.perform(get("/api/monitoring/keyword/same-url").session(member).param("url", "bozuk url"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.monitors.length()").value(0))
+                    .andExpect(jsonPath("$.data.hidden_count").value(0));
+
+            mvc.perform(get("/api/monitoring/keyword").session(member))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[?(@.id == 91)].same_url_count").value(1))
+                    .andExpect(jsonPath("$.data[?(@.id == 91)].same_url_hidden_count").value(1))
+                    .andExpect(jsonPath("$.data[?(@.id == 94)].same_url_count").value(0));
+        }
+
+        @Test
+        @DisplayName("§10.2: test ucunda kayıtlı sır — düzenleyebilen kullanır (değer yanıtta yok), düzenleyemeyen 403, görmeyen 404; "
+                + "başlık için ayrıca global admin")
+        void testWithSavedSecrets() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(95L, 5L);
+            m.setBasicAuthUser("izleme");
+            when(keywordMonitorRepo.findById(95L)).thenReturn(Optional.of(m));
+            when(keywordHeaderSecrets.basicAuthPass(m)).thenReturn("Kayitli-Parola-1");
+            when(keywordHeaderSecrets.effectiveHeaders(m)).thenReturn("X-Api-Key: kayitli");
+            org.mockito.ArgumentCaptor<com.sitemonitor.service.keyword.KeywordCheckSpec> spec =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.keyword.KeywordCheckSpec.class);
+            when(keywordChecker.check(spec.capture())).thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1, "ok", true)));
+            String req = "{\"url\":\"https://shop.example.com/\",\"keyword\":\"a\",\"basicAuthUser\":\"izleme\","
+                    + "\"monitorId\":95,\"useSaved\":[\"basicAuthPass\",\"customHeaders\"]}";
+
+            String body = mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.used_saved.length()").value(2))
+                    .andExpect(jsonPath("$.data.ok").value(true))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("Kayitli-Parola-1").doesNotContain("kayitli");
+            assertThat(spec.getValue().basicAuthPass()).isEqualTo("Kayitli-Parola-1");
+            assertThat(spec.getValue().customHeaders()).isEqualTo("X-Api-Key: kayitli");
+            assertThat(spec.getValue().toString()).doesNotContain("Kayitli-Parola-1").doesNotContain("kayitli");
+
+            // takım üyesi (düzenleyebilir) — parola evet, başlık yalnız global admin → 403
+            MockHttpSession member = sessionWithTeam("USER", 5L);
+            member.setAttribute("viewTeamIds", List.of(5L));
+            member.setAttribute("memberTeamIds", List.of(5L));
+            mvc.perform(post("/api/monitoring/keyword/test").session(member).contentType(JSON).content(req))
+                    .andExpect(status().isForbidden());
+            mvc.perform(post("/api/monitoring/keyword/test").session(member).contentType(JSON)
+                            .content(req.replace(",\"customHeaders\"", "")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.used_saved[0]").value("basicAuthPass"));
+
+            // yalnız görebilen (VIEW paylaşımı) → 403; hiç göremeyen → 404
+            mvc.perform(post("/api/monitoring/keyword/test").session(granteeOf5(SessionScope.ATTR_GRANT_VIEW)).contentType(JSON)
+                            .content(req.replace(",\"customHeaders\"", "")))
+                    .andExpect(status().isForbidden());
+            MockHttpSession stranger = sessionWithTeam("USER", 9L);
+            stranger.setAttribute("viewTeamIds", List.of(9L));
+            mvc.perform(post("/api/monitoring/keyword/test").session(stranger).contentType(JSON)
+                            .content(req.replace(",\"customHeaders\"", "")))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("§10.2: test ucu kayıtla AYNI doğrulama (geçersiz durum kuralı → 400 expectedStatus, istek atılmaz); "
+                + "yanıtta ok / decoded_charset / match_scope / status_accepted / final_url_ok")
+        void testEndpointValidatesAndReturnsNewKeys() throws Exception {
+            mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com/\",\"keyword\":\"a\",\"expectedStatus\":\"abc\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("expectedStatus"));
+            verify(keywordChecker, never()).check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class));
+
+            java.util.Map<String, Object> raw = new java.util.HashMap<>();
+            raw.put("count", 3); raw.put("found", true); raw.put("ok", false); raw.put("http_status", 503);
+            raw.put("status_accepted", false); raw.put("decoded_charset", "windows-1254"); raw.put("match_scope", "VISIBLE");
+            raw.put("failure_reason", "HTTP_STATUS"); raw.put("failure_detail", "Kabul edilen: 2xx; gelen: 503");
+            when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenReturn(raw);
+            mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com/\",\"keyword\":\"a\",\"expectedStatus\":\"2xx\","
+                                    + "\"matchScope\":\"VISIBLE\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.occurrences").value(3))
+                    .andExpect(jsonPath("$.data.condition_met").value(false))
+                    .andExpect(jsonPath("$.data.ok").value(false))
+                    .andExpect(jsonPath("$.data.status_accepted").value(false))
+                    .andExpect(jsonPath("$.data.decoded_charset").value("windows-1254"))
+                    .andExpect(jsonPath("$.data.match_scope").value("VISIBLE"))
+                    .andExpect(jsonPath("$.data.failure_reason").value("HTTP_STATUS"))
+                    .andExpect(jsonPath("$.data.used_saved.length()").value(0));
+        }
+    }
+
+
+    // ═══════════ Anahtar kelime izleme zenginleştirmesi — Aşama 2 / be2 (kw sözleşmesi §6 / §7 / §10, 2026-11-05) ═══════════
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Keyword Aşama 2: kurallar, boyut, içerik değişimi")
+    class KeywordBe2 {
+
+        private static final String JSON = "application/json";
+        private static final String BASE = "{\"name\":\"Kampanya\",\"groupName\":\"Grup A\",\"tags\":\"t1\","
+                + "\"url\":\"https://shop.example.com/\",\"teamId\":5,";
+
+        private com.sitemonitor.model.KeywordMonitor stored(long id, long team) {
+            com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+            m.setId(id); m.setName("kw-" + id); m.setUrl("https://shop.example.com/"); m.setKeyword("Sepete ekle");
+            m.setMatchOperator("GTE"); m.setMatchCount(1); m.setActive(true); m.setTeamId(team); m.setIntervalSeconds(300);
+            return m;
+        }
+
+        private void saveEchoes() {
+            when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
+                    .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); if (k.getId() == null) k.setId(72L); return k; });
+        }
+
+        private com.sitemonitor.model.KeywordMonitor lastSaved() {
+            org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordMonitor> cap =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.KeywordMonitor.class);
+            verify(keywordMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+            return cap.getValue();
+        }
+
+        @Test
+        @DisplayName("§6.6: çoklu kural → rules_json + kural #1 eski alanlara aynalanır (keyword / operatör / eşik / harf); yanıtta rules, "
+                + "rules_custom, rule_logic")
+        void multiRulesStoredAndMirrored() throws Exception {
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"ruleLogic\":\"or\",\"rules\":["
+                                    + "{\"kind\":\"REGEX\",\"pattern\":\"Fiyat: \\\\d+\",\"operator\":\"GTE\",\"count\":1,\"case_sensitive\":true},"
+                                    + "{\"kind\":\"TEXT\",\"pattern\":\"Stokta yok\",\"operator\":\"LTE\",\"count\":0}]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.rules.length()").value(2))
+                    .andExpect(jsonPath("$.data.rules[0].kind").value("REGEX"))
+                    .andExpect(jsonPath("$.data.rules[1].id").value("r2"))
+                    .andExpect(jsonPath("$.data.rules_custom").value(true))
+                    .andExpect(jsonPath("$.data.rule_logic").value("OR"))
+                    .andExpect(jsonPath("$.data.change_detect").value(false))
+                    .andExpect(jsonPath("$.data.change_baseline").doesNotExist());
+            com.sitemonitor.model.KeywordMonitor s = lastSaved();
+            assertThat(s.getRulesJson()).contains("Stokta yok");
+            assertThat(s.getRuleLogic()).isEqualTo("OR");
+            assertThat(s.getKeyword()).isEqualTo("Fiyat: \\d+");
+            assertThat(s.getMatchOperator()).isEqualTo("GTE");
+            assertThat(s.getMatchCount()).isEqualTo(1);
+            assertThat(s.getCaseSensitive()).isTrue();
+        }
+
+        @Test
+        @DisplayName("§6.6: basit tek kural (metin, sayfa, kritik yok, etiket yok) → rules_json NULL, yalnız eski alanlar (eski pod uyumu); "
+                + "VE varsayılanı NULL")
+        void simpleSingleRuleKeepsLegacyColumns() throws Exception {
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"ruleLogic\":\"AND\",\"rules\":[{\"kind\":\"TEXT\",\"pattern\":\"Sepet\",\"operator\":\"GTE\",\"count\":2}]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.rules_custom").value(false))
+                    .andExpect(jsonPath("$.data.rules[0].id").value("r1"))
+                    .andExpect(jsonPath("$.data.rule_logic").value("AND"));
+            com.sitemonitor.model.KeywordMonitor s = lastSaved();
+            assertThat(s.getRulesJson()).isNull();
+            assertThat(s.getRuleLogic()).isNull();
+            assertThat(s.getKeyword()).isEqualTo("Sepet");
+            assertThat(s.getMatchCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("B10 / §6.1: geçersiz kural → 400 rules[i].x; kritik 'en az 0' asla tetiklenmez → 400 rules[0].critical; eski yol "
+                + "'en az 0' → 400 matchCount; kayıttakiyle aynı eski koşul yeniden denetlenmez")
+        void ruleValidation() throws Exception {
+            saveEchoes();
+            String[][] cases = {
+                    { "\"rules\":[{\"kind\":\"REGEX\",\"pattern\":\"(\",\"operator\":\"GTE\",\"count\":1}]", "rules[0].pattern" },
+                    // karmaşıklık reddi (iç içe büyük tekrar) → alan hatası, ikinci kuralda doğru indeks
+                    { "\"rules\":[{\"kind\":\"TEXT\",\"pattern\":\"a\",\"operator\":\"GTE\",\"count\":1},"
+                            + "{\"kind\":\"REGEX\",\"pattern\":\"(a{1000}){1000}\",\"operator\":\"GTE\",\"count\":1}]", "rules[1].pattern" },
+                    { "\"rules\":[{\"kind\":\"TEXT\",\"pattern\":\"a\",\"operator\":\"GTE\",\"count\":5,"
+                            + "\"critical\":{\"operator\":\"GTE\",\"count\":0}}]", "rules[0].critical" },
+                    { "\"rules\":[{\"kind\":\"TEXT\",\"pattern\":\"a\",\"operator\":\"GTE\",\"count\":1,"
+                            + "\"scope\":{\"type\":\"CSS\",\"value\":\"div:matches(x)\"}}]", "rules[0].scope" },
+                    { "\"keyword\":\"a\",\"operator\":\"GTE\",\"matchCount\":0", "matchCount" },
+                    { "\"keyword\":\"a\",\"operator\":\"LT\",\"matchCount\":0", "matchCount" },
+                    { "\"keyword\":\"a\",\"ruleLogic\":\"XOR\"", "ruleLogic" },
+            };
+            for (String[] c : cases) {
+                mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON).content(BASE + c[0] + "}"))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.field").value(c[1]));
+            }
+            verify(keywordMonitorRepo, never()).save(any());
+            // saklı eski "en az 0" (bugünden önce kaydedilmiş) aynı değerle gelirse kayıt bozulmaz
+            com.sitemonitor.model.KeywordMonitor m = stored(91L, 5L);
+            m.setMatchCount(0);
+            when(keywordMonitorRepo.findById(91L)).thenReturn(Optional.of(m));
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(91L)).thenReturn(Optional.empty());
+            mvc.perform(put("/api/monitoring/keyword/91").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"operator\":\"GTE\",\"matchCount\":0,\"name\":\"yeni ad\"}"))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("§7.1: boyut — min ≤ max (400 maxBytes), yalnız gelen anahtar değişir; §7.2 seçici kuralı (:matches yok) 400 changeSelector")
+        void sizeAndChangeFieldsValidated() throws Exception {
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"keyword\":\"a\",\"minBytes\":5000,\"maxBytes\":100}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("maxBytes"));
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"keyword\":\"a\",\"changeDetect\":true,\"changeSelector\":\"p:matchesOwn(\\\\d)\"}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("changeSelector"));
+            verify(keywordMonitorRepo, never()).save(any());
+            mvc.perform(post("/api/monitoring/keyword").session(session("ADMIN")).contentType(JSON)
+                            .content(BASE + "\"keyword\":\"a\",\"minBytes\":100,\"maxBytes\":5000,\"changeDetect\":true,"
+                                    + "\"changeMask\":[\"DATES\",\"DIGITS\"],\"changeSelector\":\"#kosullar\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.min_bytes").value(100))
+                    .andExpect(jsonPath("$.data.max_bytes").value(5000))
+                    .andExpect(jsonPath("$.data.change_detect").value(true))
+                    .andExpect(jsonPath("$.data.change_mask[0]").value("DIGITS"))
+                    .andExpect(jsonPath("$.data.change_selector").value("#kosullar"))
+                    .andExpect(jsonPath("$.data.change_baseline").value(org.hamcrest.Matchers.nullValue()));
+            com.sitemonitor.model.KeywordMonitor s = lastSaved();
+            assertThat(s.getChangeMask()).isEqualTo("DIGITS,DATES");
+            assertThat(s.getChangeDetect()).isTrue();
+        }
+
+        @Test
+        @DisplayName("§7.2: değişim ayarı değişti (maske) → temel silinir + bu izlemenin açık KEYWORD_CHANGED'i sessizce kapanır; ayar "
+                + "aynıysa dokunulmaz; silmede temel de silinir")
+        void changeSettingsSideEffects() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(92L, 5L);
+            m.setChangeDetect(true);
+            m.setChangeMask("DIGITS");
+            when(keywordMonitorRepo.findById(92L)).thenReturn(Optional.of(m));
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(92L)).thenReturn(Optional.empty());
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/92").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"changeMask\":\"DIGITS\",\"name\":\"ad\"}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines, never()).delete(92L);
+            mvc.perform(put("/api/monitoring/keyword/92").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"changeMask\":\"DIGITS,DATES\"}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines).delete(92L);
+            verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/"),
+                    eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_KEYWORD_CHANGED)),
+                    eq("Sistem (değişim ayarı değişti)"),
+                    argThat((java.util.Map<String, Object> ctx) -> ctx != null && Long.valueOf(92L).equals(ctx.get("monitor_id"))));
+            org.mockito.Mockito.clearInvocations(keywordBaselines);
+            mvc.perform(delete("/api/monitoring/keyword/92").session(session("ADMIN"))).andExpect(status().isOk());
+            verify(keywordBaselines).delete(92L);
+        }
+
+        @Test
+        @DisplayName("§10.1: liste satırı — change_baseline ANAHTARI (güncel ayarla alınmış temel ya da null), son kontrolün kural sonuçları, "
+                + "breach_level, body_bytes, content_changed")
+        void listRowCarriesContentKeys() throws Exception {
+            com.sitemonitor.model.KeywordMonitor a = stored(93L, 5L);
+            a.setChangeDetect(true);
+            com.sitemonitor.model.KeywordMonitor b = stored(94L, 5L);
+            b.setUrl("https://b.example.com/");
+            when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+            com.sitemonitor.model.KeywordResult r = new com.sitemonitor.model.KeywordResult();
+            r.setMonitorId(93L); r.setOk(false); r.setCheckedAt("2026-11-05T08:00:00"); r.setBodyBytes(1234L);
+            r.setBreachLevel("CRITICAL"); r.setContentChanged(true);
+            r.setRuleResultsJson("[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern_preview\":\"x\",\"count\":0,\"ok\":false,\"level\":\"CRITICAL\",\"note\":null}]");
+            when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of(r));
+            com.sitemonitor.model.KeywordChangeBaseline base = new com.sitemonitor.model.KeywordChangeBaseline();
+            base.setMonitorId(93L); base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(null, null));
+            base.setTakenAt("2026-11-01T06:00:00"); base.setSource("AUTO"); base.setBytes(1200L); base.setFingerprint("f");
+            when(keywordBaselines.byMonitorIds(any())).thenReturn(java.util.Map.of(93L, base));
+            mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].change_baseline.source").value("AUTO"))
+                    .andExpect(jsonPath("$.data[0].change_baseline.taken_at").value("2026-11-01T06:00:00"))
+                    .andExpect(jsonPath("$.data[0].rule_results[0].level").value("CRITICAL"))
+                    .andExpect(jsonPath("$.data[0].breach_level").value("CRITICAL"))
+                    .andExpect(jsonPath("$.data[0].body_bytes").value(1234))
+                    .andExpect(jsonPath("$.data[0].content_changed").value(true))
+                    .andExpect(jsonPath("$.data[1].change_detect").value(false))
+                    .andExpect(jsonPath("$.data[1].change_baseline").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data[1].rule_results.length()").value(0));
+            // başka maskeyle alınmış temel → null
+            base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash("DIGITS", null));
+            mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                    .andExpect(jsonPath("$.data[0].change_baseline").value(org.hamcrest.Matchers.nullValue()));
+        }
+
+        @Test
+        @DisplayName("§10.2: test ucu kurallarla koşar (değişim hariç) ve rule_results / level / size_ok / rules_summary döner")
+        void testEndpointCarriesRuleKeys() throws Exception {
+            java.util.Map<String, Object> raw = new java.util.HashMap<>();
+            raw.put("count", 0); raw.put("found", false); raw.put("ok", false); raw.put("http_status", 200);
+            raw.put("rule_results", List.of(java.util.Map.of("id", "r1", "ok", false, "count", 0, "level", "WARNING")));
+            raw.put("level", "WARNING"); raw.put("size_ok", true); raw.put("rules_summary", "1/2 kural sağlanmadı");
+            org.mockito.ArgumentCaptor<com.sitemonitor.service.keyword.KeywordCheckSpec> cap =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.keyword.KeywordCheckSpec.class);
+            when(keywordChecker.check(cap.capture())).thenReturn(raw);
+            mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com/\",\"minBytes\":10,\"rules\":["
+                                    + "{\"kind\":\"TEXT\",\"pattern\":\"a\",\"operator\":\"GTE\",\"count\":1},"
+                                    + "{\"kind\":\"TEXT\",\"pattern\":\"b\",\"operator\":\"GTE\",\"count\":1}],\"changeDetect\":true}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.rule_results[0].id").value("r1"))
+                    .andExpect(jsonPath("$.data.level").value("WARNING"))
+                    .andExpect(jsonPath("$.data.size_ok").value(true))
+                    .andExpect(jsonPath("$.data.rules_summary").value("1/2 kural sağlanmadı"));
+            var spec = cap.getValue();
+            assertThat(spec.rules()).hasSize(2);
+            assertThat(spec.minBytes()).isEqualTo(10);
+            assertThat(spec.changeDetect()).as("test ucunda değişim yok").isFalse();
+        }
+    }
+
+
+    // ═══════════ Anahtar kelime — son inceleme düzeltmeleri (kw-review-be, 2026-11-05) ═══════════
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Keyword son inceleme: kayıtlı sırrın kaynağı, seviye kilidi, eski koşul, geri yükleme")
+    class KeywordReviewFixes {
+
+        private static final String JSON = "application/json";
+        private static final String RULES = "[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern\":\"hata\",\"operator\":\"LT\",\"count\":2,"
+                + "\"critical\":{\"operator\":\"LT\",\"count\":4}},"
+                + "{\"id\":\"r2\",\"kind\":\"TEXT\",\"pattern\":\"Sepete ekle\",\"operator\":\"GTE\",\"count\":1}]";
+
+        private com.sitemonitor.model.KeywordMonitor stored(long id, long team) {
+            com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+            m.setId(id); m.setName("kw-" + id); m.setUrl("https://shop.example.com/"); m.setKeyword("Sepete ekle");
+            m.setMatchOperator("GTE"); m.setMatchCount(1); m.setActive(true); m.setTeamId(team); m.setIntervalSeconds(300);
+            when(keywordMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+            return m;
+        }
+
+        private void saveEchoes() {
+            when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
+                    .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); if (k.getId() == null) k.setId(73L); return k; });
+        }
+
+        private MockHttpSession member5() {
+            MockHttpSession s = sessionWithTeam("USER", 5L);
+            s.setAttribute("viewTeamIds", List.of(5L));
+            s.setAttribute("memberTeamIds", List.of(5L));
+            return s;
+        }
+
+        /** Takım 9 üyesi; takım 5'e verilen paylaşım düzeyleri (kümülatif). */
+        private MockHttpSession granteeOf5(String... levels) {
+            MockHttpSession s = sessionWithTeam("USER", 9L);
+            s.setAttribute("viewTeamIds", List.of(9L));
+            s.setAttribute("memberTeamIds", List.of(9L));
+            s.setAttribute("manageTeamIds", List.of());
+            for (String a : levels) s.setAttribute(a, new java.util.ArrayList<>(List.of(5L)));
+            return s;
+        }
+
+        private MockHttpSession editGrantee() {
+            return granteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT);
+        }
+
+        private MockHttpSession deleteGrantee() {
+            return granteeOf5(SessionScope.ATTR_GRANT_VIEW, SessionScope.ATTR_GRANT_EXECUTE, SessionScope.ATTR_GRANT_EDIT,
+                    SessionScope.ATTR_GRANT_DELETE);
+        }
+
+        // ── Y-1 ─────────────────────────────────────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("Y-1: test ucunda kayıtlı parola / başlık YALNIZ izlemenin kendi kaynağına — başka host / port / şema 403 "
+                + "KEYWORD_SAVED_SECRET_ORIGIN (istek atılmaz); aynı kaynakta kullanıcı adı KAYITTAN")
+        void savedSecretOnlyToOwnOrigin() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(96L, 5L);
+            m.setBasicAuthUser("izleme");
+            when(keywordHeaderSecrets.basicAuthPass(m)).thenReturn("Kayitli-Parola-1");
+            when(keywordHeaderSecrets.effectiveHeaders(m)).thenReturn("X-Api-Key: kayitli");
+            org.mockito.ArgumentCaptor<com.sitemonitor.service.keyword.KeywordCheckSpec> spec =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.keyword.KeywordCheckSpec.class);
+            when(keywordChecker.check(spec.capture())).thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1, "ok", true)));
+            for (String url : List.of("https://evil.example.net/", "https://shop.example.com:8443/", "http://shop.example.com/",
+                    "https://shop.example.com.evil.net/")) {
+                for (String saved : List.of("[\"basicAuthPass\"]", "[\"customHeaders\"]")) {
+                    mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                                    .content("{\"url\":\"" + url + "\",\"keyword\":\"a\",\"monitorId\":96,\"useSaved\":" + saved + "}"))
+                            .andExpect(status().isForbidden())
+                            .andExpect(jsonPath("$.code").value("KEYWORD_SAVED_SECRET_ORIGIN"));
+                }
+            }
+            verify(keywordChecker, never()).check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class));
+            // aynı kaynak (host büyük harf, açık 443, başka yol / sorgu) → kullanılır; gövdedeki kullanıcı adı yok sayılır
+            mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://SHOP.example.com:443/sepet?x=1\",\"keyword\":\"a\",\"basicAuthUser\":\"baskasi\","
+                                    + "\"monitorId\":96,\"useSaved\":[\"basicAuthPass\",\"customHeaders\"]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.used_saved.length()").value(2));
+            assertThat(spec.getValue().basicAuthPass()).isEqualTo("Kayitli-Parola-1");
+            assertThat(spec.getValue().basicAuthUser()).as("kayıtlı parola kayıtlı kullanıcı adıyla").isEqualTo("izleme");
+            assertThat(spec.getValue().customHeaders()).isEqualTo("X-Api-Key: kayitli");
+            // başka adres + gövdede YENİ parola (kayıtlı sır kullanılmıyor) → serbest
+            mvc.perform(post("/api/monitoring/keyword/test").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://evil.example.net/\",\"keyword\":\"a\",\"basicAuthUser\":\"u\","
+                                    + "\"basicAuthPass\":\"Yeni-Parola-2\",\"monitorId\":96,\"useSaved\":[\"basicAuthPass\"]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.used_saved.length()").value(0));
+            assertThat(spec.getValue().basicAuthPass()).isEqualTo("Yeni-Parola-2");
+            assertThat(spec.getValue().basicAuthUser()).isEqualTo("u");
+        }
+
+        // ── O-1 ─────────────────────────────────────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("O-1: güncelleme kaynağı değiştiriyorsa kayıtlı parola yeni sunucuya gitmez — yeni parola yoksa 400 basicAuthPass; "
+                + "yeni parola / temizleme / aynı kaynakta yol değişimi serbest")
+        void originChangeNeedsPasswordAgain() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(97L, 5L);
+            m.setBasicAuthUser("izleme");
+            when(keywordHeaderSecrets.hasBasicAuthPass(m)).thenReturn(true);
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/97").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://other.example.net/\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("basicAuthPass"));
+            mvc.perform(put("/api/monitoring/keyword/97").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com:8443/\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("basicAuthPass"));
+            verify(keywordMonitorRepo, never()).save(any());
+            assertThat(m.getUrl()).isEqualTo("https://shop.example.com/");
+
+            mvc.perform(put("/api/monitoring/keyword/97").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://shop.example.com/yeni-yol\"}"))
+                    .andExpect(status().isOk());
+            mvc.perform(put("/api/monitoring/keyword/97").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://other.example.net/\",\"basicAuthPass\":\"Yeni-Parola-3\"}"))
+                    .andExpect(status().isOk());
+            m.setUrl("https://shop.example.com/");
+            mvc.perform(put("/api/monitoring/keyword/97").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://other.example.net/\",\"clearBasicAuthPass\":true}"))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("O-1: yöneticinin özel başlıkları varken kaynağı taşımak global yönetici ister — üye 400 url; global yönetici serbest")
+        void originChangeWithAdminHeaders() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(98L, 5L);
+            when(keywordHeaderSecrets.hasHeaders(m)).thenReturn(true);
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/98").session(member5()).contentType(JSON)
+                            .content("{\"url\":\"https://other.example.net/\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("url"));
+            verify(keywordMonitorRepo, never()).save(any());
+            mvc.perform(put("/api/monitoring/keyword/98").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"url\":\"https://other.example.net/\"}"))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("O-1: geri yükleme kaynağı değiştiriyorsa kayıtlı parola SİLİNİR (secrets_cleared, geçmişte yalnız işaret); "
+                + "yöneticinin özel başlıkları varsa global yönetici olmayan 403")
+        void restoreOriginChangeClearsPassword() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(99L, 5L);
+            m.setBasicAuthUser("izleme");
+            m.setBasicAuthPassEnc("enc:v1:CANLI");
+            when(keywordHeaderSecrets.hasBasicAuthPass(m)).thenReturn(true);
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(1L); r.setResourceKind("KEYWORD"); r.setResourceId(99L); r.setResourceName("kw-99");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L);
+            r.setSnapshot("{\"url\":\"https://eski-sunucu.example.org/\"}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 99L, 0)).thenReturn(Optional.of(r));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/99/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.secrets_cleared[0]").value("basicAuthPass"));
+            verify(keywordHeaderSecrets).clearBasicAuthPass(m);
+            org.mockito.ArgumentCaptor<String> changes = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(auditService).recordAction(eq("MONITOR_RESTORE"), any(jakarta.servlet.http.HttpSession.class), eq("KEYWORD_MONITOR"),
+                    eq("99"), any(), changes.capture());
+            assertThat(changes.getValue()).contains("basicAuthCleared").doesNotContain("CANLI");
+
+            // başlıklar varken global yönetici olmayan → 403, kayıt yok
+            com.sitemonitor.model.KeywordMonitor h = stored(100L, 5L);
+            when(keywordHeaderSecrets.hasHeaders(h)).thenReturn(true);
+            com.sitemonitor.model.MonitorChangeLog r2 = new com.sitemonitor.model.MonitorChangeLog();
+            r2.setId(2L); r2.setResourceKind("KEYWORD"); r2.setResourceId(100L); r2.setResourceName("kw-100");
+            r2.setSeq(0); r2.setEventType("UPDATE"); r2.setTeamId(5L);
+            r2.setSnapshot("{\"url\":\"https://eski-sunucu.example.org/\"}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 100L, 0)).thenReturn(Optional.of(r2));
+            MockHttpSession manager = sessionWithTeam("USER", 5L);
+            manager.setAttribute("viewTeamIds", List.of(5L));
+            manager.setAttribute("manageTeamIds", List.of(5L));
+            org.mockito.Mockito.clearInvocations(keywordMonitorRepo);
+            mvc.perform(post("/api/monitoring/changes/keyword/100/0/restore").session(manager))
+                    .andExpect(status().isForbidden());
+            verify(keywordMonitorRepo, never()).save(any());
+        }
+
+        // ── O-2 ─────────────────────────────────────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("O-2: paylaşımla yazan kritik eşiği (alarm seviyesi) değiştiremez — ekleme / silme / değer 403 KEYWORD_SHARED_LOCKED "
+                + "alan rules; desen / mantık değişimi serbest; kendi kapsamıyla yazan serbest")
+        void sharedEditorCannotChangeLevel() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(110L, 5L);
+            m.setRulesJson(com.sitemonitor.service.keyword.rules.KeywordRules.toJson(
+                    com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(RULES, List.class))));
+            m.setKeyword("hata");
+            saveEchoes();
+            String patternChanged = RULES.replace("Sepete ekle", "Sepete ekleyin");
+            mvc.perform(put("/api/monitoring/keyword/110").session(editGrantee()).contentType(JSON)
+                            .content("{\"rules\":" + patternChanged + ",\"ruleLogic\":\"OR\"}"))
+                    .andExpect(status().isOk());
+            for (String bad : List.of(
+                    RULES.replace("\"critical\":{\"operator\":\"LT\",\"count\":4}", "\"critical\":{\"operator\":\"LT\",\"count\":6}"),
+                    RULES.replace(",\"critical\":{\"operator\":\"LT\",\"count\":4}", ""),
+                    RULES.replace("}]", "},{\"id\":\"r3\",\"kind\":\"TEXT\",\"pattern\":\"uyari\",\"operator\":\"LT\","
+                            + "\"count\":2,\"critical\":{\"operator\":\"LT\",\"count\":4}}]"))) {
+                org.mockito.Mockito.clearInvocations(keywordMonitorRepo);
+                mvc.perform(put("/api/monitoring/keyword/110").session(editGrantee()).contentType(JSON)
+                                .content("{\"rules\":" + bad + "}"))
+                        .andExpect(status().isForbidden())
+                        .andExpect(jsonPath("$.code").value("KEYWORD_SHARED_LOCKED"))
+                        .andExpect(jsonPath("$.field").value("rules"));
+                verify(keywordMonitorRepo, never()).save(any());
+            }
+            // kendi kapsamıyla yazan kritik eşiği değiştirebilir
+            mvc.perform(put("/api/monitoring/keyword/110").session(member5()).contentType(JSON)
+                            .content("{\"rules\":" + RULES.replace("\"count\":4}", "\"count\":6}") + "}"))
+                    .andExpect(status().isOk());
+            // posta konusu kilidi de aynı kodla
+            mvc.perform(put("/api/monitoring/keyword/110").session(editGrantee()).contentType(JSON)
+                            .content("{\"mailSubjectTemplate\":\"Başka konu\"}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("KEYWORD_SHARED_LOCKED"))
+                    .andExpect(jsonPath("$.field").value("mailSubjectTemplate"));
+        }
+
+        @Test
+        @DisplayName("O-2: paylaşımla geri yükleyende kritik eşiği farklı kural listesi (ve aynalı eski alanlar) atlanır, skipped_routing")
+        void sharedRestoreSkipsLevelChange() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(111L, 5L);
+            String current = com.sitemonitor.service.keyword.rules.KeywordRules.toJson(
+                    com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(RULES, List.class)));
+            m.setRulesJson(current);
+            m.setKeyword("hata");
+            String older = current.replace("\"count\":4", "\"count\":9");
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(3L); r.setResourceKind("KEYWORD"); r.setResourceId(111L); r.setResourceName("kw-111");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L);
+            r.setSnapshot("{\"rulesJson\":" + new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(older)
+                    + ",\"keyword\":\"eski\",\"intervalSeconds\":600}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 111L, 0)).thenReturn(Optional.of(r));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/111/0/restore").session(deleteGrantee()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_routing[0]").value("rulesJson"));
+            assertThat(m.getRulesJson()).isEqualTo(current);
+            assertThat(m.getKeyword()).as("aynalı eski alan da atlandı").isEqualTo("hata");
+            assertThat(m.getIntervalSeconds()).isEqualTo(600);
+        }
+
+        // ── D-5 ─────────────────────────────────────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("D-5: kural listeli izlemede yalnız eski koşul alanı (farklı değer) → 400 rules; aynı değer sessizce düşer; "
+                + "kural listesiz izlemede eski alanlar bugünkü gibi")
+        void legacyOnlyUpdateRefused() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(112L, 5L);
+            String current = com.sitemonitor.service.keyword.rules.KeywordRules.toJson(
+                    com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(RULES, List.class)));
+            m.setRulesJson(current);
+            m.setKeyword("hata");
+            m.setMatchOperator("LT");
+            m.setMatchCount(2);
+            saveEchoes();
+            for (String body : List.of("{\"keyword\":\"başka\"}", "{\"operator\":\"GTE\"}", "{\"matchCount\":5}",
+                    "{\"caseSensitive\":true}")) {
+                org.mockito.Mockito.clearInvocations(keywordMonitorRepo);
+                mvc.perform(put("/api/monitoring/keyword/112").session(member5()).contentType(JSON).content(body))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                        .andExpect(jsonPath("$.field").value("rules"));
+                verify(keywordMonitorRepo, never()).save(any());
+            }
+            // eski form tam yük: aynı değerler → düşer, ad değişir, kurallar korunur
+            mvc.perform(put("/api/monitoring/keyword/112").session(member5()).contentType(JSON)
+                            .content("{\"name\":\"yeni ad\",\"keyword\":\"hata\",\"operator\":\"LT\",\"matchCount\":2,\"caseSensitive\":false}"))
+                    .andExpect(status().isOk());
+            assertThat(m.getName()).isEqualTo("yeni ad");
+            assertThat(m.getRulesJson()).isEqualTo(current);
+            // kural listesi gövdede → serbest
+            mvc.perform(put("/api/monitoring/keyword/112").session(member5()).contentType(JSON)
+                            .content("{\"keyword\":\"x\",\"rules\":" + RULES + "}"))
+                    .andExpect(status().isOk());
+            // kural listesiz izleme → eski alanlar bugünkü gibi
+            com.sitemonitor.model.KeywordMonitor plain = stored(113L, 5L);
+            mvc.perform(put("/api/monitoring/keyword/113").session(member5()).contentType(JSON)
+                            .content("{\"keyword\":\"Ödeme\"}"))
+                    .andExpect(status().isOk());
+            assertThat(plain.getKeyword()).isEqualTo("Ödeme");
+        }
+
+        @Test
+        @DisplayName("D-5: kayıplı (kırpılmış) kural listesi geri yüklenmez ve aynalı eski alanlar da yazılmaz — skipped_fields [rules]")
+        void lossyRulesNotRestored() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(114L, 5L);
+            String current = com.sitemonitor.service.keyword.rules.KeywordRules.toJson(
+                    com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(RULES, List.class)));
+            m.setRulesJson(current);
+            m.setKeyword("hata");
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(4L); r.setResourceKind("KEYWORD"); r.setResourceId(114L); r.setResourceName("kw-114");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L);
+            r.setSnapshot("{\"rulesJson\":\"[{\\\"id\\\":\\\"r1\\\",\\\"kind\\\":\\\"TEXT\\\"" + com.sitemonitor.service.AuditDiff.TRUNCATION_MARK
+                    + "812)\",\"keyword\":\"eski kelime\",\"matchOperator\":\"GTE\",\"matchCount\":3,\"intervalSeconds\":900}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 114L, 0)).thenReturn(Optional.of(r));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/114/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_fields[0]").value("rules"));
+            assertThat(m.getRulesJson()).isEqualTo(current);
+            assertThat(m.getKeyword()).isEqualTo("hata");
+            assertThat(m.getMatchCount()).isEqualTo(1);
+            assertThat(m.getIntervalSeconds()).isEqualTo(900);
+        }
+
+        // ── D-6 / liste satırı ──────────────────────────────────────────────────────────────────
+
+        @Test
+        @DisplayName("D-6: aynı-URL anahtarı yalnız şema + host'u küçültür — yol / sorgu harfe duyarlı")
+        void urlKeyCaseRules() {
+            assertThat(MonitoringController.keywordUrlKey("HTTPS://Shop.Example.com/Urun?Id=5"))
+                    .isEqualTo("https://shop.example.com/Urun?Id=5");
+            assertThat(MonitoringController.keywordUrlKey("https://shop.example.com/urun"))
+                    .isNotEqualTo(MonitoringController.keywordUrlKey("https://shop.example.com/Urun"));
+            assertThat(MonitoringController.keywordUrlKey("https://SHOP.example.com"))
+                    .isEqualTo(MonitoringController.keywordUrlKey("https://shop.example.com"));
+            assertThat(MonitoringController.keywordUrlKey("ftp://x")).isNull();
+        }
+
+        @Test
+        @DisplayName("O-3 / D-7: liste satırı son kontrolün change_note'unu taşır (değişim neden ölçülmedi)")
+        void listRowCarriesChangeNote() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(115L, 5L);
+            m.setChangeDetect(true);
+            when(keywordMonitorRepo.findAll()).thenReturn(List.of(m));
+            when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+            com.sitemonitor.model.KeywordResult last = new com.sitemonitor.model.KeywordResult();
+            last.setMonitorId(115L); last.setCheckedAt("2026-11-05T10:00:00"); last.setOk(true); last.setChangeNote("SELECTOR_NOT_FOUND");
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(115L)).thenReturn(Optional.of(last));
+            when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of(last));
+            mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].change_note").value("SELECTOR_NOT_FOUND"));
         }
     }
 }

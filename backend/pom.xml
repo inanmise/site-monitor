@@ -194,6 +194,13 @@
             <artifactId>jsoup</artifactId>
             <version>1.18.3</version>
         </dependency>
+        <!-- RE2J — anahtar kelime izlemesinin DÜZENLİ İFADE kuralları (kw 2026-11-05, kullanıcı onaylı). Doğrusal zamanlı
+             motor: kullanıcı deseni java.util.regex'e ASLA verilmez (geri izleme → ReDoS, kesintisiz). Bkz. SafeRegex. -->
+        <dependency>
+            <groupId>com.google.re2j</groupId>
+            <artifactId>re2j</artifactId>
+            <version>1.8</version>
+        </dependency>
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

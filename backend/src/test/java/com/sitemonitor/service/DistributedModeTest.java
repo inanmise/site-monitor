@@ -228,8 +228,7 @@ class DistributedModeTest {
         verify(h.escalation).resolveOrphanedPageSpeedAlerts(any());
         verify(h.escalation).resolveOrphanedScriptedAlerts(any());
         verify(h.outage, never()).handleSweepResults(anyString(), any());
-        verify(h.keywordChecker, never()).check(anyString(), anyString(), org.mockito.ArgumentMatchers.anyInt(), any(),
-                org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+        verify(h.keywordChecker, never()).check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class));
         verify(h.scriptedChecker, never()).submit(any());
         verify(h.pingChecker, never()).check(anyString(), any(), org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt());

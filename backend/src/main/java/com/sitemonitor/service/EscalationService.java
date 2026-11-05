@@ -112,6 +112,9 @@ public class EscalationService {
     private com.sitemonitor.service.dbquery.DbQueryAlertRowsService dbQueryAlertRows;
     @Autowired(required = false)
     private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    /** Anahtar kelime izlemesinin özel posta konusu (kw sözleşmesi §8.3) — alan enjeksiyonu; yoksa standart konu. */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.KeywordMonitorRepository keywordMonitorRepo;
     @Autowired(required = false)
     private com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionProfileRepo;
     @Autowired(required = false)
@@ -367,8 +370,13 @@ public class EscalationService {
     public static final String TYPE_KEYWORD_SLOW = "KEYWORD_SLOW";
     public static final String TYPE_KEYWORD_SSL = "KEYWORD_SSL";
     public static final String TYPE_KEYWORD_DOMAIN_EXPIRY = "KEYWORD_DOMAIN_EXPIRY";
+    /** Keyword içerik değişimi (kw 2026-11-05, D2): görünür metin / seçili bölge temel alınan sürümden farklı. SEVİYE tetikli
+     *  (içerik temele dönünce ya da "Yeni temel al" ile kapanır), anahtar url, seviye izlemenin {@code alert_level}'ı. Kesinti
+     *  DEĞİLDİR: fırtına sayımına ve ağ kesintisi bastırmasına girmez ({@link #DOWN_ALERT_TYPES} dışında). Ad kalıcıdır. */
+    public static final String TYPE_KEYWORD_CHANGED = "KEYWORD_CHANGED";
     public static boolean isKeywordAux(String t) {
-        return TYPE_KEYWORD_SLOW.equals(t) || TYPE_KEYWORD_SSL.equals(t) || TYPE_KEYWORD_DOMAIN_EXPIRY.equals(t);
+        return TYPE_KEYWORD_SLOW.equals(t) || TYPE_KEYWORD_SSL.equals(t) || TYPE_KEYWORD_DOMAIN_EXPIRY.equals(t)
+                || TYPE_KEYWORD_CHANGED.equals(t);
     }
 
     /** Ping (ICMP) kesintisi alarmı — ping sweep'i tarafından yönetilir. */
@@ -447,7 +455,8 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
-                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
+                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_KEYWORD_CHANGED,
+                   TYPE_PORT_SLOW, TYPE_PING_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
                    TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW,
                    TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW);
@@ -1781,7 +1790,8 @@ public class EscalationService {
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY),
+            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY,
+                            TYPE_KEYWORD_CHANGED),
                     "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
@@ -2438,12 +2448,29 @@ public class EscalationService {
                 Object url = ctx.get("url");
                 Object kw = ctx.get("keyword");
                 if (url != null && kw != null) {
+                    // B1 (kw sözleşmesi §8.1): ileti GÖZLEMDEN — sayfa açılamadıysa "0 kez bulundu" yazılmaz.
+                    String reason = str(ctx.get("failure_reason"));
+                    String detail = str(ctx.get("failure_detail"));
+                    Object err = ctx.get("last_error") != null ? ctx.get("last_error") : ctx.get("error");
+                    if (com.sitemonitor.service.keyword.KeywordMailText.requestFailed(reason, err)) {
+                        String why = detail != null ? detail : (str(err) != null ? str(err) : "sayfa yanıtı alınamadı.");
+                        return "KRİTİK: " + url + " sayfası açılamadı — " + why
+                                + " Ardışık doğrulama denemeleri başarısız oldu. "
+                                + "Sayfa yeniden açılıp koşul sağlandığında alarm otomatik kapanacaktır.";
+                    }
+                    if (detail != null && reason != null && KEYWORD_NON_CONDITION_REASONS.contains(reason)) {
+                        // Durum kodu / son URL / yönlendirme / gövde nedenli DOWN: "koşul sağlanmıyor" demek yanıltıcı olurdu.
+                        return "KRİTİK: " + url + " içerik doğrulaması başarısız — " + detail
+                                + " Ardışık doğrulama denemeleri başarısız oldu. "
+                                + "Sorun giderildiğinde alarm otomatik kapanacaktır.";
+                    }
                     String op = ctx.get("operator") != null ? ctx.get("operator").toString() : "GTE";
                     int n = ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
                     Object occ = ctx.get("occurrences");
                     String occPart = occ != null ? " Şu an " + occ + " kez bulundu." : "";
                     return "KRİTİK: " + url + " sayfasında \"" + kw + "\" " +
                             KeywordCheckerService.opPhrase(op, n) + " bulunmalı; koşul sağlanmıyor." + occPart +
+                            (detail != null ? " Neden: " + detail : "") +
                             " Ardışık doğrulama denemeleri başarısız oldu. " +
                             "Koşul yeniden sağlandığında alarm otomatik kapanacaktır.";
                 }
@@ -2470,6 +2497,9 @@ public class EscalationService {
                 return "YÜKSEK: " + dom + " (içerik izlemesi) domain kaydının süresi" +
                         (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
                         "Kayıt yenilendiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_KEYWORD_CHANGED -> {
+                return keywordChangedMessage(ctx.getOrDefault("url", domain), ctx);
             }
             case TYPE_PING_SLOW -> {
                 Object host = ctx.getOrDefault("host", domain);
@@ -3315,6 +3345,10 @@ public class EscalationService {
         DbQueryMailParts dbqStep = isDbQuery(type) ? dbQueryMailParts(event.getId(), type, level, mailCtx) : null;
         if (dbqStep != null && dbqStep.subject() != null)
             subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + dbqStep.subject();
+        if (TYPE_KEYWORD.equals(type) || TYPE_KEYWORD_CHANGED.equals(type)) {   // kw sözleşmesi §8.3 (E3): özel konu eskalasyon adımında da
+            String kwStep = keywordMailSubject(mailCtx, level, type);
+            if (kwStep != null) subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + kwStep;
+        }
         String body = event.getMessage() != null && !event.getMessage().isBlank()
                 ? event.getMessage() : buildMessage(domain, type, level, days);
         String message = escalationStepNote(delayMinutes) + "\n\n" + body;
@@ -3654,6 +3688,50 @@ public class EscalationService {
         return kind.equals(r[1]) && !Boolean.FALSE.equals(r[3]);
     }
 
+    /** Keyword alarm iletisinde kelime koşulundan BAŞKA nedenler (kw sözleşmesi §8.1) — ileti "koşul sağlanmıyor" demez. */
+    static final java.util.Set<String> KEYWORD_NON_CONDITION_REASONS = java.util.Set.of(
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.HTTP_STATUS,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.FINAL_URL_MISMATCH,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.REDIRECT_BLOCKED,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.REDIRECT_NOT_FOLLOWED,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.EMPTY_BODY,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.BODY_TOO_SMALL,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.BODY_TOO_LARGE,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.SCOPE_NOT_FOUND,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.SCOPE_INVALID);
+
+    /**
+     * Anahtar kelime izlemesinin ÖZEL posta konusu (kw sözleşmesi §8.3, E3) — izlemenin {@code mail_subject_template}'i doluysa
+     * şablondan, değilse null (çağıran standart konuyu kurar). İzleme CANLI okunur (şablon değişikliği hemen geçerli); okunamazsa
+     * standart konu. Yalnız KEYWORD türünde çağrılır (çözüm postası standart konuda kalır).
+     */
+    String keywordMailSubject(Map<String, Object> ctx, String level) {
+        return keywordMailSubject(ctx, level, TYPE_KEYWORD);
+    }
+
+    /** ... içerik değişimi (KEYWORD_CHANGED, kw-be2 Aşama 2) de aynı şablonu kullanır: {neden} = "içerik değişti", {adet} boş. */
+    String keywordMailSubject(Map<String, Object> ctx, String level, String alertType) {
+        if (keywordMonitorRepo == null || ctx == null) return null;
+        Long monitorId = ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
+        if (monitorId == null) return null;
+        try {
+            com.sitemonitor.model.KeywordMonitor m = keywordMonitorRepo.findById(monitorId).orElse(null);
+            if (m == null || !com.sitemonitor.service.keyword.KeywordMailSubject.hasTemplate(m.getMailSubjectTemplate())) return null;
+            String at = str(ctx.get("first_failure_at"));
+            String time = formatIstanbulLong(at != null ? at : ISO.format(java.time.Instant.now()));
+            Map<String, String> values = com.sitemonitor.service.keyword.KeywordMailSubject.values(ctx, levelWordTr(level), time);
+            if (TYPE_KEYWORD_CHANGED.equals(alertType)) {
+                if (values.get("keyword") == null) values.put("keyword", m.getKeyword());
+                values.put("count", null);
+                values.put("reason", "içerik değişti");
+            }
+            return com.sitemonitor.service.keyword.KeywordMailSubject.render(m.getMailSubjectTemplate(), values);
+        } catch (Exception e) {
+            log.debug("Keyword posta konusu şablonu okunamadı ({}): {}", monitorId, e.toString());
+            return null;
+        }
+    }
+
     /** Konu yer tutucu değerleri ({@link com.sitemonitor.service.dbquery.DbQueryMailSubject}). */
     static Map<String, String> dbQuerySubjectValues(Map<String, Object> c, String level) {
         Map<String, String> v = new LinkedHashMap<>();
@@ -3976,6 +4054,7 @@ public class EscalationService {
             case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
             case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
+            case TYPE_KEYWORD_CHANGED -> "İçerik Değişikliği";
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
             case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
             case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
@@ -4016,6 +4095,7 @@ public class EscalationService {
             case TYPE_DBQUERY_FAIL  -> "Veritabanı sorgusu çalıştırılamadı";
             case TYPE_DBQUERY_THRESHOLD -> "Veritabanı sorgu kuralı ihlal edildi";
             case TYPE_DBQUERY_SLOW  -> "Veritabanı sorgusu yavaş";
+            case TYPE_KEYWORD_CHANGED -> "Sayfa içeriği temelden farklı";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -4036,7 +4116,11 @@ public class EscalationService {
         // Veritabanı sorgu izlemesi (2026-10-31): canlı izleme / bağlantı bilgisi, alarm anındaki satırlar ve isteğe bağlı
         // ÖZEL konu şablonu. Satırlar YALNIZ gönderilen postaya girer (aşağıda sendCtx); günlüğe yazılan gövde satırsızdır.
         DbQueryMailParts dbqMail = isDbQuery(alertType) ? dbQueryMailParts(alertEventId, alertType, level, certContext) : null;
+        // Anahtar kelime izlemesinin özel konusu (kw sözleşmesi §8.3, E3) — açılış / eskalasyon / yeniden uyarı / elle gönderim
+        String kwSubject = TYPE_KEYWORD.equals(alertType) || TYPE_KEYWORD_CHANGED.equals(alertType)
+                ? keywordMailSubject(certContext, level, alertType) : null;
         String subject = dbqMail != null && dbqMail.subject() != null ? subjectPrefix + dbqMail.subject()
+                : kwSubject != null ? subjectPrefix + kwSubject
                 : subjectPrefix + "[Site Monitor] " + daysSeg + " · "
                   + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
@@ -4726,6 +4810,21 @@ public class EscalationService {
                 || TYPE_HOSTNAME_MISMATCH.equals(alertType) || TYPE_UNTRUSTED_CA.equals(alertType));
     }
 
+    /**
+     * KEYWORD_CHANGED iletisi (kw 2026-11-05) — bağlamlı ({@code change_summary} / {@code changed_lines}) ve bağlamsız yol
+     * ortak. Seviye sözcüğü çağıranın {@link #withLevelWord}'üyle alarmın gerçek seviyesine çevrilir.
+     */
+    static String keywordChangedMessage(Object url, Map<String, Object> ctx) {
+        Integer n = null;
+        if (ctx != null) {
+            if (ctx.get("changed_lines") instanceof Number num) n = num.intValue();
+            else n = com.sitemonitor.service.keyword.content.KeywordChangeDetector.changedLines(ctx.get("change_summary"));
+        }
+        return "YÜKSEK: " + url + " sayfasının içeriği temel alınan sürümden farklı"
+                + (n != null && n > 0 ? " (" + n + " satır değişti)" : "") + ". "
+                + "Beklenen bir değişiklikse 'Yeni temel al' ile kapatın; içerik temele dönerse alarm kendiliğinden kapanır.";
+    }
+
     private String buildMessage(String domain, String alertType, String alertLevel, Integer days) {
         String body = buildMessageBody(domain, alertType, alertLevel, days);
         // İzleme türlerinde seviye sözcüğü seviyeden (withLevelWord); sertifika iletileri olduğu gibi.
@@ -4813,6 +4912,7 @@ public class EscalationService {
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> "YÜKSEK: " + domain +
                     " (içerik izlemesi) domain kaydının süresi dolmak üzere. Kayıt yenilendiğinde alarm otomatik kapanır.";
+            case TYPE_KEYWORD_CHANGED -> keywordChangedMessage(domain, null);
             case TYPE_DOMAINMON_EXPIRY -> "YÜKSEK: " + domain + " alan adının kaydı dolmak üzere. Registrar üzerinden yenileyin.";
             case TYPE_DOMAINMON_UNKNOWN -> "UYARI: " + domain + " alan adının kayıt bilgisi alınamadı (veri yok). Erişim/TLD desteğini doğrulayın.";
             case TYPE_DOMAINMON_STATUS -> "YÜKSEK: " + domain + " alan adında dikkat gerektiren EPP durum kodları var.";
@@ -4897,6 +4997,7 @@ public class EscalationService {
                 case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
                 case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
                 case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
+                case TYPE_KEYWORD_CHANGED -> "İçerik Değişikliği";
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
                 case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
                 case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
@@ -4981,7 +5082,12 @@ public class EscalationService {
                                  // Veritabanı sorgu izlemesi (2026-10-31): çözüm postası "ne için / nerede / ne ihlal edildi"
                                  // satırları. SATIR VERİSİ ve sorgu metni BURADA YOK — alarm olayına yazılmaz.
                                  "purpose", "profile_name", "db_type", "rule_summary", "dbquery_status", "breach_level",
-                                 "failure_reason");
+                                 "failure_reason",
+                                 // Anahtar kelime izlemesi (kw sözleşmesi §8.1, E1): yeniden gönderim / eskalasyon adımı postası neden +
+                                 // ipuçlarını anlık görüntüden okur. "excerpt" BİLİNÇLİ YOK: sayfa alıntısı yalnız açılış postasında.
+                                 "failure_detail", "hints",
+                                 // kw-be2 Aşama 2: kural özeti (KEYWORD) + içerik değişimi özeti ve temelin zamanı (KEYWORD_CHANGED)
+                                 "rules_summary", "change_summary", "changed_lines", "baseline_taken_at");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

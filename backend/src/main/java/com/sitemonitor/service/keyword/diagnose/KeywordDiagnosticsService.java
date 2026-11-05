@@ -15,7 +15,10 @@ import com.sitemonitor.service.http.diagnose.HttpDiagMasker;
 import com.sitemonitor.service.http.diagnose.HttpDiagnosticsService;
 import com.sitemonitor.service.http.diagnose.RawHttpProbe;
 import com.sitemonitor.service.keyword.KeywordBodyAnalyzer;
+import com.sitemonitor.service.keyword.KeywordCheckSpec;
 import com.sitemonitor.service.keyword.KeywordFailureClassifier;
+import com.sitemonitor.service.keyword.KeywordRequestRules;
+import com.sitemonitor.service.keyword.KeywordText;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -128,7 +131,14 @@ public class KeywordDiagnosticsService {
         int timeout = HttpDiagnosticsService.clampTimeout(m.getTimeoutMs());
         int monitorTimeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10_000;
         String headersText = headerSecrets == null ? null : headerSecrets.effectiveHeaders(m);
-        HttpRequestOptions opts = new HttpRequestOptions(headersText, null, null, null, null, null, null);
+        String basicPass = headerSecrets == null ? null : headerSecrets.basicAuthPass(m);
+        // kw sözleşmesi §10.5: izlemenin İSTEK seçenekleri (yöntem / gövde / Basic auth / UA / başlıklar / yönlendirme takibi) ham
+        // ölçüme ve gerçek istemciye AYNEN geçer — tanı izlemenin attığı isteği anlatsın.
+        HttpRequestOptions opts = new HttpRequestOptions(headersText, m.getBasicAuthUser(), basicPass, m.getRequestBody(),
+                m.getRequestContentType(), null, null);
+        String method = KeywordRequestRules.method(m.getMethod());
+        boolean follow = !Boolean.FALSE.equals(m.getFollowRedirects());
+        String userAgent = KeywordRequestRules.effectiveUserAgent(m.getUserAgentMode(), m.getUserAgent());
         Map<String, String> custom = HttpRequestRules.parseHeaders(headersText);
         boolean caseSensitive = Boolean.TRUE.equals(m.getCaseSensitive());
         String keyword = m.getKeyword() == null ? "" : m.getKeyword();
@@ -136,7 +146,15 @@ public class KeywordDiagnosticsService {
 
         boolean proxyConfigured = proxySettings != null && proxySettings.enabled();
         String proxyAuth = proxyConfigured ? proxySettings.proxyAuthorizationHeader() : null;
-        HttpDiagMasker masker = new HttpDiagMasker(custom.keySet(), secrets(custom, proxyAuth));
+        List<String> secretList = secrets(custom, proxyAuth);
+        if (basicPass != null && !basicPass.isBlank()) {
+            secretList.add(basicPass);
+            // Kimliğin kodlanmış hâli de sırdır: başlığı yansıtan bir sunucu (hata sayfası, echo uç noktası) gövdede base64 verir.
+            String user = m.getBasicAuthUser() == null ? "" : m.getBasicAuthUser();
+            secretList.add(java.util.Base64.getEncoder().encodeToString(
+                    (user + ":" + basicPass).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        }
+        HttpDiagMasker masker = new HttpDiagMasker(custom.keySet(), secretList);
 
         String mode = ProxyPolicyService.normalizeMode(m.getUseProxy());
         ProxyPolicyService.Decision d = proxyPolicy == null
@@ -160,14 +178,14 @@ public class KeywordDiagnosticsService {
             boolean viaProxy = "proxy".equals(p.route());
             // verifySsl=false: keyword izlemesi güven-hepsi TLS ile okur (sertifika ayrı izlenir) — tanılama da aynı
             // kararı verir; zincir/güven/ad eşleşmesi BİLGİ olarak raporlanır.
-            RawHttpProbe.Spec spec = new RawHttpProbe.Spec(p.key(), p.route(), url, "GET", null, timeout,
-                    false, true, opts,
+            RawHttpProbe.Spec spec = new RawHttpProbe.Spec(p.key(), p.route(), url, method, null, timeout,
+                    false, follow, opts,
                     viaProxy ? proxySettings.host() : null, viaProxy ? proxySettings.port() : 0,
-                    viaProxy ? proxyAuth : null, hardDeadline, USER_AGENT, true);
+                    viaProxy ? proxyAuth : null, hardDeadline, userAgent, true);
             specs.add(spec);
             rawFutures.add(workers.submit(() -> new RawHttpProbe(spec, ssrfGuard, trustEvaluator, caAutoPin, masker, watchdog).run()));
-            clientFutures.add(workers.submit(() -> keywordChecker.check(rawUrl, keyword, timeout, headersText,
-                    caseSensitive, viaProxy, exp)));
+            KeywordCheckSpec clientSpec = KeywordCheckSpec.forMonitor(m, headersText, basicPass, viaProxy).timeoutMs(timeout).build();
+            clientFutures.add(workers.submit(() -> keywordChecker.check(clientSpec)));
         }
 
         long collectDeadline = start + COLLECT_CAP_MS;
@@ -225,7 +243,7 @@ public class KeywordDiagnosticsService {
         data.put("kind", "keyword");
         data.put("started_at", Instant.ofEpochMilli(start).truncatedTo(ChronoUnit.SECONDS).toString());
         data.put("duration_ms", System.currentTimeMillis() - start);
-        data.put("monitor", monitorMap(m, timeout, monitorTimeout, mode, custom, slowMs));
+        data.put("monitor", monitorMap(m, timeout, monitorTimeout, mode, custom, slowMs, method, follow));
         data.put("source", source());
         data.put("proxy", proxyMap(proxyConfigured));
         data.put("verdict", KeywordDiagFindings.verdict(findings, outcomes.get(0), failedSteps.get(0)));
@@ -275,8 +293,21 @@ public class KeywordDiagnosticsService {
         } else {
             int status = probe.finalStatus();
             byte[] body = probe.finalBody() == null ? new byte[0] : probe.finalBody();
-            Analysis a = analyzeBody(probe, body, keyword, caseSensitive, exp, status, m.getUrl(), masker, analyze);
-            boolean met = KeywordCheckerService.evaluate(a.count, exp.operator(), exp.threshold());
+            Analysis a = analyzeBody(probe, body, keyword, caseSensitive, exp, status, m, masker, analyze);
+            // İzlemenin kararıyla AYNI (kw sözleşmesi §5.2 / §5.3): kabul edilen durum kodu + son URL kuralı + adet koşulu.
+            String expectedStatus = blankToNull(m.getExpectedStatus());
+            String expectedFinal = blankToNull(m.getExpectedFinalUrl());
+            Boolean statusAccepted = expectedStatus == null ? null
+                    : com.sitemonitor.service.HttpCheckerService.matchesStatus(status, expectedStatus);
+            URI finalUri = finalUri(probe);
+            Boolean finalUrlOk = expectedFinal == null ? null
+                    : KeywordRequestRules.finalUrlMatches(finalUri, expectedFinal, m.getUrl());
+            // kw-be2 Aşama 2: izlemenin kural motoru + boyut kuralıyla AYNI karar (çoklu kural / REGEX / kapsam / iki eşik)
+            boolean sizeOk = a.verdict == null || !Boolean.FALSE.equals(a.verdict.size().sizeOk());
+            boolean rulesMet = a.verdict == null ? KeywordCheckerService.evaluate(a.count, exp.operator(), exp.threshold())
+                    : a.verdict.rulesMet();
+            boolean met = rulesMet && sizeOk
+                    && !Boolean.FALSE.equals(statusAccepted) && !Boolean.FALSE.equals(finalUrlOk);
             Map<String, Object> p = RawHttpProbe.params("keyword", abbreviate(keyword, 80), "count", a.count,
                     "expected", KeywordCheckerService.opPhrase(exp.operator(), exp.threshold()), "status", status,
                     "bytes", body.length, "cap_kb", RawHttpProbe.BODY_CAP_BYTES / 1024);
@@ -295,11 +326,29 @@ public class KeywordDiagnosticsService {
                 ev.findings.add(HttpDiagFindings.finding(KeywordDiagFindings.KEYWORD_OK, HttpDiagFindings.INFO, key, p));
             } else {
                 ev.outcome = "fail";
-                KeywordFailureClassifier.Reason r = KeywordFailureClassifier.forCondition(status, a.count, exp.operator(),
-                        exp.threshold(), body.length, probe.finalBodyCapped(), keyword);
+                KeywordFailureClassifier.Reason r = KeywordFailureClassifier.forCheck(new KeywordFailureClassifier.Facts(status,
+                        a.count, exp.operator(), exp.threshold(), body.length, probe.finalBodyCapped(), keyword, statusAccepted,
+                        expectedStatus, finalUrlOk, expectedFinal, KeywordBodyAnalyzer.displayUrl(finalUri),
+                        !Boolean.FALSE.equals(m.getFollowRedirects())), a.verdict == null ? null : a.verdict.ruleFacts());
                 String code = KeywordDiagFindings.fromFailureReason(r.code());
+                if (KeywordDiagFindings.KEYWORD_RULES_NOT_MET.equals(code) && a.verdict != null && a.verdict.evaluation() != null) {
+                    var rev = a.verdict.evaluation();
+                    p.put("failed", rev.results().stream().filter(x -> !x.ok()).count());
+                    p.put("total", rev.results().size());
+                    p.put("summary", rev.summary());
+                }
+                if (KeywordDiagFindings.KEYWORD_SIZE_MISMATCH.equals(code)) {
+                    p.put("min_bytes", m.getMinBytes());
+                    p.put("max_bytes", m.getMaxBytes());
+                }
+                if (KeywordDiagFindings.KEYWORD_FINAL_URL_MISMATCH.equals(code)) {
+                    p.put("expected_final_url", expectedFinal);
+                    p.put("final_url", KeywordBodyAnalyzer.displayUrl(finalUri));
+                }
+                if (statusAccepted != null) p.put("expected_status", expectedStatus);
                 ev.failedStep = KeywordDiagFindings.KEYWORD_HTTP_ERROR.equals(code)
-                        || KeywordDiagFindings.KEYWORD_REDIRECT_BLOCKED.equals(code) ? "response" : "body";
+                        || KeywordDiagFindings.KEYWORD_REDIRECT_BLOCKED.equals(code)
+                        || KeywordDiagFindings.KEYWORD_FINAL_URL_MISMATCH.equals(code) ? "response" : "body";
                 ev.findings.add(HttpDiagFindings.finding(code, HttpDiagFindings.FAIL, key, p));
                 if (a.block != null) a.block.put("failure_reason", r.code());
             }
@@ -315,6 +364,7 @@ public class KeywordDiagnosticsService {
         }
         if (ev.keyword == null && analyze) ev.keyword = unanalyzed(keyword, caseSensitive, exp);
         boolean rawOk = "ok".equals(ev.outcome);
+        // (izlemenin gerçek istemcisi de aynı kuralları uygular — clientResult "ok" kontrolün kararıdır)
         boolean clientOk = Boolean.TRUE.equals(client.get("ok"));
         if (rawOk != clientOk) {
             ev.findings.add(HttpDiagFindings.finding(HttpDiagFindings.CLIENT_MISMATCH, HttpDiagFindings.WARN, key,
@@ -324,16 +374,27 @@ public class KeywordDiagnosticsService {
         return ev;
     }
 
-    private record Analysis(int count, Map<String, Object> block) {}
+    private record Analysis(int count, Map<String, Object> block, KeywordCheckerService.Verdict verdict) {
+        Analysis(int count, Map<String, Object> block) { this(count, block, null); }
+    }
 
     /** Gövdede arama + (izlemenin yolu için) tam çözümleme bloğu. */
     private static Analysis analyzeBody(RawHttpProbe probe, byte[] body, String keyword, boolean cs,
-                                        KeywordCheckerService.Expectation exp, int status, String monitorUrl,
+                                        KeywordCheckerService.Expectation exp, int status, KeywordMonitor m,
                                         HttpDiagMasker masker, boolean full) {
-        String text = new String(body, StandardCharsets.UTF_8);
-        int count = KeywordBodyAnalyzer.count(text, keyword, cs);
+        String monitorUrl = m.getUrl();
         Map<String, Object> last = lastResponse(probe);
         String contentType = last == null ? null : headerValue(last, "content-type");
+        // İzlemeyle AYNI okuma (kw sözleşmesi §4): bildirilen karakter kümesi, eşleşme kapsamı, Türkçe katlamalı sayım.
+        KeywordText.Decoded decoded = KeywordText.decode(body, contentType);
+        String text = decoded.text();
+        String scope = KeywordText.scope(m.getMatchScope());
+        boolean normalizeWs = Boolean.TRUE.equals(m.getNormalizeWs());
+        // kw-be2 Aşama 2: izlemenin kural motoru (kural #1'in sayımı = eski "occurrences"); değişim ölçülmez
+        KeywordCheckerService.Verdict verdict = KeywordCheckerService.evaluateRules(
+                KeywordCheckSpec.forMonitor(m, null, null, false).changeDetect(false).build(),
+                text, contentType, body.length, probe.finalBodyCapped(), null, null);
+        int count = verdict.count();
         int redirects = Math.max(0, probe.hops().size() - 1);
         URI finalUri = finalUri(probe);
         Map<String, Object> b = new LinkedHashMap<>();
@@ -355,13 +416,19 @@ public class KeywordDiagnosticsService {
         b.put("body_bytes", body.length);
         b.put("body_truncated", probe.finalBodyCapped());
         b.put("checker_cap_bytes", RawHttpProbe.BODY_CAP_BYTES);
-        if (!full) return new Analysis(count, b);
+        b.put("decoded_charset", decoded.charset());
+        b.put("match_scope", scope);
+        if (verdict.evaluation() != null) b.put("rule_results", verdict.evaluation().resultsApi());
+        if (verdict.size() != null && verdict.size().sizeOk() != null) b.put("size_ok", verdict.size().sizeOk());
+        if (!full) return new Analysis(count, b, verdict);
         List<String> secrets = masker.secretValues();
         KeywordBodyAnalyzer.Analysis a = KeywordBodyAnalyzer.analyze(new KeywordBodyAnalyzer.Input(body, contentType, keyword, cs,
-                count, exp.operator(), exp.threshold(), status, monitorUrl, finalUri, redirects, secrets));
+                count, exp.operator(), exp.threshold(), status, monitorUrl, finalUri, redirects, secrets, text, decoded.charset(),
+                scope, normalizeWs));
         b.put("charset", a.declaredCharset());
         b.put("alternatives", a.alternatives().isEmpty()
-                ? KeywordBodyAnalyzer.alternatives(text, body, keyword, cs, a.declaredCharset()) : a.alternatives());
+                ? KeywordBodyAnalyzer.alternatives(text, body, keyword, cs, KeywordText.alternate(decoded.charset(), text),
+                        scope, normalizeWs) : a.alternatives());
         // İpuçları koşul sağlanmasa da sağlansa da hesaplanmaz: analyze() yalnız "eksik" kuralında ve hata sayfasında üretir.
         boolean met = KeywordCheckerService.evaluate(count, exp.operator(), exp.threshold());
         b.put("hints", met ? List.of() : a.hints());
@@ -372,7 +439,7 @@ public class KeywordDiagnosticsService {
         b.put("visible_text_preview", masker.maskBody(cut ? visible.substring(0, VISIBLE_PREVIEW_MAX) : visible));
         b.put("visible_text_truncated", cut);
         b.put("preview_stored", true);
-        return new Analysis(count, b);
+        return new Analysis(count, b, verdict);
     }
 
     /** Gövde okunamadı/hiç yanıt yok — çözümleme bloğu yine kuralı taşır (arayüz "çözümlenemedi" der). */
@@ -460,7 +527,8 @@ public class KeywordDiagnosticsService {
             return c;
         }
         boolean hadError = r.get("error") != null;
-        boolean ok = !hadError && r.get("failure_reason") == null;
+        // Kontrolün kendi kararı (kw sözleşmesi §10.6); eski biçimde: istisna yok ∧ neden yok
+        boolean ok = r.get("ok") instanceof Boolean b ? b && !hadError : !hadError && r.get("failure_reason") == null;
         c.put("ok", ok);
         c.put("http_status", r.get("http_status"));
         c.put("response_ms", r.get("response_ms"));
@@ -497,12 +565,12 @@ public class KeywordDiagnosticsService {
     }
 
     private static Map<String, Object> monitorMap(KeywordMonitor m, int diagTimeout, int monitorTimeout, String mode,
-                                                  Map<String, String> custom, Integer slowMs) {
+                                                  Map<String, String> custom, Integer slowMs, String method, boolean follow) {
         Map<String, Object> mon = new LinkedHashMap<>();
         mon.put("id", m.getId());
         mon.put("name", m.getName());
         mon.put("url", m.getUrl());
-        mon.put("method", "GET");
+        mon.put("method", method);
         mon.put("keyword", m.getKeyword());
         mon.put("operator", m.getMatchOperator() == null ? "GTE" : m.getMatchOperator());
         mon.put("match_count", m.getMatchCount() != null ? m.getMatchCount() : 1);
@@ -510,11 +578,18 @@ public class KeywordDiagnosticsService {
         mon.put("timeout_ms", monitorTimeout);
         mon.put("diag_timeout_ms", diagTimeout);
         mon.put("verify_ssl", false);
-        mon.put("follow_redirects", true);
+        mon.put("follow_redirects", follow);
         mon.put("proxy_mode", mode);
         Map<String, Object> adv = new LinkedHashMap<>();
         adv.put("custom_headers", custom.size());
         adv.put("slow_threshold_ms", slowMs);
+        // kw sözleşmesi §10.5 — istek seçenekleri (sır değeri YOK)
+        adv.put("basic_auth", m.getBasicAuthUser() != null && !m.getBasicAuthUser().isBlank());
+        adv.put("request_body", m.getRequestBody() != null && !m.getRequestBody().isEmpty());
+        adv.put("user_agent_mode", KeywordRequestRules.userAgentMode(m.getUserAgentMode()));
+        adv.put("expected_status", blankToNull(m.getExpectedStatus()));
+        adv.put("expected_final_url", blankToNull(m.getExpectedFinalUrl()));
+        adv.put("match_scope", KeywordText.scope(m.getMatchScope()));
         mon.put("advanced", adv);
         return mon;
     }

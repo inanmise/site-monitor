@@ -51,48 +51,12 @@ public final class DbQueryMailSubject {
      */
     public static String render(String template, Map<String, String> values) {
         if (!hasTemplate(template)) return null;
-        String t = template.length() > 4 * MAX_LENGTH ? template.substring(0, 4 * MAX_LENGTH) : template;
-        StringBuilder out = new StringBuilder(t.length() + 32);
-        int i = 0;
-        while (i < t.length()) {
-            char c = t.charAt(i);
-            if (c == '{') {
-                int close = t.indexOf('}', i + 1);
-                // Yer tutucu adı kısadır (≤ 12); uzak / hiç kapanmayan süslü parantez metin olarak kalır.
-                if (close > i + 1 && close - i <= 13) {
-                    String key = ALIASES.get(t.substring(i + 1, close).trim().toLowerCase(java.util.Locale.ROOT));
-                    if (key != null) {
-                        String v = values == null ? null : values.get(key);
-                        out.append(v == null ? "" : v);
-                        i = close + 1;
-                        continue;
-                    }
-                }
-            }
-            out.append(c);
-            i++;
-        }
-        String s = singleLine(out.toString());
-        if (s.isEmpty()) return null;
-        return s.length() > MAX_LENGTH ? s.substring(0, MAX_LENGTH - 1) + "…" : s;
+        // Döngü genel yardımcıda (kw sözleşmesi §8.3: anahtar kelime izlemesi aynı kuralı kullanır) — çıktı bayt bayt aynı.
+        return com.sitemonitor.util.SubjectTemplate.render(template, ALIASES, values, MAX_LENGTH);
     }
 
     /** Satır sonu / sekme / denetim karakterleri boşluk olur, ardışık boşluk teke iner, uçlar kırpılır (doğrusal). */
     static String singleLine(String s) {
-        StringBuilder b = new StringBuilder(s.length());
-        boolean space = false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (Character.isISOControl(c) || Character.isWhitespace(c)) {
-                if (!space && b.length() > 0) b.append(' ');
-                space = true;
-            } else {
-                b.append(c);
-                space = false;
-            }
-        }
-        int end = b.length();
-        while (end > 0 && b.charAt(end - 1) == ' ') end--;
-        return b.substring(0, end);
+        return com.sitemonitor.util.SubjectTemplate.singleLine(s);
     }
 }

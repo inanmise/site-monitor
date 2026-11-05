@@ -279,6 +279,18 @@ final class EmailSamples {
                         "alert_event_id", 4243L, "team_name", "Takım A"));
         alert("alert-dns-changed-empty-old", "[Site Monitor YÜKSEK] new.example.com — DNS değişikliği", "YÜKSEK: yeni kayıt eklendi.",
                 "new.example.com", "HIGH", "DNS_CHANGED", null, map("record_type", "CNAME", "old_values", List.of(), "new_values", List.of("edge.example.net")));
+        // İçerik değişimi (KEYWORD_CHANGED, 2026-11-05): kaldırılan / eklenen satır bloğu, uzun satır, temel + bölge + maske satırları.
+        alert("alert-keyword-changed", "[Site Monitor YÜKSEK] keyword — içerik değişikliği",
+                "YÜKSEK: " + LONG_URL + " sayfasının içeriği temel alınan sürümden farklı (3 satır değişti).", LONG_URL, "HIGH",
+                "KEYWORD_CHANGED", null,
+                map("url", LONG_URL, "monitor_id", 43, "alert_event_id", 93L, "team_name", "Takım A",
+                        "change_summary", map("lines_before", 12, "lines_after", 13,
+                                "removed", List.of("Kampanya #.#.# tarihine kadar geçerlidir", TR),
+                                "added", List.of("Kampanya sona erdi", "Yeni koşullar yakında duyurulacak", "Sorularınız için: " + LONG_URL),
+                                "removed_total", 2, "added_total", 3, "truncated", false),
+                        "baseline_taken_at", "2026-11-01T06:00:00", "baseline_source", "MANUAL",
+                        "change_selector", "main #kampanya-kosullari", "change_mask", "DIGITS,DATES",
+                        "checked_at", "2026-11-05T09:00:00"));
         alert("alert-simple", "[Site Monitor] KRİTİK — Sistem bildirimi",
                 "Genel bildirim metni.\nİkinci satır: ayrıntılar burada.\n\n" + TR, null, "CRITICAL", null, null, null);
         // Runbook notu (2026-10-01): izlemenin "Rehber & Notlar" rehberi varsa gövde sonunda "Ne yapılmalı" kartı —
@@ -405,6 +417,10 @@ final class EmailSamples {
                 "Takım A", new EmailNotificationService.UptimeSummary(98.40, 2, 99.61, 2));
         resolved("resolved-ping", "[Site Monitor ✅ ÇÖZÜLDÜ] 10.0.0.7", "10.0.0.7", "PING_DOWN", "CRITICAL", "Sistem (otomatik)",
                 "2026-09-26T08:00:00", "2026-09-26T07:59:20", map("ip_version", "v6", "monitor_id", 5), null, null);
+        resolved("resolved-keyword-changed", "[Site Monitor ✅ ÇÖZÜLDÜ] keyword — içerik", LONG_URL, "KEYWORD_CHANGED", "HIGH",
+                "Sistem (otomatik)", "2026-11-05T10:00:00", "2026-11-05T09:00:00",
+                map("url", LONG_URL, "monitor_id", 43, "alert_event_id", 93L, "baseline_taken_at", "2026-11-01T06:00:00",
+                        "change_summary", "{\"removed_total\":2,\"added_total\":3}"), "Takım A", null);
     }
 
     // ── #11–12 Alarm fırtınası ───────────────────────────────────────────────

@@ -206,6 +206,17 @@ function ErrHint({ children }) {
 /** Ham k6 çıktısı bloğu (eski .show-pre + .sc-output/.sc-console) — tema jetonlu, kendi içinde kayar. */
 const OUTPUT_PRE = 'm-0 mt-1 overflow-auto rounded border border-border bg-muted/40 px-3 py-2.5 font-mono text-[11.5px] leading-[1.65] whitespace-pre-wrap text-foreground'
 
+/** kw (2026-11-05): tek seferlik `sc_open` parametresini URL'den siler (geçmişe kayıt eklemeden). */
+function clearScOpenParam() {
+  try {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('sc_open')) return
+    url.searchParams.delete('sc_open')
+    const qs = url.searchParams.toString()
+    window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+  } catch { /* history yoksay */ }
+}
+
 /** Çok satırlı hata metninin İLK satırı — tablo hücresi için. Tam metin `title`'da ve panelde. */
 function firstLine(error) { return String(error ?? '').split('\n')[0] }
 
@@ -474,15 +485,44 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
   useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
 
+  // kw (sc_open=draft): taslak isteği en az bir kez sonuçlandı mı — "taslak yok" ile "henüz okunmadı" karışmasın
+  const [draftsLoaded, setDraftsLoaded] = useState(false)
+  // Taslak listesi okunamadı mı (sc_open iletisi "taslak yok" ile "okunamadı"yı ayırır — DÜŞÜK-10)
+  const draftsFailedRef = useRef(false)
   const loadDrafts = useCallback(async () => {
     if (!k6.canManage) return
-    const res = await api.monitoring.getScriptedDrafts?.()
-    if (res?.success) setDrafts(res.data?.drafts || [])
+    try {
+      const res = await api.monitoring.getScriptedDrafts?.()
+      if (res?.success) { setDrafts(res.data?.drafts || []); draftsFailedRef.current = false }
+      else draftsFailedRef.current = true
+    } catch {
+      draftsFailedRef.current = true
+    } finally {
+      setDraftsLoaded(true)
+    }
   }, [k6.canManage])
   useEffect(() => { loadDrafts() }, [loadDrafts])
 
   /** Hiç kaydedilmemiş monitörün taslağı — sayfa üstündeki "devam et" şeridini besler. */
   const newDraft = useMemo(() => drafts.find(d => d.monitor_key === 'new') || null, [drafts])
+
+  // ── kw (2026-11-05, F1): anahtar kelime izlemesinden "Sentetik izlemeye dönüştür" ─────────────────────────────────
+  // Dönüştürme penceresi taslağı `new` anahtarına yazıp `?sc_open=draft` ile buraya gelir: liste ve taslaklar yüklenince
+  // taslak BİR KEZ forma yüklenir (`continueDraft` — "devam et" şeridinin yolu) ve parametre URL'den silinir. Taslak yoksa,
+  // okunamadıysa ya da sentetik yönetim yetkisi yoksa parametre silinir ve NEDENİ söylenir. Başka davranış değişmez.
+  const scOpenRef = useRef(readUrlParam('sc_open', null))
+  useEffect(() => {
+    if (scOpenRef.current == null || loading) return
+    if (k6.canManage && !draftsLoaded) return
+    const wanted = scOpenRef.current === 'draft'
+    scOpenRef.current = null
+    clearScOpenParam()
+    if (!wanted) return
+    if (k6.canManage && newDraft) { continueDraft(newDraft); return }
+    // Parametre sessizce silinmez: kullanıcı dönüştürmenin neden açılmadığını bilsin
+    toast.error(!k6.canManage ? t('scripted.scOpen.noPermission')
+      : draftsFailedRef.current ? t('scripted.scOpen.draftsUnreadable') : t('scripted.scOpen.noDraft'))
+  }, [loading, k6.canManage, draftsLoaded, newDraft])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zamanlayıcıların closure'ı ilk render'ın state'ini görür; canlı referans her render'da tazelenir.
   liveRef.current = { form, modal, saving, pendingDraft }
