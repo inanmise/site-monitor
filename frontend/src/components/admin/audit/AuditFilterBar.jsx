@@ -40,7 +40,7 @@ function TextFilter({ id, value, onCommit, placeholder, ariaLabel, icon: Icon, c
   function commitNow(v) { committed.current = v; setLocal(v); commitRef.current(v) }
 
   return (
-    <InputGroup className={cn('h-10 md:h-8', className)}>
+    <InputGroup className={cn('h-10 md:h-8 pointer-coarse:h-10', className)}>
       <InputGroupInput id={id} value={local} placeholder={placeholder} aria-label={ariaLabel} inputMode={inputMode}
         onChange={(e) => setLocal(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitNow(local) } }} />
@@ -61,7 +61,7 @@ function RangeSelect({ id, value, onChange, className }) {
   const t = useT()
   return (
     <NativeSelect id={id} size="sm" value={value} aria-label={t('audit.range')} onChange={(e) => onChange(e.target.value)}
-      className={cn('h-10 md:h-8', className)}>
+      className={cn('h-10 md:h-8 pointer-coarse:h-10', className)}>
       <NativeSelectOption value="">{t('audit.range.any')}</NativeSelectOption>
       {RANGE_PRESETS.map(r => <NativeSelectOption key={r.key} value={r.key}>{t(r.labelKey)}</NativeSelectOption>)}
       <NativeSelectOption value="custom">{t('audit.range.custom')}</NativeSelectOption>
@@ -73,7 +73,7 @@ function OutcomeSelect({ id, value, onChange, className }) {
   const t = useT()
   return (
     <NativeSelect id={id} size="sm" value={value} aria-label={t('audit.outcomeFilter')} onChange={(e) => onChange(e.target.value)}
-      className={cn('h-10 md:h-8', className)}>
+      className={cn('h-10 md:h-8 pointer-coarse:h-10', className)}>
       <NativeSelectOption value="">{t('audit.allOutcomesShort')}</NativeSelectOption>
       {OUTCOMES.map(o => <NativeSelectOption key={o} value={o}>{t(OUTCOME_KEYS[o])}</NativeSelectOption>)}
     </NativeSelect>
@@ -89,12 +89,12 @@ export function ActiveFilterChips({ chips, onRemove, onClearAll }) {
       {chips.map(c => (
         <Button key={c.key} type="button" variant="secondary" size="sm" data-chip={c.key} onClick={() => onRemove(c)}
           aria-label={t('audit.removeFilter', c.label)}
-          className="h-10 max-w-full gap-1 rounded-full px-3 font-normal sm:h-7">
+          className="h-10 max-w-full gap-1 rounded-full px-3 font-normal sm:h-7 pointer-coarse:h-10">
           <span className="min-w-0 truncate">{c.label}</span>
           <X aria-hidden="true" />
         </Button>
       ))}
-      <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-7" onClick={onClearAll}>{t('audit.clearAll')}</Button>
+      <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-7 pointer-coarse:h-10" onClick={onClearAll}>{t('audit.clearAll')}</Button>
     </div>
   )
 }
@@ -130,7 +130,7 @@ export default function AuditFilterBar({ filters, onChange, eventOptions, isMobi
   )
   const events = (cls) => (
     <FacetedFilter title={t('audit.eventTypes')} icon={ListFilter} options={eventOptions} value={types}
-      searchPlaceholder={t('audit.eventTypesSearch')} className={cn('h-10 md:h-8', cls)}
+      searchPlaceholder={t('audit.eventTypesSearch')} className={cn('h-10 md:h-8 pointer-coarse:h-10', cls)}
       onChange={(next) => set({ eventType: next.join(',') })} />
   )
   const outcome = (cls) => (
@@ -146,7 +146,7 @@ export default function AuditFilterBar({ filters, onChange, eventOptions, isMobi
   )
   const anomalies = (cls) => (
     <Toggle variant="outline" size="sm" pressed={!!filters.anomalyOnly} onPressedChange={(v) => set({ anomalyOnly: v })}
-      className={cn('h-10 px-3 md:h-8 data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary', cls)}>
+      className={cn('h-10 px-3 md:h-8 data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary pointer-coarse:h-10', cls)}>
       <ShieldAlert aria-hidden="true" /> {t('audit.anomalyOnly')}
     </Toggle>
   )

@@ -113,7 +113,7 @@ export default function DiagramListView({ model, focus, onFocus, onOpenDetails, 
   const empty = names.connected.length === 0 && names.isolated.length === 0
   return (
     <div data-slot="diagram-list" className="flex min-h-0 flex-1 flex-col gap-2">
-      <InputGroup className="h-10 sm:h-9">
+      <InputGroup className="h-10 sm:h-9 pointer-coarse:h-10">
         <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('sql.diag.filterTables')}
           aria-label={t('sql.diag.filterTables')} />
         <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>

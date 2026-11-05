@@ -354,9 +354,12 @@ function Recommendations({ analysis, items, t, locale, onShowObjects, objectsAva
   const recs = sortRecommendations(analysis?.recommendations)
   const [open, setOpen] = useState(false)
   // "Notu düşüren 3 şey"den gelinen öneri ilk 6'nın dışındaysa liste BİR KEZ açılır (odak hedefi görünür olsun); sonra
-  // kullanıcı "Daha az göster" ile kapatabilir — liste kalıcı açık kalmaz (prs3 inceleme D6)
-  const needsOpen = Boolean(focusRec) && recs.slice(RECS_PREVIEW).some((r) => r.code === focusRec)
-  useEffect(() => { if (needsOpen) setOpen(true) }, [needsOpen, focusRec])
+  // kullanıcı "Daha az göster" ile kapatabilir — liste kalıcı açık kalmaz (prs3 inceleme D6). İstek `{ code, seq }`: aynı
+  // öneriye İKİNCİ gidiş yeni bir sıra numarasıdır, liste yine açılır (bh-prs3 D-1)
+  const focusCode = typeof focusRec?.code === 'string' ? focusRec.code : null
+  const focusSeq = focusRec?.seq ?? null
+  const needsOpen = Boolean(focusCode) && recs.slice(RECS_PREVIEW).some((r) => r.code === focusCode)
+  useEffect(() => { if (needsOpen) setOpen(true) }, [needsOpen, focusSeq])
   const all = open || recs.length <= RECS_PREVIEW
   const shown = all ? recs : recs.slice(0, RECS_PREVIEW)
   return (

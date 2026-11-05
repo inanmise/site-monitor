@@ -117,7 +117,7 @@ export default function OverviewTab({ user, teamName, onUnlock, onUnlocked, glob
                         <span className="text-xs leading-relaxed text-muted-foreground">{hint}</span>
                       </div>
                       {can && (
-                        <Button type="button" variant="outline" size="sm" className="h-10 self-start sm:h-8" disabled={busy != null}
+                        <Button type="button" variant="outline" size="sm" className="h-10 self-start sm:h-8 pointer-coarse:h-10" disabled={busy != null}
                           aria-busy={busy === key || undefined} onClick={() => (isField ? unlockField(field) : unlock(key))}>
                           {busy === key ? <Spinner decorative size={14} /> : <LockOpen aria-hidden="true" />}
                           {isField ? t('usr.fieldUnlock') : unlockLabel(t, key)}

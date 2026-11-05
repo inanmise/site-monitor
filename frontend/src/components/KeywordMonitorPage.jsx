@@ -677,7 +677,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
             : t('keyword.customHeadersHint')}
           {' '}
-          <Button type="button" variant="link" size="xs" className="h-auto p-0 align-baseline text-xs font-medium"
+          <Button type="button" variant="link" size="xs" className="relative h-auto p-0 align-baseline text-xs font-medium pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']"
             onClick={() => setShowCacheHelp(true)}>
             {t('keyword.cacheBustLink')}
           </Button>

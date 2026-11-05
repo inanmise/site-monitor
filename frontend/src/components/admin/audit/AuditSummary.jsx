@@ -82,7 +82,7 @@ function DistCard({ title, items, labelOf, onPick }) {
             return (
               <li key={i.key} className="grid grid-cols-[minmax(0,44%)_minmax(0,1fr)_auto] items-center gap-2 text-sm">
                 <Button type="button" variant="link" size="sm" disabled={!i.key}
-                  className="h-10 min-w-0 justify-start px-0 font-normal text-foreground sm:h-7"
+                  className="h-10 min-w-0 justify-start px-0 font-normal text-foreground sm:h-7 pointer-coarse:h-10"
                   title={i.key} aria-label={t('audit.filterByValue', label, i.count)}
                   onClick={() => onPick(i.key)}>
                   <span className="truncate">{label}</span>

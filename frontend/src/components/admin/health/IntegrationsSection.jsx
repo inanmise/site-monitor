@@ -61,7 +61,7 @@ export default function IntegrationsSection({
     }
   }
   const testBtn = (kind) => globalAdmin && (
-    <Button type="button" variant="secondary" size="sm" className="mt-1 h-10 sm:h-9" disabled={testing === kind} aria-busy={testing === kind || undefined}
+    <Button type="button" variant="secondary" size="sm" className="mt-1 h-10 sm:h-9 pointer-coarse:h-10" disabled={testing === kind} aria-busy={testing === kind || undefined}
       onClick={(e) => { e.stopPropagation(); runTest(kind) }}>
       {testing === kind ? t('health.testing') : t('health.testNow')}
     </Button>

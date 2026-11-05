@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T06:05:15Z",
+  "generatedAt": "2026-11-05T08:43:17Z",
   "repo": "inanmise/site-monitor",
-  "count": 804,
+  "count": 805,
   "releases": [
+    {
+      "version": "20.182.1",
+      "tag": "v20.182.1",
+      "releasedAt": "2026-11-05T08:43:10Z",
+      "commit": "ad5e1e29c3e8084fe21fef20f1c4cc8b1397e757",
+      "prevVersion": "20.182.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "mweb",
+          "breaking": false,
+          "sha": "ad5e1e29",
+          "subject": "yönetim sekmeleri dokunmatik tablette 40 px; kılavuz adresinin tam hâli başlıkta kalır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "91529b53",
+          "subject": "CLAUDE.md — aktivite kaydı hata avı düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5da18246",
+          "subject": "aktivite kaydı hata avı — tek kesinti kuralı, kontrol kapısı, dürüst durumlar"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "bd96e8d8",
+          "subject": "CLAUDE.md — DB sorgu, kaynak analizi hata avı ve dokunmatik mobil kuralları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "60fed779",
+          "subject": "kaynak analizi hata avı (bh-prs3) — eski pod, ilerleme, kısmi ölçüm, karşılaştırma ve dışa aktarım"
+        },
+        {
+          "type": "test",
+          "scope": "mweb",
+          "breaking": false,
+          "sha": "51895f43",
+          "subject": "dokunmatik telefon ve tablet süpürmesi — taşma, kırpılan metin, 40 px dokunma hedefi"
+        },
+        {
+          "type": "fix",
+          "scope": "mweb",
+          "breaking": false,
+          "sha": "d9bda956",
+          "subject": "ad ve uzun metin kırpılmaz, dokunmatik tablette 40 px hedef, başlık eylemleri taşmaz"
+        },
+        {
+          "type": "fix",
+          "scope": "mweb",
+          "breaking": false,
+          "sha": "2d023036",
+          "subject": "shadcn tabanında dokunmatik boy — düğme, girdi, giriş grubu, anahtar ve liste öğeleri 40 px"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "713da04f",
+          "subject": "DB sorgu izleme hata avı — eklenen anomali kuralı sahte alarm açmaz, maskeli ölçü postada gizli, portsuz adlandırılmış örnek 1433'te kalmaz"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.182.0",
       "tag": "v20.182.0",

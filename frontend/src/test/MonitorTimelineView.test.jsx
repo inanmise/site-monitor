@@ -17,7 +17,8 @@ vi.mock('../contexts/PermissionsProvider.jsx', async (orig) => ({
 import { api } from '../api/client'
 import MonitorTimelineView from '../components/activity/timeline/MonitorTimelineView.jsx'
 import {
-  availabilityTone, outageSeconds, readTlParams, seriesPoints, stripSegments, tlWindow, unwrapTimeline, writeTlParams,
+  availabilityTone, hasMeasured, outageKpi, outageSeconds, readTlParams, seriesPoints, stripSegments, tlWindow, unwrapTimeline,
+  writeTlParams,
 } from '../components/activity/timeline/timelineModel.js'
 
 /** İzleme zaman çizelgesi (2026-11-05, D) — model + görünüm. Sunucu yanıtı sözleşme biçiminde taklit edilir. */
@@ -76,6 +77,25 @@ describe('timelineModel', () => {
     expect(availabilityTone(99.5)).toBe('warn')
     expect(availabilityTone(90)).toBe('bad')
     expect(outageSeconds({ from: '2026-11-05T07:50:00', to: null }, Date.parse('2026-11-05T08:00:00Z'))).toBe(600)
+  })
+
+  it('hata avı O3: hiçbir kontrol ölçülemediyse kesinti "—" nötr (asla yeşil "0"); ölçülen ve kesintisizse "0" yeşil', () => {
+    const unknownOnly = unwrapTimeline({ success: true, ...BODY, checks: 7, scheduled_checks: 7, availability_pct: null, outage_count: 0,
+      outages: [], counts: { up: 0, warn: 0, down: 0, unknown: 7 },
+      periods: [{ from: '2026-11-04T08:00:00', to: null, state: 'unknown', checks: 7, reason: 'RDAP_UNREACHABLE' }] })
+    expect(unknownOnly.counts).toEqual({ up: 0, warn: 0, down: 0, unknown: 7 })
+    expect(hasMeasured(unknownOnly)).toBe(false)
+    expect(outageKpi(unknownOnly)).toEqual({ value: '—', tone: 'unknown', measured: false })
+    // elle kontroller (zamanlanmış sayımda yok) dönemlerde ölçülmüşse ölçülmüş sayılır
+    expect(hasMeasured({ ...unknownOnly, periods: [{ state: 'up' }] })).toBe(true)
+    const clean = { ...unknownOnly, counts: { up: 7, warn: 0, down: 0, unknown: 0 }, availability_pct: 100 }
+    expect(outageKpi(clean)).toEqual({ value: '0', tone: 'good', measured: true })
+    expect(outageKpi({ ...clean, outage_count: 2 })).toEqual({ value: '2', tone: 'bad', measured: true })
+    expect(outageKpi({ checks: 0, outage_count: 0, periods: [] }).tone).toBe('unknown')
+    expect(hasMeasured({ checks: 0 })).toBeNull()
+    // eski gövde (counts yok): dönemlerden / erişilebilirlikten
+    expect(hasMeasured(unwrapTimeline({ success: true, ...BODY }))).toBe(true)
+    expect(unwrapTimeline({ success: true, ...BODY }).counts).toBeNull()
   })
 
   it('yanıt gövdesi kökte ya da data altında; boş kova null kalır (sahte 0 değil)', () => {
@@ -217,6 +237,42 @@ describe('MonitorTimelineView', () => {
     expect(container.querySelector('[data-slot="act-tl-strip-empty"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="act-tl-chart-empty"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="act-tl-truncated"]')).not.toBeNull()
+  })
+
+  it('hata avı O3: tüm kontroller bilinmiyor (RDAP okunamıyor) → Kesinti "—" nötr, liste "ölçülebilen kontrol yok"', async () => {
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY, checks: 7, scheduled_checks: 7, availability_pct: null,
+      mttr_s: null, longest_outage_s: null, outage_count: 0, outages: [], counts: { up: 0, warn: 0, down: 0, unknown: 7 },
+      periods: [{ from: '2026-11-04T08:00:00', to: null, state: 'unknown', checks: 7, reason: 'RDAP_UNREACHABLE' }] })
+    const { container } = render(<MonitorTimelineView type="DOMAIN" id={8} onBack={vi.fn()} onOpenActivity={vi.fn()} />)
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"][data-state="ok"]')).not.toBeNull())
+    const out = container.querySelector('[data-slot="act-tl-kpi"][data-key="outages"]')
+    expect(out).toHaveAttribute('data-tone', 'unknown')
+    expect(out).toHaveTextContent('—')
+    expect(out).toHaveTextContent(EN['act.tl.mon.kpi.noMeasured'])
+    const none = container.querySelector('[data-slot="act-tl-no-outage"]')
+    expect(none).toHaveAttribute('data-measured', 'false')
+    expect(none).toHaveTextContent(EN['act.tl.mon.noOutageUnmeasured'])
+    expect(container).not.toHaveTextContent(EN['act.tl.mon.noOutage'])
+  })
+
+  it('hata avı D5: adresteki geçersiz özel aralık (90 günden uzun) — istek yok, sonsuz iskelet yok, "aralığı düzeltin", Uygula pasif', async () => {
+    window.history.replaceState(null, '', '/?tab=activity&amon=HTTP:4&atlr=custom&atlf=2026-01-01T00:00&atlt=2026-11-01T00:00')
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY })
+    const { container } = render(<MonitorTimelineView type="HTTP" id={4} onBack={vi.fn()} onOpenActivity={vi.fn()} />)
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"]')).toHaveAttribute('data-state', 'invalid'))
+    expect(api.getActivityTimeline).not.toHaveBeenCalled()
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(container.querySelector('[data-slot="act-tl-invalid"]')).toHaveTextContent(EN['act.tl.mon.invalidTitle'])
+    expect(container.querySelector('[data-slot="act-tl-custom-error"]')).toHaveTextContent(EN['act.tl.mon.bad.tooLong'])
+    expect(container.querySelector('[data-slot="act-tl-custom-apply"]')).toBeDisabled()
+    expect(container.querySelectorAll('[data-slot="act-tl-kpi"]')).toHaveLength(0)
+    // Yenile de istek atmaz (geçersiz aralık)
+    fireEvent.click(screen.getByRole('button', { name: EN['act.refresh'] }))
+    expect(api.getActivityTimeline).not.toHaveBeenCalled()
+    // Hazır aralık seçilince okur
+    fireEvent.click(screen.getByRole('button', { name: EN['act.tl.mon.r.7d'] }))
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"][data-state="ok"]')).not.toBeNull())
+    expect(api.getActivityTimeline).toHaveBeenCalledTimes(1)
   })
 
   it('aralık değişince yeniden okur ve URL\'ye yazar; özel aralık ters ise istek gitmez, alanın altında söylenir', async () => {

@@ -122,7 +122,7 @@ export default function InventoryToolbar({
     <div data-slot="inv-toolbar" className="mb-3 flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         {/* Telefon/tablet (< 768 px): kutu 40 px, temizle düğmesi 40 px dokunma hedefi (addon dikey boşluğu sıfır — taşmasın) */}
-        <InputGroup className="w-full sm:w-auto sm:max-w-[360px] sm:flex-[1_1_220px] max-md:h-10">
+        <InputGroup className="w-full sm:w-auto sm:max-w-[360px] sm:flex-[1_1_220px] max-md:h-10 pointer-coarse:h-10">
           <InputGroupInput type="search" value={qDraft} onChange={(e) => setQDraft(e.target.value)} placeholder={t('inv.searchPh')} aria-label={t('inv.search')} data-page-search="" />
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
           {qDraft && (

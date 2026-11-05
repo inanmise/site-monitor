@@ -1,5 +1,6 @@
 import {
-  CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, areaUnreadable, categoryLabel, categoryScoreRows as screenCategoryScoreRows, cookieIssueText,
+  CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, algorithmVersion, areaUnreadable, categoryLabel, categoryScoreRows as screenCategoryScoreRows,
+  cookieIssueText, deltasComparable,
   dupKindText, formatMs, formatNumber, formatPct, formatSize, gradeLetter, headerIssueText, hostReasonText, httpVersionText,
   plural, problemText, rbKindText, rbReasonText, recTextKey, recommendationArgs, sriKindText, toMs, vulnSeverityText,
 } from './resourceScanModel.js'
@@ -106,8 +107,25 @@ export function budgetChanges(values, base) {
 /** Tanımlı sınır sayısı. */
 export const budgetDefinedCount = (values) => BUDGET_FIELDS.filter((f) => values?.[f.key] != null).length
 
-/** Eski sunucu (uç yok): 404 / 405. Kodsuz ya da genel NOT_FOUND kodlu 404 — izlemenin geçmişi okunabildiği için. */
-export const isBudgetUnsupported = (res) => res?.status === 404 || res?.status === 405
+/**
+ * Eski sunucu bu YENİ ucu tanımıyor mu (yayılım / geri dönüş): 404, 405 ya da eski pod'un tür uyuşmazlığı 400'ü. Eski
+ * pod'da `…/resource-scans/trend` ayrı bir eşleme değildir; istek `…/resource-scans/{scanId}`'ye (sayısal) düşer ve
+ * 400 `INVALID_PARAMETER` ("'scanId' değeri geçersiz: 'trend' …") döner (bh-prs3 O-1). Yeni sunucunun bu uçlarında sayısal
+ * adres parçası yalnız izleme kimliğidir (istemci hep sayı gönderir); yine de yalnız `scanId` adı geçen (ya da metinsiz)
+ * `INVALID_PARAMETER` sayılır — başka bir parametrenin 400'ü gerçek hatadır. Bütçe / eğilim / iptal TEK bu kuralı kullanır.
+ */
+export function isEndpointUnsupported(res) {
+  const s = res?.status
+  if (s === 404 || s === 405) return true
+  if (s !== 400) return false
+  const text = [res?.error, res?.message].filter((x) => typeof x === 'string').join(' ').slice(0, 2000)
+  const namesScanId = text.includes("'scanId'")
+  if (res?.code === 'INVALID_PARAMETER') return !text.trim() || namesScanId
+  return !res?.code && namesScanId
+}
+
+/** Bütçe ucu desteklenmiyor mu: `isEndpointUnsupported` (eski pod'da `/resource-budget` eşlemesi yok → 404). */
+export const isBudgetUnsupported = (res) => isEndpointUnsupported(res)
 
 /** Sunucunun alan hatası (`field`) bütçe alanıysa o anahtar; değilse null (genel hata şeridine düşer). */
 export function budgetErrorField(res) {
@@ -270,6 +288,8 @@ export function trendSeries(points) {
       js: known ? parts.js : null, css: known ? parts.css : null, image: known ? parts.image : null, font: known ? parts.font : null,
       other: known ? other : null, stackKnown: known,
       security: num(p.security_score), seo: num(p.seo_score), a11y: num(p.a11y_score),
+      // Kısmi (sınırlı) ölçüm: değeri çizilir ama yön özetine girmez (bh-prs3 D-6)
+      capped: p.capped === true,
     }
   }).filter((p) => p.t !== null)
   pts.sort((a, b) => a.t - b.t || String(a.id).localeCompare(String(b.id)))
@@ -293,6 +313,23 @@ export function seriesSummary(points, key) {
   const first = num(known[0][key])
   const last = num(known.at(-1)[key])
   return { first, last, diff: last - first, count: known.length }
+}
+
+/**
+ * Kartın "İyileşti / Kötüleşti" rozeti (bh-prs3 D-6) — ekranın karşılaştırma kuralıyla: son bilinen nokta kısmiyse
+ * (`capped`) yön yok (güncel durum kesin değil); kısmi noktalar kıyasa girmez; algoritmaya bağlı seride (not, kategori
+ * puanları) yalnız SON algoritma sürümünün noktaları kıyaslanır — kesikli çizginin önü / arkası karşılaştırılamaz. En az
+ * iki nokta ve sıfırdan farklı fark gerekir; yoksa null.
+ */
+export function trendDirection(points, key, { higherIsBetter = false, algoDependent = false } = {}) {
+  const known = arr(points).filter((p) => num(p?.[key]) !== null)
+  const last = known.at(-1)
+  if (!last || last.capped === true) return null
+  const pool = known.filter((p) => p.capped !== true && (!algoDependent || p.algo === last.algo))
+  if (pool.length < 2) return null
+  const diff = num(last[key]) - num(pool[0][key])
+  if (diff === 0) return null
+  return (higherIsBetter ? diff > 0 : diff < 0) ? 'better' : 'worse'
 }
 
 /** Serilerden en az biri bilinen nokta var mı (grafik ya da "bu aralıkta veri yok" kararı). */
@@ -331,8 +368,8 @@ export function trendView(data) {
   }
 }
 
-/** Eğilim ucu desteklenmiyor mu (eski sunucu: 404 / 405). */
-export const isTrendUnsupported = (res) => res?.status === 404 || res?.status === 405
+/** Eğilim ucu desteklenmiyor mu (eski sunucu: 404 / 405 ya da `…/{scanId}`'ye düşen istek — 400 INVALID_PARAMETER). */
+export const isTrendUnsupported = (res) => isEndpointUnsupported(res)
 
 // ── G Çok sayfalı (site) analiz ──────────────────────────────────────────────
 
@@ -446,6 +483,8 @@ export function siteModel(site) {
       security: num(p.scores?.security), seo: num(p.scores?.seo), a11y: num(p.scores?.accessibility),
       recs: arr(p.top_recs).filter((c) => typeof c === 'string' && c).slice(0, 5),
       unique: num(p.unique_bytes), shared: num(p.shared_count), main: i === 0,
+      // Sayfa kısmi ölçüldü (sunucu `capped`): notu ve güvenlik puanı kesin değil — soluk + "Kısmi ölçüm" (bh-prs3 D-3)
+      capped: status === 'ok' && p.capped === true,
     }
   })
   const scanned = pages.filter((p) => p.status === 'ok' && p.grade !== null)
@@ -481,6 +520,20 @@ export function siteCountText(totals, t, locale) {
   return scanned >= pages
     ? plural(t, 'prs.site.countAll', pages, formatNumber(pages, locale))
     : plural(t, 'prs.site.countOf', pages, formatNumber(scanned, locale), formatNumber(pages, locale))
+}
+
+/**
+ * Geçmiş / karşılaştırma satırının site çipi — Sayfalar bölümüyle AYNI anlam (bh-prs3 Ş-3): "Site · 3 / 5 sayfa analiz
+ * edildi", hepsi analiz edildiyse "Site · 5 sayfa analiz edildi". Payda satırın `progress.pages_total`'ı (sunucu koşu
+ * sırasında yazar, bitince kalır — açılamayan / taranmayan dahil toplam); yoksa (eski satır) yalnız analiz edilen sayı;
+ * `pages_count` yoksa yalnız "Site".
+ */
+export function siteRowText(row, t, locale) {
+  const n = num(row?.pages_count)
+  if (n === null || n <= 0) return t('prs.site.chipNoCount')
+  const total = num(row?.progress?.pages_total)
+  if (total !== null && total > n) return plural(t, 'prs.site.chipOf', total, formatNumber(n, locale), formatNumber(total, locale))
+  return plural(t, 'prs.site.chip', n, formatNumber(n, locale))
 }
 
 /** Sayfa sıralaması: not artan (en kötü önce; notsuz sona), süre / boyut azalan, adres. Eşitlikte tarama sırası. */
@@ -559,16 +612,29 @@ export const EXEC_COMPARE = [
   ['grade', 'grade', false], ['load', 'load_ms', true], ['size', 'page_bytes', true], ['requests', 'request_count', true],
   ['security', 'security_score', false],
 ]
-export function compareRows(scan, prev) {
+/** Algoritma sürümüne bağlı karşılaştırma satırları: sürüm farklıysa atılır (ekranın `prs.cmp.algo` kuralı). */
+const ALGO_DEPENDENT_COMPARE = new Set(['grade', 'security'])
+
+/**
+ * Karşılaştırma satırları — ekranın kuralıyla (bh-prs3 D-4): iki analizin not algoritması sürümü farklıysa not ve
+ * güvenlik puanı satırı YOK (kıyaslanamaz); analizlerden biri kısmiyse (`capped`) değerler ve fark yazılır ama yön
+ * (`direction`) null — kısmi ölçümden "iyileşti / kötüleşti" denmez (`deltasComparable`). `analysis` = bu analizin
+ * ayrıntısı (sürüm önce oradan okunur).
+ */
+export function compareRows(scan, prev, analysis = null) {
   if (!scan || !prev) return []
+  const algoChanged = algorithmVersion(scan, analysis) !== algorithmVersion(prev, null)
+  const comparable = deltasComparable(scan, prev)
   return EXEC_COMPARE.map(([key, field, lowerIsBetter]) => {
+    if (algoChanged && ALGO_DEPENDENT_COMPARE.has(key)) return null
     const now = num(scan[field])
     const old = num(prev[field])
     if (now === null || old === null) return null
     const diff = now - old
     const pct = old !== 0 ? (diff / Math.abs(old)) * 100 : null
     const same = diff === 0 || (pct !== null && Math.abs(pct) < 1)
-    return { key, old, now, diff, direction: same ? 'same' : ((lowerIsBetter ? diff < 0 : diff > 0) ? 'better' : 'worse') }
+    const direction = !comparable ? null : same ? 'same' : ((lowerIsBetter ? diff < 0 : diff > 0) ? 'better' : 'worse')
+    return { key, old, now, diff, direction }
   }).filter(Boolean)
 }
 
@@ -607,13 +673,34 @@ export function budgetExportRows(budget, scan, t, locale) {
   return { state: band.state, summary, rows }
 }
 
-/** Karşılaştırma satırının metinleri: [metrik, önceki, bu analiz, değişim]. */
-export function compareExportRows(scan, prev, t, locale) {
-  return compareRows(scan, prev).map((r) => [
-    t(`prs.pdf.cmp.${r.key}`), compareValueText(r.key, r.old, locale), compareValueText(r.key, r.now, locale),
-    r.direction === 'same' ? t('prs.delta.same')
-      : `${r.diff < 0 ? '−' : '+'}${compareValueText(r.key, Math.abs(r.diff), locale)} · ${t(`prs.pdf.dir.${r.direction}`)}`,
-  ])
+/**
+ * Karşılaştırma satırının metinleri: [metrik, önceki, bu analiz, değişim]. Yön bilinmiyorsa (kısmi analiz) yalnız fark
+ * ve "yön söylenemez" yazılır.
+ */
+export function compareExportRows(scan, prev, t, locale, analysis = null) {
+  return compareRows(scan, prev, analysis).map((r) => {
+    const amount = `${r.diff < 0 ? '−' : '+'}${compareValueText(r.key, Math.abs(r.diff), locale)}`
+    return [
+      t(`prs.pdf.cmp.${r.key}`), compareValueText(r.key, r.old, locale), compareValueText(r.key, r.now, locale),
+      r.direction === 'same' || (r.direction === null && r.diff === 0) ? t('prs.delta.same')
+        : r.direction === null ? `${amount} · ${t('prs.pdf.dir.partial')}`
+          : `${amount} · ${t(`prs.pdf.dir.${r.direction}`)}`,
+    ]
+  })
+}
+
+/**
+ * Karşılaştırmanın uyarı satırları (PDF ve Excel aynı): not algoritması değiştiyse (not / güvenlik satırı yok) ve
+ * analizlerden biri kısmiyse (yön yok). Ekran aynı iki uyarıyı `prs-cmp-algo` / `prs-cmp-capped` olarak gösterir.
+ */
+export function compareNotes(scan, prev, t, analysis = null) {
+  if (!scan || !prev) return []
+  const out = []
+  const from = algorithmVersion(prev, null)
+  const to = algorithmVersion(scan, analysis)
+  if (from !== to) out.push(t('prs.pdf.compareAlgo', `v${from}`, `v${to}`))
+  if (!deltasComparable(scan, prev)) out.push(t('prs.cmp.capped'))
+  return out
 }
 
 /**
@@ -624,7 +711,10 @@ export function executiveSheetRows({ scan, analysis, budget, prev, t, locale }) 
   const rows = [[t('prs.pdf.execTitle')]]
   const head = (title) => { rows.push([], [title]) }
   head(t('prs.pdf.catScores'))
-  for (const r of categoryScoreRows(analysis, scan)) rows.push([t(`prs.pdf.cat.${r.key}`), categoryScoreText(r, locale)])
+  // Kısmi analizin puanı "Kısmi ölçüm" notuyla (PDF kutusu ve ekranın soluk tonu gibi — bh-prs3 D-5)
+  for (const r of categoryScoreRows(analysis, scan)) {
+    rows.push([t(`prs.pdf.cat.${r.key}`), `${categoryScoreText(r, locale)}${r.partial && r.score !== null ? ` · ${t('prs.pdf.partialScore')}` : ''}`])
+  }
   head(t('prs.pdf.budgetTitle'))
   const b = budgetExportRows(budget, scan, t, locale)
   if (!b) rows.push([t('prs.pdf.budgetMissing')])
@@ -640,10 +730,13 @@ export function executiveSheetRows({ scan, analysis, budget, prev, t, locale }) 
     for (const r of acts) { const a = actionRow(r, t, locale); rows.push([a.sevText, a.title, a.saving]) }
   }
   head(t('prs.pdf.compareTitle'))
-  const cmp = compareExportRows(scan, prev, t, locale)
+  const cmp = compareExportRows(scan, prev, t, locale, analysis)
   if (!prev) rows.push([t('prs.pdf.compareNone')])
-  else if (!cmp.length) rows.push([t('prs.pdf.compareNoValues')])
-  else rows.push([t('prs.pdf.col.metric'), t('prs.pdf.col.previous'), t('prs.pdf.col.current'), t('prs.pdf.col.change')], ...cmp)
+  else {
+    for (const note of compareNotes(scan, prev, t, analysis)) rows.push([note])
+    if (!cmp.length) rows.push([t('prs.pdf.compareNoValues')])
+    else rows.push([t('prs.pdf.col.metric'), t('prs.pdf.col.previous'), t('prs.pdf.col.current'), t('prs.pdf.col.change')], ...cmp)
+  }
   head(t('prs.pdf.deepTitle'))
   const secs = executiveSections(analysis, t, locale)
   if (!secs.length) rows.push([t('prs.pdf.deepMissing')])
@@ -697,6 +790,10 @@ export function executiveSections(analysis, t, locale) {
   const out = []
   const sz = (b) => formatSize(b, { locale })
   const n = (v) => formatNumber(v, locale)
+  // Önerinin TAM sayısı / baytı (bh-prs3 D-8): bölüm listeleri ≤ 50 satırdır; öneri tüm sayfayı sayar. Öneri yoksa satırlar.
+  const recs = arr(a.recommendations).filter(isObj)
+  const recParam = (code, key) => num(recs.find((r) => r.code === code)?.params?.[key])
+  const recSaving = (code) => num(recs.find((r) => r.code === code)?.saving_bytes)
 
   if (isObj(a.loading)) {
     const L = a.loading
@@ -712,7 +809,7 @@ export function executiveSections(analysis, t, locale) {
     }
     const mp = total(L.hints, 'missing_preconnect')
     if (mp > 0) lines.push(plural(t, 'prs.pdf.load.missingPreconnect', mp, n(mp)))
-    const unusedPreload = arr(L.hints?.preload).filter((p) => p?.used === false).length
+    const unusedPreload = Math.max(recParam('UNUSED_PRELOAD', 'count') ?? 0, arr(L.hints?.preload).filter((p) => p?.used === false).length)
     if (unusedPreload > 0) lines.push(plural(t, 'prs.pdf.load.unusedPreload', unusedPreload, n(unusedPreload)))
     if (num(L.hosts_total) !== null) lines.push(plural(t, 'prs.pdf.load.hosts', num(L.hosts_total), n(L.hosts_total)))
     if (num(L.http1_first_party_hosts) > 0) lines.push(plural(t, 'prs.pdf.load.http1', num(L.http1_first_party_hosts), n(L.http1_first_party_hosts)))
@@ -728,13 +825,13 @@ export function executiveSections(analysis, t, locale) {
     const lines = []
     const dup = arr(W.duplicates)
     const dupN = total(W, 'duplicates')
-    if (dupN) lines.push(plural(t, 'prs.pdf.waste.duplicates', dupN, n(dupN), sz(sumBytes(dup, 'bytes_wasted'))))
+    if (dupN) lines.push(plural(t, 'prs.pdf.waste.duplicates', dupN, n(dupN), sz(recParam('DUPLICATE_RESOURCES', 'bytes') ?? sumBytes(dup, 'bytes_wasted'))))
     const libs = arr(W.libraries).filter((l) => isObj(l) && l.name)
     if (libs.length) lines.push(t('prs.pdf.waste.libraries', libs.map((l) => `${l.name} (${arr(l.versions).join(', ')})`).join('; ')))
     const um = arr(W.unminified)
     const umN = total(W, 'unminified')
-    if (umN) lines.push(plural(t, 'prs.pdf.waste.unminified', umN, n(umN), sz(sumBytes(um, 'est_saving_bytes'))))
-    const maps = arr(W.source_maps).filter((m) => m?.exposed === true).length
+    if (umN) lines.push(plural(t, 'prs.pdf.waste.unminified', umN, n(umN), sz(recSaving('UNMINIFIED_ASSETS') ?? sumBytes(um, 'est_saving_bytes'))))
+    const maps = Math.max(recParam('SOURCE_MAP_EXPOSED', 'count') ?? 0, arr(W.source_maps).filter((m) => m?.exposed === true).length)
     if (maps > 0) lines.push(plural(t, 'prs.pdf.waste.sourceMaps', maps, n(maps)))
     if (isObj(W.html)) {
       const h = W.html
@@ -798,7 +895,9 @@ export function executiveSections(analysis, t, locale) {
     const cookies = arr(S.cookies).filter(isObj)
     const cookieN = total(S, 'cookies')
     const bad = cookies.filter((c) => arr(c.issues).length > 0).length
-    if (cookieN) lines.push(plural(t, 'prs.pdf.secu.cookies', cookieN, n(cookieN), n(bad)))
+    // Liste ≤ 50 çerez: kesildiyse sorunlu sayısı yalnız listelenenlerden — "ilk N çerezden" denir (toplam uydurulmaz)
+    if (cookieN > cookies.length) lines.push(t('prs.pdf.secu.cookiesListed', n(cookieN), n(bad), n(cookies.length)))
+    else if (cookieN) lines.push(plural(t, 'prs.pdf.secu.cookies', cookieN, n(cookieN), n(bad)))
     const vuln = arr(S.libraries).filter((l) => isObj(l) && arr(l.vulns).length > 0)
     if (vuln.length) {
       lines.push(t('prs.pdf.secu.vulnLibs', vuln.map((l) => `${l.name} ${l.version || ''}`.trim()).join(', ')))
@@ -898,9 +997,12 @@ export function withObjectDeepColumns(sheetRows, items, t) {
 export function deepSheets(analysis, t, locale) {
   const a = isObj(analysis) ? analysis : {}
   const sheets = []
-  const block = (rows, title, head, body, total) => {
+  // `unknown` (metin) verilirse veri OKUNAMADI: "Kayıt yok" yerine o metin yazılır — bilinmeyen asla "sorun yok"
+  // değildir (bh-prs3 D-2: HTML ayrıştırılamadığında engelleyenler / ipuçları / görsel listeleri boş gelir)
+  const block = (rows, title, head, body, total, unknown = null) => {
     if (rows.length) rows.push([])
     rows.push([title])
+    if (unknown && !body.length) { rows.push([unknown]); return }
     if (!body.length) { rows.push([t('prs.pdf.xl.none')]); return }
     rows.push(head)
     for (const r of body) rows.push(r)
@@ -911,15 +1013,18 @@ export function deepSheets(analysis, t, locale) {
     const L = a.loading
     const rows = []
     const rb = isObj(L.render_blocking) ? L.render_blocking : {}
+    // HTML okunamadı: engelleyenler (`render_blocking: null`) ve ipuçları (`hints: null`) bilinmiyor
+    const loadUnknown = t('prs.pdf.load.htmlUnknown')
     block(rows, t('prs.pdf.xl.renderBlocking'), [t('prs.export.col.url'), t('prs.pdf.xl.kind'), t('prs.export.col.bytes'), t('prs.export.col.duration'), t('prs.pdf.xl.reason')],
       arr(rb.items).filter(isObj).map((i) => [i.url ?? '', rbKindText(i.kind, t), num(i.bytes), num(i.duration_ms), rbReasonText(i.reason, t)]),
-      num(rb.items_total) ?? rb.count)
+      num(rb.items_total) ?? rb.count, isObj(L.render_blocking) ? null : loadUnknown)
     block(rows, t('prs.pdf.xl.hosts'), [t('prs.export.col.host'), t('prs.export.col.thirdParty'), t('prs.export.col.count'), t('prs.export.col.bytes'),
       t('prs.pdf.xl.httpVersion'), t('prs.pdf.xl.dns'), t('prs.pdf.xl.connect'), t('prs.pdf.xl.tls'), t('prs.pdf.xl.measured')],
     arr(L.hosts).filter(isObj).map((h) => [h.host ?? '', yn(h.third_party, t), num(h.requests), num(h.bytes), httpVersionText(h.http_version) ?? (h.reason === 'proxy' ? t('prs.deep.hosts.httpProxy') : ''), num(h.dns_ms),
       num(h.connect_ms), num(h.tls_ms), h.measured === false ? `${t('prs.export.no')} (${hostReasonText(h.reason, t)})` : yn(h.measured, t)]), L.hosts_total)
     block(rows, t('prs.pdf.xl.missingPreconnect'), [t('prs.export.col.host'), t('prs.export.col.count'), t('prs.export.col.bytes')],
-      arr(L.hints?.missing_preconnect).filter(isObj).map((h) => [h.host ?? '', num(h.requests), num(h.bytes)]), L.hints?.missing_preconnect_total)
+      arr(L.hints?.missing_preconnect).filter(isObj).map((h) => [h.host ?? '', num(h.requests), num(h.bytes)]), L.hints?.missing_preconnect_total,
+      isObj(L.hints) ? null : loadUnknown)
     block(rows, t('prs.pdf.xl.profiles'), [t('prs.pdf.xl.profile'), t('prs.pdf.xl.rtt'), t('prs.pdf.xl.mbps'), t('prs.pdf.xl.loadMs'), t('prs.pdf.xl.firstPaintMs')],
       arr(L.profiles).filter(isObj).map((p) => [profileLabel(p.key, t), num(p.rtt_ms), num(p.mbps), num(p.load_ms), num(p.first_paint_ms)]))
     sheets.push({ key: 'loading', name: t('prs.pdf.sheet.loading'), rows, widths: [70, 14, 14, 14, 16, 12, 12, 12, 16] })
@@ -949,12 +1054,14 @@ export function deepSheets(analysis, t, locale) {
     const M = a.media
     const im = isObj(M.images) ? M.images : {}
     const rows = []
+    // HTML denetlenemedi (`images.html_checked: false`): boyut / srcset / lazy listeleri boş gelir ama bilinmiyor — "Kayıt yok" değil
+    const imgUnknown = im.html_checked === false ? t('prs.pdf.media.htmlUnknown') : null
     for (const [k, key] of [['missing_dimensions', 'prs.pdf.xl.missingDimensions'], ['missing_srcset', 'prs.pdf.xl.missingSrcset'],
       ['not_lazy', 'prs.pdf.xl.notLazy'], ['animated_gif', 'prs.pdf.xl.animatedGif']]) {
       block(rows, t(key), [t('prs.export.col.url'), t('prs.pdf.xl.detail')],
         arr(im[k]).filter(isObj).map((x) => [x.url ?? '', k === 'missing_srcset' ? (num(x.width) !== null ? `${x.width} px` : '')
           : k === 'animated_gif' ? [num(x.bytes) !== null ? formatSize(x.bytes, { locale }) : '', num(x.frames) !== null ? t('prs.pdf.xl.frames', formatNumber(x.frames, locale)) : ''].filter(Boolean).join(' · ') : '']),
-        im[`${k}_total`])
+        im[`${k}_total`], k === 'animated_gif' ? null : imgUnknown)   // hareketli GIF nesneden ölçülür (HTML'den değil)
     }
     if (isObj(M.fonts)) {
       const f = M.fonts
@@ -1021,7 +1128,8 @@ export function sitePageSheetRows(model, t) {
     [t('prs.export.col.url'), t('prs.site.col.status'), t('prs.grade'), t('prs.site.col.letter'), t('prs.kpi.load'), t('prs.export.col.bytes'),
       t('prs.kpi.requests'), t('prs.site.score.security'), t('prs.site.score.seo'), t('prs.site.score.a11y'), t('prs.site.col.unique'),
       t('prs.site.col.shared'), t('prs.site.col.recs'), t('prs.site.col.problem')],
-    ...arr(model?.pages).map((p) => [p.url, pageStatusText(p.status, t), p.grade, p.letter || '', p.load, p.size, p.requests,
+    // Kısmi ölçülen sayfa durum hücresinde söylenir (ekranın "Kısmi ölçüm" rozeti — bh-prs3 D-3)
+    ...arr(model?.pages).map((p) => [p.url, `${pageStatusText(p.status, t)}${p.capped ? ` · ${t('prs.pdf.partialScore')}` : ''}`, p.grade, p.letter || '', p.load, p.size, p.requests,
       p.security, p.seo, p.a11y, p.unique, p.shared, p.recs.map((c) => recShortLabel(c, t)).join(', '), sitePageErrorText(p, t)]),
   ]
 }

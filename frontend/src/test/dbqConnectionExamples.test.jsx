@@ -90,6 +90,46 @@ describe('bağlantı formu — örnekler', () => {
     expect(screen.getByText('Varsayılan 1433')).toBeInTheDocument()
   })
 
+  it('hata avı D4: rehberin varsayılan portu formla aynı — Oracle TCPS açıkken 2484, kapalıyken 1521', () => {
+    render(<FormHarness initial={emptyForm(1, 'ORACLE')} />)
+    openExamples()
+    const guidePort = () => examples().querySelector('[data-slot="dbq-conn-guide"] [data-field="port"]')
+    expect(guidePort()).toHaveTextContent('Oracle için varsayılan 1521')
+    fireEvent.click(document.querySelector('[data-slot="dbq-conn-tcps"] [role="switch"]'))
+    expect(guidePort()).toHaveTextContent('Oracle için varsayılan 2484')
+    expect(screen.getByText('Varsayılan 2484')).toBeInTheDocument()   // formun kendi ipucu aynı portu söyler
+    fireEvent.click(document.querySelector('[data-slot="dbq-conn-tcps"] [role="switch"]'))
+    expect(guidePort()).toHaveTextContent('Oracle için varsayılan 1521')
+  })
+
+  it('hata avı O2: SQL Server örnek adı dolu + port varsayılan 1433 → uyarı; örneğin portu yazılınca kalkar', () => {
+    render(<FormHarness initial={emptyForm(1, 'MSSQL')} />)
+    const warn = () => document.querySelector('[data-slot="dbq-conn-instance-port"]')
+    expect(warn()).toBeNull()
+    fireEvent.change(screen.getByRole('textbox', { name: /^Örnek adı/ }), { target: { value: 'RAPOR' } })
+    expect(warn()).not.toBeNull()
+    expect(warn()).toHaveTextContent('varsayılan örneğe')
+    fireEvent.change(screen.getByRole('textbox', { name: /^Port/ }), { target: { value: '14331' } })
+    expect(warn()).toBeNull()
+    fireEvent.change(screen.getByRole('textbox', { name: /^Port/ }), { target: { value: '1433' } })
+    expect(warn()).not.toBeNull()
+    fireEvent.change(screen.getByRole('textbox', { name: /^Örnek adı/ }), { target: { value: '' } })
+    expect(warn()).toBeNull()
+  })
+
+  it('hata avı O2: portsuz adlandırılmış örnek yapıştırılınca port 1433 SESSİZCE kalmaz — alan boşalır, not örneğin portunu ister', () => {
+    render(<FormHarness initial={emptyForm(1)} />)
+    const box = document.querySelector('[data-slot="dbq-conn-paste"] input')
+    fireEvent.change(box, { target: { value: 'Server=sql01.corp\\RAPOR;Database=OdemeDB;User Id=mon_ro' } })
+    fireEvent.click(document.querySelector('[data-slot="dbq-conn-paste-apply"]'))
+    expect(screen.getByRole('textbox', { name: /^Örnek adı/ })).toHaveValue('RAPOR')
+    expect(screen.getByRole('textbox', { name: /^Port/ })).toHaveValue('')
+    const note = document.querySelector('[data-slot="dbq-conn-paste-notes"] [data-code="INSTANCE_NEEDS_PORT"]')
+    expect(note).not.toBeNull()
+    expect(note).toHaveTextContent('TCP portunu')
+    expect(document.querySelector('[data-slot="dbq-conn-paste-filled"]')).not.toHaveTextContent('Port')
+  })
+
   it('yapıştırma kutusu yoksa "yukarıdaki kutuya yapıştırın" ipucu da yok', () => {
     render(<FormHarness initial={emptyForm(1)} showPaste={false} />)
     openExamples()

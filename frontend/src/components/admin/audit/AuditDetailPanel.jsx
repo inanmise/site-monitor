@@ -276,22 +276,22 @@ export default function AuditDetailPanel({
         <Section title={t('audit.quickFilters')}>
           <div className="flex flex-wrap gap-2">
             {row.actor && onFilter && (
-              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8" onClick={() => filter({ actor: row.actor })}>
+              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" onClick={() => filter({ actor: row.actor })}>
                 <User /> {t('audit.filterByActor')}
               </Button>
             )}
             {row.ip_address && onFilter && (
-              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8" onClick={() => filter({ ip: row.ip_address })}>
+              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" onClick={() => filter({ ip: row.ip_address })}>
                 <Globe /> {t('audit.filterByIp')}
               </Button>
             )}
             {onFilter && (
-              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8" onClick={() => filter({ eventType: row.event_type })}>
+              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" onClick={() => filter({ eventType: row.event_type })}>
                 <Filter /> {t('audit.filterByEvent')}
               </Button>
             )}
             {(row.resource_type || row.resource_id) && (
-              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8"
+              <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10"
                 onClick={() => (onFilter ? filter({ resourceType: row.resource_type || '', resourceId: row.resource_id || '' })
                   : onDrill?.(row.resource_type, row.resource_id))}>
                 <History /> {t('audit.resourceHistory')}

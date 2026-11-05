@@ -135,6 +135,39 @@ class ActivityLogServiceEnrichmentTest {
     }
 
     @Test
+    @DisplayName("Hata avı Y1: Keyword kelime BULUNDU ama adet koşulu sağlanmadı (ok=false) → WARNING (asla SUCCESS); "
+            + "ok yoksa eski yol (bulundu + hatasız = başarılı)")
+    void keywordConditionFailure_isNotSuccess() {
+        // "içermemeli" (LT 1): kelime 1 kez bulundu, koşul sağlanmadı — HTTP 200, hata yok
+        svc.recordCheck(ActivityLogService.KEYWORD, 7L, "kw", "https://x", 5L, false, "scheduler",
+                new HashMap<>(Map.of("found", true, "ok", false, "count", 1, "http_status", 200, "response_ms", 40)),
+                ActivityLogService.Refs.check(41L, 200, "KEYWORD_FOUND_FORBIDDEN", null));
+        // "en az 3 kez" (GTE 3): 2 kez bulundu
+        svc.recordCheck(ActivityLogService.KEYWORD, 7L, "kw", "https://x", 5L, false, "scheduler",
+                new HashMap<>(Map.of("found", true, "ok", false, "count", 2, "http_status", 200)));
+        // koşul sağlandı
+        svc.recordCheck(ActivityLogService.KEYWORD, 7L, "kw", "https://x", 5L, false, "scheduler",
+                new HashMap<>(Map.of("found", true, "ok", true, "count", 3, "http_status", 200)));
+        // eski yol: ok anahtarı yok → found + hatasız = başarılı; HTTP'de ok yoksa başarısız (değişmedi)
+        svc.recordCheck(ActivityLogService.KEYWORD, 7L, "kw", "https://x", 5L, false, "scheduler",
+                new HashMap<>(Map.of("found", true, "http_status", 200)));
+        svc.recordCheck(ActivityLogService.HTTP, 8L, "web", "https://y", 5L, false, "scheduler",
+                new HashMap<>(Map.of("http_status", 200)));
+        // ok=false + HTTP kodu yok + hata yok → ERROR (HTTP / KEYWORD ortak kural)
+        svc.recordCheck(ActivityLogService.KEYWORD, 7L, "kw", "https://x", 5L, false, "scheduler",
+                new HashMap<>(Map.of("found", true, "ok", false)));
+
+        List<ActivityLog> rows = saved(6);
+        assertThat(rows.get(0).getResultStatus()).isEqualTo("WARNING");
+        assertThat(rows.get(0).getFailureReason()).isEqualTo("KEYWORD_FOUND_FORBIDDEN");
+        assertThat(rows.get(1).getResultStatus()).isEqualTo("WARNING");
+        assertThat(rows.get(2).getResultStatus()).isEqualTo("SUCCESS");
+        assertThat(rows.get(3).getResultStatus()).isEqualTo("SUCCESS");
+        assertThat(rows.get(4).getResultStatus()).isEqualTo("WARNING");
+        assertThat(rows.get(5).getResultStatus()).isEqualTo("ERROR");
+    }
+
+    @Test
     @DisplayName("Sertifika neden kodu: ön yüz checkFailureModel.certCode aynası (sınıf + ileti + aşama)")
     void certFailureReason_mirrorsFrontend() {
         assertThat(ActivityLogService.certFailureReason("DNS", "x", null)).isEqualTo("DNS_RESOLVE");

@@ -75,16 +75,18 @@ public final class DbQueryMailMask {
     }
 
     /**
-     * "Ölçülen Değer" (grafik değeri) maskeli mi: motor bu değeri sırayla ilk "değerlendirilmiş, karşılaştırma değeri olan,
-     * metin eşleşmesi olmayan" kuraldan alır; böyle kural yoksa değer satır sayısıdır (maskesiz). Kural sonuçları yoksa
-     * değerin kaynağı bilinemez → maskeli kural varsa maskeli (temkinli).
+     * "Ölçülen Değer" (grafik değeri) maskeli mi: motor bu değeri sırayla ilk {@link DbQueryEvaluator#measuresMetric} sonucundan
+     * alır (değerlendirilmiş YA DA akıllı kural — taban kurulurken / örnek yetersizken de değeri ölçer; karşılaştırma değeri
+     * olan; metin eşleşmesi olmayan) — maske AYNI kuralla kaynağı bulur (2026-11-05 hata avı O1). Böyle kural yoksa değer
+     * satır sayısıdır (maskesiz). Kural sonuçları yoksa değerin kaynağı bilinemez → maskeli kural varsa maskeli (temkinli).
      */
     public static boolean metricMasked(List<Map<String, Object>> results, Set<String> ids) {
         if (ids == null || ids.isEmpty()) return false;
         if (results == null || results.isEmpty()) return true;
         for (Map<String, Object> r : results) {
-            if (r == null || Boolean.FALSE.equals(r.get("evaluated")) || r.get("compared") == null) continue;
-            if (DbQueryRules.KIND_TEXT_MATCH.equals(String.valueOf(r.get("kind")))) continue;
+            if (r == null) continue;
+            String kind = r.get("kind") == null ? null : String.valueOf(r.get("kind"));
+            if (!DbQueryEvaluator.measuresMetric(kind, !Boolean.FALSE.equals(r.get("evaluated")), number(r.get("compared")))) continue;
             return resultMasked(r, ids);
         }
         return false;
@@ -142,6 +144,16 @@ public final class DbQueryMailMask {
             }
             out.put(historyKey, copy);
         }
+    }
+
+    /**
+     * Sonuçtaki karşılaştırma değeri → sayı; yoksa null. Var ama sayı olarak okunamıyorsa NaN ("değer VAR, ne olduğu
+     * bilinmiyor") — kaynak seçiminde var sayılır, maske temkinli kalır.
+     */
+    private static Double number(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.doubleValue();
+        try { return Double.valueOf(String.valueOf(v).trim()); } catch (NumberFormatException e) { return Double.NaN; }
     }
 
     /** Değerleri maskeli kural ihlali özeti (hangi kuralın ihlal ettiği bilinmediğinde). */

@@ -84,7 +84,7 @@ export default function SchemaExplorer({
         </div>
       )}
       <div className="border-b p-2">
-        <InputGroup className="h-10 sm:h-9">
+        <InputGroup className="h-10 sm:h-9 pointer-coarse:h-10">
           <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('sql.ex.search')} aria-label={t('sql.ex.search')} />
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
           {q && (

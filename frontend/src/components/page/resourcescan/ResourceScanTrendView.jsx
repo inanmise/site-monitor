@@ -16,7 +16,7 @@ import {
   trendDomain,
 } from './resourceScanModel.js'
 import {
-  TREND_DAYS, TREND_DEFAULT_DAYS, algoChanges, hasSeries, isTrendUnsupported, seriesSummary, trendView,
+  TREND_DAYS, TREND_DEFAULT_DAYS, algoChanges, hasSeries, isTrendUnsupported, seriesSummary, trendDirection, trendView,
 } from './resourceScanReportModel.js'
 import { CHIP, Section, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -168,7 +168,7 @@ function TrendCharts({ points, selectedId, onSelect, budget, onWiden, t, locale 
         <ChartCard {...common} chart="grade" title={t('prs.trend.c.grade')} keys={['grade']} colors={{ grade: 'var(--chart-1)' }}
           labels={{ grade: t('prs.trend.grade') }} fmt={(v) => formatNumber(v, locale)} yDomain={[0, 100]} yTicks={GRADE_TICKS}
           budgetLine={budget?.min_grade != null ? { y: budget.min_grade, label: t('prs.trend.budgetMin', formatNumber(budget.min_grade, locale)) } : null}
-          higherIsBetter labelAlgo />
+          higherIsBetter labelAlgo algoDependent />
         <ChartCard {...common} chart="load" title={t('prs.trend.c.load')} keys={['load']} colors={{ load: 'var(--chart-1)' }} area
           labels={{ load: t('prs.trend.load') }} fmt={(v) => formatMs(v, locale)} axis={niceMsTicks(loadTop || 1000, 4)}
           budgetLine={budget?.max_load_ms != null ? { y: budget.max_load_ms, label: t('prs.trend.budgetMax', formatMs(budget.max_load_ms, locale)) } : null} />
@@ -179,7 +179,7 @@ function TrendCharts({ points, selectedId, onSelect, budget, onWiden, t, locale 
           budgetLine={budget?.max_page_kb != null ? { y: budget.max_page_kb * KB, label: t('prs.trend.budgetMax', formatSize(budget.max_page_kb * KB, { locale })) } : null} />
         <ChartCard {...common} chart="scores" title={t('prs.trend.c.scores')} keys={SCORES.map(([k]) => k)}
           colors={Object.fromEntries(SCORES)} labels={{ security: t('prs.site.score.security'), seo: t('prs.site.score.seo'), a11y: t('prs.site.score.a11y') }}
-          fmt={(v) => formatNumber(v, locale)} yDomain={[0, 100]} yTicks={GRADE_TICKS} higherIsBetter
+          fmt={(v) => formatNumber(v, locale)} yDomain={[0, 100]} yTicks={GRADE_TICKS} higherIsBetter algoDependent
           budgetLine={budget?.min_security_score != null ? { y: budget.min_security_score, label: t('prs.trend.budgetMin', formatNumber(budget.min_security_score, locale)) } : null} />
       </div>
       <div data-slot="prs-tv-legend" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -199,6 +199,7 @@ function TrendCharts({ points, selectedId, onSelect, budget, onWiden, t, locale 
 function ChartCard({
   chart, title, keys, colors, labels, fmt, points, syncId, ticks, tickFmt, domain, changes, selectedId, onSelect, t, locale,
   yDomain, yTicks, axis, area = false, stacked = false, total = null, budgetLine, higherIsBetter = false, labelAlgo = false, missingKey,
+  algoDependent = false,
 }) {
   const uid = useId().replace(/:/g, '')
   const titleId = `prs-tv-${chart}-t-${uid}`
@@ -211,7 +212,8 @@ function ChartCard({
   const stackMissing = missingKey ? points.filter((p) => p[missingKey] === false && p.size != null).length : 0
   const domainY = yDomain || [0, axis?.top ?? 'auto']
   const tickY = yTicks || axis?.ticks
-  const dir = sum && sum.count >= 2 && sum.diff !== 0 ? ((higherIsBetter ? sum.diff > 0 : sum.diff < 0) ? 'better' : 'worse') : null
+  // Yön: kısmi noktalar ve (not / puanlarda) algoritma değişiminin öncesi kıyasa girmez (bh-prs3 D-6)
+  const dir = trendDirection(points, mainKey, { higherIsBetter, algoDependent })
   const summaryText = sum
     ? t('prs.trend.cardSummary', labels[mainKey], fmt(sum.last), sum.count >= 2 ? fmt(sum.first) : '—')
     : t('prs.trend.cardEmpty')

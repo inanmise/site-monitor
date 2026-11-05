@@ -312,7 +312,7 @@ public class ActivityDetailService {
         // ── Kontrol satırı + önceki / sonraki ──
         // Kapı: monitoring.read/view (geçmiş uçlarıyla aynı izin) VE izlemenin GÜNCEL takımı görülebilir (inceleme O1).
         CheckTable table = CHECK_ACTIONS.contains(a.getAction()) ? CheckTable.of(a.getMonitorType()) : null;
-        boolean canReadChecks = permissionService == null || permissionService.allows(session, "monitoring.read", "view");
+        boolean canReadChecks = checksReadable(permissionService, session);
         Map<String, Object> check = null;
         Map<String, Object> prev = null;
         Map<String, Object> next = null;
@@ -385,9 +385,12 @@ public class ActivityDetailService {
             out.put("change_error", true);
         }
         out.put("change", change);
+        // Değişiklik ayrıntısı ucu monitoring.read ister (hata avı D7): izin yoksa bağ (yalnız işaretçi) kalır ama ön yüz istek
+        // atmaz — "okunamadı" değil, nötr "izniniz yok"
+        if (change != null && !canReadChecks) out.put("change_hidden", true);
 
         Map<String, Object> alarm = castMap(out.get("alarm"));
-        out.put("links", links(a, alarm, change, session, current));
+        out.put("links", links(a, alarm, change, session, current, canReadChecks));
 
         Map<String, Object> actor = new LinkedHashMap<>();
         actor.put("name", a.getActor());
@@ -969,11 +972,14 @@ public class ActivityDetailService {
     // ── Bağlantılar ────────────────────────────────────────────────────────────────────────────────────────────────
 
     Map<String, Object> links(ActivityLog a, Map<String, Object> alarm, Map<String, Object> change, HttpSession session,
-                              CurrentTeam current) {
+                              CurrentTeam current, boolean canReadChecks) {
         String type = a.getMonitorType() == null ? "" : a.getMonitorType().toUpperCase(Locale.ROOT);
         Map<String, Object> out = new LinkedHashMap<>();
         // İzleme başka (görülemeyen) takıma taşındıysa ya da güncel takımı okunamadıysa izlemeye derin bağlantı yok (O1)
-        boolean monitorVisible = current == null || Boolean.TRUE.equals(current.visible());
+        boolean teamVisible = current == null || Boolean.TRUE.equals(current.visible());
+        // monitoring.read yoksa izleme sekmeleri (izleme / geçmiş / değişiklikler / tanılama) 403 verir → bağlantı yok
+        // (hata avı D2; kontrol kapısının belgelenen sözleşmesi)
+        boolean monitorVisible = teamVisible && canReadChecks;
         Map<String, Object> monitor = monitorVisible ? monitorLink(a, type, null) : null;
         out.put("monitor", monitor);
         out.put("history", monitorVisible ? monitorLink(a, type, "control") : null);
@@ -988,7 +994,18 @@ public class ActivityDetailService {
                 && (permissionService == null || permissionService.allows(session, "diagnostics.run", "execute"))
                 && SessionScope.canOperateTeam(session, current == null ? a.getTeamId() : current.teamId());
         out.put("can_diagnose", diag);
+        // Zaman çizelgesi ucunun kapısı izlemenin GÜNCEL takımı (izin istemez) — düğme yalnız uç kabul edecekse (hata avı D8)
+        out.put("can_timeline", a.getMonitorId() != null && teamVisible);
         return out;
+    }
+
+    /**
+     * Kontrol ayrıntısını (kontrol satırı, komşular, satırın kendi {@code failure_detail}'i, izleme derin bağlantıları) görme
+     * izni — {@code monitoring.read/view} (geçmiş uçlarıyla aynı). TEK yardımcı: ayrıntı ucu, liste ve kök neden satırları
+     * aynı kuralla gizler (hata avı D1). Servis yoksa (dar test bağlamı) izinli.
+     */
+    public static boolean checksReadable(PermissionService permissionService, HttpSession session) {
+        return permissionService == null || permissionService.allows(session, "monitoring.read", "view");
     }
 
     /** Sekme bağlantısı — {@code utils/activityTarget.js} kuralı; {@code mtab} verilirse izlemenin o sekmesi. */

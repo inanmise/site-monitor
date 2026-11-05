@@ -3,14 +3,19 @@
  * yer tutucuları için TEK kaynak. Değerler gerçek DEĞİL (example.com); parola hiçbir örnekte yok.
  *
  * Her örneğin `conn` dizesi gerçek ayrıştırıcıdan ({@link ./connectionString.js}) geçer ve `fields` ile AYNI alanları
- * doldurur — kapı `dbqConnectionExamples.test.js`. Alan değerleri sunucu kurallarına uyar (`DbJdbcUrls.requireName`,
- * `DbConnectionProfileService` sınırları; aşağıdaki `RULES`).
+ * doldurur — kapı `dbqConnectionExamples.test.js`. Alan değerleri sunucunun KAYIT kurallarına uyar
+ * (`DbConnectionProfileService` sınırları ve desenleri; aşağıdaki `RULES`).
  *
  * SQL Server adlandırılmış örnek: sunucu sürücüye portu HER ZAMAN verir ve sürücü port verildiğinde örnek adını kullanmaz
  * (portNumber önceliklidir; SQL Browser / UDP 1434 sorgusu yapılmaz) — bu yüzden örnek o örneğin KENDİ TCP portunu taşır.
  */
 
-/** Sunucu kuralları (ön yüz eşi; sunucu `DbConnectionProfileService.MAX_*` ve `DbJdbcUrls.requireName`). */
+/**
+ * Sunucu kuralları — kayıt doğrulamasının (`DbConnectionProfileService`: `MAX_*`, `HOSTNAME`, `IPV6`, `DATABASE`,
+ * `INSTANCE` desenleri) ön yüz eşi. Kaydın kendisi esastır: çalışma anı denetimi (`DbJdbcUrls.requireName` /
+ * `requireHostName`) daha gevşektir (örnek adında `.`, sunucu adında `_` kabul eder) ama o değerler kayıtta zaten reddedilir
+ * — örnekler kaydedilebilir olmalı (2026-11-05 hata avı D5).
+ */
 export const RULES = Object.freeze({
   nameMax: 120,
   hostMax: 253,
@@ -19,10 +24,14 @@ export const RULES = Object.freeze({
   usernameMax: 128,
   passwordMax: 512,
   descriptionMax: 500,
-  /** Veritabanı / servis / SID / örnek adı karakterleri. */
+  /** Veritabanı / servis / SID adı karakterleri (`DATABASE`: `[A-Za-z0-9_.$#-]`). */
   objectName: /^[A-Za-z0-9_.$#-]+$/,
-  /** Sunucu adı ya da IP (IPv6 için iki nokta). */
-  host: /^[A-Za-z0-9._:-]+$/,
+  /** SQL Server örnek adı karakterleri (`INSTANCE`: `[A-Za-z0-9_$#-]` — nokta YOK). */
+  instance: /^[A-Za-z0-9_$#-]+$/,
+  /** Sunucu adı (`HOSTNAME`: harf / rakamla başlar ve biter, arada harf, rakam, `.` `-`; `_` YOK; `..` yok). */
+  host: /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/,
+  /** IPv6 (`IPV6`: iki nokta içeren adres, 2–45 karakter). */
+  ipv6: /^[0-9A-Fa-f:.]{2,45}$/,
   /** Kullanıcı adında olamayanlar. */
   usernameForbidden: /[;{}\u0000-\u001f]/,
 })
@@ -109,10 +118,12 @@ export function valueFitsRule(field, value) {
   if (value == null) return true
   const s = String(value)
   switch (field) {
-    case 'host': return s.length <= RULES.hostMax && RULES.host.test(s)
+    case 'host':
+      if (s.length > RULES.hostMax) return false
+      return s.includes(':') ? RULES.ipv6.test(s) : RULES.host.test(s) && !s.includes('..')
     case 'port': return Number.isInteger(value) && value >= 1 && value <= 65535
     case 'database_name': return s.length <= RULES.databaseMax && RULES.objectName.test(s)
-    case 'mssql_instance': return s.length <= RULES.instanceMax && RULES.objectName.test(s)
+    case 'mssql_instance': return s.length <= RULES.instanceMax && RULES.instance.test(s)
     case 'username': return s.length <= RULES.usernameMax && !RULES.usernameForbidden.test(s)
     default: return true
   }

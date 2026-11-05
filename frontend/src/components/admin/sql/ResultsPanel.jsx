@@ -156,7 +156,7 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
 
   const toolbar = hasRows && !running && (
     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-      <InputGroup className="h-10 w-full sm:h-8 sm:w-52">
+      <InputGroup className="h-10 w-full sm:h-8 sm:w-52 pointer-coarse:h-10">
         <InputGroupInput value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t('sql.res.filter')} aria-label={t('sql.res.filter')} />
         <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
         {filter && (

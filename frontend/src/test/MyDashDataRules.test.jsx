@@ -113,6 +113,37 @@ describe('Panom — Veri kuralları', () => {
     expect(widget()).not.toHaveAttribute('data-stat', 'on')
   })
 
+  it('hata avı D2: yalnız yavaş sorgu → sayı yavaş izleme sayısı (0 değil), turuncu; tıklama yavaşları listeleyen süzgeç (stat=warn)', async () => {
+    api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: true, data: [m(1, { status: 'OK', slow: true }), m(2)] })
+    const { unmount } = render(<Shell initial={layout()}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget()?.querySelector('[data-slot="mydash-rules-list"]')).not.toBeNull())
+    expect(widget()).toHaveAttribute('data-tone', 'warning')
+    const total = widget().querySelector('[data-slot="mydash-rules-total"]')
+    expect(total).toHaveTextContent('1')
+    expect(total).toHaveTextContent(EN['mydash.rules.slowLabel'])
+    expect(widget().querySelector('[data-slot="mydash-rules-list"] li')).toHaveTextContent(EN['mydash.rules.p.slow'])
+    fireEvent.click(total)
+    expect(navs.at(-1)).toEqual({ tab: 'dbquery', params: { stat: 'warn' } })
+    unmount()
+    // Renkli panel: büyük sayı da 1 (turuncu zeminde "0" çelişkisi yok), alt satır yavaşı sayar
+    render(<Shell initial={layout('stat')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget()).toHaveAttribute('data-stat', 'on'))
+    expect(widget().querySelector('[data-slot="mydash-stat-value"]')).toHaveTextContent('1')
+    expect(widget()).toHaveTextContent('0 failing · 0 in breach · 1 slow · 0 not evaluated')
+  })
+
+  it('hata avı D2: ihlal + yavaş birlikte → sayı ihlalde / hatalı izlemeler, tıklama "Şu an ihlalde"; alt satır yavaşı da sayar', async () => {
+    api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: true, data: [
+      m(1, { status: 'OK', slow: true }), m(2, { status: 'BREACH', breach_level: 'WARNING' }),
+    ] })
+    render(<Shell initial={layout('stat')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget()).toHaveAttribute('data-stat', 'on'))
+    expect(widget().querySelector('[data-slot="mydash-stat-value"]')).toHaveTextContent('1')
+    expect(widget()).toHaveTextContent('0 failing · 1 in breach · 1 slow · 0 not evaluated')
+    fireEvent.click(widget().querySelector('[data-slot="mydash-stat"]'))
+    expect(navs.at(-1)).toEqual({ tab: 'dbquery', params: { dq: 'breach' } })
+  })
+
   it('okunamadı → hata durumu (renk yok); 403 → "yetki yok" gri; izleme yok → gri', async () => {
     api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: false, status: 500, error: 'x' })
     const { unmount } = render(<Shell initial={layout()}><MyDashPage /></Shell>)

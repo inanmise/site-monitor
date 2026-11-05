@@ -84,11 +84,11 @@ function AlertEventCard({ t, type, alert: a, ts }) {
         </Badge>
       )}
       {duration && <span className="opacity-80">{t('hist.alertDuration', duration)}</span>}
-      {a.message && <span className="min-w-0 flex-1 basis-40 truncate opacity-80" title={a.message}>{a.message}</span>}
+      {a.message && <span className="min-w-0 flex-1 basis-40 opacity-80 [overflow-wrap:anywhere]">{a.message}</span>}
       <span className="ml-auto shrink-0 tabular-nums opacity-80">{formatDateSec(ts)}</span>
       {a.id != null && (
         <SimpleTooltip content={t('hist.openAlert')}>
-          <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-current hover:bg-black/5 hover:text-current pointer-coarse:size-9 dark:hover:bg-white/10"
+          <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-current hover:bg-black/5 hover:text-current pointer-coarse:size-10 dark:hover:bg-white/10"
             aria-label={t('a11y.rowAction', `${title} · ${a.alert_type}`, t('hist.openAlert'))}
             onClick={() => navigateTo('alerthistory', alertNavParams(a))}>
             <ExternalLink aria-hidden="true" />

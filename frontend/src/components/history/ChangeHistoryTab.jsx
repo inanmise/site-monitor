@@ -237,7 +237,7 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
                   <TableCell className={cn(TD, 'hidden lg:table-cell')}><IpCopy t={t} ip={r.ip_address} masked={r.identity_masked === true} /></TableCell>
                   <TableCell className="w-10 px-1 align-top">
                     <Button type="button" variant="ghost" size="icon-sm" data-open-detail="" aria-expanded={open} aria-label={rowLabel}
-                      className="text-muted-foreground" onClick={(e) => { e.stopPropagation(); toggle(r.seq) }}>
+                      className="text-muted-foreground pointer-coarse:size-10" onClick={(e) => { e.stopPropagation(); toggle(r.seq) }}>
                       <ChevronDown aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
                     </Button>
                   </TableCell>

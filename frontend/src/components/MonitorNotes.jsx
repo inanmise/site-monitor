@@ -327,11 +327,11 @@ function NoteCard({ n, onEdit, onDelete, locked = false }) {
         <div className={cn('flex items-center justify-between gap-2.5', open && 'mb-2')}>
           <CollapsibleTrigger asChild>
             <Button type="button" variant="ghost"
-              className="group/note h-auto min-w-0 flex-1 justify-start gap-2 px-1 py-0.5 text-left font-normal hover:bg-transparent pointer-coarse:min-h-10 dark:hover:bg-transparent">
+              className="group/note h-auto min-w-0 flex-1 justify-start gap-2 px-1 py-0.5 text-left font-normal whitespace-normal hover:bg-transparent pointer-coarse:min-h-10 dark:hover:bg-transparent">
               <ChevronRight size={15} aria-hidden="true"
                 className={cn('shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-90')} />
               <span className="flex min-w-0 flex-1 flex-col gap-px">
-                <span className="truncate text-[13px] font-semibold group-hover/note:text-primary">{title}</span>
+                <span className="text-[13px] font-semibold group-hover/note:text-primary [overflow-wrap:anywhere]">{title}</span>
                 <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   {n.author_name || n.author_username} · {fmt(n.created_at)}
                   {n.updated_at ? ` · ${t('mnote.edited')}` : ''}

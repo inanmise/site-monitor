@@ -125,7 +125,7 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
   } else if (result.error) {
     body = (
       <AlertBanner tone="danger" role="alert" title={t('wn.errorTitle')} className="mb-0"
-        actions={<Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={rerun}>
+        actions={<Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" onClick={rerun}>
           <RotateCw aria-hidden="true" /> {t('wn.retry')}
         </Button>}>
         {String(result.error)}
@@ -143,7 +143,7 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
   return (
     <section data-slot="who-notified" data-testid="recipient-sim" className="mb-8 flex min-w-0 w-full flex-col gap-5">
       <SettingsHeader icon={Users} title={t('sim.title')} description={t('wn.subtitle')}
-        actions={teamId ? <CopyLinkButton variant="outline" className="h-10 w-full sm:w-auto md:h-8" /> : null} />
+        actions={teamId ? <CopyLinkButton variant="outline" className="h-10 w-full sm:w-auto md:h-8 pointer-coarse:h-10" /> : null} />
       <ScenarioForm teams={teams} teamId={teamId} onTeamChange={changeTeam}
         level={level} onLevelChange={setLevel} kind={kind} onKindChange={setKind}
         groups={groups} groupsLoaded={groupsLoaded} groupId={groupId} onGroupChange={(v) => setGroupId(normId(v))}

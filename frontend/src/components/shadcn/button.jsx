@@ -41,6 +41,20 @@ const buttonVariants = cva(
   }
 )
 
+// Dokunmatik boy (2026-11-05, mweb denetimi — RESPONSIVE.md §4): `default` ve `icon` boyutlu düğme parmakla dokunulan
+// ekranda (`pointer: coarse`) 40 px. Fare görünümü (36 px) değişmez. Çağıran kendi yüksekliğini verdiyse (önek almamış
+// `h-*`, `min-h-*`, `size-*` — ör. metin içi bağlantı `h-auto p-0`) ona dokunulmaz; `sm` / `xs` / `icon-sm` / `icon-xs`
+// bilinçli küçük boylardır, dokunmatik boyu çağıran verir (`pointer-coarse:h-10`). `buttonVariants`'ı doğrudan kullanan
+// yerler (takvim günü, sayfalama) etkilenmez. Kilit: test/buttonTouchSize.test.jsx, e2e/mweb-sweep.spec.js.
+const TOUCH_SIZE = { default: "pointer-coarse:h-10", icon: "pointer-coarse:size-10" }
+const OWN_HEIGHT = /(^|\s)!?(h|min-h|size)-/
+
+export function touchSizeClass(size, className) {
+  const cls = TOUCH_SIZE[size]
+  if (!cls) return null
+  return typeof className === "string" && OWN_HEIGHT.test(className) ? null : cls
+}
+
 // React 18 (proje sürümü): shadcn CLI 4.x bileşenleri React 19 kalıbıyla üretir (ref düz prop).
 // React 18 işlev bileşenine verilen ref'i DÜŞÜRÜR — Radix `asChild` tetikleyicileri konum için
 // ref'e muhtaç, ekranlar da odak için ref kullanıyor. forwardRef React 19'da da geçerli.
@@ -59,7 +73,7 @@ const Button = React.forwardRef(function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(buttonVariants({ variant, size }), touchSizeClass(size, className), className)}
       {...props}
     />
   )

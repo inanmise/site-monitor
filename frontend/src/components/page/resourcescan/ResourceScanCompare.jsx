@@ -16,7 +16,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { cn } from '@/lib/utils'
 // prs3 F / G (fe2): bütçe durumu, çok sayfalı analiz ve kategori puanı işaretleri
 import { BudgetStatusBadge } from './ResourceScanBudget.jsx'
-import { budgetStatusOf, scanMarkerScores } from './resourceScanReportModel.js'
+import { budgetStatusOf, scanMarkerScores, siteRowText } from './resourceScanReportModel.js'
 
 /** KPI → biçimleyici ve etiket anahtarı. */
 const KPI_LABEL = {
@@ -246,7 +246,7 @@ function CompareMarkers({ older, newer, t, locale }) {
       {budgetStatusOf(row) ? <BudgetStatusBadge row={row} /> : <span className="text-xs text-muted-foreground">{t('prs.budget.hist.none')}</span>}
       {row?.scope === 'site' && (
         <ToneBadge tone="info" className={CHIP} data-slot="prs-cmp-site">
-          {row.pages_count != null ? plural(t, 'prs.site.chip', Number(row.pages_count), formatNumber(row.pages_count, locale)) : t('prs.site.chipNoCount')}
+          {siteRowText(row, t, locale)}
         </ToneBadge>
       )}
     </span>

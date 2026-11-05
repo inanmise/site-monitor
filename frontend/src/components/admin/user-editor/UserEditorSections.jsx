@@ -156,7 +156,7 @@ export function AccountSection({ ed }) {
           {isAdd && (
             <Field label={t('usr.formPassword')} required hint={t('ued.passwordHint')} {...ed.fe.fieldProps('password')}>
               {({ id, describedBy, invalid }) => (
-                <InputGroup className="max-sm:h-10">
+                <InputGroup className="max-sm:h-10 pointer-coarse:h-10">
                   <InputGroupInput id={id} type={showPwd ? 'text' : 'password'} aria-describedby={describedBy} aria-invalid={invalid}
                     value={form.password} autoComplete="new-password" onChange={(e) => ed.set('password', e.target.value)} />
                   <InputGroupAddon align="inline-end">
@@ -338,7 +338,7 @@ export function ProfileSection({ ed }) {
       {ed.ldap ? (
         <AlertBanner tone="info" className="mb-0" icon={SearchCheck}
           actions={ed.onOpenDirectory && (
-            <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8" data-slot="ued-ad-compare" onClick={ed.onOpenDirectory}>
+            <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" data-slot="ued-ad-compare" onClick={ed.onOpenDirectory}>
               <SearchCheck aria-hidden="true" />{t('ued.adCompare')}
             </Button>
           )}>

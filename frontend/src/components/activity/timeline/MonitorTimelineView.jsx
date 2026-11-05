@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, RefreshCw, ExternalLink, ListFilter, ChevronLeft, ChevronRight, BellRing, FileSearch, Activity, XCircle,
-  SearchX, Clock, Percent, Timer, Hourglass, ListChecks,
+  SearchX, Clock, Percent, Timer, Hourglass, ListChecks, CalendarX,
 } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
 import { useT, useLanguage } from '../../../i18n/index.jsx'
@@ -31,7 +31,7 @@ import { ReasonBadge, TypeBadge } from '../ActivityParts.jsx'
 import { durationText } from '../related/relatedModel.js'
 import { tn } from '../activityModel.js'
 import {
-  TL_RANGES, availabilityTone, formatPct, hasSeriesData, outageSeconds, parseTime, readTlParams, seriesPoints,
+  TL_RANGES, availabilityTone, formatPct, hasSeriesData, outageKpi, outageSeconds, parseTime, readTlParams, seriesPoints,
   stripSegments, tlWindow, unwrapTimeline, writeTlParams,
 } from './timelineModel.js'
 
@@ -56,7 +56,9 @@ const TONE_INK = { good: 'text-success', warn: 'text-amber-700 dark:text-amber-3
  * Aralık değişimi okunamazsa eski aralığın verisi YENİ aralık etiketi altında kalmaz (inceleme FR D3): veri anahtarı
  * aralığı da içerir — aynı aralığın tazelemesi veriyi korur, farklı aralık iskelet / hata bloğu gösterir. Eski pod
  * (uç yok — `/{id}` `timeline`'ı kimlik sanıp 400 `INVALID_PARAMETER`, ya da 405) "bu sürümde yok" der (FR D2).
- * Açılınca odak başlığa (FR D11).
+ * Geçersiz özel aralık (ters / 90 günden uzun / başlangıçsız — paylaşılan bağlantı ya da adres) istek atmaz ve eski aralığın
+ * verisini YENİ etiket altında bırakmaz, sonsuz iskelet de göstermez: "aralığı düzeltin" bloğu (`data-state="invalid"`);
+ * "Uygula" geçersiz taslakta pasif, hata alanın altında (hata avı D5). Açılınca odak başlığa (FR D11).
  *
  * Props: `{ type, id, onBack, onOpenActivity(id), onFilterList(type, id, name) }`.
  * Test kancaları: `data-slot="act-tl-view"` (+ `data-state`), `act-tl-kpi` (+ `data-key` / `data-tone`), `act-tl-strip`,
@@ -92,7 +94,11 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
     const key = `${type}:${id}|${tl.range}|${tl.from}|${tl.to}`
     // Pencere HER istekte o anki zamanla hesaplanır (Yenile "son 7 gün"ü dondurmasın)
     const w = tlWindow(tl)
-    if (w.error) return Promise.resolve()
+    if (w.error) {
+      // Geçersiz aralık: istek yok, eski verinin yerine "aralığı düzeltin" (yanıt gelmemiş istek de düşer — seq arttı)
+      setState({ status: 'invalid', data: null, error: w.error, key })
+      return Promise.resolve()
+    }
     setState((s) => ({ status: 'loading', data: s.data && s.key === key ? s.data : null, error: null, key }))
     return Promise.resolve().then(() => api.getActivityTimeline({ monitor: `${type}:${id}`, from: w.from, to: w.to }))
       .then((res) => {
@@ -131,7 +137,9 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
     }
     setTl({ range: r, from: '', to: '' })
   }
-  const customErr = tl.range === 'custom' ? win.error : null
+  // Uygulanan aralığın hatası (adres / paylaşılan bağlantı) ya da taslağın hatası (Uygula pasif) — alanın altında tek ileti
+  const draftErr = tl.range === 'custom' ? tlWindow({ range: 'custom', from: draft.from, to: draft.to }).error || null : null
+  const customErr = tl.range === 'custom' ? (draftErr || win.error || null) : null
 
   return (
     <div data-slot="act-tl-view" data-state={state.status} className="flex min-w-0 flex-col gap-4">
@@ -191,7 +199,8 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
                 <DateTimeField id={`${uid}-to`} value={draft.to} onChange={(v) => setDraft((d) => ({ ...d, to: v }))}
                   min={draft.from || undefined} clearable />
               </div>
-              <Button type="button" className="pointer-coarse:h-10" onClick={() => setTl({ range: 'custom', from: draft.from, to: draft.to })}>
+              <Button type="button" className="pointer-coarse:h-10" disabled={!!draftErr} data-slot="act-tl-custom-apply"
+                onClick={() => setTl({ range: 'custom', from: draft.from, to: draft.to })}>
                 {t('act.flt.apply')}
               </Button>
               {customErr && (
@@ -208,6 +217,10 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
       ) : state.status === 'notfound' ? (
         <StatusBlock tone="neutral" icon={SearchX} title={t('act.tl.mon.notFound')} description={t('act.tl.mon.notFoundHint')}
           actions={<Button type="button" variant="outline" onClick={onBack} className="pointer-coarse:h-10"><ArrowLeft aria-hidden="true" /> {t('act.backToList')}</Button>} />
+      ) : state.status === 'invalid' ? (
+        <div data-slot="act-tl-invalid">
+          <StatusBlock tone="neutral" icon={CalendarX} title={t('act.tl.mon.invalidTitle')} description={t('act.tl.mon.invalidHint')} />
+        </div>
       ) : state.status === 'error' && !data ? (
         <StatusBlock tone="danger" icon={XCircle} title={t('act.tl.mon.loadFailed')} role="alert"
           actions={<Button type="button" variant="outline" onClick={() => load()} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" /> {t('hist.retry')}</Button>} />
@@ -240,6 +253,8 @@ function Kpi({ k, icon: Icon, label, value, sub, tone = 'unknown' }) {
 
 function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenActivity, win }) {
   const avTone = availabilityTone(data.availability_pct)
+  // Hiçbir kontrol ölçülemediyse kesinti "—" (nötr), "0 / kesinti yok" DEĞİL (hata avı O3)
+  const outage = outageKpi(data)
   const dur = (s) => (s == null ? '—' : durationText(s, t))
   const fromMs = parseTime(data.from || win.from)
   const toMs = data.to ? parseTime(data.to) : Date.now()
@@ -268,9 +283,8 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
         <Kpi k="availability" icon={Percent} label={t('act.tl.mon.kpi.availability')} tone={avTone}
           value={data.availability_pct == null ? '—' : (lang === 'en' ? `${formatPct(data.availability_pct, lang)}%` : `%${formatPct(data.availability_pct, lang)}`)}
           sub={data.availability_pct == null ? t('act.tl.mon.kpi.noScheduled') : t('act.tl.mon.kpi.availabilityHint')} />
-        <Kpi k="outages" icon={XCircle} label={t('act.tl.mon.kpi.outages')}
-          tone={data.checks ? (data.outage_count > 0 ? 'bad' : 'good') : 'unknown'}
-          value={data.checks ? String(data.outage_count) : '—'} />
+        <Kpi k="outages" icon={XCircle} label={t('act.tl.mon.kpi.outages')} tone={outage.tone} value={outage.value}
+          sub={data.checks && outage.measured === false ? t('act.tl.mon.kpi.noMeasured') : null} />
         <Kpi k="mttr" icon={Timer} label={t('act.tl.mon.kpi.mttr')} value={dur(data.mttr_s)} sub={t('act.tl.mon.kpi.mttrHint')} />
         <Kpi k="longest" icon={Hourglass} label={t('act.tl.mon.kpi.longest')} value={dur(data.longest_outage_s)} />
         <Kpi k="checks" icon={ListChecks} label={t('act.tl.mon.kpi.checks')} value={String(data.checks)}
@@ -279,7 +293,7 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
 
       <AvailabilityStrip periods={data.periods} from={data.from || win.from} to={data.to} t={t} merged={data.periods_merged} />
 
-      <OutageList outages={data.outages} t={t} onOpenActivity={onOpenActivity} />
+      <OutageList outages={data.outages} t={t} onOpenActivity={onOpenActivity} measured={outage.measured === true} />
 
       <ResponseChart series={data.series} t={t} lang={lang} spanMs={spanMs} />
     </div>
@@ -378,7 +392,7 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
 }
 
 /** Kesinti listesi — en yeni üstte; süre + kontrol sayısı + neden; ilk aktiviteye / alarma git. */
-function OutageList({ outages, t, onOpenActivity }) {
+function OutageList({ outages, t, onOpenActivity, measured = true }) {
   // Alarm düğmesi yalnız alarm okuma izniyle (inceleme FR D4: izinsiz kullanıcı boş / 403 sayfaya gidiyordu); izin
   // yoksa numara düz metin olarak kalır (bilgi kaybolmaz)
   const canOpenAlarm = usePermissions().canView('alerts.read')
@@ -397,7 +411,9 @@ function OutageList({ outages, t, onOpenActivity }) {
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-2 px-4">
         {sorted.length === 0 ? (
-          <p data-slot="act-tl-no-outage" className="m-0 text-sm text-muted-foreground">{t('act.tl.mon.noOutage')}</p>
+          <p data-slot="act-tl-no-outage" data-measured={measured ? undefined : 'false'} className="m-0 text-sm text-muted-foreground">
+            {t(measured ? 'act.tl.mon.noOutage' : 'act.tl.mon.noOutageUnmeasured')}
+          </p>
         ) : (
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {shown.map((o, i) => {

@@ -29,6 +29,12 @@ const PROBLEM = {
 
 /** Sayfa bağlantısı: "Şu an ihlalde" süzgeciyle Veritabanı Sorgusu sayfası (dbq2 C3 — `dq=breach`). */
 const BREACH_PARAMS = { dq: 'breach' }
+/**
+ * Yalnız yavaş sorgu varken (hata / ihlal / açık alarm yok) sayfa "Uyarı" sayım kartı süzgeciyle (`stat=warn`) açılır: uyarı
+ * ihlali sıfır olduğundan bu süzgeç TAM OLARAK yavaş izlemeleri listeler — "Şu an ihlalde" süzgeci yavaşı saymaz, boş liste
+ * açardı (2026-11-05 hata avı D2).
+ */
+const SLOW_PARAMS = { stat: 'warn' }
 
 /**
  * "Veri kuralları" kutusu (2026-11-05, dbq2 C5): ihlalde / hatalı / değerlendirilemeyen veritabanı sorgu izlemesi sayıları,
@@ -40,6 +46,14 @@ export function DataRulesWidget({ frame, refreshKey }) {
   const { data, loading, error, at } = useWidgetData(fetchDataRules, { refreshKey })
   const s = dataRulesSummary(data, listLimit(frame.widget.size, frame.tv, 5))
   const problemTotal = s.fail + s.breach + s.alarm
+  // D2: yalnız yavaş sorgu varken büyük sayı "0" + turuncu çelişkisi olmasın — sayı yavaş izlemeler, bağlantı onların süzgeci
+  const slowOnly = problemTotal === 0 && s.slow > 0
+  const headline = slowOnly ? s.slow : problemTotal
+  const headlineLabel = t(slowOnly ? 'mydash.rules.slowLabel' : 'mydash.rules.problemLabel')
+  const linkParams = slowOnly ? SLOW_PARAMS : BREACH_PARAMS
+  const statSub = s.slow > 0
+    ? t('mydash.rules.statSubSlow', s.fail, s.breach + s.alarm, s.slow, s.unknown)
+    : t('mydash.rules.statSub', s.fail, s.breach + s.alarm, s.unknown)
   const toneLabel = s.hidden ? t('mydash.noAccess')
     : s.fail > 0 ? t('mydash.rules.failCount', s.fail)
     : s.breach + s.alarm > 0 ? t('mydash.rules.breachCount', s.breach + s.alarm)
@@ -47,24 +61,23 @@ export function DataRulesWidget({ frame, refreshKey }) {
     : s.active === 0 ? t('mydash.rules.none')
     : s.unknown > 0 ? t('mydash.rules.unknownCount', s.unknown)
     : t('mydash.allClear')
-  const open = linkTo(frame, 'dbquery', BREACH_PARAMS)
+  const open = linkTo(frame, 'dbquery', linkParams)
   return (
-    <WidgetCard frame={frame} Icon={DatabaseZap} title={t('mydash.w.data_rules')} tab="dbquery" tabParams={BREACH_PARAMS}
+    <WidgetCard frame={frame} Icon={DatabaseZap} title={t('mydash.w.data_rules')} tab="dbquery" tabParams={linkParams}
       loading={loading} error={error} at={at} tone={s.tone} toneLabel={toneLabel}
       stat={s.hidden ? null : {
-        value: problemTotal, label: t('mydash.rules.problemLabel'),
-        sub: t('mydash.rules.statSub', s.fail, s.breach + s.alarm, s.unknown), onClick: open, hint: t('mydash.linkHint'),
+        value: headline, label: headlineLabel, sub: statSub, onClick: open, hint: t('mydash.linkHint'),
       }}>
       {s.hidden ? <Empty tone="muted" text={t('mydash.noAccessBody')} tv={frame.tv} /> : (<>
         <div className="flex flex-col gap-3 @md:flex-row @md:items-end @md:gap-x-6">
-          <Metric value={problemTotal} label={t('mydash.rules.problemLabel')} slot="mydash-rules-total" tv={frame.tv}
-            tone={s.fail ? 'danger' : problemTotal ? 'warning' : s.tone === 'success' ? 'success' : 'neutral'}
+          <Metric value={headline} label={headlineLabel} slot="mydash-rules-total" tv={frame.tv}
+            tone={s.fail ? 'danger' : headline ? 'warning' : s.tone === 'success' ? 'success' : 'neutral'}
             onClick={open} hint={t('mydash.linkHint')} />
           <div className="grid min-w-0 grid-cols-3 gap-2 @md:flex-1">
             <Tile value={s.fail} label={t('mydash.rules.fail')} tone={s.fail ? 'danger' : 'muted'} tv={frame.tv} slot="mydash-rules-fail"
-              onClick={open} hint={t('mydash.linkHint')} />
+              onClick={linkTo(frame, 'dbquery', BREACH_PARAMS)} hint={t('mydash.linkHint')} />
             <Tile value={s.breach + s.alarm} label={t('mydash.rules.breach')} tone={s.breach + s.alarm ? 'warning' : 'muted'} tv={frame.tv}
-              slot="mydash-rules-breach" onClick={open} hint={t('mydash.linkHint')} />
+              slot="mydash-rules-breach" onClick={linkTo(frame, 'dbquery', BREACH_PARAMS)} hint={t('mydash.linkHint')} />
             {/* Değerlendirilemeyen: süzgeç yok — sayfanın tamamı açılır */}
             <Tile value={s.unknown} label={t('mydash.rules.unknown')} tone="muted" tv={frame.tv} slot="mydash-rules-unknown"
               onClick={linkTo(frame, 'dbquery')} hint={t('mydash.linkHint')} />

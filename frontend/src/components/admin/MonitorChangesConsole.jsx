@@ -389,7 +389,7 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
 
       {error && (
         <AlertBanner tone="danger" role="alert" icon={AlertOctagon} title={t('chg.loadError')} className="mb-0"
-          actions={<Button type="button" variant="outline" size="sm" className="max-md:h-10" onClick={() => load()}>
+          actions={<Button type="button" variant="outline" size="sm" className="max-md:h-10 pointer-coarse:h-10" onClick={() => load()}>
             <RefreshCw aria-hidden="true" /> {t('chg.retry')}</Button>}>
           {error}
         </AlertBanner>

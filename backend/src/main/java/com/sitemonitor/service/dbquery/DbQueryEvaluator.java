@@ -249,7 +249,8 @@ public final class DbQueryEvaluator {
      * @param ended    donmuş değer: dizi KESİN bir kırılmayla bitti (değeri boş bir çalıştırma) — daha eskisi bu diziye
      *                 eklenemez; false = geçmiş bitti / okunmadı (daha eskisi bilinmiyor)
      * @param reset    geçmiş, ölçüm tanımı (sorgu / kolon / hesap / tür) değişen bir çalıştırmada kesildi
-     * @param complete noktalar kuralın karşılaştırılabilir geçmişinin TAMAMI (okuma sınırı / tavanı kesmedi) — olağan dışı
+     * @param complete noktalar kuralın karşılaştırılabilir geçmişinin TAMAMI (okuma sınırı / tavanı kesmedi ya da kuralın
+     *                 geçmişi okunan satırların içinde başlıyor — eski uçta kural sonucu olmayan satırlar, Y1) — olağan dışı
      *                 değerde "ihlal dizisi geçmişin başına kadar uzanıyor" kabulü ({@link #anomalyBase}) yalnız o zaman
      */
     public record History(List<Point> points, boolean ended, boolean reset, boolean complete) {
@@ -360,14 +361,27 @@ public final class DbQueryEvaluator {
         }
         Double metric = rowMetric;
         for (RuleResult rr : out) {
-            // Akıllı kural taban kurulurken de değeri ölçer — grafik o kuralın değerini çizsin (satır sayısına düşmesin)
-            boolean measured = rr.evaluated() || DbQueryRules.isSmart(rr.kind());
-            if (measured && rr.compared() != null && !DbQueryRules.KIND_TEXT_MATCH.equals(rr.kind())) {
+            if (measuresMetric(rr.kind(), rr.evaluated(), rr.compared())) {
                 metric = rr.compared();
                 break;
             }
         }
         return new Outcome(status, level, List.copyOf(out), metric);
+    }
+
+    /**
+     * Grafik / posta değerinin ({@code metric_value}, postada "Ölçülen Değer" ve konunun {@code {deger}}'i) kaynağı olabilecek
+     * kural sonucu mu — TEK kural: motor değeri sırayla ilk böyle sonuçtan alır, posta maskesi
+     * ({@link DbQueryMailMask#metricMasked}) değerin kaynağını AYNI kuralla bulur (2026-11-05 hata avı O1: maske yalnız
+     * değerlendirilmiş sonuçlara bakıyordu, taban kurulurken değeri ölçen akıllı kuralın maskeli kolonu açık kalıyordu).
+     * Koşul: karşılaştırma değeri var, metin eşleşmesi değil (onun "gelen"i satır SAYISI) ve sonuç değerlendirilmiş YA DA
+     * akıllı kural (taban kurulurken / örnek yetersizken de değeri ölçer — grafik satır sayısına düşmesin).
+     */
+    public static boolean measuresMetric(String kind, boolean evaluated, Double compared) {
+        if (compared == null) return false;
+        String k = kind == null ? null : kind.trim().toUpperCase(Locale.ROOT);
+        if (DbQueryRules.KIND_TEXT_MATCH.equals(k)) return false;
+        return evaluated || DbQueryRules.isSmart(k);
     }
 
     private static int rank(String level) {

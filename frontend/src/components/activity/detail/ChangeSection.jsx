@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, FileDiff, History, RefreshCw } from 'lucide-react'
+import { ChevronDown, FileDiff, History, Lock, RefreshCw } from 'lucide-react'
 import { api } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import { errorInfoOf } from '../../../utils/errorMessages.js'
@@ -27,22 +27,27 @@ function fullValue(key, value, ctx) {
  * (oluşturma / silmede açık, düzenlemede katlanır). Okunamazsa "okunamadı" + tekrar dene — asla "değişiklik yok".
  * Eşleşme yaklaşıksa (eski satır: değişiklik kaydı ± 2 dk zaman yakınlığıyla bulundu — inceleme CT O5) rozet + açıklama;
  * kesin bağ gibi gösterilmez. `refreshNonce` (sayfanın Yenile düğmesi) kaydı yeniden okutur.
- * Test kancaları: `act-dt-change` (`data-state` loading|ready|notFound|error, `data-match`), `act-dt-change-snapshot`.
+ * Değişiklik ucu `monitoring.read` ister (hata avı D7): sunucu izin yoksa `change_hidden` yollar → istek atılmaz; uç yine
+ * 403 dönerse de nötr "izniniz yok" (izin durumu okuma hatası değildir — "Yeniden dene" yok).
+ * Test kancaları: `act-dt-change` (`data-state` loading|ready|notFound|hidden|error, `data-match`), `act-dt-change-snapshot`,
+ * `act-dt-change-hidden`.
  */
-export default function ChangeSection({ change, changesLink, locale, refreshNonce = 0 }) {
+export default function ChangeSection({ change, changesLink, locale, refreshNonce = 0, hidden = false }) {
   const t = useT()
   const [st, setSt] = useState({ phase: 'loading', row: null })
   const [stateOpen, setStateOpen] = useState(false)
   const seq = useRef(0)
   const load = useCallback(() => {
     const my = ++seq.current
+    if (hidden) { setSt({ phase: 'hidden', row: null }); return }
     setSt({ phase: 'loading', row: null })
     Promise.resolve().then(() => api.monitoring.getChangeDetail(change.kind, change.id, change.seq)).catch((e) => e).then((res) => {
       if (my !== seq.current) return
-      if (res?.success && res.data) setSt({ phase: 'ready', row: res.data })
-      else setSt({ phase: errorInfoOf(res)?.status === 404 ? 'notFound' : 'error', row: null })
+      if (res?.success && res.data) { setSt({ phase: 'ready', row: res.data }); return }
+      const status = errorInfoOf(res)?.status
+      setSt({ phase: status === 404 ? 'notFound' : status === 403 ? 'hidden' : 'error', row: null })
     })
-  }, [change.kind, change.id, change.seq, refreshNonce]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [change.kind, change.id, change.seq, refreshNonce, hidden]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); const s = seq; return () => { s.current++ } }, [load])
 
   const r = st.row
@@ -77,6 +82,11 @@ export default function ChangeSection({ change, changesLink, locale, refreshNonc
         </div>
       )}
       {st.phase === 'notFound' && <p className="m-0 text-sm text-muted-foreground">{t('act.dt.chg.notFound')}</p>}
+      {st.phase === 'hidden' && (
+        <div data-slot="act-dt-change-hidden">
+          <AlertBanner tone="info" icon={Lock} className="mb-0">{t('act.dt.chg.hidden')}</AlertBanner>
+        </div>
+      )}
       {st.phase === 'error' && (
         <AlertBanner tone="danger" role="alert" className="mb-0"
           actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={load}><RefreshCw aria-hidden="true" />{t('act.dt.retry')}</Button>}>

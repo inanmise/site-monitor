@@ -3,6 +3,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from './Toast.jsx'
 import { copyText } from '../../utils/copyText.js'
 import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * "Bağlantıyı Kopyala". Kopyalama kademeleri utils/copyText'te (clipboard API →
@@ -46,9 +47,14 @@ export default function CopyLinkButton({ className, variant = 'secondary', size,
     await copyLink(url)
   }
 
+  // Dokunmatik boy (2026-11-05, mweb denetimi): varsayılan icon-sm / sm boyları parmakla dokunulan ekranda 40 px — çağıran
+  // unutsa da (izleme detay pencereleri başlıktaki ikon düğmesini 32 px bırakıyordu). Bilinçli küçük xs / icon-xs (kart)
+  // çağıranın kendi dokunmatik sınıfıyla gelir; çağıranın pointer-coarse sınıfı twMerge ile ezer.
+  const resolved = size ?? (iconOnly ? 'icon-sm' : 'sm')
+  const touch = resolved === 'icon-xs' || resolved === 'xs' ? null : (iconOnly ? 'pointer-coarse:size-10' : 'pointer-coarse:h-10')
   const label = targetName ? t('a11y.rowAction', targetName, t('share.copyLink')) : t('share.copyLink')
   return (
-    <Button type="button" variant={variant} size={size ?? (iconOnly ? 'icon-sm' : 'sm')} className={className} onClick={copy}
+    <Button type="button" variant={variant} size={resolved} className={cn(touch, className)} onClick={copy}
       title={t('share.copyLink')} aria-label={label}>
       <Link2 size={14} />{iconOnly ? null : <> {t('share.copyLink')}</>}
     </Button>
