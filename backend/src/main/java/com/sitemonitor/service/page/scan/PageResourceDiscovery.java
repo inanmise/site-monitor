@@ -117,14 +117,29 @@ public final class PageResourceDiscovery {
      * uygulanır; hariç tutulanların sayısı döner. Ayrıştırma hatası boş sonuç verir — fırlatmaz.
      */
     public static Found discover(byte[] html, String pageUrl, Predicate<String> exclude) {
-        Document doc;
+        Document doc = parse(html, pageUrl);
+        if (doc == null) return new Found(List.of(), List.of(), List.of(), List.of(), 0, pageUrl);
+        return discoverParsed(doc, pageUrl, exclude);
+    }
+
+    /**
+     * HTML'yi ayrıştırır ve JS açık tarayıcının hiç istemediği {@code <noscript>} / {@code <template>} içeriğini atar
+     * (algoritma 3: tek ayrıştırma — derin analiz aynı belgeyi okur). Ayrıştırma hatası → null.
+     */
+    public static Document parse(byte[] html, String pageUrl) {
         try {
-            doc = Jsoup.parse(new java.io.ByteArrayInputStream(html == null ? new byte[0] : html), null, pageUrl);
+            Document doc = Jsoup.parse(new java.io.ByteArrayInputStream(html == null ? new byte[0] : html), null, pageUrl);
             // JS açık tarayıcı bunları hiç istemez (GTM / piksel noscript'leri, şablon içerikleri)
             doc.select("noscript, template").remove();
+            return doc;
         } catch (Exception e) {
-            return new Found(List.of(), List.of(), List.of(), List.of(), 0, pageUrl);
+            return null;
         }
+    }
+
+    /** {@link #parse} edilmiş belgeden keşif (belge değişmez; noscript / template zaten atılmış olmalı). */
+    public static Found discoverParsed(Document doc, String pageUrl, Predicate<String> exclude) {
+        doc.select("noscript, template").remove();   // eşgüçlü: parse() dışından gelen belge için
         String self = key(pageUrl);
         Map<String, Candidate> page = new LinkedHashMap<>();
         Map<String, Candidate> docs = new LinkedHashMap<>();
@@ -165,25 +180,16 @@ public final class PageResourceDiscovery {
         Set<Element> pictureImgs = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Element pic : doc.select("picture")) {
             Element img = null;
-            List<Element> sources = new ArrayList<>();
             for (Element ch : pic.children()) {
-                if ("source".equals(ch.normalName()) && !ch.attr("srcset").isBlank()) sources.add(ch);
-                else if (img == null && "img".equals(ch.normalName())) img = ch;
+                if (img == null && "img".equals(ch.normalName())) img = ch;
             }
             if (img != null) pictureImgs.add(img);
             boolean lazy = img != null && "lazy".equalsIgnoreCase(img.attr("loading").trim());
-            Element chosen = pickPictureSource(sources);
-            String u = chosen != null ? firstSrcset(chosen) : "";
-            if (u.isBlank() && img != null) {
-                u = abs(img, "src");
-                if (u.isBlank()) u = firstSrcset(img);
-            }
-            add(page, u, IMAGE, true, lazy, false, false, self, exclude, excluded);
+            add(page, pictureUrl(pic), IMAGE, true, lazy, false, false, self, exclude, excluded);
         }
         for (Element el : doc.select("img")) {
             if (pictureImgs.contains(el)) continue;
-            String u = abs(el, "src");
-            if (u.isBlank()) u = firstSrcset(el);
+            String u = imageUrl(el);
             boolean lazy = "lazy".equalsIgnoreCase(el.attr("loading").trim());
             add(page, u, IMAGE, true, lazy, false, false, self, exclude, excluded);
         }
@@ -249,6 +255,29 @@ public final class PageResourceDiscovery {
         // Bir URL hem belge hem bağlantı listesinde olamaz (anahtar aynı) — yukarıdaki ayrım uzantıya göre tekildir.
         return new Found(List.copyOf(page.values()), List.copyOf(docs.values()), List.copyOf(links.values()),
                 inline, excluded[0], base == null || base.isBlank() ? pageUrl : base);
+    }
+
+    /** {@code <img>}'in indirilecek adresi (mutlak): {@code src}, yoksa {@code srcset}'in ilki; yoksa boş. */
+    public static String imageUrl(Element img) {
+        String u = abs(img, "src");
+        return u.isBlank() ? firstSrcset(img) : u;
+    }
+
+    /**
+     * {@code <picture>}'ın indirilecek adresi (mutlak): ilk desteklenen türdeki {@code <source srcset>}'in ilki
+     * ({@code max-width} medyalı olanlar sona kalır), yoksa {@code <img>}'in adresi; yoksa boş.
+     */
+    public static String pictureUrl(Element pic) {
+        Element img = null;
+        List<Element> sources = new ArrayList<>();
+        for (Element ch : pic.children()) {
+            if ("source".equals(ch.normalName()) && !ch.attr("srcset").isBlank()) sources.add(ch);
+            else if (img == null && "img".equals(ch.normalName())) img = ch;
+        }
+        Element chosen = pickPictureSource(sources);
+        String u = chosen != null ? firstSrcset(chosen) : "";
+        if (u.isBlank() && img != null) u = imageUrl(img);
+        return u;
     }
 
     /** {@code <picture>}'ın kaynakları içinde ilk desteklenen tür; {@code max-width} medyalı olanlar (mobil) sona kalır. */
@@ -346,7 +375,7 @@ public final class PageResourceDiscovery {
      * CSS yorumlarını atar — DOĞRUSAL: tırnaklı dizgi içindeki {@code /*} yorum değildir (dizgi satır sonunda biter, kaçışlı
      * karakter atlanır); kapanmayan yorum metnin sonuna kadar sürer (tarayıcı gibi).
      */
-    static String stripComments(String s) {
+    public static String stripComments(String s) {
         if (s.indexOf("/*") < 0) return s;
         StringBuilder out = new StringBuilder(s.length());
         int n = s.length();
@@ -381,7 +410,7 @@ public final class PageResourceDiscovery {
      * yoksa uzantı; bilinmeyen {@code format()} atlanır), yoksa ilk eot / svg. {@code local()} atlanır (makinede olup
      * olmadığı bilinmez). Doğrusal; bulunamazsa null.
      */
-    static String chooseFont(String s, String low, int from, int to) {
+    public static String chooseFont(String s, String low, int from, int to) {
         int decl = -1;
         int p = from;
         while (p < to) {

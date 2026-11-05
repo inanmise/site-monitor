@@ -14,6 +14,9 @@ import { CHIP, DeltaChip, Section, signed, TOUCH, UrlText, WRAP } from './Resour
 import { Button } from '@/components/shadcn/button'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { cn } from '@/lib/utils'
+// prs3 F / G (fe2): bütçe durumu, çok sayfalı analiz ve kategori puanı işaretleri
+import { BudgetStatusBadge } from './ResourceScanBudget.jsx'
+import { budgetStatusOf, scanMarkerScores } from './resourceScanReportModel.js'
 
 /** KPI → biçimleyici ve etiket anahtarı. */
 const KPI_LABEL = {
@@ -92,7 +95,7 @@ export default function ResourceScanCompare({ items, selectedId, otherId, onChan
                   <RefreshCw aria-hidden="true" />{t('prs.retry')}</Button>} />
             </div>
           ) : cmp ? (
-            <CompareBody cmp={cmp} t={t} locale={locale} />
+            <CompareBody cmp={cmp} t={t} locale={locale} rowOf={(id) => options.find((s) => s.id === id) || null} />
           ) : null}
         </>
       )}
@@ -100,7 +103,7 @@ export default function ResourceScanCompare({ items, selectedId, otherId, onChan
   )
 }
 
-function CompareBody({ cmp, t, locale }) {
+function CompareBody({ cmp, t, locale, rowOf }) {
   const o = cmp.older.scan
   const n = cmp.newer.scan
   const partial = !deltasComparable(n, o)
@@ -112,6 +115,7 @@ function CompareBody({ cmp, t, locale }) {
   return (
     <div data-slot="prs-cmp-body" className="flex min-w-0 flex-col gap-4">
       <p data-slot="prs-cmp-dir" className={cn('m-0 text-sm text-foreground', WRAP)}>{t('prs.cmp.direction', formatDate(o.started_at), formatDate(n.started_at))}</p>
+      <CompareMarkers older={rowOf?.(o.id) || o} newer={rowOf?.(n.id) || n} t={t} locale={locale} />
       {cmp.algoMismatch && (
         <div data-slot="prs-cmp-algo">
           <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>{t('prs.cmp.algo', String(cmp.algoOld), String(cmp.algoNew))}</AlertBanner>
@@ -222,6 +226,52 @@ function ObjList({ slot, title, list, t, locale, grown = false }) {
         </ul>
       )}
       {list.length > shown.length && <p className="m-0 text-xs text-muted-foreground">{t('prs.cmp.more', formatNumber(list.length - shown.length, locale))}</p>}
+    </div>
+  )
+}
+
+/**
+ * prs3 işaretleri: iki analizin bütçe durumu (geçmiş satırından — okuma anında GÜNCEL bütçeyle değerlendirilir), çok
+ * sayfalı analiz ve kategori puanları (güvenlik / SEO / erişilebilirlik; eski analizde yok → satır yok). Bilinmeyen bütçe
+ * durumu "bilinmiyor" (asla "geçti"). Hiçbiri yoksa çizilmez.
+ */
+function CompareMarkers({ older, newer, t, locale }) {
+  const hasBudget = budgetStatusOf(older) || budgetStatusOf(newer)
+  const hasSite = older?.scope === 'site' || newer?.scope === 'site'
+  const scores = scanMarkerScores(older, newer)
+  if (!hasBudget && !hasSite && !scores.length) return null
+  const side = (row, label) => (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {budgetStatusOf(row) ? <BudgetStatusBadge row={row} /> : <span className="text-xs text-muted-foreground">{t('prs.budget.hist.none')}</span>}
+      {row?.scope === 'site' && (
+        <ToneBadge tone="info" className={CHIP} data-slot="prs-cmp-site">
+          {row.pages_count != null ? plural(t, 'prs.site.chip', Number(row.pages_count), formatNumber(row.pages_count, locale)) : t('prs.site.chipNoCount')}
+        </ToneBadge>
+      )}
+    </span>
+  )
+  return (
+    <div data-slot="prs-cmp-markers" className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/20 px-3 py-2">
+      {(hasBudget || hasSite) && (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+          {side(older, t('prs.budget.cmp.older'))}
+          {side(newer, t('prs.budget.cmp.newer'))}
+        </div>
+      )}
+      {scores.length > 0 && (
+        <ul data-slot="prs-cmp-scores" className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs tabular-nums">
+          {scores.map((sc) => (
+            <li key={sc.key} data-key={sc.key} className="flex items-center gap-1">
+              <span className="text-muted-foreground">{t(`prs.site.score.${sc.key}`)}</span>
+              <span className="text-muted-foreground">{sc.old == null ? '—' : formatNumber(sc.old, locale)}</span>
+              <span aria-hidden="true" className="text-muted-foreground">→</span>
+              <span className="sr-only">{t('prs.cmp.to')}</span>
+              <span className="font-semibold text-foreground">{sc.now == null ? '—' : formatNumber(sc.now, locale)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

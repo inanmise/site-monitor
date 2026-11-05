@@ -377,6 +377,32 @@ Pod başına aynı anda en çok 2 tarama (fazlası 429 `RESOURCE_SCAN_BUSY`), ki
 `RATE_LIMITED`), izleme başına tek çalışan tarama (409 `RESOURCE_SCAN_RUNNING` — arayüz çalışanı izler). Nesne listesi izleme
 başına son 20 çalıştırmada tutulur; özetler (not, süre, boyut — tarih grafiği) 1 yıl.
 
+**Algoritma 3 (2026-11-05): derin analiz, bütçe, eğilim, çok sayfalı analiz.** Analiz artık altı denetim alanı da üretir
+(yükleme ve ağ, israf ve önbellek, görsel ve yazı tipi, güvenlik, SEO, erişilebilirlik) ve dört kategori puanı verir. Tarama
+sırasında ek istekler: nesnelerden önce sunucu başına bağlantı ölçümü (en çok 30 sunucu, 6 paralel, adım başına 5 sn, toplam
+15 sn; vekil üzerinden gidilen sunucu ölçülmez) ve en çok 10 kaynak haritası HEAD isteği (15 sn). Çerez DEĞERİ hiçbir yerde
+saklanmaz; algoritma 3 adreslerinde sorgu dizesindeki gizli değerler maskelenir. Kütüphane açıkları çevrimdışı katalogdan
+gelir (2026-11-04 tarihli, yalnız CVE kimlikli girdiler); katalog güncel değilse yeni açıklar görünmez.
+
+İzleme başına **performans bütçesi** (`PUT /api/monitoring/page/{id}/resource-budget`; düzenleme yetkisi gerekir) analiz
+sonucunda "aşıldı / geçti / ölçülemedi" bandı olarak görünür — alarm ya da bildirim ÜRETMEZ. **Eğilim**
+(`…/resource-scans/trend?days=30|90|365`) en çok 200 analiz noktası ve en hızlı büyüyen nesneleri verir.
+
+**Çok sayfalı analiz** ("Siteyi analiz et"): ana sayfanın aynı sunucudaki iç bağlantılarından en çok N − 1 sayfa
+(`site.monitor.page.resource-scan.max-pages`, varsayılan 10, 2–20) taranır; ortak nesneler bir kez indirilir; süre bütçesi
+bütün site içindir (`site.monitor.page.resource-scan.site-max-seconds`, 900, 120–900). Bütçe dolunca kalan sayfalar
+"taranmadı" olur ve sitenin analizi "eksik" işaretlenir (`analysis.site.incomplete`; özetin "sınırlı" işareti yalnız ana
+sayfa içindir). Başka sunucuya yönlenen sayfa (ör. SSO) analiz edilmez (`PAGE_OFFSITE`); ana sayfanın kırık bağlantıları
+iç sayfa adayı olmaz. Sürerken "Site · sayfa n / N" ilerlemesi görünür (her pod'dan okunur).
+
+| Anahtar | Varsayılan | Aralık |
+|---|---|---|
+| `site.monitor.page.resource-scan.max-pages` | 10 | 2–20 |
+| `site.monitor.page.resource-scan.site-max-seconds` | 900 | 120–900 |
+
+Sürüm geçişinde eski pod algoritma 2 üretir, "Siteyi analiz et" isteğini tek sayfa analizi olarak koşar (arayüz bunu
+söyler) ve bütçe / eğilim uçlarına 404 döner. Geri almada yeni kolonlar kalır, kullanılmaz.
+
 **Sorun giderme.**
 - *Tarama "yarıda kaldı" (INTERRUPTED):* çalıştıran pod kapandı ya da 45 sn kalp atışı yazamadı. Yeniden çalıştırın.
   "İptal edildi" ise bir kullanıcı iptal etti (`PAGE_RESOURCE_SCAN_CANCEL` denetim kaydı).
@@ -588,6 +614,23 @@ alarm da bildirilir (RESOLVEDTIME gerçek kapanış anı), bir yanıt kaybolsa d
 birden çok kapanış varsa en güncel çözülme gönderilir. Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte
 dönmez. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
 
+**Yalnız 7/24'e bildirilen alarmlar (2026-11-05, varsayılan AÇIK).** Ayarlar → Alarm akışı → Kapsam → "Yalnız 7/24'e
+bildirilen alarmlar" (`site.monitor.alarm-feed.noc-only`, env `ALARM_FEED_NOC_ONLY`). Açıkken akışa yalnız 7/24 izleme ekibine
+bildirilecek alarmlar girer — 7/24 e-postasıyla AYNI alarm kuralı: izlemede "7/24 izleme ekibine bildir" açık ve izleme aktif
+(sertifika ve erişilebilirlik alarmında envanter kaydı), Ayarlar → 7/24'te alarmın türü açık ve alarm oradaki en düşük seviyeye
+ulaşıyor (erişim kesintileri her zaman kritik sayılır). 7/24 e-postasının gerçekten gidip gitmediği (aktif 7/24 grubu, bakım
+penceresi, sistem bakımı susturması) bakılmaz: akış ayrı bir kanaldır. Seviye / takım / tür süzgeçleri ayrıca uygulanır.
+Anahtar açılınca ya da bir izlemenin "7/24 izleme ekibine bildir" anahtarı kapatılınca daha önce OPEN gönderilmiş açık
+alarm bir kez "akış kapsamından çıktı" diye `RESOLVED` döner (merkezi ekip olayı kapatır); anahtar kapatılınca 7/24 dışı açık
+alarmlar da OPEN gelmeye başlar. İzleme dizini ya da 7/24 ayarı okunamazsa yanıt **503** olur — bir alarm "7/24 dışı" sayılıp
+yanlışlıkla kapatılmaz. Geçiş sırasında (eski + yeni pod birlikte) eski pod anahtarı bilmez ve bütün alarmları verir: bir 7/24
+dışı alarm çağrıdan çağrıya OPEN / RESOLVED arasında gidip gelebilir (prod tek replika; yalnız geçiş anı).
+
+**Ayar ekranındaki "Önizleme"** kayıtlı ayarlarla şu an dönecek satırları gösterir ama hiçbir kapanışı "gönderildi" işaretlemez:
+henüz teslim edilmemiş bir `RESOLVED` satırı, gerçek bir çağrı onu teslim edene kadar her önizlemede görünür. Bir alarmın
+günler önce çözülmüş olmasına rağmen `RESOLVED` görünmesi bu yüzden normaldir (daha önce OPEN gönderildiyse ilk çağrıya kadar
+bekler; `RESOLVEDTIME` gerçek çözülme anıdır).
+
 **Tek tüketici varsayımı.** Akış tek bir merkezi sisteme göre kurulmuştur: "teslim edildi" işareti uçtan kim çağırırsa
 çağırsın konur. Aynı ucu başka bir sistem de çekiyorsa kapanışlar ilk gönderimden sonra yalnız bir pencere boyunca tekrarlanır
 — ikinci tüketici o pencerede çağırmazsa bir kapanışı kaçırabilir; ikinci tüketici gerekiyorsa ayrı bir uç isteyin.
@@ -635,6 +678,10 @@ bir satır yazar; pod başına dakikada en çok 60 reddedilen çağrı yazılır
 - "403 bu IP adresinin izni yok" → çağrı günlüğünde istemci IP'sine bakın (`forwarded_for` zinciri). Giriş katmanı
   `X-Forwarded-For` yazmıyorsa istemci IP'si giriş katmanı olur — `site.monitor.client-ip.*` ayarlarını kontrol edin.
 - "Arayan sessiz" uyarısı → ekibin işi durmuş olabilir; son çağrı zamanı ve sonucu ayar sayfasındaki "Durum" kartında.
+- Bir alarm akışta yok → "Yalnız 7/24'e bildirilen alarmlar" açıksa: izlemede "7/24 izleme ekibine bildir" açık mı, izleme
+  aktif mi, Ayarlar → 7/24'te tür açık mı, alarm en düşük seviyeye ulaşıyor mu (Önizleme ile doğrulayın).
+- Akış 503 dönüyor ve günlükte "izleme dizini okunamadı" / "7/24 ayarı okunamadı" → veritabanı / tablo okuması geçici olarak
+  başarısız; süzgeç açıkken bilinçli olarak 503 (sahte "çözüldü" yerine). Sürerse süzgeci geçici kapatmak akışı açar.
 - Örnek: `curl -s https://<host>/api/public/alarm-feed | head -c 600`; pandas:
   `pd.DataFrame(requests.get(url, timeout=30).json(), columns=['CREATEDTIME','SEVERITY','RCI','RCITYPE','CATEGORY','FILTERSOURCE','TEXT','BODY','MAILS'])`.
 

@@ -1,12 +1,12 @@
 import { useId, useState } from 'react'
-import { Archive, Braces, KeyRound, ListFilter, ScrollText, ShieldBan, SlidersHorizontal, TriangleAlert } from 'lucide-react'
+import { Archive, Braces, Info, KeyRound, ListFilter, ScrollText, ShieldBan, SlidersHorizontal, TriangleAlert } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import Field from '../../ui/Field.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import MultiTeamSelect from '../../ui/MultiTeamSelect.jsx'
 import TokenChipsInput, { TOO_MANY } from '../loginmethods/TokenChipsInput.jsx'
 import { SettingsSaveBar } from '../SettingsControls.jsx'
-import { LEVELS, MAIL_SEPARATORS, RCI_MODES, RESOLVED_MODES, isValidIpEntry, normalizeIp, numText, typeLabel } from './alarmFeedModel.js'
+import { LEVELS, MAIL_SEPARATORS, RCI_MODES, RESOLVED_MODES, isValidIpEntry, nocOnlySupported, normalizeIp, numText, typeLabel } from './alarmFeedModel.js'
 import { SectionCard, TOUCH } from './AlarmFeedParts.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Field as ShField, FieldContent, FieldDescription, FieldLabel, FieldTitle } from '@/components/shadcn/field'
@@ -117,6 +117,9 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
   const levelOptions = LEVELS.includes(form.min_level) || !form.min_level ? LEVELS : [...LEVELS, form.min_level]
   const sepOptions = MAIL_SEPARATORS.includes(form.mail_separator) || !form.mail_separator ? MAIL_SEPARATORS : [...MAIL_SEPARATORS, form.mail_separator]
   const rciChanged = data?.settings?.rci_mode != null && form.rci_mode !== data.settings.rci_mode
+  // Yalnız 7/24 süzgeci (2026-11-05): eski sunucu alanı göndermezse satır gizli
+  const nocSupported = nocOnlySupported(data)
+  const nocChanged = nocSupported && form.noc_only !== (data.settings.noc_only === true)
   const [exemptEntryError, setExemptEntryError] = useState(null)
   const ipError = ipEntryError || fe.errors.allowed_ips
   const exemptError = exemptEntryError || fe.errors.block_exempt_ips
@@ -182,6 +185,20 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
           </span>
           {fe.errors.types && <span className="text-xs text-destructive">{fe.errors.types}</span>}
         </div>
+
+        {nocSupported && (
+          <div className="mb-3.5 flex min-w-0 flex-col" data-field="noc_only">
+            <SwitchRow checked={form.noc_only} onChange={set('noc_only')} disabled={saving} slot="af-f-noc_only"
+              label={t('af.f.nocOnly')} hint={t('af.f.nocOnlyHint')} />
+            {/* Değiştirince merkezi sistemde ne olur — RCI notuyla aynı desen (değişince uyarı tonu) */}
+            <div data-slot="af-noc-only-note" data-changed={nocChanged ? 'true' : 'false'}>
+              <AlertBanner tone={nocChanged ? 'warning' : 'info'} className="mb-0" icon={nocChanged ? TriangleAlert : Info}>
+                {t('af.f.nocOnlyNote')}
+              </AlertBanner>
+            </div>
+            {fe.errors.noc_only && <span className="text-xs text-destructive">{fe.errors.noc_only}</span>}
+          </div>
+        )}
 
         <div className="grid min-w-0 grid-cols-1 gap-x-4 @2xl:grid-cols-2">
           <TextField label={t('af.f.resolvedMinutes')} hint={t('af.f.resolvedMinutesHint', limits.resolved_minutes[0], limits.resolved_minutes[1])}

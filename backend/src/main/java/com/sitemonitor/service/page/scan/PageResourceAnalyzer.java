@@ -1,5 +1,14 @@
 package com.sitemonitor.service.page.scan;
 
+import com.sitemonitor.service.page.scan.deep.DeepContext;
+import com.sitemonitor.service.page.scan.deep.DeepRec;
+import com.sitemonitor.service.page.scan.deep.DeepUrls;
+import com.sitemonitor.service.page.scan.deep.HtmlAudit;
+import com.sitemonitor.service.page.scan.deep.LoadingAnalysis;
+import com.sitemonitor.service.page.scan.deep.MediaAnalysis;
+import com.sitemonitor.service.page.scan.deep.SecurityAnalysis;
+import com.sitemonitor.service.page.scan.deep.WasteAnalysis;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -29,8 +38,16 @@ import static com.sitemonitor.service.page.scan.PageResourceDiscovery.MEDIA;
  * {@code url()} ile bulduğu nesne o stil inmeden başlayamaz. Geç yüklenen (lazy) nesneler, belgeler ve bağlantılar tahmine
  * girmez. JavaScript çalıştırılmaz.
  *
- * <p>Not (ağırlıklar toplamı 100): yükleme süresi 25, sayfa boyutu 20, görseller 15, istek sayısı 10, sunucu yanıtı (TTFB)
- * 10, hatalar 8, sıkıştırma 7, önbellek 5. Harf: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, E ≥ 50, F altı.
+ * <p>Not (ağırlıklar toplamı 100, algoritma 3): yükleme süresi 20, sayfa boyutu 15, görseller 15, istek sayısı 10, sunucu
+ * yanıtı (TTFB) 10, oluşturmayı engelleyen kaynaklar 10, hatalar 8, sıkıştırma 7, önbellek 5. Harf: A ≥ 90, B ≥ 80, C ≥ 70,
+ * D ≥ 60, E ≥ 50, F altı. HTML ayrıştırılamadıysa oluşturmayı engelleyen bileşeni BİLİNMİYOR (puan / değer / kayıp null) ve
+ * not kalan 90 ağırlıkla normalize edilir.
+ *
+ * <p><b>Algoritma 3 (2026-11, derin analiz):</b> nesne listesinin yanında {@link DeepContext} (HTML olguları, ana sayfanın
+ * güvenlik başlıkları, çerezler, {@code @font-face}'ler, host bağlantı ölçümleri, kaynak haritası denetimi) okunur ve kökte
+ * {@code loading} (A), {@code waste} (B), {@code media} (C), {@code security} (D), {@code html_audit} (E) ve
+ * {@code category_scores} bölümleri yazılır. Hesaplar {@code deep} paketindeki SAF sınıflardadır; bu sınıf yalnız çağırır,
+ * önerilerini aynı listeye katar ve bulguları ({@link DeepRec#finding()}) nesnelere yazar.
  *
  * <p><b>Algoritma sürümü {@value #ALGORITHM_VERSION}</b> (2026-11, analiz kökünde {@code algorithm_version}; eski kayıtta yok =
  * 1): TTFB yalnız son adımın ilk baytı (yönlendirmeler ayrı), kırık kararı Sayfa Bütünlüğü izlemesiyle aynı (yalnız
@@ -40,7 +57,7 @@ import static com.sitemonitor.service.page.scan.PageResourceDiscovery.MEDIA;
 public final class PageResourceAnalyzer {
 
     /** Analiz algoritmasının sürümü — farklı sürümlü iki analiz karşılaştırılırken arayüz uyarır. */
-    public static final int ALGORITHM_VERSION = 2;
+    public static final int ALGORITHM_VERSION = 3;
 
     public static final int PARALLEL = 6;
 
@@ -76,17 +93,21 @@ public final class PageResourceAnalyzer {
      */
     public static final Set<String> FINDING_CODES = Set.of("UNCOMPRESSED_TEXT", "NO_CACHE", "LARGE_IMAGES",
             "MODERN_IMAGE_FORMAT", "OVERSIZED_IMAGE_DIMENSIONS", "SLOW_OBJECTS", "REDIRECTED_OBJECTS", "BROKEN_RESOURCES",
-            "BROKEN_LINKS", "LARGE_DOCUMENTS", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS");
+            "BROKEN_LINKS", "LARGE_DOCUMENTS", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS",
+            // ── algoritma 3 (öneri kodundan farklı adlılar DeepRec.finding ile gelir) ──
+            "RENDER_BLOCKING", "DUPLICATE", "UNMINIFIED", "SOURCE_MAP_EXPOSED", "NO_VALIDATOR", "MISSING_DIMENSIONS",
+            "NOT_LAZY", "ANIMATED_GIF", "FONT_DISPLAY_MISSING", "MISSING_SRI", "VULNERABLE_LIBRARY", "MIXED_CONTENT");
 
     /** Ağırlıklar (sıra = arayüzdeki sıra). */
     public static final Map<String, Integer> WEIGHTS;
     static {
         Map<String, Integer> w = new LinkedHashMap<>();
-        w.put("load_time", 25);
-        w.put("page_weight", 20);
+        w.put("load_time", 20);
+        w.put("page_weight", 15);
         w.put("images", 15);
         w.put("requests", 10);
         w.put("server_response", 10);
+        w.put("render_blocking", 10);
         w.put("errors", 8);
         w.put("compression", 7);
         w.put("caching", 5);
@@ -99,6 +120,9 @@ public final class PageResourceAnalyzer {
     static final double[][] TTFB_CURVE = {{200, 100}, {500, 85}, {800, 70}, {1500, 40}, {3000, 0}};
     static final double[][] IMAGE_CURVE_MB = {{0.5, 100}, {1, 85}, {2, 65}, {4, 35}, {8, 0}};
     static final double[][] ERROR_CURVE = {{0, 100}, {1, 80}, {2, 65}, {5, 30}, {10, 0}};
+    /** Oluşturmayı engelleyen bayt (KB) ve sayı eğrileri (algoritma 3); bileşen puanı ikisinin küçüğü. */
+    static final double[][] RENDER_BLOCKING_CURVE_KB = {{50, 100}, {150, 85}, {400, 60}, {1024, 30}, {2048, 0}};
+    static final double[][] RENDER_BLOCKING_COUNT_CURVE = {{2, 100}, {5, 80}, {10, 50}, {20, 0}};
 
     /**
      * Bileşen hedefleri {tam puan eşiği, sıfır puan eşiği} — {@code unit} ile aynı birimde; eğrilerden türetilir (tek kaynak).
@@ -112,6 +136,8 @@ public final class PageResourceAnalyzer {
             "requests", new Object[]{(int) REQUEST_CURVE[0][0], (int) REQUEST_CURVE[REQUEST_CURVE.length - 1][0]},
             "server_response", new Object[]{(long) TTFB_CURVE[0][0], (long) TTFB_CURVE[TTFB_CURVE.length - 1][0]},
             "errors", new Object[]{(int) ERROR_CURVE[0][0], (int) ERROR_CURVE[ERROR_CURVE.length - 1][0]},
+            "render_blocking", new Object[]{Math.round(RENDER_BLOCKING_CURVE_KB[0][0] * KB),
+                    Math.round(RENDER_BLOCKING_CURVE_KB[RENDER_BLOCKING_CURVE_KB.length - 1][0] * KB)},
             "compression", new Object[]{100, 0},
             "caching", new Object[]{100, 0});
 
@@ -128,7 +154,9 @@ public final class PageResourceAnalyzer {
     /** Özet sayılar (tarama satırına yazılır) + ayrıntılı analiz (JSON). */
     public record Result(int grade, String gradeLetter, long loadMs, long htmlTtfbMs, long htmlMs, long pageBytes,
                          int requestCount, long imageBytes, int imageCount, int documentCount, long documentBytes,
-                         int linkCount, long linkBytes, int failedCount, boolean capped, Map<String, Object> analysis) {}
+                         int linkCount, long linkBytes, int failedCount, boolean capped, Map<String, Object> analysis,
+                         long jsBytes, long cssBytes, long fontBytes, Integer securityScore, Integer seoScore,
+                         Integer a11yScore) {}
 
     private PageResourceAnalyzer() {}
 
@@ -137,9 +165,17 @@ public final class PageResourceAnalyzer {
      *              bu çağrıda yazılır.
      */
     public static Result analyze(List<ScanItem> items, Limits limits) {
+        return analyze(items, limits, DeepContext.EMPTY);
+    }
+
+    /**
+     * @param deep derin analizin nesne dışı girdileri (null = boş; HTML / başlık bilgisine dayanan bölümler "bilinmiyor")
+     */
+    public static Result analyze(List<ScanItem> items, Limits limits, DeepContext deep) {
         if (items == null || items.isEmpty()) throw new IllegalArgumentException("HTML satırı yok");
         ScanItem html = items.get(0);
         Limits lim = limits == null ? Limits.NONE : limits;
+        DeepContext ctx = deep == null ? DeepContext.EMPTY : deep;
 
         long loadMs = simulate(items);
 
@@ -161,6 +197,14 @@ public final class PageResourceAnalyzer {
         // Özet "açılmayan nesne" = sayfa nesneleri (istek kutucuğu ve hatalar puanıyla aynı); kırık belge / bağlantı ayrı öneri.
         int failed = pageFailed;
 
+        // ── Derin bölüm A (performans bileşeni de buradan: oluşturmayı engelleyenler) ─────────
+        LoadingAnalysis.Result loading = LoadingAnalysis.build(items, page, ctx.html(), ctx);
+        // HTML olguları yoksa (ayrıştırılamadı) engelleyenler BİLİNMİYOR: bileşen puanlanmaz, not kalan ağırlıklarla
+        // normalize edilir (bilinmeyen = geçti değil — inceleme D-1).
+        Integer rbScore = !loading.blockingKnown() ? null
+                : Math.min(curve(loading.blockingBytes() / (double) KB, RENDER_BLOCKING_CURVE_KB),
+                        curve(loading.blockingCount(), RENDER_BLOCKING_COUNT_CURVE));
+
         // ── Alt puanlar ─────────────────────────────────────────────────────────────────
         List<ScanItem> largeImages = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
         int imageScore = Math.min(curve(imageBytes / (double) MB, IMAGE_CURVE_MB),
@@ -180,6 +224,7 @@ public final class PageResourceAnalyzer {
         s.put("images", imageScore);
         s.put("requests", curve(page.size(), REQUEST_CURVE));
         s.put("server_response", curve(html.ttfbMs, TTFB_CURVE));
+        s.put("render_blocking", rbScore);
         s.put("errors", curve(pageFailed, ERROR_CURVE));
         s.put("compression", compressionPct);
         s.put("caching", cachingPct);
@@ -189,27 +234,32 @@ public final class PageResourceAnalyzer {
                 "images", new Object[]{imageBytes, "bytes"},
                 "requests", new Object[]{page.size(), "count"},
                 "server_response", new Object[]{html.ttfbMs, "ms"},
+                "render_blocking", new Object[]{loading.blockingKnown() ? loading.blockingBytes() : null, "bytes"},
                 "errors", new Object[]{pageFailed, "count"},
                 "compression", new Object[]{compressionPct, "pct"},
                 "caching", new Object[]{cachingPct, "pct"});
+        // Bilinmeyen bileşen (null puan) ağırlığa girmez: not = Σ puan × ağırlık / Σ BİLİNEN ağırlık; kayıp aynı paydayla, böylece
+        // kayıpların toplamı yine 100 − not'u açıklar. Hepsi bilinirken payda 100 → algoritma 3'ün ilk hâliyle birebir.
+        int knownWeight = 0;
+        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) if (s.get(w.getKey()) != null) knownWeight += w.getValue();
         double weighted = 0;
         for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) {
-            int sc = s.get(w.getKey());
-            weighted += sc * w.getValue();
+            Integer sc = s.get(w.getKey());
+            if (sc != null) weighted += sc * w.getValue();
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("key", w.getKey());
             row.put("score", sc);
             row.put("weight", w.getValue());
             row.put("value", values.get(w.getKey())[0]);
             row.put("unit", values.get(w.getKey())[1]);
-            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık)
+            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık; bilinmiyorsa null)
             Object[] target = TARGETS.get(w.getKey());
             row.put("full_at", target[0]);
             row.put("zero_at", target[1]);
-            row.put("lost", Math.round(w.getValue() * (100 - sc) / 10.0) / 10.0);
+            row.put("lost", sc == null ? null : Math.round(w.getValue() * (100 - sc) * 10.0 / knownWeight) / 10.0);
             scores.add(row);
         }
-        int grade = (int) Math.round(weighted / 100.0);
+        int grade = knownWeight == 0 ? 0 : (int) Math.round(weighted / knownWeight);
         String letter = letter(grade);
 
         // ── Kategoriler ─────────────────────────────────────────────────────────────────
@@ -233,8 +283,21 @@ public final class PageResourceAnalyzer {
             categories.add(row);
         }
 
+        // ── Derin bölümler B–E ──────────────────────────────────────────────────────────────
+        WasteAnalysis.Result waste = WasteAnalysis.build(html, page, ctx.html(), ctx);
+        MediaAnalysis.Result media = MediaAnalysis.build(page, ctx.html(), ctx);
+        SecurityAnalysis.Result security = SecurityAnalysis.build(html, page, ctx.html(), ctx);
+        HtmlAudit.Result audit = HtmlAudit.audit(ctx.html(), firstHeader(ctx, "x-robots-tag"),
+                ctx.pageUrl() != null ? ctx.pageUrl() : html.url);
+        List<DeepRec> deepRecs = new ArrayList<>();
+        deepRecs.addAll(loading.section().recs());
+        deepRecs.addAll(waste.section().recs());
+        deepRecs.addAll(media.section().recs());
+        deepRecs.addAll(security.section().recs());
+
         // Öneriler nesnelere bulgu ({@code findings}) yazar — görsel listesi (toMap) bundan SONRA kurulur
-        List<Map<String, Object>> recs = recommendations(html, page, images, docs, links, pageBytes, loadMs, lim.capped());
+        List<Map<String, Object>> recs = recommendations(html, page, images, docs, links, pageBytes, loadMs, lim.capped(),
+                deepRecs);
 
         // ── Görsel etkisi ───────────────────────────────────────────────────────────────
         // Kazanç: sunucuda ölçülen görselde ölçülmüş (yeniden kodlanmış boyut farkı), diğerlerinde eski tahmin
@@ -267,7 +330,7 @@ public final class PageResourceAnalyzer {
         img.put("saving_bytes_measured", measuredSaving);
         img.put("saving_bytes_estimated", estimatedSaving);
         img.put("top", images.stream().sorted(Comparator.comparingLong((ScanItem i) -> i.bytes).reversed())
-                .limit(10).map(ScanItem::toMap).toList());
+                .limit(10).map(ScanItem::toDeepMap).toList());
 
         // ── Zamanlama ───────────────────────────────────────────────────────────────────
         Map<String, Object> timing = new LinkedHashMap<>();
@@ -288,10 +351,44 @@ public final class PageResourceAnalyzer {
         analysis.put("third_parties", thirdParties(page));
         analysis.put("timing", timing);
         analysis.put("not_loaded_count", notLoaded);
-        analysis.put("notes", notes(lim));
+        analysis.put("notes", notes(lim, ctx));
+
+        // ── Algoritma 3 bölümleri ───────────────────────────────────────────────────────────
+        Map<String, Object> categoryScores = new LinkedHashMap<>();
+        categoryScores.put("performance", scoreRow(grade, letter));
+        categoryScores.put("security", scoreRow(security.score(), security.letter()));
+        categoryScores.put("seo", scoreRow(audit.seoScore(), null));
+        categoryScores.put("accessibility", scoreRow(audit.a11yScore(), null));
+        analysis.put("category_scores", categoryScores);
+        analysis.put("loading", loading.section().json());
+        analysis.put("waste", waste.section().json());
+        analysis.put("media", media.section().json());
+        analysis.put("security", security.section().json());
+        analysis.put("html_audit", audit.section());
 
         return new Result(grade, letter, loadMs, html.ttfbMs, html.durationMs, pageBytes, page.size(), imageBytes,
-                images.size(), docs.size(), sum(docs), links.size(), sum(links), failed, lim.capped(), analysis);
+                images.size(), docs.size(), sum(docs), links.size(), sum(links), failed, lim.capped(), analysis,
+                sumOf(page, JS), sumOf(page, CSS), sumOf(page, FONT), security.score(), audit.seoScore(), audit.a11yScore());
+    }
+
+    /** {score, letter?}; puan hesaplanamadıysa {@code {score: null}} (uydurma 0 / 100 yok). */
+    private static Map<String, Object> scoreRow(Integer score, String letter) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("score", score);
+        if (letter != null || score == null) m.put("letter", letter);
+        return m;
+    }
+
+    private static long sumOf(List<ScanItem> page, String category) {
+        long t = 0;
+        for (ScanItem i : page) if (category.equals(i.category)) t += i.bytes;
+        return t;
+    }
+
+    private static String firstHeader(DeepContext ctx, String name) {
+        if (ctx.pageHeaders() == null) return null;
+        List<String> v = ctx.pageHeaders().get(name);
+        return v == null || v.isEmpty() ? null : String.join(", ", v);
     }
 
     // ── Yükleme tahmini (şelale) ────────────────────────────────────────────────────────────
@@ -330,7 +427,7 @@ public final class PageResourceAnalyzer {
 
     private static List<Map<String, Object>> recommendations(ScanItem html, List<ScanItem> page, List<ScanItem> images,
                                                              List<ScanItem> docs, List<ScanItem> links, long pageBytes,
-                                                             long loadMs, boolean capped) {
+                                                             long loadMs, boolean capped, List<DeepRec> deepRecs) {
         List<Map<String, Object>> out = new ArrayList<>();
 
         List<ScanItem> broken = page.stream().filter(ScanItem::failed).toList();
@@ -435,6 +532,10 @@ public final class PageResourceAnalyzer {
             out.add(rec("LARGE_DOCUMENTS", "low", params("count", bigDocs.size(), "bytes", sum(bigDocs)), null, null, bigDocs));
         }
 
+        for (DeepRec d : deepRecs) {
+            out.add(rec(d.code(), d.severity(), d.params(), d.savingBytes(), d.savingMs(), d.about(), d.finding()));
+        }
+
         // Kısmi (sınırlı) ölçümde "sorun yok" denmez — ölçülmeyen nesneler hakkında bir şey bilinmiyor
         if (out.isEmpty() && !capped) out.add(rec("ALL_GOOD", "low", new LinkedHashMap<>(), null, null, List.of()));
         out.sort(Comparator.comparingInt((Map<String, Object> m) -> severityRank((String) m.get("severity")))
@@ -453,13 +554,26 @@ public final class PageResourceAnalyzer {
         }
     }
 
-    private static List<Map<String, Object>> notes(Limits lim) {
+    /** Host bağlantı ölçümünün ve kaynak haritası denetiminin sınırları (servis uygular; not parametresi). */
+    public static final int HOST_TIMING_LIMIT = 30, SOURCE_MAP_LIMIT = 10;
+
+    private static List<Map<String, Object>> notes(Limits lim, DeepContext ctx) {
         List<Map<String, Object>> out = new ArrayList<>();
         out.add(note("JS_NOT_EXECUTED", Map.of()));
         if (lim.objectsCapped()) out.add(note("CAPPED_OBJECTS", Map.of("limit", lim.maxObjects())));
         if (lim.timeCapped()) out.add(note("CAPPED_TIME", Map.of("seconds", lim.maxSeconds())));
         if (lim.bytesCapped()) out.add(note("CAPPED_BYTES", Map.of("mb", lim.maxTotalMb())));
         if (lim.excluded() > 0) out.add(note("EXCLUDES_APPLIED", Map.of("count", lim.excluded())));
+        // ── algoritma 3 ──
+        out.add(note("JS_COOKIES_NOT_SEEN", Map.of()));
+        out.add(note("CONTRAST_NOT_CHECKED", Map.of()));
+        if (ctx.samplesUnavailable() > 0) out.add(note("ASSET_SAMPLES_UNAVAILABLE", Map.of("count", ctx.samplesUnavailable())));
+        if (ctx.hostsNotMeasured() > 0) {
+            out.add(note("HOSTS_NOT_MEASURED", Map.of("count", ctx.hostsNotMeasured(), "limit", HOST_TIMING_LIMIT)));
+        }
+        if (ctx.sourceMapsNotChecked() > 0) {
+            out.add(note("SOURCE_MAPS_NOT_CHECKED", Map.of("count", ctx.sourceMapsNotChecked(), "limit", SOURCE_MAP_LIMIT)));
+        }
         return out;
     }
 
@@ -477,6 +591,16 @@ public final class PageResourceAnalyzer {
      */
     private static Map<String, Object> rec(String code, String severity, Map<String, Object> params, Long savingBytes,
                                            Long savingMs, List<ScanItem> about) {
+        return rec(code, severity, params, savingBytes, savingMs, about, FINDING_CODES.contains(code) ? code : null);
+    }
+
+    /**
+     * Öneri satırı; {@code finding} doluysa (kod {@link #FINDING_CODES}'ta) {@code about} nesnelerine o bulgu yazılır ve
+     * {@code item_count} tam sayıdır, boşsa öneri sayfa düzeyindedir ({@code item_count} null). Algoritma 3: {@code finding}
+     * alanı satıra yazılır, adresler maskelenir.
+     */
+    private static Map<String, Object> rec(String code, String severity, Map<String, Object> params, Long savingBytes,
+                                           Long savingMs, List<ScanItem> about, String finding) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("code", code);
         m.put("severity", severity);
@@ -484,10 +608,11 @@ public final class PageResourceAnalyzer {
         m.put("saving_bytes", savingBytes);
         m.put("saving_ms", savingMs);
         m.put("item_urls", about.stream().sorted(Comparator.comparingLong((ScanItem i) -> i.bytes).reversed())
-                .limit(MAX_ITEM_URLS).map(i -> i.url).toList());
-        boolean attach = FINDING_CODES.contains(code);
-        if (attach) for (ScanItem i : about) i.findings.add(code);
-        m.put("item_count", attach ? about.size() : null);
+                .map(i -> DeepUrls.mask(i.url)).distinct().limit(MAX_ITEM_URLS).toList());
+        boolean attach = finding != null && FINDING_CODES.contains(finding);
+        if (attach) for (ScanItem i : about) i.findings.add(finding);
+        m.put("item_count", attach ? (int) about.stream().distinct().count() : null);
+        m.put("finding", attach ? finding : null);
         return m;
     }
 
@@ -633,7 +758,15 @@ public final class PageResourceAnalyzer {
     public static final Set<String> RECOMMENDATION_CODES = Set.copyOf(new HashSet<>(List.of(
             "LARGE_IMAGES", "MODERN_IMAGE_FORMAT", "OVERSIZED_IMAGE_DIMENSIONS", "OVERSIZED_PAGE", "TOO_MANY_REQUESTS",
             "SLOW_SERVER", "UNCOMPRESSED_TEXT", "NO_CACHE", "BROKEN_RESOURCES", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS",
-            "THIRD_PARTY_HEAVY", "SLOW_OBJECTS", "REDIRECTED_OBJECTS", "BROKEN_LINKS", "LARGE_DOCUMENTS", "ALL_GOOD")));
-    public static final Set<String> NOTE_CODES =
-            Set.of("JS_NOT_EXECUTED", "CAPPED_OBJECTS", "CAPPED_TIME", "CAPPED_BYTES", "EXCLUDES_APPLIED");
+            "THIRD_PARTY_HEAVY", "SLOW_OBJECTS", "REDIRECTED_OBJECTS", "BROKEN_LINKS", "LARGE_DOCUMENTS", "ALL_GOOD",
+            // ── algoritma 3 ──
+            "RENDER_BLOCKING_RESOURCES", "MISSING_PRECONNECT", "UNUSED_PRELOAD", "UNUSED_PRECONNECT", "MANY_HOSTS",
+            "HTTP1_ONLY", "DUPLICATE_RESOURCES", "DUPLICATE_LIBRARIES", "UNMINIFIED_ASSETS", "SOURCE_MAP_EXPOSED",
+            "HEAVY_HTML", "LARGE_DOM", "INLINE_DATA_URI", "SHORT_CACHE_VERSIONED", "NO_VALIDATOR",
+            "IMAGES_WITHOUT_DIMENSIONS", "MISSING_SRCSET", "OFFSCREEN_NOT_LAZY", "ANIMATED_GIF", "FONT_DISPLAY_MISSING",
+            "TOO_MANY_FONTS", "NON_WOFF2_FONTS", "SECURITY_HEADERS_MISSING", "WEAK_CSP", "MISSING_SRI", "MIXED_CONTENT",
+            "INSECURE_COOKIES", "VULNERABLE_LIBRARY", "TRACKING_ON_LOAD")));
+    public static final Set<String> NOTE_CODES = Set.of("JS_NOT_EXECUTED", "CAPPED_OBJECTS", "CAPPED_TIME", "CAPPED_BYTES",
+            "EXCLUDES_APPLIED", "JS_COOKIES_NOT_SEEN", "CONTRAST_NOT_CHECKED", "ASSET_SAMPLES_UNAVAILABLE", "HOSTS_NOT_MEASURED",
+            "SOURCE_MAPS_NOT_CHECKED");
 }

@@ -378,7 +378,8 @@ describe('şablon sürüm geçmişi', () => {
     const dlg = await screen.findByRole('dialog', { name: 'Şablon sürüm geçmişi' })
     const diff = await within(dlg).findByText('Sürüm 2 → 3 değişiklikleri')
     expect(diff).toBeInTheDocument()
-    expect(within(dlg).getByText('Rapor başlığı: “Eski başlık” → “Mobil Kanalı Teknik Hata Mesajları - Eylül 2026”')).toBeInTheDocument()
+    // Şablon önizlemesi {ay} {yil}'ı BUGÜNÜN varsayılan dönemiyle (önceki ay) çözer — sabit bir ay testi ay dönümünde kırar.
+    expect(within(dlg).getByText(/^Rapor başlığı: “Eski başlık” → “Mobil Kanalı Teknik Hata Mesajları - \S+ \d{4}”$/)).toBeInTheDocument()
     expect(within(dlg).getByText(/Alan kaldırıldı: Eski alan/)).toBeInTheDocument()
     expect(within(dlg).queryByRole('button', { name: 'Bu sürümü düzenleyiciye yükle' })).toBeNull()     // şu anki sürüm
     fireEvent.click(within(dlg).getByRole('button', { name: /Sürüm 2/ }))

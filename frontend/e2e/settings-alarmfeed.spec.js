@@ -6,7 +6,8 @@ import { mockApi } from './support/monitorMocks.js'
 // kırpılmaz, dokunmatikte hedefler ≥ 40 px; önizleme / çağrı günlüğü dar kapta kart, geniş ekranda tablo; çağrı ayrıntı
 // paneli ekrana sığar ve girintili gövdeyi gösterir; akışı AÇMAK onay ister (pencere ekrana sığar) ve yalnız değişen alan
 // kaydedilir. 2026-10-31: otomatik IP engeli — ayar grubu, "Engellenen IP'ler" (dar kap kart, geniş ekran tablo; uzun IPv6 +
-// user agent tam), "Engeli kaldır" onay penceresi sığar, eşik < sınır hatası alanın altında.
+// user agent tam), "Engeli kaldır" onay penceresi sığar, eşik < sınır hatası alanın altında. 2026-11-05: "Yalnız 7/24'e
+// bildirilen alarmlar" anahtarı + notu sığar, kırpılmaz, dokunma hedefi; kapatınca yalnız { noc_only: false } kaydedilir.
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true },
   { name: 'tablet', width: 768, height: 1024, touch: true },
@@ -23,7 +24,7 @@ const SETTINGS = {
   enabled: false, min_level: 'WARNING', team_ids: [3], types: ['http'], resolved_minutes: 15, resolved_mode: 'status', clear_text: 'Clear',
   severity_critical: 'Critical', severity_high: 'Major', severity_warning: 'Warning', rci_mode: 'target_type', source: 'SiteMonitor',
   rcitype: '', mail_separator: 'semicolon', allowed_ips: ['10.0.0.0/8', IPV6, '192.168.100.200/32'], rate_per_minute: 30, max_rows: 2000,
-  store_body: true, block_enabled: true, block_threshold: 120, block_minutes: 15, block_escalate: true,
+  store_body: true, block_enabled: true, block_threshold: 120, block_minutes: 15, block_escalate: true, noc_only: true,
 }
 const at = (msFromNow) => new Date(Date.now() + msFromNow).toISOString().slice(0, 19)
 const BLOCKS = [
@@ -180,6 +181,9 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="af-req-row"]')).toHaveCount(3)
       await expect(root.locator('[data-slot="af-caller"]')).toHaveCount(2)
       await expect(root.locator('[data-slot="af-grp-block"]')).toBeVisible()
+      // Yalnız 7/24 süzgeci (2026-11-05): anahtar ve notu görünür (kırpılma / taşma / dokunma hedefi aşağıda kökte ölçülür)
+      await expect(root.locator('[data-slot="af-f-noc_only"] [role="switch"]')).toHaveAttribute('aria-checked', 'true')
+      await expect(root.locator('[data-slot="af-noc-only-note"]')).toBeVisible()
       await expect(root.locator('[data-slot="af-block"]')).toHaveCount(2)
       await expect(root.locator('[data-slot="af-block"]').first()).toContainText(UA)
       await expect(root.locator('[data-slot="token-chip"]')).toHaveCount(3)
@@ -272,6 +276,42 @@ for (const vp of VIEWPORTS) {
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(root.locator('[data-slot="af-enabled"]')).toHaveAttribute('data-state', 'on')
       expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (kayıt sonrası)`).toBeLessThanOrEqual(1)
+    })
+  })
+
+  test.describe(`Ayarlar → Alarm akışı — yalnız 7/24 ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('anahtar görünür, kırpılmaz, dokunma hedefi; kapatınca not uyarıya döner ve yalnız { noc_only: false } kaydedilir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const calls = await routes(page)
+      await page.goto('/?tab=settings&sec=alarmfeed')
+      const root = page.locator(ROOT)
+      await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      const row = root.locator('[data-slot="af-f-noc_only"]')
+      const sw = row.getByRole('switch', { name: "Yalnız 7/24'e bildirilen alarmlar" })
+      await sw.scrollIntoViewIfNeeded()
+      await expect(sw).toHaveAttribute('aria-checked', 'true')
+      const note = root.locator('[data-slot="af-noc-only-note"]')
+      await expect(note).toHaveAttribute('data-changed', 'false')
+      await expect(note).toContainText('RESOLVED')
+      await sw.click()
+      await expect(note).toHaveAttribute('data-changed', 'true')
+      await page.waitForTimeout(200)
+      const scope = '[data-slot="af-grp-scope"]'
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, scope), `@${vp.name}: kapsam grubunda taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, scope), `@${vp.name}: kapsam grubunda kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, scope), `@${vp.name}: kapsam grubunda küçük hedef`).toEqual([])
+      await root.locator('[data-slot="af-grp-scope"]').screenshot({ path: `test-results/settings-alarmfeed-${vp.name}-noc.png` })
+      const bar = root.locator('[data-slot="af-settings"] [data-slot="settings-save-bar"]')
+      await bar.getByRole('button', { name: /^Kaydet$/ }).click()
+      await expect.poll(() => calls.puts.length).toBe(1)
+      expect(calls.puts[0]).toEqual({ noc_only: false })
+      await expect(page.getByRole('dialog')).toHaveCount(0)   // akışı açmıyor → onay penceresi yok
+      await expect(bar).not.toHaveAttribute('data-dirty', 'true')
+      await expect(row.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+      await expect(note).toHaveAttribute('data-changed', 'false')
     })
   })
 

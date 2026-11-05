@@ -3,15 +3,24 @@ import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import {
-  FINDING_TONE, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, foundInText,
-  isPageLoad, itemBytes, itemSizeText, optimizedImage, optimizedText, problemText, statusText, verdictOf, verdictText, verdictTone, cacheText,
+  FINDING_TONE, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, foundInText, hasDeepItem,
+  httpVersionText, isPageLoad, itemBytes, itemLibrary, itemSizeText, optimizedImage, optimizedText, problemText, recsOfFinding, statusText,
+  thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, cacheText,
 } from './resourceScanModel.js'
 import { CHIP, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
-/** Ekranda gösterilen yanıt başlıkları (sunucu yalnız bunları kaydeder; çerez / kimlik başlığı ASLA). */
-const HEADER_KEYS = ['content_type', 'content_encoding', 'cache_control', 'expires', 'content_length', 'server', 'x_cache']
+/**
+ * Ekranda gösterilen yanıt başlıkları (sunucu yalnız bunları kaydeder; çerez / kimlik başlığı ASLA). `etag` …
+ * `alt_svc` algoritma 3'te (prs3) eklendi — doğrulayıcı, CDN önbelleği ve HTTP/3 duyurusu.
+ */
+const HEADER_KEYS = [
+  'content_type', 'content_encoding', 'cache_control', 'expires', 'content_length', 'server', 'x_cache',
+  'etag', 'last_modified', 'age', 'cdn_cache', 'alt_svc',
+]
+/** Küçültme / bütünlük / kaynak haritası yalnız betik ve stilde anlamlı. */
+const CODE_CATEGORIES = new Set(['JS', 'CSS'])
 
 /** Adres kırılımı: ana makine, yol, sorgu (geçersiz adres → null). */
 function urlParts(url) {
@@ -37,6 +46,8 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
   const vt = verdictText(item, t)
   const findings = Array.isArray(item.findings) ? item.findings : []
   const recCodes = new Set((recommendations || []).map((r) => r?.code))
+  // Bulgu → ilgili öneri (prs3: bazı yeni bulgular öneriden FARKLI adla yazılır — DUPLICATE ↔ DUPLICATE_RESOURCES …)
+  const recOf = (finding) => recsOfFinding(finding).find((c) => recCodes.has(c)) ?? null
   const headers = item.headers && typeof item.headers === 'object' ? item.headers : null
   const opt = optimizedImage(item)
   const dim = dimensionsText(item)
@@ -75,7 +86,8 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
           <Row label={t('prs.col.size')} value={itemBytes(item) == null ? itemSizeText(item, t, locale)
             : `${itemSizeText(item, t, locale)} · ${formatBytesExact(item.bytes, locale)}`} />
           <Row label={t('prs.od.sizeSource')}
-            value={item.size_source === 'header' ? t('prs.od.sizeHeader') : item.size_source === 'body' ? t('prs.od.sizeBody')
+            value={item.size_source === 'header' ? t('prs.od.sizeHeader')
+              : item.size_source === 'body' ? t(item.compressed === true ? 'prs.od.sizeBody' : 'prs.od.sizeBodyPlain')
               : item.size_source === 'unknown' ? t('prs.od.sizeUnknownSource') : null} empty={nr} />
           {opt && <Row label={t('prs.od.optimized')} slot="prs-od-optimized" value={optimizedText(item, t, locale)} />}
           {dim && <Row label={t('prs.export.col.dimensions')} value={t('prs.img.dims', dim)} />}
@@ -87,9 +99,13 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
           {item.error && <Row label={t('prs.export.col.problem')} slot="prs-od-problem" value={problemText(item.error, t)} />}
         </Group>
 
+        <DeepGroup item={item} t={t} />
+
         <Group title={t('prs.od.headers')} slot="prs-od-headers">
           {headers ? HEADER_KEYS.filter((k) => headers[k] != null && headers[k] !== '').map((k) => (
-            <Row key={k} label={t(`prs.od.h.${k}`)} value={<code className={cn('font-mono text-xs', WRAP)}>{String(headers[k])}</code>} />
+            <Row key={k} label={t(`prs.od.h.${k}`)} value={k === 'cdn_cache' && (headers[k] === 'hit' || headers[k] === 'miss')
+              ? t(headers[k] === 'hit' ? 'prs.od.cdnHit' : 'prs.od.cdnMiss')
+              : <code className={cn('font-mono text-xs', WRAP)}>{String(headers[k])}</code>} />
           )) : <p className="m-0 text-xs text-muted-foreground">{t('prs.od.headersNotRecorded')}</p>}
           {headers && HEADER_KEYS.every((k) => headers[k] == null || headers[k] === '') && (
             <p className="m-0 text-xs text-muted-foreground">{t('prs.od.headersNone')}</p>
@@ -104,9 +120,9 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
               {findings.map((c) => (
                 <li key={c} data-finding={c} className="flex min-w-0 flex-wrap items-center gap-2">
                   <SmallBadge tone={FINDING_TONE[c] || 'muted'}>{findingLabel(c, t)}</SmallBadge>
-                  {onGoRec && recCodes.has(c) && (
+                  {onGoRec && recOf(c) && (
                     <Button type="button" variant="ghost" size="sm" data-slot="prs-od-gorec" className={cn('h-7 px-2 text-xs', TOUCH)}
-                      onClick={() => onGoRec(c)}>
+                      onClick={() => onGoRec(recOf(c))}>
                       <Lightbulb aria-hidden="true" />{t('prs.od.goRec')}
                     </Button>
                   )}
@@ -122,6 +138,43 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
         {item.lazy === true && <p className="m-0 text-xs text-muted-foreground">{t('prs.od.lazyNote')}</p>}
       </div>
     </ModalShell>
+  )
+}
+
+/**
+ * Ayrıntılı analiz alanları (prs3, algoritma 3): HTTP sürümü, oluşturmayı engelleyip engellemediği, içerik özeti,
+ * küçültme (sezgisel), kütüphane, kaynak haritası, bütünlük (SRI) ve üçüncü taraf kategorisi. Eski analizde alanlar yok →
+ * tek satır "bu analizde kaydedilmemiş"; değer null ise "—" (bilinmiyor — "hayır" uydurulmaz).
+ */
+function DeepGroup({ item, t }) {
+  if (!hasDeepItem(item)) {
+    return (
+      <Group title={t('prs.od.deep')} slot="prs-od-deep">
+        <p data-missing="true" className="m-0 text-xs text-muted-foreground italic">{t('prs.od.deepNotRecorded')}</p>
+      </Group>
+    )
+  }
+  const code = CODE_CATEGORIES.has(item.category)
+  const yn = (v, yes, no) => (v === true ? t(yes) : v === false ? t(no) : null)
+  const lib = itemLibrary(item)
+  return (
+    <Group title={t('prs.od.deep')} slot="prs-od-deep">
+      <Row label={t('prs.od.httpVersion')} slot="prs-od-http"
+        value={httpVersionText(item.http_version) ?? (item.via === 'proxy' ? t('prs.deep.hosts.httpProxy') : null)} empty="—" />
+      {isPageLoad(item) && <Row label={t('prs.od.renderBlocking')} slot="prs-od-rb"
+        value={yn(item.render_blocking, 'prs.od.renderBlockingYes', 'prs.od.renderBlockingNo')} empty="—" />}
+      <Row label={t('prs.od.contentHash')} slot="prs-od-hash"
+        value={item.content_hash ? <code className={cn('font-mono text-xs', WRAP)}>{item.content_hash}</code> : null}
+        empty={t('prs.od.contentHashNone')} />
+      {code && <Row label={t('prs.od.minified')} slot="prs-od-minified" value={yn(item.minified, 'prs.od.minifiedYes', 'prs.od.minifiedNo')} empty="—" />}
+      {code && <Row label={t('prs.od.integrity')} slot="prs-od-integrity" value={yn(item.integrity, 'prs.od.integrityYes', 'prs.od.integrityNo')} empty="—" />}
+      {(lib || item.category === 'JS') && <Row label={t('prs.od.library')} slot="prs-od-library"
+        value={lib ? (lib.version ? `${lib.name} ${lib.version}` : lib.name) : null} empty={t('prs.od.libraryNone')} />}
+      {code && <Row label={t('prs.od.sourceMap')} slot="prs-od-sourcemap"
+        value={item.source_map ? <UrlText url={item.source_map} t={t} className="text-sm" /> : null} empty={t('prs.od.sourceMapNone')} />}
+      {item.third_party === true && <Row label={t('prs.od.tpCategory')} slot="prs-od-tpc"
+        value={item.third_party_category ? t(`prs.deep.tpc.${thirdPartyCategoryKey(item.third_party_category)}`) : null} empty="—" />}
+    </Group>
   )
 }
 

@@ -81,6 +81,9 @@ export function signed(diff, fmtAbs) {
   return `${diff < 0 ? '−' : '+'}${fmtAbs(Math.abs(diff))}`
 }
 
+/** Sunucunun maskelediği adres (sorgudaki gizli değer `*****`) — tıklanabilir bağlantı yapılmaz. */
+export const isMaskedUrl = (url) => typeof url === 'string' && url.includes('*****')
+
 /**
  * Güvenli bağlantı: yalnız http(s) adresi tıklanır (javascript: / data: şeması bağlanmaz), yeni sekmede, URL sarar.
  * `label` verilirse görünen metin odur (adres yine `aria-label`'da).
@@ -88,6 +91,14 @@ export function signed(diff, fmtAbs) {
 export function UrlText({ url, t, className, label }) {
   const safe = typeof url === 'string' && /^https?:\/\//i.test(url)
   if (!safe) return <span className={cn(WRAP, className)}>{label ?? (url || '—')}</span>
+  // Sunucu sorgudaki gizli değerleri `*****` ile maskeler — bu adres gerçek adres DEĞİL, bağlantı yapılmaz
+  if (isMaskedUrl(url)) {
+    return (
+      <span data-slot="prs-obj-url-masked" title={t('prs.obj.maskedUrl')} className={cn(WRAP, className)}>
+        {label ?? url}<span className="sr-only"> — {t('prs.obj.maskedUrl')}</span>
+      </span>
+    )
+  }
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" data-slot="prs-obj-url"
       aria-label={t('prs.obj.openUrl', url)}
