@@ -126,6 +126,119 @@ public final class PushI18n {
                 : "[ESKALASYON · " + delayMinutes + " dk onaysız] ";
     }
 
+    // ── Alarm iletimi (2026-11-05) ─────────────────────────────────────────────────────────────────
+
+    /**
+     * İletim önekindeki sahip takım adları parçasının tavanı — push mesajı 80–320 karakter; 60+ karakterlik AD takım adı
+     * alarm metnini yutmasın. Tavanı aşan parça {@code "..."} ile biter.
+     */
+    static final int FORWARD_OWNER_MAX = 50;
+
+    /**
+     * İletim önekinin sahip takım parçası: adlar kırpılır, denetim karakterleri ve iki nokta boşluğa döner (önek, çözüm
+     * push'unda önceki satırdan geri okunur — {@link #forwardOwnerOf}; ad içindeki ":" ayırıcıyla karışmasın), tekil, ", " ile
+     * birleşir, {@link #FORWARD_OWNER_MAX} tavanı. Hiç ad yoksa null.
+     */
+    static String forwardOwnerLabel(List<String> ownerTeamNames) {
+        if (ownerTeamNames == null || ownerTeamNames.isEmpty()) return null;
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (String raw : ownerTeamNames) {
+            String n = sanitizeOwner(raw);
+            if (n != null) names.add(n);
+        }
+        if (names.isEmpty()) return null;
+        String joined = String.join(", ", names);
+        return joined.length() > FORWARD_OWNER_MAX ? joined.substring(0, FORWARD_OWNER_MAX - 3).trim() + "..." : joined;
+    }
+
+    private static String sanitizeOwner(String raw) {
+        if (raw == null) return null;
+        String s = raw.length() > 300 ? raw.substring(0, 300) : raw;
+        StringBuilder sb = new StringBuilder(s.length());
+        boolean space = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean blank = Character.isWhitespace(c) || Character.isISOControl(c) || c == ':';
+            if (blank) { space = sb.length() > 0; continue; }
+            if (space) { sb.append(' '); space = false; }
+            sb.append(c);
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /** Önekin sahip parçası ve çoğulluğu — çözüm push'unda önceki iletim satırından geri okunan biçim. */
+    public record ForwardOwner(String label, boolean plural) { }
+
+    /** İletim push'unun öneki — sahip takım adlarından ({@link #forwardOwnerLabel}). */
+    public static String forwardPrefix(List<String> ownerTeamNames, String lang) {
+        String label = forwardOwnerLabel(ownerTeamNames);
+        long distinct = ownerTeamNames == null ? 0
+                : ownerTeamNames.stream().map(PushI18n::sanitizeOwner).filter(java.util.Objects::nonNull).distinct().count();
+        return forwardPrefixFor(new ForwardOwner(label, distinct > 1), lang);
+    }
+
+    /**
+     * İletim öneki: tr {@code "Ödeme Ekibi takımından: "} / çoğul {@code "A, B takımlarından: "}; en {@code "From team X: "} /
+     * {@code "From teams A, B: "}. Sahip bilinmiyorsa tr {@code "İletilen alarm: "}, en {@code "Forwarded alarm: "}.
+     */
+    public static String forwardPrefixFor(ForwardOwner owner, String lang) {
+        boolean en = isEn(lang);
+        String label = owner == null ? null : owner.label();
+        if (label == null || label.isBlank()) return en ? "Forwarded alarm: " : "İletilen alarm: ";
+        if (en) return (owner.plural() ? "From teams " : "From team ") + label + ": ";
+        return label + (owner.plural() ? " takımlarından: " : " takımından: ");
+    }
+
+    /**
+     * Önceki iletim satırının mesajından önekin sahip parçası (çözüm push'u aynı öneki kişinin GÜNCEL dilinde yeniden kurar).
+     * İletim öneki değilse null. Arama yalnız mesajın başında, tavanlı (ad parçası {@link #FORWARD_OWNER_MAX}).
+     */
+    public static ForwardOwner forwardOwnerOf(String message) {
+        if (message == null || message.isEmpty()) return null;
+        if (message.startsWith("İletilen alarm: ") || message.startsWith("Forwarded alarm: ")) return new ForwardOwner(null, false);
+        int window = Math.min(message.length(), FORWARD_OWNER_MAX + 20);
+        String head = message.substring(0, window);
+        for (String[] p : new String[][]{{"From teams ", "t"}, {"From team ", "f"}}) {
+            if (!head.startsWith(p[0])) continue;
+            int end = head.indexOf(": ", p[0].length());
+            if (end <= p[0].length()) return null;
+            return new ForwardOwner(head.substring(p[0].length(), end), "t".equals(p[1]));
+        }
+        // Sahip parçası ":" taşımaz (forwardOwnerLabel boşluğa çevirir) — işaretten önce ":" varsa önek değildir
+        int plural = head.indexOf(" takımlarından: ");
+        if (plural > 0 && head.lastIndexOf(':', plural) < 0) return new ForwardOwner(head.substring(0, plural), true);
+        int single = head.indexOf(" takımından: ");
+        if (single > 0 && head.lastIndexOf(':', single) < 0) return new ForwardOwner(head.substring(0, single), false);
+        return null;
+    }
+
+    /**
+     * İletilen fırtınanın toplu push metni: tr {@code "Ödeme Ekibi takımının fırtınası: size iletilen 5 alarm (KRİTİK)."}
+     * (günlük tekrar "… fırtınası sürüyor: …", çözüm "… fırtınası sona erdi."); en {@code "Storm of team X: 5 alarms
+     * forwarded to you (CRITICAL)."}. Bağlantı YOK (push kurum ağı dışında okunur).
+     *
+     * @param stormTrigger INITIAL | DAILY_REALERT | RESOLVE
+     */
+    public static String forwardStormText(String ownerTeamName, int memberCount, String level, String stormTrigger,
+                                          String lang) {
+        boolean en = isEn(lang);
+        String owner = forwardOwnerLabel(ownerTeamName == null ? List.of() : List.of(ownerTeamName));
+        int n = Math.max(0, memberCount);
+        if ("RESOLVE".equals(stormTrigger)) {
+            if (owner == null) return en ? "The forwarded alert storm has ended." : "İletilen alarm fırtınası sona erdi.";
+            return en ? "Storm of team " + owner + " has ended." : owner + " takımının fırtınası sona erdi.";
+        }
+        boolean daily = "DAILY_REALERT".equals(stormTrigger);
+        String lvl = levelWord(level, lang);
+        if (en) {
+            String head = owner == null ? "Alert storm" : "Storm of team " + owner;
+            return head + (daily ? " continues: " : ": ") + n + (n == 1 ? " alarm" : " alarms")
+                    + " forwarded to you (" + lvl + ").";
+        }
+        String head = owner == null ? "Alarm fırtınası" : owner + " takımının fırtınası";
+        return head + (daily ? " sürüyor: " : ": ") + "size iletilen " + n + " alarm (" + lvl + ").";
+    }
+
     /** "Kendime test push'u gönder" metni. */
     public static String selfTest(Instant now, String lang) {
         String clock = HHMM.format((now == null ? Instant.now() : now).atZone(IST));

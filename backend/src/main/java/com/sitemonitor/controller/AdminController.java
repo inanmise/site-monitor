@@ -2664,6 +2664,9 @@ public class AdminController {
         return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert resolved"));
     }
 
+    /** Yeniden gönderim önizlemesinde alarm iletimi satırının türü (e-posta ve push satırlarında aynı, 2026-11-05). */
+    static final String FORWARD_KIND = com.sitemonitor.service.UserPushService.PREVIEW_KIND_FORWARD;
+
     /** "Tekrar Bildir" onay pop-up'ı için alıcı önizlemesi — gönderim/yazma YAPMAZ.
      *  Perm+scope çifti re-notify ile birebir aynı (önizleyebilen = gönderebilen). */
     @GetMapping("/alerts/{id}/re-notify/preview")
@@ -2678,6 +2681,9 @@ public class AdminController {
                     m.put("name",  r.name());
                     m.put("role",  r.role());
                     m.put("kind",  r.kind());
+                    // Alarm iletimi (2026-11-05): iletim satırının alıcı takımı (satırın adı alıcı takımın adıdır) — ön yüz
+                    // "İletim · <takım>" rozeti. Diğer satırlar bugünkü biçimde (alan yok).
+                    if (FORWARD_KIND.equals(r.kind())) m.put("team_name", r.name());
                     return m;
                 }).toList();
         // Webhook (push) kanali AYRI listelenir: kullanici "kime mail, kime push" gidecegini
@@ -2694,6 +2700,11 @@ public class AdminController {
                     m.put("status",       r.status());
                     // Aynı kişi kuralı (2026-10-21): SKIPPED_SAME_PERSON satırında kararın verildiği (aynı kişinin) hesap.
                     m.put("same_person_of", r.samePersonOf());
+                    // Alarm iletimi (2026-11-05): iletimle eklenen alıcı — tür ve alıcı takım (yalnız o satırlarda)
+                    if (r.kind() != null) {
+                        m.put("kind", r.kind());
+                        m.put("team_name", r.teamName());
+                    }
                     return m;
                 }).toList();
         Map<String, Object> data = new LinkedHashMap<>();
