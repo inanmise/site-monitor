@@ -59,6 +59,8 @@ export const KW_REQUEST_EMPTY = Object.freeze({
   basicAuthUser: '', basicAuthPass: '', clearBasicAuthPass: false,
   userAgentMode: 'DEFAULT', userAgent: '',
   expectedStatus: '', expectedFinalUrl: '', followRedirects: true,
+  // "Özel" durum kodu seçimi formda tutulur (gönderilmez): bölüm kapanıp açılınca seçim kaybolmaz, boş "Özel" hata verir (DÜŞÜK-8)
+  expectedStatusCustom: false,
   mailSubjectTemplate: '',
   customHeaders: '', clearHeaders: false,
 })
@@ -142,7 +144,8 @@ export function keywordFormFrom(m) {
     requestBody: row.request_body || '', requestContentType: row.request_content_type || '',
     basicAuthUser: row.basic_auth_user || '', basicAuthPass: '', clearBasicAuthPass: false,
     userAgentMode: UA_MODES.includes(row.user_agent_mode) ? row.user_agent_mode : 'DEFAULT', userAgent: row.user_agent || '',
-    expectedStatus: row.expected_status || '', expectedFinalUrl: row.expected_final_url || '',
+    expectedStatus: row.expected_status || '', expectedStatusCustom: statusModeOf(row.expected_status) === 'CUSTOM',
+    expectedFinalUrl: row.expected_final_url || '',
     followRedirects: row.follow_redirects !== false,
     mailSubjectTemplate: row.mail_subject_template || '',
     customHeaders: '', clearHeaders: false,
@@ -307,6 +310,10 @@ export function keywordPayload(form, base, { isNew = false, globalAdmin = false,
     } else if (!nextRules && prevRules) {
       out.rules = null
       for (const k of KW_CONDITION_KEYS) out[k] = next[k]
+    } else if (nextRules) {
+      // Özel kural listesi DEĞİŞMEDİ: eski koşul alanları kural #1'in sunucu aynasıdır — tek başına gönderilmez (sunucu
+      // `rules` doluyken yalnız eski alanları 400 ile reddeder; son inceleme D-5). Aynanın bayat olması kayıt sebebi değildir.
+      for (const k of KW_CONDITION_KEYS) delete out[k]
     }
   }
 
@@ -335,17 +342,68 @@ export function affectsCheck(payload) {
 }
 
 /**
+ * URL'nin kaynağı (şema + host + port; varsayılan port yazılmaz) — küçük harf; okunamazsa null. Kayıtlı sırlar YALNIZ kayıtlı
+ * adresin kaynağına gönderilir (son inceleme O2; sunucu aynı kuralı uygular: test 403 `KEYWORD_SAVED_SECRET_ORIGIN`,
+ * güncelleme 400).
+ */
+export function originOf(url) {
+  const n = normalizeUrl(String(url ?? '').trim())
+  if (!n) return null
+  try {
+    const u = new URL(n.replace(/\{timestamp\}/g, '0'))
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return u.origin.toLowerCase()
+  } catch { return null }
+}
+
+/** İki adres aynı kaynakta mı (biri okunamazsa false — kayıtlı sır gönderilmez). */
+export function sameOrigin(a, b) {
+  const x = originOf(a)
+  return x != null && x === originOf(b)
+}
+
+/**
+ * Kayıtlı sırların (Basic auth parolası, özel başlıklar) hangileri kullanılmak İSTENİYOR ama formdaki adres kayıtlı adresin
+ * kaynağından farklı olduğu için GÖNDERİLMEZ → anahtar listesi (`basicAuthPass`, `customHeaders`). Kayıt yoksa boş.
+ */
+export function savedSecretsBlocked(form, { globalAdmin = false, stored = null, storedUrl = null } = {}) {
+  const f = { ...KW_EMPTY_FORM, ...(form || {}) }
+  if (!stored || sameOrigin(f.url, storedUrl)) return []
+  const out = []
+  if (stored.hasPass && trimOrNull(f.basicAuthUser) && !f.basicAuthPass && !f.clearBasicAuthPass) out.push('basicAuthPass')
+  if (globalAdmin && stored.hasHeaders && !String(f.customHeaders || '').trim() && !f.clearHeaders) out.push('customHeaders')
+  return out
+}
+
+/**
+ * Düzenlemede adres başka bir KAYNAĞA taşındıysa sunucunun reddedeceği durumlar (istemci önceden söyler — son inceleme O2):
+ * kayıtlı parola var, kullanıcı adı duruyor ve yeni parola yazılmadı → `basicAuthPass`; özel başlıklar kayıtlı ve kullanıcı
+ * global yönetici değil → `url`. Döner: `{ alan: true }` (ileti sayfada).
+ */
+export function originChangeProblems(form, { globalAdmin = false, stored = null, storedUrl = null } = {}) {
+  const f = { ...KW_EMPTY_FORM, ...(form || {}) }
+  if (!stored || !storedUrl || sameOrigin(f.url, storedUrl) || originOf(f.url) == null) return {}
+  const out = {}
+  if (stored.hasPass && trimOrNull(f.basicAuthUser) && !f.basicAuthPass && !f.clearBasicAuthPass) out.basicAuthPass = true
+  if (stored.hasHeaders && !globalAdmin) out.url = true
+  return out
+}
+
+/**
  * "Test et" yükü (POST /monitoring/keyword/test, sözleşme §10.2). Eski anahtarlar bugünkü biçimde (özel başlık yalnız global
  * admin'de; diğerinde null — sunucu yok sayar); yeni alanlar yalnız kullanılıyorsa. Düzenlenen kayıtlı izlemede (monitorId)
- * kutuya yazılmamış bir sır KAYITLI değeriyle kullanılsın diye `useSaved` istenir — sunucu düzenleme yetkisini denetler.
+ * kutuya yazılmamış bir sır KAYITLI değeriyle kullanılsın diye `useSaved` istenir — YALNIZ formdaki adres kayıtlı adresle
+ * aynı kaynaktaysa (`storedUrl`; son inceleme O2). `alertLevel`: genel hüküm ve kural seviyeleri aynı tabanla hesaplansın
+ * (sunucu yoksa WARNING varsayar — DÜŞÜK-1).
  */
-export function keywordTestPayload(form, { globalAdmin = false, monitorId = null, stored = null } = {}) {
+export function keywordTestPayload(form, { globalAdmin = false, monitorId = null, stored = null, storedUrl = null } = {}) {
   const f = { ...KW_EMPTY_FORM, ...(form || {}) }
   const out = {
     url: normalizeUrl(f.url), keyword: f.keyword, operator: f.operator,
     matchCount: Number(f.matchCount), timeoutMs: Number(f.timeoutMs),
     customHeaders: globalAdmin ? (String(f.customHeaders || '').trim() || null) : null,
     caseSensitive: !!f.caseSensitive, useProxy: f.useProxy || 'AUTO',
+    alertLevel: f.alertLevel || 'WARNING',
   }
   if (f.matchScope === 'VISIBLE') out.matchScope = 'VISIBLE'
   if (f.normalizeWs) out.normalizeWs = true
@@ -367,11 +425,32 @@ export function keywordTestPayload(form, { globalAdmin = false, monitorId = null
   if (numOrNull(f.maxBytes) != null) out.maxBytes = numOrNull(f.maxBytes)
   if (monitorId != null) {
     out.monitorId = monitorId
+    // Kayıtlı sır başka bir kaynağa gitmez: adres değiştiyse (ya da kayıtlı adres bilinmiyorsa) hiç istenmez
+    if (!sameOrigin(f.url, storedUrl)) return out
     const useSaved = []
     if (stored?.hasPass && user && !f.basicAuthPass && !f.clearBasicAuthPass) useSaved.push('basicAuthPass')
     if (globalAdmin && stored?.hasHeaders && !String(f.customHeaders || '').trim() && !f.clearHeaders) useSaved.push('customHeaders')
     if (useSaved.length) out.useSaved = useSaved
   }
+  return out
+}
+
+/**
+ * Geri yükleme yanıtının kullanıcıya söylenecek notları (sözlük anahtarları): `secrets_cleared` (adres başka bir siteye
+ * döndüğü için kayıtlı parola / özel başlıklar TEMİZLENDİ — yeniden girilmeli) ve `skipped_fields` (`rules` — paylaşımla
+ * geri yüklemede kurallar geri sarılmadı). Bilinmeyen alan / değer yok sayılır.
+ */
+export function restoreNotices(data) {
+  const d = data && typeof data === 'object' ? data : {}
+  const cleared = Array.isArray(d.secrets_cleared) ? d.secrets_cleared : []
+  const skipped = Array.isArray(d.skipped_fields) ? d.skipped_fields : []
+  const routing = Array.isArray(d.skipped_routing) ? d.skipped_routing : []
+  const out = []
+  if (cleared.includes('basicAuthPass')) out.push('keyword.restore.passCleared')
+  if (cleared.includes('customHeaders')) out.push('keyword.restore.headersCleared')
+  if (skipped.includes('rules')) out.push('keyword.restore.rulesSkipped')
+  // Paylaşımla geri yüklemede kural listesi (kritik eşik = alarm seviyesi) geri sarılmadı
+  else if (routing.includes('rulesJson')) out.push('keyword.restore.rulesRouting')
   return out
 }
 
@@ -500,6 +579,8 @@ export function validateKeywordForm(form, { globalAdmin = false, t } = {}) {
   if (ua) errs.userAgent = ua
   const st = pick(statusPatternError(f.expectedStatus))
   if (st) errs.expectedStatus = st
+  // "Özel" seçili ama kutu boş: sessizce "kapalı" kaydedilmez — alanın altında zorunlu hatası
+  else if (f.expectedStatusCustom && !trimOrNull(f.expectedStatus)) errs.expectedStatus = tr('keyword.req.err.statusCustomEmpty')
   const fu = pick(finalUrlError(f.expectedFinalUrl))
   if (fu) errs.expectedFinalUrl = fu
   const sj = pick(subjectError(f.mailSubjectTemplate))
@@ -550,7 +631,7 @@ export function serverFieldErrors(res) {
 
 /** Hata haritasında formun gösterebildiği (alanın altına düşen) bir anahtar var mı — `rules[i].x` fe2 düzenleyicisinindir. */
 export function hasRenderableField(errs) {
-  return Object.keys(errs || {}).some((k) => KW_FORM_FIELD_KEYS.includes(k) || k.startsWith('rules['))
+  return Object.keys(errs || {}).some((k) => KW_FORM_FIELD_KEYS.includes(k) || k === 'rules' || k.startsWith('rules['))
 }
 
 // ── Posta konusu (E3) ──────────────────────────────────────────────────────────────────────

@@ -8,9 +8,9 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { CodeBlock, Kv, KvList, SectionTitle } from '../http/diagnose/HttpDiagnoseParts.jsx'
 import { highlightParts } from './keywordCardModel.js'
-import { detailRows, excerptHasKeyword, failureTexts, hintTexts, hintsOf, suggestsSynthetic } from './keywordFailureModel.js'
+import { detailRows, excerptHasKeyword, failureTexts, hintTexts, hintsOf, ruleOutcomeOf, suggestsSynthetic } from './keywordFailureModel.js'
 import RuleTestResults, { ruleResultsOf } from './rules/RuleTestResults.jsx'
-import { rulesFromRow } from './rules/ruleModel.js'
+import { logicOf, rulesFromRow } from './rules/ruleModel.js'
 
 /**
  * Keyword KONTROL GEÇMİŞİ hata teşhisi (2026-10-04, kullanıcı isteği: "kontrol geçmişinde hata olduğunda herhangi bir
@@ -79,7 +79,7 @@ const KV_TONE = { bad: 'text-destructive', warn: 'text-amber-700 dark:text-amber
  * @param {Function} onConvert    (kw F3) "Sentetik izleme ile kur" — yalnız düzenleme yetkisinde verilir; ipucu giriş sayfası
  *                                ya da JavaScript ile çizilen içerik diyorsa düğme çizilir
  */
-export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDiagnose, onConvert }) {
+export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDiagnose, onConvert, showRules = true }) {
   const t = useT()
   const f = failureTexts(check, monitor, t)
   if (!f) return null
@@ -118,10 +118,11 @@ export function KeywordFailurePanel({ check, monitor, canDiagnose = false, onDia
         </KvList>
       </div>
 
-      {ruleResultsOf(check.rule_results) && (
+      {/* Form testi kural listesini zaten üstte çiziyor (showRules=false) — aynı liste iki kez çizilmez (DÜŞÜK-2) */}
+      {showRules && ruleResultsOf(check.rule_results) && (
         <div data-slot="kwfail-rules" className="min-w-0">
           <RuleTestResults results={check.rule_results} rules={rulesFromRow(monitor)} level={check.breach_level}
-            monitorLevel={monitor?.alert_level || 'WARNING'} />
+            monitorLevel={monitor?.alert_level || 'WARNING'} logic={logicOf(monitor)} outcome={ruleOutcomeOf(check, monitor, t)} />
         </div>
       )}
 

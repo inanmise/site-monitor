@@ -33,7 +33,7 @@ export const TEXT_COUNT_CAP = 1_000_000
 /** Not kodları — her biri `keyword.k6.note.<KOD>` (TR + EN). */
 export const K6_NOTE_CODES = Object.freeze([
   'HEADERS_NOT_CARRIED', 'REGEX_NOT_PORTABLE', 'SIZE_APPROXIMATE', 'LEVELS_NOT_CARRIED', 'CHANGE_NOT_CARRIED', 'SCOPE_APPROXIMATE',
-  'INTERVAL_RAISED',
+  'INTERVAL_RAISED', 'PLAIN_REQUEST_DATA',
 ])
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/
@@ -293,6 +293,9 @@ export function keywordToK6(m, { t = keyT } = {}) {
   const finalUrl = row.expected_final_url ? absoluteUrl(String(row.expected_final_url), String(row.url || '')) : null
   const interval = clamp(row.interval_seconds, 30, 86400, 300)
   if (interval < K6_INTERVAL_MIN) note('INTERVAL_RAISED', K6_INTERVAL_MIN)
+  // Gövde ve adres sorgusu betiğe DÜZ yazılır (sentetik kayıtta okunur) — içinde sır olabilir: gizli env önerisi (DÜŞÜK-10)
+  const urlHasQuery = /\?[^#]/.test(String(row.url || ''))
+  if ((method === 'POST' && String(row.request_body ?? '').trim() !== '') || urlHasQuery) note('PLAIN_REQUEST_DATA')
 
   // ── Betik ──
   const name = commentText(row.name || row.url || '')

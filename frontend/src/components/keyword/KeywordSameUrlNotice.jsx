@@ -60,7 +60,8 @@ export default function KeywordSameUrlNotice({ url, excludeId = null, delayMs = 
         if (my === seq.current) setRes({ target, status: 'failed', data: null })
       }
     }, delayMs)
-    return () => clearTimeout(h)
+    // Söküm / yeni istek: uçuştaki yanıt artık bu örneğe yazılmaz (sıra numarası ilerler — DÜŞÜK-10)
+    return () => { clearTimeout(h); seq.current++ }
   }, [target, excludeId, nonce, delayMs])
 
   // Yanıt başka bir URL'ye aitse (yazmaya devam edildi) gösterilmez — bayat uyarı yeni adresi anlatmasın

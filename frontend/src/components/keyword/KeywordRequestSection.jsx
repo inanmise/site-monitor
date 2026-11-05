@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { ChevronDown, Fingerprint, KeyRound, ListChecks, Send, ShieldAlert } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -166,13 +166,12 @@ function ResponseRulesPart({ form, set, fe }) {
   const uid = useId()
   const labelId = `${uid}-status`
   const errId = `${uid}-status-err`
-  const [forceCustom, setForceCustom] = useState(() => statusModeOf(form.expectedStatus) === 'CUSTOM')
-  const mode = forceCustom ? 'CUSTOM' : statusModeOf(form.expectedStatus)
+  // Kip FORMDA (`expectedStatusCustom`): bölüm kapanınca bu parça sökülür — yerel durum seçimi unuturdu (DÜŞÜK-8)
+  const mode = form.expectedStatusCustom ? 'CUSTOM' : statusModeOf(form.expectedStatus)
   const statusErr = fe.errors?.expectedStatus
   const pick = (v) => {
-    if (v === 'CUSTOM') { setForceCustom(true); return }
-    setForceCustom(false)
-    set({ expectedStatus: STATUS_PRESETS[v] ?? '' }, 'expectedStatus')
+    if (v === 'CUSTOM') { set({ expectedStatusCustom: true }, 'expectedStatus'); return }
+    set({ expectedStatusCustom: false, expectedStatus: STATUS_PRESETS[v] ?? '' }, 'expectedStatus')
   }
   return (
     <FormSection boxed={false} title={t('keyword.req.rulesTitle')} icon={ListChecks}>

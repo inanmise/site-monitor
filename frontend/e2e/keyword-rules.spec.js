@@ -272,6 +272,73 @@ for (const vp of VIEWPORTS) {
       await expect(tab.locator('[data-slot="kw-change-latest"]')).toHaveAttribute('data-state', 'same')
     })
 
+    test('son inceleme: kural dışı neden hükmü, değişim ölçülmedi notu, gizli temel metni, B10 bilgi notu, kopyada sır uyarısı', async ({ page }) => {
+      test.setTimeout(150_000)
+      const base = keywordRows()
+      const rows = base.map((r, i) => {
+        // Çok kurallı izleme: kurallar tuttu ama son adres kuralından kapalı; değişim seçicisi öğe bulamadı
+        if (i === 0) {
+          return { ...r, failure_reason: 'FINAL_URL_MISMATCH', breach_level: null, change_note: 'SELECTOR_NOT_FOUND', content_changed: null,
+            rule_results: [{ id: 'r1', kind: 'TEXT', pattern_preview: 'Hoş geldiniz', count: 2, ok: true, level: 'NONE' },
+              { id: 'r-ab12', kind: 'REGEX', pattern_preview: 'Hata\\s+\\d{3}', count: 0, ok: true, level: 'NONE' }] }
+        }
+        // Eski izleme: saklı "en az 0 kez" kuralı + kayıtlı parola (kopyada taşınmaz)
+        if (i === 1) {
+          return { ...r, name: 'Eski kural (en az 0)', rules_custom: true, basic_auth_user: 'izleme', has_basic_auth_pass: true,
+            rules: [{ id: 'r1', kind: 'TEXT', pattern: r.keyword, case_sensitive: false, operator: 'GTE', count: 0, critical: null, scope: null, label: LONG_LABEL },
+              { id: 'r2', kind: 'TEXT', pattern: 'Bakım', case_sensitive: false, operator: 'LTE', count: 0, critical: null, scope: null, label: null }] }
+        }
+        return r
+      })
+      await mockApi(page, { monitors: { ...MONITORS, keyword: rows } })
+      await page.route((u) => /^\/api\/monitoring\/keyword\/\d+\/change$/.test(new URL(u).pathname), json({ success: true, data: {
+        enabled: true, can_edit: false, mask: [], selector: 'main > .kampanya-listesi',
+        baseline: { taken_at: iso(86_400_000), taken_by_name: 'Ayşe Yılmaz (Dijital Kanallar / Uzman)', source: 'AUTO', bytes: 47_500,
+          line_count: 210, text: null, text_hidden: true, text_truncated: false },
+        latest: { checked_at: iso(3_600_000), changed: false, summary: null },
+        skipped: { checked_at: iso(60_000), note: 'SELECTOR_NOT_FOUND' },
+      } }))
+      await page.route((u) => /^\/api\/monitoring\/keyword\/\d+\/content-series$/.test(new URL(u).pathname),
+        json({ success: true, data: { bucket_seconds: 3600, capped: false, total: 0, points: [] } }))
+      await page.goto('/?tab=keyword')
+      const card = page.locator('.upt-grid > [data-slot="card"]').filter({ hasText: 'Portal (çok kurallı)' })
+      await expect(card).toBeVisible({ timeout: 20_000 })
+      // Kart: hüküm nedenin kendisi (kural sağlanmadı DEĞİL); değişim çipi nötr "ölçülemedi"
+      await expect(card.locator('[data-slot="keyword-panel"]')).toHaveAttribute('data-result', 'other')
+      await expect(card.locator('[data-slot="keyword-change"]')).toHaveAttribute('data-state', 'skipped')
+      await check(page, 'kart (kural dışı neden)', null, ['.upt-grid [data-slot="keyword-panel"]'])
+
+      await card.locator('[data-monitor-open]').click()
+      const dsel = '[role="dialog"]:has([data-slot="kw-k6-convert-open"])'
+      const dlg = page.locator(dsel)
+      await expect(dlg).toBeVisible()
+      await dlg.getByRole('tab', { name: /^(Content|İçerik)/ }).click()
+      const tab = dlg.locator('[data-slot="kw-content-tab"]')
+      await expect(tab.locator('[data-slot="kw-rule-results-verdict"]')).toHaveAttribute('data-verdict', 'other')
+      await expect(tab.locator('[data-slot="kw-change-skipped"]')).toHaveAttribute('data-note', 'SELECTOR_NOT_FOUND')
+      await expect(tab.locator('[data-slot="kw-change-text-hidden"]')).toBeVisible()
+      await expect(tab.locator('[data-slot="kw-change-latest"]')).toHaveAttribute('data-state', 'older')
+      await check(page, 'İçerik sekmesi (son inceleme)', dsel, [`${dsel} [data-slot="kw-content-tab"]`])
+      await page.keyboard.press('Escape')
+      await expect(page.locator(dsel)).toHaveCount(0)
+
+      // Düzenleme: değişmemiş saklı B10 kuralı bilgi notuyla (hata değil)
+      const old = page.locator('.upt-grid > [data-slot="card"]').filter({ hasText: 'Eski kural (en az 0)' })
+      await old.getByRole('button', { name: /— (Edit|Düzenle)$/ }).click()
+      const fsel = '[role="dialog"]:has([data-slot="kw-rules-editor"])'
+      const form = page.locator(fsel)
+      await expect(form.locator('[data-slot="kw-rule-notice"]').first()).toBeVisible()
+      await expect(form.locator('[data-field="rules[0].count"] [data-slot="field-error"]')).toHaveCount(0)
+      await check(page, 'form (B10 bilgi notu)', fsel, [`${fsel} [data-slot="kw-rules-editor"]`])
+      await form.getByRole('button', { name: /^(Cancel|İptal|Vazgeç)$/ }).click()
+      await expect(page.locator(fsel)).toHaveCount(0)
+
+      // Kopyala: kayıtlı parola kopyalanmaz uyarısı
+      await old.getByRole('button', { name: /(Duplicate|Kopyala)/ }).first().click()
+      await expect(page.locator(fsel).locator('[data-slot="kw-dup-secrets"]')).toBeVisible()
+      await check(page, 'kopya formu (sır uyarısı)', fsel, [`${fsel} [data-slot="kw-dup-secrets"]`])
+    })
+
     test('"Sentetik izlemeye dönüştür" → taslak yazılır, Sentetik İzleme sc_open=draft ile formu açar', async ({ page }) => {
       test.setTimeout(150_000)
       const rows = keywordRows()

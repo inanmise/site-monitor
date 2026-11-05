@@ -64,7 +64,7 @@ import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 import KeywordMonitorCard from './keyword/KeywordMonitorCard.jsx'
 import { KeywordFailureCell, KeywordFailurePanel } from './keyword/KeywordCheckFailure.jsx'
-import { metaRow as keywordMetaRow } from './keyword/keywordCardModel.js'
+import { changeNoteOf, metaRow as keywordMetaRow } from './keyword/keywordCardModel.js'
 import KeywordRequestSection from './keyword/KeywordRequestSection.jsx'
 import KeywordMatchSection from './keyword/KeywordMatchSection.jsx'
 import KeywordSameUrlNotice from './keyword/KeywordSameUrlNotice.jsx'
@@ -73,13 +73,15 @@ import KeywordMailSubjectField from './keyword/KeywordMailSubjectField.jsx'
 import KeywordRulesEditor from './keyword/rules/KeywordRulesEditor.jsx'
 import RuleTestResults, { ruleResultsOf } from './keyword/rules/RuleTestResults.jsx'
 import {
-  legacyRuleErrors, logicOf, ruleProblemText, ruleSetBadge, rulesFromForm, rulesFromRow, toPayload, validateRules,
+  cleanRule, legacyRuleErrors, logicOf, ruleProblemText, ruleSetBadge, rulesFromForm, rulesFromRow, toPayload, validateRules,
 } from './keyword/rules/ruleModel.js'
+import { ruleOutcomeOf } from './keyword/keywordFailureModel.js'
 import KeywordContentChecks from './keyword/content/KeywordContentChecks.jsx'
 import { contentFormFrom, validateContentChecks } from './keyword/content/contentChecksModel.js'
 import {
-  KW_EMPTY_FORM, affectsCheck, hasRenderableField, keywordFormFrom, keywordPayload, keywordTestPayload, sectionsForErrors,
-  serverFieldErrors, storedSecretsOf, validateKeywordForm,
+  KW_EMPTY_FORM, affectsCheck, clampTimeoutMs, hasRenderableField, keywordFormFrom, keywordPayload, keywordTestPayload,
+  originChangeProblems, restoreNotices, savedSecretsBlocked, sectionsForErrors, serverFieldErrors, stableRules, storedSecretsOf,
+  validateKeywordForm,
 } from './keyword/keywordFormModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import {
@@ -117,6 +119,8 @@ const intervalIdx = (secs) => {
 const REFRESH_INTERVAL = 60
 /** İçerik kontrollerinin form / hata anahtarları (kw fe2). */
 const CONTENT_KEYS = ['minBytes', 'maxBytes', 'changeDetect', 'changeMask', 'changeSelector']
+/** Değişmemiş (saklı) kuralda engellemeyen, bilgi tonunda gösterilen istemci kodları — B10 (O3). */
+const SOFT_RULE_CODES = Object.freeze(['alwaysHealthy', 'neverHealthy'])
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 // Formun boş hâli keyword/keywordFormModel'de (kw 2026-11-05: eşleşme, gelişmiş istek, posta konusu, fe2 kural alanları).
 // Bildirim grubu + 7/24 alanları BURADA: izleme formu bağlantı kapısı (monitorFormWiring) halkaları sayfa dosyasında arar.
@@ -146,10 +150,17 @@ function KeywordTestExtras({ result, expectedStatus, t }) {
   if (result.final_url_ok === false) lines.push(['final', t('keyword.adv.finalUrlMismatch', result.final_url || '—')])
   if (result.match_scope === 'VISIBLE') lines.push(['scope', t('keyword.adv.scopeVisible')])
   if (result.decoded_charset) lines.push(['charset', t('keyword.adv.charset', result.decoded_charset)])
-  const used = Array.isArray(result.used_saved) ? result.used_saved : null
-  if (used?.includes('basicAuthPass')) lines.push(['pass', t('keyword.adv.usedSavedPass')])
-  if (used?.includes('customHeaders')) lines.push(['headers', t('keyword.adv.usedSavedHeaders')])
-  if (Array.isArray(result.requested_saved) && result.requested_saved.length && !used) lines.push(['notUsed', t('keyword.adv.savedNotUsed')])
+  // Sunucu `used_saved`'ı her yanıtta dizi olarak döner — "kullanılmadı" uyarısı, İSTENEN bir sır dizide YOKSA (DÜŞÜK-6;
+  // eskiden `!used` hiç doğru olmuyordu). Eski sunucu (alan yok) = hiçbiri kullanılmadı.
+  const used = Array.isArray(result.used_saved) ? result.used_saved : []
+  const requested = Array.isArray(result.requested_saved) ? result.requested_saved : []
+  if (used.includes('basicAuthPass')) lines.push(['pass', t('keyword.adv.usedSavedPass')])
+  if (used.includes('customHeaders')) lines.push(['headers', t('keyword.adv.usedSavedHeaders')])
+  if (requested.some((k) => !used.includes(k))) lines.push(['notUsed', t('keyword.adv.savedNotUsed')])
+  // Adres başka bir siteye taşındı: kayıtlı sır oraya gönderilmedi (son inceleme O2) — test onsuz yapıldı
+  const blocked = Array.isArray(result.blocked_saved) ? result.blocked_saved : []
+  if (blocked.includes('basicAuthPass')) lines.push(['blockedPass', t('keyword.adv.savedPassOtherOrigin')])
+  if (blocked.includes('customHeaders')) lines.push(['blockedHeaders', t('keyword.adv.savedHeadersOtherOrigin')])
   if (!lines.length) return null
   return (
     <ul data-slot="kw-test-extra" className="m-0 mt-1.5 list-disc ps-4 text-xs">
@@ -364,9 +375,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
   // Özel posta konusu da yönlendirme sayılır (kw sözleşmesi §8.3): paylaşımla yazılan takıma yeni kayıtta boş (standart konu)
+  // Kuralların kritik eşiği de alarm SEVİYESİNİ belirler (sunucu: KEYWORD_SHARED_LOCKED, alan `rules`) — kopyadan gelen eşik kalkar
   useEffect(() => {
     if (modal === 'new' && routingLock) {
-      setForm(f => { const r = withRoutingDefaults(f); return r.mailSubjectTemplate ? { ...r, mailSubjectTemplate: '' } : r })
+      setForm(f => {
+        const r = withRoutingDefaults(f)
+        const crit = Array.isArray(r.rules) && r.rules.some((x) => x?.critical)
+        const next = crit ? { ...r, rules: r.rules.map((x) => (x?.critical ? { ...x, critical: null } : x)) } : r
+        return next.mailSubjectTemplate ? { ...next, mailSubjectTemplate: '' } : next
+      })
     }
   }, [modal, routingLock])
   // Düzenlenen kaydın write-only durumu (kayıtlı parola / başlıklar) — Kopyala'da sır taşınmaz (boş)
@@ -377,7 +394,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     setTestResult(null); setDupSource(null); resetSections()
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
-      timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
+      // Genel ayar 1–60 sn dışındaysa da form geçerli başlar (kaydırıcı 1–60; hata çizilemeyen alanda kalmasın — O4)
+      timeoutMs: clampTimeoutMs(defaults?.timeoutMs ?? emptyForm.timeoutMs),
       slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
     setModal('new')
   }
@@ -402,11 +420,34 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     const first = p.rules[0]
     return { ...f, rules: p.rules, ruleLogic: p.ruleLogic, keyword: first.pattern, operator: first.operator, matchCount: first.count, caseSensitive: first.case_sensitive }
   }
+  /** Kural listesinin karşılaştırma imzası (temizlenmiş kurallar + VE / VEYA). */
+  function rulesSignature(f) { return `${logicOf(f)}|${stableRules(rulesFromForm(f).map(cleanRule))}` }
+  /**
+   * Kural listesi tabana göre değişti mi (yeni kayıt / kopya = her zaman). Değişmediyse kurallar DOĞRULANMAZ: eski izlemede
+   * saklı "en az 0 kez" / "0'dan az" (B10) kuralı başka bir alanın düzenlenmesini kilitlemesin (son inceleme O3).
+   */
+  function rulesDirtyFor(f) {
+    return !(modal && typeof modal === 'object') || rulesSignature(f) !== rulesSignature(formFrom(modal))
+  }
   /** kw fe2: kuralların + içerik kontrollerinin istemci doğrulaması → `{ anahtar: ileti }` (`rules[i].x`, `minBytes` …). */
   function ruleContentErrors(f) {
     const out = {}
-    for (const [k, p] of Object.entries(validateRules(rulesFromForm(f)))) out[k] = ruleProblemText(p, t)
+    const rules = rulesDirtyFor(f) ? validateRules(rulesFromForm(f)) : {}
+    for (const [k, p] of Object.entries(rules)) out[k] = ruleProblemText(p, t)
     for (const [k, p] of Object.entries(validateContentChecks(f))) out[k] = t(`keyword.content.v.${p.code}`, ...(p.params || []))
+    return out
+  }
+  /**
+   * Adres başka bir siteye (kaynağa) taşınınca sunucunun reddedeceği durumlar önceden alanın altında söylenir (son inceleme
+   * O2): kayıtlı Basic auth parolası yeni adrese gitmez → parola yeniden girilmeli; özel başlıklı izlemeyi başka siteye
+   * yalnız global yönetici taşıyabilir.
+   */
+  function originErrors(f) {
+    if (!(modal && typeof modal === 'object')) return {}
+    const p = originChangeProblems(f, { globalAdmin, stored: storedSecretsOf(modal), storedUrl: modal.url })
+    const out = {}
+    if (p.basicAuthPass) out.basicAuthPass = t('keyword.adv.passOriginChanged')
+    if (p.url) out.url = t('keyword.adv.headersOriginChanged')
     return out
   }
   /** Sunucu alan hataları: eski koşul anahtarları (`keyword`, `matchCount` …) kural #1'in alanına taşınır. */
@@ -450,17 +491,22 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     // denensin (`useSaved` — sunucu düzenleme yetkisini denetler). Özel başlıklar YALNIZ global admin'de (2026-10-22, UIM-15):
     // sunucu kapsamlı yöneticinin başlıklarını yok sayar — gönderilen başlıklar testi yanıltırdı.
     const editing = !!modal && typeof modal === 'object'
-    const payload = keywordTestPayload(sendableForm(form), {
-      globalAdmin, monitorId: editing ? modal.id : null, stored: editing ? storedSecretsOf(modal) : null,
-    })
+    const opts = { globalAdmin, stored: editing ? storedSecretsOf(modal) : null, storedUrl: editing ? modal.url : null }
+    const sendable = sendableForm(form)
+    const payload = keywordTestPayload(sendable, { ...opts, monitorId: editing ? modal.id : null })
+    const blocked = editing ? savedSecretsBlocked(sendable, opts) : []
     const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testKeyword(payload)
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
-      if (res?.success) { setTestResult({ ...res.data, requested_saved: payload.useSaved || null }); return }
+      if (res?.success) { setTestResult({ ...res.data, requested_saved: payload.useSaved || null, blocked_saved: blocked }); return }
       // Sunucunun alan hatası (400 VALIDATION_FAILED + field) alanın altına da düşer
       const fieldErrs = remapServerErrors(serverFieldErrors(res))
+      // Kayıtlı sır başka kaynağa istendi (sunucu 403): parolanın yeniden girilmesi gerektiği alanın altında söylenir
+      if (res?.code === 'KEYWORD_SAVED_SECRET_ORIGIN' && !fieldErrs.basicAuthPass && !fieldErrs.customHeaders) {
+        fieldErrs.basicAuthPass = res?.error || t('keyword.adv.savedPassOtherOrigin')
+      }
       if (hasRenderableField(fieldErrs)) { openSectionsFor(fieldErrs); fe.check(fieldErrs) }
       setTestResult({ error: res?.error || t('keyword.testError') })
     } finally {
@@ -480,6 +526,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       ...validateKeywordForm(form, { globalAdmin, t }),
       // kw-fe2: kural doğrulaması (boş desen kural #1'in alanında — eski "anahtar kelime zorunlu" denetiminin yerine) + içerik kontrolleri
       ...ruleContentErrors(form),
+      ...originErrors(form),
     }
     setRulesTried(true)
     if (Object.values(errs).some(Boolean)) { openSectionsFor(errs); fe.check(errs); return }
@@ -748,9 +795,16 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const testOk = !!testResult && !testResult.error && (typeof testResult.ok === 'boolean' ? testResult.ok : !!testResult.condition_met)
   // Birden çok kural sınandıysa tek kelimelik "« kelime » N bulundu" cümlesi yanıltır — kural listesi gösterilir
   const testMulti = (ruleResultsOf(testResult?.rule_results)?.length || 0) > 1
+  // Form testi için izleme biçimi (hata paneli + genel karar metinleri formdaki değerlerle)
+  const testMonitor = { keyword: form.keyword, operator: form.operator, match_count: Number(form.matchCount),
+    case_sensitive: !!form.caseSensitive, url: normalizeUrl(form.url), timeout_ms: Number(form.timeoutMs),
+    rules: Array.isArray(form.rules) ? rulesFromForm(form) : undefined, rule_logic: logicOf(form), alert_level: form.alertLevel }
   // kw fe2: düzenleyicinin kural listesi (form değişmedikçe aynı nesne — kart kimliği / odak korunur)
   const editorRules = useMemo(() => rulesFromForm(form),
     [form.rules, form.keyword, form.operator, form.matchCount, form.caseSensitive])   // eslint-disable-line react-hooks/exhaustive-deps
+  // Kural listesi tabana göre değişmediyse istemci hataları gösterilmez, B10 uyarısı bilgi tonunda (O3)
+  const rulesDirty = useMemo(() => rulesDirtyFor(form),
+    [form.rules, form.ruleLogic, form.keyword, form.operator, form.matchCount, form.caseSensitive, modal])   // eslint-disable-line react-hooks/exhaustive-deps
   const ruleErrors = useMemo(() => Object.fromEntries(Object.entries(fe.errors || {})
     .filter(([k, v]) => v && (k === 'rules' || k.startsWith('rules[')))), [fe.errors])
   const contentErrors = useMemo(() => Object.fromEntries(Object.entries(fe.errors || {})
@@ -794,7 +848,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('keyword.save')}</Button>
       </>}>
       {dupSource
-        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        ? (
+          <AlertBanner tone="info" icon={Copy}>
+            <span data-slot="kw-dup-hint">{t('keyword.duplicateHint')}</span>
+            {/* Kayıtlı parola / özel başlıklar API'den hiç dönmez → kopyaya taşınamaz; ilk kontrol 401 olmasın diye söylenir (DÜŞÜK-3) */}
+            {(dupSource.has_basic_auth_pass === true || dupSource.has_custom_headers === true) && (
+              <span data-slot="kw-dup-secrets" className="mt-1 block font-semibold [overflow-wrap:anywhere]">{t('keyword.duplicateSecrets')}</span>
+            )}
+          </AlertBanner>
+        )
         : <AlertBanner tone="info" icon={Target}>{t('keyword.typeInfo')}</AlertBanner>}
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
@@ -822,7 +884,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             kuralla açılır. Hatalar `rules[i].x` alanının altında; değişen kuralın eski iletisi kalkar. */}
         <LabelSlot full>
           <KeywordRulesEditor rules={editorRules} logic={logicOf(form)} onChange={onRulesChange}
-            errors={ruleErrors} showErrors={rulesTried} monitorLevel={form.alertLevel || 'WARNING'} />
+            errors={ruleErrors} showErrors={rulesTried && rulesDirty} monitorLevel={form.alertLevel || 'WARNING'}
+            softCodes={rulesDirty ? null : SOFT_RULE_CODES} criticalLocked={routingLock} />
         </LabelSlot>
         {/* ── /kw-fe2 ── */}
         {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
@@ -902,9 +965,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className="flex min-w-0 flex-col gap-3 px-3.5 pb-3.5">
-            <FormSection boxed={false} title={t('keyword.timeoutTitle')} hint={timeoutText}>
+            {/* Sunucu / istemci `timeoutMs` hatası bu alanın altına düşer (data-field) — eskiden çizilecek yeri yoktu (O4) */}
+            <FormSection boxed={false} title={t('keyword.timeoutTitle')} hint={timeoutText} {...fe.fieldProps('timeoutMs')}>
               <Slider min={1} max={60} step={1} value={[timeoutSecs]}
-                onValueChange={([v]) => setForm(f => ({ ...f, timeoutMs: v * 1000 }))}
+                onValueChange={([v]) => { setForm(f => ({ ...f, timeoutMs: v * 1000 })); fe.clear('timeoutMs') }}
                 thumbProps={{ 'aria-label': t('keyword.timeoutTitle'), 'aria-valuetext': timeoutText }}
                 className="py-1.5" />
             </FormSection>
@@ -954,7 +1018,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       {testResult && !testResult.error && (ruleResultsOf(testResult.rule_results) || typeof testResult.size_ok === 'boolean') && (
         <div className="mt-2 min-w-0" data-slot="kw-test-rules">
           <RuleTestResults results={testResult.rule_results} rules={rulesFromForm(form)} level={testResult.level}
-            sizeOk={typeof testResult.size_ok === 'boolean' ? testResult.size_ok : null} monitorLevel={form.alertLevel || 'WARNING'} />
+            sizeOk={typeof testResult.size_ok === 'boolean' ? testResult.size_ok : null} monitorLevel={form.alertLevel || 'WARNING'}
+            logic={logicOf(form)} outcome={ruleOutcomeOf({ ...testResult, ok: testOk }, testMonitor, t)} />
         </div>
       )}
       {/* Test başarısızsa (2026-10-04, kullanıcı isteği): kontrol geçmişindeki teşhis panelinin AYNISI — Neden / Etkisi /
@@ -962,11 +1027,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           Kaydedilmemiş formda uçtan uca tanılama yok (izleme kimliği gerekir) — düğme çizilmez. */}
       {testResult && !testOk && (testResult.failure_reason || testResult.error) && (
         <div className="mt-2 min-w-0" data-slot="kw-test-diagnosis">
-          <KeywordFailurePanel check={{ ...testResult, ok: false }}
-            monitor={{ keyword: form.keyword, operator: form.operator, match_count: Number(form.matchCount),
-              case_sensitive: !!form.caseSensitive, url: normalizeUrl(form.url), timeout_ms: Number(form.timeoutMs),
-              rules: Array.isArray(form.rules) ? rulesFromForm(form) : undefined, rule_logic: logicOf(form),
-              alert_level: form.alertLevel }} />
+          <KeywordFailurePanel check={{ ...testResult, ok: false }} monitor={testMonitor} showRules={false} />
         </div>
       )}
       {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
@@ -1141,16 +1202,26 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   const bad = c.ok === false
                   const open = bad && openChecks.has(c.id)
                   const when = formatDateSec(c.checked_at)
+                  // Değişim bu kontrolde ölçülmediyse nedeni (nötr; ham kod yok — kw son inceleme O-3 / D-7)
+                  const note = changeNoteOf(c.change_note)
+                  const detail = bad
+                    ? <KeywordFailureCell check={c} monitor={selected} open={open} when={when} onToggle={() => toggleCheck(c.id)} />
+                    : <span className="whitespace-nowrap"
+                        title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
+                        <strong>{occ}</strong> {t('keyword.testFound')} <span className="text-muted-foreground">· {cmp}</span>
+                      </span>
                   return (<>
                     <span className="upt-rt-time">{when}</span>
                     <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
                     <span className="upt-rt-ms">{c.http_status ?? '—'}</span>
-                    {bad
-                      ? <KeywordFailureCell check={c} monitor={selected} open={open} when={when} onToggle={() => toggleCheck(c.id)} />
-                      : <span className="whitespace-nowrap"
-                          title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
-                          <strong>{occ}</strong> {t('keyword.testFound')} <span className="text-muted-foreground">· {cmp}</span>
-                        </span>}
+                    {note ? (
+                      <div className="flex min-w-0 flex-col items-start gap-0.5">
+                        {detail}
+                        <span data-slot="kw-hist-change-note" data-note={note} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {t('keyword.change.notMeasured', t(`keyword.change.note.${note}`))}
+                        </span>
+                      </div>
+                    ) : detail}
                     {open && (
                       <KeywordFailurePanel check={c} monitor={selected} canDiagnose={canDiagnoseRow(selected)}
                         onDiagnose={() => openDiagnose(selected)}
@@ -1189,7 +1260,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 <ChangeHistoryTab t={t} kind="keyword" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canDeleteRow(selected)}
                   // Geri alma sonrası liste + açık detay kopyası tazelenir (2026-10-09) — sonraki "Düzenle" geri alınanı ezmesin
-                  onRestored={() => reloadAndSyncDetail(load, selected.id, setSelected)} />
+                  onRestored={(data) => {
+                    // Geri yükleme kayıtlı parolayı temizlediyse (adres başka siteye döndü) / kuralları atladıysa söylenir
+                    for (const key of restoreNotices(data)) toast.info(t(key))
+                    return reloadAndSyncDetail(load, selected.id, setSelected)
+                  }} />
               </Suspense>
             </TabsContent>
           </DetailTabs>

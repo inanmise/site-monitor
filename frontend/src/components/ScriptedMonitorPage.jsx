@@ -487,11 +487,16 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   // kw (sc_open=draft): taslak isteği en az bir kez sonuçlandı mı — "taslak yok" ile "henüz okunmadı" karışmasın
   const [draftsLoaded, setDraftsLoaded] = useState(false)
+  // Taslak listesi okunamadı mı (sc_open iletisi "taslak yok" ile "okunamadı"yı ayırır — DÜŞÜK-10)
+  const draftsFailedRef = useRef(false)
   const loadDrafts = useCallback(async () => {
     if (!k6.canManage) return
     try {
       const res = await api.monitoring.getScriptedDrafts?.()
-      if (res?.success) setDrafts(res.data?.drafts || [])
+      if (res?.success) { setDrafts(res.data?.drafts || []); draftsFailedRef.current = false }
+      else draftsFailedRef.current = true
+    } catch {
+      draftsFailedRef.current = true
     } finally {
       setDraftsLoaded(true)
     }
@@ -503,8 +508,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
   // ── kw (2026-11-05, F1): anahtar kelime izlemesinden "Sentetik izlemeye dönüştür" ─────────────────────────────────
   // Dönüştürme penceresi taslağı `new` anahtarına yazıp `?sc_open=draft` ile buraya gelir: liste ve taslaklar yüklenince
-  // taslak BİR KEZ forma yüklenir (`continueDraft` — "devam et" şeridinin yolu) ve parametre URL'den silinir. Taslak yoksa
-  // ya da sentetik yönetim yetkisi yoksa parametre sessizce silinir. Başka davranış değişmez.
+  // taslak BİR KEZ forma yüklenir (`continueDraft` — "devam et" şeridinin yolu) ve parametre URL'den silinir. Taslak yoksa,
+  // okunamadıysa ya da sentetik yönetim yetkisi yoksa parametre silinir ve NEDENİ söylenir. Başka davranış değişmez.
   const scOpenRef = useRef(readUrlParam('sc_open', null))
   useEffect(() => {
     if (scOpenRef.current == null || loading) return
@@ -512,7 +517,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     const wanted = scOpenRef.current === 'draft'
     scOpenRef.current = null
     clearScOpenParam()
-    if (wanted && k6.canManage && newDraft) continueDraft(newDraft)
+    if (!wanted) return
+    if (k6.canManage && newDraft) { continueDraft(newDraft); return }
+    // Parametre sessizce silinmez: kullanıcı dönüştürmenin neden açılmadığını bilsin
+    toast.error(!k6.canManage ? t('scripted.scOpen.noPermission')
+      : draftsFailedRef.current ? t('scripted.scOpen.draftsUnreadable') : t('scripted.scOpen.noDraft'))
   }, [loading, k6.canManage, draftsLoaded, newDraft])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Zamanlayıcıların closure'ı ilk render'ın state'ini görür; canlı referans her render'da tazelenir.

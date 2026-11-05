@@ -295,7 +295,9 @@ describe('KeywordContentTab', () => {
     expect(slot('kw-content-change-off')).toHaveTextContent(/İçerik değişimi/)
     expect(slot('kw-content-last-none')).toHaveTextContent('Henüz kontrol yapılmadı.')
     unmount()
-    render(<KeywordContentTab monitor={{ id: 7, checked_at: '2026-11-05T10:00:00' }} />)
+    // Özel kural (düzenli ifade) ama sunucu sonuç yazmamış → nedeni (eski kayıt) söylenir
+    render(<KeywordContentTab monitor={{ id: 7, checked_at: '2026-11-05T10:00:00', status: 'up',
+      rules_custom: true, rules: [{ id: 'r1', kind: 'REGEX', pattern: 'a+', operator: 'GTE', count: 1 }] }} />)
     expect(slot('kw-content-change-off')).toBeNull()
     expect(slot('kw-change-panel')).toBeNull()
     expect(slot('kw-content-last-none')).toHaveTextContent(/kural sonucu kaydedilmemiş/)

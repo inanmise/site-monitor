@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowDown, ArrowUp, Check, ListChecks, Plus, Siren, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Info, ListChecks, Lock, Plus, Siren, Trash2 } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -46,9 +46,14 @@ function fieldText(t, serverMap, clientMap, key, show) {
  * @param {boolean}  showErrors   istemci hatalarını dokunulmamış alanlarda da göster (kayıt denemesinden sonra)
  * @param {string}   monitorLevel izlemenin alarm seviyesi (kritik eşiksiz kuralın alarm cümlesi için)
  * @param {boolean}  disabled     salt okunur
+ * @param {string[]} softCodes    bu istemci kodları HATA değil bilgi notu olarak gösterilir (değişmemiş saklı kural — B10,
+ *                                son inceleme O3); null = hepsi hata
+ * @param {boolean}  criticalLocked  kritik eşik kilitli (paylaşımla düzenleme: eşik alarm SEVİYESİNİ belirler — sunucu
+ *                                `KEYWORD_SHARED_LOCKED`, alan `rules`)
  */
 export default function KeywordRulesEditor({
   rules, logic = 'AND', onChange, errors = null, showErrors = false, monitorLevel = 'WARNING', disabled = false,
+  softCodes = null, criticalLocked = false,
 }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -128,6 +133,7 @@ export default function KeywordRulesEditor({
           <li key={r.id || `idx-${i}`} data-rule-id={r.id}>
             <RuleCard rule={r} index={i} count={list.length} disabled={disabled} monitorLevel={monitorLevel}
               serverErrors={errors} client={client} showErrors={showErrors} touched={touched} onTouch={touch}
+              softCodes={softCodes} criticalLocked={criticalLocked}
               onChange={(next) => update(i, next)} onRemove={() => remove(i)} onMove={(d) => move(i, d)} />
           </li>
         ))}
@@ -157,12 +163,21 @@ function ChoiceRow({ label, field, error, children }) {
 }
 
 /** Tek kural kartı. */
-function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, client, showErrors, touched, onTouch, onChange, onRemove, onMove }) {
+function RuleCard({
+  rule, index, count, disabled, monitorLevel, serverErrors, client, showErrors, touched, onTouch, onChange, onRemove, onMove,
+  softCodes = null, criticalLocked = false,
+}) {
   const t = useT()
   // Koşul kipi kullanıcı seçimidir (ör. "Adet koşulu"nda GTE 1 yazmak kipi "İçermeli"ye çevirmemeli) — ilk değer kuraldan
   const [mode, setMode] = useState(() => modeOf(rule))
   const key = (alt) => `rules[${index}].${alt}`
-  const err = (alt) => fieldText(t, serverErrors, client, key(alt), showErrors || touched.has(key(alt)))
+  // Bilgi tonundaki istemci kodu (O3): hata olarak çizilmez, kartın uyarı kenarlığını yakmaz — sunucu iletisi yine önce gelir
+  const isSoft = (k) => !!(softCodes && client?.[k] && softCodes.includes(client[k].code) && !serverErrors?.[k])
+  const err = (alt) => (isSoft(key(alt)) ? null : fieldText(t, serverErrors, client, key(alt), showErrors || touched.has(key(alt))))
+  const softNotes = softCodes
+    ? Object.keys(client || {}).filter((k) => k.startsWith(`rules[${index}].`) && isSoft(k)).map((k) => ruleProblemText(client[k], t))
+    : []
+  const critDisabled = disabled || criticalLocked
   const blur = (alt) => () => onTouch(key(alt))
   const title = rule.label?.trim() || t('keyword.rule.cardTitle', index + 1)
   const titleId = `kw-rule-${rule.id}-title`
@@ -171,7 +186,7 @@ function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, cl
   const showCritical = !!rule.critical || criticalPossible(rule)
   const scopeType = rule.scope?.type || 'PAGE'
   const hasErr = Object.keys(serverErrors || {}).some((k) => k.startsWith(`${key('')}`))
-    || (showErrors && Object.keys(client).some((k) => k.startsWith(`rules[${index}].`)))
+    || (showErrors && Object.keys(client).some((k) => k.startsWith(`rules[${index}].`) && !isSoft(k)))
   // Kartın çizmediği bir alana ait sunucu hatası (kimlik, kural nesnesinin kendisi) kartın başında listelenir — kaybolmasın
   const drawn = new Set(['kind', 'pattern', 'count', 'operator', 'critical', 'scope', 'label', 'case_sensitive'])
   const orphan = Object.entries(serverErrors || {})
@@ -220,8 +235,9 @@ function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, cl
             options={RULE_KINDS.map((k) => ({ value: k, label: t(`keyword.rule.kindName.${k}`), disabled }))} />
         </ChoiceRow>
         <ChoiceRow label={t('keyword.rule.condition')} field={key('mode')}>
+          {/* Uzun EN etiketleri (640–767 px yarım sütun) kırpılmaz — satır kaydırır */}
           <SegmentedControl value={mode} onChange={(v) => !disabled && pickMode(v)} ariaLabel={t('keyword.rule.condition')}
-            className="w-full" itemClassName="flex-1 px-2"
+            className="w-full" itemClassName="h-auto min-h-7 flex-1 px-2 py-1 leading-tight whitespace-normal"
             options={RULE_MODES.map((m) => ({ value: m, label: t(`keyword.rule.mode.${m}`), disabled }))} />
         </ChoiceRow>
 
@@ -259,22 +275,33 @@ function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, cl
         {mode !== 'count' && err('count') && (
           <div data-field={key('count')} className="sm:col-span-2"><FieldError>{err('count')}</FieldError></div>
         )}
+        {softNotes.length > 0 && (
+          <p data-slot="kw-rule-notice" className="m-0 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:col-span-2 [overflow-wrap:anywhere]">
+            <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+            <span>{softNotes.join(' ')} {t('keyword.rule.softNote')}</span>
+          </p>
+        )}
 
         {showCritical && (
           <div data-slot="kw-rule-critical" data-field={key('critical')} className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 p-3 sm:col-span-2">
             <label className="flex min-w-0 cursor-pointer items-start gap-3">
-              <Switch checked={!!rule.critical} disabled={disabled} onCheckedChange={toggleCritical} aria-label={t('keyword.rule.critical')}
+              <Switch checked={!!rule.critical} disabled={critDisabled} onCheckedChange={toggleCritical} aria-label={t('keyword.rule.critical')}
                 data-slot="kw-rule-critical-toggle" className="mt-0.5 shrink-0" />
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><Siren aria-hidden="true" className="size-4 shrink-0 text-destructive" />{t('keyword.rule.critical')}</span>
                 <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('keyword.rule.criticalHint')}</span>
               </span>
             </label>
+            {criticalLocked && (
+              <p data-slot="kw-rule-critical-locked" className="m-0 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('keyword.rule.criticalLocked')}
+              </p>
+            )}
             {rule.critical && (
               <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
                 <Field label={t('keyword.rule.criticalOperator')} className={cn('mb-0', FULL_SELECT)}>
                   {({ id }) => (
-                    <NativeSelect id={id} disabled={disabled} className={CONTROL} value={critOps.includes(rule.critical.operator) ? rule.critical.operator : critOps[0]}
+                    <NativeSelect id={id} disabled={critDisabled} className={CONTROL} value={critOps.includes(rule.critical.operator) ? rule.critical.operator : critOps[0]}
                       onChange={(e) => onChange({ ...rule, critical: { ...rule.critical, operator: e.target.value } })}>
                       {critOps.map((o) => <NativeSelectOption key={o} value={o}>{t(`keyword.rule.op.${o}`)}</NativeSelectOption>)}
                     </NativeSelect>
@@ -282,7 +309,7 @@ function RuleCard({ rule, index, count, disabled, monitorLevel, serverErrors, cl
                 </Field>
                 <Field label={t('keyword.rule.criticalCount')} error={err('critical')} className="mb-0">
                   {({ id, describedBy, invalid }) => (
-                    <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} inputMode="numeric"
+                    <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={critDisabled} inputMode="numeric"
                       className={cn(CONTROL, 'tabular-nums')} value={rule.critical.count ?? ''} data-slot="kw-rule-critical-count"
                       onChange={(e) => onChange({ ...rule, critical: { ...rule.critical, count: e.target.value } })} onBlur={blur('critical')} />
                   )}
