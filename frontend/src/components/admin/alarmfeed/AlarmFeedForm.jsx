@@ -6,7 +6,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import MultiTeamSelect from '../../ui/MultiTeamSelect.jsx'
 import TokenChipsInput, { TOO_MANY } from '../loginmethods/TokenChipsInput.jsx'
 import { SettingsSaveBar } from '../SettingsControls.jsx'
-import { LEVELS, MAIL_SEPARATORS, RCI_MODES, RESOLVED_MODES, isValidIpEntry, nocOnlySupported, normalizeIp, numText, typeLabel } from './alarmFeedModel.js'
+import { LEVELS, MAIL_SEPARATORS, RCI_MODES, RESOLVED_MODES, isOpenOnly, isValidIpEntry, nocOnlySupported, normalizeIp, numText, typeLabel } from './alarmFeedModel.js'
 import { SectionCard, TOUCH } from './AlarmFeedParts.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Field as ShField, FieldContent, FieldDescription, FieldLabel, FieldTitle } from '@/components/shadcn/field'
@@ -56,7 +56,7 @@ function ChoiceCards({ value, onChange, options, labelledBy, slot, disabled, err
       {options.map((o) => {
         const rid = `${labelledBy}-${o.value}`
         return (
-          <FieldLabel key={o.value} htmlFor={rid} className="w-full cursor-pointer">
+          <FieldLabel key={o.value} htmlFor={rid} className={cn('w-full cursor-pointer', o.wide && '@2xl:col-span-2')}>
             <ShField orientation="horizontal" data-value={o.value} className="min-h-10 items-start gap-2 px-3! py-2!">
               <RadioGroupItem value={o.value} id={rid} className="mt-0.5" />
               <FieldContent className="min-w-0 gap-0.5">
@@ -116,6 +116,10 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
   ]
   const levelOptions = LEVELS.includes(form.min_level) || !form.min_level ? LEVELS : [...LEVELS, form.min_level]
   const sepOptions = MAIL_SEPARATORS.includes(form.mail_separator) || !form.mail_separator ? MAIL_SEPARATORS : [...MAIL_SEPARATORS, form.mail_separator]
+  // Bilinmeyen kayıtlı kip (daha yeni sunucu) kart olarak korunur — sessizce başka seçeneğe dönmesin
+  const resolvedModes = RESOLVED_MODES.includes(form.resolved_mode) || !form.resolved_mode ? RESOLVED_MODES : [...RESOLVED_MODES, form.resolved_mode]
+  // Yalnız açık alarmlar (2026-11-05): çözülme penceresi ve kapanış metni kullanılmaz; satır sınırı aşılırsa uyarı
+  const openOnly = isOpenOnly(form.resolved_mode)
   const rciChanged = data?.settings?.rci_mode != null && form.rci_mode !== data.settings.rci_mode
   // Yalnız 7/24 süzgeci (2026-11-05): eski sunucu alanı göndermezse satır gizli
   const nocSupported = nocOnlySupported(data)
@@ -201,11 +205,18 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
         )}
 
         <div className="grid min-w-0 grid-cols-1 gap-x-4 @2xl:grid-cols-2">
-          <TextField label={t('af.f.resolvedMinutes')} hint={t('af.f.resolvedMinutesHint', limits.resolved_minutes[0], limits.resolved_minutes[1])}
-            name="resolved_minutes" fe={fe} value={form.resolved_minutes} onChange={onChange} disabled={saving} numeric />
+          {/* Yalnız açık alarmlar kipinde çözülme penceresi kullanılmaz → pasif + not */}
+          <TextField label={t('af.f.resolvedMinutes')}
+            hint={openOnly ? t('af.f.resolvedMinutesOff') : t('af.f.resolvedMinutesHint', limits.resolved_minutes[0], limits.resolved_minutes[1])}
+            name="resolved_minutes" fe={fe} value={form.resolved_minutes} onChange={onChange} disabled={saving || openOnly} numeric />
           <TextField label={t('af.f.maxRows')} hint={t('af.f.maxRowsHint', limits.max_rows[0], limits.max_rows[1])}
             name="max_rows" fe={fe} value={form.max_rows} onChange={onChange} disabled={saving} numeric />
         </div>
+        {openOnly && (
+          <div className="mb-3.5" data-slot="af-max-rows-open-only">
+            <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>{t('af.f.maxRowsOpenOnly')}</AlertBanner>
+          </div>
+        )}
       </Group>
 
       <Group icon={Braces} title={t('af.grp.format')} slot="af-grp-format">
@@ -223,11 +234,20 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
           <span id={resolvedId} className="text-sm font-semibold">{t('af.f.resolvedMode')}</span>
           <ChoiceCards value={form.resolved_mode} onChange={set('resolved_mode')} labelledBy={resolvedId} slot="af-f-resolved_mode"
             disabled={saving} error={fe.errors.resolved_mode} errorId={`${resolvedId}-e`}
-            options={RESOLVED_MODES.map((m) => ({
-              value: m, title: t(`af.resolved.${m}`), hint: t(`af.resolved.${m}Hint`),
-              example: m === 'clear' ? t('af.resolved.clearExample', form.clear_text || '—') : t('af.resolved.statusExample', form.severity_critical || '—'),
+            options={resolvedModes.map((m) => ({
+              value: m, wide: isOpenOnly(m),
+              title: RESOLVED_MODES.includes(m) ? t(`af.resolved.${m}`) : m,
+              hint: RESOLVED_MODES.includes(m) ? t(`af.resolved.${m}Hint`) : null,
+              example: isOpenOnly(m) ? t('af.resolved.noneExample')
+                : m === 'clear' ? t('af.resolved.clearExample', form.clear_text || '—')
+                  : m === 'status' ? t('af.resolved.statusExample', form.severity_critical || '—') : null,
             }))} />
-          {fe.errors.resolved_mode && <span id={`${resolvedId}-e`} className="text-xs text-destructive">{fe.errors.resolved_mode}</span>}
+          {fe.errors.resolved_mode && <span id={`${resolvedId}-e`} className="text-xs text-destructive" data-slot="af-f-resolved_mode-error">{fe.errors.resolved_mode}</span>}
+          {openOnly && (
+            <div data-slot="af-resolved-none-note">
+              <AlertBanner tone="info" className="mb-0" icon={Info}>{t('af.resolved.noneNote')}</AlertBanner>
+            </div>
+          )}
         </div>
         {form.resolved_mode === 'clear' && (
           <TextField label={t('af.f.clearText')} hint={t('af.f.clearTextHint')} name="clear_text" fe={fe} value={form.clear_text}

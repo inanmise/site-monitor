@@ -614,6 +614,18 @@ alarm da bildirilir (RESOLVEDTIME gerçek kapanış anı), bir yanıt kaybolsa d
 birden çok kapanış varsa en güncel çözülme gönderilir. Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte
 dönmez. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
 
+**Yalnız açık alarmlar (2026-11-05, VARSAYILAN).** Ayarlar → Alarm akışı → Biçim → "Çözülen alarm nasıl gösterilsin" →
+**Gösterilmesin — yalnız açık alarmlar** (`site.monitor.alarm-feed.resolved-mode=none`). Merkezi 7/24 sistemi durum tabanlıdır:
+akışta AÇIK görmediği alarmı kendisi kapatır. Bu kipte yanıtta yalnız `STATUS=OPEN` satırları vardır — çözülen, kapsamdan çıkan,
+anahtarı değişen alarm için satır gönderilmez (`X-Feed-Resolved: 0`); yukarıdaki kapanış kuralları yalnız `status` / `clear`
+kiplerinde geçerlidir. SiteMonitor gönderdiği anahtarları yine saklar; bekleyen kapanışlar o yanıtla "teslim edildi" sayılır, bu
+yüzden kip sonradan `status`'a çevrilince eski kapanışlar topluca akmaz (yalnız son çözülme penceresindekiler bir kez daha
+`RESOLVED` görünebilir). **Satır sınırı:** açık alarm sayısı "En fazla satır"ı aşarsa sınır dışı kalan (en düşük seviyeli, en
+eski) alarmlar merkezi sistemde kapanmış görünür — sınırı açık alarm sayısının epey üstünde tutun (sunucu günlüğünde saatte bir
+`Alarm akışı satır sınırına ulaştı — yalnız açık kipte …` uyarısı). Daha önce `status` ya da `clear` kaydedilmiş ortamda o değer
+korunur (yalnız varsayılan değişti) — yeni kipi Ayarlar'dan seçin. Geçiş sırasında eski pod `none`'ı bilmez ve kısa süre `RESOLVED`
+satırı verebilir.
+
 **Yalnız 7/24'e bildirilen alarmlar (2026-11-05, varsayılan AÇIK).** Ayarlar → Alarm akışı → Kapsam → "Yalnız 7/24'e
 bildirilen alarmlar" (`site.monitor.alarm-feed.noc-only`, env `ALARM_FEED_NOC_ONLY`). Açıkken akışa yalnız 7/24 izleme ekibine
 bildirilecek alarmlar girer — 7/24 e-postasıyla AYNI alarm kuralı: izlemede "7/24 izleme ekibine bildir" açık ve izleme aktif

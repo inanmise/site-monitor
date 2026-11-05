@@ -87,4 +87,20 @@ describe('AlarmFeedSettings — dar kap (kartlar)', () => {
     // Kapalı gövde saklama + boş olmayan IP listesi: açık uç uyarısı bilgi tonunda (liste dolu)
     expect(screen.getByText('Bu uç herkese açıktır').closest('[data-tone]')).toHaveAttribute('data-tone', 'info')
   })
+
+  it('yalnız açık alarmlar kipi (2026-11-05) dar kapta: kart ilk, başlık / açıklama sarar; pencere pasif; uyarı ve not görünür', async () => {
+    const base = (await api.alarmFeed.get()).data
+    api.alarmFeed.get.mockResolvedValue({ success: true, data: { ...base, settings: { ...base.settings, resolved_mode: 'none' } } })
+    render(<AlarmFeedSettings />)
+    await waitFor(() => expect(document.querySelector('[data-slot="af-root"]')).toHaveAttribute('data-state', 'ok'))
+    const group = document.querySelector('[data-slot="af-f-resolved_mode"]')
+    const first = within(group).getAllByRole('radio')[0]
+    expect(first).toHaveAttribute('aria-checked', 'true')
+    const card = group.querySelector('[data-value="none"]')
+    expect(within(card).getByText('Gösterilmesin — yalnız açık alarmlar (önerilen)').className).toContain('[overflow-wrap:anywhere]')
+    expect(within(card).getByText(/kendisi kapatır/).className).toContain('[overflow-wrap:anywhere]')
+    expect(document.querySelector('[data-slot="af-f-resolved_minutes"]')).toBeDisabled()
+    expect(document.querySelector('[data-slot="af-max-rows-open-only"]')).toHaveTextContent('kapanmış görünür')
+    expect(document.querySelector('[data-slot="af-resolved-none-note"]')).toHaveTextContent('RESOLVEDTIME kolonu boş kalır')
+  })
 })

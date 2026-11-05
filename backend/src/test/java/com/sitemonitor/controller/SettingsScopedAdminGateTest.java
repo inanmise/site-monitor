@@ -293,6 +293,12 @@ class SettingsScopedAdminGateTest {
             assertThat(AppSettingsCatalog.isGlobalOnly(key)).as("GLOBAL_ONLY: " + key).isTrue();
         }
         assertThat(AppSettingsCatalog.byKey(nocOnly).type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+        // 2026-11-05: çözülen alarm kipi — katalogdaki seçenekler kod listesiyle aynı ('none' = yalnız açık alarmlar, varsayılan);
+        // ayar servisinin kayıt doğrulaması katalog listesini kullanır, eksik seçenek 'none' kaydını reddederdi
+        AppSettingsCatalog.Setting mode = AppSettingsCatalog.byKey(com.sitemonitor.service.alarmfeed.AlarmFeedSettings.KEY_RESOLVED_MODE);
+        assertThat(mode.type()).isEqualTo(AppSettingsCatalog.Type.ENUM);
+        assertThat(mode.enumOptions()).containsExactlyElementsOf(com.sitemonitor.service.alarmfeed.AlarmFeedSettings.RESOLVED_MODES);
+        assertThat(mode.enumOptions()).contains(com.sitemonitor.service.alarmfeed.AlarmFeedSettings.defaults().resolvedMode());
         // Katalog sırası = ekran sırası: tür süzgecinin hemen ardından
         List<String> keys = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).toList();
         assertThat(keys.indexOf(nocOnly)).isEqualTo(keys.indexOf("site.monitor.alarm-feed.types") + 1);

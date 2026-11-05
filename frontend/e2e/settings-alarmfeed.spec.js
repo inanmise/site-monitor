@@ -8,6 +8,8 @@ import { mockApi } from './support/monitorMocks.js'
 // kaydedilir. 2026-10-31: otomatik IP engeli — ayar grubu, "Engellenen IP'ler" (dar kap kart, geniş ekran tablo; uzun IPv6 +
 // user agent tam), "Engeli kaldır" onay penceresi sığar, eşik < sınır hatası alanın altında. 2026-11-05: "Yalnız 7/24'e
 // bildirilen alarmlar" anahtarı + notu sığar, kırpılmaz, dokunma hedefi; kapatınca yalnız { noc_only: false } kaydedilir.
+// 2026-11-05: "Gösterilmesin — yalnız açık alarmlar (önerilen)" kartı ilk sırada; seçilince çözülme penceresi pasif + not, satır
+// sınırı uyarısı; biçim / kapsam grupları sığar, kırpılmaz, dokunma hedefi; kayıt gövdesi yalnız { resolved_mode: 'none' }.
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true },
   { name: 'tablet', width: 768, height: 1024, touch: true },
@@ -313,6 +315,51 @@ for (const vp of VIEWPORTS) {
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(row.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
       await expect(note).toHaveAttribute('data-changed', 'false')
+    })
+  })
+
+  test.describe(`Ayarlar → Alarm akışı — yalnız açık alarmlar ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('"Gösterilmesin — yalnız açık alarmlar (önerilen)" kartı ilk; seçilince pencere pasif + not + uyarı; yalnız { resolved_mode: "none" } kaydedilir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const calls = await routes(page)
+      await page.goto('/?tab=settings&sec=alarmfeed')
+      const root = page.locator(ROOT)
+      await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      const group = root.locator('[data-slot="af-f-resolved_mode"]')
+      const radios = group.getByRole('radio')
+      await expect(radios).toHaveCount(3)
+      const none = group.getByRole('radio', { name: /Gösterilmesin — yalnız açık alarmlar \(önerilen\)/ })
+      await expect(radios.first()).toHaveAccessibleName(/Gösterilmesin — yalnız açık alarmlar \(önerilen\)/)
+      await expect(group.locator('[data-value="status"]')).not.toContainText('önerilen')
+      await expect(none).toHaveAttribute('aria-checked', 'false')
+      const minutes = root.locator('[data-slot="af-f-resolved_minutes"]')
+      await expect(minutes).toBeEnabled()
+      await none.scrollIntoViewIfNeeded()
+      // Kartın kendisine (etikete) dokunmak seçer — telefonda hedef kartın tamamı
+      await group.locator('[data-value="none"]').click()
+      await expect(none).toHaveAttribute('aria-checked', 'true')
+      await expect(minutes).toBeDisabled()
+      await expect(root.locator('[data-field="resolved_minutes"]')).toContainText('Yalnız açık alarmlar kipinde kullanılmaz')
+      await expect(root.locator('[data-slot="af-max-rows-open-only"]')).toContainText('kapanmış görünür')
+      await expect(root.locator('[data-slot="af-resolved-none-note"]')).toContainText('RESOLVEDTIME kolonu boş kalır')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      for (const sel of ['[data-slot="af-grp-format"]', '[data-slot="af-grp-scope"]']) {
+        expect(await page.evaluate(offenders, sel), `@${vp.name}: ${sel} taşan öğe`).toEqual([])
+        expect(await page.evaluate(clipped, sel), `@${vp.name}: ${sel} kırpılan metin`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, sel), `@${vp.name}: ${sel} küçük hedef`).toEqual([])
+      }
+      await root.locator('[data-slot="af-grp-format"]').screenshot({ path: `test-results/settings-alarmfeed-${vp.name}-openonly.png` })
+      const bar = root.locator('[data-slot="af-settings"] [data-slot="settings-save-bar"]')
+      await bar.getByRole('button', { name: /^Kaydet$/ }).click()
+      await expect.poll(() => calls.puts.length).toBe(1)
+      expect(calls.puts[0]).toEqual({ resolved_mode: 'none' })
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(bar).not.toHaveAttribute('data-dirty', 'true')
+      await expect(none).toHaveAttribute('aria-checked', 'true')
+      await expect(minutes).toBeDisabled()
     })
   })
 

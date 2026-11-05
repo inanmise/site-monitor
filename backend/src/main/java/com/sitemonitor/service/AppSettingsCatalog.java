@@ -269,7 +269,8 @@ public final class AppSettingsCatalog {
         // 2026-11-05: yalnız 7/24'e bildirilen alarmlar (7/24 e-postasıyla aynı alarm kararı) — varsayılan AÇIK.
         new Setting("site.monitor.alarm-feed.noc-only",          "alarm-feed", Type.BOOL),
         new Setting("site.monitor.alarm-feed.resolved-minutes",  "alarm-feed", Type.INT),
-        new Setting("site.monitor.alarm-feed.resolved-mode",     "alarm-feed", Type.ENUM, List.of("status", "clear")),
+        // 2026-11-05: "none" = yalnız açık alarmlar (VARSAYILAN) — merkezi sistem akışta görmediği alarmı kendisi kapatır.
+        new Setting("site.monitor.alarm-feed.resolved-mode",     "alarm-feed", Type.ENUM, List.of("none", "status", "clear")),
         new Setting("site.monitor.alarm-feed.clear-text",        "alarm-feed", Type.STRING),
         new Setting("site.monitor.alarm-feed.severity-critical", "alarm-feed", Type.STRING),
         new Setting("site.monitor.alarm-feed.severity-high",     "alarm-feed", Type.STRING),

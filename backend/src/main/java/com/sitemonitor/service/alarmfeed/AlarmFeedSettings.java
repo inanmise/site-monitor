@@ -21,6 +21,10 @@ import java.util.Set;
  *
  * <p>Kullanıcı kararları: kaynak = alarmlar; çözülen alarm SEVERITY'si aynı kalır + STATUS / RESOLVEDTIME kolonları (ayarla
  * "Clear" kipine geçilebilir); RCI = hedef + alarm türü (ayarla yalnız hedef); her çağrı ayrı çağrı günlüğünde.
+ *
+ * <p>Çözülen alarm kipi ({@code resolved-mode}, 2026-11-05 kullanıcı kararı): VARSAYILAN {@code none} = yalnız açık alarmlar —
+ * merkezi sistem akışta AÇIK görmediği alarmı kendisi kapatır, çözülen alarm satırı (RESOLVED / Clear) hiç gönderilmez.
+ * {@code status} / {@code clear} eski davranıştır; daha önce kaydedilmiş değer korunur, yalnız varsayılan değişti.
  */
 public final class AlarmFeedSettings {
 
@@ -64,7 +68,9 @@ public final class AlarmFeedSettings {
     public static final String KEY_BODY_RETENTION = PREFIX + "body-retention-days";
 
     public static final List<String> LEVELS = List.of("WARNING", "HIGH", "CRITICAL");
-    public static final List<String> RESOLVED_MODES = List.of("status", "clear");
+    /** Çözülen alarm kipi: {@code none} (yalnız açık alarmlar — varsayılan) · {@code status} (STATUS=RESOLVED) · {@code clear}. */
+    public static final String MODE_OPEN_ONLY = "none";
+    public static final List<String> RESOLVED_MODES = List.of(MODE_OPEN_ONLY, "status", "clear");
     public static final List<String> RCI_MODES = List.of("target_type", "target");
     public static final List<String> SEPARATORS = List.of("semicolon", "comma");
 
@@ -148,6 +154,12 @@ public final class AlarmFeedSettings {
 
         public boolean clearMode() { return "clear".equals(resolvedMode); }
 
+        /**
+         * Yalnız açık alarmlar kipi (2026-11-05): yanıtta yalnız STATUS=OPEN satırları; kapanış ve bilgi satırı gönderilmez,
+         * bekleyen kapanışlar o yanıtla "teslim edildi" sayılır (yokluk merkezi sistemde kapanış demektir).
+         */
+        public boolean openOnly() { return MODE_OPEN_ONLY.equals(resolvedMode); }
+
         public boolean targetOnlyRci() { return "target".equals(rciMode); }
 
         public String separator() { return "comma".equals(mailSeparator) ? ", " : "; "; }
@@ -230,7 +242,7 @@ public final class AlarmFeedSettings {
     }
 
     public static Config defaults() {
-        return new Config(false, "WARNING", Set.of(), Set.of(), 15, "status", "Clear", "Critical", "Major", "Warning",
+        return new Config(false, "WARNING", Set.of(), Set.of(), 15, MODE_OPEN_ONLY, "Clear", "Critical", "Major", "Warning",
                 "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true, true, 120, 15, true, List.of(), true);
     }
 

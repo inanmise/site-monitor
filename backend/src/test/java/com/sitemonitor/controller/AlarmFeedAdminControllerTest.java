@@ -261,6 +261,64 @@ class AlarmFeedAdminControllerTest {
         assertThat(off.fingerprint()).isNotEqualTo(AlarmFeedSettings.read(mockDefaults()).fingerprint());
     }
 
+    @Test
+    @DisplayName("Çözülen alarm kipi 'none' (yalnız açık alarmlar): varsayılan; kaydı yazılır + denetlenir; geçersiz değer 400; "
+            + "saklı 'status' / 'clear' korunur, bozuk saklı değer → 'none'")
+    @SuppressWarnings("unchecked")
+    void resolvedModeNone() {
+        // Varsayılan: görünümde 'none' ve aynı değerin kaydı hiçbir şey yazmaz
+        assertThat(AlarmFeedSettings.defaults().resolvedMode()).isEqualTo("none");
+        assertThat(AlarmFeedSettings.defaults().openOnly()).isTrue();
+        assertThat(AlarmFeedSettings.RESOLVED_MODES).containsExactly("none", "status", "clear");
+        Map<String, Object> d = (Map<String, Object>) controller.view(ADMIN).getBody().get("data");
+        assertThat((Map<String, Object>) d.get("settings")).containsEntry("resolved_mode", "none");
+        controller.save(Map.of("resolved_mode", "none"), ADMIN, new MockHttpServletRequest());
+        verify(settings, never()).save(any(), anyString());
+
+        // Saklı 'status' → 'none' kaydı yalnız bu anahtarı yazar, denetlenir, önbellek bırakılır
+        when(feed.config()).thenReturn(new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true));
+        controller.save(Map.of("resolved_mode", " NONE "), ADMIN, new MockHttpServletRequest());
+        ArgumentCaptor<Map<String, Object>> c = ArgumentCaptor.forClass(Map.class);
+        verify(settings).save(c.capture(), eq("root"));
+        assertThat((Map<String, Object>) c.getValue().get("values")).containsOnly(Map.entry(AlarmFeedSettings.KEY_RESOLVED_MODE, "none"));
+        verify(audit).recordAction(eq("ALARM_FEED_SETTINGS_SAVE"), eq(ADMIN), any(), eq("SETTINGS"), eq("alarm-feed"),
+                anyString(), anyString());
+        verify(feed).invalidate();
+
+        // Geçersiz değer → 400 + alan (izinli değerleri sayar)
+        assertThatThrownBy(() -> controller.save(Map.of("resolved_mode", "open"), ADMIN, new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> {
+                    assertThat(e.getFields()).containsKey("resolved_mode");
+                    assertThat(e.getMessage()).contains("none");
+                });
+
+        // Canlı okuma: kaydedilmemiş → 'none'; saklı 'status' / ' Clear ' korunur; bozuk saklı değer → 'none'
+        assertThat(AlarmFeedSettings.read(mockDefaults()).resolvedMode()).isEqualTo("none");
+        for (Map.Entry<String, String> e : Map.of("status", "status", " Clear ", "clear", "bozuk", "none", "", "none",
+                "NONE", "none").entrySet()) {
+            AppSettingsService s2 = mockDefaults();
+            when(s2.getString(eq(AlarmFeedSettings.KEY_RESOLVED_MODE), any())).thenReturn(e.getKey());
+            assertThat(AlarmFeedSettings.read(s2).resolvedMode()).as("saklı '" + e.getKey() + "'").isEqualTo(e.getValue());
+        }
+        // Önbellek anahtarı kipi içerir: kip değişince eski gövde 5 sn boyunca dönmez
+        AppSettingsService st = mockDefaults();
+        when(st.getString(eq(AlarmFeedSettings.KEY_RESOLVED_MODE), any())).thenReturn("status");
+        assertThat(AlarmFeedSettings.read(st).fingerprint()).isNotEqualTo(AlarmFeedSettings.read(mockDefaults()).fingerprint());
+        // Yalnız açık kipte Clear metni seviye metinleriyle karşılaştırılmaz (kullanılmaz)
+        AlarmFeedAdminController.requireDistinctSeverityTexts(AlarmFeedSettings.defaults(), Map.of("clear_text", "Warning"));
+    }
+
+    @Test
+    @DisplayName("Önizleme yanıtı kipi taşır (resolved_mode) — yalnız açık kipte kırpılma uyarısı ekranda ona göre söylenir")
+    @SuppressWarnings("unchecked")
+    void previewCarriesResolvedMode() {
+        when(feed.preview(any())).thenReturn(new AlarmFeedService.Feed(List.of(Map.of("ALERTID", 1L)), 1, 0, true,
+                "2026-11-05T10:00:00"));
+        Map<String, Object> d = (Map<String, Object>) controller.preview(ADMIN).getBody().get("data");
+        assertThat(d).containsEntry("resolved_mode", "none").containsEntry("resolved", 0).containsEntry("truncated", true);
+    }
+
     static AppSettingsService mockDefaults() {
         AppSettingsService s = mock(AppSettingsService.class);
         when(s.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(inv -> inv.getArgument(1));

@@ -12,7 +12,7 @@ import { useVisibleInterval } from '../../../hooks/useVisibleInterval.js'
 import { useUnsavedWork } from '../../../utils/unsavedWork.js'
 import { navigateTo } from '../../../utils/navigate.js'
 import { SETTINGS_STACK, SettingsHeader } from '../SettingsControls.jsx'
-import { STATUS_REFRESH_MS, changedSettings, crossFieldErrors, feedUrl, isDirty, limitsOf, toForm, validateChanges } from './alarmFeedModel.js'
+import { STATUS_REFRESH_MS, changedSettings, crossFieldErrors, feedUrl, isDirty, isOpenOnly, limitsOf, toForm, validateChanges, withResolvedMode } from './alarmFeedModel.js'
 import { TOUCH } from './AlarmFeedParts.jsx'
 import { CallersCard, StatusCard } from './AlarmFeedStatus.jsx'
 import { BlocksCard } from './AlarmFeedBlocks.jsx'
@@ -27,7 +27,8 @@ const has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k)
 /**
  * Ayarlar → Platform → Alarm akışı (2026-10-30).
  *
- * Merkezi izleme ekibi SiteMonitor alarmlarını (açık + son N dakikada çözülen) kendi kolon biçimlerinde herkese açık
+ * Merkezi izleme ekibi SiteMonitor alarmlarını (varsayılan yalnız açık alarmlar; ayarla son N dakikada çözülenler de) kendi
+ * kolon biçimlerinde herkese açık
  * `GET /api/public/alarm-feed` ucundan dakikada bir çeker. Bu sayfa: durum (açık / kapalı, tam adres + örnek çağrılar, son
  * çağrı, 24 saatlik sayılar, uyarılar) · ayarlar (kapsam / biçim / erişim / günlük — yalnız değişen alanlar kaydedilir,
  * alan hatası alanın altında, akışı AÇMAK onay ister) · önizleme ("şimdi ne dönerdi?") · çağıranlar · çağrı günlüğü
@@ -113,6 +114,13 @@ export default function AlarmFeedSettings() {
   }, [dirty])
 
   const setField = useCallback((key, value) => {
+    if (key === 'resolved_mode') {
+      // Yalnız açık kipte kullanılmayan alanların taslağı kayıtlı değere döner (pasif alanda geçersiz değer kalmasın)
+      setForm((f) => withResolvedMode(f, value, savedRef.current))
+      fe.clear(key)
+      if (isOpenOnly(value)) { fe.clear('resolved_minutes'); fe.clear('clear_text') }
+      return
+    }
     setForm((f) => ({ ...f, [key]: value }))
     fe.clear(key)
   }, [fe])

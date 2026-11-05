@@ -402,3 +402,116 @@ describe('AlarmFeedSettings — okuma hatası ve 403', () => {
     expect(slot('af-settings')).toBeNull()
   })
 })
+
+// 2026-11-05 (kullanıcı kararı): "Çözülen alarm gösterilmesin — yalnız açık alarmlar (önerilen)" kartı İLK sırada; seçilince
+// çözülme penceresi pasif + not, satır sınırı uyarısı; kayıt gövdesi yalnız { resolved_mode: 'none' }. Önizleme kipe göre konuşur.
+describe('AlarmFeedSettings — yalnız açık alarmlar kipi', () => {
+  const radios = () => within(slot('af-f-resolved_mode')).getAllByRole('radio')
+  const noneRadio = () => within(slot('af-f-resolved_mode')).getByRole('radio', { name: /Gösterilmesin — yalnız açık alarmlar \(önerilen\)/ })
+  const statusRadio = () => within(slot('af-f-resolved_mode')).getByRole('radio', { name: /SEVERITY aynı kalır \+ STATUS kolonu/ })
+  const minutesField = () => document.querySelector('[data-field="resolved_minutes"]')
+
+  it('kart ilk sırada ve "(önerilen)" onda; seçilince pencere pasif + not, satır sınırı uyarısı; gövde yalnız { resolved_mode: "none" }', async () => {
+    await mount()
+    expect(radios()).toHaveLength(3)
+    expect(radios()[0]).toBe(noneRadio())
+    const card = slot('af-f-resolved_mode').querySelector('[data-value="none"]')
+    expect(card).toHaveTextContent('STATUS=OPEN satırları')
+    expect(card).toHaveTextContent('Merkezi sistem akışta açık görmediği alarmı kendisi kapatır; çözülen alarm satırı gönderilmez.')
+    // "(önerilen)" artık durum kartında değil
+    expect(statusRadio().getAttribute('id')).toBeTruthy()
+    expect(slot('af-f-resolved_mode').querySelector('[data-value="status"]')).not.toHaveTextContent('önerilen')
+    expect(slot('af-f-resolved_minutes')).not.toBeDisabled()
+    expect(slot('af-max-rows-open-only')).toBeNull()
+    expect(slot('af-resolved-none-note')).toBeNull()
+
+    fireEvent.click(noneRadio())
+    expect(noneRadio()).toBeChecked()
+    expect(slot('af-f-resolved_minutes')).toBeDisabled()
+    expect(minutesField()).toHaveTextContent('Yalnız açık alarmlar kipinde kullanılmaz')
+    expect(minutesField()).not.toHaveTextContent('ilk çağrılana kadar bekler')
+    expect(slot('af-max-rows-open-only'))
+      .toHaveTextContent('sınır dışı kalan alarmlar (en düşük seviyeli ve en eski açılanlar) merkezi sistemde kapanmış görünür')
+    expect(slot('af-resolved-none-note')).toHaveTextContent('RESOLVEDTIME kolonu boş kalır')
+    expect(slot('af-f-clear_text')).toBeNull()
+
+    api.alarmFeed.save.mockResolvedValue({ success: true, data: data({ settings: { ...SETTINGS, resolved_mode: 'none' } }) })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ resolved_mode: 'none' }))
+    await waitFor(() => expect(saveBar()).not.toHaveAttribute('data-dirty', 'true'))
+    expect(noneRadio()).toBeChecked()
+    expect(slot('af-f-resolved_minutes')).toBeDisabled()
+  })
+
+  it('pasif kalacak pencerede geçersiz taslak varken yalnız-açık seçilirse taslak kayıtlı değere döner; kayıt tıkanmaz', async () => {
+    await mount()
+    fireEvent.change(slot('af-f-resolved_minutes'), { target: { value: '0' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(minutesField()).toHaveTextContent('1 ile 1440 arasında bir tam sayı girin.'))
+    expect(api.alarmFeed.save).not.toHaveBeenCalled()
+    fireEvent.click(noneRadio())
+    expect(slot('af-f-resolved_minutes')).toHaveValue('15')
+    expect(minutesField()).not.toHaveTextContent('1 ile 1440 arasında')
+    api.alarmFeed.save.mockResolvedValue({ success: true, data: data({ settings: { ...SETTINGS, resolved_mode: 'none' } }) })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ resolved_mode: 'none' }))
+  })
+
+  it('kayıtlı kip "none": kart seçili, pencere pasif; durum kipine geçince pencere açılır, gövde { resolved_mode: "status" }', async () => {
+    api.alarmFeed.get.mockResolvedValue(ok(data({ settings: { ...SETTINGS, resolved_mode: 'none' } })))
+    await mount()
+    expect(noneRadio()).toBeChecked()
+    expect(slot('af-f-resolved_minutes')).toBeDisabled()
+    expect(saveBtn()).toBeDisabled()
+    fireEvent.click(statusRadio())
+    expect(slot('af-f-resolved_minutes')).not.toBeDisabled()
+    expect(slot('af-max-rows-open-only')).toBeNull()
+    api.alarmFeed.save.mockResolvedValue({ success: true, data: data({ settings: { ...SETTINGS, resolved_mode: 'status' } }) })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ resolved_mode: 'status' }))
+  })
+
+  it('eski sunucu "none" bilmiyorsa: kart gizlenmez, kayıt 400 + field resolved_mode → sunucu metni kartların altında', async () => {
+    await mount()
+    const msg = 'Geçersiz seçim: none (izinli: status, clear).'
+    api.alarmFeed.save.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'resolved_mode', error: msg })
+    fireEvent.click(noneRadio())
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ resolved_mode: 'none' }))
+    await waitFor(() => expect(slot('af-f-resolved_mode-error')).toHaveTextContent(msg))
+    expect(document.querySelector('[data-field="resolved_mode"]')).toContainElement(slot('af-f-resolved_mode-error'))
+    expect(slot('af-f-resolved_mode')).toHaveAttribute('aria-invalid', 'true')
+    expect(saveBar()).toHaveAttribute('data-dirty', 'true')   // taslak korunur
+    expect(screen.getAllByText(msg)).toHaveLength(1)   // yalnız alanın altında (tost yok)
+  })
+
+  it('önizleme yalnız açık kipte: bilgi satırı, "çözülmüş" rozeti yok, kırpılma "kapanmış görünür" der; boşsa açık-alarm metni', async () => {
+    api.alarmFeed.preview.mockResolvedValue(ok({ columns: Object.keys(ROW), rows: [ROW], count: 1, open: 1, resolved: 0, truncated: true,
+      generated_at: iso(0), resolved_mode: 'none' }))
+    await mount()
+    fireEvent.click(slot('af-preview-run'))
+    await waitFor(() => expect(slots('af-pv-row')).toHaveLength(1))
+    expect(slot('af-pv-open-only')).toHaveTextContent('yanıtta yalnız STATUS=OPEN satırları var')
+    expect(slot('af-pv-resolved')).toBeNull()
+    expect(slot('af-pv-truncated')).toHaveAttribute('data-open-only', 'true')
+    expect(slot('af-pv-truncated')).toHaveTextContent('sınır dışı kalan açık alarmlar merkezi sistemde kapanmış görünür')
+
+    api.alarmFeed.preview.mockResolvedValue(ok({ columns: Object.keys(ROW), rows: [], count: 0, open: 0, resolved: 0, truncated: false,
+      generated_at: iso(0), resolved_mode: 'none' }))
+    fireEvent.click(slot('af-preview-run'))
+    await waitFor(() => expect(slot('af-pv-empty')).not.toBeNull())
+    expect(slot('af-pv-empty')).toHaveTextContent('Kayıtlı kapsamda açık alarm yok (yalnız açık alarmlar kipi')
+  })
+
+  it('önizleme eski sunucudan (resolved_mode yok): eski görünüm — "çözülmüş" rozeti ve eski kırpılma metni', async () => {
+    api.alarmFeed.preview.mockResolvedValue(ok({ columns: Object.keys(ROW), rows: [ROW], count: 1, open: 1, resolved: 0, truncated: true,
+      generated_at: iso(0) }))
+    await mount()
+    fireEvent.click(slot('af-preview-run'))
+    await waitFor(() => expect(slots('af-pv-row')).toHaveLength(1))
+    expect(slot('af-pv-open-only')).toBeNull()
+    expect(slot('af-pv-resolved')).toHaveTextContent('0 çözülmüş')
+    expect(slot('af-pv-truncated')).toHaveAttribute('data-open-only', 'false')
+    expect(slot('af-pv-truncated')).toHaveTextContent('merkezi ekip de yalnız bu kadarını alır')
+  })
+})
