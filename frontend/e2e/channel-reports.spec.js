@@ -1987,6 +1987,9 @@ for (const vp of VIEWPORTS) {
       await page.keyboard.press('ArrowDown')
       await expect(menu.locator('[role="menuitem"]:focus')).toHaveCount(1)
       if (vp.touch) {
+        // Menü açılış animasyonu (zoom-in-95) bitmeden ölçülürse öğe %95–100 ölçekte görünür (CI'da 38,7 px ölçüldü —
+        // titrek): önce menünün animasyonları biter, sonra ölçülür
+        await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
         for (const it of await menu.getByRole('menuitem').all()) {
           expect((await it.boundingBox()).height, 'menü öğesi dokunmatikte ≥ 40 px').toBeGreaterThanOrEqual(39.5)
         }
