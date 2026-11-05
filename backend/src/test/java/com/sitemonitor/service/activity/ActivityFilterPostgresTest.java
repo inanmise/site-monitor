@@ -72,13 +72,16 @@ class ActivityFilterPostgresTest {
 
     /** {@code SET enable_seqscan = off} ile aynı bağlantıda EXPLAIN — küçük tabloda da dizin seçimi görülür. */
     private static String explain(ActivityFilter.Sql w) {
+        return explainSql("SELECT COUNT(*) FROM activity_log " + w.where(), w.array());
+    }
+
+    private static String explainSql(String sql, Object[] a) {
         return jdbc().execute((ConnectionCallback<String>) c -> {
             try (Statement st = c.createStatement()) {
                 st.execute("SET enable_seqscan = off");
             }
             StringBuilder plan = new StringBuilder();
-            try (PreparedStatement ps = c.prepareStatement("EXPLAIN SELECT COUNT(*) FROM activity_log " + w.where())) {
-                Object[] a = w.array();
+            try (PreparedStatement ps = c.prepareStatement("EXPLAIN " + sql)) {
                 for (int i = 0; i < a.length; i++) ps.setObject(i + 1, a[i]);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) plan.append(rs.getString(1)).append('\n');
@@ -146,5 +149,46 @@ class ActivityFilterPostgresTest {
                 id -> true, Instant.parse("2031-03-01T11:00:00Z"));
         assertThat(t.get("checks")).isEqualTo(3);
         assertThat(t.get("outage_count")).isEqualTo(1);
+    }
+
+    /** Düz (tam) sıralama düğümü: "Sort  (…" — "Incremental Sort" (dizinden gelen sıranın eşitlerini sıralar) sayılmaz. */
+    private static final java.util.regex.Pattern FULL_SORT = java.util.regex.Pattern.compile("(?m)^\\s*(->\\s+)?Sort\\s+\\(");
+
+    @Test
+    @DisplayName("O3 EXPLAIN: dışa aktarım parçası sırayı dizinden alır (tam Sort yok) — takım imleci ve kapsamsız imleç; sayım sıralamaz")
+    void exportChunksTakeOrderFromIndex() throws Exception {
+        Instant now = Instant.parse("2031-03-10T00:00:00Z");
+        ActivityFilter scoped = ActivityExportService.range(filter(Params.legacy(null, null, null, "2031-01-20T00:00:00", null, null),
+                true), now).filter();
+        ActivityFilter.Sql first = ActivityExportService.chunkSql(scoped, TEAM, null, 0, 100);
+        String p1 = explainSql(first.where(), first.array());
+        assertThat(p1).as(p1).contains("Index");
+        assertThat(FULL_SORT.matcher(p1).find()).as("takım imleci tam sıralama yapmamalı:\n%s", p1).isFalse();
+        ActivityFilter.Sql next = ActivityExportService.chunkSql(scoped, TEAM, "2031-02-02T00:00:00", Long.MAX_VALUE, 100);
+        String p2 = explainSql(next.where(), next.array());
+        assertThat(FULL_SORT.matcher(p2).find()).as("anahtar kümeli parça tam sıralama yapmamalı:\n%s", p2).isFalse();
+        assertThat(p2).as(p2).contains("Index");
+
+        ActivityFilter global = ActivityExportService.range(filter(Params.legacy(null, null, null, "2031-01-20T00:00:00", null, null),
+                false), now).filter();
+        ActivityFilter.Sql g = ActivityExportService.chunkSql(global, null, "2031-02-02T00:00:00", Long.MAX_VALUE, 100);
+        String p3 = explainSql(g.where(), g.array());
+        assertThat(FULL_SORT.matcher(p3).find()).as("kapsamsız imleç tam sıralama yapmamalı:\n%s", p3).isFalse();
+
+        ActivityFilter.Sql w = scoped.where();
+        Object[] countArgs = java.util.stream.Stream.concat(w.args().stream(), java.util.stream.Stream.of(50_001)).toArray();
+        String p4 = explainSql(ActivityExportService.countSql(w.where()), countArgs);
+        assertThat(p4).as("sınırlı sayım sıralamaz:\n%s", p4).doesNotContain("Sort");
+
+        // birleştirme gerçek PostgreSQL'de: kapsamlı dışa aktarım tek sorgunun sırasıyla aynı
+        ActivityExportService exports = PostgresIt.app().bean(ActivityExportService.class);
+        exports.chunk = 333;
+        ActivityFilter tagged = ActivityExportService.range(filter(Params.legacy(null, null, null, "2031-01-20T00:00:00", null, TAG),
+                true), now).filter();
+        List<Long> got = new ArrayList<>();
+        exports.stream(tagged, 5_000, Map.of(), r -> got.add(r.id()));
+        List<Long> expected = jdbc().queryForList("SELECT id FROM activity_log WHERE team_id = ? AND LOWER(target) LIKE ?"
+                + " AND activity_time >= '2031-01-20T00:00:00' ORDER BY activity_time DESC, id DESC", Long.class, TEAM, "%" + TAG + "%");
+        assertThat(got).containsExactlyElementsOf(expected);
     }
 }

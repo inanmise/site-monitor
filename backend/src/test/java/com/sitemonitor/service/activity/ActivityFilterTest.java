@@ -115,6 +115,13 @@ class ActivityFilterTest {
         assertThat(f.reasonClasses()).containsExactly("NETWORK", "DNS");
         assertThat(fieldOf(() -> parse(p(null, null, null, null, null, null, null, null, null, "DNS-X", null)))).isEqualTo("reason");
         assertThat(fieldOf(() -> parse(p(null, null, null, null, null, null, null, null, null, "class:", null)))).isEqualTo("reason");
+        // tavan (inceleme ön yüz D8): seçilebilir katalog ~60 ve büyüyor → 100 kabul, 101 → 400
+        StringBuilder hundred = new StringBuilder();
+        for (int i = 0; i < ActivityFilter.MAX_REASONS; i++) hundred.append(i == 0 ? "" : ",").append("R").append(i);
+        assertThat(ActivityFilter.MAX_REASONS).isEqualTo(100);
+        assertThat(parse(p(null, null, null, null, null, null, null, null, null, hundred.toString(), null)).reasons()).hasSize(100);
+        String more = hundred + ",R100";
+        assertThat(fieldOf(() -> parse(p(null, null, null, null, null, null, null, null, null, more, null)))).isEqualTo("reason");
     }
 
     @Test

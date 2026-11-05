@@ -49,9 +49,19 @@ import java.util.function.LongSupplier;
  * &<liste süzgeçleri>}. Ekrandaki süzgeçle ({@link ActivityFilter}) AYNI satırlar — yalnız açık sayfa değil, tamamı:
  * CSV en çok {@link #CSV_MAX_ROWS}, JSON en çok {@link #JSON_MAX_ROWS} satır (ön yüz Excel'i JSON'dan kurar).
  *
- * <p><b>Okuma anahtar kümeli</b> ({@code activity_time DESC, id DESC}, {@link #CHUNK}'lık parçalar) ve <b>yazım akışla</b>:
- * hiçbir an dosyanın tamamı bellekte tutulmaz. Tavan aşılırsa bu, gövdeden ÖNCE başlıkta ({@code X-Export-Truncated: true})
- * ve JSON'da {@code truncated} ile söylenir (sınırlı sayım: en çok tavan + 1 satır sayılır).
+ * <p><b>Okuma anahtar kümeli ve sırayı dizinden alır</b> ({@code activity_time DESC, id DESC}; inceleme O3): her parça
+ * {@code activity_time <= son AND (activity_time < son OR id < son_id)} + {@code LIMIT} — zaman sınırı dizin koşuludur,
+ * sonraki parça kaldığı yerden okur (kapsam her parçada yeniden sıralanmaz). Kapsamlı oturumda okuma TAKIM BAŞINA ayrı
+ * imleçle yapılır ({@code team_id = ?} → {@code idx_act_team_time} sırayı verir) ve imleçler Java'da birleştirilir
+ * ({@code team_id IN (…)} dizinden zaman sırası alamaz; tek sorgu her parçada takımın tüm satırlarını sıralıyordu);
+ * {@link #MERGE_MAX_TEAMS}'ten çok takımda tek imleç. <b>Yazım akışla</b>: dosyanın tamamı bellekte tutulmaz. Tavan
+ * aşılırsa bu, gövdeden ÖNCE başlıkta ({@code X-Export-Truncated: true}) ve JSON'da {@code truncated} ile söylenir (sınırlı
+ * sayım: en çok tavan + 1 satır, sırasız).
+ *
+ * <p><b>Zaman aralığı sınırlı:</b> {@code from} verilmezse son {@link #DEFAULT_DAYS} gün ({@code to} yoksa şimdi) — başlık
+ * {@code X-Export-Range-Defaulted: true}, JSON {@code range_defaulted}; etkin uçlar {@code X-Export-From} / {@code X-Export-To}
+ * ve JSON {@code filter.from} / {@code filter.to}. {@link #MAX_DAYS} günü aşan aralık 400 {@code VALIDATION_FAILED} (alan
+ * {@code from}; hak ve denetim düşmez).
  *
  * <p><b>Sınırlar</b> (teknik hata raporu dışa aktarımı emsali): kişi başına aynı anda TEK dışa aktarım (ikincisi beklemeden
  * 429 {@code EXPORT_BUSY}, dakikalık hakkı yemez), kişi başına dakikada {@link #EXPORT_PER_MINUTE} (429 {@code RATE_LIMITED}
@@ -70,6 +80,12 @@ public class ActivityExportService {
             "actor", "request_id", "alert_event_id", "id");
 
     static final int CSV_MAX_ROWS = 50_000, JSON_MAX_ROWS = 20_000, CHUNK = 1_000;
+    /** Aralık verilmezse dışa aktarılan gün; en uzun aralık (inceleme O3: tarihsiz dışa aktarım 365 günü taramasın). */
+    static final int DEFAULT_DAYS = 30, MAX_DAYS = 90;
+    /** Takım başına imleçle birleştirilen en çok takım; fazlasında tek imleç (görüş kapsamı neredeyse kurum geneli). */
+    static final int MERGE_MAX_TEAMS = 25;
+    /** Çok takımlı birleştirmede imleç başına en küçük parça (toplam tampon ≈ parça boyu). */
+    static final int MIN_CURSOR_CHUNK = 100;
     static final int EXPORT_PER_MINUTE = 6, EXPORT_CONCURRENCY = 3;
     static final long EXPORT_WAIT_MS = 5_000L, EXPORT_BUSY_RETRY_SECONDS = 10L;
     private static final long EXPORT_WINDOW_MS = 60_000L;
@@ -106,6 +122,8 @@ public class ActivityExportService {
             throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("format",
                     Msg.t("Biçim csv ya da json olmalı.", "The format must be csv or json."));
         }
+        Range range = range(f, Instant.ofEpochMilli(clock.getAsLong()));
+        f = range.filter();
         String key = rateKey(session);
         if (!running.add(key)) {
             return busy(Msg.t("Önceki dışa aktarımınız hâlâ hazırlanıyor ya da indiriliyor; kişi başına aynı anda tek dışa aktarım yapılabilir. O bitince yeniden deneyin; bu deneme dakikalık hakkınızdan düşülmedi.",
@@ -135,6 +153,9 @@ public class ActivityExportService {
                 response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
                 response.setHeader("X-Export-Truncated", String.valueOf(truncated));
                 response.setHeader("X-Export-Max-Rows", String.valueOf(cap));
+                response.setHeader("X-Export-From", f.from() + "Z");
+                response.setHeader("X-Export-To", f.to() + "Z");
+                response.setHeader("X-Export-Range-Defaulted", String.valueOf(range.defaulted()));
                 if ("csv".equals(fmt)) {
                     response.setContentType("text/csv;charset=UTF-8");
                     response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
@@ -163,6 +184,9 @@ public class ActivityExportService {
                         gen.writeNumberProperty("row_count", written);
                         gen.writeNumberProperty("max_rows", cap);
                         gen.writeBooleanProperty("truncated", trunc);
+                        gen.writeBooleanProperty("range_defaulted", range.defaulted());
+                        gen.writeNumberProperty("range_default_days", DEFAULT_DAYS);
+                        gen.writeNumberProperty("range_max_days", MAX_DAYS);
                         gen.writePOJOProperty("filter", filterEcho(f));
                         gen.writeEndObject();
                         gen.writeEndObject();
@@ -175,7 +199,7 @@ public class ActivityExportService {
                 try {
                     auditService.recordAction("ACTIVITY_EXPORT", session, request, "ACTIVITY", "export",
                             AuditDetail.of("format", fmt, "rows", written, "truncated", truncated, "completed", completed,
-                                    "filter", filterEcho(f)));
+                                    "range_defaulted", range.defaulted(), "filter", filterEcho(f)));
                 } catch (Exception e) {
                     log.debug("ACTIVITY_EXPORT denetimi yazılamadı: {}", e.toString());
                 }
@@ -195,43 +219,137 @@ public class ActivityExportService {
     @FunctionalInterface
     interface RowSink { void accept(ExportRow row) throws IOException; }
 
-    /** En çok {@code cap + 1} satırı sayar (tavan aşıldı mı) — tüm tabloyu saymaz. */
+    /** Etkin aralık: süzgeç (uçları dolu) + varsayılan mı uygulandı. */
+    record Range(ActivityFilter filter, boolean defaulted) {}
+
+    /**
+     * Dışa aktarım aralığı: {@code to} yoksa şimdi; {@code from} yoksa {@code to − DEFAULT_DAYS} (varsayılan); aralık
+     * {@link #MAX_DAYS} günü aşarsa 400 (alan {@code from}). Uçlar zaten {@link ActivityFilter#normalizeTime} biçiminde.
+     */
+    static Range range(ActivityFilter f, Instant now) {
+        Instant to = f.to() == null ? now : ActivityFilter.instantOf(f.to());
+        boolean defaulted = f.from() == null;
+        Instant from = defaulted ? to.minus(java.time.Duration.ofDays(DEFAULT_DAYS)) : ActivityFilter.instantOf(f.from());
+        if (java.time.Duration.between(from, to).compareTo(java.time.Duration.ofDays(MAX_DAYS)) > 0) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("from", Msg.t(
+                    "Dışa aktarım en çok " + MAX_DAYS + " günlük aralığı kapsar. Başlangıç ve bitişi daraltın (aralık seçilmezse son "
+                            + DEFAULT_DAYS + " gün aktarılır).",
+                    "An export covers at most " + MAX_DAYS + " days. Narrow the start and end (without a range the last "
+                            + DEFAULT_DAYS + " days are exported)."));
+        }
+        return new Range(f.withRange(ActivityFilter.iso(from), ActivityFilter.iso(to)), defaulted);
+    }
+
+    /** En çok {@code cap + 1} satırı sayar (tavan aşıldı mı) — tüm tabloyu saymaz, sıralamaz. */
     long countCapped(ActivityFilter f, int cap) {
         ActivityFilter.Sql w = f.where();
         List<Object> a = new ArrayList<>(w.args());
         a.add(cap + 1);
-        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM (SELECT id FROM activity_log " + w.where()
-                + " ORDER BY activity_time DESC, id DESC LIMIT ?) capped", Long.class, a.toArray());
+        Long n = jdbc.queryForObject(countSql(w.where()), Long.class, a.toArray());
         return n == null ? 0 : n;
     }
 
-    /** Satırları en yeniden eskiye, {@link #CHUNK}'lık anahtar kümeli parçalarla akıtır; yazılan satır sayısını döner. */
-    int stream(ActivityFilter f, int cap, Map<Long, String> teams, RowSink sink) throws IOException {
-        int written = 0;
-        String lastTime = null;
-        long lastId = 0;
-        while (written < cap) {
-            ActivityFilter.Sql w = f.where();
-            if (lastTime != null) w = w.and("(activity_time < ? OR (activity_time = ? AND id < ?))", lastTime, lastTime, lastId);
-            int limit = Math.min(chunk, cap - written);
-            List<Object> a = new ArrayList<>(w.args());
-            a.add(limit);
-            List<ExportRow> part = jdbc.query("SELECT * FROM activity_log " + w.where()
-                    + " ORDER BY activity_time DESC, id DESC LIMIT ?", rs -> {
+    static String countSql(String where) {
+        return "SELECT COUNT(*) FROM (SELECT id FROM activity_log " + where + " LIMIT ?) capped";
+    }
+
+    /** Bir parçanın SQL'i: süzgeç [+ takım] [+ anahtar küme sınırı] + sıra + LIMIT. Zaman sınırı ayrıca dizin koşulu. */
+    static ActivityFilter.Sql chunkSql(ActivityFilter f, Long team, String lastTime, long lastId, int limit) {
+        ActivityFilter.Sql w = f.where();
+        if (team != null) w = w.and("team_id = ?", team);
+        if (lastTime != null) {
+            w = w.and("activity_time <= ? AND (activity_time < ? OR id < ?)", lastTime, lastTime, lastId);
+        }
+        List<Object> a = new ArrayList<>(w.args());
+        a.add(limit);
+        return new ActivityFilter.Sql("SELECT * FROM activity_log " + w.where() + " ORDER BY activity_time DESC, id DESC LIMIT ?",
+                List.copyOf(a));
+    }
+
+    /**
+     * İmleçlerin takımları: {@code null} → tek imleç (kapsamsız, ya da {@link #MERGE_MAX_TEAMS}'ten çok takım); boş liste →
+     * hiç satır yok ({@code teamId} kapsam dışı). {@code teamId} varsa yalnız o takım.
+     */
+    static List<Long> cursorTeams(ActivityFilter f) {
+        if (f.teamId() != null) {
+            if (f.scoped() && !f.scope().contains(f.teamId())) return List.of();
+            return List.of(f.teamId());
+        }
+        if (!f.scoped() || f.scope().size() > MERGE_MAX_TEAMS) return null;
+        return f.scope();
+    }
+
+    /** Bir imleç: kendi takımının satırlarını anahtar kümeli parçalarla okur, tampondan verir. */
+    private final class Cursor {
+        final ActivityFilter f;
+        final Long team;
+        final int limit;
+        final Map<Long, String> teams;
+        final ArrayDeque<ExportRow> buf = new ArrayDeque<>();
+        String lastTime;
+        long lastId;
+        boolean done;
+
+        Cursor(ActivityFilter f, Long team, int limit, Map<Long, String> teams) {
+            this.f = f;
+            this.team = team;
+            this.limit = limit;
+            this.teams = teams;
+        }
+
+        /** Tampon boşsa bir parça okur; tükenmişse false. */
+        boolean fill() {
+            if (!buf.isEmpty()) return true;
+            if (done) return false;
+            ActivityFilter.Sql q = chunkSql(f, team, lastTime, lastId, limit);
+            List<ExportRow> part = jdbc.query(q.where(), rs -> {
                 List<ExportRow> out = new ArrayList<>(limit);
                 Set<String> cols = columns(rs.getMetaData());
                 while (rs.next()) out.add(read(rs, cols, teams));
                 return out;
-            }, a.toArray());
-            if (part == null || part.isEmpty()) break;
-            for (ExportRow r : part) {
-                sink.accept(r);
-                written++;
+            }, q.array());
+            if (part == null || part.isEmpty()) {
+                done = true;
+                return false;
             }
+            if (part.size() < limit) done = true;
             ExportRow last = part.get(part.size() - 1);
             lastTime = last.rawTime();
             lastId = last.id();
-            if (part.size() < limit) break;
+            buf.addAll(part);
+            return true;
+        }
+
+        ExportRow head() { return buf.peekFirst(); }
+    }
+
+    /** En yeni üstte: zaman DESC, eşitlikte id DESC (tek sorgunun sırasıyla aynı). */
+    private static final java.util.Comparator<Cursor> NEWEST_FIRST = (x, y) -> {
+        int c = y.head().rawTime().compareTo(x.head().rawTime());
+        return c != 0 ? c : Long.compare(y.head().id(), x.head().id());
+    };
+
+    /**
+     * Satırları en yeniden eskiye akıtır; yazılan satır sayısını döner. Kapsamlı oturumda takım başına imleç + birleştirme
+     * (her imleç {@code idx_act_team_time} sırasıyla okur), aksi hâlde tek imleç ({@code idx_act_time}).
+     */
+    int stream(ActivityFilter f, int cap, Map<Long, String> teams, RowSink sink) throws IOException {
+        List<Long> ts = cursorTeams(f);
+        List<Cursor> cursors = new ArrayList<>();
+        if (ts == null) {
+            cursors.add(new Cursor(f, null, chunk, teams));
+        } else {
+            int per = ts.size() <= 1 ? chunk : Math.max(Math.min(chunk, MIN_CURSOR_CHUNK), chunk / ts.size());
+            for (Long t : ts) cursors.add(new Cursor(f, t, per, teams));
+        }
+        java.util.PriorityQueue<Cursor> heads = new java.util.PriorityQueue<>(Math.max(1, cursors.size()), NEWEST_FIRST);
+        for (Cursor c : cursors) if (c.fill()) heads.add(c);
+        int written = 0;
+        while (written < cap && !heads.isEmpty()) {
+            Cursor c = heads.poll();
+            sink.accept(c.buf.pollFirst());
+            written++;
+            if (c.fill()) heads.add(c);
         }
         return written;
     }
