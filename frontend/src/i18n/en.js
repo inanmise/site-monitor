@@ -18580,6 +18580,10 @@ export const EN = {
   'kwdx.finding.KEYWORD_SLOW.body': 'Total time {total_ms} ms; the monitor\'s slowness threshold is {threshold_ms} ms.',
   'kwdx.finding.KEYWORD_FINAL_URL_MISMATCH.title': 'Redirected to an unexpected address',
   'kwdx.finding.KEYWORD_FINAL_URL_MISMATCH.body': 'The final address ({final_url}) does not start with the address the monitor expects ({expected_final_url}) — the session may have dropped and the request ended on a login page.',
+  'kwdx.finding.KEYWORD_RULES_NOT_MET.title': 'Content rules not met',
+  'kwdx.finding.KEYWORD_RULES_NOT_MET.body': 'The page loaded (HTTP {status}) but {failed} of {total} rules were not met — the keyword section below shows which rule failed.',
+  'kwdx.finding.KEYWORD_SIZE_MISMATCH.title': 'Page size outside the expected range',
+  'kwdx.finding.KEYWORD_SIZE_MISMATCH.body': 'The page was {bytes} bytes, outside the monitor\'s size limits. Check whether it unexpectedly shrank (empty or error page) or grew.',
   // Check history diagnosis panel
   'kwhist.showDetails': 'Show details',
   'kwhist.hideDetails': 'Hide details',

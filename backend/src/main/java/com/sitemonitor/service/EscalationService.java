@@ -3345,8 +3345,8 @@ public class EscalationService {
         DbQueryMailParts dbqStep = isDbQuery(type) ? dbQueryMailParts(event.getId(), type, level, mailCtx) : null;
         if (dbqStep != null && dbqStep.subject() != null)
             subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + dbqStep.subject();
-        if (TYPE_KEYWORD.equals(type)) {   // kw sözleşmesi §8.3 (E3): özel konu eskalasyon adımında da
-            String kwStep = keywordMailSubject(mailCtx, level);
+        if (TYPE_KEYWORD.equals(type) || TYPE_KEYWORD_CHANGED.equals(type)) {   // kw sözleşmesi §8.3 (E3): özel konu eskalasyon adımında da
+            String kwStep = keywordMailSubject(mailCtx, level, type);
             if (kwStep != null) subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + kwStep;
         }
         String body = event.getMessage() != null && !event.getMessage().isBlank()
@@ -3706,6 +3706,11 @@ public class EscalationService {
      * standart konu. Yalnız KEYWORD türünde çağrılır (çözüm postası standart konuda kalır).
      */
     String keywordMailSubject(Map<String, Object> ctx, String level) {
+        return keywordMailSubject(ctx, level, TYPE_KEYWORD);
+    }
+
+    /** ... içerik değişimi (KEYWORD_CHANGED, kw-be2 Aşama 2) de aynı şablonu kullanır: {neden} = "içerik değişti", {adet} boş. */
+    String keywordMailSubject(Map<String, Object> ctx, String level, String alertType) {
         if (keywordMonitorRepo == null || ctx == null) return null;
         Long monitorId = ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
         if (monitorId == null) return null;
@@ -3714,8 +3719,13 @@ public class EscalationService {
             if (m == null || !com.sitemonitor.service.keyword.KeywordMailSubject.hasTemplate(m.getMailSubjectTemplate())) return null;
             String at = str(ctx.get("first_failure_at"));
             String time = formatIstanbulLong(at != null ? at : ISO.format(java.time.Instant.now()));
-            return com.sitemonitor.service.keyword.KeywordMailSubject.render(m.getMailSubjectTemplate(),
-                    com.sitemonitor.service.keyword.KeywordMailSubject.values(ctx, levelWordTr(level), time));
+            Map<String, String> values = com.sitemonitor.service.keyword.KeywordMailSubject.values(ctx, levelWordTr(level), time);
+            if (TYPE_KEYWORD_CHANGED.equals(alertType)) {
+                if (values.get("keyword") == null) values.put("keyword", m.getKeyword());
+                values.put("count", null);
+                values.put("reason", "içerik değişti");
+            }
+            return com.sitemonitor.service.keyword.KeywordMailSubject.render(m.getMailSubjectTemplate(), values);
         } catch (Exception e) {
             log.debug("Keyword posta konusu şablonu okunamadı ({}): {}", monitorId, e.toString());
             return null;
@@ -4107,7 +4117,8 @@ public class EscalationService {
         // ÖZEL konu şablonu. Satırlar YALNIZ gönderilen postaya girer (aşağıda sendCtx); günlüğe yazılan gövde satırsızdır.
         DbQueryMailParts dbqMail = isDbQuery(alertType) ? dbQueryMailParts(alertEventId, alertType, level, certContext) : null;
         // Anahtar kelime izlemesinin özel konusu (kw sözleşmesi §8.3, E3) — açılış / eskalasyon / yeniden uyarı / elle gönderim
-        String kwSubject = TYPE_KEYWORD.equals(alertType) ? keywordMailSubject(certContext, level) : null;
+        String kwSubject = TYPE_KEYWORD.equals(alertType) || TYPE_KEYWORD_CHANGED.equals(alertType)
+                ? keywordMailSubject(certContext, level, alertType) : null;
         String subject = dbqMail != null && dbqMail.subject() != null ? subjectPrefix + dbqMail.subject()
                 : kwSubject != null ? subjectPrefix + kwSubject
                 : subjectPrefix + "[Site Monitor] " + daysSeg + " · "
@@ -5074,7 +5085,9 @@ public class EscalationService {
                                  "failure_reason",
                                  // Anahtar kelime izlemesi (kw sözleşmesi §8.1, E1): yeniden gönderim / eskalasyon adımı postası neden +
                                  // ipuçlarını anlık görüntüden okur. "excerpt" BİLİNÇLİ YOK: sayfa alıntısı yalnız açılış postasında.
-                                 "failure_detail", "hints");
+                                 "failure_detail", "hints",
+                                 // kw-be2 Aşama 2: kural özeti (KEYWORD) + içerik değişimi özeti ve temelin zamanı (KEYWORD_CHANGED)
+                                 "rules_summary", "change_summary", "changed_lines", "baseline_taken_at");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

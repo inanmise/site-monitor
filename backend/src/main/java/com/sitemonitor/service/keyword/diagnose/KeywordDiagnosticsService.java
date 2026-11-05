@@ -17,7 +17,6 @@ import com.sitemonitor.service.http.diagnose.RawHttpProbe;
 import com.sitemonitor.service.keyword.KeywordBodyAnalyzer;
 import com.sitemonitor.service.keyword.KeywordCheckSpec;
 import com.sitemonitor.service.keyword.KeywordFailureClassifier;
-import com.sitemonitor.service.keyword.KeywordFold;
 import com.sitemonitor.service.keyword.KeywordRequestRules;
 import com.sitemonitor.service.keyword.KeywordText;
 import jakarta.annotation.PreDestroy;
@@ -303,7 +302,11 @@ public class KeywordDiagnosticsService {
             URI finalUri = finalUri(probe);
             Boolean finalUrlOk = expectedFinal == null ? null
                     : KeywordRequestRules.finalUrlMatches(finalUri, expectedFinal, m.getUrl());
-            boolean met = KeywordCheckerService.evaluate(a.count, exp.operator(), exp.threshold())
+            // kw-be2 Aşama 2: izlemenin kural motoru + boyut kuralıyla AYNI karar (çoklu kural / REGEX / kapsam / iki eşik)
+            boolean sizeOk = a.verdict == null || !Boolean.FALSE.equals(a.verdict.size().sizeOk());
+            boolean rulesMet = a.verdict == null ? KeywordCheckerService.evaluate(a.count, exp.operator(), exp.threshold())
+                    : a.verdict.rulesMet();
+            boolean met = rulesMet && sizeOk
                     && !Boolean.FALSE.equals(statusAccepted) && !Boolean.FALSE.equals(finalUrlOk);
             Map<String, Object> p = RawHttpProbe.params("keyword", abbreviate(keyword, 80), "count", a.count,
                     "expected", KeywordCheckerService.opPhrase(exp.operator(), exp.threshold()), "status", status,
@@ -326,8 +329,18 @@ public class KeywordDiagnosticsService {
                 KeywordFailureClassifier.Reason r = KeywordFailureClassifier.forCheck(new KeywordFailureClassifier.Facts(status,
                         a.count, exp.operator(), exp.threshold(), body.length, probe.finalBodyCapped(), keyword, statusAccepted,
                         expectedStatus, finalUrlOk, expectedFinal, KeywordBodyAnalyzer.displayUrl(finalUri),
-                        !Boolean.FALSE.equals(m.getFollowRedirects())));
+                        !Boolean.FALSE.equals(m.getFollowRedirects())), a.verdict == null ? null : a.verdict.ruleFacts());
                 String code = KeywordDiagFindings.fromFailureReason(r.code());
+                if (KeywordDiagFindings.KEYWORD_RULES_NOT_MET.equals(code) && a.verdict != null && a.verdict.evaluation() != null) {
+                    var rev = a.verdict.evaluation();
+                    p.put("failed", rev.results().stream().filter(x -> !x.ok()).count());
+                    p.put("total", rev.results().size());
+                    p.put("summary", rev.summary());
+                }
+                if (KeywordDiagFindings.KEYWORD_SIZE_MISMATCH.equals(code)) {
+                    p.put("min_bytes", m.getMinBytes());
+                    p.put("max_bytes", m.getMaxBytes());
+                }
                 if (KeywordDiagFindings.KEYWORD_FINAL_URL_MISMATCH.equals(code)) {
                     p.put("expected_final_url", expectedFinal);
                     p.put("final_url", KeywordBodyAnalyzer.displayUrl(finalUri));
@@ -361,7 +374,9 @@ public class KeywordDiagnosticsService {
         return ev;
     }
 
-    private record Analysis(int count, Map<String, Object> block) {}
+    private record Analysis(int count, Map<String, Object> block, KeywordCheckerService.Verdict verdict) {
+        Analysis(int count, Map<String, Object> block) { this(count, block, null); }
+    }
 
     /** Gövdede arama + (izlemenin yolu için) tam çözümleme bloğu. */
     private static Analysis analyzeBody(RawHttpProbe probe, byte[] body, String keyword, boolean cs,
@@ -375,8 +390,11 @@ public class KeywordDiagnosticsService {
         String text = decoded.text();
         String scope = KeywordText.scope(m.getMatchScope());
         boolean normalizeWs = Boolean.TRUE.equals(m.getNormalizeWs());
-        int count = KeywordFold.count(KeywordText.view(text, scope, normalizeWs), KeywordText.needle(keyword, scope, normalizeWs),
-                cs, KeywordFold.MAX_COUNT).count();
+        // kw-be2 Aşama 2: izlemenin kural motoru (kural #1'in sayımı = eski "occurrences"); değişim ölçülmez
+        KeywordCheckerService.Verdict verdict = KeywordCheckerService.evaluateRules(
+                KeywordCheckSpec.forMonitor(m, null, null, false).changeDetect(false).build(),
+                text, contentType, body.length, probe.finalBodyCapped(), null, null);
+        int count = verdict.count();
         int redirects = Math.max(0, probe.hops().size() - 1);
         URI finalUri = finalUri(probe);
         Map<String, Object> b = new LinkedHashMap<>();
@@ -400,7 +418,9 @@ public class KeywordDiagnosticsService {
         b.put("checker_cap_bytes", RawHttpProbe.BODY_CAP_BYTES);
         b.put("decoded_charset", decoded.charset());
         b.put("match_scope", scope);
-        if (!full) return new Analysis(count, b);
+        if (verdict.evaluation() != null) b.put("rule_results", verdict.evaluation().resultsApi());
+        if (verdict.size() != null && verdict.size().sizeOk() != null) b.put("size_ok", verdict.size().sizeOk());
+        if (!full) return new Analysis(count, b, verdict);
         List<String> secrets = masker.secretValues();
         KeywordBodyAnalyzer.Analysis a = KeywordBodyAnalyzer.analyze(new KeywordBodyAnalyzer.Input(body, contentType, keyword, cs,
                 count, exp.operator(), exp.threshold(), status, monitorUrl, finalUri, redirects, secrets, text, decoded.charset(),
@@ -419,7 +439,7 @@ public class KeywordDiagnosticsService {
         b.put("visible_text_preview", masker.maskBody(cut ? visible.substring(0, VISIBLE_PREVIEW_MAX) : visible));
         b.put("visible_text_truncated", cut);
         b.put("preview_stored", true);
-        return new Analysis(count, b);
+        return new Analysis(count, b, verdict);
     }
 
     /** Gövde okunamadı/hiç yanıt yok — çözümleme bloğu yine kuralı taşır (arayüz "çözümlenemedi" der). */

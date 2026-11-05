@@ -79,8 +79,13 @@ public final class KeywordChangeDetector {
         return sha256Hex("v" + CHANGE_ALGO_VERSION + "|" + (m == null ? "" : m) + "|" + sel).substring(0, 16);
     }
 
-    /** Karşılaştırmada kullanılan temel alanları. */
-    public record BaselineView(String fingerprint, String specHash, String text, boolean textTruncated) {}
+    /** Karşılaştırmada kullanılan temel alanları (+ alarm postası için alınma zamanı / kaynağı — karşılaştırmaya girmez). */
+    public record BaselineView(String fingerprint, String specHash, String text, boolean textTruncated, String takenAt,
+                               String source) {
+        public BaselineView(String fingerprint, String specHash, String text, boolean textTruncated) {
+            this(fingerprint, specHash, text, textTruncated, null, null);
+        }
+    }
 
     /**
      * Karşılaştırma sonucu: {@code changed} {@code null} = temel yok ya da başka ayarla alınmış ({@code baselineMissing});
@@ -180,6 +185,38 @@ public final class KeywordChangeDetector {
             if (out.size() >= max) break;
             out.add(clipLine(l, lineMax));
         }
+        return out;
+    }
+
+    /**
+     * Sonuç haritasındaki {@code change_summary} (harita — iş JSON'undan gelince sayılar Integer / Long olabilir; ya da JSON metni)
+     * → kolon JSON'u (≤ {@value #SUMMARY_JSON_MAX}); okunamazsa {@code null}. Asla fırlatmaz.
+     */
+    public static String summaryJsonOf(Object raw) {
+        Map<String, Object> m = raw instanceof Map<?, ?> mm ? stringKeys(mm) : raw instanceof String js ? parseSummary(js) : null;
+        if (m == null) return null;
+        try {
+            return summaryJson(new Summary(intOf(m.get("lines_before")), intOf(m.get("lines_after")), stringList(m.get("removed")),
+                    stringList(m.get("added")), intOf(m.get("removed_total")), intOf(m.get("added_total")),
+                    Boolean.TRUE.equals(m.get("truncated"))));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Map<String, Object> stringKeys(Map<?, ?> mm) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : mm.entrySet()) out.put(String.valueOf(e.getKey()), e.getValue());
+        return out;
+    }
+
+    private static int intOf(Object o) {
+        return o instanceof Number n ? n.intValue() : 0;
+    }
+
+    private static List<String> stringList(Object o) {
+        List<String> out = new ArrayList<>();
+        if (o instanceof List<?> l) for (Object x : l) if (x != null && out.size() < SUMMARY_LINES) out.add(String.valueOf(x));
         return out;
     }
 

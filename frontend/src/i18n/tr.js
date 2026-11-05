@@ -18609,6 +18609,10 @@ export const TR = {
   'kwdx.finding.KEYWORD_SLOW.body': 'Toplam süre {total_ms} ms; izlemenin yavaşlık eşiği {threshold_ms} ms.',
   'kwdx.finding.KEYWORD_FINAL_URL_MISMATCH.title': 'Beklenmeyen adrese yönlendirildi',
   'kwdx.finding.KEYWORD_FINAL_URL_MISMATCH.body': 'Son adres ({final_url}) izlemenin beklediği adresle ({expected_final_url}) başlamıyor — oturum düşüp giriş sayfasına yönlendirilmiş olabilir.',
+  'kwdx.finding.KEYWORD_RULES_NOT_MET.title': 'İçerik kuralları sağlanmadı',
+  'kwdx.finding.KEYWORD_RULES_NOT_MET.body': 'Sayfa geldi (HTTP {status}) ama {total} kuraldan {failed} tanesi sağlanmadı — hangi kuralın tutmadığı aşağıdaki anahtar kelime bölümünde.',
+  'kwdx.finding.KEYWORD_SIZE_MISMATCH.title': 'Sayfa boyutu beklenen aralıkta değil',
+  'kwdx.finding.KEYWORD_SIZE_MISMATCH.body': 'Sayfa {bytes} bayt geldi; bu, izlemenin boyut sınırlarının dışında. Sayfa beklenmedik biçimde küçüldüyse (boş ya da hata sayfası) ya da büyüdüyse inceleyin.',
   // Kontrol geçmişi teşhis paneli
   'kwhist.showDetails': 'Ayrıntıyı göster',
   'kwhist.hideDetails': 'Ayrıntıyı gizle',

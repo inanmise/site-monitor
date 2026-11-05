@@ -59,7 +59,7 @@ class KeywordDiagFindingsI18nGateTest {
             assertThat(KeywordBodyAnalyzer.HINT_CODES).doesNotContain(c);
         }
         for (String h : KeywordBodyAnalyzer.HINT_CODES) assertThat(HttpDiagFindings.CODES).doesNotContain(h);
-        assertThat(KeywordDiagFindings.CODES).hasSize(11).doesNotHaveDuplicates();   // kw §10.5: + KEYWORD_FINAL_URL_MISMATCH
+        assertThat(KeywordDiagFindings.CODES).hasSize(13).doesNotHaveDuplicates();   // kw §10.5: + KEYWORD_FINAL_URL_MISMATCH, + be2 A2 RULES_NOT_MET / SIZE_MISMATCH
         assertThat(KeywordBodyAnalyzer.HINT_CODES).hasSize(10).doesNotHaveDuplicates();
     }
 
