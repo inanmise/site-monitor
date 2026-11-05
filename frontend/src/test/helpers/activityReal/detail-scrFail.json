@@ -29,7 +29,7 @@
     "storm_id": null,
     "change_seq": null,
     "request_id": null,
-    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+    "team_name": "Ödeme Kanalları ve Takim A Takımı (Mobil / İnternet Şubesi)"
   },
   "check": {
     "type": "scripted",

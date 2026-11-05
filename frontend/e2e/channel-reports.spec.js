@@ -1116,7 +1116,7 @@ for (const vp of VIEWPORTS) {
       await expect(items).toHaveCount(2)
       await expect(items.first()).toHaveAttribute('data-year', '2026')
       // Radix menü açılırken zoom-in-95 animasyonu oynar: ölçüm animasyon bitince (ölçek 1) alınır
-      await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+      await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity).map((a) => a.finished.catch(() => null))))
       const mb = await menu.boundingBox()
       expect(mb.x, 'menü solda sığar').toBeGreaterThanOrEqual(-1)
       expect(mb.x + mb.width, 'menü sağda sığar').toBeLessThanOrEqual(vp.width + 1)
@@ -1989,7 +1989,7 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) {
         // Menü açılış animasyonu (zoom-in-95) bitmeden ölçülürse öğe %95–100 ölçekte görünür (CI'da 38,7 px ölçüldü —
         // titrek): önce menünün animasyonları biter, sonra ölçülür
-        await menu.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+        await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity).map((a) => a.finished.catch(() => null))))
         for (const it of await menu.getByRole('menuitem').all()) {
           expect((await it.boundingBox()).height, 'menü öğesi dokunmatikte ≥ 40 px').toBeGreaterThanOrEqual(39.5)
         }

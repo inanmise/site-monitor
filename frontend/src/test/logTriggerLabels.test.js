@@ -19,6 +19,7 @@ import { REPO_ROOT } from './helpers/javaTable.js'
 const EXEMPT = {
   TRIGGER: 'AlertStormMember.JOIN_TRIGGER — fırtına üyeliğinin katılma TÜRÜ, gönderim günlüğüne yazılmaz',
   SCHEDULED: 'TlsProfile.TRIGGER_SCHEDULED — TLS profil taramasının tetik türü, gönderim günlüğüne yazılmaz',
+  ALERT_TRIGGERED: 'ActivityLogService.ACTION_ALERT_TRIGGERED — aktivite kaydının eylem türü (alarm açıldı; adı TRIGGER içerdiği için desene takılır), gönderim günlüğüne yazılmaz',
 }
 
 function javaFiles(dir, acc = []) {
