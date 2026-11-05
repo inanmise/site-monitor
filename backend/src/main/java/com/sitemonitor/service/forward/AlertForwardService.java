@@ -169,6 +169,10 @@ public class AlertForwardService implements AlertForwardRouting {
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
         if (closing || refresher != null) return;
+        // İlk görüntü HAZIR OLAY İŞ PARÇACIĞINDA, eşzamanlı (2026-11-06, inceleme): eskiden arka plana verildiği için açılıştan
+        // hemen sonraki ilk alarm (yeniden başlatma sonrası birikmiş açılışlar) görüntü kurulmadan "iletim yok" sayılıp
+        // iletimsiz gidebiliyordu. Gönderim iş parçacığı yine BEKLEMEZ (bellek okuması); hata yutulur, tazeleyici yeniden dener.
+        refreshQuietly();
         ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(1, r -> {
             Thread t = new Thread(r, "alert-forward-refresh");
             t.setDaemon(true);
@@ -179,7 +183,6 @@ public class AlertForwardService implements AlertForwardRouting {
         refresher = ex;
         long period = Math.max(1_000L, cacheMs);
         try {
-            ex.execute(this::refreshQuietly);   // ilk görüntü hemen (alarm yolları bekletilmez)
             ex.scheduleWithFixedDelay(this::refreshQuietly, period, period, TimeUnit.MILLISECONDS);
         } catch (RuntimeException e) {
             log.warn("Alarm iletimi tazeleyicisi başlatılamadı: {}", e.toString());
@@ -435,6 +438,20 @@ public class AlertForwardService implements AlertForwardRouting {
     }
 
     @Override
+    public boolean anyLive() {
+        Snapshot s = memory();
+        if (s.all().isEmpty()) return false;
+        String nowIso = nowIso();
+        for (Fwd f : s.all()) if (live(f, nowIso) && f.recipientTeamId() != f.ownerTeamId()) return true;
+        return false;
+    }
+
+    @Override
+    public boolean anyConfigured() {
+        return !memory().all().isEmpty();
+    }
+
+    @Override
     public List<ForwardTarget> targetsFor(AlertRef ref) {
         if (ref == null || ref.ownerTeamIds() == null || ref.ownerTeamIds().isEmpty()) return List.of();
         Snapshot s = memory();
@@ -484,6 +501,7 @@ public class AlertForwardService implements AlertForwardRouting {
 
     /** Alıcı takım başına birleştirici: e-postalar / üyeler tekil, wholeTeam = herhangi bir TEAM iletimi. */
     private static final class Acc {
+        final List<Long> ownerIds = new ArrayList<>();
         final List<String> ownerNames = new ArrayList<>();
         final Set<Long> ownerSeen = new HashSet<>();
         final Set<Long> forwardIds = new java.util.TreeSet<>();
@@ -495,6 +513,7 @@ public class AlertForwardService implements AlertForwardRouting {
 
         void add(Fwd f, Map<Long, String> names) {
             if (ownerSeen.add(f.ownerTeamId())) {
+                ownerIds.add(f.ownerTeamId());
                 String n = names.get(f.ownerTeamId());
                 ownerNames.add(n != null ? n : "Takım #" + f.ownerTeamId());
             }
@@ -505,7 +524,7 @@ public class AlertForwardService implements AlertForwardRouting {
         }
 
         ForwardTarget toTarget(long recipientTeamId, String name) {
-            return new ForwardTarget(recipientTeamId, name != null ? name : "Takım #" + recipientTeamId, ownerNames,
+            return new ForwardTarget(recipientTeamId, name != null ? name : "Takım #" + recipientTeamId, ownerIds, ownerNames,
                     new ArrayList<>(forwardIds), emails, members, whole);
         }
     }
@@ -710,10 +729,38 @@ public class AlertForwardService implements AlertForwardRouting {
     /**
      * Kayıt sonucu. {@code before} = düzenlemede ESKİ hâlin kopyası (yeni kayıtta null); {@code changed} false ise HİÇBİR
      * şey yazılmadı (değişmeyen gövde). {@code newWholeTeam}: TEAM türünde yeni alıcı takım (bilgi postası takıma);
-     * {@code newMemberIds}: MEMBERS türünde yeni eklenen üyeler.
+     * {@code newMemberIds}: MEMBERS türünde yeni eklenen üyeler. {@code activated}: bu kayıt iletimi etkin OLMAYAN hâlden etkine
+     * geçirdi (2026-11-06 — bilgi bildirimi o anki TÜM alıcılara gider).
      */
     public record Saved(AlertForward forward, AlertForward before, boolean changed, boolean newWholeTeam,
-                        List<Long> newMemberIds) { }
+                        List<Long> newMemberIds, boolean activated) {
+        public Saved(AlertForward forward, AlertForward before, boolean changed, boolean newWholeTeam, List<Long> newMemberIds) {
+            this(forward, before, changed, newWholeTeam, newMemberIds, false);
+        }
+
+        /**
+         * Bilgi bildiriminin alıcıları (2026-11-06): kayıt sonrası iletim etkin değilse YOK; etkin olmayandan etkine geçtiyse o
+         * anki TÜM alıcılar (TEAM → takımın tamamı, MEMBERS → kayıtlı tüm üyeler); aksi YENİ alıcılar. {@code [whole, üyeler]}.
+         */
+        public boolean infoWholeTeam() {
+            if (forward == null || !forward.isEnabled() || !changed) return false;
+            if (activated) return AlertForward.RECIPIENT_TEAM.equals(forward.getRecipientKind());
+            return newWholeTeam;
+        }
+
+        public List<Long> infoMemberIds() {
+            if (forward == null || !forward.isEnabled() || !changed) return List.of();
+            if (activated) {
+                return AlertForward.RECIPIENT_MEMBERS.equals(forward.getRecipientKind()) ? userIdsOf(forward) : List.of();
+            }
+            return newMemberIds == null ? List.of() : newMemberIds;
+        }
+
+        /** Bu kayıtta bilgi bildirimi gerekti mi (yeni alıcı ya da etkinleştirme, iletim etkin). */
+        public boolean infoRequested() {
+            return infoWholeTeam() || !infoMemberIds().isEmpty();
+        }
+    }
 
     /**
      * Yeni iletim. {@code userIds} = istekteki {@code recipient_user_ids}'in çözümlenmiş iç kimlikleri (denetleyici opak
@@ -792,8 +839,12 @@ public class AlertForwardService implements AlertForwardRouting {
                         "The owner team can't be changed — remove the forward and add it again under the other team."));
             }
         }
-        AlertForward before = copy(f);
         Long owner = f.getOwnerTeamId();
+        // Kilit sırası (2026-11-06, inceleme): sahip takımın satırı varlık DEĞİŞMEDEN önce kilitlenir — takım taşımasıyla
+        // (moveAll: teams → alert_forwards) aynı sıra. Eskiden kilit alanlar değiştikten sonra alınıyordu; yerel sorgu öncesi
+        // otomatik boşaltma iletim satırını ÖNCE güncelleyip sonra takımı kilitliyordu (ters sıra → kilitlenme riski).
+        if (repo.lockTeamRow(owner).isEmpty()) throw notFound();
+        AlertForward before = copy(f);
 
         // Kapsam
         String scopeKind = b.containsKey("scope_kind") ? scopeKind(b.get("scope_kind")) : f.getScopeKind();
@@ -860,7 +911,7 @@ public class AlertForwardService implements AlertForwardRouting {
                 || !Objects.equals(newMonitors, f.getScopeMonitors()) || !Objects.equals(recipientKind, f.getRecipientKind())
                 || !Objects.equals(rt, f.getRecipientTeamId()) || !Objects.equals(newUsers, f.getRecipientUserIds())
                 || enabled != f.isEnabled() || !Objects.equals(expiresAt, f.getExpiresAt()) || !Objects.equals(note, f.getNote());
-        if (!changed) return new Saved(f, before, false, false, List.of());
+        if (!changed) return new Saved(f, before, false, false, List.of(), false);
 
         boolean scopeOrRecipientChanged = !Objects.equals(scopeKind, f.getScopeKind()) || !Objects.equals(newTypes, f.getScopeTypes())
                 || !Objects.equals(newMonitors, f.getScopeMonitors()) || !Objects.equals(recipientKind, f.getRecipientKind())
@@ -874,10 +925,7 @@ public class AlertForwardService implements AlertForwardRouting {
         f.setEnabled(enabled);
         f.setExpiresAt(expiresAt);
         f.setNote(note);
-        if (scopeOrRecipientChanged) {
-            repo.lockTeamRow(owner);
-            requireUnique(f, f.getId());
-        }
+        if (scopeOrRecipientChanged) requireUnique(f, f.getId());   // takım satırı yukarıda kilitli
         f.setUpdatedAt(nowIso());
         f.setUpdatedBy(actor);
         AlertForward saved = repo.saveAndFlush(f);
@@ -894,7 +942,7 @@ public class AlertForwardService implements AlertForwardRouting {
                 for (Long m : members) if (!had.contains(m)) newMembers.add(m);
             }
         }
-        return new Saved(saved, before, true, newWhole, newMembers);
+        return new Saved(saved, before, true, newWhole, newMembers, !before.isEnabled() && saved.isEnabled());
     }
 
     /** Kaldır. */
@@ -919,28 +967,93 @@ public class AlertForwardService implements AlertForwardRouting {
         return n;
     }
 
-    /** Takım taşıma sonucu. */
-    public record Moved(int moved, int removed) { }
+    /** Takım taşıma sonucu: taşınan, silinen ve taşınırken duraklatılan (ALL / TYPES kapsamlı, etkin olan) iletim sayıları. */
+    public record Moved(int moved, int removed, int paused) {
+        public Moved(int moved, int removed) {
+            this(moved, removed, 0);
+        }
+    }
+
+    /** Taşıma ile duraklatılan iletimin notuna eklenen sabit metin (Türkçe — kayıt verisidir, arayüz dili değil). */
+    public static final String MOVE_PAUSE_NOTE =
+            "Takım taşıması sonrası duraklatıldı: kapsam hedef takımın tüm izlemelerini içerir, gözden geçirip yeniden etkinleştirin.";
+
+    /** Taşınınca kapsamı GENİŞLEYEN iletimler: tüm izlemeler / seçilen türler (hedef takımın izlemelerini de kapsar). */
+    static boolean widensOnMove(AlertForward f) {
+        return AlertForward.SCOPE_ALL.equals(f.getScopeKind()) || AlertForward.SCOPE_TYPES.equals(f.getScopeKind());
+    }
 
     /**
      * Takım taşıma ({@code TeamAdminService.moveAll}): {@code from}'a GELEN iletimler ve sahibi {@code from} alıcısı {@code to}
      * olanlar (taşınınca kendi kendine iletim olurdu) silinir; sahibi {@code from} olanlar {@code to}'ya geçer.
+     *
+     * <p>Kapsam genişlemesi (2026-11-06, inceleme): kapsamı ALL ya da TYPES olan iletim taşınınca HEDEF takımın (onun izlemeleri
+     * de dahil) tüm izlemelerini / o türleri iletmeye başlardı — hedef takım bunu hiç onaylamadı. Bu yüzden etkin olanlar
+     * {@code enabled = false} ile taşınır ve notunun sonuna {@link #MOVE_PAUSE_NOTE} eklenir (500 sınırına sığdırılarak);
+     * hedefte gözden geçirilip normal düzenlemeyle yeniden etkinleştirilir (bilgi bildirimi o an gider). MONITORS kapsamlılar
+     * (seçilen izlemeler taşınmış izlemelerdir) olduğu gibi taşınır. Hedefte aynı kanonik iletim zaten varsa taşınan kopya
+     * silinir. Varlık kaydıyla yazılır — sürüm artar (açık düzenleme penceresi 409 alır).
      */
     @Transactional
     public Moved moveTeam(Long from, Long to) {
-        if (from == null || to == null || from.equals(to)) return new Moved(0, 0);
-        int removed = repo.deleteByOwnerAndRecipient(from, to);
+        if (from == null || to == null || from.equals(to)) return new Moved(0, 0, 0);
+        int removed = 0, moved = 0, paused = 0;
+        Set<String> existing = new HashSet<>();
+        for (AlertForward o : repo.findByOwnerTeamIdInOrderByIdAsc(List.of(to))) {
+            if (!Objects.equals(o.getRecipientTeamId(), from)) existing.add(canonical(o));   // from'a gelenler aşağıda silinir
+        }
+        String now = nowIso();
+        for (AlertForward f : repo.findByOwnerTeamIdInOrderByIdAsc(List.of(from))) {
+            if (Objects.equals(f.getRecipientTeamId(), to)) {   // taşınınca kendi kendine iletim olurdu
+                repo.delete(f);
+                removed++;
+                continue;
+            }
+            f.setOwnerTeamId(to);
+            if (!existing.add(canonical(f))) {   // hedefte aynısı zaten var
+                repo.delete(f);
+                removed++;
+                continue;
+            }
+            if (widensOnMove(f) && f.isEnabled()) {
+                f.setEnabled(false);
+                f.setNote(withMoveNote(f.getNote()));
+                paused++;
+            }
+            f.setUpdatedAt(now);
+            repo.save(f);
+            moved++;
+        }
+        repo.flush();
         removed += repo.deleteIncoming(from);
-        int moved = repo.moveOwner(from, to, nowIso());
         if (moved > 0 || removed > 0) changed();
-        return new Moved(moved, removed);
+        if (paused > 0) {
+            log.info("Takım taşıması {} → {}: {} alarm iletimi (tüm izlemeler / seçilen türler kapsamlı) duraklatıldı", from, to, paused);
+        }
+        return new Moved(moved, removed, paused);
     }
 
-    /** Takımın iletim sayıları (silme etkisi — bilgi). */
+    /** Notun sonuna taşıma metni — toplam {@value #NOTE_MAX} karakteri aşmaz (eski not kısaltılır, metin bütün kalır). */
+    static String withMoveNote(String note) {
+        String n = note == null ? "" : note.trim();
+        if (n.contains(MOVE_PAUSE_NOTE)) return note;   // ikinci taşıma aynı cümleyi tekrarlamaz
+        if (n.isEmpty()) return MOVE_PAUSE_NOTE;
+        int room = NOTE_MAX - MOVE_PAUSE_NOTE.length() - 1;
+        if (n.length() > room) {
+            int cut = Math.max(0, room - 1);
+            if (cut > 0 && Character.isHighSurrogate(n.charAt(cut - 1))) cut--;   // vekil çifti bölünmez
+            n = n.substring(0, cut).stripTrailing() + "…";
+        }
+        return n + " " + MOVE_PAUSE_NOTE;
+    }
+
+    /** Takımın iletim sayıları (silme / taşıma etkisi — bilgi). {@code paused_on_move}: taşınırsa duraklatılacak sayısı. */
     public Map<String, Object> impactOf(Long teamId) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("owned", teamId == null ? 0 : repo.countByOwnerTeamId(teamId));
         m.put("incoming", teamId == null ? 0 : repo.countByRecipientTeamId(teamId));
+        m.put("paused_on_move", teamId == null ? 0
+                : repo.countByOwnerTeamIdAndEnabledTrueAndScopeKindIn(teamId, List.of(AlertForward.SCOPE_ALL, AlertForward.SCOPE_TYPES)));
         return m;
     }
 
@@ -1113,10 +1226,14 @@ public class AlertForwardService implements AlertForwardRouting {
             Map<Long, Member> mem = members(fresh);
             for (Long id : fresh) {
                 Member m = mem.get(id);
-                if (m == null || !m.active() || !m.inTeam(recipientTeamId)) {
-                    String who = m == null ? "#" + id : m.name();
-                    throw field("recipient_user_ids", Msg.t("Seçilen kişi (" + who + ") aktif değil ya da alıcı takımın üyesi değil — takımdan aktif bir üye seçin.",
-                            "The selected person (" + who + ") isn't active or isn't a member of the recipient team — choose an active member of the team."));
+                if (m == null) {
+                    // İç sayısal kimlik metne YAZILMAZ (2026-11-06, inceleme — kimlikler opak)
+                    throw field("recipient_user_ids", Msg.t("Seçilen üyelerden biri artık bulunamadı (hesap silinmiş olabilir) — listeyi yenileyip yeniden seçin.",
+                            "One of the selected members can no longer be found (the account may have been deleted) — refresh the list and choose again."));
+                }
+                if (!m.active() || !m.inTeam(recipientTeamId)) {
+                    throw field("recipient_user_ids", Msg.t("Seçilen kişi (" + m.name() + ") aktif değil ya da alıcı takımın üyesi değil — takımdan aktif bir üye seçin.",
+                            "The selected person (" + m.name() + ") isn't active or isn't a member of the recipient team — choose an active member of the team."));
                 }
             }
         }

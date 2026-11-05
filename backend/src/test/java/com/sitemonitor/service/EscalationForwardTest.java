@@ -90,6 +90,8 @@ class EscalationForwardTest {
         t.setWarningDays(30); t.setHighDays(15); t.setCriticalDays(7); t.setReAlertIntervalHours(24);
         when(thresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.of(t));
         when(alertEventRepo.markResolvedIfOpen(any(), any(), any())).thenReturn(1);
+        when(alertEventRepo.setForwardEmailsIfNull(any(), any())).thenReturn(1);
+        when(alertEventRepo.setForwardEmailsIfUnchanged(any(), any(), any())).thenReturn(1);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(i -> {
             AlertEvent e = i.getArgument(0);
@@ -172,7 +174,7 @@ class EscalationForwardTest {
         assertThat(sends()).hasSize(1);
         assertThat(sends().get(0)).containsExactly(A_MAIL);
         assertThat(forwardLogs()).isEmpty();
-        verify(alertEventRepo, never()).setForwardEmails(any(), any());
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(any(), any());
 
         reset(emailService, notificationLogRepo);
         when(emailService.sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
@@ -211,7 +213,7 @@ class EscalationForwardTest {
             assertThat(l.getTrigger()).isEqualTo("INITIAL");
             assertThat(l.getAlertEventId()).isEqualTo(100L);
         });
-        verify(alertEventRepo).setForwardEmails(100L, "{\"3\":[\"" + B_MAIL + "\"]}");
+        verify(alertEventRepo).setForwardEmailsIfNull(100L, "{\"3\":[\"" + B_MAIL + "\"]}");
         assertThat(push.calls).singleElement().satisfies(c -> {
             assertThat(c.alertEventId()).isEqualTo(100L);
             assertThat(c.trigger()).isEqualTo("INITIAL");
@@ -234,7 +236,7 @@ class EscalationForwardTest {
         List<NotificationLog> rows = forwardLogs();
         assertThat(rows).extracting(NotificationLog::getRecipientName).containsExactly(B_NAME, "Takım C", "Takım D");
         assertThat(rows.get(2).getEmailStatus()).isEqualTo(EscalationService.STATUS_FORWARD_ALREADY_MAILED);
-        verify(alertEventRepo).setForwardEmails(100L, "{\"3\":[\"" + B_MAIL + "\"],\"4\":[\"" + C_MAIL + "\"]}");
+        verify(alertEventRepo).setForwardEmailsIfNull(100L, "{\"3\":[\"" + B_MAIL + "\"],\"4\":[\"" + C_MAIL + "\"]}");
     }
 
     @Test
@@ -246,7 +248,7 @@ class EscalationForwardTest {
         service.processResults(List.of(hijacked()));
         List<NotificationLog> rows = forwardLogs();
         assertThat(rows).extracting(NotificationLog::getEmailStatus).containsExactly("SKIPPED: alıcı yok", "FAILED: 550");
-        verify(alertEventRepo, never()).setForwardEmails(any(), any());
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(any(), any());
         assertThat(push.calls).singleElement().satisfies(c ->
                 assertThat(c.targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(TEAM_B, TEAM_C));
     }
@@ -350,14 +352,36 @@ class EscalationForwardTest {
     }
 
     @Test
-    @DisplayName("elle gönderim: tüm e-postalar çıkarıldı ama iletim push'u kaldı → kabul (yalnız push)")
+    @DisplayName("elle gönderim: tüm e-postalar çıkarıldı ama iletim push'u (önizlemede) kaldı → kabul (yalnız push)")
     void manualPushOnlyForwardAccepted() {
         openMonitor("{\"monitor_id\":44}");
         routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
+        when(userPushService.preview(eq(7L), any(), any())).thenReturn(new UserPushService.PushPreview(true, null, List.of(
+                new UserPushService.PushPreviewRow("u.noc", "Ayşe Yılmaz (Ağ Operasyon / Uzman)", "PENDING", null,
+                        UserPushService.PREVIEW_KIND_FORWARD, B_NAME))));
         assertThatCode(() -> service.reNotify(7L, Set.of(A_MAIL, B_MAIL), Set.of())).doesNotThrowAnyException();
         // iletim yokken aynı istek bugünkü gibi reddedilir
         service.setForwarding(null, null);
+        when(userPushService.preview(eq(7L), any(), any())).thenReturn(null);
         assertThatThrownBy(() -> service.reNotify(7L, Set.of(A_MAIL), Set.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("elle gönderim: tüm e-postalar + tüm push alıcıları (iletim dahil) çıkarıldı → 400, son bildirim damgası yazılmaz")
+    void manualEverythingExcludedRejected() {
+        AlertEvent e = openMonitor("{\"monitor_id\":44}");
+        String stampBefore = e.getLastReAlertAt();
+        routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));   // iletim hedefinin push alıcısı VAR (tüm takım)
+        when(userPushService.preview(eq(7L), any(), any())).thenReturn(new UserPushService.PushPreview(true, null, List.of(
+                new UserPushService.PushPreviewRow("u.sahip", "Sahip Kişi", "PENDING"),
+                new UserPushService.PushPreviewRow("u.noc", "Ayşe Yılmaz (Ağ Operasyon / Uzman)", "PENDING", null,
+                        UserPushService.PREVIEW_KIND_FORWARD, B_NAME))));
+        assertThatThrownBy(() -> service.reNotify(7L, Set.of(A_MAIL, B_MAIL), Set.of("u.sahip", "u.noc")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(e.getLastReAlertAt()).as("reddedilen istek damga yazmaz").isEqualTo(stampBefore);
+        verify(alertEventRepo, never()).save(e);
+        assertThat(push.calls).isEmpty();
+        assertThat(forwardLogs()).isEmpty();
     }
 
     @Test
@@ -371,7 +395,7 @@ class EscalationForwardTest {
                 anyString(), any(), any());
         assertThat(forwardLogs()).singleElement().satisfies(l ->
                 assertThat(l.getEmailStatus()).isEqualTo("SKIPPED: e-posta kanalı kapalı"));
-        verify(alertEventRepo, never()).setForwardEmails(any(), any());
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(any(), any());
         assertThat(push.calls).hasSize(1);
     }
 
@@ -456,5 +480,27 @@ class EscalationForwardTest {
         List<Map<String, Object>> mon = (List<Map<String, Object>>) service.simulateRecipients(TEAM_A, "HIGH", true, null).get("forwards");
         assertThat(mon).extracting(m -> m.get("applies")).containsExactly("all", "types_only", "monitors_only");
         assertThat(mon.get(1)).containsEntry("member_count", 2).containsEntry("scope_types", List.of("http", "ping"));
+    }
+
+    @Test
+    @DisplayName("'Kim bilgilendirilir?' MONITORS: öğelerin HEPSİ denenir — ilk öğe silinmiş izlemeyse satır kaybolmaz; cert öğesi tek toplu okuma")
+    void simulatorMonitorsTriesEveryItem() {
+        ForwardFakes.Routing r = routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
+        // yalnız 44 numaralı izleme ve shop.example.com alan adı eşleşir (999 silinmiş, 70 envanteri silinmiş)
+        r.filter = (ref, t) -> Long.valueOf(44L).equals(ref.monitorId()) || "shop.example.com".equals(ref.domain());
+        service.setForwardRepo(forwardRepo);
+        CertificateInventory shop = new CertificateInventory();
+        shop.setId(71L);
+        shop.setDomain("shop.example.com");
+        when(inventoryRepo.findAllById(anyIterable())).thenReturn(List.of(shop));
+        when(forwardRepo.findByOwnerTeamIdInOrderByIdAsc(anyCollection())).thenReturn(List.of(
+                fwd(1, "MONITORS", null, "http:999,http:44", "TEAM", null),
+                fwd(2, "MONITORS", null, "cert:70,cert:71", "TEAM", null),
+                fwd(3, "MONITORS", null, "http:998", "TEAM", null)));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> mon = (List<Map<String, Object>>) service.simulateRecipients(TEAM_A, "HIGH", true, null).get("forwards");
+        assertThat(mon).extracting(m -> m.get("forward_id")).containsExactly(1L, 2L);
+        assertThat(mon).extracting(m -> m.get("applies")).containsOnly("monitors_only");
+        verify(inventoryRepo, never()).findById(anyLong());
     }
 }

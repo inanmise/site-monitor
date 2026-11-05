@@ -1274,9 +1274,11 @@ public class EscalationService {
                 if (!e.isEmpty() && !excluded.contains(e) && seen.add(e)) recipientCount++;
             }
         }
+        // 2026-11-06 (inceleme): "push kaldı mı" kararı YALNIZ push önizlemesinden — önizleme iletim push satırlarını zaten içerir
+        // (UserPushService.previewForwards) ve elle çıkarılan kişileri tanır. Eski ayrı "iletim push'u kaldı" kontrolü, tüm
+        // e-postalar + tüm push alıcıları (iletim dahil) çıkarılmış isteği yine kabul edip boş bir gönderim kaydı yazıyordu.
         if (recipientCount == 0 && !excluded.isEmpty()
-                && !otherChannelLeft(event, targets, contacts, excludeUsernames)
-                && !forwardPushLeft(forwards)) {
+                && !otherChannelLeft(event, targets, contacts, excludeUsernames)) {
             // Kullanıcı pop-up'ta TÜM alıcıları çıkardıysa DB'ye yazmadan reddet (→ 400).
             // Doğal sıfır-alıcı durumu (kontak/takım maili hiç yok) ESKİ davranışında kalır:
             // queued döner, sendCombinedAlert boş listeyle gönderimi zaten atlar.
@@ -1398,17 +1400,6 @@ public class EscalationService {
             log.debug("Elle gönderim push önizlemesi okunamadı (olay {}): {}", event.getId(), e.toString());
             return false;
         }
-    }
-
-    /**
-     * E-posta alıcısı kalmayan elle gönderimde iletim push'u gidecek mi (2026-11-05): iletim push ayağı varken bir hedefin push
-     * alıcısı (tüm takım ya da seçilen üyeler) varsa evet. Kişi tek tek hariç tutulduysa push ayağı kendi süzgecini uygular
-     * (önizleme push satırları); burada yalnız "kanal kaldı mı" sorulur.
-     */
-    private boolean forwardPushLeft(List<com.sitemonitor.service.forward.ForwardTarget> forwards) {
-        if (forwardPush == null || forwards == null) return false;
-        for (var t : forwards) if (t.wholeTeam() || !t.memberUserIds().isEmpty()) return true;
-        return false;
     }
 
     /** Taze bağlam + alarm anı damgaları ({@code mail_disabled}, {@code team_id}, {@code monitor_id} …) — taze anahtar ezilmez. */
@@ -4818,50 +4809,41 @@ public class EscalationService {
                 String scope = f.getScopeKind() == null ? "" : f.getScopeKind().trim().toUpperCase(Locale.ROOT);
                 List<String> types = csv(f.getScopeTypes()).stream().map(x -> x.toLowerCase(Locale.ROOT)).toList();
                 String applies;
-                String probeType;   // örnek alarm türü (yönlendirmeden alıcıyı çözmek için)
-                String probeDomain = null;
-                Long probeMonitor = null;
+                // Örnek alarm(lar): [tür, alan adı, izleme kimliği] — yönlendirmeden alıcıyı çözmek için. MONITORS kapsamında
+                // öğelerin HEPSİ sırayla denenir (2026-11-06, inceleme): ilk öğe silinmiş bir izlemeyse satır kayboluyordu.
+                List<Object[]> probes = new ArrayList<>();
                 switch (scope) {
-                    case "ALL" -> { applies = "all"; probeType = standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY"; }
+                    case "ALL" -> {
+                        applies = "all";
+                        probes.add(new Object[]{standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY", null, null});
+                    }
                     case "TYPES" -> {
                         if (!standaloneMonitor) {
                             if (!types.contains("cert")) continue;
                             applies = "all";
-                            probeType = "EXPIRY";
+                            probes.add(new Object[]{"EXPIRY", null, null});
                         } else {
                             String first = types.stream().filter(x -> !"cert".equals(x)).findFirst().orElse(null);
                             if (first == null) continue;
                             applies = "types_only";
-                            probeType = sampleAlertTypeOf(first);
+                            probes.add(new Object[]{sampleAlertTypeOf(first), null, null});
                         }
                     }
                     case "MONITORS" -> {
                         applies = "monitors_only";
-                        List<String> items = csv(f.getScopeMonitors());
-                        String item = items.isEmpty() ? null : items.get(0);
-                        if (item == null || item.indexOf(':') <= 0) continue;
-                        String type = item.substring(0, item.indexOf(':'));
-                        String id = item.substring(item.indexOf(':') + 1);
-                        probeType = sampleAlertTypeOf(type);
-                        try {
-                            long n = Long.parseLong(id.trim());
-                            if ("cert".equals(type)) {
-                                probeDomain = inventoryRepo.findById(n).map(com.sitemonitor.model.CertificateInventory::getDomain)
-                                        .orElse(null);
-                            } else {
-                                probeMonitor = n;
-                            }
-                        } catch (NumberFormatException ex) {
-                            continue;
-                        }
+                        probes.addAll(monitorProbes(csv(f.getScopeMonitors())));
                     }
                     default -> { continue; }
                 }
-                if (probeType == null) continue;
-                var target = forwardTargets(routing, List.of(f.getOwnerTeamId()), teamId, ugTeamId, probeType, probeDomain,
-                        probeMonitor).stream().filter(t -> t.recipientTeamId() == f.getRecipientTeamId()).findFirst()
-                        .orElse(null);
-                if (target == null) continue;   // alıcı pasif / adresi ve üyesi kalmamış — gönderim de atlar
+                com.sitemonitor.service.forward.ForwardTarget target = null;
+                for (Object[] p : probes) {
+                    if (p[0] == null) continue;
+                    target = forwardTargets(routing, List.of(f.getOwnerTeamId()), teamId, ugTeamId, (String) p[0],
+                            (String) p[1], (Long) p[2]).stream().filter(t -> t.recipientTeamId() == f.getRecipientTeamId())
+                            .findFirst().orElse(null);
+                    if (target != null) break;
+                }
+                if (target == null) continue;   // alıcı pasif / adresi ve üyesi kalmamış / öğeler silinmiş — gönderim de atlar
                 String kind = f.getRecipientKind() == null ? "TEAM" : f.getRecipientKind().trim().toUpperCase(Locale.ROOT);
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("forward_id", f.getId());
@@ -4877,6 +4859,39 @@ public class EscalationService {
             }
         } catch (Exception e) {
             log.debug("Simülatör iletim satırları okunamadı: {}", e.toString());
+        }
+        return out;
+    }
+
+    /**
+     * MONITORS kapsamının örnek alarmları — öğe sırasıyla {@code [alarm türü, alan adı, izleme kimliği]}; cert öğelerinin alan
+     * adları TEK toplu envanter okumasıyla (silinmiş envanter kaydı atlanır). Bozuk öğe atlanır.
+     */
+    private List<Object[]> monitorProbes(List<String> items) {
+        List<Object[]> out = new ArrayList<>();
+        List<Long> certIds = new ArrayList<>();
+        for (String item : items) {
+            int c = item.indexOf(':');
+            if (c <= 0) continue;
+            String type = item.substring(0, c).trim().toLowerCase(Locale.ROOT);
+            long id;
+            try {
+                id = Long.parseLong(item.substring(c + 1).trim());
+            } catch (NumberFormatException ex) {
+                continue;
+            }
+            if ("cert".equals(type)) certIds.add(id);
+            else out.add(new Object[]{sampleAlertTypeOf(type), null, id});
+        }
+        if (!certIds.isEmpty() && inventoryRepo != null) {
+            Map<Long, String> domains = new HashMap<>();
+            for (com.sitemonitor.model.CertificateInventory inv : inventoryRepo.findAllById(certIds)) {
+                if (inv != null && inv.getId() != null && inv.getDomain() != null) domains.put(inv.getId(), inv.getDomain());
+            }
+            for (Long id : certIds) {
+                String d = domains.get(id);
+                if (d != null) out.add(new Object[]{"EXPIRY", d, null});
+            }
         }
         return out;
     }

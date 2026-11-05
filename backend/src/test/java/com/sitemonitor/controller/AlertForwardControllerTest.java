@@ -35,6 +35,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -433,5 +434,106 @@ class AlertForwardControllerTest {
                 .andExpect(jsonPath("$.data.items[*].id", contains(4, 3, 2)));
         mvc.perform(get("/api/alert-forwards/monitors").param("team", "2").session(teamAdmin1()))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── 2026-11-06 inceleme düzeltmeleri ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("izleme için: iki sahipli kayıtta yalnız GÖRÜLEN sahibin iletimleri; owner_teams = görülenler + can_manage; can_add buna göre")
+    void forMonitorOnlyVisibleOwners() throws Exception {
+        NocMonitorDirectory.Row cert = new NocMonitorDirectory.Row(NocType.SSL, 40, "shop.example.com", "shop.example.com", 3L, 2L,
+                true, false, null, false);
+        when(directory.forAlert(NocType.SSL, "shop.example.com", null)).thenReturn(cert);
+        List<AlertForward> all = List.of(fwd(7, 2, "ALL", null, null, "TEAM", 4, null),      // UG'nin (görülen)
+                fwd(8, 3, "ALL", null, null, "TEAM", 1, null));                              // SY'nin (görülmeyen)
+        List<Collection<?>> asked = new ArrayList<>();
+        when(repo.findByOwnerTeamIdInOrderByIdAsc(any())).thenAnswer(i -> {
+            Collection<?> owners = i.getArgument(0);
+            asked.add(List.copyOf(owners));
+            return all.stream().filter(f -> owners.contains(f.getOwnerTeamId())).toList();
+        });
+        mvc.perform(get("/api/alert-forwards/for-monitor").param("type", "cert").param("domain", "shop.example.com").session(user2()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[*].id", contains(7)))
+                .andExpect(jsonPath("$.data.owner_teams", hasSize(1)))
+                .andExpect(jsonPath("$.data.owner_teams[0].id").value(2))
+                .andExpect(jsonPath("$.data.owner_teams[0].name").value("Ağ Operasyon"))
+                .andExpect(jsonPath("$.data.owner_teams[0].can_manage").value(false))
+                .andExpect(jsonPath("$.data.can_add").value(false));
+        assertThat(asked).containsExactly(List.of(2L));
+        // UG'yi yöneten, SY'yi yalnız gören kapsamlı yönetici: iki sahip de görünür, can_manage sahip başına
+        MockHttpSession mgr = session("TEAM_ADMIN", 11L, List.of(2L, 3L), List.of(2L), List.of(2L));
+        mvc.perform(get("/api/alert-forwards/for-monitor").param("type", "cert").param("domain", "shop.example.com").session(mgr))
+                .andExpect(jsonPath("$.data.items[*].id", containsInAnyOrder(7, 8)))
+                .andExpect(jsonPath("$.data.owner_teams[*].id", contains(3, 2)))
+                .andExpect(jsonPath("$.data.owner_teams[0].can_manage").value(false))
+                .andExpect(jsonPath("$.data.owner_teams[1].can_manage").value(true))
+                .andExpect(jsonPath("$.data.can_add").value(true));
+        // hiçbir sahibi görmeyen: hidden, depo okunmaz
+        MockHttpSession stranger = session("USER", 90L, List.of(4L), List.of(), List.of(4L));
+        asked.clear();
+        mvc.perform(get("/api/alert-forwards/for-monitor").param("type", "cert").param("domain", "shop.example.com").session(stranger))
+                .andExpect(jsonPath("$.data.hidden").value(true))
+                .andExpect(jsonPath("$.data.owner_teams").doesNotExist());
+        assertThat(asked).isEmpty();
+    }
+
+    @Test
+    @DisplayName("hedef adres her satırda maskeli (gelen iletim dahil): sorgudaki gizli değer alıcıya gitmez")
+    void monitorTargetMasked() throws Exception {
+        rows.add(fwd(2, 3, "MONITORS", null, "http:5", "TEAM", 1, null));   // takım 1'e gelen
+        when(directory.all()).thenReturn(List.of(new NocMonitorDirectory.Row(NocType.HTTP, 5, "Ödeme API",
+                "https://pay.example.com/health?token=s3cr3t-deger&lang=tr", 3L, null, true, false, null, false)));
+        mvc.perform(get("/api/alert-forwards").session(teamAdmin1()))
+                .andExpect(jsonPath("$.data.incoming[0].scope_monitors[0].name").value("Ödeme API"))
+                .andExpect(jsonPath("$.data.incoming[0].scope_monitors[0].target")
+                        .value("https://pay.example.com/health?token=*****&lang=tr"));
+        mvc.perform(get("/api/alert-forwards").session(admin()))
+                .andExpect(jsonPath("$.data.items[0].scope_monitors[0].target")
+                        .value("https://pay.example.com/health?token=*****&lang=tr"));
+    }
+
+    @Test
+    @DisplayName("bilgi: duraklatılmış oluşturma bilgi göndermez (requested=false); etkinleştirmede TÜM alıcılar; bakım susturması muted")
+    void infoFollowsEnabled() throws Exception {
+        AlertForward paused = fwd(9, 1, "ALL", null, null, "MEMBERS", 2, "50,51");
+        paused.setEnabled(false);
+        when(forwards.create(anyMap(), any(), any())).thenReturn(new AlertForwardService.Saved(paused, null, true, false, List.of(50L, 51L)));
+        mvc.perform(post("/api/alert-forwards").session(teamAdmin1()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"owner_team_id\":1,\"scope_kind\":\"ALL\",\"recipient_kind\":\"TEAM\",\"recipient_team_id\":2,\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.requested").value(false))
+                .andExpect(jsonPath("$.info.muted").value(false))
+                .andExpect(jsonPath("$.info.emails").value(0))
+                .andExpect(jsonPath("$.info.push").value(0));
+        verify(notifier, never()).notifyAdded(any(), anyBoolean(), any(), any());
+
+        // duraklatılmış → etkin: o anki TÜM üyeler (yeni üye yokken de)
+        rows.add(paused);
+        AlertForward active = fwd(9, 1, "ALL", null, null, "MEMBERS", 2, "50,51");
+        when(forwards.update(eq(9L), anyMap(), any(), any()))
+                .thenReturn(new AlertForwardService.Saved(active, paused, true, false, List.of(), true));
+        mvc.perform(put("/api/alert-forwards/9").session(teamAdmin1()).contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.requested").value(true))
+                .andExpect(jsonPath("$.info.emails").value(3));
+        verify(notifier).notifyAdded(active, false, List.of(50L, 51L), "Kişi 10");
+
+        // etkin kalan iletimde yalnız not değişti → bilgi yok
+        org.mockito.Mockito.clearInvocations(notifier);
+        when(forwards.update(eq(9L), anyMap(), any(), any()))
+                .thenReturn(new AlertForwardService.Saved(active, active, true, false, List.of(), false));
+        mvc.perform(put("/api/alert-forwards/9").session(teamAdmin1()).contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"x\"}"))
+                .andExpect(jsonPath("$.info.requested").value(false));
+        verify(notifier, never()).notifyAdded(any(), anyBoolean(), any(), any());
+
+        // sistem bakımı susturdu → muted
+        when(notifier.notifyAdded(any(), anyBoolean(), any(), any())).thenReturn(new AlertForwardInfoNotifier.Info(true, 0, 0, true));
+        when(forwards.update(eq(9L), anyMap(), any(), any()))
+                .thenReturn(new AlertForwardService.Saved(active, paused, true, false, List.of(), true));
+        mvc.perform(put("/api/alert-forwards/9").session(teamAdmin1()).contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(jsonPath("$.info.requested").value(true))
+                .andExpect(jsonPath("$.info.muted").value(true))
+                .andExpect(jsonPath("$.info.emails").value(0));
     }
 }

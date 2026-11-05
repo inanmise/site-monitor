@@ -64,6 +64,8 @@ class QuietDigestForwardTest {
         t.setId(TEAM);
         t.setName("Ödeme");
         when(teamRepo.findAllById(any())).thenReturn(List.of(t));
+        when(alertEventRepo.setForwardEmailsIfNull(any(), any())).thenReturn(1);
+        when(alertEventRepo.setForwardEmailsIfUnchanged(any(), any(), any())).thenReturn(1);
         when(alertEventRepo.findAllById(any())).thenAnswer(i -> {
             List<AlertEvent> out = new ArrayList<>();
             for (Object id : (Iterable<?>) i.getArgument(0)) if (events.containsKey(id)) out.add(events.get(id));
@@ -149,7 +151,7 @@ class QuietDigestForwardTest {
         verify(emailService).sendHtml(any(String[].class), any(), anyString(), anyString(), any());
         verify(emailService, never()).sendHtml(any(String[].class), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
         assertThat(forwardRows()).isEmpty();
-        verify(alertEventRepo, never()).setForwardEmails(any(), any());
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(any(), any());
     }
 
     @Test
@@ -179,8 +181,8 @@ class QuietDigestForwardTest {
         assertThat(rows).extracting(NotificationLog::getTrigger).containsOnly(EscalationService.TRIGGER_QUIET_DIGEST);
         assertThat(rows).extracting(NotificationLog::getEmailStatus).containsOnly("SENT");
         // yalnız AÇIK alarm damgalanır (çözülmüş 2 numara hayır)
-        verify(alertEventRepo).setForwardEmails(1L, "{\"7\":[\"b@x.com\"]}");
-        verify(alertEventRepo, never()).setForwardEmails(eq(2L), any());
+        verify(alertEventRepo).setForwardEmailsIfNull(1L, "{\"7\":[\"b@x.com\"]}");
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(eq(2L), any());
     }
 
     @Test
@@ -200,5 +202,43 @@ class QuietDigestForwardTest {
             assertThat(l.getAlertEventId()).isEqualTo(1L);
             assertThat(l.getEmailStatus()).isEqualTo(EscalationService.STATUS_FORWARD_ALREADY_MAILED);
         });
+    }
+
+    @Test
+    @DisplayName("sahipler = damga + envanter SY / UG: alıcı takımı UG olan iletim kopyası ATLANIR (UG alarmı kendi postasıyla alıyor)")
+    void inventoryOwnersSkipped() {
+        AlertEvent e = event(1, false);
+        e.setAlertType("EXPIRY");
+        e.setDomain("shop.example.com");
+        e.setContextJson("{}");
+        item(10, 1);
+        com.sitemonitor.repository.CertificateInventoryRepository inv = mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        com.sitemonitor.model.CertificateInventory row = new com.sitemonitor.model.CertificateInventory();
+        row.setDomain("shop.example.com");
+        row.setTeamId(TEAM);
+        row.setUgTeamId(RT_B);
+        when(inv.findByDomain("shop.example.com")).thenReturn(Optional.of(row));
+        service.setInventoryRepo(inv);
+        service.setForwardRouting(new ForwardFakes.Routing(Map.of(TEAM, List.of(
+                ForwardFakes.target(RT_B, B_NAME, List.of("Ödeme"), List.of("b@x.com")),
+                ForwardFakes.target(RT_C, "Takım C", List.of("Ödeme"), List.of("c@x.com"))))));
+
+        service.run(AFTER);
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService, times(1)).sendHtml(to.capture(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
+        assertThat(to.getValue()).containsExactly("c@x.com");
+        assertThat(forwardRows()).extracting(NotificationLog::getRecipientName).containsExactly("Takım C");
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(eq(1L), argThat(j -> j != null && j.contains("\"7\"")));
+
+        // bağımsız alarmda envanter OKUNMAZ (sahip yalnız damga takımı)
+        clearInvocations(inv);
+        db.clear();
+        logs.clear();
+        AlertEvent s = event(2, false);
+        item(11, 2);
+        service.run(AFTER);
+        verify(inv, never()).findByDomain(anyString());
+        assertThat(s.getTeamId()).isEqualTo(TEAM);
     }
 }

@@ -21,6 +21,23 @@ public interface AlertForwardRouting {
     boolean anyFor(Collection<Long> ownerTeamIds);
 
     /**
+     * HERHANGİ bir takımın etkin, süresi dolmamış iletimi var mı (yalnız bellek; 2026-11-06). Sahip takımları bulmak için önce
+     * bir sorgu gereken yollar (elle yeniden gönderim önizlemesi) bunu SORGUDAN ÖNCE sorar: false ise sorgu yok, bugünkü
+     * davranış birebir. Varsayılan true (bilinmiyor = sor).
+     */
+    default boolean anyLive() {
+        return true;
+    }
+
+    /**
+     * Herhangi bir iletim KAYDI var mı — durumundan bağımsız (duraklatılmış / süresi dolmuş dahil; yalnız bellek). Fırtına
+     * çözümünde önceki iletim push'larını okumadan önce sorulur (iletim fırtına sürerken duraklatılmış olabilir). Varsayılan true.
+     */
+    default boolean anyConfigured() {
+        return true;
+    }
+
+    /**
      * Alarmın iletileceği alıcı takımlar — alıcı takım başına bir öğe, {@code recipientTeamId} artan. Kapsam eşleşmesi:
      * ALL her alarm; TYPES alarm tipinin türü kümede (tür = {@code NocType.forAlertType}, SSL → "cert"); MONITORS (tür, kimlik)
      * kümede — kimlik bağlamdaki {@code monitorId}, cert için alan adı (envanter alan adı tekil). Sahip takımlardan biri olan

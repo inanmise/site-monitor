@@ -73,6 +73,8 @@ class StormForwardTest {
         lenient().when(mail.sendHtml(any(String[].class), any(), anyString(), any(), any(), anyList(), anyBoolean(), any()))
                 .thenReturn("SENT");
         alertRepo = mock(AlertEventRepository.class);
+        lenient().when(alertRepo.setForwardEmailsIfNull(any(), any())).thenReturn(1);
+        lenient().when(alertRepo.setForwardEmailsIfUnchanged(any(), any(), any())).thenReturn(1);
         Map<Class<?>, Object> provided = new HashMap<>();
         provided.put(AppSettingsService.class, appSettings);
         provided.put(TeamRepository.class, teams);
@@ -143,7 +145,7 @@ class StormForwardTest {
         ReflectionTestUtils.invokeMethod(storm, "sendStormAlert", stormRow(), List.of(member(1, OWNER, null)), "INITIAL");
         assertThat(sentTo()).containsExactly(List.of(OWNER_MAIL));
         assertThat(forwardRows()).isEmpty();
-        verify(alertRepo, never()).setForwardEmails(any(), any());
+        verify(alertRepo, never()).setForwardEmailsIfNull(any(), any());
     }
 
     @Test
@@ -172,9 +174,9 @@ class StormForwardTest {
         assertThat(rows).extracting(NotificationLog::getRecipientName)
                 .containsExactly("Ağ Operasyon Merkezi — 7/24 İzleme", "Ağ Operasyon Merkezi — 7/24 İzleme", "Takım C");
         assertThat(rows).extracting(NotificationLog::getTrigger).containsOnly(StormService.TRIGGER_STORM_INITIAL);
-        verify(alertRepo).setForwardEmails(1L, "{\"8\":[\"" + B_MAIL + "\"]}");
-        verify(alertRepo).setForwardEmails(2L, "{\"8\":[\"" + B_MAIL + "\"],\"9\":[\"" + C_MAIL + "\"]}");
-        verify(alertRepo, never()).setForwardEmails(eq(3L), any());
+        verify(alertRepo).setForwardEmailsIfNull(1L, "{\"8\":[\"" + B_MAIL + "\"]}");
+        verify(alertRepo).setForwardEmailsIfNull(2L, "{\"8\":[\"" + B_MAIL + "\"],\"9\":[\"" + C_MAIL + "\"]}");
+        verify(alertRepo, never()).setForwardEmailsIfNull(eq(3L), any());
 
         assertThat(push.stormCalls).hasSize(2);
         assertThat(push.stormCalls.get(0)).satisfies(c -> {
@@ -196,7 +198,7 @@ class StormForwardTest {
         verify(mail, never()).sendHtml(any(String[].class), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
         assertThat(forwardRows()).singleElement().satisfies(l ->
                 assertThat(l.getEmailStatus()).isEqualTo("SKIPPED: e-posta kanalı kapalı"));
-        verify(alertRepo, never()).setForwardEmails(any(), any());
+        verify(alertRepo, never()).setForwardEmailsIfNull(any(), any());
         assertThat(push.stormCalls).hasSize(1);
     }
 
@@ -246,5 +248,80 @@ class StormForwardTest {
         // push: kurtulan üyelerin canlı iletim hedefleri → alıcı takım başına toplu çözüm bildirimi
         assertThat(push.stormCalls).extracting(ForwardFakes.Push.StormCall::trigger).containsOnly("RESOLVE");
         assertThat(push.stormCalls).extracting(c -> c.target().recipientTeamId()).containsExactly(RT_B, RT_C);
+    }
+
+    // ── 2026-11-06 inceleme düzeltmeleri ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("çözüm push'u: iletim fırtına sürerken kaldırıldıysa da açılış push'unu almış alıcı takıma 'fırtına bitti' gider")
+    void recoveryPushReachesPriorRecipients() {
+        // canlı yönlendirmede OWNER'ın iletimi YOK (kaldırıldı); bu fırtınada RT_B'ye iletim push'u gönderilmişti
+        storm.setForwarding(new ForwardFakes.Routing(Map.of()), push);
+        push.priorStormTeams.put(55L, new LinkedHashSet<>(List.of(RT_B, OWNER)));
+        AlertEvent m1 = member(1, OWNER, null);
+        m1.setResolved(true);
+        ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(), List.of(m1), List.of());
+        assertThat(push.stormCalls).singleElement().satisfies(c -> {
+            assertThat(c.trigger()).isEqualTo("RESOLVE");
+            assertThat(c.target().recipientTeamId()).isEqualTo(RT_B);
+            assertThat(c.target().recipientTeamName()).isEqualTo("Ağ Operasyon Merkezi — 7/24 İzleme");
+            assertThat(c.target().ownerTeamIds()).containsExactly(OWNER);
+            assertThat(c.ownerTeamId()).isEqualTo(OWNER);
+            assertThat(c.owner()).isEqualTo("Takım 7");
+        });
+
+        // canlı hedef varsa önceki alıcı İKİNCİ kez eklenmez
+        push.stormCalls.clear();
+        routing();
+        push.priorStormTeams.put(55L, Set.of(RT_B));
+        AlertEvent m2 = member(2, OWNER, null);
+        m2.setResolved(true);
+        ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(), List.of(m1, m2), List.of());
+        assertThat(push.stormCalls).extracting(c -> c.target().recipientTeamId()).containsExactly(RT_B, RT_C);
+    }
+
+    @Test
+    @DisplayName("toplu fırtına push'u sahip takımı söyler (tek dağıtım → o takım) — sahip kararı yalnız onun satırından okunur")
+    void stormNoticeCarriesOwnerTeam() {
+        routing();
+        ReflectionTestUtils.invokeMethod(storm, "sendStormAlert", stormRow(), List.of(member(1, OWNER, null)), "INITIAL");
+        assertThat(push.stormCalls).singleElement().satisfies(c -> assertThat(c.ownerTeamId()).isEqualTo(OWNER));
+    }
+
+    @Test
+    @DisplayName("bireysel kip: üyenin SY ve UG dağıtımları aynı alıcıya iletiyorsa hedefler BİRLEŞİR (UG'nin seçili üyeleri düşmez)")
+    void individualModeMergesSameRecipient() {
+        when(appSettings.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean())).thenReturn(true);
+        com.sitemonitor.repository.CertificateInventoryRepository inv =
+                (com.sitemonitor.repository.CertificateInventoryRepository) ReflectionTestUtils.getField(storm, "inventoryRepo");
+        com.sitemonitor.model.CertificateInventory row = new com.sitemonitor.model.CertificateInventory();
+        row.setDomain("shop.example.com");
+        row.setTeamId(OWNER);
+        row.setUgTeamId(OTHER);
+        when(inv.findByDomain("shop.example.com")).thenReturn(Optional.of(row));
+        storm.setForwarding(new ForwardFakes.Routing(Map.of(
+                OWNER, List.of(ForwardFakes.target(RT_B, "Ağ Operasyon", List.of("Takım 7"), List.of(B_MAIL))),
+                OTHER, List.of(new ForwardTarget(RT_B, "Ağ Operasyon", List.of(OTHER), List.of("Takım 10"), List.of(2L),
+                        List.of("ayse@example.com"), List.of(50L), false)))), push);
+        AlertEvent cert = new AlertEvent();
+        cert.setId(5L);
+        cert.setDomain("shop.example.com");
+        cert.setAlertType("EXPIRY");
+        cert.setAlertLevel("HIGH");
+        cert.setContextJson("{}");
+        cert.setCreatedAt("2026-10-29T08:05:00");
+        cert.setResolved(false);
+        cert.setAcknowledged(false);
+        cert.setStormId(55L);
+        ReflectionTestUtils.invokeMethod(storm, "sendStormAlert", stormRow(), List.of(cert), "DAILY_REALERT");
+        assertThat(push.calls).singleElement().satisfies(c -> {
+            assertThat(c.alertEventId()).isEqualTo(5L);
+            assertThat(c.targets()).singleElement().satisfies(t -> {
+                assertThat(t.recipientTeamId()).isEqualTo(RT_B);
+                assertThat(t.wholeTeam()).isTrue();
+                assertThat(t.memberUserIds()).containsExactly(50L);
+                assertThat(t.ownerTeamIds()).containsExactly(OTHER);
+            });
+        });
     }
 }

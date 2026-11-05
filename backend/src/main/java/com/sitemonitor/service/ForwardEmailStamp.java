@@ -19,8 +19,14 @@ import java.util.TreeMap;
  * Alarm iletimi damgası (2026-11-05) — {@code alert_events.forward_emails}: açılış / yükselme / hatırlatma / elle gönderim /
  * sessiz saat özeti / fırtına postasını İLETİMLE GERÇEKTEN alan adresler, alıcı takım başına. Biçim JSON nesnesi
  * {@code {"<alıcıTakımId>":["a@x","b@y"]}}; yazım hep BİRLEŞTİREREK (eski + yeni, büyük/küçük harf duyarsız tekil) ve
- * {@value #MAX_CHARS} karakteri aşmadan (sığmayan adres düşer, WARN). Çözüm postası yalnız bu adreslere gider — devirden /
- * iletim kaldırılmasından sonra açılışı hiç görmemiş biri "çözüldü"yü almaz, açılışı alan da çözümü kaçırmaz.
+ * {@value #MAX_CHARS} karakteri aşmadan: damgada ZATEN olan adresler korunur, sığmayan YENİ adres düşer (WARN — çözüm postası
+ * ona gitmez). Çözüm postası yalnız bu adreslere gider — devirden / iletim kaldırılmasından sonra açılışı hiç görmemiş biri
+ * "çözüldü"yü almaz, açılışı alan da çözümü kaçırmaz.
+ *
+ * <p>Yazım KOŞULLUDUR (2026-11-06, inceleme): iki gönderim (ör. anlık posta + sessiz saat özeti, iki pod) aynı alarmın
+ * damgasını aynı anda birleştirirse "oku → birleştir → yaz" birinin adreslerini siliyordu. Artık yazım okunan değere bağlı
+ * ({@code WHERE forward_emails = :eski} / {@code IS NULL}); tutmazsa yeniden okunup birleştirilir — en çok
+ * {@value #MAX_ATTEMPTS} deneme.
  *
  * <p>Okuma bozuk / boş JSON'da boş harita döner (iletim yok sayılır — fazladan posta yerine sessizlik değil, yalnız damga yok
  * demektir). Yazım hatası gönderimi ASLA bozmaz (yutulur, WARN).
@@ -32,6 +38,10 @@ public final class ForwardEmailStamp {
     public static final int MAX_CHARS = 4000;
     /** Tek adres tavanı (RFC 5321 yol uzunluğu) — daha uzunu damgaya girmez. */
     private static final int MAX_ADDRESS = 254;
+    /** Koşullu yazımın en çok deneme sayısı (her denemede yeniden okunur + birleştirilir). */
+    static final int MAX_ATTEMPTS = 3;
+    /** Tek birleştirmede denenecek en çok yeni adres (sınırlı döngü). */
+    private static final int MAX_NEW_ADDRESSES = 2_000;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -73,10 +83,16 @@ public final class ForwardEmailStamp {
     }
 
     /**
-     * Eski damga + yeni adresler → yeni JSON metni (alıcı takım artan, adres sırası korunur, tekil). Sığmayan adres düşer ve
-     * {@code dropped} sayacına eklenir. Değişiklik yoksa eskisiyle aynı içerik döner.
+     * Eski damga + yeni adresler → yeni JSON metni (alıcı takım artan, adres sırası korunur, tekil). Damgada ZATEN olan adresler
+     * hep korunur; tavana sığmayan YENİ adres düşer ve {@code dropped} sayacına eklenir (2026-11-06: eskiden sondan kırpılıyordu
+     * — açılışı almış bir alıcı takımın adresleri, sonradan eklenen bir alıcı yüzünden damgadan düşebiliyordu). Eski damga tek
+     * başına tavanı aşıyorsa (elle yazılmış) yeni adres eklenmez, eski metin aynen döner. Değişiklik yoksa eskisiyle aynı içerik.
      */
     static String merge(String existingJson, Map<Long, List<String>> add, int[] dropped) {
+        if (existingJson != null && existingJson.length() > MAX_CHARS) {   // elle yazılmış uzun damga: dokunulmaz
+            if (add != null) for (List<String> l : add.values()) if (l != null) count(dropped, l.size());
+            return existingJson;
+        }
         Map<Long, List<String>> merged = new TreeMap<>(parse(existingJson));
         Map<Long, Set<String>> keys = new LinkedHashMap<>();
         merged.forEach((t, l) -> {
@@ -84,33 +100,51 @@ public final class ForwardEmailStamp {
             for (String a : l) s.add(a.toLowerCase(Locale.ROOT));
             keys.put(t, s);
         });
-        if (add != null) {
-            for (Map.Entry<Long, List<String>> e : add.entrySet()) {
-                if (e.getKey() == null || e.getValue() == null) continue;
-                List<String> list = merged.computeIfAbsent(e.getKey(), k -> new ArrayList<>());
+        String text = write(asText(merged));
+        if (text.length() > MAX_CHARS) {
+            if (add != null) for (List<String> l : add.values()) if (l != null) count(dropped, l.size());
+            return existingJson;
+        }
+        if (add == null) return text;
+        int tried = 0;
+        for (Map.Entry<Long, List<String>> e : new TreeMap<>(withoutNullKeys(add)).entrySet()) {
+            if (e.getValue() == null) continue;
+            for (String a : e.getValue()) {
+                String v = a == null ? "" : a.trim();
+                if (v.isEmpty() || v.length() > MAX_ADDRESS) continue;
                 Set<String> s = keys.computeIfAbsent(e.getKey(), k -> new HashSet<>());
-                for (String a : e.getValue()) {
-                    String v = a == null ? "" : a.trim();
-                    if (v.isEmpty() || v.length() > MAX_ADDRESS) continue;
-                    if (s.add(v.toLowerCase(Locale.ROOT))) list.add(v);
+                if (s.contains(v.toLowerCase(Locale.ROOT))) continue;
+                if (++tried > MAX_NEW_ADDRESSES) { count(dropped, 1); continue; }
+                List<String> list = merged.computeIfAbsent(e.getKey(), k -> new ArrayList<>());
+                list.add(v);
+                String candidate = write(asText(merged));
+                if (candidate.length() > MAX_CHARS) {   // sığmadı → bu YENİ adres düşer, mevcutlar korunur
+                    list.remove(list.size() - 1);
+                    if (list.isEmpty()) merged.remove(e.getKey());
+                    count(dropped, 1);
+                    continue;
                 }
+                s.add(v.toLowerCase(Locale.ROOT));
+                text = candidate;
             }
         }
-        // Sığdır: tavanı aşan adresler SONDAN düşer (önce eklenenler — açılışı alanlar — korunur).
-        Map<String, List<String>> out = new LinkedHashMap<>();
-        merged.forEach((t, l) -> out.put(String.valueOf(t), new ArrayList<>(l)));
-        String text = write(out);
-        while (text.length() > MAX_CHARS) {
-            String lastKey = null;
-            for (Map.Entry<String, List<String>> e : out.entrySet()) if (!e.getValue().isEmpty()) lastKey = e.getKey();
-            if (lastKey == null) break;
-            List<String> l = out.get(lastKey);
-            l.remove(l.size() - 1);
-            if (l.isEmpty()) out.remove(lastKey);
-            if (dropped != null && dropped.length > 0) dropped[0]++;
-            text = write(out);
-        }
         return text;
+    }
+
+    private static Map<String, List<String>> asText(Map<Long, List<String>> m) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        m.forEach((t, l) -> { if (!l.isEmpty()) out.put(String.valueOf(t), new ArrayList<>(l)); });
+        return out;
+    }
+
+    private static Map<Long, List<String>> withoutNullKeys(Map<Long, List<String>> m) {
+        Map<Long, List<String>> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> { if (k != null) out.put(k, v); });
+        return out;
+    }
+
+    private static void count(int[] dropped, int n) {
+        if (dropped != null && dropped.length > 0) dropped[0] += n;
     }
 
     private static String write(Map<String, List<String>> m) {
@@ -122,8 +156,9 @@ public final class ForwardEmailStamp {
     }
 
     /**
-     * Damgaya ekler: tek hedefli okuma + tek hedefli yazma (varlık kaydı değil). {@code delivered} boş / depo yoksa hiçbir şey.
-     * Hata yutulur — gönderim bozulmaz (çözüm postası bu adreslere gitmeyebilir; WARN).
+     * Damgaya ekler: hedefli okuma + KOŞULLU hedefli yazma (varlık kaydı değil) — okunan değer bu arada değiştiyse (başka bir
+     * gönderim yazdı) yeniden okunup birleştirilir, en çok {@value #MAX_ATTEMPTS} deneme. {@code delivered} boş / depo yoksa
+     * hiçbir şey. Hata yutulur — gönderim bozulmaz (çözüm postası bu adreslere gitmeyebilir; WARN).
      */
     public static void stamp(AlertEventRepository repo, Long alertEventId, Map<Long, List<String>> delivered) {
         if (repo == null || alertEventId == null || delivered == null || delivered.isEmpty()) return;
@@ -131,15 +166,21 @@ public final class ForwardEmailStamp {
         for (List<String> l : delivered.values()) if (l != null && !l.isEmpty()) { any = true; break; }
         if (!any) return;
         try {
-            String prev = repo.findForwardEmails(alertEventId);
-            int[] dropped = {0};
-            String next = merge(prev, delivered, dropped);
-            if (dropped[0] > 0) {
-                log.warn("İletim damgası {} karakteri aştı — {} adres damgaya yazılmadı (olay {}; çözüm postası onlara gitmeyecek)",
-                        MAX_CHARS, dropped[0], alertEventId);
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                String prev = repo.findForwardEmails(alertEventId);
+                int[] dropped = {0};
+                String next = merge(prev, delivered, dropped);
+                if (dropped[0] > 0) {
+                    log.warn("İletim damgası {} karakteri aştı — {} yeni adres damgaya yazılmadı, mevcutlar korundu (olay {}; "
+                            + "çözüm postası onlara gitmeyecek)", MAX_CHARS, dropped[0], alertEventId);
+                }
+                if (next == null || next.equals(prev)) return;
+                int n = prev == null ? repo.setForwardEmailsIfNull(alertEventId, next)
+                        : repo.setForwardEmailsIfUnchanged(alertEventId, next, prev);
+                if (n > 0) return;
             }
-            if (next.equals(prev)) return;
-            repo.setForwardEmails(alertEventId, next);
+            log.warn("İletim alıcıları alarma yazılamadı: damga {} denemede de eşzamanlı değişti ya da alarm yok (olay {}; çözüm "
+                    + "postası bu adreslere gitmeyebilir)", MAX_ATTEMPTS, alertEventId);
         } catch (Exception e) {
             log.warn("İletim alıcıları alarma yazılamadı (olay {}; çözüm postası iletim alıcılarına gitmeyebilir): {}",
                     alertEventId, e.toString());

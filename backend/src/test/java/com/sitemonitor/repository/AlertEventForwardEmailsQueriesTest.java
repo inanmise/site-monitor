@@ -55,4 +55,31 @@ class AlertEventForwardEmailsQueriesTest {
             repo.deleteById(id);
         }
     }
+
+    @Test
+    @DisplayName("koşullu yazım (gerçek SQL): IS NULL yalnız boş damgada; eşitlik yalnız okunan değer hâlâ yerindeyse — yarışan yazım 0 satır")
+    void conditionalWrites() {
+        AlertEvent e = new AlertEvent();
+        e.setDomain("b.example.com");
+        e.setAlertType("HTTP_DOWN");
+        e.setAlertLevel("HIGH");
+        e.setResolved(false);
+        e.setAcknowledged(false);
+        e.setCreatedAt("2026-11-06T10:00:00");
+        Long id = repo.save(e).getId();
+        try {
+            assertThat(repo.setForwardEmailsIfUnchanged(id, "{\"1\":[\"x@x.com\"]}", "{}")).as("damga yok — eşitlik tutmaz").isZero();
+            assertThat(repo.setForwardEmailsIfNull(id, "{\"3\":[\"a@x.com\"]}")).isEqualTo(1);
+            assertThat(repo.setForwardEmailsIfNull(id, "{\"9\":[\"z@x.com\"]}")).as("artık boş değil").isZero();
+            assertThat(repo.setForwardEmailsIfUnchanged(id, "{\"4\":[\"b@x.com\"]}", "{\"3\":[\"eski@x.com\"]}")).isZero();
+            assertThat(repo.findForwardEmails(id)).isEqualTo("{\"3\":[\"a@x.com\"]}");
+            assertThat(repo.setForwardEmailsIfUnchanged(id, "{\"3\":[\"a@x.com\"],\"4\":[\"b@x.com\"]}", "{\"3\":[\"a@x.com\"]}"))
+                    .isEqualTo(1);
+            // stamp: araya giren yazımı görür ve birleştirir
+            ForwardEmailStamp.stamp(repo, id, Map.of(5L, List.of("c@x.com")));
+            assertThat(ForwardEmailStamp.parse(repo.findForwardEmails(id))).containsOnlyKeys(3L, 4L, 5L);
+        } finally {
+            repo.deleteById(id);
+        }
+    }
 }

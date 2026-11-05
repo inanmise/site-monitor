@@ -23,6 +23,9 @@ public interface AlertForwardRepository extends JpaRepository<AlertForward, Long
 
     long countByRecipientTeamId(Long recipientTeamId);
 
+    /** Takım taşınırsa duraklatılacak iletimler (2026-11-06): etkin ve kapsamı ALL / TYPES. */
+    long countByOwnerTeamIdAndEnabledTrueAndScopeKindIn(Long ownerTeamId, Collection<String> scopeKinds);
+
     /** Seçilen üyelere giden iletimler (kullanıcı silinince üye listesinden çıkarmak için — küçük küme). */
     List<AlertForward> findByRecipientKindOrderByIdAsc(String recipientKind);
 
@@ -58,17 +61,4 @@ public interface AlertForwardRepository extends JpaRepository<AlertForward, Long
     @Transactional
     @Query("DELETE FROM AlertForward f WHERE f.recipientTeamId = :teamId")
     int deleteIncoming(@Param("teamId") Long teamId);
-
-    /** Takım taşıma: sahibi {@code from}, alıcısı {@code to} olan iletim taşınınca kendi kendine iletim olurdu — silinir. */
-    @Modifying
-    @Transactional
-    @Query("DELETE FROM AlertForward f WHERE f.ownerTeamId = :owner AND f.recipientTeamId = :recipient")
-    int deleteByOwnerAndRecipient(@Param("owner") Long owner, @Param("recipient") Long recipient);
-
-    /** Takım taşıma: sahibi {@code from} olan iletimler {@code to}'ya geçer (sürüm artar — açık düzenleme penceresi 409 alır). */
-    @Modifying
-    @Transactional
-    @Query("UPDATE AlertForward f SET f.ownerTeamId = :to, f.version = COALESCE(f.version, 0) + 1, f.updatedAt = :at "
-         + "WHERE f.ownerTeamId = :from")
-    int moveOwner(@Param("from") Long from, @Param("to") Long to, @Param("at") String at);
 }

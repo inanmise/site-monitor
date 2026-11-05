@@ -21,7 +21,7 @@ final class ForwardFakes {
     private ForwardFakes() { }
 
     static ForwardTarget target(long rt, String name, List<String> owners, List<String> emails) {
-        return new ForwardTarget(rt, name, owners, List.of(rt * 10), emails, List.of(), true);
+        return new ForwardTarget(rt, name, List.of(), owners, List.of(rt * 10), emails, List.of(), true);
     }
 
     /** Sahte yönlendirme: {@code byOwner} sahip takım → o takımın hedefleri; çağrılar kaydedilir. */
@@ -65,10 +65,13 @@ final class ForwardFakes {
         record Call(Long alertEventId, String trigger, List<ForwardTarget> targets, Map<String, Object> ctx,
                     Set<String> excludeUsernames) { }
 
-        record StormCall(Long stormId, String trigger, ForwardTarget target, int memberCount, String level, String owner) { }
+        record StormCall(Long stormId, String trigger, ForwardTarget target, int memberCount, String level, String owner,
+                         Long ownerTeamId) { }
 
         final List<Call> calls = new ArrayList<>();
         final List<StormCall> stormCalls = new ArrayList<>();
+        /** {@code forwardStormRecipientTeams} yanıtı (fırtına → önceki iletim push alıcı takımları). */
+        final Map<Long, Set<Long>> priorStormTeams = new java.util.HashMap<>();
 
         @Override
         public void enqueueForwards(Long alertEventId, String mailTrigger, List<ForwardTarget> targets,
@@ -78,8 +81,13 @@ final class ForwardFakes {
 
         @Override
         public void enqueueForwardStormNotice(Long stormId, String stormTrigger, ForwardTarget target, int memberCount,
-                                              String level, String ownerTeamName) {
-            stormCalls.add(new StormCall(stormId, stormTrigger, target, memberCount, level, ownerTeamName));
+                                              String level, String ownerTeamName, Long ownerTeamId) {
+            stormCalls.add(new StormCall(stormId, stormTrigger, target, memberCount, level, ownerTeamName, ownerTeamId));
+        }
+
+        @Override
+        public Set<Long> forwardStormRecipientTeams(Long stormId) {
+            return priorStormTeams.getOrDefault(stormId, Set.of());
         }
     }
 }

@@ -134,6 +134,7 @@ class AlertForwardEndToEndTest {
         t.setWarningDays(30); t.setHighDays(15); t.setCriticalDays(7); t.setReAlertIntervalHours(24);
         when(thresholdRepo.findFirstByActiveTrue()).thenReturn(Optional.of(t));
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        when(alertEventRepo.setForwardEmailsIfNull(any(), any())).thenReturn(1);
         when(alertEventRepo.save(any())).thenAnswer(i -> {
             AlertEvent e = i.getArgument(0);
             if (e.getId() == null) e.setId(100L);
@@ -190,7 +191,7 @@ class AlertForwardEndToEndTest {
         assertThat(sends().get(0)).containsExactly("siparis@example.com");
         assertThat(forwardLogs()).isEmpty();
         assertThat(push.calls).isEmpty();
-        verify(alertEventRepo, never()).setForwardEmails(any(), any());
+        verify(alertEventRepo, never()).setForwardEmailsIfNull(any(), any());
     }
 
     @Test
@@ -223,7 +224,7 @@ class AlertForwardEndToEndTest {
         assertThat(forwardLogs()).extracting(NotificationLog::getRecipientName)
                 .containsExactlyInAnyOrder(NOC_NAME, "Uygulama Destek");
         assertThat(forwardLogs()).allSatisfy(l -> assertThat(l.getEmailStatus()).isEqualTo("SENT"));
-        verify(alertEventRepo, atLeastOnce()).setForwardEmails(eq(100L), anyString());
+        verify(alertEventRepo, atLeastOnce()).setForwardEmailsIfNull(eq(100L), anyString());
         assertThat(push.calls).singleElement().satisfies(c ->
                 assertThat(c.targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(noc, appTeam));
     }

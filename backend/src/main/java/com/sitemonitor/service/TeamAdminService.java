@@ -428,12 +428,14 @@ public class TeamAdminService {
             }
         }
         moved.put("maintenance_windows", n);
-        // Alarm iletimi (2026-11-05): sahibi olduğu iletimler hedefe geçer; GELEN iletimler ve hedefe giden (taşınınca kendi
-        // kendine iletim olurdu) iletimler silinir — aynı işlemde.
+        // Alarm iletimi (2026-11-05): sahibi olduğu iletimler hedefe geçer; GELEN iletimler, hedefe giden (taşınınca kendi
+        // kendine iletim olurdu) ve hedefte zaten olan iletimler silinir — aynı işlemde. 2026-11-06: kapsamı tüm izlemeler /
+        // seçilen türler olan etkin iletimler duraklatılarak taşınır (kapsam hedef takımın izlemelerine genişlerdi).
         if (alertForwards != null) {
             com.sitemonitor.service.forward.AlertForwardService.Moved fw = alertForwards.moveTeam(from, to);
             moved.put("alert_forwards", fw.moved());
             moved.put("alert_forwards_removed", fw.removed());
+            moved.put("alert_forwards_paused", fw.paused());
         }
         return moved;
     }

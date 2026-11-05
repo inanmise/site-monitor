@@ -44,7 +44,7 @@ class ForwardEmailStampTest {
     }
 
     @Test
-    @DisplayName("tavan: 4000 karakteri aşan adresler SONDAN düşer, sayılır; ilk eklenenler kalır")
+    @DisplayName("tavan: 4000 karakteri aşan YENİ adresler düşer, sayılır; ilk eklenenler kalır")
     void capped() {
         List<String> many = new ArrayList<>();
         for (int i = 0; i < 400; i++) many.add("kisi-" + i + "@ornek-kurum.example.com");
@@ -57,7 +57,31 @@ class ForwardEmailStampTest {
     }
 
     @Test
-    @DisplayName("damga: tek hedefli okuma + yazma; boş teslimde hiç sorgu yok; hata yutulur")
+    @DisplayName("tavan: damgada ZATEN olan adresler korunur, sığmayan YENİ adres düşer (eski takımın adresleri silinmez)")
+    void cappedKeepsExisting() {
+        List<String> many = new ArrayList<>();
+        for (int i = 0; i < 400; i++) many.add("kisi-" + i + "@ornek-kurum.example.com");
+        int[] first = {0};
+        String full = ForwardEmailStamp.merge(null, Map.of(9L, many), first);   // 9 numaralı takım tavanı doldurur
+        List<String> kept9 = ForwardEmailStamp.parse(full).get(9L);
+        int[] dropped = {0};
+        String next = ForwardEmailStamp.merge(full, Map.of(1L, List.of("yeni-alici@example.com")), dropped);
+        assertThat(dropped[0]).isEqualTo(1);
+        assertThat(ForwardEmailStamp.parse(next).get(9L)).as("açılışı almış adresler kalır").isEqualTo(kept9);
+        assertThat(ForwardEmailStamp.parse(next)).doesNotContainKey(1L);
+        assertThat(next.length()).isLessThanOrEqualTo(ForwardEmailStamp.MAX_CHARS);
+        // eski metin tek başına tavanı aşıyorsa (elle yazılmış) hiçbir şey eklenmez, eski metin aynen döner
+        StringBuilder big = new StringBuilder("{\"5\":[");
+        for (int i = 0; i < 160; i++) big.append(i == 0 ? "" : ",").append("\"uzun-adres-").append(i).append("@example.com\"");
+        big.append("]}");
+        int[] d2 = {0};
+        assertThat(ForwardEmailStamp.merge(big.toString(), Map.of(1L, List.of("a@x.com", "b@x.com")), d2)).isEqualTo(big.toString());
+        assertThat(d2[0]).isEqualTo(2);
+        assertThat(big.length()).isBetween(ForwardEmailStamp.MAX_CHARS + 1, ForwardEmailStamp.MAX_CHARS * 2);
+    }
+
+    @Test
+    @DisplayName("damga: okuma + KOŞULLU yazma; boş teslimde hiç sorgu yok; hata yutulur")
     void stamp() {
         AlertEventRepository repo = mock(AlertEventRepository.class);
         ForwardEmailStamp.stamp(repo, 7L, Map.of());
@@ -66,12 +90,38 @@ class ForwardEmailStampTest {
         verifyNoInteractions(repo);
 
         when(repo.findForwardEmails(7L)).thenReturn("{\"3\":[\"a@x.com\"]}");
+        when(repo.setForwardEmailsIfUnchanged(anyLong(), anyString(), anyString())).thenReturn(1);
         ForwardEmailStamp.stamp(repo, 7L, Map.of(3L, List.of("A@x.com")));   // değişiklik yok → yazım yok
-        verify(repo, never()).setForwardEmails(anyLong(), anyString());
+        verify(repo, never()).setForwardEmailsIfUnchanged(anyLong(), anyString(), anyString());
         ForwardEmailStamp.stamp(repo, 7L, Map.of(4L, List.of("b@x.com")));
-        verify(repo).setForwardEmails(7L, "{\"3\":[\"a@x.com\"],\"4\":[\"b@x.com\"]}");
+        verify(repo).setForwardEmailsIfUnchanged(7L, "{\"3\":[\"a@x.com\"],\"4\":[\"b@x.com\"]}", "{\"3\":[\"a@x.com\"]}");
+        verify(repo, never()).setForwardEmails(anyLong(), anyString());
+
+        // damga yokken: IS NULL koşullu yazım
+        when(repo.setForwardEmailsIfNull(anyLong(), anyString())).thenReturn(1);
+        ForwardEmailStamp.stamp(repo, 9L, Map.of(4L, List.of("b@x.com")));
+        verify(repo).setForwardEmailsIfNull(9L, "{\"4\":[\"b@x.com\"]}");
 
         when(repo.findForwardEmails(8L)).thenThrow(new RuntimeException("db yok"));
         ForwardEmailStamp.stamp(repo, 8L, Map.of(4L, List.of("b@x.com")));   // fırlatmaz
+    }
+
+    @Test
+    @DisplayName("yarış: araya başka yazım girerse yeniden okunur + birleştirilir (iki tarafın adresleri de kalır); en çok 3 deneme")
+    void concurrentWriteRetried() {
+        AlertEventRepository repo = mock(AlertEventRepository.class);
+        String other = "{\"5\":[\"baska@x.com\"]}";
+        when(repo.findForwardEmails(7L)).thenReturn(null, other);
+        when(repo.setForwardEmailsIfNull(7L, "{\"4\":[\"b@x.com\"]}")).thenReturn(0);   // araya öteki gönderim girdi
+        when(repo.setForwardEmailsIfUnchanged(anyLong(), anyString(), anyString())).thenReturn(1);
+        ForwardEmailStamp.stamp(repo, 7L, Map.of(4L, List.of("b@x.com")));
+        verify(repo).setForwardEmailsIfUnchanged(7L, "{\"4\":[\"b@x.com\"],\"5\":[\"baska@x.com\"]}", other);
+
+        // hep tutmuyor → 3 denemede bırakır (sonsuz döngü yok)
+        AlertEventRepository busy = mock(AlertEventRepository.class);
+        when(busy.findForwardEmails(8L)).thenReturn(other);
+        when(busy.setForwardEmailsIfUnchanged(anyLong(), anyString(), anyString())).thenReturn(0);
+        ForwardEmailStamp.stamp(busy, 8L, Map.of(4L, List.of("b@x.com")));
+        verify(busy, times(ForwardEmailStamp.MAX_ATTEMPTS)).setForwardEmailsIfUnchanged(anyLong(), anyString(), anyString());
     }
 }

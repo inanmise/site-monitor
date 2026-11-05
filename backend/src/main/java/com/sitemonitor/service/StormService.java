@@ -2297,6 +2297,9 @@ public class StormService {
     /** Alıcı takım başına toplu push birikteci (varsayılan kip). */
     private static final class ForwardPushAgg {
         com.sitemonitor.service.forward.ForwardTarget first;
+        /** Bu alıcıya ileten dağıtımların (sahip takımların) kimlikleri — sahip fırtına push kararı bunlardan okunur. */
+        final Set<Long> dispatchTeams = new LinkedHashSet<>();
+        final Set<Long> ownerIds = new LinkedHashSet<>();
         final Set<String> ownerNames = new LinkedHashSet<>();
         final Set<Long> forwardIds = new java.util.TreeSet<>();
         final Set<String> emails = new LinkedHashSet<>();
@@ -2304,19 +2307,27 @@ public class StormService {
         boolean wholeTeam;
         final List<AlertEvent> members = new ArrayList<>();
 
-        void add(com.sitemonitor.service.forward.ForwardTarget t, AlertEvent m) {
+        void add(com.sitemonitor.service.forward.ForwardTarget t, AlertEvent m, Long dispatchTeam) {
             if (first == null) first = t;
+            if (dispatchTeam != null) dispatchTeams.add(dispatchTeam);
+            ownerIds.addAll(t.ownerTeamIds());
             ownerNames.addAll(t.ownerTeamNames());
             forwardIds.addAll(t.forwardIds());
             emails.addAll(t.emails());
             memberUserIds.addAll(t.memberUserIds());
             wholeTeam |= t.wholeTeam();
-            if (!members.contains(m)) members.add(m);
+            if (m != null && !members.contains(m)) members.add(m);
         }
 
         com.sitemonitor.service.forward.ForwardTarget merged() {
             return new com.sitemonitor.service.forward.ForwardTarget(first.recipientTeamId(), first.recipientTeamName(),
-                    List.copyOf(ownerNames), List.copyOf(forwardIds), List.copyOf(emails), List.copyOf(memberUserIds), wholeTeam);
+                    List.copyOf(ownerIds), List.copyOf(ownerNames), List.copyOf(forwardIds), List.copyOf(emails),
+                    List.copyOf(memberUserIds), wholeTeam);
+        }
+
+        /** Sahip fırtına push kararının okunacağı takım: tek dağıtımsa o; birden çoksa null (hedefin sahiplerine bakılır). */
+        Long ownerTeamId() {
+            return dispatchTeams.size() == 1 ? dispatchTeams.iterator().next() : null;
         }
     }
 
@@ -2374,7 +2385,7 @@ public class StormService {
                     perMember.computeIfAbsent(m.getId(), k -> new ArrayList<>()).addAll(targets);
                     Set<String> mine = assigned.computeIfAbsent(m.getId(), k -> new java.util.HashSet<>());
                     for (var t : targets) {
-                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m);
+                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m, d.teamId());
                         List<String> to = new ArrayList<>();
                         for (String a : t.emails()) {
                             String v = a == null ? "" : a.trim();
@@ -2490,7 +2501,8 @@ public class StormService {
         for (ForwardPushAgg a : push.values()) {
             try {
                 forwardPush.enqueueForwardStormNotice(storm.getId(), stormTrigger, a.merged(), a.members.size(),
-                        stormPushLevel(a.members), String.join(", ", a.ownerNames));
+                        stormPushLevel(a.members.isEmpty() ? dispatchMembers(dispatches) : a.members),
+                        String.join(", ", a.ownerNames), a.ownerTeamId());
             } catch (Exception e) {
                 log.warn("Storm #{} iletim push'u atlandı (alıcı takım {}): {}", storm.getId(), a.first.recipientTeamId(),
                         e.toString());
@@ -2514,7 +2526,9 @@ public class StormService {
         for (AlertEvent m : due) {
             try {
                 if (quietHours != null && quietHours.defersPush(m.getTeamId(), m.getAlertLevel(), "DAILY_REALERT")) continue;
-                forwardPush.enqueueForwards(m.getId(), "DAILY_REALERT", perMember.getOrDefault(m.getId(), List.of()),
+                // Aynı alıcı takıma giden hedefler (üyenin SY ve UG dağıtımları) BİRLEŞİR — ikincisi düşmez (2026-11-06)
+                forwardPush.enqueueForwards(m.getId(), "DAILY_REALERT",
+                        com.sitemonitor.service.forward.ForwardTarget.mergeByRecipient(perMember.getOrDefault(m.getId(), List.of())),
                         memberContext(m), Set.of());
             } catch (Exception e) {
                 log.warn("Fırtına üyesinin iletim hatırlatma push'u atlandı (olay {}): {}", m.getId(), e.toString());
@@ -2612,14 +2626,67 @@ public class StormService {
                 for (AlertEvent m : d.members()) {
                     if (m == null || m.getId() == null || !recoveredIds.contains(m.getId())) continue;
                     for (var t : memberForwardTargets(routing, d.teamId(), m, owners.getOrDefault(m.getId(), Set.of()))) {
-                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m);
+                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m, d.teamId());
                     }
                 }
             }
+            addPriorForwardStormRecipients(storm, routing, recovered, dispatches, push);
             forwardStormPush(storm, "RESOLVE", push, Map.of(), dispatches);
         } catch (Exception e) {
             log.warn("Storm #{} iletim çözüm postaları atlandı (sahip postası etkilenmedi): {}", storm.getId(), e.toString());
         }
+    }
+
+    /**
+     * Fırtına çözüm push'unun ÖNCEKİ alıcıları (2026-11-06, inceleme): iletim fırtına sürerken kaldırıldıysa / duraklatıldıysa
+     * canlı yönlendirme o alıcı takımı artık döndürmez — açılışı almış kişi "fırtına bitti"yi hiç almıyordu. Bu fırtınada iletim
+     * push'u ({@code storm:<id>:FWD:<rt>:}) gönderilmiş alıcı takımlar da çözüm hedefine eklenir; kime gideceği push ayağının
+     * önceki alıcılar kuralıyla belirlenir ({@code resolvePrior}). Okuma yalnız bir iletim kaydı tanımlıyken ya da üyelerden
+     * biri iletim damgası taşıyorsa yapılır (iletim hiç yokken sorgu yok).
+     */
+    private void addPriorForwardStormRecipients(AlertStorm storm, com.sitemonitor.service.forward.AlertForwardRouting routing,
+                                                List<AlertEvent> recovered, List<TeamDispatch> dispatches,
+                                                Map<Long, ForwardPushAgg> push) {
+        if (forwardPush == null || storm.getId() == null) return;
+        boolean maybe = routing.anyConfigured();
+        if (!maybe) {
+            for (AlertEvent m : recovered) if (m != null && !ForwardEmailStamp.of(m).isEmpty()) { maybe = true; break; }
+        }
+        if (!maybe) return;
+        Set<Long> prior;
+        try {
+            prior = forwardPush.forwardStormRecipientTeams(storm.getId());
+        } catch (Exception e) {
+            log.debug("Storm #{} önceki iletim push alıcıları okunamadı: {}", storm.getId(), e.toString());
+            return;
+        }
+        if (prior == null || prior.isEmpty()) return;
+        List<Long> ownerIds = new ArrayList<>();
+        List<String> ownerNames = new ArrayList<>();
+        for (TeamDispatch d : dispatches) {
+            if (d.teamId() == null || ownerIds.contains(d.teamId())) continue;
+            ownerIds.add(d.teamId());
+            if (d.teamName() != null && !d.teamName().isBlank() && !ownerNames.contains(d.teamName())) ownerNames.add(d.teamName());
+        }
+        for (Long rt : prior) {
+            if (rt == null || push.containsKey(rt) || ownerIds.contains(rt)) continue;
+            String name = null;
+            try {
+                name = teamRepo.findById(rt).map(com.sitemonitor.model.Team::getName).orElse(null);
+            } catch (Exception ignore) { /* ad okunamazsa yer tutucu */ }
+            ForwardPushAgg a = new ForwardPushAgg();
+            a.add(new com.sitemonitor.service.forward.ForwardTarget(rt, name != null ? name : "Takım #" + rt, ownerIds, ownerNames,
+                    List.of(), List.of(), List.of(), false), null, ownerIds.size() == 1 ? ownerIds.get(0) : null);
+            for (AlertEvent m : recovered) if (m != null && !a.members.contains(m)) a.members.add(m);
+            push.put(rt, a);
+        }
+    }
+
+    /** Dağıtımların üyeleri (tekil) — seviye hesabı için. */
+    private static List<AlertEvent> dispatchMembers(List<TeamDispatch> dispatches) {
+        List<AlertEvent> out = new ArrayList<>();
+        for (TeamDispatch d : dispatches) for (AlertEvent m : d.members()) if (m != null && !out.contains(m)) out.add(m);
+        return out;
     }
 
     /** Tek iletim fırtına çözüm postası + kurtulan üye başına günlük satırı. */

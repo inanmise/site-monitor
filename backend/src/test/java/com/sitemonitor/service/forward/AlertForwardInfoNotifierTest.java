@@ -162,11 +162,14 @@ class AlertForwardInfoNotifierTest {
     }
 
     @Test
-    @DisplayName("sistem bakımı susturması: posta ve push YOK, 'SKIPPED: sistem bakımı' satırı")
+    @DisplayName("sistem bakımı susturması: posta ve push YOK, 'SKIPPED: sistem bakımı' satırı; yanıt requested + muted")
     void muted() {
         when(maintenance.notificationsMuted()).thenReturn(true);
         when(forwards.teamAlarmEmails(2L)).thenReturn(List.of("noc@example.com"));
-        assertThat(notifier.notifyAdded(fwd("TEAM"), true, List.of(), "x")).isEqualTo(AlertForwardInfoNotifier.Info.NONE);
+        AlertForwardInfoNotifier.Info info = notifier.notifyAdded(fwd("TEAM"), true, List.of(), "x");
+        assertThat(info).isEqualTo(new AlertForwardInfoNotifier.Info(true, 0, 0, true));
+        assertThat(info.toMap()).containsEntry("requested", true).containsEntry("muted", true)
+                .containsEntry("emails", 0).containsEntry("push", 0);
         verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), anyString(), any(), eq(false), any());
         verifyNoInteractions(push);
         ArgumentCaptor<NotificationLog> row = ArgumentCaptor.forClass(NotificationLog.class);
@@ -175,10 +178,22 @@ class AlertForwardInfoNotifierTest {
     }
 
     @Test
+    @DisplayName("duraklatılmış iletim bilgi göndermez (etkinleştirilince gider): sorgu / posta / push / satır yok, requested=false")
+    void pausedForwardSendsNothing() {
+        AlertForward f = fwd("TEAM");
+        f.setEnabled(false);
+        AlertForwardInfoNotifier.Info info = notifier.notifyAdded(f, true, List.of(), "x");
+        assertThat(info).isEqualTo(AlertForwardInfoNotifier.Info.NONE);
+        assertThat(info.toMap()).containsEntry("requested", false).containsEntry("muted", false);
+        verifyNoInteractions(email, push, logs, teamRepo, forwards);
+    }
+
+    @Test
     @DisplayName("hata çağıranı bozmaz: posta hatası → sayılar 0, istisna yok; teslim edilmeyen posta adres saymaz")
     void failuresDoNotThrow() {
         when(forwards.teamAlarmEmails(2L)).thenThrow(new RuntimeException("db"));
-        assertThat(notifier.notifyAdded(fwd("TEAM"), true, List.of(), "x")).isEqualTo(AlertForwardInfoNotifier.Info.NONE);
+        assertThat(notifier.notifyAdded(fwd("TEAM"), true, List.of(), "x"))
+                .as("istendi ama gitmedi — ön yüz uyarır").isEqualTo(new AlertForwardInfoNotifier.Info(true, 0, 0, false));
 
         doReturn(List.of("noc@example.com")).when(forwards).teamAlarmEmails(2L);
         when(email.sendHtml(any(), any(), anyString(), anyString(), anyString(), any(), eq(false), any())).thenReturn("FAILED: 550");

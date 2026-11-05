@@ -76,14 +76,26 @@ public class AlertForwardInfoNotifier {
     void setMaintenance(SystemMaintenanceService m) { this.maintenance = m; }
     void setDirectory(NocMonitorDirectory d) { this.directory = d; }
 
-    /** Yanıttaki {@code info}: bilgi postasının verildiği adres sayısı + kuyruğa alınan push sayısı. */
-    public record Info(int emails, int push) {
-        public static final Info NONE = new Info(0, 0);
+    /**
+     * Yanıttaki {@code info} (2026-11-06 biçimi, ön yüzle ortak): {@code requested} = bu kayıtta bilgi bildirimi gerekti mi
+     * (yeni alıcı ya da etkinleştirme — iletim etkin); {@code emails} = bilgi postasının verildiği adres sayısı; {@code push} =
+     * kuyruğa alınan push sayısı; {@code muted} = sistem bakımı susturdu (posta / push gitmedi, nedeni bu). Ön yüz "bilgi
+     * gitmedi" uyarısını yalnız {@code requested && !muted && emails + push == 0} iken gösterir.
+     */
+    public record Info(boolean requested, int emails, int push, boolean muted) {
+        public static final Info NONE = new Info(false, 0, 0, false);
+
+        /** Gönderim denendi (requested) — sayılarla. */
+        public Info(int emails, int push) {
+            this(true, emails, push, false);
+        }
 
         public Map<String, Object> toMap() {
             Map<String, Object> m = new LinkedHashMap<>();
+            m.put("requested", requested);
             m.put("emails", emails);
             m.put("push", push);
+            m.put("muted", muted);
             return m;
         }
     }
@@ -98,11 +110,12 @@ public class AlertForwardInfoNotifier {
         if (f == null || f.getRecipientTeamId() == null) return Info.NONE;
         List<Long> members = newMemberIds == null ? List.of() : newMemberIds;
         if (!wholeTeam && members.isEmpty()) return Info.NONE;
+        if (!f.isEnabled()) return Info.NONE;   // duraklatılmış iletim bilgi göndermez — etkinleştirilince gider (2026-11-06)
         try {
             return send(f, wholeTeam, members, addedBy);
         } catch (Exception e) {
             log.warn("Alarm iletimi bilgi bildirimi gönderilemedi (iletim {}): {}", f.getId(), e.toString());
-            return Info.NONE;
+            return new Info(0, 0);
         }
     }
 
@@ -124,7 +137,7 @@ public class AlertForwardInfoNotifier {
 
         if (muted()) {
             saveLog(recipientName, addresses, subject, SystemMaintenanceService.STATUS_SKIPPED);
-            return Info.NONE;
+            return new Info(true, 0, 0, true);
         }
 
         String status;

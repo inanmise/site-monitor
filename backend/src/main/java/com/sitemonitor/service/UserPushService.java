@@ -2588,6 +2588,12 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
      * saat tavanı (KRİTİK muafiyeti ayarıyla) ve aynı kişi kuralı aynen. Satırın {@code team_id}'si ALICI takım (push geçmişinde
      * tam görünür, alıcı takımın günlüğünde listelenir); metin sahip push metninin başına sahip takımın adı
      * ({@link PushI18n#forwardPrefix}). Hiçbir istisna yaymaz — e-posta yolunu etkilemez.
+     *
+     * <p>2026-11-06 (inceleme): aynı alıcı takıma giden hedefler önce BİRLEŞİR ({@link
+     * com.sitemonitor.service.forward.ForwardTarget#mergeByRecipient} — ikincisi düşmez: UG'nin seçili üyeleri de push alır);
+     * sahip düzeyindeki tür / takım kapsamı HEDEFİN sahip takımlarına sorulur ({@code ownerTeamIds}; en az biri izin veriyorsa
+     * geçer) — iki sahipli alarmda SY'nin push'u kapalıyken UG'nin iletimi yine gider, SY'ninki gitmez. Hedef sahipleri
+     * bilinmiyorsa eski kural (alarmın sahip push takımı).
      */
     @Override
     public void enqueueForwards(Long alertEventId, String mailTrigger, List<com.sitemonitor.service.forward.ForwardTarget> targets,
@@ -2604,14 +2610,23 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             // 1. Sahip düzeyi (satır yok — sahip push'unun karar satırı izi taşır)
             if (!"RESEND".equals(trigger) && systemMaintenanceMuted()) return;
             if ("RE_ALERT".equals(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) return;
-            if (scopeBlockReason(ownerPushTeam(event, ctx), family) != null) return;
-            // 2. Alıcı takımın push'u kapalı → o takımın karar satırı
+            Long ownerPush = null;
+            boolean ownerPushRead = false;
+            // 2. Hedefin sahip kapsamı (satır yok) + alıcı takımın push'u kapalı → o takımın karar satırı
             String teamKey = dedupeKeyFor(trigger, event);
             List<com.sitemonitor.service.forward.ForwardTarget> open = new ArrayList<>();
             Map<Long, String> keys = new HashMap<>();
-            for (var t : targets.stream().filter(java.util.Objects::nonNull)
-                    .sorted(java.util.Comparator.comparingLong(com.sitemonitor.service.forward.ForwardTarget::recipientTeamId)).toList()) {
+            for (var t : com.sitemonitor.service.forward.ForwardTarget.mergeByRecipient(targets)) {
                 if (keys.containsKey(t.recipientTeamId())) continue;
+                boolean ownerAllows;
+                if (!t.ownerTeamIds().isEmpty()) {
+                    ownerAllows = false;
+                    for (Long o : t.ownerTeamIds()) if (scopeBlockReason(o, family) == null) { ownerAllows = true; break; }
+                } else {
+                    if (!ownerPushRead) { ownerPush = ownerPushTeam(event, ctx); ownerPushRead = true; }
+                    ownerAllows = scopeBlockReason(ownerPush, family) == null;
+                }
+                if (!ownerAllows) continue;
                 // Elle gönderimde her alıcı takımın anahtarı yeni (RESEND:<8 hane>) — kasıtlı tekrar serbest
                 String key = forwardDedupeKey(t.recipientTeamId(), "RESEND".equals(trigger) ? dedupeKeyFor(trigger, event) : teamKey);
                 keys.put(t.recipientTeamId(), key);
@@ -2738,7 +2753,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
      */
     @Override
     public void enqueueForwardStormNotice(Long stormId, String stormTrigger, com.sitemonitor.service.forward.ForwardTarget target,
-                                          int memberCount, String level, String ownerTeamName) {
+                                          int memberCount, String level, String ownerTeamName, Long ownerTeamId) {
         try {
             if (!enabled() || stormId == null || target == null) return;
             boolean resolve = "RESOLVE".equals(stormTrigger);
@@ -2748,7 +2763,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             String ownerKey = UserPushDelivery.fitDedupeKey(stormDedupeKey(stormId, stormTrigger));
             if ("DAILY_REALERT".equals(stormTrigger)
                     && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) return;
-            if (ownerStormBlocked(ownerKey)) return;
+            if (ownerStormBlocked(ownerKey, ownerTeamId != null ? List.of(ownerTeamId) : target.ownerTeamIds())) return;
             String teamBlock = scopeBlockReason(rt, null);
             if (teamBlock != null) { stormSkipRow(rt, trigger, level, dedupeKey, teamBlock); return; }
             if (!resolve && quietHoursBlock(level)) return;
@@ -2780,11 +2795,26 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         }
     }
 
-    /** Sahip fırtına push'unun bu fırtına + tetikteki karar satırı kanal kapısıyla mı durdu (yalnız sistem satırı, tek sorgu). */
-    private boolean ownerStormBlocked(String ownerKey) {
+    /**
+     * Sahip fırtına push'unun bu fırtına + tetikteki karar satırı kanal kapısıyla mı durdu (yalnız sistem satırı, tek sorgu).
+     * 2026-11-06 (inceleme): YALNIZ ilgili sahip takım(lar)ın ({@code team_id}) karar satırına bakılır — iki dağıtımlı fırtınada
+     * (SY + UG) UG'nin push'u kapalıyken SY'nin iletimi de susuyordu. Birden çok sahip verildiyse HEPSİ engelliyse engel; sahip
+     * bilinmiyorsa (boş) eski kural: herhangi bir karar satırı.
+     */
+    private boolean ownerStormBlocked(String ownerKey, List<Long> ownerTeamIds) {
         try {
-            for (EvRow d : EvRow.of(deliveryRepo.findPersonEvidenceByKey(ownerKey, List.of(SYSTEM_USER))))
-                if (SYSTEM_USER.equals(d.username()) && OWNER_STORM_BLOCKS.contains(d.status())) return true;
+            Map<Long, Boolean> blocked = new HashMap<>();
+            boolean anyBlock = false;
+            for (Object[] r : deliveryRepo.findDecisionRowsByKey(ownerKey, SYSTEM_USER)) {
+                if (r == null || r.length < 2) continue;
+                Long team = r[0] instanceof Number n ? n.longValue() : null;
+                boolean block = r[1] != null && OWNER_STORM_BLOCKS.contains(r[1].toString());
+                if (block) anyBlock = true;
+                if (team != null && block) blocked.put(team, true);
+            }
+            if (ownerTeamIds == null || ownerTeamIds.isEmpty()) return anyBlock;
+            for (Long o : ownerTeamIds) if (o == null || !Boolean.TRUE.equals(blocked.get(o))) return false;
+            return true;
         } catch (Exception e) {
             log.debug("user-push: sahip fırtına kararı okunamadı (iletim kararını kendisi verir): {}", e.toString());
         }
@@ -2812,6 +2842,23 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         return rows;
     }
 
+    /**
+     * Bu fırtınada iletilen açılış / tekrar push'u GÖNDERİLMİŞ (SENT, kişi satırı) alıcı takımlar — fırtına çözümü canlı
+     * yönlendirmede artık olmayan (iletim kaldırılmış / duraklatılmış) alıcıya da "fırtına bitti" der (2026-11-06). Tek sorgu.
+     */
+    @Override
+    public Set<Long> forwardStormRecipientTeams(Long stormId) {
+        if (stormId == null) return Set.of();
+        Set<Long> out = new java.util.TreeSet<>();
+        for (Object[] r : deliveryRepo.findSentTeamsByKeyPrefix(likePrefix("storm:" + stormId + ":FWD:"), SYSTEM_USER)) {
+            if (r == null || r.length < 2 || !(r[0] instanceof Number n)) continue;
+            String key = r[1] == null ? "" : r[1].toString();
+            if (key.endsWith(":RESOLVE")) continue;
+            out.add(n.longValue());
+        }
+        return out;
+    }
+
     /** Bu fırtınanın bu alıcı takıma giden iletilen açılış / tekrar push'unu ALMIŞ tekil kullanıcılar (çözüm alıcıları). */
     private List<String> priorForwardStormRecipients(Long stormId, long recipientTeamId) {
         List<String> out = new ArrayList<>();
@@ -2835,6 +2882,9 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         var routing = forwardRouting();
         if (routing == null || alertEventId == null) return current;
         try {
+            // İletim yokken birebirlik (2026-11-06, inceleme): sorgudan ÖNCE yalnız bellek — hiç etkin iletim yoksa olay /
+            // envanter okunmaz, önizleme bugünkü gibi döner.
+            if (!routing.anyLive()) return current;
             AlertEvent event = alertEventRepo.findById(alertEventId).orElse(null);
             if (event == null) return current;
             Set<Long> owners = reNotifyOwners(event, fallbackTeamId);
@@ -2855,6 +2905,8 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             for (var t : targets.stream().filter(java.util.Objects::nonNull)
                     .sorted(java.util.Comparator.comparingLong(com.sitemonitor.service.forward.ForwardTarget::recipientTeamId)).toList()) {
                 if (owners.contains(t.recipientTeamId()) || scopeBlockReason(t.recipientTeamId(), null) != null) continue;
+                if (!t.ownerTeamIds().isEmpty() && t.ownerTeamIds().stream().noneMatch(o -> scopeBlockReason(o, family) == null))
+                    continue;   // gönderimle aynı: hedefin hiçbir sahibi push'a izin vermiyor
                 for (var r : forwardRecipients(t, level, family)) {
                     String k = PushSamePersonGuard.key(r.username());
                     if (!listed.contains(k)) cands.putIfAbsent(k, new ForwardCandidate(r, t));

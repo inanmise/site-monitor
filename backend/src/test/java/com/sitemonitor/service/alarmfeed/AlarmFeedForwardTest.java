@@ -76,7 +76,7 @@ class AlarmFeedForwardTest {
     }
 
     static ForwardTarget target(long rt, List<String> emails) {
-        return new ForwardTarget(rt, "Takım " + rt, List.of("Dijital Kanallar"), List.of(rt), emails, List.of(), true);
+        return new ForwardTarget(rt, "Takım " + rt, List.of(), List.of("Dijital Kanallar"), List.of(rt), emails, List.of(), true);
     }
 
     @BeforeEach

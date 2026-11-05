@@ -10,6 +10,7 @@ import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
+import com.sitemonitor.service.SecretMask;
 import com.sitemonitor.service.access.TeamAccessGrantService;
 import com.sitemonitor.service.forward.AlertForwardInfoNotifier;
 import com.sitemonitor.service.forward.AlertForwardService;
@@ -159,9 +160,7 @@ public class AlertForwardController {
         auditService.recordAction("ALERT_FORWARD_CREATE", session, request, "TEAM", String.valueOf(f.getOwnerTeamId()),
                 AuditDetail.ofMap(auditBase(f, names)));
         Map<String, Object> grant = grantView ? grantView(session, request, f, saved.newWholeTeam(), saved.newMemberIds()) : null;
-        AlertForwardInfoNotifier.Info info = notifier == null ? AlertForwardInfoNotifier.Info.NONE
-                : notifier.notifyAdded(f, saved.newWholeTeam(), saved.newMemberIds(), displayName(session));
-        return okWrite(row(f, ctx(List.of(f)), true), grant, info);
+        return okWrite(row(f, ctx(List.of(f)), true), grant, info(saved, session));
     }
 
     @PutMapping("/{id}")
@@ -188,11 +187,22 @@ public class AlertForwardController {
             auditService.recordAction("ALERT_FORWARD_UPDATE", session, request, "TEAM", String.valueOf(f.getOwnerTeamId()),
                     AuditDetail.ofMap(detail));
             if (grantView) grant = grantView(session, request, f, saved.newWholeTeam(), saved.newMemberIds());
-            if (notifier != null) info = notifier.notifyAdded(f, saved.newWholeTeam(), saved.newMemberIds(), displayName(session));
+            info = info(saved, session);
         } else if (grantView) {
             grant = grantResult(0, 0, 0, null);
         }
         return okWrite(row(f, ctx(List.of(f)), true), grant, info);
+    }
+
+    /**
+     * Bilgi bildirimi (2026-11-06): yalnız iletim ETKİNKEN — duraklatılmış oluşturulan / kaydedilen iletimde gitmez;
+     * etkin olmayandan etkine geçişte o anki TÜM alıcılara, aksi YENİ alıcılara ({@link AlertForwardService.Saved#infoWholeTeam}).
+     * Yanıttaki {@code info.requested} bunun gerekip gerekmediğini söyler.
+     */
+    private AlertForwardInfoNotifier.Info info(AlertForwardService.Saved saved, HttpSession session) {
+        if (!saved.infoRequested()) return AlertForwardInfoNotifier.Info.NONE;
+        if (notifier == null) return new AlertForwardInfoNotifier.Info(0, 0);
+        return notifier.notifyAdded(saved.forward(), saved.infoWholeTeam(), saved.infoMemberIds(), displayName(session));
     }
 
     @DeleteMapping("/{id}")
@@ -264,19 +274,19 @@ public class AlertForwardController {
         Set<Long> owners = new LinkedHashSet<>();
         if (row.teamId() != null) owners.add(row.teamId());
         if (row.ugTeamId() != null) owners.add(row.ugTeamId());
-        boolean visible = SessionScope.isGlobalViewer(session);
-        for (Long o : owners) if (SessionScope.canView(session, o)) visible = true;
+        // Yalnız görüntüleyicinin KENDİ kapsamında gördüğü sahip takımlar (2026-11-06, inceleme): iki sahipli kayıtta (SY / UG)
+        // yalnız birini gören, ötekinin iletimlerini (alıcı takımları, üye adları, notları) görmemeli. Global görüntüleyici hepsi.
+        Set<Long> visibleOwners = new LinkedHashSet<>();
+        for (Long o : owners) if (SessionScope.canView(session, o)) visibleOwners.add(o);
         Map<String, Object> data = new LinkedHashMap<>();
-        if (!visible) {
+        if (visibleOwners.isEmpty()) {
             data.put("hidden", true);
             return ok(data);
         }
         String key = AlertForwardService.keyOf(t);
         List<AlertForward> applied = new ArrayList<>();
-        if (!owners.isEmpty()) {
-            for (AlertForward f : repo.findByOwnerTeamIdInOrderByIdAsc(owners)) {
-                if (applies(f, key, row.id())) applied.add(f);
-            }
+        for (AlertForward f : repo.findByOwnerTeamIdInOrderByIdAsc(visibleOwners)) {
+            if (applies(f, key, row.id())) applied.add(f);
         }
         boolean canEdit = permissionService.allows(session, RESOURCE, "edit");
         Ctx ctx = ctx(applied);
@@ -285,12 +295,14 @@ public class AlertForwardController {
         boolean canAdd = false;
         List<Map<String, Object>> ownerTeams = new ArrayList<>();
         Map<Long, Team> teams = new HashMap<>();
-        for (Team tm : teamRepo.findAllById(owners)) teams.put(tm.getId(), tm);
-        for (Long o : owners) {
-            if (canEdit && SessionScope.canManage(session, o)) canAdd = true;
+        for (Team tm : teamRepo.findAllById(visibleOwners)) teams.put(tm.getId(), tm);
+        for (Long o : visibleOwners) {
+            boolean manage = canEdit && SessionScope.canManage(session, o);
+            if (manage) canAdd = true;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", o);
             m.put("name", teams.get(o) == null ? null : teams.get(o).getName());
+            m.put("can_manage", manage);
             ownerTeams.add(m);
         }
         Map<String, Object> monitor = new LinkedHashMap<>();
@@ -367,7 +379,9 @@ public class AlertForwardController {
             mm.put("type", r.type());
             mm.put("id", r.id());
             mm.put("name", row == null ? null : row.name());
-            mm.put("target", row == null ? null : row.target());
+            // Hedef adres HER satırda maskeli (2026-11-06, inceleme): gelen iletim satırı alıcı tarafa sahip takımın izleme
+            // adresini gösterir; sorgu dizesindeki gizli değerler (token, key, sig …) oraya taşınmaz.
+            mm.put("target", row == null ? null : SecretMask.maskUrlQuery(row.target()));
             mm.put("active", row == null ? null : row.active());
             // Dizin okunamadıysa "silinmiş" denmez (bilinmiyor = null)
             mm.put("missing", ctx.monitorsReadable() ? row == null : null);

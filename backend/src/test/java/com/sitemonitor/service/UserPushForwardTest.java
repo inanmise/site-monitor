@@ -186,11 +186,11 @@ class UserPushForwardTest {
     }
 
     private ForwardTarget whole(long rt, String name) {
-        return new ForwardTarget(rt, name, List.of(OWNER_NAME), List.of(1L), List.of("destek@example.com"), List.of(), true);
+        return new ForwardTarget(rt, name, List.of(owner), List.of(OWNER_NAME), List.of(1L), List.of("destek@example.com"), List.of(), true);
     }
 
     private ForwardTarget members(long rt, String name, Long... userIds) {
-        return new ForwardTarget(rt, name, List.of(OWNER_NAME), List.of(2L), List.of(), List.of(userIds), false);
+        return new ForwardTarget(rt, name, List.of(owner), List.of(OWNER_NAME), List.of(2L), List.of(), List.of(userIds), false);
     }
 
     private void scopeOff(String type, String key) {
@@ -610,8 +610,8 @@ class UserPushForwardTest {
         user("N20026", "TECH", owner, recipient);
         sentRow(null, "storm:77:INITIAL", "STORM", owner, "N20026", "sahip fırtınası");
 
-        push.enqueueForwardStormNotice(77L, "INITIAL", whole(recipient, RECIPIENT_NAME), 5, "CRITICAL", OWNER_NAME);
-        push.enqueueForwardStormNotice(77L, "INITIAL", whole(recipient, RECIPIENT_NAME), 5, "CRITICAL", OWNER_NAME);
+        push.enqueueForwardStormNotice(77L, "INITIAL", whole(recipient, RECIPIENT_NAME), 5, "CRITICAL", OWNER_NAME, owner);
+        push.enqueueForwardStormNotice(77L, "INITIAL", whole(recipient, RECIPIENT_NAME), 5, "CRITICAL", OWNER_NAME, owner);
 
         List<UserPushDelivery> rs = keyRows("storm:77:FWD:" + recipient + ":INITIAL");
         assertThat(rs).extracting(UserPushDelivery::getUsername).containsExactly("N20025");
@@ -631,13 +631,13 @@ class UserPushForwardTest {
         user("N20028", "TECH", recipient);
         sentRow(null, "storm:77:FWD:" + recipient + ":INITIAL", "STORM", recipient, "N20027", "x");
 
-        push.enqueueForwardStormNotice(77L, "RESOLVE", whole(recipient, RECIPIENT_NAME), 3, "CRITICAL", OWNER_NAME);
+        push.enqueueForwardStormNotice(77L, "RESOLVE", whole(recipient, RECIPIENT_NAME), 3, "CRITICAL", OWNER_NAME, owner);
         List<UserPushDelivery> rs = keyRows("storm:77:FWD:" + recipient + ":RESOLVE");
         assertThat(rs).extracting(UserPushDelivery::getUsername).containsExactly("N20027");
         assertThat(rs.get(0).getTrigger()).isEqualTo("STORM_RESOLVED");
         assertThat(rs.get(0).getMessage()).isEqualTo("Ödeme Sistemleri takımının fırtınası sona erdi.");
 
-        push.enqueueForwardStormNotice(77L, "RESOLVE", whole(recipient2, "Altyapı Nöbet Ekibi"), 3, "CRITICAL", OWNER_NAME);
+        push.enqueueForwardStormNotice(77L, "RESOLVE", whole(recipient2, "Altyapı Nöbet Ekibi"), 3, "CRITICAL", OWNER_NAME, owner);
         List<UserPushDelivery> none = keyRows("storm:77:FWD:" + recipient2 + ":RESOLVE");
         assertThat(none).extracting(UserPushDelivery::getStatus).containsExactly("SKIPPED_NO_PRIOR");
         assertThat(none.get(0).getTeamId()).isEqualTo(recipient2);
@@ -646,7 +646,7 @@ class UserPushForwardTest {
         block.setTrigger("STORM"); block.setDedupeKey("storm:78:INITIAL"); block.setUsername("-"); block.setTeamId(owner);
         block.setStatus("SKIPPED_TEAM_OFF"); block.setCreatedAt(ISO.format(Instant.now()));
         deliveryRepo.save(block);
-        push.enqueueForwardStormNotice(78L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME);
+        push.enqueueForwardStormNotice(78L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME, owner);
         assertThat(keyRows("storm:78:FWD:" + recipient + ":INITIAL")).isEmpty();
     }
 
@@ -655,7 +655,7 @@ class UserPushForwardTest {
     void forwardStormRecipientTeamOff() {
         user("N20029", "TECH", recipient);
         scopeOff("TEAM", String.valueOf(recipient));
-        push.enqueueForwardStormNotice(79L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME);
+        push.enqueueForwardStormNotice(79L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME, owner);
         assertThat(keyRows("storm:79:FWD:" + recipient + ":INITIAL")).extracting(UserPushDelivery::getUsername,
                 UserPushDelivery::getStatus).containsExactly(org.assertj.core.groups.Tuple.tuple("-", "SKIPPED_TEAM_OFF"));
     }
@@ -762,5 +762,88 @@ class UserPushForwardTest {
         assertThat(UserPushService.forwardPhaseOf("FWD:12:")).isNull();
         String storm = UserPushDelivery.fitDedupeKey(UserPushService.forwardStormKey(Long.MAX_VALUE, Long.MAX_VALUE, "DAILY_REALERT"));
         assertThat(storm).hasSizeLessThanOrEqualTo(60).startsWith("storm:" + Long.MAX_VALUE + ":");
+    }
+
+    // ── 2026-11-06 inceleme düzeltmeleri ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("sahip kapısı HEDEFİN sahiplerine sorulur: SY'nin push'u kapalıyken UG'nin iletimi gider, SY'ninki gitmez; biri izinliyse geçer")
+    void ownerGatePerTarget() {
+        user("N20040", "TECH", recipient);
+        user("N20041", "TECH", recipient2);
+        long ugOwner = team("Uygulama Geliştirme (Dijital Kanallar / Ödeme Uygulamaları Müdürlüğü)");
+        scopeOff("TEAM", String.valueOf(owner));
+        AlertEvent e = alarm(owner, "HTTP_DOWN", "HIGH");
+        ForwardTarget fromUg = new ForwardTarget(recipient2, "Altyapı Nöbet Ekibi", List.of(ugOwner), List.of("Uygulama Geliştirme"),
+                List.of(3L), List.of(), List.of(), true);
+        push.enqueueForwards(e.getId(), "INITIAL", List.of(whole(recipient, RECIPIENT_NAME), fromUg), null, Set.of());
+        assertThat(forwardRows(e.getId())).extracting(UserPushDelivery::getUsername, UserPushDelivery::getDedupeKey)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("N20041", "FWD:" + recipient2 + ":OPEN"));
+
+        // iki sahipli hedef: biri (UG) izin veriyor → geçer
+        AlertEvent e2 = alarm(owner, "HTTP_DOWN", "HIGH");
+        ForwardTarget both = new ForwardTarget(recipient, RECIPIENT_NAME, List.of(owner, ugOwner), List.of(OWNER_NAME, "UG"),
+                List.of(4L), List.of(), List.of(), true);
+        push.enqueueForwards(e2.getId(), "INITIAL", List.of(both), null, Set.of());
+        assertThat(forwardRows(e2.getId())).extracting(UserPushDelivery::getUsername).containsExactly("N20040");
+    }
+
+    @Test
+    @DisplayName("aynı alıcıya iki hedef (tüm takım + seçili üye): BİRLEŞİR — takım üyesi de seçili üye de push alır (ikinci hedef düşmez)")
+    void sameRecipientTargetsMerge() {
+        user("N20042", "TECH", recipient);
+        AppUser chosen = user("N20043", null, recipient);   // rol grubu yok — yalnız seçili üye olarak alır
+        AlertEvent e = alarm(owner, "HTTP_DOWN", "HIGH");
+        push.enqueueForwards(e.getId(), "INITIAL", List.of(whole(recipient, RECIPIENT_NAME),
+                members(recipient, RECIPIENT_NAME, chosen.getId())), null, Set.of());
+        assertThat(forwardRows(e.getId())).extracting(UserPushDelivery::getUsername).containsExactlyInAnyOrder("N20042", "N20043");
+        assertThat(forwardRows(e.getId())).extracting(UserPushDelivery::getTeamId).containsOnly(recipient);
+    }
+
+    @Test
+    @DisplayName("iletilen fırtına: sahip kararı YALNIZ ilgili sahip takımın satırından — başka dağıtımın (UG) kanal kararı susturmaz")
+    void ownerStormBlockIsPerTeam() {
+        user("N20044", "TECH", recipient);
+        // fırtınanın UG dağıtımının push'u kapalı (karar satırı UG takımında) → SY'nin iletimi yine gider
+        decision("storm:80:INITIAL", recipient2, "SKIPPED_TEAM_OFF");
+        push.enqueueForwardStormNotice(80L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME, owner);
+        assertThat(keyRows("storm:80:FWD:" + recipient + ":INITIAL")).extracting(UserPushDelivery::getUsername)
+                .containsExactly("N20044");
+        // sahibin kendi kararı → susar
+        decision("storm:81:INITIAL", owner, "SKIPPED_TYPE_OFF");
+        push.enqueueForwardStormNotice(81L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME, owner);
+        assertThat(keyRows("storm:81:FWD:" + recipient + ":INITIAL")).isEmpty();
+        // sahip takım verilmezse hedefin sahipleri ([owner]) sorulur — başka takımın kararı susturmaz
+        decision("storm:82:INITIAL", recipient2, "SKIPPED_TEAM_OFF");
+        push.enqueueForwardStormNotice(82L, "INITIAL", whole(recipient, RECIPIENT_NAME), 2, "HIGH", OWNER_NAME, null);
+        assertThat(keyRows("storm:82:FWD:" + recipient + ":INITIAL")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("önceki fırtına alıcıları (gerçek SQL): bu fırtınada SENT iletim push'u almış alıcı takımlar; çözüm / karar / bekleyen / başka fırtına hariç")
+    void forwardStormRecipientTeams() {
+        sentRow(null, "storm:90:FWD:" + recipient + ":INITIAL", "STORM", recipient, "N20050", "x");
+        sentRow(null, "storm:90:FWD:" + recipient2 + ":DAILY_REALERT:2026-11-05", "STORM", recipient2, "N20051", "x");
+        long other = team("Başka Alıcı");
+        sentRow(null, "storm:90:FWD:" + other + ":RESOLVE", "STORM_RESOLVED", other, "N20052", "x");
+        UserPushDelivery pending = sentRow(null, "storm:90:FWD:" + owner + ":INITIAL", "STORM", owner, "N20053", "x");
+        pending.setStatus("PENDING");
+        deliveryRepo.save(pending);
+        decision("storm:90:FWD:" + other + ":INITIAL", other, "SKIPPED_TEAM_OFF");
+        sentRow(null, "storm:9:FWD:" + other + ":INITIAL", "STORM", other, "N20054", "x");   // başka fırtına (önek)
+        sentRow(null, "storm:900:FWD:" + other + ":INITIAL", "STORM", other, "N20055", "x");
+        assertThat(push.forwardStormRecipientTeams(90L)).containsExactlyInAnyOrder(recipient, recipient2);
+        assertThat(push.forwardStormRecipientTeams(null)).isEmpty();
+    }
+
+    private void decision(String key, long teamId, String status) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setTrigger("STORM");
+        d.setDedupeKey(key);
+        d.setUsername("-");
+        d.setTeamId(teamId);
+        d.setStatus(status);
+        d.setCreatedAt(ISO.format(Instant.now()));
+        deliveryRepo.save(d);
     }
 }

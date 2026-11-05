@@ -90,13 +90,14 @@ class TeamAdminAlertForwardTest {
     }
 
     @Test
-    @DisplayName("taşıma: sahibi olduğu iletimler hedefe, gelenler silinir — sayılar sonuçta")
+    @DisplayName("taşıma: sahibi olduğu iletimler hedefe, gelenler silinir, kapsamı genişleyenler duraklatılır — sayılar sonuçta")
     void moveAll() {
         service.setAlertForwards(alertForwards);
-        when(alertForwards.moveTeam(7L, 9L)).thenReturn(new AlertForwardService.Moved(2, 1));
+        when(alertForwards.moveTeam(7L, 9L)).thenReturn(new AlertForwardService.Moved(2, 1, 1));
         Map<String, Integer> moved = service.moveAll(7L, 9L);
         verify(alertForwards).moveTeam(7L, 9L);
-        assertThat(moved).containsEntry("alert_forwards", 2).containsEntry("alert_forwards_removed", 1);
+        assertThat(moved).containsEntry("alert_forwards", 2).containsEntry("alert_forwards_removed", 1)
+                .containsEntry("alert_forwards_paused", 1);
         service.setAlertForwards(null);
         assertThat(service.moveAll(7L, 9L)).doesNotContainKey("alert_forwards");
     }

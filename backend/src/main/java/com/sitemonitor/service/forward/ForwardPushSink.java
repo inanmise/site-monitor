@@ -20,8 +20,18 @@ public interface ForwardPushSink {
 
     /**
      * Fırtına bildirimi (varsayılan kipte üyelerin push'u fırtınaya devredilir): alıcı takıma, kendisine iletilen üye
-     * sayısıyla tek toplu push. {@code stormTrigger} INITIAL | DAILY_REALERT | RESOLVE.
+     * sayısıyla tek toplu push. {@code stormTrigger} INITIAL | DAILY_REALERT | RESOLVE. {@code ownerTeamId}: fırtınanın bu
+     * hedefi getiren sahip takımı — sahip fırtına push'unun kanal kararı YALNIZ bu takımın karar satırından okunur (2026-11-06);
+     * null ise hedefin {@link ForwardTarget#ownerTeamIds} takımları (hepsi engelliyse engel).
      */
     void enqueueForwardStormNotice(Long stormId, String stormTrigger, ForwardTarget target, int memberCount,
-                                   String level, String ownerTeamName);
+                                   String level, String ownerTeamName, Long ownerTeamId);
+
+    /**
+     * Bu fırtınada iletilen fırtına push'u (açılış / tekrar) GÖNDERİLMİŞ alıcı takımlar (2026-11-06) — fırtına çözümü, iletim
+     * fırtına sürerken kaldırılmış / duraklatılmış olsa da bu takımlara "fırtına bitti" der (önceki alıcılara). Varsayılan boş.
+     */
+    default Set<Long> forwardStormRecipientTeams(Long stormId) {
+        return Set.of();
+    }
 }

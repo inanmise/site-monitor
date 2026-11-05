@@ -327,6 +327,70 @@ class AlertForwardServiceH2Test {
     }
 
     @Test
+    @DisplayName("taşıma kapsamı genişletmez: ALL / TYPES etkinler duraklatılır + not; MONITORS etkin kalır; hedefte aynısı varsa silinir")
+    void moveTeamPausesWideningScopes() {
+        long all = svc.create(body("owner_team_id", owner, "scope_kind", "ALL", "recipient_kind", "TEAM", "recipient_team_id", rt,
+                "note", "Gece nöbeti"), null, "a").forward().getId();
+        long types = svc.create(body("owner_team_id", owner, "scope_kind", "TYPES", "scope_types", List.of("http"),
+                "recipient_kind", "TEAM", "recipient_team_id", rt2, "note", "x".repeat(500)), null, "a").forward().getId();
+        long mons = svc.create(body("owner_team_id", owner, "scope_kind", "MONITORS", "scope_monitors",
+                List.of(Map.of("type", "http", "id", 5)), "recipient_kind", "TEAM", "recipient_team_id", rt), null, "a").forward().getId();
+        long alreadyPaused = svc.create(body("owner_team_id", owner, "scope_kind", "TYPES", "scope_types", List.of("ping"),
+                "recipient_kind", "TEAM", "recipient_team_id", rt, "enabled", false), null, "a").forward().getId();
+        // hedef takımda (ug) rt2'ye giden TYPES http iletimi ZATEN var → taşınan kopya silinir
+        long same = svc.create(body("owner_team_id", ug, "scope_kind", "TYPES", "scope_types", List.of("http"), "recipient_kind", "TEAM",
+                "recipient_team_id", rt2), null, "a").forward().getId();
+
+        Map<String, Object> impact = svc.impactOf(owner);
+        assertThat(impact).containsEntry("owned", 4L).containsEntry("paused_on_move", 2L);
+
+        AlertForwardService.Moved m = svc.moveTeam(owner, ug);
+        assertThat(m.moved()).isEqualTo(3);
+        assertThat(m.removed()).isEqualTo(1);
+        assertThat(m.paused()).as("yalnız ETKİN ALL / TYPES").isEqualTo(1);
+
+        AlertForward a = repo.findById(all).orElseThrow();
+        assertThat(a.getOwnerTeamId()).isEqualTo(ug);
+        assertThat(a.isEnabled()).isFalse();
+        assertThat(a.getNote()).isEqualTo("Gece nöbeti " + AlertForwardService.MOVE_PAUSE_NOTE);
+        assertThat(repo.findById(types)).as("hedefte aynısı vardı").isEmpty();
+        assertThat(repo.findById(same)).isPresent();
+        AlertForward mon = repo.findById(mons).orElseThrow();
+        assertThat(mon.getOwnerTeamId()).isEqualTo(ug);
+        assertThat(mon.isEnabled()).as("seçilen izlemeler kapsamı genişlemez").isTrue();
+        assertThat(mon.getNote()).isNull();
+        AlertForward p = repo.findById(alreadyPaused).orElseThrow();
+        assertThat(p.isEnabled()).isFalse();
+        assertThat(p.getNote()).as("zaten duraklatılmıştı — not eklenmez").isNull();
+        // yönlendirme: taşınan ALL iletimi hedefin (ug) alarmlarını İLETMEZ (duraklatıldı) — yalnız ug'nin kendi iletimi
+        assertThat(raw.current()).isNotNull();
+        assertThat(svc.targetsFor(new AlertRef(List.of(ug), "HTTP_DOWN", "https://x", 9L)))
+                .extracting(ForwardTarget::recipientTeamId).containsExactly(rt2);
+        assertThat(svc.targetsFor(new AlertRef(List.of(ug), "HTTP_DOWN", "https://shop.example.com", 5L)))
+                .extracting(ForwardTarget::recipientTeamId).containsExactly(rt, rt2);
+    }
+
+    @Test
+    @DisplayName("düzenleme: etkin olmayandan etkine geçiş 'activated'; bilgi alıcıları o anki TÜM üyeler; duraklatılmış kayıtta bilgi yok")
+    void activationReportsAllRecipients() {
+        AlertForwardService.Saved created = svc.create(body("owner_team_id", owner, "scope_kind", "ALL", "recipient_kind", "MEMBERS",
+                "recipient_team_id", rt, "enabled", false), List.of(ayse, mehmet), "a");
+        assertThat(created.infoRequested()).as("duraklatılmış oluşturma bilgi göndermez").isFalse();
+        assertThat(created.infoMemberIds()).isEmpty();
+        long id = created.forward().getId();
+        AlertForwardService.Saved addWhilePaused = svc.update(id, body("note", "x"), null, "b");
+        assertThat(addWhilePaused.activated()).isFalse();
+        assertThat(addWhilePaused.infoRequested()).isFalse();
+        AlertForwardService.Saved on = svc.update(id, body("enabled", true), null, "b");
+        assertThat(on.activated()).isTrue();
+        assertThat(on.infoWholeTeam()).isFalse();
+        assertThat(on.infoMemberIds()).containsExactlyInAnyOrder(ayse, mehmet);
+        AlertForwardService.Saved again = svc.update(id, body("note", "y"), null, "b");
+        assertThat(again.activated()).isFalse();
+        assertThat(again.infoRequested()).isFalse();
+    }
+
+    @Test
     @DisplayName("takım silme: sahibi ya da alıcısı o takım olanlar silinir; etki sayıları; kullanıcı silme üye listesinden çıkarır")
     void deleteTeamAndUser() {
         svc.create(teamBody(rt), null, "a");
