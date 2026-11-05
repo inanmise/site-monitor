@@ -31,8 +31,9 @@ const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v)
 
 /**
  * `forMonitor` yanıtı → rozet durumu.
- * - `none`  : hiçbir şey çizilmez — görüntüleyici sahibi görmüyor (`hidden`), izleme yok (404), izin yok (403), eski
- *             sunucu (404 / 405), oturum bitti (null) ya da yanıt beklenen biçimde değil;
+ * - `none`  : hiçbir şey çizilmez — görüntüleyici sahibi görmüyor (`hidden`), izleme yok / dizinde yok (404), izin yok
+ *             (403), bilinmeyen tür (400 field `type`), eski sunucu (404 / 405), oturum bitti (null) ya da yanıt beklenen
+ *             biçimde değil;
  * - `error` : okunamadı (ağ, zaman aşımı, 5xx) — küçük "okunamadı" + tekrar dene;
  * - `ok`    : `items` (+ `canAdd`, `ownerTeams`, `monitor`).
  */
@@ -40,7 +41,8 @@ export function readForMonitor(res) {
   if (res == null || typeof res !== 'object') return { status: 'none' }
   if (res.success === false) {
     const st = errorInfoOf(res)?.status
-    if (st === 403 || st === 404 || st === 405 || st === 401) return { status: 'none' }
+    // 400 = sunucu türü tanımıyor (field `type`) — rozet çizilmez, "okunamadı" da denmez
+    if (st === 400 || st === 401 || st === 403 || st === 404 || st === 405) return { status: 'none' }
     return { status: 'error' }
   }
   const data = res.data
@@ -124,6 +126,27 @@ export function scopeText(t, kind, types, monitorsCount) {
   }
   return t('fwdx.scope.all')
 }
+
+/**
+ * "Kim bilgilendirilir?" iletim satırının kapsam etiketi (sunucu `applies`): `all` — seçilen türe uyan (ALL ya da TYPES ∋
+ * tür); `types_only` — yalnız SEÇİLEN türler (senaryo genel, tür belirsiz) → tür adlarıyla; `monitors_only` — yalnız seçilen
+ * izlemeler. Bilinmeyen değer "tümü" sayılmaz: tür listesi varsa türlerle, yoksa izleme kapsamı gibi temkinli okunur.
+ */
+export function simAppliesText(t, row) {
+  const applies = String(row?.applies ?? '').toLowerCase()
+  const scope = String(row?.scope_kind ?? '').toUpperCase()
+  const types = Array.isArray(row?.scope_types) ? row.scope_types : []
+  if (applies === 'monitors_only') return t('fwdx.sim.appliesMonitors')
+  if (applies === 'types_only' || (applies !== 'all' && types.length > 0)) {
+    const names = types.map((x) => familyLabel(x, t)).filter(Boolean)
+    return names.length ? t('fwdx.sim.appliesTypes', names.join(', ')) : t('fwdx.scope.typesNone')
+  }
+  if (applies !== 'all') return t('fwdx.sim.appliesMonitors')
+  return scope === 'TYPES' ? t('fwdx.sim.appliesType') : t('fwdx.scope.all')
+}
+
+/** Satır "yalnız bir bölüm için" mi (`types_only` / `monitors_only`) — not ve uyarı tonu. */
+export const simAppliesPartly = (row) => ['types_only', 'monitors_only'].includes(String(row?.applies ?? '').toLowerCase())
 
 /** Satırın kapsam etiketi. */
 export const itemScopeText = (t, item) => scopeText(t, item?.scope_kind, item?.scope_types,

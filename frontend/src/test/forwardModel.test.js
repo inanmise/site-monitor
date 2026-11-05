@@ -3,7 +3,7 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   FORWARD_STATES, STATE_KEY, STATE_TONE, activeCount, forwardState, forwardTypeKey, isForwardLog, isForwardRow,
-  manageTarget, pillKind, readForMonitor, recipientRoleText, recipientText, scopeText, formatDay,
+  manageTarget, pillKind, readForMonitor, recipientRoleText, recipientText, scopeText, formatDay, simAppliesText, simAppliesPartly,
 } from '../components/forwards/forwardModel.js'
 import { familyLabel, PUSH_TYPE_ALIASES } from '../utils/pushPrefs.js'
 import { triggerText } from '../components/admin/logTriggers.js'
@@ -37,7 +37,7 @@ describe('readForMonitor', () => {
     expect(readForMonitor({ success: true, data: { hidden: true } }).status).toBe('none')
     expect(readForMonitor({ success: true, data: [] }).status).toBe('none')
     expect(readForMonitor({ success: true, data: { can_add: true } }).status).toBe('none')
-    for (const status of [401, 403, 404, 405]) expect(readForMonitor({ success: false, status }).status).toBe('none')
+    for (const status of [400, 401, 403, 404, 405]) expect(readForMonitor({ success: false, status }).status).toBe('none')
   })
 
   it('5xx / zaman aşımı / durumsuz hata → error ("okunamadı", asla "iletim yok")', () => {
@@ -113,6 +113,22 @@ describe('metinler', () => {
     expect(recipientRoleText(tOf(TR), 'FORWARD')).toBe('İletim')
     expect(recipientRoleText(t, 'NOC')).toBe('NOC')
     expect(recipientRoleText(t, '')).toBe('')
+  })
+})
+
+describe('simAppliesText — "Kim bilgilendirilir?" kapsamı', () => {
+  it('all / types_only / monitors_only; bilinmeyen değer "tümü" sayılmaz', () => {
+    expect(simAppliesText(t, { applies: 'all', scope_kind: 'ALL' })).toBe(EN['fwdx.scope.all'])
+    expect(simAppliesText(t, { applies: 'all', scope_kind: 'TYPES', scope_types: ['http'] })).toBe(EN['fwdx.sim.appliesType'])
+    expect(simAppliesText(t, { applies: 'types_only', scope_kind: 'TYPES', scope_types: ['ping', 'cert'] }))
+      .toBe(`Only these types: ${EN['userpush.type.ping']}, ${EN['userpush.type.cert']}`)
+    expect(simAppliesText(t, { applies: 'types_only', scope_types: [] })).toBe(EN['fwdx.scope.typesNone'])
+    expect(simAppliesText(t, { applies: 'monitors_only' })).toBe(EN['fwdx.sim.appliesMonitors'])
+    expect(simAppliesText(t, { applies: 'weird', scope_types: ['http'] })).toBe(`Only these types: ${EN['userpush.type.http']}`)
+    expect(simAppliesText(t, { applies: 'weird' })).toBe(EN['fwdx.sim.appliesMonitors'])
+    expect(simAppliesPartly({ applies: 'types_only' })).toBe(true)
+    expect(simAppliesPartly({ applies: 'monitors_only' })).toBe(true)
+    expect(simAppliesPartly({ applies: 'all' })).toBe(false)
   })
 })
 

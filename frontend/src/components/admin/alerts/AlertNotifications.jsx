@@ -81,6 +81,9 @@ export function mailTriggerText(t, trigger) {
   return base ? t(base.textKey) : (trigger || '')
 }
 
+/** Sunucunun iletim postası atlama nedeni (EscalationService — ham metin, `SKIPPED: ` sonrası). */
+const FORWARD_SHARED_SKIP = 'adresler bu alarmın başka bir postasını aldı'
+
 export function EmailStatusBadge({ status }) {
   const t = useT()
   if (!status) return null
@@ -93,6 +96,9 @@ export function EmailStatusBadge({ status }) {
   // "SKIPPED: <neden>" — atlanan e-posta, nedeniyle (alıcı yok / kanal kapalı / fırtına #N / takım yok). 2026-09-30.
   if (status.startsWith('SKIPPED:')) {
     const reason = status.slice('SKIPPED:'.length).trim()
+    // Alarm iletimi (2026-11-05): iletim postasının adresleri bu alarmın başka bir postasını (sahip / önceki iletim) zaten
+    // aldı — çevrilmiş anlamlı metin (ham Türkçe neden İngilizce ekranda basılmasın); ham durum title'da
+    if (reason.startsWith(FORWARD_SHARED_SKIP)) return <ToneBadge tone="warning" title={status} data-slot="notif-skip-shared">{t('fwdx.skip.sharedAddresses')}</ToneBadge>
     return <ToneBadge tone="warning" title={status}>{t('alh.status.skipped')}{reason ? ' — ' + reason : ''}</ToneBadge>
   }
   return <ToneBadge tone="muted">{status}</ToneBadge>

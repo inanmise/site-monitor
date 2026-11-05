@@ -53,7 +53,7 @@ describe('SimResult — iletim alıcıları kartı', () => {
     expect(rows[1]).toHaveAttribute('data-applies', 'monitors_only')
     expect(rows[1]).toHaveTextContent('2 members')
     expect(rows[1]).toHaveTextContent(EN['fwdx.sim.appliesMonitors'])
-    expect(rows[1].querySelector('[data-slot="wn-forward-monitors-only"]')).toHaveTextContent(EN['fwdx.sim.monitorsOnlyNote'])
+    expect(rows[1].querySelector('[data-slot="wn-forward-partly"]')).toHaveTextContent(EN['fwdx.sim.monitorsOnlyNote'])
     expect(rows[2]).toHaveTextContent(EN['fwdx.sim.appliesType'])
     expect(rows[2]).toHaveTextContent(EN['fwdx.sim.noTeamEmail'])
     // ops@ ve OPS@ aynı adres (büyük / küçük harf) → 3 tekil adres
@@ -72,7 +72,7 @@ describe('SimResult — iletim alıcıları kartı', () => {
     await draw(<SimResult data={{ ...BASE, forwards: [{ ...FORWARDS[1], emails: [], applies: 'all', scope_kind: 'ALL' }] }} level="HIGH" kind="CERT" />)
     expect(card()).toHaveTextContent(EN['fwdx.sim.noMemberEmail'])
     expect(card().querySelector('[data-slot="wn-forward-summary"]')).toHaveTextContent(EN['fwdx.sim.summaryNone'])
-    expect(card().querySelector('[data-slot="wn-forward-monitors-only"]')).toBeNull()
+    expect(card().querySelector('[data-slot="wn-forward-partly"]')).toBeNull()
   })
 
   it('alan yoksa (eski sunucu) ya da liste boşsa kart yok; yönetim düğmesi yalnız onNavigate ile', async () => {
@@ -81,6 +81,20 @@ describe('SimResult — iletim alıcıları kartı', () => {
     unmount()
     await draw(<SimResult data={{ ...BASE, forwards: [] }} level="HIGH" kind="CERT" />)
     expect(card()).toBeNull()
+  })
+
+  it('types_only: yalnız seçilen türler, tür adlarıyla (ham anahtar yok) + not; forward_id satır anahtarı', async () => {
+    await draw(<SimResult data={{ ...BASE, forwards: [{ forward_id: 41, recipient_team_id: 9, recipient_team_name: LONG_TEAM,
+      recipient_kind: 'TEAM', applies: 'types_only', scope_kind: 'TYPES', scope_types: ['http', 'cert', 'dbquery'],
+      emails: ['ops@example.com'], member_count: 0 }] }} level="HIGH" kind="MONITOR" />)
+    const row = card().querySelector('[data-slot="wn-recipient"][data-source="forward"]')
+    expect(row).toHaveAttribute('data-applies', 'types_only')
+    const applies = row.querySelector('[data-wn="applies"]')
+    expect(applies).toHaveTextContent(EN['fwdx.sim.appliesTypes'].replace('{0}',
+      `${EN['userpush.type.http']}, ${EN['userpush.type.cert']}, ${EN['userpush.type.dbquery']}`))
+    expect(applies).toHaveAttribute('data-tone', 'warning')
+    expect(row.querySelector('[data-slot="wn-forward-partly"]')).toHaveTextContent(EN['fwdx.sim.typesOnlyNote'])
+    expect(row).not.toHaveTextContent('dbquery')
   })
 
   it('tek adres → tekil özet; onNavigate yoksa yönet düğmesi yok', async () => {

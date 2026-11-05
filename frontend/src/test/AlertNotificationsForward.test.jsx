@@ -37,6 +37,24 @@ describe('NotifLogCard — iletim satırı', () => {
   })
 })
 
+describe('EmailStatusBadge — iletim atlama nedeni', () => {
+  it('"adresler bu alarmın başka bir postasını aldı" çevrilmiş anlamlı metin (ham Türkçe neden yok); ham durum başlıkta', () => {
+    const status = 'SKIPPED: adresler bu alarmın başka bir postasını aldı'
+    render(<NotifLogCard log={fwd({ email_status: status })} alertLevel="HIGH" />)
+    const b = document.querySelector('[data-slot="notif-skip-shared"]')
+    expect(b).toHaveTextContent(EN['fwdx.skip.sharedAddresses'])
+    expect(b).toHaveAttribute('title', status)
+    expect(b).toHaveAttribute('data-tone', 'warning')
+    expect(b).not.toHaveTextContent('postasını')
+  })
+
+  it('başka atlama nedenleri bugünkü gibi ("Atlandı — <neden>")', () => {
+    render(<NotifLogCard log={fwd({ email_status: 'SKIPPED: alıcı yok' })} alertLevel="HIGH" />)
+    expect(document.querySelector('[data-slot="notif-skip-shared"]')).toBeNull()
+    expect(document.body).toHaveTextContent(`${EN['alh.status.skipped']} — alıcı yok`)
+  })
+})
+
 describe('AlertNotificationsPanel — başlık özeti', () => {
   const draw = (history) => render(<AlertNotificationsPanel history={history} loadingHistory={false} loadFailed={false} pushGroups={[]} alertLevel="HIGH" />)
 

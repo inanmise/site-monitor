@@ -107,7 +107,9 @@ function offenders(sel) {
 }
 
 const overflowX = () => document.documentElement.scrollWidth - document.documentElement.clientWidth
-const settleAnimations = (page) => page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'))
+// Açılış animasyonları bitene dek (sonsuz animasyonlar — iskelet nabzı, dönen göstergeler — sayılmaz; en fazla 5 sn)
+const settleAnimations = (page) => page.waitForFunction(() => document.getAnimations()
+  .every((a) => a.playState !== 'running' || a.effect?.getTiming?.().iterations === Infinity), null, { timeout: 5_000 }).catch(() => {})
 
 for (const vp of VIEWPORTS) {
   test.describe(`alarm iletimi yüzeyleri — ${vp.name} ${vp.width}`, () => {
@@ -124,14 +126,20 @@ for (const vp of VIEWPORTS) {
       const pill = dlg.locator('[data-slot="monitor-forwards"]')
       await expect(pill).toHaveAttribute('data-state', 'active', { timeout: 15_000 })
       await expect(pill).toHaveText('İletim: 2')
-      expect(calls[0]).toEqual({ type: 'http', id: '100' })
-      // 7/24 göstergesinden SONRA
+      // İlk kart sıralamaya göre (sorunlu önce) — kimlik o kartınki; istek tür + kimlikle (alan adı yok)
+      expect(calls[0].type).toBe('http')
+      expect(calls[0].id).toMatch(/^\d+$/)
+      expect(calls[0].domain).toBeUndefined()
+      const monitorId = calls[0].id
+      // Pencere BAŞLIĞINDA; izlemenin 7/24 göstergesi çiziliyorsa ondan SONRA (taklit satırda `noc_notify` olmayabilir)
       const order = await dlg.evaluate((d) => {
-        const noc = d.querySelector('[data-slot="noc-status"]')
         const fwd = d.querySelector('[data-slot="monitor-forwards"]')
-        return noc && fwd ? Boolean(noc.compareDocumentPosition(fwd) & Node.DOCUMENT_POSITION_FOLLOWING) : null
+        const head = d.querySelector('[data-slot="dialog-header"]')
+        const noc = d.querySelector('[data-slot="noc-status"]')
+        return { inHeader: Boolean(head && fwd && head.contains(fwd)),
+          afterNoc: noc ? Boolean(noc.compareDocumentPosition(fwd) & Node.DOCUMENT_POSITION_FOLLOWING) : true }
       })
-      expect(order).toBe(true)
+      expect(order).toEqual({ inHeader: true, afterNoc: true })
       await settleAnimations(page)
       expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
       expect(await page.evaluate(offenders, '[data-slot="dialog-content"]'), `@${vp.name}: ekran dışı`).toEqual([])
@@ -161,7 +169,7 @@ for (const vp of VIEWPORTS) {
       const href = new URL(await add.getAttribute('href'), 'http://x')
       expect(href.searchParams.get('tab')).toBe('admin')
       expect(href.searchParams.get('g_tab')).toBe('forwards')
-      expect(href.searchParams.get('g_fnew')).toBe('http:100')
+      expect(href.searchParams.get('g_fnew')).toBe(`http:${monitorId}`)
       expect(href.searchParams.get('g_fteam')).toBe('1')
       await page.screenshot({ path: `test-results/fwd-monitor-pill-${vp.name}.png` })
       await add.click()
@@ -171,10 +179,11 @@ for (const vp of VIEWPORTS) {
 
     test('okuma hatası: küçük "İletim: okunamadı" — dokununca yeniden dener; iletim yok + eklenemez → rozet yok', async ({ page }) => {
       test.setTimeout(120_000)
-      let n = 0
+      // Geliştirme sunucusunda React StrictMode etkiyi iki kez koşar — sayaç değil bayrak: "yeniden dene"ye basılana dek 500
+      let pingFails = true
       await routes(page, { forMonitor: (q) => {
-        if (q.type === 'ping') { n++; return n === 1 ? { status: 500, body: { success: false, error: 'Sunucu yanıt veremedi' } }
-          : { success: true, data: { items: [ROWS[0]], can_add: false, owner_teams: [{ id: 1, name: 'Takım A' }] } } }
+        if (q.type === 'ping') return pingFails ? { status: 500, body: { success: false, error: 'Sunucu yanıt veremedi' } }
+          : { success: true, data: { items: [ROWS[0]], can_add: false, owner_teams: [{ id: 1, name: 'Takım A' }] } }
         return { success: true, data: { items: [], can_add: false, owner_teams: [{ id: 1, name: 'Takım A' }] } }
       } })
       await page.goto('/?tab=ping')
@@ -188,6 +197,7 @@ for (const vp of VIEWPORTS) {
         const h = await retry.evaluate((b) => b.getBoundingClientRect().height)
         expect(h, `@${vp.name}: yeniden dene hedefi`).toBeGreaterThanOrEqual(39.5)
       }
+      pingFails = false
       await retry.click()
       await expect(pill).toHaveAttribute('data-state', 'active')
       await expect(pill).toHaveText('İletim: 1')
@@ -223,6 +233,7 @@ for (const vp of VIEWPORTS) {
       const detail = page.locator('[data-slot="monitor-forwards-detail"]')
       await expect(detail).toBeVisible()
       await expect(detail).toContainText('başka bir takıma iletilmiyor')
+      await settleAnimations(page)
       const href = new URL(await detail.locator('[data-action="monitor-forwards-add"]').getAttribute('href'), 'http://x')
       expect(href.searchParams.get('g_fnew')).toBe(`cert:${CERT_DOMAINS.healthy}`)
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="monitor-forwards-detail"]'), `@${vp.name}: küçük hedef`).toEqual([])

@@ -5,14 +5,16 @@ import { Button } from '@/components/shadcn/button'
 import { ItemGroup } from '@/components/shadcn/item'
 import { ChannelCard, PersonAvatar, RecipientItem } from './ChannelCards.jsx'
 import { FORWARD_TONE } from '../../forwards/ForwardBadge.jsx'
+import { simAppliesPartly, simAppliesText } from '../../forwards/forwardModel.js'
 import { cn } from '@/lib/utils'
 
 /**
  * "Kim bilgilendirilir?" — İLETİM ALICILARI (2026-11-05). Simülasyon yanıtının `forwards` listesi
  * (`EscalationService.simulateRecipients`): senaryonun takımının alarm iletimleri, seçilen türe uyanlar (ALL, TYPES ∋ tür).
  * Alıcı takım / üyeler sahip takımın aldığı bildirimlerin AYNISINI AYRI bir postayla (+ push) alır; eskalasyon kişileri,
- * nöbetçi ve 7/24 iletilmez. Yalnız SEÇİLEN izlemelere tanımlı iletim (`applies: "monitors_only"`) senaryo bir izleme
- * seçmediği için "yalnız seçilen izlemeler" notuyla listelenir — bu türün her izlemesine gider sanılmasın.
+ * nöbetçi ve 7/24 iletilmez. Kapsam (`applies`): `all` — seçilen türe uyan; `types_only` — yalnız SEÇİLEN türler
+ * (senaryo bir tür belirlemiyor) → tür adlarıyla; `monitors_only` — yalnız seçilen izlemeler (senaryo izleme seçmez). Son
+ * ikisi "yalnız bir bölüm için" notuyla listelenir — takımın her alarmına gider sanılmasın.
  *
  * <p>Sunucu alanı göndermiyorsa (eski sunucu) ya da liste boşsa kart çizilmez (çağıran karar verir). Adresler kesilmez,
  * sarar; adresi olmayan alıcı "yalnız push" notuyla görünür (posta gitmez). Test kancaları: `data-channel="forward"`,
@@ -37,23 +39,24 @@ export default function ForwardsCard({ forwards, onNavigate, teamId, className }
             const members = String(f.recipient_kind ?? '').toUpperCase() === 'MEMBERS'
             const n = Number(f.member_count) || 0
             const kindText = members ? (n === 1 ? t('fwdx.recipient.members.one') : t('fwdx.recipient.members', n)) : t('fwdx.recipient.team')
-            const monitorsOnly = f.applies === 'monitors_only'
-            const scope = String(f.scope_kind ?? '').toUpperCase()
-            const appliesText = monitorsOnly ? t('fwdx.sim.appliesMonitors') : scope === 'TYPES' ? t('fwdx.sim.appliesType') : t('fwdx.scope.all')
+            const applies = String(f.applies ?? '').toLowerCase()
+            const partly = simAppliesPartly(f)
             const name = f.recipient_team_name || t('fwdx.teamUnnamed')
             return (
-              <RecipientItem key={`${f.recipient_team_id ?? 'x'}:${i}`} source="forward" data-applies={monitorsOnly ? 'monitors_only' : 'all'}
+              <RecipientItem key={f.forward_id ?? `${f.recipient_team_id ?? 'x'}:${i}`} source="forward" data-applies={applies || 'all'}
                 media={<PersonAvatar name={name} icon={Forward} />}
                 title={name}
                 badges={<>
                   <ToneBadge tone="neutral" className="h-auto overflow-visible rounded-md whitespace-normal">{kindText}</ToneBadge>
-                  <ToneBadge tone={monitorsOnly ? 'warning' : 'info'} data-wn="applies"
-                    className="h-auto overflow-visible rounded-md whitespace-normal">{appliesText}</ToneBadge>
+                  <ToneBadge tone={partly ? 'warning' : 'info'} data-wn="applies"
+                    className="h-auto overflow-visible rounded-md whitespace-normal">{simAppliesText(t, f)}</ToneBadge>
                 </>}
                 description={emails.length ? emails.join(', ') : (members ? t('fwdx.sim.noMemberEmail') : t('fwdx.sim.noTeamEmail'))}
                 mono={emails.length > 0}
-                extra={monitorsOnly && (
-                  <p data-slot="wn-forward-monitors-only" className="text-xs leading-relaxed text-muted-foreground">{t('fwdx.sim.monitorsOnlyNote')}</p>
+                extra={partly && (
+                  <p data-slot="wn-forward-partly" data-applies={applies} className="text-xs leading-relaxed text-muted-foreground">
+                    {applies === 'types_only' ? t('fwdx.sim.typesOnlyNote') : t('fwdx.sim.monitorsOnlyNote')}
+                  </p>
                 )}
               />
             )
