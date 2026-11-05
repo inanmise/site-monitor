@@ -1259,7 +1259,7 @@ public class PageResourceScanService {
         ScanItem it = new ScanItem();
         it.url = c.url();
         it.contentType = contentType(meta.contentType());
-        it.category = refine(c, it.contentType);
+        it.category = refine(c, it.contentType, f.status());
         it.pageLoad = !PageResourceDiscovery.DOCUMENT.equals(it.category) && !PageResourceDiscovery.LINK.equals(it.category);
         it.lazy = c.lazy();
         it.fromCss = c.fromCss();
@@ -1304,7 +1304,9 @@ public class PageResourceScanService {
         // ── algoritma 3 ──
         PageFetchCore.ScanMeta sm = meta.scan();
         if (sm != null && f.status() > 0) {
-            it.httpVersion = sm.httpVersion();
+            // Vekil üzerinden çekilen nesnenin HTTP sürümü vekilin değeridir (SSL inceleyen vekil ALPN'de çoğunlukla yalnız
+            // http/1.1 sunar) — host ölçümündeki "vekilli ölçülmez" kuralıyla aynı: bilinmiyor (inceleme O-5).
+            it.httpVersion = "proxy".equals(via) ? null : sm.httpVersion();
             it.contentHash = probe || it.truncated ? null : sm.contentHash();
             it.validator = sm.etag() != null || sm.lastModified() != null;
             it.h3Advertised = sm.altSvc() != null && h3(sm.altSvc());
@@ -1412,9 +1414,14 @@ public class PageResourceScanService {
     }
 
     /** İçerik türüne göre kategori: bağlantı HTML değilse BELGE; OTHER / stilden bulunan içerik türüyle incelir. */
-    static String refine(PageResourceDiscovery.Candidate c, String ct) {
+    /**
+     * Keşif türünü yanıtın içerik türüyle inceltir — YALNIZ başarılı (2xx) yanıtta. Kırık / hata yanıtının içerik türü
+     * (düz metin 404 / 500 sayfası) hata sayfasınındır, nesnenin değil: bağlantı {@code LINK} kalır, "belge" sayılmaz
+     * (belge = uzantı ya da başarılı yanıtın HTML olmayan içerik türü; sözleşme incelemesi D5).
+     */
+    static String refine(PageResourceDiscovery.Candidate c, String ct, int status) {
         String cat = c.category();
-        if (ct == null) return cat;
+        if (ct == null || status < 200 || status >= 300) return cat;
         if (PageResourceDiscovery.LINK.equals(cat)) {
             boolean html = ct.contains("html");
             return html || ct.isEmpty() ? PageResourceDiscovery.LINK : PageResourceDiscovery.DOCUMENT;

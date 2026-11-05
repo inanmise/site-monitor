@@ -135,6 +135,9 @@ public final class JsLibraryCatalog {
     public static Library detect(String url, String banner) {
         Library fromBanner = fromBanner(banner);
         Library fromUrl = fromUrl(url);
+        // Adres bir kütüphanenin EKLENTİSİ diyorsa (jquery.form, bootstrap-datepicker) o ailenin başlığı kabul edilmez:
+        // eklenti başlığı kütüphanenin adını bağımlılık olarak anar, eklentinin kendi sürümü kütüphane sürümü değildir.
+        if (fromBanner != null && fromUrl == null && sameFamily(pluginOf(url), fromBanner.name())) fromBanner = null;
         if (fromBanner != null) {
             if (fromBanner.version() == null && fromUrl != null && fromUrl.name().equals(fromBanner.name())) return fromUrl;
             return fromBanner;
@@ -142,7 +145,17 @@ public final class JsLibraryCatalog {
         return fromUrl;
     }
 
+    /** jQuery ile jQuery UI eklenti vetosu için tek aile; diğerleri yalnız kendileri. */
+    private static boolean sameFamily(String a, String b) {
+        if (a == null || b == null) return false;
+        if (a.equals(b)) return true;
+        return (JQUERY.equals(a) || JQUERY_UI.equals(a)) && (JQUERY.equals(b) || JQUERY_UI.equals(b));
+    }
+
     // ── Başlık yorumu ─────────────────────────────────────────────────────────────────────
+
+    /** Bir işaretin aranacağı en çok geçiş sayısı (sınırlı döngü). */
+    static final int MAX_MARKER_HITS = 16;
 
     static Library fromBanner(String text) {
         if (text == null || text.isEmpty()) return null;
@@ -155,25 +168,97 @@ public final class JsLibraryCatalog {
         if ((l = after(t, "Bootstrap v", BOOTSTRAP)) != null) return l;
         if ((l = after(t, "AngularJS v", ANGULARJS)) != null) return l;
         if ((l = after(t, "handlebars v", HANDLEBARS)) != null) return l;
-        if (t.contains("Lodash <https://lodash.com/>") || t.contains("Lodash lodash.com/license")) {
+        if (headerAt(t, "Lodash <https://lodash.com/>") >= 0 || headerAt(t, "Lodash lodash.com/license") >= 0) {
             String v = versionAfterKey(text, "VERSION");
             return new Library(LODASH, v);
         }
-        if (t.contains("moment.js") && t.contains("version")) {
-            int i = t.indexOf("version");
-            int c = t.indexOf(':', i);
-            if (c > i && c - i < 12) return new Library(MOMENT, version(t, skipSpaces(t, c + 1)));
-        }
+        if ((l = moment(t)) != null) return l;
         if ((l = after(t, "Underscore.js ", UNDERSCORE)) != null) return l;
         return null;
     }
 
-    /** {@code marker} sonrası sürüm; sürüm okunamazsa null (yanlış eşleşmeyi önlemek için ad da dönmez). */
+    /**
+     * {@code marker} sonrası sürüm — yalnız işaret bir yorumun BAŞINDAYSA ({@link #atCommentStart}) ve sürümün ardından
+     * "or later" / "+" gibi bir bağımlılık niteleyicisi gelmiyorsa. "Requires jQuery v1.7.2 or later", "Datepicker for
+     * Bootstrap v1.9.0" kütüphanenin kendi sürümü değildir. Sürüm okunamazsa null (yanlış eşleşmeyi önlemek için ad da dönmez).
+     */
     private static Library after(String t, String marker, String name) {
-        int i = t.indexOf(marker);
-        if (i < 0) return null;
-        String v = version(t, i + marker.length());
-        return v == null ? null : new Library(name, v);
+        int from = 0;
+        for (int hit = 0; hit < MAX_MARKER_HITS; hit++) {
+            int i = t.indexOf(marker, from);
+            if (i < 0) return null;
+            from = i + marker.length();
+            if (!atCommentStart(t, i)) continue;
+            String v = version(t, i + marker.length());
+            if (v == null || laterQualifier(t, i + marker.length() + v.length())) continue;
+            return new Library(name, v);
+        }
+        return null;
+    }
+
+    /** Yorum başındaki ilk geçişin konumu; yoksa -1. */
+    private static int headerAt(String t, String marker) {
+        int from = 0;
+        for (int hit = 0; hit < MAX_MARKER_HITS; hit++) {
+            int i = t.indexOf(marker, from);
+            if (i < 0) return -1;
+            if (atCommentStart(t, i)) return i;
+            from = i + marker.length();
+        }
+        return -1;
+    }
+
+    /** {@code //! moment.js} satırı ve ardından gelen {@code //! version : 2.29.4}. */
+    private static Library moment(String t) {
+        int from = 0;
+        for (int hit = 0; hit < MAX_MARKER_HITS; hit++) {
+            int i = t.indexOf("moment.js", from);
+            if (i < 0) return null;
+            from = i + 9;
+            if (!atCommentStart(t, i)) continue;
+            int eol = skipSpaces(t, i + 9);
+            if (eol < t.length() && t.charAt(eol) != '\n' && t.charAt(eol) != '\r') continue;   // "moment.js locale configuration"
+            int k = t.indexOf("version", eol);
+            if (k < 0 || k - eol > 80 || !atCommentStart(t, k)) continue;
+            int c = t.indexOf(':', k);
+            if (c > k && c - k < 12) return new Library(MOMENT, version(t, skipSpaces(t, c + 1)));
+        }
+        return null;
+    }
+
+    /**
+     * Konum {@code i}'den geriye satır başına dek yalnız boşluk, yorum işaretleri ({@code / * !}) ve {@code @license} var mı —
+     * ya da arada bir yorum açılışı ({@code /*}, {@code //}) geçildi mi (paketlenmiş dosyada satır ortasında açılan başlık).
+     * "Requires", "based on", "for", "compatible with" gibi bir sözcük işaretin önündeyse false. Sınırlı (64 karakter).
+     */
+    static boolean atCommentStart(String t, int i) {
+        int j = i;
+        boolean opener = false;
+        for (int guard = 0; guard < 64; guard++) {
+            if (j == 0) return true;
+            char c = t.charAt(j - 1);
+            if (c == '\n' || c == '\r') return true;
+            if (c == ' ' || c == '\t' || c == '*' || c == '!') { j--; continue; }
+            if (c == '/') {
+                if (j < t.length() && (t.charAt(j) == '*' || t.charAt(j) == '/')) opener = true;
+                j--;
+                continue;
+            }
+            if (c == 'e' && j >= 8 && t.startsWith("@license", j - 8)) { j -= 8; continue; }
+            return opener;
+        }
+        return false;
+    }
+
+    /** Sürümün ardından bağımlılık niteleyicisi: {@code +}, "or later/higher/newer/above", "and later/up/above". */
+    static boolean laterQualifier(String t, int end) {
+        if (end < t.length() && t.charAt(end) == '+') return true;
+        int j = skipSpaces(t, end);
+        String rest = t.substring(j, Math.min(t.length(), j + 12)).toLowerCase(Locale.ROOT);
+        return rest.startsWith("or later") || rest.startsWith("or higher") || rest.startsWith("or newer")
+                || rest.startsWith("or above") || rest.startsWith("or greater") || rest.startsWith("and later")
+                || rest.startsWith("and up") || rest.startsWith("and above") || rest.startsWith("and higher")
+                || rest.startsWith("and newer");
     }
 
     /** {@code VERSION = '4.17.21'} / {@code VERSION="4.17.21"} (lodash) — tüm örnekte; okunamazsa null. */
@@ -211,19 +296,51 @@ public final class JsLibraryCatalog {
         return new Library(lib[0], version);
     }
 
+    /**
+     * Adres bir kütüphanenin EKLENTİSİ ise ({@code jquery.form.min.js}, {@code bootstrap-datepicker.js},
+     * {@code angular-route.js}) o kütüphanenin adı; kütüphanenin kendisi, sürümlü dosyası ya da tanınmayan dosya → null.
+     */
+    static String pluginOf(String url) {
+        if (url == null) return null;
+        String path = DeepUrls.path(url).toLowerCase(Locale.ROOT);
+        String file = path.substring(path.lastIndexOf('/') + 1);
+        if (!file.endsWith(".js")) return null;
+        String s = stripSuffixes(file.substring(0, file.length() - 3));
+        for (String[] p : PREFIXES) {
+            if (!s.startsWith(p[0])) continue;
+            String rest = s.substring(p[0].length());
+            if (rest.length() < 2) return null;                       // kütüphanenin kendisi
+            char sep = rest.charAt(0);
+            if (sep != '-' && sep != '.' && sep != '@') return null;  // jquery2x / bootstrapper: başka ad
+            char c = rest.charAt(1);
+            if (Character.isDigit(c)) return null;                    // jquery-3.4.1(-custom): sürümlü kütüphane dosyası
+            if (c == 'v' && rest.length() > 2 && Character.isDigit(rest.charAt(2))) return null;
+            return p[1];
+        }
+        return null;
+    }
+
+    private static final String[] STEM_SUFFIXES = {".min", "-min", ".slim", "-slim", ".bundle", "-bundle"};
+
+    private static final String[][] PREFIXES = {{"jquery-ui", JQUERY_UI}, {"jquery.ui", JQUERY_UI}, {"jqueryui", JQUERY_UI},
+            {"jquery", JQUERY}, {"bootstrap", BOOTSTRAP}, {"angular", ANGULARJS}, {"lodash", LODASH},
+            {"moment-with-locales", MOMENT}, {"moment", MOMENT}, {"handlebars", HANDLEBARS}, {"underscore", UNDERSCORE}};
+
+    /** {@code .min} / {@code .slim} / {@code .bundle} son eklerini (en çok iki kez) at. */
+    private static String stripSuffixes(String stem) {
+        String s = stem;
+        for (int round = 0; round < 2; round++) {
+            for (String suffix : STEM_SUFFIXES) {
+                if (s.endsWith(suffix)) s = s.substring(0, s.length() - suffix.length());
+            }
+        }
+        return s;
+    }
+
     /** Dosya kökünden {ad, sürüm|null}; tanınmayan / eklenti dosyası ({@code jquery.validate}) null. */
     static String[] libraryOfStem(String stem) {
-        String s = stem;
-        for (String suffix : new String[]{".min", "-min", ".slim", "-slim", ".bundle", "-bundle"}) {
-            if (s.endsWith(suffix)) s = s.substring(0, s.length() - suffix.length());
-        }
-        for (String suffix : new String[]{".min", "-min", ".slim", "-slim", ".bundle", "-bundle"}) {
-            if (s.endsWith(suffix)) s = s.substring(0, s.length() - suffix.length());
-        }
-        String[][] prefixes = {{"jquery-ui", JQUERY_UI}, {"jquery.ui", JQUERY_UI}, {"jqueryui", JQUERY_UI},
-                {"jquery", JQUERY}, {"bootstrap", BOOTSTRAP}, {"angular", ANGULARJS}, {"lodash", LODASH},
-                {"moment-with-locales", MOMENT}, {"moment", MOMENT}, {"handlebars", HANDLEBARS}, {"underscore", UNDERSCORE}};
-        for (String[] p : prefixes) {
+        String s = stripSuffixes(stem);
+        for (String[] p : PREFIXES) {
             if (!s.startsWith(p[0])) continue;
             String rest = s.substring(p[0].length());
             if (rest.isEmpty()) return new String[]{p[1], null};

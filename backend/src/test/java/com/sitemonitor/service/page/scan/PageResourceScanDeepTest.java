@@ -295,4 +295,51 @@ class PageResourceScanDeepTest {
                 String.class);
         assertThat(stored).doesNotContain("GIZLI-OTURUM-DEGERI").doesNotContain("koyu");
     }
+
+    @Test
+    @DisplayName("O-5: vekil üzerinden çekilen nesnede HTTP sürümü vekilin değeridir → bilinmiyor (null); doğrudan çekimde ölçülen")
+    void proxiedItemHasNoHttpVersion() {
+        PageFetchCore.Fetch f = new PageFetchCore.Fetch(200, 5, 9, 4000, null, null, false, false);
+        PageFetchCore.ScanMeta sm = new PageFetchCore.ScanMeta("1.1", "\"e1\"", null, null, "h3=\":443\"", null,
+                "abc", null, null, false, "encoding", List.of(), null);
+        PageFetchCore.Meta meta = new PageFetchCore.Meta("https://a.com/x.js", 0, "application/javascript", null, 4000L,
+                "max-age=600", null, null, null, null, null, 0L, null, sm);
+        PageResourceDiscovery.Candidate c = new PageResourceDiscovery.Candidate("https://a.com/x.js", "JS", true, false, false);
+        ScanItem proxied = svc.item(c, new PageFetchCore.MetaFetch(f, meta), "a.com", false, "proxy", "page");
+        assertThat(proxied.via).isEqualTo("proxy");
+        assertThat(proxied.httpVersion).as("vekilin ALPN'i sitenin sürümü değildir").isNull();
+        assertThat(proxied.h3Advertised).as("Alt-Svc kökenin başlığı: korunur").isTrue();
+        assertThat(proxied.toDeepMap()).containsEntry("http_version", null);
+        ScanItem direct = svc.item(c, new PageFetchCore.MetaFetch(f, meta), "a.com", false, "direct", "page");
+        assertThat(direct.httpVersion).isEqualTo("1.1");
+    }
+
+    @Test
+    @DisplayName("D5: kırık / hata yanıtının içerik türü bağlantıyı 'belge' yapmaz; başarılı HTML olmayan yanıt belge olur")
+    void errorResponseContentTypeDoesNotMakeADocument() {
+        PageResourceDiscovery.Candidate link = new PageResourceDiscovery.Candidate("https://a.com/urunler", "LINK", false, false, false);
+        for (int status : new int[]{404, 500, 403, 0}) {
+            ScanItem it = svc.item(link, metaFetch(status, "text/plain; charset=utf-8"), "a.com", true, "direct", "page");
+            assertThat(it.category).as("durum %d", status).isEqualTo("LINK");
+            assertThat(it.pageLoad).isFalse();
+        }
+        assertThat(svc.item(link, metaFetch(200, "application/pdf"), "a.com", true, "direct", "page").category)
+                .isEqualTo("DOCUMENT");
+        assertThat(svc.item(link, metaFetch(200, "text/html"), "a.com", true, "direct", "page").category).isEqualTo("LINK");
+        PageResourceDiscovery.Candidate doc = new PageResourceDiscovery.Candidate("https://a.com/k.pdf", "DOCUMENT", false, false, false);
+        assertThat(svc.item(doc, metaFetch(404, "text/html"), "a.com", true, "direct", "page").category)
+                .as("uzantıdan belge, durum ne olursa olsun belge").isEqualTo("DOCUMENT");
+        PageResourceDiscovery.Candidate other = new PageResourceDiscovery.Candidate("https://a.com/x", "OTHER", true, false, false);
+        assertThat(svc.item(other, metaFetch(404, "text/css"), "a.com", false, "direct", "page").category).isEqualTo("OTHER");
+        assertThat(svc.item(other, metaFetch(200, "text/css"), "a.com", false, "direct", "page").category).isEqualTo("CSS");
+        assertThat(PageResourceScanService.refine(link, "text/plain", 404)).isEqualTo("LINK");
+        assertThat(PageResourceScanService.refine(link, "text/plain", 200)).isEqualTo("DOCUMENT");
+    }
+
+    static PageFetchCore.MetaFetch metaFetch(int status, String contentType) {
+        PageFetchCore.Fetch f = new PageFetchCore.Fetch(status, 5, 9, status == 0 ? 0 : 1200, null,
+                status == 0 ? "TIMEOUT" : null, false, false);
+        return new PageFetchCore.MetaFetch(f, new PageFetchCore.Meta("https://a.com/x", 0, contentType, null, 1200L, null, null,
+                null, null));
+    }
 }

@@ -27,10 +27,15 @@ public final class LoadingAnalysis {
     static final int PRECONNECT_MIN_REQUESTS = 3;
     static final int MANY_HOSTS = 10;
     static final int HTTP1_MEDIUM_REQUESTS = 30;
+    /** {@link ScanItem#via} değeri: nesne vekil üzerinden çekildi. */
+    static final String PROXY = "proxy";
     static final long BLOCKING_HIGH_BYTES = 300 * 1024L, BLOCKING_MEDIUM_BYTES = 100 * 1024L;
 
-    /** Bölüm + engelleyen sayı / bayt (performans notu bileşeni) + tahmini ilk boyama. */
-    public record Result(DeepSection section, int blockingCount, long blockingBytes, long firstPaintMs) {}
+    /**
+     * Bölüm + engelleyen sayı / bayt (performans notu bileşeni) + tahmini ilk boyama. {@code blockingKnown} false = HTML
+     * olguları yok (ayrıştırılamadı): engelleyenler BİLİNMİYOR — not bileşeni puanlanmaz, {@code render_blocking} null.
+     */
+    public record Result(DeepSection section, int blockingCount, long blockingBytes, long firstPaintMs, boolean blockingKnown) {}
 
     private LoadingAnalysis() {}
 
@@ -55,7 +60,7 @@ public final class LoadingAnalysis {
         for (int i = 1; i < items.size(); i++) {
             ScanItem it = items.get(i);
             it.renderBlocking = false;
-            if (!it.pageLoad || it.skipped()) continue;
+            if (f == null || !it.pageLoad || it.skipped()) continue;   // olgu yoksa engelleyen bilinmez (inceleme D-1)
             String reason = null, kind = null;
             if (PageResourceDiscovery.JS.equals(it.category) && !it.fromCss) {
                 HtmlFacts.ScriptTag t = scripts.get(it.url);
@@ -87,12 +92,16 @@ public final class LoadingAnalysis {
         long firstPaint = htmlEnd;
         for (ScanItem b : blocking) if (b.startMs != null) firstPaint = Math.max(firstPaint, b.startMs + Math.max(0, b.durationMs));
         long blockingBytes = DeepSection.bytes(blocking);
-        Map<String, Object> rb = new LinkedHashMap<>();
-        DeepSection.putList(rb, "items", rows);
-        rb.put("count", blocking.size());
-        rb.put("bytes", blockingBytes);
-        rb.put("est_first_paint_ms", firstPaint);
-        json.put("render_blocking", rb);
+        if (f != null) {
+            Map<String, Object> rb = new LinkedHashMap<>();
+            DeepSection.putList(rb, "items", rows);
+            rb.put("count", blocking.size());
+            rb.put("bytes", blockingBytes);
+            rb.put("est_first_paint_ms", firstPaint);
+            json.put("render_blocking", rb);
+        } else {
+            json.put("render_blocking", null);   // HTML olguları yok: bilinmiyor (boş liste "engelleyen yok" demek olurdu)
+        }
         if (!blocking.isEmpty()) {
             String sev = blocking.size() >= 6 || blockingBytes >= BLOCKING_HIGH_BYTES ? DeepRec.HIGH
                     : blocking.size() >= 3 || blockingBytes >= BLOCKING_MEDIUM_BYTES ? DeepRec.MEDIUM : DeepRec.LOW;
@@ -211,6 +220,7 @@ public final class LoadingAnalysis {
         for (Map.Entry<String, List<ScanItem>> e : sortedHosts) {
             List<ScanItem> list = e.getValue();
             boolean third = list.stream().allMatch(i -> i.thirdParty);
+            boolean proxied = list.stream().allMatch(i -> PROXY.equals(i.via));
             String version = mostCommonVersion(list);
             boolean h3 = list.stream().anyMatch(i -> i.h3Advertised);
             boolean tls = list.stream().anyMatch(i -> DeepUrls.https(i.url));
@@ -227,7 +237,7 @@ public final class LoadingAnalysis {
             r.put("connect_ms", t.connectMs());
             r.put("tls_ms", t.tlsMs());
             r.put("measured", t.measured());
-            r.put("reason", t.reason());
+            r.put("reason", proxied ? PROXY : t.reason());
             hosts.add(r);
             if (!third && tls && "1.1".equals(version)) {
                 http1FirstParty++;
@@ -257,7 +267,7 @@ public final class LoadingAnalysis {
                     it.renderBlocking, cssDepth(items, it)));
         }
         json.put("profiles", NetworkProfiles.estimate(mainHost, DeepUrls.https(html.url), html.bytes, objs));
-        return new Result(new DeepSection(json, recs), blocking.size(), blockingBytes, firstPaint);
+        return new Result(new DeepSection(json, recs), blocking.size(), blockingBytes, firstPaint, f != null);
     }
 
     /**
@@ -295,9 +305,14 @@ public final class LoadingAnalysis {
         return d;
     }
 
+    /**
+     * Hostun en sık HTTP sürümü; vekil üzerinden çekilen nesneler sayılmaz (sürüm vekilin değeridir — inceleme O-5), bu
+     * yüzden tamamı vekilli host null döner ve {@code HTTP1_ONLY}'ye girmez.
+     */
     private static String mostCommonVersion(List<ScanItem> list) {
         int v1 = 0, v2 = 0;
         for (ScanItem i : list) {
+            if (PROXY.equals(i.via)) continue;
             if ("2".equals(i.httpVersion)) v2++;
             else if ("1.1".equals(i.httpVersion)) v1++;
         }

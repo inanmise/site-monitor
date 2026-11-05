@@ -40,7 +40,8 @@ import static com.sitemonitor.service.page.scan.PageResourceDiscovery.MEDIA;
  *
  * <p>Not (ağırlıklar toplamı 100, algoritma 3): yükleme süresi 20, sayfa boyutu 15, görseller 15, istek sayısı 10, sunucu
  * yanıtı (TTFB) 10, oluşturmayı engelleyen kaynaklar 10, hatalar 8, sıkıştırma 7, önbellek 5. Harf: A ≥ 90, B ≥ 80, C ≥ 70,
- * D ≥ 60, E ≥ 50, F altı.
+ * D ≥ 60, E ≥ 50, F altı. HTML ayrıştırılamadıysa oluşturmayı engelleyen bileşeni BİLİNMİYOR (puan / değer / kayıp null) ve
+ * not kalan 90 ağırlıkla normalize edilir.
  *
  * <p><b>Algoritma 3 (2026-11, derin analiz):</b> nesne listesinin yanında {@link DeepContext} (HTML olguları, ana sayfanın
  * güvenlik başlıkları, çerezler, {@code @font-face}'ler, host bağlantı ölçümleri, kaynak haritası denetimi) okunur ve kökte
@@ -198,8 +199,11 @@ public final class PageResourceAnalyzer {
 
         // ── Derin bölüm A (performans bileşeni de buradan: oluşturmayı engelleyenler) ─────────
         LoadingAnalysis.Result loading = LoadingAnalysis.build(items, page, ctx.html(), ctx);
-        int rbScore = Math.min(curve(loading.blockingBytes() / (double) KB, RENDER_BLOCKING_CURVE_KB),
-                curve(loading.blockingCount(), RENDER_BLOCKING_COUNT_CURVE));
+        // HTML olguları yoksa (ayrıştırılamadı) engelleyenler BİLİNMİYOR: bileşen puanlanmaz, not kalan ağırlıklarla
+        // normalize edilir (bilinmeyen = geçti değil — inceleme D-1).
+        Integer rbScore = !loading.blockingKnown() ? null
+                : Math.min(curve(loading.blockingBytes() / (double) KB, RENDER_BLOCKING_CURVE_KB),
+                        curve(loading.blockingCount(), RENDER_BLOCKING_COUNT_CURVE));
 
         // ── Alt puanlar ─────────────────────────────────────────────────────────────────
         List<ScanItem> largeImages = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
@@ -230,28 +234,32 @@ public final class PageResourceAnalyzer {
                 "images", new Object[]{imageBytes, "bytes"},
                 "requests", new Object[]{page.size(), "count"},
                 "server_response", new Object[]{html.ttfbMs, "ms"},
-                "render_blocking", new Object[]{loading.blockingBytes(), "bytes"},
+                "render_blocking", new Object[]{loading.blockingKnown() ? loading.blockingBytes() : null, "bytes"},
                 "errors", new Object[]{pageFailed, "count"},
                 "compression", new Object[]{compressionPct, "pct"},
                 "caching", new Object[]{cachingPct, "pct"});
+        // Bilinmeyen bileşen (null puan) ağırlığa girmez: not = Σ puan × ağırlık / Σ BİLİNEN ağırlık; kayıp aynı paydayla, böylece
+        // kayıpların toplamı yine 100 − not'u açıklar. Hepsi bilinirken payda 100 → algoritma 3'ün ilk hâliyle birebir.
+        int knownWeight = 0;
+        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) if (s.get(w.getKey()) != null) knownWeight += w.getValue();
         double weighted = 0;
         for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) {
-            int sc = s.get(w.getKey());
-            weighted += sc * w.getValue();
+            Integer sc = s.get(w.getKey());
+            if (sc != null) weighted += sc * w.getValue();
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("key", w.getKey());
             row.put("score", sc);
             row.put("weight", w.getValue());
             row.put("value", values.get(w.getKey())[0]);
             row.put("unit", values.get(w.getKey())[1]);
-            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık)
+            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık; bilinmiyorsa null)
             Object[] target = TARGETS.get(w.getKey());
             row.put("full_at", target[0]);
             row.put("zero_at", target[1]);
-            row.put("lost", Math.round(w.getValue() * (100 - sc) / 10.0) / 10.0);
+            row.put("lost", sc == null ? null : Math.round(w.getValue() * (100 - sc) * 10.0 / knownWeight) / 10.0);
             scores.add(row);
         }
-        int grade = (int) Math.round(weighted / 100.0);
+        int grade = knownWeight == 0 ? 0 : (int) Math.round(weighted / knownWeight);
         String letter = letter(grade);
 
         // ── Kategoriler ─────────────────────────────────────────────────────────────────

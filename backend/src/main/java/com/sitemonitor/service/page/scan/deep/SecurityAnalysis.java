@@ -198,10 +198,13 @@ public final class SecurityAnalysis {
         List<Map<String, Object>> cats = new ArrayList<>();
         for (String c : ThirdPartyCatalog.CATEGORIES) {
             if (catAgg.get(c)[0] == 0) continue;
-            cats.add(row("category", c, "hosts", new ArrayList<>(catHosts.get(c)), "requests", catAgg.get(c)[0],
-                    "bytes", catAgg.get(c)[1]));
+            Map<String, Object> r = row("category", c);
+            DeepSection.putList(r, "hosts", new ArrayList<>(catHosts.get(c)));   // ≤ 50 + hosts_total (inceleme D-10)
+            r.put("requests", catAgg.get(c)[0]);
+            r.put("bytes", catAgg.get(c)[1]);
+            cats.add(r);
         }
-        json.put("third_party_categories", cats);
+        DeepSection.putList(json, "third_party_categories", cats);
         List<Map<String, Object>> tracking = new ArrayList<>();
         for (Map.Entry<String, String> e : trackingHosts.entrySet()) tracking.add(row("host", e.getKey(), "category", e.getValue()));
         DeepSection.putList(json, "tracking_on_load", tracking);

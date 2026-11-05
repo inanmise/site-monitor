@@ -15,8 +15,11 @@ import java.util.Set;
  * B — İsraf ve önbellek (2026-11, kaynak analizi algoritma 3) → {@code analysis.waste}. SAF.
  *
  * <ul>
- *   <li><b>Tekrarlar:</b> aynı içerik (tel gövdesinin SHA-256'sı aynı, ≥ {@value #DUPLICATE_MIN_BYTES} bayt) farklı adreslerden
- *       ({@code same_content}) ya da aynı host + yol, farklı sorgu ({@code same_path}, önbellek kırıcı).</li>
+ *   <li><b>Tekrarlar:</b> YALNIZ içerik özeti (tel gövdesinin SHA-256'sı) aynı, ≥ {@value #DUPLICATE_MIN_BYTES} baytlık nesneler.
+ *       Grubun bütün üyeleri aynı host + yoldaysa (yalnız sorgu farklı — önbellek kırıcı) {@code same_path}, değilse
+ *       {@code same_content}. Özeti bilinmeyen ya da farklı olan nesneler ASLA tekrar sayılmaz (aynı yolda farklı sorgu
+ *       çoğunlukla farklı içeriktir: {@code gtag/js?id=G-…} / {@code ?id=AW-…}, iki {@code css2?family=…},
+ *       {@code _next/image?url=…}).</li>
  *   <li><b>Kütüphane sürümleri:</b> aynı kütüphanenin birden çok sürümü.</li>
  *   <li><b>Küçültülmemiş:</b> örnekten sezgisel ({@link AssetSample}); kazanç tahmin.</li>
  *   <li><b>Kaynak haritası:</b> {@code sourceMappingURL} + HEAD 2xx → açık.</li>
@@ -51,25 +54,10 @@ public final class WasteAnalysis {
             if (it == html || !it.ok() || it.contentHash == null || it.bytes < DUPLICATE_MIN_BYTES) continue;
             byHash.computeIfAbsent(it.contentHash, k -> new ArrayList<>()).add(it);
         }
-        Set<ScanItem> inContentGroup = new LinkedHashSet<>();
         for (List<ScanItem> g : byHash.values()) {
             if (g.size() < 2) continue;
             long w = DeepSection.bytes(g) - g.stream().mapToLong(i -> i.bytes).max().orElse(0);
-            dups.add(dup("same_content", g, w));
-            wasted += w;
-            dupItems.addAll(g);
-            inContentGroup.addAll(g);
-        }
-        Map<String, List<ScanItem>> byPath = new LinkedHashMap<>();
-        for (ScanItem it : page) {
-            if (it == html || !it.ok() || it.bytes < DUPLICATE_MIN_BYTES || DeepUrls.query(it.url) == null) continue;
-            String host = it.host != null ? it.host : DeepUrls.host(it.url);
-            byPath.computeIfAbsent(host + DeepUrls.path(it.url), k -> new ArrayList<>()).add(it);
-        }
-        for (List<ScanItem> g : byPath.values()) {
-            if (g.size() < 2 || inContentGroup.containsAll(g)) continue;
-            long w = DeepSection.bytes(g) - g.stream().mapToLong(i -> i.bytes).max().orElse(0);
-            dups.add(dup("same_path", g, w));
+            dups.add(dup(samePath(g) ? "same_path" : "same_content", g, w));
             wasted += w;
             dupItems.addAll(g);
         }
@@ -237,6 +225,18 @@ public final class WasteAnalysis {
         if (i.status < 200 || i.status >= 300) return false;
         return Set.of(PageResourceDiscovery.CSS, PageResourceDiscovery.JS, PageResourceDiscovery.IMAGE,
                 PageResourceDiscovery.FONT, PageResourceDiscovery.MEDIA, PageResourceDiscovery.FAVICON).contains(i.category);
+    }
+
+    /** Grubun bütün üyeleri aynı host + yolda mı (yalnız sorgu farklı — aynı içerik önbellek kırıcıyla tekrar çekilmiş)? */
+    static boolean samePath(List<ScanItem> g) {
+        String key = null;
+        for (ScanItem it : g) {
+            String host = it.host != null ? it.host : DeepUrls.host(it.url);
+            String k = host + DeepUrls.path(it.url);
+            if (key == null) key = k;
+            else if (!key.equals(k)) return false;
+        }
+        return key != null;
     }
 
     private static Map<String, Object> dup(String kind, List<ScanItem> g, long wasted) {

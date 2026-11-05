@@ -786,7 +786,14 @@ public class PageFetchCore {
                         System.arraycopy(buf, 0, head, headLen, k);
                         headLen += k;
                     }
-                    for (int i = 0; i < n; i++) ring[(int) ((total + i) % ring.length)] = buf[i];
+                    // Halkaya yalnız bu okumanın son min(n, halka) baytı yazılır (en çok iki System.arraycopy; bayt başına
+                    // bölme yok — inceleme D-9). Çözülmüş indeks total + i → ring[(total + i) % halka], önceki hâlle aynı.
+                    int k = Math.min(n, ring.length);
+                    int src = n - k;
+                    int pos = (int) ((total + src) % ring.length);
+                    int first = Math.min(k, ring.length - pos);
+                    System.arraycopy(buf, src, ring, pos, first);
+                    if (first < k) System.arraycopy(buf, src + first, ring, 0, k - first);
                     total += n;
                 }
             }
@@ -807,7 +814,10 @@ public class PageFetchCore {
         if (full && tailN > 0) {
             int len = (int) Math.min(total, tailN);
             tailOut = new byte[len];
-            for (int i = 0; i < len; i++) tailOut[i] = ring[(int) ((total - len + i) % ring.length)];
+            int start = (int) ((total - len) % ring.length);
+            int first = Math.min(len, ring.length - start);
+            System.arraycopy(ring, start, tailOut, 0, first);
+            if (first < len) System.arraycopy(ring, 0, tailOut, first, len - first);
         }
         return new Sampled(wire.count, headOut, tailOut, full && total <= headN, skipped, timedOut);
     }
