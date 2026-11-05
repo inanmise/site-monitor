@@ -28,4 +28,8 @@ public interface KeywordContentQueryRepository extends Repository<KeywordResult,
     @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id AND r.contentChanged IS NOT NULL "
          + "ORDER BY r.checkedAt DESC LIMIT 1")
     List<KeywordResult> latestChangeRow(@Param("id") Long id);
+
+    /** En yeni kontrol satırı — en çok bir satır (değişim panelinin "son kontrolde neden ölçülmedi" notu, kw son inceleme D-7). */
+    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC, r.id DESC LIMIT 1")
+    List<KeywordResult> latestRow(@Param("id") Long id);
 }

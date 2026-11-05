@@ -245,7 +245,7 @@ public class KeywordCheckerService {
             result.put("final_url_ok", finalUrlOk);
             result.put("ok", ok);
             putRuleOutcome(result, spec, v);
-            putChange(result, spec, v, bytes.length, statusAccepted, finalUrlOk);
+            putChange(result, spec, v, status, bytes.length, statusAccepted, finalUrlOk);
             // ── Sağlıksızsa: neden + ipuçları + alıntı (yalnız teşhis açıkken; gövde zaten bellekte) ──
             if (!ok && spec.diagnose()) {
                 var reason = KeywordFailureClassifier.forCheck(new KeywordFailureClassifier.Facts(status, count,
@@ -268,6 +268,7 @@ public class KeywordCheckerService {
             result.put("ok", false);
             result.put("error", be.getMessage());
             putFailure(result, be, trail, timeoutMs, proxied);
+            if (spec.changeDetect()) result.put("change_skipped", CHANGE_SKIP_INCOMPLETE);
         } catch (Exception e) {
             result.put("found", false);
             result.put("count", 0);
@@ -275,6 +276,7 @@ public class KeywordCheckerService {
             result.put("response_ms", System.currentTimeMillis() - start);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             putFailure(result, e, trail, timeoutMs, proxied);
+            if (spec.changeDetect() && !result.containsKey("content_changed")) result.put("change_skipped", CHANGE_SKIP_INCOMPLETE);
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
@@ -345,7 +347,9 @@ public class KeywordCheckerService {
             count = p == null ? 0 : p.count();
             if (p != null && p.count() > 0 && p.matchStart() >= 0) {
                 String text = content.scope(rules.get(0)).text();
-                snippet = snippet(text, p.matchStart(), Math.max(0, p.matchEnd() - p.matchStart()));
+                // kw son inceleme D-1: alıntı izlemenin sırlarıyla (başlık değerleri, parola, base64 kimlik) ve hassas alan
+                // adlarıyla maskelenir — liste satırına, kontrol kaydına ve alarm bağlamına maskesiz sayfa metni gitmez
+                snippet = snippet(text, p.matchStart(), Math.max(0, p.matchEnd() - p.matchStart()), secretValues(spec));
             }
         }
         var size = com.sitemonitor.service.keyword.content.KeywordSizeCheck.evaluate(spec.minBytes(), spec.maxBytes(), bodyBytes,
@@ -377,15 +381,43 @@ public class KeywordCheckerService {
         if (v.size() != null && v.size().sizeOk() != null) result.put("size_ok", v.size().sizeOk());
     }
 
+    // ── İçerik değişimi notları (kw son inceleme O-3 / D-7) — {@code change_skipped} değerleri, KALICI ──
+    /** Değişim ölçülmedi: HTTP durumu ≥ 400 (hata sayfası temel olmaz, değişim sayılmaz). */
+    public static final String CHANGE_SKIP_HTTP_ERROR = "HTTP_ERROR";
+    /** Değişim ölçülmedi: gövde boş. */
+    public static final String CHANGE_SKIP_EMPTY_BODY = "EMPTY_BODY";
+    /** Değişim ölçülmedi: istek tamamlanmadı (bağlantı / zaman aşımı / engel). */
+    public static final String CHANGE_SKIP_INCOMPLETE = "INCOMPLETE";
+    /** Değişim ölçülmedi: kabul edilen durum kodu ya da son URL kuralı reddetti. */
+    public static final String CHANGE_SKIP_RULE_REJECTED = "RULE_REJECTED";
+    /** Değişim ölçülmedi: değişim seçicisi sayfada metinli bir öğe seçmedi (temel alınmaz, karşılaştırılmaz). */
+    public static final String CHANGE_SKIP_SELECTOR_NOT_FOUND = "SELECTOR_NOT_FOUND";
+    /** Bütün notlar (sözleşme / ön yüz eşlemesi). */
+    public static final java.util.List<String> CHANGE_SKIP_CODES = java.util.List.of(CHANGE_SKIP_HTTP_ERROR,
+            CHANGE_SKIP_EMPTY_BODY, CHANGE_SKIP_INCOMPLETE, CHANGE_SKIP_RULE_REJECTED, CHANGE_SKIP_SELECTOR_NOT_FOUND);
+
     /**
-     * İçerik değişimi (kw sözleşmesi §7.2) — yalnız değişim açık ∧ istek tamamlandı ∧ kabul edilen durum (kural açıksa) ∧ son URL
-     * tuttu. Temel yok / başka ayarla alınmış → {@code baseline_missing} (anlık görüntü çağırana {@link
-     * KeywordCheckSpec.ChangeCapture}); temel var → {@code content_changed} (+ değişimde {@code change_summary}).
+     * İçerik değişimi (kw sözleşmesi §7.2; kw son inceleme O-3) — yalnız değişim açık ∧ istek tamamlandı ∧ HTTP durumu &lt; 400 ∧
+     * gövde boş değil ∧ kabul edilen durum / son URL kuralı reddetmedi ∧ (seçici varsa) seçici metinli bir öğe seçti. Aksi hâlde
+     * {@code change_skipped} = neden ({@link #CHANGE_SKIP_CODES}): değerlendirme YOK — alarm açılmaz, kapanmaz (açık KEYWORD_CHANGED
+     * olduğu gibi kalır), temel alınmaz. Temel yok / başka ayarla alınmış → {@code baseline_missing} (anlık görüntü çağırana
+     * {@link KeywordCheckSpec.ChangeCapture}); temel var → {@code content_changed} (+ değişimde {@code change_summary}).
      */
-    private static void putChange(Map<String, Object> result, KeywordCheckSpec spec, Verdict v, long bodyBytes,
+    private static void putChange(Map<String, Object> result, KeywordCheckSpec spec, Verdict v, int status, long bodyBytes,
                                   Boolean statusAccepted, Boolean finalUrlOk) {
-        if (!spec.changeDetect() || Boolean.FALSE.equals(statusAccepted) || Boolean.FALSE.equals(finalUrlOk)) return;
+        if (!spec.changeDetect()) return;
+        String skip = Boolean.FALSE.equals(statusAccepted) || Boolean.FALSE.equals(finalUrlOk) ? CHANGE_SKIP_RULE_REJECTED
+                : status >= 400 ? CHANGE_SKIP_HTTP_ERROR
+                : bodyBytes <= 0 ? CHANGE_SKIP_EMPTY_BODY : null;
+        if (skip != null) {
+            result.put("change_skipped", skip);
+            return;
+        }
         try {
+            if (spec.changeSelector() != null && v.content().cssLines(spec.changeSelector()).isEmpty()) {
+                result.put("change_skipped", CHANGE_SKIP_SELECTOR_NOT_FOUND);
+                return;
+            }
             var snap = changeSnapshot(spec, v.content());
             String specHash = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(spec.changeMask(),
                     spec.changeSelector());
@@ -438,13 +470,24 @@ public class KeywordCheckerService {
      * CHECKS-3 — artık gerekmez). Boşluk indirgenir, ≤ 200 karakter; alıntı hiçbir koşulda kontrolü düşürmez.
      */
     static String snippet(String text, int idx, int len) {
+        return snippet(text, idx, len, java.util.List.of());
+    }
+
+    /**
+     * Maskeli alıntı (kw son inceleme D-1): pencere kenarındaki sır tam kapsanır, maske birleşik pencereye uygulanır
+     * ({@link com.sitemonitor.service.keyword.KeywordSecretWindow}), sonra boşluk indirgenir ve ≤ 200 karakter kesilir.
+     * Sır listesi boşken de hassas alan adları ({@code "password":"…"}) maskelenir.
+     */
+    static String snippet(String text, int idx, int len, java.util.Collection<String> secrets) {
         if (text == null || idx < 0 || idx > text.length()) return "";
         int start = idx;
         int end = Math.min(text.length(), idx + Math.max(0, len));
         int s = Math.max(0, start - 50);
         int e = Math.min(text.length(), Math.max(end, start) + 50);
         if (s > e) s = e;
-        String snip = KeywordBodyAnalyzer.collapseWs(text.substring(s, e));
+        int[] w = com.sitemonitor.service.keyword.KeywordSecretWindow.expand(text, s, e, secrets);
+        String snip = KeywordBodyAnalyzer.collapseWs(
+                com.sitemonitor.service.keyword.KeywordSecretWindow.maskText(text.substring(w[0], w[1]), secrets));
         return snip.length() > 200 ? snip.substring(0, 200) : snip;
     }
 
@@ -516,10 +559,11 @@ public class KeywordCheckerService {
             throws java.io.IOException, InterruptedException {
         URI current = URI.create(url);
         trail.current = current;
-        // Özel başlıklar, Basic auth ve POST gövdesi YALNIZ ilk host'a gider. Bunlar kullanıcı girdisi ve pratikte sır
-        // taşıyor (Authorization / X-Api-Key); yönlendirme hedefi başka bir host'a çıktığında onu da göndermek anahtarı
-        // yabancıya teslim etmek demek. Tarayıcıların cross-origin yönlendirmede Authorization düşürmesiyle aynı kural.
-        final String originHost = current.getHost() == null ? "" : current.getHost();
+        // Özel başlıklar, Basic auth ve POST gövdesi YALNIZ ilk isteğin KAYNAĞINA (şema + host + port) gider. Bunlar kullanıcı
+        // girdisi ve pratikte sır taşıyor (Authorization / X-Api-Key); yönlendirme hedefi başka bir kaynağa (başka host YA DA aynı
+        // host'un başka portu / şeması — kw son inceleme D-8) çıktığında onu da göndermek anahtarı yabancıya teslim etmek demek.
+        // Tarayıcıların cross-origin yönlendirmede Authorization düşürmesiyle aynı kural.
+        final URI first = current;
         HttpRequestOptions opts = spec.requestOptions();
         String userAgent = spec.effectiveUserAgent();
         String method = spec.method();
@@ -529,7 +573,7 @@ public class KeywordCheckerService {
                 throw new SsrfGuard.BlockedException("geçersiz hedef URL: " + current);
             ssrfGuard.validate(host);
             int hopTimeout = remainingFor(timeoutMs, deadline);
-            HttpRequest req = buildRequest(current, method, hopTimeout, userAgent, opts, originHost.equalsIgnoreCase(host));
+            HttpRequest req = buildRequest(current, method, hopTimeout, userAgent, opts, KeywordRequestRules.sameOrigin(first, current));
             HttpResponse<InputStream> resp = clientFor(spec.viaProxy()).send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             if (!spec.followRedirects()) return resp;   // takip kapalı → 3xx olduğu gibi değerlendirilir (kw §5.1)

@@ -62,6 +62,11 @@ public final class KeywordResultMapper {
         if (Boolean.TRUE.equals(res.getContentChanged())) {
             res.setChangeSummaryJson(com.sitemonitor.service.keyword.content.KeywordChangeDetector.summaryJsonOf(r.get("change_summary")));
         }
+        // kw son inceleme O-3 / D-7: değişim bu kontrolde ölçülmediyse nedeni (yalnız bilinen kod — kart / panel gösterir)
+        String skipped = str(r.get("change_skipped"));
+        if (skipped != null && com.sitemonitor.service.KeywordCheckerService.CHANGE_SKIP_CODES.contains(skipped)) {
+            res.setChangeNote(skipped);
+        }
         if (ok) return res;
         // ── Teşhis (yalnız başarısız satır) ──
         String reason = str(r.get("failure_reason"));

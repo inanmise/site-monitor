@@ -117,10 +117,33 @@ public class KeywordContentController {
         // Başka ayarla (maske / seçici / algoritma) alınmış temel YOK sayılır (spec_hash) — ekranda da gösterilmez
         String spec = KeywordChangeDetector.specHash(m.getChangeMask(), m.getChangeSelector());
         KeywordChangeBaseline b = baselines.find(m.getId()).filter(x -> spec.equals(x.getSpecHash())).orElse(null);
-        data.put("baseline", KeywordChangeBaselineService.toApi(b, true));
+        boolean canEdit = canEdit(session, m);
+        // kw son inceleme O-5: temel METNİ (≤ 64 000 karakter — kimlik bilgili sayfanın tüm görünür metni olabilir) yalnız
+        // izlemeyi DÜZENLEYEBİLENE; okuyucu (VIEW paylaşımı, 7/24, AUDIT) text: null + text_hidden: true görür. Fark özeti
+        // (latest.summary, ≤ 20 satır) okuyuculara kalır — alarm postası zaten taşıyor.
+        Map<String, Object> baseline = KeywordChangeBaselineService.toApi(b, true);
+        if (baseline != null && !canEdit) {
+            baseline.put("text", null);
+            baseline.put("text_hidden", true);
+        }
+        data.put("baseline", baseline);
         data.put("latest", latest(m.getId()));
-        data.put("can_edit", canEdit(session, m));
+        data.put("skipped", skipped(m.getId()));
+        data.put("can_edit", canEdit);
         return ResponseEntity.ok(ok(data));
+    }
+
+    /**
+     * Son kontrolde değişim ölçülmediyse nedeni (kw son inceleme O-3 / D-7): {@code {checked_at, note}} — {@code note} ∈
+     * {@code KeywordCheckerService.CHANGE_SKIP_CODES}; son kontrol değişimi ölçtüyse ya da hiç kontrol yoksa {@code null}.
+     */
+    private Map<String, Object> skipped(Long monitorId) {
+        List<KeywordResult> rows = contentQueries.latestRow(monitorId);
+        if (rows == null || rows.isEmpty() || rows.get(0).getChangeNote() == null) return null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("checked_at", rows.get(0).getCheckedAt());
+        out.put("note", rows.get(0).getChangeNote());
+        return out;
     }
 
     private Map<String, Object> latest(Long monitorId) {
@@ -146,7 +169,7 @@ public class KeywordContentController {
                     "You cannot change the content baseline of this team's monitor."));
         }
         boolean deleted = baselines.delete(m.getId());
-        boolean closed = closeOpenChangeAlarm(m, username(session), NOTE_BASELINE_CLEARED);
+        boolean closed = closeOpenChangeAlarm(m, session, NOTE_BASELINE_CLEARED);
         auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()),
                 AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "action", "baseline_clear",
                         "deleted", deleted, "closed_alarm", closed), null);
@@ -158,11 +181,14 @@ public class KeywordContentController {
 
     /**
      * Bu izlemenin açık KEYWORD_CHANGED alarmını elle kapatır (sözleşme §7.2). Aynı URL'yi izleyen BAŞKA bir izlemenin açtığı
-     * olaya dokunulmaz ({@link EscalationService#closableBy} — açan biliniyorsa yalnız açan izleme kapatır). Kapanış hatası
-     * temel işlemini geri almaz (WARN). @return en az bir alarm kapandıysa true.
+     * olaya dokunulmaz ({@link EscalationService#closableBy} — açan biliniyorsa yalnız açan izleme kapatır). Diğer elle kapanışlar
+     * gibi (kw son inceleme ŞÜPHE): çözen = oturumun GÖRÜNEN adı (yoksa kullanıcı adı) ve kapanan her alarm için
+     * {@code ALERT_RESOLVE} denetimi. Kapanış hatası temel işlemini geri almaz (WARN). @return en az bir alarm kapandıysa true.
      */
-    boolean closeOpenChangeAlarm(KeywordMonitor m, String by, String note) {
+    boolean closeOpenChangeAlarm(KeywordMonitor m, HttpSession session, String note) {
         boolean closed = false;
+        String dn = displayName(session);
+        String by = dn != null ? dn : username(session);
         try {
             Map<String, Object> owner = new HashMap<>();
             owner.put("monitor_id", m.getId());
@@ -172,6 +198,9 @@ public class KeywordContentController {
                 if (e.getId() == null || !EscalationService.closableBy(e, owner)) continue;
                 escalationService.resolve(e.getId(), by, note);
                 closed = true;
+                auditService.recordAction("ALERT_RESOLVE", session, "ALERT_EVENT", String.valueOf(e.getId()),
+                        AuditDetail.of("domain", e.getDomain() == null ? "" : AuditDetail.safeTarget(e.getDomain()),
+                                "note", note, "via", "keyword_baseline"), null);
             }
         } catch (RuntimeException ex) {
             log.warn("İçerik değişimi alarmı kapatılamadı (izleme {}): {}", m.getId(), ex.toString());
@@ -208,6 +237,14 @@ public class KeywordContentController {
                 Map<String, Object> extra = new LinkedHashMap<>();
                 extra.put("failure_reason", reason);
                 extra.put("http_status", r.get("http_status"));
+                extra.put("change_skipped", r.get("change_skipped"));   // kw son inceleme O-3 / D-7: neden ölçülmedi
+                if (com.sitemonitor.service.KeywordCheckerService.CHANGE_SKIP_SELECTOR_NOT_FOUND.equals(r.get("change_skipped"))) {
+                    return conflict("KEYWORD_BASELINE_FETCH_FAILED", Msg.t(
+                            "Değişim seçicisi sayfada metin içeren bir öğe bulmadı; yeni temel alınamadı, mevcut temel değişmedi. "
+                                    + "Seçiciyi izleme ayarlarından denetleyin.",
+                            "The change selector did not match any element with text on the page, so no new baseline was taken; "
+                                    + "the current one is unchanged. Check the selector in the monitor settings."), extra);
+                }
                 return conflict("KEYWORD_BASELINE_FETCH_FAILED", Msg.t(
                         "Sayfa okunamadığı (ya da kabul edilen bir yanıtla dönmediği) için yeni temel alınamadı; mevcut temel değişmedi. "
                                 + "Kontrol geçmişindeki nedeni inceleyip yeniden deneyin.",
@@ -216,7 +253,7 @@ public class KeywordContentController {
             }
             KeywordChangeBaseline b = baselines.takeManual(m.getId(), capture.snapshot(), capture.bytes(), capture.specHash(),
                     username(session), displayName(session));
-            boolean closed = closeOpenChangeAlarm(m, username(session), NOTE_BASELINE_TAKEN);
+            boolean closed = closeOpenChangeAlarm(m, session, NOTE_BASELINE_TAKEN);
             auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()),
                     AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "action", "baseline_set",
                             "bytes", capture.bytes(), "closed_alarm", closed), null);

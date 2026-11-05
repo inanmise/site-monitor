@@ -487,6 +487,10 @@ public class StatusPageService {
                 // başarısız ya da açık sorgu hatası alarmı); kural ihlali / yavaş sorgu iş göstergesidir — en fazla degraded.
                 if ("dbquery".equals(row.get("type")))
                     yield failed || Boolean.TRUE.equals(row.get("open_query_failure")) ? M_DOWN : M_DEGRADED;
+                // Anahtar kelime (kw son inceleme O-6): yalnız içerik değişimi alarmı açıksa (KEYWORD_CHANGED) sayfa ayakta —
+                // kesinti değil, en fazla degraded. Son kontrol başarısızsa ya da başka bir keyword alarmı açıksa kural değişmez.
+                if ("keyword".equals(row.get("type")) && !failed && Boolean.TRUE.equals(row.get("open_change_only")))
+                    yield M_DEGRADED;
                 yield M_DOWN;
             }
             case "paused" -> M_PAUSED;

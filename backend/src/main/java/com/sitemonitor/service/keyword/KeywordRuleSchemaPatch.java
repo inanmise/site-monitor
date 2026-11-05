@@ -18,7 +18,7 @@ import java.util.List;
  *   <li>{@code keyword_monitors}: {@code rules_json}, {@code rule_logic}, {@code min_bytes}, {@code max_bytes},
  *       {@code change_detect}, {@code change_mask}, {@code change_selector}.</li>
  *   <li>{@code keyword_results}: {@code rule_results_json}, {@code breach_level}, {@code content_fingerprint},
- *       {@code content_changed}, {@code change_summary}.</li>
+ *       {@code content_changed}, {@code change_summary}, {@code change_note} (kw son inceleme O-3 / D-7).</li>
  * </ul>
  * Kolonlar varlıklarda da tanımlı (ddl-auto ekler); bu yama ddl-auto'nun sessizce atladığı ortamları kapatır. Hepsi NULLABLE,
  * varsayılansız (NULL = eski satır: tek kelime, boyut / değişim kapalı, kural sonucu yok). {@code keyword_results} büyük bir
@@ -46,7 +46,8 @@ public class KeywordRuleSchemaPatch {
             new Col("keyword_results", "breach_level", "VARCHAR(10)"),
             new Col("keyword_results", "content_fingerprint", "VARCHAR(64)"),
             new Col("keyword_results", "content_changed", "BOOLEAN"),
-            new Col("keyword_results", "change_summary", "TEXT"));
+            new Col("keyword_results", "change_summary", "TEXT"),
+            new Col("keyword_results", "change_note", "VARCHAR(32)"));
 
     private final JdbcTemplate jdbc;
 

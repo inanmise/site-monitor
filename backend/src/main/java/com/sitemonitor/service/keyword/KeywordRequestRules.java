@@ -264,6 +264,27 @@ public final class KeywordRequestRules {
         return origin(u) + path + (u.getRawQuery() != null ? "?" + u.getRawQuery() : "");
     }
 
+    /**
+     * İzleme / test URL'sinin kaynağı (şema + host + port; şema / host küçük harf, varsayılan port düşer — {@code https://a} =
+     * {@code https://a:443}). Çözülemeyen / host'suz değer → {@code null}. Kayıtlı sırların (Basic auth parolası, özel başlıklar)
+     * yalnız izlemenin kendi kaynağına gönderilmesi kuralı bunu kullanır (kw son inceleme Y-1 / O-1 / D-8).
+     */
+    public static String originOf(String url) {
+        URI u = parse(url);
+        return u == null || u.getHost() == null || u.getHost().isBlank() ? null : origin(u);
+    }
+
+    /** İki URL aynı kaynakta mı ({@link #originOf}); biri çözülemezse {@code false} (güvenli taraf). */
+    public static boolean sameOrigin(String a, String b) {
+        String oa = originOf(a);
+        return oa != null && oa.equals(originOf(b));
+    }
+
+    /** URI sürümü — yönlendirme hop'u ile ilk istek aynı kaynakta mı (D-8: kimlik bilgisi yalnız aynı kaynağa). */
+    public static boolean sameOrigin(URI a, URI b) {
+        return a != null && b != null && a.getHost() != null && b.getHost() != null && origin(a).equals(origin(b));
+    }
+
     private static String origin(URI u) {
         String scheme = u.getScheme() == null ? "http" : u.getScheme().toLowerCase(Locale.ROOT);
         String host = u.getHost() == null ? "" : u.getHost().toLowerCase(Locale.ROOT);

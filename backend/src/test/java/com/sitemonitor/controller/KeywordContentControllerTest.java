@@ -152,6 +152,59 @@ class KeywordContentControllerTest {
     }
 
     @Test
+    @DisplayName("kw son inceleme O-5: temel METNİ yalnız düzenleyebilene — okuyucu (AUDIT / düzenleme izni yok) text null + "
+            + "text_hidden; satır sayısı ve fark özeti okuyucuya kalır; son kontrolde değişim ölçülmediyse skipped notu")
+    void baselineTextOnlyForEditors() throws Exception {
+        String spec = KeywordChangeDetector.specHash("DIGITS,DATES", "#icerik");
+        when(baselines.find(41L)).thenReturn(Optional.of(baseline(spec)));
+        KeywordResult ch = new KeywordResult();
+        ch.setCheckedAt("2026-11-05T09:00:00");
+        ch.setContentChanged(true);
+        ch.setChangeSummaryJson("{\"lines_before\":2,\"lines_after\":2,\"removed\":[\"Fiyat #\"],\"added\":[],"
+                + "\"removed_total\":1,\"added_total\":0,\"truncated\":false}");
+        when(contentQueries.latestChangeRow(41L)).thenReturn(List.of(ch));
+        KeywordResult last = new KeywordResult();
+        last.setCheckedAt("2026-11-05T10:00:00");
+        last.setChangeNote("HTTP_ERROR");
+        when(contentQueries.latestRow(41L)).thenReturn(List.of(last));
+        mvc.perform(get("/api/monitoring/keyword/41/change").session(session("AUDIT", null, 4L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_edit").value(false))
+                .andExpect(jsonPath("$.data.baseline.text").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.baseline.text_hidden").value(true))
+                .andExpect(jsonPath("$.data.baseline.line_count").value(2))
+                .andExpect(jsonPath("$.data.latest.summary.removed[0]").value("Fiyat #"))
+                .andExpect(jsonPath("$.data.skipped.note").value("HTTP_ERROR"))
+                .andExpect(jsonPath("$.data.skipped.checked_at").value("2026-11-05T10:00:00"));
+        // düzenleme izni olmayan takım üyesi de okuyucu
+        when(permissionService.allows(any(HttpSession.class), eq("monitoring.crud"), eq("edit"))).thenReturn(false);
+        mvc.perform(get("/api/monitoring/keyword/41/change").session(session("USER", 5L, 2L)))
+                .andExpect(jsonPath("$.data.baseline.text_hidden").value(true));
+        // düzenleyebilen metni görür, text_hidden yok
+        when(permissionService.allows(any(HttpSession.class), eq("monitoring.crud"), eq("edit"))).thenReturn(true);
+        when(contentQueries.latestRow(41L)).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/keyword/41/change").session(session("USER", 5L, 2L)))
+                .andExpect(jsonPath("$.data.baseline.text").value("Fiyat #\nGüncel: @"))
+                .andExpect(jsonPath("$.data.baseline.text_hidden").doesNotExist())
+                .andExpect(jsonPath("$.data.skipped").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("POST change/baseline: seçici öğe bulmadı → 409 KEYWORD_BASELINE_FETCH_FAILED + change_skipped=SELECTOR_NOT_FOUND, "
+            + "temel alınmaz")
+    void takeBaselineSelectorNotFound() throws Exception {
+        when(schedulerService.keywordCheckSpec(any(KeywordMonitor.class), eq(false))).thenAnswer(a -> liveSpec(a.getArgument(0)));
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
+                .thenReturn(new java.util.HashMap<>(Map.of("ok", true, "change_skipped", "SELECTOR_NOT_FOUND")));
+        mvc.perform(post("/api/monitoring/keyword/41/change/baseline").session(session("USER", 5L, 2L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("KEYWORD_BASELINE_FETCH_FAILED"))
+                .andExpect(jsonPath("$.change_skipped").value("SELECTOR_NOT_FOUND"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("seçici")));
+        verify(baselines, never()).takeManual(anyLong(), any(), anyLong(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("GET change: başka ayarla alınmış temel (spec farklı) gösterilmez; temel yok → null; son değerlendirme yok → null")
     void staleBaselineHidden() throws Exception {
         when(baselines.find(41L)).thenReturn(Optional.of(baseline("eski-spec-00000")));
@@ -197,8 +250,13 @@ class KeywordContentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.deleted").value(true))
                 .andExpect(jsonPath("$.data.closed_alarm").value(true));
-        verify(escalationService).resolve(7001L, "user2", "İçerik temeli sıfırlandı");
+        // kw son inceleme ŞÜPHE: çözen = GÖRÜNEN ad (diğer elle kapanışlar gibi) + kapanan alarm için ALERT_RESOLVE denetimi
+        verify(escalationService).resolve(7001L, "Kullanıcı 2", "İçerik temeli sıfırlandı");
         verify(escalationService, never()).resolve(eq(7002L), any(), any());
+        verify(auditService).recordAction(eq("ALERT_RESOLVE"), any(HttpSession.class), eq("ALERT_EVENT"), eq("7001"),
+                argThat((String d) -> d != null && d.contains("keyword_baseline") && d.contains("İçerik temeli sıfırlandı")), isNull());
+        verify(auditService, never()).recordAction(eq("ALERT_RESOLVE"), any(HttpSession.class), eq("ALERT_EVENT"), eq("7002"),
+                any(), any());
         verify(auditService).recordAction(eq("MONITOR_UPDATE"), any(HttpSession.class), eq("KEYWORD_MONITOR"), eq("41"),
                 argThat(d -> d != null && d.contains("baseline_clear") && !d.contains("id=5")), isNull());
     }
@@ -294,7 +352,9 @@ class KeywordContentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.baseline.source").value("MANUAL"))
                 .andExpect(jsonPath("$.data.closed_alarm").value(true));
-        verify(escalationService).resolve(7001L, "user2", "Yeni içerik temeli alındı");
+        verify(escalationService).resolve(7001L, "Kullanıcı 2", "Yeni içerik temeli alındı");
+        verify(auditService).recordAction(eq("ALERT_RESOLVE"), any(HttpSession.class), eq("ALERT_EVENT"), eq("7001"),
+                argThat((String d) -> d != null && d.contains("Yeni içerik temeli alındı")), isNull());
         verify(auditService).recordAction(eq("MONITOR_UPDATE"), any(HttpSession.class), eq("KEYWORD_MONITOR"), eq("41"),
                 argThat((String d) -> d != null && d.contains("baseline_set")), isNull());
 
