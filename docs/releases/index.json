@@ -1,9 +1,170 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-31T18:52:59Z",
+  "generatedAt": "2026-11-05T02:47:14Z",
   "repo": "inanmise/site-monitor",
-  "count": 800,
+  "count": 801,
   "releases": [
+    {
+      "version": "20.179.0",
+      "tag": "v20.179.0",
+      "releasedAt": "2026-11-05T02:47:08Z",
+      "commit": "12f436f7866bc1b81f6e3966e7af4d66e84b0108",
+      "prevVersion": "20.178.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 8,
+        "fix": 7,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "12f436f7",
+          "subject": "CI düzeltmeleri — kanal raporu testi ay dönümünde kırılıyordu, k6 zamanlama testi satır bırakıyordu, kaynak analizi sekmeleri tablette ızgara"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "1a5ae984",
+          "subject": "kaynak analizi algoritma 3 — inceleme düzeltmelerinin belgesi (site süresi 120–900, ilerleme, eksik site, bütçe nedenleri)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d08bf5d6",
+          "subject": "kaynak analizi prs3 inceleme — ön yüz düzeltmeleri gerçek arka uç dökümleriyle sınandı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "477cf32a",
+          "subject": "kaynak analizi prs3 G — ana sayfanın kırık bağlantıları iç sayfa adayı olmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "cf39ed41",
+          "subject": "kaynak analizi algoritma 3 — bağımsız inceleme düzeltmeleri (eklenti başlığı, sahte tekrar, vekil HTTP sürümü, bilinmeyen bileşen, robots belirteçleri, kırık bağlantı türü)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "d5452320",
+          "subject": "kaynak analizi prs3 G — çok sayfalı koşunun sayfa ilerlemesi (pages_done / pages_total)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bd5c83a6",
+          "subject": "kaynak analizi prs3 inceleme — site özetinin capped'i yalnız ana sayfa, eğilim büyümesi analiz başına okunur, kısmi analizde not aşımı kanıtsız"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6e6331ae",
+          "subject": "dağıtım kontrol listesi — alarm akışı 7/24 süzgecinin tek seferlik RESOLVED dalgası"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "56e787be",
+          "subject": "prs3 birleşmesinde fe1 etiketleri öncelikli — dışa aktarım beklentileri güncellendi"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "cc996336",
+          "subject": "kaynak analizi algoritma 3, bütçe, eğilim, çok sayfalı analiz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "860d1e50",
+          "subject": "kaynak analizi prs3 G — çok sayfalı analiz arka ucu (iç sayfalar, ortak nesneler bir kez, tek bütçe)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b518f2ea",
+          "subject": "kaynak analizi prs3 — Excel nesne derin sütunları, telefonda 5+ bölüm sekmesi iki satır, bütçe girişi dokunma hedefi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "cc25fda0",
+          "subject": "kaynak analizi site görünümü — açılamayan sayfa metni hata kalite kapısına uygun anahtarda"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "06127233",
+          "subject": "kaynak analizi algoritma 3 — derin analiz arka ucu (A yükleme ve ağ, B israf ve önbellek, C görsel ve yazı tipi, D güvenlik, E SEO + erişilebilirlik)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "13bd3a46",
+          "subject": "alarm akışında yalnız 7/24'e bildirilen alarmlar (noc-only, varsayılan açık)"
+        },
+        {
+          "type": "fix",
+          "scope": "kaynak-analizi",
+          "breaking": false,
+          "sha": "a465c93d",
+          "subject": "denetim bölümüne odak tembel parça yüklenene dek beklenir; eski analiz bloğu odak hedefi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "807c59af",
+          "subject": "kaynak analizi prs3 F/G — model, ekran, dışa aktarım testleri ve e2e (bütçe, eğilim, site, yönetici PDF)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "07edf0e8",
+          "subject": "kaynak analizi derin analiz arayüzü (A–E) — kategori puanları, ayrıntılı denetim bölümü, yeni bulgular ve nesne alanları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b22452f8",
+          "subject": "kaynak analizi bütçesi ve eğilim arka ucu (F1 + F2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "be569c48",
+          "subject": "kaynak analizi — performans bütçesi, eğilim görünümü, çok sayfalı analiz arayüzü ve yönetici PDF'i (ara kayıt)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.178.1",
       "tag": "v20.178.1",
