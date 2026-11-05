@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, cleanup } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 // Kaynak analizi — GERÇEK arka uç yanıtlarıyla (prs3 sözleşme incelemesi D9): sahte fikstürle yazılan testlerin
@@ -252,5 +252,7 @@ describe('gerçek yanıt + inceleme sonrası tel değişiklikleri', () => {
     fireEvent.click(slot('prs-site-confirm'))
     await waitFor(() => expect(slot('prs-run-site')).not.toBeNull())
     await waitFor(() => expect(slot('prs-run-site').textContent).toBe('Site · sayfa 2 / 5'))
+    // bh-prs3 O-2: çubuk sayfa ilerlemesinden (2 / 5 sayfa bitti = %40) — nesne sayacından değil
+    await waitFor(() => expect(within(slot('prs-running')).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('40'))
   })
 })

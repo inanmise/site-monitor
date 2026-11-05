@@ -470,7 +470,9 @@ function FontsBlock({ data, ctx }) {
                 label={t('prs.deep.font.missingDisplay')} />
             </div>
           )}
-          {(!v.nonWoff2 || v.nonWoff2.rows.length === 0) && (!v.missingDisplay || v.missingDisplay.rows.length === 0) && (v.count ?? 0) > 0 && (
+          {/* Biçimi bilinmeyen yazı tipi varken "hepsi WOFF2" denmez — bilinmeyen iyi değildir (bh-prs3 D-7) */}
+          {(!v.nonWoff2 || v.nonWoff2.rows.length === 0) && (!v.missingDisplay || v.missingDisplay.rows.length === 0) && (v.count ?? 0) > 0
+            && !(v.unknownFormat > 0) && (
             <EmptyLine good>{t('prs.deep.font.allGood')}</EmptyLine>
           )}
         </>

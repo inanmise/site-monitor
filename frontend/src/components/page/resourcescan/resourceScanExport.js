@@ -9,7 +9,7 @@ import {
 } from './resourceScanModel.js'
 // prs3 F3 (fe2): yönetici özeti, A–E sayfaları, çok sayfalı (site) analiz
 import {
-  algoChanges, budgetExportRows, categoryBytesChart, categoryScoreRows, categoryScoreText, compareExportRows, deepSheets,
+  budgetExportRows, categoryBytesChart, categoryScoreRows, categoryScoreText, compareExportRows, compareNotes, deepSheets,
   executiveSections, executiveSheetRows, pageStatusText, priorityActions, actionRow, siteModel, sitePageSheetRows, siteSharedSheetRows,
   withObjectDeepColumns,
 } from './resourceScanReportModel.js'
@@ -289,9 +289,9 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
   if (!prev) para(t('prs.pdf.compareNone'))
   else {
     para(t('prs.pdf.compareWith', fmtDate(prev.started_at)), { size: 8.5 })
-    const changes = algoChanges([{ algo: algorithmVersion(prev, null) }, { algo: algorithmVersion(scan, analysis) }])
-    if (changes.length) para(t('prs.pdf.compareAlgo', `v${changes[0].from}`, `v${changes[0].to}`), { size: 8 })
-    const cmp = compareExportRows(scan, prev, t, locale)
+    // Algoritma değişti (not / güvenlik satırı yok) ve kısmi analiz (yön yok) — ekranla aynı uyarılar (bh-prs3 D-4)
+    for (const note of compareNotes(scan, prev, t, analysis)) para(note, { size: 8 })
+    const cmp = compareExportRows(scan, prev, t, locale, analysis)
     if (!cmp.length) para(t('prs.pdf.compareNoValues'))
     else {
       doc.lastAutoTable = null
@@ -327,7 +327,7 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
     const worst = site.worst.length ? site.worst : site.pages.slice(0, 5)
     doc.lastAutoTable = null
     table([[t('prs.export.col.url'), t('prs.grade'), t('prs.kpi.load'), t('prs.kpi.size')],
-      ...worst.map((p) => [p.url, p.status === 'ok' ? `${p.grade ?? '—'}${p.letter ? ` ${p.letter}` : ''}` : pageStatusText(p.status, t),
+      ...worst.map((p) => [p.url, p.status === 'ok' ? `${p.grade ?? '—'}${p.letter ? ` ${p.letter}` : ''}${p.capped ? ` (${t('prs.pdf.partialScore')})` : ''}` : pageStatusText(p.status, t),
         formatMs(p.load, locale), formatSize(p.size, { locale })])], { startY: y, columnStyles: { 0: { cellWidth: 420 } } })
     after()
   }
