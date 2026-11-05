@@ -336,6 +336,15 @@ final class EmailSamples {
                 LONG_URL, "HIGH", "HTTP_SLOW", null,
                 map("url", LONG_URL, "http_status", 200, "response_ms", 4200, "threshold_ms", 2000, "monitor_id", 44,
                         "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 94L));
+        // 2026-11-05: alarm iletimi — sahip takımın postasının AYNISI, gövdenin başında iletim bandı (uzun AD takım adlarıyla)
+        alert("alert-forwarded", "[Site Monitor] YÜKSEK · Ödeme portalı · HTTP Yavaş Yanıt",
+                "YÜKSEK: " + LONG_URL + " HTTP izlemesinde yanıt süresi eşiği aşıldı — 4200 ms (eşik 2000 ms).",
+                LONG_URL, "HIGH", "HTTP_SLOW", null,
+                map("url", LONG_URL, "http_status", 200, "response_ms", 4200, "threshold_ms", 2000, "monitor_id", 44,
+                        "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 95L,
+                        EmailTemplateBuilder.CTX_FORWARD_NOTE, EmailTemplateBuilder.forwardNote(
+                                List.of("Dijital Kanallar Uygulama Geliştirme ve Operasyon Takımı (" + TR + ")"),
+                                "Ağ Operasyon Merkezi — 7/24 İzleme ve Olay Yönetimi Takımı", false)));
         // 2026-10-31: veritabanı sorgu izlemesi — kurallar tablosu, çalıştırılan sorgu ve alarm anındaki satırlar (maskeli kolon)
         alert("alert-dbquery-threshold", "[Site Monitor] KRİTİK · Bekleyen Siparişler · Veritabanı Sorgu Eşiği",
                 "KRİTİK: Bekleyen Siparişler sorgusunda kural ihlali — Bekleyen sipariş: gelen 25 · beklenen ≤ 10 (kritik eşik).",

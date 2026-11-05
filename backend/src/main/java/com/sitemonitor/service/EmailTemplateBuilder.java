@@ -227,6 +227,84 @@ public class EmailTemplateBuilder {
         };
     }
 
+    // ── Alarm iletimi bandı (2026-11-05) ────────────────────────────────────
+    /**
+     * İletilen postanın bağlam anahtarı: {@code {owner_teams: [..], recipient_team: "..", plural: bool}}. Varsa gövdenin
+     * BAŞINA (kartın içinde, rozet / başlıktan önce) nötr bir bilgi bandı, düz metnin ilk satırlarına aynı cümle eklenir;
+     * yoksa posta bayt bayt aynıdır ({@link #withForwardBand} aynı nesneyi döndürür).
+     */
+    public static final String CTX_FORWARD_NOTE = "forward_note";
+    /** Bandın başlığı (HTML ve düz metin). */
+    static final String FORWARD_BAND_TITLE = "İletilen alarm";
+
+    /** Bant bağlamı — {@code plural}: posta birden çok alarm listeler (sessiz saat özeti, fırtına). */
+    public static Map<String, Object> forwardNote(List<String> ownerTeams, String recipientTeam, boolean plural) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        List<String> owners = new ArrayList<>();
+        if (ownerTeams != null) {
+            for (String s : ownerTeams) if (s != null && !s.isBlank() && !owners.contains(s.trim())) owners.add(s.trim());
+        }
+        m.put("owner_teams", owners);
+        m.put("recipient_team", recipientTeam == null ? "" : recipientTeam.trim());
+        if (plural) m.put("plural", true);
+        return m;
+    }
+
+    /**
+     * Bant cümlesi (kullanıcı kararı 6): "Bu alarm &lt;sahip&gt; takımının izlemesine ait; size &lt;alıcı&gt; takımına tanımlı
+     * alarm iletimiyle gönderildi. Site Monitor'de görüntüleme erişiminiz yoksa ayrıntı için &lt;sahip&gt; takımına başvurun."
+     * Bant yoksa null.
+     */
+    public static String forwardBandText(Map<String, Object> note) {
+        if (note == null) return null;
+        List<String> owners = new ArrayList<>();
+        if (note.get("owner_teams") instanceof java.util.Collection<?> c) {
+            for (Object o : c) if (o != null && !String.valueOf(o).isBlank()) owners.add(String.valueOf(o).trim());
+        }
+        String recipient = note.get("recipient_team") == null ? "" : String.valueOf(note.get("recipient_team")).trim();
+        boolean plural = Boolean.TRUE.equals(note.get("plural"));
+        boolean many = owners.size() > 1;
+        String who;
+        if (owners.isEmpty()) who = null;
+        else if (owners.size() == 1) who = owners.get(0);
+        else who = String.join(", ", owners.subList(0, owners.size() - 1)) + " ve " + owners.get(owners.size() - 1);
+        StringBuilder sb = new StringBuilder(plural ? "Bu alarmlar " : "Bu alarm ");
+        if (who == null) sb.append(plural ? "başka bir takımın izlemelerine ait; " : "başka bir takımın izlemesine ait; ");
+        else sb.append(who).append(many ? " takımlarının " : " takımının ").append(plural ? "izlemelerine ait; " : "izlemesine ait; ");
+        sb.append(recipient.isEmpty() ? "size tanımlı bir alarm iletimiyle gönderildi. "
+                : "size " + recipient + " takımına tanımlı alarm iletimiyle gönderildi. ");
+        sb.append("Site Monitor'de görüntüleme erişiminiz yoksa ayrıntı için ")
+          .append(who == null ? "izlemenin sahibi takıma" : who + (many ? " takımlarına" : " takımına"))
+          .append(" başvurun.");
+        return sb.toString();
+    }
+
+    /** Bağlamdaki {@link #CTX_FORWARD_NOTE} bandı postaya eklenir; bağlamda bant yoksa AYNI nesne döner (bugünkü posta). */
+    @SuppressWarnings("unchecked")
+    public static MailDoc.Mail withForwardBand(MailDoc.Mail mail, Map<String, Object> ctx) {
+        if (mail == null || ctx == null || !(ctx.get(CTX_FORWARD_NOTE) instanceof Map<?, ?> note)) return mail;
+        return withForwardNote(mail, (Map<String, Object>) note);
+    }
+
+    /**
+     * Bandı hazır postaya ekler: HTML'de gövde açılışının ({@link MailKit#bodyOpen()}) hemen ardına — kartın içinde, ilk blok —,
+     * düz metnin başına. Gövde açılışı bulunamazsa (MailDoc dışı HTML) yalnız düz metin değişir.
+     */
+    public static MailDoc.Mail withForwardNote(MailDoc.Mail mail, Map<String, Object> note) {
+        String sentence = forwardBandText(note);
+        if (mail == null || sentence == null) return mail;
+        String block = MailKit.space(MailKit.alert(Tone.NEUTRAL, MailKit.esc(FORWARD_BAND_TITLE), MailKit.esc(sentence)), 16);
+        String html = mail.html();
+        if (html != null) {
+            String open = MailKit.bodyOpen();
+            int at = html.indexOf(open);
+            if (at >= 0) html = html.substring(0, at + open.length()) + block + html.substring(at + open.length());
+        }
+        String band = "(i) " + FORWARD_BAND_TITLE + "\n" + sentence;
+        String text = mail.text() == null || mail.text().isBlank() ? band + "\n" : band + "\n\n" + mail.text();
+        return new MailDoc.Mail(html, text);
+    }
+
     // ── HTML ─────────────────────────────────────────────────────────────────
     public String buildHtml(AlertMail m) {
         Integer days = m.daysRemaining();

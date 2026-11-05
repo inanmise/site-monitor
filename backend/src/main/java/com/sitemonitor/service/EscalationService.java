@@ -214,6 +214,59 @@ public class EscalationService {
         this.activityLog = activityLog;
     }
 
+    /**
+     * Alarm iletimi (2026-11-05, kullanıcı kararı): izlemenin SAHİBİ takımın tanımladığı iletimler — alarm sahibin aldığı her
+     * bildirimi (açılış, yükselme, hatırlatma, elle gönderim, çözüm) alıcı takıma / üyelerine AYRI posta (bant) + push olarak
+     * da gider. Okuma yalnız bellekten ({@link com.sitemonitor.service.forward.AlertForwardRouting#anyFor} false ise başka
+     * hiçbir şey yapılmaz). Alan enjeksiyonu + isteğe bağlı: yokken (elle kurulan birim testleri) gönderim yolları bugünküyle
+     * bayt bayt aynıdır. Sağlayıcı üzerinden (ilk kullanımda) çözülür — yönlendirme servisinin bağımlılıkları bu sınıfa geri
+     * dönse bile açılışta döngü oluşmaz.
+     */
+    @Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.forward.AlertForwardRouting> forwardRoutingProvider;
+    private volatile com.sitemonitor.service.forward.AlertForwardRouting forwardRouting;
+
+    /** İletim yönlendirmesi — yoksa null (iletim yok). */
+    private com.sitemonitor.service.forward.AlertForwardRouting forwardRouting() {
+        var r = forwardRouting;
+        if (r != null) return r;
+        var p = forwardRoutingProvider;
+        if (p == null) return null;
+        try {
+            r = p.getIfAvailable();
+        } catch (Exception e) {
+            log.debug("İletim yönlendirmesi çözülemedi (iletim yok sayılır): {}", e.toString());
+            return null;
+        }
+        if (r != null) forwardRouting = r;
+        return r;
+    }
+
+    /** İletimin push ayağı ({@code UserPushService}) — isteğe bağlı; yokken iletim yalnız e-posta. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.forward.ForwardPushSink forwardPush;
+
+    /** "Kim bilgilendirilir?" simülatörünün iletim satırları için kapsam ayrıntısı (yalnız simülatör okur). */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.AlertForwardRepository forwardRepo;
+
+    /** Test dikişi. */
+    void setForwarding(com.sitemonitor.service.forward.AlertForwardRouting routing,
+                       com.sitemonitor.service.forward.ForwardPushSink push) {
+        this.forwardRouting = routing;
+        this.forwardPush = push;
+    }
+
+    /** Test dikişi. */
+    void setForwardRepo(com.sitemonitor.repository.AlertForwardRepository repo) {
+        this.forwardRepo = repo;
+    }
+
+    /** Bildirim günlüğü alıcı rolü — iletimle giden (ayrı) posta satırı. */
+    public static final String ROLE_FORWARD = "FORWARD";
+    /** İletim postasının adresleri sahip / önceki iletim postasında zaten vardı — ikinci posta gönderilmedi (karar satırı). */
+    public static final String STATUS_FORWARD_ALREADY_MAILED = "SKIPPED: adresler bu alarmın başka bir postasını aldı";
+
     /** Tarama bağlamındaki izleme kimliği (sorgu yok) — yoksa null. */
     private static Long ctxMonitorId(Map<String, Object> ctx) {
         return ctx != null && ctx.get("monitor_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
@@ -920,8 +973,15 @@ public class EscalationService {
                 "This alert has no owning team, so no notification is sent."));
     }
 
-    /** Onay pop-up'ında gösterilen tek alıcı satırı. kind: TEAM | CONTACT. */
-    public record ReNotifyRecipient(String email, String name, String role, String kind) {}
+    /**
+     * Onay pop-up'ında gösterilen tek alıcı satırı. kind: TEAM | CONTACT | ONCALL | FORWARD. {@code teamName}: FORWARD
+     * satırında alıcı takımın adı (alarm iletimi, 2026-11-05); diğerlerinde null.
+     */
+    public record ReNotifyRecipient(String email, String name, String role, String kind, String teamName) {
+        public ReNotifyRecipient(String email, String name, String role, String kind) {
+            this(email, name, role, kind, null);
+        }
+    }
 
     /**
      * Alıcı çözümü çözüm/ilk-alarm bildirimiyle AYNI olmalı: standalone izleme (domain/keyword/ping/http) takımı
@@ -1066,6 +1126,9 @@ public class EscalationService {
         out.put("email_total", emails.size() + contactRows.stream().filter(r -> !Boolean.TRUE.equals(r.get("email_duplicate"))
                 && !r.containsKey("delay_minutes")
                 && r.get("email") != null && !String.valueOf(r.get("email")).isBlank()).count());
+        // Alarm iletimi (2026-11-05): takımın (+ UG) iletim alıcıları — yönlendirme yoksa alan HİÇ eklenmez (bugünkü yanıt).
+        List<Map<String, Object>> forwards = simulateForwards(teamId, ug, standaloneMonitor);
+        if (forwards != null) out.put("forwards", forwards);
         return out;
     }
 
@@ -1097,6 +1160,16 @@ public class EscalationService {
             if (p.email() != null && !p.email().isBlank() && seen.add(p.email().trim().toLowerCase())) {
                 out.add(new ReNotifyRecipient(p.email().trim(), p.displayName() != null ? p.displayName() : p.username(),
                         com.sitemonitor.util.Msg.t("Nöbetçi", "On call"), "ONCALL"));
+            }
+        }
+        // Alarm iletimi (2026-11-05): sahip takımın iletimleri — gönderim (sendCombinedAlert MANUAL) aynı hedefleri aynı sırayla
+        // ayrı postayla gönderir; sahip satırlarındaki adres tekrar etmez. Satır kaldırılabilir (excludeEmails).
+        for (var t : reNotifyForwardTargets(event, targets)) {
+            for (String raw : t.emails()) {
+                String e = raw == null ? "" : raw.trim();
+                if (e.isEmpty() || !seen.add(e.toLowerCase(Locale.ROOT))) continue;
+                String team = t.recipientTeamName() != null ? t.recipientTeamName() : "-";
+                out.add(new ReNotifyRecipient(e, team, com.sitemonitor.util.Msg.t("İletim: ", "Forward: ") + team, "FORWARD", team));
             }
         }
         return out;
@@ -1193,8 +1266,17 @@ public class EscalationService {
             if (p.email() != null && !p.email().isBlank() && !excluded.contains(p.email().trim().toLowerCase())
                     && seen.add(p.email().trim().toLowerCase())) recipientCount++;
         }
+        // Alarm iletimi (2026-11-05): iletim alıcıları da sayılır (önizlemeyle aynı hedefler; hariç tutulan sayılmaz).
+        List<com.sitemonitor.service.forward.ForwardTarget> forwards = reNotifyForwardTargets(event, targets);
+        for (var t : mailOff ? List.<com.sitemonitor.service.forward.ForwardTarget>of() : forwards) {
+            for (String raw : t.emails()) {
+                String e = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+                if (!e.isEmpty() && !excluded.contains(e) && seen.add(e)) recipientCount++;
+            }
+        }
         if (recipientCount == 0 && !excluded.isEmpty()
-                && !otherChannelLeft(event, targets, contacts, excludeUsernames)) {
+                && !otherChannelLeft(event, targets, contacts, excludeUsernames)
+                && !forwardPushLeft(forwards)) {
             // Kullanıcı pop-up'ta TÜM alıcıları çıkardıysa DB'ye yazmadan reddet (→ 400).
             // Doğal sıfır-alıcı durumu (kontak/takım maili hiç yok) ESKİ davranışında kalır:
             // queued döner, sendCombinedAlert boş listeyle gönderimi zaten atlar.
@@ -1316,6 +1398,17 @@ public class EscalationService {
             log.debug("Elle gönderim push önizlemesi okunamadı (olay {}): {}", event.getId(), e.toString());
             return false;
         }
+    }
+
+    /**
+     * E-posta alıcısı kalmayan elle gönderimde iletim push'u gidecek mi (2026-11-05): iletim push ayağı varken bir hedefin push
+     * alıcısı (tüm takım ya da seçilen üyeler) varsa evet. Kişi tek tek hariç tutulduysa push ayağı kendi süzgecini uygular
+     * (önizleme push satırları); burada yalnız "kanal kaldı mı" sorulur.
+     */
+    private boolean forwardPushLeft(List<com.sitemonitor.service.forward.ForwardTarget> forwards) {
+        if (forwardPush == null || forwards == null) return false;
+        for (var t : forwards) if (t.wholeTeam() || !t.memberUserIds().isEmpty()) return true;
+        return false;
     }
 
     /** Taze bağlam + alarm anı damgaları ({@code mail_disabled}, {@code team_id}, {@code monitor_id} …) — taze anahtar ezilmez. */
@@ -2925,6 +3018,10 @@ public class EscalationService {
                 // İZ (L-Q2, 2026-10-22): atlanan çözüm postası da tek satırla günlüğe girer (açılış yoluyla aynı metinler).
                 saveLog(event.getId(), ownerTeamNames(mailSy, mailUg), "", subject, "",
                         mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok", "SKIPPED", trigger);
+                // Alarm iletimi (2026-11-05): açılışı iletimle ALMIŞ adresler (damga) sahip postasından bağımsız çözümü öğrenir;
+                // izlemede e-posta kapalıysa onların satırı da "kanal kapalı". Damga yoksa hiçbir şey (bağlam da kurulmaz).
+                sendForwardResolutions(event, resolvedBy, trigger, mailDisabled, List.of(), mailSy, mailUg,
+                        () -> resolutionContext(event, standalone), null);
                 // Kontak webhook'u da mailden BAĞIMSIZ (O-2): açılış yolu mail atlansa da webhook'u gönderiyor.
                 sendResolutionWebhooks(event, contacts, subject, trigger);
                 // Kanal BAĞIMSIZLIĞI: e-posta alıcısı yoksa push da düşmemeli. Açılış yolunda bu
@@ -2939,44 +3036,7 @@ public class EscalationService {
                 return;
             }
 
-            // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
-            // sertifika context'i alakasız olduğundan geçilmez.
-            Map<String, Object> certContext;
-            if (isDomainMon(event.getAlertType())) {   // domain → en güncel kayıt (yenilenmiş bitiş/registrar)
-                certContext = reconstructDomainContext(event.getDomain());
-            } else if (standalone) {        // keyword/ping/sayfa — alarm anı snapshot'ından detay
-                certContext = deserializeContext(event.getContextJson());
-                // Sayfa çözümünde CANLI güncel durum: son PageCheck → mail "ne çözüldü / şu an sağlıklı" gösterir
-                // (snapshot alarm anını, resolved_* anahtarları çözüm anını taşır; hata olursa zenginleştirme atlanır).
-                if (isPage(event.getAlertType())) {
-                    try {
-                        Long monId = certContext != null && certContext.get("monitor_id") instanceof Number n
-                                ? n.longValue() : null;
-                        if (monId != null) {
-                            var latest = pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monId).orElse(null);
-                            if (latest != null) {
-                                Map<String, Object> enriched = new LinkedHashMap<>(certContext);
-                                enriched.put("resolved_page_status",     latest.getStatus());
-                                enriched.put("resolved_total_resources", latest.getTotalResources());
-                                enriched.put("resolved_broken",          latest.getBrokenResources());
-                                enriched.put("resolved_timeout",         latest.getTimeoutCount());
-                                enriched.put("resolved_mixed",           latest.getMixedContentCount());
-                                enriched.put("resolved_checked_at",      latest.getCheckedAt());
-                                certContext = enriched;
-                            }
-                        }
-                    } catch (Exception ignore) { /* zenginleştirilemezse mail yine sade hâliyle gönderilir */ }
-                }
-                // Veritabanı sorgu çözümünde CANLI güncel değerler (2026-10-31): son çalıştırmanın kural sonuçları.
-                if (isDbQuery(event.getAlertType())) certContext = withDbQueryResolvedValues(certContext);
-            } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
-                certContext = null;
-            } else {
-                certContext = latestCheckRepo.findById(event.getDomain()).map(this::latestToCertContext).orElse(null);
-            }
-            // Çözüm postasında da olay kimliği taşınır (aksiyon butonları için); ctx null olabildiği
-            // için kopya map'e sarılır — MONITORING tiplerinde yukarıda bilerek null'a çekiliyor.
-            certContext = withAlertEventId(certContext, event.getId());
+            Map<String, Object> certContext = resolutionContext(event, standalone);
             String teamNames = collectTeamNames(mailSy, mailUg, event.getNotificationGroupId());
             // Recovery erişilebilirlik özeti — yalnız HTTP uptime örneği olan tipte (ACCESSIBILITY); veri yoksa null.
             EmailNotificationService.UptimeSummary uptime = null;
@@ -3001,6 +3061,10 @@ public class EscalationService {
                     event.getCreatedAt(), certContext, teamNames, uptime);
             saveLog(event.getId(), teamNames, String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
             log.info("Çözüm bildirimi → {} alıcı status={}", allEmails.size(), status);   // adres değil sayı (P4-1)
+            // Alarm iletimi (2026-11-05): açılışı iletimle ALMIŞ adreslere (damga) ayrı çözüm postası (bant) — sahip postasını
+            // zaten alan adres tekrar almaz. Damga yoksa hiçbir şey.
+            final Map<String, Object> resolvedCtx = certContext;
+            sendForwardResolutions(event, resolvedBy, trigger, false, allEmails, mailSy, mailUg, () -> resolvedCtx, uptime);
             sendResolutionWebhooks(event, contacts, subject, trigger);
             // Kişi-webhook çözüm push'u — mail sonucundan bağımsız (kanal bağımsızlığı sözleşmesi).
             try {
@@ -3012,6 +3076,52 @@ public class EscalationService {
             if (propagate) throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
         }
+    }
+
+    /**
+     * Çözüm postasının içerik bağlamı (sahip postası ve iletilen çözüm postası AYNI bağlamı kullanır — 2026-11-05'te
+     * {@code sendResolutionNotification} gövdesinden çıkarıldı, davranış aynı).
+     */
+    private Map<String, Object> resolutionContext(AlertEvent event, boolean standalone) {
+        // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
+        // sertifika context'i alakasız olduğundan geçilmez.
+        Map<String, Object> certContext;
+        if (isDomainMon(event.getAlertType())) {   // domain → en güncel kayıt (yenilenmiş bitiş/registrar)
+            certContext = reconstructDomainContext(event.getDomain());
+        } else if (standalone) {        // keyword/ping/sayfa — alarm anı snapshot'ından detay
+            certContext = deserializeContext(event.getContextJson());
+            // Sayfa çözümünde CANLI güncel durum: son PageCheck → mail "ne çözüldü / şu an sağlıklı" gösterir
+            // (snapshot alarm anını, resolved_* anahtarları çözüm anını taşır; hata olursa zenginleştirme atlanır).
+            if (isPage(event.getAlertType())) {
+                try {
+                    Long monId = certContext != null && certContext.get("monitor_id") instanceof Number n
+                            ? n.longValue() : null;
+                    if (monId != null) {
+                        var latest = pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monId).orElse(null);
+                        if (latest != null) {
+                            Map<String, Object> enriched = new LinkedHashMap<>(certContext);
+                            enriched.put("resolved_page_status",     latest.getStatus());
+                            enriched.put("resolved_total_resources", latest.getTotalResources());
+                            enriched.put("resolved_broken",          latest.getBrokenResources());
+                            enriched.put("resolved_timeout",         latest.getTimeoutCount());
+                            enriched.put("resolved_mixed",           latest.getMixedContentCount());
+                            enriched.put("resolved_checked_at",      latest.getCheckedAt());
+                            certContext = enriched;
+                        }
+                    }
+                } catch (Exception ignore) { /* zenginleştirilemezse mail yine sade hâliyle gönderilir */ }
+            }
+            // Veritabanı sorgu çözümünde CANLI güncel değerler (2026-10-31): son çalıştırmanın kural sonuçları.
+            if (isDbQuery(event.getAlertType())) certContext = withDbQueryResolvedValues(certContext);
+        } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
+            certContext = null;
+        } else {
+            certContext = latestCheckRepo.findById(event.getDomain()).map(this::latestToCertContext).orElse(null);
+        }
+        // Çözüm postasında da olay kimliği taşınır (aksiyon butonları için); ctx null olabildiği
+        // için kopya map'e sarılır — MONITORING tiplerinde yukarıda bilerek null'a çekiliyor.
+        certContext = withAlertEventId(certContext, event.getId());
+        return certContext;
     }
 
     /** Çözüm postasının konusu (tek yer: gönderim, atlama izi ve sahipsiz kayıt izi aynı konuyu yazar). */
@@ -4207,6 +4317,11 @@ public class EscalationService {
         // Nöbetçi listesi zaten yalnız sessiz saatte OLMAYAN takımlardan kurulur (oncallFor(mailSy, mailUg)): SY penceredeyken
         // UG'nin nöbetçisi e-postayı aldığı gibi push'u da alır (2026-10-12; eskiden SY'nin sessizliği ikisini de kesiyordu).
         pushOnCall(alertEventId, trigger, oncall, excludeUsernames);
+        // Alarm iletimi (2026-11-05): sahip takımın iletimleri — sahip postası / push'undan SONRA, alıcı takım başına AYRI posta
+        // (bant) + push. Sessiz saatte ertelenen sahibin iletimleri onun özetine girer (mailSy / mailUg yalnız ertelenmeyenler).
+        // Yönlendirme yoksa / iletim tanımsızsa hiçbir şey (sorgu yok).
+        forwardAlert(alertEventId, trigger, syTeamId, ugTeamId, mailSy, mailUg, domain, level, alertType, message, subject,
+                daysRemaining, mailCtx, sendCtx, certContext, mailDisabled, excludeEmails, excludeUsernames, seen);
         // Sessiz saat: pencere İÇİNDEKİ takım bu alarm için ertelenmeyen bir bildirim aldı (YÜKSEK/KRİTİK, elle gönderim) →
         // bekleyen özet kaydı geçersizleşir (özet tekrar etmez, çözüm de normal yoldan gider). Pencere dışı = sorgu yok.
         supersedeQuietItems(alertEventId, syTeamId, ugTeamId, quietDeferred.keySet());
@@ -4424,6 +4539,377 @@ public class EscalationService {
         }
     }
 
+    // ── Alarm iletimi (2026-11-05, kullanıcı kararı) ─────────────────────────────────────────────────────────────────
+    //    Sahip takımın tanımladığı iletimler: alıcı takım "sahip ne alıyorsa" alır — AYRI posta (sahip adresleri / kişileri
+    //    görünmez, gövdenin başında bant), günlükte ayrı satır (rol FORWARD, alıcı adı = alıcı takım), push ayrı ayak
+    //    (ForwardPushSink). Eskalasyon kişileri, zamanlı adımlar, nöbetçi ve 7/24 İLETİLMEZ. Yönlendirme yoksa / sahip
+    //    takımların iletimi yoksa (anyFor false) bu yolların hiçbiri hiçbir şey yapmaz — sorgu yok, satır yok.
+
+    /**
+     * İletilecek alıcı takımlar — sahiplerden biri olan alıcı atlanır ({@code syTeamId} / {@code ugTeamId}: sessiz saatte
+     * ertelenen sahip de dahil — o takım alarmı zaten kendi özetinden alır). Boş liste = iletim yok.
+     */
+    static List<com.sitemonitor.service.forward.ForwardTarget> forwardTargets(
+            com.sitemonitor.service.forward.AlertForwardRouting routing, Collection<Long> owners, Long syTeamId, Long ugTeamId,
+            String alertType, String domain, Long monitorId) {
+        if (routing == null || owners == null || owners.isEmpty()) return List.of();
+        List<com.sitemonitor.service.forward.ForwardTarget> raw = routing.targetsFor(
+                new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(List.copyOf(owners), alertType, domain, monitorId));
+        if (raw == null || raw.isEmpty()) return List.of();
+        List<com.sitemonitor.service.forward.ForwardTarget> out = new ArrayList<>(raw.size());
+        for (var t : raw) {
+            if (t == null) continue;
+            if (syTeamId != null && syTeamId == t.recipientTeamId()) continue;
+            if (ugTeamId != null && ugTeamId == t.recipientTeamId()) continue;
+            out.add(t);
+        }
+        return out;
+    }
+
+    /** Boş olmayan sahip takımlar (tekil, SY önce). */
+    private static List<Long> ownersOf(Long sy, Long ug) {
+        List<Long> out = new ArrayList<>(2);
+        if (sy != null) out.add(sy);
+        if (ug != null && !ug.equals(sy)) out.add(ug);
+        return out;
+    }
+
+    /**
+     * {@code sendCombinedAlert}'in iletim adımı — sahip postası (gönderildi ya da atlandı) ve sahip / nöbetçi push'undan SONRA.
+     * {@code mailSy} / {@code mailUg}: sessiz saatte ERTELENMEYEN sahipler (ertelenen sahibin iletimleri onun özetine girer,
+     * şimdi gitmez). Her alıcı takıma ayrı posta: adresler = hedef adresleri − elle çıkarılanlar − sahip postasının alıcıları −
+     * önceki hedeflerin adresleri. Teslim edilen ({@link #mailDelivered}) adresler alarmın iletim damgasına birleştirilir
+     * (çözüm postası bunlara gider). Hata sahip bildirimini ASLA bozmaz.
+     */
+    private void forwardAlert(Long alertEventId, String trigger, Long syTeamId, Long ugTeamId, Long mailSy, Long mailUg,
+                              String domain, String level, String alertType, String message, String subject,
+                              Integer daysRemaining, Map<String, Object> mailCtx, Map<String, Object> sendCtx,
+                              Map<String, Object> pushCtx, boolean mailDisabled, Set<String> excludeEmails,
+                              Set<String> excludeUsernames, Set<String> ownerSeen) {
+        var routing = forwardRouting();
+        if (routing == null) return;
+        List<Long> owners = ownersOf(mailSy, mailUg);
+        if (owners.isEmpty()) return;
+        try {
+            if (!routing.anyFor(owners)) return;
+            var targets = forwardTargets(routing, owners, syTeamId, ugTeamId, alertType, domain, ctxMonitorId(pushCtx));
+            if (targets.isEmpty()) return;
+            Set<String> used = new HashSet<>();
+            for (String e : ownerSeen) if (e != null) used.add(e.trim().toLowerCase(Locale.ROOT));
+            Set<String> excluded = excludeEmails == null ? Set.of() : excludeEmails;
+            Map<Long, List<String>> delivered = new LinkedHashMap<>();
+            for (var t : targets) {
+                try {
+                    List<String> to = new ArrayList<>();
+                    boolean deselected = false, dup = false;
+                    for (String raw : t.emails()) {
+                        String e = raw == null ? "" : raw.trim();
+                        if (e.isEmpty()) continue;
+                        String k = e.toLowerCase(Locale.ROOT);
+                        if (excluded.contains(k)) { deselected = true; continue; }
+                        if (!used.add(k)) { dup = true; continue; }
+                        to.add(e);
+                    }
+                    Map<String, Object> note = EmailTemplateBuilder.forwardNote(t.ownerTeamNames(), t.recipientTeamName(), false);
+                    String html = emailService.buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining,
+                            withForwardNote(mailCtx, note));
+                    String status;
+                    if (mailDisabled) {
+                        status = "SKIPPED: e-posta kanalı kapalı";
+                    } else if (to.isEmpty()) {
+                        status = t.emails().isEmpty() ? "SKIPPED: alıcı yok"
+                                : dup ? STATUS_FORWARD_ALREADY_MAILED
+                                : deselected && TRIGGER_MANUAL.equals(trigger) ? STATUS_SKIPPED_EMAIL_DESELECTED
+                                : "SKIPPED: alıcı yok";
+                    } else {
+                        status = emailService.sendAlert(to.toArray(new String[0]), subject, message, domain, level, alertType,
+                                daysRemaining, withForwardNote(sendCtx, note));
+                    }
+                    saveForwardLog(alertEventId, t.recipientTeamName(), String.join(", ", to), subject, html, status, trigger);
+                    if (!to.isEmpty() && mailDelivered(status)) {
+                        delivered.computeIfAbsent(t.recipientTeamId(), k -> new ArrayList<>()).addAll(to);
+                    }
+                } catch (Exception e) {
+                    log.warn("İletim postası gönderilemedi (olay {}, alıcı takım {}): {}", alertEventId, t.recipientTeamId(),
+                            e.toString());
+                }
+            }
+            log.info("Alarm iletimi: {} [{}] → {} alıcı takım | olay={} | trigger={}", domain, level, targets.size(),
+                    alertEventId, trigger);
+            ForwardEmailStamp.stamp(alertEventRepo, alertEventId, delivered);
+            pushForwards(alertEventId, trigger, targets, pushCtx, excludeUsernames);
+        } catch (Exception e) {
+            log.warn("Alarm iletimi atlandı (sahip bildirimi etkilenmedi; olay {}): {}", alertEventId, e.toString());
+        }
+    }
+
+    /** İletim push'u — ayrı ayak; hata e-postayı / sahip bildirimini etkilemez. */
+    private void pushForwards(Long alertEventId, String trigger, List<com.sitemonitor.service.forward.ForwardTarget> targets,
+                              Map<String, Object> ctx, Set<String> excludeUsernames) {
+        var sink = forwardPush;
+        if (sink == null || alertEventId == null || targets == null || targets.isEmpty()) return;
+        try {
+            sink.enqueueForwards(alertEventId, trigger, targets, ctx, excludeUsernames == null ? Set.of() : excludeUsernames);
+        } catch (Exception e) {
+            log.warn("İletim push'u atlandı (e-posta etkilenmedi; olay {}): {}", alertEventId, e.toString());
+        }
+    }
+
+    /**
+     * Fırtına üyesinin bireysel push'unun iletim eşleniği (push-individual kipi, 2026-11-05): üyenin sahip takım(lar)ının
+     * iletimleri ({@link #pushStormMember} ile aynı an). Yönlendirme yoksa hiçbir şey.
+     */
+    private void pushStormMemberForwards(AlertEvent event, String mailTrigger, Long teamFallback, Map<String, Object> ctx) {
+        var routing = forwardRouting();
+        if (routing == null || forwardPush == null || event == null || event.getId() == null) return;
+        try {
+            Long owner = event.getTeamId() != null ? event.getTeamId() : teamFallback;
+            List<Long> owners = ownersOf(owner, null);
+            if (owners.isEmpty() || !routing.anyFor(owners)) return;
+            var targets = forwardTargets(routing, owners, owner, null, event.getAlertType(), event.getDomain(),
+                    ctxMonitorId(ctx));
+            pushForwards(event.getId(), mailTrigger, targets, ctx, Set.of());
+        } catch (Exception e) {
+            log.warn("Fırtına üyesinin iletim push'u atlandı (olay {}): {}", event.getId(), e.toString());
+        }
+    }
+
+    /** Bant bağlamı eklenmiş KOPYA (çağıranın haritası değişmez; null bağlam → yalnız bant). */
+    private static Map<String, Object> withForwardNote(Map<String, Object> ctx, Map<String, Object> note) {
+        Map<String, Object> m = ctx == null ? new LinkedHashMap<>() : new LinkedHashMap<>(ctx);
+        m.put(EmailTemplateBuilder.CTX_FORWARD_NOTE, note);
+        return m;
+    }
+
+    /**
+     * Çözüm postasının iletim eşleniği: alarmın iletim damgasındaki ({@code forward_emails}) HER alıcı takıma ayrı çözüm
+     * postası (bant) — açılışı iletimle almış adresler, sahip çözüm postasının alıcıları hariç. Canlı yeniden hesaplama YOK
+     * (iletim sonradan kaldırılsa da açılışı alan çözümü öğrenir; sonradan eklenen alıcı, görmediği alarmın çözümünü almaz).
+     * İzlemede e-posta kapalıysa "kanal kapalı" satırı. Bağlam yalnız gerçekten posta kurulacaksa okunur. Hata yutulur.
+     */
+    private void sendForwardResolutions(AlertEvent event, String resolvedBy, String trigger, boolean mailDisabled,
+                                        Collection<String> ownerTo, Long ownerSy, Long ownerUg,
+                                        java.util.function.Supplier<Map<String, Object>> ctxSupplier,
+                                        EmailNotificationService.UptimeSummary uptime) {
+        if (event == null || event.getId() == null) return;
+        Map<Long, List<String>> stamp = ForwardEmailStamp.of(event);
+        if (stamp.isEmpty()) return;
+        try {
+            String subject = resolutionSubject(event);
+            List<String> ownerNames = ownerTeamNameList(ownerSy, ownerUg);
+            String ownerLabel = ownerNames.isEmpty() ? null : String.join(", ", ownerNames);
+            Set<String> used = new HashSet<>();
+            if (ownerTo != null) for (String e : ownerTo) if (e != null) used.add(e.trim().toLowerCase(Locale.ROOT));
+            Map<String, Object> base = null;
+            boolean baseRead = false;
+            for (Map.Entry<Long, List<String>> en : new TreeMap<>(stamp).entrySet()) {
+                try {
+                    String rtName = teamNameOrNull(en.getKey());
+                    List<String> to = new ArrayList<>();
+                    for (String e : en.getValue()) {
+                        String v = e == null ? "" : e.trim();
+                        if (!v.isEmpty() && used.add(v.toLowerCase(Locale.ROOT))) to.add(v);
+                    }
+                    Map<String, Object> note = EmailTemplateBuilder.forwardNote(ownerNames, rtName, false);
+                    if (mailDisabled || to.isEmpty()) {
+                        saveForwardLog(event.getId(), rtName != null ? rtName : "-", String.join(", ", to), subject, "",
+                                mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : STATUS_FORWARD_ALREADY_MAILED, trigger);
+                        continue;
+                    }
+                    if (!baseRead) {
+                        base = ctxSupplier == null ? null : ctxSupplier.get();
+                        baseRead = true;
+                    }
+                    Map<String, Object> ctx = withForwardNote(base, note);
+                    String html = emailService.buildResolutionEmailHtml(event.getDomain(), event.getAlertType(),
+                            event.getAlertLevel(), event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
+                            event.getCreatedAt(), ctx, ownerLabel, uptime);
+                    String status = emailService.sendResolutionAlert(to.toArray(new String[0]), subject, event.getDomain(),
+                            event.getAlertType(), event.getAlertLevel(), event.getDaysRemaining(), resolvedBy,
+                            event.getResolvedAt(), event.getCreatedAt(), ctx, ownerLabel, uptime);
+                    saveForwardLog(event.getId(), rtName != null ? rtName : "-", String.join(", ", to), subject, html, status,
+                            trigger);
+                } catch (Exception e) {
+                    log.warn("İletilen çözüm postası gönderilemedi (olay {}, alıcı takım {}): {}", event.getId(), en.getKey(),
+                            e.toString());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("İletilen çözüm postaları atlandı (olay {}): {}", event.getId(), e.toString());
+        }
+    }
+
+    /** Sahip takım adları LİSTE olarak (bant cümlesi); okunamayan / adsız atlanır. */
+    private List<String> ownerTeamNameList(Long syTeamId, Long ugTeamId) {
+        List<String> names = new ArrayList<>(2);
+        for (Long id : ownersOf(syTeamId, ugTeamId)) {
+            String n = teamNameOrNull(id);
+            if (n != null && !names.contains(n)) names.add(n);
+        }
+        return names;
+    }
+
+    /** Takım adı — yok / okunamıyor / boş → null. */
+    private String teamNameOrNull(Long teamId) {
+        if (teamId == null) return null;
+        try {
+            return teamRepo.findById(teamId).map(com.sitemonitor.model.Team::getName)
+                    .map(String::trim).filter(n -> !n.isBlank()).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Elle gönderimin iletim hedefleri (önizleme = gönderim): sahipler hedef çözümünden; MANUAL sessiz saatte ertelenmez. */
+    private List<com.sitemonitor.service.forward.ForwardTarget> reNotifyForwardTargets(AlertEvent event, ReNotifyTargets targets) {
+        var routing = forwardRouting();
+        if (routing == null || event == null) return List.of();
+        List<Long> owners = ownersOf(targets.domainTeamId(), targets.ugTeamId());
+        try {
+            if (owners.isEmpty() || !routing.anyFor(owners)) return List.of();
+            return forwardTargets(routing, owners, targets.domainTeamId(), targets.ugTeamId(), event.getAlertType(),
+                    event.getDomain(), contextMonitorId(event));
+        } catch (Exception e) {
+            log.debug("Elle gönderim iletim hedefleri okunamadı (olay {}): {}", event.getId(), e.toString());
+            return List.of();
+        }
+    }
+
+    /** İletim satırı — {@code recipient_role} = {@link #ROLE_FORWARD}, alıcı adı = alıcı takım. Hata bildirimi durdurmaz. */
+    void saveForwardLog(Long alertEventId, String recipientTeamName, String recipientEmail, String subject, String message,
+                        String emailStatus, String trigger) {
+        try {
+            NotificationLog entry = new NotificationLog();
+            entry.setAlertEventId(alertEventId);
+            entry.setSentAt(now());
+            entry.setRecipientName(recipientTeamName != null && !recipientTeamName.isBlank() ? recipientTeamName : "-");
+            entry.setRecipientEmail(recipientEmail);
+            entry.setRecipientRole(ROLE_FORWARD);
+            entry.setSubject(subject);
+            entry.setMessage(message);
+            entry.setEmailStatus(emailStatus);
+            entry.setWebhookStatus("SKIPPED");
+            entry.setTrigger(trigger);
+            entry.setEmailFrom(emailService.getEmailFrom());
+            notificationLogRepo.save(entry);
+        } catch (Exception e) {
+            log.warn("İletim günlük satırı kaydedilemedi: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * "Kim bilgilendirilir?" simülatörünün iletim satırları — simülasyon takımının (+ UG) etkin, süresi dolmamış iletimleri:
+     * ALL ("all"), TYPES (sertifika simülasyonunda "cert" türünü içeriyorsa "all"; izleme simülasyonunda belirli türlere
+     * uygulandığı için "types_only"), MONITORS ("monitors_only" — yalnız seçilen izlemeler). Adresler yönlendirmenin o iletimin
+     * bir örneği için çözdüğü alıcı (alıcı takım başına birleşik — gönderimle aynı kaynak). Yönlendirme yoksa null (alan yok).
+     */
+    List<Map<String, Object>> simulateForwards(Long teamId, Long ugTeamId, boolean standaloneMonitor) {
+        var routing = forwardRouting();
+        if (routing == null) return null;
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<Long> owners = ownersOf(teamId, ugTeamId);
+        try {
+            if (owners.isEmpty() || !routing.anyFor(owners) || forwardRepo == null) return out;
+            String nowIso = now();
+            for (com.sitemonitor.model.AlertForward f : forwardRepo.findByOwnerTeamIdInOrderByIdAsc(owners)) {
+                if (f == null || !f.isEnabled() || f.getRecipientTeamId() == null) continue;
+                if (f.getExpiresAt() != null && !f.getExpiresAt().isBlank() && f.getExpiresAt().compareTo(nowIso) < 0) continue;
+                if (owners.contains(f.getRecipientTeamId())) continue;
+                String scope = f.getScopeKind() == null ? "" : f.getScopeKind().trim().toUpperCase(Locale.ROOT);
+                List<String> types = csv(f.getScopeTypes()).stream().map(x -> x.toLowerCase(Locale.ROOT)).toList();
+                String applies;
+                String probeType;   // örnek alarm türü (yönlendirmeden alıcıyı çözmek için)
+                String probeDomain = null;
+                Long probeMonitor = null;
+                switch (scope) {
+                    case "ALL" -> { applies = "all"; probeType = standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY"; }
+                    case "TYPES" -> {
+                        if (!standaloneMonitor) {
+                            if (!types.contains("cert")) continue;
+                            applies = "all";
+                            probeType = "EXPIRY";
+                        } else {
+                            String first = types.stream().filter(x -> !"cert".equals(x)).findFirst().orElse(null);
+                            if (first == null) continue;
+                            applies = "types_only";
+                            probeType = sampleAlertTypeOf(first);
+                        }
+                    }
+                    case "MONITORS" -> {
+                        applies = "monitors_only";
+                        List<String> items = csv(f.getScopeMonitors());
+                        String item = items.isEmpty() ? null : items.get(0);
+                        if (item == null || item.indexOf(':') <= 0) continue;
+                        String type = item.substring(0, item.indexOf(':'));
+                        String id = item.substring(item.indexOf(':') + 1);
+                        probeType = sampleAlertTypeOf(type);
+                        try {
+                            long n = Long.parseLong(id.trim());
+                            if ("cert".equals(type)) {
+                                probeDomain = inventoryRepo.findById(n).map(com.sitemonitor.model.CertificateInventory::getDomain)
+                                        .orElse(null);
+                            } else {
+                                probeMonitor = n;
+                            }
+                        } catch (NumberFormatException ex) {
+                            continue;
+                        }
+                    }
+                    default -> { continue; }
+                }
+                if (probeType == null) continue;
+                var target = forwardTargets(routing, List.of(f.getOwnerTeamId()), teamId, ugTeamId, probeType, probeDomain,
+                        probeMonitor).stream().filter(t -> t.recipientTeamId() == f.getRecipientTeamId()).findFirst()
+                        .orElse(null);
+                if (target == null) continue;   // alıcı pasif / adresi ve üyesi kalmamış — gönderim de atlar
+                String kind = f.getRecipientKind() == null ? "TEAM" : f.getRecipientKind().trim().toUpperCase(Locale.ROOT);
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("forward_id", f.getId());
+                m.put("recipient_team_id", f.getRecipientTeamId());
+                m.put("recipient_team_name", target.recipientTeamName());
+                m.put("recipient_kind", kind);
+                m.put("applies", applies);
+                m.put("scope_kind", scope);
+                if ("TYPES".equals(scope)) m.put("scope_types", types);
+                m.put("emails", target.emails());
+                m.put("member_count", "MEMBERS".equals(kind) ? csv(f.getRecipientUserIds()).size() : 0);
+                out.add(m);
+            }
+        } catch (Exception e) {
+            log.debug("Simülatör iletim satırları okunamadı: {}", e.toString());
+        }
+        return out;
+    }
+
+    /** İletim kapsam türü → yönlendirmeye sorulacak örnek alarm türü ({@code NocType.forAlertType} ile aynı eşleme). */
+    static String sampleAlertTypeOf(String type) {
+        if (type == null) return null;
+        return switch (type.trim().toLowerCase(Locale.ROOT)) {
+            case "cert" -> "EXPIRY";
+            case "domain" -> TYPE_DOMAINMON_EXPIRY;
+            case "http" -> TYPE_HTTP_DOWN;
+            case "ping" -> TYPE_PING_DOWN;
+            case "port" -> TYPE_PORT_DOWN;
+            case "dns" -> TYPE_DNS_FAILURE;
+            case "keyword" -> TYPE_KEYWORD;
+            case "page" -> TYPE_PAGE_DOWN;
+            case "pagespeed" -> TYPE_PAGESPEED_DOWN;
+            case "scripted" -> TYPE_SCRIPTED_FAIL;
+            case "dbquery" -> TYPE_DBQUERY_FAIL;
+            default -> null;
+        };
+    }
+
+    private static List<String> csv(String raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null || raw.isBlank() || raw.length() > 100_000) return out;
+        for (String p : raw.split(",")) {
+            String v = p.trim();
+            if (!v.isEmpty() && !out.contains(v)) out.add(v);
+        }
+        return out;
+    }
+
     /** E-posta gönderimi alıcıya ulaştı / kuyrukta (SENT, QUEUED_RETRY…) mı — FAILED / SKIPPED değil. */
     static boolean mailDelivered(String emailStatus) {
         return emailStatus != null && (emailStatus.equals("SENT") || emailStatus.startsWith("SENT ")
@@ -4597,6 +5083,9 @@ public class EscalationService {
             log.warn("Sessiz saat push kararı verilemedi — push gönderiliyor (olay {}): {}", event.getId(), e.toString());
         }
         triggerUserPush(event.getId(), mailTrigger, teamFallback, quiet ? quietCtx(ctx) : ctx, Set.of());
+        // Alarm iletimi (2026-11-05): üyenin push'u bireysel gidiyorsa iletim alıcılarınınki de; sahibin push'u sessiz saatte
+        // ertelendiyse iletim push'u da çağrılmaz (alıcı sahibin kararını izler).
+        if (!quiet) pushStormMemberForwards(event, mailTrigger, teamFallback, ctx);
     }
 
     /** Sahip takım adları — adresten BAĞIMSIZ (atlanan/devredilen bildirim satırının "alıcı" etiketi); yoksa "-". */
