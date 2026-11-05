@@ -83,6 +83,8 @@ export const ROUTE_URL_KEYS = ['act', 'amon', 'atlr', 'atlf', 'atlt']
 
 // Girdi sınırları — URL'den gelen değer düzenli ifadeye girmeden önce uzunlukça kırpılır / reddedilir.
 const MAX_LIST = 60
+/** Neden süzgecinin tavanı — sunucu `ActivityFilter.MAX_REASONS` ile AYNI (fazlası 400 döner; kapı activityModelFilters). */
+export const MAX_REASONS = 100
 const MAX_TOKEN = 40
 const MAX_Q = 200
 const MAX_ACTOR = 100
@@ -96,15 +98,15 @@ export const ERROR_CLASSES = ['NETWORK', 'DNS', 'SSL', 'TIMEOUT', 'BLOCKED', 'CO
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/
 const ID_RE = /^\d{1,15}$/
 
-function csvTokens(raw, allowed, re = TOKEN_RE) {
+function csvTokens(raw, allowed, re = TOKEN_RE, max = MAX_LIST) {
   if (typeof raw !== 'string' || !raw) return []
   const out = []
-  for (const part of raw.slice(0, MAX_LIST * (MAX_TOKEN + 1)).split(',')) {
+  for (const part of raw.slice(0, max * (MAX_TOKEN + 1)).split(',')) {
     const v = part.trim()
     if (!v || v.length > MAX_TOKEN || out.includes(v)) continue
     if (allowed ? !allowed.includes(v) : !re.test(v)) continue
     out.push(v)
-    if (out.length >= MAX_LIST) break
+    if (out.length >= max) break
   }
   return out
 }
@@ -141,7 +143,8 @@ export function readFilters(search) {
   const team = ID_RE.test(p.get('ateam') || '') ? p.get('ateam') : ''
   const monitorRef = parseMonitorRef(p.get('amf'))
   return {
-    types: csvTokens(p.get('atype')),
+    // Yalnız bilinen türler: sunucu `[A-Z][A-Z_]*` dışını 400'ler (rakamlı tür URL'den gelse liste düşerdi)
+    types: csvTokens(p.get('atype'), TYPE_KEYS),
     statuses: csvTokens(p.get('astatus'), STATUSES),
     // Özel aralık uçsuz anlamsız: iki uç da yoksa varsayılan aralığa düşer (yarım kalmış paylaşılan bağlantı)
     range: range === 'custom' && !from && !to ? DEFAULT_RANGE : range,
@@ -151,7 +154,7 @@ export function readFilters(search) {
     team,
     actor: (p.get('aactor') || '').trim().slice(0, MAX_ACTOR),
     groups: csvTokens(p.get('agroup'), GROUPS),
-    reasons: csvTokens(p.get('areason'), null, REASON_RE),
+    reasons: csvTokens(p.get('areason'), null, REASON_RE, MAX_REASONS),
     monitor: monitorRef ? formatMonitorRef(monitorRef.type, monitorRef.id) : '',
     monitorLabel: monitorRef ? (p.get('amfl') || '').slice(0, MAX_LABEL) : '',
   }
@@ -333,17 +336,61 @@ export function sameRoute(a, b) {
 // ── Satır alanları (2026-11-05, G) ─────────────────────────────────────────────────────────────
 
 /**
- * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi"); İngilizce arayüzde
- * jetonlar sözlükten çevrilir (QA 2026-09-12, ISSUE-010). Türkçede sözlük değeri = jetonun kendisi.
- * Liste ve ayrıntı sayfası aynı kuralı kullanır (tek kaynak).
+ * Sunucu özeti dilden bağımsız tek biçimde yazılır: Türkçe jetonlar ("0 kırık · 12ms", "3 istek", "yüklenemedi",
+ * "çalıştırılamadı", "3 satır · değer 12.5") ve İngilizce durum sözcükleri ("error", "fail · 40ms", "closed · 3ms",
+ * "up", "ok"). Arayüz dilinde sözlükten çevrilir (QA 2026-09-12, ISSUE-010; inceleme CT D2). Liste, ayrıntı sayfası ve
+ * Excel AYNI kuralı kullanır (tek kaynak).
+ *
+ * <p>Çok sözcüklü Türkçe ifadeler önce, sonra TEK sözcükler yalnız TAM sözcük olarak (boşluk / "·" ile ayrılan parça;
+ * "error" bir adın ya da hedefin içinde geçerse dokunulmaz). Doğrusal: özet ≤ 500 karakter, tek geçiş.
  */
-const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
-  ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
+const SUMMARY_PHRASES = [['yapılandırma hatası', 'act.tok.configError'], ['zaman aşımı', 'act.tok.timeout']]
+const SUMMARY_WORDS = Object.freeze({
+  'yüklenemedi': 'act.tok.loadFailed', 'kırık': 'act.tok.broken', 'istek': 'act.tok.requests',
+  'çalıştırılamadı': 'act.tok.notRun', 'satır': 'act.tok.rows', 'değer': 'act.tok.value',
+  error: 'act.tok.errWord', fail: 'act.tok.fail', closed: 'act.tok.closed', open: 'act.tok.open',
+  up: 'act.tok.up', down: 'act.tok.down', ok: 'act.tok.ok', mixed: 'act.tok.mixed',
+})
+const MAX_SUMMARY = 500
 export function localizeSummary(summary, t) {
   if (!summary) return summary
-  let s = String(summary)
-  for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))
-  return s
+  let s = String(summary).slice(0, MAX_SUMMARY)
+  for (const [tr, key] of SUMMARY_PHRASES) s = s.split(tr).join(t(key))
+  // Boşluk ve "·" ayraçları korunarak parça parça (split yakalayan grup → ayraçlar dizide kalır)
+  return s.split(/(\s+|·)/).map((part) => {
+    const key = Object.hasOwn(SUMMARY_WORDS, part) ? SUMMARY_WORDS[part] : null
+    if (!key) return part
+    const v = t(key)
+    return v && v !== key ? v : part
+  }).join('')
+}
+
+/**
+ * Kaydı kim tetikledi — tek kural (ayrıntı başlığı, Excel "Kişi" sütunu; inceleme FR D7 / CT D3). `system` → "Sistem
+ * (otomatik)"; `scheduler` ya da boş → zamanlanmış / sistem eylemlerinde "Zamanlayıcı (otomatik)", KİŞİ eylemlerinde
+ * (elle kontrol, ayar değişikliği, duraklatma …) "Bilinmiyor" — bu yayından önceki elle kontroller `scheduler`
+ * yazıyordu; kişi bilinmiyorken zamanlayıcı denmez. Diğer değerler kullanıcı adıdır (aynen).
+ * @returns {{ kind: 'person'|'system'|'scheduler'|'unknown', text: string }}
+ */
+const PERSON_ACTIONS = new Set(['MANUAL_CHECK', 'CONFIG_CHANGED', 'CREATED', 'UPDATED', 'DELETED', 'PAUSED', 'RESUMED',
+  'ALERT_ACKNOWLEDGED', 'NOC_CALL_LOGGED', 'NOC_CALL_DELETED', 'RENEWAL_PLANNED', 'RENEWAL_PLAN_CLEARED'])
+export function actorOf(actor, action, t) {
+  const a = actor == null ? '' : String(actor).trim()
+  if (a === 'system') return { kind: 'system', text: t('act.actor.system') }
+  if (!a || a === 'scheduler') {
+    return PERSON_ACTIONS.has(String(action || '').toUpperCase())
+      ? { kind: 'unknown', text: t('act.actor.unknown') }
+      : { kind: 'scheduler', text: t('act.dt.scheduler') }
+  }
+  return { kind: 'person', text: a }
+}
+
+/**
+ * Sayılı metin: sayı 1 ise `<anahtar>.one` (EN tekil — "1 check", inceleme FR D15 / CT D4), değilse anahtarın kendisi.
+ * `.one` anahtarı iki dilde de vardır (TR'de aynı metin; parite kapısı).
+ */
+export function tn(t, key, n, ...rest) {
+  return Number(n) === 1 ? t(`${key}.one`, n, ...rest) : t(key, n, ...rest)
 }
 
 const ALARM_ACTIONS = new Set(['ALERT_TRIGGERED', 'ALERT_ESCALATED', 'ALERT_ACKNOWLEDGED', 'ALERT_RESOLVED'])
@@ -384,8 +431,9 @@ export function fillNamed(template, params = {}) {
 
 /**
  * Hata nedeninin kısa adı: önce kontrol hata kataloğu (`chkfail.<KOD>.short`), sonra keyword kataloğu
- * (`kwfail.<KOD>.short`); ikisi de yoksa kodun kendisi (çağıran tek aralıklı yazıyla çizer). `params` satırdan
- * (HTTP kodu, kırık kaynak sayısı…); yoksa yer tutucu "…" olur.
+ * (`kwfail.<KOD>.short`), sonra DB sorgu kataloğu (`dbq.fail.<KOD>` — `DB_*` kodları, inceleme CT O3); hiçbiri yoksa
+ * kodun kendisi (çağıran tek aralıklı yazıyla çizer). `params` satırdan (HTTP kodu, kırık kaynak sayısı…); yoksa
+ * parametresiz ad (`act.rsn.<KOD>`) ya da yer tutucu "…".
  */
 export function reasonLabel(code, t, params = {}) {
   if (!code) return ''
@@ -410,6 +458,9 @@ export function reasonLabel(code, t, params = {}) {
       return fillNamed(tpl, params)
     }
   }
+  const dbKey = `dbq.fail.${c}`
+  const db = t(dbKey)
+  if (db && db !== dbKey) return db
   return c
 }
 

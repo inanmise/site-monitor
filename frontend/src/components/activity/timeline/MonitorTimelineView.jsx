@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
 import { useT, useLanguage } from '../../../i18n/index.jsx'
+import { usePermissions } from '../../../contexts/PermissionsProvider.jsx'
+import { errorInfoOf } from '../../../utils/errorMessages.js'
 import { navigateTo } from '../../../utils/navigate.js'
 import { activityTarget } from '../../../utils/activityTarget.js'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -24,6 +26,7 @@ import DateTimeField from '../../ui/DateTimeField.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { ReasonBadge, TypeBadge } from '../ActivityParts.jsx'
 import { durationText } from '../related/relatedModel.js'
+import { tn } from '../activityModel.js'
 import {
   TL_RANGES, availabilityTone, formatPct, hasSeriesData, outageSeconds, parseTime, readTlParams, seriesPoints,
   stripSegments, tlWindow, unwrapTimeline, writeTlParams,
@@ -48,6 +51,11 @@ const OUTAGE_PAGE = 10
  * (bilinmeyen "—", asla yeşil değil) ve yanıt süresi grafiği. Aralık 24 sa / 7 g / 30 g / 90 g / özel (URL `atlr`,
  * `atlf`, `atlt` — paylaşılabilir).
  *
+ * Aralık değişimi okunamazsa eski aralığın verisi YENİ aralık etiketi altında kalmaz (inceleme FR D3): veri anahtarı
+ * aralığı da içerir — aynı aralığın tazelemesi veriyi korur, farklı aralık iskelet / hata bloğu gösterir. Eski pod
+ * (uç yok — `/{id}` `timeline`'ı kimlik sanıp 400 `INVALID_PARAMETER`, ya da 405) "bu sürümde yok" der (FR D2).
+ * Açılınca odak başlığa (FR D11).
+ *
  * Props: `{ type, id, onBack, onOpenActivity(id), onFilterList(type, id, name) }`.
  * Test kancaları: `data-slot="act-tl-view"` (+ `data-state`), `act-tl-kpi` (+ `data-key` / `data-tone`), `act-tl-strip`,
  * `act-tl-seg` (+ `data-state` / `data-index`), `act-tl-period`, `act-tl-outage`, `act-tl-chart`.
@@ -60,7 +68,13 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
   const [draft, setDraft] = useState(() => ({ from: tl.from, to: tl.to }))
   const [state, setState] = useState({ status: 'loading', data: null, error: null })
   const seq = useRef(0)
+  const headingRef = useRef(null)
   const win = useMemo(() => tlWindow(tl), [tl])
+
+  // Görünüm açılınca (ya da başka izlemeye geçince) odak başlığa — ekran okuyucu yeni görünümü duyar
+  useEffect(() => {
+    try { headingRef.current?.focus({ preventScroll: true }) } catch { /* odak yok */ }
+  }, [type, id])
 
   // Aralık URL'ye yazılır (geçmiş kaydı eklenmez); geri / yenile aynı aralığı açar
   useEffect(() => {
@@ -72,19 +86,23 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
 
   const load = useCallback(() => {
     const my = ++seq.current
-    const key = `${type}:${id}`
+    // Veri anahtarı = izleme + aralık: başka aralığın verisi bu aralığın etiketi altında gösterilmez
+    const key = `${type}:${id}|${tl.range}|${tl.from}|${tl.to}`
     // Pencere HER istekte o anki zamanla hesaplanır (Yenile "son 7 gün"ü dondurmasın)
     const w = tlWindow(tl)
     if (w.error) return Promise.resolve()
-    setState((s) => ({ status: 'loading', data: s.data && s.key === `${type}:${id}` ? s.data : null, error: null, key: `${type}:${id}` }))
+    setState((s) => ({ status: 'loading', data: s.data && s.key === key ? s.data : null, error: null, key }))
     return Promise.resolve().then(() => api.getActivityTimeline({ monitor: `${type}:${id}`, from: w.from, to: w.to }))
       .then((res) => {
         if (my !== seq.current) return
+        const status = Number(res?.status ?? errorInfoOf(res)?.status)
         if (res?.success) {
           const data = unwrapTimeline(res)
-          setState(data ? { status: 'ok', data, error: null, key: `${type}:${id}` } : { status: 'error', data: null, error: null })
-        } else if (res?.status === 404 || res?.status === 403) {
+          setState(data ? { status: 'ok', data, error: null, key } : { status: 'error', data: null, error: null, key })
+        } else if (status === 404 || status === 403) {
           setState({ status: 'notfound', data: null, error: null })
+        } else if (status === 405 || (status === 400 && (res?.code ?? errorInfoOf(res)?.code) === 'INVALID_PARAMETER')) {
+          setState({ status: 'unsupported', data: null, error: null })
         } else {
           // Yenileme hatası son okunan veriyi SİLMEZ (üstte "yenilenemedi" bandı); ilk okuma hatası tam hata bloğu
           setState((s) => ({ status: 'error', data: s.key === key ? s.data : null, error: res?.error || null, key }))
@@ -142,12 +160,13 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
             </div>
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
-            <CardTitle role="heading" aria-level={2} className="flex min-w-0 flex-wrap items-center gap-2 text-lg font-semibold">
+            <h2 ref={headingRef} tabIndex={-1} data-slot="act-tl-heading"
+              className="m-0 flex min-w-0 flex-wrap items-center gap-2 text-lg leading-snug font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
               <TypeBadge type={type} />
               <span data-slot="act-tl-name" className="min-w-0 [overflow-wrap:anywhere]">
                 {name || t('act.tl.mon.title')}
               </span>
-            </CardTitle>
+            </h2>
             <CardDescription className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {mon?.target && mon.target !== name && <span className="min-w-0 font-mono text-xs break-all">{mon.target}</span>}
               {mon?.team_id != null && <TeamBadge teamId={mon.team_id} teamName={mon.team_name} static wrap />}
@@ -181,7 +200,10 @@ export default function MonitorTimelineView({ type, id, onBack, onOpenActivity, 
         </CardContent>
       </Card>
 
-      {state.status === 'notfound' ? (
+      {state.status === 'unsupported' ? (
+        <StatusBlock tone="neutral" icon={SearchX} title={t('act.tl.mon.unsupported')} description={t('act.tl.mon.unsupportedHint')}
+          actions={<Button type="button" variant="outline" onClick={onBack} className="pointer-coarse:h-10"><ArrowLeft aria-hidden="true" /> {t('act.backToList')}</Button>} />
+      ) : state.status === 'notfound' ? (
         <StatusBlock tone="neutral" icon={SearchX} title={t('act.tl.mon.notFound')} description={t('act.tl.mon.notFoundHint')}
           actions={<Button type="button" variant="outline" onClick={onBack} className="pointer-coarse:h-10"><ArrowLeft aria-hidden="true" /> {t('act.backToList')}</Button>} />
       ) : state.status === 'error' && !data ? (
@@ -233,7 +255,11 @@ function TimelineBody({ data, t, lang, loading, failedRefresh, onRetry, onOpenAc
         <div data-slot="act-tl-deleted"><AlertBanner tone="info" className="mb-0">{t('act.tl.mon.deleted')}</AlertBanner></div>
       )}
       {data.truncated && (
-        <div data-slot="act-tl-truncated"><AlertBanner tone="warning" className="mb-0">{t('act.tl.mon.truncated')}</AlertBanner></div>
+        <div data-slot="act-tl-truncated" data-covered-from={data.covered_from || undefined}>
+          <AlertBanner tone="warning" className="mb-0">
+            {data.covered_from ? t('act.tl.mon.truncatedFrom', formatDateSec(data.covered_from)) : t('act.tl.mon.truncated')}
+          </AlertBanner>
+        </div>
       )}
 
       <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
@@ -307,8 +333,8 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
                   tabIndex={s.index === (sel ?? order[0]) ? 0 : -1} aria-pressed={s.index === sel}
                   aria-label={periodLabel(periods[s.index])} onKeyDown={onKey} onClick={() => setSel(s.index)}
                   className={cn('absolute top-0 h-full min-w-0 rounded-none border-0 p-0 shadow-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
-                    STATE_BG[s.state], s.index === sel && 'z-[5] outline-2 outline-offset-[-2px] outline-foreground')}
-                  style={{ left: `${s.left}%`, width: `max(3px, ${s.width}%)` }} />
+                    STATE_BG[s.state], s.index === sel && 'outline-2 outline-offset-[-2px] outline-foreground')}
+                  style={{ left: `${s.left}%`, width: `max(3px, ${s.width}%)`, zIndex: s.index === sel ? 6 : s.z + 1 }} />
               ))}
             </div>
             <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs text-muted-foreground" aria-label={t('act.tl.mon.legend')}>
@@ -326,7 +352,7 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
                     {formatDateSec(p.from)} – {p.to ? formatDateSec(p.to) : t('act.tl.mon.ongoing')}
                   </span>
                   <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    {t('act.tl.mon.periodChecks', p.checks ?? 0)}
+                    {tn(t, 'act.tl.mon.periodChecks', p.checks ?? 0)}
                     {/* NO_DATA = uzun veri boşluğu (state unknown) — hata nedeni değil, nötr metin */}
                     {p.reason === 'NO_DATA'
                       ? <span data-slot="act-tl-nodata">· {t('act.tl.mon.noData')}</span>
@@ -351,6 +377,9 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
 
 /** Kesinti listesi — en yeni üstte; süre + kontrol sayısı + neden; ilk aktiviteye / alarma git. */
 function OutageList({ outages, t, onOpenActivity }) {
+  // Alarm düğmesi yalnız alarm okuma izniyle (inceleme FR D4: izinsiz kullanıcı boş / 403 sayfaya gidiyordu); izin
+  // yoksa numara düz metin olarak kalır (bilgi kaybolmaz)
+  const canOpenAlarm = usePermissions().canView('alerts.read')
   const [all, setAll] = useState(false)
   const sorted = useMemo(() => [...(outages || [])].sort((a, b) => (parseTime(b.from) || 0) - (parseTime(a.from) || 0)), [outages])
   const shown = all ? sorted : sorted.slice(0, OUTAGE_PAGE)
@@ -383,18 +412,22 @@ function OutageList({ outages, t, onOpenActivity }) {
                       {o.open_start && <Badge variant="outline" className="h-auto rounded-md whitespace-normal" data-slot="act-tl-open-start">{t('act.tl.mon.openStart')}</Badge>}
                       <span>{secs != null ? durationText(secs, t) : '—'}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{t('act.tl.mon.periodChecks', o.checks ?? 0)}</span>
+                      <span>{tn(t, 'act.tl.mon.periodChecks', o.checks ?? 0)}</span>
                       {o.reason && <ReasonBadge code={o.reason} t={t} />}
                     </span>
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    {o.alert_event_id != null && (
-                      <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10"
+                    {o.alert_event_id != null && (canOpenAlarm ? (
+                      <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" data-slot="act-tl-alarm"
                         onClick={() => navigateTo('alerthistory', { alert: o.alert_event_id })}
                         aria-label={t('act.tl.mon.openAlertFor', o.alert_event_id)}>
                         <BellRing aria-hidden="true" /> {t('act.alarmNo', o.alert_event_id)}
                       </Button>
-                    )}
+                    ) : (
+                      <Badge variant="outline" data-slot="act-tl-alarm-text" className="h-auto gap-1 rounded-md whitespace-normal">
+                        <BellRing aria-hidden="true" className="size-3" /> {t('act.alarmNo', o.alert_event_id)}
+                      </Badge>
+                    ))}
                     {o.first_activity_id != null && onOpenActivity && (
                       <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10"
                         onClick={() => onOpenActivity(o.first_activity_id)}>

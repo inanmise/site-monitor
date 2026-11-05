@@ -114,7 +114,7 @@ describe('RelatedActivityPanel', () => {
     expect(container.querySelector('[data-slot="act-rel-suspect"][data-code="DNS_WIDE"]')).toBeNull()
   })
 
-  it('okunamazsa "okunamadı" + yeniden dene (asla "ilişkili hata yok"); eski sunucu (404) nötr bilgi', async () => {
+  it('okunamazsa "okunamadı" + yeniden dene (asla "ilişkili hata yok"); 404 = kayıt yok / erişim yok (nötr), eski pod = bu sürümde yok', async () => {
     api.getActivityRelated.mockResolvedValueOnce({ success: false, status: 500, error: 'boom' })
     const { container, unmount } = render(<RelatedActivityPanel activityId={10} onOpenActivity={vi.fn()} />)
     await waitFor(() => expect(container.querySelector('[data-slot="act-related"][data-state="error"]')).not.toBeNull())
@@ -125,7 +125,7 @@ describe('RelatedActivityPanel', () => {
     unmount()
     api.getActivityRelated.mockResolvedValueOnce({ success: false, status: 404, error: 'yok' })
     const second = render(<RelatedActivityPanel activityId={10} onOpenActivity={vi.fn()} />)
-    await waitFor(() => expect(second.container.querySelector('[data-slot="act-related"][data-state="unsupported"]')).not.toBeNull())
-    expect(screen.getByText(EN['act.rel.unsupported'])).toBeInTheDocument()
+    await waitFor(() => expect(second.container.querySelector('[data-slot="act-related"][data-state="notFound"]')).not.toBeNull())
+    expect(screen.getByText(EN['act.rel.notFound'])).toBeInTheDocument()
   })
 })

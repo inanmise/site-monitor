@@ -1,0 +1,277 @@
+{
+  "success": true,
+  "data": {
+    "anchor": {
+      "id": 18,
+      "time": "2026-11-05T01:31:52",
+      "type": "DNS",
+      "monitor_id": 1,
+      "action": "SCHEDULED_CHECK",
+      "status": "ERROR",
+      "target": "isube.ornekbanka.com.tr A",
+      "host": "isube.ornekbanka.com.tr",
+      "team_id": 1,
+      "failure_reason": "DNS_NXDOMAIN",
+      "error_class": null,
+      "reason": "DNS_NXDOMAIN",
+      "reason_class": "DNS",
+      "failing": true
+    },
+    "window_s": 120,
+    "from": "2026-11-05T01:29:52",
+    "to": "2026-11-05T01:33:52",
+    "total": 5,
+    "monitors": 5,
+    "window_total": 6,
+    "anchor_in_window": true,
+    "truncated": false,
+    "by_reason": [
+      {
+        "reason": "CONNECT_REFUSED",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "reason": "DB_SQL_ERROR",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "reason": "DNS_RESOLVE",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "reason": "DNS_SERVFAIL",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "reason": "DNS_TIMEOUT",
+        "count": 1,
+        "monitors": 1
+      }
+    ],
+    "by_host": [
+      {
+        "host": "kart.ornekbanka.com.tr",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "host": "mobil.ornekbanka.com.tr",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "host": "odeme-api.ornekbanka.local",
+        "count": 1,
+        "monitors": 1
+      },
+      {
+        "host": "odeme.ornekbanka.com.tr",
+        "count": 1,
+        "monitors": 1
+      }
+    ],
+    "by_team": [
+      {
+        "team_id": 1,
+        "count": 4,
+        "monitors": 4,
+        "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+      },
+      {
+        "team_id": 2,
+        "count": 1,
+        "monitors": 1,
+        "team_name": "Altyapı ve Ağ Hizmetleri"
+      }
+    ],
+    "suspects": [
+      {
+        "code": "DNS_WIDE",
+        "params": {
+          "monitors": 4,
+          "total_monitors": 6,
+          "share_pct": 67
+        }
+      },
+      {
+        "code": "SAME_TEAM",
+        "params": {
+          "team_id": 1,
+          "monitors": 5,
+          "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+        }
+      }
+    ],
+    "facts": [
+      {
+        "code": "FAILURES_24H",
+        "params": {
+          "n": 1
+        }
+      },
+      {
+        "code": "LAST_SUCCESS",
+        "params": {
+          "at": "2026-11-05T01:26:52"
+        }
+      },
+      {
+        "code": "STILL_FAILING",
+        "params": {
+          "since": "2026-11-05T01:31:52"
+        }
+      }
+    ],
+    "items": [
+      {
+        "id": 17,
+        "activity_time": "2026-11-05T01:31:47",
+        "monitor_type": "PORT",
+        "monitor_id": 1,
+        "monitor_name": "Ödeme API 8443",
+        "target": "odeme-api.ornekbanka.local:8443",
+        "action": "SCHEDULED_CHECK",
+        "result_status": "ERROR",
+        "result_summary": "closed · 3ms",
+        "result_detail": null,
+        "error_message": "Connection refused",
+        "error_class": "NETWORK",
+        "actor": "scheduler",
+        "team_id": 1,
+        "response_ms": 3,
+        "days_remaining": null,
+        "check_id": 1,
+        "http_status": null,
+        "failure_reason": "CONNECT_REFUSED",
+        "failure_detail": {
+          "phase": "CONNECT",
+          "exception": "ConnectException",
+          "message": "Connection refused",
+          "target": "odeme-api.ornekbanka.local:8443"
+        },
+        "alert_event_id": null,
+        "storm_id": null,
+        "change_seq": null,
+        "request_id": null
+      },
+      {
+        "id": 19,
+        "activity_time": "2026-11-05T01:31:59",
+        "monitor_type": "DNS",
+        "monitor_id": 2,
+        "monitor_name": "DNS mobil.ornekbanka.com.tr",
+        "target": "mobil.ornekbanka.com.tr A",
+        "action": "SCHEDULED_CHECK",
+        "result_status": "ERROR",
+        "result_summary": "fail · 41ms",
+        "result_detail": null,
+        "error_message": "SERVFAIL",
+        "error_class": null,
+        "actor": "scheduler",
+        "team_id": 1,
+        "response_ms": 41,
+        "days_remaining": null,
+        "check_id": 2,
+        "http_status": null,
+        "failure_reason": "DNS_SERVFAIL",
+        "failure_detail": {
+          "phase": "DNS",
+          "rcode": "SERVFAIL",
+          "target": "mobil.ornekbanka.com.tr"
+        },
+        "alert_event_id": null,
+        "storm_id": null,
+        "change_seq": null,
+        "request_id": null
+      },
+      {
+        "id": 23,
+        "activity_time": "2026-11-05T01:32:02",
+        "monitor_type": "CERT",
+        "monitor_id": 1,
+        "monitor_name": "odeme.ornekbanka.com.tr",
+        "target": "odeme.ornekbanka.com.tr",
+        "action": "SCHEDULED_CHECK",
+        "result_status": "ERROR",
+        "result_summary": "error",
+        "result_detail": null,
+        "error_message": "Çözümlenemeyen host: odeme.ornekbanka.com.tr",
+        "error_class": "DNS",
+        "actor": "scheduler",
+        "team_id": 1,
+        "response_ms": null,
+        "days_remaining": null,
+        "check_id": 2,
+        "http_status": null,
+        "failure_reason": "DNS_RESOLVE",
+        "failure_detail": null,
+        "alert_event_id": null,
+        "storm_id": null,
+        "change_seq": null,
+        "request_id": null
+      },
+      {
+        "id": 20,
+        "activity_time": "2026-11-05T01:32:07",
+        "monitor_type": "DNS",
+        "monitor_id": 3,
+        "monitor_name": "DNS kart.ornekbanka.com.tr",
+        "target": "kart.ornekbanka.com.tr A",
+        "action": "SCHEDULED_CHECK",
+        "result_status": "TIMEOUT",
+        "result_summary": "fail · 42ms",
+        "result_detail": null,
+        "error_message": "Timed out while trying to resolve kart.ornekbanka.com.tr",
+        "error_class": "TIMEOUT",
+        "actor": "scheduler",
+        "team_id": 2,
+        "response_ms": 42,
+        "days_remaining": null,
+        "check_id": 3,
+        "http_status": null,
+        "failure_reason": "DNS_TIMEOUT",
+        "failure_detail": {
+          "phase": "DNS",
+          "exception": "SocketTimeoutException",
+          "message": "Timed out while trying to resolve",
+          "target": "kart.ornekbanka.com.tr"
+        },
+        "alert_event_id": null,
+        "storm_id": null,
+        "change_seq": null,
+        "request_id": null
+      },
+      {
+        "id": 25,
+        "activity_time": "2026-11-05T01:32:17",
+        "monitor_type": "DBQUERY",
+        "monitor_id": 77,
+        "monitor_name": "Bekleyen EFT kuyruğu",
+        "target": "PROD-ORA EFT",
+        "action": "SCHEDULED_CHECK",
+        "result_status": "ERROR",
+        "result_summary": "çalıştırılamadı · 12ms",
+        "result_detail": null,
+        "error_message": "ORA-00942: tablo ya da görünüm mevcut değil",
+        "error_class": null,
+        "actor": "scheduler",
+        "team_id": 1,
+        "response_ms": 12,
+        "days_remaining": null,
+        "check_id": 2,
+        "http_status": null,
+        "failure_reason": "DB_SQL_ERROR",
+        "failure_detail": null,
+        "alert_event_id": null,
+        "storm_id": null,
+        "change_seq": null,
+        "request_id": null
+      }
+    ]
+  },
+  "timestamp": "2026-11-05T01:34:27"
+}

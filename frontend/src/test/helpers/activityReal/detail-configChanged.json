@@ -1,0 +1,111 @@
+{
+  "success": true,
+  "data": {
+    "id": 15,
+    "activity_time": "2026-11-05T00:43:57",
+    "monitor_type": "HTTP",
+    "monitor_id": 1,
+    "monitor_name": "İnternet Şubesi Ana Sayfa",
+    "target": "https://isube.ornekbanka.com.tr/giris",
+    "action": "CONFIG_CHANGED",
+    "result_status": "SUCCESS",
+    "result_summary": "timeoutMs, active",
+    "result_detail": null,
+    "error_message": null,
+    "error_class": null,
+    "actor": "ayse.yilmaz",
+    "team_id": 1,
+    "response_ms": null,
+    "days_remaining": null,
+    "check_id": null,
+    "http_status": null,
+    "failure_reason": null,
+    "failure_detail": null,
+    "alert_event_id": null,
+    "storm_id": null,
+    "change_seq": 2,
+    "request_id": null,
+    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+  },
+  "check": null,
+  "previous_check": null,
+  "next_check": null,
+  "series": {
+    "from": "2026-11-04T00:43:57",
+    "to": "2026-11-06T00:43:57",
+    "points": [
+      {
+        "t": "2026-11-05T01:03:58",
+        "ms": 180,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:08:58",
+        "ms": 187,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:13:58",
+        "ms": null,
+        "status": "ERROR"
+      },
+      {
+        "t": "2026-11-05T01:18:58",
+        "ms": null,
+        "status": "ERROR"
+      },
+      {
+        "t": "2026-11-05T01:23:58",
+        "ms": 208,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:28:58",
+        "ms": 215,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:31:58",
+        "ms": 842,
+        "status": "WARNING"
+      }
+    ],
+    "truncated": false
+  },
+  "alarm": null,
+  "change": {
+    "kind": "http",
+    "id": 1,
+    "seq": 2,
+    "match": "exact"
+  },
+  "links": {
+    "monitor": {
+      "tab": "http",
+      "params": {
+        "monitor": 1
+      }
+    },
+    "history": {
+      "tab": "http",
+      "params": {
+        "monitor": 1,
+        "mtab": "control"
+      }
+    },
+    "changes": {
+      "tab": "http",
+      "params": {
+        "monitor": 1,
+        "mtab": "changes"
+      }
+    },
+    "alert": null,
+    "can_diagnose": true
+  },
+  "actor": {
+    "name": "ayse.yilmaz",
+    "request_id": null
+  },
+  "timestamp": "2026-11-05T01:34:26"
+}

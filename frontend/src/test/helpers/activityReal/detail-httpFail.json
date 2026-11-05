@@ -1,0 +1,149 @@
+{
+  "success": true,
+  "data": {
+    "id": 3,
+    "activity_time": "2026-11-05T01:13:58",
+    "monitor_type": "HTTP",
+    "monitor_id": 1,
+    "monitor_name": "İnternet Şubesi Ana Sayfa",
+    "target": "https://isube.ornekbanka.com.tr/giris",
+    "action": "SCHEDULED_CHECK",
+    "result_status": "ERROR",
+    "result_summary": "-",
+    "result_detail": null,
+    "error_message": "java.net.UnknownHostException: isube.ornekbanka.com.tr: Name or service not known",
+    "error_class": "DNS",
+    "actor": "scheduler",
+    "team_id": 1,
+    "response_ms": null,
+    "days_remaining": null,
+    "check_id": 3,
+    "http_status": null,
+    "failure_reason": "DNS_RESOLVE",
+    "failure_detail": null,
+    "alert_event_id": null,
+    "storm_id": null,
+    "change_seq": null,
+    "request_id": null,
+    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+  },
+  "check": {
+    "type": "http",
+    "match": "exact",
+    "row": {
+      "checked_at": "2026-11-05T01:13:57",
+      "error": "java.net.UnknownHostException: isube.ornekbanka.com.tr: Name or service not known",
+      "error_detail": null,
+      "http_status": null,
+      "id": 3,
+      "monitor_id": 1,
+      "ok": false,
+      "response_ms": null
+    }
+  },
+  "previous_check": {
+    "checked_at": "2026-11-05T01:08:57",
+    "error": null,
+    "error_detail": null,
+    "http_status": 200,
+    "id": 2,
+    "monitor_id": 1,
+    "ok": true,
+    "response_ms": 187,
+    "activity_id": 2
+  },
+  "next_check": {
+    "checked_at": "2026-11-05T01:18:57",
+    "error": "java.net.UnknownHostException: isube.ornekbanka.com.tr: Name or service not known",
+    "error_detail": null,
+    "http_status": null,
+    "id": 4,
+    "monitor_id": 1,
+    "ok": false,
+    "response_ms": null,
+    "activity_id": 4
+  },
+  "series": {
+    "from": "2026-11-04T01:13:58",
+    "to": "2026-11-06T01:13:58",
+    "points": [
+      {
+        "t": "2026-11-05T01:03:58",
+        "ms": 180,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:08:58",
+        "ms": 187,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:13:58",
+        "ms": null,
+        "status": "ERROR"
+      },
+      {
+        "t": "2026-11-05T01:18:58",
+        "ms": null,
+        "status": "ERROR"
+      },
+      {
+        "t": "2026-11-05T01:23:58",
+        "ms": 208,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:28:58",
+        "ms": 215,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:31:58",
+        "ms": 842,
+        "status": "WARNING"
+      }
+    ],
+    "truncated": false
+  },
+  "alarm": {
+    "id": 2,
+    "alert_type": "HTTP_DOWN",
+    "level": "HIGH",
+    "opened_at": "2026-11-05T01:14:57",
+    "resolved_at": "2026-11-05T01:24:07",
+    "resolved_by_kind": "auto",
+    "acknowledged": false,
+    "storm_id": null,
+    "match": "approximate",
+    "can_open": true
+  },
+  "change": null,
+  "links": {
+    "monitor": {
+      "tab": "http",
+      "params": {
+        "monitor": 1
+      }
+    },
+    "history": {
+      "tab": "http",
+      "params": {
+        "monitor": 1,
+        "mtab": "control"
+      }
+    },
+    "changes": null,
+    "alert": {
+      "tab": "alerthistory",
+      "params": {
+        "alert": 2
+      }
+    },
+    "can_diagnose": true
+  },
+  "actor": {
+    "name": "scheduler",
+    "request_id": null
+  },
+  "timestamp": "2026-11-05T01:34:26"
+}

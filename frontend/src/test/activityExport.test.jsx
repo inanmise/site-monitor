@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, cleanup } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import { EN } from '../i18n/en.js'
 import { TR } from '../i18n/tr.js'
@@ -67,20 +67,58 @@ describe('activityExport modeli', () => {
 describe('ActivityExportMenu', () => {
   const open = async () => pressMenuTrigger(await screen.findByRole('button', { name: new RegExp(EN['act.ex.button']) }))
 
-  it('CSV: süzgeçlerle sunucudan; tavan aşıldıysa onTruncated(csv, 50 000)', async () => {
-    api.exportActivity.mockResolvedValue({ success: true, name: 'a.csv', truncated: true, maxRows: 50000 })
-    const onTruncated = vi.fn()
-    render(<ActivityExportMenu params={{ type: 'HTTP', status: 'ERROR,TIMEOUT' }} onTruncated={onTruncated} />)
+  it('CSV: süzgeçlerle sunucudan; tavan aşıldıysa onResult(truncated, 50 000) — tost sayısı yerel biçimde', async () => {
+    api.exportActivity.mockResolvedValue({ success: true, name: 'a.csv', truncated: true, maxRows: 50000, rangeDefaulted: true })
+    const onResult = vi.fn()
+    render(<ActivityExportMenu getParams={() => ({ type: 'HTTP', status: 'ERROR,TIMEOUT' })} onResult={onResult} />)
     await open()
     fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
     await waitFor(() => expect(api.exportActivity).toHaveBeenCalledWith({ type: 'HTTP', status: 'ERROR,TIMEOUT' }, 'csv'))
-    await waitFor(() => expect(onTruncated).toHaveBeenCalledWith('csv', 50000))
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ format: 'csv', truncated: true, max: 50000,
+      rangeDefaulted: true, defaultDays: 30 })))
+    expect(await screen.findByText(EN['act.ex.doneTruncated'].replace('{0}', '50,000'))).toBeInTheDocument()
+  })
+
+  it('parametreler TIKLAMA ANINDA kurulur (açılış anında donmaz — inceleme FR O2)', async () => {
+    api.exportActivity.mockResolvedValue({ success: true, name: 'a.csv', truncated: false })
+    let n = 0
+    render(<ActivityExportMenu getParams={() => ({ type: '', from: `t${++n}` })} onResult={vi.fn()} />)
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
+    await waitFor(() => expect(api.exportActivity).toHaveBeenLastCalledWith({ type: '', from: 't1' }, 'csv'))
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
+    await waitFor(() => expect(api.exportActivity).toHaveBeenLastCalledWith({ type: '', from: 't2' }, 'csv'))
+  })
+
+  it('90 günü aşan aralık: istek GİTMEZ, ileti alanın altına (onRangeError); sunucunun 400 `from` reddi de aynı yola', async () => {
+    const onRangeError = vi.fn()
+    render(<ActivityExportMenu getParams={() => ({ from: '2026-01-01T00:00:00', to: '2026-06-01T00:00:00' })} onRangeError={onRangeError} />)
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
+    await waitFor(() => expect(onRangeError).toHaveBeenCalledWith(EN['act.ex.rangeTooLong'].replace('{0}', '90').replace('{1}', '30')))
+    expect(api.exportActivity).not.toHaveBeenCalled()
+    onRangeError.mockClear()
+    api.exportActivity.mockResolvedValueOnce({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'from', error: 'Sunucu: en çok 90 gün.' })
+    cleanup()
+    render(<ActivityExportMenu getParams={() => ({ from: '2026-05-01T00:00:00', to: '2026-06-01T00:00:00' })} onRangeError={onRangeError} />)
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
+    await waitFor(() => expect(onRangeError).toHaveBeenCalledWith('Sunucu: en çok 90 gün.'))
+  })
+
+  it('eski pod (uç yok → 400 INVALID_PARAMETER): "bu sürümde yok" tostu, sunucunun anlamsız metni değil', async () => {
+    api.exportActivity.mockResolvedValueOnce({ success: false, status: 400, code: 'INVALID_PARAMETER', error: "'id' değeri geçersiz: 'export'" })
+    render(<ActivityExportMenu getParams={() => ({})} onResult={vi.fn()} />)
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Excel/ }))
+    expect(await screen.findByText(EN['act.ex.unsupported'])).toBeInTheDocument()
   })
 
   it('Excel: JSON okunur, .xlsx indirilir; hata sunucunun metniyle (429), indirme yok', async () => {
     api.exportActivity.mockResolvedValueOnce({ success: true, data: { columns: ['time', 'monitor_type', 'monitor_name'],
       rows: [['2026-11-05 11:00:00', 'HTTP', 'web']], row_count: 1, max_rows: 20000, truncated: false } })
-    render(<ActivityExportMenu params={{ type: '' }} onTruncated={vi.fn()} />)
+    render(<ActivityExportMenu getParams={() => ({ type: '' })} onResult={vi.fn()} />)
     await open()
     fireEvent.click(await screen.findByRole('menuitem', { name: /Excel/ }))
     await waitFor(() => expect(downloads).toHaveLength(1))

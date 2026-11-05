@@ -56,6 +56,27 @@ export function appMetaKey({
 }
 
 /**
+ * Alt sayfa başlığı (2026-11-05, aktivite inceleme FR D16): bir sekmenin içindeki rota (Aktivite → ayrıntı sayfası,
+ * izleme zaman çizelgesi) kendi başlığını İSTER, YAZMAZ — tek yazar `usePageMeta` kalır. Değer `{ tab, key, name }`:
+ * `tab` etkin sekmeyken `usePageMeta` sekmenin anahtarı yerine `key`'i (`meta.page.<ad>`) kullanır; `name` verilirse
+ * başlık "<name> — <sayfa>". Sekme sökülünce (ya da liste rotasına dönünce) null.
+ */
+let subPageMeta = null
+const subPageListeners = new Set()
+export function setSubPageMeta(value) {
+  const next = value && value.tab && value.key ? { tab: String(value.tab), key: String(value.key), name: value.name ? String(value.name) : null } : null
+  const cur = subPageMeta
+  if (cur === next || (cur && next && cur.tab === next.tab && cur.key === next.key && cur.name === next.name)) return
+  subPageMeta = next
+  subPageListeners.forEach((fn) => { try { fn() } catch { /* dinleyici hatası yazımı durdurmaz */ } })
+}
+export const getSubPageMeta = () => subPageMeta
+export function subscribeSubPageMeta(fn) {
+  subPageListeners.add(fn)
+  return () => subPageListeners.delete(fn)
+}
+
+/**
  * Başlık ve açıklamayı belgeye yazar. `<meta name="description">` yoksa oluşturulur (index.html'de var; testler ve
  * harness sayfaları için savunmacı). Değişmeyen değer yeniden yazılmaz.
  */

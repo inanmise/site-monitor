@@ -158,8 +158,15 @@ async function downloadActivityCsv(qs) {
   const fallback = `aktivite-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
   const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
   const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
+  // be2: aralık seçilmediyse sunucu son 30 günü verdi; etkin uçlar UTC "…Z" (eski sunucu başlığı yollamaz → false / null)
+  const rangeDefaulted = String(headerOf(res, 'X-Export-Range-Defaulted') || '').toLowerCase() === 'true'
+  const exportFrom = headerOf(res, 'X-Export-From') || null
+  const exportTo = headerOf(res, 'X-Export-To') || null
   if (!downloadBlob(name || fallback, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
-  return { success: true, name: name || fallback, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
+  return {
+    success: true, name: name || fallback, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
+    rangeDefaulted, from: exportFrom, to: exportTo,
+  }
 }
 
 /**

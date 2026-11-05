@@ -7,6 +7,13 @@ vi.mock('../api/client', () => ({
   formatDateSec: (s) => s ?? '',
   api: withApiFallback({ getActivityTimeline: vi.fn() }),
 }))
+// Alarm düğmesi alarm okuma iznine bağlı (inceleme FR D4) — izin testten ayarlanır
+const perm = vi.hoisted(() => ({ alerts: true }))
+vi.mock('../contexts/PermissionsProvider.jsx', async (orig) => ({
+  ...(await orig()),
+  usePermissions: () => ({ perms: {}, scope: null, canView: (r) => (r === 'alerts.read' ? perm.alerts : false), canEdit: () => false,
+    canExecute: () => false, refresh: () => {}, loaded: true }),
+}))
 import { api } from '../api/client'
 import MonitorTimelineView from '../components/activity/timeline/MonitorTimelineView.jsx'
 import {
@@ -54,9 +61,12 @@ describe('timelineModel', () => {
     expect(tlWindow({ range: 'custom', from: '', to: '' }, now)).toEqual({ error: 'missing' })
   })
 
-  it('şerit bölümleri: aralığa kırpılır, kesinti en üstte çizilir; tonlar bilinmeyeni asla iyi saymaz', () => {
+  it('şerit bölümleri: aralığa kırpılır, DOM sırası kronolojik, kesinti üst katmanda; tonlar bilinmeyeni asla iyi saymaz', () => {
     const segs = stripSegments(BODY.periods, BODY.from, BODY.to)
-    expect(segs.map((x) => x.state)).toEqual(['up', 'up', 'down', 'down'])   // çizim sırası: down en üstte
+    // Kronolojik (ekran okuyucu sırayla okur — inceleme FR D12); üst üste binen dar dönemde kesinti `z` ile üstte
+    expect(segs.map((x) => x.index)).toEqual([0, 1, 2, 3])
+    expect(segs.map((x) => x.state)).toEqual(['up', 'down', 'up', 'down'])
+    expect(segs.find((x) => x.state === 'down').z).toBeGreaterThan(segs.find((x) => x.state === 'up').z)
     const first = segs.find((x) => x.index === 0)
     expect(first.left).toBeCloseTo(0)
     expect(first.width).toBeCloseTo(50)
@@ -116,6 +126,36 @@ describe('MonitorTimelineView', () => {
     fireEvent.click(within(outages[0]).getByRole('button', { name: EN['act.tl.mon.firstActivity'] }))
     expect(open).toHaveBeenCalledWith(900)
     window.removeEventListener('sm:navigate', nav)
+  })
+
+  it('alarm okuma izni yoksa "Alarm #id" düğme değil düz metin (boş / 403 sayfaya gitmez — inceleme FR D4)', async () => {
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY })
+    perm.alerts = false
+    try {
+      const { container } = render(<MonitorTimelineView type="HTTP" id={4} onBack={() => {}} onOpenActivity={() => {}} />)
+      await waitFor(() => expect(container.querySelectorAll('[data-slot="act-tl-outage"]')).toHaveLength(2))
+      expect(container.querySelector('[data-slot="act-tl-alarm"]')).toBeNull()
+      expect(container.querySelector('[data-slot="act-tl-alarm-text"]')).toHaveTextContent('#77')
+    } finally {
+      perm.alerts = true
+    }
+  })
+
+  it('eski pod (uç yok → 400 INVALID_PARAMETER) "bu sürümde yok"; aralık değişimi okunamazsa önceki aralığın verisi gösterilmez', async () => {
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY })
+    api.getActivityTimeline.mockResolvedValueOnce({ success: false, status: 400, code: 'INVALID_PARAMETER', error: "'id' değeri geçersiz" })
+    const first = render(<MonitorTimelineView type="HTTP" id={4} onBack={() => {}} onOpenActivity={() => {}} />)
+    await waitFor(() => expect(first.container.querySelector('[data-slot="act-tl-view"]')).toHaveAttribute('data-state', 'unsupported'))
+    expect(first.container).toHaveTextContent(EN['act.tl.mon.unsupported'])
+    first.unmount()
+    // Aralık değişimi: yeni aralık okunamazsa eski aralığın KPI'ları yeni etiketin altında kalmaz (tam hata bloğu)
+    const { container } = render(<MonitorTimelineView type="HTTP" id={4} onBack={() => {}} onOpenActivity={() => {}} />)
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="act-tl-kpi"]').length).toBeGreaterThan(0))
+    api.getActivityTimeline.mockResolvedValueOnce({ success: false, status: 500, error: 'boom' })
+    fireEvent.click(screen.getByRole('button', { name: EN['act.tl.mon.r.30d'] }))
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"]')).toHaveAttribute('data-state', 'error'))
+    expect(container.querySelectorAll('[data-slot="act-tl-kpi"]')).toHaveLength(0)
+    expect(container).toHaveTextContent(EN['act.tl.mon.loadFailed'])
   })
 
   it('be2 ek alanları: data kabı + Z\'li zamanlar, NO_DATA dönemi nötr metin, sürüyor bayrağı, aralıktan önce başlamış, silinmiş izleme', async () => {

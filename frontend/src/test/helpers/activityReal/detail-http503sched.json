@@ -1,0 +1,144 @@
+{
+  "success": true,
+  "data": {
+    "id": 10,
+    "activity_time": "2026-11-05T01:03:58",
+    "monitor_type": "HTTP",
+    "monitor_id": 2,
+    "monitor_name": "Kart Başvuru API",
+    "target": "https://kart-api.ornekbanka.com.tr/health",
+    "action": "SCHEDULED_CHECK",
+    "result_status": "WARNING",
+    "result_summary": "503 · 95ms",
+    "result_detail": null,
+    "error_message": null,
+    "error_class": null,
+    "actor": "scheduler",
+    "team_id": 1,
+    "response_ms": 95,
+    "days_remaining": null,
+    "check_id": 10,
+    "http_status": 503,
+    "failure_reason": "UNKNOWN",
+    "failure_detail": {
+      "kind": "STATUS_MISMATCH",
+      "phase": "RESPONSE",
+      "url": "https://kart-api.ornekbanka.com.tr/health",
+      "method": "GET",
+      "scheme": "https",
+      "host": "kart-api.ornekbanka.com.tr",
+      "port": 443,
+      "via": "direct",
+      "proxy": null,
+      "resolved_ips": [],
+      "dns_ms": null,
+      "target_ip": null,
+      "local_ip": null,
+      "timeout_ms": 10000,
+      "elapsed_ms": 95,
+      "verify_ssl": true,
+      "follow_redirects": true,
+      "redirects": [],
+      "expected_status": "2xx",
+      "http_status": 503
+    },
+    "alert_event_id": null,
+    "storm_id": null,
+    "change_seq": null,
+    "request_id": null,
+    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+  },
+  "check": {
+    "type": "http",
+    "match": "exact",
+    "row": {
+      "checked_at": "2026-11-05T01:03:57",
+      "error": null,
+      "error_detail": "{\"kind\":\"STATUS_MISMATCH\",\"phase\":\"RESPONSE\",\"url\":\"https://kart-api.ornekbanka.com.tr/health\",\"method\":\"GET\",\"scheme\":\"https\",\"host\":\"kart-api.ornekbanka.com.tr\",\"port\":443,\"via\":\"direct\",\"proxy\":null,\"resolved_ips\":[],\"dns_ms\":null,\"target_ip\":null,\"local_ip\":null,\"timeout_ms\":10000,\"elapsed_ms\":95,\"verify_ssl\":true,\"follow_redirects\":true,\"redirects\":[],\"expected_status\":\"2xx\",\"http_status\":503}",
+      "http_status": 503,
+      "id": 10,
+      "monitor_id": 2,
+      "ok": false,
+      "response_ms": 95
+    }
+  },
+  "previous_check": {
+    "checked_at": "2026-11-05T00:58:57",
+    "error": null,
+    "error_detail": "{\"kind\":\"STATUS_MISMATCH\",\"phase\":\"RESPONSE\",\"url\":\"https://kart-api.ornekbanka.com.tr/health\",\"method\":\"GET\",\"scheme\":\"https\",\"host\":\"kart-api.ornekbanka.com.tr\",\"port\":443,\"via\":\"direct\",\"proxy\":null,\"resolved_ips\":[],\"dns_ms\":null,\"target_ip\":null,\"local_ip\":null,\"timeout_ms\":10000,\"elapsed_ms\":95,\"verify_ssl\":true,\"follow_redirects\":true,\"redirects\":[],\"expected_status\":\"2xx\",\"http_status\":503}",
+    "http_status": 503,
+    "id": 9,
+    "monitor_id": 2,
+    "ok": false,
+    "response_ms": 95,
+    "activity_id": 9
+  },
+  "next_check": {
+    "checked_at": "2026-11-05T01:08:57",
+    "error": null,
+    "error_detail": "{\"kind\":\"STATUS_MISMATCH\",\"phase\":\"RESPONSE\",\"url\":\"https://kart-api.ornekbanka.com.tr/health\",\"method\":\"GET\",\"scheme\":\"https\",\"host\":\"kart-api.ornekbanka.com.tr\",\"port\":443,\"via\":\"direct\",\"proxy\":null,\"resolved_ips\":[],\"dns_ms\":null,\"target_ip\":null,\"local_ip\":null,\"timeout_ms\":10000,\"elapsed_ms\":95,\"verify_ssl\":true,\"follow_redirects\":true,\"redirects\":[],\"expected_status\":\"2xx\",\"http_status\":503}",
+    "http_status": 503,
+    "id": 11,
+    "monitor_id": 2,
+    "ok": false,
+    "response_ms": 95,
+    "activity_id": 11
+  },
+  "series": {
+    "from": "2026-11-04T01:03:58",
+    "to": "2026-11-06T01:03:58",
+    "points": [
+      {
+        "t": "2026-11-05T00:53:58",
+        "ms": 120,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T00:58:58",
+        "ms": 95,
+        "status": "WARNING"
+      },
+      {
+        "t": "2026-11-05T01:03:58",
+        "ms": 95,
+        "status": "WARNING"
+      },
+      {
+        "t": "2026-11-05T01:08:58",
+        "ms": 95,
+        "status": "WARNING"
+      },
+      {
+        "t": "2026-11-05T01:13:58",
+        "ms": 120,
+        "status": "SUCCESS"
+      }
+    ],
+    "truncated": false
+  },
+  "alarm": null,
+  "change": null,
+  "links": {
+    "monitor": {
+      "tab": "http",
+      "params": {
+        "monitor": 2
+      }
+    },
+    "history": {
+      "tab": "http",
+      "params": {
+        "monitor": 2,
+        "mtab": "control"
+      }
+    },
+    "changes": null,
+    "alert": null,
+    "can_diagnose": true
+  },
+  "actor": {
+    "name": "scheduler",
+    "request_id": null
+  },
+  "timestamp": "2026-11-05T01:34:27"
+}

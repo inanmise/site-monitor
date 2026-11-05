@@ -95,6 +95,8 @@ export function unwrapTimeline(res) {
     outages: Array.isArray(body.outages) ? body.outages : [],
     series: Array.isArray(body.series) ? body.series : [],
     truncated: !!body.truncated,
+    // Kırpılan çizelgede sayımın başladığı an (sunucu: en yeni N kontrol okundu — inceleme CT D8); yoksa null
+    covered_from: body.covered_from || null,
     periods_merged: !!body.periods_merged,
   }
 }
@@ -105,8 +107,9 @@ const Z = { up: 0, unknown: 1, warn: 2, down: 3 }
 
 /**
  * Dönemler → şerit bölümleri (yüzde). `[from, to]` dışına taşan uç kırpılır; geçersiz dönem atlanır. Çok dar
- * (≥ 0) bölüm de çizilir — kap `min-w` ile görünür kılar. Dönüş çizim sırasındadır (kesintiler en üstte); `index`
- * dönemin özgün sırası (seçim / klavye gezinmesi onunla).
+ * (≥ 0) bölüm de çizilir — kap `min-w` ile görünür kılar. Dönüş KRONOLOJİKTİR (DOM sırası = zaman sırası; ekran
+ * okuyucu sanal imleci dönemleri sırayla okur — inceleme FR D12); üst üste binen dar dönemde kesintinin görünmesi `z`
+ * katmanıyla (`down` en üstte). `index` dönemin özgün sırası (seçim / klavye gezinmesi onunla).
  */
 export function stripSegments(periods, fromIso, toIso, now = Date.now()) {
   const a = parseTime(fromIso)
@@ -119,9 +122,9 @@ export function stripSegments(periods, fromIso, toIso, now = Date.now()) {
     const e = Math.min(bRaw, p?.to ? parseTime(p.to) : bRaw)
     if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return
     const state = PERIOD_STATES.includes(p?.state) ? p.state : 'unknown'
-    out.push({ index, state, left: ((s - a) / span) * 100, width: ((e - s) / span) * 100 })
+    out.push({ index, state, z: Z[state], left: ((s - a) / span) * 100, width: ((e - s) / span) * 100 })
   })
-  return out.sort((x, y) => Z[x.state] - Z[y.state] || x.index - y.index)
+  return out.sort((x, y) => x.index - y.index)
 }
 
 /** Erişilebilirlik tonu: bilinmeyen (null) asla iyi değil. */

@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
-  DEFAULT_FILTERS, KPI_STATUS, LIST_URL_KEYS, ROUTE_URL_KEYS, STATUSES, TYPE_KEYS, activeChips, cleanIso, customRangeValid,
-  fillNamed, formatMonitorRef, isAlarmAction, isFiltered, istanbulShort, kpiKeyOf, monitorRefOf, parseMonitorRef, readFilters, readRoute,
-  reasonLabel, reasonParams, removeChip, routeSearch, sameRoute, toApiParams, writeFilters,
+  DEFAULT_FILTERS, KPI_STATUS, LIST_URL_KEYS, MAX_REASONS, ROUTE_URL_KEYS, STATUSES, TYPE_KEYS, activeChips, actorOf, cleanIso, customRangeValid,
+  fillNamed, formatMonitorRef, isAlarmAction, isFiltered, istanbulShort, kpiKeyOf, localizeSummary, monitorRefOf, parseMonitorRef, readFilters,
+  readRoute, reasonLabel, reasonParams, removeChip, routeSearch, sameRoute, tn, toApiParams, writeFilters,
 } from '../components/activity/activityModel.js'
+import { EXPORT_RANGE, exportRangeProblem, unwrapExportJson } from '../components/activity/activityExport.js'
+import { REASON_CODES } from '../components/activity/ActivityFilterBar.jsx'
+import { activityFailed, checkFailed, normalizeDetail } from '../components/activity/detail/activityDetailModel.js'
 import { TYPES } from '../components/activity/ActivityParts.jsx'
 import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
 import { PAGE_STATE_PARAMS } from '../hooks/useUrlQuerySync.js'
@@ -166,5 +171,138 @@ describe('activityModel — neden adı ve kapılar', () => {
       expect(TR['act.range.' + r], r).toBeTruthy()
       expect(EN['act.range.' + r], r).toBeTruthy()
     }
+  })
+})
+
+// ── İnceleme düzeltme turu (2026-11-05, act fe2) ─────────────────────────────────────────────────────────────────
+describe('inceleme düzeltmeleri — model', () => {
+  const en = (key, ...args) => {
+    let s = EN[key] ?? key
+    args.forEach((a, i) => { s = s.split(`{${i}}`).join(String(a)) })
+    return s
+  }
+
+  it('sunucu özeti jetonları TAM sözcük olarak çevrilir (CT D2); adın / hedefin içindeki sözcüğe dokunulmaz', () => {
+    expect(localizeSummary('çalıştırılamadı · 12ms', en)).toBe('did not run · 12ms')
+    expect(localizeSummary('3 satır · değer 12.5 · 55ms', en)).toBe('3 rows · value 12.5 · 55ms')
+    expect(localizeSummary('fail · 40ms', tr)).toBe('başarısız · 40ms')
+    expect(localizeSummary('closed · 3ms', tr)).toBe('kapalı · 3ms')
+    expect(localizeSummary('error', tr)).toBe('hata')
+    expect(localizeSummary('0 kırık · 2 zaman aşımı · 12ms', en)).toBe('0 broken · 2 timed out · 12ms')
+    // Parça içinde geçen sözcük çevrilmez (yalnız tam jeton)
+    expect(localizeSummary('errors 4 · uptime', tr)).toBe('errors 4 · uptime')
+    expect(localizeSummary(null, tr)).toBeNull()
+  })
+
+  it('kişi kuralı (FR D7 / CT D3): elle kontrolde "scheduler" → Bilinmiyor; zamanlanmışta Zamanlayıcı; system → Sistem', () => {
+    expect(actorOf('scheduler', 'MANUAL_CHECK', en)).toEqual({ kind: 'unknown', text: EN['act.actor.unknown'] })
+    expect(actorOf('', 'CONFIG_CHANGED', en).kind).toBe('unknown')
+    expect(actorOf('scheduler', 'SCHEDULED_CHECK', en)).toEqual({ kind: 'scheduler', text: EN['act.dt.scheduler'] })
+    expect(actorOf(null, 'ALERT_TRIGGERED', en).kind).toBe('scheduler')
+    expect(actorOf('system', 'ALERT_RESOLVED', en)).toEqual({ kind: 'system', text: EN['act.actor.system'] })
+    expect(actorOf('ayse.yilmaz', 'MANUAL_CHECK', en)).toEqual({ kind: 'person', text: 'ayse.yilmaz' })
+  })
+
+  it('tekil / çoğul (FR D15): sayı 1 ise `.one` anahtarı — iki dilde de var', () => {
+    expect(tn(en, 'act.tl.mon.periodChecks', 1)).toBe('1 check')
+    expect(tn(en, 'act.tl.mon.periodChecks', 3)).toBe('3 checks')
+    for (const k of ['act.tl.mon.periodChecks', 'act.dt.ser.checks', 'act.rel.total', 'act.sumTimeoutSub', 'act.rel.fact.FAILURES_24H',
+      'act.rel.fact.TIMEOUTS_24H']) {
+      expect(TR[`${k}.one`], k).toBeTruthy()
+      expect(EN[`${k}.one`], k).toBeTruthy()
+    }
+  })
+
+  it('DB sorgu neden kodları adıyla (CT O3) — ham kod değil', () => {
+    expect(reasonLabel('DB_SQL_ERROR', en)).toBe(EN['dbq.fail.DB_SQL_ERROR'])
+    expect(reasonLabel('DB_TIMEOUT', tr)).toBe(TR['dbq.fail.DB_TIMEOUT'])
+    expect(reasonLabel('HTTP_STATUS', en, { status: 503 })).toBe('Returned HTTP 503')   // kontrol kataloğu önce
+  })
+
+  it('URL: tür yalnız bilinen türler (rakamlı tür 400 olurdu — FR D8); neden tavanı sunucuyla aynı (100)', () => {
+    expect(readFilters('?atype=HTTP,PING2,FOO').types).toEqual(['HTTP'])
+    const many = Array.from({ length: 130 }, (_, i) => `R_${i}`).join(',')
+    expect(readFilters(`?areason=${many}`).reasons).toHaveLength(MAX_REASONS)
+  })
+
+  it('dışa aktarım aralığı (be2): 90 günü aşan özel aralık önceden reddedilir; JSON aralık alanları okunur', () => {
+    const now = Date.parse('2026-11-05T00:00:00Z')
+    expect(exportRangeProblem({ from: '2026-01-01T00:00:00', to: '2026-06-01T00:00:00' }, now)).toBe('tooLong')
+    expect(exportRangeProblem({ from: '2026-10-01T00:00:00' }, now)).toBeNull()        // bitiş şimdi: 35 gün
+    expect(exportRangeProblem({ from: '2026-07-01T00:00:00' }, now)).toBe('tooLong')   // bitiş şimdi: 127 gün
+    expect(exportRangeProblem({}, now)).toBeNull()                                       // sunucu son 30 günü verir
+    const b = unwrapExportJson({ success: true, data: { columns: ['time'], rows: [], range_defaulted: true, range_default_days: 30 } })
+    expect(b).toMatchObject({ rangeDefaulted: true, rangeDefaultDays: 30 })
+    expect(unwrapExportJson({ success: true, data: { columns: ['time'], rows: [] } }).rangeDefaulted).toBe(false)
+  })
+})
+
+describe('inceleme düzeltmeleri — ayrıntı modeli', () => {
+  const a = (over) => ({ id: 1, action: 'SCHEDULED_CHECK', monitor_type: 'HTTP', result_status: 'WARNING', ...over })
+
+  it('başarısız kontrol kuralı (CT Y1): HTTP / Keyword WARNING ve Scripted FAIL başarısız; NO_CHECKS, DB ihlali, alarm satırı değil', () => {
+    expect(activityFailed(a())).toBe(true)
+    expect(activityFailed(a({ monitor_type: 'KEYWORD' }))).toBe(true)
+    expect(activityFailed(a({ monitor_type: 'SCRIPTED', result_summary: 'FAIL · 1✓/2✗' }))).toBe(true)
+    expect(activityFailed(a({ monitor_type: 'SCRIPTED', result_summary: 'NO_CHECKS' }))).toBe(false)
+    expect(activityFailed(a({ monitor_type: 'DBQUERY' }))).toBe(false)
+    expect(activityFailed(a({ monitor_type: 'PAGE' }))).toBe(false)
+    expect(activityFailed(a({ result_status: 'TIMEOUT', monitor_type: 'PORT' }))).toBe(true)
+    expect(activityFailed(a({ action: 'ALERT_TRIGGERED', result_status: 'ERROR' }))).toBe(false)
+    // Kontrol satırı varsa ONUN sağlığı
+    expect(checkFailed({ data: a(), check: { row: { ok: false } } }, 'http')).toBe(true)
+    expect(checkFailed({ data: a({ monitor_type: 'DBQUERY' }), check: { row: { status: 'BREACH', breach_level: 'WARNING' } } }, 'dbquery')).toBe(false)
+  })
+
+  it('normalizeDetail bayrakları taşır; değişiklik eşleşmesi; `{text}` ayrıntısı metne iner', () => {
+    const d = normalizeDetail({ data: a({ failure_detail: { text: 'düz metin' } }), check: null, check_hidden: true,
+      check_hidden_reason: 'TEAM', series_error: true, alarm_error: true, change: { kind: 'http', id: 2, seq: 9, match: 'approximate' } })
+    expect(d.checkHidden).toBe(true)
+    expect(d.hiddenReason).toBe('team')
+    expect(d.errors).toEqual({ check: false, series: true, alarm: true, change: false })
+    expect(d.change).toEqual({ kind: 'http', id: 2, seq: 9, match: 'approximate' })
+    expect(d.data.failure_detail).toBe('düz metin')
+    expect(normalizeDetail({ data: a(), change: { kind: 'http', id: 2, seq: 9 } }).change.match).toBe('exact')
+    expect(normalizeDetail({ data: a({ failure_detail: '{"kind":"STATUS_MISMATCH"}' }) }).data.failure_detail).toEqual({ kind: 'STATUS_MISMATCH' })
+  })
+})
+
+describe('inceleme düzeltmeleri — sunucu sabitleriyle eşitlik (Java kaynağından)', () => {
+  const JAVA = path.resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor')
+  const read = (rel) => (fs.existsSync(path.join(JAVA, rel)) ? fs.readFileSync(path.join(JAVA, rel), 'utf8') : null)
+
+  it('neden tavanı = ActivityFilter.MAX_REASONS', () => {
+    const src = read('service/activity/ActivityFilter.java')
+    if (!src) return
+    expect(Number(/MAX_REASONS\s*=\s*(\d+)/.exec(src)[1])).toBe(MAX_REASONS)
+  })
+
+  it('dışa aktarım aralığı = ActivityExportService.DEFAULT_DAYS / MAX_DAYS', () => {
+    const src = read('service/activity/ActivityExportService.java')
+    if (!src) return
+    expect(Number(/DEFAULT_DAYS\s*=\s*(\d+)/.exec(src)[1])).toBe(EXPORT_RANGE.defaultDays)
+    expect(Number(/MAX_DAYS\s*=\s*(\d+)/.exec(src)[1])).toBe(EXPORT_RANGE.maxDays)
+  })
+
+  it('DB sorgu hata kodlarının her biri neden süzgecinde ve sözlükte (DbQueryErrors + DbQueryCheckerService FAIL kodları)', () => {
+    const codes = new Set()
+    for (const f of ['service/dbquery/DbQueryErrors.java', 'service/dbquery/DbQueryCheckerService.java']) {
+      const src = read(f)
+      if (!src) return
+      for (const m of src.matchAll(/\b(DB_[A-Z_]+)\s*=\s*"(DB_[A-Z_]+)"/g)) codes.add(m[2])
+    }
+    codes.delete('DB_INTERNAL')   // SKIPPED kodu: aktivite satırı hatalı yazılmaz (alarm yok)
+    expect(codes.size).toBeGreaterThan(5)
+    for (const c of codes) {
+      expect(REASON_CODES, c).toContain(c)
+      expect(EN[`dbq.fail.${c}`], c).toBeTruthy()
+    }
+  })
+
+  it('App.jsx ACTIVITY_ROUTE_KEYS = model ROUTE_URL_KEYS (menüden "Aktivite" listeye döner — FR D1)', () => {
+    const app = fs.readFileSync(path.resolve(__dirname, '../App.jsx'), 'utf8')
+    const m = /ACTIVITY_ROUTE_KEYS\s*=\s*\[([^\]]*)\]/.exec(app)
+    expect(m).not.toBeNull()
+    expect([...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1])).toEqual(ROUTE_URL_KEYS)
   })
 })

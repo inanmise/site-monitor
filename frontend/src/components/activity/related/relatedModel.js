@@ -24,20 +24,37 @@ export function suspectTone(code) {
 /**
  * Yanıtın gövdesi: sunucu alanları ya kök düzeyde (`{ success, anchor, … }`) ya da `data` altında gelebilir — ikisi de
  * okunur. Gövde tanınmıyorsa null (okunamadı sayılır, "ilişkili hata yok" DEĞİL).
+ *
+ * <p>Sayılar (be2 d1097f7a, inceleme FR O3 / CT O2): `total` / `monitors` / `by_*` BU KAYIT HARİÇ penceredeki hatalı
+ * kontroller; `window_total` bu kaydı da sayar, `anchor_in_window` kaydın pencerede hatalı sayıldığını söyler. Eski
+ * sunucu (`window_total` yok) `total`'a kaydın kendisini de katıyordu → "başka" sayısı `total − 1` (kayıt hatalıysa;
+ * `anchor.failing === false` ise 0 çıkarılır). `truncated`: pencere tavanı aşıldı — sayılar ALT SINIR ("en az N").
+ * Model `others` (başka hatalı kontrol sayısı) ve `legacyCounts` (dağılımlar bu kaydı da içerebilir) verir.
  */
 export function unwrapRelated(res) {
   if (!res || typeof res !== 'object') return null
   const body = res.data && typeof res.data === 'object' && !Array.isArray(res.data) && ('items' in res.data || 'anchor' in res.data)
     ? res.data : res
   if (!Array.isArray(body.items) && !body.anchor) return null
+  const items = Array.isArray(body.items) ? body.items : []
+  const rawTotal = Number.isFinite(Number(body.total)) ? Number(body.total) : items.length
+  const legacyCounts = body.window_total === undefined
+  const anchorIn = typeof body.anchor_in_window === 'boolean' ? body.anchor_in_window : body.anchor?.failing !== false
+  // Eski sunucu: toplam kaydı da sayıyordu; yeni sunucu: zaten hariç
+  const others = Math.max(items.length, legacyCounts ? rawTotal - (anchorIn ? 1 : 0) : rawTotal)
   return {
     anchor: body.anchor || null,
     window_s: Number(body.window_s) || null,
-    total: Number.isFinite(Number(body.total)) ? Number(body.total) : (Array.isArray(body.items) ? body.items.length : 0),
+    total: others,
+    others,
+    windowTotal: Number.isFinite(Number(body.window_total)) ? Number(body.window_total) : null,
+    anchorInWindow: anchorIn,
+    truncated: body.truncated === true,
+    legacyCounts,
     by_reason: Array.isArray(body.by_reason) ? body.by_reason : [],
     by_host: Array.isArray(body.by_host) ? body.by_host : [],
     by_team: Array.isArray(body.by_team) ? body.by_team : [],
-    items: Array.isArray(body.items) ? body.items : [],
+    items,
     suspects: Array.isArray(body.suspects) ? body.suspects.filter((s) => SUSPECT_CODES.includes(s?.code)) : [],
     facts: Array.isArray(body.facts) ? body.facts.filter((f) => FACT_CODES.includes(f?.code)) : [],
   }
@@ -111,6 +128,8 @@ export function factText(f, t, fmtTime) {
   let key = `act.rel.fact.${f.code}`
   if (f.code === 'FIRST_FAILURE_IN_DAYS' && p.at_least === true) key += '.atLeast'
   if (f.code === 'STILL_FAILING' && vals.since) key += '.since'
+  // EN tekil ("1 failed check …", inceleme CT D4) — `.one` anahtarı iki dilde
+  if ((f.code === 'FAILURES_24H' || f.code === 'TIMEOUTS_24H') && vals.n === 1) key += '.one'
   return fill(t(key), vals)
 }
 

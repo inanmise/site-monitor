@@ -11,7 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-import { LinkButton, SectionCard } from './detailParts.jsx'
+import { ApproxBadge, LinkButton, SectionCard } from './detailParts.jsx'
 import { formatIstanbul } from './activityDetailModel.js'
 
 /** Tam değer: çip biçimi 120 karakterde kırpar (`formatValue`); ayrıntıda metin kırpılmaz (ChangeHistoryTab ile aynı). */
@@ -25,9 +25,11 @@ function fullValue(key, value, ctx) {
  * {id}/{seq}`; kendi kapısı ve kimlik maskelemesi orada). Gösterim izleme penceresinin "Değişiklikler" sekmesiyle aynı
  * parçalar: olay rozeti, kim, ne zaman, not, ALAN BAZLI önce → sonra (Denetim Kaydı `DiffTable`) ve o anki tam ayarlar
  * (oluşturma / silmede açık, düzenlemede katlanır). Okunamazsa "okunamadı" + tekrar dene — asla "değişiklik yok".
- * Test kancaları: `act-dt-change` (`data-state` loading|ready|notFound|error), `act-dt-change-snapshot`.
+ * Eşleşme yaklaşıksa (eski satır: değişiklik kaydı ± 2 dk zaman yakınlığıyla bulundu — inceleme CT O5) rozet + açıklama;
+ * kesin bağ gibi gösterilmez. `refreshNonce` (sayfanın Yenile düğmesi) kaydı yeniden okutur.
+ * Test kancaları: `act-dt-change` (`data-state` loading|ready|notFound|error, `data-match`), `act-dt-change-snapshot`.
  */
-export default function ChangeSection({ change, changesLink, locale }) {
+export default function ChangeSection({ change, changesLink, locale, refreshNonce = 0 }) {
   const t = useT()
   const [st, setSt] = useState({ phase: 'loading', row: null })
   const [stateOpen, setStateOpen] = useState(false)
@@ -40,7 +42,7 @@ export default function ChangeSection({ change, changesLink, locale }) {
       if (res?.success && res.data) setSt({ phase: 'ready', row: res.data })
       else setSt({ phase: errorInfoOf(res)?.status === 404 ? 'notFound' : 'error', row: null })
     })
-  }, [change.kind, change.id, change.seq])
+  }, [change.kind, change.id, change.seq, refreshNonce]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); const s = seq; return () => { s.current++ } }, [load])
 
   const r = st.row
@@ -61,11 +63,13 @@ export default function ChangeSection({ change, changesLink, locale }) {
   )
 
   return (
-    <SectionCard slot="act-dt-change" icon={FileDiff} title={t('act.dt.chg.title')} description={t('act.dt.chg.desc')}
-      data-state={st.phase}
-      action={changesLink ? (
-        <LinkButton target={changesLink} slot="changes-all"><History aria-hidden="true" />{t('act.dt.chg.all')}</LinkButton>
-      ) : null}>
+    <SectionCard slot="act-dt-change" icon={FileDiff} title={t('act.dt.chg.title')}
+      description={change.match === 'approximate' ? t('act.dt.chg.approximate') : t('act.dt.chg.desc')}
+      data-state={st.phase} data-match={change.match || 'exact'}
+      action={(change.match === 'approximate' || changesLink) ? (<>
+        {change.match === 'approximate' && <ApproxBadge />}
+        {changesLink && <LinkButton target={changesLink} slot="changes-all"><History aria-hidden="true" />{t('act.dt.chg.all')}</LinkButton>}
+      </>) : null}>
       {st.phase === 'loading' && (
         <div className="flex flex-col gap-2" aria-busy="true">
           <span className="sr-only" role="status">{t('act.dt.chg.loading')}</span>

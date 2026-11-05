@@ -226,6 +226,11 @@ function initialSessionExpired() {
 // Mail/derin-link ile gelen ?tab= değeri — yalnız bilinen sekme anahtarları kabul edilir.
 /** Aynı sekmede param değişimi: handleTabChange(id, extraParams) → sayfalar bu olayı dinler (HelpPage view, SystemHealth sec). */
 export const TAB_PARAMS_EVENT = 'sm:tab-params'
+/**
+ * Aktivite sayfasının rota anahtarları (ayrıntı / izleme zaman çizelgesi) — `activity/activityModel.ROUTE_URL_KEYS` ile
+ * AYNI (sayfa tembel yüklenir; modeli içe aktarmak giriş parçasını büyütürdü — eşitlik testi activityModelFilters).
+ */
+export const ACTIVITY_ROUTE_KEYS = ['act', 'amon', 'atlr', 'atlf', 'atlt']
 /** Programatik gezinme olayı — bkz. utils/navigate.js */
 export const NAVIGATE_EVENT = 'sm:navigate'
 
@@ -424,6 +429,22 @@ export default function App() {
   // Temizlemeden SONRA yazılır ki PAGE_STATE_PARAMS süpürmesi onları da silmesin.
   const handleTabChange = (id, extraParams) => {
     if (id === 'weeklyreports' && tab === 'weeklyreports') setWrResetNonce((n) => n + 1)
+    // Aktivite'nin ayrıntı sayfası / izleme zaman çizelgesi açıkken menüden "Aktivite"ye tekrar basmak listeye döner
+    // (inceleme FR D1; Haftalık Raporlar emsali). Rota anahtarları silinir (geçmiş kaydıyla — tarayıcı Geri ayrıntıya
+    // döner), sayfa olayla URL'yi yeniden okur. Liste süzgeçleri korunur.
+    if (id === 'activity' && tab === 'activity' && !extraParams) {
+      try {
+        const url = new URL(window.location.href)
+        const keys = ACTIVITY_ROUTE_KEYS.filter((k) => url.searchParams.has(k))
+        if (keys.length) {
+          keys.forEach((k) => url.searchParams.delete(k))
+          const qs = url.searchParams.toString()
+          window.history.pushState({ ...(window.history.state || {}), tab: 'activity', actDepth: 0 }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+          window.dispatchEvent(new CustomEvent(TAB_PARAMS_EVENT, { detail: {} }))
+        }
+      } catch { /* history yoksay */ }
+      return
+    }
     if (id === tab && extraParams) {
       // Aynı sekme: sayfa yeniden mount olmaz, param'ı mount'ta okuyan sayfa görmezdi (ör. Yardım'dayken
       // çipten "Yenilikler"). URL'e yaz (geçmişe girmeden) + sayfaya olay gönder; HelpPage/SystemHealth dinler.

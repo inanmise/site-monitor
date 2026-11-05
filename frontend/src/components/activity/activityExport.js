@@ -7,9 +7,34 @@
  * Sütunlar sunucu CSV'siyle aynı sırada: zaman (İstanbul), tür, izleme, hedef, takım, eylem, durum, özet, hata, hata
  * nedeni, HTTP kodu, yanıt ms, kişi, istek kimliği, alarm no.
  */
-import { reasonLabel, reasonParams } from './activityModel.js'
+import { actorOf, localizeSummary, reasonLabel, reasonParams } from './activityModel.js'
 
 export const EXPORT_MAX = Object.freeze({ csv: 50000, json: 20000 })
+
+/**
+ * Dışa aktarım aralığı (be2 d1097f7a `ActivityExportService.DEFAULT_DAYS` / `MAX_DAYS` — kapı activityRelatedCodes.test):
+ * `from` verilmezse sunucu son 30 günü aktarır (`range_defaulted`); 90 günü aşan aralık 400 (alan `from`).
+ */
+export const EXPORT_RANGE = Object.freeze({ defaultDays: 30, maxDays: 90 })
+
+const DAY_MS = 86_400_000
+const ms = (iso) => {
+  if (!iso) return NaN
+  const v = String(iso)
+  return Date.parse(v.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(v) ? v : v + 'Z')
+}
+
+/**
+ * İstek parametrelerinin aralığı sunucunun sınırını aşıyor mu: `from` var ve (`to` ya da şimdi) − `from` > 90 gün →
+ * `'tooLong'`, aksi null. `from` yoksa sunucu kendisi 30 güne sınırlar (sorun değil).
+ */
+export function exportRangeProblem(params, now = Date.now()) {
+  const from = ms(params?.from)
+  if (!Number.isFinite(from)) return null
+  const toRaw = ms(params?.to)
+  const to = Number.isFinite(toRaw) ? toRaw : now
+  return to - from > EXPORT_RANGE.maxDays * DAY_MS ? 'tooLong' : null
+}
 
 /** Excel sütun başlığı anahtarları (`act.ex.col.<ad>`) + yaklaşık genişlik (karakter). */
 export const EXCEL_COLUMNS = [
@@ -39,7 +64,13 @@ export function unwrapExportJson(res) {
   })
   const truncated = !!(body.truncated ?? res.truncated)
   const maxRows = Number(body.max_rows ?? res.max_rows)
-  return { rows: objects, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
+  const defaultDays = Number(body.range_default_days)
+  return {
+    rows: objects, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
+    // be2: aralık seçilmediyse sunucu son N günü verdi (eski sunucu alanı yollamaz → false)
+    rangeDefaulted: body.range_defaulted === true,
+    rangeDefaultDays: Number.isFinite(defaultDays) && defaultDays > 0 ? defaultDays : null,
+  }
 }
 
 /** UTC ISO (Z'siz) → İstanbul "dd.MM.yyyy HH:mm:ss"; okunamazsa olduğu gibi. */
@@ -62,7 +93,10 @@ const label = (t, key, fallback) => {
   return v && v !== key ? v : (fallback ?? '')
 }
 
-/** Satır → Excel hücreleri (metinler kullanıcının dilinde; sayılar sayı hücresi). */
+/**
+ * Satır → Excel hücreleri (metinler kullanıcının dilinde; sayılar sayı hücresi). Özet ekrandaki jeton çevirisiyle
+ * (`localizeSummary`), kişi `actorOf` kuralıyla ("scheduler" / "system" çevrilir — inceleme CT D2 / CT D3).
+ */
 export function excelRow(r, t, lang = 'tr') {
   return [
     r.time_local != null ? String(r.time_local) : istanbulTime(r.activity_time, lang),
@@ -72,12 +106,12 @@ export function excelRow(r, t, lang = 'tr') {
     r.team_name || '',
     r.action ? label(t, 'act.ac.' + r.action, r.action) : '',
     r.result_status ? label(t, 'act.st.' + r.result_status, r.result_status) : '',
-    r.result_summary || '',
+    r.result_summary ? localizeSummary(r.result_summary, t) : '',
     r.error_message || '',
     r.failure_reason ? reasonLabel(r.failure_reason, t, reasonParams(r)) : '',
     numOrBlank(r.http_status),
     numOrBlank(r.response_ms),
-    r.actor || '',
+    actorOf(r.actor, r.action, t).text,
     r.request_id || '',
     numOrBlank(r.alert_event_id),
   ]

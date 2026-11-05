@@ -12,7 +12,7 @@ import { usePageMeta } from '../hooks/usePageMeta.js'
 import { useLanguage } from '../i18n/index.jsx'
 import { BrandingProvider } from '../contexts/BrandingProvider.jsx'
 import { VALID_TABS, NOT_FOUND_TAB } from '../utils/appRoutes.js'
-import { appMetaKey, applyPageMeta, formatTitle, pageMetaKey, tabMetaKey } from '../utils/pageMeta.js'
+import { appMetaKey, applyPageMeta, formatTitle, pageMetaKey, setSubPageMeta, tabMetaKey } from '../utils/pageMeta.js'
 import { EN } from '../i18n/en.js'
 import { TR } from '../i18n/tr.js'
 
@@ -57,6 +57,28 @@ describe('usePageMeta', () => {
     branding.data = { tab_title: 'ACME İzleme' }
     render(<BrandingProvider><Probe metaKey={pageMetaKey('login')} /></BrandingProvider>)
     await waitFor(() => expect(document.title).toBe('Sign in · ACME İzleme'))
+  })
+
+  it('alt sayfa isteği (setSubPageMeta): etkin sekmede o anahtar + ad; başka sekmede ve kaldırılınca sekmenin kendisi (tek yazar)', () => {
+    render(<Probe metaKey={tabMetaKey('activity')} />)
+    expect(document.title).toBe(`${EN['meta.tab.activity.title']} · SiteMonitor`)
+    act(() => setSubPageMeta({ tab: 'activity', key: pageMetaKey('activityDetail'), name: 'Kart API' }))
+    expect(document.title).toBe(`Kart API — ${EN['meta.page.activityDetail.title']} · SiteMonitor`)
+    expect(description()).toBe(EN['meta.page.activityDetail.description'])
+    act(() => setSubPageMeta({ tab: 'activity', key: pageMetaKey('activityTimeline'), name: null }))
+    expect(document.title).toBe(`${EN['meta.page.activityTimeline.title']} · SiteMonitor`)
+    act(() => setSubPageMeta(null))
+    expect(document.title).toBe(`${EN['meta.tab.activity.title']} · SiteMonitor`)
+  })
+
+  it('alt sayfa isteği başka bir sekmeyi etkilemez', () => {
+    act(() => setSubPageMeta({ tab: 'activity', key: pageMetaKey('activityDetail'), name: 'X' }))
+    try {
+      render(<Probe metaKey={tabMetaKey('dashboard')} />)
+      expect(document.title).toBe('Certificate dashboard · SiteMonitor')
+    } finally {
+      act(() => setSubPageMeta(null))
+    }
   })
 
   it('sözlükte olmayan anahtar ham basılmaz: yalnız marka, açıklamaya dokunulmaz', () => {

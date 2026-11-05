@@ -15,7 +15,7 @@ import { ProgressBar } from '../../ui/Progress.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { ReasonBadge, TypeBadge } from '../ActivityParts.jsx'
-import { reasonLabel } from '../activityModel.js'
+import { reasonLabel, tn } from '../activityModel.js'
 import {
   DEFAULT_WINDOW, WINDOWS, factText, maxCount, offsetText, suspectText, suspectTone, unwrapRelated,
 } from './relatedModel.js'
@@ -40,11 +40,17 @@ const TONE_CLASS = {
  *
  * Bölümler: pencere seçici (±1 / ±2 / ±5 / ±15 dk), şüpheli neden kartları (`act.rel.suspect.*`), olgular
  * (`act.rel.fact.*`), neden / host / takım dağılımı, ilgili satırlar (dokununca o aktivitenin sayfası). Okunamazsa
- * "okunamadı" + tekrar dene — asla "ilişkili hata yok". Eski sunucu (uç yok: 404 / 405) nötr bilgi.
- * Test kancaları: `data-slot="act-related"` (+ `data-state`), `act-rel-suspect` (+ `data-code` / `data-tone`),
- * `act-rel-fact`, `act-rel-dist`, `act-rel-item`.
+ * "okunamadı" + tekrar dene — asla "ilişkili hata yok".
+ *
+ * <p>404: YENİ sunucuda kayıt silinmiş ya da görme izni gitmiş ("kayıt bulunamadı / erişim yok" — `notFound`, inceleme
+ * FR D14); 405 ya da sunucunun bilinmeyen uç yanıtı (eski pod `/{id}`'yi `Long` sanıp 400 `INVALID_PARAMETER` döner) →
+ * "bu sürümde yok" (`unsupported`). Sayılar "bu kayıt HARİÇ" (be2); `truncated` → "en az N". `refreshNonce` sayfanın
+ * Yenile düğmesiyle yeniden okutur (inceleme FR D10).
+ * Test kancaları: `data-slot="act-related"` (+ `data-state` loading|ok|error|unsupported|notFound), `act-rel-suspect`
+ * (+ `data-code` / `data-tone`), `act-rel-fact`, `act-rel-dist`, `act-rel-item`, `act-rel-total` (+ `data-others`,
+ * `data-truncated`).
  */
-export default function RelatedActivityPanel({ activityId, onOpenActivity }) {
+export default function RelatedActivityPanel({ activityId, onOpenActivity, refreshNonce = 0 }) {
   const t = useT()
   const [windowS, setWindowS] = useState(DEFAULT_WINDOW)
   const [state, setState] = useState({ status: 'loading', data: null, error: null })
@@ -59,14 +65,16 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity }) {
         if (res?.success) {
           const data = unwrapRelated(res)
           setState(data ? { status: 'ok', data, error: null } : { status: 'error', data: null, error: null })
-        } else if (res?.status === 404 || res?.status === 405) {
+        } else if (res?.status === 404) {
+          setState({ status: 'notFound', data: null, error: null })
+        } else if (res?.status === 405 || (res?.status === 400 && res?.code === 'INVALID_PARAMETER')) {
           setState({ status: 'unsupported', data: null, error: null })
         } else {
           setState({ status: 'error', data: null, error: res?.error || null })
         }
       })
       .catch((e) => { if (my === seq.current) setState({ status: 'error', data: null, error: e?.message || null }) })
-  }, [activityId, windowS])
+  }, [activityId, windowS, refreshNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   // Söküldükten sonra gelen yanıt uygulanmaz
@@ -79,7 +87,7 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity }) {
     <Card data-slot="act-related" data-state={state.status} className="min-w-0 gap-3 py-4 shadow-xs">
       <CardHeader className="flex min-w-0 flex-col gap-3 px-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 flex-col gap-1">
-          <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-base font-semibold">
+          <CardTitle role="heading" aria-level={3} className="flex items-center gap-2 text-base font-semibold">
             <Radar aria-hidden="true" className="size-4 text-muted-foreground" /> {t('act.rel.title')}
           </CardTitle>
           <CardDescription className="text-sm">{t('act.rel.desc', Math.round(windowS / 60))}</CardDescription>
@@ -97,6 +105,9 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity }) {
         )}
         {state.status === 'unsupported' && (
           <AlertBanner tone="info" className="mb-0" role="status" icon={Info}>{t('act.rel.unsupported')}</AlertBanner>
+        )}
+        {state.status === 'notFound' && (
+          <AlertBanner tone="info" className="mb-0" role="status" icon={Info}>{t('act.rel.notFound')}</AlertBanner>
         )}
         {state.status === 'error' && (
           <AlertBanner tone="danger" className="mb-0" role="alert"
@@ -159,11 +170,13 @@ function RelatedBody({ data, t, onOpenActivity }) {
         </section>
       )}
 
-      <p data-slot="act-rel-total" className="m-0 text-sm font-medium">
-        {data.total > 0 ? t('act.rel.total', data.total) : t('act.rel.none')}
+      <p data-slot="act-rel-total" data-others={data.others} data-truncated={data.truncated || undefined} className="m-0 text-sm font-medium">
+        {data.others > 0
+          ? (data.truncated ? t('act.rel.totalAtLeast', data.others) : tn(t, 'act.rel.total', data.others))
+          : (data.truncated ? t('act.rel.noneTruncated') : t('act.rel.none'))}
       </p>
 
-      {data.total > 0 && (
+      {data.others > 0 && (
         <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
           <Distribution title={t('act.rel.byReason')} kind="reason" items={data.by_reason}
             label={(x) => (x.reason ? reasonLabel(x.reason, t) : t('act.rel.noReason'))} />
@@ -179,7 +192,9 @@ function RelatedBody({ data, t, onOpenActivity }) {
       {data.items.length > 0 && (
         <section aria-label={t('act.rel.items')} className="flex min-w-0 flex-col gap-2">
           <h3 className="m-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            {t('act.rel.items')}{data.total > data.items.length ? ` · ${t('act.rel.itemsCapped', data.items.length, data.total)}` : ''}
+            {t('act.rel.items')}{data.others > data.items.length
+              ? ` · ${data.truncated ? t('act.rel.itemsCappedAtLeast', data.items.length, data.others) : t('act.rel.itemsCapped', data.items.length, data.others)}`
+              : ''}
           </h3>
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
             {data.items.map((r) => (

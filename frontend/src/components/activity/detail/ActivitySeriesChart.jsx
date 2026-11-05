@@ -9,6 +9,7 @@ import {
   ChartContainer, ChartTooltip, ComposedChart, Line, XAxis, YAxis, CartesianGrid, ReferenceLine,
 } from '@/components/shadcn/chart'
 import { SectionCard } from './detailParts.jsx'
+import { tn } from '../activityModel.js'
 import { formatIstanbul, seriesModel, statusLabel } from './activityDetailModel.js'
 
 /** Az noktalı seride her ölçüm işaretlenir (seyrek veri okunur kalsın) — CertDaysTrend / ChartPanel ile aynı eşik. */
@@ -80,7 +81,7 @@ export default function ActivitySeriesChart({ series, anchorIso, locale }) {
       ) : (
         <>
           <div data-slot="act-dt-series-summary" className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs" aria-hidden="true">
-            <ToneBadge tone="muted" className="h-auto rounded-md whitespace-normal tabular-nums">{t('act.dt.ser.checks', counts.total)}</ToneBadge>
+            <ToneBadge tone="muted" className="h-auto rounded-md whitespace-normal tabular-nums">{tn(t, 'act.dt.ser.checks', counts.total)}</ToneBadge>
             <ToneBadge tone={hasFail ? 'danger' : 'muted'} className="h-auto rounded-md whitespace-normal tabular-nums">{t('act.dt.ser.fails', counts.fail)}</ToneBadge>
             {hasWarn && <ToneBadge tone="warning" className="h-auto rounded-md whitespace-normal tabular-nums">{t('act.dt.ser.warns', counts.warn)}</ToneBadge>}
             {model.avgMs != null && <ToneBadge tone="muted" className="h-auto rounded-md whitespace-normal tabular-nums">{t('act.dt.ser.avg', `${model.avgMs} ms`)}</ToneBadge>}

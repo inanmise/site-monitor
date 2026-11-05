@@ -1,7 +1,4 @@
-import {
-  Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge, DatabaseSearch,
-  CheckCircle, AlertTriangle, XCircle, HelpCircle, Equal,
-} from 'lucide-react'
+import { CheckCircle, AlertTriangle, XCircle, HelpCircle, Equal } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { navigateTo } from '../../../utils/navigate.js'
 import { tabDeepLink } from '../../../utils/monitorDeepLink.js'
@@ -10,6 +7,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
+import { TYPE_MAP } from '../ActivityParts.jsx'
 
 /**
  * Ayrıntı sayfasının küçük ortak parçaları (2026-11-05): tür rozeti, durum / sağlık rozeti, "yaklaşık eşleşme" rozeti,
@@ -17,26 +15,14 @@ import { cn } from '@/lib/utils'
  * ikonlarıyla AYNI görsel dil — sayfa listeden gelince aynı şeyi tanır.
  */
 
-// Liste ile aynı tür kimliği (ikon + renk). Liste dosyası ayrı ajanın; burada sözlük kopyası — renkler değişirse ikisi birlikte.
-const TYPES = {
-  CERT: { Icon: Shield, color: '#7c3aed' },
-  DOMAIN: { Icon: CalendarClock, color: '#be123c' },
-  HTTP: { Icon: Globe, color: '#2563eb' },
-  UPTIME: { Icon: Activity, color: '#059669' },
-  PORT: { Icon: Server, color: '#0d9488' },
-  PING: { Icon: Radio, color: '#0891b2' },
-  DNS: { Icon: Share2, color: '#6d28d9' },
-  KEYWORD: { Icon: Search, color: '#d97706' },
-  PAGE: { Icon: ScanSearch, color: '#0d9488' },
-  PAGESPEED: { Icon: Gauge, color: '#c2410c' },
-  SCRIPTED: { Icon: FlaskConical, color: '#7e22ce' },
-  DBQUERY: { Icon: DatabaseSearch, color: '#0369a1' },
-}
 const UNKNOWN_TYPE = { Icon: HelpCircle, color: '#71717a' }
 
-/** İzleme türü rozeti — türün kalıcı renk kimliği (ikon + ad); zemin rengin %10'u. */
+/**
+ * İzleme türü rozeti — türün kalıcı renk kimliği (ikon + ad); zemin rengin %10'u. Tür sözlüğü listeyle TEK kaynak
+ * (`ActivityParts.TYPE_MAP` — inceleme FR D17: iki kopya büyük / küçük harfte ayrışıyordu).
+ */
 export function TypeBadge({ type, className }) {
-  const tm = TYPES[type] || UNKNOWN_TYPE
+  const tm = TYPE_MAP[String(type || '').toUpperCase()] || UNKNOWN_TYPE
   return (
     <Badge variant="outline" data-slot="act-dt-type" data-type={type || undefined}
       className={cn('shrink-0 gap-1 rounded-full border-transparent px-2 text-[0.72em] font-bold tracking-wide', className)}
@@ -55,10 +41,14 @@ export const STATUS_TONE = {
   UNKNOWN: { tone: 'muted', Icon: HelpCircle },
 }
 
-export function StatusBadge({ status, label, className }) {
-  const s = STATUS_TONE[status] || STATUS_TONE.UNKNOWN
+/**
+ * `failed`: kontrol başarısız ama kayıtlı durum WARNING (HTTP / Keyword `ok=false` + HTTP kodu, Scripted FAIL — 2026-10-11
+ * sözlüğü değişmedi) → tehlike tonu; etiketi çağıran verir ("Kontrol başarısız"). `data-status` kayıtlı durum kalır.
+ */
+export function StatusBadge({ status, label, failed = false, className }) {
+  const s = failed ? STATUS_TONE.ERROR : (STATUS_TONE[status] || STATUS_TONE.UNKNOWN)
   return (
-    <ToneBadge tone={s.tone} data-slot="act-dt-status" data-status={status || 'UNKNOWN'}
+    <ToneBadge tone={s.tone} data-slot="act-dt-status" data-status={status || 'UNKNOWN'} data-failed={failed || undefined}
       className={cn('h-auto gap-1 rounded-md font-semibold whitespace-normal', className)}>
       <s.Icon aria-hidden="true" />{label}
     </ToneBadge>

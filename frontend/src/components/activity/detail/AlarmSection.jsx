@@ -139,11 +139,29 @@ function AlarmChain({ alarmId, locale }) {
  * ALARM VE BİLDİRİM ZİNCİRİ (B): aktivitenin alarmı — özet (durum, önem, tür, açılış / kapanış, kapatan türü, sahiplenme,
  * fırtına) ve okuma yetkisi varsa tam zincir + teslimatlar. Eşleşme yaklaşıksa (alarm kimliği aktivitede yok; kontrol anını
  * kapsayan / 10 dk içinde açılan alarm) rozet + açıklama. `can_open` false → zincir okunmaz, "yetkiniz yok" notu.
- * Alarm yokken hatalı kontrolde nötr not (alarm açılmamış olabilir — onay zinciri, bastırma, kapalı tür). Test kancaları:
- * `act-dt-alarm` (`data-state` linked|none, `data-match`), `act-dt-alarm-locked`, `act-dt-alarm-chain`.
+ * Alarm yokken hatalı kontrolde nötr not (alarm açılmamış olabilir — onay zinciri, bastırma, kapalı tür).
+ *
+ * <p>Sunucu alarmı OKUYAMADIYSA (`alarm_error`, inceleme FR Y1) bölüm her durumda çizilir ve tehlike bandı + Yeniden dene
+ * gösterir — asla "alarm bulunamadı" (bilinmiyor ≠ yok). `refreshNonce` (sayfanın Yenile düğmesi, inceleme FR D10) zinciri
+ * baştan okutur. Test kancaları: `act-dt-alarm` (`data-state` linked|none|error, `data-match`), `act-dt-alarm-locked`,
+ * `act-dt-alarm-chain`.
  */
-export default function AlarmSection({ alarm, alertLink, locale, failed }) {
+export default function AlarmSection({ alarm, alertLink, locale, failed, readError = false, onRetry, refreshNonce = 0 }) {
   const t = useT()
+  if (readError) {
+    return (
+      <SectionCard slot="act-dt-alarm" icon={Siren} title={t('act.dt.al.title')} data-state="error">
+        <AlertBanner tone="danger" role="alert" className="mb-0"
+          actions={onRetry ? (
+            <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={onRetry}>
+              <RefreshCw aria-hidden="true" />{t('act.dt.retry')}
+            </Button>
+          ) : null}>
+          {t('act.dt.al.readError')}
+        </AlertBanner>
+      </SectionCard>
+    )
+  }
   if (!alarm) {
     if (!failed) return null
     return (
@@ -181,7 +199,7 @@ export default function AlarmSection({ alarm, alertLink, locale, failed }) {
         )}
         <Fact label={t('act.dt.al.ack')}>{alarm.acknowledged ? t('act.dt.al.ackYes') : t('act.dt.al.ackNo')}</Fact>
       </dl>
-      {alarm.can_open ? <AlarmChain alarmId={alarm.id} locale={locale} /> : (
+      {alarm.can_open ? <AlarmChain key={refreshNonce} alarmId={alarm.id} locale={locale} /> : (
         <div data-slot="act-dt-alarm-locked">
           <AlertBanner tone="info" icon={Lock} className="mb-0">{t('act.dt.al.locked')}</AlertBanner>
         </div>

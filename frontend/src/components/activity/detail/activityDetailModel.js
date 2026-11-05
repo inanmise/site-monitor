@@ -14,6 +14,10 @@ import { formatBytes } from '../../../utils/formatBytes.js'
 import { formatPercent } from '../../../i18n/dateLocale.js'
 import { failureTexts as checkFailureTexts, isHealthy } from '../../checks/checkFailureModel.js'
 import { failureTexts as keywordFailureTexts } from '../../keyword/keywordFailureModel.js'
+import { localizeSummary } from '../activityModel.js'
+
+// Sunucu özetinin jeton çevirisi TEK kaynak: liste modeli (inceleme FR D17 — iki kopya ayrışıyordu)
+export { localizeSummary }
 
 export const TZ = 'Europe/Istanbul'
 
@@ -33,6 +37,39 @@ export const CHECK_ACTIONS = new Set(['SCHEDULED_CHECK', 'MANUAL_CHECK'])
 export const MAX_SERIES_POINTS = 600
 
 export const isFailedStatus = (s) => s === 'ERROR' || s === 'TIMEOUT'
+
+/**
+ * Aktivite satırının KENDİ alanlarından "kontrol başarısız mı" (kontrol satırı okunamadığında / gizliyken). ERROR /
+ * TIMEOUT her türde; WARNING ise HTTP ve Keyword kontrolünde başarısız kontroldür (sunucu: `ok=false` + HTTP kodu →
+ * WARNING — 2026-10-11 sözlüğü; alarm açar) ve SCRIPTED'da FAIL'dir (NO_CHECKS yapılandırma kusuru — sayılmaz).
+ * İnceleme CT Y1: bu satırlarda kök neden paneli ve "alarm yok" notu çizilmiyordu.
+ */
+export function activityFailed(a) {
+  if (!a) return false
+  if (!CHECK_ACTIONS.has(upper(a.action))) return false
+  const st = upper(a.result_status)
+  if (isFailedStatus(st)) return true
+  if (st !== 'WARNING') return false
+  const type = upper(a.monitor_type)
+  if (type === 'HTTP' || type === 'KEYWORD') return true
+  if (type === 'SCRIPTED') {
+    return upper(a.failure_reason) !== 'SCRIPT_NO_CHECKS' && !upper(a.result_summary).startsWith('NO_CHECKS')
+  }
+  return false
+}
+
+/**
+ * Bu aktivitenin kontrolü başarısız mı — kontrol satırı varsa ONUN sağlığı (`down`; DB sorgu kural ihlali `warn` ise
+ * değil), yoksa aktivitenin kendi alanları (`activityFailed`). Ayrıntı sayfasının kök neden paneli, "alarm yok" notu ve
+ * başlık rozeti bu tek kurala bağlıdır (başlık ↔ "Kontrol sonucu" bölümü çelişmesin).
+ */
+export function checkFailed(detail, type) {
+  const a = detail?.data
+  if (!a || !CHECK_ACTIONS.has(upper(a.action))) return false
+  const row = detail.check?.row
+  if (row) return rowHealth(type, row) === 'down'
+  return activityFailed(a)
+}
 
 const str = (v) => (v == null ? '' : String(v).trim())
 const upper = (v) => str(v).toUpperCase()
@@ -117,7 +154,20 @@ function normalizeAlarm(raw) {
 function normalizeChange(raw) {
   const c = plainObject(raw)
   if (!c || !str(c.kind) || num(c.id) == null || num(c.seq) == null) return null
-  return { kind: str(c.kind).toLowerCase(), id: num(c.id), seq: num(c.seq) }
+  // Sunucu eski satırda (change_seq yok) ± 120 sn içindeki kaydı `match: approximate` ile döner — kesin gibi gösterilmez
+  // (inceleme CT O5). Alan yoksa (eski sunucu) kesin: o sunucu yalnız change_seq ile eşler.
+  return { kind: str(c.kind).toLowerCase(), id: num(c.id), seq: num(c.seq), match: c.match === 'approximate' ? 'approximate' : 'exact' }
+}
+
+/**
+ * Hata ayrıntısı: JSON olmayan metni sunucu `{text: …}` nesnesine sarar (Keyword'ün düz Türkçe ayrıntısı) — teşhis
+ * panelleri dize bekler; nesne kalırsa "Teknik ayrıntı" `[object Object]` yazardı (inceleme FR O4).
+ */
+function failureDetailValue(raw) {
+  const fd = parseObject(raw)
+  if (fd && Object.keys(fd).length === 1 && typeof fd.text === 'string') return fd.text
+  if (fd) return fd
+  return typeof raw === 'string' && raw.trim() ? raw : null
 }
 
 function normalizeSeries(raw) {
@@ -128,24 +178,35 @@ function normalizeSeries(raw) {
 
 /**
  * `GET /api/activity/{id}/detail` gövdesi → sayfa modeli. `data` yoksa null (çağıran okuma hatası gösterir).
- * `failure_detail` metin gelirse nesneye çevrilir (kontrol satırındaki maskeli JSON'un aynısı).
+ * `failure_detail` metin gelirse nesneye çevrilir (kontrol satırındaki maskeli JSON'un aynısı); yalnız `{text}` taşıyan
+ * nesne düz metne iner.
+ *
+ * <p>Bölüm bayrakları (inceleme FR Y1 / CT Y2 — "okunamadı" ≠ "yok"): sunucu bir bölümü okuyamazsa onu null bırakıp
+ * `<bölüm>_error: true`, kontrol satırını görme izni yoksa `check_hidden: true` (+ `check_hidden_reason`
+ * `permission` | `team`) yollar. Model bunları `checkHidden` / `hiddenReason` / `errors.{check, series, alarm, change}`
+ * olarak taşır; bileşenler okunamayan bölümü "okunamadı + Yeniden dene", gizliyi nötr "izniniz yok" diye çizer.
  */
 export function normalizeDetail(body) {
   const b = plainObject(body)
   const data0 = plainObject(b?.data)
   if (!data0) return null
   const data = { ...data0 }
-  const fd = parseObject(data.failure_detail)
-  data.failure_detail = fd
+  data.failure_detail = failureDetailValue(data.failure_detail)
   const chk = plainObject(b.check)
   const check = chk && plainObject(chk.row)
     ? { type: checkTypeOf(data.monitor_type, chk), match: chk.match === 'exact' ? 'exact' : 'approximate', row: chk.row }
     : null
   const actor = plainObject(b.actor)
+  const hiddenReason = str(b.check_hidden_reason).toLowerCase()
   return {
     legacy: false,
     data,
     check,
+    checkHidden: b.check_hidden === true,
+    hiddenReason: hiddenReason === 'team' || hiddenReason === 'permission' ? hiddenReason : null,
+    errors: {
+      check: b.check_error === true, series: b.series_error === true, alarm: b.alarm_error === true, change: b.change_error === true,
+    },
     previous: plainObject(b.previous_check),
     next: plainObject(b.next_check),
     series: normalizeSeries(b.series),
@@ -164,8 +225,9 @@ export function legacyDetail(body) {
   if (!data) return null
   return {
     legacy: true,
-    data: { ...data, failure_detail: parseObject(data.failure_detail) },
+    data: { ...data, failure_detail: failureDetailValue(data.failure_detail) },
     check: null, previous: null, next: null, series: null, alarm: null, change: null,
+    checkHidden: false, hiddenReason: null, errors: { check: false, series: false, alarm: false, change: false },
     links: normalizeLinks(null, data),
     actor: { name: str(data.actor) || null, requestId: str(data.request_id) || null },
     recent: Array.isArray(b.recent) ? b.recent.filter((r) => plainObject(r)) : [],
@@ -292,11 +354,12 @@ export function rowReason(type, row, monitor, t) {
 
 /**
  * Kontrol satırı bulunamadığında aktivitenin KENDİ hata alanlarından (yeni kolonlar: failure_reason, failure_detail,
- * http_status) teşhis paneline verilecek satır. Yalnız ERROR / ZAMAN AŞIMI aktivitede; aksi null. `pseudo: true`
- * işaretlidir (sayfa "aktivite kaydından" notu gösterir).
+ * http_status) teşhis paneline verilecek satır. Yalnız başarısız kontrol aktivitesinde (`activityFailed`: ERROR /
+ * ZAMAN AŞIMI, HTTP / Keyword WARNING, Scripted FAIL); aksi null. `pseudo: true` işaretlidir (sayfa "aktivite
+ * kaydından" notu gösterir).
  */
 export function pseudoCheck(type, a) {
-  if (!a || !isFailedStatus(a.result_status)) return null
+  if (!a || !activityFailed(a)) return null
   const base = {
     pseudo: true, ok: false,
     failure_reason: str(a.failure_reason) || null,
@@ -316,7 +379,7 @@ export function pseudoCheck(type, a) {
     case 'pagespeed': return { ...base, error_message: base.error }
     case 'domain': return { ...base, status: 'UNKNOWN' }
     case 'cert': return { ...base, status: 'error', error_class: str(a.error_class) || null, domain: host || null }
-    case 'scripted': return { ...base, status: a.result_status === 'TIMEOUT' ? 'TIMEOUT' : 'ERROR' }
+    case 'scripted': return { ...base, status: a.result_status === 'TIMEOUT' ? 'TIMEOUT' : a.result_status === 'WARNING' ? 'FAIL' : 'ERROR' }
     case 'keyword': return { ...base, found: false }
     case 'http': return { ...base, error_detail: a.failure_detail ?? null }
     case 'dbquery': return { ...base, status: 'FAIL', error_message: base.error }
@@ -530,19 +593,6 @@ export function statusLabel(status, t) {
   const key = 'act.st.' + upper(status)
   const v = t(key)
   return v && v !== key ? v : t('act.st.UNKNOWN')
-}
-
-/**
- * Sunucu özeti yalnız Türkçe üretir ("0 kırık · 12ms", "3 istek", "yüklenemedi") — listedeki (ActivityLog) aynı jeton
- * çevirisi. Türkçede sözlük değeri jetonun kendisidir.
- */
-const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
-  ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
-export function localizeSummary(summary, t) {
-  if (!summary) return summary
-  let s = String(summary)
-  for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))
-  return s
 }
 
 /**

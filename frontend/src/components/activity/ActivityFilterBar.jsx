@@ -17,14 +17,21 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
 import { CHECK_FAILURE_CODES } from '../checks/checkFailureCodes.js'
 import { KW_FAILURE_CODES } from '../keyword/diagnose/keywordDiagCodes.js'
+import { FAILURE_CODES as DBQ_FAILURE_CODES } from '../dbquery/dbqueryPageModel.js'
 import { TYPES } from './ActivityParts.jsx'
 import MonitorFilterPicker from './MonitorFilterPicker.jsx'
 import {
-  DEFAULT_FILTERS, ERROR_CLASSES, GROUPS, RANGES, STATUSES, activeChips, customRangeValid, isFiltered, istanbulShort, reasonLabel, removeChip,
+  DEFAULT_FILTERS, ERROR_CLASSES, GROUPS, MAX_REASONS, RANGES, STATUSES, activeChips, customRangeValid, isFiltered, istanbulShort,
+  reasonLabel, removeChip,
 } from './activityModel.js'
 
-/** Hata nedeni seçenekleri: kontrol kataloğu + yalnız keyword'e özgü kodlar (sıra katalog sırası). */
+/**
+ * Hata nedeni seçenekleri: kontrol kataloğu + yalnız keyword'e özgü kodlar + DB sorgu kodları (`DB_*`, inceleme CT O3 —
+ * DB sorgu hataları nedene göre süzülemiyordu; kod listesi sunucu `DbQueryErrors` / `DbQueryCheckerService` ile aynı,
+ * kapı activityModelFilters.test) — sıra katalog sırası.
+ */
 export const REASON_CODES = [...CHECK_FAILURE_CODES, ...KW_FAILURE_CODES.filter((c) => !CHECK_FAILURE_CODES.includes(c)),
+  ...DBQ_FAILURE_CODES.filter((c) => !CHECK_FAILURE_CODES.includes(c)),
   // Neden kodu yazılmadan önceki satırlar hata sınıfıyla süzülür (be2: `reason=class:<SINIF>`)
   ...ERROR_CLASSES.map((c) => `class:${c}`)]
 
@@ -38,11 +45,12 @@ const MAX_ACTOR = 100
  * (çoklu — zaman aşımı dahil), hata nedeni, takım, izleme (arama), kişi. Satır 3: olay grubu çipleri (sayılı), satır 4:
  * tür çipleri (sayılı; dar kapta katlanır), satır 5: etkin süzgeç çipleri. Durum çipi YOK (KPI kartı + seçici gösterir).
  *
- * Props: `{ filters, setFilters, typeCounts, groupCounts, teams: {status, list}, compact, actions }`.
+ * Props: `{ filters, setFilters, typeCounts, groupCounts, teams: {status, list}, compact, actions, rangeError }` —
+ * `rangeError`: dışa aktarımın aralık reddi (en çok 90 gün, inceleme be2) — özel aralık alanlarının ALTINDA söylenir.
  * Test kancaları: `data-slot="act-filters"`, `act-group-chips`, `act-type-chips`, `act-types-toggle`, `act-more-toggle`,
  * `act-custom-range`, `act-active-filters`, `act-chip` (+ `data-kind`).
  */
-export default function ActivityFilterBar({ filters, setFilters, typeCounts, groupCounts, teams, compact = false, actions }) {
+export default function ActivityFilterBar({ filters, setFilters, typeCounts, groupCounts, teams, compact = false, actions, rangeError = null }) {
   const t = useT()
   const { lang } = useLanguage()
   const uid = useId()
@@ -53,6 +61,8 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
   const [moreOpen, setMoreOpen] = useState(false)
   const [customOpen, setCustomOpen] = useState(filters.range === 'custom')
   useEffect(() => { if (filters.range === 'custom') setCustomOpen(true) }, [filters.range])
+  // Dışa aktarımın aralık reddi alanın altında söylenir — alanlar görünür olsun
+  useEffect(() => { if (rangeError) setCustomOpen(true) }, [rangeError])
 
   // Dış değişim (çip kaldırma, Tümünü temizle, kayıtlı görünüm) girdileri de günceller
   useEffect(() => { setQInput(filters.q) }, [filters.q])
@@ -174,7 +184,7 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
         className="w-full justify-start sm:w-auto pointer-coarse:h-10" />
       <FacetedFilter title={t('act.flt.reason')} icon={CircleAlert} options={reasonOptions} value={filters.reasons}
         searchPlaceholder={t('act.flt.reasonPh')}
-        onChange={(v) => setFilters((f) => ({ ...f, reasons: v.slice(0, 60) }))}
+        onChange={(v) => setFilters((f) => ({ ...f, reasons: v.slice(0, MAX_REASONS) }))}
         className="w-full justify-start sm:w-auto pointer-coarse:h-10" />
       <div data-touch-picker className="w-full min-w-0 sm:w-56">
         <SearchableSelect value={filters.team} onChange={(v) => setFilters((f) => ({ ...f, team: v ? String(v) : '' }))}
@@ -219,7 +229,8 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
             <div className="flex min-w-0 flex-col gap-1 sm:w-56">
               <Label htmlFor={`${uid}-from`} className="text-xs text-muted-foreground">{t('act.flt.from')}</Label>
               <DateTimeField id={`${uid}-from`} value={draft.from} onChange={(v) => setDraft((d) => ({ ...d, from: v }))} clearable
-                max={draft.to || undefined} invalid={!draftValid} describedBy={!draftValid ? `${uid}-err` : undefined} />
+                max={draft.to || undefined} invalid={!draftValid || !!rangeError}
+                describedBy={!draftValid ? `${uid}-err` : rangeError ? `${uid}-xerr` : undefined} />
             </div>
             <div className="flex min-w-0 flex-col gap-1 sm:w-56">
               <Label htmlFor={`${uid}-to`} className="text-xs text-muted-foreground">{t('act.flt.to')}</Label>
@@ -232,6 +243,9 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
             </Button>
             {!draftValid && (
               <p id={`${uid}-err`} role="alert" data-slot="act-custom-error" className="m-0 text-sm text-destructive sm:w-full">{t('act.flt.rangeOrder')}</p>
+            )}
+            {draftValid && rangeError && (
+              <p id={`${uid}-xerr`} role="alert" data-slot="act-export-range-error" className="m-0 text-sm text-destructive sm:w-full [overflow-wrap:anywhere]">{rangeError}</p>
             )}
           </div>
         )}

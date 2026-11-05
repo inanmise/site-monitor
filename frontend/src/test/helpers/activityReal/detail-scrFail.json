@@ -1,0 +1,112 @@
+{
+  "success": true,
+  "data": {
+    "id": 26,
+    "activity_time": "2026-11-05T01:32:27",
+    "monitor_type": "SCRIPTED",
+    "monitor_id": 91,
+    "monitor_name": "Mobil giriş senaryosu",
+    "target": "Mobil giriş senaryosu",
+    "action": "SCHEDULED_CHECK",
+    "result_status": "WARNING",
+    "result_summary": "FAIL · 2✓/1✗ · 4200ms",
+    "result_detail": null,
+    "error_message": null,
+    "error_class": null,
+    "actor": "scheduler",
+    "team_id": 1,
+    "response_ms": 4200,
+    "days_remaining": null,
+    "check_id": 1,
+    "http_status": null,
+    "failure_reason": "SCRIPT_CHECK_FAILED",
+    "failure_detail": {
+      "phase": "SCRIPT",
+      "step": "login",
+      "check": "status is 200"
+    },
+    "alert_event_id": null,
+    "storm_id": null,
+    "change_seq": null,
+    "request_id": null,
+    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+  },
+  "check": {
+    "type": "scripted",
+    "match": "exact",
+    "row": {
+      "id": 1,
+      "monitor_id": 91,
+      "ok": false,
+      "status": "FAIL",
+      "duration_ms": 4200,
+      "exit_code": 99,
+      "checks_passed": 2,
+      "checks_failed": 1,
+      "iteration_ms": null,
+      "http_req_avg_ms": null,
+      "http_req_p95_ms": null,
+      "checks_json": null,
+      "output_tail": null,
+      "error": null,
+      "via_proxy": null,
+      "req_blocked_ms": null,
+      "req_connecting_ms": null,
+      "req_tls_ms": null,
+      "req_sending_ms": null,
+      "req_waiting_ms": null,
+      "req_receiving_ms": null,
+      "data_sent": null,
+      "data_received": null,
+      "script_version": null,
+      "k6_version": null,
+      "manual": null,
+      "checked_at": "2026-11-05T01:32:27",
+      "failure_reason": "SCRIPT_CHECK_FAILED",
+      "failure_detail": {
+        "phase": "SCRIPT",
+        "step": "login",
+        "check": "status is 200"
+      }
+    }
+  },
+  "previous_check": null,
+  "next_check": null,
+  "series": {
+    "from": "2026-11-04T01:32:27",
+    "to": "2026-11-06T01:32:27",
+    "points": [
+      {
+        "t": "2026-11-05T01:32:27",
+        "ms": 4200,
+        "status": "WARNING"
+      }
+    ],
+    "truncated": false
+  },
+  "alarm": null,
+  "change": null,
+  "links": {
+    "monitor": {
+      "tab": "scripted",
+      "params": {
+        "monitor": 91
+      }
+    },
+    "history": {
+      "tab": "scripted",
+      "params": {
+        "monitor": 91,
+        "mtab": "control"
+      }
+    },
+    "changes": null,
+    "alert": null,
+    "can_diagnose": true
+  },
+  "actor": {
+    "name": "scheduler",
+    "request_id": null
+  },
+  "timestamp": "2026-11-05T01:34:27"
+}

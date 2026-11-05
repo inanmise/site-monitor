@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
 }))
 import { api } from '../api/client'
 import ActivityLog from '../components/ActivityLog.jsx'
+import { getSubPageMeta } from '../utils/pageMeta.js'
 // Ayrıntı sayfası tembel parça (recharts + alarm bileşenleri) — ilk dönüşümü testin 1 sn'lik waitFor'ına kalmasın
 await import('../components/activity/detail/ActivityDetailPage.jsx')
 
@@ -48,10 +49,10 @@ describe('Aktivite — rota', () => {
     expect(q('[data-slot="act-detail-page"]')).toHaveAttribute('data-id', '55')
     expect(api.getActivity).not.toHaveBeenCalled()
     expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'detail')
-    // Sekme başlığı rotayı izler (meta.page.activityDetail); listeye dönünce sekmenin kendi başlığı
-    await waitFor(() => expect(document.title).toBe(`${EN['meta.page.activityDetail.title']} · SiteMonitor`))
+    // Sekme başlığı rotayı izler: sayfa YAZMAZ, alt sayfa anahtarını ister (tek yazar usePageMeta — inceleme FR D16)
+    await waitFor(() => expect(getSubPageMeta()).toMatchObject({ tab: 'activity', key: 'meta.page.activityDetail' }))
     fireEvent.click(q('[data-slot="act-dt-back"]'))   // sayfanın üst çubuğundaki geri düğmesi
-    await waitFor(() => expect(document.title).toBe(`${EN['meta.tab.activity.title']} · SiteMonitor`))
+    await waitFor(() => expect(getSubPageMeta()).toBeNull())
     await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'PING' })))
     expect(url().get('act')).toBeNull()
     expect(url().get('atype')).toBe('PING')

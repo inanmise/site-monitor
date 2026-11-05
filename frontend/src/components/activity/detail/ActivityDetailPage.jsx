@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, RefreshCw, SearchX, XCircle, History, CheckCircle, AlertTriangle, HelpCircle } from 'lucide-react'
+import { ArrowLeft, RefreshCw, SearchX, XCircle, History, LineChart as LineChartIcon, FileDiff } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { relTimeOrRaw } from '../../../utils/relativeTime.js'
 import StatusBlock from '../../ui/StatusBlock.jsx'
@@ -18,8 +18,9 @@ import AlarmSection from './AlarmSection.jsx'
 import ChangeSection from './ChangeSection.jsx'
 import { SectionCard } from './detailParts.jsx'
 import { loadActivityDetail } from './loadActivityDetail.js'
+import { STATUS_META } from '../ActivityParts.jsx'
 import {
-  CHECK_ACTIONS, activityDetailHref, checkTypeOf, isFailedStatus, localizeSummary, pseudoMonitor,
+  CHECK_ACTIONS, activityDetailHref, checkFailed, checkTypeOf, localizeSummary, pseudoMonitor,
 } from './activityDetailModel.js'
 
 /** İlk yükleme iskeleti — başlık kartı + iki bölüm (sayfa veri gelince zıplamasın). */
@@ -45,8 +46,21 @@ function DetailSkeleton({ label }) {
 
 const LOADING = Object.freeze({ phase: 'loading' })
 
-const MINI_ICON = { SUCCESS: [CheckCircle, 'text-success'], WARNING: [AlertTriangle, 'text-amber-600 dark:text-amber-400'],
-  ERROR: [XCircle, 'text-destructive'], TIMEOUT: [XCircle, 'text-destructive'] }
+/**
+ * Sunucunun okuyamadığı bölüm (`<bölüm>_error`, inceleme FR Y1): bölüm SESSİZCE kaybolmaz — kendi başlığıyla "okunamadı"
+ * bandı + Yeniden dene. Test kancası çağıranın `data-slot`'u + `data-state="error"`.
+ */
+function UnreadableSection({ slot, icon, title, message, onRetry }) {
+  const t = useT()
+  return (
+    <SectionCard slot={slot} icon={icon} title={title} data-state="error">
+      <AlertBanner tone="danger" role="alert" className="mb-0"
+        actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={onRetry}><RefreshCw aria-hidden="true" />{t('act.dt.retry')}</Button>}>
+        {message}
+      </AlertBanner>
+    </SectionCard>
+  )
+}
 
 /** Eski sunucu: ayrıntı ucu yok — temel ucun mini geçmişi (son kontroller); satıra dokununca o aktivitenin sayfası. */
 function LegacyRecent({ recent, onOpenActivity }) {
@@ -56,7 +70,7 @@ function LegacyRecent({ recent, onOpenActivity }) {
       {recent.length === 0 ? <p className="m-0 text-sm text-muted-foreground">{t('act.noHistory')}</p> : (
         <ul className="m-0 flex list-none flex-col gap-1 p-0">
           {recent.map((h) => {
-            const [Icon, ink] = MINI_ICON[h.result_status] || [HelpCircle, 'text-muted-foreground']
+            const { Icon, ink } = STATUS_META[h.result_status] || STATUS_META.UNKNOWN
             return (
               <li key={h.id}>
                 <Button type="button" variant="ghost" size="sm" onClick={() => onOpenActivity?.(h.id)}
@@ -99,6 +113,9 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
   const [raw, setSt] = useState({ phase: 'loading', forId: id })
   const st = raw.forId === id ? raw : LOADING
   const [refreshing, setRefreshing] = useState(false)
+  // Yenile alt bölümleri de tazeler (inceleme FR D10): alarm zinciri, değişiklik ve "aynı anda ne oldu?" kendi uçlarını
+  // yalnız kimlik değişince okuyordu — sayaç onların yükleme bağımlılığında
+  const [refreshNonce, setRefreshNonce] = useState(0)
   const seq = useRef(0)
   const headingRef = useRef(null)
   const rootRef = useRef(null)
@@ -145,7 +162,10 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
   const type = useMemo(() => (detail ? checkTypeOf(a?.monitor_type, detail.check) : null), [detail, a])
   const monitor = useMemo(() => (a ? pseudoMonitor(type, a) : null), [type, a])
   const isCheck = !!a && CHECK_ACTIONS.has(String(a.action || '').toUpperCase())
-  const failed = !!a && isFailedStatus(a.result_status)
+  // Tek kural (inceleme CT Y1): kontrol satırı varsa onun sağlığı, yoksa aktivite alanları — HTTP / Keyword WARNING
+  // (ok=false + HTTP kodu) ve Scripted FAIL da başarısız kontroldür (kök neden paneli + "alarm yok" notu çizilir)
+  const failed = !!detail && checkFailed(detail, type)
+  const refreshAll = useCallback(() => { load(true); setRefreshNonce((n) => n + 1) }, [load])
 
   const topBar = (
     <div data-slot="act-dt-topbar" className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -154,7 +174,7 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
       </Button>
       <div className="flex flex-wrap items-center gap-2">
         {st.phase === 'ready' && (
-          <Button type="button" variant="outline" size="icon" onClick={() => load(true)} disabled={refreshing} aria-busy={refreshing || undefined}
+          <Button type="button" variant="outline" size="icon" onClick={refreshAll} disabled={refreshing} aria-busy={refreshing || undefined}
             title={t('act.dt.refresh')} aria-label={t('act.dt.refresh')} className="pointer-coarse:size-10">
             <RefreshCw aria-hidden="true" className={cn(refreshing && 'animate-spin motion-reduce:animate-none')} />
           </Button>
@@ -189,7 +209,8 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
               {t('act.dt.refreshFailed')}
             </AlertBanner>
           )}
-          <DetailHeader detail={detail} type={type} monitor={monitor} headingRef={headingRef} locale={locale} onOpenTimeline={onOpenTimeline} />
+          <DetailHeader detail={detail} type={type} monitor={monitor} headingRef={headingRef} locale={locale} onOpenTimeline={onOpenTimeline}
+            failed={isCheck && failed} />
           {detail.legacy ? (
             <>
               <AlertBanner tone="info" className="mb-0" title={t('act.dt.legacyTitle')}>{t('act.dt.legacyBody')}</AlertBanner>
@@ -197,14 +218,21 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
             </>
           ) : (
             <>
-              {(isCheck || detail.check) && <CheckResultSection detail={detail} type={type} monitor={monitor} />}
+              {(isCheck || detail.check || detail.checkHidden || detail.errors?.check) && (
+                <CheckResultSection detail={detail} type={type} monitor={monitor} onRetry={refreshAll} />
+              )}
               {isCheck && (detail.previous || detail.next) && (
                 <CompareSection detail={detail} type={type} monitor={monitor} locale={locale} onOpenActivity={onOpenActivity} />
               )}
-              {detail.series && <ActivitySeriesChart series={detail.series} anchorIso={a.activity_time} locale={locale} />}
-              <AlarmSection alarm={detail.alarm} alertLink={detail.links?.alert} locale={locale} failed={isCheck && failed} />
-              {detail.change && <ChangeSection change={detail.change} changesLink={detail.links?.changes} locale={locale} />}
-              {isCheck && failed && <RelatedActivityPanel activityId={a.id} onOpenActivity={onOpenActivity} />}
+              {detail.errors?.series && !detail.series ? (
+                <UnreadableSection slot="act-dt-series" icon={LineChartIcon} title={t('act.dt.ser.title')} message={t('act.dt.ser.readError')} onRetry={refreshAll} />
+              ) : detail.series && <ActivitySeriesChart series={detail.series} anchorIso={a.activity_time} locale={locale} />}
+              <AlarmSection alarm={detail.alarm} alertLink={detail.links?.alert} locale={locale} failed={isCheck && failed}
+                readError={detail.errors?.alarm === true} onRetry={refreshAll} refreshNonce={refreshNonce} />
+              {detail.errors?.change && !detail.change ? (
+                <UnreadableSection slot="act-dt-change" icon={FileDiff} title={t('act.dt.chg.title')} message={t('act.dt.chg.loadError')} onRetry={refreshAll} />
+              ) : detail.change && <ChangeSection change={detail.change} changesLink={detail.links?.changes} locale={locale} refreshNonce={refreshNonce} />}
+              {isCheck && failed && <RelatedActivityPanel activityId={a.id} onOpenActivity={onOpenActivity} refreshNonce={refreshNonce} />}
             </>
           )}
         </>

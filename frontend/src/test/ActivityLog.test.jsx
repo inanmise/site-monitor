@@ -142,7 +142,7 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     const fold = document.querySelector('[data-slot="act-fold"]')
     expect(fold).not.toBeNull()
     expect(fold.textContent).toMatch(/3 ardışık kontrol|3 consecutive checks/)
-    expect(fold.textContent).toMatch(/1 hata|1 errors/)
+    expect(fold.textContent).toMatch(/1 hata|1 failed/)   // EN "1 failed" (tekil / çoğul aynı — inceleme FR D15)
     fireEvent.click(fold)
     expect(document.querySelector('[data-slot="act-fold"]')).toBeNull()
     expect(document.querySelectorAll('[data-slot="act-item"]').length).toBe(5)
