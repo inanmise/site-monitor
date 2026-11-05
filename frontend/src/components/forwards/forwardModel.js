@@ -111,13 +111,20 @@ export function recipientText(t, item) {
 }
 
 /**
- * Kapsam etiketi: "Tüm izlemeler" / "Türler: HTTP, Ping" / "Seçilen N izleme". Tür adları push tür etiketleriyle aynı
- * (`userpush.type.*` — kısa adlar; "cert" = "Sertifika").
+ * Kapsam türünün adı: push tür etiketleriyle aynı kısa adlar (`userpush.type.*`); yalnız "cert" iletimde envanter kaydının
+ * TÜM alarmlarıdır (sertifika + erişilebilirlik) — yönetim ekranındaki adıyla (`fwd.type.cert`), "Sertifika" denmez.
+ */
+export function scopeTypeName(type, t) {
+  return String(type ?? '') === 'cert' ? t('fwd.type.cert') : familyLabel(type, t)
+}
+
+/**
+ * Kapsam etiketi: "Tüm izlemeler" / "Türler: HTTP, Ping" / "Seçilen N izleme". Tür adları {@link scopeTypeName}.
  */
 export function scopeText(t, kind, types, monitorsCount) {
   const k = String(kind ?? '').toUpperCase()
   if (k === 'TYPES') {
-    const names = (Array.isArray(types) ? types : []).map((x) => familyLabel(x, t)).filter(Boolean)
+    const names = (Array.isArray(types) ? types : []).map((x) => scopeTypeName(x, t)).filter(Boolean)
     return names.length ? t('fwdx.scope.types', names.join(', ')) : t('fwdx.scope.typesNone')
   }
   if (k === 'MONITORS') {
@@ -138,7 +145,7 @@ export function simAppliesText(t, row) {
   const types = Array.isArray(row?.scope_types) ? row.scope_types : []
   if (applies === 'monitors_only') return t('fwdx.sim.appliesMonitors')
   if (applies === 'types_only' || (applies !== 'all' && types.length > 0)) {
-    const names = types.map((x) => familyLabel(x, t)).filter(Boolean)
+    const names = types.map((x) => scopeTypeName(x, t)).filter(Boolean)
     return names.length ? t('fwdx.sim.appliesTypes', names.join(', ')) : t('fwdx.scope.typesNone')
   }
   if (applies !== 'all') return t('fwdx.sim.appliesMonitors')
@@ -161,16 +168,23 @@ export function formatDay(ymd, locale) {
 }
 
 /**
- * Yönetim → Alarm iletimi bağlantısı. `add` verilirse pencere bu izleme için açılır (`g_fnew`): "<tür>:<id>"; sertifika
- * (envanter kaydı) alan adıyla "cert:<alanadı>". Sahip takım `g_fteam` — birden çok sahip takım varsa ilki (pencere
- * görüntüleyicinin yönetebildiği takımı kendisi seçer).
+ * Yönetim → Alarm iletimi bağlantısı. `add` verilirse pencere bu izleme için açılır (`g_fnew`): "<tür>:<id>" — kimlik
+ * (sertifikada envanter kaydının kimliği, `for-monitor` yanıtının `monitor.id`'si) biliniyorsa onunla; sertifikada kimlik
+ * yoksa alan adıyla "cert:<alanadı>".
+ *
+ * <p>Sahip takım `g_fteam` (sunucu `owner_teams` = yalnız görüntüleyicinin KENDİ kapsamında gördüğü sahipler, her biri
+ * `can_manage` taşır): ekleme bağlantısı YÖNETEBİLDİĞİ ilk sahibi seçer (sertifikada UG yönetilip SY yönetilmiyorsa UG);
+ * hiçbirini yönetemiyorsa `g_fteam` yok (pencere kendi seçer). "Tümünü yönet" görülen ilk sahiple süzer (yoksa süzgeç yok).
+ * Eski sunucu `can_manage` göndermez: o zaman ilk sahip (önceki davranış).
  */
 export function manageTarget({ type, id, domain, ownerTeams, add = false }) {
   const params = { g_tab: 'forwards' }
-  const owner = Array.isArray(ownerTeams) && ownerTeams.length ? ownerTeams[0]?.id : null
-  if (owner != null) params.g_fteam = String(owner)
+  const owners = (Array.isArray(ownerTeams) ? ownerTeams : []).filter((o) => o && o.id != null)
+  const knowsManage = owners.some((o) => typeof o.can_manage === 'boolean')
+  const owner = add && knowsManage ? owners.find((o) => o.can_manage === true) : owners[0]
+  if (owner?.id != null) params.g_fteam = String(owner.id)
   if (add) {
-    const key = type === 'cert' ? (domain || (id != null ? String(id) : '')) : (id != null ? String(id) : '')
+    const key = id != null && String(id) !== '' ? String(id) : (type === 'cert' && domain ? String(domain) : '')
     if (type && key) params.g_fnew = `${type}:${key}`
   }
   return { tab: 'admin', params }

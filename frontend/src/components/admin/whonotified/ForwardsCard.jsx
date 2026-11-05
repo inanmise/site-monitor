@@ -1,5 +1,6 @@
 import { ArrowRight, Forward } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
+import { usePermissions } from '../../../contexts/PermissionsProvider.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
 import { ItemGroup } from '@/components/shadcn/item'
@@ -21,11 +22,13 @@ import { cn } from '@/lib/utils'
  * satır `data-slot="wn-recipient"` + `data-source="forward"` + `data-applies`.
  *
  * @param forwards   sunucunun `forwards` dizisi
- * @param onNavigate (isteğe bağlı) AdminPanel.jump — "Alarm iletimi ekranında yönet"
+ * @param onNavigate (isteğe bağlı) AdminPanel.jump — "Alarm iletimi ekranında yönet"; düğme YALNIZ `alerts.forwards`
+ *                   görme izni varken çizilir (sekme o izinle görünür — izinsiz kullanıcı boş / reddedilen sekmeye gitmesin)
  * @param teamId     senaryonun takımı (yönetim ekranının sahip takım süzgeci)
  */
 export default function ForwardsCard({ forwards, onNavigate, teamId, className }) {
   const t = useT()
+  const canOpenForwards = usePermissions().canView('alerts.forwards')
   const rows = (Array.isArray(forwards) ? forwards : []).filter((f) => f && typeof f === 'object')
   const addressCount = new Set(rows.flatMap((f) => (Array.isArray(f.emails) ? f.emails : []).map((e) => String(e).trim().toLowerCase()))
     .filter(Boolean)).size
@@ -65,7 +68,7 @@ export default function ForwardsCard({ forwards, onNavigate, teamId, className }
         <p data-slot="wn-forward-summary" className={cn('rounded-md border px-3 py-2 text-xs leading-relaxed', FORWARD_TONE)}>
           {addressCount === 0 ? t('fwdx.sim.summaryNone') : addressCount === 1 ? t('fwdx.sim.summary.one') : t('fwdx.sim.summary', addressCount)}
         </p>
-        {onNavigate && (
+        {onNavigate && canOpenForwards && (
           <div>
             <Button type="button" variant="outline" size="sm" data-action="wn-open-forwards"
               className="h-10 w-full sm:w-auto md:h-8 pointer-coarse:h-10"

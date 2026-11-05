@@ -25,8 +25,8 @@ import { cn } from '@/lib/utils'
 import AlertForwardDialog from './AlertForwardDialog.jsx'
 import { AttentionHint, Expiry, Flow, Meta, Note, Recipient, ScopeChips, StateBadge } from './ForwardParts.jsx'
 import {
-  RECIPIENT_FILTERS, SCOPE_FILTERS, STATE_FILTERS, filterForwards, normalizeForward, normalizeLimits, ownerTeamOptions,
-  parseNewRef, payloadOf, recipientSummary, resultNotes, scopeSummary, sortForwards, summarize,
+  RECIPIENT_FILTERS, SCOPE_FILTERS, STATE_FILTERS, filterForwards, mergeForwardRow, normalizeForward, normalizeLimits,
+  ownerFilterKnown, ownerTeamOptions, parseNewRef, payloadOf, recipientSummary, resultNotes, scopeSummary, sortForwards, summarize,
 } from './alertForwardModel.js'
 
 /** Kap bu genişliğin altındaysa kartlar (tablo dar kapta okunmaz). */
@@ -83,7 +83,9 @@ export default function AlertForwardManager() {
 
   const load = useCallback(async () => {
     const my = ++seq.current
-    setState((s) => ({ ...s, status: s.status === 'ready' ? 'refreshing' : 'loading' }))
+    // Liste bir kez okunduysa (hazır / yenileniyor / bayat) yenileme iskelete DÖNMEZ — art arda iki işlemin yenilemesi
+    // (duraklat → sürdür) listeyi silip iskelet göstermesin
+    setState((s) => ({ ...s, status: ['ready', 'refreshing', 'stale'].includes(s.status) ? 'refreshing' : 'loading' }))
     let res = null
     let thrown = null
     try { res = await api.alertForwards.list() } catch (e) { thrown = e }
@@ -139,6 +141,11 @@ export default function AlertForwardManager() {
   const filtered = useMemo(() => sortForwards(filterForwards(items, { q, team, scope, rcpt, state: stateFilter }, t)),
     [items, q, team, scope, rcpt, stateFilter, t])
   const owners = useMemo(() => ownerTeamOptions(items, state.teams), [items, state.teams])
+  // URL'deki sahip takım seçeneklerde yoksa (görmediği / iletimi kalmayan takım) süzgeç bırakılır — ilk okumada da.
+  // Yalnız liste GERÇEKTEN okunmuşken (ready): yüklenirken / okunamazken seçenekler bilinmez.
+  useEffect(() => {
+    if (state.status === 'ready' && !ownerFilterKnown(team, owners)) setTeam('')
+  }, [state.status, team, owners])
   const canAdd = state.teams.length > 0
   const anyFilter = !!(q || team || scope || rcpt || stateFilter)
   const clearFilters = () => { setQ(''); setTeam(''); setScope(''); setRcpt(''); setStateFilter('') }
@@ -183,6 +190,10 @@ export default function AlertForwardManager() {
     }
   }
 
+  /** Kayıt / duraklat / sürdür yanıtındaki satır listeye hemen yazılır (yeni sürüm) — arka plan yenilemesi gelmeden ikinci
+   *  işlem eski sürümle 409 almasın. Ardından liste arkada yeniden okunur (`load` sıra numarası eski yanıtı düşürür). */
+  const applyRow = (raw) => setState((s) => ({ ...s, items: mergeForwardRow(s.items, raw) }))
+
   async function togglePause(f) {
     const enabled = f.state === 'paused'
     setBusyId(f.id)
@@ -191,7 +202,11 @@ export default function AlertForwardManager() {
       if (f.version != null) body.version = f.version
       const res = await api.alertForwards.update(f.id, body)
       if (res?.success) {
-        toast.success(t(enabled ? 'fwd.toast.resumed' : 'fwd.toast.paused'))
+        applyRow(res.data)
+        // Sürdürmede sunucu o anki tüm alıcılara bilgi bildirimi gönderir — sonucu (gitmediyse nedeni) söylenir
+        const notes = resultNotes(res, t)
+        toast.success([t(enabled ? 'fwd.toast.resumed' : 'fwd.toast.paused'), ...notes.ok].join(' '))
+        for (const w of notes.warn) toast.info(w)
         load()
       } else {
         toast.error(res?.error || t('fwd.err.generic'), { details: res })
@@ -205,10 +220,11 @@ export default function AlertForwardManager() {
     }
   }
 
-  function onSaved(res, isNew) {
+  function onSaved(res, isNew, ctx = {}) {
     setDialog(null)
     const d = res && typeof res === 'object' ? res : {}
-    const notes = resultNotes(d, t)
+    applyRow(d.data)
+    const notes = resultNotes(d, t, { isNew, newRecipients: ctx.newRecipients === true })
     toast.success([t(isNew ? 'fwd.toast.created' : 'fwd.toast.updated'), ...notes.ok].join(' '))
     for (const w of notes.warn) toast.info(w)
     load()
@@ -331,7 +347,7 @@ export default function AlertForwardManager() {
       {dialog && (
         <AlertForwardDialog open forward={dialog.forward} preset={dialog.preset || null} teams={state.teams}
           canGrant={state.canGrant} limits={state.limits}
-          onClose={() => setDialog(null)} onSaved={(res) => onSaved(res, !dialog.forward)} onStale={load}
+          onClose={() => setDialog(null)} onSaved={(res, ctx) => onSaved(res, !dialog.forward, ctx)} onStale={load}
           onGone={() => { setDialog(null); load() }} />
       )}
     </div>

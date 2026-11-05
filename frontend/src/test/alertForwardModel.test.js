@@ -5,8 +5,9 @@ import { readJavaMain } from './helpers/javaTable.js'
 import {
   ATTENTION_STATES, DEFAULT_LIMITS, FIELD_MAP, FORWARD_STATES, FORWARD_TYPES, TYPE_LABEL_KEYS, createPayload, daysLeft, deriveState,
   emptyForm, expiringSoon, filterForwards, filterMemberOptions, filterMonitorOptions, findMonitorForRef, formErrors, formOf,
-  hasNewRecipients, memberOptions, monitorKey, monitorLabel, needsAttention, normalizeForward, normalizeLimits, normalizeMonitorOptions,
-  ownerTeamOptions, parseNewRef, payloadOf, plural, recipientSummary, resultNotes, scopeChips, scopeSummary, sortForwards,
+  hasNewRecipients, infoNoticeKind, memberOptions, mergeForwardRow, monitorKey, monitorLabel, needsAttention, normalizeForward,
+  normalizeLimits, normalizeMonitorOptions, ownerFilterKnown, ownerTeamOptions, parseNewRef, payloadOf, plural, recipientSummary,
+  resultNotes, scopeChips, scopeSummary, sortForwards,
   summarize, todayIstanbul, typeLabel, updatePayload,
 } from '../components/admin/forwards/alertForwardModel.js'
 
@@ -175,10 +176,13 @@ describe('alertForwardModel', () => {
     expect(updatePayload(orig, { ...formOf(orig), scopeKind: 'ALL' })).toEqual({ scope_kind: 'ALL', scope_types: [], version: 3 })
     expect(updatePayload(orig, { ...formOf(orig), scopeKind: 'MONITORS', scopeMonitors: [{ type: 'http', id: 5 }] }))
       .toEqual({ scope_kind: 'MONITORS', scope_types: [], scope_monitors: [{ type: 'http', id: 5 }], version: 3 })
-    // Alıcı türü değişince üyeler ve takım birlikte; erişim kutusu yalnız yeni alıcıda
+    // Alıcı türü değişince üyeler ve takım birlikte; erişim kutusu yalnız YENİ alıcıda — aynı takımda "takımın tamamı" →
+    // "seçilen üyeler" daraltmadır (üyeler zaten alıyordu), erişim istenmez; başka takımın üyeleri yenidir
     const toMembers = { ...formOf(orig), recipientKind: 'MEMBERS', recipientUserIds: ['u-1'], grantView: true }
     expect(updatePayload(orig, toMembers)).toEqual({ recipient_kind: 'MEMBERS', recipient_user_ids: ['u-1'], recipient_team_id: 20,
-      grant_view: true, version: 3 })
+      version: 3 })
+    expect(updatePayload(orig, { ...toMembers, recipientTeamId: 21 })).toEqual({ recipient_kind: 'MEMBERS', recipient_user_ids: ['u-1'],
+      recipient_team_id: 21, grant_view: true, version: 3 })
     expect(updatePayload(orig, { ...formOf(orig), note: 'x', grantView: true })).toEqual({ note: 'x', version: 3 })
     // Sürüm bilinmiyorsa eklenmez
     expect(updatePayload(normalizeForward(raw({ version: undefined })), { ...formOf(orig), note: 'y' })).toEqual({ note: 'y' })
@@ -191,6 +195,42 @@ describe('alertForwardModel', () => {
     expect(hasNewRecipients(orig, { ...formOf(orig), recipientUserIds: ['a', 'c'] })).toBe(true)
     expect(hasNewRecipients(orig, { ...formOf(orig), recipientTeamId: 21 })).toBe(true)
     expect(hasNewRecipients(null, emptyForm())).toBe(true)
+    // Aynı takımda TEAM → MEMBERS daraltmadır (yeni alıcı DEĞİL); MEMBERS → TEAM takım adresini ve diğer üyeleri ekler (yeni)
+    const team = normalizeForward(raw({ recipient_kind: 'TEAM', recipient_team_id: 20 }))
+    expect(hasNewRecipients(team, { ...formOf(team), recipientKind: 'MEMBERS', recipientUserIds: ['a', 'b'] })).toBe(false)
+    expect(hasNewRecipients(team, { ...formOf(team), recipientKind: 'MEMBERS', recipientTeamId: 21, recipientUserIds: ['a'] })).toBe(true)
+    expect(hasNewRecipients(orig, { ...formOf(orig), recipientKind: 'TEAM', recipientUserIds: [] })).toBe(true)
+  })
+
+  it('bilgi bildirimi türü: yeni / etkinleştirme (tüm alıcılar) / yeni alıcı; kapalı kaydedilen ya da alıcı eklemeyen kayıtta yok', () => {
+    const on = normalizeForward(raw({ recipient_kind: 'MEMBERS', recipient_members: [{ user_id: 'a' }] }))
+    const off = normalizeForward(raw({ enabled: false, state: 'paused' }))
+    expect(infoNoticeKind(null, emptyForm(10))).toBe('new')
+    expect(infoNoticeKind(on, formOf(on))).toBeNull()
+    expect(infoNoticeKind(on, { ...formOf(on), note: 'yalnız not' })).toBeNull()
+    expect(infoNoticeKind(on, { ...formOf(on), recipientUserIds: ['a', 'b'] })).toBe('recipients')
+    expect(infoNoticeKind(on, { ...formOf(on), recipientUserIds: ['a', 'b'], enabled: false })).toBeNull()
+    expect(infoNoticeKind(off, formOf(off))).toBeNull()
+    expect(infoNoticeKind(off, { ...formOf(off), enabled: true })).toBe('enable')
+    expect(infoNoticeKind(off, { ...formOf(off), enabled: true, recipientTeamId: 21 })).toBe('enable')
+  })
+
+  it('sahip takım süzgeci seçeneklerde yoksa bilinmez sayılır (süzgeç bırakılır); boş süzgeç her zaman geçerli', () => {
+    const opts = ownerTeamOptions([normalizeForward(raw())], [{ id: 30, name: 'Yönetilen' }])
+    expect(ownerFilterKnown('', opts)).toBe(true)
+    expect(ownerFilterKnown('10', opts)).toBe(true)
+    expect(ownerFilterKnown(30, opts)).toBe(true)
+    expect(ownerFilterKnown('99', opts)).toBe(false)
+    expect(ownerFilterKnown('99', null)).toBe(false)
+  })
+
+  it('yanıttaki satır listeye hemen yazılır (yeni sürüm): aynı kimlik yerine, yeni kimlik sona; biçimsiz yanıt listeyi değiştirmez', () => {
+    const list = [normalizeForward(raw({ id: 1, version: 3 })), normalizeForward(raw({ id: 2, version: 1 }))]
+    const next = mergeForwardRow(list, raw({ id: 1, version: 4, enabled: false, state: 'paused' }))
+    expect(next.map((f) => [f.id, f.version, f.state])).toEqual([[1, 4, 'paused'], [2, 1, 'active']])
+    expect(list[0].version).toBe(3)   // girdi değişmez
+    expect(mergeForwardRow(list, raw({ id: 7 })).map((f) => f.id)).toEqual([1, 2, 7])
+    for (const bad of [null, undefined, 'x', { version: 9 }]) expect(mergeForwardRow(list, bad)).toBe(list)
   })
 
   it('form doğrulaması: zorunlular, aynı takım, sınırlar; düzenlemede değişmeyen kapsam yeniden doğrulanmaz', () => {
@@ -241,9 +281,22 @@ describe('alertForwardModel', () => {
     expect(filterMemberOptions(mem, 'zeyn').map((m) => m.userId)).toEqual(['b'])
   })
 
-  it('yanıt notları: bilgi sayıları, hiç bilgi gitmediyse uyarı, erişim (verildi / zaten vardı / verilemedi — sunucu metni öncelikli)', () => {
-    expect(resultNotes({ info: { emails: 2, push: 1 } }, tEn)).toEqual({ ok: ['Recipients were notified — e-mail: 2, push: 1.'], warn: [] })
-    expect(resultNotes({ info: { emails: 0, push: 0 } }, tEn).warn).toHaveLength(1)
+  it('yanıt notları: bilgi sayıları; "bilgi gitmedi" YALNIZ istenmiş + susturulmamış + hiç gönderim yokken; bakım ayrı metin; erişim', () => {
+    expect(resultNotes({ info: { requested: true, emails: 2, push: 1, muted: false } }, tEn))
+      .toEqual({ ok: ['Recipients were notified — e-mail: 2, push: 1.'], warn: [] })
+    expect(resultNotes({ info: { requested: true, emails: 0, push: 0, muted: false } }, tEn))
+      .toEqual({ ok: [], warn: [EN['fwd.toast.infoNone']] })
+    // Bilgi istenmediyse (yalnız not değişti, duraklatıldı, üyeler daraltıldı) uyarı YOK — eski hata: her düzenlemede uyarıyordu
+    expect(resultNotes({ info: { requested: false, emails: 0, push: 0, muted: false } }, tEn)).toEqual({ ok: [], warn: [] })
+    expect(resultNotes({ info: { requested: false, emails: 0, push: 0 } }, tEn, { isNew: true })).toEqual({ ok: [], warn: [] })
+    // Sistem bakımı susturdu → "bilgi bulunamadı" değil, bakım metni
+    expect(resultNotes({ info: { requested: true, emails: 0, push: 0, muted: true } }, tEn))
+      .toEqual({ ok: [], warn: [EN['fwd.toast.infoMuted']] })
+    // Eski sunucu (`requested` yok): yalnız yeni kayıtta ya da yeni alıcı eklenince uyarır
+    expect(resultNotes({ info: { emails: 0, push: 0 } }, tEn).warn).toEqual([])
+    expect(resultNotes({ info: { emails: 0, push: 0 } }, tEn, { isNew: true }).warn).toEqual([EN['fwd.toast.infoNone']])
+    expect(resultNotes({ info: { emails: 0, push: 0 } }, tEn, { newRecipients: true }).warn).toEqual([EN['fwd.toast.infoNone']])
+    expect(resultNotes({ info: { emails: 1, push: 0 } }, tEn).ok).toHaveLength(1)
     expect(resultNotes({ grant: { requested: true, created: 1, existing: 2, failed: 0 } }, tEn).ok)
       .toEqual(['View access given to 1 recipient.', '2 recipients already had view access.'])
     expect(resultNotes({ grant: { requested: true, created: 0, existing: 0, failed: 1, message: 'Tavan dolu.' } }, tEn).warn).toEqual(['Tavan dolu.'])

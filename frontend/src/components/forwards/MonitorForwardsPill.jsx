@@ -33,8 +33,9 @@ import {
  *
  * <p>Dokununca açılan açıklama (`ui/HintPopover` etkileşimli kip): her iletim — alıcı takım, "Tüm takım" / üye sayısı,
  * kapsam, durum (+ birden çok sahip takımda sahibi, bitiş günü) — ve eylemler: "Bu izleme için iletim ekle" (`can_add`;
- * Yönetim → Alarm iletimi penceresi bu izleme seçili açılır: `g_fnew=<tür>:<id>`, sertifikada `cert:<alanadı>`) ile
- * "Tümünü yönet". Bağlantılar gerçek `<a href>` (yeni sekmede açılabilir). Adlar sarar (kesilmez); dokunmatikte tetik ve
+ * Yönetim → Alarm iletimi penceresi bu izleme seçili ve YÖNETEBİLDİĞİ ilk sahip takımla açılır: `g_fnew=<tür>:<id>` —
+ * sertifikada yanıttaki envanter kimliğiyle `cert:<id>`, kimlik yoksa `cert:<alanadı>`) ile "Tümünü yönet" (görülen ilk
+ * sahip takımla süzülü). Bağlantılar gerçek `<a href>` (yeni sekmede açılabilir). Adlar sarar (kesilmez); dokunmatikte tetik ve
  * eylemler en az 40 px.
  *
  * <p>Test kancaları: `data-slot="monitor-forwards"` + `data-state` (active|inactive|add|error) + `data-count`; açıklama
@@ -124,6 +125,9 @@ function ForwardsDetail({ view, kind, rowLabel, type, id, domain, close }) {
   const owners = view.ownerTeams
   const monitorName = rowLabel || view.monitor?.name || ''
   const lead = kind === 'add' ? t('fwdx.leadNone') : kind === 'inactive' ? t('fwdx.leadInactive') : t('fwdx.lead')
+  // Derin bağın kimliği: sertifikada yanıttaki envanter kaydı kimliği (pencere yalnız alan adını bilir; alan adı yalnız
+  // kimlik yoksa); diğer türlerde pencerenin izleme kimliği (sorulan kimlik — yanıttaki yalnız yedek)
+  const monitorId = type === 'cert' ? (view.monitor?.id ?? id) : (id ?? view.monitor?.id)
   return (
     <div data-slot="monitor-forwards-detail" data-state={kind} className="flex flex-col gap-2.5 whitespace-normal">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -143,10 +147,10 @@ function ForwardsDetail({ view, kind, rowLabel, type, id, domain, close }) {
       )}
       <div className="flex flex-col gap-1.5">
         {view.canAdd && (
-          <ActionLink target={manageTarget({ type, id, domain, ownerTeams: owners, add: true })} action="monitor-forwards-add"
+          <ActionLink target={manageTarget({ type, id: monitorId, domain, ownerTeams: owners, add: true })} action="monitor-forwards-add"
             icon={Plus} close={close}>{t('fwdx.addForMonitor')}</ActionLink>
         )}
-        <ActionLink target={manageTarget({ type, id, domain, ownerTeams: owners })} action="monitor-forwards-manage"
+        <ActionLink target={manageTarget({ type, id: monitorId, domain, ownerTeams: owners })} action="monitor-forwards-manage"
           icon={Settings2} close={close}>{t('fwdx.manageAll')}</ActionLink>
       </div>
     </div>

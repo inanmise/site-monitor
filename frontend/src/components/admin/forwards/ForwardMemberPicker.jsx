@@ -20,11 +20,14 @@ const CHIP_REMOVE = 'relative size-5 rounded-full text-muted-foreground hover:te
  * sayaç "N / sınır". Düzenlemede kayıtlı ama artık pasif / takımdan ayrılmış üye çipte rozetiyle kalır ve kaldırılabilir
  * (bildirim almaz). E-postası olmayan seçili üye için "yalnız push alır" notu. Kimlik opaktır — asla sayıya çevrilmez.
  *
+ * Erişilebilirlik: seçici bir GRUP'tur (`role="group"`, adı alanın etiketi — `labelledBy`; ipucu / hata `aria-describedby`
+ * ile gruba bağlı); liste (`ul`) üzerinde `aria-invalid` YOK.
+ *
  * Props: `status` (loading|ready|error), `items` (memberOptions), `message`, `onRetry`, `value` (kimlikler), `onChange(next)`,
  * `limit`, `known` (kayıtlı üyeler `[{userId, displayName, active, inTeam}]` — listede olmayanların adı), `t`, `invalid`,
- * `describedBy`.
+ * `describedBy`, `labelledBy`.
  */
-export default function ForwardMemberPicker({ status, items = [], message, onRetry, value = [], onChange, limit = 50, known = [], t, invalid, describedBy }) {
+export default function ForwardMemberPicker({ status, items = [], message, onRetry, value = [], onChange, limit = 50, known = [], t, invalid, describedBy, labelledBy }) {
   const [q, setQ] = useState('')
   const base = useId()
   const shown = useMemo(() => filterMemberOptions(items, q), [items, q])
@@ -49,7 +52,8 @@ export default function ForwardMemberPicker({ status, items = [], message, onRet
   const noEmailCount = chips.filter((c) => c.noEmail).length
 
   return (
-    <div className="flex min-w-0 flex-col gap-2" data-slot="fwd-member-picker" data-status={status}>
+    <div className="flex min-w-0 flex-col gap-2" data-slot="fwd-member-picker" data-status={status}
+      role="group" aria-labelledby={labelledBy || undefined} aria-describedby={describedBy || undefined}>
       {status === 'loading' ? (
         <div className="flex flex-col gap-2" role="status" aria-label={t('fwd.mem.loading')}>
           <Skeleton className="h-10 w-full" />
@@ -75,8 +79,8 @@ export default function ForwardMemberPicker({ status, items = [], message, onRet
               {t('fwd.mem.count', value.length, limit)}
             </span>
           </div>
-          <ul className="m-0 flex max-h-72 min-w-0 list-none flex-col gap-0.5 overflow-y-auto rounded-lg border p-1" data-slot="fwd-member-list"
-            aria-describedby={describedBy} aria-invalid={invalid || undefined}>
+          <ul className={cn('m-0 flex max-h-72 min-w-0 list-none flex-col gap-0.5 overflow-y-auto rounded-lg border p-1', invalid && 'border-destructive')}
+            data-slot="fwd-member-list" data-invalid={invalid || undefined}>
             {shown.map((m, i) => {
               const on = has(m.userId)
               const cid = `${base}-${i}`

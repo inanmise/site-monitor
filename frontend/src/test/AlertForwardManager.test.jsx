@@ -271,4 +271,57 @@ describe('AlertForwardManager', () => {
     await waitFor(() => expect(api.alertForwards.list).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(document.querySelector('[data-slot="fwd-form"]')).toBeNull())
   })
+
+  it('duraklat → yanıttaki satır (yeni sürüm) listeye HEMEN yazılır; yenileme gelmeden "Sürdür" yeni sürümle gider (409 yok)', async () => {
+    render(<AlertForwardManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    // Arka plan yenilemesi asılı kalır — yeni sürümün tek kaynağı işlemin yanıtı
+    api.alertForwards.list.mockImplementation(() => new Promise(() => {}))
+    api.alertForwards.update.mockResolvedValueOnce({ success: true, data: { ...ROWS[0], version: 3, enabled: false, state: 'paused' },
+      info: { requested: false, emails: 0, push: 0, muted: false } })
+    pressMenuTrigger(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['fwd.pause'] }))
+    await waitFor(() => expect(rowOf(1)).toHaveAttribute('data-state', 'paused'))
+    expect(api.alertForwards.update).toHaveBeenLastCalledWith(1, { enabled: false, version: 2 })
+    // Duraklatma bilgi istemez → "bilgi gitmedi" uyarısı YOK
+    expect(screen.queryByText(EN['fwd.toast.infoNone'])).toBeNull()
+    api.alertForwards.update.mockResolvedValueOnce({ success: true, data: { ...ROWS[0], version: 4, enabled: true, state: 'active' },
+      info: { requested: true, emails: 2, push: 1, muted: false } })
+    await waitFor(() => expect(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) })).not.toBeDisabled())
+    pressMenuTrigger(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['fwd.resume'] }))
+    await waitFor(() => expect(api.alertForwards.update).toHaveBeenLastCalledWith(1, { enabled: true, version: 3 }))
+    await waitFor(() => expect(rowOf(1)).toHaveAttribute('data-state', 'active'))
+    // Sürdürmede sunucu tüm alıcılara bilgi gönderdi — sonucu söylenir
+    expect(await screen.findByText(/e-mail: 2, push: 1/)).toBeTruthy()
+  })
+
+  it('sürdürmede bilgi istendi ama kimseye gitmediyse uyarı; sistem bakımı susturduysa ayrı metin', async () => {
+    api.alertForwards.list.mockResolvedValue(listResponse({ items: [{ ...ROWS[0], enabled: false, state: 'paused' }] }))
+    render(<AlertForwardManager />)
+    await waitFor(() => expect(rows()).toHaveLength(1))
+    api.alertForwards.update.mockResolvedValueOnce({ success: true, data: { ...ROWS[0], version: 3, enabled: true, state: 'active' },
+      info: { requested: true, emails: 0, push: 0, muted: true } })
+    pressMenuTrigger(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['fwd.resume'] }))
+    expect(await screen.findByText(EN['fwd.toast.infoMuted'])).toBeTruthy()
+    expect(screen.queryByText(EN['fwd.toast.infoNone'])).toBeNull()
+  })
+
+  it("URL'deki sahip takım seçeneklerde yoksa süzgeç bırakılır (ilk okumada) — liste görünmez bir takımla süzülü kalmaz", async () => {
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=forwards&g_fteam=77')
+    render(<AlertForwardManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('g_fteam')).toBeNull())
+    const sel = document.querySelector('[data-slot="fwd-filter-team"] select') || document.querySelector('select[data-slot="fwd-filter-team"]')
+    expect(sel?.value ?? '').toBe('')
+  })
+
+  it("URL'deki sahip takım seçeneklerdeyse süzgeç korunur", async () => {
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=forwards&g_fteam=40')
+    render(<AlertForwardManager />)
+    await waitFor(() => expect(rows()).toHaveLength(1))
+    expect(rowOf(3)).toBeTruthy()
+    expect(new URL(window.location.href).searchParams.get('g_fteam')).toBe('40')
+  })
 })

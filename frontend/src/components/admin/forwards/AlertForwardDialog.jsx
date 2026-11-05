@@ -23,7 +23,7 @@ import ForwardMemberPicker from './ForwardMemberPicker.jsx'
 import { typeIcon } from './ForwardParts.jsx'
 import {
   DEFAULT_LIMITS, FIELD_MAP, FORWARD_TYPES, createPayload, emptyForm, findMonitorForRef, formErrors, formOf, hasNewRecipients,
-  memberOptions, normalizeMonitorOptions, payloadOf, plural, todayIstanbul, typeLabel, updatePayload,
+  infoNoticeKind, memberOptions, normalizeMonitorOptions, payloadOf, plural, todayIstanbul, typeLabel, updatePayload,
 } from './alertForwardModel.js'
 
 const SCOPE_ICON = { ALL: Layers, TYPES: ListFilter, MONITORS: ListChecks }
@@ -49,7 +49,8 @@ function Step({ n, title, children, slot }) {
  * değişiklik yoksa istek yok. Sunucu alan hatası (`VALIDATION_FAILED` + `field`) alanın altında; 409 (`FORWARD_EXISTS`,
  * `FORWARD_LIMIT`, `CONCURRENT_MODIFICATION`) pencerede; 404 → `onGone`.
  *
- * Props: `open`, `onClose`, `onSaved(response)`, `onGone`, `onStale` (409 sürüm çakışması — liste tazelensin), `forward`
+ * Props: `open`, `onClose`, `onSaved(response, { newRecipients })` (düzenlemede yeni alıcı eklendi mi — eski sunucunun
+ * `info.requested` göndermediği durumda bilgi uyarısının kararı), `onGone`, `onStale` (409 sürüm çakışması — liste tazelensin), `forward`
  * (düzenlenen; yoksa yeni), `preset` ({ ownerTeamId,
  * monitorRef }), `teams` (yönetebildiği takımlar), `canGrant`, `limits`.
  */
@@ -160,6 +161,11 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
   const recipientName = recipientDir?.name || (forward && String(forward.recipientTeamId) === String(form.recipientTeamId) ? forward.recipientTeamName : null)
   const teamHasNoEmail = form.recipientKind === 'TEAM' && recipientDir != null && !(typeof recipientDir.email === 'string' && recipientDir.email.trim())
   const newRecipients = hasNewRecipients(forward, form)
+  // Bu kayıtta bilgi bildirimi gider mi: yeni iletim / etkinleştirme (tüm alıcılar) / yeni alıcı; kapalı kaydedilende gitmez
+  const infoKind = infoNoticeKind(forward, form)
+  const infoText = infoKind === 'new' ? t('fwd.f.infoMail') : infoKind === 'enable' ? t('fwd.f.infoMailEnable')
+    : infoKind === 'recipients' ? t('fwd.f.infoMailNew')
+      : (!isNew && form.enabled === false && newRecipients ? t('fwd.f.infoMailPaused') : null)
 
   async function submit() {
     setBanner(null)
@@ -178,7 +184,7 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
     setBusy(true)
     try {
       const res = isNew ? await api.alertForwards.create(body) : await api.alertForwards.update(forward.id, body)
-      if (res?.success) { onSaved?.(res); return }
+      if (res?.success) { onSaved?.(res, { newRecipients: !isNew && newRecipients }); return }
       const info = errorInfoOf(res) || {}
       if (!isNew && info.status === 404) { onGone?.(); return }
       const field = FIELD_MAP[res?.field]
@@ -307,7 +313,7 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
 
           {form.scopeKind === 'MONITORS' && (
             <Field label={t('fwd.f.monitors')} required hint={t('fwd.f.monitorsHint')} className="mb-0" {...fe.fieldProps('scopeMonitors')}>
-              {({ describedBy, invalid }) => (form.ownerTeamId == null ? (
+              {({ labelId, describedBy, invalid }) => (form.ownerTeamId == null ? (
                 <p className="m-0 text-sm text-muted-foreground" data-slot="fwd-monitor-need-owner">{t('fwd.f.monitorsNeedOwner')}</p>
               ) : (
                 <>
@@ -317,7 +323,7 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
                   <ForwardMonitorPicker status={monitors.status === 'idle' ? 'loading' : monitors.status} items={monitors.items}
                     message={monitors.message} onRetry={() => loadMonitors(form.ownerTeamId)} value={form.scopeMonitors}
                     onChange={(v) => { patch({ scopeMonitors: v }); fe.clear('scopeMonitors') }} limit={limits.monitors} t={t}
-                    invalid={invalid} describedBy={describedBy} />
+                    invalid={invalid} describedBy={describedBy} labelledBy={labelId} />
                 </>
               ))}
             </Field>
@@ -356,14 +362,14 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
           )}
           {form.recipientKind === 'MEMBERS' && (
             <Field label={t('fwd.f.members')} required className="mb-0" {...fe.fieldProps('recipientUserIds')}>
-              {({ describedBy, invalid }) => (form.recipientTeamId == null ? (
+              {({ labelId, describedBy, invalid }) => (form.recipientTeamId == null ? (
                 <p className="m-0 text-sm text-muted-foreground" data-slot="fwd-member-need-team">{t('fwd.f.membersNeedTeam')}</p>
               ) : (
                 <ForwardMemberPicker status={members.status === 'idle' ? 'loading' : members.status} items={members.items} message={members.message}
                   onRetry={() => loadMembers(form.recipientTeamId)} value={form.recipientUserIds}
                   onChange={(v) => { patch({ recipientUserIds: v }); fe.clear('recipientUserIds') }} limit={limits.members}
                   known={forward && String(forward.recipientTeamId) === String(form.recipientTeamId) ? forward.recipientMembers : []}
-                  t={t} invalid={invalid} describedBy={describedBy} />
+                  t={t} invalid={invalid} describedBy={describedBy} labelledBy={labelId} />
               ))}
             </Field>
           )}
@@ -402,9 +408,9 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
               </span>
             </label>
           )}
-          {(isNew || newRecipients) && (
-            <p className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground" data-slot="fwd-info-mail">
-              <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t(isNew ? 'fwd.f.infoMail' : 'fwd.f.infoMailNew')}
+          {infoText && (
+            <p className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground" data-slot="fwd-info-mail" data-kind={infoKind || 'paused'}>
+              <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{infoText}
             </p>
           )}
         </Step>

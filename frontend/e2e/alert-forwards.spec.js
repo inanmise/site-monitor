@@ -57,7 +57,14 @@ const MEMBERS = [
   { id: 'op-3', username: 'KULLANICI_C', display_name: 'Pasif Kişi', email: 'p@example.com', active: false },
 ]
 
-async function mock(page, calls) {
+/**
+ * Sunucu taklidi. PUT sürüm denetler (eşleşmezse 409 CONCURRENT_MODIFICATION — gerçek sunucu gibi), başarılı PUT sürümü
+ * artırıp satırı döner (`data`). `opts.slowListMs`: ilk okumadan SONRAKİ liste okumaları bu kadar geciktirilir — duraklat →
+ * sürdür art arda yapılınca ikinci işlemin sürümü arka plan yenilemesinden değil işlemin yanıtından gelmeli.
+ */
+async function mock(page, calls, opts = {}) {
+  const server = new Map(ROWS.map((r) => [String(r.id), { ...r }]))
+  let listReads = 0
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -72,15 +79,32 @@ async function mock(page, calls) {
       body = { success: true, data: { 'alerts.forwards': { view: true, edit: true }, 'teams.sharing': { view: true, edit: true } } }
     } else if (p === '/api/alert-forwards' && req.method() === 'POST') {
       calls.posted.push(JSON.parse(req.postData() || '{}'))
-      body = { success: true, data: { ...ROWS[0], id: 77 }, grant: null, info: { emails: 2, push: 1 } }
+      body = { success: true, data: { ...ROWS[0], id: 77 }, grant: null, info: { requested: true, emails: 2, push: 1, muted: false } }
     } else if (p.startsWith('/api/alert-forwards/') && req.method() === 'PUT') {
-      calls.put.push({ id: p.split('/').pop(), body: JSON.parse(req.postData() || '{}') })
-      body = { success: true, data: ROWS[0], grant: null, info: null }
+      const id = p.split('/').pop()
+      const put = JSON.parse(req.postData() || '{}')
+      calls.put.push({ id, body: put })
+      const cur = server.get(id)
+      if (cur && put.version != null && put.version !== cur.version) {
+        await route.fulfill({ status: 409, contentType: 'application/json',
+          body: JSON.stringify({ success: false, code: 'CONCURRENT_MODIFICATION', error: 'Kayıt başka biri tarafından değiştirildi (test).' }) })
+        return
+      }
+      const resumed = cur && cur.enabled === false && put.enabled === true
+      const next = { ...cur, ...(put.note != null ? { note: put.note } : {}),
+        ...(typeof put.enabled === 'boolean' ? { enabled: put.enabled, state: put.enabled ? 'active' : 'paused' } : {}),
+        version: (cur?.version ?? 0) + 1 }
+      server.set(id, next)
+      // Bilgi yalnız etkinleştirmede istenir (yeni sözleşme: requested / muted); not değişikliğinde istenmez
+      body = { success: true, data: next, grant: null,
+        info: { requested: resumed, emails: resumed ? 1 : 0, push: resumed ? 2 : 0, muted: false } }
     } else if (p === '/api/alert-forwards/monitors') {
       body = { success: true, data: { items: MONITORS } }
     } else if (p === '/api/alert-forwards') {
-      body = { success: true, data: { items: ROWS, incoming: INCOMING, manageable_teams: [{ id: 10, name: OWNER }], can_grant: true,
-        limits: { per_team: 100, members: 50, monitors: 200, note: 500 } } }
+      listReads += 1
+      if (opts.slowListMs && listReads > 1) await new Promise((r) => setTimeout(r, opts.slowListMs))
+      body = { success: true, data: { items: [...server.values()], incoming: INCOMING, manageable_teams: [{ id: 10, name: OWNER }],
+        can_grant: true, limits: { per_team: 100, members: 50, monitors: 200, note: 500 } } }
     } else if (p === '/api/teams/directory') {
       body = { success: true, data: DIR }
     } else if (/^\/api\/teams\/\d+\/members$/.test(p)) {
@@ -242,6 +266,9 @@ for (const vp of VIEWPORTS) {
       await form.getByRole('radio', { name: /Seçilen izlemeler|Selected monitors/ }).click()
       const items = form.locator('[data-slot="fwd-monitor-item"]')
       await expect(items).toHaveCount(5)
+      // Seçici bir GRUP — adı alanın etiketi (ekran okuyucu "İzlemeler, grup" der); listede aria-invalid yok
+      await expect(form.getByRole('group', { name: /^(İzlemeler|Monitors)/ })).toHaveAttribute('data-slot', 'fwd-monitor-picker')
+      await expect(form.locator('[data-slot="fwd-monitor-list"][aria-invalid]')).toHaveCount(0)
       await items.filter({ hasText: 'Ödeme ağ geçidi sağlık ucu' }).click()
       await items.filter({ hasText: 'Bekleyen ödeme kuyruğu' }).click()
       await expect(form.locator('[data-slot="fwd-monitor-chip"]')).toHaveCount(2)
@@ -255,6 +282,7 @@ for (const vp of VIEWPORTS) {
       await page.getByRole('option', { name: NET_TEAM }).click()
       const memberItems = form.locator('[data-slot="fwd-member-item"]')
       await expect(memberItems).toHaveCount(2)
+      await expect(form.getByRole('group', { name: /^(Üyeler|Members)/ })).toHaveAttribute('data-slot', 'fwd-member-picker')
       await memberItems.nth(0).click()
       await memberItems.nth(1).click()
       await expect(form.locator('[data-slot="fwd-member-chip"]')).toHaveCount(2)
@@ -294,6 +322,9 @@ for (const vp of VIEWPORTS) {
       await page.locator('[data-slot="fwd-submit"]').click()
       await expect(form).toHaveCount(0)
       expect(calls.put).toEqual([{ id: '1', body: { note: 'Yeni not', version: 2 } }])
+      // Yalnız not değişti: bilgi istenmedi (requested:false) → "bilgi gitmedi" uyarısı ÇIKMAZ (eski hata)
+      await expect(page.getByText(/Alarm forwarding updated|Alarm iletimi güncellendi/)).toBeVisible()
+      await expect(page.getByText(/No notice reached the recipients|Alıcılara bilgi bildirimi gitmedi/)).toHaveCount(0)
 
       await page.goto('/?tab=admin&g_tab=forwards&g_fnew=ping:103&g_fteam=10')
       const deep = page.locator('[data-slot="fwd-form"]')
@@ -303,5 +334,40 @@ for (const vp of VIEWPORTS) {
       await expect(page).not.toHaveURL(/g_fnew=/)
       await inViewport(page.getByRole('dialog'), vp.width)
     })
+
+    test('duraklat → hemen sürdür: ikinci işlem yanıttaki yeni sürümle gider (409 yok); sürdürmede bilgi sonucu söylenir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const calls = { posted: [], put: [] }
+      // İlk okumadan sonraki liste okumaları 4 sn gecikir — ikinci işlem arka plan yenilemesini BEKLEMEDEN yapılır
+      await mock(page, calls, { slowListMs: 4_000 })
+      await page.goto('/?tab=admin&g_tab=forwards')
+      const row = page.locator('[data-slot="fwd-list"] [data-slot="fwd-row"]').filter({ hasText: LONG_TEAM }).first()
+      await expect(row).toHaveAttribute('data-state', 'active', { timeout: 20_000 })
+      await row.locator('button[data-kebab="labeled"]').click()
+      await page.getByRole('menuitem', { name: /^(Duraklat|Pause)$/ }).click()
+      await expect(row).toHaveAttribute('data-state', 'paused')
+      // İlk menünün kapanış animasyonu bitsin (kapanan menüye düşen tıklama yeni menüyü hemen kapatırdı — kullanıcı değil test hızı)
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      await row.locator('button[data-kebab="labeled"]').click()
+      await page.getByRole('menuitem', { name: /^(Sürdür|Resume)$/ }).click()
+      await expect(row).toHaveAttribute('data-state', 'active')
+      expect(calls.put).toEqual([{ id: '1', body: { enabled: false, version: 2 } }, { id: '1', body: { enabled: true, version: 3 } }])
+      await expect(page.getByText(/e-mail: 1, push: 2|e-posta: 1, push: 2/)).toBeVisible()
+      await expect(page.getByText(/Kayıt başka biri tarafından değiştirildi/)).toHaveCount(0)
+    })
   })
 }
+
+test.describe('Alarm iletimi — bitiş günü saat dilimine kaymaz', () => {
+  // UTC'nin gerisindeki bir saat diliminde "2099-12-31" UTC gece yarısı sayılırsa 30 Aralık görünürdü
+  test.use({ viewport: { width: 1280, height: 800 }, timezoneId: 'America/New_York' })
+
+  test('bitiş "31 Dec 2099" (saf gün), "30" değil', async ({ page }) => {
+    await mock(page, { posted: [], put: [] })
+    await page.goto('/?tab=admin&g_tab=forwards')
+    const row = page.locator('[data-slot="fwd-list"] [data-slot="fwd-row"]').filter({ hasText: NET_TEAM }).first()
+    const expiry = row.locator('[data-slot="fwd-expiry"]')
+    await expect(expiry).toContainText(/31 (Dec|Ara) 2099/, { timeout: 20_000 })
+    await expect(expiry).not.toContainText('30')
+  })
+})

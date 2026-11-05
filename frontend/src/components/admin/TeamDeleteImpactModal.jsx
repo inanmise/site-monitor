@@ -1,5 +1,5 @@
 import { useState, useEffect, useId } from 'react'
-import { Trash2, ArrowRightLeft } from 'lucide-react'
+import { Trash2, ArrowRightLeft, CirclePause } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -22,9 +22,11 @@ const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'gro
 
 /** Taşıma özeti (2026-10-22, FE-8): sunucunun saydığı HER taşınan şey, sıfırlar yazılmaz — yalnız kanalı / şablonu / bakım
  *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
-// alert_forwards / alert_forwards_removed (2026-11-05): taşınan alarm iletimleri ve hedef takımın kendisine olduğu için silinenler
+// alert_forwards / alert_forwards_removed / alert_forwards_paused (2026-11-05/06): taşınan alarm iletimleri; kaldırılanlar (bu
+// takıma gelen ya da hedef takıma giden — hedefin kendisine iletim olamaz); kapsamı "tüm izlemeler" / "seçilen türler" olduğu
+// için taşınınca DURAKLATILANLAR (hedef takımın bütün izlemelerini kapsardı — gözden geçirilip yeniden etkinleştirilir)
 const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
-  'dbq_connections', 'dbq_templates', 'alert_forwards', 'alert_forwards_removed', 'open_alerts']
+  'dbq_connections', 'dbq_templates', 'alert_forwards', 'alert_forwards_paused', 'alert_forwards_removed', 'open_alerts']
 /** Alarm iletimi sayısı (2026-11-05): sunucu sayı ya da `{count}` gönderebilir; okunamayan / eksik → 0 (satır çizilmez). */
 const fwdCount = (v) => {
   const n = Number(v != null && typeof v === 'object' ? v.count : v)
@@ -116,6 +118,15 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
           {fwdCount(impact.alert_forwards?.owned) > 0 && (
             <p className="text-xs text-muted-foreground" data-slot="team-impact-fwd-owned">
               {plural(t, empty ? 'fwd.impact.ownedDeleted' : 'fwd.impact.ownedMoved', fwdCount(impact.alert_forwards.owned))}
+            </p>
+          )}
+          {/* Taşınınca duraklatılacaklar (2026-11-06): ALL / TYPES kapsamı hedef takımın TÜM izlemelerini kapsardı — kapsam
+              kendiliğinden genişlemesin diye sunucu onları kapalı taşır; yalnız taşıma varken (dolu takım) anlamlı */}
+          {!empty && fwdCount(impact.alert_forwards?.paused_on_move) > 0 && (
+            <p className="m-0 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300 [overflow-wrap:anywhere]"
+              data-slot="team-impact-fwd-paused">
+              <CirclePause aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              {plural(t, 'fwd.impact.pausedOnMove', fwdCount(impact.alert_forwards.paused_on_move))}
             </p>
           )}
           {fwdCount(impact.alert_forwards?.incoming) > 0 && (
