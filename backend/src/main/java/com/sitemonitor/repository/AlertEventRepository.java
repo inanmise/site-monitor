@@ -114,6 +114,19 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                                                @Param("types") Collection<String> types,
                                                @Param("from") String from, @Param("to") String to);
 
+    /**
+     * {@link #findOverlappingForHistory} ile aynı kural, veritabanında SINIRLI (dbq2 inceleme D12 — sorgu izleme grafiğinin
+     * alarm dönemleri): en yeni {@code page.getPageSize()} satır, yeniden eskiye ({@code id DESC} eşitlik kırıcı). Sayım
+     * sorgusu yok (dönüş {@code List}).
+     */
+    @Query("SELECT e FROM AlertEvent e WHERE e.domain = :domainKey AND e.alertType IN :types "
+         + "AND e.createdAt <= :to "
+         + "AND (e.resolved = false OR e.resolvedAt IS NULL OR e.resolvedAt >= :from) "
+         + "ORDER BY e.createdAt DESC, e.id DESC")
+    List<AlertEvent> findOverlappingNewest(@Param("domainKey") String domainKey,
+                                           @Param("types") Collection<String> types,
+                                           @Param("from") String from, @Param("to") String to, Pageable page);
+
     // ── Alarm fırtınası (storm) sorguları ──────────────────────────────────────
     /** Pencere-içi açık DOWN incident'ler (kuruluş geneli; StormService TAKIMA süzer, 2026-09-29) — terfi eşiği sayımı + üye geri-bağlama.
      *  idx_ae_storm_scan(resolved, alert_type, created_at) tarafından beslenir; created_at sabit-genişlik ISO → sözlüksel aralık. */

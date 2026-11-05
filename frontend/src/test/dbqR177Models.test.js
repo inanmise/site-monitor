@@ -320,6 +320,22 @@ describe('yerleşik başlangıç şablonları (2.C)', () => {
     expect(builtinTemplates(tTR, null)[0].db_type).toBe('POSTGRESQL')
     expect(builtinSql('recent_problems', 'MSSQL')).toContain('GETDATE()')
   })
+
+  it('hazır DBA şablonları (dbq2 B5) aynı kapıdan geçer: yalnız SELECT, MSSQL NOLOCK, geçerli kural, yetki yazılı', async () => {
+    const { dbaTemplates } = await import('../components/dbquery/builtinTemplates.js')
+    for (const type of ['POSTGRESQL', 'MSSQL', 'ORACLE']) {
+      for (const tpl of dbaTemplates(tTR, type)) {
+        expect(tpl.sql_text).toMatch(/^SELECT /)
+        expect(tpl.sql_text).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|EXEC)\b/i)
+        expect(Object.keys(validateRules(tpl.rules)), `${type} ${tpl.key}`).toEqual([])
+        expect(tpl.privilege).toBeTruthy()
+        if (type === 'MSSQL') {
+          for (const line of tpl.sql_text.split('\n').filter((l) => /\bFROM\b|\bJOIN\b/i.test(l))) expect(line).toContain('WITH (NOLOCK)')
+        }
+      }
+    }
+    // Sunucu tarafı: DbQueryBuiltinTemplatesGuardTest aynı JSON'u gerçek DbQuerySqlGuard'dan geçirir
+  })
 })
 
 describe('r177 entegrasyon — sunucu biçimleri', () => {

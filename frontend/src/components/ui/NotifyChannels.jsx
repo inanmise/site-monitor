@@ -105,7 +105,7 @@ export default function NotifyChannels({
             value={level} onValueChange={(v) => { if (v && !locked) onAlertLevelChange(v) }}>
             {LEVELS.map((lv) => (
               <ToggleGroupItem key={lv} value={lv} role="button" aria-pressed={level === lv} aria-checked={undefined}
-                data-level={lv} className={cn('h-8 px-3 text-xs font-semibold', LEVEL_ON[lv])}>
+                data-level={lv} className={cn('h-8 px-3 text-xs font-semibold pointer-coarse:h-10', LEVEL_ON[lv])}>
                 {t('notify.level.' + lv)}
               </ToggleGroupItem>
             ))}

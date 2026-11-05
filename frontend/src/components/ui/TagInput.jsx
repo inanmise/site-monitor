@@ -6,6 +6,7 @@ import { Command, CommandGroup, CommandItem, CommandList } from '@/components/sh
 import { Input } from '@/components/shadcn/input'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/shadcn/popover'
 import { useT } from '../../i18n/index.jsx'
+import { cn } from '@/lib/utils'
 
 const randomHue = () => Math.floor(Math.random() * 360)
 /** Deterministik ton — henüz renk atanmamış (düzenlemede yüklenen) etiketler için stabil fallback. */
@@ -43,7 +44,7 @@ const tagHue = (s) => {
  * önce listeyi kapatır, pencereyi değil. Odak HEP giriş kutusunda kalır (liste açılışta odak
  * almaz) — vurgu `hi` durumunda, cmdk'ye denetimli `value` olarak verilir.
  */
-export default function TagInput({ label, value, onChange, disabled, placeholder, suggestions = null, suggestLabel = null }) {
+export default function TagInput({ label, value, onChange, disabled, placeholder, suggestions = null, suggestLabel = null, inputClassName = '' }) {
   const t = useT()
   const [text, setText] = useState('')
   const [hues, setHues] = useState({})
@@ -102,7 +103,8 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
         <Popover open={showList} onOpenChange={(next) => { if (!next) setOpen(false) }}>
           <PopoverAnchor asChild>
             <span ref={anchorRef} className="relative block">
-              <Input type="text" value={text} placeholder={placeholder}
+              {/* Dokunmatikte 40 px (2026-11-05 — on bir formun ortak etiket kutusu); `inputClassName` çağıranın eki */}
+              <Input type="text" value={text} placeholder={placeholder} className={cn('pointer-coarse:h-10', inputClassName)}
                 role={pool.length ? 'combobox' : undefined} aria-expanded={pool.length ? showList : undefined} aria-autocomplete={pool.length ? 'list' : undefined}
                 onChange={e => { setText(e.target.value); setOpen(true) }}
                 onFocus={() => setOpen(true)}

@@ -89,6 +89,11 @@ class AuditCoverageTest {
         EXEMPT.put("MonitoringController#dbQuerySqlCheck",
                 "Veritabanı sorgu izlemesi CANLI YAZIM DENETİMİ (2026-10-31): sorguyu yalnız bellekte ayrıştırır, veritabanına "
               + "gitmez, hiçbir kayıt değiştirmez. POST yalnız sorgu metni gövdesi taşıdığı için (URL'de SQL olmasın).");
+        EXEMPT.put("MonitoringController#dbQuerySqlFix",
+                "Veritabanı sorgu izlemesi TEK TIKLA DÜZELTME ÖNERİSİ (2026-11-05, dbq2 B2): sorgu metnine NOLOCK / satır sınırı "
+              + "ekleyen öneriyi bellekte hesaplar ve döndürür — veritabanına gitmez, hiçbir kayıt değiştirmez, kota harcamaz. "
+              + "POST yalnız sorgu metni gövdesi taşıdığı için (URL'de SQL olmasın); öneri uygulanıp KAYDEDİLİNCE "
+              + "MONITOR_CREATE / MONITOR_UPDATE denetlenir.");
         EXEMPT.put("MonitoringController#dbQuerySchedulePreview",
                 "Veritabanı sorgu izlemesi ZAMANLAMA ÖNİZLEMESİ (2026-10-31): sonraki çalışmaları saf hesapla bulur, hiçbir "
               + "kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");

@@ -492,7 +492,7 @@ koşar, öteki izleme türlerinin iş parçacıklarını meşgul etmez.
 | `plan-check-mode` | WARN | Kayıtta maliyet ön kontrolü (PG + MSSQL EXPLAIN): OFF / WARN / BLOCK |
 | `max-plan-cost` / `max-plan-rows` | 1 000 000 / 10 000 000 | BLOCK / WARN eşikleri |
 | `manual-cooldown-seconds` | 20 | "Şimdi kontrol et" beklemesi |
-| `test-per-hour` | 60 | Kullanıcı başına saatlik "Sorguyu dene" + "Maliyeti denetle" + "Şimdi kontrol et" sınırı (küme çapında, 5–600) |
+| `test-per-hour` | 60 | Kullanıcı başına saatlik "Sorguyu dene" + "Maliyeti denetle" + "Şimdi kontrol et" + "Bağlantıyı dene" (2026-11-05'ten beri) sınırı (küme çapında, 5–600) |
 
 Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları `site.monitor.dbquery.alert-rows.retention-days`
 (90; açık alarmın satırı silinmez). Yeniden uyarı: `site.monitor.realert.dbquery-minutes` (0 = genel aralık). Tarama tıkı
@@ -538,6 +538,57 @@ oluşturmayın — eski pod bu ayarları bilmez (alarm mailine ilk N kolon gider
   `DBQUERY_TEMPLATE_CREATE|UPDATE|DELETE`, `HOLIDAY_CALENDAR_SAVE`. Parola hiçbir yere yazılmaz; istek günlüğü bu uçların
 gövdesini yazmaz. İzleme oluşturma / güncelleme / geri yükleme farkı ve değişiklik geçmişi sorgu metnini içerir (geri
 yükleme için gerekli; ilk 512 karakter); "Sorguyu dene" denetimi yalnız uzunluk ve özet (hash) taşır.
+
+
+**Kullanıcı deneyimi paketleri (2026-11-05).** Bağlantı denemesi artık altı adımı ayrı ayrı gösterir (DNS → TCP → TLS →
+giriş → sorgu → yetki) ve her başarısız adım için ne yapılacağını söyler. TCP adımı veritabanına sürücüden önce düz bir soket
+açtığı için PostgreSQL günlüğünde her denemede bir "incomplete startup packet" satırı, SQL Server'da bir ön-giriş notu
+görülebilir — zararsızdır. Bağlantının "Son 24 saat" sağlık kartı (`GET …/connections/{id}/health`) yalnız bağlantının kendi
+takımına açıktır. "Düzelt" (`POST …/dbquery/sql-fix`) veritabanına gitmez; önerilen her sorgu yine güvenlik denetiminden geçer.
+Kartta son 24 saatin değer eğilimi, grafikte alarm dönemleri ve değişiklik işaretleri, alarm postasında ilk ihlal zamanı + kaç
+çalıştırmadır sürdüğü + son 10 değer görünür (yalnız ölçülen değer — satır verisi değil). Yeni kural türleri: **olağan dışı
+değer** (son N çalıştırmanın olağan bandı, isteğe bağlı günlük / haftalık mevsimsellik) ve **donmuş değer** (N çalıştırmadır
+değişmeyen değer); taban kurulurken (en az örnek sayısı dolana dek) kural ne ihlal ne de "kanıt yok" sayılır.
+
+**İnceleme düzeltmeleri (2026-11-05) — operatörü ilgilendirenler.**
+
+- **Bağlantı denemesi saatlik hakkı harcar.** TCP ve giriş adımları iç ağda "bu port açık mı" sorusunu yanıtladığı için
+  "Bağlantıyı dene" de kullanıcının küme çapındaki saatlik deneme sayacından düşer (`test-per-hour`; sorgu denemesi, maliyet
+  denetimi ve elle kontrolle ORTAK sayaç). Aşımda 429 `RATE_LIMITED` + `Retry-After`. Deneme çalıştırıcıya hiç ulaşmadıysa
+  (`DB_BUSY`, parola çözülemedi, bağlantı silindi) hak geri verilir. Aynı oturumdan iki deneme arasında 5 sn beklenir.
+- **`sql-check` / `sql-fix` 429 = yük sınırı, hata değil.** Canlı yazım denetimi ve "Düzelt" veritabanına gitmez ama sorgu
+  ayrıştırma izinlerini (`max(2, CPU)`) zamanlanmış çalıştırmalarla paylaşır. `DBQUERY_BUSY` = pod'daki etkileşimli istek
+  sınırı doldu (izin sayısı − 1; en az bir izin her zaman zamanlanmış çalıştırmalara kalır), `RATE_LIMITED` = kullanıcı başına
+  dakikada 60 canlı denetim / 20 düzeltme önerisi. Arayüz bunu nötr "beklemede" notuyla gösterir ve birkaç kez kendisi yeniden
+  dener; yapılacak bir şey yoktur. Zamanlanmış çalıştırmalarda `DB_BUSY` (ayrıştırma izni 3 sn'de alınamadı) sık görülüyorsa
+  pod CPU'suna bakın. `sql-fix` artık `db_type` ister (yoksa 400); `CHECK_TIMEOUT` = güvenlik denetiminin süresi doldu (sorgu
+  reddedilmedi) — birkaç saniye sonra yeniden deneyin.
+- **Sağlık kartında "Bağlantı hatası" yalnız bağlantı sınıfıdır** (ulaşılamadı, DNS, zaman aşımı, kimlik, sürücü, engellendi).
+  SQL hatası, yazabilen hesap reddi ya da çözülemeyen parola ayrı satırda sayılır — bağlantı sağlamdır, sorguya / hesaba bakın.
+  "Son durum" yalnız zamanlanmış çalıştırmadandır.
+- **Olağan dışı değer kuralı — kontrollü uyum.** Kuralı ihlal eden çalıştırmalar tabana girmez (kalıcı bir sapma kendi
+  bandını genişletip alarmı sahte kapatmasın). Değer kalıcı olarak yeni bir düzeye geçtiyse alarm, pencere kadar (varsayılan
+  30) ardışık ihlal çalıştırmasından sonra yeni düzey olağan sayılınca kendiliğinden kapanır — 5 dk aralıklı bir izlemede bu
+  yaklaşık 2,5 saattir. Daha hızlı uyum isteniyorsa pencere küçültülür. Eşik denemesi aynı kuralı kullanır ve mevsimsiz akıllı
+  kurallarda canlıyla aynı sayıda çalıştırma geri bakar.
+- **Saklama denetimi.** Tabanı kontrol geçmişi saklama süresi (`site.monitor.metrics.dbquery.retention-days`, 180) içinde
+  hiç dolamayacak bir olağan dışı değer kuralı kaydedilemez (400, "En az örnek" alanında `rules[N].min_samples` hatası; ör.
+  haftalık mevsimde 180 gün ≈ 25 hafta). Ayar sonradan kısaltılırsa var olan kurallar kendiliğinden yeniden denetlenmez.
+  `ANOMALY_SEASON_RARE` uyarısı (engellemez): mevsimsel kural + 1 saatten uzun ve günü / haftayı tam bölmeyen aralık — taban
+  çok geç dolar; günü bölen bir aralık (1, 2, 3, 4, 6, 8, 12, 24 sa) seçin.
+- **`insufficient_samples` ("örnek yetersiz").** Geçmiş yeterince çalıştırma içerdiği hâlde değeri boş ya da ihlal eden
+  satırlar yüzünden örnek "en az örnek" sayısının altında kaldı. Bu bir kanıt eksikliğidir: kontrol satırı "değerlendirilemedi"
+  (UNKNOWN) yazılır, açık eşik alarmı kanıtsız kapanmaz ve `unknown-alert-runs` (3) ardışık böyle çalıştırma "kural
+  değerlendirilemedi" alarmını (`DBQUERY_FAIL`, `[DB_RULE_UNEVALUABLE]`) açabilir. Çare: sorgunun değer döndürdüğünü denetleyin,
+  "en az örnek" sayısını düşürün ya da pencereyi büyütün. Yeni / kısa geçmişteki "taban kuruluyor" (`building_baseline`) ise
+  alarm beslemez.
+- **Alarm postasında maskeli kolonun ölçüsü `••••`.** Kuralın kolonu izlemenin güncel maskeli kolonlar listesindeyse ölçülen
+  değer, "Son Değerler" tablosu, kural tablosunun "Gelen" değeri ve özet postada gizlenir; değer değerlendirme için
+  veritabanında kalır. Postadaki "Son Değerler" serisi sorgu değişince kesilir (eski sorgunun ihlalleri sayılmaz).
+
+Sürüm geçişi: eski pod bu yeni alanları üretmez, `sql-fix` ve `…/health` uçlarına 404 döner, olağan dışı / donmuş kuralları
+okurken düşürür ve kaydederken reddeder — bu kuralları bütün podlar yeni sürümdeyken tanımlayın. Eski pod bağlantı
+denemesini saatlik haktan düşürmez, etkileşimli denetim kapısı ve postada ölçü maskelemesi yoktur.
 
 ## Merkezi izleme alarm akışı
 

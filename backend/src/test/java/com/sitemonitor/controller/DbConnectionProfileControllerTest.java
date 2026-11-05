@@ -62,6 +62,7 @@ class DbConnectionProfileControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
+    @MockitoBean com.sitemonitor.service.dbquery.DbQueryTestQuota testQuota;
 
     @BeforeEach
     void setUp() {
@@ -406,5 +407,72 @@ class DbConnectionProfileControllerTest {
         assertThat(DbConnectionProfileService.targetChanges(m2, m1)).isEmpty();
         DbConnectionProfile pg = stored(7L, 1L);
         assertThat(DbConnectionProfileService.targetChanges(pg, m1)).contains("db_type");
+    }
+
+    // ── dbq2 inceleme D5: bağlantı denemesi küme kotasından düşer; oturum beklemesi atomik ──────────────────────
+
+    @Test
+    @DisplayName("D5: bağlantı denemesi saatlik KÜME kotasından düşer (sorgu denemesiyle ortak); yürütülmeyen deneme (motor meşgul) "
+            + "hakkı geri verir; kota doluysa 429 RATE_LIMITED, deneme yapılmaz, oturum damgası geri alınır")
+    void connectionTestCountsHourlyQuota() throws Exception {
+        when(repo.findById(5L)).thenReturn(Optional.of(stored(5L, 1L)));
+        var ticket = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket.class);
+        when(testQuota.consume(any())).thenReturn(ticket);
+        when(checker.testConnection(any(), isNull())).thenReturn(new DbQueryRunner.ConnectionTest(false, 0L, null,
+                "Motor meşgul", "DB_BUSY"));
+        mvc.perform(post("/api/monitoring/dbquery/connections/5/test").session(user(1L))).andExpect(status().isOk());
+        verify(testQuota).consume(any());
+        verify(testQuota).refund(ticket);
+
+        when(checker.testConnection(any(), any())).thenReturn(new DbQueryRunner.ConnectionTest(false, 5000L, null,
+                "Bağlantı zaman aşımına uğradı", "DB_TIMEOUT"));
+        mvc.perform(post("/api/monitoring/dbquery/connections/test").session(user(1L)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":5,\"name\":\"Yeni ad\"}"))
+                .andExpect(status().isOk());
+        verify(testQuota, times(2)).consume(any());
+        verify(testQuota, times(1)).refund(any());   // zaman aşımı = deneme YAPILDI, hak geri verilmez
+
+        org.mockito.Mockito.reset(checker);
+        org.mockito.Mockito.doThrow(DbQueryApiException.tooMany("RATE_LIMITED", "Saatlik deneme sınırına ulaşıldı", 600))
+                .when(testQuota).consume(any());
+        MockHttpSession s = user(1L);
+        mvc.perform(post("/api/monitoring/dbquery/connections/5/test").session(s))
+                .andExpect(status().is(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(header().string("Retry-After", "600"));
+        assertThat(s.getAttribute(DbConnectionProfileController.TEST_AT)).isNull();
+        verify(checker, never()).testConnection(any(), any());
+    }
+
+    @Test
+    @DisplayName("D5: oturum beklemesi atomik — aynı oturumdan eşzamanlı iki denemeden yalnız biri geçer (50 tur)")
+    void cooldownIsAtomic() throws Exception {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int round = 0; round < 50; round++) {
+                MockHttpSession s = user(1L);
+                java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
+                java.util.concurrent.atomic.AtomicInteger passed = new java.util.concurrent.atomic.AtomicInteger();
+                java.util.concurrent.atomic.AtomicInteger refused = new java.util.concurrent.atomic.AtomicInteger();
+                List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>();
+                for (int i = 0; i < 2; i++) {
+                    fs.add(pool.submit(() -> {
+                        start.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                        try {
+                            DbConnectionProfileController.cooldown(s);
+                            passed.incrementAndGet();
+                        } catch (DbQueryApiException e) {
+                            if (e.status() == 429) refused.incrementAndGet();
+                        }
+                        return null;
+                    }));
+                }
+                for (var f : fs) f.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(passed.get()).as("tur %d", round).isEqualTo(1);
+                assertThat(refused.get()).isEqualTo(1);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }

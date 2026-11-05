@@ -5365,7 +5365,97 @@ public class MonitoringController {
                 .map(m -> enrichDbQuery(m, latest.get(m.getId()), teams, alarms.get(m.getId()),
                         profiles.get(m.getProfileId()), dbqProfileDetail(session, m.getTeamId())))
                 .collect(Collectors.toCollection(ArrayList::new));
+        // dbq2 C1: kartın değer eğilimi — görünen izlemeler için tek gruplu sorgu (60 sn bellek); değer yoksa alan yok
+        Map<Long, Map<String, Object>> trends = dbqValueTrends(monitors);
+        for (Map<String, Object> item : result) {
+            Map<String, Object> tr = item.get("id") instanceof Number n ? trends.get(n.longValue()) : null;
+            if (tr != null) item.put("value_trend", tr);
+        }
         return ok(withCheckFlag(session, result));
+    }
+
+    // ── dbq2 C1: kart değer eğilimi (2026-11-05) ─────────────────────────────
+
+    /** İzleme başına değer eğilimi belleği — liste 30 sn'de bir yoklanır, saatlik kovalar yavaş değişir. */
+    private record DbqTrendEntry(long at, Map<String, Object> trend) {}
+    private final java.util.concurrent.ConcurrentHashMap<Long, DbqTrendEntry> dbqTrendCache = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tek uçuş (dbq2 inceleme D7): bayat girdileri aynı anda yalnız bir istek okur. */
+    private final java.util.concurrent.locks.ReentrantLock dbqTrendRefresh = new java.util.concurrent.locks.ReentrantLock();
+    static final long DBQUERY_TREND_CACHE_MS = 60_000;
+    static final int DBQUERY_TREND_CACHE_MAX = 20_000, DBQUERY_TREND_CHUNK = 500;
+    /**
+     * İstek iş parçacığındaki okuma bütçesi: başka istek okurken en çok bu kadar beklenir (sonra bayat değer); okuma bu süreyi
+     * aşarsa kalan parçalar okunmaz (sorgunun kendi zaman aşımı depoda — {@code valueTrendBuckets} 3 sn).
+     */
+    static final long DBQUERY_TREND_BUDGET_MS = 3_000;
+
+    /**
+     * Görünen izlemelerin değer eğilimi ({@link com.sitemonitor.service.dbquery.DbQueryValueTrend}): bellekte tazesi
+     * olmayanlar için TEK gruplu sorgu (500 izleme / parça). Tek uçuş: bayat girdileri aynı anda yalnız bir istek okur;
+     * eşzamanlı istek okumanın bitmesini en çok {@value #DBQUERY_TREND_BUDGET_MS} ms bekler ve belleği yeniden okur (aynı
+     * küme için ikinci sorgu yok), süre dolarsa bayat değeri döndürür. Okunamazsa / süre aşılırsa bayat değer kalır, yoksa
+     * eğilim yazılmaz (bilinmiyor ≠ düz) ve belleğe girmez. Değeri olmayan izlemenin "yok" sonucu da bellektedir.
+     */
+    private Map<Long, Map<String, Object>> dbqValueTrends(List<DbQueryMonitor> monitors) {
+        Map<Long, Map<String, Object>> out = new HashMap<>();
+        if (monitors == null || monitors.isEmpty() || dbQueryCheckRepo == null) return out;
+        long t0 = System.currentTimeMillis();
+        List<Long> stale = dbqTrendFromCache(monitors, out, t0);
+        if (stale.isEmpty()) return out;
+        boolean locked;
+        try {
+            locked = dbqTrendRefresh.tryLock(DBQUERY_TREND_BUDGET_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return out;
+        }
+        if (!locked) return out;   // başka istek okuyor ve bütçe doldu — bayat değerler
+        try {
+            // Kilidi beklerken başka istek okuduysa bellek tazedir: yalnız HÂLÂ bayat olanlar sorgulanır
+            stale = dbqTrendFromCache(monitors, out, System.currentTimeMillis());
+            if (stale.isEmpty()) return out;
+            Instant now = Instant.now();
+            long nowMs = now.toEpochMilli();
+            String from = com.sitemonitor.service.dbquery.DbQueryValueTrend.fromIso(now);
+            Map<Long, Map<String, Double>> byMonitor = new HashMap<>();
+            List<Long> read = new ArrayList<>();
+            try {
+                for (int i = 0; i < stale.size(); i += DBQUERY_TREND_CHUNK) {
+                    if (i > 0 && System.currentTimeMillis() - t0 > DBQUERY_TREND_BUDGET_MS) break;   // kalan parçalar sonraki yoklamada
+                    List<Long> chunk = stale.subList(i, Math.min(stale.size(), i + DBQUERY_TREND_CHUNK));
+                    for (Object[] r : dbQueryCheckRepo.valueTrendBuckets(chunk, from)) {
+                        if (r == null || r.length < 3 || !(r[0] instanceof Number id) || r[1] == null || !(r[2] instanceof Number v)) continue;
+                        byMonitor.computeIfAbsent(id.longValue(), k -> new HashMap<>()).put(r[1].toString(), v.doubleValue());
+                    }
+                    read.addAll(chunk);
+                }
+            } catch (RuntimeException e) {
+                log.warn("Veritabanı sorgu izlemesi değer eğilimi okunamadı: {}", e.getClass().getSimpleName());
+                return out;
+            }
+            if (dbqTrendCache.size() + read.size() > DBQUERY_TREND_CACHE_MAX) dbqTrendCache.clear();
+            for (Long id : read) {
+                Map<String, Object> tr = com.sitemonitor.service.dbquery.DbQueryValueTrend.build(byMonitor.get(id), now);
+                dbqTrendCache.put(id, new DbqTrendEntry(nowMs, tr));
+                if (tr != null) out.put(id, tr);
+                else out.remove(id);
+            }
+            return out;
+        } finally {
+            dbqTrendRefresh.unlock();
+        }
+    }
+
+    /** Bellekteki eğilimleri {@code out}'a yazar (bayat olanı da — yenilenemezse o gösterilir); tazelenmesi gerekenleri döndürür. */
+    private List<Long> dbqTrendFromCache(List<DbQueryMonitor> monitors, Map<Long, Map<String, Object>> out, long nowMs) {
+        List<Long> stale = new ArrayList<>();
+        for (DbQueryMonitor m : monitors) {
+            if (m.getId() == null) continue;
+            DbqTrendEntry e = dbqTrendCache.get(m.getId());
+            if (e != null && e.trend() != null) out.put(m.getId(), e.trend());
+            if (e == null || nowMs - e.at() < 0 || nowMs - e.at() >= DBQUERY_TREND_CACHE_MS) stale.add(m.getId());
+        }
+        return stale;
     }
 
     @PostMapping("/dbquery")
@@ -5394,6 +5484,7 @@ public class MonitoringController {
         DbConnectionProfile profile = resolveDbqProfile(session, body, m, errs);
         applyDbQueryFields(m, body, true, errs);
         DbqSchedule sched = dbqSchedule(m, body, true, errs);
+        dbqRuleRetention(m, sched, errs);
         List<Map<String, Object>> violations = dbqGuard(m, profile, true, errs);
         throwDbqErrors(errs, violations, sched.code());
         // Ad TÜM takımlarda tekil (K1) — erken ret (maliyet ön kontrolüne gitmeden); kesin karar kayıtta ad kilidi altında
@@ -5456,6 +5547,8 @@ public class MonitoringController {
         DbConnectionProfile profile = resolveDbqProfile(session, body, m, errs);
         applyDbQueryFields(m, body, false, errs);
         DbqSchedule sched = dbqSchedule(m, body, false, errs);
+        // Saklama denetimi yalnız kurallar ya da zamanlama değiştiyse (değişmeyen kayıtlı değer yeniden denetlenmez)
+        if (!Objects.equals(oldRules, m.getRulesJson()) || sched.spec() != null) dbqRuleRetention(m, sched, errs);
         boolean queryChanged = !Objects.equals(oldSql, m.getSqlText()) || !Objects.equals(oldProfile, m.getProfileId());
         List<Map<String, Object>> violations = dbqGuard(m, profile, queryChanged, errs);
         throwDbqErrors(errs, violations, sched.code());
@@ -5641,7 +5734,10 @@ public class MonitoringController {
         if (sql.length() > 2 * DbQuerySqlGuard.MAX_SQL_CHARS) throw DbQueryApiException.field(null, "sql", com.sitemonitor.util.Msg.t(
                 "Sorgu çok uzun (en çok " + DbQuerySqlGuard.MAX_SQL_CHARS + " karakter).", "The query is too long (at most " + DbQuerySqlGuard.MAX_SQL_CHARS + " characters)."));
         DbType type = DbType.parse(body == null || body.get("db_type") == null ? null : body.get("db_type").toString());
-        DbQuerySqlGuard.Result g = DbQuerySqlGuard.check(sql, type == null ? DbType.POSTGRESQL : type);
+        DbQuerySqlGuard.Result g;
+        try (var ticket = dbqInteractive(session, com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.CHECK)) {
+            g = DbQuerySqlGuard.check(sql, type == null ? DbType.POSTGRESQL : type);
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", g != null && g.ok());
         out.put("violations", com.sitemonitor.service.dbquery.DbQueryTemplateService.violations(g));
@@ -5654,6 +5750,69 @@ public class MonitoringController {
             if (parsed.rules() != null) rules = parsed.rules();
         }
         out.put("warnings", dbqShapeWarnings(g == null ? null : g.shape(), rules));
+        return ok(out);
+    }
+
+    /**
+     * Tek tıkla güvenli düzeltme (2026-11-05, dbq2 B2): {@code ADD_NOLOCK} (MSSQL) ve {@code ADD_ROW_LIMIT} önerileri
+     * ({@link com.sitemonitor.service.dbquery.DbQuerySqlFix}). Veritabanına GİTMEZ, saatlik deneme kotasını harcamaz, kayıt
+     * değiştirmez (denetim yok — {@code AuditCoverageTest.EXEMPT}). İzin = deneme ucu izni ({@code monitoring.crud/edit}).
+     * Önerilen her sorgu sunucuda güvenlik denetiminden GEÇER; geçmeyen öneri dönmez ({@code skipped} nedeniyle).
+     */
+    @PostMapping("/dbquery/sql-fix")
+    public ResponseEntity<Map<String, Object>> dbQuerySqlFix(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        Object sqlRaw = body == null ? null : body.get("sql");
+        String sql = sqlRaw == null ? "" : sqlRaw.toString();
+        // Uzunluk çözümlemeden ÖNCE kesilir (CLAUDE.md "no unbounded … on untrusted data")
+        if (sql.length() > 2 * DbQuerySqlGuard.MAX_SQL_CHARS) throw DbQueryApiException.field(null, "sql", com.sitemonitor.util.Msg.t(
+                "Sorgu çok uzun (en çok " + DbQuerySqlGuard.MAX_SQL_CHARS + " karakter).", "The query is too long (at most " + DbQuerySqlGuard.MAX_SQL_CHARS + " characters)."));
+        Integer limit = com.sitemonitor.service.dbquery.DbQuerySqlFix.rowLimitOrNull(body == null ? null : body.get("row_limit"));
+        if (limit == null) throw DbQueryApiException.field(null, "row_limit", com.sitemonitor.util.Msg.t(
+                "Satır sınırı " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MIN_ROW_LIMIT + " ile "
+                        + com.sitemonitor.service.dbquery.DbQuerySqlFix.MAX_ROW_LIMIT + " arasında bir tam sayı olmalı.",
+                "The row limit must be a whole number between " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MIN_ROW_LIMIT
+                        + " and " + com.sitemonitor.service.dbquery.DbQuerySqlFix.MAX_ROW_LIMIT + "."));
+        // dbq2 inceleme D10: tür ZORUNLU — PostgreSQL varsayılırsa MSSQL sorgusuna LIMIT önerilir (SQL Server'da çalışmaz)
+        DbType type = DbType.parse(body == null || body.get("db_type") == null ? null : body.get("db_type").toString());
+        if (type == null) throw DbQueryApiException.field(null, "db_type", com.sitemonitor.util.Msg.t(
+                "Veritabanı türü gerekli (POSTGRESQL, MSSQL ya da ORACLE).", "The database type is required (POSTGRESQL, MSSQL or ORACLE)."));
+        com.sitemonitor.service.dbquery.DbQuerySqlFix.Result r;
+        try (var ticket = dbqInteractive(session, com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind.FIX)) {
+            r = com.sitemonitor.service.dbquery.DbQuerySqlFix.fixes(sql, type, limit);
+        }
+        List<Map<String, Object>> fixes = new ArrayList<>();
+        for (var f : r.fixes()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("code", f.code());
+            m.put("sql", f.sql());
+            m.put("changed", f.changed());
+            m.put("note", f.note());
+            List<Map<String, Object>> edits = new ArrayList<>();
+            for (var e : f.edits()) {
+                Map<String, Object> em = new LinkedHashMap<>();
+                em.put("at", e.at());
+                em.put("line", e.line());
+                em.put("column", e.column());
+                em.put("text", e.text());
+                edits.add(em);
+            }
+            m.put("edits", edits);
+            fixes.add(m);
+        }
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (var sk : r.skipped()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("code", sk.code());
+            m.put("reason", sk.reason());
+            m.put("note", sk.note());
+            skipped.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fixes", fixes);
+        out.put("skipped", skipped);
+        out.put("db_type", (type == null ? DbType.POSTGRESQL : type).name());
+        out.put("row_limit", limit);
         return ok(out);
     }
 
@@ -5798,7 +5957,93 @@ public class MonitoringController {
         if ("value".equals(m)) out.put("thresholds", dbqSeriesThresholds(mon));
         if ("rows".equals(m)) out.put("unit", "rows");
         else if ("value".equals(m)) out.put("unit", "value");
+        // dbq2 C2: grafikte gölgeli alarm dönemleri + değişiklik işaretleri (okunamazsa null — asla uydurma boş liste)
+        out.put("alarms", dbqSeriesAlarms(mon, range[0], range[1]));
+        out.put("changes", dbqSeriesChanges(mon, range[0], range[1]));
         return ok(out);
+    }
+
+    /** Grafik eklerinin üst sınırı (alarm dönemi / değişiklik işareti). */
+    static final int DBQUERY_SERIES_MARKS_MAX = 200;
+
+    /**
+     * Aralıkla KESİŞEN bu izlemenin DBQUERY_* alarmları ({@code findOverlappingNewest} — Kontrol Geçmişi ile aynı kural,
+     * veritabanında sınırlı okuma):
+     * {@code [{from, to, level, type}]}, eskiden yeniye, en yeni {@value #DBQUERY_SERIES_MARKS_MAX}. Alarm anahtarı izleme
+     * adıdır; sahiplik bağlamı başka (silinmiş, aynı adlı) izlemenin alarmını eler. {@code to} null = hâlâ açık. Okunamazsa null.
+     */
+    private List<Map<String, Object>> dbqSeriesAlarms(DbQueryMonitor mon, String from, String to) {
+        if (mon.getName() == null) return List.of();
+        try {
+            Map<String, Object> owner = ownerCtx(mon.getId(), mon.getTeamId(), null);
+            List<AlertEvent> rows = new ArrayList<>();
+            // Veritabanında sınırlı (D12): en yeni 2 × üst sınır satır — sahiplik süzgecinin elediği (aynı adlı, silinmiş başka
+            // izlemenin) alarmlara pay; süzgeçten sonra en çok üst sınır kadar
+            for (AlertEvent a : alertEventRepo.findOverlappingNewest(mon.getName(), DBQUERY_ALERT_TYPES, from, to,
+                    org.springframework.data.domain.PageRequest.of(0, 2 * DBQUERY_SERIES_MARKS_MAX))) {
+                if (!EscalationService.closableBy(a, owner)) continue;
+                rows.add(a);
+                if (rows.size() >= DBQUERY_SERIES_MARKS_MAX) break;   // sorgu yeniden eskiye — en yeniler kalır
+            }
+            List<Map<String, Object>> out = new ArrayList<>(rows.size());
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                AlertEvent a = rows.get(i);
+                boolean resolved = Boolean.TRUE.equals(a.getResolved());
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("from", a.getCreatedAt());
+                // Kapanmış ama kapanış anı yazılmamış eski satır "hâlâ açık" görünmesin: dönem açılış anında biter
+                r.put("to", resolved ? (a.getResolvedAt() != null ? a.getResolvedAt() : a.getCreatedAt()) : null);
+                r.put("level", a.getAlertLevel());
+                r.put("type", a.getAlertType());
+                out.add(r);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi grafik alarm dönemleri okunamadı (#{}): {}", mon.getId(), e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /**
+     * Aralıktaki değişiklik geçmişi satırları: {@code [{at, event, fields}]}, eskiden yeniye, en yeni
+     * {@value #DBQUERY_SERIES_MARKS_MAX}; {@code fields} = değişen alanların ANAHTARLARI (değer YOK — sorgu metni, kural, parola
+     * izi gönderilmez). Okunamazsa null.
+     */
+    private List<Map<String, Object>> dbqSeriesChanges(DbQueryMonitor mon, String from, String to) {
+        if (mon.getId() == null) return List.of();
+        try {
+            List<Object[]> rows = changeLogRepo.changeMarks(MonitorHistoryService.DBQUERY, mon.getId(), from, to,
+                    DBQUERY_SERIES_MARKS_MAX);
+            List<Map<String, Object>> out = new ArrayList<>(rows.size());
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                Object[] r = rows.get(i);
+                if (r == null || r.length < 3) continue;
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("at", r[0]);
+                c.put("event", r[1]);
+                c.put("fields", dbqChangedFields(r[2] == null ? null : r[2].toString()));
+                out.add(c);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi grafik değişiklik işaretleri okunamadı (#{}): {}", mon.getId(), e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** Değişiklik JSON'unun ({@code {"alan":{"from":…,"to":…}}}) üst düzey anahtarları — en çok 100; çözülemezse boş. */
+    static List<String> dbqChangedFields(String json) {
+        if (json == null || json.isBlank() || json.length() > 500_000) return List.of();
+        try {
+            com.fasterxml.jackson.databind.JsonNode n = SCRIPTED_MAPPER.readTree(json);
+            if (n == null || !n.isObject()) return List.of();
+            List<String> out = new ArrayList<>();
+            java.util.Iterator<String> it = n.fieldNames();
+            while (it.hasNext() && out.size() < 100) out.add(it.next());
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     /** Eşik denemesi: kullanıcı başına (bu pod) son 1 dk'daki başlangıçlar — yük sınırı (veritabanına gitmez). */
@@ -5873,15 +6118,33 @@ public class MonitoringController {
 
         Instant now = Instant.now();
         Instant from = now.minus(java.time.Duration.ofDays(days));
-        long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules);
-        String readFrom = ISO.format(from.minusMillis(lookback));
+        DbQueryCheckRepository checks = dbqCheckRepo();
+        // Geri bakış (dbq2 inceleme D1): mevsimsel kurallar ZAMANLA, mevsimsiz akıllı kurallar canlıyla AYNI çalıştırma SAYISIYLA
+        long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules, mon.getIntervalSeconds());
+        Instant readStart = from.minusMillis(lookback);
+        int lookbackRuns = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackRuns(rules);
+        if (lookbackRuns > 0) {
+            List<String> before = checks.backtestRunsBefore(id, ISO.format(from),
+                    PageRequest.of(0, lookbackRuns));
+            Instant oldest = before == null || before.isEmpty() ? null
+                    : com.sitemonitor.service.dbquery.DbQueryCheckerService.parseIso(before.get(before.size() - 1));
+            if (oldest != null && oldest.isBefore(readStart)) readStart = oldest;
+        }
+        String readFrom = ISO.format(readStart);
+        // Satır tavanı EN ESKİ kısmı keser (en yeni çalıştırmalar her zaman değerlendirilir): tavandan fazla satır varsa okuma,
+        // yeniden eskiye sıradaki tavan konumundaki satırdan başlar
+        boolean truncated = false;
+        List<String> cut = checks.backtestNewestFrom(id, readFrom,
+                PageRequest.of(DBQUERY_BACKTEST_MAX_ROWS - 1, 1));
+        if (cut != null && !cut.isEmpty() && cut.get(0) != null && cut.get(0).compareTo(readFrom) > 0) {
+            readFrom = cut.get(0);
+            truncated = true;
+        }
         com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
                 rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
         long deadline = System.currentTimeMillis() + DBQUERY_BACKTEST_BUDGET_MS;
         long after = 0;
         int read = 0;
-        boolean truncated = false;
-        DbQueryCheckRepository checks = dbqCheckRepo();
         while (true) {
             List<Object[]> page = checks.backtestPage(id, readFrom, after, DBQUERY_BACKTEST_PAGE);
             if (page == null || page.isEmpty()) break;
@@ -5894,11 +6157,38 @@ public class MonitoringController {
                 read++;
             }
             if (page.size() < DBQUERY_BACKTEST_PAGE) break;
-            if (read >= DBQUERY_BACKTEST_MAX_ROWS || System.currentTimeMillis() > deadline) { truncated = true; break; }
+            // Güvenlik sınırı (tavan yukarıda en eskiyi kesti; aynı anlı satırlar için bir sayfa pay)
+            if (read >= DBQUERY_BACKTEST_MAX_ROWS + DBQUERY_BACKTEST_PAGE || System.currentTimeMillis() > deadline) {
+                truncated = true;
+                break;
+            }
         }
         Map<String, Object> out = bt.report(truncated);
         out.put("days", days);
         return ok(out);
+    }
+
+    /**
+     * Etkileşimli sorgu denetimi kapısı (dbq2 inceleme O3): {@code sql-check} / {@code sql-fix} zamanlanmış çalıştırmalarla
+     * aynı ayrıştırma iznini paylaşır — kapı en az bir izni zamanlanmışa bırakır (dolu → beklemeden 429 {@code DBQUERY_BUSY})
+     * ve kullanıcı başına dakikalık sınır koyar (429 {@code RATE_LIMITED}). Pod belleği, yük sınırı. Testte değiştirilebilir.
+     */
+    com.sitemonitor.service.dbquery.DbQueryInteractiveGate dbqInteractiveGate =
+            com.sitemonitor.service.dbquery.DbQueryInteractiveGate.shared();
+
+    private com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Ticket dbqInteractive(HttpSession session,
+            com.sitemonitor.service.dbquery.DbQueryInteractiveGate.Kind kind) {
+        Object u = session == null ? null : session.getAttribute("username");
+        var d = dbqInteractiveGate.tryEnter(u == null ? null : u.toString(), kind);
+        if (d.admitted()) return d.ticket();
+        long wait = d.retryAfterSeconds();
+        if (com.sitemonitor.service.dbquery.DbQueryInteractiveGate.CODE_BUSY.equals(d.refusedCode()))
+            throw DbQueryApiException.tooMany("DBQUERY_BUSY", com.sitemonitor.util.Msg.t(
+                    "Sorgu denetimi şu an yoğun; birkaç saniye sonra yeniden deneyin.",
+                    "The query check is busy right now; try again in a few seconds."), wait);
+        throw DbQueryApiException.tooMany("RATE_LIMITED", com.sitemonitor.util.Msg.t(
+                "Çok sık sorgu denetimi; " + wait + " sn sonra yeniden deneyin.",
+                "Too many query checks; try again in " + wait + " s."), wait);
     }
 
     /** Eşik denemesi yük sınırı (kullanıcı başına, bu pod, kayan 1 dk) — 429 RATE_LIMITED + Retry-After. */
@@ -5998,6 +6288,8 @@ public class MonitoringController {
                 : dbqGuardResult(m.getSqlText(), profile);
         DbQuerySqlGuard.Shape shape = g == null ? null : g.shape();
         out.addAll(dbqShapeWarnings(shape, DbQueryRules.fromJson(m.getRulesJson())));
+        // dbq2 inceleme O1: mevsimsel anomali + günü / haftayı bölmeyen aralık → eşleşme nadir (engellemez)
+        out.addAll(DbQueryRules.smartWarnings(DbQueryRules.fromJson(m.getRulesJson()), m.getIntervalSeconds()));
         if (Boolean.FALSE.equals(m.getMailIncludeRows())) return out;
         List<String> known = resultColumns != null ? resultColumns : shape == null || !shape.known() ? List.of() : shape.columns();
         List<String> mailCols = dbqEffectiveMailColumns(m, known);
@@ -6603,6 +6895,26 @@ public class MonitoringController {
     }
 
     /**
+     * Akıllı kural tabanı saklama süresi içinde dolabilir mi (dbq2 inceleme O1): dolamayacaksa {@code rules[N].min_samples}
+     * alan hatası. Aralık = gövdedeki geçerli zamanlamanın ETKİN aralığı (CRON: ortanca), yoksa kayıtlı aralık. Kural alan
+     * hatası zaten varsa atlanır.
+     */
+    private void dbqRuleRetention(DbQueryMonitor m, DbqSchedule sched, Map<String, String> errs) {
+        for (String k : errs.keySet()) if (k.startsWith("rules")) return;
+        Integer interval = m.getIntervalSeconds();
+        if (sched != null && sched.spec() != null) {
+            try {
+                interval = DbQuerySchedule.columns(sched.spec(), Instant.now(), dbqHolidays()).intervalSeconds();
+            } catch (RuntimeException e) {
+                // zamanlama hatası kendi alanında bildirilir
+            }
+        }
+        int days = Math.max(1, appSettings.getInt("site.monitor.metrics.dbquery.retention-days", 180));
+        for (DbQueryRules.FieldError fe : DbQueryRules.retentionErrors(DbQueryRules.fromJson(m.getRulesJson()), interval, days))
+            errs.putIfAbsent(fe.field(), fe.message());
+    }
+
+    /**
      * Sorgu güvenlik denetimi (KATI): ihlalde alan hatası ({@code sql_text}) + ihlal listesi. {@code changed} false ise (güncelleme,
      * sorgu ve bağlantı aynı) yeniden denetlenmez — eski kaydın ilgisiz düzenlemesi reddedilmesin (çalıştırma her seferinde denetler).
      */
@@ -6896,20 +7208,12 @@ public class MonitoringController {
         return out;
     }
 
+    /**
+     * Deneme ucunun kural sonucu — kontrol geçmişi / liste satırlarıyla AYNI alan listesi (tek yer
+     * {@link DbQueryAlarmText#ruleResultApi}: parmak izi + akıllı kural taban özeti dahil; dbq2 D, 2026-11-05).
+     */
     static Map<String, Object> dbqRuleResultApi(DbQueryEvaluator.RuleResult x) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", x.id());
-        m.put("label", x.label());
-        m.put("kind", x.kind());
-        m.put("actual", x.actual());
-        m.put("expected", x.expected());
-        m.put("level", x.level());
-        m.put("passed", x.passed());
-        m.put("evaluated", x.evaluated());
-        m.put("note", x.note());
-        m.put("measure", x.measure());
-        m.put("compared", x.compared());
-        return m;
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleResultApi(x);
     }
 
     /** Kova noktalarına ek alanlar: ortalama satır sayısı / ölçülen değer ve kovanın en kötü durumu. */

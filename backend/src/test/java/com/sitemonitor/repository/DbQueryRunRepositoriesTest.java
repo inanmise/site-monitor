@@ -179,6 +179,31 @@ class DbQueryRunRepositoriesTest {
     }
 
     @Test
+    @DisplayName("dbq2 D1: eşik denemesi geri bakışı — pencere başından önceki N zamanlanmış ok satırı (yeniden eskiye); tavan konumu yeniden eskiye")
+    void backtestLookbackRunsAndCap() {
+        long id = mon("Geri bakış").getId();
+        check(id, "2026-11-01T09:00:00", true, false, false, "[a]");
+        check(id, "2026-11-01T09:05:00", true, null, null, "[b]");
+        check(id, "2026-11-01T09:07:00", true, true, false, "[elle]");
+        check(id, "2026-11-01T09:08:00", true, false, true, "[teyit]");
+        check(id, "2026-11-01T09:09:00", false, false, false, null);       // hatalı: geri bakış sayısına girmez
+        check(id, "2026-11-01T09:10:00", true, false, false, "[c]");
+        check(id, "2026-11-01T10:00:00", true, false, false, "[pencere]");   // pencere başında — dahil değil
+        assertThat(checks.backtestRunsBefore(id, "2026-11-01T10:00:00",
+                org.springframework.data.domain.PageRequest.of(0, 2)))
+                .containsExactly("2026-11-01T09:10:00", "2026-11-01T09:05:00");
+        assertThat(checks.backtestRunsBefore(id, "2026-11-01T10:00:00",
+                org.springframework.data.domain.PageRequest.of(0, 10))).hasSize(3);
+        // tavan: backtestPage kümesi (hatalı dahil, elle / teyit hariç) yeniden eskiye — 2. konumdaki satır
+        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
+                org.springframework.data.domain.PageRequest.of(1, 1))).containsExactly("2026-11-01T09:10:00");
+        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
+                org.springframework.data.domain.PageRequest.of(2, 1))).containsExactly("2026-11-01T09:09:00");
+        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
+                org.springframework.data.domain.PageRequest.of(10, 1))).as("tavan altında").isEmpty();
+    }
+
+    @Test
     @DisplayName("r177: değerlendirilemeyen çalıştırma sayacı — eski satır (NULL) artar; sıfırlama yalnız sıfır değilken yazar; varlık kaydı ezmez")
     void unknownRunsCounter() {
         DbQueryMonitor m = mon("Sayaç");

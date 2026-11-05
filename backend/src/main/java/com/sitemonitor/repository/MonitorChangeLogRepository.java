@@ -30,6 +30,16 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
     Optional<MonitorChangeLog> findByResourceKindAndResourceIdAndSeq(
             String resourceKind, Long resourceId, Integer seq);
 
+    /**
+     * Grafik değişiklik işaretleri (2026-11-05, dbquery dbq2 C2): bir kaynağın aralıktaki geçmiş satırları, yeniden eskiye,
+     * en çok {@code limit} — {@code [createdAt, eventType, changes]} (anlık görüntü OKUNMAZ; çağıran yalnız alan adlarını
+     * kullanır).
+     */
+    @Query("SELECT c.createdAt, c.eventType, c.changes FROM MonitorChangeLog c WHERE c.resourceKind = :kind "
+         + "AND c.resourceId = :id AND c.createdAt >= :from AND c.createdAt <= :to ORDER BY c.createdAt DESC, c.id DESC LIMIT :limit")
+    List<Object[]> changeMarks(@Param("kind") String kind, @Param("id") Long id, @Param("from") String from,
+                               @Param("to") String to, @Param("limit") int limit);
+
     /** Yeni satırın {@code seq}'i bundan türetilir (yoksa 0 = CREATE). */
     @Query("SELECT MAX(c.seq) FROM MonitorChangeLog c WHERE c.resourceKind = :kind AND c.resourceId = :id")
     Optional<Integer> findMaxSeq(@Param("kind") String kind, @Param("id") Long id);

@@ -264,6 +264,20 @@ describe('DbQueryMonitorPage — form', () => {
     expect(body).not.toHaveProperty('team_id')
   })
 
+  it('be2: taban saklamada dolmaz (rules[N].min_samples, DBQUERY_RULE_ANOMALY) → kural oluşturucuda alanın altında, tost yok', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', error: 'Doğrulama', field: 'rules[0].min_samples',
+      fields: { 'rules[0].min_samples': 'Kural 1 tabanı saklama süresi içinde hiç dolmaz' } })
+    await openNew()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="t-rule-builder"] [data-err="rules[0].min_samples"]')).not.toBeNull())
+    expect(document.querySelector('[data-err="rules[0].min_samples"]').textContent).toBe('Kural 1 tabanı saklama süresi içinde hiç dolmaz')
+    expect(toastMock.error).not.toHaveBeenCalled()
+    expect(formDialog()).not.toBeNull()
+    // Kural oluşturucu zamanlamayı alır (mevsimsel uyarının istemci eşi)
+    expect(blocks.props.RuleBuilder.schedule).toMatchObject({ schedule_mode: 'INTERVAL' })
+  })
+
   it('sorgu reddi (DBQUERY_SQL_REJECTED) → ihlaller sorgu düzenleyicisine, ileti alanın altına', async () => {
     api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, code: 'DBQUERY_SQL_REJECTED', field: 'sql_text',
       error: 'Sorgu yalnız SELECT olmalı', violations: [{ code: 'SQL_NOT_SELECT', message: 'SELECT değil', line: 1, column: 1 }] })

@@ -192,12 +192,41 @@ public class DbQueryRunner {
         }
     }
 
-    /** @param privileges hesap yetki denetimi (r177; istenmediyse {@link DbAccountPrivileges.Result#NOT_CHECKED}) */
+    /**
+     * @param privileges hesap yetki denetimi (r177; istenmediyse {@link DbAccountPrivileges.Result#NOT_CHECKED})
+     * @param steps      adım adım teşhis (2026-11-05, dbq2 A3 — {@link DbConnectionSteps}); deneme çalıştırıcıya hiç
+     *                   ulaşmadıysa null (API altı adımı {@code skip} yazar)
+     */
     public record ConnectionTest(boolean ok, long durationMs, String serverVersion, String error, String failureReason,
-                                 DbAccountPrivileges.Result privileges) {
+                                 DbAccountPrivileges.Result privileges, List<DbConnectionSteps.Step> steps) {
         public ConnectionTest(boolean ok, long durationMs, String serverVersion, String error, String failureReason) {
-            this(ok, durationMs, serverVersion, error, failureReason, DbAccountPrivileges.Result.NOT_CHECKED);
+            this(ok, durationMs, serverVersion, error, failureReason, DbAccountPrivileges.Result.NOT_CHECKED, null);
         }
+
+        /** r177 biçimi (adımlar yok). */
+        public ConnectionTest(boolean ok, long durationMs, String serverVersion, String error, String failureReason,
+                              DbAccountPrivileges.Result privileges) {
+            this(ok, durationMs, serverVersion, error, failureReason, privileges, null);
+        }
+    }
+
+    /**
+     * Bağlantı denemesinin TCP adımı (dbq2 A3): SSRF denetiminden geçmiş IP'ye düz soket bağlantısı açıp kapatır — sürücüden
+     * ÖNCE "port açık mı" ayrı söylenebilsin. Üretimde gerçek soket; sahte sürücülü testlerde {@link #ASSUME_OPEN}.
+     */
+    @FunctionalInterface
+    interface TcpProbe {
+        void connect(InetAddress ip, int port, int timeoutMs) throws java.io.IOException;
+
+        /** Sahte bağlanıcılı testler: ağ yok — port açık varsayılır. */
+        TcpProbe ASSUME_OPEN = (ip, port, timeoutMs) -> { };
+
+        /** Gerçek soket (sürücülerin açtığı gibi varsayılan soket; bağlantı zaman aşımı sınırlı). */
+        TcpProbe SOCKET = (ip, port, timeoutMs) -> {
+            try (java.net.Socket so = new java.net.Socket()) {
+                so.connect(new java.net.InetSocketAddress(ip, port), Math.max(1, timeoutMs));
+            }
+        };
     }
 
     /** @param supported false = bu tür için plan okunamaz (Oracle); cost / rows planın tahmini. */
@@ -205,17 +234,24 @@ public class DbQueryRunner {
 
     private final SsrfGuard ssrf;
     private final Connector connector;
+    private final TcpProbe tcp;
     /** Bekçi payları (ms) — testler kısaltır. */
     private volatile long cancelGraceMs = CANCEL_GRACE_SECONDS * 1_000L, abortGraceMs = ABORT_GRACE_SECONDS * 1_000L;
 
     @Autowired
     public DbQueryRunner(SsrfGuard ssrf) {
-        this(ssrf, PRODUCTION);
+        this(ssrf, PRODUCTION, TcpProbe.SOCKET);
     }
 
+    /** Sahte bağlanıcılı testler: TCP adımı ağa çıkmaz ({@link TcpProbe#ASSUME_OPEN}). */
     DbQueryRunner(SsrfGuard ssrf, Connector connector) {
+        this(ssrf, connector, TcpProbe.ASSUME_OPEN);
+    }
+
+    DbQueryRunner(SsrfGuard ssrf, Connector connector, TcpProbe tcp) {
         this.ssrf = ssrf;
         this.connector = connector;
+        this.tcp = tcp == null ? TcpProbe.ASSUME_OPEN : tcp;
     }
 
     /** Testler: bekçi paylarını kısaltır. */
@@ -442,16 +478,70 @@ public class DbQueryRunner {
     /**
      * Bağlantı denemesi; {@code privileges} ise ardından hesabın yazma / yönetici yetkileri OKUNUR (r177 —
      * {@link DbAccountPrivileges}). Yetki denetimi deneme sonucunu bozmaz (okunamazsa {@code CHECK_FAILED}).
+     *
+     * <p>Adım adım (2026-11-05, dbq2 A3 — {@link DbConnectionSteps}): DNS (SSRF çözümü) → TCP (doğrulanmış IP'ye düz soket)
+     * → TLS + oturum açma (sürücü bağlantısı + salt-okur oturum kurulumu; hata zincirden TLS'e ya da oturum açmaya eşlenir)
+     * → {@code SELECT 1} → yetki denetimi. İlk başarısız adımdan sonrakiler {@code skip}. Üst düzey alanlar ({@code ok},
+     * {@code failureReason}, {@code error}) eskisi gibi: aynı aşama ve sınıflandırma (TCP hatası {@code DB_UNREACHABLE}).
      */
     public ConnectionTest test(DbConnectionSpec spec, boolean privileges) {
         long t0 = System.nanoTime();
-        Session s;
+        if (spec == null || spec.type() == null) {
+            QueryResult f = failed(spec, new InvalidSpecException("bağlantı türü yok"), DbQueryErrors.Phase.CONNECT, false, 0, null);
+            return new ConnectionTest(false, elapsedMs(t0), null, f.error(), f.failureReason(),
+                    DbAccountPrivileges.Result.NOT_CHECKED, DbConnectionSteps.allSkipped());
+        }
+        List<DbConnectionSteps.Step> steps = new ArrayList<>(DbConnectionSteps.KEYS.size());
+        // 1. DNS — SSRF denetimi (engelli hedef / çözülemeyen ad)
+        long d0 = System.nanoTime();
+        List<InetAddress> addrs;
         try {
-            s = open(spec, TEST_TIMEOUT_SECONDS);
+            addrs = resolve(spec);
         } catch (Throwable e) {
             QueryResult f = failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0, null);
-            return new ConnectionTest(false, elapsedMs(t0), null, f.error(), f.failureReason());
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.DNS, DbConnectionSteps.FAIL, elapsedMs(d0), f.failureReason(), f.error()));
+            return stepsFailed(t0, null, f, steps);
         }
+        InetAddress ip = addrs.get(0);
+        String shownIp = DbJdbcUrls.bareAddress(ip) + (addrs.size() > 1 ? " (+" + (addrs.size() - 1) + ")" : "");
+        steps.add(new DbConnectionSteps.Step(DbConnectionSteps.DNS, DbConnectionSteps.OK, elapsedMs(d0), null, shownIp));
+        // 2. TCP — porta düz bağlantı (ret / zaman aşımı / yol yok ayrı kod; üst düzey DB_UNREACHABLE)
+        long c0 = System.nanoTime();
+        if (spec.port() < 1 || spec.port() > 65_535) {
+            QueryResult f = failed(spec, new InvalidSpecException("geçersiz port"), DbQueryErrors.Phase.CONNECT, false, 0, null);
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.TCP, DbConnectionSteps.FAIL, null, f.failureReason(), f.error()));
+            return stepsFailed(t0, null, f, steps);
+        }
+        String address = DbJdbcUrls.hostLiteral(ip) + ":" + spec.port();
+        try {
+            tcp.connect(ip, spec.port(), tcpTimeoutMs(spec));
+        } catch (Throwable e) {
+            String code = DbConnectionSteps.tcpCode(e);
+            String msg = DbQueryErrors.mask(DbConnectionSteps.tcpMessage(code, address), spec);
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.TCP, DbConnectionSteps.FAIL, elapsedMs(c0), code, msg));
+            if (log.isDebugEnabled()) log.debug("Bağlantı denemesi TCP adımında düştü ({}): {}", code, e.getClass().getSimpleName());
+            return new ConnectionTest(false, elapsedMs(t0), null, msg, DbQueryErrors.DB_UNREACHABLE,
+                    DbAccountPrivileges.Result.NOT_CHECKED, DbConnectionSteps.completed(steps));
+        }
+        steps.add(new DbConnectionSteps.Step(DbConnectionSteps.TCP, DbConnectionSteps.OK, elapsedMs(c0), null, address));
+        // 3 + 4. TLS + oturum açma (sürücü bağlantısı + salt-okur oturum kurulumu — eski open() ile aynı aşama)
+        long l0 = System.nanoTime();
+        Session s;
+        try {
+            s = login(spec, ip, TEST_TIMEOUT_SECONDS);
+        } catch (Throwable e) {
+            return loginFailed(t0, l0, spec, e, steps);
+        }
+        try {
+            setupSession(s, spec.type(), TEST_TIMEOUT_SECONDS);
+        } catch (Throwable e) {
+            s.close();
+            return loginFailed(t0, l0, spec, e, steps);
+        }
+        steps.add(DbConnectionSteps.tlsOutcome(spec));
+        steps.add(new DbConnectionSteps.Step(DbConnectionSteps.LOGIN, DbConnectionSteps.OK, elapsedMs(l0), null, s.version));
+        // 5. SELECT 1
+        long q0 = System.nanoTime();
         try (Statement st = s.conn.createStatement()) {
             s.stmt = st;
             st.setEscapeProcessing(false);
@@ -459,16 +549,73 @@ public class DbQueryRunner {
             try (ResultSet rs = st.executeQuery(tagged(spec, spec.type() == DbType.ORACLE ? "SELECT 1 FROM dual" : "SELECT 1"))) {
                 rs.next();
             }
-            long ms = elapsedMs(t0);
-            DbAccountPrivileges.Result priv = privileges ? DbAccountPrivileges.check(s.conn, spec.type())
-                    : DbAccountPrivileges.Result.NOT_CHECKED;
-            return new ConnectionTest(true, ms, s.version, null, null, priv);
         } catch (Throwable e) {
             QueryResult f = failed(spec, e, DbQueryErrors.Phase.QUERY, s.fired, 0, null);
-            return new ConnectionTest(false, elapsedMs(t0), s.version, f.error(), f.failureReason());
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.QUERY, DbConnectionSteps.FAIL, elapsedMs(q0), f.failureReason(), f.error()));
+            s.close();
+            return stepsFailed(t0, s.version, f, steps);
+        }
+        steps.add(new DbConnectionSteps.Step(DbConnectionSteps.QUERY, DbConnectionSteps.OK, elapsedMs(q0), null, null));
+        long ms = elapsedMs(t0);
+        // 6. Yetki denetimi (ayar kapalıysa atlandı) — AYRI try (dbq2 inceleme D8): denetim beklenmedik biçimde fırlatırsa
+        // deneme yine başarılıdır, adımlar yine tam altı (yetki = uyarı CHECK_FAILED), ikinci bir "query" adımı yazılmaz.
+        long p0 = System.nanoTime();
+        DbAccountPrivileges.Result priv;
+        try {
+            priv = privileges ? privilegeCheck.check(s.conn, spec.type()) : DbAccountPrivileges.Result.NOT_CHECKED;
+            if (priv == null) priv = privileges ? PRIVILEGES_FAILED : DbAccountPrivileges.Result.NOT_CHECKED;
+        } catch (Throwable e) {
+            log.debug("Bağlantı denemesi: yetki denetimi düştü — {}", e.getClass().getSimpleName());
+            priv = PRIVILEGES_FAILED;
         } finally {
             s.close();
         }
+        steps.add(DbConnectionSteps.privileges(priv, privileges ? elapsedMs(p0) : null));
+        return new ConnectionTest(true, ms, s.version, null, null, priv, DbConnectionSteps.completed(steps));
+    }
+
+    /** Yetki denetimi düştü: denetlendi, salt-okurluk bilinmiyor ({@code CHECK_FAILED} — engellemez). */
+    static final DbAccountPrivileges.Result PRIVILEGES_FAILED = new DbAccountPrivileges.Result(true, null,
+            List.of(new DbAccountPrivileges.Finding(DbAccountPrivileges.CHECK_FAILED, null)));
+
+    /** Bağlantı denemesinin yetki denetimi (testte değiştirilebilir — düşme yolu). */
+    interface PrivilegeCheck {
+        DbAccountPrivileges.Result check(Connection c, DbType type);
+    }
+
+    PrivilegeCheck privilegeCheck = DbAccountPrivileges::check;
+
+    /** TCP adımının bağlantı zaman aşımı — sürücüyle aynı sınır (1–30 sn, varsayılan 10 sn). */
+    static int tcpTimeoutMs(DbConnectionSpec spec) {
+        int ms = spec == null || spec.connectTimeoutMs() <= 0 ? 10_000 : spec.connectTimeoutMs();
+        return Math.max(1_000, Math.min(30_000, ms));
+    }
+
+    /**
+     * Sürücü bağlantısı ya da oturum kurulumu düştü: üst düzey eski aşama / sınıflandırma (CONNECT); adım zincirden TLS'e
+     * ya da oturum açmaya eşlenir. Oturum açma hatasında TLS adımı yalnız sunucu protokol düzeyinde yanıt verdiyse (kimlik,
+     * veritabanı yok) yapılandırmadan yazılır — diğerlerinde el sıkışmanın bitip bitmediği bilinmez ({@code skip}).
+     */
+    private ConnectionTest loginFailed(long t0, long l0, DbConnectionSpec spec, Throwable e, List<DbConnectionSteps.Step> steps) {
+        QueryResult f = failed(spec, e, DbQueryErrors.Phase.CONNECT, false, 0, null);
+        DbConnectionSteps.Placement p = e instanceof DriverUnavailableException || e instanceof InvalidSpecException
+                ? new DbConnectionSteps.Placement(DbConnectionSteps.LOGIN, DbQueryErrors.DB_DRIVER)
+                : DbConnectionSteps.loginFailure(e, f.failureReason());
+        long ms = elapsedMs(l0);
+        if (DbConnectionSteps.TLS.equals(p.step())) {
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.TLS, DbConnectionSteps.FAIL, null, p.code(), f.error()));
+        } else {
+            boolean answered = DbQueryErrors.DB_AUTH.equals(p.code()) || DbConnectionSteps.DB_NOT_FOUND.equals(p.code());
+            steps.add(answered ? DbConnectionSteps.tlsOutcome(spec)
+                    : new DbConnectionSteps.Step(DbConnectionSteps.TLS, DbConnectionSteps.SKIP, null, null, null));
+            steps.add(new DbConnectionSteps.Step(DbConnectionSteps.LOGIN, DbConnectionSteps.FAIL, ms, p.code(), f.error()));
+        }
+        return stepsFailed(t0, null, f, steps);
+    }
+
+    private static ConnectionTest stepsFailed(long t0, String version, QueryResult f, List<DbConnectionSteps.Step> steps) {
+        return new ConnectionTest(false, elapsedMs(t0), version, f.error(), f.failureReason(),
+                DbAccountPrivileges.Result.NOT_CHECKED, DbConnectionSteps.completed(steps));
     }
 
     /**
@@ -572,11 +719,28 @@ public class DbQueryRunner {
 
     private Session open(DbConnectionSpec spec, int timeoutSeconds) throws SQLException {
         if (spec == null || spec.type() == null) throw new InvalidSpecException("bağlantı türü yok");
+        Session s = login(spec, resolve(spec).get(0), timeoutSeconds);
+        try {
+            setupSession(s, spec.type(), timeoutSeconds);
+            return s;
+        } catch (Throwable e) {
+            s.close();
+            throw e;
+        }
+    }
+
+    /** SSRF denetimi + çözüm (boş liste → çözülemeyen ad). */
+    private List<InetAddress> resolve(DbConnectionSpec spec) {
         List<InetAddress> addrs = ssrf.validate(spec.host());
         if (addrs == null || addrs.isEmpty()) throw new SsrfGuard.UnresolvableHostException(SsrfGuard.UNRESOLVABLE_PREFIX + spec.host());
+        return addrs;
+    }
+
+    /** Sürücü bağlantısı (TLS + oturum açma) + bekçi + sunucu sürümü; oturum kurulumu ({@link #setupSession}) çağıranda. */
+    private Session login(DbConnectionSpec spec, InetAddress ip, int timeoutSeconds) throws SQLException {
         DbJdbcUrls.Target target;
         try {
-            target = DbJdbcUrls.build(spec, addrs.get(0), timeoutSeconds);
+            target = DbJdbcUrls.build(spec, ip, timeoutSeconds);
         } catch (IllegalArgumentException e) {
             throw new InvalidSpecException(e.getMessage());
         }
@@ -584,14 +748,8 @@ public class DbQueryRunner {
         if (c == null) throw new DriverUnavailableException("JDBC sürücüsü bağlantı adresini kabul etmedi");
         Session s = new Session(c);
         s.arm(timeoutSeconds, cancelGraceMs, abortGraceMs);
-        try {
-            s.version = serverVersion(c);
-            setupSession(s, spec.type(), timeoutSeconds);
-            return s;
-        } catch (Throwable e) {
-            s.close();
-            throw e;
-        }
+        s.version = serverVersion(c);   // asla fırlatmaz
+        return s;
     }
 
     /** SİSTEMİN oturum ifadeleri (kullanıcı SQL'i değil): salt-okur, kısa kilit bekleme, zaman aşımı. */

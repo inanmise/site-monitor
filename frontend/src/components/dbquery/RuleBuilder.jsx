@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ListChecks, Plus, Trash2, TriangleAlert, Siren, Lightbulb, Wand2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ListChecks, Plus, Trash2, TriangleAlert, Siren, Lightbulb, Wand2, Info } from 'lucide-react'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -11,12 +11,15 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import {
-  AGE_UNITS, CHANGE_BASELINES, CHANGE_DIRECTIONS, CHANGE_MODES, CHANGE_OF, MAX_RULES, RULE_KINDS, RULE_LOGICS, SCOPES,
-  ageUnitFor, aggregatesFor, changeBaseline, changeKind, changeOperator, formatInputNumber, isFreshnessKind, isNoValueOperator,
-  isRangeOperator, isTextKind, moveRule, needsAggregate, needsColumn, newRule, operatorsFor, parseNumber, ruleSummary, setTextLevel,
-  strictnessHint, textLevel, unitSeconds, validateRule,
+  AGE_UNITS, ANOMALY_DIRECTIONS, ANOMALY_FIELDS, ANOMALY_LIMITS, CHANGE_BASELINES, CHANGE_DIRECTIONS, CHANGE_MODES, CHANGE_OF,
+  FROZEN_FIELDS, FROZEN_LIMITS, MAX_RULES, RULE_KINDS, RULE_LOGICS, SCOPES, SEASONS,
+  ageUnitFor, aggregatesFor, changeBaseline, changeKind, changeOperator, formatInputNumber, formatNumber, isAnomalyKind, isFreshnessKind,
+  isNoValueOperator, isRangeOperator, isSmartKind, isTextKind, moveRule, needsAggregate, needsColumn, newRule, operatorsFor, parseNumber,
+  ruleSummary, seasonRareIndexes, setTextLevel, smartParam, strictnessHint, textLevel, unitSeconds, validateRule,
 } from './ruleModel.js'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { toColumnValueRule } from './ruleSuggest.js'
+import ThresholdSuggest from './ThresholdSuggest.jsx'
 
 /** NativeSelect tam genişlik (kendi sarmalayıcısı `w-fit`). */
 const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
@@ -43,8 +46,15 @@ function errorText(t, server, clientCode) {
  * başında listelenir: sunucunun söylediği hiçbir şey kaybolmaz.
  */
 export function renderedRuleFields(rule) {
-  const out = new Set(['kind', 'label', 'operator'])
-  if (!rule || !RULE_KINDS.includes(rule.kind)) return out
+  const out = new Set(['kind', 'label'])
+  if (!rule || !RULE_KINDS.includes(rule.kind)) { out.add('operator'); return out }
+  // Akıllı kurallar: işleç / eşik yok — kendi parametreleri (sunucu hatası `rules[N].k_warning` … alanın altına)
+  if (isSmartKind(rule.kind)) {
+    out.add('column'); out.add('aggregate')
+    for (const f of isAnomalyKind(rule.kind) ? ANOMALY_FIELDS : FROZEN_FIELDS) out.add(f)
+    return out
+  }
+  out.add('operator')
   if (needsColumn(rule)) out.add('column')
   if (needsAggregate(rule)) out.add('aggregate')
   if (rule.kind === 'CHANGE') out.add('change')
@@ -71,10 +81,13 @@ export function renderedRuleFields(rule) {
  * sunucu uyarısı `ROW_COUNT_ON_AGGREGATE` ya da deneme kanıtı) içindeki "satır sayısı" kuralının kartında uyarı + "Kolon
  * değeri kuralına çevir" (`trapColumn` — denemedeki sayısal kolon; yoksa kolonu kullanıcı seçer). `newRuleFactory`:
  * "Kural ekle"nin varsayılanı (verilmezse satır sayısı).
+ *
+ * <p>2026-11-05 (dbq2 B3): `suggest` = `{ testResult, saved, sqlText }` verilirse sayısal eşikli kurallarda "Eşik öner"
+ * (ThresholdSuggest — son denemenin değeri ya da kayıtlı izlemenin son 7 günü; öneri uygulanmadan gösterilir).
  */
 export default function RuleBuilder({
   rules, logic, onChange, onLogicChange, columns, fieldErrors, disabled = false,
-  trapIndexes = null, trapColumn = null, newRuleFactory = null,
+  trapIndexes = null, trapColumn = null, newRuleFactory = null, suggest = null, schedule = null,
 }) {
   const t = useT()
   const { showConfirm } = useDialog()
@@ -82,6 +95,8 @@ export default function RuleBuilder({
   const errs = fieldErrors || {}
   const atMax = list.length >= MAX_RULES
   const traps = useMemo(() => new Set(trapIndexes ? [...trapIndexes] : []), [trapIndexes])
+  // Mevsimsel taban + günü / haftayı bölmeyen aralık (sunucunun ANOMALY_SEASON_RARE kayıt uyarısının eşi; engellemez)
+  const seasonRare = useMemo(() => seasonRareIndexes(list, schedule), [list, schedule])
 
   const update = useCallback((i, next) => {
     onChange?.(list.map((r, j) => (j === i ? next : r)))
@@ -123,7 +138,7 @@ export default function RuleBuilder({
         {list.map((r, i) => (
           <li key={r.id || `idx-${i}`}>
             <RuleCard rule={r} index={i} count={list.length} columns={columns} disabled={disabled} errs={errs}
-              trap={traps.has(i) && r?.kind === 'ROW_COUNT'} trapColumn={trapColumn}
+              trap={traps.has(i) && r?.kind === 'ROW_COUNT'} trapColumn={trapColumn} suggest={suggest} seasonRare={seasonRare.has(i)}
               onChange={(next) => update(i, next)} onRemove={() => remove(i)}
               onMove={(d) => onChange?.(moveRule(list, i, d))} />
           </li>
@@ -143,7 +158,7 @@ export default function RuleBuilder({
 }
 
 /** Tek kural kartı. */
-function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove, trap = false, trapColumn = null }) {
+function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove, trap = false, trapColumn = null, suggest = null, seasonRare = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const client = useMemo(() => validateRule(rule), [rule])
@@ -248,18 +263,22 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
             )}
           </Field>
         )}
-        <Field label={t('dbq.rule.operator')} name={key('operator')} error={err('operator')} className={cn('mb-0', FULL_SELECT)}>
-          {({ id, describedBy, invalid }) => (
-            <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
-              value={rule.operator || operatorsFor(rule.kind)[0]} onChange={(e) => onChange(changeOperator(rule, e.target.value))}>
-              {operatorsFor(rule.kind).map((o) => <NativeSelectOption key={o} value={o}>{t(`dbq.rule.opName.${o}`)}</NativeSelectOption>)}
-            </NativeSelect>
-          )}
-        </Field>
+        {!isSmartKind(rule.kind) && (
+          <Field label={t('dbq.rule.operator')} name={key('operator')} error={err('operator')} className={cn('mb-0', FULL_SELECT)}>
+            {({ id, describedBy, invalid }) => (
+              <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
+                value={rule.operator || operatorsFor(rule.kind)[0]} onChange={(e) => onChange(changeOperator(rule, e.target.value))}>
+                {operatorsFor(rule.kind).map((o) => <NativeSelectOption key={o} value={o}>{t(`dbq.rule.opName.${o}`)}</NativeSelectOption>)}
+              </NativeSelect>
+            )}
+          </Field>
+        )}
       </div>
 
       <div className="border-t px-3 py-3 sm:px-4">
-        {text
+        {isSmartKind(rule.kind)
+          ? <SmartFields rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} seasonRare={seasonRare} />
+          : text
           ? <TextThreshold rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} />
           : isFreshnessKind(rule.kind)
             ? <FreshnessThresholds rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
@@ -272,6 +291,7 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
         {missing && !serverText(errs[key('warning')]) && !serverText(errs[key('critical')]) && (
           <FieldHint tone="warn"><span data-slot="dbq-rule-missing">{t(`dbq.rule.v.${missing}`)}</span></FieldHint>
         )}
+        {suggest && <ThresholdSuggest rule={rule} context={suggest} disabled={disabled} onApply={onChange} />}
         {hint && <p data-slot="dbq-rule-strictness" className="mt-2 mb-0 inline-flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
           <Lightbulb aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t(`dbq.rule.hint.${hint}`)}
         </p>}
@@ -437,7 +457,7 @@ function ThresholdInput({ rule, level, index, disabled, err, onChange, lang }) {
 }
 
 /** Taslak metinli sayı kutusu: yazılırken biçimlenmez; geçerliyse sayı, değilse metin olarak bildirilir. */
-function NumberInput({ id, describedBy, invalid, disabled, lang, placeholder, ariaLabel, value, onCommit }) {
+function NumberInput({ id, describedBy, invalid, disabled, lang, placeholder, ariaLabel, value, onCommit, slot }) {
   const [draft, setDraft] = useState(null)
   const matches = (d) => {
     const n = parseNumber(d, lang)
@@ -447,7 +467,7 @@ function NumberInput({ id, describedBy, invalid, disabled, lang, placeholder, ar
   }
   const shown = draft != null && matches(draft) ? draft : formatInputNumber(value, lang)
   return (
-    <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} aria-label={ariaLabel} disabled={disabled}
+    <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} aria-label={ariaLabel} disabled={disabled} data-slot={slot}
       inputMode="decimal" autoComplete="off" placeholder={placeholder} className={cn(CONTROL, 'tabular-nums')}
       value={shown}
       onChange={(e) => {
@@ -487,5 +507,112 @@ function TextThreshold({ rule, index, disabled, err, onChange }) {
           </Field>
         )}
     </div>
+  )
+}
+
+/** Akıllı kuralın açıklaması (ne yapar + gerçekçi örnek) — kullanıcı türü seçince parametrelerden önce okur. */
+function SmartAbout({ kind }) {
+  const t = useT()
+  return (
+    <div data-slot="dbq-rule-smart-about" role="note" className="flex min-w-0 flex-col gap-1 rounded-md border bg-muted/30 px-3 py-2.5">
+      <p className="m-0 inline-flex items-start gap-1.5 text-sm font-semibold"><Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />{t(`dbq.rule.smart.${kind}.title`)}</p>
+      <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t(`dbq.rule.smart.${kind}.body`)}</p>
+      <p className="m-0 text-xs [overflow-wrap:anywhere]"><strong>{t('dbq.rule.smart.example')}</strong> {t(`dbq.rule.smart.${kind}.example`)}</p>
+    </div>
+  )
+}
+
+/**
+ * Akıllı kural parametreleri (2026-11-05, dbq2 D). ANOMALY: yön (iki yön / yalnız yüksek / yalnız düşük), uyarı ve kritik
+ * hassasiyeti (σ, 1–10; küçük = daha hassas), taban (mevsim yok / günlük / haftalık) + pencere (10–200) + en az örnek
+ * (5–pencere). FROZEN: kaç çalıştırma aynı kalırsa uyarı (2–100) ve isteğe bağlı kritik (uyarıdan büyük). Boş parametre =
+ * sunucu varsayılanı (yer tutucuda yazılı); sayı TR "2,5" / EN "2.5" biçiminde, geçersiz metin kurala metin olarak geçer
+ * (alan hatası anında + sunucu da döner). Alan anahtarları sunucuyla aynı (`rules[N].k_warning` …).
+ */
+function SmartFields({ rule, index, disabled, err, onChange, lang, seasonRare = false }) {
+  const t = useT()
+  const set = (k) => (v) => {
+    const next = { ...rule }
+    if (v == null || v === '') delete next[k]; else next[k] = v
+    onChange(next)
+  }
+  const name = (k) => `rules[${index}].${k}`
+  const ph = (v) => formatNumber(v, lang)
+  const numField = (k, { label, hint, placeholder }) => (
+    <Field key={k} label={label} name={name(k)} error={err(k)} hint={hint} className="mb-0">
+      {({ id, describedBy, invalid }) => (
+        <NumberInput id={id} describedBy={describedBy} invalid={invalid} disabled={disabled} lang={lang}
+          placeholder={placeholder} value={rule[k] ?? null} onCommit={set(k)} slot={`dbq-rule-${k.replace('_', '-')}`} />
+      )}
+    </Field>
+  )
+  if (!isAnomalyKind(rule.kind)) {
+    const F = FROZEN_LIMITS
+    return (
+      <div data-slot="dbq-rule-smart" data-kind={rule.kind} className="flex min-w-0 flex-col gap-3">
+        <SmartAbout kind={rule.kind} />
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          {numField('runs_warning', { label: <LevelLabel level="warning" text={t('dbq.rule.frozen.runsWarning')} />,
+            hint: t('dbq.rule.frozen.runsWarningHint', F.RUNS_MIN, F.RUNS_MAX), placeholder: ph(F.RUNS_WARNING_DEFAULT) })}
+          {numField('runs_critical', { label: <LevelLabel level="critical" text={t('dbq.rule.frozen.runsCritical')} />,
+            hint: t('dbq.rule.frozen.runsCriticalHint', F.RUNS_MAX), placeholder: t('dbq.rule.frozen.noCritical') })}
+        </div>
+      </div>
+    )
+  }
+  const L = ANOMALY_LIMITS
+  const pick = (k, list, def) => { const v = String(smartParam(rule, k)).toLowerCase(); return list.includes(v) ? v : def }
+  const dir = pick('direction', ANOMALY_DIRECTIONS, 'both')
+  const season = pick('season', SEASONS, 'none')
+  const dirErr = err('direction')
+  return (
+    <div data-slot="dbq-rule-smart" data-kind={rule.kind} className="flex min-w-0 flex-col gap-3">
+      <SmartAbout kind={rule.kind} />
+      <div data-field={name('direction')} className="flex min-w-0 flex-col gap-1.5">
+        <span className="text-sm font-semibold">{t('dbq.rule.anomaly.direction')}</span>
+        <SegmentedControl value={dir} ariaLabel={t('dbq.rule.anomaly.direction')} className="w-full sm:w-auto"
+          itemClassName="flex-1 whitespace-normal sm:flex-none pointer-coarse:h-auto pointer-coarse:min-h-10"
+          onChange={(v) => !disabled && set('direction')(v)}
+          options={ANOMALY_DIRECTIONS.map((d) => ({ value: d, label: t(`dbq.rule.anomaly.dir.${d}`), disabled }))} />
+        <span className="text-xs text-muted-foreground">{t(`dbq.rule.anomaly.dirHint.${dir}`)}</span>
+        {dirErr && <FieldError>{dirErr}</FieldError>}
+      </div>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+        {numField('k_warning', { label: <LevelLabel level="warning" text={t('dbq.rule.anomaly.kWarning')} />,
+          hint: t('dbq.rule.anomaly.kHint', ph(L.K_MIN), ph(L.K_MAX)), placeholder: ph(L.K_WARNING_DEFAULT) })}
+        {numField('k_critical', { label: <LevelLabel level="critical" text={t('dbq.rule.anomaly.kCritical')} />,
+          hint: t('dbq.rule.anomaly.kCriticalHint'), placeholder: ph(L.K_CRITICAL_DEFAULT) })}
+        <Field label={t('dbq.rule.anomaly.season')} name={name('season')} error={err('season')} hint={t(`dbq.rule.anomaly.seasonHint.${season}`)}
+          className={cn('mb-0 sm:col-span-2', FULL_SELECT)}>
+          {({ id, describedBy, invalid }) => (
+            <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
+              value={season} onChange={(e) => set('season')(e.target.value)} data-slot="dbq-rule-season">
+              {SEASONS.map((x) => <NativeSelectOption key={x} value={x}>{t(`dbq.rule.anomaly.seasonName.${x}`)}</NativeSelectOption>)}
+            </NativeSelect>
+          )}
+        </Field>
+        {seasonRare && (
+          <AlertBanner tone="warning" icon={TriangleAlert} title={t('dbq.warn.ANOMALY_SEASON_RARE.title')} className="mb-0 sm:col-span-2">
+            <span data-slot="dbq-rule-season-rare" className="[overflow-wrap:anywhere]">{t('dbq.warn.ANOMALY_SEASON_RARE.body')}</span>
+          </AlertBanner>
+        )}
+        {numField('window', { label: t(`dbq.rule.anomaly.window.${season}`), hint: t('dbq.rule.anomaly.windowHint', L.WINDOW_MIN, L.WINDOW_MAX),
+          placeholder: ph(L.WINDOW_DEFAULT) })}
+        {numField('min_samples', { label: t('dbq.rule.anomaly.minSamples'), hint: t('dbq.rule.anomaly.minSamplesHint', L.MIN_SAMPLES_MIN),
+          placeholder: ph(L.MIN_SAMPLES_DEFAULT) })}
+      </div>
+    </div>
+  )
+}
+
+/** Seviye ikonlu alan etiketi (uyarı / kritik). */
+function LevelLabel({ level, text }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {level === 'critical'
+        ? <Siren aria-hidden="true" className="size-3.5 text-destructive" />
+        : <TriangleAlert aria-hidden="true" className="size-3.5 text-amber-600 dark:text-amber-400" />}
+      {text}
+    </span>
   )
 }

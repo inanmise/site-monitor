@@ -333,7 +333,7 @@ final class EmailSamples {
         }
         var captured = new com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows("2026-09-26T07:00:00",
                 List.of("siparis_no", "musteri", "tutar", "kart_no", "olusturma"), rows, List.of("kart_no"), 25, false, false);
-        return map("monitor_id", 51L, "monitor_name", "Bekleyen Siparişler",
+        Map<String, Object> c = map("monitor_id", 51L, "monitor_name", "Bekleyen Siparişler",
                 "purpose", "Ödeme bekleyen siparişler on adedi geçmesin — biriken siparişler müşteri şikâyetine dönüşür",
                 "profile_name", "ERP Üretim", "db_type", "ORACLE", "dbquery_target", "erpdb.corp.local:1521/ERP",
                 "checked_at", "2026-09-26T07:00:00", "duration_ms", 840L, "row_count", 25, "metric_value", 25.0,
@@ -343,6 +343,18 @@ final class EmailSamples {
                         + "  FROM siparis s JOIN musteri m ON m.id = s.musteri_id\n WHERE s.durum = 'BEKLIYOR'\n ORDER BY s.olusturma",
                 com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS, captured,
                 "team_name", "Takım A", "alert_event_id", 95L);
+        // dbq2 C4: "İlk İhlal", "Kaç Çalıştırmadır" ve "Son Değerler" (son zamanlanmış çalıştırmalar — yalnız ölçülen değer)
+        List<Object[]> recent = new ArrayList<>();
+        double[] values = {25, 22, 19, 14, 9, 7, 8, 6};
+        String[] times = {"07:00", "06:55", "06:50", "06:45", "06:40", "06:35", "06:30", "06:25"};
+        for (int i = 0; i < values.length; i++) {
+            boolean breach = values[i] > 10;
+            recent.add(new Object[] {"2026-09-26T" + times[i] + ":00", breach ? "BREACH" : "OK", values[i], true,
+                    values[i] > 20 ? "CRITICAL" : breach ? "WARNING" : "NONE", null, false});
+        }
+        recent.add(new Object[] {"2026-09-26T06:20:00", "FAIL", null, false, "NONE", "DB_TIMEOUT", false});
+        EscalationService.putDbQueryHistory(c, recent, EscalationService.TYPE_DBQUERY_THRESHOLD, null);
+        return c;
     }
 
     // ── #7–10 Çözüm ailesi ───────────────────────────────────────────────────
