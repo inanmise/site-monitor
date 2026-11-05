@@ -6,8 +6,9 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import {
   UsersRound, PenLine, Headset, Plus, CircleCheck, CirclePause, TriangleAlert, Siren, History, Gauge, ScanSearch,
-  Trash2, Users, UserPlus, BellRing, CalendarClock, Share2,
+  Trash2, Users, UserPlus, BellRing, CalendarClock, Share2, Forward,
 } from 'lucide-react'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import UserEditModal from './UserEditModal.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -141,6 +142,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const cardsTwoCol = boxWidth >= TEAM_CARDS_TWO_COL_PX
   // 7/24 izleme ekibi takımı rozeti (2026-10-04): takım rehberinin `noc_team` bayrağı (sağlayıcı yoksa rozet yok)
   const teamDir = useTeamDirectory()
+  // Alarm iletimi sekmesine geçiş (2026-11-05): sekme `alerts.forwards` görüntüleme izniyle görünür — menü öğesi de
+  const canSeeForwards = usePermissions().canView('alerts.forwards')
   const isAdmin = systemRole === 'ADMIN'
   // Takım ekle / sil / AD üyelik denetimi YALNIZ global yönetici (20.165.1, UIA-A6): createTeam / deleteTeam / impact /
   // LdapMembershipController sunucuda `isGlobalAdmin` ister — kapsamlı müdüre (ADMIN, viewTeamIds) düğmeler 403'tü.
@@ -689,6 +692,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       { label: t('team.menuShare'), icon: <Share2 />, onClick: () => jumpAdmin('sharing', { g_team: team.id }), hidden: !canEditRow(team.id) },
       { label: t('team.menuContacts'), icon: <Siren />, onClick: () => jumpAdmin('contacts', { g_team: String(team.id) }) },
       { label: t('team.menuGroups'), icon: <BellRing />, onClick: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }) },
+      // Alarm iletimi (2026-11-05): sekmeye bu takımla süzülü geçer (sahip takım süzgeci g_fteam); ekleme sunucuda takımı yönetmeyi ister
+      { label: t('fwd.teamMenu'), icon: <Forward />, onClick: () => jumpAdmin('forwards', { g_fteam: String(team.id) }), hidden: !canSeeForwards },
       // Nöbet çizelgesi (2026-10-11): herkes görür; yönetemeyen salt okunur görür (uç kapsamı uygular)
       { label: t('oncall.menu'), icon: <CalendarClock />, onClick: () => setOncallTeam(team) },
       { label: t('hist.title'), icon: <History />, onClick: () => setHistFilter({ id: team.id, name: team.name }) },

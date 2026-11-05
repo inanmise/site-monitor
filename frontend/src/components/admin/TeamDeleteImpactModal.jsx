@@ -10,6 +10,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardTitle } from '@/components/shadcn/card'
 import { Label } from '@/components/shadcn/label'
+import { plural } from './forwards/alertForwardModel.js'
 
 // ug_domains: UG olarak bağlı kayıtlar (2026-09-28). te_channels / te_templates / maintenance_windows (20.165.1, ADMIN-1):
 // takımın BELGELERİ — kanal raporları, şablon kütüphanesi, süren / yaklaşan bakım pencereleri silmeyi ENGELLER, "Taşı" taşır
@@ -23,6 +24,12 @@ const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'gro
  *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
 const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
   'dbq_connections', 'dbq_templates', 'open_alerts']
+/** Alarm iletimi sayısı (2026-11-05): sunucu sayı ya da `{count}` gönderebilir; okunamayan / eksik → 0 (satır çizilmez). */
+const fwdCount = (v) => {
+  const n = Number(v != null && typeof v === 'object' ? v.count : v)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
 export function movedSummary(data, t) {
   const m = data || {}
   const parts = MOVED_KEYS.filter((k) => Number(m[k]) > 0).map((k) => t(`team.mv.${k}`, Number(m[k])))
@@ -102,6 +109,18 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
           {/* Yönetici özeti takım ayarı / gönderim geçmişi takımla SİLİNİR — engellemez, yalnız bilgi (20.165.1, ADMIN-1) */}
           {(impact.executive_summary?.settings || Number(impact.executive_summary?.reports) > 0) && (
             <p className="text-xs text-muted-foreground" data-slot="team-impact-exec">{t('team.impactExecDeleted')}</p>
+          )}
+          {/* Alarm iletimi (2026-11-05) — silmeyi ENGELLEMEZ, yalnız bilgi: takımın kendi iletimleri "Taşı" ile hedef takıma
+              geçer (takım yalnız silinirse silinir); bu takıma gelen iletimler taşımada da silmede de kaldırılır. */}
+          {fwdCount(impact.alert_forwards?.owned) > 0 && (
+            <p className="text-xs text-muted-foreground" data-slot="team-impact-fwd-owned">
+              {plural(t, empty ? 'fwd.impact.ownedDeleted' : 'fwd.impact.ownedMoved', fwdCount(impact.alert_forwards.owned))}
+            </p>
+          )}
+          {fwdCount(impact.alert_forwards?.incoming) > 0 && (
+            <p className="text-xs text-muted-foreground" data-slot="team-impact-fwd-incoming">
+              {plural(t, 'fwd.impact.incoming', fwdCount(impact.alert_forwards.incoming))}
+            </p>
           )}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-2.5">
             {SECTIONS.map(k => {
