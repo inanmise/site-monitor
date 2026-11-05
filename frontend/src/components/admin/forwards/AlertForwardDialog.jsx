@@ -49,10 +49,11 @@ function Step({ n, title, children, slot }) {
  * değişiklik yoksa istek yok. Sunucu alan hatası (`VALIDATION_FAILED` + `field`) alanın altında; 409 (`FORWARD_EXISTS`,
  * `FORWARD_LIMIT`, `CONCURRENT_MODIFICATION`) pencerede; 404 → `onGone`.
  *
- * Props: `open`, `onClose`, `onSaved(response)`, `onGone`, `forward` (düzenlenen; yoksa yeni), `preset` ({ ownerTeamId,
+ * Props: `open`, `onClose`, `onSaved(response)`, `onGone`, `onStale` (409 sürüm çakışması — liste tazelensin), `forward`
+ * (düzenlenen; yoksa yeni), `preset` ({ ownerTeamId,
  * monitorRef }), `teams` (yönetebildiği takımlar), `canGrant`, `limits`.
  */
-export default function AlertForwardDialog({ open, onClose, onSaved, onGone, forward = null, preset = null, teams = [], canGrant = false, limits = DEFAULT_LIMITS }) {
+export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onStale, forward = null, preset = null, teams = [], canGrant = false, limits = DEFAULT_LIMITS }) {
   const t = useT()
   const isNew = !forward
   const fe = useFormErrors(open)
@@ -97,11 +98,13 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, for
       .then((r) => {
         if (my !== monitorSeq.current) return
         const d = payloadOf(r)
-        if (r?.success && Array.isArray(d?.items)) setMonitors({ status: 'ready', items: normalizeMonitorOptions(d.items), team: teamId, message: null })
+        // İzleme dizini okunamadı (`unavailable`): boş liste "izleme yok" değildir — okunamadı + yeniden dene
+        if (r?.success && d?.unavailable === true) setMonitors({ status: 'error', items: [], team: teamId, message: t('fwd.mon.unavailable') })
+        else if (r?.success && Array.isArray(d?.items)) setMonitors({ status: 'ready', items: normalizeMonitorOptions(d.items), team: teamId, message: null })
         else setMonitors({ status: 'error', items: [], team: teamId, message: r?.error || null })
       })
       .catch((e) => { if (my === monitorSeq.current) setMonitors({ status: 'error', items: [], team: teamId, message: e?.message || null }) })
-  }, [])
+  }, [t])
   useEffect(() => {
     if (!open || form.scopeKind !== 'MONITORS' || form.ownerTeamId == null) return
     if (monitors.team != null && String(monitors.team) === String(form.ownerTeamId) && monitors.status !== 'idle') return
@@ -181,7 +184,9 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, for
       const field = FIELD_MAP[res?.field]
       if (field && field !== 'grantView' && field !== 'enabled') { fe.check({ [field]: res?.error || t('fwd.err.generic') }); return }
       if (info.code === 'CONCURRENT_MODIFICATION') {
+        // Sürüm eşleşmedi: liste arkada tazelenir; pencere açık kalır (yazılanlar görünsün), kapatıp yeniden açınca güncel hâl
         setBanner({ tone: 'warning', text: res?.error || t('fwd.err.concurrent'), gone: true })
+        onStale?.()
         return
       }
       setBanner({ tone: info.status === 409 ? 'warning' : 'danger', text: res?.error || t('fwd.err.generic'), code: info.code || null })

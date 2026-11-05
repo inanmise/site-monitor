@@ -147,6 +147,17 @@ describe('AlertForwardDialog — yeni', () => {
     await waitFor(() => expect(form().querySelectorAll('[data-slot="fwd-monitor-item"]')).toHaveLength(3))
   })
 
+  it('izleme dizini okunamadı (unavailable:true) → "okunamadı" + yeniden dene; boş liste "izleme yok" DEĞİL', async () => {
+    api.alertForwards.monitors.mockResolvedValueOnce({ success: true, data: { items: [], unavailable: true } })
+    renderDialog({ teams: [TEAMS[0]] })
+    fireEvent.click(within(form()).getByRole('radio', { name: new RegExp(EN['fwd.scope.monitors']) }))
+    await screen.findByText(EN['fwd.mon.unavailable'])
+    expect(screen.queryByText(EN['fwd.mon.none'])).toBeNull()
+    expect(form().querySelector('[data-slot="fwd-monitor-picker"]')).toHaveAttribute('data-status', 'error')
+    fireEvent.click(within(form().querySelector('[data-slot="fwd-monitor-picker"]')).getByRole('button', { name: EN['fwd.retry'] }))
+    await waitFor(() => expect(form().querySelectorAll('[data-slot="fwd-monitor-item"]')).toHaveLength(3))
+  })
+
   it('seçilen üyeler: alıcı takımın AKTİF üyeleri (ad + unvan sarar); e-postasız üyeye not; gövdede opak kimlik', async () => {
     renderDialog({ teams: [TEAMS[0]] })
     fireEvent.click(within(form()).getByRole('button', { name: EN['fwd.rcpt.members'] }))
@@ -211,13 +222,24 @@ describe('AlertForwardDialog — yeni', () => {
   })
 })
 
-const ROW = normalizeForward({ id: 7, version: 4, owner_team_id: 10, owner_team_name: OWNER, scope_kind: 'TYPES', scope_types: ['http'],
+const ROW_RAW = { id: 7, version: 4, owner_team_id: 10, owner_team_name: OWNER, scope_kind: 'TYPES', scope_types: ['http'],
   scope_monitors: [], recipient_kind: 'MEMBERS', recipient_team_id: 20, recipient_team_name: LONG_TEAM, recipient_team_active: true,
   recipient_members: [{ user_id: 'op-a', display_name: LONG_PERSON, active: true, in_team: true },
     { user_id: 'op-old', display_name: 'Eski Üye', active: false, in_team: true }],
-  recipient_address_count: 1, enabled: true, expires_on: null, state: 'active', note: 'not', can_edit: true })
+  recipient_address_count: 1, enabled: true, expires_on: null, state: 'active', note: 'not', can_edit: true }
+const ROW = normalizeForward(ROW_RAW)
 
 describe('AlertForwardDialog — düzenle', () => {
+  it('kayıtlı izleme öğesinin durumu okunamadıysa çip "durumu okunamayan" der, "silinmiş" demez', async () => {
+    const row = normalizeForward({ ...ROW_RAW, scope_kind: 'MONITORS', scope_types: [],
+      scope_monitors: [{ type: 'http', id: 77, name: null, missing: null }, { type: 'port', id: 78, name: null, missing: true }] })
+    api.alertForwards.monitors.mockResolvedValueOnce({ success: true, data: { items: [], unavailable: true } })
+    renderDialog({ forward: row })
+    const chips = await waitFor(() => { const c = form().querySelectorAll('[data-slot="fwd-monitor-chip"]'); expect(c).toHaveLength(2); return c })
+    expect(chips[0]).toHaveTextContent(`Monitor status unavailable (${EN['nav.http']})`)
+    expect(chips[1]).toHaveTextContent(`Deleted monitor (${EN['nav.port']})`)
+  })
+
   it('değişiklik yoksa istek YOK (pencere kapanır); sahip takım kilitli; pasif kayıtlı üye çipte rozetli', async () => {
     const { onClose } = renderDialog({ forward: ROW })
     await waitFor(() => expect(form().querySelectorAll('[data-slot="fwd-member-chip"]')).toHaveLength(2))
@@ -257,14 +279,17 @@ describe('AlertForwardDialog — düzenle', () => {
       recipient_user_ids: ['op-a', 'op-b', 'op-old'], grant_view: true, version: 4 }))
   })
 
-  it('404 → onGone; 409 CONCURRENT_MODIFICATION → pencerede uyarı + "Kapat ve listeyi yenile"', async () => {
-    const { onGone } = renderDialog({ forward: ROW })
+  it('404 → onGone; 409 CONCURRENT_MODIFICATION (sürüm) → pencerede uyarı, liste arkada tazelenir (onStale), "Kapat ve listeyi yenile"', async () => {
+    const onStale = vi.fn()
+    const { onGone } = renderDialog({ forward: ROW, onStale })
     await waitFor(() => expect(form()).not.toBeNull())
     fireEvent.change(within(form()).getByRole('textbox', { name: EN['fwd.f.note'] }), { target: { value: 'x' } })
     api.alertForwards.update.mockResolvedValueOnce({ success: false, status: 409, code: 'CONCURRENT_MODIFICATION', error: 'Başkası değiştirdi (test).' })
     submit()
     const banner = await waitFor(() => { const b = form().querySelector('[data-slot="fwd-dialog-banner"]'); expect(b).not.toBeNull(); return b })
     expect(banner).toHaveTextContent('Başkası değiştirdi (test).')
+    expect(onStale).toHaveBeenCalledTimes(1)
+    expect(api.alertForwards.update).toHaveBeenLastCalledWith(7, { note: 'x', version: 4 })
     fireEvent.click(within(banner).getByRole('button', { name: EN['fwd.reloadClose'] }))
     expect(onGone).toHaveBeenCalledTimes(1)
     api.alertForwards.update.mockResolvedValueOnce({ success: false, status: 404, error: 'Yok (test).' })

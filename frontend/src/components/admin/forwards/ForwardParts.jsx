@@ -119,7 +119,8 @@ export function ScopeChips({ f, t }) {
             <li key={c.key} className="min-w-0 max-w-full">
               <Badge variant={c.kind === 'all' ? 'secondary' : 'outline'} data-slot="fwd-scope-chip" data-kind={c.kind}
                 data-missing={c.missing || undefined}
-                className={cn(WRAP_BADGE, 'gap-1 font-normal', c.missing && 'text-muted-foreground line-through')}>
+                data-unknown={c.unknown || undefined}
+                className={cn(WRAP_BADGE, 'gap-1 font-normal', c.missing && 'text-muted-foreground line-through', c.unknown && 'text-muted-foreground')}>
                 <Icon aria-hidden="true" className="size-3.5 shrink-0" />
                 <span className="min-w-0 [overflow-wrap:anywhere]">{c.label}</span>
                 {c.paused && <span className="text-muted-foreground">· {t('fwd.monitorPaused')}</span>}

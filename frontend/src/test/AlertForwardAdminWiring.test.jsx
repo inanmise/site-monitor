@@ -36,7 +36,7 @@ vi.mock('../components/admin/UserManager.jsx', () => ({ default: () => <div /> }
 vi.mock('../components/admin/forwards/AlertForwardManager.jsx', () => ({ default: () => <div data-testid="forward-manager" /> }))
 import { api } from '../api/client'
 import AdminPanel from '../components/admin/AdminPanel.jsx'
-import TeamDeleteImpactModal from '../components/admin/TeamDeleteImpactModal.jsx'
+import TeamDeleteImpactModal, { movedSummary } from '../components/admin/TeamDeleteImpactModal.jsx'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -102,6 +102,15 @@ describe('Takım silme etkisi — alarm iletimi', () => {
     render(<TeamDeleteImpactModal team={TEAM} teams={[TEAM]} onClose={() => {}} onDeleted={() => {}} />)
     await screen.findByRole('button', { name: /^Sil$|^Delete$/ })
     expect(document.querySelector('[data-slot="team-impact-fwd-owned"]')).toBeNull()
+  })
+})
+
+describe('takım taşıma özeti — alarm iletimi', () => {
+  it('taşınan ve hedef takıma yönelik olduğu için silinen iletimler sayılır; sıfır yazılmaz', () => {
+    const tOf = (d) => (k, ...a) => String(d[k] ?? k).replace(/\{(\d)\}/g, (_, i) => String(a[Number(i)]))
+    expect(movedSummary({ monitors: 2, alert_forwards: 3, alert_forwards_removed: 1 }, tOf(EN)))
+      .toBe(`Moved: 2 monitors, ${EN['team.mv.alert_forwards'].replace('{0}', '3')}, ${EN['team.mv.alert_forwards_removed'].replace('{0}', '1')}`)
+    expect(movedSummary({ alert_forwards: 0, alert_forwards_removed: 0 }, tOf(TR))).toBe(TR['team.movedNothing'])
   })
 })
 

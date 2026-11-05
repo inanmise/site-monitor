@@ -99,7 +99,8 @@ function normalizeMonitor(raw) {
     name: str(m.name),
     target: str(m.target),
     active: bool(m.active),
-    missing: m.missing === true,
+    // true = silinmiş, false = var, null = izleme dizini okunamadı (bilinmiyor — "silinmiş" DENMEZ)
+    missing: bool(m.missing),
   }
 }
 
@@ -172,7 +173,7 @@ export function deriveState(f, now = Date.now()) {
   const d = daysLeft(f.expiresOn, now)
   if (d != null && d < 0) return 'expired'
   if (f.recipientTeamActive === false) return 'recipient_inactive'
-  if (f.scopeKind === 'MONITORS' && f.scopeMonitors.length > 0 && f.scopeMonitors.every((m) => m.missing)) return 'no_targets'
+  if (f.scopeKind === 'MONITORS' && f.scopeMonitors.length > 0 && f.scopeMonitors.every((m) => m.missing === true)) return 'no_targets'
   if (f.recipientKind === 'MEMBERS' && f.recipientMembers.length > 0
     && !f.recipientMembers.some((m) => m.active !== false && m.inTeam !== false)) return 'no_recipients'
   return 'active'
@@ -262,24 +263,32 @@ export function ownerTeamOptions(list, manageable) {
   return [...m.entries()].sort((a, b) => collator.compare(a[1], b[1]))
 }
 
+/** İzleme öğesinin görünen adı: silinmiş → "Silinmiş izleme (tür)"; dizin okunamadı ve ad yok → "Durumu okunamayan izleme". */
+export function monitorLabel(m, t) {
+  if (m?.missing === true) return t('fwd.scope.missingMonitor', typeLabel(m.type, t))
+  if (m?.name || m?.target) return m.name || m.target
+  return m?.missing == null ? t('fwd.scope.unknownMonitor', typeLabel(m?.type, t)) : monitorKey(m)
+}
+
 /**
- * Kapsam çipleri: ALL → tek "Tüm izlemeler"; TYPES → tür adları; MONITORS → izleme adları (silinmiş izleme "silinmiş …").
- * `{ key, kind: 'all'|'type'|'monitor', type, label, missing, paused }`.
+ * Kapsam çipleri: ALL → tek "Tüm izlemeler"; TYPES → tür adları; MONITORS → izleme adları (silinmiş izleme "silinmiş …",
+ * dizin okunamadıysa "durumu okunamayan" — silinmiş sayılmaz). `{ key, kind, type, label, missing, unknown, paused }`.
  */
 export function scopeChips(f, t) {
   if (!f) return []
-  if (f.scopeKind === 'ALL') return [{ key: 'all', kind: 'all', type: null, label: t('fwd.scope.allShort'), missing: false, paused: false }]
+  if (f.scopeKind === 'ALL') return [{ key: 'all', kind: 'all', type: null, label: t('fwd.scope.allShort'), missing: false, unknown: false, paused: false }]
   if (f.scopeKind === 'TYPES') {
-    return f.scopeTypes.map((ty) => ({ key: `t:${ty}`, kind: 'type', type: ty, label: typeLabel(ty, t), missing: false, paused: false }))
+    return f.scopeTypes.map((ty) => ({ key: `t:${ty}`, kind: 'type', type: ty, label: typeLabel(ty, t), missing: false, unknown: false, paused: false }))
   }
   if (f.scopeKind === 'MONITORS') {
     return f.scopeMonitors.map((m) => ({
       key: `m:${monitorKey(m)}`,
       kind: 'monitor',
       type: m.type,
-      label: m.missing ? t('fwd.scope.missingMonitor', typeLabel(m.type, t)) : (m.name || m.target || monitorKey(m)),
-      missing: m.missing,
-      paused: m.active === false && !m.missing,
+      label: monitorLabel(m, t),
+      missing: m.missing === true,
+      unknown: m.missing == null,
+      paused: m.active === false && m.missing !== true,
     }))
   }
   return []

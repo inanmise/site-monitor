@@ -10,7 +10,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadc
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { cn } from '@/lib/utils'
 import { WRAP_BADGE, typeIcon } from './ForwardParts.jsx'
-import { FORWARD_TYPES, filterMonitorOptions, monitorKey, typeLabel } from './alertForwardModel.js'
+import { FORWARD_TYPES, filterMonitorOptions, monitorKey, monitorLabel, typeLabel } from './alertForwardModel.js'
 
 /** Seçim çipinin kaldır düğmesi: görünür 20 px, dokunmatikte görünmez ::after ile 40 px vuruş alanı. */
 const CHIP_REMOVE = 'relative size-5 rounded-full text-muted-foreground hover:text-destructive pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5 pointer-coarse:after:content-[\'\']'
@@ -149,10 +149,12 @@ function SelectedChips({ value, items, t, onRemove }) {
         const k = monitorKey(v)
         const m = byKey.get(k) || v
         const Icon = typeIcon(m.type)
-        const name = m.missing ? t('fwd.scope.missingMonitor', typeLabel(m.type, t)) : (m.name || m.target || k)
+        // Listede bulunan izleme bilinir; listede yoksa kayıtlı öğenin durumu (silinmiş / dizin okunamadı)
+        const name = monitorLabel(m, t)
         return (
           <li key={k} className="min-w-0 max-w-full">
-            <Badge variant="outline" data-slot="fwd-monitor-chip" data-key={k} className={cn(WRAP_BADGE, 'gap-1 py-1 pr-1 pl-2 font-normal', m.missing && 'text-muted-foreground')}>
+            <Badge variant="outline" data-slot="fwd-monitor-chip" data-key={k}
+              className={cn(WRAP_BADGE, 'gap-1 py-1 pr-1 pl-2 font-normal', m.missing !== false && !byKey.has(k) && 'text-muted-foreground')}>
               <Icon aria-hidden="true" className="size-3.5 shrink-0" />
               <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>
               <Button type="button" variant="ghost" size="icon-xs" className={CHIP_REMOVE} aria-label={t('fwd.mon.remove', name)}

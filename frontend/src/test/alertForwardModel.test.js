@@ -5,7 +5,7 @@ import { readJavaMain } from './helpers/javaTable.js'
 import {
   ATTENTION_STATES, DEFAULT_LIMITS, FIELD_MAP, FORWARD_STATES, FORWARD_TYPES, TYPE_LABEL_KEYS, createPayload, daysLeft, deriveState,
   emptyForm, expiringSoon, filterForwards, filterMemberOptions, filterMonitorOptions, findMonitorForRef, formErrors, formOf,
-  hasNewRecipients, memberOptions, monitorKey, needsAttention, normalizeForward, normalizeLimits, normalizeMonitorOptions,
+  hasNewRecipients, memberOptions, monitorKey, monitorLabel, needsAttention, normalizeForward, normalizeLimits, normalizeMonitorOptions,
   ownerTeamOptions, parseNewRef, payloadOf, plural, recipientSummary, resultNotes, scopeChips, scopeSummary, sortForwards,
   summarize, todayIstanbul, typeLabel, updatePayload,
 } from '../components/admin/forwards/alertForwardModel.js'
@@ -84,6 +84,20 @@ describe('alertForwardModel', () => {
     const list = [raw(), raw({ id: 2, state: 'paused' }), raw({ id: 3, state: 'expired' }), raw({ id: 4, state: 'no_recipients' }),
       raw({ id: 5, recipient_address_count: 0 })].map(normalizeForward)
     expect(summarize(list)).toEqual({ total: 5, active: 2, paused: 1, expired: 1, attention: 2 })
+  })
+
+  it('izleme durumu üç değerli: missing true = silinmiş, null = dizin okunamadı ("bilinmiyor" — silinmiş DENMEZ, iletim "izleme kalmadı" sayılmaz)', () => {
+    const f = normalizeForward(raw({ state: undefined, scope_kind: 'MONITORS', scope_types: [], scope_monitors: [
+      { type: 'http', id: 1, name: null, missing: null }, { type: 'ping', id: 2, name: 'Çekirdek', missing: null },
+      { type: 'port', id: 3, name: null, missing: true }] }))
+    expect(f.scopeMonitors.map((m) => m.missing)).toEqual([null, null, true])
+    expect(f.state).toBe('active')
+    const chips = scopeChips(f, tEn)
+    expect(chips.map((c) => c.label)).toEqual([`Monitor status unavailable (${EN['nav.http']})`, 'Çekirdek', `Deleted monitor (${EN['nav.port']})`])
+    expect(chips.map((c) => [c.missing, c.unknown])).toEqual([[false, true], [false, true], [true, false]])
+    expect(monitorLabel({ type: 'http', id: 9, missing: false }, tEn)).toBe('http:9')
+    // Hepsi bilinmiyorsa da "izleme kalmadı" değil
+    expect(normalizeForward(raw({ state: undefined, scope_kind: 'MONITORS', scope_monitors: [{ type: 'http', id: 1, missing: null }] })).state).toBe('active')
   })
 
   it('kalan gün İstanbul gününe göre; yakında bitiyor yalnız etkin satırda', () => {

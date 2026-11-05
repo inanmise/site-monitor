@@ -22,8 +22,9 @@ const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'gro
 
 /** Taşıma özeti (2026-10-22, FE-8): sunucunun saydığı HER taşınan şey, sıfırlar yazılmaz — yalnız kanalı / şablonu / bakım
  *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
+// alert_forwards / alert_forwards_removed (2026-11-05): taşınan alarm iletimleri ve hedef takımın kendisine olduğu için silinenler
 const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
-  'dbq_connections', 'dbq_templates', 'open_alerts']
+  'dbq_connections', 'dbq_templates', 'alert_forwards', 'alert_forwards_removed', 'open_alerts']
 /** Alarm iletimi sayısı (2026-11-05): sunucu sayı ya da `{count}` gönderebilir; okunamayan / eksik → 0 (satır çizilmez). */
 const fwdCount = (v) => {
   const n = Number(v != null && typeof v === 'object' ? v.count : v)

@@ -61,20 +61,23 @@ export default function AlertForwardManager() {
   const [rcpt, setRcpt] = useState(() => known(RECIPIENT_FILTERS, readUrlParam('g_frcpt', '')))
   const [stateFilter, setStateFilter] = useState(() => known(STATE_FILTERS, readUrlParam('g_fstate', '')))
   useUrlQuerySync({ g_fq: q || null, g_fteam: team || null, g_fscope: scope || null, g_frcpt: rcpt || null, g_fstate: stateFilter || null })
-  // Derin bağ (izleme penceresindeki "Bu izleme için iletim ekle"): mount'ta okunur, URL'den hemen silinir (yenilemede tekrar açılmaz)
-  const newRef = useRef(null)
-  if (newRef.current == null) {
+  // Derin bağ (izleme penceresindeki "Bu izleme için iletim ekle"): mount'ta okunur (saf okuma — StrictMode çift çizimi
+  // bağı kaybetmez), URL'den etkide silinir (yenilemede pencere tekrar açılmaz); pencere liste gelince bir kez açılır
+  const [deep] = useState(() => {
     const raw = readUrlParam('g_fnew', null)
-    newRef.current = { raw, ref: parseNewRef(raw), team: readUrlParam('g_fteam', null), used: false }
-    if (raw != null) {
-      try {
-        const url = new URL(window.location.href)
-        url.searchParams.delete('g_fnew')
-        const qs = url.searchParams.toString()
-        window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
-      } catch { /* en iyi çaba */ }
-    }
-  }
+    return { raw, ref: parseNewRef(raw), team: readUrlParam('g_fteam', null) }
+  })
+  const deepUsed = useRef(false)
+  useEffect(() => {
+    if (deep.raw == null) return
+    try {
+      const url = new URL(window.location.href)
+      if (!url.searchParams.has('g_fnew')) return
+      url.searchParams.delete('g_fnew')
+      const qs = url.searchParams.toString()
+      window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+    } catch { /* en iyi çaba */ }
+  }, [deep])
   const [width, setListEl] = useElementWidthState()
   const seq = useRef(0)
 
@@ -113,9 +116,9 @@ export default function AlertForwardManager() {
   // Derin bağ: liste geldikten sonra bir kez — sahip takım yönetilebiliyorsa pencere açılır, yoksa nedeni söylenir
   const [deepLinkProblem, setDeepLinkProblem] = useState(null)
   useEffect(() => {
-    const d = newRef.current
-    if (!d || d.used || d.raw == null || state.status !== 'ready') return
-    d.used = true
+    const d = deep
+    if (deepUsed.current || d.raw == null || state.status !== 'ready') return
+    deepUsed.current = true
     if (!d.ref) { setDeepLinkProblem('fwd.deepLink.invalid'); return }
     const teams = state.teams
     const owner = d.team != null ? teams.find((x) => String(x.id) === String(d.team))
@@ -127,7 +130,7 @@ export default function AlertForwardManager() {
       return
     }
     setDialog({ forward: null, preset: { ownerTeamId: owner.id, monitorRef: d.ref } })
-  }, [state.status, state.teams, state.items])
+  }, [deep, state.status, state.teams, state.items])
 
   const items = state.items
   const incoming = state.incoming
@@ -324,7 +327,7 @@ export default function AlertForwardManager() {
       {dialog && (
         <AlertForwardDialog open forward={dialog.forward} preset={dialog.preset || null} teams={state.teams}
           canGrant={state.canGrant} limits={state.limits}
-          onClose={() => setDialog(null)} onSaved={(res) => onSaved(res, !dialog.forward)}
+          onClose={() => setDialog(null)} onSaved={(res) => onSaved(res, !dialog.forward)} onStale={load}
           onGone={() => { setDialog(null); load() }} />
       )}
     </div>
