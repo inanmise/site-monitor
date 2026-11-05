@@ -62,6 +62,17 @@ public class DbConnectionProfileController {
     @Autowired(required = false)
     private DbQueryCheckRepository checkRepo;
 
+    /**
+     * Kullanıcı başına KÜME saatlik deneme sınırı (dbq2 inceleme D5): bağlantı denemesi de sayılır — TCP / oturum adımları iç
+     * ağda net bir "port açık mı" kâhinidir; oturum beklemesi tek başına pod ve oturum başınaydı. Bean yoksa (dilimli testler)
+     * sınır yok.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryTestQuota testQuota;
+
+    /** Denemeyi YÜRÜTMEYEN sonuçlar — saatlik hak geri verilir (motor meşgul, parola çözülemedi, bağlantı yok). */
+    static final java.util.Set<String> NOT_EXECUTED = java.util.Set.of("DB_BUSY", "DB_SECRET_UNREADABLE", "DB_PROFILE_MISSING");
+
     @ExceptionHandler(DbQueryApiException.class)
     public ResponseEntity<Map<String, Object>> onApiError(DbQueryApiException e) {
         return e.toResponse();
@@ -126,8 +137,11 @@ public class DbConnectionProfileController {
     public ResponseEntity<Map<String, Object>> testSaved(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         DbConnectionProfile p = profiles.requireUsable(id, session);
+        DbQueryCheckerService c = requireChecker();
         cooldown(session);
-        DbQueryRunner.ConnectionTest t = requireChecker().testConnection(p, null);
+        var ticket = hourlyQuota(session);
+        DbQueryRunner.ConnectionTest t = c.testConnection(p, null);
+        refundIfNotExecuted(ticket, t);
         auditService.recordAction("DBQUERY_CONNECTION_TEST", session, "DBQUERY_CONNECTION", String.valueOf(id),
                 AuditDetail.of("name", p.getName(), "ok", t != null && t.ok(), "failure_reason", t == null ? null : t.failureReason()), null);
         return ok(testResult(t));
@@ -138,8 +152,11 @@ public class DbConnectionProfileController {
     public ResponseEntity<Map<String, Object>> testDraft(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         DbConnectionProfileService.Draft d = profiles.draft(nonNull(body), session);
+        DbQueryCheckerService c = requireChecker();
         cooldown(session);
-        DbQueryRunner.ConnectionTest t = requireChecker().testConnection(d.profile(), d.passwordOverride());
+        var ticket = hourlyQuota(session);
+        DbQueryRunner.ConnectionTest t = c.testConnection(d.profile(), d.passwordOverride());
+        refundIfNotExecuted(ticket, t);
         auditService.recordAction("DBQUERY_CONNECTION_TEST", session, "DBQUERY_CONNECTION",
                 body.get("id") == null ? "draft" : String.valueOf(body.get("id")),
                 AuditDetail.of("kind", "draft", "team_id", d.profile().getTeamId(), "db_type", d.profile().getDbType(),
@@ -204,18 +221,47 @@ public class DbConnectionProfileController {
         return out;
     }
 
-    /** Oturum başına bekleme — 429 RATE_LIMITED + retry_after_seconds. */
-    private static void cooldown(HttpSession session) {
-        long now = System.currentTimeMillis();
-        Object prev = session.getAttribute(TEST_AT);
-        long windowMs = TEST_COOLDOWN_SECONDS * 1000L;
-        if (prev instanceof Long p && now - p < windowMs) {
-            long wait = (windowMs - (now - p) + 999) / 1000;
-            throw DbQueryApiException.tooMany("RATE_LIMITED", Msg.t(
-                    "Çok sık deneme; " + wait + " sn sonra yeniden deneyin.",
-                    "Too many tests; try again in " + wait + " s."), wait);
+    /**
+     * Oturum başına bekleme — 429 RATE_LIMITED + retry_after_seconds. Oku-yaz ATOMİK (oturum kilidi; dbq2 inceleme D5): aynı
+     * oturumdan eşzamanlı iki istekten yalnız biri geçer. Pod'lar arası sınır saatlik küme kotasıdır ({@link #hourlyQuota}).
+     */
+    static void cooldown(HttpSession session) {
+        synchronized (org.springframework.web.util.WebUtils.getSessionMutex(session)) {
+            long now = System.currentTimeMillis();
+            Object prev = session.getAttribute(TEST_AT);
+            long windowMs = TEST_COOLDOWN_SECONDS * 1000L;
+            if (prev instanceof Long p && now - p < windowMs) {
+                long wait = (windowMs - (now - p) + 999) / 1000;
+                throw DbQueryApiException.tooMany("RATE_LIMITED", Msg.t(
+                        "Çok sık deneme; " + wait + " sn sonra yeniden deneyin.",
+                        "Too many tests; try again in " + wait + " s."), wait);
+            }
+            session.setAttribute(TEST_AT, Long.valueOf(now));
         }
-        session.setAttribute(TEST_AT, Long.valueOf(now));
+    }
+
+    /**
+     * Saatlik küme kotası (sorgu denemesi / maliyet denetimi / elle kontrolle ORTAK sayaç). Aşımda 429 {@code RATE_LIMITED};
+     * o zaman oturum damgası geri alınır (bir sonraki tıklama saatlik iletiyi görsün). Bean yoksa null.
+     */
+    private com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket hourlyQuota(HttpSession session) {
+        if (testQuota == null) return null;
+        try {
+            return testQuota.consume(session);
+        } catch (DbQueryApiException e) {
+            session.removeAttribute(TEST_AT);
+            throw e;
+        }
+    }
+
+    /** Deneme çalıştırıcıya ulaşmadıysa saatlik hak geri verilir (yapılmayan deneme sayılmasın). */
+    private void refundIfNotExecuted(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket ticket, DbQueryRunner.ConnectionTest t) {
+        if (testQuota == null || ticket == null || t == null || !NOT_EXECUTED.contains(t.failureReason())) return;
+        try {
+            testQuota.refund(ticket);
+        } catch (RuntimeException e) {
+            // hak geri verilemedi — deneme yine yanıtlanır
+        }
     }
 
     private DbQueryCheckerService requireChecker() {

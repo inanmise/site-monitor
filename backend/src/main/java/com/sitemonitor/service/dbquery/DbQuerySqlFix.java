@@ -31,9 +31,13 @@ public final class DbQuerySqlFix {
     /** Önerilmeme nedenleri (kalıcı). */
     public static final String R_NOT_MSSQL = "NOT_MSSQL", R_NOTHING_TO_FIX = "NOTHING_TO_FIX", R_OTHER_HINT = "OTHER_HINT",
             R_GUARD_STILL_FAILS = "GUARD_STILL_FAILS", R_ALREADY_LIMITED = "ALREADY_LIMITED", R_NOT_LIMITABLE = "NOT_LIMITABLE",
-            R_UNPARSABLE = "UNPARSABLE";
+            R_UNPARSABLE = "UNPARSABLE",
+            /** Güvenlik denetiminin zaman / izin sınırı doldu — sorgu reddedilmedi, "şimdilik denetlenemedi" (inceleme D10). */
+            R_CHECK_TIMEOUT = "CHECK_TIMEOUT",
+            /** Dış sorgu GROUP BY'sız toplama (COUNT / SUM …) — her zaman tek satır döner, satır sınırı gereksiz (D10). */
+            R_SINGLE_ROW = "SINGLE_ROW";
     public static final List<String> REASONS = List.of(R_NOT_MSSQL, R_NOTHING_TO_FIX, R_OTHER_HINT, R_GUARD_STILL_FAILS,
-            R_ALREADY_LIMITED, R_NOT_LIMITABLE, R_UNPARSABLE);
+            R_ALREADY_LIMITED, R_NOT_LIMITABLE, R_UNPARSABLE, R_CHECK_TIMEOUT, R_SINGLE_ROW);
 
     public static final int DEFAULT_ROW_LIMIT = 1_000, MIN_ROW_LIMIT = 1, MAX_ROW_LIMIT = 1_000_000;
 
@@ -83,7 +87,10 @@ public final class DbQuerySqlFix {
         return v < MIN_ROW_LIMIT || v > MAX_ROW_LIMIT ? null : (int) v;
     }
 
-    /** Sorgu için önerilebilen düzeltmeler (her biri özgün sorgu + TEK değişiklik; birbirine bağlı değil). */
+    /**
+     * Sorgu için önerilebilen düzeltmeler (her biri özgün sorgu + TEK değişiklik; birbirine bağlı değil). Tür ZORUNLU (uç 400
+     * {@code db_type} der); null yalnız eski çağıranlar için PostgreSQL sayılır.
+     */
     public static Result fixes(String sql, DbType type, int rowLimit) {
         DbType t = type == null ? DbType.POSTGRESQL : type;
         int limit = Math.max(MIN_ROW_LIMIT, Math.min(MAX_ROW_LIMIT, rowLimit));
@@ -110,7 +117,7 @@ public final class DbQuerySqlFix {
 
     private static Object nolock(String sql, SqlLexer.Lexed lx) {
         DbQuerySqlGuard.Result guard = DbQuerySqlGuard.check(sql, DbType.MSSQL);
-        if (DbQuerySqlGuard.isTimeout(guard)) return new Skipped(ADD_NOLOCK, R_UNPARSABLE, msgUnparsable());
+        if (DbQuerySqlGuard.isTimeout(guard)) return new Skipped(ADD_NOLOCK, R_CHECK_TIMEOUT, msgCheckTimeout());
         Set<String> required = nolockRequired(guard);
         if (required.isEmpty()) return new Skipped(ADD_NOLOCK, R_NOTHING_TO_FIX, msgNothingToFix());
         Object last = null;
@@ -178,6 +185,7 @@ public final class DbQuerySqlFix {
                     : new Skipped(ADD_NOLOCK, R_GUARD_STILL_FAILS, msgGuardStillFails());
         String fixed = apply(sql, edits);
         DbQuerySqlGuard.Result after = DbQuerySqlGuard.check(fixed, DbType.MSSQL);
+        if (DbQuerySqlGuard.isTimeout(after)) return new Skipped(ADD_NOLOCK, R_CHECK_TIMEOUT, msgCheckTimeout());
         if (!after.ok()) {
             Skipped s = otherHint ? new Skipped(ADD_NOLOCK, R_OTHER_HINT, msgOtherHint())
                     : new Skipped(ADD_NOLOCK, R_GUARD_STILL_FAILS, msgGuardStillFails());
@@ -277,6 +285,12 @@ public final class DbQuerySqlFix {
             if (type == DbType.ORACLE && "ROWNUM".equals(u)) limited = true;
         }
         if (limited) return new Skipped(ADD_ROW_LIMIT, R_ALREADY_LIMITED, msgAlreadyLimited());
+        // Tek satır döndüren toplama (GROUP BY'sız COUNT / SUM …): sınır gereksiz ve kural tanımını değiştirmez — önerilmez.
+        // Biçim güvenlik denetiminin AST'sinden (DbQuerySqlGuard.Shape); denetim zaman aşımına uğradıysa öneri yok.
+        DbQuerySqlGuard.Result original = DbQuerySqlGuard.check(sql, type);
+        if (DbQuerySqlGuard.isTimeout(original)) return new Skipped(ADD_ROW_LIMIT, R_CHECK_TIMEOUT, msgCheckTimeout());
+        if (!setOp && original.shape() != null && original.shape().singleRowAggregate())
+            return new Skipped(ADD_ROW_LIMIT, R_SINGLE_ROW, msgSingleRow());
         String clause;
         int at;
         if (type == DbType.MSSQL) {
@@ -295,7 +309,9 @@ public final class DbQuerySqlFix {
         }
         List<Edit> edits = List.of(new Edit(at, lx.line(at), lx.column(at), " " + clause));
         String fixed = apply(sql, edits);
-        if (!DbQuerySqlGuard.check(fixed, type).ok())
+        DbQuerySqlGuard.Result after = DbQuerySqlGuard.check(fixed, type);
+        if (DbQuerySqlGuard.isTimeout(after)) return new Skipped(ADD_ROW_LIMIT, R_CHECK_TIMEOUT, msgCheckTimeout());
+        if (!after.ok())
             return new Skipped(ADD_ROW_LIMIT, R_GUARD_STILL_FAILS, msgGuardStillFails());
         return new Fix(ADD_ROW_LIMIT, fixed, List.of(clause), msgRowLimitNote(clause, limit, type), edits);
     }
@@ -360,14 +376,26 @@ public final class DbQuerySqlFix {
     private static String msgRowLimitNote(String clause, int limit, DbType type) {
         String ora = type == DbType.ORACLE ? Msg.t(" (Oracle 12c ve sonrası)", " (Oracle 12c and later)") : "";
         return Msg.t("Sorguya satır sınırı eklendi: " + clause + ora + " · Veritabanı en çok " + limit + " satır döndürür; "
-                        + "satır sayısı kuralı varsa sayım bu sınırda durur.",
+                        + "kurallar bu kesilmiş kümeden hesaplanır — satır sayısı bu sınırda durur, kolon değeri kuralları "
+                        + "(toplam / ortalama / en büyük, anomali, donma) yalnız bu satırları görür.",
                 "A row limit was added to the query: " + clause + ora + " · The database returns at most " + limit
-                        + " rows; a row count rule stops counting at this limit.");
+                        + " rows; rules are computed from this cut set — a row count stops at this limit and column value "
+                        + "rules (sum / average / maximum, anomaly, frozen) see only these rows.");
     }
 
     private static String msgUnparsable() {
         return Msg.t("Sorgu çözümlenemedi · Önce yazım hatasını giderin (kapanmayan tırnak / yorum).",
                 "The query could not be read · Fix the syntax first (an unclosed quote / comment).");
+    }
+
+    private static String msgCheckTimeout() {
+        return Msg.t("Güvenlik denetimi şu an tamamlanamadı (yoğunluk) · Sorgu reddedilmedi; birkaç saniye sonra yeniden deneyin.",
+                "The safety check could not finish right now (busy) · The query was not rejected; try again in a few seconds.");
+    }
+
+    private static String msgSingleRow() {
+        return Msg.t("Sorgu GROUP BY'sız bir toplama (COUNT / SUM …) — her zaman tek satır döner; satır sınırı gerekmez.",
+                "The query is an aggregate without GROUP BY (COUNT / SUM …) — it always returns one row; no row limit is needed.");
     }
 
     private static String msgNotMssql() {

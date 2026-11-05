@@ -180,6 +180,46 @@ class DbQuerySqlFixTest {
     }
 
     @Test
+    @DisplayName("D10: GROUP BY'sız toplama (tek satır) → satır sınırı önerilmez, neden SINGLE_ROW; GROUP BY / HAVING / pencere "
+            + "fonksiyonu / alt sorgudaki toplama → önerilir")
+    void rowLimitSingleRowAggregate() {
+        assertThat(skipped("SELECT COUNT(*) FROM siparis WHERE durum = 'B'", DbType.POSTGRESQL, "ADD_ROW_LIMIT").reason())
+                .isEqualTo(DbQuerySqlFix.R_SINGLE_ROW);
+        assertThat(skipped("SELECT SUM(tutar) AS toplam, MAX(tarih) FROM odeme", DbType.ORACLE, "ADD_ROW_LIMIT").reason())
+                .isEqualTo(DbQuerySqlFix.R_SINGLE_ROW);
+        assertThat(skipped("SELECT COUNT_BIG(*) FROM dbo.t WITH (NOLOCK)", DbType.MSSQL, "ADD_ROW_LIMIT").reason())
+                .isEqualTo(DbQuerySqlFix.R_SINGLE_ROW);
+        assertThat(skipped("SELECT COUNT(*) FROM siparis WHERE durum = 'B'", DbType.POSTGRESQL, "ADD_ROW_LIMIT").note())
+                .contains("tek satır");
+        assertThat(fix("SELECT durum, COUNT(*) FROM siparis GROUP BY durum", DbType.POSTGRESQL, "ADD_ROW_LIMIT")).isNotNull();
+        assertThat(fix("SELECT id, COUNT(*) OVER () AS n FROM siparis", DbType.POSTGRESQL, "ADD_ROW_LIMIT")).isNotNull();
+        assertThat(fix("SELECT * FROM (SELECT COUNT(*) AS n FROM siparis) x", DbType.POSTGRESQL, "ADD_ROW_LIMIT")).isNotNull();
+        assertThat(DbQuerySqlFix.REASONS).contains("SINGLE_ROW", "CHECK_TIMEOUT");
+    }
+
+    @Test
+    @DisplayName("D10: satır sınırı notu yalnız satır sayısını değil kolon değeri / akıllı kural ölçülerini de anar")
+    void rowLimitNoteMentionsMeasures() {
+        assertThat(fix("SELECT id FROM t", DbType.POSTGRESQL, "ADD_ROW_LIMIT").note()).contains("kolon değeri").contains("anomali");
+    }
+
+    @Test
+    @DisplayName("D10: güvenlik denetimi zaman / izin sınırına takılırsa neden CHECK_TIMEOUT (\"başka nedenle geçmiyor\" değil)")
+    void guardTimeoutIsReportedAsTimeout() throws Exception {
+        java.util.concurrent.Semaphore permits = (java.util.concurrent.Semaphore)
+                org.springframework.test.util.ReflectionTestUtils.getField(DbQuerySqlGuard.class, "PARSE_PERMITS");
+        int drained = permits.drainPermits();
+        try {
+            String sql = "SELECT id FROM zaman_asimi_" + System.nanoTime();
+            DbQuerySqlFix.Skipped s = skipped(sql, DbType.POSTGRESQL, "ADD_ROW_LIMIT");
+            assertThat(s.reason()).isEqualTo(DbQuerySqlFix.R_CHECK_TIMEOUT);
+            assertThat(s.note()).contains("reddedilmedi");
+        } finally {
+            permits.release(drained);
+        }
+    }
+
+    @Test
     @DisplayName("çözümlenemeyen / boş / çok uzun sorgu: iki düzeltme de UNPARSABLE; satır sınırı girdisi aralık denetimi")
     void unparsableAndLimits() {
         assertThat(DbQuerySqlFix.fixes("SELECT 'açık", DbType.POSTGRESQL, 10).skipped())

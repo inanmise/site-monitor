@@ -1146,6 +1146,24 @@ public class EmailTemplateBuilder {
         return out;
     }
 
+    /**
+     * Kural durum metni. Tabanı kurulan kural (ilk çalıştırma, sorgu / kural değişince taban yeniden kuruluyor, mevsimsel
+     * taban yok) "Değerlendirilemedi" yazmaz — bu bir bekleme, kanıt eksikliği değil (dbq2 inceleme D9); diğer durumlar
+     * {@link com.sitemonitor.service.dbquery.DbQueryAlarmText#ruleStateText}.
+     */
+    static String dbQueryRuleState(Map<String, Object> r) {
+        if (r != null && Boolean.FALSE.equals(r.get("evaluated")) && r.get("note") != null) {
+            String note = String.valueOf(r.get("note"));
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_BASELINE_RESET.equals(note))
+                return "Taban yeniden kuruluyor (sorgu ya da kural değişti)";
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_FIRST_RUN.equals(note))
+                return "Taban kuruluyor (ilk çalıştırma)";
+            if (com.sitemonitor.service.dbquery.DbQueryEvaluator.NOTE_NO_SEASONAL_BASELINE.equals(note))
+                return "Taban kuruluyor (karşılaştırılacak dönem yok)";
+        }
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r);
+    }
+
     /** Kurallar tablosu (Kural · Beklenen · Gelen · Durum) + sorgu kod bloğu + sonuç satırları. */
     private static void dbQuerySections(MailDoc d, Map<String, Object> c) {
         List<Map<String, Object>> rules = dbQueryRuleResults(c);
@@ -1155,7 +1173,7 @@ public class EmailTemplateBuilder {
             List<List<MailKit.Cell>> rows = new ArrayList<>();
             for (Map<String, Object> r : rules) {
                 boolean violated = Boolean.FALSE.equals(r.get("passed")) && !Boolean.FALSE.equals(r.get("evaluated"));
-                String state = com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r);
+                String state = dbQueryRuleState(r);
                 String color = violated ? ("CRITICAL".equals(String.valueOf(r.get("level"))) ? Tone.DESTRUCTIVE.text : Tone.WARNING.text)
                         : Boolean.FALSE.equals(r.get("evaluated")) ? MailTokens.MUTED : MailTokens.SUCCESS;
                 String label = r.get("label") != null && !String.valueOf(r.get("label")).isBlank() ? String.valueOf(r.get("label"))
@@ -1336,7 +1354,7 @@ public class EmailTemplateBuilder {
                         : com.sitemonitor.service.dbquery.DbQueryAlarmText.kindLabel(r.get("kind") == null ? null : String.valueOf(r.get("kind")));
                 sb.append("- ").append(label).append(" · Beklenen: ").append(nzv(r.get("expected")))
                   .append(" · Gelen: ").append(nzv(r.get("actual")))
-                  .append(" · Durum: ").append(com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r)).append('\n');
+                  .append(" · Durum: ").append(dbQueryRuleState(r)).append('\n');
             }
         }
         List<Map<String, Object>> hist = dbQueryHistory(c);

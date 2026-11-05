@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.DbQueryMonitor;
 import com.sitemonitor.repository.DbQueryCheckRepository;
 import com.sitemonitor.repository.DbQueryMonitorRepository;
 import com.sitemonitor.service.dbquery.DbQueryAlarmText;
@@ -15,6 +16,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,9 +80,46 @@ class DbQueryAlarmMailHistoryTest {
         Map<String, Object> u = new LinkedHashMap<>();
         EscalationService.putDbQueryHistory(u, unknown, EscalationService.TYPE_DBQUERY_FAIL, DbQueryAlarmText.RULE_UNEVALUABLE_CODE);
         assertThat(u).containsEntry(EscalationService.CTX_DBQUERY_STREAK, 3).containsEntry(EscalationService.CTX_DBQUERY_STREAK_KIND, "UNKNOWN");
-        Map<String, Object> inferred = new LinkedHashMap<>();
-        EscalationService.putDbQueryHistory(inferred, unknown, EscalationService.TYPE_DBQUERY_FAIL, null);
-        assertThat(inferred).containsEntry(EscalationService.CTX_DBQUERY_STREAK, 3);
+        // D9: tür YALNIZ alarm türü + bağlamdan — neden yoksa en yeni (UNKNOWN) satırdan "değerlendirilemeyen" çıkarılmaz
+        Map<String, Object> notInferred = new LinkedHashMap<>();
+        EscalationService.putDbQueryHistory(notInferred, unknown, EscalationService.TYPE_DBQUERY_FAIL, null);
+        assertThat(notInferred).doesNotContainKey(EscalationService.CTX_DBQUERY_STREAK)
+                .containsKey(EscalationService.CTX_DBQUERY_HISTORY);
+        // eski anlık görüntü: neden yok ama hata metni "[DB_RULE_UNEVALUABLE] …" → UNKNOWN serisi
+        Map<String, Object> oldCtx = new LinkedHashMap<>();
+        oldCtx.put("error", DbQueryAlarmText.unevaluableError(List.of("column_missing"), 3));
+        assertThat(EscalationService.dbQueryFailureReason(oldCtx)).isEqualTo(DbQueryAlarmText.RULE_UNEVALUABLE_CODE);
+        assertThat(EscalationService.dbQueryFailureReason(Map.of("error", "[DB_TIMEOUT] zaman aşımı"))).isNull();
+        assertThat(EscalationService.dbQueryFailureReason(Map.of("failure_reason", "DB_AUTH"))).isEqualTo("DB_AUTH");
+    }
+
+    /** sql_hash'li satır (8. kolon). */
+    private static Object[] hashed(String at, String status, Double value, String hash) {
+        return new Object[] {at, status, value, true, "WARNING", null, false, hash};
+    }
+
+    @Test
+    @DisplayName("D9: sorgu değişince seri ve tablo kesilir — eski sorgunun ihlal satırları sayılmaz, 'en az' yazılmaz")
+    void seriesCutAtSqlHashChange() {
+        List<Object[]> rows = List.of(
+                hashed("2026-11-05T09:00:00", "BREACH", 31.0, "h2"),
+                hashed("2026-11-05T08:55:00", "BREACH", 30.0, "h2"),
+                hashed("2026-11-05T08:50:00", "BREACH", 99.0, "h1"),
+                hashed("2026-11-05T08:45:00", "BREACH", 98.0, "h1"));
+        Map<String, Object> e = new LinkedHashMap<>();
+        EscalationService.putDbQueryHistory(e, rows, EscalationService.TYPE_DBQUERY_THRESHOLD, null);
+        assertThat(e).containsEntry(EscalationService.CTX_DBQUERY_STREAK, 2)
+                .containsEntry(EscalationService.CTX_DBQUERY_FIRST_PROBLEM, "2026-11-05T08:55:00")
+                .doesNotContainKey(EscalationService.CTX_DBQUERY_STREAK_CAPPED);
+        assertThat((List<?>) e.get(EscalationService.CTX_DBQUERY_HISTORY)).hasSize(2);
+
+        // pencerenin tamamı aynı sorgunun ihlali → "en az"; sorgu değişimiyle kesilen 100'lük pencere "en az" değil
+        List<Object[]> full = new ArrayList<>();
+        for (int i = 0; i < EscalationService.DBQUERY_HISTORY_READ; i++)
+            full.add(hashed(String.format("2026-11-05T%02d:%02d:00", 9 - i / 60, 59 - i % 60), "BREACH", 50.0, i < 99 ? "h2" : "h1"));
+        Map<String, Object> cut = new LinkedHashMap<>();
+        EscalationService.putDbQueryHistory(cut, full, EscalationService.TYPE_DBQUERY_THRESHOLD, null);
+        assertThat(cut).containsEntry(EscalationService.CTX_DBQUERY_STREAK, 99).doesNotContainKey(EscalationService.CTX_DBQUERY_STREAK_CAPPED);
     }
 
     @Test
@@ -199,5 +238,165 @@ class DbQueryAlarmMailHistoryTest {
         String none = b.buildHtml(new EmailTemplateBuilder.AlertMail("DBQUERY_THRESHOLD", "CRITICAL", "Bekleyen Siparişler",
                 "KRİTİK", null, plain, "Takım A"));
         assertThat(none).doesNotContain("Son Değerler").doesNotContain("Kaç Çalıştırmadır");
+    }
+
+    // ── dbq2 inceleme O2: maskeli kolonun ölçüsü postada gizlenir ─────────────
+
+    private static final double SECRET = 31415.0, SECRET_OLD = 27182.0;
+
+    private DbQueryMonitorRepository monitors() {
+        return (DbQueryMonitorRepository) ReflectionTestUtils.getField(esc, "dbQueryMonitorRepo");
+    }
+
+    private static DbQueryMonitor monitor(String rulesJson, String maskedJson) {
+        DbQueryMonitor m = new DbQueryMonitor();
+        m.setId(42L);
+        m.setName("Bekleyen Siparişler");
+        m.setRulesJson(rulesJson);
+        m.setMaskedColumnsJson(maskedJson);
+        m.setMailSubjectTemplate("Değer {deger}");
+        return m;
+    }
+
+    private static Map<String, Object> rule(String id, String kind, Double compared, String actual, boolean passed) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("id", id);
+        r.put("label", "Kural " + id);
+        r.put("kind", kind);
+        r.put("actual", actual);
+        r.put("expected", "> 10");
+        r.put("level", passed ? "NONE" : "CRITICAL");
+        r.put("passed", passed);
+        r.put("evaluated", true);
+        r.put("measure", compared);
+        r.put("compared", compared);
+        return r;
+    }
+
+    private static Map<String, Object> breachCtx(List<Map<String, Object>> rules, Double metric) {
+        Map<String, Object> c = ctx();
+        c.put("monitor_name", "Bekleyen Siparişler");
+        c.put("checked_at", "2026-11-05T09:00:00");
+        if (metric != null) c.put("metric_value", metric);
+        c.put("dbquery_status", "BREACH");
+        c.put("rule_results", rules);
+        c.put("rule_summary", DbQueryAlarmText.breachSummary(rules));
+        return c;
+    }
+
+    private static List<Object[]> secretHistory() {
+        return List.of(row("2026-11-05T09:00:00", "BREACH", SECRET, true, "CRITICAL"),
+                row("2026-11-05T08:55:00", "BREACH", SECRET_OLD, true, "CRITICAL"));
+    }
+
+    private static String render(String type, Map<String, Object> c) {
+        AppSettingsService app = mock(AppSettingsService.class);
+        when(app.getString(eq("site.monitor.app.base-url"), any())).thenAnswer(i -> i.getArgument(1));
+        EmailTemplateBuilder b = new EmailTemplateBuilder(app);
+        ReflectionTestUtils.setField(b, "appBaseUrl", "http://cm.local");
+        var mail = new EmailTemplateBuilder.AlertMail(type, "CRITICAL", "Bekleyen Siparişler", "KRİTİK", null, c, "Takım A");
+        return b.buildHtml(mail) + "\n" + b.buildText(mail);
+    }
+
+    private static final String ONE_MASKED_RULE = "[{\"id\":\"r1\",\"kind\":\"COLUMN_VALUE\",\"column\":\"Tutar\",\"aggregate\":\"FIRST\"}]";
+
+    @Test
+    @DisplayName("O2: kuralın kolonu maskeliyse 'Ölçülen Değer', 'Son Değerler', kural 'Gelen' değeri, ihlal özeti ve konu "
+            + "postada (gönderilen + günlük kopyası) •••• — durum / zaman kalır")
+    void maskedColumnMeasureHidden() {
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(ONE_MASKED_RULE, "[\"tutar\"]")));
+        when(checks.recentScheduledSummary(eq(42L), anyInt())).thenReturn(secretHistory());
+        List<Map<String, Object>> rules = List.of(rule("r1", "COLUMN_VALUE", SECRET, "31415", false));
+        Map<String, Object> c = breachCtx(rules, SECRET);
+        var parts = esc.dbQueryMailParts(900L, EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", c);
+
+        assertThat(parts.extra()).containsEntry("metric_value", "••••");
+        assertThat(parts.subject()).contains("••••").doesNotContain("31415");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> hist = (List<Map<String, Object>>) parts.extra().get(EscalationService.CTX_DBQUERY_HISTORY);
+        assertThat(hist).extracting(h -> h.get("metric_value")).containsOnly("••••");
+        assertThat(hist).extracting(h -> h.get("checked_at")).containsExactly("2026-11-05T09:00:00", "2026-11-05T08:55:00");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> masked = (List<Map<String, Object>>) parts.extra().get("rule_results");
+        assertThat(masked.get(0)).containsEntry("actual", "••••").containsEntry("expected", "> 10")
+                .doesNotContainKey("measure").doesNotContainKey("compared").containsEntry("passed", false);
+        assertThat(String.valueOf(parts.extra().get("rule_summary"))).contains("••••").doesNotContain("31415");
+
+        for (boolean withRows : new boolean[] {true, false}) {   // gönderilen ve notification_logs kopyası aynı maskeyle
+            String out = render("DBQUERY_THRESHOLD", parts.apply(c, withRows));
+            assertThat(out).contains("••••").contains("Son Değerler").contains("İhlal (kritik)")
+                    .doesNotContain("31415").doesNotContain("27182");
+        }
+    }
+
+    @Test
+    @DisplayName("O2: ölçü maskesiz kuraldan geldiyse 'Ölçülen Değer' açık; maskeli kuralın 'gelen'i maskeli; metin eşleşmesi "
+            + "sayısı açık; maske yoksa hiçbir şey değişmez")
+    void onlyMaskedRulesHidden() {
+        String rulesJson = "[{\"id\":\"r1\",\"kind\":\"COLUMN_VALUE\",\"column\":\"adet\"},"
+                + "{\"id\":\"r2\",\"kind\":\"COLUMN_VALUE\",\"column\":\"tutar\"},"
+                + "{\"id\":\"r3\",\"kind\":\"TEXT_MATCH\",\"column\":\"tutar\"}]";
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(rulesJson, "[\"TUTAR\"]")));
+        when(checks.recentScheduledSummary(eq(42L), anyInt())).thenReturn(secretHistory());
+        List<Map<String, Object>> rules = List.of(rule("r1", "COLUMN_VALUE", 5.0, "5", true),
+                rule("r2", "COLUMN_VALUE", SECRET, "31415", false), rule("r3", "TEXT_MATCH", 2.0, "2", false));
+        var parts = esc.dbQueryMailParts(900L, EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", breachCtx(rules, 5.0));
+        assertThat(parts.extra()).doesNotContainKey("metric_value");   // bağlamdaki 5 (maskesiz kural) aynen kalır
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rr = (List<Map<String, Object>>) parts.extra().get("rule_results");
+        assertThat(rr.get(0)).containsEntry("actual", "5");
+        assertThat(rr.get(1)).containsEntry("actual", "••••");
+        assertThat(rr.get(2)).containsEntry("actual", "2");   // metin eşleşmesi: gelen = eşleşen satır SAYISI (hücre değil)
+
+        // maske listesi boş → hiçbir şey yazılmaz
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(rulesJson, "[]")));
+        var plain = esc.dbQueryMailParts(901L, EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", breachCtx(rules, SECRET));
+        assertThat(plain.extra()).doesNotContainKey("metric_value").doesNotContainKey("rule_results");
+        assertThat(plain.subject()).contains("31415");
+    }
+
+    @Test
+    @DisplayName("O2: izleme okunamazsa temkinli (ölçü maskeli); çözüm postası ve saklanan alarm iletisi de maskeli")
+    void unreadableMonitorAndResolutionAndMessage() {
+        when(monitors().findById(42L)).thenThrow(new IllegalStateException("db"));
+        List<Map<String, Object>> rules = List.of(rule("r1", "COLUMN_VALUE", SECRET, "31415", false));
+        var parts = esc.dbQueryMailParts(900L, EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", breachCtx(rules, SECRET));
+        assertThat(parts.extra()).containsEntry("metric_value", "••••");
+
+        org.mockito.Mockito.reset(monitors());
+        when(monitors().findById(42L)).thenReturn(Optional.of(monitor(ONE_MASKED_RULE, "[\"tutar\"]")));
+        com.sitemonitor.model.DbQueryCheck latest = new com.sitemonitor.model.DbQueryCheck();
+        latest.setStatus("BREACH");
+        latest.setMetricValue(SECRET_OLD);
+        latest.setRuleResultsJson("[{\"id\":\"r1\",\"kind\":\"COLUMN_VALUE\",\"actual\":\"27182\",\"evaluated\":true,"
+                + "\"passed\":false,\"level\":\"WARNING\",\"compared\":27182.0}]");
+        when(checks.findTopByMonitorIdOrderByCheckedAtDesc(42L)).thenReturn(Optional.of(latest));
+        Map<String, Object> resolved = ReflectionTestUtils.invokeMethod(esc, "withDbQueryResolvedValues", breachCtx(rules, SECRET));
+        assertThat(resolved).containsEntry("resolved_metric_value", "••••").containsEntry("metric_value", "••••");
+        assertThat(String.valueOf(resolved.get("resolved_rule_summary"))).doesNotContain("27182");
+        assertThat(String.valueOf(resolved.get("rule_summary"))).doesNotContain("31415");
+
+        String msg = ReflectionTestUtils.invokeMethod(esc, "monitoringMessageBody", "Bekleyen Siparişler",
+                EscalationService.TYPE_DBQUERY_THRESHOLD, "CRITICAL", breachCtx(rules, SECRET));
+        assertThat(msg).contains("••••").doesNotContain("31415");
+    }
+
+    @Test
+    @DisplayName("D9: postada taban bekleyen kural 'Değerlendirilemedi' yazmaz (nötr metin)")
+    void baselineNotesNeutral() {
+        Map<String, Object> r = rule("r1", "CHANGE", null, "—", true);
+        r.put("evaluated", false);
+        r.put("note", "baseline_reset");
+        assertThat(EmailTemplateBuilder.dbQueryRuleState(r)).startsWith("Taban yeniden kuruluyor");
+        r.put("note", "first_run");
+        assertThat(EmailTemplateBuilder.dbQueryRuleState(r)).startsWith("Taban kuruluyor");
+        r.put("note", "no_seasonal_baseline");
+        assertThat(EmailTemplateBuilder.dbQueryRuleState(r)).startsWith("Taban kuruluyor");
+        r.put("note", "column_missing");
+        assertThat(EmailTemplateBuilder.dbQueryRuleState(r)).isEqualTo(DbQueryAlarmText.ruleStateText(r));
+
+        r.put("note", "baseline_reset");
+        Map<String, Object> c = breachCtx(List.of(r), null);
+        assertThat(render("DBQUERY_THRESHOLD", c)).contains("Taban yeniden kuruluyor").doesNotContain("Değerlendirilemedi");
     }
 }
