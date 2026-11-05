@@ -2683,7 +2683,7 @@ public class AdminController {
                     m.put("kind",  r.kind());
                     // Alarm iletimi (2026-11-05): iletim satırının alıcı takımı (satırın adı alıcı takımın adıdır) — ön yüz
                     // "İletim · <takım>" rozeti. Diğer satırlar bugünkü biçimde (alan yok).
-                    if (FORWARD_KIND.equals(r.kind())) m.put("team_name", r.name());
+                    if (FORWARD_KIND.equals(r.kind())) m.put("team_name", r.teamName() != null ? r.teamName() : r.name());
                     return m;
                 }).toList();
         // Webhook (push) kanali AYRI listelenir: kullanici "kime mail, kime push" gidecegini
