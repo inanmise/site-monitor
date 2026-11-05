@@ -137,7 +137,7 @@ describe('Excel A–E ve site sayfaları', () => {
     expect(obj.rows.every((r) => r.length === head.length)).toBe(true)
     const libRow = obj.rows.find((r) => r.includes('lodash 4.17.20'))
     expect(libRow).toBeTruthy()
-    expect(libRow.slice(-7)).toEqual(['HTTP/2', 'Evet', 'Evet', 'Hayır', 'lodash 4.17.20', '', 'analytics'])
+    expect(libRow.slice(-7)).toEqual(['HTTP/2', 'Evet', 'Evet', 'Hayır', 'lodash 4.17.20', '', 'Analitik'])
 
     xl.sheets = null
     const old = scanDetail(10)

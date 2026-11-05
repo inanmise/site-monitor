@@ -265,14 +265,14 @@ describe('F3 yönetici raporu', () => {
     expect(all).toContain('Eksik güvenlik başlıkları: Content-Security-Policy.')
     expect(all).toContain('Bilinen açığı olan kütüphaneler: jQuery 1.12.4.')
     expect(all).toContain('izin alınmadan çalışıyor OLABİLİR (sezgisel)')
-    expect(all).toContain('Başarısız: Meta açıklama')
+    expect(all).toContain('Başarısız: Açıklama (meta description)')   // fe1'in pano metni (prs.check.*) önceliklidir
     expect(all).toContain('Erişilebilirlik puanı: —')
     expect(all).not.toMatch(/prs\.|\{\d\}/)
     expect(executiveSections(scanAnalysis(), t, L)).toEqual([])
   })
 
   it('denetim adı: pano metni varsa o, yoksa raporun kendi metni; bilinmeyen anahtar genel ad', () => {
-    expect(checkLabel(t, 'seo', 'meta_description')).toBe('Meta açıklama')
+    expect(checkLabel(t, 'seo', 'meta_description')).toBe('Açıklama (meta description)')   // pano metni (fe1, prs.check.*)
     const tFe1 = (k) => (k === 'prs.check.seo.meta_description' ? 'Açıklama etiketi' : t(k))
     expect(checkLabel(tFe1, 'seo', 'meta_description')).toBe('Açıklama etiketi')
     expect(checkLabel(t, 'seo', 'yeni_denetim')).toBe('Diğer denetim')
@@ -344,7 +344,7 @@ describe('Nesneler sayfası — derin alan sütunları (algoritma 3, fe1 beklent
   it('anahtarı taşıyan sütunlar eklenir; sıra objectSheetRows ile aynı; null boş hücre (Hayır değil)', () => {
     const out = objectDeepColumns([deepItem, plain], t)
     expect(out.head).toEqual(OBJECT_DEEP_COLUMNS.map(([, k]) => TR[k]))
-    expect(out.rows[0]).toEqual(['HTTP/2', 'Evet', 'Hayır', '', 'jQuery 1.12.4', 'https://cdn.example.net/jquery.map', 'cdn'])
+    expect(out.rows[0]).toEqual(['HTTP/2', 'Evet', 'Hayır', '', 'jQuery 1.12.4', 'https://cdn.example.net/jquery.map', 'CDN'])
     expect(out.rows[1]).toEqual(['', '', '', '', '', '', ''])
     const merged = withObjectDeepColumns([['URL', 'Tür'], ['a', 'JS'], ['b', 'CSS']], [deepItem, plain], t)
     expect(merged[0]).toEqual(['URL', 'Tür', ...out.head])
