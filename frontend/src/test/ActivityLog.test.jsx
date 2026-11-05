@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import ActivityLog, { activityTarget } from '../components/ActivityLog.jsx'
+// Ayrıntı sayfası tembel parça (recharts + alarm bileşenleri) — ilk dönüşümü testin 1 sn'lik waitFor'ına kalmasın
+await import('../components/activity/detail/ActivityDetailPage.jsx')
 
 // Birleşik aktivite akışı — api mock'lanır. Durum/tür rozetleri dilden bağımsız CSS/enum ile doğrulanır.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))

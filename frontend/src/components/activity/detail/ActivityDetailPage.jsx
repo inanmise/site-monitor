@@ -167,7 +167,7 @@ export default function ActivityDetailPage({ id, onBack, onOpenActivity, onOpenT
   )
 
   return (
-    <div ref={rootRef} data-slot="act-detail-page" data-phase={st.phase} className="mx-auto flex w-full max-w-6xl min-w-0 scroll-mt-16 flex-col gap-4">
+    <div ref={rootRef} data-slot="act-detail-page" data-id={id} data-phase={st.phase} className="mx-auto flex w-full max-w-6xl min-w-0 scroll-mt-16 flex-col gap-4">
       {topBar}
       {st.phase === 'loading' && <DetailSkeleton label={t('act.dt.loading')} />}
       {st.phase === 'notFound' && (

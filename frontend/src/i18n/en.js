@@ -4467,7 +4467,7 @@ export const EN = {
   'act.colDetail':    'Detail / Error',
   'act.days':         '{0} days',
   // Aktivite ayrıntı sayfası (2026-11-05, act fe1)
-  'act.dt.back': 'Back to activity list',
+  'act.dt.back': 'Back to the activity list',
   'act.dt.refresh': 'Refresh details',
   'act.dt.loading': 'Loading activity details…',
   'act.dt.notFound': 'Activity not found, or you are not allowed to see it',

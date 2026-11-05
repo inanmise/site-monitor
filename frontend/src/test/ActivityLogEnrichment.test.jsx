@@ -12,6 +12,8 @@ vi.mock('../api/client', () => ({
 }))
 import { api } from '../api/client'
 import ActivityLog from '../components/ActivityLog.jsx'
+// Ayrıntı sayfası tembel parça (recharts + alarm bileşenleri) — ilk dönüşümü testin 1 sn'lik waitFor'ına kalmasın
+await import('../components/activity/detail/ActivityDetailPage.jsx')
 
 /**
  * Aktivite zenginleştirmesi (2026-11-05) — liste: rota (ayrıntı sayfası / zaman çizelgesi; Geri / İleri), süzgeçler
@@ -48,7 +50,7 @@ describe('Aktivite — rota', () => {
     expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'detail')
     // Sekme başlığı rotayı izler (meta.page.activityDetail); listeye dönünce sekmenin kendi başlığı
     await waitFor(() => expect(document.title).toBe(`${EN['meta.page.activityDetail.title']} · SiteMonitor`))
-    fireEvent.click(screen.getByRole('button', { name: EN['act.backToList'] }))
+    fireEvent.click(q('[data-slot="act-dt-back"]'))   // sayfanın üst çubuğundaki geri düğmesi
     await waitFor(() => expect(document.title).toBe(`${EN['meta.tab.activity.title']} · SiteMonitor`))
     await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'PING' })))
     expect(url().get('act')).toBeNull()
