@@ -61,14 +61,18 @@ class DbQueryHistoryPostgresTest {
         assertThat(DbQueryHistory.read(jdbc, mon, ISO.format(ref.minusSeconds(60)), r1b,
                 DbQueryHistory.plan(List.of(recent), ref, 300))).extracting(DbQueryHistory.Row::id).startsWith(r1, d1);
 
-        // En büyük plan: günlük 200 + haftalık 200 hedef (tekil 372 aralık) + yakın 200 — parametreli tek ifade çalışır
+        // En büyük plan: günlük 2 × 200 hedef + haftalık (en çok 800 gün → 114 hedef; tekil 457 aralık) + yakın 400 —
+        // parametreli tek ifade, kendi sorgu zaman aşımıyla çalışır
         DbQueryRules.Rule d200 = DbQuerySmartRulesTest.rule("id", "d", "kind", "ANOMALY", "column", "adet", "season", "daily",
                 "window", 200);
         DbQueryRules.Rule w200 = DbQuerySmartRulesTest.rule("id", "w", "kind", "ANOMALY", "column", "adet", "season",
                 "weekly", "window", 200);
         DbQueryRules.Rule n200 = DbQuerySmartRulesTest.rule("id", "x", "kind", "ANOMALY", "column", "adet", "window", 200);
         DbQueryHistory.Plan big = DbQueryHistory.plan(List.of(d200, w200, n200), ref, 300);
-        assertThat(big.ranges()).hasSize(200 + 172);   // haftalığın 28 günü (7…196) günlükle ortak
+        assertThat(big.ranges()).hasSize(400 + 57);   // haftalığın 57 günü (7…399) günlükle ortak; 406…798 ayrı
+        assertThat(big.recentLimit()).isEqualTo(DbQueryHistory.MAX_RECENT);
+        DbQueryHistory.Read read = DbQueryHistory.readAll(jdbc, mon, null, null, big);
+        assertThat(read.seasonalCutoff()).as("tavana değmedi").isNull();
         assertThat(DbQueryHistory.read(jdbc, mon, null, null, big)).extracting(DbQueryHistory.Row::id)
                 .contains(r1, r1b, d1, d2).doesNotHaveDuplicates();
         Map<String, Object> plan = jdbc.queryForMap("SELECT COUNT(*) AS n FROM dbquery_checks WHERE monitor_id = ?", mon);

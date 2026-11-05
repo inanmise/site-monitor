@@ -168,6 +168,7 @@ public final class DbQueryAlarmText {
             case DbQueryEvaluator.NOTE_NULL_VALUE -> "değer boş";
             case DbQueryEvaluator.NOTE_BUILDING_BASELINE -> "taban kuruluyor (yeterli geçmiş ölçü yok)";
             case DbQueryEvaluator.NOTE_BASELINE_RESET -> "ölçüm tanımı değişti, taban yeniden kuruluyor";
+            case DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES -> "taban için örnek yetersiz (değeri boş ya da ihlal eden çalıştırmalar)";
             default -> note;
         };
     }

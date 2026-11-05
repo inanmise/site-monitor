@@ -199,6 +199,45 @@ class DbQuerySmartRulesJpaTest {
                 .startsWith(r1.getId(), r2.getId(), d1.getId()).contains(d2.getId()).hasSize(5);
     }
 
+    @Test
+    @DisplayName("D6: geçmiş okuması kendi sorgu zaman aşımıyla; mevsimsel tavan EN ESKİ hedefi keser (kesim anı döner)")
+    void readTimeoutAndSeasonalCutoff() {
+        assertThat(svc.historyJdbc().getQueryTimeout()).isEqualTo(DbQueryHistory.QUERY_TIMEOUT_SECONDS);
+        assertThat(DbQueryHistory.timed(jdbc).getQueryTimeout()).isEqualTo(DbQueryHistory.QUERY_TIMEOUT_SECONDS);
+        assertThat(jdbc.getQueryTimeout()).as("paylaşılan şablona dokunulmaz").isLessThanOrEqualTo(0);
+
+        Instant ref = Instant.parse("2026-11-05T10:00:00Z");
+        long day = 86_400L;
+        DbQueryCheck d1 = insert(MON, ref.minusSeconds(day), true, false, false, "h", "[]");
+        DbQueryCheck d2 = insert(MON, ref.minusSeconds(2 * day), true, false, false, "h", "[]");
+        insert(MON, ref.minusSeconds(3 * day), true, false, false, "h", "[]");
+        List<long[]> ranges = new ArrayList<>();
+        for (int k = 1; k <= 3; k++) {
+            long t = ref.toEpochMilli() - k * day * 1000;
+            ranges.add(new long[]{t - 151_000, t + 151_000});
+        }
+        DbQueryHistory.Read capped = DbQueryHistory.readAll(jdbc, MON, null, null,
+                new DbQueryHistory.Plan(0, ranges, 2, ref, 150_000));
+        assertThat(capped.rows()).extracting(DbQueryHistory.Row::id).containsExactly(d1.getId(), d2.getId());
+        assertThat(capped.seasonalCutoff()).as("tavan en eski (3. gün) hedefi kesti").isEqualTo(ref.minusSeconds(2 * day));
+        DbQueryHistory.Read all = DbQueryHistory.readAll(jdbc, MON, null, null,
+                new DbQueryHistory.Plan(0, ranges, 10, ref, 150_000));
+        assertThat(all.rows()).hasSize(3);
+        assertThat(all.seasonalCutoff()).isNull();
+    }
+
+    @Test
+    @DisplayName("D3: eski pod satırı (kural sonucu yok) tabanı SIFIRLAMAZ — sonraki çalıştırma eski satırları da kullanır")
+    void oldPodRowDoesNotResetBaseline() {
+        DbQueryMonitor m = monitor("[{\"id\":\"r\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"window\":10,\"min_samples\":5}]");
+        for (int i = 0; i < 6; i++) scheduled(m, BigDecimal.valueOf(100 + i % 2));
+        // eski sürüm pod'u: aynı sorgu, kural sonucu YOK
+        insert(MON, Instant.now().plusSeconds(1), true, false, false, DbQueryCheckerService.sqlHash(m.getSqlText()), "[]");
+        DbQueryCheckerService.Result r = scheduled(m, BigDecimal.valueOf(100));
+        assertThat(r.ruleResults().get(0).evaluated()).isTrue();
+        assertThat(r.ruleResults().get(0).stats().samples()).isEqualTo(6);
+    }
+
     // ── Uçtan uca çalıştırma ─────────────────────────────────────────────────
 
     @Test
@@ -236,9 +275,10 @@ class DbQuerySmartRulesJpaTest {
         assertThat(manual.status()).isEqualTo("BREACH");
         assertThat(manual.ruleResults().get(0).stats().samples()).isEqualTo(6);
 
-        // Sonraki zamanlanmış: taban = zamanlanmış satırlar (130 dahil, elle / teyit satırları HARİÇ) → 7 örnek
+        // Sonraki zamanlanmış: taban = zamanlanmış satırlar — 130 İHLAL satırı (Y1), elle / teyit satırları HARİÇ → 6 örnek
         DbQueryCheckerService.Result after = scheduled(m, BigDecimal.valueOf(100));
-        assertThat(after.ruleResults().get(0).stats().samples()).as("elle / teyit satırı taban değil").isEqualTo(7);
+        assertThat(after.ruleResults().get(0).stats().samples()).as("ihlal / elle / teyit satırı taban değil").isEqualTo(6);
+        assertThat(after.ruleResults().get(0).stats().mean()).isEqualTo(100.0);
         assertThat(after.status()).isEqualTo("OK");
     }
 

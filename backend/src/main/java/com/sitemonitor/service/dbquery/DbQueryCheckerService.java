@@ -183,10 +183,11 @@ public class DbQueryCheckerService {
     private final AppSettingsService settings;
 
     /**
-     * Akıllı kuralların geçmiş okuması (dbq2 D, {@link DbQueryHistory#read}); yokken (elle kurulan testler) geçmiş
-     * "okunamadı" sayılır (kanıt eksikliği — asla sessizce "taban kuruluyor" değil).
+     * Akıllı kuralların geçmiş okuması (dbq2 D, {@link DbQueryHistory#readAll}) — KENDİ sorgu zaman aşımıyla
+     * ({@link DbQueryHistory#timed}, {@value DbQueryHistory#QUERY_TIMEOUT_SECONDS} sn; paylaşılan şablonun soket süresini
+     * beklemez — D6); yokken (elle kurulan testler) geçmiş "okunamadı" sayılır (kanıt eksikliği — asla sessizce "taban
+     * kuruluyor" değil).
      */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private final Permits podPermits = new Permits();
@@ -211,8 +212,12 @@ public class DbQueryCheckerService {
         this.settings = settings;
     }
 
-    /** Testler / elle kurulum: akıllı kural geçmişinin okunacağı veritabanı. */
-    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    /** Akıllı kural geçmişinin okunacağı veritabanı (Spring; testler / elle kurulum da) — zaman aşımlı kopya saklanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = DbQueryHistory.timed(jdbc); }
+
+    /** Test: geçmiş okumasının şablonu (zaman aşımı denetimi). */
+    org.springframework.jdbc.core.JdbcTemplate historyJdbc() { return jdbc; }
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
@@ -746,8 +751,8 @@ public class DbQueryCheckerService {
                 if (at != null) ref = at;
             }
             DbQueryHistory.Plan plan = DbQueryHistory.plan(smart, ref, m == null ? null : m.getIntervalSeconds());
-            List<DbQueryHistory.Row> rows = DbQueryHistory.read(jdbc, monitorId, beforeAt, beforeId, plan);
-            return DbQueryHistory.histories(smart, rows, plan, sqlHash);
+            DbQueryHistory.Read read = DbQueryHistory.readAll(jdbc, monitorId, beforeAt, beforeId, plan);
+            return DbQueryHistory.histories(smart, read, plan, sqlHash);
         } catch (RuntimeException e) {
             log.warn("Akıllı kural geçmişi okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
             for (DbQueryRules.Rule r : smart) notes.putIfAbsent(r.id(), DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);

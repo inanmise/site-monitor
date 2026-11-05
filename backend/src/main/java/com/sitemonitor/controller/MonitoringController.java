@@ -5431,6 +5431,7 @@ public class MonitoringController {
         DbConnectionProfile profile = resolveDbqProfile(session, body, m, errs);
         applyDbQueryFields(m, body, true, errs);
         DbqSchedule sched = dbqSchedule(m, body, true, errs);
+        dbqRuleRetention(m, sched, errs);
         List<Map<String, Object>> violations = dbqGuard(m, profile, true, errs);
         throwDbqErrors(errs, violations, sched.code());
         // Ad TÜM takımlarda tekil (K1) — erken ret (maliyet ön kontrolüne gitmeden); kesin karar kayıtta ad kilidi altında
@@ -5493,6 +5494,8 @@ public class MonitoringController {
         DbConnectionProfile profile = resolveDbqProfile(session, body, m, errs);
         applyDbQueryFields(m, body, false, errs);
         DbqSchedule sched = dbqSchedule(m, body, false, errs);
+        // Saklama denetimi yalnız kurallar ya da zamanlama değiştiyse (değişmeyen kayıtlı değer yeniden denetlenmez)
+        if (!Objects.equals(oldRules, m.getRulesJson()) || sched.spec() != null) dbqRuleRetention(m, sched, errs);
         boolean queryChanged = !Objects.equals(oldSql, m.getSqlText()) || !Objects.equals(oldProfile, m.getProfileId());
         List<Map<String, Object>> violations = dbqGuard(m, profile, queryChanged, errs);
         throwDbqErrors(errs, violations, sched.code());
@@ -6062,15 +6065,33 @@ public class MonitoringController {
 
         Instant now = Instant.now();
         Instant from = now.minus(java.time.Duration.ofDays(days));
+        DbQueryCheckRepository checks = dbqCheckRepo();
+        // Geri bakış (dbq2 inceleme D1): mevsimsel kurallar ZAMANLA, mevsimsiz akıllı kurallar canlıyla AYNI çalıştırma SAYISIYLA
         long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules, mon.getIntervalSeconds());
-        String readFrom = ISO.format(from.minusMillis(lookback));
+        Instant readStart = from.minusMillis(lookback);
+        int lookbackRuns = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackRuns(rules);
+        if (lookbackRuns > 0) {
+            List<String> before = checks.backtestRunsBefore(id, ISO.format(from),
+                    PageRequest.of(0, lookbackRuns));
+            Instant oldest = before == null || before.isEmpty() ? null
+                    : com.sitemonitor.service.dbquery.DbQueryCheckerService.parseIso(before.get(before.size() - 1));
+            if (oldest != null && oldest.isBefore(readStart)) readStart = oldest;
+        }
+        String readFrom = ISO.format(readStart);
+        // Satır tavanı EN ESKİ kısmı keser (en yeni çalıştırmalar her zaman değerlendirilir): tavandan fazla satır varsa okuma,
+        // yeniden eskiye sıradaki tavan konumundaki satırdan başlar
+        boolean truncated = false;
+        List<String> cut = checks.backtestNewestFrom(id, readFrom,
+                PageRequest.of(DBQUERY_BACKTEST_MAX_ROWS - 1, 1));
+        if (cut != null && !cut.isEmpty() && cut.get(0) != null && cut.get(0).compareTo(readFrom) > 0) {
+            readFrom = cut.get(0);
+            truncated = true;
+        }
         com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
                 rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
         long deadline = System.currentTimeMillis() + DBQUERY_BACKTEST_BUDGET_MS;
         long after = 0;
         int read = 0;
-        boolean truncated = false;
-        DbQueryCheckRepository checks = dbqCheckRepo();
         while (true) {
             List<Object[]> page = checks.backtestPage(id, readFrom, after, DBQUERY_BACKTEST_PAGE);
             if (page == null || page.isEmpty()) break;
@@ -6083,7 +6104,11 @@ public class MonitoringController {
                 read++;
             }
             if (page.size() < DBQUERY_BACKTEST_PAGE) break;
-            if (read >= DBQUERY_BACKTEST_MAX_ROWS || System.currentTimeMillis() > deadline) { truncated = true; break; }
+            // Güvenlik sınırı (tavan yukarıda en eskiyi kesti; aynı anlı satırlar için bir sayfa pay)
+            if (read >= DBQUERY_BACKTEST_MAX_ROWS + DBQUERY_BACKTEST_PAGE || System.currentTimeMillis() > deadline) {
+                truncated = true;
+                break;
+            }
         }
         Map<String, Object> out = bt.report(truncated);
         out.put("days", days);
@@ -6210,6 +6235,8 @@ public class MonitoringController {
                 : dbqGuardResult(m.getSqlText(), profile);
         DbQuerySqlGuard.Shape shape = g == null ? null : g.shape();
         out.addAll(dbqShapeWarnings(shape, DbQueryRules.fromJson(m.getRulesJson())));
+        // dbq2 inceleme O1: mevsimsel anomali + günü / haftayı bölmeyen aralık → eşleşme nadir (engellemez)
+        out.addAll(DbQueryRules.smartWarnings(DbQueryRules.fromJson(m.getRulesJson()), m.getIntervalSeconds()));
         if (Boolean.FALSE.equals(m.getMailIncludeRows())) return out;
         List<String> known = resultColumns != null ? resultColumns : shape == null || !shape.known() ? List.of() : shape.columns();
         List<String> mailCols = dbqEffectiveMailColumns(m, known);
@@ -6812,6 +6839,26 @@ public class MonitoringController {
 
     private java.util.Set<java.time.LocalDate> dbqHolidays() {
         return holidayCalendar == null ? java.util.Set.of() : holidayCalendar.days();
+    }
+
+    /**
+     * Akıllı kural tabanı saklama süresi içinde dolabilir mi (dbq2 inceleme O1): dolamayacaksa {@code rules[N].min_samples}
+     * alan hatası. Aralık = gövdedeki geçerli zamanlamanın ETKİN aralığı (CRON: ortanca), yoksa kayıtlı aralık. Kural alan
+     * hatası zaten varsa atlanır.
+     */
+    private void dbqRuleRetention(DbQueryMonitor m, DbqSchedule sched, Map<String, String> errs) {
+        for (String k : errs.keySet()) if (k.startsWith("rules")) return;
+        Integer interval = m.getIntervalSeconds();
+        if (sched != null && sched.spec() != null) {
+            try {
+                interval = DbQuerySchedule.columns(sched.spec(), Instant.now(), dbqHolidays()).intervalSeconds();
+            } catch (RuntimeException e) {
+                // zamanlama hatası kendi alanında bildirilir
+            }
+        }
+        int days = Math.max(1, appSettings.getInt("site.monitor.metrics.dbquery.retention-days", 180));
+        for (DbQueryRules.FieldError fe : DbQueryRules.retentionErrors(DbQueryRules.fromJson(m.getRulesJson()), interval, days))
+            errs.putIfAbsent(fe.field(), fe.message());
     }
 
     /**
