@@ -22,8 +22,8 @@ class SitePagesTest {
                 "https://shop.example.test/about",
                 "https://shop.example.test/about/",               // aynı sayfa (sondaki /)
                 "https://shop.example.test/contact.html",
-                "https://shop.example.test/files/r.pdf",          // uzantı → değil
-                "https://shop.example.test/app.php",              // uzantı → değil
+                "https://shop.example.test/files/r.pdf",          // belge uzantısı → değil
+                "https://shop.example.test/app.php",              // sunucu sayfası (D-4) → evet
                 "https://shop.example.test/",                     // ana sayfanın kendisi
                 "https://shop.example.test",                      // ana sayfa (boş yol)
                 "http://shop.example.test/insecure",              // başka şema
@@ -38,6 +38,7 @@ class SitePagesTest {
         assertThat(got).containsExactly(
                 "https://shop.example.test/about",
                 "https://shop.example.test/contact.html",
+                "https://shop.example.test/app.php",
                 "https://SHOP.example.test/Upper",
                 "https://shop.example.test/old.htm",
                 "https://shop.example.test/search?q=1");
@@ -45,6 +46,41 @@ class SitePagesTest {
                 .containsExactly("https://shop.example.test/about", "https://shop.example.test/contact.html");
         assertThat(SitePages.select(links, MAIN, null, null, 0)).isEmpty();
         assertThat(SitePages.select(null, MAIN, null, null, 5)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("D-4: sunucu sayfaları (.aspx .asp .php .jsp .jspx .cfm .shtml .xhtml .do .action) alınır; belge / görsel / betik / stil alınmaz")
+    void selectServerPages() {
+        List<String> links = List.of(
+                "https://shop.example.test/Hakkimizda.aspx",
+                "https://shop.example.test/eski.asp",
+                "https://shop.example.test/urun.php?id=3",
+                "https://shop.example.test/app/liste.jsp",
+                "https://shop.example.test/app/sayfa.jspx",
+                "https://shop.example.test/takvim.cfm",
+                "https://shop.example.test/inc/menu.shtml",
+                "https://shop.example.test/faces/giris.xhtml",
+                "https://shop.example.test/islem.do",
+                "https://shop.example.test/kayit.action",
+                "https://shop.example.test/RAPOR.ASPX",
+                "https://shop.example.test/f/a.pdf",
+                "https://shop.example.test/f/b.docx",
+                "https://shop.example.test/i/c.png",
+                "https://shop.example.test/j/d.js",
+                "https://shop.example.test/s/e.css",
+                "https://shop.example.test/x.zip");
+        assertThat(SitePages.select(links, MAIN, null, null, 20)).containsExactly(
+                "https://shop.example.test/Hakkimizda.aspx",
+                "https://shop.example.test/eski.asp",
+                "https://shop.example.test/urun.php?id=3",
+                "https://shop.example.test/app/liste.jsp",
+                "https://shop.example.test/app/sayfa.jspx",
+                "https://shop.example.test/takvim.cfm",
+                "https://shop.example.test/inc/menu.shtml",
+                "https://shop.example.test/faces/giris.xhtml",
+                "https://shop.example.test/islem.do",
+                "https://shop.example.test/kayit.action",
+                "https://shop.example.test/RAPOR.ASPX");
     }
 
     @Test
@@ -123,6 +159,11 @@ class SitePagesTest {
                 .isEqualTo(1000L + 800 + 600 + 300 + 5000 + 20_000 + 7000);
         assertThat(SitePages.scanned(pages)).isEqualTo(3);
         assertThat(SitePages.anyCapped(pages)).isTrue();
+        assertThat(s.get("incomplete")).as("O-3: taranmayan sayfa site eksikliğidir").isEqualTo(true);
+
+        // Açılamayan (failed) sayfa eksiklik değildir — sonuçtur
+        Map<String, Object> complete = SitePages.section(List.of(pages.get(0), pages.get(1), pages.get(3)));
+        assertThat(complete.get("incomplete")).isEqualTo(false);
     }
 
     @Test

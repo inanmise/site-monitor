@@ -16794,7 +16794,7 @@ export const TR = {
   'help.set.site.monitor.page.resource-scan.max-pages':
     'Ne işe yarar: Çok sayfalı kaynak analizinde taranacak en fazla sayfa (izlemenin sayfası dahil). İç sayfalar ana sayfadaki bağlantılardan, aynı sunucudaki HTML sayfaları sırasıyla seçilir; analizi başlatan kişi daha azını seçebilir.\nFaydası: Sitenin geneli tek analizde görülür; sayfalar arası ortak dosyalar bir kez indirilir.\nÖnerilen değer: 10 sayfa (varsayılan; 2–20 arası). Sayfa arttıkça analiz uzar ve hedef siteye daha çok istek gider.',
   'help.set.site.monitor.page.resource-scan.site-max-seconds':
-    'Ne işe yarar: Çok sayfalı kaynak analizinin TÜM site için tek süre bütçesi; süre dolunca biten sayfalar raporlanır, kalanlar "taranmadı" olarak listelenir. Toplam indirme ve nesne sınırları da tüm site için tektir.\nFaydası: Çok sayfalı analiz sunucuyu ve hedef siteyi sınırsız meşgul edemez.\nÖnerilen değer: 900 saniye (varsayılan; 120–1800 arası).',
+    'Ne işe yarar: Çok sayfalı kaynak analizinin TÜM site için tek süre bütçesi; süre dolunca biten sayfalar raporlanır, kalanlar "taranmadı" olarak listelenir. Toplam indirme ve nesne sınırları da tüm site için tektir.\nFaydası: Çok sayfalı analiz sunucuyu ve hedef siteyi sınırsız meşgul edemez.\nÖnerilen değer: 900 saniye (varsayılan ve en çok; 120–900 arası).',
   'help.set.site.monitor.page.resource-scan.retention-days':
     'Ne işe yarar: Kaynak analizi özetlerinin (not, yükleme süresi, sayfa boyutu — geçmiş ve grafik) saklama süresi.\nFaydası: Bir yıllık iyileşme eğilimi görülür. Nesne ayrıntısı her izlemede yalnız son 20 çalıştırmada tutulur.\nÖnerilen değer: 365 gün (varsayılan; en az 30).',
   'help.set.site.monitor.page.max-resources':

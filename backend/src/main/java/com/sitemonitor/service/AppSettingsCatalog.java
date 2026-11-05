@@ -198,7 +198,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.resource-scan.max-total-mb",       "monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.request-timeout-ms", "monitoring", Type.INT),
         // Çok sayfalı kaynak analizi (prs3 G, 2026-11): en çok sayfa (ana sayfa dahil, 2–20) ve tüm sitenin süre bütçesi
-        // (sn, 120–1800) — PageResourceScanService.siteLimits, aralık dışı → varsayılan.
+        // (sn, 120–900; D-5) — PageResourceScanService.siteLimits, aralık dışı → varsayılan.
         new Setting("site.monitor.page.resource-scan.max-pages",          "monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.site-max-seconds",   "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
