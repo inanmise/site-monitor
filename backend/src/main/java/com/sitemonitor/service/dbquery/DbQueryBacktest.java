@@ -22,6 +22,15 @@ import java.util.Map;
  * mevsimsel = dünün / geçen haftanın aynı saatine en yakın uygun satır, ± min(aralığın yarısı, 30 dk)). Birleşim ANY / ALL
  * canlı değerlendiriciyle aynı. Alarm sayımı: teyit / kurtarma yeniden ölçümleri saklanmadığından ardışık ihlal eden
  * çalıştırmalar TEK alarm sayılır; değerlendirilebilen ihlalsiz bir çalıştırma alarmı kapatır, değerlendirilemeyen kapatmaz.
+ *
+ * <p>Akıllı kurallar (olağan dışı / donmuş değer, dbq2 D) KAYAN geçmişle yeniden oynatılır: her satırda kuralın o ana kadarki
+ * geçmişi (canlı {@link DbQueryHistory} ile aynı kural — mevsimsiz: son {@code window} satır, değeri olmayan satır örnek
+ * değil; donmuş: ardışık değerler, değeri olmayan satır diziyi kırar; mevsimsel: önceki günlerin / haftaların aynı saatine
+ * tolerans içindeki en yakın satır) aynı hesapla ({@link DbQueryEvaluator#anomalyAgainst},
+ * {@link DbQueryEvaluator#frozenAgainst}) değerlendirilir, sonra satırın ölçüsü geçmişe eklenir. Başka sorgulu, kuralın
+ * saklı sonucu olmayan ya da ölçüm tanımı farklı bir satır geçmişi SIFIRLAR (canlıda yürüyüşün durduğu yer). "Taban
+ * kuruluyor" çalıştırması değerlendirilmiş sayılmaz (ihlal değil, kanıt eksikliği değil). Bellek sınırlı: mevsimsiz pencere ≤
+ * 200 değer; mevsimsel tampon yalnız {@code window} gün / hafta (+ tolerans) geriye.
  */
 public final class DbQueryBacktest {
 
@@ -47,6 +56,10 @@ public final class DbQueryBacktest {
     private final Map<String, Double> lastMeasure = new HashMap<>();
     /** Mevsimsel değişim kuralı başına: (an, ölçü) penceresi — en çok 7 gün + tolerans. */
     private final Map<String, Deque<long[]>> seasonal = new HashMap<>();
+    /** Akıllı kural başına kayan geçmiş. */
+    private final Map<String, SmartState> smart = new HashMap<>();
+    /** Akıllı kuralların geriye okuma üst sınırı (pencere başı için; daha uzun mevsimsel geçmiş pencerenin başında kurulur). */
+    public static final long MAX_SMART_LOOKBACK_MS = 60L * 86_400_000L;
 
     /**
      * @param from        değerlendirilecek pencerenin başı — öncesindeki satırlar yalnız TABAN olarak kullanılır
@@ -62,15 +75,40 @@ public final class DbQueryBacktest {
         for (DbQueryRules.Rule r : this.rules) perRule.put(r.id(), new int[5]);
     }
 
-    /** Pencereden ne kadar geri satır okunmalı (mevsimsel taban için): yoksa 0. */
+    /** Pencereden ne kadar geri satır okunmalı (mevsimsel taban için): yoksa 0. Aralık bilinmiyorsa 300 sn sayılır. */
     public static long lookbackMs(List<DbQueryRules.Rule> rules) {
+        return lookbackMs(rules, null);
+    }
+
+    /**
+     * Pencerenin başındaki çalıştırmaların da tabanı olsun diye pencereden ne kadar geri satır okunmalı: değişim kuralının
+     * mevsimsel tabanı (1 / 7 gün + tolerans), akıllı kuralların geçmişi (mevsimsiz: pencere × aralık × 1,5 + 1 sa; donmuş:
+     * dizi × aralık × 1,5 + 1 sa; günlük / haftalık: pencere gün / hafta + tolerans — en çok {@link #MAX_SMART_LOOKBACK_MS}).
+     */
+    public static long lookbackMs(List<DbQueryRules.Rule> rules, Integer intervalSec) {
         long out = 0;
         if (rules == null) return 0;
+        long intervalMs = Math.max(60_000L, (intervalSec == null || intervalSec <= 0 ? 300L : intervalSec) * 1000L);
+        long slack = 31L * 60_000L;
         for (DbQueryRules.Rule r : rules) {
-            if (!DbQueryRules.KIND_CHANGE.equals(r.kind()) || r.change() == null) continue;
-            String b = r.change().baselineOrPrevious();
-            if (DbQueryRules.BASELINE_LAST_WEEK.equals(b)) out = Math.max(out, 7L * 86_400_000L + 31L * 60_000L);
-            else if (DbQueryRules.BASELINE_YESTERDAY.equals(b)) out = Math.max(out, 86_400_000L + 31L * 60_000L);
+            if (r == null) continue;
+            if (DbQueryRules.KIND_CHANGE.equals(r.kind()) && r.change() != null) {
+                String b = r.change().baselineOrPrevious();
+                if (DbQueryRules.BASELINE_LAST_WEEK.equals(b)) out = Math.max(out, 7L * 86_400_000L + slack);
+                else if (DbQueryRules.BASELINE_YESTERDAY.equals(b)) out = Math.max(out, 86_400_000L + slack);
+                continue;
+            }
+            long need;
+            if (DbQueryRules.KIND_FROZEN.equals(r.kind())) {
+                need = DbQueryRules.frozenOf(r).runsMax() * intervalMs * 3 / 2 + 3_600_000L;
+            } else if (DbQueryRules.KIND_ANOMALY.equals(r.kind())) {
+                DbQueryRules.Anomaly a = DbQueryRules.anomalyOf(r);
+                need = DbQueryRules.SEASON_NONE.equals(a.season()) ? a.window() * intervalMs * 3 / 2 + 3_600_000L
+                        : DbQueryHistory.seasonDays(a.season(), a.window()) * 86_400_000L + slack;
+            } else {
+                continue;
+            }
+            out = Math.max(out, Math.min(MAX_SMART_LOOKBACK_MS, need));
         }
         return out;
     }
@@ -93,6 +131,7 @@ public final class DbQueryBacktest {
         }
         if (!sameQuery) {
             if (inWindow) skippedOtherQuery++;
+            for (SmartState st : smart.values()) st.clear(true);   // başka sorgu: akıllı kuralların tabanı sıfırlanır
             return;
         }
         List<Verdict> verdicts = new ArrayList<>();
@@ -124,6 +163,7 @@ public final class DbQueryBacktest {
     private record Verdict(boolean evaluated, boolean passed, String level, boolean inconclusive) {}
 
     private Verdict evaluate(DbQueryRules.Rule r, DbQueryEvaluator.RuleResult sr, Instant at, int[] pr, boolean inWindow) {
+        if (DbQueryRules.isSmart(r.kind())) return smart(r, sr, at, pr, inWindow);
         if (sr == null) return new Verdict(false, true, "NONE", true);
         if (inWindow) pr[3]++;
         boolean legacyText = DbQueryRules.KIND_TEXT_MATCH.equals(r.kind()) && sr.fingerprint() == null;
@@ -188,6 +228,146 @@ public final class DbQueryBacktest {
         if (prev == null) return new Verdict(false, true, "NONE", false);
         DbQueryEvaluator.RuleResult rr = DbQueryEvaluator.changeAgainst(r, base, prev, null, "", false);
         return new Verdict(true, rr.passed(), rr.level(), false);
+    }
+
+    // ── Akıllı kurallar (dbq2 D) ─────────────────────────────────────────────
+
+    private Verdict smart(DbQueryRules.Rule r, DbQueryEvaluator.RuleResult sr, Instant at, int[] pr, boolean inWindow) {
+        SmartState st = smart.computeIfAbsent(r.id(), k -> new SmartState());
+        if (sr == null) {   // kural o satırda yoktu (sonradan eklendi): geçmiş buradan başlar
+            st.clear(false);
+            return new Verdict(false, true, "NONE", true);
+        }
+        if (inWindow) pr[3]++;
+        if (!DbQueryEvaluator.sameMeasureDefinition(sr, r)) {
+            st.clear(true);
+            return new Verdict(false, true, "NONE", true);
+        }
+        if (inWindow) pr[4]++;
+        Double m = sr.measure() != null && Double.isFinite(sr.measure()) ? sr.measure() : null;
+        Verdict v;
+        if (m == null) {
+            v = new Verdict(false, true, "NONE", DbQueryEvaluator.isInconclusive(sr.kind(), sr.note()));
+        } else {
+            DbQueryEvaluator.History h = st.history(r, at.toEpochMilli(), toleranceMs);
+            DbQueryEvaluator.RuleResult rr = DbQueryRules.KIND_ANOMALY.equals(r.kind())
+                    ? DbQueryEvaluator.anomalyAgainst(r, m, h, null, null, "", false)
+                    : DbQueryEvaluator.frozenAgainst(r, m, h, null, null, "", false);
+            // "taban kuruluyor" = ihlal değil, kanıt eksikliği değil (canlı değerlendiriciyle aynı)
+            v = rr.evaluated() ? new Verdict(true, rr.passed(), rr.level(), false) : new Verdict(false, true, "NONE", false);
+        }
+        st.add(r, at.toEpochMilli(), m == null ? Double.NaN : m);
+        if (inWindow && v.evaluated()) {
+            pr[0]++;
+            if ("CRITICAL".equals(v.level())) pr[2]++;
+            else if ("WARNING".equals(v.level())) pr[1]++;
+        }
+        return v;
+    }
+
+    /**
+     * Akıllı kuralın kayan geçmişi: son satırlar (en yeni başta; NaN = değeri olmayan satır) ve mevsimsel (an, ölçü) tamponu
+     * (zaman sırasıyla). Sınırlı: son satırlar ≤ pencere / dizi; tampon yalnız {@code window} gün / hafta + tolerans geriye.
+     */
+    private static final class SmartState {
+        final ArrayDeque<Double> recent = new ArrayDeque<>();
+        long[] times = new long[64];
+        double[] values = new double[64];
+        int start, end;
+        boolean reset;
+
+        void clear(boolean definitionChanged) {
+            recent.clear();
+            start = end = 0;
+            reset = definitionChanged;
+        }
+
+        void add(DbQueryRules.Rule r, long at, double value) {
+            int keep;
+            if (DbQueryRules.KIND_FROZEN.equals(r.kind())) {
+                keep = Math.max(1, DbQueryRules.frozenOf(r).runsMax() - 1);
+            } else {
+                DbQueryRules.Anomaly a = DbQueryRules.anomalyOf(r);
+                if (!DbQueryRules.SEASON_NONE.equals(a.season())) {
+                    addSeasonal(at, value, DbQueryHistory.seasonDays(a.season(), a.window()) * DbQueryHistory.DAY_MS
+                            + DbQueryHistory.SEASONAL_TOLERANCE_MAX_MS + 1_000);
+                    reset = false;
+                    return;
+                }
+                keep = a.window();
+            }
+            recent.addFirst(value);
+            while (recent.size() > keep) recent.removeLast();
+            reset = false;
+        }
+
+        private void addSeasonal(long at, double value, long horizonMs) {
+            // Zaman sırası korunur (satırlar kimlik sırasıyla gelir; nadir sıra dışı satır doğru yere yerleşir)
+            if (end == times.length) compact();
+            int pos = end;
+            while (pos > start && times[pos - 1] > at) pos--;
+            System.arraycopy(times, pos, times, pos + 1, end - pos);
+            System.arraycopy(values, pos, values, pos + 1, end - pos);
+            times[pos] = at;
+            values[pos] = value;
+            end++;
+            long cutoff = times[end - 1] - horizonMs;
+            while (start < end && times[start] < cutoff) start++;
+        }
+
+        private void compact() {
+            int n = end - start;
+            if (n * 2 > times.length) {   // tampon dolu — büyüt
+                times = java.util.Arrays.copyOf(java.util.Arrays.copyOfRange(times, start, end), times.length * 2);
+                values = java.util.Arrays.copyOf(java.util.Arrays.copyOfRange(values, start, end), values.length * 2);
+            } else {
+                System.arraycopy(times, start, times, 0, n);
+                System.arraycopy(values, start, values, 0, n);
+            }
+            start = 0;
+            end = n;
+        }
+
+        /** O satırın (an {@code at}) geçmişi — canlı {@link DbQueryHistory#histories} kuralıyla. */
+        DbQueryEvaluator.History history(DbQueryRules.Rule r, long at, long toleranceMs) {
+            List<Double> out = new ArrayList<>();
+            if (DbQueryRules.KIND_FROZEN.equals(r.kind())) {
+                boolean ended = false;
+                for (Double x : recent) {
+                    if (x.isNaN()) { ended = true; break; }
+                    out.add(x);
+                }
+                return new DbQueryEvaluator.History(out, ended, reset);
+            }
+            DbQueryRules.Anomaly a = DbQueryRules.anomalyOf(r);
+            if (DbQueryRules.SEASON_NONE.equals(a.season())) {
+                for (Double x : recent) if (!x.isNaN()) out.add(x);
+                return new DbQueryEvaluator.History(out, false, reset);
+            }
+            for (int k = 1; k <= a.window(); k++) {
+                long target = at - DbQueryHistory.seasonDays(a.season(), k) * DbQueryHistory.DAY_MS;
+                int i = nearest(target);
+                if (i < 0 || Math.abs(times[i] - target) > toleranceMs) continue;
+                if (!Double.isNaN(values[i])) out.add(values[i]);
+            }
+            return new DbQueryEvaluator.History(out, false, reset);
+        }
+
+        /** Hedefe en yakın tampon girdisi (ikili arama) ya da -1. */
+        private int nearest(long target) {
+            if (end <= start) return -1;
+            int lo = start, hi = end - 1;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (times[mid] < target) lo = mid + 1;
+                else hi = mid;
+            }
+            // Eşit uzaklıkta YENİ olan (canlı okuma yeniden eskiye yürür, ilk bulunanı tutar); aynı anın son girdisi
+            while (lo + 1 < end && times[lo + 1] == times[lo]) lo++;
+            int best = lo;
+            if (lo > start && Math.abs(times[lo - 1] - target) < Math.abs(times[lo] - target)) best = lo - 1;
+            return best;
+        }
     }
 
     /** ANY / ALL birleşimi (canlı değerlendiriciyle aynı); karar verilemiyorsa null. */

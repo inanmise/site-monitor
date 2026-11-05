@@ -35,7 +35,8 @@ import java.util.function.IntSupplier;
  * Bir izlemenin tek çalıştırmasını uçtan uca yürütür (sözleşme §2–§3): bağlantıyı bulur ve parolayı çözer, sorguyu YENİDEN
  * denetler ({@link DbQuerySqlGuard}), eşzamanlılık izinlerini alır (pod / bağlantı), çalıştırır ({@link DbQueryRunner}),
  * kuralları değerlendirir ({@link DbQueryEvaluator}; değişim kuralının tabanı {@code DbQueryCheckRepository
- * .findRecentScheduledOk} — {@link Run}), yavaş sorguyu işaretler, mail / alarm satırlarını seçer + maskeler, bağlantı
+ * .findRecentScheduledOk} — {@link Run}; akıllı kuralların — olağan dışı / donmuş değer — geçmişi {@link DbQueryHistory}, TEK
+ * sorgu), yavaş sorguyu işaretler, mail / alarm satırlarını seçer + maskeler, bağlantı
  * sağlığını yazar. Kontrol satırını YAZMAZ ve alarm DEĞERLENDİRMEZ (zamanlayıcının işi). Asla fırlatmaz.
  *
  * <p><b>İzinler</b> canlı ayardan okunur ({@code site.monitor.dbquery.max-concurrency}, {@code …per-connection-concurrency})
@@ -181,6 +182,13 @@ public class DbQueryCheckerService {
     private final DbQueryRunner runner;
     private final AppSettingsService settings;
 
+    /**
+     * Akıllı kuralların geçmiş okuması (dbq2 D, {@link DbQueryHistory#read}); yokken (elle kurulan testler) geçmiş
+     * "okunamadı" sayılır (kanıt eksikliği — asla sessizce "taban kuruluyor" değil).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private final Permits podPermits = new Permits();
     /** İzin bekleme süreleri (ms) — testler kısaltır. */
     private volatile long scheduledWaitMs = SCHEDULED_WAIT_MS, interactiveWaitMs = INTERACTIVE_WAIT_MS,
@@ -202,6 +210,9 @@ public class DbQueryCheckerService {
         this.runner = runner;
         this.settings = settings;
     }
+
+    /** Testler / elle kurulum: akıllı kural geçmişinin okunacağı veritabanı. */
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
@@ -663,11 +674,17 @@ public class DbQueryCheckerService {
      */
     private DbQueryEvaluator.Baselines baselines(DbQueryMonitor m, Long monitorId, Run run, Anchor anchor,
                                                  List<DbQueryRules.Rule> rules, String sqlHash) {
-        List<DbQueryRules.Rule> change = new ArrayList<>();
-        for (DbQueryRules.Rule r : rules) if (DbQueryRules.KIND_CHANGE.equals(r.kind())) change.add(r);
-        if (monitorId == null || change.isEmpty()) return DbQueryEvaluator.Baselines.NONE;
+        List<DbQueryRules.Rule> change = new ArrayList<>(), smart = new ArrayList<>();
+        for (DbQueryRules.Rule r : rules) {
+            if (DbQueryRules.KIND_CHANGE.equals(r.kind())) change.add(r);
+            else if (DbQueryRules.isSmart(r.kind())) smart.add(r);
+        }
+        if (monitorId == null || (change.isEmpty() && smart.isEmpty())) return DbQueryEvaluator.Baselines.NONE;
         Map<String, Double> measures = new java.util.HashMap<>();
         Map<String, String> notes = new java.util.HashMap<>();
+        Map<String, DbQueryEvaluator.History> histories = smart.isEmpty() ? Map.of()
+                : smartHistories(m, monitorId, run, anchor, smart, sqlHash, notes);
+        if (change.isEmpty()) return new DbQueryEvaluator.Baselines(measures, notes, histories);
         boolean needPrevious = false, needSeasonal = false;
         for (DbQueryRules.Rule r : change) {
             if (DbQueryRules.BASELINE_PREVIOUS.equals(r.change() == null ? null : r.change().baselineOrPrevious())) needPrevious = true;
@@ -696,7 +713,46 @@ public class DbQueryCheckerService {
             }
         }
         if (needSeasonal) seasonal(m, monitorId, run, anchor, change, sqlHash, measures, notes);
-        return new DbQueryEvaluator.Baselines(measures, notes);
+        return new DbQueryEvaluator.Baselines(measures, notes, histories);
+    }
+
+    /**
+     * Akıllı kuralların geçmişi (dbq2 D) — TEK sorgu ({@link DbQueryHistory}). Başvuru ({@link Run}): zamanlanmış çalıştırmada
+     * şimdi ve tüm zamanlanmış satırlar; teyit / kurtarmada zinciri başlatan satırdan ({@link Anchor}) ÖNCEKİ satırlar (taban
+     * zincir boyunca sabit); elle kontrolde son zamanlanmış satırdan önceki satırlar (açık alarmı tetikleyen değer tabanı
+     * şişirmesin). Elle / teyit satırları zaten bant dışıdır. Okuma hatası → kural başına
+     * {@link DbQueryEvaluator#NOTE_PREVIOUS_UNREADABLE} (kanıt eksikliği).
+     */
+    private Map<String, DbQueryEvaluator.History> smartHistories(DbQueryMonitor m, Long monitorId, Run run, Anchor anchor,
+                                                                 List<DbQueryRules.Rule> smart, String sqlHash,
+                                                                 Map<String, String> notes) {
+        try {
+            if (jdbc == null) throw new IllegalStateException("geçmiş okuyucusu yok");
+            String beforeAt = null;
+            Long beforeId = null;
+            Instant ref = Instant.now();
+            if (run == Run.RECHECK && anchor != null && anchor.checkedAt() != null) {
+                beforeAt = anchor.checkedAt();
+                beforeId = anchor.checkId() == null ? -1L : anchor.checkId();
+            } else if (run != Run.SCHEDULED) {
+                DbQueryCheck trigger = checks.findLatestScheduled(monitorId).orElse(null);
+                if (trigger != null && trigger.getCheckedAt() != null) {
+                    beforeAt = trigger.getCheckedAt();
+                    beforeId = trigger.getId() == null ? -1L : trigger.getId();
+                }
+            }
+            if (beforeAt != null) {
+                Instant at = parseIso(beforeAt);
+                if (at != null) ref = at;
+            }
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(smart, ref, m == null ? null : m.getIntervalSeconds());
+            List<DbQueryHistory.Row> rows = DbQueryHistory.read(jdbc, monitorId, beforeAt, beforeId, plan);
+            return DbQueryHistory.histories(smart, rows, plan, sqlHash);
+        } catch (RuntimeException e) {
+            log.warn("Akıllı kural geçmişi okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+            for (DbQueryRules.Rule r : smart) notes.putIfAbsent(r.id(), DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
+            return Map.of();
+        }
     }
 
     /**
