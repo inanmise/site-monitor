@@ -42,6 +42,11 @@ class ActivityControllerDetailTest {
     @MockitoBean com.sitemonitor.service.HttpMetricsService httpMetricsService;
     @MockitoBean ActivityLogRepository repo;
     @MockitoBean ActivityDetailService detailService;
+    // be2 servisleri (liste / zaman çizelgesi / dışa aktarım / kök neden) — denetleyicinin yapıcısı ister
+    @MockitoBean com.sitemonitor.service.activity.ActivityQueryService queries;
+    @MockitoBean com.sitemonitor.service.activity.ActivityTimelineService timelines;
+    @MockitoBean com.sitemonitor.service.activity.ActivityExportService exports;
+    @MockitoBean com.sitemonitor.service.activity.ActivityRelatedService related;
 
     private static MockHttpSession scopedUser(Long... teams) {
         MockHttpSession s = new MockHttpSession();
