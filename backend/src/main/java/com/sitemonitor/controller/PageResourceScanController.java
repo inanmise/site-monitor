@@ -68,8 +68,16 @@ public class PageResourceScanController {
     private final ResourceBudgetService budgets;
     private final ResourceTrendService trends;
 
+    /**
+     * Başlatır. Gövde isteğe bağlı (prs3 G, çok sayfalı): {@code {scope:"site", max_pages:N}} — izlemenin sayfası + aynı
+     * host'taki iç sayfalar, en çok N sayfa (ana sayfa dahil; {@code max_pages} yoksa ayar, varsa
+     * [{@value PageResourceScanService#MAX_PAGES_MIN}, ayarın tavanı]'na kırpılır). Gövdesiz / {@code scope:"page"} = bugünkü tek
+     * sayfa analizi. {@code scope} başka değer, {@code max_pages} tam sayı değil → 400 {@code VALIDATION_FAILED} + {@code field}.
+     */
     @PostMapping("/{id}/resource-scans")
-    public ResponseEntity<Map<String, Object>> start(@PathVariable Long id, HttpSession session) {
+    public ResponseEntity<Map<String, Object>> start(@PathVariable Long id,
+                                                     @RequestBody(required = false) Map<String, Object> reqBody,
+                                                     HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         PageMonitor m = pageMonitorRepo.findById(id).orElse(null);
         if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
@@ -82,13 +90,20 @@ public class PageResourceScanController {
                     "İzlemenin adresi geçersiz (şema ya da sunucu adı yok); analiz çalıştırılamaz. Önce izlemeyi düzenleyin.",
                     "The monitor's address is invalid (no scheme or host name); the analysis cannot run. Edit the monitor first."));
         }
-        PageResourceScanService.Start r = scans.start(m, userKey(session), displayName(session));
+        PageResourceScanService.SiteOptions site = siteOptions(reqBody);
+        PageResourceScanService.Start r = site == null ? scans.start(m, userKey(session), displayName(session))
+                : scans.start(m, userKey(session), displayName(session), site);
         return switch (r.outcome()) {
             case STARTED -> {
                 Object scanId = r.scan() == null ? null : r.scan().get("id");
+                String detail = site == null
+                        ? AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "scan_id", scanId,
+                                "via", r.scan() == null ? null : r.scan().get("via"))
+                        : AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "scan_id", scanId,
+                                "via", r.scan() == null ? null : r.scan().get("via"), "scope", PageResourceScanService.SCOPE_SITE,
+                                "max_pages", site.maxPages());
                 auditService.recordAction("PAGE_RESOURCE_SCAN_RUN", session, "PAGE_MONITOR", String.valueOf(m.getId()),
-                        AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "scan_id", scanId,
-                                "via", r.scan() == null ? null : r.scan().get("via")), null);
+                        detail, null);
                 yield ResponseEntity.status(202).body(ok(r.scan()));
             }
             case RUNNING -> {
@@ -300,6 +315,52 @@ public class PageResourceScanController {
         body.put("data", data);
         body.put("timestamp", ISO.format(Instant.now()));
         return body;
+    }
+
+    /**
+     * Başlatma gövdesi → çok sayfalı seçenek (null = tek sayfa). {@code max_pages}: tam sayı (sayı ya da rakam metni), yoksa
+     * ayarın değeri; [taban, ayarın tavanı]'na kırpılır.
+     */
+    PageResourceScanService.SiteOptions siteOptions(Map<String, Object> body) {
+        if (body == null || body.isEmpty()) return null;
+        Object rawScope = body.get("scope");
+        String scope = rawScope == null ? null : String.valueOf(rawScope).trim().toLowerCase(Locale.ROOT);
+        if (scope == null || scope.isEmpty() || PageResourceScanService.SCOPE_PAGE.equals(scope)) return null;
+        if (!PageResourceScanService.SCOPE_SITE.equals(scope)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("scope", Msg.t(
+                    "Kapsam yalnız \"page\" (tek sayfa) ya da \"site\" (çok sayfalı) olabilir.",
+                    "The scope can only be \"page\" (single page) or \"site\" (several pages)."));
+        }
+        int cap = scans.siteLimits().maxPages();
+        Object raw = body.get("max_pages");
+        int n = cap;
+        if (raw != null) {
+            Integer parsed = wholeNumber(raw);
+            if (parsed == null) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("max_pages", Msg.t(
+                        "En çok sayfa sayısı tam sayı olmalı (" + PageResourceScanService.MAX_PAGES_MIN + "–" + cap + ").",
+                        "The page count must be a whole number (" + PageResourceScanService.MAX_PAGES_MIN + "–" + cap + ")."));
+            }
+            n = Math.max(PageResourceScanService.MAX_PAGES_MIN, Math.min(cap, parsed));
+        }
+        return new PageResourceScanService.SiteOptions(n);
+    }
+
+    /** Tam sayı mı (JSON sayısı ya da en çok 6 haneli rakam metni); değilse null. */
+    static Integer wholeNumber(Object raw) {
+        if (raw instanceof Number num) {
+            double d = num.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d) || d != Math.rint(d)) return null;
+            if (d > 1_000_000 || d < -1_000_000) return d > 0 ? 1_000_000 : -1_000_000;
+            return (int) d;
+        }
+        if (raw instanceof String s) {
+            String t = s.trim();
+            if (t.isEmpty() || t.length() > 6) return null;
+            for (int i = 0; i < t.length(); i++) if (t.charAt(i) < '0' || t.charAt(i) > '9') return null;
+            return Integer.parseInt(t);
+        }
+        return null;
     }
 
     private static ResponseEntity<Map<String, Object>> notFound() {

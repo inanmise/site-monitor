@@ -2641,6 +2641,8 @@ export const TR = {
   'general.lbl.site.monitor.page.resource-scan.max-objects': 'Kaynak analizi azami nesne',
   'general.lbl.site.monitor.page.resource-scan.max-total-mb': 'Kaynak analizi toplam indirme sınırı (MB)',
   'general.lbl.site.monitor.page.resource-scan.request-timeout-ms': 'Kaynak analizi istek zaman aşımı (ms)',
+  'general.lbl.site.monitor.page.resource-scan.max-pages': 'Çok sayfalı kaynak analizi en çok sayfa',
+  'general.lbl.site.monitor.page.resource-scan.site-max-seconds': 'Çok sayfalı kaynak analizi azami süresi (sn)',
   'general.lbl.site.monitor.page.resource-scan.retention-days': 'Kaynak analizi geçmişi saklama (gün)',
   'general.lbl.site.monitor.page.max-resources': 'Sayfa başına azami kaynak',
   'general.lbl.site.monitor.page.resource-concurrency': 'Sayfa kaynak eşzamanlılığı',
@@ -16789,6 +16791,10 @@ export const TR = {
     'Ne işe yarar: Tek taramanın indirebileceği toplam veri.\nFaydası: Büyük belge ve videolar pod\'un bant genişliğini tüketmez; tavan dolunca kalan nesneler atlanır.\nÖnerilen değer: 200 MB (varsayılan; 10–1000 arası). Tek nesne en çok 10 MB okunur, ötesi başlıktan bildirilir.',
   'help.set.site.monitor.page.resource-scan.request-timeout-ms':
     'Ne işe yarar: Kaynak analizinde tek nesnenin yanıt ve indirme için beklenen süresi.\nFaydası: Yavaş nesneler ölçülür ama tarama takılmaz.\nÖnerilen değer: 15000 ms (varsayılan; 2000–60000 arası).',
+  'help.set.site.monitor.page.resource-scan.max-pages':
+    'Ne işe yarar: Çok sayfalı kaynak analizinde taranacak en fazla sayfa (izlemenin sayfası dahil). İç sayfalar ana sayfadaki bağlantılardan, aynı sunucudaki HTML sayfaları sırasıyla seçilir; analizi başlatan kişi daha azını seçebilir.\nFaydası: Sitenin geneli tek analizde görülür; sayfalar arası ortak dosyalar bir kez indirilir.\nÖnerilen değer: 10 sayfa (varsayılan; 2–20 arası). Sayfa arttıkça analiz uzar ve hedef siteye daha çok istek gider.',
+  'help.set.site.monitor.page.resource-scan.site-max-seconds':
+    'Ne işe yarar: Çok sayfalı kaynak analizinin TÜM site için tek süre bütçesi; süre dolunca biten sayfalar raporlanır, kalanlar "taranmadı" olarak listelenir. Toplam indirme ve nesne sınırları da tüm site için tektir.\nFaydası: Çok sayfalı analiz sunucuyu ve hedef siteyi sınırsız meşgul edemez.\nÖnerilen değer: 900 saniye (varsayılan; 120–1800 arası).',
   'help.set.site.monitor.page.resource-scan.retention-days':
     'Ne işe yarar: Kaynak analizi özetlerinin (not, yükleme süresi, sayfa boyutu — geçmiş ve grafik) saklama süresi.\nFaydası: Bir yıllık iyileşme eğilimi görülür. Nesne ayrıntısı her izlemede yalnız son 20 çalıştırmada tutulur.\nÖnerilen değer: 365 gün (varsayılan; en az 30).',
   'help.set.site.monitor.page.max-resources':
