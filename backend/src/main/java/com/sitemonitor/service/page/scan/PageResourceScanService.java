@@ -178,7 +178,7 @@ public class PageResourceScanService {
             + "progress_done, progress_total, grade, grade_letter, load_ms, html_ttfb_ms, html_ms, page_bytes, request_count, "
             + "image_bytes, image_count, document_count, document_bytes, link_count, link_bytes, failed_count, capped, error, "
             + "items_kept, owner_pod, redirect_count, redirect_ms, algorithm_version, cancel_requested, "
-            + "js_bytes, css_bytes, font_bytes, security_score, seo_score, a11y_score, scope, pages_count";
+            + "js_bytes, css_bytes, font_bytes, security_score, seo_score, a11y_score, scope, pages_count, pages_done, pages_total";
 
     static final String SQL_INSERT = "INSERT INTO page_resource_scans (monitor_id, team_id, url, status, via, started_at, "
             + "started_ms, heartbeat_ms, owner_pod, requested_by, progress_done, progress_total, capped, items_kept, "
@@ -202,6 +202,9 @@ public class PageResourceScanService {
             + "link_count = ?, link_bytes = ?, failed_count = ?, capped = ?, analysis_json = ?, items_json = ?, items_kept = TRUE, "
             + "redirect_count = ?, redirect_ms = ?, js_bytes = ?, css_bytes = ?, font_bytes = ?, security_score = ?, "
             + "seo_score = ?, a11y_score = ?, scope = 'site', pages_count = ? WHERE id = ? AND status = 'RUNNING'";
+    /** Çok sayfalı koşunun sayfa ilerlemesi (seçimde toplam, her sayfa kararında bitmiş) — yalnız çalışan satıra. */
+    static final String SQL_SITE_PROGRESS = "UPDATE page_resource_scans SET pages_done = ?, pages_total = ? "
+            + "WHERE id = ? AND status = 'RUNNING'";
     static final String SQL_END = "UPDATE page_resource_scans SET status = ?, finished_at = ?, heartbeat_ms = ?, error = ?, "
             + "html_ttfb_ms = ?, html_ms = ?, redirect_count = ?, redirect_ms = ? WHERE id = ? AND status = 'RUNNING'";
     /** İptal: tek koşullu yazım — çalışan pod bir sonraki kalp atışında satırın artık RUNNING olmadığını görüp durur. */
@@ -579,6 +582,13 @@ public class PageResourceScanService {
         Map<String, Object> progress = new LinkedHashMap<>();
         progress.put("done", intOr(rs, "progress_done"));
         progress.put("total", intOr(rs, "progress_total"));
+        // Çok sayfalı koşunun sayfa ilerlemesi (DB'den — başka pod'un koşusu da görünür); yalnız yazılmışsa
+        Integer pagesDone = intObj(rs, "pages_done");
+        Integer pagesTotal = intObj(rs, "pages_total");
+        if (pagesDone != null || pagesTotal != null) {
+            progress.put("pages_done", pagesDone);
+            progress.put("pages_total", pagesTotal);
+        }
         m.put("progress", progress);
         m.put("grade", intObj(rs, "grade"));
         m.put("grade_letter", rs.getString("grade_letter"));
@@ -1868,19 +1878,34 @@ public class PageResourceScanService {
         pages.add(donePage(s.url(), mainItems, mainR, mainR.capped()));
         int extra = Math.max(0, s.site().maxPages() - 1);
         List<String> urls = SitePages.select(linkUrls, s.url(), base, exclude, extra);
+        int total = 1 + urls.size();
+        sitePagesProgress(s.id(), 1, total);   // ana sayfa bitti; toplam = seçilen sayfalar + ana sayfa
         for (String u : urls) {
             if (run.halted()) return null;
             String why = siteBudgetLeft(run);
             if (why != null) {
                 pages.add(SitePages.Page.skipped(u, why));
-                continue;
+            } else {
+                SitePages.Page pg = scanExtraPage(run, u, exclude);
+                if (pg == null) return null;
+                pages.add(pg);
             }
-            SitePages.Page pg = scanExtraPage(run, u, exclude);
-            if (pg == null) return null;
-            pages.add(pg);
+            sitePagesProgress(s.id(), pages.size(), total);
             run.beat(false);
         }
         return pages;
+    }
+
+    /**
+     * Sayfa ilerlemesini DB'ye yazar (yalnız çalışan satıra; liste ve tek analiz yanıtı {@code progress.pages_done} /
+     * {@code pages_total} olarak okur — başka pod'dan da görünür). Yazılamazsa yalnız ilerleme eksik kalır (ölçüm sürer).
+     */
+    private void sitePagesProgress(long id, int done, int total) {
+        try {
+            jdbc.update(SQL_SITE_PROGRESS, done, total, id);
+        } catch (RuntimeException e) {
+            log.debug("Kaynak analizi sayfa ilerlemesi yazılamadı: {}", e.getClass().getSimpleName());
+        }
     }
 
     /** Bütçe kaldı mı: null = devam; değilse sayfa satırının kodu ({@code NOT_SCANNED:TIME|BYTES|OBJECTS}). */

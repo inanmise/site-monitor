@@ -1984,6 +1984,9 @@ public class SchedulerService {
         patch("ALTER TABLE page_resource_scans ADD COLUMN a11y_score INTEGER");
         patch("ALTER TABLE page_resource_scans ADD COLUMN scope VARCHAR(8)");
         patch("ALTER TABLE page_resource_scans ADD COLUMN pages_count INTEGER");
+        // Çok sayfalı analizin koşu sırasındaki sayfa ilerlemesi (prs3 G, 2026-11) — NULL = tek sayfa / seçimden önce.
+        patch("ALTER TABLE page_resource_scans ADD COLUMN pages_done INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN pages_total INTEGER");
         // Anomali konusu görselleri (2026-10-18): yuva kimliği iss:<bölüm>:<konu>:<n> 40 karakteri aşabilir (bölüm + konu
         // kimliği 40'ar) — TechErrorReportImage.slotId 120. PostgreSQL'de VARCHAR büyütmek tabloyu yeniden yazmaz.
         patch("ALTER TABLE tech_error_report_images ALTER COLUMN slot_id TYPE VARCHAR(120)");
