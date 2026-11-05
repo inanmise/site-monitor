@@ -83,7 +83,19 @@ public final class KeywordBodyAnalyzer {
      */
     public record Input(byte[] body, String contentType, String keyword, boolean caseSensitive, int count,
                         String operator, int threshold, int status, String originalUrl, URI finalUri,
-                        int redirectCount, Collection<String> secrets) {}
+                        int redirectCount, Collection<String> secrets, String text, String usedCharset,
+                        String scope, boolean normalizeWs) {
+        /**
+         * Eski (12 alanlı) kurucu: çağıran gövdeyi UTF-8 ham metinde aradı — çözümleme o okumayı esas alır (alternatif okuma
+         * bildirilen küme). Yeni kontrol yolu {@code text} (bildirilen kümeyle çözülmüş) + {@code usedCharset} + kapsam geçirir.
+         */
+        public Input(byte[] body, String contentType, String keyword, boolean caseSensitive, int count,
+                     String operator, int threshold, int status, String originalUrl, URI finalUri,
+                     int redirectCount, Collection<String> secrets) {
+            this(body, contentType, keyword, caseSensitive, count, operator, threshold, status, originalUrl, finalUri,
+                    redirectCount, secrets, null, null, null, false);
+        }
+    }
 
     /** Çözümleme çıktısı: ipuçları + maskeli alıntı + (tanılama için) alternatif sayımlar. */
     public record Analysis(List<String> hints, String excerpt, Map<String, Object> alternatives, String declaredCharset) {}
@@ -99,13 +111,16 @@ public final class KeywordBodyAnalyzer {
 
     private static Analysis analyzeUnsafe(Input in) {
         byte[] bytes = in.body() == null ? new byte[0] : in.body();
-        String body = new String(bytes, StandardCharsets.UTF_8);
+        // Kontrolün okuduğu metin: yeni yol çözülmüş metni verir; eski çağıran UTF-8 okudu (kw sözleşmesi §4.2).
+        String body = in.text() != null ? in.text() : new String(bytes, StandardCharsets.UTF_8);
+        String used = in.text() != null ? in.usedCharset() : StandardCharsets.UTF_8.name();
         String kw = in.keyword() == null ? "" : in.keyword();
         boolean cs = in.caseSensitive();
         String declared = declaredCharset(in.contentType(), bytes);
         boolean needMore = needsMore(in.count(), in.operator(), in.threshold());
         List<String> hints = new ArrayList<>();
-        Map<String, Object> alt = alternatives(body, bytes, kw, cs, declared);
+        Charset altCs = in.text() != null ? KeywordText.alternate(used, body) : alternateCharset(declared, body);
+        Map<String, Object> alt = alternatives(body, bytes, kw, cs, altCs, in.scope(), in.normalizeWs());
 
         if (needMore && !kw.isEmpty()) {
             int raw = in.count();
@@ -153,19 +168,30 @@ public final class KeywordBodyAnalyzer {
      * metinde). Hepsi düz {@code indexOf}.
      */
     public static Map<String, Object> alternatives(String body, byte[] bytes, String kw, boolean cs, String declared) {
+        return alternatives(body, bytes, kw, cs, alternateCharset(declared, body), null, false);
+    }
+
+    /**
+     * Kapsam farkındalıklı alternatifler (kw sözleşmesi §4.2–4.3): {@code raw} kontrolün KENDİ okuması (çözülmüş metin, izlemenin
+     * kapsamı + normalleştirmesi); diğerleri aynı kapsamda farklı okumalar — karşılaştırma adil olsun. {@code alt} alternatif
+     * karakter kümesi (yoksa null — sayım 0).
+     */
+    public static Map<String, Object> alternatives(String body, byte[] bytes, String kw, boolean cs, Charset alt,
+                                                   String scope, boolean normalizeWs) {
         Map<String, Object> m = new LinkedHashMap<>();
         if (kw == null || kw.isEmpty()) return m;
-        m.put("raw", count(body, kw, cs));
-        m.put("case_insensitive", count(body, kw, false));
-        String nb = collapseWs(decodeEntities(body));
-        String nk = collapseWs(decodeEntities(kw));
+        String view = KeywordText.view(body, scope, normalizeWs);
+        String needle = KeywordText.needle(kw, scope, normalizeWs);
+        m.put("raw", count(view, needle, cs));
+        m.put("case_insensitive", count(view, needle, false));
+        String nb = KeywordText.normalize(view);
+        String nk = KeywordText.normalize(kw);
         m.put("normalized", nk.isEmpty() ? 0 : count(nb, nk, cs));
         String altName = null;
         int altCount = 0;
-        Charset alt = alternateCharset(declared, body);
         if (alt != null && bytes != null) {
             altName = alt.name();
-            altCount = count(new String(bytes, alt), kw, cs);
+            altCount = count(KeywordText.view(new String(bytes, alt), scope, normalizeWs), needle, cs);
         }
         m.put("charset", altCount);
         m.put("charset_name", altName);
@@ -188,19 +214,9 @@ public final class KeywordBodyAnalyzer {
         return null;
     }
 
-    /** Örtüşmesiz adet — kontrolün kendi sayımıyla AYNI kural (duyarsızda iki taraf {@code toLowerCase(ROOT)}). */
+    /** Örtüşmesiz adet — kontrolün kendi sayımıyla AYNI kural ({@link KeywordFold}: Türkçe İ/I/ı/i katlaması). */
     public static int count(String hay, String needle, boolean caseSensitive) {
-        if (hay == null || needle == null || needle.isEmpty()) return 0;
-        String h = caseSensitive ? hay : hay.toLowerCase(Locale.ROOT);
-        String n = caseSensitive ? needle : needle.toLowerCase(Locale.ROOT);
-        int c = 0;
-        int from = 0;
-        int idx;
-        while ((idx = h.indexOf(n, from)) >= 0) {
-            c++;
-            from = idx + n.length();
-        }
-        return c;
+        return KeywordFold.count(hay, needle, caseSensitive, KeywordFold.MAX_COUNT).count();
     }
 
     /**
@@ -222,10 +238,9 @@ public final class KeywordBodyAnalyzer {
             needle = kw;
         }
         if (needle.isEmpty()) return out;
-        String hay = cs ? text : text.toLowerCase(Locale.ROOT);
-        String n = cs ? needle : needle.toLowerCase(Locale.ROOT);
-        // toLowerCase(ROOT) uzunluğu değiştirebilir (ör. U+0130) — konumlar ancak uzunluk aynıysa ham metne uyar.
-        if (hay.length() != text.length()) { hay = text; n = needle; }
+        // KeywordFold uzunluğu KORUR: katlanmış metindeki konum özgün metindeki konumdur (U+0130 özel dalı gerekmez).
+        String hay = cs ? text : KeywordFold.fold(text);
+        String n = cs ? needle : KeywordFold.fold(needle);
         int from = 0;
         int idx;
         while (out.size() < max && (idx = hay.indexOf(n, from)) >= 0) {
@@ -259,9 +274,10 @@ public final class KeywordBodyAnalyzer {
         }
         String text = visible;
         if (aroundMatch && kw != null && !kw.isEmpty()) {
-            String hay = cs ? visible : visible.toLowerCase(Locale.ROOT);
-            String n = collapseWs(decodeEntities(cs ? kw : kw.toLowerCase(Locale.ROOT)));
-            int idx = hay.length() == visible.length() && !n.isEmpty() ? hay.indexOf(n) : -1;
+            String hay = cs ? visible : KeywordFold.fold(visible);
+            String nk = collapseWs(decodeEntities(kw));
+            String n = cs ? nk : KeywordFold.fold(nk);
+            int idx = !n.isEmpty() ? hay.indexOf(n) : -1;
             if (idx >= 0) {
                 int s = Math.max(0, idx - EXCERPT_MAX / 3);
                 text = (s > 0 ? "…" : "") + visible.substring(s);
@@ -369,6 +385,113 @@ public final class KeywordBodyAnalyzer {
         }
         String s = out.toString().trim();
         return s.length() > outCap ? s.substring(0, outCap) : s;
+    }
+
+    /**
+     * Görünür metin, SATIRLARLA (kw sözleşmesi §4.3 — içerik değişimi parmak izi için): {@link #visibleText} ile AYNI atlama
+     * kuralı; blok etiketleri satır sonu olur, satır içi boşluk teke indirgenir, satır başı / sonu boşluğu ve boş satır düşer.
+     * Tek geçiş, tavanlı.
+     *
+     * @param scanCap taranacak en çok karakter
+     * @param outCap  üretilecek en çok karakter
+     */
+    public static String visibleLines(String html, int scanCap, int outCap) {
+        if (html == null || html.isEmpty()) return "";
+        int n = Math.min(html.length(), Math.max(0, scanCap));
+        StringBuilder out = new StringBuilder(Math.min(Math.max(16, outCap), 8192));
+        boolean space = true;      // satır başı ya da önceki karakter boşluk
+        boolean lineEmpty = true;  // bu satıra henüz görünür karakter yazılmadı
+        int i = 0;
+        while (i < n && out.length() < outCap) {
+            char c = html.charAt(i);
+            if (c == '<') {
+                if (html.startsWith("<!--", i)) {
+                    int e = html.indexOf("-->", i + 4);
+                    i = e < 0 ? n : e + 3;
+                    continue;
+                }
+                int j = i + 1;
+                if (j < n && (html.charAt(j) == '!' || html.charAt(j) == '?')) {
+                    int e = html.indexOf('>', j);
+                    i = e < 0 ? n : e + 1;
+                    continue;
+                }
+                boolean closing = j < n && html.charAt(j) == '/';
+                if (closing) j++;
+                int ns = j;
+                while (j < n && isTagNameChar(html.charAt(j))) j++;
+                if (j == ns || !Character.isLetter(html.charAt(ns))) {   // etiket değil: düz '<'
+                    out.append('<');
+                    space = false;
+                    lineEmpty = false;
+                    i++;
+                    continue;
+                }
+                String name = html.substring(ns, j).toLowerCase(Locale.ROOT);
+                int gt = tagEnd(html, j, n);
+                i = gt < 0 ? n : gt + 1;
+                if (!closing && SKIP.contains(name) && !(gt > 0 && html.charAt(gt - 1) == '/')) {
+                    int close = findClose(html, i, n, name);
+                    i = close < 0 ? n : close;
+                    continue;
+                }
+                if (BLOCK.contains(name) && !lineEmpty) {
+                    trimTrailingSpace(out);
+                    out.append('\n');
+                    space = true;
+                    lineEmpty = true;
+                }
+                continue;
+            }
+            if (c == '&') {
+                int semi = entityEnd(html, i, n);
+                if (semi > 0) {
+                    String dec = decodeEntity(html.substring(i + 1, semi));
+                    if (dec != null) {
+                        for (int k = 0; k < dec.length(); k++) {
+                            char d = dec.charAt(k);
+                            if (Character.isWhitespace(d) || d == ' ') {
+                                if (!space) { out.append(' '); space = true; }
+                            } else {
+                                out.append(d);
+                                space = false;
+                                lineEmpty = false;
+                            }
+                        }
+                        i = semi + 1;
+                        continue;
+                    }
+                }
+            }
+            if (Character.isWhitespace(c) || c == ' ') {
+                if (!space) { out.append(' '); space = true; }
+            } else {
+                out.append(c);
+                space = false;
+                lineEmpty = false;
+            }
+            i++;
+        }
+        trimTrailingSpace(out);
+        String s = out.length() > outCap ? out.substring(0, outCap) : out.toString();
+        // Satır başı boşlukları ve boş satırlar düşer (tek doğrusal geçiş).
+        StringBuilder clean = new StringBuilder(s.length());
+        int st = 0;
+        while (st <= s.length()) {
+            int nl = s.indexOf('\n', st);
+            if (nl < 0) nl = s.length();
+            String line = s.substring(st, nl).trim();
+            if (!line.isEmpty()) {
+                if (clean.length() > 0) clean.append('\n');
+                clean.append(line);
+            }
+            st = nl + 1;
+        }
+        return clean.toString();
+    }
+
+    private static void trimTrailingSpace(StringBuilder b) {
+        while (b.length() > 0 && b.charAt(b.length() - 1) == ' ') b.setLength(b.length() - 1);
     }
 
     private static boolean isTagNameChar(char c) {

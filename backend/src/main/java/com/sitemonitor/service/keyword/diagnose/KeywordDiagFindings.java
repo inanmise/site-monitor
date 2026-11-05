@@ -37,11 +37,14 @@ public final class KeywordDiagFindings {
     public static final String KEYWORD_REDIRECT_BLOCKED = "KEYWORD_REDIRECT_BLOCKED";
     public static final String KEYWORD_BODY_UNREAD = "KEYWORD_BODY_UNREAD";
     public static final String KEYWORD_SLOW = "KEYWORD_SLOW";
+    /** Son (yönlendirmeler sonrası) adres izlemenin beklediği adresle başlamıyor (kw sözleşmesi §10.5). */
+    public static final String KEYWORD_FINAL_URL_MISMATCH = "KEYWORD_FINAL_URL_MISMATCH";
 
     /** TAM liste — i18n kapısı bunu okur. */
     public static final List<String> CODES = List.of(
             KEYWORD_OK, KEYWORD_NOT_FOUND, KEYWORD_FOUND_FORBIDDEN, KEYWORD_COUNT_MISMATCH, KEYWORD_HTTP_ERROR,
-            KEYWORD_EMPTY_BODY, KEYWORD_BODY_TRUNCATED, KEYWORD_REDIRECT_BLOCKED, KEYWORD_BODY_UNREAD, KEYWORD_SLOW);
+            KEYWORD_EMPTY_BODY, KEYWORD_BODY_TRUNCATED, KEYWORD_REDIRECT_BLOCKED, KEYWORD_BODY_UNREAD, KEYWORD_SLOW,
+            KEYWORD_FINAL_URL_MISMATCH);
 
     /** Kontrolün başarısızlık nedeni kodu → tanılama bulgu kodu (koşul aileleri). */
     public static String fromFailureReason(String reason) {
@@ -52,7 +55,9 @@ public final class KeywordDiagFindings {
             case KeywordFailureClassifier.HTTP_STATUS -> KEYWORD_HTTP_ERROR;
             case KeywordFailureClassifier.EMPTY_BODY -> KEYWORD_EMPTY_BODY;
             case KeywordFailureClassifier.BODY_TRUNCATED -> KEYWORD_BODY_TRUNCATED;
-            case KeywordFailureClassifier.REDIRECT_BLOCKED -> KEYWORD_REDIRECT_BLOCKED;
+            case KeywordFailureClassifier.REDIRECT_BLOCKED,
+                 KeywordFailureClassifier.REDIRECT_NOT_FOLLOWED -> KEYWORD_REDIRECT_BLOCKED;   // takip kapalı: aynı "yönlendirme" bulgusu
+            case KeywordFailureClassifier.FINAL_URL_MISMATCH -> KEYWORD_FINAL_URL_MISMATCH;
             default -> KEYWORD_NOT_FOUND;
         };
     }

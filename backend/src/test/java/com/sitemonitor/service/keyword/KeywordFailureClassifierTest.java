@@ -119,10 +119,49 @@ class KeywordFailureClassifierTest {
     }
 
     @Test
-    @DisplayName("katalog: 21 kod, tekrar yok; uzun anahtar kelime ayrıntıda kırpılır")
+    @DisplayName("katalog: 28 kod (kw sözleşmesi §11.2 ile 7 yeni), tekrar yok; uzun anahtar kelime ayrıntıda kırpılır")
     void catalog() {
-        assertThat(CODES).hasSize(21).doesNotHaveDuplicates().contains(KEYWORD_NOT_FOUND, TIMEOUT_READ, SSRF_BLOCKED, UNKNOWN);
+        assertThat(CODES).hasSize(28).doesNotHaveDuplicates().contains(KEYWORD_NOT_FOUND, TIMEOUT_READ, SSRF_BLOCKED, UNKNOWN,
+                FINAL_URL_MISMATCH, REDIRECT_NOT_FOLLOWED, RULES_NOT_MET, SCOPE_NOT_FOUND, SCOPE_INVALID, BODY_TOO_SMALL, BODY_TOO_LARGE);
         Reason r = forCondition(200, 0, "GTE", 1, 10, false, "k".repeat(400));
         assertThat(r.detail()).hasSizeLessThanOrEqualTo(DETAIL_MAX).contains("…");
+        assertThat(CODES).containsAll(REQUEST_FAILURE_CODES);
+        assertThat(REQUEST_FAILURE_CODES).doesNotContain(HTTP_STATUS, KEYWORD_NOT_FOUND, FINAL_URL_MISMATCH);
+    }
+
+    private static Facts facts(int status, int count, String op, int n, Boolean statusOk, Boolean finalOk, boolean follow) {
+        return new Facts(status, count, op, n, 1234, false, "Sepete ekle", statusOk, "2xx", finalOk,
+                "/panel", "https://shop.example.com/login", follow);
+    }
+
+    @Test
+    @DisplayName("kw §6.3 öncelik: yönlendirme (takip kapalı / izlenemedi) → durum kuralı → son URL → boş gövde / kural kodları")
+    void priority() {
+        // takip KAPALI + 3xx + kelime yok → REDIRECT_NOT_FOLLOWED (durum kuralı da tutmasa bile önce)
+        assertThat(forCheck(facts(302, 0, "GTE", 1, false, null, false)).code()).isEqualTo(REDIRECT_NOT_FOLLOWED);
+        // takip AÇIK ama izlenemedi → REDIRECT_BLOCKED (bugünkü)
+        assertThat(forCheck(facts(302, 0, "GTE", 1, false, null, true)).code()).isEqualTo(REDIRECT_BLOCKED);
+        // durum kuralı açık, kabul dışı — kelime koşulu SAĞLANSA bile HTTP_STATUS, ayrıntı "Kabul edilen: …; gelen: …"
+        Reason st = forCheck(facts(503, 3, "GTE", 1, false, null, true));
+        assertThat(st.code()).isEqualTo(HTTP_STATUS);
+        assertThat(st.detail()).startsWith("Kabul edilen: 2xx; gelen: 503").contains("sağlansa bile");
+        // durum kuralı kapalı + ≥ 400 + kelime yok → HTTP_STATUS (bugünkü metin)
+        assertThat(forCheck(facts(500, 0, "GTE", 1, null, null, true)).detail()).startsWith("Sunucu HTTP 500 döndürdü");
+        // durum kuralı 5xx'i KABUL ediyorsa kelime yokluğu kelime kodudur (durum değil)
+        assertThat(forCheck(facts(503, 0, "GTE", 1, true, null, true)).code()).isEqualTo(KEYWORD_NOT_FOUND);
+        // son URL uymadı → FINAL_URL_MISMATCH (kelime yokluğundan önce); ayrıntı beklenen + gelinen adresi söyler
+        Reason fu = forCheck(facts(200, 0, "GTE", 1, true, false, true));
+        assertThat(fu.code()).isEqualTo(FINAL_URL_MISMATCH);
+        assertThat(fu.detail()).contains("/panel").contains("https://shop.example.com/login");
+        // ≥ 400 kural kapalı + son URL uymadı → HTTP_STATUS önce (§6.3 sırası)
+        assertThat(forCheck(facts(404, 0, "GTE", 1, null, false, true)).code()).isEqualTo(HTTP_STATUS);
+        // kurallar temiz → bugünkü kelime kodları
+        assertThat(forCheck(facts(200, 2, "LTE", 0, null, null, true)).code()).isEqualTo(KEYWORD_FOUND_FORBIDDEN);
+        assertThat(forCheck(facts(200, 2, "GTE", 5, null, null, true)).code()).isEqualTo(KEYWORD_COUNT_MISMATCH);
+        assertThat(forCheck(new Facts(200, 0, "GTE", 1, 0, false, "x", null, null, null, null, null, true)).code())
+                .isEqualTo(EMPTY_BODY);
+        // eski giriş forCondition = kuralsız forCheck (geri uyum)
+        assertThat(forCondition(302, 0, "GTE", 1, 10, false, "x").code()).isEqualTo(REDIRECT_BLOCKED);
+        assertThat(forCondition(503, 0, "GTE", 1, 10, false, "x").code()).isEqualTo(HTTP_STATUS);
     }
 }

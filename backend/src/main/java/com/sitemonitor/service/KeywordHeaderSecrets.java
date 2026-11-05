@@ -80,13 +80,50 @@ public class KeywordHeaderSecrets {
         return legacy != null && !legacy.isBlank();
     }
 
-    /** Düz metni şifreleyip alana yazar; boş/null ise alanı temizler. */
+    /**
+     * Düz metni şifreleyip alana yazar; boş/null ise alanı temizler (B9: gövdede {@code customHeaders: null} = kayıtlı başlıkları
+     * kaldır). Biçim HTTP izlemesinin kuralıyla doğrulanır ({@link com.sitemonitor.service.http.HttpRequestRules#validateHeaders},
+     * kw sözleşmesi §5.1 / B8): geçersiz satır artık kontrol anında sessizce atlanmaz, kayıtta 400 {@code customHeaders} döner.
+     *
+     * @throws com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException biçim geçersizse
+     */
     @SuppressWarnings("deprecation")
     public void store(KeywordMonitor m, String plaintext) {
         if (m == null) return;
         String raw = plaintext == null ? null : plaintext.trim();
+        String err = com.sitemonitor.service.http.HttpRequestRules.validateHeaders(raw);
+        if (err != null) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("customHeaders", err);
         m.setCustomHeadersEnc(raw == null || raw.isEmpty() ? null : secretCipher.encrypt(raw));
         m.setCustomHeaders(null);   // eski düz kopya bırakılmaz
+    }
+
+    // ── Basic auth parolası (kw sözleşmesi §5.1, 2026-11-05) — HTTP izlemesinin write-only deseni ─────────────────
+
+    /** Çözülmüş Basic auth parolası; yoksa / çözülemezse (anahtar döndürme) null — kontrol o kimlik olmadan devam eder. */
+    public String basicAuthPass(KeywordMonitor m) {
+        if (m == null || m.getBasicAuthPassEnc() == null || m.getBasicAuthPassEnc().isBlank()) return null;
+        try {
+            return secretCipher.decrypt(m.getBasicAuthPassEnc());
+        } catch (Exception e) {
+            log.warn("Keyword Basic auth parolası çözülemedi (izleme {}): {}", m.getId(), e.toString());
+            return null;
+        }
+    }
+
+    /** Kayıtlı parola var mı (değeri açığa çıkarmadan). */
+    public boolean hasBasicAuthPass(KeywordMonitor m) {
+        return m != null && m.getBasicAuthPassEnc() != null && !m.getBasicAuthPassEnc().isBlank();
+    }
+
+    /** Parolayı şifreleyip yazar (boş → dokunulmaz; silmek için {@link #clearBasicAuthPass}). */
+    public void storeBasicAuthPass(KeywordMonitor m, String plaintext) {
+        if (m == null || plaintext == null || plaintext.isEmpty()) return;
+        m.setBasicAuthPassEnc(secretCipher.encrypt(plaintext));
+    }
+
+    /** Kayıtlı parolayı siler. */
+    public void clearBasicAuthPass(KeywordMonitor m) {
+        if (m != null) m.setBasicAuthPassEnc(null);
     }
 
     /** "Name: Value" satırları → sıralı harita. Bozuk satır sessizce atlanır. */

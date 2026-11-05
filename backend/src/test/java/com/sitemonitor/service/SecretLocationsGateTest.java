@@ -35,7 +35,7 @@ class SecretLocationsGateTest {
     private static final Set<String> ENCRYPT_WRITERS = Set.of(
             "controller/MonitoringController.java",     // http_basic_auth, http_headers, pagespeed_*, scripted_env (+ sürüm kopyası)
             "controller/UserPushController.java",       // push_headers
-            "service/KeywordHeaderSecrets.java",        // keyword_headers
+            "service/KeywordHeaderSecrets.java",        // keyword_headers, keyword_basic_auth
             "service/LdapSettingsService.java",         // ldap_bind_password
             "service/SmtpSettingsService.java",         // smtp_password
             "service/SecretCipher.java",                // tanım

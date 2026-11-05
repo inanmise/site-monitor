@@ -102,4 +102,19 @@ class KeywordResultMapperTest {
         List<String> many = java.util.Collections.nCopies(100, "WAF_OR_BLOCK_PAGE");
         assertThat(KeywordResult.toHintsJson(many)).hasSizeLessThanOrEqualTo(500).endsWith("]");
     }
+    @Test
+    @DisplayName("kw §3.2: decoded_charset her satırda; match_scope YALNIZ VISIBLE iken (ham kapsam NULL — golden gürültüsü yok)")
+    void decodedCharsetAndScope() {
+        KeywordResult vis = KeywordResultMapper.build(monitor(), raw("found", true, "count", 1, "http_status", 200,
+                "charset", "ISO-8859-9", "decoded_charset", "windows-1254", "match_scope", "VISIBLE"), true, "2026-11-05T10:00:00");
+        assertThat(vis.getCharset()).isEqualTo("ISO-8859-9");
+        assertThat(vis.getDecodedCharset()).isEqualTo("windows-1254");
+        assertThat(vis.getMatchScope()).isEqualTo("VISIBLE");
+        KeywordResult raw = KeywordResultMapper.build(monitor(), raw("found", true, "count", 1, "http_status", 200,
+                "decoded_charset", "UTF-8", "match_scope", "RAW"), true, "2026-11-05T10:00:00");
+        assertThat(raw.getMatchScope()).isNull();
+        KeywordResult old = KeywordResultMapper.build(monitor(), raw("found", true, "count", 1), true, "2026-11-05T10:00:00");
+        assertThat(old.getDecodedCharset()).isNull();
+        assertThat(old.getMatchScope()).isNull();
+    }
 }

@@ -2227,12 +2227,17 @@ public class EmailNotificationService {
         return url ? MailKit.link(value, value) : esc(value);
     }
 
-    /** Keyword izleme alarmı — adet/operatör koşulu alanları. */
+    /**
+     * Keyword izleme alarmı — adet/operatör koşulu alanları. B1 (kw sözleşmesi §8.1): başlık ve satırlar GÖZLEMDEN — istek
+     * tamamlanmadıysa "Sayfa Açılamadı" + "Neden" satırı, "Bulunan adet" YOK ("0 kez bulundu" asla); "hiç geçmemeli" tespiti tek
+     * kuraldan ({@code KeywordFailureClassifier.isAbsenceRule}, LT 1 dâhil — B12). E1: neden, ipuçları (TR başlık + tek satır
+     * neden), sayfadan alıntı (≤ 300), son URL ve kural özeti (varsa) satırları.
+     */
     private MailDoc keywordAlertDoc(String message, String url, String level, Map<String, Object> ctx) {
         String keyword   = ctxStr(ctx, "keyword");
         String operator  = ctxStr(ctx, "operator"); if (operator.isEmpty()) operator = "GTE";
         int threshold = ctx != null && ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
-        boolean absent = ("LTE".equals(operator) || "EQ".equals(operator) || "LT".equals(operator)) && threshold == 0;
+        boolean absent = com.sitemonitor.service.keyword.KeywordFailureClassifier.isAbsenceRule(operator, threshold);
         String condPhrase = KeywordCheckerService.opPhrase(operator, threshold);
         String occ = ctxStr(ctx, "occurrences");
         String httpStatus = ctxStr(ctx, "http_status");
@@ -2240,8 +2245,20 @@ public class EmailNotificationService {
         String snippet    = ctxStr(ctx, "snippet");
         String firstFailureAt = ctxStr(ctx, "first_failure_at");
         String lastError      = ctxStr(ctx, "last_error");
+        String failureReason  = ctxStr(ctx, "failure_reason");
+        String failureDetail  = ctxStr(ctx, "failure_detail");
+        String finalUrl       = ctxStr(ctx, "final_url");
+        String rulesSummary   = ctxStr(ctx, "rules_summary");   // kw-be2 Aşama 2 doldurur
+        List<String> hintLines = com.sitemonitor.service.keyword.KeywordMailText.hintLines(
+                com.sitemonitor.service.keyword.KeywordMailText.hintCodes(ctx == null ? null : ctx.get("hints")));
+        String excerpt = com.sitemonitor.service.keyword.KeywordMailText.mailExcerpt(ctx == null ? null : ctx.get("excerpt"));
+        Object errObj = lastError.isEmpty() || "null".equalsIgnoreCase(lastError) ? (ctx == null ? null : ctx.get("error")) : lastError;
+        boolean requestFailed = com.sitemonitor.service.keyword.KeywordMailText.requestFailed(
+                failureReason.isEmpty() ? null : failureReason, errObj);
+        Integer occN = occ.isEmpty() ? null : parseIntOrNull(occ);
         List<Map<String, Object>> attempts = attempts(ctx);
-        String heroTitle = absent ? "İstenmeyen İfade Bulundu" : "Koşul Sağlanmadı";
+        String heroTitle = com.sitemonitor.service.keyword.KeywordMailText.headline(
+                failureReason.isEmpty() ? null : failureReason, errObj, operator, threshold, occN);
 
         MailDoc d = MailDoc.create("[Site Monitor] " + EmailTemplateBuilder.severityLabel(level) + " · " + nzs(url))
                 .preheader(heroTitle + " — " + nzs(url))
@@ -2254,15 +2271,25 @@ public class EmailNotificationService {
         left.add(new Row("Adres", endpointHtml(url), nzs(url)));
         left.add(Row.of("Aranan kelime", keyword));
         left.add(Row.of("Beklenen koşul", condPhrase + " bulunmalı"));
-        if (!occ.isEmpty()) left.add(Row.of("Bulunan adet", occ + " kez"));
+        if (!occ.isEmpty() && !requestFailed) left.add(Row.of("Bulunan adet", occ + " kez"));   // B1: açılmayan sayfada adet yok
         if (!httpStatus.isEmpty()) left.add(Row.of("HTTP durumu", httpStatus));
         if (!responseMs.isEmpty()) left.add(Row.of("Yanıt süresi", responseMs + " ms"));
+        if (!failureDetail.isEmpty()) left.add(Row.of("Neden", failureDetail));
+        if (!finalUrl.isEmpty() && !finalUrl.equals(url)) left.add(new Row("Son adres", endpointHtml(finalUrl), finalUrl));
+        if (!rulesSummary.isEmpty()) left.add(Row.of("Kural özeti", rulesSummary));
         if (!firstFailureAt.isEmpty()) left.add(Row.of("İlk hata", formatIso(firstFailureAt)));
         if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
             left.add(Row.of("Son hata", lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError));
         d.keyValue("İzleme Bilgileri", left);
+        if (!hintLines.isEmpty()) {
+            List<Row> hints = new ArrayList<>();
+            for (String h : hintLines) hints.add(Row.of("İpucu", h));
+            d.keyValue("Olası Nedenler", hints);
+        }
 
-        String wordStatus = absent ? "İstenmeyen ifade var"
+        String wordStatus = requestFailed ? "Sayfa okunamadı"
+                : "KEYWORD_FOUND_FORBIDDEN".equals(failureReason) || (failureReason.isEmpty() && absent && occN != null && occN > 0)
+                        ? "İstenmeyen ifade var"
                 : (!occ.isEmpty() ? occ + " kez · gerekli: " + condPhrase : "Koşul sağlanmadı");
         d.keyValue("Doğrulama Özeti", MailDoc.rows(
                 new Row("Kelime durumu", MailKit.strong(wordStatus, Tone.DESTRUCTIVE.strong), wordStatus),
@@ -2270,12 +2297,21 @@ public class EmailNotificationService {
                 levelRow(level),
                 new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor")));
         attemptTable(d, attempts, "doğrulanamadı");
-        if (absent && !snippet.isEmpty()) d.pre("Eşleşme Bağlamı", "…" + snippet + "…");
+        if (absent && !snippet.isEmpty() && !requestFailed) d.pre("Eşleşme Bağlamı", "…" + snippet + "…");
+        if (excerpt != null) d.pre("Sayfadan Alıntı", excerpt);   // E1 — kayıtta zaten maskeli
         d.note("Koşul yeniden sağlandığında bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
         d.button(monitorCtaUrl("keyword", ctx), "Monitörü Aç →");
         MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
         d.footerWhy(teamNameOf(ctx)).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
         return d;
+    }
+
+    private static Integer parseIntOrNull(String s) {
+        try {
+            return Integer.valueOf(s.trim());
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Ping (ICMP) izleme alarmı — erişilebilirlik alanları. */
@@ -2362,7 +2398,12 @@ public class EmailNotificationService {
             String occ = ctxStr(ctx, "occurrences");
             if (!kw.isEmpty()) rows.add(Row.of("Aranan kelime", kw));
             rows.add(Row.of("Koşul", KeywordCheckerService.opPhrase(op, n) + " bulunmalı"));
-            if (!occ.isEmpty()) rows.add(Row.of("Alarm anı bulunan", occ + " kez"));
+            String reason = ctxStr(ctx, "failure_reason");
+            boolean failed = com.sitemonitor.service.keyword.KeywordMailText.requestFailed(reason.isEmpty() ? null : reason,
+                    ctx.get("error"));
+            if (!occ.isEmpty() && !failed) rows.add(Row.of("Alarm anı bulunan", occ + " kez"));   // B1: açılmayan sayfada adet yok
+            String detail = ctxStr(ctx, "failure_detail");
+            if (!detail.isEmpty()) rows.add(Row.of("Alarm anı neden", detail));   // E1 — anlık görüntüden
         }
         return typedResolvedDoc(url, "İçerik (Keyword) İzleme", "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama",
                 level, rows, monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);

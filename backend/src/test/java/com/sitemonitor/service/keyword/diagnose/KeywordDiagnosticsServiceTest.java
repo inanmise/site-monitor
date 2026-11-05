@@ -271,9 +271,35 @@ class KeywordDiagnosticsServiceTest {
         @SuppressWarnings("unchecked") List<String> transcript = (List<String>) list(data.get("paths")).get(0).get("transcript");
         assertThat(String.join("\n", transcript)).contains("> Authorization: ••••").doesNotContain(SECRET);
         assertThat(m(m(data.get("monitor")).get("advanced"))).containsEntry("custom_headers", 2);
-        // yan etkisizlik: başlık sırrı yalnız OKUNDU (şifreleme/yazma yok)
+        // yan etkisizlik: başlık sırrı ve Basic auth parolası yalnız OKUNDU (şifreleme/yazma yok — kw Aşama 1)
         verify(headers).effectiveHeaders(any());
+        verify(headers).basicAuthPass(any());
         verifyNoMoreInteractions(headers);
+    }
+
+    @Test
+    @DisplayName("kw Aşama 1: izlemenin isteği AYNEN (Basic auth, tarayıcı UA) — parola / kimlik hiçbir alanda düz değil; kabul edilen "
+            + "durum kodu kuralı tutmazsa kelime bulunsa da hüküm HTTP hatası (izlemenin kararıyla aynı), istemci de ok=false")
+    void basicAuthAndStatusRuleLikeTheMonitor() {
+        when(headers.basicAuthPass(any())).thenReturn("Basic-S3cret-77");
+        KeywordMonitor mon = monitor(base + "/echo", "seen", "GTE", 1, false);
+        mon.setBasicAuthUser("izleme");
+        mon.setUserAgentMode("BROWSER");
+        mon.setExpectedStatus("3xx");
+        Map<String, Object> data = service(null).diagnose(mon, true);
+        String all = json(data);
+        String b64 = java.util.Base64.getEncoder().encodeToString("izleme:Basic-S3cret-77".getBytes(StandardCharsets.UTF_8));
+        assertThat(all).doesNotContain("Basic-S3cret-77").doesNotContain(b64);
+        Map<String, Object> hop = list(list(data.get("paths")).get(0).get("hops")).get(0);
+        assertThat(json(m(hop.get("request")).get("headers"))).contains("Authorization").contains("Chrome/")
+                .doesNotContain("SiteMonitor-KeywordMonitor");
+        assertThat(m(data.get("verdict"))).containsEntry("status", "fail");
+        assertThat(codes(data)).contains(KeywordDiagFindings.KEYWORD_HTTP_ERROR);
+        Map<String, Object> adv = m(m(data.get("monitor")).get("advanced"));
+        assertThat(adv).containsEntry("basic_auth", true).containsEntry("expected_status", "3xx")
+                .containsEntry("user_agent_mode", "BROWSER");
+        assertThat(m(list(data.get("paths")).get(0).get("client_check"))).containsEntry("ok", false)
+                .containsEntry("failure_reason", "HTTP_STATUS");
     }
 
     @Test

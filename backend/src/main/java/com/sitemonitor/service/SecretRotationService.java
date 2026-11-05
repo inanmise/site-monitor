@@ -84,6 +84,8 @@ public class SecretRotationService {
                     "HTTP izleme — özel başlıklar", "HTTP monitor — custom headers"),
             new Location("keyword_headers", "keyword_monitors", "custom_headers_enc", Kind.VALUE, "name", null, false,
                     "Anahtar kelime izleme — özel başlıklar", "Keyword monitor — custom headers"),
+            new Location("keyword_basic_auth", "keyword_monitors", "basic_auth_pass_enc", Kind.VALUE, "name", null, false,
+                    "Anahtar kelime izleme — Basic auth parolası", "Keyword monitor — basic auth password"),
             new Location("pagespeed_basic_auth", "pagespeed_monitors", "basic_auth_pass_enc", Kind.VALUE, "name", null, false,
                     "Sayfa hızı — Basic auth parolası", "PageSpeed — basic auth password"),
             new Location("pagespeed_headers", "pagespeed_monitors", "custom_headers_enc", Kind.VALUE, "name", null, false,

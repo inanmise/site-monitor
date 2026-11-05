@@ -105,6 +105,65 @@ public class KeywordMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @Column(name = "case_sensitive")
     private Boolean caseSensitive = false;
 
+    // ── Eşleşme kapsamı + gelişmiş istek + posta konusu (kw sözleşmesi §3.1, 2026-11-05) ──────────────────
+    // Hepsi NULLABLE ve başlatıcısız: eski satır NULL = bugünkü davranış (ham HTML, GET, varsayılan UA, durum kodu karara
+    // girmez, yönlendirme takip edilir, standart konu). Kolonlar KeywordSchemaPatch ile de eklenir (ddl-auto'nun atladığı
+    // ortamlar). Eski (20.181) pod bu alanları bilmez; formdan kaydederken UPDATE'e girmezler (etkilenmez).
+
+    /** Eşleşme kapsamı: {@code RAW} (ham HTML, NULL) | {@code VISIBLE} (görünür metin — etiket / betik / stil sayılmaz). */
+    @Column(name = "match_scope", length = 10)
+    private String matchScope;
+
+    /** Ham kapsamda HTML varlıkları + boşluklar normalleştirilsin mi (görünür metin her zaman normalize eder). */
+    @Column(name = "normalize_ws")
+    private Boolean normalizeWs;
+
+    /** İstek yöntemi: {@code GET} (NULL) | {@code POST}. HEAD YOK — anahtar kelime yanıt gövdesinde aranır. */
+    @Column(name = "method", length = 10)
+    private String method;
+
+    /** POST gövdesi (≤ 64 KB UTF-8) — YALNIZ yöntem POST'ken ve yalnız ilk host'a gönderilir. */
+    @Column(name = "request_body", columnDefinition = "TEXT")
+    private String requestBody;
+
+    /** POST gövdesinin içerik türü (NULL = application/json). */
+    @Column(name = "request_content_type", length = 100)
+    private String requestContentType;
+
+    /** HTTP Basic auth kullanıcı adı (yalnız ilk host'a). */
+    @Column(name = "basic_auth_user")
+    private String basicAuthUser;
+
+    /** HTTP Basic auth parolası — ŞİFRELİ ({@code SecretCipher}), write-only (API asla döndürmez; yalnız {@code has_basic_auth_pass}).
+     *  Anahtar döndürme konumu {@code keyword_basic_auth} ({@code SecretRotationService.LOCATIONS}). */
+    @Column(name = "basic_auth_pass_enc", columnDefinition = "TEXT")
+    private String basicAuthPassEnc;
+
+    /** User-Agent kipi: {@code DEFAULT} (NULL — SiteMonitor-KeywordMonitor/1.0) | {@code BROWSER} | {@code CUSTOM}. */
+    @Column(name = "user_agent_mode", length = 10)
+    private String userAgentMode;
+
+    /** Özel User-Agent (yalnız CUSTOM kipinde; yazdırılabilir ASCII). */
+    @Column(name = "user_agent", length = 300)
+    private String userAgent;
+
+    /** Kabul edilen HTTP durum kodları ({@code 2xx}, {@code 200-399}, {@code 200,301}); NULL = KAPALI (durum kodu karara girmez). */
+    @Column(name = "expected_status", length = 100)
+    private String expectedStatus;
+
+    /** Beklenen son URL (önek; mutlak ya da {@code /} ile başlayan yol); NULL = kural yok. */
+    @Column(name = "expected_final_url", length = 2000)
+    private String expectedFinalUrl;
+
+    /** Yönlendirmeler takip edilsin mi (NULL = evet, bugünkü). false → ilk yanıt 3xx olsa da değerlendirilir. */
+    @Column(name = "follow_redirects")
+    private Boolean followRedirects;
+
+    /** Alarm postası ÖZEL konu şablonu (yer tutucular {@code {ad} {url} {kelime} {adet} {neden} {seviye} {durum} {zaman}});
+     *  NULL = standart konu. Çözüm postası standart konuda kalır. */
+    @Column(name = "mail_subject_template", length = 200)
+    private String mailSubjectTemplate;
+
     /**
      * Kurumsal vekil (proxy) tercihi: {@code AUTO} | {@code ON} | {@code OFF} (2026-09-21). AUTO (varsayılan, null da
      * AUTO): <b>envanterle aynı</b> — alan adı sertifika envanterinde "Proxy üzerinden kontrol et = Evet" ise vekil,
