@@ -422,6 +422,32 @@ public class UserPushRecipientResolver {
         return new ContactMatch(contactRecipient(u, alertLevel, families, now), null, others);
     }
 
+    /**
+     * Alarm iletiminde SEÇİLEN üyeler (2026-11-05) → alıcılar. Rol grubu / grup asgari seviyesi SORULMAZ — iletimi tanımlayan
+     * takım kişiyi açıkça seçti (eskalasyon adımı / nöbetçi push'unun aynası, {@link #resolveContact}); kişisel kurallar aynı
+     * sırayla (opt-out → tercih (aile, seviye, susturma) → kişisel sessiz saat) {@code skipReason}'a yazılır. Silinmiş / pasif /
+     * kullanıcı adı boş hesap atlanır (satır yok — iletim anlık görüntüsü bunları zaten düşürür). Sıra = verilen kimlik sırası,
+     * tekil. Tek sorgu.
+     */
+    public List<Recipient> resolveUsers(java.util.Collection<Long> userIds, String alertLevel,
+                                        java.util.Collection<String> families) {
+        if (userIds == null || userIds.isEmpty()) return List.of();
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (Long id : userIds) if (id != null) ids.add(id);
+        if (ids.isEmpty()) return List.of();
+        Map<Long, AppUser> byId = new java.util.HashMap<>();
+        for (AppUser u : userRepo.findAllById(ids)) if (u != null && u.getId() != null) byId.put(u.getId(), u);
+        java.time.Instant now = java.time.Instant.now(clock);
+        Map<String, Recipient> out = new LinkedHashMap<>();
+        for (Long id : ids) {
+            AppUser u = byId.get(id);
+            if (u == null || !Boolean.TRUE.equals(u.getActive())) continue;
+            if (u.getUsername() == null || u.getUsername().isBlank()) continue;
+            out.putIfAbsent(u.getUsername().trim().toUpperCase(Locale.ROOT), contactRecipient(u, alertLevel, families, now));
+        }
+        return new ArrayList<>(out.values());
+    }
+
     /** Hesapların hepsi AYNI kişi mi ({@link PushSamePersonGuard#groupPersons}: tek grup, herkes içinde). */
     static boolean onePerson(List<AppUser> users) {
         List<PushSamePersonGuard.Account> accs = new ArrayList<>();
