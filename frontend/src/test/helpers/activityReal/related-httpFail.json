@@ -1,0 +1,61 @@
+{
+  "success": true,
+  "data": {
+    "anchor": {
+      "id": 3,
+      "time": "2026-11-05T01:13:58",
+      "type": "HTTP",
+      "monitor_id": 1,
+      "action": "SCHEDULED_CHECK",
+      "status": "ERROR",
+      "target": "https://isube.ornekbanka.com.tr/giris",
+      "host": "isube.ornekbanka.com.tr",
+      "team_id": 1,
+      "failure_reason": "DNS_RESOLVE",
+      "error_class": "DNS",
+      "reason": "DNS_RESOLVE",
+      "reason_class": "DNS",
+      "failing": true
+    },
+    "window_s": 120,
+    "from": "2026-11-05T01:11:58",
+    "to": "2026-11-05T01:15:58",
+    "total": 0,
+    "monitors": 0,
+    "window_total": 1,
+    "anchor_in_window": true,
+    "truncated": false,
+    "by_reason": [],
+    "by_host": [],
+    "by_team": [],
+    "suspects": [
+      {
+        "code": "SINGLE",
+        "params": {}
+      }
+    ],
+    "facts": [
+      {
+        "code": "FAILURES_24H",
+        "params": {
+          "n": 1
+        }
+      },
+      {
+        "code": "LAST_SUCCESS",
+        "params": {
+          "at": "2026-11-05T01:08:58"
+        }
+      },
+      {
+        "code": "RECOVERED_AFTER",
+        "params": {
+          "seconds": 600,
+          "at": "2026-11-05T01:23:58"
+        }
+      }
+    ],
+    "items": []
+  },
+  "timestamp": "2026-11-05T01:34:27"
+}

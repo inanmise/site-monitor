@@ -155,7 +155,9 @@ class NocNotificationServiceTest {
         assertThat(log.getValue().getRecipientRole()).isEqualTo("NOC");
         assertThat(log.getValue().getTrigger()).isEqualTo("NOC_OPEN");
         assertThat(log.getValue().getAlertEventId()).isEqualTo(1L);
-        verify(activity).recordLifecycle(eq("PING"), eq(1L), any(), any(), eq(10L), eq("NOC_NOTIFIED"), eq("system"), anyString());
+        // alarm bağı (2026-11-05, aktivite zenginleştirmesi B)
+        verify(activity).recordLifecycle(eq("PING"), eq(1L), any(), any(), eq(10L), eq("NOC_NOTIFIED"), eq("system"), anyString(),
+                argThat(r -> r != null && Long.valueOf(1L).equals(r.alertEventId()) && r.stormId() == null));
         assertThat(store.get("alert:1:OPEN").getStatus()).isEqualTo("SENT");
         assertThat(store.get("alert:1:OPEN").getGroupIds()).isEqualTo("1");
     }
@@ -277,7 +279,8 @@ class NocNotificationServiceTest {
         assertThat(mailsSent()).isEqualTo(2);
         assertThat(lastRecipients()).containsExactly("gece@example.com");
         assertThat(store.get("alert:21:RESOLVE").getStatus()).isEqualTo("SENT");
-        verify(activity).recordLifecycle(eq("HTTP"), eq(21L), any(), any(), eq(10L), eq("NOC_RESOLVED"), eq("system"), anyString());
+        verify(activity).recordLifecycle(eq("HTTP"), eq(21L), any(), any(), eq(10L), eq("NOC_RESOLVED"), eq("system"), anyString(),
+                any());
     }
 
     @Test

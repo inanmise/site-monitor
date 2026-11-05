@@ -265,7 +265,8 @@ public class NocController {
                 before, after, note == null ? "7/24 bildirimi" : note, session);
         if (changeRow != null) {
             activityLog.recordLifecycle(t.activityType, m.getId(), name, target, team, "CONFIG_CHANGED", actor(session),
-                    Boolean.TRUE.equals(m.getNocNotify()) ? "7/24 bildirimi açıldı" : "7/24 bildirimi kapatıldı");
+                    Boolean.TRUE.equals(m.getNocNotify()) ? "7/24 bildirimi açıldı" : "7/24 bildirimi kapatıldı",
+                    changeRow.getSeq() == null ? null : ActivityLogService.Refs.change(changeRow.getSeq()));
         }
         return changes;
     }

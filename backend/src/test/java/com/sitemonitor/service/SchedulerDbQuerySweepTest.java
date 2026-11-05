@@ -397,7 +397,7 @@ class SchedulerDbQuerySweepTest {
         assertThat(saved).hasSize(1);
         assertThat(saved.get(0).getManual()).isTrue();
         verify(activity).recordCheck(eq(ActivityLogService.DBQUERY), eq(18L), eq("Elle"), any(), eq(7L), eq(true),
-                eq("manual"), any());
+                eq("manual"), any(), any());
 
         scheduler.evaluateDbQueryNow(m, raw);
         verify(mos).handleSweepResults(eq(EscalationService.TYPE_DBQUERY_FAIL), anyList(), eq(true));

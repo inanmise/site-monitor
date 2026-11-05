@@ -290,7 +290,8 @@ public class NocNotificationService {
                     status, TRIGGER_OPEN);
             activityLog.recordLifecycle(activityType(type, alertType), row.id(), row.name(), row.target(), owner,
                     "NOC_NOTIFIED", "system", "7/24 · " + NocMailComposer.levelTr(nocLevel(alertType, level))
-                            + " · " + String.join(", ", targets.groupNames()) + " · " + status);
+                            + " · " + String.join(", ", targets.groupNames()) + " · " + status,
+                    ActivityLogService.Refs.alert(event.getId()));
             log.info("7/24 bildirimi: alarm={} tür={} grup={} adres sayısı={} durum={}",
                     event.getId(), type, targets.groupIds(), targets.emails().size(), status);
         } catch (Exception e) {
@@ -339,7 +340,8 @@ public class NocNotificationService {
             writeLog(event.getId(), targets, subject, mail.html(), status, TRIGGER_RESOLVE);
             if (type != null && open.getMonitorId() != null) {
                 activityLog.recordLifecycle(activityType(type, event.getAlertType()), open.getMonitorId(), name, target,
-                        open.getTeamId(), "NOC_RESOLVED", "system", "7/24 · çözüldü · " + status);
+                        open.getTeamId(), "NOC_RESOLVED", "system", "7/24 · çözüldü · " + status,
+                        ActivityLogService.Refs.alert(event.getId()));
             }
         } catch (Exception e) {
             log.warn("7/24 çözüm bildirimi atlandı: alarm={} — {}", event == null ? null : event.getId(), e.toString());
@@ -438,7 +440,8 @@ public class NocNotificationService {
                 for (StormMember s : eligible) {
                     markMember(s.event().getId(), NocDelivery.OPEN, s, targets, storm.getId(), subject);
                     activityLog.recordLifecycle(activityType(s.type(), s.event().getAlertType()), s.row().id(), s.row().name(),
-                            s.row().target(), s.teamId(), "NOC_NOTIFIED", "system", "7/24 · alarm fırtınası #" + storm.getId());
+                            s.row().target(), s.teamId(), "NOC_NOTIFIED", "system", "7/24 · alarm fırtınası #" + storm.getId(),
+                            ActivityLogService.Refs.storm(s.event().getId(), storm.getId()));
                 }
             }
             log.info("7/24 fırtına bildirimi: fırtına={} kapsanan üye={} adres sayısı={} durum={}",
@@ -523,7 +526,8 @@ public class NocNotificationService {
                 for (StormMember m : fresh) {
                     markMember(m.event().getId(), NocDelivery.OPEN, m, targets, storm.getId(), subject);
                     activityLog.recordLifecycle(activityType(m.type(), m.event().getAlertType()), m.row().id(), m.row().name(),
-                            m.row().target(), m.teamId(), "NOC_NOTIFIED", "system", "7/24 · fırtına güncellemesi #" + storm.getId());
+                            m.row().target(), m.teamId(), "NOC_NOTIFIED", "system", "7/24 · fırtına güncellemesi #" + storm.getId(),
+                            ActivityLogService.Refs.storm(m.event().getId(), storm.getId()));
                 }
             }
             log.info("7/24 fırtına güncellemesi: fırtına={} yeni kapsanan üye={} adres sayısı={} durum={}",

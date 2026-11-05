@@ -93,6 +93,7 @@ public class CertificateService {
         String chainDetailsJson = serializeChain(result.get("chain"));
 
         // Save to history — wrapped so a schema error here never blocks the latest_checks upsert below
+        CertificateCheck historyRow = null;
         try {
             CertificateCheck check = new CertificateCheck();
             check.setDomain(domain);
@@ -142,7 +143,8 @@ public class CertificateService {
                 check.setResolvedIps(resolvedIpsOf(result.get("resolved_ips")));
             }
             check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa dashboard uptime %'den hariç
-            checkRepo.save(check);
+            CertificateCheck savedCheck = checkRepo.save(check);
+            historyRow = savedCheck != null ? savedCheck : check;
         } catch (Exception e) {
             log.warn("Could not save check history for {} (run_id={}): {}", domain, result.get("run_id"), e.getMessage());
         }
@@ -201,10 +203,19 @@ public class CertificateService {
         }
 
         // Birleşik aktivite akışı (best-effort). teamId envanterden türetilir (manuel /check "manual" run_id taşır).
-        Long teamId = inventoryRepo.findByDomain(domain).map(CertificateInventory::getTeamId).orElse(null);
-        boolean manual = "manual".equals(result.get("run_id"));
-        activityLog.recordCheck(ActivityLogService.CERT, null, domain, domain,
-                teamId, manual, manual ? null : "scheduler", result);
+        // monitor_id = envanter kimliği (2026-11-05, aktivite zenginleştirmesi A): TLS_GRADE_DROPPED satırlarıyla tutarlı;
+        // ayrıntı sayfası, zaman çizelgesi ve ilgili satırlar sertifika satırını kaydına bağlar. Ek sorgu yok (aynı okuma).
+        CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
+        Long teamId = inv != null ? inv.getTeamId() : null;
+        // "Sağlığı yenile" (health-refresh) de kullanıcının elle kontrolüdür (2026-11-05) — akışta MANUAL_CHECK + kullanıcı.
+        boolean manual = "manual".equals(result.get("run_id")) || "health-refresh".equals(result.get("run_id"));
+        activityLog.recordCheck(ActivityLogService.CERT, inv != null ? inv.getId() : null, domain, domain,
+                teamId, manual, manual ? null : "scheduler", result, ActivityLogService.refs(historyRow));
+    }
+
+    /** Kontrol geçmişi satırının API biçimi — sertifika penceresinin kart geçmişiyle ({@link #getHistory}) aynı eşleyici. */
+    public CertificateDto historyRow(CertificateCheck c) {
+        return c == null ? null : toDtoFromCheck(c);
     }
 
     /**

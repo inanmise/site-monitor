@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
@@ -28,19 +28,20 @@ import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 
 beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/') })
 
-describe('UIM-37 — Aktivite mini geçmişi', () => {
-  it('okunamazsa hata + yeniden dene; yeniden dene başarılıysa geçmiş görünür', async () => {
+describe('UIM-37 — Aktivite mini geçmişi (2026-11-05: ayrıntı sayfasına taşındı)', () => {
+  it('liste okunamazsa "Aktivite yok" değil hata bloğu + Yenile; satır içi mini geçmiş artık yok, satır ayrıntı sayfasına gider', async () => {
     api.getActivitySummary.mockResolvedValue({ success: true, total: 1, success_count: 1, warning: 0, error: 0 })
+    api.getActivity.mockResolvedValueOnce({ success: false, error: 'Aktivite listesi okunamadı — veritabanı yanıt vermedi.' })
+    render(<ActivityLog />)
+    await waitFor(() => expect(document.querySelector('[data-slot="empty"][data-tone="danger"]')).not.toBeNull())
+    expect(screen.getByText('Aktivite listesi okunamadı — veritabanı yanıt vermedi.')).toBeInTheDocument()
     api.getActivity.mockResolvedValue({ success: true, page: 0, total: 1, data: [{ id: 7, monitor_type: 'HTTP', monitor_name: 'web',
       target: 'https://x.com', action: 'SCHEDULED_CHECK', result_status: 'SUCCESS', result_summary: '200', activity_time: '2026-10-22T08:00:00' }] })
-    api.getActivityDetail.mockResolvedValueOnce({ success: false, error: 'boom' })
-    render(<ActivityLog />)
+    fireEvent.click(within(document.querySelector('[data-slot="empty"][data-tone="danger"]')).getByRole('button', { name: /Yenile|Refresh/ }))
     await screen.findByText('web')
     fireEvent.keyDown(document.querySelector('[data-slot="act-item"]'), { key: 'Enter' })
-    await waitFor(() => expect(document.querySelector('[data-slot="act-detail-error"]')).not.toBeNull())
-    api.getActivityDetail.mockResolvedValueOnce({ success: true, data: {}, recent: [{ id: 9, result_status: 'SUCCESS', result_summary: '200 · 120ms', activity_time: '2026-10-22T07:55:00' }] })
-    fireEvent.click(document.querySelector('[data-slot="act-detail-error"] button'))
-    expect(await screen.findByText('200 · 120ms')).toBeInTheDocument()
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('act')).toBe('7'))
+    expect(document.querySelector('[data-slot="act-detail-error"]')).toBeNull()
   })
 })
 

@@ -198,6 +198,42 @@ public class EscalationService {
     }
 
     /**
+     * Alarm olaylarının aktivite akışı satırları (2026-11-05, aktivite zenginleştirmesi B): ilk açılış, seviye yükseltme
+     * talebini kazanan pod, onay, elle / otomatik kapanış (sessiz kapanışı {@link SilentAlarmCloser} yazar). Yazım best-effort
+     * ve sorgusuz eşlemeli ({@link ActivityLogService#recordAlert}); alarm yolunu bozmaz. Alan enjeksiyonu + isteğe bağlı:
+     * elle kurulan birim testlerinde yoktur.
+     */
+    @Autowired(required = false)
+    private ActivityLogService activityLog;
+
+    /** Test dikişi. */
+    void setActivityLog(ActivityLogService activityLog) {
+        this.activityLog = activityLog;
+    }
+
+    /** Tarama bağlamındaki izleme kimliği (sorgu yok) — yoksa null. */
+    private static Long ctxMonitorId(Map<String, Object> ctx) {
+        return ctx != null && ctx.get("monitor_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+    }
+
+    /** Alarm olayı satırı — servis yoksa (elle kurulan test) hiçbir şey; asla fırlatmaz. */
+    private void noteAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note) {
+        noteAlert(event, action, level, monitorId, actor, note, null);
+    }
+
+    /** {@link #noteAlert} + satırın makinece okunur ayrıntısı (ön yüz özeti kendi dilinde kurar). */
+    private void noteAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note,
+                           ActivityLogService.AlertInfo info) {
+        ActivityLogService a = activityLog;
+        if (a == null || event == null) return;
+        try {
+            a.recordAlert(event, action, level, monitorId, actor, note, info);
+        } catch (RuntimeException e) {
+            log.debug("Alarm aktivite satırı atlandı (#{}): {}", event.getId(), e.toString());
+        }
+    }
+
+    /**
      * {@code props} kolonlarını bellekteki değerlerle hedefli yazar ve {@code event}'i döndürür; yazıcı yokken ya da kimliksiz
      * satırda eski yol ({@code save} — dönüşü kullanılır).
      */
@@ -596,16 +632,23 @@ public class EscalationService {
                                 .map(com.sitemonitor.model.CertificateInventory::getNotificationGroupId)
                                 .orElse(null));
                         event = alertEventRepo.save(event);
+                        try {
+                            // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → henüz döngüde kimse yok; sorgu yok).
+                            List<EscalationContact> contacts = EscalationDelay.immediateOnly(
+                                    getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
+                            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
+                                    "", event.getId(), "INITIAL", daysRemaining, result);
 
-                        // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → henüz döngüde kimse yok; sorgu yok).
-                        List<EscalationContact> contacts = EscalationDelay.immediateOnly(
-                                getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
-                        sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
-                                "", event.getId(), "INITIAL", daysRemaining, result);
-
-                        event.setNotifiedContacts(serializeContacts(contacts));
-                        event.setLastReAlertAt(now());
-                        persist(event, AlertEventFieldWriter.NOTIFIED);   // R2b · F: gönderim sırasında gelen kapanış / onay geri alınmaz
+                            event.setNotifiedContacts(serializeContacts(contacts));
+                            event.setLastReAlertAt(now());
+                            persist(event, AlertEventFieldWriter.NOTIFIED);   // R2b · F: gönderim sırasında gelen kapanış / onay geri alınmaz
+                        } finally {
+                            // Aktivite (2026-11-05; inceleme D1): açılış satırı GÖNDERİMDEN SONRA — aktivite INSERT'i (havuz doluyken)
+                            // ilk bildirimi geciktirmez; gönderim düşse de alarm açıldı, satır yine yazılır.
+                            noteAlert(event, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel,
+                                    inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null),
+                                    ActivityLogService.SYSTEM_ACTOR, null);
+                        }
                     } finally {
                         if (heldKeyLock != null) releaseAlertKeyLock(heldKeyLock);
                     }
@@ -631,7 +674,8 @@ public class EscalationService {
                         String seenStamp = event.getLastReAlertAt();
                         String claimAt = now();
                         EscalationUndo undo = EscalationUndo.of(event);
-                        if (!claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) continue;
+                        String fromLevel = event.getAlertLevel();
+                        if (!claimEscalation(event.getId(), seenStamp, fromLevel, alertLevel, claimAt)) continue;
                         // Sahiplenme YENİ seviyeyi yazdı: bundan sonraki HER adım (alıcı sorgusu, kayıt, gönderim) düşerse
                         // terfi geri alınır (inceleme N1 — havuz tükenmesinde kayıt / alıcı sorgusu düşünce seviye yükselmiş
                         // kalıyor, sonraki tur terfiyi "yapılmış" görüyor ve ESCALATION hiç gitmiyordu).
@@ -668,6 +712,12 @@ public class EscalationService {
                             revertEscalation(event != null ? event : claimed, undo, claimAt, ex);
                             throw ex;
                         }
+                        // Aktivite (2026-11-05; inceleme D6): talebi KAZANAN pod, terfi KALICILAŞIP gönderildikten SONRA yazar —
+                        // geri alınan terfi (gönderim / kayıt düştü) satır üretmez; sonraki turun başarılı terfisi tek satır yazar.
+                        noteAlert(event, ActivityLogService.ACTION_ALERT_ESCALATED, alertLevel,
+                                inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null),
+                                ActivityLogService.SYSTEM_ACTOR, fromLevel + " → " + alertLevel,
+                                ActivityLogService.AlertInfo.escalated(fromLevel));
 
                     } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
                         // E11: status=error (zaman aşımı/ağ) turu DOĞRULANMIŞ bir alarm hakkında hiçbir şey
@@ -824,7 +874,15 @@ public class EscalationService {
         out.setAcknowledgedBy(by);
         out.setAcknowledgedAt(at);
         if (trimmed != null) out.setAcknowledgedNote(trimmed);
+        // Aktivite (2026-11-05): onay YAZILDI (0 satırda yukarıda fırlatıldı — kapanmış alarmın onayı satır üretmez)
+        noteAlert(out, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED, null, null, actorOr(by), null);
         return out;
+    }
+
+    /** Aktivite satırının aktörü: oturumdaki kullanıcı adı (istek iş parçacığı), yoksa verilen ad. */
+    private static String actorOr(String fallback) {
+        String u = ActivityLogService.currentUser();
+        return u != null ? u : (fallback != null && !fallback.isBlank() ? fallback : ActivityLogService.SYSTEM_ACTOR);
     }
 
     /**
@@ -1898,6 +1956,7 @@ public class EscalationService {
         // Serbest-form izleme (keyword/ping) takımı outageContext.team_id'den gelir
         // (envantere bağlı değil); uptime/port/dns ise domain→envanter eşlemesinden.
         Long domainTeamId, ugTeamId;
+        Long inventoryId = null;   // aktivite satırının izleme kimliği (erişilebilirlik = envanter kaydı); ek sorgu yok
         Object ctxTeam = outageContext != null ? outageContext.get("team_id") : null;
         if (ctxTeam instanceof Number teamNum) {
             domainTeamId = teamNum.longValue();
@@ -1912,6 +1971,8 @@ public class EscalationService {
             var inventoryOpt = inventoryRepo.findByDomain(domain);
             domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
             ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+            if (TYPE_ACCESSIBILITY.equals(alertType))
+                inventoryId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getId).orElse(null);
         }
         // Standalone izleme (keyword/ping/http/domain) takım-özeldir; AMA KRİTİK domain alarmında müdür de eklenir.
         // Bağlamda team_id damgası = bağımsız izleme (PORT/DNS dâhil — O-1).
@@ -1930,52 +1991,61 @@ public class EscalationService {
             event.setNotificationGroupId(resolveStampFromContext(outageContext, domain));
             event.setContextJson(snapshotContext(outageContext));   // çözüldü mailinde keyword/koşul detayı için
             event = alertEventRepo.save(event);
+            final AlertEvent opened = event;
+            final Long openedMonitorId = inventoryId != null ? inventoryId : ctxMonitorId(outageContext);
+            try {
+                // Alarm fırtınası hunisi (bakım + ≥%50 geçitlerinin ALTINDA): eşik+pencere aşıldıysa bireysel
+                // bildirim bastırılır → TEK toplu alarm storm üzerinden gider. Storm KAPALI / eşik altı ise
+                // SEND_INDIVIDUAL (sıfır gecikme, bugünkü davranış). stormId/groupName evaluate'te event'e
+                // damgalanır; aşağıdaki save onu kalıcılaştırır.
+                StormService.StormAction stormAction = stormService.evaluate(event, outageContext);
+                if (stormAction == StormService.StormAction.SUPPRESSED) {
+                    event.setLastReAlertAt(now());
+                    // R2b · F: fırtına değerlendirmesinin damgaladığı bağ + grup ve yeniden uyarı damgası — başka kolon değil; yalnız
+                    // alarm hâlâ AÇIKSA (inceleme AL-4): arada elle çözülen alarm üye YAPILMAZ — çözüm kararı onu "fırtına üyesi değil"
+                    // görüp bireysel çözüm postasını gönderdi; bağ yazılsaydı fırtına kurtarması aynı alarmı ikinci kez "düzeldi" sayardı.
+                    if (!persistIfOpen(event, "lastReAlertAt", "stormId", "groupName")) leftStormClosedMeanwhile(event);
+                    // İZ (2026-09-30, prod olayı): bu dal eskiden hiçbir kanal çalıştırmıyor ve hiçbir kayıt da bırakmıyordu —
+                    // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
+                    // göremiyordu. Bildirim günlüğü satırı: "bireysel e-posta (ayar kapalıysa push da) fırtına #N'e devredildi".
+                    // PUSH FIRTINAYA DEVREDİLMEZ (2026-10-03, kullanıcı kararı, varsayılan): e-posta fırtınada kalır, bu alarmın
+                    // push'u ŞİMDİ bireysel gider — alarmlar sweep'te açıldıkça kuyruğa girer, yani teslim sırası açılış sırasıdır.
+                    boolean pushIndividual = stormPushIndividual();
+                    recordStormSuppression(event, domainTeamId, ugTeamId, pushIndividual);
+                    if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, outageContext);
+                    Long joinedStorm = event.getStormId();
+                    log.info("🌩 İzleme alarmı storm'a eklendi (bireysel e-posta yok, push {}): {} [{}] → storm #{}",
+                            pushIndividual ? "bireysel" : "fırtınada", domain, alertType, joinedStorm);
+                    // KAPANIŞ YARIŞI (2026-10-09): storm_id yukarıdaki save ile yazıldı; fırtına bu arada kapandıysa (yaşam
+                    // döngüsü üye listesini bu kayıttan önce okudu) bağ HEDEFLİ koşullu UPDATE ile koparılır, lastReAlertAt
+                    // sıfırlanır → sonraki tur bireysel İLK bildirimi gönderir (kapanışta duyurulmamış üyenin yolu; fırtına
+                    // devri satırı bu yolda da durur). Bundan sonra olay varlığı KAYDEDİLMEZ — bayat varlık bağı geri yazardı.
+                    if (stormService.closedAfterAttach(event)) {
+                        log.warn("🌩 Storm #{} bağlanma sırasında kapandı — {} [{}] fırtınadan ayrıldı, ilk bildirim sonraki turda bireysel",
+                                joinedStorm, domain, alertType);
+                    }
+                } else {
+                    // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → sorgu yok; adım EscalationStepService'ten).
+                    List<EscalationContact> contacts = teamOnly ? List.of()
+                            : EscalationDelay.immediateOnly(getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
+                    sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                            message, "", event.getId(), "INITIAL", null, outageContext);
 
-            // Alarm fırtınası hunisi (bakım + ≥%50 geçitlerinin ALTINDA): eşik+pencere aşıldıysa bireysel
-            // bildirim bastırılır → TEK toplu alarm storm üzerinden gider. Storm KAPALI / eşik altı ise
-            // SEND_INDIVIDUAL (sıfır gecikme, bugünkü davranış). stormId/groupName evaluate'te event'e
-            // damgalanır; aşağıdaki save onu kalıcılaştırır.
-            StormService.StormAction stormAction = stormService.evaluate(event, outageContext);
-            if (stormAction == StormService.StormAction.SUPPRESSED) {
-                event.setLastReAlertAt(now());
-                // R2b · F: fırtına değerlendirmesinin damgaladığı bağ + grup ve yeniden uyarı damgası — başka kolon değil; yalnız
-                // alarm hâlâ AÇIKSA (inceleme AL-4): arada elle çözülen alarm üye YAPILMAZ — çözüm kararı onu "fırtına üyesi değil"
-                // görüp bireysel çözüm postasını gönderdi; bağ yazılsaydı fırtına kurtarması aynı alarmı ikinci kez "düzeldi" sayardı.
-                if (!persistIfOpen(event, "lastReAlertAt", "stormId", "groupName")) leftStormClosedMeanwhile(event);
-                // İZ (2026-09-30, prod olayı): bu dal eskiden hiçbir kanal çalıştırmıyor ve hiçbir kayıt da bırakmıyordu —
-                // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
-                // göremiyordu. Bildirim günlüğü satırı: "bireysel e-posta (ayar kapalıysa push da) fırtına #N'e devredildi".
-                // PUSH FIRTINAYA DEVREDİLMEZ (2026-10-03, kullanıcı kararı, varsayılan): e-posta fırtınada kalır, bu alarmın
-                // push'u ŞİMDİ bireysel gider — alarmlar sweep'te açıldıkça kuyruğa girer, yani teslim sırası açılış sırasıdır.
-                boolean pushIndividual = stormPushIndividual();
-                recordStormSuppression(event, domainTeamId, ugTeamId, pushIndividual);
-                if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, outageContext);
-                Long joinedStorm = event.getStormId();
-                log.info("🌩 İzleme alarmı storm'a eklendi (bireysel e-posta yok, push {}): {} [{}] → storm #{}",
-                        pushIndividual ? "bireysel" : "fırtınada", domain, alertType, joinedStorm);
-                // KAPANIŞ YARIŞI (2026-10-09): storm_id yukarıdaki save ile yazıldı; fırtına bu arada kapandıysa (yaşam
-                // döngüsü üye listesini bu kayıttan önce okudu) bağ HEDEFLİ koşullu UPDATE ile koparılır, lastReAlertAt
-                // sıfırlanır → sonraki tur bireysel İLK bildirimi gönderir (kapanışta duyurulmamış üyenin yolu; fırtına
-                // devri satırı bu yolda da durur). Bundan sonra olay varlığı KAYDEDİLMEZ — bayat varlık bağı geri yazardı.
-                if (stormService.closedAfterAttach(event)) {
-                    log.warn("🌩 Storm #{} bağlanma sırasında kapandı — {} [{}] fırtınadan ayrıldı, ilk bildirim sonraki turda bireysel",
-                            joinedStorm, domain, alertType);
+                    event.setNotifiedContacts(serializeContacts(contacts));
+                    event.setLastReAlertAt(now());
+                    // R2b · F: grup adı fırtına değerlendirmesinden (grup kipi); fırtına bağına DOKUNULMAZ (bu yol bağlamadı — eşzamanlı
+                    // terfi bu olayı eş olarak bağlamış olabilir).
+                    persist(event, "notifiedContacts", "lastReAlertAt", "groupName");
+                    log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
+                            domain, alertType,
+                            outageContext != null ? outageContext.getOrDefault("detail", "") : "");
                 }
-            } else {
-                // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → sorgu yok; adım EscalationStepService'ten).
-                List<EscalationContact> contacts = teamOnly ? List.of()
-                        : EscalationDelay.immediateOnly(getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
-                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
-                        message, "", event.getId(), "INITIAL", null, outageContext);
-
-                event.setNotifiedContacts(serializeContacts(contacts));
-                event.setLastReAlertAt(now());
-                // R2b · F: grup adı fırtına değerlendirmesinden (grup kipi); fırtına bağına DOKUNULMAZ (bu yol bağlamadı — eşzamanlı
-                // terfi bu olayı eş olarak bağlamış olabilir).
-                persist(event, "notifiedContacts", "lastReAlertAt", "groupName");
-                log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
-                        domain, alertType,
-                        outageContext != null ? outageContext.getOrDefault("detail", "") : "");
+            } finally {
+                // Aktivite (2026-11-05; inceleme D1 / D7): açılış satırı fırtına kararı ve İLK gönderimden SONRA — aktivite
+                // INSERT'i bildirimi geciktirmez ve fırtınaya bağlandıysa fırtına kimliği satıra girer (bağlanma sırasında
+                // kapanan fırtınadan ayrılan alarmda kimlik yok). Gönderim düşse de alarm açıldı: satır yine yazılır.
+                noteAlert(opened, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel, openedMonitorId,
+                        ActivityLogService.SYSTEM_ACTOR, null);
             }
 
         } else {
@@ -2053,7 +2123,8 @@ public class EscalationService {
                 String seenStamp = event.getLastReAlertAt();
                 String claimAt = now();
                 EscalationUndo undo = EscalationUndo.of(event);
-                if (!stormMember && !claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) return;
+                String fromLevel = event.getAlertLevel();
+                if (!stormMember && !claimEscalation(event.getId(), seenStamp, fromLevel, alertLevel, claimAt)) return;
                 // Sahiplenme YENİ seviyeyi yazdı: kayıt, alıcı sorgusu ve gönderimden HERHANGİ biri düşerse terfi geri alınır
                 // (inceleme N1 — eskiden yalnız gönderim korunuyordu; havuz tükenmesinde kayıt düşünce seviye yükselmiş kalıyor,
                 // ESCALATION hiç gitmiyor, onaylı alarm sonsuza dek susuyordu).
@@ -2086,6 +2157,12 @@ public class EscalationService {
                     if (!stormMember) revertEscalation(event, undo, claimAt, ex);   // sonraki tur terfiyi yeniden görür ve gönderir
                     throw ex;
                 }
+                // Aktivite (2026-11-05; inceleme D6): talebi kazanan (fırtına üyesinde talep yok — izleme yolu yalnız tarama
+                // liderinde, alarm anahtarı kilidi altında) terfi kalıcılaşıp gönderildikten SONRA yazar — geri alınan terfi
+                // her taramada yeni satır üretmez.
+                noteAlert(event, ActivityLogService.ACTION_ALERT_ESCALATED, alertLevel,
+                        inventoryId != null ? inventoryId : ctxMonitorId(outageContext), ActivityLogService.SYSTEM_ACTOR,
+                        fromLevel + " → " + alertLevel, ActivityLogService.AlertInfo.escalated(fromLevel));
                 if (!stormMember) {
                     event.setNotifiedContacts(serializeContacts(contacts));
                     event.setLastReAlertAt(claimAt);
@@ -2206,6 +2283,9 @@ public class EscalationService {
         event.setNotifiedContacts("[]");
         // lastReAlertAt BİLEREK null: "ilk bildirim yarıda kaldı" dalı pencere bitince INITIAL'ı gönderir.
         AlertEvent saved = alertEventRepo.save(event);
+        noteAlert(saved, ActivityLogService.ACTION_ALERT_TRIGGERED, alertLevel, ctxMonitorId(ctx),
+                ActivityLogService.SYSTEM_ACTOR, "bakım penceresinde açıldı",
+                ActivityLogService.AlertInfo.code(ActivityLogService.CODE_MAINTENANCE_OPEN));
         log.warn("🔧 Değişiklik alarmı bakım penceresinde açıldı (bildirim pencere bitince): {} [{}] olay #{}",
                 domain, alertType, saved == null ? null : saved.getId());
     }
@@ -5480,6 +5560,20 @@ public class EscalationService {
      * {@link AlertEventRepository#markResolvedIfOpen}. 1 = bu çağrı kapattı, 0 = başkası kapatmıştı.
      */
     int markResolvedIfOpenNotify(AlertEvent event, String at, String by, boolean notify) {
+        int n = markResolvedIfOpenNotifyRaw(event, at, by, notify);
+        // Aktivite (2026-11-05): kapanışı GERÇEKTEN yapan çağıran (CAS kazananı) yazar — tam bir kez. "system" = otomatik
+        // kurtarma; başka değer = elle kapatan (ekrandaki ad).
+        if (n == 1) {
+            boolean auto = by == null || "system".equals(by);
+            noteAlert(event, ActivityLogService.ACTION_ALERT_RESOLVED, null, null,
+                    auto ? ActivityLogService.SYSTEM_ACTOR : actorOr(by), auto ? "otomatik" : "elle " + by,
+                    auto ? ActivityLogService.AlertInfo.closed(ActivityLogService.CLOSED_AUTO, null)
+                         : ActivityLogService.AlertInfo.closed(ActivityLogService.CLOSED_MANUAL, by));
+        }
+        return n;
+    }
+
+    private int markResolvedIfOpenNotifyRaw(AlertEvent event, String at, String by, boolean notify) {
         Long id = event.getId();
         if (notify && jdbcTemplate != null) {
             try {

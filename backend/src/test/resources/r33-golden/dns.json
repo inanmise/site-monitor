@@ -379,6 +379,15 @@
           ],
           "ttl": 300,
           "response_ms": 30
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -428,6 +437,15 @@
           ],
           "ttl": 60,
           "response_ms": 2000
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -475,6 +493,15 @@
           "values": [],
           "error": "NXDOMAIN",
           "response_ms": 12
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -524,6 +551,15 @@
             "7.7.7.7"
           ],
           "response_ms": 40
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -572,6 +608,15 @@
             "3.3.3.3"
           ],
           "response_ms": 20
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -621,6 +666,15 @@
             "3.3.3.3"
           ],
           "response_ms": 25
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

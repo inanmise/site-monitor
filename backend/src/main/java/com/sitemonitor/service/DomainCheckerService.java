@@ -79,12 +79,27 @@ public class DomainCheckerService {
      * @param userManual etkinlik günlüğüne "elle" olarak mı yazılsın (yalnız kullanıcı tetiği)
      */
     private Map<String, Object> check(DomainMonitor m, boolean outOfBand, boolean userManual) {
-        Map<String, Object> r = evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
-                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs(), m, outOfBand);
+        LAST_PERSISTED.remove();
+        Map<String, Object> r;
+        DomainCheck written;
+        try {
+            r = evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
+                    m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs(), m, outOfBand);
+        } finally {
+            written = LAST_PERSISTED.get();
+            LAST_PERSISTED.remove();
+        }
         activityLog.recordCheck(ActivityLogService.DOMAIN, m.getId(), m.getName(),
-                m.getDomain(), m.getTeamId(), userManual, userManual ? "manual" : "scheduler", r);
+                m.getDomain(), m.getTeamId(), userManual, userManual ? "manual" : "scheduler", r,
+                ActivityLogService.refs(written));
         return r;
     }
+
+    /**
+     * Bu iş parçacığında {@link #check} sırasında yazılan geçmiş satırı (2026-11-05, aktivite satırının {@code check_id}'si):
+     * sonuç haritasına anahtar eklenmez (elle değerlendirme kutusuna ve bağlam anlık görüntüsüne sızmasın).
+     */
+    private static final ThreadLocal<DomainCheck> LAST_PERSISTED = new ThreadLocal<>();
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
     public Map<String, Object> test(String domainInput, int warningDays, int criticalDays) {
@@ -293,7 +308,8 @@ public class DomainCheckerService {
             // Hata teşhisi (2026-10-05): yalnız veri getirilemeyen (UNKNOWN) satırda dolu — classifyUnknown yazar.
             dc.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(out));
             dc.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(out));
-            checkRepo.save(dc);
+            DomainCheck saved = checkRepo.save(dc);
+            LAST_PERSISTED.set(saved != null ? saved : dc);
         } catch (Exception e) {
             log.warn("Domain kaydı yazılamadı: {} — {}", out.get("domain"), e.getMessage());
         }

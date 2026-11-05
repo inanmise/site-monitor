@@ -997,6 +997,16 @@ public class SchedulerService {
         patch("ALTER TABLE scripted_checks ADD COLUMN script_version VARCHAR(20)");
         // k6 sürüm geçişi (2026-10-29): koşumu yapan ikilinin sürümü — geçiş öncesi / sonrası karşılaştırma için.
         patch("ALTER TABLE scripted_checks ADD COLUMN k6_version VARCHAR(20)");
+        // Aktivite ayrıntı bağlantıları (2026-11-05, aktivite zenginleştirmesi A–C): kontrol satırı, HTTP kodu, neden kodu +
+        // maskeli ayrıntı, alarm / fırtına, değişiklik sırası, istek kimliği. Hepsi nullable; eski satırlar null kalır.
+        patch("ALTER TABLE activity_log ADD COLUMN check_id BIGINT");
+        patch("ALTER TABLE activity_log ADD COLUMN http_status INTEGER");
+        patch("ALTER TABLE activity_log ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE activity_log ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE activity_log ADD COLUMN alert_event_id BIGINT");
+        patch("ALTER TABLE activity_log ADD COLUMN storm_id BIGINT");
+        patch("ALTER TABLE activity_log ADD COLUMN change_seq INTEGER");
+        patch("ALTER TABLE activity_log ADD COLUMN request_id VARCHAR(64)");
         // Elle kontrol işareti (2026-09-29, elle kontrol alarm/fırtına/anomali tetiklemez): NULL = zamanlanmış (eski
         // satırlar). DNS tarafında değişiklik tabanı, sentetikte anomali serisi YALNIZ zamanlanmış kayıtlardan okunur.
         patch("ALTER TABLE scripted_checks ADD COLUMN manual BOOLEAN");
@@ -5775,19 +5785,25 @@ public class SchedulerService {
         if (active.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         // Faz 1: ağ kontrolleri certCheckExecutor'da paralel başlar (F1); Faz 2: sonuçlar sıralı işlenir.
-        List<Map.Entry<CertificateInventory, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        List<Map.Entry<CertificateInventory, java.util.function.Supplier<UptimeRun>>> started = new ArrayList<>();
         for (CertificateInventory inv : active) {
             if (inv.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): ağ hedefi yok → erişilebilirlik yoklanmaz
             int port = inv.getPort() != null ? inv.getPort() : 443;
-            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv)))));
+            started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptimeRun(inv.getDomain(), port, uptimeViaProxy(inv)))));
         }
         for (var entry : started) {
             CertificateInventory inv = entry.getKey();
             int port = inv.getPort() != null ? inv.getPort() : 443;
             try {
-                Map<String, Object> r = entry.getValue().get();
-                activityLog.recordCheck(ActivityLogService.UPTIME, null, inv.getDomain(),
-                        inv.getDomain() + ":" + port, inv.getTeamId(), false, "scheduler", r);
+                UptimeRun run = entry.getValue().get();
+                Map<String, Object> r = run.result();
+                // monitor_id = envanter kimliği (2026-11-05, aktivite zenginleştirmesi A): TLS_GRADE_DROPPED ve sertifika
+                // satırlarıyla tutarlı — ayrıntı / zaman çizelgesi / ilgili satırlar bu satırı izlemeye bağlar.
+                UptimeCheck row = run.row();
+                activityLog.recordCheck(ActivityLogService.UPTIME, inv.getId(), inv.getDomain(),
+                        inv.getDomain() + ":" + port, inv.getTeamId(), false, "scheduler", r,
+                        row == null ? null : ActivityLogService.Refs.check(row.getId(), null, row.getFailureReason(),
+                                row.getFailureDetail()));
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
@@ -5823,7 +5839,15 @@ public class SchedulerService {
     }
 
     private Map<String, Object> recheckUptime(String domain, int port, boolean viaProxy) {
+        return recheckUptimeRun(domain, port, viaProxy).result();
+    }
+
+    /** Uptime kontrolü + yazılan geçmiş satırı (aktivite satırının {@code check_id}'si için; yazılamadıysa satır null). */
+    private record UptimeRun(Map<String, Object> result, UptimeCheck row) {}
+
+    private UptimeRun recheckUptimeRun(String domain, int port, boolean viaProxy) {
         Map<String, Object> r = uptimeHttpCheckerService.check(domain, port, 10000, viaProxy);
+        UptimeCheck saved = null;
         try {
             UptimeCheck check = new UptimeCheck();
             check.setDomain(domain);
@@ -5836,11 +5860,12 @@ public class SchedulerService {
             check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa uptime %'den hariç
             check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız "down"da dolu
             check.setFailureDetail(CheckFailure.detailOf(r));
-            uptimeCheckRepo.save(check);
+            UptimeCheck written = uptimeCheckRepo.save(check);
+            saved = written != null ? written : check;
         } catch (Exception e) {
             log.warn("Uptime kaydı yazılamadı: {}:{} — {}", domain, port, e.getMessage());
         }
-        return r;
+        return new UptimeRun(r, saved);
     }
 
     @Scheduled(fixedDelayString = PORT_SWEEP_TICK, initialDelayString = "45000")
@@ -6016,6 +6041,7 @@ public class SchedulerService {
         Map<String, Object> r = portCheckerService.check(m);
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean open = Boolean.TRUE.equals(r.getOrDefault("open", false));
+        PortCheck written = null;
         try {
             PortCheck check = new PortCheck();
             check.setMonitorId(m.getId());
@@ -6025,12 +6051,13 @@ public class SchedulerService {
             check.setCheckedAt(ISO.format(Instant.now()));
             check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız kapalıda dolu
             check.setFailureDetail(CheckFailure.detailOf(r));
-            portCheckRepo.save(check);
+            PortCheck saved = portCheckRepo.save(check);
+            written = saved != null ? saved : check;
         } catch (Exception e) {
             log.warn("Port kaydı yazılamadı: {}:{} — {}", m.getHost(), m.getPort(), e.getMessage());
         }
         activityLog.recordCheck(ActivityLogService.PORT, m.getId(), m.getName(),
-                m.getHost() + ":" + m.getPort(), m.getTeamId(), false, "scheduler", r);
+                m.getHost() + ":" + m.getPort(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(written));
         return portOutcome(r);
     }
 
@@ -6186,16 +6213,18 @@ public class SchedulerService {
         boolean hadError = r.get("error") != null;
         // Adet koşulu: SAĞLIKLI = count [operatör] threshold (HTTP hatası → down).
         boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+        KeywordResult written = null;
         try {
             // Satır eşlemesi elle "Şimdi kontrol et" ile ORTAK (teşhis alanları iki yolda da aynı yazılsın).
             KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
-            keywordResultRepo.save(res);
+            KeywordResult saved = keywordResultRepo.save(res);
+            written = saved != null ? saved : res;
         } catch (Exception e) {
             log.warn("Keyword kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
         }
         r.put("ok", ok);   // aktivite özeti için sağlıklı-mı bayrağı (found + adet koşulu)
         activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
-                m.getUrl(), m.getTeamId(), false, "scheduler", r);
+                m.getUrl(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(written));
         return keywordOutcome(m, r);
     }
 
@@ -7121,6 +7150,7 @@ public class SchedulerService {
         Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m));
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
+        HttpCheck written = null;
         try {
             HttpCheck res = new HttpCheck();
             res.setMonitorId(m.getId());
@@ -7130,12 +7160,13 @@ public class SchedulerService {
             res.setError((String) r.get("error"));
             res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
-            httpCheckRepo.save(res);
+            HttpCheck saved = httpCheckRepo.save(res);
+            written = saved != null ? saved : res;
         } catch (Exception e) {
             log.warn("HTTP kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
         }
         activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(),
-                m.getUrl(), m.getTeamId(), false, "scheduler", r);
+                m.getUrl(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(written));
         return httpOutcome(r);
     }
 
@@ -7499,6 +7530,7 @@ public class SchedulerService {
                 && mainUp && brokenCount == 0 && res.mixedContentCount() == 0) pageStatus = "OK";
 
         String ts = ISO.format(Instant.now());
+        PageCheck pageWritten = null;
         try {
             PageCheck pc = new PageCheck();
             pc.setMonitorId(m.getId());
@@ -7522,7 +7554,8 @@ public class SchedulerService {
                 pc.setFailureReason(pf.code());
                 pc.setFailureDetail(pf.json());
             }
-            pageCheckRepo.save(pc);
+            PageCheck savedPc = pageCheckRepo.save(pc);
+            pageWritten = savedPc != null ? savedPc : pc;
             if (!res.issues().isEmpty()) {
                 List<PageResourceIssue> rows = new ArrayList<>();
                 for (PageCheckerService.ResourceIssue i : res.issues()) {
@@ -7557,7 +7590,8 @@ public class SchedulerService {
         activity.put("pages_crawled", res.pagesCrawled());
         if (res.error() != null) activity.put("error", res.error());
         activityLog.recordCheck(ActivityLogService.PAGE, m.getId(), m.getName(),
-                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity,
+                ActivityLogService.refs(pageWritten));
 
         // E-posta "Sorunlu Kaynaklar" bölümü için ilk ≤10 sorun. Toggle KAPALI iken timeout satırları listede öne
         // çıkmasın (shownIssues'ten çıkar). İki biçim: problem_resources (okunaklı, geriye-uyum) + problem_rows
@@ -7834,6 +7868,7 @@ public class SchedulerService {
         boolean reachable = res.reachable();
         String ts = ISO.format(Instant.now());
 
+        PageSpeedCheck speedWritten = null;
         try {
             PageSpeedCheck pc = new PageSpeedCheck();
             pc.setMonitorId(m.getId());
@@ -7872,7 +7907,8 @@ public class SchedulerService {
                     pc.setFailureDetail(psf.json());
                 }
             }
-            pageSpeedCheckRepo.save(pc);
+            PageSpeedCheck savedSpeed = pageSpeedCheckRepo.save(pc);
+            speedWritten = savedSpeed != null ? savedSpeed : pc;
             writeResourceBreakdown(m, pc, res, ts, wasBreached);
         } catch (Exception e) {
             log.warn("Sayfa hızı kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
@@ -7888,7 +7924,8 @@ public class SchedulerService {
         activity.put("request_count", res.requestCount());
         if (res.error() != null) activity.put("error", res.error());
         activityLog.recordCheck(ActivityLogService.PAGESPEED, m.getId(), m.getName(),
-                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+                m.getUrl(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity,
+                ActivityLogService.refs(speedWritten));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", res.status());
@@ -8869,7 +8906,8 @@ public class SchedulerService {
         if (res.error() != null) activity.put("error", res.error());
         if (res.failureReason() != null) activity.put("failure_reason", res.failureReason());
         activityLog.recordCheck(ActivityLogService.DBQUERY, m.getId(), m.getName(),
-                profileName != null ? profileName : m.getName(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+                profileName != null ? profileName : m.getName(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity,
+                ActivityLogService.Refs.check(checkId, null, res.failureReason(), null));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", res.status());
@@ -9384,6 +9422,7 @@ public class SchedulerService {
         boolean noChecks = "NO_CHECKS".equals(res.status());
         boolean up = ok || (noChecks && !scriptedCheckerService.noChecksAlarms());
         String ts = ISO.format(java.time.Instant.now());
+        com.sitemonitor.model.ScriptedCheck scriptedWritten = null;
         try {
             com.sitemonitor.model.ScriptedCheck c = new com.sitemonitor.model.ScriptedCheck();
             c.setMonitorId(m.getId());
@@ -9427,7 +9466,8 @@ public class SchedulerService {
                 c.setDataReceived(ph.dataReceived());
             }
             c.setCheckedAt(ts);
-            scriptedCheckRepo.save(c);
+            com.sitemonitor.model.ScriptedCheck savedScripted = scriptedCheckRepo.save(c);
+            scriptedWritten = savedScripted != null ? savedScripted : c;
         } catch (Exception e) {
             log.warn("Senaryo kaydı yazılamadı: {} — {}", m.getName(), e.getMessage());
         }
@@ -9440,7 +9480,7 @@ public class SchedulerService {
         activity.put("response_ms", res.durationMs());
         if (res.error() != null) activity.put("error", res.error());
         activityLog.recordCheck(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(),
-                m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+                m.getTeamId(), manual, manual ? "manual" : "scheduler", activity, ActivityLogService.refs(scriptedWritten));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", res.status());
@@ -9594,9 +9634,11 @@ public class SchedulerService {
      * değildir. İstisnalar burada loglanır, yutulmaz.
      */
     public Future<Map<String, Object>> triggerScriptedCheckAsync(com.sitemonitor.model.ScriptedMonitor m) {
+        // Aktivite satırının aktörü + istek kimliği (2026-11-05): koşum sanal iş parçacığında — oturum orada okunamaz.
+        ActivityLogService.Context activityContext = ActivityLogService.captureContext();
         return manualRunPool.submit(() -> {
             try {
-                Map<String, Object> r = recheckScripted(m, true);
+                Map<String, Object> r = activityContext.call(() -> recheckScripted(m, true));
                 // Değerlendirme BURADA yapılır, ucun beklemesinden BAĞIMSIZ olarak. Eskiden uç ayrıca
                 // evaluateScriptedNow(m) çağırıyordu; o da kendi k6 koşumunu başlatıyordu → tek tıkla
                 // İKİ süreç, iki ScriptedCheck satırı, iki permit. Yarışta recheckScripted "skipped"
@@ -10446,6 +10488,7 @@ public class SchedulerService {
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
         boolean na = Boolean.TRUE.equals(r.get("na"));
+        PingCheck pingWritten = null;
         try {
             PingCheck check = new PingCheck();
             check.setMonitorId(m.getId());
@@ -10458,13 +10501,14 @@ public class SchedulerService {
             // yine up=false (geçmiş/oran davranışı aynı), ama "hedef çöktü" ile karışmaz.
             check.setFailureReason(CheckFailure.reasonOf(r));
             check.setFailureDetail(CheckFailure.detailOf(r));
-            pingCheckRepo.save(check);
+            PingCheck savedPing = pingCheckRepo.save(check);
+            pingWritten = savedPing != null ? savedPing : check;
             persistedAt = check.getCheckedAt();
         } catch (Exception e) {
             log.warn("Ping kaydı yazılamadı: {} — {}", m.getHost(), e.getMessage());
         }
         activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(),
-                m.getHost(), m.getTeamId(), false, "scheduler", r);
+                m.getHost(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(pingWritten));
         Map<String, Object> out = pingOutcome(r);
         // Taban çizgisi bu ölçümün KENDİSİNİ içermemeli: kayıt zaten yazıldı, pencerenin üst
         // sınırı olarak damgası taşınır (yoksa ölçüm kendi ortalamasını yukarı çekip sapmayı gizler).
@@ -10649,9 +10693,10 @@ public class SchedulerService {
         if (changed) record.setChangeState(dnsChangeWillAlarm(m, values)
                 ? com.sitemonitor.service.monitoring.ChangeStates.PENDING
                 : com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
-        dnsRecordRepo.save(record);
+        DnsRecord savedRecord = dnsRecordRepo.save(record);
         activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
-                m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
+                m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r,
+                ActivityLogService.refs(savedRecord != null ? savedRecord : record));
         return new DnsPersisted(success, values, valueStr, prevValue, changed, rotated, now);
     }
 

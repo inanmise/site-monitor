@@ -296,6 +296,15 @@
           "checks_passed": 3,
           "checks_failed": 0,
           "response_ms": 500
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -362,6 +371,15 @@
           "checks_passed": 3,
           "checks_failed": 0,
           "response_ms": 3000
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -429,6 +447,15 @@
           "checks_failed": 1,
           "response_ms": 800,
           "error": "request timeout"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": "READ_TIMEOUT",
+          "failureDetail": "{\"phase\":\"RESPONSE\",\"error_code\":1050,\"step\":\"Ödeme\"}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -495,6 +522,15 @@
           "checks_passed": 0,
           "checks_failed": 0,
           "response_ms": 300
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -562,6 +598,15 @@
           "checks_failed": 2,
           "response_ms": 900,
           "error": "HTTP 500"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

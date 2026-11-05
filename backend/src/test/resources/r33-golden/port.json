@@ -275,6 +275,15 @@
         {
           "open": true,
           "response_ms": 120
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -311,6 +320,15 @@
         {
           "open": true,
           "response_ms": 900
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -348,6 +366,15 @@
           "open": false,
           "error": "Connection refused",
           "response_ms": 15
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -384,6 +411,15 @@
         {
           "open": false,
           "error": "Connect timed out"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -420,6 +456,15 @@
         {
           "open": true,
           "response_ms": 40
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

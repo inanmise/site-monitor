@@ -1,9 +1,163 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T03:46:41Z",
+  "generatedAt": "2026-11-05T04:29:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 802,
+  "count": 803,
   "releases": [
+    {
+      "version": "20.181.0",
+      "tag": "v20.181.0",
+      "releasedAt": "2026-11-05T04:29:12Z",
+      "commit": "359eb07d200d62dfbb0c40c84556e4d3e7d14c13",
+      "prevVersion": "20.180.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 5,
+        "fix": 7,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 5
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2257ad3b",
+          "subject": "aktivite PR CI — fikstürlerde gerçek takım adı yer tutucuyla, kapı istisnaları, animasyon ortasında ölçen e2e'ler"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "de6c6248",
+          "subject": "kanal raporu e2e — menü öğesi yüksekliği açılış animasyonu bitince ölçülür (CI'da 38,7 px titrekliği)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1dd5c04b",
+          "subject": "aktivite zaman çizelgesi kesinti listesi standart sayfalamada (sunucuda sınırsız liste \"tümünü göster\" ile açılmaz)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "760cafb6",
+          "subject": "aktivite kaydı — inceleme düzeltmelerinin belgesi (yazım yolu, ayrıntı kapıları, dışa aktarım aralığı, eski pod yanıtları)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "acda26f6",
+          "subject": "aktivite ön yüz düzeltme turu — rota kökü, süzgecin URL'den yeniden kurulması, orta tık, odak, telefon kartı; e2e yeni /related biçimi, izleme süzgeci sarar, menüden listeye dönüş"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0e38bf41",
+          "subject": "aktivite ön yüz inceleme düzeltmeleri (ara) — okunamayan / gizli bölümler, başarısız WARNING kontrolü, kök neden sayıları, dışa aktarım aralığı, rota kökü"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bcbe7450",
+          "subject": "aktivite inceleme düzeltmeleri — komşu kontrol sorgusu dizin dostu, güncel takım kapısı, işlem dışı yazım, alarm satırı ayrıntısı, HTTP durum kesintisi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d1097f7a",
+          "subject": "aktivite inceleme düzeltmeleri — dışa aktarım dizin sıralı okur ve 30/90 gün sınırlı, kök neden sayıları çapa hariç, neden tavanı 100"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7b5ec489",
+          "subject": "aktivite birleşmesi — ayrıntı sayfası gerçek bileşenle (ön yükleme, geri düğmesi metni tek), kök data-id"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "ec7d24b6",
+          "subject": "aktivite zenginleştirmesi (ayrıntı sayfası, alarm zinciri, zaman çizelgesi, süzgeç, dışa aktarım, kök neden)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ba9e11c7",
+          "subject": "aktivite — parametresiz neden adı (zaman çizelgesi kesintisi \"HTTP … döndü\" yerine), dışa aktarım tostunda yerel sayı biçimi, tablette arama kutusu genişliği; e2e Radix menü yeniden açma yarışı"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "57a255da",
+          "subject": "aktivite ayrıntı denetleyici testi be2 servislerini taklit eder"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "949eea02",
+          "subject": "aktivite zenginleştirmesi — model, ilgili panel, zaman çizelgesi, dışa aktarım, rota testleri; be2 yanıt biçimlerine uyum (class: nedeni, data kabı, sütunlu JSON, ACTIVITY_EXPORT etiketi)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "223878c9",
+          "subject": "aktivite ayrıntısı — önceki / sonraki kontrolde activity_id, sorgu satırında error_message eş adı, geri yükleme testi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d8a22a5c",
+          "subject": "aktivite ayrıntısı — başka aktiviteye geçişte odak yeni başlıkta, teslimat kartı telefonda ezilmez, \"neden değişti\" yalnız iki sorunlu kontrolde, grafik son eksen etiketi kesilmez, telefonda tek satı…"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a11535aa",
+          "subject": "aktivite ayrıntısı arka ucu — kontrol / alarm / değişiklik bağları, elle kontrol satırları, alarm olayları ve /api/activity/{id}/detail"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "595f9fd8",
+          "subject": "aktivite zenginleştirmesi arka uç D+E+F — zaman çizelgesi, süzgeçler, tam dışa aktarım, kök neden ipuçları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9238f9dd",
+          "subject": "aktivite ayrıntı sayfası — kontrol sonucu, önceki/sonraki kıyas, ±24 sa grafik, alarm zinciri, değişiklik farkı (act fe1, ara commit)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4c079353",
+          "subject": "aktivite — ayrıntı sayfası / zaman çizelgesi rotası, genişletilmiş süzgeçler, tam dışa aktarım, kök neden paneli (fe2 ara)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.180.0",
       "tag": "v20.180.0",

@@ -50,7 +50,8 @@ public class ActivityLog {
     @Column(name = "target", length = 500)
     private String target;
 
-    /** SCHEDULED_CHECK | MANUAL_CHECK | CREATED | UPDATED | DELETED | PAUSED | RESUMED | ALERT_TRIGGERED | ALERT_RESOLVED */
+    /** SCHEDULED_CHECK | MANUAL_CHECK | CREATED | CONFIG_CHANGED | DELETED | PAUSED | RESUMED | ALERT_TRIGGERED |
+     *  ALERT_ESCALATED | ALERT_ACKNOWLEDGED | ALERT_RESOLVED | NOC_* | … */
     @Column(name = "action", nullable = false, length = 30)
     private String action;
 
@@ -86,4 +87,41 @@ public class ActivityLog {
 
     @Column(name = "days_remaining")
     private Integer daysRemaining;
+
+    // ── Ayrıntı bağlantıları (2026-11-05, aktivite zenginleştirmesi A–C; adlar KALICI, hepsi nullable) ──────────────
+    // Eski satırlarda null (geri doldurma YOK — 365 günlük tablo); eski sürüm pod'u da yazmaz (yuvarlanan dağıtım):
+    // ayrıntı sayfası o zaman "yaklaşık eşleşme"ye düşer.
+
+    /** Türün kontrol tablosundaki satır kimliği (port_checks, ping_checks, dns_records, http_checks, keyword_results,
+     *  page_checks, pagespeed_checks, scripted_checks, dbquery_checks, domain_checks, certificate_checks, uptime_checks). */
+    @Column(name = "check_id")
+    private Long checkId;
+
+    /** Kontrolün HTTP durum kodu (HTTP / keyword / sayfa / sayfa hızı …) — yoksa null. */
+    @Column(name = "http_status")
+    private Integer httpStatus;
+
+    /** Kontrol satırındaki neden kodunun AYNISI ({@code CheckFailureReason} ya da keyword kodu). Kontrol tablolarıyla aynı boy. */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kontrol satırındaki maskeli ayrıntının AYNISI (JSON; keyword'de düz metin) — ≤ 4000. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
+
+    /** Alarm olayı (ALERT_* satırları, NOC satırları). */
+    @Column(name = "alert_event_id")
+    private Long alertEventId;
+
+    /** Alarm fırtınası (fırtına 7/24 satırları). */
+    @Column(name = "storm_id")
+    private Long stormId;
+
+    /** {@code monitor_change_log.seq} — CREATED / CONFIG_CHANGED / DELETED satırlarının değişiklik kaydı. */
+    @Column(name = "change_seq")
+    private Integer changeSeq;
+
+    /** Kullanıcı eyleminin istek kimliği ({@code CorrelationIdFilter} MDC {@code requestId}); zamanlanmış işte null. */
+    @Column(name = "request_id", length = 64)
+    private String requestId;
 }

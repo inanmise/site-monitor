@@ -54,7 +54,11 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const CHANNEL_EXPORT = 'components/techerror/channelExport.js'
     // 2026-10-31: Sayfa Bütünlüğü kaynak analizi dışa aktarımı (Excel / PDF) — ResourceScanTab onu YALNIZ tıklamada import() ile alır
     const RESOURCE_SCAN_EXPORT = 'components/page/resourcescan/resourceScanExport.js'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT].sort())
+    // 2026-11-05 (act E): aktivite dışa aktarım menüsü Excel'i yazıcıyı YALNIZ tıklamada import() ile alır
+    const ACTIVITY_EXPORT = 'components/activity/ActivityExportMenu.jsx'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT].sort())
+    const activity = FILES.find((x) => x.rel === ACTIVITY_EXPORT)
+    expect(staticImports(activity.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'aktivite menüsü Excel yazıcısını statik içe aktarmaz').toEqual([])
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /resourceScanExport(\.js)?$/.test(s))).map((x) => x.rel),
       'kaynak analizi dışa aktarımı statik içe aktarılmaz').toEqual([])
     expect(FILES.filter(({ src }) => /import\(\s*'\.\/resourceScanExport\.js'\s*\)/.test(src)).map((x) => x.rel))

@@ -179,7 +179,7 @@ class NocCallLogControllerTest {
                 .andExpect(jsonPath("$.data.phone").doesNotExist());
         verify(auditService).recordAction(eq("NOC_CALL_LOG_ADD"), any(HttpSession.class), eq("ALERT_EVENT"), eq("50"), anyString(), isNull());
         verify(activityLog).recordLifecycle(eq("HTTP"), isNull(), anyString(), anyString(), eq(TEAM_A),
-                eq("NOC_CALL_LOGGED"), eq("noc2"), anyString());
+                eq("NOC_CALL_LOGGED"), eq("noc2"), anyString(), any());
 
         for (MockHttpSession s : List.of(memberA, memberB, scoped, audit))
             mvc.perform(post("/api/alerts/50/noc-calls").session(s).contentType(MediaType.APPLICATION_JSON).content(body))

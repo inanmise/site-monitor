@@ -141,8 +141,9 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
 
   it('Etkinlik günlüğü tür rozetleri her türü tanır', () => {
     // Eksik tür: satırlar gri "?" rozetiyle çıkar ve tür filtresi çipi hiç üretilmez.
-    const keys = valuesIn(read('components/ActivityLog.jsx'),
-      'const TYPES = [', '\n]', /key: '(\w+)'/g, 'ActivityLog TYPES')
+    // Tür listesi 2026-11-05'ten beri aktivite ekranlarının ortak parçasında (liste, zaman çizelgesi, ilgili satırlar)
+    const keys = valuesIn(read('components/activity/ActivityParts.jsx'),
+      'export const TYPES = [', '\n]', /key: '(\w+)'/g, 'ActivityParts TYPES')
     const upper = ALL_TYPES.map(t => t.toUpperCase())
     expect(keys).toEqual(expect.arrayContaining(upper))
   })

@@ -10,7 +10,6 @@ import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.NocCallLogRepository;
 import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.ActivityLogService;
-import com.sitemonitor.service.MonitorTypeCatalog;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpSession;
@@ -467,19 +466,18 @@ public class NocCallLogService {
             String who = c.getContactedName() == null ? "—" : c.getContactedName();
             String summary = ("NOC_CALL_DELETED".equals(action) ? "7/24 arama kaydı silindi: " : "7/24 arama: ")
                     + who + " — " + outcomeTr(c.getOutcome()) + " (" + channelTr(c.getChannel()) + ")";
-            activityLog.recordLifecycle(activityType(ev.getAlertType()), null, ev.getDomain(), ev.getDomain(), teamId,
-                    action, username(s), summary);
+            // Alarm bağı (2026-11-05, aktivite zenginleştirmesi B) + izleme kimliği alarmın bağlam anlık görüntüsünden (sorgu yok)
+            activityLog.recordLifecycle(activityType(ev.getAlertType()),
+                    ActivityLogService.monitorIdFromContext(ev.getContextJson()), ev.getDomain(), ev.getDomain(), teamId,
+                    action, username(s), summary, ActivityLogService.Refs.alert(ev.getId()));
         } catch (Exception e) {
             log.debug("7/24 arama etkinlik kaydı atlandı: {}", e.toString());
         }
     }
 
-    /** Etkinlik akışı türü: uyarı tipinin izleme türü (MonitorTypeCatalog); bilinmeyen tipte ham tip. */
+    /** Alarm tipi → aktivite türü — tek kaynak {@link ActivityLogService#alertActivityType} (ACCESSIBILITY → UPTIME). */
     static String activityType(String alertType) {
-        String t = MonitorTypeCatalog.typeOfAlert(alertType);
-        if (t != null) return t.toUpperCase(Locale.ROOT);
-        String raw = alertType == null ? "CERT" : alertType.toUpperCase(Locale.ROOT);
-        return raw.length() > 20 ? raw.substring(0, 20) : raw;
+        return ActivityLogService.alertActivityType(alertType);
     }
 
     static String outcomeTr(String o) {

@@ -446,6 +446,15 @@
           "timeout_count": 0,
           "mixed_content_count": 0,
           "pages_crawled": 1
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -522,6 +531,15 @@
           "timeout_count": 0,
           "mixed_content_count": 0,
           "pages_crawled": 1
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": "RESOURCES_BROKEN",
+          "failureDetail": "{\"phase\":\"CONTENT\",\"broken\":1,\"timeouts\":0,\"mixed\":0,\"total_resources\":12}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -575,6 +593,15 @@
           "mixed_content_count": 0,
           "pages_crawled": 1,
           "error": "HTTP 502"
+        },
+        {
+          "checkId": null,
+          "httpStatus": 502,
+          "failureReason": "HTTP_STATUS",
+          "failureDetail": "{\"phase\":\"RESPONSE\",\"http_status\":502,\"target\":\"c.example.com\",\"via\":\"direct\",\"timeout_ms\":4000}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -628,6 +655,15 @@
           "mixed_content_count": 0,
           "pages_crawled": 1,
           "error": "URL'de host yok"
+        },
+        {
+          "checkId": null,
+          "httpStatus": null,
+          "failureReason": "CONFIG_ERROR",
+          "failureDetail": "{\"phase\":\"POLICY\"}",
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -680,6 +716,15 @@
           "timeout_count": 0,
           "mixed_content_count": 0,
           "pages_crawled": 1
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -732,6 +777,15 @@
           "timeout_count": 0,
           "mixed_content_count": 0,
           "pages_crawled": 1
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     },
@@ -808,6 +862,15 @@
           "timeout_count": 1,
           "mixed_content_count": 0,
           "pages_crawled": 1
+        },
+        {
+          "checkId": null,
+          "httpStatus": 200,
+          "failureReason": null,
+          "failureDetail": null,
+          "alertEventId": null,
+          "stormId": null,
+          "changeSeq": null
         }
       ]
     }

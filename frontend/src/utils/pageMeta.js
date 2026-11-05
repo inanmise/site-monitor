@@ -19,6 +19,8 @@ export const META_PAGES = Object.freeze([
   'loading', 'login', 'sessionExpired', 'accountInactive', 'maintenance', 'changePassword', 'notFound', 'restricted',
   // Kanal raporlarının Görsel paneli penceresi (2026-10-18, ?tab=channelreports&te_view=images)
   'imagesPanel',
+  // Aktivite ayrıntı sayfası (?tab=activity&act=<id>) ve izleme zaman çizelgesi (?tab=activity&amon=<TYPE>:<id>) — 2026-11-05
+  'activityDetail', 'activityTimeline',
 ])
 
 export const tabMetaKey = (tab) => `meta.tab.${tab}`
@@ -51,6 +53,27 @@ export function appMetaKey({
   if (!validTabs?.has?.(tab)) return pageMetaKey('notFound')
   if (restricted) return pageMetaKey('restricted')
   return tabMetaKey(tab)
+}
+
+/**
+ * Alt sayfa başlığı (2026-11-05, aktivite inceleme FR D16): bir sekmenin içindeki rota (Aktivite → ayrıntı sayfası,
+ * izleme zaman çizelgesi) kendi başlığını İSTER, YAZMAZ — tek yazar `usePageMeta` kalır. Değer `{ tab, key, name }`:
+ * `tab` etkin sekmeyken `usePageMeta` sekmenin anahtarı yerine `key`'i (`meta.page.<ad>`) kullanır; `name` verilirse
+ * başlık "<name> — <sayfa>". Sekme sökülünce (ya da liste rotasına dönünce) null.
+ */
+let subPageMeta = null
+const subPageListeners = new Set()
+export function setSubPageMeta(value) {
+  const next = value && value.tab && value.key ? { tab: String(value.tab), key: String(value.key), name: value.name ? String(value.name) : null } : null
+  const cur = subPageMeta
+  if (cur === next || (cur && next && cur.tab === next.tab && cur.key === next.key && cur.name === next.name)) return
+  subPageMeta = next
+  subPageListeners.forEach((fn) => { try { fn() } catch { /* dinleyici hatası yazımı durdurmaz */ } })
+}
+export const getSubPageMeta = () => subPageMeta
+export function subscribeSubPageMeta(fn) {
+  subPageListeners.add(fn)
+  return () => subPageListeners.delete(fn)
 }
 
 /**

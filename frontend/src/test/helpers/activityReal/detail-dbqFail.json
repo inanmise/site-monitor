@@ -1,0 +1,114 @@
+{
+  "success": true,
+  "data": {
+    "id": 25,
+    "activity_time": "2026-11-05T01:32:17",
+    "monitor_type": "DBQUERY",
+    "monitor_id": 77,
+    "monitor_name": "Bekleyen EFT kuyruğu",
+    "target": "PROD-ORA EFT",
+    "action": "SCHEDULED_CHECK",
+    "result_status": "ERROR",
+    "result_summary": "çalıştırılamadı · 12ms",
+    "result_detail": null,
+    "error_message": "ORA-00942: tablo ya da görünüm mevcut değil",
+    "error_class": null,
+    "actor": "scheduler",
+    "team_id": 1,
+    "response_ms": 12,
+    "days_remaining": null,
+    "check_id": 2,
+    "http_status": null,
+    "failure_reason": "DB_SQL_ERROR",
+    "failure_detail": null,
+    "alert_event_id": null,
+    "storm_id": null,
+    "change_seq": null,
+    "request_id": null,
+    "team_name": "Ödeme Kanalları ve Takim A Takımı (Mobil / İnternet Şubesi)"
+  },
+  "check": {
+    "type": "dbquery",
+    "match": "exact",
+    "row": {
+      "id": 2,
+      "checked_at": "2026-11-05T01:32:17",
+      "ok": false,
+      "status": "FAIL",
+      "breach_level": null,
+      "duration_ms": 12,
+      "row_count": null,
+      "row_count_capped": false,
+      "metric_value": null,
+      "slow": false,
+      "manual": false,
+      "recheck": false,
+      "error": "ORA-00942: tablo ya da görünüm mevcut değil",
+      "failure_reason": "DB_SQL_ERROR",
+      "rule_results": [],
+      "error_message": "ORA-00942: tablo ya da görünüm mevcut değil"
+    }
+  },
+  "previous_check": {
+    "id": 1,
+    "checked_at": "2026-11-05T01:18:57",
+    "ok": true,
+    "status": "OK",
+    "breach_level": null,
+    "duration_ms": 55,
+    "row_count": 3,
+    "row_count_capped": false,
+    "metric_value": 12.5,
+    "slow": false,
+    "manual": false,
+    "recheck": false,
+    "error": null,
+    "failure_reason": null,
+    "rule_results": [],
+    "error_message": null,
+    "activity_id": 24
+  },
+  "next_check": null,
+  "series": {
+    "from": "2026-11-04T01:32:17",
+    "to": "2026-11-06T01:32:17",
+    "points": [
+      {
+        "t": "2026-11-05T01:18:57",
+        "ms": 55,
+        "status": "SUCCESS"
+      },
+      {
+        "t": "2026-11-05T01:32:17",
+        "ms": 12,
+        "status": "ERROR"
+      }
+    ],
+    "truncated": false
+  },
+  "alarm": null,
+  "change": null,
+  "links": {
+    "monitor": {
+      "tab": "dbquery",
+      "params": {
+        "monitor": 77
+      }
+    },
+    "history": {
+      "tab": "dbquery",
+      "params": {
+        "monitor": 77,
+        "mtab": "control"
+      }
+    },
+    "changes": null,
+    "alert": null,
+    "can_diagnose": false
+  },
+  "actor": {
+    "name": "scheduler",
+    "request_id": null
+  },
+  "timestamp": "2026-11-05T01:34:26"
+}
