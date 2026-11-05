@@ -513,6 +513,20 @@ oluşturmayın — eski pod bu ayarları bilmez (alarm mailine ilk N kolon gider
 gövdesini yazmaz. İzleme oluşturma / güncelleme / geri yükleme farkı ve değişiklik geçmişi sorgu metnini içerir (geri
 yükleme için gerekli; ilk 512 karakter); "Sorguyu dene" denetimi yalnız uzunluk ve özet (hash) taşır.
 
+
+**Kullanıcı deneyimi paketleri (2026-11-05).** Bağlantı denemesi artık altı adımı ayrı ayrı gösterir (DNS → TCP → TLS →
+giriş → sorgu → yetki) ve her başarısız adım için ne yapılacağını söyler. TCP adımı veritabanına sürücüden önce düz bir soket
+açtığı için PostgreSQL günlüğünde her denemede bir "incomplete startup packet" satırı, SQL Server'da bir ön-giriş notu
+görülebilir — zararsızdır. Bağlantının "Son 24 saat" sağlık kartı (`GET …/connections/{id}/health`) yalnız bağlantının kendi
+takımına açıktır. "Düzelt" (`POST …/dbquery/sql-fix`) veritabanına gitmez; önerilen her sorgu yine güvenlik denetiminden geçer.
+Kartta son 24 saatin değer eğilimi, grafikte alarm dönemleri ve değişiklik işaretleri, alarm postasında ilk ihlal zamanı + kaç
+çalıştırmadır sürdüğü + son 10 değer görünür (yalnız ölçülen değer — satır verisi değil). Yeni kural türleri: **olağan dışı
+değer** (son N çalıştırmanın olağan bandı, isteğe bağlı günlük / haftalık mevsimsellik) ve **donmuş değer** (N çalıştırmadır
+değişmeyen değer); taban kurulurken (en az örnek sayısı dolana dek) kural ne ihlal ne de "kanıt yok" sayılır.
+
+Sürüm geçişi: eski pod bu yeni alanları üretmez, `sql-fix` ve `…/health` uçlarına 404 döner, olağan dışı / donmuş kuralları
+okurken düşürür ve kaydederken reddeder — bu kuralları bütün podlar yeni sürümdeyken tanımlayın.
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker
