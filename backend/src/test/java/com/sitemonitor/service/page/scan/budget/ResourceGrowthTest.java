@@ -56,7 +56,7 @@ class ResourceGrowthTest {
     @Test
     @DisplayName("bozuk / boş ayrıntı → boş küme, asla fırlatmaz")
     void parseBroken() {
-        assertThat(ResourceGrowth.parse(1, null).objects()).isEmpty();
+        assertThat(ResourceGrowth.parse(1, (String) null).objects()).isEmpty();
         assertThat(ResourceGrowth.parse(1, "").objects()).isEmpty();
         assertThat(ResourceGrowth.parse(1, "{\"not\":\"array\"}").objects()).isEmpty();
         assertThat(ResourceGrowth.parse(1, "[{\"url\":\"https://x/a\",\"bytes\":1,\"page_load\":tru").objects()).isEmpty();

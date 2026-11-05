@@ -53,8 +53,13 @@ class ResourceBudgetEvaluatorTest {
             "'{\"min_grade\":80}' | DONE | false | - - - - - 80 - | ok | 0 | t | -",
             "'{\"min_grade\":80}' | DONE | false | - - - - - 79 - | exceeded | 1 | f | -",
             "'{\"min_grade\":80}' | DONE | true | - - - - - 90 - | unknown | 0 | ? | capped",
-            "'{\"min_grade\":80}' | DONE | true | - - - - - 60 - | exceeded | 1 | f | -",
+            // D-2: kısmi analizde not bir üst sınır DEĞİL (sıkıştırma / önbellek oran) — sınırın altında da olsa bilinmez
+            "'{\"min_grade\":80}' | DONE | true | - - - - - 60 - | unknown | 0 | ? | capped",
+            "'{\"min_grade\":80,\"max_requests\":50}' | DONE | true | - 51 - - - 60 - | exceeded | 1 | f ? | - capped",
             "'{\"min_security_score\":70}' | DONE | false | - - - - - - 69 | exceeded | 1 | f | -",
+            // güvenlik puanı yalnız ceza düşer → kısmi analizin puanı üst sınır: altındaysa kanıtlı aşım, değilse bilinmez
+            "'{\"min_security_score\":70}' | DONE | true | - - - - - - 40 | exceeded | 1 | f | -",
+            "'{\"min_security_score\":70}' | DONE | true | - - - - - - 90 | unknown | 0 | ? | capped",
             "'{\"min_security_score\":70}' | DONE | false | - - - - - - - | unknown | 0 | ? | missing",
             "'{\"min_grade\":0}' | DONE | false | - - - - - 0 - | ok | 0 | t | -",
             // hepsi bir arada, iki aşım

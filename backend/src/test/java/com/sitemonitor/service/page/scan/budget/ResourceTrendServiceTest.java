@@ -122,7 +122,7 @@ class ResourceTrendServiceTest {
     }
 
     @Test
-    @DisplayName("büyüme: yalnız ayrıntısı saklı ve en yeni analizle aynı algoritma sürümündekiler; sabit sorgu sayısı; aynı küme bellekten")
+    @DisplayName("büyüme: yalnız ayrıntısı saklı ve en yeni analizle aynı algoritma sürümündekiler; analiz başına tek sorgu; aynı küme bellekten")
     void growthBasisAndQueries() {
         scan(1, "DONE", 10, 2, items(10_000, 999_999), 1, null, null, null);   // algoritma 2 — dayanağa girmez
         long s1 = scan(1, "DONE", 8, 3, items(100_000, 200_000), 1, null, null, null);
@@ -134,7 +134,7 @@ class ResourceTrendServiceTest {
                 ResourceBudgetServiceTest.countingConnections(dataSource, connections)));
         counting.clock = () -> NOW;
         Map<String, Object> r = counting.trend(1, 30, ResourceBudget.EMPTY);
-        assertThat(connections.get()).as("noktalar + ayrıntı = 2 sorgu").isEqualTo(2);
+        assertThat(connections.get()).as("noktalar + analiz BAŞINA bir ayrıntı sorgusu (O-4) = 1 + 2").isEqualTo(3);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> growth = (List<Map<String, Object>>) r.get("growth");
         assertThat(growth).extracting(g -> g.get("url")).containsExactly("https://x/hero.png", "https://x/app.js");
@@ -185,6 +185,41 @@ class ResourceTrendServiceTest {
         assertThat(growth).hasSize(1);
         assertThat(growth.get(0)).containsEntry("url", "https://x/app.js").containsEntry("first_bytes", 1_005L)
                 .containsEntry("last_bytes", 1_024L).containsEntry("scans", 20);
+    }
+
+    @Test
+    @DisplayName("O-4: pod'da en çok 2 büyüme hesabı — yuvalar doluysa growth null + growth_busy (boş liste değil); boşalınca hesaplanır")
+    void growthBusyWhenSlotsFull() throws Exception {
+        scan(1, "DONE", 8, 3, items(100_000, 200_000), 1, null, null, null);
+        scan(1, "DONE", 4, 3, items(150_000, 900_000), 1, null, null, null);
+        assertThat(ResourceTrendService.GROWTH_CONCURRENCY).isEqualTo(2);
+        svc.growthSlots.acquire(2);
+        try {
+            long t0 = System.currentTimeMillis();
+            Map<String, Object> busy = svc.trend(1, 30, ResourceBudget.EMPTY);
+            assertThat(busy.get("growth")).isNull();
+            assertThat(busy.get("growth_busy")).isEqualTo(true);
+            assertThat((List<?>) busy.get("points")).hasSize(2);
+            assertThat(System.currentTimeMillis() - t0).as("en çok kısa bir bekleme")
+                    .isLessThan(ResourceTrendService.GROWTH_WAIT_MS + 3_000);
+        } finally {
+            svc.growthSlots.release(2);
+        }
+        Map<String, Object> r = svc.trend(1, 30, ResourceBudget.EMPTY);
+        assertThat(r).doesNotContainKey("growth_busy");
+        assertThat((List<?>) r.get("growth")).hasSize(2);
+        assertThat(svc.growthSlots.availablePermits()).as("yuva geri bırakıldı").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("O-4: ayrıntı karakter akışından ayrıştırılır — okuyucuyla ve metinle aynı sonuç, bozuk akış boş")
+    void parseFromReader() {
+        String json = items(150_000, 900_000);
+        ResourceGrowth.ScanObjects a = ResourceGrowth.parse(7, json);
+        ResourceGrowth.ScanObjects b = ResourceGrowth.parse(7, new java.io.StringReader(json));
+        assertThat(b.objects()).isEqualTo(a.objects()).hasSize(2);
+        assertThat(ResourceGrowth.parse(7, new java.io.StringReader("[{\"url\":")).objects()).isEmpty();
+        assertThat(ResourceGrowth.parse(7, (java.io.Reader) null).objects()).isEmpty();
     }
 
     @Test

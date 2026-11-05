@@ -50,8 +50,17 @@ public final class ResourceGrowth {
      * analizde iki kez varsa büyük bayt alınır.
      */
     public static ScanObjects parse(long scanId, String itemsJson) {
+        if (itemsJson == null || itemsJson.isBlank()) return new ScanObjects(scanId, new LinkedHashMap<>());
+        return parse(scanId, new java.io.StringReader(itemsJson));
+    }
+
+    /**
+     * {@link #parse(long, String)} — karakter akışından (O-4, 2026-11): sürücünün verdiği okuyucu doğrudan ayrıştırılır, metin
+     * ikinci kez kopyalanmaz. Okuyucu bu çağrıda kapatılır. null / boş → boş harita (asla fırlatmaz).
+     */
+    public static ScanObjects parse(long scanId, java.io.Reader itemsJson) {
         Map<String, Obj> out = new LinkedHashMap<>();
-        if (itemsJson == null || itemsJson.isBlank()) return new ScanObjects(scanId, out);
+        if (itemsJson == null) return new ScanObjects(scanId, out);
         try (JsonParser p = JSON.createParser(itemsJson)) {
             if (p.nextToken() != JsonToken.START_ARRAY) return new ScanObjects(scanId, out);
             int read = 0;

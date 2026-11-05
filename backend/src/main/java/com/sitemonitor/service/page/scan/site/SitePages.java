@@ -21,8 +21,9 @@ import java.util.function.Predicate;
  * ({@code PageResourceScanService}) sayfaları ölçüp buraya verir.
  *
  * <p><b>Sayfa seçimi</b> ({@link #select}): ana sayfanın bağlantı adayları ({@code links} — keşif sırası = DOM sırası, parçasız,
- * tekil, izlemenin hariç tutma desenleri uygulanmış) içinden ana sayfayla AYNI şema + host + bağlantı noktası olan, uzantısız ya
- * da {@code .html} / {@code .htm} sayfalar; ana sayfanın kendisi (yönlendirme sonrası adresi dahil) ve yalnız sondaki {@code /}
+ * tekil, izlemenin hariç tutma desenleri uygulanmış) içinden ana sayfayla AYNI şema + host + bağlantı noktası olan, uzantısız,
+ * durağan HTML ya da sunucu sayfası ({@link #PAGE_EXT}: {@code .html}, {@code .aspx}, {@code .php}, {@code .jsp} …) adresler;
+ * ana sayfanın kendisi (yönlendirme sonrası adresi dahil) ve yalnız sondaki {@code /}
  * farkı olan kopyalar elenir. En çok {@code max} adres.
  *
  * <p><b>Ortak / tekil bayt</b>: yalnız tamamlanan ({@link #DONE}) sayfaların sayfa yükü nesneleri sayılır (indirilmeyenler hariç;
@@ -42,8 +43,13 @@ public final class SitePages {
     public static final int MAX_SHARED = 50;
     /** Sayfa başına öne çıkan öneri kodu sayısı. */
     public static final int TOP_RECS = 5;
-    /** Taranacak sayfa uzantıları ({@code ""} = uzantısız). */
-    static final Set<String> PAGE_EXT = Set.of("", "html", "htm");
+    /**
+     * Taranacak sayfa uzantıları ({@code ""} = uzantısız): durağan HTML ve sunucu sayfaları (D-4, 2026-11 — kurumsal / kamu
+     * sitelerinde iç sayfalar çoğunlukla {@code .aspx} / {@code .php} / {@code .jsp}). HTML dönmeyen adres sayfa satırında
+     * {@code PAGE_NOT_HTML} olur.
+     */
+    static final Set<String> PAGE_EXT = Set.of("", "html", "htm", "xhtml", "shtml", "aspx", "asp", "php", "jsp", "jspx",
+            "cfm", "do", "action");
     /** Tek adresin en uzun hali (keşifle aynı tavan). */
     static final int MAX_URL_CHARS = 4096;
 
@@ -267,6 +273,9 @@ public final class SitePages {
         site.put("pages", pageRows);
         site.put("shared", shared);
         site.put("totals", totals);
+        // Site analizinin eksikliği (O-3): bir sayfa bütçe yüzünden taranmadı ya da kısmi ölçüldü. Özet satırının capped'i
+        // YALNIZ ana sayfanın kendi kırpılmasıdır — bu alan onu değiştirmez.
+        site.put("incomplete", anyCapped(pages));
         return site;
     }
 
@@ -277,7 +286,7 @@ public final class SitePages {
         return n;
     }
 
-    /** Bir sayfa yarıda kaldı ya da bütçe yüzünden taranmadı mı (özet satırının {@code capped}'ı). */
+    /** Bir sayfa yarıda kaldı ya da bütçe yüzünden taranmadı mı ({@code analysis.site.incomplete}; özetin capped'i DEĞİL). */
     public static boolean anyCapped(List<Page> pages) {
         for (Page p : pages) if (p.capped()) return true;
         return false;

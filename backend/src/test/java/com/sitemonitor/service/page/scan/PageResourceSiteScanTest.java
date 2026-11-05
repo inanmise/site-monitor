@@ -274,14 +274,67 @@ class PageResourceSiteScanTest {
         Map<String, Object> one = awaitEnd(3, id);
         Map<String, Object> scan = get(one, "scan");
         assertThat(scan.get("status")).isEqualTo("DONE");
-        assertThat(scan.get("capped")).isEqualTo(true);
+        // O-3: ana sayfa eksiksiz ölçüldü → özetin capped'i false (taranmayan iç sayfalar ana sayfayı "kısmi" yapmaz)
+        assertThat(scan.get("capped")).isEqualTo(false);
         assertThat(scan.get("pages_count")).isEqualTo(2);
-        List<Map<String, Object>> pages = get(get(get(one, "analysis"), "site"), "pages");
+        Map<String, Object> site = get(get(one, "analysis"), "site");
+        assertThat(site.get("incomplete")).as("site eksikliği ayrı alanda").isEqualTo(true);
+        assertThat((Map<String, Object>) get(site, "totals")).containsEntry("skipped", 3);
+        List<Map<String, Object>> pages = get(site, "pages");
         assertThat(pages).extracting(p -> p.get("status")).containsExactly("ok", "ok", "skipped", "skipped", "skipped");
+        assertThat(pages.get(0).get("capped")).isEqualTo(false);
         assertThat(pages.get(2).get("capped")).isEqualTo(true);
         assertThat(pages.get(2).get("error_code")).isEqualTo("NOT_SCANNED");
         assertThat(pages.get(2).get("error")).isNotNull();
         assertThat(hits("GET /contact.html")).isZero();
+
+        // O-3: bütçe ana sayfanın kendi kapsamına bakar — sınır içindeki değerler "ok" (capped yüzünden "bilinmiyor" değil)
+        com.sitemonitor.service.page.scan.budget.ResourceBudgetEvaluator.Result b =
+                com.sitemonitor.service.page.scan.budget.ResourceBudgetEvaluator.evaluate(
+                        com.sitemonitor.service.page.scan.budget.ResourceBudget.parse("{\"max_requests\":500,\"max_page_kb\":50000}"),
+                        new com.sitemonitor.service.page.scan.budget.ResourceBudgetEvaluator.Facts("DONE",
+                                (Boolean) scan.get("capped"), ((Number) scan.get("page_bytes")).longValue(),
+                                ((Number) scan.get("request_count")).longValue(), null, null, null, null, null));
+        assertThat(b.status()).isEqualTo("ok");
+    }
+
+    @Test
+    @DisplayName("D-5: site süre bütçesi en çok 900 sn — 1800 / 60 gibi aralık dışı değer 900'e döner, 600 kalır")
+    void siteMaxSecondsAtMost900() {
+        when(settings.getInt(eq(PageResourceScanService.KEY_SITE_MAX_SECONDS), anyInt())).thenReturn(1800);
+        assertThat(svc.siteLimits().maxSeconds()).isEqualTo(900);
+        when(settings.getInt(eq(PageResourceScanService.KEY_SITE_MAX_SECONDS), anyInt())).thenReturn(60);
+        assertThat(svc.siteLimits().maxSeconds()).isEqualTo(900);
+        when(settings.getInt(eq(PageResourceScanService.KEY_SITE_MAX_SECONDS), anyInt())).thenReturn(600);
+        assertThat(svc.siteLimits().maxSeconds()).isEqualTo(600);
+        assertThat(PageResourceScanService.SITE_MAX_SECONDS_MAX).isEqualTo(900);
+        when(settings.getInt(eq(PageResourceScanService.KEY_MAX_PAGES), anyInt())).thenReturn(50);
+        assertThat(svc.siteLimits().maxPages()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("D-6: önbellekteki stil başvuruları sayı ve karakter tavanıyla sınırlı; kesilen liste baştan kısalır")
+    void siteRefsCacheIsBounded() {
+        java.util.function.Function<Integer, List<PageResourceDiscovery.Candidate>> refs = n -> {
+            List<PageResourceDiscovery.Candidate> l = new java.util.ArrayList<>();
+            for (int i = 0; i < n; i++) l.add(new PageResourceDiscovery.Candidate("https://x/" + i + ".png", "IMAGE", true, false, true));
+            return l;
+        };
+        PageResourceScanService.SiteRun byCount = new PageResourceScanService.SiteRun(5, Long.MAX_VALUE);
+        assertThat(byCount.retainRefs(refs.apply(3))).hasSize(3);
+        assertThat(byCount.retainRefs(refs.apply(3))).as("tavana kalan 2").hasSize(2);
+        assertThat(byCount.retainRefs(refs.apply(3))).isEmpty();
+        assertThat(byCount.retainRefs(List.of())).isEmpty();
+
+        // "https://x/0.png" = 15 karakter → 40 karakterlik tavana 2 adres sığar
+        PageResourceScanService.SiteRun byChars = new PageResourceScanService.SiteRun(1_000, 40);
+        List<PageResourceDiscovery.Candidate> kept = byChars.retainRefs(refs.apply(5));
+        assertThat(kept).extracting(PageResourceDiscovery.Candidate::url).containsExactly("https://x/0.png", "https://x/1.png");
+        assertThat(byChars.retainRefs(refs.apply(1))).isEmpty();
+
+        PageResourceScanService.SiteRun defaults = new PageResourceScanService.SiteRun(1500);
+        assertThat(defaults.refsCap).isEqualTo(15_000);
+        assertThat(defaults.charsCap).isEqualTo(PageResourceScanService.SITE_REFS_MAX_CHARS);
     }
 
     @Test

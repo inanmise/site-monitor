@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -25,8 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><b>Sorgu sayısı sabit:</b> (1) pencerenin bitmiş analizleri — yalnız özet kolonları, {@code analysis_json} OKUNMAZ, en çok
  * {@value #MAX_POINTS} (+1 kesilme denetimi); (2) büyüme için nesne ayrıntısı saklı ({@code items_kept}) en yeni ≤ 20 analizin
- * {@code items_json}'u — TEK sorgu, akışla ayrıştırma ({@link ResourceGrowth}). Aynı analiz kümesinin büyüme sonucu küçük bir
- * bellekte tutulur: bitmiş analiz değişmez, sonuç küme kimliklerine bağlıdır (bayatlamaz).
+ * {@code items_json}'u — analiz BAŞINA ayrı sorgu (bellekte aynı anda tek analizin ayrıntısı), sürücünün karakter akışından
+ * ayrıştırma ({@link ResourceGrowth#parse(long, java.io.Reader)}); pod'da aynı anda en çok {@value #GROWTH_CONCURRENCY} büyüme
+ * hesabı, yuva {@value #GROWTH_WAIT_MS} ms'de boşalmazsa {@code growth: null} + {@code growth_busy: true}. Aynı analiz
+ * kümesinin büyüme sonucu küçük bir bellekte tutulur: bitmiş analiz değişmez, sonuç küme kimliklerine bağlıdır (bayatlamaz).
  *
  * <p><b>Algoritma sürümü:</b> büyüme yalnız EN YENİ saklı analizle AYNI algoritma sürümündeki analizlerden hesaplanır
  * (sürüm değişince ölçüm yöntemi — ör. Brotli kabulü — baytı değiştirebilir; sahte büyüme gösterilmez). Noktalar her sürümü
@@ -56,7 +60,15 @@ public class ResourceTrendService {
             + "WHERE monitor_id = ? AND status = 'DONE' AND started_at >= ? ORDER BY id DESC LIMIT ?";
     static final String SQL_POINTS_LEGACY = "SELECT " + POINT_COLS_BASE + " FROM page_resource_scans "
             + "WHERE monitor_id = ? AND status = 'DONE' AND started_at >= ? ORDER BY id DESC LIMIT ?";
-    static final String SQL_ITEMS = "SELECT id, items_json FROM page_resource_scans WHERE monitor_id = ? AND id IN (%s)";
+    /** Tek analizin nesne ayrıntısı (O-4: kimlik başına ayrı sorgu — aynı anda bellekte en çok bir analiz). */
+    static final String SQL_ITEM_ONE = "SELECT items_json FROM page_resource_scans WHERE id = ? AND monitor_id = ? "
+            + "AND items_json IS NOT NULL";
+    /** Pod'da aynı anda en çok bu kadar büyüme hesabı (bellek tepesi). */
+    static final int GROWTH_CONCURRENCY = 2;
+    /** Yuva için en çok bekleme; dolarsa {@code growth: null} + {@code growth_busy}. */
+    static final long GROWTH_WAIT_MS = 1_500L;
+    /** Paket içi: testler yuvaları doldurabilsin. */
+    final Semaphore growthSlots = new Semaphore(GROWTH_CONCURRENCY);
 
     private static final long WARN_EVERY_MS = 3_600_000L;
     private final AtomicLong lastLegacyWarn = new AtomicLong();
@@ -116,6 +128,7 @@ public class ResourceTrendService {
         }
         Collections.reverse(growthIds);              // eskiden yeniye
         List<Map<String, Object>> growth = growthIds.size() < 2 ? List.of() : growth(monitorId, growthIds);
+        boolean growthBusy = growth == null;   // hesap yuvası dolu — bilinmiyor (boş liste "büyüyen yok" demek olurdu)
 
         List<Map<String, Object>> points = new ArrayList<>(rows.size());
         for (int i = rows.size() - 1; i >= 0; i--) points.add(rows.get(i).toMap(budget));
@@ -126,6 +139,7 @@ public class ResourceTrendService {
         out.put("truncated", truncated);
         out.put("max_points", MAX_POINTS);
         out.put("growth", growth);
+        if (growthBusy) out.put("growth_busy", true);
         Map<String, Object> basis = new LinkedHashMap<>();
         basis.put("scans", growthIds.size());
         basis.put("algorithm_version", basisVersion);
@@ -157,30 +171,45 @@ public class ResourceTrendService {
         }
     }
 
+    /**
+     * Büyüme hesabı (O-4): bellekte yoksa pod'da en çok {@value #GROWTH_CONCURRENCY} hesap aynı anda; yuva
+     * {@value #GROWTH_WAIT_MS} ms içinde boşalmazsa null (çağıran {@code growth: null} + {@code growth_busy: true} yazar).
+     */
     private List<Map<String, Object>> growth(long monitorId, List<Long> ids) {
         StringJoiner key = new StringJoiner(",", monitorId + ":", "");
         for (Long id : ids) key.add(String.valueOf(id));
         String k = key.toString();
         List<Map<String, Object>> cached = growthCache.get(k);
         if (cached != null) return cached;
-
-        StringJoiner marks = new StringJoiner(", ");
-        Object[] args = new Object[ids.size() + 1];
-        args[0] = monitorId;
-        for (int i = 0; i < ids.size(); i++) {
-            marks.add("?");
-            args[i + 1] = ids.get(i);
+        boolean slot;
+        try {
+            slot = growthSlots.tryAcquire(GROWTH_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         }
-        Map<Long, ResourceGrowth.ScanObjects> byId = new LinkedHashMap<>();
-        // Satır satır ayrıştırılır; ham metin satırdan sonra tutulmaz
-        jdbc.query(String.format(SQL_ITEMS, marks), rs -> {
-            long id = rs.getLong("id");
-            String json = rs.getString("items_json");
-            if (json != null) byId.put(id, ResourceGrowth.parse(id, json));   // arada budanan ayrıntı → yok sayılır
-        }, args);
+        if (!slot) return null;
+        try {
+            cached = growthCache.get(k);   // beklerken başka istek hesaplamış olabilir
+            if (cached != null) return cached;
+            return computeGrowth(monitorId, ids, k);
+        } finally {
+            growthSlots.release();
+        }
+    }
+
+    /**
+     * Analizleri TEK TEK okur (kimlik başına bir sorgu — bellekte aynı anda en çok bir analizin ayrıntısı) ve karakter
+     * akışından ayrıştırır; ham metin String olarak tutulmaz.
+     */
+    private List<Map<String, Object>> computeGrowth(long monitorId, List<Long> ids, String k) {
         List<ResourceGrowth.ScanObjects> ordered = new ArrayList<>();
         for (Long id : ids) {
-            ResourceGrowth.ScanObjects s = byId.get(id);
+            ResourceGrowth.ScanObjects s = jdbc.query(SQL_ITEM_ONE, rs -> {
+                if (!rs.next()) return null;
+                java.io.Reader reader = rs.getCharacterStream("items_json");
+                return reader == null ? null : ResourceGrowth.parse(id, reader);
+            }, id, monitorId);
             // Arada ayrıntısı silinmiş analiz (son 20 kuralı) atlanır; kalan küme yine eskiden yeniye
             if (s != null) ordered.add(s);
         }

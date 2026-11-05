@@ -157,10 +157,13 @@ public class PageResourceScanService {
     // ── G çok sayfalı analiz (prs3 be2) ──
     /** Çok sayfalı taramada en çok sayfa (ana sayfa dahil) — istek bunu aşamaz. */
     public static final String KEY_MAX_PAGES = "site.monitor.page.resource-scan.max-pages";
-    /** Çok sayfalı taramanın TEK süre bütçesi (tüm site). */
+    /**
+     * Çok sayfalı taramanın TEK süre bütçesi (tüm site), 120–900 sn (D-5: site analizi pod'un 2 tarama yuvasından birini en çok
+     * 15 dk tutar; aralık dışı / okunamayan değer → 900).
+     */
     public static final String KEY_SITE_MAX_SECONDS = "site.monitor.page.resource-scan.site-max-seconds";
     public static final int MAX_PAGES_DEFAULT = 10, MAX_PAGES_MIN = 2, MAX_PAGES_MAX = 20;
-    public static final int SITE_MAX_SECONDS_DEFAULT = 900, SITE_MAX_SECONDS_MIN = 120, SITE_MAX_SECONDS_MAX = 1800;
+    public static final int SITE_MAX_SECONDS_DEFAULT = 900, SITE_MAX_SECONDS_MIN = 120, SITE_MAX_SECONDS_MAX = 900;
     /** Özet satırının {@code scope} değerleri (eski satır null = {@code page}). */
     public static final String SCOPE_PAGE = "page", SCOPE_SITE = "site";
 
@@ -1795,31 +1798,59 @@ public class PageResourceScanService {
     // bağlantılarından seçilen iç sayfalar sırayla: sayfa başına HTML + sayfa yükü nesneleri + A–E analizi. Sayfalar arası ortak
     // nesneler BİR kez ölçülür (URL önbelleği; nesnenin derin olgulara katkısı — çerez, yazı tipi bloğu, stil başvurusu, örnek
     // okunamadı — kopyayla birlikte o sayfanın bağlamına eklenir). Süre / bayt / nesne tavanı tüm site için TEK bütçedir;
-    // dolduğunda biten sayfalar raporlanır, kalanlar "taranmadı" (SKIPPED) satırı olur ve özet {@code capped} olur.
+    // dolduğunda biten sayfalar raporlanır, kalanlar "taranmadı" (skipped) satırı olur ve {@code analysis.site.incomplete}
+    // işaretlenir. Özet satırının {@code capped}'ı YALNIZ ana sayfanın kendi kırpılmasıdır (O-3): özet değerleri ana
+    // sayfanındır; bütçe ve eğilim onu değerlendirir.
 
     /** Bir nesnenin önbellekteki ölçümü ve derin olgulara katkısı (yeniden ölçülmeden diğer sayfalara aktarılır). */
     record SiteCached(ScanItem item, List<PageResourceDiscovery.Candidate> refs, List<FontFaces.Face> faces,
                       List<DeepContext.CookieSeen> cookies, boolean sampleMissing, boolean refsCut) {}
+
+    /** Önbellekte tutulan stil başvurularının site başına karakter tavanı (adresler; ≈ 8 MB) — D-6. */
+    static final long SITE_REFS_MAX_CHARS = 4_000_000L;
+    /** Önbellekte tutulan stil başvurusu sayısı tavanı = nesne tavanı × bu çarpan (≤ 50 000) — D-6. */
+    static final int SITE_REFS_PER_OBJECT = 10;
 
     /** Çok sayfalı taramanın paylaşılan durumu: URL önbelleği ve site geneli nesne sayacı. */
     static final class SiteRun {
         final Map<String, SiteCached> cache = new ConcurrentHashMap<>();
         /** Ölçülen (planlanan) nesne sayısı — tüm site için TEK nesne tavanı. */
         final AtomicInteger objects = new AtomicInteger();
-        /** Önbellekte tutulan stil başvurusu sayısı (bellek tavanı = nesne tavanı × 10). */
+        /** Önbellekte tutulan stil başvurusu sayısı ve adres karakteri (bellek tavanları — D-6). */
         final AtomicInteger refsRetained = new AtomicInteger();
+        final AtomicLong refCharsRetained = new AtomicLong();
         final int refsCap;
+        final long charsCap;
 
         SiteRun(int maxObjects) {
-            this.refsCap = Math.max(1, maxObjects) * 10;
+            this(Math.max(1, maxObjects) * SITE_REFS_PER_OBJECT, SITE_REFS_MAX_CHARS);
         }
 
-        /** Başvuruların saklanacak kısmı (tavan dolduysa baştan kesilmiş — {@link SiteCached#refsCut}). */
+        /** Testler için: tavanlar elle. */
+        SiteRun(int refsCap, long charsCap) {
+            this.refsCap = refsCap;
+            this.charsCap = charsCap;
+        }
+
+        /**
+         * Başvuruların önbellekte saklanacak kısmı: sayı ve karakter tavanı içinde baştan. Tavan dolduysa kesilmiş liste döner
+         * ({@link SiteCached#refsCut} — o stili önbellekten kullanan sayfa "kısmi" işaretlenir). Ölçüldüğü sayfa bu listeyi
+         * KULLANMAZ (kendi oda sınırlı başvuru listesiyle planlar).
+         */
         List<PageResourceDiscovery.Candidate> retainRefs(List<PageResourceDiscovery.Candidate> refs) {
             if (refs == null || refs.isEmpty()) return List.of();
-            int room = refsCap - refsRetained.getAndAdd(refs.size());
-            if (room >= refs.size()) return refs;
-            return room <= 0 ? List.of() : List.copyOf(refs.subList(0, room));
+            int take = 0;
+            long chars = 0;
+            for (PageResourceDiscovery.Candidate c : refs) {
+                long len = c.url() == null ? 0 : c.url().length();
+                if (refsRetained.get() + take + 1 > refsCap || refCharsRetained.get() + chars + len > charsCap) break;
+                take++;
+                chars += len;
+            }
+            refsRetained.addAndGet(take);
+            refCharsRetained.addAndGet(chars);
+            if (take == refs.size()) return refs;
+            return take == 0 ? List.of() : List.copyOf(refs.subList(0, take));
         }
     }
 
@@ -1936,10 +1967,12 @@ public class PageResourceScanService {
                 if (p.cached != null) {
                     refs = p.cached.refs();
                 } else {
-                    p.cssRefs = null;   // tek sayfa yolunun oda sınırlı listesi; çok sayfalıda saklanan katkı kullanılır
+                    // Bu sayfada ölçülen stil: sayfanın KENDİ oda sınırlı listesi (kesilirse ölçümde zaten "nesne tavanı"
+                    // işaretlenir); önbelleğe giden liste bellek tavanıyla kesilebilir, onu yalnız sonraki sayfalar kullanır (D-6)
+                    refs = p.cssRefs;
+                    p.cssRefs = null;
                     if (p.item == null) continue;
                     cache(run.site, p);
-                    refs = p.siteRefs;
                 }
                 if (refs == null || refs.isEmpty() || p.depth >= CSS_DEPTH) continue;
                 for (PageResourceDiscovery.Candidate cand : refs) sitePlan(run, nodes, next, known, order, cand, p, p.depth + 1, exclude);
@@ -2073,7 +2106,7 @@ public class PageResourceScanService {
         for (ScanItem it : items) rows.add(it.toDeepMap());
         String analysis = JSON.writeValueAsString(analysisMap);
         String itemsJson = JSON.writeValueAsString(rows);
-        boolean capped = r.capped() || SitePages.anyCapped(pages);
+        boolean capped = r.capped();   // O-3: yalnız ana sayfanın kırpılması (site eksikliği analysis.site.incomplete)
         long now = clock.getAsLong();
         int n = jdbc.update(SQL_DONE_SITE, iso(now), now, run.done.get(), run.total.get(), r.grade(), r.gradeLetter(), r.loadMs(),
                 r.htmlTtfbMs(), r.htmlMs(), r.pageBytes(), r.requestCount(), r.imageBytes(), r.imageCount(), r.documentCount(),

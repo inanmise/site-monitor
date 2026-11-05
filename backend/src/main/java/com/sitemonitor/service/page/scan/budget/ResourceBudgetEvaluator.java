@@ -16,9 +16,11 @@ import java.util.Map;
  *   <li>analiz bitmemiş (RUNNING / FAILED / INTERRUPTED) → her sınır {@code ok:null}, neden {@code not_done};</li>
  *   <li>gerekli özet değeri yok (eski algoritmanın kolonu yok, ölçülemedi) → {@code ok:null}, neden {@code missing};</li>
  *   <li>analiz tavana takıldı ({@code capped}): sayılar ALT SINIRDIR — üst sınırlı (MAX) bir değer sınırı aşıyorsa kanıtlı
- *       aşımdır ({@code ok:false}), aşmıyorsa {@code ok:null} (neden {@code capped}). Not ve güvenlik puanı eksik nesneyle
- *       ancak DÜŞEBİLİR (fazladan nesne, çerez, eksik SRI, açıklı kütüphane), yani kısmi analizin puanı bir üst sınırdır:
- *       alt sınırın (MIN) altındaysa aşımdır, değilse bilinmez.</li>
+ *       aşımdır ({@code ok:false}), aşmıyorsa {@code ok:null} (neden {@code capped}). Güvenlik puanı eksik nesneyle ancak
+ *       DÜŞEBİLİR (fazladan çerez, eksik SRI, açıklı kütüphane, karışık içerik — yalnız ceza), yani kısmi analizin güvenlik
+ *       puanı bir üst sınırdır: alt sınırın (MIN) altındaysa aşımdır, değilse bilinmez. Performans notu ise üst sınır DEĞİLDİR
+ *       (sıkıştırma / önbellek bileşenleri oran — D-2): kısmi analizde not sınırın altında da olsa üstünde de olsa
+ *       {@code ok:null} (neden {@code capped}); bkz. {@link #violationProvenWhenCapped}.</li>
  * </ul>
  * Durum: hiç sınır yok → {@code none}; en az bir aşım → {@code exceeded} (diğerleri bilinmese de — aşım kanıtlı);
  * aşım yok ama bilinmeyen var → {@code unknown}; hepsi geçti → {@code ok}.
@@ -128,9 +130,21 @@ public final class ResourceBudgetEvaluator {
         if (kb) actual = kilobytes(value, violated);
         else actual = value;
         Long bytes = kb ? value : null;
-        if (violated) return new Check(f.key(), limit, f.unit(), actual, bytes, Boolean.FALSE, null);
+        if (violated && (!capped || violationProvenWhenCapped(f))) {
+            return new Check(f.key(), limit, f.unit(), actual, bytes, Boolean.FALSE, null);
+        }
         if (capped) return new Check(f.key(), limit, f.unit(), actual, bytes, null, REASON_CAPPED);
         return new Check(f.key(), limit, f.unit(), actual, bytes, Boolean.TRUE, null);
+    }
+
+    /**
+     * Kısmi (capped) analizde sınırın aşımı KANITLI mı (D-2, 2026-11): üst sınırlı (MAX) değerler ölçülmeyen nesneyle ancak
+     * BÜYÜR (alt sınır) → evet; güvenlik puanı yalnız ceza düşer (eksik nesne fazladan çerez / SRI / açıklı kütüphane / karışık
+     * içerik getirebilir, hiçbir ceza kalkmaz) → evet. Not HAYIR: sıkıştırma ve önbellek bileşenleri ORAN'dır, ölçülmeyen iyi
+     * sıkıştırılmış / önbellekli nesneler notu YÜKSELTEBİLİR — kısmi analizde düşük not "bilinmiyor" ({@code capped}).
+     */
+    static boolean violationProvenWhenCapped(ResourceBudget.Field f) {
+        return f.kind() == ResourceBudget.Kind.MAX || ResourceBudget.MIN_SECURITY_SCORE.equals(f.key());
     }
 
     /** Bayt → KB, bir ondalık; aşan değer yukarı, aşmayan aşağı yuvarlanır (gösterim sonuçla çelişmez). */
