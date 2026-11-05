@@ -44,7 +44,7 @@ export default function DetailHeader({ detail, type, monitor, headingRef, locale
   const ActorIcon = ACTOR_ICON[actor.kind] || User
   const failedWarning = failed && a.result_status === 'WARNING'
   const requestId = detail.actor?.requestId
-  const summary = localizeSummary(a.result_summary, t)
+  const summary = localizeSummary(a.result_summary, t, a)
   const diagKind = diagnoseKindOf(type)
   const Dialog = diagKind ? DIAG_DIALOGS[['ping', 'port', 'dns'].includes(diagKind) ? 'net' : diagKind] : null
   const canTimeline = a.monitor_id != null && !!onOpenTimeline

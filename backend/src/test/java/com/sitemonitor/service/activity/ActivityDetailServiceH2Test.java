@@ -50,6 +50,7 @@ class ActivityDetailServiceH2Test {
     @Autowired CertificateInventoryRepository inventoryRepo;
     @Autowired TeamRepository teamRepo;
     @Autowired EntityManager em;
+    @Autowired javax.sql.DataSource dataSource;
 
     PermissionService perms;
     CertificateService certService;
@@ -77,6 +78,8 @@ class ActivityDetailServiceH2Test {
                 provider(certService), provider((ScriptedCheckerService) null), provider((NocCallLogService) null),
                 provider((tools.jackson.databind.ObjectMapper) null));
         svc.setEntityManager(em);
+        // Serinin üst sınırı "şimdi": testler T + 24 sa'yi görsün (gerçek saat T'ye yakın olabilir)
+        svc.setClock(java.time.Clock.fixed(Instant.parse("2030-01-01T00:00:00Z"), ZoneOffset.UTC));
     }
 
     private static MockHttpSession admin() {
@@ -284,10 +287,12 @@ class ActivityDetailServiceH2Test {
                 .containsEntry("can_open", true);
         assertThat(m(m(d.get("links")).get("alert"))).containsEntry("tab", "alerthistory");
 
-        // başka takımın kullanıcısı: alarm bilgisi var ama açamaz, bağlantı yok
+        // başka takımın kullanıcısı: YAKLAŞIK eşlenen ve açamayacağı alarmın meta verisi dönmez (inceleme D2), bağlantı yok
         Map<String, Object> other = svc.detail(check, user(99L));
-        assertThat(m(other.get("alarm"))).containsEntry("can_open", false);
+        assertThat(other.get("alarm")).isNull();
         assertThat(m(other.get("links")).get("alert")).isNull();
+        // TAM eşleşme (satırın kendi alarmı) açamasa da meta veriyi taşır
+        assertThat(m(svc.detail(trig, user(99L)).get("alarm"))).containsEntry("can_open", false);
 
         // başarılı kontrol yaklaşık alarm aramaz
         assertThat(svc.detail(act("PORT", 7L, "odeme.local:8443", T, "SCHEDULED_CHECK", "SUCCESS"), admin()).get("alarm")).isNull();
@@ -399,5 +404,218 @@ class ActivityDetailServiceH2Test {
         p.setMonitorType("NOPE");
         assertThat(ActivityDetailService.monitorLink(p, "NOPE", null)).isNull();
         assertThat(ActivityDetailService.hostOf("https://a.example.com:8443/x")).isEqualTo("a.example.com");
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-05) ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Y1: önceki / sonraki ± 7 gün penceresinde; pencere dışı → null; aynı saniyedeki satırlar kimlikle sıralanır")
+    void neighbourWindowAndSameSecond() {
+        port(21, at(-8 * 86_400), true, null);                 // pencere dışı (önceki)
+        PortCheck sixDays = port(21, at(-6 * 86_400), true, null);
+        PortCheck selfA = port(21, at(0), false, null);
+        port(21, at(8 * 86_400), true, null);                  // pencere dışı (sonraki)
+        ActivityLog a = act("PORT", 21L, "h:1", T, "SCHEDULED_CHECK", "ERROR");
+        a.setCheckId(selfA.getId());
+        Map<String, Object> d = svc.detail(a, admin());
+        assertThat(m(d.get("previous_check"))).containsEntry("id", sixDays.getId());
+        assertThat(d.get("next_check")).as("8 gün sonraki kontrol pencere dışı").isNull();
+
+        // Aynı saniye: önceki = aynı saniyede daha küçük kimlik, sonraki = aynı saniyede daha büyük kimlik
+        PortCheck tieBefore = port(22, at(0), true, null);
+        PortCheck self = port(22, at(0), false, null);
+        PortCheck tieAfter = port(22, at(0), true, null);
+        ActivityLog b = act("PORT", 22L, "h:2", T, "SCHEDULED_CHECK", "ERROR");
+        b.setCheckId(self.getId());
+        Map<String, Object> db = svc.detail(b, admin());
+        assertThat(m(db.get("previous_check"))).containsEntry("id", tieBefore.getId());
+        assertThat(m(db.get("next_check"))).containsEntry("id", tieAfter.getId());
+    }
+
+    @Test
+    @DisplayName("Y1: okunan adayların hepsi çapayla aynı saniyede ve öbür yandaysa katı arama sonrakini bulur")
+    void neighbourStrictFallback() {
+        for (int i = 0; i < ActivityDetailService.NEIGHBOUR_FETCH + 4; i++) port(23, at(0), true, null);
+        PortCheck self = port(23, at(0), false, null);
+        PortCheck later = port(23, at(60), true, null);
+        ActivityLog a = act("PORT", 23L, "h:3", T, "SCHEDULED_CHECK", "ERROR");
+        a.setCheckId(self.getId());
+        Map<String, Object> d = svc.detail(a, admin());
+        assertThat(m(d.get("next_check"))).containsEntry("id", later.getId());
+        assertThat(m(d.get("previous_check"))).containsEntry("checked_at", T);   // aynı saniyedeki daha eski bir kontrol
+    }
+
+    @Test
+    @DisplayName("O1: izleme görülemeyen takıma taşındı → kontrol / komşular gizli (check_hidden, team), satır ayrıntısı gizli, "
+            + "seri yalnız görülebilen satırlar, izleme bağlantısı yok; yönetici hepsini görür; silinmiş izleme satırın kapısıyla")
+    void monitorMovedToHiddenTeam() {
+        svc.setTimelines(new ActivityTimelineService(new org.springframework.jdbc.core.JdbcTemplate(dataSource)));
+        com.sitemonitor.model.PortMonitor pm = new com.sitemonitor.model.PortMonitor();
+        pm.setName("Taşınan port");
+        pm.setHost("moved.local");
+        pm.setPort(9443);
+        pm.setTeamId(9L);
+        pm.setStandalone(true);
+        em.persist(pm);
+        PortCheck self = port(pm.getId(), at(0), false, "CONNECT_REFUSED");
+        port(pm.getId(), at(60), false, "CONNECT_REFUSED");     // taşımadan sonra B'nin kontrolü
+        act("PORT", pm.getId(), "moved.local:9443", at(-60), "SCHEDULED_CHECK", "SUCCESS");   // takım 5 (A) dönemi
+        ActivityLog bRow = act("PORT", pm.getId(), "moved.local:9443", at(60), "SCHEDULED_CHECK", "ERROR");
+        bRow.setTeamId(9L);
+        activityRepo.save(bRow);
+        ActivityLog a = act("PORT", pm.getId(), "moved.local:9443", T, "SCHEDULED_CHECK", "ERROR");
+        a.setCheckId(self.getId());
+        a.setFailureDetail("{\"phase\":\"CONNECT\",\"resolved\":[\"10.0.0.9\"]}");
+        activityRepo.save(a);
+
+        Map<String, Object> d = svc.detail(a, user(5L));
+        assertThat(d).containsEntry("check_hidden", true).containsEntry("check_hidden_reason", "team");
+        assertThat(d.get("check")).isNull();
+        assertThat(d.get("previous_check")).isNull();
+        assertThat(d.get("next_check")).isNull();
+        assertThat(m(d.get("data")).get("failure_detail")).isNull();
+        List<Map<String, Object>> points = (List<Map<String, Object>>) m(d.get("series")).get("points");
+        assertThat(points).extracting(p -> p.get("status")).containsExactly("SUCCESS", "ERROR");   // B'nin satırı yok
+        assertThat(m(d.get("links")).get("monitor")).isNull();
+        assertThat(m(d.get("links"))).containsEntry("can_diagnose", false);
+
+        Map<String, Object> ad = svc.detail(a, admin());
+        assertThat(ad).doesNotContainKey("check_hidden");
+        assertThat(m(ad.get("check"))).containsEntry("match", "exact");
+        assertThat(m(ad.get("next_check"))).isNotNull();
+        assertThat((List<?>) m(ad.get("series")).get("points")).hasSize(3);
+
+        // Silinmiş izleme (tabloda yok): satırın kapısı geçerli — kontrol görünür
+        PortCheck gone = port(77_777L, at(0), false, null);
+        ActivityLog g = act("PORT", 77_777L, "gone.local:1", T, "SCHEDULED_CHECK", "ERROR");
+        g.setCheckId(gone.getId());
+        assertThat(m(svc.detail(g, user(5L)).get("check"))).containsEntry("match", "exact");
+    }
+
+    @Test
+    @DisplayName("D3: monitoring.read yoksa satırın kendi failure_detail'i de gizlenir")
+    void checkHiddenAlsoHidesRowFailureDetail() {
+        ActivityLog a = act("PORT", 7L, "odeme.local:8443", T, "SCHEDULED_CHECK", "ERROR");
+        a.setFailureDetail("{\"phase\":\"CONNECT\"}");
+        a.setFailureReason("CONNECT_REFUSED");
+        when(perms.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(false);
+        Map<String, Object> d = svc.detail(a, user(5L));
+        assertThat(d).containsEntry("check_hidden_reason", "permission");
+        assertThat(m(d.get("data"))).containsEntry("failure_detail", null).containsEntry("failure_reason", "CONNECT_REFUSED");
+    }
+
+    @Test
+    @DisplayName("D4: alerts.read yoksa alarm meta verisi dönmez (alarm null + alarm_hidden), alarm bağlantısı yok")
+    void alarmHiddenWithoutAlertsRead() {
+        AlertEvent ev = new AlertEvent();
+        ev.setDomain("odeme.local");
+        ev.setAlertType("PORT_DOWN");
+        ev.setAlertLevel("HIGH");
+        ev.setTeamId(5L);
+        ev.setCreatedAt(at(-300));
+        ev.setResolved(false);
+        ev = alertRepo.save(ev);
+        ActivityLog trig = act("PORT", 7L, "odeme.local:8443", at(-300), "ALERT_TRIGGERED", "ERROR");
+        trig.setAlertEventId(ev.getId());
+        when(perms.allows(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"))).thenReturn(false);
+        Map<String, Object> d = svc.detail(trig, user(5L));
+        assertThat(d.get("alarm")).isNull();
+        assertThat(d).containsEntry("alarm_hidden", true).doesNotContainKey("alarm_error");
+        assertThat(m(d.get("links")).get("alert")).isNull();
+    }
+
+    @Test
+    @DisplayName("D9: seri tavanı çapanın İKİ YANINI ayrı sınırlar — 6 100 eski satır olay anını ve sonrasını silmez")
+    void seriesKeepsBothSidesOfTheAnchor() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        Instant t0 = LocalDateTime.parse(T).toInstant(ZoneOffset.UTC);
+        List<Object[]> batch = new ArrayList<>();
+        for (int i = 6100; i >= 1; i--) {
+            batch.add(new Object[]{ActivityDetailService.ISO.format(t0.minusSeconds(i * 14L)), "SUCCESS"});
+        }
+        for (int i = 1; i <= 5; i++) batch.add(new Object[]{ActivityDetailService.ISO.format(t0.plusSeconds(i * 10L)), "ERROR"});
+        jdbc.batchUpdate("INSERT INTO activity_log (activity_time, monitor_type, monitor_id, target, action, result_status,"
+                + " team_id, response_ms, monitor_name, actor) VALUES (?, 'PORT', 31, 'h:31', 'SCHEDULED_CHECK', ?, 5, 10, 'm',"
+                + " 'scheduler')", batch);
+        ActivityLog self = act("PORT", 31L, "h:31", T, "SCHEDULED_CHECK", "SUCCESS");
+
+        Map<String, Object> series = m(svc.detail(self, admin()).get("series"));
+        assertThat(series).containsEntry("truncated", true);
+        List<Map<String, Object>> pts = (List<Map<String, Object>>) series.get("points");
+        assertThat(pts).hasSize(ActivityDetailService.SERIES_MAX_POINTS);
+        // ± 24 sa / 300 kova = 576 sn; çapa + sonraki 50 sn kova 150'de — sonraki satırlar ERROR
+        assertThat(pts.get(150)).containsEntry("status", "ERROR");
+        assertThat(pts.get(149).get("ms")).as("çapadan hemen önce").isNotNull();
+        // en eski satırlar (çapa − 85 400 sn …) tavan dışında: ilk kovalar boş
+        assertThat(pts.get(1).get("ms")).isNull();
+    }
+
+    @Test
+    @DisplayName("Sözleşme D6: seri üst sınırı şimdiyi aşmaz (yeni aktivitede sağ yarı geleceğe uzanmaz)")
+    void seriesNeverReachesTheFuture() {
+        svc.setClock(java.time.Clock.fixed(LocalDateTime.parse(T).toInstant(ZoneOffset.UTC).plusSeconds(3600), ZoneOffset.UTC));
+        ActivityLog self = act("PORT", 41L, "h:41", T, "SCHEDULED_CHECK", "SUCCESS");
+        Map<String, Object> series = m(svc.detail(self, admin()).get("series"));
+        assertThat(series).containsEntry("from", at(-24 * 3600)).containsEntry("to", at(3600));
+    }
+
+    @Test
+    @DisplayName("Sözleşme O1 / D5: sertifika kontrol satırı error_class / error_stage / resolved_ips / response_ms taşır; "
+            + "sertifika ve erişilebilirlikte geçmiş bağlantısı yok (izleme bağlantısıyla aynı yer)")
+    void certRowCarriesDiagnosisFields() {
+        CertificateCheck cc = new CertificateCheck();
+        cc.setDomain("y.example.com");
+        cc.setCheckedAt(T);
+        cc.setStatus("error");
+        cc.setError("Connection timeout after 10s");
+        cc.setErrorClass("NETWORK");
+        cc.setErrorStage("tls-handshake");
+        cc.setResolvedIps("10.1.2.3");
+        cc.setResponseMs(210);
+        em.persist(cc);
+        com.sitemonitor.dto.CertificateDto dto = new com.sitemonitor.dto.CertificateDto();
+        dto.setDomain("y.example.com");
+        when(certService.historyRow(any(CertificateCheck.class))).thenReturn(dto);
+        ActivityLog cert = act("CERT", 3L, "y.example.com", T, "SCHEDULED_CHECK", "ERROR");
+        cert.setCheckId(cc.getId());
+        Map<String, Object> d = svc.detail(cert, admin());
+        assertThat(m(m(d.get("check")).get("row"))).containsEntry("error_class", "NETWORK")
+                .containsEntry("error_stage", "tls-handshake").containsEntry("resolved_ips", "10.1.2.3")
+                .containsEntry("response_ms", 210);
+        Map<String, Object> links = m(d.get("links"));
+        assertThat(links.get("monitor")).isNotNull();
+        assertThat(links.get("history")).isNull();
+        ActivityLog up = act("UPTIME", 3L, "y.example.com:443", T, "SCHEDULED_CHECK", "SUCCESS");
+        assertThat(m(svc.detail(up, admin()).get("links")).get("history")).isNull();
+    }
+
+    @Test
+    @DisplayName("Sözleşme Y1: WARNING kontrol satırında da (HTTP durum uyuşmazlığı) yaklaşık alarm aranır")
+    void approximateAlarmOnWarningCheck() {
+        AlertEvent ev = new AlertEvent();
+        ev.setDomain("https://w.example.com/");
+        ev.setAlertType("HTTP_DOWN");
+        ev.setAlertLevel("CRITICAL");
+        ev.setTeamId(5L);
+        ev.setCreatedAt(at(-60));
+        ev.setResolved(false);
+        ev = alertRepo.save(ev);
+        ActivityLog w = act("HTTP", 51L, "https://w.example.com/", T, "SCHEDULED_CHECK", "WARNING");
+        assertThat(m(svc.detail(w, admin()).get("alarm"))).containsEntry("id", ev.getId()).containsEntry("match", "approximate");
+    }
+
+    @Test
+    @DisplayName("FR D5: alarm satırı alert_info nesnesi taşır (result_detail JSON'undan); kontrol satırında anahtar yok")
+    void alertInfoInRow() {
+        ActivityLog a = act("PORT", 7L, "odeme.local", T, "ALERT_RESOLVED", "SUCCESS");
+        a.setResultDetail("{\"alert_type\":\"PORT_DOWN\",\"level\":\"HIGH\",\"closed_by\":\"manual\",\"closer\":\"Ayşe\"}");
+        Map<String, Object> data = m(svc.detail(a, admin()).get("data"));
+        assertThat(m(data.get("alert_info"))).containsEntry("alert_type", "PORT_DOWN").containsEntry("closed_by", "manual")
+                .containsEntry("closer", "Ayşe");
+        ActivityLog bad = act("PORT", 7L, "odeme.local", T, "ALERT_TRIGGERED", "ERROR");
+        bad.setResultDetail("bozuk");
+        assertThat(m(svc.detail(bad, admin()).get("data"))).containsEntry("alert_info", null);
+        ActivityLog check = act("PORT", 7L, "odeme.local:1", T, "SCHEDULED_CHECK", "SUCCESS");
+        assertThat(m(svc.detail(check, admin()).get("data"))).doesNotContainKey("alert_info");
     }
 }

@@ -3584,7 +3584,8 @@ class MonitoringControllerTest {
             mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
                     .andExpect(status().isOk());
 
-            verify(activityLog).recordConfigChange(eq("PORT"), eq(7L), eq("Ödeme portu"), eq("Ödeme portu"), eq(5L), eq("u"),
+            // Hedef türün biçiminde (port: host:port) — izleme adı değil (aktivite incelemesi D12)
+            verify(activityLog).recordConfigChange(eq("PORT"), eq(7L), eq("Ödeme portu"), eq("odeme.local:8443"), eq(5L), eq("u"),
                     eq("#0 geri yüklendi: active, intervalSeconds"), eq(3), eq(written.getChanges()));
         }
 

@@ -19,7 +19,7 @@
     "days_remaining": null,
     "check_id": 10,
     "http_status": 503,
-    "failure_reason": "UNKNOWN",
+    "failure_reason": "HTTP_STATUS",
     "failure_detail": {
       "kind": "STATUS_MISMATCH",
       "phase": "RESPONSE",

@@ -98,10 +98,14 @@ class EscalationActivityEventsTest {
     }
 
     private EscalationService pod() {
+        return pod(mock(EscalationContactRepository.class));
+    }
+
+    private EscalationService pod(EscalationContactRepository contacts) {
         AppSettingsService settings = mock(AppSettingsService.class);
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         EscalationService s = new EscalationService(realRepo, mock(AlertThresholdRepository.class),
-                mock(EscalationContactRepository.class), inventoryRepo, mock(EmailNotificationService.class),
+                contacts, inventoryRepo, mock(EmailNotificationService.class),
                 mock(WeeklyAvailabilityReportService.class), mock(WebhookService.class), new ObjectMapper(),
                 mock(NotificationLogRepository.class), mock(LatestCheckRepository.class), mock(TeamRepository.class),
                 mock(SmtpSettingsService.class), maintenance, storm, push, mock(DomainMonitorRepository.class),
@@ -154,6 +158,8 @@ class EscalationActivityEventsTest {
         assertThat(calls).hasSize(1);
         assertThat(alarmIdOf(calls.get(0))).isEqualTo(a.getId());
         assertThat((String) calls.get(0).getArgument(5)).isEqualTo("elle Ayşe Yılmaz");
+        assertThat((ActivityLogService.AlertInfo) calls.get(0).getArgument(6))
+                .isEqualTo(ActivityLogService.AlertInfo.closed(ActivityLogService.CLOSED_MANUAL, "Ayşe Yılmaz"));
     }
 
     @Test
@@ -219,7 +225,7 @@ class EscalationActivityEventsTest {
     @Test
     @DisplayName("Aktivite servisi patlasa da kapanış / onay sürer (yazım alarm yolunu ASLA bozmaz)")
     void activityFailure_neverBreaksAlarmPath() {
-        doThrow(new RuntimeException("db down")).when(activity).recordAlert(any(), anyString(), any(), any(), any(), any());
+        doThrow(new RuntimeException("db down")).when(activity).recordAlert(any(), anyString(), any(), any(), any(), any(), any());
         AlertEvent a = open("https://boom.example.com/", HTTP);
         EscalationService s = pod();
         s.acknowledge(a.getId(), "ops", "x y z");
@@ -249,5 +255,56 @@ class EscalationActivityEventsTest {
         assertThat(calls).hasSize(1);
         assertThat((Long) calls.get(0).getArgument(3)).isEqualTo(31L);
         assertThat((String) calls.get(0).getArgument(2)).isEqualTo("HIGH");
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-05) ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("D6: geri alınan terfi (alıcı sorgusu düştü) ALERT_ESCALATED yazmaz; sonraki turun başarılı terfisi TEK satır")
+    void revertedEscalationWritesNoRow() {
+        when(maintenance.isUnderMaintenance(anyString())).thenReturn(false);
+        String domain = "https://esc.example.com/";
+        AlertEvent a = open(domain, HTTP);   // HIGH
+        Map<String, Object> ctx = new java.util.LinkedHashMap<>(Map.of("monitor_id", 31, "team_id", 7, "standalone", true));
+        EscalationContactRepository failing = mock(EscalationContactRepository.class, inv -> {
+            throw new IllegalStateException("havuz dolu");
+        });
+        EscalationService broken = pod(failing);
+        assertThatThrownBy(() -> broken.processConfirmedOutage(domain, HTTP, "CRITICAL", ctx))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(alertCalls(ActivityLogService.ACTION_ALERT_ESCALATED)).isEmpty();
+        assertThat(realRepo.findById(a.getId()).orElseThrow().getAlertLevel()).as("terfi geri alındı").isEqualTo("HIGH");
+
+        EscalationService ok = pod();
+        ok.processConfirmedOutage(domain, HTTP, "CRITICAL", ctx);
+        List<Invocation> calls = alertCalls(ActivityLogService.ACTION_ALERT_ESCALATED);
+        assertThat(calls).hasSize(1);
+        assertThat((String) calls.get(0).getArgument(2)).isEqualTo("CRITICAL");
+        assertThat((String) calls.get(0).getArgument(5)).isEqualTo("HIGH → CRITICAL");
+        assertThat(((ActivityLogService.AlertInfo) calls.get(0).getArgument(6)).fromLevel()).isEqualTo("HIGH");
+        assertThat(realRepo.findById(a.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("D7 / D1: fırtınaya bağlanan alarmın ALERT_TRIGGERED satırı fırtına kararından SONRA yazılır ve fırtına kimliğini taşır")
+    void stormMemberTriggeredCarriesStormId() {
+        when(maintenance.isUnderMaintenance(anyString())).thenReturn(false);
+        when(storm.evaluate(any(), any())).thenAnswer(inv -> {
+            ((AlertEvent) inv.getArgument(0)).setStormId(55L);
+            return StormService.StormAction.SUPPRESSED;
+        });
+        EscalationService s = pod();
+        Map<String, Object> ctx = new java.util.LinkedHashMap<>(Map.of("monitor_id", 31, "team_id", 7, "standalone", true));
+        try {
+            s.processConfirmedOutage("https://storm.example.com/", HTTP, "HIGH", ctx);
+        } catch (RuntimeException ignore) {
+            // fırtına devri adımı sahte bağımlılıklarla yarıda kalabilir — açılış satırı yine yazılır (finally)
+        }
+        List<Invocation> calls = alertCalls(ActivityLogService.ACTION_ALERT_TRIGGERED);
+        assertThat(calls).hasSize(1);
+        assertThat(((AlertEvent) calls.get(0).getArgument(0)).getStormId()).isEqualTo(55L);
+        org.mockito.InOrder order = inOrder(storm, activity);
+        order.verify(storm).evaluate(any(), any());
+        order.verify(activity).recordAlert(any(), eq(ActivityLogService.ACTION_ALERT_TRIGGERED), any(), any(), any(), any(), any());
     }
 }

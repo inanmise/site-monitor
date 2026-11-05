@@ -52,6 +52,7 @@ class ActivityControllerTest {
     @MockitoBean ActivityTimelineService timelines;
     @MockitoBean ActivityExportService exports;
     @MockitoBean ActivityRelatedService relatedSvc;
+    @MockitoBean com.sitemonitor.repository.TeamRepository teamRepo;
 
     private static MockHttpSession scopedUser(Long... teams) {
         MockHttpSession s = new MockHttpSession();
@@ -142,6 +143,23 @@ class ActivityControllerTest {
         assertThat(f.groups()).containsExactly("check", "alarm");
         assertThat(f.reasons()).containsExactly("DNS_NXDOMAIN");
         assertThat(f.reasonClasses()).containsExactly("NETWORK");
+    }
+
+    @Test
+    @DisplayName("Sözleşme D1: liste satırları team_name taşır — sayfa başına TEK takım okuması; takımsız satırda null")
+    void list_teamNamesOneReadPerPage() throws Exception {
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(1L);
+        team.setName("Kart Ödeme Ekibi");
+        when(teamRepo.findAllById(any())).thenReturn(List.of(team));
+        when(queries.list(any(), anyInt(), anyInt())).thenReturn(new ActivityQueryService.PageResult(
+                List.of(row(9L, 1L), row(10L, 1L), row(11L, null)), 3));
+        mvc.perform(get("/api/activity").session(globalViewer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].team_name").value("Kart Ödeme Ekibi"))
+                .andExpect(jsonPath("$.data[1].team_name").value("Kart Ödeme Ekibi"))
+                .andExpect(jsonPath("$.data[2].team_name").doesNotExist());
+        verify(teamRepo, times(1)).findAllById(any());
     }
 
     @Test

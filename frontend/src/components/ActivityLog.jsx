@@ -55,7 +55,7 @@ function ResultSummary({ row, t, className }) {
   return (
     <span data-slot="act-result" className={cn('inline-flex min-w-0 items-center gap-1 font-semibold tabular-nums', sm.ink, className)}>
       <sm.Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}</span>
+      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t, row) || t('act.st.' + row.result_status)}</span>
     </span>
   )
 }
@@ -520,7 +520,7 @@ function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }
                   <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(r0)}</TableCell>
                   <TableCell className="hidden lg:table-cell" />
                   <TableCell className="min-w-[9rem] text-[0.9em] whitespace-normal text-primary">
-                    {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {tn(t, 'act.foldedErrors', errs)}</span> : ''}
+                    {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
                   </TableCell>
                   <TableCell className="text-right text-[0.9em] whitespace-normal text-muted-foreground">{time(r0.activity_time, `${rel(entry.rows[entry.rows.length - 1].activity_time)} → ${rel(r0.activity_time)}`)}</TableCell>
                   <TableCell />
@@ -601,7 +601,7 @@ function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }
                   <ChevronRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                 </span>
                 <span className="text-[0.84em] text-primary">
-                  {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {tn(t, 'act.foldedErrors', errs)}</span> : ''}
+                  {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
                 </span>
                 <span className="text-[0.78em] text-muted-foreground">{rel(entry.rows[entry.rows.length - 1].activity_time)} → {rel(r0.activity_time)}</span>
               </Button>

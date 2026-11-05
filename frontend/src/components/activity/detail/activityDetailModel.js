@@ -16,7 +16,8 @@ import { failureTexts as checkFailureTexts, isHealthy } from '../../checks/check
 import { failureTexts as keywordFailureTexts } from '../../keyword/keywordFailureModel.js'
 import { localizeSummary } from '../activityModel.js'
 
-// Sunucu özetinin jeton çevirisi TEK kaynak: liste modeli (inceleme FR D17 — iki kopya ayrışıyordu)
+// Sunucu özetinin jeton çevirisi TEK kaynak: liste modeli (inceleme FR D17 — iki kopya ayrışıyordu); alarm satırı
+// özeti (`alert_info`, be1) de oradaki `localizeSummary(summary, t, row)` içinde
 export { localizeSummary }
 
 export const TZ = 'Europe/Istanbul'
@@ -203,6 +204,8 @@ export function normalizeDetail(body) {
     data,
     check,
     checkHidden: b.check_hidden === true,
+    // be1: alarm okuma izni yok (alerts.read) → alarm null + `alarm_hidden` — "alarm yok" DEĞİL
+    alarmHidden: b.alarm_hidden === true,
     hiddenReason: hiddenReason === 'team' || hiddenReason === 'permission' ? hiddenReason : null,
     errors: {
       check: b.check_error === true, series: b.series_error === true, alarm: b.alarm_error === true, change: b.change_error === true,
@@ -227,7 +230,7 @@ export function legacyDetail(body) {
     legacy: true,
     data: { ...data, failure_detail: failureDetailValue(data.failure_detail) },
     check: null, previous: null, next: null, series: null, alarm: null, change: null,
-    checkHidden: false, hiddenReason: null, errors: { check: false, series: false, alarm: false, change: false },
+    checkHidden: false, hiddenReason: null, alarmHidden: false, errors: { check: false, series: false, alarm: false, change: false },
     links: normalizeLinks(null, data),
     actor: { name: str(data.actor) || null, requestId: str(data.request_id) || null },
     recent: Array.isArray(b.recent) ? b.recent.filter((r) => plainObject(r)) : [],
@@ -416,7 +419,11 @@ export function pseudoMonitor(type, a) {
       const m = /^(\[[^\]]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(target)
       return { id, name, host: m ? m[1] : (target || null), port: m && m[2] ? Number(m[2]) : null }
     }
-    case 'dns':
+    case 'dns': {
+      // Hedef "alan.com A" (alan adı + kayıt türü) — teşhis / tanılama penceresi alan adını ayrı ister (FR D13)
+      const [domain, recordType] = target.split(/\s+/)
+      return { id, name, domain: domain || null, record_type: recordType || null }
+    }
     case 'domain':
       return { id, name, domain: target || null }
     case 'cert':

@@ -48,6 +48,8 @@ public enum CheckFailureReason {
     CONNECTION_RESET(Phase.RESPONSE),
     PROTOCOL_ERROR(Phase.RESPONSE),
     HTTP_STATUS(Phase.RESPONSE),
+    /** HTTP: durum kodu uydu ama yanıt gövdesi izlemenin JSON doğrulamasından geçmedi (2026-11-05, aktivite akışı). */
+    BODY_ASSERTION(Phase.RESPONSE),
     REDIRECT_LIMIT(Phase.RESPONSE),
     BANNER_MISMATCH(Phase.RESPONSE),
     UDP_NO_REPLY(Phase.RESPONSE),

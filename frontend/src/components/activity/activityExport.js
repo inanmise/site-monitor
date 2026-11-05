@@ -87,6 +87,18 @@ export function istanbulTime(iso, lang = 'tr') {
   return `${g('day')}.${g('month')}.${g('year')} ${g('hour')}:${g('minute')}:${g('second')}`
 }
 
+/** Dışa aktarım satırının `alert_info`'su JSON metni olarak gelebilir — nesneye çevrilir (bozuksa yok sayılır). */
+function withAlertInfo(r) {
+  const v = r?.alert_info
+  if (typeof v !== 'string') return r
+  try {
+    const o = JSON.parse(v)
+    return o && typeof o === 'object' && !Array.isArray(o) ? { ...r, alert_info: o } : r
+  } catch {
+    return r
+  }
+}
+
 const numOrBlank = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
 const label = (t, key, fallback) => {
   const v = t(key)
@@ -106,7 +118,8 @@ export function excelRow(r, t, lang = 'tr') {
     r.team_name || '',
     r.action ? label(t, 'act.ac.' + r.action, r.action) : '',
     r.result_status ? label(t, 'act.st.' + r.result_status, r.result_status) : '',
-    r.result_summary ? localizeSummary(r.result_summary, t) : '',
+    // Alarm satırı (`alert_info` — sütun gelirse; JSON metni de olabilir) satırın dilinde kurulur (be1, FR D5)
+    r.result_summary ? localizeSummary(r.result_summary, t, withAlertInfo(r)) : '',
     r.error_message || '',
     r.failure_reason ? reasonLabel(r.failure_reason, t, reasonParams(r)) : '',
     numOrBlank(r.http_status),

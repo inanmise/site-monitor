@@ -74,9 +74,23 @@ public class ActivityDetailService {
     static final int SERIES_MAX_ROWS = 6000;   // 30 sn aralıklı izlemenin 48 saati (5760) sığar
     /** Yaklaşık eşlemede okunan en çok aday. */
     private static final int APPROX_CANDIDATES = 20;
+    /** Önceki / sonraki kontrolün arandığı pencere (her iki yönde, gün) — duraklatılmış izlemede tablonun sonuna yürünmez. */
+    static final int NEIGHBOUR_WINDOW_DAYS = 7;
+    /** Komşu aramasında okunan aday (aynı saniyedeki satırlar Java'da ayıklanır; inceleme Y1). */
+    static final int NEIGHBOUR_FETCH = 16;
+    /** Kontrol tablosu okumalarının sorgu zaman aşımı (ms) — uzun tarama havuzu tutmasın (inceleme Y1). */
+    static final int QUERY_TIMEOUT_MS = 5000;
+    static final String TIMEOUT_HINT = "jakarta.persistence.query.timeout";
 
     static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Yaklaşık alarm aranan kontrol durumları (WARNING: alarm açan uyarı sınıfı kontrol hataları dahil). */
+    static final Set<String> FAILING_STATUSES = Set.of("ERROR", "TIMEOUT", "WARNING");
+    /** Alarm olayı eylemleri ({@code alert_info} taşır). */
+    static final Set<String> ALERT_ACTIONS = Set.of(ActivityLogService.ACTION_ALERT_TRIGGERED,
+            ActivityLogService.ACTION_ALERT_ESCALATED, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED,
+            ActivityLogService.ACTION_ALERT_RESOLVED);
 
     /** Kontrol satırı taşıyan eylemler. */
     static final Set<String> CHECK_ACTIONS =
@@ -101,20 +115,31 @@ public class ActivityDetailService {
      * bağlanan parametre).
      */
     enum CheckTable {
-        PORT("PortCheck", Key.MONITOR, "port"), PING("PingCheck", Key.MONITOR, "ping"), DNS("DnsRecord", Key.MONITOR, "dns"),
-        HTTP("HttpCheck", Key.MONITOR, "http"), KEYWORD("KeywordResult", Key.MONITOR, "keyword"),
-        PAGE("PageCheck", Key.MONITOR, "page"), PAGESPEED("PageSpeedCheck", Key.MONITOR, "pagespeed"),
-        SCRIPTED("ScriptedCheck", Key.MONITOR, "scripted"), DBQUERY("DbQueryCheck", Key.MONITOR, "dbquery"),
-        DOMAIN("DomainCheck", Key.MONITOR, "domain"), CERT("CertificateCheck", Key.DOMAIN, "cert"),
-        UPTIME("UptimeCheck", Key.DOMAIN_PORT, "uptime");
+        PORT("PortCheck", com.sitemonitor.model.PortCheck.class, "port_checks", Key.MONITOR, "port"),
+        PING("PingCheck", com.sitemonitor.model.PingCheck.class, "ping_checks", Key.MONITOR, "ping"),
+        DNS("DnsRecord", com.sitemonitor.model.DnsRecord.class, "dns_records", Key.MONITOR, "dns"),
+        HTTP("HttpCheck", com.sitemonitor.model.HttpCheck.class, "http_checks", Key.MONITOR, "http"),
+        KEYWORD("KeywordResult", com.sitemonitor.model.KeywordResult.class, "keyword_results", Key.MONITOR, "keyword"),
+        PAGE("PageCheck", com.sitemonitor.model.PageCheck.class, "page_checks", Key.MONITOR, "page"),
+        PAGESPEED("PageSpeedCheck", com.sitemonitor.model.PageSpeedCheck.class, "pagespeed_checks", Key.MONITOR, "pagespeed"),
+        SCRIPTED("ScriptedCheck", com.sitemonitor.model.ScriptedCheck.class, "scripted_checks", Key.MONITOR, "scripted"),
+        DBQUERY("DbQueryCheck", com.sitemonitor.model.DbQueryCheck.class, "dbquery_checks", Key.MONITOR, "dbquery"),
+        DOMAIN("DomainCheck", com.sitemonitor.model.DomainCheck.class, "domain_checks", Key.MONITOR, "domain"),
+        CERT("CertificateCheck", com.sitemonitor.model.CertificateCheck.class, "certificate_checks", Key.DOMAIN, "cert"),
+        UPTIME("UptimeCheck", com.sitemonitor.model.UptimeCheck.class, "uptime_checks", Key.DOMAIN_PORT, "uptime");
 
         final String entity;
+        final Class<?> type;
+        /** Fiziksel tablo (yerel komşu sorgusu; her birinde {@code (anahtar, checked_at)} bileşik dizini var). */
+        final String table;
         final Key key;
         /** Ön yüzün {@code failureOf(type, row)} tür adı. */
         final String uiType;
 
-        CheckTable(String entity, Key key, String uiType) {
+        CheckTable(String entity, Class<?> type, String table, Key key, String uiType) {
             this.entity = entity;
+            this.type = type;
+            this.table = table;
             this.key = key;
             this.uiType = uiType;
         }
@@ -135,6 +160,32 @@ public class ActivityDetailService {
                 case DOMAIN_PORT -> "c.domain = :k1 AND c.port = :k2";
             };
         }
+
+        /** Yerel SQL anahtar koşulu. */
+        String sqlKeyClause() {
+            return switch (key) {
+                case MONITOR -> "monitor_id = :k1";
+                case DOMAIN -> "domain = :k1";
+                case DOMAIN_PORT -> "domain = :k1 AND port = :k2";
+            };
+        }
+    }
+
+    /**
+     * Önceki / sonraki kontrolün yerel SQL'i (inceleme Y1): koşul DİZİN DOSTU — {@code checked_at >= :at} (ya da
+     * {@code <=}) + İKİ YÖNDE sınır ({@code :bound}, ± {@value #NEIGHBOUR_WINDOW_DAYS} gün) ve yalnız {@code checked_at}
+     * sıralaması: {@code (anahtar, checked_at)} bileşik dizini koşulu da sırayı da taşır. Eski
+     * {@code checkedAt > :at OR (checkedAt = :at AND id > :id)} dizin koşuluna dönüşmüyordu (tablonun en eski / en yeni
+     * ucundan çapaya kadar filtreyle okuma). Aynı saniyedeki satırlar Java'da ayıklanır. {@code strict}: aynı saniyedeki
+     * adaylar tükendiğinde tek satırlık katı arama. EXPLAIN kapısı {@code ActivityDetailPostgresTest}.
+     */
+    static String neighbourSql(CheckTable t, boolean before, boolean strict) {
+        String op = before ? (strict ? "<" : "<=") : (strict ? ">" : ">=");
+        String boundOp = before ? ">=" : "<=";
+        String order = before ? "DESC" : "ASC";
+        return "SELECT id, checked_at FROM " + t.table + " WHERE " + t.sqlKeyClause()
+                + " AND checked_at " + op + " :at AND checked_at " + boundOp + " :bound"
+                + " ORDER BY checked_at " + order + " LIMIT " + (strict ? 1 : NEIGHBOUR_FETCH);
     }
 
     enum Key { MONITOR, DOMAIN, DOMAIN_PORT }
@@ -182,6 +233,67 @@ public class ActivityDetailService {
         this.em = em;
     }
 
+    /** Saat (serinin üst sınırı "şimdi"yi aşmaz) — test dikişi. */
+    private java.time.Clock clock = java.time.Clock.systemUTC();
+
+    void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
+    /**
+     * İzlemenin GÜNCEL takımını çözen zaman çizelgesi servisi ({@code resolve} kuralı — tek kaynak; inceleme O1). İsteğe
+     * bağlı: yoksa (dar test bağlamı) güncel takım bilinmez → satırın takımı geçerli (bugünkü davranış).
+     */
+    private ActivityTimelineService timelines;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTimelines(ActivityTimelineService timelines) {
+        this.timelines = timelines;
+    }
+
+    /** Oturumun satır kapsamı (liste ucuyla aynı kural): {@code scoped=false} → tüm takımlar. */
+    record ViewScope(boolean scoped, List<Long> list) {
+        static ViewScope of(HttpSession session) {
+            List<Long> view = SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIdsWithGrants(session);
+            if (view == null) return new ViewScope(false, List.of(-1L));
+            List<Long> clean = view.stream().filter(java.util.Objects::nonNull).toList();
+            return new ViewScope(true, clean.isEmpty() ? List.of(-1L) : clean);
+        }
+    }
+
+    /**
+     * İzlemenin güncel takımı görülebiliyor mu (inceleme O1 — izleme başka takıma taşındıysa eski takımın üyesi ayrıntıdan
+     * yeni takımın kontrol satırlarını okumasın; zaman çizelgesiyle aynı kapı). {@code TRUE} görülebilir ya da izleme
+     * bulunamadı (silinmiş — satırın kapısı geçerli), {@code FALSE} görülemez, {@code null} okunamadı.
+     */
+    record CurrentTeam(Boolean visible, Long teamId) {}
+
+    CurrentTeam currentTeam(ActivityLog a, HttpSession session) {
+        String type = a.getMonitorType() == null ? "" : a.getMonitorType().toUpperCase(Locale.ROOT);
+        try {
+            Long teamId;
+            boolean known;
+            if (a.getMonitorId() != null && timelines != null) {
+                ActivityTimelineService.MonitorRef ref = timelines.resolve(type, a.getMonitorId());
+                known = ref != null;
+                teamId = ref == null ? null : ref.teamId();
+            } else if (a.getMonitorId() == null && (ActivityLogService.CERT.equals(type) || ActivityLogService.UPTIME.equals(type))
+                    && hostOf(a.getTarget()) != null) {
+                Optional<CertificateInventory> inv = inventoryRepo.findByDomain(hostOf(a.getTarget()));
+                known = inv.isPresent();
+                teamId = inv.map(CertificateInventory::getTeamId).orElse(null);
+            } else {
+                known = false;
+                teamId = null;
+            }
+            if (!known) return new CurrentTeam(Boolean.TRUE, a.getTeamId());
+            return new CurrentTeam(SessionScope.canViewMonitoring(session, teamId), teamId);
+        } catch (Exception e) {
+            log.debug("Aktivite ayrıntısı: izlemenin güncel takımı okunamadı (#{}): {}", a.getId(), e.toString());
+            return new CurrentTeam(null, a.getTeamId());
+        }
+    }
+
     /**
      * Ayrıntı. Kapı çağıranın işidir (satır görüş kapsamında değilse 404) — bu yöntem yalnız GÖRÜLEBİLEN satır için çağrılır.
      * Kontrol satırları (önceki / sonraki dahil) {@code monitoring.read/view} ister (geçmiş uçlarıyla aynı izin); yoksa
@@ -194,7 +306,11 @@ public class ActivityDetailService {
         data.put("team_name", teamName(a.getTeamId()));
         out.put("data", data);
 
+        ViewScope scope = ViewScope.of(session);
+        CurrentTeam current = currentTeam(a, session);
+
         // ── Kontrol satırı + önceki / sonraki ──
+        // Kapı: monitoring.read/view (geçmiş uçlarıyla aynı izin) VE izlemenin GÜNCEL takımı görülebilir (inceleme O1).
         CheckTable table = CHECK_ACTIONS.contains(a.getAction()) ? CheckTable.of(a.getMonitorType()) : null;
         boolean canReadChecks = permissionService == null || permissionService.allows(session, "monitoring.read", "view");
         Map<String, Object> check = null;
@@ -202,6 +318,12 @@ public class ActivityDetailService {
         Map<String, Object> next = null;
         if (table != null && !canReadChecks) {
             out.put("check_hidden", true);
+            out.put("check_hidden_reason", "permission");
+        } else if (table != null && Boolean.FALSE.equals(current.visible())) {
+            out.put("check_hidden", true);
+            out.put("check_hidden_reason", "team");
+        } else if (table != null && current.visible() == null) {
+            out.put("check_error", true);
         } else if (table != null) {
             try {
                 CheckKey key = keyOf(table, a);
@@ -215,34 +337,43 @@ public class ActivityDetailService {
                     Long id = longField(m.entity, "id");
                     Object pe = neighbour(table, key, at, id, true);
                     Object ne = neighbour(table, key, at, id, false);
-                    prev = pe == null ? null : withActivityId(row(table, pe, a), a, pe);
-                    next = ne == null ? null : withActivityId(row(table, ne, a), a, ne);
+                    prev = pe == null ? null : withActivityId(row(table, pe, a), a, pe, scope);
+                    next = ne == null ? null : withActivityId(row(table, ne, a), a, ne, scope);
                 }
             } catch (Exception e) {
                 log.debug("Aktivite ayrıntısı: kontrol satırı okunamadı (#{}): {}", a.getId(), e.toString());
                 out.put("check_error", true);
             }
         }
+        // Kontrol ayrıntısı gizliyse satırın KENDİ kontrol ayrıntısı da gizlenir (inceleme D3: aynı maskeli JSON — çözülen
+        // IP'ler, vekil, gövde doğrulama iletisi — satır alanlarında görünmesin).
+        if (Boolean.TRUE.equals(out.get("check_hidden"))) data.put("failure_detail", null);
         out.put("check", check);
         out.put("previous_check", prev);
         out.put("next_check", next);
 
-        // ── ± 24 saatlik seri (aynı izlemenin kontrol satırları) ──
+        // ── ± 24 saatlik seri (aynı izlemenin kontrol satırları; oturum kapsamıyla süzülür — inceleme O1) ──
         try {
-            out.put("series", series(a));
+            out.put("series", series(a, scope));
         } catch (Exception e) {
             log.debug("Aktivite ayrıntısı: seri okunamadı (#{}): {}", a.getId(), e.toString());
             out.put("series", null);
             out.put("series_error", true);
         }
 
-        // ── Alarm ──
-        try {
-            out.put("alarm", alarm(a, session));
-        } catch (Exception e) {
-            log.debug("Aktivite ayrıntısı: alarm okunamadı (#{}): {}", a.getId(), e.toString());
+        // ── Alarm ── (alerts.read/view yoksa meta veri de dönmez — inceleme D4; Alarm Geçmişi'yle aynı izin)
+        boolean canReadAlerts = permissionService == null || permissionService.allows(session, "alerts.read", "view");
+        if (!canReadAlerts) {
             out.put("alarm", null);
-            out.put("alarm_error", true);
+            out.put("alarm_hidden", true);
+        } else {
+            try {
+                out.put("alarm", alarm(a, session));
+            } catch (Exception e) {
+                log.debug("Aktivite ayrıntısı: alarm okunamadı (#{}): {}", a.getId(), e.toString());
+                out.put("alarm", null);
+                out.put("alarm_error", true);
+            }
         }
 
         // ── Değişiklik bağı ──
@@ -256,7 +387,7 @@ public class ActivityDetailService {
         out.put("change", change);
 
         Map<String, Object> alarm = castMap(out.get("alarm"));
-        out.put("links", links(a, alarm, change, session));
+        out.put("links", links(a, alarm, change, session, current));
 
         Map<String, Object> actor = new LinkedHashMap<>();
         actor.put("name", a.getActor());
@@ -303,6 +434,20 @@ public class ActivityDetailService {
         m.put("storm_id", a.getStormId());
         m.put("change_seq", a.getChangeSeq());
         m.put("request_id", a.getRequestId());
+        // Alarm olayı satırının makinece okunur ayrıntısı (ön yüz özeti kendi dilinde kurar; FR D5) — yalnız ALERT_*
+        if (ALERT_ACTIONS.contains(a.getAction())) m.put("alert_info", alertInfoObject(a.getResultDetail()));
+    }
+
+    /** Alarm satırının {@code result_detail} JSON'u → nesne; okunamıyor / yok → null. */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> alertInfoObject(String raw) {
+        if (raw == null || raw.isBlank() || raw.length() > 4000 || !raw.trim().startsWith("{")) return null;
+        try {
+            Object v = FALLBACK_MAPPER.readValue(raw.trim(), Map.class);
+            return v instanceof Map<?, ?> map && map.get("alert_type") != null ? (Map<String, Object>) map : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -384,19 +529,54 @@ public class ActivityDetailService {
         return best == null ? null : new Match(best, false);
     }
 
-    private Object neighbour(CheckTable table, CheckKey key, String at, Long id, boolean before) {
+    /**
+     * Aynı izlemenin önceki / sonraki kontrolü (± {@value #NEIGHBOUR_WINDOW_DAYS} gün içinde; yoksa null) — dizin dostu yerel
+     * SQL ({@link #neighbourSql}) + kimlikle varlık okuma. Sıra (zaman, kimlik); aynı saniyedeki satırlar Java'da ayıklanır.
+     */
+    Object neighbour(CheckTable table, CheckKey key, String at, Long id, boolean before) {
         if (at == null || id == null) return null;
-        String cond = before
-                ? "(c.checkedAt < :at OR (c.checkedAt = :at AND c.id < :id))"
-                : "(c.checkedAt > :at OR (c.checkedAt = :at AND c.id > :id))";
-        String order = before ? "c.checkedAt DESC, c.id DESC" : "c.checkedAt ASC, c.id ASC";
-        return query(table, key, cond, order).setParameter("at", at).setParameter("id", id)
-                .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        Instant ai = parse(at);
+        if (ai == null) return null;
+        String bound = before ? ISO.format(ai.minusSeconds(NEIGHBOUR_WINDOW_DAYS * 86_400L))
+                : ISO.format(ai.plusSeconds(NEIGHBOUR_WINDOW_DAYS * 86_400L)) + "~";   // "~" > saniye sonu ekleri
+        List<Object[]> rows = nativeRows(table, key, neighbourSql(table, before, false), at, bound);
+        List<Object[]> sorted = new ArrayList<>(rows);
+        java.util.Comparator<Object[]> cmp = java.util.Comparator
+                .comparing((Object[] r) -> r[1] == null ? "" : r[1].toString())
+                .thenComparing(r -> r[0] instanceof Number n ? n.longValue() : 0L);
+        sorted.sort(before ? cmp.reversed() : cmp);
+        for (Object[] r : sorted) {
+            Long rid = r[0] instanceof Number n ? n.longValue() : null;
+            String rt = r[1] == null ? null : r[1].toString();
+            if (rid == null || rt == null) continue;
+            if (rt.equals(at) && (before ? rid >= id : rid <= id)) continue;   // çapa ve aynı saniyede öbür yandakiler
+            return em.find(table.type, rid);
+        }
+        if (rows.size() < NEIGHBOUR_FETCH) return null;
+        // Okunan adayların hepsi çapayla aynı saniyede ve öbür yanda: katı arama (tek satır)
+        List<Object[]> strict = nativeRows(table, key, neighbourSql(table, before, true), at, bound);
+        if (strict.isEmpty() || !(strict.get(0)[0] instanceof Number n)) return null;
+        return em.find(table.type, n.longValue());
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Object[]> nativeRows(CheckTable table, CheckKey key, String sql, String at, String bound) {
+        var q = em.createNativeQuery(sql);
+        q.setHint(TIMEOUT_HINT, QUERY_TIMEOUT_MS);
+        q.setParameter("k1", key.k1());
+        if (table.key == Key.DOMAIN_PORT) q.setParameter("k2", key.k2());
+        q.setParameter("at", at);
+        q.setParameter("bound", bound);
+        List<?> raw = q.getResultList();
+        List<Object[]> out = new ArrayList<>(raw.size());
+        for (Object o : raw) if (o instanceof Object[] r && r.length >= 2) out.add(r);
+        return out;
     }
 
     private TypedQueryWrapper query(CheckTable table, CheckKey key, String cond, String order) {
         var q = em.createQuery("SELECT c FROM " + table.entity + " c WHERE " + table.keyClause() + " AND " + cond
                 + " ORDER BY " + order);
+        q.setHint(TIMEOUT_HINT, QUERY_TIMEOUT_MS);
         q.setParameter("k1", key.k1());
         if (table.key == Key.DOMAIN_PORT) q.setParameter("k2", key.k2());
         return new TypedQueryWrapper(q);
@@ -424,11 +604,11 @@ public class ActivityDetailService {
      * aç" düğmesi): aynı izlemenin kontrol satırları kontrol anının ± 120 sn'sinde — {@code check_id} eşitse o, yoksa
      * bağsız (eski) satırlardan zamanca en yakını; bulunamazsa null. Tek okuma (dizinli, dar pencere).
      */
-    private Map<String, Object> withActivityId(Map<String, Object> row, ActivityLog anchor, Object entity) {
+    private Map<String, Object> withActivityId(Map<String, Object> row, ActivityLog anchor, Object entity, ViewScope scope) {
         if (row == null) return null;
         Long id = null;
         try {
-            id = activityIdFor(anchor, longField(entity, "id"), stringField(entity, "checkedAt"));
+            id = activityIdFor(anchor, longField(entity, "id"), stringField(entity, "checkedAt"), scope);
         } catch (Exception e) {
             log.debug("Aktivite ayrıntısı: komşu kontrolün aktivite satırı okunamadı (#{}): {}", anchor.getId(), e.toString());
         }
@@ -436,7 +616,7 @@ public class ActivityDetailService {
         return row;
     }
 
-    Long activityIdFor(ActivityLog anchor, Long checkId, String checkedAt) {
+    Long activityIdFor(ActivityLog anchor, Long checkId, String checkedAt, ViewScope scope) {
         Instant at = parse(checkedAt);
         if (at == null) return null;
         String from = ISO.format(at.minusSeconds(APPROX_WINDOW_S));
@@ -444,9 +624,11 @@ public class ActivityDetailService {
         PageRequest page = PageRequest.of(0, APPROX_CANDIDATES * 2);
         List<Object[]> rows;
         if (anchor.getMonitorId() != null) {
-            rows = activityRepo.checkRowsNearForMonitor(anchor.getMonitorType(), anchor.getMonitorId(), from, to, page);
+            rows = activityRepo.checkRowsNearForMonitor(anchor.getMonitorType(), anchor.getMonitorId(), from, to,
+                    scope.scoped(), scope.list(), page);
         } else if (!blank(anchor.getTarget())) {
-            rows = activityRepo.checkRowsNearForTarget(anchor.getMonitorType(), anchor.getTarget(), from, to, page);
+            rows = activityRepo.checkRowsNearForTarget(anchor.getMonitorType(), anchor.getTarget(), from, to,
+                    scope.scoped(), scope.list(), page);
         } else {
             return null;
         }
@@ -475,9 +657,17 @@ public class ActivityDetailService {
         if (entity == null) return null;
         return switch (table) {
             case CERT -> {
+                com.sitemonitor.model.CertificateCheck cc = (com.sitemonitor.model.CertificateCheck) entity;
                 CertificateService cs = certificateService == null ? null : certificateService.getIfAvailable();
-                Object dto = cs != null ? cs.historyRow((com.sitemonitor.model.CertificateCheck) entity) : entity;
-                yield mapper().convertValue(dto, LinkedHashMap.class);
+                Object dto = cs != null ? cs.historyRow(cc) : entity;
+                Map<String, Object> r = mapper().convertValue(dto, LinkedHashMap.class);
+                // Geçmiş satırı (CertificateDto) bunları taşımıyor — teşhis paneli eski kayıt sanıp neden metinden tahmin
+                // ediyordu (sözleşme incelemesi O1). Varlıktan, eklemeli.
+                r.putIfAbsent("error_class", cc.getErrorClass());
+                r.putIfAbsent("error_stage", cc.getErrorStage());
+                r.putIfAbsent("resolved_ips", cc.getResolvedIps());
+                r.putIfAbsent("response_ms", cc.getResponseMs());
+                yield r;
             }
             case DBQUERY -> {
                 // Geçmiş ucunun biçimi + ayrıntı sayfasının okuduğu eş ad (eklemeli): error_message = error
@@ -511,25 +701,42 @@ public class ActivityDetailService {
 
     // ── Seri ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** ± 24 saat, aynı izlemenin kontrol satırları (aktivite akışından); ≤ 300 nokta (aşarsa eşit zaman kovaları). */
-    Map<String, Object> series(ActivityLog a) {
+    /**
+     * ± 24 saat, aynı izlemenin kontrol satırları (aktivite akışından; oturum kapsamıyla süzülür — inceleme O1); ≤ 300
+     * nokta (aşarsa eşit zaman kovaları). Çapanın İKİ YANI ayrı sınırlanır (her biri ≤ {@code SERIES_MAX_ROWS / 2}): tavan
+     * aşılırsa pencerenin uçları kesilir, olay anı değil (inceleme D9).
+     */
+    Map<String, Object> series(ActivityLog a, ViewScope scope) {
         Instant at = parse(a.getActivityTime());
         if (at == null) return null;
         Instant fromI = at.minusSeconds(SERIES_HOURS * 3600L);
         Instant toI = at.plusSeconds(SERIES_HOURS * 3600L);
-        String from = ISO.format(fromI), to = ISO.format(toI);
-        List<Object[]> rows;
+        Instant now = clock.instant();
+        if (toI.isAfter(now)) toI = now.isAfter(at) ? now : at;   // geleceğe uzanmaz (sözleşme incelemesi D6)
+        String from = ISO.format(fromI), to = ISO.format(toI), mid = ISO.format(at);
+        int half = SERIES_MAX_ROWS / 2;
+        PageRequest page = PageRequest.of(0, half + 1);
+        List<Object[]> before, after;
         if (a.getMonitorId() != null) {
-            rows = activityRepo.seriesForMonitor(a.getMonitorType(), a.getMonitorId(), from, to,
-                    PageRequest.of(0, SERIES_MAX_ROWS + 1));
+            before = activityRepo.seriesForMonitorDesc(a.getMonitorType(), a.getMonitorId(), from, mid,
+                    scope.scoped(), scope.list(), page);
+            after = activityRepo.seriesForMonitorAsc(a.getMonitorType(), a.getMonitorId(), mid, to,
+                    scope.scoped(), scope.list(), page);
         } else if (!blank(a.getTarget())) {
-            rows = activityRepo.seriesForTarget(a.getMonitorType(), a.getTarget(), from, to,
-                    PageRequest.of(0, SERIES_MAX_ROWS + 1));
+            before = activityRepo.seriesForTargetDesc(a.getMonitorType(), a.getTarget(), from, mid,
+                    scope.scoped(), scope.list(), page);
+            after = activityRepo.seriesForTargetAsc(a.getMonitorType(), a.getTarget(), mid, to,
+                    scope.scoped(), scope.list(), page);
         } else {
-            rows = List.of();
+            before = List.of();
+            after = List.of();
         }
-        boolean truncated = rows.size() > SERIES_MAX_ROWS;
-        if (truncated) rows = rows.subList(0, SERIES_MAX_ROWS);
+        boolean truncated = before.size() > half || after.size() > half;
+        List<Object[]> rows = new ArrayList<>(Math.min(before.size(), half) + Math.min(after.size(), half));
+        List<Object[]> b = new ArrayList<>(before.subList(0, Math.min(before.size(), half)));
+        java.util.Collections.reverse(b);
+        rows.addAll(b);
+        rows.addAll(after.subList(0, Math.min(after.size(), half)));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("from", from);
         out.put("to", to);
@@ -596,11 +803,16 @@ public class ActivityDetailService {
         if (a.getAlertEventId() != null) {
             ev = alertRepo.findById(a.getAlertEventId()).orElse(null);
             exact = ev != null;
-        } else if (CHECK_ACTIONS.contains(a.getAction())
-                && ("ERROR".equals(a.getResultStatus()) || "TIMEOUT".equals(a.getResultStatus()))) {
+        } else if (CHECK_ACTIONS.contains(a.getAction()) && FAILING_STATUSES.contains(a.getResultStatus())) {
+            // WARNING da: HTTP / KEYWORD durum uyuşmazlığı, sentetik FAIL, sorgu ihlali uyarı yazılır ama alarm açar
+            // (sözleşme incelemesi Y1 — çakışan kritik alarm bağlanmıyordu)
             ev = approximateAlarm(a);
         }
         if (ev == null) return null;
+        boolean canOpen = canOpenAlarm(ev, session);
+        // Yaklaşık eşleme yalnız AÇILABİLEN alarmı gösterir (inceleme D2): aynı URL / host / sentetik adı izleyen başka bir
+        // takımın alarmının kimliği, seviyesi ve zamanları dönmesin.
+        if (!exact && !canOpen) return null;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", ev.getId());
         m.put("alert_type", ev.getAlertType());
@@ -611,7 +823,7 @@ public class ActivityDetailService {
         m.put("acknowledged", Boolean.TRUE.equals(ev.getAcknowledged()));
         m.put("storm_id", ev.getStormId());
         m.put("match", exact ? "exact" : "approximate");
-        m.put("can_open", canOpenAlarm(ev, session));
+        m.put("can_open", canOpen);
         return m;
     }
 
@@ -756,13 +968,16 @@ public class ActivityDetailService {
 
     // ── Bağlantılar ────────────────────────────────────────────────────────────────────────────────────────────────
 
-    Map<String, Object> links(ActivityLog a, Map<String, Object> alarm, Map<String, Object> change, HttpSession session) {
+    Map<String, Object> links(ActivityLog a, Map<String, Object> alarm, Map<String, Object> change, HttpSession session,
+                              CurrentTeam current) {
         String type = a.getMonitorType() == null ? "" : a.getMonitorType().toUpperCase(Locale.ROOT);
         Map<String, Object> out = new LinkedHashMap<>();
-        Map<String, Object> monitor = monitorLink(a, type, null);
+        // İzleme başka (görülemeyen) takıma taşındıysa ya da güncel takımı okunamadıysa izlemeye derin bağlantı yok (O1)
+        boolean monitorVisible = current == null || Boolean.TRUE.equals(current.visible());
+        Map<String, Object> monitor = monitorVisible ? monitorLink(a, type, null) : null;
         out.put("monitor", monitor);
-        out.put("history", monitorLink(a, type, "control"));
-        out.put("changes", change == null ? null : monitorLink(a, type, "changes"));
+        out.put("history", monitorVisible ? monitorLink(a, type, "control") : null);
+        out.put("changes", change == null || !monitorVisible ? null : monitorLink(a, type, "changes"));
         Map<String, Object> alert = null;
         if (alarm != null && Boolean.TRUE.equals(alarm.get("can_open"))) {
             alert = link("alerthistory", Map.of("alert", alarm.get("id")));
@@ -771,7 +986,7 @@ public class ActivityDetailService {
         boolean diag = DIAGNOSABLE.contains(type) && monitor != null
                 && (MONITOR_TABS.containsKey(type) ? a.getMonitorId() != null : !blank(a.getTarget()))
                 && (permissionService == null || permissionService.allows(session, "diagnostics.run", "execute"))
-                && SessionScope.canOperateTeam(session, a.getTeamId());
+                && SessionScope.canOperateTeam(session, current == null ? a.getTeamId() : current.teamId());
         out.put("can_diagnose", diag);
         return out;
     }
@@ -784,11 +999,11 @@ public class ActivityDetailService {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("domain", host);
             p.put("open", "cert");
-            return mtab == null || "control".equals(mtab) ? link("dashboard", p) : null;
+            return mtab == null ? link("dashboard", p) : null;   // geçmiş / değişiklik sekmesi yok (izleme bağlantısıyla aynı yer)
         }
         if (ActivityLogService.UPTIME.equals(type)) {
             if (host == null) return null;
-            return mtab == null || "control".equals(mtab) ? link("uptime", Map.of("q", host)) : null;
+            return mtab == null ? link("uptime", Map.of("q", host)) : null;
         }
         String tab = MONITOR_TABS.get(type);
         if (tab == null) return null;

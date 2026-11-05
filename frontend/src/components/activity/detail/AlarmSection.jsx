@@ -141,13 +141,22 @@ function AlarmChain({ alarmId, locale }) {
  * kapsayan / 10 dk içinde açılan alarm) rozet + açıklama. `can_open` false → zincir okunmaz, "yetkiniz yok" notu.
  * Alarm yokken hatalı kontrolde nötr not (alarm açılmamış olabilir — onay zinciri, bastırma, kapalı tür).
  *
- * <p>Sunucu alarmı OKUYAMADIYSA (`alarm_error`, inceleme FR Y1) bölüm her durumda çizilir ve tehlike bandı + Yeniden dene
+ * <p>Alarm okuma izni yoksa (`alarm_hidden`, be1) nötr "izniniz yok" notu (`data-state="hidden"`).
+ * Sunucu alarmı OKUYAMADIYSA (`alarm_error`, inceleme FR Y1) bölüm her durumda çizilir ve tehlike bandı + Yeniden dene
  * gösterir — asla "alarm bulunamadı" (bilinmiyor ≠ yok). `refreshNonce` (sayfanın Yenile düğmesi, inceleme FR D10) zinciri
  * baştan okutur. Test kancaları: `act-dt-alarm` (`data-state` linked|none|error, `data-match`), `act-dt-alarm-locked`,
  * `act-dt-alarm-chain`.
  */
-export default function AlarmSection({ alarm, alertLink, locale, failed, readError = false, onRetry, refreshNonce = 0 }) {
+export default function AlarmSection({ alarm, alertLink, locale, failed, readError = false, hidden = false, onRetry, refreshNonce = 0 }) {
   const t = useT()
+  // Alarm okuma izni yok (be1 `alarm_hidden`): bağlı alarm olup olmadığı söylenemez — nötr not, "bulunamadı" DEĞİL
+  if (!alarm && hidden) {
+    return (
+      <SectionCard slot="act-dt-alarm" icon={Siren} title={t('act.dt.al.title')} data-state="hidden">
+        <AlertBanner tone="info" icon={Lock} className="mb-0">{t('act.dt.al.hidden')}</AlertBanner>
+      </SectionCard>
+    )
+  }
   if (readError) {
     return (
       <SectionCard slot="act-dt-alarm" icon={Siren} title={t('act.dt.al.title')} data-state="error">

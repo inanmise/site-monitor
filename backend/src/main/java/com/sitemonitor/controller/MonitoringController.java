@@ -168,6 +168,27 @@ public class MonitoringController {
                 row.getTeamId(), actor(session), String.join(", ", fields), row.getSeq(), row.getChanges());
     }
 
+    /**
+     * Aktivite satırının hedefi — türün kontrol / yaşam döngüsü satırlarıyla AYNI biçim (port {@code host:port}, DNS
+     * {@code alan tür}, URL'li türler URL, ping host, alan adı, sentetik / sorgu izlemesi ad). Geri yükleme satırı izleme
+     * adını hedef yazıyordu: arama, host gruplaması ve kök neden yanlış hedefe bağlıyordu (aktivite inceleme D12).
+     */
+    static String activityTargetOf(Object entity) {
+        return switch (entity) {
+            case PortMonitor m -> m.getHost() + ":" + m.getPort();
+            case DnsMonitor m -> m.getDomain() + " " + m.getRecordType();
+            case KeywordMonitor m -> m.getUrl();
+            case HttpMonitor m -> m.getUrl();
+            case PageMonitor m -> m.getUrl();
+            case PageSpeedMonitor m -> m.getUrl();
+            case DomainMonitor m -> m.getDomain();
+            case PingMonitor m -> m.getHost();
+            case ScriptedMonitor m -> m.getName();
+            case DbQueryMonitor m -> m.getName();
+            case null, default -> null;
+        };
+    }
+
     /** Değişiklik geçmişi satırının seq bağı (yazılmadıysa null). */
     private static ActivityLogService.Refs changeRefs(com.sitemonitor.model.MonitorChangeLog row) {
         return row == null || row.getSeq() == null ? null : ActivityLogService.Refs.change(row.getSeq());
@@ -818,8 +839,9 @@ public class MonitoringController {
             String activityType = MonitorHistoryService.INVENTORY.equals(resolved) ? null : resolved;
             var fieldsChanged = MonitorHistoryService.changedFields(restoreRow.getChanges());
             if (activityType != null && !fieldsChanged.isEmpty()) {
-                activityLog.recordConfigChange(activityType, id, restoreRow.getResourceName(), restoreRow.getResourceName(),
-                        liveTeam, actor(session), "#" + seq + " geri yüklendi: " + String.join(", ", fieldsChanged),
+                String restoreTarget = activityTargetOf(entity);
+                activityLog.recordConfigChange(activityType, id, restoreRow.getResourceName(),
+                        restoreTarget != null ? restoreTarget : restoreRow.getResourceName(), liveTeam, actor(session), "#" + seq + " geri yüklendi: " + String.join(", ", fieldsChanged),
                         restoreRow.getSeq(), restoreRow.getChanges());
             }
         }

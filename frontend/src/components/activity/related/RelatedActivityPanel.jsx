@@ -43,7 +43,7 @@ const TONE_CLASS = {
  * "okunamadı" + tekrar dene — asla "ilişkili hata yok".
  *
  * <p>404: YENİ sunucuda kayıt silinmiş ya da görme izni gitmiş ("kayıt bulunamadı / erişim yok" — `notFound`, inceleme
- * FR D14); 405 ya da sunucunun bilinmeyen uç yanıtı (eski pod `/{id}`'yi `Long` sanıp 400 `INVALID_PARAMETER` döner) →
+ * FR D14); eski pod'un eşlemesiz uç 404'ü (`code: NOT_FOUND`), 405 ya da sunucunun bilinmeyen uç yanıtı (eski pod `/{id}`'yi `Long` sanıp 400 `INVALID_PARAMETER` döner) →
  * "bu sürümde yok" (`unsupported`). Sayılar "bu kayıt HARİÇ" (be2); `truncated` → "en az N". `refreshNonce` sayfanın
  * Yenile düğmesiyle yeniden okutur (inceleme FR D10).
  * Test kancaları: `data-slot="act-related"` (+ `data-state` loading|ok|error|unsupported|notFound), `act-rel-suspect`
@@ -65,8 +65,12 @@ export default function RelatedActivityPanel({ activityId, onOpenActivity, refre
         if (res?.success) {
           const data = unwrapRelated(res)
           setState(data ? { status: 'ok', data, error: null } : { status: 'error', data: null, error: null })
-        } else if (res?.status === 404) {
+        } else if (res?.status === 404 && res?.code !== 'NOT_FOUND') {
+          // Yeni sunucu: kayıt yok / görme izni yok (`error: "not_found"`, kodsuz)
           setState({ status: 'notFound', data: null, error: null })
+        } else if (res?.status === 404) {
+          // Eski pod: `/related` eşlemesi yok → SPA 404 tavsiyesi (`code: NOT_FOUND`) — "bu sürümde yok"
+          setState({ status: 'unsupported', data: null, error: null })
         } else if (res?.status === 405 || (res?.status === 400 && res?.code === 'INVALID_PARAMETER')) {
           setState({ status: 'unsupported', data: null, error: null })
         } else {

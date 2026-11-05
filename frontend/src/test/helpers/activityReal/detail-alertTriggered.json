@@ -25,7 +25,11 @@
     "storm_id": null,
     "change_seq": null,
     "request_id": null,
-    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)"
+    "team_name": "Ödeme Kanalları ve Dijital Bankacılık Takımı (Mobil / İnternet Şubesi)",
+    "alert_info": {
+      "alert_type": "HTTP_DOWN",
+      "level": "HIGH"
+    }
   },
   "check": null,
   "previous_check": null,

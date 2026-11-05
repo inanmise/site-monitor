@@ -4,6 +4,8 @@
  * (liste / ayrıntı sayfası / izleme zaman çizelgesi) ve hata nedeni kısa adı.
  */
 
+import { alertInfoSummary } from './alertInfoSummary.js'
+
 /** Liste kabı bu genişliğin altındaysa kart listesi (tablo sütunları ad + sonuç + zamanı sığdıramaz). */
 export const TABLE_MIN_PX = 720
 /** Süzgeç kartı bu genişliğin altındaysa tür çipleri katlanır ("İzleme türü (n)" düğmesi). */
@@ -343,6 +345,7 @@ export function sameRoute(a, b) {
  *
  * <p>Çok sözcüklü Türkçe ifadeler önce, sonra TEK sözcükler yalnız TAM sözcük olarak (boşluk / "·" ile ayrılan parça;
  * "error" bir adın ya da hedefin içinde geçerse dokunulmaz). Doğrusal: özet ≤ 500 karakter, tek geçiş.
+ * `row` verilirse ve satır alarm olayıysa (`alert_info`) özet sunucu metninden değil ondan kurulur (`alertInfoSummary`).
  */
 const SUMMARY_PHRASES = [['yapılandırma hatası', 'act.tok.configError'], ['zaman aşımı', 'act.tok.timeout']]
 const SUMMARY_WORDS = Object.freeze({
@@ -352,7 +355,10 @@ const SUMMARY_WORDS = Object.freeze({
   up: 'act.tok.up', down: 'act.tok.down', ok: 'act.tok.ok', mixed: 'act.tok.mixed',
 })
 const MAX_SUMMARY = 500
-export function localizeSummary(summary, t) {
+export function localizeSummary(summary, t, row) {
+  // Alarm olayı satırı: özet satırın dilinde, sunucunun makinece okunur `alert_info`'sundan (be1, FR D5)
+  const alarm = row ? alertInfoSummary(row, t) : null
+  if (alarm) return alarm
   if (!summary) return summary
   let s = String(summary).slice(0, MAX_SUMMARY)
   for (const [tr, key] of SUMMARY_PHRASES) s = s.split(tr).join(t(key))

@@ -307,7 +307,12 @@
       "alert_event_id": 2,
       "storm_id": null,
       "change_seq": null,
-      "request_id": null
+      "request_id": null,
+      "alert_info": {
+        "alert_type": "HTTP_DOWN",
+        "level": "HIGH",
+        "closed_by": "auto"
+      }
     },
     {
       "id": 5,
@@ -411,7 +416,11 @@
       "alert_event_id": 2,
       "storm_id": null,
       "change_seq": null,
-      "request_id": null
+      "request_id": null,
+      "alert_info": {
+        "alert_type": "HTTP_DOWN",
+        "level": "HIGH"
+      }
     },
     {
       "id": 12,
@@ -484,7 +493,7 @@
       "days_remaining": null,
       "check_id": 11,
       "http_status": 503,
-      "failure_reason": "UNKNOWN",
+      "failure_reason": "HTTP_STATUS",
       "failure_detail": {
         "kind": "STATUS_MISMATCH",
         "phase": "RESPONSE",
@@ -557,7 +566,7 @@
       "days_remaining": null,
       "check_id": 10,
       "http_status": 503,
-      "failure_reason": "UNKNOWN",
+      "failure_reason": "HTTP_STATUS",
       "failure_detail": {
         "kind": "STATUS_MISMATCH",
         "phase": "RESPONSE",
@@ -630,7 +639,7 @@
       "days_remaining": null,
       "check_id": 9,
       "http_status": 503,
-      "failure_reason": "UNKNOWN",
+      "failure_reason": "HTTP_STATUS",
       "failure_detail": {
         "kind": "STATUS_MISMATCH",
         "phase": "RESPONSE",

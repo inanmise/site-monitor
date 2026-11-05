@@ -75,7 +75,11 @@
       "tls_mode_used": null,
       "trust_status": null,
       "via": null,
-      "warning": null
+      "warning": null,
+      "error_class": "DNS",
+      "error_stage": "dns",
+      "resolved_ips": "[]",
+      "response_ms": null
     }
   },
   "previous_check": {
@@ -154,13 +158,7 @@
         "open": "cert"
       }
     },
-    "history": {
-      "tab": "dashboard",
-      "params": {
-        "domain": "odeme.ornekbanka.com.tr",
-        "open": "cert"
-      }
-    },
+    "history": null,
     "changes": null,
     "alert": null,
     "can_diagnose": true
