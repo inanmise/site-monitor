@@ -154,16 +154,17 @@ for (const vp of VIEWPORTS) {
       await expect(band).toHaveAttribute('data-state', 'exceeded')
       await expect(band.locator('[data-slot="prs-budget-row"]')).toHaveCount(4)
       await expect(band.locator('[data-slot="prs-budget-row"][data-ok="unknown"]')).toHaveCount(1)
-      // Bölüm sekmeleri (6 sekme: Denetim, Eğilim, Sayfalar dahil) kırpılmaz: sm+ tek satır; telefonda 3 + 3 iki satır
-      // (5+ eşit sütunda adlar 360 px'te sığmıyordu — sectionTabCols)
+      // Bölüm sekmeleri (6 sekme: Denetim, Eğilim, Sayfalar dahil) kırpılmaz: lg+ tek satır; telefon ve tablette 3 + 3 iki
+      // satır (5+ eşit sütunda adlar 360 px'te sığmıyordu — sectionTabCols; 768'de satır içi düzen Linux yazı tipiyle 5 + 1
+      // kırılıyordu)
       const tabs = root.locator('[data-slot="prs-sections"] [role="tab"]')
       await expect(tabs).toHaveCount(6)
       const tops = await tabs.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
       const rows = new Set(tops).size
-      if (vp.width >= 640) {
+      if (vp.width >= 1024) {
         expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
       } else {
-        expect(rows, `@${vp.name}: telefonda bölüm sekmeleri iki satır olmalı`).toBe(2)
+        expect(rows, `@${vp.name}: telefon / tablette bölüm sekmeleri iki satır olmalı`).toBe(2)
         expect(tops.filter((v) => v === Math.min(...tops)), `@${vp.name}: ilk satırda 3 sekme`).toHaveLength(3)
       }
       // Başlık eylemleri (başlat grubu, bağlantı, Excel, PDF) sm+ genişlikte tek satır

@@ -718,9 +718,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       {hasFinished && (
         <Tabs value={shownSection} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
           {/* Telefonda bölümler eşit sütunlu ızgara (r177 H11): en çok 4 bölüm tek satır, 5+ iki satır (sectionTabCols);
-              simge üstte, ad altta (prs3: Eğilim, Sayfalar eklendi). sm ve üstü satır içi, sığmazsa sarar (yatay taşma yok). */}
+              simge üstte, ad altta (prs3: Eğilim, Sayfalar eklendi). lg ve üstü satır içi, sığmazsa sarar (yatay taşma yok). Tablette de ızgara: 6 sekme 768'de yazı tipine göre
+              (Linux) 5 + 1 kırılıyordu — 3 + 3 eşit sütun düzenli kalır. */}
           <TabsList data-count={sectionCount} data-cols={sectionCols} style={{ '--prs-tabs': sectionCols }}
-            className="grid h-auto w-full grid-cols-[repeat(var(--prs-tabs),minmax(0,1fr))] gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit sm:max-w-full sm:flex-wrap">
+            className="grid h-auto w-full grid-cols-[repeat(var(--prs-tabs),minmax(0,1fr))] gap-1 group-data-[orientation=horizontal]/tabs:h-auto lg:inline-flex lg:w-fit lg:max-w-full lg:flex-wrap">
             <TabsTrigger value="overview" className={cn(TAB, TOUCH)}><LayoutDashboard aria-hidden="true" />{t('prs.sec.overview')}</TabsTrigger>
             <TabsTrigger value="objects" className={cn(TAB, TOUCH)}>
               <List aria-hidden="true" />{t('prs.sec.objects')}
