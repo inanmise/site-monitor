@@ -164,10 +164,10 @@ export default function CertNoteItem({
               className="max-h-72 min-h-20 resize-y" />
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="mr-auto text-xs text-muted-foreground tabular-nums">{t('cnote.counter', editBody.length, NOTE_MAX_LENGTH)}</span>
-              <Button type="button" variant="ghost" size="sm" className="max-sm:h-10" onClick={cancel} disabled={editSaving}>
+              <Button type="button" variant="ghost" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={cancel} disabled={editSaving}>
                 {t('notes.cancel')}
               </Button>
-              <Button type="button" size="sm" className="gap-1.5 max-sm:h-10" onClick={() => onSaveEdit?.()} disabled={editSaving || !editBody.trim()}
+              <Button type="button" size="sm" className="gap-1.5 max-sm:h-10 pointer-coarse:h-10" onClick={() => onSaveEdit?.()} disabled={editSaving || !editBody.trim()}
                 aria-busy={editSaving || undefined}>
                 {editSaving && <Spinner size={14} inline decorative />}
                 {editSaving ? t('notes.saving') : t('notes.save')}
@@ -181,7 +181,7 @@ export default function CertNoteItem({
         <Collapsible open={historyOpen} onOpenChange={() => onToggleHistory?.(n.id)}>
           <CollapsibleTrigger asChild>
             <Button type="button" variant="ghost" size="sm"
-              className="-mx-2 h-7 w-fit gap-1 px-2 text-xs font-medium text-muted-foreground max-sm:h-10">
+              className="-mx-2 h-7 w-fit gap-1 px-2 text-xs font-medium text-muted-foreground max-sm:h-10 pointer-coarse:h-10">
               <History aria-hidden="true" className="size-3.5" />
               {historyOpen ? t('notes.hideHistory') : t('notes.showHistory')}
               <ChevronDown aria-hidden="true" className={cn('size-3.5 transition-transform motion-reduce:transition-none', historyOpen && 'rotate-180')} />

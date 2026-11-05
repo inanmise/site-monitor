@@ -45,13 +45,21 @@ farkı CSS ile.
 | Tabs | `TabsList` taşarsa `overflow-x-auto w-full justify-start`; 5+ sekme telefonda `NativeSelect`'e de düşebilir. |
 | Popover / Command / Select | genişlik `w-[--radix-popover-trigger-width]` ya da `max-w-[calc(100vw-2rem)]`; modal içinde `z-(--z-menu)`. |
 | Grafik (`ChartContainer`) | yükseklik sabit, genişlik kapsayıcıdan (`aspect-*` ya da `h-64 w-full`); eksen etiketleri seyrek. |
-| Uzun metin (alan adı, URL, hash) | `truncate` + `title`/Tooltip, ya da `break-all` (URL). |
+| Uzun metin (alan adı, URL, hash, kişi / takım / izleme adı) | **Kırpılmaz, sarar:** `[overflow-wrap:anywhere]` (URL de). `truncate` + `title` dokunmatikte okunamaz (Tooltip açılmaz) — 2026-11-05 denetiminde pencere başlığındaki izleme adı, not başlığı, geçmişteki hata metni, kılavuz adresi bu yüzden kesiliyordu. Tek istisna: satırı açınca tam metni gösteren TEK SATIRLIK özet hücresi (geçmişteki hata özeti, `e2e/mweb-sweep.spec.js` `ALLOW_CLIP`). |
 | Rozet dizileri | `flex flex-wrap gap-1`. |
 
 ## 4. Dokunma ve erişilebilirlik
 
 - Dokunma hedefi **en az 40×40 px** (ikon düğme `size="icon"`; `icon-xs`/`icon-sm` yalnız yoğun masaüstü
   tablolarında ve yanında 8 px boşlukla).
+- **Dokunmatik = `pointer-coarse:`, telefon değil (2026-11-05).** 768 px tablet de parmakla kullanılır: `h-10 sm:h-9` /
+  `max-sm:h-10` kalıbı tablette 36 px'e düşer → yanına `pointer-coarse:h-10` (`pointer-coarse:` `sm:`'den SONRA üretilir, kazanır).
+  shadcn tabanı varsayılanı zaten verir: `Button` (`default` / `icon` boy), `Input`, `InputGroup` 40 px; `Switch` ve açılır liste
+  öğeleri 40 px vuruş alanı (SHADCN.md §3.2). Görünür boyu büyütmek düzeni bozacaksa (rozet, satır içi bağlantı) görünmez
+  `::after` vuruş alanı: `relative pointer-coarse:after:absolute pointer-coarse:after:-inset-y-* pointer-coarse:after:content-['']`.
+  Komşusuyla çakışan yoğun hücreler (yoğunluk şeridi) `pointer-events-none` + tek dokunmatik katman.
+- **Tek sarmalayıcıda çok düğme** (`PageHeader actions`): sarmalayıcı satırdan geniş olamaz (`PageHeader` `[&>*]:max-w-full`),
+  kendi içinde `flex-wrap` ile sarar.
 - **Yalnız-hover bilgi YOK:** Tooltip dokunmatikte açılmaz; zorunlu bilgi görünür metin ya da `Popover` olur.
 - Form girdileri telefonda **16 px** yazı (iOS yakınlaştırmasın) — shadcn `Input`/`Textarea` zaten
   `text-base md:text-sm`; bunu `text-sm` ile EZME.
@@ -63,7 +71,10 @@ farkı CSS ile.
 1. **Kapı:** `frontend/e2e/responsive.spec.js` — her sekmeyi API mock'lu olarak 390×844 ve 768×1024'te açar,
    sayfa düzeyinde yatay taşma (`scrollWidth > innerWidth`) ve görünür öğelerin görünüm alanı dışına taşmasını
    ölçer. Yeni bir sekme/ekran eklediğinde listeye EKLE. Bilinen taşmalar listesi (`KNOWN_OVERFLOW`) yalnız
-   KÜÇÜLÜR.
+   KÜÇÜLÜR. **Dokunmatik kapı:** `frontend/e2e/mweb-sweep.spec.js` — dokunmatik telefon ve tablette (`hasTouch` +
+   `isMobile`) izleme detay pencerelerini (tüm sekmeler), izleme formlarını ve seçili sayfaları açar; taşma + kırpılan
+   metin + 40 px dokunma hedefi ölçer. Dokunmatik ölçüm `page.emulateMedia` ile YAPILMAZ (`pointer: coarse`'u sıfırlar);
+   açılış animasyonları bitmeden ölçme (`document.getAnimations()` beklenir).
 2. jsdom yerleşimi kanıtlamaz — yerleşim değişikliğini Playwright ile ölç ya da tarayıcıda 390 px'te bak
    (kullanıcının GStack penceresinde `$B viewport` KULLANMA; ayrı Playwright koşusu).
 3. Kontrol listesi: yatay kaydırma yok · tüm eylemler erişilebilir (gizli taşma yok) · dokunma hedefleri ≥40 px ·

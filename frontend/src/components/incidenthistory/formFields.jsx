@@ -88,7 +88,7 @@ export function HueChip({ value, hue, disabled, onRemove, removeLabel }) {
   }
   return (
     <Button type="button" variant="outline" size="xs" data-tag={value} aria-label={removeLabel} title={removeLabel} onClick={onRemove}
-      className="h-7 max-w-full gap-1 rounded-full pr-1.5 pl-2.5 font-semibold hover:opacity-85 max-sm:h-10 dark:border-transparent" style={style}>
+      className="h-7 max-w-full gap-1 rounded-full pr-1.5 pl-2.5 font-semibold hover:opacity-85 max-sm:h-10 dark:border-transparent pointer-coarse:h-10" style={style}>
       <span className="truncate">{value}</span>
       <X aria-hidden="true" className="size-3.5 opacity-70" />
     </Button>

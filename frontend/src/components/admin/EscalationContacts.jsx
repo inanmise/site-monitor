@@ -251,7 +251,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         <div className="flex flex-wrap items-center gap-2">
           {onOpenSimulator && (
             // Takım süzgeci yalnız yöneticide görünür; seçiliyse simülasyon o takımla açılır.
-            <Button variant="link" className="h-10 px-1 md:h-9" onClick={() => onOpenSimulator(isAdmin && fTeam ? { g_team: fTeam } : undefined)}>
+            <Button variant="link" className="h-10 px-1 md:h-9 pointer-coarse:h-10" onClick={() => onOpenSimulator(isAdmin && fTeam ? { g_team: fTeam } : undefined)}>
               {t('wn.testLink')} <ArrowRight aria-hidden="true" />
             </Button>
           )}
@@ -445,7 +445,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             {...fe.fieldProps('delay_minutes')}>
             {({ id, describedBy, invalid }) => (
               <Input id={id} type="number" inputMode="numeric" min={DELAY_MIN} max={DELAY_MAX} step={1}
-                className="h-10 sm:max-w-48 md:h-9" aria-describedby={describedBy} aria-invalid={invalid}
+                className="h-10 sm:max-w-48 md:h-9 pointer-coarse:h-10" aria-describedby={describedBy} aria-invalid={invalid}
                 value={form.delay_minutes} placeholder={t('ec.formDelayPlaceholder')}
                 onChange={(e) => { setForm({ ...form, delay_minutes: e.target.value }); fe.clear('delay_minutes') }} />
             )}

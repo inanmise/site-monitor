@@ -45,7 +45,7 @@ const CertNoteComposer = forwardRef(function CertNoteComposer({ value, onChange,
             const Icon = CAT_ICON[c]
             return (
               <ToggleGroupItem key={c} value={c} data-slot="cert-note-cat-option"
-                className="gap-1.5 text-[13px] max-sm:h-10 data-[state=on]:border-primary/50 data-[state=on]:bg-primary/10 data-[state=on]:text-primary">
+                className="gap-1.5 text-[13px] max-sm:h-10 data-[state=on]:border-primary/50 data-[state=on]:bg-primary/10 data-[state=on]:text-primary pointer-coarse:h-10">
                 <Icon aria-hidden="true" className="size-3.5" />
                 {t(`notes.cat.${c}`)}
               </ToggleGroupItem>
@@ -76,7 +76,7 @@ const CertNoteComposer = forwardRef(function CertNoteComposer({ value, onChange,
           className={cn('ml-auto text-xs tabular-nums text-muted-foreground', near && 'font-semibold text-amber-700 dark:text-amber-400')}>
           {t('cnote.counter', len, NOTE_MAX_LENGTH)}
         </span>
-        <Button type="button" size="sm" className="gap-1.5 max-sm:h-10" onClick={onSubmit} disabled={!canSubmit} aria-busy={saving || undefined}>
+        <Button type="button" size="sm" className="gap-1.5 max-sm:h-10 pointer-coarse:h-10" onClick={onSubmit} disabled={!canSubmit} aria-busy={saving || undefined}>
           {saving ? <Spinner size={14} inline decorative /> : <SendHorizontal aria-hidden="true" className="size-4" />}
           {saving ? t('notes.saving') : t('cnote.add')}
         </Button>

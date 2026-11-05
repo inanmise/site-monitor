@@ -117,7 +117,7 @@ function PushRow({ row, ctx }) {
             ? <p className="text-xs text-muted-foreground">{t('wn.pushWouldReceive')}</p>
             : fix?.text && <p data-slot="wn-push-fix" className="text-xs text-muted-foreground">{fix.text}</p>}
           {fix?.action && (
-            <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" data-fix={fix.action.kind}
+            <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" data-fix={fix.action.kind}
               aria-label={fix.action.aria || undefined} onClick={fix.action.onClick}>
               <Act aria-hidden="true" /> {fix.action.label}
             </Button>
@@ -136,7 +136,7 @@ function ChannelStatus({ channel, settings }) {
   const t = useT()
   if (!channel) return null
   const settingsButton = (
-    <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" data-fix="settings"
+    <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" data-fix="settings"
       onClick={() => navigateTo('settings', { sec: 'userpush' })}>
       <Settings2 aria-hidden="true" /> {t('wn.pushOpenSettings')}
     </Button>
@@ -230,7 +230,7 @@ export function PushCard({ view, level, cardRef, filter = 'all', onFilterChange,
               { value: 'yes', label: t('wn.pushFilterYes', counts.push) },
               { value: 'no', label: t('wn.pushFilterNo', counts.pushNot) },
             ]} />
-          <InputGroup className="h-10 w-full sm:w-64 sm:max-w-xs md:h-9">
+          <InputGroup className="h-10 w-full sm:w-64 sm:max-w-xs md:h-9 pointer-coarse:h-10">
             <InputGroupInput type="search" value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder={t('wn.pushSearch')} aria-label={t('wn.pushSearch')} autoComplete="off" />
             <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>

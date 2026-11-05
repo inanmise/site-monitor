@@ -147,14 +147,14 @@ export default function HistoryToolbar({
             return (
               <Button key={f.key} type="button" variant="outline" size="xs" data-filter={f.key}
                 aria-label={t('inc.removeFilter', label)} title={t('inc.removeFilter', label)}
-                className="h-7 max-w-full gap-1 rounded-full bg-primary/5 pr-1.5 pl-2.5 font-medium max-sm:h-10 max-sm:px-3"
+                className="h-7 max-w-full gap-1 rounded-full bg-primary/5 pr-1.5 pl-2.5 font-medium max-sm:h-10 max-sm:px-3 pointer-coarse:h-10"
                 onClick={() => patch(f.patch)}>
                 <span className="max-w-[16rem] truncate">{label}</span>
                 <X aria-hidden="true" className="size-3.5 opacity-70" />
               </Button>
             )
           })}
-          <Button type="button" variant="link" size="xs" className="h-7 px-1.5 text-muted-foreground max-sm:h-10" onClick={reset}>
+          <Button type="button" variant="link" size="xs" className="h-7 px-1.5 text-muted-foreground max-sm:h-10 pointer-coarse:h-10" onClick={reset}>
             {t('inc.clearFilters')}
           </Button>
         </div>

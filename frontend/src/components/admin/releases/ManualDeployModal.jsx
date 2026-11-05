@@ -73,8 +73,8 @@ export default function ManualDeployModal({ open, onClose, onSaved, defaultEnv =
     <ModalShell open={open} onClose={onClose} title={t('deploy.manualTitle')} icon={PenLine} size="md" busy={saving}
       scrollBody dismissOnBackdrop={false}
       footer={<>
-        <Button type="button" variant="outline" className="h-10 sm:h-9" onClick={onClose} disabled={saving}>{t('deploy.cancel')}</Button>
-        <Button type="button" className="h-10 sm:h-9" onClick={save} disabled={saving} aria-busy={saving || undefined}>
+        <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={onClose} disabled={saving}>{t('deploy.cancel')}</Button>
+        <Button type="button" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={save} disabled={saving} aria-busy={saving || undefined}>
           {saving && <Spinner decorative size={14} />}{t('deploy.save')}
         </Button>
       </>}>

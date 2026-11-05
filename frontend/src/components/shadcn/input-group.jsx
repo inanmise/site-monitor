@@ -17,6 +17,9 @@ function InputGroup({
       className={cn(
         "group/input-group relative flex w-full items-center rounded-md border border-input shadow-xs transition-[color,box-shadow] outline-none dark:bg-input/30",
         "h-9 min-w-0 has-[>textarea]:h-auto",
+        // Dokunmatik boy (2026-11-05, mweb denetimi): en az 40 px — min-height, böylece metin alanlı / blok eklentili gruplar
+        // (`h-auto`) kendi yüksekliğini korur. İçteki InputGroupInput da Input tabanından 40 px alır (kenarlıksız, saydam).
+        "pointer-coarse:min-h-10",
 
         // Variants based on alignment.
         "has-[>[data-align=inline-start]]:[&>input]:pl-2",

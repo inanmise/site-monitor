@@ -134,12 +134,12 @@ export default function UserDetailHeader({ user, name, onEdit, onOpenDirectory }
       {(onEdit || onOpenDirectory) && (
         <div data-slot="ud-actions" className="flex w-full gap-2 sm:col-start-2 sm:row-start-1 sm:w-auto sm:self-start">
           {onOpenDirectory && (
-            <Button type="button" variant="outline" className="h-10 flex-1 sm:h-9 sm:flex-none" onClick={onOpenDirectory}>
+            <Button type="button" variant="outline" className="h-10 flex-1 sm:h-9 sm:flex-none pointer-coarse:h-10" onClick={onOpenDirectory}>
               <SearchCheck aria-hidden="true" />{t('ud.adCheck')}
             </Button>
           )}
           {onEdit && (
-            <Button type="button" className="h-10 flex-1 sm:h-9 sm:flex-none" onClick={onEdit}>
+            <Button type="button" className="h-10 flex-1 sm:h-9 sm:flex-none pointer-coarse:h-10" onClick={onEdit}>
               <Pencil aria-hidden="true" />{t('usr.edit')}
             </Button>
           )}

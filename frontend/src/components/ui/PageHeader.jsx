@@ -45,9 +45,12 @@ export default function PageHeader({ icon: Icon, title, description, meta, actio
         </div>
         {actions && (
           // Telefonda her düğme satırı eşit paylaşır (flex-1) ve en az 40 px yüksektir (dokunma hedefi kuralı — sayfalar
-          // size="sm" düğme verse de); ≥640 px'te doğal genişlik, sağa yaslı.
+          // size="sm" düğme verse de); ≥640 px'te doğal genişlik, sağa yaslı. 2026-11-05 (mweb denetimi): çocuk satırdan GENİŞ
+          // olamaz (`[&>*]:max-w-full`) — tek sarmalayıcıda çok düğme veren sayfa (Kişisel Panom düzenleme kipi, 768 px tablet)
+          // sarmalayıcıyı içerik genişliğinde tutup ekranın SOLUNA taşırıyordu; düğmeler artık sarmalayıcının içinde sarar. Dokunmatik
+          // tablette de 40 px (`pointer-coarse:` — eskiden yalnız telefon).
           <div data-slot="page-actions"
-            className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:max-w-full sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none max-sm:[&_[data-slot=button]]:min-h-10">
+            className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:max-w-full sm:justify-end [&>*]:max-w-full [&>*]:flex-1 sm:[&>*]:flex-none max-sm:[&_[data-slot=button]]:min-h-10 pointer-coarse:[&_[data-slot=button]]:min-h-10">
             {actions}
           </div>
         )}

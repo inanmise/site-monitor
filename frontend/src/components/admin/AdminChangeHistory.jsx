@@ -28,7 +28,7 @@ const TH = 'h-9 px-3 text-[0.75em] tracking-wide text-muted-foreground uppercase
 const TD = 'px-3 py-2 align-top whitespace-normal'
 const HINT = 'mt-1.5 text-xs text-muted-foreground'
 /** Olay türü süzgeç çipi — shadcn Toggle (hap biçimi, basılıyken birincil ton). */
-const CHIP = 'h-7 max-sm:h-10 rounded-full px-2.5 text-[0.78em] font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary'
+const CHIP = 'h-7 max-sm:h-10 rounded-full px-2.5 text-[0.78em] font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary pointer-coarse:h-10'
 /** Özet çiplerinde en fazla kaç alan (kalanı "+N"). */
 const SUMMARY_LIMIT = 2
 

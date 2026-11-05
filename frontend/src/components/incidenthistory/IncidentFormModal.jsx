@@ -213,13 +213,13 @@ export default function IncidentFormModal({
           {/* Bölüm çubuğu + hata özetleri gövdenin üstünde yapışık kalır (uzun bölümde kaydırınca da görünür). */}
           <div className="sticky top-0 z-10 -mx-1 flex flex-col gap-2 bg-background px-1 pb-3">
             <TabsList aria-label={t('inc.sectionsLabel')}
-              className="h-auto w-full justify-start overflow-x-auto overflow-y-hidden [scrollbar-width:none] max-sm:rounded-none max-sm:bg-transparent max-sm:p-0">
+              className="h-auto w-full justify-start overflow-x-auto overflow-y-hidden [scrollbar-width:none] max-sm:rounded-none max-sm:bg-transparent max-sm:p-0 pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto">
               {SECTIONS.map((s) => {
                 const Icon = SECTION_ICON[s]
                 const n = errCounts[s] || 0
                 return (
                   <TabsTrigger key={s} value={s} data-section={s} data-invalid={n > 0 || undefined}
-                    className="h-9 flex-none gap-1.5 px-3 max-sm:h-10 max-sm:rounded-full max-sm:border-border max-sm:data-[state=active]:border-primary max-sm:data-[state=active]:bg-primary/10">
+                    className="h-9 flex-none gap-1.5 px-3 max-sm:h-10 max-sm:rounded-full max-sm:border-border max-sm:data-[state=active]:border-primary max-sm:data-[state=active]:bg-primary/10 pointer-coarse:h-10">
                     <Icon aria-hidden="true" />
                     <span>{t('inc.sec.' + s)}</span>
                     {n > 0 && (
@@ -340,7 +340,7 @@ export default function IncidentFormModal({
                     </Button>
                   </CollapsibleTrigger>
                   {previewOpen && (
-                    <Button type="button" variant="outline" size="sm" className="max-sm:h-10" onClick={loadPreview} disabled={previewing} aria-busy={previewing || undefined}>
+                    <Button type="button" variant="outline" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={loadPreview} disabled={previewing} aria-busy={previewing || undefined}>
                       {previewing ? <Spinner size={14} decorative /> : <RefreshCw aria-hidden="true" />}
                       {previewing ? t('inc.previewing') : t('inc.previewRefresh')}
                     </Button>

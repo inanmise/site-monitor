@@ -59,14 +59,14 @@ export function ChangesBar({ count, failedCount, saving, onReview, onDiscard, on
         <strong className="font-semibold" aria-live="polite">{pendingText(t, count)}</strong>
         {failedCount > 0 && <ToneBadge tone="danger" className="rounded-full">{t('perm.failedCount', failedCount)}</ToneBadge>}
       </div>
-      <Button type="button" variant="ghost" className="h-10 px-3 md:h-9" onClick={onDiscard} disabled={!!saving}>
+      <Button type="button" variant="ghost" className="h-10 px-3 md:h-9 pointer-coarse:h-10" onClick={onDiscard} disabled={!!saving}>
         <X aria-hidden="true" />{t('perm.discard')}
       </Button>
       <div className={cn('flex gap-2', phone && 'grid w-full grid-cols-2')}>
-        <Button type="button" variant="outline" className="h-10 min-w-0 md:h-9" onClick={onReview}>
+        <Button type="button" variant="outline" className="h-10 min-w-0 md:h-9 pointer-coarse:h-10" onClick={onReview}>
           <ListChecks aria-hidden="true" />{t('perm.review')}
         </Button>
-        <SaveButton saving={saving} onSave={onSave} className="h-10 min-w-0 md:h-9" />
+        <SaveButton saving={saving} onSave={onSave} className="h-10 min-w-0 md:h-9 pointer-coarse:h-10" />
       </div>
       <SavingProgress saving={saving} className="basis-full" />
     </div>
@@ -138,7 +138,7 @@ export function ReviewSheet({ open, onOpenChange, phone, changes, failures, savi
                       </div>
                       {err && <p className="mt-1.5 text-xs text-destructive">{t('perm.failed')}: {err}</p>}
                     </div>
-                    <Button type="button" variant="ghost" size="sm" className="h-10 shrink-0 sm:h-8" disabled={!!saving}
+                    <Button type="button" variant="ghost" size="sm" className="h-10 shrink-0 sm:h-8 pointer-coarse:h-10" disabled={!!saving}
                       aria-label={t('perm.undoLabel', label)} onClick={() => onUndo(c.key)}>
                       <Undo2 aria-hidden="true" /><span>{t('perm.undo')}</span>
                     </Button>

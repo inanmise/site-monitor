@@ -234,14 +234,14 @@ export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
       className={PHONE_FULLSCREEN}
       footer={(
         <div className="flex w-full flex-wrap items-center justify-end gap-2 [&>*]:flex-1 sm:[&>*]:flex-none">
-          <Button type="button" variant="outline" className="h-10 sm:h-9" onClick={() => load(true)} disabled={state.loading}>
+          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={() => load(true)} disabled={state.loading}>
             <RefreshCw aria-hidden="true" />{t('dq.refresh')}
           </Button>
-          <Button type="button" variant="outline" className="h-10 sm:h-9" onClick={exportCsv}
+          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={exportCsv}
             disabled={!data || allFailing.length === 0} data-action="dq-csv">
             <Download aria-hidden="true" />{t('dq.exportCsv')}
           </Button>
-          <Button type="button" className="h-10 sm:h-9" onClick={onClose}>{t('app.close')}</Button>
+          <Button type="button" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={onClose}>{t('app.close')}</Button>
         </div>
       )}>
       <div data-slot="dq-detail" className="flex min-w-0 flex-col gap-4">
@@ -283,7 +283,7 @@ export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
             ) : (
               <>
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <InputGroup className="w-full max-sm:h-10 sm:max-w-xs">
+                  <InputGroup className="w-full max-sm:h-10 sm:max-w-xs pointer-coarse:h-10">
                     <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)}
                       placeholder={t('dq.searchItems')} aria-label={t('dq.searchItems')} />
                     <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
