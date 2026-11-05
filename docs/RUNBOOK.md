@@ -377,6 +377,31 @@ Pod başına aynı anda en çok 2 tarama (fazlası 429 `RESOURCE_SCAN_BUSY`), ki
 `RATE_LIMITED`), izleme başına tek çalışan tarama (409 `RESOURCE_SCAN_RUNNING` — arayüz çalışanı izler). Nesne listesi izleme
 başına son 20 çalıştırmada tutulur; özetler (not, süre, boyut — tarih grafiği) 1 yıl.
 
+**Algoritma 3 (2026-11-05): derin analiz, bütçe, eğilim, çok sayfalı analiz.** Analiz artık altı denetim alanı da üretir
+(yükleme ve ağ, israf ve önbellek, görsel ve yazı tipi, güvenlik, SEO, erişilebilirlik) ve dört kategori puanı verir. Tarama
+sırasında ek istekler: nesnelerden önce sunucu başına bağlantı ölçümü (en çok 30 sunucu, 6 paralel, adım başına 5 sn, toplam
+15 sn; vekil üzerinden gidilen sunucu ölçülmez) ve en çok 10 kaynak haritası HEAD isteği (15 sn). Çerez DEĞERİ hiçbir yerde
+saklanmaz; algoritma 3 adreslerinde sorgu dizesindeki gizli değerler maskelenir. Kütüphane açıkları çevrimdışı katalogdan
+gelir (2026-11-04 tarihli, yalnız CVE kimlikli girdiler); katalog güncel değilse yeni açıklar görünmez.
+
+İzleme başına **performans bütçesi** (`PUT /api/monitoring/page/{id}/resource-budget`; düzenleme yetkisi gerekir) analiz
+sonucunda "aşıldı / geçti / ölçülemedi" bandı olarak görünür — alarm ya da bildirim ÜRETMEZ. **Eğilim**
+(`…/resource-scans/trend?days=30|90|365`) en çok 200 analiz noktası ve en hızlı büyüyen nesneleri verir.
+
+**Çok sayfalı analiz** ("Siteyi analiz et"): ana sayfanın aynı sunucudaki iç bağlantılarından en çok N − 1 sayfa
+(`site.monitor.page.resource-scan.max-pages`, varsayılan 10, 2–20) taranır; ortak nesneler bir kez indirilir; süre bütçesi
+bütün site içindir (`site.monitor.page.resource-scan.site-max-seconds`, 900, 120–1800). Bütçe dolunca kalan sayfalar
+"taranmadı" olur ve analiz "sınırlı" işaretlenir. Başka sunucuya yönlenen sayfa (ör. SSO) analiz edilmez (`PAGE_OFFSITE`).
+Sürerken sayfa ilerlemesi gösterilmez.
+
+| Anahtar | Varsayılan | Aralık |
+|---|---|---|
+| `site.monitor.page.resource-scan.max-pages` | 10 | 2–20 |
+| `site.monitor.page.resource-scan.site-max-seconds` | 900 | 120–1800 |
+
+Sürüm geçişinde eski pod algoritma 2 üretir, "Siteyi analiz et" isteğini tek sayfa analizi olarak koşar (arayüz bunu
+söyler) ve bütçe / eğilim uçlarına 404 döner. Geri almada yeni kolonlar kalır, kullanılmaz.
+
 **Sorun giderme.**
 - *Tarama "yarıda kaldı" (INTERRUPTED):* çalıştıran pod kapandı ya da 45 sn kalp atışı yazamadı. Yeniden çalıştırın.
   "İptal edildi" ise bir kullanıcı iptal etti (`PAGE_RESOURCE_SCAN_CANCEL` denetim kaydı).
