@@ -114,8 +114,10 @@ for (const vp of VIEWPORTS) {
       const first = root.locator('[data-slot="act-item"]').first()
       await expect(first).toContainText(LONG)
       await expect(first).toContainText(TARGET)
+      // sr-only (ekran okuyucu metni — telefon kartının "ayrıntı sayfasını aç" eki, bilinçli 1 px kutu) ölçülmez
       const clipped = await first.evaluate((el) => [...el.querySelectorAll('span, a, button')]
-        .filter((n) => n.childElementCount === 0 && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis'))
+        .filter((n) => n.childElementCount === 0 && !n.closest('.sr-only')
+          && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis'))
         .map((n) => n.textContent.slice(0, 30)))
       expect(clipped, 'kırpılan metin').toEqual([])
 

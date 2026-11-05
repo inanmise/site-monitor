@@ -23,10 +23,11 @@ const ROWS = [
 
 const RELATED = {
   anchor: { id: 1, time: ROWS[0].activity_time, type: 'HTTP', target: TARGET, host: 'odeme-entegrasyon-saglik.example.com', team_id: 1 },
-  window_s: 120, total: 3,
-  by_reason: [{ reason: 'DNS_NXDOMAIN', count: 2 }, { reason: 'HTTP_STATUS', count: 1 }],
-  by_host: [{ host: 'odeme-entegrasyon-saglik.example.com', count: 2 }, { host: '10.0.0.1', count: 1 }],
-  by_team: [{ team_id: 1, team_name: TEAM, count: 3 }],
+  // be2 biçimi: total / monitors / by_* bu kayıt HARİÇ; window_total bu kaydı da sayar
+  window_s: 120, total: 2, monitors: 2, window_total: 3, anchor_in_window: true, truncated: false,
+  by_reason: [{ reason: 'DNS_NXDOMAIN', count: 2 }],
+  by_host: [{ host: 'odeme-entegrasyon-saglik.example.com', count: 1 }, { host: '10.0.0.1', count: 1 }],
+  by_team: [{ team_id: 1, team_name: TEAM, count: 2 }],
   items: [{ id: 11, monitor_type: 'DNS', monitor_id: 5, monitor_name: 'odeme-entegrasyon-saglik.example.com', target: 'odeme-entegrasyon-saglik.example.com',
     activity_time: iso(30_000), result_status: 'ERROR', failure_reason: 'DNS_NXDOMAIN', team_id: 1, team_name: TEAM }],
   suspects: [{ code: 'DNS_WIDE', params: { monitors: 3, total_monitors: 4, share_pct: 75 } },
@@ -166,6 +167,12 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="act-alarm-badge"]').first()).toContainText('77')
       await expect(first).toContainText(LONG)
       expect(await page.evaluate(clippedText, '[data-slot="act-feed"]'), 'kırpılan metin').toEqual([])
+      // Telefon kartı: düğmenin adı ad + hedef + özet + "ayrıntı sayfasını aç" (aria-label durumu / özeti gizlemez)
+      if (await first.evaluate((el) => el.tagName === 'LI')) {
+        const cardBtn = first.locator('button[data-act-focus]')
+        expect(await cardBtn.getAttribute('aria-label')).toBeNull()
+        await expect(cardBtn).toHaveAccessibleName(/Ödeme Sistemleri[\s\S]*odeme-entegrasyon-saglik[\s\S]*(open the details page|ayrıntı sayfasını aç)/)
+      }
 
       // Olay grubu çipi: sayılı, süzer, etkin süzgeç çipi eklenir
       const alarm = root.locator('[data-slot="act-group-chips"] [data-group="alarm"]')
@@ -207,6 +214,8 @@ for (const vp of VIEWPORTS) {
       await expect(related.locator('[data-slot="act-rel-suspect"][data-code="DNS_WIDE"]')).toBeVisible()
       await expect(related.locator('[data-slot="act-rel-fact"]')).toHaveCount(2)
       await expect(related).toContainText(TEAM)
+      // Sayılar bu kayıt HARİÇ (be2): pencerede bu kayıt dışında 2 hatalı kontrol
+      await expect(related.locator('[data-slot="act-rel-total"]')).toHaveAttribute('data-others', '2')
       expect(await page.evaluate(overflowIn, '[data-slot="activity-page"]'), 'yatay taşma (ayrıntı)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="act-related"]'), 'küçük hedef (ilgili)').toEqual([])
       expect(await page.evaluate(clippedText, '[data-slot="act-related"]'), 'kırpılan metin (ilgili)').toEqual([])
@@ -251,6 +260,29 @@ for (const vp of VIEWPORTS) {
       await tl.getByRole('button', { name: /Aktivite listesine dön|Back to the activity list/ }).click()
       await expect(page).not.toHaveURL(/[?&](amon|act)=/)
       await expect(root.locator('[data-slot="act-item"]')).toHaveCount(3)
+
+      // "Bu izlemenin aktiviteleri": liste o izlemeye süzülür; uzun izleme adı süzgeç düğmesinde SARAR (kırpılmaz, taşmaz)
+      await first.locator('[data-slot="act-timeline-link"]').click()
+      await expect(tl).toHaveAttribute('data-state', 'ok', { timeout: 15_000 })
+      await tl.getByRole('button', { name: /Bu izlemenin aktiviteleri|This monitor's activity/ }).click()
+      const scope = root.locator('[data-slot="act-monitor-scope"]')
+      await expect(scope).toBeVisible()
+      await expect(scope).toContainText(LONG)
+      expect(new URL(page.url()).searchParams.get('amf')).toBe('HTTP:4')
+      expect(await page.evaluate(clippedText, '[data-slot="act-monitor-scope"]'), 'kırpılan metin (izleme süzgeci)').toEqual([])
+      expect(await page.evaluate(overflowIn, '[data-slot="activity-log"]'), 'yatay taşma (izleme süzgeci)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="act-monitor-scope"]'), 'küçük hedef (izleme süzgeci)').toEqual([])
+      await page.screenshot({ path: `test-results/activity-enrich-scope-${vp.name}.png`, fullPage: false })
+
+      // Menüden "Aktivite"ye yeniden basmak ayrıntı sayfasından listeye döndürür (masaüstü kenar çubuğu)
+      if (!vp.touch) {
+        await first.locator('[data-slot="act-detail-link"]').click()
+        await expect(page).toHaveURL(/[?&]act=1(&|$)/)
+        await page.locator('[data-tour="nav-tab-activity"]').click()
+        await expect(page).not.toHaveURL(/[?&](amon|act)=/)
+        await expect(page.locator('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'list')
+        await expect(root.locator('[data-slot="act-item"]').first()).toBeVisible()
+      }
     })
   })
 }

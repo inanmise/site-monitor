@@ -123,7 +123,7 @@ describe.each(LANGS)('gerçek dökümler — %s', (lang, D) => {
     const status = q('[data-slot="act-dt-status"]', container)
     expect(status).toHaveAttribute('data-status', 'WARNING')
     expect(status).toHaveAttribute('data-failed', 'true')
-    expect(status).toHaveTextContent(D['act.dt.checkFailed'])
+    expect(status).toHaveTextContent(D['act.dt.checkBadStatus'])
     expect(q('[data-slot="act-dt-check"]', container)).toHaveAttribute('data-health', 'down')
     expect(q('[data-slot="act-dt-alarm"]', container)).toHaveAttribute('data-state', 'none')
     await waitFor(() => expect(q('[data-slot="act-related"]', container)).toHaveAttribute('data-state', 'ok'))

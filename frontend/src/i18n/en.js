@@ -4535,7 +4535,7 @@ export const EN = {
   "act.dt.chk.hiddenDesc": "The check row is hidden (no permission to see it).",
   "act.dt.chk.readError": "The check's own row could not be read right now — the full result and the previous / next comparison cannot be shown. Try again; if it persists, look at the server log.",
   "act.dt.chk.readErrorDesc": "The check row could not be read; what follows comes from the activity record.",
-  "act.dt.checkFailed": "Check failed",
+  "act.dt.checkBadStatus": "Check failed",
   'act.dt.m.httpStatus': 'HTTP status',
   'act.dt.m.response': 'Response time',
   'act.dt.m.packetLoss': 'Packet loss',

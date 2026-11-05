@@ -191,3 +191,105 @@ describe('Aktivite — satır ve süzgeçler', () => {
     await waitFor(() => expect(url().get('atype')).toBeNull())
   })
 })
+
+// ── İnceleme düzeltme turu (2026-11-05): rota kökü, süzgecin URL'den yeniden kurulması, orta tık, odak, telefon kartı ──
+describe('Aktivite — inceleme rotası', () => {
+  // Ayrıntı sayfası tam ayrıntı ucunu okur (`/detail`); zaman çizelgesi düğmesi izleme kimliğiyle çizilir
+  beforeEach(() => { api.getActivityFullDetail.mockResolvedValue({ success: true, data: row(), check: null }) })
+  afterEach(() => { api.getActivityFullDetail.mockResolvedValue({ success: true }) })
+
+  it('doğrudan açılan ayrıntı → zaman çizelgesi → "listeye dön" LİSTEYE gider, geri gitmez (FR O1)', async () => {
+    window.history.replaceState(null, '', '/?tab=activity&act=55')
+    const goSpy = vi.spyOn(window.history, 'go').mockImplementation(() => {})
+    render(<ActivityLog />)
+    await waitFor(() => expect(q('[data-link="timeline"]')).not.toBeNull())
+    fireEvent.click(q('[data-link="timeline"]'))
+    await waitFor(() => expect(q('[data-slot="act-tl-back"]')).not.toBeNull())
+    expect(window.history.state).toMatchObject({ actDepth: 1, actRootList: false })
+    fireEvent.click(q('[data-slot="act-tl-back"]'))
+    await waitFor(() => expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'list'))
+    expect(goSpy).not.toHaveBeenCalled()
+    expect(url().get('amon')).toBeNull()
+    expect(url().get('act')).toBeNull()
+    expect(window.history.state).toMatchObject({ actDepth: 0, actRootList: false })
+    await waitFor(() => expect(api.getActivity).toHaveBeenCalled())
+  })
+
+  it('listeden başlayan zincir (satır → ayrıntı → zaman çizelgesi) itilen kayıt kadar geri gider; odak açılan satıra (FR O1 / D11)', async () => {
+    const goSpy = vi.spyOn(window.history, 'go').mockImplementation(() => {})
+    render(<ActivityLog />)
+    await screen.findByText('web')
+    fireEvent.click(q('[data-slot="act-item"]'))
+    await waitFor(() => expect(q('[data-link="timeline"]')).not.toBeNull())
+    expect(window.history.state).toMatchObject({ actDepth: 1, actRootList: true })
+    fireEvent.click(q('[data-link="timeline"]'))
+    await waitFor(() => expect(q('[data-slot="act-tl-back"]')).not.toBeNull())
+    expect(window.history.state).toMatchObject({ actDepth: 2, actRootList: true })
+    fireEvent.click(q('[data-slot="act-tl-back"]'))
+    expect(goSpy).toHaveBeenCalledWith(-2)
+    // Tarayıcı iki kayıt geri gider (popstate): liste görünür, odak açılan satıra döner
+    await act(async () => {
+      window.history.replaceState({ tab: 'activity' }, '', '/?tab=activity')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'list'))
+    await waitFor(() => expect(document.activeElement?.closest('[data-slot="act-item"]')).toHaveAttribute('data-id', '7'))
+  })
+
+  it('"Bu izlemenin aktiviteleri" + tarayıcı Geri: liste süzgeci URL\'den yeniden kurulur, izleme süzgeci kalmaz (FR O9)', async () => {
+    window.history.replaceState(null, '', '/?tab=activity&atype=HTTP&amon=HTTP:4')
+    api.getActivityTimeline.mockResolvedValue({ success: true, monitor: { type: 'HTTP', id: 4, name: 'web' }, periods: [], outages: [], series: [], checks: 0 })
+    render(<ActivityLog />)
+    fireEvent.click(await screen.findByRole('button', { name: EN['act.tl.mon.listActivities'] }))
+    await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ monitor: 'HTTP:4', type: 'HTTP' })))
+    expect(url().get('amf')).toBe('HTTP:4')
+    expect(q('[data-slot="act-monitor-scope"]')).not.toBeNull()
+    // Geri → zaman çizelgesi; bir daha Geri → izleme süzgeçsiz liste adresi
+    await act(async () => {
+      window.history.replaceState({ tab: 'activity' }, '', '/?tab=activity&atype=HTTP&amon=HTTP:4')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'timeline'))
+    await act(async () => {
+      window.history.replaceState({ tab: 'activity' }, '', '/?tab=activity&atype=HTTP')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(q('[data-slot="activity-page"]')).toHaveAttribute('data-route', 'list'))
+    await waitFor(() => {
+      const last = api.getActivity.mock.calls.at(-1)[0]
+      expect(last.monitor).toBeFalsy()
+      expect(last.type).toBe('HTTP')
+    })
+    expect(q('[data-slot="act-monitor-scope"]')).toBeNull()
+  })
+
+  it('orta tık TEK sekme açar; satırdaki iç düğmeye orta tık ayrıntı sekmesi açmaz (FR O8)', async () => {
+    const opened = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<ActivityLog />)
+    await screen.findByText('web')
+    const rowEl = q('[data-slot="act-item"]')
+    const tl = within(rowEl).getByRole('button', { name: EN['act.openTimelineFor'].replace('{0}', 'web') })
+    fireEvent(tl, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
+    expect(opened).not.toHaveBeenCalled()
+    fireEvent(rowEl, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(opened).toHaveBeenCalledWith(expect.stringContaining('act=7'), '_blank', 'noopener')
+  })
+
+  it('telefon kartı: düğmenin adı ad + hedef + eylem + "ayrıntı sayfasını aç" — aria-label durumu / özeti gizlemez (FR O5)', async () => {
+    const w = window.innerWidth
+    window.innerWidth = 390
+    try {
+      render(<ActivityLog />)
+      await screen.findByText('web')
+      const card = q('li[data-slot="act-item"]')
+      expect(card).not.toBeNull()
+      const btn = card.querySelector('button[data-act-focus]')
+      expect(btn).not.toHaveAttribute('aria-label')
+      expect(btn).toHaveAccessibleName(/web[\s\S]*x\.com[\s\S]*open the details page/)
+      expect(btn.textContent).toContain(EN['act.ac.SCHEDULED_CHECK'])
+    } finally {
+      window.innerWidth = w
+    }
+  })
+})

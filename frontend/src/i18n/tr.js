@@ -4538,7 +4538,7 @@ export const TR = {
   "act.dt.chk.hiddenDesc": "Kontrol satırı gizli (görme izni yok).",
   "act.dt.chk.readError": "Kontrolün kendi satırı şu an okunamadı — tam sonuç ve önceki / sonraki kıyas gösterilemiyor. Yeniden deneyin; sürerse sunucu günlüğüne bakın.",
   "act.dt.chk.readErrorDesc": "Kontrol satırı okunamadı; aşağıdakiler aktivite kaydından.",
-  "act.dt.checkFailed": "Kontrol başarısız",
+  "act.dt.checkBadStatus": "Kontrol başarısız",
   'act.dt.m.httpStatus': 'HTTP kodu',
   'act.dt.m.response': 'Yanıt süresi',
   'act.dt.m.packetLoss': 'Paket kaybı',

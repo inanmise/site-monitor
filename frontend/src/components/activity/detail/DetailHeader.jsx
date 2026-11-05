@@ -90,7 +90,7 @@ export default function DetailHeader({ detail, type, monitor, headingRef, locale
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <TypeBadge type={a.monitor_type} />
           <StatusBadge status={a.result_status} failed={failedWarning}
-            label={failedWarning ? t('act.dt.checkFailed') : statusLabel(a.result_status, t)} />
+            label={failedWarning ? t('act.dt.checkBadStatus') : statusLabel(a.result_status, t)} />
           <Badge variant="outline" data-slot="act-dt-action" className="h-auto rounded-md font-normal whitespace-normal">{actionLabel(a.action, t)}</Badge>
           {detail.check?.match === 'approximate' && <ApproxBadge />}
           {detail.legacy && <ToneBadge tone="muted" data-slot="act-dt-legacy" className="h-auto rounded-md whitespace-normal">{t('act.dt.legacyBadge')}</ToneBadge>}
