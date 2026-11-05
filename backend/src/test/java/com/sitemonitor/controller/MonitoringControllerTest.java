@@ -3567,6 +3567,27 @@ class MonitoringControllerTest {
                     eq("RESTORE"), any(), any(), anyString(), any());
         }
 
+        @Test
+        @DisplayName("Aktivite (2026-11-05): geri yükleme akışa CONFIG_CHANGED (geri yüklemenin seq'i + farkı) olarak düşer")
+        void restore_emitsConfigChangeActivity() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(snapRow(5L, "{\"name\":\"Ödeme portu\",\"active\":true,\"intervalSeconds\":300}")));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(liveMonitor()));
+            com.sitemonitor.model.MonitorChangeLog written = row(5L);
+            written.setEventType("RESTORE");
+            written.setSeq(3);
+            written.setResourceName("Ödeme portu");
+            written.setChanges("{\"active\":{\"from\":false,\"to\":true},\"intervalSeconds\":{\"from\":60,\"to\":300}}");
+            when(monitorHistory.record(eq("PORT"), eq(7L), anyString(), any(), eq("RESTORE"), any(), any(), anyString(), any()))
+                    .thenReturn(written);
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk());
+
+            verify(activityLog).recordConfigChange(eq("PORT"), eq(7L), eq("Ödeme portu"), eq("Ödeme portu"), eq(5L), eq("u"),
+                    eq("#0 geri yüklendi: active, intervalSeconds"), eq(3), eq(written.getChanges()));
+        }
+
         // ── ALERTS-8 / ADMIN-2 (2026-10-22): geri yükleme güncellemenin alarm kurallarını HER türde uygular ──────────────
 
         private void stubRestore(String kind, long id, String snapshot) {

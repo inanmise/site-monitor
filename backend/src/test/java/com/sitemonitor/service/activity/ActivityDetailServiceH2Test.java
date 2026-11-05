@@ -148,9 +148,50 @@ class ActivityDetailServiceH2Test {
                 .containsEntry("open", false).containsKey("checked_at");
         assertThat(m(d.get("previous_check"))).containsEntry("id", before.getId());
         assertThat(m(d.get("next_check"))).containsEntry("id", after.getId());
+        // komşu kontrolün aktivite satırı yok → activity_id null (anahtar yine var)
+        assertThat(m(d.get("previous_check"))).containsEntry("activity_id", null);
         Map<String, Object> data = m(d.get("data"));
         assertThat(data).containsEntry("check_id", self.getId()).containsEntry("failure_reason", "CONNECT_REFUSED");
         assertThat(m(data.get("failure_detail"))).containsEntry("phase", "CONNECT");
+    }
+
+    @Test
+    @DisplayName("Önceki / sonraki kontrolün activity_id'si: check_id eşleşen satır; yoksa bağsız (eski) satırlardan en yakını; "
+            + "başka kontrole bağlı satır seçilmez")
+    void neighbourActivityIds() {
+        PortCheck before = port(7, at(-60), true, null);
+        PortCheck self = port(7, at(0), false, null);
+        PortCheck after = port(7, at(60), true, null);
+        ActivityLog beforeRow = act("PORT", 7L, "h:1", at(-59), "SCHEDULED_CHECK", "SUCCESS");
+        beforeRow.setCheckId(before.getId());
+        activityRepo.save(beforeRow);
+        ActivityLog otherCheck = act("PORT", 7L, "h:1", at(60), "MANUAL_CHECK", "SUCCESS");
+        otherCheck.setCheckId(999_999L);   // başka kontrolün satırı — zamanca en yakın olsa da seçilmez
+        activityRepo.save(otherCheck);
+        ActivityLog legacyAfter = act("PORT", 7L, "h:1", at(62), "SCHEDULED_CHECK", "SUCCESS");
+        ActivityLog a = act("PORT", 7L, "h:1", T, "SCHEDULED_CHECK", "ERROR");
+        a.setCheckId(self.getId());
+
+        Map<String, Object> d = svc.detail(a, admin());
+        assertThat(m(d.get("previous_check"))).containsEntry("id", before.getId()).containsEntry("activity_id", beforeRow.getId());
+        assertThat(m(d.get("next_check"))).containsEntry("id", after.getId()).containsEntry("activity_id", legacyAfter.getId());
+    }
+
+    @Test
+    @DisplayName("Sorgu izlemesi kontrol satırı: geçmiş ucunun biçimi + error_message eş adı")
+    void dbqueryRowAlias() {
+        com.sitemonitor.model.DbQueryCheck c = new com.sitemonitor.model.DbQueryCheck();
+        c.setMonitorId(12L);
+        c.setCheckedAt(T);
+        c.setOk(false);
+        c.setStatus("FAIL");
+        c.setErrorMessage("ORA-00942");
+        em.persist(c);
+        ActivityLog a = act("DBQUERY", 12L, "conn", T, "SCHEDULED_CHECK", "ERROR");
+        a.setCheckId(c.getId());
+        Map<String, Object> row = m(m(svc.detail(a, admin()).get("check")).get("row"));
+        assertThat(row).containsEntry("status", "FAIL").containsEntry("error", "ORA-00942")
+                .containsEntry("error_message", "ORA-00942").containsKey("breach_level").containsKey("rule_results");
     }
 
     @Test

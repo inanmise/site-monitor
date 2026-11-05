@@ -215,8 +215,8 @@ public class ActivityDetailService {
                     Long id = longField(m.entity, "id");
                     Object pe = neighbour(table, key, at, id, true);
                     Object ne = neighbour(table, key, at, id, false);
-                    prev = pe == null ? null : row(table, pe, a);
-                    next = ne == null ? null : row(table, ne, a);
+                    prev = pe == null ? null : withActivityId(row(table, pe, a), a, pe);
+                    next = ne == null ? null : withActivityId(row(table, ne, a), a, ne);
                 }
             } catch (Exception e) {
                 log.debug("Aktivite ayrıntısı: kontrol satırı okunamadı (#{}): {}", a.getId(), e.toString());
@@ -419,6 +419,56 @@ public class ActivityDetailService {
         }
     }
 
+    /**
+     * Önceki / sonraki kontrol satırına o kontrolün AKTİVİTE satırının kimliği ({@code activity_id}; ön yüzün "Bu aktiviteyi
+     * aç" düğmesi): aynı izlemenin kontrol satırları kontrol anının ± 120 sn'sinde — {@code check_id} eşitse o, yoksa
+     * bağsız (eski) satırlardan zamanca en yakını; bulunamazsa null. Tek okuma (dizinli, dar pencere).
+     */
+    private Map<String, Object> withActivityId(Map<String, Object> row, ActivityLog anchor, Object entity) {
+        if (row == null) return null;
+        Long id = null;
+        try {
+            id = activityIdFor(anchor, longField(entity, "id"), stringField(entity, "checkedAt"));
+        } catch (Exception e) {
+            log.debug("Aktivite ayrıntısı: komşu kontrolün aktivite satırı okunamadı (#{}): {}", anchor.getId(), e.toString());
+        }
+        row.put("activity_id", id);
+        return row;
+    }
+
+    Long activityIdFor(ActivityLog anchor, Long checkId, String checkedAt) {
+        Instant at = parse(checkedAt);
+        if (at == null) return null;
+        String from = ISO.format(at.minusSeconds(APPROX_WINDOW_S));
+        String to = ISO.format(at.plusSeconds(APPROX_WINDOW_S));
+        PageRequest page = PageRequest.of(0, APPROX_CANDIDATES * 2);
+        List<Object[]> rows;
+        if (anchor.getMonitorId() != null) {
+            rows = activityRepo.checkRowsNearForMonitor(anchor.getMonitorType(), anchor.getMonitorId(), from, to, page);
+        } else if (!blank(anchor.getTarget())) {
+            rows = activityRepo.checkRowsNearForTarget(anchor.getMonitorType(), anchor.getTarget(), from, to, page);
+        } else {
+            return null;
+        }
+        Long nearest = null;
+        long best = Long.MAX_VALUE;
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            Long id = r[0] instanceof Number n ? n.longValue() : null;
+            Long cid = r[1] instanceof Number n ? n.longValue() : null;
+            if (id == null) continue;
+            if (checkId != null && checkId.equals(cid)) return id;   // tam bağ
+            if (cid != null) continue;                               // başka kontrolün satırı
+            Instant t = parse(r[2] == null ? null : r[2].toString());
+            if (t == null) continue;
+            long diff = Math.abs(t.getEpochSecond() - at.getEpochSecond());
+            if (diff < best) {
+                best = diff;
+                nearest = id;
+            }
+        }
+        return nearest;
+    }
+
     /** Kontrol varlığı → türün geçmiş ucundaki satır biçimi. */
     @SuppressWarnings("unchecked")
     Map<String, Object> row(CheckTable table, Object entity, ActivityLog a) {
@@ -429,7 +479,12 @@ public class ActivityDetailService {
                 Object dto = cs != null ? cs.historyRow((com.sitemonitor.model.CertificateCheck) entity) : entity;
                 yield mapper().convertValue(dto, LinkedHashMap.class);
             }
-            case DBQUERY -> MonitoringController.dbqCheckRow((com.sitemonitor.model.DbQueryCheck) entity);
+            case DBQUERY -> {
+                // Geçmiş ucunun biçimi + ayrıntı sayfasının okuduğu eş ad (eklemeli): error_message = error
+                Map<String, Object> r = MonitoringController.dbqCheckRow((com.sitemonitor.model.DbQueryCheck) entity);
+                r.putIfAbsent("error_message", r.get("error"));
+                yield r;
+            }
             case SCRIPTED -> scriptedRow((com.sitemonitor.model.ScriptedCheck) entity, a);
             default -> mapper().convertValue(entity, LinkedHashMap.class);
         };

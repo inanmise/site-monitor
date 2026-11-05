@@ -204,4 +204,26 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
             """)
     List<Object[]> seriesForTarget(@Param("type") String type, @Param("target") String target,
                                    @Param("from") String from, @Param("to") String to, Pageable pageable);
+
+    /** Ayrıntı sayfasının önceki / sonraki kontrolünün aktivite satırı: izlemenin kontrol satırları (id, check_id, zaman)
+     *  dar bir zaman penceresinde — idx_act_type_mon_time. */
+    @Query("""
+            SELECT a.id, a.checkId, a.activityTime FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId = :monitorId AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :from AND a.activityTime <= :to
+            ORDER BY a.activityTime ASC, a.id ASC
+            """)
+    List<Object[]> checkRowsNearForMonitor(@Param("type") String type, @Param("monitorId") Long monitorId,
+                                           @Param("from") String from, @Param("to") String to, Pageable pageable);
+
+    /** Kimliksiz (eski sertifika / erişilebilirlik) satır için aynı arama — hedef + dar zaman penceresi. */
+    @Query("""
+            SELECT a.id, a.checkId, a.activityTime FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId IS NULL AND a.target = :target
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime >= :from AND a.activityTime <= :to
+            ORDER BY a.activityTime ASC, a.id ASC
+            """)
+    List<Object[]> checkRowsNearForTarget(@Param("type") String type, @Param("target") String target,
+                                          @Param("from") String from, @Param("to") String to, Pageable pageable);
 }
