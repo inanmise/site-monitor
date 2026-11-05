@@ -10,6 +10,8 @@ export const KW_FAILURE_CODES = [
   'KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH', 'HTTP_STATUS', 'EMPTY_BODY', 'BODY_TRUNCATED',
   'REDIRECT_BLOCKED', 'TIMEOUT_CONNECT', 'TIMEOUT_READ', 'DNS', 'TLS_HANDSHAKE', 'TLS_CERT', 'CONNECTION_REFUSED',
   'CONNECTION_RESET', 'HOST_UNREACHABLE', 'PROXY', 'SSRF_BLOCKED', 'CONFIG_ERROR', 'REDIRECT_LIMIT', 'PROTOCOL_ERROR', 'UNKNOWN',
+  // kw zenginleştirmesi (2026-11-05, sözleşme §11.2): son URL / yönlendirme (be1) + kurallar / kapsam / boyut (be2)
+  'FINAL_URL_MISMATCH', 'REDIRECT_NOT_FOLLOWED', 'RULES_NOT_MET', 'SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'BODY_TOO_SMALL', 'BODY_TOO_LARGE',
 ]
 
 export const KW_HINT_CODES = [
@@ -20,6 +22,9 @@ export const KW_HINT_CODES = [
 export const KW_FINDING_CODES = [
   'KEYWORD_OK', 'KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH', 'KEYWORD_HTTP_ERROR',
   'KEYWORD_EMPTY_BODY', 'KEYWORD_BODY_TRUNCATED', 'KEYWORD_REDIRECT_BLOCKED', 'KEYWORD_BODY_UNREAD', 'KEYWORD_SLOW',
+  // kw zenginleştirmesi (2026-11-05, sözleşme §10.5): son URL (be1) + kural motoru / boyut eşliği (be2 Aşama 2). Metni olmayan
+  // kod tanılamada "bilinmeyen bulgu" metniyle çizilir (ham anahtar değil) — metinleri kodu ekleyen arka uç ajanı yazar.
+  'KEYWORD_FINAL_URL_MISMATCH', 'KEYWORD_RULES_NOT_MET', 'KEYWORD_SIZE_MISMATCH',
 ]
 
 export const KW_HINT_SET = new Set(KW_HINT_CODES)

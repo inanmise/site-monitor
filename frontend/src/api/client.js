@@ -2363,6 +2363,24 @@ export const api = {
     },
     keywordDiagnoseHistory: (id) => request(`/monitoring/keyword/${id}/diagnose/history`, { withStatus: true }),
     keywordDiagnoseRun: (id, runId) => request(`/monitoring/keyword/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
+    // Keyword içerik değişimi / grafik / canlı eşleşmeler (kw paket D + E2, 2026-11-05) — withStatus: 404 / 405 (eski sunucu =
+    // "desteklenmiyor"), 409 (değişim kapalı / sayfa okunamadı), 429 (eşleşme kotası) ayırt edilsin.
+    keywordChange: (id) => request(`/monitoring/keyword/${id}/change`, { withStatus: true }),
+    takeKeywordBaseline: (id) => request(`/monitoring/keyword/${id}/change/baseline`, { method: 'POST', withStatus: true }),
+    clearKeywordBaseline: (id) => request(`/monitoring/keyword/${id}/change/baseline`, { method: 'DELETE', withStatus: true }),
+    keywordContentSeries: (id, { days, from, to } = {}) => {
+      const q = historyQuery({ days, from, to })
+      return request(`/monitoring/keyword/${id}/content-series${q ? `?${q}` : ''}`, { withStatus: true })
+    },
+    keywordMatches: async (id, { signal } = {}) => {
+      // Canlı ölçüm (sunucu toplam bütçesi ≤ 120 sn) — istemci 130 sn bekler
+      const dl = deadlineSignal(signal, 130000)
+      try {
+        return await request(`/monitoring/keyword/${id}/matches`, { method: 'POST', withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}) })
+      } finally {
+        dl.done()
+      }
+    },
     getKeywordResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

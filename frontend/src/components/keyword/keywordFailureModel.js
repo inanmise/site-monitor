@@ -14,6 +14,7 @@
 import { formatBytes, interpolate } from '../http/diagnose/httpDiagnoseModel.js'
 import { KW_FAILURE_CODES, KW_HINT_CODES } from './diagnose/keywordDiagCodes.js'
 import { failureReason as legacyErrorReason, ruleOf } from './keywordCardModel.js'
+import { countMatches } from '../../utils/keywordFold.js'
 
 const FAILURE_SET = new Set(KW_FAILURE_CODES)
 const HINT_SET = new Set(KW_HINT_CODES)
@@ -155,8 +156,16 @@ export function detailRows(row, monitor, t) {
   return rows
 }
 
-/** Sayfa geldi ama kural sağlanmadı — kartın hüküm satırı ("Bulunamadı" vb.) bunları zaten söyler. */
-const CONDITION_CODES = new Set(['KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH'])
+/** Sayfa geldi ama kural sağlanmadı — kartın hüküm satırı ("Bulunamadı", "2/3 kural sağlanmadı" vb.) bunları zaten söyler. */
+const CONDITION_CODES = new Set(['KEYWORD_NOT_FOUND', 'KEYWORD_FOUND_FORBIDDEN', 'KEYWORD_COUNT_MISMATCH', 'RULES_NOT_MET'])
+
+/** İpucu kodları içinde "anahtar kelime izlemesi bu sayfayı göremez → sentetik izleme" önerisi doğuranlar (F3). */
+export const SYNTHETIC_HINTS = Object.freeze(['LOGIN_PAGE', 'JS_RENDERED'])
+
+/** Satırın ipuçları sentetik izlemeyi öneriyor mu (giriş sayfası / JavaScript ile çizilen içerik)? */
+export function suggestsSynthetic(row) {
+  return hintsOf(row).some((h) => SYNTHETIC_HINTS.includes(h))
+}
 
 /**
  * KART için son başarısızlığın kısa nedeni (2026-10-04) — sunucu kodu varsa:
@@ -176,10 +185,13 @@ export function cardReason(m, t) {
   return h ? { code: h, label: t(`kwhint.${h}.title`), tone: 'warning', hint: true } : null
 }
 
-/** Alıntıda anahtar kelime aranır mı / bulundu mu — `null` (alıntı yok) | true | false (harf kuralıyla). */
+/**
+ * Alıntıda anahtar kelime aranır mı / bulundu mu — `null` (alıntı yok) | true | false (harf kuralıyla). Harf duyarsızda
+ * sunucunun Türkçe katlaması (`utils/keywordFold`): "İSTANBUL" alıntısında "istanbul" bulunur.
+ */
 export function excerptHasKeyword(excerpt, keyword, caseSensitive = false) {
   const e = String(excerpt ?? '')
   const k = String(keyword ?? '').replace(/\s+/g, ' ').trim()
   if (!e || !k) return null
-  return caseSensitive ? e.includes(k) : e.toLocaleLowerCase('tr').includes(k.toLocaleLowerCase('tr'))
+  return countMatches(e, k, caseSensitive, 1).count > 0
 }
