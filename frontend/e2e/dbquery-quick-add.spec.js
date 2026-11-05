@@ -271,6 +271,47 @@ for (const vp of VIEWPORTS) {
       await expect(wiz.locator('[data-slot="dbq-sql-guard"]')).toHaveAttribute('data-status', 'ok', { timeout: 5000 })
     })
 
+    test('yeni bağlantı: "Bağlantı örnekleri" — üç tür, alan değerleri, kopyalanabilir dize, alan rehberi; sığar, kırpılmaz', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=dbquery')
+      await expect(page.locator('.upt-grid > [data-slot="card"]').first()).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="dbq-open-connections"]').click()
+      const mgr = page.locator('[data-slot="dbq-conn-manager"]')
+      await expect(mgr).toBeVisible()
+      const msel = '[role="dialog"]:has([data-slot="dbq-conn-manager"])'
+      await mgr.locator('[data-slot="dbq-conn-new"]').click()
+      const form = mgr.locator('[data-slot="dbq-conn-form"]')
+      await expect(form).toBeVisible()
+      // Alan yer tutucuları türe göre
+      await expect(form.getByRole('textbox', { name: /^Sunucu/ })).toHaveAttribute('placeholder', 'pg-rapor-01.example.com')
+      const toggle = form.locator('[data-slot="dbq-conn-examples-toggle"]')
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await toggle.click()
+      const ex = form.locator('[data-slot="dbq-conn-examples"]')
+      await expect(ex.locator('[data-slot="dbq-conn-example"]')).toHaveCount(2)
+      await expect(ex.locator('[data-slot="dbq-conn-guide"]')).toContainText('Alan alan ne yazılır')
+      await expect(ex.getByRole('button', { name: /^Bağlantı dizesini kopyala: / })).toHaveCount(2)
+      await check(page, 'bağlantı örnekleri: PostgreSQL', msel)
+      // SQL Server: adlandırılmış örnek kendi portuyla
+      await form.getByRole('button', { name: 'SQL Server', exact: true }).click()
+      await expect(ex).toHaveAttribute('data-type', 'MSSQL')
+      await expect(ex.locator('[data-id="mssql-named"] [data-field="port"]')).toContainText('14331')
+      await check(page, 'bağlantı örnekleri: SQL Server', msel)
+      // Oracle: üç örnek (servis adı, SID, TCPS)
+      await form.getByRole('button', { name: 'Oracle', exact: true }).click()
+      await expect(ex.locator('[data-slot="dbq-conn-example"]')).toHaveCount(3)
+      await ex.locator('[data-id="ora-tcps"]').scrollIntoViewIfNeeded()
+      await check(page, 'bağlantı örnekleri: Oracle', msel)
+      // Örnek dize "Bağlantı dizesinden doldur" kutusuna yapıştırılınca formu doldurur
+      const conn = await ex.locator('[data-id="ora-service"] [data-slot="dbq-conn-example-string"]').textContent()
+      await form.getByLabel('Bağlantı dizesinden doldur').fill(conn.trim())
+      await form.locator('[data-slot="dbq-conn-paste-apply"]').click()
+      await expect(form.getByRole('textbox', { name: /^Sunucu/ })).toHaveValue('ora-scan.example.com')
+      await expect(form.getByRole('textbox', { name: /^Servis adı/ })).toHaveValue('ORCLPDB1.example.com')
+      await page.screenshot({ path: test.info().outputPath(`dbq-conn-examples-${vp.name}.png`), fullPage: false })
+    })
+
     test('bağlantılar: dizeden doldurma, adım adım teşhis, sağlık kartı, "Bu bağlantıdan yeni"', async ({ page }) => {
       test.setTimeout(120_000)
       await routes(page)
