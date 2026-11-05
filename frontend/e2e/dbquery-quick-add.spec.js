@@ -339,6 +339,8 @@ for (const vp of VIEWPORTS) {
       const form = mgr.locator('[data-slot="dbq-conn-form"]')
       await expect(form.getByLabel(/^Bağlantı adı/)).toHaveValue(`${LONG_CONN} (kopya)`)
       await expect(form.getByLabel(/^Parola/)).toHaveValue('')
+      // Kaynak bağlantı: adlandırılmış örnek (RPT) + port 1433 → "örneğin kendi portunu yazın" uyarısı (hata avı O2)
+      await expect(form.locator('[data-slot="dbq-conn-instance-port"]')).toBeVisible()
       await check(page, 'bağlantı kopyası', msel)
       // dizeden doldurma: parola alınmaz, kutu temizlenir
       const box = form.getByLabel('Bağlantı dizesinden doldur')

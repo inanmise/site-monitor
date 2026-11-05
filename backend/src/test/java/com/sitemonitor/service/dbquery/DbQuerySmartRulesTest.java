@@ -1026,4 +1026,155 @@ class DbQuerySmartRulesTest {
             assertThat(DbQueryRules.smartWarnings(List.of(daily), null)).isEmpty();
         }
     }
+
+    // ── Hata avı (2026-11-05): Y1 var olan izlemeye eklenen kural, D1 eşik denemesinde "örnek yetersiz" ───────────
+
+    @Nested
+    @DisplayName("hata avı Y1 / D1: kuralın geçmişi eski uçtaki sonuçsuz satırlarda başlar; deneme 'örnek yetersiz'i geçti saymaz")
+    class RuleAddedToExistingMonitor {
+
+        final Instant ref = Instant.parse("2026-11-05T10:00:00Z");
+
+        /** Kural "a" sonucu OLMAYAN satır (izlemenin başka bir kuralının sonucu var — kural sonradan eklendi / eski pod). */
+        DbQueryHistory.Row without(long id, Instant at) {
+            RuleResult other = new RuleResult("c", null, "ROW_COUNT", "3", "> 0", "NONE", true, true, null, 3.0, 3.0, null);
+            return new DbQueryHistory.Row(id, at, "h", Map.of("c", other));
+        }
+
+        DbQueryHistory.Row with(long id, Instant at, Rule a, Double v) {
+            RuleResult rr = new RuleResult("a", null, "ANOMALY", null, null, "NONE", true, v != null,
+                    v == null ? DbQueryEvaluator.NOTE_NULL_VALUE : null, v, v, DbQueryRules.fingerprint(a));
+            return new DbQueryHistory.Row(id, at, "h", Map.of("a", rr));
+        }
+
+        /** Okuma sınırına değen geçmiş: {@code limit} satır (SQL'in LIMIT'i — yeniden eskiye). */
+        List<DbQueryHistory.Row> rows(Rule a, int limit, java.util.function.IntFunction<Double> valueAt, int ruleRows) {
+            List<DbQueryHistory.Row> out = new ArrayList<>();
+            for (int i = 0; i < limit; i++) {
+                Instant at = ref.minusSeconds(300L * (i + 1));
+                out.add(i < ruleRows ? with(1_000 - i, at, a, valueAt.apply(i)) : without(1_000 - i, at));
+            }
+            return out;
+        }
+
+        @Test
+        @DisplayName("Y1: okuma sınırı kadar (60) eski satır, hiçbirinde kural sonucu yok → TAM geçmiş, 'taban kuruluyor' (kanıt eksikliği değil)")
+        void noResultsAtAllIsBuilding() {
+            Rule a = rule("id", "a", "kind", "ANOMALY", "column", "adet");   // pencere 30, en az örnek 10
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(a), ref, 300);
+            assertThat(plan.recentLimit()).isEqualTo(60);
+            History h = DbQueryHistory.histories(List.of(a), rows(a, 60, i -> 0.0, 0), plan, "h").get("a");
+            assertThat(h.points()).isEmpty();
+            assertThat(h.complete()).as("kuralın geçmişi burada başlıyor").isTrue();
+            RuleResult rr = DbQueryEvaluator.anomalyAgainst(a, 100, h, null, null, "", false);
+            assertThat(rr.note()).isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+            Outcome o = eval(a, 100, h);
+            assertThat(o.inconclusive()).as("kontrol satırı UNKNOWN değil").isFalse();
+            assertThat(o.configUnevaluable()).as("ardışık değerlendirilemeyen alarmını beslemez").isFalse();
+            assertThat(DbQueryAlarmText.thresholdVerdict("OK", DbQueryAlarmText.toApi(o.results()), "ANY"))
+                    .as("başka kuralın açık eşik alarmı kapanabilir").isEqualTo(DbQueryAlarmText.VERDICT_OK);
+        }
+
+        @Test
+        @DisplayName("Y1: kural 5 çalıştırma önce eklendi (en yeni 5 satır değerli, eski 55 satır sonuçsuz) → 'taban kuruluyor (5 / 10)'")
+        void fewPointsThenMissingTailIsBuilding() {
+            Rule a = rule("id", "a", "kind", "ANOMALY", "column", "adet");
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(a), ref, 300);
+            History h = DbQueryHistory.histories(List.of(a), rows(a, 60, i -> 100.0 + i, 5), plan, "h").get("a");
+            assertThat(h.values()).hasSize(5);
+            assertThat(h.complete()).isTrue();
+            RuleResult rr = DbQueryEvaluator.anomalyAgainst(a, 100, h, null, null, "", false);
+            assertThat(rr.note()).isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+            assertThat(rr.actual()).isEqualTo("100 · taban kuruluyor (5 / 10)");
+            // Daha geniş okuma (başka kural 2 × 100 satır istedi) ve yürüyüş bütçesi (60) sonuçsuz satırla doldu → yine aynı
+            Rule big = rule("id", "b", "kind", "ANOMALY", "column", "adet", "window", 100);
+            DbQueryHistory.Plan wide = DbQueryHistory.plan(List.of(a, big), ref, 300);
+            assertThat(wide.recentLimit()).isEqualTo(200);
+            History hw = DbQueryHistory.histories(List.of(a, big), rows(a, 200, i -> 100.0 + i, 5), wide, "h").get("a");
+            assertThat(hw.complete()).isTrue();
+            assertThat(DbQueryEvaluator.anomalyAgainst(a, 100, hw, null, null, "", false).note())
+                    .isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+        }
+
+        @Test
+        @DisplayName("Y1 kontrol: kural VARDI (eski uçta değerli satır), ortadaki eski pod boşluğu yürüyüşü harcadı → hâlâ 'örnek yetersiz' (D3)")
+        void middleGapStillInsufficient() {
+            Rule a = rule("id", "a", "kind", "ANOMALY", "column", "adet");
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(a), ref, 300);
+            List<DbQueryHistory.Row> rows = new ArrayList<>();
+            for (int i = 0; i < 60; i++) {
+                Instant at = ref.minusSeconds(300L * (i + 1));
+                boolean gap = i >= 5 && i < 55;   // ortada 50 eski pod satırı
+                rows.add(gap ? without(1_000 - i, at) : with(1_000 - i, at, a, 100.0 + (i % 3)));
+            }
+            History h = DbQueryHistory.histories(List.of(a), rows, plan, "h").get("a");
+            assertThat(h.values()).hasSize(10);
+            assertThat(h.complete()).as("eski uç değerli — daha eskisi bilinmiyor").isFalse();
+            // 10 örnek = en az örnek → değerlendirilir; 9 örnekle "yetersiz"
+            assertThat(DbQueryEvaluator.anomalyAgainst(a, 100, h, null, null, "", false).evaluated()).isTrue();
+            Rule strict = rule("id", "a", "kind", "ANOMALY", "column", "adet", "min_samples", 11);
+            History hs = DbQueryHistory.histories(List.of(strict), rows, plan, "h").get("a");
+            assertThat(DbQueryEvaluator.anomalyAgainst(strict, 100, hs, null, null, "", false).note())
+                    .isEqualTo(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+        }
+
+        @Test
+        @DisplayName("Y1 canlı zincir: 70 sonuçsuz eski satırlı izlemeye kural eklenir → 9 tur 'taban kuruluyor' (hiçbiri UNKNOWN değil), 11. turda değerlendirilir; deneme aynı")
+        void liveChainOnExistingHistory() {
+            Rule a = rule("id", "a", "kind", "ANOMALY", "column", "adet");
+            LiveChain c = new LiveChain(a, ref.minusSeconds(300L * 100), 300);
+            for (int i = 0; i < 70; i++) {   // kural yokken yazılmış satırlar (eşik denemesine de gider)
+                DbQueryHistory.Row old = without(c.id, c.at);
+                c.rows.add(old);
+                c.bt.accept(new DbQueryBacktest.Row(c.id, c.at, true, "h", List.copyOf(old.results().values())));
+                c.id++;
+                c.at = c.at.plusSeconds(300);
+            }
+            for (int i = 0; i < 12; i++) c.run(100.0 + (i % 3));
+            for (int i = 0; i < 10; i++) {
+                RuleResult x = c.results.get(i);
+                assertThat(x.note()).as("%d. tur", i + 1).isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+                assertThat(DbQueryEvaluator.isConfigUnevaluable(x.kind(), x.note())).isFalse();
+            }
+            assertThat(c.results.get(10).evaluated()).as("11. tur: 10 örnek").isTrue();
+            assertThat(c.results.get(11).evaluated()).isTrue();
+            Map<?, ?> pr = (Map<?, ?>) ((List<?>) c.bt.report(false).get("per_rule")).get(0);
+            assertThat(pr.get("evaluated")).as("eşik denemesi canlıyla aynı").isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("D1: eşik denemesinde 'örnek yetersiz' kanıt eksikliği — açık alarm o turda KAPANMAZ, tur sayılmaz (canlıdaki gibi)")
+        void backtestInsufficientKeepsAlarmOpen() {
+            Rule col = rule("id", "c", "kind", "COLUMN_VALUE", "column", "adet", "operator", "GT", "warning", 500);
+            Rule an = rule("id", "a", "kind", "ANOMALY", "column", "adet", "window", 10, "min_samples", 5);
+            String fp = DbQueryRules.fingerprint(an);
+            DbQueryBacktest bt = new DbQueryBacktest(List.of(col, an), "ANY", "h", ref, 300);
+            Double[] seq = new Double[15];
+            for (int i = 0; i < 4; i++) seq[i] = 100.0;           // taban kuruluyor
+            for (int i = 4; i < 10; i++) seq[i] = null;           // değeri boş çalıştırmalar pencereyi doldurur
+            seq[10] = 600.0;                                       // kolon değeri ihlali → alarm açılır (anomali: örnek yetersiz)
+            seq[11] = 100.0;                                       // kolon değeri temiz, anomali örnek yetersiz → karar YOK
+            seq[12] = 600.0;                                       // aynı alarm sürüyor — yeni alarm DEĞİL
+            seq[13] = 100.0;
+            seq[14] = 600.0;
+            for (int i = 0; i < seq.length; i++) {
+                Double v = seq[i];
+                RuleResult cv = new RuleResult("c", null, "COLUMN_VALUE", null, null, "NONE", true, v != null,
+                        v == null ? DbQueryEvaluator.NOTE_NULL_VALUE : null, v, v, DbQueryRules.fingerprint(col));
+                RuleResult ar = new RuleResult("a", null, "ANOMALY", null, null, "NONE", true, v != null,
+                        v == null ? DbQueryEvaluator.NOTE_NULL_VALUE : null, v, v, fp);
+                bt.accept(new DbQueryBacktest.Row(i + 1, ref.plusSeconds(300L * i), true, "h", List.of(cv, ar)));
+            }
+            Map<String, Object> rep = bt.report(false);
+            assertThat(rep.get("would_open_alarms")).as("tek alarm — 'örnek yetersiz' turları onu kapatmadı").isEqualTo(1);
+            assertThat(rep.get("evaluated")).as("12. ve 14. tur karar vermedi (kanıt eksikliği)").isEqualTo(13);
+            // Canlı karşılığı: aynı turun eşik kararı bilinmiyor
+            List<Double> pts = new ArrayList<>();
+            for (int i = 10; i >= 0; i--) pts.add(seq[i]);
+            List<DbQueryEvaluator.Point> hp = new ArrayList<>();
+            for (Double p : pts) hp.add(new DbQueryEvaluator.Point(p, false));
+            RuleResult live = DbQueryEvaluator.anomalyAgainst(an, 100, new History(hp, false, false, true), null, null, "", false);
+            assertThat(live.note()).isEqualTo(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+        }
+    }
 }
