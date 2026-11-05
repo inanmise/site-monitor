@@ -212,6 +212,14 @@ describe('PushLogView', () => {
   })
 
   // 20.165.1 (UIA-C4): TLS notu düşüş push'u süzgeç listesinde ve etiketiyle
+  it('ALERT_FORWARD_ADDED (alarm iletimi bilgi bildirimi) süzgeçte seçilebilir ve etiketlidir', async () => {
+    const { TRIGGERS, triggerLabel } = await import('../components/admin/push/pushLogModel.js')
+    const { TR } = await import('../i18n/tr.js'); const { EN } = await import('../i18n/en.js')
+    expect(TRIGGERS).toContain('ALERT_FORWARD_ADDED')
+    expect(triggerLabel('ALERT_FORWARD_ADDED', (k) => EN[k] ?? k)).not.toBe('ALERT_FORWARD_ADDED')
+    expect(triggerLabel('ALERT_FORWARD_ADDED', (k) => TR[k] ?? k)).not.toBe('ALERT_FORWARD_ADDED')
+  })
+
   it('TLS_GRADE_DROP tetikleyicisi süzgeçte seçilebilir ve etiketlidir (ham kod değil)', async () => {
     const { TRIGGERS, triggerLabel } = await import('../components/admin/push/pushLogModel.js')
     expect(TRIGGERS).toContain('TLS_GRADE_DROP')

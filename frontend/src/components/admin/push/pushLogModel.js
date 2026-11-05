@@ -14,7 +14,9 @@ export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 
   // 2026-10-18: teknik hata raporu onay isteği / onay hatırlatması / karar / gönderildi / gönderilemedi
   'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT', 'TECH_ERROR_SEND_FAILED',
   // 20.165.1 (UIA-C4): TLS notu düşüş bildirimi (TlsGradeDropNotifier takım push'u) süzülebilir
-  'TLS_GRADE_DROP']
+  'TLS_GRADE_DROP',
+  // 2026-11-05: alarm iletimi bilgi bildirimi (iletime eklenen alıcı takıma / üyelere tek seferlik push)
+  'ALERT_FORWARD_ADDED']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */
