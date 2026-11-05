@@ -78,6 +78,9 @@ const TYPES = [
     result: { status: 'up', found: true, occurrences: 2, ok: true, http_status: 200, response_ms: 150, snippet: 'Welcome back', error: null, checked_at: STAMP },
     resultSel: '[data-slot="keyword-panel"][data-result="countOk"], [data-slot="keyword-panel"][data-result="found"]',
     target: { keyword: 'Sign in' },
+    // kw 2026-11-05: düzenleme YALNIZ değişen alanları gönderir; değişiklik yoksa istek hiç gitmez → formda gerçek bir (meta)
+    // değişiklik yapılır. Kontrolün koşup koşmaması yine sunucunun kayıt yanıtındaki satıra bağlı.
+    beforeEditSave: () => fireEvent.change(screen.getByPlaceholderText('https://www.example.com/'), { target: { value: 'Portal (yeni ad)' } }),
   },
   {
     kind: 'page', Page: PageMonitorPage, list: 'getPageMonitors', create: 'createPageMonitor', update: 'updatePageMonitor', trigger: 'triggerPageCheck',
@@ -223,6 +226,7 @@ describe.each(TYPES)('kayıt sonrası kontrol — $kind', (T) => {
     render(<T.Page systemRole="ADMIN" teamId={5} teamName="Takım A" />)
     const card = await findCard(T.label(src))
     fireEvent.click(actionOf(card, T.label(src), 'Edit'))
+    T.beforeEditSave?.()
     fireEvent.click(await saveButton())
 
     await waitFor(() => expect(api.monitoring[T.update]).toHaveBeenCalledTimes(1))
@@ -239,6 +243,7 @@ describe.each(TYPES)('kayıt sonrası kontrol — $kind', (T) => {
     render(<T.Page systemRole="ADMIN" teamId={5} teamName="Takım A" />)
     const card = await findCard(T.label(src))
     fireEvent.click(actionOf(card, T.label(src), 'Edit'))
+    T.beforeEditSave?.()
     fireEvent.click(await saveButton())
 
     await waitFor(() => expect(api.monitoring[T.update]).toHaveBeenCalledTimes(1))

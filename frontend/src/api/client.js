@@ -2349,6 +2349,12 @@ export const api = {
     deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
     triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
     testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data) }),
+    // Aynı URL'yi izleyen diğer keyword izlemeleri (kw 2026-11-05): görebildikleri (≤ 20, ad + takım + kelime) + göremediği
+    // takımlardaki SAYI. `withStatus`: 404 / 405 = eski sunucu (uyarı gösterilmez, "yok" denmez).
+    keywordSameUrl: (url, excludeId) => {
+      const q = historyQuery({ url, excludeId })
+      return request(`/monitoring/keyword/same-url${q ? `?${q}` : ''}`, { withStatus: true })
+    },
     // Keyword uçtan uca tanılama (2026-10-04) — HTTP tanılamasının aynası: 60 sn sunucu tavanı → istemci 75 sn bekler;
     // withStatus: 429 / 403 / 404 pencerede ayırt edilsin.
     diagnoseKeyword: async (id, { compare = true } = {}, { signal } = {}) => {

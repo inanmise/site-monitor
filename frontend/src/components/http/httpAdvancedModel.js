@@ -180,33 +180,49 @@ export function isValidJsonPath(path) {
 const utf8Length = (s) => new TextEncoder().encode(s).length
 
 /**
+ * Alan hata anahtarları (`data-field`) — varsayılan HTTP formununkiler (`adv*`). Bölümün parçalarını yeniden kullanan başka
+ * bir form (Keyword izlemesi, kw 2026-11-05) KENDİ istek anahtarlarını verir: sunucunun `VALIDATION_FAILED` `field`'ı
+ * istek anahtarıdır ve hata doğrudan o alanın altına düşer. Varsayılan değerler HTTP formunun çıktısını DEĞİŞTİRMEZ.
+ */
+export const ADV_FIELD_KEYS = Object.freeze({
+  headers: 'advHeaders', basicUser: 'advBasicUser', body: 'advBody', contentType: 'advContentType',
+  jsonPath: 'advJsonPath', slowThreshold: 'advSlowThreshold',
+})
+
+/**
  * Gelişmiş alanların alan-bazlı hataları — `useFormErrors().check` haritasına doğrudan katılır (anahtarlar `data-field`).
  * Boş/kapalı alan hata üretmez (bölüme dokunmayan kullanıcı hiçbir şey görmez).
+ *
+ * <p>İsteğe bağlı (geriye uyumlu, kw 2026-11-05): `keys` anahtar adlarını ezer ({@link ADV_FIELD_KEYS} biçiminde, kısmi
+ * olabilir); `parts` ile JSON doğrulaması (`json: false`) ve yavaşlık eşiği (`slow: false`) denetimi kapatılır — bu
+ * parçaları göstermeyen form onların hatasını üretmesin. Verilmezse davranış ve anahtarlar birebir eskisi gibi.
  */
-export function validateHttpAdvanced(form, { method = 'GET', canEditHeaders = false, t } = {}) {
+export function validateHttpAdvanced(form, { method = 'GET', canEditHeaders = false, t, keys, parts } = {}) {
   const tr = (key, ...args) => (t ? t(key, ...args) : key)
+  const k = { ...ADV_FIELD_KEYS, ...(keys || {}) }
+  const p = { json: true, slow: true, ...(parts || {}) }
   const errs = {}
   if (canEditHeaders) {
     const h = headerError(form.customHeaders)
-    if (h) errs.advHeaders = tr(h.key, ...h.args)
+    if (h) errs[k.headers] = tr(h.key, ...h.args)
   }
-  if (String(form.basicAuthUser ?? '').includes(':')) errs.advBasicUser = tr('http.adv.errBasicUser')
+  if (String(form.basicAuthUser ?? '').includes(':')) errs[k.basicUser] = tr('http.adv.errBasicUser')
   if (method === 'POST' && form.requestBody && utf8Length(String(form.requestBody)) > ADV_LIMITS.maxBodyBytes) {
-    errs.advBody = tr('http.adv.errBodyTooLarge')
+    errs[k.body] = tr('http.adv.errBodyTooLarge')
   }
   const ct = String(form.requestContentType ?? '').trim()
   if (method === 'POST' && ct && (ct.length > ADV_LIMITS.maxContentType || CTL.test(ct) || !CONTENT_TYPE.test(ct))) {
-    errs.advContentType = tr('http.adv.errContentType')
+    errs[k.contentType] = tr('http.adv.errContentType')
   }
   const jp = String(form.jsonPath ?? '').trim()
-  if (jp) {
-    if (!isValidJsonPath(jp)) errs.advJsonPath = tr('http.adv.errJsonPath')
-    else if (method === 'HEAD') errs.advJsonPath = tr('http.adv.errJsonHead')
+  if (p.json && jp) {
+    if (!isValidJsonPath(jp)) errs[k.jsonPath] = tr('http.adv.errJsonPath')
+    else if (method === 'HEAD') errs[k.jsonPath] = tr('http.adv.errJsonHead')
   }
-  if (form.slowResponseEnabled) {
+  if (p.slow && form.slowResponseEnabled) {
     const v = Number(form.slowThresholdMs)
     if (!Number.isFinite(v) || v < ADV_LIMITS.minSlowMs || v > ADV_LIMITS.maxSlowMs) {
-      errs.advSlowThreshold = tr('http.adv.errSlowRange', ADV_LIMITS.minSlowMs, ADV_LIMITS.maxSlowMs)
+      errs[k.slowThreshold] = tr('http.adv.errSlowRange', ADV_LIMITS.minSlowMs, ADV_LIMITS.maxSlowMs)
     }
   }
   return errs
