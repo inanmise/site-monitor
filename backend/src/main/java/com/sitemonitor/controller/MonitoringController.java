@@ -7040,20 +7040,12 @@ public class MonitoringController {
         return out;
     }
 
+    /**
+     * Deneme ucunun kural sonucu — kontrol geçmişi / liste satırlarıyla AYNI alan listesi (tek yer
+     * {@link DbQueryAlarmText#ruleResultApi}: parmak izi + akıllı kural taban özeti dahil; dbq2 D, 2026-11-05).
+     */
     static Map<String, Object> dbqRuleResultApi(DbQueryEvaluator.RuleResult x) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", x.id());
-        m.put("label", x.label());
-        m.put("kind", x.kind());
-        m.put("actual", x.actual());
-        m.put("expected", x.expected());
-        m.put("level", x.level());
-        m.put("passed", x.passed());
-        m.put("evaluated", x.evaluated());
-        m.put("note", x.note());
-        m.put("measure", x.measure());
-        m.put("compared", x.compared());
-        return m;
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleResultApi(x);
     }
 
     /** Kova noktalarına ek alanlar: ortalama satır sayısı / ölçülen değer ve kovanın en kötü durumu. */
