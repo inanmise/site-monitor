@@ -112,6 +112,55 @@ public final class ScanItem {
         return status >= 200 && status < 400;
     }
 
+    /**
+     * Ölçüm kopyası (prs3 G — çok sayfalı analiz, 2026-11): ölçülen alanlar aynen, analizin YAZDIĞI alanlar sıfırlanır
+     * ({@code startMs}, {@code findings}, {@code renderBlocking}, {@code integrity}, {@code thirdPartyCategory}, {@code parent},
+     * {@code seq}). Sayfalar arası ortak nesne bir kez ölçülür; her sayfanın analizi kendi kopyasını işaretler (asıl nesne
+     * ana sayfanın analizinde kalır). Yeni bir alan buraya da eklenmeli — {@code ScanItemCopyTest} yansımayla denetler.
+     */
+    public ScanItem measurementCopy() {
+        ScanItem c = new ScanItem();
+        c.url = url;
+        c.category = category;
+        c.contentType = contentType;
+        c.status = status;
+        c.bytes = bytes;
+        c.truncated = truncated;
+        c.sizeSource = sizeSource;
+        c.ttfbMs = ttfbMs;
+        c.durationMs = durationMs;
+        c.redirectMs = redirectMs;
+        c.thirdParty = thirdParty;
+        c.compressed = compressed;
+        c.cacheTtlS = cacheTtlS;
+        c.width = width;
+        c.height = height;
+        c.redirects = redirects;
+        c.fromCss = fromCss;
+        c.pageLoad = pageLoad;
+        c.lazy = lazy;
+        c.error = error;
+        c.host = host;
+        c.foundIn = foundIn;
+        c.finalUrl = finalUrl;
+        c.headers = headers == null ? null : new LinkedHashMap<>(headers);
+        c.verdict = verdict;
+        c.via = via;
+        c.optimizedBytes = optimizedBytes;
+        c.httpVersion = httpVersion;
+        c.contentHash = contentHash;
+        c.minified = minified;
+        c.libraryName = libraryName;
+        c.libraryVersion = libraryVersion;
+        c.sourceMap = sourceMap;
+        c.gifFrames = gifFrames;
+        c.h3Advertised = h3Advertised;
+        c.validator = validator;
+        // Analizin yazdıkları: startMs = null, findings boş, renderBlocking = false, integrity / thirdPartyCategory = null,
+        // parent = -1, seq = 0 (yeni nesnenin varsayılanları)
+        return c;
+    }
+
     public Map<String, Object> toMap() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("url", url);

@@ -2639,6 +2639,8 @@ export const EN = {
   'general.lbl.site.monitor.page.resource-scan.max-objects': 'Resource analysis object limit',
   'general.lbl.site.monitor.page.resource-scan.max-total-mb': 'Resource analysis total download limit (MB)',
   'general.lbl.site.monitor.page.resource-scan.request-timeout-ms': 'Resource analysis request timeout (ms)',
+  'general.lbl.site.monitor.page.resource-scan.max-pages': 'Multi-page resource analysis page limit',
+  'general.lbl.site.monitor.page.resource-scan.site-max-seconds': 'Multi-page resource analysis time limit (s)',
   'general.lbl.site.monitor.page.resource-scan.retention-days': 'Resource analysis history retention (days)',
   'general.lbl.site.monitor.page.max-resources': 'Max resources per page',
   'general.lbl.site.monitor.page.resource-concurrency': 'Page resource concurrency',
@@ -16761,6 +16763,10 @@ export const EN = {
     'What it does: The total amount of data one run may download.\nBenefit: Large documents and videos do not use up the pod\'s bandwidth; after the limit the remaining objects are skipped.\nRecommended: 200 MB (default; 10 to 1000). A single object is read up to 10 MB; beyond that its size comes from the header.',
   'help.set.site.monitor.page.resource-scan.request-timeout-ms':
     'What it does: How long the resource analysis waits for one object\'s response and download.\nBenefit: Slow objects are measured but the run does not hang.\nRecommended: 15000 ms (default; 2000 to 60000).',
+  'help.set.site.monitor.page.resource-scan.max-pages':
+    'What it does: The most pages a multi-page resource analysis scans (the monitored page included). The extra pages are the HTML pages on the same server linked from the main page, in order; the person starting the analysis can choose fewer.\nBenefit: One analysis shows the whole site; files shared between pages are downloaded once.\nRecommended: 10 pages (default; 2 to 20). More pages make the analysis longer and send more requests to the target site.',
+  'help.set.site.monitor.page.resource-scan.site-max-seconds':
+    'What it does: The single time budget of a multi-page resource analysis for the WHOLE site; when it runs out, the finished pages are reported and the rest are listed as not scanned. The total download and object limits also apply to the whole site.\nBenefit: A multi-page analysis cannot keep the server and the target site busy without limit.\nRecommended: 900 seconds (default; 120 to 1800).',
   'help.set.site.monitor.page.resource-scan.retention-days':
     'What it does: How long resource analysis summaries (grade, load time, page size: history and chart) are kept.\nBenefit: You can see a year of improvement. Object details are kept only for the last 20 runs of each monitor.\nRecommended: 365 days (default; at least 30).',
   'help.set.site.monitor.page.max-resources':
