@@ -35,6 +35,17 @@ public final class KeywordFailureClassifier {
     public static final String EMPTY_BODY = "EMPTY_BODY";
     public static final String BODY_TRUNCATED = "BODY_TRUNCATED";
     public static final String REDIRECT_BLOCKED = "REDIRECT_BLOCKED";
+    // ── kw sözleşmesi §11.2 (2026-11-05) — gelişmiş istek (be1) ──
+    /** Son (yönlendirmeler sonrası) URL beklenen adresle başlamıyor (örn. oturum düştü → giriş sayfası). */
+    public static final String FINAL_URL_MISMATCH = "FINAL_URL_MISMATCH";
+    /** Yönlendirme takibi KAPALI; 3xx yanıtın kendisi değerlendirildi ve koşul tutmadı. */
+    public static final String REDIRECT_NOT_FOLLOWED = "REDIRECT_NOT_FOLLOWED";
+    // ── kw sözleşmesi §11.2 — çoklu kural / kapsam / boyut (be2 Aşama 2 besler; metin burada) ──
+    public static final String RULES_NOT_MET = "RULES_NOT_MET";
+    public static final String SCOPE_NOT_FOUND = "SCOPE_NOT_FOUND";
+    public static final String SCOPE_INVALID = "SCOPE_INVALID";
+    public static final String BODY_TOO_SMALL = "BODY_TOO_SMALL";
+    public static final String BODY_TOO_LARGE = "BODY_TOO_LARGE";
     // ── İstisna (istek tamamlanmadı) ──
     public static final String TIMEOUT_CONNECT = "TIMEOUT_CONNECT";
     public static final String TIMEOUT_READ = "TIMEOUT_READ";
@@ -54,8 +65,17 @@ public final class KeywordFailureClassifier {
     /** TAM liste — i18n kapısı bunu okur. */
     public static final List<String> CODES = List.of(
             KEYWORD_NOT_FOUND, KEYWORD_FOUND_FORBIDDEN, KEYWORD_COUNT_MISMATCH, HTTP_STATUS, EMPTY_BODY, BODY_TRUNCATED,
-            REDIRECT_BLOCKED, TIMEOUT_CONNECT, TIMEOUT_READ, DNS, TLS_HANDSHAKE, TLS_CERT, CONNECTION_REFUSED,
+            REDIRECT_BLOCKED, FINAL_URL_MISMATCH, REDIRECT_NOT_FOLLOWED, RULES_NOT_MET, SCOPE_NOT_FOUND, SCOPE_INVALID,
+            BODY_TOO_SMALL, BODY_TOO_LARGE, TIMEOUT_CONNECT, TIMEOUT_READ, DNS, TLS_HANDSHAKE, TLS_CERT, CONNECTION_REFUSED,
             CONNECTION_RESET, HOST_UNREACHABLE, PROXY, SSRF_BLOCKED, CONFIG_ERROR, REDIRECT_LIMIT, PROTOCOL_ERROR, UNKNOWN);
+
+    /**
+     * İsteğin TAMAMLANMADIĞI (sayfa okunamadı) neden kodları — alarm postası / iletisi "Sayfa Açılamadı" der, "0 kez bulundu"
+     * demez (kw sözleşmesi §8.1, B1). Ön yüz {@code keywordFailureModel.REQUEST_CODES} ile aynı aile.
+     */
+    public static final java.util.Set<String> REQUEST_FAILURE_CODES = java.util.Set.of(
+            TIMEOUT_CONNECT, TIMEOUT_READ, DNS, TLS_HANDSHAKE, TLS_CERT, CONNECTION_REFUSED, CONNECTION_RESET,
+            HOST_UNREACHABLE, PROXY, SSRF_BLOCKED, CONFIG_ERROR, REDIRECT_LIMIT, PROTOCOL_ERROR, UNKNOWN);
 
     /** Kayıttaki ayrıntı metninin tavanı (kolon VARCHAR(500)). */
     public static final int DETAIL_MAX = 500;
@@ -157,20 +177,69 @@ public final class KeywordFailureClassifier {
      */
     public static Reason forCondition(int status, int count, String op, int threshold, long bodyBytes,
                                       boolean truncated, String keyword) {
-        String kw = "« " + abbreviate(keyword == null ? "" : keyword, 60) + " »";
-        String rule = com.sitemonitor.service.KeywordCheckerService.opPhrase(op, threshold);
+        return forCheck(new Facts(status, count, op, threshold, bodyBytes, truncated, keyword,
+                null, null, null, null, null, true));
+    }
+
+    /**
+     * Sayfa geldi ama kontrol sağlıksız — tüm gözlemler (kw sözleşmesi §6.3, 2026-11-05).
+     *
+     * @param statusAccepted   kabul edilen durum kuralı: null = KAPALI (bugünkü), true / false = sonuç
+     * @param expectedStatus   kuralın metni (ayrıntı için)
+     * @param finalUrlOk       son URL kuralı: null = yok, true / false = sonuç
+     * @param expectedFinalUrl kuralın metni (ayrıntı için)
+     * @param finalUrl         gözlenen son URL (MASKELİ, ayrıntı için)
+     * @param followRedirects  yönlendirmeler takip ediliyor mu (false + 3xx → {@link #REDIRECT_NOT_FOLLOWED})
+     */
+    public record Facts(int status, int count, String op, int threshold, long bodyBytes, boolean truncated, String keyword,
+                        Boolean statusAccepted, String expectedStatus, Boolean finalUrlOk, String expectedFinalUrl,
+                        String finalUrl, boolean followRedirects) {}
+
+    /**
+     * Kontrol sağlıksızken TEK neden (öncelik §6.3): yönlendirme izlenemedi / takip kapalı (kelime yokken) → durum kodu (kural
+     * açık ve kabul dışı; ya da kural kapalı, ≥ 400 ve kelime yok — bugünkü) → son URL uymadı → boş gövde → (kelime yoksa okuma
+     * tavanı, değilse) kural kodları. İstisna kodları burada değil ({@link #forException}); be2 Aşama 2 boyut / kural kodlarını
+     * bu sıranın kendi yerlerine ekler.
+     */
+    public static Reason forCheck(Facts f) {
+        String kw = "« " + abbreviate(f.keyword() == null ? "" : f.keyword(), 60) + " »";
+        String rule = com.sitemonitor.service.KeywordCheckerService.opPhrase(f.op(), f.threshold());
+        int status = f.status();
+        int count = f.count();
+        boolean redirect = status >= 300 && status < 400;
+        if (count <= 0 && redirect) {
+            if (!f.followRedirects()) {
+                return new Reason(REDIRECT_NOT_FOLLOWED, cap("Yönlendirme takibi kapalı: sunucu HTTP " + status
+                        + " (yönlendirme) döndürdü ve bu yanıtın kendisi değerlendirildi; " + kw + " bulunamadı. Koşul: " + rule
+                        + ". Hedef sayfayı izlemek için \"Yönlendirmeleri takip et\" seçeneğini açın."));
+            }
+            return new Reason(REDIRECT_BLOCKED, cap("Sunucu HTTP " + status + " ile yönlendirdi ama yönlendirme izlenemedi "
+                    + "(https→http düşürmesi ya da geçersiz Location); " + kw + " aranacak sayfaya ulaşılamadı. Koşul: " + rule + "."));
+        }
+        if (Boolean.FALSE.equals(f.statusAccepted())) {
+            boolean holds = com.sitemonitor.service.KeywordCheckerService.evaluate(count, f.op(), f.threshold());
+            return new Reason(HTTP_STATUS, cap("Kabul edilen: " + nz(f.expectedStatus()) + "; gelen: " + status
+                    + ". Sayfa kabul edilen bir durum koduyla dönmedi (kelime koşulu " + (holds ? "sağlansa bile" : "da sağlanmadı")
+                    + "). Koşul: " + rule + "."));
+        }
+        if (f.statusAccepted() == null && count <= 0 && status >= 400) {
+            return new Reason(HTTP_STATUS, cap("Sunucu HTTP " + status + " döndürdü; gelen (büyük olasılıkla hata) sayfada " + kw
+                    + " bulunamadı. Koşul: " + rule + "."));
+        }
+        if (Boolean.FALSE.equals(f.finalUrlOk())) {
+            return new Reason(FINAL_URL_MISMATCH, cap("Son adres beklenenle başlamıyor — beklenen: " + nz(f.expectedFinalUrl())
+                    + "; gelinen: " + nz(f.finalUrl()) + " (oturum düşüp giriş sayfasına yönlendirilmiş olabilir)."));
+        }
+        return forConditionOnly(status, count, f.op(), f.threshold(), f.bodyBytes(), f.truncated(), kw, rule);
+    }
+
+    /** Kuralın kendisi (eski {@code forCondition} gövdesinin boş gövde / tavan / kelime dalları — metinler AYNEN). */
+    private static Reason forConditionOnly(int status, int count, String op, int threshold, long bodyBytes, boolean truncated,
+                                           String kw, String rule) {
         String code;
         String detail;
         if (count <= 0) {
-            if (status >= 300 && status < 400) {
-                code = REDIRECT_BLOCKED;
-                detail = "Sunucu HTTP " + status + " ile yönlendirdi ama yönlendirme izlenemedi (https→http düşürmesi ya da "
-                        + "geçersiz Location); " + kw + " aranacak sayfaya ulaşılamadı. Koşul: " + rule + ".";
-            } else if (status >= 400) {
-                code = HTTP_STATUS;
-                detail = "Sunucu HTTP " + status + " döndürdü; gelen (büyük olasılıkla hata) sayfada " + kw
-                        + " bulunamadı. Koşul: " + rule + ".";
-            } else if (bodyBytes <= 0) {
+            if (bodyBytes <= 0) {
                 code = EMPTY_BODY;
                 detail = "Sunucu HTTP " + status + " ile BOŞ bir gövde döndürdü; " + kw + " aranacak içerik yoktu. Koşul: " + rule + ".";
             } else if (truncated) {
@@ -208,6 +277,10 @@ public final class KeywordFailureClassifier {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024L * 1024) return (bytes / 1024) + " KB";
         return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    private static String nz(String s) {
+        return s == null || s.isBlank() ? "—" : s;
     }
 
     static String abbreviate(String s, int max) {

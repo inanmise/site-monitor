@@ -260,6 +260,7 @@
             "charset": null,
             "checkedAt": "<time>",
             "contentType": null,
+            "decodedCharset": null,
             "error": null,
             "excerpt": null,
             "failureDetail": null,
@@ -269,6 +270,7 @@
             "hintsJson": null,
             "httpStatus": 200,
             "id": null,
+            "matchScope": null,
             "monitorId": 1,
             "occurrences": 3,
             "ok": true,
@@ -322,6 +324,7 @@
             "charset": null,
             "checkedAt": "<time>",
             "contentType": null,
+            "decodedCharset": null,
             "error": null,
             "excerpt": null,
             "failureDetail": "Sayfa yüklendi (HTTP 200, 1 B) ama « Ödeme » hiç bulunamadı. Koşul: en az 1 kez.",
@@ -331,6 +334,7 @@
             "hintsJson": null,
             "httpStatus": 200,
             "id": null,
+            "matchScope": null,
             "monitorId": 2,
             "occurrences": 0,
             "ok": false,
@@ -383,6 +387,7 @@
             "charset": null,
             "checkedAt": "<time>",
             "contentType": null,
+            "decodedCharset": null,
             "error": "HTTP 503",
             "excerpt": null,
             "failureDetail": "İstek tamamlanamadı: HTTP 503",
@@ -392,6 +397,7 @@
             "hintsJson": null,
             "httpStatus": 503,
             "id": null,
+            "matchScope": null,
             "monitorId": 3,
             "occurrences": 0,
             "ok": false,
@@ -444,6 +450,7 @@
             "charset": null,
             "checkedAt": "<time>",
             "contentType": null,
+            "decodedCharset": null,
             "error": "URL'de host yok",
             "excerpt": null,
             "failureDetail": "İstek tamamlanamadı: URL'de host yok",
@@ -453,6 +460,7 @@
             "hintsJson": null,
             "httpStatus": null,
             "id": null,
+            "matchScope": null,
             "monitorId": 4,
             "occurrences": 0,
             "ok": false,
@@ -504,6 +512,7 @@
             "charset": null,
             "checkedAt": "<time>",
             "contentType": null,
+            "decodedCharset": null,
             "error": null,
             "excerpt": null,
             "failureDetail": "« zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz » sayfada 2 kez bulundu; koşul en fazla 1 kez (HTTP 200).",
@@ -513,6 +522,7 @@
             "hintsJson": null,
             "httpStatus": 200,
             "id": null,
+            "matchScope": null,
             "monitorId": 5,
             "occurrences": 2,
             "ok": false,
@@ -559,96 +569,42 @@
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "c-yok",
-        "y",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "GTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=c-yok, keyword=y, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "https://a.example.com/",
-        "Hoş geldiniz",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "GTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=https://a.example.com/, keyword=Hoş geldiniz, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "https://b.example.com/",
-        "Ödeme",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "GTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=https://b.example.com/, keyword=Ödeme, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "https://boom.example.com/",
-        "q",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "GTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=https://boom.example.com/, keyword=q, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "https://c.example.com/",
-        "x",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "GTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=https://c.example.com/, keyword=x, condition=GTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     },
     {
       "on": "KeywordCheckerService",
       "method": "check",
       "args": [
-        "https://e.example.com/",
-        "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
-        10000,
-        null,
-        false,
-        false,
-        {
-          "operator": "LTE",
-          "threshold": 1
-        }
+        "KeywordCheckSpec[url=https://e.example.com/, keyword=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz, condition=LTE 1, caseSensitive=false, timeoutMs=10000, viaProxy=false, method=GET, scope=RAW, headers=none, basicAuth=none, body=none, expectedStatus=null, followRedirects=true]"
       ]
     }
   ]

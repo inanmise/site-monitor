@@ -553,9 +553,8 @@ final class R33SweepHarness {
         serve(keywordRepo, all, KeywordMonitor::getId);
         lenient().when(keywordRepo.findCheckDispatchRows()).thenReturn(idRows(all, KeywordMonitor::getId, KeywordMonitor::getIntervalSeconds));
         lenient().when(keywordHeaders.effectiveHeaders(any(KeywordMonitor.class))).thenReturn(null);
-        lenient().when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(),
-                any(KeywordCheckerService.Expectation.class))).thenAnswer(i -> {
-            String url = i.getArgument(0);
+        lenient().when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenAnswer(i -> {
+            String url = ((com.sitemonitor.service.keyword.KeywordCheckSpec) i.getArgument(0)).url();
             return switch (url) {
                 case "https://a.example.com/" -> map("found", true, "count", 3, "http_status", 200, "response_ms", 100L,
                         "snippet", "… Hoş geldiniz …");

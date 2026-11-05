@@ -167,9 +167,8 @@ class SlowAndIntegrityNoDataTest {
         KeywordMonitor m = keyword(true);
         when(keywordRepo.findByActiveTrue()).thenReturn(List.of(m));
         when(keywordRepo.findAll()).thenReturn(List.of(m));
-        // Zamanlanmış tur beklentili (7 argümanlı) kontrolü çağırır (2026-10-04, keyword hata teşhisi); yavaşlık
-        // yeniden ölçümü (evalKeywordSlow) eski 6 argümanlı kontrolde kaldı — aşağıdaki üçüncü saplama onu besler.
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+        // Zamanlanmış tur ve yavaşlık yeniden ölçümü (evalKeywordSlow) aynı KeywordCheckSpec kontrolünü çağırır (kw Aşama 1).
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(raw("found", false, "error", "connect timed out"));
         ReflectionTestUtils.invokeMethod(scheduler, "runKeywordChecksLocked");
         assertThat(sweepItemsFor(EscalationService.TYPE_KEYWORD_SLOW)).isEmpty();
@@ -177,14 +176,33 @@ class SlowAndIntegrityNoDataTest {
         // Ölçülü ve yavaş tur → DOWN kalemi; yeniden ölçüm HTTP hatasında "skipped"
         clearInvocations(outage);
         ((Map<?, ?>) ReflectionTestUtils.getField(scheduler, "lastMonitorCheckAt")).clear();   // checkDue ızgarası sıfırlansın
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(raw("found", true, "count", 1, "response_ms", 5000L));
         ReflectionTestUtils.invokeMethod(scheduler, "runKeywordChecksLocked");
         MonitoringOutageService.SweepItem slow = sweepItemsFor(EscalationService.TYPE_KEYWORD_SLOW).get(0);
         assertThat(slow.up()).isFalse();
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(raw("found", false, "error", "connect timed out"));
         assertThat(slow.recheck().get().get("status")).isEqualTo("skipped");
+    }
+
+    @Test
+    @DisplayName("B5 (kw §5.2): durum kodu kuralı AÇIK ve yanıt kabul edilmedi → süre ölçülmüş sayılmaz: SLOW kalemi yok, "
+            + "yeniden ölçüm 'skipped'; kural kapalıyken (status_accepted yok) bugünkü gibi ölçülür")
+    void keywordSlow_statusRejected_isNotMeasured() {
+        KeywordMonitor m = keyword(true);
+        m.setExpectedStatus("2xx");
+        // hızlı ama reddedilen 503 sayfası: açık yavaşlık alarmını kapatmamalı
+        assertThat(scheduler.keywordSlowSweepItem(m, raw("status", "down", "response_ms", 40L, "status_accepted", false)))
+                .isNull();
+        when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
+                .thenReturn(raw("found", true, "count", 1, "response_ms", 40L, "http_status", 503, "status_accepted", false, "ok", false));
+        MonitoringOutageService.SweepItem slow = scheduler.keywordSlowSweepItem(m, raw("response_ms", 5000L, "status_accepted", true));
+        assertThat(slow.up()).isFalse();
+        assertThat(slow.recheck().get().get("status")).isEqualTo("skipped");
+        // kural kapalı (anahtar yok): ölçülür
+        MonitoringOutageService.SweepItem legacy = scheduler.keywordSlowSweepItem(keyword(true), raw("response_ms", 40L));
+        assertThat(legacy.up()).isTrue();
     }
 
     // ── PING_SLOW ──────────────────────────────────────────────────────────────────────────────

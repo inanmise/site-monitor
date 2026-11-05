@@ -6167,7 +6167,9 @@ public class SchedulerService {
         boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
         // D-7 (2026-09-29): HTTP hatası / süre yok = ÖLÇÜLEMEDİ → kalem yok (eskiden "up" sayılıp açık yavaşlık
         // alarmını hedef düşükken kapatıyordu). Özellik kapalıysa sentetik "up" asılı alarmı kapatmaya devam eder.
-        boolean measured = r.get("error") == null && respMs != null;
+        // B5 (kw sözleşmesi §5.2): durum kodu kuralı AÇIKKEN yalnız KABUL EDİLEN yanıtın süresi ölçülmüş sayılır (hızlı bir 503
+        // sayfası yavaşlık alarmını kapatmasın); kural kapalıyken (anahtar yok / null) bugünkü gibi.
+        boolean measured = r.get("error") == null && respMs != null && !Boolean.FALSE.equals(r.get("status_accepted"));
         boolean slowDown = slowEnabled && measured && respMs > slowTh;
         if (slowEnabled && !measured) return null;
         return new MonitoringOutageService.SweepItem(
@@ -6198,21 +6200,13 @@ public class SchedulerService {
     }
     // ── /R3-3 B keyword ──────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Keyword check + keyword_results persist'i. Koşul (içerir/içermez) burada uygulanır;
-     *  HTTP hatası → ok=false (down). {"status","error"} döner. */
+    /** Keyword check + keyword_results persist'i. Karar ({@code ok}) kontrolde verilir (kw sözleşmesi §2: durum kodu kuralı,
+     *  son URL kuralı, adet koşulu); HTTP hatası → ok=false (down). {"status","error"} döner. */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
-        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
         // Beklentili kontrol (2026-10-04): koşul sağlanmazsa neden + ipuçları + alıntı da üretilir (ek istek YOK).
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
-                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()),
-                KeywordCheckerService.Expectation.of(m));
+        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m));
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
-        boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
-        int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
-        int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
-        boolean hadError = r.get("error") != null;
-        // Adet koşulu: SAĞLIKLI = count [operatör] threshold (HTTP hatası → down).
-        boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+        boolean ok = keywordOk(m, r);
         KeywordResult written = null;
         try {
             // Satır eşlemesi elle "Şimdi kontrol et" ile ORTAK (teşhis alanları iki yolda da aynı yazılsın).
@@ -6386,13 +6380,16 @@ public class SchedulerService {
         return out;
     }
 
-    /** Keyword ham sonucu → sweep şekli; adet koşulu izlemenin operatör/eşiğinden gelir. */
+    /**
+     * Keyword ham sonucu → sweep şekli (dağıtık iş sonucu da budur). Karar: ham sonuçta {@code ok} varsa O (kw sözleşmesi §10.6 —
+     * durum / son URL kuralı dâhil kontrolün kararı); YOKSA (eski 20.181 pod'dan gelen ham sonuç, takipçi elle sonucu) bugünkü
+     * hesap: istisna yok ∧ adet koşulu. E1 (§8.1): neden / ayrıntı / ipuçları / alıntı / son URL ve {@code status_accepted}
+     * taşınır (alarm postası + yavaşlık kararı).
+     */
     static Map<String, Object> keywordOutcome(KeywordMonitor m, Map<String, Object> r) {
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
-        int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
-        boolean hadError = r.get("error") != null;
-        boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+        boolean ok = keywordOk(m, r);
         boolean cfgError = Boolean.TRUE.equals(r.get("config_error"));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", (ok || cfgError) ? "up" : "down");
@@ -6402,7 +6399,33 @@ public class SchedulerService {
         out.put("snippet", r.get("snippet"));
         out.put("occurrences", count);
         if (cfgError) out.put(MonitoringOutageService.CTX_CONFIG_ERROR, true);   // D-A3-6: sessiz kapanış
+        // kw sözleşmesi §8.1 / §5.2 (2026-11-05) — yalnız varsa (eski ham sonuçta anahtar yok → çıktı bugünküyle aynı)
+        for (String k : KEYWORD_OUTCOME_EXTRA_KEYS) {
+            Object v = r.get(k);
+            if (v != null) out.put(k, v);
+        }
         return out;
+    }
+
+    /** Ham sonuçtan sweep şekline TAŞINAN ek anahtarlar (kw sözleşmesi §8.1 E1 + §5.2) — sırası sabit (JSON gidiş-dönüş). */
+    static final java.util.List<String> KEYWORD_OUTCOME_EXTRA_KEYS = java.util.List.of(
+            "failure_reason", "failure_detail", "hints", "excerpt", "final_url", "status_accepted");
+
+    /** Kontrol kararı: ham sonuçta {@code ok} varsa o; yoksa (eski pod / eski ham sonuç) bugünkü hesap (kw sözleşmesi §10.6). */
+    public static boolean keywordOk(KeywordMonitor m, Map<String, Object> r) {
+        if (r.get("ok") instanceof Boolean b) return b && r.get("error") == null;
+        boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
+        int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
+        int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
+        return r.get("error") == null && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
+    }
+
+    /** İzlemenin kontrol tanımı — zamanlanmış tur, teyit / kurtarma ve yavaşlık yeniden ölçümü AYNI tanımı kurar. */
+    private com.sitemonitor.service.keyword.KeywordCheckSpec keywordSpec(KeywordMonitor m) {
+        String headers = keywordHeaderSecrets == null ? null : keywordHeaderSecrets.effectiveHeaders(m);
+        String pass = keywordHeaderSecrets == null ? null : keywordHeaderSecrets.basicAuthPass(m);
+        return com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, headers, pass,
+                viaProxyFor(m.getUrl(), m.getUseProxy())).build();
     }
 
     /**
@@ -6451,6 +6474,10 @@ public class SchedulerService {
         if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
         if (r.get("snippet") != null)     ctx.put("snippet", r.get("snippet"));
         if (r.get("occurrences") != null) ctx.put("occurrences", r.get("occurrences"));
+        // E1 (kw sözleşmesi §8.1): alarm postası "neden + ipuçları + sayfadan alıntı + son URL" — yalnız varsa
+        for (String k : new String[] { "failure_reason", "failure_detail", "hints", "excerpt", "final_url" }) {
+            if (r.get(k) != null) ctx.put(k, r.get(k));
+        }
         if (Boolean.TRUE.equals(r.get(MonitoringOutageService.CTX_CONFIG_ERROR))) ctx.put(MonitoringOutageService.CTX_CONFIG_ERROR, true);   // D-A3-6
         String kw = m.getKeyword() != null ? m.getKeyword() : "";
         return new MonitoringOutageService.SweepItem(
@@ -9893,12 +9920,12 @@ public class SchedulerService {
         int th = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
         out.put("threshold_ms", th);
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
-        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
-                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
+        // Teşhissiz tanım: yalnız süre gerekir (neden / ipucu hesaplanmaz).
+        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m).toBuilder().diagnose(false).build());
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);
-        if (r.get("error") != null || ms == null) {   // HTTP hatası → yavaşlık değerlendirilemez → kanıt yok
+        // HTTP hatası / kabul edilmeyen durum (kural açıkken, B5) → yavaşlık değerlendirilemez → kanıt yok
+        if (r.get("error") != null || ms == null || Boolean.FALSE.equals(r.get("status_accepted"))) {
             out.put("status", "skipped");
             return out;
         }

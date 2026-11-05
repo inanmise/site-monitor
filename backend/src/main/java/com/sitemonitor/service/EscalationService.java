@@ -112,6 +112,9 @@ public class EscalationService {
     private com.sitemonitor.service.dbquery.DbQueryAlertRowsService dbQueryAlertRows;
     @Autowired(required = false)
     private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    /** Anahtar kelime izlemesinin özel posta konusu (kw sözleşmesi §8.3) — alan enjeksiyonu; yoksa standart konu. */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.KeywordMonitorRepository keywordMonitorRepo;
     @Autowired(required = false)
     private com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionProfileRepo;
     @Autowired(required = false)
@@ -2438,12 +2441,29 @@ public class EscalationService {
                 Object url = ctx.get("url");
                 Object kw = ctx.get("keyword");
                 if (url != null && kw != null) {
+                    // B1 (kw sözleşmesi §8.1): ileti GÖZLEMDEN — sayfa açılamadıysa "0 kez bulundu" yazılmaz.
+                    String reason = str(ctx.get("failure_reason"));
+                    String detail = str(ctx.get("failure_detail"));
+                    Object err = ctx.get("last_error") != null ? ctx.get("last_error") : ctx.get("error");
+                    if (com.sitemonitor.service.keyword.KeywordMailText.requestFailed(reason, err)) {
+                        String why = detail != null ? detail : (str(err) != null ? str(err) : "sayfa yanıtı alınamadı.");
+                        return "KRİTİK: " + url + " sayfası açılamadı — " + why
+                                + " Ardışık doğrulama denemeleri başarısız oldu. "
+                                + "Sayfa yeniden açılıp koşul sağlandığında alarm otomatik kapanacaktır.";
+                    }
+                    if (detail != null && reason != null && KEYWORD_NON_CONDITION_REASONS.contains(reason)) {
+                        // Durum kodu / son URL / yönlendirme / gövde nedenli DOWN: "koşul sağlanmıyor" demek yanıltıcı olurdu.
+                        return "KRİTİK: " + url + " içerik doğrulaması başarısız — " + detail
+                                + " Ardışık doğrulama denemeleri başarısız oldu. "
+                                + "Sorun giderildiğinde alarm otomatik kapanacaktır.";
+                    }
                     String op = ctx.get("operator") != null ? ctx.get("operator").toString() : "GTE";
                     int n = ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
                     Object occ = ctx.get("occurrences");
                     String occPart = occ != null ? " Şu an " + occ + " kez bulundu." : "";
                     return "KRİTİK: " + url + " sayfasında \"" + kw + "\" " +
                             KeywordCheckerService.opPhrase(op, n) + " bulunmalı; koşul sağlanmıyor." + occPart +
+                            (detail != null ? " Neden: " + detail : "") +
                             " Ardışık doğrulama denemeleri başarısız oldu. " +
                             "Koşul yeniden sağlandığında alarm otomatik kapanacaktır.";
                 }
@@ -3315,6 +3335,10 @@ public class EscalationService {
         DbQueryMailParts dbqStep = isDbQuery(type) ? dbQueryMailParts(event.getId(), type, level, mailCtx) : null;
         if (dbqStep != null && dbqStep.subject() != null)
             subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + dbqStep.subject();
+        if (TYPE_KEYWORD.equals(type)) {   // kw sözleşmesi §8.3 (E3): özel konu eskalasyon adımında da
+            String kwStep = keywordMailSubject(mailCtx, level);
+            if (kwStep != null) subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + kwStep;
+        }
         String body = event.getMessage() != null && !event.getMessage().isBlank()
                 ? event.getMessage() : buildMessage(domain, type, level, days);
         String message = escalationStepNote(delayMinutes) + "\n\n" + body;
@@ -3652,6 +3676,40 @@ public class EscalationService {
         if (com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(kind))
             return Boolean.FALSE.equals(r[3]) || com.sitemonitor.model.DbQueryCheck.STATUS_FAIL.equals(r[1]);
         return kind.equals(r[1]) && !Boolean.FALSE.equals(r[3]);
+    }
+
+    /** Keyword alarm iletisinde kelime koşulundan BAŞKA nedenler (kw sözleşmesi §8.1) — ileti "koşul sağlanmıyor" demez. */
+    static final java.util.Set<String> KEYWORD_NON_CONDITION_REASONS = java.util.Set.of(
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.HTTP_STATUS,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.FINAL_URL_MISMATCH,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.REDIRECT_BLOCKED,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.REDIRECT_NOT_FOLLOWED,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.EMPTY_BODY,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.BODY_TOO_SMALL,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.BODY_TOO_LARGE,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.SCOPE_NOT_FOUND,
+            com.sitemonitor.service.keyword.KeywordFailureClassifier.SCOPE_INVALID);
+
+    /**
+     * Anahtar kelime izlemesinin ÖZEL posta konusu (kw sözleşmesi §8.3, E3) — izlemenin {@code mail_subject_template}'i doluysa
+     * şablondan, değilse null (çağıran standart konuyu kurar). İzleme CANLI okunur (şablon değişikliği hemen geçerli); okunamazsa
+     * standart konu. Yalnız KEYWORD türünde çağrılır (çözüm postası standart konuda kalır).
+     */
+    String keywordMailSubject(Map<String, Object> ctx, String level) {
+        if (keywordMonitorRepo == null || ctx == null) return null;
+        Long monitorId = ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
+        if (monitorId == null) return null;
+        try {
+            com.sitemonitor.model.KeywordMonitor m = keywordMonitorRepo.findById(monitorId).orElse(null);
+            if (m == null || !com.sitemonitor.service.keyword.KeywordMailSubject.hasTemplate(m.getMailSubjectTemplate())) return null;
+            String at = str(ctx.get("first_failure_at"));
+            String time = formatIstanbulLong(at != null ? at : ISO.format(java.time.Instant.now()));
+            return com.sitemonitor.service.keyword.KeywordMailSubject.render(m.getMailSubjectTemplate(),
+                    com.sitemonitor.service.keyword.KeywordMailSubject.values(ctx, levelWordTr(level), time));
+        } catch (Exception e) {
+            log.debug("Keyword posta konusu şablonu okunamadı ({}): {}", monitorId, e.toString());
+            return null;
+        }
     }
 
     /** Konu yer tutucu değerleri ({@link com.sitemonitor.service.dbquery.DbQueryMailSubject}). */
@@ -4036,7 +4094,10 @@ public class EscalationService {
         // Veritabanı sorgu izlemesi (2026-10-31): canlı izleme / bağlantı bilgisi, alarm anındaki satırlar ve isteğe bağlı
         // ÖZEL konu şablonu. Satırlar YALNIZ gönderilen postaya girer (aşağıda sendCtx); günlüğe yazılan gövde satırsızdır.
         DbQueryMailParts dbqMail = isDbQuery(alertType) ? dbQueryMailParts(alertEventId, alertType, level, certContext) : null;
+        // Anahtar kelime izlemesinin özel konusu (kw sözleşmesi §8.3, E3) — açılış / eskalasyon / yeniden uyarı / elle gönderim
+        String kwSubject = TYPE_KEYWORD.equals(alertType) ? keywordMailSubject(certContext, level) : null;
         String subject = dbqMail != null && dbqMail.subject() != null ? subjectPrefix + dbqMail.subject()
+                : kwSubject != null ? subjectPrefix + kwSubject
                 : subjectPrefix + "[Site Monitor] " + daysSeg + " · "
                   + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
@@ -4981,7 +5042,10 @@ public class EscalationService {
                                  // Veritabanı sorgu izlemesi (2026-10-31): çözüm postası "ne için / nerede / ne ihlal edildi"
                                  // satırları. SATIR VERİSİ ve sorgu metni BURADA YOK — alarm olayına yazılmaz.
                                  "purpose", "profile_name", "db_type", "rule_summary", "dbquery_status", "breach_level",
-                                 "failure_reason");
+                                 "failure_reason",
+                                 // Anahtar kelime izlemesi (kw sözleşmesi §8.1, E1): yeniden gönderim / eskalasyon adımı postası neden +
+                                 // ipuçlarını anlık görüntüden okur. "excerpt" BİLİNÇLİ YOK: sayfa alıntısı yalnız açılış postasında.
+                                 "failure_detail", "hints");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

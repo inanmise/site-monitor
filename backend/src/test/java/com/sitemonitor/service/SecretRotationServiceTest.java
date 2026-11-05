@@ -42,7 +42,7 @@ class SecretRotationServiceTest {
         jdbc.execute("CREATE TABLE ldap_settings (id BIGINT PRIMARY KEY, bind_password_enc TEXT, updated_at VARCHAR(30))");
         jdbc.execute("CREATE TABLE smtp_settings (id BIGINT PRIMARY KEY, password_enc TEXT, updated_at VARCHAR(30))");
         jdbc.execute("CREATE TABLE http_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), basic_auth_pass_enc TEXT, custom_headers_enc TEXT)");
-        jdbc.execute("CREATE TABLE keyword_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), custom_headers_enc TEXT)");
+        jdbc.execute("CREATE TABLE keyword_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), custom_headers_enc TEXT, basic_auth_pass_enc TEXT)");
         jdbc.execute("CREATE TABLE pagespeed_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), basic_auth_pass_enc TEXT, custom_headers_enc TEXT)");
         jdbc.execute("CREATE TABLE scripted_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), env_json TEXT)");
         jdbc.execute("CREATE TABLE scripted_script_versions (id BIGINT PRIMARY KEY, version VARCHAR(40), env_json TEXT)");
@@ -140,12 +140,25 @@ class SecretRotationServiceTest {
     @Test
     @DisplayName("koşullu yazma: okunan değer arada değiştiyse satır ezilmez")
     void conditionalWrite() {
-        jdbc.update("INSERT INTO keyword_monitors VALUES (3, 'K', ?)", oldCipher.encrypt("H: 1"));
+        jdbc.update("INSERT INTO keyword_monitors (id, name, custom_headers_enc) VALUES (3, 'K', ?)", oldCipher.encrypt("H: 1"));
         SecretRotationService.Location loc = SecretRotationService.LOCATIONS.stream()
                 .filter(l -> l.id().equals("keyword_headers")).findFirst().orElseThrow();
         assertThat(svc.write(loc, 3, "enc:v1:baskasi-yazdi", rotating.encrypt("H: 2"))).isFalse();
         assertThat(oldCipher.decrypt(jdbc.queryForObject("SELECT custom_headers_enc FROM keyword_monitors WHERE id = 3", String.class)))
                 .isEqualTo("H: 1");
+    }
+
+    @Test
+    @DisplayName("kw Aşama 1: anahtar kelime Basic auth parolası da döndürülür (önceki anahtar → güncel)")
+    void keywordBasicAuthRotated() {
+        jdbc.update("INSERT INTO keyword_monitors (id, name, basic_auth_pass_enc) VALUES (4, 'KB', ?)", oldCipher.encrypt("pw-kw"));
+        SecretRotationService.Location loc = SecretRotationService.LOCATIONS.stream()
+                .filter(l -> l.id().equals("keyword_basic_auth")).findFirst().orElseThrow();
+        assertThat(svc.count(loc).previous()).isEqualTo(1);
+        svc.reencrypt("admin");
+        assertThat(svc.count(loc).current()).isEqualTo(1);
+        assertThat(rotating.decrypt(jdbc.queryForObject("SELECT basic_auth_pass_enc FROM keyword_monitors WHERE id = 4", String.class)))
+                .isEqualTo("pw-kw");
     }
 
     @Test

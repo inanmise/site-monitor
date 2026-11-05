@@ -48,6 +48,9 @@ public final class KeywordResultMapper {
         res.setBodyTruncated(r.get("body_truncated") instanceof Boolean b ? b : null);
         res.setCharset(cap(str(r.get("charset")), 60));
         res.setVia(cap(str(r.get("via")), 10));
+        // kw sözleşmesi §3.2: çözmede KULLANILAN küme + kapsam (yalnız VISIBLE yazılır — ham kapsam NULL, golden gürültüsü yok)
+        res.setDecodedCharset(cap(str(r.get("decoded_charset")), 60));
+        res.setMatchScope(KeywordText.SCOPE_VISIBLE.equals(str(r.get("match_scope"))) ? KeywordText.SCOPE_VISIBLE : null);
         if (ok) return res;
         // ── Teşhis (yalnız başarısız satır) ──
         String reason = str(r.get("failure_reason"));

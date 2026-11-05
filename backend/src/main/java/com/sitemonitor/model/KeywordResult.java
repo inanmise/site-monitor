@@ -89,6 +89,14 @@ public class KeywordResult {
     @Column(name = "via", length = 10)
     private String via;
 
+    /** Gövdeyi çözmede KULLANILAN karakter kümesi (kw sözleşmesi §3.2) — {@code charset} kolonu BİLDİRİLENİ tutmaya devam eder. */
+    @Column(name = "decoded_charset", length = 60)
+    private String decodedCharset;
+
+    /** Kontrolün kullandığı eşleşme kapsamı — yalnız {@code VISIBLE} iken yazılır (ham kapsam NULL). */
+    @Column(name = "match_scope", length = 10)
+    private String matchScope;
+
     /** "Neden bulunamadı" ipucu kodları — küçük JSON dizi ({@code ["CASE_MISMATCH"]}); API'de {@code hints} listesi. */
     @Column(name = "hints", length = 500)
     @com.fasterxml.jackson.annotation.JsonIgnore
