@@ -698,7 +698,9 @@ export const api = {
     update: (id, body) => request(`/alert-forwards/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     remove: (id) => request(`/alert-forwards/${encodeURIComponent(id)}`, { method: 'DELETE', withStatus: true }),
     monitors: (team) => request(`/alert-forwards/monitors?team=${encodeURIComponent(team)}`, { withStatus: true }),
-    forMonitor: (type, id) => request(`/alert-forwards/for-monitor?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`, { withStatus: true }),
+    // cert (envanter kaydı) için kimlik yerine alan adı da verilebilir: forMonitor('cert', null, 'ornek.com')
+    forMonitor: (type, id, domain) => request(`/alert-forwards/for-monitor?type=${encodeURIComponent(type)}${
+      id != null ? `&id=${encodeURIComponent(id)}` : ''}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`, { withStatus: true }),
   },
   /** Çevrimiçi kullanıcı özeti (2026-10-02) — oturum açmış HERKES; yalnız sayılar (toplam + birincil takıma göre). */
   presence: {
