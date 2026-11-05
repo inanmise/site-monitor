@@ -4807,8 +4807,6 @@ export const EN = {
   'act.tl.mon.noOutage': "No outage in this range.",
   'act.tl.mon.openAlertFor': "Open the details of alert #{0}",
   'act.tl.mon.firstActivity': "First activity",
-  'act.tl.mon.showAll': "Show all ({0})",
-  'act.tl.mon.showLess': "Show less",
   'act.tl.mon.chart.title': "Response time",
   'act.tl.mon.chart.desc': "Average and highest response time (ms); bars count the failed checks.",
   'act.tl.mon.chart.empty': "No response time measurement in this range.",

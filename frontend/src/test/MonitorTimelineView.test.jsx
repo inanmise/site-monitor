@@ -184,6 +184,27 @@ describe('MonitorTimelineView', () => {
     expect(screen.getByText(new RegExp(EN['act.tl.mon.merged']))).toBeInTheDocument()
   })
 
+  it('kesinti listesi sunucuda sınırsız → "Tümünü göster" değil standart sayfalama: 30 kesintide 25 + çubuk, 2. sayfada 5', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      from: `2026-11-04T${String(i % 24).padStart(2, '0')}:${String(i).padStart(2, '0')}:00`, to: `2026-11-04T${String(i % 24).padStart(2, '0')}:59:00`,
+      duration_s: 60, checks: 1, reason: 'READ_TIMEOUT', first_activity_id: 1000 + i, alert_event_id: null }))
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY, outage_count: 30, outages: many })
+    const { container } = render(<MonitorTimelineView type="HTTP" id={4} onBack={vi.fn()} onOpenActivity={vi.fn()} />)
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"][data-state="ok"]')).not.toBeNull())
+    expect(container.querySelectorAll('[data-slot="act-tl-outage"]')).toHaveLength(25)
+    expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: EN['pg.next'] }))
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="act-tl-outage"]')).toHaveLength(5))
+  })
+
+  it('kısa kesinti listesinde sayfalama çubuğu çizilmez', async () => {
+    api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY })
+    const { container } = render(<MonitorTimelineView type="HTTP" id={4} onBack={vi.fn()} onOpenActivity={vi.fn()} />)
+    await waitFor(() => expect(container.querySelector('[data-slot="act-tl-view"][data-state="ok"]')).not.toBeNull())
+    expect(container.querySelectorAll('[data-slot="act-tl-outage"]')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: EN['pg.next'] })).toBeNull()
+  })
+
   it('kontrol yoksa erişilebilirlik "—" ve nötr (asla yeşil); grafik boş durum; tavan uyarısı', async () => {
     api.getActivityTimeline.mockResolvedValue({ success: true, ...BODY, checks: 0, scheduled_checks: 0, availability_pct: null, mttr_s: null,
       longest_outage_s: null, outage_count: 0, periods: [], outages: [], series: [], truncated: true })

@@ -24,6 +24,9 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import DateTimeField from '../../ui/DateTimeField.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
+import PaginationBar from '../../ui/PaginationBar.jsx'
+import { usePagination } from '../../../hooks/usePagination.js'
+import { PAGINATION_PRESETS } from '../../../hooks/paginationPresets.js'
 import { ReasonBadge, TypeBadge } from '../ActivityParts.jsx'
 import { durationText } from '../related/relatedModel.js'
 import { tn } from '../activityModel.js'
@@ -42,7 +45,6 @@ const STATE_INK = {
   up: 'text-success', down: 'text-destructive', warn: 'text-amber-700 dark:text-amber-300', unknown: 'text-muted-foreground',
 }
 const TONE_INK = { good: 'text-success', warn: 'text-amber-700 dark:text-amber-300', bad: 'text-destructive', unknown: 'text-muted-foreground' }
-const OUTAGE_PAGE = 10
 
 /**
  * İzleme zaman çizelgesi görünümü (2026-11-05, D) — `?tab=activity&amon=<TYPE>:<id>`. Aktivite akışının kontrol
@@ -380,9 +382,11 @@ function OutageList({ outages, t, onOpenActivity }) {
   // Alarm düğmesi yalnız alarm okuma izniyle (inceleme FR D4: izinsiz kullanıcı boş / 403 sayfaya gidiyordu); izin
   // yoksa numara düz metin olarak kalır (bilgi kaybolmaz)
   const canOpenAlarm = usePermissions().canView('alerts.read')
-  const [all, setAll] = useState(false)
   const sorted = useMemo(() => [...(outages || [])].sort((a, b) => (parseTime(b.from) || 0) - (parseTime(a.from) || 0)), [outages])
-  const shown = all ? sorted : sorted.slice(0, OUTAGE_PAGE)
+  // Kesinti listesi sunucuda üstten sınırlı değil (çizelge ≤ 50 000 satır) → "Tümünü göster" açılımı değil, standart
+  // sayfalama (paginationBase kapısı). Çubuk yalnız en küçük sayfa boyutunu aşan listede.
+  const pager = usePagination(sorted, { listKey: 'activity-timeline-outages', preset: 'panel' })
+  const shown = pager.pageItems
   return (
     <Card className="min-w-0 gap-3 py-4 shadow-xs">
       <CardHeader className="px-4">
@@ -440,11 +444,7 @@ function OutageList({ outages, t, onOpenActivity }) {
             })}
           </ul>
         )}
-        {sorted.length > OUTAGE_PAGE && (
-          <Button type="button" variant="ghost" size="sm" className="self-start pointer-coarse:h-10" onClick={() => setAll((x) => !x)}>
-            {all ? t('act.tl.mon.showLess') : t('act.tl.mon.showAll', sorted.length)}
-          </Button>
-        )}
+        {sorted.length > PAGINATION_PRESETS.panel.sizeOptions[0] && <PaginationBar {...pager} />}
       </CardContent>
     </Card>
   )

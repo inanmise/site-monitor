@@ -4810,8 +4810,6 @@ export const TR = {
   'act.tl.mon.noOutage': "Bu aralıkta kesinti yok.",
   'act.tl.mon.openAlertFor': "Alarm #{0} ayrıntısını aç",
   'act.tl.mon.firstActivity': "İlk aktivite",
-  'act.tl.mon.showAll': "Tümünü göster ({0})",
-  'act.tl.mon.showLess': "Daha az göster",
   'act.tl.mon.chart.title': "Yanıt süresi",
   'act.tl.mon.chart.desc': "Ortalama ve en yüksek yanıt süresi (ms); sütunlar başarısız kontrol sayısı.",
   'act.tl.mon.chart.empty': "Bu aralıkta yanıt süresi ölçümü yok.",
