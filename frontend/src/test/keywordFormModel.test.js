@@ -4,7 +4,7 @@ import {
   keywordPayload, keywordTestPayload, matchActiveCount, renderSubject, requestActiveCount, sectionsForErrors,
   serverFieldErrors, stableRules, statusModeOf, statusPatternError, storedSecretsOf, subjectError, subjectParts,
   unknownPlaceholders, userAgentError, validateKeywordForm,
-  hasRenderableField, originChangeProblems, originOf, restoreNotices, sameOrigin, savedSecretsBlocked,
+  originChangeProblems, originOf, restoreNotices, sameOrigin, savedSecretsBlocked,
 } from '../components/keyword/keywordFormModel.js'
 
 /**
