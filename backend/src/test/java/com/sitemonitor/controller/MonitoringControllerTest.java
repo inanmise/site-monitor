@@ -7825,6 +7825,86 @@ class MonitoringControllerTest {
                 .andExpect(header().exists("Retry-After"));
     }
 
+    @Test
+    @DisplayName("dbq2 D1: eşik denemesi akıllı kural geri bakışı ÇALIŞTIRMA SAYISIYLA (canlıyla aynı); satır tavanı EN ESKİ kısmı keser")
+    void dbquery_backtest_smartLookbackByRunsAndCapCutsOldest() throws Exception {
+        var mon = dbqMonitor(95L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"window\":10,\"min_samples\":5}]");
+        when(dbQueryMonitorRepo.findById(95L)).thenReturn(Optional.of(mon));
+        when(dbQueryCheckRepo.backtestRunsBefore(eq(95L), anyString(), any())).thenReturn(
+                List.of("2026-09-30T23:55:00", "2026-09-30T23:50:00", "2026-01-02T00:00:00"));
+        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of());
+        when(dbQueryCheckRepo.backtestPage(eq(95L), anyString(), anyLong(), anyInt())).thenReturn(List.of());
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        MockHttpSession owner = dbqUser(1L);
+        owner.setAttribute("username", "dbq2-d1-backtest");
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json).content("{\"days\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.truncated").value(false));
+        // Pencere başından önceki canlı okuma kadar (2 × pencere = 20) zamanlanmış çalıştırma istenir; en eskisinden okunur
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pg =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(dbQueryCheckRepo).backtestRunsBefore(eq(95L), anyString(), pg.capture());
+        assertThat(pg.getValue().getPageSize()).isEqualTo(20);
+        assertThat(pg.getValue().getOffset()).isZero();
+        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-01-02T00:00:00"), eq(0L), anyInt());
+        // Tavan konumu: 150 000. en yeni satır
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> cp =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(dbQueryCheckRepo).backtestNewestFrom(eq(95L), eq("2026-01-02T00:00:00"), cp.capture());
+        assertThat(cp.getValue().getOffset()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_MAX_ROWS - 1L);
+        assertThat(cp.getValue().getPageSize()).isEqualTo(1);
+
+        // Tavandan fazla satır: okuma tavan konumundaki satırdan başlar (EN YENİ satırlar değerlendirilir), truncated
+        org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
+        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of("2026-10-30T12:00:00"));
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json).content("{\"days\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.truncated").value(true));
+        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-10-30T12:00:00"), eq(0L), anyInt());
+
+        // Akıllı kural yoksa sayıyla geri bakış yok
+        org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
+        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json)
+                        .content("{\"days\":7,\"rules\":[{\"id\":\"r\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":5}]}"))
+                .andExpect(status().isOk());
+        verify(dbQueryCheckRepo, never()).backtestRunsBefore(anyLong(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("dbq2 O1: hiç dolamayacak taban kayıtta 400 rules[N].min_samples; günü bölmeyen aralık + mevsim → engellemeyen ANOMALY_SEASON_RARE uyarısı")
+    void dbquery_create_smartRuleRetentionAndSeasonWarning() throws Exception {
+        when(appSettings.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));
+        when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(78L);
+            return m;
+        });
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String base = "{\"name\":\"Haftalık sipariş\",\"team_id\":1,\"profile_id\":5,\"group_name\":\"Sipariş\","
+                + "\"tags\":\"veritabanı\",\"purpose\":\"Haftalık sipariş düzeyini izler\","
+                + "\"sql_text\":\"SELECT COUNT(*) AS adet FROM orders\",";
+        // haftalık, en az 26 örnek: 180 gün saklamaya 25 hafta sığar → kaydedilmez
+        mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN")).contentType(json)
+                        .content(base + "\"schedule_mode\":\"INTERVAL\",\"interval_seconds\":3600,"
+                                + "\"rules\":[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"season\":\"weekly\","
+                                + "\"window\":40,\"min_samples\":26}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fields['rules[0].min_samples']").value(org.hamcrest.Matchers.containsString("25 hafta")));
+        verify(dbQueryMonitorRepo, never()).save(any());
+
+        // günlük mevsim + 5 saatlik aralık: kaydedilir, uyarı döner
+        mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN")).contentType(json)
+                        .content(base + "\"schedule_mode\":\"INTERVAL\",\"interval_seconds\":18000,"
+                                + "\"rules\":[{\"id\":\"a\",\"kind\":\"ANOMALY\",\"column\":\"adet\",\"season\":\"daily\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.warnings[?(@.code == 'ANOMALY_SEASON_RARE')].rule_ids[0]").value("a"))
+                .andExpect(jsonPath("$.data.warnings[?(@.code == 'ANOMALY_SEASON_RARE')].interval_seconds").value(18000));
+    }
+
     // ── Sentetik izleme sürümü (2026-10-31, k6 inceleme A1 / A4 / A6 / B1 / D1) ─────────────────────────────────
 
     @org.junit.jupiter.api.Nested

@@ -49,7 +49,8 @@ import static org.mockito.Mockito.when;
 /**
  * Akıllı kurallar (dbq2 D) gerçek alarm hattında: zamanlayıcının taraması + GERÇEK çalıştırma motoru (geçmiş H2'deki kontrol
  * satırlarından {@code DbQueryHistory} ile okunur) + GERÇEK MonitoringOutageService (teyit hemen). Olağan dışı değer: taban
- * kurulurken alarm yok; sıçrama teyitle (zinciri başlatan tabanla) alarm AÇAR; değer olağana dönünce kurtarmayla KAPANIR.
+ * kurulurken alarm yok; sıçrama teyitle (zinciri başlatan tabanla) alarm AÇAR; değer olağana dönünce kurtarmayla KAPANIR;
+ * kalıcı düşüşte ihlal satırları tabana girmez — alarm pencere kadar açık kalır, sonra kontrollü uyumla kapanır (Y1).
  * Donmuş değer: dizi uyarıya ulaşınca alarm açılır.
  */
 class SchedulerDbQuerySmartRulesTest {
@@ -206,11 +207,42 @@ class SchedulerDbQuerySmartRulesTest {
         assertThat(cr.actual()).contains("olağan");
 
         openAlarm(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
-        sweep(m);   // 100 → olağan (taban 130'u içerir ama sapma küçük) → kurtarma → kapanır
+        sweep(m);   // 100 → olağan (130 ihlal satırı tabana GİRMEZ — Y1) → kurtarma → kapanır
         verify(esc, times(1)).resolveMonitoringAlertsForDomain(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
         DbQueryCheck after = saved.stream().filter(x -> !Boolean.TRUE.equals(x.getRecheck())).reduce((a, b) -> b).orElseThrow();
-        assertThat(DbQueryEvaluator.fromJson(after.getRuleResultsJson()).get(0).stats().samples())
-                .as("sonraki zamanlanmış taban teyit satırını içermez").isEqualTo(7);
+        DbQueryEvaluator.RuleResult ar = DbQueryEvaluator.fromJson(after.getRuleResultsJson()).get(0);
+        assertThat(ar.stats().samples()).as("taban: teyit satırı ve 130 ihlal satırı hariç 6 örnek").isEqualTo(6);
+        assertThat(ar.stats().mean()).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("Y1 kalıcı düşüş (100 → 0): ihlal satırları tabana girmez — alarm pencere (10) boyunca AÇIK kalır, 11.'de kontrollü uyumla kapanır")
+    void permanentDropStaysOpenUntilAdaptation() {
+        String name = "Durmuş sipariş akışı";
+        DbQueryMonitor m = monitor(11L, name, "[{\"id\":\"r\",\"label\":\"Sipariş\",\"kind\":\"ANOMALY\","
+                + "\"column\":\"adet\",\"window\":10,\"min_samples\":5}]");
+        for (int v : new int[]{100, 102, 98, 101, 99, 100, 102, 98, 101, 99, 100, 101}) values.add(BigDecimal.valueOf(v));
+        values.add(BigDecimal.ZERO);   // son değer tekrar eder: iş durdu, değer 0'da KALIR
+        for (int i = 0; i < 12; i++) sweep(m);
+        verify(esc, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+
+        sweep(m);   // ilk 0 → kritik → teyit (0) → alarm açılır
+        verify(esc, times(1)).processConfirmedOutage(eq(name), eq(EscalationService.TYPE_DBQUERY_THRESHOLD), anyString(), any());
+        openAlarm(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
+        for (int i = 2; i <= 10; i++) {
+            sweep(m);   // 2.–10. sıfır: taban hâlâ eski düzey → kritik, alarm kapanmaz
+            DbQueryCheck last = saved.stream().filter(x -> !Boolean.TRUE.equals(x.getRecheck())).reduce((a, b) -> b).orElseThrow();
+            assertThat(last.getStatus()).as("%d. sıfır", i).isEqualTo("BREACH");
+            assertThat(last.getBreachLevel()).isEqualTo("CRITICAL");
+            assertThat(DbQueryEvaluator.fromJson(last.getRuleResultsJson()).get(0).stats().mean()).isBetween(99.0, 101.0);
+        }
+        verify(esc, never()).resolveMonitoringAlertsForDomain(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
+
+        sweep(m);   // 11. sıfır: 10 ardışık ihlal = pencere → yeni düzey olağan → kurtarma → kapanır
+        DbQueryCheck adapted = saved.stream().filter(x -> !Boolean.TRUE.equals(x.getRecheck())).reduce((a, b) -> b).orElseThrow();
+        assertThat(adapted.getStatus()).isEqualTo("OK");
+        assertThat(DbQueryEvaluator.fromJson(adapted.getRuleResultsJson()).get(0).stats().mean()).isEqualTo(0.0);
+        verify(esc, times(1)).resolveMonitoringAlertsForDomain(name, EscalationService.TYPE_DBQUERY_THRESHOLD);
     }
 
     @Test

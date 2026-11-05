@@ -405,24 +405,30 @@ class DbQuerySmartRulesTest {
         }
 
         @Test
-        @DisplayName("plan: mevsimsiz anomali / donma en yeni N satır; günlük + haftalık hedef günleri tekil; ikisi birlikte ≤ 500")
+        @DisplayName("plan: mevsimsiz anomali pencerenin iki katı / donma dizi kadar en yeni satır; günlük + haftalık hedef günleri (pencerenin iki katı) tekil; dallar kendi sınırında")
         void plan() {
             DbQueryHistory.Plan p1 = DbQueryHistory.plan(List.of(rule("kind", "ANOMALY", "column", "a", "window", 40),
                     rule("id", "f", "kind", "FROZEN", "column", "a", "runs_warning", 6, "runs_critical", 60)), ref, 300);
-            assertThat(p1.recentLimit()).isEqualTo(59);
+            assertThat(p1.recentLimit()).as("anomali 2 × 40 = 80 > donma 59").isEqualTo(80);
             assertThat(p1.ranges()).isEmpty();
             DbQueryHistory.Plan p2 = DbQueryHistory.plan(List.of(
                     rule("kind", "ANOMALY", "column", "a", "season", "daily", "window", 10),
                     rule("id", "w", "kind", "ANOMALY", "column", "a", "season", "weekly", "window", 10)), ref, 300);
             assertThat(p2.recentLimit()).isZero();
-            assertThat(p2.ranges()).hasSize(10 + 9);   // 1..10 gün ∪ 7, 14, …, 70 (7 iki kez sayılmaz)
-            assertThat(p2.seasonalLimit()).isEqualTo(DbQueryHistory.MAX_ROWS);
+            assertThat(p2.ranges()).hasSize(20 + 18);   // 1..20 gün ∪ 7, 14, …, 140 (7 ve 14 iki kez sayılmaz)
+            assertThat(p2.seasonalLimit()).isEqualTo(DbQueryHistory.MAX_SEASONAL);
             long[] first = p2.ranges().get(0);
             assertThat(first[0]).isEqualTo(ref.toEpochMilli() - 86_400_000L - 150_000 - 1_000);
             assertThat(first[1]).isEqualTo(ref.toEpochMilli() - 86_400_000L + 150_000 + 1_000);
             DbQueryHistory.Plan p3 = DbQueryHistory.plan(List.of(rule("kind", "ANOMALY", "column", "a", "window", 200),
                     rule("id", "d", "kind", "ANOMALY", "column", "a", "season", "daily", "window", 200)), ref, 60);
+            assertThat(p3.recentLimit()).isEqualTo(DbQueryHistory.MAX_RECENT);
+            assertThat(p3.seasonalLimit()).as("mevsimsel dal yakın dalın payını yemez (D6)").isEqualTo(DbQueryHistory.MAX_SEASONAL);
             assertThat(p3.recentLimit() + p3.seasonalLimit()).isEqualTo(DbQueryHistory.MAX_ROWS);
+            // Haftalık hedefler en çok MAX_SEASONAL_DAYS gün geriye (saklamadan eski hedef zaten boş)
+            DbQueryHistory.Plan pw = DbQueryHistory.plan(List.of(rule("kind", "ANOMALY", "column", "a", "season", "weekly",
+                    "window", 200)), ref, 300);
+            assertThat(pw.ranges()).hasSize(DbQueryHistory.MAX_SEASONAL_DAYS / 7);
             assertThat(DbQueryHistory.plan(List.of(rule("kind", "ROW_COUNT", "operator", "GT", "warning", 1)), ref, 60).empty())
                     .isTrue();
             assertThat(DbQueryHistory.tolerance(60)).isEqualTo(30_000);
@@ -430,7 +436,7 @@ class DbQuerySmartRulesTest {
         }
 
         @Test
-        @DisplayName("yakın geçmiş: sorgu / tanım değişiminde durur (reset), kural eksikse durur, değersiz satır anomalide örnek değil, donmada kırılma")
+        @DisplayName("yakın geçmiş: sorgu / tanım değişiminde durur (reset), kural sonucu olmayan satır atlanır (D3), değersiz satır anomalide örnek değil, donmada kırılma")
         void recentWalk() {
             Rule a = rule("id", "r", "kind", "ANOMALY", "column", "adet", "window", 10);
             Rule f = rule("id", "r", "kind", "FROZEN", "column", "adet", "runs_warning", 3, "runs_critical", 8);
@@ -452,15 +458,17 @@ class DbQuerySmartRulesTest {
             History other = DbQueryHistory.histories(List.of(a), List.of(row(9, ref, "h2", fp, 1.0, "r")), plan, "h").get("r");
             assertThat(other.values()).isEmpty();
             assertThat(other.reset()).isTrue();
-            // kural eklenmeden önceki satır → dur, sıfırlama değil (yeni kural)
+            // kural sonucu olmayan satır (kural sonradan eklendi / eski pod) → atlanır, sıfırlama değil
             History added = DbQueryHistory.histories(List.of(a), List.of(row(9, ref, "h", fp, 1.0, "r"),
                     row(8, ref.minusSeconds(60), "h", null, null, null)), plan, "h").get("r");
             assertThat(added.values()).containsExactly(1.0);
             assertThat(added.reset()).isFalse();
-            // pencere sınırı
+            // yürüme sınırı: anomali pencerenin iki katı satır (ihlal satırları dışlanır — Y1), donma runsMax − 1
             List<DbQueryHistory.Row> many = new ArrayList<>();
             for (int i = 0; i < 30; i++) many.add(row(100 - i, ref.minusSeconds(60L * (i + 1)), "h", fp, (double) i, "r"));
-            assertThat(DbQueryHistory.histories(List.of(a), many, plan, "h").get("r").values()).hasSize(10);
+            History hm = DbQueryHistory.histories(List.of(a), many, plan, "h").get("r");
+            assertThat(hm.values()).hasSize(20);
+            assertThat(hm.complete()).as("daha eski satırlar var").isFalse();
             assertThat(DbQueryHistory.histories(List.of(f), many, plan, "h").get("r").values()).as("donma: runsMax − 1")
                     .hasSize(7);
         }
@@ -492,6 +500,56 @@ class DbQuerySmartRulesTest {
             History hw = DbQueryHistory.histories(List.of(w), wrows, DbQueryHistory.plan(List.of(w), ref, 300), "h").get("r");
             assertThat(hw.values()).containsExactly(7.0, 14.0);
             assertThat(hw.reset()).isTrue();
+        }
+
+        @Test
+        @DisplayName("D3: eski pod satırı (kural sonucu yok) yakın / donma / mevsimsel yürüyüşü SIFIRLAMAZ — atlanır, devam edilir")
+        void oldPodRowIsSkipped() {
+            Rule a = rule("id", "r", "kind", "ANOMALY", "column", "adet", "window", 10);
+            Rule f = rule("id", "r", "kind", "FROZEN", "column", "adet", "runs_warning", 3, "runs_critical", 8);
+            String fp = DbQueryRules.fingerprint(a);
+            List<DbQueryHistory.Row> rows = List.of(
+                    row(9, ref.minusSeconds(60), "h", fp, 5.0, "r"),
+                    row(8, ref.minusSeconds(120), "h", null, null, null),     // eski pod: kural sonucu yok
+                    row(7, ref.minusSeconds(180), "h", fp, 5.0, "r"),
+                    row(6, ref.minusSeconds(240), "h", fp, 5.0, "r"));
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(a, f), ref, 60);
+            History ha = DbQueryHistory.histories(List.of(a), rows, plan, "h").get("r");
+            assertThat(ha.values()).containsExactly(5.0, 5.0, 5.0);
+            assertThat(ha.reset()).isFalse();
+            History hf = DbQueryHistory.histories(List.of(f), rows, plan, "h").get("r");
+            assertThat(hf.values()).as("donma dizisi eski pod satırında kırılmaz").containsExactly(5.0, 5.0, 5.0);
+            assertThat(hf.ended()).isFalse();
+            RuleResult w = eval(f, 5, hf).results().get(0);
+            assertThat(w.stats().sameRuns()).isEqualTo(4);
+            assertThat(w.level()).isEqualTo("WARNING");
+
+            Rule d = rule("id", "r", "kind", "ANOMALY", "column", "adet", "season", "daily", "window", 10);
+            long day = 86_400L;
+            History hd = DbQueryHistory.histories(List.of(d), List.of(
+                    row(30, ref.minusSeconds(day), "h", fp, 1.0, "r"),
+                    row(29, ref.minusSeconds(2 * day), "h", null, null, null),
+                    row(28, ref.minusSeconds(3 * day), "h", fp, 3.0, "r")), DbQueryHistory.plan(List.of(d), ref, 300), "h")
+                    .get("r");
+            assertThat(hd.values()).containsExactly(1.0, 3.0);
+        }
+
+        @Test
+        @DisplayName("D6: mevsimsel tavan EN ESKİ hedefleri keser — kesim anından eski hedefler okunmamış (geçmiş tam değil)")
+        void seasonalCutoffDropsOldestTargets() {
+            Rule d = rule("id", "r", "kind", "ANOMALY", "column", "adet", "season", "daily", "window", 10, "min_samples", 5);
+            String fp = DbQueryRules.fingerprint(d);
+            long day = 86_400L;
+            List<DbQueryHistory.Row> rows = new ArrayList<>();
+            for (int k = 1; k <= 5; k++) rows.add(row(100 - k, ref.minusSeconds(day * k), "h", fp, (double) k, "r"));
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(d), ref, 300);
+            History full = DbQueryHistory.histories(List.of(d), rows, plan, "h").get("r");
+            assertThat(full.values()).containsExactly(1.0, 2.0, 3.0, 4.0, 5.0);
+            assertThat(full.complete()).isTrue();
+            // tavan 3. günün satırında kesti: 3. gün ve eskisi okunmamış sayılır
+            History cut = DbQueryHistory.histories(List.of(d), rows.subList(0, 3), plan, "h", ref.minusSeconds(3 * day)).get("r");
+            assertThat(cut.values()).containsExactly(1.0, 2.0);
+            assertThat(cut.complete()).isFalse();
         }
     }
 
@@ -578,17 +636,38 @@ class DbQuerySmartRulesTest {
         }
 
         @Test
-        @DisplayName("geriye okuma: akıllı kurallar aralığa göre; mevsimsel gün / hafta; en çok 60 gün")
+        @DisplayName("D1 geriye okuma: mevsimsiz akıllı kurallar canlıyla AYNI çalıştırma SAYISI; mevsimsel gün / hafta zamanla (pencerenin iki katı)")
         void lookback() {
-            assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "ANOMALY", "column", "a", "window", 30)), 300))
-                    .isEqualTo(30 * 300_000L * 3 / 2 + 3_600_000L);
+            Rule none = rule("kind", "ANOMALY", "column", "a", "window", 30);
+            Rule frozen = rule("id", "f", "kind", "FROZEN", "column", "a", "runs_warning", 10);
+            assertThat(DbQueryBacktest.lookbackMs(List.of(none), 300)).as("zaman değil sayı").isZero();
+            assertThat(DbQueryBacktest.lookbackMs(List.of(frozen), 60)).isZero();
+            assertThat(DbQueryBacktest.lookbackRuns(List.of(none))).as("canlının yakın sınırı: 2 × 30")
+                    .isEqualTo(DbQueryHistory.plan(List.of(none), t0, 300).recentLimit()).isEqualTo(60);
+            assertThat(DbQueryBacktest.lookbackRuns(List.of(frozen))).isEqualTo(9);
+            assertThat(DbQueryBacktest.lookbackRuns(List.of(none, frozen))).isEqualTo(60);
             assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "ANOMALY", "column", "a", "season", "daily",
-                    "window", 30)), 300)).isEqualTo(30 * 86_400_000L + 31 * 60_000L);
+                    "window", 30)), 300)).isEqualTo(60 * 86_400_000L + 31 * 60_000L);
             assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "ANOMALY", "column", "a", "season", "weekly",
-                    "window", 30)), 300)).isEqualTo(DbQueryBacktest.MAX_SMART_LOOKBACK_MS);
-            assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "FROZEN", "column", "a", "runs_warning", 10)), 60))
-                    .isEqualTo(10 * 60_000L * 3 / 2 + 3_600_000L);
+                    "window", 30)), 300)).isEqualTo(420 * 86_400_000L + 31 * 60_000L);
+            assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "ANOMALY", "column", "a", "season", "weekly",
+                    "window", 200)), 300)).isLessThanOrEqualTo(DbQueryBacktest.MAX_SMART_LOOKBACK_MS);
+            assertThat(DbQueryBacktest.lookbackRuns(List.of(rule("kind", "ANOMALY", "column", "a", "season", "daily",
+                    "window", 30)))).as("mevsimsel kural sayıyla okumaz").isZero();
             assertThat(DbQueryBacktest.lookbackMs(List.of(rule("kind", "ROW_COUNT", "operator", "GT", "warning", 1)), 60)).isZero();
+        }
+
+        @Test
+        @DisplayName("D3: eski pod satırı (kural sonucu yok) eşik denemesinde de tabanı sıfırlamaz")
+        void oldPodRowDoesNotResetReplay() {
+            Rule an = rule("id", "r", "kind", "ANOMALY", "column", "adet", "window", 10, "min_samples", 5);
+            DbQueryBacktest bt = new DbQueryBacktest(List.of(an), "ANY", "h", t0, 300);
+            long id = 1;
+            for (int i = 0; i < 8; i++) bt.accept(stored(id++, t0.plusSeconds(300L * id), an, i % 2 == 0 ? 48 : 52));
+            bt.accept(new DbQueryBacktest.Row(id++, t0.plusSeconds(300L * id), true, "h", List.of()));   // eski pod
+            bt.accept(stored(id++, t0.plusSeconds(300L * id), an, 50));
+            Map<?, ?> pr = (Map<?, ?>) ((List<?>) bt.report(false).get("per_rule")).get(0);
+            assertThat(pr.get("evaluated")).as("6., 7., 8. ve eski pod satırından SONRAKİ satır").isEqualTo(4);
         }
 
         /**
@@ -622,6 +701,7 @@ class DbQuerySmartRulesTest {
                 java.util.Collections.reverse(desc);
                 DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(r), at, (int) step);
                 History h = DbQueryHistory.histories(List.of(r), desc, plan, "h").get("r");
+                RuleResult stored;
                 if (v != null) {
                     RuleResult live = "frozen".equals(mode)
                             ? DbQueryEvaluator.frozenAgainst(r, v, h, null, null, "", false)
@@ -631,9 +711,12 @@ class DbQuerySmartRulesTest {
                         if ("WARNING".equals(live.level())) liveWarn++;
                         if ("CRITICAL".equals(live.level())) liveCrit++;
                     }
+                    // canlı satır CANLI kararı saklar (ihlal bayrağı bundan okunur — Y1)
+                    stored = live.withFingerprint(fp);
+                } else {
+                    stored = new RuleResult("r", null, r.kind(), null, null, "NONE", true, false,
+                            DbQueryEvaluator.NOTE_NULL_VALUE, null, null, fp);
                 }
-                RuleResult stored = new RuleResult("r", null, r.kind(), null, null, "NONE", true, v != null,
-                        v == null ? DbQueryEvaluator.NOTE_NULL_VALUE : null, v, v, fp);
                 rows.add(new DbQueryHistory.Row(i + 1, at, "h", Map.of("r", stored)));
                 bt.accept(new DbQueryBacktest.Row(i + 1, at, true, "h", List.of(stored)));
             }
@@ -644,6 +727,303 @@ class DbQuerySmartRulesTest {
             assertThat(pr.get("evaluated")).isEqualTo(liveEval);
             assertThat(pr.get("warning")).isEqualTo(liveWarn);
             assertThat(pr.get("critical")).isEqualTo(liveCrit);
+        }
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-05): Y1 ihlal dışlama + kontrollü uyum, D11, D2, O1 ─────────────────
+
+    /**
+     * Canlı zincir: her zamanlanmış çalıştırma, o ana kadarki SAKLI satırlarla ({@link DbQueryHistory#histories} — SQL'in
+     * okuma sınırı dahil) gerçek değerlendiriciyle değerlendirilir ve SONUCU saklanır (ihlal bayrağı bu sonuçtan okunur);
+     * aynı saklı satırlar eşik denemesine de verilir.
+     */
+    static final class LiveChain {
+        final Rule r;
+        final List<DbQueryHistory.Row> rows = new ArrayList<>();
+        final List<RuleResult> results = new ArrayList<>();
+        final DbQueryBacktest bt;
+        final long step;
+        Instant at;
+        long id = 1;
+
+        LiveChain(Rule r, Instant start, long step) {
+            this.r = r;
+            this.at = start;
+            this.step = step;
+            this.bt = new DbQueryBacktest(List.of(r), "ANY", "h", start, (int) step);
+        }
+
+        RuleResult run(Double v) {
+            List<DbQueryHistory.Row> desc = new ArrayList<>(rows);
+            java.util.Collections.reverse(desc);
+            DbQueryHistory.Plan plan = DbQueryHistory.plan(List.of(r), at, (int) step);
+            if (plan.recentLimit() > 0 && desc.size() > plan.recentLimit()) desc = desc.subList(0, plan.recentLimit());
+            History h = DbQueryHistory.histories(List.of(r), desc, plan, "h").get(r.id());
+            Outcome o = DbQueryEvaluator.evaluate(List.of(r), "ANY", value(v == null ? null : BigDecimal.valueOf(v)),
+                    new DbQueryEvaluator.Baselines(Map.of(), Map.of(), Map.of(r.id(), h)), "tr");
+            RuleResult rr = o.results().get(0);
+            rows.add(new DbQueryHistory.Row(id, at, "h", Map.of(r.id(), rr)));
+            bt.accept(new DbQueryBacktest.Row(id, at, true, "h", List.of(rr)));
+            results.add(rr);
+            id++;
+            at = at.plusSeconds(step);
+            return rr;
+        }
+
+        long count(String level) {
+            return results.stream().filter(x -> x.evaluated() && level.equals(x.level())).count();
+        }
+    }
+
+    @Nested
+    @DisplayName("Y1: ihlal satırları tabandan dışlanır, kontrollü uyum (pencere kadar ardışık ihlal)")
+    class BreachExclusion {
+
+        final Instant t0 = Instant.parse("2026-10-01T00:00:00Z");
+
+        /** 40 normal çalıştırma (98..102 — etkin σ = %2 taban = 2), sonra {@code after} değerleri. */
+        LiveChain chain(Rule r, double[] after) {
+            LiveChain c = new LiveChain(r, t0, 300);
+            for (int i = 0; i < 40; i++) c.run(100.0 + (i % 5) - 2);
+            for (double v : after) c.run(v);
+            return c;
+        }
+
+        @Test
+        @DisplayName("100 → 0 kalıcı düşüş: 30 çalıştırma boyunca TUTARLI kritik (alarm açık kalır), 31.'de uyum → olağan; eşik denemesi aynı")
+        void permanentDropStaysOpenThenAdapts() {
+            Rule r = rule("id", "r", "label", "Sipariş", "kind", "ANOMALY", "column", "adet");   // varsayılan: pencere 30
+            double[] zeros = new double[45];
+            LiveChain c = chain(r, zeros);
+            List<RuleResult> after = c.results.subList(40, 85);
+            for (int i = 0; i < 30; i++) {
+                RuleResult x = after.get(i);
+                assertThat(x.level()).as("düşüşten sonraki %d. çalıştırma", i + 1).isEqualTo("CRITICAL");
+                assertThat(x.stats().mean()).as("taban hâlâ eski düzey (ihlal satırları dışlı)").isBetween(99.0, 101.0);
+                assertThat(x.stats().samples()).isEqualTo(30);
+            }
+            for (int i = 30; i < 45; i++) {
+                RuleResult x = after.get(i);
+                assertThat(x.level()).as("uyum: %d. çalıştırma", i + 1).isEqualTo("NONE");
+                assertThat(x.stats().mean()).isEqualTo(0.0);
+            }
+            assertThat(c.count("CRITICAL")).isEqualTo(30);
+            assertThat(c.count("WARNING")).isZero();
+            Map<String, Object> rep = c.bt.report(false);
+            Map<?, ?> pr = (Map<?, ?>) ((List<?>) rep.get("per_rule")).get(0);
+            assertThat(pr.get("critical")).as("eşik denemesi canlıyla aynı").isEqualTo(30);
+            assertThat(pr.get("warning")).isEqualTo(0);
+            assertThat(pr.get("evaluated")).isEqualTo((int) c.results.stream().filter(RuleResult::evaluated).count());
+            assertThat(rep.get("would_open_alarms")).as("tek alarm, 30 çalıştırma açık").isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("kalıcı 3 kat sıçrama (100 → 300): aynı — 30 kritik, sonra yeni düzey olağan; eşik denemesi aynı")
+        void permanentJumpBehavesTheSame() {
+            Rule r = rule("id", "r", "kind", "ANOMALY", "column", "adet");
+            double[] jump = new double[40];
+            for (int i = 0; i < jump.length; i++) jump[i] = 300.0 + 3 * ((i % 5) - 2);
+            LiveChain c = chain(r, jump);
+            List<RuleResult> after = c.results.subList(40, 80);
+            for (int i = 0; i < 30; i++) assertThat(after.get(i).level()).as("%d. çalıştırma", i + 1).isEqualTo("CRITICAL");
+            for (int i = 30; i < 40; i++) {
+                assertThat(after.get(i).level()).as("uyum %d", i + 1).isEqualTo("NONE");
+                assertThat(after.get(i).stats().mean()).isBetween(295.0, 305.0);
+            }
+            Map<?, ?> pr = (Map<?, ?>) ((List<?>) c.bt.report(false).get("per_rule")).get(0);
+            assertThat(pr.get("critical")).isEqualTo(30);
+            assertThat(c.bt.report(false).get("would_open_alarms")).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("tek seferlik sıçrama tabanı bozmaz: sonraki çalıştırmanın ortalaması / σ'sı aynı kalır, ikinci sıçrama yine kritik")
+        void oneOffSpikeDoesNotCorruptBaseline() {
+            Rule r = rule("id", "r", "kind", "ANOMALY", "column", "adet");
+            LiveChain c = chain(r, new double[]{1_000, 100, 101, 99, 1_000, 100});
+            RuleResult before = c.results.get(39), spike = c.results.get(40), next = c.results.get(41);
+            assertThat(spike.level()).isEqualTo("CRITICAL");
+            assertThat(next.level()).isEqualTo("NONE");
+            assertThat(next.stats().sigma()).as("σ sıçramayla şişmez").isEqualTo(before.stats().sigma());
+            assertThat(next.stats().mean()).isBetween(99.0, 101.0);
+            RuleResult second = c.results.get(44);
+            assertThat(second.level()).isEqualTo("CRITICAL");
+            assertThat(second.stats().deviation()).as("taban bozulmadı — sapma ilk sıçramayla aynı ölçekte")
+                    .isGreaterThan(400.0);
+            Map<?, ?> pr = (Map<?, ?>) ((List<?>) c.bt.report(false).get("per_rule")).get(0);
+            assertThat(pr.get("critical")).isEqualTo(2);
+            assertThat(c.bt.report(false).get("would_open_alarms")).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("taban yürüyüşü: ihlal dizisi pencereden kısa → dışlanır; pencereye ulaşan dizi → kabul; geçmişin başına uzanan dizi (tam geçmiş) min_samples'la kabul")
+        void anomalyBaseRules() {
+            List<DbQueryEvaluator.Point> pts = new ArrayList<>();
+            for (int i = 0; i < 3; i++) pts.add(new DbQueryEvaluator.Point(0.0, true));
+            for (int i = 0; i < 10; i++) pts.add(new DbQueryEvaluator.Point(100.0, false));
+            DbQueryEvaluator.AnomalyBase b = DbQueryEvaluator.anomalyBase(new History(pts, false, false, false), 10, 5);
+            assertThat(b.samples()).hasSize(10).containsOnly(100.0);
+            assertThat(b.seen()).isEqualTo(13);
+            // pencere kadar (10) ardışık ihlal → kabul (yeni düzey)
+            List<DbQueryEvaluator.Point> ten = new ArrayList<>();
+            for (int i = 0; i < 10; i++) ten.add(new DbQueryEvaluator.Point(0.0, true));
+            ten.addAll(pts.subList(3, 13));
+            assertThat(DbQueryEvaluator.anomalyBase(new History(ten, false, false, false), 10, 5).samples())
+                    .hasSize(10).containsOnly(0.0);
+            // değeri boş çalıştırma diziyi kırmaz (ama pencereyi doldurur)
+            List<DbQueryEvaluator.Point> withNull = new ArrayList<>(ten);
+            withNull.add(5, new DbQueryEvaluator.Point(null, false));
+            assertThat(DbQueryEvaluator.anomalyBase(new History(withNull, false, false, false), 10, 5).samples())
+                    .containsOnly(0.0).hasSize(9);
+            // geçmişin TAMAMI ihlal (saklamadan uzun mevsimsel pencere): tam geçmişte min_samples'la kabul, kesik geçmişte değil
+            List<DbQueryEvaluator.Point> allBreach = new ArrayList<>();
+            for (int i = 0; i < 6; i++) allBreach.add(new DbQueryEvaluator.Point(7.0, true));
+            assertThat(DbQueryEvaluator.anomalyBase(new History(allBreach, false, false, true), 30, 5).samples()).hasSize(6);
+            assertThat(DbQueryEvaluator.anomalyBase(new History(allBreach, false, false, false), 30, 5).samples()).isEmpty();
+            assertThat(DbQueryEvaluator.anomalyBase(new History(allBreach, false, false, true), 30, 7).samples())
+                    .as("min_samples'tan kısa").isEmpty();
+        }
+
+        @Test
+        @DisplayName("ihlal bayrağı yalnız OLAĞAN DIŞI DEĞER sonucundan: aynı parmak izli kolon değeri kuralının eşik ihlali taban satırıdır")
+        void breachFlagOnlyFromAnomalyResults() {
+            Rule an = rule("id", "r", "kind", "ANOMALY", "column", "adet", "window", 10, "min_samples", 5);
+            String fp = DbQueryRules.fingerprint(an);
+            Instant ref = Instant.parse("2026-11-05T10:00:00Z");
+            List<DbQueryHistory.Row> rows = new ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                RuleResult cv = new RuleResult("r", null, "COLUMN_VALUE", null, null, "WARNING", false, true, null,
+                        100.0, 100.0, fp);   // eski kolon değeri kuralı eşiği aşmıştı
+                rows.add(new DbQueryHistory.Row(10 - i, ref.minusSeconds(60L * (i + 1)), "h", Map.of("r", cv)));
+            }
+            History h = DbQueryHistory.histories(List.of(an), rows, DbQueryHistory.plan(List.of(an), ref, 60), "h").get("r");
+            assertThat(h.points()).allSatisfy(pt -> assertThat(pt.breach()).isFalse());
+            assertThat(eval(an, 100, h).results().get(0).stats().samples()).isEqualTo(6);
+        }
+    }
+
+    @Nested
+    @DisplayName("D11: aralıklı NULL — pencere doldu ama örnek yetersiz → kanıt eksikliği (UNKNOWN), taban kuruluyor değil")
+    class InsufficientSamples {
+
+        @Test
+        @DisplayName("mevsimsiz: pencere (10) NULL ağırlıklı → insufficient_samples, kanıt eksikliği, eşik kararı bilinmiyor")
+        void nullHeavyWindow() {
+            Rule r = rule("id", "a", "kind", "ANOMALY", "column", "adet", "window", 10, "min_samples", 5);
+            List<DbQueryEvaluator.Point> pts = new ArrayList<>();
+            for (int i = 0; i < 10; i++) pts.add(new DbQueryEvaluator.Point(i % 4 == 0 ? 100.0 : null, false));
+            Outcome o = eval(r, 100, new History(pts, false, false, false));
+            RuleResult rr = o.results().get(0);
+            assertThat(rr.note()).isEqualTo(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+            assertThat(rr.evaluated()).isFalse();
+            assertThat(rr.actual()).isEqualTo("100 · örnek yetersiz (3 / 5)");
+            assertThat(rr.stats().samples()).isEqualTo(3);
+            assertThat(o.inconclusive()).as("kontrol satırı UNKNOWN").isTrue();
+            assertThat(o.configUnevaluable()).as("ardışık değerlendirilemeyen alarmını besler").isTrue();
+            assertThat(DbQueryEvaluator.INCONCLUSIVE_NOTES).contains(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+            assertThat(DbQueryEvaluator.WAITING_NOTES).doesNotContain(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+            assertThat(DbQueryAlarmText.thresholdVerdict("OK", DbQueryAlarmText.toApi(o.results()), "ANY"))
+                    .as("açık eşik alarmı kanıtsız kapanmaz").isEqualTo(DbQueryAlarmText.VERDICT_UNKNOWN);
+            assertThat(DbQueryEvaluator.evaluate(List.of(r), "ANY", value(100), new DbQueryEvaluator.Baselines(Map.of(),
+                    Map.of(), Map.of("a", new History(pts, false, false, false))), "en").results().get(0).actual())
+                    .isEqualTo("100 · too few samples (3 / 5)");
+        }
+
+        @Test
+        @DisplayName("kısa (yeni) geçmiş NULL'lu → hâlâ taban kuruluyor; okuma sınırında tükenen geçmiş (dışlanan ihlaller) → yetersiz")
+        void shortHistoryIsBuilding() {
+            Rule r = rule("id", "a", "kind", "ANOMALY", "column", "adet", "window", 10, "min_samples", 5);
+            List<DbQueryEvaluator.Point> pts = List.of(new DbQueryEvaluator.Point(1.0, false),
+                    new DbQueryEvaluator.Point(null, false), new DbQueryEvaluator.Point(2.0, false));
+            assertThat(eval(r, 1, new History(pts, false, false, true)).results().get(0).note())
+                    .isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+            List<DbQueryEvaluator.Point> flapping = new ArrayList<>();
+            for (int i = 0; i < 20; i++) flapping.add(new DbQueryEvaluator.Point(i % 5 == 0 ? 100.0 : 900.0, i % 5 != 0));
+            assertThat(eval(r, 100, new History(flapping, false, false, false)).results().get(0).note())
+                    .as("kesik geçmiş, dışlanan ihlaller örnek bırakmadı").isEqualTo(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+        }
+
+        @Test
+        @DisplayName("mevsimsel: en az min_samples hedefte çalıştırma var ama değerleri NULL → yetersiz; daha az hedef → taban kuruluyor")
+        void seasonalNulls() {
+            Rule r = rule("id", "a", "kind", "ANOMALY", "column", "adet", "season", "daily", "window", 10, "min_samples", 5);
+            List<DbQueryEvaluator.Point> nights = new ArrayList<>();
+            for (int i = 0; i < 6; i++) nights.add(new DbQueryEvaluator.Point(i == 0 ? 10.0 : null, false));
+            assertThat(eval(r, 10, new History(nights, false, false, true)).results().get(0).note())
+                    .isEqualTo(DbQueryEvaluator.NOTE_INSUFFICIENT_SAMPLES);
+            assertThat(eval(r, 10, new History(nights.subList(0, 3), false, false, true)).results().get(0).note())
+                    .isEqualTo(DbQueryEvaluator.NOTE_BUILDING_BASELINE);
+        }
+    }
+
+    @Test
+    @DisplayName("D2: −0.0 ile 0.0 aynı — σ = 0 tabanında sınırsız sapma yok, donma dizisi kırılmaz")
+    void negativeZeroIsZero() {
+        Rule r = rule("id", "a", "kind", "ANOMALY", "column", "adet", "min_samples", 5);
+        History zeros = new History(ds(0, 0, 0, 0, 0, 0), false, false);
+        RuleResult rr = DbQueryEvaluator.anomalyAgainst(r, -0.0, zeros, null, null, "", false);
+        assertThat(rr.level()).isEqualTo("NONE");
+        assertThat(rr.stats().deviation()).isEqualTo(0.0);
+        assertThat(DbQueryEvaluator.sameValue(-0.0, 0.0)).isTrue();
+        assertThat(DbQueryEvaluator.sameValue(0.0, -0.0)).isTrue();
+        Rule f = rule("id", "f", "kind", "FROZEN", "column", "adet", "runs_warning", 3);
+        RuleResult fr = DbQueryEvaluator.frozenAgainst(f, -0.0, new History(ds(0, 0), false, false), null, null, "", false);
+        assertThat(fr.stats().sameRuns()).isEqualTo(3);
+        assertThat(fr.level()).isEqualTo("WARNING");
+    }
+
+    @Nested
+    @DisplayName("O1: tamamlanamayan taban kayıtta reddedilir; aralık günü / haftayı bölmüyorsa uyarı")
+    class RetentionAndSeason {
+
+        @Test
+        @DisplayName("haftalık: min_samples saklamaya sığan hafta sayısından büyükse rules[N].min_samples (DBQUERY_RULE_ANOMALY)")
+        void weekly() {
+            Rule ok = rule("id", "a", "kind", "ANOMALY", "column", "x", "season", "weekly", "window", 40, "min_samples", 25);
+            Rule bad = rule("id", "b", "kind", "ANOMALY", "column", "x", "season", "weekly", "window", 40, "min_samples", 26);
+            assertThat(DbQueryRules.retentionErrors(List.of(ok), 300, 180)).isEmpty();
+            List<DbQueryRules.FieldError> e = DbQueryRules.retentionErrors(List.of(ok, bad), 300, 180);
+            assertThat(e).singleElement().satisfies(fe -> {
+                assertThat(fe.field()).isEqualTo("rules[1].min_samples");
+                assertThat(fe.code()).isEqualTo("DBQUERY_RULE_ANOMALY");
+                assertThat(fe.message()).contains("180 gün", "25 hafta", "25 ya da altına");
+            });
+            // kısa saklama: en küçük min_samples (5) bile dolmaz → mevsim / aralık önerilir
+            assertThat(DbQueryRules.retentionErrors(List.of(rule("kind", "ANOMALY", "column", "x", "season", "weekly",
+                    "min_samples", 5)), 300, 30)).singleElement()
+                    .satisfies(fe -> assertThat(fe.message()).contains("4 hafta", "Mevsimi ya da aralığı"));
+        }
+
+        @Test
+        @DisplayName("günlük: min_samples > saklama günü; mevsimsiz: min_samples > saklamadaki çalıştırma (aralık bilinmiyorsa denetlenmez)")
+        void dailyAndNone() {
+            Rule daily = rule("kind", "ANOMALY", "column", "x", "season", "daily", "window", 200, "min_samples", 190);
+            assertThat(DbQueryRules.retentionErrors(List.of(daily), 300, 180)).hasSize(1);
+            assertThat(DbQueryRules.retentionErrors(List.of(daily), 300, 365)).isEmpty();
+            Rule none = rule("kind", "ANOMALY", "column", "x", "window", 40, "min_samples", 30);
+            assertThat(DbQueryRules.retentionErrors(List.of(none), 604_800, 180)).as("haftada bir: 25 çalıştırma").hasSize(1);
+            assertThat(DbQueryRules.retentionErrors(List.of(none), 86_400, 180)).isEmpty();
+            assertThat(DbQueryRules.retentionErrors(List.of(none), null, 180)).isEmpty();
+            assertThat(DbQueryRules.retentionErrors(List.of(rule("kind", "FROZEN", "column", "x")), 604_800, 1)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("uyarı ANOMALY_SEASON_RARE: aralık > 1 sa ve günü (günlük) / haftayı (haftalık) bölmüyor — engellemez")
+        void seasonRareWarning() {
+            Rule daily = rule("id", "d", "kind", "ANOMALY", "column", "x", "season", "daily");
+            Rule weekly = rule("id", "w", "kind", "ANOMALY", "column", "x", "season", "weekly");
+            Rule none = rule("id", "n", "kind", "ANOMALY", "column", "x");
+            List<Map<String, Object>> w = DbQueryRules.smartWarnings(List.of(daily, weekly, none), 18_000);   // 5 sa
+            assertThat(w).singleElement().satisfies(x -> {
+                assertThat(x).containsEntry("code", DbQueryRules.WARN_ANOMALY_SEASON_RARE)
+                        .containsEntry("rule_ids", List.of("d", "w")).containsEntry("interval_seconds", 18_000);
+                assertThat(x.get("message").toString()).contains("5 sa");
+            });
+            assertThat(DbQueryRules.smartWarnings(List.of(daily, weekly), 7_200)).as("2 sa günü böler").isEmpty();
+            assertThat(DbQueryRules.smartWarnings(List.of(daily), 3_300)).as("≤ 1 sa: tolerans aralığın yarısı").isEmpty();
+            assertThat(DbQueryRules.smartWarnings(List.of(weekly), 25_200)).as("7 sa haftayı böler").isEmpty();
+            assertThat(DbQueryRules.smartWarnings(List.of(daily), 25_200)).as("7 sa günü bölmez").hasSize(1);
+            assertThat(DbQueryRules.smartWarnings(List.of(none), 18_000)).isEmpty();
+            assertThat(DbQueryRules.smartWarnings(List.of(daily), null)).isEmpty();
         }
     }
 }

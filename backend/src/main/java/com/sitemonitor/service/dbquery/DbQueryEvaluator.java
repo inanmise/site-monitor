@@ -71,7 +71,14 @@ public final class DbQueryEvaluator {
              * Akıllı kural (olağan dışı / donmuş değer, dbq2 D): taban için yeterli geçmiş ölçü yok — ihlal DEĞİL, kanıt
              * eksikliği DEĞİL ({@link #WAITING_NOTES}); sonuçta {@code samples} / {@code min_samples} "n / gereken" gösterir.
              */
-            NOTE_BUILDING_BASELINE = "building_baseline";
+            NOTE_BUILDING_BASELINE = "building_baseline",
+            /**
+             * Olağan dışı değer (dbq2 D, inceleme D11): geçmiş taban için YETERLİ ÇALIŞTIRMA içeriyor ama örnekler
+             * {@code min_samples}'ın altında — değeri boş (NULL) çalıştırmalar ya da tabandan dışlanan ihlal satırları örnek
+             * vermedi. Kanıt EKSİKLİĞİ ({@link #INCONCLUSIVE_NOTES}): "geçti" sayılmaz, kontrol satırı UNKNOWN, ardışık
+             * değerlendirilemeyen çalıştırma alarmını besler (bekleme notu DEĞİL).
+             */
+            NOTE_INSUFFICIENT_SAMPLES = "insufficient_samples";
 
     /** Tazelik: veritabanı saatinden bu kadar ileride olan değer saat farkı sayılır (yaş 0); daha ilerisi "gelecekte". */
     public static final long FUTURE_TOLERANCE_SECONDS = 300;
@@ -87,7 +94,7 @@ public final class DbQueryEvaluator {
      */
     public static final java.util.Set<String> INCONCLUSIVE_NOTES =
             java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_PREVIOUS_UNREADABLE, NOTE_NOT_TIMESTAMP,
-                    NOTE_DB_CLOCK_UNAVAILABLE, NOTE_FUTURE_TIMESTAMP);
+                    NOTE_DB_CLOCK_UNAVAILABLE, NOTE_FUTURE_TIMESTAMP, NOTE_INSUFFICIENT_SAMPLES);
 
     /**
      * "Taban kuruluyor" notları (r177 ikinci tur, O-6): ihlal DEĞİL ve kanıt eksikliği de DEĞİL — eşik kararında kural
@@ -221,19 +228,53 @@ public final class DbQueryEvaluator {
     }
 
     /**
-     * Akıllı kuralın geçmiş ölçüleri (dbq2 D; {@code DbQueryHistory} kurar).
+     * Akıllı kural geçmişinin bir çalıştırması (dbq2 D).
      *
-     * @param values YENİDEN ESKİYE geçmiş ölçüler — olağan dışı değerde taban örnekleri (değeri olmayan çalıştırmalar
-     *               yok), donmuş değerde bu çalıştırmadan önceki ARDIŞIK zamanlanmış ölçüler
-     * @param ended  donmuş değer: dizi KESİN bir kırılmayla bitti (değeri boş bir çalıştırma) — daha eskisi bu diziye
-     *               eklenemez; false = geçmiş bitti / okunmadı (daha eskisi bilinmiyor)
-     * @param reset  geçmiş, ölçüm tanımı (sorgu / kolon / hesap / tür) değişen bir çalıştırmada kesildi
+     * @param value  ölçülen değer; null = değeri olmayan çalıştırma (satır yok / NULL — sorgu çalıştı ama ölçü yok)
+     * @param breach çalıştırma BU olağan dışı değer kuralını ihlal etti (canlıda saklı sonuç: tür ANOMALY, değerlendirilmiş ve
+     *               geçmemiş; eşik denemesinde yeniden oynatılan karar) — tabandan dışlanır ({@link #anomalyBase}, Y1)
      */
-    public record History(List<Double> values, boolean ended, boolean reset) {
-        public static final History EMPTY = new History(List.of(), false, false);
+    public record Point(Double value, boolean breach) {
+        public Point {
+            if (value != null && !Double.isFinite(value)) value = null;
+        }
+    }
+
+    /**
+     * Akıllı kuralın geçmiş ölçüleri (dbq2 D; {@code DbQueryHistory} / eşik denemesi kurar).
+     *
+     * @param points   YENİDEN ESKİYE geçmiş çalıştırmalar — olağan dışı değerde taban adayları (mevsimsiz: önceki
+     *                 çalıştırmalar; mevsimsel: önceki günlerin / haftaların aynı saatindeki çalıştırmalar, hedef başına en
+     *                 yakını), donmuş değerde bu çalıştırmadan önceki ARDIŞIK değerli çalıştırmalar
+     * @param ended    donmuş değer: dizi KESİN bir kırılmayla bitti (değeri boş bir çalıştırma) — daha eskisi bu diziye
+     *                 eklenemez; false = geçmiş bitti / okunmadı (daha eskisi bilinmiyor)
+     * @param reset    geçmiş, ölçüm tanımı (sorgu / kolon / hesap / tür) değişen bir çalıştırmada kesildi
+     * @param complete noktalar kuralın karşılaştırılabilir geçmişinin TAMAMI (okuma sınırı / tavanı kesmedi) — olağan dışı
+     *                 değerde "ihlal dizisi geçmişin başına kadar uzanıyor" kabulü ({@link #anomalyBase}) yalnız o zaman
+     */
+    public record History(List<Point> points, boolean ended, boolean reset, boolean complete) {
+        public static final History EMPTY = new History(List.of(), false, false, true);
 
         public History {
-            values = values == null ? List.of() : List.copyOf(values);
+            points = points == null ? List.of() : List.copyOf(points);
+        }
+
+        /** Eski biçim (değerler — ihlal olmayan, değeri olan çalıştırmalar; geçmiş tam). */
+        public History(List<Double> values, boolean ended, boolean reset) {
+            this(toPoints(values), ended, reset, true);
+        }
+
+        private static List<Point> toPoints(List<Double> values) {
+            List<Point> out = new ArrayList<>();
+            if (values != null) for (Double v : values) if (v != null) out.add(new Point(v, false));
+            return out;
+        }
+
+        /** Değeri olan çalıştırmaların değerleri (yeniden eskiye; ihlal satırları dahil). */
+        public List<Double> values() {
+            List<Double> out = new ArrayList<>(points.size());
+            for (Point p : points) if (p.value() != null) out.add(p.value());
+            return out;
         }
     }
 
@@ -661,12 +702,67 @@ public final class DbQueryEvaluator {
     }
 
     /**
+     * Olağan dışı değerin tabanı (Y1 — ürün kararı 2026-11-05): geçmiş YENİDEN ESKİYE yürünür, bu kuralı İHLAL EDEN
+     * çalıştırmalar tabandan DIŞLANIR (kalıcı bir sapma kendi tabanını şişirip alarmı sahte kapatmasın). KONTROLLÜ UYUM:
+     * ardışık ihlal dizisi (değeri boş çalıştırma diziyi kırmaz) {@code window} çalıştırmaya ulaştıysa — ya da dizi geçmişin
+     * TAMAMINI ({@link History#complete}) kaplıyor ve en az {@code min_samples} uzunluktaysa (saklama süresinden uzun
+     * mevsimsel pencere) — o dizinin satırları tabana yeniden girer: yeni düzey olağan sayılır. Taban = dışlanmayan en yeni
+     * {@code window} çalıştırma; değeri boş çalıştırma pencereyi doldurur ama örnek değildir. Canlı, teyit / kurtarma, elle
+     * kontrol ve eşik denemesi AYNI kuralı kullanır (yalnız ihlal bayrağının kaynağı farklı).
+     *
+     * @return örnekler, yürünen çalıştırma sayısı ({@code seen}, dışlananlar dahil), pencereyi dolduran çalıştırma sayısı
+     *         ({@code consumed}) ve geçmişin okuma sınırında tükenip tükenmediği ({@code cut})
+     */
+    static AnomalyBase anomalyBase(History history, int window, int minSamples) {
+        List<Point> pts = history == null ? List.of() : history.points();
+        boolean complete = history == null || history.complete();
+        List<Double> samples = new ArrayList<>();
+        int seen = 0, consumed = 0, i = 0, n = pts.size();
+        while (i < n && consumed < window) {
+            Point p = pts.get(i);
+            if (p.value() == null || !p.breach()) {
+                seen++;
+                consumed++;
+                if (p.value() != null) samples.add(p.value());
+                i++;
+                continue;
+            }
+            int j = i, len = 0;   // ardışık ihlal dizisi [i, j)
+            while (j < n) {
+                Point q = pts.get(j);
+                if (q.value() != null && !q.breach()) break;
+                if (q.value() != null) len++;
+                j++;
+            }
+            boolean accept = len >= window || (j >= n && complete && len >= minSamples);
+            for (int k = i; k < j && consumed < window; k++) {
+                Point q = pts.get(k);
+                seen++;
+                if (q.value() == null) {
+                    consumed++;
+                } else if (accept) {
+                    consumed++;
+                    samples.add(q.value());
+                }
+            }
+            i = j;
+        }
+        return new AnomalyBase(List.copyOf(samples), seen, consumed, i >= n && !complete);
+    }
+
+    /** {@link #anomalyBase} sonucu. */
+    record AnomalyBase(List<Double> samples, int seen, int consumed, boolean cut) {}
+
+    /**
      * Olağan dışı değer kararı — değer ({@code v}) ve geçmiş ({@code history}) bilindiğinde; eşik denemesi saklı ölçülerle de
-     * bunu kullanır (aynı hesap, aynı metin). Taban = geçmişin en yeni {@code window} örneği; örnek &lt; {@code min_samples}
-     * → {@link #NOTE_BUILDING_BASELINE} (taban sıfırlandıysa ve örnek yoksa {@link #NOTE_BASELINE_RESET}). Ortalama ve
-     * ÖRNEK standart sapması (n − 1); etkin σ {@link #effectiveSigma}; sapma z = (değer − ortalama) / σ (6 ondalığa yuvarlı).
-     * Yön: iki yön |z|, yukarı z, aşağı −z; kritik katsayısını AŞAN sapma kritik, uyarı katsayısını aşan uyarı (sınırın
-     * kendisi olağan). Geçmiş okunamadıysa ({@code missingNote}) değerlendirilmez, kanıt eksikliği.
+     * bunu kullanır (aynı hesap, aynı metin). Taban {@link #anomalyBase} (ihlal satırları dışlanır, kontrollü uyum).
+     * Örnek &lt; {@code min_samples}: geçmiş yeterince çalıştırma içeriyorsa (mevsimsiz: pencere doldu ya da geçmiş okuma
+     * sınırında tükendi; mevsimsel: en az {@code min_samples} hedefte çalıştırma var) ama değeri boş / dışlanan satırlar örnek
+     * vermediyse {@link #NOTE_INSUFFICIENT_SAMPLES} (kanıt eksikliği, D11); değilse {@link #NOTE_BUILDING_BASELINE} (taban
+     * sıfırlandıysa ve örnek yoksa {@link #NOTE_BASELINE_RESET}). Ortalama ve ÖRNEK standart sapması (n − 1); etkin σ
+     * {@link #effectiveSigma}; sapma z = (değer − ortalama) / σ (6 ondalığa yuvarlı). Yön: iki yön |z|, yukarı z, aşağı −z;
+     * kritik katsayısını AŞAN sapma kritik, uyarı katsayısını aşan uyarı (sınırın kendisi olağan). Geçmiş okunamadıysa
+     * ({@code missingNote}) değerlendirilmez, kanıt eksikliği.
      */
     static RuleResult anomalyAgainst(DbQueryRules.Rule r, double v, History history, String missingNote, String valueNote,
                                      String exp, boolean en) {
@@ -674,11 +770,16 @@ public final class DbQueryEvaluator {
         String val = fmt(v, en);
         if (history == null && missingNote != null)
             return new RuleResult(r.id(), r.label(), r.kind(), val, exp, LEVEL_NONE, true, false, missingNote, v, v, null, null);
-        List<Double> all = history == null ? List.of() : history.values();
-        int n = Math.min(all.size(), p.window());
+        AnomalyBase base = anomalyBase(history, p.window(), p.minSamples());
+        List<Double> all = base.samples();
+        int n = all.size();
         if (n < p.minSamples()) {
-            String note = n == 0 && history != null && history.reset() ? NOTE_BASELINE_RESET : NOTE_BUILDING_BASELINE;
-            String actual = val + " · " + (en ? "building baseline (" : "taban kuruluyor (") + n + " / " + p.minSamples() + ")";
+            boolean seasonal = !DbQueryRules.SEASON_NONE.equals(p.season());
+            boolean insufficient = seasonal ? base.seen() >= p.minSamples() : base.consumed() >= p.window() || base.cut();
+            String note = insufficient ? NOTE_INSUFFICIENT_SAMPLES
+                    : n == 0 && history != null && history.reset() ? NOTE_BASELINE_RESET : NOTE_BUILDING_BASELINE;
+            String actual = val + " · " + (insufficient ? (en ? "too few samples (" : "örnek yetersiz (")
+                    : (en ? "building baseline (" : "taban kuruluyor (")) + n + " / " + p.minSamples() + ")";
             return new RuleResult(r.id(), r.label(), r.kind(), actual, exp, LEVEL_NONE, true, false, note, v, v, null,
                     new Stats(n, p.minSamples(), null, null, null, null, null, null));
         }
@@ -695,7 +796,8 @@ public final class DbQueryEvaluator {
         }
         double sigma = effectiveSigma(mean, n > 1 ? Math.sqrt(ss / (n - 1)) : 0);
         double dev;
-        if (sigma == 0) dev = Double.compare(v, mean) == 0 ? 0 : (v > mean ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY);
+        // İlkel eşitlik (D2): −0.0 == 0.0 — "−0" sonucu sınırsız sapma sayılmaz
+        if (sigma == 0) dev = v == mean ? 0 : (v > mean ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY);
         else dev = round((v - mean) / sigma);
         double toward = switch (p.direction()) {
             case DbQueryRules.DIRECTION_UP -> dev;
@@ -773,11 +875,12 @@ public final class DbQueryEvaluator {
     }
 
     /**
-     * Donmuş değerin "aynı" kuralı: tam sayılar birebir; ondalıklarda bağıl {@value #FROZEN_EQUAL_EPS} farkı (aynı verinin
-     * toplamı / ortalaması satır sırasına göre son bitte değişebilir) aynı sayılır.
+     * Donmuş değerin "aynı" kuralı: tam sayılar birebir ({@code −0.0} ile {@code 0.0} aynı); ondalıklarda bağıl
+     * {@value #FROZEN_EQUAL_EPS} farkı (aynı verinin toplamı / ortalaması satır sırasına göre son bitte değişebilir) aynı
+     * sayılır.
      */
     static boolean sameValue(double a, double b) {
-        if (Double.compare(a, b) == 0) return true;
+        if (a == b) return true;   // ilkel eşitlik (D2): −0.0 == 0.0
         if (!Double.isFinite(a) || !Double.isFinite(b)) return false;
         if (a == Math.rint(a) && b == Math.rint(b)) return false;
         return Math.abs(a - b) <= FROZEN_EQUAL_EPS * Math.max(Math.abs(a), Math.abs(b));

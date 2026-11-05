@@ -183,6 +183,105 @@ public final class DbQueryRules {
     /** Alan hatası: {@code field} = "rules[2].warning" gibi; {@code message} istek dilinde. */
     public record FieldError(String field, String code, String message) {}
 
+    // ── Akıllı kural tabanı ve saklama / zamanlama (dbq2 inceleme O1) ────────
+
+    /** Kayıt uyarısı kodu (engellemez, kalıcı — ön yüz {@code dbq.warn.<KOD>}): mevsimsel eşleşme nadir. */
+    public static final String WARN_ANOMALY_SEASON_RARE = "ANOMALY_SEASON_RARE";
+
+    private static final int DAY_SECONDS = 86_400, WEEK_SECONDS = 7 * DAY_SECONDS;
+
+    /**
+     * Saklama süresi içinde dolabilecek en çok örnek (mevsimsel: hedef gün / hafta; mevsimsiz: çalıştırma) — taban bu sayıda
+     * geçmiş satırla kurulabilir. Mevsimsel hedefler canlıda en çok {@value DbQueryHistory#MAX_SEASONAL_DAYS} gün geriye
+     * gider; mevsimsiz yakın geçmiş pencereyle sınırlıdır (pencere ≤ 200). Aralık bilinmiyorsa mevsimsizde {@code -1}
+     * (denetlenmez).
+     */
+    static long fillableSamples(Anomaly a, Integer intervalSec, int retentionDays) {
+        int days = Math.min(Math.max(1, retentionDays), DbQueryHistory.MAX_SEASONAL_DAYS);
+        if (SEASON_DAILY.equals(a.season())) return days;
+        if (SEASON_WEEKLY.equals(a.season())) return days / 7;
+        if (intervalSec == null || intervalSec <= 0) return -1;
+        return (long) Math.max(1, retentionDays) * DAY_SECONDS / intervalSec;
+    }
+
+    /**
+     * Kayıt denetimi (dbq2 inceleme O1): taban saklama süresi içinde HİÇ dolamayacaksa {@code rules[N].min_samples} alan
+     * hatası (kod {@code DBQUERY_RULE_ANOMALY}) — haftalık mevsimde saklamaya sığan hafta sayısı, günlükte gün sayısı,
+     * mevsimsizde saklamadaki çalıştırma sayısı ({@code retention-days × gün / aralık}) en az örnek sayısından küçükse. Aksi
+     * hâlde kural sonsuza dek "taban kuruluyor" kalır ve hiçbir şey denetlemeden "geçti" sayılırdı.
+     *
+     * @param intervalSec   izlemenin ETKİN aralığı (CRON: tetiklerin ortancası); null = mevsimsiz kural denetlenmez
+     * @param retentionDays {@code site.monitor.metrics.dbquery.retention-days}
+     */
+    public static List<FieldError> retentionErrors(List<Rule> rules, Integer intervalSec, int retentionDays) {
+        List<FieldError> out = new ArrayList<>();
+        if (rules == null) return out;
+        for (int i = 0; i < rules.size(); i++) {
+            Rule r = rules.get(i);
+            if (r == null || !KIND_ANOMALY.equals(r.kind())) continue;
+            Anomaly a = anomalyOf(r);
+            long can = fillableSamples(a, intervalSec, retentionDays);
+            if (can < 0 || a.minSamples() <= can) continue;
+            String unitTr, unitEn;
+            if (SEASON_WEEKLY.equals(a.season())) { unitTr = "hafta"; unitEn = "weeks"; }
+            else if (SEASON_DAILY.equals(a.season())) { unitTr = "gün"; unitEn = "days"; }
+            else { unitTr = "çalıştırma"; unitEn = "runs"; }
+            boolean lowerable = can >= MIN_SAMPLES_MIN;
+            out.add(err("rules[" + i + "].min_samples", "DBQUERY_RULE_ANOMALY", Msg.t(
+                    "Kural " + (i + 1) + " tabanı saklama süresi içinde hiç dolmaz · Kontrol geçmişi " + retentionDays
+                            + " gün saklanıyor; bu süreye en çok " + can + " " + unitTr + " sığar, en az örnek sayısı "
+                            + a.minSamples() + " · " + (lowerable
+                            ? "En az örnek sayısını " + can + " ya da altına indirin (ya da mevsimi / aralığı değiştirin)."
+                            : "Mevsimi ya da aralığı değiştirin (ya da bir yönetici saklama süresini uzatsın)."),
+                    "Rule " + (i + 1) + " baseline can never fill within the retention period · Check history is kept for "
+                            + retentionDays + " days; at most " + can + " " + unitEn + " fit in it, the minimum sample count "
+                            + "is " + a.minSamples() + " · " + (lowerable
+                            ? "Lower the minimum sample count to " + can + " or less (or change the season / interval)."
+                            : "Change the season or the interval (or have an administrator extend the retention period)."))));
+        }
+        return out;
+    }
+
+    /**
+     * Kayıt uyarısı (engellemez, dbq2 inceleme O1): mevsimsel anomali kuralında izleme aralığı günü (günlük) / haftayı
+     * (haftalık) TAM bölmüyorsa ve mevsimsel tolerans aralığın yarısından dar ise (aralık &gt; 1 sa — tolerans en çok 30 dk)
+     * önceki günlerin / haftaların aynı saatinde çalıştırma çoğu kez bulunmaz → taban çok geç dolar. Aralık bilinmiyorsa
+     * uyarı yok. Biçim: {@code {code, rule_ids, interval_seconds, message}}.
+     */
+    public static List<Map<String, Object>> smartWarnings(List<Rule> rules, Integer intervalSec) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rules == null || intervalSec == null || intervalSec <= 2 * 30 * 60) return out;
+        List<String> ids = new ArrayList<>();
+        for (Rule r : rules) {
+            if (r == null || !KIND_ANOMALY.equals(r.kind())) continue;
+            Anomaly a = anomalyOf(r);
+            int period = SEASON_DAILY.equals(a.season()) ? DAY_SECONDS : SEASON_WEEKLY.equals(a.season()) ? WEEK_SECONDS : 0;
+            if (period > 0 && period % intervalSec != 0) ids.add(r.id());
+        }
+        if (ids.isEmpty()) return out;
+        String every = intervalText(intervalSec, false), everyEn = intervalText(intervalSec, true);
+        Map<String, Object> w = new LinkedHashMap<>();
+        w.put("code", WARN_ANOMALY_SEASON_RARE);
+        w.put("rule_ids", ids);
+        w.put("interval_seconds", intervalSec);
+        w.put("message", Msg.t(
+                "İzleme aralığı (" + every + ") günü / haftayı tam bölmüyor — mevsimsel olağan dışı değer kuralı önceki günlerin "
+                        + "/ haftaların aynı saatinde çoğu kez çalıştırma bulamaz, taban çok geç dolar · Günü bölen bir aralık "
+                        + "(ör. 1, 2, 3, 4, 6, 8, 12 ya da 24 sa) seçin ya da mevsimi kaldırın.",
+                "The monitor interval (" + everyEn + ") does not divide the day / week evenly — a seasonal unusual value rule "
+                        + "rarely finds a run at the same time on previous days / weeks, so its baseline fills very late · "
+                        + "Choose an interval that divides the day (e.g. 1, 2, 3, 4, 6, 8, 12 or 24 h) or remove the season."));
+        out.add(w);
+        return out;
+    }
+
+    /** "5 sa" / "90 dk" / "5 h" / "90 min". */
+    private static String intervalText(int sec, boolean en) {
+        if (sec % 3600 == 0) return (sec / 3600) + (en ? " h" : " sa");
+        if (sec % 60 == 0) return (sec / 60) + (en ? " min" : " dk");
+        return sec + (en ? " s" : " sn");
+    }
+
     private DbQueryRules() {}
 
     public record Parsed(List<Rule> rules, List<FieldError> errors) {}

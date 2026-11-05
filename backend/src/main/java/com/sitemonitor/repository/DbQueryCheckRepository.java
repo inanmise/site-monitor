@@ -69,6 +69,25 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
     List<Object[]> backtestPage(@Param("id") Long monitorId, @Param("from") String from, @Param("afterId") Long afterId,
                                 @Param("limit") int limit);
 
+    /**
+     * Eşik denemesi (dbq2 inceleme D1): pencere başından ({@code before}) ÖNCEKİ zamanlanmış, sorgusu çalışmış satırların
+     * anları, yeniden eskiye — sayfa boyutu = akıllı kuralların canlıda okuduğu çalıştırma sayısı (geri bakış ZAMANLA değil
+     * çalıştırma SAYISIYLA, canlıyla aynı taban).
+     */
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "AND c.checkedAt < :before ORDER BY c.checkedAt DESC, c.id DESC")
+    List<String> backtestRunsBefore(@Param("id") Long monitorId, @Param("before") String before, Pageable page);
+
+    /**
+     * Eşik denemesi satır tavanı (dbq2 inceleme D1): {@link #backtestPage} kümesinin (zamanlanmış satırlar, hatalı dahil)
+     * YENİDEN ESKİYE sırasında sayfanın konumundaki satırın anı — tavanın EN ESKİ kısmı kesmesi için okumanın başlangıcı.
+     */
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC")
+    List<String> backtestNewestFrom(@Param("id") Long monitorId, @Param("from") String from, Pageable page);
+
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
     Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
