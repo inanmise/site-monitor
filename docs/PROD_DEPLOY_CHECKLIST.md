@@ -481,7 +481,7 @@ kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu 
       verin. Eski davranış gerekirse dağıtımdan sonra Ayarlar → Platform → Alarm akışı → "Yalnız 7/24'e bildirilen alarmlar"
       kapatılır (ya da env `ALARM_FEED_NOC_ONLY=false`). İzleme listesi ya da 7/24 ayarı okunamazsa akış 503 döner — hiçbir
       alarm sahte RESOLVED ile kapatılmaz.
-- [ ] **Kaynak analizi:** yeni kolonlar (`page_resource_scans` 8 kolon, `page_monitors.resource_budget_json`) açılışta
+- [ ] **Kaynak analizi:** yeni kolonlar (`page_resource_scans` 10 kolon, `page_monitors.resource_budget_json`) açılışta
       `patch()` ile eklenir, boş tablo / yedek gerekmez. Analiz yalnız istenince koşar; algoritma 3 tarama sırasında ek ağ
       isteği yapar (sunucu başına bağlantı ölçümü ≤ 30, kaynak haritası HEAD ≤ 10) — hedef sitelere giden trafik biraz artar.
       Karışık podlarda eski pod algoritma 2 üretir ve "Siteyi analiz et" isteğini tek sayfa koşar.

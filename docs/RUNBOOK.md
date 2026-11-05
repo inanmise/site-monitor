@@ -390,14 +390,15 @@ sonucunda "aşıldı / geçti / ölçülemedi" bandı olarak görünür — alar
 
 **Çok sayfalı analiz** ("Siteyi analiz et"): ana sayfanın aynı sunucudaki iç bağlantılarından en çok N − 1 sayfa
 (`site.monitor.page.resource-scan.max-pages`, varsayılan 10, 2–20) taranır; ortak nesneler bir kez indirilir; süre bütçesi
-bütün site içindir (`site.monitor.page.resource-scan.site-max-seconds`, 900, 120–1800). Bütçe dolunca kalan sayfalar
-"taranmadı" olur ve analiz "sınırlı" işaretlenir. Başka sunucuya yönlenen sayfa (ör. SSO) analiz edilmez (`PAGE_OFFSITE`).
-Sürerken sayfa ilerlemesi gösterilmez.
+bütün site içindir (`site.monitor.page.resource-scan.site-max-seconds`, 900, 120–900). Bütçe dolunca kalan sayfalar
+"taranmadı" olur ve sitenin analizi "eksik" işaretlenir (`analysis.site.incomplete`; özetin "sınırlı" işareti yalnız ana
+sayfa içindir). Başka sunucuya yönlenen sayfa (ör. SSO) analiz edilmez (`PAGE_OFFSITE`); ana sayfanın kırık bağlantıları
+iç sayfa adayı olmaz. Sürerken "Site · sayfa n / N" ilerlemesi görünür (her pod'dan okunur).
 
 | Anahtar | Varsayılan | Aralık |
 |---|---|---|
 | `site.monitor.page.resource-scan.max-pages` | 10 | 2–20 |
-| `site.monitor.page.resource-scan.site-max-seconds` | 900 | 120–1800 |
+| `site.monitor.page.resource-scan.site-max-seconds` | 900 | 120–900 |
 
 Sürüm geçişinde eski pod algoritma 2 üretir, "Siteyi analiz et" isteğini tek sayfa analizi olarak koşar (arayüz bunu
 söyler) ve bütçe / eğilim uçlarına 404 döner. Geri almada yeni kolonlar kalır, kullanılmaz.
