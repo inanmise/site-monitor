@@ -1348,7 +1348,7 @@ Elle tutulan SRE olay defteridir — izlemeden bağımsız, kurumsal olay yönet
 
 ### 14.20 Aktivite Logu
 
-Her tarama koşusunun özetini listeler: çalışma zamanı, tetikleyici tipi (Manuel / Zamanlı / Bayat), kontrol edilen domain sayısı, uyarı ve hata sayıları, koşu kimliği (Run ID). Son N saat filtresiyle daraltılır. "Tarama gerçekten çalıştı mı?" sorusunun kanıt ekranıdır.
+Bütün izleme türlerinin her kontrolünü, elle yapılan "Şimdi kontrol et" çağrılarını (kimin yaptığıyla), izlemelerin oluşturma, değişiklik, duraklatma ve silme olaylarını, alarm açılış / seviye yükselme / onay / kapanış olaylarını ve 7/24 bildirimlerini tek akışta listeler. Tür, durum (zaman aşımı dahil), olay grubu (kontrol, alarm, bildirim, değişiklik), takım, izleme, kişi, hata nedeni ve özel tarih aralığıyla süzülür; süzülmüş sonucun tamamı CSV ya da Excel olarak alınır. Bir satıra basınca aktivitenin kendi sayfası açılır (bağlantısı paylaşılabilir): kontrolün tam sonucu ve hata açıklaması, bir önceki ve sonraki kontrolle karşılaştırma, ±24 saatlik yanıt süresi grafiği, bu kontrolün yol açtığı alarm ve kime bildirim gittiği, bir değişiklikse alan alan önceki ve sonraki değer, izlemeye / kontrol geçmişine / değişikliklere / alarma bağlantılar ve uçtan uca tanılama. Hatalı bir kontrolde "Aynı anda ne oldu?" paneli aynı dakikada hata veren diğer izlemeleri ve olası ortak nedeni (ör. kurum DNS’i) gösterir. "Bu izlemenin zaman çizelgesi" bir izlemenin erişilebilirlik şeridini, kesinti dönemlerini ve ortalama düzelme süresini verir. Herkes yalnız kendi takımlarının kayıtlarını görür.
 
 ### 14.21 Etkinliklerim
 

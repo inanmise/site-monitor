@@ -1211,7 +1211,7 @@ The SRE incident ledger, written by hand rather than derived from monitoring. Ea
 
 ### 14.20 Activity Log
 
-The operational stream of what the monitors actually did: which monitor ran, against which target, what the outcome was, how long it took and any error. It is isolated by team on the server, so you only ever see your own teams' activity — including in the detail view.
+Lists every check of every monitor type, manual "Check now" runs (with who ran them), monitor create, change, pause and delete events, alert opened / escalated / acknowledged / resolved events and 24/7 notifications in one feed. It can be filtered by type, status (timeouts included), event group (check, alert, notification, change), team, monitor, person, failure reason and a custom date range, and the whole filtered result can be exported to CSV or Excel. Clicking a row opens the activity’s own page (with a shareable link): the full check result and failure explanation, a comparison with the previous and next check, a ±24-hour response time chart, the alert this check led to and who was notified, field-by-field before and after values for a change, links to the monitor, its check history, changes and the alert, and end-to-end diagnosis. For a failed check, the "What else happened at the same time?" panel shows other monitors that failed in the same minute and a likely common cause (for example the corporate DNS). "This monitor’s timeline" shows a monitor’s availability strip, outage periods and mean time to recover. Everyone sees only their own teams’ records.
 
 ### 14.21 My Activity
 
