@@ -86,7 +86,7 @@ describe('AlertForwardManager', () => {
     expect(rowOf(1).querySelector('[data-slot="fwd-state"]')).toHaveAttribute('data-state', 'active')
     // Üye adlarının hepsi; pasif ve takımdan ayrılmış üye rozetli
     const members = [...rowOf(2).querySelectorAll('[data-slot="fwd-member"]')]
-    expect(members.map((m) => m.textContent)).toEqual([LONG_PERSON, `${PERSON2}· ${EN['fwd.memberPassive']}`, `Can Demir· ${EN['fwd.memberLeft']}`])
+    expect(members.map((m) => m.textContent)).toEqual([LONG_PERSON, `${PERSON2} · ${EN['fwd.memberPassive']}`, `Can Demir · ${EN['fwd.memberLeft']}`])
     // Etkin ama e-posta adresi yok → "yalnız push" + dikkat açıklaması
     expect(rowOf(2).querySelector('[data-slot="fwd-no-address"]')).toHaveTextContent(EN['fwd.noAddress'])
     expect(rowOf(2).querySelector('[data-slot="fwd-attention"]')).toHaveTextContent(EN['fwd.attention.noAddress'])
@@ -264,7 +264,8 @@ describe('AlertForwardManager', () => {
     const opt = await screen.findByRole('option', { name: LONG_TEAM })
     fireEvent.mouseDown(opt); fireEvent.click(opt)
     fireEvent.click(document.querySelector('[data-slot="fwd-submit"]'))
-    await waitFor(() => expect(api.alertForwards.create).toHaveBeenCalled())
+    // Süzgeçsiz "Yeni iletim": tek yönetilen takım sahip olarak (sayı) gider — boş metin DEĞİL (e2e'nin yakaladığı hata)
+    await waitFor(() => expect(api.alertForwards.create).toHaveBeenCalledWith(expect.objectContaining({ owner_team_id: 10, recipient_team_id: 20 })))
     await screen.findByText(new RegExp(EN['fwd.toast.created'].replace('.', '\\.')))
     expect(screen.getByText(new RegExp('e-mail: 2, push: 3'))).toBeTruthy()
     await waitFor(() => expect(api.alertForwards.list).toHaveBeenCalledTimes(2))

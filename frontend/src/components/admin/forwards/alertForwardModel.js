@@ -443,7 +443,7 @@ export function formErrors(form, { isNew = true, limits = DEFAULT_LIMITS, origin
   const changed = isNew || !original ? null : bodyShape(formOf(original))
   const now = bodyShape(form)
   const touched = (k) => changed == null || JSON.stringify(changed[k]) !== JSON.stringify(now[k])
-  if (isNew && form.ownerTeamId == null) e.ownerTeamId = ['fwd.err.owner']
+  if (isNew && (form.ownerTeamId == null || form.ownerTeamId === '')) e.ownerTeamId = ['fwd.err.owner']
   if (!SCOPE_KINDS.includes(form.scopeKind)) e.scopeKind = ['fwd.err.scope']
   if (form.scopeKind === 'TYPES' && (touched('scope_types') || touched('scope_kind'))) {
     if (now.scope_types.length === 0) e.scopeTypes = ['fwd.err.typesRequired']
@@ -453,7 +453,7 @@ export function formErrors(form, { isNew = true, limits = DEFAULT_LIMITS, origin
     else if (now.scope_monitors.length > limits.monitors) e.scopeMonitors = ['fwd.err.monitorsMax', limits.monitors]
   }
   if (!RECIPIENT_KINDS.includes(form.recipientKind)) e.recipientKind = ['fwd.err.recipientKind']
-  if (form.recipientTeamId == null) e.recipientTeamId = ['fwd.err.recipientTeam']
+  if (form.recipientTeamId == null || form.recipientTeamId === '') e.recipientTeamId = ['fwd.err.recipientTeam']
   else if (idKey(form.recipientTeamId) === idKey(form.ownerTeamId)) e.recipientTeamId = ['fwd.err.sameTeam']
   if (form.recipientKind === 'MEMBERS' && (touched('recipient_user_ids') || touched('recipient_kind') || touched('recipient_team_id'))) {
     if (now.recipient_user_ids.length === 0) e.recipientUserIds = ['fwd.err.membersRequired']

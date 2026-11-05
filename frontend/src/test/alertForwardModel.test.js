@@ -197,6 +197,8 @@ describe('alertForwardModel', () => {
     const e = formErrors({ ...emptyForm(null), scopeKind: 'TYPES' }, { isNew: true })
     expect(Object.keys(e).sort()).toEqual(['ownerTeamId', 'recipientTeamId', 'scopeTypes'])
     expect(formErrors({ ...emptyForm(10), recipientTeamId: 10 }).recipientTeamId).toEqual(['fwd.err.sameTeam'])
+    // Boş metin (URL / süzgeç değeri) "seçilmedi"dir
+    expect(formErrors({ ...emptyForm(''), recipientTeamId: '' })).toMatchObject({ ownerTeamId: ['fwd.err.owner'], recipientTeamId: ['fwd.err.recipientTeam'] })
     const many = Array.from({ length: 201 }, (_, i) => ({ type: 'http', id: i }))
     expect(formErrors({ ...emptyForm(10), recipientTeamId: 20, scopeKind: 'MONITORS', scopeMonitors: many }).scopeMonitors)
       .toEqual(['fwd.err.monitorsMax', DEFAULT_LIMITS.monitors])

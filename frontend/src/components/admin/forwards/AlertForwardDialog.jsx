@@ -409,23 +409,24 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
           )}
         </Step>
 
+        {/* Özet: kim → ne → kime, üç satır (her genişlikte aynı okunur; uzun adlar sarar) */}
         <div className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-3" data-slot="fwd-summary">
           <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('fwd.sum.title')}</span>
-          <div className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1 text-sm">
-            <span className="flex min-w-0 flex-col">
-              <span className="text-xs text-muted-foreground">{t('fwd.sum.who')}</span>
-              <span className="font-medium [overflow-wrap:anywhere]" data-slot="fwd-sum-owner">{ownerName || t('fwd.sum.pending')}</span>
-            </span>
-            <ArrowRight aria-hidden="true" className="mt-4 size-4 shrink-0 text-muted-foreground" />
-            <span className="flex min-w-0 flex-[1_1_10rem] flex-col">
-              <span className="text-xs text-muted-foreground">{t('fwd.sum.whom')}</span>
-              <span className="font-medium [overflow-wrap:anywhere]" data-slot="fwd-sum-recipient">{recipientText}</span>
-            </span>
-          </div>
-          <span className="flex min-w-0 flex-col text-sm">
-            <span className="text-xs text-muted-foreground">{t('fwd.sum.what')}</span>
-            <span className="[overflow-wrap:anywhere]" data-slot="fwd-sum-scope">{scopeText}</span>
-          </span>
+          <ul className="m-0 flex min-w-0 list-none flex-col gap-2 p-0 text-sm">
+            {[
+              { key: 'owner', Icon: UsersRound, label: t('fwd.sum.who'), value: ownerName || t('fwd.sum.pending'), strong: true },
+              { key: 'scope', Icon: Layers, label: t('fwd.sum.what'), value: scopeText, strong: false },
+              { key: 'recipient', Icon: ArrowRight, label: t('fwd.sum.whom'), value: recipientText, strong: true },
+            ].map((row) => (
+              <li key={row.key} className="flex min-w-0 items-start gap-2">
+                <row.Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-xs text-muted-foreground">{row.label}</span>
+                  <span className={row.strong ? 'font-medium [overflow-wrap:anywhere]' : '[overflow-wrap:anywhere]'} data-slot={`fwd-sum-${row.key}`}>{row.value}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
           <p className="m-0 text-xs text-muted-foreground">{t('fwd.sum.same')}</p>
         </div>
       </div>
@@ -435,7 +436,9 @@ export default function AlertForwardDialog({ open, onClose, onSaved, onGone, onS
 
 function initialForm(forward, preset, teams) {
   if (forward) return formOf(forward)
-  const owner = preset?.ownerTeamId ?? (teams.length === 1 ? teams[0].id : null)
+  // Boş metin "seçilmedi"dir (URL / süzgeç değeri) — tek yönetilen takım varsa o seçili gelir
+  const given = preset?.ownerTeamId
+  const owner = given != null && given !== '' ? given : (teams.length === 1 ? teams[0].id : null)
   const f = emptyForm(owner)
   if (preset?.monitorRef) f.scopeKind = 'MONITORS'
   return f

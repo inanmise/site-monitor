@@ -157,8 +157,10 @@ export default function AlertForwardManager() {
   }
 
   // Sahip takım süzgeci yönetilen bir takımsa pencere o takımla açılır (kimlik takım kaydından — URL metni değil)
-  const openNew = () => setDialog({ forward: null,
-    preset: { ownerTeamId: (team && state.teams.find((x) => String(x.id) === String(team))?.id) ?? null } })
+  const openNew = () => {
+    const owner = team ? state.teams.find((x) => String(x.id) === String(team)) : null
+    setDialog({ forward: null, preset: { ownerTeamId: owner ? owner.id : null } })
+  }
 
   async function remove(f) {
     const ok = await showConfirm({
@@ -217,8 +219,9 @@ export default function AlertForwardManager() {
 
   return (
     <div data-slot="alert-forwards" className="flex min-w-0 flex-col gap-4">
-      <Card className="min-w-0 gap-3 px-4 py-4 shadow-xs">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      {/* Kap sorgusu (@container): yan menü açık tablette içerik ~430 px — görünüm alanı değil kap genişliği belirler */}
+      <Card className="@container min-w-0 gap-3 px-4 py-4 shadow-xs">
+        <div className="flex min-w-0 flex-col gap-3 @lg:flex-row @lg:items-start @lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden="true">
               <Forward className="size-5" />
@@ -228,11 +231,11 @@ export default function AlertForwardManager() {
               <p className="m-0 text-sm text-muted-foreground">{t('fwd.desc')}</p>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2 max-sm:[&>*]:flex-1">
+          <div className="flex shrink-0 flex-wrap gap-2 [&>*]:flex-1 @lg:[&>*]:flex-none">
             <Button type="button" variant="outline" onClick={load} disabled={loading || state.status === 'refreshing'}
               className="min-h-10 gap-1.5" aria-label={t('fwd.refresh')} data-slot="fwd-refresh">
               <RefreshCw aria-hidden="true" className={cn(state.status === 'refreshing' && 'animate-spin motion-reduce:animate-none')} />
-              <span className="sm:hidden">{t('fwd.refresh')}</span>
+              <span className="@lg:hidden">{t('fwd.refresh')}</span>
             </Button>
             {canAdd && (
               <Button type="button" onClick={openNew} className="min-h-10 gap-1.5" data-slot="fwd-new">
@@ -278,8 +281,9 @@ export default function AlertForwardManager() {
             <ToolbarSearch value={q} onChange={setQ} placeholder={t('fwd.search')} ariaLabel={t('fwd.search')} clearLabel={t('app.clear')}
               className="h-10" />
             {(owners.length > 1 || team) && (
-              <NativeSelect value={team} onChange={(e) => setTeam(e.target.value)} aria-label={t('fwd.f.ownerFilter')} className="h-10 min-w-0 max-w-full"
-                data-slot="fwd-filter-team">
+              // Seçenekler uzun takım adları: yerel seçici en uzun seçenek kadar genişlerdi — telefonda tam genişlik, geniş ekranda tavanlı
+              <NativeSelect value={team} onChange={(e) => setTeam(e.target.value)} aria-label={t('fwd.f.ownerFilter')}
+                className="h-10 w-full min-w-0 max-w-full sm:w-72" data-slot="fwd-filter-team">
                 <NativeSelectOption value="">{t('fwd.filter.allTeams')}</NativeSelectOption>
                 {owners.map(([id, name]) => <NativeSelectOption key={id} value={id}>{name}</NativeSelectOption>)}
               </NativeSelect>
@@ -304,14 +308,14 @@ export default function AlertForwardManager() {
               {t('fwd.count', filtered.length, items.length)}
             </span>
           </div>
-          <div ref={setListEl} className="min-w-0" data-slot="fwd-list" data-layout={wide ? 'table' : 'cards'}>
+          <div ref={setListEl} className="@container min-w-0" data-slot="fwd-list" data-layout={wide ? 'table' : 'cards'}>
             {filtered.length === 0 ? (
               <StatusBlock icon={Forward} title={t('fwd.noMatch')}
                 actions={<Button type="button" variant="outline" className="min-h-10" onClick={clearFilters}>{t('fwd.filter.clear')}</Button>} />
             ) : wide ? (
               <ForwardTable rows={filtered} t={t} busyId={busyId} onEdit={(f) => setDialog({ forward: f })} onToggle={togglePause} onRemove={remove} />
             ) : (
-              <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2">
+              <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 @xl:grid-cols-2">
                 {filtered.map((f) => (
                   <li key={f.id} className="min-w-0">
                     <ForwardCard f={f} t={t} busy={busyId === f.id}

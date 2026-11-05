@@ -117,9 +117,11 @@ export default function ForwardMemberPicker({ status, items = [], message, onRet
               <Badge variant="outline" data-slot="fwd-member-chip" className={cn(WRAP_BADGE, 'gap-1 py-1 pr-1 pl-2 font-normal',
                 (c.passive || c.left) && 'text-muted-foreground')}>
                 <UserRound aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="min-w-0 [overflow-wrap:anywhere]">{c.name}</span>
-                {c.passive && <span className="font-semibold text-destructive">· {t('fwd.memberPassive')}</span>}
-                {c.left && <span className="font-semibold text-amber-700 dark:text-amber-300">· {t('fwd.memberLeft')}</span>}
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {c.name}
+                  {c.passive && <span className="font-semibold whitespace-nowrap text-destructive"> · {t('fwd.memberPassive')}</span>}
+                  {c.left && <span className="font-semibold whitespace-nowrap text-amber-700 dark:text-amber-300"> · {t('fwd.memberLeft')}</span>}
+                </span>
                 <Button type="button" variant="ghost" size="icon-xs" className={CHIP_REMOVE} aria-label={t('fwd.mem.remove', c.name)}
                   onClick={() => toggle(c.id, false)}>
                   <X aria-hidden="true" className="size-3" />

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  ArrowRight, CalendarClock, CircleAlert, CirclePause, CircleCheck, ShieldCheck, Layers, MailX, UserRound, UsersRound,
+  CornerDownRight, CalendarClock, CircleAlert, CirclePause, CircleCheck, ShieldCheck, Layers, MailX, UserRound, UsersRound,
   CircleSlash, HelpCircle,
 } from 'lucide-react'
 import { formatDate, formatDateOnly } from '../../../api/client'
@@ -88,9 +88,12 @@ export function Recipient({ f, t }) {
               <Badge variant="outline" data-slot="fwd-member" data-active={m.active === false ? 'false' : 'true'}
                 className={cn(WRAP_BADGE, 'gap-1 font-normal', (m.active === false || m.inTeam === false) && 'text-muted-foreground')}>
                 <UserRound aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="min-w-0 [overflow-wrap:anywhere]">{m.displayName || t('fwd.unknownPerson')}</span>
-                {m.active === false && <span className="font-semibold text-destructive">· {t('fwd.memberPassive')}</span>}
-                {m.active !== false && m.inTeam === false && <span className="font-semibold text-amber-700 dark:text-amber-300">· {t('fwd.memberLeft')}</span>}
+                {/* Ek (pasif / ayrıldı) adla AYNI satır içi metinde: ayrı esnek öğe dar rozette harf harf sarıyordu */}
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {m.displayName || t('fwd.unknownPerson')}
+                  {m.active === false && <span className="font-semibold whitespace-nowrap text-destructive"> · {t('fwd.memberPassive')}</span>}
+                  {m.active !== false && m.inTeam === false && <span className="font-semibold whitespace-nowrap text-amber-700 dark:text-amber-300"> · {t('fwd.memberLeft')}</span>}
+                </span>
               </Badge>
             </li>
           ))}
@@ -122,8 +125,10 @@ export function ScopeChips({ f, t }) {
                 data-unknown={c.unknown || undefined}
                 className={cn(WRAP_BADGE, 'gap-1 font-normal', c.missing && 'text-muted-foreground line-through', c.unknown && 'text-muted-foreground')}>
                 <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="min-w-0 [overflow-wrap:anywhere]">{c.label}</span>
-                {c.paused && <span className="text-muted-foreground">· {t('fwd.monitorPaused')}</span>}
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {c.label}
+                  {c.paused && <span className="whitespace-nowrap text-muted-foreground"> · {t('fwd.monitorPaused')}</span>}
+                </span>
               </Badge>
             </li>
           )
@@ -157,18 +162,23 @@ export function Note({ f }) {
   return <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="fwd-note">{f.note}</p>
 }
 
-/** Sahip → alıcı akış satırı (kart ve "Bize iletilenler"). */
+/**
+ * Sahip → alıcı akışı (kart ve "Bize iletilenler"): her genişlikte DİKEY — üstte sahip, altında girintili ok ile alıcı.
+ * Yan yana dizilişte uzun adlar sarınca ok satır başına düşüp akış okunmuyordu (telefon).
+ */
 export function Flow({ f, t }) {
   return (
-    <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1.5" data-slot="fwd-flow">
+    <span className="flex min-w-0 flex-col gap-1.5" data-slot="fwd-flow">
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t('fwd.col.owner')}</span>
         <TeamBadge teamId={f.ownerTeamId} teamName={f.ownerTeamName || t('fwd.unknownTeam')} wrap static />
       </span>
-      <ArrowRight aria-hidden="true" className="mt-5 size-4 shrink-0 text-muted-foreground" />
-      <span className="flex min-w-0 flex-[1_1_12rem] flex-col gap-0.5">
-        <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t('fwd.col.recipient')}</span>
-        <Recipient f={f} t={t} />
+      <span className="flex min-w-0 items-start gap-1.5 ps-1">
+        <CornerDownRight aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t('fwd.col.recipient')}</span>
+          <Recipient f={f} t={t} />
+        </span>
       </span>
     </span>
   )
