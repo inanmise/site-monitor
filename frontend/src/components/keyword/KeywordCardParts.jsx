@@ -1,8 +1,8 @@
 import {
-  Ban, CaseSensitive, CircleAlert, CircleCheck, CircleX, Globe, Hash, Hourglass, LockKeyhole, Network, Search,
-  SearchX, ServerCrash, ShieldAlert, Timer, TimerOff, TriangleAlert, Unplug,
+  Ban, Braces, CaseSensitive, CircleAlert, CircleCheck, CircleDashed, CircleX, Copy, FileDiff, Globe, Hash, Hourglass, ListChecks,
+  LockKeyhole, Network, Regex, Ruler, Search, SearchX, ServerCrash, ShieldAlert, Siren, Timer, TimerOff, TriangleAlert, Unplug,
 } from 'lucide-react'
-import { useT } from '../../i18n/index.jsx'
+import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import HintPopover from '../ui/HintPopover.jsx'
 import { CARD_LAYER, MonitorCardMetrics, MonitorPendingText } from '../monitoring/MonitorCard.jsx'
@@ -11,20 +11,23 @@ import { CompactValue, CompactVerdict } from '../ping/PingCardParts.jsx'
 import { urlParts } from '../pagespeed/pageSpeedCardModel.js'
 import { cn } from '@/lib/utils'
 import {
-  LONG_KEYWORD, LONG_SNIPPET, alertTrigger, highlightParts, httpClass, httpTone, msParts, msText, proxyMode,
-  responseAssessment, ruleLabel,
+  LONG_KEYWORD, LONG_SNIPPET, alertTrigger, breachLevel, changeState, highlightParts, httpClass, httpTone, msParts, msText, proxyMode,
+  responseAssessment, ruleLabel, ruleOutcome, ruleSet, sameUrl, sizeRule, statusUnchecked,
 } from './keywordCardModel.js'
+import { describeRule, ruleSetBadge } from './rules/ruleModel.js'
+import { sizeRangeText, bytesText } from './content/contentChecksModel.js'
 import { cardReason } from './keywordFailureModel.js'
 
 /**
  * Hüküm metni (2026-10-04): istek tamamlanmadıysa (`error`) sunucunun kısa nedeni ("Zaman aşımı", "DNS çözümlenemedi" …)
  * — eski satırda (kod yok) "Sayfa okunamadı". Diğer hükümler değişmedi.
  */
-function resultText(kind, m, t) {
+function resultText(kind, m, t, verdict) {
   if (kind === 'error') {
     const r = cardReason(m, t)
     if (r && !r.hint) return r.label
   }
+  if (kind === 'rulesFail' && verdict?.failed != null) return t('keyword.card.rulesNotMet', verdict.failed, verdict.total)
   return t(RESULT_KEY[kind])
 }
 
@@ -56,12 +59,13 @@ const PANEL = {
 }
 const RESULT_TEXT = { ok: 'text-success', bad: 'text-destructive', neutral: 'text-muted-foreground' }
 const RESULT_ICON = {
-  found: CircleCheck, absent: CircleCheck, countOk: CircleCheck,
-  missing: SearchX, forbidden: Ban, countFail: CircleX, error: CircleAlert, pending: Hourglass,
+  found: CircleCheck, absent: CircleCheck, countOk: CircleCheck, rulesOk: CircleCheck,
+  missing: SearchX, forbidden: Ban, countFail: CircleX, rulesFail: CircleX, error: CircleAlert, pending: Hourglass,
 }
 const RESULT_KEY = {
   found: 'keyword.found', missing: 'keyword.notFound', absent: 'keyword.card.absent', forbidden: 'keyword.card.forbidden',
   countOk: 'keyword.card.countOk', countFail: 'keyword.card.countFail', pending: 'keyword.card.pending', error: 'keyword.card.checkFailed',
+  rulesOk: 'keyword.card.rulesOk', rulesFail: 'keyword.card.countFail',
 }
 /** Vurgu: yasak kelimede kırmızı (kanıt), diğerlerinde sarı fosfor. */
 const MARK = {
@@ -90,23 +94,45 @@ export function KeywordUrlText({ url }) {
  * Bulunamadı ✗ / Bulundu — olmamalı … + eşleşme sayısı) → kanıt: ilk eşleşmenin çevresi (kelime vurgulu) ya da kapalıysa
  * NEDEN (zaman aşımı / DNS / TLS / HTTP 5xx …). Zemin hükmün tonunda; bekleyen izlemede kesik kenarlı nötr.
  *
+ * <p>kw zenginleştirmesi (2026-11-05): birden çok kuralda rozet "3 kural · VE" (dokun-gör: her kuralın alarm cümlesi) ve
+ * aranan metin yerine kural satırları (ilk 3 — son kontrolün sonucuyla ✓ / ✗, bilinmiyorsa nötr; fazlası "+N"); tek ama
+ * özel kuralda "Düzenli ifade" ve kapsam (CSS / JSON) çipleri; boyut kuralı ve içerik değişimi çipleri; ihlal seviyesi
+ * rozeti (Uyarı / Kritik eşik); sağlıklı ama HTTP ≥ 400 ve durum kuralı kapalıysa "Durum kodu denetlenmiyor" (B5); aynı
+ * URL'yi başka izleme de izliyorsa "Aynı URL" çipi (B6). Alan yoksa (eski sunucu) çip çizilmez.
+ *
  * <p>Test kancaları: `data-slot="keyword-panel"` + `data-result` (found|missing|absent|forbidden|countOk|countFail|
- * pending|error) + `data-tone`; `keyword-rule` (`data-rule` contains|absent|count), `keyword-case`, `keyword-chip`,
- * `keyword-result`, `keyword-count`, `keyword-snippet`, `keyword-reason` (`data-reason`).
+ * rulesOk|rulesFail|pending|error) + `data-tone`; `keyword-rule` (`data-rule` contains|absent|count), `keyword-rules-badge`,
+ * `keyword-rule-row` (`data-outcome`), `keyword-regex`, `keyword-scope`, `keyword-case`, `keyword-chip`, `keyword-result`,
+ * `keyword-count`, `keyword-breach` (`data-level`), `keyword-size`, `keyword-change` (`data-state`), `keyword-status-unchecked`,
+ * `keyword-same-url`, `keyword-snippet`, `keyword-reason` (`data-reason`).
  */
 export function KeywordRulePanel({ monitor: m, verdict, reason, rowLabel }) {
   const t = useT()
   const { rule, tone, kind, count } = verdict
   const Icon = RESULT_ICON[kind]
-  const showSnippet = !!m.snippet && count !== 0 && kind !== 'error' && kind !== 'pending'
+  const set = ruleSet(m)
+  const first = set.rules[0]
+  const single = !set.multi
+  const regexFirst = single && first?.kind === 'REGEX'
+  // Alıntı yalnız TEK kuralda (sunucunun alıntısı kural #1'in ilk eşleşmesi); düzenli ifade deseni metin gibi vurgulanmaz
+  const showSnippet = single && !!m.snippet && count !== 0 && kind !== 'error' && kind !== 'pending'
   // Sayı: "Bulunamadı" / "Sayfada yok" zaten sıfır diyor; adet kuralında ve bulunduğunda anlamlı.
-  const showCount = count != null && (count > 0 || rule.kind === 'count')
+  const showCount = single && count != null && (count > 0 || rule.kind === 'count')
+  const breach = breachLevel(m)
+  const unchecked = statusUnchecked(m)
+  const same = sameUrl(m)
   return (
     <section data-slot="keyword-panel" data-result={kind} data-tone={tone} aria-label={t('keyword.card.rule')}
       className={cn('mb-2.5 min-w-0 rounded-lg border px-3 pt-2 pb-2.5', PANEL[tone])}>
       <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-1">
-        <RuleBadge monitor={m} rule={rule} rowLabel={rowLabel} />
-        {m.case_sensitive && (
+        {set.multi ? <RulesBadge monitor={m} set={set} rowLabel={rowLabel} /> : <RuleBadge monitor={m} rule={rule} rowLabel={rowLabel} />}
+        {regexFirst && (
+          <Badge variant="outline" data-slot="keyword-regex" className={cn(CHIP, 'bg-card font-medium text-muted-foreground')}>
+            <Regex aria-hidden="true" />{t('keyword.card.regex')}
+          </Badge>
+        )}
+        {single && first?.scope?.type && <ScopeChip scope={first.scope} rowLabel={rowLabel} />}
+        {single && m.case_sensitive && (
           <HintPopover content={t('keyword.card.caseSensitiveHint')} triggerClassName={CHIP_TRIGGER}
             aria-label={t('a11y.rowAction', rowLabel, t('keyword.card.caseSensitive'))}>
             <Badge variant="outline" data-slot="keyword-case" className={cn(CHIP, 'bg-card font-medium text-muted-foreground')}>
@@ -114,6 +140,8 @@ export function KeywordRulePanel({ monitor: m, verdict, reason, rowLabel }) {
             </Badge>
           </HintPopover>
         )}
+        <SizeChip monitor={m} rowLabel={rowLabel} />
+        <ChangeChip monitor={m} rowLabel={rowLabel} />
         {intervalText(m.interval_seconds, t) && (
           <span data-slot="keyword-interval" className="ml-auto flex shrink-0 items-center gap-1 text-[10.5px] text-muted-foreground">
             <Timer aria-hidden="true" className="size-3" />{intervalText(m.interval_seconds, t)}
@@ -121,28 +149,184 @@ export function KeywordRulePanel({ monitor: m, verdict, reason, rowLabel }) {
         )}
       </div>
 
-      <KeywordChip keyword={m.keyword} rowLabel={rowLabel} />
+      {set.multi ? <RuleRows set={set} rowLabel={rowLabel} /> : <KeywordChip keyword={m.keyword} regex={regexFirst} rowLabel={rowLabel} />}
 
       <p data-slot="keyword-result" className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className={cn('inline-flex min-w-0 items-center gap-1.5 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
           {kind === 'pending'
             ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
-            : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t)}</>}
+            : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t, verdict)}</>}
         </span>
         {showCount && (
           <span data-slot="keyword-count" className="text-xs font-medium text-muted-foreground tabular-nums">
             {count === 0 ? t('keyword.card.noMatches') : count === 1 ? t('keyword.card.match1') : t('keyword.card.matches', count)}
           </span>
         )}
+        {breach && (
+          <Badge variant="outline" data-slot="keyword-breach" data-level={breach}
+            className={cn(CHIP, 'h-auto overflow-visible whitespace-normal', breach === 'CRITICAL'
+              ? 'border-destructive/40 bg-destructive/10 text-destructive'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300')}>
+            <Siren aria-hidden="true" />{t(`keyword.card.breach.${breach}`)}
+          </Badge>
+        )}
         <ReasonChip monitor={m} verdict={verdict} />
       </p>
 
       {showSnippet && (
-        <MatchSnippet snippet={m.snippet} keyword={m.keyword} caseSensitive={!!m.case_sensitive}
+        <MatchSnippet snippet={m.snippet} keyword={regexFirst ? '' : m.keyword} caseSensitive={!!m.case_sensitive}
           forbidden={kind === 'forbidden'} rowLabel={rowLabel} />
       )}
       {reason && <KeywordReason reason={reason} />}
+      {(unchecked != null || same) && (
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1">
+          {unchecked != null && (
+            <HintPopover content={t('keyword.card.statusUncheckedHint', unchecked)} triggerClassName={CHIP_TRIGGER}
+              aria-label={t('a11y.rowAction', rowLabel, t('keyword.card.statusUnchecked'))}>
+              <Badge variant="outline" data-slot="keyword-status-unchecked" data-status={unchecked}
+                className={cn(CHIP, 'h-auto overflow-visible whitespace-normal border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300')}>
+                <TriangleAlert aria-hidden="true" />{t('keyword.card.statusUnchecked')}
+              </Badge>
+            </HintPopover>
+          )}
+          {same && (
+            <HintPopover content={same.hidden > 0 ? t('keyword.card.sameUrlHintHidden', same.total, same.hidden) : t('keyword.card.sameUrlHint', same.total)}
+              triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, t('keyword.card.sameUrl', same.total))}>
+              <Badge variant="outline" data-slot="keyword-same-url" data-count={same.total}
+                className={cn(CHIP, 'h-auto overflow-visible whitespace-normal bg-card font-medium text-muted-foreground')}>
+                <Copy aria-hidden="true" />{t('keyword.card.sameUrl', same.total)}
+              </Badge>
+            </HintPopover>
+          )}
+        </div>
+      )}
     </section>
+  )
+}
+
+/** Birden çok kural rozeti ("3 kural · VE") — dokun-gör balonunda her kuralın alarm cümlesi (formdaki canlı açıklamayla aynı). */
+function RulesBadge({ monitor: m, set, rowLabel }) {
+  const t = useT()
+  const label = ruleSetBadge(set.rules, set.logic, t)
+  const content = (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="text-xs text-muted-foreground">{t(`keyword.rule.logicHint.${set.logic}`)}</span>
+      <ol className="m-0 flex list-decimal flex-col gap-1 pl-4">
+        {set.rules.map((r, i) => (
+          <li key={r.id || i} className="text-xs [overflow-wrap:anywhere]">{describeRule(r, t, m.alert_level).warning || describeRule(r, t).healthy}</li>
+        ))}
+      </ol>
+    </div>
+  )
+  return (
+    <HintPopover content={content} triggerClassName={CHIP_TRIGGER} className="max-h-72 overflow-y-auto" aria-label={t('a11y.rowAction', rowLabel, label)}>
+      <Badge variant="outline" data-slot="keyword-rules-badge" data-count={set.rules.length} data-logic={set.logic}
+        className={cn(CHIP, 'border-primary/30 bg-primary/5 text-primary dark:bg-primary/15')}>
+        <ListChecks aria-hidden="true" />{label}
+      </Badge>
+    </HintPopover>
+  )
+}
+
+const RULE_ROWS_SHOWN = 3
+
+/**
+ * Kural satırları (birden çok kural): son kontrolün sonucu (✓ / ✗ / bilinmiyor) + etiket + desen (eş aralıklı, iki satırda
+ * kırpılır — uzunsa TAMAMI dokun-gör balonunda; tek kelime çipinin deseni).
+ */
+function RuleRows({ set, rowLabel }) {
+  const t = useT()
+  const shown = set.rules.slice(0, RULE_ROWS_SHOWN)
+  const more = set.rules.length - shown.length
+  return (
+    <ul data-slot="keyword-rule-rows" className="m-0 flex list-none flex-col gap-1 p-0">
+      {shown.map((r, i) => {
+        const o = ruleOutcome(set, r.id)
+        const Ic = o === true ? CircleCheck : o === false ? CircleX : CircleDashed
+        const state = o === true ? 'ok' : o === false ? 'fail' : 'unknown'
+        return (
+          <li key={r.id || i} data-slot="keyword-rule-row" data-outcome={state} className="flex min-w-0 items-start gap-1.5">
+            <Ic aria-hidden="true" className={cn('mt-0.5 size-3.5 shrink-0', o === true ? 'text-success' : o === false ? 'text-destructive' : 'text-muted-foreground')} />
+            <span className="sr-only">{t(`keyword.card.ruleState.${state}`)}</span>
+            <RuleRowText rule={r} rowLabel={rowLabel} />
+          </li>
+        )
+      })}
+      {more > 0 && <li className="text-[11px] text-muted-foreground">{t('keyword.card.moreRules', more)}</li>}
+    </ul>
+  )
+}
+
+function RuleRowText({ rule: r, rowLabel }) {
+  const t = useT()
+  const label = r.label && r.label.trim() ? r.label.trim() : ''
+  const pattern = r.kind === 'REGEX' ? `/${r.pattern}/` : `« ${r.pattern} »`
+  const text = (
+    <span data-slot="keyword-rule-text" className="line-clamp-2 min-w-0 text-left font-mono text-[12px] leading-snug break-all whitespace-pre-wrap text-foreground">
+      {label ? <span className="font-sans font-semibold">{label}: </span> : null}
+      {pattern}
+    </span>
+  )
+  if (label.length + pattern.length <= LONG_KEYWORD) return text
+  return (
+    <HintPopover content={label ? `${label}: ${pattern}` : pattern} className="max-h-64 overflow-y-auto font-mono break-all whitespace-pre-wrap"
+      aria-label={t('a11y.rowAction', rowLabel, t('keyword.card.showKeyword'))}
+      triggerClassName={cn(CHIP_TRIGGER, 'h-auto min-w-0 justify-start text-left whitespace-normal')}>
+      {text}
+    </HintPopover>
+  )
+}
+
+/** Kapsam çipi (tek kural): "CSS: #durum" / "JSON: $.status" — seçici / yol uzunsa sarar, kesilmez. */
+function ScopeChip({ scope, rowLabel }) {
+  const t = useT()
+  const type = scope.type === 'JSON' ? 'JSON' : 'CSS'
+  const text = t(`keyword.card.scope.${type}`, String(scope.value ?? '').trim())
+  return (
+    <HintPopover content={t(`keyword.rule.scopeHint.${type}`)} triggerClassName={cn(CHIP_TRIGGER, 'h-auto whitespace-normal')}
+      aria-label={t('a11y.rowAction', rowLabel, text)}>
+      <Badge variant="outline" data-slot="keyword-scope" data-scope={type}
+        className={cn(CHIP, 'h-auto max-w-full overflow-visible whitespace-normal text-left bg-card font-mono font-medium text-muted-foreground [overflow-wrap:anywhere]')}>
+        {type === 'JSON' ? <Braces aria-hidden="true" /> : <Hash aria-hidden="true" />}{text}
+      </Badge>
+    </HintPopover>
+  )
+}
+
+/** Boyut kuralı çipi ("Boyut 1 KB–2 MB"); son başarısızlık boyut kaynaklıysa kırmızı. Son ölçülen boyut balonda. */
+function SizeChip({ monitor: m, rowLabel }) {
+  const t = useT()
+  const { lang } = useLanguage()
+  const rule = sizeRule(m)
+  if (!rule) return null
+  const range = sizeRangeText(rule.min, rule.max, lang)
+  const text = t('keyword.card.size', range)
+  const last = rule.bytes != null ? bytesText(rule.bytes, lang) : t('keyword.card.sizeUnknown')
+  return (
+    <HintPopover content={t('keyword.card.sizeHint', last)} triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, text)}>
+      <Badge variant="outline" data-slot="keyword-size" data-bad={rule.bad ? 'true' : undefined}
+        className={cn(CHIP, rule.bad ? 'border-destructive/40 bg-destructive/10 text-destructive' : 'bg-card font-medium text-muted-foreground')}>
+        <Ruler aria-hidden="true" />{text}
+      </Badge>
+    </HintPopover>
+  )
+}
+
+/** İçerik değişimi çipi: izleniyor (nötr) · temel bekleniyor (nötr) · içerik değişti (amber). */
+function ChangeChip({ monitor: m, rowLabel }) {
+  const t = useT()
+  const state = changeState(m)
+  if (!state) return null
+  const text = t(`keyword.card.change.${state}`)
+  return (
+    <HintPopover content={t('keyword.card.changeHint')} triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, text)}>
+      <Badge variant="outline" data-slot="keyword-change" data-state={state}
+        className={cn(CHIP, state === 'changed'
+          ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+          : 'bg-card font-medium text-muted-foreground')}>
+        <FileDiff aria-hidden="true" />{text}
+      </Badge>
+    </HintPopover>
   )
 }
 
@@ -169,15 +353,18 @@ function RuleBadge({ monitor: m, rule, rowLabel }) {
  * Aranan metin — eş aralıklı çip, « » arasında; boşluklar korunur (sunucu metni birebir arar). Uzunsa iki satırda
  * kırpılır, tamamı dokun-gör balonunda (telefonda da açılır). Kısa çip örtünün altında kalır: tıklamak detayı açar.
  */
-function KeywordChip({ keyword, rowLabel }) {
+function KeywordChip({ keyword, regex = false, rowLabel }) {
   const t = useT()
   const text = String(keyword ?? '')
+  // Düzenli ifade "/desen/" ile çizilir (metin değil desen olduğu tek bakışta anlaşılsın — kw paket C)
+  const open = regex ? '/' : '«'
+  const close = regex ? '/' : '»'
   const chip = (
-    <Badge variant="outline" data-slot="keyword-chip"
+    <Badge variant="outline" data-slot="keyword-chip" data-regex={regex ? 'true' : undefined}
       className="h-auto max-w-full min-w-0 items-start justify-start gap-1 rounded-md bg-card px-2 py-1 text-left font-mono text-[13px] leading-snug font-semibold whitespace-normal text-foreground shadow-xs">
-      <span aria-hidden="true" className="shrink-0 font-normal text-muted-foreground select-none">«</span>
+      <span aria-hidden="true" className="shrink-0 font-normal text-muted-foreground select-none">{open}</span>
       <span className="line-clamp-2 min-w-0 break-all whitespace-pre-wrap">{text}</span>
-      <span aria-hidden="true" className="shrink-0 font-normal text-muted-foreground select-none">»</span>
+      <span aria-hidden="true" className="shrink-0 font-normal text-muted-foreground select-none">{close}</span>
     </Badge>
   )
   if (text.length <= LONG_KEYWORD) return chip
@@ -364,7 +551,8 @@ export function KeywordCompactResult({ monitor: m, verdict, reason }) {
   const t = useT()
   const { kind, tone } = verdict
   const Icon = RESULT_ICON[kind]
-  const kw = String(m.keyword ?? '')
+  const set = ruleSet(m)
+  const kw = set.multi ? (ruleSetBadge(set.rules, set.logic, t) || '') : String(m.keyword ?? '')
   const time = kind === 'pending' || kind === 'error' ? null : msParts(m.response_ms)
   const resp = time ? responseAssessment(m, reason) : null
   return (
@@ -372,13 +560,15 @@ export function KeywordCompactResult({ monitor: m, verdict, reason }) {
       <span data-slot="keyword-result" className={cn('inline-flex shrink-0 items-center gap-1 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
         {kind === 'pending'
           ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
-          : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t)}</>}
+          : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t, verdict)}</>}
       </span>
-      {kw && (
+      {kw && (set.multi ? (
+        <span data-slot="keyword-compact-kw" data-multi="true" title={kw} className="min-w-0 overflow-hidden text-xs text-ellipsis whitespace-nowrap text-muted-foreground">{kw}</span>
+      ) : (
         <span data-slot="keyword-compact-kw" title={kw} className="min-w-0 overflow-hidden font-mono text-xs text-ellipsis whitespace-pre text-muted-foreground">
           <span aria-hidden="true">«</span>{kw}<span aria-hidden="true">»</span>
         </span>
-      )}
+      ))}
       {time && (
         <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
           {resp.tone === 'warn' && <CompactVerdict>{t('keyword.card.slow')}</CompactVerdict>}
