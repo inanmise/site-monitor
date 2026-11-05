@@ -1884,7 +1884,12 @@ public class PageResourceScanService {
         List<SitePages.Page> pages = new ArrayList<>();
         pages.add(donePage(s.url(), mainItems, mainR, mainR.capped()));
         int extra = Math.max(0, s.site().maxPages() - 1);
-        List<String> urls = SitePages.select(linkUrls, s.url(), base, exclude, extra);
+        // Ana sayfanın bağlantı denetiminde kırık bulunanlar aday olmaz (bütçe harcamaz; ana sayfanın sonucunda zaten kırık)
+        Set<String> broken = new HashSet<>();
+        for (ScanItem it : mainItems) {
+            if (!it.pageLoad && it.url != null && SitePages.brokenLink(it.verdict, it.status)) broken.add(it.url);
+        }
+        List<String> urls = SitePages.select(linkUrls, s.url(), base, exclude, extra, broken);
         int total = 1 + urls.size();
         sitePagesProgress(s.id(), 1, total);   // ana sayfa bitti; toplam = seçilen sayfalar + ana sayfa
         for (String u : urls) {

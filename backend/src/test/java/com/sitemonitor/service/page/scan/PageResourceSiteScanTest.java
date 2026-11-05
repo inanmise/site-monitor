@@ -93,6 +93,7 @@ class PageResourceSiteScanTest {
                   <a href="/contact.html">c</a>
                   <a href="/files/r.pdf">pdf</a>
                   <a href="/broken">b</a>
+                  <a href="/gone">g</a>
                   <a href="/pdf-page">p</a>
                   <a href="/skip/me">s</a>
                   <a href="http://other.example.invalid/page">o</a>
@@ -229,9 +230,10 @@ class PageResourceSiteScanTest {
         Map<String, Object> analysis = get(one, "analysis");
         Map<String, Object> site = get(analysis, "site");
         List<Map<String, Object>> pages = get(site, "pages");
+        // Ana sayfanın bağlantı denetiminde kırık bulunan /broken (500) ve /gone (404) aday değil — bütçe harcamaz
         assertThat(pages).extracting(p -> p.get("url")).containsExactly(base + "/", base + "/about", base + "/contact.html",
-                base + "/broken", base + "/pdf-page");
-        assertThat(pages).extracting(p -> p.get("status")).containsExactly("ok", "ok", "ok", "failed", "failed");
+                base + "/pdf-page");
+        assertThat(pages).extracting(p -> p.get("status")).containsExactly("ok", "ok", "ok", "failed");
         assertThat(pages.get(0).get("grade")).isEqualTo(scan.get("grade"));
         assertThat(pages.get(1).get("grade")).isNotNull();
         assertThat(pages.get(1).get("letter")).isNotNull();
@@ -241,10 +243,13 @@ class PageResourceSiteScanTest {
         assertThat(((Number) pages.get(1).get("unique_bytes")).longValue()).as("about: HTML + about.png")
                 .isEqualTo((long) aboutHtml.length + aboutPng.length);
         assertThat(pages.get(1).get("shared_count")).as("s.css, a.js, bg.png, f.woff2").isEqualTo(4);
-        assertThat(pages.get(3).get("error_code")).isEqualTo("PAGE_HTTP");
-        assertThat((String) pages.get(3).get("error")).contains("500").doesNotStartWith("PAGE_");
-        assertThat(pages.get(4).get("error_code")).isEqualTo("PAGE_NOT_HTML");
-        assertThat(pages.get(4).get("error")).isNotNull();
+        assertThat(pages.get(3).get("error_code")).isEqualTo("PAGE_NOT_HTML");
+        assertThat((String) pages.get(3).get("error")).isNotNull().doesNotStartWith("PAGE_");
+        assertThat(((Map<String, Object>) get(scan, "progress"))).containsEntry("pages_done", 4).containsEntry("pages_total", 4);
+        List<Map<String, Object>> mainItems = get(one, "items");
+        assertThat(mainItems).as("kırık bağlantılar ana sayfanın sonucunda")
+                .anyMatch(i -> ((String) i.get("url")).endsWith("/broken") && "broken".equals(i.get("verdict")))
+                .anyMatch(i -> ((String) i.get("url")).endsWith("/gone") && "broken".equals(i.get("verdict")));
 
         List<Map<String, Object>> shared = get(site, "shared");
         Map<String, Object> css = shared.stream().filter(m -> ((String) m.get("url")).endsWith("/s.css")).findFirst().orElseThrow();
@@ -255,7 +260,7 @@ class PageResourceSiteScanTest {
         assertThat(shared).anyMatch(m -> ((String) m.get("url")).endsWith("/bg.png") && Integer.valueOf(3).equals(m.get("pages")));
         assertThat(shared).anyMatch(m -> ((String) m.get("url")).endsWith("/f.woff2") && Integer.valueOf(3).equals(m.get("pages")));
         Map<String, Object> totals = get(site, "totals");
-        assertThat(totals).containsEntry("pages", 5).containsEntry("scanned", 3).containsEntry("failed", 2)
+        assertThat(totals).containsEntry("pages", 4).containsEntry("scanned", 3).containsEntry("failed", 1)
                 .containsEntry("skipped", 0);
 
         // Ortak nesneler BİR kez (sayfalar arası URL önbelleği), stilden bulunanlar dahil
@@ -292,9 +297,9 @@ class PageResourceSiteScanTest {
         assertThat(scan.get("pages_count")).isEqualTo(2);
         Map<String, Object> site = get(get(one, "analysis"), "site");
         assertThat(site.get("incomplete")).as("site eksikliği ayrı alanda").isEqualTo(true);
-        assertThat((Map<String, Object>) get(site, "totals")).containsEntry("skipped", 3);
+        assertThat((Map<String, Object>) get(site, "totals")).containsEntry("skipped", 2);
         List<Map<String, Object>> pages = get(site, "pages");
-        assertThat(pages).extracting(p -> p.get("status")).containsExactly("ok", "ok", "skipped", "skipped", "skipped");
+        assertThat(pages).extracting(p -> p.get("status")).containsExactly("ok", "ok", "skipped", "skipped");
         assertThat(pages.get(0).get("capped")).isEqualTo(false);
         assertThat(pages.get(2).get("capped")).isEqualTo(true);
         assertThat(pages.get(2).get("error_code")).isEqualTo("NOT_SCANNED");
@@ -312,7 +317,7 @@ class PageResourceSiteScanTest {
     }
 
     @Test
-    @DisplayName("O2: koşu sırasında sayfa ilerlemesi DB'de — RUNNING satırında progress.pages_done / pages_total (liste + tek analiz); bitince 5/5")
+    @DisplayName("O2: koşu sırasında sayfa ilerlemesi DB'de — RUNNING satırında progress.pages_done / pages_total (liste + tek analiz); bitince 4/4 (kırık bağlantılar aday değil)")
     void runningSiteProgress() throws Exception {
         contactGate = new java.util.concurrent.CountDownLatch(1);
         long id;
@@ -329,16 +334,16 @@ class PageResourceSiteScanTest {
             Map<String, Object> scan = get(svc.one(id, 5), "scan");
             assertThat(scan.get("status")).isEqualTo("RUNNING");
             assertThat(scan.get("scope")).isEqualTo("site");
-            assertThat((Map<String, Object>) get(scan, "progress")).containsEntry("pages_done", 2).containsEntry("pages_total", 5);
+            assertThat((Map<String, Object>) get(scan, "progress")).containsEntry("pages_done", 2).containsEntry("pages_total", 4);
             Map<String, Object> running = get(svc.list(5, 10), "running");
             assertThat((Map<String, Object>) get(running, "progress")).containsEntry("pages_done", 2)
-                    .containsEntry("pages_total", 5);
+                    .containsEntry("pages_total", 4);
         } finally {
             contactGate.countDown();
         }
         Map<String, Object> end = get(awaitEnd(5, id), "scan");
         assertThat(end.get("status")).isEqualTo("DONE");
-        assertThat((Map<String, Object>) get(end, "progress")).containsEntry("pages_done", 5).containsEntry("pages_total", 5);
+        assertThat((Map<String, Object>) get(end, "progress")).containsEntry("pages_done", 4).containsEntry("pages_total", 4);
     }
 
     @Test
