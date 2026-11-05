@@ -146,11 +146,15 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     expect(document.querySelectorAll('[data-slot="act-item"]').length).toBe(5)
   })
 
-  it('2026-09-20: activityTarget haritası — sertifika → dashboard ?q=alan, uptime → uptime, ping → ping ?monitor=id, scripted param taşımaz, bilinmeyen null', () => {
+  it('2026-09-20 / 2026-11-05: activityTarget haritası — sertifika → dashboard ?domain=alan (envanter kimliği varsa kart penceresi), uptime → uptime, ping → ping ?monitor=id, scripted kimliği taşır, bilinmeyen null', () => {
     expect(activityTarget({ monitor_type: 'CERT', target: 'https://a.example.com:443/x' })).toEqual({ tab: 'dashboard', params: { domain: 'a.example.com' } })
+    // G: be1 sertifika satırına envanter kimliği yazar → kartına tıklamakla aynı pencere (useCertDeepLink `open=cert`)
+    expect(activityTarget({ monitor_type: 'CERT', monitor_id: 44, target: 'a.example.com:443' })).toEqual({ tab: 'dashboard', params: { domain: 'a.example.com', open: 'cert' } })
     expect(activityTarget({ monitor_type: 'UPTIME', target: 'b.example.com' })).toEqual({ tab: 'uptime', params: { q: 'b.example.com' } })
     expect(activityTarget({ monitor_type: 'PING', monitor_id: 7, target: '10.0.0.1' })).toEqual({ tab: 'ping', params: { monitor: 7 } })
-    expect(activityTarget({ monitor_type: 'SCRIPTED', monitor_id: 3 })).toEqual({ tab: 'scripted', params: undefined })
+    // G: Sentetik sayfa ?monitor=<id> derin bağlantısını açıyor (useMonitorDeepLink) — eskiden kimlik taşınmıyordu
+    expect(activityTarget({ monitor_type: 'SCRIPTED', monitor_id: 3 })).toEqual({ tab: 'scripted', params: { monitor: 3 } })
+    expect(activityTarget({ monitor_type: 'SCRIPTED' })).toEqual({ tab: 'scripted', params: undefined })
     expect(activityTarget({ monitor_type: 'WEIRD' })).toBeNull()
   })
 
@@ -165,13 +169,16 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'ping', params: { monitor: 9 } })
     fireEvent.click(screen.getByText('gw'))
     expect(nav).toHaveBeenCalledTimes(2)
-    expect(container.querySelector('[data-slot="act-item"][data-state="open"]')).toBeNull()
+    // Ad tıklaması ayrıntı sayfasına GİTMEZ (izlemeye gider)
+    expect(new URLSearchParams(window.location.search).get('act')).toBeNull()
     expect(api.getActivityDetail).not.toHaveBeenCalled()
-    // özet: Hata kalemi → status=ERROR süzgeci
-    fireEvent.click(screen.getByRole('button', { name: /Hata|Error/ }))
-    await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ERROR' })))
-    expect(new URLSearchParams(window.location.search).get('astatus')).toBe('ERROR')
-    fireEvent.click(screen.getByRole('button', { name: /Hata|Error/ }))
+    // özet: Hata kalemi → ERROR + TIMEOUT süzgeci (2026-11-05, G: zaman aşımları kaybolmasın)
+    const errKpi = () => container.querySelector('[data-slot="stat-item"][data-key="ERROR"]')
+    fireEvent.click(errKpi())
+    await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ERROR,TIMEOUT' })))
+    expect(new URLSearchParams(window.location.search).get('astatus')).toBe('ERROR,TIMEOUT')
+    expect(errKpi()).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(errKpi())
     await waitFor(() => expect(api.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ status: '' })))
     window.removeEventListener('sm:navigate', nav)
   })
@@ -186,35 +193,42 @@ describe('ActivityLog — shadcn satırlar (D2)', () => {
     api.getActivity.mockResolvedValue({ success: true, page: 0, total: 1, data: [row({ id: 7, monitor_name: 'web', error_message: 'connect timed out', error_class: 'Timeout', result_status: 'ERROR' })] })
   })
 
-  it('satır klavyeyle açılır (Enter): aria-expanded, ayrıntı + hata bandı + son kontroller; tekrar Enter kapatır', async () => {
+  it('2026-11-05: satır klavyeyle (Enter) AYRINTI SAYFASINI açar — ?act=<id>, liste gizlenir; "Geri" listeye süzgeçleriyle döner', async () => {
+    window.history.replaceState(null, '', '/?tab=activity&atype=HTTP')
     render(<ActivityLog />)
     await screen.findByText('web')
     const tr = document.querySelector('[data-slot="act-item"]')
     expect(tr.tagName).toBe('TR')
-    expect(tr).toHaveAttribute('aria-expanded', 'false')
+    expect(tr).not.toHaveAttribute('aria-expanded')
     fireEvent.keyDown(tr, { key: 'Enter' })
-    await waitFor(() => expect(api.getActivityDetail).toHaveBeenCalledWith(7))
-    expect(tr).toHaveAttribute('aria-expanded', 'true')
-    expect(await screen.findByText(/connect timed out/)).toBeInTheDocument()
-    expect(await screen.findByText('200 · 120ms')).toBeInTheDocument()
-    fireEvent.keyDown(tr, { key: 'Enter' })
-    await waitFor(() => expect(document.querySelector('[data-slot="act-detail"]')).toBeNull())
+    const back = await screen.findByRole('button', { name: /Aktivite listesine dön|Back to the activity list/ })
+    const p = new URLSearchParams(window.location.search)
+    expect(p.get('act')).toBe('7')
+    expect(p.get('atype')).toBe('HTTP')   // liste süzgeçleri adreste kalır (paylaşılabilir)
+    expect(document.querySelector('[data-slot="activity-log"]').closest('[hidden]')).not.toBeNull()
+    // Satır içi ayrıntı (mini geçmiş) yok — ayrıntı sayfadadır
+    expect(document.querySelector('[data-slot="act-detail"]')).toBeNull()
+    fireEvent.click(back)
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('act')).toBeNull())
+    expect(new URLSearchParams(window.location.search).get('atype')).toBe('HTTP')
+    await waitFor(() => expect(document.querySelector('[data-slot="activity-log"]').closest('[hidden]')).toBeNull())
   })
 
-  it('telefonda (390 px) kart listesi: tablo yok, kart başlığı aria-expanded düğme, "İzlemeye git" metinli düğme', async () => {
+  it('telefonda (390 px) kart listesi: tablo yok, kart başlığı ayrıntı sayfasını açar; alt şeritte "Ayrıntı" bağlantısı ve "İzlemeye git"', async () => {
     const w = window.innerWidth
     window.innerWidth = 390
+    window.history.replaceState(null, '', '/?tab=activity')
     try {
       render(<ActivityLog />)
       await screen.findByText('web')
       expect(document.querySelector('[data-slot="act-feed"] table')).toBeNull()
       const card = document.querySelector('li[data-slot="act-item"]')
       expect(card).not.toBeNull()
-      const head = card.querySelector('button[aria-expanded]')
-      expect(head).toHaveAttribute('aria-expanded', 'false')
-      fireEvent.click(head)
-      await waitFor(() => expect(head).toHaveAttribute('aria-expanded', 'true'))
+      const link = within(card).getByRole('link', { name: /ayrıntı sayfasını aç|open the details page/i })
+      expect(link.getAttribute('href')).toMatch(/[?&]act=7(&|$)/)
       expect(within(card).getByRole('button', { name: /izlemeye git|go to the monitor/i })).toHaveTextContent(/İzlemeye git|Go to the monitor/)
+      fireEvent.click(within(card).getByRole('button', { name: /ayrıntı sayfasını aç|open the details page/i }))
+      await waitFor(() => expect(new URLSearchParams(window.location.search).get('act')).toBe('7'))
     } finally {
       window.innerWidth = w
     }

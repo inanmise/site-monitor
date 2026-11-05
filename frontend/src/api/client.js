@@ -111,6 +111,57 @@ async function downloadAlarmFeedExport(qs) {
   return { success: true, name: name || fallback }
 }
 
+/** Aktivite uçlarının sorgu metni: boş / null değerler yazılmaz (getActivity ile aynı kural). */
+function activityQuery(params = {}) {
+  const qs = new URLSearchParams()
+  Object.entries(params || {}).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.append(k, v) })
+  return qs.toString()
+}
+
+/**
+ * Aktivite akışının TAM CSV dışa aktarımı (2026-11-05, E): ham `fetch` + Blob + ortak indirme (`downloadBlob` — Safari /
+ * iPad). Sunucu tavanı aşıldıysa `X-Export-Truncated: true` başlığı → `truncated: true`. Hata yolu alarm akışı
+ * dışa aktarımıyla aynı (`downloadAlarmFeedExport`): 401 oturum yolu, 429 bekleme önerisi, JSON olmayan / ağ hatası
+ * çevrilmiş metinle; tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED` (başarı sayılmaz).
+ */
+async function downloadActivityCsv(qs) {
+  let res
+  try {
+    res = await fetch(`${BASE}/activity/export${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+  } catch {
+    return networkFailurePayload()
+  }
+  if (!res.ok) {
+    recordFailure('/activity/export', res.status)
+    if (res.status === 401) pingSessionPath()
+    let body = null
+    try { body = await res.json() } catch { body = null }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
+    const normalized = normalizeErrorBody(body, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false
+    normalized.status = res.status
+    const ra = parseRetryAfter(headerOf(res, 'Retry-After')) ?? parseRetryAfter(body?.retry_after_seconds)
+    if (ra != null) normalized.retryAfter = ra
+    return normalized
+  }
+  let blob
+  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  let name = null
+  try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
+  const p = (n) => String(n).padStart(2, '0')
+  const d = new Date()
+  const fallback = `aktivite-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
+  const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
+  const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
+  if (!downloadBlob(name || fallback, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return { success: true, name: name || fallback, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
+}
+
 /**
  * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
  * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
@@ -1237,6 +1288,16 @@ export const api = {
     const s = qs.toString()
     return request(`/activity/summary${s ? `?${s}` : ''}`)
   },
+  // ── fe2 (2026-11-05, D + E + F) ──
+  // İzleme zaman çizelgesi: { monitor: 'TYPE:id', from?, to? } (aralık sunucuda en çok 90 gün; varsayılan son 7 gün)
+  getActivityTimeline: (params = {}) => request(`/activity/timeline?${activityQuery(params)}`, { withStatus: true }),
+  // "Aynı anda ne oldu?" — satırın ± window sn içindeki hatalı kontroller + şüpheli neden / olgu kodları
+  getActivityRelated: (id, windowS) => request(`/activity/${encodeURIComponent(id)}/related${windowS ? `?window=${encodeURIComponent(windowS)}` : ''}`, { withStatus: true }),
+  // Tam dışa aktarım (liste süzgeçleriyle, TÜM sayfalar): `csv` sunucunun dosyası indirilir ({success, name, truncated});
+  // `json` en çok 20 000 satır döner (ön yüz Excel'i kurar). Uzun sürebilir — okuma zaman aşımı yok.
+  exportActivity: (params = {}, format = 'csv') => (format === 'json'
+    ? request(`/activity/export?${activityQuery({ ...params, format: 'json' })}`, { timeoutMs: 0 })
+    : downloadActivityCsv(activityQuery({ ...params, format: 'csv' }))),
 
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
 

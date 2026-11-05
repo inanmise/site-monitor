@@ -19,6 +19,8 @@ export const META_PAGES = Object.freeze([
   'loading', 'login', 'sessionExpired', 'accountInactive', 'maintenance', 'changePassword', 'notFound', 'restricted',
   // Kanal raporlarının Görsel paneli penceresi (2026-10-18, ?tab=channelreports&te_view=images)
   'imagesPanel',
+  // Aktivite ayrıntı sayfası (?tab=activity&act=<id>) ve izleme zaman çizelgesi (?tab=activity&amon=<TYPE>:<id>) — 2026-11-05
+  'activityDetail', 'activityTimeline',
 ])
 
 export const tabMetaKey = (tab) => `meta.tab.${tab}`

@@ -102,10 +102,14 @@ describe('ActivityLog — yeniden tasarım (2026-10-11)', () => {
     }
   })
 
-  it('özet isteği durum süzgecini de taşır (tür sayıları onunla süzülür)', async () => {
+  it('özet isteği durum süzgecini de taşır (tür sayıları onunla süzülür) — durum çoklu seçim, zaman aşımı dahil (2026-11-05)', async () => {
     render(<ActivityLog />)
     await screen.findByText(LONG)
-    fireEvent.change(screen.getByRole('combobox', { name: /Durum|Status/ }), { target: { value: 'ERROR' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Durum|Status)/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /^(Hata|Error)$/ }))
     await waitFor(() => expect(api.getActivitySummary).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ERROR' })))
+    fireEvent.click(screen.getByRole('option', { name: /^(Zaman aşımı|Timeout)$/ }))
+    await waitFor(() => expect(api.getActivitySummary).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ERROR,TIMEOUT' })))
+    expect(new URLSearchParams(window.location.search).get('astatus')).toBe('ERROR,TIMEOUT')
   })
 })
