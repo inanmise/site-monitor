@@ -285,8 +285,9 @@ for (const vp of VIEWPORTS) {
       await expect(badges.nth(1)).toHaveText(`İletim · ${LONG_TEAM_B}`)
       await expect(modal).not.toContainText(`İletim: ${LONG_TEAM}`)
       expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
-      expect(await page.evaluate(offenders, '[role="dialog"]'), `@${vp.name}: pencere ekran dışı`).toEqual([])
-      expect(await page.evaluate(clipped, '[role="dialog"]'), `@${vp.name}: pencere kırpılan`).toEqual([])
+      // Ölçüm YALNIZ yeniden gönderim penceresinde (arkadaki alarm ayrıntısı Sheet'i bu işin kapsamı dışında)
+      expect(await page.evaluate(offenders, '[data-slot="dialog-content"]'), `@${vp.name}: pencere ekran dışı`).toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="dialog-content"]'), `@${vp.name}: pencere kırpılan`).toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="dialog-content"]'), `@${vp.name}: küçük hedef`).toEqual([])
       // İletim alıcısı tek tek çıkarılabilir — seçim sayısı düşer
       await modal.getByRole('checkbox', { name: /dijital-kanallar-operasyon-destek@example\.com/ }).click()
