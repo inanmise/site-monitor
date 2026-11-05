@@ -9,7 +9,7 @@ import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import ResourceScanCompare from './ResourceScanCompare.jsx'
 // prs3 F / G (fe2): bütçe durumu ve çok sayfalı analiz işaretleri
 import { BudgetStatusBadge } from './ResourceScanBudget.jsx'
-import { budgetStatusOf } from './resourceScanReportModel.js'
+import { budgetStatusOf, siteRowText } from './resourceScanReportModel.js'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
@@ -67,12 +67,6 @@ export default function ResourceScanHistory({
   )
 }
 
-/** "Site · 5 sayfa" (sayfa sayısı bilinmiyorsa yalnız "Site"). */
-function siteText(s, t, locale) {
-  const n = Number(s.pages_count)
-  return s.pages_count != null && Number.isFinite(n) && n > 0 ? plural(t, 'prs.site.chip', n, formatNumber(n, locale)) : t('prs.site.chipNoCount')
-}
-
 function HistoryRow({ s, sel, t, locale, onClick }) {
   const letter = gradeLetter(s.grade, s.grade_letter)
   const done = s.status === 'DONE'
@@ -89,7 +83,7 @@ function HistoryRow({ s, sel, t, locale, onClick }) {
       : [s.error || t('prs.hist.noResult')]
   const grade = done ? (capped ? t('prs.hist.gradeShortCapped', s.grade ?? '—') : t('prs.hist.gradeShort', s.grade ?? '—')) : statusText
   // prs3: çok sayfalı analiz ("Site · 5 sayfa") ve bütçe durumu (yalnız tamamlanmış analizde; bilinmeyen "bilinmiyor")
-  const site = s.scope === 'site' ? siteText(s, t, locale) : null
+  const site = s.scope === 'site' ? siteRowText(s, t, locale) : null   // "Site · 3 / 5 sayfa analiz edildi" (Sayfalar ile aynı)
   const budget = done ? budgetStatusOf(s) : null
   const budgetAria = budget ? t(`prs.budget.hist.${budget}`) : null
   // Görünen bilginin tamamı (r177 H15 — eski etiket yalnız tarih + not okuyordu)

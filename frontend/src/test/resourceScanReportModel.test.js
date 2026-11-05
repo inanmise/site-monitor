@@ -6,7 +6,9 @@ import {
   isBudgetUnsupported, isSiteScan, isTrendUnsupported, normalizeBudget, pageStatus, parseBudgetForm, priorityActions, recShortLabel,
   scanMarkerScores, seriesSummary, siteLimits, siteModel, sitePageChoices, sitePageSheetRows, siteScopeIgnored, siteSharedSheetRows,
   sortSitePages, trendSeries, sectionTabCols, OBJECT_DEEP_COLUMNS, httpVersionLabel, objectDeepColumns, tpCategoryLabel, withObjectDeepColumns,
+  compareNotes, isEndpointUnsupported, siteRowText, trendDirection,
 } from '../components/page/resourcescan/resourceScanReportModel.js'
+import { runProgressPct } from '../components/page/resourcescan/resourceScanModel.js'
 import { KB, MB, budgetEval, deepAnalysis, deepDetail, siteBlock, trendData } from './helpers/resourceScanFgFixtures.js'
 import { scanAnalysis, scanSummary } from './helpers/resourceScanFixtures.js'
 import { TR } from '../i18n/tr.js'
@@ -300,7 +302,7 @@ describe('F3 yönetici raporu', () => {
 
   it('yönetici Excel sayfası: puanlar, bütçe, eylemler, karşılaştırma, A–E; eksik veri cümleyle (sorun yok denmez)', () => {
     const d = deepDetail(12)
-    const rows = executiveSheetRows({ scan: d.scan, analysis: d.analysis, budget: d.budget, prev: scanSummary(9, { grade: 64 }), t, locale: L })
+    const rows = executiveSheetRows({ scan: d.scan, analysis: d.analysis, budget: d.budget, prev: scanSummary(9, { grade: 64, algorithm_version: 3 }), t, locale: L })
     const flat = rows.map((r) => r.join(' | '))
     expect(flat).toContain('Güvenlik | 58 / 100 · E')
     expect(flat).toContain('Erişilebilirlik | —')
@@ -391,5 +393,185 @@ describe('bölüm sekmesi telefon ızgarası', () => {
     expect(sectionTabCols(null)).toBe(4)
     expect(sectionTabCols(2.5)).toBe(4)
     expect(sectionTabCols(1000)).toBe(6)
+  })
+})
+
+// Hata avı bh-prs3 (2026-11-05): eski pod'un eğilim yanıtı, site ilerlemesi, Excel / PDF'te bilinmeyen ve kısmi, eğilim
+// yönü, yönetici özeti sayıları, geçmişte sayfa sayısı.
+describe('bh-prs3 hata avı — model', () => {
+  it('O-1: eski pod tür uyuşmazlığı 400 (`…/{scanId}`ye düşen istek) "desteklenmiyor"; başka 400 gerçek hata', () => {
+    const oldPod = { success: false, status: 400, code: 'INVALID_PARAMETER',
+      error: "'scanId' değeri geçersiz: 'trend' beklenen biçimde değil (beklenen: sayı). Adresi ya da formu kontrol edip tekrar deneyin." }
+    expect(isTrendUnsupported(oldPod)).toBe(true)
+    expect(isBudgetUnsupported(oldPod)).toBe(true)
+    expect(isEndpointUnsupported({ ...oldPod, error: "The value of 'scanId' is invalid: 'trend' isn’t in the expected format (expected: a number)." })).toBe(true)
+    expect(isEndpointUnsupported({ status: 400, code: 'INVALID_PARAMETER' })).toBe(true)
+    expect(isEndpointUnsupported({ status: 400, error: "'scanId' değeri geçersiz: 'trend'" })).toBe(true)
+    // başka parametrenin tür hatası, doğrulama hatası, kodlu başka 400: gerçek hata (desteklenmiyor denmez)
+    expect(isEndpointUnsupported({ status: 400, code: 'INVALID_PARAMETER', error: "'id' değeri geçersiz: 'x' beklenen biçimde değil" })).toBe(false)
+    expect(isEndpointUnsupported({ status: 400, code: 'VALIDATION_FAILED', field: 'max_js_kb', error: "'scanId'" })).toBe(false)
+    expect(isEndpointUnsupported({ status: 400, code: 'RATE_LIMITED' })).toBe(false)
+    expect(isEndpointUnsupported({ status: 400 })).toBe(false)
+    expect(isEndpointUnsupported({ status: 404, code: 'NOT_FOUND' })).toBe(true)
+    expect(isEndpointUnsupported({ status: 405 })).toBe(true)
+    expect(isEndpointUnsupported({ status: 500 })).toBe(false)
+    expect(isEndpointUnsupported(null)).toBe(false)
+  })
+
+  it('O-2: site koşusunun yüzdesi sayfa ilerlemesinden; iç sayfalar toplamı büyütünce %100\'de takılmaz; geri gitmez', () => {
+    const run = (progress) => ({ id: 51, status: 'RUNNING', scope: 'site', progress })
+    // ana sayfa ölçülürken sayfa sayısı bilinmiyor: belirsiz (nesne oranı sitenin oranı değil)
+    expect(runProgressPct(run({ done: 20, total: 27 })).pct).toBeNull()
+    // ana sayfa bitti (nesne sayacı 27 / 27 = %100) → 1 / 5 sayfa = %20
+    let r = runProgressPct(run({ done: 27, total: 27, pages_done: 1, pages_total: 5 }), null)
+    expect(r.pct).toBe(20)
+    // 2. sayfa sürüyor: toplam 42'ye büyüdü, 30 ölçüldü → 1 + 3/15 = %24 (eski kural %71 → %100'de takılıyordu)
+    r = runProgressPct(run({ done: 30, total: 42, pages_done: 1, pages_total: 5 }), r.memo)
+    expect(r.pct).toBe(24)
+    // sayfanın payı en çok %99 — sayfa bitmeden bir sonrakinin payı verilmez
+    r = runProgressPct(run({ done: 42, total: 42, pages_done: 1, pages_total: 5 }), r.memo)
+    expect(r.pct).toBe(40)
+    r = runProgressPct(run({ done: 42, total: 42, pages_done: 2, pages_total: 5 }), r.memo)
+    expect(r.pct).toBe(40)
+    expect(r.memo).toEqual({ pd: 2, base: 42 })
+    r = runProgressPct(run({ done: 50, total: 58, pages_done: 2, pages_total: 5 }), r.memo)
+    expect(r.pct).toBe(50)
+    // son sayfa dışında %100 gösterilmez; hepsi bitince %100
+    expect(runProgressPct(run({ done: 99, total: 100, pages_done: 1, pages_total: 2 }), { pd: 1, base: 0 }).pct).toBe(99)
+    expect(runProgressPct(run({ done: 70, total: 70, pages_done: 5, pages_total: 5 })).pct).toBe(100)
+    // tek sayfa analizi bugünkü kural
+    expect(runProgressPct({ status: 'RUNNING', progress: { done: 9, total: 40 } }).pct).toBe(23)
+    expect(runProgressPct({ status: 'RUNNING', progress: { done: 0, total: 0 } }).pct).toBeNull()
+  })
+
+  it('D-2: Excel A–E — HTML okunamadı: engelleyenler / ipuçları / görsel listeleri "Kayıt yok" değil "bilinmiyor"', () => {
+    const a = deepAnalysis()
+    a.loading = { ...a.loading, render_blocking: null, hints: null }
+    a.media = { ...a.media, images: { missing_dimensions: [], missing_srcset: [], not_lazy: [], animated_gif: [], html_checked: false } }
+    const sheets = deepSheets(a, t, L)
+    const after = (rows, title) => rows[rows.findIndex((r) => r.length === 1 && r[0] === title) + 1]
+    const loading = sheets.find((s) => s.key === 'loading').rows
+    expect(after(loading, t('prs.pdf.xl.renderBlocking'))).toEqual([t('prs.pdf.load.htmlUnknown')])
+    expect(after(loading, t('prs.pdf.xl.missingPreconnect'))).toEqual([t('prs.pdf.load.htmlUnknown')])
+    const media = sheets.find((s) => s.key === 'media').rows
+    for (const k of ['missingDimensions', 'missingSrcset', 'notLazy']) expect(after(media, t(`prs.pdf.xl.${k}`))).toEqual([t('prs.pdf.media.htmlUnknown')])
+    // hareketli GIF nesneden ölçülür (HTML'den değil): boşsa "Kayıt yok"
+    expect(after(media, t('prs.pdf.xl.animatedGif'))).toEqual([t('prs.pdf.xl.none')])
+    expect([...loading, ...media].flat()).not.toContain(undefined)
+    // HTML okunduysa boş liste yine "Kayıt yok" (bugünkü davranış)
+    const okA = deepAnalysis()
+    okA.loading = { ...okA.loading, render_blocking: { items: [], count: 0, bytes: 0 } }
+    const okLoading = deepSheets(okA, t, L).find((s) => s.key === 'loading').rows
+    expect(after(okLoading, t('prs.pdf.xl.renderBlocking'))).toEqual([t('prs.pdf.xl.none')])
+  })
+
+  it('D-3: site sayfasının kısmi ölçümü modelde ve Excel durum hücresinde', () => {
+    const block = siteBlock()
+    block.pages[1] = { ...block.pages[1], capped: true }
+    const m = siteModel(block)
+    expect(m.pages.map((p) => p.capped)).toEqual([false, true, false, false, false])   // taranmayan sayfanın capped'i "kısmi" değil
+    const rows = sitePageSheetRows(m, t)
+    expect(rows[2][1]).toBe(`${t('prs.site.status.ok')} · ${t('prs.pdf.partialScore')}`)
+    expect(rows[1][1]).toBe(t('prs.site.status.ok'))
+  })
+
+  it('D-4: karşılaştırma — algoritma farklıysa not / güvenlik satırı yok; kısmi analizde yön yok; uyarı satırları', () => {
+    const now = scanSummary(2, { grade: 72, load_ms: 2000, security_score: 58, algorithm_version: 3 })
+    const v2 = scanSummary(1, { grade: 64, load_ms: 3000, security_score: 50, algorithm_version: 2 })
+    expect(compareRows(now, v2).map((r) => r.key)).toEqual(['load', 'size', 'requests'])
+    expect(compareNotes(now, v2, t)).toEqual([t('prs.pdf.compareAlgo', 'v2', 'v3')])
+    // analiz ayrıntısındaki sürüm öncelikli
+    expect(compareRows(scanSummary(2, { grade: 72 }), scanSummary(1, { grade: 64, algorithm_version: 3 }), { algorithm_version: 3 })
+      .map((r) => r.key)).toContain('grade')
+    // kısmi: değerler ve fark var, yön yok; metinde "iyileşti" yok
+    const capped = { ...now, capped: true }
+    const v3 = { ...v2, algorithm_version: 3 }
+    const rows = compareRows(capped, v3)
+    expect(rows.map((r) => [r.key, r.direction])).toEqual([['grade', null], ['load', null], ['size', null], ['requests', null], ['security', null]])
+    const text = compareExportRows(capped, v3, t, L)
+    expect(text[0]).toEqual(['Performans notu', '64', '72', `+8 · ${t('prs.pdf.dir.partial')}`])
+    expect(text.flat().join(' ')).not.toMatch(/iyileşti|kötüleşti/)
+    expect(text.find((r) => r[0] === t('prs.pdf.cmp.size'))[3]).toBe(t('prs.delta.same'))
+    expect(compareNotes(capped, v3, t)).toEqual([t('prs.cmp.capped')])
+    expect(compareNotes(now, null, t)).toEqual([])
+    // Excel yönetici sayfası aynı kuralı söyler
+    const d = deepDetail(12)
+    const flat = executiveSheetRows({ scan: d.scan, analysis: d.analysis, budget: d.budget, prev: scanSummary(9, { grade: 64, algorithm_version: 2 }), t, locale: L })
+      .map((r) => r.join(' | '))
+    expect(flat).toContain(t('prs.pdf.compareAlgo', 'v2', 'v3'))
+    expect(flat.some((l) => l.startsWith('Performans notu |'))).toBe(false)
+  })
+
+  it('D-5: Excel yönetici özeti — kısmi analizin performans / güvenlik puanı "Kısmi ölçüm" notuyla', () => {
+    const d = deepDetail(12, { scan: { capped: true } })
+    const flat = executiveSheetRows({ scan: d.scan, analysis: d.analysis, budget: d.budget, prev: null, t, locale: L }).map((r) => r.join(' | '))
+    expect(flat).toContain(`Performans | 72 / 100 · C · ${t('prs.pdf.partialScore')}`)
+    expect(flat).toContain(`Güvenlik | 58 / 100 · E · ${t('prs.pdf.partialScore')}`)
+    expect(flat).toContain('SEO | 86 / 100')                 // SEO yalnız HTML'den — sınırdan etkilenmez
+    expect(flat).toContain('Erişilebilirlik | —')            // hesaplanamayan puan "kısmi" değil
+  })
+
+  it('D-6: eğilim yönü — algoritmaya bağlı seride yalnız son sürüm; son nokta kısmiyse yön yok; kısmi noktalar kıyasa girmez', () => {
+    const pts = trendSeries([
+      { scan_id: 1, finished_at: '2026-10-01T09:00:00', algorithm_version: 2, grade: 92, load_ms: 3000 },
+      { scan_id: 2, finished_at: '2026-10-08T09:00:00', algorithm_version: 3, grade: 81, load_ms: 2500 },
+    ])
+    expect(pts.map((p) => p.capped)).toEqual([false, false])
+    expect(trendDirection(pts, 'grade', { higherIsBetter: true, algoDependent: true })).toBeNull()
+    expect(trendDirection(pts, 'grade', { higherIsBetter: true })).toBe('worse')          // sürüme bağlı değilse eski kural
+    expect(trendDirection(pts, 'load', {})).toBe('better')                                // süre ölçümdür: sürüm sınırı geçerli
+    const more = trendSeries([
+      { scan_id: 1, finished_at: '2026-10-01T09:00:00', algorithm_version: 2, grade: 92 },
+      { scan_id: 2, finished_at: '2026-10-08T09:00:00', algorithm_version: 3, grade: 70 },
+      { scan_id: 3, finished_at: '2026-10-15T09:00:00', algorithm_version: 3, grade: 78 },
+    ])
+    expect(trendDirection(more, 'grade', { higherIsBetter: true, algoDependent: true })).toBe('better')   // 70 → 78 (v3 dilimi)
+    const lastCapped = trendSeries([
+      { scan_id: 1, finished_at: '2026-10-01T09:00:00', algorithm_version: 3, grade: 60, load_ms: 4000 },
+      { scan_id: 2, finished_at: '2026-10-08T09:00:00', algorithm_version: 3, grade: 90, load_ms: 1000, capped: true },
+    ])
+    expect(trendDirection(lastCapped, 'grade', { higherIsBetter: true, algoDependent: true })).toBeNull()
+    expect(trendDirection(lastCapped, 'load', {})).toBeNull()
+    const middleCapped = trendSeries([
+      { scan_id: 1, finished_at: '2026-10-01T09:00:00', algorithm_version: 3, grade: 60, capped: true },
+      { scan_id: 2, finished_at: '2026-10-08T09:00:00', algorithm_version: 3, grade: 70 },
+      { scan_id: 3, finished_at: '2026-10-15T09:00:00', algorithm_version: 3, grade: 65 },
+    ])
+    expect(trendDirection(middleCapped, 'grade', { higherIsBetter: true, algoDependent: true })).toBe('worse')   // 70 → 65
+    expect(trendDirection([], 'grade', {})).toBeNull()
+  })
+
+  it('D-8: PDF yönetici özeti sayıları önerinin TAM değerinden; kesilmiş çerez listesinde "listelenen ilk N"', () => {
+    const a = deepAnalysis()
+    const cookies = Array.from({ length: 50 }, (_, i) => ({ name: `c${i}`, host: 'www.example.com', third_party: false, secure: true,
+      http_only: i >= 10, same_site: 'Lax', issues: i < 10 ? ['no_http_only'] : [] }))
+    a.security = { ...a.security, cookies, cookies_total: 120 }
+    a.loading = { ...a.loading, hints: { ...a.loading.hints, preload: [{ url: 'https://www.example.com/x.woff2', used: false }], preload_total: 80 } }
+    a.waste = { ...a.waste, duplicates_total: 70, unminified_total: 60, source_maps: [{ url: 'https://www.example.com/a.js', map_url: 'https://www.example.com/a.js.map', exposed: true }], source_maps_total: 90 }
+    a.recommendations = [
+      { code: 'UNUSED_PRELOAD', severity: 'low', params: { count: 12 } },
+      { code: 'DUPLICATE_RESOURCES', severity: 'low', params: { count: 70, bytes: 5 * 1024 * 1024 }, saving_bytes: 5 * 1024 * 1024 },
+      { code: 'UNMINIFIED_ASSETS', severity: 'low', params: { count: 60, bytes: 9 * 1024 * 1024 }, saving_bytes: 3 * 1024 * 1024 },
+      { code: 'SOURCE_MAP_EXPOSED', severity: 'low', params: { count: 33 } },
+    ]
+    const lines = executiveSections(a, t, L).flatMap((s) => s.lines)
+    expect(lines).toContain(t('prs.pdf.secu.cookiesListed', '120', '10', '50'))
+    expect(lines).toContain(t('prs.pdf.load.unusedPreload', '12'))
+    expect(lines).toContain(t('prs.pdf.waste.duplicates', '70', '5 MB'))
+    expect(lines).toContain(t('prs.pdf.waste.unminified', '60', '3 MB'))
+    expect(lines).toContain(t('prs.pdf.waste.sourceMaps', '33'))
+    // liste kesilmediyse bugünkü cümle
+    const b = deepAnalysis()
+    const plain = executiveSections(b, t, L).flatMap((s) => s.lines)
+    expect(plain).toContain(t('prs.pdf.secu.cookies', '1', '1'))
+    expect(plain.join('\n')).not.toMatch(/prs\.|\{\d\}/)
+  })
+
+  it('Ş-3: geçmiş / karşılaştırma çipi Sayfalar ile aynı: "Site · 3 / 5 sayfa analiz edildi"', () => {
+    expect(siteRowText({ pages_count: 3, progress: { done: 9, total: 9, pages_done: 5, pages_total: 5 } }, t, L)).toBe('Site · 3 / 5 sayfa analiz edildi')
+    expect(siteRowText({ pages_count: 5, progress: { pages_total: 5 } }, t, L)).toBe('Site · 5 sayfa analiz edildi')
+    expect(siteRowText({ pages_count: 3, progress: { done: 9, total: 9 } }, t, L)).toBe('Site · 3 sayfa analiz edildi')   // eski satır: payda yok
+    expect(siteRowText({ pages_count: null }, t, L)).toBe('Site')
+    expect(siteRowText({ pages_count: 0 }, t, L)).toBe('Site')
   })
 })

@@ -153,8 +153,10 @@ export function fgHistory({ site = true, running = null, canRun = true, extraLim
     if (s.id === 10) return { ...v, budget_status: 'unknown', budget_exceeded: null }
     return { ...v, budget_status: 'none' }
   })
+  // Biten site satırı koşu sırasında yazılan sayfa ilerlemesini taşır (sunucu bitince silmez): 3 / 5 sayfa (bh-prs3 Ş-3)
   const siteRow = scanSummary(30, { started_at: '2026-11-01T09:00:00', finished_at: '2026-11-01T09:04:00', algorithm_version: 3, scope: 'site',
-    pages_count: 3, budget_status: 'exceeded', budget_exceeded: 2, security_score: 58, seo_score: 86, a11y_score: null })
+    pages_count: 3, budget_status: 'exceeded', budget_exceeded: 2, security_score: 58, seo_score: 86, a11y_score: null,
+    progress: { done: 64, total: 64, pages_done: 5, pages_total: 5 } })
   const all = site ? [siteRow, ...items] : items
   return { items: running ? [running, ...all] : all, running, can_run: canRun,
     limits: { max_seconds: 300, max_objects: 1500, detail_runs: 20, max_pages: 10, site_max_seconds: 900, ...extraLimits } }

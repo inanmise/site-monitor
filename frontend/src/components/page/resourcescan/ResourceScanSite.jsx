@@ -69,6 +69,7 @@ export default function ResourceScanSite({ scan, analysis }) {
                 <li key={p.i} data-slot="prs-site-worst-row" className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
                   <GradeBadge p={p} t={t} />
                   <UrlText url={p.url} t={t} className="min-w-0 flex-1 text-sm" />
+                  {p.capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-partial">{t('prs.site.partial')}</ToneBadge>}
                   {p.recs.length > 0 && <span className={cn('text-xs text-muted-foreground', WRAP)}>{recShortLabel(p.recs[0], t)}</span>}
                 </li>
               ))}
@@ -179,8 +180,10 @@ function GradeBadge({ p, t }) {
   if (p.status !== 'ok') {
     return <ToneBadge tone={pageStatusTone(p.status)} className={cn(CHIP, 'shrink-0')} data-slot="prs-site-status">{pageStatusText(p.status, t)}</ToneBadge>
   }
+  // Kısmi ölçülen sayfanın notu soluk (asla yeşil değil — bh-prs3 D-3; panonun kuralı)
   return (
-    <ToneBadge tone={p.grade == null ? 'muted' : gradeTone(p.letter)} className={cn(CHIP, 'shrink-0 font-bold tabular-nums')} data-slot="prs-site-grade">
+    <ToneBadge tone={p.grade == null || p.capped ? 'muted' : gradeTone(p.letter)} className={cn(CHIP, 'shrink-0 font-bold tabular-nums')} data-slot="prs-site-grade"
+      data-partial={p.capped ? 'true' : undefined}>
       {p.grade ?? '—'}{p.letter ? ` · ${p.letter}` : ''}
     </ToneBadge>
   )
@@ -192,6 +195,7 @@ function PageCell({ p, t, locale }) {
       <UrlText url={p.url} t={t} className="text-sm" />
       <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         {p.main && <ToneBadge tone="info" className={CHIP} data-slot="prs-site-main">{t('prs.site.main')}</ToneBadge>}
+        {p.capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-partial">{t('prs.site.partial')}</ToneBadge>}
         {p.status === 'ok' && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
         {p.status === 'ok' && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
       </span>
@@ -206,8 +210,9 @@ function Scores({ p, t, locale }) {
   const list = [['security', p.security], ['seo', p.seo], ['a11y', p.a11y]]
   return (
     <span data-slot="prs-site-scores" className="flex flex-wrap gap-1">
+      {/* Kısmi ölçümde güvenlik puanı da soluk (nesne verisini kullanır); SEO / erişilebilirlik yalnız HTML'den */}
       {list.map(([k, v]) => (
-        <ToneBadge key={k} tone={v == null ? 'muted' : scoreTone(v)} className={cn(CHIP, 'tabular-nums')} data-score={k}>
+        <ToneBadge key={k} tone={v == null || (p.capped && k === 'security') ? 'muted' : scoreTone(v)} className={cn(CHIP, 'tabular-nums')} data-score={k}>
           {t(`prs.site.score.${k}`)} {v == null ? '—' : formatNumber(v, locale)}
         </ToneBadge>
       ))}
