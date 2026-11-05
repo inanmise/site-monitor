@@ -122,6 +122,54 @@ public final class ImageDimensions {
         return new Size(le16(b, 6), le16(b, 8));
     }
 
+    /** Sayılan en çok GIF karesi (algoritma 3 — "hareketli GIF"). */
+    static final int MAX_GIF_FRAMES = 10_000;
+
+    /**
+     * GIF kare sayısı (2026-11, kaynak analizi algoritma 3): verilen baytlardaki görüntü tanımlayıcıları ({@code 0x2C}) blok
+     * blok yürünerek sayılır — çözme yok, döngü girdinin uzunluğuyla sınırlı. Baytlar dosyanın yalnız başıysa sayı ALT
+     * SINIRDIR. GIF değil / bozuk başlık → 0.
+     */
+    public static int gifFrames(byte[] b) {
+        if (b == null || b.length < 13 || b[0] != 'G' || b[1] != 'I' || b[2] != 'F') return 0;
+        try {
+            int i = 13;
+            int packed = b[10] & 0xFF;
+            if ((packed & 0x80) != 0) i += 3 * (1 << ((packed & 0x07) + 1));
+            int frames = 0;
+            while (i < b.length && frames < MAX_GIF_FRAMES) {
+                int block = b[i] & 0xFF;
+                if (block == 0x3B) break;                      // son
+                if (block == 0x21) {                           // uzantı: etiket + alt bloklar
+                    i = skipSubBlocks(b, i + 2);
+                } else if (block == 0x2C) {                    // görüntü tanımlayıcısı
+                    frames++;
+                    if (i + 10 > b.length) break;
+                    int p = b[i + 9] & 0xFF;
+                    i += 10;
+                    if ((p & 0x80) != 0) i += 3 * (1 << ((p & 0x07) + 1));
+                    i = skipSubBlocks(b, i + 1);                // LZW en küçük kod boyu + veri
+                } else {
+                    break;                                     // bozuk akış
+                }
+                if (i < 0) break;
+            }
+            return frames;
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /** Alt blok zincirini atlar (boyut baytı + veri, 0 ile biter); girdinin sonu → girdi uzunluğu. */
+    private static int skipSubBlocks(byte[] b, int i) {
+        while (i < b.length) {
+            int size = b[i] & 0xFF;
+            i += 1 + size;
+            if (size == 0) return i;
+        }
+        return b.length;
+    }
+
     private static Size bmp(byte[] b) {
         if (b.length < 26) return null;
         int headerSize = le32(b, 14);

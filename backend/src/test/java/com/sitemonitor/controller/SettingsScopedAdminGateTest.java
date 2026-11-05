@@ -281,6 +281,24 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-11-05: alarm akışının bütün ayar anahtarları (yalnız 7/24 süzgeci dahil) katalogda, grup alarm-feed ve GLOBAL_ONLY")
+    void alarmFeedKeys_globalOnly() {
+        String nocOnly = com.sitemonitor.service.alarmfeed.AlarmFeedSettings.KEY_NOC_ONLY;
+        assertThat(nocOnly).isEqualTo("site.monitor.alarm-feed.noc-only");
+        assertThat(com.sitemonitor.service.alarmfeed.AlarmFeedSettings.FIELDS).containsEntry("noc_only", nocOnly);
+        for (String key : com.sitemonitor.service.alarmfeed.AlarmFeedSettings.FIELDS.values()) {
+            AppSettingsCatalog.Setting s = AppSettingsCatalog.byKey(key);
+            assertThat(s).as("katalogda: " + key).isNotNull();
+            assertThat(s.group()).as(key).isEqualTo("alarm-feed");
+            assertThat(AppSettingsCatalog.isGlobalOnly(key)).as("GLOBAL_ONLY: " + key).isTrue();
+        }
+        assertThat(AppSettingsCatalog.byKey(nocOnly).type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+        // Katalog sırası = ekran sırası: tür süzgecinin hemen ardından
+        List<String> keys = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).toList();
+        assertThat(keys.indexOf(nocOnly)).isEqualTo(keys.indexOf("site.monitor.alarm-feed.types") + 1);
+    }
+
+    @Test
     @DisplayName("2026-10-31: veritabanı sorgu izlemesi kapasite / güvenlik sınırları, alarm aç/kapa, elle bekleme ve saatlik deneme sınırı GLOBAL_ONLY")
     void dbQueryLimits_globalOnly() {
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(

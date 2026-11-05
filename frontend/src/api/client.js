@@ -2405,12 +2405,23 @@ export const api = {
     pageDiagnoseRun: (id, runId) => request(`/monitoring/page/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
     // Sayfa Bütünlüğü → "Kaynak analizi" (2026-10-31): kullanıcı isteyince başlar, sunucuda arka planda koşar. withStatus:
     // 409 RESOURCE_SCAN_RUNNING (gövdede süren koşu — izlenir), 429 RATE_LIMITED / RESOURCE_SCAN_BUSY, 403 / 404 ayırt edilsin.
-    startResourceScan: (id) => request(`/monitoring/page/${id}/resource-scans`, { method: 'POST', withStatus: true }),
+    // Çok sayfalı analiz (prs3 G): `body` = { scope: 'site', max_pages: N }; gövdesiz = bugünkü tek sayfa analizi (eski
+    // sunucu gövdeyi bilmez → tek sayfa döner; ekran yanıttaki `scope`'tan anlar).
+    startResourceScan: (id, body) => request(`/monitoring/page/${id}/resource-scans`, body
+      ? { method: 'POST', body: JSON.stringify(body), withStatus: true } : { method: 'POST', withStatus: true }),
     resourceScans: (id, limit = 200) => request(`/monitoring/page/${id}/resource-scans?limit=${encodeURIComponent(limit)}`, { withStatus: true }),
     resourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}`, { withStatus: true }),
     // İptal (r177): yalnız RUNNING (409 RESOURCE_SCAN_NOT_RUNNING); 404 / 405 kodsuz = eski sunucu → ekran düğmeyi gizler.
     cancelResourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}/cancel`,
       { method: 'POST', withStatus: true }),
+    // Performans bütçesi (prs3 F1): okuma = analiz listesiyle aynı kapı; yazma = izlemeyi düzenleme kapısı. PUT gövdesi
+    // YALNIZ değişen alanlar (null = sınır kaldırılır). withStatus: 404 / 405 = eski sunucu (uç yok) → "desteklemiyor".
+    resourceBudget: (id) => request(`/monitoring/page/${id}/resource-budget`, { withStatus: true }),
+    saveResourceBudget: (id, body) => request(`/monitoring/page/${id}/resource-budget`,
+      { method: 'PUT', body: JSON.stringify(body || {}), withStatus: true }),
+    // Eğilim (prs3 F2): tamamlanmış analizlerin özet noktaları (≤ 200) + en çok büyüyen nesneler. `days` 30 / 90 / 365.
+    resourceScanTrend: (id, days = 90) => request(`/monitoring/page/${id}/resource-scans/trend?days=${encodeURIComponent(days)}`,
+      { withStatus: true }),
 
     // Sayfa Hızı (Page Speed)
     getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  OUTCOMES, OUTCOME_TONE, activeBlockCount, blockRows, crossFieldErrors, remainingParts,
+  OUTCOMES, OUTCOME_TONE, FORM_FIELDS, activeBlockCount, blockRows, crossFieldErrors, nocOnlySupported, remainingParts,
   DEFAULT_LIMITS, FEED_COLUMNS, REQUEST_SIZE_OPTIONS, SILENT_AFTER_MS, bodyFileName, bodyOf, changedSettings, curlSample, feedUrl,
   fmtUtc, forwardedChain, isDirty, isValidIpEntry, isValidIpv4, isValidIpv6, limitsOf, normalizeIds, normalizeIps, numText,
   prettyBody, pyQuote, pythonSample, requestParams, shellQuote, statusModel, toForm, typeLabel, utcMs, validateChanges,
@@ -51,6 +51,23 @@ describe('alarmFeedModel — form ve yalnız değişen alanlar', () => {
     expect(f.resolved_minutes).toBe('15')
     expect(f.allowed_ips).toEqual(['10.0.0.0/8', 'fe80::1'])
     expect(f.enabled).toBe(false)
+  })
+
+  it('yalnız 7/24 süzgeci (noc_only): sunucu biliyorsa satır çizilir; değişince yalnız o alan gider; eski sunucuda hiç gönderilmez', () => {
+    expect(nocOnlySupported({ settings: { ...SETTINGS, noc_only: true } })).toBe(true)
+    expect(nocOnlySupported({ settings: { ...SETTINGS, noc_only: false } })).toBe(true)
+    expect(nocOnlySupported({ settings: SETTINGS })).toBe(false)
+    expect(nocOnlySupported(null)).toBe(false)
+    expect(FORM_FIELDS).toContain('noc_only')
+    const saved = toForm({ ...SETTINGS, noc_only: true })
+    expect(saved.noc_only).toBe(true)
+    expect(changedSettings(saved, { ...saved, noc_only: false })).toEqual({ noc_only: false })
+    expect(changedSettings(saved, { ...saved })).toEqual({})
+    // Eski sunucu alanı göndermez: iki taraf da false, gövdede yok
+    const old = toForm(SETTINGS)
+    expect(old.noc_only).toBe(false)
+    expect(changedSettings(old, { ...old, enabled: true })).toEqual({ enabled: true })
+    expect(validateChanges({ noc_only: false })).toEqual({})
   })
 
   it('değişiklik yok → boş gövde (istek gönderilmez); sıra / tekrar farkı değişiklik değildir', () => {
@@ -236,6 +253,16 @@ describe('alarmFeedModel — otomatik IP engeli', () => {
     expect(java.length).toBeGreaterThan(4)
     expect([...java].sort()).toEqual([...OUTCOMES].sort())
     expect(Object.keys(OUTCOME_TONE).sort()).toEqual([...OUTCOMES].sort())
+  })
+
+  it('form alanları sunucunun kaydettiği alanlarla AYNI (Java AlarmFeedSettings.FIELDS ↔ JS FORM_FIELDS; noc_only dahil)', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const src = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/service/alarmfeed/AlarmFeedSettings.java'), 'utf8')
+    const java = [...src.matchAll(/FIELDS\.put\("([a-z_]+)"/g)].map((m) => m[1])
+    expect(java).toContain('noc_only')
+    expect([...java].sort()).toEqual([...FORM_FIELDS].sort())
+    // Gövde de aynı alanları taşır (bodyOf tipli tam gövde — değişen alan seçimi buradan yapılır)
+    expect(Object.keys(bodyOf(toForm({}))).sort()).toEqual([...FORM_FIELDS].sort())
   })
 
   it('form ↔ gövde: engel alanları tipli; eski sunucu alan göndermezse değişiklik sayılmaz', () => {

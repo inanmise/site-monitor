@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react'
-import { ChevronDown, Gauge, Globe, Image as ImageIcon, Layers, Lightbulb, ListFilter, NotebookText, TrendingDown, TriangleAlert } from 'lucide-react'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { ChevronDown, ChevronRight, Gauge, Globe, Image as ImageIcon, Layers, Lightbulb, ListFilter, NotebookText, TrendingDown, TriangleAlert } from 'lucide-react'
 import { formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
@@ -7,13 +7,14 @@ import ToneBadge from '../../admin/ToneBadge.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock, ProgressBar } from '../../ui/Progress.jsx'
 import {
-  SEVERITIES, SEVERITY_TONE, algorithmVersion, categoryLabel, categoryRows, delta, deltasComparable, dimensionsText, estImageMs,
+  SEVERITIES, SEVERITY_TONE, algorithmVersion, areaOfRec, categoryLabel, categoryRows, delta, deltasComparable, dimensionsText, estImageMs,
   formatBytesExact, formatMs, formatNumber, formatPct, formatScoreValue, formatSize, gradeLetter, isCapped, noteRows, optimizedImage,
   optimizedText, plural, recFiltersByFinding, recHostList, recItemCount, recItemUrls, recSaving, recTextKey, recommendationArgs, relatedRec,
   scanTone, scanTtfb,
   scoreLabelKey, scoreRows, scoreTargetText, sortRecommendations, thirdPartyRows, topLosses, TOP_IMAGES_MAX,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, DeltaChip, Section, signed, TONE_BAR, TONE_STROKE, TONE_TEXT, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
+import ResourceScanCategoryScores from './ResourceScanCategoryScores.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
@@ -26,6 +27,11 @@ const ResourceScanTrend = lazy(() => import('./ResourceScanTrend.jsx'))
 const STACK_COLOR = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
 /** Üçüncü taraf tablosu ↔ kart eşiği (kap genişliği, px). */
 const THIRD_TABLE_MIN_PX = 640
+/**
+ * Panoda ilk görünen öneri sayısı (prs3): derin analizle öneri sayısı 20'yi bulabilir — telefonda pano boğulmasın diye
+ * önem sırasıyla ilk 6, gerisi "Tümünü göster" ile (her öneri ayrıca kendi denetim alanında listelenir).
+ */
+export const RECS_PREVIEW = 6
 
 /**
  * Kaynak analizi → PANO (2026-10-31; r177 yeniden düzen): ÖNCE ne yapmalı — not + "notu en çok düşüren 3 şey" (kayıp
@@ -34,19 +40,24 @@ const THIRD_TABLE_MIN_PX = 640
  * taraflar, yüklenme / boyut / not geçmişi (noktaya basınca o analiz açılır) ve ölçüm notları. Uzak görseller ÇİZİLMEZ.
  */
 export default function ResourceScanDashboard({
-  scan, analysis, prev, history, selectedId, onCategory, onShowObjects, objectsAvailable, items, onSelectScan, onGoRec,
+  scan, analysis, prev, history, selectedId, onCategory, onShowObjects, objectsAvailable, items, onSelectScan, onGoRec, onAudit, focusRec,
 }) {
   const t = useT()
   const locale = useDateLocale()
+  // Ayrıntılı denetime geçiş (prs3) yalnız derin analizde öneri satırına konur; kategori kutucukları her zaman (eski
+  // analizde denetim bölümü "bu analizde yok — yeniden analiz edin" der)
+  const deep = algorithmVersion(scan, analysis) >= 3
   return (
     <div data-slot="prs-dashboard" className="flex min-w-0 flex-col gap-3">
       <GradeHero scan={scan} analysis={analysis} prev={prev} t={t} locale={locale} onGoRec={onGoRec} />
+      {onAudit && <ResourceScanCategoryScores scan={scan} analysis={analysis} t={t} locale={locale} onAudit={onAudit} />}
       {scan?.capped === true && (
         <div data-slot="prs-capped">
           <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert} title={t('prs.capped.title')}>{t('prs.capped.body')}</AlertBanner>
         </div>
       )}
-      <Recommendations analysis={analysis} items={items} t={t} locale={locale} onShowObjects={onShowObjects} objectsAvailable={objectsAvailable} />
+      <Recommendations analysis={analysis} items={items} t={t} locale={locale} onShowObjects={onShowObjects} objectsAvailable={objectsAvailable}
+        onAudit={deep ? onAudit : null} focusRec={focusRec} />
       <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
         <CategoryBreakdown analysis={analysis} scan={scan} t={t} locale={locale} onCategory={onCategory} objectsAvailable={objectsAvailable} />
         <ScoreBreakdown analysis={analysis} t={t} locale={locale} />
@@ -316,12 +327,18 @@ function ScoreBreakdown({ analysis, t, locale }) {
                     <span className="text-xs text-muted-foreground">/100</span>
                   </span>
                 </div>
-                <ProgressBar value={r.score ?? 0} max={100} size="sm" tone={TONE_BAR[r.tone]} decorative />
-                <span className={cn('text-xs text-muted-foreground', WRAP)}>
-                  {t(`prs.score.measured.${r.known ? r.key : 'other'}`, formatScoreValue(r, locale))}
-                  {' · '}{t('prs.score.weightLost', r.weight != null ? formatPct(r.weight, locale, 1) : '—',
-                    r.lost != null ? formatNumber(r.lost, locale, 1) : '—')}
-                </span>
+                {r.score != null && <ProgressBar value={r.score} max={100} size="sm" tone={TONE_BAR[r.tone]} decorative />}
+                {r.score == null ? (
+                  <span data-slot="prs-score-unknown" className={cn('text-xs text-muted-foreground', WRAP)}>
+                    {t('prs.score.notComputed', r.weight != null ? formatPct(r.weight, locale, 1) : '—')}
+                  </span>
+                ) : (
+                  <span className={cn('text-xs text-muted-foreground', WRAP)}>
+                    {t(`prs.score.measured.${r.known ? r.key : 'other'}`, formatScoreValue(r, locale))}
+                    {' · '}{t('prs.score.weightLost', r.weight != null ? formatPct(r.weight, locale, 1) : '—',
+                      r.lost != null ? formatNumber(r.lost, locale, 1) : '—')}
+                  </span>
+                )}
                 {target && <span data-slot="prs-score-target" className={cn('text-xs text-muted-foreground', WRAP)}>{target}</span>}
               </li>
             )
@@ -333,24 +350,45 @@ function ScoreBreakdown({ analysis, t, locale }) {
 }
 
 /** Öneriler — önem rozeti, başlık + gövde, olası kazanç ve ilgili nesneler (bulgu süzgeciyle TAM liste). */
-function Recommendations({ analysis, items, t, locale, onShowObjects, objectsAvailable }) {
+function Recommendations({ analysis, items, t, locale, onShowObjects, objectsAvailable, onAudit, focusRec }) {
   const recs = sortRecommendations(analysis?.recommendations)
+  const [open, setOpen] = useState(false)
+  // "Notu düşüren 3 şey"den gelinen öneri ilk 6'nın dışındaysa liste BİR KEZ açılır (odak hedefi görünür olsun); sonra
+  // kullanıcı "Daha az göster" ile kapatabilir — liste kalıcı açık kalmaz (prs3 inceleme D6)
+  const needsOpen = Boolean(focusRec) && recs.slice(RECS_PREVIEW).some((r) => r.code === focusRec)
+  useEffect(() => { if (needsOpen) setOpen(true) }, [needsOpen, focusRec])
+  const all = open || recs.length <= RECS_PREVIEW
+  const shown = all ? recs : recs.slice(0, RECS_PREVIEW)
   return (
     <Section slot="prs-recs" icon={Lightbulb} title={t('prs.rec.title')} description={t('prs.rec.desc')}>
       {recs.length === 0 ? (
         <p className="m-0 text-sm text-muted-foreground">{t('prs.rec.none')}</p>
       ) : (
-        <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          {recs.map((r, i) => <RecItem key={`${r.code}#${i}`} rec={r} items={items} t={t} locale={locale} onShowObjects={onShowObjects} objectsAvailable={objectsAvailable} />)}
-        </ul>
+        <>
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {shown.map((r, i) => <RecItem key={`${r.code}#${i}`} rec={r} items={items} t={t} locale={locale} onShowObjects={onShowObjects} objectsAvailable={objectsAvailable}
+              onAudit={onAudit} />)}
+          </ul>
+          {recs.length > RECS_PREVIEW && (
+            <Button type="button" variant="outline" size="sm" data-slot="prs-recs-more" aria-expanded={all} onClick={() => setOpen((o) => !o)}
+              className={cn('w-fit', TOUCH)}>
+              <ChevronDown aria-hidden="true" className={cn('transition-transform', all && 'rotate-180')} />
+              {all ? t('prs.deep.showLess') : t('prs.deep.recsAll', formatNumber(recs.length, locale))}
+            </Button>
+          )}
+        </>
       )}
     </Section>
   )
 }
 
-function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable }) {
-  const args = recommendationArgs(rec, locale, 'title')
-  const bodyArgs = recommendationArgs(rec, locale, 'body')
+/**
+ * Tek öneri (pano ve ayrıntılı denetim alanı — prs3'te dışa açıldı). `onAudit` verilirse ve öneri bir denetim alanına
+ * bağlıysa "Ayrıntılı denetimde gör" düğmesi çizilir.
+ */
+export function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable, onAudit }) {
+  const args = recommendationArgs(rec, locale, 'title', t)
+  const bodyArgs = recommendationArgs(rec, locale, 'body', t)
   const sev = SEVERITIES.includes(rec.severity) ? rec.severity : 'low'
   const good = rec.code === 'ALL_GOOD'
   const saving = recSaving(rec, locale)
@@ -359,6 +397,7 @@ function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable }) {
   const byFinding = recFiltersByFinding(rec)
   const count = good ? 0 : recItemCount(rec, objectsAvailable ? items : null)
   const canShow = objectsAvailable && !good && (byFinding ? count > 0 : urls.length > 0)
+  const area = onAudit ? areaOfRec(rec.code) : null
   const title = t(recTextKey(rec, 'title'), ...args)
   return (
     <li data-slot="prs-rec" data-code={rec.code} data-severity={sev} tabIndex={-1}
@@ -377,7 +416,7 @@ function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable }) {
           {t('prs.rec.hosts', hosts.join(', '))}
         </p>
       )}
-      {(saving || canShow) && (
+      {(saving || canShow || area) && (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {saving && (
             <ToneBadge tone="info" className={CHIP} data-slot="prs-rec-saving">
@@ -389,6 +428,12 @@ function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable }) {
             <Button type="button" variant="outline" size="sm" data-slot="prs-rec-show" data-count={byFinding ? count : urls.length} className={TOUCH}
               aria-label={t('prs.rec.showObjectsFor', title, byFinding ? count : urls.length)} onClick={() => onShowObjects?.(rec)}>
               <ListFilter aria-hidden="true" />{t('prs.rec.showObjects', formatNumber(byFinding ? count : urls.length, locale))}
+            </Button>
+          )}
+          {area && (
+            <Button type="button" variant="ghost" size="sm" data-slot="prs-rec-audit" data-area={area} className={TOUCH}
+              aria-label={t('prs.deep.recAuditFor', title, t(`prs.deep.area.${area}`))} onClick={() => onAudit(area)}>
+              {t('prs.deep.recAudit')}<ChevronRight aria-hidden="true" />
             </Button>
           )}
         </div>

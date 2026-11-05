@@ -2,6 +2,7 @@ package com.sitemonitor.repository;
 
 import com.sitemonitor.model.ScriptedMonitor;
 import com.sitemonitor.service.ScriptedSchedule;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,16 @@ class ScriptedScheduleQueriesTest {
     @BeforeEach
     void clean() {
         repo.deleteAll();   // NOT_SUPPORTED: satırlar testler arasında kalır
+    }
+
+    /**
+     * NOT_SUPPORTED satırları işlem geri almasıyla silinmez ve bu sınıf aynı Spring bağlamını (create-drop) paylaşan öbür
+     * {@code @DataJpaTest} sınıflarına satır bırakıyordu — sınıf sırası değişince {@code CheckDispatchRowsQueriesTest} ve
+     * {@code ScriptedRepositoriesTest} fazladan izleme gördü (2026-11-05 CI). Son testten sonra da temizlenir.
+     */
+    @AfterEach
+    void cleanAfter() {
+        repo.deleteAll();
     }
 
     private ScriptedMonitor save(String name, boolean active, String mode, Boolean skipHolidays) {

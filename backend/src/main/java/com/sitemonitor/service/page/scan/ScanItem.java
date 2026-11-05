@@ -68,6 +68,30 @@ public final class ScanItem {
     /** Bu nesneye uyan öneri kodları ({@code PageResourceAnalyzer} yazar — öneriyi üreten kuralın AYNISI). */
     public final Set<String> findings = new LinkedHashSet<>();
 
+    // ── Algoritma 3 (2026-11, derin analiz) — eski kayıtta yok ──
+    /** HTTP sürümü ({@code 1.1} | {@code 2}); ölçülmediyse null. */
+    public String httpVersion;
+    /** Tel gövdesinin SHA-256'sı (onaltılık, 64); gövde tam okunmadıysa null. Yazılırken ilk 16 karakter. */
+    public String contentHash;
+    /** Küçültülmüş mü (yalnız betik / stil; örnek okunamadı / belirsiz → null). */
+    public Boolean minified;
+    /** Tespit edilen kütüphane (yalnız betik). */
+    public String libraryName, libraryVersion;
+    /** {@code sourceMappingURL} (çözülmüş mutlak adres); yoksa null. */
+    public String sourceMap;
+    /** Oluşturmayı engelliyor mu ({@code <head>}'deki async / defer'siz betik, medyasız stil, onların {@code @import}'u). */
+    public boolean renderBlocking;
+    /** SRI ({@code integrity}) var mı — yalnız HTML öğesinden gelen betik / stil; diğerlerinde null. */
+    public Boolean integrity;
+    /** Üçüncü taraf kategorisi ({@code ThirdPartyCatalog}); birinci tarafta null. */
+    public String thirdPartyCategory;
+    /** GIF kare sayısı (ilk baytlardan, alt sınır) — yalnız bellekte. */
+    public Integer gifFrames;
+    /** {@code Alt-Svc}'de h3 duyuruldu mu — yalnız bellekte (host tablosu). */
+    public boolean h3Advertised;
+    /** ETag / Last-Modified var mı — yalnız bellekte (doğrulayıcı kuralı). */
+    public boolean validator;
+
     /** Tahmin için: bu nesneyi bulduran stil dosyasının sırası (yoksa -1 = HTML). */
     public int parent = -1;
     /** Keşif sırası (HTML = 0). */
@@ -86,6 +110,55 @@ public final class ScanItem {
 
     public boolean ok() {
         return status >= 200 && status < 400;
+    }
+
+    /**
+     * Ölçüm kopyası (prs3 G — çok sayfalı analiz, 2026-11): ölçülen alanlar aynen, analizin YAZDIĞI alanlar sıfırlanır
+     * ({@code startMs}, {@code findings}, {@code renderBlocking}, {@code integrity}, {@code thirdPartyCategory}, {@code parent},
+     * {@code seq}). Sayfalar arası ortak nesne bir kez ölçülür; her sayfanın analizi kendi kopyasını işaretler (asıl nesne
+     * ana sayfanın analizinde kalır). Yeni bir alan buraya da eklenmeli — {@code ScanItemCopyTest} yansımayla denetler.
+     */
+    public ScanItem measurementCopy() {
+        ScanItem c = new ScanItem();
+        c.url = url;
+        c.category = category;
+        c.contentType = contentType;
+        c.status = status;
+        c.bytes = bytes;
+        c.truncated = truncated;
+        c.sizeSource = sizeSource;
+        c.ttfbMs = ttfbMs;
+        c.durationMs = durationMs;
+        c.redirectMs = redirectMs;
+        c.thirdParty = thirdParty;
+        c.compressed = compressed;
+        c.cacheTtlS = cacheTtlS;
+        c.width = width;
+        c.height = height;
+        c.redirects = redirects;
+        c.fromCss = fromCss;
+        c.pageLoad = pageLoad;
+        c.lazy = lazy;
+        c.error = error;
+        c.host = host;
+        c.foundIn = foundIn;
+        c.finalUrl = finalUrl;
+        c.headers = headers == null ? null : new LinkedHashMap<>(headers);
+        c.verdict = verdict;
+        c.via = via;
+        c.optimizedBytes = optimizedBytes;
+        c.httpVersion = httpVersion;
+        c.contentHash = contentHash;
+        c.minified = minified;
+        c.libraryName = libraryName;
+        c.libraryVersion = libraryVersion;
+        c.sourceMap = sourceMap;
+        c.gifFrames = gifFrames;
+        c.h3Advertised = h3Advertised;
+        c.validator = validator;
+        // Analizin yazdıkları: startMs = null, findings boş, renderBlocking = false, integrity / thirdPartyCategory = null,
+        // parent = -1, seq = 0 (yeni nesnenin varsayılanları)
+        return c;
     }
 
     public Map<String, Object> toMap() {
@@ -119,6 +192,33 @@ public final class ScanItem {
         m.put("verdict", verdict);
         m.put("via", via);
         if (optimizedBytes != null) m.put("optimized_bytes", optimizedBytes);
+        return m;
+    }
+
+    /**
+     * Algoritma 3 satırı: {@link #toMap()} + derin alanlar. Adresler {@code DeepUrls.mask} ile (gizli değer şüphesi olan sorgu
+     * parametresi {@code *****}); aynı kural bölüm listelerinde de uygulanır.
+     */
+    public Map<String, Object> toDeepMap() {
+        Map<String, Object> m = toMap();
+        m.put("url", com.sitemonitor.service.page.scan.deep.DeepUrls.mask(url));
+        m.put("final_url", com.sitemonitor.service.page.scan.deep.DeepUrls.mask(finalUrl));
+        if (foundIn != null && !"page".equals(foundIn)) m.put("found_in", com.sitemonitor.service.page.scan.deep.DeepUrls.mask(foundIn));
+        m.put("http_version", httpVersion);
+        m.put("content_hash", contentHash == null ? null : contentHash.substring(0, Math.min(16, contentHash.length())));
+        m.put("minified", minified);
+        if (libraryName != null) {
+            Map<String, Object> lib = new LinkedHashMap<>();
+            lib.put("name", libraryName);
+            lib.put("version", libraryVersion);
+            m.put("library", lib);
+        } else {
+            m.put("library", null);
+        }
+        m.put("source_map", com.sitemonitor.service.page.scan.deep.DeepUrls.mask(sourceMap));
+        m.put("render_blocking", renderBlocking);
+        m.put("integrity", integrity);
+        m.put("third_party_category", thirdPartyCategory);
         return m;
     }
 }

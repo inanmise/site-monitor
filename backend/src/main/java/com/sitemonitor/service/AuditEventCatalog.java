@@ -247,6 +247,7 @@ public final class AuditEventCatalog {
             "NOTIFICATION_GROUP_REASSIGN",
             "NOTIFICATION_GROUP_UPDATE",
             "PAGE_DIAGNOSTICS_RUN",       // Sayfa Bütünlüğü izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
+            "PAGE_RESOURCE_BUDGET_SAVE",  // Sayfa Bütünlüğü izlemesinin kaynak analizi bütçesi kaydedildi (2026-11, F1)
             "PAGE_RESOURCE_SCAN_CANCEL",  // Sayfa Bütünlüğü izlemesinde çalışan kaynak analizi iptal edildi (2026-11)
             "PAGE_RESOURCE_SCAN_RUN",     // Sayfa Bütünlüğü izlemesinde kaynak analizi başlatıldı (2026-10-31)
             "PAGESPEED_DIAGNOSTICS_RUN",  // Sayfa Hızı izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
@@ -465,8 +466,9 @@ public final class AuditEventCatalog {
         if (t.startsWith("PAGE_DIAGNOSTICS") || t.startsWith("PAGESPEED_DIAGNOSTICS")) return MONITOR;
         // Veritabanı sorgu izlemesi (2026-10-31): takım bağlantıları ve sorgu şablonları izleme yapılandırmasıdır — aynı kova
         if (t.startsWith("DBQUERY_")) return MONITOR;
-        // Sayfa Bütünlüğü kaynak analizi (2026-10-31) — izleme üzerinde kullanıcının istediği ölçüm, aynı kova
-        if (t.startsWith("PAGE_RESOURCE_SCAN")) return MONITOR;
+        // Sayfa Bütünlüğü kaynak analizi (2026-10-31) — izleme üzerinde kullanıcının istediği ölçüm, aynı kova; bütçesi
+        // (2026-11, F1) izleme yapılandırmasıdır — aynı kova
+        if (t.startsWith("PAGE_RESOURCE_")) return MONITOR;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
                 || t.startsWith("SCRIPTED_DRAFT")) return MONITOR;
         if (t.startsWith("CERT_") || t.startsWith("DOMAIN_") || t.startsWith("DIAGNOSTICS_")) return CERTIFICATE;

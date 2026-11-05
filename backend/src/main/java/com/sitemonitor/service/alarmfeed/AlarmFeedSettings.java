@@ -31,6 +31,12 @@ public final class AlarmFeedSettings {
     public static final String KEY_MIN_LEVEL = PREFIX + "min-level";
     public static final String KEY_TEAM_IDS = PREFIX + "team-ids";
     public static final String KEY_TYPES = PREFIX + "types";
+    /**
+     * Yalnız 7/24'e bildirilen alarmlar (2026-11-05, kullanıcı isteği): açıkken akışa yalnız 7/24 e-postasıyla AYNI alarm
+     * kararının (izlemede "7/24 ekibine bildir" açık + izleme aktif + 7/24 ayarlarında tür açık + en düşük seviye) verdiği
+     * alarmlar girer. Varsayılan AÇIK.
+     */
+    public static final String KEY_NOC_ONLY = PREFIX + "noc-only";
     public static final String KEY_RESOLVED_MINUTES = PREFIX + "resolved-minutes";
     public static final String KEY_RESOLVED_MODE = PREFIX + "resolved-mode";
     public static final String KEY_CLEAR_TEXT = PREFIX + "clear-text";
@@ -79,6 +85,7 @@ public final class AlarmFeedSettings {
         FIELDS.put("min_level", KEY_MIN_LEVEL);
         FIELDS.put("team_ids", KEY_TEAM_IDS);
         FIELDS.put("types", KEY_TYPES);
+        FIELDS.put("noc_only", KEY_NOC_ONLY);
         FIELDS.put("resolved_minutes", KEY_RESOLVED_MINUTES);
         FIELDS.put("resolved_mode", KEY_RESOLVED_MODE);
         FIELDS.put("clear_text", KEY_CLEAR_TEXT);
@@ -105,7 +112,18 @@ public final class AlarmFeedSettings {
                          String resolvedMode, String clearText, String sevCritical, String sevHigh, String sevWarning,
                          String rciMode, String source, String rcitype, String mailSeparator, List<String> allowedIps,
                          int ratePerMinute, int maxRows, boolean storeBody, boolean blockEnabled, int blockThreshold,
-                         int blockMinutes, boolean blockEscalate, List<String> blockExemptIps) {
+                         int blockMinutes, boolean blockEscalate, List<String> blockExemptIps, boolean nocOnly) {
+
+        /** 7/24 süzgeci olmadan (testler / eski çağıranlar) — süzgeç KAPALI: bugünkü davranış birebir. */
+        public Config(boolean enabled, String minLevel, Set<Long> teamIds, Set<String> types, int resolvedMinutes,
+                      String resolvedMode, String clearText, String sevCritical, String sevHigh, String sevWarning,
+                      String rciMode, String source, String rcitype, String mailSeparator, List<String> allowedIps,
+                      int ratePerMinute, int maxRows, boolean storeBody, boolean blockEnabled, int blockThreshold,
+                      int blockMinutes, boolean blockEscalate, List<String> blockExemptIps) {
+            this(enabled, minLevel, teamIds, types, resolvedMinutes, resolvedMode, clearText, sevCritical, sevHigh,
+                    sevWarning, rciMode, source, rcitype, mailSeparator, allowedIps, ratePerMinute, maxRows, storeBody,
+                    blockEnabled, blockThreshold, blockMinutes, blockEscalate, blockExemptIps, false);
+        }
 
         /** Muaf liste olmadan (testler). */
         public Config(boolean enabled, String minLevel, Set<Long> teamIds, Set<String> types, int resolvedMinutes,
@@ -115,7 +133,7 @@ public final class AlarmFeedSettings {
                       int blockMinutes, boolean blockEscalate) {
             this(enabled, minLevel, teamIds, types, resolvedMinutes, resolvedMode, clearText, sevCritical, sevHigh,
                     sevWarning, rciMode, source, rcitype, mailSeparator, allowedIps, ratePerMinute, maxRows, storeBody,
-                    blockEnabled, blockThreshold, blockMinutes, blockEscalate, List.of());
+                    blockEnabled, blockThreshold, blockMinutes, blockEscalate, List.of(), false);
         }
 
         /** Engel ayarları olmadan (testler / eski çağıranlar) — engel varsayılanlarıyla. */
@@ -125,7 +143,7 @@ public final class AlarmFeedSettings {
                       int ratePerMinute, int maxRows, boolean storeBody) {
             this(enabled, minLevel, teamIds, types, resolvedMinutes, resolvedMode, clearText, sevCritical, sevHigh,
                     sevWarning, rciMode, source, rcitype, mailSeparator, allowedIps, ratePerMinute, maxRows, storeBody,
-                    true, 120, 15, true, List.of());
+                    true, 120, 15, true, List.of(), false);
         }
 
         public boolean clearMode() { return "clear".equals(resolvedMode); }
@@ -152,7 +170,7 @@ public final class AlarmFeedSettings {
         public String fingerprint() {
             return String.join("|", String.valueOf(enabled), minLevel, String.valueOf(teamIds), String.valueOf(types),
                     String.valueOf(resolvedMinutes), resolvedMode, clearText, sevCritical, sevHigh, sevWarning, rciMode,
-                    source, rcitype, mailSeparator, String.valueOf(maxRows));
+                    source, rcitype, mailSeparator, String.valueOf(maxRows), String.valueOf(nocOnly));
         }
     }
 
@@ -207,12 +225,13 @@ public final class AlarmFeedSettings {
                         d.blockMinutes()),
                 settings.getBoolean(KEY_BLOCK_ESCALATE, d.blockEscalate()),
                 // Okunamayan muaf liste kimseyi muaf tutmaz (NONE hiçbir adresle eşleşmez)
-                ipsLenient(settings.getString(KEY_BLOCK_EXEMPT, "")));
+                ipsLenient(settings.getString(KEY_BLOCK_EXEMPT, "")),
+                settings.getBoolean(KEY_NOC_ONLY, d.nocOnly()));
     }
 
     public static Config defaults() {
         return new Config(false, "WARNING", Set.of(), Set.of(), 15, "status", "Clear", "Critical", "Major", "Warning",
-                "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true, true, 120, 15, true, List.of());
+                "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true, true, 120, 15, true, List.of(), true);
     }
 
     /** Ayar ekranına giden değerler (alan adları {@link #FIELDS} ile aynı). */
@@ -222,6 +241,7 @@ public final class AlarmFeedSettings {
         m.put("min_level", c.minLevel());
         m.put("team_ids", new ArrayList<>(c.teamIds()));
         m.put("types", new ArrayList<>(c.types()));
+        m.put("noc_only", c.nocOnly());
         m.put("resolved_minutes", c.resolvedMinutes());
         m.put("resolved_mode", c.resolvedMode());
         m.put("clear_text", c.clearText());
@@ -255,7 +275,7 @@ public final class AlarmFeedSettings {
      */
     public static String normalize(String field, Object raw) {
         switch (field) {
-            case "enabled", "store_body", "block_enabled", "block_escalate" -> {
+            case "enabled", "store_body", "block_enabled", "block_escalate", "noc_only" -> {
                 if (raw instanceof Boolean b) return b.toString();
                 String s = raw == null ? "" : raw.toString().trim().toLowerCase(Locale.ROOT);
                 if (s.equals("true") || s.equals("false")) return s;
