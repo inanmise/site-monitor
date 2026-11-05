@@ -119,7 +119,9 @@ export function normalizeLinks(raw, data) {
   if (o) {
     return {
       monitor: linkTarget(o.monitor), history: linkTarget(o.history), changes: linkTarget(o.changes), alert: linkTarget(o.alert),
-      canDiagnose: o.can_diagnose === true, source: 'server',
+      canDiagnose: o.can_diagnose === true,
+      // Zaman çizelgesi ucunun kapısı izlemenin GÜNCEL takımı (hata avı D8); alan yoksa (eski sunucu) bilinmez → açık
+      canTimeline: o.can_timeline !== false, source: 'server',
     }
   }
   const dest = activityTarget(data)
@@ -129,7 +131,7 @@ export function normalizeLinks(raw, data) {
     monitor: dest ? { tab: dest.tab, params: dest.params } : null,
     history: withTab('control'), changes: withTab('changes'),
     alert: alertId != null ? { tab: 'alerthistory', params: { alert: alertId } } : null,
-    canDiagnose: false, source: 'derived',
+    canDiagnose: false, canTimeline: true, source: 'derived',
   }
 }
 
@@ -206,6 +208,8 @@ export function normalizeDetail(body) {
     checkHidden: b.check_hidden === true,
     // be1: alarm okuma izni yok (alerts.read) → alarm null + `alarm_hidden` — "alarm yok" DEĞİL
     alarmHidden: b.alarm_hidden === true,
+    // değişiklik ayrıntısını görme izni yok (monitoring.read) → bölüm istek atmaz, nötr not (hata avı D7)
+    changeHidden: b.change_hidden === true,
     hiddenReason: hiddenReason === 'team' || hiddenReason === 'permission' ? hiddenReason : null,
     errors: {
       check: b.check_error === true, series: b.series_error === true, alarm: b.alarm_error === true, change: b.change_error === true,
@@ -230,7 +234,8 @@ export function legacyDetail(body) {
     legacy: true,
     data: { ...data, failure_detail: failureDetailValue(data.failure_detail) },
     check: null, previous: null, next: null, series: null, alarm: null, change: null,
-    checkHidden: false, hiddenReason: null, alarmHidden: false, errors: { check: false, series: false, alarm: false, change: false },
+    checkHidden: false, hiddenReason: null, alarmHidden: false, changeHidden: false,
+    errors: { check: false, series: false, alarm: false, change: false },
     links: normalizeLinks(null, data),
     actor: { name: str(data.actor) || null, requestId: str(data.request_id) || null },
     recent: Array.isArray(b.recent) ? b.recent.filter((r) => plainObject(r)) : [],
@@ -239,8 +244,21 @@ export function legacyDetail(body) {
 
 // ── Kontrol satırı okuma ──────────────────────────────────────────────────────────────────────────────────────────────
 
+/** Sayfa hızı satırının eşik aşımı ölçüleri (`breached_metrics` — CSV metni ya da dizi) → büyük harf anahtarlar. */
+export function breachedMetrics(row) {
+  const v = plainObject(row)?.breached_metrics
+  const list = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(',') : [])
+  return list.map((x) => upper(x)).filter(Boolean)
+}
+
 /**
  * Kontrol satırının sağlığı: `up` | `warn` | `down` | `unknown`. Satırda türün durum alanı YOKSA bilinmiyor — asla "up".
+ *
+ * <p>Aktivitenin KAYITLI durumuyla aynı eşleme (hata avı O2 / D6, 2026-11-05 — sunucu `ActivityLogService.summarize`):
+ * satır görünürken ve gizliyken (`check_hidden`) sayfa aynı hükmü verir, başlık ile "Kontrol sonucu" çelişmez. Sayfa hızı
+ * eşik aşımı (SLOW: `ok=true` + `breached_metrics`) → uyarı (asla "Sağlıklı"); sayfa DEGRADED → uyarı (zaman çizelgesiyle
+ * aynı); alan adı CRITICAL → sorunlu (kayıt ERROR), UNKNOWN → bilinmiyor (kayıt UNKNOWN); ICMP'nin bu pod'da olmadığı
+ * ping satırı (`ICMP_UNAVAILABLE`) → bilinmiyor (kayıt UNKNOWN).
  */
 export function rowHealth(type, row) {
   const r = plainObject(row)
@@ -255,9 +273,9 @@ export function rowHealth(type, row) {
     }
     case 'domain': {
       const s = upper(r.status)
-      if (!s) return 'unknown'
+      if (!s || s === 'UNKNOWN') return 'unknown'
       if (s === 'OK') return 'up'
-      if (s === 'WARNING' || s === 'CRITICAL') return 'warn'
+      if (s === 'WARNING') return 'warn'
       return 'down'
     }
     case 'cert': {
@@ -277,9 +295,14 @@ export function rowHealth(type, row) {
     }
     case 'keyword':
     case 'http':
-    case 'pagespeed':
       return r.ok === true ? 'up' : r.ok === false ? 'down' : 'unknown'
-    case 'ping': return typeof r.up === 'boolean' ? (r.up ? 'up' : 'down') : 'unknown'
+    case 'pagespeed':
+      if (r.ok === false) return 'down'
+      if (breachedMetrics(r).length > 0) return 'warn'
+      return r.ok === true ? 'up' : 'unknown'
+    case 'ping':
+      if (upper(r.failure_reason) === 'ICMP_UNAVAILABLE') return 'unknown'
+      return typeof r.up === 'boolean' ? (r.up ? 'up' : 'down') : 'unknown'
     case 'port': return typeof r.open === 'boolean' ? (r.open ? 'up' : 'down') : 'unknown'
     case 'uptime': {
       const s = str(r.status).toLowerCase()
@@ -290,6 +313,7 @@ export function rowHealth(type, row) {
       return isHealthy('dns', r) ? 'up' : 'down'
     case 'page':
       if (r.status === undefined && r.ok === undefined) return 'unknown'
+      if (upper(r.status) === 'DEGRADED') return 'warn'
       return isHealthy('page', r) ? 'up' : 'down'
     default:
       return typeof r.ok === 'boolean' ? (r.ok ? 'up' : 'down') : 'unknown'
@@ -322,15 +346,28 @@ export function rowCheckedAt(row) {
   return str(r.checked_at) || str(r.created_at) || str(r.activity_time) || null
 }
 
+/** Sayfa hızı eşik aşımının neden kodu (teşhis paneli yok — kısa ad eşik aşılan ölçülerden). */
+export const PAGESPEED_BREACH = 'PAGESPEED_BREACH'
+
 /**
- * Sorunlu satırın kısa nedeni `{ code, short, tone }` (sağlıklı / bilinmeyen satırda null). Ortak teşhis modeli, keyword ve
- * HTTP'nin kendi modelleri kullanılır — kıyas hücresinde liste ile aynı kısa ad görünür.
+ * Sorunlu satırın kısa nedeni `{ code, short, tone }` (sağlıklı satırda null). Ortak teşhis modeli, keyword ve HTTP'nin
+ * kendi modelleri kullanılır — kıyas hücresinde liste ile aynı kısa ad görünür. Bilinmeyen sağlıkta yalnız satır KAYITLI
+ * bir neden kodu taşıyorsa (alan adı kaydı okunamadı, ICMP bu pod'da yok …) ortak teşhis modeli "neden bilinmiyor"u açıklar.
  */
 export function rowReason(type, row, monitor, t) {
   const r = plainObject(row)
   if (!r) return null
   const health = rowHealth(type, r)
-  if (health === 'up' || health === 'unknown') return null
+  if (health === 'up') return null
+  if (health === 'unknown' && !(FAILURE_PANEL_TYPES.has(type) && str(r.failure_reason))) return null
+  if (type === 'pagespeed' && health === 'warn') {
+    const names = breachedMetrics(r).map((k) => {
+      const key = `pspd.breach_${k.toLowerCase()}`
+      const v = t(key)
+      return v === key ? k : v
+    })
+    return { code: PAGESPEED_BREACH, short: names.join(', '), tone: 'warning' }
+  }
   if (FAILURE_PANEL_TYPES.has(type)) {
     const f = checkFailureTexts(type, r, monitor, t)
     return f ? { code: f.code, short: f.short, tone: f.tone } : null

@@ -11,7 +11,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent } from '@/components/shadcn/card'
 import { ApproxBadge, Fact, LinkButton, StatusBadge, TypeBadge } from './detailParts.jsx'
-import { actionLabel, diagnoseKindOf, formatIstanbul, localizeSummary, statusLabel } from './activityDetailModel.js'
+import { actionLabel, diagnoseKindOf, formatIstanbul, isFailedStatus, localizeSummary, statusLabel } from './activityDetailModel.js'
 
 // Uçtan uca tanılama pencereleri izleme sayfalarındaki AYNI bileşenler — yalnız düğmeye basılınca yüklenir.
 const DIAG_DIALOGS = {
@@ -30,7 +30,7 @@ const ACTOR_ICON = { person: User, system: Bot, scheduler: Bot, unknown: HelpCir
  * kalan gün, alarm no) ve eylem satırı: izleme ayrıntısı, kontrol geçmişi, değişiklikler, alarm (gerçek `href` — yeni
  * sekmede açılabilir), bu izlemenin zaman çizelgesi, uçtan uca tanılama (yalnız sunucu `can_diagnose` derse).
  * Ad ve hedef KESİLMEZ (sarar). Aynı adrese giden bağlantılar tekilleşir (sertifikada izleme / geçmiş / tanılama aynı
- * pencereye gider — inceleme CT D5); ilk gelen kalır. `failed`: kontrol başarısız ama kayıtlı durum WARNING → rozet
+ * pencereye gider — inceleme CT D5); ilk gelen kalır. `failed`: kontrol başarısız ama kayıtlı durum ERROR / TIMEOUT değil → rozet
  * "Kontrol başarısız" (tehlike tonu; "Kontrol sonucu" bölümüyle tutarlı — inceleme CT Y1). Kişi `actorOf` kuralıyla
  * (elle kontrolde kişi saklanmamışsa "Bilinmiyor", asla "Zamanlayıcı" — inceleme FR D7).
  * Test kancaları: `act-dt-header`, `act-dt-actions`, `act-dt-request-id`, `act-dt-actor` (`data-kind`).
@@ -42,12 +42,15 @@ export default function DetailHeader({ detail, type, monitor, headingRef, locale
   const links = detail.links || {}
   const actor = actorOf(detail.actor?.name || a.actor, a.action, t)
   const ActorIcon = ACTOR_ICON[actor.kind] || User
-  const failedWarning = failed && a.result_status === 'WARNING'
+  // Kontrol başarısız ama kayıtlı durum ERROR / TIMEOUT değil (WARNING, UNKNOWN; düzeltmeden önce yazılmış "Başarılı"
+  // keyword koşul hatası) → "Kontrol başarısız" (tehlike) — "Kontrol sonucu" bölümüyle aynı hüküm (hata avı D6)
+  const failedWarning = failed && !isFailedStatus(a.result_status)
   const requestId = detail.actor?.requestId
   const summary = localizeSummary(a.result_summary, t, a)
   const diagKind = diagnoseKindOf(type)
   const Dialog = diagKind ? DIAG_DIALOGS[['ping', 'port', 'dns'].includes(diagKind) ? 'net' : diagKind] : null
-  const canTimeline = a.monitor_id != null && !!onOpenTimeline
+  // Zaman çizelgesi ucu izlemenin GÜNCEL takımını ister: izleme görülemeyen takıma taşındıysa düğme yok (hata avı D8)
+  const canTimeline = a.monitor_id != null && !!onOpenTimeline && links.canTimeline !== false && detail.hiddenReason !== 'team'
   // Aynı hedefe giden ikinci bağlantı çizilmez (adres karşılaştırması; ilk gelen kalır)
   const seen = new Set()
   const unique = (target) => {

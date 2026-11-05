@@ -91,6 +91,10 @@ export function unwrapTimeline(res) {
     mttr_s: n(body.mttr_s),
     longest_outage_s: n(body.longest_outage_s),
     outage_count: n(body.outage_count) ?? (Array.isArray(body.outages) ? body.outages.length : 0),
+    // Zamanlanmış kontrollerin durum sayıları (sunucu `counts`); yoksa (eski gövde) null — dönemlerden bakılır
+    counts: body.counts && typeof body.counts === 'object' && !Array.isArray(body.counts)
+      ? { up: n(body.counts.up), warn: n(body.counts.warn), down: n(body.counts.down), unknown: n(body.counts.unknown) }
+      : null,
     periods: Array.isArray(body.periods) ? body.periods : [],
     outages: Array.isArray(body.outages) ? body.outages : [],
     series: Array.isArray(body.series) ? body.series : [],
@@ -99,6 +103,32 @@ export function unwrapTimeline(res) {
     covered_from: body.covered_from || null,
     periods_merged: !!body.periods_merged,
   }
+}
+
+/**
+ * Aralıkta ÖLÇÜLEBİLEN (up / warn / down) kontrol var mı (hata avı O3, 2026-11-05): `true` var, `false` hiç yok (her kontrol
+ * bilinmiyor — RDAP okunamayan alan adı, ICMP'siz pod'daki ping), `null` hiç kontrol yok. Sunucunun zamanlanmış sayımları
+ * ya da (elle kontroller dahil) dönemlerin durumu.
+ */
+export function hasMeasured(data) {
+  if (!data || !data.checks) return null
+  const c = data.counts
+  if (c && ((c.up || 0) + (c.warn || 0) + (c.down || 0)) > 0) return true
+  if ((data.periods || []).some((p) => p?.state === 'up' || p?.state === 'warn' || p?.state === 'down')) return true
+  if (data.availability_pct != null) return true
+  return false
+}
+
+/**
+ * Kesinti kutucuğu `{ value, tone, measured }`: kesinti varsa sayısı (kırmızı); hiçbir kontrol ölçülemediyse "—" (nötr —
+ * ölçülmeyen yerde "kesinti yok" denmez, asla yeşil değil); ölçülen kontroller arasında kesinti yoksa "0" (yeşil).
+ */
+export function outageKpi(data) {
+  const measured = hasMeasured(data)
+  const count = data?.outage_count || 0
+  if (count > 0) return { value: String(count), tone: 'bad', measured }
+  if (!measured) return { value: '—', tone: 'unknown', measured }
+  return { value: '0', tone: 'good', measured }
 }
 
 export const PERIOD_STATES = ['up', 'down', 'warn', 'unknown']

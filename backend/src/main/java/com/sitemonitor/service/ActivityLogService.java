@@ -791,7 +791,12 @@ public class ActivityLogService {
             }
             case HTTP, KEYWORD -> {
                 Integer code = asInt(r.get("http_status"));
-                boolean ok = truthy(r.get("ok")) || (type.equals(KEYWORD) && truthy(r.get("found")) && error == null);
+                // Keyword: yazıcılar (zamanlanmış tur + "Şimdi kontrol et") adet koşulunun sonucunu `ok` olarak koyar —
+                // varsa YALNIZ ona bakılır (hata avı Y1, 2026-11-05: "içermemeli" / "en az 3 kez" koşulunda kelime
+                // BULUNDU ama koşul sağlanmadı → eskiden `found` yüzünden SUCCESS yazılıyordu; zaman çizelgesi %100,
+                // kök neden "başarısız değil" sayıyordu). `ok` yoksa (eski yol) bulundu + hatasız = başarılı.
+                boolean ok = r.containsKey("ok") ? truthy(r.get("ok"))
+                        : type.equals(KEYWORD) && truthy(r.get("found")) && error == null;
                 a.setResultStatus(error != null ? errStatus(errorClass) : (ok ? "SUCCESS" : (code != null ? "WARNING" : "ERROR")));
                 a.setResultSummary((code != null ? code : "-") + (ms != null ? " · " + ms + "ms" : ""));
             }

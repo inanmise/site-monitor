@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
 import {
-  activityCell, activityDetailHref, actionLabel, checkTypeOf, compareModel, diagnoseKindOf, formatDelta, formatIstanbul,
-  hostOfTarget, legacyDetail, localizeSummary, measuresOf, normalizeDetail, normalizeLinks, parseObject, pseudoCheck,
-  pseudoMonitor, rowHealth, rowReason, rowResponseMs, seriesModel, statusLabel, transitionOf,
+  PAGESPEED_BREACH, activityCell, activityDetailHref, activityFailed, actionLabel, breachedMetrics, checkFailed, checkTypeOf,
+  compareModel, diagnoseKindOf, formatDelta, formatIstanbul, hostOfTarget, legacyDetail, localizeSummary, measuresOf,
+  normalizeDetail, normalizeLinks, parseObject, pseudoCheck, pseudoMonitor, rowHealth, rowReason, rowResponseMs, seriesModel,
+  statusLabel, transitionOf,
 } from '../components/activity/detail/activityDetailModel.js'
 
 /** Gerçek TR sözlüğüyle t — eksik anahtarda anahtarın kendisi (useT ile aynı sözleşme). */
@@ -63,6 +64,16 @@ describe('aktivite ayrıntısı modeli — yanıt okuma', () => {
     const c = normalizeLinks(null, { monitor_type: 'CERT', target: 'a.example.com' })
     expect(c.monitor).toEqual({ tab: 'dashboard', params: { domain: 'a.example.com' } })
     expect(c.history).toBeNull()
+    expect(l.canTimeline).toBe(true)
+  })
+
+  it('hata avı D7 / D8: sunucunun can_timeline ve change_hidden bayrakları okunur (yoksa açık / gizli değil)', () => {
+    expect(normalizeLinks({ monitor: null, can_timeline: false }, ACT).canTimeline).toBe(false)
+    expect(normalizeLinks({ monitor: null, can_timeline: true }, ACT).canTimeline).toBe(true)
+    expect(normalizeLinks({ monitor: null }, ACT).canTimeline).toBe(true)   // eski sunucu: alan yok
+    expect(normalizeDetail({ data: ACT, change: { kind: 'ping', id: 9, seq: 3 }, change_hidden: true }).changeHidden).toBe(true)
+    expect(normalizeDetail({ data: ACT }).changeHidden).toBe(false)
+    expect(legacyDetail({ data: ACT }).changeHidden).toBe(false)
   })
 
   it('legacyDetail: temel uç → yalnız satır + mini geçmiş', () => {
@@ -94,8 +105,10 @@ describe('kontrol satırı okuma', () => {
     expect(rowHealth('cert', { status: 'warning' })).toBe('warn')
     expect(rowHealth('cert', { status: 'error' })).toBe('down')
     expect(rowHealth('cert', { status: '' })).toBe('unknown')
-    expect(rowHealth('domain', { status: 'CRITICAL' })).toBe('warn')
-    expect(rowHealth('domain', { status: 'UNKNOWN' })).toBe('down')
+    // hata avı D6: kayıtlı durumla aynı eşleme — CRITICAL kayıtta ERROR, UNKNOWN kayıtta UNKNOWN
+    expect(rowHealth('domain', { status: 'CRITICAL' })).toBe('down')
+    expect(rowHealth('domain', { status: 'WARNING' })).toBe('warn')
+    expect(rowHealth('domain', { status: 'UNKNOWN' })).toBe('unknown')
     expect(rowHealth('dbquery', { status: 'BREACH', breach_level: 'WARNING' })).toBe('warn')
     expect(rowHealth('dbquery', { status: 'BREACH', breach_level: 'CRITICAL' })).toBe('down')
     expect(rowHealth('dbquery', { status: 'UNKNOWN' })).toBe('unknown')
@@ -105,6 +118,49 @@ describe('kontrol satırı okuma', () => {
     expect(rowHealth('keyword', {})).toBe('unknown')
     expect(rowHealth('page', { status: 'OK', ok: true })).toBe('up')
     expect(rowHealth('ping', null)).toBe('unknown')
+  })
+
+  it('hata avı O2 / D6: sayfa hızı SLOW uyarı (asla sağlıklı), sayfa DEGRADED uyarı, ICMP yok bilinmiyor — kayıtlı durumla aynı', () => {
+    expect(rowHealth('pagespeed', { ok: true, breached_metrics: 'LOAD' })).toBe('warn')
+    expect(rowHealth('pagespeed', { ok: true, breached_metrics: ['TTFB', 'SIZE'] })).toBe('warn')
+    expect(rowHealth('pagespeed', { ok: true, breached_metrics: '' })).toBe('up')
+    expect(rowHealth('pagespeed', { ok: true })).toBe('up')
+    expect(rowHealth('pagespeed', { ok: false, breached_metrics: 'LOAD' })).toBe('down')
+    expect(rowHealth('pagespeed', {})).toBe('unknown')
+    expect(breachedMetrics({ breached_metrics: 'load, ttfb' })).toEqual(['LOAD', 'TTFB'])
+    expect(rowHealth('page', { status: 'DEGRADED', ok: false })).toBe('warn')
+    expect(rowHealth('page', { status: 'DOWN', ok: false })).toBe('down')
+    expect(rowHealth('ping', { up: false, failure_reason: 'ICMP_UNAVAILABLE' })).toBe('unknown')
+    expect(rowHealth('ping', { up: false, failure_reason: 'ICMP_NO_REPLY' })).toBe('down')
+
+    const slow = rowReason('pagespeed', { ok: true, breached_metrics: 'LOAD,TTFB' }, null, t)
+    expect(slow.code).toBe(PAGESPEED_BREACH)
+    expect(slow.tone).toBe('warning')
+    expect(slow.short).toBe(`${TR['pspd.breach_load']}, ${TR['pspd.breach_ttfb']}`)
+    // bilinmeyen satır KAYITLI nedenini söyler (ICMP bu pod'da yok), nedensiz bilinmeyen uydurmaz
+    expect(rowReason('ping', { up: false, failure_reason: 'ICMP_UNAVAILABLE' }, { host: 'h' }, t).code).toBe('ICMP_UNAVAILABLE')
+    expect(rowReason('domain', { status: 'UNKNOWN' }, null, t)).toBeNull()
+    // kıyas: önceki OK → bu SLOW = sorun başladı ("önceki de sağlıklıydı" DEĞİL)
+    const m = compareModel({ type: 'pagespeed', monitor: null, t, previous: { ok: true }, current: { ok: true, breached_metrics: 'LOAD' }, next: { ok: true } })
+    expect(m.transition).toBe('started')
+    expect(m.after).toBe('recovered')
+  })
+
+  it('hata avı D6: başlık / kök neden kuralı satır görünürken ve gizliyken AYNI (sayfa DEGRADED, alan adı CRITICAL / UNKNOWN)', () => {
+    const cases = [
+      { type: 'page', row: { status: 'DEGRADED', ok: false }, act: { monitor_type: 'PAGE', result_status: 'WARNING' } },
+      { type: 'domain', row: { status: 'CRITICAL' }, act: { monitor_type: 'DOMAIN', result_status: 'ERROR' } },
+      { type: 'domain', row: { status: 'UNKNOWN' }, act: { monitor_type: 'DOMAIN', result_status: 'UNKNOWN' } },
+      { type: 'pagespeed', row: { ok: true, breached_metrics: 'LOAD' }, act: { monitor_type: 'PAGESPEED', result_status: 'WARNING' } },
+      { type: 'ping', row: { up: false, failure_reason: 'ICMP_UNAVAILABLE' }, act: { monitor_type: 'PING', result_status: 'UNKNOWN' } },
+    ]
+    for (const c of cases) {
+      const data = { ...c.act, action: 'SCHEDULED_CHECK' }
+      const visible = checkFailed({ data, check: { row: c.row } }, c.type)
+      const hidden = checkFailed({ data, check: null, checkHidden: true }, c.type)
+      expect(visible, `${c.type} ${c.act.result_status}`).toBe(hidden)
+      expect(hidden).toBe(activityFailed(data))
+    }
   })
 
   it('rowResponseMs: ping rtt_ms, diğerleri response_ms', () => {
