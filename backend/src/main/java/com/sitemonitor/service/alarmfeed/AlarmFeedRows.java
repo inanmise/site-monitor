@@ -72,10 +72,25 @@ public final class AlarmFeedRows {
     /** Bir takımın akışa yazılan bilgisi ({@code emails} = alarm postalarının gittiği adresler). */
     public record TeamInfo(Long id, String name, List<String> emails) {}
 
-    /** Bir alarmın akış için toplanmış hali (veritabanı nesnesinden bağımsız). */
+    /**
+     * Bir alarmın akış için toplanmış hali (veritabanı nesnesinden bağımsız). {@code forwardEmails}: alarm iletimiyle
+     * (2026-11-05) postayı alan adresler — MAILS sütununda sahip adreslerinden SONRA (RCI / anahtar değişmez).
+     */
     public record Alarm(long id, String alertType, String level, String target, String message, Integer daysRemaining,
                         String createdAt, boolean resolved, String resolvedAt, String resolvedBy, boolean acknowledged,
-                        String acknowledgedAt, Long stormId, String monitorName, TeamInfo team, TeamInfo ugTeam) {}
+                        String acknowledgedAt, Long stormId, String monitorName, TeamInfo team, TeamInfo ugTeam,
+                        List<String> forwardEmails) {
+        public Alarm {
+            forwardEmails = forwardEmails == null ? List.of() : List.copyOf(forwardEmails);
+        }
+
+        public Alarm(long id, String alertType, String level, String target, String message, Integer daysRemaining,
+                     String createdAt, boolean resolved, String resolvedAt, String resolvedBy, boolean acknowledged,
+                     String acknowledgedAt, Long stormId, String monitorName, TeamInfo team, TeamInfo ugTeam) {
+            this(id, alertType, level, target, message, daysRemaining, createdAt, resolved, resolvedAt, resolvedBy, acknowledged,
+                    acknowledgedAt, stormId, monitorName, team, ugTeam, List.of());
+        }
+    }
 
     /** Birden çok alarm türünün paylaştığı kısa etiketler (bunlar izleme türüyle ayrılır). */
     static final Set<String> SHARED_LABELS = sharedLabels();
@@ -305,6 +320,10 @@ public final class AlarmFeedRows {
             for (String e : t.emails()) {
                 if (e != null && !e.isBlank() && seen.add(e.toLowerCase(Locale.ROOT))) out.add(e.trim());
             }
+        }
+        // Alarm iletimi (2026-11-05): iletim alıcılarının adresleri sahiplerinkinden SONRA (tekil).
+        for (String e : a.forwardEmails()) {
+            if (e != null && !e.isBlank() && seen.add(e.trim().toLowerCase(Locale.ROOT))) out.add(e.trim());
         }
         return out.isEmpty() ? null : String.join(c.separator(), out);
     }

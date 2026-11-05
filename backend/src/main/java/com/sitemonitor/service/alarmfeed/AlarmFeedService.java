@@ -173,6 +173,62 @@ public class AlarmFeedService {
         this.nocConfig = nocConfig;
     }
 
+    /**
+     * Alarm iletimi (2026-11-05, kullanıcı kararı 7): MAILS sütunu iletim alıcılarının adreslerini de içerir (sahiplerden
+     * sonra). Yalnız bellek ({@code AlertForwardRouting}); sağlayıcı üzerinden çözülür. Yokken / iletim tanımsızken sütun
+     * bugünküyle aynı.
+     */
+    @Autowired(required = false)
+    void setForwardRoutingProvider(org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.forward.AlertForwardRouting> p) {
+        this.forwardRoutingProvider = p;
+    }
+
+    /** Test kancası. */
+    void setForwardRouting(com.sitemonitor.service.forward.AlertForwardRouting r) {
+        this.forwardRouting = r;
+    }
+
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.forward.AlertForwardRouting> forwardRoutingProvider;
+    private volatile com.sitemonitor.service.forward.AlertForwardRouting forwardRouting;
+
+    private com.sitemonitor.service.forward.AlertForwardRouting forwardRouting() {
+        var r = forwardRouting;
+        if (r != null) return r;
+        try {
+            r = forwardRoutingProvider == null ? null : forwardRoutingProvider.getIfAvailable();
+        } catch (Exception e) {
+            return null;
+        }
+        if (r != null) forwardRouting = r;   // çözülen bean önbelleğe — alarm başına bean araması yok
+        return r;
+    }
+
+    /** Alarmın iletim adresleri (tekil, alıcı takım artan) — yönlendirme yoksa / sahiplerin iletimi yoksa boş. Yalnız bellek. */
+    private List<String> forwardEmails(AlertEvent e, Set<Long> owners) {
+        var routing = forwardRouting();
+        if (routing == null || owners == null || owners.isEmpty()) return List.of();
+        try {
+            if (!routing.anyFor(owners)) return List.of();
+            Object mid = monitorIdOf(e.getContextJson());
+            Long monitorId = mid instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            var targets = routing.targetsFor(new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(
+                    List.copyOf(owners), e.getAlertType(), e.getDomain(), monitorId));
+            if (targets == null || targets.isEmpty()) return List.of();
+            List<String> out = new ArrayList<>();
+            Set<String> seen = new LinkedHashSet<>();
+            for (var t : targets) {
+                if (t == null || owners.contains(t.recipientTeamId())) continue;
+                for (String a : t.emails()) {
+                    if (a != null && !a.isBlank() && seen.add(a.trim().toLowerCase(Locale.ROOT))) out.add(a.trim());
+                }
+            }
+            return out;
+        } catch (Exception ex) {
+            log.debug("Alarm akışı: iletim adresleri okunamadı ({}): {}", e.getId(), ex.toString());
+            return List.of();
+        }
+    }
+
     public AlarmFeedSettings.Config config() {
         return AlarmFeedSettings.read(settings);
     }
@@ -622,7 +678,7 @@ public class AlarmFeedService {
                 e.getResolvedBy(), Boolean.TRUE.equals(e.getAcknowledged()), e.getAcknowledgedAt(), e.getStormId(),
                 monitorName, teamInfo(shownTeam, teams, shownTeam != null && shownTeam.equals(e.getTeamId())
                         ? e.getNotificationGroupId() : null, recipientMemo),
-                teamInfo(ug, teams, null, recipientMemo));
+                teamInfo(ug, teams, null, recipientMemo), forwardEmails(e, owners));
         return new Item(e, a, level, MonitorTypeCatalog.typeOfAlert(e.getAlertType()), owners,
                 noc == null ? null : nocEligible(e.getAlertType(), e.getAlertLevel(), nt, r, noc));
     }

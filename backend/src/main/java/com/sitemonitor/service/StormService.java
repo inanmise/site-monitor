@@ -190,6 +190,37 @@ public class StormService {
     /** Test kancası. */
     void setQuietHours(TeamQuietHoursService q) { this.quietHours = q; }
 
+    /**
+     * Alarm iletimi (2026-11-05): fırtına postaları sahip takımın iletim alıcılarına da (ayrı posta, bant) gider. Sağlayıcı
+     * üzerinden çözülür (açılış döngüsü yok); yokken ya da iletim tanımsızken fırtına yolları bayt bayt bugünkü.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.forward.AlertForwardRouting> forwardRoutingProvider;
+    private volatile com.sitemonitor.service.forward.AlertForwardRouting forwardRouting;
+
+    /** İletimin push ayağı (UserPushService) — isteğe bağlı. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.forward.ForwardPushSink forwardPush;
+
+    /** Test kancası. */
+    void setForwarding(com.sitemonitor.service.forward.AlertForwardRouting routing,
+                       com.sitemonitor.service.forward.ForwardPushSink push) {
+        this.forwardRouting = routing;
+        this.forwardPush = push;
+    }
+
+    private com.sitemonitor.service.forward.AlertForwardRouting forwardRouting() {
+        var r = forwardRouting;
+        if (r != null) return r;
+        try {
+            r = forwardRoutingProvider == null ? null : forwardRoutingProvider.getIfAvailable();
+        } catch (Exception e) {
+            return null;
+        }
+        if (r != null) forwardRouting = r;   // çözülen bean önbelleğe — alarm başına bean araması yok
+        return r;
+    }
+
 
     /** Fırtına e-posta tetik adları — üye alarmın bildirim günlüğünde görünür; ön yüz {@code MAIL_TRIGGER} eşler. */
     public static final String TRIGGER_STORM_INITIAL = "STORM_INITIAL";
@@ -1880,6 +1911,9 @@ public class StormService {
                 }
             }
             if (!anyEmail) log.warn("Storm #{} toplu alarm — alıcı yok, e-posta atlandı", storm.getId());
+            // Alarm iletimi (2026-11-05): sahip takımların iletim alıcılarına ayrı fırtına postaları (yalnız kendilerine iletilen
+            // üyeler) + push. Yönlendirme / iletim yoksa hiçbir şey.
+            forwardStormAlert(storm, dispatches, prefix, trigger);
 
             // 7/24: takım e-postalarından BAĞIMSIZ; fırtına başına tek NOC e-postası (tekilleştirme serviste). Yalnız
             // izlemede açık onay (noc_notify) verilmiş üyeler — takım yalıtımında fırtına zaten tek takımın kümesidir.
@@ -2203,6 +2237,9 @@ public class StormService {
                     }
                 }
             }
+            // Alarm iletimi (2026-11-05): açılışı iletimle almış adreslere (damga) ayrı çözüm postası — bu turda o üyenin
+            // çözümünü almış adres (sahip / nöbetçi) hariç. Yönlendirme yoksa hiçbir şey.
+            forwardStormRecovery(storm, dispatches, recovered, stillDown, oncallReported);
         } catch (Exception e) {
             log.warn("Storm #{} toplu recovery gönderilemedi: {}", storm.getId(), e.getMessage());
         }
@@ -2234,6 +2271,384 @@ public class StormService {
         }
         logStormMail(new TeamDispatch(d.teamId(), d.teamName(), om.to(), Map.of(), om.recovered(), List.of()),
                 storm, TRIGGER_STORM_RESOLVE, subject, html, status);
+    }
+
+    // ── Alarm iletimi (2026-11-05, kullanıcı kararı) ─────────────────────────────────────────────────────────────────
+    //    Fırtına postası (açılış / günlük / çözüm) sahip takımın iletim alıcılarına da gider: alıcı takım × adres kümesi başına
+    //    AYRI posta, YALNIZ o alıcıya iletilen üyelerle (takım yalıtımı — planOncall deseni), başta bant. Açılış / günlükte
+    //    teslim edilen adresler üye alarmların iletim damgasına yazılır; çözüm postası damgalı adreslere gider. Push: varsayılan
+    //    kipte alıcı takıma tek toplu bildirim (ForwardPushSink), bireysel kipte üye başına. Yönlendirme yoksa / sahip takımın
+    //    iletimi yoksa hiçbir şey yapılmaz (bugünkü davranış).
+
+    /** Bir iletim fırtına postası: alıcı takım(lar), adresler ve yalnız bu adreslere iletilen üyeler. */
+    private static final class ForwardStormMail {
+        final Set<Long> recipientTeams = new java.util.TreeSet<>();
+        final Set<String> recipientNames = new LinkedHashSet<>();
+        final Set<String> ownerNames = new LinkedHashSet<>();
+        final List<String> to;
+        final List<AlertEvent> members = new ArrayList<>();
+        final List<AlertEvent> stillDown = new ArrayList<>();
+
+        ForwardStormMail(List<String> to) {
+            this.to = to;
+        }
+    }
+
+    /** Alıcı takım başına toplu push birikteci (varsayılan kip). */
+    private static final class ForwardPushAgg {
+        com.sitemonitor.service.forward.ForwardTarget first;
+        final Set<String> ownerNames = new LinkedHashSet<>();
+        final Set<Long> forwardIds = new java.util.TreeSet<>();
+        final Set<String> emails = new LinkedHashSet<>();
+        final Set<Long> memberUserIds = new LinkedHashSet<>();
+        boolean wholeTeam;
+        final List<AlertEvent> members = new ArrayList<>();
+
+        void add(com.sitemonitor.service.forward.ForwardTarget t, AlertEvent m) {
+            if (first == null) first = t;
+            ownerNames.addAll(t.ownerTeamNames());
+            forwardIds.addAll(t.forwardIds());
+            emails.addAll(t.emails());
+            memberUserIds.addAll(t.memberUserIds());
+            wholeTeam |= t.wholeTeam();
+            if (!members.contains(m)) members.add(m);
+        }
+
+        com.sitemonitor.service.forward.ForwardTarget merged() {
+            return new com.sitemonitor.service.forward.ForwardTarget(first.recipientTeamId(), first.recipientTeamName(),
+                    List.copyOf(ownerNames), List.copyOf(forwardIds), List.copyOf(emails), List.copyOf(memberUserIds), wholeTeam);
+        }
+    }
+
+    /** Üyenin iletim hedefleri — dağıtımın (sahip) iletimleri; üyenin başka bir dağıtımı olan alıcı atlanır (alarmı zaten alıyor). */
+    private List<com.sitemonitor.service.forward.ForwardTarget> memberForwardTargets(
+            com.sitemonitor.service.forward.AlertForwardRouting routing, Long ownerTeamId, AlertEvent m, Set<Long> memberOwners) {
+        var raw = routing.targetsFor(new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(
+                List.of(ownerTeamId), m.getAlertType(), m.getDomain(), EscalationService.contextMonitorId(m)));
+        if (raw == null || raw.isEmpty()) return List.of();
+        List<com.sitemonitor.service.forward.ForwardTarget> out = new ArrayList<>();
+        for (var t : raw) if (t != null && !memberOwners.contains(t.recipientTeamId())) out.add(t);
+        return out;
+    }
+
+    /** Üye kimliği → onu taşıyan dağıtımların (sahip takımların) kimlikleri. */
+    private static Map<Long, Set<Long>> memberOwners(List<TeamDispatch> dispatches) {
+        Map<Long, Set<Long>> out = new HashMap<>();
+        for (TeamDispatch d : dispatches) {
+            if (d.teamId() == null) continue;
+            for (AlertEvent m : d.members()) {
+                if (m != null && m.getId() != null) out.computeIfAbsent(m.getId(), k -> new java.util.HashSet<>()).add(d.teamId());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Fırtına açılış / günlük postasının iletim eşleniği. Her üye için sahip dağıtımlarının iletimleri; bir adres bir üyeyi bu
+     * turda yalnız BİR kez alır (sahip postasının alıcısı o üyeyi zaten aldı — tohum). Adres kümesi + alıcı takım başına tek
+     * posta; günlük satırı üye başına (rol FORWARD). Hata sahip fırtına postasını bozmaz.
+     */
+    private void forwardStormAlert(AlertStorm storm, List<TeamDispatch> dispatches, String prefix, String trigger) {
+        var routing = forwardRouting();
+        if (routing == null || dispatches == null || dispatches.isEmpty()) return;
+        try {
+            Map<Long, Set<Long>> owners = memberOwners(dispatches);
+            // Bu turda üye → (adres → gönderildi) — sahip postası alıcılarıyla tohumlanır.
+            Map<Long, Set<String>> assigned = new HashMap<>();
+            for (TeamDispatch d : dispatches) {
+                for (AlertEvent m : d.members()) {
+                    if (m == null || m.getId() == null) continue;
+                    Set<String> s = assigned.computeIfAbsent(m.getId(), k -> new java.util.HashSet<>());
+                    for (String e : d.emails()) if (e != null) s.add(e.trim().toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+            Map<String, ForwardStormMail> mails = new LinkedHashMap<>();
+            Map<Long, ForwardPushAgg> push = new java.util.TreeMap<>();
+            Map<Long, List<com.sitemonitor.service.forward.ForwardTarget>> perMember = new LinkedHashMap<>();
+            for (TeamDispatch d : dispatches) {
+                if (d.teamId() == null || !routing.anyFor(List.of(d.teamId()))) continue;
+                for (AlertEvent m : d.members()) {
+                    if (m == null || m.getId() == null) continue;
+                    var targets = memberForwardTargets(routing, d.teamId(), m, owners.getOrDefault(m.getId(), Set.of()));
+                    if (targets.isEmpty()) continue;
+                    perMember.computeIfAbsent(m.getId(), k -> new ArrayList<>()).addAll(targets);
+                    Set<String> mine = assigned.computeIfAbsent(m.getId(), k -> new java.util.HashSet<>());
+                    for (var t : targets) {
+                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m);
+                        List<String> to = new ArrayList<>();
+                        for (String a : t.emails()) {
+                            String v = a == null ? "" : a.trim();
+                            if (!v.isEmpty() && mine.add(v.toLowerCase(java.util.Locale.ROOT))) to.add(v);
+                        }
+                        if (to.isEmpty()) continue;   // adres yok (yalnız push) ya da hepsi bu üyeyi zaten aldı
+                        String key = t.recipientTeamId() + "|" + String.join(",",
+                                to.stream().map(x -> x.toLowerCase(java.util.Locale.ROOT)).sorted().toList());
+                        ForwardStormMail fm = mails.computeIfAbsent(key, k -> new ForwardStormMail(to));
+                        fm.recipientTeams.add(t.recipientTeamId());
+                        if (t.recipientTeamName() != null && !t.recipientTeamName().isBlank())
+                            fm.recipientNames.add(t.recipientTeamName().trim());
+                        fm.ownerNames.addAll(t.ownerTeamNames());
+                        if (!fm.members.contains(m)) fm.members.add(m);
+                    }
+                }
+            }
+            String logTrigger = "DAILY_REALERT".equals(trigger) ? TRIGGER_STORM_REALERT : TRIGGER_STORM_INITIAL;
+            Map<Long, Map<Long, List<String>>> stamps = new LinkedHashMap<>();
+            for (ForwardStormMail fm : mails.values()) {
+                String status = sendForwardStormAlertMail(storm, fm, prefix, logTrigger);
+                if (EscalationService.mailDelivered(status)) {
+                    for (AlertEvent m : fm.members) {
+                        Map<Long, List<String>> s = stamps.computeIfAbsent(m.getId(), k -> new LinkedHashMap<>());
+                        for (Long rt : fm.recipientTeams) s.computeIfAbsent(rt, k -> new ArrayList<>()).addAll(fm.to);
+                    }
+                }
+            }
+            stamps.forEach((id, s) -> ForwardEmailStamp.stamp(alertEventRepo, id, s));
+            forwardStormPush(storm, trigger, push, perMember, dispatches);
+        } catch (Exception e) {
+            log.warn("Storm #{} iletim postaları atlandı (sahip postası etkilenmedi): {}", storm.getId(), e.toString());
+        }
+    }
+
+    /** Tek iletim fırtına postası (açılış / günlük) + üye başına günlük satırı; durum döner. */
+    private String sendForwardStormAlertMail(AlertStorm storm, ForwardStormMail fm, String prefix, String logTrigger) {
+        String label = fm.ownerNames.isEmpty() ? "-" : String.join(", ", fm.ownerNames);
+        int count = fm.members.size();
+        String subject = prefix + "[Site Monitor 🌩 ALARM FIRTINASI] " + count + " monitör birden erişilemez — " + label;
+        String html = null;
+        String status;
+        boolean anyEligible = false;
+        for (AlertEvent m : fm.members) if (!mailDisabled(m)) { anyEligible = true; break; }
+        try {
+            String rootCause = rootCauseLabel(commonRootCause(fm.members));
+            List<String> targets = sampleTargets(fm.members);
+            int extra = Math.max(0, count - targets.size());
+            String level = stormPushLevel(fm.members);
+            String baseHtml = emailService.buildStormAlertHtml(count, label, rootCause, storm.getCreatedAt(), targets, extra, level);
+            String baseText = emailService.buildStormAlertText(count, label, rootCause, storm.getCreatedAt(), targets, extra, level);
+            var mail = EmailTemplateBuilder.withForwardNote(new com.sitemonitor.service.mail.MailDoc.Mail(baseHtml, baseText),
+                    EmailTemplateBuilder.forwardNote(List.copyOf(fm.ownerNames), String.join(", ", fm.recipientNames), true));
+            html = mail.html();
+            status = anyEligible
+                    ? emailService.sendHtml(fm.to.toArray(new String[0]), null, subject, mail.html(), mail.text(), List.of(), false, null)
+                    : "SKIPPED: e-posta kanalı kapalı";
+        } catch (Exception e) {
+            log.warn("Storm #{} iletim postası gönderilemedi: {}", storm.getId(), e.toString());
+            status = "FAILED: " + e.getClass().getSimpleName();
+        }
+        logForwardStormMail(storm, fm, logTrigger, subject, html, status, fm.members);
+        return status;
+    }
+
+    /** İletim fırtına postasının üye başına satırı — rol FORWARD, alıcı adı = alıcı takım(lar). */
+    private void logForwardStormMail(AlertStorm storm, ForwardStormMail fm, String trigger, String subject, String html,
+                                     String status, List<AlertEvent> members) {
+        if (notificationLogRepo == null) return;
+        String name = fm.recipientNames.isEmpty() ? "-" : String.join(", ", fm.recipientNames);
+        String recipients = String.join(", ", fm.to);
+        String stamp = now();
+        for (AlertEvent m : members) {
+            if (m == null || m.getId() == null) continue;
+            try {
+                com.sitemonitor.model.NotificationLog entry = new com.sitemonitor.model.NotificationLog();
+                entry.setAlertEventId(m.getId());
+                entry.setSentAt(stamp);
+                entry.setRecipientName(name);
+                entry.setRecipientEmail(recipients);
+                entry.setRecipientRole(EscalationService.ROLE_FORWARD);
+                entry.setSubject(subject);
+                entry.setMessage(html != null ? html : "");
+                entry.setEmailStatus(status != null ? status : "SKIPPED");
+                entry.setWebhookStatus("SKIPPED");
+                entry.setTrigger(trigger);
+                entry.setEmailFrom(emailService.getEmailFrom());
+                notificationLogRepo.save(entry);
+            } catch (Exception ex) {
+                log.warn("Storm #{} iletim günlük satırı yazılamadı (olay {}): {}", storm.getId(), m.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Fırtınanın iletim push'u. Varsayılan kip: alıcı takım başına TEK toplu bildirim (yalnız ona iletilen üye sayısı ve en
+     * yüksek seviye). Bireysel kip ({@link #KEY_PUSH_INDIVIDUAL}): açılışta toplu push yok (üyelerin iletim push'u alarm
+     * başına zaten gitti — EscalationService), günlük tekrarda açık + onaysız her üyeye bireysel iletim push'u, çözümde toplu
+     * bildirim yalnız sahip takımın toplu bildirimi daha önce gönderilmişse (sahip kuralının aynası).
+     */
+    private void forwardStormPush(AlertStorm storm, String stormTrigger, Map<Long, ForwardPushAgg> push,
+                                  Map<Long, List<com.sitemonitor.service.forward.ForwardTarget>> perMember,
+                                  List<TeamDispatch> dispatches) {
+        if (forwardPush == null || push.isEmpty()) return;
+        if (pushIndividual()) {
+            if ("DAILY_REALERT".equals(stormTrigger)) {
+                pushForwardMembersIndividually(push, perMember);
+                return;
+            }
+            if (!"RESOLVE".equals(stormTrigger)) return;
+            if (!anyOwnerNoticeSent(storm, dispatches)) return;
+        }
+        for (ForwardPushAgg a : push.values()) {
+            try {
+                forwardPush.enqueueForwardStormNotice(storm.getId(), stormTrigger, a.merged(), a.members.size(),
+                        stormPushLevel(a.members), String.join(", ", a.ownerNames));
+            } catch (Exception e) {
+                log.warn("Storm #{} iletim push'u atlandı (alıcı takım {}): {}", storm.getId(), a.first.recipientTeamId(),
+                        e.toString());
+            }
+        }
+    }
+
+    /** Bireysel kipte günlük tekrar: açık + onaysız üyelere bireysel iletim push'u (sahibin sessiz saati uygulanır). */
+    private void pushForwardMembersIndividually(Map<Long, ForwardPushAgg> push,
+                                                Map<Long, List<com.sitemonitor.service.forward.ForwardTarget>> perMember) {
+        Map<Long, AlertEvent> members = new LinkedHashMap<>();
+        for (ForwardPushAgg a : push.values()) for (AlertEvent m : a.members) members.putIfAbsent(m.getId(), m);
+        List<AlertEvent> due = new ArrayList<>();
+        for (AlertEvent m : members.values()) {
+            if (Boolean.TRUE.equals(m.getResolved()) || Boolean.TRUE.equals(m.getAcknowledged())) continue;
+            due.add(m);
+        }
+        due.sort(java.util.Comparator.comparing(AlertEvent::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.<String>naturalOrder()))
+                .thenComparing(AlertEvent::getId));
+        for (AlertEvent m : due) {
+            try {
+                if (quietHours != null && quietHours.defersPush(m.getTeamId(), m.getAlertLevel(), "DAILY_REALERT")) continue;
+                forwardPush.enqueueForwards(m.getId(), "DAILY_REALERT", perMember.getOrDefault(m.getId(), List.of()),
+                        memberContext(m), Set.of());
+            } catch (Exception e) {
+                log.warn("Fırtına üyesinin iletim hatırlatma push'u atlandı (olay {}): {}", m.getId(), e.toString());
+            }
+        }
+    }
+
+    private boolean anyOwnerNoticeSent(AlertStorm storm, List<TeamDispatch> dispatches) {
+        if (userPushService == null) return false;
+        for (TeamDispatch d : dispatches) {
+            if (d.teamId() == null) continue;
+            try {
+                if (userPushService.stormNoticeSent(storm.getId(), storm.getLegacyStormId(), d.teamId())) return true;
+            } catch (Exception ignore) { /* okunamazsa gönderilmemiş sayılır — sahip kuralıyla aynı */ }
+        }
+        return false;
+    }
+
+    /**
+     * Fırtına çözüm postasının iletim eşleniği: kurtulan üyelerin iletim damgasındaki adresler — bu turda o üyenin çözümünü
+     * zaten almış adres (sahip / nöbetçi postası: {@code reported}) hariç. Adres başına kurtulan ve hâlâ-down üye kümeleri;
+     * aynı kümeyi alan adresler tek postada (planOncall deseni). Push: kurtulan üyelerin canlı iletim hedeflerine toplu çözüm
+     * bildirimi. Damga yoksa posta yok.
+     */
+    private void forwardStormRecovery(AlertStorm storm, List<TeamDispatch> dispatches, List<AlertEvent> recovered,
+                                      List<AlertEvent> stillDown, Map<String, Set<Long>> reported) {
+        var routing = forwardRouting();
+        if (routing == null || recovered == null || recovered.isEmpty()) return;
+        try {
+            Map<Long, Set<Long>> owners = memberOwners(dispatches);
+            Map<Long, String> ownerNameById = new HashMap<>();
+            for (TeamDispatch d : dispatches) if (d.teamId() != null && d.teamName() != null) ownerNameById.put(d.teamId(), d.teamName());
+            Map<String, String> display = new LinkedHashMap<>();
+            Map<String, List<AlertEvent>> rec = new LinkedHashMap<>();
+            Map<String, Set<Long>> rtOf = new HashMap<>();
+            for (AlertEvent m : recovered) {
+                if (m == null || m.getId() == null) continue;
+                for (Map.Entry<Long, List<String>> en : ForwardEmailStamp.of(m).entrySet()) {
+                    for (String a : en.getValue()) {
+                        String k = a.toLowerCase(java.util.Locale.ROOT);
+                        if (reported.getOrDefault(k, Set.of()).contains(m.getId())) continue;
+                        display.putIfAbsent(k, a);
+                        List<AlertEvent> l = rec.computeIfAbsent(k, x -> new ArrayList<>());
+                        if (!l.contains(m)) l.add(m);
+                        rtOf.computeIfAbsent(k, x -> new java.util.TreeSet<>()).add(en.getKey());
+                    }
+                }
+            }
+            if (!rec.isEmpty()) {
+                Map<String, List<AlertEvent>> down = new LinkedHashMap<>();
+                for (AlertEvent m : stillDown == null ? List.<AlertEvent>of() : stillDown) {
+                    for (List<String> l : ForwardEmailStamp.of(m).values()) {
+                        for (String a : l) {
+                            String k = a.toLowerCase(java.util.Locale.ROOT);
+                            if (!rec.containsKey(k)) continue;
+                            List<AlertEvent> dl = down.computeIfAbsent(k, x -> new ArrayList<>());
+                            if (!dl.contains(m)) dl.add(m);
+                        }
+                    }
+                }
+                Map<String, ForwardStormMail> groups = new LinkedHashMap<>();
+                for (Map.Entry<String, List<AlertEvent>> en : rec.entrySet()) {
+                    String k = en.getKey();
+                    List<AlertEvent> d = down.getOrDefault(k, List.of());
+                    Set<Long> done = reported.computeIfAbsent(k, x -> new java.util.HashSet<>());
+                    for (AlertEvent m : en.getValue()) done.add(m.getId());
+                    String key = idsOf(en.getValue()) + "|" + idsOf(d);
+                    ForwardStormMail fm = groups.computeIfAbsent(key, x -> {
+                        ForwardStormMail g = new ForwardStormMail(new ArrayList<>());
+                        g.members.addAll(en.getValue());
+                        g.stillDown.addAll(d);
+                        return g;
+                    });
+                    fm.to.add(display.get(k));
+                    for (Long rt : rtOf.getOrDefault(k, Set.of())) {
+                        fm.recipientTeams.add(rt);
+                        String n = teamRepo.findById(rt).map(com.sitemonitor.model.Team::getName).orElse(null);
+                        if (n != null && !n.isBlank()) fm.recipientNames.add(n.trim());
+                    }
+                    for (AlertEvent m : en.getValue()) {
+                        for (Long o : owners.getOrDefault(m.getId(), Set.of())) {
+                            String n = ownerNameById.get(o);
+                            if (n != null) fm.ownerNames.add(n);
+                        }
+                    }
+                }
+                for (ForwardStormMail fm : groups.values()) sendForwardStormRecoveryMail(storm, fm);
+            }
+            // Push: kurtulan üyelerin canlı iletim hedefleri → alıcı takım başına toplu çözüm bildirimi.
+            Set<Long> recoveredIds = new java.util.HashSet<>();
+            for (AlertEvent m : recovered) if (m != null && m.getId() != null) recoveredIds.add(m.getId());
+            Map<Long, ForwardPushAgg> push = new java.util.TreeMap<>();
+            for (TeamDispatch d : dispatches) {
+                if (d.teamId() == null || !routing.anyFor(List.of(d.teamId()))) continue;
+                for (AlertEvent m : d.members()) {
+                    if (m == null || m.getId() == null || !recoveredIds.contains(m.getId())) continue;
+                    for (var t : memberForwardTargets(routing, d.teamId(), m, owners.getOrDefault(m.getId(), Set.of()))) {
+                        push.computeIfAbsent(t.recipientTeamId(), k -> new ForwardPushAgg()).add(t, m);
+                    }
+                }
+            }
+            forwardStormPush(storm, "RESOLVE", push, Map.of(), dispatches);
+        } catch (Exception e) {
+            log.warn("Storm #{} iletim çözüm postaları atlandı (sahip postası etkilenmedi): {}", storm.getId(), e.toString());
+        }
+    }
+
+    /** Tek iletim fırtına çözüm postası + kurtulan üye başına günlük satırı. */
+    private void sendForwardStormRecoveryMail(AlertStorm storm, ForwardStormMail fm) {
+        String label = fm.ownerNames.isEmpty() ? "-" : String.join(", ", fm.ownerNames);
+        String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — " + fm.members.size() + " monitör kurtarıldı — " + label;
+        String html = null;
+        String status;
+        boolean anyEligible = false;
+        for (AlertEvent m : fm.members) if (!mailDisabled(m)) { anyEligible = true; break; }
+        try {
+            List<String> targets = sampleTargets(fm.members);
+            int extra = Math.max(0, fm.members.size() - targets.size());
+            List<String> stillDownTargets = sampleTargets(fm.stillDown);
+            String baseHtml = emailService.buildStormRecoveryHtml(fm.members.size(), fm.stillDown.size(), label,
+                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+            String baseText = emailService.buildStormRecoveryText(fm.members.size(), fm.stillDown.size(), label,
+                    storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
+            var mail = EmailTemplateBuilder.withForwardNote(new com.sitemonitor.service.mail.MailDoc.Mail(baseHtml, baseText),
+                    EmailTemplateBuilder.forwardNote(List.copyOf(fm.ownerNames), String.join(", ", fm.recipientNames), true));
+            html = mail.html();
+            status = anyEligible
+                    ? emailService.sendHtml(fm.to.toArray(new String[0]), null, subject, mail.html(), mail.text(), List.of(), false, null)
+                    : "SKIPPED: e-posta kanalı kapalı";
+        } catch (Exception e) {
+            log.warn("Storm #{} iletim çözüm postası gönderilemedi: {}", storm.getId(), e.toString());
+            status = "FAILED: " + e.getClass().getSimpleName();
+        }
+        logForwardStormMail(storm, fm, TRIGGER_STORM_RESOLVE, subject, html, status, fm.members);
     }
 
     private List<TeamDispatch> resolveDispatches(List<AlertEvent> members) {

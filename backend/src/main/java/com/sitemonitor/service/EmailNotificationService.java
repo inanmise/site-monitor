@@ -1757,6 +1757,13 @@ public class EmailNotificationService {
      */
     MailDoc.Mail alertMail(String subject, String message, String domain, String level, String alertType,
                            Integer daysRemaining, Map<String, Object> ctx) {
+        // Alarm iletimi (2026-11-05): bağlamda iletim bandı varsa (yalnız iletilen ayrı postada) gövdenin başına eklenir;
+        // yoksa aynı nesne döner — bugünkü posta bayt bayt aynı.
+        return EmailTemplateBuilder.withForwardBand(alertMailBase(subject, message, domain, level, alertType, daysRemaining, ctx), ctx);
+    }
+
+    private MailDoc.Mail alertMailBase(String subject, String message, String domain, String level, String alertType,
+                                       Integer daysRemaining, Map<String, Object> ctx) {
         // Runbook notu (2026-10-01): tür-özel belgelerde de gövdenin SONUNA (RunbookNote.appendTo — rehber yoksa no-op).
         if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
             return withRunbook(outageAlertDoc(message, domain, alertType, level, ctx), ctx).build();
@@ -1799,6 +1806,14 @@ public class EmailNotificationService {
     MailDoc.Mail resolutionMail(String domain, String alertType, String alertLevel, Integer daysRemaining,
                                 String resolvedBy, String resolvedAt, String createdAt, Map<String, Object> ctx,
                                 String teamNames, UptimeSummary uptime) {
+        // Alarm iletimi (2026-11-05): iletilen çözüm postasında bant — yoksa aynı nesne (bugünkü posta).
+        return EmailTemplateBuilder.withForwardBand(resolutionMailBase(domain, alertType, alertLevel, daysRemaining, resolvedBy,
+                resolvedAt, createdAt, ctx, teamNames, uptime), ctx);
+    }
+
+    private MailDoc.Mail resolutionMailBase(String domain, String alertType, String alertLevel, Integer daysRemaining,
+                                            String resolvedBy, String resolvedAt, String createdAt, Map<String, Object> ctx,
+                                            String teamNames, UptimeSummary uptime) {
         if ("KEYWORD".equals(alertType)) return keywordResolvedDoc(domain, ctx, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
         if ("PING_DOWN".equals(alertType)) return pingResolvedDoc(domain, ctx, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
         if ("KEYWORD_CHANGED".equals(alertType)) return keywordChangedResolvedDoc(domain, ctx, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames).build();
