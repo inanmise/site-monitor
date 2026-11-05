@@ -219,6 +219,57 @@ class AlarmFeedAdminControllerTest {
     }
 
     @Test
+    @DisplayName("Yalnız 7/24 süzgeci (noc_only): görünümde, varsayılan açık; değişince yazılır + denetlenir; boolean değilse 400 alan")
+    @SuppressWarnings("unchecked")
+    void nocOnlyField() {
+        Map<String, Object> d = (Map<String, Object>) controller.view(ADMIN).getBody().get("data");
+        assertThat((Map<String, Object>) d.get("settings")).containsEntry("noc_only", true);
+        // Varsayılan açık; eski konumsal yapıcılar (testler / eski çağıranlar) kapalı — bugünkü davranış
+        assertThat(AlarmFeedSettings.defaults().nocOnly()).isTrue();
+        AlarmFeedSettings.Config legacy = new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true);
+        assertThat(legacy.nocOnly()).isFalse();
+        AlarmFeedSettings.Config nocOn = new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true,
+                true, 120, 15, true, List.of(), true);
+        // Önbellek anahtarı süzgeci içerir: açılınca / kapanınca eski gövde 5 sn boyunca dönmez
+        assertThat(legacy.fingerprint()).isNotEqualTo(nocOn.fingerprint());
+
+        // Aynı değer → yazılmaz
+        controller.save(Map.of("noc_only", true), ADMIN, new MockHttpServletRequest());
+        verify(settings, never()).save(any(), anyString());
+        // Kapatma → yalnız bu anahtar yazılır, denetime girer, önbellek bırakılır
+        controller.save(Map.of("noc_only", false), ADMIN, new MockHttpServletRequest());
+        ArgumentCaptor<Map<String, Object>> c = ArgumentCaptor.forClass(Map.class);
+        verify(settings).save(c.capture(), eq("root"));
+        assertThat((Map<String, Object>) c.getValue().get("values")).containsOnly(Map.entry(AlarmFeedSettings.KEY_NOC_ONLY, "false"));
+        verify(audit).recordAction(eq("ALARM_FEED_SETTINGS_SAVE"), eq(ADMIN), any(), eq("SETTINGS"), eq("alarm-feed"),
+                anyString(), anyString());
+        verify(feed).invalidate();
+        // Boolean değil → 400 + alan
+        assertThatThrownBy(() -> controller.save(Map.of("noc_only", "evet"), ADMIN, new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getFields()).containsKey("noc_only"));
+        // Canlı okuma: kayıtlı değer okunur; okunamayan / yok → varsayılan (açık)
+        AppSettingsService s2 = mock(AppSettingsService.class);
+        when(s2.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(inv -> inv.getArgument(1));
+        when(s2.getString(anyString(), any())).thenAnswer(inv -> inv.getArgument(1));
+        when(s2.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        assertThat(AlarmFeedSettings.read(s2).nocOnly()).isTrue();
+        when(s2.getBoolean(eq(AlarmFeedSettings.KEY_NOC_ONLY), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(false);
+        AlarmFeedSettings.Config off = AlarmFeedSettings.read(s2);
+        assertThat(off.nocOnly()).isFalse();
+        assertThat(off.fingerprint()).isNotEqualTo(AlarmFeedSettings.read(mockDefaults()).fingerprint());
+    }
+
+    static AppSettingsService mockDefaults() {
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(inv -> inv.getArgument(1));
+        when(s.getString(anyString(), any())).thenAnswer(inv -> inv.getArgument(1));
+        when(s.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        return s;
+    }
+
+    @Test
     @DisplayName("Seviye metinleri (Clear kipinde Clear metni de) birbirinden farklı olmalı")
     void severityTextsMustDiffer() {
         assertThatThrownBy(() -> controller.save(Map.of("severity_high", "critical"), ADMIN, new MockHttpServletRequest()))
