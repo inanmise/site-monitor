@@ -132,13 +132,18 @@ public final class MediaAnalysis {
         DeepSection.putList(fonts, "families", families);
         List<Map<String, Object>> nonWoff2 = new ArrayList<>();
         List<ScanItem> nonWoff2Items = new ArrayList<>();
+        int unknownFormat = 0;
         for (ScanItem it : fontItems) {
             String fmt = fontFormat(it);
             if ("woff2".equals(fmt)) continue;
+            // Biçimi bilinmeyen (application/octet-stream + uzantısız adres) woff2 olabilir: "woff2 değil" sayılmaz, kazanç
+            // iddia edilmez — yalnız sayılır (inceleme D-8).
+            if ("unknown".equals(fmt)) { unknownFormat++; continue; }
             nonWoff2.add(row("url", DeepUrls.mask(it.url), "format", fmt));
             nonWoff2Items.add(it);
         }
         DeepSection.putList(fonts, "non_woff2", nonWoff2);
+        fonts.put("unknown_format", unknownFormat);
         List<Map<String, Object>> md = new ArrayList<>();
         for (Map.Entry<String, String> e : missingDisplay.entrySet()) {
             md.add(row("family", e.getKey(), "css_url", DeepUrls.mask(e.getValue())));

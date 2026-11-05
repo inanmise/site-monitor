@@ -265,7 +265,7 @@ class PageResourceAnalyzerTest {
     void scoreTargetsAndLost() {
         List<ScanItem> items = new ArrayList<>();
         items.add(html(120, 2500, 30 * KB));   // yükleme 2500 ms → 83 puan
-        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE, withHtml());
         List<Map<String, Object>> scores = get(r.analysis(), "scores");
         Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
         for (Map<String, Object> s : scores) by.put((String) s.get("key"), s);
@@ -282,6 +282,46 @@ class PageResourceAnalyzerTest {
         assertThat(by.get("caching")).containsEntry("full_at", 100).containsEntry("zero_at", 0);
         double lost = scores.stream().mapToDouble(s -> ((Number) s.get("lost")).doubleValue()).sum();
         assertThat(Math.round(100 - lost)).as("kayıpların toplamı notu açıklar").isEqualTo(r.grade());
+    }
+
+    /** HTML olguları bilinen bağlam (oluşturmayı engelleyen bileşeni puanlanır). */
+    static com.sitemonitor.service.page.scan.deep.DeepContext withHtml() {
+        byte[] b = "<html><head><title>t</title></head><body></body></html>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var facts = com.sitemonitor.service.page.scan.deep.HtmlFacts.extract(PageResourceDiscovery.parse(b, "https://a.com/"), b.length);
+        return new com.sitemonitor.service.page.scan.deep.DeepContext(facts, null, "https://a.com/", null, null, null, null, 0,
+                null, 0, 0);
+    }
+
+    @Test
+    @DisplayName("D-1: HTML olguları yoksa oluşturmayı engelleyen bileşeni BİLİNMİYOR — puan / değer / kayıp null, not kalan 90 ağırlıkla")
+    void renderBlockingUnknownWithoutHtmlFacts() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 2500, 30 * KB));   // yükleme 2500 ms → 83 puan, diğer bileşenler 100
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        List<Map<String, Object>> scores = get(r.analysis(), "scores");
+        Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> s : scores) by.put((String) s.get("key"), s);
+        assertThat(by.get("render_blocking")).containsEntry("score", null).containsEntry("value", null)
+                .containsEntry("lost", null).containsEntry("weight", 10).containsEntry("full_at", 50 * KB);
+        // not = (83 × 20 + 100 × 70) / 90 = 96,2 → 96 (bilinmeyen bileşen tam puan sayılsaydı (83×20 + 100×80) / 100 = 96,6 → 97)
+        assertThat(r.grade()).isEqualTo(96);
+        assertThat(by.get("load_time")).containsEntry("lost", 3.8);   // 20 × 17 / 90 = 3,78
+        double lost = scores.stream().filter(s -> s.get("lost") != null)
+                .mapToDouble(s -> ((Number) s.get("lost")).doubleValue()).sum();
+        assertThat(Math.round(100 - lost)).as("bilinen kayıpların toplamı notu yine açıklar").isEqualTo(r.grade());
+        Map<String, Object> loading = get(r.analysis(), "loading");
+        assertThat(loading).containsKey("render_blocking");
+        assertThat(loading.get("render_blocking")).as("boş liste 'engelleyen yok' demek olurdu").isNull();
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        assertThat(recs).extracting(m -> m.get("code")).doesNotContain("RENDER_BLOCKING_RESOURCES");
+
+        // Aynı sayfa HTML olgularıyla: bileşen 100, not eski formülle (ağırlık toplamı 100) birebir.
+        List<ScanItem> again = new ArrayList<>();
+        again.add(html(120, 2500, 30 * KB));
+        PageResourceAnalyzer.Result known = PageResourceAnalyzer.analyze(again, PageResourceAnalyzer.Limits.NONE, withHtml());
+        assertThat(known.grade()).isEqualTo(97);
+        Map<String, Object> rb = get(get(known.analysis(), "loading"), "render_blocking");
+        assertThat(rb).containsEntry("count", 0);
     }
 
     @Test

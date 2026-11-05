@@ -89,6 +89,72 @@ class DeepCatalogsTest {
                 .as("eklenti başlığı jQuery sayılmaz; ad adresten").isEqualTo(new JsLibraryCatalog.Library("jquery", null));
     }
 
+    @ParameterizedTest(name = "[{index}] {0} → {1} {2}")
+    @CsvSource(delimiter = '#', quoteCharacter = '"', nullValues = "-", value = {
+            // Gerçek eklenti başlıkları: bağımlılık ifadesi kütüphanenin kendi sürümü SAYILMAZ (inceleme O-1).
+            "https://a.com/js/jquery.form.min.js#-#-#/*!\\n * jQuery Form Plugin\\n * version: 4.3.0\\n * Requires jQuery v1.7.2 or later\\n */",
+            "https://a.com/js/vendor.js#-#-#/*!\\n * jQuery Form Plugin\\n * version: 4.3.0\\n * Requires jQuery v1.7.2 or later\\n */",
+            "https://a.com/js/jquery.validate.js#-#-#/*!\\n * jQuery Validation Plugin v1.19.5\\n * Requires jQuery v1.11.4+\\n */",
+            "https://a.com/js/select2.min.js#-#-#/*! Select2 4.0.13 | https://github.com/select2/select2/blob/master/LICENSE.md */",
+            "https://a.com/js/bootstrap-datepicker.min.js#-#-#/*!\\n * Datepicker for Bootstrap v1.9.0 (https://github.com/uxsolutions/bootstrap-datepicker)\\n */",
+            "https://a.com/js/theme.js#-#-#/*!\\n * Theme based on Bootstrap v4.1.3\\n */",
+            "https://a.com/js/plugin.js#-#-#/* compatible with jQuery v1.9.1 and later */",
+            "https://a.com/js/daterangepicker.js#-#-#/**\\n* @version: 3.1\\n* @author: Dan Grossman\\n*/ // needs moment.js and jQuery",
+            // Eklenti adresi olan dosyada kütüphane başlığı olsa da (aynı aile) kabul edilmez.
+            "https://a.com/js/jquery.cookie.js#-#-#/*! jQuery v3.6.0 | (c) OpenJS Foundation */",
+            "https://a.com/js/angular-route.min.js#-#-#/*\\n @license AngularJS v1.8.2\\n (c) 2010-2020 Google LLC.\\n*/",
+            "https://a.com/js/moment-timezone.js#-#-#//! moment.js\\n//! version : 2.29.1\\n",
+            // Gerçek kütüphane başlıkları kabul edilmeye devam eder.
+            "https://a.com/js/vendor.js#jquery#3.6.0#/*! jQuery v3.6.0 | (c) OpenJS Foundation and other contributors */",
+            "https://a.com/js/vendor.js#jquery#3.6.0#/*!\\n * jQuery JavaScript Library v3.6.0\\n * https://jquery.com/\\n */",
+            "https://a.com/js/bundle.js#jquery#3.4.1#!function(){};/*! jQuery v3.4.1 | (c) JS Foundation */",
+            "https://a.com/js/angular.min.js#angularjs#1.8.2#/*\\n AngularJS v1.8.2\\n (c) 2010-2020 Google LLC.\\n*/",
+            "https://a.com/js/ng.js#angularjs#1.7.9#/**\\n * @license AngularJS v1.7.9\\n * (c) 2010-2018 Google, Inc.\\n */",
+            "https://a.com/js/hb.js#handlebars#4.7.7#/**!\\n\\n @license\\n handlebars v4.7.7\\n\\nCopyright (C) 2011-2019 */",
+            "https://a.com/js/u.js#underscore#1.13.1#//     Underscore.js 1.13.1\\n//     https://underscorejs.org\\n",
+            "https://a.com/js/jquery-3.4.1-custom.js#jquery#3.4.1#/*! jQuery v3.4.1 | (c) JS Foundation */",
+            "https://a.com/js/jquery-ui-1.12.1.custom.min.js#jquery-ui#1.12.1#/*! jQuery UI - v1.12.1 - 2016-09-14 */"})
+    void pluginBannersAreNotTheLibrary(String url, String name, String version, String banner) {
+        JsLibraryCatalog.Library lib = JsLibraryCatalog.detect(url, banner.replace("\\n", "\n"));
+        if (name == null) {
+            assertThat(lib).as("eklenti / bağımlılık ifadesi kütüphane sayılmaz").isNull();
+            return;
+        }
+        assertThat(lib).isEqualTo(new JsLibraryCatalog.Library(name, version));
+    }
+
+    @Test
+    @DisplayName("eklenti başlığı açık listesine ve sürüm çakışmasına girmez (sahte VULNERABLE_LIBRARY / DUPLICATE_LIBRARIES yok)")
+    void pluginBannerHasNoVulns() {
+        JsLibraryCatalog.Library form = JsLibraryCatalog.detect("https://a.com/js/jquery.form.min.js",
+                "/*!\n * jQuery Form Plugin\n * version: 4.3.0\n * Requires jQuery v1.7.2 or later\n */");
+        assertThat(JsLibraryCatalog.vulnsOf(form)).isEmpty();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery.form.min.js")).isEqualTo("jquery");
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/bootstrap-datepicker.min.js")).isEqualTo("bootstrap");
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery.ui.datepicker.js")).isEqualTo("jquery-ui");
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery.min.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery-3.4.1.min.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery-v3.4.1.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/bootstrap.bundle.min.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/moment-with-locales.min.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf("https://a.com/js/jquery2x.js")).isNull();
+        assertThat(JsLibraryCatalog.pluginOf(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("yorum başı bağlamı: satır başı, @license, satır ortasında açılan yorum; önünde sözcük varsa hayır")
+    void commentStartContext() {
+        assertThat(JsLibraryCatalog.atCommentStart("/*! jQuery v3", 4)).isTrue();
+        assertThat(JsLibraryCatalog.atCommentStart(";x();/*! jQuery v3", 9)).isTrue();
+        assertThat(JsLibraryCatalog.atCommentStart(" * @license AngularJS v1", 12)).isTrue();
+        assertThat(JsLibraryCatalog.atCommentStart(" * Requires jQuery v1", 12)).isFalse();
+        assertThat(JsLibraryCatalog.atCommentStart("/*! Requires jQuery v1", 13)).isFalse();
+        assertThat(JsLibraryCatalog.atCommentStart(" ".repeat(100) + "jQuery v1", 100)).as("sınırlı geri tarama").isFalse();
+        assertThat(JsLibraryCatalog.laterQualifier("v1.7.2 or later", 6)).isTrue();
+        assertThat(JsLibraryCatalog.laterQualifier("v1.11.4+", 7)).isTrue();
+        assertThat(JsLibraryCatalog.laterQualifier("v3.6.0 | (c) OpenJS Foundation and other", 6)).isFalse();
+    }
+
     @ParameterizedTest(name = "{0} {1} → {2}")
     @CsvSource(delimiter = '|', value = {
             "jquery|1.12.4|CVE-2020-11022,CVE-2020-11023,CVE-2019-11358,CVE-2015-9251",

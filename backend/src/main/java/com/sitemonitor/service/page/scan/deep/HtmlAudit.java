@@ -138,9 +138,9 @@ public final class HtmlAudit {
         }
         // Robots (meta + X-Robots-Tag)
         String robots = join(f.robots, xRobotsTag);
-        String rl = robots == null ? "" : robots.toLowerCase(Locale.ROOT);
-        if (rl.contains("noindex") || rl.contains("none")) out.add(seo("robots", FAIL, "noindex", robots, null));
-        else if (rl.contains("nofollow")) out.add(seo("robots", WARN, "nofollow", robots, null));
+        String rv = robotsVerdict(robots);
+        if ("noindex".equals(rv)) out.add(seo("robots", FAIL, "noindex", robots, null));
+        else if ("nofollow".equals(rv)) out.add(seo("robots", WARN, "nofollow", robots, null));
         else out.add(seo("robots", PASS, null, robots, null));
         // Dil
         out.add(f.lang == null ? seo("lang", FAIL, "missing", null, null) : seo("lang", PASS, null, f.lang, null));
@@ -200,6 +200,35 @@ public final class HtmlAudit {
         String origin = slash < 0 ? k : k.substring(0, slash);
         String path = slash < 0 ? "" : k.substring(slash);
         return origin.toLowerCase(Locale.ROOT) + path;
+    }
+
+    /** Değer alan robots yönergeleri ({@code ad:değer}); değerleri ({@code max-image-preview:none}) belirteç sayılmaz. */
+    static final java.util.Set<String> ROBOTS_VALUE_DIRECTIVES = java.util.Set.of("max-snippet", "max-image-preview",
+            "max-video-preview", "unavailable_after");
+
+    /**
+     * Robots yönergeleri (meta + {@code X-Robots-Tag}) BELİRTEÇ olarak: virgül / noktalı virgülle ayrılır, değer alan
+     * yönergeler ({@code max-image-preview:none}) atlanır, bot öneki ({@code googlebot: noindex}) atılır — o bot için de
+     * dizinleme yasağıdır. {@code noindex} ya da {@code none} TAM belirteci → {@code noindex}; {@code nofollow} →
+     * {@code nofollow}; yoksa null. (İnceleme D-7: "none" alt dizesi aranmaz.)
+     */
+    static String robotsVerdict(String robots) {
+        if (robots == null || robots.isBlank()) return null;
+        boolean noindex = false, nofollow = false;
+        for (String part : robots.toLowerCase(Locale.ROOT).split("[,;]")) {
+            String p = part.trim();
+            for (int round = 0; round < 3; round++) {
+                int c = p.indexOf(':');
+                if (c < 0) break;
+                if (ROBOTS_VALUE_DIRECTIVES.contains(p.substring(0, c).trim())) { p = ""; break; }
+                p = p.substring(c + 1).trim();   // bot öneki
+            }
+            for (String token : p.split("[ \t\r\n]+")) {
+                if (token.equals("noindex") || token.equals("none")) noindex = true;
+                else if (token.equals("nofollow")) nofollow = true;
+            }
+        }
+        return noindex ? "noindex" : nofollow ? "nofollow" : null;
     }
 
     private static String join(String a, String b) {

@@ -234,6 +234,56 @@ class PageFetchCoreDeepCaptureTest {
     }
 
     @Test
+    @DisplayName("D-9: son tampon halkaya toplu kopyayla yazılır — tek sayılı / halkayı saran / halkadan büyük parçalarla son baytlar aynı")
+    void sampleTailWithOddChunks() throws Exception {
+        byte[] data = new byte[50_000];
+        for (int i = 0; i < data.length; i++) data[i] = (byte) (i * 31 % 251);
+        int[] chunks = {7, 8192, 1, 4999, 13, 250, 3, 8191};
+        for (int tailN : new int[]{1, 5, 50, 4096, 8193, 9000, 60_000}) {
+            for (String enc : new String[]{null, "gzip"}) {
+                byte[] body = data;
+                if ("gzip".equals(enc)) {
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    try (GZIPOutputStream gz = new GZIPOutputStream(bos)) { gz.write(data); }
+                    body = bos.toByteArray();
+                }
+                PageFetchCore.Sampled s = PageFetchCore.sampleAndCount(new ChunkyStream(body, chunks), 1_000_000, enc, 100, tailN);
+                int len = Math.min(data.length, tailN);
+                assertThat(s.tail()).as("tailN=%d enc=%s", tailN, enc)
+                        .isEqualTo(java.util.Arrays.copyOfRange(data, data.length - len, data.length));
+                assertThat(s.head()).isEqualTo(java.util.Arrays.copyOf(data, 100));
+                assertThat(s.wire()).isEqualTo(body.length);
+            }
+        }
+    }
+
+    /** Okumaları sırayla verilen boyutlarda döndüren akış (halkanın sarma / büyük parça durumları). */
+    static final class ChunkyStream extends java.io.InputStream {
+        final byte[] data;
+        final int[] sizes;
+        int pos, call;
+
+        ChunkyStream(byte[] data, int[] sizes) {
+            this.data = data;
+            this.sizes = sizes;
+        }
+
+        @Override
+        public int read() {
+            return pos < data.length ? data[pos++] & 0xFF : -1;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) {
+            if (pos >= data.length) return -1;
+            int n = Math.min(Math.min(len, sizes[call++ % sizes.length]), data.length - pos);
+            System.arraycopy(data, pos, b, off, n);
+            pos += n;
+            return n;
+        }
+    }
+
+    @Test
     @DisplayName("bağlantı ölçümü: yerel sunucuya DNS + TCP (TLS yok); kapalı port → connect_failed; çözülemeyen ad → dns_failed")
     void measureConnection() throws Exception {
         PageFetchCore.HostConnect ok = core.measureConnection("127.0.0.1", server.getAddress().getPort(), false, 2000);

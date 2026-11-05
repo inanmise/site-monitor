@@ -128,6 +128,44 @@ class HtmlFactsAuditTest {
         assertThat(r.a11yScore()).isBetween(0, 60);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest(name = "[{index}] {0} → {1}")
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '#', nullValues = "-", value = {
+            // D-7: yönergeler BELİRTEÇ — değer alan yönergelerin "none" değeri noindex DEĞİL
+            "max-image-preview:none#-",
+            "index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1#-",
+            "max-image-preview: none, max-video-preview:0#-",
+            "noimageindex, notranslate#-",
+            "unavailable_after: Friday, 25-Jun-10 15:00:00 GMT#-",
+            "noindex#noindex",
+            "NOINDEX, NoFollow#noindex",
+            "none#noindex",
+            "index, none#noindex",
+            "nofollow#nofollow",
+            "googlebot: noindex#noindex",
+            "googlebot: max-image-preview:none#-",
+            "otherbot: nofollow; index#nofollow",
+            "noindex nofollow#noindex",
+            "nonexistent, nonesuch#-",
+            "-#-"})
+    void robotsTokens(String robots, String expected) {
+        assertThat(HtmlAudit.robotsVerdict(robots)).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("D-7: haber sitesi max-image-preview:none → robots geçti, SEO puanı düşmez")
+    void robotsMaxImagePreviewNoneIsNotNoindex() {
+        HtmlFacts f = facts("""
+                <html lang="tr"><head><title>Haber başlığı yeterince uzun bir başlık</title>
+                <meta name="robots" content="max-image-preview:none, max-snippet:-1">
+                </head><body><h1>Haber</h1></body></html>
+                """);
+        Map<String, Map<String, Object>> by = byKey(get(get(HtmlAudit.audit(f, null, null).section(), "seo"), "checks"));
+        assertThat(by.get("robots")).containsEntry("status", "pass").containsEntry("issue", null);
+        Map<String, Map<String, Object>> hdr = byKey(get(get(HtmlAudit.audit(f, "googlebot: noindex", null).section(), "seo"),
+                "checks"));
+        assertThat(hdr.get("robots")).containsEntry("status", "fail").containsEntry("issue", "noindex");
+    }
+
     @Test
     @DisplayName("HTML olguları yoksa bölüm ve puanlar null (uydurma yok)")
     void noFacts() {

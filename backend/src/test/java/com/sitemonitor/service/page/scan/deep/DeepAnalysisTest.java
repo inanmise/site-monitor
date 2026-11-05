@@ -319,9 +319,115 @@ class DeepAnalysisTest {
         assertThat(sec.get("headers")).isNull();
         Map<String, Object> loading = get(r.analysis(), "loading");
         assertThat(loading.get("hints")).isNull();
+        assertThat(loading.get("render_blocking")).as("D-1: olgu yoksa engelleyenler bilinmiyor").isNull();
+        List<Map<String, Object>> scores = get(r.analysis(), "scores");
+        assertThat(scores.stream().filter(m -> "render_blocking".equals(m.get("key"))).findFirst().orElseThrow())
+                .containsEntry("score", null).containsEntry("lost", null);
+        assertThat(rec(r, "RENDER_BLOCKING_RESOURCES")).isNull();
         Map<String, Object> media = get(r.analysis(), "media");
         assertThat(((Map<String, Object>) media.get("images")).get("html_checked")).isEqualTo(false);
         assertThat(rec(r, "SECURITY_HEADERS_MISSING")).isNull();
+    }
+
+    @Test
+    @DisplayName("D-10: üçüncü taraf kategorisinin host listesi ≤ 50 satır + hosts_total; kategori listesi de _total taşır")
+    void thirdPartyCategoryHostsAreCapped() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(item(PAGE, "HTML", 10 * KB, 100));
+        for (int k = 0; k < 60; k++) {
+            ScanItem t = item("https://cdn" + k + ".ucuncu-taraf.example/x.js", "JS", KB, 20);
+            t.thirdParty = true;
+            items.add(t);
+        }
+        ScanItem ga = item("https://www.google-analytics.com/analytics.js", "JS", 20 * KB, 40);
+        ga.thirdParty = true;
+        items.add(ga);
+        for (int k = 0; k < items.size(); k++) items.get(k).seq = k;
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE, DeepContext.EMPTY);
+        Map<String, Object> sec = get(r.analysis(), "security");
+        List<Map<String, Object>> cats = get(sec, "third_party_categories");
+        assertThat(sec.get("third_party_categories_total")).isEqualTo(cats.size());
+        Map<String, Object> other = cats.stream().filter(c -> "other".equals(c.get("category"))).findFirst().orElseThrow();
+        assertThat((List<?>) other.get("hosts")).hasSize(DeepSection.MAX_ROWS);
+        assertThat(other).containsEntry("hosts_total", 60).containsEntry("requests", 60L).containsEntry("bytes", 60 * KB);
+        Map<String, Object> analytics = cats.stream().filter(c -> "analytics".equals(c.get("category"))).findFirst().orElseThrow();
+        assertThat(analytics).containsEntry("hosts", List.of("www.google-analytics.com")).containsEntry("hosts_total", 1);
+    }
+
+    @Test
+    @DisplayName("D-8: biçimi bilinmeyen yazı tipi (octet-stream, uzantısız) 'woff2 değil' sayılmaz; yalnız sayılır")
+    void unknownFontFormatIsNotNonWoff2() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(item(PAGE, "HTML", 10 * KB, 100));
+        ScanItem opaque = item("https://ornek.com.tr/fonts/get?id=inter", "FONT", 40 * KB, 50);
+        opaque.contentType = "application/octet-stream";
+        ScanItem byExt = item("https://ornek.com.tr/fonts/inter.woff2", "FONT", 30 * KB, 50);
+        byExt.contentType = "application/octet-stream";
+        ScanItem ttf = item("https://ornek.com.tr/fonts/eski.ttf", "FONT", 90 * KB, 50);
+        ttf.contentType = "font/ttf";
+        items.addAll(List.of(opaque, byExt, ttf));
+        for (int k = 0; k < items.size(); k++) items.get(k).seq = k;
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE, DeepContext.EMPTY);
+        Map<String, Object> fonts = get(get(r.analysis(), "media"), "fonts");
+        List<Map<String, Object>> nonWoff2 = get(fonts, "non_woff2");
+        assertThat(nonWoff2).singleElement().satisfies(m -> assertThat(m).containsEntry("format", "ttf"));
+        assertThat(fonts.get("unknown_format")).isEqualTo(1);
+        assertThat(rec(r, "NON_WOFF2_FONTS")).containsEntry("saving_bytes", Math.round(90 * KB * 0.30))
+                .extracting(m -> ((Map<?, ?>) m.get("params")).get("count")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("O-2: aynı yol, farklı sorgu → içerik özeti farklı ya da bilinmiyorsa tekrar DEĞİL; özet aynıysa same_path")
+    void duplicatesNeedEqualContent() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(item(PAGE, "HTML", 10 * KB, 100));
+        ScanItem g1 = item("https://www.googletagmanager.com/gtag/js?id=G-ABC123", "JS", 90 * KB, 100);
+        g1.contentHash = "1".repeat(64);
+        ScanItem g2 = item("https://www.googletagmanager.com/gtag/js?id=AW-987654", "JS", 80 * KB, 100);
+        g2.contentHash = "2".repeat(64);
+        ScanItem f1 = item("https://fonts.googleapis.com/css2?family=Roboto:wght@400", "CSS", 2 * KB, 50);   // özet yok
+        ScanItem f2 = item("https://fonts.googleapis.com/css2?family=Inter:wght@400", "CSS", 2 * KB, 50);
+        ScanItem n1 = item("https://ornek.com.tr/_next/image?url=%2Fa.png&w=640", "IMAGE", 40 * KB, 50);
+        n1.contentHash = "3".repeat(64);
+        ScanItem n2 = item("https://ornek.com.tr/_next/image?url=%2Fb.png&w=640", "IMAGE", 40 * KB, 50);
+        n2.contentHash = "4".repeat(64);
+        ScanItem h1 = item("https://ornek.com.tr/ImageHandler.ashx?id=1", "IMAGE", 20 * KB, 50);
+        ScanItem h2 = item("https://ornek.com.tr/ImageHandler.ashx?id=2", "IMAGE", 20 * KB, 50);   // bayt eşit, özet yok
+        ScanItem v1 = item("https://ornek.com.tr/js/app.js?v=1", "JS", 30 * KB, 50);
+        v1.contentHash = "5".repeat(64);
+        ScanItem v2 = item("https://ornek.com.tr/js/app.js?v=2", "JS", 30 * KB, 50);
+        v2.contentHash = "5".repeat(64);
+        items.addAll(List.of(g1, g2, f1, f2, n1, n2, h1, h2, v1, v2));
+        for (int k = 0; k < items.size(); k++) items.get(k).seq = k;
+
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE, DeepContext.EMPTY);
+        Map<String, Object> waste = get(r.analysis(), "waste");
+        List<Map<String, Object>> dups = get(waste, "duplicates");
+        assertThat(dups).as("yalnız aynı özetli önbellek kırıcı tekrar").singleElement().satisfies(d -> {
+            assertThat(d).containsEntry("kind", "same_path").containsEntry("bytes_wasted", 30 * KB);
+            assertThat((List<?>) d.get("urls")).hasSize(2);
+        });
+        assertThat(rec(r, "DUPLICATE_RESOURCES")).containsEntry("saving_bytes", 30 * KB);
+        for (ScanItem other : List.of(g1, g2, f1, f2, n1, n2, h1, h2)) assertThat(other.findings).doesNotContain("DUPLICATE");
+        assertThat(v1.findings).contains("DUPLICATE");
+        assertThat(v2.findings).contains("DUPLICATE");
+    }
+
+    @Test
+    @DisplayName("O-2: özetleri farklı aynı yollu nesneler → öneri ve israf baytı yok")
+    void noDuplicateWithoutEqualHash() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(item(PAGE, "HTML", 10 * KB, 100));
+        ScanItem a = item("https://www.googletagmanager.com/gtag/js?id=G-ABC123", "JS", 90 * KB, 100);
+        a.contentHash = "1".repeat(64);
+        ScanItem b = item("https://www.googletagmanager.com/gtag/js?id=AW-987654", "JS", 90 * KB, 100);
+        b.contentHash = "2".repeat(64);
+        items.addAll(List.of(a, b));
+        for (int k = 0; k < items.size(); k++) items.get(k).seq = k;
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE, DeepContext.EMPTY);
+        Map<String, Object> waste = get(r.analysis(), "waste");
+        assertThat((List<?>) waste.get("duplicates")).isEmpty();
+        assertThat(rec(r, "DUPLICATE_RESOURCES")).isNull();
     }
 
     @Test
