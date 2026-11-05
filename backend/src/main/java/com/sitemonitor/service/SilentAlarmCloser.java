@@ -158,7 +158,9 @@ public class SilentAlarmCloser {
         if (a == null) return;
         try {
             a.recordAlert(closed, ActivityLogService.ACTION_ALERT_RESOLVED, null, null, null,
-                    markSilenced ? "sessiz · " + by : "otomatik · " + by);
+                    markSilenced ? "sessiz · " + by : "otomatik · " + by,
+                    ActivityLogService.AlertInfo.closed(markSilenced ? ActivityLogService.CLOSED_SILENT
+                            : ActivityLogService.CLOSED_AUTO, by));
         } catch (RuntimeException e) {
             log.debug("Sessiz kapanış aktivite satırı atlandı (#{}): {}", closed.getId(), e.toString());
         }

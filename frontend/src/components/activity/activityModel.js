@@ -4,6 +4,8 @@
  * (liste / ayrıntı sayfası / izleme zaman çizelgesi) ve hata nedeni kısa adı.
  */
 
+import { alertInfoSummary } from './alertInfoSummary.js'
+
 /** Liste kabı bu genişliğin altındaysa kart listesi (tablo sütunları ad + sonuç + zamanı sığdıramaz). */
 export const TABLE_MIN_PX = 720
 /** Süzgeç kartı bu genişliğin altındaysa tür çipleri katlanır ("İzleme türü (n)" düğmesi). */
@@ -339,7 +341,10 @@ export function sameRoute(a, b) {
  */
 const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
   ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
-export function localizeSummary(summary, t) {
+export function localizeSummary(summary, t, row) {
+  // Alarm olayı satırı: özet satırın dilinde, sunucunun makinece okunur `alert_info`'sundan (FR D5)
+  const alarm = row ? alertInfoSummary(row, t) : null
+  if (alarm) return alarm
   if (!summary) return summary
   let s = String(summary)
   for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))

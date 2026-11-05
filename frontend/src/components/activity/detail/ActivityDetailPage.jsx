@@ -62,7 +62,7 @@ function LegacyRecent({ recent, onOpenActivity }) {
                 <Button type="button" variant="ghost" size="sm" onClick={() => onOpenActivity?.(h.id)}
                   className="h-auto min-h-9 w-full justify-start gap-2 px-2 py-1.5 text-left font-normal whitespace-normal pointer-coarse:min-h-10">
                   <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', ink)} />
-                  <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">{localizeSummary(h.result_summary, t) || h.result_status}</span>
+                  <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">{localizeSummary(h.result_summary, t, h) || h.result_status}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{relTimeOrRaw(h.activity_time, t)}</span>
                 </Button>
               </li>

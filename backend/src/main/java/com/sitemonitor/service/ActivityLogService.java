@@ -12,7 +12,16 @@ import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.orm.jpa.EntityManagerHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -20,6 +29,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -47,6 +57,23 @@ public class ActivityLogService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     private final ActivityLogRepository repo;
+
+    /**
+     * İşlem yöneticisi (2026-11-05, aktivite inceleme D1) — isteğe bağlı: yapıcıyla / {@code @InjectMocks} ile kurulan
+     * birim testlerinde yok → bugünkü yazım (deponun {@code save}'i). İlk yazımda tembel çözülür.
+     */
+    @Autowired(required = false)
+    private ObjectProvider<PlatformTransactionManager> txManagerProvider;
+
+    private volatile TransactionTemplate writeTx;
+
+    /** Test dikişi: işlem yöneticisini elle bağlar (yazım {@code REQUIRES_NEW} / COMMIT sonrası yoluna geçer). */
+    void setTransactionManager(PlatformTransactionManager tx) {
+        this.writeTx = tx == null ? null : newWriteTx(tx);
+    }
+
+    /** {@code result_summary} kolon boyu. */
+    static final int SUMMARY_MAX = 300;
 
     // ── Eylem kodları (KALICI — ön yüz act.action.<KOD> etiketleri) ──────────────────────────────────────────────
     public static final String ACTION_SCHEDULED_CHECK = "SCHEDULED_CHECK";
@@ -115,10 +142,33 @@ public class ActivityLogService {
         return c == null ? null : Refs.check(c.getId(), null, c.getFailureReason(), c.getFailureDetail());
     }
 
-    /** HTTP: tabloda neden kodu yok — ön yüzün eski satır kodu ({@link #httpFailureReason}); ayrıntı = {@code error_detail}. */
+    /**
+     * HTTP: tabloda neden kodu yok. Önce kontrolün kendi tanısı ({@code error_detail.kind}: STATUS_MISMATCH →
+     * {@code HTTP_STATUS}, BODY_ASSERTION → {@code BODY_ASSERTION}); sonra hata metni (ön yüzün eski satır kodu,
+     * {@link #httpFailureReason}); hata metni olmayan başarısız kontrol + HTTP kodu → {@code HTTP_STATUS} (sözleşme incelemesi
+     * Y1: checker durum uyuşmazlığında {@code error} YAZMAZ — kod {@code UNKNOWN} kalıyor, rozet "Kontrol tamamlanamadı",
+     * {@code reason=HTTP_STATUS} süzgeci bulamıyordu). Ayrıntı = {@code error_detail}.
+     */
     public static Refs refs(com.sitemonitor.model.HttpCheck c) {
         return c == null ? null : Refs.check(c.getId(), c.getHttpStatus(),
-                httpFailureReason(Boolean.TRUE.equals(c.getOk()), c.getError()), c.getErrorDetail());
+                httpReason(Boolean.TRUE.equals(c.getOk()), c.getError(), c.getHttpStatus(), c.getErrorDetail()),
+                c.getErrorDetail());
+    }
+
+    private static final Pattern DETAIL_KIND = Pattern.compile("\"kind\"[ ]*:[ ]*\"([A-Z_]{1,40})\"");
+
+    /** HTTP satırının neden kodu (bkz. {@link #refs(com.sitemonitor.model.HttpCheck)}); sağlıklı satırda null. */
+    static String httpReason(boolean ok, String error, Integer httpStatus, String errorDetail) {
+        if (ok) return null;
+        String kind = null;
+        if (errorDetail != null && errorDetail.length() <= CTX_SCAN_MAX) {
+            Matcher m = DETAIL_KIND.matcher(errorDetail);
+            if (m.find()) kind = m.group(1);
+        }
+        if ("BODY_ASSERTION".equals(kind)) return CheckFailureReason.BODY_ASSERTION.name();
+        if ("STATUS_MISMATCH".equals(kind)) return CheckFailureReason.HTTP_STATUS.name();
+        if ((error == null || error.isBlank()) && httpStatus != null) return CheckFailureReason.HTTP_STATUS.name();
+        return httpFailureReason(false, error);
     }
 
     public static Refs refs(com.sitemonitor.model.KeywordResult c) {
@@ -178,7 +228,7 @@ public class ActivityLogService {
                     manual ? ACTION_MANUAL_CHECK : ACTION_SCHEDULED_CHECK, manual ? manualActor(actor) : actor);
             summarize(type, result, a);
             applyCheckRefs(a, result, refs);
-            repo.save(a);
+            save(a);
         } catch (Exception e) {
             log.debug("activity-log kayıt atlandı (type={} target={}): {}", type, target, e.toString());
         }
@@ -206,9 +256,9 @@ public class ActivityLogService {
         try {
             ActivityLog a = base(type, monitorId, monitorName, target, teamId, action, actor);
             a.setResultStatus("SUCCESS");
-            if (summary != null && !summary.isBlank()) a.setResultSummary(trim(summary, 500));
+            if (summary != null && !summary.isBlank()) a.setResultSummary(fitWords(summary, SUMMARY_MAX));
             applyRefs(a, refs);
-            repo.save(a);
+            save(a);
         } catch (Exception e) {
             log.debug("activity-log lifecycle atlandı (type={} action={}): {}", type, action, e.toString());
         }
@@ -272,6 +322,39 @@ public class ActivityLogService {
      * @param note      özetin sonuna eklenecek kısa açıklama (kapatan / neden); null olabilir
      */
     public void recordAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note) {
+        recordAlert(event, action, level, monitorId, actor, note, null);
+    }
+
+    /**
+     * Alarm satırının makinece okunur ayrıntısı (sözleşme / ön yüz incelemesi FR D5): özet ({@code result_summary}) Türkçe
+     * düz metin kalır (CSV, eski istemci); ön yüz satırın KENDİ dilindeki metni bu alanlardan kurar — satırın
+     * {@code result_detail} kolonuna JSON yazılır, API {@code alert_info} nesnesi olarak döner. Alanlar isteğe bağlı.
+     *
+     * @param fromLevel yükseltmede önceki seviye
+     * @param closedBy  kapanışta {@code auto} | {@code manual} | {@code silent}
+     * @param closer    elle kapatan kişinin adı ya da sessiz / otomatik kapanışın sistem nedeni (ham metin)
+     * @param code      ek durum kodu: {@code maintenance_open} (bakım penceresinde açıldı)
+     */
+    public record AlertInfo(String fromLevel, String closedBy, String closer, String code) {
+        public static AlertInfo escalated(String fromLevel) {
+            return new AlertInfo(fromLevel, null, null, null);
+        }
+
+        public static AlertInfo closed(String kind, String closer) {
+            return new AlertInfo(null, kind, closer, null);
+        }
+
+        public static AlertInfo code(String code) {
+            return new AlertInfo(null, null, null, code);
+        }
+    }
+
+    public static final String CLOSED_AUTO = "auto", CLOSED_MANUAL = "manual", CLOSED_SILENT = "silent";
+    public static final String CODE_MAINTENANCE_OPEN = "maintenance_open";
+
+    /** {@link #recordAlert(AlertEvent, String, String, Long, String, String)} + makinece okunur ayrıntı (FR D5). */
+    public void recordAlert(AlertEvent event, String action, String level, Long monitorId, String actor, String note,
+                            AlertInfo info) {
         try {
             if (event == null || event.getId() == null || action == null) return;
             String lvl = level != null ? level : event.getAlertLevel();
@@ -279,20 +362,39 @@ public class ActivityLogService {
             Long mid = monitorId != null ? monitorId : monitorIdFromContext(event.getContextJson());
             String domain = event.getDomain();
             String resolvedActor = actor != null && !actor.isBlank() ? actor : userOrSystem();
-            ActivityLog a = base(type, mid, monitorNameFromContext(event.getContextJson(), domain), domain,
-                    event.getTeamId(), action, resolvedActor);
+            ActivityLog a = base(type, mid, monitorNameFromContext(event.getContextJson(), domain),
+                    alertTarget(type, domain, event.getContextJson()), event.getTeamId(), action, resolvedActor);
             a.setResultStatus(alertStatus(action, lvl));
             StringBuilder sum = new StringBuilder(EscalationService.resolvedTypeLabel(event.getAlertType()));
             if (lvl != null && !lvl.isBlank()) sum.append(" · ").append(lvl);
             if (note != null && !note.isBlank()) sum.append(" · ").append(note.trim());
-            a.setResultSummary(trim(sum.toString(), 300));
+            a.setResultSummary(fitWords(sum.toString(), SUMMARY_MAX));
+            a.setResultDetail(alertInfoJson(event.getAlertType(), lvl, info));
             a.setAlertEventId(event.getId());
             if (event.getStormId() != null && ACTION_ALERT_TRIGGERED.equals(action)) a.setStormId(event.getStormId());
             a.setDaysRemaining(event.getDaysRemaining());
-            repo.save(a);
+            save(a);
         } catch (Exception e) {
             log.debug("activity-log alarm olayı atlandı (action={} alarm={}): {}", action,
                     event == null ? null : event.getId(), e.toString());
+        }
+    }
+
+    /** Alarm satırının {@code result_detail} JSON'u: {@code alert_type, level, from_level?, closed_by?, closer?, code?}. */
+    static String alertInfoJson(String alertType, String level, AlertInfo info) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("alert_type", alertType);
+        m.put("level", level);
+        if (info != null) {
+            if (info.fromLevel() != null) m.put("from_level", info.fromLevel());
+            if (info.closedBy() != null) m.put("closed_by", info.closedBy());
+            if (info.closer() != null && !info.closer().isBlank()) m.put("closer", cut(info.closer().trim(), 200));
+            if (info.code() != null) m.put("code", info.code());
+        }
+        try {
+            return JSON.writeValueAsString(m);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -417,6 +519,168 @@ public class ActivityLogService {
     private static String userOrSystem() {
         String u = currentUser();
         return u != null ? u : SYSTEM_ACTOR;
+    }
+
+    // ── Yazım (2026-11-05, aktivite inceleme D1 / D5 / O2) ─────────────────────────────────────────────────────
+
+    /**
+     * Satırı yazar — çağıranın işlemine ASLA katılmaz: aktivite INSERT'i düşerse (kolon taşması, kısıt, havuz) çağıranın
+     * işlemi rollback-only İŞARETLENMEZ (envanter silme / toplu işlem / içe aktarma {@code UnexpectedRollbackException} ile
+     * geri alınmaz). AuditService (MP-38) deseni:
+     * <ul>
+     *   <li>işlem yok → hemen (deponun kendi kısa işlemi);</li>
+     *   <li>açık bir işlemin içinde → COMMIT SONRASINA ertelenir ve kendi ({@code REQUIRES_NEW}) işleminde yazılır; dış işlem
+     *       geri alınırsa satır HİÇ yazılmaz (olay olmadı — denetim kaydının kuralı);</li>
+     *   <li>tamamlanmakta olan işlem (COMMIT sonrası geri çağrı) ya da senkronizasyon kapalı → hemen, kendi işleminde.</li>
+     * </ul>
+     * İşlem altyapısı bağlı değilse (elle kurulan birim testleri) bugünkü yol. Bilinen sınır (denetim kaydıyla aynı): dış
+     * işlemin bağlantısı COMMIT sonrası geri çağrıda hâlâ tutulur — yazım ikinci bir havuz bağlantısı ister.
+     */
+    void save(ActivityLog a) {
+        fitColumns(a);
+        TransactionTemplate tx = writeTx();
+        if (tx == null || !TransactionSynchronizationManager.isActualTransactionActive()) {
+            writeNow(a);
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive() && !transactionCompleting()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    writeOwn(tx, a);
+                }
+            });
+            return;
+        }
+        writeOwn(tx, a);
+    }
+
+    /** Kendi ({@code REQUIRES_NEW}) işleminde yazar; hata yutulur (COMMIT sonrası geri çağrıdan çağırana yayılmasın). */
+    private void writeOwn(TransactionTemplate tx, ActivityLog a) {
+        try {
+            tx.executeWithoutResult(st -> writeNow(a));
+        } catch (Throwable t) {
+            log.debug("activity-log kendi işleminde yazılamadı (type={} action={}): {}", a.getMonitorType(), a.getAction(),
+                    t.toString());
+        }
+    }
+
+    private void writeNow(ActivityLog a) {
+        resolveAlertMonitorId(a);
+        repo.save(a);
+    }
+
+    private TransactionTemplate writeTx() {
+        TransactionTemplate t = writeTx;
+        if (t != null) return t;
+        PlatformTransactionManager m = txManagerProvider == null ? null : txManagerProvider.getIfUnique();
+        if (m == null) return null;
+        t = newWriteTx(m);
+        writeTx = t;
+        return t;
+    }
+
+    private static TransactionTemplate newWriteTx(PlatformTransactionManager m) {
+        TransactionTemplate t = new TransactionTemplate(m);
+        t.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        t.setTimeout(10);
+        return t;
+    }
+
+    /**
+     * Dış işlem açık görünüyor ama ZATEN COMMIT / ROLLBACK oldu mu (COMMIT sonrası geri çağrı — orada kaydedilen
+     * senkronizasyon bir daha çağrılmaz). JPA: bağlı {@code EntityManager}'ın işlemi artık etkin değil. Okunamıyorsa false.
+     */
+    private static boolean transactionCompleting() {
+        try {
+            for (Object res : TransactionSynchronizationManager.getResourceMap().values()) {
+                if (res instanceof EntityManagerHolder h && h.getEntityManager() != null) {
+                    return !h.getEntityManager().getTransaction().isActive();
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // JTA EntityManager'da getTransaction() desteklenmez — işlem açık sayılır
+        }
+        return false;
+    }
+
+    /**
+     * Sertifika / erişilebilirlik alarmının onay / kapanış / 7/24 satırına izleme kimliği (envanter kimliği; aktivite
+     * inceleme O2): bu alarmlarda bağlam anlık görüntüsü kimlik taşımaz (sertifika alarmında bağlam yok), açılış satırı ise
+     * kimliği yazdı → aynı alarmın {@code ALERT_TRIGGERED} satırından okunur ({@code idx_act_alert}, tek dizinli okuma,
+     * 2 sn zaman aşımı). Açılış satırı yoksa (sürümden önce açılan alarm) null kalır. Asla fırlatmaz.
+     */
+    private void resolveAlertMonitorId(ActivityLog a) {
+        if (a.getMonitorId() != null || a.getAlertEventId() == null || ACTION_ALERT_TRIGGERED.equals(a.getAction())) return;
+        if (!CERT.equals(a.getMonitorType()) && !UPTIME.equals(a.getMonitorType())) return;
+        try {
+            List<Long> ids = repo.triggeredMonitorId(a.getAlertEventId(), PageRequest.of(0, 1));
+            if (ids != null && !ids.isEmpty() && ids.get(0) != null) a.setMonitorId(ids.get(0));
+        } catch (Exception e) {
+            log.debug("Alarm satırının izleme kimliği okunamadı (alarm={}): {}", a.getAlertEventId(), e.toString());
+        }
+    }
+
+    /** Alarm satırının hedefi: erişilebilirlikte kontrol satırlarıyla aynı {@code alan:port} (bağlamdaki port); diğerleri anahtar. */
+    static String alertTarget(String type, String domain, String contextJson) {
+        if (!UPTIME.equals(type) || domain == null || domain.isBlank()) return domain;
+        Integer port = portFromContext(contextJson);
+        return port == null ? domain : domain + ":" + port;
+    }
+
+    private static final Pattern CTX_PORT = Pattern.compile("\"port\"[ ]*:[ ]*\"?([0-9]{1,5})\\b");
+
+    static Integer portFromContext(String contextJson) {
+        if (contextJson == null || contextJson.isBlank() || contextJson.length() > CTX_SCAN_MAX) return null;
+        try {
+            Matcher m = CTX_PORT.matcher(contextJson);
+            if (!m.find()) return null;
+            int p = Integer.parseInt(m.group(1));
+            return p > 0 && p <= 65535 ? p : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Kolonlara sığdırma — satır kolon taşmasıyla SESSİZCE kaybolmasın (aktivite inceleme D5). */
+    static void fitColumns(ActivityLog a) {
+        a.setActivityTime(cut(a.getActivityTime(), 30));
+        a.setMonitorType(cut(a.getMonitorType(), 20));
+        a.setMonitorName(cut(a.getMonitorName(), 300));
+        a.setTarget(cut(a.getTarget(), 500));
+        a.setAction(cut(a.getAction(), 30));
+        a.setResultStatus(cut(a.getResultStatus(), 20));
+        a.setResultSummary(fitWords(a.getResultSummary(), SUMMARY_MAX));
+        a.setErrorMessage(cut(a.getErrorMessage(), 1000));
+        a.setErrorClass(cut(a.getErrorClass(), 40));
+        a.setActor(cut(a.getActor(), 100));
+        a.setRequestId(cut(a.getRequestId(), REQUEST_ID_MAX));
+        if (a.getFailureReason() != null && a.getFailureReason().length() > FAILURE_REASON_MAX) a.setFailureReason(null);
+    }
+
+    /**
+     * Metni {@code max} karaktere sığdırır: sığmıyorsa son kelime sınırında (son 60 karakter içinde varsa) kesip "…" ekler;
+     * vekil çifti bölünmez. Sonuç her zaman ≤ max.
+     */
+    static String fitWords(String s, int max) {
+        if (s == null || s.length() <= max) return s;
+        int cut = max - 1;
+        if (Character.isHighSurrogate(s.charAt(cut - 1))) cut--;
+        int floor = Math.max(cut - 60, max / 2);
+        for (int i = cut; i > floor; i--) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                cut = i;
+                break;
+            }
+        }
+        return s.substring(0, cut).stripTrailing() + "\u2026";
+    }
+
+    /** Kesme (vekil çifti bölünmez). */
+    private static String cut(String s, int max) {
+        if (s == null || s.length() <= max) return s;
+        int end = Character.isHighSurrogate(s.charAt(max - 1)) ? max - 1 : max;
+        return s.substring(0, end);
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

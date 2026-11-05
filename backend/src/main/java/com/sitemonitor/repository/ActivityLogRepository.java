@@ -144,13 +144,15 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
                                            Pageable pageable);
 
     // ── "Sizin için — bugün" izleme kartları (2026-09-19; TodayMonitorInsightsService) ──────────
-    // Üçü de monitörlü satırlarla (monitor_id dolu → 9 izleme türü) sınırlı; CERT/UPTIME envanter
-    // satırları (monitor_id NULL) kendi kartlarında. Zaman aralığı idx_act_time ile kesilir.
+    // Üçü de izleme türü satırlarıyla sınırlı (monitor_id dolu ve tür CERT / UPTIME DEĞİL — 2026-11-05'ten beri sertifika /
+    // erişilebilirlik satırları da envanter kimliği taşır; kendi kartlarında, aktivite inceleme D13). Zaman aralığı
+    // idx_act_time ile kesilir.
 
     /** Yanıt süresi ortalaması (tür + monitör) — yalnız BAŞARILI ve ölçümlü kontroller (hata süresi tabana karışmasın). */
     @Query("""
             SELECT a.monitorType, a.monitorId, AVG(a.responseMs), COUNT(a) FROM ActivityLog a
-            WHERE a.monitorId IS NOT NULL AND a.responseMs IS NOT NULL AND a.resultStatus = 'SUCCESS'
+            WHERE a.monitorId IS NOT NULL AND a.monitorType NOT IN ('CERT','UPTIME')
+              AND a.responseMs IS NOT NULL AND a.resultStatus = 'SUCCESS'
               AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :from AND a.activityTime < :to
             GROUP BY a.monitorType, a.monitorId
@@ -160,7 +162,8 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
     /** Son kontrol zamanı (tür + monitör) — bayat izleme tespiti; {@code since} öncesi hiç görünmeyen zaten bayattır. */
     @Query("""
             SELECT a.monitorType, a.monitorId, MAX(a.activityTime) FROM ActivityLog a
-            WHERE a.monitorId IS NOT NULL AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK') AND a.activityTime >= :since
+            WHERE a.monitorId IS NOT NULL AND a.monitorType NOT IN ('CERT','UPTIME')
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK') AND a.activityTime >= :since
             GROUP BY a.monitorType, a.monitorId
             """)
     List<Object[]> lastCheckByMonitor(@Param("since") String since);
@@ -168,7 +171,8 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
     /** Aralıkta en az bir ARIZA (ERROR/TIMEOUT) yazan monitörler — kararsızlık dizisi yalnız bunlar için çekilir. */
     @Query("""
             SELECT DISTINCT a.monitorType, a.monitorId FROM ActivityLog a
-            WHERE a.monitorId IS NOT NULL AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+            WHERE a.monitorId IS NOT NULL AND a.monitorType NOT IN ('CERT','UPTIME')
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :since AND a.resultStatus IN ('ERROR','TIMEOUT')
             """)
     List<Object[]> monitorsWithFailureSince(@Param("since") String since);
@@ -183,38 +187,93 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
     List<Object[]> statusSequence(@Param("type") String type, @Param("ids") List<Long> ids, @Param("since") String since);
 
     // ── be1 (2026-11-05, aktivite ayrıntı sayfası) ────────────────────────────────────────────────────────────────────
+    // Hepsi oturum kapsamıyla süzülür ({@code :scoped / :scope}, liste ucuyla aynı kural — izleme başka takıma taşındıysa
+    // yeni takımın satırları eski takımın üyesine dönmez; aktivite inceleme O1) ve 5 sn sorgu zaman aşımı taşır (havuzu
+    // tutan uzun okuma olmasın; inceleme Y1).
 
-    /** Ayrıntı sayfasının ± 24 saatlik serisi: izlemenin kontrol satırları (zaman, ms, durum) — idx_act_type_mon_time. */
+    /** Sorgu zaman aşımı (ms) — ayrıntı sayfasının okumaları. */
+    String DETAIL_QUERY_TIMEOUT_MS = "5000";
+
+    /**
+     * Ayrıntı sayfasının serisi — çapanın ÖNCESİ (en yeniden geriye; {@code idx_act_type_mon_time}). Çapa sonrası ayrı
+     * okunur: tavan aşılırsa olay anının iki yanı da korunur (inceleme D9 — tek ASC okuma en ESKİ satırları tutuyordu).
+     */
     @Query("""
             SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
             WHERE a.monitorType = :type AND a.monitorId = :monitorId AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
+            ORDER BY a.activityTime DESC, a.id DESC
+            """)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
+    List<Object[]> seriesForMonitorDesc(@Param("type") String type, @Param("monitorId") Long monitorId,
+                                        @Param("from") String from, @Param("to") String to,
+                                        @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                        Pageable pageable);
+
+    /** Serinin çapa SONRASI (eskiden yeniye). */
+    @Query("""
+            SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId = :monitorId AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime > :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
             ORDER BY a.activityTime ASC, a.id ASC
             """)
-    List<Object[]> seriesForMonitor(@Param("type") String type, @Param("monitorId") Long monitorId,
-                                    @Param("from") String from, @Param("to") String to, Pageable pageable);
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
+    List<Object[]> seriesForMonitorAsc(@Param("type") String type, @Param("monitorId") Long monitorId,
+                                       @Param("from") String from, @Param("to") String to,
+                                       @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                       Pageable pageable);
 
-    /** Kimliksiz (eski sertifika / erişilebilirlik) satırın serisi — hedef + zaman aralığı (zaman dizini üzerinde ± 24 saat). */
+    /** Kimliksiz (eski sertifika / erişilebilirlik) satırın serisi — çapa öncesi, hedef + zaman aralığı. */
     @Query("""
             SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
             WHERE a.monitorType = :type AND a.monitorId IS NULL AND a.target = :target
               AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
+            ORDER BY a.activityTime DESC, a.id DESC
+            """)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
+    List<Object[]> seriesForTargetDesc(@Param("type") String type, @Param("target") String target,
+                                       @Param("from") String from, @Param("to") String to,
+                                       @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                       Pageable pageable);
+
+    /** Kimliksiz satırın serisi — çapa sonrası. */
+    @Query("""
+            SELECT a.activityTime, a.responseMs, a.resultStatus FROM ActivityLog a
+            WHERE a.monitorType = :type AND a.monitorId IS NULL AND a.target = :target
+              AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
+              AND a.activityTime > :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
             ORDER BY a.activityTime ASC, a.id ASC
             """)
-    List<Object[]> seriesForTarget(@Param("type") String type, @Param("target") String target,
-                                   @Param("from") String from, @Param("to") String to, Pageable pageable);
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
+    List<Object[]> seriesForTargetAsc(@Param("type") String type, @Param("target") String target,
+                                      @Param("from") String from, @Param("to") String to,
+                                      @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                      Pageable pageable);
 
     /** Ayrıntı sayfasının önceki / sonraki kontrolünün aktivite satırı: izlemenin kontrol satırları (id, check_id, zaman)
-     *  dar bir zaman penceresinde — idx_act_type_mon_time. */
+     *  dar bir zaman penceresinde — idx_act_type_mon_time; yalnız oturumun GÖREBİLDİĞİ satırlar. */
     @Query("""
             SELECT a.id, a.checkId, a.activityTime FROM ActivityLog a
             WHERE a.monitorType = :type AND a.monitorId = :monitorId AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
             ORDER BY a.activityTime ASC, a.id ASC
             """)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
     List<Object[]> checkRowsNearForMonitor(@Param("type") String type, @Param("monitorId") Long monitorId,
-                                           @Param("from") String from, @Param("to") String to, Pageable pageable);
+                                           @Param("from") String from, @Param("to") String to,
+                                           @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                           Pageable pageable);
 
     /** Kimliksiz (eski sertifika / erişilebilirlik) satır için aynı arama — hedef + dar zaman penceresi. */
     @Query("""
@@ -222,8 +281,26 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
             WHERE a.monitorType = :type AND a.monitorId IS NULL AND a.target = :target
               AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK')
               AND a.activityTime >= :from AND a.activityTime <= :to
+              AND (:scoped = FALSE OR a.teamId IN :scope)
             ORDER BY a.activityTime ASC, a.id ASC
             """)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = DETAIL_QUERY_TIMEOUT_MS))
     List<Object[]> checkRowsNearForTarget(@Param("type") String type, @Param("target") String target,
-                                          @Param("from") String from, @Param("to") String to, Pageable pageable);
+                                          @Param("from") String from, @Param("to") String to,
+                                          @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                          Pageable pageable);
+
+    /**
+     * Alarmın açılış ({@code ALERT_TRIGGERED}) satırındaki izleme kimliği — sertifika / erişilebilirlik alarmının onay /
+     * kapanış / 7/24 satırları bunu taşır (aktivite inceleme O2). Kısmi {@code idx_act_alert} dizinine giden tek okuma;
+     * EXPLAIN kapısı {@code ActivityDetailPostgresTest} (sabit, testte aynı metin koşar).
+     */
+    String SQL_TRIGGERED_MONITOR_ID = "SELECT monitor_id FROM activity_log WHERE alert_event_id = :alertEventId"
+            + " AND action = 'ALERT_TRIGGERED' AND monitor_id IS NOT NULL ORDER BY activity_time ASC";
+
+    @Query(value = SQL_TRIGGERED_MONITOR_ID, nativeQuery = true)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = "2000"))
+    List<Long> triggeredMonitorId(@Param("alertEventId") Long alertEventId, Pageable pageable);
 }

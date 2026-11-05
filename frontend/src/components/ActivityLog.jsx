@@ -56,7 +56,7 @@ function ResultSummary({ row, t, className }) {
   return (
     <span data-slot="act-result" className={cn('inline-flex min-w-0 items-center gap-1 font-semibold tabular-nums', sm.ink, className)}>
       <sm.Icon aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}</span>
+      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t, row) || t('act.st.' + row.result_status)}</span>
     </span>
   )
 }

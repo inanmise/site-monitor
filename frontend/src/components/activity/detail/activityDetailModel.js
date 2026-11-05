@@ -14,6 +14,7 @@ import { formatBytes } from '../../../utils/formatBytes.js'
 import { formatPercent } from '../../../i18n/dateLocale.js'
 import { failureTexts as checkFailureTexts, isHealthy } from '../../checks/checkFailureModel.js'
 import { failureTexts as keywordFailureTexts } from '../../keyword/keywordFailureModel.js'
+import { alertInfoSummary } from '../alertInfoSummary.js'
 
 export const TZ = 'Europe/Istanbul'
 
@@ -353,7 +354,11 @@ export function pseudoMonitor(type, a) {
       const m = /^(\[[^\]]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(target)
       return { id, name, host: m ? m[1] : (target || null), port: m && m[2] ? Number(m[2]) : null }
     }
-    case 'dns':
+    case 'dns': {
+      // Hedef "alan.com A" (alan adı + kayıt türü) — teşhis / tanılama penceresi alan adını ayrı ister (FR D13)
+      const [domain, recordType] = target.split(/\s+/)
+      return { id, name, domain: domain || null, record_type: recordType || null }
+    }
     case 'domain':
       return { id, name, domain: target || null }
     case 'cert':
@@ -538,7 +543,10 @@ export function statusLabel(status, t) {
  */
 const SUMMARY_TOKENS = [['yapılandırma hatası', 'act.tok.configError'], ['yüklenemedi', 'act.tok.loadFailed'],
   ['zaman aşımı', 'act.tok.timeout'], ['kırık', 'act.tok.broken'], ['istek', 'act.tok.requests']]
-export function localizeSummary(summary, t) {
+export function localizeSummary(summary, t, row) {
+  // Alarm olayı satırı: özet satırın dilinde, sunucunun makinece okunur `alert_info`'sundan (FR D5)
+  const alarm = row ? alertInfoSummary(row, t) : null
+  if (alarm) return alarm
   if (!summary) return summary
   let s = String(summary)
   for (const [tr, key] of SUMMARY_TOKENS) s = s.split(tr).join(t(key))

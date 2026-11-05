@@ -329,4 +329,102 @@ class ActivityLogServiceEnrichmentTest {
         assertThat(a.getStormId()).isEqualTo(9L);
         assertThat(a.getResultStatus()).isEqualTo("SUCCESS");
     }
+
+    // ── İnceleme düzeltmeleri (2026-11-05) ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("D5 fitWords: sığan metin aynen; uzun metin ≤ sınır + '…' ve kelime sınırı; boşluksuz metin kesilir; vekil çifti bölünmez")
+    void fitWords_rules() {
+        assertThat(ActivityLogService.fitWords("kısa", 300)).isEqualTo("kısa");
+        assertThat(ActivityLogService.fitWords("x".repeat(300), 300)).hasSize(300);
+        String words = "kelime ".repeat(80);   // 560
+        String w = ActivityLogService.fitWords(words, 300);
+        assertThat(w).hasSizeLessThanOrEqualTo(300).endsWith("…");
+        assertThat(w.substring(0, w.length() - 1)).endsWith("kelime");
+        String solid = "y".repeat(500);
+        assertThat(ActivityLogService.fitWords(solid, 300)).hasSize(300).endsWith("…");
+        String emoji = "a".repeat(298) + "😀" + "b".repeat(10);   // 299. konumda vekil çifti
+        String e = ActivityLogService.fitWords(emoji, 300);
+        assertThat(e).hasSizeLessThanOrEqualTo(300);
+        assertThat(Character.isHighSurrogate(e.charAt(e.length() - 2))).isFalse();
+    }
+
+    @Test
+    @DisplayName("D5: yaşam döngüsü özeti 500'e değil kolon boyuna (300) sığar")
+    void lifecycleSummaryFitsColumn() {
+        svc.recordLifecycle(ActivityLogService.HTTP, 1L, "n", "u", 5L, "CONFIG_CHANGED", "ops", "alan, ".repeat(100));
+        assertThat(savedOne().getResultSummary()).hasSizeLessThanOrEqualTo(300).endsWith("…");
+    }
+
+    @Test
+    @DisplayName("O2: erişilebilirlik alarm satırı hedefi alan:port (bağlamdaki port); diğer türler alarm anahtarı")
+    void alertTarget_accessibilityPort() {
+        assertThat(ActivityLogService.alertTarget("UPTIME", "x.com", "{\"port\":8443}")).isEqualTo("x.com:8443");
+        assertThat(ActivityLogService.alertTarget("UPTIME", "x.com", "{\"port\": \"443\", \"x\":1}")).isEqualTo("x.com:443");
+        assertThat(ActivityLogService.alertTarget("UPTIME", "x.com", null)).isEqualTo("x.com");
+        assertThat(ActivityLogService.alertTarget("UPTIME", "x.com", "{\"port\":99999}")).isEqualTo("x.com");
+        assertThat(ActivityLogService.alertTarget("HTTP", "https://x.com/", "{\"port\":8443}")).isEqualTo("https://x.com/");
+    }
+
+    @Test
+    @DisplayName("O2: açılış satırından kimlik okuması yalnız sertifika / erişilebilirlik onay-kapanış satırında (izleme alarmında sorgu yok)")
+    void triggeredLookupOnlyForCertAndUptime() {
+        when(repo.triggeredMonitorId(eq(50L), any())).thenReturn(List.of(42L));
+        AlertEvent cert = new AlertEvent();
+        cert.setId(50L);
+        cert.setDomain("c.example.com");
+        cert.setAlertType("EXPIRY");
+        cert.setAlertLevel("HIGH");
+        svc.recordAlert(cert, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED, null, null, "ayse", null);
+
+        AlertEvent http = new AlertEvent();
+        http.setId(51L);
+        http.setDomain("https://h.example.com/");
+        http.setAlertType(EscalationService.TYPE_HTTP_DOWN);
+        http.setAlertLevel("HIGH");
+        http.setContextJson("{\"team_id\":7}");
+        svc.recordAlert(http, ActivityLogService.ACTION_ALERT_RESOLVED, null, null, "system", null);
+        svc.recordAlert(cert, ActivityLogService.ACTION_ALERT_TRIGGERED, null, null, "system", null);
+
+        List<ActivityLog> rows = saved(3);
+        assertThat(rows.get(0).getMonitorId()).isEqualTo(42L);
+        assertThat(rows.get(1).getMonitorId()).isNull();
+        verify(repo, times(1)).triggeredMonitorId(any(), any());   // HTTP ve açılış satırı sorgulamaz
+    }
+
+    @Test
+    @DisplayName("Sözleşme Y1: HTTP neden kodu tanıdan (STATUS_MISMATCH → HTTP_STATUS, BODY_ASSERTION), error yoksa HTTP kodundan; sağlıklı satırda yok")
+    void httpReasonFromDiagnosis() {
+        assertThat(ActivityLogService.httpReason(false, null, 503, "{\"kind\":\"STATUS_MISMATCH\",\"http_status\":503}"))
+                .isEqualTo("HTTP_STATUS");
+        assertThat(ActivityLogService.httpReason(false, "JSON doğrulaması başarısız: $.status beklenen UP", 200,
+                "{\"kind\":\"BODY_ASSERTION\"}")).isEqualTo("BODY_ASSERTION");
+        assertThat(ActivityLogService.httpReason(false, null, 404, null)).isEqualTo("HTTP_STATUS");
+        assertThat(ActivityLogService.httpReason(false, "java.net.UnknownHostException: x.invalid", null, null))
+                .isEqualTo("DNS_RESOLVE");
+        assertThat(ActivityLogService.httpReason(true, null, 200, null)).isNull();
+        HttpCheck c = new HttpCheck();
+        c.setOk(false);
+        c.setHttpStatus(503);
+        c.setErrorDetail("{\"kind\":\"STATUS_MISMATCH\"}");
+        assertThat(ActivityLogService.refs(c).failureReason()).isEqualTo("HTTP_STATUS");
+    }
+
+    @Test
+    @DisplayName("FR D5: alarm satırı result_detail'e makinece okunur ayrıntı yazar (tür, seviye, önceki seviye, kapanış, kod)")
+    void alertInfoJsonWritten() {
+        AlertEvent e = alarm(60L, EscalationService.TYPE_PORT_DOWN, "CRITICAL", null);
+        svc.recordAlert(e, ActivityLogService.ACTION_ALERT_ESCALATED, "CRITICAL", 9L, "system", "HIGH → CRITICAL",
+                ActivityLogService.AlertInfo.escalated("HIGH"));
+        svc.recordAlert(e, ActivityLogService.ACTION_ALERT_RESOLVED, null, 9L, "ayse", "elle Ayşe",
+                ActivityLogService.AlertInfo.closed(ActivityLogService.CLOSED_MANUAL, "Ayşe"));
+        svc.recordAlert(e, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED, null, 9L, "ayse", null);
+        List<ActivityLog> rows = saved(3);
+        assertThat(rows.get(0).getResultDetail())
+                .isEqualTo("{\"alert_type\":\"PORT_DOWN\",\"level\":\"CRITICAL\",\"from_level\":\"HIGH\"}");
+        assertThat(rows.get(1).getResultDetail())
+                .isEqualTo("{\"alert_type\":\"PORT_DOWN\",\"level\":\"CRITICAL\",\"closed_by\":\"manual\",\"closer\":\"Ayşe\"}");
+        assertThat(rows.get(2).getResultDetail()).isEqualTo("{\"alert_type\":\"PORT_DOWN\",\"level\":\"CRITICAL\"}");
+        assertThat(rows.get(0).getResultSummary()).as("Türkçe özet aynen kalır (CSV, eski istemci)").contains("HIGH → CRITICAL");
+    }
 }

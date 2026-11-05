@@ -134,7 +134,8 @@ public class ActivityTimelineService {
         sql.append(" ORDER BY activity_time DESC, id DESC LIMIT ?");
         args.add(maxRows + 1);
         List<Row> rows = new ArrayList<>(jdbc.query(sql.toString(), (rs, i) -> new Row(rs.getLong("id"),
-                rs.getString("activity_time"), rs.getString("action"), rs.getString("result_status"),
+                rs.getString("activity_time"), rs.getString("action"),
+                timelineStatus(type, rs.getString("action"), rs.getString("result_status"), rs.getString("failure_reason")),
                 (Long) rs.getObject("response_ms", Long.class), rs.getString("failure_reason"), rs.getString("error_class"),
                 (Long) rs.getObject("alert_event_id", Long.class)), args.toArray()));
         boolean truncated = rows.size() > maxRows;
@@ -436,6 +437,24 @@ public class ActivityTimelineService {
         for (int i = 0; i < n; i++) d[i] = epoch(checks.get(off + i + 1).time()) - epoch(checks.get(off + i).time());
         java.util.Arrays.sort(d);
         return d[n / 2];
+    }
+
+    /**
+     * Zaman çizelgesinin gördüğü durum (2026-11-05, sözleşme incelemesi Y1): kayıtlı {@code result_status} DEĞİŞMEZ
+     * (2026-10-11 sözlüğü; liste KPI'ları), ama alarm AÇAN uyarı sınıfı kontrol hataları çizelgede KESİNTİ sayılır —
+     * HTTP / KEYWORD'de {@code WARNING} yalnız başarısız kontrol + HTTP kodu ile yazılır (durum uyuşmazlığı, gövde
+     * doğrulaması, anahtar kelime koşulu; yavaş yanıt SUCCESS) → kesinti, eski (nedensiz) satırlarda da; SCRIPTED
+     * {@code WARNING} = senaryo FAIL → kesinti, yalnız {@code SCRIPT_NO_CHECKS} (yapılandırma kusuru) uyarı kalır.
+     * DBQUERY ihlali, sayfa DEGRADED, sayfa hızı SLOW uyarı kalır. Kontrol olmayan satır (alarm açılışı) dokunulmaz.
+     */
+    static String timelineStatus(String type, String action, String status, String reason) {
+        if (!"WARNING".equalsIgnoreCase(status) || !ActivityFilter.CHECK_ACTIONS.contains(action)) return status;
+        String t = type == null ? "" : type.toUpperCase(Locale.ROOT);
+        return switch (t) {
+            case "HTTP", "KEYWORD" -> "ERROR";
+            case "SCRIPTED" -> "SCRIPT_NO_CHECKS".equals(reason) ? status : "ERROR";
+            default -> status;
+        };
     }
 
     static String stateOf(String status) {

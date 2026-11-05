@@ -77,7 +77,7 @@ public class ActivityController {
         if (scope.empty) return ResponseEntity.ok(envelope(List.of(), 0L, 0, sz));
 
         ActivityQueryService.PageResult result = queries.list(f, pg, sz);
-        List<Map<String, Object>> data = result.rows().stream().map(ActivityController::listDto).toList();
+        List<Map<String, Object>> data = listDtos(result.rows());
         return ResponseEntity.ok(envelope(data, result.total(), pg, sz));
     }
 
@@ -263,7 +263,7 @@ public class ActivityController {
         ActivityRelatedService.Result r = relatedSvc.related(id, window, scope.scoped, scope.list,
                 team -> SessionScope.canViewMonitoring(session, team));
         Map<String, Object> data = new LinkedHashMap<>(r.body());
-        data.put("items", r.items().stream().map(ActivityController::listDto).toList());
+        data.put("items", listDtos(r.items()));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("data", data);
@@ -351,6 +351,40 @@ public class ActivityController {
      * failure_reason, failure_detail, alert_event_id, storm_id, change_seq, request_id}). {@code GET /{id}} yanıtı
      * birebir kalsın diye {@code toDto}'ya eklenmez.
      */
+    /** Takım adları (liste / kök neden satırları) — isteğe bağlı: yoksa {@code team_name} null. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.TeamRepository teamRepo;
+
+    /**
+     * Satırlar + {@code team_name} (sözleşme incelemesi D1: ön yüz okuyordu, üretilmiyordu): sayfa başına TEK takım okuması
+     * ({@code findAllById}); okunamazsa ad null (rozet dizinden çözer).
+     */
+    private List<Map<String, Object>> listDtos(List<ActivityLog> rows) {
+        Map<Long, String> names = teamNames(rows);
+        List<Map<String, Object>> out = new java.util.ArrayList<>(rows.size());
+        for (ActivityLog a : rows) {
+            Map<String, Object> m = listDto(a);
+            m.put("team_name", a.getTeamId() == null ? null : names.get(a.getTeamId()));
+            out.add(m);
+        }
+        return out;
+    }
+
+    private Map<Long, String> teamNames(List<ActivityLog> rows) {
+        if (teamRepo == null || rows == null || rows.isEmpty()) return Map.of();
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        for (ActivityLog a : rows) if (a.getTeamId() != null) ids.add(a.getTeamId());
+        if (ids.isEmpty()) return Map.of();
+        try {
+            Map<Long, String> m = new java.util.HashMap<>();
+            for (com.sitemonitor.model.Team t : teamRepo.findAllById(ids)) m.put(t.getId(), t.getName());
+            return m;
+        } catch (Exception e) {
+            log.debug("Aktivite listesi: takım adları okunamadı: {}", e.toString());
+            return Map.of();
+        }
+    }
+
     private static Map<String, Object> listDto(ActivityLog a) {
         Map<String, Object> m = toDto(a);
         com.sitemonitor.service.activity.ActivityDetailService.putRefs(m, a);
