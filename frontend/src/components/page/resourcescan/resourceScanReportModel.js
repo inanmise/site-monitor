@@ -1,6 +1,7 @@
 import {
-  CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, categoryLabel, formatMs, formatNumber, formatPct, formatSize, gradeLetter, gradeTone,
-  isCapped, plural, recTextKey, recommendationArgs, scoreTone, toMs,
+  CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, areaUnreadable, categoryLabel, categoryScoreRows as screenCategoryScoreRows, cookieIssueText,
+  dupKindText, formatMs, formatNumber, formatPct, formatSize, gradeLetter, headerIssueText, hostReasonText, httpVersionText,
+  plural, problemText, rbKindText, rbReasonText, recTextKey, recommendationArgs, sriKindText, toMs, vulnSeverityText,
 } from './resourceScanModel.js'
 
 /**
@@ -134,6 +135,8 @@ export function budgetActual(key, scan, check) {
   const f = FIELD[key]
   const fromScan = f ? num(scan?.[f.scanField]) : null
   if (fromScan !== null) return { value: fromScan, kind: f.kind === 'kb' ? 'bytes' : f.kind }
+  const ab = f?.kind === 'kb' ? num(check?.actual_bytes) : null
+  if (ab !== null) return { value: ab, kind: 'bytes' }
   const a = num(check?.actual)
   if (a === null) return null
   return { value: a, kind: f ? f.kind : 'count' }
@@ -146,28 +149,67 @@ export function formatBudgetActual(key, actual, locale) {
   return formatBudgetLimit(key, actual.value, locale)
 }
 
+/** Sunucunun "değerlendirilemedi" nedenleri: sınıra takılan analiz / bu analizde ölçülmemiş / analiz bitmemiş. */
+export const BUDGET_REASONS = ['capped', 'missing', 'not_done']
+
 /**
  * Analiz sonucu bütçe bandı. `budget` = ayrıntı yanıtının alanı; YOKSA null (eski sunucu — bant çizilmez).
- * Durum: `none` (bütçe tanımlı değil), `exceeded` (en az bir kalem aşıldı), `partial` (aşılan yok ama ölçülemeyen var —
- * yeşil DEĞİL), `ok` (her kalem ölçüldü ve geçti). Satırlar sabit alan sırasıyla; bilinmeyen anahtar sona.
+ * Durum: `none` (bütçe tanımlı değil), `unreadable` (sınırlar tanımlı ama değerlendirme OKUNAMADI — "aşılan yok"
+ * denmez, satır çizilmez), `exceeded` (en az bir kalem aşıldı), `partial` (aşılan yok ama kesin olmayan var — yeşil
+ * DEĞİL), `ok` (her kalem ölçüldü ve geçti). Satırlar sabit alan sırasıyla; bilinmeyen anahtar sona.
+ * Kesin olmayan kalemin nedeni (`reason`): `capped` → ölçülen değer gösterilir (kısmi ölçüm, kesin değil); `missing` /
+ * `not_done` / bilinmeyen → değer GÖSTERİLMEZ (ölçülen + "ölçülemedi" çelişkisi olmasın).
  */
 export function budgetBand(budget, scan) {
   if (!isObj(budget)) return null
+  if (budget.unreadable === true) return { state: 'unreadable', rows: [], exceeded: null, unknown: 0 }
   const checks = arr(budget.checks).filter((c) => isObj(c) && typeof c.key === 'string' && c.key)
   if (budget.defined === false || (!checks.length && !(num(budget.exceeded) > 0))) {
     return { state: 'none', rows: [], exceeded: 0, unknown: 0 }
   }
   const order = (k) => (BUDGET_KEYS.indexOf(k) < 0 ? 99 : BUDGET_KEYS.indexOf(k))
-  // Sunucu kalemi ÖLÇEMEDİYSE (ok null) gerçek değer yalnız sunucunun `actual`'ından — özet satırındaki bir değer
-  // "ölçüldü X" diye "Ölçülemedi" rozetinin yanına yazılmaz (çelişkili görünüyordu).
   const rows = [...checks].sort((a, b) => order(a.key) - order(b.key)).map((c) => {
     const ok = c.ok === true ? true : c.ok === false ? false : null
-    return { key: c.key, known: Boolean(FIELD[c.key]), limit: num(c.limit), actual: budgetActual(c.key, ok === null ? null : scan, c), ok }
+    const reason = ok === null ? (BUDGET_REASONS.includes(c.reason) ? c.reason : 'unknown') : null
+    const actual = ok !== null ? budgetActual(c.key, scan, c) : reason === 'capped' ? budgetActual(c.key, null, c) : null
+    return { key: c.key, known: Boolean(FIELD[c.key]), limit: num(c.limit), actual, ok, reason }
   })
   const exceeded = rows.filter((r) => r.ok === false).length || (rows.length ? 0 : Math.max(0, num(budget.exceeded) ?? 0))
   const unknown = rows.filter((r) => r.ok === null).length
   const state = exceeded > 0 ? 'exceeded' : unknown > 0 ? 'partial' : 'ok'
   return { state, rows, exceeded, unknown }
+}
+
+/** Satır durum anahtarı (`prs.budget.state.*`): ok | exceeded | partial (kısmi) | missing | notDone | unknown. */
+export function budgetRowState(row) {
+  if (row?.ok === true) return 'ok'
+  if (row?.ok === false) return 'exceeded'
+  return { capped: 'partial', missing: 'missing', not_done: 'notDone' }[row?.reason] || 'unknown'
+}
+/** Satır durumunun tonu: aşıldı tehlike, geçti başarı, kesin olmayan SOLUK. */
+export const BUDGET_ROW_TONE = { ok: 'success', exceeded: 'danger', partial: 'muted', missing: 'muted', notDone: 'muted', unknown: 'muted' }
+
+/**
+ * Satırın ikinci satırı: "Sınır ≤ 2 MB · ölçülen 969 KB"; kısmi ölçümde "… · kısmi ölçümde 1,5 MB — kesin değil"; değer
+ * yoksa "Sınır ≤ 2 MB · bu analizde ölçülmedi" (neden cümlesi). Ekran, PDF ve Excel aynı metni kullanır.
+ */
+export function budgetRowDetail(row, t, locale) {
+  const f = FIELD[row?.key]
+  const limit = `${f?.dir === 'min' ? '≥' : '≤'} ${formatBudgetLimit(row?.key, row?.limit, locale)}`
+  const st = budgetRowState(row)
+  if (st === 'ok' || st === 'exceeded') return t('prs.budget.row.limitActual', limit, formatBudgetActual(row.key, row.actual, locale))
+  if (st === 'partial' && row.actual) return t('prs.budget.row.limitPartial', limit, formatBudgetActual(row.key, row.actual, locale))
+  return t('prs.budget.row.limitOnly', limit, t(`prs.budget.reason.${st === 'partial' ? 'capped' : st}`))
+}
+
+/** Bandın başlık metni (ekran, PDF ve Excel ortak). */
+export function budgetBandText(band, t, locale) {
+  if (!band) return ''
+  if (band.state === 'none') return t('prs.budget.band.none')
+  if (band.state === 'unreadable') return t('prs.budget.band.unreadable')
+  if (band.state === 'exceeded') return plural(t, 'prs.budget.band.exceeded', band.exceeded, formatNumber(band.exceeded, locale))
+  if (band.state === 'partial') return plural(t, 'prs.budget.band.partial', band.unknown, formatNumber(band.unknown, locale))
+  return plural(t, 'prs.budget.band.ok', band.rows.length, formatNumber(band.rows.length, locale))
 }
 
 /**
@@ -270,6 +312,25 @@ export function growthRows(growth) {
     .slice(0, GROWTH_MAX)
 }
 
+/**
+ * Eğilim yanıtı → görünüm verisi. `growth: null` (+ `growth_busy`) = büyüme şu an HESAPLANAMADI (asla "büyüyen nesne
+ * yok" denmez); `truncated` = pencerede `max_points`'ten (200) çok analiz var, yalnız en yeniler geldi; `growth_basis`
+ * büyümenin kaç analizden hesaplandığı.
+ */
+export function trendView(data) {
+  const d = isObj(data) ? data : {}
+  const growthMissing = !Array.isArray(d.growth)
+  const basis = isObj(d.growth_basis) ? num(d.growth_basis.scans) : null
+  return {
+    points: trendSeries(d.points),
+    growth: growthMissing ? null : growthRows(d.growth),
+    growthBusy: growthMissing && d.growth_busy === true,
+    truncated: d.truncated === true,
+    maxPoints: num(d.max_points),
+    basisScans: basis !== null && basis > 0 ? basis : null,
+  }
+}
+
 /** Eğilim ucu desteklenmiyor mu (eski sunucu: 404 / 405). */
 export const isTrendUnsupported = (res) => res?.status === 404 || res?.status === 405
 
@@ -332,6 +393,34 @@ export function pageStatus(page) {
   return 'unknown'
 }
 
+/** Site sayfası hata / taranmama kodları (sunucu `error_code` öneki; `NOT_SCANNED:<neden>`). */
+export const SITE_PAGE_ERROR_CODES = ['PAGE_HTTP', 'PAGE_FAILED', 'PAGE_BLOCKED', 'PAGE_EMPTY', 'PAGE_NOT_HTML', 'PAGE_OFFSITE', 'NOT_SCANNED']
+const CODE_LIKE = /^[A-Z][A-Z0-9_]*(?::[A-Za-z0-9_.-]+)?$/
+
+/**
+ * Site sayfasının hata metni. Sunucu `error`'ı isteğin dilinde CÜMLE olarak yazar (+ `error_code` önek, `error_reason`
+ * ulaşılamama nedeni) — cümle varsa o gösterilir. Kod biçiminde gelirse (eski / ara sürüm) burada çevrilir; bilinmeyen
+ * kod genel metin. Ham kod hiçbir yüzeyde (ekran, Excel, PDF) gösterilmez. Sorun yoksa ''.
+ */
+export function sitePageErrorText(page, t) {
+  const raw = typeof page?.error === 'string' ? page.error.trim() : ''
+  if (raw && !CODE_LIKE.test(raw)) return raw
+  const [prefix, arg] = raw ? raw.split(':') : []
+  const code = typeof page?.error_code === 'string' && page.error_code ? page.error_code : prefix
+  const reason = typeof page?.error_reason === 'string' && page.error_reason ? page.error_reason : (prefix === 'PAGE_FAILED' ? arg : null)
+  if (!code) return ''
+  switch (code) {
+    case 'PAGE_HTTP': return /^\d{3}$/.test(arg || '') ? t('prs.site.err.http', arg) : t('prs.site.err.httpNoCode')
+    case 'PAGE_FAILED': return reason ? `${t('prs.site.err.failed')} (${problemText(reason, t)})` : t('prs.site.err.failed')
+    case 'PAGE_BLOCKED': return t('prs.site.err.blocked')
+    case 'PAGE_EMPTY': return t('prs.site.err.empty')
+    case 'PAGE_NOT_HTML': return t('prs.site.err.notHtml')
+    case 'PAGE_OFFSITE': return t('prs.site.err.offsite')
+    case 'NOT_SCANNED': return t(`prs.site.skip.${{ TIME: 'time', BYTES: 'bytes', OBJECTS: 'objects' }[arg || page?.error_reason] || 'other'}`)
+    default: return t('prs.site.err.unknown')
+  }
+}
+
 const PAGE_STATUS_TONE = { ok: 'success', failed: 'danger', skipped: 'muted', unknown: 'muted' }
 export const pageStatusTone = (status) => PAGE_STATUS_TONE[status] || 'muted'
 /** Sayfa durumunun metni (`prs.site.status.ok|notOpened|skipped|unknown`). */
@@ -349,7 +438,9 @@ export function siteModel(site) {
     const grade = num(p.grade)
     const status = pageStatus(p)
     return {
-      i, url: typeof p.url === 'string' ? p.url : '', status, error: p.error || null, grade,
+      i, url: typeof p.url === 'string' ? p.url : '', status, grade,
+      // Hata alanları ham hâliyle (metin sitePageErrorText ile ÇİZİMDE çevrilir — dil değişince yeniden hesaplanır)
+      error: p.error || null, error_code: p.error_code || null, error_reason: p.error_reason || null,
       letter: status === 'ok' ? gradeLetter(grade, p.letter ?? p.grade_letter) : null,
       load: num(p.load_ms), size: num(p.page_bytes), requests: num(p.requests ?? p.request_count),
       security: num(p.scores?.security), seo: num(p.scores?.seo), a11y: num(p.scores?.accessibility),
@@ -369,11 +460,27 @@ export function siteModel(site) {
     pages: num(tt.pages) ?? pages.length,
     scanned: num(tt.scanned) ?? scanned.length,
     failed: num(tt.failed) ?? pages.filter((p) => p.status === 'failed').length,
+    skipped: num(tt.skipped) ?? pages.filter((p) => p.status === 'skipped').length,
     avgGrade: num(tt.avg_grade),
     uniqueBytes: num(tt.total_unique_bytes),
-    sharedCount: arr(site.shared).length,
+    // Sunucu ortak nesnelerin TAMAMINI sayar, listeyi 50'de keser (`totals.shared`)
+    sharedCount: Math.max(arr(site.shared).length, num(tt.shared) ?? 0),
   }
-  return { pages, worst, shared, totals }
+  // Eksiklik: bir sayfa bütçe yüzünden taranmadı ya da kısmi ölçüldü (`incomplete`; eski yanıtta alan yok → null)
+  const incomplete = typeof site.incomplete === 'boolean' ? site.incomplete : null
+  return { pages, worst, shared, totals, incomplete }
+}
+
+/**
+ * Site analizinin sayfa sayısı cümlesi — geçmiş, karşılaştırma, sekme rozeti ve Sayfalar başlığı AYNI anlamı söyler:
+ * hepsi analiz edildiyse "5 sayfa analiz edildi", değilse "3 / 5 sayfa analiz edildi" (açılamayan / taranmayan dahil toplam).
+ */
+export function siteCountText(totals, t, locale) {
+  const pages = num(totals?.pages) ?? 0
+  const scanned = num(totals?.scanned) ?? 0
+  return scanned >= pages
+    ? plural(t, 'prs.site.countAll', pages, formatNumber(pages, locale))
+    : plural(t, 'prs.site.countOf', pages, formatNumber(scanned, locale), formatNumber(pages, locale))
 }
 
 /** Sayfa sıralaması: not artan (en kötü önce; notsuz sona), süre / boyut azalan, adres. Eşitlikte tarama sırası. */
@@ -406,28 +513,10 @@ export function recShortLabel(code, t) {
 export const CATEGORY_SCORE_KEYS = ['performance', 'security', 'seo', 'accessibility']
 
 export function categoryScoreRows(analysis, scan) {
-  const cs = isObj(analysis?.category_scores) ? analysis.category_scores : {}
-  const pick = (k, ...fallbacks) => {
-    const v = isObj(cs[k]) ? num(cs[k].score) : num(cs[k])
-    if (v !== null) return { score: v, letter: isObj(cs[k]) ? cs[k].letter ?? null : null }
-    for (const f of fallbacks) if (num(f) !== null) return { score: num(f), letter: null }
-    return { score: null, letter: null }
-  }
-  const rows = {
-    performance: pick('performance', scan?.grade),
-    security: pick('security', analysis?.security?.score, scan?.security_score),
-    seo: pick('seo', analysis?.html_audit?.seo?.score, scan?.seo_score),
-    accessibility: pick('accessibility', analysis?.html_audit?.accessibility?.score, scan?.a11y_score),
-  }
-  if (rows.performance.letter == null) rows.performance.letter = gradeLetter(rows.performance.score, scan?.grade_letter)
-  if (rows.security.letter == null && isObj(analysis?.security)) rows.security.letter = analysis.security.letter ?? null
-  return CATEGORY_SCORE_KEYS.map((key) => {
-    const r = rows[key]
-    const letter = typeof r.letter === 'string' && /^[A-F]$/.test(r.letter.trim()) ? r.letter.trim() : null
-    // Sınırlı (kısmi) ölçümün performans notu yeşil değil
-    const tone = key === 'performance' && isCapped(scan) ? 'muted' : letter ? gradeTone(letter) : scoreTone(r.score)
-    return { key, score: r.score, letter, tone }
-  })
+  // Ekranın (pano kutucukları) TEK kuralı: kısmi analizde performans VE güvenlik soluk; hesaplanamayan null
+  return screenCategoryScoreRows(scan, analysis).map((r) => ({
+    key: r.key, score: r.score, letter: r.letter ?? null, tone: r.score === null ? 'muted' : r.tone, partial: r.partial === true,
+  }))
 }
 
 const SEV_RANK = (s) => (SEVERITIES.indexOf(s) < 0 ? 9 : SEVERITIES.indexOf(s))
@@ -503,17 +592,16 @@ export function categoryScoreText(row, locale) {
 export function budgetExportRows(budget, scan, t, locale) {
   const band = budgetBand(budget, scan)
   if (!band) return null
-  const summary = band.state === 'none' ? t('prs.budget.band.none')
-    : band.state === 'exceeded' ? plural(t, 'prs.budget.band.exceeded', band.exceeded, formatNumber(band.exceeded, locale))
-      : band.state === 'partial' ? plural(t, 'prs.budget.band.partial', band.unknown, formatNumber(band.unknown, locale))
-        : plural(t, 'prs.budget.band.ok', band.rows.length, formatNumber(band.rows.length, locale))
+  const summary = band.state === 'unreadable' ? `${t('prs.budget.band.unreadable')} — ${t('prs.budget.band.unreadableBody')}` : budgetBandText(band, t, locale)
   const rows = band.rows.map((r) => {
     const f = FIELD[r.key]
+    const st = budgetRowState(r)
     return [
       r.known ? t(`prs.budget.f.${r.key}`) : t('prs.budget.f.other'),
       `${f?.dir === 'min' ? '≥' : '≤'} ${formatBudgetLimit(r.key, r.limit, locale)}`,
-      formatBudgetActual(r.key, r.actual, locale),
-      t(`prs.budget.state.${r.ok === true ? 'ok' : r.ok === false ? 'exceeded' : 'unknown'}`),
+      r.actual ? formatBudgetActual(r.key, r.actual, locale) : '—',
+      st === 'ok' || st === 'exceeded' ? t(`prs.budget.state.${st}`)
+        : `${t(`prs.budget.state.${st}`)} — ${t(`prs.budget.reason.${st === 'partial' ? 'capped' : st}`)}`,
     ]
   })
   return { state: band.state, summary, rows }
@@ -597,6 +685,8 @@ export function checkLabel(t, area, key) {
 }
 
 const sumBytes = (list, field) => arr(list).reduce((s, x) => s + (num(x?.[field]) ?? 0), 0)
+/** Listenin GERÇEK sayısı: sunucu ≤ 50 satır gönderir, tamamı `<ad>_total`'da (yoksa dizinin uzunluğu). */
+const total = (obj, key) => Math.max(arr(obj?.[key]).length, num(obj?.[`${key}_total`]) ?? 0)
 
 /**
  * A–E bölümlerinin YÖNETİCİ ÖZETİ satırları (PDF): yalnız analizde OLAN bölümler; her bölüm { key, title, lines }.
@@ -612,12 +702,15 @@ export function executiveSections(analysis, t, locale) {
     const L = a.loading
     const lines = []
     const rb = isObj(L.render_blocking) ? L.render_blocking : null
+    const htmlUnread = areaUnreadable(L, 'loading')
+    if (htmlUnread) lines.push(t('prs.pdf.load.htmlUnknown'))
     if (rb) {
       const c = num(rb.count) ?? arr(rb.items).length
-      lines.push(c > 0 ? plural(t, 'prs.pdf.load.blocking', c, n(c), sz(num(rb.bytes) ?? sumBytes(rb.items, 'bytes'))) : t('prs.pdf.load.blockingNone'))
+      if (c > 0) lines.push(plural(t, 'prs.pdf.load.blocking', c, n(c), sz(num(rb.bytes) ?? sumBytes(rb.items, 'bytes'))))
+      else if (!htmlUnread) lines.push(t('prs.pdf.load.blockingNone'))
       if (num(rb.est_first_paint_ms) !== null) lines.push(t('prs.pdf.load.firstPaint', formatMs(rb.est_first_paint_ms, locale)))
     }
-    const mp = arr(L.hints?.missing_preconnect).length
+    const mp = total(L.hints, 'missing_preconnect')
     if (mp > 0) lines.push(plural(t, 'prs.pdf.load.missingPreconnect', mp, n(mp)))
     const unusedPreload = arr(L.hints?.preload).filter((p) => p?.used === false).length
     if (unusedPreload > 0) lines.push(plural(t, 'prs.pdf.load.unusedPreload', unusedPreload, n(unusedPreload)))
@@ -634,11 +727,13 @@ export function executiveSections(analysis, t, locale) {
     const W = a.waste
     const lines = []
     const dup = arr(W.duplicates)
-    if (dup.length) lines.push(plural(t, 'prs.pdf.waste.duplicates', dup.length, n(dup.length), sz(sumBytes(dup, 'bytes_wasted'))))
+    const dupN = total(W, 'duplicates')
+    if (dupN) lines.push(plural(t, 'prs.pdf.waste.duplicates', dupN, n(dupN), sz(sumBytes(dup, 'bytes_wasted'))))
     const libs = arr(W.libraries).filter((l) => isObj(l) && l.name)
     if (libs.length) lines.push(t('prs.pdf.waste.libraries', libs.map((l) => `${l.name} (${arr(l.versions).join(', ')})`).join('; ')))
     const um = arr(W.unminified)
-    if (um.length) lines.push(plural(t, 'prs.pdf.waste.unminified', um.length, n(um.length), sz(sumBytes(um, 'est_saving_bytes'))))
+    const umN = total(W, 'unminified')
+    if (umN) lines.push(plural(t, 'prs.pdf.waste.unminified', umN, n(umN), sz(sumBytes(um, 'est_saving_bytes'))))
     const maps = arr(W.source_maps).filter((m) => m?.exposed === true).length
     if (maps > 0) lines.push(plural(t, 'prs.pdf.waste.sourceMaps', maps, n(maps)))
     if (isObj(W.html)) {
@@ -664,17 +759,20 @@ export function executiveSections(analysis, t, locale) {
       ['missing_dimensions', 'prs.pdf.media.missingDimensions'], ['missing_srcset', 'prs.pdf.media.missingSrcset'],
       ['not_lazy', 'prs.pdf.media.notLazy'], ['animated_gif', 'prs.pdf.media.animatedGif'],
     ]
+    if (im.html_checked === false) lines.push(t('prs.pdf.media.htmlUnknown'))
     for (const [k, key] of parts) {
-      const c = arr(im[k]).length
+      const c = total(im, k)
       if (c > 0) lines.push(plural(t, key, c, n(c)))
     }
     if (isObj(M.fonts)) {
       const f = M.fonts
       const fc = num(f.count) ?? 0
-      lines.push(plural(t, 'prs.pdf.media.fonts', fc, n(fc), sz(f.bytes), n(arr(f.families).length)))
-      const nw = arr(f.non_woff2).length
+      lines.push(plural(t, 'prs.pdf.media.fonts', fc, n(fc), sz(f.bytes), n(total(f, 'families'))))
+      const nw = total(f, 'non_woff2')
       if (nw > 0) lines.push(plural(t, 'prs.pdf.media.nonWoff2', nw, n(nw)))
-      const md = arr(f.missing_display).length
+      const uf = num(f.unknown_format)
+      if (uf > 0) lines.push(plural(t, 'prs.deep.font.unknownFormat', uf, n(uf)))
+      const md = total(f, 'missing_display')
       if (md > 0) lines.push(plural(t, 'prs.pdf.media.missingDisplay', md, n(md)))
     }
     if (!lines.length) lines.push(t('prs.pdf.media.noFindings'))
@@ -685,25 +783,29 @@ export function executiveSections(analysis, t, locale) {
     const S = a.security
     const lines = []
     if (num(S.score) !== null) lines.push(t('prs.pdf.secu.score', n(S.score), S.letter ? ` (${S.letter})` : ''))
+    // Ana yanıtın başlıkları okunamadı: bilinmeyen "bulgu yok" değildir
+    const secUnread = areaUnreadable(S, 'security')
+    if (secUnread) lines.push(t('prs.pdf.secu.headersUnknown'))
     const hdr = arr(S.headers).filter(isObj)
     const missing = hdr.filter((h) => h.status === 'missing').map((h) => headerName(h.key))
     const weak = hdr.filter((h) => h.status === 'weak').map((h) => headerName(h.key))
     if (missing.length) lines.push(t('prs.pdf.secu.missingHeaders', missing.join(', ')))
     if (weak.length) lines.push(t('prs.pdf.secu.weakHeaders', weak.join(', ')))
-    const sri = arr(S.sri_missing).length
+    const sri = total(S, 'sri_missing')
     if (sri > 0) lines.push(plural(t, 'prs.pdf.secu.sri', sri, n(sri)))
-    const mixed = arr(S.mixed_content).length
+    const mixed = total(S, 'mixed_content')
     if (mixed > 0) lines.push(plural(t, 'prs.pdf.secu.mixed', mixed, n(mixed)))
     const cookies = arr(S.cookies).filter(isObj)
+    const cookieN = total(S, 'cookies')
     const bad = cookies.filter((c) => arr(c.issues).length > 0).length
-    if (cookies.length) lines.push(plural(t, 'prs.pdf.secu.cookies', cookies.length, n(cookies.length), n(bad)))
+    if (cookieN) lines.push(plural(t, 'prs.pdf.secu.cookies', cookieN, n(cookieN), n(bad)))
     const vuln = arr(S.libraries).filter((l) => isObj(l) && arr(l.vulns).length > 0)
     if (vuln.length) {
       lines.push(t('prs.pdf.secu.vulnLibs', vuln.map((l) => `${l.name} ${l.version || ''}`.trim()).join(', ')))
     }
-    const track = arr(S.tracking_on_load).length
+    const track = total(S, 'tracking_on_load')
     if (track > 0) lines.push(plural(t, 'prs.pdf.secu.tracking', track, n(track)))
-    if (!lines.length) lines.push(t('prs.pdf.secu.noFindings'))
+    if (!lines.length && !secUnread) lines.push(t('prs.pdf.secu.noFindings'))
     out.push({ key: 'security', title: t('prs.pdf.sec.security'), lines })
   }
 
@@ -810,13 +912,14 @@ export function deepSheets(analysis, t, locale) {
     const rows = []
     const rb = isObj(L.render_blocking) ? L.render_blocking : {}
     block(rows, t('prs.pdf.xl.renderBlocking'), [t('prs.export.col.url'), t('prs.pdf.xl.kind'), t('prs.export.col.bytes'), t('prs.export.col.duration'), t('prs.pdf.xl.reason')],
-      arr(rb.items).filter(isObj).map((i) => [i.url ?? '', i.kind ?? '', num(i.bytes), num(i.duration_ms), i.reason ?? '']), rb.count)
+      arr(rb.items).filter(isObj).map((i) => [i.url ?? '', rbKindText(i.kind, t), num(i.bytes), num(i.duration_ms), rbReasonText(i.reason, t)]),
+      num(rb.items_total) ?? rb.count)
     block(rows, t('prs.pdf.xl.hosts'), [t('prs.export.col.host'), t('prs.export.col.thirdParty'), t('prs.export.col.count'), t('prs.export.col.bytes'),
       t('prs.pdf.xl.httpVersion'), t('prs.pdf.xl.dns'), t('prs.pdf.xl.connect'), t('prs.pdf.xl.tls'), t('prs.pdf.xl.measured')],
-    arr(L.hosts).filter(isObj).map((h) => [h.host ?? '', yn(h.third_party, t), num(h.requests), num(h.bytes), h.http_version ?? '', num(h.dns_ms),
-      num(h.connect_ms), num(h.tls_ms), h.measured === false ? (h.reason ? `${t('prs.export.no')} (${h.reason})` : t('prs.export.no')) : yn(h.measured, t)]), L.hosts_total)
+    arr(L.hosts).filter(isObj).map((h) => [h.host ?? '', yn(h.third_party, t), num(h.requests), num(h.bytes), httpVersionText(h.http_version) ?? (h.reason === 'proxy' ? t('prs.deep.hosts.httpProxy') : ''), num(h.dns_ms),
+      num(h.connect_ms), num(h.tls_ms), h.measured === false ? `${t('prs.export.no')} (${hostReasonText(h.reason, t)})` : yn(h.measured, t)]), L.hosts_total)
     block(rows, t('prs.pdf.xl.missingPreconnect'), [t('prs.export.col.host'), t('prs.export.col.count'), t('prs.export.col.bytes')],
-      arr(L.hints?.missing_preconnect).filter(isObj).map((h) => [h.host ?? '', num(h.requests), num(h.bytes)]))
+      arr(L.hints?.missing_preconnect).filter(isObj).map((h) => [h.host ?? '', num(h.requests), num(h.bytes)]), L.hints?.missing_preconnect_total)
     block(rows, t('prs.pdf.xl.profiles'), [t('prs.pdf.xl.profile'), t('prs.pdf.xl.rtt'), t('prs.pdf.xl.mbps'), t('prs.pdf.xl.loadMs'), t('prs.pdf.xl.firstPaintMs')],
       arr(L.profiles).filter(isObj).map((p) => [profileLabel(p.key, t), num(p.rtt_ms), num(p.mbps), num(p.load_ms), num(p.first_paint_ms)]))
     sheets.push({ key: 'loading', name: t('prs.pdf.sheet.loading'), rows, widths: [70, 14, 14, 14, 16, 12, 12, 12, 16] })
@@ -826,13 +929,13 @@ export function deepSheets(analysis, t, locale) {
     const W = a.waste
     const rows = []
     block(rows, t('prs.pdf.xl.duplicates'), [t('prs.pdf.xl.kind'), t('prs.pdf.xl.urls'), t('prs.pdf.xl.wasted')],
-      arr(W.duplicates).filter(isObj).map((d) => [d.kind ?? '', arr(d.urls).join('\n'), num(d.bytes_wasted)]))
+      arr(W.duplicates).filter(isObj).map((d) => [dupKindText(d.kind, t), arr(d.urls).join('\n'), num(d.bytes_wasted)]), W.duplicates_total)
     block(rows, t('prs.pdf.xl.libraries'), [t('prs.pdf.xl.library'), t('prs.pdf.xl.versions'), t('prs.pdf.xl.urls')],
-      arr(W.libraries).filter(isObj).map((l) => [l.name ?? '', arr(l.versions).join(', '), arr(l.urls).join('\n')]))
+      arr(W.libraries).filter(isObj).map((l) => [l.name ?? '', arr(l.versions).join(', '), arr(l.urls).join('\n')]), W.libraries_total)
     block(rows, t('prs.pdf.xl.unminified'), [t('prs.export.col.url'), t('prs.export.col.bytes'), t('prs.pdf.xl.saving')],
-      arr(W.unminified).filter(isObj).map((u) => [u.url ?? '', num(u.bytes), num(u.est_saving_bytes)]))
+      arr(W.unminified).filter(isObj).map((u) => [u.url ?? '', num(u.bytes), num(u.est_saving_bytes)]), W.unminified_total)
     block(rows, t('prs.pdf.xl.sourceMaps'), [t('prs.export.col.url'), t('prs.pdf.xl.mapUrl'), t('prs.pdf.xl.exposed')],
-      arr(W.source_maps).filter(isObj).map((m) => [m.url ?? '', m.map_url ?? '', yn(m.exposed, t)]))
+      arr(W.source_maps).filter(isObj).map((m) => [m.url ?? '', m.map_url ?? '', yn(m.exposed, t)]), W.source_maps_total)
     if (isObj(W.caching)) {
       const b = isObj(W.caching.buckets) ? W.caching.buckets : {}
       block(rows, t('prs.pdf.xl.caching'), [t('prs.pdf.xl.bucket'), t('prs.export.col.count')],
@@ -850,16 +953,18 @@ export function deepSheets(analysis, t, locale) {
       ['not_lazy', 'prs.pdf.xl.notLazy'], ['animated_gif', 'prs.pdf.xl.animatedGif']]) {
       block(rows, t(key), [t('prs.export.col.url'), t('prs.pdf.xl.detail')],
         arr(im[k]).filter(isObj).map((x) => [x.url ?? '', k === 'missing_srcset' ? (num(x.width) !== null ? `${x.width} px` : '')
-          : k === 'animated_gif' ? [num(x.bytes) !== null ? formatSize(x.bytes, { locale }) : '', num(x.frames) !== null ? t('prs.pdf.xl.frames', formatNumber(x.frames, locale)) : ''].filter(Boolean).join(' · ') : '']))
+          : k === 'animated_gif' ? [num(x.bytes) !== null ? formatSize(x.bytes, { locale }) : '', num(x.frames) !== null ? t('prs.pdf.xl.frames', formatNumber(x.frames, locale)) : ''].filter(Boolean).join(' · ') : '']),
+        im[`${k}_total`])
     }
     if (isObj(M.fonts)) {
       const f = M.fonts
       block(rows, t('prs.pdf.xl.fontFamilies'), [t('prs.pdf.xl.family'), t('prs.pdf.xl.weights'), t('prs.pdf.xl.files')],
-        arr(f.families).filter(isObj).map((x) => [x.family ?? '', arr(x.weights).join(', '), num(x.files)]))
+        arr(f.families).filter(isObj).map((x) => [x.family ?? '', arr(x.weights).join(', '), num(x.files)]), f.families_total)
       block(rows, t('prs.pdf.xl.nonWoff2'), [t('prs.export.col.url'), t('prs.pdf.xl.format')],
-        arr(f.non_woff2).filter(isObj).map((x) => [x.url ?? '', x.format ?? '']))
+        arr(f.non_woff2).filter(isObj).map((x) => [x.url ?? '', x.format ? String(x.format).toUpperCase() : '']), f.non_woff2_total)
       block(rows, t('prs.pdf.xl.missingDisplay'), [t('prs.pdf.xl.family'), t('prs.pdf.xl.cssUrl')],
-        arr(f.missing_display).filter(isObj).map((x) => [x.family ?? '', x.css_url ?? '']))
+        arr(f.missing_display).filter(isObj).map((x) => [x.family ?? '', x.css_url ?? '']), f.missing_display_total)
+      if (num(f.unknown_format) > 0) rows.push([], [plural(t, 'prs.deep.font.unknownFormat', num(f.unknown_format), formatNumber(num(f.unknown_format), locale))])
     }
     sheets.push({ key: 'media', name: t('prs.pdf.sheet.media'), rows, widths: [80, 40, 12] })
   }
@@ -867,21 +972,30 @@ export function deepSheets(analysis, t, locale) {
   if (isObj(a.security)) {
     const S = a.security
     const rows = []
-    block(rows, t('prs.pdf.xl.headers'), [t('prs.pdf.xl.header'), t('prs.pdf.xl.status'), t('prs.pdf.xl.value'), t('prs.pdf.xl.issue')],
-      arr(S.headers).filter(isObj).map((h) => [headerName(h.key), t(`prs.pdf.hstatus.${['ok', 'weak', 'missing'].includes(h.status) ? h.status : 'unknown'}`),
-        h.value ?? '', h.issue ?? '']))
+    if (S.headers == null) rows.push([t('prs.pdf.xl.headers')], [t('prs.pdf.secu.headersUnknown')])
+    else {
+      block(rows, t('prs.pdf.xl.headers'), [t('prs.pdf.xl.header'), t('prs.pdf.xl.status'), t('prs.pdf.xl.value'), t('prs.pdf.xl.issue')],
+        arr(S.headers).filter(isObj).map((h) => [headerName(h.key), t(`prs.pdf.hstatus.${['ok', 'weak', 'missing'].includes(h.status) ? h.status : 'unknown'}`),
+          h.value ?? '', h.issue ? headerIssueText(h.issue, t) : '']))
+    }
     block(rows, t('prs.pdf.xl.sri'), [t('prs.export.col.url'), t('prs.pdf.xl.kind')],
-      arr(S.sri_missing).filter(isObj).map((x) => [x.url ?? '', x.kind ?? '']))
-    block(rows, t('prs.pdf.xl.mixed'), [t('prs.export.col.url')], arr(S.mixed_content).filter(isObj).map((x) => [x.url ?? '']))
+      arr(S.sri_missing).filter(isObj).map((x) => [x.url ?? '', sriKindText(x.kind, t)]), S.sri_missing_total)
+    block(rows, t('prs.pdf.xl.mixed'), [t('prs.export.col.url')], arr(S.mixed_content).filter(isObj).map((x) => [x.url ?? '']), S.mixed_content_total)
     block(rows, t('prs.pdf.xl.cookies'), [t('prs.pdf.xl.cookie'), t('prs.export.col.host'), t('prs.export.col.thirdParty'), 'Secure', 'HttpOnly', 'SameSite', t('prs.pdf.xl.issue')],
-      arr(S.cookies).filter(isObj).map((c) => [c.name ?? '', c.host ?? '', yn(c.third_party, t), yn(c.secure, t), yn(c.http_only, t), c.same_site ?? '', arr(c.issues).join(', ')]))
+      arr(S.cookies).filter(isObj).map((c) => [c.name ?? '', c.host ?? '', yn(c.third_party, t), yn(c.secure, t), yn(c.http_only, t), c.same_site ?? '',
+        arr(c.issues).map((x) => cookieIssueText(x, t)).join(', ')]), S.cookies_total)
     block(rows, t('prs.pdf.xl.libraries'), [t('prs.pdf.xl.library'), t('prs.pdf.xl.version'), t('prs.export.col.url'), t('prs.pdf.xl.vulns')],
       arr(S.libraries).filter(isObj).map((l) => [l.name ?? '', l.version ?? '', l.url ?? '',
-        arr(l.vulns).filter(isObj).map((v) => [v.id, v.severity].filter(Boolean).join(' · ')).join('\n')]))
+        arr(l.vulns).filter(isObj).map((v) => [v.id, v.severity ? vulnSeverityText(v.severity, t) : null].filter(Boolean).join(' · ')).join('\n')]),
+      S.libraries_total)
     block(rows, t('prs.pdf.xl.thirdParty'), [t('prs.pdf.xl.category'), t('prs.pdf.xl.hostsCol'), t('prs.export.col.count'), t('prs.export.col.bytes')],
-      arr(S.third_party_categories).filter(isObj).map((c) => [tpCategoryLabel(c.category, t), arr(c.hosts).join(', '), num(c.requests), num(c.bytes)]))
+      arr(S.third_party_categories).filter(isObj).map((c) => {
+        const more = Math.max(0, (num(c.hosts_total) ?? 0) - arr(c.hosts).length)
+        return [tpCategoryLabel(c.category, t), arr(c.hosts).join(', ') + (more > 0 ? ` ${t('prs.deep.tp.hostsMore', formatNumber(more, locale))}` : ''),
+          num(c.requests), num(c.bytes)]
+      }), S.third_party_categories_total)
     block(rows, t('prs.pdf.xl.tracking'), [t('prs.export.col.host'), t('prs.pdf.xl.category')],
-      arr(S.tracking_on_load).filter(isObj).map((x) => [x.host ?? '', tpCategoryLabel(x.category, t)]))
+      arr(S.tracking_on_load).filter(isObj).map((x) => [x.host ?? '', tpCategoryLabel(x.category, t)]), S.tracking_on_load_total)
     if (S.catalog_date) rows.push([], [t('prs.pdf.xl.catalogDate', String(S.catalog_date))])
     sheets.push({ key: 'security', name: t('prs.pdf.sheet.security'), rows, widths: [40, 30, 60, 50, 12, 12, 30] })
   }
@@ -908,7 +1022,7 @@ export function sitePageSheetRows(model, t) {
       t('prs.kpi.requests'), t('prs.site.score.security'), t('prs.site.score.seo'), t('prs.site.score.a11y'), t('prs.site.col.unique'),
       t('prs.site.col.shared'), t('prs.site.col.recs'), t('prs.site.col.problem')],
     ...arr(model?.pages).map((p) => [p.url, pageStatusText(p.status, t), p.grade, p.letter || '', p.load, p.size, p.requests,
-      p.security, p.seo, p.a11y, p.unique, p.shared, p.recs.map((c) => recShortLabel(c, t)).join(', '), p.error || '']),
+      p.security, p.seo, p.a11y, p.unique, p.shared, p.recs.map((c) => recShortLabel(c, t)).join(', '), sitePageErrorText(p, t)]),
   ]
 }
 

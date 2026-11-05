@@ -41,7 +41,8 @@ export function deepAnalysis() {
       hosts: [
         { host: 'www.example.com', third_party: false, requests: 40, bytes: Math.round(1.6 * MB), http_version: '1.1', h3_advertised: false,
           dns_ms: 12, connect_ms: 30, tls_ms: 45, measured: true, reason: null },
-        { host: 'analytics.example.net', third_party: true, requests: 3, bytes: 90 * KB, http_version: '2', h3_advertised: true,
+        // be1: vekil üzerinden giden host'un HTTP sürümü bilinmez (null + reason proxy)
+        { host: 'analytics.example.net', third_party: true, requests: 3, bytes: 90 * KB, http_version: null, h3_advertised: true,
           dns_ms: null, connect_ms: null, tls_ms: null, measured: false, reason: 'proxy' },
       ],
       hosts_total: 4, http1_first_party_hosts: 1,
@@ -69,13 +70,13 @@ export function deepAnalysis() {
     security: {
       score: 58, letter: 'E',
       headers: [
-        { key: 'csp', status: 'missing', value: null, issue: 'Content-Security-Policy yok' },
+        { key: 'csp', status: 'missing', value: null, issue: null },
         { key: 'hsts', status: 'weak', value: 'max-age=300', issue: 'max-age kısa' },
         { key: 'x_content_type_options', status: 'ok', value: 'nosniff', issue: null },
       ],
       sri_missing: [{ url: 'https://cdn.example.org/lib.js', kind: 'script' }],
       mixed_content: [],
-      cookies: [{ name: 'SESSIONID', host: 'www.example.com', third_party: false, secure: true, http_only: false, same_site: null, issues: ['no_httponly', 'no_samesite'] }],
+      cookies: [{ name: 'SESSIONID', host: 'www.example.com', third_party: false, secure: true, http_only: false, same_site: null, issues: ['no_http_only', 'no_same_site'] }],
       libraries: [{ name: 'jQuery', version: '1.12.4', url: 'https://www.example.com/a/jquery.js', vulns: [{ id: 'CVE-2020-11022', severity: 'medium', summary: 'XSS' }] }],
       catalog_date: '2026-10-01',
       third_party_categories: [{ category: 'analytics', hosts: ['analytics.example.net'], requests: 3, bytes: 90 * KB }],
@@ -113,10 +114,13 @@ export function siteBlock() {
         grade: 48, letter: 'F', load_ms: 6100, page_bytes: Math.round(7.8 * MB), requests: 132,
         scores: { security: 58, seo: 64, accessibility: 71 }, top_recs: ['OVERSIZED_PAGE', 'LARGE_IMAGES', 'MISSING_SRCSET', 'BILINMEYEN_KOD'],
         unique_bytes: Math.round(6.2 * MB), shared_count: 6 },
-      { url: 'https://www.example.com/iletisim', status: 'failed', error: 'PAGE_HTTP:503', grade: null, letter: null, load_ms: null, page_bytes: null,
-        requests: null, scores: {}, top_recs: [], unique_bytes: null, shared_count: null },
-      { url: 'https://www.example.com/kampanyalar', status: 'skipped', error: null, grade: null, letter: null, load_ms: null, page_bytes: null,
-        requests: null, scores: {}, top_recs: [], unique_bytes: null, shared_count: null },
+      // Gerçek biçim (be2 localizeSite): `error` isteğin dilinde CÜMLE, `error_code` önek, `error_reason` neden
+      { url: 'https://www.example.com/iletisim', status: 'failed', error: 'Sayfa HTTP 503 döndürdü; analiz yapılamadı. Sayfanın açıldığını kontrol edip yeniden deneyin.',
+        error_code: 'PAGE_HTTP', error_reason: null, grade: null, letter: null, load_ms: null, page_bytes: null,
+        requests: null, scores: {}, top_recs: [], unique_bytes: null, shared_count: null, capped: false },
+      { url: 'https://www.example.com/kampanyalar', status: 'skipped', error: 'Süre bütçesi doldu; bu sayfa taranmadı. Daha az sayfayla ya da daha uzun süreyle yeniden çalıştırın.',
+        error_code: 'NOT_SCANNED', error_reason: null, grade: null, letter: null, load_ms: null, page_bytes: null,
+        requests: null, scores: {}, top_recs: [], unique_bytes: null, shared_count: null, capped: true },
       { url: 'https://www.example.com/urunler', status: 'ok', error: null, grade: 81, letter: 'B', load_ms: 1900, page_bytes: Math.round(1.2 * MB), requests: 38,
         scores: { security: 58, seo: 90, accessibility: 88 }, top_recs: [], unique_bytes: 300 * KB, shared_count: 6 },
     ],
@@ -125,13 +129,14 @@ export function siteBlock() {
       { url: 'https://www.example.com/static/site.css', category: 'CSS', bytes: 120 * KB, pages: 3 },
       { url: 'https://www.example.com/fonts/inter.woff2', category: 'FONT', bytes: 96 * KB, pages: 3 },
     ],
-    totals: { pages: 5, scanned: 3, failed: 1, avg_grade: 67, total_unique_bytes: Math.round(8.4 * MB) },
+    totals: { pages: 5, scanned: 3, failed: 1, skipped: 1, avg_grade: 67, total_unique_bytes: Math.round(8.4 * MB), shared: 3 },
+    incomplete: true,
   }
 }
 
 /** Çok sayfalı analizin ayrıntısı. */
 export function siteDetail(id = 30, over = {}) {
-  const d = deepDetail(id, { scan: { scope: 'site', pages_count: 5, started_at: '2026-11-01T09:00:00', finished_at: '2026-11-01T09:04:00', ...over.scan } })
+  const d = deepDetail(id, { scan: { scope: 'site', pages_count: 3, started_at: '2026-11-01T09:00:00', finished_at: '2026-11-01T09:04:00', ...over.scan } })
   return { ...d, analysis: { ...d.analysis, site: siteBlock() } }
 }
 
@@ -149,7 +154,7 @@ export function fgHistory({ site = true, running = null, canRun = true, extraLim
     return { ...v, budget_status: 'none' }
   })
   const siteRow = scanSummary(30, { started_at: '2026-11-01T09:00:00', finished_at: '2026-11-01T09:04:00', algorithm_version: 3, scope: 'site',
-    pages_count: 5, budget_status: 'exceeded', budget_exceeded: 2, security_score: 58, seo_score: 86, a11y_score: null })
+    pages_count: 3, budget_status: 'exceeded', budget_exceeded: 2, security_score: 58, seo_score: 86, a11y_score: null })
   const all = site ? [siteRow, ...items] : items
   return { items: running ? [running, ...all] : all, running, can_run: canRun,
     limits: { max_seconds: 300, max_objects: 1500, detail_runs: 20, max_pages: 10, site_max_seconds: 900, ...extraLimits } }

@@ -34,10 +34,11 @@ function categorySummary(key, scan, analysis) {
   const areas = AUDIT_AREAS.filter((a) => AUDIT_AREA_CATEGORY[a] === key)
   const sums = areas.map((a) => areaSummary(analysis, scan, a))
   if (sums.every((s) => s.state === 'old')) return { state: 'old', count: null }
-  const known = sums.filter((s) => s.state === 'ok' || s.state === 'issues')
+  // "Kısmi" (sınıra takılan analiz) bulgu sayar ama asla "bulgu yok" demez; yalnız HER alan ok ise ok
+  const known = sums.filter((s) => s.state === 'ok' || s.state === 'issues' || s.state === 'partial')
   if (!known.length) return { state: sums.some((s) => s.state === 'unknown') ? 'unknown' : 'missing', count: null }
   const count = known.reduce((n, s) => n + (s.count || 0), 0)
-  return { state: count > 0 ? 'issues' : (known.length === sums.length ? 'ok' : 'unknown'), count }
+  return { state: count > 0 ? 'issues' : (sums.every((s) => s.state === 'ok') ? 'ok' : 'unknown'), count }
 }
 
 function ScoreTile({ row, scan, analysis, t, locale, onAudit }) {

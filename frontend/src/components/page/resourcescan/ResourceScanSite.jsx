@@ -5,9 +5,9 @@ import { useElementWidth } from '../../../hooks/useElementWidth.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
-import { categoryLabel, formatMs, formatNumber, formatSize, gradeTone, isCapped, plural, problemText, scoreTone } from './resourceScanModel.js'
+import { categoryLabel, formatMs, formatNumber, formatSize, gradeTone, isCapped, plural, scoreTone } from './resourceScanModel.js'
 import {
-  SITE_SORTS, SITE_TABLE_MIN_PX, pageStatusText, pageStatusTone, recShortLabel, siteModel, sortSitePages,
+  SITE_SORTS, SITE_TABLE_MIN_PX, pageStatusText, pageStatusTone, recShortLabel, siteCountText, siteModel, sitePageErrorText, sortSitePages,
 } from './resourceScanReportModel.js'
 import { CHIP, Section, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
@@ -38,21 +38,27 @@ export default function ResourceScanSite({ scan, analysis }) {
   }
   const layout = width > 0 && width < SITE_TABLE_MIN_PX ? 'cards' : 'table'
   const tt = model.totals
+  // Site eksikliği sunucunun `incomplete` alanından (özetin capped'i artık YALNIZ ana sayfanın kırpılması); eski yanıtta
+  // alan yok → bugünkü kural (özetin capped'i)
+  const incomplete = model.incomplete ?? isCapped(scan)
   return (
     <div data-slot="prs-site" data-state="ok" className="flex min-w-0 flex-col gap-3">
       <Section slot="prs-site-summary" icon={Globe} title={t('prs.site.title')} titleFocusable
-        description={plural(t, 'prs.site.desc', tt.pages, formatNumber(tt.pages, locale))}>
+        description={`${siteCountText(tt, t, locale)}; ${t('prs.site.descTail')}`}>
         <ul data-slot="prs-site-totals" className="m-0 grid min-w-0 list-none grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-5">
           <Tile k="scanned" label={t('prs.site.tile.scanned')} value={`${formatNumber(tt.scanned, locale)} / ${formatNumber(tt.pages, locale)}`} />
           <Tile k="failed" label={t('prs.site.tile.notOpened')} value={formatNumber(tt.failed, locale)} tone={tt.failed > 0 ? 'danger' : null} />
+          {tt.skipped > 0 && <Tile k="skipped" label={t('prs.site.tile.skipped')} value={formatNumber(tt.skipped, locale)} />}
           <Tile k="avg" label={t('prs.site.tile.avgGrade')} value={tt.avgGrade == null ? '—' : formatNumber(tt.avgGrade, locale)}
             tone={tt.avgGrade == null ? null : scoreTone(tt.avgGrade)} />
           <Tile k="unique" label={t('prs.site.tile.unique')} value={formatSize(tt.uniqueBytes, { locale })} />
           <Tile k="shared" label={t('prs.site.tile.shared')} value={formatNumber(tt.sharedCount, locale)} />
         </ul>
-        {isCapped(scan) && (
+        {(incomplete || tt.skipped > 0) && (
           <div data-slot="prs-site-capped">
-            <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>{t('prs.site.capped')}</AlertBanner>
+            <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>
+              {tt.skipped > 0 ? plural(t, 'prs.site.skippedNote', tt.skipped, formatNumber(tt.skipped, locale)) : t('prs.site.capped')}
+            </AlertBanner>
           </div>
         )}
         {model.worst.length > 0 && (
@@ -180,16 +186,6 @@ function GradeBadge({ p, t }) {
   )
 }
 
-/** Sunucu hata alanı: kod ise çevrilir (ham kod gösterilmez), metinse olduğu gibi. */
-function pageErrorText(error, t) {
-  if (!error) return ''
-  const s = String(error)
-  const http = /^PAGE_HTTP:(\d{3})$/.exec(s)
-  if (http) return t('prs.site.err.http', http[1])
-  if (/^[A-Z][A-Z0-9_]*(?::[A-Za-z0-9_.-]+)?$/.test(s)) return problemText(s.split(':').pop(), t)
-  return s
-}
-
 function PageCell({ p, t, locale }) {
   return (
     <span className="flex min-w-0 flex-col gap-1">
@@ -199,8 +195,8 @@ function PageCell({ p, t, locale }) {
         {p.status === 'ok' && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
         {p.status === 'ok' && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
       </span>
-      {p.status === 'failed' && <span data-slot="prs-site-error" className={cn('text-xs text-destructive', WRAP)}>{pageErrorText(p.error, t) || pageStatusText(p.status, t)}</span>}
-      {p.status === 'skipped' && <span className={cn('text-xs text-muted-foreground', WRAP)}>{t('prs.site.skippedBody')}</span>}
+      {p.status === 'failed' && <span data-slot="prs-site-error" className={cn('text-xs text-destructive', WRAP)}>{sitePageErrorText(p, t) || pageStatusText(p.status, t)}</span>}
+      {p.status === 'skipped' && <span data-slot="prs-site-skip" className={cn('text-xs text-muted-foreground', WRAP)}>{sitePageErrorText(p, t) || t('prs.site.skippedBody')}</span>}
     </span>
   )
 }
@@ -224,7 +220,7 @@ function Recs({ p, t }) {
   if (!p.recs.length) return <span className="text-xs text-muted-foreground">{t('prs.site.recsNone')}</span>
   return (
     <span data-slot="prs-site-recs" className="flex flex-wrap gap-1">
-      {p.recs.map((c) => <ToneBadge key={c} tone="warning" className={CHIP} data-code={c}>{recShortLabel(c, t)}</ToneBadge>)}
+      {p.recs.map((c) => <ToneBadge key={c} tone={c === 'ALL_GOOD' ? 'success' : 'warning'} className={CHIP} data-code={c}>{recShortLabel(c, t)}</ToneBadge>)}
     </span>
   )
 }

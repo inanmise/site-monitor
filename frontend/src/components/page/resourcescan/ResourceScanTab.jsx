@@ -33,7 +33,7 @@ import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudget.jsx'
 import ResourceScanStart from './ResourceScanStart.jsx'
 import ResourceScanSite from './ResourceScanSite.jsx'
-import { isSiteScan, sectionTabCols, siteScopeIgnored } from './resourceScanReportModel.js'
+import { isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
@@ -145,17 +145,23 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       running: res.data.running && isRunning(res.data.running) ? res.data.running : null,
       can_run: res.data.can_run === true,
       limits: res.data.limits || null,
+      // Bütçe değerleri okunamadı: satırlar "bilinmiyor" — geçmişte ayrıca söylenir
+      budgetUnreadable: res.data.budget_unreadable === true,
       timestamp: res.timestamp ?? null,
     }
     setHist({ state: 'ok', data, error: null })
     return data
   }, [monitorId])
 
-  const loadDetail = useCallback(async (id) => {
+  /**
+   * Seçili analizin ayrıntısı. `quiet` (bütçe kaydı sonrası tazeleme): önbellek atlanır, ekranda eski ayrıntı KALIR (yükleniyor
+   * bloğuna düşmez, kaydırma korunur); başarısız sessiz tazelemede de eski ayrıntı gösterilmeye devam eder.
+   */
+  const loadDetail = useCallback(async (id, { quiet = false } = {}) => {
     const seq = ++detailSeq.current
-    const cached = cacheRef.current.get(id)
+    const cached = quiet ? null : cacheRef.current.get(id)
     if (cached) { setDetail({ state: 'ok', id, data: cached, error: null }); return }
-    setDetail({ state: 'loading', id, data: null, error: null })
+    if (!quiet) setDetail({ state: 'loading', id, data: null, error: null })
     let res = null
     let err = null
     try { res = await api.monitoring.resourceScan(monitorId, id) } catch (e) { err = e }
@@ -163,7 +169,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (res?.success && res.data?.scan) {
       if (!isRunning(res.data.scan)) cacheRef.current.set(id, res.data)
       setDetail({ state: 'ok', id, data: res.data, error: null })
-    } else setDetail({ state: 'error', id, data: null, error: res || err })
+    } else if (!quiet) setDetail({ state: 'error', id, data: null, error: res || err })
   }, [monitorId])
 
   /** Karşılaştırma için ayrıntı (önbellekten; yoksa okur) — `{ scan, … }` ya da hata gövdesi. */
@@ -272,7 +278,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     let failures = 0
     // Tavan BU istemcinin izlemeye başladığı andan ölçülür (Sürdür / yeni koşu sıfırlar) — sunucunun `started_at`
     // damgası tarayıcı saatiyle kıyaslanmaz (saat ileri olan tarayıcıda izleme hemen dururdu; 2026-10-31 inceleme).
-    const cap = pollCap ?? pollCapMs(limits)
+    // Site koşusu kendi süre bütçesiyle (site_max_seconds) izlenir
+    const cap = pollCap ?? pollCapMs(limits, running)
     const pollStartedAt = monoNow()
     const tick = async () => {
       let res = null
@@ -307,7 +314,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (!r || !startedHere(monitorId, r.id)) return
     const { toast: tt, t: tr, monitor: mon } = ctxRef.current
     handOff({
-      monitorId, scanId: r.id, pollMs: Math.max(pollMs * 2, 300), capMs: pollCap ?? pollCapMs(limitsRef.current),
+      monitorId, scanId: r.id, pollMs: Math.max(pollMs * 2, 300), capMs: pollCap ?? pollCapMs(limitsRef.current, r),
       poll: async () => { const res = await api.monitoring.resourceScan(monitorId, r.id); return res?.success ? res.data : null },
       onDone: (scan) => {
         if (isCancelled(scan)) return
@@ -481,6 +488,13 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   // eklenirse BURAYA da eklenir — telefon ızgarası (sectionTabCols) bu sayıya göre satıra böler.
   const sectionCount = 5 + (siteAvailable ? 1 : 0)
   const sectionCols = sectionTabCols(sectionCount)
+  // Sekme rozeti: "analiz edilen / toplam" (geçmiş ve Sayfalar başlığıyla AYNI anlam; hepsi analiz edildiyse tek sayı)
+  const siteTotals = siteAvailable ? siteModel(sel?.analysis?.site)?.totals ?? null : null
+  const siteBadge = siteTotals && siteTotals.pages > 0 ? {
+    text: siteTotals.scanned === siteTotals.pages ? formatNumber(siteTotals.pages, locale)
+      : `${formatNumber(siteTotals.scanned, locale)}/${formatNumber(siteTotals.pages, locale)}`,
+    aria: siteCountText(siteTotals, t, locale),
+  } : null
   const view = viewOf(shownSection, objectsMode, historyMode)
   const urlScanId = selectedId != null && selectedId !== running?.id ? selectedId : null
 
@@ -597,7 +611,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   useEffect(() => { if (section === 'trend' && budget.status === 'idle') budgetLoad() }, [section, budget.status, budgetLoad])
   function onBudgetSaved() {
     cacheRef.current.clear()
-    if (selectedRef.current != null && !(running && running.id === selectedRef.current)) loadDetail(selectedRef.current)
+    if (selectedRef.current != null && !(running && running.id === selectedRef.current)) loadDetail(selectedRef.current, { quiet: true })
     loadHistory()
   }
 
@@ -718,7 +732,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
             {siteAvailable && (
               <TabsTrigger value="pages" data-slot="prs-sec-pages" className={cn(TAB, TOUCH)}>
                 <Layers aria-hidden="true" />{t('prs.site.tab')}
-                {sel?.analysis?.site?.pages?.length > 0 && <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(sel.analysis.site.pages.length, locale)}</Badge>}
+                {siteBadge && <Badge variant="secondary" data-slot="prs-sec-pages-count" aria-label={siteBadge.aria}
+                  className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{siteBadge.text}</Badge>}
               </TabsTrigger>
             )}
             <TabsTrigger value="trend" data-slot="prs-sec-trend" className={cn(TAB, TOUCH)}><ChartSpline aria-hidden="true" />{t('prs.trend.tab')}</TabsTrigger>
@@ -802,7 +817,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
           </TabsContent>
 
           <TabsContent value="history" className="min-w-0">
-            <ResourceScanHistory items={items} selectedId={selectedId} limits={hist.data?.limits}
+            <ResourceScanHistory items={items} selectedId={selectedId} limits={hist.data?.limits} budgetUnreadable={hist.data?.budgetUnreadable === true}
               mode={historyMode} onModeChange={(m) => { setHistoryMode(m); requestFocus('history') }}
               otherId={otherId} getDetail={getDetail}
               onCompareChange={({ scanId, otherId: o }) => { if (scanId != null && scanId !== selectedId) select(scanId); setOtherId(o ?? null) }}
@@ -947,13 +962,18 @@ function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel,
   )
 }
 
-/** "Site · 5 sayfa" (çok sayfalı koşu; sunucu sayfa ilerlemesini verirse "Site · sayfa 2 / 5"). */
+/**
+ * Süren site koşusunun çipi: sunucu sayfa ilerlemesini (`progress.pages_done / pages_total`) sayfa listesi seçilince verir
+ * → "Site · sayfa 2 / 5"; öncesinde (ana sayfa ölçülürken) yalnız "Site".
+ */
 function siteChipText(scan, t, locale) {
   const n = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v))
   const done = n(scan?.progress?.pages_done)
-  const total = n(scan?.progress?.pages_total ?? scan?.pages_count)
-  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) return t('prs.site.runProgress', formatNumber(done, locale), formatNumber(total, locale))
-  return Number.isFinite(total) && total > 0 ? plural(t, 'prs.site.chip', total, formatNumber(total, locale)) : t('prs.site.chipNoCount')
+  const total = n(scan?.progress?.pages_total)
+  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+    return t('prs.site.runProgress', formatNumber(Math.min(done, total), locale), formatNumber(total, locale))
+  }
+  return t('prs.site.chipNoCount')
 }
 
 /** Geçen süre (r177 H13): sunucu saatine göre görüldüğü andaki taban + o andan beri geçen MONOTON süre. */

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Gauge, Globe, Image as ImageIcon, Layers, Lightbulb, ListFilter, NotebookText, TrendingDown, TriangleAlert } from 'lucide-react'
 import { formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -327,12 +327,18 @@ function ScoreBreakdown({ analysis, t, locale }) {
                     <span className="text-xs text-muted-foreground">/100</span>
                   </span>
                 </div>
-                <ProgressBar value={r.score ?? 0} max={100} size="sm" tone={TONE_BAR[r.tone]} decorative />
-                <span className={cn('text-xs text-muted-foreground', WRAP)}>
-                  {t(`prs.score.measured.${r.known ? r.key : 'other'}`, formatScoreValue(r, locale))}
-                  {' · '}{t('prs.score.weightLost', r.weight != null ? formatPct(r.weight, locale, 1) : '—',
-                    r.lost != null ? formatNumber(r.lost, locale, 1) : '—')}
-                </span>
+                {r.score != null && <ProgressBar value={r.score} max={100} size="sm" tone={TONE_BAR[r.tone]} decorative />}
+                {r.score == null ? (
+                  <span data-slot="prs-score-unknown" className={cn('text-xs text-muted-foreground', WRAP)}>
+                    {t('prs.score.notComputed', r.weight != null ? formatPct(r.weight, locale, 1) : '—')}
+                  </span>
+                ) : (
+                  <span className={cn('text-xs text-muted-foreground', WRAP)}>
+                    {t(`prs.score.measured.${r.known ? r.key : 'other'}`, formatScoreValue(r, locale))}
+                    {' · '}{t('prs.score.weightLost', r.weight != null ? formatPct(r.weight, locale, 1) : '—',
+                      r.lost != null ? formatNumber(r.lost, locale, 1) : '—')}
+                  </span>
+                )}
                 {target && <span data-slot="prs-score-target" className={cn('text-xs text-muted-foreground', WRAP)}>{target}</span>}
               </li>
             )
@@ -347,9 +353,11 @@ function ScoreBreakdown({ analysis, t, locale }) {
 function Recommendations({ analysis, items, t, locale, onShowObjects, objectsAvailable, onAudit, focusRec }) {
   const recs = sortRecommendations(analysis?.recommendations)
   const [open, setOpen] = useState(false)
-  // "Notu düşüren 3 şey"den gelinen öneri ilk 6'nın dışındaysa liste kendiliğinden açılır (odak hedefi görünür olsun)
-  const forced = Boolean(focusRec) && recs.slice(RECS_PREVIEW).some((r) => r.code === focusRec)
-  const all = open || forced || recs.length <= RECS_PREVIEW
+  // "Notu düşüren 3 şey"den gelinen öneri ilk 6'nın dışındaysa liste BİR KEZ açılır (odak hedefi görünür olsun); sonra
+  // kullanıcı "Daha az göster" ile kapatabilir — liste kalıcı açık kalmaz (prs3 inceleme D6)
+  const needsOpen = Boolean(focusRec) && recs.slice(RECS_PREVIEW).some((r) => r.code === focusRec)
+  useEffect(() => { if (needsOpen) setOpen(true) }, [needsOpen, focusRec])
+  const all = open || recs.length <= RECS_PREVIEW
   const shown = all ? recs : recs.slice(0, RECS_PREVIEW)
   return (
     <Section slot="prs-recs" icon={Lightbulb} title={t('prs.rec.title')} description={t('prs.rec.desc')}>
@@ -361,7 +369,7 @@ function Recommendations({ analysis, items, t, locale, onShowObjects, objectsAva
             {shown.map((r, i) => <RecItem key={`${r.code}#${i}`} rec={r} items={items} t={t} locale={locale} onShowObjects={onShowObjects} objectsAvailable={objectsAvailable}
               onAudit={onAudit} />)}
           </ul>
-          {recs.length > RECS_PREVIEW && !forced && (
+          {recs.length > RECS_PREVIEW && (
             <Button type="button" variant="outline" size="sm" data-slot="prs-recs-more" aria-expanded={all} onClick={() => setOpen((o) => !o)}
               className={cn('w-fit', TOUCH)}>
               <ChevronDown aria-hidden="true" className={cn('transition-transform', all && 'rotate-180')} />

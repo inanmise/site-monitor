@@ -36,7 +36,7 @@ async function routes(page, { oldServer = false } = {}) {
   const state = { started: null, polls: 0, posts: [], puts: [], trend: [] }
   const running = (id, scope) => scanSummary(id, { status: 'RUNNING', grade: null, grade_letter: null, load_ms: null, finished_at: null,
     started_at: new Date(Date.now() - 3000).toISOString().slice(0, 19), progress: { done: 9, total: 40, ...(scope ? { pages_done: 2, pages_total: 7 } : {}) },
-    ...(scope ? { scope: 'site', pages_count: 7 } : {}) })
+    ...(scope ? { scope: 'site', pages_count: null } : {}) })
   await page.route(PATH(/^\/api\/monitoring\/page\/100\/resource-scans$/), (route) => {
     if (route.request().method() === 'POST') {
       let body = null

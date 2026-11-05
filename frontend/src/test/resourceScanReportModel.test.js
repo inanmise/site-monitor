@@ -106,7 +106,7 @@ describe('F1 bütçe — okuma, form, fark', () => {
     expect(r.summary).toBe('Bütçe aşıldı: 2 kalem')
     expect(r.rows[0]).toEqual(['Sayfa boyutu (en çok)', '≤ 2 MB', '3,4 MB', 'Aşıldı'])
     expect(r.rows[2]).toEqual(['Performans notu (en az)', '≥ 80 / 100', '72 / 100', 'Aşıldı'])
-    expect(r.rows[3][3]).toBe('Ölçülemedi')
+    expect(r.rows[3][3]).toBe('Ölçülemedi — değer okunamadı')
     expect(budgetExportRows(null, scanSummary(1), t, L)).toBeNull()
   })
 })
@@ -186,7 +186,8 @@ describe('G çok sayfalı analiz', () => {
     expect(m.pages[0].main).toBe(true)
     expect(m.worst.map((p) => p.grade)).toEqual([48, 72])
     expect(m.shared.map((s) => s.category)).toEqual(['JS', 'CSS', 'FONT'])
-    expect(m.totals).toEqual({ pages: 5, scanned: 3, failed: 1, avgGrade: 67, uniqueBytes: Math.round(8.4 * MB), sharedCount: 3 })
+    expect(m.totals).toEqual({ pages: 5, scanned: 3, failed: 1, skipped: 1, avgGrade: 67, uniqueBytes: Math.round(8.4 * MB), sharedCount: 3 })
+    expect(m.incomplete).toBe(true)
     expect(m.pages[0].a11y).toBeNull()
     expect(siteModel(null)).toBeNull()
   })
@@ -284,11 +285,16 @@ describe('F3 yönetici raporu', () => {
     expect(sheets.map((s) => s.key)).toEqual(['loading', 'waste', 'media', 'security', 'html_audit'])
     const sec = sheets.find((s) => s.key === 'security').rows
     expect(sec[0]).toEqual(['Güvenlik başlıkları'])
-    expect(sec[2]).toEqual(['Content-Security-Policy', 'Eksik', '', 'Content-Security-Policy yok'])
+    expect(sec[2]).toEqual(['Content-Security-Policy', 'Eksik', '', ''])
+    // çerez sorunları ÇEVRİLİR (ham kod yok)
+    expect(sec.flat().join(' ')).toContain(t('prs.check.cookieIssue.no_http_only'))
+    expect(sec.flat().join(' ')).not.toMatch(/no_http_only/)
     // çerez DEĞERİ hiçbir hücrede yok (sunucu göndermez; sayfa yalnız ad ve bayraklar)
     expect(sec.flat().join(' ')).toContain('SESSIONID')
     const loading = sheets[0].rows
-    expect(loading.some((r) => r[0] === 'analytics.example.net' && /Hayır \(proxy\)/.test(r[8]))).toBe(true)
+    expect(loading.some((r) => r[0] === 'analytics.example.net' && r[8] === `Hayır (${t('prs.deep.hosts.reason.proxy')})`)).toBe(true)
+    // vekilli host'un HTTP sürümü bilinmiyor — "HTTP/2" uydurulmaz
+    expect(loading.find((r) => r[0] === 'analytics.example.net')[4]).toBe(t('prs.deep.hosts.httpProxy'))
     expect(deepSheets(scanAnalysis(), t, L)).toEqual([])
   })
 

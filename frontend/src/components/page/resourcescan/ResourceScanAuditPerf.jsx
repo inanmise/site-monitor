@@ -1,9 +1,9 @@
 import { Ban, Copy, Database, FileCode2, Image as ImageIcon, Link2, Map as MapIcon, Server, Signal, Type } from 'lucide-react'
 import { ProgressBar } from '../../ui/Progress.jsx'
 import {
-  CACHE_BUCKET_TONE, areaData, cacheText, cachingView, duplicateRows, fontView, formatMs, formatNumber, formatPct, formatSize, hintMore, hintRows,
-  HINT_STATE_TONE, HOST_SKIP_REASONS, hostRows, htmlStats, imageIssueGroups, isHttp1, libraryVersionRows, plural, profileRows,
-  renderBlockingView, sourceMapRows, unminifiedRows,
+  CACHE_BUCKET_TONE, areaData, areaUnreadable, cacheText, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
+  formatSize, hintMore, hintRows, HINT_STATE_TONE, hostReasonText, hostRows, htmlStats, imageIssueGroups, isHttp1, libraryVersionRows, plural,
+  profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows,
 } from './resourceScanModel.js'
 import {
   EmptyLine, KindBadge, NotInScan, ResponsiveRows, ShowObjectsButton, StatTiles, StateChip, UrlCell, UrlList,
@@ -38,9 +38,12 @@ export function LoadingArea({ ctx }) {
 function RenderBlockingBlock({ data, ctx }) {
   const { t, locale } = ctx
   const v = renderBlockingView(data)
+  // HTML ayrıştırılamadı (`hints` null; sunucu `render_blocking`'i de null yazar): engelleyen kaynak BİLİNMİYOR — "yok" değil
+  const htmlUnread = areaUnreadable(data, 'loading')
   return (
     <Section slot="prs-a-rb" icon={Ban} title={t('prs.deep.rb.title')} description={t('prs.deep.rb.desc')}>
-      {!v ? <NotInScan t={t} /> : (
+      {!v && htmlUnread ? <p data-slot="prs-a-rb-unknown" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('prs.deep.rb.htmlUnknown')}</p>
+        : !v ? <NotInScan t={t} /> : (
         <>
           <StatTiles tiles={[
             { k: 'count', label: t('prs.deep.rb.count'), value: formatNumber(v.count, locale), tone: v.count > 0 ? 'warning' : undefined },
@@ -48,13 +51,15 @@ function RenderBlockingBlock({ data, ctx }) {
             { k: 'paint', label: t('prs.deep.rb.firstPaint'), value: v.firstPaintMs != null ? `~${formatMs(v.firstPaintMs, locale)}` : '—',
               sub: <><KindBadge kind="estimate" t={t} /> {t('prs.deep.rb.firstPaintSub')}</> },
           ]} />
-          {v.rows.length === 0 ? <EmptyLine good>{t('prs.deep.rb.none')}</EmptyLine> : (
+          {v.rows.length === 0 ? (htmlUnread
+            ? <p data-slot="prs-a-rb-unknown" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('prs.deep.rb.htmlUnknown')}</p>
+            : <EmptyLine good>{t('prs.deep.rb.none')}</EmptyLine>) : (
             <ResponsiveRows slot="prs-a-rb-list" rowSlot="prs-a-rb-row" t={t} locale={locale} rows={v.rows} more={v.more}
               rowKey={(r) => r.url} rowAttrs={(r) => ({ 'data-kind': r.kind })} caption={t('prs.deep.rb.title')}
               columns={[
                 { key: 'url', primary: true, head: t('prs.deep.col.resource'), cell: (r) => <UrlCell url={r.url} t={t} item={ctx.itemOf(r.url)} onOpenItem={ctx.onOpenItem} /> },
-                { key: 'kind', head: t('prs.deep.col.kind'), className: 'w-[15%]', cell: (r) => t(`prs.deep.rb.kind.${r.kind}`) },
-                { key: 'reason', head: t('prs.deep.col.reason'), className: 'w-[22%]', cell: (r) => t(`prs.deep.rb.reason.${r.reason}`) },
+                { key: 'kind', head: t('prs.deep.col.kind'), className: 'w-[15%]', cell: (r) => rbKindText(r.kind, t) },
+                { key: 'reason', head: t('prs.deep.col.reason'), className: 'w-[22%]', cell: (r) => rbReasonText(r.reason, t) },
                 { key: 'bytes', head: t('prs.col.size'), align: 'right', className: 'w-[12%]', cell: (r) => fmtSize(r.bytes, locale) },
                 { key: 'dur', head: t('prs.col.time'), align: 'right', className: 'w-[11%]', cell: (r) => formatMs(r.durationMs, locale) },
               ]} />
@@ -125,7 +130,8 @@ function HostsBlock({ data, ctx }) {
                 { key: 'req', head: t('prs.deep.col.requests'), align: 'right', className: 'w-[10%]', cell: (r) => formatNumber(r.requests, locale) },
                 { key: 'bytes', head: t('prs.col.size'), align: 'right', className: 'w-[12%]', cell: (r) => fmtSize(r.bytes, locale) },
                 { key: 'http', head: t('prs.deep.col.http'), className: 'w-[11%]', cell: (r) => (r.httpVersion
-                  ? <span className={cn(isHttp1(r.httpVersion) && 'font-semibold text-amber-700 dark:text-amber-300')}>{r.httpVersion}</span> : '—') },
+                  ? <span className={cn(isHttp1(r.httpVersion) && 'font-semibold text-amber-700 dark:text-amber-300')}>{r.httpVersion}</span>
+                  : r.viaProxy ? <span data-slot="prs-a-host-proxy" className={cn('text-muted-foreground', WRAP)}>{t('prs.deep.hosts.httpProxy')}</span> : '—') },
                 { key: 'conn', head: t('prs.deep.col.connection'), className: 'w-[26%]', cell: (r) => connectionText(r, t, locale) },
                 { key: 'total', head: t('prs.deep.col.connTotal'), align: 'right', className: 'w-[11%]', cell: (r) => (r.totalMs != null ? formatMs(r.totalMs, locale) : '—') },
               ]} />
@@ -137,7 +143,7 @@ function HostsBlock({ data, ctx }) {
 }
 
 function connectionText(r, t, locale) {
-  if (!r.measured) return t('prs.deep.hosts.notMeasured', t(`prs.deep.hosts.reason.${HOST_SKIP_REASONS.includes(r.reason) ? r.reason : 'other'}`))
+  if (!r.measured) return t('prs.deep.hosts.notMeasured', hostReasonText(r.reason, t))
   const part = (v) => (v != null ? formatMs(v, locale) : '—')
   return t('prs.deep.hosts.parts', part(r.dnsMs), part(r.connectMs), part(r.tlsMs))
 }
@@ -198,7 +204,7 @@ function DuplicatesBlock({ data, ctx }) {
             {v.rows.map((r, i) => (
               <li key={`${r.urls[0]}#${i}`} data-slot="prs-b-dup-row" data-kind={r.kind} className="flex min-w-0 flex-col gap-1.5 rounded-lg border px-3 py-2">
                 <span className="flex min-w-0 flex-wrap items-center gap-2">
-                  <StateChip tone="warning">{t(`prs.deep.dup.kind.${r.kind}`)}</StateChip>
+                  <StateChip tone="warning">{dupKindText(r.kind, t)}</StateChip>
                   {r.wasted != null && <span className="text-xs text-muted-foreground tabular-nums">{t('prs.deep.dup.wasted', fmtSize(r.wasted, locale))}</span>}
                 </span>
                 <ul className="m-0 flex list-none flex-col gap-1 p-0">
@@ -444,6 +450,11 @@ function FontsBlock({ data, ctx }) {
               <UrlList slot="prs-c-font-nonwoff2" urls={v.nonWoff2.rows} t={t} locale={locale} more={v.nonWoff2.more} itemOf={ctx.itemOf} onOpenItem={ctx.onOpenItem}
                 renderMeta={(r) => t('prs.deep.font.format', r.format === 'unknown' ? t('prs.deep.font.formatUnknown') : r.format.toUpperCase())} />
             </div>
+          )}
+          {v.unknownFormat > 0 && (
+            <p data-slot="prs-c-font-unknown" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>
+              {plural(t, 'prs.deep.font.unknownFormat', v.unknownFormat, formatNumber(v.unknownFormat, locale))}
+            </p>
           )}
           {v.missingDisplay && v.missingDisplay.rows.length > 0 && (
             <div className="flex min-w-0 flex-col gap-1.5">

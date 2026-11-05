@@ -28,7 +28,7 @@ function statusKey(s) {
  * tamamlanmış analizi istemcide karşılaştırır (ResourceScanCompare). Satırın erişilebilir adı görünen bilginin TAMAMI.
  */
 export default function ResourceScanHistory({
-  items, selectedId, onSelect, onShowRunning, limits, mode = 'list', onModeChange, otherId, onCompareChange, getDetail,
+  items, selectedId, onSelect, onShowRunning, limits, mode = 'list', onModeChange, otherId, onCompareChange, getDetail, budgetUnreadable = false,
 }) {
   const t = useT()
   const locale = useDateLocale()
@@ -50,6 +50,9 @@ export default function ResourceScanHistory({
         <Section slot="prs-history" icon={History} title={t('prs.hist.title')} titleFocusable
           description={days ? plural(t, 'prs.hist.descDays', limits?.detail_runs ?? 20, formatNumber(limits?.detail_runs ?? 20, locale), formatNumber(days, locale))
             : plural(t, 'prs.hist.desc', limits?.detail_runs ?? 20, formatNumber(limits?.detail_runs ?? 20, locale))}>
+          {budgetUnreadable && list.length > 0 && (
+            <p data-slot="prs-history-budget-unreadable" className="m-0 text-xs text-muted-foreground">{t('prs.budget.hist.unreadableNote')}</p>
+          )}
           {list.length === 0 ? (
             <p data-slot="prs-history-empty" className="m-0 text-sm text-muted-foreground">{t('prs.hist.none')}</p>
           ) : (

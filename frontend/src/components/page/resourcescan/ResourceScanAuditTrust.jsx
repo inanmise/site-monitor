@@ -76,9 +76,9 @@ function SecurityScoreBlock({ data, ctx }) {
         title={t('prs.deep.sec.scoreTitle')}
         chips={c && (
           <>
-            <StateChip tone="danger" data-slot="prs-d-count-missing">{plural(t, 'prs.deep.sec.missingCount', c.missing, formatNumber(c.missing, locale))}</StateChip>
-            <StateChip tone="warning" data-slot="prs-d-count-weak">{plural(t, 'prs.deep.sec.weakCount', c.weak, formatNumber(c.weak, locale))}</StateChip>
-            <StateChip tone="success" data-slot="prs-d-count-ok">{plural(t, 'prs.deep.sec.okCount', c.ok, formatNumber(c.ok, locale))}</StateChip>
+            <StateChip tone={countTone(c.missing, 'danger')} data-slot="prs-d-count-missing">{plural(t, 'prs.deep.sec.missingCount', c.missing, formatNumber(c.missing, locale))}</StateChip>
+            <StateChip tone={countTone(c.weak, 'warning')} data-slot="prs-d-count-weak">{plural(t, 'prs.deep.sec.weakCount', c.weak, formatNumber(c.weak, locale))}</StateChip>
+            <StateChip tone={countTone(c.ok, 'success')} data-slot="prs-d-count-ok">{plural(t, 'prs.deep.sec.okCount', c.ok, formatNumber(c.ok, locale))}</StateChip>
           </>
         )} />
     </Section>
@@ -228,7 +228,11 @@ function LibrariesBlock({ data, ctx }) {
                               </a>
                             ) : <code className="font-mono text-xs font-semibold">{x.id}</code>}
                           </span>
-                          {x.summary && <span lang="en" className={cn('text-xs text-muted-foreground', WRAP)}>{x.summary}</span>}
+                          {x.summary && (
+                            <span data-slot="prs-d-vuln-summary" className={cn('text-xs text-muted-foreground', WRAP)}>
+                              <span className="font-medium">{t('prs.deep.sec.vulnSummaryLabel')} </span><span lang="en">{x.summary}</span>
+                            </span>
+                          )}
                         </li>
                       )
                     })}
@@ -266,7 +270,12 @@ function ThirdPartyCategoriesBlock({ data, ctx }) {
               </span>
             ) },
             { key: 'hosts', head: t('prs.deep.col.hosts'), className: 'w-[40%]', cell: (r) => (
-              <ul className="m-0 flex list-none flex-col gap-0.5 p-0">{r.hosts.map((h) => <li key={h} className={WRAP}>{h}</li>)}</ul>
+              <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                {r.hosts.map((h) => <li key={h} className={WRAP}>{h}</li>)}
+                {r.hostsTotal > r.hosts.length && (
+                  <li data-slot="prs-d-tp-hosts-more" className="text-muted-foreground">{t('prs.deep.tp.hostsMore', formatNumber(r.hostsTotal - r.hosts.length, locale))}</li>
+                )}
+              </ul>
             ) },
             { key: 'req', head: t('prs.deep.col.requests'), align: 'right', className: 'w-[11%]', cell: (r) => formatNumber(r.requests, locale) },
             { key: 'bytes', head: t('prs.col.size'), align: 'right', className: 'w-[13%]', cell: (r) => fmtSize(r.bytes, locale) },
@@ -321,9 +330,9 @@ export function ChecksArea({ ctx, area }) {
         <ScoreHeader slot={`prs-e-${ns}-score-value`} score={score} letter={null} tone={tone} partial={false} t={t} title={t(`prs.deep.${ns}.scoreTitle`)}
           chips={c.total > 0 && (
             <>
-              <StateChip tone="danger" data-slot="prs-e-count-fail">{plural(t, 'prs.deep.checks.failCount', c.fail, formatNumber(c.fail, locale))}</StateChip>
-              <StateChip tone="warning" data-slot="prs-e-count-warn">{plural(t, 'prs.deep.checks.warnCount', c.warn, formatNumber(c.warn, locale))}</StateChip>
-              <StateChip tone="success" data-slot="prs-e-count-pass">{plural(t, 'prs.deep.checks.passCount', c.pass, formatNumber(c.pass, locale))}</StateChip>
+              <StateChip tone={countTone(c.fail, 'danger')} data-slot="prs-e-count-fail">{plural(t, 'prs.deep.checks.failCount', c.fail, formatNumber(c.fail, locale))}</StateChip>
+              <StateChip tone={countTone(c.warn, 'warning')} data-slot="prs-e-count-warn">{plural(t, 'prs.deep.checks.warnCount', c.warn, formatNumber(c.warn, locale))}</StateChip>
+              <StateChip tone={countTone(c.pass, 'success')} data-slot="prs-e-count-pass">{plural(t, 'prs.deep.checks.passCount', c.pass, formatNumber(c.pass, locale))}</StateChip>
             </>
           )}>
           {area === 'a11y' && <p data-slot="prs-e-contrast" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('prs.deep.a11y.contrast')}</p>}
@@ -340,6 +349,9 @@ export function ChecksArea({ ctx, area }) {
   )
 }
 
+/** Sayı rozetinin tonu: sıfır SOLUK (renkli "0 eksik" / "0 başarısız" yanlış alarm gibi görünür), değilse verilen ton. */
+const countTone = (n, tone) => (Number(n) > 0 ? tone : 'muted')
+
 function CheckRow({ row, ns, t, locale }) {
   const titleKey = row.known ? `prs.check.${ns}.${row.key}` : `prs.check.${ns}.other`
   const showWhy = row.status !== 'pass'
@@ -349,7 +361,7 @@ function CheckRow({ row, ns, t, locale }) {
         <StateChip tone={CHECK_TONE[row.status]}>{t(`prs.check.status.${row.status}`)}</StateChip>
         <span className={cn('text-sm font-semibold text-foreground', WRAP)}>{t(titleKey)}</span>
         {row.issue && row.status !== 'pass' && <SmallBadge tone={CHECK_TONE[row.status]} data-slot="prs-e-check-issue">{t(`prs.check.issue.${row.issue}`)}</SmallBadge>}
-        {row.count != null && (ns === 'a11y' ? row.status !== 'pass' : row.count !== 1) && (
+        {row.count != null && row.issue !== 'missing' && (ns === 'a11y' ? row.status !== 'pass' : row.count !== 1) && (
           <span className="text-xs text-muted-foreground tabular-nums">{plural(t, 'prs.deep.checks.count', row.count, formatNumber(row.count, locale))}</span>
         )}
       </span>

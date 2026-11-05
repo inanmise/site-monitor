@@ -11,8 +11,8 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { LoadingBlock, Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import {
-  BUDGET_FIELDS, BUDGET_STATUS_TONE, budgetBand, budgetChanges, budgetDefinedCount, budgetErrorField, budgetFormFrom, budgetStatusOf,
-  formatBudgetActual, formatBudgetLimit, isBudgetUnsupported, normalizeBudget, parseBudgetForm,
+  BUDGET_FIELDS, BUDGET_ROW_TONE, BUDGET_STATUS_TONE, budgetBand, budgetBandText, budgetChanges, budgetDefinedCount, budgetErrorField,
+  budgetFormFrom, budgetRowDetail, budgetRowState, budgetStatusOf, isBudgetUnsupported, normalizeBudget, parseBudgetForm,
 } from './resourceScanReportModel.js'
 import { formatNumber, formatSize, KB, plural } from './resourceScanModel.js'
 import { CHIP, TOUCH, WRAP } from './ResourceScanParts.jsx'
@@ -73,13 +73,6 @@ export function useResourceBudget(monitorId, fallbackCanEdit) {
 /** Kalem adı + birim ipucu ("Sayfa boyutu (KB)"). */
 const fieldLabel = (key, t) => t(`prs.budget.f.${key}`)
 
-/** Satırın durumu: ok / exceeded / unknown — metin ve ton. */
-function rowState(ok) {
-  if (ok === true) return { k: 'ok', tone: 'success' }
-  if (ok === false) return { k: 'exceeded', tone: 'danger' }
-  return { k: 'unknown', tone: 'muted' }
-}
-
 /** Seçili analizin bütçe bandı. `budget` yoksa (eski sunucu / eski pod) null. */
 export function BudgetBand({ budget, scan, canEdit, onOpen }) {
   const t = useT()
@@ -87,13 +80,11 @@ export function BudgetBand({ budget, scan, canEdit, onOpen }) {
   const titleId = useId()
   const band = useMemo(() => budgetBand(budget, scan), [budget, scan])
   if (!band) return null
-  const head = band.state === 'none'
-    ? { tone: 'muted', text: t('prs.budget.band.none') }
-    : band.state === 'exceeded'
-      ? { tone: 'danger', text: plural(t, 'prs.budget.band.exceeded', band.exceeded, formatNumber(band.exceeded, locale)) }
-      : band.state === 'partial'
-        ? { tone: 'muted', text: plural(t, 'prs.budget.band.partial', band.unknown, formatNumber(band.unknown, locale)) }
-        : { tone: 'success', text: plural(t, 'prs.budget.band.ok', band.rows.length, formatNumber(band.rows.length, locale)) }
+  // Okunamayan değerlendirme / kesin olmayan kalemler SOLUK — "aşılan yok" yazılmaz, yeşil gösterilmez
+  const head = {
+    tone: band.state === 'exceeded' ? 'danger' : band.state === 'ok' ? 'success' : 'muted',
+    text: budgetBandText(band, t, locale),
+  }
   const action = band.state === 'none'
     ? (canEdit ? t('prs.budget.set') : null)
     : (canEdit ? t('prs.budget.edit') : t('prs.budget.view'))
@@ -114,26 +105,26 @@ export function BudgetBand({ budget, scan, canEdit, onOpen }) {
       </div>
       {band.state === 'none' ? (
         <p className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t(canEdit ? 'prs.budget.band.noneBody' : 'prs.budget.band.noneBodyRead')}</p>
+      ) : band.state === 'unreadable' ? (
+        <p data-slot="prs-budget-unreadable" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('prs.budget.band.unreadableBody')}</p>
       ) : (
         <>
           <ul data-slot="prs-budget-rows" className="m-0 grid min-w-0 list-none grid-cols-1 gap-1.5 p-0 sm:grid-cols-2">
             {band.rows.map((r) => {
-              const s = rowState(r.ok)
-              const f = BUDGET_FIELDS.find((x) => x.key === r.key)
-              const limit = formatBudgetLimit(r.key, r.limit, locale)
-              const actual = formatBudgetActual(r.key, r.actual, locale)
-              const cmp = f?.dir === 'min' ? '≥' : '≤'
+              const st = budgetRowState(r)
+              // data-ok: ok | exceeded | unknown (kesin olmayan her neden) — nedeni data-reason söyler
+              const okAttr = st === 'ok' || st === 'exceeded' ? st : 'unknown'
               return (
-                <li key={r.key} data-slot="prs-budget-row" data-key={r.key} data-ok={s.k}
+                <li key={r.key} data-slot="prs-budget-row" data-key={r.key} data-ok={okAttr} data-reason={r.reason || undefined}
                   className={cn('flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border px-3 py-2',
-                    s.k === 'exceeded' ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/20')}>
+                    st === 'exceeded' ? 'border-destructive/40 bg-destructive/5' : 'bg-muted/20')}>
                   <span className="flex min-w-0 flex-col gap-0.5">
                     <span className={cn('text-sm font-medium text-foreground', WRAP)}>{r.known ? fieldLabel(r.key, t) : t('prs.budget.f.other')}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {t('prs.budget.row.limitActual', `${cmp} ${limit}`, actual)}
+                    <span data-slot="prs-budget-row-detail" className={cn('text-xs text-muted-foreground tabular-nums', WRAP)}>
+                      {budgetRowDetail(r, t, locale)}
                     </span>
                   </span>
-                  <ToneBadge tone={s.tone} className={cn(CHIP, 'font-semibold')} data-slot="prs-budget-row-state">{t(`prs.budget.state.${s.k}`)}</ToneBadge>
+                  <ToneBadge tone={BUDGET_ROW_TONE[st]} className={cn(CHIP, 'font-semibold')} data-slot="prs-budget-row-state">{t(`prs.budget.state.${st}`)}</ToneBadge>
                 </li>
               )
             })}
@@ -177,19 +168,25 @@ export function BudgetDialog({ open, onClose, monitorId, budget, onSaved }) {
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const { load } = budget
 
-  // Açılışta taze oku (fark, açılıştaki kayıtlı hâle göre hesaplanır — başka bir kullanıcının kaydı ezilmesin)
+  // Açılışta taze oku; taban (fark hesabı) YALNIZ bu açılıştaki okuma bittikten sonra alınır — bellekte eski bir okuma
+  // varsa (Eğilim sekmesi) onu taban almak başka kullanıcının son kaydını göstermezdi (prs3 inceleme D4)
+  const [readGen, setReadGen] = useState(0)
+  const openGen = useRef(0)
   useEffect(() => {
-    if (!open) return
+    if (!open) return undefined
+    const my = ++openGen.current
     setSaveError(null)
     setBase(null)
-    load()
+    setReadGen(0)
+    Promise.resolve(load()).finally(() => { if (alive.current && openGen.current === my) setReadGen(my) })
+    return () => { openGen.current += 1 }
   }, [open, load])
   useEffect(() => {
-    if (open && budget.status === 'ok' && base === null) {
+    if (open && readGen > 0 && readGen === openGen.current && budget.status === 'ok' && base === null) {
       setBase(budget.values)
       setForm(budgetFormFrom(budget.values))
     }
-  }, [open, budget.status, budget.values, base])
+  }, [open, readGen, budget.status, budget.values, base])
 
   const editable = budget.canEdit === true && budget.status === 'ok'
   const parsed = useMemo(() => parseBudgetForm(form), [form])
@@ -266,7 +263,7 @@ export function BudgetDialog({ open, onClose, monitorId, budget, onSaved }) {
       dismissOnBackdrop={false} scrollBody footer={footer}>
       <div data-slot="prs-budget-dialog" data-state={status} data-editable={editable ? 'true' : 'false'} className="flex min-w-0 flex-col gap-3">
         <p className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('prs.budget.dialogIntro')}</p>
-        {(status === 'loading' || status === 'idle' || (status === 'refreshing' && base === null)) && <LoadingBlock label={t('prs.budget.loading')} className="py-6" />}
+        {base === null && status !== 'unsupported' && status !== 'error' && <LoadingBlock label={t('prs.budget.loading')} className="py-6" />}
         {status === 'unsupported' && (
           <div data-slot="prs-budget-unsupported">
             <StatusBlock tone="info" icon={Target} title={t('prs.budget.unsupportedTitle')} description={t('prs.budget.unsupportedBody')} />

@@ -68,7 +68,7 @@ describe('başlatma menüsü (G)', () => {
   })
 
   it('"Siteyi analiz et" → pencere (2 … sunucu sınırı) → gövde { scope: site, max_pages }; koşu kartında "Site · N sayfa"', async () => {
-    const run = scanSummary(51, { status: 'RUNNING', scope: 'site', pages_count: 7,
+    const run = scanSummary(51, { status: 'RUNNING', scope: 'site', pages_count: null,
       progress: { done: 3, total: 40, pages_done: 2, pages_total: 7 }, grade: null, finished_at: null })
     api.monitoring.startResourceScan.mockResolvedValue(ok(run))
     api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 51
@@ -207,18 +207,18 @@ describe('performans bütçesi (F1)', () => {
 })
 
 describe('geçmiş ve karşılaştırma işaretleri', () => {
-  it('geçmiş satırı: "Site · 5 sayfa", bütçe aşıldı (2) / içinde / bilinmiyor; bütçesiz satırda işaret yok', async () => {
+  it('geçmiş satırı: "Site · 3 sayfa analiz edildi", bütçe aşıldı (2) / içinde / bilinmiyor; bütçesiz satırda işaret yok', async () => {
     await mount()
     openTab(/^Geçmiş/)
     const row = (id) => document.querySelector(`[data-slot="prs-history-row"][data-id="${id}"]`)
     await waitFor(() => expect(row(30)).not.toBeNull())
-    expect(slot('prs-history-scope', row(30)).textContent).toBe('Site · 5 sayfa')
+    expect(slot('prs-history-scope', row(30)).textContent).toBe('Site · 3 sayfa analiz edildi')
     expect(slot('prs-budget-status', row(30)).textContent).toBe('Bütçe aşıldı (2)')
     expect(slot('prs-budget-status', row(12)).getAttribute('data-status')).toBe('ok')
     expect(slot('prs-budget-status', row(10)).textContent).toBe('Bütçe: bilinmiyor')
     expect(slot('prs-budget-status', row(10)).getAttribute('data-tone')).toBe('muted')
     expect(slot('prs-budget-status', row(9))).toBeNull()
-    expect(row(30).getAttribute('aria-label')).toMatch(/Site · 5 sayfa/)
+    expect(row(30).getAttribute('aria-label')).toMatch(/Site · 3 sayfa analiz edildi/)
   })
 
   it('karşılaştırma: iki tarafın bütçe durumu, site işareti ve kategori puanları', async () => {
@@ -228,7 +228,7 @@ describe('geçmiş ve karşılaştırma işaretleri', () => {
     await waitFor(() => expect(slot('prs-cmp-body')).not.toBeNull())
     const m = slot('prs-cmp-markers')
     expect(slots('prs-budget-status', m).map((b) => b.getAttribute('data-status'))).toEqual(['ok', 'exceeded'])
-    expect(slot('prs-cmp-site', m).textContent).toBe('Site · 5 sayfa')
+    expect(slot('prs-cmp-site', m).textContent).toBe('Site · 3 sayfa analiz edildi')
     expect(slot('prs-cmp-scores', m).textContent).toMatch(/Güvenlik.*58/)
   })
 })
@@ -307,7 +307,8 @@ describe('sayfalar görünümü (G)', () => {
     const pages = slots('prs-site-page')
     expect(pages.map((p) => p.getAttribute('data-status'))).toEqual(['ok', 'ok', 'ok', 'failed', 'skipped'])
     expect(pages[0].textContent).toMatch(/48/)
-    expect(slot('prs-site-error').textContent).toBe('Sayfa HTTP 503 durum kodu döndürdü.')
+    // sunucu sayfa hatasını isteğin dilinde CÜMLE olarak yazar (gerçek biçim) — o gösterilir
+    expect(slot('prs-site-error').textContent).toBe('Sayfa HTTP 503 döndürdü; analiz yapılamadı. Sayfanın açıldığını kontrol edip yeniden deneyin.')
     expect(pages[0].textContent).toMatch(/Ağır sayfa/)
     expect(pages[0].textContent).toMatch(/Diğer öneri/)
     expect(pages[0].textContent).not.toMatch(/BILINMEYEN_KOD/)

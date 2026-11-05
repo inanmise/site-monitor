@@ -190,9 +190,15 @@ for (const vp of VIEWPORTS) {
         expect(tops.length, `@${vp.name}: başlık eylemleri`).toBe(4)
         expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: başlık eylemleri tek satır değil (${tops.join(', ')})`).toBeLessThanOrEqual(1)
       }
-      // Bölüm sekmeleri tek satır (telefonda 3 eşit sütun — "Geçmiş" alt satıra düşmez)
+      // Bölüm sekmeleri: sm+ tek satır; telefonda eşit sütunlu ızgara (en çok 4 tek satır, 5+ iki satır — sectionTabCols;
+      // prs3'te Denetim ve Eğilim eklendi, 5 sekme 390 px'te tek satıra sığmıyordu)
       const secTops = await root.locator('[data-slot="prs-sections"] [role="tab"]').evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
-      expect(Math.max(...secTops) - Math.min(...secTops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      if (vp.width >= 640) {
+        expect(Math.max(...secTops) - Math.min(...secTops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
+      } else {
+        const cols = Number(await root.locator('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-cols'))
+        expect(new Set(secTops).size, `@${vp.name}: bölüm sekmesi satırı`).toBe(Math.ceil(secTops.length / cols))
+      }
       await expect(root.locator('[data-slot="prs-note"]')).toHaveCount(2)
       await check('pano')
       if (vp.name === 'phone') {

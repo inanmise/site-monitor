@@ -64,7 +64,7 @@ async function mountDone(props = {}) {
 const area = (a) => slots('prs-audit-tab').find((x) => x.getAttribute('data-area') === a)
 async function openAudit(a) {
   openTab(/^Denetim/)
-  await waitFor(() => expect(slot('prs-audit')).not.toBeNull())
+  await waitFor(() => expect(slot('prs-audit')).not.toBeNull(), { timeout: 5000 })
   if (a) {
     fireEvent.mouseDown(area(a), { button: 0 })
     await waitFor(() => expect(slot('prs-audit').getAttribute('data-area')).toBe(a))
@@ -84,7 +84,7 @@ describe('pano — kategori puanları', () => {
     // kategori puanları önerilerden ÖNCE (ilk ekranda)
     expect(slot('prs-cat-scores').compareDocumentPosition(slot('prs-recs')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     fireEvent.click(within(tiles[1]).getByRole('button', { name: /Güvenlik: 58\/100 \(E\)/ }))
-    await waitFor(() => expect(slot('prs-audit')?.getAttribute('data-area')).toBe('security'))
+    await waitFor(() => expect(slot('prs-audit')?.getAttribute('data-area')).toBe('security'), { timeout: 5000 })
     await waitFor(() => expect(document.activeElement?.getAttribute('data-focus-target')).toBe('prs-audit'))
     await waitFor(() => expect(window.location.search).toMatch(/prs_v=audit-security/))
   })

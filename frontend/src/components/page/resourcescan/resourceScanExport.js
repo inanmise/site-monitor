@@ -221,9 +221,10 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
     const rgb = TONE_RGB[r.score === null ? 'muted' : r.tone] || TONE_RGB.muted
     doc.setFont('Roboto', 'bold').setFontSize(16).setTextColor(rgb[0], rgb[1], rgb[2])
     doc.text(categoryScoreText(r, locale), x + 10, y + 36)
-    if (r.score === null) {
+    if (r.score === null || r.partial) {
+      // Hesaplanamayan "—"; kısmi analizin puanı soluk + not (ekranın kuralı — kısmi veriden yeşil türetilmez)
       doc.setFont('Roboto', 'normal').setFontSize(7.5).setTextColor(120)
-      doc.text(t('prs.pdf.notComputed'), x + 10, y + 46)
+      doc.text(t(r.score === null ? 'prs.pdf.notComputed' : 'prs.pdf.partialScore'), x + 10, y + 46)
     }
   })
   doc.setTextColor(40)
@@ -321,6 +322,8 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
     para(t('prs.pdf.siteSummary', formatNumber(site.totals.scanned, locale), formatNumber(site.totals.pages, locale),
       site.totals.avgGrade == null ? '—' : formatNumber(site.totals.avgGrade, locale), formatSize(site.totals.uniqueBytes, { locale }),
       formatNumber(site.totals.sharedCount, locale)))
+    if (site.totals.skipped > 0) para(plural(t, 'prs.site.skippedNote', site.totals.skipped, formatNumber(site.totals.skipped, locale)), { size: 8.5 })
+    else if (site.incomplete) para(t('prs.site.capped'), { size: 8.5 })
     const worst = site.worst.length ? site.worst : site.pages.slice(0, 5)
     doc.lastAutoTable = null
     table([[t('prs.export.col.url'), t('prs.grade'), t('prs.kpi.load'), t('prs.kpi.size')],

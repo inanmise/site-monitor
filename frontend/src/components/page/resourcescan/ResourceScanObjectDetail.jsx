@@ -86,7 +86,8 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
           <Row label={t('prs.col.size')} value={itemBytes(item) == null ? itemSizeText(item, t, locale)
             : `${itemSizeText(item, t, locale)} · ${formatBytesExact(item.bytes, locale)}`} />
           <Row label={t('prs.od.sizeSource')}
-            value={item.size_source === 'header' ? t('prs.od.sizeHeader') : item.size_source === 'body' ? t('prs.od.sizeBody')
+            value={item.size_source === 'header' ? t('prs.od.sizeHeader')
+              : item.size_source === 'body' ? t(item.compressed === true ? 'prs.od.sizeBody' : 'prs.od.sizeBodyPlain')
               : item.size_source === 'unknown' ? t('prs.od.sizeUnknownSource') : null} empty={nr} />
           {opt && <Row label={t('prs.od.optimized')} slot="prs-od-optimized" value={optimizedText(item, t, locale)} />}
           {dim && <Row label={t('prs.export.col.dimensions')} value={t('prs.img.dims', dim)} />}
@@ -158,7 +159,8 @@ function DeepGroup({ item, t }) {
   const lib = itemLibrary(item)
   return (
     <Group title={t('prs.od.deep')} slot="prs-od-deep">
-      <Row label={t('prs.od.httpVersion')} slot="prs-od-http" value={httpVersionText(item.http_version)} empty="—" />
+      <Row label={t('prs.od.httpVersion')} slot="prs-od-http"
+        value={httpVersionText(item.http_version) ?? (item.via === 'proxy' ? t('prs.deep.hosts.httpProxy') : null)} empty="—" />
       {isPageLoad(item) && <Row label={t('prs.od.renderBlocking')} slot="prs-od-rb"
         value={yn(item.render_blocking, 'prs.od.renderBlockingYes', 'prs.od.renderBlockingNo')} empty="—" />}
       <Row label={t('prs.od.contentHash')} slot="prs-od-hash"

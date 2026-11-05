@@ -47,7 +47,7 @@ export const REC_PARAM_KIND = {
   // ── prs3 (A–E; be1 kod kataloğu) ──
   est_first_paint_ms: 'ms', host_list: 'hosts', name_list: 'hosts', nodes: 'count', depth: 'count', inline_bytes: 'bytes', min_width: 'px',
   families: 'count', variants: 'count', active: 'count', keys: 'header_keys', issues: 'csp_issues', categories: 'tp_categories',
-  max_severity: 'severity',
+  max_severity: 'severity', saving_bytes: 'bytes',
 }
 
 /**
@@ -82,7 +82,8 @@ export const REC_TEXT = {
   // B israf ve önbellek
   DUPLICATE_RESOURCES: { title: ['count'], body: ['bytes'] },
   DUPLICATE_LIBRARIES: { title: ['count'], body: ['name_list'] },
-  UNMINIFIED_ASSETS: { title: ['count'], body: ['bytes'] },
+  // Gövde KAZANCI söyler: önerinin `saving_bytes`'ı (params.bytes dosyaların TOPLAM boyutudur — "Olası kazanç" ile çelişirdi)
+  UNMINIFIED_ASSETS: { title: ['count'], body: ['saving_bytes'] },
   SOURCE_MAP_EXPOSED: { title: ['count'], body: [] },
   HEAVY_HTML: { title: ['bytes'], body: ['inline_bytes', 'limit_kb'] },
   LARGE_DOM: { title: ['nodes'], body: ['depth', 'limit'] },
@@ -834,10 +835,16 @@ export function progressPct(scan) {
 }
 
 /** İstemci izleme tavanı (ms): sunucunun süre sınırı + pay; en az 10 dk. */
-export function pollCapMs(limits) {
-  const max = num(limits?.max_seconds)
+export function pollCapMs(limits, scan = null) {
+  // Çok sayfalı (site) koşu kendi süre bütçesiyle koşar (`site_max_seconds`, sunucu ≤ 900; yoksa 900) — tek sayfa
+  // sınırıyla (300 sn) izlemek 10. dakikada "takip durdu" der ve arka plan bildirimi hiç gelmezdi (prs3 inceleme O1).
+  const max = scan?.scope === 'site'
+    ? (num(limits?.site_max_seconds) ?? SITE_POLL_DEFAULT_SECONDS)
+    : num(limits?.max_seconds)
   return Math.max(POLL_MIN_CAP_MS, max !== null ? max * 1000 + POLL_GRACE_MS : 0)
 }
+/** Site koşusunun süre bütçesi sunucu `limits.site_max_seconds` göndermezse (sunucu varsayılanı). */
+export const SITE_POLL_DEFAULT_SECONDS = 900
 
 /**
  * İzleme tavanı aşıldı mı — süre BU istemcinin izlemeye başladığı andan ölçülür (`startedMs`, monoton saat), sunucunun
@@ -1034,20 +1041,23 @@ export function recTextKey(rec, part = 'title') {
 export function recommendationArgs(rec, locale, part = 'title', t = null) {
   const spec = REC_TEXT[rec?.code]?.[part === 'body' ? 'body' : 'title'] || []
   const p = rec?.params || {}
-  return spec.map((name) => formatRecParam(p[name], REC_PARAM_KIND[name] || 'count', locale, t))
+  // Parametre yoksa önerinin kendi alanı (ör. `saving_bytes` — sunucu kazancı öneri satırına yazar)
+  return spec.map((name) => formatRecParam(name in p ? p[name] : rec?.[name], REC_PARAM_KIND[name] || 'count', locale, t))
 }
 
 /** Kod listesini (en çok 3 + "+N") ad listesine çevirir; `nameOf(kod)` null dönerse o kod yazılmaz. */
-function codeList(v, nameOf) {
+function codeList(v, nameOf, sep = ', ') {
   const list = (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((x) => typeof x === 'string' && x.trim())
   const names = list.map(nameOf).filter(Boolean)
   if (!names.length) return '—'
-  return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ')
+  return names.length > 3 ? `${names.slice(0, 3).join(sep)} +${names.length - 3}` : names.join(sep)
 }
+/** Tam cümle olan adların sonundaki noktayı atar (metin "{0}." ile sürdüğü için ".." / ".," çıkmasın). */
+const clause = (s) => (typeof s === 'string' ? s.trim().replace(/[.。]+$/, '') : s)
 
 function formatRecParam(v, kind, locale, t = null) {
   if (kind === 'header_keys') return codeList(v, (k) => SECURITY_HEADER_NAMES[k] || null)
-  if (kind === 'csp_issues') return codeList(v, (k) => (t ? t(`prs.check.headerIssue.${headerIssueKey(k)}`) : null))
+  if (kind === 'csp_issues') return codeList(v, (k) => (t ? clause(t(`prs.check.headerIssue.${headerIssueKey(k)}`)) : null), '; ')
   if (kind === 'tp_categories') return codeList(v, (k) => (t ? t(`prs.deep.tpc.${thirdPartyCategoryKey(k)}`) : null))
   if (kind === 'severity') return typeof v === 'string' && t ? t(`prs.deep.sec.sev.${VULN_SEVERITIES.includes(v) ? v : 'unknown'}`) : '—'
   if (kind === 'hosts') {
@@ -1264,11 +1274,30 @@ export function areaSummary(analysis, scan, area) {
     return { state: n > 0 ? 'issues' : 'ok', count: n, fail: c.fail, warn: c.warn }
   }
   const n = areaRecs(analysis, area).length
-  return { state: n > 0 ? 'issues' : 'ok', count: n }
+  if (n > 0) return { state: 'issues', count: n }
+  // Öneri yok ≠ sorun yok: sunucu verinin okunamadığını açıkça işaretler — o hâlde "bilinmiyor"; sınıra takılan analizde
+  // (yalnız nesne verisinden beslenen alanlarda) "kısmi". İkisi de SOLUK, asla yeşil (prs3 inceleme O4).
+  if (areaUnreadable(data, area)) return { state: 'unknown', count: null }
+  if (isCapped(scan)) return { state: 'partial', count: 0 }
+  return { state: 'ok', count: 0 }
 }
 
-/** Alan durumunun rozet tonu: sorun uyarı, sorunsuz başarı; eski / yok / bilinmiyor SOLUK (asla yeşil değil). */
-export const AREA_STATE_TONE = { issues: 'warning', ok: 'success', unknown: 'muted', missing: 'muted', old: 'muted' }
+/**
+ * Alanın verisi okunamadı mı (sunucu işaretleri): güvenlikte ana yanıtın başlıkları / puanı yok; yüklemede HTML
+ * ipuçları yok (HTML ayrıştırılamadı — betik / stil etiketleri hiç görülmedi); israfta HTML ölçüsü yok; görselde
+ * `html_checked: false`.
+ */
+export function areaUnreadable(data, area) {
+  if (!isObj(data)) return true
+  if (area === 'security') return data.headers == null || num(data.score) === null
+  if (area === 'loading') return data.hints == null
+  if (area === 'waste') return data.html == null
+  if (area === 'media') return isObj(data.images) && data.images.html_checked === false
+  return false
+}
+
+/** Alan durumunun rozet tonu: sorun uyarı, sorunsuz başarı; eski / yok / bilinmiyor / kısmi SOLUK (asla yeşil değil). */
+export const AREA_STATE_TONE = { issues: 'warning', ok: 'success', unknown: 'muted', missing: 'muted', old: 'muted', partial: 'muted' }
 
 /**
  * Kategori puanları (pano): performans = sayfanın notu (sunucu `category_scores.performance`, yoksa özetin notu);
@@ -1401,6 +1430,8 @@ export function hostRows(loading) {
       httpVersion: httpVersionText(r.http_version), h3: r.h3_advertised === true,
       dnsMs: parts[0], connectMs: parts[1], tlsMs: parts[2], totalMs: measured && known.length ? known.reduce((s, p) => s + p, 0) : null,
       measured, reason: measured ? null : (strOrNull(r.reason) || 'other'),
+      // Vekil üzerinden giden nesnelerin sürümü vekilindir — sunucu sayamaz (`http_version` null, `reason` proxy)
+      viaProxy: r.reason === 'proxy',
     }
   }).sort((a, b) => b.requests - a.requests || (b.bytes ?? -1) - (a.bytes ?? -1) || a.host.localeCompare(b.host))
   return { rows, total: Math.max(list.total, num(loading.hosts_total) ?? 0), more: list.more, http1FirstParty: num(loading.http1_first_party_hosts) }
@@ -1544,7 +1575,7 @@ export function fontView(media) {
   const nw = listOf(f, 'non_woff2')
   const md = listOf(f, 'missing_display')
   return {
-    count: num(f.count), bytes: num(f.bytes), preloaded: num(f.preloaded),
+    count: num(f.count), bytes: num(f.bytes), preloaded: num(f.preloaded), unknownFormat: num(f.unknown_format),
     families: fam ? { ...fam, rows: fam.rows.filter((r) => strOrNull(r?.family)).map((r) => ({
       family: r.family, weights: (Array.isArray(r.weights) ? r.weights : []).map((w) => String(w)).filter(Boolean), files: num(r.files),
     })).sort((a, b) => (b.files ?? 0) - (a.files ?? 0)) } : null,
@@ -1620,6 +1651,17 @@ export function cookieRows(security) {
 export const VULN_SEVERITIES = ['critical', 'high', 'medium', 'low']
 export const VULN_KINDS = ['xss', 'prototype_pollution', 'redos', 'code_injection']
 export const VULN_SEVERITY_TONE = { critical: 'danger', high: 'danger', medium: 'warning', low: 'info' }
+
+// Kod → metin (ekran, PDF ve Excel AYNI çeviriyi kullanır; bilinmeyen kod genel metin — ham kod hiçbir yüzeyde basılmaz)
+export const DUP_KINDS = ['same_content', 'same_path']
+export const rbKindText = (k, t) => t(`prs.deep.rb.kind.${RENDER_BLOCKING_KINDS.includes(k) ? k : 'other'}`)
+export const rbReasonText = (r, t) => t(`prs.deep.rb.reason.${RENDER_BLOCKING_REASONS.includes(r) ? r : 'other'}`)
+export const hostReasonText = (r, t) => t(`prs.deep.hosts.reason.${HOST_SKIP_REASONS.includes(r) ? r : 'other'}`)
+export const dupKindText = (k, t) => t(`prs.deep.dup.kind.${DUP_KINDS.includes(k) ? k : 'other'}`)
+export const headerIssueText = (c, t) => t(`prs.check.headerIssue.${headerIssueKey(c)}`)
+export const sriKindText = (k, t) => t(`prs.deep.sec.sriKind.${k === 'script' || k === 'stylesheet' ? k : 'other'}`)
+export const cookieIssueText = (c, t) => t(`prs.check.cookieIssue.${COOKIE_ISSUES.includes(c) ? c : 'other'}`)
+export const vulnSeverityText = (s, t) => t(`prs.deep.sec.sev.${VULN_SEVERITIES.includes(s) ? s : 'unknown'}`)
 const sevRank = (s) => (VULN_SEVERITIES.indexOf(s) < 0 ? 9 : VULN_SEVERITIES.indexOf(s))
 
 /**
@@ -1667,7 +1709,8 @@ export function thirdPartyCategoryRows(security) {
   return {
     ...list,
     rows: list.rows.filter((r) => strOrNull(r?.category)).map((r) => ({
-      category: thirdPartyCategoryKey(r.category), hosts: urlsOf(r.hosts), requests: num(r.requests) ?? 0, bytes: num(r.bytes),
+      category: thirdPartyCategoryKey(r.category), hosts: urlsOf(r.hosts), hostsTotal: Math.max(urlsOf(r.hosts).length, num(r.hosts_total) ?? 0),
+      requests: num(r.requests) ?? 0, bytes: num(r.bytes),
       tracking: TRACKING_CATEGORIES.has(r.category),
     })).sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1) || b.requests - a.requests),
   }

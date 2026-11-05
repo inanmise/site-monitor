@@ -16,7 +16,7 @@ import {
   trendDomain,
 } from './resourceScanModel.js'
 import {
-  TREND_DAYS, TREND_DEFAULT_DAYS, algoChanges, growthRows, hasSeries, isTrendUnsupported, seriesSummary, trendSeries,
+  TREND_DAYS, TREND_DEFAULT_DAYS, algoChanges, hasSeries, isTrendUnsupported, seriesSummary, trendView,
 } from './resourceScanReportModel.js'
 import { CHIP, Section, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -62,7 +62,7 @@ export default function ResourceScanTrendView({ monitorId, items, selectedId, on
       try { res = await api.monitoring.resourceScanTrend(monitorId, days) } catch (e) { err = e }
       if (!alive.current || my !== seq.current) return
       if (res?.success && res.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
-        setSt({ status: 'ok', data: { points: trendSeries(res.data.points), growth: growthRows(res.data.growth) }, error: null, days })
+        setSt({ status: 'ok', data: trendView(res.data), error: null, days })
       } else if (isTrendUnsupported(res)) {
         setSt({ status: 'unsupported', data: null, error: null, days })
       } else {
@@ -118,12 +118,18 @@ export default function ResourceScanTrendView({ monitorId, items, selectedId, on
               onClick={() => setRetry((n) => n + 1)}>{t('prs.retry')}</Button>}>{t('prs.trend.stale')}</AlertBanner>
           </div>
         )}
+        {st.data?.truncated && (
+          <p data-slot="prs-tv-truncated" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>
+            {t('prs.trend.truncated', formatNumber(st.data.maxPoints ?? st.data.points.length, locale))}
+          </p>
+        )}
         {st.data && (
           <TrendCharts points={st.data.points} days={days} selectedId={selectedId} onSelect={onSelect} budget={budgetValues}
             onWiden={days < 365 ? () => setDays(365) : null} t={t} locale={locale} />
         )}
       </Section>
-      {st.data && <Growth rows={st.data.growth} t={t} locale={locale} />}
+      {st.data && <Growth rows={st.data.growth} busy={st.data.growthBusy} basis={st.data.basisScans} t={t} locale={locale}
+        onRetry={() => setRetry((n) => n + 1)} />}
     </div>
   )
 }
@@ -328,10 +334,17 @@ function TvTooltip({ active, payload, keys, labels, colors, fmt, t, clickable })
 }
 
 /** En çok büyüyen nesneler (son ≤ 20 analizin nesne ayrıntısından; sunucu hesaplar). */
-function Growth({ rows, t, locale }) {
+function Growth({ rows, busy, basis, t, locale, onRetry }) {
+  // `growth: null` = şu an HESAPLANAMADI (sunucu meşgul / okunamadı) — asla "büyüyen nesne yok" denmez
+  const description = basis ? `${t('prs.trend.growthDesc')} ${plural(t, 'prs.trend.growthBasis', basis, formatNumber(basis, locale))}` : t('prs.trend.growthDesc')
   return (
-    <Section slot="prs-tv-growth" icon={TrendingUp} title={t('prs.trend.growthTitle')} description={t('prs.trend.growthDesc')}>
-      {rows.length === 0 ? (
+    <Section slot="prs-tv-growth" icon={TrendingUp} title={t('prs.trend.growthTitle')} description={description}>
+      {rows === null ? (
+        <div data-slot="prs-tv-growth-unavailable" className="flex min-w-0 flex-wrap items-center gap-2">
+          <p className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t(busy ? 'prs.trend.growthBusy' : 'prs.trend.growthUnread')}</p>
+          <Button type="button" variant="outline" size="sm" className={TOUCH} onClick={onRetry}><RefreshCw aria-hidden="true" />{t('prs.retry')}</Button>
+        </div>
+      ) : rows.length === 0 ? (
         <p data-slot="prs-tv-growth-empty" className="m-0 text-sm text-muted-foreground">{t('prs.trend.growthNone')}</p>
       ) : (
         <ul className="m-0 grid min-w-0 list-none grid-cols-1 gap-1.5 p-0 @3xl:grid-cols-2">
