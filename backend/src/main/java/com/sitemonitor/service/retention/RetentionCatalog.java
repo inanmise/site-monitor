@@ -163,6 +163,10 @@ public final class RetentionCatalog {
                 180, 30, true, DataClass.OPERATIONAL, "Port kontrol ham serisi (30 sn kadans)."),
         age("series-keyword", "keyword_results", "checked_at", "site.monitor.series.keyword.retention-days",
                 180, 30, true, DataClass.OPERATIONAL, "İçerik kontrol ham serisi (sayfa parçacığı içerebilir)."),
+        orphan("keyword-change-baselines-orphan", "keyword_change_baselines",
+                "monitor_id NOT IN (SELECT id FROM keyword_monitors)", DataClass.OPERATIONAL,
+                "İzlemesi silinmiş anahtar kelime içerik değişimi temelleri (2026-11-05). İzleme başına tek satır; izleme silinirken "
+                + "servis siler, silme başarısız olursa öksüz kalan satır burada temizlenir."),
         age("series-ping", "ping_checks", "checked_at", "site.monitor.series.ping.retention-days",
                 180, 30, true, DataClass.OPERATIONAL, "Ping ham serisi (30 sn kadans)."),
         guarded("series-dns", "dns_records", "checked_at", "site.monitor.series.dns.retention-days",

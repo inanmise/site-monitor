@@ -2967,7 +2967,8 @@ public class MonitoringOutageService implements EvalStateSource {
             case EscalationService.TYPE_KEYWORD,
                  EscalationService.TYPE_KEYWORD_SLOW,
                  EscalationService.TYPE_KEYWORD_SSL,
-                 EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY ->
+                 EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY,
+                 EscalationService.TYPE_KEYWORD_CHANGED ->
                     appSettings.getBoolean("site.monitor.keyword.alert-enabled", keywordAlertEnabled);
             case EscalationService.TYPE_PING_DOWN,
                  EscalationService.TYPE_PING_SLOW   ->

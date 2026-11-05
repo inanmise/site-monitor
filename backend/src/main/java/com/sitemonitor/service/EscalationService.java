@@ -367,8 +367,13 @@ public class EscalationService {
     public static final String TYPE_KEYWORD_SLOW = "KEYWORD_SLOW";
     public static final String TYPE_KEYWORD_SSL = "KEYWORD_SSL";
     public static final String TYPE_KEYWORD_DOMAIN_EXPIRY = "KEYWORD_DOMAIN_EXPIRY";
+    /** Keyword içerik değişimi (kw 2026-11-05, D2): görünür metin / seçili bölge temel alınan sürümden farklı. SEVİYE tetikli
+     *  (içerik temele dönünce ya da "Yeni temel al" ile kapanır), anahtar url, seviye izlemenin {@code alert_level}'ı. Kesinti
+     *  DEĞİLDİR: fırtına sayımına ve ağ kesintisi bastırmasına girmez ({@link #DOWN_ALERT_TYPES} dışında). Ad kalıcıdır. */
+    public static final String TYPE_KEYWORD_CHANGED = "KEYWORD_CHANGED";
     public static boolean isKeywordAux(String t) {
-        return TYPE_KEYWORD_SLOW.equals(t) || TYPE_KEYWORD_SSL.equals(t) || TYPE_KEYWORD_DOMAIN_EXPIRY.equals(t);
+        return TYPE_KEYWORD_SLOW.equals(t) || TYPE_KEYWORD_SSL.equals(t) || TYPE_KEYWORD_DOMAIN_EXPIRY.equals(t)
+                || TYPE_KEYWORD_CHANGED.equals(t);
     }
 
     /** Ping (ICMP) kesintisi alarmı — ping sweep'i tarafından yönetilir. */
@@ -447,7 +452,8 @@ public class EscalationService {
                    TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
-                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
+                   TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_KEYWORD_CHANGED,
+                   TYPE_PORT_SLOW, TYPE_PING_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
                    TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW,
                    TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW);
@@ -1781,7 +1787,8 @@ public class EscalationService {
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY),
+            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY,
+                            TYPE_KEYWORD_CHANGED),
                     "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
@@ -2470,6 +2477,9 @@ public class EscalationService {
                 return "YÜKSEK: " + dom + " (içerik izlemesi) domain kaydının süresi" +
                         (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
                         "Kayıt yenilendiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_KEYWORD_CHANGED -> {
+                return keywordChangedMessage(ctx.getOrDefault("url", domain), ctx);
             }
             case TYPE_PING_SLOW -> {
                 Object host = ctx.getOrDefault("host", domain);
@@ -3976,6 +3986,7 @@ public class EscalationService {
             case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
             case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
+            case TYPE_KEYWORD_CHANGED -> "İçerik Değişikliği";
             case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
             case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
             case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
@@ -4016,6 +4027,7 @@ public class EscalationService {
             case TYPE_DBQUERY_FAIL  -> "Veritabanı sorgusu çalıştırılamadı";
             case TYPE_DBQUERY_THRESHOLD -> "Veritabanı sorgu kuralı ihlal edildi";
             case TYPE_DBQUERY_SLOW  -> "Veritabanı sorgusu yavaş";
+            case TYPE_KEYWORD_CHANGED -> "Sayfa içeriği temelden farklı";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -4726,6 +4738,21 @@ public class EscalationService {
                 || TYPE_HOSTNAME_MISMATCH.equals(alertType) || TYPE_UNTRUSTED_CA.equals(alertType));
     }
 
+    /**
+     * KEYWORD_CHANGED iletisi (kw 2026-11-05) — bağlamlı ({@code change_summary} / {@code changed_lines}) ve bağlamsız yol
+     * ortak. Seviye sözcüğü çağıranın {@link #withLevelWord}'üyle alarmın gerçek seviyesine çevrilir.
+     */
+    static String keywordChangedMessage(Object url, Map<String, Object> ctx) {
+        Integer n = null;
+        if (ctx != null) {
+            if (ctx.get("changed_lines") instanceof Number num) n = num.intValue();
+            else n = com.sitemonitor.service.keyword.content.KeywordChangeDetector.changedLines(ctx.get("change_summary"));
+        }
+        return "YÜKSEK: " + url + " sayfasının içeriği temel alınan sürümden farklı"
+                + (n != null && n > 0 ? " (" + n + " satır değişti)" : "") + ". "
+                + "Beklenen bir değişiklikse 'Yeni temel al' ile kapatın; içerik temele dönerse alarm kendiliğinden kapanır.";
+    }
+
     private String buildMessage(String domain, String alertType, String alertLevel, Integer days) {
         String body = buildMessageBody(domain, alertType, alertLevel, days);
         // İzleme türlerinde seviye sözcüğü seviyeden (withLevelWord); sertifika iletileri olduğu gibi.
@@ -4813,6 +4840,7 @@ public class EscalationService {
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> "YÜKSEK: " + domain +
                     " (içerik izlemesi) domain kaydının süresi dolmak üzere. Kayıt yenilendiğinde alarm otomatik kapanır.";
+            case TYPE_KEYWORD_CHANGED -> keywordChangedMessage(domain, null);
             case TYPE_DOMAINMON_EXPIRY -> "YÜKSEK: " + domain + " alan adının kaydı dolmak üzere. Registrar üzerinden yenileyin.";
             case TYPE_DOMAINMON_UNKNOWN -> "UYARI: " + domain + " alan adının kayıt bilgisi alınamadı (veri yok). Erişim/TLD desteğini doğrulayın.";
             case TYPE_DOMAINMON_STATUS -> "YÜKSEK: " + domain + " alan adında dikkat gerektiren EPP durum kodları var.";
@@ -4897,6 +4925,7 @@ public class EscalationService {
                 case TYPE_KEYWORD_SLOW  -> "İçerik Yavaş Yanıt";
                 case TYPE_KEYWORD_SSL   -> "İçerik SSL Sorunu";
                 case TYPE_KEYWORD_DOMAIN_EXPIRY -> "İçerik Domain Bitişi";
+                case TYPE_KEYWORD_CHANGED -> "İçerik Değişikliği";
                 case TYPE_PING_DOWN     -> "Erişilebilirlik (Ping)";
                 case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
                 case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";

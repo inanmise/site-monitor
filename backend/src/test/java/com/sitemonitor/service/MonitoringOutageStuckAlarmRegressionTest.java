@@ -382,6 +382,7 @@ class MonitoringOutageStuckAlarmRegressionTest {
                 EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_SLOW, EscalationService.TYPE_DNS_UNEXPECTED,
                 EscalationService.TYPE_DNS_INCONSISTENT, EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW,
                 EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY,
+                EscalationService.TYPE_KEYWORD_CHANGED,
                 EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW, EscalationService.TYPE_HTTP_DOWN,
                 EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW, EscalationService.TYPE_DOMAIN_EXPIRY,
                 EscalationService.TYPE_PAGE_DOWN,

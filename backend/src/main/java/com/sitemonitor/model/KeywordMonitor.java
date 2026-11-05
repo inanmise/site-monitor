@@ -158,6 +158,39 @@ public class KeywordMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @Column(name = "domain_reminder_days")
     private String domainReminderDays = "30,14,7";
 
+    // ── Çoklu kural + içerik kontrolleri (kw sözleşmesi §3.1, 2026-11-05) ─────────────────────────────────────
+    // Hepsi NULLABLE, başlatıcısız: eski satır NULL = bugünkü davranış (tek kelime, boyut / değişim kapalı). Kolonlar
+    // KeywordRuleSchemaPatch ile de eklenir (ddl-auto'nun atladığı ortamlar).
+
+    /** Kurallar (≤ 10, ≤ 16 KB JSON, {@code KeywordRules} biçimi); NULL = eski tek kural (keyword + match_operator + match_count
+     *  + case_sensitive). Doluyken eski alanlar kural #1'in aynasıdır (sunucu yazar). */
+    @Column(name = "rules_json", columnDefinition = "TEXT")
+    private String rulesJson;
+
+    /** Kural birleşimi: {@code AND} (hepsi sağlanmalı) | {@code OR} (en az biri); NULL = AND. */
+    @Column(name = "rule_logic", length = 5)
+    private String ruleLogic;
+
+    /** Sayfa boyutu alt sınırı (bayt, 1 – 2 000 000); NULL = kapalı → altındaysa BODY_TOO_SMALL. */
+    @Column(name = "min_bytes")
+    private Integer minBytes;
+
+    /** Sayfa boyutu üst sınırı (bayt, 1 – 2 000 000, min ≤ max); NULL = kapalı → üstündeyse BODY_TOO_LARGE. */
+    @Column(name = "max_bytes")
+    private Integer maxBytes;
+
+    /** İçerik değişimi tespiti (KEYWORD_CHANGED); NULL = kapalı. */
+    @Column(name = "change_detect")
+    private Boolean changeDetect;
+
+    /** Değişim maskeleri — CSV ⊆ {DIGITS, DATES}; NULL = maske yok. */
+    @Column(name = "change_mask", length = 40)
+    private String changeMask;
+
+    /** Değişimin izlendiği bölge (CSS seçici); NULL = tüm görünür metin. */
+    @Column(name = "change_selector", length = 300)
+    private String changeSelector;
+
     @Column(name = "created_at")
     private String createdAt;
 

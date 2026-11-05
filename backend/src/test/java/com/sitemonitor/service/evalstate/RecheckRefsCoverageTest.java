@@ -45,7 +45,7 @@ class RecheckRefsCoverageTest {
                 Map.entry("DNS_FAILURE", "dns"), Map.entry("DNS_CHANGED", "dns"), Map.entry("DNS_SLOW", "dns"),
                 Map.entry("DNS_UNEXPECTED", "dns"), Map.entry("DNS_INCONSISTENT", "dns"),
                 Map.entry("KEYWORD", "keyword"), Map.entry("KEYWORD_SLOW", "keyword"), Map.entry("KEYWORD_SSL", "keyword"),
-                Map.entry("KEYWORD_DOMAIN_EXPIRY", "keyword"),
+                Map.entry("KEYWORD_DOMAIN_EXPIRY", "keyword"), Map.entry("KEYWORD_CHANGED", "keyword"),
                 Map.entry("PING_DOWN", "ping"), Map.entry("PING_SLOW", "ping"),
                 Map.entry("HTTP_DOWN", "http"), Map.entry("HTTP_SSL", "http"), Map.entry("HTTP_SLOW", "http"),
                 Map.entry("DOMAIN_EXPIRY", "http"),

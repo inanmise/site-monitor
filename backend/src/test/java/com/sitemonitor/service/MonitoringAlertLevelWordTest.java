@@ -96,6 +96,7 @@ class MonitoringAlertLevelWordTest {
         m.put(EscalationService.TYPE_KEYWORD_SLOW, Map.of("url", "https://app.example.com/"));
         m.put(EscalationService.TYPE_KEYWORD_SSL, Map.of("url", "https://app.example.com/"));
         m.put(EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, Map.of("url", "https://app.example.com/"));
+        m.put(EscalationService.TYPE_KEYWORD_CHANGED, Map.of("url", "https://app.example.com/", "changed_lines", 3));
         m.put(EscalationService.TYPE_PING_DOWN, Map.of("host", "app.example.com"));
         m.put(EscalationService.TYPE_PING_SLOW, Map.of("host", "app.example.com"));
         m.put(EscalationService.TYPE_HTTP_DOWN, Map.of("url", "https://app.example.com/"));

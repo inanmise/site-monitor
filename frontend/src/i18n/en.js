@@ -211,6 +211,7 @@ export const EN = {
   'incov.type.PING_SLOW':'Ping Slow Response',
   'incov.type.KEYWORD':  'Content Check',
   'incov.type.KEYWORD_SLOW':'Content Slow Response',
+  'incov.type.KEYWORD_CHANGED':'Content Change',
   'incov.type.KEYWORD_SSL': 'Content SSL Issue',
   'incov.type.KEYWORD_DOMAIN_EXPIRY':'Content Domain Expiry',
   'incov.type.DNS_FAILURE':'DNS Resolution Failure',

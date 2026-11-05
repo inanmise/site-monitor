@@ -1,5 +1,5 @@
 {
-  "seedVersion": 2,
+  "seedVersion": 3,
   "templates": [
     {
       "builtinKey": "smoke-health",
@@ -446,6 +446,47 @@
       "whenToUseEn": "When refresh breaks, users can log in but get silently thrown out a while later — the hardest identity fault to diagnose.",
       "env": [{ "name": "TOKEN_URL", "secret": false }, { "name": "CLIENT_ID", "secret": false }, { "name": "REFRESH_TOKEN", "secret": true }],
       "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// Gerekli __ENV: TOKEN_URL, CLIENT_ID, REFRESH_TOKEN (secret olarak tanımlayın)\nexport default function () {\n  const form = {\n    grant_type: 'refresh_token',\n    client_id: __ENV.CLIENT_ID,\n    refresh_token: __ENV.REFRESH_TOKEN,\n  };\n  const r = http.post(__ENV.TOKEN_URL, form, { timeout: '15s' });\n  const body = r.body || '';\n\n  check(r, {\n    'status 200': (res) => res.status === 200,\n    'erişim jetonu döndü': () => body.indexOf('access_token') >= 0,\n    'hata alanı yok': () => body.indexOf('\"error\"') < 0,\n  });\n}\n"
+    },
+    {
+      "builtinKey": "login-then-keyword",
+      "category": "identity",
+      "name": "Giriş + anahtar kelime (oturumlu sayfa)",
+      "nameEn": "Login + keyword (session page)",
+      "description": "Form ile oturum açar, ardından hedef sayfada anahtar kelimeyi (Türkçe harf katlamalı: İ / I / ı / i aynı) arar ve giriş formuna geri düşmediğini doğrular. Env: LOGIN_URL, USERNAME, PASSWORD (gizli), TARGET_URL, KEYWORD; isteğe bağlı USERNAME_FIELD (varsayılan username) ve PASSWORD_FIELD (varsayılan password).",
+      "descriptionEn": "Logs in with a form, then searches the target page for the keyword (Turkish case folding: İ / I / ı / i match) and verifies it did not fall back to the login form. Env: LOGIN_URL, USERNAME, PASSWORD (secret), TARGET_URL, KEYWORD; optional USERNAME_FIELD (default username) and PASSWORD_FIELD (default password).",
+      "whenToUse": "Anahtar kelime izlemesinin göremediği, oturum açmayı gerektiren sayfalar için (anahtar kelime izlemesi giriş sayfasına düştüğünü \"Giriş sayfası\" ipucuyla söyler). İzleme için AYRI bir servis hesabı kullanın; MFA (çok adımlı doğrulama) isteyen sistemlerde çalışmaz. Sayfa içeriği JavaScript ile çiziliyorsa bu şablon da göremez.",
+      "whenToUseEn": "For pages that need a login, which a keyword monitor cannot see (the keyword monitor reports landing on a login page with the \"Login page\" hint). Use a SEPARATE service account for monitoring; it does not work with systems that require MFA (multi-factor authentication). If the page content is drawn by JavaScript, this template cannot see it either.",
+      "env": [
+        {
+          "name": "LOGIN_URL",
+          "secret": false
+        },
+        {
+          "name": "USERNAME",
+          "secret": false
+        },
+        {
+          "name": "PASSWORD",
+          "secret": true
+        },
+        {
+          "name": "USERNAME_FIELD",
+          "secret": false
+        },
+        {
+          "name": "PASSWORD_FIELD",
+          "secret": false
+        },
+        {
+          "name": "TARGET_URL",
+          "secret": false
+        },
+        {
+          "name": "KEYWORD",
+          "secret": false
+        }
+      ],
+      "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\n// İZLEME İÇİN AYRI SERVİS HESABI KULLANIN. MFA (çok adımlı doğrulama) isteyen sistemlerde ÇALIŞMAZ.\n// Gerekli __ENV: LOGIN_URL, USERNAME, PASSWORD (gizli), TARGET_URL, KEYWORD\n// İsteğe bağlı __ENV: USERNAME_FIELD (varsayılan username), PASSWORD_FIELD (varsayılan password)\n\n// Anahtar kelime izlemesiyle AYNI Türkçe harf katlaması: İ / I / ı / i aynı sayılır, diğer harfler küçük harfe iner.\nfunction fold(s) {\n  let out = '';\n  for (const ch of String(s || '')) {\n    out += (ch === 'I' || ch === 'i' || ch === 'İ' || ch === 'ı') ? 'i' : ch.toLowerCase();\n  }\n  return out;\n}\n\nexport default function () {\n  const userField = __ENV.USERNAME_FIELD || 'username';\n  const passField = __ENV.PASSWORD_FIELD || 'password';\n\n  // 1) Giriş sayfası\n  const page = http.get(__ENV.LOGIN_URL, { timeout: '15s' });\n  check(page, { 'giriş sayfası 200': (r) => r.status === 200 });\n\n  // 2) Form ile giriş — çerezler k6 tarafından oturum boyunca taşınır\n  const fields = {};\n  fields[userField] = __ENV.USERNAME;\n  fields[passField] = __ENV.PASSWORD;\n  const res = page.submitForm({ fields: fields, params: { timeout: '15s' } });\n  check(res, { 'giriş isteği yanıt verdi (2xx/3xx)': (r) => r.status >= 200 && r.status < 400 });\n\n  // 3) Hedef sayfa: 200 + anahtar kelime (katlamalı) + giriş formuna geri DÜŞMEDİ\n  const target = http.get(__ENV.TARGET_URL, { timeout: '15s' });\n  const body = target.body || '';\n  check(target, {\n    'hedef sayfa 200': (r) => r.status === 200,\n    'anahtar kelime sayfada': () => fold(body).indexOf(fold(__ENV.KEYWORD)) >= 0,\n    'oturum açık (giriş formuna düşmedi)': () => body.indexOf('name=\"' + passField + '\"') < 0,\n  });\n}\n"
     },
     {
       "builtinKey": "site-search-returns-results",
