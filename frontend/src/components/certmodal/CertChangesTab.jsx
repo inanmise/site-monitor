@@ -56,7 +56,7 @@ export default function CertChangesTab({ t, domain }) {
   if (state.status === 'error') {
     return (
       <StatusBlock tone="danger" icon={History} title={t('certchg.loadError')}
-        actions={<Button type="button" variant="outline" className="h-10 sm:h-9" onClick={load}>{t('certchg.retry')}</Button>} />
+        actions={<Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" onClick={load}>{t('certchg.retry')}</Button>} />
     )
   }
   if (state.status === 'missing') {

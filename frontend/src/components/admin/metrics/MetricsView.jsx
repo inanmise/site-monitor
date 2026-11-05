@@ -161,7 +161,7 @@ export default function MetricsView({ onBack, initial }) {
 
       <div data-slot="mx-controls" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <SegmentedControl value={range} onChange={(v) => setRange(normalizeRange(v))} ariaLabel={t('mx.range.label')}
-          itemClassName="flex-1 max-sm:h-10 sm:flex-none"
+          itemClassName="flex-1 max-sm:h-10 sm:flex-none pointer-coarse:h-10"
           options={METRIC_RANGES.map((r) => ({ value: r, label: t(`mx.range.${r}`) }))} />
         <div className="min-w-0 sm:w-72">
           <SearchableSelect value={pod} onChange={(v) => setPod(v ? String(v) : '')} options={podOptions} ariaLabel={t('mx.pod.filter')} wrapLabels />

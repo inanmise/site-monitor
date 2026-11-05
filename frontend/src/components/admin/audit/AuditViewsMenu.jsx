@@ -59,7 +59,7 @@ export default function AuditViewsMenu({ filters, onApply }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="h-10 md:h-8">
+        <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10">
           <Bookmark aria-hidden="true" /> {t('audit.views')}
         </Button>
       </PopoverTrigger>
@@ -72,7 +72,7 @@ export default function AuditViewsMenu({ filters, onApply }) {
             return (
               <Button key={v.key} type="button" variant="ghost" size="sm" aria-pressed={active}
                 onClick={() => apply(active ? { ...EMPTY_FILTERS } : target)}
-                className={cn('h-10 w-full justify-start font-normal sm:h-8', active && 'bg-primary/10 text-primary')}>
+                className={cn('h-10 w-full justify-start font-normal sm:h-8 pointer-coarse:h-10', active && 'bg-primary/10 text-primary')}>
                 <Check aria-hidden="true" className={cn(!active && 'invisible')} />
                 {t('audit.preset.' + v.key)}
               </Button>
@@ -88,7 +88,7 @@ export default function AuditViewsMenu({ filters, onApply }) {
               <li key={v.name} className="flex items-center gap-1">
                 <Button type="button" variant="ghost" size="sm" title={v.name}
                   onClick={() => apply(normalizeFilters(v.filters))}
-                  className="h-10 min-w-0 flex-1 justify-start font-normal sm:h-8">
+                  className="h-10 min-w-0 flex-1 justify-start font-normal sm:h-8 pointer-coarse:h-10">
                   <span className="truncate">{v.name}</span>
                 </Button>
                 <Button type="button" variant="ghost" size="icon-sm" className="size-10 text-muted-foreground hover:text-destructive sm:size-8"
@@ -99,10 +99,10 @@ export default function AuditViewsMenu({ filters, onApply }) {
             ))}
           </ul>
           <div className="mt-2 flex gap-1.5 px-1">
-            <Input className="h-10 min-w-0 flex-1 md:h-8" placeholder={t('audit.viewNamePh')} aria-label={t('audit.viewNamePh')}
+            <Input className="h-10 min-w-0 flex-1 md:h-8 pointer-coarse:h-10" placeholder={t('audit.viewNamePh')} aria-label={t('audit.viewNamePh')}
               value={name} onChange={e => setName(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save() } }} />
-            <Button type="button" size="sm" className="h-10 md:h-8" disabled={!name.trim()} onClick={save}>{t('audit.saveView')}</Button>
+            <Button type="button" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" disabled={!name.trim()} onClick={save}>{t('audit.saveView')}</Button>
           </div>
         </div>
       </PopoverContent>

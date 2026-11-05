@@ -261,7 +261,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" aria-pressed={autoRefresh} title={t('audit.autoRefreshHint')}
-            className={cn('h-10 md:h-8', autoRefresh && 'border-success text-success hover:text-success')}
+            className={cn('h-10 md:h-8 pointer-coarse:h-10', autoRefresh && 'border-success text-success hover:text-success')}
             onClick={() => setAutoRefresh(a => !a)}>
             <span aria-hidden="true" className={cn('size-2 rounded-full', autoRefresh ? 'animate-pulse bg-success motion-reduce:animate-none' : 'bg-muted-foreground')} />
             {t('audit.autoRefresh')}
@@ -270,7 +270,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
           <div className="flex items-center gap-0.5">
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" disabled={!!exporting} aria-busy={!!exporting}>
+                <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" disabled={!!exporting} aria-busy={!!exporting}>
                   {exporting ? <Spinner decorative size={14} inline /> : <Download aria-hidden="true" />}
                   {exporting ? t('audit.exporting') : t('audit.exportMenu')}
                 </Button>
@@ -286,7 +286,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
             </HintPopover>
           </div>
           {fullScope && (
-            <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={checkIntegrity}
+            <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" onClick={checkIntegrity}
               disabled={!!integrity?.loading} aria-busy={!!integrity?.loading}>
               {integrity?.loading ? <Spinner decorative size={14} inline /> : <ShieldCheck aria-hidden="true" />}
               {integrity?.loading ? t('audit.integrityRunning') : t('audit.verifyIntegrity')}

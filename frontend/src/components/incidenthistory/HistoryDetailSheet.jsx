@@ -193,7 +193,7 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
                       {r.pm_summary === true ? t('pm.cardEmpty') : t('pm.cardOpenHint')}
                     </span>}
               </div>
-              <Button type="button" variant="outline" size="sm" className="h-9 max-sm:h-10 max-sm:w-full" data-slot="ih-open-postmortem"
+              <Button type="button" variant="outline" size="sm" className="h-9 max-sm:h-10 max-sm:w-full pointer-coarse:h-10" data-slot="ih-open-postmortem"
                 onClick={() => onPostmortem(r)}>
                 {t('pm.open')}<ChevronRight aria-hidden="true" />
               </Button>

@@ -245,7 +245,7 @@ export default function ChangeKpis({
   if (error && !summary) {
     return (
       <AlertBanner tone="warning" title={t('chg.kpiError')} className="mb-0"
-        actions={<Button type="button" variant="outline" size="sm" className="max-md:h-10" onClick={onRetry}>
+        actions={<Button type="button" variant="outline" size="sm" className="max-md:h-10 pointer-coarse:h-10" onClick={onRetry}>
           <RefreshCw aria-hidden="true" /> {t('chg.retry')}</Button>}>
         {error}
       </AlertBanner>

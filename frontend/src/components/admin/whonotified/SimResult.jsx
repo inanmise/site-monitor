@@ -91,10 +91,10 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
           {t('wn.nobodyDesc')}
           {onNavigate && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={() => onNavigate('contacts', navParams)}>
+              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" onClick={() => onNavigate('contacts', navParams)}>
                 <UserPlus aria-hidden="true" /> {t('wn.addContact')}
               </Button>
-              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={() => onNavigate('notifyGroups', navParams)}>
+              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" onClick={() => onNavigate('notifyGroups', navParams)}>
                 <Users aria-hidden="true" /> {t('wn.addGroup')}
               </Button>
             </div>
@@ -118,7 +118,7 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
           {t('wn.teamContactsNone')}
           {onNavigate && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={() => onNavigate('contacts', navParams)}>
+              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8 pointer-coarse:h-10" onClick={() => onNavigate('contacts', navParams)}>
                 <UserPlus aria-hidden="true" /> {t('wn.addContact')}
               </Button>
             </div>

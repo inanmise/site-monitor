@@ -204,7 +204,7 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
             <AlertBanner tone="danger" role="alert" className="mb-0">{error.message}</AlertBanner>
             {error.listChanged && (
               <Button type="button" variant="outline" onClick={runPreview} disabled={busy} data-slot="ubd-refresh"
-                className="self-start max-sm:h-10 max-sm:w-full">
+                className="self-start max-sm:h-10 max-sm:w-full pointer-coarse:h-10">
                 <RefreshCw aria-hidden="true" /> {t('ubd.refreshPreview')}
               </Button>
             )}
@@ -499,7 +499,7 @@ function ResultStep({ result, undoResult, t, onUndo, undoingId }) {
       ) : (result.ok ?? 0) > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" onClick={() => onUndo(opId)} disabled={undoingId === opId}
-            aria-busy={undoingId === opId || undefined} data-slot="ubd-undo" className="max-sm:h-10 max-sm:w-full">
+            aria-busy={undoingId === opId || undefined} data-slot="ubd-undo" className="max-sm:h-10 max-sm:w-full pointer-coarse:h-10">
             <Undo2 aria-hidden="true" /> {t('ubd.undo')}
           </Button>
         </div>

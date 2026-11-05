@@ -86,7 +86,7 @@ export default function ChangesTab({ section, pagination }) {
                 {model.parsed && (
                   <Collapsible open={isOpen} onOpenChange={() => toggle(r.id)}>
                     <CollapsibleTrigger asChild>
-                      <Button type="button" variant="ghost" size="sm" className="-ml-2 h-10 text-muted-foreground sm:h-8"
+                      <Button type="button" variant="ghost" size="sm" className="-ml-2 h-10 text-muted-foreground sm:h-8 pointer-coarse:h-10"
                         aria-label={t('a11y.rowAction', formatDateSec(r.at), isOpen ? t('ud.hideDetails') : t('ud.showDetails'))}>
                         {isOpen ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
                         {isOpen ? t('ud.hideDetails') : t('ud.showDetails')}

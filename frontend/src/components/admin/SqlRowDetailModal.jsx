@@ -76,7 +76,7 @@ export default function SqlRowDetailModal({ row, cols, index, onClose, onPrev, o
       }>
       <div className="flex flex-col gap-3" onKeyDown={onKeyDown}>
         {cols.length > 8 && (
-          <InputGroup className="h-10 sm:h-9">
+          <InputGroup className="h-10 sm:h-9 pointer-coarse:h-10">
             <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('sql.row.filter')} aria-label={t('sql.row.filter')} />
             <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
             {q && (

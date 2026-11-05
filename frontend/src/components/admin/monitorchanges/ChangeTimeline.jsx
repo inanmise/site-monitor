@@ -109,7 +109,7 @@ function ChangeItem({ r, t, now, onOpen, selected }) {
             {!open && <ChangeDiffChips t={t} changes={r.changes} limit={3} wrap className="min-w-0" />}
             <CollapsibleTrigger asChild>
               <Button type="button" variant="ghost" size="sm" data-diff-toggle=""
-                className={cn(LAYER, 'h-8 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground max-md:h-10')}>
+                className={cn(LAYER, 'h-8 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground max-md:h-10 pointer-coarse:h-10')}>
                 <ChevronDown aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
                 {open ? t('chg.hideDiff') : t('chg.showDiff', fields)}
               </Button>

@@ -11,7 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils'
 
 /** Kart eylem düğmesi: telefonda tam genişlik + 40 px, geniş ekranda içerik genişliğinde. */
-const ACTION = 'h-10 w-full justify-center sm:h-9 sm:w-auto sm:self-start'
+const ACTION = 'h-10 w-full justify-center sm:h-9 sm:w-auto sm:self-start pointer-coarse:h-10'
 
 /**
  * Güvenlik sekmesi (2026-10-02, kullanıcı isteği) — var olan hesabın oturum/erişim eylemleri tek yerde, HEPSİ mevcut
@@ -119,7 +119,7 @@ export default function UserEditorSecurity({ ed }) {
             bodyClassName={ed.devicesOpen ? undefined : 'hidden'}
             action={(
               <CollapsibleTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8" data-slot="ued-devices-toggle">
+                <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" data-slot="ued-devices-toggle">
                   {ed.devicesOpen ? t('ued.devicesHide') : t('ued.devicesShow')}
                   <ChevronDown aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', ed.devicesOpen && 'rotate-180')} />
                 </Button>

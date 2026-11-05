@@ -48,7 +48,7 @@ function HowItWorks({ config }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" data-action="dq-how" className="max-sm:h-10">
+        <Button type="button" variant="outline" size="sm" data-action="dq-how" className="max-sm:h-10 pointer-coarse:h-10">
           <CircleHelp aria-hidden="true" />{t('dq.howButton')}
         </Button>
       </PopoverTrigger>
@@ -240,7 +240,7 @@ export default function DataQualityPage({ globalAdmin = false }) {
                 {t(`dq.nocReason.${nocNote.params?.reason ?? 'UNKNOWN'}`)} {t('dq.nocNoteBody', nocNote.params?.critical ?? 0)}
               </span>
               {globalAdmin && (
-                <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8"
+                <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8 pointer-coarse:h-10"
                   onClick={() => navigateTo(NOC_SETTINGS_LINK.tab, NOC_SETTINGS_LINK.params)}>{t('dq.nocSettings')}</Button>
               )}
             </AlertBanner>
@@ -262,7 +262,7 @@ export default function DataQualityPage({ globalAdmin = false }) {
           {data.unassigned && (data.unassigned.findings ?? 0) > 0 && (
             <AlertBanner tone="danger" icon={UserX} className="mb-0" title={t('dq.unassignedTitle')}>
               <span className="block">{t('dq.unassignedSummary', data.unassigned.findings)}</span>
-              <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8" data-action="dq-unassigned-open"
+              <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8 pointer-coarse:h-10" data-action="dq-unassigned-open"
                 onClick={() => setTeamKey('unassigned')}>{t('dq.unassignedOpen')}</Button>
             </AlertBanner>
           )}
@@ -282,17 +282,17 @@ export default function DataQualityPage({ globalAdmin = false }) {
                   onStatClick={(k) => setBand((cur) => (cur === k ? '' : k))} />
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <InputGroup className="w-full max-sm:h-10 sm:max-w-xs">
+                  <InputGroup className="w-full max-sm:h-10 sm:max-w-xs pointer-coarse:h-10">
                     <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)} data-page-search
                       placeholder={t('dq.searchTeams')} aria-label={t('dq.searchTeams')} />
                     <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
                   </InputGroup>
                   <NativeSelect value={sort} onChange={(e) => setSort(e.target.value)} aria-label={t('dq.sortLabel')}
-                    className="w-full max-sm:h-10 sm:w-auto">
+                    className="w-full max-sm:h-10 sm:w-auto pointer-coarse:h-10">
                     {SORTS.map((s) => <NativeSelectOption key={s} value={s}>{t(`dq.sort.${s}`)}</NativeSelectOption>)}
                   </NativeSelect>
                   {filtersActive && (
-                    <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8"
+                    <Button type="button" variant="ghost" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10"
                       onClick={() => { setQ(''); setBand('') }}>{t('dq.clearFilters')}</Button>
                   )}
                   <span className="text-xs text-muted-foreground sm:ml-auto" aria-live="polite">

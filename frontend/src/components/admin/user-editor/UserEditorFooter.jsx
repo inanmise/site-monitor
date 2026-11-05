@@ -40,7 +40,7 @@ export default function UserEditorFooter({ ed }) {
       <Popover>
         <PopoverTrigger asChild>
           <Button type="button" variant="outline" size="sm" data-slot="ued-dirty" data-count={changes.length}
-            className="h-8 gap-1.5 border-amber-500/40 font-medium max-sm:h-10">
+            className="h-8 gap-1.5 border-amber-500/40 font-medium max-sm:h-10 pointer-coarse:h-10">
             <span aria-hidden="true" className="size-2 rounded-full bg-amber-500" />
             {changes.length === 1 ? t('ued.changesOne') : t('ued.changesMany', changes.length)}
             <ListChecks aria-hidden="true" className="text-muted-foreground" />

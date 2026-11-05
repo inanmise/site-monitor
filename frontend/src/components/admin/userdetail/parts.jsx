@@ -80,7 +80,7 @@ export function SectionError({ title, error, onRetry }) {
     <StatusBlock tone="danger" icon={AlertOctagon} title={title} description={error}
       className="rounded-lg border border-dashed border-destructive/40 px-4 py-6 md:py-6 text-sm"
       actions={onRetry && (
-        <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8" onClick={onRetry}
+        <Button type="button" variant="outline" size="sm" className="h-10 sm:h-8 pointer-coarse:h-10" onClick={onRetry}
           aria-label={t('a11y.rowAction', title, t('ud.retry'))}>
           <RotateCcw aria-hidden="true" />{t('ud.retry')}
         </Button>

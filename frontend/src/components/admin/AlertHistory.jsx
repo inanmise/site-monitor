@@ -734,13 +734,13 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       )}
 
       <Tabs value={tab} onValueChange={(v) => { if (TABS.includes(v)) setTab(v) }} className="min-w-0 gap-3">
-        <TabsList aria-label={t('alh.tabs')} className="w-full group-data-[orientation=horizontal]/tabs:h-10 sm:w-fit">
-          <TabsTrigger value="open" className="gap-1.5 px-3">
+        <TabsList aria-label={t('alh.tabs')} className="w-full group-data-[orientation=horizontal]/tabs:h-10 pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto sm:w-fit">
+          <TabsTrigger value="open" className="gap-1.5 px-3 pointer-coarse:h-10">
             <Siren aria-hidden="true" />{t('alh.tab.open')}
             {summary && <Badge variant="secondary" data-slot="tab-count" className="h-5 rounded-full px-1.5 tabular-nums">{summary.open}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="closed" className="gap-1.5 px-3"><CheckCircle2 aria-hidden="true" />{t('alh.tab.closed')}</TabsTrigger>
-          <TabsTrigger value="all" className="gap-1.5 px-3"><History aria-hidden="true" />{t('alh.tab.all')}</TabsTrigger>
+          <TabsTrigger value="closed" className="gap-1.5 px-3 pointer-coarse:h-10"><CheckCircle2 aria-hidden="true" />{t('alh.tab.closed')}</TabsTrigger>
+          <TabsTrigger value="all" className="gap-1.5 px-3 pointer-coarse:h-10"><History aria-hidden="true" />{t('alh.tab.all')}</TabsTrigger>
         </TabsList>
 
         {urlSync && (

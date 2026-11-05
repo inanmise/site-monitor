@@ -675,6 +675,13 @@ body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 12px; }
    olduğu için burada nötr adlı ayrı bir sınıf kullanılıyor. */
 .md-editor-box .w-md-editor-text { min-height: 100% !important; height: 100%; }
 .md-editor-box .w-md-editor-area { height: 100%; }
+/* Dokunmatik araç çubuğu (2026-11-05, mweb denetimi): kütüphanenin araç çubuğu düğmeleri 20 × 20 px — parmakla dokunulan
+   ekranda 40 × 40 px (RESPONSIVE.md §4); düğmeler gerekirse ikinci satıra sarar. Fareli ekranda görünüm aynı. Özgüllük
+   (0,2,2): kütüphane CSS'i tembel parçada SONRA yüklenir, eşit özgüllükte o kazanırdı. */
+@media (pointer: coarse) {
+  .w-md-editor .w-md-editor-toolbar { flex-wrap: wrap; height: auto; }
+  .w-md-editor .w-md-editor-toolbar li > button { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+}
 /* Genel form-control sınıfı — Senaryo İzleme modalı .input kullanıyor ama sınıf
    tanımsızdı; label DIŞINDAKİ alanlar (Ortam Değişkenleri AD/değer) tarayıcı
    varsayılanında kalıyordu. Üstteki Ad/Açıklama alanlarıyla birebir aynı görünüm. */

@@ -282,7 +282,7 @@ export default function StormStatusPage({ canOpenSettings }) {
                   <Label htmlFor="sf-to" className="text-xs text-muted-foreground">{t('sf.history.to')}</Label>
                   <Input id="sf-to" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="w-full sm:w-40" />
                 </div>
-                <div className="flex h-10 items-center gap-2 sm:h-9">
+                <div className="flex h-10 items-center gap-2 sm:h-9 pointer-coarse:h-10">
                   <Checkbox id="sf-res" checked={resolvedOnly} onCheckedChange={(v) => setResolvedOnly(!!v)} />
                   <Label htmlFor="sf-res" className="text-sm">{t('sf.history.resolvedOnly')}</Label>
                 </div>

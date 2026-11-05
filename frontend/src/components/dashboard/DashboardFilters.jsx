@@ -129,7 +129,7 @@ export default function DashboardFilters({
   // ── Parçalar ──
   const search = (
     <InputGroup data-slot="dashboard-domain-search"
-      className={phone ? 'h-12 w-full' : 'h-8 w-full sm:w-80 lg:w-[26rem] pointer-coarse:h-10'}>
+      className={phone ? 'h-12 w-full' : 'h-8 w-full sm:w-80 lg:w-[26rem] pointer-coarse:h-12'}>
       <InputGroupInput type="text" placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchPlaceholder')} data-page-search=""
         value={values.search} className={phone ? 'h-full text-base' : undefined}
         onChange={(e) => setters.search(e.target.value)}
@@ -137,7 +137,7 @@ export default function DashboardFilters({
       <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
       {values.search && (
         <InputGroupAddon align="inline-end">
-          <InputGroupButton size="icon-xs" className={phone ? 'size-10' : undefined} onClick={() => setters.search('')}
+          <InputGroupButton size="icon-xs" className={phone ? 'size-10' : 'pointer-coarse:size-10'} onClick={() => setters.search('')}
             title={t('app.clearFilter')} aria-label={t('app.clearFilter')}>
             <X aria-hidden="true" />
           </InputGroupButton>
@@ -379,13 +379,13 @@ function SslChecker({ value, onChange, onSubmit, busy, phone }) {
   const t = useT()
   return (
     <InputGroup data-tour="add-domain"
-      className={phone ? 'h-12 w-full' : 'h-9 w-full md:ml-auto md:w-auto md:min-w-[22rem] md:max-w-[34rem] md:flex-1'}>
+      className={phone ? 'h-12 w-full' : 'h-9 w-full md:ml-auto md:w-auto md:min-w-[22rem] md:max-w-[34rem] md:flex-1 pointer-coarse:h-12'}>
       <InputGroupInput type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
         className={phone ? 'h-full text-base' : undefined}
         value={value} onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && onSubmit()} />
       <InputGroupAddon align="inline-end">
-        <InputGroupButton variant="success" size="sm" className={phone ? 'h-10' : 'h-7 pointer-coarse:h-8'}
+        <InputGroupButton variant="success" size="sm" className={phone ? 'h-10' : 'h-7 pointer-coarse:h-10'}
           onClick={onSubmit} disabled={busy} aria-busy={busy || undefined}>
           {busy ? t('app.checkingDomain') : t('app.checkBtn')}
         </InputGroupButton>

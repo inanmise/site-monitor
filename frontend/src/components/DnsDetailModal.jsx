@@ -287,12 +287,12 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
               {/* Kayıt türleri — alt sekmeler (shadcn Tabs); boş tür soluk ama seçilebilir */}
               <DnsSection title={t('dns.recordTypes')}>
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-2.5">
-                  <TabsList aria-label={t('dns.recordTypes')} className="max-w-full justify-start overflow-x-auto">
+                  <TabsList aria-label={t('dns.recordTypes')} className="max-w-full justify-start overflow-x-auto pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto">
                     {RECORD_TYPES.map(rt => {
                       const n = details?.records?.[rt]?.values?.length || 0
                       return (
                         <TabsTrigger key={rt} value={rt} data-empty={n === 0 ? 'true' : undefined}
-                          className="flex-none px-3 font-mono data-[empty=true]:opacity-50">
+                          className="flex-none px-3 font-mono data-[empty=true]:opacity-50 pointer-coarse:h-10 pointer-coarse:min-w-10">
                           {rt}
                           {n > 0 && <Badge variant="secondary" className="h-4 min-w-4 px-1 font-sans text-[10px] tabular-nums">{n}</Badge>}
                         </TabsTrigger>

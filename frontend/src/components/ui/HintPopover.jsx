@@ -3,6 +3,12 @@ import { Button } from '@/components/shadcn/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { cn } from '@/lib/utils'
 
+// Dokunmatik vuruş alanı (2026-11-05, mweb denetimi): görünür boy 32 px kalır (rozet satırı şişmesin), görünmez ::after
+// dikeyde 4'er px büyür → 40 px; dar (yalnız ikon) tetikte en az 40 px genişlik — checkbox ile aynı teknik. Kendi ::after
+// katmanını veren çağıranın (kart rozetleri: `pointer-coarse:after:-inset-*`) sınıflarıyla karışmasın diye o durumda eklenmez.
+const TOUCH_HIT = "relative pointer-coarse:after:absolute pointer-coarse:after:-inset-y-1 pointer-coarse:after:left-1/2 pointer-coarse:after:w-full pointer-coarse:after:min-w-10 pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:content-['']"
+export const hintTouchHit = (triggerClassName) => (/(^|\s|:)after:/.test(String(triggerClassName || '')) ? null : TOUCH_HIT)
+
 /**
  * DOKUN-GÖR açıklama — rozet/etiket gibi küçük bir öğenin açıklamasını fare, klavye VE dokunmatikte gösterir.
  *
@@ -36,6 +42,7 @@ export default function HintPopover({ content, side = 'top', align = 'start', in
       <PopoverTrigger asChild>
         <Button type="button" variant="ghost" data-slot="hint-trigger" aria-describedby={open && !interactive ? id : undefined} {...rest}
           className={cn('h-auto min-h-0 gap-0 rounded-full p-0 font-[inherit] hover:bg-transparent dark:hover:bg-transparent pointer-coarse:min-h-8',
+            hintTouchHit(triggerClassName),
             interactive ? 'cursor-pointer' : 'cursor-help', triggerClassName)}>
           {children}
         </Button>

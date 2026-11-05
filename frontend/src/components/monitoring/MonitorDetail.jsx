@@ -55,7 +55,8 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       scrollBody
       data-status={status}
       // Telefonda başlık satırı SARAR: eylem grubu (dokunmatikte 40 px düğmeler) başlığı sıfıra ezmesin, kendi
-      // satırına sağa yaslı insin. Geniş ekranda eski düzen (tek satır, uzun başlık kırpılır).
+      // satırına sağa yaslı insin. Geniş ekranda tek satır; uzun başlık (izleme adı) KIRPILMAZ, kendi sütununda sarar
+      // (2026-11-05, mweb denetimi: telefonda "Giriş akışı api.example.com" 193 px'de kesiliyordu).
       // `grid-cols-[minmax(0,1fr)]`: Dialog kutusu bir ızgara; `auto` sütun en uzun kırılmaz metne (uzun başlık) göre
       // genişleyip pencereyi telefonda ekrandan taşırıyordu (Sentetik detayı 439 px, 2026-09-26 responsive ölçümü).
       // GENİŞLİK (2026-09-30, kullanıcı: "sentetik kartına tıklayınca üst sekmeler taşıyor, yatay kaydırma açılıyor"):
@@ -66,7 +67,7 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       // penceresiyle aynı davranış). sm+ değişmedi. Sayfanın kendi `className`'i (Alan adı: yapışkan başlıklı varyant) sonra gelir, ezer.
       className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(1140px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
         'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', PHONE_FULLSCREEN, className)}
-      title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
+      title={<>{badge}<span data-slot="monitor-detail-title" className="min-w-0 text-lg font-bold tracking-[-.02em] [overflow-wrap:anywhere]">{title}</span></>}
       headerExtra={(actions || noc) ? <>
         {noc && <NocStatus {...noc} />}
         {/* Favori yıldızı (2026-10-02, öneri 23) — kartla AYNI anahtar; tercihler hazır değilse çizilmez */}

@@ -1072,11 +1072,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   .page-issue-filters) küçük düğme aralık köprüsünü sıfırlar (App.css katmansız). */}
               <div className="upt-range-btns page-issue-filters">
                 {issueFilters.map(f => (
-                  <Button key={f} type="button" variant={issueFilter === f ? 'default' : 'secondary'} size="sm"
+                  <Button key={f} type="button" variant={issueFilter === f ? 'default' : 'secondary'} size="sm" className="pointer-coarse:h-10"
                     aria-pressed={issueFilter === f}
                     onClick={() => selectIssueFilter(selected.id, f)}>{t(`page.filter_${f}`)}</Button>
                 ))}
-                <Button type="button" variant="secondary" size="sm" className="ml-auto"
+                <Button type="button" variant="secondary" size="sm" className="ml-auto pointer-coarse:h-10"
                   disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</Button>
               </div>
               {issuesError && issues.length > 0 && !issuesLoading && (

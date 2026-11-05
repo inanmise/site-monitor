@@ -21,7 +21,7 @@ import { colonHex } from './sslModel.js'
  */
 
 const SAN_OPEN_LIMIT = 4
-const ROW_BTN = 'h-8 max-sm:h-10'
+const ROW_BTN = 'h-8 max-sm:h-10 pointer-coarse:h-10'
 
 function daysBadge(node, t) {
   if (node.expired) return <Badge variant="destructive" data-slot="ssl-node-days">{t('sslv.expiredBadge')}</Badge>
