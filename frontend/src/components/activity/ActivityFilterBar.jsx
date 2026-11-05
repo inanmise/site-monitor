@@ -198,7 +198,8 @@ export default function ActivityFilterBar({ filters, setFilters, typeCounts, gro
         <div className="flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
           <SegmentedControl value={rangeValue} onChange={changeRange} ariaLabel={t('act.rangeFilter')} className="max-w-full flex-wrap"
             options={RANGES.map((rg) => ({ value: rg, label: t('act.range.' + rg) }))} />
-          <InputGroup className="w-full pointer-coarse:h-11 md:max-w-sm md:flex-1">
+          {/* md:min-w-64: dar kapta (768 px tablet + kenar çubuğu) aralık seçicinin yanına 47 px'e ezilmesin, alt satıra sarsın */}
+          <InputGroup className="w-full pointer-coarse:h-11 md:max-w-sm md:min-w-64 md:flex-1">
             <InputGroupInput type="search" placeholder={t('act.searchPh')} value={qInput} aria-label={t('act.searchPh')}
               data-page-search className="pointer-coarse:h-10" maxLength={200} onChange={(e) => setQInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />

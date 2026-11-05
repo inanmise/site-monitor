@@ -135,8 +135,10 @@ function smallTargets(sel) {
 function clippedText(sel) {
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
+  // sr-only (ekran okuyucu metni, bilinçli 1 px kutu) ölçülmez
   return [...root.querySelectorAll('span, a, button, h2, h3, p')]
-    .filter((n) => n.childElementCount === 0 && n.textContent.trim() && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis'))
+    .filter((n) => n.childElementCount === 0 && n.textContent.trim() && !n.closest('.sr-only')
+      && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis'))
     .map((n) => n.textContent.slice(0, 30))
 }
 
@@ -187,6 +189,9 @@ for (const vp of VIEWPORTS) {
       const [csv] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="act-export-csv"]').click()])
       expect(csv.suggestedFilename()).toBe('aktivite-test.csv')
       await expect(page.locator('[data-slot="act-export-truncated"]')).toBeVisible()
+      // Önceki (CSV) menünün kapanış animasyonu bitmeden tetiğe basılırsa Radix'in eski katmanı basışı "dışarı tık"
+      // sayıp yeni açılan menüyü hemen kapatır — kullanıcı bunu ikinci tıkla aşar; test kapanışı bekler.
+      await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveCount(0)
       await root.locator('[data-slot="act-export-trigger"]').click()
       const [xlsx] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="act-export-xlsx"]').click()])
       expect(xlsx.suggestedFilename()).toMatch(/^aktivite-\d{8}-\d{4}\.xlsx$/)
@@ -236,10 +241,11 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowIn, '[data-slot="activity-page"]'), 'yatay taşma (zaman çizelgesi)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="act-tl-view"]'), 'küçük hedef (zaman çizelgesi)').toEqual([])
       expect(await page.evaluate(clippedText, '[data-slot="act-tl-view"]'), 'kırpılan metin (zaman çizelgesi)').toEqual([])
+      await tl.locator('[data-slot="act-tl-strip"]').scrollIntoViewIfNeeded()
+      await page.screenshot({ path: `test-results/activity-enrich-timeline-${vp.name}.png`, fullPage: false })
       // Kesintinin "İlk aktivite"si → ayrıntı sayfası; uygulama içi Geri → liste
       await tl.locator('[data-slot="act-tl-outage"]').first().getByRole('button', { name: /İlk aktivite|First activity/ }).click()
       await expect(page).toHaveURL(/[?&]act=1(&|$)/)
-      await page.screenshot({ path: `test-results/activity-enrich-timeline-${vp.name}.png`, fullPage: false })
       await page.goBack()
       await expect(tl).toBeVisible()
       await tl.getByRole('button', { name: /Aktivite listesine dön|Back to the activity list/ }).click()

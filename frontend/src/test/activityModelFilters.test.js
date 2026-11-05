@@ -133,7 +133,12 @@ describe('activityModel — neden adı ve kapılar', () => {
   it('reasonLabel: chkfail kısa adı (adlı yer tutucu satırdan), yoksa kwfail, yoksa ham kod; asla ham "{status}"', () => {
     expect(reasonLabel('DNS_NXDOMAIN', tr)).toBe(TR['chkfail.DNS_NXDOMAIN.short'])
     expect(reasonLabel('HTTP_STATUS', tr, reasonParams({ http_status: 503 }))).toBe('HTTP 503 döndü')
-    expect(reasonLabel('HTTP_STATUS', tr)).toBe('HTTP … döndü')
+    // Parametre yoksa (zaman çizelgesi kesintisi: satır yok) "…" yerine parametresiz ad
+    expect(reasonLabel('HTTP_STATUS', tr)).toBe(TR['act.rsn.HTTP_STATUS'])
+    expect(reasonLabel('RESOURCES_BROKEN', tr)).toBe(TR['act.rsn.RESOURCES_BROKEN'])
+    expect(reasonLabel('RESOURCES_BROKEN', tr, { broken: 3 })).toBe('3 kırık kaynak')
+    // Parametresiz adı olmayan kalıp: eski davranış ("…")
+    expect(reasonLabel('HTTP_STATUS', (k) => (k === 'chkfail.HTTP_STATUS.short' ? 'HTTP {status} döndü' : k))).toBe('HTTP … döndü')
     expect(reasonLabel('KEYWORD_NOT_FOUND', tr)).toBe(TR['kwfail.KEYWORD_NOT_FOUND.short'])
     expect(reasonLabel('SOMETHING_NEW', tr)).toBe('SOMETHING_NEW')
     // Eski satır (neden kodu yok): be2 `class:<SINIF>` — sınıf adıyla, bilinmeyen sınıf "Hata sınıfı: X"

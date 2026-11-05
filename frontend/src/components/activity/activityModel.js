@@ -400,9 +400,26 @@ export function reasonLabel(code, t, params = {}) {
   for (const ns of ['chkfail', 'kwfail']) {
     const key = `${ns}.${c}.short`
     const tpl = t(key)
-    if (tpl && tpl !== key) return fillNamed(tpl, params)
+    if (tpl && tpl !== key) {
+      // Parametresi gelmeyen kalıp ("HTTP {status} döndü", zaman çizelgesi kesintisi gibi satırsız yerler):
+      // "…" yerine parametresiz ad (`act.rsn.<KOD>`), yoksa eski davranış
+      if (missingParam(tpl, params)) {
+        const plain = t(`act.rsn.${c}`)
+        if (plain && plain !== `act.rsn.${c}`) return plain
+      }
+      return fillNamed(tpl, params)
+    }
   }
   return c
+}
+
+/** Kalıpta değeri gelmeyen `{ad}` yer tutucusu var mı. */
+function missingParam(template, params = {}) {
+  for (const m of String(template).matchAll(/\{([a-z][a-z0-9_]*)\}/gi)) {
+    const v = params[m[1]]
+    if (v == null || v === '') return true
+  }
+  return false
 }
 
 /** Satırın neden etiketinin parametreleri (HTTP kodu + ayrıntıdaki sayılar). */
