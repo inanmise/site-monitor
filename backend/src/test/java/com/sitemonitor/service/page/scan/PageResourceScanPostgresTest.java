@@ -71,10 +71,13 @@ class PageResourceScanPostgresTest {
         int n = jdbc.update(PageResourceScanService.SQL_DONE, PageResourceScanService.iso(now), now, 5, 5, 87, "B", 2400L,
                 180L, 420L, 1_500_000L, 4, 900_000L, 2, 1, 3_000L, 1, 20_000L, 0, true,
                 "{\"scores\":[],\"notes\":[{\"code\":\"JS_NOT_EXECUTED\",\"params\":{}}]}",
-                "[{\"url\":\"https://a.com/\",\"category\":\"HTML\",\"start_ms\":null}]", 2, 640L, runId);
+                "[{\"url\":\"https://a.com/\",\"category\":\"HTML\",\"start_ms\":null}]", 2, 640L,
+                // algoritma 3: bayt dökümü + kategori puanları (gerçek BIGINT / INTEGER, null puan)
+                300_000L, 80_000L, 40_000L, 72, null, 91, runId);
         assertThat(n).isEqualTo(1);
         Map<String, Object> done = svc.one(runId, mon + 2);
-        assertThat(get(done, "scan").toString()).contains("grade=87", "capped=true", "redirect_count=2", "redirect_ms=640");
+        assertThat(get(done, "scan").toString()).contains("grade=87", "capped=true", "redirect_count=2", "redirect_ms=640",
+                "js_bytes=300000", "security_score=72", "seo_score=null", "a11y_score=91", "scope=page");
         assertThat((List<?>) done.get("items")).hasSize(1);
         assertThat(get(done, "analysis").toString()).contains("JS_NOT_EXECUTED");
         // ikinci bitiş yazımı (artık RUNNING değil) hiçbir şey yazmaz
@@ -92,9 +95,9 @@ class PageResourceScanPostgresTest {
                 Integer.class, mon + 3)).isEqualTo(20);
         assertThat((List<?>) svc.list(mon + 3, 200).get("items")).hasSize(22);
 
-        // 4b) Algoritma 2: başlatılan satır algorithm_version = 2; iptal tek koşullu UPDATE (gerçek BOOLEAN / BIGINT)
+        // 4b) Algoritma 3: başlatılan satır algorithm_version = 3; iptal tek koşullu UPDATE (gerçek BOOLEAN / BIGINT)
         assertThat(jdbc.queryForObject("SELECT algorithm_version FROM page_resource_scans WHERE id = ?", Integer.class, id))
-                .isEqualTo(2);
+                .isEqualTo(3);
         long rt = System.currentTimeMillis();
         jdbc.update("INSERT INTO page_resource_scans (monitor_id, url, status, started_at, started_ms, heartbeat_ms, "
                 + "progress_done, progress_total, capped, items_kept) VALUES (?, 'x', 'RUNNING', ?, ?, ?, 0, 0, FALSE, FALSE)",

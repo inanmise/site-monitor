@@ -211,7 +211,7 @@ class PageResourceScanServiceTest {
         assertThat(items).noneMatch(i -> ((String) i.get("url")).contains("/skip/"));
 
         Map<String, Object> analysis = get(one, "analysis");
-        assertThat((List<?>) analysis.get("scores")).hasSize(8);
+        assertThat((List<?>) analysis.get("scores")).as("algoritma 3: + render_blocking").hasSize(9);
         List<Map<String, Object>> notes = get(analysis, "notes");
         assertThat(notes).extracting(n -> n.get("code")).contains("JS_NOT_EXECUTED", "EXCLUDES_APPLIED");
 

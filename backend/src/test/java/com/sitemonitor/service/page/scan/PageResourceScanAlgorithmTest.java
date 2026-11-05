@@ -255,7 +255,7 @@ class PageResourceScanAlgorithmTest {
         assertThat(waf).containsEntry("verdict", "unverified").containsEntry("status", 403);
         Map<String, Object> wafHeaders = get(waf, "headers");
         assertThat(wafHeaders.keySet()).isSubsetOf(Set.of("content_type", "content_encoding", "cache_control", "expires",
-                "content_length", "server", "x_cache"));
+                "content_length", "server", "x_cache", "etag", "last_modified", "age", "alt_svc", "cdn_cache"));
         assertThat(wafHeaders).containsEntry("server", "AkamaiGHost").containsEntry("x_cache", "TCP_DENIED");
         assertThat(waf.toString()).doesNotContain("GIZLI");
 
@@ -293,7 +293,7 @@ class PageResourceScanAlgorithmTest {
         assertThat(items.get(0)).containsEntry("found_in", null).containsEntry("final_url", null);
 
         Map<String, Object> analysis = get(one, "analysis");
-        assertThat(analysis.get("algorithm_version")).isEqualTo(2);
+        assertThat(analysis.get("algorithm_version")).isEqualTo(3);
         assertThat(analysis.get("not_loaded_count")).isEqualTo(1);
         List<Map<String, Object>> recs = get(analysis, "recommendations");
         assertThat(recs).extracting(m -> m.get("code")).doesNotContain("BROKEN_LINKS");
@@ -311,14 +311,14 @@ class PageResourceScanAlgorithmTest {
         assertThat(scan.get("redirect_count")).isEqualTo(1);
         assertThat((Long) scan.get("redirect_ms")).isGreaterThanOrEqualTo(250L);
         assertThat((Long) scan.get("ttfb_ms")).as("son adım hızlı").isLessThan(250L).isEqualTo(scan.get("html_ttfb_ms"));
-        assertThat(scan.get("algorithm_version")).isEqualTo(2);
+        assertThat(scan.get("algorithm_version")).isEqualTo(3);
         assertThat(scan.get("owner_pod")).isNotNull();
         assertThat(scan.get("cancelled")).isEqualTo(false);
         List<Map<String, Object>> items = get(one, "items");
         assertThat((String) items.get(0).get("final_url")).endsWith("/r1");
         Map<String, Object> list = svc.list(2, 10);
         Map<String, Object> row = ((List<Map<String, Object>>) list.get("items")).get(0);
-        assertThat(row).containsEntry("redirect_count", 1).containsEntry("algorithm_version", 2);
+        assertThat(row).containsEntry("redirect_count", 1).containsEntry("algorithm_version", 3).containsEntry("scope", "page");
     }
 
     @Test
@@ -331,7 +331,10 @@ class PageResourceScanAlgorithmTest {
         Map<String, Object> row = ((List<Map<String, Object>>) svc.list(3, 10).get("items")).get(0);
         assertThat(row).containsEntry("algorithm_version", null).containsEntry("ttfb_ms", null)
                 .containsEntry("redirect_count", null).containsEntry("redirect_ms", null).containsEntry("cancelled", false)
-                .containsEntry("html_ttfb_ms", 900L);
+                .containsEntry("html_ttfb_ms", 900L)
+                // algoritma 3 özet kolonları: eski satırda null, kapsam varsayılanı "page"
+                .containsEntry("js_bytes", null).containsEntry("security_score", null).containsEntry("seo_score", null)
+                .containsEntry("a11y_score", null).containsEntry("scope", "page").containsEntry("pages_count", null);
     }
 
     @Test

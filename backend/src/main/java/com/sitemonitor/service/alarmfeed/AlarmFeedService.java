@@ -11,7 +11,9 @@ import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.MonitorTypeCatalog;
 import com.sitemonitor.service.NotificationGroupService;
+import com.sitemonitor.service.noc.NocConfigService;
 import com.sitemonitor.service.noc.NocMonitorDirectory;
+import com.sitemonitor.service.noc.NocNotificationService;
 import com.sitemonitor.service.noc.NocType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,8 +54,16 @@ import java.util.function.LongSupplier;
  * Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı ASLA birlikte dönmez. "Clear" kipinde kapanış o RCI'da açık satır
  * yoksa (alarm başına bir) Clear olarak gider.
  *
- * <p><b>Bilinmeyen ≠ boş.</b> Alarm, envanter, takım ya da (takım süzgeci varken) izleme dizini okunamazsa yanıt kurulmaz
- * (istisna → uç 503): boş liste merkezi sistemde "hiç alarm yok" sanılırdı.
+ * <p><b>Yalnız 7/24'e bildirilenler</b> ({@code noc-only}, varsayılan açık; 2026-11-05 kullanıcı isteği): akışa yalnız 7/24
+ * e-postasıyla AYNI alarm kararının ({@code NocNotificationService.onAlertDispatched}'in alarm-bazlı kısmı) verdiği alarmlar
+ * girer — 7/24'te türü açık, en düşük seviyeye ulaşıyor (erişim kesintisi ailesi her zaman KRİTİK), izlemesi "7/24 ekibine
+ * bildir" işaretli ve aktif. Teslime özgü kapılar (7/24 grubu / adresi, bakım penceresi, sistem bakımı susturması, teslim
+ * satırı) DAHİL DEĞİL: akış ayrı bir kanaldır. Daha önce açık gönderilmiş, artık 7/24 dışı kalan alarm bir kez kapsam dışı
+ * (SCOPE) "çözüldü" olarak kapanır.
+ *
+ * <p><b>Bilinmeyen ≠ boş.</b> Alarm, envanter, takım ya da (takım süzgeci ya da 7/24 süzgeci varken) izleme dizini / 7/24
+ * ayarı okunamazsa yanıt kurulmaz (istisna → uç 503): boş liste merkezi sistemde "hiç alarm yok", okunamayan 7/24 kararı
+ * "7/24 dışı" sanılır ve daha önce gönderilmiş HER açık alarm sahte bir "çözüldü" ile kapanırdı.
  *
  * <p>Pod başına {@code cache-ms} (5 sn) önbellek: aynı dakika içindeki çağrılar aynı gövdeyi alır ve durum tablosu bir kez
  * yazılır. Önizleme ({@code dryRun}) durumu YAZMAZ.
@@ -105,6 +115,7 @@ public class AlarmFeedService {
 
     private NocMonitorDirectory directory;
     private NotificationGroupService notificationGroups;
+    private NocConfigService nocConfig;
 
     @Value("${site.monitor.alarm-feed.cache-ms:5000}")
     long cacheMs = 5_000;
@@ -147,6 +158,11 @@ public class AlarmFeedService {
     @Autowired(required = false)
     void setNotificationGroups(NotificationGroupService notificationGroups) {
         this.notificationGroups = notificationGroups;
+    }
+
+    @Autowired(required = false)
+    void setNocConfig(NocConfigService nocConfig) {
+        this.nocConfig = nocConfig;
     }
 
     public AlarmFeedSettings.Config config() {
@@ -239,8 +255,11 @@ public class AlarmFeedService {
         }
     }
 
-    /** Bir alarmın kapsam değerlendirmesi için toplanmış hali. */
-    record Item(AlertEvent event, AlarmFeedRows.Alarm alarm, String level, String family, Set<Long> owners) {}
+    /**
+     * Bir alarmın kapsam değerlendirmesi için toplanmış hali. {@code noc}: 7/24 kararı — yalnız 7/24 süzgeci açıkken
+     * hesaplanır (kapalıyken {@code null}, kullanılmaz).
+     */
+    record Item(AlertEvent event, AlarmFeedRows.Alarm alarm, String level, String family, Set<Long> owners, Boolean noc) {}
 
     Feed build(AlarmFeedSettings.Config c, boolean dryRun) {
         long nowMs = clock.getAsLong();
@@ -271,20 +290,34 @@ public class AlarmFeedService {
 
         // 4) Takımlar (zorunlu) + envanter (zorunlu) + izleme adları (takım süzgeci varken zorunlu — damgasız bağımsız
         //    alarmın takımı dizinden gelir; okunamazsa kapsam kararı verilemez, yanlış "kapsam dışı" kapanışı olurdu).
+        //    7/24 süzgeci açıkken izleme dizini VE 7/24 ayarı zorunlu: okunamayan karar "7/24 dışı" sayılırsa daha önce
+        //    gönderilmiş her açık alarm sahte bir "çözüldü" (SCOPE) ile kapanırdı — yanıt kurulmaz (uç 503), durum yazılmaz.
         Map<Long, Team> teams = teams();
         Map<String, CertificateInventory> inv = inventory(byId.values());
+        NocConfigService.Config noc = null;
+        if (c.nocOnly()) {
+            if (directory == null || nocConfig == null) {
+                throw new IllegalStateException("7/24 süzgeci açık ama izleme dizini / 7/24 ayarı bu pod'da yok");
+            }
+            try {
+                noc = nocConfig.get();
+            } catch (Exception ex) {
+                throw new IllegalStateException("7/24 ayarı okunamadı", ex);
+            }
+            if (noc == null) throw new IllegalStateException("7/24 ayarı okunamadı");
+        }
         NocMonitorDirectory.Snapshot snap = null;
         if (directory != null) {
             try {
                 snap = directory.snapshot();
             } catch (Exception ex) {
-                if (!c.teamIds().isEmpty()) throw new IllegalStateException("izleme dizini okunamadı", ex);
+                if (!c.teamIds().isEmpty() || c.nocOnly()) throw new IllegalStateException("izleme dizini okunamadı", ex);
                 log.debug("Alarm akışı: izleme dizini okunamadı: {}", ex.toString());
             }
         }
         Map<String, List<String>> recipientMemo = new HashMap<>();
         Map<Long, Item> items = new LinkedHashMap<>();
-        for (AlertEvent e : byId.values()) items.put(e.getId(), item(e, inv, teams, snap, recipientMemo));
+        for (AlertEvent e : byId.values()) items.put(e.getId(), item(e, inv, teams, snap, noc, recipientMemo));
 
         // 5) Kapsam. Tarama tavanı dışında kalmış AÇIK alarm da (durumda bildirilmişse) kapsamda sayılır.
         List<Item> open = new ArrayList<>();
@@ -484,6 +517,9 @@ public class AlarmFeedService {
 
     static boolean inScope(Item it, AlarmFeedSettings.Config c) {
         if (!c.levelIncluded(it.level())) return false;
+        // 7/24 süzgeci: yalnız 7/24 kararı EVET olan alarm (hesaplanmamış = dışarıda; okunamayan karar build()'de zaten
+        // istisnaya dönüşür, buraya "bilinmiyor" olarak gelmez).
+        if (c.nocOnly() && !Boolean.TRUE.equals(it.noc())) return false;
         if (!c.types().isEmpty() && (it.family() == null || !c.types().contains(it.family()))) return false;
         if (!c.teamIds().isEmpty()) {
             for (Long t : it.owners()) if (c.teamIds().contains(t)) return true;
@@ -492,22 +528,28 @@ public class AlarmFeedService {
         return true;
     }
 
+    /**
+     * @param noc 7/24 ayarı — yalnız 7/24 süzgeci açıkken dolu; o zaman izleme çözülemezse (tür tablosu okunamıyor) istisna
+     *            yükselir (karar "7/24 dışı" sayılmaz). Kapalıyken çözülemeyen izleme yalnız ad / takım kaybıdır (debug).
+     */
     private Item item(AlertEvent e, Map<String, CertificateInventory> inv, Map<Long, Team> teams,
-                      NocMonitorDirectory.Snapshot snap, Map<String, List<String>> recipientMemo) {
+                      NocMonitorDirectory.Snapshot snap, NocConfigService.Config noc, Map<String, List<String>> recipientMemo) {
         boolean inventoryRouted = AlertOwnership.routesLikeInventory(e);
         CertificateInventory row = inventoryRouted ? inv.get(lower(e.getDomain())) : null;
         String monitorName = null;
         Long dirTeam = null;
-        if (snap != null) {
+        NocType nt = NocType.forAlertType(e.getAlertType());
+        NocMonitorDirectory.Row r = null;
+        if (snap != null && nt != null) {
             try {
-                NocType nt = NocType.forAlertType(e.getAlertType());
-                NocMonitorDirectory.Row r = nt == null ? null : snap.forAlert(nt, e.getDomain(), monitorIdOf(e.getContextJson()));
-                if (r != null) {
-                    monitorName = r.name();
-                    dirTeam = r.teamId();
-                }
+                r = snap.forAlert(nt, e.getDomain(), monitorIdOf(e.getContextJson()));
             } catch (Exception ex) {
+                if (noc != null) throw new IllegalStateException("izleme dizini okunamadı (" + nt + ")", ex);
                 log.debug("Alarm akışı: izleme çözülemedi ({}): {}", e.getId(), ex.toString());
+            }
+            if (r != null) {
+                monitorName = r.name();
+                dirTeam = r.teamId();
             }
         }
         // Sahibi takım: damga → (envanter gibi yönlenen alarmda) envanter SY → UG; bağımsız alarm envanteri ALMAZ
@@ -528,7 +570,21 @@ public class AlarmFeedService {
                 monitorName, teamInfo(shownTeam, teams, shownTeam != null && shownTeam.equals(e.getTeamId())
                         ? e.getNotificationGroupId() : null, recipientMemo),
                 teamInfo(ug, teams, null, recipientMemo));
-        return new Item(e, a, level, MonitorTypeCatalog.typeOfAlert(e.getAlertType()), owners);
+        return new Item(e, a, level, MonitorTypeCatalog.typeOfAlert(e.getAlertType()), owners,
+                noc == null ? null : nocEligible(e.getAlertType(), e.getAlertLevel(), nt, r, noc));
+    }
+
+    /**
+     * 7/24 e-postasıyla AYNI alarm kararı ({@code NocNotificationService.onAlertDispatched}'in alarm-bazlı kısmı): tür 7/24'e
+     * eşleniyor ve 7/24 ayarlarında açık, seviye en düşük seviyeye ulaşıyor (erişim kesintisi ailesi = KRİTİK), izleme satırı
+     * var, "7/24 ekibine bildir" açık ve izleme aktif. Teslime özgü kapılar (7/24 grubu, bakım penceresi, sistem bakımı
+     * susturması, teslim satırı) bilinçli olarak YOK — akış ayrı bir kanaldır.
+     */
+    static boolean nocEligible(String alertType, String level, NocType type, NocMonitorDirectory.Row row,
+                               NocConfigService.Config cfg) {
+        if (type == null || cfg == null || !cfg.typeEnabled(type)) return false;
+        if (!cfg.meetsMinLevel(NocNotificationService.nocLevel(alertType, level))) return false;
+        return row != null && row.nocNotify() && row.active();
     }
 
     /**

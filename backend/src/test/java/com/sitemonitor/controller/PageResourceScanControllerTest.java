@@ -7,6 +7,8 @@ import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
 import com.sitemonitor.service.page.scan.PageResourceScanService;
+import com.sitemonitor.service.page.scan.budget.ResourceBudgetService;
+import com.sitemonitor.service.page.scan.budget.ResourceTrendService;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,6 +59,8 @@ class PageResourceScanControllerTest {
     @MockitoBean PermissionService permissionService;
     @MockitoBean PageResourceScanService scans;
     @MockitoBean AuditService auditService;
+    @MockitoBean ResourceBudgetService budgets;
+    @MockitoBean ResourceTrendService trends;
 
     static Map<String, Object> scan(long id, String status) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -79,6 +83,7 @@ class PageResourceScanControllerTest {
         list.put("running", null);
         list.put("limits", Map.of("detail_runs", 20));
         when(scans.list(eq(61L), anyInt())).thenReturn(list);
+        when(budgets.annotate(anyLong(), any(), org.mockito.ArgumentMatchers.anyList())).thenReturn(true);
     }
 
     static PageMonitor page(Long id, Long teamId, String url) {

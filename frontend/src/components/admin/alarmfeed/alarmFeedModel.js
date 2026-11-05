@@ -49,7 +49,7 @@ export const IP_FILTER_DEBOUNCE_MS = 300
 
 /** Form alanları — `settings` ile aynı adlar (kayıt gövdesi yalnız DEĞİŞENLERİ taşır). */
 export const FORM_FIELDS = [
-  'enabled', 'min_level', 'team_ids', 'types', 'resolved_minutes', 'max_rows', 'resolved_mode', 'clear_text',
+  'enabled', 'min_level', 'team_ids', 'types', 'noc_only', 'resolved_minutes', 'max_rows', 'resolved_mode', 'clear_text',
   'severity_critical', 'severity_high', 'severity_warning', 'rci_mode', 'source', 'rcitype', 'mail_separator',
   'allowed_ips', 'rate_per_minute', 'store_body', 'block_enabled', 'block_threshold', 'block_minutes', 'block_escalate',
   'block_exempt_ips',
@@ -109,6 +109,8 @@ export function toForm(settings) {
     min_level: text(s.min_level),
     team_ids: normalizeIds(s.team_ids),
     types: normalizeTypes(s.types),
+    // Eski sunucu alanı göndermez → satır gizli (nocOnlySupported) ve iki taraf da false: değişmiş sayılmaz, gönderilmez
+    noc_only: s.noc_only === true,
     resolved_minutes: numField(s.resolved_minutes),
     max_rows: numField(s.max_rows),
     resolved_mode: text(s.resolved_mode),
@@ -146,6 +148,7 @@ export function bodyOf(form) {
     min_level: text(f.min_level).trim(),
     team_ids: normalizeIds(f.team_ids),
     types: normalizeTypes(f.types),
+    noc_only: f.noc_only === true,
     resolved_mode: text(f.resolved_mode).trim(),
     rci_mode: text(f.rci_mode).trim(),
     mail_separator: text(f.mail_separator).trim(),
@@ -167,6 +170,14 @@ export function changedSettings(saved, form) {
 }
 
 export const isDirty = (saved, form) => Object.keys(changedSettings(saved, form)).length > 0
+
+/**
+ * "Yalnız 7/24'e bildirilen alarmlar" süzgecini sunucu biliyor mu (2026-11-05) — eski sunucu `settings.noc_only` göndermez;
+ * o zaman satır çizilmez (gönderilse yok sayılırdı).
+ */
+export function nocOnlySupported(data) {
+  return !!data?.settings && Object.prototype.hasOwnProperty.call(data.settings, 'noc_only')
+}
 
 /** Sunucu sınırları (eski pod göndermezse varsayılanlar). */
 export function limitsOf(data) {

@@ -197,6 +197,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.resource-scan.max-objects",        "monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.max-total-mb",       "monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.request-timeout-ms", "monitoring", Type.INT),
+        // Çok sayfalı kaynak analizi (prs3 G, 2026-11): en çok sayfa (ana sayfa dahil, 2–20) ve tüm sitenin süre bütçesi
+        // (sn, 120–900; D-5) — PageResourceScanService.siteLimits, aralık dışı → varsayılan.
+        new Setting("site.monitor.page.resource-scan.max-pages",          "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.site-max-seconds",   "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.pagespeed.resource-concurrency",    "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.user-agent",              "monitoring", Type.STRING),
@@ -262,6 +266,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.alarm-feed.min-level",         "alarm-feed", Type.ENUM, List.of("WARNING", "HIGH", "CRITICAL")),
         new Setting("site.monitor.alarm-feed.team-ids",          "alarm-feed", Type.CSV),
         new Setting("site.monitor.alarm-feed.types",             "alarm-feed", Type.CSV),
+        // 2026-11-05: yalnız 7/24'e bildirilen alarmlar (7/24 e-postasıyla aynı alarm kararı) — varsayılan AÇIK.
+        new Setting("site.monitor.alarm-feed.noc-only",          "alarm-feed", Type.BOOL),
         new Setting("site.monitor.alarm-feed.resolved-minutes",  "alarm-feed", Type.INT),
         new Setting("site.monitor.alarm-feed.resolved-mode",     "alarm-feed", Type.ENUM, List.of("status", "clear")),
         new Setting("site.monitor.alarm-feed.clear-text",        "alarm-feed", Type.STRING),
@@ -818,6 +824,7 @@ public final class AppSettingsCatalog {
         "site.monitor.alarm-feed.min-level",
         "site.monitor.alarm-feed.team-ids",
         "site.monitor.alarm-feed.types",
+        "site.monitor.alarm-feed.noc-only",
         "site.monitor.alarm-feed.resolved-minutes",
         "site.monitor.alarm-feed.resolved-mode",
         "site.monitor.alarm-feed.clear-text",

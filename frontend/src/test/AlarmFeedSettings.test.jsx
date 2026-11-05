@@ -235,8 +235,57 @@ describe('AlarmFeedSettings — ayarlar', () => {
     await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ types: ['http'], resolved_mode: 'clear' }))
   })
 
+  it('yalnız 7/24 süzgeci: eski sunucu alanı göndermezse satır yok; gönderirse anahtar + kural + not; değişince yalnız o alan', async () => {
+    await mount()
+    expect(slot('af-f-noc_only')).toBeNull()
+    expect(slot('af-noc-only-note')).toBeNull()
+  })
+
+  it('yalnız 7/24 süzgeci açık: kural ve "bir kez RESOLVED" notu görünür; kapatınca not uyarı tonuna geçer, gövde { noc_only: false }', async () => {
+    api.alarmFeed.get.mockResolvedValue(ok(data({ settings: { ...SETTINGS, noc_only: true } })))
+    await mount()
+    const row = slot('af-f-noc_only')
+    expect(row).toHaveAttribute('data-on', 'true')
+    const sw = within(row).getByRole('switch', { name: "Yalnız 7/24'e bildirilen alarmlar" })
+    expect(sw).toHaveAttribute('aria-checked', 'true')
+    // Kural açıklaması anahtara bağlı (ekran okuyucu) ve 7/24 e-postasıyla aynı kuralı söyler
+    expect(sw).toHaveAccessibleDescription(/7\/24 izleme ekibine bildir/)
+    expect(row).toHaveTextContent('erişim kesintileri her zaman kritik sayılır')
+    const note = slot('af-noc-only-note')
+    expect(note).toHaveAttribute('data-changed', 'false')
+    expect(note).toHaveTextContent('bir kez RESOLVED (kapsam dışı) olarak kapanır')
+    expect(saveBtn()).toBeDisabled()
+    fireEvent.click(sw)
+    expect(slot('af-noc-only-note')).toHaveAttribute('data-changed', 'true')
+    expect(slot('af-noc-only-note').querySelector('[data-tone]')).toHaveAttribute('data-tone', 'warning')
+    api.alarmFeed.save.mockResolvedValue({ success: true, data: data({ settings: { ...SETTINGS, noc_only: false } }) })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ noc_only: false }))
+    await waitFor(() => expect(saveBar()).not.toHaveAttribute('data-dirty', 'true'))
+    expect(slot('af-f-noc_only')).toHaveAttribute('data-on', 'false')
+    expect(slot('af-noc-only-note')).toHaveAttribute('data-changed', 'false')
+  })
+
+  it('yalnız 7/24 süzgeci: sunucu alan hatası (field noc_only) alanın altında', async () => {
+    api.alarmFeed.get.mockResolvedValue(ok(data({ settings: { ...SETTINGS, noc_only: false } })))
+    await mount()
+    api.alarmFeed.save.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'noc_only',
+      error: 'Açık / kapalı değeri bekleniyor.' })
+    fireEvent.click(within(slot('af-f-noc_only')).getByRole('switch'))
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.alarmFeed.save).toHaveBeenCalledWith({ noc_only: true }))
+    await waitFor(() => expect(document.querySelector('[data-field="noc_only"]')).toHaveTextContent('Açık / kapalı değeri bekleniyor.'))
+  })
+
   it('RCI değişince EVENTKEY notu uyarı tonuna geçer; saklama süresi salt okunur metin', async () => {
     await mount()
+    // Not gerçeği söyler: eski anahtarlı olaylar bir kez RESOLVED olarak kapanır, aynı alarmlar yeni RCI ile OPEN gelir
+    expect(slot('af-rci-eventkey')).toHaveTextContent('bir kez RESOLVED (anahtar değişti) olarak kapanır')
+    expect(slot('af-rci-eventkey')).not.toHaveTextContent('kapanmaz')
+    expect(slot('af-rci-eventkey')).toHaveTextContent('Değiştirmeden önce merkezi ekiple konuşun')
+    // Çözülme penceresi ipucu: gönderilmiş alarmın RESOLVED satırı ilk çağrıya kadar bekler (eski "N dk kalır" sözü yok)
+    expect(document.querySelector('[data-field="resolved_minutes"]')).toHaveTextContent('ilk çağrılana kadar bekler')
+    expect(document.querySelector('[data-field="resolved_minutes"]')).toHaveTextContent('RESOLVEDTIME gerçek çözülme anıdır')
     expect(slot('af-rci-eventkey')).toHaveAttribute('data-changed', 'false')
     fireEvent.click(within(slot('af-f-rci_mode')).getByRole('radio', { name: /Yalnız hedef/ }))
     expect(slot('af-rci-eventkey')).toHaveAttribute('data-changed', 'true')
@@ -251,6 +300,8 @@ describe('AlarmFeedSettings — önizleme', () => {
   it('"Şimdi ne dönerdi?" → sayılar + satır; satır açılınca BODY ve bütün kolonlar', async () => {
     await mount()
     expect(slot('af-pv-idle')).toBeInTheDocument()
+    // Açıklama: önizleme teslim işareti koymaz — gönderilmemiş kapanış her önizlemede yeniden görünür
+    expect(slot('af-preview')).toHaveTextContent('“gönderildi” işaretlemez')
     fireEvent.click(slot('af-preview-run'))
     await waitFor(() => expect(slots('af-pv-row')).toHaveLength(1))
     expect(slot('af-pv-count')).toHaveTextContent('1 satır')

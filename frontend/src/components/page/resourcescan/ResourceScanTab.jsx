@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CircleAlert, FileSpreadsheet, FileText, History, Hourglass, Info, LayoutDashboard, Link2, List, Play, RefreshCw, RotateCw, ScanSearch,
-  Square, TriangleAlert,
+  ChartSpline, CircleAlert, FileSpreadsheet, FileText, Globe, History, Hourglass, Info, Layers, LayoutDashboard, Link2, List,
+  ListChecks, RefreshCw, RotateCw, ScanSearch, Square, TriangleAlert,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -22,16 +22,27 @@ import ResourceScanObjects from './ResourceScanObjects.jsx'
 import ResourceScanHistory from './ResourceScanHistory.jsx'
 import ResourceScanObjectDetail from './ResourceScanObjectDetail.jsx'
 import {
-  DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedAtSighting, filtersForNewScan, formatMs, formatNumber, gradeLetter, isCancelled,
+  AUDIT_AREAS, DEFAULT_AUDIT_AREA, DEFAULT_FILTERS, POLL_MAX_FAILURES, POLL_MS, elapsedAtSighting, filtersForNewScan, findingOfRec, formatMs,
+  formatNumber, gradeLetter, isCancelled,
   isRunning, latestDoneId, monotonicPct, parseUrlState, pickDefaultScan, plural, pollCapMs, pollCapReached, previousDone, problemText,
-  progressPct, recFiltersByFinding, recItemUrls, resourceScanLink, sectionOfView, urlStateValues, viewOf, withFindings,
+  progressPct, recItemUrls, resourceScanLink, sectionOfView, urlStateValues, viewOf, withFindings,
 } from './resourceScanModel.js'
 import { forgetStarted, handOff, markStartedHere, startedHere, takeBack } from './resourceScanWatcher.js'
 import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
+// ── prs3 F / G (fe2): bütçe, başlatma menüsü, eğilim ve sayfalar görünümleri
+import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudget.jsx'
+import ResourceScanStart from './ResourceScanStart.jsx'
+import ResourceScanSite from './ResourceScanSite.jsx'
+import { isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
+
+// Ayrıntılı denetim (prs3) yalnız açılınca iner — sekme parçası küçük kalsın
+const ResourceScanAudit = lazy(() => import('./ResourceScanAudit.jsx'))
+// Eğilim görünümü grafik (recharts) taşır — yalnız sekme açılınca iner (prs3 F2)
+const ResourceScanTrendView = lazy(() => import('./ResourceScanTrendView.jsx'))
 
 /**
  * Sayfa bütünlüğü detayı → "Kaynak analizi" sekmesi (2026-10-31, kullanıcı isteği; r177 yeniden düzen). YALNIZ kullanıcı
@@ -89,10 +100,16 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const [section, setSection] = useState(initSection)
   const [objectsMode, setObjectsMode] = useState(initialUrl.current.view === 'waterfall' ? 'waterfall' : 'list')
   const [historyMode, setHistoryMode] = useState(initialUrl.current.view === 'compare' ? 'compare' : 'list')
+  // Ayrıntılı denetim alanı (prs3; URL `prs_v=audit-<alan>`)
+  const [area, setArea] = useState(AUDIT_AREAS.includes(initialUrl.current.area) ? initialUrl.current.area : DEFAULT_AUDIT_AREA)
   const [otherId, setOtherId] = useState(initialUrl.current.otherId)
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [openItem, setOpenItem] = useState(null)
   const [focusReq, setFocusReq] = useState(null)        // { target, seq } — bölüm geçişinde odak / kaydırma isteği
+  // prs3 F / G (fe2): bütçe penceresi ve sunucunun site isteğini yok saydığı (eski sunucu) koşu
+  const [budgetOpen, setBudgetOpen] = useState(false)
+  const [siteIgnoredId, setSiteIgnoredId] = useState(null)
+  const budget = useResourceBudget(monitorId, monitor?.can_edit === true)
 
   const alive = useRef(true)
   const histSeq = useRef(0)
@@ -128,17 +145,23 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       running: res.data.running && isRunning(res.data.running) ? res.data.running : null,
       can_run: res.data.can_run === true,
       limits: res.data.limits || null,
+      // Bütçe değerleri okunamadı: satırlar "bilinmiyor" — geçmişte ayrıca söylenir
+      budgetUnreadable: res.data.budget_unreadable === true,
       timestamp: res.timestamp ?? null,
     }
     setHist({ state: 'ok', data, error: null })
     return data
   }, [monitorId])
 
-  const loadDetail = useCallback(async (id) => {
+  /**
+   * Seçili analizin ayrıntısı. `quiet` (bütçe kaydı sonrası tazeleme): önbellek atlanır, ekranda eski ayrıntı KALIR (yükleniyor
+   * bloğuna düşmez, kaydırma korunur); başarısız sessiz tazelemede de eski ayrıntı gösterilmeye devam eder.
+   */
+  const loadDetail = useCallback(async (id, { quiet = false } = {}) => {
     const seq = ++detailSeq.current
-    const cached = cacheRef.current.get(id)
+    const cached = quiet ? null : cacheRef.current.get(id)
     if (cached) { setDetail({ state: 'ok', id, data: cached, error: null }); return }
-    setDetail({ state: 'loading', id, data: null, error: null })
+    if (!quiet) setDetail({ state: 'loading', id, data: null, error: null })
     let res = null
     let err = null
     try { res = await api.monitoring.resourceScan(monitorId, id) } catch (e) { err = e }
@@ -146,7 +169,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (res?.success && res.data?.scan) {
       if (!isRunning(res.data.scan)) cacheRef.current.set(id, res.data)
       setDetail({ state: 'ok', id, data: res.data, error: null })
-    } else setDetail({ state: 'error', id, data: null, error: res || err })
+    } else if (!quiet) setDetail({ state: 'error', id, data: null, error: res || err })
   }, [monitorId])
 
   /** Karşılaştırma için ayrıntı (önbellekten; yoksa okur) — `{ scan, … }` ya da hata gövdesi. */
@@ -255,7 +278,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     let failures = 0
     // Tavan BU istemcinin izlemeye başladığı andan ölçülür (Sürdür / yeni koşu sıfırlar) — sunucunun `started_at`
     // damgası tarayıcı saatiyle kıyaslanmaz (saat ileri olan tarayıcıda izleme hemen dururdu; 2026-10-31 inceleme).
-    const cap = pollCap ?? pollCapMs(limits)
+    // Site koşusu kendi süre bütçesiyle (site_max_seconds) izlenir
+    const cap = pollCap ?? pollCapMs(limits, running)
     const pollStartedAt = monoNow()
     const tick = async () => {
       let res = null
@@ -290,7 +314,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (!r || !startedHere(monitorId, r.id)) return
     const { toast: tt, t: tr, monitor: mon } = ctxRef.current
     handOff({
-      monitorId, scanId: r.id, pollMs: Math.max(pollMs * 2, 300), capMs: pollCap ?? pollCapMs(limitsRef.current),
+      monitorId, scanId: r.id, pollMs: Math.max(pollMs * 2, 300), capMs: pollCap ?? pollCapMs(limitsRef.current, r),
       poll: async () => { const res = await api.monitoring.resourceScan(monitorId, r.id); return res?.success ? res.data : null },
       onDone: (scan) => {
         if (isCancelled(scan)) return
@@ -301,32 +325,47 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monitorId])
-  async function start() {
-    if (starting || running) return
+  /**
+   * Analizi başlatır. `sitePages` (prs3 G) verilirse çok sayfalı analiz (`{ scope: 'site', max_pages }`); gövdesiz = tek
+   * sayfa (bugünkü istek). Eski sunucu gövdeyi bilmez → tek sayfa döner: yanıtta `scope` yoksa söylenir. Dönüş: başlatma
+   * isteği bir koşuyla sonuçlandı mı (site penceresi kapanır) — hata tostunda pencere açık kalır.
+   */
+  async function start(sitePages = null) {
+    if (starting || running) return false
+    const site = Number.isInteger(sitePages) && sitePages > 0 ? sitePages : null
     setStarting(true)
     let res = null
     try {
-      res = await api.monitoring.startResourceScan(monitorId)
+      res = site ? await api.monitoring.startResourceScan(monitorId, { scope: 'site', max_pages: site })
+        : await api.monitoring.startResourceScan(monitorId)
     } catch (e) {
       if (alive.current) toast.error(e?.message || t('prs.startFailed'), { details: e })
-      return
+      return false
     } finally {
       if (alive.current) setStarting(false)
     }
-    if (!alive.current || !res) return
+    if (!alive.current || !res) return false
     if (res.success && res.data) {
       markStartedHere(monitorId, res.data.id)
       follow(res.data, res.timestamp)
       if (!hasFinished) changeSelection(res.data.id)
+      if (siteScopeIgnored(Boolean(site), res.data)) {
+        setSiteIgnoredId(res.data.id)
+        toast.info(t('prs.site.ignored'))
+      }
       requestFocus('running')
-    } else if (res.code === 'RESOURCE_SCAN_RUNNING' && res.data) {
+      return true
+    }
+    if (res.code === 'RESOURCE_SCAN_RUNNING' && res.data) {
       follow(res.data, res.timestamp)
       if (!hasFinished) changeSelection(res.data.id)
       toast.info(t('prs.toast.alreadyRunning'))
-    } else {
-      toast.error(res.error || t('prs.startFailed'), { details: res })
+      return true
     }
+    toast.error(res.error || t('prs.startFailed'), { details: res })
+    return false
   }
+  const startPage = () => start(null)
 
   async function cancel() {
     const r = running
@@ -414,7 +453,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     try {
       const mod = await import('./resourceScanExport.js')
       const args = { monitor, scan: d.scan, analysis: d.analysis, items: d.items_kept === false ? null : (enriched ?? d.items), t, locale,
-        detailRuns: hist.data?.limits?.detail_runs ?? 20 }
+        detailRuns: hist.data?.limits?.detail_runs ?? 20,
+        // prs3 F3: yönetici özeti — bütçe değerlendirmesi ve önceki tamamlanmış analizle karşılaştırma
+        budget: d.budget ?? null, prev: previousDone(items, d.scan.id) }
       if (kind === 'xlsx') mod.exportResourceScanXlsx(args)
       else await mod.exportResourceScanPdf(args)
       if (alive.current) toast.success(t(kind === 'xlsx' ? 'prs.export.xlsxDone' : 'prs.export.pdfDone'))
@@ -440,11 +481,25 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const objectsAvailable = done && sel?.items_kept !== false && Array.isArray(sel?.items)
   const enriched = useMemo(() => (objectsAvailable ? withFindings(sel.items, sel.analysis?.recommendations) : null), [objectsAvailable, sel])
   const latestDone = latestDoneId(items)
-  const view = viewOf(section, objectsMode, historyMode)
+  // prs3 G: "Sayfalar" yalnız çok sayfalı analizde; seçili analiz yüklenmiş ve site değilse görünüm panoya düşer
+  const siteAvailable = done && isSiteScan(selScan, sel?.analysis)
+  const shownSection = section === 'pages' && sel && !siteAvailable ? 'overview' : section
+  // Görünen bölüm sekmesi sayısı (pano, nesneler, eğilim, geçmiş + site analizinde Sayfalar). Yeni bir bölüm sekmesi
+  // eklenirse BURAYA da eklenir — telefon ızgarası (sectionTabCols) bu sayıya göre satıra böler.
+  const sectionCount = 5 + (siteAvailable ? 1 : 0)
+  const sectionCols = sectionTabCols(sectionCount)
+  // Sekme rozeti: "analiz edilen / toplam" (geçmiş ve Sayfalar başlığıyla AYNI anlam; hepsi analiz edildiyse tek sayı)
+  const siteTotals = siteAvailable ? siteModel(sel?.analysis?.site)?.totals ?? null : null
+  const siteBadge = siteTotals && siteTotals.pages > 0 ? {
+    text: siteTotals.scanned === siteTotals.pages ? formatNumber(siteTotals.pages, locale)
+      : `${formatNumber(siteTotals.scanned, locale)}/${formatNumber(siteTotals.pages, locale)}`,
+    aria: siteCountText(siteTotals, t, locale),
+  } : null
+  const view = viewOf(shownSection, objectsMode, historyMode)
   const urlScanId = selectedId != null && selectedId !== running?.id ? selectedId : null
 
   // Paylaşılabilir URL (yalnız sekme görünürken; gizliyken detay sayfası kendi anahtarlarını siler)
-  useUrlQuerySync(urlStateValues({ scanId: urlScanId, view, otherId }), { enabled: active && hist.state !== 'loading' })
+  useUrlQuerySync(urlStateValues({ scanId: urlScanId, view, otherId, area }), { enabled: active && hist.state !== 'loading' })
 
   /** Odak / kaydırma isteği (bölüm geçişi): `count`, `hero`, `history`, `running`, `rec:<KOD>`, `restoreDash`. */
   function requestFocus(target) {
@@ -466,6 +521,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       if (tg === 'history') return root.querySelector('[data-focus-target="prs-history"], [data-focus-target="prs-compare"]')
       if (tg === 'running') return root.querySelector('[data-slot="prs-running"]')
       if (tg === 'objects') return root.querySelector('[data-focus-target="prs-objects"]')
+      if (tg === 'audit') return root.querySelector('[data-focus-target="prs-audit"]')
       // Öneri kodları yalnız [A-Z_] — seçicide kaçış gerekmez (jsdom'da CSS.escape yok)
       if (typeof tg === 'string' && tg.startsWith('rec:') && /^[A-Z_]+$/.test(tg.slice(4))) return root.querySelector(`[data-slot="prs-rec"][data-code="${tg.slice(4)}"]`)
       return null
@@ -481,7 +537,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       const el = find()
       if (!el) {
         frames += 1
-        if (frames < 20) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
+        // Ayrıntılı denetim tembel parçada (ilk açılışta indirilir) — hedef ~3 sn beklenir; diğerleri ~20 kare (sınırlı)
+        if (frames < (focusReq.target === 'audit' ? 180 : 20)) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
         return
       }
       // Hedefin bölüm başlığıyla birlikte görünmesi için: sayaç → nesne bölümünün başı; diğerleri kendisi
@@ -513,6 +570,28 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     requestFocus('count')
   }
 
+  /** Pano kategori kutucuğundan / öneriden ayrıntılı denetime (prs3): alan seçilir, odak alan başlığına. */
+  function goAudit(next) {
+    rememberDash()
+    setOpenItem(null)
+    if (AUDIT_AREAS.includes(next)) setArea(next)
+    setSection('audit')
+    requestFocus('audit')
+  }
+
+  /** Denetimdeki "Nesneleri göster" — bulgu süzgeciyle TAM nesne listesi (kapsam: tümü). */
+  function showFinding(code) {
+    goObjects({ ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [code] })
+  }
+
+  /** Öneriden nesne listesine: nesne bulgusu olan öneri bulgu süzgeciyle (tam liste), olmayan sunucunun adresleriyle. */
+  function showRecObjects(rec) {
+    const finding = findingOfRec(rec?.code)
+    goObjects(finding
+      ? { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [finding], rec: rec.code }
+      : { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', urls: recItemUrls(rec), rec: rec.code })
+  }
+
   function goRec(code) {
     setOpenItem(null)
     if (section !== 'overview') setSection('overview')
@@ -524,6 +603,16 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (section === 'overview' && next !== 'overview') rememberDash()
     setSection(next)
     if (back) requestFocus('restoreDash')
+  }
+
+  // prs3 F: eğilim açılınca bütçe bir kez okunur (bütçe çizgileri); bütçe kaydı ayrıntı önbelleğini geçersiz kılar —
+  // analizler OKUNURKEN güncel bütçeyle değerlendirilir, seçili analiz ve geçmiş (bütçe işaretleri) yeniden okunur
+  const budgetLoad = budget.load
+  useEffect(() => { if (section === 'trend' && budget.status === 'idle') budgetLoad() }, [section, budget.status, budgetLoad])
+  function onBudgetSaved() {
+    cacheRef.current.clear()
+    if (selectedRef.current != null && !(running && running.id === selectedRef.current)) loadDetail(selectedRef.current, { quiet: true })
+    loadHistory()
   }
 
   async function reload() {
@@ -539,7 +628,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
   function shareLink() {
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    copyLink(resourceScanLink({ origin, monitorId, scanId: urlScanId, view, otherId }))
+    copyLink(resourceScanLink({ origin, monitorId, scanId: urlScanId, view, otherId, area }))
   }
 
   // ── İlk okuma / okunamayan geçmiş ───────────────────────────────────────
@@ -558,12 +647,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     )
   }
 
+  // prs3 G: bölünmüş başlat düğmesi — ana düğme bugünkü tek sayfa analizi, ok "Siteyi analiz et (N sayfa)"
   const startBtn = canRun && (
-    <Button type="button" onClick={start} disabled={starting || Boolean(running)} data-slot="prs-start" className={TOUCH}
-      aria-busy={starting || undefined}>
-      {starting ? <Spinner size={14} inline decorative /> : hasFinished ? <RotateCw aria-hidden="true" /> : <Play aria-hidden="true" />}
-      {running ? t('prs.runningShort') : hasFinished ? t('prs.restart') : t('prs.start')}
-    </Button>
+    <ResourceScanStart hasFinished={hasFinished} running={running} starting={starting} limits={hist.data?.limits}
+      onStartPage={startPage} onStartSite={(n) => start(n)} />
   )
   const finished = selScan && !isRunning(selScan)
   const showOld = done && latestDone != null && selectedId !== latestDone
@@ -621,7 +708,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       )}
 
       {running && <RunningCard scan={running} pollState={pollState} t={t} locale={locale} sighting={sighting}
-        onResume={() => { setPollState('ok'); setPollNonce((n) => n + 1) }}
+        onResume={() => { setPollState('ok'); setPollNonce((n) => n + 1) }} siteIgnored={siteIgnoredId === running.id}
         onCancel={canRun && cancelSupported ? cancel : null} cancelling={cancelling} cancelRequested={cancelRequested === running.id} />}
 
       {!hasFinished && !running && (
@@ -629,15 +716,29 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       )}
 
       {hasFinished && (
-        <Tabs value={section} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
-          {/* Telefonda 3 eşit sütun (r177 H11 — "Geçmiş" alt satıra düşüyordu) */}
-          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:inline-flex sm:w-fit">
-            <TabsTrigger value="overview" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}><LayoutDashboard aria-hidden="true" />{t('prs.sec.overview')}</TabsTrigger>
-            <TabsTrigger value="objects" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}>
+        <Tabs value={shownSection} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
+          {/* Telefonda bölümler eşit sütunlu ızgara (r177 H11): en çok 4 bölüm tek satır, 5+ iki satır (sectionTabCols);
+              simge üstte, ad altta (prs3: Eğilim, Sayfalar eklendi). lg ve üstü satır içi, sığmazsa sarar (yatay taşma yok). Tablette de ızgara: 6 sekme 768'de yazı tipine göre
+              (Linux) 5 + 1 kırılıyordu — 3 + 3 eşit sütun düzenli kalır. */}
+          <TabsList data-count={sectionCount} data-cols={sectionCols} style={{ '--prs-tabs': sectionCols }}
+            className="grid h-auto w-full grid-cols-[repeat(var(--prs-tabs),minmax(0,1fr))] gap-1 group-data-[orientation=horizontal]/tabs:h-auto lg:inline-flex lg:w-fit lg:max-w-full lg:flex-wrap">
+            <TabsTrigger value="overview" className={cn(TAB, TOUCH)}><LayoutDashboard aria-hidden="true" />{t('prs.sec.overview')}</TabsTrigger>
+            <TabsTrigger value="objects" className={cn(TAB, TOUCH)}>
               <List aria-hidden="true" />{t('prs.sec.objects')}
               {objectsAvailable && <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(sel.items.length, locale)}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="history" className={cn('min-w-0 gap-1.5 px-2 sm:flex-none sm:px-3', TOUCH)}>
+            <TabsTrigger value="audit" data-slot="prs-sec-audit" className={cn(TAB, TOUCH)}>
+              <ListChecks aria-hidden="true" />{t('prs.sec.audit')}
+            </TabsTrigger>
+            {siteAvailable && (
+              <TabsTrigger value="pages" data-slot="prs-sec-pages" className={cn(TAB, TOUCH)}>
+                <Layers aria-hidden="true" />{t('prs.site.tab')}
+                {siteBadge && <Badge variant="secondary" data-slot="prs-sec-pages-count" aria-label={siteBadge.aria}
+                  className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{siteBadge.text}</Badge>}
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="trend" data-slot="prs-sec-trend" className={cn(TAB, TOUCH)}><ChartSpline aria-hidden="true" />{t('prs.trend.tab')}</TabsTrigger>
+            <TabsTrigger value="history" className={cn(TAB, TOUCH)}>
               <History aria-hidden="true" />{t('prs.sec.history')}
               <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(items.length, locale)}</Badge>
             </TabsTrigger>
@@ -655,24 +756,24 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
           <TabsContent value="overview" className="min-w-0">
             <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
-              onRetryDetail={() => loadDetail(selectedId)} onStart={start} starting={starting}
+              onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting}
               latestDone={latestDone} onLatest={() => { select(latestDone); requestFocus('hero') }}>
+              {done && <div className="mb-3 empty:hidden"><BudgetBand budget={sel.budget} scan={selScan} canEdit={budget.canEdit} onOpen={() => setBudgetOpen(true)} /></div>}
               {done && (
                 <ResourceScanDashboard scan={selScan} analysis={sel.analysis} prev={prev} history={items} selectedId={selectedId}
                   objectsAvailable={objectsAvailable} items={enriched}
                   onCategory={(c) => goObjects({ ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', types: [c] })}
-                  onShowObjects={(rec) => goObjects(recFiltersByFinding(rec)
-                    ? { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', findings: [rec.code], rec: rec.code }
-                    : { ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', urls: recItemUrls(rec), rec: rec.code })}
+                  onShowObjects={showRecObjects}
                   onSelectScan={(id) => { if (id !== selectedId) { select(id); requestFocus('hero') } }}
-                  onGoRec={goRec} />
+                  onGoRec={goRec} onAudit={goAudit}
+                  focusRec={typeof focusReq?.target === 'string' && focusReq.target.startsWith('rec:') ? focusReq.target.slice(4) : null} />
               )}
             </SelectedView>
           </TabsContent>
 
           <TabsContent value="objects" className="min-w-0">
             <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
-              onRetryDetail={() => loadDetail(selectedId)} onStart={start} starting={starting} compact
+              onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
               latestDone={latestDone} onLatest={() => select(latestDone)}>
               {done && (
                 <ResourceScanObjects scanId={selectedId} items={enriched} timing={sel.analysis?.timing} countRef={countRef}
@@ -682,8 +783,42 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
             </SelectedView>
           </TabsContent>
 
+          <TabsContent value="audit" className="min-w-0">
+            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+              onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
+              latestDone={latestDone} onLatest={() => select(latestDone)}>
+              {done && (
+                <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="py-6" />}>
+                  <ResourceScanAudit scan={selScan} analysis={sel.analysis} items={enriched} area={area} onAreaChange={setArea}
+                    objectsAvailable={objectsAvailable} onShowFinding={showFinding} onShowObjects={showRecObjects} onOpenItem={setOpenItem}
+                    canRun={canRun} running={running} onStart={startPage} starting={starting} />
+                </Suspense>
+              )}
+            </SelectedView>
+          </TabsContent>
+
+          {(siteAvailable || shownSection === 'pages') && (
+            <TabsContent value="pages" className="min-w-0">
+              <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+                onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
+                latestDone={latestDone} onLatest={() => select(latestDone)}>
+                {siteAvailable && <ResourceScanSite scan={selScan} analysis={sel.analysis} />}
+              </SelectedView>
+            </TabsContent>
+          )}
+
+          <TabsContent value="trend" className="min-w-0">
+            {shownSection === 'trend' && (
+              <Suspense fallback={<LoadingBlock label={t('prs.trend.loading')} />}>
+                <ResourceScanTrendView monitorId={monitorId} items={items} selectedId={selectedId} budget={budget}
+                  canEditBudget={budget.canEdit} onEditBudget={() => setBudgetOpen(true)}
+                  onSelect={(id) => { select(id); setSection('overview'); requestFocus('hero') }} />
+              </Suspense>
+            )}
+          </TabsContent>
+
           <TabsContent value="history" className="min-w-0">
-            <ResourceScanHistory items={items} selectedId={selectedId} limits={hist.data?.limits}
+            <ResourceScanHistory items={items} selectedId={selectedId} limits={hist.data?.limits} budgetUnreadable={hist.data?.budgetUnreadable === true}
               mode={historyMode} onModeChange={(m) => { setHistoryMode(m); requestFocus('history') }}
               otherId={otherId} getDetail={getDetail}
               onCompareChange={({ scanId, otherId: o }) => { if (scanId != null && scanId !== selectedId) select(scanId); setOtherId(o ?? null) }}
@@ -702,9 +837,14 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
         <ResourceScanObjectDetail item={openItem} onClose={() => setOpenItem(null)} recommendations={sel?.analysis?.recommendations}
           onGoRec={(code) => goRec(code)} />
       )}
+
+      <BudgetDialog open={budgetOpen} onClose={() => setBudgetOpen(false)} monitorId={monitorId} budget={budget} onSaved={onBudgetSaved} />
     </div>
   )
 }
+
+/** Bölüm sekmesi: telefonda simge üstte, ad altta (4–5 eşit sütun sığsın); sm+ yan yana. */
+const TAB = 'min-w-0 gap-1.5 px-2 max-sm:flex-col max-sm:gap-0.5 max-sm:py-1 max-sm:text-[11px] max-sm:leading-tight sm:flex-none sm:px-3'
 
 /** Tamamlanan analizin bildirim metni (not + harf; başarısız / yarıda kalan ayrı). */
 function doneText(scan, t, monitor) {
@@ -771,7 +911,7 @@ function EmptyState({ canRun, startBtn, t }) {
 }
 
 /** Süren analizin ilerlemesi — sayaç kendi yaprağında (üst bileşen saniyede bir çizilmez). */
-function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel, cancelling, cancelRequested }) {
+function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel, cancelling, cancelRequested, siteIgnored = false }) {
   const maxRef = useRef({ id: null, pct: null })
   if (maxRef.current.id !== scan?.id) maxRef.current = { id: scan?.id, pct: null }
   // İlerleme geri gitmez (r177 H16): CSS'ten yeni nesne bulundukça toplam büyür; görülen en yüksek değer korunur
@@ -795,6 +935,9 @@ function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel,
           {total > 0 ? plural(t, 'prs.run.progress', total, formatNumber(done, locale), formatNumber(total, locale)) : t('prs.run.discovering')}
         </span>
         <ToneBadge tone="muted" className={cn(CHIP, 'tabular-nums')}><Elapsed sighting={sighting?.id === scan?.id ? sighting : null} t={t} locale={locale} /></ToneBadge>
+        {scan?.scope === 'site' && (
+          <ToneBadge tone="info" className={cn(CHIP, 'gap-1')} data-slot="prs-run-site"><Globe aria-hidden="true" />{siteChipText(scan, t, locale)}</ToneBadge>
+        )}
       </div>
       <ProgressBar value={pct} max={100} label={t('prs.run.progressLabel')} showValue={pct != null} />
       <p data-slot="prs-stage" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>
@@ -803,6 +946,11 @@ function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel,
       </p>
       <p className="m-0 text-xs text-muted-foreground">{t('prs.run.background')}</p>
       {cancelRequested && <p data-slot="prs-cancel-pending" className="m-0 text-xs text-muted-foreground">{t('prs.cancel.pendingBody')}</p>}
+      {siteIgnored && (
+        <div data-slot="prs-site-ignored">
+          <AlertBanner tone="info" className="mb-0" icon={Info}>{t('prs.site.ignoredBody')}</AlertBanner>
+        </div>
+      )}
       {pollState !== 'ok' && (
         <div data-slot="prs-poll-stopped">
           <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}
@@ -813,6 +961,20 @@ function RunningCard({ scan, pollState, t, locale, sighting, onResume, onCancel,
       )}
     </Section>
   )
+}
+
+/**
+ * Süren site koşusunun çipi: sunucu sayfa ilerlemesini (`progress.pages_done / pages_total`) sayfa listesi seçilince verir
+ * → "Site · sayfa 2 / 5"; öncesinde (ana sayfa ölçülürken) yalnız "Site".
+ */
+function siteChipText(scan, t, locale) {
+  const n = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v))
+  const done = n(scan?.progress?.pages_done)
+  const total = n(scan?.progress?.pages_total)
+  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+    return t('prs.site.runProgress', formatNumber(Math.min(done, total), locale), formatNumber(total, locale))
+  }
+  return t('prs.site.chipNoCount')
 }
 
 /** Geçen süre (r177 H13): sunucu saatine göre görüldüğü andaki taban + o andan beri geçen MONOTON süre. */
