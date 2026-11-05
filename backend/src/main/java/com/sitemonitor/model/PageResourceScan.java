@@ -179,4 +179,14 @@ public class PageResourceScan {
     /** Çok sayfalı analizde taranan sayfa sayısı; tek sayfada NULL. */
     @Column(name = "pages_count")
     private Integer pagesCount;
+
+    /**
+     * Çok sayfalı analizin sayfa ilerlemesi (koşu sırasında; başka pod'dan okunur): karar verilen sayfa (bitti / açılamadı /
+     * taranmadı) ve sayfa listesi seçilince toplam (ana sayfa dahil). Tek sayfada ve seçimden önce NULL.
+     */
+    @Column(name = "pages_done")
+    private Integer pagesDone;
+
+    @Column(name = "pages_total")
+    private Integer pagesTotal;
 }

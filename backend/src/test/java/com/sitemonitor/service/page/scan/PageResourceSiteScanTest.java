@@ -59,6 +59,8 @@ class PageResourceSiteScanTest {
     final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
     final AtomicLong clockOffset = new AtomicLong();
     volatile boolean jumpOnAbout;
+    /** Doluysa "/contact.html" GET'i bu kapı açılana dek (en çok 10 sn) bekletir — koşu sırasındaki ilerlemeyi okumak için. */
+    volatile java.util.concurrent.CountDownLatch contactGate;
     byte[] aboutHtml;
     byte[] aboutPng;
 
@@ -117,7 +119,18 @@ class PageResourceSiteScanTest {
             switch (path) {
                 case "/" -> { body = main.getBytes(StandardCharsets.UTF_8); ct = "text/html; charset=utf-8"; }
                 case "/about", "/about/" -> { body = aboutHtml; ct = "text/html"; }
-                case "/contact.html" -> { body = contact.getBytes(StandardCharsets.UTF_8); ct = "text/html"; }
+                case "/contact.html" -> {
+                    java.util.concurrent.CountDownLatch gate = contactGate;
+                    if (gate != null && "GET".equals(ex.getRequestMethod())) {
+                        try {
+                            gate.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    body = contact.getBytes(StandardCharsets.UTF_8);
+                    ct = "text/html";
+                }
                 case "/s.css" -> {
                     body = ("@font-face{font-family:F;src:url(/f.woff2) format('woff2')} body{background:url(/bg.png)}")
                             .getBytes(StandardCharsets.UTF_8);
@@ -299,6 +312,36 @@ class PageResourceSiteScanTest {
     }
 
     @Test
+    @DisplayName("O2: koşu sırasında sayfa ilerlemesi DB'de — RUNNING satırında progress.pages_done / pages_total (liste + tek analiz); bitince 5/5")
+    void runningSiteProgress() throws Exception {
+        contactGate = new java.util.concurrent.CountDownLatch(1);
+        long id;
+        try {
+            id = start(5, 10);
+            long until = System.currentTimeMillis() + 20_000;
+            Integer done = null;
+            while (System.currentTimeMillis() < until) {
+                done = jdbc.queryForObject("SELECT pages_done FROM page_resource_scans WHERE id = ?", Integer.class, id);
+                if (done != null && done >= 2) break;
+                Thread.sleep(20);
+            }
+            assertThat(done).as("ana sayfa + about bitti, contact bekliyor").isEqualTo(2);
+            Map<String, Object> scan = get(svc.one(id, 5), "scan");
+            assertThat(scan.get("status")).isEqualTo("RUNNING");
+            assertThat(scan.get("scope")).isEqualTo("site");
+            assertThat((Map<String, Object>) get(scan, "progress")).containsEntry("pages_done", 2).containsEntry("pages_total", 5);
+            Map<String, Object> running = get(svc.list(5, 10), "running");
+            assertThat((Map<String, Object>) get(running, "progress")).containsEntry("pages_done", 2)
+                    .containsEntry("pages_total", 5);
+        } finally {
+            contactGate.countDown();
+        }
+        Map<String, Object> end = get(awaitEnd(5, id), "scan");
+        assertThat(end.get("status")).isEqualTo("DONE");
+        assertThat((Map<String, Object>) get(end, "progress")).containsEntry("pages_done", 5).containsEntry("pages_total", 5);
+    }
+
+    @Test
     @DisplayName("D-5: site süre bütçesi en çok 900 sn — 1800 / 60 gibi aralık dışı değer 900'e döner, 600 kalır")
     void siteMaxSecondsAtMost900() {
         when(settings.getInt(eq(PageResourceScanService.KEY_SITE_MAX_SECONDS), anyInt())).thenReturn(1800);
@@ -343,6 +386,7 @@ class PageResourceSiteScanTest {
         long id = start(4, null);
         Map<String, Object> one = awaitEnd(4, id);
         Map<String, Object> scan = get(one, "scan");
+        assertThat((Map<String, Object>) get(scan, "progress")).doesNotContainKeys("pages_done", "pages_total");
         assertThat(scan.get("scope")).isEqualTo("page");
         assertThat(scan.get("pages_count")).isNull();
         assertThat((Map<String, Object>) get(one, "analysis")).doesNotContainKey("site");
