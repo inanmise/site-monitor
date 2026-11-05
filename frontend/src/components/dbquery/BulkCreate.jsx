@@ -105,7 +105,7 @@ export function BulkCreatePanel({ load, onReload, dbType, baseName, bulk, disabl
                   return (
                     <li key={p.id} data-slot="dbq-bulk-connection" data-id={p.id}
                       className="flex min-w-0 items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50 pointer-coarse:min-h-10">
-                      <Checkbox id={id} checked={bulk.selected.has(p.id)} disabled={locked} className="mt-0.5"
+                      <Checkbox id={id} aria-label={t('dbq.bulk.selectConnection', p.name)} checked={bulk.selected.has(p.id)} disabled={locked} className="mt-0.5"
                         onCheckedChange={(v) => toggle(p.id, v === true)} />
                       <Label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer flex-col items-start gap-1 font-normal">
                         <span className="font-semibold [overflow-wrap:anywhere]">{p.name}</span>
@@ -211,7 +211,7 @@ export function BulkCreateDialog({ open, onClose, teamId, dbType, baseBody, base
       dismissOnBackdrop={false}
       footer={<>
         {bulk.running && <Button type="button" variant="outline" onClick={bulk.stop} className="mr-auto pointer-coarse:h-10" data-slot="dbq-bulk-stop">{t('dbq.bulk.stop')}</Button>}
-        <Button type="button" variant="secondary" onClick={onClose} disabled={bulk.running} className="pointer-coarse:h-10">{t(finished ? 'dbq.bulk.close' : 'dbq.form.cancel')}</Button>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={bulk.running} className="pointer-coarse:h-10" data-slot="dbq-bulk-close">{t(finished ? 'dbq.bulk.close' : 'dbq.form.cancel')}</Button>
         {!finished && (
           <Button type="button" onClick={start} disabled={!ready || bulk.running} aria-busy={bulk.running || undefined}
             data-slot="dbq-bulk-run" className="pointer-coarse:h-10">{t('dbq.bulk.run', plan.length)}</Button>

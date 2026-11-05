@@ -60,7 +60,7 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
   }
 
   return (
-    <section data-slot="dbq-conn-paste" aria-labelledby={`${id}-title`}
+    <div data-slot="dbq-conn-paste"
       className="mb-3.5 flex min-w-0 flex-col gap-2 rounded-md border border-dashed bg-muted/30 p-3">
       <div className="flex min-w-0 items-start gap-2">
         <ClipboardPaste aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -72,7 +72,7 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
         <Input id={id} value={text} disabled={disabled} maxLength={MAX_CONN_STRING} aria-describedby={hintId}
           autoComplete="off" spellCheck={false} autoCapitalize="off" data-1p-ignore data-lpignore="true"
-          placeholder={t('dbq.conn.paste.placeholder')} className="h-9 min-w-0 flex-1 font-mono pointer-coarse:h-10"
+          placeholder={t('dbq.conn.paste.placeholder')} className="h-9 min-w-0 font-mono sm:flex-1 pointer-coarse:h-10"
           onChange={(e) => { setText(e.target.value); if (outcome?.kind === 'error') setOutcome(null) }}
           onPaste={(e) => {
             const pasted = e.clipboardData?.getData('text')
@@ -133,6 +133,6 @@ export default function ConnectionStringPaste({ form, onChange, disabled = false
           </p>
         )}
       </div>
-    </section>
+    </div>
   )
 }

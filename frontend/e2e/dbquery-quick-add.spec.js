@@ -123,6 +123,11 @@ function smallTargets(sel) {
     const cs = getComputedStyle(b)
     if (cs.visibility === 'hidden' || cs.display === 'none' || b.getAttribute('aria-hidden') === 'true') continue
     if (b.closest('[hidden]') || b.getAttribute('role') === 'checkbox' || b.closest('[data-slot="dbq-sql-editor"] [data-slot="dbq-sql-rules"]')) continue
+    // Ortak "Bildirimler ve Uyarılar" bloğunun seviye düğmeleri (ui/NotifyChannels, on bir formda aynı, h-8) bu sürümün
+    // dışında — ayrı iş olarak bildirildi; burada yalnız bu sürümün öğeleri ölçülür.
+    if (b.closest('[data-slot="notify-channels"]') && b.getAttribute('data-slot') === 'toggle-group-item') continue
+    // Ortak etiket kutusu (ui/TagInput) — on bir formda aynı, giriş kutusu h-9; aynı gerekçe.
+    if (b.tagName === 'INPUT' && b.closest('[data-field="tags"]')) continue
     let h = r.height
     const role = b.getAttribute('role')
     if (role === 'switch') h = Math.max(h, b.parentElement.getBoundingClientRect().height)
@@ -132,7 +137,10 @@ function smallTargets(sel) {
       const bottom = parseFloat(af.bottom) || 0
       h = Math.max(h, r.height - Math.min(0, top) - Math.min(0, bottom))
     }
-    if (h < 39.5) out.push(`"${(b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 30)}" ${Math.round(h)}`)
+    if (h < 39.5) {
+      const who = `${b.tagName.toLowerCase()}[${b.getAttribute('data-slot') || b.getAttribute('type') || ''}] ${(b.labels?.[0]?.textContent || b.getAttribute('placeholder') || '').trim().slice(0, 30)}`
+      out.push(`${who} "${(b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 30)}" ${Math.round(h)}`)
+    }
   }
   return out
 }
@@ -196,7 +204,7 @@ for (const vp of VIEWPORTS) {
       await check(page, 'sihirbaz: zamanlama', dsel)
       await page.locator('[data-slot="dbq-wiz-next"]').click()
       await expect(wiz).toHaveAttribute('data-step', 'summary')
-      await expect(wiz.getByLabel(/^Ad/)).toHaveValue('Bloklanan / kilit bekleyen oturumlar')
+      await expect(wiz.getByLabel(/^Ad(\s*\*)?$/)).toHaveValue('Bloklanan / kilit bekleyen oturumlar')
       // grup + etiket
       await wiz.locator('[data-field="group_name"] [role="combobox"]').click()
       await page.getByRole('option', { name: 'Kurumsal Ödeme Sistemleri — Raporlama' }).click()
@@ -205,6 +213,18 @@ for (const vp of VIEWPORTS) {
       await tag.press('Enter')
       await check(page, 'sihirbaz: özet', dsel)
       await footerVisible('özet')
+      // toplu oluşturma paneli (B4): bağlantı listesi + ad kalıbı + plan — ölç, sonra kapat (tek izleme kaydedilecek)
+      await wiz.locator('#dbq-wiz-bulk').click()
+      const bulkPanel = wiz.locator('[data-slot="dbq-bulk"]')
+      await expect(bulkPanel.locator('[data-slot="dbq-bulk-connection"]')).toHaveCount(2)
+      await expect(bulkPanel.locator('[data-slot="dbq-bulk-connection"][data-id="42"] [data-slot="dbq-bulk-other-type"]')).toBeVisible()
+      await expect(bulkPanel.locator('[data-slot="dbq-bulk-plan-row"]')).toHaveCount(1)
+      await expect(page.locator('[data-slot="dbq-wiz-save"]')).toContainText('1 izleme oluştur')
+      await check(page, 'sihirbaz: toplu oluşturma', dsel)
+      await footerVisible('toplu oluşturma')
+      await page.screenshot({ path: test.info().outputPath(`dbq-wizard-bulk-${vp.name}.png`), fullPage: false })
+      await wiz.locator('#dbq-wiz-bulk').click()
+      await expect(bulkPanel).toHaveCount(0)
       await page.screenshot({ path: test.info().outputPath(`dbq-wizard-summary-${vp.name}.png`), fullPage: false })
       await page.locator('[data-slot="dbq-wiz-save"]').click()
       await expect(wiz).toHaveCount(0)

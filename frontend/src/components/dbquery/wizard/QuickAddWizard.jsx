@@ -428,8 +428,8 @@ export default function QuickAddWizard({
             <FormGrid>
               <FormField label={t('dbq.form.slowQuery')} name="slow_query_ms" error={errors.slow_query_ms} hint={t('dbq.form.slowQueryHint')}>
                 {({ id, describedBy }) => (
-                  <InputGroup>
-                    <InputGroupInput id={id} aria-describedby={describedBy} type="number" min="100" max="600000" step="100"
+                  <InputGroup className="pointer-coarse:h-10">
+                    <InputGroupInput id={id} aria-describedby={describedBy} type="number" min="100" max="600000" step="100" className="pointer-coarse:h-10"
                       value={form.slowQueryMs} placeholder={t('dbq.form.slowQueryOff')}
                       onChange={(e) => set({ slowQueryMs: e.target.value }, ['slow_query_ms'])} />
                     <InputGroupAddon align="inline-end"><InputGroupText>ms</InputGroupText></InputGroupAddon>
@@ -468,6 +468,12 @@ export default function QuickAddWizard({
               setBulkOn(v)
               if (v && form.profileId != null) bulk.setSelected((s) => (s.size ? s : new Set([form.profileId])))
               if (!v) bulk.reset()
+              // açılan panel çoğunlukla ekranın altında kalır — görünür alana getir
+              if (v && typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => {
+                  try { document.querySelector('[data-slot="dbq-wiz-bulk"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) } catch { /* jsdom */ }
+                })
+              }
             }}
             bulkPanel={bulkOn ? <BulkCreatePanel load={connLoad} onReload={reloadConns} dbType={dbType} baseName={form.name.trim()} bulk={bulk} /> : null}
             bulkLocked={bulk.running || !!bulk.rows} />
@@ -555,7 +561,7 @@ function SummaryStep({ t, lang, form, set, errors, profile, dbType, teamGroups, 
       <FormGrid>
         <FormField full label={t('dbq.form.name')} required name="name" error={errors.name} hint={t('dbq.wiz.nameHint')}>
           {({ id, describedBy }) => (
-            <Input id={id} aria-describedby={describedBy} value={form.name} maxLength={200} disabled={bulkLocked}
+            <Input id={id} aria-describedby={describedBy} value={form.name} maxLength={200} disabled={bulkLocked} className="pointer-coarse:h-10"
               onChange={(e) => set({ name: e.target.value }, ['name'])} />
           )}
         </FormField>
@@ -628,9 +634,12 @@ function SummaryRow({ t, step, label, onEdit, locked, children }) {
   return (
     <div data-slot="dbq-wiz-summary-row" data-step={step} className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-start">
       <dt className="text-[10.5px] font-semibold tracking-wider text-muted-foreground uppercase sm:w-36 sm:shrink-0 sm:pt-1">{label}</dt>
-      <dd className="m-0 flex min-w-0 flex-1 flex-col gap-1 text-sm">{children}</dd>
-      <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(step)} disabled={locked}
-        aria-label={t('dbq.wiz.editStep', label)} className="self-start pointer-coarse:h-10">{t('dbq.wiz.edit')}</Button>
+      {/* Düzenle düğmesi `dd` İÇİNDE — `dl > div` yalnız dt / dd taşıyabilir */}
+      <dd className="m-0 flex min-w-0 flex-1 flex-col gap-1.5 text-sm sm:flex-row sm:items-start">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">{children}</div>
+        <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(step)} disabled={locked}
+          aria-label={t('dbq.wiz.editStep', label)} className="self-start pointer-coarse:h-10">{t('dbq.wiz.edit')}</Button>
+      </dd>
     </div>
   )
 }

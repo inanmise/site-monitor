@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act, fillGroupAndTags } from './test-utils.jsx'
+import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 
 /**
  * dbq2 B1 + B4 (2026-11-05): "Hızlı ekle" sihirbazı — sayfa başlığından ve boş durumdan açılır; adımlar Bağlantı → Şablon
@@ -83,6 +84,7 @@ const next = () => fireEvent.click(document.querySelector('[data-slot="dbq-wiz-n
 
 beforeEach(() => {
   vi.clearAllMocks()
+  try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   for (const k of Object.keys(blocks.props)) delete blocks.props[k]
   window.history.replaceState({}, '', '/')
   api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
@@ -143,7 +145,7 @@ describe('Hızlı ekle sihirbazı (B1)', () => {
     expect(document.querySelector('[data-slot="dbq-wiz-steps"] [aria-current="step"]').getAttribute('data-step')).toBe('connection')
     await walkToSummary()
     const dlg = wiz().closest('[role="dialog"]')
-    expect(within(dlg).getByLabelText(/^Ad/)).toHaveValue('Bloklanan / kilit bekleyen oturumlar')
+    expect(within(dlg).getByLabelText(/^Ad(\s*\*)?$/)).toHaveValue('Bloklanan / kilit bekleyen oturumlar')
     expect(within(dlg).getByLabelText(/^Bu alarm ne için\?/).value).toContain('Kilit bekleyen')
     // grup + etiket zorunlu: boş kayıtta Özet alanlarının altında hata, istek gitmez
     fireEvent.click(document.querySelector('[data-slot="dbq-wiz-save"]'))
@@ -199,8 +201,8 @@ describe('Hızlı ekle sihirbazı (B1)', () => {
     await waitFor(() => expect(step()).toBe('query'))
     expect(document.querySelector('[data-slot="t-sql-error"]').textContent).toBe('Sorgu bu türde reddedildi')
     const steps = document.querySelector('[data-slot="dbq-wiz-steps"]')
-    expect(steps.querySelector('[data-step="query"] button').getAttribute('data-errors')).toBe('1')
-    expect(steps.querySelector('[data-step="summary"] button').getAttribute('data-errors')).toBe('1')
+    expect(steps.querySelector('li[data-step="query"] > button').getAttribute('data-errors')).toBe('1')
+    expect(steps.querySelector('li[data-step="summary"] > button').getAttribute('data-errors')).toBe('1')
   })
 
   it('sihirbazda alanı olmayan hata → bant + "Gelişmiş görünümde düzelt" → değerler uzun forma taşınır', async () => {
@@ -230,7 +232,7 @@ describe('Hızlı ekle sihirbazı (B1)', () => {
     await waitFor(() => expect(wiz()).toBeNull())
     const form = await screen.findByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })
     expect(within(form).getByLabelText('sql')).toHaveValue('SELECT 42 AS x')
-    fireEvent.click(within(form).getByRole('button', { name: 'Vazgeç' }))
+    fireEvent.click(within(form).getByRole('button', { name: 'İptal' }))
     expect(await screen.findByText('Değişiklikleri at')).toBeInTheDocument()
   })
 
@@ -331,7 +333,7 @@ describe('Uzun formdan toplu oluşturma (B4)', () => {
     await waitFor(() => expect(api.monitoring.createDbQueryMonitor).toHaveBeenCalledTimes(2))
     expect(api.monitoring.createDbQueryMonitor.mock.calls[0][0]).toMatchObject({ name: 'Kuyruk · Sipariş DB', profile_id: 3, sql_text: 'SELECT 1 AS x', groupName: 'Kurumsal' })
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-bulk"][data-state="done"]')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: 'Kapat' }))
+    fireEvent.click(document.querySelector('[data-slot="dbq-bulk-close"]'))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Yeni veritabanı sorgu izlemesi/ })).toBeNull())
   })
 })
