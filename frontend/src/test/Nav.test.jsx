@@ -330,20 +330,85 @@ describe('Nav — çok takımlı kullanıcı', () => {
   })
 })
 
-describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
-  it('dört ara başlık sırayla çizilir; her biri kendi ilk sekmesinin HEMEN önünde durur', () => {
+describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
+  const GROUPS = ['nav.secAvailability', 'nav.secDomainDns', 'nav.secContent', 'nav.secData']
+  const subTrigger = (container, key) => container.querySelector(`[data-nav-subgroup-trigger="${key}"]`)
+  const subList = (container, key) => container.querySelector(`[data-nav-subgroup="${key}"] [data-slot="nav-subgroup-list"]`)
+  afterEach(() => { try { localStorage.removeItem('nav-subsection-open'); localStorage.removeItem('nav-section-open') } catch { /* yok */ } })
+
+  it('dört alt grup sırayla, her biri kendi ikonu ve sekmeleriyle; İzleme Panosu ve Durum Sayfası gruba girmez', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
-    const heads = [...container.querySelectorAll('[data-nav-section]')]
-    expect(heads.map((h) => h.textContent)).toEqual(
-      [expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/), expect.stringMatching(/İçerik ve Deneyim|Content and experience/),
-        expect.stringMatching(/Veri ve iş kuralları|Data and business rules/)])
-    expect(heads.map((h) => h.nextElementSibling.querySelector('[data-tour]').getAttribute('data-tour')))
-      .toEqual(['nav-tab-http', 'nav-tab-dns', 'nav-tab-keyword', 'nav-tab-dbquery'])
-    // Başlık tıklanabilir bir kontrol DEĞİL — klavye odağına girmez; alt menünün (SidebarMenuSub) içinde durur
-    heads.forEach((h) => {
-      expect(h.tagName).not.toBe('BUTTON'); expect(h.getAttribute('role')).toBe('presentation')
-      expect(h.closest('[data-sidebar="menu-sub"]')).not.toBeNull()
-    })
+    const triggers = [...container.querySelectorAll('[data-nav-subgroup-trigger]')]
+    expect(triggers.map((b) => b.getAttribute('data-nav-subgroup-trigger'))).toEqual(GROUPS)
+    expect(triggers.map((b) => b.textContent)).toEqual([
+      expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/),
+      expect.stringMatching(/İçerik ve Deneyim|Content and experience/), expect.stringMatching(/Veri ve iş kuralları|Data and business rules/)])
+    expect(triggers.map(iconName)).toEqual(['lucide-radio-tower', 'lucide-earth', 'lucide-app-window', 'lucide-database-zap'])
+    const tabsOf = (key) => [...subList(container, key).querySelectorAll('[data-tour]')].map((b) => b.getAttribute('data-tour'))
+    expect(tabsOf('nav.secAvailability')).toEqual(['nav-tab-http', 'nav-tab-ping', 'nav-tab-port'])
+    expect(tabsOf('nav.secDomainDns')).toEqual(['nav-tab-dns', 'nav-tab-domain'])
+    expect(tabsOf('nav.secContent')).toEqual(['nav-tab-keyword', 'nav-tab-page', 'nav-tab-pagespeed', 'nav-tab-scripted'])
+    expect(tabsOf('nav.secData')).toEqual(['nav-tab-dbquery'])
+    for (const id of ['monitoring', 'status']) expect(tabButton(container, id).closest('[data-nav-subgroup]')).toBeNull()
+    // Başlık gerçek bir düğme (klavye odağına girer), alt menünün içinde
+    triggers.forEach((b) => { expect(b.tagName).toBe('BUTTON'); expect(b.closest('[data-sidebar="menu-sub"]')).not.toBeNull() })
+  })
+
+  it('kapalı başlar; tıklanınca açılır (aria-expanded), gruplar BAĞIMSIZ açılır ve seçim tarayıcıda kalır', () => {
+    const { container, unmount } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    for (const k of GROUPS) {
+      expect(subTrigger(container, k)).toHaveAttribute('aria-expanded', 'false')
+      expect(subList(container, k).parentElement).toHaveAttribute('hidden')   // kapalı: erişilebilirlik ağacı dışında
+    }
+    fireEvent.click(subTrigger(container, 'nav.secAvailability'))
+    fireEvent.click(subTrigger(container, 'nav.secContent'))
+    expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'false')
+    expect(subList(container, 'nav.secAvailability').parentElement).not.toHaveAttribute('hidden')
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secAvailability', 'nav.secContent'])
+    unmount()
+    const again = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    expect(subTrigger(again.container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(subTrigger(again.container, 'nav.secContent'))
+    expect(subTrigger(again.container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'false')
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secAvailability'])
+  })
+
+  it('etkin sekmenin alt grubu kendiliğinden açılır ve vurgulanır; diğerleri olduğu gibi kalır', () => {
+    const { container, rerender } = render(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="keyword" />))
+    expect(sectionTrigger(container, 'monitoring')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('data-contains-active', 'true')
+    expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'false')
+    expect(tabButton(container, 'keyword')).toHaveAttribute('aria-current', 'page')
+    rerender(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="dns" />))
+    expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')   // kullanıcı kapatmadıkça açık kalır
+  })
+
+  it('sekmeye tıklamak onTabChange çağırır; grup başlığına tıklamak gezinmez', () => {
+    const onTabChange = vi.fn()
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />))
+    fireEvent.click(sectionTrigger(container, 'monitoring'))
+    fireEvent.click(subTrigger(container, 'nav.secDomainDns'))
+    expect(onTabChange).not.toHaveBeenCalled()
+    fireEvent.click(tabButton(container, 'domain'))
+    expect(onTabChange).toHaveBeenCalledWith('domain')
+  })
+
+  it('tur bir sekmeyi göstermek isteyince bölümü ve alt grubunu açar (sm:nav-reveal)', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'false')
+    act(() => { window.dispatchEvent(new CustomEvent('sm:nav-reveal', { detail: { tab: 'dbquery' } })) })
+    expect(sectionTrigger(container, 'monitoring')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('bozuk saklı değer hiçbir grubu açmaz ve hata vermez', () => {
+    localStorage.setItem('nav-subsection-open', '{bozuk')
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    for (const k of GROUPS) expect(subTrigger(container, k)).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {

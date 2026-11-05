@@ -40,6 +40,14 @@ const SUMMARY = {
 
 const PROPS = { activeTab: 'dashboard', onTabChange: vi.fn(), username: 'u', onLogout: vi.fn() }
 
+/** İzleme bölümünü ve (2026-11-05'ten beri akordeon olan) alt gruplarını açar — sekme rozetleri açık grupta görünür. */
+function openMonitoring(container) {
+  fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+  for (const b of container.querySelectorAll('[data-nav-subgroup-trigger]')) {
+    if (b.getAttribute('aria-expanded') !== 'true') fireEvent.click(b)
+  }
+}
+
 describe('İzleme menüsü — aktif alarm rozetleri', () => {
   beforeEach(() => { vi.clearAllMocks(); try { localStorage.clear() } catch { /* yok */ } })
 
@@ -48,7 +56,7 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     const { container } = render(withSidebar(<Nav {...PROPS} />))
     await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
     // İzleme bölümünü aç
-    fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+    openMonitoring(container)
     const http = await screen.findByRole('button', { name: /HTTP \/ Website: 2 (aktif alarm|active alerts)/i })
     expect(http).toHaveAttribute('data-level', 'critical')
     const scripted = screen.getByRole('button', { name: /(Sentetik İzleme|Synthetic Monitoring): 3 (aktif alarm|active alerts)/i })
@@ -63,7 +71,7 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     api.me.openAlerts.mockResolvedValue(SUMMARY)
     const { container } = render(withSidebar(<Nav {...PROPS} />))
     await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
-    fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+    openMonitoring(container)
     fireEvent.click(await screen.findByRole('button', { name: /(Sentetik İzleme|Synthetic Monitoring): 3 (aktif alarm|active alerts)/i }))
     expect(PROPS.onTabChange).toHaveBeenCalledWith('alerthistory', { view: 'open', src: 'scripted' })
     expect(PROPS.onTabChange).not.toHaveBeenCalledWith('scripted')
@@ -78,6 +86,22 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     expect(trigger.querySelector('[data-slot="nav-section-alert-count"]').textContent).toBe('5')
     fireEvent.click(trigger)
     await waitFor(() => expect(trigger.querySelector('[data-slot="nav-section-alert-count"]')).toBeNull())
+  })
+
+  it('alt grup kapalıyken başlığında alt sekmelerin toplamı (Erişilebilirlik 2, İçerik 3) görünür; açılınca kalkar', async () => {
+    api.me.openAlerts.mockResolvedValue(SUMMARY)
+    const { container } = render(withSidebar(<Nav {...PROPS} />))
+    await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
+    fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+    const avail = container.querySelector('[data-nav-subgroup-trigger="nav.secAvailability"]')
+    const content = container.querySelector('[data-nav-subgroup-trigger="nav.secContent"]')
+    await waitFor(() => expect(avail.querySelector('[data-slot="nav-subgroup-alert-count"]')).not.toBeNull())
+    expect(avail.querySelector('[data-slot="nav-subgroup-alert-count"]').textContent).toBe('2')
+    expect(content.querySelector('[data-slot="nav-subgroup-alert-count"]').textContent).toBe('3')
+    expect(container.querySelector('[data-nav-subgroup-trigger="nav.secDomainDns"] [data-slot="nav-subgroup-alert-count"]')).toBeNull()
+    fireEvent.click(avail)
+    expect(avail.querySelector('[data-slot="nav-subgroup-alert-count"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /HTTP \/ Website: 2 (aktif alarm|active alerts)/i })).toBeInTheDocument()
   })
 
   it('performans (2026-10-01): açılış/yoklama sunucu belleğini kullanır (fresh=false); alarm eylemi olayı fresh=true ile tazeler', async () => {
@@ -95,7 +119,7 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     api.me.openAlerts.mockResolvedValue({ success: true, data: { ...SUMMARY.data, visible: false } })
     const { container } = render(withSidebar(<Nav {...PROPS} />))
     await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
-    fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+    openMonitoring(container)
     await new Promise((r) => setTimeout(r, 20))
     expect(container.querySelector('[data-slot="nav-alert-badge"]')).toBeNull()
     expect(container.querySelector('[data-slot="nav-section-alert-count"]')).toBeNull()
@@ -105,7 +129,7 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     api.me.openAlerts.mockResolvedValue(SUMMARY)
     const { container } = render(withSidebar(<Nav {...PROPS} />))
     await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
-    fireEvent.click(container.querySelector('[data-nav-section-trigger="monitoring"]'))
+    openMonitoring(container)
     const badge = await screen.findByRole('button', { name: /HTTP \/ Website: 2 (aktif alarm|active alerts)/i })
     // Radix HoverCard: pointer enter/move ile açılır (openDelay 250ms)
     fireEvent.pointerEnter(badge)

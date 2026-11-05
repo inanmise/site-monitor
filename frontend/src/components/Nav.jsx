@@ -13,7 +13,8 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation, FileWarning
+  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation, FileWarning,
+  RadioTower, Earth, AppWindow, DatabaseZap
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -44,6 +45,23 @@ function readOpenSection() {
 }
 function writeOpenSection(key) {
   try { if (key) localStorage.setItem(OPEN_KEY, key); else localStorage.removeItem(OPEN_KEY) } catch { /* depolama yok */ }
+}
+
+/**
+ * İzleme alt grupları (2026-11-05, kullanıcı isteği: "Erişilebilirlik, Alan Adı ve DNS, İçerik ve Deneyim ayrı ayrı akordeon
+ * gibi açılsın, izlemelere altından erişilsin"): açık alt grupların KÜMESİ — birbirinden bağımsız açılıp kapanır, tarayıcıda
+ * kalır (kullanıcı tercihi olarak aynalanmaz, `nav-section-open` gibi). Bilinmeyen / bozuk değer = hiçbiri açık değil.
+ */
+const SUB_OPEN_KEY = 'nav-subsection-open'
+const SUB_OPEN_MAX = 16
+function readOpenSubs() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SUB_OPEN_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, SUB_OPEN_MAX) : []
+  } catch { return [] }
+}
+function writeOpenSubs(keys) {
+  try { if (keys.length) localStorage.setItem(SUB_OPEN_KEY, JSON.stringify(keys.slice(0, SUB_OPEN_MAX))); else localStorage.removeItem(SUB_OPEN_KEY) } catch { /* depolama yok */ }
 }
 
 export default function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
@@ -84,24 +102,25 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
     },
     {
       key: 'monitoring', Icon: Activity, labelKey: 'nav.groupMonitoring',
-      // Ara başlıklar (2026-09-23): `section` taşıyan sekme, önüne tıklanmayan küçük bir başlık çizer —
-      // türler cevapladıkları soruya göre: ayakta mı / adres doğru mu / sayfa doğru ve hızlı mı.
+      // Alt gruplar (2026-09-23 ara başlık → 2026-11-05 akordeon): `section` taşıyan sekme yeni bir alt grup başlatır, sonraki
+      // sekmeler bir sonraki `section`'a dek o gruptadır; `sectionIcon` grubun kendi ikonu. Türler cevapladıkları soruya göre:
+      // ayakta mı / adres doğru mu / sayfa doğru ve hızlı mı / veritabanındaki sonuç beklendiği gibi mi.
       items: [
         // İzleme Panosu (2026-09-30): 9 türün tek ekranda durumu — bölümün ilk sırasında, ara başlıksız.
         { id: 'monitoring', Icon: Radar,        labelKey: 'nav.monitoringOverview', show: true },
         // Kurum içi Durum Sayfası (2026-10-01): hizmet düzeyinde özet — oturum açmış HERKES (operasyon dışı takımlar, yönetim)
         { id: 'status',    Icon: SignalHigh,    labelKey: 'nav.statusPage', show: true },
-        { id: 'http',      Icon: Globe,         labelKey: 'nav.http',      show: true, section: 'nav.secAvailability' },
+        { id: 'http',      Icon: Globe,         labelKey: 'nav.http',      show: true, section: 'nav.secAvailability', sectionIcon: RadioTower },
         { id: 'ping',      Icon: Radio,     labelKey: 'nav.ping',      show: true },
         { id: 'port',      Icon: EthernetPort,  labelKey: 'nav.port',      show: true },
-        { id: 'dns',       Icon: Waypoints,     labelKey: 'nav.dns',       show: true, section: 'nav.secDomainDns' },
+        { id: 'dns',       Icon: Waypoints,     labelKey: 'nav.dns',       show: true, section: 'nav.secDomainDns', sectionIcon: Earth },
         { id: 'domain',    Icon: CalendarClock, labelKey: 'nav.domainmon', show: true },
-        { id: 'keyword',   Icon: TextSearch,    labelKey: 'nav.keyword',   show: true, section: 'nav.secContent' },
+        { id: 'keyword',   Icon: TextSearch,    labelKey: 'nav.keyword',   show: true, section: 'nav.secContent', sectionIcon: AppWindow },
         { id: 'page',      Icon: FileCheck,     labelKey: 'nav.page',      show: true },
         { id: 'pagespeed', Icon: Gauge,         labelKey: 'nav.pagespeed', show: true },
         { id: 'scripted',  Icon: Workflow,      labelKey: 'nav.scripted',  show: true },
         // Veritabanı Sorgu İzleme (11. tür, 2026-10-31): iş kuralını veritabanından ölçer — kendi ara başlığı
-        { id: 'dbquery',   Icon: DatabaseSearch, labelKey: 'nav.dbquery', show: true, section: 'nav.secData' },
+        { id: 'dbquery',   Icon: DatabaseSearch, labelKey: 'nav.dbquery', show: true, section: 'nav.secData', sectionIcon: DatabaseZap },
       ],
     },
     {
@@ -168,6 +187,18 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
   const sectionsRef = useRef(sections)
   sectionsRef.current = sections
   const sectionOf = (tabId) => sectionsRef.current.find((s) => s.items?.some((it) => it.id === tabId))?.key ?? null
+  // Sekmenin alt grubu (`section` anahtarı): bölüm içinde kendinden önceki son `section`; alt grubu yoksa null.
+  const subgroupOf = (tabId) => {
+    for (const s of sectionsRef.current) {
+      if (!s.items) continue
+      let current = null
+      for (const it of s.items) {
+        if (it.section) current = it.section
+        if (it.id === tabId) return current
+      }
+    }
+    return null
+  }
 
   // Palet için görünür sekmeler (etiketleriyle) — menüyle aynı görünürlük kuralları ve sıra.
   const paletteTabs = [...sections.flatMap((s) => (s.items || [s])), HELP].map((tb) => ({ id: tb.id, label: t(tb.labelKey) }))
@@ -175,10 +206,30 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
   const [openSection, setOpenSection] = useState(readOpenSection)
   const openOnly = (key) => { setOpenSection(key); writeOpenSection(key) }
 
-  // Etkin sekmenin bölümü kendiliğinden açılır (Pano/Yardım gibi yapraklarda açık bölüm korunur).
+  const [openSubs, setOpenSubs] = useState(readOpenSubs)
+  // Alt grubu AÇIK yapar (açıksa dokunmaz) — etkin sekme ve tur hedefi için; diğer açık gruplar korunur.
+  const ensureSubOpen = (sub) => {
+    if (!sub) return
+    setOpenSubs((prev) => {
+      if (prev.includes(sub)) return prev
+      const next = [...prev, sub]
+      writeOpenSubs(next)
+      return next
+    })
+  }
+  function toggleSub(sub) {
+    setOpenSubs((prev) => {
+      const next = prev.includes(sub) ? prev.filter((k) => k !== sub) : [...prev, sub]
+      writeOpenSubs(next)
+      return next
+    })
+  }
+
+  // Etkin sekmenin bölümü (ve alt grubu) kendiliğinden açılır (Pano/Yardım gibi yapraklarda açık bölüm korunur).
   useEffect(() => {
     const key = sectionOf(activeTab)
     if (key) openOnly(key)
+    ensureSubOpen(subgroupOf(activeTab))
   }, [activeTab])
 
   // Tur motoru bir sekmeyi göstermek istediğinde kenar çubuğunu ve o sekmenin bölümünü açar (2026-09-13).
@@ -192,6 +243,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       else if (state === 'collapsed') setOpen(true)
       const key = tabId === '*' ? null : sectionOf(tabId)
       if (key) openOnly(key)
+      if (tabId !== '*') ensureSubOpen(subgroupOf(tabId))
     }
     const onConceal = () => { if (isMobile) setOpenMobile(false) }
     window.addEventListener('sm:nav-reveal', onReveal)
@@ -262,7 +314,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         {/* ── Ana menü (tek gezinme bölgesi) + ikincil menü (Yardım, ayraçla) ── */}
         <SidebarContent data-tour="nav-groups" role="navigation" aria-label={t('nav.sidebarTitle')}>
           <NavMain label={t('nav.groupPlatform')} sections={sections} activeTab={activeTab} openSection={openSection}
-            onToggle={toggleSection} onSelect={go} collapsed={collapsed}
+            onToggle={toggleSection} onSelect={go} collapsed={collapsed} openSubs={openSubs} onToggleSub={toggleSub}
             alertCounts={openAlerts.visible ? openAlerts.byTab : null} onGoAlerts={goAlerts} />
           <SidebarGroup className="mt-auto pt-0">
             <SidebarSeparator className="mx-0 mb-2" />
