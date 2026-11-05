@@ -1,0 +1,47 @@
+{
+  "recent_problems": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS error_count", "FROM app_errors", "WHERE created_at >= now() - interval '15 minutes'"],
+    "MSSQL": ["SELECT COUNT(*) AS error_count", "FROM dbo.app_errors WITH (NOLOCK)", "WHERE created_at >= DATEADD(MINUTE, -15, GETDATE())"],
+    "ORACLE": ["SELECT COUNT(*) AS error_count", "FROM app_errors", "WHERE created_at >= SYSTIMESTAMP - INTERVAL '15' MINUTE"]
+  },
+  "stuck_queue": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS stuck_count", "FROM job_queue", "WHERE status = 'PENDING'", "  AND created_at < now() - interval '30 minutes'"],
+    "MSSQL": ["SELECT COUNT(*) AS stuck_count", "FROM dbo.job_queue WITH (NOLOCK)", "WHERE status = 'PENDING'", "  AND created_at < DATEADD(MINUTE, -30, GETDATE())"],
+    "ORACLE": ["SELECT COUNT(*) AS stuck_count", "FROM job_queue", "WHERE status = 'PENDING'", "  AND created_at < SYSTIMESTAMP - INTERVAL '30' MINUTE"]
+  },
+  "freshness": {
+    "POSTGRESQL": ["SELECT MAX(created_at) AS last_record_at", "FROM orders"],
+    "MSSQL": ["SELECT MAX(created_at) AS last_record_at", "FROM dbo.orders WITH (NOLOCK)"],
+    "ORACLE": ["SELECT MAX(created_at) AS last_record_at", "FROM orders"]
+  },
+  "daily_job": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS completed_count", "FROM batch_runs", "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", "  AND finished_at >= date_trunc('day', now())"],
+    "MSSQL": ["SELECT COUNT(*) AS completed_count", "FROM dbo.batch_runs WITH (NOLOCK)", "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", "  AND finished_at >= CAST(GETDATE() AS date)"],
+    "ORACLE": ["SELECT COUNT(*) AS completed_count", "FROM batch_runs", "WHERE job_name = 'END_OF_DAY'", "  AND status = 'DONE'", "  AND finished_at >= TRUNC(SYSDATE)"]
+  },
+  "replica_lag": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS replica_count,", "       MAX(EXTRACT(EPOCH FROM replay_lag)) AS replica_lag_seconds", "FROM pg_stat_replication"],
+    "MSSQL": ["SELECT COUNT(*) AS replica_count,", "       MAX(secondary_lag_seconds) AS replica_lag_seconds", "FROM sys.dm_hadr_database_replica_states WITH (NOLOCK)", "WHERE is_local = 0"],
+    "ORACLE": ["SELECT EXTRACT(DAY FROM TO_DSINTERVAL(value)) * 86400", "     + EXTRACT(HOUR FROM TO_DSINTERVAL(value)) * 3600", "     + EXTRACT(MINUTE FROM TO_DSINTERVAL(value)) * 60", "     + EXTRACT(SECOND FROM TO_DSINTERVAL(value)) AS replica_lag_seconds", "FROM v$dataguard_stats", "WHERE name = 'apply lag'"]
+  },
+  "blocked_sessions": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS blocked_sessions", "FROM pg_stat_activity", "WHERE wait_event_type = 'Lock'"],
+    "MSSQL": ["SELECT COUNT(*) AS blocked_sessions", "FROM sys.dm_exec_requests WITH (NOLOCK)", "WHERE blocking_session_id <> 0"],
+    "ORACLE": ["SELECT COUNT(*) AS blocked_sessions", "FROM v$session", "WHERE blocking_session IS NOT NULL"]
+  },
+  "long_transactions": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS long_tx_count", "FROM pg_stat_activity", "WHERE xact_start < now() - interval '15 minutes'", "  AND state <> 'idle'"],
+    "MSSQL": ["SELECT COUNT(*) AS long_tx_count", "FROM sys.dm_tran_active_transactions WITH (NOLOCK)", "WHERE transaction_type = 1", "  AND transaction_begin_time < DATEADD(MINUTE, -15, GETDATE())"],
+    "ORACLE": ["SELECT COUNT(*) AS long_tx_count", "FROM v$transaction", "WHERE start_date < SYSDATE - INTERVAL '15' MINUTE"]
+  },
+  "database_size": {
+    "POSTGRESQL": ["SELECT ROUND(pg_database_size(current_database()) / 1048576.0) AS database_size_mb"],
+    "MSSQL": ["SELECT SUM(CAST(size AS bigint)) * 8 / 1024 AS database_size_mb", "FROM sys.database_files WITH (NOLOCK)"],
+    "ORACLE": ["SELECT ROUND(SUM(bytes) / 1048576) AS database_size_mb", "FROM dba_data_files"]
+  },
+  "failed_jobs": {
+    "POSTGRESQL": ["SELECT COUNT(*) AS failed_job_count", "FROM cron.job_run_details", "WHERE status = 'failed'", "  AND start_time >= now() - interval '24 hours'"],
+    "MSSQL": ["SELECT COUNT(*) AS failed_job_count", "FROM msdb.dbo.sysjobhistory WITH (NOLOCK)", "WHERE run_status = 0", "  AND step_id = 0", "  AND run_date >= CAST(FORMAT(DATEADD(DAY, -1, GETDATE()), 'yyyyMMdd') AS int)"],
+    "ORACLE": ["SELECT COUNT(*) AS failed_job_count", "FROM dba_scheduler_job_run_details", "WHERE status = 'FAILED'", "  AND log_date >= SYSTIMESTAMP - INTERVAL '1' DAY"]
+  }
+}

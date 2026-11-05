@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, DatabaseZap, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2, Eye, Table2, ListTree, Server, CircleAlert, CircleHelp,
-  ShieldAlert, ShieldCheck, Info,
+  ArrowLeft, DatabaseZap, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2, Eye, Table2, Server, CircleAlert, CircleHelp,
+  ShieldAlert, ShieldCheck, Info, CopyPlus, Unplug,
 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -23,8 +23,10 @@ import { Spinner } from '../ui/Progress.jsx'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
 import ConnectionForm from './ConnectionForm.jsx'
 import { DbTypeBadge, HealthBadge } from './dbqueryParts.jsx'
+import { ConnectionHealthCard, ConnectionSteps, ConnectionUsedBy, useConnectionHealth } from './ConnectionDiagnostics.jsx'
+import ToneBadge from '../admin/ToneBadge.jsx'
 import {
-  PG_WEAK_SSL, changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey, isInfoPrivilege,
+  PG_WEAK_SSL, changedConnectionPayload, copyFormFromProfile, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey, isInfoPrivilege,
   privilegeState, serverFieldErrors, serverLabel, validateConnection,
 } from './connectionModel.js'
 import { countText } from './dbqueryPageModel.js'
@@ -46,6 +48,10 @@ export const CONNECTIONS_TABLE_MIN_PX = 760
  * Form görünümünde (Y1) Escape ve örtü pencereyi KAPATMAZ; kaydedilmemiş değişiklikle kapat (X) / "Geri" / "Vazgeç" onay
  * ister (izleme formunun "kaydedilmemiş değişiklikler" deseni) — yazılan sunucu / kullanıcı / parola sessizce gitmez.
  * Düzenleme yalnız değişen alanları gönderir (hedef alanları + parola kuralı birlikte; DÜŞÜK 7).
+ *
+ * 2026-11-05 (dbq2): "Bu bağlantıdan yeni" (A2 — aynı alanlar, ad "… (kopya)", parola BOŞ; sunucuda yeni kayıt),
+ * testin adım adım teşhisi (A3 — `steps`), ayrıntıda son 24 saatin sağlık kartı (A4 — `…/health`; eski sunucu →
+ * "desteklenmiyor"), kullanılmayan bağlantı işareti. `onOpenMonitor(id)` verilirse kullanan izlemenin adı o izlemeyi açar.
  */
 /** Sunucunun `security_warnings` kodlarından ekranda AYRICA gösterilecekler (bilinmeyen kod çizilmez). */
 export const SERVER_SECURITY_WARNINGS = ['SSL_NOT_VERIFIED', 'MSSQL_UNENCRYPTED', 'MSSQL_TRUST_SERVER_CERT']
@@ -54,7 +60,7 @@ export function serverSecurityWarnings(p) {
   return SERVER_SECURITY_WARNINGS.filter((c) => list.includes(c))
 }
 
-export default function ConnectionsManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onChanged, initialView = 'list' }) {
+export default function ConnectionsManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onChanged, initialView = 'list', onOpenMonitor = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -143,6 +149,8 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
 
   const detail = view.name === 'detail' ? (byId(view.id) || view.fresh || null) : null
   const editing = view.name === 'form' && view.id != null ? byId(view.id) : null
+  const copySource = view.name === 'form' && view.id == null && view.copyOf != null ? (byId(view.copyOf) || view.copyFresh || null) : null
+  const startCopy = (p) => setView({ name: 'form', id: null, copyOf: p.id, copyFresh: p })
 
   return (
     <ModalShell open={!!open} onClose={close} size="xl" scrollBody dismissOnBackdrop={view.name !== 'form'} dismissOnEscape={view.name !== 'form'}
@@ -152,13 +160,14 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
           <ListView t={t} load={load} teams={teamList} team={team} setTeam={setTeam} canEdit={canEdit} teamName={teamName}
             onReload={reload} onOpen={(p) => setView({ name: 'detail', id: p.id })}
             onEdit={(p) => setView({ name: 'form', id: p.id })} onNew={() => setView({ name: 'form', id: null })}
-            onDelete={remove} editable={editable} />
+            onDelete={remove} editable={editable} onCopy={canEdit ? startCopy : null} />
         )}
         {view.name === 'detail' && (
           detail
             ? <DetailView t={t} p={detail} editable={editable(detail)} inUse={view.inUse} inUseMessage={view.inUseMessage}
                 onBack={() => setView({ name: 'list' })} onEdit={() => setView({ name: 'form', id: detail.id })}
-                onDelete={() => remove(detail)} onTested={reload} />
+                onDelete={() => remove(detail)} onTested={reload} onCopy={canEdit ? () => startCopy(detail) : null}
+                onOpenMonitor={onOpenMonitor} />
             : <StatusBlock tone="neutral" title={t('dbq.conn.goneTitle')} description={t('dbq.conn.goneBody')}
                 actions={<Button type="button" variant="outline" onClick={() => setView({ name: 'list' })}>{t('dbq.conn.backToList')}</Button>} />
         )}
@@ -167,9 +176,9 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
             actions={<Button type="button" variant="outline" onClick={() => setView({ name: 'list' })}>{t('dbq.conn.backToList')}</Button>} />
         )}
         {view.name === 'form' && (view.id == null || editing) && (
-          <FormView key={view.id ?? 'new'} t={t} team={team} teams={teamList} profile={editing} creating={view.id == null}
-            dirtyRef={dirtyRef}
-            onCancel={() => leaveForm(view.id != null ? { name: 'detail', id: view.id } : { name: 'list' })}
+          <FormView key={view.id ?? (view.copyOf != null ? `copy-${view.copyOf}` : 'new')} t={t} team={team} teams={teamList} profile={editing}
+            creating={view.id == null} copyFrom={copySource} dirtyRef={dirtyRef}
+            onCancel={() => leaveForm(view.id != null ? { name: 'detail', id: view.id } : view.copyOf != null ? { name: 'detail', id: view.copyOf } : { name: 'list' })}
             onNoChanges={() => { dirtyRef.current = false; setView({ name: 'detail', id: view.id }) }}
             onSaved={afterSave} />
         )}
@@ -179,7 +188,7 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
 }
 
 /** Liste görünümü — takım seçici + tablo / kart. */
-function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, onOpen, onEdit, onNew, onDelete, editable }) {
+function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, onOpen, onEdit, onNew, onDelete, editable, onCopy }) {
   const [ref, width] = useElementWidth()
   const table = width === 0 || width >= CONNECTIONS_TABLE_MIN_PX
   return (
@@ -245,9 +254,11 @@ function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, 
                   </TableCell>
                   <TableCell className="align-top font-mono text-xs whitespace-normal [overflow-wrap:anywhere]">{serverLabel(p)}</TableCell>
                   <TableCell className="align-top whitespace-normal"><HealthBadge profile={p} /></TableCell>
-                  <TableCell className="align-top text-sm whitespace-normal tabular-nums">{countText(t, 'dbq.conn.usedCount', (p.used_by || []).length)}</TableCell>
+                  <TableCell className="align-top text-sm whitespace-normal tabular-nums">
+                    <span className="flex flex-col items-start gap-1">{countText(t, 'dbq.conn.usedCount', (p.used_by || []).length)}<UnusedBadge t={t} p={p} /></span>
+                  </TableCell>
                   <TableCell className="text-right align-top">
-                    <RowActions t={t} p={p} editable={editable(p)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} />
+                    <RowActions t={t} p={p} editable={editable(p)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onCopy={onCopy} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -264,12 +275,13 @@ function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, 
                       <span className="font-semibold [overflow-wrap:anywhere]">{p.name}</span>
                       <span className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{serverLabel(p)}</span>
                     </div>
-                    <RowActions t={t} p={p} editable={editable(p)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} />
+                    <RowActions t={t} p={p} editable={editable(p)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} onCopy={onCopy} />
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <DbTypeBadge type={p.db_type} />
                     <HealthBadge profile={p} />
                     <span className="text-xs text-muted-foreground">{countText(t, 'dbq.conn.usedCount', (p.used_by || []).length)}</span>
+                    <UnusedBadge t={t} p={p} />
                   </div>
                   <Button type="button" variant="outline" onClick={() => onOpen(p)} className="w-full pointer-coarse:h-10">
                     <Eye aria-hidden="true" />{t('dbq.conn.details')}
@@ -283,20 +295,35 @@ function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, 
   )
 }
 
-function RowActions({ t, p, editable, onOpen, onEdit, onDelete }) {
+/**
+ * Kullanılmayan bağlantı işareti (A4) — hiçbir izleme kullanmıyor. Sunucunun sağlık rozeti zaten "kullanılmıyor" diyorsa
+ * ikinci kez yazılmaz; `used_by` alanı yoksa (eski sunucu) bilinmez → işaret yok.
+ */
+function UnusedBadge({ t, p }) {
+  if (!Array.isArray(p?.used_by) || p.used_by.length > 0 || healthState(p) === 'unused') return null
+  return (
+    <ToneBadge tone="muted" data-slot="dbq-conn-unused" className="h-auto gap-1 rounded-md whitespace-normal">
+      <Unplug aria-hidden="true" />{t('dbq.conn.health.unused')}
+    </ToneBadge>
+  )
+}
+
+function RowActions({ t, p, editable, onOpen, onEdit, onDelete, onCopy }) {
   return (
     <KebabMenu variant="labeled" label={t('dbq.conn.col.actions')} rowLabel={p.name}
       items={[
         { label: t('dbq.conn.details'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(p) },
         { label: t('dbq.conn.edit'), icon: <Pencil aria-hidden="true" />, onClick: () => onEdit(p), hidden: !editable },
+        { label: t('dbq.conn.copyNew'), icon: <CopyPlus aria-hidden="true" />, onClick: () => onCopy?.(p), hidden: !onCopy },
         { label: t('dbq.conn.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete(p), danger: true, hidden: !editable },
       ]} />
   )
 }
 
 /** Sağlık paneli + kullananlar + tablolar. */
-function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDelete, onTested }) {
+function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDelete, onTested, onCopy, onOpenMonitor }) {
   const toast = useToast()
+  const [health, reloadHealth] = useConnectionHealth(p.id)
   const [test, setTest] = useState(null)
   const [testing, setTesting] = useState(false)
   const h = p.health || {}
@@ -308,7 +335,7 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
     let res
     try { res = await api.monitoring.testDbConnection(p.id) } catch (e) { res = { success: false, error: e?.message } } finally { setTesting(false) }
     setTest(res)
-    if (res?.success) onTested?.()
+    if (res?.success) { onTested?.(); reloadHealth() }
     else if (res?.code === 'RATE_LIMITED') toast.info(res.error || t('dbq.conn.testWait', res.retry_after_seconds ?? 5))
   }
 
@@ -321,6 +348,7 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
             {testing ? <Spinner size={14} inline decorative /> : <PlugZap aria-hidden="true" />}{t('dbq.conn.test')}
           </Button>
           {editable && <Button type="button" variant="outline" onClick={onEdit} className="pointer-coarse:h-10"><Pencil aria-hidden="true" />{t('dbq.conn.edit')}</Button>}
+          {onCopy && <Button type="button" variant="outline" onClick={onCopy} className="pointer-coarse:h-10" data-slot="dbq-conn-copy"><CopyPlus aria-hidden="true" />{t('dbq.conn.copyNew')}</Button>}
           {editable && <Button type="button" variant="outline" onClick={onDelete} className="text-destructive hover:text-destructive pointer-coarse:h-10"><Trash2 aria-hidden="true" />{t('dbq.conn.delete')}</Button>}
         </div>
       </div>
@@ -399,22 +427,10 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
         </dl>
       </Card>
 
+      <ConnectionHealthCard load={health} onRetry={reloadHealth} />
+
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <Card data-slot="dbq-conn-usedby" className="gap-2 px-4 py-3 shadow-none">
-          <h4 className="m-0 inline-flex items-center gap-1.5 text-xs font-bold tracking-wide text-muted-foreground uppercase"><ListTree aria-hidden="true" className="size-3.5" />{t('dbq.conn.usedBy')}</h4>
-          {(p.used_by || []).length === 0
-            ? <p className="m-0 text-sm text-muted-foreground">{t('dbq.conn.usedByNone')}</p>
-            : (
-              <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                {p.used_by.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center gap-1.5 text-sm">
-                    <span className="[overflow-wrap:anywhere]">{m.name}</span>
-                    {m.active === false && <Badge variant="outline" className="font-normal text-muted-foreground">{t('dbq.conn.paused')}</Badge>}
-                  </li>
-                ))}
-              </ul>
-            )}
-        </Card>
+        <ConnectionUsedBy profile={p} health={health} onOpenMonitor={onOpenMonitor} />
         <Card data-slot="dbq-conn-tables" className="gap-2 px-4 py-3 shadow-none">
           <h4 className="m-0 inline-flex items-center gap-1.5 text-xs font-bold tracking-wide text-muted-foreground uppercase"><Table2 aria-hidden="true" className="size-3.5" />{t('dbq.conn.tablesUsed')}</h4>
           {(p.tables_used || []).length === 0
@@ -505,6 +521,7 @@ function TestOutcome({ t, res }) {
           <span data-slot="dbq-conn-test" data-ok="true">
             {t('dbq.conn.testOkBody', d.duration_ms ?? '—')}{d.server_version ? ` · ${d.server_version}` : ''}
           </span>
+          <ConnectionSteps steps={d.steps} />
           <PrivilegesSummary t={t} priv={d.privileges} />
         </span>
       </AlertBanner>
@@ -519,6 +536,7 @@ function TestOutcome({ t, res }) {
       <span className="flex min-w-0 flex-col gap-1.5">
         <code data-slot="dbq-conn-test" data-ok="false" className="block font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{msg}</code>
         {d?.duration_ms != null && <span className="text-xs">{t('dbq.conn.ms', d.duration_ms)}</span>}
+        <ConnectionSteps steps={d?.steps} />
         <PrivilegesSummary t={t} priv={d?.privileges} />
       </span>
     </AlertBanner>
@@ -526,9 +544,10 @@ function TestOutcome({ t, res }) {
 }
 
 /** Ekle / düzenle formu + kaydetmeden deneme. */
-function FormView({ t, team, teams, profile, creating, onCancel, onSaved, onNoChanges, dirtyRef }) {
+function FormView({ t, team, teams, profile, creating, copyFrom = null, onCancel, onSaved, onNoChanges, dirtyRef }) {
   const toast = useToast()
-  const [baseline] = useState(() => (profile ? formFromProfile(profile) : emptyForm(team)))
+  // Kopya (A2): kaynak bağlantının alanları, parola boş — kaydedilmemiş değişiklik ölçütü kopyanın kendisi
+  const [baseline] = useState(() => (profile ? formFromProfile(profile) : copyFrom ? copyFormFromProfile(copyFrom, t('dbq.conn.copySuffix')) : emptyForm(team)))
   const [form, setForm] = useState(baseline)
   const [server, setServer] = useState({})
   const [client, setClient] = useState({})
@@ -606,8 +625,13 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved, onNoCh
     <div className="flex min-w-0 flex-col gap-3" data-slot="dbq-conn-form-view">
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={saving} className="pointer-coarse:h-10"><ArrowLeft aria-hidden="true" />{t('dbq.conn.back')}</Button>
-        <h3 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">{creating ? t('dbq.conn.newTitle') : t('dbq.conn.editTitle', profile?.name || '')}</h3>
+        <h3 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">{creating ? (copyFrom ? t('dbq.conn.copyTitle', copyFrom.name || '') : t('dbq.conn.newTitle')) : t('dbq.conn.editTitle', profile?.name || '')}</h3>
       </div>
+      {copyFrom && (
+        <AlertBanner tone="info" icon={CopyPlus} className="mb-0">
+          <span data-slot="dbq-conn-copy-note">{t(copyFrom.password_set ? 'dbq.conn.copyNotePassword' : 'dbq.conn.copyNote')}</span>
+        </AlertBanner>
+      )}
       {banner && <AlertBanner tone="danger" title={t('dbq.conn.saveFailedTitle')} className="mb-0">{banner}</AlertBanner>}
       <ConnectionForm form={form} onChange={onChange} errors={shownErrors} disabled={saving} teams={teams} showTeam={creating} />
       {test && <TestOutcome t={t} res={test} />}

@@ -69,6 +69,21 @@ export function formFromProfile(p) {
   }
 }
 
+/** Sunucunun bağlantı adı üst sınırı (`DbConnectionProfileService.MAX_NAME`). */
+export const CONNECTION_NAME_MAX = 120
+
+/**
+ * "Bu bağlantıdan yeni" (A2, 2026-11-05): kayıtlı profilin alanlarıyla YENİ bağlantı formu — kimlik yok, ad "… (kopya)"
+ * (120 karaktere sığacak biçimde), parola BOŞ ve `password_set` false: kayıtlı parola asla kopyalanmaz / gönderilmez
+ * (parolasız hesapta boş bırakılabilir). Takım kaynağınkidir (bağlantılar takım belgesi).
+ */
+export function copyFormFromProfile(p, suffix = ' (kopya)') {
+  const f = formFromProfile(p)
+  const base = String(f.name || '').trim()
+  const room = Math.max(0, CONNECTION_NAME_MAX - suffix.length)
+  return { ...f, id: null, name: `${base.slice(0, room)}${suffix}`, password: '', password_set: false, password_clear: false }
+}
+
 /** Formun şu anki varsayılan portu (Oracle TCPS açıksa 2484). */
 function defaultPortOf(form) {
   return form.db_type === 'ORACLE' && form.oracle_tcps ? ORACLE_TCPS_PORT : DEFAULT_PORT[form.db_type]
