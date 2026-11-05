@@ -174,10 +174,12 @@ describe('KeywordMonitorPage', () => {
       has_custom_headers: true, custom_header_names: [],
     }] })
 
-    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    // kw 2026-11-05: başlıklar "Gelişmiş istek" bölümünde ve yalnız global admin'e kayıtlı adlar / düzenleme
+    render(<KeywordMonitorPage systemRole="ADMIN" globalAdmin teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
     await cardTitle.find('https://www.example.com/')
     fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    fireEvent.click(screen.getByRole('button', { name: /gelişmiş istek|advanced request/i }))
 
     // İpucu artık shadcn Field açıklaması (FormField `hint`), alana aria-describedby ile bağlı
     const hint = [...document.querySelectorAll('[data-slot="field-description"]')]
@@ -196,10 +198,11 @@ describe('KeywordMonitorPage', () => {
       has_custom_headers: true, custom_header_names: ['X-Api-Key', 'Cache-Control'],
     }] })
 
-    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    render(<KeywordMonitorPage systemRole="ADMIN" globalAdmin teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
     await cardTitle.find('https://www.example.com/')
     fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    fireEvent.click(screen.getByRole('button', { name: /gelişmiş istek|advanced request/i }))
 
     const hint = [...document.querySelectorAll('[data-slot="field-description"]')]
       .find(h => /Kayıtlı başlıklar|Stored headers/i.test(h.textContent))
