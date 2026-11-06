@@ -126,8 +126,21 @@ public class AlertForwardInfoNotifier {
         String recipientName = recipient != null && recipient.getName() != null ? recipient.getName() : "Takım #" + f.getRecipientTeamId();
         List<AppUser> users = new ArrayList<>();
         if (!wholeTeam) {
+            // Push alıcıları da e-posta gibi yalnız alıcı takımda HÂLÂ üye olanlar (2026-11-06, hata avı H2#6): etkinleştirmede
+            // bilgi kayıtlı TÜM üyelere gider — takımdan ayrılmış üye ("takımda değil") push almasın. Üyelik projeksiyonla
+            // (birincil + ek) okunur; okunamazsa push'a kimse eklenmez (e-posta zaten aynı kuralla süzülür).
+            Map<Long, AlertForwardService.Member> membership;
+            try {
+                membership = forwards.members(newMemberIds);
+            } catch (RuntimeException e) {
+                log.debug("Alarm iletimi bilgi push'u: üyelikler okunamadı (iletim {}): {}", f.getId(), e.toString());
+                membership = Map.of();
+            }
             for (AppUser u : userRepo.findAllById(newMemberIds)) {
-                if (u != null && !Boolean.FALSE.equals(u.getActive()) && u.getUsername() != null && !u.getUsername().isBlank()) users.add(u);
+                if (u == null || Boolean.FALSE.equals(u.getActive()) || u.getUsername() == null || u.getUsername().isBlank()) continue;
+                AlertForwardService.Member m = membership.get(u.getId());
+                if (m == null || !m.inTeam(f.getRecipientTeamId())) continue;
+                users.add(u);
             }
         }
         List<String> addresses = wholeTeam ? forwards.teamAlarmEmails(f.getRecipientTeamId())

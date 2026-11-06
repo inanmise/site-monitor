@@ -133,6 +133,8 @@ class AlertForwardInfoNotifierTest {
         AppUser p = new AppUser();
         p.setId(6L); p.setUsername("pasif"); p.setActive(false);
         when(userRepo.findAllById(List.of(5L, 6L))).thenReturn(List.of(a, p));
+        when(forwards.members(List.of(5L, 6L))).thenReturn(Map.of(
+                5L, member(5L, true, 2L), 6L, member(6L, false, 2L)));
         when(forwards.memberEmails(2L, List.of(5L, 6L))).thenReturn(List.of("ayse@example.com"));
         AlertForwardInfoNotifier.Info info = notifier.notifyAdded(fwd("MEMBERS"), false, List.of(5L, 6L), "Yönetici");
         assertThat(info).isEqualTo(new AlertForwardInfoNotifier.Info(1, 1));
@@ -144,6 +146,33 @@ class AlertForwardInfoNotifierTest {
         assertThat(rec.getValue().get(0).username()).isEqualTo("ayse");
         assertThat(rec.getValue().get(0).optOut()).isTrue();
         verify(push, never()).enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+    }
+
+    static AlertForwardService.Member member(long id, boolean active, Long... teams) {
+        return new AlertForwardService.Member(id, "u" + id + "@example.com", active, java.util.Set.of(teams), "Kişi " + id, "u" + id);
+    }
+
+    @Test
+    @DisplayName("seçilen üyeler: takımdan ayrılmış üye push almaz (e-posta gibi yalnız alıcı takımda olanlar); üyelik okunamazsa push'a kimse eklenmez")
+    void membersOutsideTeamGetNoPush() {
+        AppUser in = new AppUser();
+        in.setId(5L); in.setUsername("ayse"); in.setDisplayName("Ayşe Yılmaz"); in.setActive(true);
+        AppUser left = new AppUser();
+        left.setId(7L); left.setUsername("ayrilan"); left.setDisplayName("Takımdan Ayrılan (Eski Ağ / Uzman)"); left.setActive(true);
+        when(userRepo.findAllById(List.of(5L, 7L))).thenReturn(List.of(in, left));
+        when(forwards.members(List.of(5L, 7L))).thenReturn(Map.of(5L, member(5L, true, 2L), 7L, member(7L, true, 9L)));
+        when(forwards.memberEmails(2L, List.of(5L, 7L))).thenReturn(List.of("ayse@example.com"));
+        notifier.notifyAdded(fwd("MEMBERS"), false, List.of(5L, 7L), "Yönetici");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UserPushService.DirectRecipient>> rec = ArgumentCaptor.forClass(List.class);
+        verify(push).enqueueDirectLocalized(rec.capture(), eq(2L), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(rec.getValue()).extracting(UserPushService.DirectRecipient::username).containsExactly("ayse");
+
+        when(forwards.members(List.of(5L, 7L))).thenThrow(new RuntimeException("db"));
+        org.mockito.Mockito.clearInvocations(push);
+        notifier.notifyAdded(fwd("MEMBERS"), false, List.of(5L, 7L), "Yönetici");
+        verify(push).enqueueDirectLocalized(rec.capture(), eq(2L), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(rec.getValue()).isEmpty();
     }
 
     @Test

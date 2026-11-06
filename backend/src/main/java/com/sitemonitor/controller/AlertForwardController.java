@@ -17,6 +17,7 @@ import com.sitemonitor.service.forward.AlertForwardService;
 import com.sitemonitor.service.noc.NocMonitorDirectory;
 import com.sitemonitor.service.noc.NocType;
 import com.sitemonitor.service.userref.UserPublicIds;
+import com.sitemonitor.util.ErrorTexts;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -297,7 +298,8 @@ public class AlertForwardController {
         Map<Long, Team> teams = new HashMap<>();
         for (Team tm : teamRepo.findAllById(visibleOwners)) teams.put(tm.getId(), tm);
         for (Long o : visibleOwners) {
-            boolean manage = canEdit && SessionScope.canManage(session, o);
+            // Pasif sahip takım yeni iletim ekleyemez (servis 400 döner — 2026-11-06, hata avı H3#4): "iletim ekle" sunulmaz.
+            boolean manage = canEdit && SessionScope.canManage(session, o) && AlertForwardService.activeTeam(teams.get(o));
             if (manage) canAdd = true;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", o);
@@ -423,6 +425,9 @@ public class AlertForwardController {
                 && missing == refs.size()) state = "no_targets";
         else if (AlertForward.SCOPE_MONITORS.equals(f.getScopeKind()) && refs.isEmpty()) state = "no_targets";
         else if (AlertForward.RECIPIENT_MEMBERS.equals(f.getRecipientKind()) && liveMembers == 0) state = "no_recipients";
+        // Seçilen izlemeler kapsamında izleme dizini okunamadıysa izlemelerin hâlâ var olup olmadığı BİLİNMİYOR (2026-11-06,
+        // hata avı H2#8) — yeşil "etkin" denmez; ön yüz nötr "bilinmiyor" gösterir.
+        else if (AlertForward.SCOPE_MONITORS.equals(f.getScopeKind()) && !ctx.monitorsReadable()) state = "unknown";
         else state = "active";
         m.put("state", state);
         m.put("note", f.getNote());
@@ -511,8 +516,10 @@ public class AlertForwardController {
                 created++;
             } catch (RuntimeException e) {
                 failed++;
-                message = e.getMessage() != null && !e.getMessage().isBlank() ? e.getMessage()
-                        : Msg.t("Görüntüleme erişimi verilemedi.", "View access couldn't be given.");
+                // Teknik metin (SQL, sınıf adı) kullanıcıya dönmez (2026-11-06, hata avı H2#5); servisin kendi doğrulama
+                // iletisi (Msg.t) korunur.
+                message = ErrorTexts.safeMessage(e, "Görüntüleme erişimi verilemedi; Erişim paylaşımı ekranından deneyin.",
+                        "View access couldn't be given; try it on the Access sharing screen.");
                 log.info("Alarm iletimi {}: görüntüleme erişimi verilemedi ({}): {}", f.getId(), key, e.toString());
             }
         }

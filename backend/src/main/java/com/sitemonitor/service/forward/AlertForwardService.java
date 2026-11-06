@@ -370,7 +370,7 @@ public class AlertForwardService implements AlertForwardRouting {
             List<Long> memberIds = new ArrayList<>();
             List<String> emails;
             if (whole) {
-                emails = recipientActive ? teamEmails.computeIfAbsent(rt, k -> teamAlarmEmails(recipient)) : List.of();
+                emails = recipientActive ? teamEmailsSafe(teamEmails, rt, recipient) : List.of();
             } else {
                 List<String> e = new ArrayList<>();
                 Set<String> seen = new HashSet<>();
@@ -410,6 +410,26 @@ public class AlertForwardService implements AlertForwardRouting {
         Map<Long, String> names = new HashMap<>();
         teams.forEach((id, t) -> { if (t.getName() != null) names.put(id, t.getName()); });
         return new Snapshot(List.copyOf(all), Map.copyOf(frozen), Map.copyOf(byId), Map.copyOf(names), now);
+    }
+
+    /**
+     * TEAM türü alıcının adresleri, takım başına bir kez (görüntü kurulumu). Bir takımın çözümü (bildirim grubu / takım adresi)
+     * hata verirse (2026-11-06, hata avı H2#8) TÜM görüntü düşmez: o takımın adresleri BİLİNMİYOR sayılır — boş liste (hedef
+     * yalnız push kalır, e-postası "alıcı yok"), WARN; öbür takımlar ve iletimler aynen kurulur. Takım adresine geri DÜŞÜLMEZ
+     * (varsayılan grubu olan takımın postası yanlış adrese gitmesin).
+     */
+    private List<String> teamEmailsSafe(Map<Long, List<String>> cache, long rt, Team recipient) {
+        List<String> cached = cache.get(rt);
+        if (cached != null) return cached;
+        List<String> out;
+        try {
+            out = teamAlarmEmails(recipient);
+        } catch (RuntimeException e) {
+            log.warn("Alarm iletimi: alıcı takım {} adresleri çözülemedi — bu turda yalnız push ({})", rt, e.toString());
+            out = List.of();
+        }
+        cache.put(rt, out);
+        return out;
     }
 
     // ── Yönlendirme (yalnız bellek) ──────────────────────────────────────────
@@ -730,26 +750,34 @@ public class AlertForwardService implements AlertForwardRouting {
      * Kayıt sonucu. {@code before} = düzenlemede ESKİ hâlin kopyası (yeni kayıtta null); {@code changed} false ise HİÇBİR
      * şey yazılmadı (değişmeyen gövde). {@code newWholeTeam}: TEAM türünde yeni alıcı takım (bilgi postası takıma);
      * {@code newMemberIds}: MEMBERS türünde yeni eklenen üyeler. {@code activated}: bu kayıt iletimi etkin OLMAYAN hâlden etkine
-     * geçirdi (2026-11-06 — bilgi bildirimi o anki TÜM alıcılara gider).
+     * geçirdi (2026-11-06 — bilgi bildirimi o anki TÜM alıcılara gider). {@code expired}: kayıt sonrası iletimin süresi dolmuş
+     * (2026-11-06, hata avı H2#6 — süresi dolmuş iletim etkinleştirilse de yeni üye eklense de HİÇBİR alarm iletmez; bilgi
+     * bildirimi "alarmlarımız size gelecek" demesin).
      */
     public record Saved(AlertForward forward, AlertForward before, boolean changed, boolean newWholeTeam,
-                        List<Long> newMemberIds, boolean activated) {
+                        List<Long> newMemberIds, boolean activated, boolean expired) {
         public Saved(AlertForward forward, AlertForward before, boolean changed, boolean newWholeTeam, List<Long> newMemberIds) {
-            this(forward, before, changed, newWholeTeam, newMemberIds, false);
+            this(forward, before, changed, newWholeTeam, newMemberIds, false, false);
+        }
+
+        public Saved(AlertForward forward, AlertForward before, boolean changed, boolean newWholeTeam, List<Long> newMemberIds,
+                     boolean activated) {
+            this(forward, before, changed, newWholeTeam, newMemberIds, activated, false);
         }
 
         /**
-         * Bilgi bildiriminin alıcıları (2026-11-06): kayıt sonrası iletim etkin değilse YOK; etkin olmayandan etkine geçtiyse o
-         * anki TÜM alıcılar (TEAM → takımın tamamı, MEMBERS → kayıtlı tüm üyeler); aksi YENİ alıcılar. {@code [whole, üyeler]}.
+         * Bilgi bildiriminin alıcıları (2026-11-06): kayıt sonrası iletim etkin değilse ya da süresi dolmuşsa YOK; etkin olmayandan
+         * etkine geçtiyse o anki TÜM alıcılar (TEAM → takımın tamamı, MEMBERS → kayıtlı tüm üyeler); aksi YENİ alıcılar.
+         * {@code [whole, üyeler]}.
          */
         public boolean infoWholeTeam() {
-            if (forward == null || !forward.isEnabled() || !changed) return false;
+            if (forward == null || !forward.isEnabled() || !changed || expired) return false;
             if (activated) return AlertForward.RECIPIENT_TEAM.equals(forward.getRecipientKind());
             return newWholeTeam;
         }
 
         public List<Long> infoMemberIds() {
-            if (forward == null || !forward.isEnabled() || !changed) return List.of();
+            if (forward == null || !forward.isEnabled() || !changed || expired) return List.of();
             if (activated) {
                 return AlertForward.RECIPIENT_MEMBERS.equals(forward.getRecipientKind()) ? userIdsOf(forward) : List.of();
             }
@@ -888,9 +916,11 @@ public class AlertForwardService implements AlertForwardRouting {
                 Set<Long> kept = teamChanged || !AlertForward.RECIPIENT_MEMBERS.equals(f.getRecipientKind())
                         ? Set.of() : new HashSet<>(oldMembers);
                 members = validateMembers(rt, userIds, kept);
-            } else if (teamChanged || !AlertForward.RECIPIENT_MEMBERS.equals(f.getRecipientKind()) || members.isEmpty()) {
-                members = validateMembers(rt, null, Set.of());   // üye gönderilmedi → 400
+            } else if (teamChanged || !AlertForward.RECIPIENT_MEMBERS.equals(f.getRecipientKind())) {
+                members = validateMembers(rt, null, Set.of());   // üyelere geçildi / takım değişti ama üye gönderilmedi → 400
             }
+            // Alıcı alanları gönderilmediyse kayıtlı üye listesi (BOŞ olsa da) yeniden doğrulanmaz (2026-11-06, hata avı H2#2):
+            // üyelerin hepsi silinince (removeUser) iletim duraklatılamıyor / notu değiştirilemiyordu (400 "üye seçin").
         } else {
             members = List.of();
         }
@@ -942,7 +972,7 @@ public class AlertForwardService implements AlertForwardRouting {
                 for (Long m : members) if (!had.contains(m)) newMembers.add(m);
             }
         }
-        return new Saved(saved, before, true, newWhole, newMembers, !before.isEnabled() && saved.isEnabled());
+        return new Saved(saved, before, true, newWhole, newMembers, !before.isEnabled() && saved.isEnabled(), expired(saved));
     }
 
     /** Kaldır. */
@@ -955,10 +985,15 @@ public class AlertForwardService implements AlertForwardRouting {
 
     // ── Takım / kullanıcı yaşam döngüsü ─────────────────────────────────────
 
-    /** Takım silinince: sahibi ya da alıcısı o takım olan iletimler (çağıranın işleminde). */
+    /**
+     * Takım silinince: sahibi ya da alıcısı o takım olan iletimler (çağıranın işleminde). Kilit sırası (2026-11-06, hata avı
+     * H2#3): ÖNCE takım satırı ({@code lockTeamRow}), sonra iletim satırları — iletim düzenlemesi ve takım taşımasıyla aynı yön
+     * (teams → alert_forwards). Eskiden iletim satırları önce siliniyor, takım satırı sonra (deleteById) kilitleniyordu.
+     */
     @Transactional
     public int deleteForTeam(Long teamId) {
         if (teamId == null) return 0;
+        repo.lockTeamRow(teamId);
         int n = repo.deleteByTeam(teamId);
         if (n > 0) {
             log.info("Takım {} silindi: {} alarm iletimi (sahibi ya da alıcısı) silindi", teamId, n);
@@ -1031,6 +1066,30 @@ public class AlertForwardService implements AlertForwardRouting {
             log.info("Takım taşıması {} → {}: {} alarm iletimi (tüm izlemeler / seçilen türler kapsamlı) duraklatıldı", from, to, paused);
         }
         return new Moved(moved, removed, paused);
+    }
+
+    /**
+     * Taşıma sonrası hedef takımın SAHİBİ olacağı iletim sayısı (2026-11-06, hata avı H2#4) — {@link #moveTeam} ile AYNI kural,
+     * yalnız okuma: hedefin kendi iletimleri ({@code from}'a gidenler taşımayla silinir) + taşınacaklar (hedefe gidenler ve
+     * hedefte kanonik kopyası olanlar silinir). Çağıran ({@code TeamAdminService.moveAll}) {@link #MAX_PER_TEAM}'i aşarsa 409
+     * döner, hiçbir şey taşınmaz.
+     */
+    public int countAfterMove(Long from, Long to) {
+        if (from == null || to == null || from.equals(to)) return 0;
+        Set<String> keys = new HashSet<>();
+        int n = 0;
+        for (AlertForward o : repo.findByOwnerTeamIdInOrderByIdAsc(List.of(to))) {
+            if (Objects.equals(o.getRecipientTeamId(), from)) continue;
+            n++;
+            keys.add(canonical(o));
+        }
+        for (AlertForward f : repo.findByOwnerTeamIdInOrderByIdAsc(List.of(from))) {
+            if (Objects.equals(f.getRecipientTeamId(), to)) continue;
+            AlertForward moved = copy(f);
+            moved.setOwnerTeamId(to);
+            if (keys.add(canonical(moved))) n++;
+        }
+        return n;
     }
 
     /** Notun sonuna taşıma metni — toplam {@value #NOTE_MAX} karakteri aşmaz (eski not kısaltılır, metin bütün kalır). */
@@ -1327,7 +1386,7 @@ public class AlertForwardService implements AlertForwardRouting {
 
     // ── Küçük yardımcılar ────────────────────────────────────────────────────
 
-    static boolean activeTeam(Team t) {
+    public static boolean activeTeam(Team t) {
         return t != null && !Boolean.FALSE.equals(t.getActive());
     }
 

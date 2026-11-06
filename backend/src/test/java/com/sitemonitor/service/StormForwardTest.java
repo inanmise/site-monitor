@@ -324,4 +324,24 @@ class StormForwardTest {
             });
         });
     }
+
+    // ── hata avı 2026-11-06 ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("H1#6: çözüm postalarında alıcı takım adı adres başına değil TAKIM başına bir kez okunur (N+1 yok)")
+    void recoveryReadsRecipientTeamNamesOncePerTeam() {
+        routing();
+        TeamRepository teams = (TeamRepository) ReflectionTestUtils.getField(storm, "teamRepo");
+        clearInvocations(teams);
+        AlertEvent m1 = member(1, OWNER, null), m2 = member(2, OWNER, null), m3 = member(3, OWNER, null);
+        for (AlertEvent m : List.of(m1, m2, m3)) m.setResolved(true);
+        m1.setForwardEmails("{\"8\":[\"b1@example.com\"]}");
+        m2.setForwardEmails("{\"8\":[\"b2@example.com\"]}");
+        m3.setForwardEmails("{\"8\":[\"b3@example.com\"],\"9\":[\"" + C_MAIL + "\"]}");
+        ReflectionTestUtils.invokeMethod(storm, "sendStormRecovery", stormRow(), List.of(m1, m2, m3), List.of());
+        verify(teams, times(1)).findById(RT_B);
+        verify(teams, times(1)).findById(RT_C);
+        assertThat(forwardRows()).extracting(NotificationLog::getRecipientName)
+                .contains("Ağ Operasyon Merkezi — 7/24 İzleme", "Ağ Operasyon Merkezi — 7/24 İzleme, Takım C");
+    }
 }

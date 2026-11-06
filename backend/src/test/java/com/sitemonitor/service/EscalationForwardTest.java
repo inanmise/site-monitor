@@ -277,15 +277,20 @@ class EscalationForwardTest {
     }
 
     @Test
-    @DisplayName("sessiz saat: sahip tamamen ertelendiyse iletim ŞİMDİ gitmez (özete girer); kısmide yalnız ertelenmeyen sahibin iletimleri")
+    @DisplayName("sessiz saat: sahip tamamen ertelendiyse iletim ŞİMDİ gitmez (özete girer, push yalnız iz); kısmide yalnız ertelenmeyen sahibin iletimleri")
     void quietHoursFollowOwner() {
         quiet(TEAM_A);
-        ForwardFakes.Routing r = routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
+        routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
         service.processResults(List.of(expiring(25)));
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), any());
-        assertThat(r.anyCalls).isEmpty();
-        assertThat(push.calls).isEmpty();
+        // 2026-11-06 (H1#5): ertelenen sahibin iletim push'u GİTMEZ ama iz bırakır — sessiz saat işaretli bağlamla tek çağrı
+        // (push ayağı alıcı takımda SKIPPED_TEAM_QUIET karar satırı yazar)
+        assertThat(push.calls).singleElement().satisfies(c -> {
+            assertThat(c.ctx()).containsEntry(EscalationService.CTX_QUIET_DEFERRED, true);
+            assertThat(c.targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(TEAM_B);
+        });
+        push.calls.clear();
 
         // kısmi: SY penceresinde, UG değil → yalnız UG'nin iletimleri (SY'ninki SY özetine)
         reset(emailService, notificationLogRepo);
@@ -296,9 +301,15 @@ class EscalationForwardTest {
         ForwardFakes.Routing r2 = routing(Map.of(TEAM_A, List.of(toB(B_MAIL)),
                 TEAM_UG, List.of(ForwardFakes.target(TEAM_C, "Takım C", List.of("Takım UG"), List.of(C_MAIL)))));
         service.processResults(List.of(expiring(25)));
-        assertThat(r2.refs).singleElement().satisfies(ref -> assertThat(ref.ownerTeamIds()).containsExactly(TEAM_UG));
+        assertThat(r2.refs).extracting(ref -> List.copyOf(ref.ownerTeamIds())).contains(List.of(TEAM_UG));
         List<String[]> to = sends();
         assertThat(to).extracting(a -> List.of(a)).containsExactly(List.of(UG_MAIL), List.of(C_MAIL));
+        // push: UG'nin iletimi (C) canlı; ertelenen SY'ninki (B) yalnız sessiz saat izi
+        assertThat(push.calls).hasSize(2);
+        assertThat(push.calls.get(0).targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(TEAM_C);
+        assertThat(push.calls.get(0).ctx()).doesNotContainKey(EscalationService.CTX_QUIET_DEFERRED);
+        assertThat(push.calls.get(1).targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(TEAM_B);
+        assertThat(push.calls.get(1).ctx()).containsEntry(EscalationService.CTX_QUIET_DEFERRED, true);
     }
 
     private Map<String, Object> expiring(int days) {
@@ -502,5 +513,69 @@ class EscalationForwardTest {
         assertThat(mon).extracting(m -> m.get("forward_id")).containsExactly(1L, 2L);
         assertThat(mon).extracting(m -> m.get("applies")).containsOnly("monitors_only");
         verify(inventoryRepo, never()).findById(anyLong());
+    }
+
+    // ── hata avı 2026-11-06 ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("fırtına üyesinin bireysel push'u (H1#2): UG sahibinin iletimleri de gider, SY'nin UG'ye iletimi atlanır")
+    void stormMemberForwardPushIncludesUg() {
+        inv.setUgTeamId(TEAM_UG);
+        when(stormService.evaluate(any(), any())).thenReturn(StormService.StormAction.SUPPRESSED);
+        when(appSettings.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean())).thenReturn(true);
+        when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
+        routing(Map.of(
+                TEAM_A, List.of(ForwardFakes.target(TEAM_UG, "Takım UG", List.of("Takım A"), List.of(UG_MAIL)), toB(B_MAIL)),
+                TEAM_UG, List.of(ForwardFakes.target(TEAM_C, "Takım C", List.of("Takım UG"), List.of(C_MAIL)))));
+        service.processConfirmedOutage(DOMAIN, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>());
+        assertThat(push.calls).singleElement().satisfies(c -> {
+            assertThat(c.trigger()).isEqualTo("INITIAL");
+            assertThat(c.targets()).extracting(ForwardTarget::recipientTeamId)
+                    .as("UG (sahip) atlanır; SY→B ve UG→C gider").containsExactly(TEAM_B, TEAM_C);
+            assertThat(c.ctx()).doesNotContainKey(EscalationService.CTX_QUIET_DEFERRED);
+        });
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("fırtına üyesi, sahibin push'u sessiz saatte (H1#5): iletim push'u GİTMEZ ama işaretli bağlamla iz bırakır")
+    void stormMemberQuietForwardPushLeavesTrace() {
+        ReflectionTestUtils.setField(service, "quietHours", quietHours);
+        when(quietHours.defersPush(eq(TEAM_A), any(), any())).thenReturn(true);
+        when(stormService.evaluate(any(), any())).thenReturn(StormService.StormAction.SUPPRESSED);
+        when(appSettings.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean())).thenReturn(true);
+        when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
+        routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
+        service.processConfirmedOutage(DOMAIN, EscalationService.TYPE_ACCESSIBILITY, "WARNING", new LinkedHashMap<>());
+        assertThat(push.calls).singleElement().satisfies(c -> {
+            assertThat(c.targets()).extracting(ForwardTarget::recipientTeamId).containsExactly(TEAM_B);
+            assertThat(c.ctx()).containsEntry(EscalationService.CTX_QUIET_DEFERRED, true);
+        });
+    }
+
+    @Test
+    @DisplayName("kısmi sessiz saat (H1#5): ertelenen sahibin iletim alıcısı ertelenmeyen sahipten CANLI alıyorsa sessiz iz yazılmaz")
+    void quietTraceSkipsRecipientsServedLive() {
+        quiet(TEAM_A);
+        inv.setUgTeamId(TEAM_UG);
+        routing(Map.of(TEAM_A, List.of(toB(B_MAIL)),
+                TEAM_UG, List.of(ForwardFakes.target(TEAM_B, B_NAME, List.of("Takım UG"), List.of(B_MAIL)))));
+        service.processResults(List.of(expiring(25)));
+        assertThat(push.calls).as("B, UG'nin iletimiyle canlı aldı — ikinci 'sessiz saat' çağrısı yok").singleElement()
+                .satisfies(c -> assertThat(c.ctx()).doesNotContainKey(EscalationService.CTX_QUIET_DEFERRED));
+    }
+
+    @Test
+    @DisplayName("elle gönderim önizlemesi (H3#6): alıcı takımın adı yoksa '-' yazılmaz — ad / takım adı boş, rol yalnız 'İletim'")
+    void manualPreviewUnnamedRecipientTeam() {
+        openMonitor("{\"monitor_id\":44,\"team_id\":1}");
+        routing(Map.of(TEAM_A, List.of(ForwardFakes.target(TEAM_C, "  ", List.of("Takım A"), List.of(C_MAIL)))));
+        List<EscalationService.ReNotifyRecipient> preview = service.previewReNotify(7L);
+        EscalationService.ReNotifyRecipient row = preview.stream().filter(x -> "FORWARD".equals(x.kind())).findFirst().orElseThrow();
+        assertThat(row.email()).isEqualTo(C_MAIL);
+        assertThat(row.teamName()).isNull();
+        assertThat(row.name()).isNull();
+        assertThat(row.role()).isEqualTo("İletim").doesNotContain("-");
     }
 }

@@ -2589,6 +2589,15 @@ public class StormService {
                         }
                     }
                 }
+                // Alıcı takım adları döngü DIŞINDA, takım başına bir kez (2026-11-06, hata avı H1#6 — eskiden adres × takım başına
+                // findById okunuyordu).
+                Map<Long, String> rtNames = new HashMap<>();
+                Set<Long> rtIds = new java.util.TreeSet<>();
+                for (Set<Long> s : rtOf.values()) rtIds.addAll(s);
+                for (Long rt : rtIds) {
+                    String n = teamRepo.findById(rt).map(com.sitemonitor.model.Team::getName).orElse(null);
+                    if (n != null && !n.isBlank()) rtNames.put(rt, n.trim());
+                }
                 Map<String, ForwardStormMail> groups = new LinkedHashMap<>();
                 for (Map.Entry<String, List<AlertEvent>> en : rec.entrySet()) {
                     String k = en.getKey();
@@ -2605,8 +2614,8 @@ public class StormService {
                     fm.to.add(display.get(k));
                     for (Long rt : rtOf.getOrDefault(k, Set.of())) {
                         fm.recipientTeams.add(rt);
-                        String n = teamRepo.findById(rt).map(com.sitemonitor.model.Team::getName).orElse(null);
-                        if (n != null && !n.isBlank()) fm.recipientNames.add(n.trim());
+                        String n = rtNames.get(rt);
+                        if (n != null) fm.recipientNames.add(n);
                     }
                     for (AlertEvent m : en.getValue()) {
                         for (Long o : owners.getOrDefault(m.getId(), Set.of())) {

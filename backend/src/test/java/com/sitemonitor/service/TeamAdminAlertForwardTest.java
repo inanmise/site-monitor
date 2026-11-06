@@ -101,4 +101,22 @@ class TeamAdminAlertForwardTest {
         service.setAlertForwards(null);
         assertThat(service.moveAll(7L, 9L)).doesNotContainKey("alert_forwards");
     }
+
+    @Test
+    @DisplayName("H2#4: taşıma hedefi iletim sınırının üstüne çıkarırsa 409 TEAM_MOVE_FORWARD_LIMIT — hiçbir şey taşınmaz; sınırda geçer")
+    void moveOverForwardLimitRefused() {
+        service.setAlertForwards(alertForwards);
+        when(alertForwards.countAfterMove(7L, 9L)).thenReturn(AlertForwardService.MAX_PER_TEAM + 1);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.moveAll(7L, 9L))
+                .isInstanceOf(TeamAdminService.MoveConflictException.class)
+                .satisfies(e -> assertThat(((TeamAdminService.MoveConflictException) e).getCode()).isEqualTo("TEAM_MOVE_FORWARD_LIMIT"))
+                .hasMessageContaining(String.valueOf(AlertForwardService.MAX_PER_TEAM));
+        org.mockito.Mockito.verify(alertForwards, org.mockito.Mockito.never()).moveTeam(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verifyNoInteractions(inventoryRepo, httpRepo, contactRepo);
+
+        when(alertForwards.countAfterMove(7L, 9L)).thenReturn(AlertForwardService.MAX_PER_TEAM);
+        when(alertForwards.moveTeam(7L, 9L)).thenReturn(new AlertForwardService.Moved(1, 0, 0));
+        assertThat(service.moveAll(7L, 9L)).containsEntry("alert_forwards", 1);
+    }
 }

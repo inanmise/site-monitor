@@ -846,4 +846,64 @@ class UserPushForwardTest {
         d.setCreatedAt(ISO.format(Instant.now()));
         deliveryRepo.save(d);
     }
+
+    // ── hata avı 2026-11-06 ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("H2#1: sahibin (SY) takım push'u kapalı ama UG'nin iletimiyle OPEN almış kişi DÜZELDİ alır (alıcı takımın satırı, önekli); SY satırı sahip kararını izler")
+    void resolveReachesForwardRecipientWhenOwnerBlocked() {
+        user("N20060", "TECH", recipient);
+        user("N10060", "TECH", owner);
+        scopeOff("TEAM", String.valueOf(owner));
+        AlertEvent e = alarm(owner, "HTTP_DOWN", "HIGH");
+        sentRow(e.getId(), "OPEN", "OPEN", owner, "N10060", "YÜKSEK: odeme.example.com yanıt vermiyor.");
+        sentRow(e.getId(), "FWD:" + recipient + ":OPEN", "OPEN", recipient, "N20060",
+                "Uygulama Geliştirme takımından: YÜKSEK: odeme.example.com yanıt vermiyor.");
+        e.setResolved(true);
+        alertRepo.save(e);
+        push.setForwardRouting(routing(owner));
+
+        push.enqueueResolve(alertRepo.findById(e.getId()).orElseThrow(), null, owner);
+
+        List<UserPushDelivery> res = rows(e.getId()).stream().filter(d -> "RESOLVE".equals(d.getTrigger())).toList();
+        assertThat(res).extracting(UserPushDelivery::getUsername).containsExactlyInAnyOrder(UserPushService.SYSTEM_USER, "N20060");
+        assertThat(rowOf(res, UserPushService.SYSTEM_USER).getStatus()).as("sahip kararı aynen").isEqualTo("SKIPPED_TEAM_OFF");
+        UserPushDelivery fwd = rowOf(res, "N20060");
+        assertThat(fwd.getTeamId()).isEqualTo(recipient);
+        assertThat(fwd.getMessage()).startsWith("Uygulama Geliştirme takımından: DÜZELDİ: odeme.example.com");
+        assertThat(delivering(fwd)).isTrue();
+    }
+
+    @Test
+    @DisplayName("H2#1 kapı: iletim hiç tanımlı değilse (yönlendirme yok) sahip kapısı engelli çözüm bugünkü gibi yalnız karar satırı")
+    void resolveOwnerBlockedWithoutRoutingUnchanged() {
+        user("N20061", "TECH", recipient);
+        scopeOff("TEAM", String.valueOf(owner));
+        AlertEvent e = alarm(owner, "HTTP_DOWN", "HIGH");
+        sentRow(e.getId(), "FWD:" + recipient + ":OPEN", "OPEN", recipient, "N20061", "x takımından: y");
+        e.setResolved(true);
+        alertRepo.save(e);
+
+        push.enqueueResolve(alertRepo.findById(e.getId()).orElseThrow(), null, owner);
+
+        assertThat(rows(e.getId()).stream().filter(d -> "RESOLVE".equals(d.getTrigger())))
+                .extracting(UserPushDelivery::getUsername).containsExactly(UserPushService.SYSTEM_USER);
+    }
+
+    @Test
+    @DisplayName("H1#5: sessiz saat işaretli bağlam → alıcı takımda SKIPPED_TEAM_QUIET karar satırı, kişi satırı / gönderim YOK")
+    void quietDeferredOwnerLeavesTraceOnly() {
+        user("N20062", "TECH", recipient);
+        AlertEvent e = alarm(owner, "HTTP_DOWN", "WARNING");
+        push.enqueueForwards(e.getId(), "INITIAL", List.of(whole(recipient, RECIPIENT_NAME)),
+                Map.of(EscalationService.CTX_QUIET_DEFERRED, true), Set.of());
+        List<UserPushDelivery> fwd = forwardRows(e.getId());
+        assertThat(fwd).singleElement().satisfies(d -> {
+            assertThat(d.getUsername()).isEqualTo(UserPushService.SYSTEM_USER);
+            assertThat(d.getStatus()).isEqualTo(EscalationService.PUSH_SKIPPED_TEAM_QUIET);
+            assertThat(d.getTeamId()).isEqualTo(recipient);
+            assertThat(d.getDedupeKey()).isEqualTo("FWD:" + recipient + ":OPEN");
+        });
+        assertThat(bodies).isEmpty();
+    }
 }

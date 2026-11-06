@@ -241,4 +241,84 @@ class QuietDigestForwardTest {
         verify(inv, never()).findByDomain(anyString());
         assertThat(s.getTeamId()).isEqualTo(TEAM);
     }
+
+    // ── hata avı 2026-11-06 ─────────────────────────────────────────────────────────────────────────
+
+    static final long UG = 43L;
+
+    private void ugTeam() {
+        Team t = new Team();
+        t.setId(TEAM);
+        t.setName("Ödeme");
+        Team u = new Team();
+        u.setId(UG);
+        u.setName("Mobil Bankacılık (Dijital Kanallar / Uygulama Geliştirme)");
+        when(teamRepo.findAllById(any())).thenReturn(List.of(t, u));
+        when(escalationService.teamEmailsForMonitor(UG, null)).thenReturn(List.of("ug@x.com"));
+    }
+
+    private void itemFor(long id, long eventId, long team, boolean openingDeferred) {
+        item(id, eventId);
+        db.get(id).setTeamId(team);
+        db.get(id).setOpeningDeferred(openingDeferred);
+    }
+
+    @Test
+    @DisplayName("H1#1: SY ve UG özetleri aynı turda, ikisi de X'e iletiyor → X TEK iletim özeti alır (bant iki sahibi de söyler)")
+    void twoOwnersSameRoundSingleForwardDigest() {
+        ugTeam();
+        event(1, false);
+        itemFor(10, 1, TEAM, true);
+        itemFor(11, 1, UG, true);
+        service.setForwardRouting(new ForwardFakes.Routing(Map.of(
+                TEAM, List.of(ForwardFakes.target(RT_B, B_NAME, List.of("Ödeme"), List.of("b@x.com"))),
+                UG, List.of(ForwardFakes.target(RT_B, B_NAME, List.of("Mobil"), List.of("b@x.com"))))));
+
+        service.run(AFTER);
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
+        verify(emailService, times(1)).sendHtml(to.capture(), any(), anyString(), any(), text.capture(), anyList(),
+                anyBoolean(), any());
+        assertThat(to.getValue()).containsExactly("b@x.com");
+        assertThat(text.getValue()).contains("Ödeme").contains("Mobil Bankacılık (Dijital Kanallar / Uygulama Geliştirme)");
+        assertThat(forwardRows()).singleElement().satisfies(l -> {
+            assertThat(l.getAlertEventId()).isEqualTo(1L);
+            assertThat(l.getRecipientName()).isEqualTo(B_NAME);
+            assertThat(l.getEmailStatus()).isEqualTo("SENT");
+        });
+        verify(alertEventRepo, times(1)).setForwardEmailsIfNull(1L, "{\"7\":[\"b@x.com\"]}");
+    }
+
+    @Test
+    @DisplayName("H1#3: iki alıcı takımda ORTAK adres alarmı bir kez alır (hedefler arası ortak küme); sahip adresi zaten düşer")
+    void sharedAddressAcrossTargetsOnce() {
+        event(1, false);
+        item(10, 1);
+        service.setForwardRouting(new ForwardFakes.Routing(Map.of(TEAM, List.of(
+                ForwardFakes.target(RT_B, B_NAME, List.of("Ödeme"), List.of("ortak@x.com", "b@x.com")),
+                ForwardFakes.target(RT_C, "Takım C", List.of("Ödeme"), List.of("ORTAK@x.com", "c@x.com", "team@x.com"))))));
+        service.run(AFTER);
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService, times(2)).sendHtml(to.capture(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
+        assertThat(to.getAllValues()).extracting(a -> List.of(a))
+                .containsExactly(List.of("ortak@x.com", "b@x.com"), List.of("c@x.com"));
+    }
+
+    @Test
+    @DisplayName("H1#4: damga tekilleştirmesi yalnız açılışı ertelenen kayıtta — ertelenen günlük hatırlatma damgalı alıcıya da gider")
+    void deferredReAlertReachesStampedRecipient() {
+        AlertEvent e1 = event(1, false);
+        e1.setForwardEmails("{\"7\":[\"b@x.com\"]}");
+        item(10, 1);
+        db.get(10L).setOpeningDeferred(false);
+        db.get(10L).setFirstTrigger("DAILY_REALERT");
+        service.setForwardRouting(new ForwardFakes.Routing(Map.of(TEAM, List.of(
+                ForwardFakes.target(RT_B, B_NAME, List.of("Ödeme"), List.of("b@x.com"))))));
+        service.run(AFTER);
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtml(to.capture(), any(), anyString(), any(), any(), anyList(), anyBoolean(), any());
+        assertThat(to.getValue()).containsExactly("b@x.com");
+        assertThat(forwardRows()).singleElement().satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo("SENT"));
+    }
 }
