@@ -439,7 +439,7 @@ describe('SystemHealth — Veritabanı Analitiği yükleme hatası', () => {
       const el = document.querySelector('[data-testid="db-analytics"] [role="alert"]')
       expect(el).not.toBeNull()
       return el
-    })
+    }, { timeout: 5000 })   // panel tembel parça (2026-11-06, PF4 O3) — soğuk dönüştürmede ilk yükleme 1 sn'yi aşabilir
     expect(alert.textContent).toContain('db down')
     await user.click([...alert.querySelectorAll('button')].find((b) => /Tekrar dene|Try again/.test(b.textContent)))
     await waitFor(() => expect(document.querySelector('[data-kpi="connections"]')?.textContent).toContain('2 / 50'))
@@ -457,7 +457,8 @@ describe('SystemHealth — haftalık erişilebilirlik günlükleri', () => {
     window.history.replaceState(null, '', '/?sec=integrations')
     await renderLoaded()
     fireEvent.click(screen.getByRole('button', { name: /Click to view delivery logs|Gönderim loglarını görmek/ }))
-    const table = await waitFor(() => { const el = document.querySelector('[data-testid="wa-logs"]'); expect(el).not.toBeNull(); return el })
+    const table = await waitFor(() => { const el = document.querySelector('[data-testid="wa-logs"]'); expect(el).not.toBeNull(); return el },
+      { timeout: 5000 })   // pencere tembel parça (2026-11-06, PF4 O3)
     // 2026-10-01 yeniden tasarım: gün başlığı satırları da tbody'de — veri satırları `data-slot="wa-row"`
     expect(table.querySelectorAll('[data-slot="wa-row"]').length).toBe(2)
     fireEvent.click(table.querySelector('[data-slot="wa-row"]'))

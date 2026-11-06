@@ -9,14 +9,9 @@ import { useIsMobile } from '../../hooks/use-mobile.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { useGlobalAdmin } from './useGlobalAdmin.js'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
-import ChartModal from './ChartModal'
-import HeartbeatHistoryModal from './HeartbeatHistoryModal'
-import SmtpLogView from './SmtpLogView.jsx'   // SMTP Gönderim Logu v2 — tam sayfa alt görünüm (2026-09-19)
-import PushLogView from './PushLogView.jsx'   // Webhook Push Gönderim Logu — tam sayfa alt görünüm (2026-09-19)
-import UserActivityPanel from './useractivity/UserActivityPanel.jsx'   // Kullanıcı / Oturum paneli
-import DbAnalyticsPanel from './DbAnalyticsPanel.jsx'   // Veritabanı Analitiği (2026-09-26 yeniden tasarım)
 import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import LazySection from '../ui/LazySection.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { SECTION_KEYS, deriveOverall, deriveKpis, sectionLevels, executorStats, poolStats, relTime, formatDurationShort, scanPollStep } from './health/healthModel.js'
@@ -27,11 +22,19 @@ import SchedulerSection from './health/SchedulerSection.jsx'
 import IntegrationsSection from './health/IntegrationsSection.jsx'
 import HeartbeatSection from './health/HeartbeatSection.jsx'
 import HttpSection from './health/HttpSection.jsx'
-import WeeklyAvailLogsModal from './health/WeeklyAvailLogsModal.jsx'
 import WatchdogSection from './health/WatchdogSection.jsx'   // Kendi kendini izleme (2026-10-11)
-import HttpExplorerModal from './httpmetrics/HttpExplorerModal.jsx'   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
 // Metrikler (2026-10-13): pod başına dakikalık kalıcı örnekler — tam sayfa alt görünüm, ilk açılışta yüklenir
 const MetricsView = lazy(() => import('./metrics/MetricsView.jsx'))
+// Ağır alt parçalar TEMBEL (2026-11-06, performans PF4 O3): gönderim günlükleri, kullanıcı / veritabanı panelleri ve
+// pencereler yalnız açılınca indirilir — Sistem Sağlığı ilk açılışta yalnız özet + bölüm başlıklarını yükler.
+const ChartModal = lazy(() => import('./ChartModal.jsx'))
+const HeartbeatHistoryModal = lazy(() => import('./HeartbeatHistoryModal.jsx'))
+const SmtpLogView = lazy(() => import('./SmtpLogView.jsx'))   // SMTP Gönderim Logu v2 — tam sayfa alt görünüm (2026-09-19)
+const PushLogView = lazy(() => import('./PushLogView.jsx'))   // Webhook Push Gönderim Logu — tam sayfa alt görünüm (2026-09-19)
+const UserActivityPanel = lazy(() => import('./useractivity/UserActivityPanel.jsx'))   // Kullanıcı / Oturum paneli
+const DbAnalyticsPanel = lazy(() => import('./DbAnalyticsPanel.jsx'))   // Veritabanı Analitiği (2026-09-26 yeniden tasarım)
+const WeeklyAvailLogsModal = lazy(() => import('./health/WeeklyAvailLogsModal.jsx'))
+const HttpExplorerModal = lazy(() => import('./httpmetrics/HttpExplorerModal.jsx'))   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
 
 /**
@@ -397,14 +400,18 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
   if (view === 'smtp') {
     return (
       <div data-slot="system-health" className="py-1">
-        <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
+        <LazySection sectionKey="smtp">
+          <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
+        </LazySection>
       </div>
     )
   }
   if (view === 'push') {
     return (
       <div data-slot="system-health" className="py-1">
-        <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
+        <LazySection sectionKey="push">
+          <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
+        </LazySection>
       </div>
     )
   }
@@ -460,8 +467,10 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
         triggering={triggering} onForceRun={handleForceRun} releasing={releasing} onForceRelease={handleForceRelease} />
     ),
     db: () => (
-      <DbAnalyticsPanel data={dbData} loading={dbLoading} error={dbError} days={dbDays} onDaysChange={setDbDays} onRefresh={loadDbAnalytics} updatedAt={dbUpdatedAt}
-        appPool={health?.pool} />
+      <LazySection sectionKey="db">
+        <DbAnalyticsPanel data={dbData} loading={dbLoading} error={dbError} days={dbDays} onDaysChange={setDbDays} onRefresh={loadDbAnalytics} updatedAt={dbUpdatedAt}
+          appPool={health?.pool} />
+      </LazySection>
     ),
     integrations: () => (
       <IntegrationsSection t={t} health={health} pushKpi={pushKpi} configChecks={configChecks} globalAdmin={!!globalAdmin}
@@ -474,8 +483,10 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
     http: () => <HttpSection t={t} httpMetrics={httpMetrics} error={loadErrors.http} onRetry={refreshNow}
       onOpenExplorer={(focus) => setHttpExp(focus && typeof focus === 'object' && !('nativeEvent' in focus) ? focus : {})} />,
     users: () => (
-      <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
-        isAdmin={isAdmin} globalAdmin={!!globalAdmin} canAck={canActUserActivity} username={username} onTerminated={refreshUserActivity} />
+      <LazySection sectionKey="users">
+        <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
+          isAdmin={isAdmin} globalAdmin={!!globalAdmin} canAck={canActUserActivity} username={username} onTerminated={refreshUserActivity} />
+      </LazySection>
     ),
     releases: () => (
       <Suspense fallback={<LoadingBlock />}>
@@ -518,13 +529,14 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
 
       {visible.map((k) => section(k, openSection === k ? content[k]() : null))}
 
-      <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
+      {/* Pencereler tembel parça: ilk açılışta indirilir (ChartModal grafik yokken zaten hiçbir şey çizmiyordu) */}
+      {modalChart && <Suspense fallback={null}><ChartModal chart={modalChart} onClose={() => setModalChart(null)} /></Suspense>}
 
-      {httpExp && <HttpExplorerModal t={t} focus={httpExp} onClose={() => setHttpExp(null)} />}
+      {httpExp && <Suspense fallback={null}><HttpExplorerModal t={t} focus={httpExp} onClose={() => setHttpExp(null)} /></Suspense>}
 
-      {hbModalOpen && <HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} />}
+      {hbModalOpen && <Suspense fallback={null}><HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} /></Suspense>}
 
-      {waLogsModal && <WeeklyAvailLogsModal t={t} onClose={() => setWaLogsModal(false)} />}
+      {waLogsModal && <Suspense fallback={null}><WeeklyAvailLogsModal t={t} onClose={() => setWaLogsModal(false)} /></Suspense>}
 
       {/* Sayfa geneli not — EN ALTTA (2026-09-12, kullanıcı: bölümler arasında sahipsiz görünüyordu). */}
       <p data-testid="sys-refresh-note" className="mt-1 text-center text-xs text-muted-foreground">

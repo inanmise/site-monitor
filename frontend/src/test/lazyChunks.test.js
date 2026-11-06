@@ -23,6 +23,10 @@ const staticImports = (src) => [...src.matchAll(/^\s*import\s+(?:[^'"]*?\s+from\
 const dynamicImports = (src) => [...src.matchAll(/import\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1])
 const hasStatic = (r, re) => staticImports(read(r)).some((s) => re.test(s))
 const hasDynamic = (r, re) => dynamicImports(read(r)).some((s) => re.test(s))
+/** `a/B` → içe aktarma yolu `…/a/B` (uzantılı ya da uzantısız) / yalnız uzantılı `…/a/B.jsx` (2026-11-06, PF4 O3). */
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+const staticPathRe = (name) => new RegExp('(^|/)' + escRe(name) + '(\\.jsx)?$')
+const dynamicPathRe = (name) => new RegExp('(^|/)' + escRe(name) + '\\.jsx$')
 
 describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme grafikleri', () => {
   it('Markdown editörü (@uiw/react-md-editor) yalnız mdEditor/ parçalarında; onlar yalnız import() ile yüklenir', () => {
@@ -176,6 +180,36 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     for (const re of [/http\/diagnose\/HttpDiagnoseDialog\.jsx$/, /keyword\/diagnose\/KeywordDiagnoseDialog\.jsx$/,
       /\/page\/diagnose\/PageDiagnoseDialog\.jsx$/, /pagespeed\/diagnose\/PageSpeedDiagnoseDialog\.jsx$/, /\/diagnose\/NetDiagnoseDialog\.jsx$/]) {
       expect(hasDynamic(header, re), String(re)).toBe(true)
+    }
+  })
+
+  it('Ayarlar bölümleri, Yönetim sekmeleri ve Sistem Sağlığı ağır alt parçaları yalnız açılınca (2026-11-06, PF4 O3)', () => {
+    // Ayarlar: 25 bölüm — hiçbiri statik değil, hepsi import() ile; kabuk tembel bölüm kabını (iskelet + hata sınırı) kullanır
+    const settings = 'components/admin/AdminSettings.jsx'
+    const SECTIONS = ['SmtpSettings', 'LdapSettings', 'GeneralSettings', 'MonitorGroups', 'PlatformSettings', 'SecretTools', 'DatabaseInfo',
+      'WeeklyAvailabilitySettings', 'WeeklyReportAccessSettings', 'CertInventoryReportSettings', 'StormSettings', 'LoginAnomalySettings',
+      'DomainDiagnostics', 'BrandingSettings', 'RetentionSettings', 'UserPushSettings', 'NocSettings', 'TechErrorReportSettings',
+      'SystemMaintenanceSettings', 'LoginMethodsSettings', 'ThemeSettings', 'grafana/GrafanaDashboardSettings', 'k6engine/K6EngineSettings',
+      'alarmfeed/AlarmFeedSettings', 'HolidayCalendarSettings']
+    for (const name of SECTIONS) {
+      expect(hasStatic(settings, staticPathRe(name)), name).toBe(false)
+      expect(hasDynamic(settings, dynamicPathRe(name)), name).toBe(true)
+    }
+    expect(hasStatic(settings, /ui\/LazySection\.jsx$/)).toBe(true)
+    // Yönetim: sekiz sekme tembel; özet şeridi statik kalır
+    const panel = 'components/admin/AdminPanel.jsx'
+    for (const name of ['AlertThresholds', 'EscalationContacts', 'NotificationGroups', 'RecipientSimulator', 'TeamManager', 'UserManager',
+      'access/TeamAccessManager', 'forwards/AlertForwardManager']) {
+      expect(hasStatic(panel, staticPathRe(name)), name).toBe(false)
+      expect(hasDynamic(panel, dynamicPathRe(name)), name).toBe(true)
+    }
+    expect(hasStatic(panel, /ui\/LazySection\.jsx$/)).toBe(true)
+    // Sistem Sağlığı: günlük görünümleri, kullanıcı / veritabanı panelleri ve pencereler tembel
+    const health = 'components/admin/SystemHealth.jsx'
+    for (const name of ['SmtpLogView', 'PushLogView', 'useractivity/UserActivityPanel', 'DbAnalyticsPanel', 'health/WeeklyAvailLogsModal',
+      'httpmetrics/HttpExplorerModal', 'ChartModal', 'HeartbeatHistoryModal']) {
+      expect(hasStatic(health, staticPathRe(name)), name).toBe(false)
+      expect(hasDynamic(health, dynamicPathRe(name)), name).toBe(true)
     }
   })
 })

@@ -72,7 +72,7 @@ describe('Yönetim → Alarm iletimi sekmesi', () => {
     perm.loaded = true
     await act(async () => { rerender(<AdminPanel systemRole="USER" />) })
     await waitFor(() => expect(screen.queryByTestId('forward-manager')).toBeNull())
-    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(await screen.findByTestId('escalation-contacts')).toBeInTheDocument()
   })
 })
 
