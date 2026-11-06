@@ -280,9 +280,82 @@ public final class KeywordRequestRules {
         return oa != null && oa.equals(originOf(b));
     }
 
-    /** URI sürümü — yönlendirme hop'u ile ilk istek aynı kaynakta mı (D-8: kimlik bilgisi yalnız aynı kaynağa). */
-    public static boolean sameOrigin(URI a, URI b) {
-        return a != null && b != null && a.getHost() != null && b.getHost() != null && origin(a).equals(origin(b));
+    // Yönlendirme hop'unun kimlik bilgisi kuralı (eski sameOrigin(URI, URI)) SafeRedirect.extrasMayFollow'a taşındı (hata avı
+    // 2026-11-06 H4#2 / H4#5): kontrol ve uçtan uca tanı tek yardımcıyı kullanır; aynı host'ta http:80 → https:443 yükseltmesi
+    // aynı kaynak sayılır. Yukarıdaki String sürümü AYRI bir kuraldır (kayıtlı sırrın izlemenin adresinde kalması).
+
+    // ── İstek parmak izi (hata avı 2026-11-06 H4#3 / H4#7) ─────────────────────────────────────
+
+    /**
+     * İzlemenin İSTEK TANIMININ parmak izi (16 onaltılık) — içerik değişimi temelinin {@code spec_hash}'ine ve dağıtık işin tanım
+     * özetine ({@code keyword_spec}) girer: istek değişince eski temel başka bir sayfanın ölçümüdür (kıyaslanmaz, yenilenir) ve
+     * eski tanımla ölçülmüş iş sonucu düşer.
+     *
+     * <p>Girenler: ham URL ({@code {timestamp}} yer tutucusu OLDUĞU GİBİ — her kontrolde değişen saniye değil), kanonik yöntem,
+     * {@code POST} gövdesinin özeti + etkin içerik türü (yalnız gövde gerçekten gönderildiğinde), Basic auth KULLANICI ADI (parola
+     * GİRMEZ — temel bir kimliğin sayfasıdır, parola düzeltmesi sayfayı değiştirmez; dağıtık özet parolayı ayrıca ekler), özel
+     * başlıkların adları + değerlerinin özeti (ad harfe duyarsız, sıra önemsiz), etkin User-Agent, yönlendirme takibi ve beklenen son
+     * URL. Değerler yalnız SHA-256 özeti olarak girer; çıktı API'ye dönmez.
+     *
+     * <p>Kayıtlı izlemeden ({@link #requestFingerprint(com.sitemonitor.model.KeywordMonitor, String)}) ve kontrol tanımından
+     * ({@link #requestFingerprint(KeywordCheckSpec)}) aynı değerler aynı izi verir — normalleştirme yalnız burada.
+     */
+    public static String requestFingerprint(String url, String method, String body, String contentType, String basicAuthUser,
+                                            String headersPlain, String userAgentMode, String userAgent, Boolean followRedirects,
+                                            String expectedFinalUrl) {
+        String m = method(method);
+        boolean sendsBody = METHOD_POST.equals(m) && body != null && !body.isBlank();
+        StringBuilder b = new StringBuilder(256).append("r1");
+        b.append('\u0000').append(url == null ? "" : url.trim());
+        b.append('\u0000').append(m);
+        b.append('\u0000').append(sendsBody ? sha256Hex(body) : "");
+        b.append('\u0000').append(!sendsBody ? ""
+                : contentType == null || contentType.isBlank() ? com.sitemonitor.service.http.HttpRequestRules.DEFAULT_CONTENT_TYPE
+                : contentType.trim());
+        b.append('\u0000').append(basicAuthUser == null || basicAuthUser.isBlank() ? "" : basicAuthUser.trim());
+        b.append('\u0000').append(headersDigest(headersPlain));
+        b.append('\u0000').append(effectiveUserAgent(userAgentMode, userAgent));
+        b.append('\u0000').append(!Boolean.FALSE.equals(followRedirects));
+        b.append('\u0000').append(expectedFinalUrl == null || expectedFinalUrl.isBlank() ? "" : expectedFinalUrl.trim());
+        return sha256Hex(b.toString()).substring(0, 16);
+    }
+
+    /** Kayıtlı izlemenin istek parmak izi ({@code headersPlain}: çağıranın çözdüğü özel başlıklar; çözülemezse null). */
+    public static String requestFingerprint(com.sitemonitor.model.KeywordMonitor m, String headersPlain) {
+        if (m == null) return requestFingerprint(null, null, null, null, null, null, null, null, null, null);
+        return requestFingerprint(m.getUrl(), m.getMethod(), m.getRequestBody(), m.getRequestContentType(), m.getBasicAuthUser(),
+                headersPlain, m.getUserAgentMode(), m.getUserAgent(), m.getFollowRedirects(), m.getExpectedFinalUrl());
+    }
+
+    /** Kontrol tanımının istek parmak izi (kontrolün kendi alanlarından — kayıtlı izlemeninkiyle aynı değer). */
+    public static String requestFingerprint(KeywordCheckSpec s) {
+        if (s == null) return requestFingerprint((com.sitemonitor.model.KeywordMonitor) null, null);
+        return requestFingerprint(s.url(), s.method(), s.requestBody(), s.requestContentType(), s.basicAuthUser(),
+                s.customHeaders(), s.userAgentMode(), s.userAgent(), s.followRedirects(), s.expectedFinalUrl());
+    }
+
+    /** Özel başlıkların ad + değer özeti (ad küçük harf, sıralı); başlık yoksa boş. Değer yalnız özet olarak çıkar. */
+    private static String headersDigest(String headersPlain) {
+        java.util.Map<String, String> parsed = com.sitemonitor.service.http.HttpRequestRules.parseHeaders(headersPlain);
+        if (parsed.isEmpty()) return "";
+        java.util.TreeMap<String, String> sorted = new java.util.TreeMap<>();
+        for (java.util.Map.Entry<String, String> e : parsed.entrySet()) {
+            sorted.put(e.getKey().toLowerCase(Locale.ROOT), e.getValue() == null ? "" : e.getValue());
+        }
+        StringBuilder b = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : sorted.entrySet()) {
+            b.append(e.getKey()).append(':').append(e.getValue()).append('\n');
+        }
+        return sha256Hex(b.toString());
+    }
+
+    static String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of().formatHex(md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 yok", e);
+        }
     }
 
     private static String origin(URI u) {

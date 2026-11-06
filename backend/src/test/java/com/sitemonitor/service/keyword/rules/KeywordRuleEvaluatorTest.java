@@ -120,6 +120,36 @@ class KeywordRuleEvaluatorTest {
     }
 
     @Test
+    @DisplayName("hata avı 2026-11-06: derlenemeyen saklı desen 'içermemeli' kuralında SESSİZ YEŞİL değil — ihlal, not PATTERN_INVALID, "
+            + "seviye kuralın uyarı düzeyi (kritik eşik varsa WARNING), özette nedeni söylenir")
+    void storedPatternInvalidIsNeverGreen() {
+        KeywordContent c = KeywordContent.builder("Sayfa metni hata yok").build();
+        // "LTE 0" (bulunmamalı) — eskiden derlenmemiş desen 0 sayılıp kural SAĞLANDI diyordu
+        var forbid = KeywordRuleEvaluator.evaluate(List.of(new KeywordRule("r", Kind.REGEX, "(bozuk", false, Op.LTE, 0,
+                null, null, null)), "AND", c, "HIGH");
+        var res = forbid.results().get(0);
+        assertThat(res.ok()).isFalse();
+        assertThat(res.count()).isZero();
+        assertThat(res.note()).isEqualTo(KeywordRuleEvaluator.NOTE_PATTERN_INVALID);
+        assertThat(res.level()).isEqualTo(KeywordRuleEvaluator.LEVEL_MONITOR);
+        assertThat(forbid.breached()).isTrue();
+        assertThat(forbid.level()).as("izlemenin seviyesi").isEqualTo("HIGH");
+        assertThat(forbid.patternInvalid()).isTrue();
+        assertThat(forbid.summary()).contains("düzenli ifade derlenemedi");
+        // uzunluk sınırını aşan saklı desen (kural sonradan sıkılaştı) de aynı
+        var tooLong = KeywordRuleEvaluator.evaluate(List.of(new KeywordRule("r", Kind.REGEX, "a".repeat(SafeRegex.MAX_PATTERN + 1),
+                false, Op.LTE, 0, new Threshold(Op.LTE, 3), null, null)), "AND", c, null);
+        assertThat(tooLong.results().get(0).note()).isEqualTo(KeywordRuleEvaluator.NOTE_PATTERN_INVALID);
+        assertThat(tooLong.results().get(0).level()).isEqualTo(KeywordRuleEvaluator.LEVEL_WARNING);
+        assertThat(tooLong.breached()).isTrue();
+        // geçerli desende not yok
+        var fine = KeywordRuleEvaluator.evaluate(List.of(new KeywordRule("r", Kind.REGEX, "zz", false, Op.LTE, 0,
+                null, null, null)), "AND", c, null);
+        assertThat(fine.patternInvalid()).isFalse();
+        assertThat(fine.breached()).isFalse();
+    }
+
+    @Test
     @DisplayName("Notlar: COUNT_CAPPED (METİN tavanı), SCAN_TRUNCATED (DÜZENLİ İFADE 512 K)")
     void notes() {
         String many = "a".repeat(KeywordFold.MAX_COUNT + 10);

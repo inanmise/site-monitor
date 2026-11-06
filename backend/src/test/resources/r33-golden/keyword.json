@@ -306,7 +306,7 @@
           "response_ms": 100,
           "snippet": "… Hoş geldiniz …",
           "ok": true,
-          "keyword_spec": "4b4b449a431556b9"
+          "keyword_spec": "c70cd171d8d76fbf"
         },
         {
           "checkId": null,
@@ -376,7 +376,7 @@
           "http_status": 200,
           "response_ms": 900,
           "ok": false,
-          "keyword_spec": "4b4b449a431556b9"
+          "keyword_spec": "6c3dbe3c7dacc12f"
         },
         {
           "checkId": null,
@@ -446,7 +446,7 @@
           "response_ms": 30,
           "error": "HTTP 503",
           "ok": false,
-          "keyword_spec": "4b4b449a431556b9"
+          "keyword_spec": "b953d375c3b2e88b"
         },
         {
           "checkId": null,
@@ -515,7 +515,7 @@
           "error": "URL'de host yok",
           "config_error": true,
           "ok": false,
-          "keyword_spec": "4b4b449a431556b9"
+          "keyword_spec": "4537387063d61396"
         },
         {
           "checkId": null,
@@ -585,7 +585,7 @@
           "http_status": 200,
           "response_ms": 50,
           "ok": false,
-          "keyword_spec": "a270b5c9b446d96c"
+          "keyword_spec": "7fe2aedc0cb4f78c"
         },
         {
           "checkId": null,

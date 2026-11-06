@@ -739,6 +739,15 @@ public class MonitoringController {
         // kırpılmış) ya da paylaşımla geri yükleyende kritik eşikleri (alarm seviyesi) değiştirecekse kural listesi VE ona aynalı
         // eski koşul alanları birlikte atlanır — biri yazılıp öteki kalırsa ayna bozulurdu.
         List<String> skippedFields = new ArrayList<>();
+        // Hata avı 2026-11-06 H4#4: kural listesinden ÖNCEKİ (20.183 öncesi) geçmiş kaydında rulesJson anahtarı hiç yok. Kural
+        // listeli izlemeye böyle bir kayıt geri yüklenince eski koşul alanları (keyword / işleç / adet / harf) yazılıyor ama kural
+        // listesi olduğu gibi kalıyordu — ayna bozuluyordu (kart bir kuralı, kontrol başkasını anlatırdı). Kural alanlarının hepsi
+        // atlanır ve yanıtta söylenir.
+        if (kwKind && entity instanceof KeywordMonitor kwl && !snapshot.containsKey("rulesJson")
+                && kwl.getRulesJson() != null && !kwl.getRulesJson().isBlank()) {
+            skip.addAll(KEYWORD_RULE_RESTORE_FIELDS);
+            skippedFields.add("rules");
+        }
         if (kwKind && entity instanceof KeywordMonitor kwm && snapshot.containsKey("rulesJson")) {
             Object snapRules = snapshot.get("rulesJson");
             boolean lossyRules = AuditDiff.MASK.equals(snapRules) || AuditDiff.isLossy(snapRules);
@@ -752,6 +761,8 @@ public class MonitoringController {
                 routingSkipped.add("rulesJson");
             }
         }
+        // İstek parmak izi geri yüklemeden ÖNCE (hata avı 2026-11-06 H4#3: istek tanımı geri dönerse içerik temeli geçersiz)
+        String kwPrevRequestFp = entity instanceof KeywordMonitor kwBefore ? keywordRequestFingerprint(kwBefore) : null;
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
         if (!skippedFields.isEmpty()) maskedSkipped = maskedSkipped.stream().filter(f -> !"rulesJson".equals(f)).toList();
@@ -876,7 +887,7 @@ public class MonitoringController {
                 keywordChangeSettingsChanged(km, before.get("changeDetect") instanceof Boolean bd ? bd : null,
                         before.get("changeMask") == null ? null : before.get("changeMask").toString(),
                         before.get("changeSelector") == null ? null : before.get("changeSelector").toString(),
-                        bu != null && !bu.toString().equals(km.getUrl()));
+                        kwPrevRequestFp, bu != null && !bu.toString().equals(km.getUrl()));
             }
         }
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
@@ -3431,9 +3442,11 @@ public class MonitoringController {
             guardSharedKeywordLevel(session, m.getTeamId(), rulesPatch, m);  // ... ve kuralların kritik eşiğini (O-2)
             guardKeywordLegacyOnly(body, rulesPatch, m);                      // D-5: kural listeli izlemede tek başına eski koşul
             String previousUrl = m.getUrl();
+            Boolean prevActive = m.getActive();
             Boolean prevChangeDetect = m.getChangeDetect();
             String prevChangeMask = m.getChangeMask();
             String prevChangeSelector = m.getChangeSelector();
+            String prevRequestFp = keywordRequestFingerprint(m);   // hata avı 2026-11-06 H4#3: istek değişince temel geçersiz
             // Edit ile mükerrere dönüşmeyi de engelle (ping PUT'undaki desen; excludeId = kendisi).
             String intendedUrl  = body.get("url")     != null ? MonitorUrls.normalize(body.get("url").toString()) : m.getUrl();
             String intendedWord = body.get("keyword") != null ? body.get("keyword").toString().trim() : m.getKeyword();
@@ -3455,9 +3468,6 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            // Duraklatma: bu izlemenin TÜM keyword alarm türleri sessizce kapanır (katalog kümesi — yeni türler kendiliğinden).
-            // URL de değiştiyse kapanacak olaylar ESKİ anahtardadır.
-            closeAlertsOnPause(m.getActive(), body.get("active"), previousUrl, KEYWORD_ALERT_TYPES, ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             applyKeywordTimeout(m, body);   // kw §5.1 / B13: 1–60 sn, dışı 400 timeoutMs
@@ -3472,6 +3482,12 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             KeywordMonitor saved = keywordMonitorRepo.save(m);
+            // Duraklatma: bu izlemenin TÜM keyword alarm türleri sessizce kapanır (katalog kümesi — yeni türler kendiliğinden).
+            // URL de değiştiyse kapanacak olaylar ESKİ anahtardadır. Hata avı 2026-11-06 H4#6: KAYITTAN SONRA — eskiden bütün
+            // doğrulamalardan (zaman aşımı, istek alanları, kurallar, içerik ayarları) ÖNCE koşuyordu; 400 dönen bir güncelleme
+            // alarmları kapatıyor ama izleme etkin kalıyordu (sonraki tur yeniden açıp bildirim gönderiyordu).
+            closeAlertsOnPause(prevActive, body.get("active"), previousUrl, KEYWORD_ALERT_TYPES,
+                    ownerCtx(saved.getId(), saved.getTeamId(), null));
             // B7 (kw sözleşmesi §12): alarm anahtarı URL — URL değişince ESKİ anahtarın açık alarmları (tüm keyword türleri)
             // sessizce kapanır; yalnız BU izlemenin olayı (ownerCtx). Eskiden öksüz temizliğine (5 dk) kalıyordu ve aynı URL'yi
             // başka izleme kullanıyorsa hiç kapanmıyordu. Duraklatıldıysa yukarıda zaten kapandı.
@@ -3481,7 +3497,7 @@ public class MonitoringController {
             }
             // kw-be2 §7.2: değişim kapatıldı / maske / seçici değişti (ya da URL değişti) → eski temel geçersiz: silinir, açık
             // KEYWORD_CHANGED sessizce kapanır; sonraki zamanlanmış kontrol yeni temeli otomatik alır
-            keywordChangeSettingsChanged(saved, prevChangeDetect, prevChangeMask, prevChangeSelector,
+            keywordChangeSettingsChanged(saved, prevChangeDetect, prevChangeMask, prevChangeSelector, prevRequestFp,
                     previousUrl != null && !previousUrl.equals(saved.getUrl()));
             Map<String, Object> after = keywordSnapshot(saved);
             auditService.recordAction("MONITOR_UPDATE", session, "KEYWORD_MONITOR", String.valueOf(saved.getId()), saved.getName(),
@@ -4101,8 +4117,9 @@ public class MonitoringController {
         } catch (RuntimeException e) {
             return null;
         }
-        String spec = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(m.getChangeMask(), m.getChangeSelector());
-        if (b == null || !spec.equals(b.getSpecHash())) return null;
+        if (b == null) return null;
+        String spec = keywordChangeSpecHash(m);   // istek tanımı dahil (hata avı 2026-11-06 H4#3)
+        if (!spec.equals(b.getSpecHash())) return null;
         return com.sitemonitor.service.keyword.content.KeywordChangeBaselineService.toApi(b, false);
     }
 
@@ -4475,14 +4492,36 @@ public class MonitoringController {
         }
     }
 
+    /** Kayıtlı izlemenin içerik temeli özeti ({@code spec_hash}) — özel başlıklar çözülerek; kontrolün hesapladığıyla aynı değer. */
+    private String keywordChangeSpecHash(KeywordMonitor m) {
+        return com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHashFor(m, keywordHeaders(m));
+    }
+
+    /** Kayıtlı izlemenin istek parmak izi (içerik temeli ve tanım özeti — hata avı 2026-11-06 H4#3). */
+    private String keywordRequestFingerprint(KeywordMonitor m) {
+        return com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(m, keywordHeaders(m));
+    }
+
+    /** Çözülmüş özel başlıklar (yalnız parmak izi için; asla dönmez / yazılmaz); çözülemezse null. */
+    private String keywordHeaders(KeywordMonitor m) {
+        if (keywordHeaderSecrets == null || m == null) return null;
+        try {
+            return keywordHeaderSecrets.effectiveHeaders(m);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /**
-     * Değişim ayarı değişti (kapatıldı / maske / seçici) ya da URL değişti → temel silinir + bu izlemenin açık KEYWORD_CHANGED'i
-     * sessizce kapanır (§7.2; URL değişiminde eski anahtarınki B7 ile zaten kapandı). Hata kaydı bozmaz.
+     * Değişim ayarı değişti (kapatıldı / açıldı / maske / seçici / İSTEK tanımı — hata avı 2026-11-06 H4#3) ya da URL değişti →
+     * temel silinir + bu izlemenin açık KEYWORD_CHANGED'i sessizce kapanır (§7.2; URL değişiminde eski anahtarınki B7 ile zaten
+     * kapandı). {@code prevRequest}: değişiklikten ÖNCEKİ istek parmak izi ({@link #keywordRequestFingerprint}). Hata kaydı bozmaz.
      */
     void keywordChangeSettingsChanged(KeywordMonitor saved, Boolean prevDetect, String prevMask, String prevSelector,
-                                      boolean urlChanged) {
+                                      String prevRequest, boolean urlChanged) {
         boolean changed = com.sitemonitor.service.keyword.content.KeywordChangeSettings.settingsChanged(prevDetect, prevMask,
-                prevSelector, saved.getChangeDetect(), saved.getChangeMask(), saved.getChangeSelector());
+                prevSelector, prevRequest, saved.getChangeDetect(), saved.getChangeMask(), saved.getChangeSelector(),
+                keywordRequestFingerprint(saved));
         if (!changed && !(urlChanged && Boolean.TRUE.equals(prevDetect))) return;
         deleteKeywordBaseline(saved.getId());
         try {

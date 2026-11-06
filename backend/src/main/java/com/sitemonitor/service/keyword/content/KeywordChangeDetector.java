@@ -24,8 +24,8 @@ import java.util.Set;
  * değerleri — analizördeki maskeyle aynı) ve {@code change_mask}'ten ({@link ContentMasker}) geçer. Parmak izi = maskeli TÜM
  * metnin SHA-256'sı; temel metni ≤ {@value #BASELINE_TEXT_MAX} karakter saklanır (parmak izi tam metinden).
  *
- * <p><b>{@code spec_hash}</b> = (maske, seçici, {@value #CHANGE_ALGO_VERSION}) özeti — ayar ya da algoritma değişince eski
- * temel YOK sayılır (başka bir metinle ölçülmüştür, kıyaslanmaz).
+ * <p><b>{@code spec_hash}</b> = (maske, seçici, istek parmak izi, {@value #CHANGE_ALGO_VERSION}) özeti — ayar, istek tanımı ya da
+ * algoritma değişince eski temel YOK sayılır (başka bir metinle ya da başka bir istekle ölçülmüştür, kıyaslanmaz).
  *
  * <p><b>Fark</b> (doğrusal): ortak önek / sonek satırları sayılır, aradaki bölge temelden {@code removed}, güncelden
  * {@code added}; her biri ilk {@value #SUMMARY_LINES} satır, satır ≤ {@value #SUMMARY_LINE_MAX} karakter; JSON ≤
@@ -36,8 +36,8 @@ public final class KeywordChangeDetector {
 
     private KeywordChangeDetector() {}
 
-    /** Algoritma sürümü — değişince tüm temeller yeniden alınır ({@code spec_hash}). */
-    public static final int CHANGE_ALGO_VERSION = 1;
+    /** Algoritma sürümü — değişince tüm temeller yeniden alınır ({@code spec_hash}). 2: istek parmak izi eklendi (2026-11-06). */
+    public static final int CHANGE_ALGO_VERSION = 2;
     public static final int BASELINE_TEXT_MAX = 64_000;
     public static final int SUMMARY_JSON_MAX = 4_000;
     public static final int SUMMARY_LINES = 20;
@@ -72,11 +72,34 @@ public final class KeywordChangeDetector {
         return new Snapshot(sha256Hex(full), stored, truncated, List.copyOf(lines), lines.size(), full.length());
     }
 
-    /** {@code spec_hash} — maske (kanonik CSV), seçici (kırpılmış) ve algoritma sürümünün ilk 16 onaltılığı. */
-    public static String specHash(String maskCsv, String selector) {
+    /**
+     * {@code spec_hash} — maske (kanonik CSV), seçici (kırpılmış), İSTEK parmak izi ({@link
+     * com.sitemonitor.service.keyword.KeywordRequestRules#requestFingerprint}) ve algoritma sürümünün ilk 16 onaltılığı.
+     *
+     * <p>İstek parmak izi hata avı 2026-11-06 H4#3 ile eklendi: temel ölçüldüğü İSTEĞE bağlıdır (URL, yöntem, gövde, kimlik,
+     * başlıklar, yönlendirme). Eskiden yalnız maske + seçici giriyordu; eski URL'yle koşan bayat bir görev yeni URL'nin temelini
+     * alabiliyor (kalıcı sahte KEYWORD_CHANGED), yöntem / gövde / başlık değişince temel silinmiyordu. Artık tanım değişince eski
+     * temel YOK sayılır ve ilk sağlıklı zamanlanmış kontrolde yenilenir (alarm açılmaz). Bu sürümle önceki biçimde yazılmış her
+     * temel de bir kez yenilenir ({@value #CHANGE_ALGO_VERSION}).
+     */
+    public static String specHash(String maskCsv, String selector, String requestFingerprint) {
         String m = ContentMasker.toCsv(ContentMasker.parseStored(maskCsv));
         String sel = selector == null ? "" : selector.trim();
-        return sha256Hex("v" + CHANGE_ALGO_VERSION + "|" + (m == null ? "" : m) + "|" + sel).substring(0, 16);
+        String req = requestFingerprint == null ? "" : requestFingerprint;
+        return sha256Hex("v" + CHANGE_ALGO_VERSION + "|" + (m == null ? "" : m) + "|" + sel + "|" + req).substring(0, 16);
+    }
+
+    /** Kayıtlı izlemenin {@code spec_hash}'i ({@code headersPlain}: çağıranın çözdüğü özel başlıklar; çözülemezse null). */
+    public static String specHashFor(com.sitemonitor.model.KeywordMonitor m, String headersPlain) {
+        return specHash(m == null ? null : m.getChangeMask(), m == null ? null : m.getChangeSelector(),
+                com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(m, headersPlain));
+    }
+
+    /** Kontrol tanımının {@code spec_hash}'i — kayıtlı izlemeninkiyle ({@link #specHashFor(com.sitemonitor.model.KeywordMonitor,
+     *  String)}) aynı değer. */
+    public static String specHashFor(com.sitemonitor.service.keyword.KeywordCheckSpec spec) {
+        return specHash(spec.changeMask(), spec.changeSelector(),
+                com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(spec));
     }
 
     /** Karşılaştırmada kullanılan temel alanları (+ alarm postası için alınma zamanı / kaynağı — karşılaştırmaya girmez). */

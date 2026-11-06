@@ -6324,11 +6324,21 @@ public class SchedulerService {
         }
     }
 
+    /** Güncel izlemenin kontrol tanımı özeti — özel başlıklar çözülerek ({@link #keywordSpecHash(KeywordMonitor, String)}). */
+    String keywordSpecHash(KeywordMonitor m) {
+        return keywordSpecHash(m, keywordHeaderSecrets == null ? null : keywordHeaderSecrets.effectiveHeaders(m));
+    }
+
     /**
      * Kontrol tanımı özeti (B13, §13) — kural / istek / boyut / değişim ayarlarının ilk 16 onaltılığı. Dağıtık işçinin sonucu
      * GÜNCEL izlemenin özetiyle uyuşmazsa uygulayıcı düşürür (hedef parmak izi {@code url|keyword} DEĞİŞMEZ).
+     *
+     * <p>Hata avı 2026-11-06 H4#7: istek parmak izinin TAMAMI ({@code KeywordRequestRules.requestFingerprint} — içerik temeliyle
+     * aynı yardımcı: URL, gövde, kullanıcı adı, özel başlıklar, User-Agent, yönlendirme, beklenen son URL) + şifreli parolanın
+     * özeti (yeniden kayıtta değişir; parola metne hiç girmez) + etkin zaman aşımı + vekil kipi de girer. Eskiden yalnız yöntem /
+     * durum kuralı / takip giriyordu: parola düzeltilmeden önce gönderilmiş işin 401'i yeni tanımın sonucu gibi uygulanıyordu.
      */
-    static String keywordSpecHash(KeywordMonitor m) {
+    static String keywordSpecHash(KeywordMonitor m, String headersPlain) {
         StringBuilder b = new StringBuilder();
         if (m.getRulesJson() != null && !m.getRulesJson().isBlank()) b.append("R:").append(m.getRulesJson());
         else b.append("L:").append(m.getMatchOperator()).append('|').append(m.getMatchCount()).append('|')
@@ -6341,7 +6351,12 @@ public class SchedulerService {
                 .append('|').append(!Boolean.FALSE.equals(m.getFollowRedirects()))
                 .append('|').append(m.getMinBytes()).append('|').append(m.getMaxBytes())
                 .append('|').append(Boolean.TRUE.equals(m.getChangeDetect())).append('|').append(m.getChangeMask())
-                .append('|').append(m.getChangeSelector());
+                .append('|').append(m.getChangeSelector())
+                .append("|q:").append(com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(m, headersPlain))
+                // ŞİFRELİ parola (düz parola özete hiç girmez); bütün dizge aşağıda SHA-256'dan geçer
+                .append("|p:").append(m.getBasicAuthPassEnc() == null ? "" : m.getBasicAuthPassEnc())
+                .append("|t:").append(com.sitemonitor.service.keyword.KeywordRequestRules.effectiveTimeoutMs(m.getTimeoutMs()))
+                .append("|x:").append(ProxyPolicyService.normalizeMode(m.getUseProxy()));
         try {
             byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(h).substring(0, 16);

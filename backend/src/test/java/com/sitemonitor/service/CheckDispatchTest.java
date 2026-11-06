@@ -2,6 +2,7 @@ package com.sitemonitor.service;
 
 import com.sitemonitor.model.DnsMonitor;
 import com.sitemonitor.model.HttpMonitor;
+import com.sitemonitor.model.KeywordMonitor;
 import com.sitemonitor.model.PageSpeedMonitor;
 import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.service.checks.CheckJobRow;
@@ -375,6 +376,33 @@ class CheckDispatchTest {
         h.scheduler.applyCheckResults(List.of(good));
         assertThat(h.mosCalls()).hasSize(1).first().asString().startsWith("HTTP_DOWN");
         assertThat(h.scheduler.distributedCheckStatus().get("applied")).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#7: keyword işi ESKİ istek tanımıyla ölçüldüyse (parola düzeltildi / özel başlık değişti) sonuç "
+            + "düşer — eskiden 401'i yeni tanımın sonucu gibi uygulanıyordu; aynı tanımla ölçülen sonuç uygulanır")
+    void keywordResultOfStaleRequestIsDropped() {
+        List<KeywordMonitor> kw = h.keywordFixture();
+        KeywordMonitor a = kw.get(0);
+        CheckResultRow beforePasswordFix = h.workerRow(CheckJobTypes.KEYWORD, a.getId());
+        a.setBasicAuthPassEnc("enc:v1:duzeltilmis-parola");   // kullanıcı parolayı düzeltti (yeni şifreli değer)
+        h.clearMos();
+        h.scheduler.applyCheckResults(List.of(beforePasswordFix));
+        assertThat(h.mosCalls()).as("MOS'a kalem gitmez").allMatch(c -> c.endsWith("[]"));
+        assertThat(h.scheduler.distributedCheckStatus().get("dropped_target")).isEqualTo(1L);
+
+        CheckResultRow beforeHeaderChange = h.workerRow(CheckJobTypes.KEYWORD, a.getId());
+        when(h.keywordHeaders.effectiveHeaders(a)).thenReturn("X-Api-Key: yeni-anahtar");
+        h.clearMos();
+        h.scheduler.applyCheckResults(List.of(beforeHeaderChange));
+        assertThat(h.mosCalls()).allMatch(c -> c.endsWith("[]"));
+        assertThat(h.scheduler.distributedCheckStatus().get("dropped_target")).isEqualTo(2L);
+
+        CheckResultRow current = h.workerRow(CheckJobTypes.KEYWORD, a.getId());
+        h.clearMos();
+        h.scheduler.applyCheckResults(List.of(current));
+        assertThat(h.mosCalls()).anyMatch(c -> c.startsWith("KEYWORD ") && !c.endsWith("[]"));
+        assertThat(h.scheduler.distributedCheckStatus().get("dropped_target")).isEqualTo(2L);
     }
 
     @Test

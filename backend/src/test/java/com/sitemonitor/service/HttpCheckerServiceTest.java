@@ -396,6 +396,45 @@ class HttpCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("Hata avi 2026-11-06 H4#1: POST + 302 sonrasi GET'e doner (govdesiz, Content-Type yok) - tarayici / JDK davranisi; "
+            + "307 POST'u ve govdeyi korur")
+    void post302BecomesGet_307KeepsPost() throws Exception {
+        java.util.List<String> seen = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        com.sun.net.httpserver.HttpServer s = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        s.createContext("/", ex -> {
+            String path = ex.getRequestURI().getPath();
+            String body = new String(ex.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            seen.add(path + "|" + ex.getRequestMethod() + "|" + body + "|" + ex.getRequestHeaders().getFirst("Content-Type"));
+            if (path.startsWith("/login")) {
+                ex.getResponseHeaders().add("Location", "/home");
+                ex.sendResponseHeaders(path.endsWith("307") ? 307 : 302, -1);
+            } else {
+                ex.sendResponseHeaders("GET".equals(ex.getRequestMethod()) ? 200 : 405, -1);
+            }
+            ex.close();
+        });
+        s.start();
+        try {
+            Fixture f = fixture("", false);
+            var opts = new com.sitemonitor.service.http.HttpRequestOptions(null, null, null, "{\"u\":\"ali\"}", null, null, null);
+            Map<String, Object> r = f.service().check("http://127.0.0.1:" + s.getAddress().getPort() + "/login",
+                    "POST", "200-200", 3000, false, true, false, opts);
+            assertThat(seen).containsExactly("/login|POST|{\"u\":\"ali\"}|application/json", "/home|GET||null");
+            assertThat(r.get("ok")).isEqualTo(true);
+
+            seen.clear();
+            Map<String, Object> r307 = f.service().check("http://127.0.0.1:" + s.getAddress().getPort() + "/login307",
+                    "POST", "200-200", 3000, false, true, false, opts);
+            assertThat(seen).containsExactly("/login307|POST|{\"u\":\"ali\"}|application/json",
+                    "/home|POST|{\"u\":\"ali\"}|application/json");
+            assertThat(r307.get("http_status")).isEqualTo(405);
+        } finally {
+            s.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("SSRF: cloud-metadata ucuna YONLENDIRME engellenir (Redirect.NORMAL bunu kacirirdi)")
     void followRedirects_toMetadata_blocked() throws Exception {
         com.sun.net.httpserver.HttpServer entry = plainRedirect("http://169.254.169.254/latest/meta-data/");
