@@ -58,7 +58,11 @@ public final class DeferredIndexBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(DeferredIndexBuilder.class);
 
-    /** Advisory lock anahtarı — "SMIDXBLD" baytları; yama kilidinden ({@link SchemaPatchRunner#LOCK_KEY}) ayrı. */
+    /**
+     * Advisory lock anahtarı — "SMIDXBLD" baytları; yama kilidinden ({@link SchemaPatchRunner#LOCK_KEY}) ayrı. İndeks bakım
+     * işleri ({@link RedundantIndexCleanup}, {@link IndexBloatMaintenance}, 2026-11-06) AYNI kilidi alır: indeks DDL'i
+     * yapan bu üç iş hiçbir zaman aynı anda koşmaz.
+     */
     public static final long LOCK_KEY = 0x534D_4944_5842_4C44L;
     /** Başka bir pod kurarken en fazla bu kadar beklenir (sonra bu açılışta vazgeçilir; sonraki açılış yeniden dener). */
     static final long LOCK_WAIT_MS = 30L * 60_000;
@@ -566,7 +570,8 @@ public final class DeferredIndexBuilder {
 
     private static long elapsedMs(long t0) { return (System.nanoTime() - t0) / 1_000_000; }
 
-    private static String firstLine(Throwable e) {
+    /** İstisnanın kök nedeninin ilk satırı (≤ 200 karakter) — indeks bakım işleri de kullanır. */
+    static String firstLine(Throwable e) {
         Throwable t = e;
         int causeDepth = 0;   // neden zinciri tavanı: A→B→A döngüsü sonsuza dek dönmesin
         while (t.getCause() != null && t.getCause() != t && causeDepth++ < com.sitemonitor.util.CauseChain.MAX_DEPTH) t = t.getCause();
@@ -645,6 +650,11 @@ public final class DeferredIndexBuilder {
         private JdbcSession(Connection conn, boolean pooled) {
             this.conn = conn;
             this.pooled = pooled;
+        }
+
+        /** Oturumun bağlantısı — indeks bakım işleri ({@link JdbcIndexCatalog}) aynı havuz dışı oturumu kullanır. */
+        Connection connection() {
+            return conn;
         }
 
         static JdbcSession open(DataSource ds) throws SQLException {

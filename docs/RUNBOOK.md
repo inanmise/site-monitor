@@ -15,6 +15,7 @@
 | Yeni sürüm açılmıyor / geri dönmek gerekiyor | [Dağıtım](#dağıtım-rollout) · [Geri alma](#geri-alma-rollback) |
 | Aynı anda çok sayıda alarm | [Alarm fırtınası](#alarm-fırtınası) |
 | DB diski doluyor, sorgular yavaş | [DB dolması](#db-dolması) |
+| Tablo küçük ama indeksleri çok büyük, `_ccnew` / `_ccold` indeks, "Gereksiz indeks" günlüğü | [İndeks bakımı](#indeks-bakımı) |
 | E-postalar gitmiyor | [SMTP düştü](#smtp-düştü) |
 | Tarayıcı uygulamanın sertifikasına uyarı veriyor | [Uygulamanın kendi sertifikası](#uygulamanın-kendi-sertifikası) |
 | Yönetici giriş yapamıyor ("hesap kilitli") | [Kilitli admin hesabı](#kilitli-admin-hesabı) |
@@ -100,6 +101,8 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   "var mı?" diye bakar ve ihlali yakalar, eski kesinti / bastırma yazımları ihlali yakalayıp WARN yazar (işlem dışında);
   yalnız eski bir `@Transactional` çağıranın içindeki gerçek bir yarış o çağıranı geri sarabilir (nadir). Yeni kolonlar
   (`close_state`, `resolution_notify`, `change_state`, posta durum kolonları) eski sürümce yok sayılır.
+- **İndeks bakımının düşürdüğü gereksiz indeksler** (2026-11-06) geri almada eski sürümün ddl-auto'su / yamalarıyla açılışta
+  yeniden yaratılır (kilitli `CREATE INDEX`, saniyeler) — zararsız; ayrıntı [İndeks bakımı](#indeks-bakımı).
 - Geri alma **secret key değişikliğini** geri almaz; anahtar değiştiyse önceki değeri Secret'a geri koyun.
 - Son çare DB yedeğinden dönüş (yedekten sonraki kayıtlar kaybolur) — platform/DBA ile.
 
@@ -140,6 +143,62 @@ kubectl rollout status "$DEPLOY" -n "$NS"
    düzeyinde tam veri olmalı, özet ham verinin yerine geçmez. Önce disk/tier büyütülür; süre değişikliği
    Ayarlar → Veri Saklama'da onay akışıyla ve ürün sahibinin kararıyla yapılır.
 5. Kapasite planı: [`db-scaling.md`](db-scaling.md).
+6. Şişmiş indeksler (tablo küçük, indeksleri çok büyük) gece kendiliğinden yeniden kurulur — [İndeks bakımı](#indeks-bakımı).
+
+## İndeks bakımı
+
+İki arka plan işi (2026-11-06, yalnız PostgreSQL; ikisi de ertelenmiş indeks kurucusuyla AYNI advisory lock'u — `SMIDXBLD` —
+alır, üçü asla aynı anda DDL yapmaz). Açılış anahtarı `site.monitor.index-maintenance.enabled` (env `INDEX_MAINTENANCE_ENABLED`,
+true); `false` → ikisi de koşmaz.
+
+**1. Gereksiz indeks temizliği (tek seferlik, `RedundantIndexCleanup`).** Eski kurulumlarda kalan 15 kopya / sol önek indeksi
+(`idx_pri_check`, `idx_mch_type_key_hour`, `idx_act_type`, `idx_act_type_mon`, `idx_*_monitor_id` × 9, `idx_cc_domain`,
+`idx_uc_domain_port`) `DROP INDEX CONCURRENTLY` ile düşürür; yeni kurulum bunları hiç yaratmaz. Açılıştan 3 dk sonra, sonra
+10 dk'da bir, iş bitene dek (yan iş `redundant-index-cleanup`). Beklediği durumlar (deneme sayılmaz): **başka sürüm koşan canlı
+pod** (yayılım sürüyor — Sürüm & Dağıtım geçmişi; okunamazsa da bekler), `SMIDXBLD` başka oturumda, başka pod açılış yaması
+koşuyor. Her adayı düşürmeden önce katalogdan doğrular (kapsayan btree aynı tabloda, geçerli, kısmi / ifade değil, öncü sütunlar
+/ opclass / sıra aynı; aday benzersiz değil, kısıt desteklemiyor). Günlük:
+```bash
+kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -E "Gereksiz indeks"
+```
+- `Gereksiz indeks düşürüldü: <ad> ON <tablo> (<boyut>; kapsayan: …)` — her düşürme; sonunda `… tamamlandı … nişan yazıldı`
+  (`schema_patch_markers` anahtarı `2026-11-06-redundant-index-cleanup`). Bir daha koşmaz.
+- `… şimdilik düşürülmedi (geçerli bir kapsayan indeks yok | kapsayan … henüz geçerli / hazır değil)` — kapsayan dizin eksik /
+  geçersiz (ör. `idx_act_type_mon_time` ertelenmiş kurucuda henüz kurulmadı): aday DÜŞÜRÜLMEZ, nişan yazılmaz; pod 24 turdan
+  (4 saat) sonra bırakır, sonraki açılış yeniden dener. Kapsayanın durumu: `SELECT c.relname, i.indisvalid FROM pg_index i JOIN
+  pg_class c ON c.oid = i.indexrelid WHERE c.relname = '<kapsayan>';`
+- `… bizim tanımımız değil (benzersiz | kısmi | sütunları beklenen değil …)` — aynı adla başka bir dizin (DBA'nın): hiçbir koşulda
+  düşürülmez, nişanı engellemez.
+- `… düşürülemedi … kilit beklemesi aşıldı` — uzun açık bir işlem tabloyu tutuyordu (`lock_timeout`,
+  `site.monitor.index-maintenance.lock-timeout-ms`, 30 sn); yarıda kalan `DROP INDEX CONCURRENTLY` adayı GEÇERSİZ bırakabilir
+  (okumada kullanılmaz), sonraki tur düşürür.
+
+**2. Şişmiş indeks bakımı (gece, `IndexBloatMaintenance`).** Saklama silmelerinden sonra btree'de yarı boş sayfalar kalır (VACUUM
+sayfayı yeniden kullanıma açar, indeksi küçültmez): yerelde `page_checks` 10 MB / 46 bin satırken indeksleri 183 MB,
+`page_resource_issues` 15 MB / 61 bin satırken 338 MB idi. Her gece 04:40 İstanbul (`site.monitor.index-maintenance.bloat-cron`,
+env `INDEX_MAINTENANCE_BLOAT_CRON`, `-` = kapalı) tek pod (`scheduler_lock` + küme turu `round:index-bloat-maintenance`),
+yalnız saklama motorunun yaşa göre sildiği kontrol / geçmiş tablolarında, yalnız sade btree (benzersiz / birincil anahtar
+dizinlerine dokunulmaz): beklenen boyut katalog tahmininden (`pg_stats` + `reltuples`), şişmiş = gerçek ≥ max(2 × beklenen,
+beklenen + 64 MB). En büyük fazladan başlayarak gece başına en çok 6 indeks / 4 GB / 45 dk (`…max-indexes-per-run`,
+`…max-mb-per-run`, `…time-budget-minutes`, `…min-excess-mb`; açılış anahtarları) `REINDEX INDEX CONCURRENTLY` ile yeniden kurar —
+yazımlar sürer, tablo kilitlenmez; her bekleme `lock_timeout` ile, toplam süre kalan bütçe kadar `statement_timeout` ile sınırlı.
+```bash
+kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -E "İndeks bakımı|Şişmiş indeks|kalıntı"
+```
+- `Şişmiş indeks yeniden kuruldu: <ad> ON <tablo> — <önce> → <sonra> (beklenen ≈ …)`.
+- `… yeniden kurulamadı … lock_timeout'u aştı` — uzun bir işlem / eski anlık görüntü (boşta bekleyen `idle in transaction`
+  oturum, uzun rapor sorgusu) yeniden kurmayı bekletti; iş vazgeçti, sonraki gece yeniden dener. Kim: `SELECT pid, state,
+  xact_start, left(query, 80) FROM pg_stat_activity WHERE state <> 'idle' ORDER BY xact_start;`
+- Kesilen / başarısız bir yeniden kurma GEÇERSİZ bir `<ad>_ccnew` (yeni dizin bitmedi) ya da `<ad>_ccold` (eski dizin düşürülemedi —
+  yeni dizin zaten yerinde) bırakır; iş hemen, olmazsa sonraki koşunun başında düşürür (`Yarıda kalmış yeniden kurma kalıntısı
+  düşürüldü`). Elle: `DROP INDEX CONCURRENTLY IF EXISTS <ad>_ccnew;` — yalnız `indisvalid = false` olanlar.
+- Pod kapanırken süren deyim iptal edilir, kalan indekslere geçilmez; kalıntı sonraki gece temizlenir.
+
+**Geri alma:** eski sürüme dönülürse ddl-auto ve eski şema yamaları gereksiz indeksleri açılışta yeniden yaratır (düz, kilitli
+`CREATE INDEX`; bu tablolarda saniyeler — en büyüğü `activity_log` üzerindeki iki dizin) — zararsız, yalnız fazla dizin. Yeniden
+ileri gidildiğinde nişan zaten yazılıysa iş bir daha koşmaz ve bu dizinler kalır; düşürmek için nişanı silin
+(`DELETE FROM schema_patch_markers WHERE patch_key = '2026-11-06-redundant-index-cleanup';`) — sonraki açılışta iş yeniden
+doğrulayıp düşürür. Şişme bakımı geri almada iz bırakmaz (yeniden kurulan dizin aynı tanım).
 
 ## SMTP düştü
 

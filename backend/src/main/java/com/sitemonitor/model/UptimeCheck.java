@@ -6,7 +6,8 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "uptime_checks", indexes = {
-    @Index(name = "idx_uc_domain_port", columnList = "domain,port"),
+    // (domain, port) dizini KALDIRILDI (2026-11-06, indeks bakımı): idx_uc_domain_port_checked (domain, port, checked_at —
+    // SchedulerService.applySchemaPatches) aynı öncü kolonları taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_uc_checked_at",  columnList = "checked_at")
 })
 @Data

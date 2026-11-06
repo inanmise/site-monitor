@@ -19,9 +19,10 @@ import lombok.NoArgsConstructor;
 @Entity
 @Table(name = "activity_log", indexes = {
     @Index(name = "idx_act_team_time",  columnList = "team_id, activity_time"),
-    @Index(name = "idx_act_time",       columnList = "activity_time"),
-    @Index(name = "idx_act_type",       columnList = "monitor_type"),
-    @Index(name = "idx_act_type_mon",   columnList = "monitor_type, monitor_id")
+    // (monitor_type) ve (monitor_type, monitor_id) dizinleri KALDIRILDI (2026-11-06, indeks bakımı): idx_act_type_mon_time
+    // (monitor_type, monitor_id, activity_time — DeferredIndexBuilder.CATALOG) aynı öncü kolonları taşır; eski kurulumlarda
+    // RedundantIndexCleanup düşürür.
+    @Index(name = "idx_act_time",       columnList = "activity_time")
 })
 @Data
 @NoArgsConstructor
