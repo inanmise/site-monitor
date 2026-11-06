@@ -307,6 +307,21 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/history/{domain}?limit=: sertifika penceresinin yoklaması yalnız son kaydı ister; limitsiz istek eski 30 satırı alır, değer 1–30'a sıkışır")
+    void getHistory_limitParam_isClampedAndOptional() throws Exception {
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(invOf("example.com", null)));
+        when(certService.getHistory(org.mockito.ArgumentMatchers.eq("example.com"), anyInt())).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/history/example.com").param("limit", "1").session(authSession())).andExpect(status().isOk());
+        verify(certService).getHistory("example.com", 1);
+        mvc.perform(get("/api/history/example.com").param("limit", "500").session(authSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/history/example.com").session(authSession())).andExpect(status().isOk());
+        verify(certService, times(2)).getHistory("example.com", 30);
+        mvc.perform(get("/api/history/example.com").param("limit", "0").session(authSession())).andExpect(status().isOk());
+        verify(certService, times(2)).getHistory("example.com", 1);
+    }
+
+    @Test
     @DisplayName("GET /api/history/{domain}: zarf kaydın GÜNCEL 7/24 alanlarını taşır — yetki kapısının okuduğu envanter satırından, ek sorgu YOK")
     void getHistory_envelopeCarriesNocFromTheGateRead() throws Exception {
         var inv = invOf("example.com", null);

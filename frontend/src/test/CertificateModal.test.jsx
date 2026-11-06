@@ -483,6 +483,8 @@ describe('CertificateModal — başlık aksiyonları ve tazeleme', () => {
     await waitFor(() => expect(onCheckNow).toHaveBeenCalled())
     // Koşu bittikten SONRA yeniden okunur; yoksa kullanıcı sonucu modalın dışında görürdü.
     await waitFor(() => expect(api.getHistory).toHaveBeenCalledTimes(2))
+    // Pencere yalnız EN SON kaydı kullanır → her okuma `limit: 1` (2026-11-06, PF4 D4: 30 sn yoklaması 30 satır çekmesin)
+    for (const call of api.getHistory.mock.calls) expect(call).toEqual(['example.com', { limit: 1 }])
   })
 
   it('Çalıştır koşu sürerken devre dışı (çift tetikleme yok)', async () => {
