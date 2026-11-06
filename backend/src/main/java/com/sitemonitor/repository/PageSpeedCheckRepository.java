@@ -24,7 +24,8 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
 
     /** Her monitör için en güncel ölçüm — tek toplu sorgu (N+1 önleme); monitör başına tek index-seek. */
     @Query(value = "SELECT c.* FROM pagespeed_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM pagespeed_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM pagespeed_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM pagespeed_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<PageSpeedCheck> findLatestPerMonitor();
 

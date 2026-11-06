@@ -100,7 +100,8 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
 
     /** Her izleme için en güncel çalıştırma — tek toplu sorgu (N+1 önleme). */
     @Query(value = "SELECT c.* FROM dbquery_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM dbquery_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM dbquery_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM dbquery_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<DbQueryCheck> findLatestPerMonitor();
 

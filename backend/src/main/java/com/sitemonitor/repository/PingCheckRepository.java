@@ -45,7 +45,8 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     // LATERAL join: küçük monitör tablosu × monitör başına tek index-seek (eski MAX(id)+GROUP BY /
     // DISTINCT ON full-scan yerine — milyonlarca satırda ~3.5sn → ~0.2ms).
     @Query(value = "SELECT c.* FROM ping_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM ping_checks pc WHERE pc.monitor_id = m.id ORDER BY pc.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM ping_checks pc WHERE pc.monitor_id = m.id AND pc.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM ping_checks x WHERE x.monitor_id = m.id) ORDER BY pc.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<PingCheck> findLatestPerMonitor();
 

@@ -42,9 +42,15 @@ public interface PortCheckRepository extends JpaRepository<PortCheck, Long> {
 
     /** Her monitör için en güncel kontrol. Eski "id IN (SELECT MAX(id) GROUP BY monitor_id)" ve
      *  DISTINCT ON TÜM tabloyu tarıyordu (898k satırda ~3.5 sn). LATERAL join küçük monitör tablosunu
-     *  gezip her monitör için (monitor_id, checked_at) index'iyle tek backward-seek yapar → ~0.2 ms. */
+     *  gezip her monitör için (monitor_id, checked_at) index'iyle tek backward-seek yapar → ~0.2 ms.
+     *  <p>Performans 2026-11-06: {@code ORDER BY checked_at DESC LIMIT 1} biçiminde planlayıcı tekil {@code checked_at}
+     *  indexini geri tarayıp {@code monitor_id} süzgeciyle satır eliyordu (yerel 2,3 M satırda 1,9 sn — son kontrolü eski,
+     *  duraklatılmış izlemelerde yüz binlerce satır). {@code MAX(checked_at)} bileşik indexte index-only taramayla bulunur,
+     *  satır iki sütunlu eşitlikle alınır (≈ 1 ms); aynı saniyede iki satır → büyük id. Aynı biçim bütün türlerde
+     *  ({@code LatestPerMonitorQueryGateTest}). */
     @Query(value = "SELECT c.* FROM port_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM port_checks pc WHERE pc.monitor_id = m.id ORDER BY pc.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM port_checks pc WHERE pc.monitor_id = m.id AND pc.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM port_checks x WHERE x.monitor_id = m.id) ORDER BY pc.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<PortCheck> findLatestPerMonitor();
     List<PortCheck> findByMonitorIdAndCheckedAtGreaterThanEqualOrderByCheckedAtAsc(Long monitorId, String since);

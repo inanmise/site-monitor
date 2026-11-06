@@ -57,7 +57,8 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
     // tabloyu tarıyordu; küçük certificate_inventory'ye LATERAL join ile domain başına tek index-seek
     // (overview zaten yalnız inventory domain'lerini gösterir → semantik aynı; ~3.5sn → ~80ms).
     @Query(value = "SELECT c.* FROM certificate_inventory i CROSS JOIN LATERAL "
-         + "(SELECT * FROM uptime_checks u WHERE u.domain = i.domain ORDER BY u.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM uptime_checks u WHERE u.domain = i.domain AND u.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM uptime_checks x WHERE x.domain = i.domain) ORDER BY u.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<UptimeCheck> findLatestPerDomainPort();
 

@@ -326,6 +326,42 @@ class PolledQueriesPostgresTest {
     }
 
     @Test
+    @DisplayName("Son kontrol (performans 2026-11-06): MAX(checked_at) biçimi en yeni satırı döner; aynı saniyede iki satır → büyük id; yalnız eski satırı olan izleme de gelir")
+    void latestPerMonitor_maxForm_tieAndOldOnlyMonitor() {
+        Instant now = Instant.now();
+        String newest = iso(now.minus(1, ChronoUnit.MINUTES));
+        PortMonitorRepository monitors = bean(PortMonitorRepository.class);
+        PortCheckRepository checks = bean(PortCheckRepository.class);
+        PortMonitor busy = new PortMonitor();
+        busy.setName("it-port-tie-" + tag); busy.setHost("tie-" + tag + ".invalid"); busy.setPort(8443); busy.setProtocol("TCP");
+        busy.setTeamId(teamId); busy.setActive(true); busy.setStandalone(true);
+        long busyId = monitors.save(busy).getId();
+        PortMonitor paused = new PortMonitor();
+        paused.setName("it-port-old-" + tag); paused.setHost("old-" + tag + ".invalid"); paused.setPort(8444); paused.setProtocol("TCP");
+        paused.setTeamId(teamId); paused.setActive(false); paused.setStandalone(true);
+        long pausedId = monitors.save(paused).getId();
+        PortCheck old = new PortCheck(); old.setMonitorId(pausedId); old.setOpen(true); old.setResponseMs(11L);
+        old.setCheckedAt(iso(now.minus(40, ChronoUnit.DAYS)));
+        long oldId = checks.save(old).getId();
+        for (int i = 30; i >= 2; i--) {
+            PortCheck c = new PortCheck(); c.setMonitorId(busyId); c.setOpen(true); c.setResponseMs(20L);
+            c.setCheckedAt(iso(now.minus(i, ChronoUnit.MINUTES)));
+            checks.save(c);
+        }
+        PortCheck first = new PortCheck(); first.setMonitorId(busyId); first.setOpen(false); first.setResponseMs(21L); first.setCheckedAt(newest);
+        checks.save(first);
+        PortCheck second = new PortCheck(); second.setMonitorId(busyId); second.setOpen(true); second.setResponseMs(22L); second.setCheckedAt(newest);
+        long secondId = checks.save(second).getId();
+
+        java.util.Map<Long, PortCheck> latest = new java.util.HashMap<>();
+        for (PortCheck c : checks.findLatestPerMonitor()) latest.put(c.getMonitorId(), c);
+        assertThat(latest.get(busyId)).as("en yeni saniye, büyük id").isNotNull();
+        assertThat(latest.get(busyId).getId()).isEqualTo(secondId);
+        assertThat(latest.get(pausedId)).as("yalnız 40 gün önceki satırı olan duraklatılmış izleme").isNotNull();
+        assertThat(latest.get(pausedId).getId()).isEqualTo(oldId);
+    }
+
+    @Test
     @DisplayName("Kart 'son alarm' şeridi (2026-10-09): envanter-sınırlı LATERAL sorgu aktif alanın EN SON alarmını döner; pasif / envanter dışı alan yok")
     void latestAlertForActiveInventoryDomains_returnsLatestPerActiveDomain() {
         String act = "it-card-act-" + tag + ".example.test";
