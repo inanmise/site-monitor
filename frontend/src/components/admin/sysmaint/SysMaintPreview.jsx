@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { CalendarClock, CheckCircle2, Hourglass, LogIn, MonitorSmartphone, Timer } from 'lucide-react'
 import { FixedLangProvider, isLanguageLoaded, loadLanguage, useLanguage, useT } from '../../../i18n/index.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
@@ -33,17 +33,25 @@ export default function SysMaintPreview({ current, serverNowMs }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
   const [lang, setLang] = useState(uiLang === 'en' ? 'en' : 'tr')
+  // Seçicide gösterilen SON seçim (sözlük inerken de) — sahne `lang` ile, yüklenince çizilir. İkisi ayrı: TR iniyorken EN'e
+  // dönmek seçicide gerçek bir değişikliktir (aynı değere tık SegmentedControl'de yok sayılır).
+  const [want, setWant] = useState(lang)
   const [loading, setLoading] = useState(false)
   const [tab, setTab] = useState('login')
   const block = useMemo(() => sampleBlock(current, serverNowMs), [current, serverNowMs])
 
   // İki dil de ayrı (lazy) parça (2026-11-06): seçilen dilin sözlüğü yoksa önce iner; inmezse metinler yüklü öbür dile düşer.
+  // SON SEÇİM KAZANIR (2026-11-06 inceleme DÜŞÜK-7): TR iniyorken EN seçilirse geç inen TR seçimi ezmez (sıra numarası).
+  const langSeq = useRef(0)
   async function changeLang(next) {
+    const seq = ++langSeq.current
+    setWant(next)
     if (!isLanguageLoaded(next)) {
       setLoading(true)
       try { await loadLanguage(next) } catch { /* sözlük inmedi: yüklü öbür dilin metinleriyle çizilir */ }
-      setLoading(false)
+      if (seq !== langSeq.current) return
     }
+    setLoading(false)
     setLang(next)
   }
 
@@ -72,7 +80,7 @@ export default function SysMaintPreview({ current, serverNowMs }) {
             </div>
             <div className="flex items-center gap-2 self-end sm:self-auto">
               {loading && <Spinner size={14} inline label={t('nav.langLoading')} />}
-              <SegmentedControl value={lang} onChange={changeLang} ariaLabel={t('sysmaint.preview.lang')}
+              <SegmentedControl value={want} onChange={changeLang} ariaLabel={t('sysmaint.preview.lang')}
                 options={[{ value: 'tr', label: 'TR' }, { value: 'en', label: 'EN' }]} />
             </div>
           </div>

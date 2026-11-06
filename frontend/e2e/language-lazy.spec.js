@@ -215,3 +215,55 @@ for (const vp of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
     expect(n.docs).toBe(3)
   })
 }
+
+// ── Yavaş hat (2026-11-06 inceleme ORTA-1): açılışta zaman aşımı hata DEĞİL ─────────────────────────────────────────────
+// Sözlük parçası ~14 sn geciktirilir (eşik 10 sn): açılış ekranı kalır, "Beklenenden uzun sürüyor" + "Yeniden yükle" çıkar,
+// AYNI indirme beklenir ve uygulama saklı dilde açılır — sayfa yenilenmez (window işaretçisi korunur), öbür dil istenmez,
+// parça tek kez istenir.
+for (const [lang, vp] of [['tr', { width: 390, height: 844 }], ['en', { width: 1280, height: 900 }]]) {
+  test(`yavaş sözlük parçası (saklı dil ${lang}, ${vp.width}): uyarı + düğme, sonra uygulama ${lang} — yenileme / öbür dil yok`, async ({ page }) => {
+    test.setTimeout(90_000)
+    await page.setViewportSize(vp)
+    await mockApi(page)
+    await presetLanguage(page, lang)
+    const n = countDictRequests(page)
+    const own = lang === 'tr' ? TR_CHUNK : EN_CHUNK_EXACT
+    await page.route(own, async (route) => { await new Promise((r) => setTimeout(r, 14_000)); await route.continue() })
+    await page.goto('/?tab=dashboard')
+    const boot = page.locator('[data-slot="lang-boot"]')
+    await expect(boot).toBeVisible({ timeout: 20_000 })
+    await page.evaluate(() => { window.__smSlowMarker = 'aynı-sayfa' })
+    const dict = lang === 'tr' ? TR : EN
+    const slow = page.locator('[data-slot="lang-boot-slow"]')
+    await expect(slow).toBeVisible({ timeout: 15_000 })
+    await expect(slow).toHaveAttribute('lang', lang)
+    await expect(slow).toContainText(dict['lang.bootSlow.title'])
+    await expect(slow).toContainText(dict['lang.bootSlow.body'])
+    await expect(boot.getByRole('status')).toContainText(dict['app.loading'])
+    const button = slow.getByRole('button', { name: dict['lang.bootReload'] })
+    await expect(button).toBeVisible()
+    const box = await button.boundingBox()
+    expect(box.height).toBeGreaterThanOrEqual(44)
+    expect(box.width).toBeGreaterThanOrEqual(44)
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+    const clipped = await slow.evaluate((el) => [...el.querySelectorAll('*')]
+      .filter((e) => e.children.length === 0 && e.textContent.trim() && (e.scrollWidth > e.clientWidth + 1)).length)
+    expect(clipped).toBe(0)
+    expect(await rawKeysOnPage(page)).toEqual([])
+    await expect(page.locator('[data-slot="lang-boot-failure"]')).toHaveCount(0)
+    // Süren indirme iner: uygulama saklı dilde, aynı sayfa (yenileme yok), bildirim yok
+    await page.locator('.app-main').waitFor({ timeout: 30_000 })
+    await expect(page.getByRole('heading', { name: dict['app.dashTitle'], exact: true })).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('lang', lang)
+    await expect(slow).toHaveCount(0)
+    expect(await page.evaluate(() => window.__smSlowMarker)).toBe('aynı-sayfa')
+    expect(n.docs).toBe(1)
+    expect(lang === 'tr' ? n.tr : n.en).toBe(1)                               // parça TEK kez istendi
+    expect(lang === 'tr' ? n.en : n.tr).toBe(0)                               // öbür dil istenmedi
+    await expect(page.getByText(EN['lang.loadFailed'])).toHaveCount(0)
+    await expect(page.getByText(TR['lang.loadFailed'])).toHaveCount(0)
+    await expect(page.getByText(EN['lang.loadFailedTr'])).toHaveCount(0)
+    await expect(page.getByText(TR['lang.loadFailedTr'])).toHaveCount(0)
+  })
+}

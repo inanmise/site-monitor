@@ -18145,6 +18145,9 @@ export const TR = {
   'lang.bootFailed.title': 'Arayüz dil dosyaları yüklenemedi',
   'lang.bootFailed.body': 'Türkçe ve İngilizce dil dosyalarının ikisi de indirilemedi — bağlantı kesilmiş ya da yeni sürüm şu anda dağıtılıyor olabilir. Birkaç saniye bekleyip sayfayı yeniden yükleyin.',
   'lang.bootReload': 'Yeniden yükle',
+  // Açılışta yavaş indirme (2026-11-06 inceleme ORTA-1): bekleme eşiği dolunca hata değil — açılış ekranında uyarı + düğme.
+  'lang.bootSlow.title': 'Dil dosyası beklenenden uzun sürüyor',
+  'lang.bootSlow.body': 'Bağlantı yavaş görünüyor; indirme sürüyor ve bitince uygulama kendiliğinden açılır. Beklemek istemezseniz sayfayı yeniden yükleyin.',
   // HTTP uçtan uca tanılama (2026-10-02) — components/http/diagnose/*. Bulgu gövdelerinde ADLI yer tutucular ({status},
   // {ms}, {route}…) — httpDiagnoseModel.interpolate doldurur; EN karşılığında aynı adlar aynı sayıda. Başlıklar yer
   // tutucusuz (geçmiş listesi parametresiz koddan başlık çizer).

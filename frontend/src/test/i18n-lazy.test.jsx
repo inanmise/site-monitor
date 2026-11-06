@@ -14,8 +14,10 @@ import { EN } from '../i18n/en.js'
  *      TR_BOOT) — ham anahtar ya da öbür dilde metin yok; sözlük inince ağaç doğrudan o dilde açılır.
  *   2. Çalışırken TR↔EN: önce yükleme (pending, arayüz eski dilde), sonra tek adımda yeni dil + tercih kaydı; hata sayfayı
  *      yenilemez, bildirim çıkar.
- *   3. Açılış hata zinciri: tek yenileme hakkı → öbür dilin sözlüğü (bildirim + oturumluk X-Lang, saklı tercih korunur) →
- *      ikisi de inmezse sözlüksüz, sabit metinli hata ekranı ("Yeniden yükle"); zaman aşımı sonsuz beklemeyi keser.
+ *   3. Açılış hata zinciri (yalnız GERÇEK hata): tek yenileme hakkı → öbür dilin sözlüğü (bildirim + oturumluk X-Lang,
+ *      saklı tercih korunur) → ikisi de inmezse sözlüksüz, sabit metinli hata ekranı ("Yeniden yükle"); bir sözlük sonradan
+ *      inerse ekran kendiliğinden toparlanır. Açılışta ZAMAN AŞIMI hata değildir (2026-11-06 inceleme ORTA-1): açılış ekranı
+ *      kalır, "Beklenenden uzun sürüyor" + "Yeniden yükle" çıkar, AYNI indirme beklenir — yavaş hat cezalandırılmaz.
  *   4. Önbellek: aynı anda gelen istekler tek indirmeyi paylaşır; inmiş sözlükle geçiş ANINDA; tanınmayan kod Türkçe sözlük.
  */
 
@@ -423,26 +425,113 @@ describe('i18n — sözlükler ayrı chunk (öneri 22 + 2026-11-06 Türkçe)', (
     expect(screen.getByTestId('toasts')).toHaveTextContent(TR['lang.loadFailed'])
   })
 
-  it('açılışta sözlük HİÇ inmezse (asılı istek): zaman aşımında öbür dile düşülür — açılış ekranında sonsuza dek kalınmaz (2026-10-09)', async () => {
+  // ── Yavaş indirme (2026-11-06 inceleme ORTA-1): açılışta zaman aşımı başarısızlık DEĞİL ─────────────────────────────
+  for (const stored of ['en', 'tr']) {
+    it(`açılış, saklı dil ${stored}, YAVAŞ sözlük: eşikte uyarı + "Yeniden yükle", aynı indirme beklenir, inince uygulama ${stored} (yenileme / öbür dil yok)`, async () => {
+      localStorage.setItem(STORAGE_KEY, stored)
+      const gate = deferred()
+      const imports = { tr: 0, en: 0 }
+      const slowDict = stored === 'en' ? EN : TR
+      const slowMod = async () => { imports[stored]++; await gate.promise; return stored === 'en' ? { EN } : { TR } }
+      const otherMod = async () => { imports[stored === 'en' ? 'tr' : 'en']++; return stored === 'en' ? { TR } : { EN } }
+      const m = await freshI18n(stored === 'en' ? { enModule: slowMod, trModule: otherMod } : { trModule: slowMod, enModule: otherMod })
+      const reload = vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
+      const boot = stored === 'en' ? m.EN_BOOT : m.TR_BOOT
+      function App() {
+        const t = m.useT()
+        return <p data-testid="app">{t('stat.total')}</p>
+      }
+      vi.useFakeTimers()
+      try {
+        render(<Tree m={m}><App /></Tree>)
+        const slow = () => document.querySelector('[data-slot="lang-boot-slow"]')
+        await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS - 100) })
+        expect(slow()).toBeNull()                                              // eşikten önce uyarı yok
+        await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+        expect(slow()).not.toBeNull()
+        expect(slow().getAttribute('lang')).toBe(stored)
+        expect(slow()).toHaveTextContent(boot['lang.bootSlow.title'])
+        expect(slow()).toHaveTextContent(boot['lang.bootSlow.body'])
+        expect(screen.getByRole('status').textContent).toContain(boot['app.loading'])   // açılış ekranı yerinde
+        expect(screen.queryByTestId('app')).toBeNull()
+        expect(screen.queryByRole('alert')).toBeNull()                         // hata ekranı yok
+        expect(rawKeys()).toEqual([])
+        // Uzun bekleme: yine hata yok, yenileme yok, öbür dil indirilmez, yeni indirme açılmaz
+        await act(async () => { await vi.advanceTimersByTimeAsync(5 * m.LANG_LOAD_TIMEOUT_MS) })
+        expect(screen.queryByRole('alert')).toBeNull()
+        expect(reload).not.toHaveBeenCalled()
+        expect(imports).toEqual(stored === 'en' ? { en: 1, tr: 0 } : { tr: 1, en: 0 })
+        // Düğme: kullanıcının kendi yenilemesi
+        fireEvent.click(screen.getByRole('button', { name: boot['lang.bootReload'] }))
+        expect(reload).toHaveBeenCalledTimes(1)
+        // Süren indirme iner: uygulama saklı dilde açılır, bildirim yok, oturum dili zorlanmaz
+        await act(async () => { gate.resolve(); await vi.advanceTimersByTimeAsync(50) })
+        expect(screen.getByTestId('app')).toHaveTextContent(slowDict['stat.total'])
+        expect(slow()).toBeNull()
+        expect(document.documentElement.lang).toBe(stored)
+        expect(m.dateLocale.sessionLangOverride()).toBeNull()
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+        expect(screen.queryByText(EN['lang.loadFailed'])).toBeNull()
+        expect(screen.queryByText(TR['lang.loadFailed'])).toBeNull()
+        expect(screen.queryByText(EN['lang.loadFailedTr'])).toBeNull()
+        expect(screen.queryByText(TR['lang.loadFailedTr'])).toBeNull()
+        expect(imports[stored]).toBe(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  }
+
+  it('asılı istek: açılış ekranında uyarı + düğme ile çıkış yolu var; hata ekranına ya da öbür dile hiç düşülmez', async () => {
+    localStorage.setItem(STORAGE_KEY, 'tr')
+    let enImports = 0
+    const m = await freshI18n({ trModule: hangs(), enModule: async () => { enImports++; return { EN } } })
+    const reload = vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
+    vi.useFakeTimers()
+    try {
+      render(<Tree m={m}><p data-testid="app">x</p></Tree>)
+      await act(async () => { await vi.advanceTimersByTimeAsync(20 * m.LANG_LOAD_TIMEOUT_MS) })
+      expect(document.querySelector('[data-slot="lang-boot-slow"]')).not.toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByTestId('app')).toBeNull()
+      expect(reload).not.toHaveBeenCalled()
+      expect(enImports).toBe(0)
+      fireEvent.click(screen.getByRole('button', { name: m.TR_BOOT['lang.bootReload'] }))
+      expect(reload).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gerçek hatadan sonra öbür dil de YAVAŞSA: aynı kural — uyarı (saklı dilde), sonra öbür dilde açılış + bildirim', async () => {
     localStorage.setItem(STORAGE_KEY, 'en')
-    const m = await freshI18n({ enModule: hangs() })
+    const gate = deferred()
+    let trStarted = false
+    const m = await freshI18n({ enModule: fails('offline'), trModule: async () => { trStarted = true; await gate.promise; return { TR } } })
     reloadAlreadyUsed(m)
     function App() {
       const t = m.useT()
       return <p data-testid="app">{t('stat.total')}</p>
     }
+    // İngilizce parçanın reddi (taklit modül yükleyicisi) gerçek olay döngüsünü ister: sahte saat ilerletilmeden önce
+    // Türkçe aşamasının başladığı gerçek saatle beklenir (öbür dilin eşik sayacı o an kurulur).
+    const realTimeout = globalThis.setTimeout
     vi.useFakeTimers()
     try {
       render(<Tree m={m}><App /></Tree>)
-      expect(screen.queryByTestId('app')).toBeNull()
+      for (let i = 0; i < 200 && !trStarted; i++) await act(async () => { await new Promise((r) => realTimeout(r, 5)) })
+      expect(trStarted).toBe(true)
       await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS - 100) })
-      expect(screen.queryByTestId('app')).toBeNull()                         // süre dolmadan yedek yola düşülmez
+      expect(document.querySelector('[data-slot="lang-boot-slow"]')).toBeNull()
       await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      const slow = document.querySelector('[data-slot="lang-boot-slow"]')
+      expect(slow).not.toBeNull()
+      expect(slow).toHaveTextContent(m.EN_BOOT['lang.bootSlow.title'])
+      expect(screen.queryByRole('alert')).toBeNull()
+      await act(async () => { gate.resolve(); await vi.advanceTimersByTimeAsync(50) })
       expect(screen.getByTestId('app')).toHaveTextContent(TR['stat.total'])
-      expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
       expect(m.dateLocale.sessionLangOverride()).toBe('tr')
-      expect(m.isLanguageLoaded('en')).toBe(false)
-      // Bildirim sahte saatte doğrulanır: gerçek saate dönüşte bekleyen sahte zamanlayıcılar (toast yerleşimi) düşer.
+      expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
       await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
       expect(screen.getByText(TR['lang.loadFailed'])).toBeInTheDocument()
     } finally {
@@ -450,22 +539,117 @@ describe('i18n — sözlükler ayrı chunk (öneri 22 + 2026-11-06 Türkçe)', (
     }
   })
 
-  it('iki sözlük de asılı kalırsa: en çok 2 × zaman aşımı sonra hata ekranı (sonsuz bekleme yok)', async () => {
+  it('hata ekranındayken sözlük sonradan inerse ekran kendiliğinden toparlanır (saklı dilde, bildirimsiz)', async () => {
     localStorage.setItem(STORAGE_KEY, 'tr')
-    const m = await freshI18n({ enModule: hangs(), trModule: hangs() })
+    // İlk indirme "sözlüksüz modül" (gerçek hata) → öbür dil de hata → hata ekranı; sonra AYNI dilin indirmesi başka bir
+    // yoldan (burada doğrudan loadLanguage) iner — vitest taklit modülü önbelleğe aldığından ikinci okuma sözlüğü verir.
+    let reads = 0
+    const m = await freshI18n({ trModule: () => ({ get TR() { reads++; return reads === 1 ? undefined : TR } }), enModule: fails() })
     reloadAlreadyUsed(m)
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    render(<Tree m={m}><App /></Tree>)
+    expect(await screen.findByRole('alert')).toHaveTextContent(m.TR_BOOT['lang.bootFailed.title'])
+    await act(async () => { await m.loadLanguage('tr') })
+    expect(await screen.findByTestId('app')).toHaveTextContent(TR['stat.total'])
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(document.documentElement.lang).toBe('tr')
+    expect(m.dateLocale.sessionLangOverride()).toBeNull()
+  })
+
+  it('öbür dile düşmüş çalışan oturum, saklı dilin sözlüğü sonradan inse de KENDİLİĞİNDEN dil değiştirmez', async () => {
+    localStorage.setItem(STORAGE_KEY, 'tr')
+    let reads = 0
+    const m = await freshI18n({ trModule: () => ({ get TR() { reads++; return reads === 1 ? undefined : TR } }), enModule: async () => ({ EN }) })
+    reloadAlreadyUsed(m)
+    let ctx
+    function App() {
+      const t = m.useT()
+      ctx = m.useLanguage()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    render(<Tree m={m}><App /></Tree>)
+    expect(await screen.findByTestId('app')).toHaveTextContent(EN['stat.total'])
+    await act(async () => { await m.loadLanguage('tr') })                  // saklı dilin sözlüğü sonradan iner
+    expect(m.isLanguageLoaded('tr')).toBe(true)
+    expect(screen.getByTestId('app')).toHaveTextContent(EN['stat.total'])     // arayüz İngilizce kalır
+    expect(ctx.lang).toBe('en')
+    expect(m.dateLocale.sessionLangOverride()).toBe('en')
+  })
+
+  it('StrictMode çift effect: yavaş açılışta TEK indirme, tek uyarı; inince uygulama açılır', async () => {
+    localStorage.setItem(STORAGE_KEY, 'tr')
+    const gate = deferred()
+    let imports = 0
+    const m = await freshI18n({ trModule: async () => { imports++; await gate.promise; return { TR } } })
+    const reload = vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
+    const { StrictMode } = await import('react')
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
     vi.useFakeTimers()
     try {
-      render(<Tree m={m}><p data-testid="app">x</p></Tree>)
+      render(<StrictMode><Tree m={m}><App /></Tree></StrictMode>)
       await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS + 100) })
-      expect(screen.getByRole('status').textContent).toContain(TR['app.loading'])   // ikinci dil deneniyor
-      expect(screen.queryByRole('alert')).toBeNull()
-      await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS) })
-      expect(screen.getByRole('alert')).toHaveTextContent(m.TR_BOOT['lang.bootFailed.title'])
-      expect(screen.queryByTestId('app')).toBeNull()
+      expect(document.querySelectorAll('[data-slot="lang-boot-slow"]')).toHaveLength(1)
+      await act(async () => { gate.resolve(); await vi.advanceTimersByTimeAsync(50) })
+      expect(screen.getByTestId('app')).toHaveTextContent(TR['stat.total'])
+      expect(imports).toBe(1)
+      expect(reload).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('çalışırken geçişte zaman aşımı: bildirim, dil değişmez; süren indirme inince sonraki geçiş ANINDA (yeni indirme yok)', async () => {
+    localStorage.setItem(STORAGE_KEY, 'tr')
+    const gate = deferred()
+    let imports = 0
+    const m = await freshI18n({ enModule: async () => { imports++; await gate.promise; return { EN } } })
+    let ctx
+    function Probe() {
+      const t = m.useT()
+      ctx = m.useLanguage()
+      return <p data-testid="text">{`${t('stat.total')}|${ctx.lang}|${ctx.pending ?? '-'}`}</p>
+    }
+    vi.useFakeTimers()
+    try {
+      render(<Tree m={m}><Probe /></Tree>)
+      let first
+      act(() => { first = ctx.toggle() })
+      await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS + 100) })
+      await expect(first).resolves.toBe(false)
+      expect(screen.getByTestId('text')).toHaveTextContent(`${TR['stat.total']}|tr|-`)
+      // Bildirim sahte saatte doğrulanır (toast yerleşimi zamanlayıcıları)
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(screen.getByText(TR['lang.loadFailed'])).toBeInTheDocument()
+      expect(localStorage.getItem(STORAGE_KEY)).toBe('tr')
+      await act(async () => { gate.resolve(); await vi.advanceTimersByTimeAsync(50) })
+      expect(m.isLanguageLoaded('en')).toBe(true)                             // geç inen sözlük önbellekte
+      expect(screen.getByTestId('text')).toHaveTextContent(`${TR['stat.total']}|tr|-`)   // kendiliğinden dil değişmez
+      act(() => { ctx.toggle() })
+      expect(screen.getByTestId('text')).toHaveTextContent(`${EN['stat.total']}|en|-`)   // anında, pending yok
+      expect(imports).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('loadLanguage zaman aşımı GERÇEK hatadan ayırt edilir (isLanguageLoadTimeout)', async () => {
+    const m = await freshI18n({ trModule: hangs(), enModule: fails() })
+    vi.useFakeTimers()
+    try {
+      const timed = m.loadLanguage('tr').catch((e) => e)
+      await act(async () => { await vi.advanceTimersByTimeAsync(m.LANG_LOAD_TIMEOUT_MS + 10) })
+      expect(m.isLanguageLoadTimeout(await timed)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+    const real = await m.loadLanguage('en').catch((e) => e)
+    expect(m.isLanguageLoadTimeout(real)).toBe(false)
   })
 
   it('aynı anda gelen yüklemeler TEK indirmeyi paylaşır; inmiş sözlükle geçiş ANINDA (pending yok)', async () => {

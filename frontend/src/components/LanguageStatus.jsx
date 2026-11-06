@@ -13,24 +13,47 @@ import { Button } from '@/components/shadcn/button'
  * döngüsel import olurdu) — açılış ve hata ekranı LangProvider'a `fallback` / `failure` olarak verilir.
  */
 
+/** Kullanıcının kendi yenilemesi — sayaçsız (public/boot-guard.js ile aynı kural); testler `reloader`'ı değiştirir. */
+function reloadPage() {
+  try { reloader.reload() } catch { /* yoksay */ }
+}
+
 /**
  * Açılış ekranı: saklı dilin sözlüğü henüz inmemişken uygulama ağacının yerine çizilir (genellikle bir an). App'in oturum
  * denetimi ekranıyla aynı kimlik: soluk logo + "Loading..." / "Yükleniyor...". Metinler i18n `EN_BOOT` / `TR_BOOT`
  * açılış metinlerinden gelir — kullanıcı başka dilde metin ya da ham anahtar görmez. role="status" duyurur.
+ *
+ * Yavaş indirme (2026-11-06 inceleme ORTA-1): bekleme eşiği dolunca (`bootSlow`) ekran KALIR ve altına "Beklenenden uzun
+ * sürüyor" + "Yeniden yükle" (44 px) eklenir — indirme sürer, inince uygulama kendiliğinden açılır; düğme asılı bir istekte
+ * çıkış yolu. Test kancası `lang-boot-slow`.
  */
 export function LanguageBootSplash() {
   const t = useT()
+  const { lang, bootSlow } = useLanguage()
   return (
     <div data-slot="lang-boot" className="mt-20 flex flex-col items-center px-4">
       <BrandLogo status="muted" size={64} />
       <LoadingBlock label={t('app.loading')} className="py-3" />
+      <div aria-live="polite" className="flex w-full max-w-md flex-col items-center">
+        {bootSlow && (
+          <div data-slot="lang-boot-slow" lang={dictLang(lang)}
+            className="flex w-full flex-col items-center gap-3 text-center [overflow-wrap:anywhere]">
+            <p className="m-0 text-base font-semibold text-foreground">{t('lang.bootSlow.title')}</p>
+            <p className="m-0 text-sm text-muted-foreground">{t('lang.bootSlow.body')}</p>
+            <Button type="button" variant="outline" className="min-h-11 min-w-11 px-5" onClick={reloadPage}>
+              {t('lang.bootReload')}
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
 /**
- * Sözlüksüz açılış hata ekranı (2026-11-06): açılışta ne saklı dilin ne de öbür dilin sözlüğü indi (yenileme hakkı da
- * kullanılmış). Boş sayfa ya da sonsuz "Yükleniyor..." yerine sabit metinli bir uyarı ve "Yeniden yükle" (44 px) — metinler
+ * Sözlüksüz açılış hata ekranı (2026-11-06): açılışta saklı dilin de öbür dilin de sözlüğü GERÇEK hatayla inmedi (parça
+ * 404 / ağ hatası; yenileme hakkı da kullanılmış — yavaş indirme buraya düşmez, açılış ekranında beklenir). Bir sözlük
+ * sonradan inerse LangProvider ekranı kendiliğinden kapatır. Boş sayfa yerine sabit metinli bir uyarı ve "Yeniden yükle" (44 px) — metinler
  * açılış metinlerinden (EN_BOOT / TR_BOOT, `tr.js` / `en.js` değerlerinin birebir kopyası), kullanıcının dilinde; ham anahtar
  * yok. Kullanıcının kendi yenilemesi sayaçsızdır (public/boot-guard.js ile aynı kural). Test kancası `lang-boot-failure`.
  */
@@ -44,7 +67,7 @@ export function LanguageBootFailure() {
       <StatusBlock tone="danger" role="alert" title={t('lang.bootFailed.title')} description={t('lang.bootFailed.body')}
         className="py-6 md:py-6"
         actions={(
-          <Button type="button" className="min-h-11 min-w-11 px-5" onClick={() => { try { reloader.reload() } catch { /* yoksay */ } }}>
+          <Button type="button" className="min-h-11 min-w-11 px-5" onClick={reloadPage}>
             {t('lang.bootReload')}
           </Button>
         )} />

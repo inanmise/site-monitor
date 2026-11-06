@@ -28,7 +28,8 @@ const STORAGE_KEY = LANG_STORAGE_KEY
 const DICTS = (globalThis.__smI18nDicts ??= {})
 
 /**
- * Açılış metinleri — etkin dilin sözlüğü henüz inmemişken (açılış ekranı `LanguageBootSplash`) ya da hiç inmediğinde
+ * Açılış metinleri — etkin dilin sözlüğü henüz inmemişken (açılış ekranı `LanguageBootSplash`, yavaş indirmede
+ * "Beklenenden uzun sürüyor" uyarısı dahil) ya da hiç inmediğinde
  * (sözlüksüz hata ekranı `LanguageBootFailure`) gereken birkaç metin; ayrıca provider'sız çizilen çökme ekranının
  * (ErrorBoundary → ErrorFallback) kendi metinleri, ki sözlük hiç yokken bile ham anahtar basılmasın. Değerler
  * `en.js` / `tr.js`'tekilerin BİREBİR kopyası (`i18n-lazy.test.jsx` eşitliği iki dil için de kilitler).
@@ -39,6 +40,8 @@ export const EN_BOOT = Object.freeze({
   'lang.bootFailed.title': 'The interface language files could not be loaded',
   'lang.bootFailed.body': 'Neither the Turkish nor the English language file could be downloaded. The connection may have dropped, or a new version is being rolled out right now. Wait a few seconds, then reload the page.',
   'lang.bootReload': 'Reload',
+  'lang.bootSlow.title': 'The language file is taking longer than expected',
+  'lang.bootSlow.body': 'The connection seems slow; the download is still running and the app opens by itself when it finishes. If you would rather not wait, reload the page.',
   'err.title': 'Something went wrong',
   'err.detail': 'This screen stopped because of an unexpected error. Reload the page (unsaved changes may be lost); if it keeps happening, use "Report a Problem" to tell the system administrators.',
   'err.reload': 'Reload',
@@ -58,6 +61,8 @@ export const TR_BOOT = Object.freeze({
   'lang.bootFailed.title': 'Arayüz dil dosyaları yüklenemedi',
   'lang.bootFailed.body': 'Türkçe ve İngilizce dil dosyalarının ikisi de indirilemedi — bağlantı kesilmiş ya da yeni sürüm şu anda dağıtılıyor olabilir. Birkaç saniye bekleyip sayfayı yeniden yükleyin.',
   'lang.bootReload': 'Yeniden yükle',
+  'lang.bootSlow.title': 'Dil dosyası beklenenden uzun sürüyor',
+  'lang.bootSlow.body': 'Bağlantı yavaş görünüyor; indirme sürüyor ve bitince uygulama kendiliğinden açılır. Beklemek istemezseniz sayfayı yeniden yükleyin.',
   'err.title': 'Bir şey ters gitti',
   'err.detail': 'Bu ekran beklenmedik bir hata yüzünden durdu. Sayfayı yenileyin (kaydedilmemiş değişiklikler kaybolabilir); sorun sürerse "Sorun Bildir" ile sistem yöneticilerine iletin.',
   'err.reload': 'Yenile',
@@ -90,44 +95,75 @@ const IMPORTERS = {
   en: () => import('./en.js').then((m) => m.EN),
 }
 
-/** Dil başına sürmekte olan indirme (aynı anda gelen çağrılar TEK isteği paylaşır). */
-const loading = {}
+/** Dil başına sürmekte olan parça indirmesi — süresiz (aynı anda gelen çağrılar TEK isteği paylaşır). */
+const inflight = {}
+
+/** Bir sözlük indiğinde haber verilecekler (açılış hata ekranının kendiliğinden toparlanması). */
+const dictListeners = new Set()
 
 /**
- * Sözlük bu sürede inmezse yükleme BAŞARISIZ sayılır (2026-10-09, sonsuz bekleme denetimi): hiç sonuçlanmayan bir parça
- * isteği (asılı proxy / bağlantı) açılış ekranını (`LanguageBootSplash`) sonsuza dek açık tutuyordu. Zaman aşımı açılış
- * hata zincirine düşer ({@link LangProvider}); geç gelen sözlük yine önbelleğe yazılır, sonraki geçiş anında olur.
- * Açılışta en kötü durumda iki dil arka arkaya denenir: ekran en çok 2 × bu süre açık kalır, sonra hata ekranı.
+ * Sözlük parçasını indirir — SÜRESİZ, tek paylaşılan istek. Zaman aşımı bu indirmeyi KESMEZ: yavaş hatta süren indirme
+ * sonradan inerse sözlük önbelleğe yazılır ve dinleyicilere bildirilir. Gerçek hata (parça 404, ağ hatası, sözlüksüz
+ * modül) reddedilir ve önbelleğe ALINMAZ — sonraki çağrı yeniden dener.
+ */
+function importDictionary(key) {
+  if (DICTS[key]) return Promise.resolve(DICTS[key])
+  if (!inflight[key]) {
+    const attempt = IMPORTERS[key]().then((dict) => {
+      if (!dict || typeof dict !== 'object') throw new Error('language module without dictionary')
+      DICTS[key] = dict
+      for (const cb of [...dictListeners]) { try { cb(key) } catch { /* dinleyici hatası yüklemeyi bozmaz */ } }
+      return dict
+    })
+    inflight[key] = attempt
+    const settle = () => { if (inflight[key] === attempt) inflight[key] = null }
+    attempt.then(settle, settle)
+  }
+  return inflight[key]
+}
+
+/** Zaman aşımı hatası: GERÇEK bir yükleme hatası değil — indirme sürüyor olabilir ({@link isLanguageLoadTimeout}). */
+const TIMEOUT_CODE = 'LANG_LOAD_TIMEOUT'
+
+/** Hata bir zaman aşımı mı (indirme sürüyor) yoksa gerçek bir yükleme hatası mı (parça yok / ağ / sözlüksüz modül)? */
+export function isLanguageLoadTimeout(err) {
+  return err?.code === TIMEOUT_CODE
+}
+
+/**
+ * Bekleme eşiği (2026-10-09, sonsuz bekleme denetimi; 2026-11-06 inceleme ORTA-1 ile anlamı değişti).
+ * <ul>
+ *   <li>Çalışırken dil geçişinde ({@link loadLanguage}): bu sürede inmezse geçiş BAŞARISIZ sayılır (bildirim, dil
+ *       değişmez); süren indirme kesilmez — sonradan inen sözlük önbelleğe yazılır, sonraki geçiş anında olur.</li>
+ *   <li>Açılışta ({@link LangProvider}): zaman aşımı başarısızlık DEĞİLDİR — yenileme yok, öbür dile geçiş yok, yeni
+ *       indirme yok. Açılış ekranı kalır ve "Beklenenden uzun sürüyor" + "Yeniden yükle" gösterir; AYNI indirme
+ *       beklenmeye devam eder, inince uygulama saklı dilde açılır. Yavaş hat (yavaş 3G, zayıf VPN — ~540 KB gzip'lik
+ *       sözlük) cezalandırılmaz, asılı bir istek de çıkışsız kalmaz (düğme).</li>
+ * </ul>
  */
 export const LANG_LOAD_TIMEOUT_MS = 10_000
 
 /**
  * Dil sözlüğünü yükler (önbellekli; aynı anda gelen çağrılar TEK isteği paylaşır). Tanınmayan kod Türkçe sözlüğü
- * yükler ({@link dictLang}). Başarısız (ya da {@link LANG_LOAD_TIMEOUT_MS} içinde bitmeyen) indirme önbelleğe
- * ALINMAZ — sonraki çağrı yeniden dener. Sözlük nesnesi taşımayan bir modül de başarısızlık sayılır.
+ * yükler ({@link dictLang}). Gerçek hata önbelleğe ALINMAZ — sonraki çağrı yeniden dener; sözlük nesnesi taşımayan bir
+ * modül de hata sayılır. {@link LANG_LOAD_TIMEOUT_MS} içinde bitmezse bu çağrı zaman aşımıyla reddedilir
+ * ({@link isLanguageLoadTimeout}) ama indirme SÜRER ve inince önbelleğe yazılır.
  * @returns {Promise<object>} sözlük nesnesi
  */
 export function loadLanguage(lang) {
   const key = dictLang(lang)
   if (DICTS[key]) return Promise.resolve(DICTS[key])
-  if (!loading[key]) {
-    const attempt = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('language load timeout')), LANG_LOAD_TIMEOUT_MS)
-      IMPORTERS[key]().then(
-        (dict) => {
-          clearTimeout(timer)
-          if (!dict || typeof dict !== 'object') { reject(new Error('language module without dictionary')); return }
-          DICTS[key] = dict
-          resolve(dict)
-        },
-        (err) => { clearTimeout(timer); reject(err) },
-      )
-    })
-    loading[key] = attempt
-    const settle = () => { if (loading[key] === attempt) loading[key] = null }
-    attempt.then(settle, settle)
-  }
-  return loading[key]
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error('language load timeout')
+      err.code = TIMEOUT_CODE
+      reject(err)
+    }, LANG_LOAD_TIMEOUT_MS)
+    importDictionary(key).then(
+      (dict) => { clearTimeout(timer); resolve(dict) },
+      (err) => { clearTimeout(timer); reject(err) },
+    )
+  })
 }
 
 /** Dilin sözlüğü şu an eşzamanlı kullanılabilir mi (yüklendiyse). */
@@ -181,7 +217,13 @@ function persistLang(lang) {
  */
 export function preloadStoredLanguage() {
   const lang = storedLang()
-  if (needsLoad(lang)) loadLanguage(lang).catch(() => {})
+  if (needsLoad(lang)) importDictionary(dictLang(lang)).catch(() => {})
+}
+
+/** Bir sözlük indiğinde çağrılır; aboneliği bırakan işlev döner. */
+function onDictionaryLoaded(cb) {
+  dictListeners.add(cb)
+  return () => { dictListeners.delete(cb) }
 }
 
 // Tek, kimliği sabit yedek nesne: hem context'in varsayılanı hem de useLanguage'in
@@ -200,30 +242,38 @@ const LangCtx = (globalThis.__smLangCtx ??= createContext(FALLBACK_CTX))
  *   <li>Açılışta saklı dilin sözlüğü henüz inmemişken: ağaç yerine {@code fallback} (açılış ekranı, etkin dilin açılış
  *       metinleriyle) çizilir; sözlük inince uygulama doğrudan o dilde açılır — ham anahtar ya da dil kayması yok.</li>
  *   <li>Çalışırken TR↔EN: önce sözlük iner ({@code pending: <hedef>} — dil denetimi meşgul göstergesi çizer), sonra
- *       dil tek adımda değişir ve tercih kaydedilir. Sözlük önbellekteyse geçiş ANINDA olur. İndirme başarısızsa arayüz
- *       mevcut dilde kalır, {@code loadFailures} artar (LanguageLoadNotice bildirim gösterir); sayfa YENİLENMEZ
- *       (kaydedilmemiş iş kaybolmasın).</li>
- *   <li><b>Açılış hata zinciri</b> (saklı dilin sözlüğü inmedi):
+ *       dil tek adımda değişir ve tercih kaydedilir. Sözlük önbellekteyse geçiş ANINDA olur. İndirme başarısızsa (zaman
+ *       aşımı dahil) arayüz mevcut dilde kalır, {@code loadFailures} artar (LanguageLoadNotice bildirim gösterir); sayfa
+ *       YENİLENMEZ (kaydedilmemiş iş kaybolmasın). Zaman aşımında süren indirme kesilmez: inince sonraki geçiş anında olur.</li>
+ *   <li><b>Açılışta yavaş indirme</b> (2026-11-06 inceleme ORTA-1): {@link LANG_LOAD_TIMEOUT_MS} dolunca indirme
+ *       BAŞARISIZ SAYILMAZ — yenileme, öbür dile geçiş, yeni indirme yok. Açılış ekranı kalır, {@code bootSlow} ile
+ *       "Beklenenden uzun sürüyor" + "Yeniden yükle" gösterir; AYNI indirme beklenir, inince uygulama o dilde açılır
+ *       (bildirim yok).</li>
+ *   <li><b>Açılış hata zinciri</b> (yalnız GERÇEK hata: parça 404, ağ hatası, sözlüksüz modül):
  *     <ol>
  *       <li>Sayfa BİR KEZ yenilenir (2026-10-23, çok pod R2b · MP-47): yuvarlanan dağıtımda bu paketin sözlük parçası
  *           öbür podda olabilir — yenileme taze index'i ve onun parçalarını getirir; açılış ekranı yenilenene kadar kalır.
  *           Hak açılış koruması ve ErrorBoundary ile ORTAK (utils/chunkReloadGuard.js).</li>
- *       <li>Hak yoksa ÖBÜR dilin sözlüğü denenir (İngilizce kullanıcıda Türkçe, Türkçe kullanıcıda İngilizce): inerse
- *           uygulama o dilde açılır, {@code loadFailures} artar; saklı tercih DEĞİŞMEZ (geçici hata kalıcı tercihi
- *           bozmasın); sunucu iletileri arayüzle aynı dilde kalsın diye X-Lang bu oturum için o dile zorlanır
- *           (dateLocale.setSessionLang).</li>
- *       <li>İkisi de inmezse {@code failure} (sözlüksüz, sabit metinli hata ekranı + "Yeniden yükle") çizilir — açılış
- *           ekranında sonsuza dek kalınmaz.</li>
+ *       <li>Hak yoksa ÖBÜR dilin sözlüğü denenir (İngilizce kullanıcıda Türkçe, Türkçe kullanıcıda İngilizce; o da yavaşsa
+ *           aynı yavaş indirme kuralı): inerse uygulama o dilde açılır, {@code loadFailures} artar; saklı tercih DEĞİŞMEZ
+ *           (geçici hata kalıcı tercihi bozmasın); sunucu iletileri arayüzle aynı dilde kalsın diye X-Lang bu oturum için
+ *           o dile zorlanır (dateLocale.setSessionLang). Çalışan oturumun dili sonradan kendiliğinden DEĞİŞMEZ.</li>
+ *       <li>İkisi de gerçek hatayla inmezse {@code failure} (sözlüksüz, sabit metinli hata ekranı + "Yeniden yükle")
+ *           çizilir. Hata ekranındayken bir sözlük inerse (ör. başka bir yerden tetiklenen indirme) ekran kendiliğinden
+ *           toparlanır: saklı dil öncelikli, yoksa öbür dil (yedek kuralıyla).</li>
  *     </ol></li>
  * </ul>
  */
 export function LangProvider({ children, fallback = null, failure = null }) {
   // storedLang() try/catch'li. LangProvider ErrorBoundary'nin ÜSTÜNDE: fırlarsa beyaz ekran (bkz. theme.jsx aynı düzeltme).
+  // lang: etkin dil (açılışta saklı dil; yalnız öbür dile düşülünce değişir) · bootTarget: açılışta şu an indirilen dil
+  // (saklı dil ya da gerçek hatadan sonra öbür dil; hazırken null) · slow: bu indirme bekleme eşiğini geçti.
   const [state, setState] = useState(() => {
     const lang = storedLang()
-    return { lang, ready: !needsLoad(lang), failed: false, pending: null, loadFailures: 0 }
+    const ready = !needsLoad(lang)
+    return { lang, ready, failed: false, slow: false, bootTarget: ready ? null : lang, pending: null, loadFailures: 0 }
   })
-  const { lang, ready, failed, pending, loadFailures } = state
+  const { lang, ready, failed, slow, bootTarget, pending, loadFailures } = state
   // Güncel etkin dil — toggle hedefini hesaplamak için; her dil değişiminde setState ile AYNI anda yazılır.
   const langRef = useRef(lang)
   const switching = useRef(null)
@@ -240,29 +290,55 @@ export function LangProvider({ children, fallback = null, failure = null }) {
     setDateLocale(lang)
   }, [lang])
 
-  // Açılış: saklı dilin sözlüğü henüz yoksa iner; inene kadar fallback, hiçbiri inmezse failure çizilir.
+  // Açılış: bootTarget'ın sözlüğü SÜRESİZ beklenir (bekleme eşiğinde yalnız `slow`); gerçek hatada zincir ilerler.
   useEffect(() => {
-    if (ready || failed) return undefined
+    if (ready || failed || !bootTarget) return undefined
     let cancelled = false
-    loadLanguage(lang).then(
-      () => { if (!cancelled) setState((s) => ({ ...s, ready: true })) },
+    const fellBack = bootTarget !== lang                            // öbür dil deneniyor (saklı dil gerçek hatayla inmedi)
+    const slowTimer = setTimeout(() => {
+      if (!cancelled) setState((s) => (s.slow ? s : { ...s, slow: true }))
+    }, LANG_LOAD_TIMEOUT_MS)
+    importDictionary(dictLang(bootTarget)).then(
       () => {
+        clearTimeout(slowTimer)
+        if (cancelled) return
+        if (!fellBack) {
+          setState((s) => ({ ...s, ready: true, slow: false, bootTarget: null }))
+          return
+        }
+        langRef.current = bootTarget
+        setSessionLang(bootTarget)
+        setState((s) => ({ ...s, lang: bootTarget, ready: true, slow: false, bootTarget: null, loadFailures: s.loadFailures + 1 }))
+      },
+      () => {
+        clearTimeout(slowTimer)
         if (cancelled) return
         if (reloadForStaleBundle()) return                          // bir kez yenile; açılış ekranı yerinde kalır
-        const other = otherLang(lang)
-        loadLanguage(other).then(
-          () => {
-            if (cancelled) return
-            langRef.current = other
-            setSessionLang(other)
-            setState((s) => ({ ...s, lang: other, ready: true, loadFailures: s.loadFailures + 1 }))
-          },
-          () => { if (!cancelled) setState((s) => ({ ...s, failed: true })) },
-        )
+        setState((s) => (fellBack
+          ? { ...s, failed: true, slow: false, bootTarget: null }
+          : { ...s, slow: false, bootTarget: otherLang(s.lang) }))
       },
     )
-    return () => { cancelled = true }
-  }, [ready, failed, lang])
+    return () => { cancelled = true; clearTimeout(slowTimer) }
+  }, [ready, failed, bootTarget, lang])
+
+  // Hata ekranındayken bir sözlük inerse kendiliğinden toparlan (saklı dil öncelikli; öbür dil yedek kuralıyla).
+  useEffect(() => {
+    if (!failed) return undefined
+    const recover = () => {
+      if (DICTS[dictLang(lang)]) {
+        setState((s) => (s.failed ? { ...s, failed: false, ready: true } : s))
+        return
+      }
+      const other = otherLang(lang)
+      if (!DICTS[dictLang(other)]) return
+      langRef.current = other
+      setSessionLang(other)
+      setState((s) => (s.failed ? { ...s, lang: other, failed: false, ready: true, loadFailures: s.loadFailures + 1 } : s))
+    }
+    recover()
+    return onDictionaryLoaded(recover)
+  }, [failed, lang])
 
   const switchTo = useCallback((next) => {
     if (!needsLoad(next)) {
@@ -295,7 +371,8 @@ export function LangProvider({ children, fallback = null, failure = null }) {
   /** TR ↔ EN. Sözlük inmemişse önce yükler; Promise<boolean> döner (true = dil değişti). */
   const toggle = useCallback(() => switchTo(langRef.current === 'tr' ? 'en' : 'tr'), [switchTo])
 
-  const value = useMemo(() => ({ lang, toggle, pending, loadFailures }), [lang, toggle, pending, loadFailures])
+  // bootSlow: yalnız açılış ekranı okur (LanguageBootSplash — "Beklenenden uzun sürüyor"); hazır olunca hep false.
+  const value = useMemo(() => ({ lang, toggle, pending, loadFailures, bootSlow: slow }), [lang, toggle, pending, loadFailures, slow])
 
   return <LangCtx.Provider value={value}>{ready ? children : (failed ? failure : fallback)}</LangCtx.Provider>
 }
