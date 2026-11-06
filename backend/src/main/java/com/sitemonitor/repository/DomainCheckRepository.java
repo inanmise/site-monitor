@@ -15,10 +15,26 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
     // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
     // Hata = status <> 'OK' (WARNING/CRITICAL/UNKNOWN/ERROR). Eski down sayacı kesik 500'lük
     // listeden hesaplanıyordu (bug); artık DB count.
-    Page<DomainCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<DomainCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to);
+    default Page<DomainCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM DomainCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM DomainCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<DomainCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<DomainCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p) {
+        return historyStatusNotPage(monitorId, status, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM DomainCheck c WHERE c.monitorId IN (:id, :id) AND c.status <> :status "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM DomainCheck c WHERE c.monitorId = :id AND c.status <> :status "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<DomainCheck> historyStatusNotPage(@Param("id") Long id, @Param("status") String status, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM DomainCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM DomainCheck c WHERE c.monitorId = :id AND c.status <> :status AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndStatusNotAndCheckedAtBetween(@Param("id") Long monitorId, @Param("status") String status, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
@@ -33,24 +49,27 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
     List<DomainCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
-    Optional<DomainCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM DomainCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<DomainCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     /** Son BAŞARILI kontrol (kaynak NONE değil) — değişiklik tespiti bunun registrar/NS/status'una karşı çalışır. */
-    Optional<DomainCheck> findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(Long monitorId, String source);
+    @Query("SELECT d FROM DomainCheck d WHERE d.monitorId IN (:id, :id) AND d.source <> :source "
+         + "ORDER BY d.monitorId DESC, d.checkedAt DESC LIMIT 1")
+    Optional<DomainCheck> findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(@Param("id") Long monitorId, @Param("source") String source);
 
     /**
      * Zamanlanmış DOMAINMON_CHANGED tespitinin TABANI (2026-09-29): veri taşıyan ({@code source <> 'NONE'}) ve ELLE
      * OLMAYAN en yeni satır — DNS'teki {@code DnsRecordRepository.findLatestScheduledSuccessful} eşleniği.
      */
-    @Query("SELECT d FROM DomainCheck d WHERE d.monitorId = :monitorId AND d.source <> 'NONE' "
-            + "AND (d.manual IS NULL OR d.manual = false) ORDER BY d.checkedAt DESC LIMIT 1")
+    @Query("SELECT d FROM DomainCheck d WHERE d.monitorId IN (:monitorId, :monitorId) AND d.source <> 'NONE' "
+            + "AND (d.manual IS NULL OR d.manual = false) ORDER BY d.monitorId DESC, d.checkedAt DESC LIMIT 1")
     Optional<DomainCheck> findLatestScheduledWithData(@Param("monitorId") Long monitorId);
 
     /** History detay listesi — SQL-LIMIT'li: en yeni :limit satır. */
-    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId IN (:id, :id) ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<DomainCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM DomainCheck r WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :since ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<DomainCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */

@@ -89,11 +89,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * Genel Bakış kartı "şu an" şeridi — YALNIZ aktif envanter alanları için alan başına en son alarm (2026-10-09, performans).
      * {@link #findLatestPerDomain} kapanmış alarmlar dahil TÜM geçmişi alan adına göre grupluyordu (alarm satırları hiç
      * silinmez → tablo büyüdükçe yavaşlar ve Genel Bakış ek verisini geciktirir). Küçük envanter üzerinden LATERAL ile alan
-     * başına tek indeks araması ({@code idx_ae_domain}); kart yalnız aktif envanter alanlarını gösterdiği için sonuç aynı.
-     * PostgreSQL'e özgü sözdizimi düşerse çağıran eski sorguya döner.
+     * başına tek indeks araması; kart yalnız aktif envanter alanlarını gösterdiği için sonuç aynı. Sorgu düşerse çağıran eski
+     * sorguya döner.
+     * <p>Performans 2026-11-06 (PF1 madde 6): {@code ORDER BY e.id DESC LIMIT 1} biçiminde planlayıcı birincil anahtarı geriye
+     * tarayıp alan adını SÜZGEÇLE eleyebiliyordu (hiç alarmı olmayan alanda tüm alarm tablosu). {@code MAX(x.id)} bileşik
+     * {@code idx_ae_domain_id (domain, id)} dizininde yalnız-dizin aramasıyla bulunur, satır birincil anahtarla alınır; LATERAL
+     * gerekmez (H2'de de koşar). Alarmı olmayan alan satır üretmez (eskisi gibi).
      */
-    @Query(value = "SELECT a.* FROM certificate_inventory i CROSS JOIN LATERAL "
-         + "(SELECT * FROM alert_events e WHERE e.domain = i.domain ORDER BY e.id DESC LIMIT 1) a "
+    @Query(value = "SELECT a.* FROM certificate_inventory i JOIN alert_events a "
+         + "ON a.id = (SELECT MAX(x.id) FROM alert_events x WHERE x.domain = i.domain) "
          + "WHERE i.active = true", nativeQuery = true)
     List<AlertEvent> findLatestForActiveInventoryDomains();
 

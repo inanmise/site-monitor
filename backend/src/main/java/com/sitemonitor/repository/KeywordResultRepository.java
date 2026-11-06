@@ -13,10 +13,26 @@ import java.util.Optional;
 public interface KeywordResultRepository extends JpaRepository<KeywordResult, Long> {
 
     // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
-    Page<KeywordResult> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<KeywordResult> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    default Page<KeywordResult> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM KeywordResult c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM KeywordResult c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<KeywordResult> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<KeywordResult> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM KeywordResult c WHERE c.monitorId IN (:id, :id) AND c.ok = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM KeywordResult c WHERE c.monitorId = :id AND c.ok = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<KeywordResult> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM KeywordResult c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM KeywordResult c WHERE c.monitorId = :id AND c.ok = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
@@ -31,14 +47,15 @@ public interface KeywordResultRepository extends JpaRepository<KeywordResult, Lo
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
     List<KeywordResult> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
-    Optional<KeywordResult> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM KeywordResult c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<KeywordResult> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır
      *  (eski: findByMonitorIdOrderByCheckedAtDesc(id).stream().limit(cap) → aylarca satır yüklüyordu). */
-    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId IN (:id, :id) ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<KeywordResult> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM KeywordResult r WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :since ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<KeywordResult> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
@@ -57,8 +74,8 @@ public interface KeywordResultRepository extends JpaRepository<KeywordResult, Lo
      *  (en yeni :limit). Null filtresi YOK: down/error kovaları için tüm kayıtlar gelir, istatistik
      *  Java'da null'sız hesaplanır. idx_kwr_monitor_checked üzerinden. */
     @Query("SELECT r.checkedAt, r.responseMs, r.ok FROM KeywordResult r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 

@@ -34,6 +34,10 @@ public class DbGrowthMetrics {
     private static final List<String> TABLES =
             com.sitemonitor.service.retention.RetentionCatalog.tables();
 
+    /** Yalnız izlenen tablolar ({@link #TABLES}, tek dizi parametresi) — boyut fonksiyonu yalnız onlar için çalışır. */
+    static final String SQL_SAMPLE =
+            "SELECT relname, n_live_tup, pg_total_relation_size(relid) FROM pg_stat_user_tables WHERE relname = ANY(?)";
+
     private final MeterRegistry registry;
     private final JdbcTemplate jdbcTemplate;
     private final AppSettingsService appSettings;
@@ -59,8 +63,11 @@ public class DbGrowthMetrics {
             // Kod fallback'i properties varsayılanıyla AYNI kalmalı: ikisi ayrışırsa ayar
             // silindiğinde eşik sessizce eski değere döner (2026-09: 5M → 20M).
             long warnRows = appSettings.getInt("site.monitor.db.growth-warn-rows", 20_000_000);
-            jdbcTemplate.query(
-                    "SELECT relname, n_live_tup, pg_total_relation_size(relid) FROM pg_stat_user_tables",
+            // Performans 2026-11-06 (PF3 madde 6): boyut (pg_total_relation_size — tablo başına dosya okuması) YALNIZ izlenen
+            // (saklama kataloğundaki) tablolar için hesaplanır; eskiden her pod 5 dakikada bir bütün kullanıcı tablolarının
+            // boyutunu hesaplayıp Java'da süzüyordu (yerel 162 tablo ≈ 300 ms → 109 tablo ≈ 200 ms). Sonuç aynı.
+            jdbcTemplate.query(SQL_SAMPLE,
+                    ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", TABLES.toArray())),
                     rs -> {
                         String t = rs.getString(1);
                         if (!rowCounts.containsKey(t)) return;             // yalnız izlenen tablolar

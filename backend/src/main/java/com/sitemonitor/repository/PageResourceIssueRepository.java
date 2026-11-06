@@ -16,10 +16,11 @@ public interface PageResourceIssueRepository extends JpaRepository<PageResourceI
     List<PageResourceIssue> findByMonitorIdOrderByCheckedAtDescIdAsc(Long monitorId);
 
     /** Sorun listesi — SQL-LIMIT'li, opsiyonel issueType filtresi (null = hepsi). */
-    @Query("SELECT r FROM PageResourceIssue r WHERE r.monitorId = :id "
+    // Performans 2026-11-06: IN (:id, :id) + ORDER BY monitorId biçimi (MonitorIndexSort) — bileşik idx_pri_monitor_checked geriye taranır.
+    @Query("SELECT r FROM PageResourceIssue r WHERE r.monitorId IN (:id, :id) "
          + "AND (:issueType IS NULL OR r.issueType = :issueType) "
          + "AND (:since IS NULL OR r.checkedAt >= :since) "
-         + "ORDER BY r.checkedAt DESC, r.id ASC LIMIT :limit")
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC, r.id ASC LIMIT :limit")
     List<PageResourceIssue> findFiltered(@Param("id") Long id, @Param("issueType") String issueType,
                                          @Param("since") String since, @Param("limit") int limit);
 

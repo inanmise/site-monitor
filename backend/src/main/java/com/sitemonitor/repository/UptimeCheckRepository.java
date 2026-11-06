@@ -13,8 +13,27 @@ import java.util.Optional;
 public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> {
 
     // ── Kontrol Geçmişi v2 (domain+port anahtarlı): sayfalı aralık + hata filtresi + histogram ──
-    Page<UptimeCheck> findByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to, Pageable p);
-    Page<UptimeCheck> findByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to, Pageable p);
+    // Performans 2026-11-06: alan adı IN (:domain, :domain) + sırada (MonitorIndexSort), port eşitlik — genel planda alan adı dizini
+    // (idx_uc_domain_checked) geriye taranır, port yalnız o alanın satırlarında süzülür; eşitlikte PostgreSQL tekil checked_at
+    // dizinini seçip domain / port'u TÜM aralığın satırlarında süzgeçle eliyordu.
+    default Page<UptimeCheck> findByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to, Pageable p) {
+        return historyPage(domain, port, from, to, MonitorIndexSort.leading(p, "domain"));
+    }
+    default Page<UptimeCheck> findByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to, Pageable p) {
+        return historyStatusNotPage(domain, port, status, from, to, MonitorIndexSort.leading(p, "domain"));
+    }
+    @Query(value = "SELECT u FROM UptimeCheck u WHERE u.domain IN (:domain, :domain) AND u.port = :port "
+         + "AND u.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_U,
+           countQuery = "SELECT COUNT(u.domain) FROM UptimeCheck u WHERE u.domain = :domain AND u.port = :port "
+         + "AND u.checkedAt >= :from AND u.checkedAt <= :to")
+    Page<UptimeCheck> historyPage(@Param("domain") String domain, @Param("port") int port,
+                                  @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query(value = "SELECT u FROM UptimeCheck u WHERE u.domain IN (:domain, :domain) AND u.port = :port "
+         + "AND u.status <> :status AND u.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_U,
+           countQuery = "SELECT COUNT(u.domain) FROM UptimeCheck u WHERE u.domain = :domain AND u.port = :port "
+         + "AND u.status <> :status AND u.checkedAt >= :from AND u.checkedAt <= :to")
+    Page<UptimeCheck> historyStatusNotPage(@Param("domain") String domain, @Param("port") int port, @Param("status") String status,
+                                           @Param("from") String from, @Param("to") String to, Pageable p);
     long countByDomainAndPortAndCheckedAtBetween(String domain, int port, String from, String to);
     long countByDomainAndPortAndStatusNotAndCheckedAtBetween(String domain, int port, String status, String from, String to);
 
