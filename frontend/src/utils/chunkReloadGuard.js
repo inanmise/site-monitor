@@ -14,7 +14,7 @@ import { BUILD_VERSION } from './appVersion.js'
  * <ul>
  *   <li>{@code public/boot-guard.js} — paketin kendisi (giriş betiği / CSS) yüklenemezse, React hiç başlamadan;</li>
  *   <li>ErrorBoundary — tembel bir parça yüklenemezse;</li>
- *   <li>dil yükleyici — açılışta İngilizce sözlük parçası inmezse (i18n/index.jsx; ancak hak bittikten sonra Türkçe).</li>
+ *   <li>dil yükleyici — açılışta saklı dilin sözlük parçası inmezse (i18n/index.jsx; hak bittikten sonra öbür dilin sözlüğü).</li>
  * </ul>
  * Paket kimliği giriş betiğinin yoludur ({@code /assets/index-<hash>.js}) — aynı VERSION dosyasıyla yapılan iki derleme
  * (develop) de ayrı sayılır; giriş betiği yoksa (geliştirme, testler) gömülü sürüm. Ayrıca HERHANGİ bir otomatik
@@ -95,7 +95,7 @@ export const reloader = { reload: () => window.location.reload() }
 
 /**
  * Bayat paket şüphesinde: hak varsa sayfayı yeniden yükler ve true döner (çağıran beklemeye geçer); hak yoksa false
- * (çağıran kendi yedek yolunu izler: hata ekranı, Türkçe sözlük…).
+ * (çağıran kendi yedek yolunu izler: hata ekranı, öbür dilin sözlüğü…).
  */
 export function reloadForStaleBundle(version) {
   if (!claimChunkReload(version)) return false

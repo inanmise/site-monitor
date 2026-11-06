@@ -6,7 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { DialogProvider } from './components/ui/Dialog.jsx'
 import { ToastProvider } from './components/ui/Toast.jsx'
 import { LangProvider, preloadStoredLanguage } from './i18n/index.jsx'
-import { LanguageBootSplash, LanguageLoadNotice } from './components/LanguageStatus.jsx'
+import { LanguageBootFailure, LanguageBootSplash, LanguageLoadNotice } from './components/LanguageStatus.jsx'
 import { ThemeProvider } from './i18n/theme.jsx'
 import { BrandingProvider } from './contexts/BrandingProvider.jsx'
 import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
@@ -20,9 +20,9 @@ import './styles/themes.css'   // ek temalar (2026-10-05): YALNIZ jetonlar, şem
 // Rename storage göçü — render'dan ÖNCE senkron: Theme/Lang provider'ları localStorage'ı
 // initializer'da okur; göç sonraya kalırsa kullanıcı tercihleri varsayılana dönmüş görünür.
 migrateStorageKeys()
-// İngilizce sözlük ayrı (lazy) chunk (2026-10-02, öneri 22): etkin dil İngilizce ise (saklı tercih 'en' ya da hiç
-// tercih yok — storedLang varsayılanı 'en') isteği ilk render'ı beklemeden başlat (göç SONRASI — eski anahtardaki
-// tercih de okunur). Türkçe sözlük açılış paketinde; Türkçe kullanıcı için ek istek yok.
+// Sözlükler ayrı (lazy) parça (İngilizce 2026-10-02, öneri 22; Türkçe 2026-11-06, performans): saklı dilin (hiç tercih
+// yoksa storedLang varsayılanı 'en') sözlük isteğini ilk render'ı beklemeden başlat (göç SONRASI — eski anahtardaki
+// tercih de okunur). Açılış parçası yalnız etkin dilin sözlüğünü indirir.
 preloadStoredLanguage()
 
 // Markalı 404 (2026-10-08): uygulama yalnız `/` (ve `/index.html`) yolunda açılır; sunucu bilinmeyen bir yola da aynı
@@ -32,18 +32,19 @@ const NotFoundPage = lazy(() => import('./pages/NotFoundPage.jsx'))
 const unknownPath = !isKnownAppPath(window.location.pathname)
 
 // Açılış ön isteği (2026-11-06, performans — PF4 Y3a): `/api/branding` ve (bilinen yolda, bekleyen çıkış yoksa) `/api/me` ilk
-// çizimden ÖNCE başlar — İngilizce sözlük parçası inerken bekleme yapmasınlar. BrandingProvider ve App aynı sözü alır (tek istek).
+// çizimden ÖNCE başlar — sözlük parçası inerken bekleme yapmasınlar. BrandingProvider ve App aynı sözü alır (tek istek).
 startBootPrefetch({ me: !unknownPath && !isLogoutPending() })
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <ThemeProvider>
-      {/* fallback: saklı dil İngilizce ve sözlüğü henüz inmemişken (genellikle bir an) uygulama yerine açılış ekranı */}
-      <LangProvider fallback={<LanguageBootSplash />}>
+      {/* fallback: saklı dilin sözlüğü henüz inmemişken (genellikle bir an) uygulama yerine açılış ekranı;
+          failure: açılışta iki dilin sözlüğü de inmezse sözlüksüz, sabit metinli hata ekranı (yeniden yükle düğmesi) */}
+      <LangProvider fallback={<LanguageBootSplash />} failure={<LanguageBootFailure />}>
         {/* Branding App'in ÜSTÜNDE: login sayfası da markalanır (public /api/branding, auth öncesi). */}
         <BrandingProvider>
           <ToastProvider>
-            {/* Dil sözlüğü indirilemezse (arayüz Türkçe kalır) bildirim — ToastProvider'ın içinde olmalı */}
+            {/* Dil sözlüğü indirilemezse (arayüz öbür / mevcut dilde kalır) bildirim — ToastProvider'ın içinde olmalı */}
             <LanguageLoadNotice />
             <DialogProvider>
               {/* Duyuru şeridi App'in İÇİNDE (içerik kolonunda) render edilir — burada olduğunda

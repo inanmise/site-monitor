@@ -31,9 +31,10 @@ export function setDateLocale(lang) {
 }
 
 /**
- * Oturumluk arayüz dili zorlaması — YALNIZ açılışta İngilizce sözlük indirilemediğinde kurulur
- * (i18n/index.jsx LangProvider, 2026-10-02 öneri 22). O durumda arayüz Türkçe açılır ama saklı tercih 'en'
- * kalır (geçici bir ağ hatası kullanıcının tercihini kalıcı değiştirmesin). `api/client.js` X-Lang'i önce
+ * Oturumluk arayüz dili zorlaması — YALNIZ açılışta saklı dilin sözlüğü indirilemeyip öbür dilin sözlüğüyle açıldığında
+ * kurulur (i18n/index.jsx LangProvider; 2026-10-02 öneri 22, 2026-11-06'dan beri iki yönde de: İngilizce kullanıcı Türkçe,
+ * Türkçe kullanıcı İngilizce açılır). Saklı tercih değişmez (geçici bir ağ hatası kullanıcının tercihini kalıcı
+ * değiştirmesin). `api/client.js` X-Lang'i önce
  * buradan okur ki sunucu iletileri arayüzle aynı dilde kalsın (QA ISSUE-001 sınıfı). null = zorlama yok;
  * başarılı her dil geçişi temizler. Normal akışta HİÇ kurulmaz → X-Lang eskisi gibi saklı tercihten gelir.
  */

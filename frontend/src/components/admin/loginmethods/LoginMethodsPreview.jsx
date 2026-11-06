@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react'
 import { Info, KeyRound, Mail, MonitorSmartphone, Smartphone } from 'lucide-react'
-import { FixedLangProvider, loadLanguage, useLanguage, useT } from '../../../i18n/index.jsx'
+import { FixedLangProvider, isLanguageLoaded, loadLanguage, useLanguage, useT } from '../../../i18n/index.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import Field from '../../ui/Field.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
@@ -101,10 +101,11 @@ export default function LoginMethodsPreview({ form, status }) {
   const [loading, setLoading] = useState(false)
   const channels = previewChannels(form, status)
 
+  // İki dil de ayrı (lazy) parça (2026-11-06): seçilen dilin sözlüğü yoksa önce iner; inmezse metinler yüklü öbür dile düşer.
   async function changeLang(next) {
-    if (next === 'en') {
+    if (!isLanguageLoaded(next)) {
       setLoading(true)
-      try { await loadLanguage('en') } catch { /* sözlük inmedi: TR yedeğiyle çizilir */ }
+      try { await loadLanguage(next) } catch { /* sözlük inmedi: yüklü öbür dilin metinleriyle çizilir */ }
       setLoading(false)
     }
     setLang(next)

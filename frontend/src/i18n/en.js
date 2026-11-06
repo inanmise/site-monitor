@@ -18109,6 +18109,12 @@ export const EN = {
   // The English dictionary is a separate (lazy) chunk — language-switch busy indicator + download failure (2026-10-02, item 22)
   'nav.langLoading': 'Loading language…',
   'lang.loadFailed': 'The English language file could not be loaded; the interface stays in Turkish. Reload the page and try again.',
+  // The Turkish dictionary is a separate (lazy) chunk too (2026-11-06, performance): when Turkish fails to load the interface
+  // stays in English; when both fail, the dictionary-free boot failure screen (texts also in i18n TR_BOOT/EN_BOOT).
+  'lang.loadFailedTr': 'The Turkish language file could not be loaded; the interface stays in English. Reload the page and try again.',
+  'lang.bootFailed.title': 'The interface language files could not be loaded',
+  'lang.bootFailed.body': 'Neither the Turkish nor the English language file could be downloaded. The connection may have dropped, or a new version is being rolled out right now. Wait a few seconds, then reload the page.',
+  'lang.bootReload': 'Reload',
   // End-to-end HTTP diagnosis (2026-10-02) — components/http/diagnose/*. Finding bodies use NAMED placeholders ({status},
   // {ms}, {route}…) filled by httpDiagnoseModel.interpolate; same names, same count as Turkish. Titles carry no
   // placeholders (the history list draws a title from the code alone).

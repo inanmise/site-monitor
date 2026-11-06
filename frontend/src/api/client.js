@@ -17,7 +17,7 @@ import {
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur.
- *  Oturumluk zorlama yalnız açılışta İngilizce sözlük inemediğinde kurulur (dateLocale.setSessionLang). */
+ *  Oturumluk zorlama yalnız açılışta saklı dilin sözlüğü inemeyip öbür dile düşüldüğünde kurulur (dateLocale.setSessionLang). */
 function uiLang() {
   const forced = sessionLangOverride()
   if (forced) return forced

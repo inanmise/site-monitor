@@ -5,7 +5,7 @@ import { evalStateModel, sideJobsModel, otherPodState, EVAL_KINDS, EVAL_VERIFY_T
 import { evalLoadModel, handoverModel, loadLevel, EVAL_LOAD_REASONS, EVAL_LOAD_EXPECTED_REASONS, EVAL_LOAD_OPERATIONAL_REASONS,
   EVAL_LOAD_OUTCOMES, EVAL_LOAD_TONE, HANDOVER_RESULTS, HANDOVER_NOT_READY, EVAL_LOAD_OBSERVATIONS_REASONS,
   HANDOVER_NOT_READY_FROM_REASON } from '../components/admin/health/clusterRuntimeModel.js'
-import { TR } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
 import { checkJobsModel, CHECK_JOB_TYPES, CHECK_QUEUE_WARN_MS, CHECK_JOBS_TONE, CHECK_MODE_TONE, CHECK_WORKER_TONE }

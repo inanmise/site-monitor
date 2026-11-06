@@ -1,7 +1,7 @@
 import { api } from '../api/client'
 
 /**
- * Açılış ön isteği (2026-11-06, performans — PF4 Y3a). Saklı dil İngilizce ise uygulama, İngilizce sözlük parçası inene kadar
+ * Açılış ön isteği (2026-11-06, performans — PF4 Y3a). Uygulama, saklı dilin sözlük parçası (Türkçe ya da İngilizce) inene kadar
  * açılış ekranında bekler (LangProvider `fallback`); `BrandingProvider` ve `App` o ana dek BAĞLANMAZ, dolayısıyla `/api/branding`
  * ve oturum açılışı `/api/me` da sözlüğü bekliyordu (seri: parça → sonra iki istek). Artık `main.jsx` iki isteği ilk çizimden ÖNCE
  * başlatır (sözlükle paralel); `App` (`bootMe`) ve `BrandingProvider` aynı sözü TEK kez alır — ağda yine birer istek.
@@ -29,7 +29,7 @@ function hold(promise) {
 /** İstekleri başlatır (yalnız bir kez; zaten başlamışsa dokunmaz). `me: false` → oturum isteği başlatılmaz. */
 /**
  * Ön istekler dil başlığı (`X-Lang`) TAŞIMAZ: ikisinin başarılı yanıtında dile bağlı metin yok, sözlük de henüz inmedi —
- * İngilizce sözlük inemezse oturum Türkçe'ye zorlanır ve hiçbir istek "en" taşımamalı (`rolling-update-assets.spec.js`).
+ * saklı dilin sözlüğü inemezse oturum öbür dile zorlanır ve hiçbir istek saklı dili taşımamalı (`rolling-update-assets.spec.js`).
  */
 const NO_LANG = Object.freeze({ headers: Object.freeze({ 'X-Lang': undefined }) })
 

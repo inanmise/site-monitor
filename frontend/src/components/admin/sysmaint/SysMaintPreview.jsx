@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CalendarClock, CheckCircle2, Hourglass, LogIn, MonitorSmartphone, Timer } from 'lucide-react'
-import { FixedLangProvider, loadLanguage, useLanguage, useT } from '../../../i18n/index.jsx'
+import { FixedLangProvider, isLanguageLoaded, loadLanguage, useLanguage, useT } from '../../../i18n/index.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import MaintenanceLoginCard from '../../maintenance/MaintenanceLoginCard.jsx'
@@ -37,10 +37,11 @@ export default function SysMaintPreview({ current, serverNowMs }) {
   const [tab, setTab] = useState('login')
   const block = useMemo(() => sampleBlock(current, serverNowMs), [current, serverNowMs])
 
+  // İki dil de ayrı (lazy) parça (2026-11-06): seçilen dilin sözlüğü yoksa önce iner; inmezse metinler yüklü öbür dile düşer.
   async function changeLang(next) {
-    if (next === 'en') {
+    if (!isLanguageLoaded(next)) {
       setLoading(true)
-      try { await loadLanguage('en') } catch { /* sözlük inmedi: TR yedeğiyle çizilir */ }
+      try { await loadLanguage(next) } catch { /* sözlük inmedi: yüklü öbür dilin metinleriyle çizilir */ }
       setLoading(false)
     }
     setLang(next)

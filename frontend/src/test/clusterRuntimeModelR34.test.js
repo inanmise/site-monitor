@@ -7,7 +7,7 @@ import {
   CERT_SWEEP_MODES, CERT_CHUNKS_TONE, CERT_MODE_TONE, CERT_CHUNK_OLDEST_WARN_MS, CERT_COORDINATOR_ALIVE_MS, CERT_NEWER_RUN_SLACK_MS,
 } from '../components/admin/health/clusterRuntimeModel.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
-import { TR } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 
 /**
