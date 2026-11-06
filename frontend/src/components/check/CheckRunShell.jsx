@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { dateLocale } from '../../i18n/dateLocale.js'
 import { RefreshCw, Check, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
@@ -68,6 +68,57 @@ function tdClassOf(c, row) {
 const TH = 'sticky top-0 z-[1] h-auto bg-card px-3 py-1.5 text-right text-[10.5px] font-bold tracking-[.04em] text-muted-foreground uppercase'
 const TD = 'px-3 py-1.5 text-right'
 
+/** Varsayılan satır hatası: satırın kendi `error`'u, yoksa sunucu gövdesindeki `error`. Modül düzeyi → kararlı başvuru. */
+const defaultRowError = (r) => r.error || r.data?.error
+
+/**
+ * Duvar saati süresi — YAPRAK bileşen (2026-11-06, performans). Koşum sürerken saniyede bir yalnız
+ * bu metin çizilir; eskiden saniyelik `setNow` bütün pencereyi (300 satırlık tabloyu) yeniden
+ * çiziyordu. Süre satır sürelerinin toplamı DEĞİL: kontroller paralel koşar.
+ */
+function ElapsedSummary({ startedAt, finishedAt, running }) {
+  const t = useT()
+  const [now, setNow] = useState(() => Date.now())
+  // Geçen süre saniyede bir ilerlesin: koşum paralel olduğu için son yavaş kontrol beklenirken
+  // yeni satır gelmiyor ve yalnız render'a bağlı bir sayaç donmuş görünürdü.
+  useEffect(() => {
+    if (!running) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [running])
+  const elapsedMs = startedAt ? Math.max(0, (finishedAt ?? now) - startedAt) : null
+  return <span className="inline-flex items-center gap-1.5">{t('app.checkSummaryTime', fmtDur(elapsedMs))}</span>
+}
+
+/**
+ * Tek sonuç satırı — `memo`: satır nesnesi eklendikten sonra değişmez (koşum yeni satırı diziye
+ * ekler, eskileri aynı başvuruyla taşır), dolayısıyla her yeni sonuçta yalnız YENİ satır çizilir.
+ * Önceden her sonuç bütün tabloyu yeniden çiziyordu (N sonuçta O(N²) hücre).
+ */
+const CheckRow = memo(function CheckRow({ r, nameOf, rowError, columns }) {
+  const msg = r.ok ? null : rowError(r)
+  return (
+    <TableRow data-error={r.ok ? undefined : 'true'} className={r.ok ? undefined : 'bg-destructive/5'}>
+      <TableCell data-col="status" className={cn(TD, 'w-[34px] pr-1 pl-2.5 text-center')}>
+        <span data-ok={r.ok ? 'true' : 'false'}
+          className={cn('inline-flex size-[17px] items-center justify-center rounded-full align-middle text-[11px] font-extrabold text-white',
+            r.ok ? 'bg-success' : 'bg-destructive')}>
+          {r.ok ? '✓' : '✕'}
+        </span>
+      </TableCell>
+      <TableCell data-col="name" className={cn(TD, 'text-left font-semibold')}>
+        <span className="block">{nameOf(r)}</span>
+        {msg && <span data-slot="check-row-msg" className="mt-0.5 block max-w-[320px] text-[.88em] font-normal whitespace-normal text-destructive">{msg}</span>}
+      </TableCell>
+      {columns.map(c => (
+        <TableCell key={c.key} className={cn(TD, tdClassOf(c, r))}>{c.render(r)}</TableCell>
+      ))}
+      <TableCell className={cn(TD, CELL.mono)}>{fmtClock(r.start)}</TableCell>
+      <TableCell className={cn(TD, CELL.mono)}><b>{fmtDur(r.ms)}</b></TableCell>
+    </TableRow>
+  )
+})
+
 /**
  * "Şimdi Kontrol Et" akan ilerleme tablosunun İSKELETİ: ilerleme çubuğu, özet şeridi, akış
  * kaydırması, duvar saati ve Durdur/Kapat eylemleri. Çizim shadcn: pencere ui/ModalShell (Dialog),
@@ -89,15 +140,15 @@ const TD = 'px-3 py-1.5 text-right'
  *
  * @param {Object|null} run  {rows, total, done, teamLabel, startedAt, finishedAt}; null → hiçbir şey çizilmez
  * @param {string} nameHeader  ilk veri kolonunun başlığı
- * @param {Function} nameOf  (row) => string — ilk veri kolonunun metni
- * @param {Function} [errorOf]  (row) => string|null — varsayılan: row.error || row.data?.error
- * @param {Array} columns  [{key, label, thClassName?, tdClassName?: string|(row)=>string, render: (row)=>node}]
+ * @param {Function} nameOf  (row) => string — ilk veri kolonunun metni. KARARLI başvuru verin (modül düzeyi
+ *                           ya da useCallback): satırlar `memo`; her çizimde yeni fonksiyon bütün tabloyu yeniden çizdirir.
+ * @param {Function} [errorOf]  (row) => string|null — varsayılan: row.error || row.data?.error (kararlı başvuru)
+ * @param {Array} columns  [{key, label, thClassName?, tdClassName?: string|(row)=>string, render: (row)=>node}] — useMemo'lu
  * @param {import('react').ReactNode} [notice]  özet şeridinin altında koşum geneli bildirim (ör. "havuz dolu → N atlandı")
  */
 export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, columns = [], title, notice, onClose, onCancel }) {
   const t = useT()
   const listRef = useRef(null)
-  const [now, setNow] = useState(() => Date.now())
 
   // Yeni satır eklendikçe listeyi en alta kaydır (akış efekti).
   useEffect(() => {
@@ -105,24 +156,12 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
     if (el) el.scrollTop = el.scrollHeight
   }, [run?.rows.length])
 
-  // Geçen süre saniyede bir ilerlesin: koşum paralel olduğu için son yavaş kontrol beklenirken
-  // yeni satır gelmiyor ve yalnız render'a bağlı bir sayaç donmuş görünürdü.
-  const running = !!run && !run.done
-  useEffect(() => {
-    if (!running) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [running])
-
   if (!run) return null
 
   const rows = run.rows
   const okCount = rows.filter(r => r.ok).length
   const failCount = rows.length - okCount
-  // DUVAR SAATİ süresi. Satır sürelerinin toplamı DEĞİL: kontroller paralel koştuğu için o toplam
-  // (ör. 8 × 6 sn) gerçekte geçen sürenin çok üstünde çıkar ve kullanıcıya yanlış bilgi verirdi.
-  const elapsedMs = run.startedAt ? Math.max(0, (run.finishedAt ?? now) - run.startedAt) : null
-  const rowError = errorOf || ((r) => r.error || r.data?.error)
+  const rowError = errorOf || defaultRowError
 
   return (
     <ModalShell
@@ -155,7 +194,9 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
       <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 px-0.5 pt-2 pb-2.5 text-xs font-bold tabular-nums text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 text-success"><Check size={13} aria-hidden="true" />{t('app.checkSummaryOk', okCount)}</span>
         <span className={cn('inline-flex items-center gap-1.5', failCount && 'text-destructive')}><X size={13} aria-hidden="true" />{t('app.checkSummaryFail', failCount)}</span>
-        <span className="inline-flex items-center gap-1.5">{t('app.checkSummaryTime', fmtDur(elapsedMs))}</span>
+        {/* DUVAR SAATİ süresi. Satır sürelerinin toplamı DEĞİL: kontroller paralel koştuğu için o toplam
+            (ör. 8 × 6 sn) gerçekte geçen sürenin çok üstünde çıkar ve kullanıcıya yanlış bilgi verirdi. */}
+        <ElapsedSummary startedAt={run.startedAt} finishedAt={run.finishedAt} running={!run.done} />
         {run.teamLabel && <span data-slot="check-run-team" className="ml-auto max-w-full min-w-0 font-semibold [overflow-wrap:anywhere] sm:max-w-[42%]">{run.teamLabel}</span>}
       </div>
       {notice}
@@ -176,29 +217,9 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r, i) => {
-              const msg = r.ok ? null : rowError(r)
-              return (
-                <TableRow key={i} data-error={r.ok ? undefined : 'true'} className={r.ok ? undefined : 'bg-destructive/5'}>
-                  <TableCell data-col="status" className={cn(TD, 'w-[34px] pr-1 pl-2.5 text-center')}>
-                    <span data-ok={r.ok ? 'true' : 'false'}
-                      className={cn('inline-flex size-[17px] items-center justify-center rounded-full align-middle text-[11px] font-extrabold text-white',
-                        r.ok ? 'bg-success' : 'bg-destructive')}>
-                      {r.ok ? '✓' : '✕'}
-                    </span>
-                  </TableCell>
-                  <TableCell data-col="name" className={cn(TD, 'text-left font-semibold')}>
-                    <span className="block">{nameOf(r)}</span>
-                    {msg && <span data-slot="check-row-msg" className="mt-0.5 block max-w-[320px] text-[.88em] font-normal whitespace-normal text-destructive">{msg}</span>}
-                  </TableCell>
-                  {columns.map(c => (
-                    <TableCell key={c.key} className={cn(TD, tdClassOf(c, r))}>{c.render(r)}</TableCell>
-                  ))}
-                  <TableCell className={cn(TD, CELL.mono)}>{fmtClock(r.start)}</TableCell>
-                  <TableCell className={cn(TD, CELL.mono)}><b>{fmtDur(r.ms)}</b></TableCell>
-                </TableRow>
-              )
-            })}
+            {rows.map((r, i) => (
+              <CheckRow key={i} r={r} nameOf={nameOf} rowError={rowError} columns={columns} />
+            ))}
             {!run.done && (
               <TableRow className="hover:bg-transparent">
                 <TableCell className={cn(TD, 'text-left text-muted-foreground italic')} colSpan={columns.length + 4}>

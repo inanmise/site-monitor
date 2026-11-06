@@ -244,6 +244,12 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
 
 const IDLE = Object.freeze({ status: 'idle', prefs: {}, hydratedKeys: [] })
 
+/** İki tercih belgesi içerikçe aynı mı (JSON; okunamazsa farklı say — güvenli taraf yeni durum). */
+function sameDoc(a, b) {
+  if (a === b) return true
+  try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
+}
+
 /**
  * App düzeyi denetleyici — auth erken-return'lerinden ÖNCE çağrılır (hook kuralı); `user` null iken boşta durur.
  * Döner: bağlam değeri (bkz. {@link useUserPrefs}).
@@ -310,6 +316,9 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
         if (!alive || !res?.success || engine.isBusy() || engine.generation() !== startGen) return
         const doc = res.prefs && typeof res.prefs === 'object' && !Array.isArray(res.prefs) ? res.prefs : {}
         const hydratedKeys = engine.hydrate(doc, { migrate: false, refresh: true })
+        // Değişmeyen belge (2026-11-06, performans): odak / görünürlük yenilemesi aynı belgeyi getirdiyse ve yerele hiçbir anahtar
+        // yazılmadıysa durum DEĞİŞMEZ — eskiden her yenileme yeni nesneyle bütün uygulamayı (tercih bağlamı) yeniden çiziyordu.
+        if (hydratedKeys.length === 0 && sameDoc(doc, prefsRef.current)) return
         prefsRef.current = doc
         setState({ status: 'ready', prefs: doc, hydratedKeys })
       } finally {

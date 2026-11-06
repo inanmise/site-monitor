@@ -109,13 +109,30 @@ export function tagNamesOf(monitors) {
   return [...seen.values()].sort((a, b) => a.localeCompare(b))
 }
 
+/*
+ * Katlama önbelleği (2026-11-06, performans): pano araması her tuşta her kartın alan adını / yayıncısını / grubunu ve
+ * aranan metni yeniden katlıyordu (normalize NFD pahalı; 1000 kartta tuş başına binlerce çağrı). Aynı dize aynı sonucu
+ * verir — sınırlı önbellek (dolunca boşaltılır), uzun metinler önbelleğe girmez.
+ */
+const FOLD_CACHE_MAX = 20_000
+const FOLD_CACHE_MAX_LEN = 512
+const foldCache = new Map()
+
 /**
  * Arama için metni katlar (2026-10-16): Türkçe büyük / küçük harfler (İ I ı i) ve aksanlı harfler (ş ç ğ ö ü) eşit
  * sayılır — "internet" "İnternet Şubesi"ni, "katılım" "KATILIM"ı, "odeme" "Ödeme"yi bulur. Düz `toLowerCase()` "İ"yi
  * "i + birleşik nokta" yapıyordu, küçük harfle yazılan arama Türkçe adları bulamıyordu.
  */
 export function foldSearchText(value) {
-  return String(value ?? '').toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const s = String(value ?? '')
+  const hit = foldCache.get(s)
+  if (hit !== undefined) return hit
+  const out = s.toLocaleLowerCase('tr').replace(/ı/g, 'i').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  if (s.length <= FOLD_CACHE_MAX_LEN) {
+    if (foldCache.size >= FOLD_CACHE_MAX) foldCache.clear()
+    foldCache.set(s, out)
+  }
+  return out
 }
 
 /**

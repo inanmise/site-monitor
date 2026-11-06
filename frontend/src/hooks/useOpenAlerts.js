@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { useVisibleInterval } from './useVisibleInterval.js'
+import { replaceEqualDeep } from '../utils/replaceEqualDeep.js'
 
 /** Yoklama aralığı — sekme gizliyken durur (useVisibleInterval); alarm eylemleri `sm:alerts-changed` ile anında tazeler. */
 export const OPEN_ALERTS_POLL_MS = 60_000
@@ -29,7 +30,8 @@ export function useOpenAlerts({ enabled = true, pollMs = OPEN_ALERTS_POLL_MS } =
     try {
       const res = await api.me.openAlerts(fresh === true)
       if (!alive.current) return
-      if (res?.success && res.data) setData({ ...EMPTY, ...res.data, tabs: res.data.tabs || {} })
+      // Aynı içerik → aynı nesne (2026-11-06, performans): dakikalık yoklama değişmeyen özette menüyü yeniden çizdirmesin
+      if (res?.success && res.data) setData((prev) => replaceEqualDeep(prev, { ...EMPTY, ...res.data, tabs: res.data.tabs || {} }))
     } catch { /* son bilinen veri kalır */ } finally {
       if (alive.current) setLoaded(true)
     }
@@ -43,7 +45,9 @@ export function useOpenAlerts({ enabled = true, pollMs = OPEN_ALERTS_POLL_MS } =
     return () => window.removeEventListener(ALERTS_CHANGED_EVENT, onChanged)
   }, [enabled, refresh])
 
-  return { byTab: data.tabs || {}, total: Number(data.total || 0), sampled: !!data.sampled, visible: !!data.visible, loaded, refresh }
+  return useMemo(
+    () => ({ byTab: data.tabs || {}, total: Number(data.total || 0), sampled: !!data.sampled, visible: !!data.visible, loaded, refresh }),
+    [data, loaded, refresh])
 }
 
 /** Alarm durumu değişti — menü rozetlerini tazele (sahiplen / çöz / toplu işlem çağırır). */

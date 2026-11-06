@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { CirclePause } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import CertificateCardExtras from './CertificateCardExtras.jsx'
@@ -70,10 +70,16 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                                           // Zengin görünüm (2026-09-19): /card-extras bloğu; extra yoksa kompakt
                                           extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false,
                                           // "Şu an" şeridi (2026-09-19): her iki görünümde; live = {uptime, alert, renewal?}
-                                          live,
+                                          live: liveProp,
+                                          // ...ya da /card-extras SATIRI (2026-11-06, performans): şerit kartın içinde türetilir — çağıran her
+                                          // çizimde yeni bir `live` nesnesi üretip memo'yu bozmasın. `live` verilmişse o kazanır.
+                                          liveRow,
                                           // Yeni eklenen alan adı ilk kontrol + kart eki bekleniyor (App, 2026-09-28): boşluk yerine bekleme durumu
                                           warming = false, extrasPending = false }) {
   const t = useT()
+  const liveFromRow = useMemo(
+    () => (liveRow ? { uptime: liveRow.uptime, alert: liveRow.last_alert, renewal: liveRow.renewal } : undefined), [liveRow])
+  const live = liveProp !== undefined ? liveProp : liveFromRow
   const tone = certTone(cert)
   // Pasif kart (2026-10-08): bilgi son kontrolden — bayat gerekçe/bildirim çipleri ve "yeni yenilendi" çizilmez
   const paused = isPausedCert(cert)
@@ -196,8 +202,9 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
 }
 
 /**
- * MEMO: panoda 50 kart aynı anda duruyor ve App saniyede bir yeniden render olabiliyor (inaktivite geri sayımı,
- * "Şimdi Kontrol Et" akışı). Kart saf: aynı proplarla aynı çıktıyı üretir. Kazancın gerçekleşmesi için ÇAĞIRAN da
- * referansları sabit tutmalı — App.jsx'te cardActions/onClick useCallback ile sarılı.
+ * MEMO: panoda 50–200 kart aynı anda duruyor ve App sık yeniden çiziliyor ("Şimdi Kontrol Et" akışı, veri dalgaları, SSL
+ * Checker, diyaloglar). Kart saf: aynı proplarla aynı çıktıyı üretir. Kazancın gerçekleşmesi için ÇAĞIRAN da başvuruları
+ * sabit tutmalı (2026-11-06): App kart işleyicilerini alan adı başına kararlı üretir (`useKeyedHandler`), "şu an" şeridini
+ * `liveRow` (ek satırı) olarak verir, veri dalgaları değişmeyen satırların başvurusunu korur (`replaceEqualDeep`).
  */
 export default memo(CertificateCard)

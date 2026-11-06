@@ -43,7 +43,9 @@ import { cn } from '@/lib/utils'
  * @param setters  aynı anahtarlarla App durum ayarlayıcıları
  * @param options  { activity, team, group, tag, platform } — seçenek listeleri ({value,label}[]); `null` = seçici gizli
  * @param densityToggle  App'te çizilen `<CardDensityToggle>` (kart yoğunluğu standardı App.jsx'te pinli)
- * @param sslChecker     { value, onChange, onSubmit, busy }
+ * @param sslChecker     { value, onChange, onSubmit, busy } (denetimli) ya da { initialValue, onValueChange, onSubmit(metin) → true
+ *                       ise alan temizlenir, busy } (2026-11-06, performans: metin alanın kendi durumunda — basılan her tuş App'i
+ *                       ve kart ızgarasını yeniden çizmesin)
  */
 export const DASH_FILTER_DEFAULTS = Object.freeze({
   search: '', sort: 'default', activity: 'all', status: 'all', expiry: 'all', team: 'all', group: 'all', tag: 'all', platform: Object.freeze([]),
@@ -375,18 +377,31 @@ function SheetSelect({ label, value, options, onChange }) {
  * satırının EN SAĞINDA kalan yeri doldurur (en az 22rem, en çok 34rem; 2026-09-26 kullanıcı isteği), telefonda araç
  * çubuğunun en altında tam genişlik (48 px kutu, 40 px düğme). Tüm Sertifikalar başlığındaki kutuyla aynı görünüm.
  */
-function SslChecker({ value, onChange, onSubmit, busy, phone }) {
+function SslChecker({ value, onChange, onSubmit, busy, phone, initialValue = '', onValueChange }) {
   const t = useT()
+  const controlled = value !== undefined && typeof onChange === 'function'
+  const [local, setLocal] = useState(() => initialValue)
+  const text = controlled ? value : local
+  const change = (v) => {
+    if (controlled) { onChange(v); return }
+    setLocal(v)
+    onValueChange?.(v)
+  }
+  const submit = async () => {
+    if (controlled) { onSubmit(); return }
+    const ok = await onSubmit(text)
+    if (ok === true) change('')
+  }
   return (
     <InputGroup data-tour="add-domain"
       className={phone ? 'h-12 w-full' : 'h-9 w-full md:ml-auto md:w-auto md:min-w-[22rem] md:max-w-[34rem] md:flex-1 pointer-coarse:h-12'}>
       <InputGroupInput type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
         className={phone ? 'h-full text-base' : undefined}
-        value={value} onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && onSubmit()} />
+        value={text} onChange={(e) => change(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()} />
       <InputGroupAddon align="inline-end">
         <InputGroupButton variant="success" size="sm" className={phone ? 'h-10' : 'h-7 pointer-coarse:h-10'}
-          onClick={onSubmit} disabled={busy} aria-busy={busy || undefined}>
+          onClick={submit} disabled={busy} aria-busy={busy || undefined}>
           {busy ? t('app.checkingDomain') : t('app.checkBtn')}
         </InputGroupButton>
       </InputGroupAddon>

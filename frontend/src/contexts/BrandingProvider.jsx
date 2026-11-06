@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { api } from '../api/client'
 import { setRuntimeVersion, currentVersion } from '../utils/appVersion.js'
 import { useTheme } from '../i18n/theme.jsx'
+import { takeBootBranding } from '../utils/bootPrefetch.js'
 
 // globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
 const BrandingContext = (globalThis.__smBrandingCtx ??= createContext(null))
@@ -19,7 +20,8 @@ export function BrandingProvider({ children }) {
   /** fresh=true → cache-bust (admin kaydı sonrası anında yansıma); açılış çağrısı cache'li kalır. */
   const refresh = useCallback(async (fresh = false) => {
     try {
-      const res = await api.getBranding(fresh)
+      // Açılış çağrısı main.jsx'in ön isteğini alır (PF4 Y3a — sözlükle paralel, ağda tek istek); taze istek her zaman yeni
+      const res = await ((fresh ? null : takeBootBranding()) ?? api.getBranding(fresh))
       if (res?.success) {
         setBranding(res.data || {})
         // Sürüm ÇALIŞMA ANINDA sunucudan gelir; senkron okuyucular (ErrorBoundary, hata bildirimi)
