@@ -22,6 +22,15 @@ interface IndexCatalog extends AutoCloseable {
     /** Nişanı yazar (zaten varsa dokunmaz). */
     void writeMarker(String key, int rowsAffected) throws SQLException;
 
+    /** Anahtarı önekle başlayan nişanlar: anahtar → {@code applied_at} (UTC ISO). */
+    java.util.Map<String, String> markersWithPrefix(String prefix) throws SQLException;
+
+    /** Nişanı yazar ya da {@code applied_at}'ini şimdiye çeker (küme genelinde "şu an itibarıyla" kaydı). */
+    void upsertMarker(String key, int rowsAffected) throws SQLException;
+
+    /** Nişanı siler (yoksa hiçbir şey). */
+    void deleteMarker(String key) throws SQLException;
+
     /** Tablonun bütün indeksleri (geçerli şema); tablo yoksa boş liste. */
     List<IndexFacts> indexes(String table) throws SQLException;
 
@@ -40,7 +49,9 @@ interface IndexCatalog extends AutoCloseable {
     /**
      * DDL'i oturumda {@code lock_timeout} ve {@code statement_timeout} ile koşar, sonra ikisini sıfırlar. Her bekleme (kilit,
      * eski anlık görüntü / işlem — {@code CONCURRENTLY} aşamaları {@code VirtualXactLock} ile bekler) {@code lock_timeout}
-     * ile, toplam süre {@code statement_timeout} ile sınırlı (2026-11-06'da geçici kümede doğrulandı).
+     * ile, toplam süre {@code statement_timeout} ile sınırlı (2026-11-06'da geçici kümede doğrulandı). Deyim sürerken
+     * {@link DdlBlockWatch} ayrı bir bağlantıdan bizi bekleyen oturum arar; ≈ 6 sn bekleyen varsa deyimi iptal eder →
+     * {@link BlockingOthersException}. Bekçi başlatılamazsa DDL koşmaz (SQLException).
      */
     void executeBounded(String ddl, long lockTimeoutMs, long statementTimeoutMs) throws SQLException;
 

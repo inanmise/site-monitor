@@ -300,9 +300,11 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
                 // sonra uygulamanın kendi turu testin ortasında paylaşılan veritabanına satır yazmasın.
                 "--site.monitor.audit.chain-restart.initial-delay-ms=86400000",
                 // İndeks bakımı (2026-11-06): IndexMaintenancePostgresTest işleri kendisi koşar — uygulamanın kendi turu
-                // (3 dk sonra gereksiz indeks temizliği, 04:40 şişme bakımı) testin ortasında paylaşılan şemada DDL yapmasın.
+                // (3 dk sonra gereksiz indeks temizliği, 04:40 şişme bakımı, açılış kalıntı taraması) testin ortasında
+                // paylaşılan şemada DDL yapmasın.
                 "--site.monitor.index-maintenance.redundant-drop.initial-delay-ms=86400000",
-                "--site.monitor.index-maintenance.bloat-cron=-"));
+                "--site.monitor.index-maintenance.bloat-cron=-",
+                "--site.monitor.index-maintenance.leftover-sweep.delay-ms=86400000"));
         return a.toArray(String[]::new);
     }
 

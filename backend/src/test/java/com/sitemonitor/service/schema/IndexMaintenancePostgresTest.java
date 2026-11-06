@@ -13,6 +13,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,7 +30,10 @@ import static org.mockito.Mockito.mock;
  * indeksleri hiç yaratmaz ve kapsayanlar vardır; eski kurulum taklidinde temizlik yalnız doğrulananları düşürür (kapsayanı
  * olmayan / geçersiz kapsayanlı / benzersiz aday kalır); şişirilmiş bir indeks {@code REINDEX CONCURRENTLY} ile küçülür,
  * yarıda kalmış {@code _ccnew} kalıntısı temizlenir, benzersiz dizine dokunulmaz; açık bir işlem / anlık görüntü yeniden
- * kurmayı beklettiğinde iş {@code lock_timeout}'ta (sınırlı sürede) vazgeçer ve kalıntı temizlenir.
+ * kurmayı beklettiğinde iş {@code lock_timeout}'ta (sınırlı sürede) vazgeçer ve kalıntı temizlenir. İnceleme düzeltmeleri
+ * (2026-11-06): yeniden kurma bir {@code ALTER TABLE}'ı beklettiğinde bekçi ≈ 6 sn'de deyimi iptal eder (uzun
+ * {@code lock_timeout}'a rağmen), ALTER biter, kalıntı temizlenir; açılış kalıntı taraması ve bütçe atlama nişanları gerçek
+ * veritabanında çalışır.
  */
 @PostgresIntegration
 class IndexMaintenancePostgresTest {
@@ -339,6 +343,105 @@ class IndexMaintenancePostgresTest {
         } finally {
             jdbc().execute("DROP TABLE IF EXISTS " + t);
             jdbc().execute("DROP TABLE IF EXISTS it_ixm_other");
+        }
+    }
+
+    // ── 4. İnceleme düzeltmeleri (2026-11-06) ───────────────────────────────────────────────────────────────────────
+
+    private static int count(String sql) {
+        Integer n = jdbc().queryForObject(sql, Integer.class);
+        return n == null ? 0 : n;
+    }
+
+    @Test
+    @DisplayName("Bekçi: REINDEX (lock_timeout 5 dk) açık anlık görüntüyü beklerken ALTER TABLE onu bekler → ≈ 6 sn'de REINDEX iptal"
+            + " edilir, ALTER biter, _ccnew hemen temizlenir")
+    void watchdogCancelsRebuildThatBlocksAnotherSession() throws Exception {
+        String t = "it_ixm_watch";
+        try {
+            bloatedTable(t);
+            jdbc().execute("DROP TABLE IF EXISTS it_ixm_other4");
+            jdbc().execute("CREATE TABLE it_ixm_other4 (x INT)");
+            long before = size(t + "_mc");
+            try (Connection blocker = PostgresIt.app().newSession()) {
+                blocker.setAutoCommit(false);
+                blocker.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+                try (Statement st = blocker.createStatement()) { st.execute("SELECT count(*) FROM it_ixm_other4"); }
+                CompletableFuture<IndexBloatMaintenance.Report> run =
+                        CompletableFuture.supplyAsync(() -> maintenance(List.of(t), 300_000).maintain());
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                while (count("SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'REINDEX INDEX CONCURRENTLY%'"
+                        + " AND wait_event_type = 'Lock'") == 0) {
+                    assertThat(System.nanoTime()).as("REINDEX anlık görüntüyü beklemeye başlamalı").isLessThan(until);
+                    assertThat(run).as("REINDEX beklemeden bitmemeli").isNotDone();
+                    Thread.sleep(100);
+                }
+                long t0 = System.nanoTime();
+                try (Connection alter = PostgresIt.app().newSession(); Statement st = alter.createStatement()) {
+                    st.execute("SET statement_timeout = '60s'");   // güvenlik ağı — bekçi çalışmazsa test 60 sn'de düşer
+                    st.execute("ALTER TABLE " + t + " ADD COLUMN z INT");
+                }
+                long alterMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                assertThat(alterMs).as("ALTER bekçinin iptaliyle (≈ 6 sn) bitti, lock_timeout'u (5 dk) beklemedi").isBetween(2_000L, 15_000L);
+                IndexBloatMaintenance.Report r = run.get(60, TimeUnit.SECONDS);
+                assertThat(r.failed()).containsExactly(t + "_mc");
+                assertThat(r.stoppedEarly()).isTrue();
+                assertThat(r.leftoversDropped()).as("yarıda kalan _ccnew hemen düşürüldü").isEqualTo(1);
+                blocker.rollback();
+            }
+            assertThat(leftovers(t)).isEmpty();
+            assertThat(validity(t + "_mc")).isTrue();
+            assertThat(size(t + "_mc")).as("eski dizin yerinde").isEqualTo(before);
+            assertThat(count("SELECT count(*) FROM information_schema.columns WHERE table_name = '" + t + "' AND column_name = 'z'"))
+                    .isOne();
+            String watchers = "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND query LIKE '%pg_blocking_pids%'";
+            long closeBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (count(watchers) > 0 && System.nanoTime() < closeBy) Thread.sleep(100);
+            assertThat(count(watchers)).as("bekçi bağlantıları kapandı").isZero();
+        } finally {
+            jdbc().execute("DROP TABLE IF EXISTS " + t);
+            jdbc().execute("DROP TABLE IF EXISTS it_ixm_other4");
+        }
+    }
+
+    @Test
+    @DisplayName("Açılış kalıntı taraması gerçek kalıntıyı düşürür; bütçe atlama nişanı yazılır / tazelenir / okunur / silinir")
+    void bootSweepAndSkipMarkersOnPostgres() throws Exception {
+        String t = "it_ixm_sweep";
+        String prefix = "index-bloat-skip:it_ixm_probe_" + UUID.randomUUID().toString().substring(0, 8);
+        try {
+            bloatedTable(t);
+            try {
+                jdbc().execute("CREATE UNIQUE INDEX CONCURRENTLY " + t + "_mc_ccnew ON " + t + " (m)");
+            } catch (Exception expected) { /* tekrarlı m → INVALID kalıntı */ }
+            assertThat(validity(t + "_mc_ccnew")).as("hazırlık: kalıntı").isFalse();
+            IndexBloatMaintenance m = maintenance(List.of(t), 5_000);
+            m.markReady(0);
+            m.sweepTick();   // zamanlayıcı yok (sahte sağlayıcı) → satır içinde
+            assertThat(m.sweepDone()).isTrue();
+            assertThat(leftovers(t)).isEmpty();
+            assertThat(validity(t + "_mc")).isTrue();
+
+            try (IndexCatalog db = catalogs().open()) {
+                String key = prefix + "_idx";
+                db.upsertMarker(key, 5);
+                db.upsertMarker(key, 7);
+                Map<String, String> got = db.markersWithPrefix(prefix);
+                assertThat(got).containsOnlyKeys(key);
+                long at = IndexBloatMaintenance.parseUtc(got.get(key));
+                assertThat(Math.abs(System.currentTimeMillis() - at)).as("applied_at şimdi (UTC)").isLessThan(5 * 60_000L);
+                try (Connection c = PostgresIt.app().newSession(); Statement st = c.createStatement();
+                     ResultSet rs = st.executeQuery("SELECT rows_affected FROM schema_patch_markers WHERE patch_key = '" + key + "'")) {
+                    assertThat(rs.next()).isTrue();
+                    assertThat(rs.getInt(1)).as("tazelendi").isEqualTo(7);
+                }
+                assertThat(db.markersWithPrefix(prefix.substring(0, prefix.length() - 2) + "zz")).isEmpty();
+                db.deleteMarker(key);
+                assertThat(db.markersWithPrefix(prefix)).isEmpty();
+            }
+        } finally {
+            jdbc().execute("DROP TABLE IF EXISTS " + t);
+            jdbc().update("DELETE FROM schema_patch_markers WHERE left(patch_key, ?) = ?", prefix.length(), prefix);
         }
     }
 }

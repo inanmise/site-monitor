@@ -12,10 +12,13 @@ import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.SchedulingConfigurer;
+import org.springframework.scheduling.config.FixedDelayTask;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Service;
 
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,8 +41,10 @@ import java.util.stream.Collectors;
  * sürümde kaldırıldı: yeni kurulum onları hiç yaratmaz; bu iş ESKİ kurulumdaki kopyaları düşürür.
  *
  * <p><b>Ne zaman:</b> açılış yolunda değil — açılıştan {@code site.monitor.index-maintenance.redundant-drop.initial-delay-ms}
- * (3 dk) sonra, sonra {@code …interval-ms}'de (10 dk) bir, iş bitene dek; pod'un yan iş koşucusunda (yerel kadans "bitiş +
- * aralık"). Yalnız PostgreSQL. Türü okunamayan veritabanı = "sonra dene" (asla "PostgreSQL değil → bitti").
+ * (3 dk, en az 0) sonra, sonra {@code …interval-ms}'de (10 dk, en az {@value #MIN_INTERVAL_MS} ms) bir, iş bitene dek; pod'un
+ * yan iş koşucusunda (yerel kadans "bitiş + aralık"). Zamanlama programla kaydedilir ({@link #configureTasks}): 0 / negatif
+ * ayar sıkıştırılır, açılışı düşürmez (inceleme DÜŞÜK-6). Yalnız PostgreSQL. Türü okunamayan veritabanı = "sonra dene" (asla
+ * "PostgreSQL değil → bitti").
  *
  * <p><b>Kapı — başka sürüm koşan canlı pod yok:</b> {@link DeploymentHistoryService#liveOtherVersions()} boş VE okunabilir
  * olmalı. Eski sürüm bir pod ayaktayken (yayılım sürüyor) düşürülen indeks, o pod yeniden başlarsa ddl-auto / eski yama ile
@@ -58,7 +63,9 @@ import java.util.stream.Collectors;
  * ifade içermiyor ve ilk k sütunu adayın sütunlarıyla, aynı opclass / collation / sıralama seçenekleriyle birebir aynı.
  * Kapsayan benzersiz olabilir (birincil anahtar). Düşürme {@code DROP INDEX CONCURRENTLY IF EXISTS <şema>.<ad>} —
  * {@code lock_timeout} ile (kilit beklemesi aşılırsa 55P03 → WARN, sonraki tur; yarıda kalan düşürme adayı GEÇERSİZ bırakabilir,
- * sonraki tur onu da düşürür — geçici kümede doğrulandı).
+ * sonraki tur onu da düşürür — geçici kümede doğrulandı). Düşürme sürerken bekçi ({@link DdlBlockWatch}) bizi ≈ 6 sn bekleyen
+ * başka bir oturum görürse deyimi iptal eder: WARN "başka bir oturumu bekletiyordu, bırakıldı", tur burada biter (bekleme
+ * sayılır, deneme sayılmaz), sonraki turda yeniden denenir.
  *
  * <p><b>Doğrulanamayan aday iki türlüdür</b> (gerekçe, 2026-11-06): (1) ADAYIN KENDİSİ bizim tanımımız değil (benzersiz, kısıt,
  * kısmi, ifade, farklı sütun — bir DBA'nın aynı adla kurduğu dizin): hiçbir koşulda düşürülmez, yeniden denemek anlamsızdır →
@@ -68,12 +75,13 @@ import java.util.stream.Collectors;
  * — kapı, kilit, tür — sayılmaz), sonra bu pod bırakır (WARN); sonraki açılış yeniden dener. Bir indeks kapsayanı olmadan
  * ASLA düşürülmez. Nişan yalnız her hedef YOKKEN ya da (1) türündeyken yazılır.
  *
- * <p><b>Geri alma:</b> eski sürüme dönülürse ddl-auto ve eski yamalar bu indeksleri açılışta yeniden yaratır (kilitli
- * {@code CREATE INDEX}; bu tablolarda saniyeler) — RUNBOOK "İndeks bakımı".
+ * <p><b>Geri alma:</b> eski sürüme dönülürse ddl-auto ve eski yamalar bu indeksleri açılışta KİLİTLEYEREK yeniden yaratır
+ * (düz {@code CREATE INDEX}: yapım süresince tabloya yazımlar bekler — {@code activity_log}'da saniyeler-dakikalar); geri
+ * almadan ÖNCE dizinleri {@code CREATE INDEX CONCURRENTLY IF NOT EXISTS} ile kurun — RUNBOOK "İndeks bakımı".
  */
 @Slf4j
 @Service
-public class RedundantIndexCleanup {
+public class RedundantIndexCleanup implements SchedulingConfigurer {
 
     /** Nişan anahtarı — yayından sonra DEĞİŞTİRİLMEZ. */
     public static final String MARKER = "2026-11-06-redundant-index-cleanup";
@@ -83,6 +91,9 @@ public class RedundantIndexCleanup {
     static final int MAX_ATTEMPTS = 24;
     /** Bir düşürmenin toplam süre tavanı (her bekleme ayrıca {@code lock_timeout} ile sınırlı). */
     static final long DROP_STATEMENT_TIMEOUT_MS = 5 * 60_000L;
+    /** Tur aralığının alt sınırı (ayar 0 / negatif / küçük → bu). */
+    static final long MIN_INTERVAL_MS = 60_000L;
+    static final long DEFAULT_INITIAL_DELAY_MS = 180_000L;
 
     /** Düşürülecek indeks: ad, tablo, beklenen anahtar sütunları (sırayla). */
     public record Target(String index, String table, List<String> columns) {
@@ -138,6 +149,7 @@ public class RedundantIndexCleanup {
     private final boolean enabled;
     private final long lockTimeoutMs;
     private final long intervalMs;
+    private final long initialDelayMs;
 
     private final AtomicInteger failures = new AtomicInteger();
     private volatile boolean finished;
@@ -152,7 +164,8 @@ public class RedundantIndexCleanup {
                                  ObjectProvider<DeploymentHistoryService> history,
                                  @Value("${site.monitor.index-maintenance.enabled:true}") boolean enabled,
                                  @Value("${site.monitor.index-maintenance.lock-timeout-ms:30000}") long lockTimeoutMs,
-                                 @Value("${site.monitor.index-maintenance.redundant-drop.interval-ms:600000}") long intervalMs) {
+                                 @Value("${site.monitor.index-maintenance.redundant-drop.interval-ms:600000}") long intervalMs,
+                                 @Value("${site.monitor.index-maintenance.redundant-drop.initial-delay-ms:180000}") long initialDelayMs) {
         this(TARGETS, MARKER, DeferredIndexBuilder.memoKnown(() -> DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource())),
                 () -> JdbcIndexCatalog.open(jdbc.getDataSource()),
                 () -> {
@@ -167,12 +180,21 @@ public class RedundantIndexCleanup {
                     SchedulerService s = scheduler.getIfAvailable();
                     return s != null && s.offloadSideJob(job);
                 },
-                enabled, lockTimeoutMs, intervalMs);
+                enabled, lockTimeoutMs, intervalMs, initialDelayMs);
+    }
+
+    /** Test: varsayılan ilk gecikme. */
+    RedundantIndexCleanup(List<Target> targets, String marker, Supplier<Boolean> postgres, IndexCatalog.Factory catalogs,
+                          Supplier<List<Map<String, String>>> otherVersions, BooleanSupplier schedulerStopping,
+                          Predicate<SideJob> offload, boolean enabled, long lockTimeoutMs, long intervalMs) {
+        this(targets, marker, postgres, catalogs, otherVersions, schedulerStopping, offload, enabled, lockTimeoutMs, intervalMs,
+                DEFAULT_INITIAL_DELAY_MS);
     }
 
     RedundantIndexCleanup(List<Target> targets, String marker, Supplier<Boolean> postgres, IndexCatalog.Factory catalogs,
                           Supplier<List<Map<String, String>>> otherVersions, BooleanSupplier schedulerStopping,
-                          Predicate<SideJob> offload, boolean enabled, long lockTimeoutMs, long intervalMs) {
+                          Predicate<SideJob> offload, boolean enabled, long lockTimeoutMs, long intervalMs,
+                          long initialDelayMs) {
         this.targets = List.copyOf(targets);
         this.targetNames = this.targets.stream().map(Target::index).collect(Collectors.toUnmodifiableSet());
         this.marker = marker;
@@ -183,11 +205,22 @@ public class RedundantIndexCleanup {
         this.offload = offload;
         this.enabled = enabled;
         this.lockTimeoutMs = Math.max(1_000L, lockTimeoutMs);
-        this.intervalMs = Math.max(60_000L, intervalMs);
+        this.intervalMs = Math.max(MIN_INTERVAL_MS, intervalMs);
+        this.initialDelayMs = Math.max(0L, initialDelayMs);
     }
 
-    @Scheduled(initialDelayString = "${site.monitor.index-maintenance.redundant-drop.initial-delay-ms:180000}",
-            fixedDelayString = "${site.monitor.index-maintenance.redundant-drop.interval-ms:600000}")
+    /**
+     * Tur zamanlaması programla (inceleme DÜŞÜK-6): {@code @Scheduled(fixedDelayString)} 0 / negatif aralıkta
+     * {@code scheduleWithFixedDelay} hatasıyla açılışı düşürürdü; burada aralık en az {@value #MIN_INTERVAL_MS} ms, ilk
+     * gecikme en az 0 olarak sıkıştırılmış değerler kaydedilir. Kapalıysa hiç kaydedilmez.
+     */
+    @Override
+    public void configureTasks(ScheduledTaskRegistrar registrar) {
+        if (!enabled) return;
+        registrar.addFixedDelayTask(new FixedDelayTask(this::scheduled, Duration.ofMillis(intervalMs),
+                Duration.ofMillis(initialDelayMs)));
+    }
+
     public void scheduled() {
         if (!enabled || finished || closing || failures.get() >= MAX_ATTEMPTS) return;
         Runnable body = this::runAndCount;
@@ -310,6 +343,11 @@ public class RedundantIndexCleanup {
                         lastPending.remove(t.index());
                         log.info("Gereksiz indeks düşürüldü: {} ON {} ({}; kapsayan: {})", t.index(), t.table(),
                                 IndexBloatEstimator.human(d.candidate().bytes()), d.covering().name());
+                    } catch (BlockingOthersException e) {
+                        // Bekçi: bir oturum (ör. yeni pod'un ddl-auto ALTER'ı) bu düşürmeyi bekliyordu → bu tur burada biter
+                        log.warn("Gereksiz indeks düşürme başka bir oturumu bekletiyordu, bırakıldı: {} ON {} ({}) — sonraki turda"
+                                + " yeniden denenecek", t.index(), t.table(), e.reason());
+                        return Outcome.WAITING;
                     } catch (SQLException e) {
                         pending = true;
                         log.warn("Gereksiz indeks düşürülemedi (sonraki turda yeniden denenecek): {} ON {} — {}{}", t.index(),
