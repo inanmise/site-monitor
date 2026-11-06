@@ -324,7 +324,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.PortMonitor a = new com.sitemonitor.model.PortMonitor();
         a.setId(11L); a.setHost("a.example.com"); a.setPort(80); a.setProtocol("TCP"); a.setStandalone(true); a.setTeamId(3L);
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(a));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
         Map<String, Object> r = new java.util.HashMap<>(Map.of("open", false, "error", "Connection refused"));
         r.put(com.sitemonitor.service.failure.CheckFailure.KEY_REASON, "CONNECT_REFUSED");
         when(portCheckerService.check(a)).thenReturn(r);
@@ -366,7 +366,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.PortMonitor b = new com.sitemonitor.model.PortMonitor();
         b.setId(12L); b.setHost("b.example.com"); b.setPort(81); b.setProtocol("TCP"); b.setStandalone(true);
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(a, b));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
         when(portCheckerService.check(a)).thenThrow(new RuntimeException("conn boom"));
         when(portCheckerService.check(b)).thenReturn(Map.of("open", true, "response_ms", 5L));
 
@@ -388,8 +388,8 @@ class SchedulerServiceTest {
         gone.setId(41L); gone.setHost("eski.example.com"); gone.setPort(443); gone.setProtocol("TCP");
         gone.setStandalone(false);   // envanter-türevi → envanter pasifleşince kontrol edilmez
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(gone));
-        when(portMonitorRepo.findAll()).thenReturn(List.of(gone));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());   // envanterde yok
+        when(portMonitorRepo.findOrphanCheckKeys()).thenReturn(List.of("eski.example.com"));   // PF3 #3: tek kolon
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());   // envanterde yok
 
         scheduler.runPortChecks();
 
@@ -397,6 +397,9 @@ class SchedulerServiceTest {
         verify(escalationService).resolveOpenAlertsSilently(eq("eski.example.com"),
                 eq(java.util.Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW)),
                 org.mockito.ArgumentMatchers.contains("envanterde aktif değil"));
+        // PF3 #2 / #3 (2026-11-06): taramanın envanter kapısı ve öksüz temizliği TAM VARLIK okumaz (tek kolon)
+        verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
+        verify(portMonitorRepo, never()).findAll();
     }
 
     @Test
@@ -407,8 +410,8 @@ class SchedulerServiceTest {
         com.sitemonitor.model.PortMonitor live = new com.sitemonitor.model.PortMonitor();
         live.setId(43L); live.setHost("paylasik.example.com"); live.setPort(443); live.setProtocol("TCP"); live.setStandalone(true);
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of(skipped, live));
-        when(portMonitorRepo.findAll()).thenReturn(List.of(skipped, live));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(portMonitorRepo.findOrphanCheckKeys()).thenReturn(List.of("paylasik.example.com"));   // PF3 #3: tek kolon
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
         when(portCheckerService.check(live)).thenReturn(Map.of("open", true, "response_ms", 4L));
 
         scheduler.runPortChecks();
@@ -423,7 +426,7 @@ class SchedulerServiceTest {
         com.sitemonitor.model.DnsMonitor gone = new com.sitemonitor.model.DnsMonitor();
         gone.setId(51L); gone.setDomain("eski.example.com"); gone.setRecordType("A"); gone.setStandalone(false);
         when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(gone));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
 
         scheduler.runDnsChecks();
 
@@ -516,7 +519,7 @@ class SchedulerServiceTest {
     @DisplayName("F5: öksüz-alarm temizliği art arda sweep'lerde yalnız 1 kez koşar (5 dk gate)")
     void orphanCleanup_gatedAcrossSweeps() {
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of());
-        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(portMonitorRepo.findOrphanCheckKeys()).thenReturn(List.of());
 
         scheduler.runPortChecks();
         scheduler.runPortChecks();
@@ -534,13 +537,14 @@ class SchedulerServiceTest {
         deleted.setId(2L); deleted.setHost("silindi.example.com"); deleted.setPort(443); deleted.setStandalone(true);
         deleted.setActive(false); deleted.setDeletedAt("2026-09-01T00:00:00");
         when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of());
-        when(portMonitorRepo.findAll()).thenReturn(List.of(live, deleted));
+        when(portMonitorRepo.findOrphanCheckKeys()).thenReturn(List.of("canli.example.com"));   // silinmiş satır SQL'de elenir (PerfScheduledProjectionQueriesTest)
 
         scheduler.runPortChecks();
 
         org.mockito.ArgumentCaptor<java.util.Set<String>> hosts = org.mockito.ArgumentCaptor.forClass(java.util.Set.class);
         verify(escalationService).resolveOrphanedPortAlerts(hosts.capture());
         assertThat(hosts.getValue()).containsExactly("canli.example.com");   // duraklatılmış İZLENİYOR sayılır, silinmiş sayılmaz
+        verify(portMonitorRepo, never()).findAll();                          // PF3 #3: öksüz temizliği tam varlık OKUMAZ
     }
 
     @Test
@@ -583,7 +587,7 @@ class SchedulerServiceTest {
     void runPortChecks_dispatchesSweep() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("x.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));   // PF3 #2: tek kolon
 
         com.sitemonitor.model.PortMonitor inInv = new com.sitemonitor.model.PortMonitor();
         inInv.setId(1L); inInv.setHost("x.example.com"); inInv.setPort(8443);
@@ -812,7 +816,7 @@ class SchedulerServiceTest {
     void runDnsChecks_changeDetection_andFailureRegression() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("x.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));   // PF3 #2: tek kolon
 
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(7L); m.setDomain("x.example.com"); m.setRecordType("A");
@@ -863,7 +867,7 @@ class SchedulerServiceTest {
     @DisplayName("runDnsChecks: standalone monitör envanterde olmasa da kontrol edilir + ctx team_id taşır")
     void runDnsChecks_standaloneBypassesInventorySkip() {
         // Envanter BOŞ — domain envanterde yok; envanter-türevi olsa atlanırdı.
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
 
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(42L); m.setDomain("standalone.example.com"); m.setRecordType("A");
@@ -893,7 +897,7 @@ class SchedulerServiceTest {
             + "yeniden ölçümde ad çözülemezse SLOW/UNEXPECTED 'skipped' (D-b4)")
     @SuppressWarnings("unchecked")
     void runDnsChecks_allItemsCarryMonitorId_andUnresolvableRecheckSkipped() {
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(44L); m.setDomain("id.example.com"); m.setRecordType("A"); m.setStandalone(true); m.setTeamId(9L);
         m.setExpectedValue("192.0.2.1"); m.setPropagationCheck(true); m.setSlowThresholdMs(100);
@@ -933,7 +937,7 @@ class SchedulerServiceTest {
     @Test
     @DisplayName("O1/D8: bağımsız DNS monitörünün DEĞİŞİKLİĞİ DnsChange'e standalone işaretiyle çıkar; bağlamda işaret kalır — takımı BOŞ olsa da")
     void runDnsChecks_standaloneChange_carriesStandaloneMark() {
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(43L); m.setDomain("s.example.com"); m.setRecordType("A"); m.setStandalone(true); m.setTeamId(null);
         when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
@@ -961,7 +965,7 @@ class SchedulerServiceTest {
     void runDnsChecks_unexpectedValue() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("locked.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));   // PF3 #2: tek kolon
 
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(21L); m.setDomain("locked.example.com"); m.setRecordType("A"); m.setTeamId(3L);
@@ -993,7 +997,7 @@ class SchedulerServiceTest {
     void runDnsChecks_propagationInconsistent() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("prop.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));   // PF3 #2: tek kolon
 
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(31L); m.setDomain("prop.example.com"); m.setRecordType("A"); m.setTeamId(2L);
@@ -2431,7 +2435,7 @@ class SchedulerServiceTest {
     void runDnsChecks_baselineIgnoresManualRecords() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("m.example.com");
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));   // PF3 #2: tek kolon
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
         m.setId(44L); m.setDomain("m.example.com"); m.setRecordType("A");
         when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));

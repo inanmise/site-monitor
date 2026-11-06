@@ -299,14 +299,14 @@ class CheckPipelineReviewFixTest {
     void inventoryReadFailureClaimsNothing() {
         h.bindDistributed(true, CheckJobTypes.PORT);
         h.portFixture();
-        when(h.inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenThrow(new DataAccessResourceFailureException("db blip"));
+        when(h.inventoryRepo.findActiveDomains()).thenThrow(new DataAccessResourceFailureException("db blip"));   // PF3 #2: tek kolon
         h.scheduler.dispatchCheckJobs();
         assertThat(store.dispatched).isEmpty();
         assertThat(dueKeys().keySet()).noneMatch(k -> k.startsWith("port:"));
         CertificateInventory inv = new CertificateInventory();
         inv.setDomain("inv-host.example.com");
         inv.setActive(true);
-        Mockito.doReturn(List.of(inv)).when(h.inventoryRepo).findByActiveTrueOrderByDomainAsc();
+        Mockito.doReturn(List.of(inv.getDomain())).when(h.inventoryRepo).findActiveDomains();
         h.clock.addAndGet(5_000L);
         h.scheduler.dispatchCheckJobs();
         assertThat(dispatchedIds(CheckJobTypes.PORT)).containsExactly(1L, 2L, 3L, 4L, 6L, 7L);

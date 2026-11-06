@@ -80,6 +80,14 @@ public class CheckHistoryService {
          * anahtar hiç yazılmaz (diğer türlerin zarfı aynen kalır).
          */
         default Long errors(String from, String to) { return null; }
+
+        /**
+         * Sayfa sorgusunun ({@link #page}) kendi COUNT'u bu kipte {@link #total} ({@code fail=false}) ya da {@link #fail}
+         * ({@code fail=true}) ile AYNI ölçütü mü sayar (2026-11-06, performans PF2 #10)? Evetse {@code execute} o sayacı
+         * ayrıca sorgulamaz, sayfanın toplamını kullanır — aynı COUNT iki kez koşmaz. Varsayılan false: kaynak sayfa ile
+         * sayaçta farklı ölçüt kullanabilir (DNS "başarısız sorgu" kipi, dbquery "sorunlu" süzgeci) → iki ayrı sorgu (eski davranış).
+         */
+        default boolean pageCountMatches(boolean fail) { return false; }
     }
 
     /** CSV kolonu: başlık + satırdan değer çıkaran fonksiyon. */
@@ -144,8 +152,9 @@ public class CheckHistoryService {
         Pageable pageable = PageRequest.of(r.page(), r.size(), Sort.by(Sort.Direction.DESC, "checkedAt"));
         Page<?> page = src.page(r.from(), r.to(), r.fail(), pageable);
 
-        long totalAll = src.total(r.from(), r.to());
-        long totalFail = src.fail(r.from(), r.to());
+        // PF2 #10: sayfanın toplamı süzgeçli kipin sayacıyla aynı ölçütteyse (kaynak beyan eder) o sayaç YENİDEN sorgulanmaz.
+        long totalAll = !r.fail() && src.pageCountMatches(false) ? page.getTotalElements() : src.total(r.from(), r.to());
+        long totalFail = r.fail() && src.pageCountMatches(true) ? page.getTotalElements() : src.fail(r.from(), r.to());
 
         // Histogram degrade-edilebilir: patlarsa şerit kaybolur ama liste/sayaç/alarm YAŞAR.
         // 2026-08 test ortamı dersi: JPQL 42803 hatası tüm sekmeyi öldürmüştü — bir daha asla.

@@ -76,6 +76,11 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
          + "WHEN 'LOW' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END, e.createdAt DESC")
     List<AlertEvent> findAllOpenOrderBySeverity();
 
+    /** Öksüz alarm temizliği (2026-11-06, performans PF3 #3): verilen türlerdeki AÇIK alarmların alan anahtarları (tekil). Tüm açık
+     *  alarmları ({@code context_json} dahil) okuyup Java'da süzmek yerine; {@code idx_ae_storm_scan (resolved, alert_type, …)} önekiyle. */
+    @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND e.alertType IN :types AND e.domain IS NOT NULL")
+    List<String> findOpenDomainsByAlertTypes(@Param("types") Collection<String> types);
+
     /** Genel Bakış kartı "şu an" şeridi (2026-09-19): alan başına EN SON alarm olayı (açık ya da çözülmüş) — tek sorgu. */
     @Query("SELECT a FROM AlertEvent a WHERE a.id IN (SELECT MAX(b.id) FROM AlertEvent b WHERE b.domain IS NOT NULL GROUP BY b.domain)")
     List<AlertEvent> findLatestPerDomain();

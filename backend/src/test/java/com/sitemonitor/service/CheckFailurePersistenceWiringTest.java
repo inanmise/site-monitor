@@ -204,7 +204,7 @@ class CheckFailurePersistenceWiringTest {
         CertificateInventoryRepository inv = field("inventoryRepo");
         CertificateInventory ci = new CertificateInventory();
         ci.setDomain("x.example.test");
-        when(inv.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(ci));
+        when(inv.findActiveDomains()).thenReturn(List.of(ci.getDomain()));   // PF3 #2: tek kolon
         DnsMonitor m = new DnsMonitor();
         m.setId(7L); m.setDomain("x.example.test"); m.setRecordType("A");
         DnsMonitorRepository monRepo = field("dnsMonitorRepo");

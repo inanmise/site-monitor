@@ -95,6 +95,15 @@ public class UserPushOverflowService {
                initialDelayString = "${site.monitor.userpush.overflow-sweep-initial-ms:75000}")
     public void scheduledSweep() {
         if (!push.enabled() || !push.overflowSummaryEnabled()) return;   // kapalıyken bugünkü davranış: satırlar günlükte kalır
+        // Ucuz ön kontrol (2026-11-06, performans PF3 #8): özetlenecek taşma yoksa kilit HİÇ alınmaz — kilit almak her pod'da
+        // dakikada üç yazma (eskiyi sil, ekle, bırak) demekti, çoğu turda boşuna. Aday varsa kilit içindeki tur adayları
+        // YENİDEN okur (karar her zaman kilit altındaki okumadır; ön kontrol yalnız "kilide gerek var mı").
+        try {
+            List<Object[]> pending = repo.overflowCandidates(ISO.format(Instant.now(clock).minus(LOOKBACK)));
+            if (pending == null || pending.isEmpty()) return;
+        } catch (Exception e) {
+            log.debug("Push saat tavanı ön kontrolü okunamadı — kilitli tura geçiliyor: {}", e.getMessage());
+        }
         schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
             SweepResult r = sweep(Instant.now(clock));
             if (r.summaries() > 0 || r.skipped() > 0) {

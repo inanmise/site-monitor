@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
@@ -14,6 +15,21 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByDomainIn(Collection<String> domains);
 
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
+
+    /** Alan adı süre bitişi tazelemesi (2026-11-06, performans PF3 #4): aktif, silinmemiş AĞ kayıtlarının (elle yüklenen
+     *  sertifika hariç) [id, domain, domainExpiry, domainExpiryCheckedAt] — tam varlık yerine; alan adı sırası korunur. */
+    @Query("SELECT c.id, c.domain, c.domainExpiry, c.domainExpiryCheckedAt FROM CertificateInventory c WHERE c.active = true"
+            + " AND c.deletedAt IS NULL AND (c.certSource IS NULL OR c.certSource <> 'MANUAL') ORDER BY c.domain ASC")
+    List<Object[]> findDomainExpiryRows();
+
+    /** Süre bitişini YALNIZ kendi üç kolonuna yazar (PF3 #4) — tam varlık kaydı (merge) aradaki eşzamanlı envanter düzenlemesini
+     *  bayat değerle geri yazıyordu. Dönüş: güncellenen satır sayısı. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.domainExpiry = :expiry, c.domainRegistrar = :registrar,"
+            + " c.domainExpiryCheckedAt = :checkedAt WHERE c.id IN :ids")
+    int updateDomainExpiry(@Param("ids") Collection<Long> ids, @Param("expiry") String expiry,
+                           @Param("registrar") String registrar, @Param("checkedAt") String checkedAt);
 
     /** İzlemesi durdurulmuş (pasif) kayıtlar — Pano'nun "Pasif" kartları (2026-10-08). */
     List<CertificateInventory> findByActiveFalseOrderByDomainAsc();

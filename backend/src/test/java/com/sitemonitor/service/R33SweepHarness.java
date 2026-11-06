@@ -189,6 +189,8 @@ final class R33SweepHarness {
         inv.setDomain("inv-host.example.com");
         inv.setActive(true);
         lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        // PF3 #2 (2026-11-06): klasik Port / DNS taraması aktif ağ envanterini tek kolonla okur (findActiveDomains).
+        lenient().when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));
     }
 
     private MonitoringOutageService realMos() {
@@ -463,6 +465,27 @@ final class R33SweepHarness {
             return all.stream().filter(m -> ids.contains(idOf.apply(m))).toList();
         });
         lenient().when(repo.findAll()).thenReturn(all);
+        // PF3 #3 (2026-11-06): öksüz alarm temizliği tek kolon okur — aynı fixture'dan türetilir (karar dökümü aynı).
+        if (repo instanceof com.sitemonitor.repository.PortMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all,
+                    m -> ((PortMonitor) m).getDeletedAt() == null ? ((PortMonitor) m).getHost() : null));
+        else if (repo instanceof com.sitemonitor.repository.KeywordMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((KeywordMonitor) m).getUrl()));
+        else if (repo instanceof com.sitemonitor.repository.HttpMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((HttpMonitor) m).getUrl()));
+        else if (repo instanceof com.sitemonitor.repository.PingMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((PingMonitor) m).getHost()));
+        else if (repo instanceof com.sitemonitor.repository.PageMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((PageMonitor) m).getUrl()));
+        else if (repo instanceof com.sitemonitor.repository.PageSpeedMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((PageSpeedMonitor) m).getUrl()));
+        else if (repo instanceof com.sitemonitor.repository.ScriptedMonitorRepository r)
+            lenient().when(r.findOrphanCheckKeys()).thenAnswer(i -> orphanKeys(all, m -> ((ScriptedMonitor) m).getName()));
+    }
+
+    /** {@link #serve}'in öksüz anahtar türetmesi — boş olmayan, tekil. */
+    static <M> List<String> orphanKeys(List<M> all, Function<M, String> key) {
+        return all.stream().map(key).filter(java.util.Objects::nonNull).distinct().toList();
     }
 
     static PortMonitor port(long id, String host, int p, boolean standalone) {

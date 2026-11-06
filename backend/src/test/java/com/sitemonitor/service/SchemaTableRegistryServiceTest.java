@@ -99,6 +99,31 @@ class SchemaTableRegistryServiceTest {
     }
 
     @Test
+    @DisplayName("PF3 #9: kalp atışı turu yalnız tarama liderinde koşar — izleyici pod katalog sorgusu bile yapmaz; açılış turu (tickNow) liderlikten bağımsız")
+    void heartbeatTick_onlyOnSweepLeader() {
+        SchedulerService scheduler = mock(SchedulerService.class);
+        service.setSchedulerService(scheduler);
+        when(jdbc.queryForList(contains("pg_stat_user_tables"))).thenReturn(List.of());
+        when(jdbc.queryForList(contains("SELECT table_name, activity_counter FROM"))).thenReturn(List.of());
+
+        when(scheduler.sweepLeaderHint()).thenReturn(false);   // izleyici
+        assertThat(service.tick()).isZero();
+        verifyNoInteractions(jdbc);
+
+        assertThat(service.tickNow()).isEqualTo(2);           // açılış adımı: izleyicide de yeni tablolar first_seen alır
+        clearInvocations(jdbc);
+
+        when(scheduler.sweepLeaderHint()).thenReturn(true);    // lider
+        assertThat(service.tick()).isEqualTo(2);               // lider koşar (stub'lı defter boş → iki tablo eklenir)
+        verify(jdbc).queryForList(contains("information_schema.tables"), eq(String.class));
+
+        clearInvocations(jdbc);
+        when(scheduler.sweepLeaderHint()).thenThrow(new IllegalStateException("ipucu yok"));   // okunamazsa koşar (sessizce atlamaz)
+        service.tick();
+        verify(jdbc).queryForList(contains("information_schema.tables"), eq(String.class));
+    }
+
+    @Test
     @DisplayName("all()/get(): satır sözleşmesi (first_seen_approx = bootstrap) ve iso() dönüşümleri")
     void allAndIso() {
         when(jdbc.queryForList(startsWith("SELECT table_name, first_seen_at"))).thenReturn(List.of(

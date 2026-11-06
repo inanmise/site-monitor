@@ -121,7 +121,7 @@ class SlowAndIntegrityNoDataTest {
 
     private void runPortSweep(PortMonitor m, Map<String, Object> check) {
         when(portRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(portRepo.findAll()).thenReturn(List.of(m));
+        when(portRepo.findOrphanCheckKeys()).thenReturn(List.of(m.getHost()));   // PF3 #3: öksüz temizliği tek kolon
         when(portChecker.check(any(PortMonitor.class))).thenReturn(check);
         ReflectionTestUtils.invokeMethod(scheduler, "runPortChecksLocked");
     }
@@ -166,7 +166,7 @@ class SlowAndIntegrityNoDataTest {
     void keywordSlow_httpError_noItem_andRecheckSkipped() {
         KeywordMonitor m = keyword(true);
         when(keywordRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(keywordRepo.findAll()).thenReturn(List.of(m));
+        when(keywordRepo.findOrphanCheckKeys()).thenReturn(List.of(m.getUrl()));   // PF3 #3
         // Zamanlanmış tur ve yavaşlık yeniden ölçümü (evalKeywordSlow) aynı KeywordCheckSpec kontrolünü çağırır (kw Aşama 1).
         when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class)))
                 .thenReturn(raw("found", false, "error", "connect timed out"));

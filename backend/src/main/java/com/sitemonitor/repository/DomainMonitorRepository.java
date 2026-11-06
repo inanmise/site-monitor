@@ -11,6 +11,11 @@ import java.util.Optional;
 
 public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Long> {
     List<DomainMonitor> findByActiveTrue();
+
+    /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin alan adları (aktif + pasif) — tam varlık
+     *  ({@code findAll}) yerine tek kolon; temizlik 5 dk'da bir koşar. */
+    @Query("SELECT DISTINCT m.domain FROM DomainMonitor m WHERE m.domain IS NOT NULL")
+    List<String> findOrphanCheckKeys();
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
     long countByTeamIdAndActiveTrue(Long teamId);

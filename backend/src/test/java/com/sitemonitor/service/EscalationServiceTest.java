@@ -2004,10 +2004,8 @@ class EscalationServiceTest {
     @Test
     @DisplayName("resolveOrphanedScriptedAlerts: eşleşmeyen senaryo adının açık alarmı sessizce kapanır")
     void resolveOrphanedScriptedAlerts_closesOrphans() {
-        AlertEvent open = new AlertEvent();
-        open.setAlertType(EscalationService.TYPE_SCRIPTED_FAIL);
-        open.setDomain("Silinmiş Senaryo");
-        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(java.util.List.of(open));
+        when(alertEventRepo.findOpenDomainsByAlertTypes(java.util.Set.of(EscalationService.TYPE_SCRIPTED_FAIL,
+                EscalationService.TYPE_SCRIPTED_SLOW))).thenReturn(java.util.List.of("Silinmiş Senaryo", "Yaşayan Senaryo"));
         when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
 
         int closed = service.resolveOrphanedScriptedAlerts(java.util.Set.of("Yaşayan Senaryo"));
@@ -2018,15 +2016,55 @@ class EscalationServiceTest {
     @Test
     @DisplayName("resolveOrphanedPageAlerts: eşleşen monitörü olmayan açık PAGE alarmını öksüz sayar")
     void resolveOrphanedPageAlerts_closesOrphans() {
-        AlertEvent orphan = new AlertEvent();
-        orphan.setDomain("https://gone.example.com/");
-        orphan.setAlertType(EscalationService.TYPE_PAGE_DOWN);
-        orphan.setResolved(false); orphan.setAcknowledged(false);
-        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(orphan));
+        when(alertEventRepo.findOpenDomainsByAlertTypes(java.util.Set.of(EscalationService.TYPE_PAGE_DOWN,
+                EscalationService.TYPE_PAGE_INTEGRITY))).thenReturn(List.of("https://gone.example.com/"));
 
         int n = service.resolveOrphanedPageAlerts(java.util.Set.of("https://live.example.com/"));
 
         assertThat(n).isEqualTo(1);   // gone.example.com hiçbir mevcut URL'ye karşılık gelmiyor → öksüz
+    }
+
+    @Test
+    @DisplayName("PF3 #3: öksüz temizlikleri TÜM açık alarmları okumaz — yalnız kendi türlerinin alan anahtarlarını (tür kümesi = kapatma kümesi)")
+    void orphanCleanups_readOnlyTheirTypes_neverAllOpenAlarms() {
+        when(alertEventRepo.findOpenDomainsByAlertTypes(any())).thenReturn(List.of());
+        java.util.Set<String> none = java.util.Set.of();
+        service.resolveOrphanedPingAlerts(none);
+        service.resolveOrphanedKeywordAlerts(none);
+        service.resolveOrphanedHttpAlerts(none);
+        service.resolveOrphanedPageAlerts(none);
+        service.resolveOrphanedPageSpeedAlerts(none);
+        service.resolveOrphanedScriptedAlerts(none);
+        service.resolveOrphanedDbQueryAlerts(none);
+        service.resolveOrphanedDomainMonAlerts(none);
+        service.resolveOrphanedPortAlerts(none);
+
+        verify(alertEventRepo, never()).findAllOpenOrderBySeverity();
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Collection<String>> cap = org.mockito.ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(alertEventRepo, org.mockito.Mockito.times(9)).findOpenDomainsByAlertTypes(cap.capture());
+        // Her tür kümesi eski Java süzgecinin (isPing/isKeyword+Aux/HTTP/isPage/isPageSpeed/isScripted/isDbQuery/isDomainMon/Port)
+        // tam karşılığı — eksik tür = o türün öksüz alarmı hiç kapanmaz.
+        assertThat(cap.getAllValues()).extracting(c -> new java.util.TreeSet<>(c).toString()).containsExactly(
+                "[PING_DOWN, PING_SLOW]",
+                "[KEYWORD, KEYWORD_CHANGED, KEYWORD_DOMAIN_EXPIRY, KEYWORD_SLOW, KEYWORD_SSL]",
+                "[DOMAIN_EXPIRY, HTTP_DOWN, HTTP_SLOW, HTTP_SSL]",
+                "[PAGE_DOWN, PAGE_INTEGRITY]",
+                "[PAGESPEED_DOWN, PAGESPEED_SLOW]",
+                "[SCRIPTED_FAIL, SCRIPTED_SLOW]",
+                "[DBQUERY_FAIL, DBQUERY_SLOW, DBQUERY_THRESHOLD]",
+                "[DOMAINMON_BLACKLIST, DOMAINMON_CHANGED, DOMAINMON_EXPIRY, DOMAINMON_STATUS, DOMAINMON_TRANSFER_LOCK, DOMAINMON_UNKNOWN]",
+                "[PORT_DOWN, PORT_SLOW]");
+        for (java.util.Collection<String> types : cap.getAllValues()) {
+            for (String t : types) {
+                boolean predicate = t.startsWith("PING_") || t.startsWith("PORT_")
+                        || EscalationService.TYPE_KEYWORD.equals(t) || EscalationService.isKeywordAux(t)
+                        || t.startsWith("HTTP_") || EscalationService.TYPE_DOMAIN_EXPIRY.equals(t)
+                        || EscalationService.isPage(t) || EscalationService.isPageSpeed(t) || EscalationService.isScripted(t)
+                        || EscalationService.isDbQuery(t) || EscalationService.isDomainMon(t);
+                assertThat(predicate).as(t).isTrue();
+            }
+        }
     }
 
     @Test

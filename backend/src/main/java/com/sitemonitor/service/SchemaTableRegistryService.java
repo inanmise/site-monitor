@@ -47,11 +47,40 @@ public class SchemaTableRegistryService {
     @Autowired(required = false)
     private BuildInfo buildInfo;
 
+    /** Tarama lideri ipucu (2026-11-06, performans PF3 #9) — yoksa (elle kurulum / test) her çağrıda koşar (bugünkü davranış). */
+    @org.springframework.context.annotation.Lazy
+    @Autowired(required = false)
+    private SchedulerService schedulerService;
+
+    /** Kendi vekili — {@link #tick} işlemli {@link #tickNow}'ı proxy üzerinden çağırsın (yoksa — elle kurulum / test — doğrudan). */
+    @org.springframework.context.annotation.Lazy
+    @Autowired(required = false)
+    private SchemaTableRegistryService self;
+
     public SchemaTableRegistryService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    /** Bir tur: yeni tabloları kaydet, sayaç değişenlere last_change_at yaz. Dönüş: değişen/eklenen satır. */
-    @Transactional
+    /** Test kancası. */
+    void setSchedulerService(SchedulerService s) { this.schedulerService = s; }
+
+    /**
+     * Kalp atışı turu (dakikada bir, HER pod çağırır): yalnız tarama liderini taşıyan pod koşar (2026-11-06, performans PF3 #9).
+     * Defter veritabanı genelidir (sayaçlar {@code pg_stat_user_tables}'tan) — N pod'un her dakika aynı üç katalog okumasını
+     * yapması gereksizdi. İpucu bellektir ({@link SchedulerService#sweepLeaderHint()}, DB okumaz); okunamazsa koşar.
+     * Lider yokken (kira boş) kimse yazmaz — dakika hassasiyetli "son değişim" o aralıkta bekler, sonraki liderle tamamlanır.
+     */
     public int tick() {
+        try {
+            if (schedulerService != null && !schedulerService.sweepLeaderHint()) return 0;
+        } catch (Exception e) {
+            log.debug("schema registry lider ipucu okunamadı — tur koşuyor: {}", e.toString());
+        }
+        return (self != null ? self : this).tickNow();   // proxy üzerinden → @Transactional işler (eski tick() gibi)
+    }
+
+    /** Bir tur: yeni tabloları kaydet, sayaç değişenlere last_change_at yaz. Dönüş: değişen/eklenen satır.
+     *  Liderlikten bağımsız (açılış adımı — yeni tablolar o pod'da hemen first_seen alsın). */
+    @Transactional
+    public int tickNow() {
         try {
             String now = ISO.format(Instant.now());
             List<String> tables = jdbc.queryForList(

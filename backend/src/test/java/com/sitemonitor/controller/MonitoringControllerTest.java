@@ -2627,7 +2627,8 @@ class MonitoringControllerTest {
     void history_domainFailCount_fromDbCount() throws Exception {
         stubAllHistoryMonitors();
         stubAllHistoryRepos();
-        when(domainCheckRepo.countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(700L);
+        // PF2 #10: süzgeçsiz sayfada toplam sayfanın (DB) COUNT'undan gelir — ayrı count sorgusu koşmaz.
+        when(domainCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 700));
         when(domainCheckRepo.countByMonitorIdAndStatusNotAndCheckedAtBetween(anyLong(), anyString(), anyString(), anyString())).thenReturn(650L);
         mvc.perform(get("/api/monitoring/domain/1/history").param("days", "365").session(session("ADMIN")))
                 .andExpect(status().isOk())
@@ -4620,6 +4621,94 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[?(@.host=='a.example.com')]").isNotEmpty())
                 .andExpect(jsonPath("$.data[?(@.host=='b.example.com')]").isNotEmpty());
+    }
+
+    // ── Performans PF2 #3 (2026-11-06): Port / DNS listesinde satır başına envanter sorgusu (N+1) yok ──────
+
+    @Test
+    @DisplayName("PF2 #3: GET /port türev satırın ETKİN takımını yüklü envanterden alır (bayat saklı takım yerine) — findByDomain HİÇ çağrılmaz")
+    void listPort_effectiveTeamFromLoadedInventory_noPerRowLookup() throws Exception {
+        com.sitemonitor.model.PortMonitor derived = new com.sitemonitor.model.PortMonitor();
+        derived.setId(31L); derived.setName("tasindi.example.com"); derived.setHost("tasindi.example.com"); derived.setPort(443);
+        derived.setProtocol("TCP"); derived.setActive(true); derived.setStandalone(false);
+        derived.setTeamId(5L);                                    // BAYAT: transfer öncesi takım
+        com.sitemonitor.model.PortMonitor standalone = new com.sitemonitor.model.PortMonitor();
+        standalone.setId(32L); standalone.setName("bagimsiz"); standalone.setHost("bagimsiz.example.com"); standalone.setPort(22);
+        standalone.setProtocol("TCP"); standalone.setActive(true); standalone.setStandalone(true); standalone.setTeamId(7L);
+        CertificateInventory noTeam = invT("takimsiz.example.com", null);   // envanter takımı boş → saklı takıma düşer (eski kural)
+        com.sitemonitor.model.PortMonitor derivedNoTeam = new com.sitemonitor.model.PortMonitor();
+        derivedNoTeam.setId(33L); derivedNoTeam.setName("takimsiz.example.com"); derivedNoTeam.setHost("takimsiz.example.com");
+        derivedNoTeam.setPort(443); derivedNoTeam.setProtocol("TCP"); derivedNoTeam.setActive(true); derivedNoTeam.setStandalone(false);
+        derivedNoTeam.setTeamId(4L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenReturn(List.of(invT("tasindi.example.com", 9L), noTeam));   // envanter ARTIK 9 numaralı takımda
+        when(portMonitorRepo.findAll()).thenReturn(List.of(derived, derivedNoTeam, standalone));
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(standalone));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id==31)].team_id").value(9))    // envanterin takımı (tek-kayıt PUT'u gibi)
+                .andExpect(jsonPath("$.data[?(@.id==33)].team_id").value(4))    // envanter takımı yok → saklı takım
+                .andExpect(jsonPath("$.data[?(@.id==32)].team_id").value(7));   // bağımsız → kendi takımı
+        verify(inventoryRepo, never()).findByDomain(anyString());
+    }
+
+    @Test
+    @DisplayName("PF2 #3: GET /dns türev satırın ETKİN takımını yüklü envanterden alır — findByDomain HİÇ çağrılmaz")
+    void listDns_effectiveTeamFromLoadedInventory_noPerRowLookup() throws Exception {
+        com.sitemonitor.model.DnsMonitor derived = new com.sitemonitor.model.DnsMonitor();
+        derived.setId(41L); derived.setName("tasindi.example.com"); derived.setDomain("tasindi.example.com"); derived.setRecordType("A");
+        derived.setActive(true); derived.setStandalone(false); derived.setTeamId(5L);   // bayat
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(invT("tasindi.example.com", 9L)));
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of(derived));
+        when(dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
+        when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/dns").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.id==41)].team_id").value(9));
+        verify(inventoryRepo, never()).findByDomain(anyString());
+    }
+
+    @Test
+    @DisplayName("PF2 #10: kontrol geçmişi süzgeçsiz sayfada TOPLAM sayacını yeniden saymaz (sayfanın COUNT'u kullanılır); hata sayacı ayrı")
+    void history_allStatus_totalFromPageCount_noSecondCount() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        when(portCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(histPage(List.of(), 120));
+        when(portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(3L);
+
+        mvc.perform(get("/api/monitoring/port/1/history").param("days", "7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(120))
+                .andExpect(jsonPath("$.data.counts.total").value(120))
+                .andExpect(jsonPath("$.data.counts.fail").value(3));
+        verify(portCheckRepo, never()).countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString());
+
+        // status=fail: hata sayacı sayfanın COUNT'undan, toplam ayrı sorgudan
+        when(portCheckRepo.findByMonitorIdAndOpenFalseAndCheckedAtBetween(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(histPage(List.of(), 3));
+        when(portCheckRepo.countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(120L);
+        org.mockito.Mockito.clearInvocations(portCheckRepo);
+        mvc.perform(get("/api/monitoring/port/1/history").param("days", "7").param("status", "fail").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts.total").value(120))
+                .andExpect(jsonPath("$.data.counts.fail").value(3));
+        verify(portCheckRepo, never()).countByMonitorIdAndOpenFalseAndCheckedAtBetween(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("PF2 #10: DNS 'başarısız sorgu' süzgecinde sayfa ≠ 'değişenler' sayacı → sayaç AYRICA sorgulanır (eşdeğer olmayan kip kısayol almaz)")
+    void history_dnsFailedLookups_doesNotReusePageCount() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        when(dnsRecordRepo.findFailedByMonitorIdBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(), 1));
+        when(dnsRecordRepo.countChangedByMonitorIdBetween(anyLong(), anyString(), anyString())).thenReturn(4L);
+        mvc.perform(get("/api/monitoring/dns/1/history").param("days", "7").param("status", "fail").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts.fail").value(4));   // sayfanın 1'i DEĞİL
     }
 
     // ── Denetim 5. tur, bulgu 17 + 18: kimlik karşılaştırması ve mükerrer ──────

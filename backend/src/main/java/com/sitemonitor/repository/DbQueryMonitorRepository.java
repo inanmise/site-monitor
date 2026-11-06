@@ -13,6 +13,11 @@ import java.util.Optional;
 public interface DbQueryMonitorRepository extends JpaRepository<DbQueryMonitor, Long> {
 
     List<DbQueryMonitor> findByActiveTrue();
+
+    /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin adları (aktif + pasif; alarm anahtarı = ad) — tam varlık
+     *  ({@code findAll}) yerine tek kolon; temizlik 5 dk'da bir koşar. */
+    @Query("SELECT DISTINCT m.name FROM DbQueryMonitor m WHERE m.name IS NOT NULL")
+    List<String> findOrphanCheckKeys();
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService). */
     long countByTeamIdAndActiveTrue(Long teamId);

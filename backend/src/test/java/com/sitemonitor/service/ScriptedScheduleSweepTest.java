@@ -55,6 +55,7 @@ class ScriptedScheduleSweepTest {
         h = new R33SweepHarness();
         lenient().when(h.scriptedRepo.findByActiveTrue()).thenAnswer(i -> new ArrayList<>(active));
         lenient().when(h.scriptedRepo.findAll()).thenAnswer(i -> new ArrayList<>(active));
+        lenient().when(h.scriptedRepo.findOrphanCheckKeys()).thenAnswer(i -> R33SweepHarness.orphanKeys(new ArrayList<>(active), ScriptedMonitor::getName));   // PF3 #3
         lenient().when(h.scriptedCheckRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         lenient().when(h.scriptedChecker.submit(any(ScriptedMonitor.class))).thenAnswer(i -> {
             ScriptedMonitor m = i.getArgument(0);

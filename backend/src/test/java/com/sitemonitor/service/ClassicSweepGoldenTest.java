@@ -231,6 +231,14 @@ class ClassicSweepGoldenTest {
         inv.setDomain("inv-host.example.com");
         inv.setActive(true);
         lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        // PF3 #2 (2026-11-06): klasik Port / DNS taraması aktif ağ envanterini tek kolonla okur (findActiveDomains).
+        lenient().when(inventoryRepo.findActiveDomains()).thenReturn(List.of(inv.getDomain()));
+    }
+
+    /** PF3 #3 (2026-11-06): öksüz alarm temizliği tam varlık ({@code findAll}) yerine tek kolon ({@code findOrphanCheckKeys})
+     *  okur — stub AYNI fixture'dan türetilir, karar dökümü değişmez (goldens yeniden kaydedilmez). */
+    static <T> List<String> orphanKeys(List<T> all, java.util.function.Function<T, String> key) {
+        return all.stream().map(key).filter(java.util.Objects::nonNull).distinct().toList();
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -296,6 +304,7 @@ class ClassicSweepGoldenTest {
         List<PortMonitor> all = List.of(a, b, c, d, e, f, g);
         when(portRepo.findByActiveTrue()).thenReturn(all);
         when(portRepo.findAll()).thenReturn(all);
+        when(portRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, m -> m.getDeletedAt() == null ? m.getHost() : null));
         when(portChecker.check(any(PortMonitor.class))).thenAnswer(i -> {
             PortMonitor m = i.getArgument(0);
             return switch (m.getId().intValue()) {
@@ -346,6 +355,7 @@ class ClassicSweepGoldenTest {
         List<KeywordMonitor> all = List.of(a, b, c, d, e, f);
         when(keywordRepo.findByActiveTrue()).thenReturn(all);
         when(keywordRepo.findAll()).thenReturn(all);
+        when(keywordRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, KeywordMonitor::getUrl));
         when(keywordHeaders.effectiveHeaders(any(KeywordMonitor.class))).thenReturn(null);
         when(keywordChecker.check(any(com.sitemonitor.service.keyword.KeywordCheckSpec.class))).thenAnswer(i -> {
             String url = ((com.sitemonitor.service.keyword.KeywordCheckSpec) i.getArgument(0)).url();
@@ -398,6 +408,7 @@ class ClassicSweepGoldenTest {
         List<HttpMonitor> all = List.of(a, b, c, d, e, f);
         when(httpRepo.findByActiveTrue()).thenReturn(all);
         when(httpRepo.findAll()).thenReturn(all);
+        when(httpRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, HttpMonitor::getUrl));
         when(httpChecker.check(anyString(), any(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean())).thenAnswer(i -> {
             String url = i.getArgument(0);
             return switch (url) {
@@ -447,6 +458,7 @@ class ClassicSweepGoldenTest {
         List<PingMonitor> all = List.of(a, b, c, d, e, f);
         when(pingRepo.findByActiveTrue()).thenReturn(all);
         when(pingRepo.findAll()).thenReturn(all);
+        when(pingRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, PingMonitor::getHost));
         when(pingChecker.check(anyString(), any(), anyInt(), anyInt())).thenAnswer(i -> {
             String host = i.getArgument(0);
             return switch (host) {
@@ -585,6 +597,7 @@ class ClassicSweepGoldenTest {
         List<PageMonitor> all = List.of(a, b, c, d, e, f, g, h);
         when(pageRepo.findByActiveTrue()).thenReturn(all);
         when(pageRepo.findAll()).thenReturn(all);
+        when(pageRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, PageMonitor::getUrl));
         PageCheckerService.ResourceIssue broken = new PageCheckerService.ResourceIssue(
                 "https://b.example.com/app.js", "SCRIPT", "https://b.example.com/urunler", "BROKEN", true, 404, 120L);
         PageCheckerService.ResourceIssue timeout = new PageCheckerService.ResourceIssue(
@@ -645,6 +658,7 @@ class ClassicSweepGoldenTest {
         List<PageSpeedMonitor> all = List.of(a, b, c, d, e);
         when(pageSpeedRepo.findByActiveTrue()).thenReturn(all);
         when(pageSpeedRepo.findAll()).thenReturn(all);
+        when(pageSpeedRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, PageSpeedMonitor::getUrl));
         List<PageSpeedCheckerService.Measured> res = List.of(
                 new PageSpeedCheckerService.Measured("https://b.example.com/hero.jpg", "image", 900_000L, 300L, 200,
                         false, false, false),
@@ -714,6 +728,7 @@ class ClassicSweepGoldenTest {
         List<ScriptedMonitor> all = List.of(a, b, c, d, e, f, g);
         when(scriptedRepo.findByActiveTrue()).thenReturn(all);
         when(scriptedRepo.findAll()).thenReturn(all);
+        when(scriptedRepo.findOrphanCheckKeys()).thenReturn(orphanKeys(all, ScriptedMonitor::getName));
         String failedJson = "[{\"name\":\"durum 200\",\"passed\":true},{\"name\":\"gövde ok\",\"passed\":false}]";
         when(scriptedChecker.submit(any(ScriptedMonitor.class))).thenAnswer(i -> {
             ScriptedMonitor m = i.getArgument(0);
