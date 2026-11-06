@@ -243,7 +243,45 @@ public final class DeferredIndexBuilder {
             // Hata nedeni süzgeci (failure_reason IN (…) [+ zaman]) — 365 günlük tabloda nedensiz satırlar dizine girmez
             // (kısmi; kolon yalnız başarısız kontrol satırlarında dolu). PostgreSQL'e özgü (H2'de zaman dizini + süzme).
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_reason_time ON activity_log(failure_reason, activity_time)"
-                    + " WHERE failure_reason IS NOT NULL"));
+                    + " WHERE failure_reason IS NOT NULL"),
+            // ── 2026-11-06 performans incelemesi (PF1 / PF3; EXPLAIN'le ölçüldü) ──
+            // Anahtar kelime "İçerik" sekmesinin son değişim satırı (KeywordContentQueryRepository.latestChangeRow):
+            // content_changed IS NOT NULL — değişimi uzun süredir ölçülmeyen izlemede bileşik dizinin bütün eski girdileri
+            // okunuyordu (yerel 496 ms). Kısmi indeks yalnız değişim ölçülmüş satırları taşır; BETWEEN biçimli sorguya sırayı da
+            // verir. PostgreSQL'e özgü (H2'de bileşik (monitor_id, checked_at) dizini aynı sonucu verir).
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kwr_change_checked ON keyword_results(monitor_id, checked_at)"
+                    + " WHERE content_changed IS NOT NULL"),
+            // DNS değişiklik kayıtları: açık DNS_CHANGED yeniden uyarısının son changed kaydı (findChangedByMonitorId,
+            // findChangedByDomain — her DNS turunda açık alarm başına; yerel 120–145 ms) ve Kontrol Geçmişi "Değişenler"
+            // süzgeci (changed VEYA rotated). Satırların ~%1'i; changed = true sorguları da (OR'un bir kolu) kullanır.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_changed ON dns_records(monitor_id, checked_at)"
+                    + " WHERE changed = true OR rotated = true"),
+            // Genel Bakış kartı "şu an" şeridi: aktif envanter alanı başına MAX(alert_events.id) (AlertEventRepository
+            // .findLatestForActiveInventoryDomains) — (domain) dizini id sırası taşımadığından alanın bütün alarm satırları
+            // okunuyordu ya da birincil anahtar geriye taranıp alan adı süzülüyordu. Yalnız-dizin MAX. Taşınabilir.
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ae_domain_id ON alert_events(domain, id)"),
+            // Çözüm bildirimi süpürücüsü (EscalationService.deliverPendingResolutions, dakikada bir): resolution_notify =
+            // 'PENDING' / 'SENDING' AND resolved_at aralığı ORDER BY id LIMIT — bekleyen satır birkaç tane; kısmi indeks yalnız
+            // onları taşır, id sırası LIMIT'i dizinden karşılar. PostgreSQL'e özgü.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ae_resolution_notify_open ON alert_events(id)"
+                    + " WHERE resolution_notify IN ('PENDING', 'SENDING')"),
+            // Kontrol Geçmişi "yalnız hatalar" sayfası + HER geçmiş açılışındaki hata sayacı (countBy…OpenFalse / OkFalse /
+            // UpFalse, DNS boş değer): planlayıcı izlemenin hata oranını bilmediğinden tekil checked_at dizinini tarayıp
+            // monitor_id + hata bayrağını SÜZGEÇLE eliyordu (yerel port_checks: aktif izlemenin 30 günlük hata sayacı
+            // 150–450 ms, 471 bin satır elenir). Kısmi indeksler yalnız hatalı satırları taşır (yazım maliyeti ihmal edilebilir):
+            // sayım yalnız-dizin, sayfa BETWEEN biçimiyle sıralı. Sorgulardaki koşul indeks koşuluyla aynı metin. PG'ye özgü.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_portc_fail ON port_checks(monitor_id, checked_at)"
+                    + " WHERE open = false"),
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kwr_fail ON keyword_results(monitor_id, checked_at)"
+                    + " WHERE ok = false"),
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pingc_fail ON ping_checks(monitor_id, checked_at)"
+                    + " WHERE up = false"),
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_hc_fail ON http_checks(monitor_id, checked_at)"
+                    + " WHERE ok = false"),
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pc_fail ON page_checks(monitor_id, checked_at)"
+                    + " WHERE ok = false"),
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_fail ON dns_records(monitor_id, checked_at)"
+                    + " WHERE value IS NULL OR value = ''"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

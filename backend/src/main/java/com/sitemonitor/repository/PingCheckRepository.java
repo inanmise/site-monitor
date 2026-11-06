@@ -13,10 +13,26 @@ import java.util.Optional;
 public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
 
     // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
-    Page<PingCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<PingCheck> findByMonitorIdAndUpFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndUpFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    default Page<PingCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM PingCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM PingCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<PingCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<PingCheck> findByMonitorIdAndUpFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM PingCheck c WHERE c.monitorId IN (:id, :id) AND c.up = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM PingCheck c WHERE c.monitorId = :id AND c.up = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<PingCheck> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM PingCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM PingCheck c WHERE c.monitorId = :id AND c.up = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndUpFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — ISO string sözlüksel=kronolojik olduğundan
      *  substr prefix'i dakika(16)/saat(13)/gün(10) kovası üretir; satırlar JVM'e taşınmaz.
@@ -32,13 +48,14 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
     List<PingCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
-    Optional<PingCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM PingCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<PingCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır. */
-    @Query("SELECT c FROM PingCheck c WHERE c.monitorId = :id ORDER BY c.checkedAt DESC LIMIT :limit")
+    @Query("SELECT c FROM PingCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT :limit")
     List<PingCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    @Query("SELECT c FROM PingCheck c WHERE c.monitorId = :id AND c.checkedAt >= :since ORDER BY c.checkedAt DESC LIMIT :limit")
+    @Query("SELECT c FROM PingCheck c WHERE c.monitorId IN (:id, :id) AND c.checkedAt >= :since ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT :limit")
     List<PingCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
@@ -57,8 +74,8 @@ public interface PingCheckRepository extends JpaRepository<PingCheck, Long> {
     /** RTT grafiği için ham veri: [checked_at, rtt_ms (null olabilir), up, packet_loss] — aralık + cap
      *  (en yeni :limit). Null filtresi YOK: down kovaları için tüm kayıtlar gelir. */
     @Query("SELECT c.checkedAt, c.rttMs, c.up, c.packetLoss FROM PingCheck c "
-         + "WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to "
-         + "ORDER BY c.checkedAt DESC LIMIT :limit")
+         + "WHERE c.monitorId IN (:id, :id) AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C + " "
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 

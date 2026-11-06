@@ -1612,6 +1612,15 @@ public class SchedulerService {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
         }
+        // Performans 2026-11-06 (PF1 madde 8): EKLEME ağırlıklı büyük tablolarda görünürlük haritası da sık tazelensin.
+        // Ölü satır üretmeyen ekleme-yalnız tabloyu autovacuum varsayılanda ancak satırların %20'si kadar ekleme olunca
+        // vakumlar (PG 13+ autovacuum_vacuum_insert_scale_factor 0,2) — arada görünürlük haritası eskir, "index only scan"
+        // (MAX(checked_at), sayımlar) yığına gider (Heap Fetches). %2 ile milyon satırlık tabloda ~20 bin eklemede bir.
+        // SchemaDdlGuard seçenek yerindeyse atlar; PostgreSQL'e özgü (H2'de patch() sessiz atlar).
+        for (String t : new String[]{"port_checks", "dns_records", "keyword_results", "ping_checks", "http_checks",
+                "page_checks", "activity_log", "uptime_checks", "certificate_checks"}) {
+            patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_insert_scale_factor = 0.02)");
+        }
         // USER artık kendi takımı için olay girer/düzenler — eski sistem-default'u (false) güncelle.
         // Yalnız sistem tarafından tohumlanmış (admin'in elle kapatmadığı) satırı çevirir; silme (incidents.delete)
         // TEAM_ADMIN/ADMIN'de kalır (seedMissingDefaults yeni resource'u doğru tohumlar).

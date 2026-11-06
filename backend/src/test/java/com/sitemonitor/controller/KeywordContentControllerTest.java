@@ -161,6 +161,27 @@ class KeywordContentControllerTest {
     }
 
     @Test
+    @DisplayName("Performans 2026-11-06: değişim algılama KAPALIYKEN son değişim / son satır sorgulanmaz, anahtarlar null")
+    void changeViewDisabled_readsNoResultRows() throws Exception {
+        KeywordMonitor m = monitor(41L, 5L);
+        m.setChangeDetect(false);
+        when(keywordMonitorRepo.findById(41L)).thenReturn(Optional.of(m));
+        mvc.perform(get("/api/monitoring/keyword/41/change").session(session("USER", 5L, 2L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(false))
+                .andExpect(jsonPath("$.data.latest").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.skipped").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.can_edit").value(true));
+        org.mockito.Mockito.verify(contentQueries, org.mockito.Mockito.never()).latestChangeRow(anyLong());
+        org.mockito.Mockito.verify(contentQueries, org.mockito.Mockito.never()).latestRow(anyLong());
+        // null (hiç ayarlanmamış) da kapalı sayılır
+        m.setChangeDetect(null);
+        mvc.perform(get("/api/monitoring/keyword/41/change").session(session("USER", 5L, 2L)))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+        org.mockito.Mockito.verify(contentQueries, org.mockito.Mockito.never()).latestChangeRow(anyLong());
+    }
+
+    @Test
     @DisplayName("kw son inceleme O-5: temel METNİ yalnız düzenleyebilene — okuyucu (AUDIT / düzenleme izni yok) text null + "
             + "text_hidden; satır sayısı ve fark özeti okuyucuya kalır; son kontrolde değişim ölçülmediyse skipped notu")
     void baselineTextOnlyForEditors() throws Exception {

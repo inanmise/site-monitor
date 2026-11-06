@@ -13,10 +13,26 @@ import java.util.Optional;
 public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Long> {
 
     // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
-    Page<ScriptedCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<ScriptedCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    default Page<ScriptedCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM ScriptedCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM ScriptedCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<ScriptedCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<ScriptedCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM ScriptedCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM ScriptedCheck c WHERE c.monitorId = :id AND c.ok = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<ScriptedCheck> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM ScriptedCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM ScriptedCheck c WHERE c.monitorId = :id AND c.ok = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
@@ -33,14 +49,19 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
     /**
      * En az bir kez BAŞARILI olmuş monitörlerin id'leri — "hiç yeşile dönmedi" rozeti için.
      * Tek toplu sorgu: liste endpoint'i monitör başına ayrı sorgu açmasın.
+     * <p>Performans 2026-11-06 (PF2 madde 9): {@code SELECT DISTINCT monitor_id … WHERE ok = true} bütün başarılı koşumları
+     * (kısmi {@code idx_sc_success_monitor} dizininin tamamını) okuyordu — liste her yoklamada. İzleme başına {@code EXISTS}
+     * kısmi dizinde tek arama yapar. Sonuç: VAR OLAN izlemelerden en az bir başarılısı olanlar (izleme silinince kontrolleri de
+     * silinir — liste yalnız var olan izlemeleri sorar).
      */
-    @Query("SELECT DISTINCT r.monitorId FROM ScriptedCheck r WHERE r.ok = true")
+    @Query("SELECT m.id FROM ScriptedMonitor m WHERE EXISTS (SELECT 1 FROM ScriptedCheck r WHERE r.monitorId = m.id AND r.ok = true)")
     List<Long> monitorIdsWithSuccess();
 
     List<ScriptedCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
-    Optional<ScriptedCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM ScriptedCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<ScriptedCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
-    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId IN (:id, :id) ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
     /**
@@ -48,11 +69,11 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
      * Teyit / kurtarma zincirinin yeniden kontrolleri ({@code recheck = true}, 2026-10-31 k6r inceleme #1) de DIŞARIDA: alarm
      * zincirin sonunda açılır; zincir adımları seriye girerse alarm açılmadan seri dolup izleme kapanırdı.
      */
-    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND (r.manual IS NULL OR r.manual = false) "
-            + "AND (r.recheck IS NULL OR r.recheck = false) ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId IN (:id, :id) AND (r.manual IS NULL OR r.manual = false) "
+            + "AND (r.recheck IS NULL OR r.recheck = false) ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentScheduledByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :since ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — LATERAL (monitör başına tek index-seek; N+1 önleme). */
@@ -67,8 +88,8 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
 
     /** Süre trend serisi: [checked_at, duration_ms, ok] — aralık + cap. */
     @Query("SELECT r.checkedAt, r.durationMs, r.ok FROM ScriptedCheck r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 
@@ -103,9 +124,9 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
      * teyit / kurtarma yeniden kontrolü trendi bozmasın), adım verisi olanlar, yeniden eskiye, tavanlı (çağıran tavan + 1 ister → "kırpıldı" bilgisi).
      */
     @Query("SELECT r.checkedAt, r.stepsJson FROM ScriptedCheck r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
          + "AND (r.manual IS NULL OR r.manual = false) AND (r.recheck IS NULL OR r.recheck = false) "
-         + "AND r.stepsJson IS NOT NULL ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "AND r.stepsJson IS NOT NULL ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> stepSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                  @Param("to") String to, @Param("limit") int limit);
 }

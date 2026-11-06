@@ -66,7 +66,7 @@ class DeferredIndexFallbackH2Test {
     private static List<String> referencedColumns(Spec s) {
         String tail = s.postgresDdl().substring(s.postgresDdl().indexOf(" ON " + s.table() + "(") + (" ON " + s.table() + "(").length());
         Set<String> keywords = Set.of("lower", "upper", "include", "where", "true", "false", "is", "not", "null",
-                "coalesce", "and", "in");   // işlev / anahtar sözcük — kolon değil
+                "coalesce", "and", "in", "or");   // işlev / anahtar sözcük — kolon değil
         List<String> out = new ArrayList<>();
         // Tırnaklı sabitler (ör. kısmi indeksin 'TEST' / tarih kesimi) kolon değil — taranmadan çıkarılır (2026-10-21)
         Matcher m = Pattern.compile("[a-z_]+").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
@@ -98,7 +98,7 @@ class DeferredIndexFallbackH2Test {
             portable++;
             assertThat(indexColumns(s.name())).as("%s kolonları", s.name()).containsExactlyElementsOf(keyColumns(s.fallbackDdl()));
         }
-        assertThat(portable).isEqualTo(15);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz); 2026-10-23: + idx_lir_ip_reported (MP-33); 2026-10-31: + idx_dbqc_checked_at (veritabanı sorgu izlemesi); 2026-11-05: + idx_act_alert (aktivite alarm bağı) + idx_act_team_status_time (aktivite süzgeçleri)
+        assertThat(portable).isEqualTo(16);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz); 2026-10-23: + idx_lir_ip_reported (MP-33); 2026-10-31: + idx_dbqc_checked_at (veritabanı sorgu izlemesi); 2026-11-05: + idx_act_alert (aktivite alarm bağı) + idx_act_team_status_time (aktivite süzgeçleri); 2026-11-06: + idx_ae_domain_id (alan başına son alarm)
         assertThat(builder.startInBackground()).as("H2'de arka plan kurulumu yok").isNull();
     }
 
