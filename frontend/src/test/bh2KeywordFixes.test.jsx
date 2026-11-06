@@ -37,7 +37,8 @@ import { REQUEST_CODES } from '../components/keyword/keywordFailureModel.js'
 import {
   KW_EMPTY_FORM, keywordBody, keywordFormFrom, keywordPayload, keywordTestPayload, savedPassUserChanged, storedSecretsOf, unplacedErrors,
 } from '../components/keyword/keywordFormModel.js'
-import { RULE_LIMITS, criticalPossible, defaultCritical, validateRule } from '../components/keyword/rules/ruleModel.js'
+import { NOT_SEARCHED_NOTES, RULE_LIMITS, RULE_NOTES, criticalPossible, defaultCritical, validateRule } from '../components/keyword/rules/ruleModel.js'
+import RuleTestResults from '../components/keyword/rules/RuleTestResults.jsx'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 
@@ -269,6 +270,35 @@ describe('KeywordContentChart — izleme değişince eski seri yok', () => {
     await waitFor(() => expect(api.monitoring.keywordContentSeries).toHaveBeenLastCalledWith(8, { days: 7 }))
     expect(slot('kw-content-chart-plot')).toBeNull()
     expect(slot('kw-content-chart-skeleton')).not.toBeNull()
+  })
+})
+
+describe('kural notu PATTERN_INVALID (saklı düzenli ifade derlenemedi — sunucu B ajanı)', () => {
+  it('model: bilinen not (ham kod düşmez), "aranamadı" kümesinde; iki dilde metin', () => {
+    expect(RULE_NOTES).toContain('PATTERN_INVALID')
+    expect(NOT_SEARCHED_NOTES).toContain('PATTERN_INVALID')
+    expect(matchesOf({ rules: [{ id: 'r1', count: 0, note: 'PATTERN_INVALID', contexts: [] }] }).rules[0].note).toBe('PATTERN_INVALID')
+    expect(TR['keyword.rule.note.PATTERN_INVALID']).toMatch(/Desen geçersiz/)
+    expect(EN['keyword.rule.note.PATTERN_INVALID']).toMatch(/Invalid pattern/)
+  })
+
+  it('kural sonucu: not metni görünür, sunucunun 0\'ı ölçüm gibi gösterilmez', () => {
+    render(<RuleTestResults results={[{ id: 'r1', ok: false, level: 'MONITOR', count: 0, note: 'PATTERN_INVALID', kind: 'REGEX',
+      pattern_preview: '(a' }]} rules={[rule({ kind: 'REGEX', pattern: '(a' })]} monitorLevel="WARNING" title="Kurallar" />)
+    expect(slot('kw-rule-result-note')).toHaveTextContent(TR['keyword.rule.note.PATTERN_INVALID'])
+    expect(slot('kw-rule-result-count')).toBeNull()
+    expect(document.body).not.toHaveTextContent('PATTERN_INVALID')
+  })
+
+  it('canlı eşleşme: "eşleşme yok" ve sayı yok, not var', async () => {
+    api.monitoring.keywordMatches.mockResolvedValue({ success: true, data: { http_status: 200, error: null, failure_reason: 'RULES_NOT_MET',
+      rules: [{ id: 'r1', pattern_preview: '(a', count: 0, note: 'PATTERN_INVALID', contexts: [] }] } })
+    render(<KeywordMatchesPanel monitorId={7} canExecute rules={[rule({ kind: 'REGEX', pattern: '(a' })]} />)
+    fireEvent.click(slot('kw-matches-run'))
+    await waitFor(() => expect(slot('kw-matches-note')).not.toBeNull())
+    expect(slot('kw-matches-note')).toHaveTextContent(TR['keyword.rule.note.PATTERN_INVALID'])
+    expect(slot('kw-matches-none')).toBeNull()
+    expect(slot('kw-matches-count')).toBeNull()
   })
 })
 

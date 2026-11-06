@@ -18529,6 +18529,7 @@ export const TR = {
   'keyword.rule.note.SCOPE_INVALID': 'Yanıt JSON değil; JSON alanı okunamadı.',
   'keyword.rule.note.COUNT_CAPPED': 'Sayım üst sınıra ulaştı; gerçek adet daha fazla olabilir.',
   'keyword.rule.note.SCAN_TRUNCATED': 'Tarama süre ya da boyut sınırına ulaştı; sayı bir alt sınırdır (gerçek adet daha fazla olabilir).',
+  "keyword.rule.note.PATTERN_INVALID": "Desen geçersiz — kayıtlı düzenli ifade derlenemedi; eşleşme aranamadı ve kural ihlal sayıldı. Kuralı yeniden kaydedin.",
   'keyword.rule.res.title': 'Kural sonuçları',
   'keyword.rule.res.allOk': 'Kurallar sağlandı',
   'keyword.rule.res.okOtherReason': 'Kurallar sağlandı (başka neden: {0})',

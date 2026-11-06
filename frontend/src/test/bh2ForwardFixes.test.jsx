@@ -26,7 +26,7 @@ import { api } from '../api/client'
 import AlertForwardManager from '../components/admin/forwards/AlertForwardManager.jsx'
 import ForwardBadge from '../components/forwards/ForwardBadge.jsx'
 import { forwardTeamName, pillKind } from '../components/forwards/forwardModel.js'
-import { needsAttention, normalizeForward, summarize } from '../components/admin/forwards/alertForwardModel.js'
+import { FORWARD_STATES, matchesState, needsAttention, normalizeForward, summarize } from '../components/admin/forwards/alertForwardModel.js'
 
 const OWNER = 'Ödeme Sistemleri ve Kart Operasyonları Uygulama Geliştirme Ekibi (Teknoloji / Ödeme Platformları)'
 const base = (over) => ({
@@ -89,7 +89,11 @@ describe('iletim satırı durumu "unknown" (izleme dizini okunamadı)', () => {
     const f = normalizeForward(base({ state: 'unknown', scope_kind: 'MONITORS', scope_monitors: [{ type: 'http', id: 7, missing: null }] }))
     expect(f.state).toBe('unknown')
     expect(needsAttention(f)).toBe(false)
+    // Yalnız "Toplam" kutusuna girer — Etkin / Duraklatıldı / Süresi doldu / Dikkat süzgeçlerinin hiçbiri onu göstermez
     expect(summarize([f])).toEqual({ total: 1, active: 0, paused: 0, expired: 0, attention: 0 })
+    for (const s of ['active', 'paused', 'expired', 'attention']) expect(matchesState(f, s), s).toBe(false)
+    expect(matchesState(f, '')).toBe(true)
+    expect(FORWARD_STATES).toContain('unknown')
     // Sunucu durumu göndermezse (eski sunucu) istemci "unknown" TÜRETMEZ
     expect(normalizeForward(base({ state: undefined })).state).toBe('active')
   })

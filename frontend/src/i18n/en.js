@@ -18500,6 +18500,7 @@ export const EN = {
   'keyword.rule.note.SCOPE_INVALID': 'The response is not JSON; the JSON field could not be read.',
   'keyword.rule.note.COUNT_CAPPED': 'The count reached its cap; the real number may be higher.',
   'keyword.rule.note.SCAN_TRUNCATED': 'The scan hit its time or size limit; the count is a lower bound (the real number may be higher).',
+  "keyword.rule.note.PATTERN_INVALID": "Invalid pattern — the saved regular expression could not be compiled, so no match was searched and the rule counts as broken. Save the rule again.",
   'keyword.rule.res.title': 'Rule results',
   'keyword.rule.res.allOk': 'Rules hold',
   'keyword.rule.res.okOtherReason': 'Rules hold (other reason: {0})',

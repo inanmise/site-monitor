@@ -8,13 +8,13 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { CONTEXT_SOURCES, matchesOf, matchesPageUnread } from './contentDetailModel.js'
-import { AT_LEAST_NOTES } from '../rules/ruleModel.js'
+import { AT_LEAST_NOTES, NOT_SEARCHED_NOTES } from '../rules/ruleModel.js'
 import { REQUEST_CODES } from '../keywordFailureModel.js'
 import { KW_FAILURE_CODES } from '../diagnose/keywordDiagCodes.js'
 import { interpolate } from '../../http/diagnose/httpDiagnoseModel.js'
 
-/** Kapsam bulunamadı / geçersiz: eşleşme hiç ARANAMADI — sayı ve "eşleşme yok" gösterilmez, not söyler. */
-const SCOPE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID'])
+/** Kapsam bulunamadı / geçersiz ya da desen derlenemedi: eşleşme hiç ARANAMADI — sayı ve "eşleşme yok" gösterilmez, not söyler. */
+const SCOPE_NOTES = NOT_SEARCHED_NOTES
 
 const statusOf = (r) => Number(r?.status ?? errorInfoOf(r)?.status)
 const FAILURE_SET = new Set(KW_FAILURE_CODES)

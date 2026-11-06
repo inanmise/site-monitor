@@ -22,7 +22,10 @@ import { MAX_COUNT } from '../../../utils/keywordFold.js'
 
 /** Sunucu sınırları (`service/keyword/rules/*`; sözleşme §6.1). */
 /** Sunucunun kural notları (`rule_results[].note`, canlı eşleşmede `rules[].note`) — bilinmeyen not ekrana ham düşmez. */
-export const RULE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'COUNT_CAPPED', 'SCAN_TRUNCATED'])
+// PATTERN_INVALID (hata avı 2026-11-06): saklı düzenli ifade derlenemedi — kural ihlal sayılır, adet 0 bir ölçüm DEĞİL
+export const RULE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'COUNT_CAPPED', 'SCAN_TRUNCATED', 'PATTERN_INVALID'])
+/** Eşleşme hiç ARANAMADI (bölge yok / geçersiz, desen derlenemedi): sayı ve "eşleşme yok" gösterilmez, not söyler. */
+export const NOT_SEARCHED_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'PATTERN_INVALID'])
 /** Sayı bir ALT SINIR olduğunda ("en az N") — tarama bütçesi / sayım tavanı. */
 export const AT_LEAST_NOTES = Object.freeze(['SCAN_TRUNCATED', 'COUNT_CAPPED'])
 
