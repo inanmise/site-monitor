@@ -2613,7 +2613,8 @@ class MonitoringControllerTest {
                 .format(java.time.Instant.now().minus(90, java.time.temporal.ChronoUnit.DAYS));
 
         var res = mvc.perform(get("/api/monitoring/dns/1/history")
-                        .param("from", "2020-01-01").param("to", "2026-08-07")
+                        // to = bugün (UTC): sabit bir tarih takvim ilerleyince 90 günlük pencerenin gerisinde kalıyordu (2026-11-06)
+                        .param("from", "2020-01-01").param("to", java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString())
                         .session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andReturn();
@@ -9097,7 +9098,7 @@ class MonitoringControllerTest {
             r.setRuleResultsJson("[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern_preview\":\"x\",\"count\":0,\"ok\":false,\"level\":\"CRITICAL\",\"note\":null}]");
             when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of(r));
             com.sitemonitor.model.KeywordChangeBaseline base = new com.sitemonitor.model.KeywordChangeBaseline();
-            base.setMonitorId(93L); base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(null, null));
+            base.setMonitorId(93L); base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHashFor(a, null));
             base.setTakenAt("2026-11-01T06:00:00"); base.setSource("AUTO"); base.setBytes(1200L); base.setFingerprint("f");
             when(keywordBaselines.byMonitorIds(any())).thenReturn(java.util.Map.of(93L, base));
             mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
@@ -9112,7 +9113,8 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.data[1].change_baseline").value(org.hamcrest.Matchers.nullValue()))
                     .andExpect(jsonPath("$.data[1].rule_results.length()").value(0));
             // başka maskeyle alınmış temel → null
-            base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash("DIGITS", null));
+            base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash("DIGITS", null,
+                    com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(a, null)));
             mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
                     .andExpect(jsonPath("$.data[0].change_baseline").value(org.hamcrest.Matchers.nullValue()));
         }
@@ -9487,6 +9489,193 @@ class MonitoringControllerTest {
             mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data[0].change_note").value("SELECTOR_NOT_FOUND"));
+        }
+    }
+
+
+    // ═══════════ Anahtar kelime — hata avı düzeltmeleri (2026-11-06, bh2 H4) ═══════════
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Keyword hata avı 2026-11-06: istek değişince içerik temeli, doğrulamadan önce alarm kapatma, eski geçmiş kaydı")
+    class KeywordBugHunt20261106 {
+
+        private static final String JSON = "application/json";
+        private static final String RULES = "[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern\":\"hata\",\"operator\":\"LT\",\"count\":2},"
+                + "{\"id\":\"r2\",\"kind\":\"TEXT\",\"pattern\":\"Sepete ekle\",\"operator\":\"GTE\",\"count\":1}]";
+
+        private com.sitemonitor.model.KeywordMonitor stored(long id, long team) {
+            com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+            m.setId(id); m.setName("kw-" + id); m.setUrl("https://shop.example.com/"); m.setKeyword("Sepete ekle");
+            m.setMatchOperator("GTE"); m.setMatchCount(1); m.setActive(true); m.setTeamId(team); m.setIntervalSeconds(300);
+            when(keywordMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+            when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(id)).thenReturn(Optional.empty());
+            return m;
+        }
+
+        private void saveEchoes() {
+            when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class))).thenAnswer(a -> a.getArgument(0));
+        }
+
+        private void verifyChangeAlarmClosedSilently(long id) {
+            verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/"),
+                    eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_KEYWORD_CHANGED)),
+                    eq("Sistem (değişim ayarı değişti)"),
+                    argThat((java.util.Map<String, Object> ctx) -> ctx != null && Long.valueOf(id).equals(ctx.get("monitor_id"))));
+        }
+
+        @Test
+        @DisplayName("H4#3: değişim açıkken İSTEK tanımı değişince (yöntem / gövde, yönlendirme takibi) temel silinir + açık KEYWORD_CHANGED "
+                + "sessizce kapanır; yalnız ad değişince dokunulmaz")
+        void requestChangeResetsBaseline() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(201L, 5L);
+            m.setChangeDetect(true);
+            m.setChangeMask("DIGITS");
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/201").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"name\":\"yeni ad\"}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines, never()).delete(201L);
+            mvc.perform(put("/api/monitoring/keyword/201").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"method\":\"POST\",\"requestBody\":\"{\\\"q\\\":1}\"}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines).delete(201L);
+            verifyChangeAlarmClosedSilently(201L);
+            org.mockito.Mockito.clearInvocations(keywordBaselines, escalationService);
+            mvc.perform(put("/api/monitoring/keyword/201").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"followRedirects\":false}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines).delete(201L);
+        }
+
+        @Test
+        @DisplayName("H4#3: değişim KAPALI → AÇIK geçişinde (kapalıyken kalmış) eski temel silinir; kapalı kalırken istek değişse dokunulmaz")
+        void offToOnDeletesStaleBaseline() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(202L, 5L);
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/202").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"followRedirects\":false}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines, never()).delete(202L);
+            mvc.perform(put("/api/monitoring/keyword/202").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"changeDetect\":true}"))
+                    .andExpect(status().isOk());
+            verify(keywordBaselines).delete(202L);
+            assertThat(m.getChangeDetect()).isTrue();
+        }
+
+        @Test
+        @DisplayName("H4#6: doğrulaması düşen (400) güncelleme duraklatma alarmlarını KAPATMAZ ve kaydetmez; geçerli duraklatma kayıttan "
+                + "sonra kapatır")
+        void invalidUpdateNeverClosesAlarms() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(203L, 5L);
+            saveEchoes();
+            mvc.perform(put("/api/monitoring/keyword/203").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"active\":false,\"timeoutMs\":90000}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("timeoutMs"));
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(java.util.Collection.class), anyString(), any());
+            verify(keywordMonitorRepo, never()).save(any(com.sitemonitor.model.KeywordMonitor.class));
+            assertThat(m.getId()).isEqualTo(203L);
+            // istek alanı doğrulaması (geçersiz yöntem) da aynı: kapatma yok (gerçekte kayıt her istekte veritabanından okunur —
+            // 400 alan istekte bellekte değişen ayrık nesne kaydedilmez; test de taze nesne verir)
+            stored(203L, 5L);
+            mvc.perform(put("/api/monitoring/keyword/203").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"active\":false,\"method\":\"DELETE\"}"))
+                    .andExpect(status().isBadRequest());
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(java.util.Collection.class), anyString(), any());
+            verify(keywordMonitorRepo, never()).save(any(com.sitemonitor.model.KeywordMonitor.class));
+            // geçerli duraklatma → kayıt + kapatma
+            stored(203L, 5L);
+            mvc.perform(put("/api/monitoring/keyword/203").session(session("ADMIN")).contentType(JSON)
+                            .content("{\"active\":false}"))
+                    .andExpect(status().isOk());
+            org.mockito.InOrder order = org.mockito.Mockito.inOrder(keywordMonitorRepo, escalationService);
+            order.verify(keywordMonitorRepo).save(any(com.sitemonitor.model.KeywordMonitor.class));
+            order.verify(escalationService).resolveOpenAlertsSilently(eq("https://shop.example.com/"), any(java.util.Collection.class),
+                    eq("Sistem (izleme duraklatıldı)"), any());
+        }
+
+        @Test
+        @DisplayName("H4#4: kural listesinden ÖNCEKİ geçmiş kaydı (rulesJson anahtarı yok) kural listeli izlemeye geri yüklenince kural "
+                + "alanları atlanır (ayna bozulmaz) — skipped_fields [rules]; öteki alanlar geri döner")
+        void legacySnapshotSkipsRuleFields() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(204L, 5L);
+            String current = com.sitemonitor.service.keyword.rules.KeywordRules.toJson(
+                    com.sitemonitor.service.keyword.rules.KeywordRules.parseRequest(new com.fasterxml.jackson.databind.ObjectMapper()
+                            .readValue(RULES, List.class)));
+            m.setRulesJson(current);
+            m.setKeyword("hata");
+            m.setMatchOperator("LT");
+            m.setMatchCount(2);
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(6L); r.setResourceKind("KEYWORD"); r.setResourceId(204L); r.setResourceName("kw-204");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L);
+            r.setSnapshot("{\"keyword\":\"eski kelime\",\"matchOperator\":\"GTE\",\"matchCount\":3,\"caseSensitive\":true,"
+                    + "\"intervalSeconds\":900}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 204L, 0)).thenReturn(Optional.of(r));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/204/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_fields[0]").value("rules"));
+            assertThat(m.getRulesJson()).isEqualTo(current);
+            assertThat(m.getKeyword()).isEqualTo("hata");
+            assertThat(m.getMatchOperator()).isEqualTo("LT");
+            assertThat(m.getMatchCount()).isEqualTo(2);
+            assertThat(m.getCaseSensitive()).isFalse();
+            assertThat(m.getIntervalSeconds()).isEqualTo(900);
+
+            // kural listesiz izlemede eski kayıt bugünkü gibi geri yüklenir (atlama yok)
+            com.sitemonitor.model.KeywordMonitor plain = stored(205L, 5L);
+            com.sitemonitor.model.MonitorChangeLog r2 = new com.sitemonitor.model.MonitorChangeLog();
+            r2.setId(7L); r2.setResourceKind("KEYWORD"); r2.setResourceId(205L); r2.setResourceName("kw-205");
+            r2.setSeq(0); r2.setEventType("UPDATE"); r2.setTeamId(5L);
+            r2.setSnapshot("{\"keyword\":\"eski kelime\",\"matchCount\":3}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 205L, 0)).thenReturn(Optional.of(r2));
+            mvc.perform(post("/api/monitoring/changes/keyword/205/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_fields").doesNotExist());
+            assertThat(plain.getKeyword()).isEqualTo("eski kelime");
+            assertThat(plain.getMatchCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("H4#3: geri yükleme istek tanımını değiştirirse (yönlendirme takibi) içerik temeli silinir + açık KEYWORD_CHANGED kapanır")
+        void restoreRequestChangeResetsBaseline() throws Exception {
+            com.sitemonitor.model.KeywordMonitor m = stored(206L, 5L);
+            m.setChangeDetect(true);
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(8L); r.setResourceKind("KEYWORD"); r.setResourceId(206L); r.setResourceName("kw-206");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L);
+            r.setSnapshot("{\"followRedirects\":false,\"changeDetect\":true}");
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("KEYWORD", 206L, 0)).thenReturn(Optional.of(r));
+            saveEchoes();
+            mvc.perform(post("/api/monitoring/changes/keyword/206/0/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            assertThat(m.getFollowRedirects()).isFalse();
+            verify(keywordBaselines).delete(206L);
+            verifyChangeAlarmClosedSilently(206L);
+        }
+
+        @Test
+        @DisplayName("H4#3: liste satırının change_baseline'ı istek tanımına bağlı — başka URL'yle alınmış temel gösterilmez")
+        void listBaselineFollowsRequest() throws Exception {
+            com.sitemonitor.model.KeywordMonitor a = stored(207L, 5L);
+            a.setChangeDetect(true);
+            when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a));
+            when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of());
+            com.sitemonitor.model.KeywordMonitor old = stored(299L, 5L);
+            old.setChangeDetect(true);
+            old.setUrl("https://shop.example.com/eski");
+            com.sitemonitor.model.KeywordChangeBaseline base = new com.sitemonitor.model.KeywordChangeBaseline();
+            base.setMonitorId(207L); base.setTakenAt("2026-11-01T06:00:00"); base.setSource("AUTO"); base.setFingerprint("f");
+            base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHashFor(old, null));
+            when(keywordBaselines.byMonitorIds(any())).thenReturn(java.util.Map.of(207L, base));
+            mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].change_baseline").value(org.hamcrest.Matchers.nullValue()));
+            base.setSpecHash(com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHashFor(a, null));
+            mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                    .andExpect(jsonPath("$.data[0].change_baseline.source").value("AUTO"));
         }
     }
 }

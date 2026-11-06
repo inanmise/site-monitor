@@ -109,25 +109,78 @@ class ContentFingerprintTest {
     }
 
     @Test
-    @DisplayName("spec_hash: maske / seçici / sürüm özeti, 16 onaltılık; maske sırası ve boşluk farkı aynı iz")
+    @DisplayName("spec_hash: maske / seçici / istek parmak izi / sürüm özeti, 16 onaltılık; maske sırası ve boşluk farkı aynı iz")
     void specHash() {
-        String h = KeywordChangeDetector.specHash("DIGITS,DATES", "#a");
+        String h = KeywordChangeDetector.specHash("DIGITS,DATES", "#a", "r");
         assertThat(h).hasSize(16).matches("[0-9a-f]{16}");
-        assertThat(KeywordChangeDetector.specHash("DATES,DIGITS", " #a ")).isEqualTo(h);
-        assertThat(KeywordChangeDetector.specHash("DATES", "#a")).isNotEqualTo(h);
-        assertThat(KeywordChangeDetector.specHash(null, null)).isNotEqualTo(KeywordChangeDetector.specHash(null, "#a"));
-        assertThat(KeywordChangeSettings.settingsChanged(true, "DATES", null, true, "DATES", "")).isFalse();
-        assertThat(KeywordChangeSettings.settingsChanged(true, "DATES", null, true, "DIGITS", null)).isTrue();
-        assertThat(KeywordChangeSettings.settingsChanged(true, null, null, false, null, null)).isTrue();
-        assertThat(KeywordChangeSettings.settingsChanged(false, null, null, true, "DIGITS", null)).isFalse();
-        assertThat(KeywordChangeSettings.settingsChanged(null, null, null, null, null, null)).isFalse();
+        assertThat(KeywordChangeDetector.specHash("DATES,DIGITS", " #a ", "r")).isEqualTo(h);
+        assertThat(KeywordChangeDetector.specHash("DATES", "#a", "r")).isNotEqualTo(h);
+        assertThat(KeywordChangeDetector.specHash("DIGITS,DATES", "#a", "baska-istek")).isNotEqualTo(h);
+        assertThat(KeywordChangeDetector.specHash(null, null, null)).isNotEqualTo(KeywordChangeDetector.specHash(null, "#a", null));
+        assertThat(KeywordChangeSettings.settingsChanged(true, "DATES", null, "r", true, "DATES", "", "r")).isFalse();
+        assertThat(KeywordChangeSettings.settingsChanged(true, "DATES", null, "r", true, "DIGITS", null, "r")).isTrue();
+        assertThat(KeywordChangeSettings.settingsChanged(true, null, null, "r", false, null, null, "r")).isTrue();
+        assertThat(KeywordChangeSettings.settingsChanged(null, null, null, null, null, null, null, null)).isFalse();
+        assertThat(KeywordChangeSettings.settingsChanged(false, null, null, "r", false, "DIGITS", null, "s")).isFalse();
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#3: istek tanımı değişince (açıkken) temel geçersiz; değişim KAPALI → AÇIK geçişi de eski temeli siler")
+    void settingsChangedFollowsRequestAndOffOn() {
+        // açık kaldı, maske / seçici aynı, istek (URL / yöntem / başlık …) değişti → temel silinmeli
+        assertThat(KeywordChangeSettings.settingsChanged(true, "DATES", "#a", "eski-istek", true, "DATES", "#a", "yeni-istek")).isTrue();
+        // kapalıyken kalmış eski bir temel (silinememiş / eski pod) yeni tanımla kıyaslanmasın: açılınca silinir
+        assertThat(KeywordChangeSettings.settingsChanged(false, null, null, "r", true, "DIGITS", null, "r")).isTrue();
+        assertThat(KeywordChangeSettings.settingsChanged(null, null, null, "r", true, null, null, "r")).isTrue();
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#3: spec_hash istek parmak izine bağlı — kayıtlı izleme ile kontrol tanımı AYNI değeri verir; "
+            + "URL / yöntem / gövde / kullanıcı adı / başlık / UA / yönlendirme / beklenen son URL değişince değişir, parola değişince DEĞİŞMEZ")
+    void specHashFollowsRequest() {
+        com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+        m.setUrl("https://shop.example.test/urun?ts={timestamp}");
+        m.setKeyword("Sepet");
+        m.setChangeDetect(true);
+        m.setChangeMask("DIGITS");
+        m.setMethod("POST");
+        m.setRequestBody("{\"q\":1}");
+        m.setBasicAuthUser("izleme");
+        String headers = "X-Api-Key: abc\nAccept-Language: tr";
+        String h = KeywordChangeDetector.specHashFor(m, headers);
+        // kontrol tanımı (zamanlayıcının kurduğu) ile kayıtlı izleme aynı izi verir — başlık sırası / ad harfi önemsiz
+        var spec = com.sitemonitor.service.keyword.KeywordCheckSpec.forMonitor(m, "accept-language: tr\nX-API-KEY: abc", "parola", false)
+                .build();
+        assertThat(KeywordChangeDetector.specHashFor(spec)).isEqualTo(h);
+        // parola temele girmez
+        assertThat(KeywordChangeDetector.specHashFor(com.sitemonitor.service.keyword.KeywordCheckSpec
+                .forMonitor(m, headers, "baska-parola", true).build())).isEqualTo(h);
+        java.util.function.Consumer<java.util.function.Consumer<com.sitemonitor.model.KeywordMonitor>> differs = c -> {
+            com.sitemonitor.model.KeywordMonitor x = new com.sitemonitor.model.KeywordMonitor();
+            x.setUrl(m.getUrl()); x.setKeyword(m.getKeyword()); x.setChangeDetect(true); x.setChangeMask("DIGITS");
+            x.setMethod("POST"); x.setRequestBody(m.getRequestBody()); x.setBasicAuthUser("izleme");
+            c.accept(x);
+            assertThat(KeywordChangeDetector.specHashFor(x, headers)).isNotEqualTo(h);
+        };
+        differs.accept(x -> x.setUrl("https://shop.example.test/yeni"));
+        differs.accept(x -> x.setMethod("GET"));
+        differs.accept(x -> x.setRequestBody("{\"q\":2}"));
+        differs.accept(x -> x.setRequestContentType("text/plain"));
+        differs.accept(x -> x.setBasicAuthUser("baska"));
+        differs.accept(x -> x.setUserAgentMode("BROWSER"));
+        differs.accept(x -> x.setFollowRedirects(false));
+        differs.accept(x -> x.setExpectedFinalUrl("/hesap"));
+        assertThat(KeywordChangeDetector.specHashFor(m, "X-Api-Key: def\nAccept-Language: tr")).isNotEqualTo(h);
+        assertThat(KeywordChangeDetector.specHashFor(m, null)).isNotEqualTo(h);
+        // önceki (sürüm 1, istek izsiz) biçimdeki özet hiçbir zaman eşleşmez → eski satırlar bir kez yenilenir
+        assertThat(KeywordChangeDetector.CHANGE_ALGO_VERSION).isEqualTo(2);
     }
 
     @Test
     @DisplayName("Karşılaştırma: temel yok / başka spec → baseline_missing; aynı iz → false; farklı → true + özet")
     void compare() {
         var base = KeywordChangeDetector.snapshot(List.of("a", "b", "c", "d"), masks(""), List.of());
-        String spec = KeywordChangeDetector.specHash(null, null);
+        String spec = KeywordChangeDetector.specHash(null, null, null);
         var view = new KeywordChangeDetector.BaselineView(base.fingerprint(), spec, base.text(), base.textTruncated());
         assertThat(KeywordChangeDetector.compare(null, base, spec)).isEqualTo(KeywordChangeDetector.Comparison.MISSING);
         assertThat(KeywordChangeDetector.compare(view, base, "baska").baselineMissing()).isTrue();
@@ -188,7 +241,7 @@ class ContentFingerprintTest {
         changedTail.set(4_999, "son satır değişti");   // kırpılan bölümde
         var cur = KeywordChangeDetector.snapshot(changedTail, masks(""), List.of());
         assertThat(cur.fingerprint()).isNotEqualTo(base.fingerprint());
-        String spec = KeywordChangeDetector.specHash(null, null);
+        String spec = KeywordChangeDetector.specHash(null, null, null);
         var cmp = KeywordChangeDetector.compare(new KeywordChangeDetector.BaselineView(base.fingerprint(), spec, base.text(), true),
                 cur, spec);
         assertThat(cmp.changed()).isTrue();

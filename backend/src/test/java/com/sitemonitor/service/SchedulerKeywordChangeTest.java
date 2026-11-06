@@ -127,7 +127,7 @@ class SchedulerKeywordChangeTest {
         Map<String, Object> out = ReflectionTestUtils.invokeMethod(scheduler, "recheckKeyword", m, true);
         verify(baselines).takeAuto(41L, snap, 77L, "spec1");
         assertThat(out).containsKey("keyword_spec");
-        assertThat(out.get("keyword_spec")).isEqualTo(SchedulerService.keywordSpecHash(m));
+        assertThat(out.get("keyword_spec")).isEqualTo(SchedulerService.keywordSpecHash(m, null));
 
         org.mockito.Mockito.clearInvocations(baselines);
         ReflectionTestUtils.invokeMethod(scheduler, "recheckKeyword", m, false);
@@ -195,16 +195,44 @@ class SchedulerKeywordChangeTest {
     @DisplayName("B13 tanım özeti: kural / boyut / değişim / istek ayarı değişince değişir; aynı izlemede kararlı (16 onaltılık)")
     void specHash() {
         KeywordMonitor m = monitor();
-        String h = SchedulerService.keywordSpecHash(m);
-        assertThat(h).hasSize(16).isEqualTo(SchedulerService.keywordSpecHash(monitor()));
+        String h = SchedulerService.keywordSpecHash(m, null);
+        assertThat(h).hasSize(16).isEqualTo(SchedulerService.keywordSpecHash(monitor(), null));
         m.setMaxBytes(1000);
-        assertThat(SchedulerService.keywordSpecHash(m)).isNotEqualTo(h);
+        assertThat(SchedulerService.keywordSpecHash(m, null)).isNotEqualTo(h);
         KeywordMonitor r = monitor();
         r.setRulesJson("[{\"id\":\"r1\",\"kind\":\"TEXT\",\"pattern\":\"a\",\"operator\":\"GTE\",\"count\":1}]");
-        assertThat(SchedulerService.keywordSpecHash(r)).isNotEqualTo(h);
+        assertThat(SchedulerService.keywordSpecHash(r, null)).isNotEqualTo(h);
         KeywordMonitor s = monitor();
         s.setChangeSelector("#x");
-        assertThat(SchedulerService.keywordSpecHash(s)).isNotEqualTo(h);
+        assertThat(SchedulerService.keywordSpecHash(s, null)).isNotEqualTo(h);
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#7: tanım özeti istek parmak izinin tamamını (URL, gövde, kullanıcı adı, özel başlık, UA, "
+            + "yönlendirme), şifreli parolayı, zaman aşımını ve vekil kipini içerir; örnek yöntemi başlıkları çözer")
+    void specHashCoversRequest() {
+        KeywordMonitor m = monitor();
+        String h = SchedulerService.keywordSpecHash(m, null);
+        java.util.List<java.util.function.Consumer<KeywordMonitor>> changes = java.util.List.of(
+                x -> x.setUrl("https://kampanya.example.com/yeni"),
+                x -> { x.setMethod("POST"); x.setRequestBody("a=1"); },
+                x -> x.setBasicAuthUser("izleme"),
+                x -> x.setBasicAuthPassEnc("enc:v1:yeni-parola"),
+                x -> x.setUserAgentMode("BROWSER"),
+                x -> x.setFollowRedirects(false),
+                x -> x.setExpectedFinalUrl("/hesap"),
+                x -> x.setTimeoutMs(20_000),
+                x -> x.setUseProxy("ON"));
+        for (int i = 0; i < changes.size(); i++) {
+            KeywordMonitor x = monitor();
+            changes.get(i).accept(x);
+            assertThat(SchedulerService.keywordSpecHash(x, null)).as("değişiklik #" + i).isNotEqualTo(h);
+        }
+        assertThat(SchedulerService.keywordSpecHash(m, "X-Api-Key: a")).isNotEqualTo(h)
+                .isNotEqualTo(SchedulerService.keywordSpecHash(m, "X-Api-Key: b"));
+        KeywordHeaderSecrets secrets = (KeywordHeaderSecrets) ReflectionTestUtils.getField(scheduler, "keywordHeaderSecrets");
+        when(secrets.effectiveHeaders(m)).thenReturn("X-Api-Key: a");
+        assertThat(scheduler.keywordSpecHash(m)).isEqualTo(SchedulerService.keywordSpecHash(m, "X-Api-Key: a"));
     }
 
     @Test

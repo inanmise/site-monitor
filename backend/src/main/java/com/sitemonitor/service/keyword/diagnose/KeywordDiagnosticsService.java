@@ -49,7 +49,8 @@ import java.util.function.UnaryOperator;
  * <p>Her yol (izlemenin KENDİ yolu — vekil kararı {@link ProxyPolicyService}; vekil tanımlıysa ÖTEKİ yol paralel) için:
  * <ul>
  *   <li>ham soket ölçümü ({@link RawHttpProbe}) — izlemenin isteğinin AYNISI: GET, keyword izlemesinin User-Agent'ı,
- *       izlemenin şifreli özel başlıkları (yalnız ilk host'a), yönlendirme takibi, güven-hepsi TLS (doğrulama yok —
+ *       izlemenin şifreli özel başlıkları (kontrolün kuralıyla yalnız ilk kaynağa — {@code RawHttpProbe.Spec#originExtras}),
+ *       yönlendirme takibi, güven-hepsi TLS (doğrulama yok —
  *       izleme de doğrulamaz; güven durumu bilgi olarak raporlanır), gövde tam okunur (2 MB tavan — izlemeninkiyle
  *       aynı);</li>
  *   <li>izlemenin GERÇEK istemcisi ({@link KeywordCheckerService#check} beklentili) → {@code client_check};</li>

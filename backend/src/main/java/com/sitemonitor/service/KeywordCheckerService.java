@@ -36,7 +36,9 @@ import java.util.Map;
  * <p>Akış ({@link #check(KeywordCheckSpec)}):
  * <ul>
  *   <li><b>fetch</b>: yöntem (GET / POST), gövde + içerik türü, Basic auth, User-Agent kipi, özel başlıklar — eklentiler YALNIZ
- *       ilk host'a; yönlendirme elle takip (≤ 5 hop, her hop SSRF) ya da takip kapalı; hop başına izlemenin zaman aşımı (≤ 60 sn),
+ *       ilk isteğin kaynağına (aynı host'ta http:80 → https:443 yükseltmesi dahil — {@link SafeRedirect#extrasMayFollow});
+ *       yönlendirme elle takip (≤ 5 hop, her hop SSRF; 301 / 302 + POST → GET — {@link SafeRedirect#nextMethod}) ya da takip
+ *       kapalı; hop başına izlemenin zaman aşımı (≤ 60 sn),
  *       TÜM kontrol ≤ {@value KeywordRequestRules#TOTAL_BUDGET_MS} ms; gövde ≤ 2 MB.</li>
  *   <li><b>decode</b>: {@link KeywordText#decode} — sayfanın bildirdiği karakter kümesi (eskiden her zaman UTF-8).</li>
  *   <li><b>view</b>: eşleşme kapsamı RAW (ham, isteğe bağlı normalleştirme) ya da VISIBLE (görünür metin).</li>
@@ -95,8 +97,8 @@ public class KeywordCheckerService {
         }
     }
 
-    /** viaProxy: vekilli istemci (yapılandırılmamışsa doğrudan). */
-    private HttpClient clientFor(boolean viaProxy) {
+    /** viaProxy: vekilli istemci (yapılandırılmamışsa doğrudan). Paket içi: testler sahte istemciyle yönlendirme zinciri kurar. */
+    HttpClient clientFor(boolean viaProxy) {
         return viaProxy && proxiedClient != null ? proxiedClient : httpClient;
     }
 
@@ -308,7 +310,9 @@ public class KeywordCheckerService {
         /** Sınıflandırıcıya giden kural / boyut gözlemleri. */
         public KeywordFailureClassifier.RuleFacts ruleFacts() {
             var ev = evaluation;
-            return new KeywordFailureClassifier.RuleFacts(rulesMet, ev != null && ev.multi(), ev == null ? null : ev.summary(),
+            // derlenemeyen saklı desen (PATTERN_INVALID) tek kuralda da "kurallar sağlanmadı" — "kelime bulunamadı" demek yanlış olurdu
+            return new KeywordFailureClassifier.RuleFacts(rulesMet, ev != null && (ev.multi() || ev.patternInvalid()),
+                    ev == null ? null : ev.summary(),
                     ev == null ? null : ev.scopeNote(), size == null ? null : size.sizeOk(),
                     size == null ? null : size.reason(), size == null ? null : size.detail());
         }
@@ -419,8 +423,8 @@ public class KeywordCheckerService {
                 return;
             }
             var snap = changeSnapshot(spec, v.content());
-            String specHash = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHash(spec.changeMask(),
-                    spec.changeSelector());
+            // istek parmak izi dahil (hata avı 2026-11-06 H4#3): başka istekle alınmış temel kıyaslanmaz, yenilenir
+            String specHash = com.sitemonitor.service.keyword.content.KeywordChangeDetector.specHashFor(spec);
             result.put("content_fingerprint", snap.fingerprint());
             var base = spec.baseline();
             var cmp = com.sitemonitor.service.keyword.content.KeywordChangeDetector.compare(base, snap, specHash);
@@ -562,7 +566,8 @@ public class KeywordCheckerService {
         // Özel başlıklar, Basic auth ve POST gövdesi YALNIZ ilk isteğin KAYNAĞINA (şema + host + port) gider. Bunlar kullanıcı
         // girdisi ve pratikte sır taşıyor (Authorization / X-Api-Key); yönlendirme hedefi başka bir kaynağa (başka host YA DA aynı
         // host'un başka portu / şeması — kw son inceleme D-8) çıktığında onu da göndermek anahtarı yabancıya teslim etmek demek.
-        // Tarayıcıların cross-origin yönlendirmede Authorization düşürmesiyle aynı kural.
+        // Tek istisna aynı host'ta http:80 → https:443 yükseltmesi (hata avı 2026-11-06 H4#2) — kural SafeRedirect.extrasMayFollow'da,
+        // uçtan uca tanı (RawHttpProbe) da aynısını kullanır.
         final URI first = current;
         HttpRequestOptions opts = spec.requestOptions();
         String userAgent = spec.effectiveUserAgent();
@@ -573,7 +578,7 @@ public class KeywordCheckerService {
                 throw new SsrfGuard.BlockedException("geçersiz hedef URL: " + current);
             ssrfGuard.validate(host);
             int hopTimeout = remainingFor(timeoutMs, deadline);
-            HttpRequest req = buildRequest(current, method, hopTimeout, userAgent, opts, KeywordRequestRules.sameOrigin(first, current));
+            HttpRequest req = buildRequest(current, method, hopTimeout, userAgent, opts, SafeRedirect.extrasMayFollow(first, current));
             HttpResponse<InputStream> resp = clientFor(spec.viaProxy()).send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             if (!spec.followRedirects()) return resp;   // takip kapalı → 3xx olduğu gibi değerlendirilir (kw §5.1)
@@ -587,7 +592,7 @@ public class KeywordCheckerService {
             try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), drainMs, "Keyword")) {
                 is.readNBytes(4096);
             } catch (Exception ignore) { /* bağlantı iadesi */ }
-            method = SafeRedirect.nextMethod(resp.statusCode(), method);   // 303 → GET (gövdesiz)
+            method = SafeRedirect.nextMethod(resp.statusCode(), method);   // 303 / 301-302+POST → GET (gövdesiz)
             current = next;
             trail.current = next;
             trail.redirects++;

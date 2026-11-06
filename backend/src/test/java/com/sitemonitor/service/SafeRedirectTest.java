@@ -66,13 +66,49 @@ class SafeRedirectTest {
     }
 
     @Test
-    @DisplayName("nextMethod: 303 → GET; diğer 3xx metodu KORUR")
-    void nextMethod_303BecomesGet() {
-        assertThat(SafeRedirect.nextMethod(303, "HEAD")).isEqualTo("GET");
-        assertThat(SafeRedirect.nextMethod(303, "POST")).isEqualTo("GET");
-        assertThat(SafeRedirect.nextMethod(302, "HEAD")).isEqualTo("HEAD");
-        assertThat(SafeRedirect.nextMethod(301, "POST")).isEqualTo("POST");
+    @DisplayName("nextMethod (hata avı 2026-11-06 H4#1): 303 her yöntem → GET; 301 / 302 + POST → GET; 307 / 308 yöntemi KORUR; "
+            + "GET / HEAD her 3xx'te aynı")
+    void nextMethod_browserRule() {
+        // {durum, yöntem, beklenen}
+        String[][] table = {
+                {"303", "HEAD", "GET"}, {"303", "POST", "GET"}, {"303", "GET", "GET"},
+                {"301", "POST", "GET"}, {"302", "POST", "GET"}, {"302", "post", "GET"},
+                {"307", "POST", "POST"}, {"308", "POST", "POST"},
+                {"301", "GET", "GET"}, {"302", "GET", "GET"}, {"307", "GET", "GET"}, {"308", "GET", "GET"},
+                {"301", "HEAD", "HEAD"}, {"302", "HEAD", "HEAD"}, {"307", "HEAD", "HEAD"}, {"308", "HEAD", "HEAD"},
+                {"302", "PUT", "PUT"},
+        };
+        for (String[] row : table) {
+            assertThat(SafeRedirect.nextMethod(Integer.parseInt(row[0]), row[1])).as(row[0] + " " + row[1]).isEqualTo(row[2]);
+        }
         assertThat(SafeRedirect.nextMethod(302, null)).isEqualTo("GET");
+    }
+
+    @Test
+    @DisplayName("extrasMayFollow (hata avı 2026-11-06 H4#2 / H4#5): aynı kaynak + aynı host'ta http:80 → https:443 yükseltmesi; başka "
+            + "host / port / şema geçişi gitmez; karşılaştırma ilk isteğe göre")
+    void extrasMayFollow_truthTable() {
+        // {ilk istek, hop, gider mi}
+        String[][] table = {
+                {"https://a.example.com/x", "https://a.example.com/y", "true"},
+                {"https://a.example.com/", "https://A.EXAMPLE.com:443/z", "true"},
+                {"http://a.example.com/", "http://a.example.com:80/z", "true"},
+                {"http://a.example.com/", "https://a.example.com/", "true"},
+                {"http://a.example.com:80/", "https://a.example.com:443/", "true"},
+                {"http://a.example.com:8080/", "https://a.example.com/", "false"},
+                {"http://a.example.com/", "https://a.example.com:8443/", "false"},
+                {"https://a.example.com/", "http://a.example.com/", "false"},
+                {"https://a.example.com/", "https://a.example.com:8443/", "false"},
+                {"http://127.0.0.1:5000/", "http://127.0.0.1:5001/", "false"},
+                {"https://a.example.com/", "https://b.example.com/", "false"},
+                {"http://a.example.com/", "https://b.example.com/", "false"},
+        };
+        for (String[] row : table) {
+            assertThat(SafeRedirect.extrasMayFollow(URI.create(row[0]), URI.create(row[1]))).as(row[0] + " → " + row[1])
+                    .isEqualTo(Boolean.parseBoolean(row[2]));
+        }
+        assertThat(SafeRedirect.extrasMayFollow(null, URI.create("https://a/"))).isFalse();
+        assertThat(SafeRedirect.extrasMayFollow(URI.create("https://a/"), null)).isFalse();
     }
 
     @Test
