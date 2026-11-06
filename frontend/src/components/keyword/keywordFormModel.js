@@ -255,8 +255,9 @@ export function keywordBody(form) {
     mailSubjectTemplate: trimOrNull(f.mailSubjectTemplate),
     // fe2 alanları (Aşama 2)
     minBytes: numOrNull(f.minBytes), maxBytes: numOrNull(f.maxBytes),
-    // Seçici yalnız değişim AÇIKKEN anlamlı (hata avı 2026-11-06): kapalıyken kutu gizli — eski değer gönderilmez (null), doğrulanmaz
-    changeDetect: !!f.changeDetect, changeMask: listOf(f.changeMask), changeSelector: f.changeDetect ? trimOrNull(f.changeSelector) : null,
+    // Seçici yalnız değişim AÇIKKEN anlamlı (hata avı 2026-11-06): kapalıyken kutu gizli — anahtar HİÇ gönderilmez (undefined →
+    // JSON'da yok), sunucu doğrulamaz ve kayıtlı seçiciyi korur (değişimi yeniden açan kullanıcı eski seçiciyi bulur)
+    changeDetect: !!f.changeDetect, changeMask: listOf(f.changeMask), changeSelector: f.changeDetect ? trimOrNull(f.changeSelector) : undefined,
   }
 }
 

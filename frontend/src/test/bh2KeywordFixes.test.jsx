@@ -57,20 +57,21 @@ describe('gizli alan (H5#1) — model', () => {
     request_body: 'q=1', request_content_type: 'text/plain', change_detect: true, change_mask: 'DIGITS', change_selector: 'main',
     team_id: 5, group_name: 'G', tags: 't' }
 
-  it('keywordBody: GET\'te gövde / içerik türü null; değişim kapalıyken seçici null', () => {
+  it('keywordBody: GET\'te gövde / içerik türü null; değişim kapalıyken seçici gönderilmez', () => {
     expect(keywordBody({ ...KW_EMPTY_FORM, method: 'GET', requestBody: 'q=1', requestContentType: 'text/plain' }))
       .toMatchObject({ method: 'GET', requestBody: null, requestContentType: null })
     expect(keywordBody({ ...KW_EMPTY_FORM, method: 'POST', requestBody: 'q=1', requestContentType: ' text/plain ' }))
       .toMatchObject({ method: 'POST', requestBody: 'q=1', requestContentType: 'text/plain' })
-    expect(keywordBody({ ...KW_EMPTY_FORM, changeDetect: false, changeSelector: '[class~=x]' }).changeSelector).toBeNull()
+    expect(keywordBody({ ...KW_EMPTY_FORM, changeDetect: false, changeSelector: '[class~=x]' }).changeSelector).toBeUndefined()
     expect(keywordBody({ ...KW_EMPTY_FORM, changeDetect: true, changeSelector: ' main ' }).changeSelector).toBe('main')
   })
 
-  it('keywordPayload (düzenleme): POST → GET gövdeyi null gönderir; değişimi kapatmak seçiciyi null gönderir', () => {
+  it('keywordPayload (düzenleme): POST → GET gövdeyi null gönderir; değişimi kapatmak seçiciyi göndermez (kayıtlı seçici korunur)', () => {
     const base = { ...keywordFormFrom(ROW), changeDetect: true, changeMask: ['DIGITS'], changeSelector: 'main' }
     expect(keywordPayload({ ...base, method: 'GET' }, base)).toMatchObject({ method: 'GET', requestBody: null, requestContentType: null })
     const off = keywordPayload({ ...base, changeDetect: false, changeSelector: '[class~=x]' }, base)
-    expect(off).toMatchObject({ changeDetect: false, changeSelector: null })
+    expect(off).toMatchObject({ changeDetect: false })
+    expect(Object.prototype.hasOwnProperty.call(JSON.parse(JSON.stringify(off)), 'changeSelector')).toBe(false)
   })
 
   it('unplacedErrors: DOM\'da alanı olmayan hataların iletileri', () => {
