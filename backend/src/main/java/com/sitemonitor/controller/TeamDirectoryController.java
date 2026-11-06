@@ -80,22 +80,28 @@ public class TeamDirectoryController {
         if (teamOpt.isEmpty()) return ResponseEntity.notFound().build();
         Team team = teamOpt.get();
 
-        List<AppUser> all = userRepo.findAll();
-        Map<Long, AppUser> byId = new HashMap<>();
-        for (AppUser u : all) if (u.getId() != null) byId.put(u.getId(), u);
+        // Performans 2026-11-06 (PF2 #10): yalnız takımın üyeleri, dar sütunlarla (fotoğraf / takım koleksiyonu okunmaz);
+        // müdür, lider ve bağlı eskalasyon kişisi adları tek kimlik listesiyle. Eskiden TÜM kullanıcılar tam varlık okunuyordu.
+        List<Object[]> memberRows = userRepo.findTeamMemberDirectoryRows(id);
+        List<EscalationContact> contactRows = contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(id);
+        Set<Long> nameIds = new HashSet<>();
+        for (Object[] r : memberRows) if (r[11] != null) nameIds.add(((Number) r[11]).longValue());
+        if (team.getLeaderId() != null) nameIds.add(team.getLeaderId());
+        for (EscalationContact c : contactRows) if (c.getUserId() != null) nameIds.add(c.getUserId());
+        Map<Long, NameRow> byId = new HashMap<>();
+        if (!nameIds.isEmpty()) for (Object[] r : userRepo.findNameRowsByIds(nameIds)) {
+            NameRow n = NameRow.of(r);
+            if (n.id() != null) byId.put(n.id(), n);
+        }
 
         List<Map<String, Object>> members = new ArrayList<>();
-        for (AppUser u : all) {
-            boolean member = id.equals(u.getTeamId()) || (u.getTeamIds() != null && u.getTeamIds().contains(id));
-            if (!member) continue;
-            members.add(project(u, byId));
-        }
+        for (Object[] r : memberRows) members.add(project(r, byId));
         // Aktifler önce, pasifler sonda; her grupta ada göre.
         members.sort(Comparator.comparing((Map<String, Object> m) -> !Boolean.TRUE.equals(m.get("active")))
                 .thenComparing(m -> String.valueOf(m.get("display_name")), String.CASE_INSENSITIVE_ORDER));
 
         List<Map<String, Object>> contacts = new ArrayList<>();
-        for (EscalationContact c : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(id)) {
+        for (EscalationContact c : contactRows) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", c.getId());
             m.put("name", c.getName());
@@ -104,8 +110,8 @@ public class TeamDirectoryController {
             m.put("min_alert_level", c.getMinAlertLevel());
             // Bağlı kullanıcı pasif mi (2026-10-02): pasif kişi BİLDİRİM ALMAZ (InactiveRecipientGuard) — arayüz üye
             // listesindeki gibi belirgin "Pasif" rozeti çizer. Bağsız (serbest metin) kişi → null; kimlik sızdırılmaz.
-            AppUser linked = c.getUserId() == null ? null : byId.get(c.getUserId());
-            m.put("user_active", linked == null ? null : Boolean.TRUE.equals(linked.getActive()));
+            NameRow linked = c.getUserId() == null ? null : byId.get(c.getUserId());
+            m.put("user_active", linked == null ? null : Boolean.TRUE.equals(linked.active()));
             contacts.add(m);
         }
 
@@ -124,33 +130,55 @@ public class TeamDirectoryController {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
-    /** Beyaz-liste projeksiyonu — yeni alan eklerken kurum-geneli görünürlüğü düşün (telefon/sicil YOK). */
-    static Map<String, Object> project(AppUser u, Map<Long, AppUser> byId) {
+    /** Ad çözümü için dar satır ({@code AppUserRepository.findNameRowsByIds}): id, username, displayName, firstName, lastName, active. */
+    record NameRow(Long id, String username, String displayName, String firstName, String lastName, Boolean active) {
+        static NameRow of(Object[] r) {
+            return new NameRow(r[0] instanceof Number n ? n.longValue() : null, (String) r[1], (String) r[2], (String) r[3],
+                    (String) r[4], (Boolean) r[5]);
+        }
+    }
+
+    /**
+     * Beyaz-liste projeksiyonu — dar satırdan ({@code AppUserRepository.findTeamMemberDirectoryRows}). Anahtarlar ve sıra eski
+     * tam varlık projeksiyonuyla BİREBİR (yanıt sözleşmesi değişmez). Yeni alan eklerken kurum-geneli görünürlüğü düşün
+     * (telefon/sicil YOK).
+     */
+    static Map<String, Object> project(Object[] r, Map<Long, NameRow> byId) {
+        Long id = r[0] instanceof Number n ? n.longValue() : null;
+        Long managerId = r[11] instanceof Number n ? n.longValue() : null;
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", com.sitemonitor.service.userref.UserRef.of(u.getId()));   // global olmayana opak kimlik (UserRefWire)
-        m.put("username", u.getUsername());
-        m.put("display_name", displayName(u));
-        m.put("first_name", u.getFirstName());
-        m.put("last_name", u.getLastName());
-        m.put("org_role", u.getOrgRole());
-        m.put("title", u.getTitle());
-        m.put("department", u.getDepartment());
-        m.put("mudurluk_name", u.getMudurlukName());
-        m.put("company_level", u.getCompanyLevel());
-        m.put("email", u.getEmail());
-        m.put("manager_id", u.getManagerId());
-        m.put("manager_display_name", u.getManagerId() != null ? displayName(byId.get(u.getManagerId())) : null);
-        m.put("system_role", u.getSystemRole());
-        m.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
-        m.put("active", Boolean.TRUE.equals(u.getActive()));   // 2026-10-02: pasif üye listede, belirgin rozetle
+        m.put("id", com.sitemonitor.service.userref.UserRef.of(id));   // global olmayana opak kimlik (UserRefWire)
+        m.put("username", r[1]);
+        m.put("display_name", displayName((String) r[2], (String) r[3], (String) r[4], (String) r[1]));
+        m.put("first_name", r[3]);
+        m.put("last_name", r[4]);
+        m.put("org_role", r[5]);
+        m.put("title", r[6]);
+        m.put("department", r[7]);
+        m.put("mudurluk_name", r[8]);
+        m.put("company_level", r[9]);
+        m.put("email", r[10]);
+        m.put("manager_id", managerId);
+        m.put("manager_display_name", managerId != null ? displayName(byId.get(managerId)) : null);
+        m.put("system_role", r[12]);
+        m.put("has_photo", Boolean.TRUE.equals(r[14]));
+        m.put("active", Boolean.TRUE.equals(r[13]));   // 2026-10-02: pasif üye listede, belirgin rozetle
         return m;
     }
 
     private static String displayName(AppUser u) {
         if (u == null) return null;
-        if (u.getDisplayName() != null && !u.getDisplayName().isBlank()) return u.getDisplayName();
-        String full = ((u.getFirstName() != null ? u.getFirstName() : "") + " "
-                     + (u.getLastName() != null ? u.getLastName() : "")).trim();
-        return full.isEmpty() ? u.getUsername() : full;
+        return displayName(u.getDisplayName(), u.getFirstName(), u.getLastName(), u.getUsername());
+    }
+
+    private static String displayName(NameRow u) {
+        if (u == null) return null;
+        return displayName(u.displayName(), u.firstName(), u.lastName(), u.username());
+    }
+
+    private static String displayName(String display, String first, String last, String username) {
+        if (display != null && !display.isBlank()) return display;
+        String full = ((first != null ? first : "") + " " + (last != null ? last : "")).trim();
+        return full.isEmpty() ? username : full;
     }
 }

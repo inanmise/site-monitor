@@ -589,9 +589,23 @@ public class ExtendedHealthService {
                 .map(NotificationLog::getAlertEventId)
                 .filter(java.util.Objects::nonNull)
                 .collect(java.util.stream.Collectors.toSet());
+        return aeIdToDomain(ids);
+    }
+
+    private Map<Long, String> aeIdToDomain(java.util.Set<Long> ids) {
         if (ids.isEmpty()) return java.util.Collections.emptyMap();
         return alertEventRepo.findAllById(ids).stream()
                 .collect(java.util.stream.Collectors.toMap(AlertEvent::getId, AlertEvent::getDomain));
+    }
+
+    /**
+     * {@code NotificationLogRepository.findStatusRowsSince} satırının okunan alanları (gövdesiz). Sütun sırası: alertEventId,
+     * sentAt, recipientEmail, subject, emailStatus, webhookStatus.
+     */
+    record MailStatusRow(Long alertEventId, String sentAt, String emailStatus) {
+        static MailStatusRow of(Object[] r) {
+            return new MailStatusRow(r[0] instanceof Number n ? n.longValue() : null, (String) r[1], (String) r[4]);
+        }
     }
 
     /** Domains whose last N consecutive non-SKIPPED mail attempts (within the last
@@ -605,21 +619,24 @@ public class ExtendedHealthService {
         if (consecutive < 1) return List.of();
         String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
                 .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        List<NotificationLog> recent = notificationLogRepo.findAllSince(cutoff).stream()
-                .filter(n -> n.getEmailStatus() != null && !n.getEmailStatus().startsWith("SKIPPED"))
-                .filter(n -> n.getAlertEventId() != null)
-                .collect(java.util.stream.Collectors.toList());
+        // Performans 2026-11-06 (PF2 #6): gövdesiz satırlar (posta HTML'i okunmaz) — yalnız alarm, zaman ve durum.
+        List<MailStatusRow> recent = new java.util.ArrayList<>();
+        for (Object[] r : notificationLogRepo.findStatusRowsSince(cutoff)) {
+            MailStatusRow row = MailStatusRow.of(r);
+            if (row.emailStatus() != null && !row.emailStatus().startsWith("SKIPPED") && row.alertEventId() != null) recent.add(row);
+        }
         if (recent.isEmpty()) return List.of();
 
-        Map<Long, String> aeToDomain = aeIdToDomainMap(recent);
-        Map<String, List<NotificationLog>> byDomain = recent.stream()
-                .filter(n -> aeToDomain.containsKey(n.getAlertEventId()))
+        Map<Long, String> aeToDomain = aeIdToDomain(recent.stream().map(MailStatusRow::alertEventId)
+                .collect(java.util.stream.Collectors.toSet()));
+        Map<String, List<MailStatusRow>> byDomain = recent.stream()
+                .filter(n -> aeToDomain.containsKey(n.alertEventId()))
                 .collect(java.util.stream.Collectors.groupingBy(
-                        n -> aeToDomain.get(n.getAlertEventId())));
+                        n -> aeToDomain.get(n.alertEventId())));
 
-        java.util.Comparator<NotificationLog> bySentAtDesc = (a, b) -> {
-            String sa = a.getSentAt();
-            String sb = b.getSentAt();
+        java.util.Comparator<MailStatusRow> bySentAtDesc = (a, b) -> {
+            String sa = a.sentAt();
+            String sb = b.sentAt();
             if (sa == null && sb == null) return 0;
             if (sa == null) return 1;   // nulls last
             if (sb == null) return -1;
@@ -627,26 +644,35 @@ public class ExtendedHealthService {
         };
 
         List<String> failing = new java.util.ArrayList<>();
-        for (Map.Entry<String, List<NotificationLog>> e : byDomain.entrySet()) {
-            List<NotificationLog> top = e.getValue().stream()
+        for (Map.Entry<String, List<MailStatusRow>> e : byDomain.entrySet()) {
+            List<MailStatusRow> top = e.getValue().stream()
                     .sorted(bySentAtDesc)
                     .limit(consecutive)
                     .collect(java.util.stream.Collectors.toList());
             if (top.size() < consecutive) continue;
             boolean allFailed = top.stream()
-                    .allMatch(n -> n.getEmailStatus() != null && n.getEmailStatus().startsWith("FAILED"));
+                    .allMatch(n -> n.emailStatus() != null && n.emailStatus().startsWith("FAILED"));
             if (allFailed) failing.add(e.getKey());
         }
         java.util.Collections.sort(failing);
         return failing;
     }
 
+    /** SMTP kutusunun dönemleri (gün) — {@code smtpPeriodCounts} dört kesimi bu sırayla alır, sonuncusu en eski. */
+    static final int[] SMTP_PERIOD_DAYS = { 1, 7, 15, 30 };
+
     public Map<String, Object> getSmtpStats() {
         try {
-            int[] days = { 1, 7, 15, 30 };
+            int[] days = SMTP_PERIOD_DAYS;
+            // Performans 2026-11-06 (PF2 #10): 4 dönem × 3 sayım = 12 tarama yerine TEK gruplu geçiş (sonuç aynı).
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            String[] cut = new String[days.length];
+            for (int i = 0; i < days.length; i++) cut[i] = now.minusDays(days[i]).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            List<Object[]> rows = notificationLogRepo.smtpPeriodCounts(cut[0], cut[1], cut[2], cut[3]);
+            Object[] row = rows == null || rows.isEmpty() ? null : rows.get(0);
             Map<String, Map<String, Object>> periods = new LinkedHashMap<>();
-            for (int d : days) {
-                periods.put(d + "d", computeSmtpPeriod(d));
+            for (int i = 0; i < days.length; i++) {
+                periods.put(days[i] + "d", smtpPeriod(count(row, 3 * i), count(row, 3 * i + 1), count(row, 3 * i + 2)));
             }
             // Top-level fields mirror 30d defaults for backward compatibility (existing clients/tests).
             Map<String, Object> m = new LinkedHashMap<>(periods.get("30d"));
@@ -665,13 +691,15 @@ public class ExtendedHealthService {
         }
     }
 
-    private Map<String, Object> computeSmtpPeriod(int days) {
-        String cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(days)
-                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        // attempted = SENT + FAILED (excludes intentional SKIPPED_DISABLED)
-        long attempted = notificationLogRepo.countAttemptedSince(cutoff);
-        long sent      = notificationLogRepo.countSentSince(cutoff);
-        long total     = notificationLogRepo.countAllSince(cutoff);
+    /** Tek satırlık toplam sorgusunun sütunu — satır / değer yoksa (boş pencere: SUM null) 0. */
+    private static long count(Object[] row, int i) {
+        return row != null && i < row.length && row[i] instanceof Number n ? n.longValue() : 0L;
+    }
+
+    /**
+     * Bir dönemin SMTP özeti. attempted = SENT + FAILED (bilinçli SKIPPED_DISABLED hariç), sent = SENT, total = tüm satırlar.
+     */
+    private static Map<String, Object> smtpPeriod(long attempted, long sent, long total) {
         double rate    = attempted == 0 ? 100.0 : (sent * 100.0 / attempted);
         // İKİ ayrı kusur vardı, ikisi de burada:
         //

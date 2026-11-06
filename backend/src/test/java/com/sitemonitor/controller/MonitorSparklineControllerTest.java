@@ -5,7 +5,6 @@ import com.sitemonitor.service.RememberMeService;
 import com.sitemonitor.service.UserService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.mock.web.MockHttpSession;
@@ -15,7 +14,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -63,20 +61,36 @@ class MonitorSparklineControllerTest {
         Map<Long, Long> teams = new HashMap<>();
         teams.put(1L, 5L); teams.put(2L, 9L); teams.put(3L, null);
         when(sparklineService.monitorTeams("http")).thenReturn(teams);
-        Map<Long, Map<String, Object>> out = new HashMap<>();
-        out.put(1L, Map.of("n", 3, "fail", 0, "up_pct", 100.0));
-        when(sparklineService.sparklines(eq("http"), anyInt(), eq(Set.of(1L)))).thenReturn(out);
+        // Performans 2026-11-06 (PF2 #2): kapsamlı kullanıcı da ORTAK (global) önbellekten okur; görünür kümeyle bellekte süzülür
+        Map<Long, Map<String, Object>> all = new HashMap<>();
+        all.put(1L, Map.of("n", 3, "fail", 0, "up_pct", 100.0));
+        all.put(2L, Map.of("n", 7, "fail", 1, "up_pct", 85.7));
+        all.put(3L, Map.of("n", 1, "fail", 0, "up_pct", 100.0));
+        when(sparklineService.sparklinesAll(eq("http"), anyInt())).thenReturn(all);
 
         mvc.perform(get("/api/monitoring/sparklines").param("type", "http").param("hours", "9999").session(teamUser(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.hours").value(24))   // O-7: kapsamlı çağıran 24 saatle sınırlı (global 168)
                 .andExpect(jsonPath("$.data.1.n").value(3))
-                .andExpect(jsonPath("$.data.2").doesNotExist());
+                .andExpect(jsonPath("$.data.2").doesNotExist())    // takım 9
+                .andExpect(jsonPath("$.data.3").doesNotExist());   // takımsız
 
-        @SuppressWarnings("unchecked") ArgumentCaptor<Set<Long>> ids = ArgumentCaptor.forClass(Set.class);
-        verify(sparklineService).sparklines(eq("http"), eq(24), ids.capture());   // tavan controller'da uygulanır (O-7)
-        assertThat(ids.getValue()).containsExactly(1L);   // takım 9 ve takımsız monitör dışarıda
+        verify(sparklineService).sparklinesAll("http", 24);   // tavan controller'da uygulanır (O-7); anahtar 24 sa
+        verify(sparklineService, org.mockito.Mockito.never()).sparklines(org.mockito.ArgumentMatchers.anyString(), anyInt(), org.mockito.ArgumentMatchers.anySet());
+
+        // Başka kapsam aynı ortak sonuçtan YALNIZ kendisininkini alır (kullanıcılar arası sızıntı yok)
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").session(teamUser(9L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.2.n").value(7))
+                .andExpect(jsonPath("$.data.1").doesNotExist())
+                .andExpect(jsonPath("$.data.3").doesNotExist());
+        // Görünür monitörü olmayan kullanıcı ortak yola hiç girmez
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").session(teamUser(77L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+        verify(sparklineService, org.mockito.Mockito.times(2)).sparklinesAll("http", 24);
+        assertThat(all).hasSize(3);   // paylaşılan önbellek haritası değiştirilmedi
     }
     @Test
     @DisplayName("sla: hedef canlı ayardan (varsayılan 99.9), gün tavanı 30 (kapsamlı, O-7), kapsam aynı")
@@ -86,13 +100,15 @@ class MonitorSparklineControllerTest {
         when(appSettings.getDouble(eq("site.monitor.sla.target-pct"), org.mockito.ArgumentMatchers.anyDouble())).thenReturn(99.5);
         Map<Long, Map<String, Object>> out = new HashMap<>();
         out.put(1L, Map.of("n", 100, "fail", 1, "up_pct", 99.0, "bad_hours", 1));
-        when(sparklineService.availability(eq("ping"), anyInt(), eq(Set.of(1L)))).thenReturn(out);
+        out.put(2L, Map.of("n", 100, "fail", 0, "up_pct", 100.0, "bad_hours", 0));
+        when(sparklineService.availabilityAll(eq("ping"), eq(30))).thenReturn(out);   // ortak önbellek, kapsamlı tavan 30 gün
         mvc.perform(get("/api/monitoring/sla").param("type", "ping").param("days", "365").session(teamUser(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.target_pct").value(99.5))
                 .andExpect(jsonPath("$.days").value(30))   // O-7: kapsamlı çağıran 30 günle sınırlı (global 90)
                 .andExpect(jsonPath("$.data.1.up_pct").value(99.0))
                 .andExpect(jsonPath("$.data.2").doesNotExist());
+        verify(sparklineService, org.mockito.Mockito.never()).availability(org.mockito.ArgumentMatchers.anyString(), anyInt(), org.mockito.ArgumentMatchers.anySet());
     }
 
     // ── Maliyet sınırı (prod kapısı 2026-09-25, O-7) ───────────────────────────────────────────

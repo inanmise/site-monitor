@@ -80,14 +80,24 @@ class ExtendedHealthServiceTest {
         assertThat((Long) result.get("minutes_since")).isGreaterThanOrEqualTo(15L);
     }
 
+
+    /**
+     * 2026-11-06 (performans PF2 #10): SMTP kutusu dört dönemi TEK toplam sorgusuyla okur — her dönem aynı sayılarla
+     * (eski testlerin "her kesimde aynı sayım" saplamasıyla birebir).
+     */
+    private void stubCounts(long attempted, long sent, long total) {
+        Object[] row = new Object[12];
+        for (int i = 0; i < 4; i++) { row[3 * i] = attempted; row[3 * i + 1] = sent; row[3 * i + 2] = total; }
+        when(notificationLogRepo.smtpPeriodCounts(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(java.util.Collections.singletonList(row));
+    }
+
     // ── getSmtpStats ──────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("no records → rate=100, alarm=false")
     void getSmtpStats_noRecords_rate100_noAlarm() {
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(0L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(0L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(0L);
+        stubCounts(0L, 0L, 0L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -98,9 +108,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("all sent → rate=100, alarm=false")
     void getSmtpStats_allSent_rate100() {
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(10L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(10L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(10L);
+        stubCounts(10L, 10L, 10L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -111,9 +119,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("90% sent (1 of 10 failed) → alarm=true (rate < 95%)")
     void getSmtpStats_someFailed_alarm() {
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(10L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(9L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(10L);
+        stubCounts(10L, 9L, 10L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -123,9 +129,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("96% sent → alarm=false (within ≥95% tolerance)")
     void getSmtpStats_rate96_noAlarm() {
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(100L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(96L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(100L);
+        stubCounts(100L, 96L, 100L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -136,9 +140,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("94% sent → alarm=true (below 95% threshold)")
     void getSmtpStats_rate94_alarm() {
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(100L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(94L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(100L);
+        stubCounts(100L, 94L, 100L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -150,9 +152,7 @@ class ExtendedHealthServiceTest {
     @DisplayName("SKIPPED excluded from denominator → rate computed correctly")
     void getSmtpStats_skippedExcluded() {
         // attempted=5 (SENT+FAILED only), sent=5 → rate=100 even though total=10
-        when(notificationLogRepo.countAttemptedSince(any())).thenReturn(5L);
-        when(notificationLogRepo.countSentSince(any())).thenReturn(5L);
-        when(notificationLogRepo.countAllSince(any())).thenReturn(10L);
+        stubCounts(5L, 5L, 10L);
 
         Map<String, Object> result = service.getSmtpStats();
 
@@ -251,9 +251,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("SMTP orani tek ondalik korur - 967/1000 -> 96.7 (96 DEGIL)")
     void getSmtpStats_keepsOneDecimal() {
-        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(1000L);
-        when(notificationLogRepo.countSentSince(anyString())).thenReturn(967L);
-        when(notificationLogRepo.countAllSince(anyString())).thenReturn(1000L);
+        stubCounts(1000L, 967L, 1000L);
 
         Map<String, Object> m = service.getSmtpStats();
 
@@ -266,9 +264,7 @@ class ExtendedHealthServiceTest {
     void getSmtpStats_displayAgreesWithAlarm() {
         // Alarm ham `rate < 95.0` uzerinden hesaplaniyor. Tamsayi bolmesi doneminde pano
         // Math.round(949.6)=950/10L=95 gosterip "saglikli" gorunurken alarm ACIK oluyordu.
-        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(10000L);
-        when(notificationLogRepo.countSentSince(anyString())).thenReturn(9496L);
-        when(notificationLogRepo.countAllSince(anyString())).thenReturn(10000L);
+        stubCounts(10000L, 9496L, 10000L);
 
         Map<String, Object> m = service.getSmtpStats();
 
@@ -280,9 +276,7 @@ class ExtendedHealthServiceTest {
     @Test
     @DisplayName("Hic deneme yoksa oran 100 - tam sayi gibi cizilir, artefakt yok")
     void getSmtpStats_noAttempts_isHundred() {
-        when(notificationLogRepo.countAttemptedSince(anyString())).thenReturn(0L);
-        when(notificationLogRepo.countSentSince(anyString())).thenReturn(0L);
-        when(notificationLogRepo.countAllSince(anyString())).thenReturn(0L);
+        stubCounts(0L, 0L, 0L);
 
         Map<String, Object> m = service.getSmtpStats();
 

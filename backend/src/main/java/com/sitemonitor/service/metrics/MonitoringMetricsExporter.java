@@ -29,7 +29,6 @@ import com.sitemonitor.service.evalstate.EvalVerifyReport;
 import com.sitemonitor.service.schedule.ClusterScheduleService;
 import com.sitemonitor.service.watchdog.WatchdogCheck;
 import com.sitemonitor.service.watchdog.WatchdogService;
-import com.sitemonitor.util.TtlMemo;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.MultiGauge;
 import io.micrometer.core.instrument.Tag;
@@ -647,8 +646,10 @@ public class MonitoringMetricsExporter {
         // İzlemeler + alan adları (Genel Bakış kuruluş görünümü — paylaşılan 30 sn'lik bellek)
         Map<String, Object> ov = read(sources, "overview", () -> {
             if (overview == null) return null;
-            Map<String, Object> m = overview.build(TtlMemo.scopeKey(true, null), team -> true, true,
-                    MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS);
+            // Performans 2026-11-06 (PF3 #1): tur aralığından 5 sn kısa yaştaki kuruluş hesabı kabul (pano belleği 30 sn <
+            // tur 60 sn → her tur tam hesap yapılıyordu); ardışık iki tur aynı hesabı okumaz. Anahtar panoyla ORTAK.
+            long maxAgeMs = Math.max(0L, MetricsExportSettings.refreshSeconds(settings) * 1000L - 5_000L);
+            Map<String, Object> m = overview.orgOverview(maxAgeMs);
             if (m == null) throw new IllegalStateException("overview unavailable");
             // Açık alarmlar okunamadıysa durumlar alarmsız hesaplandı — "down" izleme "up" görünebilir: yayılmaz
             if (Boolean.TRUE.equals(m.get("alerts_unavailable"))) throw new IllegalStateException("overview alerts unavailable");

@@ -45,6 +45,40 @@ public class MonitorRefResolver {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
 
+    /**
+     * Dar sütunlu okuma (performans 2026-11-06, PF2 #1): aile başına yalnız {@code (anahtar, ad, id)} — tam varlık listesi
+     * k6 betiğini, ortam JSON'unu, dbquery SQL'ini ve sayfa / başlık sütunlarını da çekiyordu (zil her dakika). Sıra kimliğe
+     * göre: "anahtar başına İLK satır" kuralı (küçük id) eski tam liste okumasıyla aynı kalır. Bean yoksa (elle kurulan birim
+     * testi) eski tam liste yolu.
+     */
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager em;
+
+    /** Aile → (varlık, anahtar alanı, silinmiş satır süzgeci). Anahtar alanı {@link #resolve}'un eski {@code index} çağrılarıyla aynı. */
+    private record RefSource(String entity, String keyField, boolean softDelete) {}
+    private static final Map<String, RefSource> REF_SOURCES = Map.of(
+            "http",      new RefSource("HttpMonitor",      "url",    false),
+            "port",      new RefSource("PortMonitor",      "host",   true),
+            "keyword",   new RefSource("KeywordMonitor",   "url",    false),
+            "ping",      new RefSource("PingMonitor",      "host",   false),
+            "dns",       new RefSource("DnsMonitor",       "domain", true),
+            "domain",    new RefSource("DomainMonitor",    "domain", false),
+            "page",      new RefSource("PageMonitor",      "url",    false),
+            "scripted",  new RefSource("ScriptedMonitor",  "name",   false),
+            "pagespeed", new RefSource("PageSpeedMonitor", "url",    false),
+            "dbquery",   new RefSource("DbQueryMonitor",   "name",   false));
+
+    /** {@code (anahtar, ad, id)} satırları — kimliğe göre sıralı; silinmiş Port/DNS satırı yok. */
+    private Map<String, Object[]> refIndex(RefSource src) {
+        String jpql = "SELECT m." + src.keyField() + ", m.name, m.id FROM " + src.entity() + " m"
+                + (src.softDelete() ? " WHERE m.deletedAt IS NULL" : "") + " ORDER BY m.id";
+        Map<String, Object[]> m = new HashMap<>();
+        for (Object[] r : em.createQuery(jpql, Object[].class).getResultList()) {
+            if (r[0] != null) m.putIfAbsent((String) r[0], new Object[]{ r[1], r[2] });
+        }
+        return m;
+    }
+
     /** @param family cert | http | port | … ; {@code tab} arayüz sekmesi; {@code monitorId} çözülemezse null */
     public record Ref(String name, String family, String tab, Long monitorId) {}
 
@@ -53,6 +87,14 @@ public class MonitorRefResolver {
         if (events.isEmpty()) return byEvent;
         Set<String> fams = events.stream().map(e -> family(e.getAlertType())).collect(Collectors.toSet());
         Map<String, Map<String, Object[]>> idx = new HashMap<>();
+        if (em != null) {
+            for (String fam : fams) {
+                RefSource src = REF_SOURCES.get(fam);
+                if (src == null || ("dbquery".equals(fam) && dbQueryMonitorRepo == null)) continue;
+                idx.put(fam, refIndex(src));
+            }
+            return refs(events, idx, byEvent);
+        }
         // Port/DNS: SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) indekse girmez — anahtar başına İLK satır kazandığı
         // için silinmiş eski satır canlı izlemeyi gölgeleyip derin bağlantıyı açılamayan bir izlemeye götürebilirdi.
         if (fams.contains("http"))      idx.put("http",      index(httpMonitorRepo.findAll(),      m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
@@ -66,6 +108,10 @@ public class MonitorRefResolver {
         if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
         if (fams.contains("dbquery") && dbQueryMonitorRepo != null)
             idx.put("dbquery", index(dbQueryMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
+        return refs(events, idx, byEvent);
+    }
+
+    private static Map<Long, Ref> refs(List<AlertEvent> events, Map<String, Map<String, Object[]>> idx, Map<Long, Ref> byEvent) {
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;

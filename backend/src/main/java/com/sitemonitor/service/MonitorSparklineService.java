@@ -123,6 +123,20 @@ public class MonitorSparklineService {
     }
 
     /**
+     * Ortak (tüm filo) sonucun görünür alt kümesi (performans 2026-11-06, PF2 #2) — kapsamlı çağıran da ortak önbellekten
+     * okur. Her monitörün sonucu YALNIZ kendi kontrol satırlarından hesaplandığı için alt küme, kapsamlı sorgunun
+     * ({@link #sparklines(String, int, Set)} / {@link #availability(String, int, Set)}) çıktısıyla birebirdir. Yeni harita;
+     * değerler PAYLAŞILIR (önbellekteki iç haritalar değiştirilmez), sıra ortak sonucun sırası. Ortak sonuçta olmayan görünür
+     * monitör (önbellek dolduktan sonra eklenmiş) atlanır — kartı bir sonraki önbellek turunda dolar (trend 60 sn, SLA 300 sn).
+     */
+    public static Map<Long, Map<String, Object>> subset(Map<Long, Map<String, Object>> all, Set<Long> visible) {
+        Map<Long, Map<String, Object>> out = new LinkedHashMap<>();
+        if (all == null || visible == null || visible.isEmpty()) return out;
+        all.forEach((id, v) -> { if (visible.contains(id)) out.put(id, v); });
+        return out;
+    }
+
+    /**
      * @param ids görünür monitör id'leri (boş → boş harita); sorgu bu kümeyle daraltılır (O-7)
      * @return id → { n, fail, up_pct, buckets:[{t,n,fail,ms}], last:[{at,ok,ms}] }
      */

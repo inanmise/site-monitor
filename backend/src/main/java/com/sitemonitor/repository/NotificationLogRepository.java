@@ -102,6 +102,31 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     @Query("SELECT COUNT(n) FROM NotificationLog n WHERE n.sentAt >= :cutoff")
     long countAllSince(@Param("cutoff") String cutoff);
 
+    /**
+     * Sistem Sağlığı SMTP kutusunun dört dönemi (1 / 7 / 15 / 30 gün) TEK geçişte (performans 2026-11-06, PF2 #10): eskiden
+     * dönem başına {@link #countAttemptedSince} + {@link #countSentSince} + {@link #countAllSince} = 12 ayrı tarama. Tek satır,
+     * dönem başına üç sütun (denenen = SENT + FAILED*, gönderilen = SENT, toplam), sıra c1, c2, c3, c4; {@code c4} en eski kesim
+     * olmalı (WHERE onunla). Satır yoksa SUM null döner — okuyan 0 sayar.
+     */
+    @Query("""
+            SELECT
+              SUM(CASE WHEN n.sentAt >= :c1 AND (n.emailStatus = 'SENT' OR n.emailStatus LIKE 'FAILED%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c1 AND n.emailStatus = 'SENT' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c1 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c2 AND (n.emailStatus = 'SENT' OR n.emailStatus LIKE 'FAILED%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c2 AND n.emailStatus = 'SENT' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c2 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c3 AND (n.emailStatus = 'SENT' OR n.emailStatus LIKE 'FAILED%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c3 AND n.emailStatus = 'SENT' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.sentAt >= :c3 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN (n.emailStatus = 'SENT' OR n.emailStatus LIKE 'FAILED%') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN n.emailStatus = 'SENT' THEN 1 ELSE 0 END),
+              COUNT(n)
+            FROM NotificationLog n WHERE n.sentAt >= :c4
+            """)
+    List<Object[]> smtpPeriodCounts(@Param("c1") String c1, @Param("c2") String c2,
+                                    @Param("c3") String c3, @Param("c4") String c4);
+
     @Query("SELECT n FROM NotificationLog n WHERE n.emailStatus LIKE 'FAILED%' AND n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
     List<NotificationLog> findFailedSince(@Param("cutoff") String cutoff);
 
@@ -110,6 +135,16 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
 
     @Query("SELECT n FROM NotificationLog n WHERE n.sentAt >= :cutoff ORDER BY n.sentAt DESC")
     List<NotificationLog> findAllSince(@Param("cutoff") String cutoff);
+
+    /**
+     * {@link #findAllSince}'in GÖVDESİZ hâli (performans 2026-11-06, PF2 #6): {@code message} (tam HTML posta gövdesi, satır
+     * başına onlarca KB — yerel 7 günde 140 satır ≈ 3 M karakter) okunmaz; "Bugün" panelinin teslim edilemeyen bildirim kartı
+     * ve tekrarlayan posta hatası alanları yalnız durum alanlarını kullanır. Sıra: alertEventId, sentAt, recipientEmail,
+     * subject, emailStatus, webhookStatus. Sıralama {@link #findAllSince} ile aynı (+ eşitlikte id).
+     */
+    @Query("SELECT n.alertEventId, n.sentAt, n.recipientEmail, n.subject, n.emailStatus, n.webhookStatus "
+         + "FROM NotificationLog n WHERE n.sentAt >= :cutoff ORDER BY n.sentAt DESC, n.id DESC")
+    List<Object[]> findStatusRowsSince(@Param("cutoff") String cutoff);
 
     /**
      * SMTP Gönderim Logu penceresi (2026-09-19; SmtpLogQueryService) — {@code message} (tam HTML gövde, satır

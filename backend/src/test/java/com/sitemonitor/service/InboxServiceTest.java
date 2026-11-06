@@ -57,12 +57,20 @@ class InboxServiceTest {
         return e;
     }
 
+    /** Envanter varlıkları → findActiveDomainTeams satırları ([domain, teamId, ugTeamId]). */
+    static List<Object[]> rows(CertificateInventory... items) {
+        List<Object[]> out = new java.util.ArrayList<>();
+        for (CertificateInventory i : items) out.add(new Object[]{i.getDomain(), i.getTeamId(), i.getUgTeamId()});
+        return out;
+    }
+
     @BeforeEach
     void setUp() {
         svc = new InboxService(alertEventRepo, inventoryRepo, maintenanceRepo, maintenanceService, exceptionRepo, weeklyReportRepo, appSettings);
         CertificateInventory a = new CertificateInventory(); a.setDomain("a.example.com"); a.setTeamId(1L); a.setActive(true);
         CertificateInventory b = new CertificateInventory(); b.setDomain("b.example.com"); b.setTeamId(2L); b.setActive(true);
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b));
+        // 2026-11-06 (performans PF2 #1): envanter dar sütunlarla okunur — [domain, SY, UG]
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(rows(a, b));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(ev(1, "a.example.com", 1L, "WARNING", false, 0), ev(2, "a.example.com", 1L, "CRITICAL", false, 0), ev(3, "b.example.com", 2L, "CRITICAL", false, 0)));
         // 2026-10-22 (DATA-11): "son 24 saatte çözülenler" ve geçmiş ÇÖZÜLME anıyla okunur — açılış alt sınırı yok
         when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
@@ -166,7 +174,7 @@ class InboxServiceTest {
     @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): yalnız UG takımı görülebilen envanterin alarmı bildirim kutusunda ve geçmişte görünür")
     void ugTeamSeesAlarm() {
         CertificateInventory ug = new CertificateInventory(); ug.setDomain("ug.example.com"); ug.setTeamId(2L); ug.setUgTeamId(3L); ug.setActive(true);
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(ug));
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(rows(ug));
         AlertEvent cert = ev(20, "ug.example.com", 2L, "HIGH", false, 0);   // sertifika alarmı SY damgalı
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(cert));
         AlertEvent done = ev(21, "ug.example.com", 2L, "HIGH", true, 2);

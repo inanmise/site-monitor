@@ -67,9 +67,27 @@ public class TodayPanelController {
         boolean showAlerts = permissionService.allows(session, "alerts.read", "view");
         // İzleme OKUMA kapsamı (2026-10-04): 7/24 operatörünün "Bugün" kartları kurum genelidir; haftalık KENDİ takım
         // bloğu (own) üyelikten kalır. Bildirim kutusu (inbox) kişiseldir — bilerek genişlemez.
-        Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), own,
+        // Performans 2026-11-06 (PF2 #5): sonuç izleme okuma kapsamı anahtarıyla kısa süre (30 sn) paylaşılır — anahtar yüklemi
+        // TAM belirler (monitoringScopeKey), kendi takımları + tavan + iki izin de anahtarda.
+        Map<String, Object> data = todayPanelService.cached(monitoringScopeKey(session),
+                teamId -> SessionScope.canViewMonitoring(session, teamId), own,
                 full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP, showMaintenance, showAlerts);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /**
+     * {@link SessionScope#canViewMonitoring} yüklemini TAM belirleyen bellek anahtarı: tüm izlemeleri gören (global
+     * görüntüleyici ya da 7/24 operatörü) → {@code ALL}; aksi hâlde görüş takımları ∪ paylaşımla okunan takımlar (sıralı,
+     * tekil). {@code monitoringViewTeamIds}'ten farkı: görüş listesi olmayan (null) kapsamlı oturumda da paylaşımlar anahtara
+     * girer — iki farklı paylaşımı olan kullanıcı aynı anahtarı ASLA paylaşmaz.
+     */
+    static String monitoringScopeKey(HttpSession session) {
+        if (SessionScope.seesAllMonitoring(session)) return "ALL";
+        List<Long> ids = new ArrayList<>();
+        List<Long> view = SessionScope.viewTeamIds(session);
+        if (view != null) ids.addAll(view);
+        ids.addAll(SessionScope.grantViewTeamIds(session));
+        return com.sitemonitor.util.TtlMemo.scopeKey(false, ids);
     }
 
     /** Bildirim kutusu (2026-09-12, #2): {@code GET /api/me/inbox}. Okundu durumu istemcide (anahtar bazlı). */

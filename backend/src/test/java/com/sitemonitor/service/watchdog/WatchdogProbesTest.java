@@ -73,7 +73,7 @@ class WatchdogProbesTest {
     @Test
     @DisplayName("izleme taramaları: etkin ≥ 2 türde gecikmiş oranı ≥ %50 → PROBLEM; küçük türler sayılmaz")
     void monitorSweep() {
-        when(overview.orgTypes()).thenReturn(List.of(
+        when(overview.orgTypes(org.mockito.ArgumentMatchers.anyLong())).thenReturn(List.of(
                 Map.of("type", "http", "active", 20L, "stale", 2L),
                 Map.of("type", "ping", "active", 6L, "stale", 3L),
                 Map.of("type", "dns", "active", 1L, "stale", 1L)));
@@ -81,10 +81,13 @@ class WatchdogProbesTest {
         assertThat(p.result()).isEqualTo(Result.PROBLEM);
         assertThat(p.facts()).containsEntry("types_checked", 2);
         assertThat(WatchdogMessages.detail(WatchdogCheck.MONITOR_SWEEP, p.facts(), false)).contains("ping 3/6").doesNotContain("dns");
-        when(overview.orgTypes()).thenReturn(List.of(Map.of("type", "http", "active", 20L, "stale", 2L)));
+        when(overview.orgTypes(org.mockito.ArgumentMatchers.anyLong())).thenReturn(List.of(Map.of("type", "http", "active", 20L, "stale", 2L)));
         assertThat(probes.monitorSweep().result()).isEqualTo(Result.OK);
-        when(overview.orgTypes()).thenReturn(null);
+        when(overview.orgTypes(org.mockito.ArgumentMatchers.anyLong())).thenReturn(null);
         assertThat(probes.monitorSweep().result()).isEqualTo(Result.UNKNOWN);
+        // Performans 2026-11-06 (PF3 #1): pano kaydı en çok "aralık − 5 sn" yaşında kabul edilir (ardışık iki tur aynı hesabı okumaz)
+        org.mockito.Mockito.verify(overview, org.mockito.Mockito.atLeastOnce()).orgTypes(55_000L);
+        org.mockito.Mockito.verify(overview, org.mockito.Mockito.never()).orgTypes();
     }
 
     @Test
