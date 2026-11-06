@@ -344,6 +344,14 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-field="resolved_minutes"]')).toContainText('Yalnız açık alarmlar kipinde kullanılmaz')
       await expect(root.locator('[data-slot="af-max-rows-open-only"]')).toContainText('kapanmış görünür')
       await expect(root.locator('[data-slot="af-resolved-none-note"]')).toContainText('RESOLVEDTIME kolonu boş kalır')
+      // Kipe uygun uyarı metinleri (hata avı 2026-11-06): bu kipte RESOLVED satırı yok — alarm akıştan düşer
+      await expect(root.locator('[data-slot="af-rci-eventkey"]')).toContainText('akıştan düşer')
+      await expect(root.locator('[data-slot="af-rci-eventkey"]')).not.toContainText('bir kez RESOLVED (anahtar değişti)')
+      const nocNote = root.locator('[data-slot="af-noc-only-note"]')
+      if (await nocNote.count()) {
+        await expect(nocNote).toContainText('akıştan düşer')
+        await expect(nocNote).not.toContainText('bir kez RESOLVED (kapsam dışı)')
+      }
       await page.waitForTimeout(200)
       expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
       for (const sel of ['[data-slot="af-grp-format"]', '[data-slot="af-grp-scope"]']) {
@@ -360,6 +368,9 @@ for (const vp of VIEWPORTS) {
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(none).toHaveAttribute('aria-checked', 'true')
       await expect(minutes).toBeDisabled()
+      // Kayıtlı kip artık "yalnız açık": önizleme açıklaması RESOLVED satırından söz etmez
+      await expect(root.locator('[data-slot="af-preview"]')).toContainText('RESOLVED satırı yoktur')
+      await expect(root.locator('[data-slot="af-preview"]')).not.toContainText('gerçek bir çağrı onu teslim edene kadar')
     })
   })
 

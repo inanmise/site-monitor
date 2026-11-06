@@ -18,8 +18,12 @@ export const SCOPE_KINDS = Object.freeze(['ALL', 'TYPES', 'MONITORS'])
 export const RECIPIENT_KINDS = Object.freeze(['TEAM', 'MEMBERS'])
 /** İzleme türleri — Java `MonitorTypeCatalog.ORDER` (cert = envanter kaydı: sertifika + erişilebilirlik alarmları). */
 export const FORWARD_TYPES = Object.freeze(['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery'])
-/** Sunucu durumları — öncelik sırası sunucuda (paused > expired > recipient_inactive > no_targets > no_recipients > active). */
-export const FORWARD_STATES = Object.freeze(['active', 'paused', 'expired', 'recipient_inactive', 'no_targets', 'no_recipients'])
+/**
+ * Sunucu durumları — öncelik sırası sunucuda (paused > expired > recipient_inactive > no_targets > no_recipients > active).
+ * `unknown` (hata avı 2026-11-06): "Seçilen izlemeler" kapsamlı satırda izleme dizini okunamadı — durum BİLİNMİYOR: etkin
+ * (yeşil) değildir, "Dikkat" kutusuna da sayılmaz; nötr "Bilinmiyor" rozetiyle çizilir. İstemci asla kendisi türetmez.
+ */
+export const FORWARD_STATES = Object.freeze(['active', 'paused', 'expired', 'recipient_inactive', 'no_targets', 'no_recipients', 'unknown'])
 /** "Dikkat" kutusuna sayılan durumlar (iletim kayıtlı ama kimseye ulaşmıyor / ulaşamaz). */
 export const ATTENTION_STATES = Object.freeze(['recipient_inactive', 'no_targets', 'no_recipients'])
 /** Durum süzgeci değerleri (URL `g_fstate`, KPI kutuları). */

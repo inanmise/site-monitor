@@ -54,7 +54,17 @@ export default function AlertForwardManager() {
   const [state, setState] = useState({ status: 'loading', items: [], incoming: [], teams: [], canGrant: false,
     limits: normalizeLimits(null), message: null })
   const [dialog, setDialog] = useState(null)   // { forward } | { forward: null, preset }
-  const [busyId, setBusyId] = useState(null)
+  // Meşgul satırlar KÜMESİ (hata avı 2026-11-06): tek kimlik iki satırda art arda işlem başlatılınca ilkinin kilidini bırakıyordu
+  // (B'nin işlemi A'nın kimliğini ezdi, A biterken null yazdı → B'nin ikinci işlemi açıldı)
+  const [busyIds, setBusyIds] = useState(() => new Set())
+  const markBusy = useCallback((id, on) => setBusyIds((cur) => {
+    const key = String(id)
+    if (on === cur.has(key)) return cur
+    const next = new Set(cur)
+    if (on) next.add(key); else next.delete(key)
+    return next
+  }), [])
+  const isBusy = (id) => busyIds.has(String(id))
   const [q, setQ] = useState(() => readUrlParam('g_fq', ''))
   const [team, setTeam] = useState(() => readUrlParam('g_fteam', ''))
   const [scope, setScope] = useState(() => known(SCOPE_FILTERS, readUrlParam('g_fscope', '')))
@@ -176,7 +186,7 @@ export default function AlertForwardManager() {
       confirmText: t('fwd.remove.ok'), cancelText: t('dlg.cancel'), variant: 'danger',
     })
     if (!ok) return
-    setBusyId(f.id)
+    markBusy(f.id, true)
     try {
       const res = await api.alertForwards.remove(f.id)
       if (res?.success) { toast.success(t('fwd.toast.removed')); load() } else {
@@ -186,7 +196,7 @@ export default function AlertForwardManager() {
     } catch (e) {
       toast.error(e?.message || t('fwd.err.generic'), { details: e })
     } finally {
-      setBusyId(null)
+      markBusy(f.id, false)
     }
   }
 
@@ -196,7 +206,9 @@ export default function AlertForwardManager() {
 
   async function togglePause(f) {
     const enabled = f.state === 'paused'
-    setBusyId(f.id)
+    // Aynı satırda süren işlem varken ikinci tıklama (menü kapanıp açılınca) yok sayılır — eski sürümle 409 almasın
+    if (isBusy(f.id)) return
+    markBusy(f.id, true)
     try {
       const body = { enabled }
       if (f.version != null) body.version = f.version
@@ -216,7 +228,7 @@ export default function AlertForwardManager() {
     } catch (e) {
       toast.error(e?.message || t('fwd.err.generic'), { details: e })
     } finally {
-      setBusyId(null)
+      markBusy(f.id, false)
     }
   }
 
@@ -329,12 +341,12 @@ export default function AlertForwardManager() {
               <StatusBlock icon={Forward} title={t('fwd.noMatch')}
                 actions={<Button type="button" variant="outline" className="min-h-10" onClick={clearFilters}>{t('fwd.filter.clear')}</Button>} />
             ) : wide ? (
-              <ForwardTable rows={filtered} t={t} busyId={busyId} onEdit={(f) => setDialog({ forward: f })} onToggle={togglePause} onRemove={remove} />
+              <ForwardTable rows={filtered} t={t} isBusy={isBusy} onEdit={(f) => setDialog({ forward: f })} onToggle={togglePause} onRemove={remove} />
             ) : (
               <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 @xl:grid-cols-2">
                 {filtered.map((f) => (
                   <li key={f.id} className="min-w-0">
-                    <ForwardCard f={f} t={t} busy={busyId === f.id}
+                    <ForwardCard f={f} t={t} busy={isBusy(f.id)}
                       onEdit={() => setDialog({ forward: f })} onToggle={() => togglePause(f)} onRemove={() => remove(f)} />
                   </li>
                 ))}
@@ -372,17 +384,19 @@ function Actions({ f, t, busy, onEdit, onToggle, onRemove }) {
   )
 }
 
-function ForwardTable({ rows, t, busyId, onEdit, onToggle, onRemove }) {
+function ForwardTable({ rows, t, isBusy, onEdit, onToggle, onRemove }) {
   return (
     <div className="min-w-0 overflow-x-auto rounded-lg border">
       <Table className="table-fixed" data-slot="fwd-table">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[17%] whitespace-normal">{t('fwd.col.owner')}</TableHead>
+            {/* Sütunlar YÜZDE ve toplamı %100 (hata avı 2026-11-06): sabit 10rem işlem sütunu + %83, 860–941 px kapta ~14 px
+                yatay kaydırıyordu. İşlem sütununun %17'si 860 px'te ~130 px içerik — etiketli "İşlemler" menüsüne yeter. */}
+            <TableHead className="w-[18%] whitespace-normal">{t('fwd.col.owner')}</TableHead>
             <TableHead className="w-[25%] whitespace-normal">{t('fwd.col.recipient')}</TableHead>
             <TableHead className="w-[24%] whitespace-normal">{t('fwd.col.scope')}</TableHead>
-            <TableHead className="w-[17%] whitespace-normal">{t('fwd.col.state')}</TableHead>
-            <TableHead className="w-[10rem] text-right whitespace-normal">{t('fwd.actions')}</TableHead>
+            <TableHead className="w-[16%] whitespace-normal">{t('fwd.col.state')}</TableHead>
+            <TableHead className="w-[17%] text-right whitespace-normal">{t('fwd.actions')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -407,7 +421,7 @@ function ForwardTable({ rows, t, busyId, onEdit, onToggle, onRemove }) {
                 </span>
               </TableCell>
               <TableCell className="text-right">
-                <Actions f={f} t={t} busy={busyId === f.id} onEdit={onEdit} onToggle={onToggle} onRemove={onRemove} />
+                <Actions f={f} t={t} busy={isBusy(f.id)} onEdit={onEdit} onToggle={onToggle} onRemove={onRemove} />
               </TableCell>
             </TableRow>
           ))}

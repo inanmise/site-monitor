@@ -23,6 +23,9 @@ const SOURCES = [
   { file: 'controller/MonitoringController.java', name: 'PAGESPEED_FIELDS' },
   // HTTP gelişmiş istek alanları (2026-10-01) — MON_FIELDS'e eklenerek HTTP geçmişine yazılır
   { file: 'controller/MonitoringController.java', name: 'HTTP_EXTRA_FIELDS' },
+  // Anahtar kelime izlemesinin ek alanları (hata avı 2026-11-06): geçmişte ham anahtarlar ("matchScope", "changeSelector")
+  // görünüyordu — MON_FIELDS'e eklenerek keyword geçmişine yazılır
+  { file: 'controller/MonitoringController.java', name: 'KEYWORD_EXTRA_FIELDS' },
   { file: 'controller/AdminController.java', name: 'INVENTORY_FIELDS' },
   // İçe aktarma da envanter geçmişine YAZAR (2026-09-28: ugTeamId etiketsiz ham anahtar olarak görünüyordu)
   { file: 'service/InventoryImportService.java', name: 'HISTORY_FIELDS' },
@@ -51,6 +54,14 @@ describe('chg.field.* etiketleri — backend alan listeleriyle senkron', () => {
     const missingEn = fields.filter(f => !EN[`chg.field.${f}`])
     expect(missingTr, 'TR etiketi eksik').toEqual([])
     expect(missingEn, 'EN etiketi eksik').toEqual([])
+  })
+
+  it('geçmişe elle yazılan anahtarlar da etiketli (keyword parola kaldırma: basicAuthCleared)', () => {
+    // MonitoringController keyword güncellemesi parola kaldırıldığında before/after'a "basicAuthCleared" yazar (dizide değil)
+    const src = fs.readFileSync(path.join(BACKEND, 'controller/MonitoringController.java'), 'utf8')
+    expect(src).toContain('"basicAuthCleared"')
+    expect(TR['chg.field.basicAuthCleared']).toBeTruthy()
+    expect(EN['chg.field.basicAuthCleared']).toBeTruthy()
   })
 
   it('etiketler iki dilde de FARKLI yazılmış olmalı — kopyala-yapıştır TR metni kalmasın', () => {

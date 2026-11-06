@@ -4,7 +4,7 @@ import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge, { SystemRoleBadge } from '../ToneBadge.jsx'
 import { statusLabel } from './alertHistoryModel.js'
 import ForwardBadge from '../../forwards/ForwardBadge.jsx'
-import { isForwardRow } from '../../forwards/forwardModel.js'
+import { isForwardRow, forwardTeamName } from '../../forwards/forwardModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
@@ -78,7 +78,7 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, emai
               // İletim alıcısı: adres + "İletim · <alıcı takım>" (sunucunun Türkçe rol metni basılmaz)
               <>
                 <strong className="min-w-0 [overflow-wrap:anywhere]">{r.email}</strong>
-                <ForwardBadge teamName={r.team_name || r.name} data-renotify="forward" />
+                <ForwardBadge teamName={forwardTeamName(r.team_name) || r.name} data-renotify="forward" />
               </>
             ) : (
               <>

@@ -162,12 +162,27 @@ export function keywordFormFrom(m) {
 
 /** Satırın write-only durumu (sayfa ve bölümler için): kayıtlı parola / başlık var mı, başlık adları (yalnız global admin). */
 export function storedSecretsOf(m) {
-  if (!m || typeof m !== 'object') return { hasPass: false, hasHeaders: false, headerNames: [] }
+  if (!m || typeof m !== 'object') return { hasPass: false, hasHeaders: false, headerNames: [], user: null }
   return {
     hasPass: m.has_basic_auth_pass === true,
     hasHeaders: m.has_custom_headers === true,
     headerNames: Array.isArray(m.custom_header_names) ? m.custom_header_names.filter(Boolean) : [],
+    // Kayıtlı Basic auth kullanıcı adı — sunucu kayıtlı parolayı HER ZAMAN bu adla kullanır (bkz. savedPassUserChanged)
+    user: trimOrNull(m.basic_auth_user),
   }
+}
+
+/**
+ * "Test et": kayıtlı parola var, kutu boş ama kullanıcı adı KAYITLIDAN FARKLI mı (hata avı 2026-11-06)? Sunucu kayıtlı parolayı
+ * yalnız KAYITLI kullanıcı adıyla kullanır — yeni ad kayıtlı parolayla denenemez; test eski adla yapılır ve ekran yanıltırdı.
+ * Bu durumda kayıtlı parola istenmez ve kullanıcıya "yeni adı denemek için parolayı yazın" denir. Kayıtlı ad bilinmiyorsa false.
+ */
+export function savedPassUserChanged(form, stored) {
+  const f = { ...KW_EMPTY_FORM, ...(form || {}) }
+  const user = trimOrNull(f.basicAuthUser)
+  if (!stored?.hasPass || !user || f.basicAuthPass || f.clearBasicAuthPass) return false
+  const saved = trimOrNull(stored.user)
+  return saved != null && saved !== user
 }
 
 /** Bugünkü (2026-11-05 öncesi) kayıt yükünün anahtarları — yeni kayıtta HEPSİ gider. */
@@ -227,8 +242,10 @@ export function keywordBody(form) {
     matchScope: f.matchScope === 'VISIBLE' ? 'VISIBLE' : 'RAW',
     normalizeWs: !!f.normalizeWs,
     method: f.method === 'POST' ? 'POST' : 'GET',
-    requestBody: rawOrNull(f.requestBody),
-    requestContentType: trimOrNull(f.requestContentType),
+    // Gövde / içerik türü yalnız POST'ta anlamlı (hata avı 2026-11-06): GET'e dönünce kutular gizlenir ama eski değer
+    // gönderiliyordu → sunucu GİZLİ alanı doğrulayıp reddediyordu, kayıt sessizce duruyordu. GET'te null (kayıtlı değer silinir).
+    requestBody: f.method === 'POST' ? rawOrNull(f.requestBody) : null,
+    requestContentType: f.method === 'POST' ? trimOrNull(f.requestContentType) : null,
     basicAuthUser: trimOrNull(f.basicAuthUser),
     userAgentMode: UA_MODES.includes(f.userAgentMode) ? f.userAgentMode : 'DEFAULT',
     userAgent: f.userAgentMode === 'CUSTOM' ? trimOrNull(f.userAgent) : null,
@@ -238,7 +255,8 @@ export function keywordBody(form) {
     mailSubjectTemplate: trimOrNull(f.mailSubjectTemplate),
     // fe2 alanları (Aşama 2)
     minBytes: numOrNull(f.minBytes), maxBytes: numOrNull(f.maxBytes),
-    changeDetect: !!f.changeDetect, changeMask: listOf(f.changeMask), changeSelector: trimOrNull(f.changeSelector),
+    // Seçici yalnız değişim AÇIKKEN anlamlı (hata avı 2026-11-06): kapalıyken kutu gizli — eski değer gönderilmez (null), doğrulanmaz
+    changeDetect: !!f.changeDetect, changeMask: listOf(f.changeMask), changeSelector: f.changeDetect ? trimOrNull(f.changeSelector) : null,
   }
 }
 
@@ -309,6 +327,9 @@ export function keywordPayload(form, base, { isNew = false, globalAdmin = false,
       for (const k of KW_CONDITION_KEYS) delete out[k]
     } else if (!nextRules && prevRules) {
       out.rules = null
+      // Basite dönüşte birleşim de VE'ye döner (hata avı 2026-11-06): kayıtlı VEYA kalırsa satır "rules yok + VEYA" taşır ve
+      // sonradan eklenen ikinci kural sessizce VEYA ile başlardı
+      out.ruleLogic = 'AND'
       for (const k of KW_CONDITION_KEYS) out[k] = next[k]
     } else if (nextRules) {
       // Özel kural listesi DEĞİŞMEDİ: eski koşul alanları kural #1'in sunucu aynasıdır — tek başına gönderilmez (sunucu
@@ -428,7 +449,8 @@ export function keywordTestPayload(form, { globalAdmin = false, monitorId = null
     // Kayıtlı sır başka bir kaynağa gitmez: adres değiştiyse (ya da kayıtlı adres bilinmiyorsa) hiç istenmez
     if (!sameOrigin(f.url, storedUrl)) return out
     const useSaved = []
-    if (stored?.hasPass && user && !f.basicAuthPass && !f.clearBasicAuthPass) useSaved.push('basicAuthPass')
+    // Kullanıcı adı kayıtlıdan farklıysa kayıtlı parola İSTENMEZ (sunucu onu eski adla kullanırdı — savedPassUserChanged)
+    if (stored?.hasPass && user && !f.basicAuthPass && !f.clearBasicAuthPass && !savedPassUserChanged(f, stored)) useSaved.push('basicAuthPass')
     if (globalAdmin && stored?.hasHeaders && !String(f.customHeaders || '').trim() && !f.clearHeaders) useSaved.push('customHeaders')
     if (useSaved.length) out.useSaved = useSaved
   }
@@ -627,6 +649,23 @@ export function serverFieldErrors(res) {
   }
   if (typeof res.field === 'string' && res.field && !out[res.field]) out[res.field] = res.error || ''
   return Object.fromEntries(Object.entries(out).filter(([, v]) => !!v))
+}
+
+/**
+ * Hata haritasında DOM'da alanı OLMAYAN (gizli bölüm / çizilmemiş alan) hataların iletileri — güvenlik ağı (hata avı
+ * 2026-11-06): böyle bir hata alanın altına düşemez, kayıt sessizce dururdu; çağıran iletileri görünür biçimde söyler.
+ * `root` verilmezse belge; belge yoksa boş liste.
+ */
+export function unplacedErrors(errs, root) {
+  const scope = root || (typeof document !== 'undefined' ? document : null)
+  if (!scope) return []
+  const out = []
+  for (const [k, v] of Object.entries(errs || {})) {
+    if (!v || typeof k !== 'string' || k.includes('"')) continue
+    if (scope.querySelector(`[data-field="${k}"]`)) continue
+    out.push(typeof v === 'string' ? v : String(v?.message || v?.error || k))
+  }
+  return out
 }
 
 /** Hata haritasında formun gösterebildiği (alanın altına düşen) bir anahtar var mı — `rules[i].x` fe2 düzenleyicisinindir. */

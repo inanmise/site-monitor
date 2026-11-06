@@ -161,8 +161,24 @@ export function matchesOf(data) {
     httpStatus: num(data.http_status),
     finalUrl: typeof data.final_url === 'string' ? data.final_url : null,
     truncated: data.truncated === true,
+    // Sayfa okunamadıysa (bağlantı / zaman aşımı / boş yanıt …) sunucu nedeni söyler — panel "eşleşme yok" DEMEZ (hata avı
+    // 2026-11-06): kural listesi boş gelir, neden gösterilir
+    error: typeof data.error === 'string' && data.error.trim() ? data.error.trim() : null,
+    failureReason: typeof data.failure_reason === 'string' && data.failure_reason.trim() ? data.failure_reason.trim() : null,
     rules,
   }
+}
+
+/**
+ * Canlı eşleşmede sayfa OKUNAMADI mı (kural aranamadı): istek tamamlanmadı (ağ / TLS / zaman aşımı … — `requestCodes`),
+ * boş yanıt, ya da sunucu hata metni döndü. Sayfa okunduysa ama kural sağlanmadıysa (`RULES_NOT_MET` …) false — liste anlamlı.
+ */
+export function matchesPageUnread(d, requestCodes) {
+  if (!d) return false
+  if (d.error) return true
+  const code = d.failureReason
+  if (!code) return false
+  return code === 'EMPTY_BODY' || (requestCodes instanceof Set && requestCodes.has(code))
 }
 
 /** Eşleşme bağlamının kaynağı (yalnız bilinen değerler gösterilir). */

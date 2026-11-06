@@ -7,13 +7,26 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
-import { CONTEXT_SOURCES, matchesOf } from './contentDetailModel.js'
+import { CONTEXT_SOURCES, matchesOf, matchesPageUnread } from './contentDetailModel.js'
 import { AT_LEAST_NOTES } from '../rules/ruleModel.js'
+import { REQUEST_CODES } from '../keywordFailureModel.js'
+import { KW_FAILURE_CODES } from '../diagnose/keywordDiagCodes.js'
+import { interpolate } from '../../http/diagnose/httpDiagnoseModel.js'
 
 /** Kapsam bulunamadı / geçersiz: eşleşme hiç ARANAMADI — sayı ve "eşleşme yok" gösterilmez, not söyler. */
 const SCOPE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID'])
 
 const statusOf = (r) => Number(r?.status ?? errorInfoOf(r)?.status)
+const FAILURE_SET = new Set(KW_FAILURE_CODES)
+
+/** Sayfa okunamadığında nedenin kısa metni (`kwfail.<kod>.short`, yer tutucular yanıttan); bilinmeyen kod → genel metin. */
+function unreadReason(d, t) {
+  const code = d?.failureReason
+  if (code && FAILURE_SET.has(code)) {
+    return interpolate(t(`kwfail.${code}.short`), { status: d.httpStatus, host: null, final_host: null })
+  }
+  return t('keyword.matches.pageUnread')
+}
 
 /**
  * CANLI EŞLEŞMELER (kw E2) — "Eşleşmeleri göster" sayfayı şimdi okur (`POST /keyword/{id}/matches`) ve her kuralın ilk ≤ 5
@@ -21,8 +34,11 @@ const statusOf = (r) => Number(r?.status ?? errorInfoOf(r)?.status)
  * (geç gelen eski yanıt yenisinin üstüne yazmaz), pencere kapanınca iptal edilir; 429'da sunucunun bekleme metni,
  * 404 / 405'te "desteklemiyor" gösterilir. Yalnız `canExecute` (EXECUTE) ile çağrılır — düğme yoksa panel açıklama gösterir.
  *
+ * Sayfa okunamadıysa (yanıtta `error` / istek kodlu `failure_reason`) boş liste "eşleşme yok" sanılmasın: neden uyarısı
+ * (`kwfail.<kod>.short` + sunucunun maskeli hata metni) gösterilir, kural satırları çizilmez (hata avı 2026-11-06).
+ *
  * <p>Kancalar: `kw-matches`, `kw-matches-run`, `kw-matches-rule` (`data-id`), `kw-matches-context`, `kw-matches-none`,
- * `kw-matches-error`, `kw-matches-unsupported`.
+ * `kw-matches-error`, `kw-matches-unsupported`, `kw-matches-unread` (`data-reason`).
  */
 export default function KeywordMatchesPanel({ monitorId, canExecute = false, rules = null }) {
   const t = useT()
@@ -55,6 +71,7 @@ export default function KeywordMatchesPanel({ monitorId, canExecute = false, rul
 
   const data = state.data
   const loading = state.status === 'loading'
+  const unread = matchesPageUnread(data, REQUEST_CODES)
   return (
     <section data-slot="kw-matches" aria-label={t('keyword.matches.title')} className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -86,6 +103,14 @@ export default function KeywordMatchesPanel({ monitorId, canExecute = false, rul
               data.finalUrl ? `${t('keyword.matches.finalUrl')}: ${data.finalUrl}` : null].filter(Boolean).join(' · ')}
           </p>
           {data.truncated && <p className="m-0 text-xs text-amber-700 dark:text-amber-300">{t('keyword.matches.truncated')}</p>}
+          {unread && (
+            <div data-slot="kw-matches-unread" data-reason={data.failureReason || undefined}>
+              <AlertBanner tone="warning" className="mb-0" title={t('keyword.matches.unreadTitle', unreadReason(data, t))}>
+                {data.error ? String(data.error) : t('keyword.matches.unreadBody')}
+              </AlertBanner>
+            </div>
+          )}
+          {!unread && (
           <ol className="m-0 flex list-none flex-col gap-2 p-0">
             {data.rules.map((r, i) => {
               const name = (labels.get(r.id) || '').trim() || t('keyword.rule.cardTitle', i + 1)
@@ -134,6 +159,7 @@ export default function KeywordMatchesPanel({ monitorId, canExecute = false, rul
               )
             })}
           </ol>
+          )}
         </div>
       )}
     </section>

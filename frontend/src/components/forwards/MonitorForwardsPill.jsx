@@ -8,6 +8,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { applyTabView, navigateTo } from '../../utils/navigate.js'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { tabDeepLink } from '../../utils/monitorDeepLink.js'
 import {
   STATE_KEY, STATE_TONE, activeCount, formatDay, forwardState, itemScopeText, manageTarget, pillKind, readForMonitor,
@@ -29,7 +30,12 @@ import {
  *       7/24 ile görenler yönlendirmeyi göremez); izleme yok, izin yok ya da eski sunucu (403 / 404 / 405).</li>
  * </ul>
  * Okuma hatası (ağ, zaman aşımı, 5xx) "iletim yok" sayılmaz: küçük "İletim: okunamadı" düğmesi tekrar dener.
- * Yükleme sessizdir (rozet yanıt gelince belirir).
+ * Yükleme sessizdir (rozet yanıt gelince belirir). Etkin iletim yok ama bir satırın durumu bilinmiyorsa (sunucu `unknown`)
+ * sessiz "İletim: durum bilinmiyor" — "etkin değil" denmez.
+ *
+ * <p>İzin (hata avı 2026-11-06): yetki snapshot'ı yüklü ve `alerts.forwards` görüntüleme izni YOKSA istek atılmaz, hiçbir şey
+ * çizilmez — sunucu her pencere açılışında 403 + `ACCESS_DENIED` güvenlik denetimi yazıyordu. Snapshot henüz gelmediyse ya da
+ * kaynağı hiç taşımıyorsa (sağlayıcısız çizim, eski sunucu) bugünkü gibi sorulur (403 → rozet yok).
  *
  * <p>Dokununca açılan açıklama (`ui/HintPopover` etkileşimli kip): her iletim — alıcı takım, "Tüm takım" / üye sayısı,
  * kapsam, durum (+ birden çok sahip takımda sahibi, bitiş günü) — ve eylemler: "Bu izleme için iletim ekle" (`can_add`;
@@ -38,7 +44,7 @@ import {
  * sahip takımla süzülü). Bağlantılar gerçek `<a href>` (yeni sekmede açılabilir). Adlar sarar (kesilmez); dokunmatikte tetik ve
  * eylemler en az 40 px.
  *
- * <p>Test kancaları: `data-slot="monitor-forwards"` + `data-state` (active|inactive|add|error) + `data-count`; açıklama
+ * <p>Test kancaları: `data-slot="monitor-forwards"` + `data-state` (active|unknown|inactive|add|error) + `data-count`; açıklama
  * `data-slot="monitor-forwards-detail"`, satır `data-slot="monitor-forwards-item"` + `data-state`; eylemler
  * `data-action="monitor-forwards-add|monitor-forwards-manage"`.
  *
@@ -50,6 +56,7 @@ import {
 const PILL_TONE = {
   active: 'border-primary/30 bg-primary/5 text-primary group-hover/fwd:bg-primary/10 dark:bg-primary/15',
   inactive: 'border-border bg-transparent text-muted-foreground group-hover/fwd:bg-muted',
+  unknown: 'border-border bg-transparent text-muted-foreground group-hover/fwd:bg-muted',
   add: 'border-dashed border-border bg-transparent text-muted-foreground group-hover/fwd:bg-muted',
   error: 'border-border bg-muted text-muted-foreground',
 }
@@ -124,7 +131,8 @@ function ForwardsDetail({ view, kind, rowLabel, type, id, domain, close }) {
   const items = view.items
   const owners = view.ownerTeams
   const monitorName = rowLabel || view.monitor?.name || ''
-  const lead = kind === 'add' ? t('fwdx.leadNone') : kind === 'inactive' ? t('fwdx.leadInactive') : t('fwdx.lead')
+  const lead = kind === 'add' ? t('fwdx.leadNone') : kind === 'inactive' ? t('fwdx.leadInactive')
+    : kind === 'unknown' ? t('fwdx.leadUnknown') : t('fwdx.lead')
   // Derin bağın kimliği: sertifikada yanıttaki envanter kaydı kimliği (pencere yalnız alan adını bilir; alan adı yalnız
   // kimlik yoksa); diğer türlerde pencerenin izleme kimliği (sorulan kimlik — yanıttaki yalnız yedek)
   const monitorId = type === 'cert' ? (view.monitor?.id ?? id) : (id ?? view.monitor?.id)
@@ -157,10 +165,22 @@ function ForwardsDetail({ view, kind, rowLabel, type, id, domain, close }) {
   )
 }
 
+/**
+ * Görüntüleme izni KESİN olarak yok mu: snapshot yüklü VE kaynağı taşıyor (sunucu snapshot'ı her katalog kaynağını
+ * izinli / izinsiz taşır) VE `view` açık değil. Yüklenmemiş / kaynaksız snapshot (sağlayıcısız çizim, eski sunucu) → false.
+ */
+function forwardsDenied(perm) {
+  if (!perm?.loaded) return false
+  const p = perm.perms
+  if (!p || typeof p !== 'object' || !Object.prototype.hasOwnProperty.call(p, 'alerts.forwards')) return false
+  return !perm.canView('alerts.forwards')
+}
+
 export default function MonitorForwardsPill({ type, id, domain, rowLabel, className }) {
   const t = useT()
+  const denied = forwardsDenied(usePermissions())
   const forDomain = type === 'cert' ? (domain || '') : ''
-  const key = type && (id != null || forDomain) ? `${type}|${id ?? ''}|${forDomain}` : ''
+  const key = type && !denied && (id != null || forDomain) ? `${type}|${id ?? ''}|${forDomain}` : ''
   const [state, setState] = useState({ key: '', view: null })
   const [nonce, setNonce] = useState(0)
   const [retrying, setRetrying] = useState(false)
@@ -201,7 +221,8 @@ export default function MonitorForwardsPill({ type, id, domain, rowLabel, classN
   const kind = pillKind(view)
   if (!kind) return null
   const n = activeCount(view.items)
-  const text = kind === 'active' ? t('fwdx.pill.active', n) : kind === 'inactive' ? t('fwdx.pill.inactive') : t('fwdx.pill.add')
+  const text = kind === 'active' ? t('fwdx.pill.active', n) : kind === 'inactive' ? t('fwdx.pill.inactive')
+    : kind === 'unknown' ? t('fwdx.pill.unknown') : t('fwdx.pill.add')
   const name = label ? t('a11y.rowAction', label, text) : text
   const Icon = kind === 'add' ? Plus : Forward
   return (

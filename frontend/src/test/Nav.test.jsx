@@ -411,6 +411,18 @@ describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
     for (const k of GROUPS) expect(subTrigger(container, k)).toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('bilinmeyen / tekrarlanan saklı anahtarlar budanır: 16\'lık tavanı dolduran çöp yeni grubun açık kalmasını engellemez (hata avı 2026-11-06)', () => {
+    const junk = Array.from({ length: 20 }, (_, i) => `nav.eskiGrup${i}`)
+    localStorage.setItem('nav-subsection-open', JSON.stringify([...junk, 'nav.secData', 'nav.secData', 42]))
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    // Bilinen grup (çöpün arkasında olsa da) açık okunur; tekrar tek sayılır
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(subTrigger(container, 'nav.secAvailability'))
+    expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'true')
+    // Saklı değerde yalnız bilinen, tekil anahtarlar kalır — yeni açılan grup DÜŞMEDİ
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secData', 'nav.secAvailability'])
+  })
+
   it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     for (const id of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']) {
