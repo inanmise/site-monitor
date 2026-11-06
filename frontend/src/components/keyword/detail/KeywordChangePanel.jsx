@@ -74,13 +74,21 @@ function DiffList({ slot, tone, title, lines, more }) {
  * canlı okunur; açık değişim alarmı kapanır) ve "Temeli sıfırla" (sonraki zamanlanmış kontrol yeniden alır). Eylemler
  * yalnız `canEdit` ile; dönüş metni sunucudan (409 kapalı / sayfa okunamadı). Okunamayan durum "okunamadı" + Yeniden dene;
  * eski sunucu (404 / 405) "desteklemiyor" — asla "temel yok" DEĞİL.
+ *
+ * <p>Bayat veri yok (hata avı 2026-11-06): izleme ya da değişim ayarı (maske / seçici — sunucu bu değişimde temeli siler)
+ * değişince panel ESKİ veriyi bırakıp yeniden okur; eski izlemenin temeli yeni izlemenin yanında bir an bile gösterilmez.
+ *
+ * @param changeMask     izleme satırının `change_mask` değeri (CSV / dizi) — değişince yeniden okunur
+ * @param changeSelector izleme satırının `change_selector` değeri — değişince yeniden okunur
  */
-export default function KeywordChangePanel({ monitorId, canEdit = false, onChanged }) {
+export default function KeywordChangePanel({ monitorId, canEdit = false, onChanged, changeMask = null, changeSelector = null }) {
   const t = useT()
   const { lang } = useLanguage()
   const { showConfirm } = useDialog()
   const toast = useToast()
-  const [state, setState] = useState({ status: 'loading' })
+  // Verinin ait olduğu anahtar: izleme + değişim ayarı. Anahtar değişince eski veri gösterilmez (yeniden okunur).
+  const settingsKey = `${monitorId ?? ''}|${maskList(changeMask).join(',')}|${String(changeSelector ?? '').trim()}`
+  const [state, setState] = useState(() => ({ status: 'loading', key: settingsKey }))
   const [busy, setBusy] = useState(null)   // 'take' | 'clear'
   const [actionError, setActionError] = useState(null)
   const [textOpen, setTextOpen] = useState(false)
@@ -92,19 +100,23 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
 
   const load = useCallback(async () => {
     const my = ++seq.current
-    setState((s) => ({ status: 'loading', data: s.data ?? null }))
+    const key = settingsKey
+    // Aynı anahtarın verisi yenilenirken kalır; başka anahtarın (önceki izleme / ayar) verisi asla taşınmaz
+    const keep = (s) => (s.key === key ? (s.data ?? null) : null)
+    setState((s) => ({ status: 'loading', key, data: keep(s) }))
     try {
       const r = await api.monitoring.keywordChange(monitorId)
       if (my !== seq.current || !alive.current) return
-      if (r?.success) setState({ status: 'ok', data: r.data || {} })
-      else if (statusOf(r) === 404 || statusOf(r) === 405) setState({ status: 'unsupported' })
-      else setState((s) => ({ status: 'error', error: r?.error || t('keyword.change.loadFailed'), data: s.data ?? null }))
+      if (r?.success) setState({ status: 'ok', key, data: r.data || {} })
+      else if (statusOf(r) === 404 || statusOf(r) === 405) setState({ status: 'unsupported', key })
+      else setState((s) => ({ status: 'error', key, error: r?.error || t('keyword.change.loadFailed'), data: keep(s) }))
     } catch (e) {
-      if (my === seq.current && alive.current) setState((s) => ({ status: 'error', error: e?.message || t('keyword.change.loadFailed'), data: s.data ?? null }))
+      if (my === seq.current && alive.current) setState((s) => ({ status: 'error', key, error: e?.message || t('keyword.change.loadFailed'), data: keep(s) }))
     }
-  }, [monitorId, t])
+  }, [monitorId, settingsKey, t])
 
-  useEffect(() => { load() }, [load])
+  // İzleme / değişim ayarı değişince eski eylem hatası ve açık metin de bırakılır
+  useEffect(() => { setActionError(null); setTextOpen(false); load() }, [load])
 
   async function act(kind) {
     const take = kind === 'take'
@@ -140,13 +152,16 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
     }
   }
 
-  const data = state.data
+  const mine = state.key === settingsKey
+  const data = mine ? state.data : null
+  // Başka anahtarın durumu (hata / desteklemiyor) bu izlemeye yazılmaz — yeniden okunana dek "yükleniyor"
+  const status = mine ? state.status : 'loading'
   // Sunucu yanıtındaki `can_edit` (be2) karar verir; alan yoksa (eski sunucu) satır bayrağından gelen `canEdit`
   const editable = typeof data?.can_edit === 'boolean' ? data.can_edit : canEdit
   let body
-  if (state.status === 'unsupported') {
+  if (status === 'unsupported') {
     body = <div data-slot="kw-change-unsupported"><StatusBlock tone="neutral" title={t('keyword.change.unsupported')} className="py-5" /></div>
-  } else if (state.status === 'error' && !data) {
+  } else if (status === 'error' && !data) {
     body = (
       <div data-slot="kw-change-error">
         <AlertBanner tone="danger" role="alert" className="mb-0" title={t('keyword.change.loadFailed')}
@@ -258,7 +273,7 @@ export default function KeywordChangePanel({ monitorId, canEdit = false, onChang
             )}
           </div>
         )}
-        {state.status === 'error' && <p className="m-0 text-xs text-destructive">{t('keyword.change.refreshFailed')}</p>}
+        {status === 'error' && <p className="m-0 text-xs text-destructive">{t('keyword.change.refreshFailed')}</p>}
       </div>
     )
   }

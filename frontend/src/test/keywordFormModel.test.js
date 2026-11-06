@@ -64,8 +64,8 @@ describe('keywordFormFrom — satır → form', () => {
   })
 
   it('storedSecretsOf: kayıtlı parola / başlık + adlar', () => {
-    expect(storedSecretsOf(ROW)).toEqual({ hasPass: true, hasHeaders: true, headerNames: ['X-Api-Key'] })
-    expect(storedSecretsOf(null)).toEqual({ hasPass: false, hasHeaders: false, headerNames: [] })
+    expect(storedSecretsOf(ROW)).toEqual({ hasPass: true, hasHeaders: true, headerNames: ['X-Api-Key'], user: 'izleme' })
+    expect(storedSecretsOf(null)).toEqual({ hasPass: false, hasHeaders: false, headerNames: [], user: null })
   })
 })
 
@@ -152,7 +152,8 @@ describe('keywordPayload — düzenleme (yalnız değişenler, B14)', () => {
     expect(p).toEqual({ rules: r2, ruleLogic: 'AND' })
     expect(keywordPayload({ ...b, ruleLogic: 'OR' }, b, { routingBody: routing })).toEqual({ rules: r1, ruleLogic: 'OR' })
     const back = keywordPayload({ ...b, rules: null }, b, { routingBody: routing })
-    expect(back).toEqual({ rules: null, keyword: 'Hoş geldiniz', operator: 'GTE', matchCount: 1, caseSensitive: false })
+    // Basite dönüşte birleşim de VE'ye döner (hata avı 2026-11-06): kayıtlı VEYA satırda kalmasın
+    expect(back).toEqual({ rules: null, ruleLogic: 'AND', keyword: 'Hoş geldiniz', operator: 'GTE', matchCount: 1, caseSensitive: false })
     expect(stableRules(null)).toBeNull()
   })
 

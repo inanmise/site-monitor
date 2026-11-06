@@ -83,6 +83,8 @@ export default function RuleTestResults({
             const note = RULE_NOTES.includes(r.note) ? r.note : null
             // Tarama bütçesi / sayım tavanı: sayı bir ALT SINIR — asla tam sayı gibi gösterilmez ("en az N")
             const atLeast = AT_LEAST_NOTES.includes(note)
+            // Desen derlenemedi: sunucunun 0'ı ölçüm değil — sayı gösterilmez, not söyler
+            const showCount = count != null && note !== 'PATTERN_INVALID'
             const name = (labels.get(r.id) || '').trim() || t('keyword.rule.cardTitle', i + 1)
             const Icon = ok ? CircleCheck : CircleX
             return (
@@ -94,7 +96,7 @@ export default function RuleTestResults({
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="text-sm font-semibold [overflow-wrap:anywhere]">{name}</span>
                     <span className="sr-only">{ok ? t('keyword.rule.res.ok') : t('keyword.rule.res.fail')}</span>
-                    {count != null && (
+                    {showCount && (
                       <span data-slot="kw-rule-result-count" data-at-least={atLeast ? 'true' : undefined} className="text-xs text-muted-foreground tabular-nums">
                         {atLeast ? t('keyword.rule.res.countAtLeast', count) : count === 1 ? t('keyword.rule.res.count1') : t('keyword.rule.res.count', count)}
                       </span>

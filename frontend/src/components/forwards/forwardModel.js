@@ -68,6 +68,8 @@ export const activeCount = (items) => (Array.isArray(items) ? items.filter((i) =
 /**
  * Rozetin görünümü:
  * - `active`   : en az bir etkin iletim → "İletim: N" (bilgi tonu);
+ * - `unknown`  : etkin iletim yok ama en az birinin durumu BİLİNMİYOR (sunucu `state: "unknown"` — izleme dizini okunamadı;
+ *                ya da tanınmayan durum) → sessiz "durum bilinmiyor" (hata avı 2026-11-06: "etkin değil" denmez — bilinmiyor);
  * - `inactive` : iletim var ama hiçbiri etkin değil (duraklatılmış / süresi dolmuş / alıcısız) → sessiz "etkin değil";
  * - `add`      : iletim yok, görüntüleyici ekleyebilir → sessiz "İletim ekle";
  * - null       : çizilmez (iletim yok ve eklenemez).
@@ -75,6 +77,7 @@ export const activeCount = (items) => (Array.isArray(items) ? items.filter((i) =
 export function pillKind(view) {
   if (view?.status !== 'ok') return null
   if (activeCount(view.items) > 0) return 'active'
+  if (view.items.some((i) => forwardState(i) === 'unknown')) return 'unknown'
   if (view.items.length > 0) return 'inactive'
   return view.canAdd ? 'add' : null
 }
@@ -188,6 +191,15 @@ export function manageTarget({ type, id, domain, ownerTeams, add = false }) {
     if (type && key) params.g_fnew = `${type}:${key}`
   }
   return { tab: 'admin', params }
+}
+
+/**
+ * İletim alıcı takımının GÖSTERİLECEK adı: kırpılmış; boş ya da yalnız tire ("-", "–", "—") → '' (sunucu eski sürümde önizleme
+ * satırında takım adı yokken "-" yazıyordu — hata avı 2026-11-06: rozet "İletim · -" demesin, yalnız "İletim").
+ */
+export function forwardTeamName(v) {
+  const s = String(v ?? '').trim()
+  return s === '-' || s === '–' || s === '—' ? '' : s
 }
 
 /** Alıcı rolü etiketi — `FORWARD` → "İletim"; diğer roller olduğu gibi (SMTP günlüğü ayrıntısı). */

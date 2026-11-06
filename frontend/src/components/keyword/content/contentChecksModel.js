@@ -68,7 +68,9 @@ export function validateContentChecks(v) {
   if (!out.minBytes && !out.maxBytes && typeof v?.minBytes === 'number' && typeof v?.maxBytes === 'number' && v.minBytes > v.maxBytes) {
     out.maxBytes = { code: 'sizeOrder', params: [] }
   }
-  const sel = String(v?.changeSelector ?? '')
+  // Seçici yalnız değişim açıkken doğrulanır (hata avı 2026-11-06): kapalıyken kutu gizli — gizli alandaki hata kaydı sessizce
+  // durduruyordu; kayıtta da gönderilmez (null)
+  const sel = v?.changeDetect === true ? String(v?.changeSelector ?? '') : ''
   if (sel.trim()) {
     if (NEWLINE.test(sel)) out.changeSelector = { code: 'selectorNewline', params: [] }
     else if (sel.trim().length > CONTENT_LIMITS.selectorMax) out.changeSelector = { code: 'selectorTooLong', params: [CONTENT_LIMITS.selectorMax] }
@@ -84,7 +86,7 @@ export function contentPayload(v) {
     maxBytes: typeof v?.maxBytes === 'number' ? v.maxBytes : null,
     changeDetect: v?.changeDetect === true,
     changeMask: maskList(v?.changeMask),
-    changeSelector: String(v?.changeSelector ?? '').trim() || null,
+    changeSelector: v?.changeDetect === true ? (String(v?.changeSelector ?? '').trim() || null) : null,
   }
 }
 

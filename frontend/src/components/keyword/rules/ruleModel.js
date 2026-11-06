@@ -22,7 +22,10 @@ import { MAX_COUNT } from '../../../utils/keywordFold.js'
 
 /** Sunucu sınırları (`service/keyword/rules/*`; sözleşme §6.1). */
 /** Sunucunun kural notları (`rule_results[].note`, canlı eşleşmede `rules[].note`) — bilinmeyen not ekrana ham düşmez. */
-export const RULE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'COUNT_CAPPED', 'SCAN_TRUNCATED'])
+// PATTERN_INVALID (hata avı 2026-11-06): saklı düzenli ifade derlenemedi — kural ihlal sayılır, adet 0 bir ölçüm DEĞİL
+export const RULE_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'COUNT_CAPPED', 'SCAN_TRUNCATED', 'PATTERN_INVALID'])
+/** Eşleşme hiç ARANAMADI (bölge yok / geçersiz, desen derlenemedi): sayı ve "eşleşme yok" gösterilmez, not söyler. */
+export const NOT_SEARCHED_NOTES = Object.freeze(['SCOPE_NOT_FOUND', 'SCOPE_INVALID', 'PATTERN_INVALID'])
 /** Sayı bir ALT SINIR olduğunda ("en az N") — tarama bütçesi / sayım tavanı. */
 export const AT_LEAST_NOTES = Object.freeze(['SCAN_TRUNCATED', 'COUNT_CAPPED'])
 
@@ -237,7 +240,7 @@ export function applyMode(r, mode) {
 
 /**
  * Kritik eşik anlamlı olabilir mi? EQ'da asla; alt sınırda (GTE / GT) kritik sınır 1 ≤ k < uyarı sınırı olmalı → uyarı sınırı
- * en az 2; üst sınırda kritik sınır uyarı sınırının ötesinde ve tavanın altında olmalı.
+ * en az 2; üst sınırda kritik sınır uyarı sınırının ötesinde ve tavanın altında olmalı (uyarı sınırı en çok tavan − 2).
  */
 export function criticalPossible(r) {
   const n = parseCount(r?.count)
@@ -245,13 +248,14 @@ export function criticalPossible(r) {
   const fam = family(r?.operator)
   if (fam === 'eq') return false
   const b = boundary(r.operator, n)
-  return fam === 'lower' ? b >= 2 : b < countCap(r)
+  // Üst sınırda kritik sınır tavanın ALTINDA kalmalı ("en fazla <tavan> kez" her zaman sağlanır — B10): uyarı sınırı ≤ tavan − 2
+  return fam === 'lower' ? b >= 2 : b < countCap(r) - 1
 }
 
 /**
  * Kritik açılınca önerilen başlangıç (aynı işleç, sınır kuralına uyan): alt sınırda yarısı (GTE en az 1, GT en az 0 —
  * `criticalPossible` uyarı sınırının ≥ 2 olmasını garanti eder, yarısı her zaman ondan küçüktür), üst sınırda 4 katı
- * (0 ise 5), tavanla sınırlı.
+ * (0 ise 5), tavanla sınırlı (LTE en çok tavan − 1 — "en fazla <tavan> kez" anlamsız).
  */
 export function defaultCritical(r) {
   const n = parseCount(r?.count)
@@ -259,7 +263,9 @@ export function defaultCritical(r) {
   const base = Number.isFinite(n) ? n : 0
   if (op === 'GTE') return { operator: 'GTE', count: Math.max(1, Math.floor(base / 2)) }
   if (op === 'GT') return { operator: 'GT', count: Math.max(0, Math.floor(base / 2)) }
-  return { operator: op === 'LT' ? 'LT' : 'LTE', count: Math.min(countCap(r), base === 0 ? 5 : base * 4) }
+  // LTE tavanı anlamsızdır (B10): en çok tavan − 1; LT tavanı geçerli (sınır tavan − 1)
+  const lt = op === 'LT'
+  return { operator: lt ? 'LT' : 'LTE', count: Math.min(lt ? countCap(r) : countCap(r) - 1, base === 0 ? 5 : base * 4) }
 }
 
 // ── Doğrulama (sunucu aynası) ────────────────────────────────────────────────────────────────────────────────────
@@ -451,13 +457,23 @@ export function validateRule(rule, index) {
   else if (n > cap) put('count', 'countRange', [cap])
   else if (r.operator === 'GTE' && n === 0) put('count', 'alwaysHealthy')
   else if (r.operator === 'LT' && n === 0) put('count', 'neverHealthy')
+  // Sayım tavanında durur (B10 — sunucu `KeywordRules.meaningless` ile aynı, hata avı 2026-11-06): "en fazla <tavan> kez" her
+  // zaman sağlanır, "<tavan> kezden fazla" hiç sağlanamaz
+  else if (r.operator === 'LTE' && n >= cap) put('count', 'alwaysHealthyCap', [cap])
+  else if (r.operator === 'GT' && n >= cap) put('count', 'neverHealthyCap', [cap])
 
   if (r.critical) {
     const k = parseCount(r.critical.count)
     const fam = family(r.operator)
+    const cop = r.critical.operator
     if (r.operator === 'EQ') put('critical', 'criticalEq')
     else if (!Number.isFinite(k) || k > cap) put('critical', 'criticalCount', [cap])
-    else if (family(r.critical.operator) !== fam) put('critical', 'criticalFamily')
+    // Kritik koşulun kendisi anlamsız (B10 — sunucu kritik eşiğe de `meaningless` uygular, ikili kontrolden ÖNCE)
+    else if (cop === 'GTE' && k === 0) put('critical', 'criticalNeverFires')
+    else if (cop === 'LT' && k === 0) put('critical', 'criticalLtZero')
+    else if (cop === 'LTE' && k >= cap) put('critical', 'criticalAlwaysCap', [cap])
+    else if (cop === 'GT' && k >= cap) put('critical', 'criticalNeverCap', [cap])
+    else if (family(cop) !== fam) put('critical', 'criticalFamily')
     else if (Number.isFinite(n)) {
       const wb = boundary(r.operator, n)
       const cb = boundary(r.critical.operator, k)

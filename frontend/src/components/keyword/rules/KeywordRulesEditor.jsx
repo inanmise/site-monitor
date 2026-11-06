@@ -49,7 +49,9 @@ function fieldText(t, serverMap, clientMap, key, show) {
  * @param {string[]} softCodes    bu istemci kodları HATA değil bilgi notu olarak gösterilir (değişmemiş saklı kural — B10,
  *                                son inceleme O3); null = hepsi hata
  * @param {boolean}  criticalLocked  kritik eşik kilitli (paylaşımla düzenleme: eşik alarm SEVİYESİNİ belirler — sunucu
- *                                `KEYWORD_SHARED_LOCKED`, alan `rules`)
+ *                                `KEYWORD_SHARED_LOCKED`, alan `rules`). Kritik eşikli kuralda eşiği DOLAYLI düşüren eylemler de
+ *                                kilitlidir (hata avı 2026-11-06): koşul kipi değişimi ("İçermeli" kritiği siler), işlecin yön
+ *                                ailesini değiştirmek (kritik geçersiz kalırdı) ve kuralı silmek — not ile söylenir
  */
 export default function KeywordRulesEditor({
   rules, logic = 'AND', onChange, errors = null, showErrors = false, monitorLevel = 'WARNING', disabled = false,
@@ -178,6 +180,8 @@ function RuleCard({
     ? Object.keys(client || {}).filter((k) => k.startsWith(`rules[${index}].`) && isSoft(k)).map((k) => ruleProblemText(client[k], t))
     : []
   const critDisabled = disabled || criticalLocked
+  // Kritik eşikli kural paylaşımla düzenlenirken eşiği dolaylı düşüren eylemler kilitli: kip, işleç ailesi, silme
+  const critHeld = criticalLocked && !!rule.critical
   const blur = (alt) => () => onTouch(key(alt))
   const title = rule.label?.trim() || t('keyword.rule.cardTitle', index + 1)
   const titleId = `kw-rule-${rule.id}-title`
@@ -196,6 +200,7 @@ function RuleCard({
   const setKind = (kind) => onChange({ ...rule, kind })
   const pickMode = (m) => { setMode(m); onChange(applyMode(rule, m)) }
   const setOperator = (op) => {
+    if (critHeld && family(op) !== family(rule.operator)) return   // kilitli kritik eşik dolaylı düşürülmez
     // Aile değişince kritik eşik geçersiz kalırdı — aynı ailedeki karşılığına çevrilir (yön korunur)
     const crit = rule.critical && family(op) !== family(rule.operator) ? null : rule.critical
     onChange({ ...rule, operator: op, critical: op === 'EQ' ? null : crit })
@@ -216,7 +221,7 @@ function RuleCard({
             aria-label={t('keyword.rule.moveUp', title)} className={ICON_BTN}><ArrowUp aria-hidden="true" /></Button>
           <Button type="button" variant="ghost" size="icon" data-move="down" disabled={disabled || index === count - 1} onClick={() => onMove(1)}
             aria-label={t('keyword.rule.moveDown', title)} className={ICON_BTN}><ArrowDown aria-hidden="true" /></Button>
-          <Button type="button" variant="ghost" size="icon" data-slot="kw-rule-delete" disabled={disabled || count <= 1} onClick={onRemove}
+          <Button type="button" variant="ghost" size="icon" data-slot="kw-rule-delete" disabled={disabled || count <= 1 || critHeld} onClick={onRemove}
             aria-label={t('keyword.rule.delete', title)} className={cn(ICON_BTN, 'text-destructive hover:text-destructive')}><Trash2 aria-hidden="true" /></Button>
         </div>
       </div>
@@ -236,10 +241,15 @@ function RuleCard({
         </ChoiceRow>
         <ChoiceRow label={t('keyword.rule.condition')} field={key('mode')}>
           {/* Uzun EN etiketleri (640–767 px yarım sütun) kırpılmaz — satır kaydırır */}
-          <SegmentedControl value={mode} onChange={(v) => !disabled && pickMode(v)} ariaLabel={t('keyword.rule.condition')}
+          <SegmentedControl value={mode} onChange={(v) => !disabled && !critHeld && pickMode(v)} ariaLabel={t('keyword.rule.condition')}
             className="w-full" itemClassName="h-auto min-h-7 flex-1 px-2 py-1 leading-tight whitespace-normal"
-            options={RULE_MODES.map((m) => ({ value: m, label: t(`keyword.rule.mode.${m}`), disabled }))} />
+            options={RULE_MODES.map((m) => ({ value: m, label: t(`keyword.rule.mode.${m}`), disabled: disabled || (critHeld && m !== mode) }))} />
         </ChoiceRow>
+        {critHeld && (
+          <p data-slot="kw-rule-critical-held" className="m-0 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground sm:col-span-2 [overflow-wrap:anywhere]">
+            <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('keyword.rule.criticalHeld')}
+          </p>
+        )}
 
         <Field label={t(`keyword.rule.pattern.${rule.kind}`)} required hint={t(`keyword.rule.patternHint.${rule.kind}`)}
           name={key('pattern')} error={err('pattern')} className="mb-0 sm:col-span-2">
@@ -259,7 +269,10 @@ function RuleCard({
               {({ id, describedBy, invalid }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
                   value={rule.operator} onChange={(e) => setOperator(e.target.value)}>
-                  {OPERATORS.map((o) => <NativeSelectOption key={o} value={o}>{t(`keyword.rule.op.${o}`)}</NativeSelectOption>)}
+                  {/* Kritik eşik kilitliyken yalnız aynı yön ailesinin işleçleri (kritik eşik geçerli kalır) */}
+                  {OPERATORS.filter((o) => !critHeld || family(o) === fam).map((o) => (
+                    <NativeSelectOption key={o} value={o}>{t(`keyword.rule.op.${o}`)}</NativeSelectOption>
+                  ))}
                 </NativeSelect>
               )}
             </Field>

@@ -54,14 +54,29 @@ function writeOpenSection(key) {
  */
 const SUB_OPEN_KEY = 'nav-subsection-open'
 const SUB_OPEN_MAX = 16
-function readOpenSubs() {
+/**
+ * Saklı değeri BİLİNEN alt grup anahtarlarına süzer, tekrarları atar (hata avı 2026-11-06): eski sürümün / elle yazılmış
+ * bilinmeyen ya da tekrarlanan anahtarlar 16'lık tavanı doldurunca yeni açılan grup `slice` ile düşüyor, hiç açık kalmıyordu.
+ * `known` verilmezse (Set değilse) yalnız metin + tekil süzgeci.
+ */
+function cleanOpenSubs(list, known) {
+  const out = []
+  for (const x of Array.isArray(list) ? list : []) {
+    if (typeof x !== 'string' || out.includes(x)) continue
+    if (known instanceof Set && !known.has(x)) continue
+    out.push(x)
+    if (out.length >= SUB_OPEN_MAX) break
+  }
+  return out
+}
+function readOpenSubs(known) {
   try {
-    const v = JSON.parse(localStorage.getItem(SUB_OPEN_KEY) || '[]')
-    return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, SUB_OPEN_MAX) : []
+    return cleanOpenSubs(JSON.parse(localStorage.getItem(SUB_OPEN_KEY) || '[]'), known)
   } catch { return [] }
 }
-function writeOpenSubs(keys) {
-  try { if (keys.length) localStorage.setItem(SUB_OPEN_KEY, JSON.stringify(keys.slice(0, SUB_OPEN_MAX))); else localStorage.removeItem(SUB_OPEN_KEY) } catch { /* depolama yok */ }
+function writeOpenSubs(keys, known) {
+  const clean = cleanOpenSubs(keys, known)
+  try { if (clean.length) localStorage.setItem(SUB_OPEN_KEY, JSON.stringify(clean)); else localStorage.removeItem(SUB_OPEN_KEY) } catch { /* depolama yok */ }
 }
 
 export default function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
@@ -206,21 +221,27 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
   const [openSection, setOpenSection] = useState(readOpenSection)
   const openOnly = (key) => { setOpenSection(key); writeOpenSection(key) }
 
-  const [openSubs, setOpenSubs] = useState(readOpenSubs)
+  // Bilinen alt grup anahtarları (menü yapısındaki `section` değerleri) — saklı açık küme bunlara süzülür
+  const knownSubsRef = useRef(null)
+  if (knownSubsRef.current == null) {
+    knownSubsRef.current = new Set(SECTIONS.flatMap((sec) => (sec.items || []).map((it) => it.section).filter(Boolean)))
+  }
+  const knownSubs = knownSubsRef.current
+  const [openSubs, setOpenSubs] = useState(() => readOpenSubs(knownSubs))
   // Alt grubu AÇIK yapar (açıksa dokunmaz) — etkin sekme ve tur hedefi için; diğer açık gruplar korunur.
   const ensureSubOpen = (sub) => {
     if (!sub) return
     setOpenSubs((prev) => {
       if (prev.includes(sub)) return prev
-      const next = [...prev, sub]
-      writeOpenSubs(next)
+      const next = cleanOpenSubs([...prev, sub], knownSubs)
+      writeOpenSubs(next, knownSubs)
       return next
     })
   }
   function toggleSub(sub) {
     setOpenSubs((prev) => {
-      const next = prev.includes(sub) ? prev.filter((k) => k !== sub) : [...prev, sub]
-      writeOpenSubs(next)
+      const next = cleanOpenSubs(prev.includes(sub) ? prev.filter((k) => k !== sub) : [...prev, sub], knownSubs)
+      writeOpenSubs(next, knownSubs)
       return next
     })
   }

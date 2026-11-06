@@ -37,14 +37,22 @@ describe('contentChecksModel', () => {
     expect(validateContentChecks({ maxBytes: 2_000_001 }).maxBytes.code).toBe('sizeRange')
     expect(validateContentChecks({ minBytes: 0 }).minBytes.code).toBe('sizeRange')
     expect(validateContentChecks({ minBytes: 5000, maxBytes: 100 }).maxBytes.code).toBe('sizeOrder')
-    expect(validateContentChecks({ changeSelector: 'a'.repeat(301) }).changeSelector.code).toBe('selectorTooLong')
-    expect(validateContentChecks({ changeSelector: 'a\nb' }).changeSelector.code).toBe('selectorNewline')
+    const on = (changeSelector) => validateContentChecks({ changeDetect: true, changeSelector })
+    expect(on('a'.repeat(301)).changeSelector.code).toBe('selectorTooLong')
+    expect(on('a\nb').changeSelector.code).toBe('selectorNewline')
     // Seçici kuralı kural kapsamıyla aynı (be2): :matches… ve ~= yok, :has( en çok bir kez
-    expect(validateContentChecks({ changeSelector: 'main:matchesWholeText(x)' }).changeSelector.code).toBe('selectorCssRegex')
-    expect(validateContentChecks({ changeSelector: '[class~=x]' }).changeSelector.code).toBe('selectorCssRegex')
-    expect(validateContentChecks({ changeSelector: 'div:has(a) p:has(b)' }).changeSelector.code).toBe('selectorCssHasMany')
-    expect(validateContentChecks({ changeSelector: 'main:has(> h1)' })).toEqual({})
-    expect(validateContentChecks({ minBytes: 1, maxBytes: 2_000_000, changeSelector: 'main' })).toEqual({})
+    expect(on('main:matchesWholeText(x)').changeSelector.code).toBe('selectorCssRegex')
+    expect(on('[class~=x]').changeSelector.code).toBe('selectorCssRegex')
+    expect(on('div:has(a) p:has(b)').changeSelector.code).toBe('selectorCssHasMany')
+    expect(on('main:has(> h1)')).toEqual({})
+    expect(validateContentChecks({ minBytes: 1, maxBytes: 2_000_000, changeDetect: true, changeSelector: 'main' })).toEqual({})
+  })
+
+  it('değişim KAPALIYKEN gizli seçici doğrulanmaz ve gönderilmez (hata avı 2026-11-06 — kayıt sessizce duruyordu)', () => {
+    expect(validateContentChecks({ changeDetect: false, changeSelector: '[class~=x]' })).toEqual({})
+    expect(validateContentChecks({ changeSelector: 'a\nb' })).toEqual({})
+    expect(contentPayload({ changeDetect: false, changeMask: ['DIGITS'], changeSelector: 'main' }).changeSelector).toBeNull()
+    expect(contentPayload({ changeDetect: true, changeSelector: ' main ' }).changeSelector).toBe('main')
   })
 
   it('istek parçası: boş → null; maske dizi; seçici kırpılır', () => {

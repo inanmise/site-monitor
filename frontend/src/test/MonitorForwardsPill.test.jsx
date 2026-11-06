@@ -195,10 +195,12 @@ describe('MonitorForwardsPill — iletimler', () => {
     expect(dlg).toHaveTextContent(EN['fwdx.leadInactive'])
   })
 
-  it('bilinmeyen durum ham basılmaz ("durum bilinmiyor"); etkin sayılmaz', async () => {
+  it('bilinmeyen durum ham basılmaz ("durum bilinmiyor"); etkin sayılmaz, rozet "etkin değil" de DEMEZ', async () => {
     respond({ can_add: false, items: [row({ state: 'SOMETHING_NEW' })] })
     render(<MonitorForwardsPill type="ping" id={4} rowLabel="h.example.com" />)
-    await waitFor(() => expect(pill()).toHaveAttribute('data-state', 'inactive'))
+    // Hata avı 2026-11-06: durumu bilinmeyen iletim "etkin değil" sayılmaz — rozet "durum bilinmiyor"
+    await waitFor(() => expect(pill()).toHaveAttribute('data-state', 'unknown'))
+    expect(pill()).toHaveTextContent(EN['fwdx.pill.unknown'])
     fireEvent.click(screen.getByRole('button', { name: /h\.example\.com — / }))
     const dlg = await screen.findByRole('dialog')
     expect(dlg).toHaveTextContent(EN['fwdx.state.unknown'])
