@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { STORE, STORE_DISMISSED, readSet, writeSet } from './inboxModel.js'
+import { replaceEqualDeep } from '../../utils/replaceEqualDeep.js'
 
 /**
  * Bildirim kutusu durumu (v3, 2026-09-26): güncel liste (60 sn'de bir, sekme görünürken), okundu / temizlendi
@@ -29,7 +30,8 @@ export function useInbox(username, { open, view }) {
   const load = useCallback(async () => {
     try {
       const r = await api.me.inbox()
-      if (r?.success && Array.isArray(r.data)) { setItems(r.data); setError(false) }
+      // Aynı içerik → aynı dizi (2026-11-06, performans): dakikalık yoklama değişmeyen listede zili / menüyü yeniden çizdirmesin
+      if (r?.success && Array.isArray(r.data)) { setItems((prev) => replaceEqualDeep(prev, r.data)); setError(false) }
       else setError(true)
     } catch { setError(true) }
   }, [])
