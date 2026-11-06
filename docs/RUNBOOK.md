@@ -101,8 +101,10 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   "var mı?" diye bakar ve ihlali yakalar, eski kesinti / bastırma yazımları ihlali yakalayıp WARN yazar (işlem dışında);
   yalnız eski bir `@Transactional` çağıranın içindeki gerçek bir yarış o çağıranı geri sarabilir (nadir). Yeni kolonlar
   (`close_state`, `resolution_notify`, `change_state`, posta durum kolonları) eski sürümce yok sayılır.
-- **İndeks bakımının düşürdüğü gereksiz indeksler** (2026-11-06) geri almada eski sürümün ddl-auto'su / yamalarıyla açılışta
-  yeniden yaratılır (kilitli `CREATE INDEX`, saniyeler) — zararsız; ayrıntı [İndeks bakımı](#indeks-bakımı).
+- **İndeks bakımının düşürdüğü 15 gereksiz indeks** (2026-11-06) geri almada eski sürümün ddl-auto'su / yamalarıyla açılışta
+  KİLİTLEYEREK (düz `CREATE INDEX`) yeniden yaratılır: her yapım boyunca o tabloya yazımlar bekler (`activity_log`'da iki dizin;
+  tablo büyüklüğüne göre saniyeler-dakikalar). **Geri almadan ÖNCE** dizinleri `CREATE INDEX CONCURRENTLY` ile kurun — komutlar ve
+  etkiler: [İndeks bakımı → Geri alma](#indeks-bakımı).
 - Geri alma **secret key değişikliğini** geri almaz; anahtar değiştiyse önceki değeri Secret'a geri koyun.
 - Son çare DB yedeğinden dönüş (yedekten sonraki kayıtlar kaybolur) — platform/DBA ile.
 
@@ -172,6 +174,9 @@ kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | 
 - `… düşürülemedi … kilit beklemesi aşıldı` — uzun açık bir işlem tabloyu tutuyordu (`lock_timeout`,
   `site.monitor.index-maintenance.lock-timeout-ms`, 30 sn); yarıda kalan `DROP INDEX CONCURRENTLY` adayı GEÇERSİZ bırakabilir
   (okumada kullanılmaz), sonraki tur düşürür.
+- `Gereksiz indeks düşürme başka bir oturumu bekletiyordu, bırakıldı: <ad> ON <tablo> (N oturum bu DDL'i bekliyordu)` — bekçi
+  (aşağıda) düşürmeyi iptal etti; tur burada biter, deneme sayılmaz, sonraki turda (10 dk) yeniden denenir. Zamanlama ayarı 0 /
+  negatif verilirse açılış düşmez: aralık en az 60 sn, ilk gecikme en az 0 olarak uygulanır.
 
 **2. Şişmiş indeks bakımı (gece, `IndexBloatMaintenance`).** Saklama silmelerinden sonra btree'de yarı boş sayfalar kalır (VACUUM
 sayfayı yeniden kullanıma açar, indeksi küçültmez): yerelde `page_checks` 10 MB / 46 bin satırken indeksleri 183 MB,
@@ -192,13 +197,68 @@ kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | 
 - Kesilen / başarısız bir yeniden kurma GEÇERSİZ bir `<ad>_ccnew` (yeni dizin bitmedi) ya da `<ad>_ccold` (eski dizin düşürülemedi —
   yeni dizin zaten yerinde) bırakır; iş hemen, olmazsa sonraki koşunun başında düşürür (`Yarıda kalmış yeniden kurma kalıntısı
   düşürüldü`). Elle: `DROP INDEX CONCURRENTLY IF EXISTS <ad>_ccnew;` — yalnız `indisvalid = false` olanlar.
-- Pod kapanırken süren deyim iptal edilir, kalan indekslere geçilmez; kalıntı sonraki gece temizlenir.
+- Pod kapanırken süren deyim iptal edilir, kalan indekslere geçilmez; kalıntı sonraki gece ya da sonraki açılışta temizlenir.
+- `Şişmiş indeks yeniden kurma başka bir oturumu bekletiyordu, bırakıldı: <ad> ON <tablo> (N oturum bu DDL'i bekliyordu)` — **bekçi**:
+  `REINDEX` / `DROP INDEX CONCURRENTLY` sürerken ayrı bir bağlantı 2 sn'de bir "bizi bekleyen oturum var mı"
+  (`pg_blocking_pids`) diye bakar; art arda 3 yoklamada (≈ 6 sn) varsa deyimi iptal eder. Tipik neden: gece dağıtılan yeni pod'un
+  ddl-auto `ALTER TABLE … ADD COLUMN`'ı — o yeniden kurmayı beklerken tablonun BÜTÜN sorguları onun arkasında sıraya girerdi
+  (`lock_timeout` yalnız bizim beklememizi sınırlar, bizi bekleyeni değil). Kalıntı hemen temizlenir, bu gecenin koşusu biter,
+  kalanlar sonraki gece. Geçici kümede: açık bir REPEATABLE READ anlık görüntüsünü bekleyen yeniden kurmanın (lock_timeout 5 dk)
+  arkasındaki `ALTER TABLE` ≈ 6 sn'de bitti. Yoklama art arda 3 kez başarısız olursa da deyim iptal edilir (kör bekçiyle uzun DDL
+  koşmaz).
+- `Şişmiş indeks süre bütçesi içinde yeniden kurulamadı: <ad> … — 7 gün atlanacak` — yeniden kurma BİZİM süre bütçemizi
+  (`statement_timeout` = kalan bütçe; bütçenin en az dörtte üçüyle başlamış deneme) doldurdu. Dizin 7 gün KÜME GENELİNDE atlanır
+  (`schema_patch_markers` anahtarı `index-bloat-skip:<ad>`; her pod okur), diğerleri sırasını alır; 7 gün sonra kayıt silinir ve
+  yeniden denenir (gece özetinde `N indeks 7 günlük bütçe atlamasında`). Çözüm: `…time-budget-minutes`'ı büyütün ya da bakım
+  penceresinde elle `REINDEX INDEX CONCURRENTLY <ad>;`. Erken denemek için: `DELETE FROM schema_patch_markers WHERE patch_key =
+  'index-bloat-skip:<ad>';`.
+- **Açılış kalıntı taraması:** pod trafiğe hazır olduktan 3 dk sonra (`site.monitor.index-maintenance.leftover-sweep.delay-ms`)
+  bir kez, `SMIDXBLD` altında (doluysa dakikada bir, en çok 30 deneme), yalnız izinli tablolarda ve kurulum sürmeyen tablolarda
+  yarıda kalmış `_ccnew` / `_ccold` kalıntılarını düşürür (öldürülen bir pod'un yeniden kurması gece koşusunu beklemesin —
+  geçersiz `_ccnew` her yazımda güncellenir). Günlük: `Açılış kalıntı taraması: N yarıda kalmış yeniden kurma kalıntısı düşürüldü`.
+- **Cron ayarı geçersizse** (`site.monitor.index-maintenance.bloat-cron`) açılış DÜŞMEZ: `Şişmiş indeks bakımı KAPALI: … geçersiz`
+  WARN'ı yazılır ve gece işi o açılışta koşmaz (varsayılana sessizce dönülmez — yanlış yazılmış bir saat yoğun saatte DDL
+  koşturabilirdi). Altı alanlı Spring cron yazın (ör. `0 40 4 * * *`) ya da `-` ile kapatın.
 
-**Geri alma:** eski sürüme dönülürse ddl-auto ve eski şema yamaları gereksiz indeksleri açılışta yeniden yaratır (düz, kilitli
-`CREATE INDEX`; bu tablolarda saniyeler — en büyüğü `activity_log` üzerindeki iki dizin) — zararsız, yalnız fazla dizin. Yeniden
-ileri gidildiğinde nişan zaten yazılıysa iş bir daha koşmaz ve bu dizinler kalır; düşürmek için nişanı silin
-(`DELETE FROM schema_patch_markers WHERE patch_key = '2026-11-06-redundant-index-cleanup';`) — sonraki açılışta iş yeniden
-doğrulayıp düşürür. Şişme bakımı geri almada iz bırakmaz (yeniden kurulan dizin aynı tanım).
+**Geri alma — önce dizinleri kurun.** Eski sürümün ddl-auto'su 13 dizini (entity `@Index`), eski şema yamaları 2 dizini
+(`idx_pri_check`, `idx_mch_type_key_hour`) açılışta, trafiğe hazır olmadan, düz `CREATE INDEX` ile yeniden yaratır. Düz
+`CREATE INDEX` tabloyu yapım boyunca `SHARE` kilitler: okumalar sürer, **yazımlar bekler**. Ölçüm (yerel verinin geçici kümedeki
+kopyası, boş makine): `activity_log` 2,5 M satır — `idx_act_type` 2,6 sn + `idx_act_type_mon` 3,7 sn; `port_checks` 2,3 M satır —
+`idx_portc_monitor_id` 1,7 sn. Üretimde tablolar (365 günlük `activity_log`) daha büyük ve disk yüklü olduğundan bu süreler
+dakikalara çıkabilir. O sırada: kontrol taramalarının satır yazımları (işlem dışı) bekler — tarama ve alarm kararı gecikir;
+bir işlemin içinden yazılan aktivite satırları kendi işlemlerinde 10 sn zaman aşımıyla yazılır ve bekleme 10 sn'yi aşarsa
+**kaybolur** (yalnız DEBUG günlüğü, `ActivityLogService.writeOwn`); geri dönen pod'un hazır olması gecikir (Helm `--timeout`).
+Bunu önlemek için geri almadan ÖNCE, üretim saatinin dışında (bu komutlar yazımları KİLİTLEMEZ, yalnız eski işlemleri bekler):
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pri_check ON page_resource_issues (check_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_mch_type_key_hour ON monitor_check_hourly (monitor_type, monitor_key, hour_bucket);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_type ON activity_log (monitor_type);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_act_type_mon ON activity_log (monitor_type, monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_portc_monitor_id ON port_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pc_monitor_id ON page_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_monitor_id ON dns_records (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_kwr_monitor_id ON keyword_results (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pingc_monitor_id ON ping_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_hc_monitor_id ON http_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dc_monitor_id ON domain_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sc_monitor_id ON scripted_checks (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pri_monitor_id ON page_resource_issues (monitor_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cc_domain ON certificate_checks (domain);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_uc_domain_port ON uptime_checks (domain, port);
+-- yarıda kalan (GEÇERSİZ) dizin kaldı mı? Varsa: DROP INDEX CONCURRENTLY <ad>; ve o satırı yeniden koşun
+SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE NOT i.indisvalid AND c.relname IN ('idx_pri_check','idx_mch_type_key_hour','idx_act_type','idx_act_type_mon',
+  'idx_portc_monitor_id','idx_pc_monitor_id','idx_dnsr_monitor_id','idx_kwr_monitor_id','idx_pingc_monitor_id',
+  'idx_hc_monitor_id','idx_dc_monitor_id','idx_sc_monitor_id','idx_pri_monitor_id','idx_cc_domain','idx_uc_domain_port');
+```
+
+Dizinler bu adlarla varsa eski sürüm ddl-auto'su ve `IF NOT EXISTS` yamaları onları atlar — açılışta kilitli yapım olmaz. Bu
+SQL'ler `psql` ile ayrı ayrı koşulmalı (`CONCURRENTLY` bir işlem bloğu içinde koşmaz). Yeniden ileri gidildiğinde nişan
+(`2026-11-06-redundant-index-cleanup`) zaten yazılıysa iş bir daha koşmaz ve bu dizinler kalır (zararsız, yalnız fazla dizin);
+düşürmek için her pod yeni sürümdeyken nişanı silin (`DELETE FROM schema_patch_markers WHERE patch_key =
+'2026-11-06-redundant-index-cleanup';`) — sonraki açılışta iş yeniden doğrulayıp düşürür. Şişme bakımı geri almada iz bırakmaz
+(yeniden kurulan dizin aynı tanım); bütçe atlama kayıtları (`index-bloat-skip:%`) eski sürümce yok sayılır.
 
 ## SMTP düştü
 

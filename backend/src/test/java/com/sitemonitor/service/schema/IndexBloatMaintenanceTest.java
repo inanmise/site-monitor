@@ -10,6 +10,10 @@ import com.sitemonitor.service.schema.IndexCatalog.Leftover;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.availability.AvailabilityChangeEvent;
+import org.springframework.boot.availability.ReadinessState;
+import org.springframework.scheduling.config.CronTask;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -65,6 +69,12 @@ class IndexBloatMaintenanceTest {
         long budgetMs = 45 * 60_000L;
         int maxIndexes = 6;
         boolean enabled = true;
+        String cron = IndexBloatMaintenance.DEFAULT_CRON;
+        long sweepDelayMs = 180_000L;
+
+        Rig() {
+            db.markerClock = now::get;
+        }
 
         IndexBloatMaintenance build() {
             return new IndexBloatMaintenance(List.of("page_checks", "page_resource_issues"), () -> pg, () -> {
@@ -74,7 +84,7 @@ class IndexBloatMaintenanceTest {
             }, provider(scheduler), enabled, 30_000, maxIndexes, 4096 * MB, budgetMs, 64 * MB, now::get, ms -> {
                 sleeps.incrementAndGet();
                 now.addAndGet(ms);
-            }, schedulerStopping::get);
+            }, schedulerStopping::get, cron, sweepDelayMs);
         }
     }
 
@@ -265,7 +275,7 @@ class IndexBloatMaintenanceTest {
         when(s.claimItemProtectedCronRound(eq("index-bloat-maintenance"), anyString(), eq("Europe/Istanbul"))).thenReturn(true);
         m.scheduled();
         assertThat(r.db.ddls()).containsExactly("REINDEX INDEX CONCURRENTLY public.a");
-        verify(s, times(2)).claimItemProtectedCronRound(eq("index-bloat-maintenance"), eq(IndexBloatMaintenance.CRON), eq("Europe/Istanbul"));
+        verify(s, times(2)).claimItemProtectedCronRound(eq("index-bloat-maintenance"), eq(IndexBloatMaintenance.DEFAULT_CRON), eq("Europe/Istanbul"));
 
         SchedulerService s2 = mock(SchedulerService.class);
         Rig notPg = new Rig();
@@ -290,7 +300,7 @@ class IndexBloatMaintenanceTest {
         assertThat(job.get().name()).isEqualTo("index-bloat-maintenance");
         assertThat(job.get().cronRound()).isEqualTo("index-bloat-maintenance");
         assertThat(job.get().heavy()).isTrue();
-        assertThat(job.get().cron()).isEqualTo(IndexBloatMaintenance.CRON);
+        assertThat(job.get().cron()).isEqualTo(IndexBloatMaintenance.DEFAULT_CRON);
         assertThat(job.get().zone()).isEqualTo("Europe/Istanbul");
         verify(s, never()).callWithSchedulerLock(anyString(), any(Supplier.class));
 
@@ -323,5 +333,256 @@ class IndexBloatMaintenanceTest {
         assertThat(IndexBloatMaintenance.timeoutKind(new SQLException("x", "55P03"))).contains("lock_timeout");
         assertThat(IndexBloatMaintenance.timeoutKind(new SQLException("x", "57014"))).contains("bütçe");
         assertThat(IndexBloatMaintenance.timeoutKind(new SQLException("x", "42P01"))).isEmpty();
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-06) ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Bekçi: yeniden kurma başka bir oturumu bekletti → başarısız + durduruldu, o tablonun kalıntısı hemen düşer, sıradakine geçilmez")
+    void blockingOthersEndsTheRun() {
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 300 * MB));
+        r.db.stats.add(bloated("b", "page_resource_issues", 200 * MB));
+        r.db.failState = ddl -> {
+            if (ddl.equals("REINDEX INDEX CONCURRENTLY public.a")) {
+                r.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", MB, false));
+                return FakeIndexCatalog.BLOCKING;
+            }
+            return null;
+        };
+        IndexBloatMaintenance.Report rep = r.build().maintain();
+        assertThat(rep.failed()).containsExactly("a");
+        assertThat(rep.rebuilt()).isEmpty();
+        assertThat(rep.stoppedEarly()).isTrue();
+        assertThat(r.db.ddls()).containsExactly("REINDEX INDEX CONCURRENTLY public.a", "DROP INDEX CONCURRENTLY IF EXISTS public.a_ccnew");
+        assertThat(rep.leftoversDropped()).isEqualTo(1);
+        assertThat(r.db.markers).as("bekçi iptali bütçe atlaması değildir").isEmpty();
+        assertThat(r.db.held).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Bekçi: açılıştaki kalıntı düşürmesi başka bir oturumu bekletti → bu gece hiçbir yeniden kurmaya girişilmez, seçilenler sonraki geceye")
+    void blockingOthersDuringLeftoverDrop() {
+        Rig r = new Rig();
+        r.db.leftovers.add(new Leftover("x_ccnew", "public.x_ccnew", "page_checks", MB, false));
+        r.db.leftovers.add(new Leftover("y_ccold", "public.y_ccold", "page_checks", MB, false));
+        r.db.stats.add(bloated("a", "page_checks", 300 * MB));
+        r.db.failState = ddl -> ddl.endsWith("x_ccnew") ? FakeIndexCatalog.BLOCKING : null;
+        IndexBloatMaintenance.Report rep = r.build().maintain();
+        assertThat(r.db.ddls()).containsExactly("DROP INDEX CONCURRENTLY IF EXISTS public.x_ccnew");
+        assertThat(rep.stoppedEarly()).isTrue();
+        assertThat(rep.leftoversFailed()).isEqualTo(1);
+        assertThat(rep.deferred()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Bütçe aşımı (bizim statement_timeout'umuz): indeks 7 gün küme genelinde atlanır, diğerleri sırasını alır; süre dolunca yeniden denenir")
+    void budgetTimeoutSkipsSevenDays() {
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        r.db.stats.add(bloated("b", "page_checks", 200 * MB));
+        r.db.failState = ddl -> ddl.endsWith(".a") ? "57014" : null;
+        // deyim verilen süreyi doldurdu (statement_timeout) — kalan bütçenin tamamı
+        r.db.beforeExecute = ddl -> { if (ddl.endsWith(".a")) r.now.addAndGet(r.budgetMs); };
+        IndexBloatMaintenance.Report first = r.build().maintain();
+        assertThat(first.failed()).containsExactly("a");
+        assertThat(r.db.markers).containsKey("index-bloat-skip:a");
+        assertThat(r.db.ddls()).as("bütçe bitti, b bu gece kalır").containsExactly("REINDEX INDEX CONCURRENTLY public.a");
+
+        r.db.executed.clear();
+        r.now.addAndGet(24 * 60 * 60_000L);   // ertesi gece
+        IndexBloatMaintenance.Report second = r.build().maintain();
+        assertThat(r.db.ddls()).containsExactly("REINDEX INDEX CONCURRENTLY public.b");
+        assertThat(second.skippedForTime()).isEqualTo(1);
+        assertThat(second.rebuilt()).containsExactly("b");
+
+        r.db.executed.clear();
+        r.db.failState = ddl -> null;
+        r.db.beforeExecute = ddl -> { };
+        r.now.addAndGet(7 * 24 * 60 * 60_000L);   // 7 gün doldu
+        IndexBloatMaintenance.Report later = r.build().maintain();
+        assertThat(r.db.markerDeletes).containsExactly("index-bloat-skip:a");
+        assertThat(r.db.ddls()).contains("REINDEX INDEX CONCURRENTLY public.a");
+        assertThat(later.skippedForTime()).isZero();
+    }
+
+    @Test
+    @DisplayName("Bütçe atlaması YALNIZ bizim süremiz dolunca: kısa iptal, kapanış iptali ve gecenin sonunda kısa süreli deneme atlatmaz")
+    void budgetSkipOnlyForOwnTimeout() {
+        IndexBloatMaintenance m = new Rig().build();
+        long budget = 45 * 60_000L;
+        SQLException timeout = new SQLException("canceling statement due to statement timeout", "57014");
+        assertThat(m.budgetTimeout(timeout, budget, budget)).isTrue();
+        assertThat(m.budgetTimeout(timeout, budget - 500, budget)).as("1 sn pay").isTrue();
+        assertThat(m.budgetTimeout(timeout, 10_000, budget)).as("kısa sürede iptal (başka biri)").isFalse();
+        assertThat(m.budgetTimeout(timeout, 10 * 60_000L, 10 * 60_000L)).as("bütçenin dörtte üçünden az kalmıştı").isFalse();
+        assertThat(m.budgetTimeout(new SQLException("lock", "55P03"), budget, budget)).isFalse();
+        assertThat(m.budgetTimeout(new BlockingOthersException("x", timeout), budget, budget)).isFalse();
+
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        AtomicReference<IndexBloatMaintenance> self = new AtomicReference<>();
+        r.db.failState = ddl -> "57014";
+        r.db.beforeExecute = ddl -> {
+            r.now.addAndGet(r.budgetMs);
+            self.get().onContextClosed(null);   // kapanış iptali — süre de dolmuş olsa bile atlama yazılmaz
+        };
+        IndexBloatMaintenance mm = r.build();
+        self.set(mm);
+        mm.maintain();
+        assertThat(r.db.markers).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Atlama kaydı okunamazsa atlama uygulanmaz (koşu sürer); yazılamazsa WARN, koşu sürer")
+    void skipMarkersUnreadableOrUnwritable() {
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 300 * MB));
+        r.db.markerReadFails = true;
+        assertThat(r.build().maintain().rebuilt()).containsExactly("a");
+
+        Rig w = new Rig();
+        w.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        w.db.markerWriteFails = true;
+        w.db.failState = ddl -> "57014";
+        w.db.beforeExecute = ddl -> w.now.addAndGet(w.budgetMs);
+        IndexBloatMaintenance.Report rep = w.build().maintain();
+        assertThat(rep.failed()).containsExactly("a");
+        assertThat(w.db.markers).isEmpty();
+        assertThat(w.db.held).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Cron: geçersiz ifade açılışı düşürmez (WARN, iş kapalı, görev kaydedilmez); '-' / boş kapalı; geçerli ifade İstanbul saatinde kaydedilir")
+    void cronValidation() {
+        Rig bad = new Rig();
+        bad.cron = "0 40 25 * * *";
+        IndexBloatMaintenance m = bad.build();
+        assertThat(m.cron()).isNull();
+        ScheduledTaskRegistrar reg = new ScheduledTaskRegistrar();
+        m.configureTasks(reg);
+        assertThat(reg.getCronTaskList()).isEmpty();
+        SchedulerService s = mock(SchedulerService.class);
+        bad.scheduler = s;
+        bad.build().scheduled();
+        verify(s, never()).offloadSideJob(any());
+
+        for (String off : new String[] { "-", "", "  ", null }) {
+            Rig r = new Rig();
+            r.cron = off;
+            assertThat(r.build().cron()).as("'%s'", off).isNull();
+        }
+        assertThat(IndexBloatMaintenance.validCron("five words not cron")).isNull();
+
+        Rig ok = new Rig();
+        ok.cron = " 0 15 3 * * * ";
+        IndexBloatMaintenance good = ok.build();
+        assertThat(good.cron()).isEqualTo("0 15 3 * * *");
+        ScheduledTaskRegistrar reg2 = new ScheduledTaskRegistrar();
+        good.configureTasks(reg2);
+        assertThat(reg2.getCronTaskList()).singleElement().extracting(CronTask::getExpression).isEqualTo("0 15 3 * * *");
+
+        Rig disabled = new Rig();
+        disabled.enabled = false;
+        ScheduledTaskRegistrar reg3 = new ScheduledTaskRegistrar();
+        disabled.build().configureTasks(reg3);
+        assertThat(reg3.getCronTaskList()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Açılış kalıntı taraması: trafiğe hazır + gecikme dolmadan koşmaz; sonra bir kez (yalnız izinli tablolar, kurulum süren tabloya dokunmaz)")
+    void bootLeftoverSweepOncePerBoot() {
+        Rig r = new Rig();
+        r.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", MB, false));
+        r.db.leftovers.add(new Leftover("b_ccold", "public.b_ccold", "page_resource_issues", MB, true));
+        IndexBloatMaintenance m = r.build();
+        m.sweepTick();
+        assertThat(r.opens.get()).as("henüz trafiğe hazır değil").isZero();
+        m.onReadiness(new AvailabilityChangeEvent<>(this, ReadinessState.REFUSING_TRAFFIC));
+        m.sweepTick();
+        assertThat(r.opens.get()).isZero();
+        m.onReadiness(new AvailabilityChangeEvent<>(this, ReadinessState.ACCEPTING_TRAFFIC));
+        r.now.addAndGet(60_000);
+        m.sweepTick();
+        assertThat(r.opens.get()).as("gecikme (3 dk) dolmadı").isZero();
+        r.now.addAndGet(120_000);
+        m.sweepTick();
+        assertThat(r.opens.get()).isEqualTo(1);
+        assertThat(r.db.leftoverQueries).containsExactly(List.of("page_checks", "page_resource_issues"));
+        assertThat(r.db.ddls()).containsExactly("DROP INDEX CONCURRENTLY IF EXISTS public.a_ccnew");
+        assertThat(m.sweepDone()).isTrue();
+        assertThat(r.db.held).isEmpty();
+        assertThat(r.db.closed).isTrue();
+        m.sweepTick();
+        assertThat(r.opens.get()).as("açılış başına bir kez").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Açılış kalıntı taraması: SMIDXBLD dolu / yama sürüyor → sonraki yoklama, en çok 30 deneme; PG değil → biter; kapalı / kapanış → hiçbir şey")
+    void bootLeftoverSweepRetriesBounded() {
+        Rig r = new Rig();
+        r.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", MB, false));
+        r.db.heldElsewhere.add(DeferredIndexBuilder.LOCK_KEY);
+        IndexBloatMaintenance m = r.build();
+        m.markReady(0);
+        for (int i = 0; i < IndexBloatMaintenance.SWEEP_MAX_ATTEMPTS + 5; i++) m.sweepTick();
+        assertThat(m.sweepAttempts()).isEqualTo(IndexBloatMaintenance.SWEEP_MAX_ATTEMPTS);
+        assertThat(m.sweepDone()).isTrue();
+        assertThat(r.db.executed).isEmpty();
+
+        Rig patching = new Rig();
+        patching.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", MB, false));
+        patching.db.heldElsewhere.add(SchemaPatchRunner.LOCK_KEY);
+        IndexBloatMaintenance p = patching.build();
+        p.markReady(0);
+        p.sweepTick();
+        assertThat(p.sweepAttempts()).isEqualTo(1);
+        assertThat(patching.db.executed).isEmpty();
+        patching.db.heldElsewhere.clear();
+        p.sweepTick();
+        assertThat(p.sweepDone()).isTrue();
+        assertThat(patching.db.ddls()).containsExactly("DROP INDEX CONCURRENTLY IF EXISTS public.a_ccnew");
+
+        Rig notPg = new Rig();
+        notPg.pg = false;
+        IndexBloatMaintenance n = notPg.build();
+        n.markReady(0);
+        n.sweepTick();
+        assertThat(n.sweepDone()).isTrue();
+        assertThat(notPg.opens.get()).isZero();
+
+        Rig off = new Rig();
+        off.enabled = false;
+        IndexBloatMaintenance o = off.build();
+        o.markReady(0);
+        o.sweepTick();
+        assertThat(off.opens.get()).isZero();
+
+        Rig closing = new Rig();
+        IndexBloatMaintenance c = closing.build();
+        c.markReady(0);
+        c.onContextClosed(null);
+        c.sweepTick();
+        assertThat(closing.opens.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("Açılış kalıntı taraması yan iş koşucusunda (uzun iş, kalıcı ad); koşucu üstlenirse gövde satır içinde koşmaz")
+    void bootLeftoverSweepIsASideJob() {
+        SchedulerService s = mock(SchedulerService.class);
+        AtomicReference<SideJob> job = new AtomicReference<>();
+        when(s.offloadSideJob(any(SideJob.class))).thenAnswer(inv -> { job.set(inv.getArgument(0)); return true; });
+        Rig r = new Rig();
+        r.scheduler = s;
+        IndexBloatMaintenance m = r.build();
+        m.markReady(0);
+        m.sweepTick();
+        assertThat(job.get()).isNotNull();
+        assertThat(job.get().name()).isEqualTo("index-leftover-sweep");
+        assertThat(job.get().heavy()).isTrue();
+        assertThat(job.get().cronTriggered()).isFalse();
+        assertThat(r.opens.get()).isZero();
+        job.get().body().run();
+        assertThat(m.sweepDone()).isTrue();
     }
 }

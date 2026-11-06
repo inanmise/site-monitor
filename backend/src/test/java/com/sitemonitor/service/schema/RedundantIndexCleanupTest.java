@@ -8,11 +8,14 @@ import com.sitemonitor.service.schema.RedundantIndexCleanup.Target;
 import com.sitemonitor.service.schema.RedundantIndexCleanup.Verdict;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.scheduling.config.IntervalTask;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -478,5 +481,66 @@ class RedundantIndexCleanupTest {
         assertThat(r.db.markers).containsEntry("test-marker", 1);
         assertThat(r.db.tables.get("activity_log")).extracting(IndexFacts::name).containsExactly("idx_act_type_mon_time");
         assertThat(r.db.tables.get("monitor_check_hourly")).extracting(IndexFacts::name).containsExactly("monitor_check_hourly_pkey");
+    }
+
+    // ── 3. İnceleme düzeltmeleri (2026-11-06) ───────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Bekçi: düşürme başka bir oturumu bekletti → tur burada biter (WAITING, deneme sayılmaz, nişan yok); sonraki tur düşürür")
+    void blockingOthersYieldsAndRetries() {
+        Rig r = new Rig();
+        Target second = new Target("idx_pc_monitor_id", "page_checks", List.of("monitor_id"));
+        r.targets = List.of(PORT, second);
+        r.db.put(cand()).put(cover())
+                .put(idx("page_checks", "idx_pc_monitor_id", List.of("monitor_id")))
+                .put(idx("page_checks", "idx_pc_monitor_checked", List.of("monitor_id", "checked_at")));
+        AtomicBoolean block = new AtomicBoolean(true);
+        r.db.failState = ddl -> block.get() && ddl.endsWith("idx_portc_monitor_id") ? FakeIndexCatalog.BLOCKING : null;
+        RedundantIndexCleanup c = r.build();
+        c.runAndCount();
+        assertThat(c.failures()).as("bekleme sayılmaz").isZero();
+        assertThat(c.finished()).isFalse();
+        assertThat(r.db.ddls()).as("ikinci hedefe geçilmez").containsExactly("DROP INDEX CONCURRENTLY IF EXISTS public.idx_portc_monitor_id");
+        assertThat(r.db.markers).isEmpty();
+        assertThat(r.db.held).as("kilit bırakıldı").isEmpty();
+        assertThat(r.db.closed).isTrue();
+        block.set(false);
+        c.runAndCount();
+        assertThat(c.finished()).isTrue();
+        assertThat(r.db.markers).containsEntry("test-marker", 2);
+    }
+
+    @Test
+    @DisplayName("Zamanlama programla: aralık 0 / negatif / küçük → 60 sn, ilk gecikme negatif → 0 (açılış düşmez); kapalıyken kayıt yok")
+    void schedulingIsClamped() {
+        RedundantIndexCleanup zero = new RedundantIndexCleanup(List.of(PORT), "m", () -> true, () -> new FakeIndexCatalog(),
+                List::of, () -> false, job -> false, true, 30_000, 0, -5);
+        ScheduledTaskRegistrar reg = new ScheduledTaskRegistrar();
+        zero.configureTasks(reg);
+        assertThat(reg.getFixedDelayTaskList()).singleElement().satisfies(t -> {
+            assertThat(t.getIntervalDuration()).isEqualTo(Duration.ofMillis(RedundantIndexCleanup.MIN_INTERVAL_MS));
+            assertThat(t.getInitialDelayDuration()).isEqualTo(Duration.ZERO);
+        });
+
+        RedundantIndexCleanup neg = new RedundantIndexCleanup(List.of(PORT), "m", () -> true, () -> new FakeIndexCatalog(),
+                List::of, () -> false, job -> false, true, 30_000, -1, 1_000);
+        ScheduledTaskRegistrar reg2 = new ScheduledTaskRegistrar();
+        neg.configureTasks(reg2);
+        IntervalTask t2 = reg2.getFixedDelayTaskList().get(0);
+        assertThat(t2.getIntervalDuration()).isEqualTo(Duration.ofMillis(60_000));
+        assertThat(t2.getInitialDelayDuration()).isEqualTo(Duration.ofMillis(1_000));
+
+        RedundantIndexCleanup normal = new RedundantIndexCleanup(List.of(PORT), "m", () -> true, () -> new FakeIndexCatalog(),
+                List::of, () -> false, job -> false, true, 30_000, 600_000);
+        ScheduledTaskRegistrar reg3 = new ScheduledTaskRegistrar();
+        normal.configureTasks(reg3);
+        assertThat(reg3.getFixedDelayTaskList().get(0).getIntervalDuration()).isEqualTo(Duration.ofMinutes(10));
+        assertThat(reg3.getFixedDelayTaskList().get(0).getInitialDelayDuration()).isEqualTo(Duration.ofMinutes(3));
+
+        RedundantIndexCleanup off = new RedundantIndexCleanup(List.of(PORT), "m", () -> true, () -> new FakeIndexCatalog(),
+                List::of, () -> false, job -> false, false, 30_000, 0, -5);
+        ScheduledTaskRegistrar reg4 = new ScheduledTaskRegistrar();
+        off.configureTasks(reg4);
+        assertThat(reg4.getFixedDelayTaskList()).isEmpty();
     }
 }

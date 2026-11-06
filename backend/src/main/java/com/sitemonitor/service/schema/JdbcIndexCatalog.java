@@ -100,18 +100,76 @@ final class JdbcIndexCatalog implements IndexCatalog {
             ORDER BY c.relname
             """;
 
+    /**
+     * Bekçi yoklaması: bizim oturumumuzu ({@code ?}) bekleyen, kilit bekleyen BAŞKA oturumlar. {@code pg_blocking_pids} kilit
+     * yöneticisine kısa süre özel erişim ister — yalnız kilit bekleyen satırlarda çağrılsın diye {@code OFFSET 0} çiti.
+     */
+    static final String SQL_WAITING_FOR = """
+            SELECT count(*) FROM (SELECT pid FROM pg_stat_activity
+                                  WHERE pid <> ? AND wait_event_type = 'Lock' OFFSET 0) w
+            WHERE ? = ANY (pg_blocking_pids(w.pid))
+            """;
+
+    /** Bekçi açıcısı: (bizim pid, DDL'in deyim süresi) → başlamış bekçi; açamazsa SQLException. */
+    @FunctionalInterface
+    interface WatchStarter { DdlBlockWatch start(int pid, long maxMs) throws SQLException; }
+
     private final DeferredIndexBuilder.JdbcSession session;
     private final Connection conn;
+    private final WatchStarter watches;
     /** Süren DDL deyimi — kapanışta {@link #cancel()} başka iş parçacığından iptal eder. */
     private volatile Statement running;
+    private int backendPid = -1;
 
-    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session) {
+    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session, WatchStarter watches) {
         this.session = session;
         this.conn = session.connection();
+        this.watches = watches;
     }
 
     static JdbcIndexCatalog open(DataSource ds) throws SQLException {
-        return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.open(ds));
+        return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.open(ds),
+                (pid, maxMs) -> DdlBlockWatch.start(JdbcProbe.open(ds), pid, maxMs));
+    }
+
+    /** Bekçinin ayrı bağlantısı (havuz dışı, otomatik commit, 3 sn deyim süresi). */
+    static final class JdbcProbe implements DdlBlockWatch.Probe {
+        private final DeferredIndexBuilder.JdbcSession session;
+
+        private JdbcProbe(DeferredIndexBuilder.JdbcSession session) { this.session = session; }
+
+        static JdbcProbe open(DataSource ds) throws SQLException {
+            DeferredIndexBuilder.JdbcSession s = DeferredIndexBuilder.JdbcSession.open(ds);
+            try (Statement st = s.connection().createStatement()) {
+                st.execute("SET statement_timeout = 3000");
+            } catch (SQLException e) {
+                s.close();
+                throw e;
+            }
+            return new JdbcProbe(s);
+        }
+
+        @Override
+        public int waitingFor(int pid) throws SQLException {
+            try (PreparedStatement ps = session.connection().prepareStatement(SQL_WAITING_FOR)) {
+                ps.setInt(1, pid);
+                ps.setInt(2, pid);
+                try (ResultSet rs = ps.executeQuery()) { return rs.next() ? rs.getInt(1) : 0; }
+            }
+        }
+
+        @Override
+        public void cancel(int pid) throws SQLException {
+            try (PreparedStatement ps = session.connection().prepareStatement("SELECT pg_cancel_backend(?)")) {
+                ps.setInt(1, pid);
+                ps.execute();
+            }
+        }
+
+        @Override
+        public void close() {
+            session.close();
+        }
     }
 
     @Override
@@ -140,6 +198,42 @@ final class JdbcIndexCatalog implements IndexCatalog {
             ps.setString(1, key);
             ps.setString(2, ISO.format(Instant.now()));
             ps.setInt(3, rowsAffected);
+            ps.executeUpdate();
+        }
+    }
+
+    @Override
+    public Map<String, String> markersWithPrefix(String prefix) throws SQLException {
+        try (Statement st = conn.createStatement()) { st.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL); }
+        Map<String, String> out = new LinkedHashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT patch_key, applied_at FROM schema_patch_markers WHERE left(patch_key, ?) = ? ORDER BY patch_key")) {
+            ps.setInt(1, prefix.length());
+            ps.setString(2, prefix);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.put(rs.getString(1), rs.getString(2));
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public void upsertMarker(String key, int rowsAffected) throws SQLException {
+        try (Statement st = conn.createStatement()) { st.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL); }
+        try (PreparedStatement ps = conn.prepareStatement("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected)"
+                + " VALUES (?, ?, ?) ON CONFLICT (patch_key) DO UPDATE SET applied_at = EXCLUDED.applied_at,"
+                + " rows_affected = EXCLUDED.rows_affected")) {
+            ps.setString(1, key);
+            ps.setString(2, ISO.format(Instant.now()));
+            ps.setInt(3, rowsAffected);
+            ps.executeUpdate();
+        }
+    }
+
+    @Override
+    public void deleteMarker(String key) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("DELETE FROM schema_patch_markers WHERE patch_key = ?")) {
+            ps.setString(1, key);
             ps.executeUpdate();
         }
     }
@@ -231,16 +325,30 @@ final class JdbcIndexCatalog implements IndexCatalog {
 
     @Override
     public void executeBounded(String ddl, long lockTimeoutMs, long statementTimeoutMs) throws SQLException {
+        long stmtMs = Math.max(1L, statementTimeoutMs);
+        DdlBlockWatch watch;
+        try {
+            watch = watches.start(backendPid(), stmtMs);
+        } catch (SQLException | RuntimeException e) {
+            throw new SQLException("indeks DDL bekçisi başlatılamadı — DDL koşulmadı: " + DeferredIndexBuilder.firstLine(e),
+                    "08000", e);
+        }
         try (Statement st = conn.createStatement()) {
             st.execute("SET lock_timeout = " + Math.max(1L, lockTimeoutMs));
-            st.execute("SET statement_timeout = " + Math.max(1L, statementTimeoutMs));
+            st.execute("SET statement_timeout = " + stmtMs);
             running = st;
             try {
                 st.execute(ddl);
+            } catch (SQLException e) {
+                watch.stop();
+                String fired = watch.firedReason();
+                if (fired != null) throw new BlockingOthersException(fired, e);
+                throw e;
             } finally {
                 running = null;
             }
         } finally {
+            watch.stop();   // her yolda (SET hatası dahil); durdurulmuş bekçi iptal etmez: tamamlanma ile iptal yarışmaz
             try (Statement st = conn.createStatement()) {
                 st.execute("RESET lock_timeout");
                 st.execute("SET statement_timeout = 0");   // JdbcSession'ın açılış değeri (rol varsayılanı geri gelmesin)
@@ -248,6 +356,16 @@ final class JdbcIndexCatalog implements IndexCatalog {
                 // bağlantı koptuysa oturum zaten kapanıyor
             }
         }
+    }
+
+    /** Bu oturumun sunucu süreci (bekçi onu bekleyenleri arar, gerekirse iptal eder). */
+    private int backendPid() throws SQLException {
+        if (backendPid > 0) return backendPid;
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery("SELECT pg_backend_pid()")) {
+            backendPid = rs.next() ? rs.getInt(1) : -1;
+        }
+        if (backendPid <= 0) throw new SQLException("pg_backend_pid okunamadı");
+        return backendPid;
     }
 
     @Override
