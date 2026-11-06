@@ -71,6 +71,7 @@ import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
 } from './monitoring/MonitorForm.jsx'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
@@ -96,6 +97,10 @@ const intervalIdx = (secs) => {
   return best
 }
 const REFRESH_INTERVAL = 60
+// Ayrıntı penceresinin sessiz tazelemesi (sn değil ms). Liste bu aralıktan (eksi pay) yeni yüklendiyse pencere
+// ucu yeniden çağırmaz — kopyasını liste yoklaması zaten tazeledi (2026-11-06, performans PF2 madde 8).
+const DETAIL_REFRESH_MS = 30_000
+const LIST_FRESH_SLACK_MS = 1_000
 // Sorun türü → ikon (kaynak tür ikonlarıyla birlikte tabloda gösterilir).
 const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME: Frame, FONT: Type, FAVICON: Image }
 // Sorun tablosu kolon şablonu: Zaman | Tür | Kaynak | Sorun | HTTP | Süre | Alarm Kapsamı | İşlem.
@@ -125,7 +130,9 @@ const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', n
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
-export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showPrompt, showConfirm } = useDialog()
@@ -268,7 +275,21 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
   // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
-  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
+  // Liste yoklaması + açık ayrıntının kopyası TEK yanıttan (2026-11-06, performans PF2 madde 8). Eskiden pencerenin 30 sn'lik
+  // tazelemesi listeyi AYRICA çekiyordu; sayfanın kendi yoklaması da sürdüğünden pencere açıkken liste ucu dakikada 3 kez
+  // (DB sorgu: 4) çağrılıyordu. Yoklama artık pencerenin kopyasını da tazeler; pencere tazelemesi liste son 30 sn içinde
+  // böyle yüklendiyse ucu yeniden çağırmaz. Diğer load() çağrıları (kaydet, sürdür, hariç tut …) eskisi gibi kopyaya dokunmaz.
+  // Sıra koruması load()'da — bayat yanıt undefined döner, kopya değişmez; A'nın satırı B'nin penceresini değiştirmez.
+  const listSyncedAtRef = useRef(0)
+  const loadAndSync = useCallback(async () => {
+    const rows = await load()
+    if (Array.isArray(rows)) {
+      listSyncedAtRef.current = Date.now()
+      setSelected((prev) => (prev ? (rows.find((x) => x.id === prev.id) ?? prev) : prev))
+    }
+    return rows
+  }, [load])
+  useVisibleInterval(loadAndSync, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
 
   useEffect(() => {
     if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
@@ -351,20 +372,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   async function refreshModal() {
     if (!selected) return
     const { id, url } = selected
-    // Liste SIRA KORUMALI load()'dan geçer (2026-10-22, UIM-19): eskiden doğrudan çağrı vardı — yavaş bir yenileme
-    // yanıtı kaydetmeden SONRA dönünce kaydedilmiş satırı eski değerlerle eziyor, ikinci "Düzenle" ilk düzenlemeyi
-    // sessizce geri alıyordu. load() bayat yanıtta undefined döner; hata dalını (ağ dahil) kendisi işler.
-    const rows = await load()
-    if (Array.isArray(rows)) {
-      const fresh = rows.find(x => x.id === id)
-      if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
-    }
+    // Liste son 30 sn içinde yoklamayla yüklendiyse yeniden çekilmez — kopya o yanıttan tazelendi. Aksi hâlde SIRA
+    // KORUMALI load()'dan geçer (2026-10-22, UIM-19) ve kopya aynı yanıttan tazelenir (loadAndSync).
+    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) await loadAndSync()
+    // (Eskiden doğrudan çağrı vardı — yavaş bir yenileme yanıtı kaydetmeden SONRA dönünce kaydedilmiş satırı eski
+    // değerlerle eziyor, ikinci "Düzenle" ilk düzenlemeyi sessizce geri alıyordu.)
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın sorunları B'nin penceresine yüklenmesin.
     if (selectedIdRef.current !== id) return
     loadIssues(id, issueFilterRef.current, true)
     loadConfirmations(url)
   }
-  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
+  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? DETAIL_REFRESH_MS : 0, false)
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
   function cancelTest() { testSeq.current++; setTesting(false) }
@@ -778,6 +796,34 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const issueFilters = ['all', 'BROKEN', 'TIMEOUT', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
   const excludeCount = (form.excludePatterns || '').split('\n').map(s => s.trim()).filter(Boolean).length
 
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* Kart sunumu page/PageMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama yuva
+           olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak; CONFIG_ERROR mor
+           rozet), toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
+        <PageMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => cardEv.current.openDetail(m)}
+          spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+          select={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
+          )}
+          actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.url}
+              running={isRunning(m.id)}
+              onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('page.check')} editTitle={t('page.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id} deleteTitle={t('page.delete')} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
   // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
@@ -984,26 +1030,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* Kart sunumu page/PageMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama yuva
-               olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak; CONFIG_ERROR mor
-               rozet), toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
-            <PageMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
-              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
-              select={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
-              )}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.url}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('page.check')} editTitle={t('page.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={t('page.delete')} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

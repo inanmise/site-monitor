@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { DatabaseZap, Unplug } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -115,11 +115,12 @@ export function useGroupHealth(teamIds, enabled) {
     // Takım kümesi değişince / kapatılınca eski yanıtlar yazılmaz
     return () => { alive = false }
   }, [key])
-  return (group) => {
+  // Kimlik yalnız sağlık verisi değişince değişir (2026-11-06, PF4 O2): sayfanın kart ızgarası belleği buna bağlı.
+  return useCallback((group) => {
     if (!group || group.key === NO_CONNECTION_KEY || group.teamId == null) return null
     const entry = byTeam[String(group.teamId)]
     if (!entry) return null
     if (entry.state !== 'ok') return entry.state
     return entry.index.get(String(group.profileId)) || 'unreadable'
-  }
+  }, [byTeam])
 }

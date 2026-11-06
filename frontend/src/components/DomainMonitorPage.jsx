@@ -73,6 +73,7 @@ import { MonitorDetailModal, DetailDivider, DetailTabs, useDeepLinkTab } from '.
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
 } from './monitoring/MonitorForm.jsx'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -137,7 +138,9 @@ const STATUS_TEXT = {
   up: 'text-success', warn: 'text-amber-700 dark:text-amber-400', down: 'text-destructive', unknown: 'text-muted-foreground',
 }
 
-export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -748,6 +751,41 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Formdaki "Sorun Tanıla" (FE-5): kayıtlı izleme + satırın tanılama kapısı + alan adı DEĞİŞMEMİŞ (sunucu izlemeyi alan adıyla bulur)
   const formDiagnosable = !!modal && modal !== 'new' && !dupSource && canDiagnoseRow(modal)
     && normalizeDomainInput(form.domain) === normalizeDomainInput(modal.domain || '')
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* Alan Adı kartı (domain/DomainMonitorCard, 2026-09-27): kalan gün kahraman paneli (bitiş tarihi, kalan kayıt
+           süresi çubuğu, yenileme planı çipi / kısayolu), koruma çipleri, EPP kodları. Yetkiye, seçime ve eylemlere
+           bağlı parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, kart eylemleri (telefonda
+           "Diğer işlemler" menüsü + Yenileme planla), plan penceresi. Durum sözlüğü detay penceresiyle ortak. */
+        <DomainMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusCls(m.status)} badge={cardStatusBadge(m)}
+          alarmLabel={alarmLabel(m)} onOpen={() => cardEv.current.openDetail(m)}
+          onPlanRenewal={canManageRow(m) ? () => setPlanRow(m) : undefined}
+          select={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
+          )}
+          meta={<MonitorCardMeta monitor={m} />}
+          actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
+              running={isRunning(m.id)}
+              onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('dom.check')} editTitle={t('dom.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id} deleteTitle={t('dom.delete')}
+              phoneMenu menuItems={canManageRow(m) ? [{
+                label: m.renewal_planned_at ? t('forecast.editPlan') : t('forecast.planRenewal'),
+                icon: <CalendarPlus aria-hidden="true" />, onClick: () => setPlanRow(m),
+              }] : []} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, t, isAdmin, isTeamAdmin, isOwnTeam])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   const formModal = modal && (
     <MonitorFormModal onClose={closeEdit} icon={CalendarClock} width={640}
@@ -966,33 +1004,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* Alan Adı kartı (domain/DomainMonitorCard, 2026-09-27): kalan gün kahraman paneli (bitiş tarihi, kalan kayıt
-               süresi çubuğu, yenileme planı çipi / kısayolu), koruma çipleri, EPP kodları. Yetkiye, seçime ve eylemlere
-               bağlı parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, kart eylemleri (telefonda
-               "Diğer işlemler" menüsü + Yenileme planla), plan penceresi. Durum sözlüğü detay penceresiyle ortak. */
-            <DomainMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusCls(m.status)} badge={cardStatusBadge(m)}
-              alarmLabel={alarmLabel(m)} onOpen={() => openDetail(m)}
-              onPlanRenewal={canManageRow(m) ? () => setPlanRow(m) : undefined}
-              select={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
-              )}
-              meta={<MonitorCardMeta monitor={m} />}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('dom.check')} editTitle={t('dom.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={t('dom.delete')}
-                  phoneMenu menuItems={canManageRow(m) ? [{
-                    label: m.renewal_planned_at ? t('forecast.editPlan') : t('forecast.planRenewal'),
-                    icon: <CalendarPlus aria-hidden="true" />, onClick: () => setPlanRow(m),
-                  }] : []} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

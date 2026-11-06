@@ -61,6 +61,7 @@ import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
 } from './monitoring/MonitorForm.jsx'
 import { cn } from '@/lib/utils'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 // Uçtan uca tanılama penceresi (2026-10-05) — tembel: giriş paketi büyümez
 const NetDiagnoseDialog = lazy(() => import('./diagnose/NetDiagnoseDialog.jsx'))
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
@@ -93,7 +94,9 @@ const INFO_ITEMS = [
 
 const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, alertLevel: 'WARNING', confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
-export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -602,6 +605,39 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Canlı test sonucu uyarı tonunda mı (beklenmeyen değer / yavaş yanıt) — ton ve ikon aynı kararı paylaşır.
   const testWarn = !!(testResult && !testResult.error && (testResult.unexpected?.length || testResult.slow))
 
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* DNS kartı (dns/DnsMonitorCard, 2026-09-27): değer paneli kartın kalbi (çoklu değer, değişti/rotasyon/
+           beklenmeyen değer), kaynak rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı ortak
+           parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, mini trend, kart eylemleri
+           (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü detay penceresiyle ortak (statusKey/statusBadge). */
+        <DnsMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} density={density} running={isRunning(m.id)}
+          statusBadge={statusBadge(m, { lastKnown: true })} alarmLabel={alarmLabel(m)}
+          onOpen={() => setDetailMonitor(m)}
+          select={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
+          )}
+          meta={<MonitorCardMeta monitor={m} />}
+          spark={<MonitorSpark rowLabel={m.domain} spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />}
+          actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
+              running={isRunning(m.id)}
+              onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('dns.check')} editTitle={t('dns.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id}
+              deleteTitle={m.standalone ? t('dns.delete') : t('dns.deleteDerivedTitle')} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // İÇ KAYDIRMA ortak pencerenin sözleşmesi (MonitorFormModal → ui/ModalShell scrollBody): eskiden DNS bunu
   // taşımıyordu ve kaydırma çubuğu ekranın en sağında çıkıyordu — kapı: modalScroll.test.jsx.
@@ -850,31 +886,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           api={{ update: api.monitoring.updateDnsMonitor, remove: api.monitoring.deleteDnsMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* DNS kartı (dns/DnsMonitorCard, 2026-09-27): değer paneli kartın kalbi (çoklu değer, değişti/rotasyon/
-               beklenmeyen değer), kaynak rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı ortak
-               parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, mini trend, kart eylemleri
-               (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü detay penceresiyle ortak (statusKey/statusBadge). */
-            <DnsMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} density={density} running={isRunning(m.id)}
-              statusBadge={statusBadge(m, { lastKnown: true })} alarmLabel={alarmLabel(m)}
-              onOpen={() => setDetailMonitor(m)}
-              select={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
-              )}
-              meta={<MonitorCardMeta monitor={m} />}
-              spark={<MonitorSpark rowLabel={m.domain} spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.domain}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('dns.check')} editTitle={t('dns.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id}
-                  deleteTitle={m.standalone ? t('dns.delete') : t('dns.deleteDerivedTitle')} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

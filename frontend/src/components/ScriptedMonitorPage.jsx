@@ -95,6 +95,7 @@ import { historyDetailText, runContextOf, stepsOf, stepsTruncated, thresholdsOf,
 import { scenarioTarget } from './scripted/scriptedCardModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import { MonitorFormModal, FormGrid, FormField, CheckField, FormSection } from './monitoring/MonitorForm.jsx'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -319,7 +320,9 @@ function scriptedRowSignature(c) {
   return `${c.status}|${c.exit_code ?? ''}|${first}`
 }
 
-export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
@@ -1418,6 +1421,36 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   }
 
 
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* Kart sunumu scripted/ScriptedMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
+           yuva olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak), toplu seçim
+           kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). Duraklatılmış = `active === false`
+           — sayfanın "Duraklatılan" sayacı/süzgeciyle AYNI yüklem. */
+        <ScriptedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)} onOpen={() => cardEv.current.openDetail(m)}
+          spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+          select={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
+          )}
+          actions={(canManageRow(m) || canRunRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions rowLabel={m.name}
+              running={isRunning(m.id)} checkDisabled={!k6.available}
+              onCheck={canRunRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id} deleteTitle={t('scripted.delete')}
+              onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam, k6.canManage, k6.available])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
@@ -1529,28 +1562,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
           api={{ update: api.monitoring.updateScriptedMonitor, remove: api.monitoring.deleteScriptedMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* Kart sunumu scripted/ScriptedMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
-               yuva olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak), toplu seçim
-               kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). Duraklatılmış = `active === false`
-               — sayfanın "Duraklatılan" sayacı/süzgeciyle AYNI yüklem. */
-            <ScriptedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
-              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
-              select={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
-              )}
-              actions={(canManageRow(m) || canRunRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions rowLabel={m.name}
-                  running={isRunning(m.id)} checkDisabled={!k6.available}
-                  onCheck={canRunRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={t('scripted.delete')}
-                  onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

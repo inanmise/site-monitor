@@ -77,6 +77,7 @@ import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
 } from './monitoring/MonitorForm.jsx'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
@@ -100,6 +101,10 @@ const intervalIdx = (secs) => {
   return best
 }
 const REFRESH_INTERVAL = 60
+// Ayrıntı penceresinin sessiz tazelemesi (sn değil ms). Liste bu aralıktan (eksi pay) yeni yüklendiyse pencere
+// ucu yeniden çağırmaz — kopyasını liste yoklaması zaten tazeledi (2026-11-06, performans PF2 madde 8).
+const DETAIL_REFRESH_MS = 30_000
+const LIST_FRESH_SLACK_MS = 1_000
 const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, IFRAME: Frame, FONT: Type, FAVICON: Image, OTHER: Link2 }
 
 /** Grafik metrikleri — sunucu `?metric=` ile TEK seriyi projekte eder (yeni tarama üretmez). */
@@ -170,7 +175,9 @@ function BreachEvidence({ metrics, detail, t }) {
   )
 }
 
-export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -311,7 +318,21 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // görüntüsüyle değiştirip listeyi yeniden sıralar, kullanıcının baktığı kart zıplardı.
   // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
-  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
+  // Liste yoklaması + açık ayrıntının kopyası TEK yanıttan (2026-11-06, performans PF2 madde 8). Eskiden pencerenin 30 sn'lik
+  // tazelemesi listeyi AYRICA çekiyordu; sayfanın kendi yoklaması da sürdüğünden pencere açıkken liste ucu dakikada 3 kez
+  // (DB sorgu: 4) çağrılıyordu. Yoklama artık pencerenin kopyasını da tazeler; pencere tazelemesi liste son 30 sn içinde
+  // böyle yüklendiyse ucu yeniden çağırmaz. Diğer load() çağrıları (kaydet, sürdür, hariç tut …) eskisi gibi kopyaya dokunmaz.
+  // Sıra koruması load()'da — bayat yanıt undefined döner, kopya değişmez; A'nın satırı B'nin penceresini değiştirmez.
+  const listSyncedAtRef = useRef(0)
+  const loadAndSync = useCallback(async () => {
+    const rows = await load()
+    if (Array.isArray(rows)) {
+      listSyncedAtRef.current = Date.now()
+      setSelected((prev) => (prev ? (rows.find((x) => x.id === prev.id) ?? prev) : prev))
+    }
+    return rows
+  }, [load])
+  useVisibleInterval(loadAndSync, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
 
   useEffect(() => {
     if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
@@ -388,19 +409,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   async function refreshModal() {
     if (!selected) return
     const id = selected.id
-    // Liste SIRA KORUMALI load()'dan geçer (2026-10-22, UIM-19): yavaş bir yenileme yanıtı kaydetmeden sonra dönüp
-    // kaydedilmiş satırı eski değerlerle ezmesin (ikinci "Düzenle" ilkini geri alıyordu); ağ hatası load()'da işlenir.
-    const rows = await load()
-    if (Array.isArray(rows)) {
-      const fresh = rows.find(x => x.id === id)
-      if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
-    }
+    // Liste son 30 sn içinde yoklamayla yüklendiyse yeniden çekilmez — kopya o yanıttan tazelendi. Aksi hâlde SIRA
+    // KORUMALI load()'dan geçer (2026-10-22, UIM-19) ve kopya aynı yanıttan tazelenir (loadAndSync).
+    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) await loadAndSync()
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın kaynakları B'nin penceresine yüklenmesin
     // (loadResources'ın resSeq'i EN SON isteği kazandırır — bayat çağrı en son olmamalı).
     if (selectedIdRef.current !== id) return
     loadResources(id, resCheckIdRef.current, true)
   }
-  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
+  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? DETAIL_REFRESH_MS : 0, false)
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
   function cancelTest() { testSeq.current++; setTesting(false) }
@@ -764,6 +781,36 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     </InputGroup>
   )
 
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* Kart: pagespeed/PageSpeedMonitorCard (shadcn Card + "stretched button" + bütçe ölçerleri). Yetki
+           kapıları ve olay işleyicileri SAYFADA kalır: seçim kutusu, meta ve eylemler kart yuvalarına geçer. */
+        <PageSpeedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
+          onOpen={() => cardEv.current.openDetail(m)}
+          spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+          week7={week7.data[String(m.id)]} week14={week14.data[String(m.id)]}
+          selection={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
+          )}
+          meta={<MonitorCardMeta monitor={m} />}
+          actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.url}
+              running={isRunning(m.id)}
+              onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam, week7, week14])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
   // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
@@ -1077,28 +1124,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* Kart: pagespeed/PageSpeedMonitorCard (shadcn Card + "stretched button" + bütçe ölçerleri). Yetki
-               kapıları ve olay işleyicileri SAYFADA kalır: seçim kutusu, meta ve eylemler kart yuvalarına geçer. */
-            <PageSpeedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
-              onOpen={() => openDetail(m)}
-              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
-              week7={week7.data[String(m.id)]} week14={week14.data[String(m.id)]}
-              selection={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
-              )}
-              meta={<MonitorCardMeta monitor={m} />}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.url}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

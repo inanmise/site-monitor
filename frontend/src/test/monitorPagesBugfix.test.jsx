@@ -73,6 +73,13 @@ beforeEach(() => {
 afterEach(() => { window.history.replaceState({}, '', '/') })
 
 describe('UIM-19 — Sayfa izleme detayının 30 sn yenilemesi sıra korumalı', () => {
+  // Saat kaydırıcı: Date.now'u ileri alır (gerçek zamanlayıcılar aynen çalışır)
+  const realNow = Date.now
+  let offset = 0
+  const laterBy = (ms) => { offset += ms }
+  beforeEach(() => { offset = 0; vi.spyOn(Date, 'now').mockImplementation(() => realNow.call(Date) + offset) })
+  afterEach(() => { vi.mocked(Date.now).mockRestore?.() })
+
   const PAGE = { id: 1, name: 'Eski Ad', url: 'https://www.example.com/', mode: 'SINGLE_PAGE', group_name: 'G', tags: 'prod',
     team_id: 5, team_name: 'SY-A', status: 'OK', broken_resources: 0, mixed_content_count: 0, total_resources: 3, active: true,
     checked_at: '2026-10-22T08:00:00', can_edit: true }
@@ -85,7 +92,9 @@ describe('UIM-19 — Sayfa izleme detayının 30 sn yenilemesi sıra korumalı',
     const listMs = [...intervals.keys()].find((ms) => ms !== 30000 && ms !== 1000)
     expect(listMs).toBeGreaterThan(0)
 
-    // 1) 30 sn detay yenilemesi başlar — yanıtı yavaş (eski veri)
+    // 1) 30 sn detay yenilemesi başlar — yanıtı yavaş (eski veri). Gerçekte pencere tazelemesi son liste yüklemesinden
+    //    ≥ 30 sn sonra gelir; daha erken gelirse listeyi yeniden ÇEKMEZ (2026-11-06, PF2 madde 8) → saat ileri alınır.
+    laterBy(31_000)
     const slow = deferred()
     api.monitoring.getPageMonitors.mockImplementationOnce(() => slow.p)
     act(() => { fire(30000) })
@@ -104,8 +113,11 @@ describe('UIM-19 — Sayfa izleme detayının 30 sn yenilemesi sıra korumalı',
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     fireEvent.click(await screen.findByRole('button', { name: /^https:\/\/www\.example\.com\/ — (open details|detayları aç)$/ }))
     await waitFor(() => expect(has(30000)).toBe(true))
+    laterBy(31_000)   // pencere tazelemesi listeyi ancak son yüklemeden ≥ 30 sn sonra yeniden çeker (PF2 madde 8)
     api.monitoring.getPageMonitors.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const calls = api.monitoring.getPageMonitors.mock.calls.length
     await act(async () => { await fire(30000) })
+    expect(api.monitoring.getPageMonitors.mock.calls.length).toBe(calls + 1)   // tazeleme gerçekten listeyi çekti
     expect(document.body.textContent).toContain('Eski Ad')
   })
 
