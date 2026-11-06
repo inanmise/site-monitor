@@ -383,7 +383,11 @@ function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }
   }, [])
 
   // Görünür sekmede, liste açıkken ve 1. sayfadayken sessiz otomatik tazeleme (gizli sekmede / ayrıntı açıkken durur).
-  useVisibleInterval(() => (active && sp.page === 1 ? load(true) : undefined), 30000, false)
+  // "Tümü" aralığında KAPALI (2026-11-06, performans PF1 madde 7): özet tüm aktivite tablosunu tarar (yerel
+  // gerçekçi veride ≈ 1,5 sn, paralel sıralı tarama) — 30 sn'de bir koşmamalı. Zaman çizelgesi "Canlı" yerine bunu
+  // söyler; Yenile düğmesi her zaman çalışır. Varsayılan (24 sa) ve diğer aralıklar değişmedi.
+  const autoRefresh = filters.range !== 'all'
+  useVisibleInterval(() => (active && autoRefresh && sp.page === 1 ? load(true) : undefined), 30000, false)
 
   const anyFilter = isFiltered(filters)
   // Dışa aktarım parametreleri TIKLAMA ANINDA (inceleme FR O2 — liste gibi "şimdi"ye göre)
@@ -651,7 +655,8 @@ function ActivityList({ refreshTrigger, active, onOpenActivity, onOpenTimeline }
 
       {/* Zaman çizelgesi — seçili aralıkta sonuç dağılımı + son aktivite + canlı göstergesi */}
       <ActivityTimeline series={summary?.series} loading={!summary && !summaryError} failed={!summary && summaryError} lastActivity={summary?.last_activity}
-        live={sp.page === 1 && !error && !(!summary && summaryError)} />
+        live={autoRefresh && sp.page === 1 && !error && !(!summary && summaryError)}
+        autoRefreshOff={!autoRefresh} />
 
       {/* Süzgeç kartı — aralık / arama / eylemler; durum, neden, takım, izleme, kişi; olay grubu ve tür çipleri; etkin süzgeç çipleri */}
       <div ref={setFilterEl} className="min-w-0">
