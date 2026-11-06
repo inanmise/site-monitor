@@ -219,6 +219,46 @@ class CheckHistoryServiceTest {
         assertThat(out.get("oldest_at")).isEqualTo("2026-01-01T00:00:00");
     }
 
+    /** PF2 #10 kaynağı: sayfa toplamı ({@code pageTotal}) + sayaç çağrı sayıları; {@code matches} = pageCountMatches cevabı. */
+    private CheckHistoryService.Source<String> countingSource(long pageTotal, boolean matches, int[] totalCalls, int[] failCalls) {
+        return new CheckHistoryService.Source<>() {
+            public Page<String> page(String f, String t, boolean fail, Pageable p) {
+                return new PageImpl<>(List.of("row1"), org.springframework.data.domain.PageRequest.of(0, 1), pageTotal);
+            }
+            public long total(String f, String t) { totalCalls[0]++; return 120; }
+            public long fail(String f, String t)  { failCalls[0]++; return 7; }
+            public List<Object[]> histogram(String f, String t, int len) { return List.of(); }
+            @Override public boolean pageCountMatches(boolean fail) { return matches; }
+        };
+    }
+
+    @Test
+    @DisplayName("PF2 #10: kaynak sayfa COUNT'unu eşdeğer beyan ederse süzgeçli kipin sayacı İKİNCİ KEZ sorgulanmaz; diğer sayaç sorgulanır")
+    void execute_pageCountReusedOnlyWhenSourceDeclaresIt() {
+        int[] tc = {0}, fc = {0};
+        Map<String, Object> all = service.execute(countingSource(120, true, tc, fc),
+                service.resolve(q(null, null, 7, "all", 0, 50), 180), null, null);
+        assertThat(all.get("counts")).isEqualTo(Map.of("total", 120L, "fail", 7L));
+        assertThat(tc[0]).isZero();          // toplam = sayfanın toplamı
+        assertThat(fc[0]).isEqualTo(1);
+
+        tc[0] = 0; fc[0] = 0;
+        Map<String, Object> fail = service.execute(countingSource(7, true, tc, fc),
+                service.resolve(q(null, null, 7, "fail", 0, 50), 180), null, null);
+        assertThat(fail.get("counts")).isEqualTo(Map.of("total", 120L, "fail", 7L));
+        assertThat(fail.get("total")).isEqualTo(7L);
+        assertThat(tc[0]).isEqualTo(1);
+        assertThat(fc[0]).isZero();          // hata sayacı = sayfanın toplamı
+
+        tc[0] = 0; fc[0] = 0;               // varsayılan (beyan yok): eski davranış — iki sayaç da ayrı sorgu
+        Map<String, Object> legacy = service.execute(countingSource(99, false, tc, fc),
+                service.resolve(q(null, null, 7, "all", 0, 50), 180), null, null);
+        assertThat(legacy.get("counts")).isEqualTo(Map.of("total", 120L, "fail", 7L));
+        assertThat(tc[0]).isEqualTo(1);
+        assertThat(fc[0]).isEqualTo(1);
+        assertThat(source(() -> {}, () -> {}).pageCountMatches(false)).isFalse();   // arayüz varsayılanı kapalı
+    }
+
     @Test
     @DisplayName("alertDomainKey null ise alarm sorgusu HİÇ koşmaz (gereksiz iş yok)")
     void execute_noAlertKey_skipsAlertQuery() {

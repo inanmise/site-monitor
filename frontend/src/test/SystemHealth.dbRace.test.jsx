@@ -55,6 +55,7 @@ describe('SystemHealth — Veritabanı Analitiği pencere yarışı (BF2)', () =
     await waitFor(() => expect(document.querySelector('[data-section="db"] [data-slot="stats-toggle"]')).not.toBeNull())
     fireEvent.click(document.querySelector('[data-section="db"] [data-slot="stats-toggle"]'))
     await waitFor(() => expect(api.admin.getDbAnalytics).toHaveBeenCalledWith(7))
+    await waitFor(() => expect(panel()).not.toBeNull(), { timeout: 5000 })   // panel tembel parça (2026-11-06, PF4 O3)
 
     fireEvent.click(within(panel()).getByRole('button', { name: /^30 (gün|days)$/i }))
     await waitFor(() => expect(api.admin.getDbAnalytics).toHaveBeenCalledWith(30))

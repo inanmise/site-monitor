@@ -10,6 +10,8 @@ import { LanguageBootSplash, LanguageLoadNotice } from './components/LanguageSta
 import { ThemeProvider } from './i18n/theme.jsx'
 import { BrandingProvider } from './contexts/BrandingProvider.jsx'
 import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
+import { startBootPrefetch } from './utils/bootPrefetch.js'
+import { isLogoutPending } from './utils/pendingLogout.js'
 import './styles/mdEditorStyles.js'   // Markdown editörü CSS'i — editör JS'i lazy olsa da kaskadda ESKİ yerinde (öneri 22)
 import './styles/globals.css'   // shadcn/ui + Tailwind (önce: App.css katmansız, üstüne biner)
 import './App.css'
@@ -28,6 +30,10 @@ preloadStoredLanguage()
 // Sayfa tembel parça: normal açılışta indirilmez.
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage.jsx'))
 const unknownPath = !isKnownAppPath(window.location.pathname)
+
+// Açılış ön isteği (2026-11-06, performans — PF4 Y3a): `/api/branding` ve (bilinen yolda, bekleyen çıkış yoksa) `/api/me` ilk
+// çizimden ÖNCE başlar — İngilizce sözlük parçası inerken bekleme yapmasınlar. BrandingProvider ve App aynı sözü alır (tek istek).
+startBootPrefetch({ me: !unknownPath && !isLogoutPending() })
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -50,6 +50,28 @@ class TeamDirectoryControllerTest {
         return u;
     }
 
+    /**
+     * 2026-11-06 (performans PF2 #10): üyeler ve adlar dar sorgulardan — saplamalar eski Java süzgecinin (birincil ya da çoklu
+     * üyelik, kimliğe göre) aynısını kurar; sorguların kendisi {@code TeamMemberDirectoryQueriesTest} (H2) ile kanıtlı.
+     */
+    private void stubUsers(Long teamId, AppUser... users) {
+        List<Object[]> rows = java.util.Arrays.stream(users)
+                .filter(u -> teamId.equals(u.getTeamId()) || (u.getTeamIds() != null && u.getTeamIds().contains(teamId)))
+                .sorted(java.util.Comparator.comparing(AppUser::getId))
+                .map(u -> new Object[]{u.getId(), u.getUsername(), u.getDisplayName(), u.getFirstName(), u.getLastName(),
+                        u.getOrgRole(), u.getTitle(), u.getDepartment(), u.getMudurlukName(), u.getCompanyLevel(), u.getEmail(),
+                        u.getManagerId(), u.getSystemRole(), u.getActive(),
+                        u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank()})
+                .toList();
+        when(userRepo.findTeamMemberDirectoryRows(teamId)).thenReturn(rows);
+        when(userRepo.findNameRowsByIds(any())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            return java.util.Arrays.stream(users).filter(u -> ids.contains(u.getId()))
+                    .map(u -> new Object[]{u.getId(), u.getUsername(), u.getDisplayName(), u.getFirstName(), u.getLastName(), u.getActive()})
+                    .toList();
+        });
+    }
+
     private static Team team(long id, String name, Long leaderId) {
         Team t = new Team(); t.setId(id); t.setName(name); t.setLeaderId(leaderId); t.setEmail(name.toLowerCase() + "@example.com"); t.setActive(true);
         return t;
@@ -65,7 +87,7 @@ class TeamDirectoryControllerTest {
         AppUser passive = user(10, "gone", "Ayrılmış", 1L); passive.setActive(false);
         AppUser mgr = user(11, "mgr", "Müdür Kişi", 3L); lead.setManagerId(11L);
         when(teamRepo.findById(1L)).thenReturn(Optional.of(team(1, "Payments", 7L)));
-        when(userRepo.findAll()).thenReturn(List.of(lead, multi, other, passive, mgr));
+        stubUsers(1L, lead, multi, other, passive, mgr);
         EscalationContact c = new EscalationContact(); c.setId(3L); c.setName("Nöbetçi"); c.setEmail("oncall@example.com"); c.setRole("TECH"); c.setMinAlertLevel("HIGH");
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(1L)).thenReturn(List.of(c));
 
@@ -91,6 +113,8 @@ class TeamDirectoryControllerTest {
             assertThat(m.get("email")).isEqualTo("oncall@example.com");
             assertThat(m.get("min_alert_level")).isEqualTo("HIGH");
         });
+        // Performans 2026-11-06 (PF2 #10): tüm kullanıcılar (fotoğraflarıyla) okunmaz
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).findAll();
     }
 
     @Test
@@ -100,7 +124,7 @@ class TeamDirectoryControllerTest {
         AppUser active = user(7, "lead", "Lider Kişi", 1L);
         AppUser passive = user(10, "gone", "Ayrılmış", 1L); passive.setActive(false);
         when(teamRepo.findById(1L)).thenReturn(Optional.of(team(1, "Payments", 7L)));
-        when(userRepo.findAll()).thenReturn(List.of(active, passive));
+        stubUsers(1L, active, passive);
         EscalationContact linkedActive = new EscalationContact(); linkedActive.setId(1L); linkedActive.setName("Lider"); linkedActive.setUserId(7L);
         EscalationContact linkedPassive = new EscalationContact(); linkedPassive.setId(2L); linkedPassive.setName("Ayrılmış"); linkedPassive.setUserId(10L);
         EscalationContact free = new EscalationContact(); free.setId(3L); free.setName("Nöbet kutusu"); free.setEmail("noc@example.com");

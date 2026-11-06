@@ -55,6 +55,8 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
     @MockitoBean com.sitemonitor.service.WebhookService webhookService;
+    @MockitoBean com.sitemonitor.service.InboxService inboxServiceMemo;          // zil belleği (performans 2026-11-06)
+    @MockitoBean com.sitemonitor.service.TodayPanelService todayPanelServiceMemo; // "Bugün" belleği (performans 2026-11-06)
     @MockitoBean com.sitemonitor.service.TeamAdminService teamAdminService;
     @MockitoBean com.sitemonitor.service.AdminOverviewService adminOverviewService;
     @MockitoBean com.sitemonitor.service.DerivedMonitorTeamSync derivedMonitorTeamSync;
@@ -2898,6 +2900,9 @@ class AdminControllerTest {
 
         org.mockito.Mockito.verify(escalationService)
                 .acknowledge(eq(1L), any(), eq("bilinen sorun takip ediliyor"));
+        // Performans 2026-11-06: kendi eylemi bu pod'un zil / "Bugün" belleğini düşürür (15 – 30 sn bayat görünmesin)
+        org.mockito.Mockito.verify(inboxServiceMemo).invalidateLocal();
+        org.mockito.Mockito.verify(todayPanelServiceMemo).invalidateLocal();
     }
 
     @Test

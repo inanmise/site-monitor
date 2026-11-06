@@ -213,6 +213,8 @@ final class R33ClusterRig {
         PortMonitorRepository portRepo = mp.mock(PortMonitorRepository.class);
         when(portRepo.findByActiveTrue()).thenAnswer(i -> ports.stream().filter(m -> Boolean.TRUE.equals(m.getActive())).toList());
         when(portRepo.findAll()).thenAnswer(i -> List.copyOf(ports));
+        when(portRepo.findOrphanCheckKeys()).thenAnswer(i -> ports.stream().filter(m -> m.getDeletedAt() == null)
+                .map(PortMonitor::getHost).filter(java.util.Objects::nonNull).distinct().toList());   // PF3 #3: tek kolon
         when(portRepo.findById(any())).thenAnswer(i -> byId(ports, i.getArgument(0), PortMonitor::getId));
         when(portRepo.findAllById(anyIterable())).thenAnswer(i -> allById(ports, i.getArgument(0), PortMonitor::getId));
         when(portRepo.findCheckDispatchRows()).thenAnswer(i -> {
@@ -227,6 +229,8 @@ final class R33ClusterRig {
         PingMonitorRepository pingRepo = mp.mock(PingMonitorRepository.class);
         when(pingRepo.findByActiveTrue()).thenAnswer(i -> pings.stream().filter(m -> Boolean.TRUE.equals(m.getActive())).toList());
         when(pingRepo.findAll()).thenAnswer(i -> List.copyOf(pings));
+        when(pingRepo.findOrphanCheckKeys()).thenAnswer(i -> pings.stream()
+                .map(PingMonitor::getHost).filter(java.util.Objects::nonNull).distinct().toList());   // PF3 #3: tek kolon
         when(pingRepo.findById(any())).thenAnswer(i -> byId(pings, i.getArgument(0), PingMonitor::getId));
         when(pingRepo.findAllById(anyIterable())).thenAnswer(i -> allById(pings, i.getArgument(0), PingMonitor::getId));
         when(pingRepo.findCheckDispatchRows()).thenAnswer(i -> {
@@ -239,6 +243,8 @@ final class R33ClusterRig {
         ScriptedMonitorRepository scriptedRepo = mp.mock(ScriptedMonitorRepository.class);
         when(scriptedRepo.findByActiveTrue()).thenAnswer(i -> scripteds.stream().filter(m -> Boolean.TRUE.equals(m.getActive())).toList());
         when(scriptedRepo.findAll()).thenAnswer(i -> List.copyOf(scripteds));
+        when(scriptedRepo.findOrphanCheckKeys()).thenAnswer(i -> scripteds.stream()
+                .map(ScriptedMonitor::getName).filter(java.util.Objects::nonNull).distinct().toList());   // PF3 #3: tek kolon
         when(scriptedRepo.findById(any())).thenAnswer(i -> byId(scripteds, i.getArgument(0), ScriptedMonitor::getId));
         when(scriptedRepo.findAllById(anyIterable())).thenAnswer(i -> allById(scripteds, i.getArgument(0), ScriptedMonitor::getId));
         when(scriptedRepo.findCheckDispatchRows()).thenAnswer(i -> {

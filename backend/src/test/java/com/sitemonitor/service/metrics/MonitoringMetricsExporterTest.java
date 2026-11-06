@@ -107,7 +107,7 @@ class MonitoringMetricsExporterTest {
         ov = new LinkedHashMap<>();
         ov.put("types", List.of(new LinkedHashMap<>(Map.of("type", "http"))));
         ov.put("monitors", new ArrayList<>(List.of(monitor(1, "Ana sayfa", "up"), monitor(2, "Ödeme", "down"))));
-        when(overview.build(anyString(), any(), anyBoolean(), anyInt())).thenAnswer(i -> ov);
+        when(overview.orgOverview(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(i -> ov);
         when(alerts.findOpenMetricRows(any())).thenReturn(List.<Object[]>of(
                 new Object[]{5L, "https://pay.example.com", "HTTP_DOWN", "CRITICAL", false, 14L, "2026-10-18T07:00:00", null}));
         CertificateDto c = new CertificateDto(); c.setDomain("api.example.com"); c.setDaysRemaining(20); c.setAlertLevel("warning"); c.setTeamId(14L);
@@ -193,6 +193,8 @@ class MonitoringMetricsExporterTest {
         assertThat(exporter.lastStatus()).isSameAs(s);
         // Tarama liderliği SALT OKUNUR: kira alınmaz
         verify(cluster, never()).acquireLease(anyString(), anyLong(), anyLong());
+        // Performans 2026-11-06 (PF3 #1): kuruluş pano kaydı "tur − 5 sn" yaşa kadar paylaşılır (varsayılan 60 sn tur → 55 sn)
+        verify(overview).orgOverview(55_000L);
     }
 
     @Test

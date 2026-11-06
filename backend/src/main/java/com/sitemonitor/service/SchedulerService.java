@@ -489,7 +489,7 @@ public class SchedulerService {
             // Dağıtım kaydı: şema yamalarından SONRA (tablo/indeks hazır). Hata içeride yutulur — açılışı
             // hiçbir koşulda durdurmaz (K2). Tür (UPGRADE/RESTART/ROLLBACK) satırlardan türetilir, burada değil.
             bootstrapStep("deployment-history", () -> { if (deploymentHistory != null) deploymentHistory.recordStartup(); });
-            bootstrapStep("schema-registry", () -> { if (schemaRegistry != null) schemaRegistry.tick(); });   // yeni tablolar first_seen alsın
+            bootstrapStep("schema-registry", () -> { if (schemaRegistry != null) schemaRegistry.tickNow(); });   // yeni tablolar first_seen alsın (liderlikten bağımsız — PF3 #9)
             // Tohumlama (2026-10-21, çok pod R1-A, MP-20): "boş mu → ekle" adımları aynı anda açılan iki pod'da yarışıyordu
             // (ilk kurulum replicaCount 2, sürüm + replika aynı helm upgrade'de). Kazanan pod'u bırakıp kaybedenin
             // ApplicationReadyEvent'inden kaçan benzersizlik istisnası açılışı düşürüyor, eşiksiz "default" eşik satırı
@@ -1611,6 +1611,15 @@ public class SchedulerService {
                 "dbquery_checks"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
+        }
+        // Performans 2026-11-06 (PF1 madde 8): EKLEME ağırlıklı büyük tablolarda görünürlük haritası da sık tazelensin.
+        // Ölü satır üretmeyen ekleme-yalnız tabloyu autovacuum varsayılanda ancak satırların %20'si kadar ekleme olunca
+        // vakumlar (PG 13+ autovacuum_vacuum_insert_scale_factor 0,2) — arada görünürlük haritası eskir, "index only scan"
+        // (MAX(checked_at), sayımlar) yığına gider (Heap Fetches). %2 ile milyon satırlık tabloda ~20 bin eklemede bir.
+        // SchemaDdlGuard seçenek yerindeyse atlar; PostgreSQL'e özgü (H2'de patch() sessiz atlar).
+        for (String t : new String[]{"port_checks", "dns_records", "keyword_results", "ping_checks", "http_checks",
+                "page_checks", "activity_log", "uptime_checks", "certificate_checks"}) {
+            patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_insert_scale_factor = 0.02)");
         }
         // USER artık kendi takımı için olay girer/düzenler — eski sistem-default'u (false) güncelle.
         // Yalnız sistem tarafından tohumlanmış (admin'in elle kapatmadığı) satırı çevirir; silme (incidents.delete)
@@ -5950,10 +5959,8 @@ public class SchedulerService {
         try {
             // SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) host'u "hâlâ izleniyor" saymaz — silinen
             // izlemenin açık alarmı öksüz sayılıp kapanabilsin (kalıcı silinen kardeş türlerle aynı sonuç).
-            java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
-                    .filter(m -> m.getDeletedAt() == null)
-                    .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            // Tek kolon okunur (PF3 #3; süzgeç sorguda: host dolu, deleted_at boş).
+            java.util.Set<String> existingHosts = new java.util.HashSet<>(portMonitorRepo.findOrphanCheckKeys());
             escalationService.resolveOrphanedPortAlerts(existingHosts);
         } catch (Exception e) {
             log.warn("Öksüz port alarmı temizliği başarısız: {}", e.getMessage());
@@ -6144,9 +6151,7 @@ public class SchedulerService {
     /** Öksüz keyword alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanKeywordAlerts() {
         try {
-            java.util.Set<String> existingUrls = keywordMonitorRepo.findAll().stream()
-                    .map(KeywordMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existingUrls = new java.util.HashSet<>(keywordMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedKeywordAlerts(existingUrls);
         } catch (Exception e) {
             log.warn("Öksüz keyword alarmı temizliği başarısız: {}", e.getMessage());
@@ -6423,9 +6428,7 @@ public class SchedulerService {
     /** Öksüz HTTP alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanHttpAlerts() {
         try {
-            java.util.Set<String> existingUrls = httpMonitorRepo.findAll().stream()
-                    .map(HttpMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existingUrls = new java.util.HashSet<>(httpMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedHttpAlerts(existingUrls);
         } catch (Exception e) {
             log.warn("Öksüz HTTP alarmı temizliği başarısız: {}", e.getMessage());
@@ -7425,9 +7428,7 @@ public class SchedulerService {
     /** Öksüz sayfa alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanPageAlerts() {
         try {
-            java.util.Set<String> existingUrls = pageMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.PageMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existingUrls = new java.util.HashSet<>(pageMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedPageAlerts(existingUrls);
         } catch (Exception e) {
             log.warn("Öksüz sayfa alarmı temizliği başarısız: {}", e.getMessage());
@@ -7949,9 +7950,7 @@ public class SchedulerService {
     /** Öksüz sayfa hızı alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanPageSpeedAlerts() {
         try {
-            java.util.Set<String> existingUrls = pageSpeedMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.PageSpeedMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existingUrls = new java.util.HashSet<>(pageSpeedMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedPageSpeedAlerts(existingUrls);
         } catch (Exception e) {
             log.warn("Öksüz sayfa hızı alarmı temizliği başarısız: {}", e.getMessage());
@@ -8717,9 +8716,7 @@ public class SchedulerService {
     /** Öksüz sorgu alarmı temizliği (ad değişimi / silme sonrası; kimlik = izleme adı). */
     private void cleanupOrphanDbQueryAlerts() {
         try {
-            java.util.Set<String> names = dbQueryMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.DbQueryMonitor::getName).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> names = new java.util.HashSet<>(dbQueryMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon (SQL / kural JSON okunmaz)
             escalationService.resolveOrphanedDbQueryAlerts(names);
         } catch (Exception e) {
             log.warn("Öksüz veritabanı sorgu alarmı temizliği başarısız: {}", e.getMessage());
@@ -9261,9 +9258,7 @@ public class SchedulerService {
     /** Öksüz senaryo alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanScriptedAlerts() {
         try {
-            java.util.Set<String> names = scriptedMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.ScriptedMonitor::getName).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> names = new java.util.HashSet<>(scriptedMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon (betik / env okunmaz)
             escalationService.resolveOrphanedScriptedAlerts(names);
         } catch (Exception e) {
             log.warn("Öksüz senaryo alarmı temizliği başarısız: {}", e.getMessage());
@@ -10344,9 +10339,7 @@ public class SchedulerService {
     private void runDomainChecksLocked() {
         List<DomainMonitor> monitors = domainMonitorRepo.findByActiveTrue();
         try {
-            java.util.Set<String> existing = domainMonitorRepo.findAll().stream()
-                    .map(DomainMonitor::getDomain).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existing = new java.util.HashSet<>(domainMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedDomainMonAlerts(existing);
         } catch (Exception e) {
             log.warn("Öksüz domain alarmı temizliği başarısız: {}", e.getMessage());
@@ -10654,9 +10647,7 @@ public class SchedulerService {
     /** Öksüz ping alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
     private void cleanupOrphanPingAlerts() {
         try {
-            java.util.Set<String> existingHosts = pingMonitorRepo.findAll().stream()
-                    .map(PingMonitor::getHost).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
+            java.util.Set<String> existingHosts = new java.util.HashSet<>(pingMonitorRepo.findOrphanCheckKeys());   // PF3 #3: tek kolon
             escalationService.resolveOrphanedPingAlerts(existingHosts);
         } catch (Exception e) {
             log.warn("Öksüz ping alarmı temizliği başarısız: {}", e.getMessage());
@@ -11437,11 +11428,14 @@ public class SchedulerService {
         return !Boolean.TRUE.equals(standalone) && !activeDomains.contains(target);
     }
 
-    /** Aktif AĞ envanteri (elle yüklenen sertifika kaydı ağ hedefi değildir) — klasik Port / DNS taramasının okuması. */
+    /**
+     * Aktif AĞ envanteri (elle yüklenen sertifika kaydı ağ hedefi değildir) — klasik Port / DNS taramasının okuması.
+     * Yalnız alan adı kolonu okunur (2026-11-06, performans PF3 #2: port taraması 30 sn'de bir TÜM envanter varlıklarını
+     * okuyordu); süzgeç {@link CertificateInventoryRepository#findActiveDomains} ile aynı (aktif, MANUAL değil) — İzleme
+     * Panosu da aynı sorguyu kullanır, kural tek yerde.
+     */
     Set<String> activeNetworkInventoryDomains() {
-        return inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
-                .filter(inv -> !inv.isManual())
-                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
+        return new HashSet<>(inventoryRepo.findActiveDomains());
     }
 
     /** Gönderici / değerlendiricinin envanter önbelleği süresi (ms) — tasarım §3.5 "30 sn önbellekli küme". */

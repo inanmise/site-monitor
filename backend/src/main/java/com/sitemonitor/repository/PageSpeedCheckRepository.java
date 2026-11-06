@@ -14,17 +14,33 @@ import java.util.Optional;
 
 public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, Long> {
 
-    Optional<PageSpeedCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM PageSpeedCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<PageSpeedCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     // ── Kontrol geçmişi: server-side sayfalı aralık + hata filtresi ──
-    Page<PageSpeedCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<PageSpeedCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
+    default Page<PageSpeedCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM PageSpeedCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM PageSpeedCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<PageSpeedCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<PageSpeedCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM PageSpeedCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM PageSpeedCheck c WHERE c.monitorId = :id AND c.ok = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<PageSpeedCheck> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
     long countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(Long monitorId, String since);
 
     /** Her monitör için en güncel ölçüm — tek toplu sorgu (N+1 önleme); monitör başına tek index-seek. */
     @Query(value = "SELECT c.* FROM pagespeed_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM pagespeed_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM pagespeed_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM pagespeed_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<PageSpeedCheck> findLatestPerMonitor();
 
@@ -36,8 +52,8 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
      * metrik değiştirdiğinde DB'ye yeni bir tarama gitmiyor.
      */
     @Query("SELECT r.checkedAt, r.responseMs, r.ttfbMs, r.totalBytes, r.requestCount, r.ok FROM PageSpeedCheck r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> seriesRaw(@Param("id") Long id, @Param("from") String from,
                              @Param("to") String to, @Param("limit") int limit);
 
@@ -51,8 +67,10 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
          + "AND r.checkedAt >= :from AND r.checkedAt <= :to GROUP BY r.monitorId")
     List<Object[]> weeklySummary(@Param("ids") List<Long> ids, @Param("from") String from, @Param("to") String to);
 
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    @Query("SELECT COUNT(c.monitorId) FROM PageSpeedCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM PageSpeedCheck c WHERE c.monitorId = :id AND c.ok = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + türetilmiş tablo: JPQL'de :len iki ayrı placeholder'a bağlanıyor ve Postgres ifade

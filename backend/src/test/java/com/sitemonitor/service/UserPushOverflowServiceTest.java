@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -298,8 +299,25 @@ class UserPushOverflowServiceTest {
         service.scheduledSweep();
         verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
 
+        // PF3 #8 (2026-11-06): özetlenecek taşma yoksa kilit ALINMAZ (ön kontrol kilitten önce; çoğu turda boşuna üç yazma).
         when(push.overflowSummaryEnabled()).thenReturn(true);
         when(repo.overflowCandidates(anyString())).thenReturn(List.of());
+        service.scheduledSweep();
+        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
+
+        // Aday var → kilit 'push-overflow' altında alınır ve kilitli tur adayları YENİDEN okur (karar kilit altındaki okumadır).
+        List<Object[]> one = new java.util.ArrayList<>();
+        one.add(new Object[]{"someone", "2026-01-01T00:00:00", 1L});
+        when(repo.overflowCandidates(anyString())).thenReturn(one, List.of());
+        service.scheduledSweep();
+        verify(scheduler).runWithSchedulerLock(eq("push-overflow"), any());
+        verify(repo, times(3)).overflowCandidates(anyString());   // boş ön kontrol + dolu ön kontrol + kilit içi okuma
+    }
+
+    @Test
+    @DisplayName("PF3 #8: ön kontrol okunamazsa kilitli tura geçilir (eski davranış — sessizce atlanmaz)")
+    void scheduledSweep_precheckFailure_stillRunsLocked() {
+        when(repo.overflowCandidates(anyString())).thenThrow(new RuntimeException("db yavaş")).thenReturn(List.of());
         service.scheduledSweep();
         verify(scheduler).runWithSchedulerLock(eq("push-overflow"), any());
     }

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { render, screen, fireEvent, act } from './test-utils.jsx'
 import CheckRunShell, { CELL } from '../components/check/CheckRunShell.jsx'
 import MonitorCheckRunModal from '../components/check/MonitorCheckRunModal.jsx'
+import CheckRunModal from '../components/check/CheckRunModal.jsx'
 import CheckAllButton from '../components/check/CheckAllButton.jsx'
 
 const baseRow = (over = {}) => ({
@@ -107,6 +108,78 @@ describe('CheckRunShell', () => {
       <CheckRunShell run={null} nameHeader="x" nameOf={() => ''} columns={[]}
         onClose={() => {}} onCancel={() => {}} />)
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// Performans (2026-11-06, PF4 Y2): saniyelik süre sayacı ve her yeni sonuç bütün tabloyu yeniden çiziyordu
+// (300 satırda saniyede 300 × kolon hücresi; N sonuçta O(N²)). Sayaç artık yaprak bileşen, satırlar memo.
+describe('CheckRunShell — çizim maliyeti', () => {
+  const manyRows = (n) => Array.from({ length: n }, (_, i) => baseRow({ monitor: { id: i, name: `M${i}` } }))
+  const nameOf = (r) => r.monitor.name
+
+  it('saniye sayacı ilerlerken satırlar YENİDEN ÇİZİLMEZ; süre metni yine ilerler', () => {
+    vi.useFakeTimers()
+    try {
+      const cell = vi.fn((r) => `c-${r.monitor.id}`)
+      const columns = [{ key: 'a', label: 'A', render: cell }]
+      const run = runOf(manyRows(300), { total: 400, done: false, finishedAt: null, startedAt: Date.now() })
+      render(<CheckRunShell run={run} nameHeader="İzleme" nameOf={nameOf} columns={columns}
+        onClose={() => {}} onCancel={() => {}} />)
+      expect(cell).toHaveBeenCalledTimes(300)
+      cell.mockClear()
+      act(() => { vi.advanceTimersByTime(3000) })
+      expect(cell).not.toHaveBeenCalled()
+      expect(screen.getByText(/(Toplam|Total) 3\.000 s/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('yeni sonuç geldiğinde YALNIZ yeni satır çizilir (eski satırlar aynı başvuru)', () => {
+    const cell = vi.fn((r) => `c-${r.monitor.id}`)
+    const columns = [{ key: 'a', label: 'A', render: cell }]
+    const rows = manyRows(50)
+    const run = runOf(rows, { total: 60, done: false, finishedAt: null })
+    const { rerender } = render(<CheckRunShell run={run} nameHeader="İzleme" nameOf={nameOf} columns={columns}
+      onClose={() => {}} onCancel={() => {}} />)
+    expect(cell).toHaveBeenCalledTimes(50)
+    cell.mockClear()
+    const next = { ...run, rows: [...rows, baseRow({ monitor: { id: 99, name: 'Yeni' } })] }
+    rerender(<CheckRunShell run={next} nameHeader="İzleme" nameOf={nameOf} columns={columns}
+      onClose={() => {}} onCancel={() => {}} />)
+    expect(cell).toHaveBeenCalledTimes(1)
+    expect(cell.mock.calls[0][0].monitor.id).toBe(99)
+    expect(screen.getByText('Yeni')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="check-count"]').textContent).toBe('51/60')
+  })
+
+  it('izleme ve sertifika sarmalayıcıları KARARLI ad fonksiyonu verir: yeni sonuçta eski satır okunmaz', () => {
+    // Satırın alanı bir okuyucu (getter): eski satır yeniden çizilirse sayaç artar.
+    let reads = 0
+    const watched = (id) => {
+      const monitor = { id, name: `W${id}`, url: `https://w${id}.example.com` }
+      return { ...baseRow(), get monitor() { reads += 1; return monitor }, get domain() { reads += 1; return `w${id}.example.com` } }
+    }
+    const rows = [watched(1), watched(2), watched(3)]
+    const run = runOf(rows, { total: 5, done: false, finishedAt: null })
+    const { rerender, unmount } = render(<MonitorCheckRunModal run={run} type="http" onClose={() => {}} onCancel={() => {}} />)
+    expect(reads).toBeGreaterThan(0)
+    reads = 0
+    const next = { ...run, rows: [...rows, baseRow({ monitor: { id: 9, name: 'Son', url: 'https://son.example.com' } })] }
+    rerender(<MonitorCheckRunModal run={next} type="http" onClose={() => {}} onCancel={() => {}} />)
+    expect(screen.getByText('Son')).toBeInTheDocument()
+    expect(reads).toBe(0)
+    unmount()
+
+    reads = 0
+    const certIndex = {}   // App'te useMemo'lu; aynı başvuru
+    const r2 = render(<CheckRunModal run={run} certIndex={certIndex} onClose={() => {}} onCancel={() => {}} />)
+    expect(reads).toBeGreaterThan(0)
+    reads = 0
+    r2.rerender(<CheckRunModal run={{ ...run, rows: [...rows, { ...baseRow(), domain: 'yeni.example.com' }] }} certIndex={certIndex}
+      onClose={() => {}} onCancel={() => {}} />)
+    expect(screen.getByText('yeni.example.com')).toBeInTheDocument()
+    expect(reads).toBe(0)
   })
 })
 

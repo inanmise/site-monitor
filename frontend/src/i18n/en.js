@@ -4411,6 +4411,8 @@ export const EN = {
   'act.tl.loadError': "Couldn't load the summary, so the counts and chart can't be shown right now. Use Refresh to try again; on the first page it also retries every 30 seconds.",
   'act.tl.live': 'Live',
   'act.tl.liveHint': 'On the first page the feed refreshes itself every 30 seconds; it pauses while the tab is in the background.',
+  'act.tl.liveOffAll': 'Range “All”: auto refresh off',
+  'act.tl.liveOffAllHint': 'The “All” range scans every record, so the feed does not refresh itself. Use the Refresh button for current data.',
   'act.tl.aria': 'Timeline: {0} records in the selected range; successful, warning, error and unknown results as stacked bars.',
   'act.typeCount': '{0} records',
   'act.typesSelected': '{0} selected',

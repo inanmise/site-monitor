@@ -145,8 +145,12 @@ public class KeywordContentController {
             baseline.put("text_hidden", true);
         }
         data.put("baseline", baseline);
-        data.put("latest", latest(m.getId()));
-        data.put("skipped", skipped(m.getId()));
+        // Performans 2026-11-06 (PF1 madde 2): değişim algılama KAPALIYKEN son değişim / son atlanma satırı okunmaz — arayüz
+        // yalnız "kapalı" bloğunu çiziyor (KeywordChangePanel) ve kısmi dizin dışında kalan izlemede "en yeni content_changed
+        // dolu satır" araması tüm sonuç geçmişini tarıyordu (yerel 496 ms). Anahtarlar null olarak durur (yanıt biçimi aynı).
+        boolean enabled = Boolean.TRUE.equals(m.getChangeDetect());
+        data.put("latest", enabled ? latest(m.getId()) : null);
+        data.put("skipped", enabled ? skipped(m.getId()) : null);
         data.put("can_edit", canEdit);
         return ResponseEntity.ok(ok(data));
     }

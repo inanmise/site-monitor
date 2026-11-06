@@ -280,7 +280,7 @@ class ExtendedHealthServiceStatusTest {
     @Test
     @DisplayName("getSmtpStats: günlük sorgusu patlarsa güvenli varsayılanlar (rate 100, alarm yok) + error")
     void smtpStats_repoThrows_safeDefaults() {
-        when(notificationLogRepo.countAttemptedSince(anyString())).thenThrow(new RuntimeException("db down"));
+        when(notificationLogRepo.smtpPeriodCounts(anyString(), anyString(), anyString(), anyString())).thenThrow(new RuntimeException("db down"));
         Map<String, Object> m = service.getSmtpStats();
         assertThat(m).containsEntry("total", 0).containsEntry("rate", 100).containsEntry("alarm", false)
                 .containsEntry("error", "db down");

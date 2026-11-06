@@ -213,9 +213,14 @@ public class MonitoringOverviewService {
     public Map<String, Object> build(String scopeKey, Predicate<Long> canViewTeam, boolean seesAllAlerts, int hours, boolean fresh) {
         int h = Math.max(1, Math.min(hours, 24 * 30));
         MonitoringOverviewService target = self != null ? self : this;
-        String key = scopeKey == null ? null : scopeKey + "|h=" + h + "|all=" + seesAllAlerts;
+        String key = scopeKey == null ? null : memoKey(scopeKey, h, seesAllAlerts);
         long ttl = fresh && cacheMs > 0 ? Math.min(cacheMs, FRESH_MIN_MS) : cacheMs;
         return memo.get(key, ttl, false, () -> target.build(canViewTeam, seesAllAlerts, h));
+    }
+
+    /** Bellek anahtarı (kapsam + pencere + tüm alarmlar) — denetleyici girişi ve kuruluş geneli okuyucular AYNI anahtarı kurar. */
+    static String memoKey(String scopeKey, int hours, boolean seesAllAlerts) {
+        return scopeKey + "|h=" + hours + "|all=" + seesAllAlerts;
     }
 
     /** Kuruluş geneli özetin penceresi (sa) — İzleme Panosu'nun varsayılan penceresi; anahtar onunla AYNI olsun diye. */
@@ -236,13 +241,39 @@ public class MonitoringOverviewService {
      * (ek sorgu yok). Her öğe {@code type, active, stale, down, …} (bkz. build'in "types" listesi); okunamazsa null.
      * Dönen haritalar paylaşılır — çağıran değiştirmez.
      */
-    @SuppressWarnings("unchecked")
     public List<Map<String, Object>> orgTypes() {
-        MonitoringOverviewService target = self != null ? self : this;
-        Map<String, Object> built = target.build(com.sitemonitor.util.TtlMemo.scopeKey(true, null), team -> true, true,
-                ORG_SUMMARY_WINDOW_HOURS);
+        return orgTypes(0L);
+    }
+
+    /**
+     * {@link #orgTypes()} — kabul edilen en eski kayıt yaşı {@code maxAgeMs} ile (performans 2026-11-06, PF3 #1): kendi
+     * kendini izleme her dakika koşuyor, bellek penceresi ({@link #cacheMs}, 30 sn) bundan kısa olduğu için HER turda tam pano
+     * hesabı yapılıyordu (ölçüm aktarıcısı da öyle). Arka plan okuyucuları kendi turlarından KISA bir yaşı kabul eder
+     * ({@code aralık − 5 sn}): böylece ardışık iki tur asla aynı hesabı okumaz (doğrulama sayımı bağımsız kalır) ama aynı
+     * dakikadaki pano / aktarıcı / bekçi hesapları paylaşılır. Arayüzün penceresi ({@code cacheMs}) DEĞİŞMEZ; bellek
+     * kapalıyken ({@code cacheMs ≤ 0}) her çağrı yine hesaplar.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> orgTypes(long maxAgeMs) {
+        Map<String, Object> built = orgOverview(maxAgeMs);
         if (built == null || !(built.get("types") instanceof List<?> list)) return null;
         return (List<Map<String, Object>>) list;
+    }
+
+    /**
+     * Kuruluş geneli (kapsamsız, tüm alarmlar, {@link #ORG_SUMMARY_WINDOW_HOURS}) pano hesabı — global görüntüleyicinin
+     * İzleme Panosu ile AYNI bellek anahtarı. {@code maxAgeMs}: {@link #orgTypes(long)}'daki arka plan kuralı (0 → yalnız
+     * {@code cacheMs}). Dönen harita PAYLAŞILIR — çağıran değiştirmez.
+     */
+    /** Arka plan okuyucusunun kabul ettiği en eski yaşın üst sınırı (son inceleme 2026-11-06): büyük bir bekçi / aktarıcı aralığı
+     *  (ör. 600 sn) pano verisini aralığın iki katı kadar eskitmesin. */
+    static final long BACKGROUND_MAX_AGE_MS = 60_000;
+
+    public Map<String, Object> orgOverview(long maxAgeMs) {
+        MonitoringOverviewService target = self != null ? self : this;
+        String key = memoKey(com.sitemonitor.util.TtlMemo.scopeKey(true, null), ORG_SUMMARY_WINDOW_HOURS, true);
+        long ttl = cacheMs <= 0 ? cacheMs : Math.max(cacheMs, Math.min(maxAgeMs, BACKGROUND_MAX_AGE_MS));
+        return memo.get(key, ttl, false, () -> target.build(team -> true, true, ORG_SUMMARY_WINDOW_HOURS));
     }
 
     public Map<String, Object> orgSummary() {

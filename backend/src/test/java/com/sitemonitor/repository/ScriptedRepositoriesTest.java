@@ -160,11 +160,15 @@ class ScriptedRepositoriesTest {
     @Test
     @DisplayName("monitorIdsWithSuccess: en az bir PASS'i olan monitörleri döner, hiç geçmemişi dönmez")
     void monitorIdsWithSuccess() {
-        checkRepo.save(check(1L, false, 100, "2026-08-01T10:00:00"));
-        checkRepo.save(check(1L, true,  120, "2026-08-01T10:05:00"));
-        checkRepo.save(check(2L, false, 130, "2026-08-01T10:00:00"));
+        long passed = monitorRepo.save(mon("Geçen", 1L, "G", true)).getId();
+        long failing = monitorRepo.save(mon("Hiç geçmeyen", 1L, "G", true)).getId();
+        monitorRepo.save(mon("Hiç koşmamış", 1L, "G", true));
+        checkRepo.save(check(passed, false, 100, "2026-08-01T10:00:00"));
+        checkRepo.save(check(passed, true,  120, "2026-08-01T10:05:00"));
+        checkRepo.save(check(passed, true,  125, "2026-08-01T10:10:00"));   // ikinci başarı → yine tek id
+        checkRepo.save(check(failing, false, 130, "2026-08-01T10:00:00"));
 
-        assertThat(checkRepo.monitorIdsWithSuccess()).containsExactly(1L);
+        assertThat(checkRepo.monitorIdsWithSuccess()).containsExactly(passed);
     }
 
     @Test

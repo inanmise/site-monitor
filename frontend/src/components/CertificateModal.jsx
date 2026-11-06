@@ -205,7 +205,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     if (!reqDomain) return
     if (!silent) setRefreshing(true)
     let res = null
-    try { res = await api.getHistory(reqDomain) } catch { /* ağ hatası: mevcut veri ekranda kalsın */ }
+    // Yalnız EN SON kayıt kullanılır (2026-11-06, performans PF4 D4): 30 sn'lik yoklama 30 satır çekmesin.
+    try { res = await api.getHistory(reqDomain, { limit: 1 }) } catch { /* ağ hatası: mevcut veri ekranda kalsın */ }
     // Bayrak guard'DAN ÖNCE düşer. Elenen dalda bırakılırsa `refreshing` true kalır ve Yenile
     // düğmesi kalıcı olarak devre dışı olurdu — `sslLoading`in v20.44.1'de düştüğü tuzağın aynısı.
     if (!silent) setRefreshing(false)

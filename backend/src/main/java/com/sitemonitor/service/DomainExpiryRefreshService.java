@@ -1,6 +1,5 @@
 package com.sitemonitor.service;
 
-import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DomainCheck;
 import com.sitemonitor.model.DomainMonitor;
 import com.sitemonitor.repository.CertificateInventoryRepository;
@@ -9,14 +8,16 @@ import com.sitemonitor.repository.DomainMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,18 +59,24 @@ public class DomainExpiryRefreshService {
      */
     public int refreshAll() {
         // 1) Envanterden distinct registrable → EN YENİ checkedAt (tazelik guard'ı) + mevcut cache değeri (değişti mi kontrolü).
+        //    Envanter TUR BAŞINA BİR KEZ okunur (2026-11-06, performans PF3 #4): eskiden yazılan her registrable için tüm aktif
+        //    envanter yeniden okunuyordu. Aynı okumadan "satırın registrable'ı → kimlikler" haritası da kurulur (yazma hedefi).
         Map<String, Instant> latestChecked = new HashMap<>();
         Map<String, String> currentExpiry = new HashMap<>();
-        for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-            if (ci.getDeletedAt() != null) continue;
-            if (ci.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): takip adı bir alan adı değil — RDAP/WHOIS yok
-            String reg = publicSuffixService.registrableDomain(ci.getDomain());
-            if (reg == null || reg.isBlank()) continue;
-            reg = reg.toLowerCase();
-            Instant checked = parseIso(ci.getDomainExpiryCheckedAt());
+        Map<String, List<Long>> idsByRowRegistrable = new LinkedHashMap<>();
+        for (Object[] row : inventoryRepo.findDomainExpiryRows()) {   // aktif, silinmemiş, elle yüklenen sertifika HARİÇ (sorguda)
+            Long id = row[0] == null ? null : ((Number) row[0]).longValue();
+            String domain = (String) row[1];
+            String expiryNow = (String) row[2];
+            String checkedAtNow = (String) row[3];
+            String rowReg = publicSuffixService.registrableDomain(domain);
+            if (rowReg == null || rowReg.isBlank()) continue;
+            if (id != null) idsByRowRegistrable.computeIfAbsent(rowReg, k -> new ArrayList<>()).add(id);
+            String reg = rowReg.toLowerCase();
+            Instant checked = parseIso(checkedAtNow);
             latestChecked.merge(reg, checked != null ? checked : Instant.EPOCH, (a, b) -> a.isAfter(b) ? a : b);
-            if (ci.getDomainExpiry() != null && !ci.getDomainExpiry().isBlank())
-                currentExpiry.putIfAbsent(reg, ci.getDomainExpiry());
+            if (expiryNow != null && !expiryNow.isBlank())
+                currentExpiry.putIfAbsent(reg, expiryNow);
         }
 
         // 2) Canlı domain monitörlerinin son BAŞARILI kontrolünden registrable → expiry. Monitörler sık (canlı RDAP)
@@ -86,7 +93,7 @@ public class DomainExpiryRefreshService {
             if (mv != null && mv.checkedAt() != null
                     && Duration.between(mv.checkedAt(), now).compareTo(MONITOR_TRUST_WINDOW) < 0) {
                 if (!sameDay(mv.expiry(), currentExpiry.get(reg))) {
-                    if (persistToInventory(reg, mv.expiry(), mv.registrar()) > 0) reconciled++;
+                    if (writeExpiry(reg, mv.expiry(), mv.registrar(), idsByRowRegistrable) > 0) reconciled++;
                 }
                 continue;   // monitör bu registrable'ı kapsıyor → RDAP/WHOIS diagnose'a gerek yok
             }
@@ -98,7 +105,8 @@ public class DomainExpiryRefreshService {
                 String source = String.valueOf(data.get("source"));
                 Object expiry = data.get("expiry_date");
                 if (!"FAILED".equals(source) && expiry != null) {
-                    persistToInventory(objStr(data.get("registrable")), String.valueOf(expiry), objStr(data.get("registrar")));
+                    writeExpiry(objStr(data.get("registrable")), String.valueOf(expiry), objStr(data.get("registrar")),
+                            idsByRowRegistrable);
                     refreshed++;
                 } else {
                     failed++;   // taze değer alınamadı → mevcut cache korunur
@@ -144,25 +152,42 @@ public class DomainExpiryRefreshService {
     /**
      * Süre bitişini registrable'ı eşleşen aktif envanter satır(lar)ına yazar; güncellenen satır sayısını döner.
      * (Elle "Alan Adı Tanılama" da buraya delege eder — tek kaynak; eskiden AdminController'da private'dı.)
+     *
+     * <p>2026-11-06 (performans PF3 #4): satırlar tek kolon projeksiyonla okunur ve YALNIZ süre bitişi kolonları hedefli
+     * {@code UPDATE} ile yazılır ({@link CertificateInventoryRepository#updateDomainExpiry}, kendi işlemi). Eskiden tam
+     * varlık okunup {@code save} ediliyordu: aradaki eşzamanlı envanter düzenlemesi bayat değerle geri yazılıyordu.
+     * Hata yutulur (0 döner) — tazeleme turu bir alan adı yüzünden düşmez.
      */
-    @Transactional
     public int persistToInventory(String registrable, String expiry, String registrar) {
         if (registrable == null || registrable.isBlank() || expiry == null) return 0;
         try {
-            String now = ISO.format(Instant.now());
-            int updated = 0;
-            for (CertificateInventory ci : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-                if (ci.getDeletedAt() != null) continue;
-                if (ci.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): takip adı bir alan adı değil — RDAP/WHOIS yok
-                String rowReg = publicSuffixService.registrableDomain(ci.getDomain());
-                if (rowReg != null && rowReg.equalsIgnoreCase(registrable)) {
-                    ci.setDomainExpiry(expiry);
-                    ci.setDomainRegistrar(registrar);
-                    ci.setDomainExpiryCheckedAt(now);
-                    inventoryRepo.save(ci);
-                    updated++;
-                }
+            Map<String, List<Long>> idsByRowRegistrable = new LinkedHashMap<>();
+            for (Object[] row : inventoryRepo.findDomainExpiryRows()) {   // aktif, silinmemiş, elle yüklenen sertifika HARİÇ
+                if (row[0] == null) continue;
+                String rowReg = publicSuffixService.registrableDomain((String) row[1]);
+                if (rowReg == null || rowReg.isBlank()) continue;
+                idsByRowRegistrable.computeIfAbsent(rowReg, k -> new ArrayList<>()).add(((Number) row[0]).longValue());
             }
+            return writeExpiry(registrable, expiry, registrar, idsByRowRegistrable);
+        } catch (Exception e) {
+            log.warn("Domain-expiry envantere yazılamadı ({}): {}", registrable, e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * {@code registrable} ile eşleşen (büyük/küçük harf duyarsız — eski {@code equalsIgnoreCase} kuralı) satır kimliklerine
+     * süre bitişini TEK hedefli {@code UPDATE} ile yazar. Hiç fırlatmaz; güncellenen satır sayısını döner.
+     */
+    private int writeExpiry(String registrable, String expiry, String registrar, Map<String, List<Long>> idsByRowRegistrable) {
+        if (registrable == null || registrable.isBlank() || expiry == null) return 0;
+        try {
+            List<Long> ids = new ArrayList<>();
+            for (Map.Entry<String, List<Long>> e : idsByRowRegistrable.entrySet()) {
+                if (e.getKey().equalsIgnoreCase(registrable)) ids.addAll(e.getValue());
+            }
+            if (ids.isEmpty()) return 0;
+            int updated = inventoryRepo.updateDomainExpiry(ids, expiry, registrar, ISO.format(Instant.now()));
             if (updated > 0) log.info("Domain-expiry envantere yazıldı: {} → {} satır (expiry={})", registrable, updated, expiry);
             return updated;
         } catch (Exception e) {

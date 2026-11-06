@@ -1844,6 +1844,21 @@ public class EscalationService {
     }
 
     /**
+     * Öksüz alarm temizliklerinin ortak okuması (2026-11-06, performans PF3 #3): {@code types} türlerinde AÇIK alarmı olup
+     * {@code existing} kimlik kümesinde OLMAYAN alan anahtarları. Eskiden her temizlik (9 tür × 5 dk) TÜM açık alarmları
+     * ({@code context_json} dahil) okuyup Java'da türe göre süzüyordu; şimdi yalnız o türlerin alan anahtarları okunur
+     * (tekil, {@code idx_ae_storm_scan}). Sonuç kümesi aynı: tür süzgeci ve "alan dolu" koşulu sorguda.
+     */
+    private Set<String> orphanAlertKeys(Set<String> types, Set<String> existing) {
+        Set<String> orphans = new HashSet<>();
+        for (String d : alertEventRepo.findOpenDomainsByAlertTypes(types)) {
+            if (d == null || existing.contains(d)) continue;   // eşleşen izleme var → dokunma
+            orphans.add(d);
+        }
+        return orphans;
+    }
+
+    /**
      * Öksüz ping alarmı temizliği — aktif/pasif HİÇBİR ping monitör host'una karşılık gelmeyen açık
      * PING_DOWN alarmlarını SESSİZCE kapatır. Host rename (updatePing eski host'u değiştirir) veya eski
      * kayıt sonrası recovery bu alarmı asla resolve edemez: kapatma domain=host ile aranır, ama o host
@@ -1853,14 +1868,10 @@ public class EscalationService {
      */
     public int resolveOrphanedPingAlerts(Set<String> existingHosts) {
         if (existingHosts == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_PING_DOWN.equals(e.getAlertType()) && !TYPE_PING_SLOW.equals(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_PING_DOWN, TYPE_PING_SLOW);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingHosts);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PING_DOWN, TYPE_PING_SLOW), "Sistem (öksüz alarm — eşleşen ping izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen ping izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz ping alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -1871,16 +1882,10 @@ public class EscalationService {
      *  {@code resolveOrphanedPingAlerts} ile birebir; kimlik = url. */
     public int resolveOrphanedKeywordAlerts(Set<String> existingUrls) {
         if (existingUrls == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_KEYWORD.equals(e.getAlertType()) && !isKeywordAux(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_KEYWORD_CHANGED);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingUrls);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_KEYWORD, TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY,
-                            TYPE_KEYWORD_CHANGED),
-                    "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -1890,17 +1895,10 @@ public class EscalationService {
      *  HTTP_DOWN/HTTP_SSL/DOMAIN_EXPIRY alarmlarını sessizce kapatır (url rename/silme sonrası). Kimlik = url. */
     public int resolveOrphanedHttpAlerts(Set<String> existingUrls) {
         if (existingUrls == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_HTTP_DOWN.equals(e.getAlertType()) && !TYPE_HTTP_SSL.equals(e.getAlertType())
-                    && !TYPE_HTTP_SLOW.equals(e.getAlertType())
-                    && !TYPE_DOMAIN_EXPIRY.equals(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingUrls);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY),
-                    "Sistem (öksüz alarm — eşleşen HTTP izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen HTTP izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz HTTP alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -1910,15 +1908,10 @@ public class EscalationService {
      *  PAGE_DOWN/PAGE_INTEGRITY alarmlarını sessizce kapatır (url rename/silme sonrası). Kimlik = url. */
     public int resolveOrphanedPageAlerts(Set<String> existingUrls) {
         if (existingUrls == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!isPage(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingUrls);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY),
-                    "Sistem (öksüz alarm — eşleşen sayfa izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen sayfa izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz sayfa alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -1928,15 +1921,10 @@ public class EscalationService {
      *  PAGESPEED_* alarmlarını sessizce kapatır (URL değişimi/silme sonrası). Kimlik = URL. */
     public int resolveOrphanedPageSpeedAlerts(Set<String> existingUrls) {
         if (existingUrls == null) return 0;
-        Set<String> orphans = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!isPageSpeed(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;
-            orphans.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
+        Set<String> orphans = orphanAlertKeys(types, existingUrls);
         for (String d : orphans) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW),
-                    "Sistem (öksüz alarm — eşleşen sayfa hızı izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen sayfa hızı izlemesi yok)");
         }
         if (!orphans.isEmpty()) log.info("🧹 Öksüz sayfa hızı alarmı temizlendi: {} URL {}", orphans.size(), orphans);
         return orphans.size();
@@ -1946,15 +1934,10 @@ public class EscalationService {
      *  alarmlarını sessizce kapatır (ad rename/silme sonrası). Kimlik = senaryo adı. */
     public int resolveOrphanedScriptedAlerts(Set<String> existingNames) {
         if (existingNames == null) return 0;
-        Set<String> orphans = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!isScripted(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingNames.contains(e.getDomain())) continue;
-            orphans.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW);
+        Set<String> orphans = orphanAlertKeys(types, existingNames);
         for (String d : orphans) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW),
-                    "Sistem (öksüz alarm — eşleşen sentetik izleme yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen sentetik izleme yok)");
         }
         if (!orphans.isEmpty()) log.info("🧹 Öksüz senaryo alarmı temizlendi: {} senaryo {}", orphans.size(), orphans);
         return orphans.size();
@@ -1964,15 +1947,10 @@ public class EscalationService {
      *  alarmlarını sessizce kapatır (ad değişimi / silme sonrası). Kimlik = izleme adı (k6 emsali). */
     public int resolveOrphanedDbQueryAlerts(Set<String> existingNames) {
         if (existingNames == null) return 0;
-        Set<String> orphans = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!isDbQuery(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingNames.contains(e.getDomain())) continue;
-            orphans.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW);
+        Set<String> orphans = orphanAlertKeys(types, existingNames);
         for (String d : orphans) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW),
-                    "Sistem (öksüz alarm — eşleşen veritabanı sorgu izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen veritabanı sorgu izlemesi yok)");
         }
         if (!orphans.isEmpty()) log.info("🧹 Öksüz veritabanı sorgu alarmı temizlendi: {} izleme {}", orphans.size(), orphans);
         return orphans.size();
@@ -1982,16 +1960,11 @@ public class EscalationService {
      *  DOMAINMON_* alarmlarını sessizce kapatır (domain rename/silme sonrası). Kimlik = kayıtlı domain. */
     public int resolveOrphanedDomainMonAlerts(Set<String> existingDomains) {
         if (existingDomains == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!isDomainMon(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingDomains.contains(e.getDomain())) continue;
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS,
+                TYPE_DOMAINMON_CHANGED, TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingDomains);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS,
-                            TYPE_DOMAINMON_CHANGED, TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST),
-                    "Sistem (öksüz alarm — eşleşen domain izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen domain izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz Domain alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();
@@ -2002,14 +1975,10 @@ public class EscalationService {
      *  kalır → alarm kapatılmaz (yalnız o host'un HİÇ monitörü kalmayınca öksüz). Kimlik = host. */
     public int resolveOrphanedPortAlerts(Set<String> existingHosts) {
         if (existingHosts == null) return 0;
-        Set<String> orphanDomains = new HashSet<>();
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!TYPE_PORT_DOWN.equals(e.getAlertType()) && !TYPE_PORT_SLOW.equals(e.getAlertType())) continue;
-            if (e.getDomain() == null || existingHosts.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
-            orphanDomains.add(e.getDomain());
-        }
+        Set<String> types = Set.of(TYPE_PORT_DOWN, TYPE_PORT_SLOW);
+        Set<String> orphanDomains = orphanAlertKeys(types, existingHosts);
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_PORT_DOWN, TYPE_PORT_SLOW), "Sistem (öksüz alarm — eşleşen port izlemesi yok)");
+            resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen port izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz port alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
         return orphanDomains.size();

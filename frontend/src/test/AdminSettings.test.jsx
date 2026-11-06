@@ -54,6 +54,7 @@ vi.mock('../api/client', () => ({
 
 import { api } from '../api/client'
 import AdminSettings from '../components/admin/AdminSettings.jsx'
+// Bölümler TEMBEL yüklenir (2026-11-06, performans PF4 O3): bölüm içeriği bir mikro görev sonra gelir → findByTestId.
 
 function setUrl(search) {
   window.history.replaceState({}, '', search ? `/?${search}` : '/')
@@ -110,7 +111,7 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     // Radix odağı bir sonraki tikte taşır
     await waitFor(() => expect(document.activeElement).toBe(tabs[1]))
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')   // seçim yerinde
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()
     expect(screen.queryByTestId('sec-branding')).toBeNull()
   })
 
@@ -124,47 +125,47 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
     await waitFor(() => expect(document.activeElement).toBe(tabs[0]))
     fireEvent.keyDown(tabs[0], { key: 'ArrowUp' })
     await waitFor(() => expect(document.activeElement).toBe(tabs.at(-1)))
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()   // seçim hâlâ yerinde
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()   // seçim hâlâ yerinde
   })
 
-  it('Enter/Space odaklı sekmeyi aktive eder', () => {
+  it('Enter/Space odaklı sekmeyi aktive eder', async () => {
     render(<AdminSettings />)
     const tabs = screen.getAllByRole('tab')
     // İNDEKS DEĞİL etiket (2026-09-16): araya bölüm eklendikçe indeksli seçim sessizce başka sekmeyi tıklıyordu.
     const ldapTab = tabs.find((x) => /LDAP/.test(x.textContent))
     ldapTab.focus()
     fireEvent.keyDown(ldapTab, { key: 'Enter' })
-    expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-ldap')).toBeInTheDocument()
     expect(ldapTab.getAttribute('aria-selected')).toBe('true')
     const storm = tabs.find((x) => /Storm/.test(x.textContent))
     fireEvent.keyDown(storm, { key: ' ' })
-    expect(screen.getByTestId('sec-storm')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-storm')).toBeInTheDocument()
   })
 
-  it('fare basışı sekmeyi seçer (Radix: mousedown)', () => {
+  it('fare basışı sekmeyi seçer (Radix: mousedown)', async () => {
     render(<AdminSettings />)
     pressMenuTrigger(screen.getAllByRole('tab').find((x) => /Branding|Marka/.test(x.textContent)))
-    expect(screen.getByTestId('sec-branding')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-branding')).toBeInTheDocument()
   })
 
-  it('?sec=ldap ile doğrudan LDAP bölümü açılır (derin bağlantı)', () => {
+  it('?sec=ldap ile doğrudan LDAP bölümü açılır (derin bağlantı)', async () => {
     setUrl('tab=settings&sec=ldap')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-ldap')).toBeInTheDocument()
     expect(screen.queryByTestId('sec-general')).toBeNull()
   })
 
-  it('bilinmeyen ?sec= değeri varsayılana düşer (whitelist)', () => {
+  it('bilinmeyen ?sec= değeri varsayılana düşer (whitelist)', async () => {
     setUrl('sec=zzz-yok')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()
   })
 
   // Ayarlar ZATEN açıkken gelen derin bağlantı (2026-10-09): App param'ları adrese yazıp `sm:tab-params` yollar; `sec`
   // eskiden yalnız mount'ta okunduğu için olay yok sayılıyordu (SystemHealth ile aynı desen). Bilinmeyen bölüm yok sayılır.
   it('açıkken gelen sm:tab-params olayı bölümü değiştirir; bilinmeyen sec yok sayılır', async () => {
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()
     act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { sec: 'storm' } })) })
     expect(await screen.findByTestId('sec-storm')).toBeInTheDocument()
     expect(screen.queryByTestId('sec-general')).toBeNull()
@@ -172,7 +173,7 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
 
     act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { sec: 'zzz-yok' } })) })
     act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { view: 'smtp' } })) })
-    expect(screen.getByTestId('sec-storm')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-storm')).toBeInTheDocument()
   })
 
   it('bölüm değişince URL\'e ?sec= yazılır; varsayılana dönünce param SİLİNİR', async () => {
@@ -225,7 +226,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     for (const tab of screen.getAllByRole('tab')) expect(tab.querySelector('svg')).not.toBeNull()
   })
 
-  it('bölüm arama kutusu sekmeleri süzer, boş grubu gizler; eşleşme yoksa not; temizleyince hepsi döner', () => {
+  it('bölüm arama kutusu sekmeleri süzer, boş grubu gizler; eşleşme yoksa not; temizleyince hepsi döner', async () => {
     render(<AdminSettings />)
     const search = screen.getByRole('searchbox', { name: /Search sections|Bölüm ara/ })
     fireEvent.change(search, { target: { value: 'ldap' } })
@@ -233,7 +234,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(screen.getAllByRole('tab')[0]).toHaveAttribute('data-id', 'ldap')
     expect(document.querySelectorAll('[data-slot="settings-nav-group"]')).toHaveLength(1)
     // Seçim değişmedi (arama yalnız listeyi süzer)
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: 'zzz-yok' } })
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
@@ -276,7 +277,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(api.admin.getConfigHealth).not.toHaveBeenCalled()
   })
 
-  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 24 sekme, kendi kaydırma kabında', () => {
+  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 24 sekme, kendi kaydırma kabında', async () => {
     const restore = withTablet(true)
     try {
       render(<AdminSettings />)
@@ -287,7 +288,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
       expect(screen.getAllByRole('tab')).toHaveLength(25)
       expect(screen.queryByRole('searchbox')).toBeNull()   // arama kutusu yalnız masaüstü listesinde
       pressMenuTrigger(screen.getByRole('tab', { name: /LDAP/ }))
-      expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+      expect(await screen.findByTestId('sec-ldap')).toBeInTheDocument()
     } finally { restore() }
   })
 })
@@ -310,43 +311,43 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     }
   })
 
-  it('Veri Saklama müdüre KİLİTLİ değil ama salt okunur (sistem geneli, 2026-09-28); global admine yazılabilir', () => {
+  it('Veri Saklama müdüre KİLİTLİ değil ama salt okunur (sistem geneli, 2026-09-28); global admine yazılabilir', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/Data Retention|Veri Saklama/)
-    expect(screen.getByTestId('sec-retention')).toHaveAttribute('data-readonly', 'true')
+    expect(await screen.findByTestId('sec-retention')).toHaveAttribute('data-readonly', 'true')
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     r1.unmount()
     render(<AdminSettings />)
     clickTab(/Data Retention|Veri Saklama/)
-    expect(screen.getByTestId('sec-retention')).toHaveAttribute('data-readonly', 'false')
+    expect(await screen.findByTestId('sec-retention')).toHaveAttribute('data-readonly', 'false')
   })
 
-  it('Login Anomali müdüre KİLİTLİ değil; saklama alanı müdürde salt okunur, global admine yazılabilir', () => {
+  it('Login Anomali müdüre KİLİTLİ değil; saklama alanı müdürde salt okunur, global admine yazılabilir', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/^Login Anomal/)
-    expect(screen.getByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'true')
+    expect(await screen.findByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'true')
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     r1.unmount()
     render(<AdminSettings />)
     clickTab(/^Login Anomal/)
-    expect(screen.getByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'false')
+    expect(await screen.findByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'false')
   })
 
   it('Temalar (2026-10-05) müdüre KİLİTLİ değil — sayfa çizilir (salt okunurluğu sunucu read_only ile verir); ?sec=themes derin bağlantı', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/^(Themes|Temalar)$/)
-    expect(screen.getByTestId('sec-themes')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-themes')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     await waitFor(() => expect(window.location.search).toContain('sec=themes'), { timeout: 2000 })
     r1.unmount()
     setUrl('tab=settings&sec=themes')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-themes')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-themes')).toBeInTheDocument()
   })
 
   // k6 motoru (2026-10-29): K6EngineController her uçta global yönetici ister — müdüre kurum geneli not, bileşen yok;
   // global yönetici bileşeni görür ve ?sec=k6engine derin bağlantısı açılır
-  it('müdür: k6 motoru KİLİTLİ (kurum geneli not, sır metni değil); global yönetici bileşeni görür, ?sec=k6engine açılır', () => {
+  it('müdür: k6 motoru KİLİTLİ (kurum geneli not, sır metni değil); global yönetici bileşeni görür, ?sec=k6engine açılır', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/^(k6 engine|k6 motoru)$/i)
     expect(screen.getByTestId('settings-global-only')).toBeInTheDocument()
@@ -355,14 +356,14 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     r1.unmount()
     setUrl('tab=settings&sec=k6engine')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-k6engine')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-k6engine')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     setUrl('')
   })
 
   // Alarm akışı (2026-10-30): AlarmFeedController her uçta global yönetici ister — müdüre kurum geneli not, bileşen yok;
   // global yönetici bileşeni görür ve ?sec=alarmfeed derin bağlantısı açılır
-  it('müdür: Alarm akışı KİLİTLİ (kurum geneli not); global yönetici bileşeni görür, ?sec=alarmfeed açılır', () => {
+  it('müdür: Alarm akışı KİLİTLİ (kurum geneli not); global yönetici bileşeni görür, ?sec=alarmfeed açılır', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/^(Alarm feed|Alarm akışı)$/i)
     expect(screen.getByTestId('settings-global-only')).toBeInTheDocument()
@@ -371,21 +372,21 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     r1.unmount()
     setUrl('tab=settings&sec=alarmfeed')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-alarmfeed')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-alarmfeed')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     setUrl('')
   })
 
   // Tatil takvimi (2026-10-31): GET herkese açık, PUT global yönetici — müdürde KİLİTLİ değil, salt okunur çizilir; ?sec=holidays açılır
-  it('müdür: Tatil takvimi salt okunur çizilir (kilitli not yok); global yönetici düzenler, ?sec=holidays açılır', () => {
+  it('müdür: Tatil takvimi salt okunur çizilir (kilitli not yok); global yönetici düzenler, ?sec=holidays açılır', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/^(Holiday calendar|Tatil takvimi)$/i)
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
-    expect(screen.getByTestId('sec-holidays').getAttribute('data-readonly')).toBe('true')
+    expect((await screen.findByTestId('sec-holidays')).getAttribute('data-readonly')).toBe('true')
     r1.unmount()
     setUrl('tab=settings&sec=holidays')
     render(<AdminSettings />)
-    expect(screen.getByTestId('sec-holidays').getAttribute('data-readonly')).toBe('false')
+    expect((await screen.findByTestId('sec-holidays')).getAttribute('data-readonly')).toBe('false')
     setUrl('')
   })
 
@@ -400,42 +401,42 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     }
   })
 
-  it('Alan Adı Tanılama: globalAdmin bölüme geçirilir (müdürde false)', () => {
+  it('Alan Adı Tanılama: globalAdmin bölüme geçirilir (müdürde false)', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     clickTab(/Domain Diagnostics|Alan Adı Tanılama/i)
-    expect(screen.getByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'false')
+    expect(await screen.findByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'false')
     r1.unmount()
     render(<AdminSettings />)
     clickTab(/Domain Diagnostics|Alan Adı Tanılama/i)
-    expect(screen.getByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'true')
+    expect(await screen.findByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'true')
   })
 
-  it('müdür: operasyonel bölümler (Genel, Storm) normal çizilir', () => {
+  it('müdür: operasyonel bölümler (Genel, Storm) normal çizilir', async () => {
     render(<AdminSettings globalAdmin={false} />)
-    expect(screen.getByTestId('sec-general')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-general')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     clickTab(/Alert Storm/)
-    expect(screen.getByTestId('sec-storm')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-storm')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
   })
 
-  it('7/24 İzleme Ekibi Bildirimler grubunda; müdüre KİLİTLİ değil ama salt okunur, global admine yazılabilir', () => {
+  it('7/24 İzleme Ekibi Bildirimler grubunda; müdüre KİLİTLİ değil ama salt okunur, global admine yazılabilir', async () => {
     const r1 = render(<AdminSettings globalAdmin={false} />)
     const notif = document.querySelector('[data-slot="settings-nav-group"][data-group="notifications"]')
     expect(within(notif).getAllByRole('tab').map((x) => x.getAttribute('data-id'))).toContain('noc')
     clickTab(/24\/7 Monitoring Team|7\/24 İzleme Ekibi/)
-    expect(screen.getByTestId('sec-noc')).toHaveAttribute('data-readonly', 'true')
+    expect(await screen.findByTestId('sec-noc')).toHaveAttribute('data-readonly', 'true')
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
     r1.unmount()
     render(<AdminSettings />)
     clickTab(/24\/7 Monitoring Team|7\/24 İzleme Ekibi/)
-    expect(screen.getByTestId('sec-noc')).toHaveAttribute('data-readonly', 'false')
+    expect(await screen.findByTestId('sec-noc')).toHaveAttribute('data-readonly', 'false')
   })
 
-  it('global admin (varsayılan prop): SMTP bileşeni çizilir, not yok', () => {
+  it('global admin (varsayılan prop): SMTP bileşeni çizilir, not yok', async () => {
     render(<AdminSettings />)
     clickTab(/SMTP/)
-    expect(screen.getByTestId('sec-smtp')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-smtp')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()
   })
 })
@@ -445,7 +446,7 @@ describe('AdminSettings — telefon bölüm seçicisi', () => {
   beforeEach(() => { setUrl(''); mobile.on = true })
   afterEach(() => { mobile.on = false })
 
-  it('sekme listesi yok; 24 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', () => {
+  it('sekme listesi yok; 24 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', async () => {
     render(<AdminSettings />)
     expect(screen.queryByRole('tablist')).toBeNull()
     const select = screen.getByRole('combobox', { name: /^settings$/i })
@@ -455,7 +456,7 @@ describe('AdminSettings — telefon bölüm seçicisi', () => {
     expect([...select.querySelectorAll('optgroup')].map((g) => g.label)).toEqual(
       expect.arrayContaining([expect.stringMatching(/Platform/), expect.stringMatching(/Notifications|Bildirimler/)]))
     fireEvent.change(select, { target: { value: 'ldap' } })
-    expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
+    expect(await screen.findByTestId('sec-ldap')).toBeInTheDocument()
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(select.id)
   })
 })

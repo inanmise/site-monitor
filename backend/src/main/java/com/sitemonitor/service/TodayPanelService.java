@@ -80,6 +80,44 @@ public class TodayPanelService {
     @org.springframework.context.annotation.Lazy
     private CertificateService certService;
 
+    /**
+     * Panel sonucunun bellek penceresi (ms) — performans 2026-11-06 (PF2 #5). Panel her kullanıcıda 2 dk'da bir yoklanıyor ve
+     * her çağrı envanteri, takımları, tüm açık alarmları ve kendi takımlarının haftalık raporunu okuyordu. Sonuç
+     * {@link #cached} anahtarı (izleme okuma kapsamı + kendi takımları + tavan + iki izin) başına pod'da en çok bu kadar
+     * paylaşılır; anahtar yüklemi TAM belirler (aynı anahtarı paylaşan iki kullanıcı aynı veriyi görür — sızıntı yok). 0 →
+     * kapalı (elle kurulan birim testleri).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.today.cache-ms:30000}")
+    long cacheMs;
+
+    /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. Anahtar sayısı kapsam × tavan × izin kombinasyonuyla sınırlı. */
+    private com.sitemonitor.util.TtlMemo<Built> memo = new com.sitemonitor.util.TtlMemo<>(500);
+
+    /** Bu pod'daki paneller belleğini düşürür (kendi alarm eylemi sonrası — {@code AdminController}). */
+    public void invalidateLocal() { memo.clear(); }
+
+    /** Bellek değeri: görüntü + "eksik" işareti (işaret yanıta yazılmaz). */
+    private record Built(Map<String, Object> value, boolean partial) { }
+
+    /**
+     * Bellekli giriş (2026-11-06): {@code scopeKey} {@code canViewTeam} yüklemini TAM belirlemelidir
+     * ({@code TodayPanelController.monitoringScopeKey}); {@code null} anahtar belleği atlar. Kendi takımları sırasıyla anahtara
+     * girer (haftalık kartın satır sırası listeden gelir). Dönen harita PAYLAŞILIR — çağıran değiştirmez.
+     */
+    public Map<String, Object> cached(String scopeKey, Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit,
+                                      boolean showMaintenance, boolean showAlerts) {
+        String key = scopeKey == null ? null
+                : scopeKey + "|own=" + (ownTeamIds == null ? "-" : ownTeamIds.toString()) + "|l=" + limit
+                  + "|m=" + showMaintenance + "|a=" + showAlerts;
+        // Eksik (bir okuması düşmüş) görüntü SAKLANMAZ (son inceleme 2026-11-06): envanter / takım / izleme anlık görüntüsü
+        // okunamadıysa ya da bir kart hata taşıyorsa bilinmeyen durum 30 sn boyunca aynı anahtardaki herkese "temiz" görünürdü.
+        return memo.get(key, cacheMs, false, () -> {
+            boolean[] partial = new boolean[1];
+            Map<String, Object> v = build(canViewTeam, ownTeamIds, limit, showMaintenance, showAlerts, Instant.now(), partial);
+            return new Built(v, partial[0]);
+        }, b -> b.partial() ? 0L : Long.MAX_VALUE).value();
+    }
+
     /** "Dün bu saatte" görüntüsü — 10 dk'lık kovada bellekte (her panel isteği DB'ye gitmesin). */
     private record Prior(String bucket, String takenAt, Map<String, List<Map<String, Object>>> cards) { }
     private volatile Prior priorCache;
@@ -119,6 +157,12 @@ public class TodayPanelService {
     /** Test edilebilir çekirdek — {@code now} enjekte edilir (trend penceresi kayan). */
     Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance,
                               boolean showAlerts, Instant now) {
+        return build(canViewTeam, ownTeamIds, limit, showMaintenance, showAlerts, now, new boolean[1]);
+    }
+
+    /** {@code partial[0]} = bir temel okuma düştü ya da bir kart hata taşıyor (görüntü belleğe alınmaz). */
+    Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance,
+                              boolean showAlerts, Instant now, boolean[] partial) {
         Map<String, Object> out = new LinkedHashMap<>();
         List<CertificateInventory> visible = new ArrayList<>();
         try {
@@ -126,12 +170,12 @@ public class TodayPanelService {
             // süresi dolan sertifika "Bugün" panelinde de görünür (Alarm Geçmişi listesiyle aynı kural).
             for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc())
                 if (canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()))) visible.add(i);
-        } catch (Exception e) { log.debug("today: envanter okunamadı: {}", e.toString()); }
+        } catch (Exception e) { partial[0] = true; log.debug("today: envanter okunamadı: {}", e.toString()); }
         Set<String> visibleDomains = new HashSet<>();
         Map<String, Long> domainTeam = new HashMap<>();
         for (CertificateInventory i : visible) { visibleDomains.add(i.getDomain()); domainTeam.put(i.getDomain(), i.getTeamId()); }
         Map<Long, String> teamNames = new HashMap<>();
-        try { teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName())); } catch (Exception ignored) { }
+        try { teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName())); } catch (Exception ignored) { partial[0] = true; }
 
         out.put("certs", safe(() -> certs(visibleDomains, domainTeam, teamNames, limit)));
         out.put("alerts", showAlerts ? safe(() -> alerts(canViewTeam, visibleDomains, teamNames, limit)) : hiddenAlerts());
@@ -139,7 +183,7 @@ public class TodayPanelService {
         // İzleme kartları: tüm-takım anlık görüntü (önbellekli) → görünürlük süzgeci → tavan.
         TodayMonitorInsightsService.Snapshot snap;
         try { snap = monitorInsights.snapshot(); }
-        catch (Exception e) { log.debug("today: izleme anlık görüntüsü alınamadı: {}", e.toString()); snap = null; }
+        catch (Exception e) { partial[0] = true; log.debug("today: izleme anlık görüntüsü alınamadı: {}", e.toString()); snap = null; }
         final TodayMonitorInsightsService.Snapshot sn = snap;
         out.put("flapping", safe(() -> monitorBlock(visibleRows(sn == null ? List.of() : sn.flapping(), canViewTeam, visibleDomains, teamNames), limit, Map.of())));
         out.put("slow", safe(() -> monitorBlock(visibleRows(sn == null ? List.of() : sn.slow(), canViewTeam, visibleDomains, teamNames), limit, Map.of())));
@@ -190,6 +234,7 @@ public class TodayPanelService {
             }
         } catch (Exception e) { log.debug("today: trend okunamadı: {}", e.toString()); }
         out.put("scope_domains", visibleDomains.size());
+        for (Object blk : out.values()) if (blk instanceof Map<?, ?> m && m.containsKey("error")) { partial[0] = true; break; }
         return out;
     }
 

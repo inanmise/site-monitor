@@ -7,6 +7,9 @@ import { monitorCheckColumns } from './monitorCheckColumns.jsx'
 /** Sunucu "yürütülmedi: elle k6 kotası dolu" dediği satır (D-10 / O-b3). */
 export const isPoolBusyRow = (r) => r?.data?.skipped_code === 'MANUAL_POOL_BUSY'
 
+// Ad hücresi — modül düzeyi: CheckRunShell satırları memo, her çizimde yeni fonksiyon onları bozardı.
+const monitorNameOf = (r) => r.monitor?.name || '—'
+
 /**
  * "Şimdi Kontrol Et" akan ilerleme tablosu — İZLEME sürümü.
  *
@@ -37,7 +40,7 @@ export default function MonitorCheckRunModal({ run, type, onClose, onCancel }) {
     <CheckRunShell
       run={run}
       nameHeader={t('mon.checkColMonitor')}
-      nameOf={r => r.monitor?.name || '—'}
+      nameOf={monitorNameOf}
       columns={allColumns}
       notice={poolBusy > 0
         ? <AlertBanner tone="warning" className="mb-2">{t('check.poolBusySkipped', poolBusy)}</AlertBanner>

@@ -1,5 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { useVisibleInterval } from './hooks/useVisibleInterval'
+import { useLatestCallback, useKeyedHandler } from './hooks/useLatestCallback.js'
+import { replaceEqualDeep, keepSameSet } from './utils/replaceEqualDeep.js'
+import { takeBootMe, discardBootMe } from './utils/bootPrefetch.js'
 import { BarChart3, AlertOctagon, Inbox, CalendarDays, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
@@ -214,6 +217,9 @@ const CHECK_CONCURRENCY = Number(import.meta.env.VITE_CHECK_CONCURRENCY ?? 6)
  *  ilk sırada istenir. Tam dalga: giriş, 5 dk tazelemesi, Yenile, envanter değişikliği. Kontrol dalgası: "Şimdi Kontrol Et"
  *  ve tek kart kontrolünden sonra (eskiden de yalnız bu üçü). */
 const FULL_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent', 'paused', 'mailFail', 'extras', 'grants'])
+// Girişten sonraki İLK dalga (2026-11-06, performans): paylaşım düzeylerini /me (ya da giriş yanıtı) az önce getirdi —
+// `grants` aynı veriyi ikinci kez istemesin. 5 dk tazelemesi / Yenile tam dalgayı kullanır.
+const INITIAL_LOAD_WAVE = Object.freeze(FULL_LOAD_WAVE.filter((k) => k !== 'grants'))
 const CHECK_LOAD_WAVE = Object.freeze(['certs', 'stats', 'silent'])
 
 // Oturum düşünce client.js hard reload ile /?session=expired'a yönlendirir → giriş formunda
@@ -316,6 +322,38 @@ function viewIdsFrom(r) {
 function isValidCert(c) {
   if (c?.alert_level) return c.alert_level === 'valid'
   return !c?.warning && c?.status !== 'error'
+}
+
+/**
+ * Tüm Sertifikalar başlığındaki SSL Checker (2026-09-27): shadcn InputGroup — alan + düğme tek kutu; telefonda başlığın altında
+ * tam genişlik (48 px kutu, 40 px düğme — dokunma hedefi), geniş ekranda 22rem ve Pano boyu (36 px).
+ *
+ * <p>Metin BU bileşenin durumunda (2026-11-06, performans): eskiden App durumundaydı ve basılan her tuş bütün uygulamayı
+ * (kart ızgarası dâhil) yeniden çiziyordu. İlk değer ve sekmeler arası taşıma App'teki ref'ten (`initialValue` /
+ * `onValueChange`); gönderim başarılıysa (`onSubmit(metin)` → true) alan temizlenir — eskisiyle aynı.
+ */
+function SslCheckerHeaderInput({ initialValue = '', readInitial, onValueChange, onSubmit, busy }) {
+  const t = useT()
+  // `readInitial` bağlanma ANINDAKİ değeri okur (son inceleme 2026-11-06): yazmak App'i çizmediği için `initialValue` bayattır
+  const [text, setText] = useState(() => (typeof readInitial === 'function' ? readInitial() : initialValue) ?? '')
+  const change = (v) => { setText(v); onValueChange?.(v) }
+  const submit = async () => {
+    const ok = await onSubmit(text)
+    if (ok === true) change('')
+  }
+  return (
+    <InputGroup data-tour="add-domain" className="h-12 w-full max-sm:min-w-full sm:h-9 sm:w-[22rem]">
+      <InputGroupInput type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
+        value={text} onChange={(e) => change(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton variant="success" size="sm" className="h-10 sm:h-7" onClick={submit} disabled={busy}
+          aria-busy={busy || undefined}>
+          {busy ? t('app.checkingDomain') : t('app.checkBtn')}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
+  )
 }
 
 /** Çıkıştan önce bekleyen tercih yazımı (öneri 23) — en çok 3 sn; çevrimdışıyken çıkışı bekletmez. */
@@ -481,14 +519,16 @@ export default function App() {
   // Silme KALICI + iyimser (2026-10-07): sunucudan gelen her sertifika listesi "yakın zamanda silindi" işaretleriyle süzülür
   // (başka pod'un bayat önbelleği silinen kartı geri getiremez); bir yüzeyde (envanter, form, kart, Tüm Sertifikalar)
   // silinen kayıt Genel Bakış'tan ANINDA düşer — tam liste yüklemesi beklenmez.
-  const setCerts = useCallback((data) => setCertsRaw(filterDeleted('cert', data || [], (c) => c.domain)), [])
+  // Yapısal paylaşım (2026-11-06, performans): içeriği değişmeyen satır ESKİ nesnesiyle kalır — 5 dk tazelemesinde değişmeyen
+  // kart (memo) yeniden çizilmez; liste tümüyle aynıysa durum hiç değişmez.
+  const setCerts = useCallback((data) => setCertsRaw((prev) => replaceEqualDeep(prev, filterDeleted('cert', data || [], (c) => c.domain))), [])
   const deletedMarks = useDeletedMarksVersion()
   useEffect(() => { setCertsRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
   // Pasif (izlemesi durdurulmuş) sertifikalar (2026-10-08): `certs` (aktif) İstatistik / Uyarılar / sayaçları da besler —
   // pasifler oraya KARIŞMAZ; ayrı okunur (loadData içinde, aynı dalgada) ve yalnız Pano kart listesine katılır. Silinen
   // pasif kart da "yakın zamanda silindi" işaretiyle ANINDA düşer (2026-10-09; eskiden sonraki yüklemeye kadar kalıyordu).
   const [pausedCerts, setPausedRaw] = useState([])
-  const setPausedCerts = useCallback((data) => setPausedRaw(filterDeleted('cert', data || [], (c) => c.domain)), [])
+  const setPausedCerts = useCallback((data) => setPausedRaw((prev) => replaceEqualDeep(prev, filterDeleted('cert', data || [], (c) => c.domain))), [])
   useEffect(() => { setPausedRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
@@ -573,7 +613,8 @@ export default function App() {
     return m == null ? true : m
   }
   const [caModal, setCaModal]     = useState(false)
-  const [newDomain,    setNewDomain]    = useState('')
+  // SSL Checker metni (2026-11-06): durum alanın kendisinde; burada yalnız sekmeler arası taşınan son değer (çizim tetiklemez)
+  const newDomainRef = useRef('')
   const [checkLoading, setCheckLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [checkRun, setCheckRun] = useState(null)        // Şimdi Kontrol Et — akan ilerleme modalı (domain başına sonuç satırı)
@@ -625,7 +666,8 @@ export default function App() {
     // Bekleyen çıkış (UIM-1): önceki çıkışta sunucuya ulaşılamadıysa oturum çerezi hâlâ geçerli — /me'den ÖNCE kapatılır,
     // F5 kullanıcıyı geri getirmez. Yine kapanamazsa /me sorulmaz (giriş formu; yeniden deneme giriş ekranı effect'inde).
     let cancelled = false
-    const bootMe = () => api.getMe().then((res) => {
+    // Açılış ön isteği (PF4 Y3a): main.jsx sözlükle paralel başlattıysa aynı söz alınır (ağda tek istek); yoksa kendi isteği
+    const bootMe = () => (takeBootMe() ?? api.getMe()).then((res) => {
       if (res?.success) {
         prefsMigrateRef.current = sameStorageOwner(res.username)   // öneri 23: claim'den ÖNCE okunur
         claimPersonalStorage(res.username)   // B9: başka kullanıcının tarayıcıda kalan kişisel kayıtları silinir
@@ -673,6 +715,7 @@ export default function App() {
     if (!isLogoutPending()) {
       bootMe()   // bugünkü yol: hemen (eşzamanlı) — bekleyen çıkış yoksa açılış sırası değişmez
     } else {
+      discardBootMe()   // çıkıştan ÖNCEKİ oturumun ön yanıtı kullanılmaz — çıkış kapanınca bootMe kendi isteğini atar
       // Süren bir giriş varsa (öteki sekme) açılış çıkışı başlatmaz — yanıtı yeni oturumun çerezini silebilirdi (D1)
       settlePendingLogout((signal) => api.logout({ signal }), undefined, { respectLoginHold: true }).then((done) => {
         if (cancelled) return
@@ -706,6 +749,10 @@ export default function App() {
   // burada handleTabChange ile aynı yoldan (URL + geçmiş kaydı) uygulanır. Ref: handleTabChange her render'da yeni.
   const tabChangeRef = useRef(null)
   tabChangeRef.current = handleTabChange
+  // Menü (memo) için KARARLI işleyiciler (2026-11-06, performans): çağrıldıklarında son çizimin işleyicisini çalıştırırlar
+  const navTabChange = useLatestCallback(handleTabChange)
+  const navLogout = useLatestCallback(handleLogout)   // function bildirimi — yukarı taşınır (hoisted)
+  const openSelfPwd = useCallback(() => setSelfPwdModalOpen(true), [])
   useEffect(() => {
     const onNav = (e) => {
       const tab = e?.detail?.tab
@@ -892,20 +939,24 @@ export default function App() {
       apply: (r) => { setCerts(r.data); setLastUpdate(r.timestamp); setCertsFailed(false) },
       fail: () => setCertsFailed(true),   // UIM-4: yalnız ilk veriden önce görünür (bkz. certsFailed)
     },
-    stats:    { fetch: () => api.getStats(), apply: (r) => setStats(r.data) },
-    silent:   { fetch: () => api.getSilentAlertDomains(), apply: (r) => setSilentAlertDomains(new Set(r.data)) },
+    // Aynı içerik → aynı başvuru (2026-11-06, performans): her dalgada yeni Set / nesne bütün kartları ve tüketenleri yeniden çizdiriyordu
+    stats:    { fetch: () => api.getStats(), apply: (r) => setStats((prev) => replaceEqualDeep(prev, r.data)) },
+    silent:   { fetch: () => api.getSilentAlertDomains(), apply: (r) => setSilentAlertDomains((prev) => keepSameSet(prev, new Set(r.data))) },
     paused:   {
       fetch: () => (typeof api.getPausedCertificates === 'function' ? api.getPausedCertificates() : null),
       ok: (r) => r?.success && Array.isArray(r.data), apply: (r) => setPausedCerts(r.data), after: 'certs',
     },
-    mailFail: { fetch: () => api.getMailFailureDomains(), apply: (r) => setMailFailureDomains(new Set(r.data ?? [])) },
-    extras:   { fetch: () => api.getCardExtras(), apply: (r) => setCardExtras(r.data || {}) },
+    mailFail: { fetch: () => api.getMailFailureDomains(), apply: (r) => setMailFailureDomains((prev) => keepSameSet(prev, new Set(r.data ?? []))) },
+    extras:   { fetch: () => api.getCardExtras(), apply: (r) => setCardExtras((prev) => replaceEqualDeep(prev, r.data || {})) },
     // Paylaşım düzeyleri (2026-10-12): /me yalnız girişte okunuyordu — paylaşım eklenince / kaldırılınca kart düğmeleri ve
     // ekleme formlarının takım listesi yeniden girişe kadar bayat kalıyordu. Uç yoksa (eski test sahtesi) atlanır.
     grants:   {
       fetch: () => (typeof api.teamAccess?.myGrants === 'function' ? api.teamAccess.myGrants() : null),
       ok: (r) => r?.success && Array.isArray(r.data?.access_grants),
-      apply: (r) => { setGrantLevels(grantLevelsFromMe(r.data)); setGrantWriteTeams(grantWriteTeamsFromMe(r.data)) },
+      apply: (r) => {
+        setGrantLevels((prev) => replaceEqualDeep(prev, grantLevelsFromMe(r.data)))
+        setGrantWriteTeams((prev) => replaceEqualDeep(prev, grantWriteTeamsFromMe(r.data)))
+      },
     },
   }), [setCerts, setPausedCerts])
 
@@ -954,9 +1005,9 @@ export default function App() {
     if (user && !imagesPanelReport) {
       loadAliveRef.current = true
       lastDataLoadRef.current = Date.now()
-      loadData()
+      runLoadWave(INITIAL_LOAD_WAVE)
     }
-  }, [user, loadData, imagesPanelReport])
+  }, [user, runLoadWave, imagesPanelReport])
   const refreshDataIfDue = useCallback(() => {
     if (Date.now() - lastDataLoadRef.current < DATA_REFRESH_MS - 1000) return
     lastDataLoadRef.current = Date.now()
@@ -1551,39 +1602,58 @@ export default function App() {
     loadData()
   }
 
+  // Kart işleyicileri — alan adı başına KARARLI (2026-11-06, performans). Kart memo'lu; eskiden `cardActions` her çizimde kart
+  // başına beş yeni fonksiyon üretiyordu ve App'in her çizimi (SSL Checker'a basılan tuş, "Şimdi Kontrol Et"in her sonucu,
+  // veri dalgası, onay diyaloğu) sayfadaki BÜTÜN kartları yeniden çiziyordu. İşleyici çağrıldığında son çizimin fonksiyonunu
+  // çalıştırır (güncel durum okunur) — davranış eskisiyle aynı. Kapılar (hangi işleyici VAR) her çizimde yeniden hesaplanır.
+  const checkHandlerFor = useKeyedHandler((domain) => runSingleCheck(domain))
+  const editHandlerFor = useKeyedHandler((domain) => setInvForm({ domain, mode: 'edit' }))
+  const duplicateHandlerFor = useKeyedHandler((domain) => setInvForm({ domain, mode: 'duplicate' }))
+  const deleteHandlerFor = useKeyedHandler((domain) => deleteCertFromCard(domain))
+  const contactsHandlerFor = useKeyedHandler((domain) => setInvForm({ domain, mode: 'edit', focus: 'contacts' }))
+  const mailFailureHandlerFor = useKeyedHandler((domain) => {
+    handleTabChange('health')
+    setSmtpPreFilterDomain(domain)
+    setOpenSmtpModalOnLoad(true)
+  })
+
   function cardActions(cert) {
+    const d = cert.domain
     return {
       // Çalıştır sunucunun kapısıyla (UIM-9): 7/24 operatörü başka takımın kartında görmez; paylaşımda EXECUTE+
-      onCheckNow: cert.paused || !canCheckCert(cert) ? undefined : () => runSingleCheck(cert.domain),
-      checking: checkingDomain === cert.domain || refreshing,
+      onCheckNow: cert.paused || !canCheckCert(cert) ? undefined : checkHandlerFor(d),
+      checking: checkingDomain === d || refreshing,
       // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
-      onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
+      onEdit:      canEditCert(cert) ? editHandlerFor(d) : undefined,
       // Manuel (dosyadan yüklenen) kayıt kopyalanmaz: kopya bir ağ adresi değil, sertifikası da yüklenmemiş bir kayıt olurdu.
-      onDuplicate: canEditCert(cert) && !isManualCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+      onDuplicate: canEditCert(cert) && !isManualCert(cert) ? duplicateHandlerFor(d) : undefined,
       // Kapı Düzenle/Kopyala ile AYNI: rol tabanlı. usePermissions BURADA çalışmaz —
       // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
       // kapısı zaten uçta: inventory.crud/edit + takım kapsamı; reddedilirse toast hatayı gösterir.
-      onDelete: canDeleteCert(cert) ? () => deleteCertFromCard(cert.domain) : undefined,
+      onDelete: canDeleteCert(cert) ? deleteHandlerFor(d) : undefined,
       // "Sorumlu kişi yok" çipi (2026-09-20): form doğrudan Sorumlu Ekipler bölümünde açılır.
-      onEditContacts: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit', focus: 'contacts' }) : undefined,
-      deleting: deletingDomain === cert.domain,
+      onEditContacts: canEditCert(cert) ? contactsHandlerFor(d) : undefined,
+      deleting: deletingDomain === d,
     }
   }
 
-  async function handleAddDomain() {
-    if (!newDomain.trim() || checkLoading) return
-    let domain = newDomain.trim()
+  /** SSL Checker gönderimi: alanın metnini alır; true → alan temizlenir (yalnız BAŞARIDA, eskisi gibi). */
+  async function handleAddDomain(text) {
+    const typed = String(text ?? '')
+    if (!typed.trim() || checkLoading) return false
+    let domain = typed.trim()
     domain = domain.replace(/^https?:\/\//i, '')
     domain = domain.split('/')[0]
     if (domain.includes(':')) domain = domain.split(':')[0]
-    if (!domain) return
+    if (!domain) return false
     setCheckLoading(true)
     try {
       const res = await api.checkDomainPreview(domain)
       if (res?.data) {
-        setNewDomain('')
+        newDomainRef.current = ''
         setModalCert({ ...res.data, domain: res.data.domain || domain, _preview: true })
+        return true
       } else {
         // BASARISIZLIK SESSIZDI: giris kutusu temizleniyor, modal acilmiyor, hicbir toast
         // cikmiyordu — kullanici tiklamanin islenip islenmedigini anlayamiyordu. Girdi de
@@ -1597,6 +1667,11 @@ export default function App() {
       setCheckLoading(false)
     }
   }
+
+  // SSL Checker işleyicileri (kararlı): metin alanın durumunda; App yalnız son değeri ref'te tutar (sekme geçişinde taşınır)
+  const setNewDomainText = useCallback((v) => { newDomainRef.current = v }, [])
+  const readNewDomainText = useCallback(() => newDomainRef.current, [])
+  const submitNewDomain = useLatestCallback(handleAddDomain)
 
   function handleLogin(userData) {
     // Duyuru "hero"su ve giriş güvenliği uyarısı her GERÇEK girişte bir kez görünsün
@@ -1859,21 +1934,9 @@ export default function App() {
   // varsa HER ZAMAN görünür — kaldırılabilsin.
   const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
   // Genel Bakış'taki "SSL Checker" alanı artık DashboardFilters'ta (başlık satırının en sağı; telefonda araç çubuğunun sonu).
-  // Tüm Sertifikalar BAŞLIĞINDAKİ SSL Checker (2026-09-27): eskiden sayfanın üstünde ayrı bir kontrol satırındaydı (iki başlık
-  // üst üste). shadcn InputGroup — alan + düğme tek kutu; telefonda başlığın altında tam genişlik (48 px kutu, 40 px düğme —
-  // dokunma hedefi), geniş ekranda 22rem ve Pano boyu (36 px).
+  // Tüm Sertifikalar BAŞLIĞINDAKİ SSL Checker (2026-09-27; metin alanın kendi durumunda — bkz. SslCheckerHeaderInput).
   const sslCheckerHeader = (
-    <InputGroup data-tour="add-domain" className="h-12 w-full max-sm:min-w-full sm:h-9 sm:w-[22rem]">
-      <InputGroupInput type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
-        value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-      <InputGroupAddon align="inline-end">
-        <InputGroupButton variant="success" size="sm" className="h-10 sm:h-7" onClick={handleAddDomain} disabled={checkLoading}
-          aria-busy={checkLoading || undefined}>
-          {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
-        </InputGroupButton>
-      </InputGroupAddon>
-    </InputGroup>
+    <SslCheckerHeaderInput initialValue={newDomainRef.current} readInitial={readNewDomainText} onValueChange={setNewDomainText} onSubmit={submitNewDomain} busy={checkLoading} />
   )
   // "Şimdi Kontrol Et" — Tüm Sertifikalar başlığında ikincil düğme (Pano başlığıyla aynı görünüm); Envanter'e prop olarak geçer.
   const checkNowLabel = refreshing ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0) : t('app.checkNow')
@@ -2043,9 +2106,9 @@ export default function App() {
 
       {inactivityStrip}
 
-      <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} myTeams={myTeams} systemRole={systemRole}
+      <Nav activeTab={tab} onTabChange={navTabChange} username={user} teamName={teamName} myTeams={myTeams} systemRole={systemRole}
         globalAdmin={globalAdmin} loginInfo={loginInfo} profile={profile} weeklyReportsVisible={weeklyReportsVisible}
-        onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
+        onLogout={navLogout} onChangePassword={openSelfPwd} />
 
       {selfPwdModalOpen && user && (
         <PasswordChangeModal
@@ -2176,7 +2239,7 @@ export default function App() {
                   options={{ activity: activityOptions, team: hasTeamOptions ? teamOptions : null, group: hasGroupOptions ? groupOptions : null, tag: hasTagOptions ? tagOptions : null, platform: showPlatformFilter ? platformOptions : null }}
                   onClearAll={clearDashFilters} shown={sorted.length} total={dashAll.length}
                   densityToggle={<CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} hideLabelsOnPhone />}
-                  sslChecker={{ value: newDomain, onChange: setNewDomain, onSubmit: handleAddDomain, busy: checkLoading }} />
+                  sslChecker={{ initialValue: newDomainRef.current, readInitial: readNewDomainText, onValueChange: setNewDomainText, onSubmit: submitNewDomain, busy: checkLoading }} />
                 {/* İstatistik kartı süzgeci şeridi (davranış aynı; eskiden .dashboard-header içindeydi) */}
                 {statsFilter && (
                   <div className="stats-filter-bar mb-4">
@@ -2228,18 +2291,15 @@ export default function App() {
                         <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal} tourId={ci === 0 ? 'first-card' : undefined}
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
                           warming={warmingDomains.has(cert.domain)} extrasPending={cardMode === 'rich' && warmingDomains.has(cert.domain)}
-                          live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert, renewal: cardExtras[cert.domain].renewal } : undefined}
+                          // "Şu an" şeridi kartın içinde ek satırından türer (memo: her çizimde yeni nesne kartı yeniden çizdirirdi)
+                          liveRow={cardExtras[cert.domain]}
                           // Onayla / Planla sunucunun kapısıyla (UIM-10/11): onay = envanter düzenleme; plan = yönetim kapsamı
                           onOpenHealth={openCertHealth} onConfirmRenewal={cert.paused || !canEditCert(cert) ? undefined : confirmCardRenewal}
                           onPlanRenewal={cert.paused || !canPlanCert(cert) ? undefined : planCardRenewal} confirming={confirmingDomain === cert.domain}
                           onOpenShared={setSharedCert}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
-                          onMailFailureClick={() => {
-                            handleTabChange('health')
-                            setSmtpPreFilterDomain(cert.domain)
-                            setOpenSmtpModalOnLoad(true)
-                          }}
+                          onMailFailureClick={mailFailureHandlerFor(cert.domain)}
                           isWeak={weakAlgStats != null ? weakDomainSet.has(cert.domain) : undefined}
                           {...cardActions(cert)} />
                       ))}

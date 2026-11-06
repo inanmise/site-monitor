@@ -1556,9 +1556,19 @@ public class MonitoringController {
      */
     private Long effectiveTeam(String domain, Boolean standalone, Long storedTeamId) {
         if (Boolean.TRUE.equals(standalone) || domain == null) return storedTeamId;
-        return inventoryRepo.findByDomain(domain)
-                .map(CertificateInventory::getTeamId)
-                .orElse(storedTeamId);
+        return effectiveTeamFrom(domain, standalone, storedTeamId, inventoryRepo.findByDomain(domain).orElse(null));
+    }
+
+    /**
+     * {@link #effectiveTeam}'in envanter satırı ZATEN elde olan sürümü (2026-11-06, performans PF2 #3): Port / DNS listesi
+     * satır başına {@code findByDomain} koşuyordu (N+1); liste envanteri zaten belleğe okuduğu için türev satırın envanter
+     * kaydı ({@code inv} — alan adı {@code domain} ile birebir aynı satır) çağıran tarafından verilir. Kural birebir: bağımsız
+     * satır ya da alan adı yok → saklanan takım; envanter satırının takımı doluysa o, değilse saklanan takım.
+     */
+    static Long effectiveTeamFrom(String domain, Boolean standalone, Long storedTeamId, CertificateInventory inv) {
+        if (Boolean.TRUE.equals(standalone) || domain == null) return storedTeamId;
+        Long invTeam = inv == null ? null : inv.getTeamId();
+        return invTeam != null ? invTeam : storedTeamId;
     }
 
     /**
@@ -2170,6 +2180,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndCheckedAtBetween(domain, port, f, t); }
             public long fail(String f, String t) { return uptimeCheckRepo.countByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return uptimeCheckRepo.historyHistogram(domain, port, f, t, len); }
             public List<Object[]> bounds() { return uptimeCheckRepo.historyBounds(domain, port); }
         };
@@ -2210,6 +2221,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return certCheckRepo.countByDomainAndCheckedAtBetween(domain, f, t); }
             public long fail(String f, String t) { return certCheckRepo.countByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return certCheckRepo.historyHistogram(domain, f, t, len); }
             public List<Object[]> bounds() { return certCheckRepo.historyBounds(domain); }
         };
@@ -2401,13 +2413,16 @@ public class MonitoringController {
             // ve provision başarısız olsa NPE → 500 olurdu: tüm liste, tek bir domain yüzünden ölürdü.
             if (monitor == null) continue;
             PortCheck latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichPort(monitor, latest, teamMap, teamById, portAlarms.get(monitor.getHost())));
+            // Etkin takım yüklü envanter satırından (PF2 #3 — satır başına findByDomain yok): host == inv.getDomain() (anahtar eşleşmesi).
+            result.add(enrichPort(monitor, latest, teamMap, teamById, portAlarms.get(monitor.getHost()),
+                    effectiveTeamFrom(monitor.getHost(), monitor.getStandalone(), monitor.getTeamId(), inv)));
         }
         // Standalone (envanterden bağımsız) port monitörleri — envanter döngüsünde yok; takım görüşüne göre ekle.
         for (PortMonitor m : standaloneMonitors) {
             if (!SessionScope.canViewMonitoring(session, m.getTeamId())) continue;
             PortCheck latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
-            result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost())));
+            result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost()),
+                    effectiveTeamFrom(m.getHost(), m.getStandalone(), m.getTeamId(), null)));   // bağımsız → kendi takımı
         }
         return ok(withDiagnoseFlag(session, result));
     }
@@ -2607,6 +2622,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return portCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return portCheckRepo.countByMonitorIdAndOpenFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return portCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return portCheckRepo.historyBounds(id); }
         };
@@ -2694,13 +2710,19 @@ public class MonitoringController {
     }
 
     private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById, AlertEvent openAlarm) {
+        return enrichPort(m, latest, teamMap, teamById, openAlarm, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()));
+    }
+
+    /** {@code effTeam}: satırın ETKİN takımı ({@link #effectiveTeam} / liste yolunda {@link #effectiveTeamFrom}). */
+    private Map<String, Object> enrichPort(PortMonitor m, PortCheck latest, Map<String, String> teamMap, Map<Long, String> teamById,
+                                           AlertEvent openAlarm, Long effTeam) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",              m.getId());
         item.put("name",            m.getName());
         item.put("host",            m.getHost());
         // Manuel eklenen kayıt takımı teamId'den; otomatik üretilen (teamId=null) kayıt domain→takım haritasından.
         // team_id ile team_name AYNI kaynaktan (effectiveTeam) — bkz. enrichDns.
-        item.put("team_id",         effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()));
+        item.put("team_id",         effTeam);
         item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
         item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
@@ -2895,13 +2917,16 @@ public class MonitoringController {
             DnsMonitor monitor = monitorByDomain.get(inv.getDomain());
             if (monitor == null) continue;   // yarış sonrası eksikse satırı atla (bkz. port yolu)
             DnsRecord latest = monitor.getId() != null ? latestByMonitor.get(monitor.getId()) : null;
-            result.add(enrichDns(monitor, latest, teamMap, teamById, dnsAlarms.get(inv.getDomain())));
+            // Etkin takım yüklü envanter satırından (PF2 #3 — satır başına findByDomain yok): domain == inv.getDomain() (anahtar eşleşmesi).
+            result.add(enrichDns(monitor, latest, teamMap, teamById, dnsAlarms.get(inv.getDomain()),
+                    effectiveTeamFrom(monitor.getDomain(), monitor.getStandalone(), monitor.getTeamId(), inv)));
         }
         // Standalone (sertifikadan bağımsız) monitörler — envanter döngüsünde yok; takım görüş kapsamına göre ekle.
         for (DnsMonitor m : standaloneMonitors) {
             if (!SessionScope.canViewMonitoring(session, m.getTeamId())) continue;
             DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
-            result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain())));
+            result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain()),
+                    effectiveTeamFrom(m.getDomain(), m.getStandalone(), m.getTeamId(), null)));   // bağımsız → kendi takımı
         }
         return ok(withDiagnoseFlag(session, result));
     }
@@ -3148,6 +3173,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return dnsRecordRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return dnsRecordRepo.countChangedByMonitorIdBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return !fail || !failedLookups; }   // PF2 #10: "başarısız sorgu" kipinde sayfa ≠ fail() (değişenler)
             @Override public Long errors(String f, String t) { return dnsRecordRepo.countFailedByMonitorIdBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return dnsRecordRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return dnsRecordRepo.historyBounds(id); }
@@ -3274,6 +3300,13 @@ public class MonitoringController {
     private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest,
                                           Map<String, String> teamMap, Map<Long, String> teamById,
                                           AlertEvent openAlarm) {
+        return enrichDns(m, latest, teamMap, teamById, openAlarm, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));
+    }
+
+    /** {@code effTeam}: satırın ETKİN takımı ({@link #effectiveTeam} / liste yolunda {@link #effectiveTeamFrom}). */
+    private Map<String, Object> enrichDns(DnsMonitor m, DnsRecord latest,
+                                          Map<String, String> teamMap, Map<Long, String> teamById,
+                                          AlertEvent openAlarm, Long effTeam) {
         Map<String, Object> item = new LinkedHashMap<>();
         boolean standalone = Boolean.TRUE.equals(m.getStandalone());
         item.put("id",              m.getId());
@@ -3283,7 +3316,7 @@ public class MonitoringController {
         // team_id ile team_name AYNI kaynaktan gelir (effectiveTeam): türev satırda ikisi de
         // envanterin takımı. Eskiden ad tazeydi ama kimlik bayattı; frontend isOwnTeam
         // karşılaştırması bu yüzden transferden sonra yanlış sonuç veriyordu.
-        item.put("team_id",         effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));
+        item.put("team_id",         effTeam);
         item.put("notification_group_id",         m.getNotificationGroupId());
         item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
         item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
@@ -3554,6 +3587,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return keywordResultRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return keywordResultRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return keywordResultRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return keywordResultRepo.historyBounds(id); }
         };
@@ -4930,6 +4964,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return httpCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return httpCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return httpCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return httpCheckRepo.historyBounds(id); }
         };
@@ -5354,6 +5389,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return pageCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return pageCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return pageCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return pageCheckRepo.historyBounds(id); }
         };
@@ -5617,6 +5653,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return pageSpeedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return pageSpeedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return pageSpeedCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return pageSpeedCheckRepo.historyBounds(id); }
         };
@@ -6684,6 +6721,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return checks.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return checks.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return !fail || !onlyProblem; }   // PF2 #10: "sorunlu" süzgecinde sayfa (status ≠ OK) ≠ fail() (ok = false)
             public Long errors(String f, String t) { return checks.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return checks.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return checks.historyBounds(id); }
@@ -8569,6 +8607,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return scriptedCheckRepo.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return scriptedCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return scriptedCheckRepo.historyBounds(id); }
         };
@@ -9757,6 +9796,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return domainCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return domainCheckRepo.countByMonitorIdAndStatusNotAndCheckedAtBetween(id, "OK", f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return domainCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return domainCheckRepo.historyBounds(id); }
         };
@@ -10225,6 +10265,7 @@ public class MonitoringController {
             }
             public long total(String f, String t) { return pingCheckRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return pingCheckRepo.countByMonitorIdAndUpFalseAndCheckedAtBetween(id, f, t); }
+            @Override public boolean pageCountMatches(boolean fail) { return true; }   // PF2 #10: sayfa sorgusu sayaçla aynı ölçüt — COUNT bir kez
             public List<Object[]> histogram(String f, String t, int len) { return pingCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return pingCheckRepo.historyBounds(id); }
         };

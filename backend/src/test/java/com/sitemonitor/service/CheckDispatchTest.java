@@ -354,7 +354,7 @@ class CheckDispatchTest {
         CheckResultRow derived = h.workerRow(CheckJobTypes.PORT, 4L);   // inv-host envanterde → klasikte kontrol edilir
         http.get(0).setUrl("https://a.example.com/v2/health");
         http.get(1).setActive(false);
-        when(h.inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());   // türev hedef envanterden çıktı
+        when(h.inventoryRepo.findActiveDomains()).thenReturn(List.of());   // türev hedef envanterden çıktı (PF3 #2: tek kolon)
         CheckResultRow failed = h.row(CheckJobTypes.HTTP, 3L, CheckJobRunner.failed(new IllegalStateException()));
         CheckResultRow timeout = h.row(CheckJobTypes.HTTP, 4L, CheckJobRunner.workerTimeout());
         h.clearMos();

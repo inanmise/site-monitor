@@ -87,7 +87,7 @@ class HttpSlowAndAdvancedSweepTest {
 
     private void runSweep(HttpMonitor m) {
         when(httpRepo.findByActiveTrue()).thenReturn(List.of(m));
-        when(httpRepo.findAll()).thenReturn(List.of(m));
+        when(httpRepo.findOrphanCheckKeys()).thenReturn(List.of(m.getUrl()));   // PF3 #3: öksüz temizliği tek kolon
         ReflectionTestUtils.invokeMethod(scheduler, "runHttpChecksLocked");
     }
 

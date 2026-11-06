@@ -1,5 +1,5 @@
 import {
-  useState, useEffect, useRef } from 'react'
+  memo, useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n/index.jsx'
 // Komut paleti (cmdk) ilk Ctrl/⌘+K ya da `sm:palette` isteğinde yüklenir — başlatıcı ilk basışı da karşılar (2026-10-09).
 import CommandPaletteLauncher from './CommandPaletteLauncher.jsx'
@@ -79,7 +79,7 @@ function writeOpenSubs(keys, known) {
   try { if (clean.length) localStorage.setItem(SUB_OPEN_KEY, JSON.stringify(clean)); else localStorage.removeItem(SUB_OPEN_KEY) } catch { /* depolama yok */ }
 }
 
-export default function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
+function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
   // Kanal teknik hata raporu modülü görünürlüğü (2026-10-17, S6): sunucu kapsam bloğu kapalı derse sekme çizilmez; eski sunucu (null) → görünür
   const { scope: permScope } = usePermissions()
   const t = useT()
@@ -380,3 +380,10 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
     </>
   )
 }
+
+/**
+ * MEMO (2026-11-06, performans): App sık yeniden çiziliyor (kontrol akışı, veri dalgaları, diyaloglar); menü kendi durumunu
+ * (açık alarm rozetleri, bildirim kutusu) kendisi tazeler. App menüye KARARLI işleyiciler verir (useLatestCallback), menü
+ * yalnız kendi propları değişince çizilir.
+ */
+export default memo(Nav)

@@ -1,9 +1,142 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-06T06:18:39Z",
+  "generatedAt": "2026-11-06T10:41:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 810,
+  "count": 811,
   "releases": [
+    {
+      "version": "20.186.2",
+      "tag": "v20.186.2",
+      "releasedAt": "2026-11-06T10:40:58Z",
+      "commit": "5fd96a4bec345ef02acd6eaded02c795c93be4a9",
+      "prevVersion": "20.186.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 13,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "5fd96a4b",
+          "subject": "açılış ön isteği dil başlığı kuralı (CLAUDE.md)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fa0ea3bb",
+          "subject": "performans PR'ı CI düzeltmeleri (test kirliliği, kapı tarayıcıları, açılış ön isteği dili)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "02da544f",
+          "subject": "son inceleme düzeltmeleri ve performans belgesi"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "cb7d77f3",
+          "subject": "tek izleme kontrol sorguları bileşik dizinde; eksik kısmi dizinler (DNS değişikliği, hata, içerik, son alarm)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "00859f42",
+          "subject": "Ayarlar bölümleri, Yönetim sekmeleri ve Sistem Sağlığı ağır alt parçaları tembel yüklensin"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "90a59f77",
+          "subject": "sertifika penceresinin 30 sn yoklaması yalnız son kaydı istesin (?limit=1)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "f181ad4b",
+          "subject": "aktivite \"Tümü\" aralığında 30 sn'lik canlı tazeleme kapalı"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "fada1c52",
+          "subject": "izleme sayfalarında form yazımı kart ızgarasını çizmesin, ayrıntı açıkken liste ucu tekrarlanmasın"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "57cdced3",
+          "subject": "pano kart memo'su çalışsın, menü memo, aynı içerik aynı başvuru, açılış ön isteği"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "77b6d3ed",
+          "subject": "zamanlanmış işlerde tam varlık okumaları ve liste N+1 kalktı"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "d64db37d",
+          "subject": "istek yolu önbellekleri — zil, bugün paneli, kart trendi/SLA, bekçi, takım üyeleri"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "e140e462",
+          "subject": "arama katlaması ve tarih biçimleyicisi önbellekli (çıktı aynı)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d19d1be",
+          "subject": "sekmeye dönüşte yoklamalar tempolarını korusun (aynı anda istek patlaması yok)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "19e4c863",
+          "subject": "kontrol penceresi saniye sayacı yaprak bileşende, sonuç satırları memo"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "85660cfd",
+          "subject": "güven süzgeci e2e ölçümü açılış animasyonunun bitmesini beklesin"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "bcc03073",
+          "subject": "izleme başına son kontrol sorguları bileşik indexi kullansın (MAX(checked_at) biçimi)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.186.1",
       "tag": "v20.186.1",

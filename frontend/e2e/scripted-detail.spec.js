@@ -294,6 +294,8 @@ for (const vp of VIEWPORTS) {
       await routes(page)
       await page.goto('/?tab=scripted')
       await page.getByRole('button', { name: /^(Şablonlar|Templates)$/ }).click()
+      // Dallar şablon listesi gelince çizilir — `.all()` anlık görüntüdür; önce dalı bekle (CI 2026-11-06 yarış)
+      await expect(page.locator('[data-branch]').first()).toBeVisible({ timeout: 15_000 })
       for (const b of await page.locator('[data-branch] button[aria-expanded="false"]').all()) await b.click()
       const cards = page.locator('[data-template-card]')
       await expect(cards).toHaveCount(2)

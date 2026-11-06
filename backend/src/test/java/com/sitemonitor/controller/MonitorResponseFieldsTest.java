@@ -58,15 +58,21 @@ class MonitorResponseFieldsTest {
         }
     }
 
-    /** Metot gövdesini kaba ama yeterli biçimde kes: imzadan bir sonraki metot imzasına kadar. */
+    /** Metot gövdesini kaba ama yeterli biçimde kes: imzadan bir sonraki metot imzasına kadar. Aşırı yüklemeler (kısa devreden
+     *  imza + asıl gövde, performans 2026-11-06) BİRLİKTE okunur. */
     private static String bodyOf(String src, String method) {
         Matcher m = Pattern.compile("Map<String, Object> " + method + "\\s*\\(").matcher(src);
-        if (!m.find()) return null;
-        int start = m.end();
-        Matcher next = Pattern.compile("\\n    (private|public|protected|static)[^\\n]*\\(").matcher(src);
-        int end = src.length();
-        if (next.find(start)) end = next.start();
-        return src.substring(start, end);
+        StringBuilder all = new StringBuilder();
+        boolean found = false;
+        while (m.find()) {
+            found = true;
+            int start = m.end();
+            Matcher next = Pattern.compile("\\n    (private|public|protected|static)[^\\n]*\\(").matcher(src);
+            int end = src.length();
+            if (next.find(start)) end = next.start();
+            all.append(src, start, end).append('\n');
+        }
+        return found ? all.toString() : null;
     }
 
     @Test

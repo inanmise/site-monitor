@@ -394,14 +394,14 @@ function historyPath(kind, id) {
  * nesnesinin yerine geçiyordu).
  */
 export function requestInit(opts = {}, method = String(opts.method || 'GET').toUpperCase(), isForm = opts.body instanceof FormData) {
-  return {
-    credentials: 'include',
-    ...opts,
-    headers: {
-      ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
-      ...opts.headers,
-    },
+  const headers = {
+    ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
+    ...opts.headers,
   }
+  // Çağıranın `undefined` / `null` verdiği başlık GÖNDERİLMEZ (fetch onu "undefined" metni olarak yollardı) — açılış ön isteği
+  // dil başlığını böyle kaldırır (2026-11-06)
+  for (const k of Object.keys(headers)) if (headers[k] == null) delete headers[k]
+  return { credentials: 'include', ...opts, headers }
 }
 
 /** Boş/null paramları atarak query string üretir (mevcut get*ResponseSeries deseniyle aynı). */
@@ -1046,11 +1046,11 @@ export const api = {
     return logoutRequest(signal)
   },
 
-  getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+  getMe: (opts = {}) => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS, ...opts }),
 
   // Branding (beyaz etiket) — PUBLIC, auth gerekmez (login sayfası açılışta çeker).
   // fresh=true: kaydet sonrası çağrı — 60 sn'lik Cache-Control'ü query ile bust'la (anında yansıma).
-  getBranding: (fresh = false) => request('/branding' + (fresh ? `?_=${Date.now()}` : '')),
+  getBranding: (fresh = false, opts = {}) => request('/branding' + (fresh ? `?_=${Date.now()}` : ''), opts),
 
   // Login hero istatistikleri — PUBLIC (izlenen hedef adedi + 7g erişilebilirlik %).
   getPublicStats: () => request('/public-stats'),
@@ -1206,7 +1206,9 @@ export const api = {
 
   getWarnings: () => request('/warnings'),
 
-  getHistory: (domain) => request(`/history/${encodeURIComponent(domain)}`),
+  // `limit` (isteğe bağlı, 2026-11-06 PF4 D4): sertifika penceresi yalnız son kaydı kullanır → `{ limit: 1 }`. Eski sunucu
+  // parametreyi yok sayar (30 satır döner, ilk satır aynı).
+  getHistory: (domain, { limit } = {}) => request(`/history/${encodeURIComponent(domain)}${limit ? `?limit=${encodeURIComponent(limit)}` : ''}`),
 
   getDomainAlerts: (domain) => request(`/history/${encodeURIComponent(domain)}/alerts`),
 
@@ -2732,13 +2734,38 @@ export const api = {
 // toUtc / localDayKey: utils/localDay.js (yeniden dışa aktarılır — eski import yolları geçerli)
 export { toUtc, localDayKey }
 
+/*
+ * Biçimleyici önbelleği (2026-11-06, performans): `toLocaleString(yerel, seçenek)` HER çağrıda yeni bir
+ * Intl.DateTimeFormat kurar — bir sayfa yüzlerce tarih basıyor (kartlar, tablolar, geçmiş). Seçenekler hem tarih hem
+ * saat alanlarını açıkça verdiği için `new Intl.DateTimeFormat(yerel, seçenek).format(d)` çıktısı birebir aynıdır;
+ * yerel (dil) değişince anahtar değişir. Geçersiz tarih ESKİ yoldan biçimlenir (toLocaleString "Invalid Date" döner,
+ * format() ise fırlatırdı — çıktı değişmesin).
+ */
+const DATE_FMT_OPTS = {
+  dateTime: { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' },
+  dateTimeSec: { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' },
+  time: { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+  date: { year: 'numeric', month: '2-digit', day: '2-digit' },
+}
+const DATE_FMT_LEGACY = { dateTime: 'toLocaleString', dateTimeSec: 'toLocaleString', time: 'toLocaleTimeString', date: 'toLocaleDateString' }
+const dateFormatters = new Map()
+
+function formatCached(d, kind) {
+  const locale = dateLocale()
+  if (Number.isNaN(d.getTime())) return d[DATE_FMT_LEGACY[kind]](locale, DATE_FMT_OPTS[kind])
+  const key = `${kind}|${locale}`
+  let f = dateFormatters.get(key)
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, DATE_FMT_OPTS[kind])
+    dateFormatters.set(key, f)
+  }
+  return f.format(d)
+}
+
 export function formatDate(iso) {
   if (!iso) return 'N/A'
   try {
-    return new Date(toUtc(iso)).toLocaleString(dateLocale(), {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    })
+    return formatCached(new Date(toUtc(iso)), 'dateTime')
   } catch {
     return iso
   }
@@ -2748,10 +2775,7 @@ export function formatDate(iso) {
 export function formatDateSec(iso) {
   if (!iso) return 'N/A'
   try {
-    return new Date(toUtc(iso)).toLocaleString(dateLocale(), {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    })
+    return formatCached(new Date(toUtc(iso)), 'dateTimeSec')
   } catch {
     return iso
   }
@@ -2760,9 +2784,7 @@ export function formatDateSec(iso) {
 export function formatTime(iso) {
   if (!iso) return '—'
   try {
-    return new Date(toUtc(iso)).toLocaleTimeString(dateLocale(), {
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    })
+    return formatCached(new Date(toUtc(iso)), 'time')
   } catch {
     return iso.substring(11, 19)
   }
@@ -2772,9 +2794,7 @@ export function formatTime(iso) {
 export function formatDateOnly(iso) {
   if (!iso) return '—'
   try {
-    return new Date(toUtc(iso)).toLocaleDateString(dateLocale(), {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    })
+    return formatCached(new Date(toUtc(iso)), 'date')
   } catch {
     return iso.substring(0, 10)
   }

@@ -14,7 +14,8 @@ import java.util.Optional;
 
 public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long> {
 
-    Optional<DbQueryCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<DbQueryCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     /**
      * Değişim kuralının tabanları (2026-10-31 inceleme Y1): son İKİ zamanlanmış ve sorgusu çalışmış satır, yeniden yeniye.
@@ -22,9 +23,9 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * yeniden kontrolü ve elle "Şimdi kontrol et" onu okur (aksi hâlde ihlal eden satırın kendisiyle kıyaslanıp "değişim
      * yok" görünürdü). Elle ve yeniden kontrol satırları bant dışıdır.
      */
-    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = true "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 2")
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC LIMIT 2")
     List<DbQueryCheck> findRecentScheduledOk(@Param("id") Long monitorId);
 
     /**
@@ -32,9 +33,9 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * tabanında "tetikleyen" (2026-10-31 ikinci tur O-2) ve CRON planı sıfırlanınca geri bakışın tabanı (D-1: o tetik
      * zaten koştuysa yeniden koşmasın).
      */
-    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id "
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 1")
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC LIMIT 1")
     Optional<DbQueryCheck> findLatestScheduled(@Param("id") Long monitorId);
 
     /**
@@ -42,10 +43,10 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * kurtarmanın değişim tabanı zincir boyunca sabit kalsın (2026-10-31 ikinci tur O-2). Aynı saniyedeki satırlar
      * kimlikle ayrılır; kimlik bilinmiyorsa {@code beforeId} = -1 (yalnız daha önceki saniyeler).
      */
-    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = true "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
          + "AND (c.checkedAt < :at OR (c.checkedAt = :at AND c.id < :beforeId)) "
-         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 1")
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC LIMIT 1")
     Optional<DbQueryCheck> findScheduledOkBefore(@Param("id") Long monitorId, @Param("at") String at,
                                                  @Param("beforeId") Long beforeId);
 
@@ -53,9 +54,9 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * Mevsimsel değişim tabanı adayları (r177): {@code [from, to]} aralığındaki zamanlanmış ve sorgusu çalışmış satırlar (en çok
      * 50, zamana göre) — elle ve yeniden kontrol satırları bant dışıdır.
      */
-    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = true "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "AND c.checkedAt >= :from AND c.checkedAt <= :to ORDER BY c.checkedAt ASC, c.id ASC LIMIT 50")
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C + " ORDER BY c.monitorId ASC, c.checkedAt ASC, c.id ASC LIMIT 50")
     List<DbQueryCheck> findScheduledOkBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /**
@@ -74,40 +75,65 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * anları, yeniden eskiye — sayfa boyutu = akıllı kuralların canlıda okuduğu çalıştırma sayısı (geri bakış ZAMANLA değil
      * çalıştırma SAYISIYLA, canlıyla aynı taban).
      */
-    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = true "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "AND c.checkedAt < :before ORDER BY c.checkedAt DESC, c.id DESC")
+         + "AND c.checkedAt < :before ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC")
     List<String> backtestRunsBefore(@Param("id") Long monitorId, @Param("before") String before, Pageable page);
 
     /**
      * Eşik denemesi satır tavanı (dbq2 inceleme D1): {@link #backtestPage} kümesinin (zamanlanmış satırlar, hatalı dahil)
      * YENİDEN ESKİYE sırasında sayfanın konumundaki satırın anı — tavanın EN ESKİ kısmı kesmesi için okumanın başlangıcı.
      */
-    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from "
+    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.checkedAt >= :from "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.checkedAt DESC, c.id DESC")
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC")
     List<String> backtestNewestFrom(@Param("id") Long monitorId, @Param("from") String from, Pageable page);
 
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
-    Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
-    Page<DbQueryCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to);
-    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    default Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<DbQueryCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p) {
+        return historyStatusNotPage(monitorId, status, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.status <> :status "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id AND c.status <> :status "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<DbQueryCheck> historyStatusNotPage(@Param("id") Long id, @Param("status") String status, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<DbQueryCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<DbQueryCheck> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id AND c.status <> :status AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndStatusNotAndCheckedAtBetween(@Param("id") Long monitorId, @Param("status") String status, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
     long countByMonitorIdAndOkFalseAndCheckedAtGreaterThanEqual(Long monitorId, String since);
 
     /** Her izleme için en güncel çalıştırma — tek toplu sorgu (N+1 önleme). */
     @Query(value = "SELECT c.* FROM dbquery_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM dbquery_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM dbquery_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM dbquery_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<DbQueryCheck> findLatestPerMonitor();
 
     /** Grafik serisi: [checkedAt, durationMs, rowCount, metricValue, ok, status]. */
     @Query("SELECT r.checkedAt, r.durationMs, r.rowCount, r.metricValue, r.ok, r.status FROM DbQueryCheck r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> seriesRaw(@Param("id") Long id, @Param("from") String from,
                              @Param("to") String to, @Param("limit") int limit);
 
@@ -186,8 +212,8 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * satırında hiç yok); {@code sqlHash} seriyi sorgu değişiminde kesmek için (dbq2 inceleme D9).
      */
     @Query("SELECT c.checkedAt, c.status, c.metricValue, c.ok, c.breachLevel, c.failureReason, c.slow, c.sqlHash FROM DbQueryCheck c "
-         + "WHERE c.monitorId = :id AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT :limit")
+         + "WHERE c.monitorId IN (:id, :id) AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC LIMIT :limit")
     List<Object[]> recentScheduledSummary(@Param("id") Long monitorId, @Param("limit") int limit);
 
     /** İzleme silinince çalıştırma geçmişini de temizle. */

@@ -12,6 +12,9 @@ const TIER_TONE = {
   4: 'bg-muted text-muted-foreground',
 }
 
+// Ad hücresi — modül düzeyi: CheckRunShell satırları memo, her çizimde yeni fonksiyon onları bozardı.
+const domainOf = (r) => r.domain
+
 /**
  * "Şimdi Kontrol Et" akan ilerleme tablosu — SERTİFİKA sürümü. Her satır tek bir kontrolün
  * SONUCUNU taşır: durum · alan adı · takım · tier · port · HTTP · kalan gün · bitiş · süre.
@@ -55,7 +58,7 @@ export default function CheckRunModal({ run, certIndex, onClose, onCancel }) {
     <CheckRunShell
       run={run}
       nameHeader={t('app.checkColDomain')}
-      nameOf={r => r.domain}
+      nameOf={domainOf}
       columns={columns}
       onClose={onClose}
       onCancel={onCancel}

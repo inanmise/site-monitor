@@ -71,7 +71,7 @@ class ScriptedScheduleTodayTest {
         when(activityRepo.avgResponseByMonitor(anyString(), anyString())).thenReturn(List.of());
         when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
-        when(notificationLogRepo.findAllSince(anyString())).thenReturn(List.of());
+        when(notificationLogRepo.findStatusRowsSince(anyString())).thenReturn(List.of());
         when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(anyString(), anyString())).thenReturn(List.of());
         when(latestCheckRepo.findAll()).thenReturn(List.of());
         when(exceptionRepo.findAll()).thenReturn(List.of());
@@ -101,7 +101,7 @@ class ScriptedScheduleTodayTest {
         missed.setNextRunAt(at(30));                                          // 30 dk önceydi, koşulmadı
         ScriptedMonitor flat = k6(3, "duz");
         when(scriptedRepo.findAll()).thenReturn(List.of(waiting, missed, flat));
-        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
+        when(activityRepo.lastCheckPerMonitor(anyString())).thenReturn(List.<Object[]>of(
                 new Object[]{"SCRIPTED", 1L, at(120)}, new Object[]{"SCRIPTED", 2L, at(60 * 25)}, new Object[]{"SCRIPTED", 3L, at(120)}));
 
         TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
@@ -125,7 +125,7 @@ class ScriptedScheduleTodayTest {
         ok.setScheduleMode("CRON"); ok.setCronExpression("0 8 * * *"); ok.setIntervalSeconds(86_400);
         ok.setNextRunAt(ISO.format(NOW.plus(Duration.ofHours(10))));
         when(scriptedRepo.findAll()).thenReturn(List.of(skipped, never, ok));
-        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
+        when(activityRepo.lastCheckPerMonitor(anyString())).thenReturn(List.<Object[]>of(
                 new Object[]{"SCRIPTED", 4L, at(60 * 30)}, new Object[]{"SCRIPTED", 6L, at(60 * 10)}));
 
         TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
@@ -143,7 +143,7 @@ class ScriptedScheduleTodayTest {
         monthly.setScheduleMode("CRON"); monthly.setCronExpression("@monthly"); monthly.setIntervalSeconds(30 * 86_400);
         monthly.setNextRunAt(ISO.format(NOW.plus(Duration.ofDays(10))));
         when(scriptedRepo.findAll()).thenReturn(List.of(monthly));
-        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.of());
+        when(activityRepo.lastCheckPerMonitor(anyString())).thenReturn(List.of());
 
         assertThat(ScriptedSchedule.hasPlan(monthly)).isTrue();
         assertThat(MonitoringOverviewService.isScriptedStale(monthly, null, NOW, java.util.Set.of())).as("doğrudan").isFalse();

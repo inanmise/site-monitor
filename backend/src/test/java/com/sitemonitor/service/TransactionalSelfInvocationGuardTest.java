@@ -45,12 +45,10 @@ class TransactionalSelfInvocationGuardTest {
 
     private static final Path MAIN = Path.of("src/main/java");
 
-    /** "Sınıf#çağıran->çağrılan" → gerekçe. Liste bilinçli karar noktasıdır, kısayol değil. */
-    private static final Map<String, String> ALLOWED = Map.of(
-            "DomainExpiryRefreshService#refreshAll->persistToInventory",
-            "persistToInventory satır başına save eder ve TÜM istisnaları kendi içinde yutar (return 0). Bir tx içinde"
-                    + " koşsaydı yutulan hata tx'i rollback-only yapar, commit UnexpectedRollbackException ile TÜM tazeleme"
-                    + " turunu düşürürdü. Satır başına commit burada bilinçli; eksik kalan satırı sonraki tur tamamlar.");
+    /** "Sınıf#çağıran->çağrılan" → gerekçe. Liste bilinçli karar noktasıdır, kısayol değil.
+     *  (2026-11-06: tek girdi "DomainExpiryRefreshService#refreshAll->persistToInventory" düştü — persistToInventory artık
+     *  {@code @Transactional} değil, yazımı repository'nin hedefli {@code updateDomainExpiry}'sine (kendi işlemi) bırakıyor.) */
+    private static final Map<String, String> ALLOWED = Map.of();
 
     private static final Pattern TX = Pattern.compile("@(?:org[.]springframework[.]transaction[.]annotation[.])?Transactional[(]?");
     private static final Pattern DECL = Pattern.compile(

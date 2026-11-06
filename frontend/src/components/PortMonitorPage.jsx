@@ -67,6 +67,7 @@ import {
 } from './monitoring/MonitorForm.jsx'
 import { cn } from '@/lib/utils'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -99,7 +100,9 @@ const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', useProxy: 'OF
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
-export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -590,6 +593,38 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Gelişmiş ayarlar → istek zaman aşımı kaydırıcısı saniye cinsinden (1..60); form milisaniye tutar.
   const timeoutSecs = Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))
 
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openModal, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    <div className="upt-grid" data-density={density}>
+      {pager.pageItems.map(m => (
+        /* Port kartı (port/PortMonitorCard, 2026-09-27): uç nokta kimliği (host · :port · tür · yaygın hizmet),
+           SONUÇ PANELİ (açık / reddedildi / filtreli / DNS … + tek satırlık neden), bağlantı süresi kutuları, kaynak
+           rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı parçalar BURADA kurulur ve yuva olarak
+           geçer — toplu seçim kutusu, meta, kart eylemleri (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü
+           detay penceresiyle ortak (cardStatus / statusBadge / alarmLabel). */
+        <PortMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
+          onOpen={() => cardEv.current.openModal(m)}
+          spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+          select={canManageRow(m) && (
+            <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', `${m.host}:${m.port}`)} />
+          )}
+          meta={<MonitorCardMeta monitor={m} />}
+          actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
+            <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={`${m.host}:${m.port}`}
+              running={isRunning(m.id)}
+              onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
+              checkTitle={t('port.check')} editTitle={t('port.edit')}
+              onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
+              deleting={deleting === m.id} deleteTitle={m.standalone === true ? t('port.delete') : t('port.deleteDerivedTitle')} />
+          )} />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam])
+
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
   // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
@@ -817,30 +852,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
           api={{ update: api.monitoring.updatePortMonitor, remove: api.monitoring.deletePortMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid" data-density={density}>
-          {pager.pageItems.map(m => (
-            /* Port kartı (port/PortMonitorCard, 2026-09-27): uç nokta kimliği (host · :port · tür · yaygın hizmet),
-               SONUÇ PANELİ (açık / reddedildi / filtreli / DNS … + tek satırlık neden), bağlantı süresi kutuları, kaynak
-               rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı parçalar BURADA kurulur ve yuva olarak
-               geçer — toplu seçim kutusu, meta, kart eylemleri (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü
-               detay penceresiyle ortak (cardStatus / statusBadge / alarmLabel). */
-            <PortMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
-              onOpen={() => openModal(m)}
-              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
-              select={canManageRow(m) && (
-                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', `${m.host}:${m.port}`)} />
-              )}
-              meta={<MonitorCardMeta monitor={m} />}
-              actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (   // yalnız çalıştırma / silme yetkisi de (paylaşım, 2026-10-12)
-                <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={`${m.host}:${m.port}`}
-                  running={isRunning(m.id)}
-                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
-                  checkTitle={t('port.check')} editTitle={t('port.edit')}
-                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                  deleting={deleting === m.id} deleteTitle={m.standalone === true ? t('port.delete') : t('port.deleteDerivedTitle')} />
-              )} />
-          ))}
-        </div>
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

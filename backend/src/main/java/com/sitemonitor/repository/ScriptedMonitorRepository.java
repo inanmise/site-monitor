@@ -12,6 +12,11 @@ import java.util.Optional;
 public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor, Long> {
     List<ScriptedMonitor> findByActiveTrue();
 
+    /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin adları (aktif + pasif; alarm anahtarı = ad) — tam varlık
+     *  ({@code findAll}) yerine tek kolon; temizlik 5 dk'da bir koşar. */
+    @Query("SELECT DISTINCT m.name FROM ScriptedMonitor m WHERE m.name IS NOT NULL")
+    List<String> findOrphanCheckKeys();
+
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn)] (betik /
      *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır.
      *  2026-10-31 (k6r D2): + zamanlama kolonları [2 kip, 3 cron, 4 pencereler, 5 yasak pencereler, 6 tatil atla, 7 ek tarihler,

@@ -12,6 +12,11 @@ import java.util.Optional;
 public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> {
     List<PortMonitor> findByActiveTrue();
 
+    /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin host'ları (SİLİNMİŞ standalone satır hariç — silinen izlemenin açık alarmı öksüz sayılır) — tam varlık
+     *  ({@code findAll}) yerine tek kolon; temizlik 5 dk'da bir koşar. */
+    @Query("SELECT DISTINCT m.host FROM PortMonitor m WHERE m.host IS NOT NULL AND m.deletedAt IS NULL")
+    List<String> findOrphanCheckKeys();
+
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn), bağımsız, host] (betik /
      *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
     @Query("SELECT m.id, m.intervalSeconds, m.standalone, m.host FROM PortMonitor m WHERE m.active = true")

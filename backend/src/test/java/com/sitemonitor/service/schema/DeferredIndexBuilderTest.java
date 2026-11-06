@@ -81,6 +81,19 @@ class DeferredIndexBuilderTest {
         // Aktivite süzgeçleri (2026-11-05, aktivite zenginleştirmesi E): takım + durum + zaman taşınabilir; neden kısmi, PG'ye özgü
         EXPECTED.put("idx_act_team_status_time", "activity_log(team_id, result_status, activity_time)");
         EXPECTED.put("idx_act_reason_time", "activity_log(failure_reason, activity_time) WHERE failure_reason IS NOT NULL");
+        // 2026-11-06 performans incelemesi: anahtar kelime son değişim satırı, DNS değişiklikleri (kısmi, PG'ye özgü), alan başına
+        // son alarm (taşınabilir), çözüm bildirimi süpürücüsü (kısmi, PG'ye özgü)
+        EXPECTED.put("idx_kwr_change_checked", "keyword_results(monitor_id, checked_at) WHERE content_changed IS NOT NULL");
+        EXPECTED.put("idx_dnsr_changed", "dns_records(monitor_id, checked_at) WHERE changed = true OR rotated = true");
+        EXPECTED.put("idx_ae_domain_id", "alert_events(domain, id)");
+        EXPECTED.put("idx_ae_resolution_notify_open", "alert_events(id) WHERE resolution_notify IN ('PENDING', 'SENDING')");
+        // Kontrol Geçmişi hata sayacı / "yalnız hatalar" sayfası (2026-11-06): yalnız hatalı satırları taşıyan kısmi indeksler
+        EXPECTED.put("idx_portc_fail", "port_checks(monitor_id, checked_at) WHERE open = false");
+        EXPECTED.put("idx_kwr_fail", "keyword_results(monitor_id, checked_at) WHERE ok = false");
+        EXPECTED.put("idx_pingc_fail", "ping_checks(monitor_id, checked_at) WHERE up = false");
+        EXPECTED.put("idx_hc_fail", "http_checks(monitor_id, checked_at) WHERE ok = false");
+        EXPECTED.put("idx_pc_fail", "page_checks(monitor_id, checked_at) WHERE ok = false");
+        EXPECTED.put("idx_dnsr_fail", "dns_records(monitor_id, checked_at) WHERE value IS NULL OR value = ''");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");
@@ -88,7 +101,9 @@ class DeferredIndexBuilderTest {
     private static final Set<String> POSTGRES_ONLY =
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
                     "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending", "ux_der_mon_exp_thr",
-                    "ux_audit_seq", "idx_act_reason_time");
+                    "ux_audit_seq", "idx_act_reason_time", "idx_kwr_change_checked", "idx_dnsr_changed",
+                    "idx_ae_resolution_notify_open", "idx_portc_fail", "idx_kwr_fail", "idx_pingc_fail", "idx_hc_fail",
+                    "idx_pc_fail", "idx_dnsr_fail");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

@@ -23,6 +23,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { useElementWidthState } from '../hooks/useElementWidth.js'
+import { useLatestCallback, useKeyedHandler } from '../hooks/useLatestCallback.js'
 import WarningsToolbar from './warnings/WarningsToolbar.jsx'
 import AttentionList from './warnings/AttentionList.jsx'
 import { EMPTY_ICONS, attentionCsv } from './warnings/AttentionParts.jsx'
@@ -184,8 +185,11 @@ export default function WarningsPage({
   const clearAll = () => { setWhy(null); setQ(''); setTeams([]); setTiers([]) }
 
   // ── Eylemler ──────────────────────────────────────────────────────────────────────────────────
+  // Kart (memo) işleyicileri KARARLI (2026-11-06, performans): satır içi fonksiyon her çizimde bütün kartları yeniden çizdirirdi
+  const openStable = useLatestCallback((d) => onOpenCert?.(d))
+  const mailFailureFor = useKeyedHandler((d) => onMailFailure?.(d))
   const h = {
-    onOpen: (d) => onOpenCert?.(d),
+    onOpen: openStable,
     onHealth: onOpenHealth ? (d) => onOpenHealth(d) : null,
     onPlan: onPlanRenewal ? (row, plan) => onPlanRenewal(row, plan) : null,
     // Satır başına kapı (2026-10-22, UIM-9/11): plan yönetim kapsamı, kontrol kartın Çalıştır kuralı — sunucu reddederdi
@@ -202,7 +206,7 @@ export default function WarningsPage({
   const cardProps = (row) => ({
     hasSilentAlert: has(silentAlertDomains, row.domain),
     hasMailFailure: has(mailFailureDomains, row.domain),
-    onMailFailureClick: onMailFailure ? () => onMailFailure(row.domain) : undefined,
+    onMailFailureClick: onMailFailure ? mailFailureFor(row.domain) : undefined,
     isWeak: weakDomains ? weakDomains.has(row.domain) : undefined,
     ...(cardActions ? cardActions(row) : {}),
   })

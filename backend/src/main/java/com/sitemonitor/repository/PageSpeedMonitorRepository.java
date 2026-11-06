@@ -13,6 +13,11 @@ public interface PageSpeedMonitorRepository extends JpaRepository<PageSpeedMonit
 
     List<PageSpeedMonitor> findByActiveTrue();
 
+    /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin URL'leri (aktif + pasif) — tam varlık
+     *  ({@code findAll}) yerine tek kolon; temizlik 5 dk'da bir koşar. */
+    @Query("SELECT DISTINCT m.url FROM PageSpeedMonitor m WHERE m.url IS NOT NULL")
+    List<String> findOrphanCheckKeys();
+
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, ham aralık (sn) — gönderici türün sınırlarına kırpar] (betik /
      *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
     @Query("SELECT m.id, m.intervalSeconds FROM PageSpeedMonitor m WHERE m.active = true")

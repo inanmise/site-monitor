@@ -46,10 +46,11 @@ public class MonitorSparklineController {
         if (global) {
             result = sparklineService.sparklinesAll(type, h);
         } else {
-            Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                    .filter(e -> SessionScope.canViewMonitoring(session, e.getValue()))
-                    .map(Map.Entry::getKey).collect(Collectors.toSet());
-            result = sparklineService.sparklines(type, h, visible);
+            // Performans 2026-11-06 (PF2 #2): kapsamlı kullanıcı da ortak (global) önbellekten okur, görünür kümeyle BELLEKTE
+            // süzülür — her izlemenin sonucu yalnız kendi satırlarından hesaplanır, çıktı kendi sorgusuyla birebir. Kapsamlı tavan
+            // (24 sa) korunur.
+            Set<Long> visible = visibleMonitors(type, session);
+            result = visible.isEmpty() ? Map.of() : MonitorSparklineService.subset(sparklineService.sparklinesAll(type, h), visible);
         }
         Map<String, Object> data = new LinkedHashMap<>();
         result.forEach((id, v) -> data.put(String.valueOf(id), v));
@@ -78,10 +79,9 @@ public class MonitorSparklineController {
         if (global) {
             result = sparklineService.availabilityAll(type, d);
         } else {
-            Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                    .filter(e -> SessionScope.canViewMonitoring(session, e.getValue()))
-                    .map(Map.Entry::getKey).collect(Collectors.toSet());
-            result = sparklineService.availability(type, d, visible);
+            // Performans 2026-11-06 (PF2 #2): ortak (global) önbellekten, görünür kümeyle bellekte süzülür; kapsamlı tavan (30 gün).
+            Set<Long> visible = visibleMonitors(type, session);
+            result = visible.isEmpty() ? Map.of() : MonitorSparklineService.subset(sparklineService.availabilityAll(type, d), visible);
         }
         Map<String, Object> data = new LinkedHashMap<>();
         result.forEach((id, v) -> data.put(String.valueOf(id), v));
@@ -92,6 +92,13 @@ public class MonitorSparklineController {
         body.put("target_pct", appSettings.getDouble(SLA_TARGET_KEY, 99.9));
         body.put("data", data);
         return ResponseEntity.ok(body);
+    }
+
+    /** Oturumun izleme okuma kapsamındaki monitörler (takımsız / envanter türevi: yüklemin kararı). */
+    private Set<Long> visibleMonitors(String type, HttpSession session) {
+        return sparklineService.monitorTeams(type).entrySet().stream()
+                .filter(e -> SessionScope.canViewMonitoring(session, e.getValue()))
+                .map(Map.Entry::getKey).collect(Collectors.toSet());
     }
 
     /** Filo geneli kullanılabilirlik hedefi (%) — Genel Ayarlar; takım başına hedef bilinçli ertelendi. */

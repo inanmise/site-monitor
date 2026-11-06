@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.jdbc.core.RowCallbackHandler;
 
 import java.sql.ResultSet;
@@ -42,11 +43,11 @@ class DbGrowthMetricsTest {
         when(rs.getLong(2)).thenReturn(6_000_000L, 999L);
         when(rs.getLong(3)).thenReturn(12345L, 111L);
         doAnswer(inv -> {
-            RowCallbackHandler h = inv.getArgument(1);
+            RowCallbackHandler h = inv.getArgument(2);
             h.processRow(rs);   // port_checks
             h.processRow(rs);   // some_other_table
             return null;
-        }).when(jdbcTemplate).query(anyString(), any(RowCallbackHandler.class));
+        }).when(jdbcTemplate).query(anyString(), any(PreparedStatementSetter.class), any(RowCallbackHandler.class));
 
         metrics.sample();
 
@@ -62,9 +63,32 @@ class DbGrowthMetricsTest {
     @DisplayName("sample: DB hatası fırlatmaz (Postgres-only sorgu, best-effort)")
     void sample_swallowsDbError() {
         when(appSettings.getInt(anyString(), anyInt())).thenReturn(5_000_000);
-        doThrow(new RuntimeException("pg-only")).when(jdbcTemplate).query(anyString(), any(RowCallbackHandler.class));
+        doThrow(new RuntimeException("pg-only")).when(jdbcTemplate)
+                .query(anyString(), any(PreparedStatementSetter.class), any(RowCallbackHandler.class));
         metrics.sample();   // fırlatmamalı
         assertThat(metrics.rows("port_checks")).isZero();   // registerGauges 0'la başlattı
+    }
+
+    @Test
+    @DisplayName("Performans 2026-11-06: boyut yalnız izlenen (saklama kataloğu) tablolar için — SQL süzgeci + dizi parametresi")
+    void sample_sizesOnlyCatalogTables() throws Exception {
+        when(appSettings.getInt(anyString(), anyInt())).thenReturn(5_000_000);
+        metrics.sample();
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<PreparedStatementSetter> setter = org.mockito.ArgumentCaptor.forClass(PreparedStatementSetter.class);
+        verify(jdbcTemplate).query(sql.capture(), setter.capture(), any(RowCallbackHandler.class));
+        assertThat(sql.getValue()).contains("FROM pg_stat_user_tables WHERE relname = ANY(?)");
+
+        java.sql.PreparedStatement ps = mock(java.sql.PreparedStatement.class);
+        java.sql.Connection con = mock(java.sql.Connection.class);
+        java.sql.Array arr = mock(java.sql.Array.class);
+        when(ps.getConnection()).thenReturn(con);
+        org.mockito.ArgumentCaptor<Object[]> names = org.mockito.ArgumentCaptor.forClass(Object[].class);
+        when(con.createArrayOf(eq("text"), names.capture())).thenReturn(arr);
+        setter.getValue().setValues(ps);
+        verify(ps).setArray(1, arr);
+        assertThat(names.getValue()).containsExactlyInAnyOrderElementsOf(
+                com.sitemonitor.service.retention.RetentionCatalog.tables()).contains("port_checks");
     }
 
     // ── Eşik varsayılanı: properties ↔ kod yedeği ─────────────────────────────

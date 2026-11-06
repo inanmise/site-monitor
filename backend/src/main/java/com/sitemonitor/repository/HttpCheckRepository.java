@@ -13,10 +13,26 @@ import java.util.Optional;
 public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
 
     // ── Kontrol Geçmişi v2: server-side sayfalı aralık + hata filtresi + yoğunluk histogramı ──
-    Page<HttpCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    Page<HttpCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
-    long countByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to);
-    long countByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to);
+    default Page<HttpCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM HttpCheck c WHERE c.monitorId IN (:id, :id) "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM HttpCheck c WHERE c.monitorId = :id "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<HttpCheck> historyPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    default Page<HttpCheck> findByMonitorIdAndOkFalseAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
+        return historyFailedPage(monitorId, from, to, MonitorIndexSort.leading(p, "monitorId"));
+    }
+    @Query(value = "SELECT c FROM HttpCheck c WHERE c.monitorId IN (:id, :id) AND c.ok = false "
+         + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C,
+           countQuery = "SELECT COUNT(c.monitorId) FROM HttpCheck c WHERE c.monitorId = :id AND c.ok = false "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    Page<HttpCheck> historyFailedPage(@Param("id") Long id, @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(c.monitorId) FROM HttpCheck c WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+    @Query("SELECT COUNT(c.monitorId) FROM HttpCheck c WHERE c.monitorId = :id AND c.ok = false AND c.checkedAt >= :from AND c.checkedAt <= :to")
+    long countByMonitorIdAndOkFalseAndCheckedAtBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
     /** Yoğunluk şeridi: [bucketKey, toplam, hata] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
@@ -31,19 +47,21 @@ public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
     List<Object[]> historyHistogram(@Param("id") Long id, @Param("from") String from,
                                     @Param("to") String to, @Param("len") int len);
     List<HttpCheck> findByMonitorIdOrderByCheckedAtDesc(Long monitorId);
-    Optional<HttpCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
+    @Query("SELECT c FROM HttpCheck c WHERE c.monitorId IN (:id, :id) ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT 1")
+    Optional<HttpCheck> findTopByMonitorIdOrderByCheckedAtDesc(@Param("id") Long monitorId);
 
     /** History detay listesi — SQL-LIMIT'li: tüm geçmişi JVM'e çekmeden en yeni :limit satır. */
-    @Query("SELECT r FROM HttpCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM HttpCheck r WHERE r.monitorId IN (:id, :id) ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<HttpCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    @Query("SELECT r FROM HttpCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
+    @Query("SELECT r FROM HttpCheck r WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :since ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<HttpCheck> findRecentByMonitorIdSince(@Param("id") Long id, @Param("since") String since, @Param("limit") int limit);
 
     /** Her monitör için en güncel kontrol — tek toplu sorgu (N+1 önleme). */
     // LATERAL join: monitör başına tek index-seek (full-scan yerine).
     @Query(value = "SELECT c.* FROM http_monitors m CROSS JOIN LATERAL "
-         + "(SELECT * FROM http_checks r WHERE r.monitor_id = m.id ORDER BY r.checked_at DESC LIMIT 1) c",
+         + "(SELECT * FROM http_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM http_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
            nativeQuery = true)
     List<HttpCheck> findLatestPerMonitor();
 
@@ -52,8 +70,8 @@ public interface HttpCheckRepository extends JpaRepository<HttpCheck, Long> {
 
     /** Yanıt-süresi grafiği için ham veri: [checked_at, response_ms (null olabilir), ok] — aralık + cap. */
     @Query("SELECT r.checkedAt, r.responseMs, r.ok FROM HttpCheck r "
-         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
-         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> responseSeriesRaw(@Param("id") Long id, @Param("from") String from,
                                      @Param("to") String to, @Param("limit") int limit);
 

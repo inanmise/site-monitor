@@ -168,6 +168,31 @@ public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> 
             """)
     List<Object[]> lastCheckByMonitor(@Param("since") String since);
 
+    /**
+     * {@link #lastCheckByMonitor}'un izleme başına İLİŞKİLİ MAX biçimi (performans 2026-11-06, PF1 #5 / PF2 #5): eski gruplu
+     * sorgu 7 günün TÜM kontrol satırlarını {@code idx_act_time} ile okuyup topluyordu (yerel 2,5 M satırda ≈ 210 ms, panelin
+     * "bugün" görüntüsü her dolumda). Burada izleme tabloları gezilir ve her izleme için {@code idx_act_type_mon_time}
+     * (tür, izleme, zaman) üstünde tek geri tarama yapılır (≈ 10 ms). Satır biçimi aynı: {@code [type, monitorId, maxTime]};
+     * fark: yalnız MEVCUT izlemeler döner (silinmiş izlemenin eski satırı yok — okuyan zaten izleme listesinden arar) ve
+     * kontrolü olmayan izleme {@code maxTime = null} ile gelir (okuyan atlar). Tür adları {@code MonitorSchedule.scheduleType()}.
+     */
+    @Query(value = """
+            SELECT k.t, k.id, (SELECT MAX(a.activity_time) FROM activity_log a
+                               WHERE a.monitor_type = k.t AND a.monitor_id = k.id
+                                 AND a.action IN ('SCHEDULED_CHECK','MANUAL_CHECK') AND a.activity_time >= :since) AS last_at
+            FROM (SELECT 'HTTP' AS t, id FROM http_monitors
+                  UNION ALL SELECT 'PORT', id FROM port_monitors
+                  UNION ALL SELECT 'PING', id FROM ping_monitors
+                  UNION ALL SELECT 'DNS', id FROM dns_monitors
+                  UNION ALL SELECT 'KEYWORD', id FROM keyword_monitors
+                  UNION ALL SELECT 'PAGE', id FROM page_monitors
+                  UNION ALL SELECT 'PAGESPEED', id FROM pagespeed_monitors
+                  UNION ALL SELECT 'SCRIPTED', id FROM scripted_monitors
+                  UNION ALL SELECT 'DOMAIN', id FROM domain_monitors
+                  UNION ALL SELECT 'DBQUERY', id FROM dbquery_monitors) k
+            """, nativeQuery = true)
+    List<Object[]> lastCheckPerMonitor(@Param("since") String since);
+
     /** Aralıkta en az bir ARIZA (ERROR/TIMEOUT) yazan monitörler — kararsızlık dizisi yalnız bunlar için çekilir. */
     @Query("""
             SELECT DISTINCT a.monitorType, a.monitorId FROM ActivityLog a

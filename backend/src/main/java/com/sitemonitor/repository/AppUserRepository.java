@@ -154,6 +154,29 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<Object[]> findMemberIdentities(@Param("teamIds") Collection<Long> teamIds);
 
     /**
+     * Takım üyeleri penceresinin beyaz-liste satırları (performans 2026-11-06, PF2 #10 — {@code TeamDirectoryController.members}):
+     * eskiden TÜM kullanıcılar tam varlık olarak (AD fotoğrafı base64 TEXT + EAGER takım koleksiyonu) okunup Java'da takıma
+     * göre süzülüyordu. Üyelik yüklemi aynı: birincil takım VEYA çoklu üyelik ({@code MEMBER OF} → tekrar satır yok). Fotoğrafın
+     * kendisi okunmaz; yalnız VAR MI ({@code has_photo}: boş değil — LDAP fotoğrafı base64 metnidir, salt boşluk olmaz).
+     * Satır: {@code [Long id, String username, String displayName, String firstName, String lastName, String orgRole,
+     * String title, String department, String mudurlukName, String companyLevel, String email, Long managerId,
+     * String systemRole, Boolean active, Boolean hasPhoto]}; kimliğe göre sıralı.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.orgRole, u.title, u.department, u.mudurlukName, "
+         + "u.companyLevel, u.email, u.managerId, u.systemRole, u.active, "
+         + "CASE WHEN u.photoBase64 IS NOT NULL AND LENGTH(TRIM(u.photoBase64)) > 0 THEN true ELSE false END "
+         + "FROM AppUser u WHERE u.teamId = :teamId OR :teamId MEMBER OF u.teamIds ORDER BY u.id")
+    List<Object[]> findTeamMemberDirectoryRows(@Param("teamId") Long teamId);
+
+    /**
+     * Görünen ad + aktiflik — yalnız verilen kimlikler (takım üyeleri penceresinin müdür / lider / eskalasyon kişisi adları; foto
+     * ve takım koleksiyonu yüklenmez). Satır: {@code [Long id, String username, String displayName, String firstName,
+     * String lastName, Boolean active]}. Çağıran boş koleksiyonla çağırmamalı.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.active FROM AppUser u WHERE u.id IN :ids")
+    List<Object[]> findNameRowsByIds(@Param("ids") Collection<Long> ids);
+
+    /**
      * 7/24 izleme ekibi takımlarının AKTİF üyeleri (2026-10-04, {@code NocOperatorService}) — fotoğraf kolonu ve EAGER takım
      * koleksiyonu YÜKLENMEZ (önbellek her ≤ 30 sn'de bir koşar). Üyelik {@code memberTeamIds} ile aynı: birincil takım VEYA
      * çoklu üyelik. Satır başına bir üyelik eşleşmesi: {@code [Long id, String username, String displayName,
