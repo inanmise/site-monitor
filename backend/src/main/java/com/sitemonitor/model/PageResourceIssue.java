@@ -11,8 +11,10 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Table(name = "page_resource_issues", indexes = {
-    @Index(name = "idx_pri_monitor_id", columnList = "monitor_id"),
+    // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+    // (idx_pri_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_pri_checked_at", columnList = "checked_at"),
+    // check_id için TEK dizin budur — birebir kopyası idx_pri_check (eski yama) 2026-11-06'da kaldırıldı.
     @Index(name = "idx_pri_check_id", columnList = "check_id")
 })
 @Data

@@ -1,5 +1,6 @@
 // Türkçe arayüz sözlüğü — i18n/index.jsx'ten mekanik olarak ayrıldı (2026-10-02, performans önerisi 22).
-// index.jsx bunu STATİK import eder: açılış paketinde, ilk boyamada eşzamanlı hazır (İngilizce sözlük inemezse yedek dil).
+// Ayrı (lazy) chunk (2026-11-06, performans): index.jsx bunu yalnız Türkçe gerektiğinde `import('./tr.js')` ile yükler —
+// açılış paketine girmez (varsayılan dil İngilizce; eskiden statik import'la her kullanıcı ~570 KB gzip indiriyordu).
 // Anahtar eklerken en.js sözlüğüne de aynı anahtarı ekleyin (i18n-parity.test.jsx).
 
 export const TR = {
@@ -18138,6 +18139,15 @@ export const TR = {
   // İngilizce sözlük ayrı (lazy) chunk — dil geçişi meşgul göstergesi + indirme hatası (2026-10-02, öneri 22)
   'nav.langLoading': 'Dil yükleniyor…',
   'lang.loadFailed': 'İngilizce dil dosyası yüklenemedi; arayüz Türkçe devam ediyor. Sayfayı yenileyip yeniden deneyin.',
+  // Türkçe sözlük de ayrı (lazy) chunk (2026-11-06, performans): çalışırken / açılışta TR inmezse arayüz İngilizce kalır;
+  // ikisi de inmezse sözlüksüz açılış hata ekranı (LanguageStatus.LanguageBootFailure — metinler i18n TR_BOOT/EN_BOOT'ta da).
+  'lang.loadFailedTr': 'Türkçe dil dosyası yüklenemedi; arayüz İngilizce devam ediyor. Sayfayı yenileyip yeniden deneyin.',
+  'lang.bootFailed.title': 'Arayüz dil dosyaları yüklenemedi',
+  'lang.bootFailed.body': 'Türkçe ve İngilizce dil dosyalarının ikisi de indirilemedi — bağlantı kesilmiş ya da yeni sürüm şu anda dağıtılıyor olabilir. Birkaç saniye bekleyip sayfayı yeniden yükleyin.',
+  'lang.bootReload': 'Yeniden yükle',
+  // Açılışta yavaş indirme (2026-11-06 inceleme ORTA-1): bekleme eşiği dolunca hata değil — açılış ekranında uyarı + düğme.
+  'lang.bootSlow.title': 'Dil dosyası beklenenden uzun sürüyor',
+  'lang.bootSlow.body': 'Bağlantı yavaş görünüyor; indirme sürüyor ve bitince uygulama kendiliğinden açılır. Beklemek istemezseniz sayfayı yeniden yükleyin.',
   // HTTP uçtan uca tanılama (2026-10-02) — components/http/diagnose/*. Bulgu gövdelerinde ADLI yer tutucular ({status},
   // {ms}, {route}…) — httpDiagnoseModel.interpolate doldurur; EN karşılığında aynı adlar aynı sayıda. Başlıklar yer
   // tutucusuz (geçmiş listesi parametresiz koddan başlık çizer).

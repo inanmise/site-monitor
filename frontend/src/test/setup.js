@@ -42,13 +42,17 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
 }
 
-// İngilizce sözlük 2026-10-02'den beri ayrı (lazy) bir chunk (performans önerisi 22). Testler — tıpkı
-// sözlüğü bir kez inmiş çalışan uygulama gibi — iki dili de eşzamanlı hazır bulur: varsayılan dil 'en'
-// olduğundan aksi halde her bileşen testi önce açılış ekranını görürdü. Yüklenmemiş-sözlük yolu (açılış
-// ekranı, çalışırken geçiş, indirme hatası) i18n-lazy.test.jsx'te ayrıca sınanır. Kayıt globalThis'te:
-// vi.resetModules() sonrası yeniden değerlendirilen i18n modülü de yüklenmiş sözlüğü görür.
-import { loadLanguage } from '../i18n/index.jsx'
-await loadLanguage('en')
+// Sözlüklerin İKİSİ DE ayrı (lazy) chunk (İngilizce 2026-10-02, öneri 22; Türkçe 2026-11-06, performans). Testler —
+// tıpkı sözlükleri bir kez inmiş çalışan uygulama gibi — iki dili de eşzamanlı hazır bulur: aksi halde her bileşen testi
+// önce açılış ekranını görürdü. Burada statik import serbest (kurulum üretim paketine girmez). Yüklenmemiş-sözlük yolu
+// (açılış ekranı, çalışırken geçiş, indirme hatası, öbür dile düşme, sözlüksüz hata ekranı) i18n-lazy.test.jsx'te ayrıca
+// sınanır. Kayıt globalThis'te (i18n/index.jsx DICTS): vi.resetModules() sonrası yeniden değerlendirilen i18n modülü de
+// yüklenmiş sözlükleri görür.
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
+const i18nDicts = (globalThis.__smI18nDicts ??= {})
+i18nDicts.tr = TR
+i18nDicts.en = EN
 
 // Testler arası URL izolasyonu: URL-sync'li sayfalar (useUrlQuerySync) paramları adres çubuğuna yazar;
 // bir dosyanın bıraktığı ?page=/&stat= sonraki dosyanın mount'unu etkilemesin.

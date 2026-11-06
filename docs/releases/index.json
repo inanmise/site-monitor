@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-06T10:41:05Z",
+  "generatedAt": "2026-11-06T13:52:39Z",
   "repo": "inanmise/site-monitor",
-  "count": 811,
+  "count": 812,
   "releases": [
+    {
+      "version": "20.186.3",
+      "tag": "v20.186.3",
+      "releasedAt": "2026-11-06T13:52:31Z",
+      "commit": "1b88a745529576fdb410bfdb94df1b2821636f48",
+      "prevVersion": "20.186.2",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 3,
+        "refactor": 0,
+        "docs": 3,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "1b88a745",
+          "subject": "index bakımı inceleme düzeltmeleri notları (CLAUDE.md)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "1e4cf9a0",
+          "subject": "indeks bakımı inceleme düzeltmeleri (bekçi, bütçe atlaması, açılış taraması)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "848d0a6d",
+          "subject": "yavaş sözlük indirmesi ve önizleme yarışı notları (CLAUDE.md)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c2292f6b",
+          "subject": "açılışta yavaş sözlük indirmesi hata sayılmaz; önizlemede son dil seçimi kazanır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "1264239b",
+          "subject": "Türkçe sözlük ve index bakımı notları (CLAUDE.md)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "233fe77c",
+          "subject": "indeks bakımı — gereksiz indeksler güvenle düşer, şişmiş indeksler gece yeniden kurulur"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "f0c1d90e",
+          "subject": "Türkçe sözlük açılış paketinden çıktı (ayrı tembel parça)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.186.2",
       "tag": "v20.186.2",

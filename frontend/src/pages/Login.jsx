@@ -50,7 +50,7 @@ const STATS_POLL_MS = 60_000
 
 export default function Login({ onLogin, sessionExpired = false, accountInactive = false, maintenanceEnded = false, usernamePrefixDenied = false }) {
   const t = useT()
-  // langPending: İngilizce sözlük (ayrı chunk) iniyor — dil düğmesi kısa süre meşgul görünür (2026-10-02, öneri 22)
+  // langPending: hedef dilin sözlüğü (ayrı chunk) iniyor — dil düğmesi kısa süre meşgul görünür (2026-10-02, öneri 22)
   const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
   // Branding (beyaz etiket): dolu değer varsa onu, boşsa i18n varsayılanını kullan (auth ÖNCESİ public).
   const { get: brand, branding } = useBranding()

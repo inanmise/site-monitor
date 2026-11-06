@@ -29,6 +29,21 @@ const staticPathRe = (name) => new RegExp('(^|/)' + escRe(name) + '(\\.jsx)?$')
 const dynamicPathRe = (name) => new RegExp('(^|/)' + escRe(name) + '\\.jsx$')
 
 describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme grafikleri', () => {
+  it('Dil sözlükleri (2026-11-06): tr.js ve en.js hiçbir üretim dosyasından statik içe aktarılmaz; yalnız i18n import() ile', () => {
+    // Statik bir içe aktarma (ya da i18n/index.jsx'ten statik TR / EN dışa aktarımı) sözlüğü açılış paketine geri sokar:
+    // ölçüm (vite build) — açılış 906 KB gzip, Türkçe sözlük tek başına ~570 KB gzip (varsayılan dil İngilizce).
+    const dictRe = /(^|\/)i18n\/(tr|en)(\.js)?$|^\.\/(tr|en)(\.js)?$/
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => dictRe.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    // Sözlük dosyalarının kendisi başlık yorumunda kendi import() çağrısını anar — kapsam dışı
+    const dictImporters = FILES.filter(({ rel: r }) => !/^i18n\/(tr|en)\.js$/.test(r))
+      .filter(({ src }) => dynamicImports(src).some((s) => dictRe.test(s))).map((x) => x.rel)
+    expect(dictImporters).toEqual(['i18n/index.jsx'])
+    expect(dynamicImports(read('i18n/index.jsx')).filter((s) => dictRe.test(s)).sort()).toEqual(['./en.js', './tr.js'])
+    // Dışa aktarım yolu da kapalı: `export { TR }` / `export { EN }` ya da `export * from './tr.js'` yok
+    expect(read('i18n/index.jsx')).not.toMatch(/export\s*\{[^}]*\b(TR|EN)\b[^}]*\}|export\s*\*\s*from\s*['"]\.\/(tr|en)/)
+  })
+
   it('Markdown editörü (@uiw/react-md-editor) yalnız mdEditor/ parçalarında; onlar yalnız import() ile yüklenir', () => {
     const users = FILES.filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => s.startsWith('@uiw/react-md-editor')))
       .map((x) => x.rel).sort()

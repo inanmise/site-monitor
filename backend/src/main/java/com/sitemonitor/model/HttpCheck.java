@@ -7,7 +7,8 @@ import lombok.NoArgsConstructor;
 /** Bir HTTP uptime kontrolünün sonucu (geçmiş). */
 @Entity
 @Table(name = "http_checks", indexes = {
-    @Index(name = "idx_hc_monitor_id", columnList = "monitor_id"),
+    // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+    // (idx_hc_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_hc_checked_at", columnList = "checked_at")
 })
 @Data

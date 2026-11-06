@@ -7,7 +7,8 @@ import lombok.NoArgsConstructor;
 /** Bir domain süre-bitişi kontrolünün sonucu (geçmiş + trend + değişiklik tespiti bunun üstünden çalışır). */
 @Entity
 @Table(name = "domain_checks", indexes = {
-    @Index(name = "idx_dc_monitor_id", columnList = "monitor_id"),
+    // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+    // (idx_dc_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_dc_checked_at", columnList = "checked_at")
 })
 @Data
