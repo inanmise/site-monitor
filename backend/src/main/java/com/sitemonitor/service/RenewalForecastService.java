@@ -58,6 +58,30 @@ public class RenewalForecastService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.TeamRepository teamRepo;
 
+    /**
+     * Yenileme geçmişinin ham grupları (alan × parmak izi) için bellek ömrü (ms) — performans 2026-11-06 (PF1 #4). Sorgu
+     * {@code certificate_checks}'i 490 günlük pencerede (pratikte tablonun tamamı) topluyor (yerel ≈ 330 ms sıralı tarama),
+     * Vade Takvimi her açılışta çağırıyordu. Gruplar KURUM GENELİ saklanır (kullanıcıya göre değil), istenen alanlar her
+     * çağrıda bellekte seçilir. Sertifika önbellekleri boşaltılınca (tarama sonu / envanter yazımı — {@code CachesEvictedEvent},
+     * öteki pod'un yayını da) bellek düşer; olay gelmezse (ör. bayat tarama boşaltmaz) en çok bu süre bayat kalır. 0 → kapalı
+     * (elle kurulan birim testleri).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.forecast.renewals-cache-ms:900000}")
+    long renewalsCacheMs;
+
+    /** Bellekteki gruplar: okunduğu an (ms) + alan → [fingerprint, first_seen, not_after] (first_seen'e göre SIRALI, değişmez). */
+    private record RenewalGroups(long atMs, Map<String, List<Object[]>> byDomain) {}
+    private volatile RenewalGroups renewalGroupsCache;
+    /** Boşaltma sayacı — okuma sürerken gelen boşaltmadan SONRA eski sonucun yazılmasını önler. */
+    private final java.util.concurrent.atomic.AtomicLong renewalGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Sertifika önbellekleri boşaltıldı (bu pod ya da öteki pod'un yayını) → yenileme grupları yeniden okunur. */
+    @org.springframework.context.event.EventListener
+    public void onCertificateCachesEvicted(CertificateService.CachesEvictedEvent event) {
+        renewalGeneration.incrementAndGet();
+        renewalGroupsCache = null;
+    }
+
     /** Tier → lead gün. Ayar boş/0 ise genel varsayılana (o da boşsa 14) düşer. */
     public Map<String, Integer> leadDays() {
         int def = Math.max(0, appSettings.getInt(KEY_LEAD_DEFAULT, 14));
@@ -253,20 +277,12 @@ public class RenewalForecastService {
         Map<String, int[]> months = new TreeMap<>();
         if (!domains.isEmpty()) {
             try {
-                String since = ISO.format(Instant.now().minus(RENEWAL_WINDOW_DAYS + 400, ChronoUnit.DAYS));   // önceki sertifika da görünsün
                 Set<String> wanted = new HashSet<>(domains);
-                Map<String, List<Object[]>> byDomain = new HashMap<>();
-                jdbc.query("SELECT domain, fingerprint, MIN(checked_at) AS first_seen, MAX(not_after) AS not_after "
-                        + "FROM certificate_checks WHERE checked_at >= ? AND fingerprint IS NOT NULL AND fingerprint <> '' "
-                        + "GROUP BY domain, fingerprint", rs -> {
-                    String dom = rs.getString("domain");
-                    if (!wanted.contains(dom)) return;
-                    byDomain.computeIfAbsent(dom, k -> new ArrayList<>()).add(new Object[]{rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")});
-                }, since);
+                Map<String, List<Object[]>> allGroups = renewalGroups();
                 String windowStart = ISO.format(Instant.now().minus(RENEWAL_WINDOW_DAYS, ChronoUnit.DAYS));
-                for (Map.Entry<String, List<Object[]>> e : byDomain.entrySet()) {
-                    List<Object[]> groups = e.getValue();
-                    groups.sort(Comparator.comparing(g -> String.valueOf(g[1])));
+                for (Map.Entry<String, List<Object[]>> e : allGroups.entrySet()) {
+                    if (!wanted.contains(e.getKey())) continue;
+                    List<Object[]> groups = e.getValue();   // first_seen'e göre sıralı, PAYLAŞILAN — değiştirilmez
                     CertificateInventory i = inv.get(e.getKey());
                     int leadD = leadFor(i != null ? i.getTier() : null, lead);
                     for (int k = 1; k < groups.size(); k++) {
@@ -296,5 +312,36 @@ public class RenewalForecastService {
         for (Map.Entry<String, int[]> e : months.entrySet()) ms.add(Map.of("month", e.getKey(), "on_time", e.getValue()[0], "late", e.getValue()[1]));
         out.put("months", ms);
         return out;
+    }
+
+    /**
+     * Kurum geneli (alan × parmak izi) grupları — bellekte {@link #renewalsCacheMs} kadar (ya da boşaltmaya dek). Her alanın
+     * listesi {@code first_seen}'e göre sıralı ve DEĞİŞTİRİLEMEZ (çağrılar paylaşır). Okuma hatası belleğe yazılmaz.
+     */
+    private Map<String, List<Object[]>> renewalGroups() {
+        long now = System.currentTimeMillis();
+        RenewalGroups cached = renewalGroupsCache;
+        if (renewalsCacheMs > 0 && cached != null && now >= cached.atMs() && now - cached.atMs() < renewalsCacheMs) {
+            return cached.byDomain();
+        }
+        long generation = renewalGeneration.get();
+        String since = ISO.format(Instant.now().minus(RENEWAL_WINDOW_DAYS + 400, ChronoUnit.DAYS));   // önceki sertifika da görünsün
+        Map<String, List<Object[]>> byDomain = new HashMap<>();
+        jdbc.query("SELECT domain, fingerprint, MIN(checked_at) AS first_seen, MAX(not_after) AS not_after "
+                + "FROM certificate_checks WHERE checked_at >= ? AND fingerprint IS NOT NULL AND fingerprint <> '' "
+                + "GROUP BY domain, fingerprint", rs -> {
+            String dom = rs.getString("domain");
+            if (dom == null) return;
+            byDomain.computeIfAbsent(dom, k -> new ArrayList<>()).add(new Object[]{rs.getString("fingerprint"), rs.getString("first_seen"), rs.getString("not_after")});
+        }, since);
+        Map<String, List<Object[]>> sorted = new HashMap<>();
+        for (Map.Entry<String, List<Object[]>> e : byDomain.entrySet()) {
+            List<Object[]> groups = e.getValue();
+            groups.sort(Comparator.comparing(g -> String.valueOf(g[1])));
+            sorted.put(e.getKey(), java.util.Collections.unmodifiableList(groups));
+        }
+        Map<String, List<Object[]>> result = java.util.Collections.unmodifiableMap(sorted);
+        if (renewalsCacheMs > 0 && renewalGeneration.get() == generation) renewalGroupsCache = new RenewalGroups(now, result);
+        return result;
     }
 }

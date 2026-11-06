@@ -56,6 +56,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -105,6 +108,14 @@ class TodayMonitorInsightsServiceTest {
         DomainCheck c = new DomainCheck(); c.setMonitorId(monitorId); c.setDaysRemaining(days); c.setExpiryDate("2026-10-01"); c.setRegistrar("Registrar X"); return c;
     }
 
+    /** Bildirim günlüğü varlıkları → findStatusRowsSince satırları (gövde YOK). */
+    static List<Object[]> statusRows(NotificationLog... logs) {
+        List<Object[]> out = new java.util.ArrayList<>();
+        for (NotificationLog n : logs)
+            out.add(new Object[]{n.getAlertEventId(), n.getSentAt(), n.getRecipientEmail(), n.getSubject(), n.getEmailStatus(), n.getWebhookStatus()});
+        return out;
+    }
+
     @BeforeEach
     void setUp() {
         svc = new TodayMonitorInsightsService(activityRepo, inventoryRepo, notificationLogRepo, pushDeliveryRepo, alertEventRepo,
@@ -116,10 +127,10 @@ class TodayMonitorInsightsServiceTest {
         when(activityRepo.monitorsWithFailureSince(anyString())).thenReturn(List.of());
         when(activityRepo.statusSequence(anyString(), anyList(), anyString())).thenReturn(List.of());
         when(activityRepo.avgResponseByMonitor(anyString(), anyString())).thenReturn(List.of());
-        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.of());
+        when(activityRepo.lastCheckPerMonitor(anyString())).thenReturn(List.of());
         when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
-        when(notificationLogRepo.findAllSince(anyString())).thenReturn(List.of());
+        when(notificationLogRepo.findStatusRowsSince(anyString())).thenReturn(List.of());
         when(pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc(anyString(), anyString())).thenReturn(List.of());
         when(latestCheckRepo.findAll()).thenReturn(List.of());
         when(exceptionRepo.findAll()).thenReturn(List.of());
@@ -138,7 +149,8 @@ class TodayMonitorInsightsServiceTest {
         NotificationLog okMail = new NotificationLog(); okMail.setAlertEventId(1L); okMail.setSentAt(at(60)); okMail.setEmailStatus("SENT"); okMail.setWebhookStatus("SKIPPED");
         NotificationLog badMail = new NotificationLog(); badMail.setAlertEventId(1L); badMail.setSentAt(at(30)); badMail.setEmailStatus("FAILED: 550 mailbox unavailable"); badMail.setWebhookStatus("SENT"); badMail.setRecipientEmail("ops@example.com"); badMail.setSubject("[Site Monitor] down");
         NotificationLog badHook = new NotificationLog(); badHook.setAlertEventId(2L); badHook.setSentAt(at(10)); badHook.setEmailStatus("SKIPPED_DISABLED"); badHook.setWebhookStatus("FAILED:connect timed out"); badHook.setRecipientEmail("hook");
-        when(notificationLogRepo.findAllSince(anyString())).thenReturn(List.of(okMail, badMail, badHook));
+        // 2026-11-06 (performans PF2 #6): gövdesiz satırlar — [alertEventId, sentAt, recipientEmail, subject, emailStatus, webhookStatus]
+        when(notificationLogRepo.findStatusRowsSince(anyString())).thenReturn(statusRows(okMail, badMail, badHook));
         AlertEvent e1 = new AlertEvent(); e1.setId(1L); e1.setDomain("a.example.com"); e1.setTeamId(1L); e1.setAlertType("HTTP_DOWN");
         AlertEvent e2 = new AlertEvent(); e2.setId(2L); e2.setDomain("b.example.com"); e2.setTeamId(2L); e2.setAlertType("PORT_DOWN");
         when(alertEventRepo.findAllById(any())).thenReturn(List.of(e1, e2));
@@ -256,6 +268,39 @@ class TodayMonitorInsightsServiceTest {
                 .containsEntry("ratio", 2.3).containsEntry("samples", 20);
     }
 
+    @Test
+    @DisplayName("Performans 2026-11-06 (PF1 #5): yavaşlayan kartının TABANI (önceki 6 gün) belleklenir — süre içinde yeniden okunmaz, "
+            + "bugün ortalaması her dolumda okunur; süre dolunca / saat geri gidince yeniden; kapalıyken her dolum okur")
+    void slow_baselineIsCachedTodayIsNot() {
+        org.mockito.ArgumentMatcher<String> todayTo = a -> a.startsWith("9999");
+        org.mockito.ArgumentMatcher<String> baseTo = a -> !a.startsWith("9999");
+        svc.snapshot(NOW);
+        svc.snapshot(NOW);
+        verify(activityRepo, times(2)).avgResponseByMonitor(anyString(), org.mockito.ArgumentMatchers.argThat(baseTo));   // kapalı (0)
+
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "baselineCacheMs", 600_000L);
+        org.mockito.Mockito.clearInvocations(activityRepo);
+        svc.snapshot(NOW);
+        svc.snapshot(NOW.plus(Duration.ofMinutes(5)));
+        verify(activityRepo, times(1)).avgResponseByMonitor(anyString(), org.mockito.ArgumentMatchers.argThat(baseTo));
+        verify(activityRepo, times(2)).avgResponseByMonitor(anyString(), org.mockito.ArgumentMatchers.argThat(todayTo));
+        svc.snapshot(NOW.plus(Duration.ofMinutes(11)));                     // süre doldu
+        verify(activityRepo, times(2)).avgResponseByMonitor(anyString(), org.mockito.ArgumentMatchers.argThat(baseTo));
+        svc.snapshot(NOW);                                                  // saat geri gitti → yeniden
+        verify(activityRepo, times(3)).avgResponseByMonitor(anyString(), org.mockito.ArgumentMatchers.argThat(baseTo));
+    }
+
+    @Test
+    @DisplayName("Performans 2026-11-06 (PF1 #5 / PF2 #6): son kontrol izleme başına MAX sorgusundan, bildirimler gövdesiz satırlardan okunur — "
+            + "eski gruplu / tam varlık sorguları çağrılmaz")
+    void usesNarrowQueries() {
+        svc.snapshot(NOW);
+        verify(activityRepo).lastCheckPerMonitor(anyString());
+        verify(activityRepo, never()).lastCheckByMonitor(anyString());
+        verify(notificationLogRepo).findStatusRowsSince(anyString());
+        verify(notificationLogRepo, never()).findAllSince(anyString());
+    }
+
     // ── Bayat ───────────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -270,7 +315,7 @@ class TodayMonitorInsightsServiceTest {
                 http(8, "ancient", true, 60, at(30 * 1440)), // hiç kontrol yok, 30 gün önce yaratıldı → "7+ gündür yok" (yaş pencereyle sınırlı, never DEĞİL)
                 http(6, "paused", false, 60, at(10_000)),  // duraklatılmış → bayat değil, paused listesinde
                 http(7, "paused2", false, 60, at(10_000))));
-        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
+        when(activityRepo.lastCheckPerMonitor(anyString())).thenReturn(List.<Object[]>of(
                 new Object[]{"HTTP", 1L, at(30)}, new Object[]{"HTTP", 2L, at(3)}, new Object[]{"HTTP", 3L, at(50)}));
 
         TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);

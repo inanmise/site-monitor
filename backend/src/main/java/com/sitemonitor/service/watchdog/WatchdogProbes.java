@@ -148,6 +148,18 @@ public class WatchdogProbes {
     @Value("${site.monitor.scheduler.sweep-leader-ttl-ms:180000}")
     private long leaseTtlMs = 180_000;
 
+    /**
+     * Değerlendirme aralığı (ms) — İzleme Panosu hesabının kabul edilen en eski yaşı bundan türer (performans 2026-11-06,
+     * PF3 #1): {@code aralık − }{@link #OVERVIEW_AGE_MARGIN_MS}. Pano belleği (30 sn) aralıktan (60 sn) kısa olduğu için her tur
+     * tam hesap yapılıyordu; artık son {@code aralık − 5 sn} içindeki (arayüz / aktarıcı) hesabı okunur. Pay, ardışık iki turun
+     * AYNI hesabı okumasını önler — "art arda N sonuç" doğrulaması bağımsız ölçümlerle kalır.
+     */
+    @Value("${site.monitor.watchdog.interval-ms:60000}")
+    long intervalMs = 60_000;
+
+    /** {@link #intervalMs}'ten düşülen pay (ms). */
+    static final long OVERVIEW_AGE_MARGIN_MS = 5_000;
+
     /** Sistem metrikleri örnekleyicisi açık mı (kapalıysa pod örneği yok → saat farkı uygulanmaz, havuz yalnız bilgi). */
     @Value("${site.monitor.metrics.system.enabled:true}")
     boolean samplesEnabled = true;
@@ -210,7 +222,7 @@ public class WatchdogProbes {
 
     Probe monitorSweep() {
         if (overview == null) return Probe.na(WatchdogCheck.MONITOR_SWEEP, "no_overview");
-        List<Map<String, Object>> types = overview.orgTypes();
+        List<Map<String, Object>> types = overview.orgTypes(Math.max(0L, intervalMs - OVERVIEW_AGE_MARGIN_MS));
         if (types == null) return new Probe(WatchdogCheck.MONITOR_SWEEP, Result.UNKNOWN, null, Map.of("reason", "overview_unavailable"));
         int ratio = WatchdogSettings.staleRatio(settings);
         List<Map<String, Object>> late = new ArrayList<>();

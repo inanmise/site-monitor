@@ -154,4 +154,48 @@ class RenewalForecastServiceTest {
         assertThat(months.get(0).get("on_time")).isEqualTo(1);
         assertThat(months.get(0).get("late")).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("Performans 2026-11-06 (PF1 #4): yenileme grupları KURUM GENELİ belleklenir — farklı alan kümeleri aynı okumadan "
+            + "süzülür; sertifika önbellekleri boşaltılınca yeniden okunur; kapalıyken her çağrı okur")
+    void renewalGroupsAreCachedAndEvicted() {
+        String recent = ISO.format(Instant.now().minus(10, ChronoUnit.DAYS));
+        String oldPrev = ISO.format(Instant.now().minus(300, ChronoUnit.DAYS));
+        String prevNotAfter = ISO.format(Instant.now().plus(40, ChronoUnit.DAYS));
+        doAnswer(inv -> {
+            RowCallbackHandler h = inv.getArgument(1);
+            ResultSet rs = mock(ResultSet.class);
+            String[][] rows = {
+                {"a.example.com", "F2", recent, "2027-01-01T00:00:00"}, {"a.example.com", "F1", oldPrev, prevNotAfter},   // sırasız gelir
+                {"b.example.com", "G1", oldPrev, prevNotAfter}, {"b.example.com", "G2", recent, "2027-01-01T00:00:00"},
+            };
+            for (String[] r : rows) {
+                when(rs.getString("domain")).thenReturn(r[0]); when(rs.getString("fingerprint")).thenReturn(r[1]);
+                when(rs.getString("first_seen")).thenReturn(r[2]); when(rs.getString("not_after")).thenReturn(r[3]);
+                h.processRow(rs);
+            }
+            return null;
+        }).when(jdbc).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "renewalsCacheMs", 900_000L);
+
+        Map<String, Object> a = service.renewals(List.of("a.example.com"), Map.of(), Map.of("default", 14));
+        Map<String, Object> b = service.renewals(List.of("b.example.com"), Map.of(), Map.of("default", 14));
+        Map<String, Object> ab = service.renewals(List.of("a.example.com", "b.example.com"), Map.of(), Map.of("default", 14));
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.times(1)).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> evA = (List<Map<String, Object>>) a.get("events");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> evB = (List<Map<String, Object>>) b.get("events");
+        assertThat(evA).extracting(e -> e.get("domain")).containsExactly("a.example.com");   // b'nin geçişi a'ya sızmaz
+        assertThat(evB).extracting(e -> e.get("domain")).containsExactly("b.example.com");
+        assertThat(evA.get(0).get("prev_not_after")).isEqualTo(prevNotAfter);                // first_seen'e göre sıralandı
+        assertThat(ab.get("on_time")).isEqualTo(2);
+
+        service.onCertificateCachesEvicted(new CertificateService.CachesEvictedEvent());
+        service.renewals(List.of("a.example.com"), Map.of(), Map.of("default", 14));
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.times(2)).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "renewalsCacheMs", 0L);
+        service.renewals(List.of("a.example.com"), Map.of(), Map.of("default", 14));
+        service.renewals(List.of("a.example.com"), Map.of(), Map.of("default", 14));
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.times(4)).query(anyString(), any(RowCallbackHandler.class), any(Object[].class));
+    }
 }

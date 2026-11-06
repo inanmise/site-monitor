@@ -1,7 +1,6 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.AlertEvent;
-import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.WeakAlgorithmException;
 import com.sitemonitor.model.WeeklyReport;
@@ -58,6 +57,21 @@ public class InboxService {
     // yöneticiye. Aynı alan-enjeksiyonu deseni (7-arg yapıcı testte olduğu gibi kalır).
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.IssueReportCommentRepository issueCommentRepo;
+
+    /**
+     * Kurum geneli ham verinin bellek penceresi (ms) — performans 2026-11-06 (PF2 #1). Zil her kullanıcıda dakikada bir
+     * yoklanıyor; her çağrı envanteri, takımları, TÜM açık alarmları, son 24 saatte çözülenleri, bakım pencerelerini,
+     * istisnaları ve izleme tablolarını okuyordu (7–17 sorgu). Artık bu KULLANICIDAN BAĞIMSIZ kısım ({@link OrgInbox}) pod
+     * başına en çok bu kadar paylaşılır; kapsam süzgeci (görüş takımı / görünür envanter) HER çağrıda bellekte uygulanır —
+     * kullanıcılar arası sızıntı yok. Zaman kesimleri (24 sa çözülen penceresi, bakımın "şimdi aktif / 24 sa içinde",
+     * dolmuş istisna günü) de çağrı anında hesaplanır. Bir bloğu okunamayan görüntü saklanmaz (bir sonraki çağrı yeniden
+     * okur). 0 → kapalı (elle kurulan birim testlerinin varsayılanı: her çağrı okur).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.inbox.cache-ms:15000}")
+    long cacheMs;
+
+    /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. */
+    private com.sitemonitor.util.TtlMemo<OrgInbox> orgMemo = new com.sitemonitor.util.TtlMemo<>(4);
     static final int HISTORY_DAYS = 30;
     static final int HISTORY_SIZE_MAX = 100;
     /** Sorun bildirimi haberleri: son {@value} gün, en çok {@link #ISSUE_ITEMS_MAX} satır. */
@@ -179,16 +193,32 @@ public class InboxService {
      * yalnız SY sorulurdu — UG takımı kendine postalanan sertifika alarmını bildirim kutusunda göremiyordu.
      */
     private Set<String> visibleDomains(Predicate<Long> canViewTeam) {
+        return visibleDomains(canViewTeam, activeInventory());
+    }
+
+    /**
+     * Aktif envanter (alan adı, SY, UG) — dar sütunlar (performans 2026-11-06: tam varlık listesi gerekmiyordu). Okunamazsa
+     * {@code null} (çağıran boş küme sayar; kurum görüntüsü saklanmaz).
+     */
+    private List<Object[]> activeInventory() {
+        try { return inventoryRepo.findActiveDomainTeams(); }
+        catch (Exception e) { log.debug("inbox: envanter okunamadı: {}", e.toString()); return null; }
+    }
+
+    /** SY ya da UG takımı görülebilen AKTİF envanter alanları — satırlar {@code [domain, teamId, ugTeamId]}. */
+    private static Set<String> visibleDomains(Predicate<Long> canViewTeam, List<Object[]> inventory) {
         Set<String> domains = new HashSet<>();
-        try {
-            for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-                if (canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()))) {
-                    domains.add(i.getDomain());
-                }
-            }
-        } catch (Exception e) { log.debug("inbox: envanter okunamadı: {}", e.toString()); }
+        if (inventory == null) return domains;
+        for (Object[] r : inventory) {
+            if (r == null || r.length == 0) continue;
+            Long team = r.length > 1 ? asLong(r[1]) : null;
+            Long ug = r.length > 2 ? asLong(r[2]) : null;
+            if (canViewTeam.test(team) || (ug != null && canViewTeam.test(ug))) domains.add((String) r[0]);
+        }
         return domains;
     }
+
+    private static Long asLong(Object o) { return o instanceof Number n ? n.longValue() : null; }
 
     /**
      * Bildirim kutusu + sorun bildirimi haberleri (2026-09-26). {@code username}: bildirenin kendi raporlarına gelen
@@ -265,59 +295,47 @@ public class InboxService {
     public List<Item> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds) {
         List<Item> out = new ArrayList<>();
         Instant now = Instant.now();
-        Set<String> domains = visibleDomains(canViewTeam);
+        OrgInbox org = orgInbox(now);
+        Set<String> domains = visibleDomains(canViewTeam, org.inventory());
+        Map<Long, String> teamNames = org.teamNames();
 
-        Map<Long, String> teamNames = teamNames();
-        List<AlertEvent> alertRows = new ArrayList<>();
-        // Açık alarmlar
-        try {
-            for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-                if (!visible(e, canViewTeam, domains)) continue;
-                // Hedef: Alarm Geçmişi (alerthistory) — "Uyarılar" SERTİFİKA uyarıları sayfasıdır ve
-                // alarm olayını tanımaz; bildirim oraya gidince kullanıcı tıkladığı alarmı bulamıyordu
-                // (2026-09-16 kullanıcı bildirimi). Artık: açık sekmesi + tipe süzme + olay kimliği
-                // (arayüz grubu açar, kartı vurgular ve kaydırır).
-                alertRows.add(e);
-            }
-        } catch (Exception ex) { log.debug("inbox: açık alarmlar düştü: {}", ex.toString()); }
-        List<AlertEvent> resolvedRows = new ArrayList<>();
-        // Son 24 saatte çözülenler
-        try {
+        // Açık alarmlar — hedef: Alarm Geçmişi (alerthistory). "Uyarılar" SERTİFİKA uyarıları sayfasıdır ve alarm olayını
+        // tanımaz; bildirim oraya gidince kullanıcı tıkladığı alarmı bulamıyordu (2026-09-16 kullanıcı bildirimi). Artık:
+        // açık sekmesi + tipe süzme + olay kimliği (arayüz grubu açar, kartı vurgular ve kaydırır).
+        if (org.open() != null) {
+            for (AlertRow r : org.open()) if (visible(r.teamId(), r.domain(), canViewTeam, domains)) out.add(r.item());
+        }
+        // Son 24 saatte çözülenler — pencere ÇAĞRI anından (bellekteki liste daha geniş bir kesimle okunmuş olabilir).
+        if (org.resolved() != null) {
             String since = ISO.format(now.minus(24, ChronoUnit.HOURS));
-            // Yalnız son 24 saatte çözülenler DB'de süzülür (2026-10-09); aşağıdaki denetim aynen kalır (savunma).
-            // Açılış alt sınırı YOK (2026-10-22, DATA-11): 30 günden uzun açık kalıp bugün çözülen alarm da "çözüldü" haberidir.
-            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
-                if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
-                if (!visible(e, canViewTeam, domains)) continue;
-                resolvedRows.add(e);
+            for (AlertRow r : org.resolved()) {
+                if (r.resolvedAt() == null || r.resolvedAt().compareTo(since) < 0) continue;
+                if (visible(r.teamId(), r.domain(), canViewTeam, domains)) out.add(r.item());
             }
-        } catch (Exception ex) { log.debug("inbox: çözülenler düştü: {}", ex.toString()); }
-        // Takım adı + izleme bağlantısı TEK geçişte (2026-09-20)
-        List<AlertEvent> all = new ArrayList<>(alertRows); all.addAll(resolvedRows);
-        Map<Long, MonitorRefResolver.Ref> refs = monitorRefs(all);
-        for (AlertEvent e : alertRows) out.add(alertItem(e, false, teamNames, refs));
-        for (AlertEvent e : resolvedRows) out.add(alertItem(e, true, teamNames, refs));
+        }
 
-        // Bakım pencereleri: aktif ya da 24 saat içinde başlayacak
-        try {
-            Instant horizon = now.plus(24, ChronoUnit.HOURS);
-            for (MaintenanceWindow w : maintenanceRepo.findByActiveTrue()) {
-                if (w.getTeamId() != null && !canViewTeam.test(w.getTeamId())) continue;
-                if (maintenanceService.isActiveAt(w, now)) {
-                    out.add(new Item("maint:" + w.getId() + ":active", "maintenance_active", "INFO", w.getName(), null, w.getStartAt(), "maintenance", Map.of("window", w.getId()))
-                            .withTeam(w.getTeamId(), w.getTeamId() != null ? teamNames.get(w.getTeamId()) : null));
-                    continue;
+        // Bakım pencereleri: aktif ya da 24 saat içinde başlayacak (zaman kesimi çağrı anında)
+        if (org.windows() != null) {
+            try {
+                Instant horizon = now.plus(24, ChronoUnit.HOURS);
+                for (MaintenanceWindow w : org.windows()) {
+                    if (w.getTeamId() != null && !canViewTeam.test(w.getTeamId())) continue;
+                    if (maintenanceService.isActiveAt(w, now)) {
+                        out.add(new Item("maint:" + w.getId() + ":active", "maintenance_active", "INFO", w.getName(), null, w.getStartAt(), "maintenance", Map.of("window", w.getId()))
+                                .withTeam(w.getTeamId(), w.getTeamId() != null ? teamNames.get(w.getTeamId()) : null));
+                        continue;
+                    }
+                    String next = maintenanceService.nextOccurrence(w, now);
+                    if (next == null) continue;
+                    Instant n = Instant.parse(next.endsWith("Z") ? next : next + "Z");
+                    if (n.isBefore(horizon))
+                        out.add(new Item("maint:" + w.getId() + ":" + next, "maintenance_soon", "INFO", w.getName(), null, next, "maintenance", Map.of("window", w.getId()))
+                                .withTeam(w.getTeamId(), w.getTeamId() != null ? teamNames.get(w.getTeamId()) : null));
                 }
-                String next = maintenanceService.nextOccurrence(w, now);
-                if (next == null) continue;
-                Instant n = Instant.parse(next.endsWith("Z") ? next : next + "Z");
-                if (n.isBefore(horizon))
-                    out.add(new Item("maint:" + w.getId() + ":" + next, "maintenance_soon", "INFO", w.getName(), null, next, "maintenance", Map.of("window", w.getId()))
-                            .withTeam(w.getTeamId(), w.getTeamId() != null ? teamNames.get(w.getTeamId()) : null));
-            }
-        } catch (Exception ex) { log.debug("inbox: bakım pencereleri düştü: {}", ex.toString()); }
+            } catch (Exception ex) { log.debug("inbox: bakım pencereleri düştü: {}", ex.toString()); }
+        }
 
-        // Haftalık rapor: bugün son giriş günü ve kendi takımının raporu eksikse
+        // Haftalık rapor: bugün son giriş günü ve kendi takımının raporu eksikse (kullanıcıya özgü — bellekte DEĞİL)
         try {
             WeeklyReportDeadline d = WeeklyReportDeadline.resolve(appSettings);
             LocalDate today = LocalDate.now(IST);
@@ -334,14 +352,14 @@ public class InboxService {
             }
         } catch (Exception ex) { log.debug("inbox: haftalık rapor düştü: {}", ex.toString()); }
 
-        // Süresi dolan istisnalar
-        try {
+        // Süresi dolan istisnalar (gün kesimi çağrı anında)
+        if (org.exceptions() != null) {
             String today = LocalDate.now(IST).toString();
-            for (WeakAlgorithmException ex : exceptionRepo.findAll()) {
+            for (WeakAlgorithmException ex : org.exceptions()) {
                 if (ex.getDomain() == null || !domains.contains(ex.getDomain()) || ex.getUntil() == null || ex.getUntil().compareTo(today) >= 0) continue;
                 out.add(new Item("exception:" + ex.getDomain() + ":" + ex.getUntil(), "exception_expired", "WARNING", ex.getDomain(), ex.getReason(), ex.getUntil() + "T00:00:00", "weakalgo", Map.of()));
             }
-        } catch (Exception ex) { log.debug("inbox: istisnalar düştü: {}", ex.toString()); }
+        }
 
         out.sort((a, b) -> {
             int c = Integer.compare(rank(b), rank(a));
@@ -349,6 +367,79 @@ public class InboxService {
             return String.valueOf(b.at()).compareTo(String.valueOf(a.at()));
         });
         return out.size() > MAX_ITEMS ? out.subList(0, MAX_ITEMS) : out;
+    }
+
+    // ── Kurum geneli ham veri (performans 2026-11-06, PF2 #1) ─────────────────────────────────────────────────────────
+
+    /** Bir alarmın KULLANICIDAN BAĞIMSIZ satırı (takım adı + izleme bağlantısı dahil) ve görünürlük ipuçları. */
+    record AlertRow(Item item, Long teamId, String domain, String resolvedAt) {}
+
+    /**
+     * Kurum geneli bildirim kutusu girdileri — hiçbiri kullanıcıya göre süzülmemiş. {@code null} blok = okunamadı (o blok
+     * listede yok, eski davranış: her blok kendi try/catch'inde). {@code complete} değilse görüntü saklanmaz.
+     */
+    record OrgInbox(List<Object[]> inventory, Map<Long, String> teamNames, List<AlertRow> open, List<AlertRow> resolved,
+                    List<MaintenanceWindow> windows, List<WeakAlgorithmException> exceptions, boolean complete) {}
+
+    private OrgInbox orgInbox(Instant now) {
+        return orgMemo.get("org", cacheMs, false, () -> loadOrgInbox(now), o -> o.complete() ? Long.MAX_VALUE : 0L);
+    }
+
+    /** Tek seferlik kurum okuması — bloklar bağımsız düşer (eski davranış). */
+    OrgInbox loadOrgInbox(Instant now) {
+        boolean complete = true;
+        List<Object[]> inventory = activeInventory();
+        if (inventory == null) complete = false;
+        Map<Long, String> teamNames = new HashMap<>();
+        if (teamRepo != null) {
+            try { for (Team t : teamRepo.findAll()) if (t.getId() != null) teamNames.put(t.getId(), t.getName()); }
+            catch (Exception e) { log.debug("inbox: takımlar okunamadı: {}", e.toString()); complete = false; }
+        }
+        List<AlertEvent> openEvents = null;
+        try { openEvents = alertEventRepo.findAllOpenOrderBySeverity(); }
+        catch (Exception ex) { log.debug("inbox: açık alarmlar düştü: {}", ex.toString()); complete = false; }
+        List<AlertEvent> resolvedEvents = null;
+        try {
+            String since = ISO.format(now.minus(24, ChronoUnit.HOURS));
+            // Yalnız son 24 saatte çözülenler DB'de süzülür (2026-10-09); açılış alt sınırı YOK (2026-10-22, DATA-11): 30 günden
+            // uzun açık kalıp bugün çözülen alarm da "çözüldü" haberidir. Kesin pencere çağrıda yeniden uygulanır.
+            List<AlertEvent> rows = new ArrayList<>();
+            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
+                if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
+                rows.add(e);
+            }
+            resolvedEvents = rows;
+        } catch (Exception ex) { log.debug("inbox: çözülenler düştü: {}", ex.toString()); complete = false; }
+        // Takım adı + izleme bağlantısı TEK geçişte (2026-09-20)
+        List<AlertEvent> all = new ArrayList<>();
+        if (openEvents != null) all.addAll(openEvents);
+        if (resolvedEvents != null) all.addAll(resolvedEvents);
+        Map<Long, MonitorRefResolver.Ref> refs = Map.of();
+        if (monitorRefResolver != null && !all.isEmpty()) {
+            try { refs = monitorRefResolver.resolve(all); }
+            catch (Exception e) { log.debug("inbox: izleme çözümü düştü: {}", e.toString()); complete = false; }
+        }
+        List<AlertRow> open = null;
+        if (openEvents != null) {
+            open = new ArrayList<>(openEvents.size());
+            for (AlertEvent e : openEvents) open.add(new AlertRow(alertItem(e, false, teamNames, refs), e.getTeamId(), e.getDomain(), null));
+        }
+        List<AlertRow> resolved = null;
+        if (resolvedEvents != null) {
+            resolved = new ArrayList<>(resolvedEvents.size());
+            for (AlertEvent e : resolvedEvents) resolved.add(new AlertRow(alertItem(e, true, teamNames, refs), e.getTeamId(), e.getDomain(), e.getResolvedAt()));
+        }
+        List<MaintenanceWindow> windows = null;
+        try { windows = maintenanceRepo.findByActiveTrue(); }
+        catch (Exception ex) { log.debug("inbox: bakım pencereleri düştü: {}", ex.toString()); complete = false; }
+        List<WeakAlgorithmException> exceptions = null;
+        try { exceptions = exceptionRepo.findAll(); }
+        catch (Exception ex) { log.debug("inbox: istisnalar düştü: {}", ex.toString()); complete = false; }
+        return new OrgInbox(inventory, java.util.Collections.unmodifiableMap(teamNames),
+                open == null ? null : java.util.Collections.unmodifiableList(open),
+                resolved == null ? null : java.util.Collections.unmodifiableList(resolved),
+                windows == null ? null : java.util.Collections.unmodifiableList(new ArrayList<>(windows)),
+                exceptions == null ? null : java.util.Collections.unmodifiableList(new ArrayList<>(exceptions)), complete);
     }
 
     /**
@@ -372,6 +463,10 @@ public class InboxService {
     }
 
     private static boolean visible(AlertEvent e, Predicate<Long> canViewTeam, Set<String> domains) {
-        return (e.getTeamId() != null && canViewTeam.test(e.getTeamId())) || (e.getDomain() != null && domains.contains(e.getDomain()));
+        return visible(e.getTeamId(), e.getDomain(), canViewTeam, domains);
+    }
+
+    private static boolean visible(Long teamId, String domain, Predicate<Long> canViewTeam, Set<String> domains) {
+        return (teamId != null && canViewTeam.test(teamId)) || (domain != null && domains.contains(domain));
     }
 }

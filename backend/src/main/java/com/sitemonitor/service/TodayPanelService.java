@@ -80,6 +80,32 @@ public class TodayPanelService {
     @org.springframework.context.annotation.Lazy
     private CertificateService certService;
 
+    /**
+     * Panel sonucunun bellek penceresi (ms) — performans 2026-11-06 (PF2 #5). Panel her kullanıcıda 2 dk'da bir yoklanıyor ve
+     * her çağrı envanteri, takımları, tüm açık alarmları ve kendi takımlarının haftalık raporunu okuyordu. Sonuç
+     * {@link #cached} anahtarı (izleme okuma kapsamı + kendi takımları + tavan + iki izin) başına pod'da en çok bu kadar
+     * paylaşılır; anahtar yüklemi TAM belirler (aynı anahtarı paylaşan iki kullanıcı aynı veriyi görür — sızıntı yok). 0 →
+     * kapalı (elle kurulan birim testleri).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.today.cache-ms:30000}")
+    long cacheMs;
+
+    /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. Anahtar sayısı kapsam × tavan × izin kombinasyonuyla sınırlı. */
+    private com.sitemonitor.util.TtlMemo<Map<String, Object>> memo = new com.sitemonitor.util.TtlMemo<>(500);
+
+    /**
+     * Bellekli giriş (2026-11-06): {@code scopeKey} {@code canViewTeam} yüklemini TAM belirlemelidir
+     * ({@code TodayPanelController.monitoringScopeKey}); {@code null} anahtar belleği atlar. Kendi takımları sırasıyla anahtara
+     * girer (haftalık kartın satır sırası listeden gelir). Dönen harita PAYLAŞILIR — çağıran değiştirmez.
+     */
+    public Map<String, Object> cached(String scopeKey, Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit,
+                                      boolean showMaintenance, boolean showAlerts) {
+        String key = scopeKey == null ? null
+                : scopeKey + "|own=" + (ownTeamIds == null ? "-" : ownTeamIds.toString()) + "|l=" + limit
+                  + "|m=" + showMaintenance + "|a=" + showAlerts;
+        return memo.get(key, cacheMs, false, () -> build(canViewTeam, ownTeamIds, limit, showMaintenance, showAlerts));
+    }
+
     /** "Dün bu saatte" görüntüsü — 10 dk'lık kovada bellekte (her panel isteği DB'ye gitmesin). */
     private record Prior(String bucket, String takenAt, Map<String, List<Map<String, Object>>> cards) { }
     private volatile Prior priorCache;

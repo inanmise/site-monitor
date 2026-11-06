@@ -240,6 +240,28 @@ class MonitorSparklineServiceTest {
         assertThat(svc.availabilityAll("http", 30)).containsKeys(1L, 2L, 3L);
     }
 
+    @Test
+    @DisplayName("Performans 2026-11-06 (PF2 #2): ortak (global) sonucun görünür alt kümesi kapsamlı sorgunun çıktısıyla BİREBİR (trend 24 sa + SLA 30 gün)")
+    void subsetOfSharedResult_equalsScopedQuery() {
+        check(1, 5, 200L, null);
+        check(1, 65, 300L, "timeout");
+        check(1, 3 * 24 * 60, 250L, "dns");     // 3 gün önce: trend dışında, SLA içinde
+        check(2, 10, 150L, null);
+        check(3, 20, 180L, null);
+        check(3, 30, null, "refused");
+        check(3, 40 * 24 * 60, 100L, null);      // 40 gün önce: ikisinin de dışında
+        Set<Long> visible = Set.of(1L, 3L);
+
+        assertThat(MonitorSparklineService.subset(svc.sparklinesAll("http", 24), visible))
+                .isEqualTo(svc.sparklines("http", 24, visible))
+                .containsOnlyKeys(1L, 3L);
+        assertThat(MonitorSparklineService.subset(svc.availabilityAll("http", 30), visible))
+                .isEqualTo(svc.availability("http", 30, visible))
+                .containsOnlyKeys(1L, 3L);
+        assertThat(MonitorSparklineService.subset(svc.sparklinesAll("http", 24), Set.of())).isEmpty();
+        assertThat(MonitorSparklineService.subset(null, visible)).isEmpty();
+    }
+
     // ── DATA-1 (2026-10-22): hata = kontrolün kendi hükmü ───────────────────────────────────────
 
     @Test

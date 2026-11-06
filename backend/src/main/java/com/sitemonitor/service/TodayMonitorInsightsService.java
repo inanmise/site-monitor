@@ -6,7 +6,6 @@ import com.sitemonitor.model.DomainCheck;
 import com.sitemonitor.model.LatestCheck;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.model.MonitorSchedule;
-import com.sitemonitor.model.NotificationLog;
 import com.sitemonitor.model.UserPushDelivery;
 import com.sitemonitor.model.WeakAlgorithmException;
 import com.sitemonitor.repository.ActivityLogRepository;
@@ -121,6 +120,19 @@ public class TodayMonitorInsightsService {
     private final MaintenanceWindowRepository maintenanceRepo;
     private final MaintenanceService maintenanceService;
     private final MonitorChangeLogRepository changeLogRepo;
+
+    /**
+     * "Yavaşlayan" kartının TABAN ortalamasının (önceki 6 gün) bellek ömrü (ms) — performans 2026-11-06 (PF1 #5 / PF2 #5).
+     * Taban penceresi yavaş kayar ama sorgusu 6 günün tüm başarılı kontrollerini topluyordu (yerel ≈ 220 ms, görüntü her
+     * 60 sn'de bir doluyor). Bu süre içinde aynı taban kullanılır (pencere en çok bu kadar kayar); "bugün" ortalaması her
+     * dolumda okunur. 0 → kapalı (elle kurulan birim testlerinin varsayılanı).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.today.baseline-cache-ms:600000}")
+    long baselineCacheMs;
+
+    /** Bellekteki taban: hesaplandığı an (görüntünün {@code now}'ı, ms) + "TYPE:id" → {ortalama, adet}. */
+    private record Baseline(long atMs, Map<String, double[]> byMonitor) {}
+    private volatile Baseline baselineCache;
 
     /**
      * Tüm takımlar için hesaplanmış listeler. Satırlar {@code team_id} ve {@code domain} taşır (süzme için).
@@ -264,7 +276,7 @@ public class TodayMonitorInsightsService {
         String dayAgo = ISO.format(now.minus(Duration.ofHours(24)));
         String baseFrom = ISO.format(now.minus(Duration.ofDays(SLOW_BASELINE_DAYS)));
         Map<String, double[]> today = avg(activityRepo.avgResponseByMonitor(dayAgo, "9999-12-31T23:59:59"));
-        Map<String, double[]> base = avg(activityRepo.avgResponseByMonitor(baseFrom, dayAgo));
+        Map<String, double[]> base = baseline(now, baseFrom, dayAgo);
         List<Map<String, Object>> items = new ArrayList<>();
         for (var e : today.entrySet()) {
             double[] t = e.getValue(), b = base.get(e.getKey());
@@ -279,6 +291,19 @@ public class TodayMonitorInsightsService {
         }
         items.sort(Comparator.comparingDouble((Map<String, Object> m) -> -(Double) m.get("ratio")));
         return items;
+    }
+
+    /**
+     * Taban ortalaması — {@link #baselineCacheMs} içinde hesaplanmışsa bellekten (saat geri gittiyse yeniden). Okuma hatası
+     * belleğe yazılmaz (çağıran kartı atlar; sonraki dolum yeniden dener).
+     */
+    private Map<String, double[]> baseline(Instant now, String baseFrom, String dayAgo) {
+        long nowMs = now.toEpochMilli();
+        Baseline b = baselineCache;
+        if (baselineCacheMs > 0 && b != null && nowMs >= b.atMs() && nowMs - b.atMs() < baselineCacheMs) return b.byMonitor();
+        Map<String, double[]> fresh = avg(activityRepo.avgResponseByMonitor(baseFrom, dayAgo));
+        if (baselineCacheMs > 0) baselineCache = new Baseline(nowMs, java.util.Collections.unmodifiableMap(fresh));
+        return fresh;
     }
 
     /** (tür, id, avg, count) satırları → "TYPE:id" → {avg, count}. */
@@ -297,7 +322,8 @@ public class TodayMonitorInsightsService {
         Instant sinceAt = now.minus(Duration.ofDays(STALE_LOOKBACK_DAYS));
         String since = ISO.format(sinceAt);
         Map<String, String> last = new HashMap<>();
-        for (Object[] r : activityRepo.lastCheckByMonitor(since))
+        // Performans 2026-11-06 (PF1 #5): izleme başına ilişkili MAX (idx_act_type_mon_time) — 7 günü topluca okumaz.
+        for (Object[] r : activityRepo.lastCheckPerMonitor(since))
             if (r[2] != null) last.put(key((String) r[0], ((Number) r[1]).longValue()), (String) r[2]);
         List<Map<String, Object>> items = new ArrayList<>();
         for (MonitorSchedule m : monitors.values()) {
@@ -379,15 +405,19 @@ public class TodayMonitorInsightsService {
     private List<Map<String, Object>> notifications(Instant now) {
         String since = ISO.format(now.minus(Duration.ofHours(NOTIFY_WINDOW_HOURS)));
         List<Map<String, Object>> items = new ArrayList<>();
-        List<NotificationLog> logs = notificationLogRepo.findAllSince(since);
+        // Performans 2026-11-06 (PF2 #6): gövdesiz satırlar — posta HTML'i (satır başına onlarca KB) okunmaz. Sütunlar:
+        // alertEventId, sentAt, recipientEmail, subject, emailStatus, webhookStatus.
+        List<Object[]> logs = notificationLogRepo.findStatusRowsSince(since);
         Set<Long> eventIds = new HashSet<>();
-        for (NotificationLog n : logs) if (n.getAlertEventId() != null && (failed(n.getEmailStatus()) || failed(n.getWebhookStatus()))) eventIds.add(n.getAlertEventId());
+        for (Object[] n : logs) if (n[0] != null && (failed((String) n[4]) || failed((String) n[5]))) eventIds.add(((Number) n[0]).longValue());
         Map<Long, AlertEvent> events = new HashMap<>();
         if (!eventIds.isEmpty()) for (AlertEvent e : alertEventRepo.findAllById(eventIds)) events.put(e.getId(), e);
-        for (NotificationLog n : logs) {
-            AlertEvent e = n.getAlertEventId() == null ? null : events.get(n.getAlertEventId());
-            if (failed(n.getEmailStatus())) items.add(notifyRow("EMAIL", n.getRecipientEmail(), n.getEmailStatus(), n.getSentAt(), n.getSubject(), e, n.getAlertEventId()));
-            if (failed(n.getWebhookStatus())) items.add(notifyRow("WEBHOOK", n.getRecipientEmail(), n.getWebhookStatus(), n.getSentAt(), n.getSubject(), e, n.getAlertEventId()));
+        for (Object[] n : logs) {
+            Long eventId = n[0] == null ? null : ((Number) n[0]).longValue();
+            AlertEvent e = eventId == null ? null : events.get(eventId);
+            String target = (String) n[2], at = (String) n[1], subject = (String) n[3], mail = (String) n[4], hook = (String) n[5];
+            if (failed(mail)) items.add(notifyRow("EMAIL", target, mail, at, subject, e, eventId));
+            if (failed(hook)) items.add(notifyRow("WEBHOOK", target, hook, at, subject, e, eventId));
         }
         for (UserPushDelivery d : pushDeliveryRepo.findByStatusAndCreatedAtGreaterThanEqualOrderByIdDesc("FAILED", since)) {
             Map<String, Object> r = new LinkedHashMap<>();

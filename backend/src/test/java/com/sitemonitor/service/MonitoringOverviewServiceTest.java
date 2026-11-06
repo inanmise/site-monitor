@@ -447,6 +447,38 @@ class MonitoringOverviewServiceTest {
     }
 
     @Test
+    @DisplayName("Performans 2026-11-06 (PF3 #1): arka plan okuyucusu (bekçi / aktarıcı) kendi yaşıyla panonun kaydını paylaşır; "
+            + "arayüz penceresi (30 sn) değişmez; yaş dolunca yeniden hesap; bellek kapalıyken her çağrı hesaplar")
+    void orgTypes_backgroundMaxAgeSharesTheOverviewEntry() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 30_000L);
+        long[] clock = {1_000_000L};
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "memo",
+                new com.sitemonitor.util.TtlMemo<Map<String, Object>>(MonitoringOverviewService.MEMO_MAX_KEYS, () -> clock[0]));
+        String all = com.sitemonitor.util.TtlMemo.scopeKey(true, null);
+        Map<String, Object> page = svc.build(all, team -> true, true, MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS);
+        verify(teamRepo, times(1)).findAll();
+
+        clock[0] += 40_000;   // arayüz penceresinin (30 sn) dışında, bekçinin (55 sn) içinde
+        assertThat(svc.orgTypes(55_000L)).isSameAs(page.get("types"));
+        assertThat(svc.orgOverview(55_000L)).isSameAs(page);
+        verify(teamRepo, times(1)).findAll();   // yeni hesap YOK
+
+        Map<String, Object> ui = svc.build(all, team -> true, true, MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS);
+        assertThat(ui).isNotSameAs(page);       // arayüz kendi 30 sn penceresiyle yeniden hesaplar
+        verify(teamRepo, times(2)).findAll();
+        assertThat(svc.orgTypes()).isSameAs(ui.get("types"));   // eski imza = arayüz penceresi, aynı anahtar
+
+        clock[0] += 56_000;   // bekçi yaşı da doldu
+        assertThat(svc.orgTypes(55_000L)).isNotSameAs(ui.get("types"));
+        verify(teamRepo, times(3)).findAll();
+
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 0L);   // bellek kapalı
+        svc.orgTypes(55_000L);
+        svc.orgTypes(55_000L);
+        verify(teamRepo, times(5)).findAll();
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     @DisplayName("orgSummary (2026-10-04, giriş sayfası): global görüntüleyicinin pano toplamlarıyla AYNI; sağlıklı = aktif − düşük − gecikmiş − bilinmiyor = 'up' satır sayısı; kapsamsız (her takım + takımsız); bellek anahtarı panoyla ortak")
     void orgSummary_equalsGlobalViewerTotals() {
