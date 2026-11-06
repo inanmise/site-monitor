@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-05T23:54:17Z",
+  "generatedAt": "2026-11-06T06:18:39Z",
   "repo": "inanmise/site-monitor",
-  "count": 809,
+  "count": 810,
   "releases": [
+    {
+      "version": "20.186.1",
+      "tag": "v20.186.1",
+      "releasedAt": "2026-11-06T06:18:32Z",
+      "commit": "84098dc82fac2529cd859dc14fe09de2d8c7cedf",
+      "prevVersion": "20.186.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "84098dc8",
+          "subject": "değişim algılama kapatılınca kayıtlı seçici silinmesin; ön yüz hata avı belgesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "36ec507d",
+          "subject": "kural notu PATTERN_INVALID ve iletim \"unknown\" durumu kutu testi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c41dafa9",
+          "subject": "anahtar kelime yönlendirme ve içerik temeli hataları (hata avı 2026-11-06)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3b321df3",
+          "subject": "alarm iletimi hata avı — arka uç düzeltmeleri (özet birleştirme, UG fırtına push'u, sessiz saat izi, çözüm push'u, taşıma sınırı)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "073d9f1e",
+          "subject": "iletim ve anahtar kelime ön yüzü hata avı düzeltmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.186.0",
       "tag": "v20.186.0",
