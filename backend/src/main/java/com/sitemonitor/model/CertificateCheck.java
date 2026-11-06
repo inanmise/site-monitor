@@ -8,7 +8,8 @@ import lombok.NoArgsConstructor;
 @Table(
     name = "certificate_checks",
     indexes = {
-        @Index(name = "idx_cc_domain",      columnList = "domain"),
+        // (domain) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): idx_cc_domain_ts (domain, checked_at) aynı öncü
+        // kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
         @Index(name = "idx_cc_checked_at",  columnList = "checkedAt"),
         @Index(name = "idx_cc_run_id",      columnList = "runId"),
         @Index(name = "idx_cc_domain_ts",   columnList = "domain,checkedAt")

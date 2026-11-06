@@ -1390,8 +1390,8 @@ public class SchedulerService {
         // bu guvenlik agi).
         patch("ALTER TABLE network_outage_events ADD COLUMN source VARCHAR(32)");
         dedupeAndLockMonitorKeys();
-        // keyword_results / ping_checks: süre-grafiği aralık taraması (monitor_id + checked_at) — tekil
-        // index'ler entity'de var; composite range sorgusunu (responseSeriesRaw) hızlandırır.
+        // keyword_results / ping_checks: süre-grafiği aralık taraması (monitor_id + checked_at) — bu bileşik dizinler aynı
+        // zamanda monitor_id'nin TEK dizinidir (tek kolon dizinleri 2026-11-06'da kaldırıldı; RedundantIndexCleanup).
         patch("CREATE INDEX IF NOT EXISTS idx_kwr_monitor_checked ON keyword_results(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pingc_monitor_checked ON ping_checks(monitor_id, checked_at)");
         // Haftalık izleme göstergeleri (MonitoringWeeklyStatsService) — pencere-içi gruplu COUNT için (monitor_id, checked_at).
@@ -1586,7 +1586,8 @@ public class SchedulerService {
         // Sayfa-bütünlüğü (9. tür) — LATERAL en-güncel + sorun listesi + purge güvenlik-ağı index'leri (ddl-auto ile de gelir).
         patch("CREATE INDEX IF NOT EXISTS idx_pc_monitor_checked ON page_checks(monitor_id, checked_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_pri_monitor_checked ON page_resource_issues(monitor_id, checked_at)");
-        patch("CREATE INDEX IF NOT EXISTS idx_pri_check ON page_resource_issues(check_id)");
+        // idx_pri_check (check_id) KALDIRILDI (2026-11-06): entity'deki idx_pri_check_id'nin birebir kopyasıydı — eski
+        // kurulumlarda RedundantIndexCleanup düşürür.
         patch("CREATE INDEX IF NOT EXISTS idx_sc_monitor_checked ON scripted_checks(monitor_id, checked_at)");
         // ── Yüksek-yazımlı tablolarda daha AGRESİF autovacuum — büyük tabloda varsayılan %20 ölü-tuple
         //    eşiği çok seyrek vacuum + şişme (bloat) demek; %2 scale + sabit eşikle sık, küçük vacuum/analyze.
@@ -1772,7 +1773,8 @@ public class SchedulerService {
                 PRIMARY KEY (monitor_type, monitor_key, hour_bucket)
             )
             """);
-        patch("CREATE INDEX IF NOT EXISTS idx_mch_type_key_hour ON monitor_check_hourly(monitor_type, monitor_key, hour_bucket)");
+        // idx_mch_type_key_hour KALDIRILDI (2026-11-06): birincil anahtarın (monitor_type, monitor_key, hour_bucket) birebir
+        // kopyasıydı — eski kurulumlarda RedundantIndexCleanup düşürür.
 
         // İzleme grubu registry'si (takım + izleme TÜRÜ bazlı grup adları) — ddl-auto entity'yi de oluşturur; bu
         // güvenlik ağı + case-insensitive UNIQUE(team_id, type, name_lower) hem PG hem H2'de (name_lower app'te lower).

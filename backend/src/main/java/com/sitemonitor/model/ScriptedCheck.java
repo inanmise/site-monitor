@@ -10,7 +10,8 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Table(name = "scripted_checks", indexes = {
-        @Index(name = "idx_sc_monitor_id", columnList = "monitor_id"),
+        // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+        // (idx_sc_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
         @Index(name = "idx_sc_checked_at", columnList = "checked_at")
 })
 @Data

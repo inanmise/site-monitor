@@ -6,7 +6,8 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "port_checks", indexes = {
-    @Index(name = "idx_portc_monitor_id", columnList = "monitor_id"),
+    // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+    // (idx_portc_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_portc_checked_at", columnList = "checked_at")
 })
 @Data

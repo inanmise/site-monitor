@@ -7,7 +7,8 @@ import lombok.NoArgsConstructor;
 /** Bir ping kontrolünün sonucu (geçmiş). */
 @Entity
 @Table(name = "ping_checks", indexes = {
-    @Index(name = "idx_pingc_monitor_id", columnList = "monitor_id"),
+    // (monitor_id) tek kolon dizini KALDIRILDI (2026-11-06, indeks bakımı): (monitor_id, checked_at) bileşik dizini
+    // (idx_pingc_monitor_checked — SchedulerService.applySchemaPatches) aynı öncü kolonu taşır; eski kurulumlarda RedundantIndexCleanup düşürür.
     @Index(name = "idx_pingc_checked_at", columnList = "checked_at")
 })
 @Data
