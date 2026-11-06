@@ -9,7 +9,9 @@ export const BUSY_MAX_MS = 120_000
 /**
  * Görünürlük-farkındalıklı interval. `fn`i her `ms`de çağırır AMA sekme gizliyken (document.hidden)
  * duraklatır (interval temizlenir) — arka plan sekmelerinde boşa polling + re-render'ı keser. Sekme
- * yeniden görünür olduğunda `fn()` bir kez çağrılıp interval yeniden başlar; unmount'ta her şey temizlenir.
+ * yeniden görünür olduğunda son çağrının üstünden `ms` GEÇTİYSE `fn()` hemen bir kez çağrılıp interval yeniden
+ * başlar; geçmediyse kalan süre dolunca çağrılır (2026-11-06, performans: kısa bir sekme değişiminden dönüşte
+ * sayfadaki 7–8 yoklamanın HEPSİ aynı anda istek atıyordu; artık her biri kendi temposunda). Unmount'ta her şey temizlenir.
  *
  * `ms <= 0` veya `null` → hiç kurulmaz. `fn` her render'da değişebilir (useRef ile en güncel tutulur;
  * effect yalnız `ms` değişince yeniden kurulur → gereksiz resubscribe yok).
@@ -27,12 +29,15 @@ export function useVisibleInterval(fn, ms, immediate = true) {
   useEffect(() => {
     if (!ms || ms <= 0) return undefined
     let id = null
+    let resume = null                                             // görünürlüğe dönüşte kalan süreyi bekleyen zamanlayıcı
     let busy = null                                               // { since } — önceki çağrının sözü sürüyor
+    let lastAt = Date.now()                                       // son çağrı (ya da kurulum) anı — tempo çapası
     const tick = () => {
       const f = fnRef.current
       if (!f) return
       if (busy && Date.now() - busy.since < BUSY_MAX_MS) return    // önceki istek sürüyor → bu tur atlanır
       busy = null
+      lastAt = Date.now()
       const r = f()
       if (r && typeof r.then === 'function') {
         const mine = { since: Date.now() }
@@ -43,10 +48,21 @@ export function useVisibleInterval(fn, ms, immediate = true) {
       }
     }
     const start = () => { if (id == null) id = setInterval(tick, ms) }
-    const stop = () => { if (id != null) { clearInterval(id); id = null } }
+    const stop = () => {
+      if (id != null) { clearInterval(id); id = null }
+      if (resume != null) { clearTimeout(resume); resume = null }
+    }
     const onVis = () => {
-      if (document.hidden) stop()
-      else { tick(); start() }   // geri gelince 1 tazeleme + devam
+      if (document.hidden) { stop(); return }
+      // Gizlenmeden gelen "görünür" olayı (gerçek tarayıcı değişim olmadan olay atmaz; testler ve elle tazeleme
+      // kancası bunu "şimdi tazele" diye kullanır): eskisi gibi anında 1 tur, ikinci interval kurulmaz.
+      if (id != null) { tick(); return }
+      if (resume != null) return                                  // kalan süre zaten bekleniyor
+      // Geri gelince: süre dolduysa 1 tazeleme + devam; dolmadıysa kalan süre sonra (tempo korunur).
+      // Saat geri alındıysa (elapsed < 0) beklemeden tazele.
+      const elapsed = Date.now() - lastAt
+      if (elapsed >= ms || elapsed < 0) { tick(); start(); return }
+      resume = setTimeout(() => { resume = null; tick(); start() }, ms - elapsed)
     }
     if (immediate) tick()
     if (!document.hidden) start()
