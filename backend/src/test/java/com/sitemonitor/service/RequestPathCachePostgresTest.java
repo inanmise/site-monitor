@@ -64,7 +64,10 @@ class RequestPathCachePostgresTest {
         for (Object[] r : repo.lastCheckByMonitor(since)) old.put(r[0] + ":" + ((Number) r[1]).longValue(), (String) r[2]);
         Map<String, String> fresh = new HashMap<>();
         for (Object[] r : repo.lastCheckPerMonitor(since)) if (r[2] != null) fresh.put(r[0] + ":" + ((Number) r[1]).longValue(), (String) r[2]);
-        assertThat(fresh.get("HTTP:" + hid)).isEqualTo(old.get("HTTP:" + hid)).isEqualTo(ISO.format(now.minus(10, ChronoUnit.MINUTES)));
+        // Paylaşılan postgres-it veritabanında başka bir test aynı izleme kimliğine (tablolar arası çakışan id) daha yeni bir
+        // satır bırakmış olabilir (CI 2026-11-06) — asıl kanıt yeni sorgu = eski sorgu; mutlak zaman en az bizim son kontrolümüz
+        assertThat(fresh.get("HTTP:" + hid)).isEqualTo(old.get("HTTP:" + hid))
+                .isGreaterThanOrEqualTo(ISO.format(now.minus(10, ChronoUnit.MINUTES)));
         assertThat(fresh.get("PORT:" + pid)).isEqualTo(old.get("PORT:" + pid));
         for (Map.Entry<String, String> e : fresh.entrySet()) assertThat(e.getValue()).as(e.getKey()).isEqualTo(old.get(e.getKey()));
     }

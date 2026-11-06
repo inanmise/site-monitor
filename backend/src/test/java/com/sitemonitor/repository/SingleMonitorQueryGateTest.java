@@ -46,12 +46,74 @@ class SingleMonitorQueryGateTest {
      * IN biçimli sorguda (aynı ek açıklama, sayım sorgusundan önce) çıplak üst sınır {@code x.checkedAt <= :to}: genel planda
      * aralık çifti sayılır, tekil checked_at dizini + sıralama seçilebilir → {@code MonitorIndexSort.UNTIL_*} kullanılmalı.
      */
-    private static final Pattern RAW_UPPER = Pattern.compile(
-            "\\b(?:monitorId|domain) IN \\(:(\\w+), :\\1\\)(?:(?!countQuery)[^@;])*?\\b\\w+\\.checkedAt <= :to\\b");
-    /** JPQL @Query metni (Java dize birleştirmeleri dahil). */
-    private static final Pattern QUERY = Pattern.compile(
-            "@Query\\((?:value\\s*=\\s*)?(\"(?:[^\"\\\\]|\\\\.)*\"(?:\\s*\\+\\s*\"(?:[^\"\\\\]|\\\\.)*\")*)(.{0,200}?)\\)\\s*\\n",
-            Pattern.DOTALL);
+    // Doğrusal tarama (2026-11-06): eski gruplu tekrar desenleri (`(?:[^"\\]|\\.)*`, `(?:(?!countQuery)[^@;])*?`) karakter
+    // başına özyineleme yapıyordu — uzun bir sorgu metni testi StackOverflowError ile düşürdü (CLAUDE.md "Things that bite").
+    private static final Pattern IN_PAIR = Pattern.compile("\\b(?:monitorId|domain) IN \\(:(\\w+), :\\1\\)");
+    private static final Pattern UPPER_TO = Pattern.compile("\\b\\w+\\.checkedAt <= :to\\b");
+
+    /** IN biçimli sorgudan sonraki ilk '@' / ';' sınırına (sayım sorgusundan önce) dek çıplak üst sınır var mı. */
+    static List<String> rawUpperBounds(String joinedSrc) {
+        List<String> out = new ArrayList<>();
+        Matcher m = IN_PAIR.matcher(joinedSrc);
+        while (m.find()) {
+            int end = joinedSrc.length();
+            int at = joinedSrc.indexOf('@', m.end());
+            int semi = joinedSrc.indexOf(';', m.end());
+            if (at >= 0) end = Math.min(end, at);
+            if (semi >= 0) end = Math.min(end, semi);
+            String seg = joinedSrc.substring(m.end(), end);
+            int cq = seg.indexOf("countQuery");
+            if (cq >= 0) seg = seg.substring(0, cq);
+            Matcher u = UPPER_TO.matcher(seg);
+            if (u.find()) out.add(m.group() + seg.substring(0, u.end()));
+        }
+        return out;
+    }
+
+    /** @Query metni (Java dize birleştirmeleri dahil) ve ardından gelen ek açıklama kuyruğu — {@code [sql, tail]}. */
+    static List<String[]> queries(String src) {
+        List<String[]> out = new ArrayList<>();
+        int from = 0;
+        while (true) {
+            int q = src.indexOf("@Query(", from);
+            if (q < 0) break;
+            int i = q + "@Query(".length();
+            from = i;
+            i = skipWs(src, i);
+            if (src.startsWith("value", i)) {
+                int j = skipWs(src, i + 5);
+                if (j < src.length() && src.charAt(j) == '=') i = skipWs(src, j + 1);
+            }
+            if (i >= src.length() || src.charAt(i) != '"') continue;
+            StringBuilder sql = new StringBuilder();
+            while (i < src.length() && src.charAt(i) == '"') {
+                int k = i + 1;
+                while (k < src.length() && src.charAt(k) != '"') k += src.charAt(k) == '\\' ? 2 : 1;
+                if (k >= src.length()) break;
+                sql.append(src, i + 1, k);
+                i = skipWs(src, k + 1);
+                if (i < src.length() && src.charAt(i) == '+') i = skipWs(src, i + 1); else break;
+            }
+            // Kuyruk: ek açıklamanın kapanışına (")" + satır sonu) dek, en çok 200 karakter (eski desenle aynı pencere)
+            int limit = Math.min(src.length(), i + 200);
+            int close = -1;
+            for (int k = i; k < limit; k++) {
+                if (src.charAt(k) != ')') continue;
+                int n = k + 1;
+                while (n < src.length() && (src.charAt(n) == ' ' || src.charAt(n) == '\t' || src.charAt(n) == '\r')) n++;
+                if (n < src.length() && src.charAt(n) == '\n') { close = k; break; }
+            }
+            if (close < 0) continue;
+            out.add(new String[]{sql.toString(), src.substring(i, close)});
+            from = close;
+        }
+        return out;
+    }
+
+    private static int skipWs(String s, int i) {
+        while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
+        return i;
+    }
     private static final Pattern EQ_MONITOR = Pattern.compile("\\b(\\w+)\\.monitorId\\s*=\\s*:\\w+");
     private static final Pattern ORDER_CHECKED = Pattern.compile("ORDER BY\\s+(\\w+)\\.checkedAt\\b", Pattern.CASE_INSENSITIVE);
 
@@ -79,14 +141,13 @@ class SingleMonitorQueryGateTest {
         }
         Matcher bw = BETWEEN_MONITOR.matcher(joined(src));
         while (bw.find()) out.add(file + ": " + bw.group() + " (BETWEEN — IN (:id, :id) kullanın)");
-        Matcher up = RAW_UPPER.matcher(joined(src));
-        while (up.find()) out.add(file + ": çıplak üst sınır (MonitorIndexSort.UNTIL_* yok): " + up.group().replaceAll("\\s+", " "));
+        for (String up : rawUpperBounds(joined(src)))
+            out.add(file + ": çıplak üst sınır (MonitorIndexSort.UNTIL_* yok): " + up.replaceAll("\\s+", " "));
         Matcher p = DERIVED_PAGE.matcher(src);
         while (p.find()) out.add(file + ": soyut sayfalı " + p.group(2) + " (varsayılan metot + MonitorIndexSort.leading yok)");
-        Matcher q = QUERY.matcher(src);
-        while (q.find()) {
-            if (q.group(2).contains("nativeQuery")) continue;
-            String sql = joined(q.group(1));
+        for (String[] q : queries(src)) {
+            if (q[1].contains("nativeQuery")) continue;
+            String sql = q[0];
             Matcher eq = EQ_MONITOR.matcher(sql);
             Matcher ord = ORDER_CHECKED.matcher(sql);
             if (eq.find() && ord.find() && eq.group(1).equals(ord.group(1))) {

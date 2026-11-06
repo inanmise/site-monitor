@@ -394,14 +394,14 @@ function historyPath(kind, id) {
  * nesnesinin yerine geçiyordu).
  */
 export function requestInit(opts = {}, method = String(opts.method || 'GET').toUpperCase(), isForm = opts.body instanceof FormData) {
-  return {
-    credentials: 'include',
-    ...opts,
-    headers: {
-      ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
-      ...opts.headers,
-    },
+  const headers = {
+    ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
+    ...opts.headers,
   }
+  // Çağıranın `undefined` / `null` verdiği başlık GÖNDERİLMEZ (fetch onu "undefined" metni olarak yollardı) — açılış ön isteği
+  // dil başlığını böyle kaldırır (2026-11-06)
+  for (const k of Object.keys(headers)) if (headers[k] == null) delete headers[k]
+  return { credentials: 'include', ...opts, headers }
 }
 
 /** Boş/null paramları atarak query string üretir (mevcut get*ResponseSeries deseniyle aynı). */
@@ -1046,11 +1046,11 @@ export const api = {
     return logoutRequest(signal)
   },
 
-  getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+  getMe: (opts = {}) => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS, ...opts }),
 
   // Branding (beyaz etiket) — PUBLIC, auth gerekmez (login sayfası açılışta çeker).
   // fresh=true: kaydet sonrası çağrı — 60 sn'lik Cache-Control'ü query ile bust'la (anında yansıma).
-  getBranding: (fresh = false) => request('/branding' + (fresh ? `?_=${Date.now()}` : '')),
+  getBranding: (fresh = false, opts = {}) => request('/branding' + (fresh ? `?_=${Date.now()}` : ''), opts),
 
   // Login hero istatistikleri — PUBLIC (izlenen hedef adedi + 7g erişilebilirlik %).
   getPublicStats: () => request('/public-stats'),

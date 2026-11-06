@@ -33,7 +33,10 @@ class PerfScheduledProjectionQueriesTest {
     @Autowired AlertEventRepository alerts;
     @Autowired PortMonitorRepository ports;
 
+    // İşlem dışı (NOT_SUPPORTED) yazılan satırlar geri alınmaz — sonda da temizlenir; aynı H2 bağlamını paylaşan sonraki depo
+    // testleri (alarm sayımları) fazladan satır görmesin (CI 2026-11-06)
     @BeforeEach
+    @org.junit.jupiter.api.AfterEach
     void clean() {
         alerts.deleteAll();
         ports.deleteAll();

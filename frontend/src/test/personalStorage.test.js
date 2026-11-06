@@ -79,6 +79,8 @@ describe('personalStorage — kullanıcıya göre ayrım + çıkışta temizlik'
     expect(src).toMatch(/const doAutoLogout = \(\) => logoutRef\.current\?\.\(\)/)
     expect(src).toMatch(/logoutRef\.current = logoutEverywhere/)
     expect(body(/function handleLogin\(userData\)/)).toMatch(/claimPersonalStorage\(userData\.username\)[\s\S]*setUser\(userData\.username\)/)
-    expect(body(/api\.getMe\(\)\.then\(/)).toMatch(/claimPersonalStorage\(res\.username\)[\s\S]*setUser\(res\.username\)/)
+    // Açılış ön isteği (2026-11-06, performans): `(takeBootMe() ?? api.getMe()).then(` — aynı oturum geri yükleme yolu
+    expect(src).toMatch(/\(takeBootMe\(\) \?\? api\.getMe\(\)\)\.then\(/)
+    expect(body(/api\.getMe\(\)\)?\.then\(/)).toMatch(/claimPersonalStorage\(res\.username\)[\s\S]*setUser\(res\.username\)/)
   })
 })

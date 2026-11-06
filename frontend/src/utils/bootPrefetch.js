@@ -27,10 +27,16 @@ function hold(promise) {
 }
 
 /** İstekleri başlatır (yalnız bir kez; zaten başlamışsa dokunmaz). `me: false` → oturum isteği başlatılmaz. */
+/**
+ * Ön istekler dil başlığı (`X-Lang`) TAŞIMAZ: ikisinin başarılı yanıtında dile bağlı metin yok, sözlük de henüz inmedi —
+ * İngilizce sözlük inemezse oturum Türkçe'ye zorlanır ve hiçbir istek "en" taşımamalı (`rolling-update-assets.spec.js`).
+ */
+const NO_LANG = Object.freeze({ headers: Object.freeze({ 'X-Lang': undefined }) })
+
 export function startBootPrefetch({ me: withMe = true, branding: withBranding = true } = {}) {
   try {
-    if (withMe && !me) me = hold(api.getMe())
-    if (withBranding && !branding) branding = hold(api.getBranding(false))
+    if (withMe && !me) me = hold(api.getMe(NO_LANG))
+    if (withBranding && !branding) branding = hold(api.getBranding(false, NO_LANG))
   } catch { /* istemci hazır değil: bileşenler kendi isteğini atar */ }
 }
 
