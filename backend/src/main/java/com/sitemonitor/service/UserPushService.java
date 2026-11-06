@@ -392,7 +392,20 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
 
         String block = channelBlockReason(event, trigger, teamId, family, ctx);
-        if (block != null) { skipRow(event, trigger, block); return; }
+        // Alarm iletimi (2026-11-06, hata avı H2#1): sahibin kanal kapısı çözümü engellese de (ör. iki sahipli alarmda SY'nin
+        // takım push'u kapalı) açılışı İLETİMLE almış kişiler "düzeldi"yi alır — iletim UG'nin kapısından geçip gitmişti.
+        // Sahibin karar satırı aynen yazılır; ardından yalnız İLK SENT satırı iletim ({@code FWD:}) olan kişilere çözüm satırı.
+        // İletim hiç tanımlı değilse ve alarmın iletim damgası yoksa bugünkü gibi erken dönüş (ek sorgu yok).
+        Map<String, UserPushDelivery> forwardPriors = null;
+        if (block != null) {
+            skipRow(event, trigger, block);
+            if (!"RESOLVE".equals(trigger) || !forwardResolveCandidate(event)) return;
+            forwardPriors = new LinkedHashMap<>();
+            for (var en : priorSentRows(event).entrySet()) {
+                if (forwardPhaseOf(en.getValue().getDedupeKey()) != null) forwardPriors.put(en.getKey(), en.getValue());
+            }
+            if (forwardPriors.isEmpty()) return;
+        }
 
         // Onay pop-up'inda cikarilan sicillere SATIR YAZILMAZ (mail tarafindaki filtreyle simetrik).
         Set<String> excluded = excludeUsernames == null ? Set.of() : excludeUsernames;
@@ -401,7 +414,8 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         // Kişisel aile süzgeci (2026-10-04) yalnız açılış/eskalasyon/tekrar/elle gönderimde; ÇÖZÜM muaf (resolvePrior).
         // Alarm iletimi (2026-11-05): önceki SENT satırlar iletim satırlarını da kapsar — kişinin İLK SENT satırı iletimse
         // çözüm satırı da o alıcı takımın satırıdır (team_id) ve aynı önekle gider (aşağıda).
-        Map<String, UserPushDelivery> priorRows = "RESOLVE".equals(trigger) ? priorSentRows(event) : Map.of();
+        Map<String, UserPushDelivery> priorRows = forwardPriors != null ? forwardPriors
+                : "RESOLVE".equals(trigger) ? priorSentRows(event) : Map.of();
         List<UserPushRecipientResolver.Recipient> resolved =
                 "RESOLVE".equals(trigger) ? resolver.resolvePrior(new ArrayList<>(priorRows.keySet()))
                                           : UserPushRecipientResolver.withFamilies(
@@ -2516,6 +2530,21 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
     }
 
     /**
+     * Sahip kapısı engelli çözümde iletim alıcılarının önceki satırları okunmalı mı (2026-11-06, H2#1) — yalnız bellek: yönlendirme
+     * varsa ve herhangi bir iletim kaydı tanımlıysa ya da alarmın iletim damgası doluysa (iletim fırtına / alarm sürerken
+     * kaldırılmış olabilir — önceki alıcı kuralı). İletim hiç yokken false → bugünkü erken dönüş, ek sorgu yok.
+     */
+    private boolean forwardResolveCandidate(AlertEvent event) {
+        var routing = forwardRouting();
+        if (routing == null) return false;
+        try {
+            return routing.anyConfigured() || !ForwardEmailStamp.of(event).isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Envanter — damgasız (envanter gibi yönlenen) alarmın sahip push takımı (SY) ve önizlemenin UG takımı için
      * (2026-11-05). İsteğe bağlı; yalnız iletim yolunda okunur (iletim yokken sorgu yok).
      */
@@ -2580,7 +2609,8 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
      * günlük tekrar ayarı → SAHİP takımın tür / takım kapsamı ({@link #ownerPushTeam}) → ALICI takımın push'u kapalı mı
      * ({@code SKIPPED_TEAM_OFF} — alıcı takımın karar satırı) → izleme push'u kapalı (bağlam / kalıcı karar) → küresel sessiz saat.
      * Sahip düzeyindeki ret satır YAZMAZ: karar sahip push'unun satırında izlidir (nöbetçi push'uyla aynı). Bağlamdaki takım
-     * sessiz saati işareti burada SORULMAZ: e-posta yolu ertelenen sahibin iletimlerini zaten çağırmaz (özete girer).
+     * sessiz saati işareti (2026-11-06, H1#5): e-posta yolu ertelenen sahibin hedeflerini işaretli bağlamla verir — öbür kapılar
+     * geçilirse alıcı takımda {@code SKIPPED_TEAM_QUIET} karar satırı yazılır, gönderim yok (iletim özete girer).
      *
      * <p>Alıcılar {@link #forwardRecipients}; bir kişi birden çok alıcı takımda ise İLK (küçük kimlikli) takımın satırı. Aynı kişi
      * aynı alarm + aynı aşamada İKİ push almaz: hesabın bu aşamada ZATEN satırı varsa (sahip takım push'u, nöbetçi, başka bir
@@ -2639,6 +2669,15 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             if (ctx != null && Boolean.TRUE.equals(ctx.get("push_disabled"))) return;
             if (!"OPEN".equals(trigger) && deliveryRepo.existsByAlertEventIdAndStatus(event.getId(), "SKIPPED_MONITOR_OFF")) return;
             if (quietHoursBlock(level)) return;
+            // 3.1 Sahibin bildirimi takım sessiz saatinde ertelendi (2026-11-06, hata avı H1#5): e-posta yolu ertelenen sahibin
+            // hedeflerini sessiz saat işaretli bağlamla verir — GÖNDERİM YOK, alıcı takımda karar satırı (sahibinkiyle aynı neden).
+            if (ctx != null && Boolean.TRUE.equals(ctx.get(EscalationService.CTX_QUIET_DEFERRED))) {
+                for (var t : open) {
+                    forwardSkipRow(event, trigger, keys.get(t.recipientTeamId()), t.recipientTeamId(), family,
+                            EscalationService.PUSH_SKIPPED_TEAM_QUIET);
+                }
+                return;
+            }
 
             // 4. Alıcılar — kişi başına ilk hedef
             Map<String, ForwardCandidate> cands = new LinkedHashMap<>();

@@ -358,6 +358,53 @@ for (const vp of VIEWPORTS) {
   })
 }
 
+test.describe('Alarm iletimi — tablo kabı yatay kaymaz (hata avı 2026-11-06)', () => {
+  // Sabit 10rem işlem sütunu + %83: kap 860–941 px iken tablo ~14 px yatay kayıyordu (1200 px görünümde yan menü açıkken)
+  test.use({ viewport: { width: 1200, height: 800 } })
+
+  test('tablo düzenindeki her genişlikte tablo kabı kaymaz; durumu bilinmeyen satır nötr rozetli', async ({ page }) => {
+    test.setTimeout(120_000)
+    await mock(page, { posted: [], put: [] })
+    await page.goto('/?tab=admin&g_tab=forwards')
+    const list = page.locator('[data-slot="fwd-list"]')
+    await expect(list.locator('[data-slot="fwd-row"]')).toHaveCount(3, { timeout: 20_000 })
+    let tables = 0
+    for (const w of [1120, 1160, 1200, 1240, 1280, 1366]) {
+      await page.setViewportSize({ width: w, height: 800 })
+      await settle(page)
+      const m = await list.evaluate((el) => {
+        const wrap = el.querySelector('[data-slot="fwd-table"]')?.parentElement
+        return { layout: el.getAttribute('data-layout'), width: Math.round(el.clientWidth),
+          overflow: wrap ? wrap.scrollWidth - wrap.clientWidth : 0 }
+      })
+      if (m.layout === 'table') {
+        tables++
+        expect(m.overflow, `${w} px görünüm, kap ${m.width} px: tablo yatay kaydı`).toBeLessThanOrEqual(1)
+      }
+      expect(await pageOverflow(page), `${w} px: sayfa yatay taşması`).toBeLessThanOrEqual(1)
+    }
+    expect(tables, 'en az bir genişlikte tablo düzeni ölçülmeli').toBeGreaterThan(0)
+  })
+
+  test('sunucu "unknown" durumu: nötr "Bilinmiyor" rozeti + açıklama; Etkin / Dikkat sayılmaz', async ({ page }) => {
+    await mock(page, { posted: [], put: [] })
+    await page.route((u) => new URL(u).pathname === '/api/alert-forwards', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      const items = [{ ...ROWS[1], id: 2, state: 'unknown', recipient_address_count: null,
+        scope_monitors: [{ type: 'http', id: 101, name: null, target: null, active: null, missing: null }] }]
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items, incoming: [],
+        manageable_teams: [{ id: 10, name: OWNER }], can_grant: true, limits: { per_team: 100, members: 50, monitors: 200, note: 500 } } }) })
+    })
+    await page.goto('/?tab=admin&g_tab=forwards')
+    const row = page.locator('[data-slot="fwd-list"] [data-slot="fwd-row"]').first()
+    await expect(row).toHaveAttribute('data-state', 'unknown', { timeout: 20_000 })
+    await expect(row.locator('[data-slot="fwd-state"]')).toHaveText(/Unknown|Bilinmiyor/)
+    await expect(row.locator('[data-slot="fwd-state-unknown"]')).toBeVisible()
+    await expect(page.locator('[data-slot="stat-item"][data-key="active"]')).toContainText('0')
+    await expect(page.locator('[data-slot="stat-item"][data-key="attention"]')).toContainText('0')
+  })
+})
+
 test.describe('Alarm iletimi — bitiş günü saat dilimine kaymaz', () => {
   // UTC'nin gerisindeki bir saat diliminde "2099-12-31" UTC gece yarısı sayılırsa 30 Aralık görünürdü
   test.use({ viewport: { width: 1280, height: 800 }, timezoneId: 'America/New_York' })

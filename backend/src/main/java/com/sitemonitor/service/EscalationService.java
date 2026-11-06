@@ -1168,8 +1168,12 @@ public class EscalationService {
             for (String raw : t.emails()) {
                 String e = raw == null ? "" : raw.trim();
                 if (e.isEmpty() || !seen.add(e.toLowerCase(Locale.ROOT))) continue;
-                String team = t.recipientTeamName() != null ? t.recipientTeamName() : "-";
-                out.add(new ReNotifyRecipient(e, team, com.sitemonitor.util.Msg.t("İletim: ", "Forward: ") + team, "FORWARD", team));
+                // Adı bilinmeyen alıcı takım (2026-11-06, H3#6): "-" yazılmaz (ön yüz "İletim · -" gösteriyordu) — ad / takım adı
+                // boş kalır, rol yalnız "İletim"; ön yüz rozetini adsız çizer.
+                String team = t.recipientTeamName() == null || t.recipientTeamName().isBlank() ? null : t.recipientTeamName().trim();
+                String role = team == null ? com.sitemonitor.util.Msg.t("İletim", "Forward")
+                        : com.sitemonitor.util.Msg.t("İletim: ", "Forward: ") + team;
+                out.add(new ReNotifyRecipient(e, team, role, "FORWARD", team));
             }
         }
         return out;
@@ -2106,7 +2110,7 @@ public class EscalationService {
                     // push'u ŞİMDİ bireysel gider — alarmlar sweep'te açıldıkça kuyruğa girer, yani teslim sırası açılış sırasıdır.
                     boolean pushIndividual = stormPushIndividual();
                     recordStormSuppression(event, domainTeamId, ugTeamId, pushIndividual);
-                    if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, outageContext);
+                    if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, ugTeamId, outageContext);
                     Long joinedStorm = event.getStormId();
                     log.info("🌩 İzleme alarmı storm'a eklendi (bireysel e-posta yok, push {}): {} [{}] → storm #{}",
                             pushIndividual ? "bireysel" : "fırtınada", domain, alertType, joinedStorm);
@@ -2266,7 +2270,7 @@ public class EscalationService {
                 } else if (stormPushIndividual()) {
                     // Fırtına üyesinin seviye artışı (2026-10-03): e-posta fırtınada kalır (bugünkü gibi), push bireysel
                     // ESCALATION olarak gider — seviye başına bir kez (UserPushService tekilleştirmesi).
-                    pushStormMember(event, "ESCALATION", domainTeamId, outageContext);
+                    pushStormMember(event, "ESCALATION", domainTeamId, ugTeamId, outageContext);
                     log.info("⬆ Fırtına üyesi {} seviyesine yükseldi: {} [{}] — e-posta fırtınada, push bireysel",
                             alertLevel, domain, alertType);
                 }
@@ -4030,6 +4034,9 @@ public class EscalationService {
                         alertEventId, domain, level, trigger, quietDeferred.keySet());
                 // Push kanalı da kararını kendi günlüğüne yazar (SKIPPED_TEAM_QUIET, doğru tetik/dedupe ile).
                 triggerUserPush(alertEventId, trigger, syTeamId, quietCtx(certContext), excludeUsernames);
+                // Alarm iletimi (2026-11-06, H1#5): ertelenen sahiplerin iletim push'u da karar satırı bırakır (gönderim yok).
+                traceQuietForwardPush(alertEventId, trigger, syTeamId, ugTeamId, quietDeferred.keySet(), null, null,
+                        alertType, domain, certContext, excludeUsernames);
                 return List.of();
             }
             // Kısmi (SY/UG'den yalnız biri pencerede): ertelenen takımın adresleri ve kişileri düşer, diğer takım bugünkü gibi alır.
@@ -4313,6 +4320,11 @@ public class EscalationService {
         // Yönlendirme yoksa / iletim tanımsızsa hiçbir şey (sorgu yok).
         forwardAlert(alertEventId, trigger, syTeamId, ugTeamId, mailSy, mailUg, domain, level, alertType, message, subject,
                 daysRemaining, mailCtx, sendCtx, certContext, mailDisabled, excludeEmails, excludeUsernames, seen);
+        // Kısmi erteleme (2026-11-06, H1#5): ertelenen sahibin iletimlerinin push'u gitmez ama alıcı takımda iz bırakır.
+        if (!quietDeferred.isEmpty()) {
+            traceQuietForwardPush(alertEventId, trigger, syTeamId, ugTeamId, quietDeferred.keySet(), mailSy, mailUg,
+                    alertType, domain, certContext, excludeUsernames);
+        }
         // Sessiz saat: pencere İÇİNDEKİ takım bu alarm için ertelenmeyen bir bildirim aldı (YÜKSEK/KRİTİK, elle gönderim) →
         // bekleyen özet kaydı geçersizleşir (özet tekrar etmez, çözüm de normal yoldan gider). Pencere dışı = sorgu yok.
         supersedeQuietItems(alertEventId, syTeamId, ugTeamId, quietDeferred.keySet());
@@ -4634,6 +4646,42 @@ public class EscalationService {
         }
     }
 
+    /**
+     * Sessiz saatte ERTELENEN sahibin iletim push'unun izi (2026-11-06, hata avı H1#5): ertelenen sahibin iletimleri onun özetine
+     * girer ve ŞİMDİ gitmez — ama push ayağı eskiden hiç çağrılmıyor, alıcı takımın push geçmişinde "neden gelmedi" görünmüyordu.
+     * Artık hedefler sessiz saat işaretli bağlam kopyasıyla push ayağına verilir; push ayağı alıcı takımda
+     * {@code SKIPPED_TEAM_QUIET} karar satırı yazar — GÖNDERİM YOK (sahibin push'u da aynı kararla atlanır). Aynı alarm için
+     * ertelenmeyen bir sahipten CANLI iletim alan alıcı takım atlanır (o takım push'unu canlı yoldan alıyor; ikinci bir "sessiz
+     * saat" satırı yanıltıcı olurdu). Yönlendirme yoksa / ertelenen sahibin iletimi yoksa hiçbir şey (sorgu yok).
+     */
+    private void traceQuietForwardPush(Long alertEventId, String trigger, Long syTeamId, Long ugTeamId,
+                                       Collection<Long> deferredOwners, Long liveSy, Long liveUg, String alertType,
+                                       String domain, Map<String, Object> pushCtx, Set<String> excludeUsernames) {
+        var routing = forwardRouting();
+        if (routing == null || forwardPush == null || alertEventId == null || deferredOwners == null) return;
+        List<Long> owners = new ArrayList<>(2);
+        for (Long o : ownersOf(syTeamId, ugTeamId)) if (deferredOwners.contains(o)) owners.add(o);
+        if (owners.isEmpty()) return;
+        try {
+            if (!routing.anyFor(owners)) return;
+            Long monitorId = ctxMonitorId(pushCtx);
+            var targets = forwardTargets(routing, owners, syTeamId, ugTeamId, alertType, domain, monitorId);
+            if (targets.isEmpty()) return;
+            List<Long> live = ownersOf(liveSy, liveUg);
+            Set<Long> liveRecipients = new HashSet<>();
+            if (!live.isEmpty() && routing.anyFor(live)) {
+                for (var t : forwardTargets(routing, live, syTeamId, ugTeamId, alertType, domain, monitorId)) {
+                    liveRecipients.add(t.recipientTeamId());
+                }
+            }
+            List<com.sitemonitor.service.forward.ForwardTarget> quiet = new ArrayList<>();
+            for (var t : targets) if (!liveRecipients.contains(t.recipientTeamId())) quiet.add(t);
+            pushForwards(alertEventId, trigger, quiet, quietCtx(pushCtx), excludeUsernames);
+        } catch (Exception e) {
+            log.warn("Ertelenen sahibin iletim push izi atlandı (olay {}): {}", alertEventId, e.toString());
+        }
+    }
+
     /** İletim push'u — ayrı ayak; hata e-postayı / sahip bildirimini etkilemez. */
     private void pushForwards(Long alertEventId, String trigger, List<com.sitemonitor.service.forward.ForwardTarget> targets,
                               Map<String, Object> ctx, Set<String> excludeUsernames) {
@@ -4649,16 +4697,21 @@ public class EscalationService {
     /**
      * Fırtına üyesinin bireysel push'unun iletim eşleniği (push-individual kipi, 2026-11-05): üyenin sahip takım(lar)ının
      * iletimleri ({@link #pushStormMember} ile aynı an). Yönlendirme yoksa hiçbir şey.
+     *
+     * <p>UG sahibi (2026-11-06, hata avı H1#2): envanter gibi yönlenen üyede UG de sahiptir — eskiden yalnız SY'nin iletimleri
+     * sorulup UG'ninkiler hiç gitmiyor, SY'nin UG'ye iletimi de atlanmıyordu (UG alarmı kendi takımından zaten alıyor). Artık
+     * sahipler SY + UG, sahiplerden biri olan alıcı atlanır, aynı alıcıya giden hedefler birleşir.
      */
-    private void pushStormMemberForwards(AlertEvent event, String mailTrigger, Long teamFallback, Map<String, Object> ctx) {
+    private void pushStormMemberForwards(AlertEvent event, String mailTrigger, Long teamFallback, Long ugTeamId,
+                                         Map<String, Object> ctx) {
         var routing = forwardRouting();
         if (routing == null || forwardPush == null || event == null || event.getId() == null) return;
         try {
             Long owner = event.getTeamId() != null ? event.getTeamId() : teamFallback;
-            List<Long> owners = ownersOf(owner, null);
+            List<Long> owners = ownersOf(owner, ugTeamId);
             if (owners.isEmpty() || !routing.anyFor(owners)) return;
-            var targets = forwardTargets(routing, owners, owner, null, event.getAlertType(), event.getDomain(),
-                    ctxMonitorId(ctx));
+            var targets = com.sitemonitor.service.forward.ForwardTarget.mergeByRecipient(forwardTargets(routing, owners, owner,
+                    ugTeamId, event.getAlertType(), event.getDomain(), ctxMonitorId(ctx)));
             pushForwards(event.getId(), mailTrigger, targets, ctx, Set.of());
         } catch (Exception e) {
             log.warn("Fırtına üyesinin iletim push'u atlandı (olay {}): {}", event.getId(), e.toString());
@@ -5088,7 +5141,8 @@ public class EscalationService {
      * ({@code SKIPPED_TEAM_QUIET}). Sessiz saat ÖZET kaydı yazılmaz — fırtına e-postası postayı zaten taşıyor. Hata alarm
      * hattına yayılmaz.
      */
-    private void pushStormMember(AlertEvent event, String mailTrigger, Long teamFallback, Map<String, Object> ctx) {
+    private void pushStormMember(AlertEvent event, String mailTrigger, Long teamFallback, Long ugTeamId,
+                                 Map<String, Object> ctx) {
         if (event == null || event.getId() == null) return;
         Long pushTeam = event.getTeamId() != null ? event.getTeamId() : teamFallback;
         boolean quiet = false;
@@ -5098,9 +5152,10 @@ public class EscalationService {
             log.warn("Sessiz saat push kararı verilemedi — push gönderiliyor (olay {}): {}", event.getId(), e.toString());
         }
         triggerUserPush(event.getId(), mailTrigger, teamFallback, quiet ? quietCtx(ctx) : ctx, Set.of());
-        // Alarm iletimi (2026-11-05): üyenin push'u bireysel gidiyorsa iletim alıcılarınınki de; sahibin push'u sessiz saatte
-        // ertelendiyse iletim push'u da çağrılmaz (alıcı sahibin kararını izler).
-        if (!quiet) pushStormMemberForwards(event, mailTrigger, teamFallback, ctx);
+        // Alarm iletimi (2026-11-05): üyenin push'u bireysel gidiyorsa iletim alıcılarınınki de. Sahibin push'u sessiz saatte
+        // ertelendiyse iletim push'u GİTMEZ ama iz bırakır (2026-11-06, H1#5): işaretli bağlamla alıcı takımda SKIPPED_TEAM_QUIET
+        // karar satırı (alıcı sahibin kararını izler).
+        pushStormMemberForwards(event, mailTrigger, teamFallback, ugTeamId, quiet ? quietCtx(ctx) : ctx);
     }
 
     /** Sahip takım adları — adresten BAĞIMSIZ (atlanan/devredilen bildirim satırının "alıcı" etiketi); yoksa "-". */

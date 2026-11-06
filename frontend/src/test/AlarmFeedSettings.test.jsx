@@ -443,6 +443,27 @@ describe('AlarmFeedSettings — yalnız açık alarmlar kipi', () => {
     expect(slot('af-f-resolved_minutes')).toBeDisabled()
   })
 
+  it('uyarı metinleri kipe göre (hata avı 2026-11-06): yalnız açık kipte RCI / 7/24 notu ve önizleme açıklaması RESOLVED satırından söz etmez', async () => {
+    api.alarmFeed.get.mockResolvedValue(ok(data({ settings: { ...SETTINGS, noc_only: true } })))
+    await mount()
+    // Durum kipi: bugünkü metinler
+    expect(slot('af-rci-eventkey')).toHaveTextContent('bir kez RESOLVED (anahtar değişti) olarak kapanır')
+    expect(slot('af-noc-only-note')).toHaveTextContent('bir kez RESOLVED (kapsam dışı) olarak kapanır')
+    expect(slot('af-preview')).toHaveTextContent('gerçek bir çağrı onu teslim edene kadar')
+    // Taslakta yalnız açık: form notları hemen kipe uyar (önizleme KAYITLI ayarı anlatır — değişmez)
+    fireEvent.click(noneRadio())
+    expect(slot('af-rci-eventkey')).toHaveTextContent('akıştan düşer')
+    expect(slot('af-rci-eventkey')).not.toHaveTextContent('bir kez RESOLVED (anahtar değişti)')
+    expect(slot('af-noc-only-note')).toHaveTextContent('akıştan düşer')
+    expect(slot('af-noc-only-note')).not.toHaveTextContent('bir kez RESOLVED (kapsam dışı)')
+    expect(slot('af-preview')).toHaveTextContent('gerçek bir çağrı onu teslim edene kadar')
+    // Kaydedilince önizleme açıklaması da
+    api.alarmFeed.save.mockResolvedValue({ success: true, data: data({ settings: { ...SETTINGS, noc_only: true, resolved_mode: 'none' } }) })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(slot('af-preview')).toHaveTextContent('RESOLVED satırı yoktur'))
+    expect(slot('af-preview')).not.toHaveTextContent('gerçek bir çağrı onu teslim edene kadar')
+  })
+
   it('pasif kalacak pencerede geçersiz taslak varken yalnız-açık seçilirse taslak kayıtlı değere döner; kayıt tıkanmaz', async () => {
     await mount()
     fireEvent.change(slot('af-f-resolved_minutes'), { target: { value: '0' } })

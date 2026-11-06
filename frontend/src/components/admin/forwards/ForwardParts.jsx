@@ -35,6 +35,8 @@ const STATE_META = {
   recipient_inactive: { Icon: CircleSlash, cls: '', variant: 'warning' },
   no_targets: { Icon: CircleAlert, cls: '', variant: 'warning' },
   no_recipients: { Icon: CircleAlert, cls: '', variant: 'warning' },
+  // Durum bilinmiyor (izleme dizini okunamadı): nötr — yeşil değil, uyarı da değil
+  unknown: { Icon: HelpCircle, cls: 'border-border bg-muted text-muted-foreground', variant: 'outline' },
 }
 
 /** Durum rozeti (+ etkin ama adresi olmayan iletimde "yalnız push" uyarısı; adres sayısı okunamadıysa nötr not). */
@@ -53,6 +55,9 @@ export function StateBadge({ f, t }) {
       )}
       {f.recipientAddressCount == null && f.state === 'active' && (
         <span className="text-xs text-muted-foreground" data-slot="fwd-address-unknown">{t('fwd.addressUnknown')}</span>
+      )}
+      {f.state === 'unknown' && (
+        <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="fwd-state-unknown">{t('fwd.stateUnknownHint')}</span>
       )}
     </span>
   )

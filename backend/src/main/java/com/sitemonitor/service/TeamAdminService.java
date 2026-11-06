@@ -326,6 +326,7 @@ public class TeamAdminService {
         // hiçbir şey taşınmaz (işlem geri alınır). Kanal adı takım içinde tekildir (uk_tech_error_channel_team_name).
         DocumentMove docs = planDocumentMove(from, to);
         planDbQueryMove(from, to);   // veritabanı sorgu izlemesi: ad çakışması / şablon sınırı → 409, hiçbir şey taşınmaz
+        planForwardMove(from, to);   // alarm iletimi: hedefin takım başına iletim sınırı aşılırsa → 409, hiçbir şey taşınmaz
         Map<String, Integer> moved = new LinkedHashMap<>();
         int n = 0;
         for (CertificateInventory i : inventoryRepo.findByTeamIdOrderByDomainAsc(from)) {
@@ -602,6 +603,26 @@ public class TeamAdminService {
                         "Taşıma hedef takımın sorgu şablonu sınırını (" + max + ") aşar; hiçbir şey taşınmadı. Kullanılmayan şablonları silip tekrar deneyin.",
                         "Moving would put the target team over its query template limit (" + max + "); nothing was moved. Delete unused templates and try again."));
             }
+        }
+    }
+
+    /**
+     * Alarm iletimi taşımasının ön denetimi (2026-11-06, hata avı H2#4): taşınacak iletimler (hedefe gidenler ve hedefte aynısı
+     * olanlar düşülerek) hedefin kendi iletimleriyle birlikte takım başına sınırı ({@link
+     * com.sitemonitor.service.forward.AlertForwardService#MAX_PER_TEAM}) aşarsa 409 {@code TEAM_MOVE_FORWARD_LIMIT} — hiçbir şey
+     * taşınmaz (kanal / şablon sınırıyla aynı desen). Eskiden taşıma sınırın üstüne çıkarıyor, hedef takım bir sonraki "yeni
+     * iletim"de neden reddedildiğini anlayamıyordu. Taşınacak iletim yoksa denetim yok.
+     */
+    private void planForwardMove(Long from, Long to) {
+        if (alertForwards == null) return;
+        int max = com.sitemonitor.service.forward.AlertForwardService.MAX_PER_TEAM;
+        int after = alertForwards.countAfterMove(from, to);
+        if (after > max) {
+            throw new MoveConflictException("TEAM_MOVE_FORWARD_LIMIT", com.sitemonitor.util.Msg.t(
+                    "Taşıma hedef takımı alarm iletimi sınırının (" + max + ") üstüne çıkarır (taşıma sonrası " + after
+                            + "); hiçbir şey taşınmadı. Kullanılmayan iletimleri kaldırıp tekrar deneyin.",
+                    "Moving would put the target team over its alarm forwarding limit (" + max + "; " + after
+                            + " after the move); nothing was moved. Remove forwards you no longer need and try again."));
         }
     }
 

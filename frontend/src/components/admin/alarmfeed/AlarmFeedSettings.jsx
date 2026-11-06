@@ -256,7 +256,8 @@ export default function AlarmFeedSettings() {
       <SettingsCard data={data} form={form} dirty={dirty} saving={saving} fe={fe} limits={limits} lang={lang}
         onChange={setField} onSave={save} onDiscard={discard} onGoRetention={() => goSection('retention')} />
 
-      <PreviewCard preview={preview} onLoad={loadPreview} lang={lang} dirty={dirty} />
+      <PreviewCard preview={preview} onLoad={loadPreview} lang={lang} dirty={dirty}
+        savedOpenOnly={isOpenOnly(data?.settings?.resolved_mode)} />
 
       {Object.prototype.hasOwnProperty.call(data, 'blocks') && (
         <BlocksCard data={data} lang={lang} onBlocks={applyBlocks} />

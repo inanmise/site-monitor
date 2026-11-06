@@ -64,7 +64,8 @@ import java.util.regex.Pattern;
  * başlıklar + süre + 32 KB metin önizlemesi, her yönlendirme adımı ve takıldığı yer ({@code failed_step}).
  *
  * <p><b>İzlemeyle aynı istek.</b> Yöntem, URL, User-Agent, Host, gelişmiş istek eklentileri ({@link HttpRequestOptions};
- * yalnız İLK host'a — {@code HttpCheckerService.sendFollowing} ile aynı kural), yönlendirme politikası
+ * yalnız İLK host'a — {@code HttpCheckerService.sendFollowing} ile aynı kural; anahtar kelime tanısında İLK KAYNAĞA, kontrolün
+ * {@link SafeRedirect#extrasMayFollow} kuralı — {@link Spec#originExtras}), yönlendirme politikası
  * ({@link SafeRedirect}, her hop'ta {@link SsrfGuard}). Farklar bilinçli: {@code Connection: close} (hop başına yeni
  * bağlantı) ve {@code Accept-Encoding} YOK (gövde düz gelsin, önizlenebilsin). ALPN yalnız {@code http/1.1} önerir —
  * yazıcı HTTP/1.1 konuşur; izleme istemcisinin müzakere ettiği sürüm {@code client_check.http_version}'da görünür.
@@ -106,28 +107,48 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
      * @param captureBody  son yanıtın gövdesi TAM (tavana kadar) tutulsun — keyword tanılaması gövdede arar
      * @param profile      sayfa çekirdeğinin istek profili (Sayfa Bütünlüğü / Sayfa Hızı tanılaması, 2026-10-05); null →
      *                     HTTP/keyword davranışı AYNEN (çıktı değişmez)
+     * @param originExtras gelişmiş istek eklentileri (Basic auth, özel başlıklar, gövde) yönlendirmede hangi kuralla gider:
+     *                     {@code true} = anahtar kelime kontrolünün KAYNAK kuralı ({@link SafeRedirect#extrasMayFollow} — şema +
+     *                     host + port, yalnız aynı host'ta http:80 → https:443 yükseltmesi istisna; hata avı 2026-11-06 H4#5);
+     *                     {@code false} = HTTP izlemesinin / sayfa çekirdeğinin HOST kuralı (aynı host'un her portuna) —
+     *                     tanı her zaman izlemenin GERÇEK istemcisinin kuralını taşır
      */
     public record Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                 boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
                 String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
-                String userAgent, boolean captureBody, Profile profile) {
+                String userAgent, boolean captureBody, Profile profile, boolean originExtras) {
+        /** Sayfa çekirdeğinin kurucusu (2026-10-05) — HTTP / sayfa host kuralı. */
+        public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
+                    boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
+                    String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
+                    String userAgent, boolean captureBody, Profile profile) {
+            this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, userAgent, captureBody, profile, false);
+        }
         /** HTTP izlemesinin kurucusu (2026-10-02 sözleşmesi) — User-Agent HTTP izlemesininki, gövde yalnız JSON doğrulamasında. */
         public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                     boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
                     String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline) {
             this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
-                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, USER_AGENT, false, null);
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, USER_AGENT, false, null, false);
         }
-        /** Keyword izlemesinin kurucusu (2026-10-04 sözleşmesi) — profil yok. */
+        /** Keyword izlemesinin kurucusu (2026-10-04 sözleşmesi) — profil yok; eklentiler keyword KAYNAK kuralıyla (H4#5). */
         public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                     boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
                     String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
                     String userAgent, boolean captureBody) {
             this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
-                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, userAgent, captureBody, null);
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, userAgent, captureBody, null, true);
         }
         public boolean viaProxy() { return "proxy".equals(route); }
         int maxHops() { return profile != null ? Math.max(0, profile.maxRedirects()) : SafeRedirect.MAX_HOPS; }
+
+        /** Eklentiler bu hop'a gider mi — {@link #originExtras} kuralına göre ({@code first}: yolun ilk isteği). */
+        boolean extrasFollow(URI first, URI hop) {
+            if (originExtras) return SafeRedirect.extrasMayFollow(first, hop);
+            String h = first == null ? null : first.getHost();
+            return h != null && hop != null && h.equalsIgnoreCase(hop.getHost());
+        }
     }
 
     /**
@@ -225,13 +246,13 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
         try {
             URI base = URI.create(spec.url().trim());
             String method = spec.method() == null ? "GET" : spec.method().trim().toUpperCase(Locale.ROOT);
-            String originHost = base.getHost();
             URI current = base;
             int maxHops = spec.maxHops();
             boolean followDowngrade = spec.profile() != null && spec.profile().followDowngrade();
             for (int hop = 0; hop <= maxHops; hop++) {
-                boolean origin = !spec.followRedirects()
-                        || (originHost != null && originHost.equalsIgnoreCase(current.getHost()));
+                // Eklentiler (Basic auth, özel başlıklar, gövde) izlemenin GERÇEK istemcisinin kuralıyla: keyword KAYNAK, HTTP /
+                // sayfa HOST (Spec.originExtras — hata avı 2026-11-06 H4#5)
+                boolean origin = !spec.followRedirects() || spec.extrasFollow(base, current);
                 HopResult hr = runHop(hop, current, method, origin);
                 if (hr.status != null) finalStatus = hr.status;   // gövde hatasında da durum kodu biliniyor
                 if (failure != null || hr.status == null) break;
@@ -245,8 +266,7 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
                 boolean crossHost = next != null && current.getHost() != null && !current.getHost().equalsIgnoreCase(next.getHost());
                 redirect.put("cross_host", crossHost);
                 boolean extras = spec.opts() != null && !spec.opts().isEmpty();
-                redirect.put("extras_dropped", next != null && extras && originHost != null
-                        && !originHost.equalsIgnoreCase(next.getHost()));
+                redirect.put("extras_dropped", next != null && extras && base.getHost() != null && !spec.extrasFollow(base, next));
                 hr.hop.put("redirect", redirect);
                 // Takip edilemeyen hedef (şema dışı / host'suz / https→http düşürmesi) → 3xx OLDUĞU GİBİ son yanıttır.
                 if (next == null || (SafeRedirect.isDowngrade(current, next) && !followDowngrade)) {

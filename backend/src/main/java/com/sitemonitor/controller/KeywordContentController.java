@@ -89,6 +89,9 @@ public class KeywordContentController {
     /** Canlı ölçüm (temel / eşleşmeler) — izlemenin kontrol tanımı zamanlayıcıdan, ölçüm denetleyiciden (aynı yol). */
     private final com.sitemonitor.service.SchedulerService schedulerService;
     private final com.sitemonitor.service.KeywordCheckerService keywordChecker;
+    /** Temel özeti istek parmak izini içerir (hata avı 2026-11-06 H4#3) — özel başlıklar çözülür; yoksa (elle kurulan test) null. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.KeywordHeaderSecrets keywordHeaderSecrets;
     private Clock clock = Clock.systemUTC();
 
     /** Canlı eşleşme ucunun kullanıcı başına dakikalık sınırı (pod belleği — yük sınırı). */
@@ -103,6 +106,21 @@ public class KeywordContentController {
         this.clock = clock;
     }
 
+    /** Testler için başlık sırları. */
+    void setKeywordHeaderSecrets(com.sitemonitor.service.KeywordHeaderSecrets s) {
+        this.keywordHeaderSecrets = s;
+    }
+
+    /** Çözülmüş özel başlıklar (yalnız temel özeti için — asla dönmez); çözülemez / bileşen yoksa null. */
+    private String headersOf(KeywordMonitor m) {
+        if (keywordHeaderSecrets == null) return null;
+        try {
+            return keywordHeaderSecrets.effectiveHeaders(m);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     // ── Değişim görünümü ─────────────────────────────────────────────────────────────────────
 
     @GetMapping("/{id}/change")
@@ -114,8 +132,8 @@ public class KeywordContentController {
         data.put("enabled", Boolean.TRUE.equals(m.getChangeDetect()));
         data.put("mask", ContentMasker.toList(m.getChangeMask()));
         data.put("selector", m.getChangeSelector());
-        // Başka ayarla (maske / seçici / algoritma) alınmış temel YOK sayılır (spec_hash) — ekranda da gösterilmez
-        String spec = KeywordChangeDetector.specHash(m.getChangeMask(), m.getChangeSelector());
+        // Başka ayarla (maske / seçici / istek tanımı / algoritma) alınmış temel YOK sayılır (spec_hash) — ekranda da gösterilmez
+        String spec = KeywordChangeDetector.specHashFor(m, headersOf(m));
         KeywordChangeBaseline b = baselines.find(m.getId()).filter(x -> spec.equals(x.getSpecHash())).orElse(null);
         boolean canEdit = canEdit(session, m);
         // kw son inceleme O-5: temel METNİ (≤ 64 000 karakter — kimlik bilgili sayfanın tüm görünür metni olabilir) yalnız

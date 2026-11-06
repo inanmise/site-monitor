@@ -80,8 +80,8 @@ import KeywordContentChecks from './keyword/content/KeywordContentChecks.jsx'
 import { contentFormFrom, validateContentChecks } from './keyword/content/contentChecksModel.js'
 import {
   KW_EMPTY_FORM, affectsCheck, clampTimeoutMs, hasRenderableField, keywordFormFrom, keywordPayload, keywordTestPayload,
-  originChangeProblems, restoreNotices, savedSecretsBlocked, sectionsForErrors, serverFieldErrors, stableRules, storedSecretsOf,
-  validateKeywordForm,
+  originChangeProblems, restoreNotices, sameOrigin, savedPassUserChanged, savedSecretsBlocked, sectionsForErrors, serverFieldErrors,
+  stableRules, storedSecretsOf, unplacedErrors, validateKeywordForm,
 } from './keyword/keywordFormModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import {
@@ -120,7 +120,8 @@ const REFRESH_INTERVAL = 60
 /** İçerik kontrollerinin form / hata anahtarları (kw fe2). */
 const CONTENT_KEYS = ['minBytes', 'maxBytes', 'changeDetect', 'changeMask', 'changeSelector']
 /** Değişmemiş (saklı) kuralda engellemeyen, bilgi tonunda gösterilen istemci kodları — B10 (O3). */
-const SOFT_RULE_CODES = Object.freeze(['alwaysHealthy', 'neverHealthy'])
+const SOFT_RULE_CODES = Object.freeze(['alwaysHealthy', 'neverHealthy', 'alwaysHealthyCap', 'neverHealthyCap', 'criticalLtZero',
+  'criticalAlwaysCap', 'criticalNeverCap'])
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
 // Formun boş hâli keyword/keywordFormModel'de (kw 2026-11-05: eşleşme, gelişmiş istek, posta konusu, fe2 kural alanları).
 // Bildirim grubu + 7/24 alanları BURADA: izleme formu bağlantı kapısı (monitorFormWiring) halkaları sayfa dosyasında arar.
@@ -161,6 +162,8 @@ function KeywordTestExtras({ result, expectedStatus, t }) {
   const blocked = Array.isArray(result.blocked_saved) ? result.blocked_saved : []
   if (blocked.includes('basicAuthPass')) lines.push(['blockedPass', t('keyword.adv.savedPassOtherOrigin')])
   if (blocked.includes('customHeaders')) lines.push(['blockedHeaders', t('keyword.adv.savedHeadersOtherOrigin')])
+  // Kullanıcı adı kayıtlıdan farklı: kayıtlı parola (eski adla eşli) kullanılmadı — yeni adı denemek için parola yazılmalı
+  if (result.pass_user_changed === true) lines.push(['passUser', t('keyword.adv.savedPassUserChanged')])
   if (!lines.length) return null
   return (
     <ul data-slot="kw-test-extra" className="m-0 mt-1.5 list-disc ps-4 text-xs">
@@ -459,6 +462,22 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     if (secs.has('match')) setMatchOpen(true)
     if (secs.has('advanced')) setAdvOpen(true)
   }
+  /**
+   * Hataları gösterir: bölümler açılır, iletiler alanların altına yazılır, ilk hatalıya kaydırılır. GÜVENLİK AĞI (hata avı
+   * 2026-11-06): bölümler çizildikten sonra DOM'da alanı bulunmayan (gizli alana düşen) hata varsa kayıt / test sessizce
+   * durmasın — iletisi tostla söylenir.
+   */
+  function showFormErrors(errs) {
+    openSectionsFor(errs)
+    fe.check(errs)
+    const verify = () => {
+      const lost = unplacedErrors(errs)
+      if (lost.length) toast.error(t('keyword.form.unplaced', lost.slice(0, 3).join(' · ')))
+    }
+    // İki kare: bölüm açma state'i işlensin ve içerik DOM'a girsin
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(verify))
+    else setTimeout(verify, 0)
+  }
   function openEdit(row) {
     // Güncel satır (2026-10-09): detay kopyası bayat olabilir (liste yenilemesi / geri alma) — form ondan kurulursa kayıt
     // eski değerleri sessizce geri yazar. Listedeki satır kopyanın üstüne birleştirilir (bkz. utils/monitorDetailSync).
@@ -486,7 +505,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     // Yeni alanların istemci doğrulaması (kw 2026-11-05): hatalı durum kodu / son adres / User-Agent sunucuya gitmeden alanın
     // altında gösterilir (kapalı bölüm açılır).
     const errs = { ...validateKeywordForm(form, { globalAdmin, t }), ...ruleContentErrors(form) }
-    if (Object.values(errs).some(Boolean)) { openSectionsFor(errs); fe.check(errs); return }
+    if (Object.values(errs).some(Boolean)) { showFormErrors(errs); return }
     // Düzenlenen kayıtlı izlemede kutuya yazılmamış sır (Basic auth parolası, global admin'in özel başlıkları) KAYITLI değeriyle
     // denensin (`useSaved` — sunucu düzenleme yetkisini denetler). Özel başlıklar YALNIZ global admin'de (2026-10-22, UIM-15):
     // sunucu kapsamlı yöneticinin başlıklarını yok sayar — gönderilen başlıklar testi yanıltırdı.
@@ -495,19 +514,24 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     const sendable = sendableForm(form)
     const payload = keywordTestPayload(sendable, { ...opts, monitorId: editing ? modal.id : null })
     const blocked = editing ? savedSecretsBlocked(sendable, opts) : []
+    // Kullanıcı adı değişti ama parola yazılmadı: kayıtlı parola istenmedi — sonuçta söylenir
+    const passUserChanged = editing && sameOrigin(sendable.url, opts.storedUrl) && savedPassUserChanged(sendable, opts.stored)
     const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
       const res = await api.monitoring.testKeyword(payload)
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
-      if (res?.success) { setTestResult({ ...res.data, requested_saved: payload.useSaved || null, blocked_saved: blocked }); return }
+      if (res?.success) {
+        setTestResult({ ...res.data, requested_saved: payload.useSaved || null, blocked_saved: blocked, pass_user_changed: passUserChanged })
+        return
+      }
       // Sunucunun alan hatası (400 VALIDATION_FAILED + field) alanın altına da düşer
       const fieldErrs = remapServerErrors(serverFieldErrors(res))
       // Kayıtlı sır başka kaynağa istendi (sunucu 403): parolanın yeniden girilmesi gerektiği alanın altında söylenir
       if (res?.code === 'KEYWORD_SAVED_SECRET_ORIGIN' && !fieldErrs.basicAuthPass && !fieldErrs.customHeaders) {
         fieldErrs.basicAuthPass = res?.error || t('keyword.adv.savedPassOtherOrigin')
       }
-      if (hasRenderableField(fieldErrs)) { openSectionsFor(fieldErrs); fe.check(fieldErrs) }
+      if (hasRenderableField(fieldErrs)) showFormErrors(fieldErrs)
       setTestResult({ error: res?.error || t('keyword.testError') })
     } finally {
       if (my === testSeq.current) setTesting(false)
@@ -529,7 +553,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       ...originErrors(form),
     }
     setRulesTried(true)
-    if (Object.values(errs).some(Boolean)) { openSectionsFor(errs); fe.check(errs); return }
+    if (Object.values(errs).some(Boolean)) { showFormErrors(errs); return }
     const isNew = modal === 'new'
     // Yeni kayıt (Kopyala dahil) TAM yük; düzenleme YALNIZ değişen alanlar (B14, "Before a feature counts as done" madde 9) —
     // aynı izlemeyi açık tutan başka bir yöneticinin o arada kaydettiği alan (toplu duraklatma, taşıma …) geri yazılmaz.
@@ -547,7 +571,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       if (!res?.success) {
         // Sunucunun alan hatası (400 VALIDATION_FAILED + field, istek anahtarı = form anahtarı) alanın altına; alana düşmüyorsa tost
         const fieldErrs = remapServerErrors(serverFieldErrors(res))
-        if (hasRenderableField(fieldErrs)) { openSectionsFor(fieldErrs); fe.check(fieldErrs); return }
+        if (hasRenderableField(fieldErrs)) { showFormErrors(fieldErrs); return }
         toast.error(res?.error || 'Error'); return
       }
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan

@@ -28,14 +28,17 @@ public final class KeywordChangeSettings {
 
     /**
      * Değişim ayarı değişti mi (temel silinmeli + açık KEYWORD_CHANGED sessizce kapanmalı — §7.2 güncelleme yan etkileri):
-     * değişim kapatıldı, ya da maske / seçici farklı.
+     * değişim kapatıldı, AÇILDI (kapalıyken kalmış eski bir temel — silinememiş, eski pod — yeni tanımla kıyaslanmasın; hata avı
+     * 2026-11-06 H4#3), ya da açıkken maske / seçici / İSTEK tanımı ({@code oldRequest} / {@code newRequest}:
+     * {@link com.sitemonitor.service.keyword.KeywordRequestRules#requestFingerprint}) farklı.
      */
-    public static boolean settingsChanged(Boolean oldDetect, String oldMask, String oldSelector,
-                                          Boolean newDetect, String newMask, String newSelector) {
+    public static boolean settingsChanged(Boolean oldDetect, String oldMask, String oldSelector, String oldRequest,
+                                          Boolean newDetect, String newMask, String newSelector, String newRequest) {
         boolean wasOn = Boolean.TRUE.equals(oldDetect);
         boolean isOn = Boolean.TRUE.equals(newDetect);
-        if (wasOn && !isOn) return true;
-        if (!wasOn) return false;   // kapalıydı: temel zaten yok
-        return !KeywordChangeDetector.specHash(oldMask, oldSelector).equals(KeywordChangeDetector.specHash(newMask, newSelector));
+        if (wasOn != isOn) return true;
+        if (!wasOn) return false;   // kapalı kaldı: temel kullanılmıyor
+        return !KeywordChangeDetector.specHash(oldMask, oldSelector, oldRequest)
+                .equals(KeywordChangeDetector.specHash(newMask, newSelector, newRequest));
     }
 }

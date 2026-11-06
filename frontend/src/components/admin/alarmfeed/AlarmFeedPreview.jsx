@@ -161,7 +161,7 @@ function PreviewCardRow({ row, columns, isOpen, onToggle, idx }) {
  * yazılmaz). Sayı / açık / çözülmüş / kırpıldı; kap ≥ 900 px tablo, altında kart; her satır BODY ve bütün kolonlarla açılır;
  * "JSON'u kopyala". Okuma hatası tehlike bloğu + Tekrar dene ("satır yok" değil).
  */
-export function PreviewCard({ preview, onLoad, lang, dirty }) {
+export function PreviewCard({ preview, onLoad, lang, dirty, savedOpenOnly = false }) {
   const t = useT()
   const [open, setOpen] = useState(() => new Set())
   const [ref, width] = useElementWidth()
@@ -170,7 +170,8 @@ export function PreviewCard({ preview, onLoad, lang, dirty }) {
   const rows = Array.isArray(data?.rows) ? data.rows : []
   const columns = previewColumns(data)
   // Yalnız açık alarmlar kipi (2026-11-05; eski sunucu `resolved_mode` göndermez → eski görünüm): çözülen satır yok,
-  // kırpılma "sınır dışı kalan alarm merkezi sistemde kapanmış görünür" demektir
+  // kırpılma "sınır dışı kalan alarm merkezi sistemde kapanmış görünür" demektir. Önizleme henüz koşmadıysa açıklama KAYITLI
+  // ayarın kipine göre (`savedOpenOnly`, hata avı 2026-11-06 — "RESOLVED satırı önizlemede görünür" demesin)
   const openOnly = isOpenOnly(data?.resolved_mode)
   const toggle = (key) => setOpen((cur) => {
     const next = new Set(cur)
@@ -247,7 +248,8 @@ export function PreviewCard({ preview, onLoad, lang, dirty }) {
   }
 
   return (
-    <SectionCard slot="af-preview" data-state={preview.status} icon={Eye} title={t('af.pv.title')} description={t('af.pv.desc')} actions={runButton}>
+    <SectionCard slot="af-preview" data-state={preview.status} icon={Eye} title={t('af.pv.title')}
+      description={t((data ? openOnly : savedOpenOnly) ? 'af.pv.descOpenOnly' : 'af.pv.desc')} actions={runButton}>
       {dirty && (
         <p className="m-0 text-xs text-muted-foreground" data-slot="af-pv-saved-note">{t('af.pv.savedNote')}</p>
       )}

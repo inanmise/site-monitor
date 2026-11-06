@@ -536,4 +536,51 @@ class AlertForwardControllerTest {
                 .andExpect(jsonPath("$.info.muted").value(true))
                 .andExpect(jsonPath("$.info.emails").value(0));
     }
+
+    // ── hata avı 2026-11-06 ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("H2#8: seçilen izlemeler kapsamında izleme dizini okunamazsa durum 'unknown' (yeşil 'active' değil); öbür kapsamlar etkin")
+    void monitorsUnreadableStateUnknown() throws Exception {
+        rows.add(fwd(1, 1, "MONITORS", null, "http:5", "TEAM", 2, null));
+        rows.add(fwd(2, 1, "ALL", null, null, "TEAM", 3, null));
+        when(directory.all()).thenThrow(new RuntimeException("dizin okunamadı"));
+        mvc.perform(get("/api/alert-forwards").session(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].state").value("unknown"))
+                .andExpect(jsonPath("$.data.items[0].scope_monitors[0].missing").value(nullValue()))
+                .andExpect(jsonPath("$.data.items[1].state").value("active"));
+    }
+
+    @Test
+    @DisplayName("H3#4: izleme için — pasif sahip takımda can_manage false, can_add false (servis pasif sahibe iletim ekletmez)")
+    void forMonitorPassiveOwnerCannotAdd() throws Exception {
+        Team passiveOwner = team(1, "Sipariş Sistemleri (Dijital Kanallar Uygulama Geliştirme)");
+        passiveOwner.setActive(false);
+        org.mockito.Mockito.doReturn(List.of(passiveOwner)).when(teamRepo).findAllById(any());
+        when(directory.find(NocType.HTTP, 5L)).thenReturn(
+                new NocMonitorDirectory.Row(NocType.HTTP, 5, "Vitrin", "https://shop", 1L, null, true, false, null, false));
+        when(repo.findByOwnerTeamIdInOrderByIdAsc(any())).thenReturn(List.of());
+        mvc.perform(get("/api/alert-forwards/for-monitor").param("type", "http").param("id", "5").session(teamAdmin1()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.owner_teams[0].id").value(1))
+                .andExpect(jsonPath("$.data.owner_teams[0].can_manage").value(false))
+                .andExpect(jsonPath("$.data.can_add").value(false));
+    }
+
+    @Test
+    @DisplayName("H2#5: görüntüleme erişimi teknik hatayla verilemezse ileti TEKNİK METİN taşımaz (açıklayıcı yedek)")
+    void grantViewTechnicalErrorIsNotLeaked() throws Exception {
+        AlertForward saved = fwd(9, 1, "ALL", null, null, "TEAM", 2, null);
+        when(forwards.create(anyMap(), any(), any())).thenReturn(new AlertForwardService.Saved(saved, null, true, true, List.of()));
+        when(grantRepo.findByOwnerTeamIdAndGranteeKey(1L, "T:2"))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+                        "could not execute statement [duplicate key value violates unique constraint]"));
+        String body = "{\"owner_team_id\":1,\"scope_kind\":\"ALL\",\"recipient_kind\":\"TEAM\",\"recipient_team_id\":2,\"grant_view\":true}";
+        String json = mvc.perform(post("/api/alert-forwards").session(teamAdmin1()).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.grant.failed").value(1))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(json).doesNotContain("could not execute").doesNotContain("duplicate key").contains("Görüntüleme erişimi verilemedi");
+    }
 }

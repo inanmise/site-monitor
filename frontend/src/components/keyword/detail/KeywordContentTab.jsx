@@ -85,7 +85,8 @@ export default function KeywordContentTab({ monitor, canEdit = false, canExecute
       </Suspense>
 
       {m.change_detect === true ? (
-        <KeywordChangePanel monitorId={m.id} canEdit={canEdit} onChanged={onChanged} />
+        <KeywordChangePanel monitorId={m.id} canEdit={canEdit} onChanged={onChanged} changeMask={m.change_mask ?? null}
+          changeSelector={m.change_selector ?? null} />
       ) : m.change_detect === false ? (
         <section data-slot="kw-content-change-off" className="flex min-w-0 flex-col gap-2">
           <h4 className="m-0 flex items-center gap-1.5 text-sm font-semibold"><FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />{t('keyword.change.title')}</h4>

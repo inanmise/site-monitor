@@ -187,13 +187,63 @@ public final class SafeRedirect {
     }
 
     /**
-     * Yönlendirmeden sonra kullanılacak HTTP metodu.
+     * Yönlendirmeden sonra kullanılacak HTTP metodu — tarayıcının (ve JDK {@code HttpClient.Redirect.NORMAL}'ın) kuralı.
      *
-     * <p>303 See Other her zaman GET'e döner (RFC 9110 §15.4.4) — {@code PageFetchCore}'un
-     * bugünkü davranışı da budur ({@code HEAD} + 303 → {@code GET}). Diğer 3xx'lerde metot korunur.
+     * <ul>
+     *   <li>303 See Other: her yöntem {@code GET}'e döner (RFC 9110 §15.4.4) — {@code PageFetchCore}'un bugünkü davranışı da
+     *       budur ({@code HEAD} + 303 → {@code GET}).</li>
+     *   <li>301 / 302 + {@code POST}: {@code GET}'e döner (RFC 9110 §15.4.2 / §15.4.3 tarihsel davranış; bütün tarayıcılar ve
+     *       JDK böyle yapar — 2026-11-06 hata avı H4#1). Eskiden yöntem korunuyordu: giriş formu ({@code POST /login} →
+     *       {@code 302 /home}) aynı kaynakta gövde + Authorization ile YENİDEN POST ediliyor, başka kaynakta gövdesiz POST
+     *       atılıyordu; sunucu 405 / 400 dönünce izleme sahte alarm açıyordu.</li>
+     *   <li>307 / 308: yöntem (ve gövde) KORUNUR — standardın amacı budur.</li>
+     *   <li>{@code GET} / {@code HEAD} her 301 / 302 / 307 / 308'de aynı kalır.</li>
+     * </ul>
+     * Gövdesiz istek: çağıranlar gövdeyi ve {@code Content-Type}'ı yalnız {@code POST}'ta yazar — {@code GET}'e dönen hop
+     * ikisini de göndermez.
      */
     public static String nextMethod(int status, String method) {
         String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
-        return status == 303 ? "GET" : m;
+        if (status == 303) return "GET";
+        if ((status == 301 || status == 302) && "POST".equals(m)) return "GET";
+        return m;
+    }
+
+    /**
+     * İlk isteğin ek parçaları (özel başlıklar, Basic auth, {@code POST} gövdesi) bu yönlendirme hop'una GİDER mi — anahtar
+     * kelime kontrolünün ve onun uçtan uca tanısının ({@code RawHttpProbe}) TEK kuralı (2026-11-06 hata avı H4#2 / H4#5).
+     *
+     * <p>Kural: ilk istekle AYNI KAYNAK (şema + host + port; host harfe duyarsız, varsayılan port düşer) → gider. Tek istisna:
+     * aynı host'ta düz {@code http}'nin varsayılan portundan (80) {@code https}'in varsayılan portuna (443) YÜKSELTME de aynı
+     * kaynak sayılır — kurumsal sitelerin çoğu {@code http://site/} → {@code https://site/} yönlendirir ve kullanıcının
+     * tanımladığı {@code Authorization} / {@code X-Api-Key} ikinci adımda gönderilmeyince sayfa 401 dönüp sahte alarm
+     * açıyordu (tarayıcının düz http'de zaten açıkta giden kimliği TLS'e taşımak güvenliği artırır). Başka host, aynı host'un
+     * başka portu ya da başka bir şema geçişi (ör. {@code https} → {@code http} düşürmesi, {@code http:8080} →
+     * {@code https:443}) → GİTMEZ: kimliği yabancı bir sunucuya / sürece teslim etmek olurdu (tarayıcıların cross-origin
+     * yönlendirmede {@code Authorization} düşürmesiyle aynı).
+     *
+     * <p>Karşılaştırma her zaman İLK isteğe göre yapılır (zincirdeki önceki hop'a göre değil): {@code http://a} →
+     * {@code https://b} → {@code https://a} zincirinde sırlar yalnız {@code a}'ya gider. Saf; ağ yok.
+     */
+    public static boolean extrasMayFollow(URI first, URI hop) {
+        if (first == null || hop == null) return false;
+        String h1 = first.getHost();
+        String h2 = hop.getHost();
+        if (h1 == null || h2 == null || h1.isBlank() || !h1.equalsIgnoreCase(h2)) return false;
+        String s1 = scheme(first);
+        String s2 = scheme(hop);
+        int p1 = effectivePort(first, s1);
+        int p2 = effectivePort(hop, s2);
+        if (s1.equals(s2) && p1 == p2) return true;
+        return "http".equals(s1) && p1 == 80 && "https".equals(s2) && p2 == 443;
+    }
+
+    private static String scheme(URI u) {
+        return u.getScheme() == null ? "http" : u.getScheme().toLowerCase(Locale.ROOT);
+    }
+
+    private static int effectivePort(URI u, String scheme) {
+        if (u.getPort() != -1) return u.getPort();
+        return "https".equals(scheme) ? 443 : "http".equals(scheme) ? 80 : -1;
     }
 }

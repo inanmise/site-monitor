@@ -111,6 +111,15 @@ class KeywordContentControllerTest {
         return s;
     }
 
+    /** Varsayılan izlemenin (41) GÜNCEL temel özeti — istek parmak izi dahil (hata avı 2026-11-06 H4#3). */
+    static String currentSpec() {
+        KeywordMonitor m = monitor(41L, 5L);
+        m.setChangeDetect(true);
+        m.setChangeMask("DIGITS,DATES");
+        m.setChangeSelector("#icerik");
+        return KeywordChangeDetector.specHashFor(m, null);
+    }
+
     static KeywordChangeBaseline baseline(String spec) {
         KeywordChangeBaseline b = new KeywordChangeBaseline();
         b.setMonitorId(41L);
@@ -128,7 +137,7 @@ class KeywordContentControllerTest {
     @Test
     @DisplayName("GET change: ayar + temel (spec uyuşuyorsa, metinle) + son değerlendirme + can_edit")
     void changeView() throws Exception {
-        String spec = KeywordChangeDetector.specHash("DIGITS,DATES", "#icerik");
+        String spec = currentSpec();
         when(baselines.find(41L)).thenReturn(Optional.of(baseline(spec)));
         KeywordResult r = new KeywordResult();
         r.setCheckedAt("2026-11-05T09:00:00");
@@ -155,7 +164,7 @@ class KeywordContentControllerTest {
     @DisplayName("kw son inceleme O-5: temel METNİ yalnız düzenleyebilene — okuyucu (AUDIT / düzenleme izni yok) text null + "
             + "text_hidden; satır sayısı ve fark özeti okuyucuya kalır; son kontrolde değişim ölçülmediyse skipped notu")
     void baselineTextOnlyForEditors() throws Exception {
-        String spec = KeywordChangeDetector.specHash("DIGITS,DATES", "#icerik");
+        String spec = currentSpec();
         when(baselines.find(41L)).thenReturn(Optional.of(baseline(spec)));
         KeywordResult ch = new KeywordResult();
         ch.setCheckedAt("2026-11-05T09:00:00");

@@ -261,6 +261,8 @@ public class QuietDigestService {
         // 4) Gönder: (takım, alıcı kümesi) başına bir e-posta.
         int mails = 0, sentMails = 0;
         Set<Long> notifiedOpen = new LinkedHashSet<>();
+        List<OwnerDigest> forwardInputs = new ArrayList<>();
+        Map<Long, Set<String>> ownerKeysByEvent = new HashMap<>();
         for (Map.Entry<Long, Map<String, List<QuietDigestItem>>> t : byTeam.entrySet()) {
             Team team = teams.get(t.getKey());
             String name = teamName(team);
@@ -309,10 +311,18 @@ public class QuietDigestService {
                 } catch (Exception ex) {
                     log.warn("Sessiz saat özeti günlüğe yazılamadı (takım {}): {}", t.getKey(), ex.getMessage());
                 }
-                // Alarm iletimi (2026-11-05): bu özetin alarmlarının iletim alıcılarına ayrı özet kopyaları (yoksa hiçbir şey).
-                forwardDigest(t.getKey(), name, group, events, to, windowLabel);
+                // Alarm iletimi (2026-11-05): bu özetin alarmları iletim kopyaları için TURA toplanır — gönderim tur sonunda,
+                // alıcı takım başına birleşik (2026-11-06, hata avı H1#1). Yönlendirme yoksa hiçbir şey toplanmaz.
+                if (forwardRouting() != null) {
+                    forwardInputs.add(new OwnerDigest(t.getKey(), name, group));
+                    for (Long eventId : seenEvents) {
+                        Set<String> keys = ownerKeysByEvent.computeIfAbsent(eventId, k -> new HashSet<>());
+                        for (String a : to) if (a != null) keys.add(a.trim().toLowerCase(Locale.ROOT));
+                    }
+                }
             }
         }
+        forwardDigests(forwardInputs, events, ownerKeysByEvent);
 
         // 5) Hâlâ açık alarmlar özet anından itibaren "bildirilmiş" — günlük hatırlatma kadansı buradan sürer.
         if (!notifiedOpen.isEmpty()) {
@@ -325,12 +335,33 @@ public class QuietDigestService {
         return new RunResult(owned.size(), mails, sentMails);
     }
 
+    /** Turun bir sahip özeti (takım, adı, kayıtları) — iletim kopyalarının girdisi. */
+    private record OwnerDigest(Long teamId, String name, List<QuietDigestItem> items) { }
+
+    /** Turda bir alarmın iletim girdisi: özetine girdiği takımlar, kayıtları ve takım başına hedefler. */
+    private static final class AlarmForward {
+        final AlertEvent event;
+        final Set<Long> digestTeams = new LinkedHashSet<>();
+        final List<QuietDigestItem> items = new ArrayList<>();
+        final List<com.sitemonitor.service.forward.ForwardTarget> targets = new ArrayList<>();
+        /** Alıcı takım → bu alıcıyı getiren TÜM kaynaklarda açılış mı ertelenmişti (VE). */
+        final Map<Long, Boolean> openingOnly = new HashMap<>();
+        /** Alıcı takım → alarmı ona ileten sahip özet takımlarının adları. */
+        final Map<Long, Set<String>> ownerNames = new HashMap<>();
+
+        AlarmForward(AlertEvent event) {
+            this.event = event;
+        }
+    }
+
     /** İletim özeti grubu: (alıcı takım, adres kümesi) → alarmlar; {@code reason} doluysa posta yok, yalnız karar satırı. */
     private static final class ForwardDigestGroup {
         final com.sitemonitor.service.forward.ForwardTarget target;
         final List<String> to;
         final String reason;
         final List<AlertEvent> events = new ArrayList<>();
+        final List<QuietDigestItem> items = new ArrayList<>();
+        final Set<String> ownerNames = new LinkedHashSet<>();
 
         ForwardDigestGroup(com.sitemonitor.service.forward.ForwardTarget target, List<String> to, String reason) {
             this.target = target;
@@ -340,67 +371,104 @@ public class QuietDigestService {
     }
 
     /**
-     * Sessiz saat özetinin iletim kopyaları (2026-11-05): {@code teamId} takımının özetindeki her alarm için o takımın
-     * iletimleri ({@code targetsFor(owners=[takım])}); alıcı takım × adres kümesi başına AYRI özet — yalnız ona iletilen
-     * alarmlar, başta bant, başlıkta sahip takımın adı. Adresler: hedef − sahip özetinin alıcıları − bu alarmı iletimle ZATEN
-     * almış adresler (damga). Alarm başına {@code QUIET_DIGEST} satırı (rol FORWARD, alıcı adı = alıcı takım). Teslim edilen ve
-     * hâlâ açık alarmlar iletim damgasına yazılır (çözüm postası onlara gider). Hata sahip özetini bozmaz.
+     * Sessiz saat özetinin iletim kopyaları (2026-11-05): turun her sahip özetindeki alarmlar için o takımın iletimleri
+     * ({@code targetsFor(owners=[takım])}); alıcı takım × adres kümesi başına AYRI özet — yalnız ona iletilen alarmlar, başta
+     * bant, başlıkta sahip takım(lar)ın adı. Alarm başına {@code QUIET_DIGEST} satırı (rol FORWARD, alıcı adı = alıcı takım).
+     * Teslim edilen ve hâlâ açık alarmlar iletim damgasına yazılır (çözüm postası onlara gider). Hata sahip özetini bozmaz.
      *
-     * <p>Sahipler (2026-11-06, inceleme): alarmın damga takımı + envanter gibi yönleniyorsa envanterin SY / UG takımı; alıcı
-     * takımı bu sahiplerden biri olan hedef ATLANIR (alarmı kendi postasından / özetinden zaten alıyor — anlık gönderim ve fırtına
-     * yoluyla aynı kural). Eskiden yalnız özet takımı sahip sayılıyordu: SY'nin UG'ye iletimi UG'ye ikinci bir kopya
-     * götürüyordu.
+     * <p><b>Tur içinde birleşik (2026-11-06, hata avı H1#1).</b> İki sahipli alarmın (SY ve UG) özetleri aynı turda gidince
+     * eskiden sahip özeti başına ayrı iletim kopyası kuruluyordu — ikisi aynı X takımına iletiyorsa X aynı alarmı İKİ özette
+     * alıyordu (damga turun başında okunduğu için ikinci kopya ilkini görmüyordu). Artık kopyalar TUR SONUNDA kurulur: alarm
+     * başına bütün sahip özetlerinin hedefleri alıcı takım başına birleşir ({@link
+     * com.sitemonitor.service.forward.ForwardTarget#mergeByRecipient}), bant sahip adlarının hepsini söyler.
+     *
+     * <p><b>Adresler.</b> Hedef − alarmın TÜM sahip özetlerinin alıcıları − aynı alarmın önceki hedeflerine verilmiş adresler
+     * (hedefler arası ortak küme, H1#3: iki alıcı takımda ortak bir adres alarmı bir kez alır) − iletim damgasındakiler; damga
+     * tekilleştirmesi YALNIZ açılışı ertelenen kayıtlarda (kullanıcı kararı 2026-11-06, H1#4: ertelenen günlük hatırlatma /
+     * yükselme sahip ne alıyorsa alıcıya da gider — açılışı başka yoldan almış olması onu düşürmez).
+     *
+     * <p>Sahipler (2026-11-06, inceleme): alarmın özet takımları + damga takımı + envanter gibi yönleniyorsa envanterin SY / UG
+     * takımı; alıcı takımı bu sahiplerden biri olan hedef ATLANIR (alarmı kendi postasından / özetinden zaten alıyor — anlık
+     * gönderim ve fırtına yoluyla aynı kural).
      */
-    private void forwardDigest(Long teamId, String ownerName, List<QuietDigestItem> group, Map<Long, AlertEvent> events,
-                               List<String> ownerTo, String windowLabel) {
+    private void forwardDigests(List<OwnerDigest> inputs, Map<Long, AlertEvent> events,
+                                Map<Long, Set<String>> ownerKeysByEvent) {
         var routing = forwardRouting();
-        if (routing == null || teamId == null) return;
+        if (routing == null || inputs == null || inputs.isEmpty()) return;
         try {
-            if (!routing.anyFor(List.of(teamId))) return;
-            Set<String> ownerKeys = new HashSet<>();
-            for (String a : ownerTo) if (a != null) ownerKeys.add(a.trim().toLowerCase(Locale.ROOT));
+            Map<Long, AlarmForward> alarms = new LinkedHashMap<>();
+            for (OwnerDigest d : inputs) {
+                if (d.teamId() == null || !routing.anyFor(List.of(d.teamId()))) continue;
+                Map<Long, Boolean> opening = new LinkedHashMap<>();
+                Map<Long, List<QuietDigestItem>> itemsOf = new LinkedHashMap<>();
+                for (QuietDigestItem i : d.items()) {
+                    AlertEvent e = events.get(i.getAlertEventId());
+                    if (e == null || e.getId() == null) continue;
+                    opening.merge(e.getId(), Boolean.TRUE.equals(i.getOpeningDeferred()), Boolean::logicalOr);
+                    itemsOf.computeIfAbsent(e.getId(), k -> new ArrayList<>()).add(i);
+                }
+                for (Map.Entry<Long, Boolean> en : opening.entrySet()) {
+                    AlertEvent e = events.get(en.getKey());
+                    var targets = routing.targetsFor(new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(
+                            List.of(d.teamId()), e.getAlertType(), e.getDomain(), EscalationService.contextMonitorId(e)));
+                    if (targets == null || targets.isEmpty()) continue;
+                    AlarmForward a = alarms.computeIfAbsent(e.getId(), k -> new AlarmForward(e));
+                    a.digestTeams.add(d.teamId());
+                    a.items.addAll(itemsOf.getOrDefault(e.getId(), List.of()));
+                    for (var t : targets) {
+                        if (t == null) continue;
+                        a.targets.add(t);
+                        a.openingOnly.merge(t.recipientTeamId(), en.getValue(), Boolean::logicalAnd);
+                        a.ownerNames.computeIfAbsent(t.recipientTeamId(), k -> new LinkedHashSet<>()).add(d.name());
+                    }
+                }
+            }
+            if (alarms.isEmpty()) return;
             Map<String, ForwardDigestGroup> groups = new LinkedHashMap<>();
-            Set<Long> seenEvents = new HashSet<>();
             Map<String, Set<Long>> ownersByDomain = new HashMap<>();
-            for (QuietDigestItem i : group) {
-                AlertEvent e = events.get(i.getAlertEventId());
-                if (e == null || e.getId() == null || !seenEvents.add(e.getId())) continue;
-                var targets = routing.targetsFor(new com.sitemonitor.service.forward.AlertForwardRouting.AlertRef(
-                        List.of(teamId), e.getAlertType(), e.getDomain(), EscalationService.contextMonitorId(e)));
-                if (targets == null || targets.isEmpty()) continue;
-                Set<Long> owners = alarmOwners(e, teamId, ownersByDomain);
+            for (AlarmForward a : alarms.values()) {
+                AlertEvent e = a.event;
+                Set<Long> owners = alarmOwners(e, a.digestTeams, ownersByDomain);
+                Set<String> used = new HashSet<>(ownerKeysByEvent.getOrDefault(e.getId(), Set.of()));
                 Set<String> already = new HashSet<>();
-                ForwardEmailStamp.of(e).values().forEach(l -> l.forEach(a -> already.add(a.toLowerCase(Locale.ROOT))));
-                for (var t : targets) {
-                    if (t == null || owners.contains(t.recipientTeamId())) continue;
+                ForwardEmailStamp.of(e).values().forEach(l -> l.forEach(x -> already.add(x.toLowerCase(Locale.ROOT))));
+                for (var t : com.sitemonitor.service.forward.ForwardTarget.mergeByRecipient(a.targets)) {
+                    if (owners.contains(t.recipientTeamId())) continue;
+                    boolean stampDedupe = Boolean.TRUE.equals(a.openingOnly.get(t.recipientTeamId()));
                     List<String> to = new ArrayList<>();
                     Set<String> keys = new LinkedHashSet<>();
-                    for (String a : t.emails()) {
-                        String v = a == null ? "" : a.trim();
+                    for (String raw : t.emails()) {
+                        String v = raw == null ? "" : raw.trim();
                         String k = v.toLowerCase(Locale.ROOT);
-                        if (v.isEmpty() || ownerKeys.contains(k) || already.contains(k) || !keys.add(k)) continue;
+                        if (v.isEmpty() || used.contains(k) || (stampDedupe && already.contains(k)) || !keys.add(k)) continue;
                         to.add(v);
                     }
+                    used.addAll(keys);
                     String reason = to.isEmpty()
                             ? (t.emails().isEmpty() ? STATUS_NO_RECIPIENT : EscalationService.STATUS_FORWARD_ALREADY_MAILED)
                             : null;
                     String key = t.recipientTeamId() + "|" + (reason != null ? reason : String.join(",", new TreeSet<>(keys)));
-                    groups.computeIfAbsent(key, k -> new ForwardDigestGroup(t, to, reason)).events.add(e);
+                    ForwardDigestGroup g = groups.computeIfAbsent(key, k -> new ForwardDigestGroup(t, to, reason));
+                    g.events.add(e);
+                    g.items.addAll(a.items);
+                    g.ownerNames.addAll(a.ownerNames.getOrDefault(t.recipientTeamId(), Set.of()));
                 }
             }
-            for (ForwardDigestGroup g : groups.values()) sendForwardDigest(g, ownerName, windowLabel);
+            Map<Long, Map<Long, List<String>>> delivered = new LinkedHashMap<>();
+            for (ForwardDigestGroup g : groups.values()) sendForwardDigest(g, delivered);
+            delivered.forEach((eventId, byTeam) -> ForwardEmailStamp.stamp(alertEventRepo, eventId, byTeam));
         } catch (Exception e) {
-            log.warn("Sessiz saat özetinin iletim kopyaları atlandı (takım {}): {}", teamId, e.toString());
+            log.warn("Sessiz saat özetinin iletim kopyaları atlandı: {}", e.toString());
         }
     }
 
     /**
-     * Alarmın sahip takımları: özet takımı + damga takımı + (envanter gibi yönleniyorsa) envanterin SY / UG takımı. Envanter
-     * alan adı başına bir kez okunur (tur içi bellek); okunamazsa yalnız özet + damga takımı.
+     * Alarmın sahip takımları: özet takımları + damga takımı + (envanter gibi yönleniyorsa) envanterin SY / UG takımı. Envanter
+     * alan adı başına bir kez okunur (tur içi bellek); okunamazsa yalnız özet + damga takımları.
      */
-    private Set<Long> alarmOwners(AlertEvent e, Long digestTeam, Map<String, Set<Long>> cache) {
+    private Set<Long> alarmOwners(AlertEvent e, Collection<Long> digestTeams, Map<String, Set<Long>> cache) {
         Set<Long> owners = new LinkedHashSet<>();
-        if (digestTeam != null) owners.add(digestTeam);
+        for (Long t : digestTeams) if (t != null) owners.add(t);
         if (e.getTeamId() != null) owners.add(e.getTeamId());
         var inv = inventoryRepo;
         if (inv == null || e.getDomain() == null || !AlertOwnership.routesLikeInventory(e)) return owners;
@@ -420,23 +488,28 @@ public class QuietDigestService {
         return owners;
     }
 
-    /** Bir iletim özeti grubunun postası (ya da karar satırı) + alarm başına satır + açık alarmların damgası. */
-    private void sendForwardDigest(ForwardDigestGroup g, String ownerName, String windowLabel) {
+    /**
+     * Bir iletim özeti grubunun postası (ya da karar satırı) + alarm başına satır. Teslim edilen ve hâlâ açık alarmların
+     * adresleri {@code delivered}'a eklenir (damga tur sonunda alarm başına TEK yazımla).
+     */
+    private void sendForwardDigest(ForwardDigestGroup g, Map<Long, Map<Long, List<String>>> delivered) {
         String rtName = g.target.recipientTeamName() == null || g.target.recipientTeamName().isBlank()
                 ? "-" : g.target.recipientTeamName().trim();
+        List<String> ownerNames = new ArrayList<>(g.ownerNames);
+        String ownerLabel = ownerNames.isEmpty() ? "-" : String.join(", ", ownerNames);
         List<EmailNotificationService.QuietDigestRow> rows = new ArrayList<>();
         for (AlertEvent e : g.events) rows.add(row(e));
         rows.sort(Comparator.comparing(EmailNotificationService.QuietDigestRow::resolved)
                 .thenComparing(r -> -QuietHours.levelValue(r.level()))
                 .thenComparing(r -> r.openedAt() == null ? "" : r.openedAt()));
-        String subject = EmailNotificationService.quietDigestSubject(ownerName, rows);
+        String subject = EmailNotificationService.quietDigestSubject(ownerLabel, rows);
         String html = "";
         String status;
         try {
-            String base = emailService.buildQuietDigestHtml(ownerName, windowLabel, rows);
+            String base = emailService.buildQuietDigestHtml(ownerLabel, windowLabel(g.items), rows);
             var mail = EmailTemplateBuilder.withForwardNote(
                     new com.sitemonitor.service.mail.MailDoc.Mail(base, com.sitemonitor.service.mail.MailKit.plainTextFor(base)),
-                    EmailTemplateBuilder.forwardNote(List.of(ownerName), g.target.recipientTeamName(), true));
+                    EmailTemplateBuilder.forwardNote(ownerNames, g.target.recipientTeamName(), true));
             html = mail.html() == null ? "" : mail.html();
             status = g.reason != null ? g.reason
                     : emailService.sendHtml(g.to.toArray(new String[0]), null, subject, mail.html(), mail.text(),
@@ -460,7 +533,8 @@ public class QuietDigestService {
         if (g.reason == null && !g.to.isEmpty() && EscalationService.mailDelivered(status)) {
             for (AlertEvent e : g.events) {
                 if (Boolean.TRUE.equals(e.getResolved())) continue;
-                ForwardEmailStamp.stamp(alertEventRepo, e.getId(), Map.of(g.target.recipientTeamId(), g.to));
+                delivered.computeIfAbsent(e.getId(), k -> new LinkedHashMap<>())
+                        .computeIfAbsent(g.target.recipientTeamId(), k -> new ArrayList<>()).addAll(g.to);
             }
         }
     }

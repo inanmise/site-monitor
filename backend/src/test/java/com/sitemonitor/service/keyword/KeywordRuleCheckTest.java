@@ -181,7 +181,8 @@ class KeywordRuleCheckTest {
         assertThat(first).doesNotContainKey("content_changed");
         assertThat(first.get("content_fingerprint")).isNotNull();
         assertThat(capture.snapshot()).isNotNull();
-        assertThat(capture.specHash()).isEqualTo(KeywordChangeDetector.specHash("DIGITS", null));
+        assertThat(capture.specHash()).isEqualTo(KeywordChangeDetector.specHash("DIGITS", null,
+                com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(spec(url, "Fiyat").build())));
         var base = new KeywordChangeDetector.BaselineView(capture.snapshot().fingerprint(), capture.specHash(),
                 capture.snapshot().text(), capture.snapshot().textTruncated(), "2026-11-05T06:00:00", "AUTO");
         // rakamlar değişti ama maskeli → değişim yok
@@ -231,5 +232,73 @@ class KeywordRuleCheckTest {
         assertThat(contexts.get(0)).containsEntry("match", "fiyat").containsEntry("source", "RAW");
         assertThat(contexts.get(1)).containsEntry("match", "Fiyat");
         assertThat((String) contexts.get(1).get("after")).startsWith(": 1.250 TL");
+    }
+    // ── Hata avı 2026-11-06 ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("hata avı 2026-11-06: derlenemeyen saklı düzenli ifade ('içermemeli') kontrolü sağlıksız yapar — neden RULES_NOT_MET "
+            + "(\"kelime bulunamadı\" değil), özet nedeni söyler, kural notu PATTERN_INVALID")
+    void storedInvalidRegexIsNotSilentlyGreen() throws IOException {
+        String url = serve(PAGE);
+        Map<String, Object> r = checker().check(spec(url, "(bozuk")
+                .rulesJson("[{\"id\":\"r1\",\"kind\":\"REGEX\",\"pattern\":\"(bozuk\",\"operator\":\"LTE\",\"count\":0}]").build());
+        assertThat(r.get("ok")).isEqualTo(false);
+        assertThat(r.get("failure_reason")).isEqualTo(KeywordFailureClassifier.RULES_NOT_MET);
+        assertThat((String) r.get("failure_detail")).contains("düzenli ifade derlenemedi");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> results = (List<Map<String, Object>>) r.get("rule_results");
+        assertThat(results.get(0)).containsEntry("note", "PATTERN_INVALID").containsEntry("ok", false);
+    }
+
+    /** 20.186 ve öncesinin {@code spec_hash} biçimi (sürüm 1, istek izi YOK) — yükseltme testinin "eski satırı". */
+    private static String legacySpecHash(String maskCsv, String selector) throws Exception {
+        String raw = "v1|" + (maskCsv == null ? "" : maskCsv) + "|" + (selector == null ? "" : selector);
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
+        return java.util.HexFormat.of().formatHex(d).substring(0, 16);
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#3: eski biçimde (istek izsiz) saklanmış temel ilk kontrolde BİR KEZ yenilenir — içerik "
+            + "değişmiş olsa da karşılaştırılmaz (alarm açılmaz), yeni anlık görüntü çağırana; sonraki kontrol yeni temelle kıyaslar")
+    void legacyBaselineIsRefreshedOnceWithoutAlarm() throws Exception {
+        String url = serve("<div><p>Kampanya bugün</p><p>Fiyat 1250 TL</p></div>");
+        // eski satır: başka bir metnin parmak izi + eski biçim özet (aynı maske / seçici)
+        var legacy = new KeywordChangeDetector.BaselineView("e".repeat(64), legacySpecHash("DIGITS", null), "eski metin", false,
+                "2026-11-01T06:00:00", "AUTO");
+        var capture = new KeywordCheckSpec.ChangeCapture();
+        Map<String, Object> first = checker().check(spec(url, "Fiyat").changeDetect(true).changeMask("DIGITS").baseline(legacy)
+                .changeCapture(capture).build());
+        assertThat(first.get("baseline_missing")).isEqualTo(true);
+        assertThat(first).doesNotContainKey("content_changed");   // KEYWORD_CHANGED kalemi yok → alarm açılmaz / kapanmaz
+        assertThat(capture.snapshot()).isNotNull();
+        assertThat(capture.specHash()).isNotEqualTo(legacy.specHash());
+        // zamanlayıcı yenilenmiş temeli alır (refreshIfStale) → sonraki kontrol kıyaslar
+        var fresh = new KeywordChangeDetector.BaselineView(capture.snapshot().fingerprint(), capture.specHash(),
+                capture.snapshot().text(), capture.snapshot().textTruncated(), "2026-11-06T06:00:00", "AUTO");
+        Map<String, Object> second = checker().check(spec(url, "Fiyat").changeDetect(true).changeMask("DIGITS").baseline(fresh).build());
+        assertThat(second.get("content_changed")).isEqualTo(false);
+        assertThat(second).doesNotContainKey("baseline_missing");
+    }
+
+    @Test
+    @DisplayName("hata avı 2026-11-06 H4#3: ESKİ URL'yle (bayat görev) alınmış temel yeni URL'nin kontrolünde kullanılmaz — "
+            + "baseline_missing (yenilenir), kalıcı sahte KEYWORD_CHANGED olmaz; aynı URL'de kıyaslanır")
+    void baselineOfOtherRequestIsNotCompared() throws Exception {
+        String url = serve("<p>Eski sayfa: Fiyat 1250 TL</p>");
+        var oldCapture = new KeywordCheckSpec.ChangeCapture();
+        checker().check(spec(url, "Fiyat").changeDetect(true).changeCapture(oldCapture).build());
+        var oldBase = new KeywordChangeDetector.BaselineView(oldCapture.snapshot().fingerprint(), oldCapture.specHash(),
+                oldCapture.snapshot().text(), false);
+        // aynı sunucu, başka yol (izlemenin URL'si değişti) → içerik farklı ama karşılaştırılmaz
+        body.set("<p>Yeni sayfa: tamamen başka içerik, Fiyat 999 TL</p>");
+        Map<String, Object> moved = checker().check(spec(url + "yeni", "Fiyat").changeDetect(true).baseline(oldBase).build());
+        assertThat(moved.get("baseline_missing")).isEqualTo(true);
+        assertThat(moved).doesNotContainKey("content_changed");
+        // yöntem / kimlik değişimi de aynı (istek tanımı başka)
+        Map<String, Object> other = checker().check(spec(url, "Fiyat").changeDetect(true).basicAuthUser("baska").baseline(oldBase).build());
+        assertThat(other.get("baseline_missing")).isEqualTo(true);
+        // aynı istek → kıyaslanır (içerik değişti)
+        Map<String, Object> same = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(oldBase).build());
+        assertThat(same.get("content_changed")).isEqualTo(true);
     }
 }

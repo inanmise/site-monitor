@@ -13,7 +13,8 @@ import java.util.Map;
 /**
  * Saf kural değerlendirici (kw sözleşmesi §6.2) — girdi: ETKİN kurallar ({@link KeywordRules#effective}), birleşim (AND / OR),
  * kontrolün içerik görünümü ({@link KeywordContent}) ve izlemenin etkin alarm seviyesi. Asla fırlatmaz; "bilinmiyor" sonucu
- * YOK — her kural her zaman sağlandı / ihlal sonucu verir.
+ * YOK — her kural her zaman sağlandı / ihlal sonucu verir. Değerlendirilemeyen kural (bölge yok / geçersiz, saklı düzenli ifade
+ * derlenemiyor — {@code PATTERN_INVALID}) ASLA sessizce sağlandı sayılmaz: ihlal, adet 0, notlu.
  *
  * <ul>
  *   <li><b>Kural seviyesi:</b> kritik eşik varsa → kritik koşul ihlal → {@code CRITICAL}, değilse uyarı koşulu ihlal →
@@ -46,6 +47,8 @@ public final class KeywordRuleEvaluator {
     public static final String NOTE_SCOPE_INVALID = "SCOPE_INVALID";
     public static final String NOTE_COUNT_CAPPED = "COUNT_CAPPED";
     public static final String NOTE_SCAN_TRUNCATED = "SCAN_TRUNCATED";
+    /** Saklı düzenli ifade bugünkü kurallarla derlenemedi — kural İHLAL sayılır (sessiz yeşil değil); kuralı yeniden kaydetmek gerekir. */
+    public static final String NOTE_PATTERN_INVALID = "PATTERN_INVALID";
 
     /** {@code rule_results_json} üst sınırı (karakter). */
     public static final int RESULTS_JSON_MAX = 4_000;
@@ -99,6 +102,11 @@ public final class KeywordRuleEvaluator {
         /** Çok kurallı mı (neden kodu {@code RULES_NOT_MET}). */
         public boolean multi() {
             return results != null && results.size() > 1;
+        }
+
+        /** Bir kuralın saklı düzenli ifadesi derlenemedi mi ({@code PATTERN_INVALID}) — neden kodu {@code RULES_NOT_MET} olur. */
+        public boolean patternInvalid() {
+            return results != null && results.stream().anyMatch(x -> NOTE_PATTERN_INVALID.equals(x.note()));
         }
 
         /** Tek kuralın bölge notu ({@code SCOPE_NOT_FOUND} / {@code SCOPE_INVALID}) — neden kodu için; yoksa {@code null}. */
@@ -181,6 +189,13 @@ public final class KeywordRuleEvaluator {
         String note = null;
         if (r.kind() == Kind.REGEX) {
             SafeRegex.Compiled c = SafeRegex.compileStored(r.pattern(), r.caseSensitive());
+            if (c == null) {
+                // Saklı desen bugünkü kurallarla derlenemiyor (kural sıkılaştı / kayıt elle bozuldu — hata avı 2026-11-06): eskiden
+                // derlenmemiş desen "0 kez" sayılıyor, "içermemeli" kuralı SESSİZCE YEŞİL kalıyordu. Artık bölge hatası gibi:
+                // kural İHLAL, adet 0, not PATTERN_INVALID; seviye kuralın UYARI düzeyi (yapısal sorun, sayı kademesi değil).
+                String lvl = r.critical() != null ? LEVEL_WARNING : LEVEL_MONITOR;
+                return new RuleResult(r.id(), r.kind().name(), preview, 0, false, lvl, NOTE_PATTERN_INVALID, r.scopeType(), -1, -1);
+            }
             long now = System.nanoTime();
             long remain = Math.max(0, totalDeadline - now);
             long budget = Math.min(REGEX_RULE_BUDGET_MS * 1_000_000L, remain);
@@ -238,6 +253,9 @@ public final class KeywordRuleEvaluator {
         }
         if (NOTE_SCOPE_INVALID.equals(x.note())) {
             return name + ": yanıt geçerli JSON değil (yol: " + clip(r.scopeValue(), 40) + ")";
+        }
+        if (NOTE_PATTERN_INVALID.equals(x.note())) {
+            return name + ": düzenli ifade derlenemedi (kayıtlı desen bugünkü kurallara uymuyor — kuralı düzenleyip yeniden kaydedin)";
         }
         String expected;
         if (r.critical() != null && LEVEL_CRITICAL.equals(x.level())) {

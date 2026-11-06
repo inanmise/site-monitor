@@ -197,7 +197,8 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
             {/* Değiştirince merkezi sistemde ne olur — RCI notuyla aynı desen (değişince uyarı tonu) */}
             <div data-slot="af-noc-only-note" data-changed={nocChanged ? 'true' : 'false'}>
               <AlertBanner tone={nocChanged ? 'warning' : 'info'} className="mb-0" icon={nocChanged ? TriangleAlert : Info}>
-                {t('af.f.nocOnlyNote')}
+                {/* Yalnız açık alarmlar kipinde RESOLVED satırı yoktur (hata avı 2026-11-06): alarm akıştan düşer, merkezi sistem kapatır */}
+                {t(openOnly ? 'af.f.nocOnlyNoteOpenOnly' : 'af.f.nocOnlyNote')}
               </AlertBanner>
             </div>
             {fe.errors.noc_only && <span className="text-xs text-destructive">{fe.errors.noc_only}</span>}
@@ -261,7 +262,9 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
             options={RCI_MODES.map((m) => ({ value: m, title: t(`af.rci.${m}`), hint: t(`af.rci.${m}Hint`), example: t(`af.rci.${m}Example`) }))} />
           {fe.errors.rci_mode && <span id={`${rciId}-e`} className="text-xs text-destructive">{fe.errors.rci_mode}</span>}
           <div data-slot="af-rci-eventkey" data-changed={rciChanged ? 'true' : 'false'}>
-            <AlertBanner tone={rciChanged ? 'warning' : 'info'} className="mb-0" icon={TriangleAlert}>{t('af.rci.eventKey')}</AlertBanner>
+            <AlertBanner tone={rciChanged ? 'warning' : 'info'} className="mb-0" icon={TriangleAlert}>
+              {t(openOnly ? 'af.rci.eventKeyOpenOnly' : 'af.rci.eventKey')}
+            </AlertBanner>
           </div>
         </div>
 

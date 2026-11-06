@@ -40,28 +40,35 @@ export default function KeywordContentChart({ monitorId }) {
   const titleId = `kc-title-${uid}`
   const summaryId = `kc-sum-${uid}`
   const [days, setDays] = useState(7)
-  const [state, setState] = useState({ status: 'loading' })
+  // Verinin ait olduğu izleme (hata avı 2026-11-06): izleme değişince önceki izlemenin serisi yeniden okunurken GÖSTERİLMEZ
+  // (aralık değişiminde aynı izlemenin önceki serisi kalır — kaybolup gelmesin)
+  const [state, setState] = useState(() => ({ status: 'loading', id: monitorId }))
   const [measureRef, width] = useElementWidth()
   const seq = useRef(0)
 
   const load = useCallback(async () => {
     const my = ++seq.current
-    setState((s) => ({ status: 'loading', prev: s.data ?? s.prev ?? null }))
+    const id = monitorId
+    const prevOf = (s) => (s.id === id ? (s.data ?? s.prev ?? null) : null)
+    setState((s) => ({ status: 'loading', id, prev: prevOf(s) }))
     try {
       const r = await api.monitoring.keywordContentSeries(monitorId, { days })
       if (my !== seq.current) return
-      if (r?.success) setState({ status: 'ok', data: r.data || {} })
-      else if (statusOf(r) === 404 || statusOf(r) === 405) setState({ status: 'unsupported' })
-      else setState((s) => ({ status: 'error', error: r?.error || t('keyword.content.seriesFailed'), prev: s.prev ?? null }))
+      if (r?.success) setState({ status: 'ok', id, data: r.data || {} })
+      else if (statusOf(r) === 404 || statusOf(r) === 405) setState({ status: 'unsupported', id })
+      else setState((s) => ({ status: 'error', id, error: r?.error || t('keyword.content.seriesFailed'), prev: s.id === id ? (s.prev ?? null) : null }))
     } catch (e) {
-      if (my === seq.current) setState((s) => ({ status: 'error', error: e?.message || t('keyword.content.seriesFailed'), prev: s.prev ?? null }))
+      if (my === seq.current) setState((s) => ({ status: 'error', id, error: e?.message || t('keyword.content.seriesFailed'), prev: s.id === id ? (s.prev ?? null) : null }))
     }
   }, [monitorId, days, t])
 
   useEffect(() => { load() }, [load])
   useEffect(() => () => { seq.current++ }, [])
 
-  const data = state.status === 'ok' ? state.data : state.prev
+  const mine = state.id === monitorId
+  // Başka izlemenin durumu (hata / desteklemiyor) bu izlemeye yazılmaz — yeniden okunana dek "yükleniyor"
+  const status = mine ? state.status : 'loading'
+  const data = !mine ? null : state.status === 'ok' ? state.data : state.prev
   const rows = useMemo(() => shapeContentSeries(data), [data])
   const stats = useMemo(() => seriesStats(rows), [rows])
   const domain = rows.length ? [rows[0].t, rows.at(-1).t] : null
@@ -91,9 +98,9 @@ export default function KeywordContentChart({ monitorId }) {
   )
 
   let body
-  if (state.status === 'unsupported') {
+  if (status === 'unsupported') {
     body = <div data-slot="kw-content-chart-unsupported"><StatusBlock tone="neutral" title={t('keyword.content.seriesUnsupported')} className="py-6" /></div>
-  } else if (state.status === 'error' && !data) {
+  } else if (status === 'error' && !data) {
     body = (
       <div data-slot="kw-content-chart-error">
         <AlertBanner tone="danger" role="alert" className="mb-0" title={t('keyword.content.seriesFailed')}
@@ -120,7 +127,7 @@ export default function KeywordContentChart({ monitorId }) {
     }
     body = (
       <figure aria-labelledby={titleId} aria-describedby={summaryId} ref={measureRef} className="m-0 flex min-w-0 flex-col gap-1.5">
-        <ChartContainer config={config} data-slot="kw-content-chart-plot" className={cn('aspect-auto h-[220px] w-full sm:h-[260px]', state.status === 'loading' && 'opacity-60')}>
+        <ChartContainer config={config} data-slot="kw-content-chart-plot" className={cn('aspect-auto h-[220px] w-full sm:h-[260px]', status === 'loading' && 'opacity-60')}>
           <ComposedChart data={rows} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid vertical={false} />
             <XAxis dataKey="t" type="number" scale="time" domain={domain} ticks={ticks?.ticks} interval={0}
@@ -146,7 +153,7 @@ export default function KeywordContentChart({ monitorId }) {
           <span className="inline-flex items-center gap-1.5"><SeriesKey shape="dashed" color={BYTES_COLOR} />{t('keyword.content.bytes')}</span>
           <span className="inline-flex items-center gap-1.5"><SeriesKey shape="dot" color="var(--color-amber-500, #f59e0b)" />{t('keyword.content.changedLegend')}</span>
           {data?.capped && <span data-slot="kw-content-chart-capped">{t('keyword.content.seriesCapped')}</span>}
-          {state.status === 'error' && <span className="text-destructive">{t('keyword.content.refreshFailed')}</span>}
+          {status === 'error' && <span className="text-destructive">{t('keyword.content.refreshFailed')}</span>}
         </div>
         <p id={summaryId} data-slot="kw-content-chart-summary" className="sr-only">
           {t('keyword.content.summary', stats.buckets, stats.checks, stats.failed, stats.maxOcc ?? '—', stats.changed)}
