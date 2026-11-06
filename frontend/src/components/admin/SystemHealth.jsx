@@ -23,6 +23,7 @@ import IntegrationsSection from './health/IntegrationsSection.jsx'
 import HeartbeatSection from './health/HeartbeatSection.jsx'
 import HttpSection from './health/HttpSection.jsx'
 import WatchdogSection from './health/WatchdogSection.jsx'   // Kendi kendini izleme (2026-10-11)
+import ErrorBoundary from '../ErrorBoundary.jsx'
 // Metrikler (2026-10-13): pod başına dakikalık kalıcı örnekler — tam sayfa alt görünüm, ilk açılışta yüklenir
 const MetricsView = lazy(() => import('./metrics/MetricsView.jsx'))
 // Ağır alt parçalar TEMBEL (2026-11-06, performans PF4 O3): gönderim günlükleri, kullanıcı / veritabanı panelleri ve
@@ -530,13 +531,14 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       {visible.map((k) => section(k, openSection === k ? content[k]() : null))}
 
       {/* Pencereler tembel parça: ilk açılışta indirilir (ChartModal grafik yokken zaten hiçbir şey çizmiyordu) */}
-      {modalChart && <Suspense fallback={null}><ChartModal chart={modalChart} onClose={() => setModalChart(null)} /></Suspense>}
+      {/* Hata sınırı (son inceleme 2026-11-06): dağıtım sonrası bayat parça 404 dönerse yalnız pencere düşer, sayfa değil */}
+      {modalChart && <ErrorBoundary key="m-chart"><Suspense fallback={null}><ChartModal chart={modalChart} onClose={() => setModalChart(null)} /></Suspense></ErrorBoundary>}
 
-      {httpExp && <Suspense fallback={null}><HttpExplorerModal t={t} focus={httpExp} onClose={() => setHttpExp(null)} /></Suspense>}
+      {httpExp && <ErrorBoundary key="m-http"><Suspense fallback={null}><HttpExplorerModal t={t} focus={httpExp} onClose={() => setHttpExp(null)} /></Suspense></ErrorBoundary>}
 
-      {hbModalOpen && <Suspense fallback={null}><HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} /></Suspense>}
+      {hbModalOpen && <ErrorBoundary key="m-hb"><Suspense fallback={null}><HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} /></Suspense></ErrorBoundary>}
 
-      {waLogsModal && <Suspense fallback={null}><WeeklyAvailLogsModal t={t} onClose={() => setWaLogsModal(false)} /></Suspense>}
+      {waLogsModal && <ErrorBoundary key="m-wa"><Suspense fallback={null}><WeeklyAvailLogsModal t={t} onClose={() => setWaLogsModal(false)} /></Suspense></ErrorBoundary>}
 
       {/* Sayfa geneli not — EN ALTTA (2026-09-12, kullanıcı: bölümler arasında sahipsiz görünüyordu). */}
       <p data-testid="sys-refresh-note" className="mt-1 text-center text-xs text-muted-foreground">

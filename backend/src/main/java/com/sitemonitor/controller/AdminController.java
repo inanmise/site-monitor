@@ -2627,6 +2627,20 @@ public class AdminController {
         }
     }
 
+    /** Zil ve "Bugün" paneli pod belleği (performans 2026-11-06) — bu pod'daki kendi alarm eylemi belleği düşürür (kullanıcı
+     *  onayladığı / çözdüğü alarmı 15 – 30 sn açık görmesin). Başka pod'lar bellek süresiyle yenilenir. Alan enjeksiyonu. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.InboxService inboxService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.TodayPanelService todayPanelService;
+
+    private void alarmViewsChanged() {
+        try {
+            if (inboxService != null) inboxService.invalidateLocal();
+            if (todayPanelService != null) todayPanelService.invalidateLocal();
+        } catch (RuntimeException e) { log.debug("alarm görünüm belleği düşürülemedi: {}", e.toString()); }
+    }
+
     @PostMapping("/alerts/{id}/acknowledge")
     public ResponseEntity<Map<String, Object>> acknowledgeAlert(
             @PathVariable Long id,
@@ -2639,6 +2653,7 @@ public class AdminController {
         String note = AlertActionNote.require(body == null ? null : str(body.get("note")));
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.acknowledge(id, by, note);
+        alarmViewsChanged();
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
@@ -2656,6 +2671,7 @@ public class AdminController {
         String note = AlertActionNote.require(body == null ? null : str(body.get("note")));
         String by = resolveDisplayName(session);
         AlertEvent event = escalationService.resolve(id, by, note);
+        alarmViewsChanged();
         auditService.recordAction("ALERT_RESOLVE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
@@ -2811,6 +2827,7 @@ public class AdminController {
         data.put("processed", processed);
         data.put("skipped", skipped);
         data.put("failed", failed);
+        if (!"re-notify".equals(action) && processed > 0) alarmViewsChanged();
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
     }
 

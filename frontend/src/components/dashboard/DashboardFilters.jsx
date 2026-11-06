@@ -377,10 +377,12 @@ function SheetSelect({ label, value, options, onChange }) {
  * satırının EN SAĞINDA kalan yeri doldurur (en az 22rem, en çok 34rem; 2026-09-26 kullanıcı isteği), telefonda araç
  * çubuğunun en altında tam genişlik (48 px kutu, 40 px düğme). Tüm Sertifikalar başlığındaki kutuyla aynı görünüm.
  */
-function SslChecker({ value, onChange, onSubmit, busy, phone, initialValue = '', onValueChange }) {
+function SslChecker({ value, onChange, onSubmit, busy, phone, initialValue = '', readInitial, onValueChange }) {
   const t = useT()
   const controlled = value !== undefined && typeof onChange === 'function'
-  const [local, setLocal] = useState(() => initialValue)
+  // Telefon ↔ geniş yerleşim değişiminde bileşen başka ağaçta yeniden kurulur; `readInitial` o ANKİ metni okur (son inceleme
+  // 2026-11-06 — `initialValue` App'in son çizimindeki değerdir, yazılan metin kaybolurdu)
+  const [local, setLocal] = useState(() => (typeof readInitial === 'function' ? readInitial() : initialValue) ?? '')
   const text = controlled ? value : local
   const change = (v) => {
     if (controlled) { onChange(v); return }

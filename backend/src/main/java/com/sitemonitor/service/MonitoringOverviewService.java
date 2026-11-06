@@ -265,10 +265,14 @@ public class MonitoringOverviewService {
      * İzleme Panosu ile AYNI bellek anahtarı. {@code maxAgeMs}: {@link #orgTypes(long)}'daki arka plan kuralı (0 → yalnız
      * {@code cacheMs}). Dönen harita PAYLAŞILIR — çağıran değiştirmez.
      */
+    /** Arka plan okuyucusunun kabul ettiği en eski yaşın üst sınırı (son inceleme 2026-11-06): büyük bir bekçi / aktarıcı aralığı
+     *  (ör. 600 sn) pano verisini aralığın iki katı kadar eskitmesin. */
+    static final long BACKGROUND_MAX_AGE_MS = 60_000;
+
     public Map<String, Object> orgOverview(long maxAgeMs) {
         MonitoringOverviewService target = self != null ? self : this;
         String key = memoKey(com.sitemonitor.util.TtlMemo.scopeKey(true, null), ORG_SUMMARY_WINDOW_HOURS, true);
-        long ttl = cacheMs <= 0 ? cacheMs : Math.max(cacheMs, maxAgeMs);
+        long ttl = cacheMs <= 0 ? cacheMs : Math.max(cacheMs, Math.min(maxAgeMs, BACKGROUND_MAX_AGE_MS));
         return memo.get(key, ttl, false, () -> target.build(team -> true, true, ORG_SUMMARY_WINDOW_HOURS));
     }
 

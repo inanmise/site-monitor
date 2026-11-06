@@ -105,6 +105,13 @@ class PerfScheduledProjectionQueriesTest {
         assertThat(after.getGroupName()).isEqualTo("Yeni grup");    // bayat tam varlık kaydı bunu geri yazardı
         assertThat(after.getTeamId()).isEqualTo(42L);
         assertThat(inventory.findById(other.getId()).orElseThrow().getDomainExpiry()).isNull();
+
+        // Tur sırasında duraklatılan satıra yazılmaz (son inceleme 2026-11-06 — eski yol her yazımdan önce etkin envanteri okurdu)
+        CertificateInventory paused = inventory.findById(other.getId()).orElseThrow();
+        paused.setActive(false);
+        inventory.save(paused);
+        assertThat(inventory.updateDomainExpiry(List.of(other.getId()), "2027-09-01", "X", "2026-11-06T09:05:00")).isZero();
+        assertThat(inventory.findById(other.getId()).orElseThrow().getDomainExpiry()).isNull();
     }
 
     private AlertEvent alert(String domain, String type, boolean resolved) {

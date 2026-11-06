@@ -23,11 +23,12 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<Object[]> findDomainExpiryRows();
 
     /** Süre bitişini YALNIZ kendi üç kolonuna yazar (PF3 #4) — tam varlık kaydı (merge) aradaki eşzamanlı envanter düzenlemesini
-     *  bayat değerle geri yazıyordu. Dönüş: güncellenen satır sayısı. */
+     *  bayat değerle geri yazıyordu. Satırın O ANKİ durumu yeniden denetlenir (son inceleme 2026-11-06): uzun bir RDAP turunda
+     *  duraklatılan satıra yazılmaz (eskiden her yazımdan önce etkin envanter yeniden okunuyordu). Dönüş: güncellenen satır sayısı. */
     @Modifying
     @Transactional
     @Query("UPDATE CertificateInventory c SET c.domainExpiry = :expiry, c.domainRegistrar = :registrar,"
-            + " c.domainExpiryCheckedAt = :checkedAt WHERE c.id IN :ids")
+            + " c.domainExpiryCheckedAt = :checkedAt WHERE c.id IN :ids AND c.active = true AND c.deletedAt IS NULL")
     int updateDomainExpiry(@Param("ids") Collection<Long> ids, @Param("expiry") String expiry,
                            @Param("registrar") String registrar, @Param("checkedAt") String checkedAt);
 

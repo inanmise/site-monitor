@@ -72,6 +72,9 @@ public class InboxService {
 
     /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. */
     private com.sitemonitor.util.TtlMemo<OrgInbox> orgMemo = new com.sitemonitor.util.TtlMemo<>(4);
+
+    /** Bu pod'daki kurum geneli belleği düşürür (kendi alarm eylemi sonrası — {@code AdminController}). */
+    public void invalidateLocal() { orgMemo.clear(); }
     static final int HISTORY_DAYS = 30;
     static final int HISTORY_SIZE_MAX = 100;
     /** Sorun bildirimi haberleri: son {@value} gün, en çok {@link #ISSUE_ITEMS_MAX} satır. */

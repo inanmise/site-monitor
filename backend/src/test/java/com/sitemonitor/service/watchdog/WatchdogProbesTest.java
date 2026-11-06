@@ -88,6 +88,10 @@ class WatchdogProbesTest {
         // Performans 2026-11-06 (PF3 #1): pano kaydı en çok "aralık − 5 sn" yaşında kabul edilir (ardışık iki tur aynı hesabı okumaz)
         org.mockito.Mockito.verify(overview, org.mockito.Mockito.atLeastOnce()).orgTypes(55_000L);
         org.mockito.Mockito.verify(overview, org.mockito.Mockito.never()).orgTypes();
+        // Elle değerlendirme (son inceleme 2026-11-06): zamanlanmış turun hesabı kabul edilmez — yalnız arayüz belleği yaşı
+        probes.freshOverviewForRun(true);
+        try { probes.monitorSweep(); } finally { probes.freshOverviewForRun(false); }
+        org.mockito.Mockito.verify(overview).orgTypes(0L);
     }
 
     @Test

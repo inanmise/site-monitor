@@ -160,4 +160,18 @@ class TodayPanelMemoTest {
                 .contains("alert:2").doesNotContain("alert:1");
         verify(alertRepo, times(1)).findAllOpenOrderBySeverity();   // dört kullanıcı, tek kurum okuması
     }
+
+    @Test
+    @DisplayName("/me/today: eksik görüntü (envanter okunamadı) belleğe girmez — sonraki çağrı yeniden hesaplar; tam görüntü saklanır")
+    void partialTodayIsNotMemoised() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"))
+                .thenReturn(List.of(inv("a.example.com", 1L), inv("b.example.com", 2L)));
+        controller.today(false, session("ADMIN", null, null, false));
+        controller.today(false, session("ADMIN", null, null, false));
+        controller.today(false, session("ADMIN", null, null, false));
+        // 1. çağrı eksik (saklanmadı) → 2. yeniden hesapladı (tam, saklandı) → 3. bellekten
+        verify(inventoryRepo, times(2)).findByActiveTrueOrderByDomainAsc();
+        verify(alertRepo, times(2)).findAllOpenOrderBySeverity();
+    }
 }

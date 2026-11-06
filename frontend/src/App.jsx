@@ -332,9 +332,10 @@ function isValidCert(c) {
  * (kart ızgarası dâhil) yeniden çiziyordu. İlk değer ve sekmeler arası taşıma App'teki ref'ten (`initialValue` /
  * `onValueChange`); gönderim başarılıysa (`onSubmit(metin)` → true) alan temizlenir — eskisiyle aynı.
  */
-function SslCheckerHeaderInput({ initialValue = '', onValueChange, onSubmit, busy }) {
+function SslCheckerHeaderInput({ initialValue = '', readInitial, onValueChange, onSubmit, busy }) {
   const t = useT()
-  const [text, setText] = useState(() => initialValue)
+  // `readInitial` bağlanma ANINDAKİ değeri okur (son inceleme 2026-11-06): yazmak App'i çizmediği için `initialValue` bayattır
+  const [text, setText] = useState(() => (typeof readInitial === 'function' ? readInitial() : initialValue) ?? '')
   const change = (v) => { setText(v); onValueChange?.(v) }
   const submit = async () => {
     const ok = await onSubmit(text)
@@ -1669,6 +1670,7 @@ export default function App() {
 
   // SSL Checker işleyicileri (kararlı): metin alanın durumunda; App yalnız son değeri ref'te tutar (sekme geçişinde taşınır)
   const setNewDomainText = useCallback((v) => { newDomainRef.current = v }, [])
+  const readNewDomainText = useCallback(() => newDomainRef.current, [])
   const submitNewDomain = useLatestCallback(handleAddDomain)
 
   function handleLogin(userData) {
@@ -1934,7 +1936,7 @@ export default function App() {
   // Genel Bakış'taki "SSL Checker" alanı artık DashboardFilters'ta (başlık satırının en sağı; telefonda araç çubuğunun sonu).
   // Tüm Sertifikalar BAŞLIĞINDAKİ SSL Checker (2026-09-27; metin alanın kendi durumunda — bkz. SslCheckerHeaderInput).
   const sslCheckerHeader = (
-    <SslCheckerHeaderInput initialValue={newDomainRef.current} onValueChange={setNewDomainText} onSubmit={submitNewDomain} busy={checkLoading} />
+    <SslCheckerHeaderInput initialValue={newDomainRef.current} readInitial={readNewDomainText} onValueChange={setNewDomainText} onSubmit={submitNewDomain} busy={checkLoading} />
   )
   // "Şimdi Kontrol Et" — Tüm Sertifikalar başlığında ikincil düğme (Pano başlığıyla aynı görünüm); Envanter'e prop olarak geçer.
   const checkNowLabel = refreshing ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0) : t('app.checkNow')
@@ -2237,7 +2239,7 @@ export default function App() {
                   options={{ activity: activityOptions, team: hasTeamOptions ? teamOptions : null, group: hasGroupOptions ? groupOptions : null, tag: hasTagOptions ? tagOptions : null, platform: showPlatformFilter ? platformOptions : null }}
                   onClearAll={clearDashFilters} shown={sorted.length} total={dashAll.length}
                   densityToggle={<CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} hideLabelsOnPhone />}
-                  sslChecker={{ initialValue: newDomainRef.current, onValueChange: setNewDomainText, onSubmit: submitNewDomain, busy: checkLoading }} />
+                  sslChecker={{ initialValue: newDomainRef.current, readInitial: readNewDomainText, onValueChange: setNewDomainText, onSubmit: submitNewDomain, busy: checkLoading }} />
                 {/* İstatistik kartı süzgeci şeridi (davranış aynı; eskiden .dashboard-header içindeydi) */}
                 {statsFilter && (
                   <div className="stats-filter-bar mb-4">

@@ -160,6 +160,14 @@ public class WatchdogProbes {
     /** {@link #intervalMs}'ten düşülen pay (ms). */
     static final long OVERVIEW_AGE_MARGIN_MS = 5_000;
 
+    /**
+     * Elle değerlendirme (son inceleme 2026-11-06): {@code WatchdogService.evaluate} (senkron) elle turda bunu açar — pano
+     * hesabı yalnız arayüz belleği ({@code cacheMs}) kadar eski olabilir; zamanlanmış turun hesabı ikinci kez sayılmaz.
+     */
+    private volatile boolean freshOverview;
+
+    public void freshOverviewForRun(boolean fresh) { this.freshOverview = fresh; }
+
     /** Sistem metrikleri örnekleyicisi açık mı (kapalıysa pod örneği yok → saat farkı uygulanmaz, havuz yalnız bilgi). */
     @Value("${site.monitor.metrics.system.enabled:true}")
     boolean samplesEnabled = true;
@@ -222,7 +230,7 @@ public class WatchdogProbes {
 
     Probe monitorSweep() {
         if (overview == null) return Probe.na(WatchdogCheck.MONITOR_SWEEP, "no_overview");
-        List<Map<String, Object>> types = overview.orgTypes(Math.max(0L, intervalMs - OVERVIEW_AGE_MARGIN_MS));
+        List<Map<String, Object>> types = overview.orgTypes(freshOverview ? 0L : Math.max(0L, intervalMs - OVERVIEW_AGE_MARGIN_MS));
         if (types == null) return new Probe(WatchdogCheck.MONITOR_SWEEP, Result.UNKNOWN, null, Map.of("reason", "overview_unavailable"));
         int ratio = WatchdogSettings.staleRatio(settings);
         List<Map<String, Object>> late = new ArrayList<>();

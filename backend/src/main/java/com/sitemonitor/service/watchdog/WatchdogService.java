@@ -220,7 +220,10 @@ public class WatchdogService {
         List<WatchdogMail.Item> items = new ArrayList<>();
         List<Map.Entry<WatchdogState, Action>> acted = new ArrayList<>();
         int alerts = 0, reminders = 0, recoveries = 0;
-        for (Probe p : probes.runAll(now)) {
+        List<Probe> ran;
+        probes.freshOverviewForRun(manual);
+        try { ran = probes.runAll(now); } finally { probes.freshOverviewForRun(false); }
+        for (Probe p : ran) {
             WatchdogState st = states.computeIfAbsent(p.check().key(), k -> {
                 WatchdogState n = new WatchdogState();
                 n.setCheckKey(k);

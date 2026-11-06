@@ -472,10 +472,17 @@ class MonitoringOverviewServiceTest {
         assertThat(svc.orgTypes(55_000L)).isNotSameAs(ui.get("types"));
         verify(teamRepo, times(3)).findAll();
 
+        // Üst sınır (son inceleme 2026-11-06): 600 sn'lik bir aralık bile en çok 60 sn'lik hesabı kabul eder
+        Map<String, Object> last = svc.orgOverview(600_000L);   // az önceki hesap (yaş 0)
+        verify(teamRepo, times(3)).findAll();
+        clock[0] += 70_000;
+        assertThat(svc.orgOverview(600_000L)).isNotSameAs(last);
+        verify(teamRepo, times(4)).findAll();
+
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 0L);   // bellek kapalı
         svc.orgTypes(55_000L);
         svc.orgTypes(55_000L);
-        verify(teamRepo, times(5)).findAll();
+        verify(teamRepo, times(6)).findAll();
     }
 
     @Test
