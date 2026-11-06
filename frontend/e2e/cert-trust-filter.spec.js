@@ -61,6 +61,14 @@ for (const vp of VIEWPORTS) {
     await page.getByRole('button', { name: /(Partly verified|Kısmen doğrulandı) — / }).first().click()
     const detail = page.locator('[data-slot="cert-trust-detail"]')
     await expect(detail).toBeVisible()
+    // Açılış animasyonu (zoom-in %95 → %100) bitmeden ölçülen yükseklik %95'e düşer (CI'da 38,2 px) — sonlu animasyonların
+    // bitmesini bekle (sonsuz animasyon beklenmez)
+    await detail.evaluate((el) => {
+      const root = el.closest('[data-radix-popper-content-wrapper]') || el
+      return Promise.all(root.getAnimations({ subtree: true })
+        .filter((a) => a.effect?.getComputedTiming?.().iterations !== Infinity)
+        .map((a) => a.finished.catch(() => {})))
+    })
     await expect(detail.locator('[data-slot="trust-check"]')).toHaveCount(3)
     await expect(detail.locator('[data-slot="trust-check"][data-check="rev"]')).toHaveAttribute('data-state', 'unknown')
     await expect(detail.locator('[data-slot="trust-check"][data-check="rev"] [data-slot="trust-check-hint"]')).toContainText(/OCSP|CRL/)
