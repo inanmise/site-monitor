@@ -4414,6 +4414,8 @@ export const TR = {
   'act.tl.loadError': 'Özet yüklenemedi; sayılar ve grafik şu an gösterilemiyor. Yenile ile tekrar deneyin; ilk sayfada 30 saniyede bir kendiliğinden de denenir.',
   'act.tl.live': 'Canlı',
   'act.tl.liveHint': 'İlk sayfadayken akış 30 saniyede bir kendiliğinden yenilenir; sekme arka plandayken durur.',
+  'act.tl.liveOffAll': 'Aralık “Tümü”: otomatik yenileme kapalı',
+  'act.tl.liveOffAllHint': '“Tümü” aralığı bütün kayıtları tarayan ağır bir sorgu; akış kendiliğinden yenilenmez. Güncel veri için Yenile düğmesini kullanın.',
   'act.tl.aria': 'Zaman çizelgesi: seçili aralıkta {0} kayıt; başarılı, uyarı, hata ve bilinmeyen sonuçlar yığılmış çubuklarla.',
   'act.typeCount': '{0} kayıt',
   'act.typesSelected': '{0} seçili',

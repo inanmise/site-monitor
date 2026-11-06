@@ -18,6 +18,7 @@ import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { useCardDensity } from '../hooks/useCardDensity.js'
+import { useCardHandlers } from '../hooks/useCardHandlers.js'
 import { useToast } from './ui/Toast.jsx'
 import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
@@ -92,6 +93,10 @@ const BulkCreateDialog = lazy(() => import('./dbquery/BulkCreate.jsx').then((m) 
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 30
+// Ayrıntı penceresinin sessiz tazelemesi (sn değil ms). Liste bu aralıktan (eksi pay) yeni yüklendiyse pencere
+// ucu yeniden çağırmaz — kopyasını liste yoklaması zaten tazeledi (2026-11-06, performans PF2 madde 8).
+const DETAIL_REFRESH_MS = 30_000
+const LIST_FRESH_SLACK_MS = 1_000
 const PURPOSE_MIN = 5
 const PURPOSE_MAX = 2000
 
@@ -188,7 +193,9 @@ function payloadFromForm(form) {
 
 const SCHEDULE_ERROR_KEYS = ['schedule', 'schedule_mode', 'interval_seconds', 'cron_expression', 'windows', 'blackouts', 'skip_dates']
 
-export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
+/** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
+const NO_TEAMS = Object.freeze([])
+export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -300,7 +307,21 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     concurrency: CHECK_CONCURRENCY_BY_TYPE.dbquery,
   })
   // Koşum sırasında tazeleme DURUR (ortada gelen load() satırları değiştirip kartları zıplatırdı).
-  useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
+  // Liste yoklaması + açık ayrıntının kopyası TEK yanıttan (2026-11-06, performans PF2 madde 8). Eskiden pencerenin 30 sn'lik
+  // tazelemesi listeyi AYRICA çekiyordu; sayfanın kendi yoklaması da sürdüğünden pencere açıkken liste ucu dakikada 3 kez
+  // (DB sorgu: 4) çağrılıyordu. Yoklama artık pencerenin kopyasını da tazeler; pencere tazelemesi liste son 30 sn içinde
+  // böyle yüklendiyse ucu yeniden çağırmaz. Diğer load() çağrıları (kaydet, sürdür, hariç tut …) eskisi gibi kopyaya dokunmaz.
+  // Sıra koruması load()'da — bayat yanıt undefined döner, kopya değişmez; A'nın satırı B'nin penceresini değiştirmez.
+  const listSyncedAtRef = useRef(0)
+  const loadAndSync = useCallback(async () => {
+    const rows = await load()
+    if (Array.isArray(rows)) {
+      listSyncedAtRef.current = Date.now()
+      setSelected((prev) => (prev ? (rows.find((x) => x.id === prev.id) ?? prev) : prev))
+    }
+    return rows
+  }, [load])
+  useVisibleInterval(loadAndSync, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
 
   useEffect(() => {
     if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
@@ -331,15 +352,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   async function refreshModal() {
     if (!selected) return
-    const id = selected.id
-    // Liste SIRA KORUMALI load()'dan geçer: yavaş yenileme kaydedilmiş satırı eski değerlerle ezmesin.
-    const rows = await load()
-    if (Array.isArray(rows)) {
-      const fresh = rows.find(x => x.id === id)
-      if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))
-    }
+    // Liste son 30 sn içinde yoklamayla yüklendiyse yeniden çekilmez — kopya o yanıttan tazelendi. Aksi hâlde SIRA
+    // KORUMALI load()'dan geçer (2026-10-22, UIM-19) ve kopya aynı yanıttan tazelenir (loadAndSync).
+    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) await loadAndSync()
   }
-  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
+  useVisibleInterval(() => { if (selected) refreshModal() }, selected ? DETAIL_REFRESH_MS : 0, false)
 
   /** Uçuşan deneme VE maliyet isteğini geçersiz kılar (form açılışı / kapanışı, takım / bağlantı değişimi). */
   function cancelTest() { testSeq.current++; planSeq.current++; setTesting(false); setPlanChecking(false) }
@@ -1037,21 +1054,42 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   /** Tek kart — düz listede ve bağlantı gruplarında aynı (sayfa bayrakları: düzenle / kontrol / sil kapıları). */
   const renderCard = (m) => (
     <DbQueryMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={dbqueryStatusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
-      onOpen={() => openDetail(m)}
+      onOpen={() => cardEv.current.openDetail(m)}
       spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
       selection={canManageRow(m) && (
-        <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
+        <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => cardEv.current.toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
       )}
       meta={<MonitorCardMeta monitor={m} />}
       actions={(canManageRow(m) || canCheckRow(m) || canDeleteRow(m)) && (
-        <MonitorCardActions onResume={canManageRow(m) ? () => resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.name}
+        <MonitorCardActions onResume={canManageRow(m) ? () => cardEv.current.resume(m) : undefined} resuming={isResuming(m.id)} rowLabel={m.name}
           running={isRunning(m.id)}
-          onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={canManageRow(m) ? () => openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => openDuplicate(m) : undefined}
+          onCheck={canCheckRow(m) ? () => cardEv.current.checkNow(m) : undefined} onEdit={canManageRow(m) ? () => cardEv.current.openEdit(m) : undefined} onDuplicate={canManageRow(m) ? () => cardEv.current.openDuplicate(m) : undefined}
           checkTitle={t('dbq.page.check')} editTitle={t('dbq.page.edit')}
-          onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+          onDelete={canDeleteRow(m) ? () => cardEv.current.deleteMonitor(m) : undefined}
           deleting={deleting === m.id} deleteTitle={t('dbq.page.delete')} />
       )} />
   )
+
+  // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
+  // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
+  // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardGrid = useMemo(() => (
+    connGroups ? (
+      <div data-slot="dbq-conn-groups" className="flex min-w-0 flex-col gap-4">
+        {pageSections(pager.pageItems, connGroups).map((sec, k) => (
+          <section key={`${sec.group.key}-${k}`} data-slot="dbq-conn-group" data-key={sec.group.key} aria-labelledby={`dbq-grp-${k}`}
+            className="flex min-w-0 flex-col gap-2.5">
+            <ConnectionGroupHeader group={sec.group} continued={sec.continued} health={groupHealth(sec.group)} headingId={`dbq-grp-${k}`} />
+            <div className="upt-grid" data-density={density}>{sec.items.map(renderCard)}</div>
+          </section>
+        ))}
+      </div>
+    ) : (
+      <div className="upt-grid" data-density={density}>{pager.pageItems.map(renderCard)}</div>
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- çizim girdileri tam; işleyiciler cardEv'den okunur
+  ), [pager.pageItems, density, isRunning, isResuming, deleting, bulkSel, sparks, sla, t, isAdmin, isTeamAdmin, isOwnTeam, connGroups, groupHealth])
 
   return (
     <div className="upt-page">
@@ -1145,19 +1183,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
               description={loadError ? t('dbq.focus.noneStale') : t('dbq.focus.noneBody')}
               actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => setFocus(null)}>{t('dbq.focus.clear')}</Button>} /></div>
           : <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />)}
-        {connGroups ? (
-          <div data-slot="dbq-conn-groups" className="flex min-w-0 flex-col gap-4">
-            {pageSections(pager.pageItems, connGroups).map((sec, k) => (
-              <section key={`${sec.group.key}-${k}`} data-slot="dbq-conn-group" data-key={sec.group.key} aria-labelledby={`dbq-grp-${k}`}
-                className="flex min-w-0 flex-col gap-2.5">
-                <ConnectionGroupHeader group={sec.group} continued={sec.continued} health={groupHealth(sec.group)} headingId={`dbq-grp-${k}`} />
-                <div className="upt-grid" data-density={density}>{sec.items.map(renderCard)}</div>
-              </section>
-            ))}
-          </div>
-        ) : (
-          <div className="upt-grid" data-density={density}>{pager.pageItems.map(renderCard)}</div>
-        )}
+        {cardGrid}
         <PaginationBar {...pager} />
         </>
       )}

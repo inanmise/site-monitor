@@ -73,7 +73,7 @@ describe('CertificateModal — açıkken yeniden adlandırma', () => {
 
     fireEvent.mouseDown(tab(dlg, HISTORY)); fireEvent.click(tab(dlg, HISTORY))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
-    await waitFor(() => expect(api.getHistory).toHaveBeenCalledWith('yeni-ad'))
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalledWith('yeni-ad', { limit: 1 }))   // pencere yalnız son kaydı ister (PF4 D4)
     // Yeniden adlandırmadan sonra eski adla HİÇBİR istek yok ve hata yüzeye çıkmaz
     for (const fn of [api.getCertificateHealth, api.getHistory]) expect(fn.mock.calls.map((c) => c[0])).not.toContain('eski-ad')
     expect(api.monitoring.getCheckHistory.mock.calls.map((c) => c[1])).not.toContain('eski-ad')

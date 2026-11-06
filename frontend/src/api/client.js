@@ -1206,7 +1206,9 @@ export const api = {
 
   getWarnings: () => request('/warnings'),
 
-  getHistory: (domain) => request(`/history/${encodeURIComponent(domain)}`),
+  // `limit` (isteğe bağlı, 2026-11-06 PF4 D4): sertifika penceresi yalnız son kaydı kullanır → `{ limit: 1 }`. Eski sunucu
+  // parametreyi yok sayar (30 satır döner, ilk satır aynı).
+  getHistory: (domain, { limit } = {}) => request(`/history/${encodeURIComponent(domain)}${limit ? `?limit=${encodeURIComponent(limit)}` : ''}`),
 
   getDomainAlerts: (domain) => request(`/history/${encodeURIComponent(domain)}/alerts`),
 

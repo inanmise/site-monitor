@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { BarChart3, Clock } from 'lucide-react'
+import { BarChart3, Clock, PauseCircle } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -14,9 +14,10 @@ import { chartPoints, seriesTotal } from './activityModel.js'
  * Aktivite zaman çizelgesi (2026-10-11): seçili aralıkta sonuç dağılımı — yığılmış çubuk (başarılı / uyarı / hata /
  * bilinmeyen). ≤ 48 saat saatlik, daha uzun İstanbul günü (sunucu belirler). Sağ üstte son aktivite ve "canlı"
  * göstergesi (1. sayfada 30 sn'de bir sessiz tazeleme). Test kancaları: `data-slot="act-timeline"` (+ `data-bucket`),
- * `act-live`, `act-timeline-empty`.
+ * `act-live`, `act-live-off` (aralık kendiliğinden yenilenmiyor), `act-timeline-empty`.
  */
-export default function ActivityTimeline({ series, loading, failed = false, lastActivity, live }) {
+/** `autoRefreshOff`: seçili aralık kendiliğinden yenilenmiyor ("Tümü" — ağır sorgu, 2026-11-06 PF1 madde 7) → görünür not. */
+export default function ActivityTimeline({ series, loading, failed = false, lastActivity, live, autoRefreshOff = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const points = useMemo(() => chartPoints(series, lang), [series, lang])
@@ -47,6 +48,14 @@ export default function ActivityTimeline({ series, loading, failed = false, last
                 <span className="relative inline-flex size-2 rounded-full bg-success" />
               </span>
               {t('act.tl.live')}
+            </Badge>
+          )}
+          {autoRefreshOff && (
+            <Badge variant="outline" data-slot="act-live-off" className="h-auto gap-1.5 whitespace-normal text-muted-foreground"
+              title={t('act.tl.liveOffAllHint')}>
+              <PauseCircle aria-hidden="true" className="size-3 shrink-0" />
+              {t('act.tl.liveOffAll')}
+              <span className="sr-only"> — {t('act.tl.liveOffAllHint')}</span>
             </Badge>
           )}
           {lastActivity && (

@@ -1,18 +1,21 @@
-import { useState, useEffect } from 'react'
+import { lazy, useState, useEffect } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
-import AlertThresholds from './AlertThresholds'
-import EscalationContacts from './EscalationContacts'
-import NotificationGroups from './NotificationGroups'
-import RecipientSimulator from './RecipientSimulator.jsx'
-import TeamManager from './TeamManager'
-import UserManager from './UserManager'
 import AdminOverviewStrip from './AdminOverviewStrip.jsx'
-import TeamAccessManager from './access/TeamAccessManager.jsx'
-import AlertForwardManager from './forwards/AlertForwardManager.jsx'
+import LazySection from '../ui/LazySection.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+// Sekmeler TEMBEL (2026-11-06, performans PF4 O3): sekiz sekme tek parçaydı (~360 KB) ve Yönetim her açıldığında hepsi
+// indiriliyordu; artık yalnız açılan sekme. Yedek iskelet + sekme başına hata sınırı: ui/LazySection.
+const AlertThresholds = lazy(() => import('./AlertThresholds.jsx'))
+const EscalationContacts = lazy(() => import('./EscalationContacts.jsx'))
+const NotificationGroups = lazy(() => import('./NotificationGroups.jsx'))
+const RecipientSimulator = lazy(() => import('./RecipientSimulator.jsx'))
+const TeamManager = lazy(() => import('./TeamManager.jsx'))
+const UserManager = lazy(() => import('./UserManager.jsx'))
+const TeamAccessManager = lazy(() => import('./access/TeamAccessManager.jsx'))
+const AlertForwardManager = lazy(() => import('./forwards/AlertForwardManager.jsx'))
 
 const TAB_GROUPS = [
   {
@@ -123,6 +126,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
         <GroupedTabStrip groups={groups} t={t} />
 
         <TabsContent value={activeTab} key={remountKey} className="min-h-[300px] min-w-0">
+          <LazySection sectionKey={activeTab}>
           {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
           {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} onOpenSimulator={(params) => jump('whoNotified', params)} />}
           {activeTab === 'notifyGroups' && <NotificationGroups teams={teams} systemRole={systemRole} />}
@@ -134,6 +138,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
           {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} onJump={jump} />}
           {activeTab === 'sharing'    && <TeamAccessManager />}
           {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}
+          </LazySection>
         </TabsContent>
       </Tabs>
     </div>

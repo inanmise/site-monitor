@@ -66,13 +66,13 @@ describe('AdminPanel', () => {
 
   it('shows EscalationContacts by default for non-admin', async () => {
     await act(async () => { render(<AdminPanel />) })
-    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(await screen.findByTestId('escalation-contacts')).toBeInTheDocument()
     expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
   })
 
   it('shows AlertThresholds by default for admin', async () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
-    expect(screen.getByTestId('alert-thresholds')).toBeInTheDocument()
+    expect(await screen.findByTestId('alert-thresholds')).toBeInTheDocument()
     expect(screen.queryByTestId('escalation-contacts')).not.toBeInTheDocument()
   })
 
@@ -84,11 +84,11 @@ describe('AdminPanel', () => {
   it('switches to EscalationContacts when contacts tab is clicked (admin)', async () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
     pick('Escalation Contacts')
-    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(await screen.findByTestId('escalation-contacts')).toBeInTheDocument()
     expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
     // İçerik, seçili sekmeye bağlı sekme paneli içinde
     const panel = screen.getByRole('tabpanel')
-    expect(panel).toContainElement(screen.getByTestId('escalation-contacts'))
+    expect(panel).toContainElement(await screen.findByTestId('escalation-contacts'))
     expect(panel.getAttribute('aria-labelledby')).toBe(screen.getByRole('tab', { name: 'Escalation Contacts' }).id)
   })
 
@@ -96,7 +96,7 @@ describe('AdminPanel', () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
     pick('Escalation Contacts')
     pick('Thresholds')
-    expect(screen.getByTestId('alert-thresholds')).toBeInTheDocument()
+    expect(await screen.findByTestId('alert-thresholds')).toBeInTheDocument()
   })
 
   it('active tab updates when switching tabs', async () => {
@@ -111,7 +111,7 @@ describe('AdminPanel', () => {
     const users = screen.getByRole('tab', { name: 'Users' })
     users.focus()
     fireEvent.keyDown(users, { key: 'Enter' })
-    expect(screen.getByTestId('user-manager')).toBeInTheDocument()
+    expect(await screen.findByTestId('user-manager')).toBeInTheDocument()
   })
 })
 
@@ -146,7 +146,7 @@ describe('AdminPanel — tam genişlik gruplu şerit', () => {
     // Radix odağı setTimeout ile taşır (RovingFocusGroup focusFirst) → beklenir
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Escalation Contacts' })))
     pick('Users')
-    expect(screen.getByTestId('user-manager')).toBeInTheDocument()
+    expect(await screen.findByTestId('user-manager')).toBeInTheDocument()
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('g_tab')).toBe('users'), { timeout: 2000 })
   })
 })
@@ -158,21 +158,21 @@ describe('AdminPanel — g_tab derin bağlantı', () => {
   it('g_tab=users ile açılınca Kullanıcılar sekmesi aktif', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=users')
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
-    expect(screen.getByTestId('user-manager')).toBeInTheDocument()
+    expect(await screen.findByTestId('user-manager')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Users' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('yetkisiz sekme (TEAM_ADMIN + g_tab=thresholds) varsayılana iner', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=thresholds')
     await act(async () => { render(<AdminPanel systemRole="TEAM_ADMIN" />) })
-    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    expect(await screen.findByTestId('escalation-contacts')).toBeInTheDocument()
     expect(screen.queryByTestId('alert-thresholds')).not.toBeInTheDocument()
   })
 
   it('g_tab=whoNotified derin bağlantısı (yönetici olmayan da) simülatörü açar', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=whoNotified&g_team=7&g_level=CRITICAL')
     await act(async () => { render(<AdminPanel systemRole="TEAM_ADMIN" />) })
-    expect(screen.getByTestId('who-notified')).toBeInTheDocument()
+    expect(await screen.findByTestId('who-notified')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Who gets notified?' })).toHaveAttribute('aria-selected', 'true')
     // Simülatörün kendi g_* anahtarları sekme açılışında SİLİNMEZ (paylaşılan senaryo bağlantısı)
     expect(new URLSearchParams(window.location.search).get('g_team')).toBe('7')
@@ -187,7 +187,7 @@ describe('AdminPanel — g_tab derin bağlantı', () => {
     expect(sp.get('g_role')).toBeNull()
     expect(sp.get('g_q')).toBeNull()
     expect(sp.get('tab')).toBe('admin')
-    expect(screen.getByTestId('team-manager')).toBeInTheDocument()
+    expect(await screen.findByTestId('team-manager')).toBeInTheDocument()
   })
 })
 
@@ -205,7 +205,7 @@ describe('AdminPanel — Who gets notified? tab', () => {
     const notify = screen.getByRole('tablist').querySelector('[data-group="admin.groupNotify"]')
     expect(within(notify).getByRole('tab', { name: 'Who gets notified?' })).toBeInTheDocument()
     pick('Who gets notified?')
-    expect(screen.getByTestId('who-notified')).toHaveAttribute('data-admin', 'false')
+    expect(await screen.findByTestId('who-notified')).toHaveAttribute('data-admin', 'false')
     expect(screen.queryByTestId('escalation-contacts')).toBeNull()
     await waitFor(() => expect(sp().get('g_tab')).toBe('whoNotified'), { timeout: 2000 })
   })
@@ -213,8 +213,8 @@ describe('AdminPanel — Who gets notified? tab', () => {
   it('contacts page link switches to the tab and carries the team (g_team) via jump', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=contacts&g_q=ali')
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
-    fireEvent.click(screen.getByRole('button', { name: 'open-simulator' }))
-    expect(screen.getByTestId('who-notified')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'open-simulator' }))   // sekme tembel parça (PF4 O3)
+    expect(await screen.findByTestId('who-notified')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Who gets notified?' })).toHaveAttribute('aria-selected', 'true')
     expect(sp().get('g_team')).toBe('5')
     expect(sp().get('g_q')).toBeNull()   // kişiler sayfasının süzgeci taşınmaz
@@ -223,8 +223,8 @@ describe('AdminPanel — Who gets notified? tab', () => {
   it('simulator next-step button jumps back to contacts with the team filter', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=whoNotified')
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
-    fireEvent.click(screen.getByRole('button', { name: 'go-contacts' }))
-    expect(screen.getByTestId('escalation-contacts')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'go-contacts' }))   // sekme tembel parça (PF4 O3)
+    expect(await screen.findByTestId('escalation-contacts')).toBeInTheDocument()
     expect(sp().get('g_team')).toBe('5')
   })
 
@@ -240,6 +240,6 @@ describe('AdminPanel — Who gets notified? tab', () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
     await waitFor(() => expect(api.admin.getTeams.mock.calls.length).toBe(calls + 1))
     await act(async () => {})
-    expect(screen.getByTestId('who-notified')).toHaveAttribute('data-default-team', '')
+    expect(await screen.findByTestId('who-notified')).toHaveAttribute('data-default-team', '')
   })
 })

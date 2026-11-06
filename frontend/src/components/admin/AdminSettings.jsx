@@ -1,4 +1,4 @@
-import { useId, useState, useCallback, useEffect, useMemo } from 'react'
+import { lazy, useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText, CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn, SwatchBook, FileWarning,
   ChartNoAxesCombined, Cpu, RadioTower, CalendarOff,
@@ -12,35 +12,38 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadc
 import { Badge } from '@/components/shadcn/badge'
 import { Label } from '@/components/shadcn/label'
 import { cn } from '@/lib/utils'
-import SmtpSettings from './SmtpSettings'
-import LdapSettings from './LdapSettings'
-import GeneralSettings from './GeneralSettings'
-import MonitorGroups from './MonitorGroups'
-import PlatformSettings from './PlatformSettings.jsx'   // platform kataloğu (2026-09-22)
-import SecretTools from './SecretTools'
-import DatabaseInfo from './DatabaseInfo'
-import WeeklyAvailabilitySettings from './WeeklyAvailabilitySettings'
-import WeeklyReportAccessSettings from './WeeklyReportAccessSettings'
 import ConfigHealthCard from './ConfigHealthCard.jsx'
-import CertInventoryReportSettings from './CertInventoryReportSettings'
-import StormSettings from './StormSettings'
-import LoginAnomalySettings from './LoginAnomalySettings'
-import DomainDiagnostics from './DomainDiagnostics'
-import BrandingSettings from './BrandingSettings'
-import RetentionSettings from './RetentionSettings'
-import UserPushSettings from './UserPushSettings'
-import NocSettings from './NocSettings.jsx'   // 7/24 İzleme Ekibi (2026-09-27)
-import TechErrorReportSettings from './TechErrorReportSettings.jsx'   // Teknik hata raporu modülü (2026-10-17, S6)
-import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sistem Bakım Modu (2026-10-02)
-import LoginMethodsSettings from './LoginMethodsSettings.jsx'   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
-import ThemeSettings from './ThemeSettings.jsx'   // Görünüm → Temalar (2026-10-05)
-import GrafanaDashboardSettings from './grafana/GrafanaDashboardSettings.jsx'   // Grafana panosu + ölçüm aktarıcısı (2026-10-18)
-import K6EngineSettings from './k6engine/K6EngineSettings.jsx'   // k6 motoru — 0.49 → 2.3 geçişi, uyumluluk taraması (2026-10-29)
-import AlarmFeedSettings from './alarmfeed/AlarmFeedSettings.jsx'   // Alarm akışı — merkezi izleme ekibinin çektiği herkese açık uç (2026-10-30)
-import HolidayCalendarSettings from './HolidayCalendarSettings.jsx'   // Tatil takvimi — veritabanı sorgu izlemesinin "tatillerde çalışma" günleri (2026-10-31)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
+import LazySection from '../ui/LazySection.jsx'
+// Bölümler TEMBEL (2026-11-06, performans PF4 O3): 25 bölüm tek parçaydı (~630 KB) ve Ayarlar her açıldığında
+// hepsi indiriliyordu; artık yalnız açılan bölüm. Yedek iskelet + bölüm başına hata sınırı: ui/LazySection.
+const SmtpSettings = lazy(() => import('./SmtpSettings.jsx'))
+const LdapSettings = lazy(() => import('./LdapSettings.jsx'))
+const GeneralSettings = lazy(() => import('./GeneralSettings.jsx'))
+const MonitorGroups = lazy(() => import('./MonitorGroups.jsx'))
+const PlatformSettings = lazy(() => import('./PlatformSettings.jsx'))   // platform kataloğu (2026-09-22)
+const SecretTools = lazy(() => import('./SecretTools.jsx'))
+const DatabaseInfo = lazy(() => import('./DatabaseInfo.jsx'))
+const WeeklyAvailabilitySettings = lazy(() => import('./WeeklyAvailabilitySettings.jsx'))
+const WeeklyReportAccessSettings = lazy(() => import('./WeeklyReportAccessSettings.jsx'))
+const CertInventoryReportSettings = lazy(() => import('./CertInventoryReportSettings.jsx'))
+const StormSettings = lazy(() => import('./StormSettings.jsx'))
+const LoginAnomalySettings = lazy(() => import('./LoginAnomalySettings.jsx'))
+const DomainDiagnostics = lazy(() => import('./DomainDiagnostics.jsx'))
+const BrandingSettings = lazy(() => import('./BrandingSettings.jsx'))
+const RetentionSettings = lazy(() => import('./RetentionSettings.jsx'))
+const UserPushSettings = lazy(() => import('./UserPushSettings.jsx'))
+const NocSettings = lazy(() => import('./NocSettings.jsx'))   // 7/24 İzleme Ekibi (2026-09-27)
+const TechErrorReportSettings = lazy(() => import('./TechErrorReportSettings.jsx'))   // Teknik hata raporu modülü (2026-10-17, S6)
+const SystemMaintenanceSettings = lazy(() => import('./SystemMaintenanceSettings.jsx'))   // Sistem Bakım Modu (2026-10-02)
+const LoginMethodsSettings = lazy(() => import('./LoginMethodsSettings.jsx'))   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
+const ThemeSettings = lazy(() => import('./ThemeSettings.jsx'))   // Görünüm → Temalar (2026-10-05)
+const GrafanaDashboardSettings = lazy(() => import('./grafana/GrafanaDashboardSettings.jsx'))   // Grafana panosu + ölçüm aktarıcısı (2026-10-18)
+const K6EngineSettings = lazy(() => import('./k6engine/K6EngineSettings.jsx'))   // k6 motoru — 0.49 → 2.3 geçişi, uyumluluk taraması (2026-10-29)
+const AlarmFeedSettings = lazy(() => import('./alarmfeed/AlarmFeedSettings.jsx'))   // Alarm akışı — merkezi izleme ekibinin çektiği herkese açık uç (2026-10-30)
+const HolidayCalendarSettings = lazy(() => import('./HolidayCalendarSettings.jsx'))   // Tatil takvimi — veritabanı sorgu izlemesinin "tatillerde çalışma" günleri (2026-10-31)
 
 /**
  * Ayarlar kabuğu (tam sayfa yeniden tasarım, 2026-09-27 — kullanıcı: "Ayarlar sayfası tüm sayfayı kullanmıyor;
@@ -300,7 +303,7 @@ export default function AdminSettings({ globalAdmin = true }) {
               </AlertBanner>
             </div>
           )}
-          {(globalAdmin || !GLOBAL_ONLY_SECTIONS.has(active)) && <>
+          {(globalAdmin || !GLOBAL_ONLY_SECTIONS.has(active)) && <LazySection sectionKey={active}>
           {active === 'general' && <GeneralSettings focusKey={focusKey} />}
           {active === 'branding' && <BrandingSettings />}
           {active === 'monitorgroups' && <MonitorGroups />}
@@ -327,7 +330,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'retention' && <RetentionSettings readOnly={!globalAdmin} />}
           {active === 'database' && <DatabaseInfo />}
           {active === 'secrets' && <SecretTools />}
-          </>}
+          </LazySection>}
         </TabsContent>
       </Tabs>
     </div>

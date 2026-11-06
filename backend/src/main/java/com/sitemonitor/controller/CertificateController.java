@@ -315,10 +315,21 @@ public class CertificateController {
      * (envanter birleşimi yok), kayıt durumu ise yetki kapısının ZATEN okuduğu envanter satırından gelir — ek sorgu yok.
      * Biçim listelerle aynı ({@code CertificateService.applyNoc}): null kolon = kapalı, boş liste = varsayılan gruplar.
      */
+    /** {@code /history/{domain}} varsayılan / en çok satır sayısı (eski davranış: 30). */
+    static final int HISTORY_DEFAULT_LIMIT = 30;
+
+    /**
+     * Alan adının son kontrol kayıtları. {@code limit} (isteğe bağlı, 2026-11-06 performans PF4 D4): sertifika penceresinin
+     * 30 sn'lik sessiz yoklaması yalnız EN SON kaydı kullanıyor → {@code ?limit=1}. Verilmezse 30 (eski istemci aynı yanıtı
+     * alır); 1–30 aralığına sıkıştırılır (daha büyük değer 30, sıfır / negatif 1).
+     */
     @GetMapping("/history/{domain}")
-    public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain, HttpSession session) {
+    public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain,
+                                                          @RequestParam(required = false) Integer limit,
+                                                          HttpSession session) {
         CertificateInventory inv = requireReadableDomain(session, domain);
-        List<CertificateDto> history = certService.getHistory(domain, 30);
+        int rows = limit == null ? HISTORY_DEFAULT_LIMIT : Math.max(1, Math.min(HISTORY_DEFAULT_LIMIT, limit));
+        List<CertificateDto> history = certService.getHistory(domain, rows);
         return ok(Map.of("success", true, "domain", domain, "data", history, "timestamp", now(),
                 "noc_notify", Boolean.TRUE.equals(inv.getNocNotify()),
                 "noc_group_ids", com.sitemonitor.service.noc.NocGroupIds.parse(inv.getNocGroupIds())));
