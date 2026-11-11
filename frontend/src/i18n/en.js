@@ -2573,6 +2573,10 @@ export const EN = {
   'help.set.site.monitor.eval-state.read-enabled':
     "What it does: When sweep leadership moves to another pod, the new leader loads the alarm evaluation state its predecessor recorded in the database: after a clean handover (graceful shutdown) recovery counters, DOWN sibling monitors, suppression, type rounds and the suppression window; after a crash or lease expiry only observations (DOWN siblings and the window). Running confirmation chains always restart. When off, every handover starts from scratch as today.\nBenefit: Alarms keep their consecutive-healthy counters across deploys and restarts, and a shared alarm is not closed early while a sibling monitor is still DOWN.\nRecommended: false (default). Turn on only after at least 7 days of clean VERIFY on two production pods; turning it off is instantly safe (the next handover behaves as today). No effect while the recording mode is off.",
   // ── /multi-pod R3-2 · P0 ──
+  // ── Dynamic baseline (2026-11-12) ──
+  'general.lbl.site.monitor.baseline.enabled': 'Dynamic baseline (response-time anomaly)',
+  'help.set.site.monitor.baseline.enabled':
+    "What it does: For enabled monitors, instead of a fixed threshold a band learned from each monitor's OWN history is used (mean ± k·σ). When the response time goes clearly outside that band (unusually slow for this hour) a warning/critical slow alarm opens; it closes when it returns to the band. Turned on per monitor (the 'Dynamic baseline' button in each monitor's detail); this switch turns the whole evaluation on/off organisation-wide.\nBenefit: Catches slow degradation a fixed threshold would miss without tuning a threshold; learns the seasonal (time-of-day/week) pattern.\nRecommended: true (default). Turning it off is instantly safe: the slow path runs exactly as before with the fixed threshold, samples are kept.",
   // ── multi-pod R3-3 · P0 ──
   'general.lbl.site.monitor.checks.distributed.enabled': 'Distributed monitoring checks (multi-pod)',
   'general.lbl.site.monitor.checks.distributed.types': 'Distributed check types (comma separated)',

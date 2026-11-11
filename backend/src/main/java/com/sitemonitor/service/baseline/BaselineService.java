@@ -40,8 +40,15 @@ public class BaselineService {
     /** Taban-çizgisi SLOW kaleminin KARARLI {@code detail} eki (teyit zinciri anahtarı her sweep'te değişmesin). */
     public static final String SLOW_DETAIL = "dinamik taban";
 
+    /** Ana anahtar ayar anahtarı — KALICI ({@code AppSettingsCatalog}, BOOL, grup monitoring, GLOBAL_ONLY, CANLI). */
+    public static final String KEY_ENABLED = "site.monitor.baseline.enabled";
+
     private final MonitorBaselineConfigRepository configRepo;
     private final BaselineSampleStore store;
+
+    /** Ana anahtarın CANLI okunması (kaydetme → 30 sn ayar yenilemesi). Yoksa (birim test) {@link #globalEnabled} alanı. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AppSettingsService appSettings;
 
     @Value("${site.monitor.baseline.enabled:true}")
     private boolean globalEnabled;
@@ -61,9 +68,19 @@ public class BaselineService {
         return type + ":" + id;
     }
 
+    /** Ana anahtar şu an açık mı — CANLI ({@link com.sitemonitor.service.AppSettingsService}); servis yoksa / okuma hatasında boot değeri. */
+    private boolean globalEnabled() {
+        if (appSettings == null) return globalEnabled;
+        try {
+            return appSettings.getBoolean(KEY_ENABLED, globalEnabled);
+        } catch (RuntimeException e) {
+            return globalEnabled;
+        }
+    }
+
     /** Açık yapılandırmayı döndürür (yoksa / kapalıysa null) — 30 sn'lik bellek anlık görüntüsünden. */
     public MonitorBaselineConfig config(String type, long monitorId) {
-        if (!globalEnabled || configRepo == null || !BaselineTypes.supported(type)) return null;
+        if (!globalEnabled() || configRepo == null || !BaselineTypes.supported(type)) return null;
         Map<String, MonitorBaselineConfig> snap = enabledSnapshot;
         if (System.currentTimeMillis() - loadedAt > Math.max(1000, cacheMs)) snap = refresh();
         return snap.get(key(type, monitorId));
@@ -95,7 +112,7 @@ public class BaselineService {
 
     /** Taban çizgisi açık izleme var mı (bellek) — çağıran gereksiz işten kaçınır. */
     public boolean anyEnabled() {
-        if (!globalEnabled || configRepo == null) return false;
+        if (!globalEnabled() || configRepo == null) return false;
         if (System.currentTimeMillis() - loadedAt > Math.max(1000, cacheMs)) refresh();
         return !enabledSnapshot.isEmpty();
     }

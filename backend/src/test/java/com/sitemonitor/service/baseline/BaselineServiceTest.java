@@ -150,4 +150,16 @@ class BaselineServiceTest {
         enable(1);
         assertThat(svc.anyEnabled()).isTrue();
     }
+
+    @Test
+    void ana_anahtar_canli_kapatinca_null() {
+        enable(1);
+        assertThat(svc.evaluateScheduled(HTTP, 1, 500, T0, 60)).isNotNull();   // ana anahtar açık
+        com.sitemonitor.service.AppSettingsService settings = mock(com.sitemonitor.service.AppSettingsService.class);
+        when(settings.getBoolean(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(false);
+        ReflectionTestUtils.setField(svc, "appSettings", settings);
+        assertThat(svc.evaluateScheduled(HTTP, 1, 500, T0 + 1000, 60)).isNull();   // CANLI kapandı → değerlendirme yok
+        assertThat(svc.anyEnabled()).isFalse();
+    }
 }

@@ -2576,6 +2576,10 @@ export const TR = {
   'help.set.site.monitor.eval-state.read-enabled':
     "Ne işe yarar: Tarama liderliği başka pod'a geçince yeni lider, öncekinin veritabanına kaydettiği alarm değerlendirme durumunu yükler: temiz devirde (zarif kapanış) kurtarma sayaçları, DOWN kardeş izlemeler, bastırma, tür turları ve bastırma penceresi; çökme / kira süresi dolmasında yalnız gözlemler (DOWN kardeşler ve pencere). Süren teyit zincirleri her durumda yeniden başlar. Kapalıyken her devir bugünkü gibi sıfırdan başlar.\nFaydası: Dağıtım ve yeniden başlatmalarda alarmlar ardışık sağlıklı sayaçlarını kaybetmez; paylaşılan alarm, DOWN kardeşi varken erken kapanmaz.\nÖnerilen değer: false (varsayılan). Yalnız iki prod pod'unda en az 7 gün temiz doğrulamadan sonra true; kapatmak anında güvenlidir (sonraki devir bugünkü gibi). Kayıt kipi off iken etkisizdir.",
   // ── /multi-pod R3-2 · P0 ──
+  // ── Dinamik taban çizgisi (2026-11-12) ──
+  'general.lbl.site.monitor.baseline.enabled': 'Dinamik taban çizgisi (yanıt-süresi anomalisi)',
+  'help.set.site.monitor.baseline.enabled':
+    "Ne işe yarar: Açık izlemelerde sabit eşik yerine her izlemenin KENDİ geçmişinden öğrenilen bir bant kullanılır (ortalama ± k·σ). Yanıt süresi bu bandın belirgin dışına çıkınca (bu saat için olağandışı yavaş) uyarı/kritik yavaşlık alarmı açılır; banda dönünce kapanır. İzleme-başına açılır (her izlemenin detayındaki 'Dinamik taban çizgisi' düğmesi); bu anahtar tüm bu değerlendirmeyi kurum genelinde açar/kapatır.\nFaydası: Sabit bir eşiğin kaçırdığı yavaş bozulmaları eşik ayarlamadan yakalar; mevsimsel (günün/haftanın saati) örüntüyü öğrenir.\nÖnerilen değer: true (varsayılan). Kapatmak anında güvenlidir: yavaşlık hattı sabit eşikle birebir eskisi gibi çalışır, örnekler korunur.",
   // ── multi-pod R3-3 · P0 ──
   'general.lbl.site.monitor.checks.distributed.enabled': 'Dağıtık izleme kontrolleri (çok pod)',
   'general.lbl.site.monitor.checks.distributed.types': 'Dağıtık kontrol türleri (virgülle)',
