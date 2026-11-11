@@ -1782,7 +1782,7 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım çıkarılamaz (409)")
+    @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım da çıkarılabilir (takımsız kalır)")
     void teamMembers() throws Exception {
         AppUser u = new AppUser(); u.setId(42L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(9L);
         u.setTeamIds(new java.util.LinkedHashSet<>(List.of(9L)));
@@ -1798,9 +1798,11 @@ class AdminControllerTest {
         assertThat(ids.getValue()).containsExactly(9L, 7L);
         verify(auditService).recordAction(eq("TEAM_MEMBER_ADD"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), any());
 
-        // tek takımı 9 → çıkarılamaz
+        // son takımı 9 → ÇIKARILABİLİR, kullanıcı takımsız kalır (2026-11-11: engelleme kaldırıldı, arayüz uyarır)
         mvc.perform(delete("/api/admin/teams/9/members/42").session(authSession()))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.removed").value(true))
+                .andExpect(jsonPath("$.data.became_teamless").value(true));
         // üyesi olmadığı takımdan çıkarma no-op
         mvc.perform(delete("/api/admin/teams/7/members/42").session(authSession()))
                 .andExpect(status().isOk())
