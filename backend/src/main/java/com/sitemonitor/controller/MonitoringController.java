@@ -300,6 +300,9 @@ public class MonitoringController {
     private final AppSettingsService appSettings;
     /** Saklama süreleri tek kaynaktan (RetentionCatalog) — history kırpması onunla senkron. */
     private final com.sitemonitor.service.retention.RetentionService retentionService;
+    /** Dinamik taban çizgisi yapılandırması (2026-11-12) — isteğe bağlı: bean yoksa (dilim testleri) uçlar 501 döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
     /** Canlı teyit durumu ("Teyit denemesi X/N") — detay modalı 30sn'de bir poll eder. */
     private final MonitoringOutageService monitoringOutageService;
 
@@ -473,6 +476,57 @@ public class MonitoringController {
     // uçları çağırır; bu sınıftaki yazma/çalıştırma kapıları canOperateTeam/canManage'tır ve operatörü TANIMAZ.
     private ResponseEntity<Map<String, Object>> denyIfNotViewable(HttpSession session, Long teamId) {
         return SessionScope.canViewMonitoring(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
+    }
+
+    // ── Dinamik taban çizgisi (2026-11-12) — HTTP yanıt-süresi anomalisi (izleme-başına opt-in) ────────────────────────
+
+    /**
+     * Bir HTTP izlemesinin dinamik taban çizgisi yapılandırması. Okuma: {@code monitoring.read} + izlemenin takımını
+     * görüntüleyebilme. Yapılandırma yoksa öntanımlı + {@code defaults:true} döner; {@code sample_count} tanılama içindir.
+     */
+    @GetMapping("/http/{id}/baseline")
+    public ResponseEntity<Map<String, Object>> getHttpBaseline(@PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (baselineConfigService == null) return notImplemented();
+        var m = httpMonitorRepo.findById(id).orElse(null);
+        if (m == null) return notFound("İzleme bulunamadı");
+        ResponseEntity<Map<String, Object>> deny = denyIfNotViewable(session, m.getTeamId());
+        if (deny != null) return deny;
+        return ok(baselineConfigService.view(com.sitemonitor.service.baseline.BaselineTypes.HTTP, id));
+    }
+
+    /**
+     * HTTP izlemesinin dinamik taban çizgisini kaydeder. Yazma: {@code monitoring.crud} + izlemenin takımını işletebilme
+     * ({@link #canOperateTeam}). Alan hatası → 400 {@code VALIDATION_FAILED}. Aç↔kapa geçişinde bu izlemenin açık HTTP_SLOW
+     * alarmları sessizce kapanır (bant kipinin zincir anahtarı sabit eşiğinkinden farklı — askıda kalmasın); kapatmada
+     * örnekler {@link BaselineConfigService}'te silinir.
+     */
+    @PutMapping("/http/{id}/baseline")
+    public ResponseEntity<Map<String, Object>> putHttpBaseline(@PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (baselineConfigService == null) return notImplemented();
+        var m = httpMonitorRepo.findById(id).orElse(null);
+        if (m == null) return notFound("İzleme bulunamadı");
+        if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+        var res = baselineConfigService.save(com.sitemonitor.service.baseline.BaselineTypes.HTTP, id,
+                body == null ? java.util.Map.of() : body);
+        if (!res.ok()) {
+            var first = res.errors().entrySet().iterator().next();
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(first.getKey(), first.getValue());
+        }
+        if (res.transition())
+            escalationService.resolveOpenAlertsSilently(m.getUrl(), java.util.Set.of(EscalationService.TYPE_HTTP_SLOW),
+                    "Sistem (taban çizgisi değişti)", ownerCtx(id, m.getTeamId(), null));
+        auditService.recordAction("MONITOR_UPDATE", session, "HttpMonitor", String.valueOf(id),
+                m.getName() != null ? m.getName() : m.getUrl(), "{\"baseline_enabled\":" + res.nowEnabled() + "}");
+        return ok(baselineConfigService.view(com.sitemonitor.service.baseline.BaselineTypes.HTTP, id));
+    }
+
+    private ResponseEntity<Map<String, Object>> notImplemented() {
+        return ResponseEntity.status(501).body(java.util.Map.of("success", false, "code", "NOT_IMPLEMENTED",
+                "error", com.sitemonitor.util.Msg.t("Dinamik taban çizgisi bu sürümde kullanılamıyor.",
+                        "Dynamic baseline is not available in this version.")));
     }
 
     /**
@@ -4912,6 +4966,10 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             HttpMonitor saved = httpMonitorRepo.save(m);
+            // URL (taban çizgisinin anahtarı) değiştiyse eski yanıt-süresi örnekleri yeni hedefe karışmasın — temizle.
+            if (baselineConfigService != null && _before != null && _before.get("url") != null
+                    && !_before.get("url").toString().equals(saved.getUrl()))
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.HTTP, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, httpSnapshot(saved)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
@@ -4937,6 +4995,8 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW,
                             EscalationService.TYPE_DOMAIN_EXPIRY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.HTTP, id);   // taban çizgisi config + örnekler
             httpMonitorRepo.delete(m);
             auditService.recordAction("MONITOR_DELETE", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.HTTP, m.getId(), m.getName(), m.getTeamId(),
