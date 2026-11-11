@@ -35,7 +35,7 @@ public class BaselineService {
      */
     public static final String CTX_ON = "baseline_on", CTX_EVALUATED = "baseline_evaluated", CTX_LEVEL = "baseline_level",
             CTX_MEAN = "baseline_mean", CTX_LOW = "baseline_low", CTX_HIGH = "baseline_high",
-            CTX_DEVIATION = "baseline_deviation", CTX_NOTE = "baseline_note";
+            CTX_DEVIATION = "baseline_deviation", CTX_NOTE = "baseline_note", CTX_VALUE = "baseline_value";
 
     /** Taban-çizgisi SLOW kaleminin KARARLI {@code detail} eki (teyit zinciri anahtarı her sweep'te değişmesin). */
     public static final String SLOW_DETAIL = "dinamik taban";

@@ -5,8 +5,8 @@ import BaselineDialog from '../components/baseline/BaselineDialog.jsx'
 
 vi.mock('../api/client', () => ({
   api: { monitoring: {
-    getHttpBaseline: vi.fn(),
-    saveHttpBaseline: vi.fn(),
+    getBaseline: vi.fn(),
+    saveBaseline: vi.fn(),
   } },
   formatDate: (x) => x,
   formatDateSec: (x) => x,
@@ -21,15 +21,15 @@ const CONFIG = {
 }
 
 function mount(props = {}) {
-  return render(<BaselineDialog monitorId={7} monitorName="https://ornek.test/" onClose={props.onClose || (() => {})}
+  return render(<BaselineDialog type="http" monitorId={7} monitorName="https://ornek.test/" onClose={props.onClose || (() => {})}
     onSaved={props.onSaved || (() => {})} />)
 }
 
 beforeEach(() => {
-  api.monitoring.getHttpBaseline.mockReset()
-  api.monitoring.saveHttpBaseline.mockReset()
-  api.monitoring.getHttpBaseline.mockResolvedValue({ success: true, data: CONFIG })
-  api.monitoring.saveHttpBaseline.mockResolvedValue({ success: true, data: { ...CONFIG, enabled: true } })
+  api.monitoring.getBaseline.mockReset()
+  api.monitoring.saveBaseline.mockReset()
+  api.monitoring.getBaseline.mockResolvedValue({ success: true, data: CONFIG })
+  api.monitoring.saveBaseline.mockResolvedValue({ success: true, data: { ...CONFIG, enabled: true } })
 })
 
 describe('BaselineDialog', () => {
@@ -56,7 +56,7 @@ describe('BaselineDialog', () => {
     fireEvent.change(slot('baseline-k-warning'), { target: { value: '0.1' } })
     fireEvent.click(slot('baseline-save'))
     await waitFor(() => expect(document.querySelector('[data-field="k_warning"][data-invalid]')).toBeTruthy())
-    expect(api.monitoring.saveHttpBaseline).not.toHaveBeenCalled()
+    expect(api.monitoring.saveBaseline).not.toHaveBeenCalled()
   })
 
   it('geçerli → PUT çağrılır, kaydedilir', async () => {
@@ -66,8 +66,9 @@ describe('BaselineDialog', () => {
     fireEvent.click(document.querySelector('[role="switch"]'))
     await waitFor(() => expect(slot('baseline-save')).toBeTruthy())
     fireEvent.click(slot('baseline-save'))
-    await waitFor(() => expect(api.monitoring.saveHttpBaseline).toHaveBeenCalled())
-    const [id, body] = api.monitoring.saveHttpBaseline.mock.calls[0]
+    await waitFor(() => expect(api.monitoring.saveBaseline).toHaveBeenCalled())
+    const [callType, id, body] = api.monitoring.saveBaseline.mock.calls[0]
+    expect(callType).toBe('http')
     expect(id).toBe(7)
     expect(body).toMatchObject({ enabled: true, direction: 'up', window: 30 })
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
@@ -75,7 +76,7 @@ describe('BaselineDialog', () => {
   })
 
   it('sunucu alan hatası alanın altında gösterilir', async () => {
-    api.monitoring.saveHttpBaseline.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'window', error: 'Pencere hatalı.' })
+    api.monitoring.saveBaseline.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'window', error: 'Pencere hatalı.' })
     mount()
     await waitFor(() => expect(slot('baseline-enable')).toBeTruthy())
     fireEvent.click(document.querySelector('[role="switch"]'))
@@ -85,7 +86,7 @@ describe('BaselineDialog', () => {
   })
 
   it('yükleme hatası danger bandı gösterir', async () => {
-    api.monitoring.getHttpBaseline.mockResolvedValue({ success: false, error: 'okunamadı' })
+    api.monitoring.getBaseline.mockResolvedValue({ success: false, error: 'okunamadı' })
     mount()
     await waitFor(() => expect(slot('baseline-load-error')).toBeTruthy())
   })

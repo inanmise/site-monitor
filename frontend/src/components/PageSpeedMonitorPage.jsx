@@ -10,6 +10,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
@@ -1157,6 +1158,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   <Stethoscope size={13} aria-hidden="true" />
                 </Button>
               )}
+              <BaselineControl type="pagespeed" monitor={selected} name={selected.name || selected.url} canManage={canManageRow(selected)} />
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>

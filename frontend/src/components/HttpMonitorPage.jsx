@@ -1017,7 +1017,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
           {/* Dinamik taban çizgisi penceresi (2026-11-12) — detayın İÇİNDE, iç içe kabuk */}
           {baselineFor && baselineFor.id === selected.id && canManageRow(selected) && (
             <Suspense fallback={null}>
-              <BaselineDialog monitorId={selected.id} monitorName={baselineFor.name}
+              <BaselineDialog type="http" monitorId={selected.id} monitorName={baselineFor.name}
                 onClose={() => setBaselineFor(null)} />
             </Suspense>
           )}

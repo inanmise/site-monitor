@@ -3,6 +3,7 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
 import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
@@ -248,6 +249,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
               <Stethoscope size={13} aria-hidden="true" />
             </Button>
           )}
+          <BaselineControl type="dns" monitor={monitor} name={monitor.name || monitor.domain} canManage={canManage} />
           <CopyLinkButton iconOnly variant="outline" />
         </MonitorModalActions>
       }>

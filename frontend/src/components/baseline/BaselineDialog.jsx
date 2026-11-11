@@ -18,7 +18,7 @@ import { BASELINE_DEFAULTS, DIRECTIONS, SEASONS, formFromConfig, isDirty, rangeO
  * (uçtan uca tanılama deseni gibi; büyük HTTP formuna dokunmaz). GET/PUT bağımsız: /monitoring/http/{id}/baseline. shadcn +
  * mweb (tek sütun, dokunmatik hedefler). Sunucu doğrulaması yetkilidir; istemci ön kontrolü alan hatalarını erken gösterir.
  */
-export default function BaselineDialog({ monitorId, monitorName, onClose, onSaved }) {
+export default function BaselineDialog({ type = 'http', monitorId, monitorName, onClose, onSaved }) {
   const t = useT()
   const toast = useToast()
   const [cfg, setCfg] = useState(null)
@@ -35,7 +35,7 @@ export default function BaselineDialog({ monitorId, monitorName, onClose, onSave
     let alive = true
     const my = ++seq.current
     setLoading(true); setLoadError(null)
-    api.monitoring.getHttpBaseline(monitorId).then((res) => {
+    api.monitoring.getBaseline(type, monitorId).then((res) => {
       if (!alive || my !== seq.current) return
       if (res?.success) {
         const d = res.data || {}
@@ -44,7 +44,7 @@ export default function BaselineDialog({ monitorId, monitorName, onClose, onSave
     }).catch((e) => { if (alive && my === seq.current) setLoadError(e?.message || t('baseline.loadFailed')) })
       .finally(() => { if (alive && my === seq.current) setLoading(false) })
     return () => { alive = false }
-  }, [monitorId])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [type, monitorId])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = useMemo(() => readiness(form, sampleCount), [form, sampleCount])
   const dirty = useMemo(() => isDirty(form, cfg), [form, cfg])
@@ -69,7 +69,7 @@ export default function BaselineDialog({ monitorId, monitorName, onClose, onSave
     if (Object.keys(clientErrors).length) { setErrors(clientErrors); return }
     setSaving(true); setServerError(null)
     try {
-      const res = await api.monitoring.saveHttpBaseline(monitorId, toBody(form))
+      const res = await api.monitoring.saveBaseline(type, monitorId, toBody(form))
       if (res?.success) {
         toast.success(t('baseline.saved'))
         onSaved?.(res.data)

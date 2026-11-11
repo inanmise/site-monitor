@@ -34,6 +34,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
+import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
@@ -887,6 +888,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                   <Stethoscope size={13} aria-hidden="true" />
                 </Button>
               )}
+              <BaselineControl type="port" monitor={selected} name={selected.name || (selected.host + ':' + selected.port)} canManage={canManageRow(selected)} />
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
