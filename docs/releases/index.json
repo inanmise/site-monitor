@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-06T13:52:39Z",
+  "generatedAt": "2026-11-11T18:23:12Z",
   "repo": "inanmise/site-monitor",
-  "count": 812,
+  "count": 813,
   "releases": [
+    {
+      "version": "20.186.4",
+      "tag": "v20.186.4",
+      "releasedAt": "2026-11-11T18:23:05Z",
+      "commit": "ba46d8533d193bdd76d65dcdbf0ed1c347f7b617",
+      "prevVersion": "20.186.3",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "chore",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "ba46d853",
+          "subject": "npm grubunu bu PR'dan çıkar (radix 1.8.1 Tabs gerilemesi)"
+        },
+        {
+          "type": "chore",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "b2727dfb",
+          "subject": "radix-ui'yi 1.6.7'de tut (1.8.1 Dialog kapanış gerilemesi)"
+        },
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "e8c906a6",
+          "subject": "Spring Boot 4.1.1 batchUpdate imzasına uy (List<? extends Object[]>)"
+        },
+        {
+          "type": "chore",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "a8c20b7e",
+          "subject": "minor ve yama bağımlılık güncellemelerini topla"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.186.3",
       "tag": "v20.186.3",
