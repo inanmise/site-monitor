@@ -119,6 +119,12 @@ class AuditCoverageTest {
         EXEMPT.put("AuditController#replayFallback",
                 "Kendisi AUDIT_REPLAY yazar ama auditService üzerinden değil replay servisinden "
               + "(Faz 5'te eklenecek; şimdilik uç yok).");
+        EXEMPT.put("AdUserController#search",
+                "AD'den kullanıcı ARAMASI (2026-11-11): yalnız Active Directory'de okuma yapar, hiçbir kayıt "
+              + "değiştirmez. POST yalnız arama metni gövdesi taşıdığı için. Çekme (USER_PROVISION_FROM_AD) denetlenir.");
+        EXEMPT.put("AdUserController#detail",
+                "AD kullanıcı DETAYI / önizleme (2026-11-11): yalnız AD'de okuma + türetilen takım önizlemesi, hiçbir "
+              + "kayıt değiştirmez. Çekme (USER_PROVISION_FROM_AD) denetlenir.");
     }
 
     /** Bir kaynak dosyadaki metot adı → gövde. */

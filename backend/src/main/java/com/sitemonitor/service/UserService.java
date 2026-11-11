@@ -1066,6 +1066,67 @@ public class UserService {
         return saved;
     }
 
+    /**
+     * AD'den kullanıcı çekme (2026-11-11, ürün isteği): kişi GİRİŞ YAPMADAN, yöneticinin "Kullanıcı Ekle →
+     * AD'den ara" eylemiyle sisteme çekilir — tam giriş yolundaki gibi LDAP hesabı (parolasız,
+     * {@code authSource=LDAP}, {@code active=true}), AD profil alanları (e-posta, sicil, ad, soyad, görünen ad)
+     * AD özniteliklerinden doldurulur. ROL / ORG ROLÜ / TAKIMLAR yöneticinin SEÇİMİDİR (kullanıcı kararı:
+     * "yönetici eklemeden önce seçer") ve KİLİTLENİR ({@code roleLocked/orgRoleLocked/teamLocked},
+     * takım kaynağı {@link UserTeamSource#MANUAL}) → kişi sonradan giriş yapınca LDAP provizyonu bunları EZMEZ.
+     * Çağıran (controller) yalnız global admin'e açar, var olanı 409 ile reddeder ve denetimi yazar.
+     */
+    @Transactional
+    public AppUser provisionAdUser(String username, Map<String, Object> adAttrs, String systemRole,
+                                   String orgRole, Collection<Long> teamIds, Long primaryTeamId) {
+        if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
+        String uname = normalizeUsername(username);
+        if (userRepo.existsByUsername(uname)) throw new IllegalArgumentException("Username already exists: " + uname);
+        LinkedHashSet<Long> teams = normalizeTeams(teamIds);
+        if (teams.isEmpty() && !"ADMIN".equals(systemRole)) throw new IllegalArgumentException("Team is required");
+        String email = adStr(adAttrs, "mail");
+        if (email != null && !email.isBlank()) requireEmailFormat(email);
+
+        String now = now();
+        AppUser user = new AppUser();
+        user.setUsername(uname);
+        user.setPasswordHash(null);        // AD kullanıcısı yerel parola tutmaz
+        user.setAuthSource("LDAP");
+        // ── AD profil alanları (giriş provizyonuyla aynı eşleme) ──
+        user.setEmail(email);
+        user.setEmployeeId(adStr(adAttrs, "cn"));          // Sicil No
+        user.setFirstName(adStr(adAttrs, "givenName"));
+        user.setLastName(adStr(adAttrs, "sn"));
+        String disp = adStr(adAttrs, "displayName");
+        user.setDisplayName(disp != null && !disp.isBlank() ? disp : uname);
+        // ── Rol / org / takım — yönetici seçimi, KİLİTLİ (LDAP provizyonu ezmesin) ──
+        user.setSystemRole(systemRole != null ? systemRole : "USER");
+        user.setRoleLocked(true);
+        user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
+        user.setOrgRoleLocked(true);
+        applyTeams(user, teams);
+        if (primaryTeamId != null && teams.contains(primaryTeamId)) user.setTeamId(primaryTeamId);
+        user.setTeamLocked(true);
+        user.setActive(true);
+        user.setCreatedAt(now);
+        user.setUpdatedAt(now);
+        AppUser saved = userRepo.save(user);
+        if (teamSources != null) {
+            teamSources.recordAll(saved.getId(), teams, com.sitemonitor.model.UserTeamSource.MANUAL,
+                    "provision-ad", TeamMembershipSourceService.currentActor());
+        }
+        syncPoLeadership(saved);
+        return saved;
+    }
+
+    /** AD öznitelik değerini (String ya da çok-değerli liste) ilk-değer String olarak okur. */
+    private static String adStr(Map<String, Object> attrs, String key) {
+        Object v = attrs == null ? null : attrs.get(key);
+        if (v instanceof List<?> list) v = list.isEmpty() ? null : list.get(0);
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
+    }
+
     /** Çoklu takımı YENİ kullanıcıya uygular: üyelik kümesini yazar, birincil = ilk eleman (form sırası). */
     private void applyTeams(AppUser user, LinkedHashSet<Long> teams) {
         user.setTeamIds(teams);

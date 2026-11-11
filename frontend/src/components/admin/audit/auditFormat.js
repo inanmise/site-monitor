@@ -151,6 +151,7 @@ const SPECIAL = {
   SCHEMA_PATCH: 'audit.ev.SCHEMA_PATCH',
   SECRET_REENCRYPT: 'audit.ev.SECRET_REENCRYPT',   // gizli anahtar döndürme (2026-10-11)
   SCRIPTED_SECRET_REVEAL: 'audit.ev.SCRIPTED_SECRET_REVEAL',   // sentetik izlemenin gizli env değeri gösterildi (2026-10-19)
+  USER_PROVISION_FROM_AD: 'audit.ev.USER_PROVISION_FROM_AD',   // AD'den kullanıcı çekme (2026-11-11)
   WATCHDOG_EVALUATE: 'audit.ev.WATCHDOG_EVALUATE',   // kendi kendini izleme (2026-10-11)
   WATCHDOG_TEST: 'audit.ev.WATCHDOG_TEST',
   ONCALL_SCHEDULE_SAVE: 'audit.ev.ONCALL_SCHEDULE_SAVE',   // nöbet çizelgesi (2026-10-11)
