@@ -29,6 +29,17 @@ import java.util.Map;
 @Service
 public class BaselineService {
 
+    /**
+     * SLOW builder'ına enjekte edilen bağlam anahtarları (TEK kaynak — hem enjekte eden sweep gövdesi hem okuyan builder
+     * bunları kullanır). {@link #CTX_ON} varsa builder SABİT eşik yerine öğrenen bant yolunu kullanır.
+     */
+    public static final String CTX_ON = "baseline_on", CTX_EVALUATED = "baseline_evaluated", CTX_LEVEL = "baseline_level",
+            CTX_MEAN = "baseline_mean", CTX_LOW = "baseline_low", CTX_HIGH = "baseline_high",
+            CTX_DEVIATION = "baseline_deviation", CTX_NOTE = "baseline_note";
+
+    /** Taban-çizgisi SLOW kaleminin KARARLI {@code detail} eki (teyit zinciri anahtarı her sweep'te değişmesin). */
+    public static final String SLOW_DETAIL = "dinamik taban";
+
     private final MonitorBaselineConfigRepository configRepo;
     private final BaselineSampleStore store;
 

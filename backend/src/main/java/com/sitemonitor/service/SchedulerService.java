@@ -151,6 +151,13 @@ public class SchedulerService {
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /**
+     * Dinamik yanıt-süresi taban çizgisi (2026-11-12) — isteğe bağlı: bean yoksa (golden / round-trip harness'ı dâhil)
+     * taban çizgisi HİÇ koşmaz, SLOW kararı birebir sabit-eşik yolundadır. Yalnız lider çağırır (SLOW item'ları yalnız
+     * lider kurar).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.baseline.BaselineService baselineService;
     /** Alan adı süre-bitişi hatırlatmaları (2026-09-22, madde E) — isteğe bağlı: bean yoksa hatırlatma yok. */
     @Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
@@ -6414,6 +6421,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(httpSweepItem(m, r));
+                baselineHttpScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
                 MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, r);
                 if (slow != null) slowSweep.add(slow);
                 checked++;
@@ -6997,6 +7005,9 @@ public class SchedulerService {
      * sweep'te değişmesin — PAGESPEED_SLOW'da yaşanan çift-zincir kusuru burada baştan kapalı.
      */
     MonitoringOutageService.SweepItem httpSlowSweepItem(HttpMonitor m, Map<String, Object> r) {
+        // Dinamik taban çizgisi AÇIKSA (sweep gövdesi baseline_* enjekte etti): öğrenen bant yolu; aksi hâlde sabit eşik.
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON)))
+            return httpBaselineSlowItem(m, r);
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) return null;
         Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
         boolean measured = r.get("error") == null && respMs != null;
@@ -7041,6 +7052,87 @@ public class SchedulerService {
             return out;
         }
         out.put("status", ms > th ? "down" : "up");
+        return out;
+    }
+
+    // ── Dinamik taban çizgisi (2026-11-12) — SLOW sinyalinin "sabit eşik | öğrenen bant" kipi ──────────────────────────
+
+    /**
+     * Taban çizgisi AÇIK bir izlemenin ZAMANLANMIŞ kontrolünde (lider): bant kararını {@code r}'ye {@code baseline_*} olarak
+     * enjekte eder ve örneği (değer + ihlal) yazar. Kapalı / bean yok / ölçülemedi → {@code r} değişmez, builder sabit eşik
+     * yolunu kullanır. İki yerden çağrılır (klasik sweep + dağıtık apply) — tek kaynak, ikisi sapmaz.
+     */
+    private void applyBaselineScheduled(String type, Long monitorId, Long respMs, boolean measured, Map<String, Object> r) {
+        if (baselineService == null || monitorId == null || respMs == null || !measured) return;
+        com.sitemonitor.service.baseline.BaselineMath.Verdict v =
+                baselineService.evaluateScheduled(type, monitorId, respMs, System.currentTimeMillis(), null);
+        if (v == null) return;   // bu izlemede taban çizgisi kapalı
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED, v.evaluated());
+        if (v.level() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL, v.level());
+        if (v.mean() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_MEAN, v.mean());
+        if (v.low() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LOW, v.low());
+        if (v.high() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH, v.high());
+        if (v.deviation() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_DEVIATION, v.deviation());
+        if (v.note() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_NOTE, v.note());
+    }
+
+    /** HTTP için taban çizgisi enjeksiyonu (klasik sweep + dağıtık apply ortak). */
+    private void baselineHttpScheduled(HttpMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.HTTP, m.getId(), respMs,
+                r.get("error") == null && respMs != null, r);
+    }
+
+    /**
+     * HTTP_SLOW kalemi — öğrenen bant kipi. Taban HENÜZ KURULUYORSA ({@code baseline_evaluated=false}) kalem YOK (D-7:
+     * ölçülemedi / karar yok = sağlıklı değil → açık alarm sahte kapanmaz). Değerlendirildiyse yavaş = bant dışı
+     * (uyarı/kritik seviye). {@code detail} KARARLI ({@link com.sitemonitor.service.baseline.BaselineService#SLOW_DETAIL}) —
+     * teyit zinciri anahtarı bant kaydıkça değişmesin.
+     */
+    private MonitoringOutageService.SweepItem httpBaselineSlowItem(HttpMonitor m, Map<String, Object> r) {
+        if (!Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED))) return null;
+        String level = (String) r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL);
+        boolean slow = level != null && !com.sitemonitor.service.baseline.BaselineMath.LEVEL_NONE.equals(level);
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("monitor_name", m.getName());
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        slowCtx.put("response_ms", respMs);
+        slowCtx.put("baseline", true);
+        slowCtx.put("baseline_mean", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_MEAN));
+        slowCtx.put("baseline_high", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH));
+        slowCtx.put("baseline_low", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LOW));
+        slowCtx.put("baseline_level", level);
+        slowCtx.put("baseline_deviation", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_DEVIATION));
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_HTTP_SLOW, m.getUrl(),
+                com.sitemonitor.service.baseline.BaselineService.SLOW_DETAIL,
+                !slow, null, chanCtx(slowCtx, m), () -> evalHttpSlowBaseline(m));
+    }
+
+    /**
+     * HTTP_SLOW öğrenen-bant teyit/kurtarma re-check'i: taze istek ölçer, {@code BaselineService.evaluateRecheck} ile bantı
+     * YAZMADAN değerlendirir. Kapalı / taban kuruluyor / ölçülemedi → "skipped" (kanıt yok).
+     */
+    private Map<String, Object> evalHttpSlowBaseline(HttpMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m).withoutJsonAssertion());
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        if (ms != null) out.put("response_ms", ms);
+        if (r.get("error") != null || ms == null) { out.put("status", "skipped"); return out; }
+        com.sitemonitor.service.baseline.BaselineMath.Verdict v = baselineService == null ? null
+                : baselineService.evaluateRecheck(com.sitemonitor.service.baseline.BaselineTypes.HTTP, m.getId(), ms,
+                        System.currentTimeMillis(), null);
+        if (v == null || !v.evaluated()) { out.put("status", "skipped"); return out; }
+        out.put("status", com.sitemonitor.service.baseline.BaselineMath.LEVEL_NONE.equals(v.level()) ? "up" : "down");
         return out;
     }
 
@@ -12457,6 +12549,7 @@ public class SchedulerService {
                     HttpMonitor m = e.getKey();
                     try {
                         sweep.add(httpSweepItem(m, e.getValue()));
+                        baselineHttpScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, e.getValue());
                         if (slow != null) slowSweep.add(slow);
                         checkResultsApplied.incrementAndGet();
