@@ -96,6 +96,47 @@ class BaselineSampleStoreH2Test {
     }
 
     @Test
+    void mevsimsel_gunluk_ayni_saat_slotu() {
+        long DAY = BaselineSampleStore.DAY_MS, tol = BaselineSampleStore.SEASON_TOLERANCE_MIN_MS;
+        long nowPos = Math.floorMod(T0, DAY);   // 08:00 konumu
+        for (int d = 0; d < 5; d++) {
+            store.append(HTTP, 1, T0 + d * DAY, 100 + d, false);                 // her gün 08:00
+            store.append(HTTP, 1, T0 + d * DAY + 20 * 60_000, 150 + d, false);   // 08:20 (±30 dk içinde)
+        }
+        for (int d = 0; d < 5; d++) store.append(HTTP, 1, T0 + d * DAY + 6 * 3_600_000L, 900, false);   // 14:00 (başka slot)
+        store.append(HTTP, 1, T0 + 40 * 60_000, 800, false);   // 08:40 (±30 dk dışı)
+
+        History h = store.readSeasonal(HTTP, 1, T0 + 10 * DAY, 50, DAY, nowPos, tol);
+        assertThat(h.samples()).hasSize(10);                        // yalnız 08:00 + 08:20 × 5 gün
+        assertThat(h.complete()).isFalse();                         // mevsimsel okuma muhafazakâr
+        assertThat(h.samples()).allMatch(s -> s.value() < 200);     // 14:00 (900) / 08:40 (800) yok
+    }
+
+    @Test
+    void mevsimsel_haftalik_ayni_gun_ve_saat() {
+        long WEEK = BaselineSampleStore.WEEK_MS, DAY = BaselineSampleStore.DAY_MS, tol = BaselineSampleStore.SEASON_TOLERANCE_MIN_MS;
+        long nowPos = Math.floorMod(T0, WEEK);
+        for (int w = 0; w < 4; w++) store.append(HTTP, 1, T0 + w * WEEK, 100 + w, false);        // aynı hafta-günü-saati
+        for (int w = 0; w < 4; w++) store.append(HTTP, 1, T0 + w * WEEK + DAY, 900, false);       // ertesi gün (haftalıkta eşleşmez)
+        History h = store.readSeasonal(HTTP, 1, T0 + 10 * WEEK, 50, WEEK, nowPos, tol);
+        assertThat(h.samples()).hasSize(4);
+        assertThat(h.samples()).allMatch(s -> s.value() < 200);
+    }
+
+    @Test
+    void mevsimsel_gun_sarmasi_dairesel() {
+        long DAY = BaselineSampleStore.DAY_MS, tol = BaselineSampleStore.SEASON_TOLERANCE_MIN_MS;
+        long midnight = T0 - Math.floorMod(T0, DAY);       // o günün 00:00'ı
+        long nowPos = Math.floorMod(midnight + 10 * 60_000, DAY);   // 00:10
+        store.append(HTTP, 1, midnight - 10 * 60_000, 111, false);  // dün 23:50 → dairesel 20 dk → eşleşir
+        store.append(HTTP, 1, midnight + 5 * 60_000, 222, false);   // bugün 00:05 → 5 dk → eşleşir
+        store.append(HTTP, 1, midnight + 60 * 60_000, 999, false);  // bugün 01:00 → 50 dk → eşleşmez
+        History h = store.readSeasonal(HTTP, 1, midnight + 2 * DAY, 50, DAY, nowPos, tol);
+        assertThat(h.samples()).hasSize(2);
+        assertThat(h.samples()).allMatch(s -> s.value() < 900);
+    }
+
+    @Test
     void desteklenmeyen_tur_yazmaz_okumaz() {
         store.append("domain", 1, T0 + 1000, 100, false);
         assertThat(store.count("domain", 1)).isZero();

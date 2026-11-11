@@ -108,10 +108,28 @@ public class BaselineService {
         MonitorBaselineConfig cfg = config(type, monitorId);
         if (cfg == null) return null;
         BaselineParams params = cfg.toParams();
-        History h = store.readRecent(type, monitorId, checkedMs, BaselineSampleStore.recentNeed(params));
+        History h = readHistory(type, monitorId, checkedMs, params, intervalSec);
         Verdict v = BaselineMath.evaluate(valueMs, h, params);
         store.append(type, monitorId, checkedMs, valueMs, v.breached());
         return v;
+    }
+
+    /**
+     * Geçmiş okuma planı: mevsimsiz → en yeni N örnek ({@link BaselineSampleStore#readRecent}); mevsimsel → günün/haftanın
+     * aynı saatine ± {@value BaselineSampleStore#SEASON_TOLERANCE_MIN_MS} ms düşen örnekler
+     * ({@link BaselineSampleStore#readSeasonal}). Tolerans SABİT (±30 dk) — zamanlanmış değerlendirme ve recheck AYNI pencereyi
+     * görsün (aralığa bağlasaydık uzun aralıklı izlemede recheck daha dar bir pencere okuyup teyidi zayıflatabilirdi).
+     * {@code intervalSec} imza kararlılığı için tutulur (v1'de kullanılmaz). {@code beforeMs} zamanlanmışta kontrol anı,
+     * recheck'te recheck anı.
+     */
+    private History readHistory(String type, long monitorId, long beforeMs, BaselineParams params, Integer intervalSec) {
+        BaselineParams p = params.normalized();
+        if (!p.seasonal())
+            return store.readRecent(type, monitorId, beforeMs, BaselineSampleStore.recentNeed(p));
+        long period = BaselineParams.SEASON_WEEKLY.equals(p.season()) ? BaselineSampleStore.WEEK_MS : BaselineSampleStore.DAY_MS;
+        long nowPos = Math.floorMod(beforeMs, period);
+        return store.readSeasonal(type, monitorId, beforeMs, p.window(), period, nowPos,
+                BaselineSampleStore.SEASON_TOLERANCE_MIN_MS);
     }
 
     /**
@@ -122,7 +140,7 @@ public class BaselineService {
         MonitorBaselineConfig cfg = config(type, monitorId);
         if (cfg == null) return null;
         BaselineParams params = cfg.toParams();
-        History h = store.readRecent(type, monitorId, checkedMs, BaselineSampleStore.recentNeed(params));
+        History h = readHistory(type, monitorId, checkedMs, params, intervalSec);
         return BaselineMath.evaluate(valueMs, h, params);
     }
 

@@ -126,6 +126,25 @@ class BaselineServiceTest {
     }
 
     @Test
+    void mevsimsel_gunluk_yalniz_ayni_slotu_degerlendirir() {
+        long DAY = BaselineSampleStore.DAY_MS;
+        MonitorBaselineConfig c = cfg(1, true);
+        c.setSeason(BaselineParams.SEASON_DAILY);
+        when(configRepo.findByEnabledTrue()).thenReturn(List.of(c));
+        svc.invalidate();
+        // 10 gün, her gün aynı saat (~08:00) ~100 → o slotun tabanı dolar
+        for (int d = 0; d < 10; d++) svc.evaluateScheduled(HTTP, 1, 100, T0 + d * DAY, 300);
+        // 11. gün aynı saat, yavaş 500 → kritik (mevsimsel slot tabanı 100)
+        Verdict slot = svc.evaluateScheduled(HTTP, 1, 500, T0 + 10 * DAY, 300);
+        assertThat(slot.evaluated()).isTrue();
+        assertThat(slot.level()).isEqualTo(BaselineMath.LEVEL_CRITICAL);
+        assertThat(slot.mean()).isEqualTo(100.0);
+        // Aynı gün BAŞKA saat (14:00): o slotta geçmiş yok → karar YOK (kuruluyor), sahte alarm yok
+        Verdict other = svc.evaluateScheduled(HTTP, 1, 500, T0 + 10 * DAY + 6 * 3_600_000L, 300);
+        assertThat(other.evaluated()).isFalse();
+    }
+
+    @Test
     void anyEnabled_yansitir() {
         assertThat(svc.anyEnabled()).isFalse();
         enable(1);
