@@ -21,7 +21,8 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { CARD_CHECK, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
-import { UserPlus, BellOff } from 'lucide-react'
+import { UserPlus, BellOff, Search } from 'lucide-react'
+import AdUserSearch from './aduser/AdUserSearch.jsx'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditor from './user-editor/UserEditor.jsx'
 import BulkDeactivateWizard from './BulkDeactivateWizard.jsx'
@@ -294,6 +295,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   // Ekle / düzenle: paylaşılan kullanıcı düzenleyicisi (user-editor/UserEditor, 2026-10-02). Form durumu, doğrulama,
   // kayıt yükü (takım yöneticisinde kendi takımına sabitleme dâhil) ve korumalar orada — burada yalnız hangi kayıt.
   function openAdd() { setMsg(null); setModal('add') }
+  const [adSearch, setAdSearch] = useState(false)   // AD'den ara penceresi (2026-11-11, global admin)
   function openEdit(user) { setMsg(null); setModal(user) }
 
   async function unlock(id) {
@@ -492,6 +494,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             </Button>
           )}
           {canManage && <Button variant="success" onClick={openAdd}><UserPlus size={14} aria-hidden="true" /> {t('usr.addBtn')}</Button>}
+          {canManage && globalAdmin && <Button variant="outline" data-slot="aduser-open" onClick={() => { setMsg(null); setAdSearch(true) }}><Search size={14} aria-hidden="true" /> {t('aduser.openBtn')}</Button>}
         </div>
       </div>
       {msg && !modal && !autoResetModal && <AlertBanner tone={msg === t('usr.autoResetFailed') ? 'danger' : 'success'} className="mb-0">{msg}</AlertBanner>}
@@ -678,6 +681,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           activeAdminCount={activeAdminCount}
           onClose={() => setModal(null)} onSaved={refresh} onChanged={refresh}
           onOpenDirectory={isAdmin && globalAdmin ? (u) => { setModal(null); setViewTab('directory'); setViewUser(u) } : undefined} />
+      )}
+
+      {adSearch && globalAdmin && (
+        <AdUserSearch teams={teams} onClose={() => setAdSearch(false)} onAdded={refresh}
+          onEditExisting={(id) => { setAdSearch(false); if (id != null) { refresh(); setModal({ id }) } }} />
       )}
 
       {globalAdmin && (

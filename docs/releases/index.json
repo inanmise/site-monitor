@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-11T18:23:12Z",
+  "generatedAt": "2026-11-11T22:07:52Z",
   "repo": "inanmise/site-monitor",
-  "count": 813,
+  "count": 814,
   "releases": [
+    {
+      "version": "20.187.0",
+      "tag": "v20.187.0",
+      "releasedAt": "2026-11-11T22:07:44Z",
+      "commit": "8801b526d26f3e2f0d76a9882d3e9ef5b4434f49",
+      "prevVersion": "20.186.4",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "teams",
+          "breaking": false,
+          "sha": "8801b526",
+          "subject": "takımdan çıkarma son takımı da çıkarabilir (engelleme yok, uyarır)"
+        },
+        {
+          "type": "fix",
+          "scope": "users",
+          "breaking": false,
+          "sha": "7caa5d53",
+          "subject": "AD ekleme dokunma hedefleri + hata iletisi kalitesi"
+        },
+        {
+          "type": "test",
+          "scope": "users",
+          "breaking": false,
+          "sha": "04085dea",
+          "subject": "AD'den ekleme e2e (390/768/1280) + combobox dokunma hedefi"
+        },
+        {
+          "type": "feat",
+          "scope": "users",
+          "breaking": false,
+          "sha": "1c7c34f1",
+          "subject": "AD'den kullanıcı arama ve çekme (giriş yapmadan ekle)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.186.4",
       "tag": "v20.186.4",

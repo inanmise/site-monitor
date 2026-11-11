@@ -170,6 +170,73 @@ public class LdapDirectoryService {
         }
     }
 
+    /**
+     * Kısmi (substring) kullanıcı araması — yöneticinin AD'den kullanıcı bulup çekmesi için (2026-11-11).
+     * Verilen metin kullanıcı adı (sAMAccountName), görünen ad (displayName), e-posta ve cn (sicil) içinde
+     * {@code *metin*} olarak aranır. Değer önce {@link #escapeFilter} ile kaçışlanır (kullanıcının yazdığı
+     * {@code *} ( ) \ zararsızlaşır — LDAP filtre injection yok), sonra etrafına LİTERAL {@code *} konur.
+     * Sonuç {@code limit} ile sınırlı (≤ {@link #MAX_MATCHES}); her kayıt özet döner (dn, kullanıcı adı,
+     * görünen ad, e-posta, unvan, departman). Tam özellikler/gruplar için {@link #queryUser} ya da
+     * {@link #findUser} kullanılır.
+     */
+    public List<Map<String, Object>> searchUsers(String query, int limit) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("Arama değeri boş olamaz");
+        }
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()) {
+            throw new IllegalArgumentException("LDAP host yapılandırılmamış");
+        }
+        if (s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            throw new IllegalArgumentException("Base DN yapılandırılmamış");
+        }
+        int cap = Math.max(1, Math.min(limit <= 0 ? 25 : limit, MAX_MATCHES));
+        String q = escapeFilter(query.trim());
+        String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank())
+                ? s.getUserAttribute() : "sAMAccountName";
+        String dispAttr = (s.getDisplayAttribute() != null && !s.getDisplayAttribute().isBlank())
+                ? s.getDisplayAttribute() : "displayName";
+        String mailAttr = (s.getEmailAttribute() != null && !s.getEmailAttribute().isBlank())
+                ? s.getEmailAttribute() : "mail";
+        String or = "(|(" + userAttr + "=*" + q + "*)(" + dispAttr + "=*" + q + "*)"
+                + "(" + mailAttr + "=*" + q + "*)(cn=*" + q + "*))";
+        String base = s.getUserSearchFilter();
+        String filter = (base != null && !base.isBlank() && !base.contains("{{username}}"))
+                ? "(&" + base + or + ")" : or;
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (LdapConn conn = open(s)) {
+            SearchControls controls = new SearchControls();
+            controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+            controls.setCountLimit(cap);
+            controls.setTimeLimit(READ_TIMEOUT_MS);
+            controls.setReturningAttributes(new String[]{
+                    userAttr, dispAttr, mailAttr, "cn", "title", "department"});
+            NamingEnumeration<SearchResult> results = conn.ctx.search(s.getBaseDn(), filter, controls);
+            try {
+                while (results.hasMore() && out.size() < cap) {
+                    SearchResult r = results.next();
+                    Map<String, Object> a = readAttributes(r.getAttributes());
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("dn", r.getNameInNamespace());
+                    m.put("username", firstAttr(a, userAttr, null));
+                    m.put("displayName", firstAttr(a, dispAttr, null));
+                    m.put("email", firstAttr(a, mailAttr, null));
+                    m.put("title", firstAttr(a, "title", null));
+                    m.put("department", firstAttr(a, "department", null));
+                    out.add(m);
+                }
+            } catch (PartialResultException | javax.naming.SizeLimitExceededException ignored) {
+                // AD referral chasing / count cap — return what we collected so far.
+            }
+            return out;
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new IllegalStateException(rootMessage(e), e);
+        }
+    }
+
     /** Identity returned by a successful {@link #authenticate}. */
     /** Authenticated identity + the full AD attribute map (incl. memberOf) for provisioning. */
     public record LdapUser(String username, String dn, Map<String, Object> attributes) {}

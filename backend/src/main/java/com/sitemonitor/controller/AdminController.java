@@ -3496,7 +3496,12 @@ public class AdminController {
         return ok(Map.of("data", Map.of("added", added)));
     }
 
-    /** Üye çıkar — kullanıcının SON takımı çıkarılamaz (ADMIN hariç: takımsız olabilir). */
+    /**
+     * Üye çıkar. SON takım da çıkarılabilir — kullanıcı TAKIMSIZ kalır (ürün kararı 2026-11-11, kullanıcı
+     * isteği: "takımsız kalacak diye uyarı versin ama çıkarılmasını engellemesin"). Arayüz çıkarmadan önce
+     * uyarır (engellemez); yanıttaki {@code became_teamless} ile de bilgilendirir. Takımsız (ADMIN dışı)
+     * kullanıcı hiçbir bildirim almaz ve kapsamı boşalır — uyarının amacı budur.
+     */
     @DeleteMapping("/teams/{id}/members/{userId}")
     public ResponseEntity<Map<String, Object>> removeTeamMember(@PathVariable Long id, @PathVariable("userId") String userRefRaw,
                                                                 HttpSession session, HttpServletRequest request) {
@@ -3512,14 +3517,11 @@ public class AdminController {
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
         if (u.getTeamId() != null) ids.add(u.getTeamId());
         boolean removed = ids.remove(id);
-        if (removed && ids.isEmpty() && !"ADMIN".equals(u.getSystemRole())) {
-            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Kullanıcının tek takımı bu; önce başka bir takıma ekleyin.", "This is the user's only team; add another team first."));
-        }
+        boolean becameTeamless = removed && ids.isEmpty();   // son takım da çıkarılabilir; kullanıcı takımsız kalır (engelleme yok)
         if (removed) userService.updateUser(userId, null, null, null, null, ids, null, null);
         auditService.recordAction("TEAM_MEMBER_REMOVE", session, request, "TEAM", id.toString(),
-                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", removed));
-        return ok(Map.of("data", Map.of("removed", removed)));
+                AuditDetail.of("username", u.getUsername(), "user_id", userId, "changed", removed, "became_teamless", becameTeamless));
+        return ok(Map.of("data", Map.of("removed", removed, "became_teamless", becameTeamless)));
     }
 
     private void requireTeamManageScope(HttpSession session, Long teamId) {

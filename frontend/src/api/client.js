@@ -2039,6 +2039,10 @@ export const api = {
       return request(`/admin/users/search?${q}`)
     },
     createUser: (data) => request('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+    // AD'den kullanıcı arama / görüntüleme / çekme (2026-11-11) — global admin; kişi giriş yapmadan eklenir.
+    adUserSearch: (query, limit) => request('/admin/ad-users/search', { method: 'POST', body: JSON.stringify({ query, limit }) }),
+    adUserDetail: (username) => request('/admin/ad-users/detail', { method: 'POST', body: JSON.stringify({ username }) }),
+    adUserProvision: (data) => request('/admin/ad-users/provision', { method: 'POST', body: JSON.stringify(data) }),
     updateUser: (id, data) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
     autoResetPassword: (id, adminPassword) => request(`/admin/users/${id}/auto-reset-password`, {
