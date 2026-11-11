@@ -37,7 +37,9 @@ class RetentionCoverageTest {
             // Dağıtık kontroller (2026-10-29, çok pod Sürüm 3-3, paket A) — CheckJobSchemaPatch, ham DDL (katalogda info satırı)
             "monitor_check_jobs", "monitor_check_workers",
             // Parçalı sertifika taraması (2026-10-29, çok pod Sürüm 3-4, paket A) — CertSweepSchemaPatch, ham DDL (katalogda info satırı)
-            "cert_sweep_runs", "cert_sweep_chunks");
+            "cert_sweep_runs", "cert_sweep_chunks",
+            // Dinamik taban çizgisi (2026-11-12) — BaselineSchemaPatch, ham DDL (katalogda info satırı)
+            "monitor_baseline_samples");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(
@@ -58,6 +60,7 @@ class RetentionCoverageTest {
             Map.entry("oncall_schedules", "Takım nöbet çizelgesi — takım başına TEK satır; takım silinince silinir."),
             Map.entry("oncall_overrides", "Nöbet yer değiştirmeleri — elle eklenir; bitişinden 180 gün sonra OnCallService kaydederken budar."),
             Map.entry("team_access_grants", "Takım erişim paylaşımı (2026-10-12) — elle yönetilir, takım başına en çok 200 satır; takım ya da alıcı kullanıcı silinince silinir."),
+            Map.entry("monitor_baseline_config", "Dinamik taban çizgisi izleme-başına opt-in yapılandırması (2026-11-12) — izleme başına en çok bir satır; izleme silinince / taban çizgisi kapatılınca silinir."),
             Map.entry("watchdog_state", "Kendi kendini izleme — kontrol başına TEK satır (katalog kadar, ~6); geçmiş tutulmaz."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),

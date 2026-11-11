@@ -622,7 +622,14 @@ public final class RetentionCatalog {
                 "Parçalı sertifika taramasının parçaları: koşu başına ≤ 500 satır (20 alan adı), sahiplenen pod, kira ve "
                 + "ölçüm sonucu JSON'u (koordinatör okuyup kaydeder; API'den dönmez, günlüğe yazılmaz). Koşu kapanınca "
                 + "koordinatör parçalarını SİLER; ölen koordinatörün parçalarını bir sonraki parçalı tur siler. Tablo en "
-                + "çok bir koşunun parçalarını tutar, birikmez. Anahtar kapalıyken boş. Kişisel veri yok.")
+                + "çok bir koşunun parçalarını tutar, birikmez. Anahtar kapalıyken boş. Kişisel veri yok."),
+        // ── Dinamik taban çizgisi (2026-11-12) ───────────────────────────────────────────────────────────────────────
+        info("monitor-baseline-samples", "monitor_baseline_samples", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Dinamik yanıt-süresi taban çizgisi örnekleri (yalnız taban çizgisi AÇIK izlemeler): zamanlanmış kontrol "
+                + "başına bir satır — tür, izleme kimliği, yanıt süresi (ms) ve bu değerin öğrenilen bantı ihlal edip "
+                + "etmediği. Değerlendirici bantı bu tablodan okur; elle / teyit / kurtarma kontrolleri yazmaz. İzleme "
+                + "başına en yeni 600 satır tutulur (gerisi budanır), hedef değişince / taban çizgisi kapatılınca o "
+                + "izlemenin satırları silinir. Hiçbir izleme açmadıkça boş. Kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */
