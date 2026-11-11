@@ -66,9 +66,13 @@ export default function TeamMembersManager({ team, users = [], canManage, global
   }
 
   async function remove(u) {
+    // Son takım da çıkarılabilir (2026-11-11): engelleme YOK — yalnız "takımsız kalacak" diye uyarırız.
+    const willBeTeamless = (u.team_ids || []).filter((tid) => tid !== team.id).length === 0
     const ok = await showConfirm({
       title: t('team.memberRemoveTitle'),
-      message: t('team.memberRemoveMsg', u.display_name || u.username, team.name),
+      message: willBeTeamless
+        ? t('team.memberRemoveTeamlessMsg', u.display_name || u.username, team.name)
+        : t('team.memberRemoveMsg', u.display_name || u.username, team.name),
       confirmText: t('team.memberRemove'),
       variant: 'danger',
     })
@@ -76,8 +80,11 @@ export default function TeamMembersManager({ team, users = [], canManage, global
     setBusy(true)
     try {
       const res = await api.admin.removeTeamMember(team.id, u.id)
-      if (res?.success) { toast.success(t('team.memberRemoved')); await load(); onChanged?.() }
-      else toast.error(res?.error || 'Error')
+      if (res?.success) {
+        if (res.data?.became_teamless) toast.info(t('team.memberNowTeamless', u.display_name || u.username))
+        else toast.success(t('team.memberRemoved'))
+        await load(); onChanged?.()
+      } else toast.error(res?.error || 'Error')
     } catch (e) { toast.error(e?.message || t('team.saveError')) } finally { setBusy(false) }
   }
 

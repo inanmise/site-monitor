@@ -7231,6 +7231,8 @@ export const TR = {
   'team.memberRemove': 'Çıkar',
   'team.memberRemoveTitle': 'Üyeyi çıkar',
   'team.memberRemoveMsg': '"{0}" kullanıcısı "{1}" takımından çıkarılacak. Devam edilsin mi?',
+  'team.memberRemoveTeamlessMsg': '"{0}" kullanıcısı "{1}" takımından çıkarılacak ve BAŞKA takımı kalmayacak (takımsız kalacak). Takımsız kullanıcı bildirim almaz ve görünürlük kapsamı boşalır. Yine de çıkarılsın mı?',
+  'team.memberNowTeamless': '"{0}" artık takımsız. İzleme / bildirim kapsamı için bir takıma ekleyin.',
   'team.memberRemoved': 'Üye çıkarıldı',
   'team.memberPrimary': 'birincil takım',
   // Üyelik kaynağı + AD ile karşılaştırma (2026-09-26, prod hatası: üye olmayan kullanıcı takımda görünüyordu)

@@ -7217,6 +7217,8 @@ export const EN = {
   'team.memberRemove': 'Remove',
   'team.memberRemoveTitle': 'Remove member',
   'team.memberRemoveMsg': '"{0}" will be removed from the "{1}" team. Continue?',
+  'team.memberRemoveTeamlessMsg': '"{0}" will be removed from the "{1}" team and will have NO other team (teamless). A teamless user receives no notifications and their visibility scope becomes empty. Remove anyway?',
+  'team.memberNowTeamless': '"{0}" is now teamless. Add them to a team for monitoring / notification scope.',
   'team.memberRemoved': 'Member removed',
   'team.memberPrimary': 'primary team',
   'mship.src.LDAP_GROUP': 'AD group',
