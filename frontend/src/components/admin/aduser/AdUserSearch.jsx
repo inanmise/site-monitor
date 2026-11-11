@@ -138,7 +138,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
   return (
     <ModalShell open onClose={onClose} size="lg" scrollBody busy={provisioning}
       icon={UserPlus} title={t('aduser.title')} className={cn(FIXED, PHONE_FULLSCREEN)}>
-      <div data-slot="aduser" className="flex min-w-0 flex-col gap-3 max-sm:[&_[data-slot=input]]:h-10">
+      <div data-slot="aduser" className="flex min-w-0 flex-col gap-3 max-sm:[&_[data-slot=input]]:h-10 max-sm:[&_[role=combobox]]:min-h-10">
         <p className="m-0 text-sm text-muted-foreground">{t('aduser.intro')}</p>
 
         {/* ── Arama ── */}
