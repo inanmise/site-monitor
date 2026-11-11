@@ -138,7 +138,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
   return (
     <ModalShell open onClose={onClose} size="lg" scrollBody busy={provisioning}
       icon={UserPlus} title={t('aduser.title')} className={cn(FIXED, PHONE_FULLSCREEN)}>
-      <div data-slot="aduser" className="flex min-w-0 flex-col gap-3 max-sm:[&_[data-slot=input]]:h-10 max-sm:[&_[role=combobox]]:min-h-10">
+      <div data-slot="aduser" className="flex min-w-0 flex-col gap-3 pointer-coarse:[&_[data-slot=input]]:h-10 pointer-coarse:[&_[role=combobox]]:min-h-10">
         <p className="m-0 text-sm text-muted-foreground">{t('aduser.intro')}</p>
 
         {/* ── Arama ── */}
@@ -188,12 +188,12 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                           </div>
                         </div>
                         {exists ? (
-                          <Button variant="outline" size="sm" className="shrink-0 max-sm:min-h-10"
+                          <Button variant="outline" size="sm" className="shrink-0 pointer-coarse:min-h-10"
                             data-slot="aduser-edit-existing"
                             onClick={() => { onEditExisting?.(r.local_user_id); onClose?.() }}>
                             <UserCheck aria-hidden="true" />{t('aduser.editExisting')}</Button>
                         ) : (
-                          <Button variant="secondary" size="sm" className="shrink-0 max-sm:min-h-10"
+                          <Button variant="secondary" size="sm" className="shrink-0 pointer-coarse:min-h-10"
                             data-slot="aduser-view" onClick={() => openDetail(r.username)}>
                             {t('aduser.view')}</Button>
                         )}
@@ -209,7 +209,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
         {/* ── Detay + ekleme ── */}
         {selected && (
           <div data-slot="aduser-detail-wrap" className="flex min-w-0 flex-col gap-3">
-            <Button variant="ghost" size="sm" className="self-start max-sm:min-h-10" data-slot="aduser-back" onClick={backToList}>
+            <Button variant="ghost" size="sm" className="self-start pointer-coarse:min-h-10" data-slot="aduser-back" onClick={backToList}>
               <ArrowLeft aria-hidden="true" />{t('aduser.back')}</Button>
 
             {detailLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-4" />{t('aduser.loading')}</div>}
@@ -248,7 +248,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                     <AlertBanner tone="info">
                       {t('aduser.existsBody')}
                       {detail.local_user_id != null && (
-                        <Button variant="outline" size="sm" className="ms-2 max-sm:min-h-10" data-slot="aduser-edit-existing"
+                        <Button variant="outline" size="sm" className="ms-2 pointer-coarse:min-h-10" data-slot="aduser-edit-existing"
                           onClick={() => { onEditExisting?.(detail.local_user_id); onClose?.() }}>
                           <UserCheck aria-hidden="true" />{t('aduser.editExisting')}</Button>
                       )}
@@ -256,9 +256,9 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                   </div>
                 ) : !adding ? (
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="success" data-slot="aduser-start-add" className="max-sm:min-h-10" onClick={startAdding}>
+                    <Button variant="success" data-slot="aduser-start-add" className="pointer-coarse:min-h-10" onClick={startAdding}>
                       <UserPlus aria-hidden="true" />{t('aduser.addBtn')}</Button>
-                    <Button variant="outline" className="max-sm:min-h-10" onClick={onClose}>{t('aduser.viewOnly')}</Button>
+                    <Button variant="outline" className="pointer-coarse:min-h-10" onClick={onClose}>{t('aduser.viewOnly')}</Button>
                   </div>
                 ) : (
                   <div data-slot="aduser-add-form" className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 p-3">
@@ -299,9 +299,9 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                       </Field>
                     )}
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Button variant="outline" className="max-sm:min-h-10" onClick={() => setAdding(false)} disabled={provisioning}>
+                      <Button variant="outline" className="pointer-coarse:min-h-10" onClick={() => setAdding(false)} disabled={provisioning}>
                         {t('aduser.cancelAdd')}</Button>
-                      <Button variant="success" className="max-sm:min-h-10" data-slot="aduser-confirm-add"
+                      <Button variant="success" className="pointer-coarse:min-h-10" data-slot="aduser-confirm-add"
                         onClick={doProvision} disabled={provisioning}>
                         {provisioning ? <Spinner className="size-4" /> : <UserPlus aria-hidden="true" />}{t('aduser.confirmAdd')}</Button>
                     </div>

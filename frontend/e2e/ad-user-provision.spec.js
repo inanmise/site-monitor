@@ -109,7 +109,7 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="aduser-badge-prefix"]')).toHaveCount(1)
 
       expect(await pageOverflow(page)).toBeLessThanOrEqual(1)
-      expect(await page.evaluate(smallTargets, '[data-slot="aduser"]')).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="aduser"]')).toEqual([])
       expect(await page.evaluate(clipped, '[data-slot="aduser-results"]')).toEqual([])
 
       // Zaten var olan satırda "Düzenle", eklenebilir satırda "Görüntüle"
@@ -126,7 +126,7 @@ for (const vp of VIEWPORTS) {
       await page.locator('[data-slot="aduser-start-add"]').click()
       await expect(page.locator('[data-slot="aduser-add-form"]')).toBeVisible()
       expect(await pageOverflow(page)).toBeLessThanOrEqual(1)
-      expect(await page.evaluate(smallTargets, '[data-slot="aduser-add-form"]')).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="aduser-add-form"]')).toEqual([])
 
       // Ekle → provision çağrılır, pencere kapanır (yalnız dizüstünde doğrula)
       if (vp.name === 'laptop') {
