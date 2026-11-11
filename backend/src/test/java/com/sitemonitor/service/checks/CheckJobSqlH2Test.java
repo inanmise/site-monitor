@@ -432,7 +432,7 @@ class CheckJobSqlH2Test {
         java.util.concurrent.atomic.AtomicInteger batches = new java.util.concurrent.atomic.AtomicInteger();
         JdbcTemplate failSecond = new JdbcTemplate(mp.dataSource()) {
             @Override
-            public int[] batchUpdate(String sql, List<Object[]> batchArgs) {
+            public int[] batchUpdate(String sql, List<? extends Object[]> batchArgs) {
                 if (sql.equals(CheckJobSql.SQL_DISPATCH_ONE) && batches.incrementAndGet() == 2) {
                     throw new DataAccessResourceFailureException("db");
                 }

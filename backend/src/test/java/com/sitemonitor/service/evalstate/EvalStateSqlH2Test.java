@@ -98,7 +98,7 @@ class EvalStateSqlH2Test {
         AtomicBoolean injected = new AtomicBoolean();
         JdbcTemplate racing = new JdbcTemplate(mp.dataSource()) {
             @Override
-            public int[] batchUpdate(String s, List<Object[]> args) {
+            public int[] batchUpdate(String s, List<? extends Object[]> args) {
                 if (s.startsWith("INSERT INTO monitor_eval_state") && injected.compareAndSet(false, true)) {
                     new EvalStateSql(mp.jdbc()).writeRecovery(List.of(rec("race.example", 8, 1)), "old", 0, 1L);
                 }
