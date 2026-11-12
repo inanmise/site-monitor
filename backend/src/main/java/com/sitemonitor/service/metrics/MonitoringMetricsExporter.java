@@ -165,6 +165,7 @@ public class MonitoringMetricsExporter {
     private DomainCheckRepository domainCheckRepo;
     private AlertStormRepository stormRepo;
     private TeamRepository teamRepo;
+    private com.sitemonitor.repository.MonitorBaselineConfigRepository baselineConfigRepo;   // dinamik taban çizgisi benimseme
     private JdbcTemplate jdbc;
     private WatchdogService watchdog;
     private ClusterScheduleService cluster;
@@ -258,6 +259,7 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) public void setDomainCheckRepo(DomainCheckRepository v) { this.domainCheckRepo = v; }
     @Autowired(required = false) public void setStormRepo(AlertStormRepository v) { this.stormRepo = v; }
     @Autowired(required = false) public void setTeamRepo(TeamRepository v) { this.teamRepo = v; }
+    @Autowired(required = false) public void setBaselineConfigRepo(com.sitemonitor.repository.MonitorBaselineConfigRepository v) { this.baselineConfigRepo = v; }
     @Autowired(required = false) public void setJdbc(JdbcTemplate v) { this.jdbc = v; }
     @Autowired(required = false) @Lazy public void setWatchdog(WatchdogService v) { this.watchdog = v; }
     @Autowired(required = false) @Lazy public void setCluster(ClusterScheduleService v) { this.cluster = v; }
@@ -631,6 +633,18 @@ public class MonitoringMetricsExporter {
         }
         TeamDirectory teams = readTeams(sources);
         if (teams != null) MonitoringMetricsModel.teams(f, teams);
+
+        // Dinamik taban çizgisi benimseme (2026-11-12) — açık izleme sayısı türe göre (boş = hepsi 0; repo yok → aile yok)
+        Map<String, Long> baselineCounts = read(sources, "baseline", () -> {
+            if (baselineConfigRepo == null) return null;
+            Map<String, Long> m = new HashMap<>();
+            for (Object[] r : baselineConfigRepo.countEnabledByType()) {
+                if (r == null || r.length < 2 || r[0] == null) continue;
+                m.put(String.valueOf(r[0]), asLong(r[1]));
+            }
+            return m;
+        });
+        if (baselineCounts != null) MonitoringMetricsModel.baseline(f, baselineCounts);
 
         // Envanter sahipleri (alarm sahipliği + sertifika UG takımı) — bir kez okunur
         Map<String, Owners> owners = read(sources, "inventory", () -> {

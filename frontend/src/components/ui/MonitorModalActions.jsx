@@ -52,7 +52,7 @@ export default function MonitorModalActions({
 }) {
   const t = useT()
   return (
-    <div data-slot="monitor-modal-actions" className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+    <div data-slot="monitor-modal-actions" className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:shrink-0">
       {onResume && (
         <Button type="button" size="sm" data-slot="monitor-resume" disabled={resuming} onClick={onResume}
           aria-busy={resuming || undefined} className="h-7 gap-1.5 px-2.5 text-xs pointer-coarse:h-10">

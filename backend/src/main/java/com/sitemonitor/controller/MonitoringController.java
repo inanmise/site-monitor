@@ -300,6 +300,9 @@ public class MonitoringController {
     private final AppSettingsService appSettings;
     /** Saklama süreleri tek kaynaktan (RetentionCatalog) — history kırpması onunla senkron. */
     private final com.sitemonitor.service.retention.RetentionService retentionService;
+    /** Dinamik taban çizgisi yapılandırması (2026-11-12) — isteğe bağlı: bean yoksa (dilim testleri) uçlar 501 döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
     /** Canlı teyit durumu ("Teyit denemesi X/N") — detay modalı 30sn'de bir poll eder. */
     private final MonitoringOutageService monitoringOutageService;
 
@@ -473,6 +476,83 @@ public class MonitoringController {
     // uçları çağırır; bu sınıftaki yazma/çalıştırma kapıları canOperateTeam/canManage'tır ve operatörü TANIMAZ.
     private ResponseEntity<Map<String, Object>> denyIfNotViewable(HttpSession session, Long teamId) {
         return SessionScope.canViewMonitoring(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
+    }
+
+    // ── Dinamik taban çizgisi (2026-11-12) — yanıt-süresi anomalisi (izleme-başına opt-in, 7 tür ortak uç) ──────────────
+
+    /** Bir izlemenin taban-çizgisi için çözümü: takım, alarm anahtarı (url/host/domain/ad), SLOW alarm tipi. */
+    private record BaselineRef(Long teamId, String key, String slowType) {}
+
+    /** Tür + kimlikten izlemeyi yükler; yoksa / desteklenmeyen tür → null. Alarm anahtarı her türün SLOW kaleminin domain'i. */
+    private BaselineRef resolveBaselineMonitor(String type, Long id) {
+        return switch (type == null ? "" : type) {
+            case com.sitemonitor.service.baseline.BaselineTypes.HTTP -> httpMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_HTTP_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.KEYWORD -> keywordMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_KEYWORD_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.PING -> pingMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getHost(), EscalationService.TYPE_PING_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.PORT -> portMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getHost(), EscalationService.TYPE_PORT_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED -> pageSpeedMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_PAGESPEED_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED -> scriptedMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getName(), EscalationService.TYPE_SCRIPTED_SLOW)).orElse(null);
+            case com.sitemonitor.service.baseline.BaselineTypes.DNS -> dnsMonitorRepo.findById(id)
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getDomain(), EscalationService.TYPE_DNS_SLOW)).orElse(null);
+            default -> null;
+        };
+    }
+
+    /**
+     * Bir izlemenin dinamik taban çizgisi yapılandırması. Okuma: {@code monitoring.read} + izlemenin takımını görüntüleyebilme.
+     * Yapılandırma yoksa öntanımlı + {@code defaults:true}; {@code sample_count} tanılama içindir. Desteklenen türler:
+     * http/keyword/ping/port/pagespeed/scripted/dns ({@code BaselineTypes}).
+     */
+    @GetMapping("/baseline/{type}/{id}")
+    public ResponseEntity<Map<String, Object>> getBaseline(@PathVariable String type, @PathVariable Long id, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (baselineConfigService == null) return notImplemented();
+        if (!com.sitemonitor.service.baseline.BaselineTypes.supported(type)) return notFound("Bilinmeyen izleme türü");
+        BaselineRef ref = resolveBaselineMonitor(type, id);
+        if (ref == null) return notFound("İzleme bulunamadı");
+        ResponseEntity<Map<String, Object>> deny = denyIfNotViewable(session, ref.teamId());
+        if (deny != null) return deny;
+        return ok(baselineConfigService.view(type, id));
+    }
+
+    /**
+     * İzlemenin dinamik taban çizgisini kaydeder. Yazma: {@code monitoring.crud} + takımı işletebilme ({@link #canOperateTeam}).
+     * Alan hatası → 400 {@code VALIDATION_FAILED}. Aç↔kapa geçişinde bu izlemenin açık SLOW alarmları sessizce kapanır (bant
+     * kipinin zincir anahtarı sabit eşiğinkinden farklı — askıda kalmasın); kapatmada örnekler {@link BaselineConfigService}'te
+     * silinir.
+     */
+    @PutMapping("/baseline/{type}/{id}")
+    public ResponseEntity<Map<String, Object>> putBaseline(@PathVariable String type, @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (baselineConfigService == null) return notImplemented();
+        if (!com.sitemonitor.service.baseline.BaselineTypes.supported(type)) return notFound("Bilinmeyen izleme türü");
+        BaselineRef ref = resolveBaselineMonitor(type, id);
+        if (ref == null) return notFound("İzleme bulunamadı");
+        if (!canOperateTeam(session, ref.teamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
+        var res = baselineConfigService.save(type, id, body == null ? java.util.Map.of() : body);
+        if (!res.ok()) {
+            var first = res.errors().entrySet().iterator().next();
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(first.getKey(), first.getValue());
+        }
+        if (res.transition() && ref.key() != null)
+            escalationService.resolveOpenAlertsSilently(ref.key(), java.util.Set.of(ref.slowType()),
+                    "Sistem (taban çizgisi değişti)", ownerCtx(id, ref.teamId(), null));
+        auditService.recordAction("MONITOR_UPDATE", session, "BaselineConfig", type + ":" + id, ref.key(),
+                "{\"baseline_enabled\":" + res.nowEnabled() + "}");
+        return ok(baselineConfigService.view(type, id));
+    }
+
+    private ResponseEntity<Map<String, Object>> notImplemented() {
+        return ResponseEntity.status(501).body(java.util.Map.of("success", false, "code", "NOT_IMPLEMENTED",
+                "error", com.sitemonitor.util.Msg.t("Dinamik taban çizgisi bu sürümde kullanılamıyor.",
+                        "Dynamic baseline is not available in this version.")));
     }
 
     /**
@@ -2551,6 +2631,8 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             PortMonitor saved = portMonitorRepo.save(m);
+            if (detached && baselineConfigService != null)   // host/port (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PORT, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "PORT_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
@@ -2582,6 +2664,8 @@ public class MonitoringController {
                 // (yalnız BU izlemenin) sessizce kapanır, kontrol serisi / özetleri / tanılamaları ve satır tek işlemde gider.
                 // Eskiden deleted_at yazılıyordu (görünmez ama DB'de duran satır).
                 requireDeletion().deleteStandalonePort(m);
+                if (baselineConfigService != null)
+                    baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.PORT, id);   // taban çizgisi config + örnekler (kalıcı silme)
             } else {
                 // Envanter-türevi satırın "silmesi" duraklatmadır (envanterle yaşar; envanter kaydı silinince o da gider).
                 // ALERTS-7 (2026-10-22): duraklatma güncellemedeki gibi BU izlemenin açık alarmlarını sessizce kapatır —
@@ -3095,6 +3179,8 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             DnsMonitor saved = dnsMonitorRepo.save(m);
+            if (detached && baselineConfigService != null)   // alan adı (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.DNS, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "DNS_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
@@ -3131,6 +3217,8 @@ public class MonitoringController {
             boolean standalone = Boolean.TRUE.equals(m.getStandalone());
             if (standalone) {
                 requireDeletion().deleteStandaloneDns(m);
+                if (baselineConfigService != null)
+                    baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.DNS, id);   // taban çizgisi config + örnekler (kalıcı silme)
             } else {
                 // ALERTS-7 (2026-10-22): duraklatma BU izlemenin açık DNS alarmlarını sessizce kapatır (Port ile aynı gerekçe;
                 // DNS'in öksüz temizliği de yok — alarm hiç kapanmıyordu).
@@ -3528,6 +3616,8 @@ public class MonitoringController {
                 escalationService.resolveOpenAlertsSilently(previousUrl, KEYWORD_ALERT_TYPES, KEYWORD_URL_CHANGED_BY,
                         ownerCtx(saved.getId(), saved.getTeamId(), null));
             }
+            if (previousUrl != null && !previousUrl.equals(saved.getUrl()) && baselineConfigService != null)   // URL (taban çizgisi hedefi) değişti → yanıt-süresi örnekleri karışmasın
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.KEYWORD, saved.getId());
             // kw-be2 §7.2: değişim kapatıldı / maske / seçici değişti (ya da URL değişti) → eski temel geçersiz: silinir, açık
             // KEYWORD_CHANGED sessizce kapanır; sonraki zamanlanmış kontrol yeni temeli otomatik alır
             keywordChangeSettingsChanged(saved, prevChangeDetect, prevChangeMask, prevChangeSelector, prevRequestFp,
@@ -3561,6 +3651,8 @@ public class MonitoringController {
                     ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1: yalnız bu izlemenin olayı
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             deleteKeywordBaseline(m.getId());   // kw-be2 §3.3: içerik temeli de (öksüz kuralı yedek)
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.KEYWORD, id);   // yanıt-süresi taban çizgisi config + örnekler
             auditService.recordAction("MONITOR_DELETE", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.KEYWORD, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, keywordSnapshot(m), null, session);
@@ -4912,6 +5004,10 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             HttpMonitor saved = httpMonitorRepo.save(m);
+            // URL (taban çizgisinin anahtarı) değiştiyse eski yanıt-süresi örnekleri yeni hedefe karışmasın — temizle.
+            if (baselineConfigService != null && _before != null && _before.get("url") != null
+                    && !_before.get("url").toString().equals(saved.getUrl()))
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.HTTP, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, httpSnapshot(saved)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
@@ -4937,6 +5033,8 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW,
                             EscalationService.TYPE_DOMAIN_EXPIRY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.HTTP, id);   // taban çizgisi config + örnekler
             httpMonitorRepo.delete(m);
             auditService.recordAction("MONITOR_DELETE", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.HTTP, m.getId(), m.getName(), m.getTeamId(),
@@ -5595,6 +5693,9 @@ public class MonitoringController {
             applyPageSpeedFields(m, body, session);
             m.setUpdatedAt(ISO.format(Instant.now()));
             com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
+            if (baselineConfigService != null && _before != null && _before.get("url") != null
+                    && !_before.get("url").toString().equals(saved.getUrl()))   // URL (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS)));
             var changeRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
@@ -5626,6 +5727,8 @@ public class MonitoringController {
             pageSpeedResourceRepo.deleteByMonitorId(m.getId());
             pageSpeedCheckRepo.deleteByMonitorId(m.getId());
             pageSpeedMonitorRepo.delete(m);
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, id);   // taban çizgisi config + örnekler
             auditService.recordAction("MONITOR_DELETE", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, PAGESPEED_FIELDS), null, session);
@@ -8349,6 +8452,9 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+            if (baselineConfigService != null   // script / env (ölçülen = taban çizgisi hedefi) değişti → eski süre örnekleri karışmasın (ad değişimi hedefi değiştirmez)
+                    && (!java.util.Objects.equals(oldScript, saved.getScript()) || !java.util.Objects.equals(oldEnv, saved.getEnvJson())))
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, saved.getId());
             // k6r D2: zamanlama değiştiyse plan sıfırlanır — yanıt da sıfırlanmış planı söyler (inceleme #6; eski plan değil)
             boolean k6Replanned = scriptedReplanIfChanged(schedBefore, saved);
             // Sürüm YALNIZ içerik (script/env) değişince yazılır: aralık/timeout gibi ayar
@@ -8564,6 +8670,8 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             scriptedMonitorRepo.delete(m);
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, id);   // taban çizgisi config + örnekler
             // Taslaklar monitörle birlikte düşer (öksüz taslak "devam et" şeridinde hayalet üretirdi).
             // Sürüm geçmişi BİLİNÇLİ olarak silinmez: silinen bir monitörün script'i denetim değeri
             // taşır; öksüz satırlar retention kuralıyla temizlenir.
@@ -10218,6 +10326,9 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             PingMonitor saved = pingMonitorRepo.save(m);
+            if (baselineConfigService != null && _before != null && _before.get("host") != null
+                    && !_before.get("host").toString().equals(saved.getHost()))   // host (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+                baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PING, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "PING_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
@@ -10241,6 +10352,8 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
+            if (baselineConfigService != null)
+                baselineConfigService.remove(com.sitemonitor.service.baseline.BaselineTypes.PING, id);   // taban çizgisi config + örnekler
             auditService.recordAction("MONITOR_DELETE", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             var lifecycleRow = monitorHistory.record(MonitorHistoryService.PING, m.getId(), m.getName(), m.getTeamId(),
                     MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);

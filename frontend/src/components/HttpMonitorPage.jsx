@@ -16,7 +16,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight, Copy, Stethoscope } from 'lucide-react'
+import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight, Copy, Stethoscope, Activity } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -74,6 +74,7 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // HTTP uçtan uca tanılama penceresi (2026-10-02) — tembel: yalnız açılınca iner, sayfa paketi büyümez
 const HttpDiagnoseDialog = lazy(() => import('./http/diagnose/HttpDiagnoseDialog.jsx'))
+const BaselineDialog = lazy(() => import('./baseline/BaselineDialog.jsx'))   // dinamik taban çizgisi (2026-11-12)
 
 // Kontrol aralığı çubuğu duraklama noktaları (30 sn → 24 saat).
 const INTERVALS = [
@@ -180,6 +181,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     const runId = readUrlInt('hdx', null), monitorId = readUrlInt('monitor', null)
     return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
   })
+  const [baselineFor, setBaselineFor] = useState(null)   // dinamik taban çizgisi diyaloğu (2026-11-12)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -267,7 +269,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab())
     setHttpDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
   }
-  function closeDetail() { setSelected(null); setSelCheck(null); setHttpDx(null) }
+  function closeDetail() { setSelected(null); setSelCheck(null); setHttpDx(null); setBaselineFor(null) }
+  function openBaseline(m) { if (m) setBaselineFor({ id: m.id, name: m.name || m.url }) }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setHttpDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
@@ -880,6 +883,14 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                   <Stethoscope size={13} aria-hidden="true" />
                 </Button>
               )}
+              {/* Dinamik taban çizgisi (2026-11-12) — yalnız düzenleyebilen; yanıt-süresi anomalisi yapılandırması */}
+              {canManageRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="baseline-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openBaseline(selected)} title={t('baseline.open')} aria-label={t('baseline.open')}>
+                  <Activity size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -1000,6 +1011,14 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               <HttpDiagnoseDialog monitor={selected} initialRunId={httpDx.initialRunId}
                 onRunChange={(runId) => setHttpDx((cur) => (cur ? { ...cur, runId } : cur))}
                 onClose={() => setHttpDx(null)} />
+            </Suspense>
+          )}
+
+          {/* Dinamik taban çizgisi penceresi (2026-11-12) — detayın İÇİNDE, iç içe kabuk */}
+          {baselineFor && baselineFor.id === selected.id && canManageRow(selected) && (
+            <Suspense fallback={null}>
+              <BaselineDialog type="http" monitorId={selected.id} monitorName={baselineFor.name}
+                onClose={() => setBaselineFor(null)} />
             </Suspense>
           )}
 

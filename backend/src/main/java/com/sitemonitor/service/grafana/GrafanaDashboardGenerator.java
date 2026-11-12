@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 12;
+    public static final int DASHBOARD_REVISION = 13;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1407,7 +1407,29 @@ public final class GrafanaDashboardGenerator {
             volume.timeseries("short", false, "line");
             add(volume);
 
+            baselineAdoption();
             scriptedRuns();
+        }
+
+        /**
+         * Dinamik taban çizgisi benimseme (2026-11-12): yanıt-süresi anomalisi (öğrenen bant) AÇIK izleme sayısı, türe göre
+         * (kurum geneli; pod'lar arası {@code max}). Alarmların kendisi normal yavaşlık alarmı panellerinde (ALERTS) görünür —
+         * bu panel yalnız kaç izlemenin bandı kullandığını gösterir. Veri yoksa kaynak okunamadı (0 sayılmaz).
+         */
+        void baselineAdoption() {
+            Panel adopt = new Panel("timeseries",
+                    t("Dinamik taban çizgisi — açık izleme (tür)", "Dynamic baseline — enabled monitors (type)"),
+                    t("Dinamik taban çizgisi (yanıt-süresi anomalisi, öğrenen bant) AÇIK izleme sayısı, türe göre. Benimseme "
+                            + "görünümüdür; bu tabandan açılan yavaşlık alarmları normal yavaşlık alarmı panellerinde görünür. "
+                            + "Veri yoksa kaynak okunamadı (0 sayılmaz).",
+                            "Monitors with the dynamic response-time baseline (learned band) enabled, by type. An adoption view; the "
+                                    + "slow alarms this baseline opens appear in the normal slow-alarm panels. No data means the source "
+                                    + "could not be read (not 0)."));
+            adopt.w = 12; adopt.h = 8;
+            adopt.target(guard("max by (type) (" + metric(MonitoringMetricNames.BASELINE_ENABLED) + ")", "baseline"),
+                    "{{type}}", false);
+            adopt.timeseries("short", false, "line");
+            add(adopt);
         }
 
         /**

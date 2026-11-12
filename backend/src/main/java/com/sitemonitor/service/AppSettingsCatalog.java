@@ -180,6 +180,10 @@ public final class AppSettingsCatalog {
         // değerlendirme durumunu yükler (temiz devirde tam, çökmede yalnız gözlemler). VARSAYILAN KAPALI; kapalı = 20.168.1.
         // CANLI (EvalStateReadSwitch); kurum geneli → GLOBAL_ONLY (aşağıda). Anahtar: EvalStateReadSwitch.KEY.
         new Setting("site.monitor.eval-state.read-enabled",      "monitoring", Type.BOOL),
+        // Dinamik taban çizgisi (yanıt-süresi anomalisi, 2026-11-12) ana anahtarı — izleme-başına yapılandırma ayrı (her
+        // izlemenin detayından açılır). Kapalı = öğrenen bant hiç çalışmaz, SLOW hattı sabit eşikle birebir eskisi gibi.
+        // CANLI (BaselineService, 30 sn yapılandırma yenilemesi); kurum geneli → GLOBAL_ONLY (aşağıda). Anahtar: BaselineService.KEY_ENABLED.
+        new Setting("site.monitor.baseline.enabled",             "monitoring", Type.BOOL),
         new Setting("site.monitor.http.rdap-base-url",           "monitoring", Type.STRING),
         // Sayfa Bütünlüğü (9. tür) — alarm aç/kapa + kaynak-doğrulama eşzamanlılığı (nezaket + tek-pod yük).
         new Setting("site.monitor.page.alert-enabled",           "monitoring", Type.BOOL),
@@ -814,6 +818,8 @@ public final class AppSettingsCatalog {
         "site.monitor.scheduler.leader-yield.enabled",
         // 2026-10-28 (çok pod Sürüm 3-2): devirde okuma — her pod'un devir davranışını belirler; kurum geneli karar.
         "site.monitor.eval-state.read-enabled",
+        // 2026-11-12: dinamik taban çizgisi ana anahtarı — tüm izlemelerin öğrenen-bant değerlendirmesini açar/kapar; kurum geneli.
+        "site.monitor.baseline.enabled",
         // 2026-10-29 (çok pod Sürüm 3-3): dağıtık kontroller — TÜM pod'ların kontrol yükünü ve iş yerleşimini belirler.
         "site.monitor.checks.distributed.enabled",
         "site.monitor.checks.distributed.types",

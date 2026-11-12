@@ -151,6 +151,13 @@ public class SchedulerService {
     /** HTTP/Keyword/Sayfa vekil kararı (2026-09-21) — isteğe bağlı: bean yoksa doğrudan (bugünkü davranış). */
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /**
+     * Dinamik yanıt-süresi taban çizgisi (2026-11-12) — isteğe bağlı: bean yoksa (golden / round-trip harness'ı dâhil)
+     * taban çizgisi HİÇ koşmaz, SLOW kararı birebir sabit-eşik yolundadır. Yalnız lider çağırır (SLOW item'ları yalnız
+     * lider kurar).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.baseline.BaselineService baselineService;
     /** Alan adı süre-bitişi hatırlatmaları (2026-09-22, madde E) — isteğe bağlı: bean yoksa hatırlatma yok. */
     @Autowired(required = false)
     private DomainExpiryReminderService domainReminders;
@@ -5943,6 +5950,7 @@ public class SchedulerService {
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
                 sweep.add(portSweepItem(m, r));
+                baselinePortScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
                 MonitoringOutageService.SweepItem slow = portSlowSweepItem(m, r);   // R3-3 B: ayrıştırıldı (D-7: null = kalem yok)
                 if (slow != null) slowSweep.add(slow);
                 checked++;
@@ -5986,6 +5994,8 @@ public class SchedulerService {
      * alarmı kapat; ölçülemedi / erişim hatası → {@code null}, kalem YOK — D-7).
      */
     MonitoringOutageService.SweepItem portSlowSweepItem(PortMonitor m, Map<String, Object> r) {
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON)))
+            return portBaselineSlowItem(m, r);
         Map<String, Object> slowCtx = new LinkedHashMap<>();
         slowCtx.put("port", m.getPort());
         slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
@@ -6137,6 +6147,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(keywordSweepItem(m, r));
+                baselineKeywordScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* + örnek (lider)
                 MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, r);   // R3-3 B: ayrıştırıldı (D-7: null = kalem yok)
                 if (slow != null) slowSweep.add(slow);
                 MonitoringOutageService.SweepItem change = keywordChangeSweepItem(m, r);   // kw-be2 Aşama 2 (§7.2): null = kalem yok
@@ -6167,6 +6178,8 @@ public class SchedulerService {
      * asılı alarmı kapat; ölçülemedi / HTTP hatası → {@code null}, kalem YOK — D-7).
      */
     MonitoringOutageService.SweepItem keywordSlowSweepItem(KeywordMonitor m, Map<String, Object> r) {
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON)))
+            return keywordBaselineSlowItem(m, r);
         Map<String, Object> slowCtx = new LinkedHashMap<>();
         slowCtx.put("url", m.getUrl());
         slowCtx.put("monitor_id", m.getId());
@@ -6416,6 +6429,7 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(httpSweepItem(m, r));
+                baselineHttpScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
                 MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, r);
                 if (slow != null) slowSweep.add(slow);
                 checked++;
@@ -6873,6 +6887,8 @@ public class SchedulerService {
      *  ölçüm alır ve ping_checks'e YAZMAZ (port deseninin aynısı: teyit turu tabanı kaydırmasın).
      *  D-7 (2026-09-29): hüküm "skipped" (ölçülemedi) ise {@code null} — kalem ÜRETİLMEZ, çağıran atlar. */
     private MonitoringOutageService.SweepItem pingSlowSweepItem(PingMonitor m, Map<String, Object> r) {
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON)))
+            return pingBaselineSlowItem(m, r);
         Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
         boolean measured = "up".equals(r.get("status")) && !Boolean.TRUE.equals(r.get("na"));
         Map<String, Object> v = pingSlowVerdict(m, measured ? rtt : null, (String) r.get("checked_at"));
@@ -6999,6 +7015,9 @@ public class SchedulerService {
      * sweep'te değişmesin — PAGESPEED_SLOW'da yaşanan çift-zincir kusuru burada baştan kapalı.
      */
     MonitoringOutageService.SweepItem httpSlowSweepItem(HttpMonitor m, Map<String, Object> r) {
+        // Dinamik taban çizgisi AÇIKSA (sweep gövdesi baseline_* enjekte etti): öğrenen bant yolu; aksi hâlde sabit eşik.
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON)))
+            return httpBaselineSlowItem(m, r);
         if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) return null;
         Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
         boolean measured = r.get("error") == null && respMs != null;
@@ -7044,6 +7063,282 @@ public class SchedulerService {
         }
         out.put("status", ms > th ? "down" : "up");
         return out;
+    }
+
+    // ── Dinamik taban çizgisi (2026-11-12) — SLOW sinyalinin "sabit eşik | öğrenen bant" kipi ──────────────────────────
+
+    /**
+     * Taban çizgisi AÇIK bir izlemenin ZAMANLANMIŞ kontrolünde (lider): bant kararını {@code r}'ye {@code baseline_*} olarak
+     * enjekte eder ve örneği (değer + ihlal) yazar. Kapalı / bean yok / ölçülemedi → {@code r} değişmez, builder sabit eşik
+     * yolunu kullanır. İki yerden çağrılır (klasik sweep + dağıtık apply) — tek kaynak, ikisi sapmaz.
+     */
+    private void applyBaselineScheduled(String type, Long monitorId, Long respMs, boolean measured, Map<String, Object> r) {
+        if (baselineService == null || monitorId == null || !baselineService.enabledFor(type, monitorId)) return;
+        // Taban çizgisi AÇIK → SLOW builder öğrenen-bant dalını alır. Bu izlemede ölçülemediyse (hata / süre yok)
+        // CTX_EVALUATED YAZILMAZ → builder kalem üretmez (D-7): sabit eşiğin "up" sentetiği, hedef ölçülemezken açık
+        // bant alarmını SAHTE kapatmasın. Örnek de yalnız ÖLÇÜLEN değerde yazılır.
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
+        if (respMs == null || !measured) return;
+        com.sitemonitor.service.baseline.BaselineMath.Verdict v =
+                baselineService.evaluateScheduled(type, monitorId, respMs, System.currentTimeMillis(), null);
+        if (v == null) { r.remove(com.sitemonitor.service.baseline.BaselineService.CTX_ON); return; }   // yarış: config kapandı → sabit eşik yolu
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE, respMs);
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED, v.evaluated());
+        if (v.level() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL, v.level());
+        if (v.mean() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_MEAN, v.mean());
+        if (v.low() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LOW, v.low());
+        if (v.high() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH, v.high());
+        if (v.deviation() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_DEVIATION, v.deviation());
+        if (v.note() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_NOTE, v.note());
+    }
+
+    /** HTTP için taban çizgisi enjeksiyonu (klasik sweep + dağıtık apply ortak). */
+    private void baselineHttpScheduled(HttpMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.HTTP, m.getId(), respMs,
+                r.get("error") == null && respMs != null, r);
+    }
+
+    /**
+     * Taban-çizgisi SLOW kalemi — TÜM TÜRLER ORTAK. Türün KENDİ bağlamı ({@code slowCtx}: monitor_name / anahtar / id /
+     * confirm / recovery / team / group) verilir; karar, {@code detail} ve recheck ortaktır. Taban HENÜZ KURULUYORSA
+     * ({@code baseline_evaluated=false}) kalem YOK (D-7: karar yok = sağlıklı değil → açık alarm sahte kapanmaz).
+     * Değerlendirildiyse yavaş = bant dışı (uyarı/kritik). {@code detail} KARARLI ({@code SLOW_DETAIL}) — zincir anahtarı
+     * bant kaydıkça değişmesin.
+     */
+    private MonitoringOutageService.SweepItem baselineSlowItem(String alertType, String domainKey,
+            com.sitemonitor.model.MonitorAlertPrefs prefs, Map<String, Object> slowCtx, Map<String, Object> r,
+            java.util.function.Supplier<Map<String, Object>> recheck) {
+        if (!Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED))) return null;
+        String level = (String) r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL);
+        boolean slow = level != null && !com.sitemonitor.service.baseline.BaselineMath.LEVEL_NONE.equals(level);
+        slowCtx.put("response_ms", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE));
+        slowCtx.put("baseline", true);
+        slowCtx.put("baseline_mean", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_MEAN));
+        slowCtx.put("baseline_high", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH));
+        slowCtx.put("baseline_low", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LOW));
+        slowCtx.put("baseline_level", level);
+        slowCtx.put("baseline_deviation", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_DEVIATION));
+        return new MonitoringOutageService.SweepItem(alertType, domainKey,
+                com.sitemonitor.service.baseline.BaselineService.SLOW_DETAIL, !slow, null, chanCtx(slowCtx, prefs), recheck);
+    }
+
+    /**
+     * Taban-çizgisi SLOW teyit/kurtarma re-check'inin ORTAK çekirdeği: ÖLÇÜLEN değer + tür → status up/down/skipped; örnek
+     * YAZMAZ ({@code evaluateRecheck}). Kapalı / taban kuruluyor / ölçülemedi → "skipped" (kanıt yok). Türe özel kısım yalnız
+     * canlı ölçüm (çağıran yapar).
+     */
+    private Map<String, Object> baselineSlowRecheck(String type, Long id, Long respMs, boolean measured) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (respMs != null) out.put("response_ms", respMs);
+        if (!measured) { out.put("status", "skipped"); return out; }
+        com.sitemonitor.service.baseline.BaselineMath.Verdict v = baselineService == null ? null
+                : baselineService.evaluateRecheck(type, id, respMs, System.currentTimeMillis(), null);
+        if (v == null || !v.evaluated()) { out.put("status", "skipped"); return out; }
+        out.put("status", com.sitemonitor.service.baseline.BaselineMath.LEVEL_NONE.equals(v.level()) ? "up" : "down");
+        return out;
+    }
+
+    /** HTTP_SLOW öğrenen-bant kalemi — ortak builder'a türün bağlamını verir. */
+    private MonitoringOutageService.SweepItem httpBaselineSlowItem(HttpMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("monitor_name", m.getName());
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_HTTP_SLOW, m.getUrl(), m, slowCtx, r, () -> evalHttpSlowBaseline(m));
+    }
+
+    /** HTTP_SLOW öğrenen-bant re-check'i: taze istek ölçer, ortak çekirdeğe verir. */
+    private Map<String, Object> evalHttpSlowBaseline(HttpMonitor m) {
+        Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m).withoutJsonAssertion());
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.HTTP, m.getId(), ms, r.get("error") == null && ms != null);
+    }
+
+    /** Taban-çizgisi enjeksiyonu için ortak "ölçüldü mü": hata yok + süre var. */
+    private boolean baselineMeasured(Map<String, Object> r, Long respMs) {
+        return r.get("error") == null && respMs != null;
+    }
+
+    // ── KEYWORD ─────────────────────────────────────────────────────────────
+    private void baselineKeywordScheduled(KeywordMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        // B5: yalnız KABUL EDİLEN yanıt geçerli bir süre örneğidir (reddedilen durum kodu tabana girmesin).
+        boolean measured = baselineMeasured(r, respMs) && !Boolean.FALSE.equals(r.get("status_accepted"));
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.KEYWORD, m.getId(), respMs, measured, r);
+    }
+
+    private MonitoringOutageService.SweepItem keywordBaselineSlowItem(KeywordMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(), m, slowCtx, r, () -> evalKeywordSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalKeywordSlowBaseline(KeywordMonitor m) {
+        Map<String, Object> r = keywordCheckerService.check(keywordSpec(m).toBuilder().diagnose(false).build());
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = baselineMeasured(r, ms) && !Boolean.FALSE.equals(r.get("status_accepted"));
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.KEYWORD, m.getId(), ms, measured);
+    }
+
+    // ── PORT ────────────────────────────────────────────────────────────────
+    private void baselinePortScheduled(PortMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        // D-7: port açık + hata yok + süre var = geçerli ölçüm; kapalı/hatalı port tabana girmesin.
+        boolean measured = "up".equals(r.get("status")) && r.get("error") == null && respMs != null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.PORT, m.getId(), respMs, measured, r);
+    }
+
+    private MonitoringOutageService.SweepItem portBaselineSlowItem(PortMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("port", m.getPort());
+        slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId());
+        if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_PORT_SLOW, m.getHost(), m, slowCtx, r, () -> evalPortSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalPortSlowBaseline(PortMonitor m) {
+        Map<String, Object> r = portCheckerService.check(m);
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = r.get("error") == null && Boolean.TRUE.equals(r.get("open")) && ms != null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.PORT, m.getId(), ms, measured);
+    }
+
+    // ── PING ────────────────────────────────────────────────────────────────
+    private void baselinePingScheduled(PingMonitor m, Map<String, Object> r) {
+        Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
+        // Ölçülen RTT = up + ICMP ölçülebildi (na değil) + değer var; na/down tabana girmesin.
+        boolean measured = "up".equals(r.get("status")) && !Boolean.TRUE.equals(r.get("na")) && rtt != null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.PING, m.getId(), rtt, measured, r);
+    }
+
+    private MonitoringOutageService.SweepItem pingBaselineSlowItem(PingMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("monitor_name", m.getName());
+        slowCtx.put("host", m.getHost());
+        slowCtx.put("ip_version", m.getIpVersion());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_PING_SLOW, m.getHost(), m, slowCtx, r, () -> evalPingSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalPingSlowBaseline(PingMonitor m) {
+        Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
+                m.getPacketCount() != null ? m.getPacketCount() : 4,
+                m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
+        boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
+        Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.PING, m.getId(), rtt, up && rtt != null);
+    }
+
+    // ── PAGESPEED ───────────────────────────────────────────────────────────
+    private void baselinePageSpeedScheduled(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        // Yükleme süresi = yapılandırma hatası yok + ulaşıldı + değer var; alınamayan sayfa tabana girmesin.
+        boolean measured = !Boolean.TRUE.equals(r.get("config_error")) && Boolean.TRUE.equals(r.get("reachable")) && respMs != null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), respMs, measured, r);
+    }
+
+    private MonitoringOutageService.SweepItem pageSpeedBaselineSlowItem(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("monitor_name", m.getName());
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), m, slowCtx, r, () -> evalPageSpeedSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalPageSpeedSlowBaseline(com.sitemonitor.model.PageSpeedMonitor m) {
+        Map<String, Object> p = recheckPageSpeed(m, false);
+        Long ms = p.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = !Boolean.TRUE.equals(p.get("config_error")) && Boolean.TRUE.equals(p.get("reachable")) && ms != null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), ms, measured);
+    }
+
+    // ── SCRIPTED ────────────────────────────────────────────────────────────
+    private void baselineScriptedScheduled(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r) {
+        Long durMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        // Yalnız PASS koşumunun süresi geçerli; düşen / atlanan (altyapı) koşum tabana girmesin.
+        boolean measured = !Boolean.TRUE.equals(r.get("skipped")) && Boolean.TRUE.equals(r.get("up")) && durMs != null;
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, m.getId(), durMs, measured, r);
+    }
+
+    private MonitoringOutageService.SweepItem scriptedBaselineSlowItem(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("name", m.getName());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_SCRIPTED_SLOW, m.getName(), m, slowCtx, r, () -> evalScriptedSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalScriptedSlowBaseline(com.sitemonitor.model.ScriptedMonitor m) {
+        Map<String, Object> p = recheckScripted(m, false);
+        Long ms = p.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = !Boolean.TRUE.equals(p.get("skipped")) && Boolean.TRUE.equals(p.get("up")) && ms != null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, m.getId(), ms, measured);
+    }
+
+    // ── DNS ─────────────────────────────────────────────────────────────────
+    private void baselineDnsScheduled(DnsMonitor m, Map<String, Object> r, boolean success) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        // Yalnız başarılı çözümün süresi geçerli; çözümlenemeyen sorgu tabana girmesin.
+        applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.DNS, m.getId(), respMs, success && respMs != null, r);
+    }
+
+    private MonitoringOutageService.SweepItem dnsBaselineSlowItem(DnsMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("record_type", m.getRecordType());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId());
+        if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        return baselineSlowItem(EscalationService.TYPE_DNS_SLOW, m.getDomain(), m, slowCtx, r, () -> evalDnsSlowBaseline(m));
+    }
+
+    private Map<String, Object> evalDnsSlowBaseline(DnsMonitor m) {
+        Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.DNS, m.getId(), ms,
+                Boolean.TRUE.equals(r.get("success")) && ms != null);
     }
 
     /** İzlemenin gelişmiş istek seçenekleri; hiçbiri yoksa {@code HttpRequestOptions.NONE} (aynı örnek). */
@@ -7985,7 +8280,9 @@ public class SchedulerService {
         for (var entry : started) {
             com.sitemonitor.model.PageSpeedMonitor m = entry.getKey();
             try {
-                addPageSpeedSweepItems(m, entry.getValue().get(), downSweep, slowSweep);
+                Map<String, Object> r = entry.getValue().get();
+                baselinePageSpeedScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
+                addPageSpeedSweepItems(m, r, downSweep, slowSweep);
                 checked++;
             } catch (Exception e) {
                 log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
@@ -8063,6 +8360,12 @@ public class SchedulerService {
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("reachable")) ? "up" : "down"); }));
 
+        // Taban çizgisi AÇIK → sabit eşik yerine öğrenen bant yolu (CTX_ON yalnız ölçülen = reachable olduğunda set edilir).
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON))) {
+            MonitoringOutageService.SweepItem bi = pageSpeedBaselineSlowItem(m, r);
+            if (bi != null) slowSweep.add(bi);
+            return;
+        }
         // Sayfa alınamıyorken AYRI bir yavaşlık alarmı üretme: çökmüş bir sayfayı "yavaş" diye ikinci kez raporlamak
         // gürültüdür. D-7 (2026-09-29): ama "alınamadı" SAĞLIKLI da DEĞİLDİR — eskiden SLOW kalemi "up" sayılıp açık
         // yavaşlık alarmını sayfa çökükken "ÇÖZÜLDÜ" diye kapatıyordu. Artık ölçüm yoksa kalem ÜRETİLMEZ; yeniden ölçüm
@@ -9281,6 +9584,7 @@ public class SchedulerService {
                     continue;
                 }
                 Map<String, Object> r = persistScripted(m, res, false);
+                baselineScriptedScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
                 addScriptedSweepItems(m, r, sweep, slowSweep);
                 checked++;
             } catch (java.util.concurrent.TimeoutException te) {
@@ -9570,6 +9874,12 @@ public class SchedulerService {
                             return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
                         return Map.of("status", Boolean.TRUE.equals(p.get("up")) ? "up" : "down"); }));
 
+        // Taban çizgisi AÇIK → sabit eşik yerine öğrenen bant yolu (CTX_ON yalnız ölçülen = PASS + süre olduğunda set edilir).
+        if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON))) {
+            MonitoringOutageService.SweepItem bi = scriptedBaselineSlowItem(m, r);
+            if (bi != null) slowSweep.add(bi);
+            return;
+        }
         // ── SCRIPTED_SLOW (opt-in) ───────────────────────────────────────────────────────────
         // Ozellik KAPALIYSA sentetik "up" uretilir: boylece daha once acilmis bir SLOW alarmi asili kalmaz.
         // Ozellik aciksa ve kosum DUSTUYSE ya da sure yoksa kalem HIC uretilmez (O-2, asagida) — "olculemedi"
@@ -10681,6 +10991,7 @@ public class SchedulerService {
                 Map<String, Object> r = entry.getValue().get();
                 MonitoringOutageService.SweepItem downItem = pingSweepItem(m, r);   // D-A3-5: ICMP ölçülemediyse null
                 if (downItem != null) sweep.add(downItem);
+                baselinePingScheduled(m, r);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider)
                 MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, r);   // D-7: ölçülemediyse null
                 if (slowItem != null) slowSweep.add(slowItem);
                 checked++;
@@ -10965,11 +11276,18 @@ public class SchedulerService {
         int slowConfirmAttempts = settings.slowConfirmAttempts();
         int slowConfirmIntervalMs = settings.slowConfirmIntervalMs();
 
+        baselineDnsScheduled(m, r, success);   // taban çizgisi açıksa r'ye baseline_* enjekte eder + örnek yazar (lider; addDnsMainItems yalnız zamanlanmış yolda)
+
         sweep.add(dnsFailureSweepItem(m, r, success));
 
         // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
         // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
         if (success) {
+            // Taban çizgisi AÇIK → sabit eşik yerine öğrenen bant yolu (CTX_ON yalnız başarılı çözümde set edilir).
+            if (Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_ON))) {
+                MonitoringOutageService.SweepItem bi = dnsBaselineSlowItem(m, r);
+                if (bi != null) slowSweep.add(bi);
+            } else {
             long responseMs = r.get("response_ms") instanceof Number rn2 ? rn2.longValue() : 0L;
             int effSlow = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : slowThresholdMs;  // per-monitor eşik ?? global
             boolean slow = responseMs > effSlow;
@@ -10986,6 +11304,7 @@ public class SchedulerService {
                     EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
                     !slow, slow ? responseMs + " ms" : null,
                     chanCtx(slowCtx, m), () -> recheckDnsSlow(m, effSlow)));
+            }
         }
 
         // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
@@ -12466,6 +12785,7 @@ public class SchedulerService {
                     PortMonitor m = e.getKey();
                     try {
                         sweep.add(portSweepItem(m, e.getValue()));
+                        baselinePortScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         MonitoringOutageService.SweepItem slow = portSlowSweepItem(m, e.getValue());
                         if (slow != null) slowSweep.add(slow);
                         checkResultsApplied.incrementAndGet();
@@ -12486,6 +12806,7 @@ public class SchedulerService {
                     try {
                         MonitoringOutageService.SweepItem downItem = pingSweepItem(m, e.getValue());
                         if (downItem != null) sweep.add(downItem);
+                        baselinePingScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, e.getValue());
                         if (slowItem != null) slowSweep.add(slowItem);
                         checkResultsApplied.incrementAndGet();
@@ -12505,6 +12826,7 @@ public class SchedulerService {
                     HttpMonitor m = e.getKey();
                     try {
                         sweep.add(httpSweepItem(m, e.getValue()));
+                        baselineHttpScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, e.getValue());
                         if (slow != null) slowSweep.add(slow);
                         checkResultsApplied.incrementAndGet();
@@ -12532,6 +12854,7 @@ public class SchedulerService {
                     }
                     try {
                         sweep.add(keywordSweepItem(m, e.getValue()));
+                        baselineKeywordScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, e.getValue());
                         if (slow != null) slowSweep.add(slow);
                         MonitoringOutageService.SweepItem change = keywordChangeSweepItem(m, e.getValue());
@@ -12570,6 +12893,7 @@ public class SchedulerService {
                 for (var e : entries) {
                     com.sitemonitor.model.PageSpeedMonitor m = e.getKey();
                     try {
+                        baselinePageSpeedScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         addPageSpeedSweepItems(m, e.getValue(), downSweep, slowSweep);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
@@ -12590,6 +12914,7 @@ public class SchedulerService {
                     // Altyapı atlaması (k6 havuzu dolu / k6 yok) hedefin arızası DEĞİL: klasik gibi kalem üretilmez.
                     if (Boolean.TRUE.equals(e.getValue().get("skipped"))) continue;
                     try {
+                        baselineScriptedScheduled(m, e.getValue());   // dağıtık apply (lider) — klasikle ortak
                         addScriptedSweepItems(m, e.getValue(), sweep, slowSweep);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {

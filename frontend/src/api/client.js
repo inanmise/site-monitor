@@ -2653,6 +2653,8 @@ export const api = {
         dl.done()
       }
     },
+    getBaseline: (type, id) => request(`/monitoring/baseline/${type}/${id}`, { withStatus: true }),
+    saveBaseline: (type, id, body) => request(`/monitoring/baseline/${type}/${id}`, { method: 'PUT', body: JSON.stringify(body || {}), withStatus: true }),
     httpDiagnoseHistory: (id) => request(`/monitoring/http/${id}/diagnose/history`, { withStatus: true }),
     httpDiagnoseRun: (id, runId) => request(`/monitoring/http/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
     getHttpResponseSeries: (id, { from, to, days } = {}) => {
