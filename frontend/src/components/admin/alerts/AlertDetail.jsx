@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall, CloudLightning, Moon,
+  ShieldCheck,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { durationMs, formatDuration, formatIncidentTime } from '../../../utils/incidentMeta.js'
+import PageIssueList from '../../page/PageIssueList.jsx'   // E2: sayfa bütünlüğü sorunlu kaynak listesi
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
 import MaintenanceBadge from '../../ui/MaintenanceBadge.jsx'
@@ -256,6 +258,26 @@ export function AlertDetailBody({
             </span>
           </Fact>
         </dl>
+        {/* E2 (2026-11-12): sayfa bütünlüğü alarmında SORUNLU KAYNAKLAR (alarm-anı) — hangi kaynak / nasıl bir hata. */}
+        {Array.isArray(a.page_issues) && a.page_issues.length > 0 && (
+          <div className="border-t px-4 py-2.5" data-slot="alert-page-issues">
+            <h3 className="mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('alh.pageIssuesTitle')}</h3>
+            <PageIssueList issues={a.page_issues} max={20} />
+          </div>
+        )}
+        {/* E3 (2026-11-12): teyit & kurtarma görünürlüğü — "açılmadan önce N kez doğrulandı; giderilince otomatik kapanır". */}
+        {a.confirm_info && a.confirm_info.confirm_attempts != null && (
+          <div className="flex items-start gap-1.5 border-t px-4 py-2 text-xs text-muted-foreground" data-slot="alert-confirm-info">
+            <ShieldCheck aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span>{Number(a.confirm_info.confirm_attempts) <= 0
+              ? t('alh.pageConfirmOff', Number(a.confirm_info.recovery_checks || 0),
+                  Math.round(Number(a.confirm_info.recovery_interval_ms || 0) / 1000))
+              : t('alh.pageConfirmInfo', Number(a.confirm_info.confirm_attempts),
+                  Math.round(Number(a.confirm_info.confirm_interval_ms || 0) / 1000),
+                  Number(a.confirm_info.recovery_checks || 0),
+                  Math.round(Number(a.confirm_info.recovery_interval_ms || 0) / 1000))}</span>
+          </div>
+        )}
         {/* İmza geçmişi: aynı hedef + tip kaçıncı kez, önceki oluşum, ne zamandır sessiz, geçmişine geçiş */}
         <div className="border-t px-4 py-2.5 empty:hidden">
           <AlertSignatureStrip alert={a} teamName={teamName} onShowHistory={onShowHistory} />

@@ -2861,7 +2861,59 @@ public class AdminController {
                 ? List.of()
                 : oncallFor(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId())
                 .stream().filter(t -> SessionScope.canViewMonitoringOwn(session, t)).toArray(Long[]::new)));
+        // E2/E3 (2026-11-12): sayfa bütünlüğü alarmında SORUNLU KAYNAKLAR (alarm-anı snapshot'ı, problem_rows) + TEYİT/
+        // KURTARMA ayarları — alarm detayında "hangi kaynak / nasıl bir hata" ve "açılmadan önce N kez doğrulandı,
+        // giderilince otomatik kapanır". Yönlendirme bağlamı (team_id, grup) AÇILMAZ; yalnız kaynak + doğrulama alanları.
+        if (EscalationService.TYPE_PAGE_INTEGRITY.equals(ev.getAlertType())) {
+            Map<String, Object> ctx = parsePageAlertContext(ev.getContextJson());
+            List<Map<String, Object>> pi = pageIssuesFromContext(ctx);
+            if (!pi.isEmpty()) body.put("page_issues", pi);
+            Map<String, Object> ci = confirmInfoFromContext(ctx);
+            if (!ci.isEmpty()) body.put("confirm_info", ci);
+        }
         return ok(body);
+    }
+
+    /** E2/E3: alarm bağlam JSON'unu güvenli ayrıştır (bozuk/boş → boş Map). Asla fırlatmaz. */
+    static Map<String, Object> parsePageAlertContext(String ctxJson) {
+        if (ctxJson == null || ctxJson.isBlank()) return Map.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(ctxJson, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.debug("Alarm bağlamı ayrıştırılamadı: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** E2: bağlamdaki {@code problem_rows} ("tür\\tURL\\tHTTP" satırları) → yapısal liste. Yalnız kaynak satırları. */
+    static List<Map<String, Object>> pageIssuesFromContext(Map<String, Object> ctx) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!(ctx.get("problem_rows") instanceof String rows) || rows.isBlank()) return out;
+        for (String line : rows.split("\n")) {
+            if (line.isBlank()) continue;
+            if (line.startsWith("…")) { out.add(Map.of("more", line.trim())); continue; }   // "… +N daha"
+            String[] p = line.split("\t", -1);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("issue_type", p.length > 0 && !p[0].isBlank() ? p[0] : null);
+            m.put("resource_url", p.length > 1 && !p[1].isBlank() ? p[1] : null);
+            if (p.length > 2 && !p[2].isBlank()) {
+                try { m.put("http_status", Integer.parseInt(p[2].trim())); } catch (NumberFormatException ignore) { /* yok */ }
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** E3: bağlamdaki teyit/kurtarma ayarları → {confirm_attempts, confirm_interval_ms, recovery_checks, recovery_interval_ms}. */
+    static Map<String, Object> confirmInfoFromContext(Map<String, Object> ctx) {
+        Map<String, Object> ci = new LinkedHashMap<>();
+        for (String[] kv : new String[][]{
+                {"monitor_confirm_attempts", "confirm_attempts"}, {"monitor_confirm_interval_ms", "confirm_interval_ms"},
+                {"monitor_recovery_checks", "recovery_checks"},    {"monitor_recovery_interval_ms", "recovery_interval_ms"}}) {
+            if (ctx.get(kv[0]) instanceof Number n) ci.put(kv[1], n.longValue());
+        }
+        return ci;
     }
 
     /**
