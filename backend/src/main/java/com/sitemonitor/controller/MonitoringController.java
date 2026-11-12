@@ -199,7 +199,7 @@ public class MonitoringController {
         "name", "host", "port", "url", "domain", "recordType", "keyword", "expectedValue", "expect",
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags", "alertLevel",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects", "useProxy",
-        "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
+        "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "minBrokenResources", "resourceConcurrency",
         "notificationGroupId", "nocNotify", "nocGroupIds",
         "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook", "renewalPlannedAt", "renewalPlannedNote",
         // Teyit/kurtarma ayarlari: 6 noktanin 5'inde vardi (patch, create, update, gosterim, form)
@@ -6046,6 +6046,7 @@ public class MonitoringController {
         if (body.get("alertThirdParty") instanceof Boolean b) m.setAlertThirdParty(b);
         if (body.get("alertMixedContent") instanceof Boolean b) m.setAlertMixedContent(b);
         if (body.get("alertTimeout") instanceof Boolean b) m.setAlertTimeout(b);
+        if (body.get("minBrokenResources") instanceof Number n) m.setMinBrokenResources(Math.max(1, Math.min(100, n.intValue())));   // E5: alarm eşiği
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
@@ -6068,6 +6069,7 @@ public class MonitoringController {
         item.put("alert_third_party",    m.getAlertThirdParty());
         item.put("alert_mixed_content",  m.getAlertMixedContent());
         item.put("alert_timeout",        m.getAlertTimeout());
+        item.put("min_broken_resources", m.getMinBrokenResources());   // E5: alarm eşiği (en az kırık kaynak)
         item.put("resource_concurrency", m.getResourceConcurrency());
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());

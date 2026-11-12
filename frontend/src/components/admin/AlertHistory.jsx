@@ -312,7 +312,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       const wanted = linkedAlertId
       const wantCall = linkedNocCall
       Promise.resolve().then(() => api.admin.getAlert(wanted)).catch(() => null).then((res) => {
-        const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(wanted) ? res.data : null
+        const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(wanted)
+          ? { ...res.data, page_issues: res.page_issues, confirm_info: res.confirm_info } : null   // E2: sayfa bütünlüğü sorunlu kaynakları (varsa)
         if (my !== linkFetchSeq.current || !one || linkOpenedRef.current === wanted) return
         linkOpenedRef.current = wanted
         setLinkedNocCall(false)
@@ -397,7 +398,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     const my = ++slotOpenSeq.current
     Promise.resolve().then(() => api.admin.getAlert(a.id)).catch(() => null).then((res) => {
       if (my !== slotOpenSeq.current) return
-      const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(a.id) ? res.data : null
+      const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(a.id)
+        ? { ...res.data, page_issues: res.page_issues, confirm_info: res.confirm_info } : null   // E2: sayfa bütünlüğü sorunlu kaynakları (varsa)
       if (one) setDetail(one)
       else toast.error(res?.error || t('alh.openAlertFailed'))
     })

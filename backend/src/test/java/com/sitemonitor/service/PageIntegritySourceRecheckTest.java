@@ -157,8 +157,8 @@ class PageIntegritySourceRecheckTest {
     }
 
     @Test
-    @DisplayName("O-b4: ANA SAYFA kaynaklı alarm (crawl izlemesi) ana sayfa temizse kapanır; crawl kaynaklıysa ana sayfa kanıt değil")
-    void homeScopedAlarm_closesOnCleanHome_crawlScopedDoesNot() {
+    @DisplayName("O-b4: ANA SAYFA kaynaklı alarm (crawl izlemesi) ana sayfa temizse kapanır")
+    void homeScopedAlarm_closesOnCleanHome() {
         PageMonitor m = crawlMonitor();
         when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(Map.of("integrity_scope", "HOME"));
         scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
@@ -167,12 +167,40 @@ class PageIntegritySourceRecheckTest {
         assertThat(items.get(0).up()).isTrue();
         stub(HOME, "SINGLE_PAGE", reachable(List.of()));
         assertThat(items.get(0).recheck().get().get("status")).isEqualTo("up");
+    }
 
-        clearInvocations(outage);
+    @Test
+    @DisplayName("FIX oto-çözülme: crawl kaynaklı alarm + temiz ANA SAYFA turu → sorunlu sayfa HEDEFLİ ölçülür; "
+            + "temizse sağlıklı kurtarma kalemi, hâlâ kırıksa kalem yok (D-7 korunur)")
+    void crawlScopedAlarm_targetedRecoveryOnFrequentHomeSweep() {
+        PageMonitor m = crawlMonitor();
         when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
                 .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+
+        // Sorunlu sayfa HÂLÂ kırık → sık taramada kalem üretilmez (korunumlu: alarm açık kalır, günlük crawl doğrular).
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(broken(DEEP))));
         scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
-        assertThat(integrityItems()).as("crawl kaynaklı alarm: ana sayfa temizliği kanıt değil").isEmpty();
+        assertThat(integrityItems()).as("sorunlu sayfa hâlâ kırık → kalem yok").isEmpty();
+
+        // Sorunlu sayfa ARTIK temiz → sağlıklı kurtarma kalemi (eskiden yalnız günlük crawl kapatabiliyordu).
+        clearInvocations(outage);
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
+        List<MonitoringOutageService.SweepItem> rec = integrityItems();
+        assertThat(rec).as("sorunlu sayfa temiz → sağlıklı kurtarma kalemi").hasSize(1);
+        assertThat(rec.get(0).up()).isTrue();
+        assertThat(rec.get(0).ctxExtra()).containsEntry("integrity_scope", "CRAWL")
+                .containsEntry("problem_pages", List.of(DEEP));
+        // Kurtarma zinciri yine sorunlu sayfaları ölçer (ana sayfayı değil).
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(broken(DEEP))));
+        assertThat(rec.get(0).recheck().get().get("status")).as("kurtarma yeniden ölçümü sorunlu sayfaya bakar").isEqualTo("down");
+
+        // Kaynaksız (eski) crawl alarmı → hedef yok → kalem yok (günlük crawl kapatır, D-7).
+        clearInvocations(outage);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL"));
+        scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
+        assertThat(integrityItems()).as("kaynaksız crawl alarmı → kalem yok").isEmpty();
     }
 
     @Test
@@ -209,5 +237,32 @@ class PageIntegritySourceRecheckTest {
     @DisplayName("O-b4: kaynak bilgisi alarm bağlamına kalıcılaşır (snapshot whitelist)")
     void sourceKeysAreSnapshotted() {
         assertThat(EscalationService.RESOLVED_CONTEXT_KEYS).contains("integrity_scope", "problem_pages");
+    }
+
+    @Test
+    @DisplayName("FIX perf: zamanlı sweep'te hedefli kurtarma ölçümü izleme başına kadenslenir (ardışık tık ölçmez); "
+            + "elle kontrol throttle'a tabi değildir")
+    @SuppressWarnings("unchecked")
+    void scheduledTargetedRecovery_isThrottledPerMonitor_manualIsNot() {
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));   // sorunlu sayfa temiz → ölçülürse sağlıklı kurtarma kalemi
+        Map<String, Object> r = raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE");
+
+        // Zamanlı sweep (scheduledSweep=true): ilk tık ölçer → kalem; kadence içindeki ikinci tık ÖLÇMEZ → kalem yok (nötr).
+        List<MonitoringOutageService.SweepItem> down1 = new ArrayList<>(), integ1 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down1, integ1, true);
+        assertThat(integ1).as("ilk zamanlı tık ölçer → sağlıklı kurtarma kalemi").hasSize(1);
+        assertThat(integ1.get(0).up()).isTrue();
+
+        List<MonitoringOutageService.SweepItem> down2 = new ArrayList<>(), integ2 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down2, integ2, true);
+        assertThat(integ2).as("kadence içindeki ikinci zamanlı tık ölçmez → kalem yok (MOS sayacı nötr)").isEmpty();
+
+        // Elle kontrol (scheduledSweep=false): throttle'a tabi değil → her seferinde ölçer.
+        List<MonitoringOutageService.SweepItem> down3 = new ArrayList<>(), integ3 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down3, integ3, false);
+        assertThat(integ3).as("elle kontrol throttle'a tabi değil → ölçer").hasSize(1);
     }
 }

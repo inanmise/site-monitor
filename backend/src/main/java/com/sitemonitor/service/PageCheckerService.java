@@ -622,6 +622,32 @@ public class PageCheckerService {
         return i.firstParty() || Boolean.TRUE.equals(m.getAlertThirdParty());
     }
 
+    /** Alarm için en az kaç alarm-uygun KIRIK (BROKEN) kaynak gerekli — izleme başına eşik (varsayılan 1 = bugünkü davranış). */
+    public static int minBrokenResources(com.sitemonitor.model.PageMonitor m) {
+        if (m == null) return 1;
+        Integer v = m.getMinBrokenResources();
+        return (v == null || v < 1) ? 1 : v;
+    }
+
+    /**
+     * Bir kontrolün sonucu ALARM açar mı — alarm eşiği ({@link #minBrokenResources}) uygulanmış TEK karar. Sweep
+     * (açılış + kurtarma), teyit/kurtarma yeniden ölçümü ve uçtan uca tanılama AYNISINI okur. Kural: alarm-uygun
+     * KIRIK sayısı ≥ eşik, YA DA herhangi bir alarm-uygun zaman aşımı / mixed-content (bunlar sayıyla değil kendi
+     * aç/kapa ayarlarıyla geçitli). Eşik=1 iken "en az bir alarm-uygun sorun" = eski davranış (golden değişmez).
+     */
+    public static boolean resultAlarmWorthy(com.sitemonitor.model.PageMonitor m, java.util.Collection<ResourceIssue> issues) {
+        if (m == null || issues == null) return false;
+        int minBroken = minBrokenResources(m);
+        int broken = 0;
+        boolean other = false;
+        for (ResourceIssue i : issues) {
+            if (!issueAlarmWorthy(m, i)) continue;
+            if ("BROKEN".equals(i.issueType())) broken++;
+            else other = true;   // TIMEOUT / MIXED_CONTENT — issueAlarmWorthy'de aç/kapa ile zaten geçitli
+        }
+        return broken >= minBroken || other;
+    }
+
     /** İstek User-Agent'ı — canlı config (F4); boş/null ise tarayıcı-uyumlu varsayılan. */
     private String userAgent() {
         String ua = appSettings.getString("site.monitor.page.user-agent", DEFAULT_UA);

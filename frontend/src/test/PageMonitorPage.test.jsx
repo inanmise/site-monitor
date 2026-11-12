@@ -276,7 +276,7 @@ describe('PageMonitorPage', () => {
       groupName: 'Kurumsal', teamId: 5, tags: 'prod,kritik', alertLevel: 'HIGH', notifyEmail: false, notifyWebhook: true,
       mode: 'CRAWL', crawlDepth: 3, crawlMaxPages: 80, excludePatterns: '/ads/\n/tracker/',
       slowResourceMs: 1500, useProxy: 'AUTO', alertThirdParty: true, alertMixedContent: false, alertTimeout: false,
-      resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,
+      minBrokenResources: 1, resourceConcurrency: 8, intervalSeconds: 600, timeoutMs: 6000,
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.

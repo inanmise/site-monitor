@@ -32,6 +32,8 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { CheckFailureBlock } from './checks/CheckFailurePanel.jsx'
+import PageIssueList from './page/PageIssueList.jsx'
+import { issuesForCheckedAt } from './page/pageIssueModel.js'
 import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import { isHealthy } from './checks/checkFailureModel.js'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
@@ -126,7 +128,7 @@ const ISSUE_TEXT = {
 }
 const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000, useProxy: 'AUTO',
-  alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
+  alertThirdParty: false, alertMixedContent: true, alertTimeout: true, minBrokenResources: 1, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
@@ -176,6 +178,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [issues, setIssues] = useState([])
+  // Kontrol Geçmişi ayrıntısı ('Bozulmuş' satırı → sorunlu kaynaklar) DAİMA 'all' anlık görüntüsünü kullanır: Sorunlar
+  // sekmesinin süzgeci (issueType / firstParty) `issues`'ı değiştirse de geçmiş detayının sayımını/listesini BOZMAZ.
+  const [histIssues, setHistIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
   // Sorunlu kaynaklar okunamadı mı (2026-10-22, UIM-45): okuma hatası "Sorunlu kaynak yok" GÖSTERİLMEZ
   const [issuesError, setIssuesError] = useState(null)
@@ -340,6 +345,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       let rows = res.data ?? []
       if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
       setIssues(rows)
+      if (filter === 'all') setHistIssues(rows)   // yalnız süzgeçsiz ('all') okuma geçmiş detayının kaynağını tazeler
       setIssuesError(null)
     } catch (e) {
       if (seq === issuesSeq.current) {
@@ -359,11 +365,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (res?.success) setConfirmations(res.data ?? [])
   }
   function openDetail(m) {
-    setSelected(m); setIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
+    setSelected(m); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
     setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  function closeDetail() { setSelected(null); setIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null) }
+  function closeDetail() { setSelected(null); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null) }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setPageDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
@@ -411,7 +417,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
       excludePatterns: m.exclude_patterns || '', slowResourceMs: m.slow_resource_ms ?? 2000, useProxy: m.use_proxy || 'AUTO',
-      alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, resourceConcurrency: m.resource_concurrency ?? 5,
+      alertThirdParty: !!m.alert_third_party, alertMixedContent: m.alert_mixed_content !== false, alertTimeout: m.alert_timeout !== false, minBrokenResources: m.min_broken_resources ?? 1, resourceConcurrency: m.resource_concurrency ?? 5,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 4000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
@@ -470,7 +476,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
         excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs), useProxy: form.useProxy || 'AUTO',
-        alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, resourceConcurrency: Number(form.resourceConcurrency),
+        alertThirdParty: form.alertThirdParty, alertMixedContent: form.alertMixedContent, alertTimeout: form.alertTimeout, minBrokenResources: Math.max(1, Number(form.minBrokenResources) || 1), resourceConcurrency: Number(form.resourceConcurrency),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
@@ -918,6 +924,12 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           label={t('page.alertMixedContent')} hint={t('page.alertMixedContentHint')} />
         <CheckField full checked={form.alertTimeout} onCheckedChange={v => setForm(f => ({ ...f, alertTimeout: v }))}
           label={t('page.alertTimeout')} hint={t('page.alertTimeoutHint')} />
+        {/* E5: alarm için en az kırık kaynak eşiği (1 = bugünkü davranış; zaman aşımı/mixed'i etkilemez) */}
+        <FormField full label={t('page.minBroken')} hint={t('page.minBrokenHint')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="100" className="sm:max-w-40"
+            value={form.minBrokenResources}
+            onChange={e => setForm(f => ({ ...f, minBrokenResources: Number(e.target.value) }))} />}
+        </FormField>
 
         {/* Etiketler */}
         <FormSection title={t('page.tagsTitle')} required {...fe.fieldProps('tags')}>
@@ -1223,6 +1235,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   const k = failureRowKey(c)
                   const failed = !isHealthy('page', c)
                   const when = formatDateSec(c.checked_at)
+                  // E1/#4: bu kontrolün sorunlu kaynakları SATIR BAŞINA BİR kez hesaplanır (3× tam-liste taraması yerine);
+                  // kaynak `histIssues` (süzgeçsiz anlık görüntü) — Sorunlar sekmesi süzgeci sayımı/listeyi bozmaz.
+                  const rowIssues = failed && failRows.isOpen(k) ? issuesForCheckedAt(histIssues, c.checked_at) : null
                   return (<>
                     <span className="upt-rt-time">{when}</span>
                     <span className={cn('font-semibold', statusText(c.status))}>
@@ -1235,6 +1250,16 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                       <CheckFailureBlock type="page" check={c} monitor={selected} open={failRows.isOpen(k)} when={when}
                         panelId={failurePanelId('page', k)} onToggle={() => failRows.toggle(k)}
                         canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => openDiagnose(selected)} />
+                    )}
+                    {/* E1: bu kontrolün SORUNLU KAYNAKLARI (hangi kaynak / nasıl bir hata / hangi sayfa) — açıkken, tam genişlik.
+                        Yüklü issues'tan checked_at ile eşleştirilir (Sorunlar sekmesi filtresi 'all' varsayılan). */}
+                    {rowIssues && rowIssues.length > 0 && (
+                      <div data-slot="page-hist-issues" className="mt-1 min-w-0 rounded-md border border-dashed bg-muted/20 p-2.5">
+                        <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
+                          {t('page.histIssuesTitle', rowIssues.length)}
+                        </div>
+                        <PageIssueList issues={rowIssues} />
+                      </div>
                     )}
                   </>)
                 }} />
