@@ -128,6 +128,10 @@ public final class MonitoringMetricNames {
     /** Bu pod'un saati − veritabanı saati (sn; pozitif = pod ileride). */
     public static final String CLOCK_SKEW = "sitemonitor.clock.skew.seconds";
 
+    // ── Dinamik taban çizgisi (2026-11-12) — benimseme ───────────────────────────────────────────────────────────────
+    /** Dinamik taban çizgisi (yanıt-süresi anomalisi) AÇIK izleme sayısı, türe göre (kurum geneli; 7 tür, sıfır dahil). */
+    public static final String BASELINE_ENABLED = "sitemonitor.baseline.enabled.monitors";
+
     // ── Kalıcı değerlendirme durumu (2026-10-23, çok pod R3-1, plan 3a — hepsi bu pod'un kaydedicisinden) ───────────
     /** Kayıt kipi: 0 kapalı ({@code off}), 1 yalnız yazma ({@code write}), 2 yazma + doğrulama ({@code verify}). */
     public static final String EVAL_STATE_MODE = "sitemonitor.eval.state.mode";
@@ -220,6 +224,9 @@ public final class MonitoringMetricNames {
                 "Failed checks in the last 24 hours"));
         l.add(new Def(TEAMS, Scope.AGGREGATE, List.of("team", "team_id", "active"),
                 "Teams known to SiteMonitor (constant 1); feeds the dashboard team filter"));
+        // Dinamik taban çizgisi benimseme (2026-11-12) — kaç izleme öğrenen-bant kullanıyor (türe göre, sıfır dahil)
+        l.add(new Def(BASELINE_ENABLED, Scope.AGGREGATE, List.of("type"),
+                "Monitors with the dynamic response-time baseline enabled, by type"));
         // Alarmlar
         l.add(new Def(ALERTS_OPEN, Scope.AGGREGATE,
                 List.of("family", "alert_type", "team", "team_id", "ug_team", "ug_team_id", "level", "acknowledged"),

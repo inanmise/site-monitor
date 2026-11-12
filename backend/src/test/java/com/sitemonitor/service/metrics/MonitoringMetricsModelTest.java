@@ -86,6 +86,22 @@ class MonitoringMetricsModelTest {
     }
 
     @Test
+    @DisplayName("taban çizgisi benimseme: 7 tür sıfır dahil; verilen sayılar türe yazılır; null → hepsi 0")
+    void baselineAdoptionRowsZerosIncluded() {
+        Families f = new Families();
+        MonitoringMetricsModel.baseline(f, Map.of("http", 5L, "dns", 2L));
+        assertThat(value(f, BASELINE_ENABLED, Map.of("type", "http"))).isEqualTo(5);
+        assertThat(value(f, BASELINE_ENABLED, Map.of("type", "dns"))).isEqualTo(2);
+        assertThat(value(f, BASELINE_ENABLED, Map.of("type", "ping"))).isEqualTo(0);   // sıfır dahil
+        assertThat(f.get(BASELINE_ENABLED)).hasSize(com.sitemonitor.service.baseline.BaselineTypes.ALL.size());
+
+        Families f2 = new Families();
+        MonitoringMetricsModel.baseline(f2, null);
+        assertThat(value(f2, BASELINE_ENABLED, Map.of("type", "http"))).isEqualTo(0);
+        assertThat(f2.get(BASELINE_ENABLED)).hasSize(com.sitemonitor.service.baseline.BaselineTypes.ALL.size());
+    }
+
+    @Test
     @DisplayName("izlemeler: durum kodu, up 1/0 (gecikmiş/duraklatılmış yok), yanıt / son kontrol / alarm alanları; toplamlar her durumu sıfırla yazar")
     void monitorRowsAndAggregates() {
         Families f = new Families();

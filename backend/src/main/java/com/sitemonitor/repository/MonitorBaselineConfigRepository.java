@@ -25,4 +25,8 @@ public interface MonitorBaselineConfigRepository extends JpaRepository<MonitorBa
 
     @Query("select count(c) from MonitorBaselineConfig c where c.enabled = true")
     long countEnabled();
+
+    /** Açık izleme sayısı türe göre — Grafana benimseme göstergesi (satır: [monitor_type, count]). */
+    @Query("select c.monitorType, count(c) from MonitorBaselineConfig c where c.enabled = true group by c.monitorType")
+    List<Object[]> countEnabledByType();
 }

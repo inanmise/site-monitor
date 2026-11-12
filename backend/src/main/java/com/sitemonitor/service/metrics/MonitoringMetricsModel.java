@@ -146,6 +146,14 @@ public final class MonitoringMetricsModel {
         f.add(MonitoringMetricNames.TEAMS, 1, "team", NO_TEAM, "team_id", NO_TEAM_ID, "active", "true");
     }
 
+    /** Dinamik taban çizgisi benimseme: AÇIK izleme sayısı türe göre (7 tür, sıfır dahil → panelde hepsi görünür). */
+    public static void baseline(Families f, Map<String, Long> countsByType) {
+        for (String type : com.sitemonitor.service.baseline.BaselineTypes.ALL) {
+            long c = countsByType == null ? 0L : countsByType.getOrDefault(type, 0L);
+            f.add(MonitoringMetricNames.BASELINE_ENABLED, c, "type", type);
+        }
+    }
+
     // ── İzlemeler (Genel Bakış haritasından) ─────────────────────────────────────────────────────────────
 
     /**
