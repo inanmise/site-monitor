@@ -41,7 +41,7 @@ export function buildSearchParams(f = {}) {
     source: SOURCE_VALUES.includes(f.source) ? f.source : '',
     hasPhone: TRISTATE_VALUES.includes(f.phone) ? f.phone : '',
     hasEmail: TRISTATE_VALUES.includes(f.email) ? f.email : '',
-    otpReady: !!f.otp,
+    codeLoginReady: !!f.otp,   // tel-üzeri ad kimlik-benzeri olmasın (OTel sorgu-gizleme kapısı)
     noc: TRISTATE_VALUES.includes(f.noc) ? f.noc : '',
     online: TRISTATE_VALUES.includes(f.online) ? f.online : '',
     loginFrom: f.loginFrom || '',

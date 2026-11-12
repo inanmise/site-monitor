@@ -3987,7 +3987,7 @@ class AdminControllerTest {
                         .param("q", "No").param("field", "username")
                         .param("status", "active").param("source", "LDAP")
                         .param("hasPhone", "yes").param("hasEmail", "no")
-                        .param("otpReady", "true").param("noc", "yes").param("online", "yes")
+                        .param("codeLoginReady", "true").param("noc", "yes").param("online", "yes")
                         .param("loginFrom", "2026-01-01").param("createdTo", "2026-12-31")
                         .param("sort", "lastLogin").param("dir", "desc")
                         .session(authSession()))

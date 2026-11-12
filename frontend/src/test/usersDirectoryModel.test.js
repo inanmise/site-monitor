@@ -5,12 +5,12 @@ import {
 } from '../components/admin/usersDirectoryModel.js'
 
 describe('usersDirectoryModel — buildSearchParams', () => {
-  it('boş süzgeç: varsayılanlar atlanır (field all, sort username asc), otpReady false', () => {
+  it('boş süzgeç: varsayılanlar atlanır (field all, sort username asc), codeLoginReady false', () => {
     const p = buildSearchParams(EMPTY_FILTERS)
     expect(p.field).toBe('')          // all → atlanır
     expect(p.sort).toBe('')           // username asc → atlanır
     expect(p.dir).toBe('')
-    expect(p.otpReady).toBe(false)
+    expect(p.codeLoginReady).toBe(false)
     expect(p.status).toBe('')
     expect(p.hasPhone).toBe('')
     expect(p.q).toBe('')
@@ -26,7 +26,7 @@ describe('usersDirectoryModel — buildSearchParams', () => {
     expect(p).toMatchObject({
       q: 'Ali', field: 'email', systemRole: 'USER', orgRole: 'PO', teamId: '3',
       dormantDays: 90, neverLoggedIn: false, status: 'active', source: 'LDAP',
-      hasPhone: 'yes', hasEmail: 'no', otpReady: true, noc: 'yes', online: 'no',
+      hasPhone: 'yes', hasEmail: 'no', codeLoginReady: true, noc: 'yes', online: 'no',
       loginFrom: '2026-01-01', loginTo: '2026-06-30', createdFrom: '2025-12-01', createdTo: '2026-12-31',
       sort: 'lastLogin', dir: 'desc',
     })

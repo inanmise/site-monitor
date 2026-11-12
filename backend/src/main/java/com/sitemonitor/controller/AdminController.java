@@ -3660,7 +3660,8 @@ public class AdminController {
             @RequestParam(required = false)    String source,       // LOCAL|LDAP
             @RequestParam(required = false)    String hasPhone,     // yes|no
             @RequestParam(required = false)    String hasEmail,     // yes|no
-            @RequestParam(defaultValue = "false") boolean otpReady,
+            // Ad kimlik-benzeri olmasın (OTel sorgu-gizleme kapısı "otp" içeren adı kimlik sanar); UI yine "OTP uygun"
+            @RequestParam(defaultValue = "false") boolean codeLoginReady,  // OTP/kod ile giriş uygun (aktif + kilitsiz + iletişim var)
             @RequestParam(required = false)    String noc,          // yes|no (7/24 ekibi)
             @RequestParam(required = false)    String online,       // yes|no (açık oturum)
             @RequestParam(required = false)    String loginFrom,    // yyyy-MM-dd (son giriş)
@@ -3716,7 +3717,7 @@ public class AdminController {
 
         PageRequest pr = PageRequest.of(page, size, directorySort(sort, dir));
         Page<AppUser> p = userRepo.findDirectory(qParam, fieldParam, roleParam, orgRoleParam, effTeamId,
-                scoped, scopeTeamsArg, statusParam, sourceParam, phoneMode, emailMode, otpReady,
+                scoped, scopeTeamsArg, statusParam, sourceParam, phoneMode, emailMode, codeLoginReady,
                 nocMode, nocTeamsArg, onlineMode, onlineThreshold,
                 loginFromDay, loginToDay, createdFromDay, createdToDay, dormantBefore, neverLoggedIn, nowIso, pr);
 
