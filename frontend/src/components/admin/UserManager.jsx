@@ -9,6 +9,7 @@ import AdminChangeHistory from './AdminChangeHistory.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
 import {
   Download, SlidersHorizontal, Users, UserCheck, Shield, UserX, Moon, Lock, LockOpen, X, Pencil, History, KeyRound, Trash2,
+  ArrowUp, ArrowDown, ChevronsUpDown, Wifi, Radio,
 } from 'lucide-react'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
@@ -30,9 +31,11 @@ import { PREFILL_PARAMS, formFromParams } from './bulkDeactivateModel.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
+import { buildSearchParams, hasActiveDirectoryFilter, nextSort, safeSort, SEARCH_FIELDS } from './usersDirectoryModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Card } from '@/components/shadcn/card'
@@ -170,15 +173,54 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
-  useUrlQuerySync({ g_q: q, g_role: fRole, g_org: fOrgRole, g_team: fTeam, g_dormant: fDormant })
+  // Dizin zenginleştirme süzgeçleri (2026-11-12): alan-bazlı arama, hesap durumu/kaynak, iletişim/OTP, 7/24, çevrimiçi,
+  // tarih aralığı, sıralama. Çevrimiçi/7-24 satır rozetleri sunucudan (online_ids/noc_ids — yalnız global admin).
+  const [fField, setFField] = useState(() => (SEARCH_FIELDS.includes(readUrlParam('g_field', 'all')) ? readUrlParam('g_field', 'all') : 'all'))
+  const [fStatus, setFStatus] = useState(() => readUrlParam('g_status', ''))
+  const [fSource, setFSource] = useState(() => readUrlParam('g_src', ''))
+  const [fPhone, setFPhone] = useState(() => readUrlParam('g_phone', ''))
+  const [fEmail, setFEmail] = useState(() => readUrlParam('g_email', ''))
+  const [fOtp, setFOtp] = useState(() => readUrlParam('g_otp', '') === '1')
+  const [fNoc, setFNoc] = useState(() => readUrlParam('g_noc', ''))
+  const [fOnline, setFOnline] = useState(() => readUrlParam('g_online', ''))
+  const [fLoginFrom, setFLoginFrom] = useState(() => readUrlParam('g_lf', ''))
+  const [fLoginTo, setFLoginTo] = useState(() => readUrlParam('g_lt', ''))
+  const [fCreatedFrom, setFCreatedFrom] = useState(() => readUrlParam('g_cf', ''))
+  const [fCreatedTo, setFCreatedTo] = useState(() => readUrlParam('g_ct', ''))
+  const [sortField, setSortField] = useState(() => safeSort(readUrlParam('g_sort', 'username')))
+  const [sortDir, setSortDir] = useState(() => (readUrlParam('g_dir', 'asc') === 'desc' ? 'desc' : 'asc'))
+  const [onlineIds, setOnlineIds] = useState(() => new Set())
+  const [nocIds, setNocIds] = useState(() => new Set())
+  // Tüm süzgeç durumu tek nesnede (model yardımcıları + yükleme/dışa aktarım/çipler için)
+  const filters = {
+    q, field: fField, role: fRole, orgRole: fOrgRole, team: fTeam, dormant: fDormant,
+    status: fStatus, source: fSource, phone: fPhone, email: fEmail, otp: fOtp, noc: fNoc, online: fOnline,
+    loginFrom: fLoginFrom, loginTo: fLoginTo, createdFrom: fCreatedFrom, createdTo: fCreatedTo, sort: sortField, dir: sortDir,
+  }
+  useUrlQuerySync({
+    g_q: q, g_field: fField === 'all' ? '' : fField, g_role: fRole, g_org: fOrgRole, g_team: fTeam, g_dormant: fDormant,
+    g_status: fStatus, g_src: fSource, g_phone: fPhone, g_email: fEmail, g_otp: fOtp ? '1' : '', g_noc: fNoc, g_online: fOnline,
+    g_lf: fLoginFrom, g_lt: fLoginTo, g_cf: fCreatedFrom, g_ct: fCreatedTo,
+    g_sort: sortField === 'username' ? '' : sortField, g_dir: sortDir === 'asc' ? '' : sortDir,
+  })
+  const setSort = (field) => { const n = nextSort({ sort: sortField, dir: sortDir }, field); setSortField(n.sort); setSortDir(n.dir) }
   // Proje standardı araç çubuğu (2026-09-20): arama kutusu + "Süzgeçler" açılır paneli (envanter ile aynı .invtb dağarcığı);
   // etkin süzgeç varsa panel açık başlar (derin bağlantıdan gelen kişi süzgeci görsün).
-  const filterActive = !!(fRole || fOrgRole || fTeam || fDormant)
-  const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_role', '') || readUrlParam('g_org', '') || readUrlParam('g_team', '') || readUrlParam('g_dormant', '')))
-  const clearFilters = () => { setQ(''); setFRole(''); setFOrgRole(''); setFTeam(''); setFDormant('') }
+  const filterActive = hasActiveDirectoryFilter(filters)
+  const [filtersOpen, setFiltersOpen] = useState(() => hasActiveDirectoryFilter({
+    role: readUrlParam('g_role', ''), orgRole: readUrlParam('g_org', ''), team: readUrlParam('g_team', ''), dormant: readUrlParam('g_dormant', ''),
+    status: readUrlParam('g_status', ''), source: readUrlParam('g_src', ''), phone: readUrlParam('g_phone', ''), email: readUrlParam('g_email', ''),
+    otp: readUrlParam('g_otp', '') === '1', noc: readUrlParam('g_noc', ''), online: readUrlParam('g_online', ''),
+    loginFrom: readUrlParam('g_lf', ''), loginTo: readUrlParam('g_lt', ''), createdFrom: readUrlParam('g_cf', ''), createdTo: readUrlParam('g_ct', ''),
+  }))
+  const clearFilters = () => {
+    setQ(''); setFField('all'); setFRole(''); setFOrgRole(''); setFTeam(''); setFDormant('')
+    setFStatus(''); setFSource(''); setFPhone(''); setFEmail(''); setFOtp(false); setFNoc(''); setFOnline('')
+    setFLoginFrom(''); setFLoginTo(''); setFCreatedFrom(''); setFCreatedTo(''); setSortField('username'); setSortDir('asc')
+  }
   // Sayfalama standardı (2026-09-26): süzgeçler 300 ms debounce ile "uygulanır"; uygulanan süzgeç değişince sayfa 1
   // (değer karşılaştırmalı). Sayfa/boyut değişimi beklemeden yükler. Panel ön ayarı (25), API 0-tabanlı.
-  const filterKey = JSON.stringify([q.trim(), fRole, fOrgRole, fTeam, fDormant])
+  const filterKey = JSON.stringify(buildSearchParams(filters))
   const [appliedKey, setAppliedKey] = useState(filterKey)
   useEffect(() => { const tmr = setTimeout(() => setAppliedKey(filterKey), 300); return () => clearTimeout(tmr) }, [filterKey])
   const sp = useServerPagination({ listKey: 'admin-users', preset: 'panel', resetDeps: [appliedKey], apiBase: 0 })
@@ -211,15 +253,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     const my = ++loadSeq.current
     setLoading(true)
     try {
-      const res = await api.admin.searchUsers({
-        page: p, size: s, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
-        dormantDays: fDormant && fDormant !== 'never' ? Number(fDormant) : '',
-        neverLoggedIn: fDormant === 'never',
-      })
+      const res = await api.admin.searchUsers({ page: p, size: s, ...buildSearchParams(filters) })
       if (my !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
         setUsers(res.data); sp.setTotal(res.total ?? 0)
         setActiveAdminCount(res.active_admin_count ?? 0)
+        // Çevrimiçi / 7/24 rozet kümeleri (yalnız global admin sunucudan alır; yoksa boş → rozet çizilmez)
+        setOnlineIds(new Set(res.online_ids || []))
+        setNocIds(new Set(res.noc_ids || []))
         // Sayfa değişince görünmeyen seçim kalmasın (yanlışlıkla toplu işlem görünmeyene uygulanmasın).
         setSelected(prev => new Set([...prev].filter(id => (res.data || []).some(u => u.id === id))))
       }
@@ -271,24 +312,22 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   /** CSV: süzgeçli liste, TÜM sayfalar (200'lük dilimlerle). Ekranda sayfa sayfa gezmeden dışa liste. */
   async function exportCsv() {
+    const base = buildSearchParams(filters)   // ekrandaki süzgeç + sıralama; tüm sayfalar (200'lük dilim)
     const rows = []
     for (let p = 0; p < 50; p++) {
-      const res = await api.admin.searchUsers({
-        page: p, size: 200, q: q.trim(), systemRole: fRole, orgRole: fOrgRole, teamId: fTeam,
-        dormantDays: fDormant && fDormant !== 'never' ? Number(fDormant) : '', neverLoggedIn: fDormant === 'never',
-      })
+      const res = await api.admin.searchUsers({ page: p, size: 200, ...base })
       if (!res?.success) break
       for (const u of res.data || []) {
         const tids = u.team_ids ?? u.teamIds ?? (u.team_id != null ? [u.team_id] : [])
-        rows.push([u.username, u.display_name, u.email, u.employee_id, u.system_role, u.org_role,
+        rows.push([u.username, u.display_name, u.email, u.phone, u.employee_id, u.system_role, u.org_role,
           tids.map(id => teamMap[id] || id).join(' | '), u.active ? t('usr.active') : t('usr.inactive'),
-          u.auth_source, u.last_login_at || '', u.title, u.department])
+          u.auth_source, u.last_login_at || '', u.created_at || '', u.title, u.department])
       }
       if ((res.page ?? p) + 1 >= (res.total_pages ?? 0)) break
     }
     downloadCsv(stampedName('kullanicilar'), toCsv(
-      [t('usr.formUsername'), t('usr.formDisplay'), t('usr.colEmail'), t('usr.formEmployeeId'), t('usr.colRole'), t('usr.colOrgRole'),
-       t('usr.colTeam'), t('usr.colActive'), t('usr.authSourceTitle'), t('usr.colLastLogin'), t('usr.colTitle'), t('usr.colDept')], rows))
+      [t('usr.formUsername'), t('usr.formDisplay'), t('usr.colEmail'), t('usr.colPhone'), t('usr.formEmployeeId'), t('usr.colRole'), t('usr.colOrgRole'),
+       t('usr.colTeam'), t('usr.colActive'), t('usr.authSourceTitle'), t('usr.colLastLogin'), t('usr.colCreated'), t('usr.colTitle'), t('usr.colDept')], rows))
     toast.success(t('usr.exportDone', rows.length))
   }
 
@@ -401,6 +440,19 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         {u.active ? t('usr.active') : t('usr.inactive')}
       </Badge>
       {u.permanent_lock && lockBadge('perm', t('usr.permLocked'), true)}
+      {/* Çevrimiçi / 7/24 rozetleri — sunucudan (yalnız global admin alır; aksi hâlde kümeler boş) */}
+      {onlineIds.has(u.id) && (
+        <Badge variant="outline" data-online="" title={t('usr.onlineTitle')}
+          className="gap-1 rounded-full border-success/30 bg-success/10 font-medium text-success">
+          <Wifi size={11} aria-hidden="true" /> {t('usr.onlineBadge')}
+        </Badge>
+      )}
+      {nocIds.has(u.id) && (
+        <Badge variant="outline" data-noc="" title={t('usr.nocTitle')}
+          className="gap-1 rounded-full border-primary/30 bg-primary/10 font-medium text-primary">
+          <Radio size={11} aria-hidden="true" /> {t('usr.nocBadge')}
+        </Badge>
+      )}
     </span>
   )
   const identity = (u, { titleButton = false } = {}) => (
@@ -464,18 +516,43 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   // ── Etkin süzgeç çipleri ──
   const dormantLabel = { 30: t('usr.dormant30'), 90: t('usr.dormant90'), 180: t('usr.dormant180'), never: t('usr.dormantNever') }
+  const triLabel = (v) => (v === 'yes' ? t('usr.triYes') : v === 'no' ? t('usr.triNo') : v)
+  const triOpts = [{ value: '', label: t('usr.triAny') }, { value: 'yes', label: t('usr.triYes') }, { value: 'no', label: t('usr.triNo') }]
   const chips = [
     q.trim() && { key: 'q', label: t('usr.chipSearch', q.trim()), clear: () => setQ('') },
+    fField !== 'all' && { key: 'field', label: `${t('usr.fieldChip')}: ${t('usr.field.' + fField)}`, clear: () => setFField('all') },
     fRole && { key: 'role', label: `${t('usr.colRole')}: ${fRole}`, clear: () => setFRole('') },
     fOrgRole && { key: 'org', label: `${t('usr.colOrgRole')}: ${t('usr.orgRoleVal.' + fOrgRole)}`, clear: () => setFOrgRole('') },
     fTeam && { key: 'team', label: `${t('usr.colTeam')}: ${teamMap[fTeam] || teamMap[Number(fTeam)] || fTeam}`, clear: () => setFTeam('') },
     fDormant && { key: 'dormant', label: dormantLabel[fDormant] || fDormant, clear: () => setFDormant('') },
+    fStatus && { key: 'status', label: `${t('usr.statusFilter')}: ${t('usr.status.' + fStatus)}`, clear: () => setFStatus('') },
+    fSource && { key: 'source', label: `${t('usr.authSourceTitle')}: ${fSource}`, clear: () => setFSource('') },
+    fPhone && { key: 'phone', label: `${t('usr.colPhone')}: ${triLabel(fPhone)}`, clear: () => setFPhone('') },
+    fEmail && { key: 'email', label: `${t('usr.colEmail')}: ${triLabel(fEmail)}`, clear: () => setFEmail('') },
+    fOtp && { key: 'otp', label: t('usr.otpChip'), clear: () => setFOtp(false) },
+    fNoc && { key: 'noc', label: `${t('usr.nocFilter')}: ${triLabel(fNoc)}`, clear: () => setFNoc('') },
+    fOnline && { key: 'online', label: `${t('usr.onlineFilter')}: ${triLabel(fOnline)}`, clear: () => setFOnline('') },
+    (fLoginFrom || fLoginTo) && { key: 'loginrange', label: `${t('usr.colLastLogin')}: ${fLoginFrom || '…'} – ${fLoginTo || '…'}`, clear: () => { setFLoginFrom(''); setFLoginTo('') } },
+    (fCreatedFrom || fCreatedTo) && { key: 'createdrange', label: `${t('usr.colCreated')}: ${fCreatedFrom || '…'} – ${fCreatedTo || '…'}`, clear: () => { setFCreatedFrom(''); setFCreatedTo('') } },
   ].filter(Boolean)
 
   const firstLoad = loading && users.length === 0
   const empty = !loading && users.length === 0
   const TH_CLS = 'h-10 px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase'
   const STICKY = 'sticky right-0 z-[1] bg-card shadow-[-10px_0_12px_-12px_rgba(0,0,0,.35)] group-hover:bg-muted group-data-[state=selected]:bg-muted'
+  // Sıralanabilir başlık (2026-11-12): tıklama yönü döndürür; etkin alan ok ile; a11y için aria-sort.
+  const sortHead = (field, label, extraCls) => (
+    <TableHead className={cn(TH_CLS, 'p-0', extraCls)} aria-sort={sortField === field ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setSort(field)} data-sort={field}
+        aria-label={t('usr.sortBy', label)}
+        className="h-10 w-full justify-start gap-1 rounded-none px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground">
+        {label}
+        {sortField === field
+          ? (sortDir === 'asc' ? <ArrowUp size={12} aria-hidden="true" /> : <ArrowDown size={12} aria-hidden="true" />)
+          : <ChevronsUpDown size={12} aria-hidden="true" className="opacity-40" />}
+      </Button>
+    </TableHead>
+  )
 
   return (
     <section data-testid="users-tab" className="flex min-w-0 flex-col gap-4">
@@ -510,7 +587,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       <div className="flex flex-col gap-2" data-testid="um-toolbar">
         <div className="flex flex-wrap items-center gap-2">
           <ToolbarSearch value={q} onChange={setQ} placeholder={t('usr.searchPlaceholder')}
-            ariaLabel={t('usr.searchLabel')} clearLabel={t('inv.filterClear')} className="w-full max-w-none sm:w-auto sm:max-w-[420px]" />
+            ariaLabel={t('usr.searchLabel')} clearLabel={t('inv.filterClear')} className="w-full max-w-none sm:w-auto sm:max-w-[360px]" />
+          {/* Alan-bazlı arama (2026-11-12): aramayı tek alana daralt (ad / kullanıcı adı / e-posta / telefon / sicil) */}
+          <span className="w-full sm:w-auto sm:min-w-[150px]" data-slot="um-search-field">
+            <SearchableSelect value={fField} onChange={setFField} ariaLabel={t('usr.fieldLabel')}
+              options={SEARCH_FIELDS.map((f) => ({ value: f, label: t('usr.field.' + f) }))} />
+          </span>
           <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="h-8" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} aria-hidden="true" /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
           </Button>
@@ -543,10 +625,52 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                   options={[{ value: '', label: t('usr.allTeams') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
               </FilterField>
             )}
-            <FilterField label={t('usr.colLastLogin')}>
-              <SearchableSelect value={fDormant} onChange={setFDormant} ariaLabel={t('usr.colLastLogin')}
+            <FilterField label={t('usr.activityFilter')}>
+              <SearchableSelect value={fDormant} onChange={setFDormant} ariaLabel={t('usr.activityFilter')}
                 options={[{ value: '', label: t('usr.dormantAll') }, { value: '30', label: t('usr.dormant30') }, { value: '90', label: t('usr.dormant90') },
                   { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} />
+            </FilterField>
+            {/* Dizin zenginleştirme süzgeçleri (2026-11-12) */}
+            <FilterField label={t('usr.statusFilter')}>
+              <SearchableSelect value={fStatus} onChange={setFStatus} ariaLabel={t('usr.statusFilter')}
+                options={[{ value: '', label: t('usr.statusAny') }, { value: 'active', label: t('usr.status.active') }, { value: 'passive', label: t('usr.status.passive') },
+                  { value: 'locked', label: t('usr.status.locked') }, { value: 'mustchange', label: t('usr.status.mustchange') }]} />
+            </FilterField>
+            <FilterField label={t('usr.authSourceTitle')}>
+              <SearchableSelect value={fSource} onChange={setFSource} ariaLabel={t('usr.authSourceTitle')}
+                options={[{ value: '', label: t('usr.sourceAny') }, { value: 'LOCAL', label: 'LOCAL' }, { value: 'LDAP', label: 'LDAP' }]} />
+            </FilterField>
+            <FilterField label={t('usr.colPhone')}>
+              <SearchableSelect value={fPhone} onChange={setFPhone} ariaLabel={t('usr.phoneFilter')} options={triOpts} />
+            </FilterField>
+            <FilterField label={t('usr.colEmail')}>
+              <SearchableSelect value={fEmail} onChange={setFEmail} ariaLabel={t('usr.emailFilter')} options={triOpts} />
+            </FilterField>
+            <FilterField label={t('usr.nocFilter')}>
+              <SearchableSelect value={fNoc} onChange={setFNoc} ariaLabel={t('usr.nocFilter')} options={triOpts} />
+            </FilterField>
+            <FilterField label={t('usr.onlineFilter')}>
+              <SearchableSelect value={fOnline} onChange={setFOnline} ariaLabel={t('usr.onlineFilter')} options={triOpts} />
+            </FilterField>
+            <FilterField label={t('usr.otpFilter')}>
+              <label className="flex h-9 items-center gap-2 text-sm">
+                <Checkbox checked={fOtp} onCheckedChange={(v) => setFOtp(!!v)} aria-label={t('usr.otpFilter')} data-slot="um-otp" />
+                {t('usr.otpReadyLabel')}
+              </label>
+            </FilterField>
+            <FilterField label={t('usr.loginRange')}>
+              <div className="flex items-center gap-1.5">
+                <Input type="date" value={fLoginFrom} max={fLoginTo || undefined} onChange={(e) => setFLoginFrom(e.target.value)} aria-label={t('usr.loginFrom')} className="h-9 min-w-0" data-slot="um-login-from" />
+                <span aria-hidden="true" className="text-xs text-muted-foreground">–</span>
+                <Input type="date" value={fLoginTo} min={fLoginFrom || undefined} onChange={(e) => setFLoginTo(e.target.value)} aria-label={t('usr.loginTo')} className="h-9 min-w-0" data-slot="um-login-to" />
+              </div>
+            </FilterField>
+            <FilterField label={t('usr.createdRange')}>
+              <div className="flex items-center gap-1.5">
+                <Input type="date" value={fCreatedFrom} max={fCreatedTo || undefined} onChange={(e) => setFCreatedFrom(e.target.value)} aria-label={t('usr.createdFrom')} className="h-9 min-w-0" data-slot="um-created-from" />
+                <span aria-hidden="true" className="text-xs text-muted-foreground">–</span>
+                <Input type="date" value={fCreatedTo} min={fCreatedFrom || undefined} onChange={(e) => setFCreatedTo(e.target.value)} aria-label={t('usr.createdTo')} className="h-9 min-w-0" data-slot="um-created-to" />
+              </div>
             </FilterField>
           </FilterPanel>
         )}
@@ -622,12 +746,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
                     <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('usr.selectAll')} />
                   </TableHead>
                 )}
-                <TableHead className={TH_CLS}>{t('usr.colUser')}</TableHead>
+                {sortHead('username', t('usr.colUser'))}
                 <TableHead className={cn(TH_CLS, 'hidden 2xl:table-cell')}>{t('usr.colEmail')}</TableHead>
-                <TableHead className={TH_CLS}>{t('usr.colRole')}</TableHead>
+                {sortHead('role', t('usr.colRole'))}
                 <TableHead className={cn(TH_CLS, 'hidden xl:table-cell')}>{t('usr.colTeam')}</TableHead>
-                <TableHead className={cn(TH_CLS, 'hidden xl:table-cell')}>{t('usr.colLastLogin')}</TableHead>
-                <TableHead className={TH_CLS}>{t('usr.colActive')}</TableHead>
+                {sortHead('lastLogin', t('usr.colLastLogin'), 'hidden xl:table-cell')}
+                {sortHead('status', t('usr.colActive'))}
                 <TableHead className={cn(TH_CLS, STICKY, 'w-px bg-muted text-right')}><span className="sr-only">{t('usr.colActions')}</span></TableHead>
               </TableRow>
             </TableHeader>

@@ -50,7 +50,11 @@ class AppUserScopeSearchQueryTest {
     }
 
     private List<String> names(Long teamId, List<Long> scope, String dormantBefore, boolean never) {
-        return repo.findFilteredInTeams(null, null, null, teamId, scope, dormantBefore, never, PageRequest.of(0, 50))
+        // findDirectory: kapsam yolu (scoped=true, scopeTeams=scope); diğer süzgeçler nötr; username ASC (kararlı sıra).
+        return repo.findDirectory(null, "all", null, null, teamId, true, scope,
+                        null, null, 0, 0, false, 0, List.of(-1L), 0, "",
+                        null, null, null, null, dormantBefore, never, "",
+                        PageRequest.of(0, 50, org.springframework.data.domain.Sort.by("username")))
                 .getContent().stream().map(AppUser::getUsername).toList();
     }
 

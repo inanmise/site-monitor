@@ -142,6 +142,17 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.noc.NocAlertFacts nocAlertFacts;
 
+    /**
+     * 7/24 operatör kümesi (2026-11-12, dizin zenginleştirme) — isteğe bağlı: Kullanıcılar dizininin "7/24 ekibi" süzgeci
+     * ile satır rozetleri için operatör takım id'leri. Dilimli/birim testte yokken NOC süzgeci "herhangi" davranır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocOperatorService nocOperatorService;
+
+    /** Çevrimiçi penceresi (2026-11-12) — Kullanıcılar dizini "çevrimiçi" süzgeci/rozeti; PresenceService ile aynı eşik. */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.session.active-window-seconds:120}")
+    private long directoryActiveWindowSeconds = 120;
+
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
 
@@ -3638,11 +3649,27 @@ public class AdminController {
             @RequestParam(defaultValue = "0")  int    page,
             @RequestParam(defaultValue = "20") int    size,
             @RequestParam(required = false)    String q,
+            @RequestParam(required = false)    String field,        // all|name|username|email|phone|employee (2026-11-12)
             @RequestParam(required = false)    String systemRole,
             @RequestParam(required = false)    String orgRole,
             @RequestParam(required = false)    Long   teamId,
             @RequestParam(required = false)    Integer dormantDays,
             @RequestParam(defaultValue = "false") boolean neverLoggedIn,
+            // Dizin zenginleştirme (2026-11-12): hesap durumu/kaynak, iletişim/OTP, 7/24, çevrimiçi, tarih aralığı, sıralama
+            @RequestParam(required = false)    String status,       // active|passive|locked|mustchange
+            @RequestParam(required = false)    String source,       // LOCAL|LDAP
+            @RequestParam(required = false)    String hasPhone,     // yes|no
+            @RequestParam(required = false)    String hasEmail,     // yes|no
+            // Ad kimlik-benzeri olmasın (OTel sorgu-gizleme kapısı "otp" içeren adı kimlik sanar); UI yine "OTP uygun"
+            @RequestParam(defaultValue = "false") boolean codeLoginReady,  // OTP/kod ile giriş uygun (aktif + kilitsiz + iletişim var)
+            @RequestParam(required = false)    String noc,          // yes|no (7/24 ekibi)
+            @RequestParam(required = false)    String online,       // yes|no (açık oturum)
+            @RequestParam(required = false)    String loginFrom,    // yyyy-MM-dd (son giriş)
+            @RequestParam(required = false)    String loginTo,
+            @RequestParam(required = false)    String createdFrom,  // yyyy-MM-dd (oluşturulma)
+            @RequestParam(required = false)    String createdTo,
+            @RequestParam(required = false)    String sort,         // username|lastLogin|created|role|status
+            @RequestParam(required = false)    String dir,          // asc|desc
             HttpSession session) {
         requirePerm(session, "users.list", "view");
         size = Math.min(Math.max(size, 1), 200);
@@ -3662,17 +3689,37 @@ public class AdminController {
                     "active_admin_count", userRepo.countBySystemRoleAndActiveTrue("ADMIN")));
         }
         String qParam = (q == null || q.isBlank()) ? null : "%" + q.trim().toLowerCase() + "%";
+        String fieldParam = directorySearchField(field);
         String roleParam    = (systemRole == null || systemRole.isBlank()) ? null : systemRole;
         String orgRoleParam = (orgRole == null || orgRole.isBlank()) ? null : orgRole;
         // Uyuyan hesap süzgeci (2026-09-20): N gündür girmeyen / hiç girmemiş.
         String dormantBefore = dormantDays != null && dormantDays > 0
                 ? ISO.format(Instant.now().minus(java.time.Duration.ofDays(dormantDays))) : null;
-        Page<AppUser> p = scopeTeams != null
-                ? userRepo.findFilteredInTeams(qParam, roleParam, orgRoleParam, effTeamId, scopeTeams, dormantBefore,
-                        neverLoggedIn, PageRequest.of(page, size))
-                : (dormantBefore == null && !neverLoggedIn)
-                ? userRepo.findFiltered(qParam, roleParam, orgRoleParam, effTeamId, PageRequest.of(page, size))
-                : userRepo.findFilteredDormant(qParam, roleParam, orgRoleParam, effTeamId, dormantBefore, neverLoggedIn, PageRequest.of(page, size));
+        // Dizin zenginleştirme parametreleri (2026-11-12)
+        String statusParam = directoryStatus(status);
+        String sourceParam = directorySource(source);
+        int phoneMode  = presenceMode(hasPhone);
+        int emailMode  = presenceMode(hasEmail);
+        int nocMode    = presenceMode(noc);
+        int onlineMode = presenceMode(online);
+        // Koleksiyon nöbetçileri — JPQL boş IN tuzağı: uygulanmıyorsa List.of(-1L) + bayrak.
+        boolean scoped = scopeTeams != null;
+        List<Long> scopeTeamsArg = scoped ? scopeTeams : List.of(-1L);
+        List<Long> nocTeamsArg = (nocMode != 0 && nocOperatorService != null)
+                ? sentinelIfEmpty(nocOperatorService.teamIds()) : List.of(-1L);
+        Instant now = Instant.now();
+        String nowIso = ISO.format(now);
+        String onlineThreshold = ISO.format(now.minusSeconds(Math.max(1L, directoryActiveWindowSeconds)));
+        String loginFromDay  = dayPrefix(loginFrom);
+        String loginToDay    = dayPrefix(loginTo);
+        String createdFromDay = dayPrefix(createdFrom);
+        String createdToDay   = dayPrefix(createdTo);
+
+        PageRequest pr = PageRequest.of(page, size, directorySort(sort, dir));
+        Page<AppUser> p = userRepo.findDirectory(qParam, fieldParam, roleParam, orgRoleParam, effTeamId,
+                scoped, scopeTeamsArg, statusParam, sourceParam, phoneMode, emailMode, codeLoginReady,
+                nocMode, nocTeamsArg, onlineMode, onlineThreshold,
+                loginFromDay, loginToDay, createdFromDay, createdToDay, dormantBefore, neverLoggedIn, nowIso, pr);
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("data", p.getContent());
@@ -3681,7 +3728,82 @@ public class AdminController {
         resp.put("total_pages", p.getTotalPages());
         // Sayfalamadan bağımsız "son aktif admin" guard'ı için toplam aktif admin sayısı
         resp.put("active_admin_count", userRepo.countBySystemRoleAndActiveTrue("ADMIN"));
+        // Çevrimiçi / 7/24 rozetleri: YALNIZ global admin (sayısal kimlik görüntüleyicisi) — opak kimlikli görüntüleyiciye
+        // (AUDIT, kapsamlı müdür) sayısal id listesi sızdırmadan satır rozeti; onlar süzgeci yine kullanabilir (sunucu tarafı).
+        if (isAdmin(session)) {
+            List<Long> onlineIds = new java.util.ArrayList<>();
+            List<Long> nocIds = new java.util.ArrayList<>();
+            for (AppUser u : p.getContent()) {
+                String sid = u.getActiveSessionId();
+                String ls = u.getLastSeenAt();
+                if (sid != null && !sid.startsWith("TERMINATED:") && ls != null && ls.compareTo(onlineThreshold) >= 0) onlineIds.add(u.getId());
+                if (nocOperatorService != null && nocOperatorService.isOperator(u.getId())) nocIds.add(u.getId());
+            }
+            resp.put("online_ids", onlineIds);
+            resp.put("noc_ids", nocIds);
+        }
         return ok(resp);
+    }
+
+    // ── Kullanıcılar dizini yardımcıları (2026-11-12) — saf, test edilebilir ──
+    private static final java.util.Set<String> DIR_FIELDS = java.util.Set.of("all", "name", "username", "email", "phone", "employee");
+    private static final java.util.Set<String> DIR_STATUS = java.util.Set.of("active", "passive", "locked", "mustchange");
+
+    /** Serbest-metin arama alanı — bilinmeyen → 'all' (mevcut davranış). */
+    private static String directorySearchField(String field) {
+        String f = field == null ? null : field.trim().toLowerCase();
+        return f != null && DIR_FIELDS.contains(f) ? f : "all";
+    }
+
+    /** Hesap durumu süzgeci — bilinmeyen/boş → null (atla). */
+    private static String directoryStatus(String status) {
+        String s = status == null ? null : status.trim().toLowerCase();
+        return s != null && DIR_STATUS.contains(s) ? s : null;
+    }
+
+    /** Kaynak süzgeci — LOCAL|LDAP; bilinmeyen/boş → null. */
+    private static String directorySource(String source) {
+        if (source == null || source.isBlank()) return null;
+        String s = source.trim().toUpperCase();
+        return ("LOCAL".equals(s) || "LDAP".equals(s)) ? s : null;
+    }
+
+    /** Üçlü kip: yes/1/true → 1 (var/evet/çevrimiçi) · no/0/false → 2 (yok/hayır/çevrimdışı) · diğer → 0 (herhangi). */
+    private static int presenceMode(String v) {
+        if (v == null) return 0;
+        return switch (v.trim().toLowerCase()) {
+            case "yes", "1", "true" -> 1;
+            case "no", "0", "false" -> 2;
+            default -> 0;
+        };
+    }
+
+    /** Tarih süzgeci GÜN öneki (yyyy-MM-dd) — zaman biçiminden bağımsız; boş/kısa → null. */
+    private static String dayPrefix(String v) {
+        if (v == null) return null;
+        String d = v.trim();
+        return d.length() >= 10 ? d.substring(0, 10) : null;
+    }
+
+    /** JPQL boş IN tuzağı: boş liste → nöbetçi [-1L]. */
+    private static List<Long> sentinelIfEmpty(List<Long> ids) {
+        return (ids == null || ids.isEmpty()) ? List.of(-1L) : ids;
+    }
+
+    /** Dizin sıralaması — Pageable Sort (sorguda ORDER BY yok); tarih alanlarında NULLS LAST, id ikincil (kararlı sayfalama). */
+    private static org.springframework.data.domain.Sort directorySort(String sort, String dir) {
+        String key = (sort == null || sort.isBlank()) ? "username" : sort.trim();
+        org.springframework.data.domain.Sort.Direction d =
+                "desc".equalsIgnoreCase(dir) ? org.springframework.data.domain.Sort.Direction.DESC
+                                             : org.springframework.data.domain.Sort.Direction.ASC;
+        org.springframework.data.domain.Sort.Order primary = switch (key) {
+            case "lastLogin" -> new org.springframework.data.domain.Sort.Order(d, "lastLoginAt").nullsLast();
+            case "created"   -> new org.springframework.data.domain.Sort.Order(d, "createdAt").nullsLast();
+            case "role"      -> new org.springframework.data.domain.Sort.Order(d, "systemRole");
+            case "status"    -> new org.springframework.data.domain.Sort.Order(d, "active");
+            default          -> new org.springframework.data.domain.Sort.Order(d, "username");
+        };
+        return org.springframework.data.domain.Sort.by(primary, org.springframework.data.domain.Sort.Order.asc("id"));
     }
 
     @PostMapping("/users")

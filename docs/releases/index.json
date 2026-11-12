@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T12:36:14Z",
+  "generatedAt": "2026-11-12T15:31:03Z",
   "repo": "inanmise/site-monitor",
-  "count": 816,
+  "count": 817,
   "releases": [
+    {
+      "version": "20.190.0",
+      "tag": "v20.190.0",
+      "releasedAt": "2026-11-12T15:30:52Z",
+      "commit": "7666659e08befd59fa05f25c5425bc5fc4c34227",
+      "prevVersion": "20.189.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "7666659e",
+          "subject": "OTP süzgeç parametresini codeLoginReady yap (OTel sorgu-gizleme kapısı)"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "cc74e9ae",
+          "subject": "kullanıcılar dizinine gelişmiş süzgeçler, alan-bazlı arama ve sıralama"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.189.0",
       "tag": "v20.189.0",

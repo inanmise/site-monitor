@@ -28,6 +28,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -3869,21 +3870,27 @@ class AdminControllerTest {
     // ── Users: uyuyan hesap süzgeci + toplu işlem (2026-09-20) ─────────────────
 
     @Test
-    @DisplayName("GET /users/search?dormantDays=90: uyuyan süzgeci ayrı sorguya gider, kesim ISO-UTC")
+    @DisplayName("GET /users/search?dormantDays=90: uyuyan süzgeci dizin sorgusuna gider (dormantBefore ISO-UTC, neverOnly)")
     void searchUsers_dormant() throws Exception {
-        when(userRepo.findFilteredDormant(any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
         when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
         mvc.perform(get("/api/admin/users/search").param("dormantDays", "90").session(authSession()))
                 .andExpect(status().isOk());
         ArgumentCaptor<String> cut = ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), cut.capture(), eq(false), any());
+        // dormantBefore (21. arg) ISO-UTC; neverOnly (22.) false; field 'all'; diğer yeni süzgeçler nötr (0/null/false)
+        org.mockito.Mockito.verify(userRepo).findDirectory(isNull(), eq("all"), isNull(), isNull(), isNull(),
+                anyBoolean(), any(), isNull(), isNull(), eq(0), eq(0), eq(false), eq(0), any(), eq(0), any(),
+                isNull(), isNull(), isNull(), isNull(), cut.capture(), eq(false), any(), any());
         assertThat(cut.getValue()).matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}");
         // hiç girmemiş
         mvc.perform(get("/api/admin/users/search").param("neverLoggedIn", "true").session(authSession()))
                 .andExpect(status().isOk());
-        org.mockito.Mockito.verify(userRepo).findFilteredDormant(isNull(), isNull(), isNull(), isNull(), isNull(), eq(true), any());
-        org.mockito.Mockito.verify(userRepo, never()).findFiltered(any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(userRepo).findDirectory(isNull(), eq("all"), isNull(), isNull(), isNull(),
+                anyBoolean(), any(), isNull(), isNull(), eq(0), eq(0), eq(false), eq(0), any(), eq(0), any(),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(true), any(), any());
     }
 
     @Test
@@ -3925,7 +3932,9 @@ class AdminControllerTest {
         u.setId(5L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(3L);
         Page<AppUser> pg = new PageImpl<>(List.of(u),
                 org.springframework.data.domain.PageRequest.of(0, 200), 1);
-        when(userRepo.findFiltered(any(), any(), any(), any(), any())).thenReturn(pg);
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any())).thenReturn(pg);
         when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(2L);
 
         mvc.perform(get("/api/admin/users/search")
@@ -3937,23 +3946,66 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.active_admin_count").value(2));
 
-        // q lowercased + %..%, role/orgRole/teamId aynen, size 200'e cap
-        org.mockito.Mockito.verify(userRepo).findFiltered(eq("%ali%"), eq("USER"), eq("PO"), eq(3L),
+        // q lowercased + %..%, field 'all', role/orgRole/teamId aynen, size 200'e cap
+        org.mockito.Mockito.verify(userRepo).findDirectory(eq("%ali%"), eq("all"), eq("USER"), eq("PO"), eq(3L),
+                anyBoolean(), any(), any(), any(), anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(),
                 org.mockito.ArgumentMatchers.argThat(p -> p.getPageSize() == 200));
     }
 
     @Test
     @DisplayName("GET /users/search: TEAM_ADMIN kendi takımına sabitli (client teamId yok sayılır)")
     void searchUsers_teamAdminForcedTeam() throws Exception {
-        when(userRepo.findFiltered(any(), any(), any(), any(), any()))
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
         when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
 
         mvc.perform(get("/api/admin/users/search").param("teamId", "99").session(teamAdminSession()))
                 .andExpect(status().isOk());
 
-        // client teamId=99 yok sayılır; oturum takımı (2) zorlanır; diğer filtreler null
-        org.mockito.Mockito.verify(userRepo).findFiltered(isNull(), isNull(), isNull(), eq(2L), any());
+        // client teamId=99 yok sayılır; oturum takımı (2) zorlanır; scoped=false (pinned); diğer filtreler null/nötr
+        org.mockito.Mockito.verify(userRepo).findDirectory(isNull(), eq("all"), isNull(), isNull(), eq(2L),
+                eq(false), any(), isNull(), isNull(), eq(0), eq(0), eq(false), eq(0), any(), eq(0), any(),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any(), any());
+    }
+
+    @Test
+    @DisplayName("GET /users/search: yeni dizin süzgeçleri repo'ya eşlenir (field/status/source/iletişim/OTP/NOC/çevrimiçi/tarih/sıralama) + online_ids rozeti (global admin)")
+    void searchUsers_directoryFiltersAndBadges() throws Exception {
+        AppUser on = new AppUser();
+        on.setId(7L); on.setUsername("nobetci"); on.setSystemRole("USER"); on.setTeamId(4L);
+        on.setActiveSessionId("sess-1"); on.setLastSeenAt("2099-01-01T00:00:00");   // her zaman eşik üstü → çevrimiçi
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(on), org.springframework.data.domain.PageRequest.of(0, 20), 1));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(get("/api/admin/users/search")
+                        .param("q", "No").param("field", "username")
+                        .param("status", "active").param("source", "LDAP")
+                        .param("hasPhone", "yes").param("hasEmail", "no")
+                        .param("codeLoginReady", "true").param("noc", "yes").param("online", "yes")
+                        .param("loginFrom", "2026-01-01").param("createdTo", "2026-12-31")
+                        .param("sort", "lastLogin").param("dir", "desc")
+                        .session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.online_ids[0]").value(7));   // global admin → çevrimiçi rozet id listesi
+
+        ArgumentCaptor<org.springframework.data.domain.Pageable> pc =
+                ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        // q→%no%, field=username, status=active, source=LDAP, phoneMode=1(var), emailMode=2(yok), otpReady=true,
+        // nocMode=1, onlineMode=1, loginFromDay=2026-01-01, createdToDay=2026-12-31; sıralama Pageable'da doğrulanır
+        org.mockito.Mockito.verify(userRepo).findDirectory(eq("%no%"), eq("username"), isNull(), isNull(), isNull(),
+                anyBoolean(), any(), eq("active"), eq("LDAP"), eq(1), eq(2), eq(true), eq(1), any(), eq(1), any(),
+                eq("2026-01-01"), isNull(), isNull(), eq("2026-12-31"), isNull(), eq(false), any(), pc.capture());
+        org.springframework.data.domain.Sort.Order primary = pc.getValue().getSort().getOrderFor("lastLoginAt");
+        assertThat(primary).isNotNull();
+        assertThat(primary.getDirection()).isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
+        assertThat(primary.getNullHandling()).isEqualTo(org.springframework.data.domain.Sort.NullHandling.NULLS_LAST);
+        assertThat(pc.getValue().getSort().getOrderFor("id")).isNotNull();   // id ikincil (kararlı sayfalama)
     }
 
     private MockHttpSession authSession() {
@@ -5003,24 +5055,32 @@ class AdminControllerTest {
     @Test
     @DisplayName("UIA-2: kapsamlı müdür (görüş {2, 3}) kullanıcı aramasında teamId=3 → 3'ün üyeleri; teamId yok → tüm görüş kapsamı; kapsam dışı 99 → boş, sorgu yok; birincil takımı OLMAYAN müdür de arar")
     void searchUsers_scopedAdminUsesViewScope() throws Exception {
-        when(userRepo.findFilteredInTeams(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
         MockHttpSession m = mudur(List.of(2L, 3L), List.of(2L, 3L));
 
+        // teamId=3 → scoped=true, scopeTeams={2,3}, teamId=3
         mvc.perform(get("/api/admin/users/search").param("teamId", "3").session(m)).andExpect(status().isOk());
-        verify(userRepo).findFilteredInTeams(isNull(), isNull(), isNull(), eq(3L), eq(List.of(2L, 3L)), isNull(), eq(false), any());
+        verify(userRepo).findDirectory(isNull(), eq("all"), isNull(), isNull(), eq(3L),
+                eq(true), eq(List.of(2L, 3L)), isNull(), isNull(), eq(0), eq(0), eq(false), eq(0), any(), eq(0), any(),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), any(), any());
 
         org.mockito.Mockito.clearInvocations(userRepo);
         m.removeAttribute("teamId");   // AD'den eşlenmemiş müdür: birincil takım yok
         mvc.perform(get("/api/admin/users/search").param("dormantDays", "30").session(m)).andExpect(status().isOk());
-        verify(userRepo).findFilteredInTeams(isNull(), isNull(), isNull(), isNull(), eq(List.of(2L, 3L)), any(String.class), eq(false), any());
+        verify(userRepo).findDirectory(isNull(), eq("all"), isNull(), isNull(), isNull(),
+                eq(true), eq(List.of(2L, 3L)), isNull(), isNull(), eq(0), eq(0), eq(false), eq(0), any(), eq(0), any(),
+                isNull(), isNull(), isNull(), isNull(), any(String.class), eq(false), any(), any());
 
         org.mockito.Mockito.clearInvocations(userRepo);
         mvc.perform(get("/api/admin/users/search").param("teamId", "99").session(m))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));
-        verify(userRepo, never()).findFilteredInTeams(any(), any(), any(), any(), any(), any(), anyBoolean(), any());
-        verify(userRepo, never()).findFiltered(any(), any(), any(), any(), any());
+        verify(userRepo, never()).findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any());
     }
 
     @Test

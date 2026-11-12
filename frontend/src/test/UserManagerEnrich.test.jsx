@@ -49,13 +49,44 @@ describe('UserManager — zenginleştirme', () => {
     render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
     await screen.findByText('Ali')
     fireEvent.click(screen.getByRole('button', { name: /Süzgeçler|Filters/ }))   // standart araç çubuğu: panel kapalı başlar (2026-09-20)
-    fireEvent.mouseDown(screen.getByLabelText(/Son giriş|Last login/))
+    // Ön-ayar etkinlik süzgeci (2026-11-12 dizin zenginleştirmesinde "Etkinlik (son giriş)" olarak adlandırıldı — tam tarih aralığından ayrı)
+    fireEvent.mouseDown(screen.getByLabelText(/Etkinlik|Activity/))
     fireEvent.mouseDown(await screen.findByText(/90\+ gündür|90\+ days/))
     await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ dormantDays: 90, neverLoggedIn: false })))
-    fireEvent.mouseDown(screen.getByLabelText(/Son giriş|Last login/))
+    fireEvent.mouseDown(screen.getByLabelText(/Etkinlik|Activity/))
     fireEvent.mouseDown(await screen.findByText(/Hiç girmemiş|Never logged in/))
     await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ dormantDays: '', neverLoggedIn: true })))
     await waitFor(() => expect(new URLSearchParams(window.location.search).get('g_dormant')).toBe('never'))
+  })
+
+  // ── Dizin zenginleştirme (2026-11-12): alan-bazlı arama, hesap durumu/çevrimiçi süzgeci, sıralama, rozetler ──
+  it('alan-bazlı arama + hesap durumu + çevrimiçi süzgeci + sıralama sunucuya eşlenir', async () => {
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
+    await screen.findByText('Ali')
+    // Arama alanını Sicil yap → field: 'employee'
+    fireEvent.mouseDown(screen.getByLabelText(/Arama alanı|Search field/))
+    fireEvent.mouseDown(await screen.findByText(/^Sicil$|^Employee ID$/))
+    await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ field: 'employee' })))
+    // Süzgeç panelini aç → hesap durumu Kilitli → status: 'locked'
+    fireEvent.click(screen.getByRole('button', { name: /Süzgeçler|Filters/ }))
+    fireEvent.mouseDown(screen.getByLabelText(/Hesap durumu|Account status/))
+    fireEvent.mouseDown(await screen.findByText(/^Kilitli$|^Locked$/))
+    await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'locked' })))
+    // Çevrimiçi süzgeci → online: 'yes'
+    fireEvent.mouseDown(screen.getByLabelText(/^Çevrimiçi$|^Online$/))
+    fireEvent.mouseDown(await screen.findByText(/^Var$|^Yes$/))
+    await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ online: 'yes' })))
+    // "Son giriş" başlığına tıkla → sort: 'lastLogin', dir: 'desc' (varsayılan yön)
+    fireEvent.click(screen.getByRole('button', { name: /Son giriş sütununa göre sırala|Sort by Last login/ }))
+    await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'lastLogin', dir: 'desc' })))
+  })
+
+  it('çevrimiçi / 7/24 rozetleri: online_ids / noc_ids yanıtından satıra çizilir', async () => {
+    api.admin.searchUsers.mockResolvedValue({ success: true, data: USERS, total: 2, page: 0, total_pages: 1, active_admin_count: 1, online_ids: [1], noc_ids: [2] })
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
+    await screen.findByText('Ali')
+    await waitFor(() => expect(document.querySelector('[data-online]')).not.toBeNull())   // id 1 çevrimiçi
+    expect(document.querySelector('[data-noc]')).not.toBeNull()                            // id 2 7/24
   })
 
   it('toplu işlem: sayfayı seç → çubuk → Pasif yap → onay → bulkUsers(deactivate, ids)', async () => {
