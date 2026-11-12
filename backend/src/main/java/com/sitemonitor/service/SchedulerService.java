@@ -7071,11 +7071,15 @@ public class SchedulerService {
      * yolunu kullanır. İki yerden çağrılır (klasik sweep + dağıtık apply) — tek kaynak, ikisi sapmaz.
      */
     private void applyBaselineScheduled(String type, Long monitorId, Long respMs, boolean measured, Map<String, Object> r) {
-        if (baselineService == null || monitorId == null || respMs == null || !measured) return;
+        if (baselineService == null || monitorId == null || !baselineService.enabledFor(type, monitorId)) return;
+        // Taban çizgisi AÇIK → SLOW builder öğrenen-bant dalını alır. Bu izlemede ölçülemediyse (hata / süre yok)
+        // CTX_EVALUATED YAZILMAZ → builder kalem üretmez (D-7): sabit eşiğin "up" sentetiği, hedef ölçülemezken açık
+        // bant alarmını SAHTE kapatmasın. Örnek de yalnız ÖLÇÜLEN değerde yazılır.
+        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
+        if (respMs == null || !measured) return;
         com.sitemonitor.service.baseline.BaselineMath.Verdict v =
                 baselineService.evaluateScheduled(type, monitorId, respMs, System.currentTimeMillis(), null);
-        if (v == null) return;   // bu izlemede taban çizgisi kapalı
-        r.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
+        if (v == null) { r.remove(com.sitemonitor.service.baseline.BaselineService.CTX_ON); return; }   // yarış: config kapandı → sabit eşik yolu
         r.put(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE, respMs);
         r.put(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED, v.evaluated());
         if (v.level() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL, v.level());

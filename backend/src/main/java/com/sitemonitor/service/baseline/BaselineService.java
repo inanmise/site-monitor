@@ -110,6 +110,11 @@ public class BaselineService {
         loadedAt = 0;
     }
 
+    /** Bu izlemede taban çizgisi AÇIK mı (30 sn bellek anlık görüntüsü) — ölçülemeyen kontrolde de SLOW builder'ı bant yoluna sokmak için. */
+    public boolean enabledFor(String type, long monitorId) {
+        return config(type, monitorId) != null;
+    }
+
     /** Taban çizgisi açık izleme var mı (bellek) — çağıran gereksiz işten kaçınır. */
     public boolean anyEnabled() {
         if (!globalEnabled() || configRepo == null) return false;

@@ -118,4 +118,27 @@ class BaselineHttpSweepTest {
         // CTX_ON yok + slowResponseEnabled kapalı → kalem yok (bugünkü davranış)
         assertThat(h.scheduler.httpSlowSweepItem(monitor(false, null), result(500, false, null, null))).isNull();
     }
+
+    @Test
+    void olculemeyen_kontrol_baseline_acik_sahte_up_uretmez() {
+        // D-7: taban çizgisi AÇIK ama kontrol ölçülemedi (hata) → CTX_ON set, CTX_EVALUATED YOK → builder kalem üretmez.
+        // Eskiden CTX_ON hiç set edilmiyordu → sabit eşik yolu (slowResponseEnabled kapalı) sentetik "up" üretip açık
+        // bant alarmını hedef ölçülemezken SAHTE kapatıyordu.
+        HttpMonitor m = monitor(false, null);   // slowResponseEnabled kapalı — kullanıcı bandı kullanıyor
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("status", "down");
+        r.put("error", "connect timeout");   // ölçülemedi (respMs yok)
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(h.scheduler, "baselineHttpScheduled", m, r);
+        assertThat(r.get(BaselineService.CTX_ON)).isEqualTo(true);              // bant AÇIK işaretlendi
+        assertThat(r.get(BaselineService.CTX_EVALUATED)).isNull();             // ölçülemedi → değerlendirme yok
+        assertThat(h.scheduler.httpSlowSweepItem(m, r)).isNull();              // KALEM YOK (sahte "up" / kapanış yok)
+
+        // Karşıt kanıt: ölçülen sağlıklı değer → CTX_ON + değerlendirildi → kalem var
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("status", "up");
+        ok.put("response_ms", 100L);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(h.scheduler, "baselineHttpScheduled", m, ok);
+        assertThat(ok.get(BaselineService.CTX_ON)).isEqualTo(true);
+        assertThat(ok.get(BaselineService.CTX_EVALUATED)).isNotNull();
+    }
 }
