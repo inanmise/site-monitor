@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-11T22:07:52Z",
+  "generatedAt": "2026-11-12T11:44:44Z",
   "repo": "inanmise/site-monitor",
-  "count": 814,
+  "count": 815,
   "releases": [
+    {
+      "version": "20.188.0",
+      "tag": "v20.188.0",
+      "releasedAt": "2026-11-12T11:44:37Z",
+      "commit": "475a3209c19c882ba7e2508f753a532b2d1f3499",
+      "prevVersion": "20.187.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "475a3209",
+          "subject": "inceleme bulguları — E2/E3 görünürlüğü, kurtarma ölçümü throttle, geçmiş-süzgeç ayrışması"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "faa81403",
+          "subject": "change-history 'En az kırık kaynak' etiketi (TR/EN)"
+        },
+        {
+          "type": "test",
+          "scope": "page",
+          "breaking": false,
+          "sha": "04307684",
+          "subject": "E1 kontrol-geçmişi sorunlu kaynak e2e (390/768/1280) + E2/E3 alarm detayı testi"
+        },
+        {
+          "type": "feat",
+          "scope": "page",
+          "breaking": false,
+          "sha": "434ec8f4",
+          "subject": "kırık kaynak detayı (geçmiş + alarm) + neden/ne yapmalı + teyit görünürlüğü + eşik formu (E1-E5 UI)"
+        },
+        {
+          "type": "feat",
+          "scope": "page",
+          "breaking": false,
+          "sha": "4743df97",
+          "subject": "E5 — alarm için en az kırık kaynak eşiği (minBrokenResources)"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "1dca656a",
+          "subject": "CRAWL-kaynaklı bütünlük alarmı sık taramada HEDEFLİ kurtarmayla oto-çözülür"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.187.0",
       "tag": "v20.187.0",
