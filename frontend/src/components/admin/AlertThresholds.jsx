@@ -12,6 +12,7 @@ import { useIsMobile } from '../../hooks/use-mobile.js'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { SettingsSection } from './SettingsControls.jsx'
 import ThresholdCard from './thresholds/ThresholdCard.jsx'
+import ThresholdMatrix from './thresholds/ThresholdMatrix.jsx'
 import ThresholdEditor from './thresholds/ThresholdEditor.jsx'
 import TierCoverage from './thresholds/TierCoverage.jsx'
 import { BUILTIN, TIERS, daysOf, tierOf } from './thresholds/thresholdModel.js'
@@ -199,6 +200,8 @@ export default function AlertThresholds() {
   } else {
     body = (
       <>
+        {/* Karşılaştırma matrisi (2026-11-12, #3): tier değerleri yan yana + etki — bir bakışta kıyas (düzenleme kartlarda) */}
+        <ThresholdMatrix rows={rows} impact={impact} />
         <TierCoverage overrides={overrides} counts={tierCounts} unclassified={unclassified}
           canEdit={editable} phone={phone} onAdd={openAdd} />
         <div data-slot="threshold-list" className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-3">
