@@ -4852,6 +4852,14 @@ export const EN = {
   // ── Team notification groups ─────────────────────────────────────────────
   'admin.tabNotifyGroups': 'Notification Groups',
   'ng.title':            'Team notification groups',
+  // Cleanup: usage / unused (2026-11-12)
+  'ng.kpi.total':        'Groups',
+  'ng.kpi.unused':       'Unused',
+  'ng.kpi.noEmails':     'No address',
+  'ng.kpi.inactive':     'Inactive',
+  'ng.usageCount':       '{0} monitor(s)',
+  'ng.unused':           'unused',
+  'ng.usageUnknown':     'Usage unknown (could not be read)',
   'ng.add':              'Add group',
   'ng.allTeams':         'All teams',
   'ng.howTitle':         'Who receives alert emails?',

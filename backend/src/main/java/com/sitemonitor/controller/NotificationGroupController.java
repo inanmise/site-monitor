@@ -265,6 +265,18 @@ public class NotificationGroupController {
     }
 
     /**
+     * TÜM grupların referans sayısı (grup id → adet) — "kullanılmayan grup" tespiti için (2026-11-12). Tek toplu
+     * hesap (tür başına GROUP BY); frontend yalnız kendi gördüğü gruplar için kullanır. Haritada olmayan grup = 0.
+     */
+    @GetMapping("/usage-counts")
+    public ResponseEntity<Map<String, Object>> usageCounts(HttpSession session) {
+        permissionService.require(session, PERM, "view");
+        Map<String, Object> counts = new java.util.LinkedHashMap<>();
+        usageService.usageCounts().forEach((id, n) -> counts.put(String.valueOf(id), n));
+        return ok(Map.of("counts", counts));
+    }
+
+    /**
      * Grubun TÜM referanslarını başka bir gruba taşır ({@code target_group_id} null → takım
      * varsayılanı). Silmeden önceki hazırlık adımı: kullanıcı 200 izlemeyi tek tek gezmesin.
      */

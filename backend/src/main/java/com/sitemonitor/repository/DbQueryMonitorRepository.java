@@ -54,6 +54,10 @@ public interface DbQueryMonitorRepository extends JpaRepository<DbQueryMonitor, 
     /** Bildirim grubu kullanım sorgusu (silme / taşıma ekranı) — tarama yolunda değil. */
     List<DbQueryMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
+    @Query("SELECT m.notificationGroupId, COUNT(m) FROM DbQueryMonitor m WHERE m.notificationGroupId IS NOT NULL GROUP BY m.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
     /**
      * Zamanlayıcının bir sonraki planlı çalışmayı yazması — hedefli (varlık kaydı eş zamanlı düzenlemeyi ezmesin). Kolon
      * varlıkta {@code updatable = false} — yerel SQL (2026-10-31 inceleme D4 / K6; {@code AlertEventRepository} emsali).

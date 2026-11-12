@@ -77,6 +77,10 @@ public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<ScriptedMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
+    @Query("SELECT m.notificationGroupId, COUNT(m) FROM ScriptedMonitor m WHERE m.notificationGroupId IS NOT NULL GROUP BY m.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
     /**
      * Anomali guard'ının OTOMATİK kapatması (CHECKS-4, 2026-10-22) — yalnız dört alan, yalnız hâlâ AÇIK satırda. Guard,
      * sweep'in başında okunmuş (dakikalarca eski) varlığı {@code save} ediyordu; {@code ScriptedMonitor}'da sürüm alanı

@@ -47,4 +47,8 @@ public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<DnsMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
+    @Query("SELECT m.notificationGroupId, COUNT(m) FROM DnsMonitor m WHERE m.notificationGroupId IS NOT NULL AND m.deletedAt IS NULL GROUP BY m.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
 }

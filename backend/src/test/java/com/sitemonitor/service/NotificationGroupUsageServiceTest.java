@@ -175,4 +175,18 @@ class NotificationGroupUsageServiceTest {
         verify(dnsRepo, never()).saveAll(any());
         verify(inventoryRepo, never()).saveAll(any());
     }
+
+    @Test
+    @DisplayName("usageCounts: tür başına GROUP BY sonuçları grup id'de TOPLANIR; haritada olmayan grup = kullanılmıyor (0)")
+    void usageCounts_sumsAcrossTypes() {
+        // Grup 5: 3 http; grup 7: 2 http + 1 port = 3; grup 9: 4 envanter. Stubsuz tür → Mockito boş liste döner.
+        when(httpRepo.countByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[]{5L, 3L}, new Object[]{7L, 2L}));
+        when(portRepo.countByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[]{7L, 1L}));
+        when(inventoryRepo.countByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[]{9L, 4L}));
+
+        var counts = service.usageCounts();
+
+        assertThat(counts).containsEntry(5L, 3).containsEntry(7L, 3).containsEntry(9L, 4);
+        assertThat(counts).doesNotContainKey(1L);   // referansı olmayan grup haritada yok → kullanılmıyor
+    }
 }

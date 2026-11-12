@@ -48,4 +48,8 @@ public interface HttpMonitorRepository extends JpaRepository<HttpMonitor, Long> 
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<HttpMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
+    @Query("SELECT m.notificationGroupId, COUNT(m) FROM HttpMonitor m WHERE m.notificationGroupId IS NOT NULL GROUP BY m.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
 }
