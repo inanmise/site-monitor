@@ -123,4 +123,27 @@ describe('SavedViewsMenu', () => {
     await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(1))
     expect(api.me.savePreferences.mock.calls[0][0].savedViews.http.map((v) => v.name)).toEqual(['A', 'Sorgu x'])
   })
+
+  // Durum-tabanlı listeler (2026-11-12, Kullanıcılar dizini): snapshot() URL yerine; onApply applyTabView yerine
+  it('snapshot/onApply: kaydet anlık görüntüyü (URL değil) saklar; uygula onApply çağırır (sm:apply-view yok)', async () => {
+    server.doc = { savedViews: { 'admin-users': [{ name: 'Kilitli', params: { status: 'locked' } }] } }
+    const applyCb = vi.fn()
+    render(<PrefsShell>
+      <SavedViewsMenu listKey="admin-users" snapshot={() => ({ status: 'locked', q: 'ali' })} onApply={applyCb} />
+    </PrefsShell>)
+    // uygula → onApply(params); sm:apply-view YAYILMAZ (URL gezinmesi yok)
+    pressMenuTrigger(await trigger())
+    fireEvent.click(menuItem(/Kilitli/))
+    expect(applyCb).toHaveBeenCalledWith({ status: 'locked' })
+    expect(applied).toEqual([])
+    // kaydet → snapshot() saklanır (URL'deki team=3&q=api DEĞİL)
+    pressMenuTrigger(await trigger())
+    fireEvent.click(menuItem(/Save this view|Bu görünümü kaydet/))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.change(dlg.querySelector('input'), { target: { value: 'Benim' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalled())
+    const saved = api.me.savePreferences.mock.calls.at(-1)[0].savedViews['admin-users']
+    expect(saved.at(-1)).toEqual({ name: 'Benim', params: { status: 'locked', q: 'ali' } })
+  })
 })

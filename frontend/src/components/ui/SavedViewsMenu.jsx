@@ -43,6 +43,10 @@ export default function SavedViewsMenu(props) {
 function SavedViewsMenuInner({
   prefs, listKey, tab = listKey, keys = [], prefix = null, exclude = [],
   size = 'sm', className, labelClassName, align = 'end',
+  // Durum-tabanlı listeler (2026-11-12, Kullanıcılar dizini): `snapshot()` geçerli görünümü URL yerine bileşen
+  // durumundan üretir; `onApply(params)` görünümü applyTabView (URL gezinmesi) yerine setter'larla uygular. İkisi de
+  // yoksa davranış DEĞİŞMEZ (mevcut tüketiciler URL + applyTabView ile çalışır).
+  snapshot = null, onApply = null,
 }) {
   const t = useT()
   const toast = useToast()
@@ -53,6 +57,7 @@ function SavedViewsMenuInner({
   const views = prefs.viewsFor(listKey)
 
   const capture = () => {
+    if (snapshot) return snapshot()
     flushUrlQuerySync()
     return pickParams(window.location.search, { keys, prefix, exclude })
   }
@@ -62,7 +67,8 @@ function SavedViewsMenuInner({
   }
 
   function apply(v) {
-    applyTabView(tab, v.params || {})
+    if (onApply) onApply(v.params || {})
+    else applyTabView(tab, v.params || {})
   }
 
   async function save() {
