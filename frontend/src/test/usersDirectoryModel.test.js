@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildSearchParams, hasActiveDirectoryFilter, nextSort, safeSort, EMPTY_FILTERS,
-  SEARCH_FIELDS, STATUS_VALUES, SORT_FIELDS,
+  SEARCH_FIELDS, STATUS_VALUES, SORT_FIELDS, viewFromFilters, filtersFromView,
 } from '../components/admin/usersDirectoryModel.js'
 
 describe('usersDirectoryModel — buildSearchParams', () => {
@@ -90,5 +90,45 @@ describe('usersDirectoryModel — yardımcılar', () => {
     expect(SEARCH_FIELDS).toEqual(['all', 'name', 'username', 'email', 'phone', 'employee'])
     expect(STATUS_VALUES).toEqual(['active', 'passive', 'locked', 'mustchange'])
     expect(SORT_FIELDS).toEqual(['username', 'lastLogin', 'created', 'role', 'status'])
+  })
+})
+
+describe('usersDirectoryModel — kayıtlı görünümler (B7)', () => {
+  const FULL = {
+    q: 'ali', field: 'email', role: 'USER', orgRole: 'PO', team: '3', dormant: '90',
+    status: 'locked', source: 'LDAP', phone: 'yes', email: 'no', otp: true, noc: 'yes', online: 'no',
+    loginFrom: '2026-01-01', loginTo: '2026-06-30', createdFrom: '2025-12-01', createdTo: '2026-12-31',
+    sort: 'lastLogin', dir: 'desc',
+  }
+
+  it('viewFromFilters: yalnız tanımlı süzgeç anahtarları, otp boolean; geçici alanlar (onlineIds) girmez', () => {
+    const snap = viewFromFilters({ ...FULL, onlineIds: new Set([1]), extra: 'x' })
+    expect(Object.keys(snap).sort()).toEqual(Object.keys(EMPTY_FILTERS).sort())
+    expect(snap).toMatchObject(FULL)
+    expect(snap.otp).toBe(true)
+    expect(snap.onlineIds).toBeUndefined()
+    expect(snap.extra).toBeUndefined()
+  })
+
+  it('filtersFromView: tam + doğrulanmış durum; eksik/bozuk değerler güvenli varsayılana döner', () => {
+    expect(filtersFromView(FULL)).toEqual(FULL)
+    // bozuk görünüm → güvenli varsayılan
+    const bad = filtersFromView({ field: 'xyz', status: 'nope', source: 'OTHER', phone: 'maybe', sort: 'hack', dir: 'sideways', otp: 1, q: 42 })
+    expect(bad.field).toBe('all')
+    expect(bad.status).toBe('')
+    expect(bad.source).toBe('')
+    expect(bad.phone).toBe('')
+    expect(bad.sort).toBe('username')
+    expect(bad.dir).toBe('asc')
+    expect(bad.otp).toBe(true)      // 1 → true
+    expect(bad.q).toBe('')          // sayı → boş string
+    // boş görünüm → EMPTY_FILTERS
+    expect(filtersFromView({})).toEqual(EMPTY_FILTERS)
+    expect(filtersFromView(null)).toEqual(EMPTY_FILTERS)
+  })
+
+  it('gidiş-dönüş: viewFromFilters → filtersFromView aynı süzgeç durumunu verir', () => {
+    expect(filtersFromView(viewFromFilters(FULL))).toEqual(FULL)
+    expect(filtersFromView(viewFromFilters(EMPTY_FILTERS))).toEqual(EMPTY_FILTERS)
   })
 })

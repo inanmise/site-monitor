@@ -67,3 +67,43 @@ export const EMPTY_FILTERS = {
   status: '', source: '', phone: '', email: '', otp: false, noc: '', online: '',
   loginFrom: '', loginTo: '', createdFrom: '', createdTo: '', sort: 'username', dir: 'asc',
 }
+
+// ── Kayıtlı görünümler (2026-11-12, B7) — görünüm = süzgeç durumunun kararlı anlık görüntüsü (string/bool); SavedViewsMenu
+//    bunu kişisel tercihlerde (savedViews.admin-users) saklar ve onApply ile geri yükler. Geçici durum (onlineIds vb.) girmez.
+const VIEW_KEYS = Object.keys(EMPTY_FILTERS)
+
+/** Geçerli süzgeç durumundan saklanabilir görünüm anlık görüntüsü (yalnız tanımlı süzgeç anahtarları). */
+export function viewFromFilters(f = {}) {
+  const out = {}
+  for (const k of VIEW_KEYS) out[k] = k === 'otp' ? !!f[k] : (f[k] ?? '')
+  return out
+}
+
+/** Saklanan görünüm → tam, DOĞRULANMIŞ süzgeç durumu (eksik/bozuk değerler güvenli varsayılana döner; bilinmeyen anahtar atlanır). */
+export function filtersFromView(v = {}) {
+  const s = v && typeof v === 'object' ? v : {}
+  const tri = (x) => (TRISTATE_VALUES.includes(x) ? x : '')
+  const str = (x) => (typeof x === 'string' ? x : '')
+  return {
+    ...EMPTY_FILTERS,
+    q: str(s.q),
+    field: SEARCH_FIELDS.includes(s.field) ? s.field : 'all',
+    role: str(s.role),
+    orgRole: str(s.orgRole),
+    team: str(s.team),
+    dormant: str(s.dormant),
+    status: STATUS_VALUES.includes(s.status) ? s.status : '',
+    source: SOURCE_VALUES.includes(s.source) ? s.source : '',
+    phone: tri(s.phone),
+    email: tri(s.email),
+    otp: !!s.otp,
+    noc: tri(s.noc),
+    online: tri(s.online),
+    loginFrom: str(s.loginFrom),
+    loginTo: str(s.loginTo),
+    createdFrom: str(s.createdFrom),
+    createdTo: str(s.createdTo),
+    sort: safeSort(s.sort),
+    dir: s.dir === 'desc' ? 'desc' : 'asc',
+  }
+}

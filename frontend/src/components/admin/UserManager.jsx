@@ -31,7 +31,8 @@ import { PREFILL_PARAMS, formFromParams } from './bulkDeactivateModel.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
-import { buildSearchParams, hasActiveDirectoryFilter, nextSort, safeSort, SEARCH_FIELDS } from './usersDirectoryModel.js'
+import { buildSearchParams, hasActiveDirectoryFilter, nextSort, safeSort, SEARCH_FIELDS, viewFromFilters, filtersFromView } from './usersDirectoryModel.js'
+import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -217,6 +218,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     setQ(''); setFField('all'); setFRole(''); setFOrgRole(''); setFTeam(''); setFDormant('')
     setFStatus(''); setFSource(''); setFPhone(''); setFEmail(''); setFOtp(false); setFNoc(''); setFOnline('')
     setFLoginFrom(''); setFLoginTo(''); setFCreatedFrom(''); setFCreatedTo(''); setSortField('username'); setSortDir('asc')
+  }
+  // Kayıtlı görünümü uygula (B7): saklanan anlık görüntüden tüm süzgeç durumunu doldur (doğrulanmış; URL eşitlemesi + yükleme otomatik)
+  const applyView = (view) => {
+    const f = filtersFromView(view)
+    setQ(f.q); setFField(f.field); setFRole(f.role); setFOrgRole(f.orgRole); setFTeam(f.team); setFDormant(f.dormant)
+    setFStatus(f.status); setFSource(f.source); setFPhone(f.phone); setFEmail(f.email); setFOtp(f.otp); setFNoc(f.noc); setFOnline(f.online)
+    setFLoginFrom(f.loginFrom); setFLoginTo(f.loginTo); setFCreatedFrom(f.createdFrom); setFCreatedTo(f.createdTo)
+    setSortField(f.sort); setSortDir(f.dir)
   }
   // Sayfalama standardı (2026-09-26): süzgeçler 300 ms debounce ile "uygulanır"; uygulanan süzgeç değişince sayfa 1
   // (değer karşılaştırmalı). Sayfa/boyut değişimi beklemeden yükler. Panel ön ayarı (25), API 0-tabanlı.
@@ -596,6 +605,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="h-8" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} aria-hidden="true" /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
           </Button>
+          {/* Kayıtlı görünümler (B7, 2026-11-12): geçerli süzgeç+sıralama anlık görüntüsünü kişisel tercihlere kaydet / uygula */}
+          <SavedViewsMenu listKey="admin-users" snapshot={() => viewFromFilters(filters)} onApply={applyView}
+            size="sm" className="h-8" labelClassName="hidden sm:inline" />
           <span className="text-[0.84em] whitespace-nowrap text-muted-foreground" aria-live="polite">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
         </div>
         {chips.length > 0 && (
