@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T19:14:13Z",
+  "generatedAt": "2026-11-12T23:26:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 820,
+  "count": 821,
   "releases": [
+    {
+      "version": "20.194.0",
+      "tag": "v20.194.0",
+      "releasedAt": "2026-11-12T23:26:04Z",
+      "commit": "c802c39968bf100b6b6ccc1f971b41d984518343",
+      "prevVersion": "20.193.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "checks",
+          "breaking": false,
+          "sha": "c802c399",
+          "subject": "sonuç birikimi karakter sayacı kuyruğa eklemeden önce artar"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "96f9e5bd",
+          "subject": "bildirim gruplarına kullanım sayısı + temizlik KPI'ları"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "17ea1141",
+          "subject": "eşiklere katman karşılaştırma matrisi + etki"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.193.0",
       "tag": "v20.193.0",

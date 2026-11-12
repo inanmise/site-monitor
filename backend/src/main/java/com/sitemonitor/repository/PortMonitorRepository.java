@@ -63,4 +63,8 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<PortMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
+    @Query("SELECT m.notificationGroupId, COUNT(m) FROM PortMonitor m WHERE m.notificationGroupId IS NOT NULL AND m.deletedAt IS NULL GROUP BY m.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
 }

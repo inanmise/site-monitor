@@ -111,6 +111,37 @@ public class NotificationGroupUsageService {
     }
 
     /**
+     * TÜM gruplar için referans sayısı (grup id → adet) — "kullanılmayan grup" tespiti ve satır rozeti (2026-11-12).
+     * Türe göre 11 TOPLU GROUP BY sorgusu; grup başına sorgu YOK (liste 100+ grup olabilir). Port/DNS'te silinmiş
+     * standalone satır sorguda dışlanır (usage() ile aynı kural). Haritada OLMAYAN grup = 0 referans (kullanılmıyor).
+     */
+    public Map<Long, Integer> usageCounts() {
+        Map<Long, Integer> out = new LinkedHashMap<>();
+        accumulate(out, httpRepo.countByNotificationGroup());
+        accumulate(out, keywordRepo.countByNotificationGroup());
+        accumulate(out, pingRepo.countByNotificationGroup());
+        accumulate(out, portRepo.countByNotificationGroup());
+        accumulate(out, dnsRepo.countByNotificationGroup());
+        accumulate(out, domainRepo.countByNotificationGroup());
+        accumulate(out, pageRepo.countByNotificationGroup());
+        accumulate(out, pageSpeedRepo.countByNotificationGroup());
+        accumulate(out, scriptedRepo.countByNotificationGroup());
+        if (dbQueryRepo != null) accumulate(out, dbQueryRepo.countByNotificationGroup());
+        accumulate(out, inventoryRepo.countByNotificationGroup());
+        return out;
+    }
+
+    private static void accumulate(Map<Long, Integer> out, List<Object[]> rows) {
+        if (rows == null) return;
+        for (Object[] r : rows) {
+            if (r == null || r[0] == null) continue;
+            Long gid = ((Number) r[0]).longValue();
+            int n = r[1] == null ? 0 : ((Number) r[1]).intValue();
+            out.merge(gid, n, Integer::sum);
+        }
+    }
+
+    /**
      * Grubun TÜM referanslarını başka bir gruba (ya da {@code null} = takım varsayılanı) taşır.
      *
      * <p>Tek işlem: yarım kalan bir taşıma, izlemelerin bir kısmını eski gruba bırakıp diğerlerini

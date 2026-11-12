@@ -1483,6 +1483,8 @@ export const api = {
     makeDefault: (id) => request(`/notification-groups/${id}/make-default`, { method: 'POST' }),
     /** Grup nerede kullaniliyor — silme onayindan ONCE gosterilen ozet. */
     usage: (id) => request(`/notification-groups/${id}/usage`),
+    /** TUM gruplarin referans sayisi (grup id -> adet) — kullanilmayan grup tespiti (2026-11-12). */
+    usageCounts: () => request('/notification-groups/usage-counts'),
     /** Degisiklik gecmisi (kim/ne zaman/ne degisti) — SILINMIS gruplar dahil. Kaynak audit_log;
      *  denetim uclarindan ayri, cunku bu ekran notification.groups yetkisiyle acilir. */
     history: (groupId, { page = 0, size = 25 } = {}) => {   // sayfalı (2026-09-20)

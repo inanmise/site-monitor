@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useId } from 'react'
-import { Users, Star, Mail, Plus, Trash2, Pencil, History, CircleAlert } from 'lucide-react'
+import { Users, Star, Mail, Plus, Trash2, Pencil, History, CircleAlert, BellOff, MailX } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -15,6 +15,8 @@ import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
+import MonitorStatsBar from '../MonitorStatsBar.jsx'
+import { usageOf, filterGroups, groupKpis } from './notifyGroupCleanupModel.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { Button } from '@/components/shadcn/button'
@@ -48,6 +50,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const { showConfirm } = useDialog()
 
   const [groups, setGroups] = useState([])
+  // Kullanım sayıları (grup id → referans adedi) — null = henüz/okunamadı (rozet "—"; bilinmeyen ≠ kullanılmıyor).
+  const [usageCounts, setUsageCounts] = useState(null)
   const [writableTeamIds, setWritableTeamIds] = useState([])
   const [teamEmails, setTeamEmails] = useState({})
   const [loading, setLoading] = useState(true)
@@ -58,7 +62,9 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))   // URL'de (g_team)
-  useUrlQuerySync({ g_team: fTeam })
+  // Durum süzgeci (KPI kartından): all | unused | noEmails | inactive (2026-11-12 temizlik)
+  const [fStatus, setFStatus] = useState(() => readUrlParam('g_gstatus', 'all'))
+  useUrlQuerySync({ g_team: fTeam, g_gstatus: fStatus === 'all' ? '' : fStatus })
   // { group, usage } — silme 409 dondugunde ya da kullanici kullanimi merak ettiginde
   const [usageModal, setUsageModal] = useState(null)
   const [moveTarget, setMoveTarget] = useState('')
@@ -81,8 +87,17 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
   // Okunamayan liste "henüz grup yok" / "uyarılar kimseye gitmeyebilir" gibi görünmesin: `{success:false}` ve ağ hatası
   // (request() throw eder) hata bloğu + Tekrar dene çizer.
+  // Kullanım sayıları (kullanılmayan grup tespiti) — en iyi çaba; okunamazsa null kalır (rozet "—", bilinmeyen ≠ kullanılmıyor).
+  async function loadUsageCounts() {
+    try {
+      const r = await api.notificationGroups.usageCounts?.()
+      setUsageCounts(r?.success ? (r.data?.counts || {}) : null)
+    } catch { setUsageCounts(null) }
+  }
+
   async function load() {
     setLoading(true)
+    loadUsageCounts()
     try {
       const res = await api.notificationGroups.list()
       if (res?.success) {
@@ -126,10 +141,21 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     setHistOpen(true)
   }
 
-  const visible = useMemo(
-    () => (fTeam ? groups.filter(g => String(g.team_id) === String(fTeam)) : groups),
-    [groups, fTeam],
-  )
+  const visible = useMemo(() => {
+    const byTeam = fTeam ? groups.filter(g => String(g.team_id) === String(fTeam)) : groups
+    return filterGroups(byTeam, fStatus, usageCounts)
+  }, [groups, fTeam, fStatus, usageCounts])
+
+  // KPI sayımları takım süzgecinden SONRA (gösterilen kümeye göre), durum süzgecinden ÖNCE (kartlar o kümeyi süzer).
+  const kpiGroups = useMemo(() => (fTeam ? groups.filter(g => String(g.team_id) === String(fTeam)) : groups), [groups, fTeam])
+  const kpis = useMemo(() => groupKpis(kpiGroups, usageCounts), [kpiGroups, usageCounts])
+  const statItems = [
+    { key: 'total',    Icon: Mail,    label: t('ng.kpi.total'),    value: kpis.total,             cls: 'total' },
+    { key: 'unused',   Icon: BellOff, label: t('ng.kpi.unused'),   value: kpis.unused ?? '—',     cls: 'warning' },
+    { key: 'noEmails', Icon: MailX,   label: t('ng.kpi.noEmails'), value: kpis.noEmails,          cls: 'warning' },
+    { key: 'inactive', Icon: Trash2,  label: t('ng.kpi.inactive'), value: kpis.inactive,          cls: 'paused' },
+  ]
+  const onKpi = (k) => setFStatus((cur) => (k === 'total' ? 'all' : cur === k ? 'all' : k))
 
   /** Grubu olmayan takımlar — dürüst boş durum satırı bunlar için çizilir. */
   const teamsWithoutGroup = useMemo(() => {
@@ -266,7 +292,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
   const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
   return (
-    <section className="mb-8 flex min-w-0 flex-col gap-4">
+    <section data-slot="notify-groups" className="mb-8 flex min-w-0 flex-col gap-4">
       {/* Başlık + eylemler — telefonda alt alta */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
@@ -295,6 +321,11 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           )}
         </div>
       </div>
+
+      {/* Temizlik KPI'ları (2026-11-12): kullanılmayan / adressiz / pasif — tıklanınca listeyi süzer */}
+      {!loading && !loadError && kpiGroups.length > 0 && (
+        <MonitorStatsBar dense items={statItems} activeFilter={fStatus === 'all' ? 'total' : fStatus} onStatClick={onKpi} className="mb-0" />
+      )}
 
       {!loading && !loadError && teamsAtRisk.length > 0 && (
         <AlertBanner tone="warning" title={t('ng.riskTitle')} className="mb-0">
@@ -343,6 +374,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                           <ToneBadge tone="success"><Star aria-hidden="true" /> {t('ng.default')}</ToneBadge>
                         )}
                         {!g.active && <ToneBadge tone="muted" className="line-through">{t('ng.deletedBadge')}</ToneBadge>}
+                        {g.active !== false && <UsageBadge count={usageOf(g, usageCounts)} t={t} />}
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</TableCell>
@@ -584,4 +616,15 @@ function EmailChip({ emails, label, title }) {
       {chip}
     </HintPopover>
   )
+}
+
+/** Kullanım rozeti (2026-11-12): N izleme (nötr) · kullanılmıyor (uyarı) · bilinmiyor (—, counts okunamadı). */
+function UsageBadge({ count, t }) {
+  if (count == null) {
+    return <ToneBadge tone="muted" data-slot="ng-usage" data-usage="unknown" title={t('ng.usageUnknown')}>—</ToneBadge>
+  }
+  if (count === 0) {
+    return <ToneBadge tone="warning" data-slot="ng-usage" data-usage="0"><BellOff aria-hidden="true" /> {t('ng.unused')}</ToneBadge>
+  }
+  return <ToneBadge tone="neutral" data-slot="ng-usage" data-usage={count}>{t('ng.usageCount', count)}</ToneBadge>
 }

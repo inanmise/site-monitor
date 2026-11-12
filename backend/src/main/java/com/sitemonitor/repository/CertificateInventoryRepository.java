@@ -170,4 +170,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<CertificateInventory> findByNotificationGroupId(Long notificationGroupId);
 
+    /** Bildirim grubu → referans sayısı (toplu kullanım, 2026-11-12). */
+    @Query("SELECT i.notificationGroupId, COUNT(i) FROM CertificateInventory i WHERE i.notificationGroupId IS NOT NULL GROUP BY i.notificationGroupId")
+    java.util.List<Object[]> countByNotificationGroup();
+
 }

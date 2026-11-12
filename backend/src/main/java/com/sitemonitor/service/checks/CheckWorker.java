@@ -531,8 +531,10 @@ public class CheckWorker {
     private void enqueue(CheckJobRow row, Map<String, Object> result) {
         CheckResultCodec.Encoded e = CheckResultCodec.encode(result);
         CheckJobStore.Completion c = new CheckJobStore.Completion(row.id(), row.claimToken(), e.json(), e.truncated(), owner);
-        pending.addLast(c);
+        // Sayaç ÖNCE: kuyrukta görünen her sonucun karakteri zaten sayılmış olur — öğeyi hemen alan flush ondan sonra düşer,
+        // sayaç hiç negatife inmez (önceki sırada alıcı, artış gelmeden düşüyordu; CheckWorkerTest titrekliği).
         pendingChars.addAndGet(chars(c));
+        pending.addLast(c);
         // Sert tavan: sahiplenme yumuşak tavanda durduğundan koşan yuvalar en çok MAX_SLOTS sonuç ekleyebilir — buraya varmak
         // beklenmez; varılırsa en eski düşer, SESSİZ DEĞİL (WARN + sayaç; işin kirası dolunca başka pod yeniden koşar).
         long extraChars = (long) DistributedChecks.Tuning.MAX_SLOTS * CheckResultCodec.MAX_RESULT_CHARS;
