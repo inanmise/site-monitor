@@ -19,6 +19,7 @@ import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
 import ToneBadge, { OrgRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch } from './ListToolbar.jsx'
+import CoveragePanel from './contacts/CoveragePanel.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
@@ -66,6 +67,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [contacts, setContacts] = useState([])
   const [loadError, setLoadError] = useState(null)
   const [users, setUsers]       = useState([])
+  // Takım başına aktif varlık sayısı (izleme + envanter) — kapsam matrisinin "boşluk gerçek mi" kapısı (2026-11-12).
+  const [stats, setStats]       = useState({})
   // Pasif kullanıcıya bağlı kişiler (2026-10-02): bildirim ALMAZLAR — listede belirgin "Pasif" rozeti. Seçici aktif-yalnız kalır.
   const [inactiveUserIds, setInactiveUserIds] = useState(() => new Set())
   const [modal, setModal]   = useState(null)
@@ -109,7 +112,15 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', preset: 'panel', resetDeps: [q, fRole, fLevel, fTeam] })
   const pagedContacts = pager.pageItems
 
-  useEffect(() => { load(); loadUsers() }, [])
+  useEffect(() => { load(); loadUsers(); loadStats() }, [])
+
+  async function loadStats() {
+    // Kapsam-filtreli (sunucu viewScope'u uygular). Okunamazsa matris "varlık 0" varsayar — boşluk işaretlemez (yanıltmaz).
+    try {
+      const r = await api.admin.teamStats()
+      if (r?.success) setStats(r.data || {})
+    } catch { /* matris yine çizilir; varlık kapısı muhafazakâr davranır */ }
+  }
 
   async function load() {
     // Bos liste ile YUKLENEMEDI ayni ekrani uretiyordu (ne else ne catch vardi).
@@ -161,6 +172,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     // Takım BİLİNÇLİ seçilir (2026-09-28): eskiden ilk takım önceden seçiliydi — değiştirmeyi unutan yönetici kişiyi
     // o takıma yazıyor, kişi o takımın alarmlarını alıyordu. Tek takım görünüyorsa belirsizlik yok, o seçilir.
     setForm({ ...emptyContact, team_id: teams.length === 1 ? teams[0].id : '' })
+    setModal('add')
+  }
+  /** Kapsam matrisindeki boşluk/kısmi satırdan hızlı ekle: takım + WARNING eşiği (tüm seviyeleri karşılar) önceden dolu. */
+  function openAddForGap(teamId) {
+    setMsg(null)
+    setForm({ ...emptyContact, team_id: teamId ?? '', min_alert_level: 'WARNING' })
     setModal('add')
   }
   function openEdit(c) {
@@ -265,6 +282,13 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       </div>
       {loadError && contacts.length === 0 && (
         <AlertBanner tone="danger" title={t('settings.loadError')} role="alert" className="mb-0">{String(loadError)}</AlertBanner>
+      )}
+
+      {/* Kapsam matrisi (2026-11-12): takım × seviye eskalasyon boşlukları — en sert alarmda kişisi olmayan takımları
+          yüzeye çıkarır. Kişiler HİÇ yüklenemediyse çizilmez (sahte boşluk göstermemek için — bilinmeyen ≠ eksik). */}
+      {!(loadError && contacts.length === 0) && (
+        <CoveragePanel contacts={contacts} teams={teams} inactiveIds={inactiveUserIds} stats={stats}
+          canManage={canManage} onQuickAdd={openAddForGap} />
       )}
 
       {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım (telefonda tam genişlik, alt alta) */}
