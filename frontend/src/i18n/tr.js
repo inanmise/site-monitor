@@ -5183,6 +5183,9 @@ export const TR = {
   'aov.w.USER_DORMANT':  '{0} kullanıcı 90+ gündür girmiyor',
   'aov.w.SINGLE_ADMIN':  'Tek aktif ADMIN var — ikinci bir yönetici tanımlayın',
   'aov.w.NO_ADMIN':      'Aktif ADMIN yok',
+  'aov.healthTitle':     'Sağlık',
+  'aov.w.ESCALATION_GAP':'{0} takımda kritik eskalasyon boşluğu — en sert alarm kimseye tırmanmaz',
+  'aov.w.USER_ATTENTION':'{0} kullanıcı dikkat istiyor (kilitli / atıl / hiç giriş)',
   // Yönetim Paneli değişiklik geçmişi (2026-09-20)
   'hist.title':          'Değişiklik Geçmişi',
   'hist.desc.ALERT_THRESHOLD': 'Eşikleri kim, ne zaman, neyden neye değiştirdi. Kaynak denetim kaydıdır (audit_log) ve sonradan düzenlenemez.',

@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T18:32:49Z",
+  "generatedAt": "2026-11-12T19:14:13Z",
   "repo": "inanmise/site-monitor",
-  "count": 819,
+  "count": 820,
   "releases": [
+    {
+      "version": "20.193.0",
+      "tag": "v20.193.0",
+      "releasedAt": "2026-11-12T19:14:02Z",
+      "commit": "7544938f139a069aff7f186198c17d78848e79dc",
+      "prevVersion": "20.192.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "7544938f",
+          "subject": "yönetim genel bakışını eyleme dönük sağlık panosuna çevir"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.192.0",
       "tag": "v20.192.0",

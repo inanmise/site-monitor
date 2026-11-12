@@ -51,14 +51,20 @@ describe('AdminOverviewStrip', () => {
     expect(document.querySelector('[class*="aov-"]')).toBeNull()
   })
 
-  // 2026-09-27 kullanıcı isteği: "hiç giriş yapmamış" bilgisi Kullanıcılar sekmesinin kutucuklarında; şeritte YOK.
-  it('kullanıcı etkinliği uyarıları (hiç girmemiş / uzun süredir girmemiş / kilitli) şeritte gösterilmez', async () => {
+  // 2026-11-12 (#2): kullanıcı etkinliği uyarıları (kilitli/atıl/hiç) TEK "Dikkat isteyen kullanıcılar" kutucuğunda
+  // toplanır (ayrı çipler YOK — 2026-09-27 kararının ruhu) ve Kullanıcılar sekmesine süzgeçli gider.
+  it('kullanıcı etkinliği uyarıları tek "Dikkat isteyen kullanıcılar" kutucuğunda toplanır', async () => {
+    const jump = vi.fn()
     api.admin.overview.mockResolvedValue({ success: true, data: { counts: { teams: 1, users: 2, contacts: 0, groups: 0 },
       warnings: [{ code: 'USER_NEVER_LOGGED_IN', count: 1 }, { code: 'USER_DORMANT', count: 2 }, { code: 'USER_LOCKED', count: 1 }] } })
-    const { container } = render(<AdminOverviewStrip isAdmin onJump={() => {}} />)
-    expect(await screen.findByText(/Sağlık uyarısı yok|No health warnings/)).toBeInTheDocument()
-    expect(container.querySelector('[data-warning]')).toBeNull()
-    expect(screen.queryByText(/hiç giriş|never signed in|never logged in/i)).toBeNull()
+    const { container } = render(<AdminOverviewStrip isAdmin onJump={jump} />)
+    const chip = await screen.findByText(/dikkat istiyor|need attention/i)
+    expect(chip.closest('button')).toHaveAttribute('data-warning', 'USER_ATTENTION')
+    // Tek kutucuk — ayrı USER_LOCKED/DORMANT/NEVER çipi yok (toplanmış)
+    const codes = [...container.querySelectorAll('[data-warning]')].map(b => b.getAttribute('data-warning'))
+    expect(codes).toEqual(['USER_ATTENTION'])
+    fireEvent.click(chip)
+    expect(jump).toHaveBeenCalledWith('users', { g_status: 'locked' })   // kilitli öncelikli süzgeç
   })
 
   it('admin değilse eşik KPI\\u0027si yok; uyarı yoksa "temiz" satırı; hata → hiç çizilmez', async () => {
@@ -89,9 +95,10 @@ describe('AdminOverviewStrip — telefon', () => {
     const { container } = render(<AdminOverviewStrip isAdmin onJump={jump} />)
     await screen.findByText('12')
     const chips = () => [...container.querySelectorAll('[data-warning]')].map((b) => b.getAttribute('data-warning'))
-    expect(chips()).toEqual(['SINGLE_ADMIN', 'CONTACT_INACTIVE'])
+    // Ağır (SINGLE_ADMIN) önce; sonra model sırası (takım → grup → kişi): TEAM_NO_LEADER, CONTACT_INACTIVE
+    expect(chips()).toEqual(['SINGLE_ADMIN', 'TEAM_NO_LEADER'])
     fireEvent.click(screen.getByRole('button', { name: /^\+1 (more|daha)$/ }))
-    expect(chips()).toEqual(['SINGLE_ADMIN', 'CONTACT_INACTIVE', 'TEAM_NO_LEADER'])
+    expect(chips()).toEqual(['SINGLE_ADMIN', 'TEAM_NO_LEADER', 'CONTACT_INACTIVE'])
     fireEvent.click(screen.getByText(/1 takımın lideri yok|1 teams have no leader/))
     expect(jump).toHaveBeenCalledWith('teams', {})
     mobile.on = false
