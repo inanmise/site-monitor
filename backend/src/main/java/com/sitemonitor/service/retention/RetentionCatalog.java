@@ -628,7 +628,7 @@ public final class RetentionCatalog {
                 "Dinamik yanıt-süresi taban çizgisi örnekleri (yalnız taban çizgisi AÇIK izlemeler): zamanlanmış kontrol "
                 + "başına bir satır — tür, izleme kimliği, yanıt süresi (ms) ve bu değerin öğrenilen bantı ihlal edip "
                 + "etmediği. Değerlendirici bantı bu tablodan okur; elle / teyit / kurtarma kontrolleri yazmaz. İzleme "
-                + "başına en yeni 600 satır tutulur (gerisi budanır), hedef değişince / taban çizgisi kapatılınca o "
+                + "başına en yeni 1500 satır tutulur (gerisi budanır), hedef değişince / taban çizgisi kapatılınca o "
                 + "izlemenin satırları silinir. Hiçbir izleme açmadıkça boş. Kişisel veri yok.")
     );
 
