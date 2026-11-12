@@ -61,6 +61,27 @@ for (const vp of VIEWPORTS) {
     // Yatay taşma yok
     expect(await overflow(page), 'yatay taşma').toBeLessThanOrEqual(1)
 
+    // Alıcı önizlemesi (2026-11-13): "Pasif alıcılı" = 2 (g14 tümü, g15 kısmi); satır rozetleri; sessiz kayıp bandı g14'ü adlandırır
+    await expect(section.locator('[data-slot="stat-item"][data-key="passive"] [data-slot="stat-value"]')).toHaveText('2')
+    await expect(section.locator('[data-slot="ng-recipients"][data-state="none"]')).toHaveCount(1)
+    await expect(section.locator('[data-slot="ng-recipients"][data-state="partial"]')).toHaveCount(1)
+    const dead = section.locator('[data-slot="ng-dead-banner"]')
+    await expect(dead).toContainText('UG Varsayılan Liste — Tümü Pasif Hesaplar')
+    await expect(dead).not.toContainText('Kısmi Pasif Dağıtım')
+    // Kısmi grubun adres listesi: teslim edilen + düşen ayrı; açılır kutu ekrana sığar, uzun adres sarar
+    const row = section.locator('tr', { hasText: 'Kısmi Pasif Dağıtım' })
+    await row.locator('[data-slot="ng-mailchip"]').click()
+    const preview = page.locator('[data-slot="ng-recipients-preview"]')
+    await expect(preview).toBeVisible()
+    await expect(preview).toContainText('aktif.kisi@example.com')
+    await expect(preview.locator('[data-slot="ng-mail-dropped"]')).toHaveText(['ayrilan.kisi.cok.uzun.adres.ornegi@example.com.tr'])
+    const box = await preview.boundingBox()
+    expect(box.x, 'açılır kutu solda taşmaz').toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width, 'açılır kutu sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+    await page.keyboard.press('Escape')
+    await expect(preview).toHaveCount(0)
+    expect(await overflow(page), 'önizleme sonrası taşma').toBeLessThanOrEqual(1)
+
     // "Kullanılmayan" kartı → liste yalnız 0 kullanımlı aktif gruplar; kullanımdaki (g10) gizlenir
     await unused.click()
     await expect(page.getByText('SY Nöbet Listesi')).toHaveCount(0)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { usageOf, isUnused, emailCount, filterGroups, groupKpis } from '../components/admin/notifyGroupCleanupModel.js'
+import { usageOf, isUnused, emailCount, filterGroups, groupKpis, inactiveEmailsOf, recipientState, hasPassiveRecipients, deadGroups } from '../components/admin/notifyGroupCleanupModel.js'
 
 const g = (id, extra = {}) => ({ id, active: true, emails: [], ...extra })
 
@@ -48,5 +48,68 @@ describe('notifyGroupCleanupModel — groupKpis', () => {
   it('emailCount', () => {
     expect(emailCount(g(1, { emails: ['a', 'b'] }))).toBe(2)
     expect(emailCount({})).toBe(0)
+  })
+})
+
+// Birleşik alıcı önizlemesi (2026-11-13): sunucunun inactive_emails alanı — yalnız pasif hesaba ait (gönderimde düşen) adresler.
+describe('notifyGroupCleanupModel — recipientState', () => {
+  it('alan yoksa / null ise bilinmiyor: inactive/effective null, uyarı türetilmez', () => {
+    const s = recipientState(g(1, { emails: ['a@x.com'] }))
+    expect(s).toMatchObject({ total: 1, inactive: null, effective: null, allPassive: false, known: false })
+    expect(inactiveEmailsOf(g(1, { inactive_emails: null }))).toBeNull()
+    expect(hasPassiveRecipients(g(1, { emails: ['a@x.com'] }))).toBe(false)
+  })
+  it('kısmi: düşen + teslim edilen ayrılır; büyük/küçük harf ve boşluk duyarsız', () => {
+    const s = recipientState(g(1, { emails: ['ok@x.com', 'Gone@X.com '], inactive_emails: ['gone@x.com'] }))
+    expect(s).toMatchObject({ total: 2, inactive: 1, effective: 1, allPassive: false, known: true })
+    expect(s.dropped).toEqual(['Gone@X.com '])
+    expect(s.delivered).toEqual(['ok@x.com'])
+  })
+  it('hepsi pasif → allPassive; adressiz grup hiçbir zaman allPassive değil', () => {
+    expect(recipientState(g(1, { emails: ['a@x'], inactive_emails: ['a@x'] })).allPassive).toBe(true)
+    expect(recipientState(g(1, { emails: [], inactive_emails: [] })).allPassive).toBe(false)
+  })
+  it('bilinen boş liste = pasif yok (known true, inactive 0)', () => {
+    expect(recipientState(g(1, { emails: ['a@x'], inactive_emails: [] }))).toMatchObject({ known: true, inactive: 0, effective: 1 })
+  })
+  it('hasPassiveRecipients: pasif (silinmiş) grup sayılmaz', () => {
+    expect(hasPassiveRecipients(g(1, { emails: ['a@x'], inactive_emails: ['a@x'] }))).toBe(true)
+    expect(hasPassiveRecipients(g(1, { active: false, emails: ['a@x'], inactive_emails: ['a@x'] }))).toBe(false)
+  })
+})
+
+describe('notifyGroupCleanupModel — passive süzgeci / KPI', () => {
+  const groups = [
+    g(1, { emails: ['a@x'], inactive_emails: ['a@x'] }),
+    g(2, { emails: ['b@x', 'c@x'], inactive_emails: ['c@x'] }),
+    g(3, { emails: ['d@x'], inactive_emails: [] }),
+    g(4, { emails: [], inactive_emails: [] }),
+    g(5, { active: false, emails: ['e@x'], inactive_emails: ['e@x'] }),
+  ]
+  it('passive → aktif ve en az bir pasif adres (1,2)', () => {
+    expect(filterGroups(groups, 'passive', {}).map(x => x.id)).toEqual([1, 2])
+  })
+  it('KPI passive = 2; adresi olan bir grup bilinmiyorsa null (kısmi sayı gösterilmez)', () => {
+    expect(groupKpis(groups, {}).passive).toBe(2)
+    expect(groupKpis([...groups, g(6, { emails: ['f@x'] })], {}).passive).toBeNull()
+    // adressiz grubun bilinmemesi sayımı bozmaz (onda düşecek adres yok)
+    expect(groupKpis([...groups, g(7, { emails: [] })], {}).passive).toBe(2)
+  })
+})
+
+describe('notifyGroupCleanupModel — deadGroups (alarmı kimseye ulaştırmayan, devredeki grup)', () => {
+  const all = (id, extra) => g(id, { emails: ['a@x'], inactive_emails: ['a@x'], ...extra })
+  it('varsayılan grup → her zaman devrede', () => {
+    expect(deadGroups([all(1, { is_default: true })], null).map(x => x.id)).toEqual([1])
+  })
+  it('kullanılan grup → devrede; kullanılmayan değil; kullanım bilinmiyorsa yalnız varsayılan', () => {
+    expect(deadGroups([all(1), all(2)], { 1: 3 }).map(x => x.id)).toEqual([1])
+    expect(deadGroups([all(1), all(2)], null)).toEqual([])
+  })
+  it('kısmi pasif, bilinmeyen ve silinmiş grup sayılmaz', () => {
+    const partial = g(1, { is_default: true, emails: ['a@x', 'b@x'], inactive_emails: ['a@x'] })
+    const unknown = g(2, { is_default: true, emails: ['a@x'] })
+    const deleted = all(3, { is_default: true, active: false })
+    expect(deadGroups([partial, unknown, deleted], { 1: 1, 2: 1, 3: 1 })).toEqual([])
   })
 })

@@ -148,4 +148,38 @@ class InactiveRecipientGuardTest {
         assertThat(guard.filter(m).skipStatus()).isNull();
         assertThat(addrs(m, Message.RecipientType.TO)).containsExactly("gone@x.com");
     }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: yalnız pasife ait adresler, yazıldığı gibi ve sırasıyla; ortak adres düşmez")
+    void preview_listsOnlyPassiveOnlyAddresses() {
+        passive(new Object[]{1L, "Gone@X.com"}, new Object[]{2L, "shared@x.com"});
+        when(userRepo.findActiveEmailsLowerIn(anyCollection())).thenReturn(List.of("shared@x.com"));
+        assertThat(guard.inactiveOnlyEmailsOf(List.of("ok@x.com", " GONE@x.com", "shared@x.com", "gone@x.com")))
+                .containsExactly(" GONE@x.com", "gone@x.com");
+        assertThat(guard.inactiveOnlyEmailsOf(List.of())).isEmpty();
+        assertThat(guard.inactiveOnlyEmailsOf(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: pasif listesi hiç okunamadıysa bilinmiyor (null) — 'pasif adres yok' denmez")
+    void preview_unknownWhenNeverRead() {
+        when(userRepo.findInactiveIdsAndEmails()).thenThrow(new RuntimeException("db down"));
+        assertThat(guard.inactiveOnlyEmailsOf(List.of("gone@x.com"))).isNull();
+    }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: okunmuş liste sonradan okunamazsa önceki bilinen liste kullanılır (bilinir kalır)")
+    void preview_keepsKnownAfterLaterFailure() {
+        passive(new Object[]{1L, "gone@x.com"});
+        assertThat(guard.inactiveOnlyEmailsOf(List.of("gone@x.com"))).containsExactly("gone@x.com");
+        guard.evict();
+        when(userRepo.findInactiveIdsAndEmails()).thenThrow(new RuntimeException("db down"));
+        assertThat(guard.inactiveOnlyEmailsOf(List.of("gone@x.com"))).containsExactly("gone@x.com");
+    }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: pasif kullanıcı yokken boş liste (bilinir) — null değil")
+    void preview_knownEmptyWhenNoPassive() {
+        assertThat(guard.inactiveOnlyEmailsOf(List.of("ok@x.com"))).isNotNull().isEmpty();
+    }
 }

@@ -61,6 +61,35 @@ public class NotificationGroupController {
     private final AuditService auditService;
     private final NotificationGroupHistoryService historyService;
 
+    /**
+     * Alıcı önizlemesi (2026-11-13): grubun hangi adresleri YALNIZ pasif hesaplara ait — gönderimde düşer. İsteğe bağlı
+     * (dilim testleri ve elle kurulan bağlamlar bean'siz çalışır → alan {@code null} = bilinmiyor).
+     */
+    private com.sitemonitor.service.InactiveRecipientGuard inactiveGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setInactiveGuard(com.sitemonitor.service.InactiveRecipientGuard guard) {
+        this.inactiveGuard = guard;
+    }
+
+    /**
+     * Grubun pasif-yalnız adresleri — gönderim süzgeci ({@code InactiveRecipientGuard}) bunları düşürür. {@code null}:
+     * bilinmiyor (bean yok ya da pasif listesi hiç okunamadı); arayüz o zaman "pasif adres yok" demez.
+     */
+    private List<String> inactiveEmails(Object emails) {
+        com.sitemonitor.service.InactiveRecipientGuard g = inactiveGuard;
+        if (g == null) return null;
+        if (!(emails instanceof java.util.Collection<?> c)) return List.of();
+        List<String> list = new ArrayList<>();
+        for (Object o : c) if (o != null) list.add(o.toString());
+        try {
+            return g.inactiveOnlyEmailsOf(list);
+        } catch (RuntimeException e) {
+            log.debug("Grup alıcı önizlemesi okunamadı: {}", e.toString());
+            return null;
+        }
+    }
+
     // ── Yanıt yardımcıları ───────────────────────────────────────────────────
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
@@ -163,6 +192,8 @@ public class NotificationGroupController {
             Map<String, Object> m = new LinkedHashMap<>(groupService.toDto(g));
             m.put("team_name", teamNames.get(g.getTeamId()));
             m.put("can_write", canWriteTeam(session, g.getTeamId()));
+            // Alıcı önizlemesi: gönderimde düşecek (yalnız pasif hesaba ait) adresler; null = bilinmiyor
+            m.put("inactive_emails", inactiveEmails(m.get("emails")));
             return m;
         }).toList();
 

@@ -66,3 +66,75 @@ describe('NotificationGroups — temizlik', () => {
     })
   })
 })
+
+// Birleşik alıcı önizlemesi (2026-11-13): inactive_emails → rozet, KPI süzgeci, adres açılır listesi, sessiz-kayıp bandı.
+describe('NotificationGroups — alıcı önizlemesi', () => {
+  beforeEach(() => {
+    state.groups = [
+      grp(20, 'Hepsi-Pasif', { emails: ['gone@x.com'], inactive_emails: ['gone@x.com'], is_default: true }),
+      grp(21, 'Kismi', { emails: ['ok@x.com', 'gone2@x.com'], inactive_emails: ['gone2@x.com'] }),
+      grp(22, 'Temiz', { emails: ['ok2@x.com'], inactive_emails: [] }),
+    ]
+    state.counts = { 21: 1, 22: 2 }
+  })
+
+  it('satır rozetleri: hepsi pasif → "etkin alıcı yok", kısmi → pasif adres; temiz grupta rozet yok', async () => {
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Hepsi-Pasif')
+    expect(document.querySelectorAll('[data-slot="ng-recipients"][data-state="none"]').length).toBe(1)
+    expect(document.querySelectorAll('[data-slot="ng-recipients"][data-state="partial"]').length).toBe(1)
+    expect(document.querySelectorAll('[data-slot="ng-recipients"]').length).toBe(2)
+  })
+
+  it('varsayılan grubun tüm adresleri pasifse sessiz-kayıp bandı grubu adlandırır', async () => {
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    const band = await waitFor(() => {
+      const el = document.querySelector('[data-slot="ng-dead-banner"]')
+      expect(el).toBeTruthy()
+      return el
+    })
+    expect(band.textContent).toContain('Hepsi-Pasif')
+    expect(band.textContent).toContain('SY-A')
+    expect(band.textContent).not.toContain('Kismi')
+  })
+
+  it('"Pasif alıcılı" KPI = 2 ve tıklanınca yalnız o grupları gösterir', async () => {
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Temiz')
+    const tile = document.querySelector('[data-slot="stat-item"][data-key="passive"]')
+    expect(tile.querySelector('[data-slot="stat-value"]').textContent).toBe('2')
+    fireEvent.click(tile)
+    await waitFor(() => {
+      expect(screen.queryByText('Temiz')).toBeNull()
+      expect(screen.getByText('Hepsi-Pasif')).toBeInTheDocument()
+      expect(screen.getByText('Kismi')).toBeInTheDocument()
+    })
+  })
+
+  it('adres açılır listesi teslim edilen ve düşen adresleri ayırır', async () => {
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    const row = (await screen.findByText('Kismi')).closest('tr')
+    const chip = row.querySelector('[data-slot="ng-mailchip"]')
+    expect(chip.getAttribute('data-dropped')).toBe('1')
+    fireEvent.click(chip.closest('button'))
+    const preview = await waitFor(() => {
+      const el = document.querySelector('[data-slot="ng-recipients-preview"]')
+      expect(el).toBeTruthy()
+      return el
+    })
+    expect(preview.textContent).toContain('ok@x.com')
+    expect([...preview.querySelectorAll('[data-slot="ng-mail-dropped"]')].map(x => x.textContent)).toEqual(['gone2@x.com'])
+  })
+
+  it('sunucu inactive_emails göndermezse (bilinmiyor) rozet / band yok, KPI "—"', async () => {
+    state.groups = [grp(30, 'Eski-Sunucu', { emails: ['a@x.com'], is_default: true })]
+    state.counts = {}
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Eski-Sunucu')
+    expect(document.querySelector('[data-slot="ng-recipients"]')).toBeNull()
+    expect(document.querySelector('[data-slot="ng-dead-banner"]')).toBeNull()
+    const tile = document.querySelector('[data-slot="stat-item"][data-key="passive"]')
+    expect(tile.querySelector('[data-slot="stat-value"]').textContent).toBe('—')
+    expect(document.querySelector('[data-slot="ng-mailchip"]').getAttribute('data-dropped')).toBe('unknown')
+  })
+})
