@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T15:31:03Z",
+  "generatedAt": "2026-11-12T16:19:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 817,
+  "count": 818,
   "releases": [
+    {
+      "version": "20.191.0",
+      "tag": "v20.191.0",
+      "releasedAt": "2026-11-12T16:19:03Z",
+      "commit": "a33516c6ed5f20ccc182fe2d896d0c4b5a95a492",
+      "prevVersion": "20.190.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "a33516c6",
+          "subject": "kullanıcılar dizini için kayıtlı süzgeç görünümleri (B7)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.190.0",
       "tag": "v20.190.0",
