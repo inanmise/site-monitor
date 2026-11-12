@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall, CloudLightning, Moon,
+  ShieldCheck,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { durationMs, formatDuration, formatIncidentTime } from '../../../utils/incidentMeta.js'
+import PageIssueList from '../../page/PageIssueList.jsx'   // E2: sayfa bütünlüğü sorunlu kaynak listesi
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
 import MaintenanceBadge from '../../ui/MaintenanceBadge.jsx'
@@ -81,6 +83,30 @@ export function useAlertDeliveries(id) {
   return state
 }
 
+/**
+ * PAGE_INTEGRITY alarmının "Sorunlu kaynaklar" (page_issues) + teyit/kurtarma (confirm_info) ayrıntısı. Bu alanlar yalnız
+ * TEKİL getAlert yanıtına (sunucuda alarm bağlamından ayrıştırılır) eklenir; normal LİSTE-satırı tıklaması (openDetail →
+ * kısmi liste kaydı) ve izleme penceresine gömülü "Alarmlar" sekmesi bunları GETİRMEZ. Eksikse getAlert'ten çekilir →
+ * E2/E3 her açılış yolunda görünür; zaten varsa (ısı haritası / derin bağlantı) istek atılmaz. Sayfa dışı türlerde hiç
+ * çalışmaz (koşul alert_type'a bakar). Sıra güvenli: alarm değişirse eski yanıt uygulanmaz.
+ */
+function usePageAlertDetail(a) {
+  const id = a?.id
+  const need = a?.alert_type === 'PAGE_INTEGRITY' && id != null && a.page_issues == null && a.confirm_info == null
+  const [extra, setExtra] = useState(null)
+  useEffect(() => {
+    setExtra(null)
+    if (!need) return undefined
+    let alive = true
+    Promise.resolve().then(() => api.admin.getAlert(id)).catch(() => null).then((res) => {
+      if (!alive || !res?.success || !res.data || Array.isArray(res.data) || String(res.data.id) !== String(id)) return
+      setExtra({ page_issues: res.page_issues ?? null, confirm_info: res.confirm_info ?? null })
+    })
+    return () => { alive = false }
+  }, [id, need])
+  return extra
+}
+
 /** Anahtar-değer satırı (temel bilgiler kartı). */
 function Fact({ label, children, className }) {
   return (
@@ -105,6 +131,7 @@ export function AlertDetailBody({
   const t = useT()
   const locale = useDateLocale()
   const deliveries = useAlertDeliveries(a?.id)
+  const pageExtra = usePageAlertDetail(a)   // E2/E3: liste-satırı / gömülü açılışta page_issues+confirm_info getAlert'ten gelir
   const [localNocFocus, setLocalNocFocus] = useState(0)   // eylem satırındaki "Arama kaydet" → forma kaydır + odakla
   const pushGroups = useMemo(() => groupPushRows(deliveries.push), [deliveries.push])
   const timeline = useMemo(
@@ -120,6 +147,9 @@ export function AlertDetailBody({
   const hasCert = Boolean(expIso || a.cert_tier != null || a.days_remaining != null)
   const when = (iso) => (iso ? formatIncidentTime(iso, locale) : t('alh.ev.timeUnknown'))
   const mails = Number(a.email_sent_count ?? 0), mailsFailed = Number(a.email_failed_count ?? 0)
+  // E2/E3: alarm kaydında yoksa getAlert'ten zenginleştirilmiş kopya (pageExtra) kullanılır (boş [] mevcut sayılır).
+  const pageIssues = a.page_issues ?? pageExtra?.page_issues ?? null
+  const confirmInfo = a.confirm_info ?? pageExtra?.confirm_info ?? null
 
   return (
     <div data-slot="alert-detail-body" className="min-w-0">
@@ -256,6 +286,26 @@ export function AlertDetailBody({
             </span>
           </Fact>
         </dl>
+        {/* E2 (2026-11-12): sayfa bütünlüğü alarmında SORUNLU KAYNAKLAR (alarm-anı) — hangi kaynak / nasıl bir hata. */}
+        {Array.isArray(pageIssues) && pageIssues.length > 0 && (
+          <div className="border-t px-4 py-2.5" data-slot="alert-page-issues">
+            <h3 className="mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('alh.pageIssuesTitle')}</h3>
+            <PageIssueList issues={pageIssues} max={20} />
+          </div>
+        )}
+        {/* E3 (2026-11-12): teyit & kurtarma görünürlüğü — "açılmadan önce N kez doğrulandı; giderilince otomatik kapanır". */}
+        {confirmInfo && confirmInfo.confirm_attempts != null && (
+          <div className="flex items-start gap-1.5 border-t px-4 py-2 text-xs text-muted-foreground" data-slot="alert-confirm-info">
+            <ShieldCheck aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span>{Number(confirmInfo.confirm_attempts) <= 0
+              ? t('alh.pageConfirmOff', Number(confirmInfo.recovery_checks || 0),
+                  Math.round(Number(confirmInfo.recovery_interval_ms || 0) / 1000))
+              : t('alh.pageConfirmInfo', Number(confirmInfo.confirm_attempts),
+                  Math.round(Number(confirmInfo.confirm_interval_ms || 0) / 1000),
+                  Number(confirmInfo.recovery_checks || 0),
+                  Math.round(Number(confirmInfo.recovery_interval_ms || 0) / 1000))}</span>
+          </div>
+        )}
         {/* İmza geçmişi: aynı hedef + tip kaçıncı kez, önceki oluşum, ne zamandır sessiz, geçmişine geçiş */}
         <div className="border-t px-4 py-2.5 empty:hidden">
           <AlertSignatureStrip alert={a} teamName={teamName} onShowHistory={onShowHistory} />
