@@ -1,9 +1,135 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T11:44:44Z",
+  "generatedAt": "2026-11-12T12:36:14Z",
   "repo": "inanmise/site-monitor",
-  "count": 815,
+  "count": 816,
   "releases": [
+    {
+      "version": "20.189.0",
+      "tag": "v20.189.0",
+      "releasedAt": "2026-11-12T12:36:06Z",
+      "commit": "d33902fe59972369721f9c82dd9a3e46952a40f2",
+      "prevVersion": "20.188.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 10,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "9efa8fb1",
+          "subject": "retention dokümanını katalogdan yeniden üret (KEEP_PER_MONITOR 1500)"
+        },
+        {
+          "type": "docs",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "d327b4d0",
+          "subject": "D-7 — ölçülemeyen kontrolde CTX_ON her zaman set edilir (sahte kapanış yok)"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "90aa0c5d",
+          "subject": "çok düğmeli izleme detay başlığı telefonda taşmasın (taban çizgisi düğmesi)"
+        },
+        {
+          "type": "fix",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "fe0772fc",
+          "subject": "ölçülemeyen kontrol açık bant alarmını sahte kapatmasın (D-7)"
+        },
+        {
+          "type": "docs",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "899bf5a2",
+          "subject": "CLAUDE.md — dinamik yanıt-süresi taban çizgisi (7 tür, mevsimsel, ayar, Grafana)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "7cdd8d87",
+          "subject": "Grafana benimseme göstergesi (sitemonitor_baseline_enabled_monitors)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "5c872919",
+          "subject": "kurum geneli ana anahtar ayarı (CANLI, GLOBAL_ONLY)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "cda015a7",
+          "subject": "mevsimsel okuma (günlük/haftalık) — UI'daki sezon seçeneği artık çalışır"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "87ecf0c9",
+          "subject": "dinamik taban çizgisini 6 türe çoğalt (keyword/port/ping/pagespeed/scripted/dns)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "f82eefbe",
+          "subject": "HTTP dinamik taban çizgisi arayüzü (shadcn, mweb)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "b0d46810",
+          "subject": "HTTP taban çizgisi yapılandırma API'si (aç/kapa, doğrulama)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "64f9e63c",
+          "subject": "HTTP_SLOW'u öğrenen banda bağla (varsayılan KAPALI, davranış aynı)"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "f6fae86c",
+          "subject": "BaselineService — lider düzenleme katmanı"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "e2a1e0fe",
+          "subject": "örnek deposu + izleme-başına yapılandırma + şema/retention"
+        },
+        {
+          "type": "feat",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "ed18e4da",
+          "subject": "dinamik taban çizgisi — saf anomali çekirdeği"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.188.0",
       "tag": "v20.188.0",
