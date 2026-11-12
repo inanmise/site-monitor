@@ -342,68 +342,87 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findActiveByOrgRoleInTeam(@Param("teamId") Long teamId, @Param("role") String role);
 
     /**
-     * Admin Users ekranı için filtreli + sayfalı arama. q (lowercased "%..%")
-     * username/displayName/email/employeeId üzerinde OR arar; systemRole/orgRole/teamId
-     * eşitlik filtresi. null parametreler ilgili koşulu atlar (AuditLog.findFiltered deseni).
+     * Admin Users dizini — TEK esnek filtreli + sayfalı + SIRALANABİLİR arama (2026-11-12, dizin zenginleştirme).
+     * Üç eski sorgunun ({@code findFiltered}/{@code findFilteredDormant}/{@code findFilteredInTeams}) yerine geçer:
+     * serbest metin alan-bazlı, hesap durumu, kaynak (LOCAL/LDAP), iletişim (telefon/e-posta/OTP), 7/24 (NOC), çevrimiçi,
+     * son-giriş/oluşturulma tarih aralığı. Sıralama Pageable'ın Sort'undan gelir (sorguda ORDER BY YOK; çağıran id ikincil
+     * sıralamayı ekler — kararlı sayfalama). null / 0 parametreler ilgili koşulu atlar (AuditLog.findFiltered deseni).
+     *
+     * <p>Koleksiyon parametreleri ({@code scopeTeams}, {@code nocTeams}) ASLA null/boş geçilmez — kapsam/NOC uygulanmıyorsa
+     * nöbetçi {@code List.of(-1L)} + bayrak ({@code scoped=false} / {@code nocMode=0}) geçilir (JPQL boş {@code IN} tuzağı).
+     *
+     * <p>Kipler: {@code phoneMode}/{@code emailMode}/{@code nocMode}/{@code onlineMode} = 0 herhangi · 1 var/evet/çevrimiçi
+     * · 2 yok/hayır/çevrimdışı. {@code status} = active|passive|locked|mustchange. {@code source} = LOCAL|LDAP (LOCAL =
+     * authSource null ya da 'LDAP' değil). {@code field} = all|name|username|email|phone|employee. Tarih aralığı GÜN
+     * hassasiyetinde — ilk 10 karakter (yyyy-MM-dd), zaman biçiminden bağımsız. {@code nowIso}/{@code onlineThreshold}
+     * UserService ISO biçiminde (yyyy-MM-dd'T'HH:mm:ss, sabit genişlik → leksikografik karşılaştırma güvenli).
      */
     @Query("SELECT u FROM AppUser u WHERE "
-        + "(:q IS NULL OR LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
-        +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
-        + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
-        + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
-        + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) "
-        + "ORDER BY u.username ASC")
-    Page<AppUser> findFiltered(@Param("q") String q,
-                               @Param("systemRole") String systemRole,
-                               @Param("orgRole") String orgRole,
-                               @Param("teamId") Long teamId,
-                               Pageable pageable);
-
-    /**
-     * {@link #findFiltered} + uyuyan hesap süzgeci (2026-09-20): {@code dormantBefore} (ISO-UTC) verilirse
-     * son girişi bu andan ESKİ ya da hiç olmayan; {@code neverOnly} true ise yalnız hiç girmemiş hesaplar.
-     * ISO-UTC sabit genişlikte → leksikografik karşılaştırma güvenli (UserService.shouldShiftStamp ile aynı).
-     */
-    @Query("SELECT u FROM AppUser u WHERE "
-        + "(:q IS NULL OR LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
-        +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
-        + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
-        + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
-        + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) AND "
-        + "(:dormantBefore IS NULL OR u.lastLoginAt IS NULL OR u.lastLoginAt < :dormantBefore) AND "
-        + "(:neverOnly = false OR u.lastLoginAt IS NULL) "
-        + "ORDER BY u.username ASC")
-    Page<AppUser> findFilteredDormant(@Param("q") String q,
-                                      @Param("systemRole") String systemRole,
-                                      @Param("orgRole") String orgRole,
-                                      @Param("teamId") Long teamId,
-                                      @Param("dormantBefore") String dormantBefore,
-                                      @Param("neverOnly") boolean neverOnly,
-                                      Pageable pageable);
-
-    /**
-     * {@link #findFilteredDormant} + GÖRÜŞ KAPSAMI (2026-09-29, A1-O7): kapsamlı roller (TEAM_ADMIN, kapsamlı müdür)
-     * Kullanıcılar ekranında yalnız oturumun BİRİNCİL takımını görüyordu; {@code listUsers}/Takım Yönetimi ise tam
-     * {@code viewTeamIds} kümesini. Burada kullanıcı, {@code teamIds} kümesinden herhangi birine ÜYE (birincil ya da
-     * ek) olmalı; istemcinin {@code teamId} süzgeci kümeyle KESİŞİR (kapsam dışı takım istenirse boş döner — çağıran
-     * zaten kesişimi alır). {@code teamIds} ASLA null/boş geçilmez (çağıran boş kapsamda sorguya hiç inmez).
-     */
-    @Query("SELECT u FROM AppUser u WHERE "
-        + "(:q IS NULL OR LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
-        +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
+        + "(:q IS NULL OR "
+        +   "(:field = 'username' AND LOWER(u.username) LIKE :q) OR "
+        +   "(:field = 'email' AND LOWER(u.email) LIKE :q) OR "
+        +   "(:field = 'phone' AND LOWER(u.phone) LIKE :q) OR "
+        +   "(:field = 'employee' AND LOWER(u.employeeId) LIKE :q) OR "
+        +   "(:field = 'name' AND (LOWER(u.displayName) LIKE :q OR LOWER(u.username) LIKE :q)) OR "
+        +   "(:field = 'all' AND (LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
+        +                        "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q))) AND "
         + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
         + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
         + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) AND "
-        + "(u.teamId IN :teamIds OR EXISTS (SELECT tid2 FROM u.teamIds tid2 WHERE tid2 IN :teamIds)) AND "
+        + "(:scoped = false OR u.teamId IN :scopeTeams OR EXISTS (SELECT ts FROM u.teamIds ts WHERE ts IN :scopeTeams)) AND "
+        + "(:status IS NULL OR "
+        +   "(:status = 'active' AND u.active = true) OR "
+        +   "(:status = 'passive' AND u.active = false) OR "
+        +   "(:status = 'locked' AND (u.permanentLock = true OR (u.lockoutUntil IS NOT NULL AND u.lockoutUntil > :nowIso))) OR "
+        +   "(:status = 'mustchange' AND u.mustChangePassword = true)) AND "
+        + "(:source IS NULL OR "
+        +   "(:source = 'LDAP' AND u.authSource = 'LDAP') OR "
+        +   "(:source = 'LOCAL' AND (u.authSource IS NULL OR u.authSource <> 'LDAP'))) AND "
+        + "(:phoneMode = 0 OR (:phoneMode = 1 AND u.phone IS NOT NULL AND TRIM(u.phone) <> '') "
+        +                 "OR (:phoneMode = 2 AND (u.phone IS NULL OR TRIM(u.phone) = ''))) AND "
+        + "(:emailMode = 0 OR (:emailMode = 1 AND u.email IS NOT NULL AND TRIM(u.email) <> '') "
+        +                 "OR (:emailMode = 2 AND (u.email IS NULL OR TRIM(u.email) = ''))) AND "
+        + "(:otpReady = false OR (u.active = true "
+        +     "AND (u.permanentLock IS NULL OR u.permanentLock = false) "
+        +     "AND (u.lockoutUntil IS NULL OR u.lockoutUntil <= :nowIso) "
+        +     "AND (u.mustChangePassword IS NULL OR u.mustChangePassword = false) "
+        +     "AND ((u.phone IS NOT NULL AND TRIM(u.phone) <> '') OR (u.email IS NOT NULL AND TRIM(u.email) <> '')))) AND "
+        + "(:nocMode = 0 OR "
+        +   "(:nocMode = 1 AND u.active = true AND (u.teamId IN :nocTeams OR EXISTS (SELECT tn FROM u.teamIds tn WHERE tn IN :nocTeams))) OR "
+        +   "(:nocMode = 2 AND NOT (u.active = true AND (u.teamId IN :nocTeams OR EXISTS (SELECT tn2 FROM u.teamIds tn2 WHERE tn2 IN :nocTeams))))) AND "
+        + "(:onlineMode = 0 OR "
+        +   "(:onlineMode = 1 AND u.activeSessionId IS NOT NULL AND u.activeSessionId NOT LIKE 'TERMINATED:%' "
+        +                    "AND u.lastSeenAt IS NOT NULL AND u.lastSeenAt >= :onlineThreshold) OR "
+        +   "(:onlineMode = 2 AND (u.activeSessionId IS NULL OR u.activeSessionId LIKE 'TERMINATED:%' "
+        +                    "OR u.lastSeenAt IS NULL OR u.lastSeenAt < :onlineThreshold))) AND "
+        + "(:loginFromDay IS NULL OR (u.lastLoginAt IS NOT NULL AND SUBSTRING(u.lastLoginAt, 1, 10) >= :loginFromDay)) AND "
+        + "(:loginToDay IS NULL OR (u.lastLoginAt IS NOT NULL AND SUBSTRING(u.lastLoginAt, 1, 10) <= :loginToDay)) AND "
+        + "(:createdFromDay IS NULL OR (u.createdAt IS NOT NULL AND SUBSTRING(u.createdAt, 1, 10) >= :createdFromDay)) AND "
+        + "(:createdToDay IS NULL OR (u.createdAt IS NOT NULL AND SUBSTRING(u.createdAt, 1, 10) <= :createdToDay)) AND "
         + "(:dormantBefore IS NULL OR u.lastLoginAt IS NULL OR u.lastLoginAt < :dormantBefore) AND "
-        + "(:neverOnly = false OR u.lastLoginAt IS NULL) "
-        + "ORDER BY u.username ASC")
-    Page<AppUser> findFilteredInTeams(@Param("q") String q,
-                                      @Param("systemRole") String systemRole,
-                                      @Param("orgRole") String orgRole,
-                                      @Param("teamId") Long teamId,
-                                      @Param("teamIds") Collection<Long> teamIds,
-                                      @Param("dormantBefore") String dormantBefore,
-                                      @Param("neverOnly") boolean neverOnly,
-                                      Pageable pageable);
+        + "(:neverOnly = false OR u.lastLoginAt IS NULL)")
+    Page<AppUser> findDirectory(@Param("q") String q,
+                                @Param("field") String field,
+                                @Param("systemRole") String systemRole,
+                                @Param("orgRole") String orgRole,
+                                @Param("teamId") Long teamId,
+                                @Param("scoped") boolean scoped,
+                                @Param("scopeTeams") Collection<Long> scopeTeams,
+                                @Param("status") String status,
+                                @Param("source") String source,
+                                @Param("phoneMode") int phoneMode,
+                                @Param("emailMode") int emailMode,
+                                @Param("otpReady") boolean otpReady,
+                                @Param("nocMode") int nocMode,
+                                @Param("nocTeams") Collection<Long> nocTeams,
+                                @Param("onlineMode") int onlineMode,
+                                @Param("onlineThreshold") String onlineThreshold,
+                                @Param("loginFromDay") String loginFromDay,
+                                @Param("loginToDay") String loginToDay,
+                                @Param("createdFromDay") String createdFromDay,
+                                @Param("createdToDay") String createdToDay,
+                                @Param("dormantBefore") String dormantBefore,
+                                @Param("neverOnly") boolean neverOnly,
+                                @Param("nowIso") String nowIso,
+                                Pageable pageable);
 }
