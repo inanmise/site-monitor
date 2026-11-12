@@ -84,7 +84,9 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
           <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} size="header"
             name={typeof title === 'string' ? title : (noc.monitor.name || noc.monitor.url || noc.monitor.host || noc.monitor.domain)} />
         )}
-        {actions && <div className="ml-auto flex shrink-0 items-center">{actions}</div>}
+        {/* Telefonda daralabilir (içteki MonitorModalActions flex-wrap ile satır atlar — çok düğmeli başlık 390 px'i taşmasın);
+            masaüstünde eski davranış (tek satır, shrink-0). */}
+        {actions && <div className="ml-auto flex min-w-0 items-center sm:min-w-fit sm:shrink-0">{actions}</div>}
       </> : null}
     >
       {subtitle && <div data-slot="monitor-detail-subtitle" className="-mt-1 mb-2 min-w-0 text-sm text-muted-foreground">{subtitle}</div>}
