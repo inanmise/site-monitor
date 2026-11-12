@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T16:19:10Z",
+  "generatedAt": "2026-11-12T18:32:49Z",
   "repo": "inanmise/site-monitor",
-  "count": 818,
+  "count": 819,
   "releases": [
+    {
+      "version": "20.192.0",
+      "tag": "v20.192.0",
+      "releasedAt": "2026-11-12T18:32:39Z",
+      "commit": "fd71aa8196fa7cce785c67ede5cecb46dc8fb3ef",
+      "prevVersion": "20.191.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "fd71aa81",
+          "subject": "kişiler sekmesine takım × seviye eskalasyon kapsam matrisi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.191.0",
       "tag": "v20.191.0",
