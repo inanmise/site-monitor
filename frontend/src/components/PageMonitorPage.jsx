@@ -178,6 +178,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [issues, setIssues] = useState([])
+  // Kontrol Geçmişi ayrıntısı ('Bozulmuş' satırı → sorunlu kaynaklar) DAİMA 'all' anlık görüntüsünü kullanır: Sorunlar
+  // sekmesinin süzgeci (issueType / firstParty) `issues`'ı değiştirse de geçmiş detayının sayımını/listesini BOZMAZ.
+  const [histIssues, setHistIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
   // Sorunlu kaynaklar okunamadı mı (2026-10-22, UIM-45): okuma hatası "Sorunlu kaynak yok" GÖSTERİLMEZ
   const [issuesError, setIssuesError] = useState(null)
@@ -342,6 +345,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       let rows = res.data ?? []
       if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
       setIssues(rows)
+      if (filter === 'all') setHistIssues(rows)   // yalnız süzgeçsiz ('all') okuma geçmiş detayının kaynağını tazeler
       setIssuesError(null)
     } catch (e) {
       if (seq === issuesSeq.current) {
@@ -361,11 +365,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (res?.success) setConfirmations(res.data ?? [])
   }
   function openDetail(m) {
-    setSelected(m); setIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
+    setSelected(m); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
     setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  function closeDetail() { setSelected(null); setIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null) }
+  function closeDetail() { setSelected(null); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null) }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setPageDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
@@ -1231,6 +1235,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   const k = failureRowKey(c)
                   const failed = !isHealthy('page', c)
                   const when = formatDateSec(c.checked_at)
+                  // E1/#4: bu kontrolün sorunlu kaynakları SATIR BAŞINA BİR kez hesaplanır (3× tam-liste taraması yerine);
+                  // kaynak `histIssues` (süzgeçsiz anlık görüntü) — Sorunlar sekmesi süzgeci sayımı/listeyi bozmaz.
+                  const rowIssues = failed && failRows.isOpen(k) ? issuesForCheckedAt(histIssues, c.checked_at) : null
                   return (<>
                     <span className="upt-rt-time">{when}</span>
                     <span className={cn('font-semibold', statusText(c.status))}>
@@ -1246,12 +1253,12 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                     )}
                     {/* E1: bu kontrolün SORUNLU KAYNAKLARI (hangi kaynak / nasıl bir hata / hangi sayfa) — açıkken, tam genişlik.
                         Yüklü issues'tan checked_at ile eşleştirilir (Sorunlar sekmesi filtresi 'all' varsayılan). */}
-                    {failed && failRows.isOpen(k) && issuesForCheckedAt(issues, c.checked_at).length > 0 && (
+                    {rowIssues && rowIssues.length > 0 && (
                       <div data-slot="page-hist-issues" className="mt-1 min-w-0 rounded-md border border-dashed bg-muted/20 p-2.5">
                         <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
-                          {t('page.histIssuesTitle', issuesForCheckedAt(issues, c.checked_at).length)}
+                          {t('page.histIssuesTitle', rowIssues.length)}
                         </div>
-                        <PageIssueList issues={issuesForCheckedAt(issues, c.checked_at)} />
+                        <PageIssueList issues={rowIssues} />
                       </div>
                     )}
                   </>)

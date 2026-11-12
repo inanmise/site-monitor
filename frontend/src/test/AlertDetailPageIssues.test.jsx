@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { waitFor } from '@testing-library/react'
 import { render } from './test-utils.jsx'
 
 // Alarm ayrıntısı (AlertDetailBody) → PAGE_INTEGRITY alarmında E2 "Sorunlu kaynaklar" + E3 teyit/kurtarma bilgisi.
@@ -70,5 +71,35 @@ describe('AlertDetailBody — sayfa bütünlüğü (E2/E3)', () => {
     // Not: page_issues yalnız PAGE_INTEGRITY alarm detayına sunucudan eklenir; bileşen koşulu alert_type'a bakmaz
     // ama backend yalnız PAGE_INTEGRITY'de gönderir. Burada alanın varlığında bile ping alarmı kırılmamalı.
     expect(document.body.textContent).toContain('SY')
+  })
+
+  // 2026-11-12 (inceleme bulgusu #1): normal LİSTE-satırı tıklaması (openDetail → kısmi kayıt) ve gömülü "Alarmlar"
+  // sekmesi page_issues/confirm_info GETİRMEZ; eksikse AlertDetailBody getAlert'ten çeker → E2/E3 her açılışta görünür.
+  it('E2/E3: kısmi kayıtla açılış → getAlert ile zenginleştirilir, bölümler SONRADAN çizilir', async () => {
+    api.admin.getAlert.mockResolvedValue({
+      success: true, data: { id: 933 },
+      page_issues: [{ issue_type: 'BROKEN', resource_url: 'https://x/a.js', http_status: 404 }],
+      confirm_info: { confirm_attempts: 3, confirm_interval_ms: 30000, recovery_checks: 3, recovery_interval_ms: 30000 },
+    })
+    render(<AlertDetailBody teamName="SY" nowMs={NOW} alert={{ ...BASE, alert_type: 'PAGE_INTEGRITY' }} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="alert-page-issues"]')).not.toBeNull())
+    expect(api.admin.getAlert).toHaveBeenCalledWith(933)
+    expect(document.body.textContent).toContain('https://x/a.js')
+    expect(document.body.textContent).toContain('HTTP 404')
+    expect(document.querySelector('[data-slot="alert-confirm-info"]')).not.toBeNull()
+  })
+
+  it('alanlar zaten varsa (ısı haritası / derin bağlantı) getAlert ÇAĞRILMAZ', async () => {
+    render(<AlertDetailBody teamName="SY" nowMs={NOW} alert={{
+      ...BASE, alert_type: 'PAGE_INTEGRITY', page_issues: [], confirm_info: { confirm_attempts: 3 },
+    }} />)
+    await Promise.resolve()
+    expect(api.admin.getAlert).not.toHaveBeenCalled()
+  })
+
+  it('sayfa dışı türde (PING_DOWN) getAlert ÇAĞRILMAZ', async () => {
+    render(<AlertDetailBody teamName="SY" nowMs={NOW} alert={{ ...BASE, alert_type: 'PING_DOWN' }} />)
+    await Promise.resolve()
+    expect(api.admin.getAlert).not.toHaveBeenCalled()
   })
 })

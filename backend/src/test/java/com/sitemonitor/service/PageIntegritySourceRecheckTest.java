@@ -238,4 +238,31 @@ class PageIntegritySourceRecheckTest {
     void sourceKeysAreSnapshotted() {
         assertThat(EscalationService.RESOLVED_CONTEXT_KEYS).contains("integrity_scope", "problem_pages");
     }
+
+    @Test
+    @DisplayName("FIX perf: zamanlı sweep'te hedefli kurtarma ölçümü izleme başına kadenslenir (ardışık tık ölçmez); "
+            + "elle kontrol throttle'a tabi değildir")
+    @SuppressWarnings("unchecked")
+    void scheduledTargetedRecovery_isThrottledPerMonitor_manualIsNot() {
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));   // sorunlu sayfa temiz → ölçülürse sağlıklı kurtarma kalemi
+        Map<String, Object> r = raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE");
+
+        // Zamanlı sweep (scheduledSweep=true): ilk tık ölçer → kalem; kadence içindeki ikinci tık ÖLÇMEZ → kalem yok (nötr).
+        List<MonitoringOutageService.SweepItem> down1 = new ArrayList<>(), integ1 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down1, integ1, true);
+        assertThat(integ1).as("ilk zamanlı tık ölçer → sağlıklı kurtarma kalemi").hasSize(1);
+        assertThat(integ1.get(0).up()).isTrue();
+
+        List<MonitoringOutageService.SweepItem> down2 = new ArrayList<>(), integ2 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down2, integ2, true);
+        assertThat(integ2).as("kadence içindeki ikinci zamanlı tık ölçmez → kalem yok (MOS sayacı nötr)").isEmpty();
+
+        // Elle kontrol (scheduledSweep=false): throttle'a tabi değil → her seferinde ölçer.
+        List<MonitoringOutageService.SweepItem> down3 = new ArrayList<>(), integ3 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down3, integ3, false);
+        assertThat(integ3).as("elle kontrol throttle'a tabi değil → ölçer").hasSize(1);
+    }
 }

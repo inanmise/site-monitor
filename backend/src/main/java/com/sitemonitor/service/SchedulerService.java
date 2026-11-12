@@ -6701,7 +6701,7 @@ public class SchedulerService {
                 m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), integrity = new ArrayList<>();
-            addPageSweepItems(m, checkResult, down, integrity);
+            addPageSweepItems(m, checkResult, down, integrity, false);   // elle: hedefli kurtarma ölçümü throttle'a tabi değil
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, down, true);
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integrity, true);
         } catch (Exception e) {
@@ -7417,7 +7417,7 @@ public class SchedulerService {
             com.sitemonitor.model.PageMonitor m = entry.getKey();
             try {
                 Map<String, Object> r = entry.getValue().get();
-                addPageSweepItems(m, r, downSweep, integritySweep);
+                addPageSweepItems(m, r, downSweep, integritySweep, true);   // zamanlı sweep
                 checked++;
             } catch (Exception e) {
                 log.warn("Page check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -7496,7 +7496,7 @@ public class SchedulerService {
         for (com.sitemonitor.model.PageMonitor m : crawlers) {
             try {
                 Map<String, Object> r = recheckPage(m, false, "SITE_CRAWL");
-                addPageSweepItems(m, r, downSweep, integritySweep);
+                addPageSweepItems(m, r, downSweep, integritySweep, true);   // günlük crawl (bu dalda hedefli ölçüm zaten koşmaz)
             } catch (Exception e) {
                 log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
             }
@@ -7511,7 +7511,7 @@ public class SchedulerService {
     /** Bir page kontrol sonucundan iki SweepItem (DOWN + INTEGRITY) üretip ilgili listelere ekler. */
     private void addPageSweepItems(com.sitemonitor.model.PageMonitor m, Map<String, Object> r,
                                    List<MonitoringOutageService.SweepItem> downSweep,
-                                   List<MonitoringOutageService.SweepItem> integritySweep) {
+                                   List<MonitoringOutageService.SweepItem> integritySweep, boolean scheduledSweep) {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("monitor_name", m.getName());   // subject standardı: ad > çıplak URL
         ctx.put("url", m.getUrl());
@@ -7605,6 +7605,13 @@ public class SchedulerService {
             } else {
                 List<String> openPages = "CRAWL".equals(scope) ? stringList(openCtx.get("problem_pages")) : List.of();
                 if (openPages.isEmpty()) return;   // alarm yok / kaynaksız eski alarm → günlük crawl kapatır (D-7)
+                // Perf (2026-11-12 inceleme): zamanlı sweep'te hedefli kurtarma ölçümü HER tıkta değil, izleme başına en
+                // çok kurtarma kadencesinde (taban 120 sn) koşar — açık alarm süresince sık tarama thread'ini her tıkta
+                // 5 sayfa çekmekle meşgul etmez. Ölçüm yapılmayan tık MOS kurtarma sayacı için NÖTRdür (reconcileRecoveries
+                // yalnız KALEM GELEN anahtarı işler; sayaç yalnız sahibe ait DOWN kalemde sıfırlanır) → kapanış biraz
+                // yavaşlar ama sağlam kalır, D-7 ve flapping korunur. Elle kontrol (evaluatePageNow, @Async — istek
+                // thread'i DEĞİL — scheduledSweep=false) seyrek/kullanıcı tetikli olduğundan her seferinde ölçer.
+                if (scheduledSweep && !integrityRecoveryProbeDue(m)) return;
                 Map<String, Object> probe;
                 try { probe = recheckIntegrityPages(m, openPages); }
                 catch (Exception e) {
@@ -7637,6 +7644,24 @@ public class SchedulerService {
         Map<String, Object> c = openIntegrityContext(m);
         if (c == null || !"CRAWL".equals(String.valueOf(c.get("integrity_scope")))) return List.of();
         return stringList(c.get("problem_pages"));
+    }
+
+    /** FIX oto-çözülme (2026-11-12 inceleme) throttle: izleme başına son HEDEFLİ kurtarma ölçümünün zamanı — yalnız
+     *  zamanlı sweep'te okunur/yazılır (elle kontrol throttle'a tabi değil). Lider değişiminde harita sıfırlanır
+     *  (en fazla bir fazladan ölçüm); giriş sayısı yalnız açık CRAWL alarmı olan izlemelerle sınırlı (küçük). */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long> integrityRecoveryProbeAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Zamanlı sweep: bu izlemenin açık CRAWL alarmı için hedefli kurtarma ölçümünün vakti geldi mi? İzleme başına en çok
+     *  {@code max(120 sn, recoveryIntervalSeconds)}'de bir true döner. İlk çağrı DAİMA koşar (harita boş). */
+    private boolean integrityRecoveryProbeDue(com.sitemonitor.model.PageMonitor m) {
+        if (m == null || m.getId() == null) return true;
+        long now = System.currentTimeMillis();
+        long periodMs = Math.max(120_000L,
+                m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : 120_000L);
+        Long prev = integrityRecoveryProbeAt.get(m.getId());
+        if (prev != null && now - prev < periodMs) return false;
+        integrityRecoveryProbeAt.put(m.getId(), now);
+        return true;
     }
 
     private static List<String> stringList(Object v) {
@@ -12527,7 +12552,7 @@ public class SchedulerService {
                 for (var e : entries) {
                     com.sitemonitor.model.PageMonitor m = e.getKey();
                     try {
-                        addPageSweepItems(m, e.getValue(), downSweep, integritySweep);
+                        addPageSweepItems(m, e.getValue(), downSweep, integritySweep, true);   // dağıtık zamanlı sonuç uygulama
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
                         log.warn("Page check failed for {}: {}", m.getUrl(), ex.getMessage());
