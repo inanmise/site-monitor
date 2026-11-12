@@ -7587,9 +7587,33 @@ public class SchedulerService {
                 return openPages.isEmpty() ? homeRecheck.get() : recheckIntegrityPages(m, openPages);
             };
         } else {
-            // Crawl izlemesinde yalnız ana sayfa turu temiz: yalnız ANA SAYFA kaynaklı açık alarmın kanıtıdır.
-            if (!"HOME".equals(openIntegrityScope(m))) return;
-            recheck = homeRecheck;
+            // Crawl izlemesinde yalnız ANA SAYFA turu temiz. D-7: ana sayfa temizliği tüm sitenin temiz olduğunu
+            // KANITLAMAZ. Açık alarm ANA SAYFA kaynaklıysa ana sayfa kanıttır (recheck = homeRecheck, eski davranış).
+            // CRAWL kaynaklıysa: ESKİDEN burada return ediliyordu → alarm yalnız bir sonraki TEMİZ GÜNLÜK crawl'a
+            // kadar (kaynak dalgalıysa GÜNLERCE) açık kalıp elle kapatılmak zorunda kalıyordu.
+            // FIX (oto-çözülme, 2026-11-12): açık CRAWL alarmının KENDİ sorunlu sayfalarını HEDEFLİ yeniden ölç
+            // (günlük crawl'ın kurtarma ölçümüyle AYNI kanıt — ana sayfaya değil, gerçek sorunlu sayfalara bakar).
+            // Hepsi temizse sağlıklı kalem üret → kurtarma zinciri dakikalar içinde kapatır. Hâlâ sorunlu / ölçülemez
+            // ise kalem ÜRETME (açılış/yeniden-uyarı davranışı değişmez; günlük crawl yine yeniden doğrular) — yalnız
+            // KAPANIŞ yeteneği eklenir, flapping yok (kurtarma zinciri recoveryChecks kadar üst üste temiz ister).
+            Map<String, Object> openCtx = openIntegrityContext(m);
+            String scope = openCtx == null ? null : String.valueOf(openCtx.get("integrity_scope"));
+            if ("HOME".equals(scope)) {
+                recheck = homeRecheck;   // ana sayfa kaynaklı alarm: ana sayfa kapsamın tamamı
+            } else {
+                List<String> openPages = "CRAWL".equals(scope) ? stringList(openCtx.get("problem_pages")) : List.of();
+                if (openPages.isEmpty()) return;   // alarm yok / kaynaksız eski alarm → günlük crawl kapatır (D-7)
+                Map<String, Object> probe;
+                try { probe = recheckIntegrityPages(m, openPages); }
+                catch (Exception e) {
+                    log.debug("Sık taramada hedefli kurtarma ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
+                    return;   // ölçülemedi → kalem yok (alarm açık kalır, günlük crawl doğrular)
+                }
+                if (!"up".equals(String.valueOf(probe.get("status")))) return;   // hâlâ sorunlu / ölçülemedi → kalem yok
+                integ.put("integrity_scope", "CRAWL");                 // kurtarma kalemi kaynağı taşır (tutarlılık)
+                integ.put("problem_pages", openPages);
+                recheck = () -> recheckIntegrityPages(m, openPages);   // kurtarma zinciri de hedefli sayfaları ölçer
+            }
         }
         integritySweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_INTEGRITY, m.getUrl(), pageIntegrityDetail(r),
@@ -7604,13 +7628,6 @@ public class SchedulerService {
             log.debug("Açık bütünlük alarmı bağlamı okunamadı {}: {}", m.getUrl(), e.getMessage());
             return null;
         }
-    }
-
-    /** Açık bütünlük alarmının kaynağı: "HOME" / "CRAWL"; alarm yoksa ya da eski (kaynaksız) alarmsa null. */
-    private String openIntegrityScope(com.sitemonitor.model.PageMonitor m) {
-        Map<String, Object> c = openIntegrityContext(m);
-        Object s = c == null ? null : c.get("integrity_scope");
-        return s == null ? null : String.valueOf(s);
     }
 
     /** Açık CRAWL kaynaklı bütünlük alarmının sorunlu sayfaları; yoksa boş (→ ana sayfa doğrulaması, eski davranış). */

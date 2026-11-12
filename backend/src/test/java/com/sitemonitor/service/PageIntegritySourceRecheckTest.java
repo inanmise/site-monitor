@@ -157,8 +157,8 @@ class PageIntegritySourceRecheckTest {
     }
 
     @Test
-    @DisplayName("O-b4: ANA SAYFA kaynaklı alarm (crawl izlemesi) ana sayfa temizse kapanır; crawl kaynaklıysa ana sayfa kanıt değil")
-    void homeScopedAlarm_closesOnCleanHome_crawlScopedDoesNot() {
+    @DisplayName("O-b4: ANA SAYFA kaynaklı alarm (crawl izlemesi) ana sayfa temizse kapanır")
+    void homeScopedAlarm_closesOnCleanHome() {
         PageMonitor m = crawlMonitor();
         when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(Map.of("integrity_scope", "HOME"));
         scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
@@ -167,12 +167,40 @@ class PageIntegritySourceRecheckTest {
         assertThat(items.get(0).up()).isTrue();
         stub(HOME, "SINGLE_PAGE", reachable(List.of()));
         assertThat(items.get(0).recheck().get().get("status")).isEqualTo("up");
+    }
 
-        clearInvocations(outage);
+    @Test
+    @DisplayName("FIX oto-çözülme: crawl kaynaklı alarm + temiz ANA SAYFA turu → sorunlu sayfa HEDEFLİ ölçülür; "
+            + "temizse sağlıklı kurtarma kalemi, hâlâ kırıksa kalem yok (D-7 korunur)")
+    void crawlScopedAlarm_targetedRecoveryOnFrequentHomeSweep() {
+        PageMonitor m = crawlMonitor();
         when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
                 .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+
+        // Sorunlu sayfa HÂLÂ kırık → sık taramada kalem üretilmez (korunumlu: alarm açık kalır, günlük crawl doğrular).
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(broken(DEEP))));
         scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
-        assertThat(integrityItems()).as("crawl kaynaklı alarm: ana sayfa temizliği kanıt değil").isEmpty();
+        assertThat(integrityItems()).as("sorunlu sayfa hâlâ kırık → kalem yok").isEmpty();
+
+        // Sorunlu sayfa ARTIK temiz → sağlıklı kurtarma kalemi (eskiden yalnız günlük crawl kapatabiliyordu).
+        clearInvocations(outage);
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
+        List<MonitoringOutageService.SweepItem> rec = integrityItems();
+        assertThat(rec).as("sorunlu sayfa temiz → sağlıklı kurtarma kalemi").hasSize(1);
+        assertThat(rec.get(0).up()).isTrue();
+        assertThat(rec.get(0).ctxExtra()).containsEntry("integrity_scope", "CRAWL")
+                .containsEntry("problem_pages", List.of(DEEP));
+        // Kurtarma zinciri yine sorunlu sayfaları ölçer (ana sayfayı değil).
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(broken(DEEP))));
+        assertThat(rec.get(0).recheck().get().get("status")).as("kurtarma yeniden ölçümü sorunlu sayfaya bakar").isEqualTo("down");
+
+        // Kaynaksız (eski) crawl alarmı → hedef yok → kalem yok (günlük crawl kapatır, D-7).
+        clearInvocations(outage);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL"));
+        scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"));
+        assertThat(integrityItems()).as("kaynaksız crawl alarmı → kalem yok").isEmpty();
     }
 
     @Test
