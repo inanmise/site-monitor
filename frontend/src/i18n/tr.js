@@ -888,6 +888,7 @@ export const TR = {
   'chg.field.crawlMaxPages': 'En fazla sayfa', 'chg.field.excludePatterns': 'Hariç tutulan kalıplar',
   'chg.field.slowResourceMs': 'Yavaş kaynak eşiği', 'chg.field.alertThirdParty': 'Üçüncü taraf alarmı',
   'chg.field.alertMixedContent': 'Karışık içerik alarmı', 'chg.field.alertTimeout': 'Zaman aşımı alarmı',
+  'chg.field.minBrokenResources': 'En az kırık kaynak',
   'chg.field.resourceConcurrency': 'Eşzamanlı kaynak', 'chg.field.description': 'Açıklama',
   'chg.field.script': 'Script', 'chg.field.envJson': 'Ortam değişkenleri',
   'chg.field.useProxy': 'Vekil kullanımı', 'chg.field.scriptVersion': 'Script sürümü',

@@ -887,6 +887,7 @@ export const EN = {
   'chg.field.crawlMaxPages': 'Max pages', 'chg.field.excludePatterns': 'Excluded patterns',
   'chg.field.slowResourceMs': 'Slow resource threshold', 'chg.field.alertThirdParty': 'Third-party alerts',
   'chg.field.alertMixedContent': 'Mixed content alerts', 'chg.field.alertTimeout': 'Timeout alerts',
+  'chg.field.minBrokenResources': 'Min broken resources',
   'chg.field.resourceConcurrency': 'Concurrent resources', 'chg.field.description': 'Description',
   'chg.field.script': 'Script', 'chg.field.envJson': 'Environment variables',
   'chg.field.useProxy': 'Proxy usage', 'chg.field.scriptVersion': 'Script version',
