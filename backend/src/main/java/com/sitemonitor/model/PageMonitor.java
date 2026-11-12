@@ -73,6 +73,12 @@ public class PageMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarge
     @Column(name = "alert_timeout")
     private Boolean alertTimeout = true;
 
+    /** Alarm açmak için en az kaç alarm-uygun KIRIK (BROKEN) kaynak gerekli (varsayılan 1 = bugünkü davranış).
+     *  Tek dalgalı kaynakta alarm istemeyen takımlar için eşik. Zaman aşımı / mixed content bu sayıya GİRMEZ —
+     *  onlar kendi aç/kapa ayarlarıyla geçitlidir. 1'in altı 1'e yuvarlanır; NULL (eski satır) → 1. */
+    @Column(name = "min_broken_resources")
+    private Integer minBrokenResources = 1;
+
     /** Kaynak doğrulamada eşzamanlı istek sınırı (nezaket + tek-pod yük; varsayılan 5, clamp'li). */
     @Column(name = "resource_concurrency")
     private Integer resourceConcurrency = 5;

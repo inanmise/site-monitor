@@ -984,6 +984,8 @@ public class SchedulerService {
         // Kaynak analizi bütçesi (2026-11, F1) — PageMonitor.resourceBudgetJson (NULL = bütçe yok). Varsayılansız nullable
         // kolon: PostgreSQL'de anlık.
         patch("ALTER TABLE page_monitors ADD COLUMN resource_budget_json TEXT");
+        // E5 (2026-11-12): alarm için en az kırık kaynak eşiği (NULL/1 = bugünkü davranış). Varsayılanlı:
+        patch("ALTER TABLE page_monitors ADD COLUMN min_broken_resources INTEGER DEFAULT 1");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN use_proxy VARCHAR(10)");
         patch("ALTER TABLE scripted_checks ADD COLUMN via_proxy BOOLEAN");
         // İsteğin faz kırılımı: k6 bunları hep üretiyordu, okunmuyordu — "request timeout"un
@@ -7736,13 +7738,15 @@ public class SchedulerService {
         boolean alertTimeout = !Boolean.FALSE.equals(m.getAlertTimeout());       // varsayılan true (mevcut davranış)
         // O-b4: bulgunun KAYNAK sayfaları (alarm-uygun sorunların bulunduğu sayfalar, tavanlı) — teyit/kurtarma yeniden
         // ölçümü bulgunun kaynağına bakar (derin crawl bulgusu ana sayfayla "geçici" sayılmasın).
-        boolean alarmWorthy = false;
+        // E5 (2026-11-12): alarm-uygunluk minBrokenResources eşiğiyle kümülatif karar (varsayılan 1 = eski davranış).
+        boolean alarmWorthy = PageCheckerService.resultAlarmWorthy(m, res.issues());
         java.util.LinkedHashSet<String> problemPages = new java.util.LinkedHashSet<>();
-        for (PageCheckerService.ResourceIssue i : res.issues()) {
-            if (!issueAlarmWorthy(m, i)) continue;
-            alarmWorthy = true;
-            if (problemPages.size() < INTEGRITY_RECHECK_MAX_PAGES)
-                problemPages.add(i.sourcePage() != null && !i.sourcePage().isBlank() ? i.sourcePage() : m.getUrl());
+        if (alarmWorthy) {
+            for (PageCheckerService.ResourceIssue i : res.issues()) {
+                if (!issueAlarmWorthy(m, i)) continue;
+                if (problemPages.size() < INTEGRITY_RECHECK_MAX_PAGES)
+                    problemPages.add(i.sourcePage() != null && !i.sourcePage().isBlank() ? i.sourcePage() : m.getUrl());
+            }
         }
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
@@ -7895,6 +7899,8 @@ public class SchedulerService {
         int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
         int maxCheckSec = appSettings.getInt("site.monitor.page.max-check-seconds", 120);
         int unmeasured = 0;
+        // E5: eşik (minBrokenResources) kümülatif uygulanır → sayfa sayfa kısa-devre YOK, tüm sorunlar toplanır.
+        List<PageCheckerService.ResourceIssue> found = new ArrayList<>();
         for (String page : pages.stream().filter(java.util.Objects::nonNull).distinct()
                 .limit(INTEGRITY_RECHECK_MAX_PAGES).toList()) {
             PageCheckerService.PageCheckResult res = pageCheckerService.check(
@@ -7906,10 +7912,10 @@ public class SchedulerService {
                 if (hs == null || (hs != 404 && hs != 410)) unmeasured++;   // 404/410 = kaynak sayfa kaldırıldı
                 continue;
             }
-            for (PageCheckerService.ResourceIssue i : res.issues()) {
-                if (issueAlarmWorthy(m, i)) return Map.of("status", "down", "error", "kaynak sayfada sorun sürüyor: " + page);
-            }
+            found.addAll(res.issues());
         }
+        if (PageCheckerService.resultAlarmWorthy(m, found))
+            return Map.of("status", "down", "error", "kaynak sayfalarda sorun sürüyor");
         return unmeasured > 0 ? Map.of("status", "skipped", "error", unmeasured + " kaynak sayfa ölçülemedi")
                               : Map.of("status", "up");
     }
