@@ -5179,6 +5179,9 @@ export const EN = {
   'aov.w.USER_DORMANT':  '{0} users have not logged in for 90+ days',
   'aov.w.SINGLE_ADMIN':  'Only one active ADMIN — set up a second administrator',
   'aov.w.NO_ADMIN':      'No active ADMIN',
+  'aov.healthTitle':     'Health',
+  'aov.w.ESCALATION_GAP':'{0} team(s) with a critical escalation gap — the most severe alarm escalates to nobody',
+  'aov.w.USER_ATTENTION':'{0} user(s) need attention (locked / dormant / never signed in)',
   // Admin panel change history (2026-09-20)
   'hist.title':          'Change History',
   'hist.desc.ALERT_THRESHOLD': 'Who changed the thresholds, when, and from what to what. The source is the audit log and cannot be edited afterwards.',

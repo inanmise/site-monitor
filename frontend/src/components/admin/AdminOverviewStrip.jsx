@@ -1,80 +1,82 @@
 import { useState, useEffect } from 'react'
-import { Users, UsersRound, Mail, BellRing, SlidersHorizontal, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Users, UsersRound, Mail, BellRing, SlidersHorizontal, AlertTriangle, CheckCircle2,
+  ShieldX, ShieldAlert, UserX, ArrowRight, Activity } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { TONE_CLASS } from './ToneBadge.jsx'
 import { KpiCard } from './HealthUi.jsx'
+import { buildCoverage } from './contactsCoverageModel.js'
+import { buildHealthSignals, escalationGapFrom } from './adminHealthModel.js'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
 /**
- * Yönetim Paneli özet şeridi (2026-09-20): sekmelerin üstünde sayaçlar + sağlık uyarıları. Uyarı çipi tıklanınca
- * ilgili sekme SÜZGEÇLİ açılır (örn. "3 hiç girmemiş" → Kullanıcılar, g_dormant=never). Yönetici sekmeleri tek tek
- * gezmeden neyin eksik olduğunu bir bakışta görür. Sunucu kapsamlı kullanıcı için yalnız görüş alanını sayar.
+ * Yönetim Paneli SAĞLIK PANOSU (2026-09-20; eyleme dönük yeniden tasarım 2026-11-12, çapraz zenginleştirme #2):
+ * sekmelerin üstünde KPI sayaçları + yapısal sağlık kutucukları. Her kutucuk tıklanınca ilgili sekme SÜZGEÇLİ açılır
+ * (örn. "Tek ADMIN" → Kullanıcılar g_role=ADMIN). Yönetici sekmeleri gezmeden neyin eksik olduğunu bir bakışta görür.
  *
- * Yerleşim (2026-09-26, mweb): sayaçlar telefonda 2'li, küçük tablette 3'lü ızgara, geniş ekranda tek satır akış;
- * uyarılar küçük, saran, tıklanabilir rozet-düğmeler (shadcn Button, ton = uyarı/ağır). Eskiden tablet/telefonda her
- * çip kendi satırına düşüp ekranı yiyordu.
+ * Sinyaller `adminHealthModel.buildHealthSignals(overview, escalationGap)` ile üretilir; eskalasyon KAPSAM BOŞLUĞU
+ * (varlık var ama kritik eskalasyon kişisi yok) #1'in test edilmiş `contactsCoverageModel.buildCoverage`'ı ile frontend'de
+ * hesaplanır (overview'un yanına contacts/all + users + teams/stats çekilir; veri okunamazsa o kutucuk hiç çizilmez —
+ * bilinmeyen ≠ eksik). Kullanıcı-etkinlik uyarıları (kilitli/atıl/hiç) TEK "Dikkat isteyen kullanıcılar" kutucuğunda
+ * toplanır (şeridi çipe boğmadan; 2026-09-27 kararının ruhu) ve Kullanıcılar sekmesine süzgeçli gider — kırılım orada.
+ *
+ * Yerleşim (mweb): KPI sayaçları telefonda 2'li, tablette 3'lü, geniş ekranda akış; sağlık kutucukları telefonda tek
+ * sütun, tablette 2'li; telefonda yalnız ilk {@link PHONE_WARN_LIMIT} (ağırlar önce) + "+N daha". Sunucu kapsamlı
+ * kullanıcı için yalnız görüş alanını sayar. Test kancaları: `data-slot="overview-health"`, kutucuk `data-warning` + `data-tone`.
  */
-const SEVERE = new Set(['SINGLE_ADMIN', 'NO_ADMIN', 'TEAM_NO_EMAIL', 'GROUP_NO_EMAILS'])
-/**
- * Kullanıcı ETKİNLİĞİ bilgileri (hiç girmemiş / uzun süredir girmemiş / kilitli) bu şeritte gösterilmez — Kullanıcılar
- * sekmesinin özet kutucuklarında (tıklanınca süzen) yaşar (2026-09-27, kullanıcı isteği: "1 kullanıcı hiç giriş yapmamış
- * bilgisini Kullanıcılar sekmesinde verelim"). Şerit yalnız yapısal sorunları taşır (tek yönetici, e-postasız takım…).
- */
-export const USER_TAB_WARNINGS = new Set(['USER_NEVER_LOGGED_IN', 'USER_DORMANT', 'USER_LOCKED'])
+const HEALTH_ICON = {
+  NO_ADMIN: UserX, SINGLE_ADMIN: ShieldAlert, ESCALATION_GAP: ShieldX,
+  TEAM_NO_EMAIL: Mail, TEAM_NO_LEADER: UsersRound, GROUP_NO_EMAILS: BellRing,
+  CONTACT_INACTIVE: UserX, USER_ATTENTION: Users,
+}
 const PHONE_WARN_LIMIT = 2
 
 export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) {
   const t = useT()
   const [data, setData] = useState(null)
+  const [gap, setGap] = useState(null)            // eskalasyon kapsam boşluğu sayısı (number) ya da null (bilinmiyor)
   const [error, setError] = useState(false)
-  // Telefonda uyarıların yalnız ilk ikisi (ağırlar önce) + "+N daha" — davranış farkı → useIsMobile.
-  const phone = useIsMobile()
-  const [showAll, setShowAll] = useState(false)
 
+  // Sayaçlar + uyarılar: sekme değişiminde (refreshKey) tazelenir — eskisi gibi tek çağrı.
   useEffect(() => {
     let alive = true
-    api.admin.overview?.().then(r => { if (!alive) return; if (r?.success) { setData(r.data); setError(false) } else setError(true) })
-      .catch(() => { if (alive) setError(true) })
+    api.admin.overview?.().then((r) => { if (!alive) return; if (r?.success) { setData(r.data); setError(false) } else { setError(true); setData(null) } })
+      .catch(() => { if (alive) { setError(true); setData(null) } })
     return () => { alive = false }
   }, [refreshKey])
 
+  // Eskalasyon kapsam boşluğu girdileri (ağır liste uçları) YALNIZ bir kez — sekme değişiminde tekrar çekilmez (maliyet).
+  // #1'in test edilmiş buildCoverage'ı ile boşluk sayısı; biri okunamazsa escalationGapFrom null döner → kutucuk çizilmez.
+  useEffect(() => {
+    let alive = true
+    Promise.allSettled([api.admin.getContacts?.(), api.admin.getUsers?.(), api.admin.teamStats?.()])
+      .then(([co, us, st]) => {
+        if (!alive) return
+        const contactsOk = co.status === 'fulfilled' && !!co.value?.success
+        const contacts = contactsOk ? (co.value.data || []) : []
+        const users = us.status === 'fulfilled' && us.value?.success ? (us.value.data || []) : []
+        const inactiveIds = new Set(users.filter((u) => u.active === false).map((u) => String(u.id)))
+        const stats = st.status === 'fulfilled' && st.value?.success ? (st.value.data || {}) : {}
+        const teams = Object.keys(stats).map((id) => ({ id: Number(id), name: '' }))
+        setGap(escalationGapFrom(buildCoverage(contacts, teams, inactiveIds, stats), contactsOk))
+      })
+      .catch(() => { /* boşluk kutucuğu çizilmez; strip yine çalışır */ })
+    return () => { alive = false }
+  }, [])
+
   if (error || !data) return null
   const c = data.counts || {}
-  const warnings = (data.warnings || []).filter((w) => !USER_TAB_WARNINGS.has(w.code))
+  const signals = buildHealthSignals(data, gap)
 
-  // Uyarı kodu → sekme + süzgeç (URL g_* anahtarları; sekme mount olunca readUrlParam ile okur).
-  const jumpFor = (w) => {
-    switch (w.code) {
-      case 'USER_NEVER_LOGGED_IN': return ['users', { g_dormant: 'never' }]
-      case 'USER_DORMANT': return ['users', { g_dormant: String(data.dormant_days || 90) }]
-      case 'USER_LOCKED': return ['users', {}]
-      case 'SINGLE_ADMIN': case 'NO_ADMIN': return ['users', { g_role: 'ADMIN' }]
-      case 'CONTACT_INACTIVE': return ['contacts', {}]
-      case 'GROUP_NO_EMAILS': return ['notifyGroups', {}]
-      default: return [w.tab || 'teams', {}]
-    }
-  }
-
-  // Kart: Sistem Sağlığı / Kullanıcılar ile AYNI KpiCard (ikon kutusu, büyük sayı, etiket, alt satır); tıklanınca sekme.
-  // 2026-09-26 kullanıcı isteği: kartlar sayfanın tamamına yayılsın — ızgara tam genişlik, auto-fit ile eşit paylaşır.
   const kpi = (Icon, label, value, tab, sub) => (
-    <KpiCard key={tab} kpiKey={tab} icon={Icon} value={value ?? '—'} label={label} sub={sub}
-      onClick={() => onJump?.(tab, {})} />
+    <KpiCard key={tab} kpiKey={tab} icon={Icon} value={value ?? '—'} label={label} sub={sub} onClick={() => onJump?.(tab, {})} />
   )
-
-  const isSevere = (w) => SEVERE.has(w.code)
-  // Ağır uyarılar önce; telefonda ilk PHONE_WARN_LIMIT görünür, kalanı "+N daha" ile açılır (ekranı yemesin).
-  const sorted = [...warnings].sort((a, b) => Number(isSevere(b)) - Number(isSevere(a)))
-  const limit = phone && !showAll ? PHONE_WARN_LIMIT : sorted.length
-  const visible = sorted.slice(0, limit)
-  const hidden = sorted.length - visible.length
 
   return (
     <div className="mb-4 flex flex-col gap-3" data-testid="admin-overview">
-      {/* Tam genişlik: telefonda 2, tablette 3, geniş ekranda kart sayısı kadar eşit sütun (sağda boşluk kalmaz) */}
+      {/* KPI sayaçları — tam genişlik: telefonda 2, tablette 3, geniş ekranda eşit sütun */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] lg:gap-3">
         {kpi(UsersRound, t('aov.teams'), c.teams, 'teams', t('aov.active', c.teams_active ?? 0))}
         {kpi(Users, t('aov.users'), c.users, 'users', t('aov.usersSub', c.users_active ?? 0, c.admins ?? 0))}
@@ -84,33 +86,61 @@ export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) 
           `${c.threshold_default.warning}/${c.threshold_default.high}/${c.threshold_default.critical}`, 'thresholds',
           c.threshold_tiers > 0 ? t('aov.tierRows', c.threshold_tiers) : null)}
       </div>
-      {/* Sağlık uyarıları: tam genişlik, hafif zeminli şerit; çipler sarar */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border bg-muted/30 px-3 py-2" data-slot="overview-warnings">
-        {warnings.length === 0 ? (
-          <span className="inline-flex items-center gap-1.5 text-sm text-success">
-            <CheckCircle2 aria-hidden="true" className="size-3.5" /> {t('aov.allClear')}
-          </span>
-        ) : visible.map(w => {
-          const [tab, params] = jumpFor(w)
-          const severe = isSevere(w)
-          return (
-            <Button type="button" key={w.code} variant="outline" size="xs" data-warning={w.code}
-              data-tone={severe ? 'danger' : 'warning'} onClick={() => onJump?.(tab, params)}
-              className={cn('h-auto min-h-8 max-w-full rounded-full px-2.5 py-1 text-left font-semibold whitespace-normal sm:min-h-7',
-                severe
-                  ? cn(TONE_CLASS.danger, 'border-destructive/40 hover:bg-destructive/20 hover:text-destructive')
-                  : cn(TONE_CLASS.warning, 'border-amber-500/40 hover:bg-amber-500/25 hover:text-amber-800 dark:hover:text-amber-200'))}>
-              <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" /> {t(`aov.w.${w.code}`, w.count)}
-            </Button>
-          )
-        })}
-        {hidden > 0 && (
-          <Button type="button" variant="ghost" size="xs" className="h-8 rounded-full px-2.5 font-semibold"
-            aria-expanded={false} onClick={() => setShowAll(true)}>
-            {t('aov.moreWarnings', hidden)}
-          </Button>
-        )}
-      </div>
+
+      <HealthTiles signals={signals} onJump={onJump} />
     </div>
+  )
+}
+
+/**
+ * Sağlık kutucukları (fetch'siz, saf sunum — strip ile e2e harness'ı AYNI bileşeni kullanır). Ağır (danger) önce,
+ * uyarı (amber) sonra; telefonda ilk {@link PHONE_WARN_LIMIT} + "+N daha". Her kutucuk tıklanınca sekme + süzgeç.
+ */
+export function HealthTiles({ signals = [], onJump }) {
+  const t = useT()
+  const phone = useIsMobile()
+  const [showAll, setShowAll] = useState(false)
+  const limit = phone && !showAll ? PHONE_WARN_LIMIT : signals.length
+  const visible = signals.slice(0, limit)
+  const hidden = signals.length - visible.length
+
+  return (
+    <div className="rounded-xl border bg-muted/30 p-2.5 sm:p-3" data-slot="overview-health">
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+        <Activity aria-hidden="true" className="size-3.5" /> {t('aov.healthTitle')}
+      </div>
+      {signals.length === 0 ? (
+        <span className="inline-flex items-center gap-1.5 text-sm text-success">
+          <CheckCircle2 aria-hidden="true" className="size-3.5" /> {t('aov.allClear')}
+        </span>
+      ) : (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {visible.map((s) => <HealthTile key={s.code} s={s} t={t} onJump={onJump} />)}
+          {hidden > 0 && (
+            <Button type="button" variant="ghost" size="sm" aria-expanded={false} onClick={() => setShowAll(true)}
+              className="h-auto min-h-10 justify-center rounded-lg font-semibold">
+              {t('aov.moreWarnings', hidden)}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Tek sağlık kutucuğu — ikon + açıklama (sayı gömülü) + ok; ton ağır/uyarı. Tıklanınca sekme + süzgeç. */
+function HealthTile({ s, t, onJump }) {
+  const Icon = HEALTH_ICON[s.code] || AlertTriangle
+  return (
+    <Button type="button" variant="outline" size="sm" data-warning={s.code} data-tone={s.severe ? 'danger' : 'warning'}
+      onClick={() => onJump?.(s.tab, s.params)}
+      className={cn('h-auto min-h-12 w-full justify-start gap-2.5 rounded-lg px-3 py-2 text-left whitespace-normal pointer-coarse:min-h-12',
+        s.severe
+          ? cn(TONE_CLASS.danger, 'border-destructive/40 hover:bg-destructive/15 hover:text-destructive')
+          : cn(TONE_CLASS.warning, 'border-amber-500/40 hover:bg-amber-500/20 hover:text-amber-800 dark:hover:text-amber-200'))}>
+      <Icon aria-hidden="true" className="size-4 shrink-0" />
+      <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{t(`aov.w.${s.code}`, s.count)}</span>
+      <ArrowRight aria-hidden="true" className="ms-auto size-4 shrink-0 opacity-60" />
+    </Button>
   )
 }
