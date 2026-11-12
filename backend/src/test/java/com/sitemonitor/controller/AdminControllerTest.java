@@ -54,6 +54,7 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
     @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
+    @MockitoBean com.sitemonitor.service.AdminActivityFeedService activityFeedService;       // çapraz değişiklik akışı (2026-11-13)
     @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
     @MockitoBean com.sitemonitor.service.WebhookService webhookService;
     @MockitoBean com.sitemonitor.service.InboxService inboxServiceMemo;          // zil belleği (performans 2026-11-06)
@@ -2172,6 +2173,95 @@ class AdminControllerTest {
         assertThat(AdminController.historyName("{\"team\":\"Takim A\",\"enabled\":false}")).isEqualTo("Takim A");
         assertThat(AdminController.historyName("{\"enabled\":false}")).isNull();
         assertThat(AdminController.historyName(null)).isNull();
+    }
+
+    // ── Çapraz yönetim değişiklik akışı (2026-11-13) ──────────────────────────
+
+    private void allowAllFeedPerms() {
+        for (String k : List.of("teams.list", "users.list", "contacts.list", "thresholds.read", "notification.groups",
+                "alerts.forwards", "teams.sharing", "oncall.read")) {
+            when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq(k), eq("view"))).thenReturn(true);
+        }
+    }
+
+    @Test
+    @DisplayName("GET /history/feed global admin: 8 alan sınırsız; satır alanı, öneki kırpılmış işlem, takım adı ve JSON ayrıntı döner")
+    @SuppressWarnings("unchecked")
+    void adminHistoryFeed_globalAdmin() throws Exception {
+        allowAllFeedPerms();
+        com.sitemonitor.model.AuditLog row = new com.sitemonitor.model.AuditLog();
+        row.setId(21L); row.setEventType("ALERT_FORWARD_CREATE"); row.setEventTime("2026-11-12T10:00:00");
+        row.setActor("admin"); row.setResourceType("TEAM"); row.setResourceId("7"); row.setDetail("{\"scope\":\"ALL\"}");
+        when(activityFeedService.feed(any(), isNull(), any(), eq(0), eq(25)))
+                .thenReturn(new com.sitemonitor.service.AdminActivityFeedService.Feed(
+                        List.of(new com.sitemonitor.service.AdminActivityFeedService.Entry(row, "forwards", 7L)), 1, 0, 25, false, 0));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(7L); team.setName("Takım A");
+        when(teamRepo.findAll()).thenReturn(List.of(team));
+
+        mvc.perform(get("/api/admin/history/feed").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].area").value("forwards"))
+                .andExpect(jsonPath("$.items[0].action").value("CREATE"))
+                .andExpect(jsonPath("$.items[0].name").value("Takım A"))     // ayrıntıda ad yok → sahip takım
+                .andExpect(jsonPath("$.items[0].team_name").value("Takım A"))
+                .andExpect(jsonPath("$.items[0].detail").value("{\"scope\":\"ALL\"}"))
+                .andExpect(jsonPath("$.areas.length()").value(8))
+                .andExpect(jsonPath("$.days").value(30))
+                .andExpect(jsonPath("$.total").value(1));
+
+        ArgumentCaptor<List<com.sitemonitor.service.AdminActivityFeedService.Access>> acc = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> since = ArgumentCaptor.forClass(String.class);
+        verify(activityFeedService).feed(acc.capture(), isNull(), since.capture(), eq(0), eq(25));
+        assertThat(acc.getValue()).hasSize(8).allMatch(a -> a.teams() == null);
+        assertThat(since.getValue()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
+    }
+
+    @Test
+    @DisplayName("GET /history/feed kapsamlı müdür: kullanıcılar/eşikler YOK; paylaşım yönetim, diğerleri görüş kapsamı; areas süzgeci + days=0")
+    @SuppressWarnings("unchecked")
+    void adminHistoryFeed_scopedAdmin() throws Exception {
+        allowAllFeedPerms();
+        when(activityFeedService.feed(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new com.sitemonitor.service.AdminActivityFeedService.Feed(List.of(), 0, 0, 25, false, 0));
+        MockHttpSession s = scopedAdminSession();
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(2L, 3L)));
+
+        mvc.perform(get("/api/admin/history/feed").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.areas.length()").value(6))
+                .andExpect(jsonPath("$.areas[?(@ == 'users')]").isEmpty())
+                .andExpect(jsonPath("$.areas[?(@ == 'thresholds')]").isEmpty());
+        ArgumentCaptor<List<com.sitemonitor.service.AdminActivityFeedService.Access>> acc = ArgumentCaptor.forClass(List.class);
+        verify(activityFeedService).feed(acc.capture(), any(), any(), anyInt(), anyInt());
+        for (var a : acc.getValue()) {
+            if ("sharing".equals(a.area())) assertThat(a.teams()).containsExactly(2L, 3L);
+            else assertThat(a.teams()).containsExactly(2L);
+        }
+
+        org.mockito.Mockito.clearInvocations(activityFeedService);
+        mvc.perform(get("/api/admin/history/feed").param("areas", "groups,users,bogus").param("days", "0").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selected_areas.length()").value(1))
+                .andExpect(jsonPath("$.selected_areas[0]").value("groups"))
+                .andExpect(jsonPath("$.days").value(0));
+        verify(activityFeedService).feed(acc.capture(), any(), eq(""), anyInt(), anyInt());
+        assertThat(acc.getValue()).extracting(com.sitemonitor.service.AdminActivityFeedService.Access::area).containsExactly("groups");
+    }
+
+    @Test
+    @DisplayName("GET /history/feed: izinli alan yoksa 403; kişi süzgeci 200 karakteri aşarsa 400; geçersiz gün → 30")
+    void adminHistoryFeed_gatesAndValidation() throws Exception {
+        mvc.perform(get("/api/admin/history/feed").session(userSession()))
+                .andExpect(status().isForbidden());
+        allowAllFeedPerms();
+        mvc.perform(get("/api/admin/history/feed").param("actor", "x".repeat(201)).session(authSession()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("actor"));
+        when(activityFeedService.feed(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new com.sitemonitor.service.AdminActivityFeedService.Feed(List.of(), 0, 0, 25, false, 0));
+        mvc.perform(get("/api/admin/history/feed").param("days", "45").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days").value(30));
     }
 
     @Test

@@ -52,14 +52,14 @@ describe('AdminPanel', () => {
     expect(screen.queryByText('Certificate Management')).not.toBeInTheDocument()
   })
 
-  it('renders all 7 tabs under their group labels with admin role (shadcn Tabs)', async () => {
+  it('renders all 8 tabs under their group labels with admin role (shadcn Tabs)', async () => {
     await act(async () => { render(<AdminPanel systemRole="ADMIN" />) })
     const list = screen.getByRole('tablist')
     expect(list).toHaveAttribute('data-slot', 'tabs-list')
     expect(within(list).getAllByRole('tab').map((x) => x.textContent))
-      .toEqual(['Thresholds', 'Escalation Contacts', 'Notification Groups', 'Who gets notified?', 'Teams', 'Users', 'Access sharing'])
+      .toEqual(['Thresholds', 'Escalation Contacts', 'Notification Groups', 'Who gets notified?', 'Teams', 'Users', 'Access sharing', 'Change feed'])
     // Grup başlıkları görünür ama sekme listesinde sekme DEĞİL (aria-hidden).
-    for (const g of ['Certificate Management', 'Notifications & Alerts', 'Organization']) {
+    for (const g of ['Certificate Management', 'Notifications & Alerts', 'Organization', 'Audit']) {
       expect(within(list).getByText(g)).toHaveAttribute('aria-hidden', 'true')
     }
   })
@@ -129,7 +129,7 @@ describe('AdminPanel — tam genişlik gruplu şerit', () => {
     expect(list.className).toMatch(/flex-wrap/)
     expect(list.className).not.toMatch(/w-max|overflow-x-auto/)
     const groups = list.querySelectorAll('[data-slot="admin-tab-group"]')
-    expect([...groups].map((g) => g.getAttribute('data-group'))).toEqual(['admin.groupNotify', 'admin.groupOrg'])   // Sertifika grubu yöneticiye özel
+    expect([...groups].map((g) => g.getAttribute('data-group'))).toEqual(['admin.groupNotify', 'admin.groupOrg', 'admin.groupAudit'])   // Sertifika grubu yöneticiye özel; Denetim (değişiklik akışı, 2026-11-13) herkese
     // Grup sekme sayısıyla orantılı büyür; sekmeler grubun İÇİNDE
     expect(groups[0].style.flexGrow).toBe('3')
     expect(within(groups[0]).getAllByRole('tab').map((x) => x.textContent)).toEqual(['Escalation Contacts', 'Notification Groups', 'Who gets notified?'])
