@@ -85,10 +85,16 @@ export function buildView(data) {
   for (const e of teamEmails) {
     if (!lower(e?.email)) continue
     const src = parseTeamSource(e.source)
+    const name = src.kind === 'group' ? src.groupName : (e.team || data?.team_name || '')
+    // Zincir izi (2026-11-13): yalnız pasif hesaplara ait adres gönderimde süzülür → alıcı değil, gerekçesiyle hariç.
+    if (e.inactive_only === true) {
+      excluded.push({ key: `team:${lower(e.email)}`, channel: 'email', name: name || String(e.email).trim(), sub: '',
+        address: String(e.email).trim(), reason: 'INACTIVE_ADDRESS' })
+      continue
+    }
     const row = {
       key: `team:${lower(e.email)}`, email: String(e.email).trim(),
-      name: src.kind === 'group' ? src.groupName : (e.team || data?.team_name || ''),
-      source: src.kind, groupName: src.groupName, also: [],
+      name, source: src.kind, groupName: src.groupName, also: [],
     }
     emails.push(row)
     byAddress.set(lower(e.email), row)
@@ -98,6 +104,11 @@ export function buildView(data) {
     const address = lower(c?.email)
     if (!address) {
       excluded.push({ key: `contact:${c?.id}`, channel: 'email', name: c?.name || '—', sub: c?.role || '', reason: 'NO_EMAIL' })
+      continue
+    }
+    if (c?.inactive_only === true) {
+      excluded.push({ key: `contact:${c?.id}`, channel: 'email', name: c?.name || '—', sub: c?.role || '',
+        address: String(c.email).trim(), reason: 'INACTIVE_ADDRESS' })
       continue
     }
     // Zamana bağlı eskalasyon adımı (2026-10-01): gecikmeli kişi ilk e-postaya GİRMEZ — kendi satırında "N dk onaysız
@@ -115,6 +126,37 @@ export function buildView(data) {
     emails.push(row)
     if (delayMinutes == null) byAddress.set(address, row)
   }
+
+  // Nöbetçi (2026-11-13 zincir izi): YÜKSEK / KRİTİK'te "nöbetçiye de bildir" açık takımın o anki nöbetçisi. Adres zincirde
+  // zaten varsa aynı satıra not düşer (tek e-posta); pasif hesaba aitse hariç.
+  const oncall = Array.isArray(data?.oncall) ? data.oncall : []
+  for (const [i, p] of oncall.entries()) {
+    const address = lower(p?.email)
+    const name = p?.name || String(p?.email || '').trim() || '—'
+    if (!address) continue
+    if (p?.inactive_only === true) {
+      excluded.push({ key: `oncall:${i}`, channel: 'email', name, sub: '', address: String(p.email).trim(), reason: 'INACTIVE_ADDRESS' })
+      continue
+    }
+    const host = byAddress.get(address)
+    if (host) { host.also.push({ id: `oncall:${i}`, name, oncall: true }); continue }
+    const row = { key: `oncall:${i}`, email: String(p.email).trim(), name, source: 'oncall', also: [] }
+    emails.push(row)
+    byAddress.set(address, row)
+  }
+
+  // Sunucunun hariç listesi (2026-11-13): sahip takımların bu senaryoda alıcı OLMAYAN kişileri + gerekçesi
+  // (TEAM_ONLY / INACTIVE_ACCOUNT / SAME_ADDRESS / LEVEL_THRESHOLD). Eski sunucu alanı göndermez → liste bugünkü gibi.
+  const excludedContacts = Array.isArray(data?.excluded_contacts) ? data.excluded_contacts : []
+  for (const c of excludedContacts) {
+    excluded.push({
+      key: `xcontact:${c?.id}`, channel: 'email', name: c?.name || '—', sub: c?.role || '',
+      address: c?.email ? String(c.email).trim() : '', reason: String(c?.reason || 'UNKNOWN'),
+      minLevel: c?.min_level || null,
+    })
+  }
+  const traced = teamEmails.some((e) => e?.inactive_only === true) || contacts.some((c) => c?.inactive_only === true)
+    || oncall.length > 0
 
   const webhooks = rawWebhooks.map((w, i) => ({
     key: `webhook:${w?.id ?? i}`, name: w?.name || '—', type: String(w?.type || '').toUpperCase(), target: w?.target || '',
@@ -154,7 +196,11 @@ export function buildView(data) {
   // Eski sunucu (alan yok): satırlar geldiyse tam görünüm, gelmediyse gizli — neden bilinmiyor.
   const access = PUSH_ACCESS.includes(rawAccess) ? rawAccess : (push != null ? 'FULL' : 'NONE')
 
-  const emailCount = Number.isFinite(Number(data?.email_total)) && data?.email_total != null ? Number(data.email_total) : emails.length
+  // Sunucunun email_total'ı düşecek pasif adresleri ve nöbetçiyi bilmez: zincir izi alanları varsa sayı satırlardan (gecikmeli
+  // kişi hariç — o ilk e-postaya girmez); yoksa sunucunun sayısı (bugünkü davranış).
+  const emailCount = traced
+    ? emails.filter((e) => e.delayMinutes == null).length
+    : (Number.isFinite(Number(data?.email_total)) && data?.email_total != null ? Number(data.email_total) : emails.length)
   const counts = {
     email: emailCount, push: pushRecipients.length, pushNot: pushNonRecipients.length,
     // Gecikmeli kişinin webhook'u ilk bildirime girmez (yalnız eskalasyon adımında) — sayı anlık kanalları gösterir.
@@ -225,4 +271,74 @@ export function filterPushRows(rows, filter, query) {
     if (!q) return true
     return lower(r.name).includes(q) || lower(r.username).includes(q)
   })
+}
+
+// ── Dışa aktarım + seviye karşılaştırması (2026-11-13, "Kim bilgilendirilir?" zincir izi) ─────────────────────────────
+
+/**
+ * Senaryonun alıcı listesi → CSV satırları (başlık dahil). Dahil olanlar (e-posta / webhook / push) ve hariç kalanlar
+ * gerekçesiyle; metinler çağıranın dilinde (`labels`): kanal adları, kaynak etiketleri, durum ve gerekçe metni.
+ * @param {ReturnType<typeof buildView>} view
+ * @param {{header:string[], channel:(c:string)=>string, source:(s:string)=>string, yes:string, no:string,
+ *          later:(m:number)=>string, reason:(code:string, channel:string)=>string}} labels
+ */
+export function recipientCsvRows(view, labels) {
+  const rows = [labels.header]
+  for (const e of view.emails) {
+    const notes = (e.also || []).map((a) => a.name).join(', ')
+    rows.push([labels.channel('email'), e.name || '', e.email, labels.source(e.source),
+      e.delayMinutes != null ? labels.later(e.delayMinutes) : labels.yes, notes])
+  }
+  for (const w of view.webhooks) {
+    rows.push([labels.channel('webhook'), w.name, w.target, labels.source('contact'),
+      w.delayMinutes != null ? labels.later(w.delayMinutes) : labels.yes, ''])
+  }
+  if (view.push.available) {
+    for (const p of view.push.recipients) rows.push([labels.channel('push'), p.name, p.username, p.group || '', labels.yes, ''])
+  }
+  for (const x of view.excluded) {
+    rows.push([labels.channel(x.channel), x.name, x.address || x.sub || '', '', labels.no, labels.reason(x.reason, x.channel)])
+  }
+  return rows
+}
+
+/**
+ * Seviyelere göre karşılaştırma: her seviyenin görünümünden (null = okunamadı) alıcı birleşimi. Hücre: 'yes' (alır),
+ * 'later' (gecikmeli adım), 'no' (değerlendirildi, almaz — gerekçe `reason`), 'unknown' (o seviye okunamadı).
+ * Seviyeler arasında farklılaşan satırlar önce; sonra kanal, ad.
+ * @param {Record<string, ReturnType<typeof buildView>|null>} byLevel
+ */
+export function compareLevels(byLevel, levels = LEVELS) {
+  const rows = new Map()
+  const ensure = (key, channel, name, address) => {
+    if (!rows.has(key)) rows.set(key, { key, channel, name, address, cells: {} })
+    return rows.get(key)
+  }
+  for (const lv of levels) {
+    const v = byLevel[lv]
+    if (!v) continue
+    for (const e of v.emails) {
+      ensure(`email:${lower(e.email)}`, 'email', e.name || e.email, e.email).cells[lv] = { state: e.delayMinutes != null ? 'later' : 'yes' }
+    }
+    for (const w of v.webhooks) {
+      ensure(`webhook:${lower(w.name)}|${w.target}`, 'webhook', w.name, w.target).cells[lv] = { state: w.delayMinutes != null ? 'later' : 'yes' }
+    }
+    if (v.push.available) {
+      for (const p of v.push.recipients) ensure(`push:${lower(p.username)}`, 'push', p.name, p.username).cells[lv] = { state: 'yes' }
+    }
+    for (const x of v.excluded) {
+      const key = x.channel === 'push' ? `push:${lower(x.sub)}` : `email:${lower(x.address || x.name)}`
+      const r = ensure(key, x.channel, x.name, x.address || x.sub || '')
+      if (!r.cells[lv]) r.cells[lv] = { state: 'no', reason: x.reason }
+    }
+  }
+  const out = [...rows.values()].map((r) => {
+    for (const lv of levels) if (!r.cells[lv]) r.cells[lv] = { state: byLevel[lv] ? 'no' : 'unknown' }
+    const states = new Set(levels.map((lv) => r.cells[lv].state).filter((s) => s !== 'unknown'))
+    return { ...r, varies: states.size > 1 }
+  })
+  const CH = { email: 0, webhook: 1, push: 2 }
+  out.sort((a, b) => (Number(b.varies) - Number(a.varies)) || ((CH[a.channel] ?? 9) - (CH[b.channel] ?? 9))
+    || String(a.name).localeCompare(String(b.name), 'tr'))
+  return out
 }

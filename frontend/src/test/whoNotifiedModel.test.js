@@ -104,3 +104,52 @@ describe('whoNotifiedModel', () => {
     expect(buildView({ push_error: 'boom' }).push.error).toBe('boom')
   })
 })
+
+// Zincir izi (2026-11-13): düşecek pasif adres, sunucunun hariç listesi (gerekçeli) ve nöbetçi satırları.
+describe('whoNotifiedModel — zincir izi', () => {
+  const base = {
+    team_id: 1, team_name: 'Takım A', email_total: 3,
+    team_emails: [
+      { email: 'takim@x.com', team: 'Takım A', source: 'Takım maili', kind: 'TEAM' },
+      { email: 'eski@x.com', team: 'Takım A', source: 'Grup: Nöbet', kind: 'TEAM', inactive_only: true },
+    ],
+    contacts: [
+      { id: 5, name: 'Müdür', email: 'mudur@x.com', role: 'MANAGER', min_level: 'HIGH', email_duplicate: false },
+      { id: 6, name: 'Ayrılan', email: 'ayrilan@x.com', role: 'TECH', min_level: 'HIGH', email_duplicate: false, inactive_only: true },
+    ],
+    excluded_contacts: [
+      { id: 7, name: 'Üst Eşik', email: 'ust@x.com', role: 'MANAGER', min_level: 'CRITICAL', reason: 'LEVEL_THRESHOLD' },
+      { id: 8, name: 'Pasif Kişi', email: 'pasif@x.com', role: 'TECH', min_level: 'WARNING', reason: 'INACTIVE_ACCOUNT' },
+    ],
+    oncall: [
+      { team_id: 1, name: 'Nöbetçi Ayşe', email: 'ayse@x.com', duplicate: false },
+      { team_id: 1, name: 'Müdür (nöbette)', email: 'MUDUR@x.com', duplicate: true },
+    ],
+    webhooks: [],
+  }
+
+  it('pasif adres alıcı değil, gerekçeli hariç; nöbetçi yeni satır ya da mevcut satıra not; sayı satırlardan', () => {
+    const v = buildView(base)
+    expect(v.emails.map((e) => e.email)).toEqual(['takim@x.com', 'mudur@x.com', 'ayse@x.com'])
+    expect(v.emails.find((e) => e.email === 'ayse@x.com').source).toBe('oncall')
+    expect(v.emails.find((e) => e.email === 'mudur@x.com').also).toEqual([{ id: 'oncall:1', name: 'Müdür (nöbette)', oncall: true }])
+    expect(v.counts.email).toBe(3)    // sunucunun email_total'ı (3) pasif grup adresini de sayardı; burada satırlardan
+    const ex = v.excluded.filter((x) => x.channel === 'email').map((x) => [x.name, x.reason])
+    expect(ex).toEqual([
+      ['Nöbet', 'INACTIVE_ADDRESS'],
+      ['Ayrılan', 'INACTIVE_ADDRESS'],
+      ['Üst Eşik', 'LEVEL_THRESHOLD'],
+      ['Pasif Kişi', 'INACTIVE_ACCOUNT'],
+    ])
+    expect(v.excluded.find((x) => x.name === 'Üst Eşik')).toMatchObject({ minLevel: 'CRITICAL', address: 'ust@x.com' })
+  })
+
+  it('eski sunucu (iz alanı yok): sayı sunucunun email_total değeri, hariç listesi bugünkü gibi', () => {
+    const old = { ...base, team_emails: [base.team_emails[0]], contacts: [base.contacts[0]], email_total: 2 }
+    delete old.excluded_contacts
+    delete old.oncall
+    const v = buildView(old)
+    expect(v.counts.email).toBe(2)
+    expect(v.excluded).toEqual([])
+  })
+})
