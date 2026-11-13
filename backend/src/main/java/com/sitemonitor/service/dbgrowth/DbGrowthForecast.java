@@ -21,8 +21,9 @@ import java.util.List;
  *       tahmin = min(doğrusal, dengelenme). Dolmuş tablo doğrusal (ekleme ≈ silme → eğim ≈ 0).</li>
  *   <li><b>Veritabanı:</b> tablo dışı pay (katalog, boş alan) sabit + tablo tahminlerinin toplamı. Tablo verisi yoksa
  *       veritabanının kendi eğimiyle doğrusal.</li>
- *   <li><b>Soğuk başlangıç:</b> eğim yoksa (geçmiş &lt; {@value #MIN_POINTS} gün) tablonun tahmini günlük artışı
- *       ({@link #histogramFractionBefore} ya da tekdüze varsayım) ve ±%50 bant — "tahmin" etiketiyle.</li>
+ *   <li><b>Soğuk başlangıç:</b> eğim yoksa (geçmiş &lt; {@value #MIN_POINTS} gün) tablonun tahmini günlük artışı — en az
+ *       iki görüntüde toplam bayt farkı / gün, tek görüntüde brüt ekleme × satır başı bayt ({@link #histogramFractionBefore}
+ *       ya da tekdüze varsayım; çok az satırlı tabloda yok) — ve ±%50 bant, "tahmin" etiketiyle.</li>
  * </ul>
  */
 public final class DbGrowthForecast {

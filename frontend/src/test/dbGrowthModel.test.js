@@ -167,6 +167,13 @@ describe('öneriler', () => {
     expect(findingArgs({ code: 'CAPACITY', params: { used_pct: 86, db_bytes: GB, capacity_bytes: 2 * GB, days_until_full: null } }, t)[3])
       .toBe('dbg.adv.noForecast')
   })
+  it('ölü satır: görüntüden gelen bulgu (son vacuum anahtarı YOK) "hiç çalışmamış" demez; analizinki anahtara göre (2026-11-13 hata taraması)', () => {
+    const view = { code: 'DEAD_TUPLES', table: 'port_checks', params: { dead_pct: 40, dead_rows: 40000, table_bytes: GB } }
+    expect(findingArgs(view, t)[3]).toBe('')
+    expect(findingArgs({ ...view, params: { ...view.params, last_autovacuum: null } }, t)[3]).toBe('dbg.adv.noAutovacuum')
+    expect(findingArgs({ ...view, params: { ...view.params, last_autovacuum: '2026-11-01T03:04:05' } }, t)[3])
+      .toBe('dbg.adv.lastAutovacuum(2026-11-01 03:04)')
+  })
 })
 
 describe('kapasite girdisi', () => {
