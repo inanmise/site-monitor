@@ -48,6 +48,7 @@ class NotificationGroupBulkTest {
     @MockitoBean NotificationGroupUsageService usageService;
     @MockitoBean NotificationGroupHistoryService historyService;
     @MockitoBean InactiveRecipientGuard inactiveGuard;
+    @MockitoBean com.sitemonitor.repository.AlertEventRepository alertRepo;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -74,13 +75,26 @@ class NotificationGroupBulkTest {
             ((Iterable<?>) inv.getArgument(0)).forEach(o -> ids.add((Long) o));
             return store.stream().filter(g -> ids.contains(g.getId())).toList();
         });
-        when(groupRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(groupService.makeDefault(any())).thenAnswer(i -> { NotificationGroup g = i.getArgument(0); g.setIsDefault(true); return g; });
+        // Satır YAZMADAN önce taze okunur (findById) ve hedefli UPDATE ile yazılır — sahte depo bu ikisini bellekte uygular.
+        when(groupRepo.findById(anyLong())).thenAnswer(i -> store.stream()
+                .filter(g -> g.getId().equals(i.getArgument(0))).findFirst());
+        when(groupRepo.bulkMoveTeam(anyLong(), anyLong(), anyLong(), any(), any(), any())).thenAnswer(i -> {
+            NotificationGroup g = store.stream().filter(x -> x.getId().equals(i.getArgument(0))).findFirst().orElse(null);
+            if (g == null || !g.getTeamId().equals(i.getArgument(1)) || !g.getActive() || g.getIsDefault()) return 0;
+            g.setTeamId(i.getArgument(2));
+            return 1;
+        });
+        when(groupService.makeDefaultTargeted(anyLong(), anyLong())).thenAnswer(i -> {
+            NotificationGroup g = store.stream().filter(x -> x.getId().equals(i.getArgument(0))).findFirst().orElse(null);
+            if (g == null || !g.getActive() || g.getIsDefault()) return false;
+            store.stream().filter(x -> x.getTeamId().equals(g.getTeamId())).forEach(x -> x.setIsDefault(false));
+            g.setIsDefault(true);
+            return true;
+        });
+        when(inactiveGuard.inactiveOnlyEmailsOf(any())).thenReturn(List.of());
         when(teamRepo.findAll()).thenReturn(List.of(team(TEAM_A, "Takım A"), team(TEAM_B, "Takım B"), team(TEAM_C, "Takım C")));
         when(teamRepo.existsById(anyLong())).thenAnswer(i -> List.of(TEAM_A, TEAM_B, TEAM_C).contains((Long) i.getArgument(0)));
         when(usageService.usageCounts()).thenReturn(Map.of(11L, 3));
-        when(usageService.usage(anyLong())).thenAnswer(i -> new NotificationGroupUsageService.Usage(
-                ((Long) i.getArgument(0)) == 11L ? 3 : 0, Map.of(), List.of()));
     }
 
     private static Team team(long id, String name) {
@@ -136,15 +150,65 @@ class NotificationGroupBulkTest {
     }
 
     @Test
-    @DisplayName("delete: toplu sayımda 0 görünse de silmeden önce yeniden denetlenen kullanım varsa in_use (yarış)")
-    void delete_rechecksUsage() throws Exception {
-        when(usageService.usageCounts()).thenReturn(Map.of());
-        when(usageService.usage(10L)).thenReturn(new NotificationGroupUsageService.Usage(1, Map.of(), List.of()));
+    @DisplayName("kullanım tek toplu sayımla okunur — satır başına kullanım sorgusu YOK; satır yazmadan önce taze okunur")
+    void usageReadOnceAndRowsReread() throws Exception {
         mvc.perform(post("/api/notification-groups/bulk").session(userOfA()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"action\":\"delete\",\"ids\":[10]}"))
+                        .content("{\"action\":\"delete\",\"ids\":[10,11,12]}"))
+                .andExpect(status().isOk());
+        verify(usageService, times(1)).usageCounts();
+        verify(usageService, never()).usage(anyLong());
+        verify(groupRepo, times(3)).findById(anyLong());
+        verify(groupRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("set_team: açık alarma damgalı grup stamped_open_alerts (sayıyla) atlanır; damga sayısı okunamazsa stamp_unknown")
+    void setTeam_stampedOpenAlerts() throws Exception {
+        when(alertRepo.countOpenByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[] { 13L, 2L }));
+        mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_team\",\"ids\":[13],\"team_id\":2}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.results[0].reason").value("in_use"));
-        verify(groupService, never()).deletePermanently(any());
+                .andExpect(jsonPath("$.data.results[0].reason").value("stamped_open_alerts"))
+                .andExpect(jsonPath("$.data.results[0].open_alerts").value(2));
+        assertThat(store.get(4).getTeamId()).isEqualTo(TEAM_A);
+
+        when(alertRepo.countOpenByNotificationGroup()).thenThrow(new RuntimeException("db"));
+        mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_team\",\"ids\":[13],\"team_id\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].reason").value("stamp_unknown"));
+        assertThat(store.get(4).getTeamId()).isEqualTo(TEAM_A);
+        verify(groupRepo, never()).bulkMoveTeam(anyLong(), anyLong(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("set_team: okuma ile yazma arasında grup değiştiyse (hedefli UPDATE 0 satır) changed_meanwhile — denetim yazılmaz")
+    void setTeam_changedMeanwhile() throws Exception {
+        when(groupRepo.bulkMoveTeam(eq(13L), anyLong(), anyLong(), any(), any(), any())).thenReturn(0);
+        mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_team\",\"ids\":[13],\"team_id\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].reason").value("changed_meanwhile"))
+                .andExpect(jsonPath("$.data.results[0].team_name").value("Takım A"));
+        verify(auditService, never()).recordAction(eq("NOTIFICATION_GROUP_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                anyString(), anyString(), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
+    }
+
+    @Test
+    @DisplayName("make_default: adreslerin TAMAMI pasif hesaplara aitse no_active_emails; pasif listesi okunamazsa active_unknown")
+    void makeDefault_activeRecipients() throws Exception {
+        when(inactiveGuard.inactiveOnlyEmailsOf(any())).thenAnswer(i -> new ArrayList<>((java.util.Collection<String>) i.getArgument(0)));
+        mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"make_default\",\"ids\":[10]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].reason").value("no_active_emails"));
+        doReturn(null).when(inactiveGuard).inactiveOnlyEmailsOf(any());   // when() çağrısı önceki yanıtı (null liste) tetiklerdi
+        mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"make_default\",\"ids\":[10]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].reason").value("active_unknown"));
+        verify(groupService, never()).makeDefaultTargeted(anyLong(), anyLong());
+        assertThat(store.get(0).getIsDefault()).isFalse();
     }
 
     @Test
@@ -183,10 +247,27 @@ class NotificationGroupBulkTest {
                 .andExpect(jsonPath("$.data.results[2].reason").value("duplicate_team"))
                 .andExpect(jsonPath("$.data.results[3].reason").value("done"))
                 .andExpect(jsonPath("$.data.results[4].reason").value("duplicate_team"));
-        verify(groupService, times(2)).makeDefault(any());
+        verify(groupService, times(2)).makeDefaultTargeted(anyLong(), anyLong());
+        verify(groupService, never()).makeDefault(any());   // bayat varlığın tamamı kaydedilmez
         verify(auditService, times(2)).recordAction(eq("NOTIFICATION_GROUP_DEFAULT"), any(jakarta.servlet.http.HttpSession.class),
                 eq("NOTIFICATION_GROUP"), anyString(), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
         verify(usageService, never()).usageCounts();
+    }
+
+    @Test
+    @DisplayName("usage-counts: damgalı açık alarm sayıları da döner (önizleme); okunamazsa null — 'damga yok' değil")
+    void usageCountsCarryStamps() throws Exception {
+        when(alertRepo.countOpenByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[] { 13L, 2L }));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/notification-groups/usage-counts")
+                        .session(global()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts['11']").value(3))
+                .andExpect(jsonPath("$.data.stamped_open_alerts['13']").value(2));
+        when(alertRepo.countOpenByNotificationGroup()).thenThrow(new RuntimeException("db"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/notification-groups/usage-counts")
+                        .session(global()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stamped_open_alerts").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test

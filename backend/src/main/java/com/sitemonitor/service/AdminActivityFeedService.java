@@ -151,8 +151,11 @@ public class AdminActivityFeedService {
             Long team = res.teamOf(area, r);
             Set<Long> teams = allowed.get(area);
             if (teams == null) { visible.add(new Entry(r, area, team)); continue; }
-            if (team == null) { hidden++; continue; }        // kapalı tarafa düş
-            if (!teams.contains(team)) continue;
+            Set<Long> rowTeams = res.visibleOf(area, r, team);   // grup taşıma satırı iki takıma da görünür
+            if (rowTeams.isEmpty()) { hidden++; continue; }   // kapalı tarafa düş
+            boolean any = false;
+            for (Long t : rowTeams) if (teams.contains(t)) { any = true; break; }
+            if (!any) continue;
             visible.add(new Entry(r, area, team));
         }
         int from = Math.min(p * s, visible.size());
@@ -164,7 +167,7 @@ public class AdminActivityFeedService {
     /** Satırın takımı — okunan satırlar için TEK seferlik tablo okumalarıyla (kişi ve grup tabloları yalnız gerekirse). */
     private final class Resolver {
         private Map<Long, Long> contactTeams;
-        private Map<Long, Long> groupTeams;
+        private Map<Long, NotificationGroupHistoryService.RowTeams> groupTeams;
         private final List<AuditLog> rows;
 
         Resolver(List<AuditLog> rows) { this.rows = rows; }
@@ -180,18 +183,30 @@ public class AdminActivityFeedService {
                     return AdminHistoryService.teamOf("ESCALATION_CONTACT", r, contactTeams);
                 }
                 case "groups" -> {
+                    // Satırın KENDİ zamanındaki takımı (2026-11-13: toplu taşıma — eski geçmiş eski takımda kalır)
                     if (groupTeams == null) groupTeams = groupTeams();
-                    return groupTeams.get(AdminHistoryService.parseLong(r.getResourceId()));
+                    NotificationGroupHistoryService.RowTeams rt = groupTeams.get(r.getId());
+                    return rt == null ? null : rt.team();
                 }
                 default -> { return null; }          // kullanıcılar / eşikler: takıma bağlı değil (yalnız global alan)
             }
         }
 
-        private Map<Long, Long> groupTeams() {
+        /** Satırı görebilen takımlar: grup satırında satırın kendi zamanı (taşıma = iki taraf), diğerlerinde gösterim takımı. */
+        Set<Long> visibleOf(String area, AuditLog r, Long team) {
+            if ("groups".equals(area)) {
+                if (groupTeams == null) groupTeams = groupTeams();
+                NotificationGroupHistoryService.RowTeams rt = groupTeams.get(r.getId());
+                return rt == null ? Set.of() : rt.visible();
+            }
+            return team == null ? Set.of() : Set.of(team);
+        }
+
+        private Map<Long, NotificationGroupHistoryService.RowTeams> groupTeams() {
             List<AuditLog> groupRows = new ArrayList<>();
             for (AuditLog r : rows) if (NotificationGroupHistoryService.RESOURCE.equals(r.getResourceType())) groupRows.add(r);
             try {
-                return groupHistory.resolveTeams(groupRows);
+                return groupHistory.rowTeams(groupRows);
             } catch (RuntimeException e) {
                 return Map.of();                     // takımı çözülemeyen grup satırı kapsamlıya gizlenir
             }

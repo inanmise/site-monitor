@@ -30,6 +30,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -79,6 +81,30 @@ class ContactBulkControllerTest {
             ((Iterable<?>) inv.getArgument(0)).forEach(o -> ids.add((Long) o));
             return store.stream().filter(c -> ids.contains(c.getId())).toList();
         });
+        // Satır yazmadan önce taze okunur (findById); yazım hedefli UPDATE — sahte depo bellekte uygular (okunan takıma koşullu).
+        when(contactRepo.findById(any())).thenAnswer(inv -> store.stream().filter(c -> c.getId().equals(inv.getArgument(0))).findFirst());
+        when(contactRepo.bulkSetActive(anyLong(), anyLong(), any())).thenAnswer(inv -> {
+            EscalationContact c = byId(inv.getArgument(0));
+            if (c == null || key(c) != (long) (Long) inv.getArgument(1) || inv.getArgument(2).equals(c.getActive())) return 0;
+            c.setActive(inv.getArgument(2));
+            return 1;
+        });
+        when(contactRepo.bulkSetLevel(anyLong(), anyLong(), any())).thenAnswer(inv -> {
+            EscalationContact c = byId(inv.getArgument(0));
+            if (c == null || key(c) != (long) (Long) inv.getArgument(1) || inv.getArgument(2).equals(c.getMinAlertLevel())) return 0;
+            c.setMinAlertLevel(inv.getArgument(2));
+            return 1;
+        });
+        when(contactRepo.bulkMoveTeam(anyLong(), anyLong(), anyLong())).thenAnswer(inv -> {
+            EscalationContact c = byId(inv.getArgument(0));
+            if (c == null || key(c) != (long) (Long) inv.getArgument(1)) return 0;
+            c.setTeamId(inv.getArgument(2));
+            return 1;
+        });
+        when(contactRepo.findByTeamIdInOrderByRoleAsc(anyCollection())).thenAnswer(inv -> {
+            java.util.Collection<?> teams = inv.getArgument(0);
+            return store.stream().filter(c -> c.getTeamId() != null && teams.contains(c.getTeamId())).toList();
+        });
         when(contactRepo.save(any())).thenAnswer(inv -> {
             EscalationContact c = inv.getArgument(0);
             if (c.getId() == null) c.setId(100L + store.size());
@@ -91,6 +117,14 @@ class ContactBulkControllerTest {
             ((Iterable<?>) inv.getArgument(0)).forEach(o -> { Team t = teamOf((Long) o); if (t != null) out.add(t); });
             return out;
         });
+    }
+
+    private EscalationContact byId(Object id) {
+        return store.stream().filter(c -> c.getId().equals(id)).findFirst().orElse(null);
+    }
+
+    private static long key(EscalationContact c) {
+        return c.getTeamId() == null ? -1L : c.getTeamId();
     }
 
     private static Team teamOf(Long id) {
@@ -175,10 +209,9 @@ class ContactBulkControllerTest {
                 .andExpect(jsonPath("$.data.results[2].reason").value("not_found"))
                 .andExpect(jsonPath("$.data.results[2].name").doesNotExist())
                 .andExpect(jsonPath("$.data.results[3].reason").value("not_found"));
-        ArgumentCaptor<EscalationContact> cap = ArgumentCaptor.forClass(EscalationContact.class);
-        verify(contactRepo, times(1)).save(cap.capture());
-        assertThat(cap.getValue().getId()).isEqualTo(1L);
-        assertThat(cap.getValue().getActive()).isFalse();
+        verify(contactRepo, times(1)).bulkSetActive(1L, 2L, false);
+        verify(contactRepo, never()).save(any());          // bayat varlığın tamamı kaydedilmez
+        assertThat(store.get(0).getActive()).isFalse();
         assertThat(store.get(2).getActive()).isTrue();   // kapsam dışı satır değişmedi
         verify(auditService).recordAction(eq("CONTACT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
                 eq("ESCALATION_CONTACT"), eq("1"), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
@@ -195,7 +228,8 @@ class ContactBulkControllerTest {
                 .andExpect(jsonPath("$.data.results[0].reason").value("unchanged"))
                 .andExpect(jsonPath("$.data.results[1].reason").value("done"))
                 .andExpect(jsonPath("$.data.results[2].reason").value("no_team"));
-        verify(contactRepo, times(1)).save(any());
+        verify(contactRepo, times(1)).bulkSetActive(anyLong(), anyLong(), any());
+        verify(contactRepo, never()).save(any());
         assertThat(store.get(1).getActive()).isTrue();
         assertThat(store.get(4).getActive()).isFalse();
         verify(auditService, times(1)).recordAction(eq("CONTACT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
@@ -240,7 +274,7 @@ class ContactBulkControllerTest {
         mvc.perform(post("/api/admin/contacts/bulk").session(teamAdmin()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"set_team\",\"ids\":[1],\"team_id\":2}"))
                 .andExpect(status().isForbidden());
-        verify(contactRepo, never()).save(any());
+        verify(contactRepo, never()).bulkMoveTeam(anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -260,7 +294,20 @@ class ContactBulkControllerTest {
         mvc.perform(post("/api/admin/contacts/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"activate\",\"ids\":[" + many + "]}"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.field").value("ids"));
-        verify(contactRepo, never()).save(any());
+        verify(contactRepo, never()).bulkSetActive(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("okuma ile yazma arasında kayıt değiştiyse (hedefli UPDATE 0 satır) changed_meanwhile — denetim yazılmaz")
+    void changedMeanwhile() throws Exception {
+        when(contactRepo.bulkSetLevel(eq(1L), anyLong(), any())).thenReturn(0);
+        mvc.perform(post("/api/admin/contacts/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set_level\",\"ids\":[1],\"min_alert_level\":\"CRITICAL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].reason").value("changed_meanwhile"))
+                .andExpect(jsonPath("$.data.skipped").value(1));
+        verify(auditService, never()).recordAction(eq("CONTACT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                anyString(), anyString(), ArgumentMatchers.<String>any(), ArgumentMatchers.<String>any());
     }
 
     // ── /bulk-create ─────────────────────────────────────────────────────────
@@ -270,7 +317,7 @@ class ContactBulkControllerTest {
     void bulkCreate_global() throws Exception {
         when(userRepo.findById(50L)).thenReturn(Optional.of(appUser(50L, 2L, true, "kisi@example.com")));
         EscalationContact prior = contact(7L, 3L, "HIGH", true); prior.setUserId(50L);
-        when(contactRepo.findByUserId(50L)).thenReturn(List.of(prior));
+        store.add(prior);
         mvc.perform(post("/api/admin/contacts/bulk-create").session(global()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"team_ids\":[2,3,77],\"user_id\":50,\"role\":\"MANAGER\",\"min_alert_level\":\"WARNING\"}"))
                 .andExpect(status().isOk())
@@ -294,11 +341,30 @@ class ContactBulkControllerTest {
     }
 
     @Test
+    @DisplayName("bulk-create: aynı e-posta (harf duyarsız) kaydı already_exists; PASİF kayıt already_exists_inactive — etkinleştirilmez, yeni açılmaz")
+    void bulkCreate_emailMatchAndInactive() throws Exception {
+        when(userRepo.findById(50L)).thenReturn(Optional.of(appUser(50L, 2L, true, "Kisi@Example.com")));
+        EscalationContact sameMail = contact(8L, 2L, "WARNING", true); sameMail.setEmail(" kisi@example.COM ");
+        EscalationContact passive = contact(9L, 3L, "CRITICAL", false); passive.setUserId(50L);
+        store.add(sameMail);
+        store.add(passive);
+        mvc.perform(post("/api/admin/contacts/bulk-create").session(global()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_ids\":[2,3],\"user_id\":50}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.done").value(0))
+                .andExpect(jsonPath("$.data.results[0].reason").value("already_exists"))
+                .andExpect(jsonPath("$.data.results[1].reason").value("already_exists_inactive"))
+                .andExpect(jsonPath("$.data.results[1].existing_active").value(false))
+                .andExpect(jsonPath("$.data.results[1].existing_level").value("CRITICAL"));
+        verify(contactRepo, never()).save(any());
+        assertThat(passive.getActive()).isFalse();
+    }
+
+    @Test
     @DisplayName("bulk-create kapsamlı müdür: yönetmediği takım out_of_scope (kişi açılmaz); kapsam dışı kullanıcı 400 user_id")
     void bulkCreate_scoped() throws Exception {
         when(userRepo.findById(50L)).thenReturn(Optional.of(appUser(50L, 2L, true, "kisi@example.com")));
         when(userRepo.findById(60L)).thenReturn(Optional.of(appUser(60L, 9L, true, "yabanci@example.com")));
-        when(contactRepo.findByUserId(any())).thenReturn(List.of());
         mvc.perform(post("/api/admin/contacts/bulk-create").session(mudur()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"team_ids\":[2,3,9],\"user_id\":50,\"role\":\"TECH\",\"min_alert_level\":\"WARNING\"}"))
                 .andExpect(status().isOk())
@@ -336,8 +402,8 @@ class ContactBulkControllerTest {
     @Test
     @DisplayName("satır hatası istisna metnini sızdırmaz; diğer satırlar sürer")
     void rowFailureIsSafe() throws Exception {
-        org.mockito.Mockito.doThrow(new RuntimeException("org.hibernate.exception.JDBCConnectionException: jdbc:postgresql://db:5432 host"))
-                .when(contactRepo).save(ArgumentMatchers.argThat(c -> c != null && Long.valueOf(1L).equals(c.getId())));
+        when(contactRepo.bulkSetLevel(eq(1L), anyLong(), any()))
+                .thenThrow(new RuntimeException("org.hibernate.exception.JDBCConnectionException: jdbc:postgresql://db:5432 host"));
         mvc.perform(post("/api/admin/contacts/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"set_level\",\"ids\":[1,2],\"min_alert_level\":\"CRITICAL\"}"))
                 .andExpect(status().isOk())

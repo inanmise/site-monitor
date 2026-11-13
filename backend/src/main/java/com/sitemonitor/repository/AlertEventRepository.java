@@ -1133,4 +1133,13 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
          + "WHERE e.domain IN :domains ORDER BY e.createdAt DESC")
     List<Object[]> findSignatureTimeline(@Param("domains") Collection<String> domains, Pageable pageable);
 
+    /**
+     * Bildirim grubuna DAMGALI açık alarm sayısı (grup id → adet; 2026-11-13). Damgalı grup yalnız alarmın takımında
+     * uygulanır ({@code NotificationGroupService.overrideFor}) — başka takıma taşınan grubun damgalı açık alarmlarının
+     * yeniden uyarı / çözüm postası sessizce varsayılana ya da takım adresine düşerdi. Toplu taşıma bu sayıyla atlar.
+     */
+    @Query("SELECT e.notificationGroupId, COUNT(e) FROM AlertEvent e "
+         + "WHERE e.resolved = false AND e.notificationGroupId IS NOT NULL GROUP BY e.notificationGroupId")
+    List<Object[]> countOpenByNotificationGroup();
+
 }

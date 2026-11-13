@@ -67,6 +67,24 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
          + "WHERE g.teamId = :teamId AND g.id <> :keepId AND g.isDefault = true")
     int clearOtherDefaults(@Param("teamId") Long teamId, @Param("keepId") Long keepId);
 
+    // ── Toplu işlem hedefli yazımları (2026-11-13) ─────────────────────────────────────────────
+    // Bayat okumadan TÜM varlık yazılmaz (adres listesi aynı anda tekil uçtan değişmiş olabilir): yalnız takım /
+    // varsayılan bayrağı (+ son düzenleyen) yazılır ve okunan değere koşulludur — 0 satır = grup bu arada değişti.
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationGroup g SET g.teamId = :toTeam, g.updatedAt = :at, g.updatedBy = :by, g.updatedByName = :byName "
+         + "WHERE g.id = :id AND g.teamId = :fromTeam AND g.active = true AND g.isDefault = false")
+    int bulkMoveTeam(@Param("id") Long id, @Param("fromTeam") Long fromTeam, @Param("toTeam") Long toTeam,
+                     @Param("at") String at, @Param("by") String by, @Param("byName") String byName);
+
+    /** Varsayılan bayrağını yalnız bu grupta açar (aynı takımın diğerleri ayrı UPDATE ile iner — aynı işlemde). */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationGroup g SET g.isDefault = true "
+         + "WHERE g.id = :id AND g.teamId = :teamId AND g.active = true AND g.isDefault = false")
+    int bulkSetDefault(@Param("id") Long id, @Param("teamId") Long teamId);
+
     /** Grup kalıcı silinirse (admin) onu kullanan monitör alanları temizlensin diye sayım. */
     long countByTeamIdAndActiveTrue(Long teamId);
 }

@@ -54,6 +54,17 @@ public class NotificationGroupHistoryService {
     public record Entry(AuditLog row, Long teamId) {}
 
     /**
+     * Bir denetim satırının takımı (2026-11-13, toplu taşıma): {@code team} gösterim takımı, {@code visible} satırı
+     * görebilen takımlar. Satır KENDİ ZAMANINDAKİ takıma aittir — taşınan grubun eski geçmişini eski takım görmeye devam
+     * eder, yeni takım yalnız taşımadan sonrasını görür; taşıma satırının kendisi İKİ tarafa da görünür (gösterim = yeni).
+     */
+    public record RowTeams(Long team, Set<Long> visible) {}
+
+    /** Taşıma izi okuma tavanı (grup güncelleme satırı; taşımalar yalnız toplu uçtan doğar, nadirdir). */
+    private static final int MOVES_MAX = 5000;
+    private static final String UPDATE_EVENT = "NOTIFICATION_GROUP_UPDATE";
+
+    /**
      * @param items      görüntülenecek satırlar (yeniden eskiye)
      * @param truncated  pencere doldu; daha eski kayıtlar var olabilir
      * @param hidden     takımı çözülemediği için gizlenen satır sayısı
@@ -78,14 +89,15 @@ public class NotificationGroupHistoryService {
                 ? auditRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
                         RESOURCE, String.valueOf(groupId), PageRequest.of(0, window))
                 : auditRepo.findByResourceTypeOrderByEventTimeDesc(RESOURCE, PageRequest.of(0, window));
-        Map<Long, Long> teamOf = resolveTeams(scanned);
+        Map<Long, RowTeams> teamOf = rowTeams(scanned);
         boolean unrestricted = teamIds == null;
         Set<Long> allowed = unrestricted ? Set.of() : new HashSet<>(teamIds);
         List<Entry> all = new ArrayList<>();
         int hidden = 0;
         for (AuditLog r : scanned) {
-            Long team = teamOf.get(parseLong(r.getResourceId()));
-            if (!unrestricted && (team == null || !allowed.contains(team))) {
+            RowTeams rt = teamOf.get(r.getId());
+            Long team = rt == null ? null : rt.team();
+            if (!unrestricted && !visibleTo(rt, allowed)) {
                 if (team == null) hidden++;
                 continue;
             }
@@ -109,7 +121,7 @@ public class NotificationGroupHistoryService {
                         RESOURCE, String.valueOf(groupId), PageRequest.of(0, window))
                 : auditRepo.findByResourceTypeOrderByEventTimeDesc(RESOURCE, PageRequest.of(0, window));
 
-        Map<Long, Long> teamOf = resolveTeams(scanned);
+        Map<Long, RowTeams> teamOf = rowTeams(scanned);
         boolean unrestricted = teamIds == null;
         Set<Long> allowed = unrestricted ? Set.of() : new HashSet<>(teamIds);
 
@@ -117,9 +129,10 @@ public class NotificationGroupHistoryService {
         int hidden = 0;
         boolean more = false;
         for (AuditLog r : scanned) {
-            Long team = teamOf.get(parseLong(r.getResourceId()));
+            RowTeams rt = teamOf.get(r.getId());
+            Long team = rt == null ? null : rt.team();
             // Kapalı tarafa düş: takımı bilinmeyen satır, kapsamlı kullanıcıya gösterilmez.
-            if (!unrestricted && (team == null || !allowed.contains(team))) {
+            if (!unrestricted && !visibleTo(rt, allowed)) {
                 if (team == null) hidden++;
                 continue;
             }
@@ -148,6 +161,89 @@ public class NotificationGroupHistoryService {
             if (team != null) teamOf.put(gid, team);
         }
         return teamOf;
+    }
+
+    /** Satır, izinli takımlardan en az birine görünür mü (takımı çözülemeyen satır KAPALI tarafa düşer). */
+    public static boolean visibleTo(RowTeams rt, Set<Long> allowed) {
+        if (rt == null || rt.visible().isEmpty()) return false;
+        for (Long t : rt.visible()) if (allowed.contains(t)) return true;
+        return false;
+    }
+
+    /**
+     * Denetim satırı kimliği → satırın KENDİ ZAMANINDAKİ takımı. Kurallar (kimlik sırası = yazım sırası):
+     * <ol>
+     *   <li>Taşıma satırı ({@code changes} içinde {@code teamId} farkı) → gösterim yeni takım, görünür iki takım.</li>
+     *   <li>Anlık görüntü satırı (oluşturma / silme: düz {@code teamId}) → o anki takım.</li>
+     *   <li>Diğerleri → kendinden SONRAKİ ilk taşımanın {@code from}'u; sonra taşıma yoksa güncel takım (canlı satır ya da
+     *       silme anlık görüntüsü — {@link #resolveTeams}).</li>
+     * </ol>
+     * Taşıma izi, okunan satırlardan bağımsız olarak grubun güncelleme satırlarından okunur (TEK sorgu, tavanlı) — akışın
+     * kişi / tarih süzgeci taşıma satırını dışarıda bıraksa da eski satır yanlış takıma yazılmaz.
+     */
+    public Map<Long, RowTeams> rowTeams(List<AuditLog> rows) {
+        Map<Long, RowTeams> out = new HashMap<>();
+        if (rows == null || rows.isEmpty()) return out;
+        Map<Long, Long> current = resolveTeams(rows);
+        Set<String> ids = new HashSet<>();
+        for (AuditLog r : rows) if (parseLong(r.getResourceId()) != null) ids.add(r.getResourceId().trim());
+        Map<Long, List<long[]>> moves = new HashMap<>();   // grup → [denetim kimliği, from, to] (kimliğe göre artan)
+        if (!ids.isEmpty()) {
+            for (AuditLog m : auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(
+                    RESOURCE, UPDATE_EVENT, ids, PageRequest.of(0, MOVES_MAX))) {
+                Long gid = parseLong(m.getResourceId());
+                long[] mv = moveOf(m.getChanges());
+                if (gid == null || mv == null || m.getId() == null) continue;
+                moves.computeIfAbsent(gid, k -> new ArrayList<>()).add(new long[] { m.getId(), mv[0], mv[1] });
+            }
+            for (List<long[]> l : moves.values()) l.sort((a, b) -> Long.compare(a[0], b[0]));
+        }
+        for (AuditLog r : rows) {
+            if (r.getId() == null) continue;
+            Long gid = parseLong(r.getResourceId());
+            long[] own = moveOf(r.getChanges());
+            if (own != null) {
+                Set<Long> vis = new HashSet<>();
+                vis.add(own[0]);
+                vis.add(own[1]);
+                out.put(r.getId(), new RowTeams(own[1], vis));
+                continue;
+            }
+            Long team = flatTeam(r.getChanges());
+            if (team == null && gid != null) {
+                for (long[] m : moves.getOrDefault(gid, List.of())) {
+                    if (m[0] > r.getId()) { team = m[1]; break; }
+                }
+                if (team == null) team = current.get(gid);
+            }
+            out.put(r.getId(), new RowTeams(team, team == null ? Set.of() : Set.of(team)));
+        }
+        return out;
+    }
+
+    /** Taşıma farkı ({@code {"teamId":{"from":A,"to":B}}}) → {A, B}; değilse null. */
+    static long[] moveOf(String changes) {
+        if (changes == null || changes.isBlank() || !changes.contains("teamId")) return null;
+        try {
+            JsonNode n = JSON.readTree(changes).get("teamId");
+            if (n == null || !n.isObject()) return null;
+            JsonNode from = n.get("from"), to = n.get("to");
+            if (from == null || to == null || !from.canConvertToLong() || !to.canConvertToLong()) return null;
+            return new long[] { from.asLong(), to.asLong() };
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Anlık görüntü satırının düz {@code teamId}'si (fark biçimi değil); yoksa null. */
+    static Long flatTeam(String changes) {
+        if (changes == null || changes.isBlank() || !changes.contains("teamId")) return null;
+        try {
+            JsonNode n = JSON.readTree(changes).get("teamId");
+            return n != null && !n.isObject() && n.canConvertToLong() ? n.asLong() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     static Long teamFromChanges(String changes) {

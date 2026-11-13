@@ -123,7 +123,9 @@ class AdminActivityFeedServiceTest {
         EscalationContact c = new EscalationContact();
         c.setId(30L); c.setTeamId(1L);
         when(contactRepo.findAll()).thenReturn(List.of(c));
-        when(groupHistory.resolveTeams(anyList())).thenReturn(Map.of(40L, 1L, 41L, 2L));
+        when(groupHistory.rowTeams(anyList())).thenReturn(Map.of(
+                5L, new NotificationGroupHistoryService.RowTeams(1L, java.util.Set.of(1L)),
+                6L, new NotificationGroupHistoryService.RowTeams(2L, java.util.Set.of(2L))));
         when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(
                 row(1, "TEAM_UPDATE", "TEAM", "1", null),                          // takım 1 → görünür
                 row(2, "TEAM_UPDATE", "TEAM", "2", null),                          // takım 2 → kapsam dışı
@@ -142,6 +144,22 @@ class AdminActivityFeedServiceTest {
         assertThat(f.total()).isEqualTo(3);
         assertThat(f.hidden()).isEqualTo(2);           // silinmiş kişi + kaynak türü uymayan
         assertThat(f.truncated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Kapsamlı: toplu taşınan grubun taşıma satırı İKİ takıma görünür (gösterim yeni takım); eski satır eski takımda")
+    void groupMoveRowVisibleToBothTeams() {
+        when(groupHistory.rowTeams(anyList())).thenReturn(Map.of(
+                1L, new NotificationGroupHistoryService.RowTeams(2L, java.util.Set.of(1L, 2L)),   // taşıma A → B
+                2L, new NotificationGroupHistoryService.RowTeams(1L, java.util.Set.of(1L))));     // taşımadan önceki düzenleme
+        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(
+                row(1, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null),
+                row(2, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null))));
+        var a = service.feed(List.of(acc("groups", List.of(1L))), null, "", 0, 25);
+        assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(1L, 2L);
+        var b = service.feed(List.of(acc("groups", List.of(2L))), null, "", 0, 25);
+        assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(1L);
+        assertThat(b.items().get(0).teamId()).isEqualTo(2L);
     }
 
     @Test

@@ -203,4 +203,40 @@ class NotificationGroupHistoryServiceTest {
         assertThat(NotificationGroupHistoryService.teamFromChanges("{\"name\":\"X\"}")).isNull();
         assertThat(NotificationGroupHistoryService.teamFromChanges(null)).isNull();
     }
+
+    @Test
+    @DisplayName("Toplu taşıma: satır KENDİ zamanındaki takıma ait — A eski geçmişi görür, B yalnız taşımadan sonrasını; taşıma satırı iki tarafta")
+    void movedGroup_rowsBelongToTheirOwnTime() {
+        when(groupRepo.findAll()).thenReturn(List.of(group(10L, TEAM_B)));        // grup ŞİMDİ B'de
+        AuditLog create = row(1, "NOTIFICATION_GROUP_CREATE", "10", "{\"name\":\"Nöbet\",\"teamId\":1}");
+        AuditLog editInA = row(2, "NOTIFICATION_GROUP_UPDATE", "10", "{\"emails\":{\"from\":\"a@x\",\"to\":\"b@x\"}}");
+        AuditLog move = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        AuditLog editInB = row(4, "NOTIFICATION_GROUP_UPDATE", "10", "{\"name\":{\"from\":\"Nöbet\",\"to\":\"Gece\"}}");
+        audit(editInB, move, editInA, create);
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(Pageable.class)))
+                .thenReturn(List.of(editInB, move, editInA));
+
+        var a = service().page(List.of(TEAM_A), null, 0, 50);
+        assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(3L, 2L, 1L);
+        assertThat(a.hidden()).isZero();
+        var b = service().page(List.of(TEAM_B), null, 0, 50);
+        assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(4L, 3L);
+        assertThat(b.items()).extracting(NotificationGroupHistoryService.Entry::teamId).containsExactly(TEAM_B, TEAM_B);
+        // Taşıma satırı eski takımın görünümünde de "B'ye taşındı" diye görünür (gösterim yeni takım)
+        assertThat(a.items().get(0).teamId()).isEqualTo(TEAM_B);
+        assertThat(a.items().get(1).teamId()).isEqualTo(TEAM_A);
+    }
+
+    @Test
+    @DisplayName("Toplu taşıma: okunan satırlar taşımayı içermese de (akış süzgeci) eski satır taşıma izinden eski takıma çözülür")
+    void movedGroup_moveReadFromTrailEvenWhenNotInRows() {
+        when(groupRepo.findAll()).thenReturn(List.of(group(10L, TEAM_B)));
+        AuditLog editInA = row(2, "NOTIFICATION_GROUP_UPDATE", "10", "{\"emails\":{\"from\":\"a@x\",\"to\":\"b@x\"}}");
+        AuditLog move = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of(move, editInA));
+        var teams = service().rowTeams(List.of(editInA));
+        assertThat(teams.get(2L).team()).isEqualTo(TEAM_A);
+        assertThat(teams.get(2L).visible()).containsExactly(TEAM_A);
+    }
 }

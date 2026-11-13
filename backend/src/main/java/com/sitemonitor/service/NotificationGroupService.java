@@ -290,6 +290,21 @@ public class NotificationGroupService {
     }
 
     /**
+     * Toplu "varsayılan yap" (2026-11-13): yalnız bayrakları yazar — bayat okunan grubun TAMAMI kaydedilmez (aynı anda
+     * tekil uçtan değişen adres listesi ezilmesin). Bu grubun bayrağı okunan takıma ve "aktif, henüz varsayılan değil"
+     * koşuluna bağlı açılır; açıldıysa aynı işlemde takımın diğer varsayılanları iner (takım başına EN FAZLA BİR).
+     *
+     * @return {@code false} = grup bu arada değişti (silindi / taşındı / pasif / zaten varsayılan) — hiçbir şey yazılmadı
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean makeDefaultTargeted(Long groupId, Long teamId) {
+        if (groupRepo.bulkSetDefault(groupId, teamId) == 0) return false;
+        int demoted = groupRepo.clearOtherDefaults(teamId, groupId);
+        if (demoted > 0) log.info("Takım {} varsayılan bildirim grubu değişti → id={} ({} grup indirildi)", teamId, groupId, demoted);
+        return true;
+    }
+
+    /**
      * KALICI silme — satır gider.
      *
      * <p>Eskiden yumuşak silmeydi ({@code active=false}) ve satır kalıyordu. İki gerçek soruna yol

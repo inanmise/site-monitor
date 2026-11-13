@@ -37,4 +37,33 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
      * {@code EscalationContactScope}) çözülür. {@code EscalationContactScopeTest.UNSCOPED_READS_ALLOWED} listesinde.
      */
     boolean existsByActiveTrueAndDelayMinutesGreaterThan(Integer minutes);
+
+    // ── Toplu işlem hedefli yazımları (2026-11-13) ─────────────────────────────────────────────
+    // Bayat bir okumadan TÜM varlık yazılmaz: aynı anda yapılan tekil düzenleme (ad, e-posta, webhook, gecikme) asla
+    // ezilmez. Her UPDATE yalnız kendi kolonunu yazar ve okunan değere koşulludur — 0 satır = kayıt bu arada değişti.
+    // {@code teamKey} = okunan takım ya da takımsız (eski kayıt) için -1: bu arada başka takıma taşınan kayda yazılmaz.
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("UPDATE EscalationContact c SET c.active = :active "
+            + "WHERE c.id = :id AND COALESCE(c.teamId, -1L) = :teamKey AND (c.active IS NULL OR c.active <> :active)")
+    int bulkSetActive(@org.springframework.data.repository.query.Param("id") Long id,
+                      @org.springframework.data.repository.query.Param("teamKey") Long teamKey,
+                      @org.springframework.data.repository.query.Param("active") Boolean active);
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("UPDATE EscalationContact c SET c.minAlertLevel = :level "
+            + "WHERE c.id = :id AND COALESCE(c.teamId, -1L) = :teamKey AND (c.minAlertLevel IS NULL OR c.minAlertLevel <> :level)")
+    int bulkSetLevel(@org.springframework.data.repository.query.Param("id") Long id,
+                     @org.springframework.data.repository.query.Param("teamKey") Long teamKey,
+                     @org.springframework.data.repository.query.Param("level") String level);
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("UPDATE EscalationContact c SET c.teamId = :toTeam "
+            + "WHERE c.id = :id AND COALESCE(c.teamId, -1L) = :fromKey")
+    int bulkMoveTeam(@org.springframework.data.repository.query.Param("id") Long id,
+                     @org.springframework.data.repository.query.Param("fromKey") Long fromKey,
+                     @org.springframework.data.repository.query.Param("toTeam") Long toTeam);
 }

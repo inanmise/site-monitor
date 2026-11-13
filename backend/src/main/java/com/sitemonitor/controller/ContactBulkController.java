@@ -78,6 +78,10 @@ public class ContactBulkController {
     static final String UNCHANGED = "unchanged";
     static final String NO_TEAM = "no_team";
     static final String ALREADY_EXISTS = "already_exists";
+    /** Takımda aynı kullanıcının / aynı adresin PASİF kaydı var — yenisi açılmaz, pasif kayıt etkinleştirilmez. */
+    static final String ALREADY_EXISTS_INACTIVE = "already_exists_inactive";
+    /** Satır okunduktan sonra yazılana dek değişti (taşındı / silindi) — hedefli UPDATE 0 satır döndü, hiçbir şey yazılmadı. */
+    static final String CHANGED_MEANWHILE = "changed_meanwhile";
     static final String ERROR = "error";
 
     /** {@code AdminController.updateContact} denetim alanlarıyla AYNI liste — fark ekranı iki yolda aynı okunur. */
@@ -139,15 +143,14 @@ public class ContactBulkController {
             }
         }
 
-        Map<Long, EscalationContact> byId = new HashMap<>();
-        for (EscalationContact c : contactRepo.findAllById(ids)) byId.put(c.getId(), c);
         Map<Long, String> teamNames = teamNames();
 
         List<Map<String, Object>> results = new ArrayList<>();
         List<Long> doneIds = new ArrayList<>();
         int done = 0, skipped = 0, failed = 0;
         for (Long id : ids) {
-            EscalationContact c = byId.get(id);
+            // Satır YAZMADAN HEMEN ÖNCE yeniden okunur; kapsam ve "değişmedi" kararı taze satıra göre verilir.
+            EscalationContact c = contactRepo.findById(id).orElse(null);
             if (c == null || !SessionScope.canView(session, c.getTeamId())) {
                 results.add(row(id, null, null, null, "skipped", NOT_FOUND)); skipped++; continue;
             }
@@ -157,14 +160,27 @@ public class ContactBulkController {
             }
             try {
                 Map<String, Object> before = AuditDiff.snapshot(c, AUDIT_FIELDS);
-                String reason = apply(c, action, level, targetTeam);
+                Long teamBefore = c.getTeamId();
+                String reason = decide(c, action, level, targetTeam);
                 if (!DONE.equals(reason)) {
-                    results.add(row(id, name, c.getTeamId(), teamNames.get(c.getTeamId()), "skipped", reason)); skipped++; continue;
+                    results.add(row(id, name, teamBefore, teamNames.get(teamBefore), "skipped", reason)); skipped++; continue;
                 }
-                EscalationContact saved = contactRepo.save(c);
-                auditService.recordAction("CONTACT_UPDATE", session, "ESCALATION_CONTACT", String.valueOf(id), saved.getName(),
-                        AuditDiff.diff(before, AuditDiff.snapshot(saved, AUDIT_FIELDS)));
-                results.add(row(id, name, saved.getTeamId(), teamNames.get(saved.getTeamId()), "done", DONE));
+                // Hedefli yazım: yalnız eylemin kolonu, okunan takıma (ve değere) koşullu — ad / e-posta / webhook /
+                // gecikme gibi aynı anda tekil uçtan değişmiş alanlar asla ezilmez.
+                if (write(c, action, level, targetTeam) == 0) {
+                    results.add(row(id, name, teamBefore, teamNames.get(teamBefore), "skipped", CHANGED_MEANWHILE)); skipped++; continue;
+                }
+                Map<String, Object> after = new java.util.LinkedHashMap<>(before);
+                switch (action) {
+                    case "activate" -> after.put("active", Boolean.TRUE);
+                    case "deactivate" -> after.put("active", Boolean.FALSE);
+                    case "set_level" -> after.put("minAlertLevel", level);
+                    default -> after.put("teamId", targetTeam);
+                }
+                Long teamNow = "set_team".equals(action) ? targetTeam : teamBefore;
+                auditService.recordAction("CONTACT_UPDATE", session, "ESCALATION_CONTACT", String.valueOf(id), c.getName(),
+                        AuditDiff.diff(before, after));
+                results.add(row(id, name, teamNow, teamNames.get(teamNow), "done", DONE));
                 doneIds.add(id);
                 done++;
             } catch (RuntimeException e) {
@@ -181,30 +197,37 @@ public class ContactBulkController {
         return ok(summary(action, done, skipped, failed, results));
     }
 
-    /** Satırı eyleme göre değiştirir; {@code DONE} ya da atlama nedeni döner (yazma çağıranda). */
-    private static String apply(EscalationContact c, String action, String level, Long targetTeam) {
+    /** Taze satıra göre karar: {@code DONE} (yazılacak) ya da atlama nedeni. Satır DEĞİŞTİRİLMEZ (yazım hedefli UPDATE). */
+    private static String decide(EscalationContact c, String action, String level, Long targetTeam) {
         switch (action) {
             case "activate" -> {
                 if (Boolean.TRUE.equals(c.getActive())) return UNCHANGED;
                 // Takımsız kişi hiçbir bildirim almaz (2026-09-28) — etkinleştirmek bir şey düzeltmez; önce takım atanır.
                 if (c.getTeamId() == null) return NO_TEAM;
-                c.setActive(true);
             }
             case "deactivate" -> {
                 if (Boolean.FALSE.equals(c.getActive())) return UNCHANGED;
-                c.setActive(false);
             }
             case "set_level" -> {
                 if (level.equals(c.getMinAlertLevel())) return UNCHANGED;
-                c.setMinAlertLevel(level);
             }
             case "set_team" -> {
                 if (Objects.equals(targetTeam, c.getTeamId())) return UNCHANGED;
-                c.setTeamId(targetTeam);
             }
             default -> throw new IllegalStateException("action");
         }
         return DONE;
+    }
+
+    /** Eylemin tek kolonunu okunan takıma koşullu yazar; yazılan satır sayısı (0 = bu arada değişti). */
+    private int write(EscalationContact c, String action, String level, Long targetTeam) {
+        long teamKey = c.getTeamId() == null ? -1L : c.getTeamId();
+        return switch (action) {
+            case "activate" -> contactRepo.bulkSetActive(c.getId(), teamKey, Boolean.TRUE);
+            case "deactivate" -> contactRepo.bulkSetActive(c.getId(), teamKey, Boolean.FALSE);
+            case "set_level" -> contactRepo.bulkSetLevel(c.getId(), teamKey, level);
+            default -> contactRepo.bulkMoveTeam(c.getId(), teamKey, targetTeam);
+        };
     }
 
     // ── Takımlara toplu kişi ekleme ──────────────────────────────────────────────────────────
@@ -227,10 +250,17 @@ public class ContactBulkController {
 
         Map<Long, Team> teams = new HashMap<>();
         for (Team t : teamRepo.findAllById(teamIds)) teams.put(t.getId(), t);
-        // Aynı kullanıcının mevcut kişi kayıtları (takım → kayıt) — ikinci kayıt açılmaz, mevcut olan rapora yazılır.
+        // Takımdaki mevcut kayıt (takım → kayıt): aynı kullanıcı YA DA aynı e-posta (harf duyarsız) — ikinci kayıt açılmaz
+        // (kişi iki kez posta alırdı). Etkin kayıt PASİF olandan önce gelir; pasifse ayrı neden (etkinleştirilmez).
+        String mail = user.getEmail().trim().toLowerCase(java.util.Locale.ROOT);
         Map<Long, EscalationContact> existing = new HashMap<>();
-        for (EscalationContact c : contactRepo.findByUserId(user.getId())) {
-            if (c.getTeamId() != null) existing.putIfAbsent(c.getTeamId(), c);
+        for (EscalationContact c : contactRepo.findByTeamIdInOrderByRoleAsc(teams.keySet())) {
+            if (c.getTeamId() == null) continue;
+            boolean same = Objects.equals(c.getUserId(), user.getId())
+                    || (c.getEmail() != null && c.getEmail().trim().toLowerCase(java.util.Locale.ROOT).equals(mail));
+            if (!same) continue;
+            EscalationContact cur = existing.get(c.getTeamId());
+            if (cur == null || (!Boolean.TRUE.equals(cur.getActive()) && Boolean.TRUE.equals(c.getActive()))) existing.put(c.getTeamId(), c);
         }
 
         List<Map<String, Object>> results = new ArrayList<>();
@@ -247,10 +277,12 @@ public class ContactBulkController {
             }
             EscalationContact prior = existing.get(teamId);
             if (prior != null) {
-                Map<String, Object> r = row(teamId, team.getName(), teamId, team.getName(), "skipped", ALREADY_EXISTS);
+                boolean active = Boolean.TRUE.equals(prior.getActive());
+                Map<String, Object> r = row(teamId, team.getName(), teamId, team.getName(), "skipped",
+                        active ? ALREADY_EXISTS : ALREADY_EXISTS_INACTIVE);
                 r.put("contact_id", prior.getId());
                 r.put("existing_level", prior.getMinAlertLevel());
-                r.put("existing_active", Boolean.TRUE.equals(prior.getActive()));
+                r.put("existing_active", active);
                 results.add(r); skipped++; continue;
             }
             try {
