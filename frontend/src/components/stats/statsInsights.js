@@ -31,6 +31,43 @@ export function slaPct(v, { floor = false } = {}, dash = '—') {
   return formatPercent(shown.toLocaleString(dateLocale(), { maximumFractionDigits: 2 }))
 }
 
+/**
+ * Sağlık yüzdesi — sunucuyla TEK kural (`CertHealthCounts.healthPct`, tablo `CertHealthCountsTest.HEALTH_TABLE`): temiz /
+ * değerlendirilen, bir ondalığa AŞAĞI kesilir (hata taraması 2026-11-13: yuvarlama 1999 / 2000'i "%100" yazıyordu — %100
+ * yalnız gerçekten hepsi temizken). `ok * 1000` tam sayıdır; tam bölünen oran tam çıkar, bölünmeyen en yakın tam sayıya
+ * ≥ 1 / değerlendirilen uzaktır — `Math.floor` güvenli. Değerlendirilen yoksa null.
+ */
+export function healthPctOf(ok, evaluated) {
+  const ev = Number(evaluated), k = Number(ok)
+  if (!Number.isFinite(ev) || !Number.isFinite(k) || ev <= 0) return null
+  return Math.floor((k * 1000) / ev) / 10
+}
+
+/**
+ * Günlük sağlık serisinin grafik satırları (hata taraması 2026-11-13): ilk görüntü gününden son güne (ya da `today`'e) her
+ * gün BİR satır; görüntüsü olmayan gün `health: null` — kategorik eksende eksik gün dizide hiç olmayınca çizgi boşluğun
+ * üstünden geçiyordu. Gün dizgisi `YYYY-MM-DD` (İstanbul günü; UTC takvim aritmetiğiyle ilerlenir). En çok 120 satır.
+ */
+export function fillHealthDays(points, today = null) {
+  const list = Array.isArray(points) ? points.filter((p) => typeof p?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.day)) : []
+  if (!list.length) return []
+  const byDay = new Map(list.map((p) => [p.day, p]))
+  const days = [...byDay.keys()].sort()
+  const first = days[0]
+  let last = days[days.length - 1]
+  if (typeof today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(today) && today > last) last = today
+  const out = []
+  let ms = Date.parse(`${first}T00:00:00Z`)
+  for (let i = 0; i < 120; i++) {
+    const day = new Date(ms).toISOString().slice(0, 10)
+    const p = byDay.get(day)
+    out.push({ day, label: day.slice(5), health: p ? (p.health_pct ?? null) : null })
+    if (day >= last) break
+    ms += 86_400_000
+  }
+  return out
+}
+
 /** Tam sayı (yerel binlik ayırıcı); sayı değilse tire. */
 export function statsNum(v, dash = '—') {
   if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return dash
@@ -152,7 +189,7 @@ export function teamScorecard({ teams = [], certs = [], alerts = null, sla = nul
     const evaluated = total - unchecked
     const r = row(tm.id, tm.teamless ? null : tm.name)
     r.teamless = !!tm.teamless
-    r.certs = { total, ok, under30, expired, error, unchecked, evaluated, health: evaluated > 0 ? Math.round((ok * 1000) / evaluated) / 10 : null }
+    r.certs = { total, ok, under30, expired, error, unchecked, evaluated, health: healthPctOf(ok, evaluated) }
   }
   if (alerts) {
     for (const a of alerts.teams || []) {

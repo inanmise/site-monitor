@@ -12301,6 +12301,7 @@ export const EN = {
   'stx.hsNoTeam': 'There is no team whose series you can see.',
   'stx.hsCollecting': 'Collecting data since {0} — the line appears after a few days.',
   'stx.hsCollectingSoon': 'Data collection is starting — the first daily snapshot is written within an hour.',
+  'stx.hsNoCerts': 'This team has no monitored certificates — the health line is drawn only for teams with certificates. A newly added certificate appears with the next day’s snapshot.',
   'stx.hsLast': 'As of {0}: {1} ({2} of {3} clean)',
   'stx.hsSince': 'since {0}',
   'stx.scTitle': 'Team scorecard',
@@ -12703,6 +12704,7 @@ export const EN = {
   'chg7.opened': '{0} alerts opened',
   'chg7.resolved': '{0} resolved',
   'chg7.none': 'no changes',
+  'chg7.unknown': 'some counts could not be read (unknown, not zero)',
   // Renewal load (2026-09-12, #9)
   'forecast.loadTitle': 'Renewal load — next 12 months',
   'forecast.loadPeak': '{0} certificates expiring · peak {1}: {2}',

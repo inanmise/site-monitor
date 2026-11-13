@@ -90,6 +90,18 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT e.teamId, e.domain, e.createdAt FROM AlertEvent e WHERE e.createdAt >= :since")
     List<Object[]> findCreatedStatRowsSince(@Param("since") String since);
 
+    /**
+     * Alarm takım kırılımı ({@code AlertTeamStatsService}, 2026-11-13 performans): AÇIK alarmlar — tam entity ({@code context_json}
+     * dahil) yerine yalnız okunan sütunlar (Alarm Geçmişi paneli + İstatistikler 5 dk yoklaması).
+     * Sütunlar: {@code [id, teamId, domain, resolved, createdAt]}.
+     */
+    @Query("SELECT e.id, e.teamId, e.domain, e.resolved, e.createdAt FROM AlertEvent e WHERE e.resolved = false")
+    List<Object[]> findOpenTeamStatRows();
+
+    /** {@link #findOpenTeamStatRows} kardeşi: pencerede AÇILAN alarmlar, aynı sütunlar. */
+    @Query("SELECT e.id, e.teamId, e.domain, e.resolved, e.createdAt FROM AlertEvent e WHERE e.createdAt >= :since")
+    List<Object[]> findTeamStatRowsSince(@Param("since") String since);
+
     /** Öksüz alarm temizliği (2026-11-06, performans PF3 #3): verilen türlerdeki AÇIK alarmların alan anahtarları (tekil). Tüm açık
      *  alarmları ({@code context_json} dahil) okuyup Java'da süzmek yerine; {@code idx_ae_storm_scan (resolved, alert_type, …)} önekiyle. */
     @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND e.alertType IN :types AND e.domain IS NOT NULL")

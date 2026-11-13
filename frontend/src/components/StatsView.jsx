@@ -276,7 +276,9 @@ export default function StatsView({
 
   if (loading && certs.length === 0) return <StatsSkeleton label={t('stv.loading')} />
   const hasCerts = certs.length > 0
-  const reloadSrc = () => src.reload(false)
+  // Bölüm başına "Tekrar dene" yalnız o kaynağı `fresh` ile okur (hata taraması 2026-11-13: tüm sayfayı bellekten okuyordu)
+  const retryExec = () => src.retry('exec'), retryNoise = () => src.retry('noise')
+  const retryOverview = () => src.retry('overview'), retryRenewal = () => src.retry('renewal')
 
   return (
     <div data-slot="stats-view" className="flex min-w-0 flex-col gap-6">
@@ -292,7 +294,7 @@ export default function StatsView({
           className="rounded-xl border border-dashed" />
       )}
 
-      <ExecutiveSummary source={src.exec} onRetry={reloadSrc} canMonitoring={perm.canView('monitoring.read')} />
+      <ExecutiveSummary source={src.exec} onRetry={retryExec} canMonitoring={perm.canView('monitoring.read')} />
       {ugBeyondList && (
         <p data-slot="stats-ug-note" className="-mt-3 mb-0 flex items-start gap-2 text-xs text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('stx.ugNote')}
@@ -300,8 +302,8 @@ export default function StatsView({
       )}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
-        <AlarmTrendCard source={src.noise} onRetry={reloadSrc} />
-        <MonitorTypesSummary source={src.overview} onRetry={reloadSrc} />
+        <AlarmTrendCard source={src.noise} onRetry={retryNoise} />
+        <MonitorTypesSummary source={src.overview} onRetry={retryOverview} />
       </div>
 
       {hasCerts && (
@@ -312,8 +314,8 @@ export default function StatsView({
       )}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
-        <RenewalTimelinessCard source={src.renewal} onRetry={reloadSrc} />
-        <HealthSeriesCard source={src.health} onRetry={() => src.loadHealth(healthTeam)} team={healthTeam} onTeam={onHealthTeam} />
+        <RenewalTimelinessCard source={src.renewal} onRetry={retryRenewal} />
+        <HealthSeriesCard source={src.health} onRetry={() => src.retry('health')} team={healthTeam} onTeam={onHealthTeam} />
       </div>
 
       <TeamScorecard rows={scRows} onTeam={onScoreTeam} selectedTeam={teamId}

@@ -47,7 +47,7 @@ public class ExecutiveStatsService {
      */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.stats-changes.cache-ms:120000}")
     long changesCacheMs;
-    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> changesMemo = new com.sitemonitor.util.TtlMemo<>(500);
+    private final com.sitemonitor.util.TtlMemo<Changes> changesMemo = new com.sitemonitor.util.TtlMemo<>(500);
 
     /**
      * "Silinen alan" sayacının kaynağı (2026-10-07): envanter silmesi KALICI — satır gidiyor, {@code deleted_at} ile
@@ -97,7 +97,22 @@ public class ExecutiveStatsService {
                                      boolean fresh) {
         long ttl = fresh && execCacheMs > 0 ? Math.min(execCacheMs, FRESH_MIN_MS) : execCacheMs;
         String key = scopeKey == null ? null : scopeKey + "|a" + (alertsVisible ? 1 : 0) + "|m" + (monitorsVisible ? 1 : 0);
-        return execMemo.get(key, ttl, false, () -> compute(canViewTeam, alertsVisible, monitorsVisible));
+        // Okunamayan bloğu olan sonuç bellekte TUTULMAZ (hata taraması 2026-11-13): yoksa o kapsamdaki herkes 60 sn "okunamadı"
+        // görüyor, "Tekrar dene" hiçbir şey değiştirmiyordu. Eşzamanlı istekler yine tek hesabı paylaşır.
+        return execMemo.get(key, ttl, false, () -> compute(canViewTeam, alertsVisible, monitorsVisible), ExecutiveStatsService::maxAgeOf);
+    }
+
+    /** Bellek ömrü: bir blok ({@code certs} / {@code alerts} / {@code sla}) {@code error_msg} taşıyorsa 0 (saklanmaz). */
+    static long maxAgeOf(Map<String, Object> v) {
+        return hasUnreadableBlock(v) ? 0L : Long.MAX_VALUE;
+    }
+
+    static boolean hasUnreadableBlock(Map<String, Object> v) {
+        if (v == null) return false;
+        for (String k : new String[]{"certs", "alerts", "sla"}) {
+            if (v.get(k) instanceof Map<?, ?> m && m.containsKey("error_msg")) return true;
+        }
+        return false;
     }
 
     /** Son kontrol özeti — alan adı → (durum, kalan gün). */
@@ -306,66 +321,98 @@ public class ExecutiveStatsService {
     /**
      * "Son N günde ne değişti" satırı (2026-09-12, #7): yeni alan, silinen alan, yenilenen sertifika (parmak izi
      * değişimi), açılan / çözülen alarm. Dashboard istatistik şeridinin altında tek satır.
+     *
+     * <p>Hata taraması 2026-11-13: alarm sayıları yalnız {@code alerts.read/view} iznine ({@code alertsVisible}; yoksa
+     * {@code alerts_opened} / {@code alerts_resolved} null + {@code alerts_visible=false}); okunamayan blok null (bilinmiyor,
+     * asla 0) ve böyle bir sonuç bellekte tutulmaz. Envanter okunamazsa ona dayanan her sayı (yeni / silinen / yenilenen,
+     * sertifika alarmları alan adından görüldüğü için alarm sayıları da) null. Alan adları değişmedi (eski istemci).
      */
-    /** Kapsam anahtarlı (bellekli) sürüm — {@code scopeKey} aynı kapsamı gören kullanıcılar için aynı sonucu paylaşır. */
-    public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam, String scopeKey) {
-        return changesMemo.get(scopeKey == null ? null : scopeKey + "|d" + days, changesCacheMs, false,
-                () -> recentChanges(days, canViewTeam));
+    public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam, boolean alertsVisible, String scopeKey) {
+        String key = scopeKey == null ? null : scopeKey + "|d" + days + "|a" + (alertsVisible ? 1 : 0);
+        return changesMemo.get(key, changesCacheMs, false, () -> computeChanges(days, canViewTeam, alertsVisible),
+                v -> v.partial() ? 0L : Long.MAX_VALUE).data();
     }
 
+    /** Belleksiz sürüm, alarm sayıları dahil (testler). */
     public Map<String, Object> recentChanges(int days, Predicate<Long> canViewTeam) {
+        return computeChanges(days, canViewTeam, true).data();
+    }
+
+    /** Bellek değeri: yanıt + okunamayan blok var mı (varsa saklanmaz). */
+    private record Changes(Map<String, Object> data, boolean partial) { }
+
+    private Changes computeChanges(int days, Predicate<Long> canViewTeam, boolean alertsVisible) {
         int d = Math.max(1, Math.min(90, days));
         String since = ISO.format(Instant.now().minus(d, ChronoUnit.DAYS));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("days", d);
+        boolean partial = false;
         Set<String> visibleDomains = new HashSet<>();
         Set<Long> liveIds = new HashSet<>();
-        int added = 0, removed = 0;
+        Integer added = null, removed = null, renewed = null;
+        boolean inventoryRead = false;
         try {
+            int n = 0;
             for (CertificateInventory i : inventoryRepo.findAllByOrderByDomainAsc()) {
                 if (i.getDeletedAt() != null) continue;   // eski sürümden kalmış çöp satırı (tek seferlik temizlik siler)
                 liveIds.add(i.getId());
                 if (!visibleInventory(i, canViewTeam)) continue;
                 visibleDomains.add(i.getDomain());
-                if (i.getCreatedAt() != null && i.getCreatedAt().compareTo(since) >= 0) added++;
+                if (i.getCreatedAt() != null && i.getCreatedAt().compareTo(since) >= 0) n++;
             }
-        } catch (Exception e) { log.debug("changes: envanter düştü: {}", e.toString()); }
+            added = n;
+            inventoryRead = true;
+        } catch (Exception e) { log.debug("changes: envanter düştü: {}", e.toString()); partial = true; }
         // Silinen (2026-10-07, silme KALICI): pencerede DELETE satırı olan ve BUGÜN envanterde olmayan kayıtlar — kimlik başına
         // bir kez; takım kapsamı satırın (silme anındaki) takımıyla. Eski çöp kutusundan geri yüklenmiş kayıt hâlâ canlıdır →
-        // sayılmaz. Tek gruplu sorgu (pencere ≤ 90 gün).
-        if (changeLogRepo != null) {
+        // sayılmaz. Tek gruplu sorgu (pencere ≤ 90 gün). Canlı kimlikler okunamadıysa sayı bilinmiyor (her silme sayılırdı).
+        if (changeLogRepo == null) {
+            removed = 0;
+        } else if (inventoryRead) {
             try {
                 Set<Long> counted = new HashSet<>();
                 for (Object[] row : changeLogRepo.findInventoryDeletesSince(since)) {
                     Long id = row[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
                     Long team = row[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
                     if (id == null || liveIds.contains(id) || !canViewTeam.test(team)) continue;
-                    if (counted.add(id)) removed++;
+                    counted.add(id);
                 }
-            } catch (Exception e) { log.debug("changes: silinen kayıt sorgusu düştü: {}", e.toString()); }
+                removed = counted.size();
+            } catch (Exception e) { log.debug("changes: silinen kayıt sorgusu düştü: {}", e.toString()); partial = true; }
         }
-        int renewed = 0;
-        try { for (String dom : certificateCheckRepo.domainsWithFingerprintChangeSince(since)) if (visibleDomains.contains(dom)) renewed++; }
-        catch (Exception e) { log.debug("changes: parmak izi sorgusu düştü: {}", e.toString()); }
-        int opened = 0, resolved = 0;
-        try {
-            for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
-                if (!visible(e, canViewTeam, visibleDomains) || e.getCreatedAt() == null || e.getCreatedAt().compareTo(since) < 0) continue;
-                opened++;
-            }
-        } catch (Exception e) { log.debug("changes: alarm sorgusu düştü: {}", e.toString()); }
-        // A5 D-3 (2026-09-29): "çözülen" pencerede ÇÖZÜLEN alarmlardır — açılış tarihinden bağımsız (10 gün önce açılıp dün
-        // çözülen alarm sayılır). Sessiz kapanış (D-7: silindi/duraklatıldı/envanter pasif) kurtarma değildir, sayılmaz.
-        try {
-            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
-                if (!visible(e, canViewTeam, visibleDomains) || !Boolean.TRUE.equals(e.getResolved())) continue;
-                if (Boolean.TRUE.equals(e.getResolvedSilently())) continue;
-                resolved++;
-            }
-        } catch (Exception e) { log.debug("changes: çözülen alarm sorgusu düştü: {}", e.toString()); }
+        if (inventoryRead) {
+            try {
+                int n = 0;
+                for (String dom : certificateCheckRepo.domainsWithFingerprintChangeSince(since)) if (visibleDomains.contains(dom)) n++;
+                renewed = n;
+            } catch (Exception e) { log.debug("changes: parmak izi sorgusu düştü: {}", e.toString()); partial = true; }
+        }
+        Integer opened = null, resolved = null;
+        if (alertsVisible && inventoryRead) {
+            try {
+                int n = 0;
+                for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
+                    if (!visible(e, canViewTeam, visibleDomains) || e.getCreatedAt() == null || e.getCreatedAt().compareTo(since) < 0) continue;
+                    n++;
+                }
+                opened = n;
+            } catch (Exception e) { log.debug("changes: alarm sorgusu düştü: {}", e.toString()); partial = true; }
+            // A5 D-3 (2026-09-29): "çözülen" pencerede ÇÖZÜLEN alarmlardır — açılış tarihinden bağımsız (10 gün önce açılıp dün
+            // çözülen alarm sayılır). Sessiz kapanış (D-7: silindi/duraklatıldı/envanter pasif) kurtarma değildir, sayılmaz.
+            try {
+                int n = 0;
+                for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
+                    if (!visible(e, canViewTeam, visibleDomains) || !Boolean.TRUE.equals(e.getResolved())) continue;
+                    if (Boolean.TRUE.equals(e.getResolvedSilently())) continue;
+                    n++;
+                }
+                resolved = n;
+            } catch (Exception e) { log.debug("changes: çözülen alarm sorgusu düştü: {}", e.toString()); partial = true; }
+        }
         out.put("added", added); out.put("removed", removed); out.put("renewed", renewed);
         out.put("alerts_opened", opened); out.put("alerts_resolved", resolved);
-        return out;
+        out.put("alerts_visible", alertsVisible);
+        return new Changes(out, partial);
     }
 
     /** Envanter kaydı görülebilir mi: SY ya da UG takımı (Alarm Geçmişi listesiyle aynı kural). */

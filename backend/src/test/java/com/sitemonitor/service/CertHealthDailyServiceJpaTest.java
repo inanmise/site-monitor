@@ -148,6 +148,56 @@ class CertHealthDailyServiceJpaTest {
         assertThat(alertRepo.findCreatedStatRowsSince("2026-08-01T00:00:00")).hasSize(2);
     }
 
+    @Test
+    @DisplayName("hata taraması 2026-11-13: sertifikası olmayan takım — kapsamlıya varsayılan VERİSİ OLAN takım; seçilirse no_certificates (görüntü başlamadıysa false)")
+    void teamWithoutCertificates() {
+        Team empty = new Team(); empty.setName("AAA Sertifikasız Takım"); empty.setActive(true);
+        Long emptyId = teamRepo.save(empty).getId();   // adı ilk sırada — eskiden varsayılan buydu
+        // Görüntü henüz yok → "toplanmaya başlıyor" (no_certificates false)
+        assertThat(svc.series(90, emptyId, false, t -> true)).containsEntry("no_certificates", false);
+        svc.writeDailySnapshot(Instant.now());
+        Map<String, Object> def = svc.series(90, null, false, t -> emptyId.equals(t) || teamB.equals(t));
+        assertThat(def).containsEntry("scope", "team").containsEntry("team_id", teamB).containsEntry("no_certificates", false);
+        assertThat(pts(def)).hasSize(1);
+        Map<String, Object> chosen = svc.series(90, emptyId, false, t -> emptyId.equals(t) || teamB.equals(t));
+        assertThat(chosen).containsEntry("team_id", emptyId).containsEntry("no_certificates", true);
+        assertThat(pts(chosen)).isEmpty();
+        assertThat(chosen.get("collecting_since")).isNull();
+        // Hiçbir görünür takımın verisi yoksa ilk görünür takım (eski davranış)
+        assertThat(svc.series(90, null, false, emptyId::equals)).containsEntry("team_id", emptyId).containsEntry("no_certificates", true);
+        // Kurum serisi bu alanı hiç işaretlemez
+        assertThat(svc.series(90, null, true, t -> true)).containsEntry("no_certificates", false);
+    }
+
+    @Test
+    @DisplayName("hata taraması 2026-11-13: seri yüzdesi aşağı kesilir (sayaçla aynı kural)")
+    void seriesHealthIsFloored() {
+        jdbc.update("INSERT INTO cert_health_daily(snap_day, team_key, total, evaluated, ok, under30, under7, expired, error_count, created_at) "
+                + "VALUES (?, 0, 2000, 2000, 1999, 0, 0, 1, 0, 'x')", LocalDate.now(ZoneId.of("Europe/Istanbul")).toString());
+        assertThat((Double) pts(svc.series(90, null, true, t -> true)).get(0).get("health_pct")).isEqualTo(99.9);
+    }
+
+    @Test
+    @DisplayName("hata taraması 2026-11-13: takım alarm kırılımının dar JPQL'leri — açık [id, takım, alan, çözüldü, açılış] ve pencerede açılan")
+    void teamStatNarrowQueries() {
+        AlertEvent open = new AlertEvent(); open.setDomain("d1.example.com"); open.setAlertLevel("CRITICAL"); open.setAlertType("EXPIRY");
+        open.setTeamId(teamA); open.setCreatedAt("2026-09-10T10:00:00"); open.setResolved(false); open.setAcknowledged(false);
+        AlertEvent closed = new AlertEvent(); closed.setDomain("d2.example.com"); closed.setAlertLevel("WARNING"); closed.setAlertType("EXPIRY");
+        closed.setCreatedAt("2026-11-01T10:00:00"); closed.setResolved(true); closed.setAcknowledged(false);
+        alertRepo.saveAll(List.of(open, closed));
+        List<Object[]> o = alertRepo.findOpenTeamStatRows();
+        assertThat(o).hasSize(1);
+        assertThat(o.get(0)).hasSize(5);
+        assertThat(o.get(0)[1]).isEqualTo(teamA);
+        assertThat(o.get(0)[2]).isEqualTo("d1.example.com");
+        assertThat(o.get(0)[3]).isEqualTo(false);
+        assertThat(o.get(0)[4]).isEqualTo("2026-09-10T10:00:00");
+        List<Object[]> since = alertRepo.findTeamStatRowsSince("2026-10-01T00:00:00");
+        assertThat(since).hasSize(1);
+        assertThat(since.get(0)[2]).isEqualTo("d2.example.com");
+        assertThat(since.get(0)[3]).isEqualTo(true);
+    }
+
     @SuppressWarnings("unchecked") private static List<Map<String, Object>> pts(Map<String, Object> m) { return (List<Map<String, Object>>) m.get("points"); }
     @SuppressWarnings("unchecked") private static List<Map<String, Object>> teams(Map<String, Object> m) { return (List<Map<String, Object>>) m.get("teams"); }
 }
