@@ -2920,11 +2920,17 @@ public class AdminController {
         String by = resolveDisplayName(session);
         int processed = 0, skipped = 0, failed = 0;
         // Satır başına sonuç (2026-11-13, Olaylar toplu işlemi — eklemeli alan): processed | skipped (kapsam dışı) |
-        // closed (bu arada kapandı) | failed. Alarm Geçmişi yalnız sayıları okur; Olaylar her satırın sonucunu gösterir.
+        // already_acknowledged (onaylı açık alarm — sahiplenen / an / gerekçe EZİLMEZ) | closed (bu arada kapandı) | failed.
+        // Alarm Geçmişi yalnız sayıları okur ("atlandı"); Olaylar her satırın sonucunu gösterir.
         List<Map<String, Object>> results = new ArrayList<>();
         for (Long id : ids) {
             // kapsam-dışı → atla (fırlatma yok); toplu YENİDEN BİLDİR erişim paylaşımıyla yapılmaz (2026-10-12)
             if (!isAlertInScope(session, id, !"re-notify".equals(action))) { skipped++; results.add(bulkResult(id, "skipped")); continue; }
+            // Toplu onay zaten onaylı açık alarmı yeniden onaylamaz (2026-11-13 inceleme): ilk sahiplenenin adı / anı /
+            // gerekçesi ezilir, MTTA şişerdi. Tekil uç (bilinçli yeniden sahiplenme) değişmedi.
+            if ("acknowledge".equals(action) && alreadyAcknowledgedOpen(id)) {
+                skipped++; results.add(bulkResult(id, "already_acknowledged")); continue;
+            }
             try {
                 switch (action) {
                     case "acknowledge" -> escalationService.acknowledge(id, by, note);
@@ -2961,6 +2967,16 @@ public class AdminController {
         data.put("results", results);
         if (!"re-notify".equals(action) && processed > 0) alarmViewsChanged();
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
+    }
+
+    /** Açık ve onaylı mı — okunamazsa false (eski davranış: onay denenir, sonucu satırda söylenir). */
+    private boolean alreadyAcknowledgedOpen(Long id) {
+        try {
+            AlertEvent ev = alertEventRepo.findById(id).orElse(null);
+            return ev != null && !Boolean.TRUE.equals(ev.getResolved()) && Boolean.TRUE.equals(ev.getAcknowledged());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static Map<String, Object> bulkResult(Long id, String outcome) {

@@ -15,7 +15,7 @@ import { useDelayedFlag } from '../hooks/useDelayedFlag.js'
 import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
 import { navigateTo } from '../utils/navigate.js'
 import { downloadBlob } from '../utils/csvExport.js'
-import { clientFailure } from '../utils/errorMessages.js'
+import { clientFailure, errorInfoOf } from '../utils/errorMessages.js'
 import { shortcutEligible, letterOf, SEQUENCE_MS } from '../utils/keyboardShortcuts.js'
 import { Spinner } from './ui/Progress.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
@@ -47,6 +47,7 @@ import {
   FILTER_DEFAULTS, serverParams, clientFacet, hasClientFacet, summarize, summaryFromServer, activeFilters, teamOptions,
   iso24hAgo, filtersFromUrl, filtersToUrl, sortFromUrl, severityMeta, rowName, isOpen, isAcked,
   SCOPE_MINE, SCOPE_OTHERS, normalizeIncidentScope, scopeParam, canActOn, canDeleteIncident, canCommentOn, isSelectable,
+  ackable,
 } from './incidents/incidentsModel.js'
 
 const BANNER_KEY = 'incidents-banner-dismissed'
@@ -58,6 +59,18 @@ const REFRESH_MS = 60_000
 const loadXlsxWriter = () => import('../utils/xlsxWriter.js')
 /** Okunamayan sayı "—" (asla 0). */
 const shown = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : '—')
+/** Toplu işlem satır sonuçları (sunucu kodları) — bilinmeyen "unknown". */
+const BULK_OUTCOMES = ['processed', 'skipped', 'already_acknowledged', 'closed', 'failed']
+/**
+ * Eski pod (uç yok): 404 / 405, ya da `/{id}` (Long) eşlemesine düşen istek → 400 `INVALID_PARAMETER` (Aktivite deseni).
+ * Bu yanıt "bu sürümde yok" sayılır, sunucu hatası değil.
+ */
+export function isOldServerAnswer(res) {
+  const info = errorInfoOf(res)
+  const status = Number(res?.status ?? info?.status)
+  const code = res?.code ?? info?.code
+  return status === 404 || status === 405 || (status === 400 && code === 'INVALID_PARAMETER')
+}
 
 /**
  * Olaylar konsolu (2026-09-26 yeniden tasarım) — tüm izlemelerin makine-üretimi olayları: özet kartları (süzer),
@@ -121,7 +134,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
   const [cursorId, setCursorId] = useState(null)       // klavye imleci (j / k)
   const reqIdRef = useRef(0)
   const summarySeqRef = useRef(0)   // özet de yarışır (dakikalık tazeleme + teamId değişimi + elle tazeleme)
-  const prevIdsRef = useRef({ key: null, ids: null })   // son yüklenen sayfanın kimlikleri (yeni olay tespiti)
+  const prevIdsRef = useRef({ key: null, maxId: null })   // son yüklemedeki EN BÜYÜK kimlik (yeni olay tespiti)
   const resultsRef = useRef(null)
   // Son BAŞARILI yanıtın istek anahtarı + o an ekranda uygulanan süzgeçler (key null = hiç yüklenmedi → iskelet).
   const [loaded, setLoaded] = useState(() => ({ key: null, filters: null }))
@@ -136,8 +149,8 @@ export default function IncidentsPage({ systemRole, teamId }) {
 
   useUrlQuerySync({ ...filtersToUrl(filters, view, sort), scope: scope === SCOPE_MINE ? null : scope })
   useEffect(() => { try { localStorage.setItem(VIEW_KEY, view) } catch { /* yoksay */ } }, [view])
-  // Süzgeç / sayfa / görünüm değişimi = etkileşim: seçim, toplu sonuç ve "yeni" vurgusu temizlenir.
-  useEffect(() => { setSelectedIds(new Set()); setNewIds(new Set()) }, [requestKey, view])
+  // Süzgeç / sayfa / görünüm değişimi = etkileşim: seçim, toplu sonuç bandı ve "yeni" vurgusu temizlenir.
+  useEffect(() => { setSelectedIds(new Set()); setNewIds(new Set()); setBulkResult(null) }, [requestKey, view])
 
   const load = useCallback(async ({ silent = false } = {}) => {
     const myId = ++reqIdRef.current
@@ -148,13 +161,17 @@ export default function IncidentsPage({ systemRole, teamId }) {
       if (myId !== reqIdRef.current) return   // yalnız EN SON isteğin yanıtı (bayat yanıt grid'i ezmesin)
       if (res?.success) {
         const data = Array.isArray(res.data) ? res.data : []
-        // Yeni olay tespiti: YALNIZ aynı istek anahtarının sessiz yenilemesinde, önceki sayfada olmayan AÇIK olaylar.
+        // Yeni olay tespiti (2026-11-13 inceleme): YALNIZ aynı istek anahtarının sessiz yenilemesinde, kimliği önceki
+        // yüklemede görülen EN BÜYÜK kimlikten büyük AÇIK olaylar — sayfa 2+'ye kayan eski satırlar "yeni" sayılmaz.
         const prev = prevIdsRef.current
-        if (silent && prev.key === key && prev.ids) {
-          const fresh = data.filter((r) => isOpen(r) && !prev.ids.has(String(r.id))).map((r) => String(r.id))
+        const ids = data.map((r) => Number(r.id)).filter(Number.isFinite)
+        const maxNow = ids.length ? Math.max(...ids) : null
+        if (silent && prev.key === key && prev.maxId != null) {
+          const fresh = data.filter((r) => isOpen(r) && Number(r.id) > prev.maxId).map((r) => String(r.id))
           if (fresh.length) setNewIds((cur) => new Set([...cur, ...fresh]))
         }
-        prevIdsRef.current = { key, ids: new Set(data.map((r) => String(r.id))) }
+        const keepMax = prev.key === key && prev.maxId != null ? Math.max(prev.maxId, maxNow ?? prev.maxId) : maxNow
+        prevIdsRef.current = { key, maxId: keepMax }
         setRows(data); sp.bind(res); setTypeCounts(res.type_counts ?? {}); setError(null)
         setServerFacets(res.server_facets === true)
         setLoaded((l) => ({ ...l, key }))
@@ -184,13 +201,16 @@ export default function IncidentsPage({ systemRole, teamId }) {
       if (my !== summarySeqRef.current) return
       const exact = summaryFromServer(res)
       if (exact) { setSummary(exact); return }
+      // Yedek "Çözüldü (24 sa)" YALNIZ çözülme anıyla (`resolvedSince`); sunucu bu süzgeci uyguladığını söylemezse
+      // (`server_facets` yok — eski pod tüm çözülmüşleri sayardı) değer bilinmiyor: "—".
       const [open, res24] = await Promise.all([
         api.monitoring.incidents.list({ status: 'ongoing', page: 0, size: OPEN_SAMPLE, ...scopeParam(scope) }),
-        api.monitoring.incidents.list({ status: 'resolved', resolvedSince: iso24hAgo(Date.now()), since: iso24hAgo(Date.now()), page: 0, size: 1, ...scopeParam(scope) }),
+        api.monitoring.incidents.list({ status: 'resolved', resolvedSince: iso24hAgo(Date.now()), page: 0, size: 1, ...scopeParam(scope) }),
       ])
       if (my !== summarySeqRef.current) return   // bayat yanıt — daha yeni bir özet isteği yolda
       if (!open?.success) { setSummary(null); return }
-      setSummary(summarize(open.data ?? [], Number(open.total ?? 0), res24?.success ? Number(res24.total ?? 0) : null, teamId))
+      const resolved24 = res24?.success && res24.server_facets === true ? Number(res24.total ?? 0) : null
+      setSummary(summarize(open.data ?? [], Number(open.total ?? 0), resolved24, teamId))
     } catch {
       if (my === summarySeqRef.current) setSummary(null)
     }
@@ -329,20 +349,29 @@ export default function IncidentsPage({ systemRole, teamId }) {
     }),
   }), [selectedIds])
   const selectedRows = useMemo(() => visibleRows.filter((r) => selectedIds.has(String(r.id)) && isSelectable(r)), [visibleRows, selectedIds])
+  // Toplu ONAY zaten onaylı olayları göndermez (ilk sahiplenen / an / gerekçe korunur, MTTA şişmez); sonuç listesinde
+  // "zaten onaylı — atlandı" olarak görünürler. Sunucu da aynı kuralı uygular (already_acknowledged).
+  const ackSkipped = useMemo(() => selectedRows.filter((r) => !ackable(r)), [selectedRows])
   function bulk(action) {
-    if (selectedRows.length === 0) return
-    const items = selectedRows.map(contextFromIncident)
-    const ids = selectedRows.map((r) => r.id)
+    const rowsFor = action === 'ack' ? selectedRows.filter(ackable) : selectedRows
+    if (rowsFor.length === 0) return
+    const items = rowsFor.map(contextFromIncident)
+    const ids = rowsFor.map((r) => r.id)
     const names = new Map(selectedRows.map((r) => [String(r.id), r.monitor?.name || r.domain || `#${r.id}`]))
-    setNoteDialog({ action, items, submit: (note) => runBulk(action, ids, names, note) })
+    const preSkipped = action === 'ack' ? ackSkipped.map((r) => r.id) : []
+    setNoteDialog({ action, items, submit: (note) => runBulk(action, ids, names, note, preSkipped) })
   }
-  async function runBulk(action, ids, names, note) {
+  async function runBulk(action, ids, names, note, preSkipped = []) {
     let res
     try { res = await api.admin.bulkAlertAction(action === 'resolve' ? 'resolve' : 'acknowledge', ids, note) } catch { res = null }
     if (!res?.success) return { ok: false, error: res?.error || t('incov.bulk.failed') }
     const byId = new Map((Array.isArray(res.data?.results) ? res.data.results : []).map((x) => [String(x.id), x.outcome]))
-    const items = ids.map((id) => ({ id, name: names.get(String(id)), outcome: byId.get(String(id)) || 'unknown' }))
-    const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
+    const items = [
+      ...ids.map((id) => ({ id, name: names.get(String(id)), outcome: byId.get(String(id)) || 'unknown' })),
+      ...preSkipped.map((id) => ({ id, name: names.get(String(id)), outcome: 'already_acknowledged' })),
+    ]
+    const { processed = 0, failed = 0 } = res.data ?? {}
+    const skipped = Number(res.data?.skipped ?? 0) + preSkipped.length
     setBulkResult({ action, items, processed, skipped, failed })
     const text = t('incov.bulk.summary', processed, skipped, failed)
     if (failed) toast.error(text); else toast.success(text)
@@ -391,6 +420,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
     try {
       const res = await api.monitoring.incidents.exportCsv(params)
       if (res?.success) toast.success(res.truncated ? t('incov.exportTruncated', res.maxRows ?? 10000) : t('incov.exportDone', res.name))
+      else if (isOldServerAnswer(res)) toast.error(t('incov.exportUnsupported'))
       else toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('incov.exportFailed') : (res?.error || t('incov.exportFailed')), { details: res })
     } finally { setExporting(null) }
   }
@@ -398,6 +428,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
     setExporting('xlsx')
     try {
       const res = await api.monitoring.incidents.exportJson(params)
+      if (!res?.success && isOldServerAnswer(res)) { toast.error(t('incov.exportUnsupported')); return }
       if (!res?.success || !Array.isArray(res.data?.rows)) { toast.error(res?.error || t('incov.exportFailed'), { details: res }); return }
       let mod
       try { mod = await loadXlsxWriter() } catch (e) { toast.error(clientFailure(e, t).message, { details: e }); return }
@@ -448,9 +479,10 @@ export default function IncidentsPage({ systemRole, teamId }) {
       if (!current) return
       const a = actionsRef.current
       if (e.key === 'Enter') {
-        // Odak bir satırda / kart düğmesindeyse kendi Enter'ı açar — çift açılış yok
+        // Enter YALNIZ odak gövdedeyken imleçteki olayı açar (2026-11-13 inceleme): odak bir düğme / bağlantı / satır /
+        // kartta ise o öğenin kendi Enter'ı çalışır (sayfalama düğmesi sayfayı değiştirir, satır kendini açar).
         const ae = document.activeElement
-        if (ae && ae !== document.body && ae.closest?.('[data-incident-id]')) return
+        if (ae && ae !== document.body && ae !== document.documentElement) return
         e.preventDefault(); a.openDetail(current); return
       }
       if (letter === 'a' && isOpen(current) && !isAcked(current) && canActOn(current)) { e.preventDefault(); a.ack(current); return }
@@ -558,7 +590,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
       {!phone && (
         <Popover>
           <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={t('incov.kbd.title')} data-slot="incidents-kbd">
+            <Button type="button" variant="ghost" size="icon" className="size-8 pointer-coarse:size-10" aria-label={t('incov.kbd.title')} data-slot="incidents-kbd">
               <Keyboard aria-hidden="true" />
             </Button>
           </PopoverTrigger>
@@ -634,7 +666,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
         <Card data-slot="incidents-bulk-bar" className="flex-row flex-wrap items-center gap-2 px-3 py-2 shadow-none">
           <span className="text-sm font-semibold">{t('incov.bulk.selected', selectedRows.length)}</span>
           <Button type="button" variant="outline" size="sm" className="h-8 pointer-coarse:h-10" onClick={() => bulk('ack')}
-            disabled={!selectedRows.some((r) => !isAcked(r))}>
+            disabled={!selectedRows.some(ackable)}>
             <UserCheck aria-hidden="true" />{t('incov.bulk.ack')}
           </Button>
           <Button type="button" variant="success" size="sm" className="h-8 pointer-coarse:h-10" onClick={() => bulk('resolve')}>
@@ -643,6 +675,9 @@ export default function IncidentsPage({ systemRole, teamId }) {
           <Button type="button" variant="ghost" size="sm" className="ml-auto h-8 pointer-coarse:h-10" onClick={() => setSelectedIds(new Set())}>
             {t('incov.bulk.clear')}
           </Button>
+          {ackSkipped.length > 0 && (
+            <p data-slot="incidents-bulk-ack-skip" className="m-0 w-full text-xs text-muted-foreground">{t('incov.bulk.ackSkipNote', ackSkipped.length)}</p>
+          )}
         </Card>
       )}
 
@@ -655,7 +690,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
               <li key={it.id} data-outcome={it.outcome} className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
                 <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{it.name}</span>
                 <Badge variant="outline" className="h-auto overflow-visible rounded-md whitespace-normal">
-                  {t(`incov.bulk.outcome.${['processed', 'skipped', 'closed', 'failed'].includes(it.outcome) ? it.outcome : 'unknown'}`)}
+                  {t(`incov.bulk.outcome.${BULK_OUTCOMES.includes(it.outcome) ? it.outcome : 'unknown'}`)}
                 </Badge>
               </li>
             ))}

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   laneOf, clientFacet, summarize, buildTimeline, serverParams, statusOf, filtersFromUrl, filtersToUrl, sortFromUrl,
   incidentHref, activeFilters, teamOptions, FILTER_DEFAULTS, parseLevels, summaryFromServer, minutesText, isSelectable,
-  canCommentOn, canDeleteComment, canNotifyOn, evidenceQuery, asAlert,
+  canCommentOn, canDeleteComment, canNotifyOn, evidenceQuery, asAlert, ackable,
 } from '../components/incidents/incidentsModel.js'
 
 const open = { id: 1, status: 'ongoing', acknowledged: false, alert_level: 'CRITICAL', team_id: 5, started_at: '2026-07-10T10:00:00' }
@@ -105,11 +105,17 @@ describe('incidentsModel — saf yardımcılar', () => {
 
   it('evidenceQuery: izleme kimliği + tür → Aktivite sorgusu (açılıştan 15 dk önce, çözümden 1 dk sonra); sertifika olayı null', () => {
     const inc = { status: 'resolved', started_at: '2026-11-12T10:00:00', resolved_at: '2026-11-12T11:00:00', monitor: { type: 'http', monitor_id: 42 } }
-    expect(evidenceQuery(inc)).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', to: '2026-11-12T11:01:00', status: 'ERROR,TIMEOUT' })
-    expect(evidenceQuery({ ...inc, status: 'ongoing' })).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', status: 'ERROR,TIMEOUT' })
+    expect(evidenceQuery(inc)).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', to: '2026-11-12T11:01:00', status: 'ERROR,TIMEOUT,WARNING' })
+    expect(evidenceQuery({ ...inc, status: 'ongoing' })).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', status: 'ERROR,TIMEOUT,WARNING' })
     expect(evidenceQuery({ ...inc, monitor: { type: 'cert', monitor_id: null } })).toBeNull()
     expect(evidenceQuery({ ...inc, monitor: { type: 'http', monitor_id: null } })).toBeNull()
     expect(evidenceQuery({ ...inc, monitor: { type: 'dbquery', monitor_id: 3 } }).monitor).toBe('DBQUERY:3')
+  })
+
+  it('ackable: toplu onayda yalnız onaysız açık satırlar (onaylı satır yeniden onaylanmaz)', () => {
+    expect(ackable(open)).toBe(true)
+    expect(ackable(acked)).toBe(false)
+    expect(ackable(done)).toBe(false)
   })
 
   it('asAlert: Alarm Geçmişi parçaları için created_at + resolved', () => {

@@ -774,7 +774,8 @@ public class IncidentsController {
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Map<String, List<Object[]>> byKey = idx.get(fam);
-            Object[] ref = byKey == null ? null : pickMonitor(byKey.get(e.getDomain()), e.getTeamId(), inventoryTeams(inv, e.getDomain()));
+            Object[] ref = byKey == null ? null
+                    : pickMonitor(byKey.get(e.getDomain()), contextMonitorId(e), e.getTeamId(), inventoryTeams(inv, e.getDomain()));
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", ref != null ? ref[0] : e.getDomain());
             m.put("type", fam);
@@ -790,7 +791,18 @@ public class IncidentsController {
      * kendi takımının izlemesini alır; damgasız olay envanter takımının izlemesini, o yoksa ilk adayı.
      */
     static Object[] pickMonitor(List<Object[]> cands, Long stampedTeam, Set<Long> inventoryTeams) {
+        return pickMonitor(cands, null, stampedTeam, inventoryTeams);
+    }
+
+    /**
+     * Önce alarm bağlamının {@code monitor_id}'si (aynı anahtarlı aday arasında KESİN eşleşme — izleme takım değiştirse de
+     * olayı açan izleme odur), sonra takım kuralı (2026-11-13 inceleme: damgalı takımın izlemesi taşınmışsa bağ kayboluyordu).
+     */
+    static Object[] pickMonitor(List<Object[]> cands, Long contextMonitorId, Long stampedTeam, Set<Long> inventoryTeams) {
         if (cands == null || cands.isEmpty()) return null;
+        if (contextMonitorId != null) {
+            for (Object[] c : cands) if (contextMonitorId.equals(c[1] instanceof Number n ? Long.valueOf(n.longValue()) : null)) return c;
+        }
         if (stampedTeam != null) {
             for (Object[] c : cands) if (stampedTeam.equals(c[2])) return c;
             return null;
@@ -799,6 +811,18 @@ public class IncidentsController {
             for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return c;
         }
         return cands.get(0);
+    }
+
+    /** Alarm bağlamındaki izleme kimliği (sayı ya da sayısal metin); yoksa / okunamazsa null. */
+    private Long contextMonitorId(AlertEvent e) {
+        try {
+            Map<String, Object> ctx = deserialize(e.getContextJson());
+            if (ctx == null) return null;
+            Object v = ctx.get("monitor_id");
+            if (v instanceof Number n) return Long.valueOf(n.longValue());
+            if (v instanceof String s && s.matches("\\d{1,18}")) return Long.valueOf(s);
+        } catch (Exception ignored) { /* bağlam yok / bozuk */ }
+        return null;
     }
 
     private static Set<Long> inventoryTeams(Map<String, List<com.sitemonitor.model.CertificateInventory>> inv, String domain) {
@@ -932,10 +956,25 @@ public class IncidentsController {
         ScopeQuery sq = scopeQuery(eff, own);
         Long primary = SessionScope.primaryTeamId(session);
         String key = eff + '|' + com.sitemonitor.util.TtlMemo.scopeKey(own == null, own) + "|p" + primary;
-        Map<String, Object> data = summaryMemo.get(key, summaryCacheMs, fresh, () -> computeSummary(sq, primary));
+        Map<String, Object> data = summaryMemo.get(key, summaryCacheMs, allowFresh(key, fresh), () -> computeSummary(sq, primary));
         Map<String, Object> out = new LinkedHashMap<>(data);
         out.put("scope", eff);
         return ok(Map.of("data", out));
+    }
+
+    /** `fresh` en çok bu aralıkta bir hesaplatır (anahtar başına; İzleme Panosu deseni) — Yenile düğmesi DB'yi dövemez. */
+    static final long SUMMARY_FRESH_MIN_MS = 5_000L;
+    private final Map<String, Long> summaryFreshAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Taze hesap izni: son taze hesaptan {@link #SUMMARY_FRESH_MIN_MS} geçmediyse önbellek döner. */
+    boolean allowFresh(String key, boolean fresh) {
+        if (!fresh) return false;
+        long now = System.currentTimeMillis();
+        if (summaryFreshAt.size() > 1000) summaryFreshAt.clear();
+        Long last = summaryFreshAt.get(key);
+        if (last != null && now - last < SUMMARY_FRESH_MIN_MS) return false;
+        summaryFreshAt.put(key, now);
+        return true;
     }
 
     private Map<String, Object> computeSummary(ScopeQuery sq, Long primary) {
@@ -1039,7 +1078,7 @@ public class IncidentsController {
                     PageRequest.of(0, 1, Sort.by(Sort.Direction.ASC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id"))));
             if (p.isEmpty()) return null;
             AlertEvent e = p.getContent().get(0);
-            Map<String, Object> m = resolveMonitors(List.of(e), Map.of()).get(e.getId());
+            Map<String, Object> m = resolveMonitors(List.of(e), inventoryFor(List.of(e), null)).get(e.getId());
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("id", e.getId());
             out.put("name", m == null ? e.getDomain() : m.get("name"));
@@ -1052,6 +1091,9 @@ public class IncidentsController {
         }
     }
 
+    /** Takım seçeneklerinin geriye bakışı (gün) — açık olaylar her zaman sayılır. */
+    static final int TEAM_OPTION_DAYS = 90;
+
     /**
      * Takım süzgeci seçenekleri — kapsamdaki olayların takımları (damgalı olay + damgasız olayın envanter SY/UG takımı),
      * adlarıyla, Türkçe abece sırasında. Ham kimlik çipi yok: adı okunamayan takım listeye girmez. Düşerse null.
@@ -1059,15 +1101,22 @@ public class IncidentsController {
     private List<Map<String, Object>> teamOptions(ScopeQuery sq) {
         try {
             Map<Long, Long> counts = new HashMap<>();
-            for (Object[] r : alertEventRepo.countIncidentStampedTeams(null, null, null, null, null, false,
-                    AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
-                if (r[0] != null) counts.merge(((Number) r[0]).longValue(), ((Number) r[1]).longValue(), Long::sum);
-            }
-            for (Object[] r : alertEventRepo.countIncidentInventoryTeams(null, null, null, null, null, false,
-                    AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
-                long n = ((Number) r[2]).longValue();
-                if (r[0] != null) counts.merge(((Number) r[0]).longValue(), n, Long::sum);
-                if (r[1] != null && !r[1].equals(r[0])) counts.merge(((Number) r[1]).longValue(), n, Long::sum);
+            // Tüm geçmiş TARANMAZ (2026-11-13 inceleme): açık olaylar + son TEAM_OPTION_DAYS günde açılıp kapanmışlar
+            // (iki ayrık dilim — açılış zamanı indeksiyle sınırlı).
+            String recent = ISO.format(Instant.now().minus(java.time.Duration.ofDays(TEAM_OPTION_DAYS)));
+            for (Object[] slice : new Object[][] { { Boolean.FALSE, null }, { Boolean.TRUE, recent } }) {
+                Boolean res = (Boolean) slice[0];
+                String since = (String) slice[1];
+                for (Object[] r : alertEventRepo.countIncidentStampedTeams(res, since, null, null, null, false,
+                        AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
+                    if (r[0] != null) counts.merge(((Number) r[0]).longValue(), ((Number) r[1]).longValue(), Long::sum);
+                }
+                for (Object[] r : alertEventRepo.countIncidentInventoryTeams(res, since, null, null, null, false,
+                        AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
+                    long n = ((Number) r[2]).longValue();
+                    if (r[0] != null) counts.merge(((Number) r[0]).longValue(), n, Long::sum);
+                    if (r[1] != null && !r[1].equals(r[0])) counts.merge(((Number) r[1]).longValue(), n, Long::sum);
+                }
             }
             if (counts.isEmpty()) return List.of();
             java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));

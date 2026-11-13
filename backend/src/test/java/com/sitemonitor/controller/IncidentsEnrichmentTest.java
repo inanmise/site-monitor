@@ -244,6 +244,20 @@ class IncidentsEnrichmentTest {
         assertThat(IncidentsController.pickMonitor(cands, null, java.util.Set.of(5L))[1]).isEqualTo(2L);
         assertThat(IncidentsController.pickMonitor(cands, null, java.util.Set.of())[1]).isEqualTo(1L);
         assertThat(IncidentsController.pickMonitor(List.of(), 5L, null)).isNull();
+        // Alarm bağlamının monitor_id'si önce: izleme başka takıma taşınmış olsa da olayı açan izleme bağlanır
+        assertThat(IncidentsController.pickMonitor(cands, 1L, 7L, null)[1]).isEqualTo(1L);
+        assertThat(IncidentsController.pickMonitor(cands, 99L, 5L, null)[1]).isEqualTo(2L);   // aday değil → takım kuralı
+        assertThat(IncidentsController.pickMonitor(cands, 99L, 7L, null)).isNull();
+    }
+
+    @Test
+    @DisplayName("özet: fresh anahtar başına en çok 5 sn'de bir taze hesaplatır (Yenile düğmesi DB'yi dövemez)")
+    void summaryFreshIsThrottled() {
+        String key = "test|" + System.nanoTime();
+        assertThat(controller.allowFresh(key, false)).isFalse();
+        assertThat(controller.allowFresh(key, true)).isTrue();
+        assertThat(controller.allowFresh(key, true)).isFalse();
+        assertThat(controller.allowFresh(key + "-b", true)).isTrue();
     }
 
     @Test
@@ -265,9 +279,13 @@ class IncidentsEnrichmentTest {
         when(alertEventRepo.findIncidentTimingRows(isNull(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(List.<Object[]>of(new Object[]{ recent, recentPlus30, null, false, null }));
-        when(alertEventRepo.countIncidentStampedTeams(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+        // Takım seçenekleri: açık olaylar (resolved=false, tarih yok) + son 90 günde açılıp kapanmışlar (resolved=true,
+        // since dolu) — tüm geçmiş taranmaz
+        when(alertEventRepo.countIncidentStampedTeams(eq(Boolean.FALSE), isNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ OWN, 6L }));
-        when(alertEventRepo.countIncidentInventoryTeams(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+        when(alertEventRepo.countIncidentStampedTeams(eq(Boolean.TRUE), notNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ OWN, 1L }));
+        when(alertEventRepo.countIncidentInventoryTeams(eq(Boolean.FALSE), isNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ FOREIGN, null, 2L }));
 
         mvc.perform(get("/api/monitoring/incidents/summary").session(user()))
@@ -285,8 +303,10 @@ class IncidentsEnrichmentTest {
                 .andExpect(jsonPath("$.data.longest_open.id").value(1))
                 .andExpect(jsonPath("$.data.longest_open.name").value("Kendi kopyamız"))
                 .andExpect(jsonPath("$.data.team_options[0].name").value("Takım A"))
-                .andExpect(jsonPath("$.data.team_options[0].count").value(6))
+                .andExpect(jsonPath("$.data.team_options[0].count").value(7))
                 .andExpect(jsonPath("$.data.team_options[1].name").value("Takım B"));
+        verify(alertEventRepo, never()).countIncidentStampedTeams(isNull(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), anyBoolean(), any());
     }
 
     @Test

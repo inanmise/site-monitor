@@ -56,7 +56,8 @@ function mockList({ rows = [], total = rows.length, typeCounts = {}, open = null
   const openRows = open ?? rows.filter(r => r.status === 'ongoing')
   api.monitoring.incidents.list.mockImplementation((p = {}) => {
     if (p.status === 'ongoing' && Number(p.size) === 200) return Promise.resolve({ success: true, data: openRows, total: openRows.length, type_counts: {} })
-    if (p.status === 'resolved' && Number(p.size) === 1) return Promise.resolve({ success: true, data: [], total: resolved24, type_counts: {} })
+    // Yedek "Çözüldü (24 sa)": sunucu çözülme anı süzgecini uyguladığını `server_facets` ile söyler (2026-11-13)
+    if (p.status === 'resolved' && Number(p.size) === 1) return Promise.resolve({ success: true, data: [], total: resolved24, type_counts: {}, server_facets: true })
     return Promise.resolve({ success: true, data: rows, total, type_counts: typeCounts })
   })
 }

@@ -11,7 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { errorInfoOf } from '../../utils/errorMessages.js'
-import { evidenceQuery, EVIDENCE_LIMIT } from './incidentsModel.js'
+import { evidenceQuery, EVIDENCE_LIMIT, isForeign } from './incidentsModel.js'
 
 const SECTION = 'mt-5 mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase'
 
@@ -23,9 +23,17 @@ function inApp(e, tab, params, onLeave) {
   navigateTo(tab, params)
 }
 
+/** Satır durum rozeti tonu — hata / zaman aşımı kırmızı, uyarı amber. */
+const STATUS_TONE = {
+  ERROR: 'border-destructive/40 bg-destructive/10 text-destructive',
+  TIMEOUT: 'border-destructive/40 bg-destructive/10 text-destructive',
+  WARNING: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+}
+
 /**
- * "Kontrol kanıtları" (2026-11-13) — olay süresince bu izlemenin BAŞARISIZ ve ZAMAN AŞIMI kontrolleri, Aktivite
- * kaydından (`/api/activity?monitor=TYPE:id&from&to&status=ERROR,TIMEOUT`). Her satır Aktivite ayrıntı sayfasına
+ * "Kontrol kanıtları" (2026-11-13) — olay süresince bu izlemenin BAŞARISIZ, ZAMAN AŞIMI ve UYARI veren kontrolleri,
+ * Aktivite kaydından (`/api/activity?monitor=TYPE:id&from&to&status=ERROR,TIMEOUT,WARNING` — HTTP hata kodu, içerik
+ * koşulu, k6 FAIL, sorgu ihlali ve yavaş yanıt WARNING yazılır). Her satır Aktivite ayrıntı sayfasına
  * (`?tab=activity&act=<id>`) gider; "İzleme zaman çizelgesi" `amon` görünümünü açar; ilk başarısızlık için "Aynı anda
  * başka ne oldu?" (RelatedActivityPanel — yalnız görüş kapsamındaki kayıtlar).
  *
@@ -68,6 +76,8 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
   useEffect(() => { load() }, [load])
 
   const monitor = incident?.monitor
+  const foreign = isForeign(incident)
+  const certLike = !monitor?.type || monitor.type === 'cert'
   // Zaman çizelgesi özel aralıkla: olay penceresi (atlr=custom; bitiş yoksa "şimdi")
   const timelineParams = query
     ? { amon: query.monitor, atlr: 'custom', atlf: query.from, ...(query.to ? { atlt: query.to } : {}) }
@@ -81,9 +91,13 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
       </p>
     )
   } else if (!query) {
+    // Neden doğru söylenir: başka ekibin satırında sunucu izleme kimliğini boşaltır; sertifika olayının izleme kaydı yok;
+    // aksi hâlde olayı açan izleme bulunamadı (silinmiş / adı değişmiş)
+    const state = foreign ? 'foreign' : certLike ? 'cert' : 'no-monitor'
+    const key = foreign ? 'incov.evidence.foreign' : certLike ? 'incov.evidence.cert' : 'incov.evidence.noMonitor'
     body = (
-      <p data-slot="incident-evidence-state" data-state="no-monitor" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
-        <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('incov.evidence.noMonitor')}
+      <p data-slot="incident-evidence-state" data-state={state} className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+        <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t(key)}
       </p>
     )
   } else if (state.loading && state.rows.length === 0) {
@@ -114,7 +128,8 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
                   aria-label={t('incov.evidence.openDetail', when)}
                   onClick={(e) => inApp(e, 'activity', { act: String(r.id) }, onLeave)}
                   className="flex min-h-10 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border bg-card px-2.5 py-1.5 text-xs no-underline hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none">
-                  <Badge variant="outline" className="border-destructive/40 bg-destructive/10 font-semibold text-destructive">
+                  <Badge variant="outline" data-slot="incident-evidence-status"
+                    className={`font-semibold ${STATUS_TONE[r.result_status] || 'text-muted-foreground'}`}>
                     {t(`act.st.${r.result_status}`) !== `act.st.${r.result_status}` ? t(`act.st.${r.result_status}`) : r.result_status}
                   </Badge>
                   {reason && <span className="min-w-0 font-medium text-foreground [overflow-wrap:anywhere]">{reason}</span>}

@@ -157,7 +157,11 @@ export default function IncidentDetailSheet({
   const composerRef = useRef(null)
   const id = incident?.id
   const foreign = isForeign(incident)
-  const nocOperator = usePermissions().canEdit('noc_calls.write')
+  const perms = usePermissions()
+  const nocOperator = perms.canEdit('noc_calls.write')
+  // Alarm Geçmişi tekil okuması sunucuda requireAlertReadScope: kendi kapsamı ya da tüm uyarıları gören (7/24 konsolu) —
+  // başka ekibin org geneli okunan olayında bağlantı 403'e götürürdü (2026-11-13 inceleme)
+  const canOpenAlert = !foreign || perms.scope?.noc_console === true
   // Bildirim geçmişi (e-posta günlüğü + push + fırtına push'u): alerts.read + takım kapsamı. Başka ekibin olayında HİÇ
   // istenmez — alıcılar takım içi veri (uç 403 döner, boşuna istek olurdu).
   const deliveries = useIncidentDeliveries(foreign ? null : id, deliveryNonce)
@@ -319,12 +323,12 @@ export default function IncidentDetailSheet({
                 <a href={incidentHref(incident)}><ExternalLink aria-hidden="true" />{t('incov.openMonitor')}</a>
               </Button>
             )}
-            <Button asChild variant="outline" size="sm" className={ACTION}>
+            {canOpenAlert && <Button asChild variant="outline" size="sm" className={ACTION}>
               <a data-slot="incident-open-alert" href={`?tab=alerthistory&alert=${encodeURIComponent(incident.id)}`}
                 onClick={(e) => inApp(e, 'alerthistory', { alert: String(incident.id) }, onClose)}>
                 <History aria-hidden="true" />{t('incov.openInAlertHistory')}
               </a>
-            </Button>
+            </Button>}
             {/* Olay kaydı köprüsü (Alarm Geçmişi ile aynı): "Olay kaydı aç" ya da bağlı kaydın bağlantısı */}
             <AlertIncidentLink alert={alertish} teamName={incident.team_name} actBlocked={foreign} />
             <CopyLinkButton variant="outline" className={ACTION} url={incidentLink(incident.id)} />

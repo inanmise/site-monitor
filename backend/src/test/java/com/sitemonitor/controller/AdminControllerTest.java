@@ -3083,6 +3083,27 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("toplu ONAY zaten onaylı açık alarmı yeniden onaylamaz (sahiplenen / an / gerekçe ezilmez, MTTA şişmez) — already_acknowledged")
+    void bulkAcknowledge_alreadyAcknowledged_notOverwritten() throws Exception {
+        AlertEvent acked = new AlertEvent(); acked.setId(5L); acked.setResolved(false); acked.setAcknowledged(true);
+        AlertEvent fresh = new AlertEvent(); fresh.setId(6L); fresh.setResolved(false); fresh.setAcknowledged(false);
+        when(alertEventRepo.findById(5L)).thenReturn(java.util.Optional.of(acked));
+        when(alertEventRepo.findById(6L)).thenReturn(java.util.Optional.of(fresh));
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(fresh);
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[5,6],\"note\":\"toplu sahiplenme gerekçesi\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1))
+                .andExpect(jsonPath("$.data.results[0].outcome").value("already_acknowledged"))
+                .andExpect(jsonPath("$.data.results[1].outcome").value("processed"));
+        org.mockito.Mockito.verify(escalationService, org.mockito.Mockito.never()).acknowledge(eq(5L), any(), any());
+        org.mockito.Mockito.verify(escalationService).acknowledge(eq(6L), any(), any());
+    }
+
+    @Test
     @DisplayName("TEKRAR BİLDİR toplu işlemi not İSTEMEZ — orada alarm kapatılmıyor")
     void bulkRenotify_doesNotRequireNote() throws Exception {
         when(escalationService.reNotify(anyLong())).thenReturn(java.util.Map.of("ok", true));

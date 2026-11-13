@@ -16,7 +16,7 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : '—')
 export default function IncidentsHeader({ summary, view, onView, onRefresh, loading, actions = null }) {
   const t = useT()
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div data-slot="incidents-header" className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
         <h2 className="flex items-center gap-1.5 text-lg font-bold"><Siren aria-hidden="true" className="size-5 shrink-0" />{t('incov.title')}</h2>
         <p className="mt-1 max-w-[78ch] text-xs text-muted-foreground">{t('incov.subtitle')}</p>

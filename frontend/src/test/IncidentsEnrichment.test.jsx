@@ -178,10 +178,11 @@ describe('Olaylar zenginleştirmesi — toplu işlem, yeni olay, klavye, dışa 
     mock({ rows: [second] })
     render(<IncidentsPage systemRole="USER" teamId={5} />)
     await screen.findByRole('button', { name: /api\.example\.com/ })
-    mock({ rows: [base, second] })
+    // Yeni olay = önceki yüklemedeki en büyük kimlikten (2) büyük açık olay
+    mock({ rows: [{ ...base, id: 7 }, second] })
     await act(async () => { INTERVALS[60000]() })
     expect(await screen.findByRole('button', { name: /1 new incident|1 yeni olay/ })).toBeInTheDocument()
-    expect(document.querySelector('[data-slot="incident-card"][data-incident-id="1"]')).toHaveAttribute('data-new', 'true')
+    expect(document.querySelector('[data-slot="incident-card"][data-incident-id="7"]')).toHaveAttribute('data-new', 'true')
     await openDetail('https://x.example.com')
     await waitFor(() => expect(screen.queryByRole('button', { name: /1 new incident|1 yeni olay/ })).toBeNull())
   })
@@ -290,11 +291,111 @@ describe('Olaylar zenginleştirmesi — detay penceresi', () => {
     ] })
     render(<IncidentsPage systemRole="USER" teamId={5} />)
     let dlg = await openDetail('https://x.example.com')
-    await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ monitor: 'HTTP:9', status: 'ERROR,TIMEOUT' })))
+    // Uyarı veren kontroller de kanıttır (HTTP hata kodu, içerik koşulu, yavaş yanıt WARNING yazılır)
+    await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ monitor: 'HTTP:9', status: 'ERROR,TIMEOUT,WARNING' })))
     const row = await waitFor(() => { const r = dlg.querySelector('[data-slot="incident-evidence-row"]'); expect(r).toBeTruthy(); return r })
     expect(row.querySelector('a')).toHaveAttribute('href', '?tab=activity&act=501')
     fireEvent.click(within(dlg).getByRole('button', { name: /^Close$|^Kapat$/ }))
     dlg = await openDetail('cert.example.com')
-    expect(dlg.querySelector('[data-slot="incident-evidence-state"]')).toHaveAttribute('data-state', 'no-monitor')
+    expect(dlg.querySelector('[data-slot="incident-evidence-state"]')).toHaveAttribute('data-state', 'cert')
+  })
+})
+
+describe('Olaylar zenginleştirmesi — bağımsız inceleme düzeltmeleri (2026-11-13)', () => {
+  it('Enter yalnız odak gövdedeyken imleçteki olayı açar; sayfalama düğmesindeki Enter olay açmaz', async () => {
+    mock({ total: 120 })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    await screen.findByRole('button', { name: /api\.example\.com/ })
+    fireEvent.keyDown(document.body, { key: 'j' })
+    const next = screen.getAllByRole('button', { name: /^(Next|Sonraki)$/ })[0]
+    next.focus()
+    fireEvent.keyDown(next, { key: 'Enter' })
+    expect(screen.queryByRole('dialog', { name: /Incident #|Olay #/ })).toBeNull()
+    next.blur()
+    fireEvent.keyDown(document.body, { key: 'Enter' })
+    expect(await screen.findByRole('dialog', { name: /Incident #|Olay #/ })).toBeInTheDocument()
+  })
+
+  it('toplu onay onaylı olayı göndermez (ilk sahiplenme korunur); sonuçta "zaten onaylı — atlandı"', async () => {
+    mock({ rows: [base, { ...second, acknowledged: true }] })
+    api.admin.bulkAlertAction.mockResolvedValue({ success: true, data: { processed: 1, skipped: 0, failed: 0, results: [{ id: 1, outcome: 'processed' }] } })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^(List|Liste)$/ }))
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="incidents-select-row"]').length).toBe(2))
+    fireEvent.click(document.querySelector('[data-slot="incidents-select-all"]'))
+    expect(await waitFor(() => document.querySelector('[data-slot="incidents-bulk-ack-skip"]'))).toHaveTextContent(/1/)
+    fireEvent.click(screen.getByRole('button', { name: /Acknowledge selected|Toplu onayla/ }))
+    const dlg = await screen.findByRole('dialog', { name: /Acknowledge|onayla/i })
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Reason|Gerekçe)/ }), { target: { value: 'ağ ekibi inceliyor, takipteyiz' } })
+    fireEvent.click(dlg.querySelector('[data-action-submit]'))
+    await waitFor(() => expect(api.admin.bulkAlertAction).toHaveBeenCalledWith('acknowledge', [1], 'ağ ekibi inceliyor, takipteyiz'))
+    const result = await waitFor(() => { const r = document.querySelector('[data-slot="incidents-bulk-result"]'); expect(r).toBeTruthy(); return r })
+    expect(result.querySelector('[data-outcome="already_acknowledged"]')).toHaveTextContent(/already acknowledged|zaten onaylı/)
+    // Süzgeç değişimi sonuç bandını temizler
+    fireEvent.change(screen.getByRole('combobox', { name: /Severity|Önem/ }), { target: { value: 'HIGH' } })
+    await waitFor(() => expect(document.querySelector('[data-slot="incidents-bulk-result"]')).toBeNull())
+  })
+
+  it('"yeni olay": sayfa sonuna kayan eski satır yeni SAYILMAZ; önceki en büyük kimlikten büyük açık olay sayılır', async () => {
+    const a = { ...base, id: 5 }
+    const b = { ...second, id: 6 }
+    const old = { ...base, id: 3, monitor: { ...base.monitor, name: 'old.example.com', monitor_id: 30 } }
+    const fresh = { ...base, id: 9, monitor: { ...base.monitor, name: 'fresh.example.com', monitor_id: 90 } }
+    mock({ rows: [a, b] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    await screen.findByRole('button', { name: /api\.example\.com/ })
+    mock({ rows: [a, b, old] })   // daha küçük kimlik (sayfaya kayan eski satır)
+    await act(async () => { INTERVALS[60000]() })
+    await screen.findByRole('button', { name: /old\.example\.com/ })
+    expect(screen.queryByRole('button', { name: /new incident|yeni olay/ })).toBeNull()
+    mock({ rows: [fresh, a, b] })
+    await act(async () => { INTERVALS[60000]() })
+    expect(await screen.findByRole('button', { name: /1 new incident|1 yeni olay/ })).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="incident-card"][data-incident-id="9"]')).toHaveAttribute('data-new', 'true')
+  })
+
+  it('yedek özet: sunucu çözülme süzgecini uyguladığını söylemezse "Çözüldü (24 sa)" bilinmiyor ("—")', async () => {
+    api.monitoring.incidents.summary.mockResolvedValue({ success: true, data: [] })
+    api.monitoring.incidents.list.mockImplementation((p = {}) => Promise.resolve(
+      p.status === 'resolved' && Number(p.size) === 1
+        ? { success: true, data: [], total: 999 }
+        : { success: true, data: [base], total: 1, type_counts: {} }))
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    const tile = () => document.querySelector('[data-slot="stat-item"][data-key="resolved24"] [data-slot="stat-value"]')
+    await waitFor(() => expect(tile()?.textContent).toBe('—'))
+    const call = api.monitoring.incidents.list.mock.calls.map((c) => c[0]).find((p) => p.status === 'resolved' && Number(p.size) === 1)
+    expect(call.resolvedSince).toBeTruthy()
+    expect(call.since).toBeUndefined()
+  })
+
+  it('dışa aktarım eski podda (400 INVALID_PARAMETER) "bu sürümde yok" der', async () => {
+    mock()
+    api.monitoring.incidents.exportCsv.mockResolvedValue({ success: false, status: 400, code: 'INVALID_PARAMETER', error: 'Geçersiz parametre' })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    await screen.findByRole('button', { name: /api\.example\.com/ })
+    fireEvent.pointerDown(document.querySelector('[data-slot="incidents-export"]'), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/ }))
+    expect(await screen.findByText(/no export|Dışa aktarım sunucunun bu sürümünde yok/)).toBeInTheDocument()
+  })
+
+  it('başka ekibin satırı: kanıt "başka ekibin izlemesi", Alarm Geçmişi bağlantısı yok (7/24 konsolu değil)', async () => {
+    const other = { ...foreign, monitor: { ...foreign.monitor, monitor_id: null } }
+    mock({ rows: [other] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    const dlg = await openDetail('other.example.com')
+    expect(dlg.querySelector('[data-slot="incident-evidence-state"]')).toHaveAttribute('data-state', 'foreign')
+    expect(dlg.querySelector('[data-slot="incident-open-alert"]')).toBeNull()
+  })
+
+  it('kanıt satırında durum rozeti: uyarı (WARNING) satırı kırmızı değil', async () => {
+    mock({ rows: [base] })
+    api.getActivity.mockResolvedValueOnce({ success: true, total: 1, data: [
+      { id: 601, activity_time: '2026-11-12T09:59:00', result_status: 'WARNING', failure_reason: 'HTTP_STATUS', http_status: 500 },
+    ] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    const dlg = await openDetail('https://x.example.com')
+    const badge = await waitFor(() => { const b = dlg.querySelector('[data-slot="incident-evidence-status"]'); expect(b).toBeTruthy(); return b })
+    expect(badge.className).toMatch(/amber/)
+    expect(badge.className).not.toMatch(/(^|\s)(text|bg)-destructive(\/|\s|$)/)
   })
 })

@@ -147,6 +147,8 @@ export function clientFacet(rows, filters, teamId) {
 export const hasClientFacet = (filters) => CLIENT_FACET.has(filters.stat) || Boolean(filters.level) || Boolean(filters.team)
   || Boolean(filters.recurring)
 
+/** Toplu ONAYDA gönderilecek mi: seçilebilir ve henüz onaysız (onaylı satır yeniden onaylanmaz — ilk sahiplenme korunur). */
+export const ackable = (inc) => isSelectable(inc) && !isAcked(inc)
 /** Satır işlem için seçilebilir mi (toplu onay / çöz): açık + sunucu eylem bayrağı. Yabancı / izinsiz satır asla. */
 export const isSelectable = (inc) => isOpen(inc) && canActOn(inc)
 /** Yorum yazabilir mi — sunucu `can_comment` (7/24 operatörü başka ekibin olayına da yazar); alan yoksa eski kural. */
@@ -242,12 +244,16 @@ export const ACTIVITY_TYPE = Object.freeze({
   http: 'HTTP', ping: 'PING', port: 'PORT', dns: 'DNS', domain: 'DOMAIN', keyword: 'KEYWORD',
   page: 'PAGE', pagespeed: 'PAGESPEED', scripted: 'SCRIPTED', dbquery: 'DBQUERY',
 })
+/** Kanıt olarak istenen Aktivite durumları (uyarı veren kontroller dahil). */
+export const EVIDENCE_STATUSES = 'ERROR,TIMEOUT,WARNING'
 /** Kanıt penceresinin açılıştan önceki payı: teyit kontrolleri olaydan önce çalışır. */
 export const EVIDENCE_LEAD_MS = 15 * 60 * 1000
 
 /**
- * Olayın kontrol kanıtı sorgusu — `{ monitor: 'HTTP:42', from, to?, status: 'ERROR,TIMEOUT' }` (UTC, zone'suz — Aktivite
- * ucu zone'suz değeri UTC okur). İzleme kimliği yoksa (sertifika olayı, silinmiş izleme) `null`: kanıt aranmaz.
+ * Olayın kontrol kanıtı sorgusu — `{ monitor: 'HTTP:42', from, to?, status: 'ERROR,TIMEOUT,WARNING' }` (UTC, zone'suz —
+ * Aktivite ucu zone'suz değeri UTC okur). WARNING DAHİL (2026-11-13 inceleme): Aktivite kaydı HTTP hata kodunu, içerik
+ * koşulunu, k6 FAIL'i, sorgu ihlalini ve yavaş yanıtı WARNING yazar — yalnız ERROR / TIMEOUT sormak HTTP 500'lü HTTP_DOWN
+ * olayında "başarısız kontrol yok" diyordu. İzleme kimliği yoksa (sertifika olayı, silinmiş izleme) `null`.
  */
 export function evidenceQuery(inc) {
   const m = inc?.monitor
@@ -257,7 +263,7 @@ export function evidenceQuery(inc) {
   if (!start) return null
   const from = new Date(start.getTime() - EVIDENCE_LEAD_MS).toISOString().slice(0, 19)
   const end = !isOpen(inc) && inc.resolved_at ? parseUtc(inc.resolved_at) : null
-  const out = { monitor: `${type}:${m.monitor_id}`, from, status: 'ERROR,TIMEOUT' }
+  const out = { monitor: `${type}:${m.monitor_id}`, from, status: EVIDENCE_STATUSES }
   if (end) out.to = new Date(end.getTime() + 60 * 1000).toISOString().slice(0, 19)
   return out
 }

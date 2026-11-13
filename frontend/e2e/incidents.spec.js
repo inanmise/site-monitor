@@ -118,7 +118,7 @@ for (const vp of VIEWPORTS) {
       expect(await overflow(page), 'yatay taşma').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="incidents-page"]'), 'kırpılan metin').toEqual([])
       if (vp.touch) {
-        expect(await page.evaluate(smallTargets, '[data-slot="incidents-toolbar"], [data-slot="incident-metrics"], [data-slot="incident-card"]'),
+        expect(await page.evaluate(smallTargets, '[data-slot="incidents-header"], [data-slot="incidents-toolbar"], [data-slot="incident-metrics"], [data-slot="incident-card"]'),
           'küçük hedef').toEqual([])
       }
       if (vp.name === 'phone') {
