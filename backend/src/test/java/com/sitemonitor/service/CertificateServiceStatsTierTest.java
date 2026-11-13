@@ -81,6 +81,28 @@ class CertificateServiceStatsTierTest {
     }
 
     @Test
+    @org.junit.jupiter.api.DisplayName("2026-11-13: /stats/teams yalın biçim — takım başına SY / UG alan listeleri (sıralı), kapsam; istatistik nesnesi yok")
+    void teamDomainListsLean() {
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(1L); a.setName("A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(2L); b.setName("B");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(a, b));
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(List.of(
+                new Object[]{"z.example.com", 1L, 2L}, new Object[]{"a.example.com", 1L, null}, new Object[]{"u.example.com", 3L, 2L}));
+        Map<String, Object> all = service.getTeamDomainLists(null);
+        assertThat(all).containsEntry("mode", "domains");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> teams = (List<Map<String, Object>>) all.get("teams");
+        assertThat(teams).hasSize(2);
+        assertThat(teams.get(0)).containsEntry("team_id", 1L).containsEntry("sy_domains", List.of("a.example.com", "z.example.com"))
+                .containsEntry("ug_domains", List.of());
+        assertThat(teams.get(1)).containsEntry("sy_domains", List.of()).containsEntry("ug_domains", List.of("u.example.com", "z.example.com"));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> scoped = (List<Map<String, Object>>) service.getTeamDomainLists(List.of(2L)).get("teams");
+        assertThat(scoped).extracting(t -> t.get("team_id")).containsExactly(2L);
+        @SuppressWarnings("unchecked") List<Object> none = (List<Object>) service.getTeamDomainLists(List.of()).get("teams");
+        assertThat(none).isEmpty();
+        org.mockito.Mockito.verify(latestRepo, org.mockito.Mockito.never()).findByDomainIn(anyCollection());
+    }
+
+    @Test
     @DisplayName("T1 uyarı 60 / yüksek 45: 40 gün → high_count 1, 50 gün → warning_count; valid_count yalnız gerçekten geçerliler")
     @SuppressWarnings("unchecked")
     void statsFollowTierAlertLevel() {

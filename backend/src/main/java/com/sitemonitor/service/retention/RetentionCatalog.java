@@ -540,6 +540,11 @@ public final class RetentionCatalog {
                 "Takım veri kalitesi puanının günlük görüntüsü (2026-10-10): gün × kova (takım / kurum / sahipsiz) başına TEK "
                 + "satır — puan, bulgu ve incelenen öğe sayısı (30 günlük eğilim çizgisi). DataQualitySnapshotJob her yazımda "
                 + "120 günden eski satırları siler → en fazla ~120 × (takım sayısı + 2) satır. Kişisel veri yok."),
+        info("cert-health-daily", "cert_health_daily", Mode.BOUNDED, DataClass.OPERATIONAL,
+                "Sertifika sağlığının günlük görüntüsü (2026-11-13, İstatistikler 90 günlük serisi): gün × kova (takım / kurum) "
+                + "başına TEK satır — toplam, değerlendirilen, temiz, 30 / 7 gün altı, dolmuş ve hatalı sertifika sayısı. "
+                + "CertHealthSnapshotJob her yazımda 120 günden eski satırları siler → en fazla ~120 × (takım sayısı + 1) satır. "
+                + "Kişisel veri yok."),
         info("spring-session", "spring_session", Mode.EXTERNAL, DataClass.PERSONAL,
                 "Spring Session JDBC deposu — Spring'in kendi dakikalık cleanup job'ı süresi dolan oturumları siler "
                 + "(spring.session.timeout=24h). Bu uygulama dokunmaz."),

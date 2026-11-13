@@ -1046,6 +1046,37 @@ public class CertificateService {
         return res;
     }
 
+    /**
+     * İstatistik sekmesinin takım listesi — YALIN biçim (2026-11-13, performans): arayüz kırılımdan yalnız takımın SY ve UG
+     * alan adı kümelerini okuyor (matris, tablo takım süzgeci, aramada takım adı). Tek dar envanter sorgusu + aktif takımlar;
+     * son kontrol / eşik / dört istatistik nesnesi KURULMAZ. Kapsam {@code /stats/teams} ile aynı: null = tüm aktif takımlar,
+     * boş = hiçbiri, aksi hâlde verilen takımlar. Alan listeleri sıralı; aktif envanter satırları.
+     * Biçim: {@code {mode: "domains", teams: [{team_id, team_name, sy_domains, ug_domains}]}}.
+     */
+    public Map<String, Object> getTeamDomainLists(java.util.Collection<Long> onlyTeamIds) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (onlyTeamIds != null && onlyTeamIds.isEmpty()) return Map.of("mode", "domains", "teams", result);
+        Map<Long, java.util.TreeSet<String>> syMap = new HashMap<>();
+        Map<Long, java.util.TreeSet<String>> ugMap = new HashMap<>();
+        for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
+            if (r == null || r.length < 2 || r[0] == null) continue;
+            String d = String.valueOf(r[0]);
+            if (r[1] instanceof Number n) syMap.computeIfAbsent(n.longValue(), k -> new java.util.TreeSet<>()).add(d);
+            if (r.length > 2 && r[2] instanceof Number n2) ugMap.computeIfAbsent(n2.longValue(), k -> new java.util.TreeSet<>()).add(d);
+        }
+        for (Team team : teamRepo.findByActiveTrueOrderByNameAsc()) {
+            Long tid = team.getId();
+            if (onlyTeamIds != null && !onlyTeamIds.contains(tid)) continue;
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("team_id", tid);
+            entry.put("team_name", team.getName());
+            entry.put("sy_domains", new ArrayList<>(syMap.getOrDefault(tid, new java.util.TreeSet<>())));
+            entry.put("ug_domains", new ArrayList<>(ugMap.getOrDefault(tid, new java.util.TreeSet<>())));
+            result.add(entry);
+        }
+        return Map.of("mode", "domains", "teams", result);
+    }
+
     public Map<String, Object> getAllTeamsBreakdownStats() { return teamsBreakdown(null); }
 
     /** Per-team breakdown limited to the given teams (Faz 3b scoped müdür/PO). null = all. */
