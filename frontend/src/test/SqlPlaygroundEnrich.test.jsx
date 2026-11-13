@@ -423,7 +423,9 @@ describe('SqlPlayground zenginleştirme', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Save query|Sorguyu kaydet/ })).toBeNull())
     expect(document.querySelector('[data-slot="sql-tab"][data-active="true"]')).toHaveTextContent('Açık alarmlar')
 
-    // Güncelle: sunucudan taze kayıt okunur; değişmeyen başlık gönderilmez, SQL değişti → sql_text + params + version
+    // Güncelle: sunucudan taze kayıt okunur; değişmeyen başlık gönderilmez, SQL değişti → sql_text + params + version.
+    // Sürüm SEKMENİN yüklediği sürümdür (0): bu arada v3 kaydedildiği için sunucu 409 verir (3. tur bulgu 6 — taze kaydın
+    // sürümü gönderilseydi v3 sessizce ezilirdi)
     api.admin.sqlSavedGet.mockResolvedValue({ success: true, data: { id: 41, title: 'Açık alarmlar', description: '', tags: [], shared: false, sql_text: 'SELECT :id', version: 3, mine: true } })
     api.admin.sqlSavedUpdate.mockResolvedValueOnce({ success: false, status: 409, code: 'CONCURRENT_MODIFICATION', error: 'changed' })
     await typeSql('SELECT :id, 2')
@@ -431,7 +433,7 @@ describe('SqlPlayground zenginleştirme', () => {
     const dlg2 = await screen.findByRole('dialog', { name: /Edit saved query|Kayıtlı sorguyu düzenle/ })
     fireEvent.click(within(dlg2).getByRole('button', { name: /Save changes|Değişiklikleri kaydet/ }))
     await waitFor(() => expect(api.admin.sqlSavedUpdate).toHaveBeenCalledTimes(1))
-    expect(api.admin.sqlSavedUpdate.mock.calls[0]).toEqual([41, { sql_text: 'SELECT :id, 2', params: { id: 'number' }, version: 3 }])
+    expect(api.admin.sqlSavedUpdate.mock.calls[0]).toEqual([41, { sql_text: 'SELECT :id, 2', params: { id: 'number' }, version: 0 }])
     const banner = await waitFor(() => { const b = dlg2.querySelector('[data-slot="sql-save-banner"]'); expect(b).not.toBeNull(); return b })
     expect(banner).toHaveTextContent(/changed while you were editing|siz düzenlerken değişti/)
     expect(within(banner).getByRole('button', { name: /Load latest version|Son sürümü yükle/ })).toBeInTheDocument()

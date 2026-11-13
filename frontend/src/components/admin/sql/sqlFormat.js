@@ -7,8 +7,10 @@ import { KEYWORDS } from './sqlHighlight.jsx'
  * UNION / INTERSECT / EXCEPT, WITH, VALUES) satır başına; SELECT listesindeki virgüller ve WHERE / HAVING / ON içindeki
  * AND / OR alt satıra (iki boşluk girintiyle; `BETWEEN … AND …` bölünmez); `(SELECT …)` alt sorgu girintili; anahtar
  * sözcükler BÜYÜK harf. Dokunulmaz: metin (`'…'`, `E'…'`), dolar blokları (`$$…$$`, `$etiket$…$etiket$`), tırnaklı ad
- * (`"…"`), yorumlar (satır yorumundan sonra DAİMA yeni satır — sonraki kod yoruma girmesin) ve işleç aralığı (kaynaktaki
- * boşluk korunur). Aynı metni iki kez biçimlendirmek aynı sonucu verir (sabit nokta — testte pinli).
+ * (`"…"`), yorumlar (satır yorumundan sonra DAİMA yeni satır — sonraki kod yoruma girmesin), `:ad` parametreleri (tek `:`
+ * hemen ardından gelen ad — `:from`, `:limit`, `:end` anahtar sözcük sayılmaz, büyütülmez, önüne satır sonu konmaz; `::tip`
+ * dönüşümü değil) ve işleç aralığı (kaynaktaki boşluk korunur). Aynı metni iki kez biçimlendirmek aynı sonucu verir (sabit
+ * nokta — testte pinli).
  */
 export const FORMAT_MAX_CHARS = 200_000
 const INDENT = '  '
@@ -161,8 +163,12 @@ export function formatSql(src) {
     if (prev && prev.t === 'punct' && ['(', '.', '::', '['].includes(prev.v)) space = false
     if (prev && prev.t === 'punct' && prev.v === ',') space = true
 
+    // `:ad` parametresi: tek `:` (`::` ayrı belirteç) hemen ardından boşluksuz ad — olduğu gibi yazılır, yan cümle kuralı yok
+    const isParam = tk.t === 'word' && !tk.ws && prev && prev.t === 'punct' && prev.v === ':'
+    if (isParam) space = false
+
     let out = tk.v
-    if (tk.t === 'word') {
+    if (tk.t === 'word' && !isParam) {
       const next = toks[k + 1]
       const qualified = (prev && prev.t === 'punct' && prev.v === '.') || (next && next.t === 'punct' && next.v === '.')
       if (!qualified && (KEYWORDS.has(lw) || EXTRA_KEYWORDS.has(lw))) out = tk.v.toUpperCase()
@@ -171,7 +177,7 @@ export function formatSql(src) {
     let nlIndent = null
     if (mustBreak) { nlIndent = contIndent(lv); mustBreak = false }
 
-    if (tk.t === 'word' && lv.sub) {
+    if (tk.t === 'word' && lv.sub && !isParam) {
       const nextLw = lower(toks[k + 1])
       const prevLw = lower(prev)
       const isTwo = Boolean(TWO_WORD[lw]) && nextLw === TWO_WORD[lw]

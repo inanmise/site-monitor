@@ -198,7 +198,12 @@ export default function ResultsPanel({
   const openAt = (i) => setDetail(i)
 
   const hasRows = rows.length > 0
-  const capped = hasRows && (result?.rowCount ?? rows.length) >= MAX_ROWS
+  // Sunucu sonucu kestiyse (2026-11-13, bellek bütçesi): `truncated` + `truncated_reason` ('rows' | 'bytes') +
+  // `truncated_cells`. 'bytes' = boyut sınırı (kısmi sonuç bandı); 'rows' ya da alan yoksa (eski sunucu) 1000 satır tavanı.
+  const cutReason = result?.truncated === true ? (result.truncated_reason === 'bytes' ? 'bytes' : 'rows') : null
+  const partial = hasRows && cutReason === 'bytes'
+  const capped = hasRows && !partial && (cutReason === 'rows' || (result?.rowCount ?? rows.length) >= MAX_ROWS)
+  const cutCells = Number.isFinite(Number(result?.truncated_cells)) && Number(result.truncated_cells) > 0 ? Number(result.truncated_cells) : 0
   const status = running ? (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground tabular-nums" aria-live="polite">
       <Timer aria-hidden="true" className="size-3.5" />{t('sql.res.running', formatDuration(elapsedMs))}
@@ -473,7 +478,21 @@ export default function ResultsPanel({
           {t('sql.res.cappedHint')}
         </AlertBanner>
       )}
-      <div className={cn('flex min-h-0 flex-1 flex-col', phone && 'overflow-y-auto')}>{body}</div>
+      {resultView === 'table' && partial && !running && (
+        <div data-slot="sql-result-partial">
+          <AlertBanner tone="warning" title={t('sql.res.partialTitle', rows.length.toLocaleString(locale))} className="m-3 mb-0">
+            {t('sql.res.partialHint')}
+          </AlertBanner>
+        </div>
+      )}
+      {resultView === 'table' && hasRows && cutCells > 0 && !running && (
+        <p data-slot="sql-cells-cut" className="m-0 flex flex-wrap items-center gap-1.5 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 [overflow-wrap:anywhere] dark:text-amber-200">
+          <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />{t('sql.res.cellsCut', cutCells.toLocaleString(locale))}
+        </p>
+      )}
+      {/* Gövde HER yerleşimde kaydırılır: grafik / karşılaştırma / plan panelden uzun olabilir (bölüm overflow-hidden — kesilip
+          erişilemez kalıyordu); tablo kendi iç kaydırmasıyla (sql-result-scroll) zaten sığar, dış gövde kaymaz. */}
+      <div data-slot="sql-result-body" className="flex min-h-0 flex-1 flex-col overflow-y-auto">{body}</div>
       {resultView === 'table' && hasRows && !running && view.length > 0 && (
         <div className="shrink-0 border-t px-3 py-2"><PaginationBar {...pager} /></div>
       )}
