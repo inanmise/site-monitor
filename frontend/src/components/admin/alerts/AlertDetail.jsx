@@ -100,7 +100,8 @@ function usePageAlertDetail(a) {
     let alive = true
     Promise.resolve().then(() => api.admin.getAlert(id)).catch(() => null).then((res) => {
       if (!alive || !res?.success || !res.data || Array.isArray(res.data) || String(res.data.id) !== String(id)) return
-      setExtra({ page_issues: res.page_issues ?? null, confirm_info: res.confirm_info ?? null })
+      setExtra({ page_issues: res.page_issues ?? null, page_issues_total: res.page_issues_total ?? null,
+        confirm_info: res.confirm_info ?? null })
     })
     return () => { alive = false }
   }, [id, need])
@@ -149,6 +150,8 @@ export function AlertDetailBody({
   const mails = Number(a.email_sent_count ?? 0), mailsFailed = Number(a.email_failed_count ?? 0)
   // E2/E3: alarm kaydında yoksa getAlert'ten zenginleştirilmiş kopya (pageExtra) kullanılır (boş [] mevcut sayılır).
   const pageIssues = a.page_issues ?? pageExtra?.page_issues ?? null
+  // Bulgu 6 (2026-11-13): bağlam en çok 10 kaynak tutar — toplam ayrıca gelir, liste "+N kaynak daha" der
+  const pageIssuesTotal = a.page_issues_total ?? pageExtra?.page_issues_total ?? null
   const confirmInfo = a.confirm_info ?? pageExtra?.confirm_info ?? null
 
   return (
@@ -290,7 +293,7 @@ export function AlertDetailBody({
         {Array.isArray(pageIssues) && pageIssues.length > 0 && (
           <div className="border-t px-4 py-2.5" data-slot="alert-page-issues">
             <h3 className="mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('alh.pageIssuesTitle')}</h3>
-            <PageIssueList issues={pageIssues} max={20} />
+            <PageIssueList issues={pageIssues} max={20} total={pageIssuesTotal} />
           </div>
         )}
         {/* E3 (2026-11-12): teyit & kurtarma görünürlüğü — "açılmadan önce N kez doğrulandı; giderilince otomatik kapanır". */}

@@ -50,6 +50,15 @@ describe('AlertDetailBody — sayfa bütünlüğü (E2/E3)', () => {
     expect(ci.textContent).toMatch(/3/)
   })
 
+  it('bulgu 6: page_issues_total ile "+N kaynak daha" görünür (bağlam 10 satır tutar)', () => {
+    render(<AlertDetailBody teamName="SY" nowMs={NOW} alert={{
+      ...BASE, alert_type: 'PAGE_INTEGRITY', page_issues_total: 60,
+      page_issues: Array.from({ length: 10 }, (_, i) => ({ issue_type: 'BROKEN', resource_url: `https://x/${i}.js`, http_status: 404 })),
+    }} />)
+    expect(document.querySelectorAll('[data-slot="page-issue-row"]').length).toBe(10)
+    expect(document.querySelector('[data-slot="page-issue-rest"]').textContent).toMatch(/50/)
+  })
+
   it('page_issues / confirm_info yoksa bölümler çizilmez', () => {
     render(<AlertDetailBody teamName="SY" nowMs={NOW} alert={{ ...BASE, alert_type: 'PAGE_INTEGRITY' }} />)
     expect(document.querySelector('[data-slot="alert-page-issues"]')).toBeNull()

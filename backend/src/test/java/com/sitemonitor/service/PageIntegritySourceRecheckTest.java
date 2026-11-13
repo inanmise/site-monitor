@@ -66,6 +66,9 @@ class PageIntegritySourceRecheckTest {
         ReflectionTestUtils.setField(scheduler, "pageCheckerService", pageChecker);
         ReflectionTestUtils.setField(scheduler, "pageCheckRepo", mock(com.sitemonitor.repository.PageCheckRepository.class));
         ReflectionTestUtils.setField(scheduler, "pageResourceIssueRepo", mock(com.sitemonitor.repository.PageResourceIssueRepository.class));
+        // Bulgu 4 (2026-11-13): hedefli kurtarma ölçümü ayrı yürütücüde koşar — bu sınıfın senaryoları AYNI iş parçacığında
+        // koşan yürütücüyle eski (eşzamanlı) davranışı doğrular; eşzamansız davranış ayrı testte (probeRunsOffTheEvaluationThread).
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) Runnable::run);
     }
 
     private static PageMonitor crawlMonitor() {
@@ -138,7 +141,8 @@ class PageIntegritySourceRecheckTest {
     }
 
     @Test
-    @DisplayName("O-b4 maliyet: yeniden ölçülen kaynak sayfa sayısı tavanlı (5)")
+    @DisplayName("O-b4 maliyet: yeniden ölçülen kaynak sayfa sayısı tavanlı (5); bulgu 2: kırpılmış listenin eşik altı "
+            + "ölçümü sağlık kanıtı değil → 'skipped' (eskiden 'up' → geçici sayılıp alarm hiç açılmıyordu)")
     void recheckIsCapped() {
         PageMonitor m = crawlMonitor();
         List<PageCheckerService.ResourceIssue> many = new ArrayList<>();
@@ -146,14 +150,192 @@ class PageIntegritySourceRecheckTest {
         stub(HOME, "SITE_CRAWL", reachable(many));
         Map<String, Object> r = crawl(m);
         assertThat((List<?>) r.get("problem_pages")).hasSize(SchedulerService.INTEGRITY_RECHECK_MAX_PAGES);
+        assertThat(r).containsEntry("problem_pages_truncated", true);
 
         scheduler.evaluatePageNow(m, r);
         MonitoringOutageService.SweepItem it = integrityItems().get(0);
+        assertThat(it.ctxExtra()).containsEntry("problem_pages_truncated", true);
         when(pageChecker.check(anyString(), eq("SINGLE_PAGE"), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(),
                 anyInt(), anyBoolean())).thenReturn(reachable(List.of()));
-        assertThat(it.recheck().get().get("status")).isEqualTo("up");
+        assertThat(it.recheck().get().get("status")).as("görülmeyen sorunlu sayfalar ölçülmedi").isEqualTo("skipped");
         verify(pageChecker, times(SchedulerService.INTEGRITY_RECHECK_MAX_PAGES)).check(anyString(), eq("SINGLE_PAGE"),
                 anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt(), anyBoolean());
+        // Kırpılmış listede eşik (1) yine görülürse → "down" (teyit)
+        stub(HOME + "sayfa-1", "SINGLE_PAGE", reachable(List.of(broken(HOME + "sayfa-1"))));
+        assertThat(it.recheck().get().get("status")).isEqualTo("down");
+    }
+
+    @Test
+    @DisplayName("Bulgu 1/2: kırpılırsa EN ÇOK sorunlu 5 sayfa seçilir (ilk görülme sırasıyla); 5 ve altı kırpılmaz")
+    void truncatedListPicksHeaviestPages() {
+        java.util.LinkedHashMap<String, Integer> per = new java.util.LinkedHashMap<>();
+        per.put("a", 1); per.put("b", 4); per.put("c", 1); per.put("d", 2); per.put("e", 1); per.put("f", 3); per.put("g", 1);
+        assertThat(SchedulerService.integrityProblemPages(per)).containsExactly("a", "b", "c", "d", "f");
+        java.util.LinkedHashMap<String, Integer> few = new java.util.LinkedHashMap<>();
+        few.put("x", 1); few.put("y", 9);
+        assertThat(SchedulerService.integrityProblemPages(few)).containsExactly("x", "y");
+
+        // Tarama sonucunda da: 16 sorunlu kaynaklı sayfa ağır basar (ilk görülen 5 hafif sayfa değil)
+        PageMonitor m = crawlMonitor();
+        List<PageCheckerService.ResourceIssue> issues = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) issues.add(broken(HOME + "hafif-" + i));
+        for (int k = 0; k < 16; k++)
+            issues.add(new PageCheckerService.ResourceIssue(HOME + "img" + k + ".png", "IMG", HOME + "sozlesmeler",
+                    "BROKEN", true, 404, 5L));
+        stub(HOME, "SITE_CRAWL", reachable(issues));
+        Map<String, Object> r = crawl(m);
+        assertThat(r.get("problem_pages").toString()).contains(HOME + "sozlesmeler");
+        assertThat((List<?>) r.get("problem_pages")).hasSize(5);
+        assertThat(r).containsEntry("problem_pages_truncated", true);
+    }
+
+    @Test
+    @DisplayName("Bulgu 2: yeniden ölçüm kaynakları adresle TEKİLLEŞTİRİR — ortak şablon kaynağı iki sayfada tek sayılır "
+            + "(eşik 2 → tek kırık kaynakla 'down' değil)")
+    void recheckDedupsSharedResource() {
+        PageMonitor m = crawlMonitor();
+        m.setMinBrokenResources(2);
+        String deep2 = HOME + "hakkimizda";
+        PageCheckerService.ResourceIssue shared = new PageCheckerService.ResourceIssue(HOME + "ortak/app.js", "JS", DEEP,
+                "BROKEN", true, 404, 5L);
+        PageCheckerService.ResourceIssue sharedOn2 = new PageCheckerService.ResourceIssue(HOME + "ortak/app.js", "JS", deep2,
+                "BROKEN", true, 404, 5L);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP, deep2),
+                        "problem_pages_truncated", false));
+        scheduler.evaluatePageNow(m, raw("main_up", true, "integrity_up", true, "check_mode", "SITE_CRAWL"));
+        MonitoringOutageService.SweepItem it = integrityItems().get(0);
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(shared)));
+        stub(deep2, "SINGLE_PAGE", reachable(List.of(sharedOn2)));
+        assertThat(it.recheck().get().get("status")).as("1 tekil kırık < eşik 2").isEqualTo("up");
+        PageCheckerService.ResourceIssue other = new PageCheckerService.ResourceIssue(HOME + "baska.png", "IMG", deep2,
+                "BROKEN", true, 404, 5L);
+        stub(deep2, "SINGLE_PAGE", reachable(List.of(sharedOn2, other)));
+        assertThat(it.recheck().get().get("status")).as("2 tekil kırık = eşik").isEqualTo("down");
+    }
+
+    @Test
+    @DisplayName("Bulgu 1: kırpılmış listeli açık CRAWL alarmı sık taramada HEDEFLİ ölçümle kapanmaz (kapanış temiz günlük "
+            + "taramaya kalır); bayraksız eski alarmda 5 sayfa = kırpılmış sayılır; bayrak false ise hedefli kapanış sürer")
+    void truncatedOpenAlarm_noTargetedClosure() {
+        PageMonitor m = crawlMonitor();
+        List<String> five = List.of(HOME + "1", HOME + "2", HOME + "3", HOME + "4", HOME + "5");
+        when(pageChecker.check(anyString(), eq("SINGLE_PAGE"), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(),
+                anyInt(), anyBoolean())).thenReturn(reachable(List.of()));
+        Map<String, Object> home = raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE");
+
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", five, "problem_pages_truncated", true));
+        scheduler.evaluatePageNow(m, home);
+        assertThat(integrityItems()).as("kırpılmış → kalem yok").isEmpty();
+
+        clearInvocations(outage);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", five));   // eski alarm: bayrak yok
+        scheduler.evaluatePageNow(m, home);
+        assertThat(integrityItems()).as("bayraksız tavan dolu liste → kırpılmış say").isEmpty();
+        verify(pageChecker, never()).check(anyString(), eq("SINGLE_PAGE"), anyInt(), anyInt(), anyInt(), any(), anyInt(),
+                anyInt(), anyInt(), anyBoolean());
+
+        clearInvocations(outage);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", five, "problem_pages_truncated", false));
+        scheduler.evaluatePageNow(m, home);
+        List<MonitoringOutageService.SweepItem> rec = integrityItems();
+        assertThat(rec).as("tam liste + temiz → hedefli kurtarma kalemi").hasSize(1);
+        assertThat(rec.get(0).up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Bulgu 1: günlük tarama hâlâ sorunlu → açık alarmın kaynağı (sayfalar + kırpılma + CRAWL) tazelenir; temiz "
+            + "tarama tazelemez")
+    @SuppressWarnings("unchecked")
+    void crawlDownRefreshesOpenAlarmSource() {
+        PageMonitor m = crawlMonitor();
+        com.sitemonitor.repository.PageMonitorRepository repo = mock(com.sitemonitor.repository.PageMonitorRepository.class);
+        when(repo.findByActiveTrue()).thenReturn(List.of(m));
+        ReflectionTestUtils.setField(scheduler, "pageMonitorRepo", repo);
+        List<PageCheckerService.ResourceIssue> many = new ArrayList<>();
+        for (int i = 1; i <= 7; i++) many.add(broken(HOME + "s" + i));
+        stub(HOME, "SITE_CRAWL", reachable(many));
+        ReflectionTestUtils.invokeMethod(scheduler, "runPageCrawlsLocked");
+        ArgumentCaptor<Map<String, Object>> patch = ArgumentCaptor.forClass(Map.class);
+        verify(escalation).refreshOpenAlertContext(eq(HOME), eq(EscalationService.TYPE_PAGE_INTEGRITY), patch.capture());
+        assertThat(patch.getValue()).containsEntry("integrity_scope", "CRAWL").containsEntry("problem_pages_truncated", true);
+        assertThat((List<String>) patch.getValue().get("problem_pages")).hasSize(5);
+
+        clearInvocations(escalation);
+        stub(HOME, "SITE_CRAWL", reachable(List.of()));   // temiz tarama → kaynak tazelenmez (kurtarma yolu ayrı)
+        ReflectionTestUtils.invokeMethod(scheduler, "runPageCrawlsLocked");
+        verify(escalation, never()).refreshOpenAlertContext(anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 4: hedefli ölçüm değerlendirme döngüsünün DIŞINDA koşar — çağrı ölçümü beklemez, sonuç SONRAKİ "
+            + "değerlendirmede okunur; sayfa listesi değişince eski sonuç kanıt sayılmaz")
+    void probeRunsOffTheEvaluationThread() {
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        Map<String, Object> r = raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE");
+
+        List<MonitoringOutageService.SweepItem> d1 = new ArrayList<>(), i1 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d1, i1, true);
+        assertThat(i1).as("ölçüm başladı ama çağrı onu beklemedi → bu tık kalem yok").isEmpty();
+        assertThat(queued).hasSize(1);
+        verify(pageChecker, never()).check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(),
+                anyInt(), anyBoolean());
+
+        List<MonitoringOutageService.SweepItem> d2 = new ArrayList<>(), i2 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d2, i2, false);
+        assertThat(i2).as("ölçüm hâlâ sürüyor → ikinci ölçüm yok, kalem yok").isEmpty();
+        assertThat(queued).hasSize(1);
+
+        queued.poll().run();   // ölçüm (ayrı yürütücüde) biter: sayfa temiz
+        List<MonitoringOutageService.SweepItem> d3 = new ArrayList<>(), i3 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d3, i3, true);
+        assertThat(i3).as("hazır 'up' sonucu tüketilir → kurtarma kalemi").hasSize(1);
+        assertThat(i3.get(0).up()).isTrue();
+
+        // Sayfa listesi değişti (günlük tarama tazeledi) → eski sonuç kanıt değil, yenisi başlar
+        List<MonitoringOutageService.SweepItem> d4 = new ArrayList<>(), i4 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d4, i4, false);   // elle: kadansa takılmaz
+        assertThat(queued).hasSize(1);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP, HOME + "yeni")));
+        queued.poll().run();
+        List<MonitoringOutageService.SweepItem> d5 = new ArrayList<>(), i5 = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d5, i5, false);
+        assertThat(i5).as("eski listeyle ölçülmüş sonuç kullanılmaz").isEmpty();
+        assertThat(queued).as("yeni liste için yeni ölçüm").hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Bulgu 4: 'hâlâ sorunlu' sonucu tüketilince kalem yok ve SIRADAKİ ölçüm aynı değerlendirmede başlar")
+    void probeNotUpStartsTheNextAtOnce() {
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of(broken(DEEP))));
+        Map<String, Object> r = raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE");
+
+        List<MonitoringOutageService.SweepItem> d = new ArrayList<>(), i = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d, i, false);
+        queued.poll().run();   // sonuç: hâlâ kırık
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d, i, false);
+        assertThat(i).as("hâlâ sorunlu → kalem yok").isEmpty();
+        assertThat(queued).as("sıradaki ölçüm hemen başladı").hasSize(1);
+
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        queued.poll().run();   // düzeldi
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d, i, false);
+        assertThat(i).hasSize(1);
+        assertThat(i.get(0).up()).isTrue();
     }
 
     @Test

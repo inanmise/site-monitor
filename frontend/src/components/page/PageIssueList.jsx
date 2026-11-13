@@ -17,11 +17,16 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
  *
  * @param {Array}  issues  page_resource_issues satırları (bir kontrole ait)
  * @param {number} max     en çok kaç satır çizilir (varsayılan 50); gerisi "+N daha" olarak sayılır
+ * @param {number} [total] bilinen TOPLAM sorun sayısı (bulgu 6, 2026-11-13: alarm bağlamı en çok 10 satır tutar; toplam
+ *                         `page_issues_total` ile gelir) — verilirse "+N daha" ona göre sayılır, eski "… +N" satırı çizilmez
  */
-export default function PageIssueList({ issues, max = 50, className }) {
+export default function PageIssueList({ issues, max = 50, total = null, className }) {
   const t = useT()
   if (!Array.isArray(issues) || issues.length === 0) return null
-  const shown = issues.slice(0, max)
+  const knownTotal = Number.isFinite(Number(total)) && total != null ? Number(total) : null
+  const shown = issues.slice(0, max).filter((r) => knownTotal == null || !r.more)
+  const shownRows = shown.filter((r) => !r.more).length
+  const rest = knownTotal != null ? Math.max(0, knownTotal - shownRows) : Math.max(0, issues.length - max)
   return (
     <div data-slot="page-issue-list" className={cn('flex min-w-0 flex-col gap-2', className)}>
       {shown.map((r, i) => {
@@ -53,8 +58,9 @@ export default function PageIssueList({ issues, max = 50, className }) {
               <div className="mt-0.5 break-all text-muted-foreground">
                 {t('page.foundOn')}:{' '}
                 {linkable
-                  ? <a href={r.source_page} target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-0.5 text-inherit underline-offset-2 hover:underline">
+                  ? <a href={r.source_page} target="_blank" rel="noreferrer" data-slot="page-issue-source-link"
+                      // Bulgu 10 (2026-11-13): satır içi küçük bağlantının dokunmatik isabet alanı ≥ 40 px (görünüm aynı)
+                      className="relative inline-flex items-center gap-0.5 text-inherit underline-offset-2 hover:underline pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']">
                       {r.source_page}<ExternalLink size={10} aria-hidden="true" />
                     </a>
                   : r.source_page}
@@ -62,14 +68,14 @@ export default function PageIssueList({ issues, max = 50, className }) {
             )}
             {/* E4: neden + ne yapmalı (insan-okur) */}
             <div className="mt-1.5 flex flex-col gap-0.5 border-t pt-1.5">
-              <span><span className="font-semibold text-muted-foreground">{t('page.issueWhy')}:</span> {t(`page.issueReason.${reason}.why`)}</span>
+              <span><span className="font-semibold text-muted-foreground">{t('page.issueWhy')}:</span> {t(`page.issueReason.${reason}.why`, r.http_status)}</span>
               <span className="text-muted-foreground"><span className="font-semibold">{t('page.issueFix')}:</span> {t(`page.issueReason.${reason}.fix`)}</span>
             </div>
           </div>
         )
       })}
-      {issues.length > max && (
-        <div className="text-xs text-muted-foreground">{t('page.issueMore', issues.length - max)}</div>
+      {rest > 0 && (
+        <div data-slot="page-issue-rest" className="text-xs text-muted-foreground">{t('page.issueMore', rest)}</div>
       )}
     </div>
   )

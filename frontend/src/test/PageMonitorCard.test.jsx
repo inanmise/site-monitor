@@ -229,6 +229,17 @@ describe('PageMonitorCard', () => {
     expect(container.querySelector('[data-slot="monitor-metrics"]').className).toMatch(/(^|\s)grid-cols-2(\s|$)/)
     expect(screen.getByRole('button', { name: 'https://www.example.com/ — Copy URL' }).className).toContain('pointer-coarse:size-10')
   })
+
+  it('bulgu 11 (2026-11-13): uzun etiket KIRPILMAZ — rozet sarar (truncate / sabit genişlik / sabit yükseklik yok)', () => {
+    const long = 'odeme-servisleri-kritik-musteri-yuzlu-uretim-ortami-etiketi'
+    const { container } = renderCard({ tags: `${long},prod` })
+    const badge = container.querySelector('[data-page-tag]')
+    expect(badge.textContent).toBe(long)
+    expect(badge.className).toMatch(/whitespace-normal/)
+    expect(badge.className).toMatch(/overflow-wrap:anywhere/)
+    expect(badge.className).not.toMatch(/(^|\s)(truncate|max-w-40|h-5)(\s|$)/)
+    expect(badge.querySelector('.truncate')).toBeNull()
+  })
 })
 
 /**

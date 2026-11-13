@@ -5378,6 +5378,7 @@ public class MonitoringController {
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         if (pageMonitorRepo.existsDuplicate(url, teamId, null))           // mükerrer kontrolü normalize edilmiş değerle
             return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer sayfa monitörü oluşturulamaz.");
+        requirePageMinBroken(body, null);   // bulgu 9: kayıttan / grup oluşturmadan ÖNCE alan hatası
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.PageMonitor m = new com.sitemonitor.model.PageMonitor();
         m.setName(blank(body.get("name")) ? url : body.get("name").toString());
@@ -5415,6 +5416,7 @@ public class MonitoringController {
         java.util.Map<String, Object> _before = pageMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
         return pageMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            requirePageMinBroken(body, m.getMinBrokenResources());   // bulgu 9: alarm kapatma / kayıttan ÖNCE alan hatası
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) {
@@ -5511,11 +5513,18 @@ public class MonitoringController {
     @GetMapping("/page/{id}/issues")
     public ResponseEntity<Map<String, Object>> pageIssues(@PathVariable Long id, HttpSession session,
             @RequestParam(required = false) String issueType, @RequestParam(required = false) Integer days,
-            @RequestParam(defaultValue = "500") int limit) {
+            @RequestParam(defaultValue = "500") int limit, @RequestParam(required = false) Long checkId) {
         com.sitemonitor.model.PageMonitor mon = pageMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Sayfa monitörü bulunamadı");
         var deny = denyIfNotViewable(session, mon.getTeamId());
         if (deny != null) return deny;
+        // Bulgu 7 (2026-11-13): kontrol geçmişinde açılan TEK kontrolün sorunları (kontrol kimliğiyle, idx_pri_check_id) —
+        // pencere listesi en yeni 500 satırla sınırlı; eski bir kontrolün listesi oradan eksik okunuyordu. Yalnız bu izlemenin
+        // satırları döner (başka izlemenin kontrol kimliği sızmaz).
+        if (checkId != null) {
+            return ok(pageResourceIssueRepo.findByCheckIdOrderByIdAsc(checkId).stream()
+                    .filter(r -> id.equals(r.getMonitorId())).limit(5000).toList());
+        }
         String since = (days != null && days > 0) ? ISO.format(Instant.now().minus(days, ChronoUnit.DAYS)) : null;
         String type = blank(issueType) ? null : issueType.toString().trim().toUpperCase();
         int cap = Math.max(1, Math.min(limit, 5000));
@@ -6134,6 +6143,22 @@ public class MonitoringController {
             return List.of();
         }
     }
+    /**
+     * Bulgu 9 (2026-11-13): "Alarm için en az kırık kaynak" 1–100 arası TAM sayı olmalı — sınır dışı değer eskiden sessizce
+     * kırpılıyordu (150 → 100). Gövdede gelmediyse ya da kayıtlı değerle aynıysa denetlenmez (eski kayıt düzenlenebilir
+     * kalır). Yan etkiden (alarm kapatma, kayıt) ÖNCE çağrılır → 400 VALIDATION_FAILED + alan {@code minBrokenResources}.
+     */
+    private static void requirePageMinBroken(Map<String, Object> body, Integer stored) {
+        if (body == null || body.get("minBrokenResources") == null) return;   // gelmedi / null = dokunma (eski davranış)
+        Object v = body.get("minBrokenResources");
+        if (v instanceof Number n && stored != null && n.doubleValue() == stored.doubleValue()) return;
+        boolean ok = v instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())
+                && n.doubleValue() >= 1 && n.doubleValue() <= 100;
+        if (!ok) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("minBrokenResources",
+                com.sitemonitor.util.Msg.t("Alarm için en az kırık kaynak 1 ile 100 arasında bir tam sayı olmalı.",
+                        "Minimum broken resources for an alert must be a whole number between 1 and 100."));
+    }
+
     /** Ortak: sayfa-özel alanları (mode, crawl derinlik/limit, exclude, slow, alertThirdParty, concurrency,
      *  tags, notifyEmail) body'den clamp'li uygular. */
     private void applyPageFeatureFields(com.sitemonitor.model.PageMonitor m, Map<String, Object> body) {
@@ -6149,7 +6174,9 @@ public class MonitoringController {
         if (body.get("alertThirdParty") instanceof Boolean b) m.setAlertThirdParty(b);
         if (body.get("alertMixedContent") instanceof Boolean b) m.setAlertMixedContent(b);
         if (body.get("alertTimeout") instanceof Boolean b) m.setAlertTimeout(b);
-        if (body.get("minBrokenResources") instanceof Number n) m.setMinBrokenResources(Math.max(1, Math.min(100, n.intValue())));   // E5: alarm eşiği
+        // E5: alarm eşiği — sınır dışı değer artık SESSİZCE kırpılmaz, kayıttan önce alan hatası verir (requirePageMinBroken);
+        // buradaki kırpma yalnız savunma (doğrulanmış değeri değiştirmez).
+        if (body.get("minBrokenResources") instanceof Number n) m.setMinBrokenResources(Math.max(1, Math.min(100, n.intValue())));
         if (body.get("resourceConcurrency") instanceof Number n) m.setResourceConcurrency(Math.max(1, Math.min(20, n.intValue())));
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)

@@ -77,6 +77,7 @@ class PageDiagFindingsI18nGateTest {
         k.add("pgdx.finding.PAGE_DOWN.body.unfinished");
         k.add("pgdx.finding.THIRD_PARTY_ONLY.body.alarm");
         k.add("pgdx.finding.THIRD_PARTY_ONLY.body.quiet");
+        k.add("pgdx.finding.RESOURCES_BROKEN.body.below_threshold");   // 2026-11-13: E5 eşiğinin altında kalan kırık
         for (String r : List.of("resources", "time", "single_page")) {
             k.add("pgdx.finding.CRAWL_LIMIT.title." + r);
             k.add("pgdx.finding.CRAWL_LIMIT.body." + r);

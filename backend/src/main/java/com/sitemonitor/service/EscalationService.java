@@ -5668,6 +5668,11 @@ public class EscalationService {
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
                                  "problem_resources", "problem_rows", "problem_total", "detail",
+                                 // E3 (2026-11-13 düzeltme): teyit / kurtarma ayarları — alarm detayının "N kez doğrulandı,
+                                 // giderilince M kez doğrulanıp kapanır" satırı (AdminController.confirmInfoFromContext) ve
+                                 // yeniden gönderim postasının "Doğrulama" satırı bunları ANLIK GÖRÜNTÜDEN okur.
+                                 "monitor_confirm_attempts", "monitor_confirm_interval_ms",
+                                 "monitor_recovery_checks", "monitor_recovery_interval_ms",
                                  // Kanal bastirma damgalari: cozum yolu ctx'i olaydan geri okuyor;
                                  // bu anahtarlar kalicilastirilmazsa "e-postayi kapattim ama COZULDU
                                  // maili geliyor" paritesizligi olusuyordu.
@@ -5685,7 +5690,7 @@ public class EscalationService {
                                  "duration_ms", "failed_checks", "error",
                                  // O-b4: sayfa bütünlüğü bulgusunun KAYNAĞI (HOME / CRAWL) ve crawl'daki sorunlu
                                  // sayfalar — kurtarma doğrulaması aynı kaynağı yeniden ölçer (SchedulerService).
-                                 "integrity_scope", "problem_pages",
+                                 "integrity_scope", "problem_pages", "problem_pages_truncated",
                                  // ALERTS-2 (2026-10-22): bakım penceresinde algılanan DNS / alan adı DEĞİŞİKLİĞİ pencere bitince
                                  // bu anlık görüntüden bildiriliyor — anahtarlar yokken ileti eski/yeni değersiz genel metne
                                  // dönüyor, e-postanın ESKİ / YENİ kutuları boş gidiyordu.
@@ -5727,6 +5732,39 @@ public class EscalationService {
             Map<String, Object> c = deserializeContext(e.getContextJson());
             return c != null ? c : Map.<String, Object>of();
         }).orElse(null);
+    }
+
+    /**
+     * Bulgu 1 (2026-11-13, sayfa bütünlüğü): bu anahtarın AÇIK alarmının bağlamındaki verilen anahtarları tazeler (null değer
+     * = anahtarı sil). Yalnız anlık görüntü listesindeki ({@link #RESOLVED_CONTEXT_KEYS}) anahtarlar yazılabilir; bağlamın
+     * geri kalanı (alarm anı) korunur. HEDEFLİ yazım: yalnız {@code contextJson}, yalnız alarm hâlâ AÇIKSA
+     * ({@link AlertEventFieldWriter}) — okunan olay kaydedilmez, arada kapanan alarm yeniden açılmaz. Değişiklik yoksa yazmaz.
+     *
+     * @return bağlam yazıldıysa true
+     */
+    public boolean refreshOpenAlertContext(String domain, String alertType, Map<String, Object> patch) {
+        if (patch == null || patch.isEmpty() || fieldWriter == null) return false;
+        for (String k : patch.keySet()) {
+            if (!RESOLVED_CONTEXT_KEYS.contains(k))
+                throw new IllegalArgumentException("Alarm bağlamında tazelenemeyen anahtar: " + k);
+        }
+        Optional<AlertEvent> open = alertEventRepo.findOpenAlert(domain, alertType);
+        if (open.isEmpty() || open.get().getId() == null) return false;
+        Map<String, Object> current = deserializeContext(open.get().getContextJson());
+        Map<String, Object> next = current != null ? new LinkedHashMap<>(current) : new LinkedHashMap<>();
+        boolean changed = false;
+        for (Map.Entry<String, Object> en : patch.entrySet()) {
+            Object v = en.getValue();
+            if (java.util.Objects.equals(next.get(en.getKey()), v)) continue;
+            if (v == null) next.remove(en.getKey()); else next.put(en.getKey(), v);
+            changed = true;
+        }
+        if (!changed) return false;
+        String json;
+        try { json = objectMapper.writeValueAsString(next); } catch (Exception e) { return false; }
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("contextJson", json);
+        return fieldWriter.writeValues(open.get().getId(), values, true) > 0;
     }
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?

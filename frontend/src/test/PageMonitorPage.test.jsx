@@ -161,6 +161,27 @@ describe('PageMonitorPage', () => {
     expect(api.monitoring.createPageMonitor.mock.calls[0][0].url).toBe('https://www.axess.com.tr')
   })
 
+  it('bulgu 9: "en az kırık kaynak" 1–100 dışıysa alanın altında hata, kayıt isteği gitmez; sunucunun alan hatası da alanda', async () => {
+    api.monitoring.createPageMonitor.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'minBrokenResources',
+      error: 'Sunucu: eşik 1 ile 100 arasında olmalı.' })
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni izleme/i }))
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
+    await fillGroupAndTags()
+    const minBroken = screen.getByRole('spinbutton', { name: /minimum broken|en az kırık/i })
+    fireEvent.change(minBroken, { target: { value: '150' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(document.body.textContent).toMatch(/1 ile 100 arasında|between 1 and 100/))
+    expect(api.monitoring.createPageMonitor).not.toHaveBeenCalled()
+
+    fireEvent.change(minBroken, { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPageMonitor.mock.calls[0][0].minBrokenResources).toBe(3)
+    expect(await screen.findByText('Sunucu: eşik 1 ile 100 arasında olmalı.')).toBeInTheDocument()
+  })
+
   it('CONFIG_ERROR monitörü "yapılandırma hatası" rozetiyle görünür; kritik sayaca girmez', async () => {
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [
       { ...monitor, status: 'CONFIG_ERROR', error: 'yapılandırma hatası: URL\'de geçerli bir host yok' },
@@ -547,5 +568,58 @@ describe('PageMonitorPage — kontrol geçmişi hata teşhisi', () => {
     const panel = await within(detail).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
     expect(panel.querySelector('[data-key="httpStatus"]').textContent).toBe('HTTP 503')
     expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('ana sayfa HTTP 503')
+  })
+
+  it('bulgu 7: açılan satırın sorunları KONTROL KİMLİĞİYLE okunur; sayaçtan az satır → "liste eksik"; okunamazsa yeniden dene', async () => {
+    const row = (id, url) => ({ id, check_id: 30, monitor_id: 1, resource_url: url, resource_type: 'IMG',
+      issue_type: 'BROKEN', first_party: true, http_status: 404, checked_at: '2026-10-05T08:00:00' })
+    api.monitoring.getPageIssues.mockImplementation((id, opts = {}) => Promise.resolve(opts.checkId === 30
+      ? { success: true, data: [row(1, 'https://www.example.com/a.png')] }
+      : { success: true, data: [] }))
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await findCard('https://www.example.com/'))
+    const detail = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(detail).getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
+    await waitFor(() => expect(detail.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(2))
+    const degraded = detail.querySelectorAll('[data-slot="chkfail-cell"]')[1]
+    fireEvent.click(degraded.querySelector('[data-slot="chkfail-toggle"]'))
+    await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalledWith(1, { checkId: 30 }))
+    const box = await within(detail).findByText('https://www.example.com/a.png')
+    expect(box).toBeInTheDocument()
+    // sayaç 2 kırık diyor, 1 satır okunabildi → eksik denir (sessizce tam gibi gösterilmez)
+    expect(detail.querySelector('[data-slot="page-hist-issues-partial"]').textContent).toMatch(/2/)
+
+    // ana sayfası alınamayan (DOWN) satırda kaynak listesi yok → boşuna istek atılmaz
+    const down = detail.querySelectorAll('[data-slot="chkfail-cell"]')[0]
+    fireEvent.click(down.querySelector('[data-slot="chkfail-toggle"]'))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(api.monitoring.getPageIssues).not.toHaveBeenCalledWith(1, { checkId: 31 })
+  })
+
+  it('bulgu 7: kontrolün sorunları okunamazsa "yok" denmez — hata + yeniden dene; yeniden deneme listeyi getirir', async () => {
+    let fail = true
+    api.monitoring.getPageIssues.mockImplementation((id, opts = {}) => Promise.resolve(opts.checkId === 30
+      ? (fail ? { success: false, error: 'x' } : { success: true, data: [
+        { id: 5, check_id: 30, resource_url: 'https://www.example.com/b.png', resource_type: 'IMG', issue_type: 'BROKEN',
+          http_status: 404, checked_at: '2026-10-05T08:00:00' },
+        { id: 6, check_id: 30, resource_url: 'https://www.example.com/c.png', resource_type: 'IMG', issue_type: 'BROKEN',
+          http_status: 404, checked_at: '2026-10-05T08:00:00' }] })
+      : { success: true, data: [] }))
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await findCard('https://www.example.com/'))
+    const detail = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(detail).getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
+    await waitFor(() => expect(detail.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(2))
+    fireEvent.click(detail.querySelectorAll('[data-slot="chkfail-cell"]')[1].querySelector('[data-slot="chkfail-toggle"]'))
+    const err = await waitFor(() => {
+      const e = detail.querySelector('[data-slot="page-hist-issues-error"]')
+      expect(e).not.toBeNull()
+      return e
+    })
+    fail = false
+    fireEvent.click(within(err).getByRole('button', { name: /yeniden dene|try again/i }))
+    expect(await within(detail).findByText('https://www.example.com/c.png')).toBeInTheDocument()
+    expect(detail.querySelector('[data-slot="page-hist-issues-error"]')).toBeNull()
+    expect(detail.querySelector('[data-slot="page-hist-issues-partial"]')).toBeNull()   // 2 kırık = 2 satır
   })
 })

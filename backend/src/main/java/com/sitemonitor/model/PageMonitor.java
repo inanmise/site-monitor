@@ -79,6 +79,15 @@ public class PageMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarge
     @Column(name = "min_broken_resources")
     private Integer minBrokenResources = 1;
 
+    /**
+     * Etkin eşik — NULL (sütun ddl-auto ile varsayılansız eklendi; özellik öncesi satırların hepsi NULL) 1 okunur. Kalıcılık
+     * ALAN erişimiyle (@Id alanda) çalışır, bu getter'dan etkilenmez; değişiklik geçmişi / denetim farkı ise getter'la alınır →
+     * eski izlemenin ilk kaydında "— → 1" gürültüsü olmaz (bulgu 9, 2026-11-13).
+     */
+    public Integer getMinBrokenResources() {
+        return minBrokenResources == null ? 1 : minBrokenResources;
+    }
+
     /** Kaynak doğrulamada eşzamanlı istek sınırı (nezaket + tek-pod yük; varsayılan 5, clamp'li). */
     @Column(name = "resource_concurrency")
     private Integer resourceConcurrency = 5;

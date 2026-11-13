@@ -556,6 +556,74 @@ class MonitoringControllerTest {
         org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
     }
 
+    // ── Sayfa bütünlüğü 2026-11-13 hata taraması ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Bulgu 9: minBrokenResources 1–100 dışı → 400 VALIDATION_FAILED + alan (sessiz kırpma yok); kayıt / grup yok")
+    void createPage_minBrokenOutOfRange_fieldError() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        for (String v : new String[]{"150", "0", "2.5"}) {
+            mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\",\"teamId\":1,"
+                                    + "\"minBrokenResources\":" + v + "}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("minBrokenResources"));
+        }
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+        org.mockito.Mockito.verify(monitoringGroupService, never()).getOrCreateFor(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 9: güncellemede sınır dışı eşik alarm KAPATMADAN (active:false ile gelse de) reddedilir; kayıtlı "
+            + "değerle aynısı denetlenmez; geçerli değer kaydedilir")
+    void updatePage_minBrokenValidatedBeforeSideEffects() throws Exception {
+        com.sitemonitor.model.PageMonitor m = pageMon(5L, "https://x.com", 1L);
+        m.setMinBrokenResources(4);
+        when(pageMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+        when(pageMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false,\"minBrokenResources\":101}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("minBrokenResources"));
+        org.mockito.Mockito.verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any(), any());
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"minBrokenResources\":4}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.min_broken_resources").value(4));
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"minBrokenResources\":100}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.min_broken_resources").value(100));
+    }
+
+    @Test
+    @DisplayName("Bulgu 7: /page/{id}/issues?checkId= o kontrolün TÜM sorunlarını döner (pencere sınırı yok); başka izlemenin "
+            + "kontrol satırı sızmaz")
+    void pageIssues_byCheckId() throws Exception {
+        when(pageMonitorRepo.findById(9L)).thenReturn(Optional.of(pageMon(9L, "https://x.com", 1L)));
+        com.sitemonitor.model.PageResourceIssue own = new com.sitemonitor.model.PageResourceIssue();
+        own.setId(1L); own.setCheckId(77L); own.setMonitorId(9L); own.setResourceUrl("https://x.com/a.js");
+        own.setIssueType("BROKEN");
+        com.sitemonitor.model.PageResourceIssue foreign = new com.sitemonitor.model.PageResourceIssue();
+        foreign.setId(2L); foreign.setCheckId(77L); foreign.setMonitorId(10L); foreign.setResourceUrl("https://gizli/b.js");
+        foreign.setIssueType("BROKEN");
+        when(pageResourceIssueRepo.findByCheckIdOrderByIdAsc(77L)).thenReturn(List.of(own, foreign));
+
+        mvc.perform(get("/api/monitoring/page/9/issues").param("checkId", "77").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].resource_url").value("https://x.com/a.js"));
+        org.mockito.Mockito.verify(pageResourceIssueRepo, never()).findFiltered(any(), any(), any(), anyInt());
+    }
+
     @Test
     @DisplayName("uptimeOverview: kontrol kaydı yoksa boş veri, %100 değil null uptime — hata vermez")
     void uptimeOverview_empty() throws Exception {
