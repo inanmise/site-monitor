@@ -1279,10 +1279,16 @@ export const api = {
   },
 
   getStats: () => request('/stats'),
-  getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
+  // yönetici özeti (2026-09-12, #20); `fresh` (2026-11-13, İstatistikler Yenile): sunucu belleği en fazla 5 sn'de bir atlanır
+  getExecutiveStats: (fresh = false) => request(fresh === true ? '/stats/executive?fresh=1' : '/stats/executive'),
+  // İstatistikler (2026-11-13): zamanında yenileme oranı (3 / 6 / 12 ay) ve 90 günlük sağlık serisi (takım = tek takım)
+  getRenewalTimeliness: () => request('/stats/renewal-timeliness'),
+  getHealthSeries: (days = 90, team = null) =>
+    request(`/stats/health-series?days=${encodeURIComponent(days)}${team != null && team !== '' ? `&team=${encodeURIComponent(team)}` : ''}`),
   getRecentChanges: (days = 7) => request(`/stats/changes?days=${days}`),   // "ne değişti" satırı (2026-09-12, #7)
 
-  getTeamStats: () => request('/stats/teams'),
+  // `lean` (2026-11-13): yalnız takımların SY / UG alan listeleri (`mode: domains`); eski sunucu parametreyi yok sayar
+  getTeamStats: (opts = {}) => request(opts?.lean ? '/stats/teams?view=domains' : '/stats/teams'),
 
   runScheduler: () => request('/scheduler/run', { method: 'POST' }),
 

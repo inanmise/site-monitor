@@ -4,7 +4,7 @@ import {
 } from 'lucide-react'
 import { formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { formatPercent } from '../../i18n/dateLocale.js'
+import { statsPct } from './statsInsights.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { navigateTo } from '../../utils/navigate.js'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
@@ -41,7 +41,7 @@ export default function StatsOverview({ certs, kpi, onKpi, onClearKpi, onOpen, o
   const dist = useMemo(() => distribution(certs), [certs])
   const next = useMemo(() => upcoming(certs, UPCOMING_N), [certs])
 
-  const pct = (n) => (counts.total > 0 ? formatPercent(Math.round((n * 1000) / counts.total) / 10) : null)
+  const pct = (n) => (counts.total > 0 ? statsPct(Math.round((n * 1000) / counts.total) / 10) : null)
   const tiles = [
     {
       key: 'total', Icon: Layers, cls: 'total', value: counts.total, label: t('stv.kpi.total'), hint: t('stv.kpiHint.total'),
@@ -61,7 +61,7 @@ export default function StatsOverview({ certs, kpi, onKpi, onClearKpi, onOpen, o
       </div>
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
         <DistributionCard dist={dist} />
-        <UpcomingCard items={next} onOpen={onOpen} onShowUpcoming={onShowUpcoming} />
+        <UpcomingCard items={next} counts={counts} onOpen={onOpen} onShowUpcoming={onShowUpcoming} />
       </div>
     </section>
   )
@@ -103,9 +103,9 @@ function DistributionCard({ dist }) {
                 <li key={r.key} data-slot="stats-dist-row" data-bucket={r.key}
                   className={cn('grid grid-cols-[auto_minmax(0,1fr)_auto_3.5rem] items-center gap-x-2.5 rounded-md px-2 py-1.5 text-sm', r.count === 0 && 'text-muted-foreground')}>
                   <span aria-hidden="true" className={cn('size-3 rounded-sm', SWATCH[r.key])} />
-                  <span className="min-w-0 truncate">{t(`stv.bucket.${r.key}`)}</span>
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{t(`stv.bucket.${r.key}`)}</span>
                   <span className="font-semibold tabular-nums">{r.count}</span>
-                  <span className="text-right text-xs text-muted-foreground tabular-nums">{formatPercent(r.pct)}</span>
+                  <span className="text-right text-xs text-muted-foreground tabular-nums">{statsPct(r.pct)}</span>
                 </li>
               ))}
               {(dist.error > 0 || dist.unknown > 0) && (
@@ -122,7 +122,7 @@ function DistributionCard({ dist }) {
   )
 }
 
-function UpcomingCard({ items, onOpen, onShowUpcoming }) {
+function UpcomingCard({ items, counts, onOpen, onShowUpcoming }) {
   const t = useT()
   return (
     <Card data-slot="stats-upcoming" className="min-w-0 gap-3 py-4 shadow-xs">
@@ -132,7 +132,18 @@ function UpcomingCard({ items, onOpen, onShowUpcoming }) {
       </CardHeader>
       <CardContent className="min-w-0 flex-1 px-2 sm:px-4">
         {items.length === 0 ? (
-          <StatusBlock tone="success" icon={ShieldCheck} title={t('stv.upEmpty')} className="py-6 md:py-6" />
+          // Yaklaşan bitiş yok ama dolmuş / hatalı varsa yeşil "sorun yok" DEĞİL (2026-11-13); hiç okunmuş bitiş yoksa nötr
+          (counts.expired + counts.error > 0) ? (
+            <div data-slot="stats-upcoming-attention">
+              <StatusBlock tone="danger" icon={AlertOctagon} title={t('stx.upNoneButProblems', counts.expired, counts.error)} className="py-6 md:py-6" />
+            </div>
+          ) : counts.valid > 0 ? (
+            <StatusBlock tone="success" icon={ShieldCheck} title={t('stv.upEmpty')} className="py-6 md:py-6" />
+          ) : (
+            <div data-slot="stats-upcoming-unknown">
+              <StatusBlock tone="neutral" icon={Hourglass} title={t('stx.upUnknown')} className="py-6 md:py-6" />
+            </div>
+          )
         ) : (
           <ul className="m-0 flex min-w-0 list-none flex-col p-0">
             {items.map((c) => (
@@ -142,7 +153,7 @@ function UpcomingCard({ items, onOpen, onShowUpcoming }) {
                   className="h-auto min-h-11 w-full justify-start gap-3 rounded-md px-2 py-2 text-left font-normal whitespace-normal">
                   <DaysBadge cert={c} unit className="min-w-14" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="min-w-0 truncate font-semibold" title={c.domain}>{c.domain}</span>
+                    <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{c.domain}</span>
                     <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                       {c.tier != null && <TierBadge tier={c.tier} className="text-[10px]" />}
                       <span className="tabular-nums">{t('stv.expiresOn', formatDateOnly(c.not_after))}</span>

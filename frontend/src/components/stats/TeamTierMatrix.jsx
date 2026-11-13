@@ -8,6 +8,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import { LEVELS, columnMax, heatStep } from './statsModel.js'
@@ -26,7 +27,7 @@ import { HEAT, LEVEL_DOT, LEVEL_TONE, TierBadge } from './statsUi.jsx'
  * (telefon) takım başına kart + katman başına seviye çipleri. Test kancaları: `data-slot="stats-matrix"` (tablo),
  * `stats-matrix-card` (kart), `stats-matrix-cell` (+ `data-level`, `aria-pressed`), `stats-matrix-team-filter`.
  */
-export default function TeamTierMatrix({ rows, allTiers, onAllTiers, sel, onCell, onTeam, onTier, narrow }) {
+export default function TeamTierMatrix({ rows, allTiers, onAllTiers, sel, onCell, onTeam, onTier, narrow, status = 'ok', onRetry }) {
   const t = useT()
   const scope = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -38,11 +39,30 @@ export default function TeamTierMatrix({ rows, allTiers, onAllTiers, sel, onCell
       </HintPopover>
     </div>
   )
+  // Takım listesi yükleniyor / okunamadı / gerçekten boş — üçü ayrı (2026-11-13; eskiden hepsi "Takım verisi yok" idi)
   if (!rows.length) {
+    let body
+    if (status === 'loading') {
+      body = (
+        <div data-slot="stats-matrix-loading" aria-busy="true">
+          <span role="status" className="sr-only">{t('stv.loading')}</span>
+          <Skeleton className="h-32 rounded-xl" />
+        </div>
+      )
+    } else if (status === 'failed') {
+      body = (
+        <div data-slot="stats-matrix-failed">
+          <StatusBlock tone="danger" title={t('stx.mxFailed')} description={t('stx.failedHint')} className="rounded-xl border border-dashed py-8 md:py-8"
+            actions={onRetry ? <Button type="button" variant="outline" className="pointer-coarse:h-10 max-sm:h-10" onClick={onRetry}>{t('stx.retry')}</Button> : null} />
+        </div>
+      )
+    } else {
+      body = <StatusBlock tone="neutral" title={t('stv.mxEmpty')} className="rounded-xl border border-dashed py-8 md:py-8" />
+    }
     return (
       <div className="flex min-w-0 flex-col gap-3">
         {scope}
-        <StatusBlock tone="neutral" title={t('stv.mxEmpty')} className="rounded-xl border border-dashed py-8 md:py-8" />
+        {body}
       </div>
     )
   }
@@ -66,9 +86,15 @@ function TierTag({ tier, t }) {
       {tier === 0
         ? <Badge variant="outline" data-slot="stats-tier" className="rounded px-1.5 text-[11px] font-extrabold">?</Badge>
         : <TierBadge tier={tier} />}
-      <span className="min-w-0 truncate text-xs text-muted-foreground">{tier === 0 ? t('tier.descNone') : t(`tier.desc${tier}`)}</span>
+      <span className="min-w-0 text-left text-xs whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">{tier === 0 ? t('tier.descNone') : t(`tier.desc${tier}`)}</span>
     </span>
   )
+}
+
+/** Takım adı — kırpılmaz (TeamBadge `wrap`); takımsız / pasif takım satırı düz metin (2026-11-13). */
+function TeamName({ r }) {
+  if (r.teamless) return <span data-slot="stats-matrix-teamless" className="[overflow-wrap:anywhere]">{r.name}</span>
+  return <TeamBadge teamId={typeof r.id === 'number' && r.id > 0 ? r.id : undefined} teamName={r.name} wrap />
 }
 
 /** Takım süzgeci düğmesi (yalnız ikon; adı takımı taşır). */
@@ -131,7 +157,7 @@ function MatrixTable({ rows, h }) {
             <TableRow className="bg-muted hover:bg-muted">
               <TableCell className="sticky left-0 z-[1] bg-muted py-1.5 pr-2">
                 <div className="flex min-w-0 items-center justify-between gap-2">
-                  <span className="min-w-0 font-semibold"><TeamBadge teamId={r.id > 0 ? r.id : undefined} teamName={r.name} /></span>
+                  <span className="min-w-0 font-semibold"><TeamName r={r} /></span>
                   <TeamFilterButton r={r} h={h} />
                 </div>
               </TableCell>
@@ -198,7 +224,7 @@ function MatrixCards({ rows, h }) {
       {rows.map((r) => (
         <Card key={r.id} data-slot="stats-matrix-card" data-team={r.id} className="min-w-0 gap-3 py-3.5 shadow-none">
           <CardHeader className="gap-1 px-4">
-            <CardTitle role="heading" aria-level={4} className="min-w-0 text-sm"><TeamBadge teamId={r.id > 0 ? r.id : undefined} teamName={r.name} /></CardTitle>
+            <CardTitle role="heading" aria-level={4} className="min-w-0 text-sm"><TeamName r={r} /></CardTitle>
             <CardDescription className="tabular-nums">{t('stv.mxCardTotal', r.total)}</CardDescription>
             <CardAction><TeamFilterButton r={r} h={h} className="size-10" /></CardAction>
           </CardHeader>

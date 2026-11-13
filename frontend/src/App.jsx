@@ -534,6 +534,8 @@ export default function App() {
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
   const [teamStats, setTeamStats] = useState(null)
+  // İstatistik takım listesinin durumu (2026-11-13): loading | failed | ok — matris "yükleniyor" ile "okunamadı"yı ayırsın
+  const [teamStatsStatus, setTeamStatsStatus] = useState('loading')
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
   const [selfPwdModalOpen, setSelfPwdModalOpen] = useState(false)
@@ -1301,7 +1303,7 @@ export default function App() {
     checkCancelRef.current = true
     checkRunSeqRef.current += 1
     setRefreshing(false); setCheckingDomain(null)
-    setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setCardExtras({})
+    setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setTeamStatsStatus('loading'); setCardExtras({})
     setSilentAlertDomains(new Set()); setMailFailureDomains(new Set()); setWeakAlgStats(null)
     setNetworkStatus(null); setLastUpdate(null); setCertsFailed(false)
     setModalCert(null); setInvForm(null); setSharedCert(null); setPlanRow(null); setCaModal(false); setCheckRun(null)
@@ -1516,10 +1518,17 @@ export default function App() {
   useEffect(() => { pausedRef.current = pausedCerts }, [pausedCerts])
   // Takım kırılımı (/stats/teams) yalnız İstatistik sekmesi açıkken (2026-10-09, performans): eskiden her sekmede 5 dk'da
   // bir isteniyordu, tek tüketicisi StatsView.
+  // 2026-11-13: yalın biçim (`view=domains` — yalnız SY / UG alan listeleri); hata artık sessiz değil (durum `failed`,
+  // son liste kalır).
   useEffect(() => {
     if (!user || tab !== 'stats') return undefined
     let alive = true
-    Promise.resolve(api.getTeamStats?.()).then((r) => { if (alive && r?.success) setTeamStats(r.data) }).catch(() => {})
+    Promise.resolve(api.getTeamStats?.({ lean: true }))
+      .then((r) => {
+        if (!alive) return
+        if (r?.success) { setTeamStats(r.data); setTeamStatsStatus('ok') } else setTeamStatsStatus('failed')
+      })
+      .catch(() => { if (alive) setTeamStatsStatus('failed') })
     return () => { alive = false }
   }, [user, tab, lastUpdate])
   /** Alan adına göre kart satırı — önce aktif, sonra pasif liste (pencere / sağlık kısayolu pasif kartta da açılsın). */
@@ -2315,9 +2324,13 @@ export default function App() {
                 <PageHeader icon={TAB_META.stats.Icon} title={t('app.statsTitle')} description={t('app.statsDesc')} />
                 {/* İlk liste okunamadı (UIM-4): "yükleniyor" ya da sahte "sertifika yok" yerine hata + Yeniden dene */}
                 {certsFailed && lastUpdate == null ? certsFailedBlock : (
-                  <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                  <StatsView certs={certs} teamStats={teamStats} teamStatsStatus={teamStats ? 'ok' : teamStatsStatus}
+                    onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                     canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'} loading={lastUpdate == null && !certsFailed}
-                    onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
+                    onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }}
+                    // 2026-11-13: son güncelleme + Yenile (App'in veri dalgası) ve satır eylemleri — Pano kartıyla AYNI kapılar
+                    lastUpdate={lastUpdate} onRefresh={loadData}
+                    cardActions={cardActions} canPlan={canPlanCert} onPlanRenewal={planCardRenewal} cardExtras={cardExtras} />
                 )}
               </div>
             )}
