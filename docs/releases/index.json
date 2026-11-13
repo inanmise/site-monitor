@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T10:39:20Z",
+  "generatedAt": "2026-11-13T13:14:49Z",
   "repo": "inanmise/site-monitor",
-  "count": 825,
+  "count": 826,
   "releases": [
+    {
+      "version": "20.197.0",
+      "tag": "v20.197.0",
+      "releasedAt": "2026-11-13T13:14:29Z",
+      "commit": "fe7823c304ee23f2ab928d333099868fccce2f88",
+      "prevVersion": "20.196.2",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "fe7823c3",
+          "subject": "CSV kapısı — SQL Playground dışa aktarım ucu gövdeyi SqlExportWriter (Csv.row) ile üretir"
+        },
+        {
+          "type": "fix",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "1152213e",
+          "subject": "sonuç kolon adları tekilleştirilir — aynı adlı kolonlar birbirinin üstüne yazılmaz"
+        },
+        {
+          "type": "feat",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "49f43da1",
+          "subject": "SQL Playground ön yüz — bağımsız inceleme düzeltmeleri ve kapı uyumu"
+        },
+        {
+          "type": "fix",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "1df686ee",
+          "subject": "SQL Playground inceleme düzeltmeleri — satır karşılaştırma kâhini, dışa aktarım durdurma/süre, danışma kilidi"
+        },
+        {
+          "type": "feat",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "7b737dbe",
+          "subject": "yeni SQL denetim olaylarının ekran etiketleri"
+        },
+        {
+          "type": "feat",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "a4b7b831",
+          "subject": "SQL Playground arka uç zenginleştirmesi — hassas kolon maskesi, durdurma, parametre, plan, dışa aktarım, kayıtlı sorgu"
+        },
+        {
+          "type": "feat",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "31bbb9ef",
+          "subject": "SQL Playground zenginleştirme — ön yüz (16 öğe)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.196.2",
       "tag": "v20.196.2",
