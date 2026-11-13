@@ -72,6 +72,24 @@ public final class SqlSensitiveColumns {
             "database_to_xml", "database_to_xml_and_xmlschema", "database_to_xmlschema",
             "ts_stat", "ts_rewrite");
 
+    /**
+     * Bir satırı (bileşik değeri) TEK argüman olarak kabul eden fonksiyonların adları — PostgreSQL 16 çekirdeği (2026-11-13,
+     * 3. tur). PostgreSQL {@code u.f} yazımını, {@code u}'nun {@code f} adlı kolonu YOKSA {@code f(u)} çağrısı olarak
+     * yorumlar ("alan biçiminde fonksiyon çağrısı"): {@code u.to_jsonb}, {@code u.concat}, {@code u.json_agg},
+     * {@code u.quote_literal} satırın tamamını — hassas kolonlarla — metne çevirir. Canlı veritabanında liste
+     * {@code pg_proc}'tan okunur (ilk argüman türü {@code record} / çok biçimli / bileşik, tek argümanla çağrılabilir);
+     * bu sabit yalnız o okuma yapılamadığında (ya da H2'de) kullanılan TABAN — canlı liste her zaman bununla birleştirilir.
+     */
+    public static final Set<String> ROW_FUNCTIONS_FALLBACK = Set.of(
+            "any_out", "any_value", "anycompatible_out", "anycompatiblenonarray_out", "anyelement_out", "anynonarray_out",
+            "array_agg", "concat", "count", "cume_dist", "dense_rank", "first_value", "hash_record", "json_agg",
+            "json_agg_strict", "json_build_array", "json_build_object", "jsonb_agg", "jsonb_agg_strict",
+            "jsonb_build_array", "jsonb_build_object", "lag", "last_value", "lead", "mode", "num_nonnulls", "num_nulls",
+            "percent_rank", "pg_collation_for", "pg_column_compression", "pg_column_size", "pg_typeof", "quote_literal",
+            "quote_nullable", "rank", "record_out", "record_send", "row_to_json", "to_json", "to_jsonb",
+            // hstore eklentisi: hstore(record) — kurulu bir veritabanında canlı okuma da bulur
+            "hstore");
+
     static {
         Map<String, Set<String>> p = new LinkedHashMap<>();
         pair(p, "app_users", "password_hash", "active_session_id");
@@ -161,6 +179,11 @@ public final class SqlSensitiveColumns {
     /** Hücre şifreli değer biçiminde mi ({@code enc:v1:} içerir)? — hangi kolonda olursa olsun maskelenir. */
     public static boolean isEncryptedValue(Object v) {
         if (v instanceof String s) return s.contains(ENC_VALUE_MARK);
+        // Dizi hücresi listeye çevrilir (SqlResultColumns.plain — en çok 10 000 öğe, 6 boyut): öğelerden biri yeter
+        if (v instanceof java.util.Collection<?> c) {
+            for (Object e : c) if (isEncryptedValue(e)) return true;
+            return false;
+        }
         // PostgreSQL json / jsonb / diğer özel türler sürücünün PGobject'i olarak gelir (metin değeri toString)
         if (v != null && v.getClass().getName().startsWith("org.postgresql.util.PG")) {
             return String.valueOf(v).contains(ENC_VALUE_MARK);
@@ -184,17 +207,31 @@ public final class SqlSensitiveColumns {
      * @param columnsByTable canlı şema (tablo → kolonlar); null ya da boş olabilir (yalnız statik çiftler)
      */
     public static Schema schemaOf(Map<String, ? extends java.util.Collection<String>> columnsByTable) {
+        return schemaOf(columnsByTable, null);
+    }
+
+    /**
+     * {@link #schemaOf(Map)} + canlı veritabanının satır alan fonksiyon adları ({@code pg_proc}; null / boş →
+     * yalnız {@link #ROW_FUNCTIONS_FALLBACK}). Liste her zaman tabanla BİRLEŞTİRİLİR (asla daralmaz).
+     */
+    public static Schema schemaOf(Map<String, ? extends java.util.Collection<String>> columnsByTable,
+                                  java.util.Collection<String> liveRowFunctions) {
         Map<String, Set<String>> out = new LinkedHashMap<>();
+        Map<String, Set<String>> all = new LinkedHashMap<>();
         PAIRS.forEach((t, cols) -> out.computeIfAbsent(t, k -> new LinkedHashSet<>()).addAll(cols));
         if (columnsByTable != null) {
             columnsByTable.forEach((table, cols) -> {
                 if (cols == null) return;
                 for (String col : cols) {
+                    if (col == null) continue;
+                    all.computeIfAbsent(norm(table), k -> new LinkedHashSet<>()).add(col);   // tam ad (harf duyarlı)
                     if (isSensitive(table, col)) out.computeIfAbsent(norm(table), k -> new LinkedHashSet<>()).add(norm(col));
                 }
             });
         }
-        return new Schema(out);
+        Set<String> fns = new LinkedHashSet<>(ROW_FUNCTIONS_FALLBACK);
+        if (liveRowFunctions != null) for (String f : liveRowFunctions) if (f != null && !f.isBlank()) fns.add(norm(f));
+        return new Schema(out, all, fns);
     }
 
     /**
@@ -204,8 +241,11 @@ public final class SqlSensitiveColumns {
     public static final class Schema {
         private final Map<String, Set<String>> byTable;
         private final Set<String> names;
+        /** Canlı şemadaki (public) TÜM kolonlar — yalnız alan biçiminde fonksiyon kuralının "gerçek kolon mu" sorusu için. */
+        private final Map<String, Set<String>> allColumns;
+        private final Set<String> rowFunctions;
 
-        Schema(Map<String, Set<String>> byTable) {
+        Schema(Map<String, Set<String>> byTable, Map<String, Set<String>> allColumns, Set<String> rowFunctions) {
             Map<String, Set<String>> f = new LinkedHashMap<>();
             Set<String> n = new LinkedHashSet<>();
             byTable.forEach((t, cols) -> {
@@ -214,6 +254,24 @@ public final class SqlSensitiveColumns {
             });
             this.byTable = Collections.unmodifiableMap(f);
             this.names = Collections.unmodifiableSet(n);
+            Map<String, Set<String>> a = new LinkedHashMap<>();
+            allColumns.forEach((t, cols) -> a.put(t, Collections.unmodifiableSet(new LinkedHashSet<>(cols))));
+            this.allColumns = Collections.unmodifiableMap(a);
+            this.rowFunctions = Collections.unmodifiableSet(new LinkedHashSet<>(rowFunctions));
+        }
+
+        /** {@code u.f} yazımında {@code f} bir satırı argüman alan fonksiyonun adı mı (küçük harf)? */
+        public boolean isRowFunction(String name) {
+            return rowFunctions.contains(norm(name));
+        }
+
+        /**
+         * Tablonun (public şeması) bu adlı GERÇEK bir kolonu olduğu biliniyor mu? Kolon adı TAM eşleşir (PostgreSQL'in
+         * katlanmış adıyla — {@code "Mode"} ile {@code mode} farklı kolonlardır); kolonları bilinmiyorsa false.
+         */
+        public boolean hasColumn(String table, String column) {
+            Set<String> s = allColumns.get(norm(table));
+            return s != null && column != null && s.contains(column);
         }
 
         public Map<String, Set<String>> byTable() { return byTable; }

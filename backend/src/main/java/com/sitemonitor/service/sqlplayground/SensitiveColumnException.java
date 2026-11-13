@@ -59,6 +59,24 @@ public class SensitiveColumnException extends CodedBadRequestException {
                             + "sıralama / gruplama kolonunu adıyla yazın.",
                     "The ORDER BY / GROUP BY position (" + c + ") may refer to a sensitive column or a * item; write the "
                             + "column name instead.");
+            case SqlSensitiveGuard.R_TABLE_REF -> Msg.t(
+                    "Hassas kolonu olan bir tablo içeren sorguda FROM öğesi bu biçimde (" + q + ") kullanılamaz: ONLY, "
+                            + "miras yıldızı (tablo *), TABLESAMPLE, ROWS FROM, WITH ORDINALITY ya da takma addan sonra "
+                            + "beklenmeyen bir belirteç, satır kaynağının adını belirsizleştirir — sorgu çalıştırılmadı. "
+                            + "Tabloyu düz yazın: FROM tablo [AS] takma_ad.",
+                    "In a query on a table with a sensitive column, a FROM item can't be written this way (" + q + "): "
+                            + "ONLY, the inheritance star (table *), TABLESAMPLE, ROWS FROM, WITH ORDINALITY or an "
+                            + "unexpected token after the alias makes the row source's name ambiguous — the query wasn't "
+                            + "run. Write the table plainly: FROM table [AS] alias.");
+            case SqlSensitiveGuard.R_ATTRIBUTE_FUNCTION -> Msg.t(
+                    q + " kullanılamaz: PostgreSQL bu yazımı, nitelikteki satırın böyle bir kolonu yoksa satırın TAMAMIYLA bir "
+                            + "fonksiyon çağrısı yapar (ör. u.to_jsonb = to_jsonb(u)) ve hassas kolonlar açığa çıkar — sorgu "
+                            + "çalıştırılmadı. Gerçek bir kolonsa niteleyicisiz yazın ya da alt sorguda / CTE'de farklı bir "
+                            + "adla (AS ad) adlandırın.",
+                    q + " can't be used: if the qualifying row has no such column, PostgreSQL turns this into a function call "
+                            + "on the WHOLE row (e.g. u.to_jsonb = to_jsonb(u)) and exposes sensitive columns — the query "
+                            + "wasn't run. If it is a real column, write it without the qualifier or give it another name "
+                            + "(AS name) in the subquery / CTE.");
             case SqlSensitiveGuard.R_STATS -> Msg.t(
                     q + " istatistik görünümü kolonların gerçek değerlerinden örnek taşır (hassas kolonlar dahil); SQL "
                             + "Playground'da sorgulanamaz.",

@@ -706,6 +706,108 @@ class SqlPlaygroundServiceTest {
         assertThat(SqlPlaygroundService.fkAction(null)).isNull();
     }
 
+    // ── 3. tur (2026-11-13) ──────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("3. tur ORTA 3: yalnız EN DIŞ LIMIT tavana iner — alt sorgu / CTE LIMIT'i ve dize içindeki 'limit' aynen")
+    void enforceLimitOnlyOuterLimit() {
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT count(*) FROM (SELECT g FROM t LIMIT 5000) s", 1000))
+                .isEqualTo("SELECT * FROM (SELECT count(*) FROM (SELECT g FROM t LIMIT 5000) s) AS _capped LIMIT 1000");
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT 'limit 5000' AS note", 1000))
+                .isEqualTo("SELECT * FROM (SELECT 'limit 5000' AS note) AS _capped LIMIT 1000");
+        assertThat(SqlPlaygroundService.enforceLimit("WITH c AS (SELECT * FROM t LIMIT 5000) SELECT * FROM c", 1000))
+                .contains("LIMIT 5000) SELECT");
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT * FROM teams LIMIT 5000;", 1000))
+                .isEqualTo("SELECT * FROM (SELECT * FROM teams LIMIT 1000) AS _capped LIMIT 1000");
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT * FROM teams LIMIT 500 OFFSET 2", 1000))
+                .isEqualTo("SELECT * FROM (SELECT * FROM teams LIMIT 500 OFFSET 2) AS _capped LIMIT 1000");
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT * FROM t LIMIT 100000", 50_001)).contains("LIMIT 50001)");
+        assertThat(SqlPlaygroundService.enforceLimit("SELECT * FROM t LIMIT 0x7fffffff", 1000)).contains("LIMIT 0x7fffffff)");
+        // H2'de gerçek sonuç: eskiden iç LIMIT 1000'e iniyor, sayım sessizce 1000 dönüyordu
+        Map<String, Object> r = h2.execute("SELECT count(*) AS c FROM (SELECT \"X\" FROM SYSTEM_RANGE(1, 5000) LIMIT 5000) s", "admin");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        assertThat(((Number) rows(r).get(0).get("c")).intValue()).isEqualTo(5000);
+        assertThat(rows(h2.execute("SELECT 'limit 5000' AS note", "admin")).get(0).get("note")).isEqualTo("limit 5000");
+    }
+
+    @Test
+    @DisplayName("3. tur DÜŞÜK 5: ekran sorgusu bellek bütçesi — uzun hücre kesilir (truncated_cells), toplam aşılınca okuma durur")
+    void screenMemoryBudget() {
+        Map<String, Object> small = h2.execute("SELECT id FROM teams", "admin");
+        assertThat(small.get("truncated")).isEqualTo(false);
+        assertThat(small.get("truncated_reason")).isNull();
+        assertThat(small.get("truncated_cells")).isEqualTo(0);
+
+        Map<String, Object> one = h2.execute("SELECT REPEAT('x', 250000) AS big, 'y' AS small", "admin");
+        assertThat(one.get("ok")).as("hata: %s", one.get("error")).isEqualTo(true);
+        String big = (String) rows(one).get(0).get("big");
+        assertThat(big).hasSize(SqlPlaygroundService.CELL_MAX_CHARS + 1).endsWith(SqlPlaygroundService.CELL_TRUNCATED_MARK);
+        assertThat(rows(one).get(0).get("small")).isEqualTo("y");
+        assertThat(one.get("truncated_cells")).isEqualTo(1);
+        assertThat(one.get("truncated")).isEqualTo(false);
+
+        Map<String, Object> many = h2.execute("SELECT REPEAT('z', 90000) AS v FROM SYSTEM_RANGE(1, 200)", "admin");
+        assertThat(many.get("ok")).as("hata: %s", many.get("error")).isEqualTo(true);
+        assertThat(many.get("truncated")).isEqualTo(true);
+        assertThat(many.get("truncated_reason")).isEqualTo("bytes");
+        int n = rows(many).size();
+        assertThat(n).isGreaterThan(0).isLessThan(200);
+        assertThat((long) n * 90_000).isLessThanOrEqualTo(SqlPlaygroundService.RESULT_MAX_CHARS);
+        assertThat(many.get("rowCount")).isEqualTo(n);
+
+        Map<String, Object> capped = h2.execute("SELECT \"X\" FROM SYSTEM_RANGE(1, 1500)", "admin");
+        assertThat(rows(capped)).hasSize(1000);
+        assertThat(capped.get("truncated")).isEqualTo(true);
+        assertThat(capped.get("truncated_reason")).isEqualTo("rows");
+
+        // Kesme maskeyi açmaz: hassas kolon maskesi ve şifreli değer kuralı hücre okunurken uygulanır
+        Map<String, Object> m = h2.execute("SELECT password_hash FROM app_users WHERE id = 1", "admin");
+        assertThat(rows(m).get(0).get("password_hash")).isEqualTo(SqlSensitiveColumns.MASK);
+    }
+
+    @Test
+    @DisplayName("Hücre sınırı: vekil çift bölünmez; ikili veri [binary N bytes]; kısa değer aynı nesne")
+    void fitCellRules() {
+        String s = "a".repeat(9) + "😀" + "b";   // 9 + vekil çift + 1
+        assertThat(SqlPlaygroundService.fitCell(s, 10)).isEqualTo("a".repeat(9) + SqlPlaygroundService.CELL_TRUNCATED_MARK);
+        assertThat(SqlPlaygroundService.fitCell(new byte[300], 100)).isEqualTo("[binary 300 bytes]");
+        String shortV = "kısa";
+        assertThat(SqlPlaygroundService.fitCell(shortV, 10)).isSameAs(shortV);
+        assertThat(SqlPlaygroundService.fitCell(List.of("x".repeat(50), "y".repeat(50)), 40)).asString()
+                .endsWith(SqlPlaygroundService.CELL_TRUNCATED_MARK);
+    }
+
+    @Test
+    @DisplayName("3. tur DÜŞÜK 4: dizi hücresi JSON listesi (500 yok); şifreli değer içeren dizi maskelenir; time metin")
+    void driverObjectsAreJsonSafe() throws Exception {
+        Map<String, Object> r = h2.execute("SELECT ARRAY[1, 2] AS a, ARRAY['x', NULL] AS b, TIME '12:30:05' AS t", "admin");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        Map<String, Object> row = rows(r).get(0);
+        assertThat(row.get("a")).isEqualTo(List.of(1, 2));
+        assertThat(row.get("b")).isEqualTo(java.util.Arrays.asList("x", null));
+        assertThat(row.get("t")).isEqualTo("12:30:05");
+        // Yanıt gövdesi JSON'a yazılabilir (eskiden sürücü dizi nesnesi Jackson'da 500 veriyordu)
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(r);
+        assertThat(json).contains("\"a\":[1,2]");
+
+        Map<String, Object> enc = h2.execute("SELECT ARRAY[setting_value] AS v FROM app_settings WHERE id = 2", "admin");
+        assertThat(rows(enc).get(0).get("v")).isEqualTo(SqlSensitiveColumns.MASK);
+        assertThat(enc.get("masked_columns")).isEqualTo(List.of("v"));
+    }
+
+    @Test
+    @DisplayName("3. tur YÜKSEK 1: takma ad / alan biçiminde çağrı / konum atlatmaları servis düzeyinde çalıştırılmadan reddedilir")
+    void bypassesRejectedBeforeRunning() {
+        for (String sql : List.of(
+                "SELECT length(to_jsonb(u)->>'password_hash') AS l FROM app_users * u",
+                "SELECT length(to_jsonb(rows)->>'password_hash') AS l FROM app_users rows",
+                "SELECT u.to_jsonb FROM app_users u",
+                "SELECT username FROM (SELECT * FROM app_users ORDER BY (6) LIMIT 100) d",
+                "SELECT password_hash, username FROM app_users ORDER BY 0x1")) {
+            assertThatThrownBy(() -> h2.execute(sql, "admin")).as(sql).isInstanceOf(SensitiveColumnException.class);
+        }
+    }
+
     /** null değer taşıyabilen sıralı harita (Map.of null kabul etmez). */
     private static Map<String, Object> mapOf(Object... kv) {
         Map<String, Object> m = new java.util.LinkedHashMap<>();

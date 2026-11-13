@@ -51,8 +51,20 @@ public final class SqlResultColumns {
         public OriginUnavailableException(Throwable cause) { super("origin unavailable", cause, false, false); }
     }
 
-    /** Zaman türü: değer biçimi (2026-11-13). */
-    static final int K_OTHER = 0, K_DATE = 1, K_TIMESTAMP = 2, K_TIMESTAMPTZ = 3;
+    /** Zaman türü: değer biçimi (2026-11-13). {@code K_TIME}: {@code time} / {@code timetz} — veritabanının metni. */
+    static final int K_OTHER = 0, K_DATE = 1, K_TIMESTAMP = 2, K_TIMESTAMPTZ = 3, K_TIME = 4;
+
+    /** Sonsuz tarih / zaman damgası (PostgreSQL'in kendi yazımı). */
+    static final String INFINITY = "infinity", NEG_INFINITY = "-infinity";
+
+    /** Dizi hücresi listeye çevrilirken en çok bu kadar öğe (aşan hücre veritabanının metni olur — kesme sonra). */
+    static final int MAX_ARRAY_ELEMENTS = 10_000;
+
+    /** Dizi boyutu sınırı (PostgreSQL en çok 6 boyut). */
+    private static final int MAX_ARRAY_DEPTH = 6;
+
+    /** {@link #toPlainList} işareti: öğe JSON'a güvenle yazılamaz — hücre metne düşer. */
+    private static final Object UNSUPPORTED = new Object();
 
     private static final java.time.format.DateTimeFormatter LOCAL_SECONDS =
             java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss");
@@ -190,6 +202,8 @@ public final class SqlResultColumns {
      * {@code date} → {@code yyyy-MM-dd}; zamansız {@code timestamp} → yerel {@code yyyy-MM-ddTHH:mm:ss[.SSS]} (milisaniye
      * altı varsa mikro / nano basamakları); {@code timestamptz} → UTC {@code yyyy-MM-ddTHH:mm:ss.SSSZ} (eski biçim).
      * Önceden {@code java.sql.Date} JSON'da UTC'ye kaymış gece yarısı ({@code …T21:00:00.000Z}, bir gün geride) olarak dönüyordu.
+     * Sonsuz tarih → {@code infinity} / {@code -infinity}; MÖ tarih ve {@code time} / {@code timetz} → veritabanının metni
+     * (sürücü çevirisi yılı 0 yapıyor / saat dilimini JVM'e kaydırıyordu).
      */
     private Object read(ResultSet rs, int i) throws SQLException {
         int col = i + 1;
@@ -197,24 +211,92 @@ public final class SqlResultColumns {
             switch (kinds[i]) {
                 case K_DATE -> {
                     java.time.LocalDate d = rs.getObject(col, java.time.LocalDate.class);
-                    return d == null ? null : formatDate(d);
+                    if (d == null) return null;
+                    if (d.equals(java.time.LocalDate.MAX)) return INFINITY;
+                    if (d.equals(java.time.LocalDate.MIN)) return NEG_INFINITY;
+                    return d.getYear() <= 0 ? rs.getString(col) : formatDate(d);
                 }
                 case K_TIMESTAMP -> {
                     java.time.LocalDateTime t = rs.getObject(col, java.time.LocalDateTime.class);
-                    return t == null ? null : formatLocal(t);
+                    if (t == null) return null;
+                    if (t.equals(java.time.LocalDateTime.MAX)) return INFINITY;
+                    if (t.equals(java.time.LocalDateTime.MIN)) return NEG_INFINITY;
+                    return t.getYear() <= 0 ? rs.getString(col) : formatLocal(t);
                 }
                 case K_TIMESTAMPTZ -> {
                     java.time.OffsetDateTime t = rs.getObject(col, java.time.OffsetDateTime.class);
-                    return t == null ? null : formatInstant(t.toInstant());
+                    if (t == null) return null;
+                    if (t.equals(java.time.OffsetDateTime.MAX) || t.toLocalDateTime().equals(java.time.LocalDateTime.MAX)) {
+                        return INFINITY;
+                    }
+                    if (t.equals(java.time.OffsetDateTime.MIN) || t.toLocalDateTime().equals(java.time.LocalDateTime.MIN)) {
+                        return NEG_INFINITY;
+                    }
+                    java.time.Instant in = t.toInstant();
+                    return in.atOffset(java.time.ZoneOffset.UTC).getYear() <= 0 ? rs.getString(col) : formatInstant(in);
+                }
+                case K_TIME -> {
+                    return rs.getString(col);
                 }
                 default -> { }
             }
         } catch (SQLException | RuntimeException e) {
-            // Sürücü türü çeviremedi (ör. sonsuz tarih) — metin karşılığı
-            String s = rs.getString(col);
-            return s;
+            // Sürücü türü çeviremedi — metin karşılığı
+            return rs.getString(col);
         }
-        return JdbcUtils.getResultSetValue(rs, col);
+        return plain(JdbcUtils.getResultSetValue(rs, col), rs, col);
+    }
+
+    /**
+     * JSON'a güvenle yazılabilen düz değer (2026-11-13, 3. tur): metin, sayı, mantıksal, ikili ({@code byte[]}) aynen;
+     * UUID / karakter metne; dizi listeye ({@link #toPlainList}); başka her nesne (sürücü türleri: {@code jsonb} /
+     * {@code json} / {@code interval} / {@code point} {@code PGobject}'leri, {@code xml} …) veritabanının kendi metni
+     * ({@code getString}). Önceden {@code ARRAY[1,2]} yanıt yazımında 500 verdi, {@code jsonb} sürücü iç alanlarıyla döndü.
+     */
+    static Object plain(Object v, ResultSet rs, int col) throws SQLException {
+        if (v == null) return null;
+        if (v instanceof String || v instanceof Number || v instanceof Boolean || v instanceof byte[]) return v;
+        if (v instanceof Character || v instanceof java.util.UUID) return v.toString();
+        if (v instanceof java.sql.Array a) {
+            Object list;
+            try {
+                list = toPlainList(a.getArray(), new int[]{MAX_ARRAY_ELEMENTS}, 0);
+            } catch (SQLException | RuntimeException e) {
+                list = UNSUPPORTED;
+            } finally {
+                try { a.free(); } catch (SQLException | RuntimeException ignored) { }
+            }
+            if (list != UNSUPPORTED) return list;
+        }
+        return rs.getString(col);
+    }
+
+    /**
+     * Sürücünün dizi nesnesi ({@code Object[]} ya da ilkel dizi, iç içe) → liste. Öğeler yalnız null / metin / sayı /
+     * mantıksal (UUID / karakter metne); başka bir öğe, {@value #MAX_ARRAY_ELEMENTS} öğe ya da {@value #MAX_ARRAY_DEPTH}
+     * boyut aşılırsa {@link #UNSUPPORTED} (çağıran veritabanının metnini kullanır).
+     */
+    static Object toPlainList(Object arr, int[] budget, int depth) {
+        if (arr == null) return null;
+        if (!arr.getClass().isArray() || depth >= MAX_ARRAY_DEPTH) return UNSUPPORTED;
+        int len = java.lang.reflect.Array.getLength(arr);
+        List<Object> out = new ArrayList<>(Math.min(len, 64));
+        for (int k = 0; k < len; k++) {
+            if (--budget[0] < 0) return UNSUPPORTED;
+            Object e = java.lang.reflect.Array.get(arr, k);
+            if (e == null || e instanceof String || e instanceof Number || e instanceof Boolean) {
+                out.add(e);
+            } else if (e instanceof Character || e instanceof java.util.UUID) {
+                out.add(e.toString());
+            } else if (e.getClass().isArray() && !(e instanceof byte[])) {
+                Object inner = toPlainList(e, budget, depth + 1);
+                if (inner == UNSUPPORTED) return UNSUPPORTED;
+                out.add(inner);
+            } else {
+                return UNSUPPORTED;
+            }
+        }
+        return java.util.Collections.unmodifiableList(out);
     }
 
     static int timeKind(ResultSetMetaData md, int col) {
@@ -227,8 +309,12 @@ public final class SqlResultColumns {
             return K_OTHER;
         }
         String n = name == null ? "" : name.toLowerCase(java.util.Locale.ROOT);
+        if (type == java.sql.Types.TIME || type == java.sql.Types.TIME_WITH_TIMEZONE
+                || (n.startsWith("time") && !n.startsWith("timestamp"))) {
+            return K_TIME;
+        }
         if (type == java.sql.Types.TIMESTAMP_WITH_TIMEZONE || n.equals("timestamptz") || n.contains("with time zone")) {
-            return n.startsWith("time") && !n.startsWith("timestamp") ? K_OTHER : K_TIMESTAMPTZ;
+            return K_TIMESTAMPTZ;
         }
         if (type == java.sql.Types.DATE || n.equals("date")) return K_DATE;
         if (type == java.sql.Types.TIMESTAMP || n.equals("timestamp") || n.startsWith("timestamp")) return K_TIMESTAMP;
