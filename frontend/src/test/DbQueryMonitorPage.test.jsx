@@ -76,6 +76,8 @@ vi.mock('../api/client', () => ({
 }))
 import { api } from '../api/client'
 import DbQueryMonitorPage from '../components/DbQueryMonitorPage.jsx'
+import { DBQ_DRAFT_KEY, writeDbQueryDraft } from '../utils/sqlDbQueryDraft.js'
+import { OWNER_KEY, personalKey } from '../utils/personalStorage.js'
 
 const PROFILE = { id: 3, name: 'Sipariş DB (PostgreSQL üretim)', db_type: 'POSTGRESQL', host: 'db.example.com', port: 5432, database_name: 'orders' }
 const row = (over = {}) => ({
@@ -692,5 +694,35 @@ describe('DbQueryMonitorPage — paylaşımla erişim (O5 / K2)', () => {
     fireEvent.change(within(dlg).getByLabelText('sql'), { target: { value: 'SELECT 1' } })
     fireEvent.click(within(dlg).getByRole('button', { name: /^Save$/ }))
     await waitFor(() => expect(fieldOf('team_id').textContent).toContain('bağlantılar takımın kendi belgesidir'))
+  })
+})
+
+// ── SQL Playground'dan izleme taslağı (2026-11-13, D4) ──────────────────────────────────────────────────────────────
+
+describe('DbQueryMonitorPage — SQL Playground taslağı (D4)', () => {
+  beforeEach(() => { sessionStorage.clear(); localStorage.setItem(OWNER_KEY, 'admin') })
+  afterEach(() => { sessionStorage.clear(); localStorage.removeItem(OWNER_KEY) })
+
+  it('taslak varsa yeni izleme formu SQL ile bir kez açılır, bilgi bandı görünür, anahtar silinir; PostgreSQL dışı bağlantıda uyarı tonu', async () => {
+    writeDbQueryDraft('SELECT count(*) FROM alerts')
+    render(<DbQueryMonitorPage {...props} />)
+    const banner = await waitFor(() => { const b = document.querySelector('[data-slot="dbq-from-playground"]'); expect(b).not.toBeNull(); return b })
+    expect(banner).toHaveAttribute('data-tone', 'info')
+    expect(banner.textContent).toMatch(/SQL Playground/)
+    expect(blocks.props.SqlEditor.value).toBe('SELECT count(*) FROM alerts')
+    expect(sessionStorage.getItem(personalKey(DBQ_DRAFT_KEY, 'admin'))).toBeNull()
+    fireEvent.click(within(formDialog()).getByText('pick-connection'))   // MSSQL bağlantısı
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-from-playground"]')).toHaveAttribute('data-tone', 'warning'))
+    expect(document.querySelector('[data-slot="dbq-from-playground"]').textContent).toMatch(/another database type|başka bir veritabanı/)
+  })
+
+  it('taslak yoksa form kendiliğinden açılmaz; başka kullanıcının taslağı okunmaz', async () => {
+    localStorage.setItem(OWNER_KEY, 'baskasi')
+    writeDbQueryDraft('SELECT 1')
+    localStorage.setItem(OWNER_KEY, 'admin')
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(titles()).toHaveLength(1))
+    expect(document.querySelector('[data-slot="dbq-from-playground"]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

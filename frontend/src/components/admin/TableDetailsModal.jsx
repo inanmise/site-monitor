@@ -61,7 +61,7 @@ function SecHead({ icon: Icon, label, count }) {
  * Veri `/admin/sql/tables/{name}/details` (Postgres katalogu); eski (dar) yanıtla geriye uyumlu. Örnek satır sekmesi YOK:
  * uç örnek satır döndürmüyor ve sorgu çalıştırmak geçmişe/denetime yazar (API boşluğu).
  */
-export default function TableDetailsModal({ table, details, loading, onClose, onOpenTable, onUseQuery, onShowInDiagram }) {
+export default function TableDetailsModal({ table, details, loading, onClose, onOpenTable, onUseQuery, onShowInDiagram, dictionary = null }) {
   const t = useT()
   const [tab, setTab] = useState('overview')
   const columns     = useMemo(() => details?.columns ?? [], [details])
@@ -169,6 +169,9 @@ export default function TableDetailsModal({ table, details, loading, onClose, on
                     {act.first_seen_approx && muted(<> · {t('sql.meta.createdApprox')}</>)}
                     {act.first_seen_version && muted(<> · v{act.first_seen_version}</>)}
                   </dd>
+                  {dictionary?.description && (<>
+                    <dt>{t('sql.dict.label')}</dt><dd data-slot="sql-td-dict" className="[overflow-wrap:anywhere]">{dictionary.description}</dd>
+                  </>)}
                   <dt>{t('sql.td.comment')}</dt><dd>{details.comment || muted('—')}</dd>
                   <dt>{t('sql.td.fkOut')}</dt><dd className="flex flex-wrap gap-x-2">{fks.length ? fks.map((c) => <span key={c.name}>{tableLink(c.ref_table)}</span>) : muted(t('sql.td.none'))}</dd>
                   <dt>{t('sql.td.fkIn')}</dt><dd className="flex flex-wrap gap-x-2">{refBy.length ? refBy.map((r) => <span key={r.name}>{tableLink(r.from_table)}</span>) : muted(t('sql.td.none'))}</dd>
@@ -231,7 +234,14 @@ export default function TableDetailsModal({ table, details, loading, onClose, on
                   <TableBody>
                     {columns.map((c) => (
                       <TableRow key={c.column_name} data-pk={c.is_pk ? 'true' : undefined}>
-                        <TableCell className={cn(MONO, 'align-top', c.is_pk && 'font-bold')}>{c.column_name}</TableCell>
+                        <TableCell className={cn(MONO, 'align-top', c.is_pk && 'font-bold')}>
+                          {c.column_name}
+                          {dictionary?.columns?.[c.column_name] && (
+                            <span data-slot="sql-td-dict-col" className="mt-0.5 block max-w-[18rem] font-sans text-[0.9em] font-normal whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">
+                              {dictionary.columns[c.column_name]}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="align-top">{badge(c)}</TableCell>
                         <TableCell className={cn(MONO, 'align-top text-primary')}>{c.udt_name || c.data_type}</TableCell>
                         <TableCell className={cn('hidden align-top md:table-cell', MUTED)}>{c.bounds || '—'}</TableCell>

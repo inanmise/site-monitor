@@ -7,7 +7,7 @@
  * genişliğini oynatabilir ve üstteki şeffaf textarea ile hizayı bozar (SqlEditor).
  */
 
-const KEYWORDS = new Set(`
+export const KEYWORDS = new Set(`
   select from where and or not in is null as on join inner left right full outer cross natural using
   group by order having limit offset fetch first next rows row only distinct all any some exists between like ilike
   similar case when then else end union intersect except with recursive lateral asc desc nulls last

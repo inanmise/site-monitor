@@ -1,4 +1,4 @@
-import { toCsv } from '../../../utils/csvExport.js'
+import { downloadBlob, toCsv } from '../../../utils/csvExport.js'
 import { neutraliseFormula } from '../../../utils/csv.js'
 
 /**
@@ -11,6 +11,8 @@ import { neutraliseFormula } from '../../../utils/csv.js'
  */
 export const MAX_ROWS = 1000
 export const QUERY_TIMEOUT_SEC = 30
+/** Sunucunun maskelediği hücre değeri (A1, 2026-11-13): hassas kolonun her hücresi bu metin, NULL yine null. */
+export const MASK_TEXT = '••••'
 
 /** Sunucunun sorguyu sardığı önek — hata konumunu düzenleyiciye geri eşlemek için. */
 const CAP_PREFIX = 'SELECT * FROM ('
@@ -131,22 +133,10 @@ export function stampedFile(base, ext, d = new Date()) {
   return `${base}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`
 }
 
-/** Blob indir — jsdom'da (test) sessizce çıkar. */
-export function downloadBlob(filename, blob) {
-  try {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1500)
-    return true
-  } catch { return false }
-}
-
-/** Metin indir (JSON, SVG, CSV). */
+/**
+ * Metin indir (JSON, SVG, CSV) — ortak `utils/csvExport.downloadBlob` ile (2026-11-13, A3; CLAUDE.md "Downloads only
+ * through"): bağlantı DOM'a eklenir, adres 60 sn tutulur (Safari / iPad). Başlatılamazsa false.
+ */
 export function downloadText(filename, text, mime) {
   return downloadBlob(filename, new Blob([text], { type: `${mime};charset=utf-8` }))
 }
