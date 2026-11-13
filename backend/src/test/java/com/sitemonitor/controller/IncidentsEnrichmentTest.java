@@ -188,6 +188,29 @@ class IncidentsEnrichmentTest {
     }
 
     @Test
+    @DisplayName("tam damga: saat dilimli değer UTC'ye çevrilir (…+03:00 → 3 saat önce, …Z aynen), dilimsiz UTC; ayrıştırılamayan 400")
+    void list_zonedStampIsConvertedToUtc() throws Exception {
+        mvc.perform(get("/api/monitoring/incidents").session(admin())
+                        .param("since", "2026-11-13T00:00:00+03:00").param("resolvedSince", "2026-11-12T10:00:00Z"))
+                .andExpect(status().isOk());
+        verify(alertEventRepo).findIncidentsFiltered(any(), eq("2026-11-12T21:00:00"), any(), eq("2026-11-12T10:00:00"), any(),
+                any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
+        assertThat(IncidentsController.stampOrNull("2026-11-13T00:00+03:00", "since")).isEqualTo("2026-11-12T21:00:00");
+        assertThat(IncidentsController.untilBound("2026-11-13T05:30:00-02:00", "until")).isEqualTo("2026-11-13T07:30:00");
+        assertThat(IncidentsController.stampOrNull("2026-11-12T10:00:00.900", "since")).isEqualTo("2026-11-12T10:00:00");
+        assertThat(IncidentsController.stampOrNull("2026-11-12", "resolvedSince")).isEqualTo("2026-11-12T00:00:00");
+        clearInvocations(alertEventRepo);
+        for (String bad : List.of("2026-11-12T25:00:00", "2026-11-12T10:00:00+0300", "2026-02-30T10:00:00Z")) {
+            mvc.perform(get("/api/monitoring/incidents").session(admin()).param("resolvedSince", bad))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("resolvedSince"));
+        }
+        verify(alertEventRepo, never()).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
     @DisplayName("geçersiz gün → 400 VALIDATION_FAILED alanı since (sorgu çalışmaz)")
     void list_badDayIs400() throws Exception {
         mvc.perform(get("/api/monitoring/incidents").session(admin()).param("since", "2026-13-45"))
@@ -285,8 +308,8 @@ class IncidentsEnrichmentTest {
                 anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ OWN, 6L }));
         when(alertEventRepo.countIncidentStampedTeams(eq(Boolean.TRUE), notNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ OWN, 1L }));
-        when(alertEventRepo.countIncidentInventoryTeams(eq(Boolean.FALSE), isNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
-                anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ FOREIGN, null, 2L }));
+        when(alertEventRepo.countIncidentInventoryOwners(eq(Boolean.FALSE), isNull(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{ null, FOREIGN, null, 2L }));
 
         mvc.perform(get("/api/monitoring/incidents/summary").session(user()))
                 .andExpect(status().isOk())

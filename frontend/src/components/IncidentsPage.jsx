@@ -47,7 +47,7 @@ import {
   FILTER_DEFAULTS, serverParams, clientFacet, hasClientFacet, summarize, summaryFromServer, activeFilters, teamOptions,
   iso24hAgo, filtersFromUrl, filtersToUrl, sortFromUrl, severityMeta, rowName, isOpen, isAcked,
   SCOPE_MINE, SCOPE_OTHERS, normalizeIncidentScope, scopeParam, canActOn, canDeleteIncident, canCommentOn, isSelectable,
-  ackable,
+  ackable, withFreshWindow,
 } from './incidents/incidentsModel.js'
 
 const BANNER_KEY = 'incidents-banner-dismissed'
@@ -157,7 +157,8 @@ export default function IncidentsPage({ systemRole, teamId }) {
     const key = JSON.stringify([params, apiPage, pageSize])
     setLoading(true)
     try {
-      const res = await api.monitoring.incidents.list({ ...params, page: apiPage, size: pageSize })
+      // "Çözüldü (24 sa)" penceresi her istekte şimdiye göre (sessiz yenileme dahil); anahtar `params`tan — değişmez
+      const res = await api.monitoring.incidents.list({ ...withFreshWindow(params, Date.now()), page: apiPage, size: pageSize })
       if (myId !== reqIdRef.current) return   // yalnız EN SON isteğin yanıtı (bayat yanıt grid'i ezmesin)
       if (res?.success) {
         const data = Array.isArray(res.data) ? res.data : []
@@ -418,7 +419,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
   async function exportCsv() {
     setExporting('csv')
     try {
-      const res = await api.monitoring.incidents.exportCsv(params)
+      const res = await api.monitoring.incidents.exportCsv(withFreshWindow(params, Date.now()))
       if (res?.success) toast.success(res.truncated ? t('incov.exportTruncated', res.maxRows ?? 10000) : t('incov.exportDone', res.name))
       else if (isOldServerAnswer(res)) toast.error(t('incov.exportUnsupported'))
       else toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('incov.exportFailed') : (res?.error || t('incov.exportFailed')), { details: res })
@@ -427,7 +428,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
   async function exportXlsx() {
     setExporting('xlsx')
     try {
-      const res = await api.monitoring.incidents.exportJson(params)
+      const res = await api.monitoring.incidents.exportJson(withFreshWindow(params, Date.now()))
       if (!res?.success && isOldServerAnswer(res)) { toast.error(t('incov.exportUnsupported')); return }
       if (!res?.success || !Array.isArray(res.data?.rows)) { toast.error(res?.error || t('incov.exportFailed'), { details: res }); return }
       let mod

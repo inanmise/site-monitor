@@ -292,7 +292,9 @@ describe('Olaylar zenginleştirmesi — detay penceresi', () => {
     render(<IncidentsPage systemRole="USER" teamId={5} />)
     let dlg = await openDetail('https://x.example.com')
     // Uyarı veren kontroller de kanıttır (HTTP hata kodu, içerik koşulu, yavaş yanıt WARNING yazılır)
-    await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ monitor: 'HTTP:9', status: 'ERROR,TIMEOUT,WARNING' })))
+    // Yalnız kontrol satırları (`group=check` — alarm satırı kanıt değildir); ölçülemeyen (UNKNOWN) kontrol de kanıttır
+    await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({
+      monitor: 'HTTP:9', status: 'ERROR,TIMEOUT,WARNING,UNKNOWN', group: 'check' })))
     const row = await waitFor(() => { const r = dlg.querySelector('[data-slot="incident-evidence-row"]'); expect(r).toBeTruthy(); return r })
     expect(row.querySelector('a')).toHaveAttribute('href', '?tab=activity&act=501')
     fireEvent.click(within(dlg).getByRole('button', { name: /^Close$|^Kapat$/ }))
@@ -397,5 +399,62 @@ describe('Olaylar zenginleştirmesi — bağımsız inceleme düzeltmeleri (2026
     const badge = await waitFor(() => { const b = dlg.querySelector('[data-slot="incident-evidence-status"]'); expect(b).toBeTruthy(); return b })
     expect(badge.className).toMatch(/amber/)
     expect(badge.className).not.toMatch(/(^|\s)(text|bg)-destructive(\/|\s|$)/)
+  })
+})
+
+describe('Olaylar — hata taraması düzeltmeleri (2026-11-13)', () => {
+  it('ölçülemeyen (UNKNOWN) kontrol kanıtta görünür, rozeti nötr (kırmızı / amber / yeşil değil)', async () => {
+    mock({ rows: [{ ...base, alert_type: 'DOMAINMON_UNKNOWN', monitor: { ...base.monitor, type: 'domain', tab: 'domain' } }] })
+    api.getActivity.mockResolvedValueOnce({ success: true, total: 1, data: [
+      { id: 701, activity_time: '2026-11-12T09:59:00', result_status: 'UNKNOWN', failure_reason: 'WHOIS_UNAVAILABLE' },
+    ] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    const dlg = await openDetail('https://x.example.com')
+    await waitFor(() => expect(api.getActivity).toHaveBeenCalledWith(expect.objectContaining({ monitor: 'DOMAIN:9', group: 'check' })))
+    const badge = await waitFor(() => { const b = dlg.querySelector('[data-slot="incident-evidence-status"]'); expect(b).toBeTruthy(); return b })
+    expect(badge).toHaveTextContent(/Unknown|Bilinmiyor/)
+    expect(badge.className).toMatch(/text-muted-foreground/)
+    expect(badge.className).not.toMatch(/(^|\s)(text|bg|border)-(destructive|amber|success|green|emerald)/)
+  })
+
+  it('kontrol kayıtları başka takımın kapsamındaysa (check_records_visible:false) SORULMAZ, "görme yetkiniz yok" der', async () => {
+    mock({ rows: [{ ...base, check_records_visible: false }] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    const dlg = await openDetail('https://x.example.com')
+    const state = await waitFor(() => { const el = dlg.querySelector('[data-slot="incident-evidence-state"]'); expect(el).toBeTruthy(); return el })
+    expect(state).toHaveAttribute('data-state', 'records-hidden')
+    expect(state).toHaveTextContent(/another team|başka bir takımın/)
+    expect(api.getActivity).not.toHaveBeenCalled()
+    expect(dlg.querySelector('[data-state="none"]')).toBeNull()
+  })
+
+  it('Alarm Geçmişi bağlantısı sunucunun can_open_alert bayrağıyla: paylaşımla okunan yabancı olayda var, bayrak false iken yok', async () => {
+    mock({ rows: [{ ...foreign, can_open_alert: true }, { ...base, can_open_alert: false }] })
+    render(<IncidentsPage systemRole="USER" teamId={5} />)
+    let dlg = await openDetail('other.example.com')
+    expect(dlg.querySelector('[data-slot="incident-open-alert"]')).toHaveAttribute('href', '?tab=alerthistory&alert=3')
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Close$|^Kapat$/ }))
+    dlg = await openDetail('https://x.example.com')
+    expect(dlg.querySelector('[data-slot="incident-open-alert"]')).toBeNull()
+  })
+
+  it('"Çözüldü (24 sa)": sessiz yenileme pencereyi ŞİMDİYE göre yeniden hesaplar; yeni olay tespiti bozulmaz', async () => {
+    let now = Date.UTC(2026, 10, 13, 12, 0, 0)
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      window.history.replaceState({}, '', '/?tab=incidents&stat=resolved24')
+      mock({ rows: [second] })
+      render(<IncidentsPage systemRole="USER" teamId={5} />)
+      await screen.findByRole('button', { name: /api\.example\.com/ })
+      expect(lastListParams().resolvedSince).toBe('2026-11-12T12:00:00')
+      now += 3 * 3600 * 1000   // sayfa 3 saat açık kaldı
+      mock({ rows: [{ ...base, id: 7 }, second] })
+      await act(async () => { INTERVALS[60000]() })
+      await waitFor(() => expect(lastListParams().resolvedSince).toBe('2026-11-12T15:00:00'))
+      // İstek anahtarı değişmedi: yeni (daha büyük kimlikli) olay yine vurgulanır
+      expect(await screen.findByRole('button', { name: /1 new incident|1 yeni olay/ })).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

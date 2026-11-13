@@ -835,12 +835,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scope") List<Long> scope);
 
     /**
-     * Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki DAMGASIZ olayların envanter SY / UG takımları
-     * ({@code [teamId, ugTeamId, count]}) — sertifika gibi envanter üzerinden yönlenen olaylar damgasız açılır.
+     * Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki olayların — DAMGALI olanlar DAHİL — alan adının envanter
+     * SY / UG takımları ({@code [e.teamId, inv.teamId, inv.ugTeamId, count]}). Liste süzgeci ({@link #INCIDENTS_FILTER},
+     * {@code :teamId}) damgalı olayı da envanter SY / UG takımıyla eşleştirir; sayım o kuralla aynı olsun diye damga da
+     * döner — çağıran damganın kendisini (zaten {@link #countIncidentStampedTeams}'te sayılır) envanter kolundan düşer.
+     * Envanter alan adı tekil olduğundan her olay en çok bir satırda sayılır (2026-11-13 hata taraması: yalnız damgasız
+     * olaylar sayılıyordu — seçenek 12 dediği takımda liste 31 olay gösteriyordu).
      */
-    @Query("SELECT inv.teamId, inv.ugTeamId, COUNT(e) FROM AlertEvent e, CertificateInventory inv "
-            + "WHERE e.teamId IS NULL AND inv.domain = e.domain AND " + INCIDENTS_FILTER + " GROUP BY inv.teamId, inv.ugTeamId")
-    List<Object[]> countIncidentInventoryTeams(
+    @Query("SELECT e.teamId, inv.teamId, inv.ugTeamId, COUNT(e) FROM AlertEvent e, CertificateInventory inv "
+            + "WHERE inv.domain = e.domain AND " + INCIDENTS_FILTER + " GROUP BY e.teamId, inv.teamId, inv.ugTeamId")
+    List<Object[]> countIncidentInventoryOwners(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,
