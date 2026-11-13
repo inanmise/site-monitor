@@ -3074,7 +3074,12 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.processed").value(1))
                 .andExpect(jsonPath("$.data.skipped").value(1))
-                .andExpect(jsonPath("$.data.failed").value(1));
+                .andExpect(jsonPath("$.data.failed").value(1))
+                // Satır başına sonuç (2026-11-13, Olaylar toplu işlemi — eklemeli alan)
+                .andExpect(jsonPath("$.data.results[0].id").value(1))
+                .andExpect(jsonPath("$.data.results[0].outcome").value("processed"))
+                .andExpect(jsonPath("$.data.results[1].outcome").value("closed"))
+                .andExpect(jsonPath("$.data.results[2].outcome").value("failed"));
     }
 
     @Test

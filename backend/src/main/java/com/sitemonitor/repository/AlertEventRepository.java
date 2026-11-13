@@ -660,12 +660,34 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     // IncidentsController.incidentTeamInScope ile aynı kural); `scoped=true, outside=true` → TAMAMLAYICI küme ("Diğer
     // ekiplerin olayları"). İki küme ayrık ve birleşimleri tümüdür. Tamamlayıcıda NULL teamId AÇIKÇA ele alınır:
     // `NOT (e.teamId IN :scope)` NULL için BİLİNMEYEN döner ve takımsız olayı iki kümeden de sessizce düşürürdü.
-    // Üç sorgu aynı süzgeç gövdesini paylaşır (sayfa, sayfa-dışı toplam, kök neden sayaçları) — ayrışamasınlar.
+    // Bütün olay sorguları aynı süzgeç gövdesini paylaşır (sayfa, sayfa-dışı toplam, kök neden sayaçları, özet) — ayrışamasınlar.
+    //
+    // Sunucu süzgeçleri (2026-11-13, Olaylar zenginleştirmesi): eskiden yalnız YÜKLENEN SAYFAYA uygulanan önem / takım /
+    // onaylı / takımsız / takımım + "tekrarlayan" artık burada. Takım süzgeci Alarm Geçmişi listesinin kuralıyla AYNI
+    // (`ALERT_LIST_FIND`: damgalı teamId ya da alan adı → envanter SY/UG); "takımsız" = olay listesinin takım sütunuyla aynı
+    // (damga yok VE envanterde SY/UG yok); `resolvedSince` "Çözüldü (24 sa)" kartı — ÇÖZÜLME anına bakar (açılışa değil);
+    // `q` çağıranda kaçışlanmış LIKE kalıbıdır (`!` kaçış — "%" artık her şeyi döndürmez; {@link #incidentLike}).
+    // `recurSince`: aynı (alan adı, tür) imzası o andan beri EN AZ İKİ kez açıldı (satır rozeti "7 günde N kez" ile aynı sayım).
     String INCIDENTS_FILTER = """
              (:resolved IS NULL OR e.resolved = :resolved)
                AND (:since IS NULL OR e.createdAt >= :since)
                AND (:until IS NULL OR e.createdAt <= :until)
-               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
+               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+               AND (:levelScoped = FALSE OR e.alertLevel IN :levels)
+               AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
+               AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+               AND (:teamless = FALSE OR (e.teamId IS NULL AND NOT EXISTS (
+                      SELECT 1 FROM CertificateInventory tl
+                       WHERE tl.domain = e.domain
+                         AND (tl.teamId IS NOT NULL OR tl.ugTeamId IS NOT NULL))))
+               AND (:recurSince IS NULL OR (
+                      SELECT COUNT(rc) FROM AlertEvent rc
+                       WHERE rc.domain = e.domain AND rc.alertType = e.alertType
+                         AND rc.createdAt >= :recurSince) >= 2)
                AND (:scoped = FALSE
                     OR (:outside = FALSE AND (e.teamId IN :scope OR EXISTS (
                            SELECT 1 FROM CertificateInventory i
@@ -679,40 +701,180 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                               AND (i2.teamId IN :scope OR i2.ugTeamId IN :scope))))
             """;
 
+    /** Önem süzgeci verilmediğinde IN listesi boş olamaz — {@code levelScoped=false} kısa devre yaptığı için değeri önemsiz. */
+    java.util.List<String> NO_LEVELS = java.util.List.of("-");
+
+    /**
+     * Olay araması için kaçışlanmış LIKE kalıbı (Alarm Geçmişi listesiyle aynı kural): küçük harf, {@code ! % _} kaçışlı,
+     * iki yanda {@code %}. Boş/null → null (süzgeç yok). Kullanıcının yazdığı "%" artık her şeyi döndürmez.
+     */
+    static String incidentLike(String q) {
+        if (q == null || q.isBlank()) return null;
+        String esc = q.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%" + esc + "%";
+    }
+
     @Query("SELECT e FROM AlertEvent e WHERE (:alertType IS NULL OR e.alertType = :alertType) AND " + INCIDENTS_FILTER)
-    Page<AlertEvent> findIncidents(
+    Page<AlertEvent> findIncidentsFiltered(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
             @Param("alertType") String alertType,
             @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
             @Param("scoped") boolean scoped,
             @Param("outside") boolean outside,
             @Param("scope") List<Long> scope,
             Pageable pageable);
 
-    /** Sayfanın DIŞINDAKİ bir kapsamın toplamı ("Takımımın / Diğer ekiplerin / Tümü" çip sayıları) — findIncidents'la aynı süzgeç. */
+    /** Sayfanın DIŞINDAKİ bir kümenin toplamı (kapsam çipleri, özet kartları) — {@link #findIncidentsFiltered} ile aynı süzgeç. */
     @Query("SELECT COUNT(e) FROM AlertEvent e WHERE (:alertType IS NULL OR e.alertType = :alertType) AND " + INCIDENTS_FILTER)
-    long countIncidents(
+    long countIncidentsFiltered(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
             @Param("alertType") String alertType,
             @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
             @Param("scoped") boolean scoped,
             @Param("outside") boolean outside,
             @Param("scope") List<Long> scope);
 
     /** Root-cause (alertType) pill sayaçları — alertType HARİÇ aynı incident filtreleri. */
     @Query("SELECT e.alertType, COUNT(e) FROM AlertEvent e WHERE " + INCIDENTS_FILTER + " GROUP BY e.alertType")
-    List<Object[]> countIncidentsByType(
+    List<Object[]> countIncidentsByTypeFiltered(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
             @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
             @Param("scoped") boolean scoped,
             @Param("outside") boolean outside,
             @Param("scope") List<Long> scope);
+
+    /** Olaylar özeti (2026-11-13): önem × onay kırılımı — tek gruplu sorgu (açık / onaylı / kritik kartları). */
+    @Query("SELECT e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e WHERE (:alertType IS NULL OR e.alertType = :alertType) AND "
+            + INCIDENTS_FILTER + " GROUP BY e.alertLevel, e.acknowledged")
+    List<Object[]> countIncidentFacets(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
+            @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
+            @Param("scope") List<Long> scope);
+
+    /**
+     * Olaylar özeti MTTA / MTTR (2026-11-13): dar izdüşüm {@code [createdAt, acknowledgedAt, resolvedAt, resolved,
+     * resolvedSilently]} — tam varlık (5 TEXT sütun) taşınmaz. En yeni önce; tavan {@code pageable} (çağıran).
+     */
+    @Query("SELECT e.createdAt, e.acknowledgedAt, e.resolvedAt, e.resolved, e.resolvedSilently FROM AlertEvent e "
+            + "WHERE (:alertType IS NULL OR e.alertType = :alertType) AND " + INCIDENTS_FILTER + " ORDER BY e.id DESC")
+    List<Object[]> findIncidentTimingRows(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
+            @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
+            @Param("scope") List<Long> scope,
+            Pageable pageable);
+
+    /** Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki DAMGALI olayların takımları — tek gruplu sorgu. */
+    @Query("SELECT e.teamId, COUNT(e) FROM AlertEvent e WHERE e.teamId IS NOT NULL AND " + INCIDENTS_FILTER
+            + " GROUP BY e.teamId")
+    List<Object[]> countIncidentStampedTeams(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
+            @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
+            @Param("scope") List<Long> scope);
+
+    /**
+     * Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki DAMGASIZ olayların envanter SY / UG takımları
+     * ({@code [teamId, ugTeamId, count]}) — sertifika gibi envanter üzerinden yönlenen olaylar damgasız açılır.
+     */
+    @Query("SELECT inv.teamId, inv.ugTeamId, COUNT(e) FROM AlertEvent e, CertificateInventory inv "
+            + "WHERE e.teamId IS NULL AND inv.domain = e.domain AND " + INCIDENTS_FILTER + " GROUP BY inv.teamId, inv.ugTeamId")
+    List<Object[]> countIncidentInventoryTeams(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("q") String q,
+            @Param("levelScoped") boolean levelScoped,
+            @Param("levels") Collection<String> levels,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("teamless") boolean teamless,
+            @Param("recurSince") String recurSince,
+            @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
+            @Param("scope") List<Long> scope);
+
+    // ── Önceki (sunucu süzgeçleri EKLENMEDEN ÖNCEKİ) imzalar — çağıranlar / testler değişmesin; yeni süzgeçler kapalı ──
+
+    default Page<AlertEvent> findIncidents(Boolean resolved, String since, String until, String alertType, String q,
+                                           boolean scoped, boolean outside, List<Long> scope, Pageable pageable) {
+        return findIncidentsFiltered(resolved, since, until, null, alertType, incidentLike(q), false, NO_LEVELS, null, null,
+                false, null, scoped, outside, scope, pageable);
+    }
+
+    default long countIncidents(Boolean resolved, String since, String until, String alertType, String q,
+                                boolean scoped, boolean outside, List<Long> scope) {
+        return countIncidentsFiltered(resolved, since, until, null, alertType, incidentLike(q), false, NO_LEVELS, null, null,
+                false, null, scoped, outside, scope);
+    }
+
+    default List<Object[]> countIncidentsByType(Boolean resolved, String since, String until, String q,
+                                                boolean scoped, boolean outside, List<Long> scope) {
+        return countIncidentsByTypeFiltered(resolved, since, until, null, incidentLike(q), false, NO_LEVELS, null, null,
+                false, null, scoped, outside, scope);
+    }
 
 
     // ── Tip kapsamı EKLENMEDEN ÖNCEKİ imzalar ────────────────────────────────────────────

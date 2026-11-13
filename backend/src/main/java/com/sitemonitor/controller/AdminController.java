@@ -2919,9 +2919,12 @@ public class AdminController {
 
         String by = resolveDisplayName(session);
         int processed = 0, skipped = 0, failed = 0;
+        // Satır başına sonuç (2026-11-13, Olaylar toplu işlemi — eklemeli alan): processed | skipped (kapsam dışı) |
+        // closed (bu arada kapandı) | failed. Alarm Geçmişi yalnız sayıları okur; Olaylar her satırın sonucunu gösterir.
+        List<Map<String, Object>> results = new ArrayList<>();
         for (Long id : ids) {
             // kapsam-dışı → atla (fırlatma yok); toplu YENİDEN BİLDİR erişim paylaşımıyla yapılmaz (2026-10-12)
-            if (!isAlertInScope(session, id, !"re-notify".equals(action))) { skipped++; continue; }
+            if (!isAlertInScope(session, id, !"re-notify".equals(action))) { skipped++; results.add(bulkResult(id, "skipped")); continue; }
             try {
                 switch (action) {
                     case "acknowledge" -> escalationService.acknowledge(id, by, note);
@@ -2929,10 +2932,13 @@ public class AdminController {
                     case "re-notify"   -> escalationService.reNotify(id);
                 }
                 processed++;
+                results.add(bulkResult(id, "processed"));
             } catch (EscalationService.AlertClosedMeanwhileException e) {
                 skipped++;   // R2b · F (AL-1): alarm bu arada kapandı — onay yazılmadı, işlenmiş sayılmaz
+                results.add(bulkResult(id, "closed"));
             } catch (Exception e) {
                 failed++;   // bulunamadı / zaten kapalı / bildirim hatası — say ama batch'i durdurma
+                results.add(bulkResult(id, "failed"));
                 log.warn("Bulk alert '{}' failed for id={}: {}", action, id, e.getMessage());
             }
         }
@@ -2952,8 +2958,16 @@ public class AdminController {
         data.put("processed", processed);
         data.put("skipped", skipped);
         data.put("failed", failed);
+        data.put("results", results);
         if (!"re-notify".equals(action) && processed > 0) alarmViewsChanged();
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
+    }
+
+    private static Map<String, Object> bulkResult(Long id, String outcome) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("outcome", outcome);
+        return m;
     }
 
     /**

@@ -171,6 +171,7 @@ public final class AuditEventCatalog {
             "INCIDENT_POSTMORTEM_SAVE",   // postmortem raporu kaydedildi / durumu değişti (2026-10-11)
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",
+            "INCIDENTS_EXPORT",           // Olaylar konsolu dışa aktarımı (CSV / JSON — süzgeç + satır sayısı; 2026-11-13)
             "ISSUE_REPORT",
             "ISSUE_REPORT_COMMENT",
             "ISSUE_REPORT_REOPEN",

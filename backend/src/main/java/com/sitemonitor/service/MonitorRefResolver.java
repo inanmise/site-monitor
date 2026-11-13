@@ -79,6 +79,36 @@ public class MonitorRefResolver {
         return m;
     }
 
+    /**
+     * Takım duyarlı DAR okuma (2026-11-13, Olaylar zenginleştirmesi): yalnız verilen anahtarların izlemeleri, aday listesi
+     * olarak — aile → anahtar → {@code [ad, id, teamId]} (kimlik sırasında; silinmiş Port/DNS satırı yok). Aynı URL'yi /
+     * host'u iki takım izleyebilir: seçimi çağıran olayın damgalı takımına göre yapar ({@code IncidentsController}) —
+     * başka takımın izlemesi asla seçilmez. Anahtarlar 500'lük parçalarla {@code IN}; aile başına en çok
+     * ⌈n / 500⌉ sorgu. {@code em} yoksa (elle kurulan birim testi) {@code null} — çağıran eski tam liste yoluna düşer.
+     */
+    public Map<String, Map<String, List<Object[]>>> candidates(Map<String, ? extends java.util.Collection<String>> keysByFamily) {
+        if (em == null) return null;
+        Map<String, Map<String, List<Object[]>>> out = new HashMap<>();
+        for (Map.Entry<String, ? extends java.util.Collection<String>> e : keysByFamily.entrySet()) {
+            RefSource src = REF_SOURCES.get(e.getKey());
+            if (src == null || e.getValue() == null || e.getValue().isEmpty()
+                    || ("dbquery".equals(e.getKey()) && dbQueryMonitorRepo == null)) continue;
+            List<String> keys = new java.util.ArrayList<>(new java.util.LinkedHashSet<>(e.getValue()));
+            keys.removeIf(java.util.Objects::isNull);
+            Map<String, List<Object[]>> byKey = new HashMap<>();
+            String jpql = "SELECT m." + src.keyField() + ", m.name, m.id, m.teamId FROM " + src.entity() + " m WHERE m."
+                    + src.keyField() + " IN :keys" + (src.softDelete() ? " AND m.deletedAt IS NULL" : "") + " ORDER BY m.id";
+            for (int i = 0; i < keys.size(); i += 500) {
+                List<String> part = keys.subList(i, Math.min(keys.size(), i + 500));
+                for (Object[] r : em.createQuery(jpql, Object[].class).setParameter("keys", part).getResultList()) {
+                    if (r[0] != null) byKey.computeIfAbsent((String) r[0], k -> new java.util.ArrayList<>()).add(new Object[]{ r[1], r[2], r[3] });
+                }
+            }
+            out.put(e.getKey(), byKey);
+        }
+        return out;
+    }
+
     /** @param family cert | http | port | … ; {@code tab} arayüz sekmesi; {@code monitorId} çözülemezse null */
     public record Ref(String name, String family, String tab, Long monitorId) {}
 

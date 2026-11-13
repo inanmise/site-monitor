@@ -137,10 +137,10 @@ class IncidentsActionContextTest {
 
         when(alertEventRepo.findById(1L)).thenReturn(Optional.of(ownEv));
         when(alertEventRepo.findById(2L)).thenReturn(Optional.of(foreignEv));
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(foreignEv, ownEv, ugEv)));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
-        when(alertEventRepo.countIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(3L);
+        when(alertEventRepo.countIncidentsByTypeFiltered(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(3L);
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
 
         CertificateInventory ug = new CertificateInventory();
@@ -241,7 +241,7 @@ class IncidentsActionContextTest {
     @Test
     @DisplayName("sayfada kendi satır yok (yalnız başka ekiplerin olayları): özet sorgusu HİÇ atılmaz, alan yok")
     void foreignOnlyPage_noSummaryQueries() throws Exception {
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(foreignEv)));
         JsonNode data = body(get("/api/monitoring/incidents").param("scope", "others").session(user())).path("data");
         assertNoOwnerFields(row(data, 2));
