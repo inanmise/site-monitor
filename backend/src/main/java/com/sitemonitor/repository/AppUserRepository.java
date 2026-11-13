@@ -187,6 +187,10 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
          + "WHERE u.active = true AND (u.teamId IN :teamIds OR tid IN :teamIds)")
     List<Object[]> findActiveMemberRowsOfTeams(@Param("teamIds") Collection<Long> teamIds);
 
+    /** Kimlik → etkin bayrağı (dar: fotoğraf vb. okunmaz) — eskalasyon kişisi listesinin {@code user_active} alanı. */
+    @Query("SELECT u.id, u.active FROM AppUser u WHERE u.id IN :ids")
+    List<Object[]> findActiveFlagsByIds(@Param("ids") Collection<Long> ids);
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);

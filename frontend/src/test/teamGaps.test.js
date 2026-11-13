@@ -31,6 +31,8 @@ describe('teamGaps — kurallar', () => {
     expect(teamGaps(team(), { ...known, stats: { ...FULL, contacts: 0, groups: 0 } })).toEqual(['contacts', 'groups'])
     expect(teamGaps(team(), { ...known, stats: { ...FULL, domains: 0 } })).toEqual([])
     expect(teamGaps(team(), { ...known, stats: { ...FULL, domains: 0, monitors: 0 } })).toEqual(['assets'])
+    // yalnız UG olarak bağlı alan adı da varlıktır (kapsam matrisi / panoyla aynı)
+    expect(teamGaps(team(), { ...known, stats: { ...FULL, domains: 0, monitors: 0, ug_domains: 2 } })).toEqual([])
   })
 
   it('sayaçlar gelmediyse sayaca dayalı kurallar, kullanıcılar gelmediyse lider/müdür "bilinmiyor" — eksik SAYILMAZ', () => {

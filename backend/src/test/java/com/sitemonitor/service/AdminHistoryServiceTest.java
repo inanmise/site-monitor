@@ -124,7 +124,7 @@ class AdminHistoryServiceTest {
         AuditLog editInB = row(3, "CONTACT_UPDATE", "ESCALATION_CONTACT", "5", "{\"minAlertLevel\":{\"from\":\"WARNING\",\"to\":\"HIGH\"}}");
         when(auditRepo.findByResourceTypeAndEventTypeIn(eq("ESCALATION_CONTACT"), anyCollection(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(editInB, move, editInA)));
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
                 .thenReturn(List.of(editInB, move, editInA));
 
         var a = service.history("ESCALATION_CONTACT", null, null, Set.of(1L), 0, 50);
@@ -147,7 +147,7 @@ class AdminHistoryServiceTest {
         AuditLog editInA = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "6", "{\"role\":{\"from\":\"TECH\",\"to\":\"PO\"}}");
         when(auditRepo.findByResourceTypeAndEventTypeIn(eq("ESCALATION_CONTACT"), anyCollection(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(editInB, editInA)));             // taşıma satırı okunanlarda yok
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
                 .thenReturn(List.of(editInB, move, editInA));
         var b = service.history("ESCALATION_CONTACT", null, null, Set.of(2L), 0, 50);
         assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(3L);

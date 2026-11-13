@@ -862,11 +862,19 @@ public class DbGrowthService {
      * istatistik 7 günden eskiyse "şimdi − 7 gün" bütün sınırların sağında kalır ve oran sahte 0 çıkardı (2026-11-13 hata
      * taraması: bugün yeni satırı olan tablolar "0 satır/gün").
      */
+    /** Soğuk başlangıç satır/gün tahmininde histogram penceresinin son sınıra kaydırılabileceği en büyük yaş (gün). */
+    static final int HISTOGRAM_SHIFT_MAX_DAYS = 21;
+
     static Double histogramRowsPerDay(List<String> bounds, long liveRows, Instant now) {
         if (bounds == null || bounds.size() < 2) return null;
         Long lastSec = DbGrowthForecast.epochSeconds(bounds.get(bounds.size() - 1));
         if (lastSec == null) return null;
-        Instant end = Instant.ofEpochSecond(Math.min(lastSec, now.getEpochSecond()));
+        // Pencere histogramın son sınırında biter (otomatik ANALYZE büyük tabloda haftalar sürebilir — satır/gün sahte 0 olmasın),
+        // ama yalnız son sınır HISTOGRAM_SHIFT_MAX_DAYS içindeyse: daha eskisi ya haftalardır ekleme almayan bekleyen tablo ya da
+        // çok bayat istatistik — ayırt edilemez; sahte büyüme yerine eski kural (pencere şimdide biter) (2026-11-13 son inceleme).
+        long endSec = lastSec >= now.minus(HISTOGRAM_SHIFT_MAX_DAYS, ChronoUnit.DAYS).getEpochSecond()
+                ? Math.min(lastSec, now.getEpochSecond()) : now.getEpochSecond();
+        Instant end = Instant.ofEpochSecond(endSec);
         Double frac = DbGrowthForecast.histogramFractionBefore(bounds, end.minus(7, ChronoUnit.DAYS));
         return frac == null ? null : liveRows * (1 - frac) / 7.0;
     }

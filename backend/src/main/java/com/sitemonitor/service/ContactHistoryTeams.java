@@ -58,8 +58,10 @@ final class ContactHistoryTeams {
         if (!ids.isEmpty() && auditRepo != null) {
             List<AuditLog> trail;
             try {
-                trail = auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(RESOURCE, UPDATE_EVENT, ids,
-                        PageRequest.of(0, MOVES_MAX));
+                // Yalnız takım değişikliği satırları, en yeni önce (tavan aşılırsa en ESKİ taşımalar düşer — rastgele değil)
+                trail = auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(RESOURCE, UPDATE_EVENT, ids,
+                        "\"teamId\"", PageRequest.of(0, MOVES_MAX, org.springframework.data.domain.Sort.by(
+                                org.springframework.data.domain.Sort.Direction.DESC, "id")));
             } catch (RuntimeException e) {
                 trail = List.of();               // iz okunamazsa eski kural (canlı takım) — satır yine listelenir
             }

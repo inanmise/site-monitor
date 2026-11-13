@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import AdminOverviewStrip from '../components/admin/AdminOverviewStrip.jsx'
+import AdminOverviewStrip, { GAP_REFRESH_MIN_MS } from '../components/admin/AdminOverviewStrip.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
@@ -109,14 +109,22 @@ describe('AdminOverviewStrip — kapsam boşluğu', () => {
     expect(document.querySelector('[data-warning="ESCALATION_GAP"]')).toBeNull()
   })
 
-  it('pasif kişiye bağlı tek kişi → gerçek boşluk; sekme değişince (refreshKey) girdiler yeniden okunur', async () => {
+  it('pasif kişiye bağlı tek kişi → gerçek boşluk; sekme değişince (refreshKey) girdiler en az 60 sn arayla yeniden okunur', async () => {
     const { rerender } = render(<AdminOverviewStrip isAdmin onJump={() => {}} refreshKey="contacts" />)
     expect(await screen.findByText(/1 takımda kritik eskalasyon boşluğu|1 team\(s\) with a critical escalation gap/)).toBeInTheDocument()
     expect(api.admin.getContacts).toHaveBeenCalledTimes(1)
-    // Kişi etkinleşti (aktif kullanıcıya bağlandı) → sekme değişimi boşluğu tazeler
+    // Kişi etkinleşti (aktif kullanıcıya bağlandı). 60 sn dolmadan sekme değişimi ağır uçları YENİDEN okumaz (son inceleme)
     api.admin.getUsers.mockResolvedValue({ success: true, data: [{ id: 9, active: true }] })
+    const realNow = Date.now
     rerender(<AdminOverviewStrip isAdmin onJump={() => {}} refreshKey="teams" />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(api.admin.getContacts).toHaveBeenCalledTimes(1)
+    // ... 60 sn sonra sekme değişimi boşluğu tazeler
+    const t0 = realNow()
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => t0 + GAP_REFRESH_MIN_MS + 1000)
+    rerender(<AdminOverviewStrip isAdmin onJump={() => {}} refreshKey="contacts" />)
     await waitFor(() => expect(api.admin.getContacts).toHaveBeenCalledTimes(2))
+    spy.mockRestore()
     await waitFor(() => expect(document.querySelector('[data-warning="ESCALATION_GAP"]')).toBeNull())
     expect(await screen.findByText(/^Sağlık uyarısı yok$|^No health warnings$/)).toBeInTheDocument()
   })

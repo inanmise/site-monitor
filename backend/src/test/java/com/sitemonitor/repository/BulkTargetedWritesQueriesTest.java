@@ -160,6 +160,25 @@ class BulkTargetedWritesQueriesTest {
         List<AuditLog> trail = auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(
                 "NOTIFICATION_GROUP", "NOTIFICATION_GROUP_UPDATE", List.of("55", "56"), PageRequest.of(0, 10));
         assertThat(trail).extracting(AuditLog::getResourceId).containsExactly("55");
+        // Taşıma izi sorgusu (son inceleme): yalnız teamId içeren güncelleme satırları, en yeni önce
+        AuditLog edit = new AuditLog();
+        edit.setEventType("NOTIFICATION_GROUP_UPDATE");
+        edit.setResourceType("NOTIFICATION_GROUP");
+        edit.setResourceId("55");
+        edit.setEventTime("2026-11-13T12:00:00");
+        edit.setChanges("{\"name\":{\"from\":\"a\",\"to\":\"b\"}}");
+        auditRepo.save(edit);
+        AuditLog move2 = new AuditLog();
+        move2.setEventType("NOTIFICATION_GROUP_UPDATE");
+        move2.setResourceType("NOTIFICATION_GROUP");
+        move2.setResourceId("55");
+        move2.setEventTime("2026-11-13T13:00:00");
+        move2.setChanges("{\"teamId\":{\"from\":2,\"to\":3}}");
+        auditRepo.save(move2);
+        List<AuditLog> moves = auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(
+                "NOTIFICATION_GROUP", "NOTIFICATION_GROUP_UPDATE", List.of("55"), "\"teamId\"",
+                PageRequest.of(0, 10, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id")));
+        assertThat(moves).extracting(AuditLog::getId).containsExactly(move2.getId(), u.getId());
     }
 
     private static NotificationGroup group(long teamId, String name, String emails, boolean def) {

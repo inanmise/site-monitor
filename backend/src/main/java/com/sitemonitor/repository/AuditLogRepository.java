@@ -216,6 +216,15 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     List<AuditLog> findByResourceTypeAndEventTypeAndResourceIdIn(String resourceType, String eventType,
                                                                  Collection<String> resourceIds, Pageable pageable);
 
+    /**
+     * Taşıma izi (2026-11-13 son inceleme): yalnız {@code changes} metni verilen parçayı (ör. {@code "teamId"}) içeren
+     * güncelleme satırları — tavan sık düzenlemeli kaynaklarda taşıma DIŞI satırlarla dolmasın. Sıralama çağıranın
+     * Pageable'ından (en yeni önce).
+     */
+    List<AuditLog> findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(String resourceType, String eventType,
+                                                                                   Collection<String> resourceIds,
+                                                                                   String changesPart, Pageable pageable);
+
     /** Bir kaynak TÜRÜNÜN tüm geçmişi (ör. tüm RETENTION_POLICY değişiklikleri). */
     List<AuditLog> findByResourceTypeOrderByEventTimeDesc(String resourceType, Pageable pageable);
 

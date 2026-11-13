@@ -2045,7 +2045,7 @@ public class AdminController {
                     ? List.of()
                     : contactRepo.findByTeamIdInAndActiveTrueOrderByRoleAsc(scope);
         }
-        return ok(Map.of("data", contacts));
+        return ok(Map.of("data", withUserActive(contacts)));
     }
 
     @GetMapping("/contacts/all")
@@ -2060,7 +2060,27 @@ public class AdminController {
                     ? List.of()
                     : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
         }
-        return ok(Map.of("data", contacts));
+        return ok(Map.of("data", withUserActive(contacts)));
+    }
+
+    /**
+     * Kişi satırlarına bağlı kullanıcının etkinliğini yazar ({@code user_active}, saklanmaz) — tek dar sorgu. Okunamazsa
+     * alan boş kalır (istemci kendi kullanıcı listesine döner: bugünkü davranış). Silinmiş kullanıcı → null (bilinmiyor).
+     */
+    private List<EscalationContact> withUserActive(List<EscalationContact> contacts) {
+        Set<Long> ids = new HashSet<>();
+        for (EscalationContact c : contacts) if (c.getUserId() != null) ids.add(c.getUserId());
+        if (ids.isEmpty()) return contacts;
+        try {
+            Map<Long, Boolean> active = new HashMap<>();
+            for (Object[] r : userRepo.findActiveFlagsByIds(ids)) {
+                if (r != null && r.length > 1 && r[0] instanceof Number n) active.put(n.longValue(), !Boolean.FALSE.equals(r[1]));
+            }
+            for (EscalationContact c : contacts) if (c.getUserId() != null) c.setUserActive(active.get(c.getUserId()));
+        } catch (RuntimeException e) {
+            log.debug("Kişi listesi: kullanıcı etkinliği okunamadı: {}", e.toString());
+        }
+        return contacts;
     }
 
     /**

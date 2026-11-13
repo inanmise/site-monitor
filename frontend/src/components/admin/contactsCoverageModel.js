@@ -26,6 +26,11 @@ export function contactNotifies(c, inactiveIds, knownIds) {
   if (!c || c.active === false) return false
   const uid = c.user_id != null && c.user_id !== '' ? String(c.user_id) : null
   if (!uid) return true
+  // Sunucunun kişi satırına yazdığı bağlı kullanıcı etkinliği önce gelir (2026-11-13 son inceleme): kapsamlı müdürün
+  // kullanıcı listesi kapsamla süzülü olduğundan kapsam dışı kullanıcının durumu istemcide bilinmezdi. Yoksa (eski sunucu,
+  // okunamadı, silinmiş kullanıcı) istemcinin kendi listesine düşülür.
+  if (c.user_active === false) return false
+  if (c.user_active === true) return true
   if (inactiveIds === null) return null
   if (inactiveIds && typeof inactiveIds.has === 'function' && inactiveIds.has(uid)) return false
   if (knownIds && typeof knownIds.has === 'function' && !knownIds.has(uid)) return null

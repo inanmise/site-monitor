@@ -33,6 +33,9 @@ const HEALTH_ICON = {
 }
 const PHONE_WARN_LIMIT = 2
 
+/** Eskalasyon boşluğu girdilerinin (kişi, kullanıcı, takım istatistiği) sekme değişiminde en kısa tazeleme aralığı. */
+export const GAP_REFRESH_MIN_MS = 60_000
+
 export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0, usersListComplete = false }) {
   const t = useT()
   const [data, setData] = useState(null)
@@ -55,7 +58,13 @@ export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0, us
   // değer görünür (yanıp sönme yok); geç gelen eski yanıt yenisini ezmez (sıra numarası).
   // #1'in test edilmiş buildCoverage'ı ile boşluk sayısı; biri okunamazsa escalationGapFrom null döner → kutucuk çizilmez.
   const gapSeq = useRef(0)
+  // Bu üç uç ağır (tüm kişiler, tüm kullanıcılar, takım istatistiği = kurum geneli izleme tabloları): sekme her değiştiğinde
+  // değil, en az GAP_REFRESH_MIN_MS arayla tazelenir (2026-11-13 son inceleme) — kullanıcı listesinin tamlığı değişirse hemen.
+  const gapLoad = useRef({ at: 0, complete: null })
   useEffect(() => {
+    const now = Date.now()
+    if (gapLoad.current.complete === usersListComplete && now - gapLoad.current.at < GAP_REFRESH_MIN_MS) return
+    gapLoad.current = { at: now, complete: usersListComplete }
     const my = ++gapSeq.current
     Promise.allSettled([api.admin.getContacts?.(), api.admin.getUsers?.(), api.admin.teamStats?.()])
       .then(([co, us, st]) => {

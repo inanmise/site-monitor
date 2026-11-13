@@ -213,7 +213,7 @@ class NotificationGroupHistoryServiceTest {
         AuditLog move = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
         AuditLog editInB = row(4, "NOTIFICATION_GROUP_UPDATE", "10", "{\"name\":{\"from\":\"Nöbet\",\"to\":\"Gece\"}}");
         audit(editInB, move, editInA, create);
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(editInB, move, editInA));
 
         var a = service().page(List.of(TEAM_A), null, 0, 50);
@@ -233,7 +233,7 @@ class NotificationGroupHistoryServiceTest {
         when(groupRepo.findAll()).thenReturn(List.of(group(10L, TEAM_B)));
         AuditLog editInA = row(2, "NOTIFICATION_GROUP_UPDATE", "10", "{\"emails\":{\"from\":\"a@x\",\"to\":\"b@x\"}}");
         AuditLog move = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), any(), any(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(any(), any(), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(move, editInA));
         var teams = service().rowTeams(List.of(editInA));
         assertThat(teams.get(2L).team()).isEqualTo(TEAM_A);
@@ -246,7 +246,7 @@ class NotificationGroupHistoryServiceTest {
         AuditLog create = row(1, "NOTIFICATION_GROUP_CREATE", "10", "{\"name\":\"Nöbet\",\"teamId\":1}");
         AuditLog move = row(2, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
         AuditLog editInB = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"name\":{\"from\":\"Nöbet\",\"to\":\"Gece\"}}");
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(editInB, move));
         // Akışın kişi süzgeci: yalnız oluşturma + taşımadan sonraki düzenleme okunmuş (taşıma ve silme satırları yok)
         var teams = service().rowTeams(List.of(editInB, create));

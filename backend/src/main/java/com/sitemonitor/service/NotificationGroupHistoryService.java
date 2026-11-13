@@ -202,8 +202,10 @@ public class NotificationGroupHistoryService {
         for (AuditLog r : rows) if (parseLong(r.getResourceId()) != null) ids.add(r.getResourceId().trim());
         Map<Long, List<long[]>> moves = new HashMap<>();   // grup → [denetim kimliği, from, to] (kimliğe göre artan)
         if (!ids.isEmpty()) {
-            for (AuditLog m : auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(
-                    RESOURCE, UPDATE_EVENT, ids, PageRequest.of(0, MOVES_MAX))) {
+            // Yalnız takım değişikliği satırları, en yeni önce (2026-11-13 son inceleme: sırasız tavan rastgele taşıma düşürürdü)
+            for (AuditLog m : auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(
+                    RESOURCE, UPDATE_EVENT, ids, "\"teamId\"", PageRequest.of(0, MOVES_MAX,
+                            org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id")))) {
                 Long gid = parseLong(m.getResourceId());
                 long[] mv = moveOf(m.getChanges());
                 if (gid == null || mv == null || m.getId() == null) continue;

@@ -186,7 +186,7 @@ class AdminActivityFeedServiceTest {
         AuditLog move = row(2, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"teamId\":{\"from\":1,\"to\":2}}");
         AuditLog before = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"role\":{\"from\":\"PO\",\"to\":\"TECH\"}}");
         when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(move, before)));
-        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(Pageable.class)))
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
                 .thenReturn(List.of(move, before));
         var a = service.feed(List.of(acc("contacts", List.of(1L))), null, "", 0, 25);
         assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(2L, 1L);

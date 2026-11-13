@@ -4199,6 +4199,24 @@ class AdminControllerTest {
                 any(), any(), any(), any(), any(), anyBoolean(), any(), any());
     }
 
+    @Test
+    @DisplayName("GET /contacts/all: bağlı kullanıcının etkinliği satıra user_active olarak yazılır (tek dar sorgu); bağsız / silinmiş → yok (2026-11-13)")
+    void listContacts_carriesUserActive() throws Exception {
+        com.sitemonitor.model.EscalationContact passive = new com.sitemonitor.model.EscalationContact();
+        passive.setId(1L); passive.setUserId(9L); passive.setRole("MANAGER"); passive.setTeamId(2L); passive.setActive(true);
+        com.sitemonitor.model.EscalationContact gone = new com.sitemonitor.model.EscalationContact();
+        gone.setId(2L); gone.setUserId(77L); gone.setRole("PO"); gone.setTeamId(2L); gone.setActive(true);
+        com.sitemonitor.model.EscalationContact hook = new com.sitemonitor.model.EscalationContact();
+        hook.setId(3L); hook.setRole("TECH"); hook.setTeamId(2L); hook.setActive(true); hook.setWebhookUrl("https://x.example/h");
+        when(contactRepo.findAll()).thenReturn(List.of(passive, gone, hook));
+        when(userRepo.findActiveFlagsByIds(any())).thenReturn(List.<Object[]>of(new Object[]{9L, false}));
+        mvc.perform(get("/api/admin/contacts/all").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].user_active").value(false))
+                .andExpect(jsonPath("$.data[1].user_active").doesNotExist())
+                .andExpect(jsonPath("$.data[2].user_active").doesNotExist());
+    }
+
     private MockHttpSession authSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);

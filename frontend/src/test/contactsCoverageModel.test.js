@@ -28,6 +28,13 @@ describe('contactsCoverageModel — 2026-11-13 hata taraması (bilinmeyen ≠ et
     expect(contactNotifies({ active: true, user_id: 5 }, new Set(), new Set(['5']))).toBe(true)
     expect(contactNotifies({ active: true, user_id: 5 }, new Set(['5']), new Set(['5']))).toBe(false)
   })
+  it('sunucunun user_active alanı istemci listesinden önce gelir (kapsam dışı kullanıcı artık bilinmiyor değil)', () => {
+    expect(contactNotifies({ active: true, user_id: 9, user_active: false }, new Set(), new Set(['5']))).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: true }, new Set(), new Set(['5']))).toBe(true)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: true }, null)).toBe(true)
+    expect(contactNotifies({ active: false, user_id: 9, user_active: true }, null)).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: null }, new Set(), new Set(['5']))).toBeNull()
+  })
   it('durumu bilinmeyen kişi: kesin kapsam yoksa takım "bilinmiyor" (ne yeşil ne boşluk); "+N?" sayısı', () => {
     const stats = { 1: { monitors: 2 }, 2: { monitors: 1 } }
     const contacts = [
