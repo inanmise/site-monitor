@@ -1,9 +1,149 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T00:07:11Z",
+  "generatedAt": "2026-11-13T03:07:17Z",
   "repo": "inanmise/site-monitor",
-  "count": 822,
+  "count": 823,
   "releases": [
+    {
+      "version": "20.196.0",
+      "tag": "v20.196.0",
+      "releasedAt": "2026-11-13T03:07:08Z",
+      "commit": "523c65cef4ce714dbb0a00288ecb03656e9aeae7",
+      "prevVersion": "20.195.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 8,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "523c65ce",
+          "subject": "denetim satırı sızıntısı ve seçim kutusu dokunma ölçümü"
+        },
+        {
+          "type": "test",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "610b3604",
+          "subject": "Olaylar Excel dışa aktarımı tembel Excel yazıcısı listesinde"
+        },
+        {
+          "type": "fix",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "48e2bc4c",
+          "subject": "kaynak kapıları — meşgul bayrağı finally, histogram istisnası, tembel Excel listesi"
+        },
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "2def7ecb",
+          "subject": "kapsam panosu bilinmeyeni yeşil göstermez, seçim tavanı ve budama"
+        },
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "6c67083a",
+          "subject": "toplu işlemlerde hedefli yazım, etkin alıcı ve damga denetimi, zamana göre grup geçmişi"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "6c811e89",
+          "subject": "toplu kişi / grup işlemleri ve Takımlar kapsam panosu"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "83f945a4",
+          "subject": "eskalasyon kişileri ve bildirim grupları için toplu işlem uçları"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "a4710f0b",
+          "subject": "veritabanı büyümesi — bağımsız inceleme bulguları"
+        },
+        {
+          "type": "feat",
+          "scope": "health",
+          "breaking": false,
+          "sha": "9ae2fd26",
+          "subject": "Sistem Sağlığı → Veritabanı büyümesi bölümü (arayüz)"
+        },
+        {
+          "type": "feat",
+          "scope": "health",
+          "breaking": false,
+          "sha": "980cce01",
+          "subject": "veritabanı büyümesi — günlük boyut geçmişi, tahmin, öneriler, analiz (backend)"
+        },
+        {
+          "type": "fix",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "30f5faf2",
+          "subject": "bağımsız inceleme bulguları — kanıt, klavye, toplu onay, özet, yeni olay"
+        },
+        {
+          "type": "test",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "f2e8830f",
+          "subject": "Olaylar e2e (390 / 768 dokunmatik / 1280) + tablo 1280'de sığar + CLAUDE.md notu"
+        },
+        {
+          "type": "feat",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "833de9ff",
+          "subject": "Olaylar ekranı zenginleştirmesi — kesin özet, bağlam, kanıt, toplu işlem, dışa aktarım"
+        },
+        {
+          "type": "feat",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "67280268",
+          "subject": "Olaylar sunucu süzgeçleri, özet ucu, dışa aktarım ve zengin satır bağlamı"
+        },
+        {
+          "type": "fix",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "2d1cfddd",
+          "subject": "bağımsız inceleme bulguları — saklama sınırı, SLA kesinliği, izin kapıları"
+        },
+        {
+          "type": "feat",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "e2e90a49",
+          "subject": "İstatistikler sayfası zenginleştirmesi — arayüz"
+        },
+        {
+          "type": "feat",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "0cc40313",
+          "subject": "istatistik yönetici özeti belleği, SY∪UG takım satırları, zamanında yenileme ve 90 günlük sağlık serisi uçları"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.195.0",
       "tag": "v20.195.0",

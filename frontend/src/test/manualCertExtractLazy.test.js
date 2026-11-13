@@ -56,7 +56,16 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const RESOURCE_SCAN_EXPORT = 'components/page/resourcescan/resourceScanExport.js'
     // 2026-11-05 (act E): aktivite dışa aktarım menüsü Excel'i yazıcıyı YALNIZ tıklamada import() ile alır
     const ACTIVITY_EXPORT = 'components/activity/ActivityExportMenu.jsx'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT].sort())
+    // 2026-11-13: İstatistikler Excel / PDF dışa aktarımı — StatsView onu YALNIZ tıklamada import() ile alır
+    const STATS_EXPORT = 'components/stats/statsExport.js'
+    // 2026-11-13: Olaylar dışa aktarımı — IncidentsPage Excel yazıcısını YALNIZ tıklamada import() ile alır
+    const INCIDENTS_EXPORT = 'components/IncidentsPage.jsx'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT].sort())
+    const incidents = FILES.find((x) => x.rel === INCIDENTS_EXPORT)
+    expect(staticImports(incidents.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Olaylar Excel yazıcısını statik içe aktarmaz').toEqual([])
+    const stats = FILES.find((x) => x.rel === STATS_EXPORT)
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)statsExport(\.js)?$/.test(s))).map((x) => x.rel), 'İstatistikler dışa aktarımı statik içe aktarılmaz').toEqual([])
+    expect(stats, 'istatistik dışa aktarım modülü bulunur').toBeTruthy()
     const activity = FILES.find((x) => x.rel === ACTIVITY_EXPORT)
     expect(staticImports(activity.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'aktivite menüsü Excel yazıcısını statik içe aktarmaz').toEqual([])
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /resourceScanExport(\.js)?$/.test(s))).map((x) => x.rel),

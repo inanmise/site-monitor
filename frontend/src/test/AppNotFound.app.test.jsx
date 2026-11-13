@@ -104,7 +104,7 @@ describe('App — bilinmeyen sekme paneli', () => {
     await boot('/?tab=stats')
     await waitFor(() => expect(document.title).toBe('Statistics · SiteMonitor'))
     expect(document.head.querySelector('meta[name="description"]')?.getAttribute('content'))
-      .toMatch(/spread across teams/)
+      .toMatch(/team scorecard/)
     expect(panel()).toBeNull()
   })
 })

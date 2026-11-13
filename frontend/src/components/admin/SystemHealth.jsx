@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { Activity, ChevronRight, Database, Globe, HeartPulse, Plug, Radar, Rocket, Server, Users, Zap } from 'lucide-react'
+import { Activity, ChevronRight, Database, Globe, HeartPulse, Plug, Radar, Rocket, Server, TrendingUp, Users, Zap } from 'lucide-react'
 import { api } from '../../api/client'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { useT } from '../../i18n/index.jsx'
@@ -34,6 +34,7 @@ const SmtpLogView = lazy(() => import('./SmtpLogView.jsx'))   // SMTP Gönderim 
 const PushLogView = lazy(() => import('./PushLogView.jsx'))   // Webhook Push Gönderim Logu — tam sayfa alt görünüm (2026-09-19)
 const UserActivityPanel = lazy(() => import('./useractivity/UserActivityPanel.jsx'))   // Kullanıcı / Oturum paneli
 const DbAnalyticsPanel = lazy(() => import('./DbAnalyticsPanel.jsx'))   // Veritabanı Analitiği (2026-09-26 yeniden tasarım)
+const DbGrowthSection = lazy(() => import('./dbgrowth/DbGrowthSection.jsx'))   // Veritabanı büyümesi (2026-11-13) — yalnız bölüm açılınca
 const WeeklyAvailLogsModal = lazy(() => import('./health/WeeklyAvailLogsModal.jsx'))
 const HttpExplorerModal = lazy(() => import('./httpmetrics/HttpExplorerModal.jsx'))   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
@@ -52,13 +53,14 @@ const SECTION_META = {
   sys: { icon: Server, label: 'health.sectionApp' },
   sched: { icon: Zap, label: 'health.sectionSched' },
   db: { icon: Database, label: 'health.dbTitle' },
+  dbgrowth: { icon: TrendingUp, label: 'dbg.section' },
   integrations: { icon: Plug, label: 'health.sectionIntegrations' },
   heartbeat: { icon: HeartPulse, label: 'health.hbTitle' },
   http: { icon: Globe, label: 'http.shortTitle' },
   users: { icon: Users, label: 'uact.section' },
   releases: { icon: Rocket, label: 'deploy.section' },
 }
-const ORDER = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
+const ORDER = ['watchdog', 'sys', 'sched', 'db', 'dbgrowth', 'integrations', 'heartbeat', 'http', 'users', 'releases']
 
 function initialSection() {
   const sec = readUrlParam('sec', '')
@@ -439,7 +441,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
     integrations: kpis ? t('health.kpiIntegrationsSub', kpis.integrations.ok, kpis.integrations.total) : '',
     heartbeat: health?.heartbeat ? (health.heartbeat.minutes_since >= 0 ? t('health.hbMinutes').replace('{n}', health.heartbeat.minutes_since) : t('health.hbAlarm')) : '',
     http: httpMetrics?.summary ? [`${Number(httpMetrics.summary.total_requests ?? 0).toLocaleString()} ${t('http.totalReqs').toLowerCase()}`, `${formatPercent(httpMetrics.summary.error_rate_pct ?? 0)} ${t('http.errorRate').toLowerCase()}`, `${httpMetrics.summary.avg_ms ?? 0} ms`].join(' · ') : '',
-    users: '', releases: '',
+    users: '', releases: '', dbgrowth: '',
     watchdog: watchdog ? (watchdog.enabled === false ? t('wd.status.DISABLED')
       : [t(`wd.status.${watchdog.status}`), (watchdog.checks || []).filter((c) => c.status === 'PROBLEM').length > 0
         && t('wd.problemCount', (watchdog.checks || []).filter((c) => c.status === 'PROBLEM').length)].filter(Boolean).join(' · ')) : '',
@@ -449,7 +451,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
   const section = (key, children) => {
     const m = SECTION_META[key]
     return (
-      <HealthSection key={key} id={key} icon={m.icon} label={sectionLabel(key)} level={key === 'users' || key === 'releases' ? null : levels[key]}
+      <HealthSection key={key} id={key} icon={m.icon} label={sectionLabel(key)} level={key === 'users' || key === 'releases' || key === 'dbgrowth' ? null : levels[key]}
         summary={summaries[key] || undefined} open={openSection === key} onToggle={toggleSection} t={t}
         sectionRef={(el) => { sectionRefs.current[key] = el }}>
         {children}
@@ -471,6 +473,11 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       <LazySection sectionKey="db">
         <DbAnalyticsPanel data={dbData} loading={dbLoading} error={dbError} days={dbDays} onDaysChange={setDbDays} onRefresh={loadDbAnalytics} updatedAt={dbUpdatedAt}
           appPool={health?.pool} />
+      </LazySection>
+    ),
+    dbgrowth: () => (
+      <LazySection sectionKey="dbgrowth">
+        <DbGrowthSection isAdmin={isAdmin} />
       </LazySection>
     ),
     integrations: () => (

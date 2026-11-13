@@ -59,6 +59,17 @@ public class NocCoverageService {
     public Map<String, Object> compute(Long teamFilter, NocType typeFilter, Predicate<NocMonitorDirectory.Row> visible,
                                        Predicate<NocMonitorDirectory.Row> canEdit, Map<Long, String> teamNames,
                                        boolean withItems) {
+        return compute(teamFilter, typeFilter, visible, canEdit, teamNames, withItems, false);
+    }
+
+    /**
+     * {@code byTeam=true} (2026-11-13, Takımlar → kapsam panosu): özete takım başına sayılar eklenir —
+     * {@code summary.by_team = {"<takım>": {total, covered, paused}}} (sahip takım = satırın {@code teamId}'si; takımsız satır
+     * eklenmez). Görüş süzgeci ve kapsam kuralı özetle AYNI; parametre verilmezse yanıt BİREBİR eskisi.
+     */
+    public Map<String, Object> compute(Long teamFilter, NocType typeFilter, Predicate<NocMonitorDirectory.Row> visible,
+                                       Predicate<NocMonitorDirectory.Row> canEdit, Map<Long, String> teamNames,
+                                       boolean withItems, boolean byTeam) {
         NocConfigService.Config cfg = config.get();
         List<NocNotificationGroup> all = groups.list();
         boolean anyGroup = NocGroupService.anyUsable(all);
@@ -78,6 +89,7 @@ public class NocCoverageService {
         for (String r : List.of(PAUSED, MONITOR_OFF, TYPE_DISABLED, NO_ACTIVE_GROUP)) byReason.put(r, 0);
 
         int total = 0, covered = 0, paused = 0;
+        Map<String, Map<String, Integer>> perTeam = new LinkedHashMap<>();
         List<Map<String, Object>> items = new ArrayList<>();
         for (NocMonitorDirectory.Row r : rows) {
             if (!visible.test(r)) continue;
@@ -91,6 +103,16 @@ public class NocCoverageService {
             Map<String, Integer> c = byType.get(r.type().name());
             c.merge("total", 1, Integer::sum);
             if (isCovered) c.merge("covered", 1, Integer::sum);
+            if (byTeam && r.teamId() != null) {
+                Map<String, Integer> tc = perTeam.computeIfAbsent(String.valueOf(r.teamId()), k -> {
+                    Map<String, Integer> z = new LinkedHashMap<>();
+                    z.put("total", 0); z.put("covered", 0); z.put("paused", 0);
+                    return z;
+                });
+                tc.merge("total", 1, Integer::sum);
+                if (isCovered) tc.merge("covered", 1, Integer::sum);
+                if (!r.active()) tc.merge("paused", 1, Integer::sum);
+            }
 
             if (withItems) items.add(item(r, reason, all, anyGroup, canEdit.test(r), teamNames));
         }
@@ -106,6 +128,7 @@ public class NocCoverageService {
         summary.put("active_groups", activeGroups);
         summary.put("disabled_types", cfg.disabledTypeKeys());
         summary.put("min_level", cfg.minLevel());
+        if (byTeam) summary.put("by_team", perTeam);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("summary", summary);

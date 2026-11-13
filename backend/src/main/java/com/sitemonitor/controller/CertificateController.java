@@ -41,6 +41,11 @@ public class CertificateController {
     private final CertificateCheckerService checkerService;
     private final SchedulerService schedulerService;
     private final com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
+    /** Zamanında yenileme oranı + 90 günlük sağlık serisi (2026-11-13) — alan enjeksiyonu: dilimli testler bean'siz kurar. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.report.executive.RenewalTimelinessStatsService renewalTimelinessStats;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.CertHealthDailyService certHealthDailyService;
     private final AlertEventRepository alertEventRepository;
     private final CertificateInventoryRepository inventoryRepo;
     private final NetworkOutageEventRepository networkOutageRepo;
@@ -521,10 +526,73 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.monitoringViewTeamIds(session)), "timestamp", now()));
     }
 
-    /** Yönetici özeti (2026-09-12, #20): KPI + takım karşılaştırması + 30 gün delta. Kapsam viewTeamIds. */
+    /**
+     * Yönetici özeti (2026-09-12, #20): KPI + takım karşılaştırması + 30 gün delta. Kapsam viewTeamIds.
+     *
+     * <p>2026-11-13: bellekli (kapsam × alarm izni; {@code fresh=1} en fazla 5 sn'de bir yeniden hesaplar). Alarm sayıları
+     * yalnız {@code alerts.read/view} iznine — yoksa {@code alerts.visible=false} ve takım satırlarında alarm null (Bugün
+     * paneliyle aynı kural; eskiden izinsiz kullanıcı da alarm sayısını görüyordu).
+     */
     @GetMapping("/stats/executive")
-    public ResponseEntity<Map<String, Object>> getExecutiveStats(HttpSession session) {
-        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId)), "timestamp", now()));
+    public ResponseEntity<Map<String, Object>> getExecutiveStats(@RequestParam(value = "fresh", required = false) String fresh,
+                                                                 HttpSession session) {
+        // Bellek anahtarı = izleme görüş kapsamı (yüklem yalnız kapsama bağlı: canViewMonitoring ⇔ monitoringViewTeamIds)
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        String key = com.sitemonitor.util.TtlMemo.scopeKey(scope == null, scope);
+        boolean alerts = permissionService.allows(session, "alerts.read", "view");
+        // En kötü SLA satırının izleme adı / kimliği yalnız izleme okuma izniyle (inceleme 2026-11-13)
+        boolean monitors = permissionService.allows(session, "monitoring.read", "view");
+        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId),
+                alerts, monitors, key, isFreshParam(fresh)), "timestamp", now()));
+    }
+
+    /** {@code fresh=1|true} — sayfanın Yenile düğmesi. */
+    static boolean isFreshParam(String v) {
+        return v != null && ("1".equals(v.trim()) || "true".equalsIgnoreCase(v.trim()));
+    }
+
+    /**
+     * Zamanında yenileme oranı (2026-11-13, İstatistikler #11): son 3 / 6 / 12 ayda süresi DOLMADAN yapılan yenilemeler ÷
+     * (yenilemeler + yenilenmeden dolanlar) — aylık yönetici özetinin kuralı ({@code RenewalTimelinessSection}). Kapsam:
+     * SY ya da UG takımı görülebilen aktif envanter.
+     */
+    @GetMapping("/stats/renewal-timeliness")
+    public ResponseEntity<Map<String, Object>> getRenewalTimeliness(HttpSession session) {
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        String key = com.sitemonitor.util.TtlMemo.scopeKey(scope == null, scope);
+        if (renewalTimelinessStats == null) return ResponseEntity.status(503).body(Map.of("success", false, "code", "DB_UNAVAILABLE",
+                "error", com.sitemonitor.util.Msg.t("Yenileme istatistiği şu an hesaplanamıyor.", "Renewal statistics are not available right now.")));
+        return ok(Map.of("success", true, "data",
+                renewalTimelinessStats.build(teamId -> SessionScope.canViewMonitoring(session, teamId), key), "timestamp", now()));
+    }
+
+    /**
+     * Sertifika sağlığının 90 günlük günlük serisi (2026-11-13, İstatistikler #12). Kurum serisi yalnız tüm izlemeyi gören
+     * kullanıcıya; kapsamlı kullanıcı görebildiği TEK takımın serisini seçer ({@code team}; boşsa ilk görünür takım).
+     * Görülemeyen takım → 403.
+     */
+    @GetMapping("/stats/health-series")
+    public ResponseEntity<Map<String, Object>> getHealthSeries(@RequestParam(defaultValue = "90") int days,
+                                                               @RequestParam(required = false) String team,
+                                                               HttpSession session) {
+        boolean global = SessionScope.seesAllMonitoring(session);
+        Long teamId = null;
+        if (team != null && !team.isBlank() && !"org".equals(team.trim())) {
+            try { teamId = Long.valueOf(team.trim()); }
+            catch (NumberFormatException e) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("team",
+                        com.sitemonitor.util.Msg.t("Geçersiz takım.", "Invalid team."));
+            }
+            final Long tid = teamId;
+            if (!SessionScope.canViewMonitoring(session, tid)) {
+                return ResponseEntity.status(org.springframework.http.HttpStatus.FORBIDDEN).body(Map.of("success", false,
+                        "message", com.sitemonitor.util.Msg.t("Bu takımı görüntüleme yetkiniz yok.", "You are not allowed to view this team.")));
+            }
+        }
+        if (certHealthDailyService == null) return ResponseEntity.status(503).body(Map.of("success", false, "code", "DB_UNAVAILABLE",
+                "error", com.sitemonitor.util.Msg.t("Sağlık serisi şu an okunamıyor.", "The health series is not available right now.")));
+        return ok(Map.of("success", true, "data",
+                certHealthDailyService.series(days, teamId, global, tid -> SessionScope.canViewMonitoring(session, tid)), "timestamp", now()));
     }
 
     /** "Son 7 günde ne değişti" (2026-09-12, #7). */
@@ -536,9 +604,19 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canViewMonitoring(session, teamId), key), "timestamp", now()));
     }
 
+    /**
+     * Takım kırılımı (İstatistik sekmesinin TEK tüketicisi). {@code view=domains} (2026-11-13, performans): istemci yalnız
+     * takımların alan adı listelerini okuyor — takım başına dört istatistik nesnesi kurulmadan yalnız
+     * {@code {team_id, team_name, sy_domains, ug_domains}} döner ({@code mode=domains}). Parametresiz çağrı eski biçimi
+     * verir (dağıtım sırasında eski sürüm arayüzü bozulmasın).
+     */
     @GetMapping("/stats/teams")
-    public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> getTeamStats(@RequestParam(value = "view", required = false) String view,
+                                                            HttpSession session) {
         List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        if ("domains".equals(view)) {
+            return ok(Map.of("success", true, "data", certService.getTeamDomainLists(scope), "timestamp", now()));
+        }
         if (scope == null) {  // global admin / AUDIT / 7/24 operatörü → all teams
             return ok(Map.of("success", true, "data", certService.getAllTeamsBreakdownStats(), "timestamp", now()));
         }

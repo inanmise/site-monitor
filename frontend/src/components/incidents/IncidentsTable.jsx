@@ -7,11 +7,12 @@ import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
+import { Checkbox } from '@/components/shadcn/checkbox'
 import { cn } from '@/lib/utils'
 import IncidentCard from './IncidentCard.jsx'
 import LiveDuration from './LiveDuration.jsx'
-import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
-import { isOpen, isAcked, incidentHref, rowName, isForeign, canActOn, canDeleteIncident } from './incidentsModel.js'
+import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon, RecurrenceBadge, NewBadge } from './IncidentBadges.jsx'
+import { isOpen, isAcked, incidentHref, rowName, isForeign, canActOn, canDeleteIncident, isSelectable } from './incidentsModel.js'
 
 const TH = 'h-9 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase'
 /** Sütun → sunucu sıralama anahtarı (IncidentsController.sortFor). */
@@ -32,9 +33,14 @@ export function TableSkeleton({ phone = false }) {
  * (adı satırı ayırır). Sıralama başlıkta `aria-sort` ile duyurulur. Seçili satır TÜM zeminle vurgulanır.
  * Başka ekibin olayı (`can_manage:false`) salt okunur: olay hücresinde kilit rozeti, menüde yalnız "Detayı aç" kalır —
  * onayla/çöz/sil ve (takım kapsamlı) izleme bağlantısı YOK.
+ *
+ * <p>2026-11-13: ad / ileti KESİLMEZ; tekrarlayan imza ve "Yeni" rozeti; `selection` verilirse (masaüstü liste) ilk
+ * sütunda yalnız işlem yapılabilen açık satırlar için onay kutusu (toplu onayla / çöz). Telefonda toplu seçim yok —
+ * kartlarda hızlı Onayla / Çöz düğmeleri var.
  */
 export default function IncidentsTable({
   rows, sort, onSort, onOpen, selectedId, phone = false, isAdmin = false, onAck, onResolve, onDelete,
+  newIds = null, selection = null,
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
@@ -44,7 +50,8 @@ export default function IncidentsTable({
       <ul data-slot="incident-list" className="m-0 flex list-none flex-col gap-2 p-0">
         {rows.map((inc) => (
           <li key={inc.id} className="min-w-0">
-            <IncidentCard inc={inc} showStatus onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
+            <IncidentCard inc={inc} showStatus onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)}
+              isNew={Boolean(newIds?.has(String(inc.id)))} quickActions onAck={onAck} onResolve={onResolve} />
           </li>
         ))}
       </ul>
@@ -58,7 +65,7 @@ export default function IncidentsTable({
   const sortHead = (col, labelKey, className) => (
     <TableHead className={cn(TH, className)} aria-sort={ariaSort(col)}>
       <Button type="button" variant="ghost" size="xs" onClick={() => onSort(SORT_KEY[col])}
-        className="-ml-1.5 h-auto gap-1 px-1.5 py-0.5 text-[1em] font-semibold tracking-wide uppercase hover:text-primary">
+        className="relative -ml-1.5 h-auto gap-1 px-1.5 py-0.5 text-[1em] font-semibold tracking-wide uppercase hover:text-primary pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:content-['']">
         {t(labelKey)}{sortIcon(col)}
       </Button>
     </TableHead>
@@ -86,19 +93,30 @@ export default function IncidentsTable({
     ]
   }
 
+  const selectable = selection ? rows.filter(isSelectable) : []
+  const allOn = selectable.length > 0 && selectable.every((r) => selection.ids.has(String(r.id)))
+  const someOn = selectable.some((r) => selection?.ids.has(String(r.id)))
+
   return (
     <div data-slot="incident-list" className="overflow-hidden rounded-lg border bg-card">
       <Table className="text-[0.88em]">
         <TableHeader className="bg-muted/50">
           <TableRow className="hover:bg-transparent">
-            {sortHead('severity', 'incov.severity', 'w-[7.5rem]')}
+            {selection && (
+              <TableHead className={cn(TH, 'w-10 pr-0')}>
+                <Checkbox data-slot="incidents-select-all" className="pointer-coarse:after:-inset-3.5" aria-label={t('incov.bulk.selectAll')} disabled={selectable.length === 0}
+                  checked={allOn ? true : someOn ? 'indeterminate' : false}
+                  onCheckedChange={(on) => selection.setMany(selectable.map((r) => String(r.id)), on === true)} />
+              </TableHead>
+            )}
+            {sortHead('severity', 'incov.severity', 'w-[7rem]')}
             {/* Olay sütunu: otomatik tablo yerleşimi nowrap komşular yüzünden bunu 12 karaktere sıkıştırıyordu → alt sınır */}
-            <TableHead className={cn(TH, 'min-w-[20rem]')}>{t('incov.colIncident')}</TableHead>
-            {sortHead('status', 'incov.colStatus', 'w-[8.5rem]')}
-            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('incov.colTeam')}</TableHead>
-            {sortHead('started', 'incov.colStarted', 'whitespace-nowrap')}
+            <TableHead className={cn(TH, 'min-w-[14rem]')}>{t('incov.colIncident')}</TableHead>
+            {sortHead('status', 'incov.colStatus', 'w-[7.5rem]')}
+            <TableHead className={cn(TH, 'hidden min-w-[9rem] lg:table-cell')}>{t('incov.colTeam')}</TableHead>
+            {sortHead('started', 'incov.colStarted', 'min-w-[7rem]')}
             <TableHead className={cn(TH, 'whitespace-nowrap')}>{t('incov.colDuration')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-16 text-center xl:table-cell')}><span className="sr-only">{t('incov.colComments')}</span><MessageSquare aria-hidden="true" className="inline size-3.5" /></TableHead>
+            <TableHead className={cn(TH, 'hidden w-16 text-center 2xl:table-cell')}><span className="sr-only">{t('incov.colComments')}</span><MessageSquare aria-hidden="true" className="inline size-3.5" /></TableHead>
             <TableHead className={cn(TH, 'w-12')}><span className="sr-only">{t('incov.colActions')}</span></TableHead>
           </TableRow>
         </TableHeader>
@@ -107,25 +125,38 @@ export default function IncidentsTable({
             const selected = String(selectedId) === String(inc.id)
             const name = inc.monitor?.name || inc.domain || '—'
             const open = isOpen(inc)
+            const fresh = Boolean(newIds?.has(String(inc.id)))
             return (
               <TableRow key={inc.id} data-status={inc.status} data-incident-id={inc.id} data-state={selected ? 'selected' : undefined}
-                data-foreign={isForeign(inc) || undefined}
+                data-foreign={isForeign(inc) || undefined} data-new={fresh || undefined}
                 tabIndex={0} title={t('incov.openDetail')}
                 className={cn('cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
-                  open && !selected && 'bg-destructive/[0.04]',
+                  open && !selected && !fresh && 'bg-destructive/[0.04]',
+                  fresh && !selected && 'bg-primary/[0.07]',
                   selected && 'bg-primary/10 outline outline-2 -outline-offset-2 outline-primary/60 hover:bg-primary/15')}
                 onClick={() => onOpen(inc)}
                 onKeyDown={(e) => onRowKey(e, inc)}>
+                {selection && (
+                  <TableCell className="w-10 pr-0" onClick={(e) => e.stopPropagation()}>
+                    {isSelectable(inc) && (
+                      <Checkbox data-slot="incidents-select-row" className="pointer-coarse:after:-inset-3.5" aria-label={t('incov.bulk.selectRow', rowName(inc, dateLocale))}
+                        checked={selection.ids.has(String(inc.id))}
+                        onCheckedChange={(on) => selection.setMany([String(inc.id)], on === true)} />
+                    )}
+                  </TableCell>
+                )}
                 <TableCell><SeverityBadge level={inc.alert_level} /></TableCell>
-                <TableCell className="min-w-[20rem] max-w-[32rem] whitespace-normal">
+                <TableCell className="min-w-[14rem] max-w-[32rem] whitespace-normal">
                   <div className="flex min-w-0 items-start gap-2">
                     <MonitorTypeIcon type={inc.monitor?.type} />
                     <div className="min-w-0">
-                      <div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]" title={name}>{name}</div>
+                      <div className="font-semibold [overflow-wrap:anywhere]">{name}</div>
                       <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <RootCauseChip rc={inc.root_cause} />
                         {isForeign(inc) && <ReadOnlyBadge compact />}
-                        {inc.message && <span className="line-clamp-1 [overflow-wrap:anywhere]" title={inc.message}>{inc.message}</span>}
+                        {fresh && <NewBadge />}
+                        <RecurrenceBadge count={inc.recurrence_7d} />
+                        {inc.message && <span className="min-w-0 [overflow-wrap:anywhere]">{inc.message}</span>}
                       </div>
                     </div>
                   </div>
@@ -138,22 +169,24 @@ export default function IncidentsTable({
                 </TableCell>
                 {/* Takım rozeti kendi tıklamasını durdurur (üye penceresi); hücrenin BOŞ alanı satır gibi detayı açar —
                     eski hücre-düzeyi stopPropagation satırın ortasına tıklayanı sessizce yutuyordu (1440 ölçümü) */}
-                <TableCell className="hidden lg:table-cell">
+                <TableCell data-slot="incident-team-cell" className="hidden min-w-[9rem] max-w-[14rem] whitespace-normal lg:table-cell">
                   {(inc.team_name || inc.team_id != null)
-                    ? <TeamBadge teamId={inc.team_id} teamName={inc.team_name} />
+                    ? <TeamBadge wrap teamId={inc.team_id} teamName={inc.team_name} />
                     : <span className="text-muted-foreground">—</span>}
                 </TableCell>
-                <TableCell className="text-[0.92em] whitespace-nowrap text-muted-foreground" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</TableCell>
-                <TableCell className="text-[0.95em] whitespace-nowrap">
+                {/* Başlangıç sarar (2026-11-13): seçim sütunuyla 1280 + açık kenar çubuğunda tablo kabı taşıyordu */}
+                <TableCell className="min-w-[7rem] text-[0.92em] whitespace-normal text-muted-foreground" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</TableCell>
+                <TableCell className="min-w-[6.5rem] text-[0.95em] whitespace-normal">
                   {/* Süre kendi saatiyle tazelenir (yaprak) — tablo saniyede bir yeniden çizilmez (2026-10-09) */}
-                  <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open} />
+                  <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open} className="whitespace-nowrap" />
+                  {/* Çözülme anı sarar (2026-11-13): tek satırda tabloyu 1280'de taşırıyordu */}
                   {!open && inc.resolved_at && (
-                    <span className="block text-[0.82em] whitespace-nowrap text-muted-foreground" title={inc.resolved_at}>
+                    <span className="block text-[0.82em] text-muted-foreground" title={inc.resolved_at}>
                       {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at, dateLocale)}
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="hidden text-center text-muted-foreground tabular-nums xl:table-cell">
+                <TableCell className="hidden text-center text-muted-foreground tabular-nums 2xl:table-cell">
                   {inc.comment_count ?? 0}
                   <span className="sr-only"> {(inc.comment_count ?? 0) === 1 ? t('incov.commentOne') : t('incov.comments', inc.comment_count ?? 0)}</span>
                 </TableCell>

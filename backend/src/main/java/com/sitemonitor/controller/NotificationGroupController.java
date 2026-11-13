@@ -73,6 +73,17 @@ public class NotificationGroupController {
     }
 
     /**
+     * Açık alarm damgası sayımı (2026-11-13, toplu taşıma + kullanım sayıları) — isteğe bağlı: dilim testleri ve elle
+     * kurulan bağlamlar bean'siz çalışır (alan {@code null} = damga bilgisi yok).
+     */
+    private com.sitemonitor.repository.AlertEventRepository alertRepo;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAlertRepo(com.sitemonitor.repository.AlertEventRepository repo) {
+        this.alertRepo = repo;
+    }
+
+    /**
      * Grubun pasif-yalnız adresleri — gönderim süzgeci ({@code InactiveRecipientGuard}) bunları düşürür. {@code null}:
      * bilinmiyor (bean yok ya da pasif listesi hiç okunamadı); arayüz o zaman "pasif adres yok" demez.
      */
@@ -304,7 +315,18 @@ public class NotificationGroupController {
         permissionService.require(session, PERM, "view");
         Map<String, Object> counts = new java.util.LinkedHashMap<>();
         usageService.usageCounts().forEach((id, n) -> counts.put(String.valueOf(id), n));
-        return ok(Map.of("counts", counts));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("counts", counts);
+        // Açık alarma damgalı grup sayıları (toplu taşıma önizlemesi "atlanacak" diyebilsin). Okunamazsa ya da sayım
+        // bean'i yoksa null — "damga yok" DEĞİL (arayüz o zaman "sunucu denetleyecek" der).
+        Map<Long, Integer> st = alertRepo == null ? null : stampedOpenAlerts();
+        Map<String, Object> sm = null;
+        if (st != null) {
+            sm = new LinkedHashMap<>();
+            for (Map.Entry<Long, Integer> e : st.entrySet()) sm.put(String.valueOf(e.getKey()), e.getValue());
+        }
+        data.put("stamped_open_alerts", sm);
+        return ok(data);
     }
 
     /**
@@ -344,6 +366,202 @@ public class NotificationGroupController {
         out.put("moved", total);
         out.put("by_type", moved);
         return ok(out);
+    }
+
+    // ── Toplu işlem (2026-11-13) ─────────────────────────────────────────────
+
+    /** Toplu eylemler. Tavan {@link ContactBulkController#MAX_ITEMS} ({@code parseIds} uygular). */
+    static final Set<String> BULK_ACTIONS = Set.of("delete", "set_team", "make_default");
+
+    /**
+     * Seçili gruplarda toplu işlem (2026-11-13, yönetim zenginleştirmesi (d)): {@code delete} (yalnız KULLANILMAYAN ve
+     * varsayılan OLMAYAN gruplar kalıcı silinir), {@code set_team} (kullanılmayan, varsayılan olmayan grup başka takıma
+     * taşınır), {@code make_default} (her grup kendi takımının varsayılanı — Takımlar → toplu düzeltme de bunu çağırır).
+     *
+     * <p><b>Neden etkinleştir / pasifleştir YOK:</b> {@code active=false} eski YUMUŞAK SİLMENİN izidir (silme 2026'dan beri
+     * kalıcı); "grubu kapat" anlamı taşımaz ve çözümleme onu yok sayar — toplu "etkinleştir" silinmiş grubu geri getirirdi.
+     *
+     * <p><b>Neden kullanılan grup taşınmaz:</b> izlemeye damgalı grup YALNIZ kendi takımında uygulanır
+     * ({@code NotificationGroupService.overrideFor} sahiplik denetimi) — taşınan grup o izlemeler için sessizce düşer ve
+     * alarm takım adresine (o da yoksa kimseye) gider. Varsayılan grup taşınmaz / silinmez: kaynak takım varsayılansız
+     * kalırdı (izlemelerin tümü takım adresine düşer), hedefte ikinci varsayılan doğardı.
+     *
+     * <p>Kapsam satır satır, tekil uçlarla aynı: görülmeyen grup {@code not_found} (varlığı sızmaz), görülüp yazılamayan
+     * {@code out_of_scope}. Taşıma hedefi her satır için aynıdır → hedefe yazılamıyorsa istek tümden 403. Her işlenen satır
+     * tekil uçla AYNI denetim olayını yazar (grup geçmişi kimliğe göre takımı çözer; "bulk" kimlikli özet satırı orada
+     * çözülemeyip gizli sayılırdı — bu yüzden özet satırı YOK).
+     */
+    @PostMapping("/bulk")
+    public ResponseEntity<Map<String, Object>> bulk(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, PERM, "edit");
+        String action = body.get("action") == null ? "" : body.get("action").toString().trim().toLowerCase(Locale.ROOT);
+        if (!BULK_ACTIONS.contains(action)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("action", com.sitemonitor.util.Msg.t(
+                    "Geçersiz toplu işlem. Sil, takıma taşı ya da varsayılan yap seçin.",
+                    "Invalid bulk action. Choose delete, move to team or make default."));
+        }
+        List<Long> ids = ContactBulkController.parseIds(body.get("ids"), "ids");
+
+        Long target = null;
+        if ("set_team".equals(action)) {
+            target = toLong(body.get("team_id"));
+            if (target == null) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("team_id",
+                    com.sitemonitor.util.Msg.t("Grupların taşınacağı takımı seçin.", "Choose the team to move the groups to."));
+            if (!teamRepo.existsById(target)) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("team_id",
+                    com.sitemonitor.util.Msg.t("Seçilen takım bulunamadı — geçerli bir takım seçin.",
+                            "The selected team doesn't exist — choose a valid team."));
+            if (!canWriteTeam(session, target)) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Grupları yalnız grup yazabildiğiniz bir takıma taşıyabilirsiniz.",
+                        "You can only move groups to a team whose groups you can edit."));
+            }
+        }
+
+        Map<Long, String> teamNames = new HashMap<>();
+        teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName()));
+        // Kullanım ve damgalı açık alarm sayıları TEK SEFER toplu okunur (türe göre 11 + 1 gruplu sorgu); satır başına
+        // kullanım sorgusu YOK (200 satırda ~2200 sorgu olurdu). Kalan yarış (döngü süresince bir izlemeye atanan grup)
+        // tekil silmedeki "denetim → sil" aralığıyla aynı sınıftadır.
+        Map<Long, Integer> counts = "make_default".equals(action) ? Map.of() : usageService.usageCounts();
+        Map<Long, Integer> stamped = "set_team".equals(action) ? stampedOpenAlerts() : Map.of();
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        Set<Long> defaultTeams = new HashSet<>();
+        int done = 0, skipped = 0, failed = 0;
+        for (Long id : ids) {
+            // Her satır YAZMADAN HEMEN ÖNCE yeniden okunur (kapsam ve kurallar taze satıra göre); yazım hedefli UPDATE'tir.
+            NotificationGroup g = groupRepo.findById(id).orElse(null);
+            if (g == null || !SessionScope.canView(session, g.getTeamId())) {
+                results.add(bulkRow(id, null, null, null, "skipped", "not_found")); skipped++; continue;
+            }
+            String teamName = teamNames.get(g.getTeamId());
+            if (!canWriteTeam(session, g.getTeamId())) {
+                results.add(bulkRow(id, g.getName(), g.getTeamId(), teamName, "skipped", "out_of_scope")); skipped++; continue;
+            }
+            Long teamBefore = g.getTeamId();
+            try {
+                String reason = switch (action) {
+                    case "delete" -> bulkDelete(g, counts, session);
+                    case "set_team" -> bulkMove(g, target, counts, stamped, session);
+                    default -> bulkMakeDefault(g, defaultTeams, session);
+                };
+                Long teamNow = "done".equals(reason) && "set_team".equals(action) ? target : teamBefore;
+                Map<String, Object> r = bulkRow(id, g.getName(), teamNow, teamNames.get(teamNow),
+                        "done".equals(reason) ? "done" : "skipped", reason);
+                if ("in_use".equals(reason)) r.put("usage", counts.getOrDefault(id, 0));
+                if ("stamped_open_alerts".equals(reason)) r.put("open_alerts", stamped.getOrDefault(id, 0));
+                results.add(r);
+                if ("done".equals(reason)) done++; else skipped++;
+            } catch (RuntimeException e) {
+                log.warn("Toplu bildirim grubu işlemi ({}) başarısız id={}: {}", action, id, e.toString());
+                Map<String, Object> r = bulkRow(id, g.getName(), teamBefore, teamName, "failed", "error");
+                r.put("message", com.sitemonitor.util.ErrorTexts.safeMessage(e, "Grup işlenemedi.", "The group couldn't be processed."));
+                results.add(r);
+                failed++;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("action", action);
+        out.put("done", done);
+        out.put("skipped", skipped);
+        out.put("failed", failed);
+        out.put("results", results);
+        return ok(out);
+    }
+
+    /** Kullanılmayan, varsayılan olmayan grubu kalıcı siler (tekil silmeyle aynı denetim satırı). {@code g} taze okunmuştur. */
+    private String bulkDelete(NotificationGroup g, Map<Long, Integer> counts, HttpSession session) {
+        if (Boolean.TRUE.equals(g.getIsDefault()) && Boolean.TRUE.equals(g.getActive())) return "is_default";
+        if (counts.getOrDefault(g.getId(), 0) > 0) return "in_use";
+        String snapshot = AuditDiff.snapshotJson(AuditDiff.snapshot(g, FIELDS));
+        String name = g.getName();
+        groupService.deletePermanently(g);
+        auditService.recordAction("NOTIFICATION_GROUP_DELETE", session, "NOTIFICATION_GROUP",
+                String.valueOf(g.getId()), name, snapshot);
+        return "done";
+    }
+
+    /**
+     * Kullanılmayan, varsayılan olmayan AKTİF grubu hedef takıma taşır (ad hedefte boş olmalı). Açık alarma DAMGALI grup
+     * taşınmaz ({@code stamped_open_alerts}): damga yalnız alarmın takımında uygulanır, taşımadan sonra o alarmların
+     * yeniden uyarı / çözüm postası sessizce varsayılana ya da takım adresine düşerdi; damga sayısı okunamazsa
+     * {@code stamp_unknown} (bilinmeyen = işlem yok). Yazım yalnız takım kolonunu (+ son düzenleyen) okunan takıma koşullu
+     * günceller — 0 satır = grup bu arada değişti.
+     */
+    private String bulkMove(NotificationGroup g, Long target, Map<Long, Integer> counts, Map<Long, Integer> stamped,
+                            HttpSession session) {
+        if (target.equals(g.getTeamId())) return "unchanged";
+        if (!Boolean.TRUE.equals(g.getActive())) return "inactive";
+        if (Boolean.TRUE.equals(g.getIsDefault())) return "is_default";
+        if (counts.getOrDefault(g.getId(), 0) > 0) return "in_use";
+        if (stamped == null) return "stamp_unknown";
+        if (stamped.getOrDefault(g.getId(), 0) > 0) return "stamped_open_alerts";
+        if (groupRepo.existsByTeamAndName(target, g.getName(), g.getId())) return "name_taken";
+        Map<String, Object> before = AuditDiff.snapshot(g, FIELDS);
+        String at = ISO.format(Instant.now());
+        if (groupRepo.bulkMoveTeam(g.getId(), g.getTeamId(), target, at, actor(session), actorName(session)) == 0) {
+            return "changed_meanwhile";
+        }
+        Map<String, Object> after = new LinkedHashMap<>(before);
+        after.put("teamId", target);
+        auditService.recordAction("NOTIFICATION_GROUP_UPDATE", session, "NOTIFICATION_GROUP",
+                String.valueOf(g.getId()), g.getName(), AuditDiff.diff(before, after));
+        return "done";
+    }
+
+    /**
+     * Grubu kendi takımının varsayılanı yapar (aynı takımdan ikinci grup aynı istekte atlanır). Etkin alıcısı olmayan grup
+     * varsayılan yapılmaz: gönderilebilir adresi yoksa {@code no_emails}, adreslerin TAMAMI pasif hesaplara aitse
+     * {@code no_active_emails} (gönderim süzgeci hepsini düşürür — grup "uygulanır" ama posta kimseye gitmez), pasif
+     * listesi okunamıyorsa {@code active_unknown} (bilinmeyen = işlem yok). Yazım yalnız bayrakları günceller.
+     */
+    private String bulkMakeDefault(NotificationGroup g, Set<Long> defaultTeams, HttpSession session) {
+        if (!Boolean.TRUE.equals(g.getActive())) return "inactive";
+        if (defaultTeams.contains(g.getTeamId())) return "duplicate_team";
+        if (Boolean.TRUE.equals(g.getIsDefault())) { defaultTeams.add(g.getTeamId()); return "unchanged"; }
+        List<String> deliverable = NotificationGroupService.deliverableEmails(g.getEmails());
+        if (deliverable.isEmpty()) return "no_emails";
+        List<String> passive = inactiveEmails(deliverable);
+        if (passive == null) return "active_unknown";
+        if (passive.size() >= deliverable.size()) return "no_active_emails";
+        Map<String, Object> before = AuditDiff.snapshot(g, FIELDS);
+        if (!groupService.makeDefaultTargeted(g.getId(), g.getTeamId())) return "changed_meanwhile";
+        defaultTeams.add(g.getTeamId());
+        Map<String, Object> after = new LinkedHashMap<>(before);
+        after.put("isDefault", Boolean.TRUE);
+        auditService.recordAction("NOTIFICATION_GROUP_DEFAULT", session, "NOTIFICATION_GROUP",
+                String.valueOf(g.getId()), g.getName(), AuditDiff.diff(before, after));
+        return "done";
+    }
+
+    /**
+     * Açık alarm damgası sayıları (grup id → adet). {@code null} = okunamadı (taşıma "bilinmiyor" ile atlanır); depo
+     * bean'i yoksa (dilim testleri) boş harita = damga bilgisi yok.
+     */
+    private Map<Long, Integer> stampedOpenAlerts() {
+        com.sitemonitor.repository.AlertEventRepository repo = alertRepo;
+        if (repo == null) return Map.of();
+        try {
+            Map<Long, Integer> out = new HashMap<>();
+            for (Object[] r : repo.countOpenByNotificationGroup()) {
+                if (r[0] instanceof Number gid && r[1] instanceof Number n) out.put(gid.longValue(), n.intValue());
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Damgalı açık alarm sayıları okunamadı: {}", e.toString());
+            return null;
+        }
+    }
+
+    private static Map<String, Object> bulkRow(Long id, String name, Long teamId, String teamName, String status, String reason) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("name", name);
+        m.put("team_id", teamId);
+        m.put("team_name", teamName);
+        m.put("status", status);
+        m.put("reason", reason);
+        return m;
     }
 
     private static Map<String, Object> usageMap(NotificationGroupUsageService.Usage u) {

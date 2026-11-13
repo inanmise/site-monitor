@@ -12,6 +12,7 @@
  */
 import { levelOf } from '../certtable/certTableModel.js'
 import { toCsv } from '../../utils/csvExport.js'
+import { TLS_GRADES } from '../tlsgrade/tlsGradeCodes.js'
 
 /** Seviyeler — matris sütun sırası (iyi → kötü, hata en sonda). */
 export const LEVELS = ['valid', 'warning', 'high', 'critical', 'expired', 'error']
@@ -40,7 +41,11 @@ export const UPCOMING_N = 6
 export const URL_KEYS = Object.freeze({
   kpi: 'st_k', q: 'st_q', issuers: 'st_iss', team: 'st_team', tier: 'st_tier', level: 'st_lvl',
   sort: 'st_sort', matrix: 'st_mx', allTiers: 'st_mxall',
+  // 2026-11-13 zenginleştirme: güvenlik duruşu süzgeci (`g:<not>` | bayrak) ve 12 haftalık bitiş çubuğu (0–11)
+  sec: 'st_sec', week: 'st_wk',
 })
+/** Takımsız / pasif takımlı sertifikaların matris satırı + takım süzgeci değeri (2026-11-13). */
+export const NO_TEAM = 'none'
 export const PAGE_URL = Object.freeze({ pageKey: 'st_page', sizeKey: 'st_ps' })
 /** Çoklu değer ayırıcısı — sağlayıcı adları virgül içerebilir. */
 const LIST_SEP = '|'
@@ -83,6 +88,94 @@ export function issuerOf(c) { return c?.issuer_cn || c?.issuer || '' }
 
 /** Tier anahtarı: 1–4, sınıflandırılmamış 0. */
 export function tierOf(c) { return c?.tier == null ? 0 : Number(c.tier) }
+
+// ── Güvenlik duruşu (2026-11-13) ─────────────────────────────────────────────────────────────────
+
+/** Güvenlik bayrakları — sertifika satırındaki alanlardan (sunucunun hükmü; ikinci kural YOK). */
+export const SEC_FLAGS = ['chain', 'untrusted', 'revoked', 'mismatch', 'weakkey']
+/** Not süzgeç değerleri: `g:A+` … `g:F`, `g:none` (notsuz — bilinmiyor, asla "iyi" sayılmaz). */
+export const GRADE_KEYS = [...TLS_GRADES, 'none']
+
+/**
+ * Anahtar boyu hükmü — sunucunun `CertificateHealthRules.keySizeStatus` aynası (gate: statsInsights.test.js Java listesini
+ * okur): boy bilinmiyor → UNKNOWN; EC (ad "EC" ile başlar) &lt; 256 → FAIL; EdDSA / kuantum-sonrası aileler ölçülmez;
+ * RSA / DSA &lt; 2048 → FAIL.
+ */
+export const NON_SIZED_KEY_TOKENS = ['EDDSA', 'ED25519', 'ED448', 'ML-DSA', 'MLDSA', 'SLH-DSA', 'SLHDSA', 'FN-DSA', 'FNDSA']
+export function keySizeStatus(alg, size) {
+  const n = Number(size)
+  if (size == null || !Number.isFinite(n) || n <= 0) return 'UNKNOWN'
+  const up = String(alg || '').toUpperCase()
+  if (!up) return 'UNKNOWN'
+  if (up.startsWith('EC')) return n < 256 ? 'FAIL' : 'OK'
+  if (NON_SIZED_KEY_TOKENS.some((t) => up.includes(t))) return 'UNKNOWN'
+  if (up.includes('RSA') || up.includes('DSA')) return n < 2048 ? 'FAIL' : 'OK'
+  return 'UNKNOWN'
+}
+
+/** Satırın güvenlik bayrakları (`SEC_FLAGS` sırası). */
+export function secFlagsOf(c) {
+  const up = (v) => String(v || '').trim().toUpperCase()
+  const chain = up(c?.chain_status)
+  const out = []
+  if (chain && chain !== 'VALID' && chain !== 'UNKNOWN') out.push('chain')
+  if (up(c?.trust_status) === 'UNTRUSTED') out.push('untrusted')
+  if (up(c?.revocation_status) === 'REVOKED') out.push('revoked')
+  if (up(c?.deployment_status) === 'INCOMPLETE') out.push('mismatch')
+  if (keySizeStatus(c?.public_key_algorithm, c?.public_key_size) === 'FAIL') out.push('weakkey')
+  return out
+}
+
+/** TLS notu (A+ … F) ya da `none` (notsuz / bilinmiyor). */
+export function gradeOf(c) {
+  return TLS_GRADES.includes(c?.tls_grade) ? c.tls_grade : 'none'
+}
+
+/** Güvenlik süzgeci: `g:<not>` ya da bayrak. Bilinmeyen değer → süzmez. */
+export function matchesSec(c, v) {
+  if (!v) return true
+  if (v.startsWith('g:')) return gradeOf(c) === v.slice(2)
+  return SEC_FLAGS.includes(v) ? secFlagsOf(c).includes(v) : true
+}
+
+export function isSecKey(v) {
+  return typeof v === 'string' && (SEC_FLAGS.includes(v) || (v.startsWith('g:') && GRADE_KEYS.includes(v.slice(2))))
+}
+
+// ── 12 haftalık bitiş çubuğu (2026-11-13) ───────────────────────────────────────────────────────
+
+export const WEEKS = 12
+const DAY_MS = 86_400_000
+const IST_OFFSET_MS = 3 * 3_600_000   // Europe/Istanbul UTC+3, yaz saati yok
+
+/** UTC ISO (bölgesiz = UTC) → İstanbul takvim günü `YYYY-MM-DD`; çözülemezse null. */
+export function istanbulDay(iso) {
+  if (!iso) return null
+  const s = String(iso)
+  const ms = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s}Z`)
+  if (!Number.isFinite(ms)) return null
+  return new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10)
+}
+
+/** Bu İstanbul haftasının pazartesisinden başlayan 12 hafta: `[{ index, start, end }]` (gün dizgisi; `end` hariç). */
+export function weekWindows(nowMs = Date.now()) {
+  const today = new Date(nowMs + IST_OFFSET_MS).toISOString().slice(0, 10)
+  const base = Date.parse(`${today}T00:00:00Z`)
+  const dow = new Date(base).getUTCDay()   // 0 = pazar
+  const monday = base - ((dow + 6) % 7) * DAY_MS
+  return Array.from({ length: WEEKS }, (_, i) => ({
+    index: i,
+    start: new Date(monday + i * 7 * DAY_MS).toISOString().slice(0, 10),
+    end: new Date(monday + (i + 1) * 7 * DAY_MS).toISOString().slice(0, 10),
+  }))
+}
+
+/** Sertifika o haftada mı dolacak (süresi dolmamış, hatasız; bitiş günü İstanbul). */
+export function inWeek(c, w) {
+  if (!w || isErrorCert(c) || c?.days_remaining == null || c.days_remaining < 0) return false
+  const d = istanbulDay(c?.not_after)
+  return d != null && d >= w.start && d < w.end
+}
 
 // ── Özet ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -158,23 +251,45 @@ function collect(stats) {
 export function buildTeams(teamStats) {
   if (!teamStats) return []
   const one = (tm, fallbackId) => {
-    const sy = collect(tm?.sy_stats), ug = collect(tm?.ug_stats)
+    // Yalın biçim (2026-11-13, `view=domains`): doğrudan alan listeleri; eski biçim: istatistik nesnelerinin listeleri
+    const sy = Array.isArray(tm?.sy_domains) ? new Set(tm.sy_domains) : collect(tm?.sy_stats)
+    const ug = Array.isArray(tm?.ug_domains) ? new Set(tm.ug_domains) : collect(tm?.ug_stats)
     return { id: tm?.team_id ?? fallbackId, name: tm?.team_name || '—', sy, ug, domains: new Set([...sy, ...ug]) }
   }
-  if (teamStats.mode === 'all_teams') return (teamStats.teams ?? []).map((tm, i) => one(tm, -(i + 1)))
+  if (teamStats.mode === 'all_teams' || teamStats.mode === 'domains') return (teamStats.teams ?? []).map((tm, i) => one(tm, -(i + 1)))
   if (teamStats.mode === 'personal') return [one(teamStats, 0)]
   return []
 }
 
-/** Alan adı → { sy: [ad], ug: [ad] } (takım adları sıralı). */
+/**
+ * Takımsız ya da pasif takımlı sertifikalar (2026-11-13): hiçbir (aktif) takımın SY / UG kümesinde olmayan alan adları
+ * matriste ve takım süzgecinde AYRI bir satır olur (`NO_TEAM`) — eskiden sessizce düşüyorlardı. Takım listesi yokken
+ * (yükleniyor / okunamadı) eklenmez: o an her sertifika "takımsız" görünürdü.
+ */
+export function withTeamless(teams, certs, label) {
+  if (!teams?.length) return teams || []
+  const covered = new Set()
+  for (const tm of teams) for (const d of tm.domains) covered.add(d)
+  const rest = (certs || []).filter((c) => c?.domain && !covered.has(c.domain)).map((c) => c.domain)
+  if (!rest.length) return teams
+  const set = new Set(rest)
+  return [...teams, { id: NO_TEAM, name: label, sy: set, ug: new Set(), domains: set, teamless: true }]
+}
+
+/**
+ * Alan adı → { sy: [ad], ug: [ad], ids: { ad: takımId } } (takım adları sıralı). `ids` (2026-11-13): UG rozeti de takım
+ * üyeleri penceresini açabilsin (eskiden UG adı kimliksiz çiziliyordu). Takımsız satır (`teamless`) eşlemeye girmez.
+ */
 export function domainTeamMap(teams) {
   const map = new Map()
   for (const tm of teams || []) {
+    if (tm.teamless) continue
     for (const [kind, set] of [['sy', tm.sy], ['ug', tm.ug]]) {
       for (const d of set) {
-        if (!map.has(d)) map.set(d, { sy: [], ug: [] })
+        if (!map.has(d)) map.set(d, { sy: [], ug: [], ids: {} })
         const e = map.get(d)
         if (!e[kind].includes(tm.name)) e[kind].push(tm.name)
+        if (typeof tm.id === 'number' && tm.id > 0) e.ids[tm.name] = tm.id
       }
     }
   }
@@ -190,9 +305,13 @@ export function resolveTeam(id, teams, certs) {
   if (id == null) return null
   const tm = (teams || []).find((x) => String(x.id) === String(id))
   if (tm) return { id: tm.id, name: tm.name, domains: tm.domains }
-  const own = (certs || []).filter((c) => c.team_id != null && String(c.team_id) === String(id))
-  if (own.length === 0) return { id, name: String(id), domains: new Set() }
-  return { id, name: own[0].team_name || String(id), domains: new Set(own.map((c) => c.domain)) }
+  // Takım listesinde yok (yükleniyor / okunamadı / başka kaynaktan gelen takım): sertifikanın sahip takımları (SY + UG,
+  // `owner_team_ids`) ya da sorumlu takımı — tablonun kuralı SY ∪ UG. Ad bilinmiyorsa null (çip ham kimlik YAZMAZ).
+  const owns = (c) => (Array.isArray(c?.owner_team_ids) && c.owner_team_ids.some((x) => String(x) === String(id)))
+    || (c?.team_id != null && String(c.team_id) === String(id))
+  const own = (certs || []).filter(owns)
+  const named = own.find((c) => c.team_id != null && String(c.team_id) === String(id) && c.team_name)
+  return { id, name: named ? named.team_name : null, domains: new Set(own.map((c) => c.domain)) }
 }
 
 // ── Takım × katman matrisi ──────────────────────────────────────────────────────────────────────
@@ -227,9 +346,10 @@ export function matrixRows(certs, teams, tiers = PROD_TIERS) {
     if (total === 0) continue
     const tierRows = tiers.filter((k) => tierMap.has(k)).map((k) => tierMap.get(k))
     const attention = counts.high + counts.critical + counts.expired + counts.error
-    out.push({ id: tm.id, name: tm.name, domains: tm.domains, total, counts, tiers: tierRows, attention })
+    out.push({ id: tm.id, name: tm.name, domains: tm.domains, total, counts, tiers: tierRows, attention, teamless: tm.teamless === true })
   }
-  return out.sort((a, b) => b.attention - a.attention || b.total - a.total || a.name.localeCompare(b.name))
+  // Takımsız satır her zaman sonda (2026-11-13) — bir takımın yerine geçmez.
+  return out.sort((a, b) => Number(a.teamless) - Number(b.teamless) || b.attention - a.attention || b.total - a.total || a.name.localeCompare(b.name))
 }
 
 /** Isı tonu adımı (1–3): sayının o sütundaki en büyük değere oranı. 0 → 0. */
@@ -249,7 +369,8 @@ export function columnMax(rows) {
 // ── Süzme + sıralama ────────────────────────────────────────────────────────────────────────────
 
 /**
- * @param f { kpi, q, issuers:string[], team:{domains}|null, tier:number|null, level:string|null }
+ * @param f { kpi, q, issuers:string[], team:{domains}|null, tier:number|null, level:string|null, sec:string|null,
+ *            week:{start,end}|null }
  * @param dtm domainTeamMap (aramada takım adları)
  */
 export function applyFilters(certs, f, dtm) {
@@ -257,6 +378,8 @@ export function applyFilters(certs, f, dtm) {
   const iss = f?.issuers?.length ? new Set(f.issuers) : null
   return (certs || []).filter((c) => {
     if (f?.kpi && !matchesKpi(c, f.kpi)) return false
+    if (f?.sec && !matchesSec(c, f.sec)) return false
+    if (f?.week && !inWeek(c, f.week)) return false
     if (f?.team && !f.team.domains.has(c.domain)) return false
     if (f?.tier != null && tierOf(c) !== f.tier) return false
     if (f?.level && levelOfCert(c) !== f.level) return false
@@ -307,11 +430,15 @@ export function stateFromUrl(read) {
   const level = read(URL_KEYS.level, null)
   const sort = read(URL_KEYS.sort, null)
   const team = read(URL_KEYS.team, null)
+  const sec = read(URL_KEYS.sec, null)
+  const wk = read(URL_KEYS.week, null)
   return {
+    sec: isSecKey(sec) ? sec : null,
+    week: wk != null && /^\d{1,2}$/.test(wk) && Number(wk) < WEEKS ? Number(wk) : null,
     kpi: KPI_KEYS.includes(kpi) ? kpi : null,
     q: read(URL_KEYS.q, '') || '',
     issuers: parseList(read(URL_KEYS.issuers, '')),
-    team: team != null && /^-?\d+$/.test(team) ? team : null,
+    team: team != null && (/^-?\d+$/.test(team) || team === NO_TEAM) ? team : null,
     tier,
     level: LEVELS.includes(level) ? level : null,
     sort: SORT_KEYS.includes(sort) ? sort : DEFAULT_SORT,
@@ -332,6 +459,8 @@ export function toUrlMapping(s) {
     [URL_KEYS.sort]: s.sort && s.sort !== DEFAULT_SORT ? s.sort : null,
     [URL_KEYS.matrix]: s.matrixOpen ? '1' : null,
     [URL_KEYS.allTiers]: s.allTiers ? '1' : null,
+    [URL_KEYS.sec]: s.sec || null,
+    [URL_KEYS.week]: s.week != null ? String(s.week) : null,
   }
 }
 

@@ -209,6 +209,13 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** Bir kaynağın tüm geçmişi ("bu izlemeye kim ne yaptı"). */
     List<AuditLog> findByResourceTypeAndResourceIdOrderByEventTimeDesc(String resourceType, String resourceId, Pageable pageable);
 
+    /**
+     * Belirli kaynakların belirli türdeki olayları (2026-11-13: bildirim grubu GÜNCELLEME satırları → toplu taşıma izi;
+     * geçmişteki her satırın takımı kendi zamanına göre çözülür). Sıra çağıranda (kimliğe göre) kurulur.
+     */
+    List<AuditLog> findByResourceTypeAndEventTypeAndResourceIdIn(String resourceType, String eventType,
+                                                                 Collection<String> resourceIds, Pageable pageable);
+
     /** Bir kaynak TÜRÜNÜN tüm geçmişi (ör. tüm RETENTION_POLICY değişiklikleri). */
     List<AuditLog> findByResourceTypeOrderByEventTimeDesc(String resourceType, Pageable pageable);
 

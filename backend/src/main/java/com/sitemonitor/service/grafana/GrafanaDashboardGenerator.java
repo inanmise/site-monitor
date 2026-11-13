@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 13;
+    public static final int DASHBOARD_REVISION = 15;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1766,8 +1766,8 @@ public final class GrafanaDashboardGenerator {
             add(maint);
 
             Panel checks = new Panel("state-timeline", t("Kendi kendini izleme kontrolleri", "Self-monitoring checks"),
-                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu ve dağıtık kontrol kuyruğu kontrollerinin durumu, zamanla.",
-                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database, clock alignment and distributed check queue checks over time."));
+                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu, dağıtık kontrol kuyruğu ve veritabanı doluluğu kontrollerinin durumu, zamanla.",
+                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database, clock alignment, distributed check queue and database capacity checks over time."));
             checks.w = 16; checks.h = 8;
             checks.target("max by (check) (" + metric(MonitoringMetricNames.WATCHDOG_CHECK) + ")", "{{check}}", false);
             Map<String, Object> to = new LinkedHashMap<>();
@@ -1831,6 +1831,16 @@ public final class GrafanaDashboardGenerator {
             growth.target("topk(8, max by (table) (db_table_bytes" + sel(RT) + "))", "{{table}}", false);
             growth.timeseries("bytes", false, "line");
             add(growth);
+            // Veritabanı büyümesi (2026-11-13, revizyon 14): boyut + dolmaya kalan gün (KÜME; yalnız PostgreSQL)
+            String dbSize = MonitoringMetricNames.DB_SIZE_BYTES;
+            String dbFull = MonitoringMetricNames.DB_DAYS_UNTIL_FULL;
+            add(stat(t("Veritabanı boyutu", "Database size"), t("SiteMonitor veritabanının boyutu (pg_database_size, en çok 5 dk eski). Veri yoksa veritabanı PostgreSQL değil ya da ölçülemedi — 0 sayılmaz.",
+                    "Size of the SiteMonitor database (pg_database_size, at most 5 minutes old). No data means the database is not PostgreSQL or could not be measured — not 0."),
+                    "max(" + metric(dbSize) + ")", "bytes", thresholds(BLUE, null), "value", links() ? url("tab=health&sec=dbgrowth") : null).size(6, 8));
+            add(stat(t("Dolmaya kalan gün", "Days until full"), t("Bugünkü büyüme hızıyla veritabanının tanımlı kapasiteye ulaşmasına kalan tahmini gün (en az 7 günlük görüntüye dayanır). 30 günün altı kırmızı, 90 günün altı sarı. Veri yoksa kapasite tanımlı değil (Sistem Sağlığı → Veritabanı büyümesi), geçmiş henüz kısa ya da 10 yıl içinde dolmuyor.",
+                    "Estimated days until the database reaches its configured capacity at the current growth rate (based on at least 7 daily snapshots). Red below 30 days, amber below 90. No data means the capacity is not set (System Health → Database growth), the history is still short or it does not fill within 10 years."),
+                    "min(" + metric(dbFull) + ")", "short", thresholds(RED, null, AMBER, 30, GREEN, 90), "background",
+                    links() ? url("tab=health&sec=dbgrowth") : null).size(6, 8));
 
             Panel exp = new Panel("timeseries", t("Ölçüm aktarıcısı", "Metrics exporter"),
                     t("Aktarıcının tur süresi ve yayılan seri sayısı (pod başına).", "Exporter refresh duration and exported series (per pod)."));
@@ -1843,6 +1853,13 @@ public final class GrafanaDashboardGenerator {
                     t("{{instance}} izleme başına seri kapalı", "{{instance}} per-monitor series off"), false);
             exp.timeseries("short", false, "line");
             add(exp);
+            Panel dbTrend = new Panel("timeseries", t("Veritabanı boyutu (eğilim)", "Database size (trend)"),
+                    t("Veritabanı boyutunun zaman içindeki seyri. Günlük görüntü, tahmin ve tablo başına saklama önerileri Sistem Sağlığı → Veritabanı büyümesi'nde.",
+                            "Database size over time. The daily snapshots, the forecast and per-table retention suggestions are under System Health → Database growth."));
+            dbTrend.w = 12; dbTrend.h = 8;
+            dbTrend.target("max(" + metric(dbSize) + ")", t("Veritabanı", "Database"), false);
+            dbTrend.timeseries("bytes", false, "line");
+            add(dbTrend);
 
             clusterRuntime();
         }

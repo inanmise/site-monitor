@@ -147,7 +147,7 @@ public class NotificationGroupService {
      * kayıtlar / doğrudan veritabanı müdahalesi / ileride eklenecek bir yazma yolu onu delebilir;
      * garanti gönderim anında da durmalı.
      */
-    static List<String> deliverableEmails(String csv) {
+    public static List<String> deliverableEmails(String csv) {
         List<String> out = new ArrayList<>();
         for (String e : parseEmails(csv)) {
             if (DELIVERABLE.matcher(e).matches()) out.add(e);
@@ -287,6 +287,21 @@ public class NotificationGroupService {
             g = groupRepo.save(g);
         }
         return g;
+    }
+
+    /**
+     * Toplu "varsayılan yap" (2026-11-13): yalnız bayrakları yazar — bayat okunan grubun TAMAMI kaydedilmez (aynı anda
+     * tekil uçtan değişen adres listesi ezilmesin). Bu grubun bayrağı okunan takıma ve "aktif, henüz varsayılan değil"
+     * koşuluna bağlı açılır; açıldıysa aynı işlemde takımın diğer varsayılanları iner (takım başına EN FAZLA BİR).
+     *
+     * @return {@code false} = grup bu arada değişti (silindi / taşındı / pasif / zaten varsayılan) — hiçbir şey yazılmadı
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean makeDefaultTargeted(Long groupId, Long teamId) {
+        if (groupRepo.bulkSetDefault(groupId, teamId) == 0) return false;
+        int demoted = groupRepo.clearOtherDefaults(teamId, groupId);
+        if (demoted > 0) log.info("Takım {} varsayılan bildirim grubu değişti → id={} ({} grup indirildi)", teamId, groupId, demoted);
+        return true;
     }
 
     /**

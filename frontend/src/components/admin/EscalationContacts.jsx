@@ -20,6 +20,8 @@ import Field from '../ui/Field.jsx'
 import ToneBadge, { OrgRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch } from './ListToolbar.jsx'
 import CoveragePanel from './contacts/CoveragePanel.jsx'
+import ContactBulkActions from './bulk/ContactBulkActions.jsx'
+import { addCapped, manageScope } from './bulk/bulkModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
@@ -57,7 +59,8 @@ export function parseDelayInput(raw) {
  * @param onOpenSimulator (g_* paramları) → "Kim bilgilendirilir?" sekmesine geçer (AdminPanel.jump). Simülatör
  *        2026-09-27'de bu sayfadan ayrı sekmeye taşındı; burada yalnız oraya götüren bağlantı kalır.
  */
-export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false, onOpenSimulator }) {
+export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false, onOpenSimulator,
+  globalAdmin = false, manageTeamIds = null }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
@@ -111,6 +114,39 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   // Proje standardı sayfalama (2026-09-21): usePagination + PaginationBar (istemci-taraflı)
   const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', preset: 'panel', resetDeps: [q, fRole, fLevel, fTeam] })
   const pagedContacts = pager.pageItems
+
+  // ── Toplu işlem (2026-11-13): seçim yalnız YÖNETİLEBİLİR satırlarda (K2 yönetim kapsamı bilinmiyorsa rol kuralı — sunucu
+  // her satırı yine kendi kapsamıyla denetler). Seçim süzülmüş listeyle sınırlı: süzgeç değişince görünmeyen seçim düşer.
+  const canManageTeam = useMemo(() => manageScope({ globalAdmin, manageIds: manageTeamIds }), [globalAdmin, manageTeamIds])
+  const canSelect = (c) => canManage && canManageTeam(c.team_id ?? null) !== false
+  const [selected, setSelected] = useState(() => new Set())
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev
+      const visible = new Set(filteredContacts.map((c) => c.id))
+      const next = new Set([...prev].filter((id) => visible.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [filteredContacts])
+  const selectedContacts = useMemo(() => filteredContacts.filter((c) => selected.has(c.id)), [filteredContacts, selected])
+  const pageSelectable = pagedContacts.filter(canSelect).map((c) => c.id)
+  const allPageSelected = pageSelectable.length > 0 && pageSelectable.every((id) => selected.has(id))
+  // Seçim tavanı (sunucu MAX_ITEMS = BULK_MAX): sayfa seçimi tavanda durur ve bunu söyler.
+  const [capHit, setCapHit] = useState(false)
+  useEffect(() => { if (selected.size === 0) setCapHit(false) }, [selected])
+  const toggleAllPage = () => {
+    if (allPageSelected) { setSelected((prev) => { const n = new Set(prev); pageSelectable.forEach((id) => n.delete(id)); return n }); return }
+    const { next, capped } = addCapped(selected, pageSelectable)
+    setSelected(next)
+    setCapHit(capped)
+  }
+  const toggleOne = (id) => {
+    if (selected.has(id)) { setSelected((prev) => { const n = new Set(prev); n.delete(id); return n }); return }
+    const { next, capped } = addCapped(selected, [id])
+    if (capped) { setCapHit(true); return }
+    setSelected(next)
+  }
+  const moveTargets = useMemo(() => teams.filter((tm) => canManageTeam(tm.id) !== false), [teams, canManageTeam])
 
   useEffect(() => { load(); loadUsers(); loadStats() }, [])
 
@@ -314,10 +350,24 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         )}
       </div>
 
+      {canManage && (
+        <ContactBulkActions selected={selectedContacts} capped={capHit} onClear={() => setSelected(new Set())} onDone={load}
+          canManage={canManageTeam} isAdmin={isAdmin} teamOptions={moveTargets}
+          teamNameOf={(id) => (id == null ? null : teamMap[id] || null)} />
+      )}
+
       <div className="overflow-hidden rounded-lg border bg-card">
         <Table className="text-[0.86em]">
           <TableHeader className="bg-muted/50">
             <TableRow className="hover:bg-transparent">
+              {canManage && (
+                <TableHead className={cn(TH, 'w-10 px-2')}>
+                  <label className="-m-2 flex size-10 cursor-pointer items-center justify-center">
+                    <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} disabled={pageSelectable.length === 0}
+                      aria-label={t('ec.bulk.selectAll')} data-slot="ec-select-all" />
+                  </label>
+                </TableHead>
+              )}
               <TableHead className={TH}>{t('ec.colName')}</TableHead>
               {/* Telefonda düşük öncelikli sütunlar gizli (ad + rol + seviye + durum + eylem kalır) */}
               <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('ec.colEmail')}</TableHead>
@@ -333,11 +383,21 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
           <TableBody>
             {filteredContacts.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={9} className="py-5 text-center text-muted-foreground">{t('ec.noResults')}</TableCell>
+                <TableCell colSpan={canManage ? 10 : 9} className="py-5 text-center text-muted-foreground">{t('ec.noResults')}</TableCell>
               </TableRow>
             )}
             {pagedContacts.map((c) => (
-              <TableRow key={c.id}>
+              <TableRow key={c.id} data-contact-id={c.id} data-state={selected.has(c.id) ? 'selected' : undefined}>
+                {canManage && (
+                  <TableCell className="w-10 px-2 align-top">
+                    {canSelect(c) && (
+                      <label className="-m-2 flex size-10 cursor-pointer items-center justify-center">
+                        <Checkbox checked={selected.has(c.id)} onCheckedChange={() => toggleOne(c.id)}
+                          aria-label={t('ec.bulk.selectOne', c.name || c.email || c.id)} data-slot="ec-select" />
+                      </label>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell className="max-w-[16rem] whitespace-normal">
                   <UserBadge displayName={c.name} email={c.email} inline size="sm" />
                   {c.user_id != null && inactiveUserIds.has(String(c.user_id)) && (

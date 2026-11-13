@@ -82,6 +82,23 @@ public class MonitorSparklineService {
         return out;
     }
 
+    /**
+     * Monitör id → ad (2026-11-13, İstatistikler SLA ihlal listesi): yalnız verilen (en çok {@link #IN_LIMIT}) id'ler, tek dar
+     * sorgu. Ad boş (eski türev satır) olan monitör haritada olmaz — çağıran "#id" yazar.
+     */
+    public Map<Long, String> monitorNames(String type, Collection<Long> ids) {
+        Kind k = KINDS.get(type);
+        Map<Long, String> out = new HashMap<>();
+        if (k == null || ids == null || ids.isEmpty() || ids.size() > IN_LIMIT) return out;
+        List<Object> args = new ArrayList<>(ids);
+        jdbc.query("SELECT id, name FROM " + k.monitorTable() + " WHERE id IN ("
+                + String.join(",", Collections.nCopies(args.size(), "?")) + ")", rs -> {
+            String n = rs.getString("name");
+            if (n != null && !n.isBlank()) out.put(rs.getLong("id"), n);
+        }, args.toArray());
+        return out;
+    }
+
     // ── Maliyet sınırları (prod kapısı 2026-09-25, O-7) ──────────────────────────────────────────
     // Her istek türün TÜM monitörlerinin ham kontrol satırlarını tarıyordu (görünürlük süzgeci bellekte);
     // beş izlemesi olan kullanıcı da 10k monitörlük taramayı ödüyordu, 100 açık sayfa dakikada bir. Artık:

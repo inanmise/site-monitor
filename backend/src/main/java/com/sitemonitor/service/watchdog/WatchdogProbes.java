@@ -144,6 +144,8 @@ public class WatchdogProbes {
     /** Çok pod R3-4 (paket C1): parçalı sertifika taraması — anahtar (bellek), koşu deposu (yalnız açıkken SQL). */
     private com.sitemonitor.service.certsweep.CertChunking certChunking;
     private com.sitemonitor.service.certsweep.CertSweepStore certSweepStore;
+    /** Veritabanı büyümesi (2026-11-13): kapasite olguları (5 dk'lık hesap — ucuz). */
+    private com.sitemonitor.service.dbgrowth.DbGrowthService dbGrowth;
 
     @Value("${site.monitor.scheduler.sweep-leader-ttl-ms:180000}")
     private long leaseTtlMs = 180_000;
@@ -187,6 +189,7 @@ public class WatchdogProbes {
     @Autowired(required = false) public void setCheckWorkerRegistry(com.sitemonitor.service.checks.CheckWorkerRegistry v) { this.checkWorkerRegistry = v; }
     @Autowired(required = false) public void setCertChunking(com.sitemonitor.service.certsweep.CertChunking v) { this.certChunking = v; }
     @Autowired(required = false) public void setCertSweepStore(com.sitemonitor.service.certsweep.CertSweepStore v) { this.certSweepStore = v; }
+    @Autowired(required = false) @Lazy public void setDbGrowth(com.sitemonitor.service.dbgrowth.DbGrowthService v) { this.dbGrowth = v; }
 
     /** Tüm kontroller katalog sırasıyla. */
     public List<Probe> runAll(Instant now) {
@@ -206,6 +209,7 @@ public class WatchdogProbes {
                 case DATABASE -> database(now);
                 case CLOCK_SKEW -> clockSkew(now);
                 case CHECK_QUEUE -> checkQueue();
+                case DB_CAPACITY -> dbCapacity();
             };
         } catch (Exception e) {
             log.warn("Kendi kendini izleme: {} ölçülemedi: {}", c.key(), e.toString());
@@ -564,6 +568,51 @@ public class WatchdogProbes {
         boolean problem = (pendingMs != null && pendingMs > CHECK_QUEUE_LIMIT_MS) || (doneMs != null && doneMs > CHECK_QUEUE_LIMIT_MS)
                 || st.expiredClaims() > 0;
         return new Probe(WatchdogCheck.CHECK_QUEUE, problem ? Result.PROBLEM : Result.OK, WatchdogCheck.CHECK_QUEUE.severity().name(), f);
+    }
+
+    /** Kullanım eşiği (%) ve dolmaya kalan gün eşiği — {@code DbGrowthAdvisor}'ın kritik eşikleriyle aynı. */
+    static final double DB_CAPACITY_PCT = com.sitemonitor.service.dbgrowth.DbGrowthAdvisor.CAPACITY_CRITICAL_PCT;
+    static final int DB_CAPACITY_DAYS = com.sitemonitor.service.dbgrowth.DbGrowthAdvisor.CAPACITY_CRITICAL_DAYS;
+    /** Bu eşiklerin ötesi yüksek önem: kullanım %95, dolmaya 7 gün. */
+    static final double DB_CAPACITY_HIGH_PCT = 95.0;
+    static final int DB_CAPACITY_HIGH_DAYS = 7;
+
+    /**
+     * Veritabanı doluluğu (2026-11-13): kapasite tanımsız (0) ya da PostgreSQL değil → NA. Kullanım ≥ %85 ya da geçmişe dayalı
+     * tahminle (en az 7 günlük görüntü) ≤ 30 gün içinde dolacak → PROBLEM (orta; %95 / 7 gün üstü yüksek). Yeterli geçmiş yoksa
+     * yalnız kullanım karar verir. Okunamadı → istisna → UNKNOWN (sayaçlar değişmez). Kaynak 5 dakikalık hesap (canlı boyut 5 dk
+     * bellek) — tur başına ek sorgu en çok bir.
+     */
+    Probe dbCapacity() {
+        com.sitemonitor.service.dbgrowth.DbGrowthService g = dbGrowth;
+        if (g == null) return Probe.na(WatchdogCheck.DB_CAPACITY, "no_db_growth");
+        if (g.capacityGb() <= 0) return Probe.na(WatchdogCheck.DB_CAPACITY, "capacity_unknown");
+        com.sitemonitor.service.dbgrowth.DbGrowthService.CapacityFacts c = g.capacityFacts();
+        if (c == null || Boolean.FALSE.equals(c.supported())) return Probe.na(WatchdogCheck.DB_CAPACITY, "not_postgres");
+        if (c.usedBytes() == null || c.usedPct() == null) {
+            return new Probe(WatchdogCheck.DB_CAPACITY, Result.UNKNOWN, null, Map.of("reason", "probe_failed"));
+        }
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("capacity_bytes", c.capacityBytes());
+        f.put("used_bytes", c.usedBytes());
+        f.put("used_pct", c.usedPct());
+        f.put("threshold_pct", (long) DB_CAPACITY_PCT);
+        f.put("threshold_days", DB_CAPACITY_DAYS);
+        f.put("history_points", c.historyPoints());
+        // Görüntü işi durmuşsa (son görüntü > 3 gün) tahmin bayat çapadan geri sayardı → yok sayılır, karar yalnız kullanıma göre
+        boolean stale = c.forecastStale();
+        if (c.snapshotAgeDays() != null) f.put("snapshot_age_days", c.snapshotAgeDays());
+        if (stale) f.put("forecast_stale", true);
+        boolean forecast = !stale && c.historyPoints() >= com.sitemonitor.service.dbgrowth.DbGrowthForecast.MIN_POINTS;
+        f.put("forecast", forecast);
+        Integer days = forecast ? c.daysUntilFull() : null;
+        if (days != null) f.put("days_until_full", days);
+        boolean full = c.usedPct() >= DB_CAPACITY_PCT;
+        boolean soon = days != null && days <= DB_CAPACITY_DAYS;
+        if (!full && !soon) return new Probe(WatchdogCheck.DB_CAPACITY, Result.OK, null, f);
+        boolean high = c.usedPct() >= DB_CAPACITY_HIGH_PCT || (days != null && days <= DB_CAPACITY_HIGH_DAYS);
+        return new Probe(WatchdogCheck.DB_CAPACITY, Result.PROBLEM,
+                (high ? WatchdogCheck.Severity.HIGH : WatchdogCheck.DB_CAPACITY.severity()).name(), f);
     }
 
     /** Canlı (durmayan) işçi sayısı — kayıt önbelleğinden (bellek); önbellek bilinmiyorsa null. */

@@ -21,6 +21,9 @@ const EXEMPT = new Set([
   // (her bölüt bir nesnenin payı / zaman aralığı; ProgressBar'ın tek değerli role="progressbar" anlamı yanlış olurdu)
   path.join('components', 'page', 'resourcescan', 'ResourceScanDashboard.jsx'),
   path.join('components', 'page', 'resourcescan', 'ResourceScanWaterfall.jsx'),
+  // İstatistikler (2026-11-13): 12 haftalık bitiş histogramı — çubuk genişliği o haftanın SAYISININ en büyük haftaya oranı
+  // (veri grafiği; tek değerli role="progressbar" anlamı yanlış olurdu)
+  path.join('components', 'stats', 'ExpiryHistogram.jsx'),
 ])
 
 function walk(dir, acc = []) {

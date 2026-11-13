@@ -108,6 +108,8 @@ public final class AuditEventCatalog {
             "CERT_TLS_PROFILE_RESCAN",      // TLS profili (protokol / zımbalama) elle yeniden tarandı (2026-10-10)
             "CHANGE_LOG_DENIED",
             "CLIENT_ERROR_REPORT",
+            "CONTACT_BULK_CREATE",          // bir kullanıcı seçili takımlara toplu eskalasyon kişisi olarak eklendi (2026-11-13)
+            "CONTACT_BULK_UPDATE",          // seçili eskalasyon kişileri toplu etkinleştirildi / pasifleştirildi / seviye / takım (2026-11-13)
             "CONTACT_CREATE",
             "CONTACT_DELETE",
             "CONTACT_UPDATE",
@@ -120,6 +122,8 @@ public final class AuditEventCatalog {
             "DBQUERY_TEMPLATE_CREATE",    // takım sorgu şablonu eklendi
             "DBQUERY_TEMPLATE_DELETE",    // takım sorgu şablonu silindi
             "DBQUERY_TEMPLATE_UPDATE",    // takım sorgu şablonu düzenlendi
+            "DB_CAPACITY_SETTINGS_SAVE",  // veritabanı disk kapasitesi (GB) kaydedildi (2026-11-13, Veritabanı büyümesi)
+            "DB_HEALTH_ANALYSIS_RUN",     // salt okunur veritabanı sağlık analizi çalıştırıldı (2026-11-13) — durum + bulgu sayısı
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
@@ -171,6 +175,7 @@ public final class AuditEventCatalog {
             "INCIDENT_POSTMORTEM_SAVE",   // postmortem raporu kaydedildi / durumu değişti (2026-10-11)
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",
+            "INCIDENTS_EXPORT",           // Olaylar konsolu dışa aktarımı (CSV / JSON — süzgeç + satır sayısı; 2026-11-13)
             "ISSUE_REPORT",
             "ISSUE_REPORT_COMMENT",
             "ISSUE_REPORT_REOPEN",
@@ -492,6 +497,8 @@ public final class AuditEventCatalog {
 
         // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motorunu değiştiren platform işlemi — SETTINGS sonekinden ÖNCE
         if (t.startsWith("K6_")) return SYSTEM;
+        // Veritabanı sağlık analizi (2026-11-13) — platform işlemi; kapasite kaydı (DB_CAPACITY_SETTINGS_SAVE) SETTINGS kuralına düşer
+        if (t.startsWith("DB_HEALTH_")) return SYSTEM;
         if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 

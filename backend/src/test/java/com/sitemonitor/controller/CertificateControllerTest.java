@@ -94,6 +94,13 @@ class CertificateControllerTest {
     @MockitoBean
     com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
 
+    /** İstatistikler zenginleştirmesi (2026-11-13) — denetleyicide isteğe bağlı alan enjeksiyonu. */
+    @MockitoBean
+    com.sitemonitor.service.report.executive.RenewalTimelinessStatsService renewalTimelinessStats;
+
+    @MockitoBean
+    com.sitemonitor.service.CertHealthDailyService certHealthDailyService;
+
     /** Elle yüklenen sertifikanın çevrim-dışı değerlendirmesi (2026-10-06) — yalnız manuel kayıtta çağrılır. */
     @MockitoBean
     com.sitemonitor.service.manualcert.ManualCertificateEvaluationService manualCertEvaluation;
@@ -1224,14 +1231,55 @@ class CertificateControllerTest {
                 .andExpect(jsonPath("$.data.security_flags").doesNotExist());
     }
     @Test
-    @DisplayName("2026-09-12: GET /stats/executive gövdeyi servisten kapsam predicate'iyle döner")
+    @DisplayName("2026-09-12: GET /stats/executive gövdeyi servisten kapsam predicate'iyle döner (2026-11-13: bellek anahtarı + alarm izni + fresh)")
     void executiveStats() throws Exception {
-        org.mockito.Mockito.when(executiveStatsService.build(org.mockito.ArgumentMatchers.any()))
+        org.mockito.Mockito.when(executiveStatsService.build(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean(),
+                        org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(java.util.Map.of("certs", java.util.Map.of("total", 5, "health_pct", 80.0), "teams", java.util.List.of()));
-        mvc.perform(get("/api/stats/executive").session(teamSession(5L)))
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"))).thenReturn(false);
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+        mvc.perform(get("/api/stats/executive?fresh=1").session(teamSession(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.certs.total").value(5))
                 .andExpect(jsonPath("$.data.certs.health_pct").value(80.0));
+        // Alarm izni yok → servis alarm bloğunu OKUMAZ; anahtar = kapsam (takım 5); fresh iletilir
+        // İzleme okuma izni → en kötü SLA adları istenir (izin yoksa false; servis testi adı / kimliği siler)
+        verify(executiveStatsService).build(any(), eq(false), eq(true), eq(com.sitemonitor.util.TtlMemo.scopeKey(false, List.of(5L))), eq(true));
+    }
+
+    @Test
+    @DisplayName("2026-11-13: GET /stats/teams?view=domains yalın biçim (kapsam); parametresiz çağrı eski biçimi verir")
+    void teamStats_leanView() throws Exception {
+        when(certService.getTeamDomainLists(List.of(5L))).thenReturn(java.util.Map.of("mode", "domains", "teams", List.of(
+                java.util.Map.of("team_id", 5, "team_name", "T5", "sy_domains", List.of("a.example.com"), "ug_domains", List.of()))));
+        mvc.perform(get("/api/stats/teams?view=domains").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mode").value("domains"))
+                .andExpect(jsonPath("$.data.teams[0].sy_domains[0]").value("a.example.com"));
+        verify(certService, never()).getTeamBreakdownStats(any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-11-13: GET /stats/renewal-timeliness kapsam anahtarıyla servisten")
+    void renewalTimeliness() throws Exception {
+        when(renewalTimelinessStats.build(any(), any())).thenReturn(java.util.Map.of("windows", List.of(java.util.Map.of("months", 3, "on_time_pct", 75.0))));
+        mvc.perform(get("/api/stats/renewal-timeliness").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.windows[0].on_time_pct").value(75.0));
+        verify(renewalTimelinessStats).build(any(), eq(com.sitemonitor.util.TtlMemo.scopeKey(false, List.of(5L))));
+    }
+
+    @Test
+    @DisplayName("2026-11-13: GET /stats/health-series — görülemeyen takım 403, geçersiz takım 400, kendi takımı / varsayılan 200")
+    void healthSeries() throws Exception {
+        when(certHealthDailyService.series(anyInt(), any(), anyBoolean(), any())).thenReturn(java.util.Map.of("scope", "team", "points", List.of()));
+        mvc.perform(get("/api/stats/health-series?team=9").session(teamSession(5L))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/stats/health-series?team=abc").session(teamSession(5L))).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/stats/health-series?team=5&days=30").session(teamSession(5L)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.scope").value("team"));
+        verify(certHealthDailyService).series(eq(30), eq(5L), eq(false), any());
+        mvc.perform(get("/api/stats/health-series").session(teamSession(5L))).andExpect(status().isOk());
+        verify(certHealthDailyService).series(eq(90), isNull(), eq(false), any());
     }
     // ── 7/24 izleme ekibi operatörü (2026-10-04) ──────────────────────────────
 

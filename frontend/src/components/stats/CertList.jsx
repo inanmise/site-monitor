@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Clock } from 'lucide-react'
 import { formatDate, formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 import { relTime } from '../certtable/certTableModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -20,23 +21,34 @@ import { DaysBadge, LevelBadge, TierBadge } from './statsUi.jsx'
  * penceresindeki tıklama da React ağacında satıra kabarcıklanırdı). Kalan gün: aciliyet rozeti (tabular sayı, tam
  * metin `title` + ekran okuyucu). Son kontrol: göreli, tam zaman `title`'da.
  *
+ * Satır eylemleri (2026-11-13, #14): `rowActions(cert)` → KebabMenu öğeleri ("Şimdi kontrol et", "Yenileme planla") — Pano
+ * kartlarıyla AYNI kapılar App'ten gelir; sunucunun reddedeceği düğme hiç çizilmez (öğe yoksa menü de yok). Eylem hücresi
+ * satır tıklamasına SIZMAZ.
+ *
  * Test kancaları: `data-slot="stats-table"`, satır `stats-row` + `data-domain`, kart `stats-card` + `data-domain`,
- * sıralama başlığı `stats-sort-head` (+ `aria-sort` başlık hücresinde).
+ * sıralama başlığı `stats-sort-head` (+ `aria-sort` başlık hücresinde), eylem hücresi `stats-row-actions`.
  */
 const SORTABLE = { domain: 'domain', days: 'days_remaining', issuer: 'issuer', checked: 'checked_at' }
 const TH = 'h-10 bg-muted/60 px-3 text-xs font-semibold text-muted-foreground'
 const stop = (e) => e.stopPropagation()
 
-export default function CertList({ rows, narrow, dtm, onOpen, sort, onSort }) {
-  if (narrow) return <CertCards rows={rows} dtm={dtm} onOpen={onOpen} />
-  return <CertTable rows={rows} dtm={dtm} onOpen={onOpen} sort={sort} onSort={onSort} />
+export default function CertList({ rows, narrow, dtm, onOpen, sort, onSort, rowActions }) {
+  if (narrow) return <CertCards rows={rows} dtm={dtm} onOpen={onOpen} rowActions={rowActions} />
+  return <CertTable rows={rows} dtm={dtm} onOpen={onOpen} sort={sort} onSort={onSort} rowActions={rowActions} />
+}
+
+function RowActions({ cert, rowActions }) {
+  const t = useT()
+  const items = rowActions ? rowActions(cert) : []
+  if (!items?.length) return null
+  return <KebabMenu items={items} label={t('stx.rowActions')} rowLabel={cert.domain} />
 }
 
 function teamsFor(cert, dtm) {
   const tm = dtm?.get(cert.domain)
-  const sy = tm?.sy?.length ? tm.sy.map((name) => ({ name, id: name === cert.team_name ? cert.team_id : undefined }))
+  const sy = tm?.sy?.length ? tm.sy.map((name) => ({ name, id: tm.ids?.[name] ?? (name === cert.team_name ? cert.team_id : undefined) }))
     : cert.team_name ? [{ name: cert.team_name, id: cert.team_id }] : []
-  const ug = (tm?.ug ?? []).filter((n) => !sy.some((s) => s.name === n)).map((name) => ({ name }))
+  const ug = (tm?.ug ?? []).filter((n) => !sy.some((s) => s.name === n)).map((name) => ({ name, id: tm.ids?.[name] }))
   return { sy, ug }
 }
 
@@ -57,13 +69,13 @@ function TeamsCell({ cert, dtm, row = false, className }) {
       {sy.map((s) => (
         <span key={`sy-${s.name}`} className="inline-flex min-w-0 items-center gap-1">
           <span className="text-[10px] font-bold text-muted-foreground" title={t('sv.colSyTeam')}>{t('stv.sy')}</span>
-          <TeamBadge teamId={s.id} teamName={s.name} className={badgeCls} />
+          <TeamBadge teamId={s.id} teamName={s.name} className={badgeCls} wrap />
         </span>
       ))}
       {ug.map((u) => (
         <span key={`ug-${u.name}`} className="inline-flex min-w-0 items-center gap-1">
           <span className="text-[10px] font-bold text-muted-foreground" title={t('sv.colUgTeam')}>{t('stv.ug')}</span>
-          <TeamBadge teamName={u.name} className={badgeCls} />
+          <TeamBadge teamId={u.id} teamName={u.name} className={badgeCls} wrap />
         </span>
       ))}
     </span>
@@ -93,7 +105,7 @@ function SortHead({ col, label, sort, onSort, className }) {
   return (
     <TableHead className={cn(TH, className)} aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}>
       <Button type="button" variant="ghost" size="sm" data-slot="stats-sort-head" data-col={col}
-        className="-ml-2 h-8 gap-1 px-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+        className="-ml-2 h-8 gap-1 px-2 text-xs font-semibold text-muted-foreground hover:text-foreground pointer-coarse:h-10"
         title={t('stv.sortCol', label)} onClick={() => onSort(`${key}|${next}`)}>
         {label}<Icon aria-hidden="true" className={cn('size-3.5', !active && 'opacity-50')} />
       </Button>
@@ -101,9 +113,10 @@ function SortHead({ col, label, sort, onSort, className }) {
   )
 }
 
-function CertTable({ rows, dtm, onOpen, sort, onSort }) {
+function CertTable({ rows, dtm, onOpen, sort, onSort, rowActions }) {
   const t = useT()
   const sh = { sort, onSort }
+  const actions = typeof rowActions === 'function'
   return (
     <div className="@container overflow-hidden rounded-lg border bg-card">
       <Table data-slot="stats-table" className="text-sm">
@@ -116,6 +129,7 @@ function CertTable({ rows, dtm, onOpen, sort, onSort }) {
             <SortHead col="issuer" label={t('tbl.colIssuer')} className="hidden @3xl:table-cell" {...sh} />
             <TableHead className={cn(TH, 'hidden @4xl:table-cell')}>{t('tbl.colTeam')}</TableHead>
             <SortHead col="checked" label={t('tbl.colChecked')} className="hidden @5xl:table-cell" {...sh} />
+            {actions && <TableHead className={cn(TH, 'w-12 text-right')}><span className="sr-only">{t('stx.rowActions')}</span></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -130,22 +144,27 @@ function CertTable({ rows, dtm, onOpen, sort, onSort }) {
                   <span className="font-semibold break-all">{c.domain}</span>
                   <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <TierBadge tier={c.tier} />
-                    <span className="@3xl:hidden min-w-0 truncate" title={issuerOf(c)}>{issuerOf(c)}</span>
+                    <span className="@3xl:hidden min-w-0 [overflow-wrap:anywhere]">{issuerOf(c)}</span>
                     <span className="@2xl:hidden tabular-nums">{t('stv.expiresOn', formatDateOnly(c.not_after))}</span>
                   </span>
-                  {c.error && <span className="line-clamp-2 text-xs [overflow-wrap:anywhere] text-destructive" title={c.error}>{c.error}</span>}
+                  {c.error && <span className="text-xs [overflow-wrap:anywhere] text-destructive">{c.error}</span>}
                 </div>
               </TableCell>
               <TableCell className="px-3 py-2.5 align-top"><LevelBadge cert={c} /></TableCell>
               <TableCell className="px-3 py-2.5 align-top"><DaysBadge cert={c} /></TableCell>
               <TableCell className="hidden px-3 py-2.5 align-top tabular-nums @2xl:table-cell">{formatDateOnly(c.not_after)}</TableCell>
-              <TableCell className="hidden max-w-[16rem] px-3 py-2.5 align-top @3xl:table-cell">
-                <span className="block truncate" title={issuerOf(c)}>{issuerOf(c) || '—'}</span>
+              <TableCell className="hidden max-w-[16rem] px-3 py-2.5 align-top whitespace-normal @3xl:table-cell">
+                <span className="block [overflow-wrap:anywhere]">{issuerOf(c) || '—'}</span>
               </TableCell>
-              <TableCell className="hidden max-w-[14rem] px-3 py-2 align-top @4xl:table-cell" onClick={stop} onKeyDown={stop}>
+              <TableCell className="hidden max-w-[14rem] px-3 py-2 align-top whitespace-normal @4xl:table-cell" onClick={stop} onKeyDown={stop}>
                 <TeamsCell cert={c} dtm={dtm} />
               </TableCell>
               <TableCell className="hidden px-3 py-2.5 align-top text-muted-foreground @5xl:table-cell"><Checked iso={c.checked_at} /></TableCell>
+              {actions && (
+                <TableCell data-slot="stats-row-actions" className="px-2 py-2 text-right align-top" onClick={stop} onKeyDown={stop}>
+                  <RowActions cert={c} rowActions={rowActions} />
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
@@ -154,7 +173,7 @@ function CertTable({ rows, dtm, onOpen, sort, onSort }) {
   )
 }
 
-function CertCards({ rows, dtm, onOpen }) {
+function CertCards({ rows, dtm, onOpen, rowActions }) {
   const t = useT()
   return (
     <ul className="m-0 flex min-w-0 list-none flex-col gap-2.5 p-0">
@@ -163,7 +182,12 @@ function CertCards({ rows, dtm, onOpen }) {
           <Card data-slot="stats-card" data-domain={c.domain} className="relative min-w-0 gap-2 px-4 py-3 shadow-none">
             <div className="flex min-w-0 items-start justify-between gap-2">
               <LevelBadge cert={c} />
-              <DaysBadge cert={c} long />
+              <span className="flex items-start gap-1">
+                <DaysBadge cert={c} long />
+                {typeof rowActions === 'function' && (
+                  <span data-slot="stats-row-actions" className="relative z-10 -mt-1 -mr-2"><RowActions cert={c} rowActions={rowActions} /></span>
+                )}
+              </span>
             </div>
             <Button type="button" variant="ghost" data-slot="stats-card-open" aria-label={t('card.openDetailFor', c.domain)}
               onClick={() => onOpen(c.domain)}
@@ -176,7 +200,7 @@ function CertCards({ rows, dtm, onOpen }) {
             </Button>
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               <TierBadge tier={c.tier} />
-              <span className="min-w-0 truncate" title={issuerOf(c)}>{issuerOf(c) || '—'}</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{issuerOf(c) || '—'}</span>
             </div>
             <div className="relative z-10 min-w-0 self-start py-1 text-sm"><TeamsCell cert={c} dtm={dtm} row /></div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

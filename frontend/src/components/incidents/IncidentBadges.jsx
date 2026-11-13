@@ -1,7 +1,6 @@
-import { CheckCircle2, UserCheck, OctagonAlert, TriangleAlert, CircleAlert, ExternalLink, Bot } from 'lucide-react'
+import { CheckCircle2, UserCheck, OctagonAlert, TriangleAlert, CircleAlert, ExternalLink, Bot, Repeat, Sparkles, UserRound } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { rcMeta } from '../../utils/incidentMeta.js'
-import UserBadge from '../ui/UserBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
@@ -118,5 +117,38 @@ export function ResolvedBy({ by, className }) {
       </span>
     )
   }
-  return <span data-slot="resolved-by" className={cn('inline-flex', className)}><UserBadge displayName={by} username={by} inline size="sm" /></span>
+  // Kişi adı KESİLMEZ (2026-11-13): uzun AD görünen adı sarar — UserBadge satır içi kipi üç nokta koyuyordu
+  return (
+    <span data-slot="resolved-by" className={cn('inline-flex min-w-0 items-start gap-1.5', className)}>
+      <UserRound aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{by}</span>
+    </span>
+  )
+}
+
+/**
+ * Tekrarlayan imza rozeti (2026-11-13) — aynı izleme + olay türü son 7 günde en az iki kez açıldıysa "7 günde N kez".
+ * Sayı sunucudan (`recurrence_7d`, sayfa başına tek gruplu sorgu); alan yoksa ya da < 2 ise çizilmez.
+ */
+export function RecurrenceBadge({ count, className }) {
+  const t = useT()
+  const n = Number(count)
+  if (!Number.isFinite(n) || n < 2) return null
+  return (
+    <Badge variant="outline" data-slot="incident-recur" data-count={n} title={t('incov.recurHint', n)}
+      className={cn('gap-1 overflow-visible rounded-md border-violet-500/40 bg-violet-500/10 font-semibold whitespace-normal text-violet-700 dark:text-violet-300', className)}>
+      <Repeat aria-hidden="true" />{t('incov.recur', n)}
+      <span className="sr-only"> — {t('incov.recurHint', n)}</span>
+    </Badge>
+  )
+}
+
+/** "Yeni" işareti — son sessiz yenilemede gelen olay (kullanıcı etkileşince kalkar). */
+export function NewBadge({ className }) {
+  const t = useT()
+  return (
+    <Badge data-slot="incident-new" className={cn('gap-1 whitespace-nowrap', className)}>
+      <Sparkles aria-hidden="true" />{t('incov.newBadge')}
+    </Badge>
+  )
 }

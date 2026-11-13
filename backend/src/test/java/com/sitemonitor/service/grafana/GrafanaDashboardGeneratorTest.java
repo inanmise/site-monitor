@@ -541,6 +541,21 @@ class GrafanaDashboardGeneratorTest {
         assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(8);
     }
 
+    @Test
+    @DisplayName("veritabanı büyümesi (revizyon 14): boyut + dolmaya kalan gün + eğilim; 'En büyük tablolar' panelinin ardından")
+    void dbGrowthPanels() {
+        JsonNode d = tree(defaults());
+        assertThat(exprOf(d, "Veritabanı boyutu")).startsWith("max(sitemonitor_db_size_bytes");
+        assertThat(exprOf(d, "Dolmaya kalan gün")).startsWith("min(sitemonitor_db_days_until_full");
+        assertThat(exprOf(d, "Veritabanı boyutu (eğilim)")).contains("sitemonitor_db_size_bytes");
+        List<String> titles = contentPanels(d).stream().map(p -> p.get("title").asString()).toList();
+        assertThat(titles.indexOf("Veritabanı boyutu")).isEqualTo(titles.indexOf("En büyük tablolar") + 1);
+        assertThat(titles.indexOf("Dolmaya kalan gün")).isEqualTo(titles.indexOf("Veritabanı boyutu") + 1);
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Days until full")).contains("sitemonitor_db_days_until_full");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(14);
+    }
+
     /** Başlığa göre panelin açıklaması. */
     static String descOf(JsonNode d, String title) {
         for (JsonNode p : contentPanels(d)) {

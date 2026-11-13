@@ -57,30 +57,36 @@ class ExecutiveStatsServiceTest {
     }
     @SuppressWarnings("unchecked") private static Map<String, Object> m(Map<String, Object> b, String k) { return (Map<String, Object>) b.get(k); }
 
+    private static Object[] row(String d, Long sy, Long ug) { return new Object[]{d, sy, ug}; }
+    private static Object[] open(Long team, String domain, String level) { return new Object[]{team, domain, level}; }
+    private static Object[] created(Long team, String domain, int daysAgo) {
+        return new Object[]{team, domain, ISO.format(Instant.now().minus(daysAgo, ChronoUnit.DAYS))};
+    }
+
     @BeforeEach
     void setUp() {
         svc = new ExecutiveStatsService(inventoryRepo, latestCheckRepo, alertEventRepo, teamRepo, sparklineService, appSettings, certificateCheckRepo);
         Team a = new Team(); a.setId(1L); a.setName("Takım A"); Team b = new Team(); b.setId(2L); b.setName("Takım B");
         when(teamRepo.findAll()).thenReturn(List.of(a, b));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(
-                inv("ok1.example.com", 1L), inv("ok2.example.com", 1L), inv("soon.example.com", 1L), inv("err.example.com", 1L),
-                inv("bok.example.com", 2L), inv("bexp.example.com", 2L), inv("bexp2.example.com", 2L), inv("never.example.com", 2L)));
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(List.of(
+                row("ok1.example.com", 1L, null), row("ok2.example.com", 1L, null), row("soon.example.com", 1L, null), row("err.example.com", 1L, null),
+                row("bok.example.com", 2L, null), row("bexp.example.com", 2L, null), row("bexp2.example.com", 2L, null), row("never.example.com", 2L, null)));
         when(latestCheckRepo.findAll()).thenReturn(List.of(
                 lc("ok1.example.com", 200, "valid"), lc("ok2.example.com", 90, "valid"), lc("soon.example.com", 5, "valid"), lc("err.example.com", null, "error"),
                 lc("bok.example.com", 60, "valid"), lc("bexp.example.com", -2, "valid"), lc("bexp2.example.com", -5, "valid")));
-        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(ev(1, "soon.example.com", 1L, "CRITICAL", 1), ev(2, "bexp.example.com", 2L, "WARNING", 3)));
+        when(alertEventRepo.findOpenStatRows()).thenReturn(List.of(open(1L, "soon.example.com", "CRITICAL"), open(2L, "bexp.example.com", "WARNING")));
+        when(alertEventRepo.findCreatedStatRowsSince(anyString())).thenReturn(List.of(
+                created(1L, "soon.example.com", 1), created(2L, "bexp.example.com", 3), created(1L, "ok1.example.com", 45), created(1L, "ok1.example.com", 50)));
         when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString())).thenReturn(List.of(
                 ev(1, "soon.example.com", 1L, "CRITICAL", 1), ev(2, "bexp.example.com", 2L, "WARNING", 3), ev(3, "ok1.example.com", 1L, "WARNING", 45), ev(4, "ok1.example.com", 1L, "WARNING", 50)));
         when(appSettings.getDouble(eq("site.monitor.sla.target-pct"), anyDouble())).thenReturn(99.9);
         when(sparklineService.monitorTeams(anyString())).thenReturn(Map.of());
         when(sparklineService.monitorTeams("http")).thenReturn(Map.of(10L, 1L, 11L, 2L));
-        when(sparklineService.availability(eq("http"), anyInt(), any())).thenAnswer(i -> {
-            Set<Long> ids = i.getArgument(2);
-            Map<Long, Map<String, Object>> out = new java.util.HashMap<>();
-            if (ids.contains(10L)) out.put(10L, Map.of("n", 100, "fail", 5, "up_pct", 95.0, "bad_hours", 2));
-            if (ids.contains(11L)) out.put(11L, Map.of("n", 100, "fail", 0, "up_pct", 100.0, "bad_hours", 0));
-            return out;
-        });
+        // Ortak (tüm filo) SLA önbelleği — görünür alt küme MonitorSparklineService.subset ile (gerçek statik)
+        when(sparklineService.availabilityAll(eq("http"), anyInt())).thenReturn(new java.util.LinkedHashMap<>(Map.of(
+                10L, Map.of("n", 100, "fail", 5, "up_pct", 95.0, "bad_hours", 2),
+                11L, Map.of("n", 100, "fail", 0, "up_pct", 100.0, "bad_hours", 0))));
+        when(sparklineService.monitorNames(eq("http"), any())).thenReturn(Map.of(10L, "Ödeme API"));
     }
 
     @Test
@@ -138,12 +144,119 @@ class ExecutiveStatsServiceTest {
     @Test
     @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): yalnız UG takımı (3) görülebilen kayıt — sertifika ve SY damgalı açık alarm istatistik özetine girer")
     void ugTeamCounted() {
-        CertificateInventory b = inv("bexp.example.com", 2L);
-        b.setUgTeamId(3L);
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("ok1.example.com", 1L), b));
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(List.of(row("ok1.example.com", 1L, null), row("bexp.example.com", 2L, 3L)));
         Map<String, Object> out = svc.build(t -> t != null && t == 3L);
         assertThat(m(out, "certs")).containsEntry("total", 1).containsEntry("expired", 1);
         assertThat(m(out, "alerts")).containsEntry("open", 1);
         assertThat(m(svc.build(t -> t != null && t == 4L), "certs")).containsEntry("total", 0);
+    }
+
+    @SuppressWarnings("unchecked") private static List<Map<String, Object>> list(Map<String, Object> b, String k) { return (List<Map<String, Object>>) b.get(k); }
+    private static Map<String, Object> team(Map<String, Object> b, long id) {
+        return list(b, "teams").stream().filter(t -> Long.valueOf(id).equals(t.get("team_id"))).findFirst().orElse(null);
+    }
+
+    @Test
+    @DisplayName("2026-11-13: takım satırı SY ∪ UG (sertifika iki takımda da), kurum toplamı bir kez; değerlendirilen alanı")
+    void teamRowsCountSyAndUg() {
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(List.of(
+                row("ok1.example.com", 1L, 2L), row("soon.example.com", 1L, null), row("bok.example.com", 2L, 2L), row("never.example.com", 2L, null)));
+        Map<String, Object> b = svc.build(t -> true);
+        assertThat(m(b, "certs")).containsEntry("total", 4).containsEntry("evaluated", 3).containsEntry("unchecked", 1);
+        assertThat(team(b, 1L)).containsEntry("total", 2).containsEntry("ok", 1).containsEntry("under30", 1);
+        // Takım B: ok1 (UG) + bok (SY = UG, bir kez) + never
+        assertThat(team(b, 2L)).containsEntry("total", 3).containsEntry("ok", 2).containsEntry("unchecked", 1).containsEntry("evaluated", 2);
+        assertThat((Double) team(b, 2L).get("health_pct")).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("2026-11-13: sertifikası olmayan takımın açık alarmı da takım satırına girer")
+    void alertOnlyTeamGetsRow() {
+        Team c = new Team(); c.setId(3L); c.setName("Takım C");
+        Team a = new Team(); a.setId(1L); a.setName("Takım A"); Team bt = new Team(); bt.setId(2L); bt.setName("Takım B");
+        when(teamRepo.findAll()).thenReturn(List.of(a, bt, c));
+        when(alertEventRepo.findOpenStatRows()).thenReturn(List.of(open(3L, "api.example.com", "HIGH"), open(1L, "soon.example.com", "CRITICAL")));
+        Map<String, Object> b = svc.build(t -> true);
+        assertThat(team(b, 3L)).containsEntry("team_name", "Takım C").containsEntry("total", 0).containsEntry("open_alerts", 1);
+        assertThat(team(b, 3L).get("health_pct")).isNull();
+        assertThat(m(b, "alerts")).containsEntry("open", 2).containsEntry("visible", true);
+    }
+
+    @Test
+    @DisplayName("2026-11-13: alerts.read yok → alarm bloğu okunmaz (visible=false), takım satırlarında alarm null (asla 0)")
+    void alertsHiddenWithoutPermission() {
+        Map<String, Object> b = svc.build(t -> true, false, null, false);
+        assertThat(m(b, "alerts")).containsOnlyKeys("visible").containsEntry("visible", false);
+        assertThat(list(b, "teams")).allSatisfy(t -> assertThat(t.get("open_alerts")).isNull());
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findOpenStatRows();
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findCreatedStatRowsSince(anyString());
+    }
+
+    @Test
+    @DisplayName("2026-11-13: alarm okuması düşerse error_msg + takım alarmları null (bilinmiyor ≠ 0)")
+    void alertReadFailureIsUnknown() {
+        when(alertEventRepo.findOpenStatRows()).thenThrow(new RuntimeException("db down"));
+        Map<String, Object> b = svc.build(t -> true);
+        assertThat(m(b, "alerts")).containsKey("error_msg").doesNotContainKey("open");
+        assertThat(list(b, "teams")).allSatisfy(t -> assertThat(t.get("open_alerts")).isNull());
+    }
+
+    @Test
+    @DisplayName("2026-11-13: SLA ortak önbellekten (availabilityAll + subset) — en kötü listesinde ad, tür, takım; takım kırılımı; kapsam")
+    void slaWorstNamedAndByTeam() {
+        Map<String, Object> b = svc.build(t -> true);
+        List<Map<String, Object>> worst = (List<Map<String, Object>>) m(b, "sla").get("worst");
+        assertThat(worst).hasSize(1);
+        assertThat(worst.get(0)).containsEntry("type", "http").containsEntry("id", 10L).containsEntry("name", "Ödeme API").containsEntry("team_id", 1L);
+        List<Map<String, Object>> byTeam = (List<Map<String, Object>>) m(b, "sla").get("by_team");
+        assertThat(byTeam).extracting(x -> x.get("team_id"), x -> x.get("monitors"), x -> x.get("breaches"))
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(1L, 1, 1), org.assertj.core.groups.Tuple.tuple(2L, 1, 0));
+        // Kapsam: takım 2 görmez → monitör 10 yok
+        Map<String, Object> s2 = m(svc.build(t -> t != null && t == 2L), "sla");
+        assertThat(s2).containsEntry("monitors", 1).containsEntry("breaches", 0);
+        org.mockito.Mockito.verify(sparklineService, org.mockito.Mockito.never()).availability(anyString(), anyInt(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("2026-11-13 inceleme: izleme okuma izni yok → en kötü SLA satırı ad / kimlik / takım taşımaz (yalnız tür + yüzde), ad sorgusu yok; ayrı bellek anahtarı")
+    void slaWorstWithoutMonitoringPermission() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "execCacheMs", 60_000L);
+        Map<String, Object> sla = m(svc.build(t -> true, true, false, "ALL", false), "sla");
+        List<Map<String, Object>> worst = (List<Map<String, Object>>) sla.get("worst");
+        assertThat(worst).hasSize(1);
+        assertThat(worst.get(0)).containsEntry("type", "http").containsKey("up_pct")
+                .doesNotContainKey("id").doesNotContainKey("name").doesNotContainKey("team_id");
+        assertThat(sla).containsEntry("monitors_visible", false).containsEntry("breaches", 1);
+        org.mockito.Mockito.verify(sparklineService, org.mockito.Mockito.never()).monitorNames(anyString(), any());
+        // İzinli çağrı aynı kapsam için AYRI hesaplanır (izinsiz sonuç paylaşılmaz)
+        List<Map<String, Object>> named = (List<Map<String, Object>>) m(svc.build(t -> true, true, true, "ALL", false), "sla").get("worst");
+        assertThat(named.get(0)).containsEntry("id", 10L).containsEntry("name", "Ödeme API");
+    }
+
+    @Test
+    @DisplayName("2026-11-13 eşitlik: son kontroller Pano önbelleğinden (getAllLatest) okununca sonuç latest_checks okumasıyla BİREBİR aynı")
+    void latestFromCertCacheEqualsRepository() {
+        Map<String, Object> fromRepo = svc.build(t -> true);
+        CertificateService cs = org.mockito.Mockito.mock(CertificateService.class);
+        List<com.sitemonitor.dto.CertificateDto> dtos = latestCheckRepo.findAll().stream()
+                .map(c -> com.sitemonitor.dto.CertificateDto.from(c, List.of(), List.of(), List.of())).toList();
+        when(cs.getAllLatest()).thenReturn(dtos);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "certService", cs);
+        Map<String, Object> fromCache = svc.build(t -> true);
+        fromRepo.remove("generated_at"); fromCache.remove("generated_at");
+        assertThat(fromCache).isEqualTo(fromRepo);
+    }
+
+    @Test
+    @DisplayName("2026-11-13: bellek — aynı kapsam anahtarı ikinci çağrıda hesaplamaz; fresh 5 sn içinde yine bellekten")
+    void memoisedPerScope() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "execCacheMs", 60_000L);
+        svc.build(t -> true, true, "ALL", false);
+        svc.build(t -> true, true, "ALL", false);
+        svc.build(t -> true, true, "ALL", true);
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(1)).findActiveDomainTeams();
+        svc.build(t -> true, false, "ALL", false);   // alarm izni ayrı anahtar
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findActiveDomainTeams();
     }
 }

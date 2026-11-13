@@ -257,10 +257,14 @@ export const VIEW_SPECS = Object.freeze({
   monitoring: Object.freeze({ prefix: 'mo_', exclude: ['mo_dlg'] }),
   /** Alarm Geçmişi (alertHistoryModel.URL_KEYS + görünüm sekmesi). */
   alerthistory: Object.freeze({ keys: ['view', 'type', 'q', 'level', 'team', 'ack', 'from', 'to', 'range', 'src', 'sort', 'noc'] }),
+  /** İstatistikler (`st_*`, 2026-11-13) — sayfa numarası / boyutu geçici, girmez. */
+  stats: Object.freeze({ prefix: 'st_', exclude: ['st_page', 'st_ps'] }),
   /** Olay & Hata Geçmişi (`ih_*`). */
   'incident-history': Object.freeze({ prefix: 'ih_', exclude: ['ih_id', 'ih_page', 'ih_ps'] }),
   /** Kayıtlar → Aktivite (2026-11-05) — activityModel.LIST_URL_KEYS; rota (`act`, `amon`, `atl*`) geçicidir, girmez. */
   activity: Object.freeze({ keys: ['atype', 'astatus', 'arange', 'afrom', 'ato', 'aq', 'ateam', 'aactor', 'agroup', 'areason', 'amf', 'amfl'] }),
+  /** Olaylar (2026-11-13) — incidentsModel.URL_KEYS + görünüm / sıralama / kapsam; açık olay (`incident`) ve sayfa girmez. */
+  incidents: Object.freeze({ keys: ['stat', 'type', 'q', 'from', 'to', 'level', 'team', 'inc_rec', 'view', 'sort', 'scope'] }),
 })
 
 /** İki parametre kümesi aynı mı (sıra önemsiz). */

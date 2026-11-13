@@ -82,6 +82,12 @@ public class IncidentsController {
     private UserPushDeliveryRepository userPushDeliveryRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
+    /** "7/24'e gitti" bilgisi (2026-11-13) — isteğe bağlı; dilimli testte yokken alan yazılmaz. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocAlertFacts nocAlertFacts;
+    /** Takım duyarlı dar izleme çözümlemesi (2026-11-13) — isteğe bağlı; yokken eski tam liste yolu (takım duyarlı seçimle). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.MonitorRefResolver monitorRefs;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -107,21 +113,27 @@ public class IncidentsController {
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String status,      // all | ongoing | resolved
             @RequestParam(required = false) String rootCause,   // alertType pill
-            @RequestParam(required = false) String q,           // monitör adı/host araması (LIKE domain)
-            @RequestParam(required = false) String since,
-            @RequestParam(required = false) String until,
+            @RequestParam(required = false) String q,           // monitör adı/host araması (LIKE domain, kaçışlı)
+            @RequestParam(required = false) String since,       // ISO ya da yyyy-MM-dd (İstanbul günü başı)
+            @RequestParam(required = false) String until,       // ISO ya da yyyy-MM-dd (o İstanbul günü DAHİL)
             @RequestParam(defaultValue = "default") String sort,
             @RequestParam(defaultValue = "desc") String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = SCOPE_MINE) String scope,   // mine | others | all (2026-09-28)
+            // Sunucu süzgeçleri (2026-11-13) — eskiden yalnız yüklenen sayfaya uygulanıyordu
+            @RequestParam(required = false) String level,          // CSV: CRITICAL,HIGH,WARNING
+            @RequestParam(required = false) Long teamId,           // Alarm Geçmişi ile aynı sahiplik kuralı
+            @RequestParam(required = false) Boolean acknowledged,
+            @RequestParam(defaultValue = "false") boolean teamless,
+            @RequestParam(defaultValue = "false") boolean mine,    // oturumun birincil takımı
+            @RequestParam(required = false) String resolvedSince,  // Çözüldü (24 sa) kartı: çözülme anına göre
+            @RequestParam(defaultValue = "false") boolean recurring, // son 7 günde aynı imza en az iki kez
             HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
-        Boolean resolved = "ongoing".equalsIgnoreCase(status) ? Boolean.FALSE
-                : "resolved".equalsIgnoreCase(status) ? Boolean.TRUE : null;
-        String type = (rootCause != null && !rootCause.isBlank()) ? rootCause.trim() : null;
-        String qEff = (q != null && !q.isBlank()) ? q.trim() : null;
+        Filters f = filters(status, rootCause, q, since, until, level, teamId, acknowledged, teamless, mine,
+                resolvedSince, recurring, session);
 
         // Takım kapsamı (IDOR): "kendi" kapsam = görüş kapsamı (global görüntüleyicide null = tümü). Org geneli okuma
         // ayrı bir karar: yalnız anahtar açıkken others/all uygulanır.
@@ -132,25 +144,12 @@ public class IncidentsController {
 
         Page<AlertEvent> result = sq == null
                 ? Page.empty(PageRequest.of(0, sz))   // kapsamsız kullanıcının "Takımımın olayları": hiçbir olay
-                : alertEventRepo.findIncidents(resolved, since, until, type, qEff, sq.scoped(), sq.outside(), sq.ids(),
-                        PageRequest.of(Math.max(0, page), sz, sortFor(sort, dir)));
-        List<AlertEvent> events = result.getContent();
-
-        Map<Long, Map<String, Object>> monitors = resolveMonitors(events);
-        Map<Long, Long> commentCounts = commentCounts(events);
-        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(events, own);
-        TeamInfo teams = resolveTeams(events, inv);
-        Set<Long> owned = ownedIds(events, actScope(session), inv);   // eylem sahipliği ≠ okuma (paylaşım VIEW, 2026-10-12)
-        Access access = accessFor(session);
-        // 7/24 operatörü (2026-10-04) başka ekibin olayını da TAM okur (teslim özeti, izleme bağlantısı, çözen kişi) —
-        // eylem bayrakları (can_manage/can_act/can_delete) yine KENDİ kapsamından.
-        Delivery delivery = deliveryFor(events, e -> access.noc() || owned.contains(e.getId()));
-        List<Map<String, Object>> data = events.stream()
-                .map(e -> toDto(e, monitors, commentCounts, teams, access.forRow(owned.contains(e.getId())), delivery)).toList();
+                : page(f, sq, PageRequest.of(Math.max(0, page), sz, sortFor(sort, dir)));
+        List<Map<String, Object>> data = rowsFor(result.getContent(), own, session);
 
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         if (sq != null)
-            for (Object[] row : alertEventRepo.countIncidentsByType(resolved, since, until, qEff, sq.scoped(), sq.outside(), sq.ids()))
+            for (Object[] row : byType(f, sq))
                 typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -161,38 +160,191 @@ public class IncidentsController {
         body.put("type_counts", typeCounts);
         body.put("scope",       eff);
         body.put("visible_to_all", visibleToAll() || nocCommenter(session));   // 7/24 operatörü: ayardan bağımsız
-        if (orgWide) body.put("scope_counts",
-                scopeCounts(eff, result.getTotalElements(), own, resolved, since, until, type, qEff));
+        // 2026-11-13: önem / takım / onaylı / takımsız / takımım / tekrarlayan SUNUCUDA uygulandı — arayüz yüklenen
+        // sayfaya ikinci kez süzgeç uygulamaz (sayfaya uygulandı notu yok). Alan yoksa (eski sunucu) eski istemci yolu.
+        body.put("server_facets", true);
+        if (orgWide) body.put("scope_counts", scopeCounts(eff, result.getTotalElements(), own, f));
         return ok(body);
     }
 
     /**
-     * "Takımımın olayları / Diğer ekiplerin olayları / Tümü" çip sayıları — sayfa süzgeçleriyle (durum, kök neden, arama,
-     * tarih) aynı. İki küme ayrık ve birleşimleri tümü olduğundan sayfanın toplamına TEK sayım eklemek yeter.
+     * Sayfa satırları — liste, tekil olay ve dışa aktarım AYNI yoldan geçer (kişi verisi maskesi tek yerde): izleme
+     * çözümlemesi (takım duyarlı, dar okuma), yorum sayıları, envanter (takım sütunu + sahiplik), teslim özeti (yalnız
+     * kendi / 7/24 satırları), 7 günlük tekrar sayısı. Sayfa başına sabit sorgu sayısı; satır başına sorgu YOK.
      */
-    private Map<String, Long> scopeCounts(String eff, long pageTotal, List<Long> own, Boolean resolved,
-                                          String since, String until, String type, String q) {
-        long mine;
+    private List<Map<String, Object>> rowsFor(List<AlertEvent> events, List<Long> own, HttpSession session) {
+        if (events.isEmpty()) return List.of();
+        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(events, own);
+        Map<Long, Map<String, Object>> monitors = resolveMonitors(events, inv);
+        Map<Long, Long> commentCounts = commentCounts(events);
+        TeamInfo teams = resolveTeams(events, inv);
+        Set<Long> owned = ownedIds(events, actScope(session), inv);   // eylem sahipliği ≠ okuma (paylaşım VIEW, 2026-10-12)
+        // Yeniden bildirim kapsamı (2026-11-13): AdminController.requireAlertNotifyScope ile aynı — erişim paylaşımı kolu YOK
+        Set<Long> notifyOwned = ownedIds(events,
+                SessionScope.isGlobalViewer(session) ? null : nullToEmpty(SessionScope.viewTeamIds(session)), inv);
+        Access access = accessFor(session);
+        // 7/24 operatörü (2026-10-04) başka ekibin olayını da TAM okur (teslim özeti, izleme bağlantısı, çözen kişi) —
+        // eylem bayrakları (can_manage/can_act/can_delete) yine KENDİ kapsamından.
+        Delivery delivery = deliveryFor(events, e -> access.noc() || owned.contains(e.getId()));
+        Map<String, Long> recurrence = recurrenceFor(events);
+        return events.stream()
+                .map(e -> toDto(e, monitors, commentCounts, teams,
+                        access.forRow(owned.contains(e.getId()), notifyOwned.contains(e.getId())), delivery, inv, recurrence))
+                .toList();
+    }
+
+    private static List<Long> nullToEmpty(List<Long> v) { return v == null ? List.of() : v; }
+
+    /**
+     * "Takımımın olayları / Diğer ekiplerin olayları / Tümü" çip sayıları — sayfa süzgeçleriyle (durum, kök neden, arama,
+     * tarih, önem, takım …) aynı. İki küme ayrık ve birleşimleri tümü olduğundan sayfanın toplamına TEK sayım eklemek yeter.
+     */
+    private Map<String, Long> scopeCounts(String eff, long pageTotal, List<Long> own, Filters f) {
+        long mineN;
         long all;
         switch (eff) {
             case SCOPE_MINE -> {
-                mine = pageTotal;
-                all = alertEventRepo.countIncidents(resolved, since, until, type, q, false, false, NO_SCOPE);
+                mineN = pageTotal;
+                all = count(f, new ScopeQuery(false, false, NO_SCOPE));
             }
             case SCOPE_ALL -> {
                 all = pageTotal;
-                mine = own.isEmpty() ? 0L : alertEventRepo.countIncidents(resolved, since, until, type, q, true, false, own);
+                mineN = own.isEmpty() ? 0L : count(f, new ScopeQuery(true, false, own));
             }
             default -> {   // others
-                mine = own.isEmpty() ? 0L : alertEventRepo.countIncidents(resolved, since, until, type, q, true, false, own);
-                all = mine + pageTotal;
+                mineN = own.isEmpty() ? 0L : count(f, new ScopeQuery(true, false, own));
+                all = mineN + pageTotal;
             }
         }
         Map<String, Long> m = new LinkedHashMap<>();
-        m.put(SCOPE_MINE, mine);
-        m.put(SCOPE_OTHERS, Math.max(0L, all - mine));
+        m.put(SCOPE_MINE, mineN);
+        m.put(SCOPE_OTHERS, Math.max(0L, all - mineN));
         m.put(SCOPE_ALL, all);
         return m;
+    }
+
+    // ── Süzgeç gövdesi (2026-11-13) — liste, özet ve dışa aktarım AYNI kayıttan sorgular ──────────────────────────
+    /** İstanbul — tarih süzgecinin gün sınırı (depolama UTC). */
+    static final java.time.ZoneId TZ = java.time.ZoneId.of("Europe/Istanbul");
+    private static final java.util.regex.Pattern DAY = java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+    private static final java.util.regex.Pattern STAMP = java.util.regex.Pattern.compile("^[0-9TZ:.+\\-]{10,40}$");
+    /** Önem süzgecinin kabul ettiği değerler (Alarm Geçmişi ile aynı üçlü); bilinmeyen değer düşer, hiçbiri kalmazsa boş sonuç. */
+    static final Set<String> LEVELS = Set.of("CRITICAL", "HIGH", "WARNING");
+    /** Hiçbir alarmın taşımadığı önem değeri: geçersiz (ya da boş kesişimli) önem süzgeci boş sonuç verir. */
+    static final String NO_LEVEL = "-";
+    /** "Tekrarlayan" ve satır rozetinin penceresi (gün). */
+    static final int RECUR_DAYS = 7;
+    /** Hiçbir olayla eşleşmeyen takım kimliği ("Takımım" süzgeci birincil takımı olmayan oturumda). */
+    static final Long NO_TEAM = -1L;
+
+    /**
+     * Olay süzgeçleri. {@code q} kaçışlanmış LIKE kalıbıdır; {@code levels} boş = süzgeç yok; {@code teamId} Alarm Geçmişi
+     * listesinin sahiplik kuralı (damga ya da envanter SY/UG); {@code teamless} takım sütunu boş; {@code recurSince}
+     * imza en az iki kez.
+     */
+    record Filters(Boolean resolved, String since, String until, String resolvedSince, String alertType, String q,
+                   List<String> levels, Boolean acknowledged, Long teamId, boolean teamless, String recurSince) {
+        static Filters none() {
+            return new Filters(null, null, null, null, null, null, List.of(), null, null, false, null);
+        }
+        boolean levelScoped() { return !levels.isEmpty(); }
+        java.util.Collection<String> levelParam() { return levels.isEmpty() ? AlertEventRepository.NO_LEVELS : levels; }
+        Filters resolved(Boolean v) { return new Filters(v, since, until, resolvedSince, alertType, q, levels, acknowledged, teamId, teamless, recurSince); }
+        Filters createdSince(String v) { return new Filters(resolved, v, until, resolvedSince, alertType, q, levels, acknowledged, teamId, teamless, recurSince); }
+        Filters resolvedFrom(String v) { return new Filters(resolved, since, until, v, alertType, q, levels, acknowledged, teamId, teamless, recurSince); }
+        Filters team(Long v) { return new Filters(resolved, since, until, resolvedSince, alertType, q, levels, acknowledged, v, teamless, recurSince); }
+        Filters onlyTeamless() { return new Filters(resolved, since, until, resolvedSince, alertType, q, levels, acknowledged, teamId, true, recurSince); }
+    }
+
+    private Filters filters(String status, String rootCause, String q, String since, String until, String level, Long teamId,
+                            Boolean acknowledged, boolean teamless, boolean mine, String resolvedSince, boolean recurring,
+                            HttpSession session) {
+        Boolean resolved = "ongoing".equalsIgnoreCase(status) ? Boolean.FALSE
+                : "resolved".equalsIgnoreCase(status) ? Boolean.TRUE : null;
+        String type = (rootCause != null && !rootCause.isBlank()) ? rootCause.trim() : null;
+        List<String> levels = new ArrayList<>();
+        if (level != null && !level.isBlank() && level.length() <= 200) {
+            for (String part : level.split(",")) {
+                String v = part.trim().toUpperCase(Locale.ROOT);
+                if (LEVELS.contains(v) && !levels.contains(v)) levels.add(v);
+            }
+            // Dolu ama geçerli değer taşımayan süzgeç (istemcinin "Kritik" kartı ∩ uyarı süzgeci → "-") HİÇBİR olayla
+            // eşleşmez — süzgeci yok saymak her önemi listelerdi.
+            if (levels.isEmpty()) levels.add(NO_LEVEL);
+        }
+        Long effTeam = teamId;
+        if (mine) {
+            Long primary = SessionScope.primaryTeamId(session);
+            // Birincil takımı olmayan oturumun "Takımım"ı boş küme; açık takım süzgeci farklı bir takımsa da kesişim boş.
+            effTeam = primary == null || (teamId != null && !teamId.equals(primary)) ? NO_TEAM : primary;
+        }
+        String recurSince = recurring ? ISO.format(Instant.now().minus(java.time.Duration.ofDays(RECUR_DAYS))) : null;
+        return new Filters(resolved, sinceBound(since, "since"), untilBound(until, "until"), stampOrNull(resolvedSince, "resolvedSince"),
+                type, AlertEventRepository.incidentLike(q), List.copyOf(levels), acknowledged, effTeam, teamless, recurSince);
+    }
+
+    /**
+     * Tarih süzgecinin ALT sınırı (2026-11-13 düzeltmesi): {@code yyyy-MM-dd} → o İSTANBUL gününün başı (UTC ISO);
+     * tam damga (eski istemci / derin bağlantı) aynen. Önceden gün metni UTC sözlüksel karşılaştırılıyordu: başlangıç 3 saat
+     * kayıyordu. Geçersiz gün → 400 alan hatası.
+     */
+    static String sinceBound(String raw, String field) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim();
+        if (!DAY.matcher(v).matches()) return stampOrNull(v, field);
+        return ISO.format(parseDay(v, field).atStartOfDay(TZ).toInstant());
+    }
+
+    /**
+     * Tarih süzgecinin ÜST sınırı: {@code yyyy-MM-dd} → o İstanbul gününün SONU dahil (ertesi günün başından bir saniye
+     * önce — damgalar saniye hassasiyetinde, sorgu {@code <=}). Önceden "2026-11-10" metni "2026-11-10T…" damgalarından
+     * küçük kaldığı için bitiş günü TÜMÜYLE dışarıda kalıyordu.
+     */
+    static String untilBound(String raw, String field) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim();
+        if (!DAY.matcher(v).matches()) return stampOrNull(v, field);
+        return ISO.format(parseDay(v, field).plusDays(1).atStartOfDay(TZ).toInstant().minusSeconds(1));
+    }
+
+    private static java.time.LocalDate parseDay(String v, String field) {
+        try {
+            return java.time.LocalDate.parse(v);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, com.sitemonitor.util.Msg.t(
+                    "Tarih geçersiz: " + v + " — yyyy-AA-gg biçiminde geçerli bir gün girin.",
+                    "Invalid date: " + v + " — enter a valid day as yyyy-MM-dd."));
+        }
+    }
+
+    /** Tam damga — uzunluk / karakter sınırı (sorguya giden serbest metin); boş → null. */
+    private static String stampOrNull(String raw, String field) {
+        if (raw == null || raw.isBlank()) return null;
+        String v = raw.trim();
+        if (!STAMP.matcher(v).matches()) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, com.sitemonitor.util.Msg.t(
+                    "Zaman değeri geçersiz: yyyy-AA-gg ya da yyyy-AA-ggTSS:dd:ss biçiminde girin.",
+                    "Invalid time value: use yyyy-MM-dd or yyyy-MM-ddTHH:mm:ss."));
+        }
+        return v;
+    }
+
+    private Page<AlertEvent> page(Filters f, ScopeQuery sq, org.springframework.data.domain.Pageable p) {
+        return alertEventRepo.findIncidentsFiltered(f.resolved(), f.since(), f.until(), f.resolvedSince(), f.alertType(), f.q(),
+                f.levelScoped(), f.levelParam(), f.acknowledged(), f.teamId(), f.teamless(), f.recurSince(),
+                sq.scoped(), sq.outside(), sq.ids(), p);
+    }
+
+    private long count(Filters f, ScopeQuery sq) {
+        return alertEventRepo.countIncidentsFiltered(f.resolved(), f.since(), f.until(), f.resolvedSince(), f.alertType(), f.q(),
+                f.levelScoped(), f.levelParam(), f.acknowledged(), f.teamId(), f.teamless(), f.recurSince(),
+                sq.scoped(), sq.outside(), sq.ids());
+    }
+
+    private List<Object[]> byType(Filters f, ScopeQuery sq) {
+        return alertEventRepo.countIncidentsByTypeFiltered(f.resolved(), f.since(), f.until(), f.resolvedSince(), f.q(),
+                f.levelScoped(), f.levelParam(), f.acknowledged(), f.teamId(), f.teamless(), f.recurSince(),
+                sq.scoped(), sq.outside(), sq.ids());
     }
 
     /** Sorgu kapsamı: {@code null} = boş küme (görüş kapsamı boş kullanıcının "Takımımın olayları"). */
@@ -252,15 +404,20 @@ public class IncidentsController {
     /** İstek başına bir kez kurulan eylem hakları (satır başına oturum/izin okunmaz). */
     private record Access(boolean actions, boolean globalAdmin, boolean noc) {
         RowAccess forRow(boolean owned) {
+            return forRow(owned, false);
+        }
+        RowAccess forRow(boolean owned, boolean notifyOwned) {
             return new RowAccess(owned, owned && actions, owned && actions && globalAdmin,
-                    owned || noc, (owned && actions) || noc);
+                    owned || noc, (owned && actions) || noc, notifyOwned && actions);
         }
     }
 
     /** {@code can_manage} = olay kendi kapsamında (yazma kapılarının sorduğu kapsam); {@code can_act} = + alerts.actions;
-     *  {@code can_delete} = + global yönetici (silme ucunun kuralı). Arayüz yalnız bunlara göre eylem çizer; sunucu her
-     *  yazma ucunda yine kendi kapısını uygular. */
-    private record RowAccess(boolean owned, boolean canAct, boolean canDelete, boolean full, boolean canComment) {}
+     *  {@code can_delete} = + global yönetici (silme ucunun kuralı); {@code can_notify} (2026-11-13) = yeniden bildirim
+     *  ({@code AdminController.requireAlertNotifyScope}: kendi görüş kapsamı, erişim paylaşımı kolu YOK) + alerts.actions.
+     *  Arayüz yalnız bunlara göre eylem çizer; sunucu her yazma ucunda yine kendi kapısını uygular. */
+    private record RowAccess(boolean owned, boolean canAct, boolean canDelete, boolean full, boolean canComment,
+                             boolean canNotify) {}
 
     private Access accessFor(HttpSession session) {
         return new Access(permissionService.allows(session, "alerts.actions", "execute"), SessionScope.isGlobalAdmin(session),
@@ -310,7 +467,8 @@ public class IncidentsController {
             if (e.getDomain() == null) continue;
             boolean teamless = e.getTeamId() == null;
             boolean ownershipOpen = own != null && !own.isEmpty() && (teamless || !own.contains(e.getTeamId()));
-            if (teamless || ownershipOpen) need.add(e.getDomain());
+            // Envanter gibi yönlenen olayın sahip takımları (owner_team_ids → nöbetçi) SY/UG'yi de ister (2026-11-13)
+            if (teamless || ownershipOpen || AlertOwnership.routesLikeInventory(e)) need.add(e.getDomain());
         }
         Map<String, List<com.sitemonitor.model.CertificateInventory>> byDomain = new HashMap<>();
         if (need.isEmpty()) return byDomain;
@@ -359,7 +517,9 @@ public class IncidentsController {
     }
 
     private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts,
-                                      TeamInfo teams, RowAccess access, Delivery delivery) {
+                                      TeamInfo teams, RowAccess access, Delivery delivery,
+                                      Map<String, List<com.sitemonitor.model.CertificateInventory>> inv,
+                                      Map<String, Long> recurrence) {
         Map<String, Object> ctx = deserialize(e.getContextJson());
         Map<String, Object> dto = new LinkedHashMap<>();
         dto.put("id",            e.getId());
@@ -400,13 +560,62 @@ public class IncidentsController {
         dto.put("can_delete",    access.canDelete());
         // Yorum yazabilir mi (2026-10-04): kendi kapsamında alerts.actions ya da 7/24 operatörü (her okunabilir olay).
         dto.put("can_comment",   access.canComment());
+        // Yeniden bildir (2026-11-13): yalnız kendi görüş kapsamı + alerts.actions (paylaşım / 7/24 / org geneli okuma DEĞİL)
+        dto.put("can_notify",    access.canNotify());
+        // Zengin bağlam (2026-11-13) — kişi verisi DEĞİL, her okunabilir satırda: sessiz kapanış (izleme silindi / duraklatıldı
+        // / bildirimler kapatıldı — "kurtulmadı, susturuldu"), bakım penceresinde algılanan değişiklik, 7 günlük tekrar.
+        dto.put("resolved_silently", Boolean.TRUE.equals(e.getResolvedSilently()));
+        dto.put("in_maintenance", ctx != null && ctx.get(com.sitemonitor.service.EscalationService.CTX_DETECTED_IN_MAINTENANCE) != null);
+        Long rec = recurrence == null ? null : recurrence.get(recurrenceKey(e.getDomain(), e.getAlertType()));
+        if (rec != null) dto.put("recurrence_7d", rec);
         if (!access.full() && monitor.containsKey("monitor_id")) {
             Map<String, Object> slim = new LinkedHashMap<>(monitor);
             slim.put("monitor_id", null);
             dto.put("monitor", slim);
         }
-        if (access.full()) ownerFacts(dto, e, delivery);
+        if (access.full()) {
+            ownerFacts(dto, e, delivery);
+            // Sahip takımlar (nöbetçi bölümü — AlertOwnership; bağımsız alarmda yalnız damga) + fırtına bağı
+            com.sitemonitor.model.CertificateInventory row = firstInventory(inv, e.getDomain());
+            dto.put("owner_team_ids", new ArrayList<>(AlertOwnership.ownerTeamIds(e,
+                    row == null ? null : row.getTeamId(), row == null ? null : row.getUgTeamId())));
+            dto.put("storm_id", e.getStormId());
+        }
         return dto;
+    }
+
+    private static com.sitemonitor.model.CertificateInventory firstInventory(
+            Map<String, List<com.sitemonitor.model.CertificateInventory>> inv, String domain) {
+        if (inv == null || domain == null) return null;
+        List<com.sitemonitor.model.CertificateInventory> rows = inv.get(domain);
+        return rows == null || rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** Tekrar sayımının anahtarı (alan adı + tür) — ayırıcı alan adında görünmeyen bir karakter. */
+    private static String recurrenceKey(String domain, String type) {
+        return String.valueOf(domain) + '\u0001' + String.valueOf(type);
+    }
+
+    /**
+     * "7 günde N kez" (2026-11-13): sayfadaki (alan adı, tür) imzalarının son {@value #RECUR_DAYS} günde açılma sayısı — TEK
+     * gruplu sorgu (Alarm Geçmişi'nin tekrar sayımıyla aynı). Kapsam sorusu yoktur: yalnız ekrandaki olayların imzası sayılır.
+     * Sorgu düşerse boş (rozet çizilmez — uydurma sayı yok).
+     */
+    private Map<String, Long> recurrenceFor(List<AlertEvent> events) {
+        Set<String> domains = new HashSet<>();
+        for (AlertEvent e : events) if (e.getDomain() != null) domains.add(e.getDomain());
+        Map<String, Long> out = new HashMap<>();
+        if (domains.isEmpty()) return out;
+        try {
+            String since = ISO.format(Instant.now().minus(java.time.Duration.ofDays(RECUR_DAYS)));
+            List<Object[]> rows = alertEventRepo.countRecentByDomainAndType(domains, since);
+            if (rows != null) for (Object[] r : rows)
+                out.put(recurrenceKey(r[0] == null ? null : r[0].toString(), r[1] == null ? null : r[1].toString()),
+                        ((Number) r[2]).longValue());
+        } catch (Exception ex) {
+            log.debug("Olay tekrar sayıları alınamadı: {}", ex.toString());
+        }
+        return out;
     }
 
     /**
@@ -427,6 +636,15 @@ public class IncidentsController {
     private static void ownerFacts(Map<String, Object> dto, AlertEvent e, Delivery d) {
         dto.put("acknowledged_by", e.getAcknowledgedBy());
         dto.put("acknowledged_at", e.getAcknowledgedAt());
+        // Gerekçeler + tekrar hatırlatma (2026-11-13) — sahiplenen gibi takım içi bilgi: yalnız kendi / 7/24 satırında
+        dto.put("acknowledged_note", e.getAcknowledgedNote());
+        dto.put("resolved_note", e.getResolvedNote());
+        dto.put("realert_count", e.getRealertCount());
+        dto.put("last_re_alert_at", e.getLastReAlertAt());
+        if (e.getNocSentAt() != null) {
+            dto.put("noc_sent_at", e.getNocSentAt());
+            dto.put("noc_via_storm", Boolean.TRUE.equals(e.getNocViaStorm()));
+        }
         if (d == null) return;
         if (d.mail() != null) {
             long[] m = d.mail().getOrDefault(e.getId(), new long[]{ 0, 0, 0 });
@@ -484,6 +702,7 @@ public class IncidentsController {
             }
         }
         if (nocCallLog != null) nocCallLog.decorate(mine);   // noc_call_count — tek sorgu; düşerse alan boş kalır
+        if (nocAlertFacts != null) nocAlertFacts.decorate(mine);   // noc_sent_at / noc_via_storm — tek sorgu (2026-11-13)
         return new Delivery(mail, push);
     }
 
@@ -533,29 +752,30 @@ public class IncidentsController {
     }
 
     // ── Monitör çözümleme (AlertEvent.domain → ad + tip + tab + monitor_id) — N+1'siz ──
-    private Map<Long, Map<String, Object>> resolveMonitors(List<AlertEvent> events) {
+    /**
+     * İzleme çözümlemesi (2026-11-13, takım duyarlı): aynı URL / host / ad'ı birden çok takım izleyebilir — olay DAMGALI
+     * takımın izlemesine bağlanır, başka takımın izlemesi ASLA seçilmez (damgalı takımın izlemesi yoksa bağlantı yok, ad =
+     * alan adı). Damgasız olay (envanter türevi Port/DNS, sertifika) envanterin SY/UG takımının izlemesini, o da yoksa ilk
+     * adayı (kimlik sırası — eski davranış) alır. Okuma DAR: {@link com.sitemonitor.service.MonitorRefResolver#candidates}
+     * yalnız sayfadaki anahtarları {@code IN} ile okur (eskiden her istekte aile başına {@code findAll()} — k6 betikleri,
+     * dbquery SQL'i dahil tam varlıklar). Çözümleyici yokken (dilimli test) eski tam liste yolu, aynı seçim kuralıyla.
+     */
+    private Map<Long, Map<String, Object>> resolveMonitors(List<AlertEvent> events,
+                                                           Map<String, List<com.sitemonitor.model.CertificateInventory>> inv) {
         Map<Long, Map<String, Object>> byEvent = new HashMap<>();
         if (events.isEmpty()) return byEvent;
-        Set<String> fams = events.stream().map(e -> family(e.getAlertType())).collect(Collectors.toSet());
-        Map<String, Map<String, Object[]>> idx = new HashMap<>();   // family → (key → [name, id])
-        // Port/DNS: SİLİNMİŞ standalone satır indekse girmez (2026-09-27; bkz. MonitorRefResolver aynı kural).
-        if (fams.contains("http"))    idx.put("http",    index(httpMonitorRepo.findAll(),    m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
-        if (fams.contains("port"))    idx.put("port",    index(portMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
-        if (fams.contains("keyword")) idx.put("keyword", index(keywordMonitorRepo.findAll(), m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
-        if (fams.contains("ping"))    idx.put("ping",    index(pingMonitorRepo.findAll(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
-        if (fams.contains("dns"))     idx.put("dns",     index(dnsMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),     m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
-        if (fams.contains("domain"))  idx.put("domain",  index(domainMonitorRepo.findAll(),  m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
-        if (fams.contains("page"))     idx.put("page",     index(pageMonitorRepo.findAll(),     m -> m.getUrl(),  m -> m.getName(), m -> m.getId()));
-        if (fams.contains("scripted")) idx.put("scripted", index(scriptedMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
-        // PAGESPEED alarmlari AlertEvent.domain'e m.getUrl() yaziyor (SchedulerService.addPageSpeedSweepItems)
-        // — page/http ile ayni anahtarlama.
-        if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(), m -> m.getName(), m -> m.getId()));
-        // Veritabanı sorgusu: alarm anahtarı izleme ADI (k6 emsali).
-        if (fams.contains("dbquery") && dbQueryMonitorRepo != null)
-            idx.put("dbquery", index(dbQueryMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
+        Map<String, Set<String>> keys = new HashMap<>();
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
-            Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;
+            if (!"cert".equals(fam) && e.getDomain() != null) keys.computeIfAbsent(fam, k -> new HashSet<>()).add(e.getDomain());
+        }
+        Map<String, Map<String, List<Object[]>>> idx = monitorRefs != null ? monitorRefs.candidates(keys) : null;
+        if (idx == null) idx = legacyCandidates(keys.keySet());
+        for (AlertEvent e : events) {
+            String fam = family(e.getAlertType());
+            Map<String, List<Object[]>> byKey = idx.get(fam);
+            Object[] ref = byKey == null ? null
+                    : pickMonitor(byKey.get(e.getDomain()), contextMonitorId(e), e.getTeamId(), inventoryTeams(inv, e.getDomain()));
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", ref != null ? ref[0] : e.getDomain());
             m.put("type", fam);
@@ -566,11 +786,82 @@ public class IncidentsController {
         return byEvent;
     }
 
-    private static <T> Map<String, Object[]> index(List<T> rows, Function<T, String> key, Function<T, String> name, Function<T, Long> id) {
-        Map<String, Object[]> m = new HashMap<>();
-        for (T r : rows) {
+    /**
+     * Aday seçimi — paket görünür (birim testi). {@code cands}: kimlik sıralı {@code [ad, id, teamId]}. Damgalı olay yalnız
+     * kendi takımının izlemesini alır; damgasız olay envanter takımının izlemesini, o yoksa ilk adayı.
+     */
+    static Object[] pickMonitor(List<Object[]> cands, Long stampedTeam, Set<Long> inventoryTeams) {
+        return pickMonitor(cands, null, stampedTeam, inventoryTeams);
+    }
+
+    /**
+     * Önce alarm bağlamının {@code monitor_id}'si (aynı anahtarlı aday arasında KESİN eşleşme — izleme takım değiştirse de
+     * olayı açan izleme odur), sonra takım kuralı (2026-11-13 inceleme: damgalı takımın izlemesi taşınmışsa bağ kayboluyordu).
+     */
+    static Object[] pickMonitor(List<Object[]> cands, Long contextMonitorId, Long stampedTeam, Set<Long> inventoryTeams) {
+        if (cands == null || cands.isEmpty()) return null;
+        if (contextMonitorId != null) {
+            for (Object[] c : cands) if (contextMonitorId.equals(c[1] instanceof Number n ? Long.valueOf(n.longValue()) : null)) return c;
+        }
+        if (stampedTeam != null) {
+            for (Object[] c : cands) if (stampedTeam.equals(c[2])) return c;
+            return null;
+        }
+        if (inventoryTeams != null && !inventoryTeams.isEmpty()) {
+            for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return c;
+        }
+        return cands.get(0);
+    }
+
+    /** Alarm bağlamındaki izleme kimliği (sayı ya da sayısal metin); yoksa / okunamazsa null. */
+    private Long contextMonitorId(AlertEvent e) {
+        try {
+            Map<String, Object> ctx = deserialize(e.getContextJson());
+            if (ctx == null) return null;
+            Object v = ctx.get("monitor_id");
+            if (v instanceof Number n) return Long.valueOf(n.longValue());
+            if (v instanceof String s && s.matches("\\d{1,18}")) return Long.valueOf(s);
+        } catch (Exception ignored) { /* bağlam yok / bozuk */ }
+        return null;
+    }
+
+    private static Set<Long> inventoryTeams(Map<String, List<com.sitemonitor.model.CertificateInventory>> inv, String domain) {
+        if (inv == null || domain == null) return Set.of();
+        Set<Long> out = new HashSet<>();
+        for (com.sitemonitor.model.CertificateInventory i : inv.getOrDefault(domain, List.of())) {
+            if (i.getTeamId() != null) out.add(i.getTeamId());
+            if (i.getUgTeamId() != null) out.add(i.getUgTeamId());
+        }
+        return out;
+    }
+
+    /** Çözümleyici yokken (dilimli test) eski tam liste okuması — aynı aday biçimi; silinmiş Port/DNS satırı girmez. */
+    private Map<String, Map<String, List<Object[]>>> legacyCandidates(Set<String> fams) {
+        Map<String, Map<String, List<Object[]>>> idx = new HashMap<>();
+        if (fams.contains("http"))    idx.put("http",    index(httpMonitorRepo.findAll(),    m -> m.getUrl(),    m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("port"))    idx.put("port",    index(portMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("keyword")) idx.put("keyword", index(keywordMonitorRepo.findAll(), m -> m.getUrl(),    m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("ping"))    idx.put("ping",    index(pingMonitorRepo.findAll(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("dns"))     idx.put("dns",     index(dnsMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),     m -> m.getDomain(), m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("domain"))  idx.put("domain",  index(domainMonitorRepo.findAll(),  m -> m.getDomain(), m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("page"))     idx.put("page",     index(pageMonitorRepo.findAll(),     m -> m.getUrl(),  m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        if (fams.contains("scripted")) idx.put("scripted", index(scriptedMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        // PAGESPEED alarmlari AlertEvent.domain'e m.getUrl() yaziyor (SchedulerService.addPageSpeedSweepItems)
+        if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(), m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        // Veritabanı sorgusu: alarm anahtarı izleme ADI (k6 emsali).
+        if (fams.contains("dbquery") && dbQueryMonitorRepo != null)
+            idx.put("dbquery", index(dbQueryMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId(), m -> m.getTeamId()));
+        return idx;
+    }
+
+    private static <T> Map<String, List<Object[]>> index(List<T> rows, Function<T, String> key, Function<T, String> name,
+                                                         Function<T, Long> id, Function<T, Long> team) {
+        Map<String, List<Object[]>> m = new HashMap<>();
+        List<T> sorted = new ArrayList<>(rows);
+        sorted.sort(java.util.Comparator.comparing(id, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        for (T r : sorted) {
             String k = key.apply(r);
-            if (k != null) m.putIfAbsent(k, new Object[]{ name.apply(r), id.apply(r) });
+            if (k != null) m.computeIfAbsent(k, x -> new ArrayList<>()).add(new Object[]{ name.apply(r), id.apply(r), team.apply(r) });
         }
         return m;
     }
@@ -629,20 +920,421 @@ public class IncidentsController {
         AlertEvent ev = requireAlert(id);
         boolean owned = requireIncidentReadable(session, ev);
         List<AlertEvent> one = List.of(ev);
-        TeamInfo teams = resolveTeams(one, inventoryFor(one, null));
-        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one), teams,
-                accessFor(session).forRow(owned), deliveryFor(one, e -> owned || nocCommenter(session)))));
+        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(one, null);
+        TeamInfo teams = resolveTeams(one, inv);
+        boolean notify = SessionScope.isGlobalViewer(session) || incidentOwnedBy(ev, SessionScope.viewTeamIds(session));
+        return ok(Map.of("data", toDto(ev, resolveMonitors(one, inv), commentCounts(one), teams,
+                accessFor(session).forRow(owned, notify), deliveryFor(one, e -> owned || nocCommenter(session)), inv,
+                recurrenceFor(one))));
+    }
+
+    // ── Özet (2026-11-13) ─────────────────────────────────────────────────────────
+    /** Özet belleği — dakikalık yoklama aynı kapsam için DB'ye her seferinde binmesin; {@code fresh=1} atlar (en sık 5 sn). */
+    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> summaryMemo = new com.sitemonitor.util.TtlMemo<>(500);
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.incidents.summary-cache-ms:15000}")
+    long summaryCacheMs = 15_000L;
+    /** MTTA / MTTR örneklem tavanı (satır) — dar izdüşüm, en yeni önce. */
+    static final int TIMING_CAP = 20_000;
+
+    /**
+     * Olaylar özeti (2026-11-13, kullanıcı onaylı zenginleştirme): AÇIK / ONAYLI / KRİTİK / TAKIMSIZ / TAKIMIM sayıları KESİN
+     * (eskiden ilk 200 açık satırdan türetiliyordu), son 24 saatte ÇÖZÜLEN (çözülme anına göre — eskiden açılışa bakıyordu),
+     * MTTA / MTTR (24 sa ve 7 gün; sessiz kapanışlar MTTR'a girmez — Alarm Gürültüsü ile aynı kural), en uzun süren açık
+     * olay ve takım süzgeci seçenekleri (kapsamdaki olayların takımları, adlarıyla). Kapsam listeyle aynı ({@code scope}).
+     * Gruplu sorgular, satır başına sorgu yok; kapsam anahtarı başına {@code site.monitor.incidents.summary-cache-ms}
+     * (15 sn) bellek. Bir bölüm okunamazsa o alan {@code null} (bilinmiyor — uydurma sıfır yok).
+     */
+    @GetMapping("/summary")
+    public ResponseEntity<Map<String, Object>> summary(
+            @RequestParam(defaultValue = SCOPE_MINE) String scope,
+            @RequestParam(defaultValue = "false") boolean fresh,
+            HttpSession session) {
+        permissionService.require(session, "alerts.read", "view");
+        List<Long> own = ownScope(session);
+        boolean orgWide = orgWideReader(session);
+        String eff = orgWide ? normalizeScope(scope) : SCOPE_MINE;
+        ScopeQuery sq = scopeQuery(eff, own);
+        Long primary = SessionScope.primaryTeamId(session);
+        String key = eff + '|' + com.sitemonitor.util.TtlMemo.scopeKey(own == null, own) + "|p" + primary;
+        Map<String, Object> data = summaryMemo.get(key, summaryCacheMs, allowFresh(key, fresh), () -> computeSummary(sq, primary));
+        Map<String, Object> out = new LinkedHashMap<>(data);
+        out.put("scope", eff);
+        return ok(Map.of("data", out));
+    }
+
+    /** `fresh` en çok bu aralıkta bir hesaplatır (anahtar başına; İzleme Panosu deseni) — Yenile düğmesi DB'yi dövemez. */
+    static final long SUMMARY_FRESH_MIN_MS = 5_000L;
+    private final Map<String, Long> summaryFreshAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Taze hesap izni: son taze hesaptan {@link #SUMMARY_FRESH_MIN_MS} geçmediyse önbellek döner. */
+    boolean allowFresh(String key, boolean fresh) {
+        if (!fresh) return false;
+        long now = System.currentTimeMillis();
+        if (summaryFreshAt.size() > 1000) summaryFreshAt.clear();
+        Long last = summaryFreshAt.get(key);
+        if (last != null && now - last < SUMMARY_FRESH_MIN_MS) return false;
+        summaryFreshAt.put(key, now);
+        return true;
+    }
+
+    private Map<String, Object> computeSummary(ScopeQuery sq, Long primary) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        Instant now = Instant.now();
+        String since24 = ISO.format(now.minus(java.time.Duration.ofHours(24)));
+        String since7 = ISO.format(now.minus(java.time.Duration.ofDays(7)));
+        if (sq == null) {   // kapsamsız "Takımımın olayları": bilinen BOŞ küme (bilinmiyor değil)
+            d.put("open", 0L); d.put("acknowledged", 0L); d.put("critical", 0L); d.put("teamless", 0L);
+            d.put("mine", primary == null ? null : 0L); d.put("resolved_24h", 0L);
+            for (String k : List.of("mtta_24h_minutes", "mtta_7d_minutes", "mttr_24h_minutes", "mttr_7d_minutes")) d.put(k, null);
+            d.put("mtta_sample_7d", 0); d.put("mttr_sample_7d", 0); d.put("timing_capped", false);
+            d.put("longest_open", null); d.put("team_options", List.of());
+            return d;
+        }
+        Filters open = Filters.none().resolved(Boolean.FALSE);
+        long openN = 0, ack = 0, critical = 0;
+        for (Object[] row : alertEventRepo.countIncidentFacets(open.resolved(), null, null, null, null, null, false,
+                AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
+            long n = ((Number) row[2]).longValue();
+            openN += n;
+            if (Boolean.TRUE.equals(row[1])) ack += n;
+            if ("CRITICAL".equalsIgnoreCase(String.valueOf(row[0]))) critical += n;
+        }
+        d.put("open", openN);
+        d.put("acknowledged", ack);
+        d.put("critical", critical);
+        d.put("teamless", count(open.onlyTeamless(), sq));
+        d.put("mine", primary == null ? null : count(open.team(primary), sq));
+        d.put("resolved_24h", count(Filters.none().resolved(Boolean.TRUE).resolvedFrom(since24), sq));
+        timing(d, sq, since24, since7);
+        d.put("longest_open", longestOpen(sq));
+        d.put("team_options", teamOptions(sq));
+        return d;
+    }
+
+    /** MTTA / MTTR — iki dar sorgu (açılışı 7 günde olanlar; çözülmesi 7 günde olanlar). Düşerse alanlar null. */
+    private void timing(Map<String, Object> d, ScopeQuery sq, String since24, String since7) {
+        try {
+            org.springframework.data.domain.Pageable cap = PageRequest.of(0, TIMING_CAP);
+            List<Object[]> resolvedRows = alertEventRepo.findIncidentTimingRows(Boolean.TRUE, null, null, since7, null, null, false,
+                    AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids(), cap);
+            List<Object[]> openedRows = alertEventRepo.findIncidentTimingRows(null, since7, null, null, null, null, false,
+                    AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids(), cap);
+            Mean mttr24 = new Mean(), mttr7 = new Mean(), mtta24 = new Mean(), mtta7 = new Mean();
+            for (Object[] r : resolvedRows) {
+                if (Boolean.TRUE.equals(r[4])) continue;   // sessiz kapanış: kurtarma değil (AlertNoiseService ile aynı)
+                Instant c = parseStamp(r[0]), res = parseStamp(r[2]);
+                if (c == null || res == null || res.isBefore(c)) continue;
+                double min = (res.toEpochMilli() - c.toEpochMilli()) / 60_000.0;
+                mttr7.add(min);
+                if (String.valueOf(r[2]).compareTo(since24) >= 0) mttr24.add(min);
+            }
+            for (Object[] r : openedRows) {
+                Instant c = parseStamp(r[0]), a = parseStamp(r[1]);
+                if (c == null || a == null || a.isBefore(c)) continue;
+                double min = (a.toEpochMilli() - c.toEpochMilli()) / 60_000.0;
+                mtta7.add(min);
+                if (String.valueOf(r[0]).compareTo(since24) >= 0) mtta24.add(min);
+            }
+            d.put("mtta_24h_minutes", mtta24.value());
+            d.put("mtta_7d_minutes", mtta7.value());
+            d.put("mttr_24h_minutes", mttr24.value());
+            d.put("mttr_7d_minutes", mttr7.value());
+            d.put("mtta_sample_7d", mtta7.n);
+            d.put("mttr_sample_7d", mttr7.n);
+            d.put("timing_capped", resolvedRows.size() >= TIMING_CAP || openedRows.size() >= TIMING_CAP);
+        } catch (Exception ex) {
+            log.debug("Olay özeti MTTA/MTTR okunamadı: {}", ex.toString());
+            for (String k : List.of("mtta_24h_minutes", "mtta_7d_minutes", "mttr_24h_minutes", "mttr_7d_minutes",
+                    "mtta_sample_7d", "mttr_sample_7d", "timing_capped")) d.put(k, null);
+        }
+    }
+
+    /** Ortalama (dakika, bir ondalık); örnek yoksa null. */
+    private static final class Mean {
+        double sum; int n;
+        void add(double v) { sum += v; n++; }
+        Double value() { return n == 0 ? null : Math.round(sum / n * 10) / 10.0; }
+    }
+
+    /** Saklanan UTC damgası ({@code yyyy-MM-ddTHH:mm:ss}, isteğe bağlı kesir / Z) → an; okunamazsa null. */
+    static Instant parseStamp(Object raw) {
+        if (raw == null) return null;
+        String v = raw.toString().trim();
+        if (v.isEmpty()) return null;
+        if (v.endsWith("Z")) v = v.substring(0, v.length() - 1);
+        int dot = v.indexOf('.');
+        if (dot > 0) v = v.substring(0, dot);
+        try {
+            return java.time.LocalDateTime.parse(v).toInstant(ZoneOffset.UTC);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** En uzun süren AÇIK olay (en eski açılış) — kimlik + izleme adı + açılış. Düşerse null. */
+    private Map<String, Object> longestOpen(ScopeQuery sq) {
+        try {
+            Page<AlertEvent> p = page(Filters.none().resolved(Boolean.FALSE), sq,
+                    PageRequest.of(0, 1, Sort.by(Sort.Direction.ASC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id"))));
+            if (p.isEmpty()) return null;
+            AlertEvent e = p.getContent().get(0);
+            Map<String, Object> m = resolveMonitors(List.of(e), inventoryFor(List.of(e), null)).get(e.getId());
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("id", e.getId());
+            out.put("name", m == null ? e.getDomain() : m.get("name"));
+            out.put("started_at", e.getCreatedAt());
+            out.put("alert_level", e.getAlertLevel());
+            return out;
+        } catch (Exception ex) {
+            log.debug("Olay özeti en uzun açık olay okunamadı: {}", ex.toString());
+            return null;
+        }
+    }
+
+    /** Takım seçeneklerinin geriye bakışı (gün) — açık olaylar her zaman sayılır. */
+    static final int TEAM_OPTION_DAYS = 90;
+
+    /**
+     * Takım süzgeci seçenekleri — kapsamdaki olayların takımları (damgalı olay + damgasız olayın envanter SY/UG takımı),
+     * adlarıyla, Türkçe abece sırasında. Ham kimlik çipi yok: adı okunamayan takım listeye girmez. Düşerse null.
+     */
+    private List<Map<String, Object>> teamOptions(ScopeQuery sq) {
+        try {
+            Map<Long, Long> counts = new HashMap<>();
+            // Tüm geçmiş TARANMAZ (2026-11-13 inceleme): açık olaylar + son TEAM_OPTION_DAYS günde açılıp kapanmışlar
+            // (iki ayrık dilim — açılış zamanı indeksiyle sınırlı).
+            String recent = ISO.format(Instant.now().minus(java.time.Duration.ofDays(TEAM_OPTION_DAYS)));
+            for (Object[] slice : new Object[][] { { Boolean.FALSE, null }, { Boolean.TRUE, recent } }) {
+                Boolean res = (Boolean) slice[0];
+                String since = (String) slice[1];
+                for (Object[] r : alertEventRepo.countIncidentStampedTeams(res, since, null, null, null, false,
+                        AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
+                    if (r[0] != null) counts.merge(((Number) r[0]).longValue(), ((Number) r[1]).longValue(), Long::sum);
+                }
+                for (Object[] r : alertEventRepo.countIncidentInventoryTeams(res, since, null, null, null, false,
+                        AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
+                    long n = ((Number) r[2]).longValue();
+                    if (r[0] != null) counts.merge(((Number) r[0]).longValue(), n, Long::sum);
+                    if (r[1] != null && !r[1].equals(r[0])) counts.merge(((Number) r[1]).longValue(), n, Long::sum);
+                }
+            }
+            if (counts.isEmpty()) return List.of();
+            java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (com.sitemonitor.model.Team tm : teamRepo.findAllById(counts.keySet())) {
+                if (tm.getId() == null || tm.getName() == null) continue;
+                Map<String, Object> o = new LinkedHashMap<>();
+                o.put("id", tm.getId());
+                o.put("name", tm.getName());
+                o.put("count", counts.getOrDefault(tm.getId(), 0L));
+                out.add(o);
+            }
+            out.sort((a, b) -> col.compare(String.valueOf(a.get("name")), String.valueOf(b.get("name"))));
+            return out;
+        } catch (Exception ex) {
+            log.debug("Olay takım seçenekleri okunamadı: {}", ex.toString());
+            return null;
+        }
+    }
+
+    // ── Dışa aktarım (2026-11-13) ─────────────────────────────────────────────────
+    /** Dışa aktarım satır tavanı. */
+    static final int EXPORT_MAX_ROWS = 10_000;
+    /** Okuma parçası — parça başına sabit sorgu sayısı. */
+    static final int EXPORT_CHUNK = 1_000;
+    /** Kişi başına dakikada dışa aktarım (pod belleği — yük sınırı). */
+    static final int EXPORT_PER_MINUTE = 6;
+    private final Map<String, java.util.Deque<Long>> exportCalls = new HashMap<>();
+    private final Set<String> exportRunning = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** CSV sütunları — sıra sabit (Excel'i istemci JSON'dan aynı sırayla kurar). */
+    static final List<String> EXPORT_COLUMNS = List.of("id", "status", "alert_level", "monitor", "monitor_type", "domain",
+            "alert_type", "root_cause", "team", "started_at", "resolved_at", "duration_minutes", "acknowledged",
+            "acknowledged_by", "resolved_by", "comment_count", "recurrence_7d", "message");
+
+    /**
+     * Olaylar dışa aktarımı — LİSTEYLE AYNI süzgeç + kapsam (ekranda ne varsa o), en çok {@value #EXPORT_MAX_ROWS} satır
+     * ({@code X-Export-Truncated}). Kişi verisi maskesi listeyle AYNI ({@link #rowsFor}): sahiplenen / çözen kişi yalnız
+     * kendi ya da 7/24 satırında. {@code format=csv} (varsayılan; BOM, formül koruması, İstanbul saati) | {@code json}
+     * (istemci Excel'i kurar). Kişi başına aynı anda tek + dakikada {@value #EXPORT_PER_MINUTE} (429). Denetim
+     * {@code INCIDENTS_EXPORT} (süzgeç + satır sayısı).
+     */
+    @GetMapping("/export")
+    public ResponseEntity<?> export(
+            @RequestParam(required = false) String format,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String rootCause,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String since,
+            @RequestParam(required = false) String until,
+            @RequestParam(defaultValue = "default") String sort,
+            @RequestParam(defaultValue = "desc") String dir,
+            @RequestParam(defaultValue = SCOPE_MINE) String scope,
+            @RequestParam(required = false) String level,
+            @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) Boolean acknowledged,
+            @RequestParam(defaultValue = "false") boolean teamless,
+            @RequestParam(defaultValue = "false") boolean mine,
+            @RequestParam(required = false) String resolvedSince,
+            @RequestParam(defaultValue = "false") boolean recurring,
+            HttpSession session, HttpServletRequest request) {
+        permissionService.require(session, "alerts.read", "view");
+        String fmt = format == null || format.isBlank() ? "csv" : format.trim().toLowerCase(Locale.ROOT);
+        if (!"csv".equals(fmt) && !"json".equals(fmt))
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("format",
+                    com.sitemonitor.util.Msg.t("Biçim csv ya da json olmalı.", "The format must be csv or json."));
+        Filters f = filters(status, rootCause, q, since, until, level, teamId, acknowledged, teamless, mine,
+                resolvedSince, recurring, session);
+        String who = exportKey(session);
+        if (!exportRunning.add(who)) {
+            return tooMany("EXPORT_BUSY", 5L, com.sitemonitor.util.Msg.t(
+                    "Önceki dışa aktarımınız hâlâ hazırlanıyor; kişi başına aynı anda tek dışa aktarım yapılabilir. Bitince yeniden deneyin.",
+                    "Your previous export is still being prepared; one export per person can run at a time. Try again when it has finished."));
+        }
+        try {
+            Long retry = reserveExport(who);
+            if (retry != null) {
+                return tooMany("RATE_LIMITED", retry, com.sitemonitor.util.Msg.t(
+                        "Dışa aktarım sınırına ulaşıldı: kişi başına dakikada en çok " + EXPORT_PER_MINUTE + " dışa aktarım. "
+                                + retry + " saniye sonra yeniden deneyin.",
+                        "Export limit reached: at most " + EXPORT_PER_MINUTE + " exports per person per minute. Try again in "
+                                + retry + " seconds."));
+            }
+            List<Long> own = ownScope(session);
+            boolean orgWide = orgWideReader(session);
+            String eff = orgWide ? normalizeScope(scope) : SCOPE_MINE;
+            ScopeQuery sq = scopeQuery(eff, own);
+            List<Map<String, Object>> rows = new ArrayList<>();
+            long total = 0;
+            if (sq != null) {
+                Sort order = sortFor(sort, dir);
+                for (int pg = 0; rows.size() < EXPORT_MAX_ROWS; pg++) {
+                    Page<AlertEvent> p = page(f, sq, PageRequest.of(pg, EXPORT_CHUNK, order));
+                    if (pg == 0) total = p.getTotalElements();
+                    rows.addAll(rowsFor(p.getContent(), own, session));
+                    if (!p.hasNext() || p.getContent().isEmpty()) break;
+                }
+                if (rows.size() > EXPORT_MAX_ROWS) rows = new ArrayList<>(rows.subList(0, EXPORT_MAX_ROWS));
+            }
+            boolean truncated = total > rows.size();
+            try {
+                auditService.recordAction("INCIDENTS_EXPORT", session, request, "ALERT_EVENT", "export",
+                        com.sitemonitor.service.AuditDetail.of("format", fmt, "rows", rows.size(), "total", total,
+                                "truncated", truncated, "scope", eff, "status", status, "root_cause", rootCause,
+                                "level", level, "team_id", teamId, "q", q, "since", since, "until", until));
+            } catch (Exception e) {
+                log.debug("INCIDENTS_EXPORT denetimi yazılamadı: {}", e.toString());
+            }
+            org.springframework.http.HttpHeaders h = new org.springframework.http.HttpHeaders();
+            h.setCacheControl("no-store");
+            h.set("X-Export-Truncated", String.valueOf(truncated));
+            h.set("X-Export-Max-Rows", String.valueOf(EXPORT_MAX_ROWS));
+            if ("json".equals(fmt)) {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("rows", rows);
+                data.put("row_count", rows.size());
+                data.put("total", total);
+                data.put("max_rows", EXPORT_MAX_ROWS);
+                data.put("truncated", truncated);
+                data.put("scope", eff);
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("success", true);
+                body.put("data", data);
+                return ResponseEntity.ok().headers(h).body(body);
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append('﻿').append(com.sitemonitor.util.Csv.row(EXPORT_COLUMNS.toArray()));
+            for (Map<String, Object> r : rows) sb.append(csvRow(r));
+            h.setContentType(org.springframework.http.MediaType.parseMediaType("text/csv;charset=UTF-8"));
+            h.setContentDisposition(org.springframework.http.ContentDisposition.attachment()
+                    .filename("olaylar-" + java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmm").withZone(TZ).format(Instant.now()) + ".csv")
+                    .build());
+            return ResponseEntity.ok().headers(h).body(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } finally {
+            exportRunning.remove(who);
+        }
+    }
+
+    /** CSV satırı — {@link #EXPORT_COLUMNS} sırasıyla; zamanlar İstanbul yerel, süre dakika. */
+    @SuppressWarnings("unchecked")
+    private static String csvRow(Map<String, Object> r) {
+        Map<String, Object> mon = r.get("monitor") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        Map<String, Object> rc = r.get("root_cause") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        Instant start = parseStamp(r.get("started_at"));
+        Instant end = parseStamp(r.get("resolved_at"));
+        Long minutes = start == null ? null
+                : Math.max(0L, ((end != null ? end : Instant.now()).toEpochMilli() - start.toEpochMilli()) / 60_000L);
+        return com.sitemonitor.util.Csv.row(r.get("id"), r.get("status"), r.get("alert_level"), mon.get("name"), mon.get("type"),
+                r.get("domain"), r.get("alert_type"), rc.get("code"), r.get("team_name"), local(start), local(end), minutes,
+                r.get("acknowledged"), r.get("acknowledged_by"), r.get("resolved_by"), r.get("comment_count"),
+                r.get("recurrence_7d"), r.get("message"));
+    }
+
+    private static String local(Instant i) {
+        return i == null ? null : java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(TZ).format(i);
+    }
+
+    private static String exportKey(HttpSession session) {
+        Object u = session == null ? null : session.getAttribute("username");
+        return u != null ? "u:" + u : "s:" + (session == null ? "-" : session.getId());
+    }
+
+    /** Dakikalık hak — dolu ise kalan saniye, yoksa null (hak düşülür). */
+    private Long reserveExport(String who) {
+        long now = System.currentTimeMillis();
+        synchronized (exportCalls) {
+            if (exportCalls.size() > 1000) exportCalls.clear();
+            java.util.Deque<Long> q = exportCalls.computeIfAbsent(who, k -> new java.util.ArrayDeque<>());
+            while (!q.isEmpty() && now - q.peekFirst() >= 60_000L) q.pollFirst();
+            if (q.size() >= EXPORT_PER_MINUTE) return Math.max(1L, (60_000L - (now - q.peekFirst()) + 999) / 1000);
+            q.addLast(now);
+            return null;
+        }
+    }
+
+    private static ResponseEntity<Map<String, Object>> tooMany(String code, long retry, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", code);
+        body.put("error", message);
+        body.put("retry_after_seconds", retry);
+        String rid = org.slf4j.MDC.get("requestId");
+        if (rid != null) body.put("request_id", rid);
+        return ResponseEntity.status(429).header(org.springframework.http.HttpHeaders.RETRY_AFTER, String.valueOf(retry)).body(body);
     }
 
     // ── Yorumlar ─────────────────────────────────────────────────────────────────
-    /** Yorum dizisi — tekil olayla aynı okuma kapısı (başka ekibin olayında da okunur; yazma kapıları ayrı). */
+    /**
+     * Yorum dizisi — tekil olayla aynı okuma kapısı (başka ekibin olayında da okunur; yazma kapıları ayrı). Her yorum
+     * {@code can_delete} taşır (2026-11-13): silme ucunun kuralıyla AYNI — yazar ya da olayın yönetim kapsamı, ve çağıran
+     * silme ucunun kapısından geçer (7/24 operatörü okuyabildiği olayda; diğerleri alerts.actions + kendi kapsamı).
+     */
     @GetMapping("/{id}/comments")
     public ResponseEntity<Map<String, Object>> listComments(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
-        requireIncidentReadable(session, requireAlert(id));
-        return ok(Map.of("data", commentRepo.findByAlertEventIdAndDeletedAtIsNullOrderByCreatedAtAsc(id)));
+        AlertEvent ev = requireAlert(id);
+        requireIncidentReadable(session, ev);
+        boolean noc = nocCommenter(session);
+        boolean gate = noc || (permissionService.allows(session, "alerts.actions", "execute") && ownsIncident(session, ev));
+        boolean manage = gate && canManageIncident(session, ev);
+        String user = session == null ? null : (String) session.getAttribute("username");
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AlertComment c : commentRepo.findByAlertEventIdAndDeletedAtIsNullOrderByCreatedAtAsc(id)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", c.getId());
+            m.put("alert_event_id", c.getAlertEventId());
+            m.put("body", c.getBody());
+            m.put("team_id", c.getTeamId());
+            m.put("author_username", c.getAuthorUsername());
+            m.put("author_name", c.getAuthorName());
+            m.put("created_at", c.getCreatedAt());
+            m.put("updated_at", c.getUpdatedAt());
+            boolean own = user != null && user.equals(c.getAuthorUsername());
+            m.put("can_delete", gate && (own || manage));
+            out.add(m);
+        }
+        return ok(Map.of("data", out));
     }
-
     @PostMapping("/{id}/comments")
     public ResponseEntity<Map<String, Object>> addComment(
             @PathVariable Long id, @RequestBody Map<String, Object> body,

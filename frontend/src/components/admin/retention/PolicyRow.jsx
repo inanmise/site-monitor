@@ -41,7 +41,7 @@ const MODE_TONE = { AGE: 'info', EXTERNAL: 'warning', ORPHAN_ONLY: 'success' }
  * vurgulanır (sol renk şeridi YOK — kullanıcı kararı 2026-09-26); `data-changed` test kancası.
  */
 export default function PolicyRow({
-  policy, value, original, maxRows, expanded, onToggle, onChange, approval, onApprove, disabled,
+  policy, value, original, maxRows, expanded, onToggle, onChange, approval, onApprove, disabled, focused = false,
 }) {
   const t = useT()
   const p = policy
@@ -51,9 +51,11 @@ export default function PolicyRow({
   const needsApproval = p.data_class === 'PERSONAL' || p.data_class === 'SECURITY_AUDIT'
 
   return (
-    <div data-slot="policy-row" data-changed={changed ? 'true' : undefined} data-open={expanded ? 'true' : undefined}
+    <div data-slot="policy-row" data-policy-id={p.id} data-changed={changed ? 'true' : undefined} data-open={expanded ? 'true' : undefined}
+      data-focused={focused ? 'true' : undefined} tabIndex={focused ? -1 : undefined}
       className={cn('mb-2 overflow-hidden rounded-[10px] border bg-card transition-[border-color,box-shadow] hover:border-primary/40',
         expanded && 'shadow-md',
+        focused && 'border-primary ring-2 ring-primary/40 outline-none',
         changed && 'border-amber-500/70 bg-amber-500/5 hover:border-amber-500/80')}>
       <div className="grid grid-cols-[28px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 px-3 py-2.5 sm:px-3.5 xl:grid-cols-[28px_minmax(200px,1.5fr)_minmax(230px,auto)_minmax(280px,1.4fr)] xl:gap-3.5">
         <Button type="button" variant="ghost" size="icon-sm" onClick={onToggle} aria-expanded={expanded} aria-label={p.table}

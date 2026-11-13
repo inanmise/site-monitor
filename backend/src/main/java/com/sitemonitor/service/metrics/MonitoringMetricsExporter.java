@@ -199,6 +199,7 @@ public class MonitoringMetricsExporter {
     private volatile ScheduledExecutorService executor;
     /** {@code ContextClosedEvent}'in BU bağlamdan geldiğini ayırt etmek için (alt bağlamın kapanışı kapanış saymasın). */
     private ApplicationContext context;
+    private com.sitemonitor.service.dbgrowth.DbGrowthService dbGrowth;
     /** Gözlemde kullanılan örnek kimliği; null = {@link #instanceId()} (testler iki aktarıcıya ayrı kimlik verir). */
     private volatile String selfId;
     /**
@@ -284,6 +285,7 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) public void setCertSweepStore(com.sitemonitor.service.certsweep.CertSweepStore v) { this.certSweepStore = v; }
 
     @Autowired(required = false) public void setContext(ApplicationContext v) { this.context = v; }
+    @Autowired(required = false) @Lazy public void setDbGrowth(com.sitemonitor.service.dbgrowth.DbGrowthService v) { this.dbGrowth = v; }
 
     /** Testler: saat enjeksiyonu. */
     void setClock(Supplier<Instant> clock) { this.clock = clock; }
@@ -796,6 +798,8 @@ public class MonitoringMetricsExporter {
         evalStateMeters(f);
         Long depth = read(sources, "eval_inbox", () -> inbox == null ? null : Long.valueOf(inbox.depth()));
         if (depth != null) f.add(MonitoringMetricNames.EVAL_INBOX_DEPTH, depth);
+        // Veritabanı büyümesi (2026-11-13): 5 dakikalık hesaptan; PostgreSQL değilse ya da okunamazsa seri YOK (sahte 0 yok)
+        mergeInto(f, read(sources, "db_growth", () -> dbGrowthFamilies(dbGrowth)));
         // Dağıtık kontroller (R3-3): kuyruk KÜME ailesi (tek gruplu deyim, yalnız anahtar + tür açıkken), işçi POD ailesi (bellek)
         checkJobQueueMeters(f, sources);
         checkJobPodMeters(f);
@@ -1094,6 +1098,18 @@ public class MonitoringMetricsExporter {
     }
 
     /** Geçici aile kümesini (kaynak tamamen okunduysa) asıl kümeye ekler — yarım okunan kaynak satır bırakmaz. */
+    /** Veritabanı büyümesi aileleri; PostgreSQL değil / servis yok → null (kaynak satırı yazılmaz). */
+    static Families dbGrowthFamilies(com.sitemonitor.service.dbgrowth.DbGrowthService g) {
+        if (g == null) return null;
+        com.sitemonitor.service.dbgrowth.DbGrowthService.CapacityFacts c = g.capacityFacts();
+        if (c == null || !Boolean.TRUE.equals(c.supported())) return null;
+        Families t = new Families();
+        if (c.usedBytes() != null) t.add(MonitoringMetricNames.DB_SIZE_BYTES, c.usedBytes());
+        // Bayat görüntüden (> 3 gün) dolma günü yazılmaz — seri yok, sahte geri sayım değil
+        if (c.daysUntilFull() != null && !c.forecastStale()) t.add(MonitoringMetricNames.DB_DAYS_UNTIL_FULL, c.daysUntilFull());
+        return t;
+    }
+
     private static void mergeInto(Families f, Families part) {
         if (part != null) f.mergeFrom(part);
     }

@@ -58,7 +58,7 @@ const TAB_GROUPS = [
   },
 ]
 
-export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUsername, globalAdmin = false }) {
+export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUsername, globalAdmin = false, manageTeamIds = null }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
   const defaultTab = isAdmin ? 'thresholds' : 'contacts'
@@ -137,14 +137,16 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
         <TabsContent value={activeTab} key={remountKey} className="min-h-[300px] min-w-0">
           <LazySection sectionKey={activeTab}>
           {activeTab === 'thresholds' && isAdmin && <AlertThresholds />}
-          {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} onOpenSimulator={(params) => jump('whoNotified', params)} />}
+          {activeTab === 'contacts'   && <EscalationContacts teams={teams} systemRole={systemRole} onOpenSimulator={(params) => jump('whoNotified', params)}
+            globalAdmin={globalAdmin} manageTeamIds={manageTeamIds} />}
           {activeTab === 'notifyGroups' && <NotificationGroups teams={teams} systemRole={systemRole} />}
           {activeTab === 'forwards'   && activeAllowed && <AlertForwardManager />}
           {activeTab === 'whoNotified' && (
             <RecipientSimulator teams={teams} isAdmin={isAdmin} onNavigate={jump}
               defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
           )}
-          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} onJump={jump} />}
+          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} onJump={jump}
+            manageTeamIds={manageTeamIds} />}
           {activeTab === 'sharing'    && <TeamAccessManager />}
           {activeTab === 'changes'    && <AdminChangeFeed />}
           {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}

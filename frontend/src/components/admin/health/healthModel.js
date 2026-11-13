@@ -10,7 +10,7 @@ import { watchdogReasons } from './watchdogModel.js'
 import { toUtc } from '../../../utils/localDay.js'
 import { evalStateModel, sideJobsModel, certChunksModel } from './clusterRuntimeModel.js'
 
-export const SECTION_KEYS = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'releases', 'users', 'http']
+export const SECTION_KEYS = ['watchdog', 'sys', 'sched', 'db', 'dbgrowth', 'integrations', 'heartbeat', 'releases', 'users', 'http']
 
 /** Grafik eşikleri (2026-09-12, #23) — tek pod / 100 eşzamanlı kullanıcı kabulü. */
 export const HEALTH_THRESHOLDS = {

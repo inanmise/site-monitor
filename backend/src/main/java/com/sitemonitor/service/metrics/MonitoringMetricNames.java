@@ -128,6 +128,12 @@ public final class MonitoringMetricNames {
     /** Bu pod'un saati − veritabanı saati (sn; pozitif = pod ileride). */
     public static final String CLOCK_SKEW = "sitemonitor.clock.skew.seconds";
 
+    // ── Veritabanı büyümesi (2026-11-13) — KÜME; DbGrowthService'in 5 dakikalık hesabı, yalnız PostgreSQL ────────────────
+    /** Veritabanı boyutu (bayt, {@code pg_database_size}; en çok 5 dk eski). PostgreSQL dışında YOK. */
+    public static final String DB_SIZE_BYTES = "sitemonitor.db.size.bytes";
+    /** Kapasiteye kadar tahmini gün (geçmişe dayalı, en az 7 günlük görüntü). Kapasite tanımsız / geçmiş kısa / 10 yılda dolmuyor → YOK. */
+    public static final String DB_DAYS_UNTIL_FULL = "sitemonitor.db.days.until.full";
+
     // ── Dinamik taban çizgisi (2026-11-12) — benimseme ───────────────────────────────────────────────────────────────
     /** Dinamik taban çizgisi (yanıt-süresi anomalisi) AÇIK izleme sayısı, türe göre (kurum geneli; 7 tür, sıfır dahil). */
     public static final String BASELINE_ENABLED = "sitemonitor.baseline.enabled.monitors";
@@ -286,6 +292,12 @@ public final class MonitoringMetricNames {
         l.add(new Def(DATABASE_STATUS, Scope.POD, List.of(), "Database health seen by this pod: 0 up, 1 degraded, 2 down"));
         l.add(new Def(SYSTEM_MAINTENANCE, Scope.CLUSTER, List.of(),
                 "SiteMonitor maintenance: 0 none, 1 announced, 2 warning, 3 active, 4 recently ended"));
+        // Veritabanı büyümesi (2026-11-13)
+        l.add(new Def(DB_SIZE_BYTES, Scope.CLUSTER, List.of(),
+                "Database size in bytes (pg_database_size, at most 5 minutes old); absent outside PostgreSQL"));
+        l.add(new Def(DB_DAYS_UNTIL_FULL, Scope.CLUSTER, List.of(),
+                "Forecast days until the database reaches its configured capacity (history-based, at least 7 daily snapshots); "
+                        + "absent while the capacity is unset, the history is too short or it does not fill within 10 years"));
         // Çok pod çalışma ölçümleri
         l.add(new Def(CLUSTER_LOCK_LOST, Scope.POD, List.of(),
                 "Job locks this pod lost while holding them (renewal found the row gone or owned by another pod), since the pod started"));

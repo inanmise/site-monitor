@@ -37,7 +37,8 @@ export default function StatsToolbar({
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
           {q && (
             <InputGroupAddon align="inline-end">
-              <InputGroupButton size="icon-xs" onClick={() => onQ('')} aria-label={t('stv.clearSearch')} title={t('stv.clearSearch')}>
+              <InputGroupButton size="icon-xs" onClick={() => onQ('')} aria-label={t('stv.clearSearch')} title={t('stv.clearSearch')}
+                className="pointer-coarse:size-10">
                 <X aria-hidden="true" />
               </InputGroupButton>
             </InputGroupAddon>
@@ -89,9 +90,9 @@ export default function StatsToolbar({
           <div role="group" aria-label={t('stv.activeFilters')} className="flex min-w-0 flex-wrap items-center gap-1.5">
             {chips.map((c) => (
               <Button key={c.key} type="button" variant="secondary" size="xs" data-slot="stats-chip" data-chip={c.key}
-                className="h-7 max-w-full rounded-full pr-1.5 font-normal max-sm:h-10 pointer-coarse:h-10"
+                className="h-auto min-h-7 max-w-full rounded-md pr-1.5 text-left font-normal whitespace-normal max-sm:min-h-10 pointer-coarse:min-h-10"
                 aria-label={t('stv.removeFilter', c.label)} title={t('stv.removeFilter', c.label)} onClick={c.onRemove}>
-                <span className="truncate">{c.label}</span><X aria-hidden="true" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{c.label}</span><X aria-hidden="true" className="shrink-0" />
               </Button>
             ))}
             <Button type="button" variant="link" size="xs" data-slot="stats-clear" className="h-7 px-1 max-sm:h-10 pointer-coarse:h-10" onClick={onClearAll}>{t('stv.clearAll')}</Button>

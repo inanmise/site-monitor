@@ -169,6 +169,56 @@ async function downloadActivityCsv(qs) {
   }
 }
 
+/** Olaylar liste / dışa aktarım sorgu dizesi — yalnız tanınan, boş olmayan anahtarlar (2026-11-13). */
+const INCIDENT_QUERY_KEYS = ['status', 'rootCause', 'q', 'since', 'until', 'sort', 'dir', 'page', 'size', 'scope',
+  'level', 'teamId', 'acknowledged', 'teamless', 'mine', 'resolvedSince', 'recurring', 'format']
+function incidentsQuery(params = {}) {
+  const q = new URLSearchParams()
+  for (const k of INCIDENT_QUERY_KEYS) {
+    if (params[k] != null && params[k] !== '') q.set(k, params[k])
+  }
+  const qs = q.toString()
+  return qs ? `?${qs}` : ''
+}
+
+/**
+ * Olaylar CSV dışa aktarımı (2026-11-13) — aktivite CSV'siyle aynı yol: ham `fetch` + Blob + ortak indirme
+ * (`downloadBlob` — Safari / iPad). 401 oturum yolu, 429 bekleme önerisi, JSON olmayan / ağ hatası çevrilmiş metinle;
+ * tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`. `X-Export-Truncated` → `truncated`.
+ */
+async function downloadIncidentsCsv(qs) {
+  let res
+  try {
+    res = await fetch(`${BASE}/monitoring/incidents/export${qs}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+  } catch {
+    return networkFailurePayload()
+  }
+  if (!res.ok) {
+    recordFailure('/monitoring/incidents/export', res.status)
+    if (res.status === 401) pingSessionPath()
+    let body = null
+    try { body = await res.json() } catch { body = null }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
+    const normalized = normalizeErrorBody(body, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false
+    normalized.status = res.status
+    return normalized
+  }
+  let blob
+  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  const p = (n) => String(n).padStart(2, '0')
+  const d = new Date()
+  const name = plain ? plain[1] : `olaylar-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
+  const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
+  const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
+  if (!downloadBlob(name, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return { success: true, name, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
+}
+
 /**
  * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
  * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
@@ -1279,10 +1329,16 @@ export const api = {
   },
 
   getStats: () => request('/stats'),
-  getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
+  // yönetici özeti (2026-09-12, #20); `fresh` (2026-11-13, İstatistikler Yenile): sunucu belleği en fazla 5 sn'de bir atlanır
+  getExecutiveStats: (fresh = false) => request(fresh === true ? '/stats/executive?fresh=1' : '/stats/executive'),
+  // İstatistikler (2026-11-13): zamanında yenileme oranı (3 / 6 / 12 ay) ve 90 günlük sağlık serisi (takım = tek takım)
+  getRenewalTimeliness: () => request('/stats/renewal-timeliness'),
+  getHealthSeries: (days = 90, team = null) =>
+    request(`/stats/health-series?days=${encodeURIComponent(days)}${team != null && team !== '' ? `&team=${encodeURIComponent(team)}` : ''}`),
   getRecentChanges: (days = 7) => request(`/stats/changes?days=${days}`),   // "ne değişti" satırı (2026-09-12, #7)
 
-  getTeamStats: () => request('/stats/teams'),
+  // `lean` (2026-11-13): yalnız takımların SY / UG alan listeleri (`mode: domains`); eski sunucu parametreyi yok sayar
+  getTeamStats: (opts = {}) => request(opts?.lean ? '/stats/teams?view=domains' : '/stats/teams'),
 
   runScheduler: () => request('/scheduler/run', { method: 'POST' }),
 
@@ -1496,6 +1552,8 @@ export const api = {
     reassign: (id, targetGroupId) => request(`/notification-groups/${id}/reassign`, {
       method: 'POST', body: JSON.stringify({ target_group_id: targetGroupId ?? null }),
     }),
+    /** Toplu işlem (2026-11-13): { action: delete | set_team | make_default, ids, team_id? } → satır satır sonuç. */
+    bulk: (body) => request('/notification-groups/bulk', { method: 'POST', body: JSON.stringify(body) }),
   },
 
   /**
@@ -1508,11 +1566,12 @@ export const api = {
      *  (sözleşmedeki düz dizi DEĞİL; NocController.groupOptions). E-posta YOK. */
     groupOptions: () => request('/noc/groups/options'),
     /** { summary: { total, covered, not_covered, paused, by_type, active_groups, disabled_types }, items: [...] } */
-    coverage: ({ teamId, type, summary } = {}) => {
+    coverage: ({ teamId, type, summary, byTeam } = {}) => {
       const qs = new URLSearchParams()
       if (teamId != null && teamId !== '') qs.set('team_id', String(teamId))
       if (type) qs.set('type', String(type))
       if (summary) qs.set('summary', '1')   // yalnız sayılar (Genel Bakış şeridi) — items gelmez
+      if (byTeam) qs.set('by_team', '1')    // özete takım başına {total, covered, paused} (Takımlar → kapsam panosu, 2026-11-13)
       const q = qs.toString()
       return request(`/noc/coverage${q ? `?${q}` : ''}`)
     },
@@ -1945,6 +2004,10 @@ export const api = {
     addContact: (contact) => request('/admin/contacts', { method: 'POST', body: JSON.stringify(contact) }),
     updateContact: (id, contact) => request(`/admin/contacts/${id}`, { method: 'PUT', body: JSON.stringify(contact) }),
     deleteContact: (id) => request(`/admin/contacts/${id}`, { method: 'DELETE' }),
+    /** Toplu işlem (2026-11-13): { action: activate | deactivate | set_level | set_team, ids, min_alert_level?, team_id? }. */
+    bulkContacts: (body) => request('/admin/contacts/bulk', { method: 'POST', body: JSON.stringify(body) }),
+    /** Bir kullanıcıyı seçili takımlara eskalasyon kişisi ekler: { team_ids, user_id, role, min_alert_level }. */
+    bulkCreateContacts: (body) => request('/admin/contacts/bulk-create', { method: 'POST', body: JSON.stringify(body) }),
 
     // Alert Events
     /**
@@ -2181,6 +2244,17 @@ export const api = {
     },
     getDbStats: () => request('/admin/system/db-stats'),
     getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
+    // Veritabanı büyümesi (2026-11-13): günlük boyut geçmişi + tahmin, tablo önerileri, istek üzerine sağlık analizi.
+    dbGrowth: {
+      get: (range = 90, fresh = false) =>
+        request(`/admin/system/db-growth?range=${range}${fresh ? '&fresh=1' : ''}`),
+      whatIf: (policy, days) => request(
+        `/admin/system/db-growth/what-if?policy=${encodeURIComponent(policy)}&days=${encodeURIComponent(days)}`),
+      saveCapacity: (capacityGb) => request('/admin/system/db-growth/capacity',
+        { method: 'PUT', body: JSON.stringify({ capacity_gb: capacityGb }) }),
+      runAnalysis: () => request('/admin/system/db-growth/analysis', { method: 'POST' }),
+      latestAnalysis: () => request('/admin/system/db-growth/analysis/latest'),
+    },
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     // SMTP Gönderim Logu v2 (2026-09-19): sunucu taraflı arama/özet/dışa aktarma/detay/yeniden gönderim.
@@ -2254,15 +2328,21 @@ export const api = {
 
     // Incidents Overview (AlertEvent tabanlı — tüm monitörlerin olayları)
     incidents: {
-      list: (params = {}) => {
+      // scope: mine | others | all (2026-09-28, org geneli salt okunur olaylar; varsayılan mine gönderilmez)
+      // 2026-11-13: sunucu süzgeçleri (level CSV, teamId, acknowledged, teamless, mine, resolvedSince, recurring)
+      list: (params = {}) => request(`/monitoring/incidents${incidentsQuery(params)}`),
+      /** Kesin özet (2026-11-13): sayılar + MTTA/MTTR + en uzun açık + takım seçenekleri. Eski sunucu → 404 / {status}. */
+      summary: (params = {}) => {
         const q = new URLSearchParams()
-        // scope: mine | others | all (2026-09-28, org geneli salt okunur olaylar; varsayılan mine gönderilmez)
-        for (const k of ['status', 'rootCause', 'q', 'since', 'until', 'sort', 'dir', 'page', 'size', 'scope']) {
-          if (params[k] != null && params[k] !== '') q.set(k, params[k])
-        }
+        if (params.scope) q.set('scope', params.scope)
+        if (params.fresh) q.set('fresh', 'true')
         const qs = q.toString()
-        return request(`/monitoring/incidents${qs ? '?' + qs : ''}`)
+        return request(`/monitoring/incidents/summary${qs ? '?' + qs : ''}`, { withStatus: true })
       },
+      /** Dışa aktarım (2026-11-13): JSON satırları (istemci Excel'i kurar) — liste süzgeçleriyle aynı, en çok 10 000 satır. */
+      exportJson: (params = {}) => request(`/monitoring/incidents/export${incidentsQuery({ ...params, format: 'json' })}`, { timeoutMs: 0, withStatus: true }),
+      /** Dışa aktarım CSV — sunucunun dosyası indirilir ({ success, name, truncated }). */
+      exportCsv: (params = {}) => downloadIncidentsCsv(incidentsQuery({ ...params, format: 'csv' })),
       // Tekil olay — e-posta derin linki (?incident=<id>) sayfalı listede olmayan olayı da açabilsin.
       get:           (id) => request(`/monitoring/incidents/${id}`),
       comments:      (id) => request(`/monitoring/incidents/${id}/comments`),

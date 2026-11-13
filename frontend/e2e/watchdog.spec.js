@@ -2,7 +2,8 @@
 // (dokunmatik) / 1280: bölüm en üstte; açılınca kontrol satırları, kanal özeti ve dış izleyici adresi sığar, yatay taşma
 // yok, dokunma hedefleri ≥ 40 px; onaylı kritik sorun genel bandı kritiğe çeker. API mock'lu. 2026-10-29 (çok pod R3-3): 8. kontrol
 // "Dağıtık kontrol kuyruğu" (ana anahtar kapalıyken uygulanmaz). 2026-10-29 (çok pod R3-4, paket C1): sertifika taraması kontrolü
-// parçalı tarama açıkken ek olgular ve uzun bir ayrıntı cümlesi taşır (karar aynı) — sarar, kırpılmaz.
+// parçalı tarama açıkken ek olgular ve uzun bir ayrıntı cümlesi taşır (karar aynı) — sarar, kırpılmaz. 2026-11-13: 9. kontrol
+// "Veritabanı doluluğu" (kapasite tanımlı değilken uygulanmaz).
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -33,6 +34,9 @@ const WATCHDOG = {
     // Dağıtık kontrol kuyruğu (2026-10-29, çok pod R3-3, paket D1): ana anahtar kapalıyken "uygulanmaz" (sorgu yok)
     C('check_queue', 'Dağıtık kontrol kuyruğu', { last_result: 'NA', detail: 'Uygulanmaz: dağıtık kontroller kapalı (bütün türler tarama liderinde koşar).',
       facts: { reason: 'distributed_off' } }),
+    // Veritabanı doluluğu (2026-11-13): kapasite tanımlı değilken "uygulanmaz" (sorgu yok)
+    C('db_capacity', 'Veritabanı doluluğu', { last_result: 'NA', detail: 'Uygulanmaz: veritabanı kapasitesi tanımlı değil (Sistem Sağlığı → Veritabanı büyümesi).',
+      facts: { reason: 'capacity_unknown' } }),
   ],
   channels: { email_recipients: 3, push_users: 2, webhook: true, reminder_hours: 6, confirm_checks: 2 },
 }
@@ -88,9 +92,10 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="health-overall"]')).toHaveAttribute('data-level', 'down')
       const sections = await page.locator('[data-section]').evaluateAll((els) => els.map((e) => e.getAttribute('data-section')))
       expect(sections[0]).toBe('watchdog')
-      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(8)
+      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(9)
       await expect(sec.locator('[data-key="sweep_leader"]')).toHaveAttribute('data-state', 'problem')
       await expect(sec.locator('[data-key="check_queue"]')).toHaveAttribute('data-state', 'na')
+      await expect(sec.locator('[data-key="db_capacity"]')).toHaveAttribute('data-state', 'na')
       await expect(sec.locator('[data-key="cert_sweep"]')).toHaveAttribute('data-state', 'ok')
       await expect(sec.locator('[data-key="cert_sweep"]')).toContainText('Parçalı tarama açık')
       await sec.scrollIntoViewIfNeeded()

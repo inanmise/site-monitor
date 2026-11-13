@@ -615,6 +615,11 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page-usage.retention-days",         "retention", Type.INT),   // sayfa kullanımı özeti (System Health #1)
         new Setting("site.monitor.cert-inventory-report.retention-days", "retention", Type.INT),
         new Setting("site.monitor.db.growth-warn-rows",               "retention", Type.INT),
+        // Veritabanı büyümesi (2026-11-13): günlük boyut görüntüsünün saklaması (RetentionCatalog "db-size-daily") ve
+        // veritabanı disk kapasitesi (GB; 0 = bilinmiyor — dolma tahmini ve "Veritabanı doluluğu" kendi kendini izleme
+        // kontrolü). Kapasite Sistem Sağlığı → Veritabanı büyümesi'nden düzenlenir; GLOBAL_ONLY (aşağıda).
+        new Setting("site.monitor.db.size-history.retention-days",    "retention", Type.INT),
+        new Setting("site.monitor.db.capacity-gb",                    "retention", Type.INT),
         // ── 2026-08: eskiden koda GÖMÜLÜ olan kesimler artık ayar (RetentionCatalog ile senkron;
         //    RetentionSettingsSyncTest kilitler). Her birinin kodda bir minDays tabanı vardır. ──
         new Setting(RetentionCatalog.HOLD_KEY,                        "retention", Type.BOOL),
@@ -708,6 +713,8 @@ public final class AppSettingsCatalog {
         "site.monitor.watchdog.push-users",
         "site.monitor.watchdog.webhook-url",
         "site.monitor.watchdog.webhook-type",
+        // Veritabanı kapasitesi (2026-11-13): kurum geneli dolma tahmini ve kendi kendini izleme kontrolünün eşiği
+        "site.monitor.db.capacity-gb",
         "site.monitor.monitoring.allow-internal-targets",
         "site.monitor.monitoring.allow-loopback-targets",
         "site.monitor.dns.resolvers",

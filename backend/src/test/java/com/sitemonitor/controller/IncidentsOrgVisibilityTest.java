@@ -138,10 +138,10 @@ class IncidentsOrgVisibilityTest {
         when(alertEventRepo.findById(1L)).thenReturn(Optional.of(ownEv));
         when(alertEventRepo.findById(2L)).thenReturn(Optional.of(foreignEv));
         when(alertEventRepo.findById(3L)).thenReturn(Optional.of(ugEv));
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(foreignEv, ownEv, ugEv)));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
-        when(alertEventRepo.countIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(40L);
+        when(alertEventRepo.countIncidentsByTypeFiltered(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(40L);
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
 
         CertificateInventory ug = new CertificateInventory();
@@ -155,9 +155,9 @@ class IncidentsOrgVisibilityTest {
         when(teamRepo.findAllById(any())).thenReturn(List.of(a, b));
 
         com.sitemonitor.model.HttpMonitor own = new com.sitemonitor.model.HttpMonitor();
-        own.setId(70L); own.setName("Kendi sitesi"); own.setUrl("https://own.example.com");
+        own.setId(70L); own.setName("Kendi sitesi"); own.setUrl("https://own.example.com"); own.setTeamId(OWN);
         com.sitemonitor.model.HttpMonitor foreign = new com.sitemonitor.model.HttpMonitor();
-        foreign.setId(90L); foreign.setName("Başka site"); foreign.setUrl("https://foreign.example.com");
+        foreign.setId(90L); foreign.setName("Başka site"); foreign.setUrl("https://foreign.example.com"); foreign.setTeamId(FOREIGN);
         when(httpMonitorRepo.findAll()).thenReturn(List.of(own, foreign));
     }
 
@@ -173,22 +173,22 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(jsonPath("$.scope_counts.mine").value(3))      // sayfa toplamı (PageImpl 3 satır)
                 .andExpect(jsonPath("$.scope_counts.all").value(40))      // tek ek sayım: tümü
                 .andExpect(jsonPath("$.scope_counts.others").value(37));
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(true), eq(false), eq(List.of(OWN)), any(Pageable.class));
-        verify(alertEventRepo).countIncidents(any(), any(), any(), any(), any(), eq(false), eq(false), any());
-        verify(alertEventRepo).countIncidentsByType(any(), any(), any(), any(), eq(true), eq(false), eq(List.of(OWN)));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(false), eq(List.of(OWN)), any(Pageable.class));
+        verify(alertEventRepo).countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(false), eq(false), any());
+        verify(alertEventRepo).countIncidentsByTypeFiltered(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(false), eq(List.of(OWN)));
     }
 
     @Test
     @DisplayName("USER scope=others → TAMAMLAYICI küme (outside=true); scope=all → kapsamsız; sayılar tutarlı")
     void list_othersAndAll() throws Exception {
-        when(alertEventRepo.countIncidents(any(), any(), any(), any(), any(), eq(true), eq(false), any())).thenReturn(12L);
+        when(alertEventRepo.countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(false), any())).thenReturn(12L);
         mvc.perform(get("/api/monitoring/incidents").param("scope", "others").session(user()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("others"))
                 .andExpect(jsonPath("$.scope_counts.mine").value(12))
                 .andExpect(jsonPath("$.scope_counts.others").value(3))
                 .andExpect(jsonPath("$.scope_counts.all").value(15));
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(true), eq(true), eq(List.of(OWN)), any(Pageable.class));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(true), eq(List.of(OWN)), any(Pageable.class));
 
         mvc.perform(get("/api/monitoring/incidents").param("scope", "all").session(user()))
                 .andExpect(status().isOk())
@@ -196,7 +196,7 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(jsonPath("$.scope_counts.all").value(3))
                 .andExpect(jsonPath("$.scope_counts.mine").value(12))
                 .andExpect(jsonPath("$.scope_counts.others").value(0));   // taban: negatif sayı yok
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(false), eq(false), any(), any(Pageable.class));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(false), eq(false), any(), any(Pageable.class));
     }
 
     @Test
@@ -204,13 +204,13 @@ class IncidentsOrgVisibilityTest {
     void list_teamAdminAndScopedAdmin() throws Exception {
         mvc.perform(get("/api/monitoring/incidents").param("scope", "others").session(teamAdmin()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.scope").value("others"));
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(true), eq(true), eq(List.of(OWN)), any(Pageable.class));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(true), eq(List.of(OWN)), any(Pageable.class));
 
         mvc.perform(get("/api/monitoring/incidents").param("scope", "others").session(scopedAdmin()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("others"))
                 .andExpect(jsonPath("$.scope_counts").exists());
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(true), eq(true), eq(List.of(OWN, SUB)), any(Pageable.class));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(true), eq(List.of(OWN, SUB)), any(Pageable.class));
     }
 
     @Test
@@ -224,8 +224,8 @@ class IncidentsOrgVisibilityTest {
                     .andExpect(jsonPath("$.data.length()").value(3))
                     .andExpect(jsonPath("$.data[0].can_manage").value(true));
         }
-        verify(alertEventRepo, times(2)).findIncidents(any(), any(), any(), any(), any(), eq(false), eq(false), any(), any(Pageable.class));
-        verify(alertEventRepo, never()).countIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any());
+        verify(alertEventRepo, times(2)).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(false), eq(false), any(), any(Pageable.class));
+        verify(alertEventRepo, never()).countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any());
     }
 
     @Test
@@ -237,8 +237,8 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(jsonPath("$.scope").value("mine"))
                 .andExpect(jsonPath("$.visible_to_all").value(false))
                 .andExpect(jsonPath("$.scope_counts").doesNotExist());
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(true), eq(false), eq(List.of(OWN)), any(Pageable.class));
-        verify(alertEventRepo, never()).countIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any());
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(true), eq(false), eq(List.of(OWN)), any(Pageable.class));
+        verify(alertEventRepo, never()).countIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any());
     }
 
     @Test
@@ -251,18 +251,18 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(jsonPath("$.total").value(0))
                 .andExpect(jsonPath("$.scope_counts.mine").value(0))
                 .andExpect(jsonPath("$.scope_counts.others").value(40));
-        verify(alertEventRepo, never()).findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
+        verify(alertEventRepo, never()).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
 
         mvc.perform(get("/api/monitoring/incidents").param("scope", "others").session(lonely))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.scope").value("others"));
-        verify(alertEventRepo).findIncidents(any(), any(), any(), any(), any(), eq(false), eq(false), any(), any(Pageable.class));
+        verify(alertEventRepo).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), eq(false), eq(false), any(), any(Pageable.class));
 
         // viewTeamIds niteliği hiç yok (bozuk/eski oturum) + ayar kapalı: eskiden kapsamsız sorguya düşüyordu, artık boş.
         switchOn(false);
         MockHttpSession noScope = session("eski", "USER", null, null);
         mvc.perform(get("/api/monitoring/incidents").session(noScope))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(0));
-        verify(alertEventRepo, times(1)).findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
+        verify(alertEventRepo, times(1)).findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class));
     }
 
     // ══ Satır bayrakları + veri azaltma ═════════════════════════════════════════════════════════
@@ -502,7 +502,7 @@ class IncidentsOrgVisibilityTest {
         verify(commentRepo, times(3)).save(any(AlertComment.class));
 
         // Liste satırı: "Takımımın olayları"nda görünse de (sorgu envanter kuralını taşır) bayraklar kapalı.
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ping, ugEv)));
         mvc.perform(get("/api/monitoring/incidents").session(user()))
                 .andExpect(status().isOk())

@@ -318,6 +318,15 @@ public class RenewalForecastService {
      * Kurum geneli (alan × parmak izi) grupları — bellekte {@link #renewalsCacheMs} kadar (ya da boşaltmaya dek). Her alanın
      * listesi {@code first_seen}'e göre sıralı ve DEĞİŞTİRİLEMEZ (çağrılar paylaşır). Okuma hatası belleğe yazılmaz.
      */
+    /**
+     * Ortak (kurum geneli) grupların salt okunur görünümü (2026-11-13, İstatistikler "zamanında yenileme oranı"): aynı
+     * bellek, ek sorgu yok. Her öğe {@code [fingerprint, first_seen, not_after]}, alan başına {@code first_seen} sıralı;
+     * pencere {@value #RENEWAL_WINDOW_DAYS} + 400 gün (12 ay + önceki sertifikayı görecek kadar). Okuma hatası fırlar.
+     */
+    public Map<String, List<Object[]>> sharedRenewalGroups() {
+        return renewalGroups();
+    }
+
     private Map<String, List<Object[]>> renewalGroups() {
         long now = System.currentTimeMillis();
         RenewalGroups cached = renewalGroupsCache;

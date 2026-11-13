@@ -125,11 +125,14 @@ describe('statsModel', () => {
   })
 
   it('URL eşlemesi gidiş-dönüş; bilinmeyen değerler yok sayılır', () => {
-    const s = { kpi: 'd14', q: 'x', issuers: ['A, Inc', 'R3'], team: '2', tier: 0, level: 'critical', sort: 'domain|desc', matrixOpen: true, allTiers: true }
+    const s = { kpi: 'd14', q: 'x', issuers: ['A, Inc', 'R3'], team: '2', tier: 0, level: 'critical', sort: 'domain|desc', matrixOpen: true, allTiers: true,
+      sec: 'g:A+', week: 3 }
     const m = toUrlMapping(s)
     expect(stateFromUrl((k, fb) => m[k] ?? fb)).toEqual(s)
-    expect(stateFromUrl((k, fb) => ({ st_k: 'bogus', st_lvl: 'x', st_tier: '9', st_sort: 'nope' })[k] ?? fb))
-      .toMatchObject({ kpi: null, level: null, tier: null, sort: 'priority|asc' })
+    expect(stateFromUrl((k, fb) => ({ st_k: 'bogus', st_lvl: 'x', st_tier: '9', st_sort: 'nope', st_sec: 'g:Z', st_wk: '12' })[k] ?? fb))
+      .toMatchObject({ kpi: null, level: null, tier: null, sort: 'priority|asc', sec: null, week: null })
+    // 2026-11-13: takımsız / pasif takım satırı (`none`) ve güvenlik bayrağı da URL'den okunur
+    expect(stateFromUrl((k, fb) => ({ st_team: 'none', st_sec: 'weakkey' })[k] ?? fb)).toMatchObject({ team: 'none', sec: 'weakkey' })
   })
 
   it('CSV: formül ile başlayan hücre nötrlenir', () => {
@@ -202,9 +205,11 @@ describe('StatsView — takım × katman matrisi', () => {
   it('"Tüm katmanlar" kapsamı T3 satırını açar', () => {
     renderView()
     openMatrix()
-    expect(screen.queryByRole('button', { name: new RegExp(esc(tierLbl(3)[0]) + '|' + esc(tierLbl(3)[1])) })).toBeNull()
+    // Katman dağılımı kartı da (2026-11-13) aynı adlı katman satırları taşır — matrisin içinde aranır
+    const mx = () => within(document.querySelector('[data-slot="stats-matrix-section"]'))
+    expect(mx().queryByRole('button', { name: new RegExp(esc(tierLbl(3)[0]) + '|' + esc(tierLbl(3)[1])) })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: both('stv.mxScopeAll') }))
-    expect(screen.getAllByRole('button', { name: new RegExp(esc(tierLbl(3)[0]) + '|' + esc(tierLbl(3)[1])) }).length).toBeGreaterThan(0)
+    expect(mx().getAllByRole('button', { name: new RegExp(esc(tierLbl(3)[0]) + '|' + esc(tierLbl(3)[1])) }).length).toBeGreaterThan(0)
   })
 
   it('takım verisi yoksa matris açılır ve boş durum söyler', () => {
@@ -335,14 +340,13 @@ describe('StatsView — genel bakış kartları + operasyon özeti', () => {
     expect(screen.getByText(both('stv.distUnknown', 1, 0))).toBeInTheDocument()
   })
 
-  it('operasyon özetindeki takım satırı tabloyu o takıma süzer', async () => {
+  it('takım karnesi satırı (2026-11-13; eski operasyon özeti takım satırının yerine) tabloyu o takıma süzer', async () => {
     api.getExecutiveStats.mockResolvedValue({ success: true, data: {
-      certs: { total: 7, ok: 2, health_pct: 28.6 }, alerts: { open: 1 }, sla: {}, window_days: 30,
-      teams: [{ team_id: 2, team_name: 'Takım B', total: 3, ok: 1, health_pct: 33.3 }, { team_id: 1, team_name: 'Takım A', total: 4, ok: 1, health_pct: 25 }],
+      certs: { total: 7, ok: 2, health_pct: 28.6 }, alerts: { open: 1 }, sla: {}, window_days: 30, teams: [],
     } })
     renderView()
     const row = await waitFor(() => {
-      const r = document.querySelector('[data-slot="exs-team-row"]')
+      const r = document.querySelector('[data-slot="stats-score-row"][data-team="2"]')
       if (!r) throw new Error('yok')
       return r
     })
