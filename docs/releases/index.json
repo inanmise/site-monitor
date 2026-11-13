@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T16:20:34Z",
+  "generatedAt": "2026-11-13T23:26:19Z",
   "repo": "inanmise/site-monitor",
-  "count": 827,
+  "count": 828,
   "releases": [
+    {
+      "version": "20.197.2",
+      "tag": "v20.197.2",
+      "releasedAt": "2026-11-13T23:26:12Z",
+      "commit": "587395fb87466c2b52d2cd3cb0a7a18973859262",
+      "prevVersion": "20.197.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "587395fb",
+          "subject": "md-editor 4.1.1'de kalır; \"Öneriyi göster\" pencere kapanınca sekme geri dönmez"
+        },
+        {
+          "type": "fix",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "5586548e",
+          "subject": "ön yüz paketleri aynı ana sürüm içinde güncellendi (radix-ui 1.8, lucide-react 1.72, recharts 3.10, Playwright 1.65 …)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.197.1",
       "tag": "v20.197.1",
