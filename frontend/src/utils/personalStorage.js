@@ -9,6 +9,7 @@
  *   - `sm.te.open.r.<rapor>` / `sm.te.open.t.<kanal>` — açık bıraktığı rapor / şablon bölümleri (2026-10-16);
  *     `sm.te.open.ri.<rapor>` — açık bıraktığı anomali konuları (2026-10-18)
  *   - `sm.activity.<sekme>` — sekmeler arası etkinlik damgası (kullanıcı adının tuzsuz özeti + zaman; 2026-10-18 inceleme)
+ *   - `sm.sql.tabs` — SQL Playground sekmeleri ve taslak sorguları + parametre değerleri (2026-11-13)
  *
  * Kural: anahtarlar kullanıcıya göre ayrılır ({@link personalKey}: `<taban>:<kullanıcı>`) ve çıkışta (elle ya da
  * boşta kalma) hepsi silinir ({@link clearPersonalStorage}). Sahip `sm.storage.owner`'da tutulur: oturum düşüp
@@ -16,7 +17,7 @@
  * (oturum-kesintisi yedeği tam da bunun için) korunur ({@link claimPersonalStorage}). Kardeş desen: `inbox-seen:<kullanıcı>`.
  */
 export const OWNER_KEY = 'sm.storage.owner'
-export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.activity.']
+export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.activity.', 'sm.sql.tabs']
 
 function store() {
   try { return globalThis.localStorage || null } catch { return null }

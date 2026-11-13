@@ -153,6 +153,16 @@ public final class RetentionCatalog {
                 365, 7, false, DataClass.SECURITY_AUDIT,
                 "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle "
                 + "aynı 1 yıl (2026-08 kararı); hacmi düşüktür."),
+        orphan("sql-saved-queries-orphan", "sql_saved_queries",
+                "shared = false AND owner_username NOT IN (SELECT username FROM app_users)", DataClass.CONTENT,
+                "SQL Playground kayıtlı sorguları (2026-11-13): sahibi silinen kullanıcının PAYLAŞILMAMIŞ kayıtları silinir; "
+                + "paylaşılanlar kaydedenin görünen adıyla (owner_name) kalır — başkaları kullanıyor olabilir. Kişi başına "
+                + "≤ 200 kayıt, birikmez. Parametre değeri saklanmaz (yalnız türleri)."),
+        info("sql-running-queries", "sql_running_queries", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Çalışan SQL Playground sorguları (2026-11-13): sorgu başına TEK satır (sahip, pod, PostgreSQL pid'i, "
+                + "çalıştırma etiketi) — başka pod'a düşen durdurma isteği için. Sorgu bitince satır silinir; ölen pod'un "
+                + "kalıntısını bir sonraki başlangıç 3 dk sonra temizler. En çok aynı anda çalışan sorgu kadar satır, "
+                + "birikmez. SQL metni yok (yalnız parmak izi)."),
 
         // ── Ham izleme serileri (tür bazında ayarlanır; eski ortak 180g davranışı korunur) ─────
         age("series-uptime", "uptime_checks", "checked_at", "site.monitor.series.uptime.retention-days",

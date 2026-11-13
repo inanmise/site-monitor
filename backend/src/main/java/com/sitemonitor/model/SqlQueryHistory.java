@@ -38,4 +38,7 @@ public class SqlQueryHistory {
 
     @Column(nullable = false, length = 30)
     private String executedAt;
+
+    /** Kullanıcı "Durdur" ile kesti (2026-11-13, A2); eski satırlarda null. */
+    private Boolean cancelled;
 }

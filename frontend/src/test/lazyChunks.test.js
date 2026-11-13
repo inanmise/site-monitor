@@ -227,4 +227,17 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
       expect(hasDynamic(health, dynamicPathRe(name)), name).toBe(true)
     }
   })
+
+  it('SQL Playground (2026-11-13): sonuç grafiği (recharts) ve Excel yazıcısı yalnız import() ile', () => {
+    const pg = 'components/admin/SqlPlayground.jsx'
+    expect(hasStatic(pg, staticPathRe('sql/ResultChart'))).toBe(false)
+    expect(hasDynamic(pg, dynamicPathRe('sql/ResultChart'))).toBe(true)
+    for (const f of [pg, 'components/admin/sql/ResultsPanel.jsx']) {
+      expect(hasStatic(f, /xlsxWriter(\.js)?$/), f).toBe(false)
+      expect(hasStatic(f, /sqlExcelExport(\.js)?$/), f).toBe(false)
+      expect(hasDynamic(f, /sqlExcelExport\.js$/), f).toBe(true)
+    }
+    const chartUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)sql\/ResultChart(\.jsx)?$/.test(s))).map((x) => x.rel)
+    expect(chartUsers).toEqual([])
+  })
 })

@@ -25,7 +25,8 @@ import DiagramListView from './sql/diagram/DiagramListView.jsx'
 import TablePanel from './sql/diagram/TablePanel.jsx'
 import { computeDiagram, neighbourhood } from './sql/diagram/layout.js'
 import { buildDiagramSvg, readPalette, svgToPngBlob } from './sql/diagram/exportDiagram.js'
-import { downloadBlob, downloadText, formatCompact, shortType, stampedFile } from './sql/sqlUtils.js'
+import { downloadBlob } from '../../utils/csvExport.js'
+import { downloadText, formatCompact, shortType, stampedFile } from './sql/sqlUtils.js'
 
 /** Arama: tablo bul → vurgula + ortala (Popover + Command; cmdk kendi süzer). */
 function TableFinder({ names, onPick, t }) {

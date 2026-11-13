@@ -26,19 +26,19 @@ import java.util.Locale;
  *
  * <p>Sınırlı: her döngü dizini ilerletir; arama yalnız {@code String.indexOf} (doğrusal). Düzenli ifade kullanılmaz.
  */
-final class SqlLexer {
+public final class SqlLexer {
 
-    enum Kind { WORD, QUOTED, STRING, NUMBER, SYMBOL }
+    public enum Kind { WORD, QUOTED, STRING, NUMBER, SYMBOL }
 
     /**
      * @param text    kaynaktaki ham metin (tırnaklı tanımlayıcıda tırnaklar dahil)
      * @param upper   WORD için büyük harf ({@link Locale#ROOT}); QUOTED için tırnaksız içerik büyük harf; diğerleri null
      * @param start   kaynak dizini (dahil), {@code end} hariç
      */
-    record Token(Kind kind, String text, String upper, int start, int end) {
-        boolean isWord(String u) { return kind == Kind.WORD && u.equals(upper); }
-        boolean isSymbol(char c) { return kind == Kind.SYMBOL && text.length() == 1 && text.charAt(0) == c; }
-        boolean isName() { return kind == Kind.WORD || kind == Kind.QUOTED; }
+    public record Token(Kind kind, String text, String upper, int start, int end) {
+        public boolean isWord(String u) { return kind == Kind.WORD && u.equals(upper); }
+        public boolean isSymbol(char c) { return kind == Kind.SYMBOL && text.length() == 1 && text.charAt(0) == c; }
+        public boolean isName() { return kind == Kind.WORD || kind == Kind.QUOTED; }
     }
 
     /**
@@ -48,15 +48,15 @@ final class SqlLexer {
      * @param maxDepth    en derin parantez düzeyi
      * @param neutral     ayrıştırıcıya gidecek nötr metin (kaynakla AYNI uzunlukta)
      */
-    record Lexed(List<Token> tokens, String error, String errorDetail, int errorPos, int maxDepth, char[] neutral,
+    public record Lexed(List<Token> tokens, String error, String errorDetail, int errorPos, int maxDepth, char[] neutral,
                  int[] lineStarts) {
-        int line(int pos) { return SqlLexer.lineOf(lineStarts, pos); }
-        int column(int pos) { return pos - lineStarts[line(pos) - 1] + 1; }
+        public int line(int pos) { return SqlLexer.lineOf(lineStarts, pos); }
+        public int column(int pos) { return pos - lineStarts[line(pos) - 1] + 1; }
     }
 
     private SqlLexer() {}
 
-    static Lexed lex(String s, DbType type) {
+    public static Lexed lex(String s, DbType type) {
         int n = s.length();
         int[] lineStarts = lineStarts(s);
         char[] neutral = s.toCharArray();

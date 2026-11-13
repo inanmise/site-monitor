@@ -1,4 +1,4 @@
-import { toCsv } from '../../../utils/csvExport.js'
+import { downloadBlob, toCsv } from '../../../utils/csvExport.js'
 import { neutraliseFormula } from '../../../utils/csv.js'
 
 /**
@@ -11,6 +11,8 @@ import { neutraliseFormula } from '../../../utils/csv.js'
  */
 export const MAX_ROWS = 1000
 export const QUERY_TIMEOUT_SEC = 30
+/** Sunucunun maskelediği hücre değeri (A1, 2026-11-13): hassas kolonun her hücresi bu metin, NULL yine null. */
+export const MASK_TEXT = '••••'
 
 /** Sunucunun sorguyu sardığı önek — hata konumunu düzenleyiciye geri eşlemek için. */
 const CAP_PREFIX = 'SELECT * FROM ('
@@ -27,11 +29,12 @@ export function cellText(v) {
 }
 
 /**
- * Sütun tipi çıkarımı (ilk 200 değer): number · boolean · datetime · json · text · null (hepsi NULL).
+ * Sütun tipi çıkarımı (ilk 200 değer): number · boolean · date (yalnız `yyyy-MM-dd`) · datetime (saatli; sunucu yerel
+ * `yyyy-MM-ddTHH:mm:ss[.SSS]` ya da `…Z`) · json · text · null (hepsi NULL).
  * Sunucu sonuç kümesinde tip bilgisi döndürmüyor (API boşluğu) — başlıktaki tip ipucu buradan gelir.
  */
 export function inferType(values) {
-  let seen = 0, num = 0, bool = 0, date = 0, json = 0
+  let seen = 0, num = 0, bool = 0, date = 0, dayOnly = 0, json = 0
   let i = 0
   for (const v of values) {
     if (i++ >= 200) break
@@ -40,12 +43,12 @@ export function inferType(values) {
     if (typeof v === 'number' || typeof v === 'bigint') num++
     else if (typeof v === 'boolean') bool++
     else if (typeof v === 'object') json++
-    else if (typeof v === 'string' && ISO_DATE.test(v)) date++
+    else if (typeof v === 'string' && ISO_DATE.test(v)) { date++; if (v.length === 10) dayOnly++ }
   }
   if (!seen) return 'null'
   if (num === seen) return 'number'
   if (bool === seen) return 'boolean'
-  if (date === seen) return 'datetime'
+  if (date === seen) return dayOnly === seen ? 'date' : 'datetime'
   if (json === seen) return 'json'
   return 'text'
 }
@@ -131,22 +134,10 @@ export function stampedFile(base, ext, d = new Date()) {
   return `${base}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.${ext}`
 }
 
-/** Blob indir — jsdom'da (test) sessizce çıkar. */
-export function downloadBlob(filename, blob) {
-  try {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1500)
-    return true
-  } catch { return false }
-}
-
-/** Metin indir (JSON, SVG, CSV). */
+/**
+ * Metin indir (JSON, SVG, CSV) — ortak `utils/csvExport.downloadBlob` ile (2026-11-13, A3; CLAUDE.md "Downloads only
+ * through"): bağlantı DOM'a eklenir, adres 60 sn tutulur (Safari / iPad). Başlatılamazsa false.
+ */
 export function downloadText(filename, text, mime) {
   return downloadBlob(filename, new Blob([text], { type: `${mime};charset=utf-8` }))
 }
@@ -259,3 +250,6 @@ export function shortType(t) {
 export function tableQuery(name) {
   return `SELECT *\nFROM ${name}\nLIMIT 100;`
 }
+
+/** Zaman ekseni / tarih sıralaması olan türler (gün ya da saatli zaman). */
+export const isTimeType = (type) => type === 'datetime' || type === 'date'

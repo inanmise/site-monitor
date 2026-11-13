@@ -6,6 +6,7 @@ import { Button } from '@/components/shadcn/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/shadcn/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { cn } from '@/lib/utils'
+import { SAMPLE_CATEGORIES, groupSamples } from './sqlLibraryModel.js'
 import { formatDuration, relativeFrom } from './sqlUtils.js'
 
 /** Geçmiş satırı alanları — tel biçimi snake_case; eski camelCase yanıtla da çalışır. */
@@ -25,6 +26,10 @@ function historyFields(h) {
  * Geçmiş SUNUCUDAN gelir (kullanıcının son 50 sorgusu; başarısızlar dâhil) — tarayıcı deposu değil: cihazdan bağımsız,
  * süre ve satır sayısıyla. Seçim düzenleyiciye yazar (tarayıcının geri alma yığını korunur, bkz. SqlEditor).
  *
+ * Örnekler (2026-11-13, D2): sunucu `category` + `description` gönderirse kategoriye göre GRUPLU, açıklama etiketin altında
+ * (sararak); bilinen kategori kodu `sql.sampleCat.<kod>` ile çevrilir, bilinmeyen kodda sunucunun `category_label`ı (yoksa kod).
+ * Eski sunucu (`category` yok) → tek grup (önceki görünüm).
+ *
  * @param kind 'samples' | 'history'
  */
 export default function QueryPicker({ kind, items, onPick, className }) {
@@ -39,29 +44,36 @@ export default function QueryPicker({ kind, items, onPick, className }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className={cn('min-w-0', className)} aria-label={t('sql.pick.trigger', label, list.length)}>
-          <Icon /> <span className="min-w-0 truncate">{label}</span>
+        <Button type="button" variant="outline" size="sm" className={cn('h-auto min-h-8 min-w-0 whitespace-normal', className)} aria-label={t('sql.pick.trigger', label, list.length)}>
+          <Icon /> <span className="min-w-0 text-left [overflow-wrap:anywhere]">{label}</span>
           {list.length > 0 && <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[10px] tabular-nums">{list.length}</Badge>}
           <ChevronDown aria-hidden="true" className="size-3.5 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" collisionPadding={8} data-slot={`sql-${kind}`}
-        className="z-(--z-menu) w-[min(32rem,calc(100vw-1rem))] p-0">
-        <Command>
+        className="z-(--z-menu) flex max-h-(--radix-popover-content-available-height) w-[min(32rem,calc(100vw-1rem))] flex-col p-0">
+        <Command className="min-h-0">
           <CommandInput className="text-base md:text-sm"
             placeholder={samples ? t('sql.pick.searchSamples') : t('sql.pick.searchHistory')} />
-          <CommandList className="max-h-[min(26rem,60dvh)]">
+          <CommandList className="max-h-[min(26rem,60dvh)] min-h-0">
             <CommandEmpty>{samples ? t('sql.noSamples') : t('sql.noHistory')}</CommandEmpty>
-            <CommandGroup heading={samples ? t('sql.pick.samplesHeading') : t('sql.pick.historyHeading')}>
-              {samples
-                ? list.map((s, i) => (
-                  <CommandItem key={i} value={`s${i} ${s.label} ${s.sql}`} onSelect={() => { setOpen(false); onPick(s.sql) }}
+            {samples && groupSamples(list).map((g, gi) => (
+              <CommandGroup key={g.category ?? '_'} data-slot="sql-sample-group" data-category={g.category ?? undefined}
+                heading={g.category == null ? t('sql.pick.samplesHeading')
+                  : SAMPLE_CATEGORIES.includes(g.category) ? t(`sql.sampleCat.${g.category}`) : (g.items[0]?.category_label || g.category)}>
+                {g.items.map((s, i) => (
+                  <CommandItem key={i} value={`s${gi}-${i} ${s.label} ${s.description ?? ''} ${s.sql}`} onSelect={() => { setOpen(false); onPick(s.sql) }}
                     className="flex-col items-start gap-1 py-2">
-                    <span className="font-medium">{s.label}</span>
+                    <span className="font-medium [overflow-wrap:anywhere]">{s.label}</span>
+                    {s.description && <span data-slot="sql-sample-desc" className="w-full text-xs [overflow-wrap:anywhere] text-muted-foreground">{s.description}</span>}
                     <span className="line-clamp-2 w-full font-mono text-[11px] leading-snug whitespace-pre-wrap text-muted-foreground">{s.sql}</span>
                   </CommandItem>
-                ))
-                : list.map((h, i) => {
+                ))}
+              </CommandGroup>
+            ))}
+            {!samples && (
+            <CommandGroup heading={t('sql.pick.historyHeading')}>
+              {list.map((h, i) => {
                   const f = historyFields(h)
                   const when = relativeFrom(f.at, locale)
                   return (
@@ -80,6 +92,7 @@ export default function QueryPicker({ kind, items, onPick, className }) {
                   )
                 })}
             </CommandGroup>
+            )}
           </CommandList>
         </Command>
       </PopoverContent>

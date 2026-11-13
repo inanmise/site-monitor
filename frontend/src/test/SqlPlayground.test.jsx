@@ -39,12 +39,13 @@ async function typeAndRun(sql) {
   const ed = await screen.findByRole('textbox', { name: /SQL query|SQL sorgusu/ })
   fireEvent.change(ed, { target: { value: sql } })
   fireEvent.keyDown(ed, { key: 'Enter', ctrlKey: true })
-  await waitFor(() => expect(api.admin.sqlExecute).toHaveBeenCalledWith(sql))
+  await waitFor(() => expect(api.admin.sqlExecute.mock.calls.at(-1)?.[0]).toBe(sql))
 }
 
 describe('SqlPlayground', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     mobile.on = false
     api.admin.sqlListTables.mockResolvedValue({ success: true, data: [
       { table_name: 'alerts', live_rows: 1234, first_seen_at: '2026-01-01', last_change_at: '2026-09-01T10:00:00' },

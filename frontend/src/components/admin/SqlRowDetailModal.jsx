@@ -9,7 +9,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { cn } from '@/lib/utils'
 import { cellText } from './sql/sqlUtils.js'
 
-const TYPE_LABEL = { number: 'num', boolean: 'bool', datetime: 'time', json: 'json', text: 'text', null: '—' }
+const TYPE_LABEL = { number: 'num', boolean: 'bool', date: 'date', datetime: 'datetime', json: 'json', text: 'text', null: '—' }
 
 /**
  * SQL sonucunun TEK satırı — anahtar/değer listesi (salt okunur). Sonuç tablosunda satıra tıklayınca/Enter ile açılır.
@@ -95,7 +95,7 @@ export default function SqlRowDetailModal({ row, cols, index, onClose, onPrev, o
               <div key={col} className="grid grid-cols-1 items-start gap-1 border-b px-3 py-2 last:border-b-0 even:bg-muted/40 sm:grid-cols-[minmax(140px,28%)_1fr] sm:gap-3">
                 <dt className="flex flex-wrap items-center gap-1.5 font-mono text-xs font-semibold break-all text-muted-foreground">
                   {col}
-                  {types?.[col] && <span className="font-sans text-[10px] font-normal tracking-wide uppercase opacity-70">{TYPE_LABEL[types[col]] ?? types[col]}</span>}
+                  {types?.[col] && <span lang="en" className="font-sans text-[10px] font-normal tracking-wide uppercase opacity-70">{TYPE_LABEL[types[col]] ?? types[col]}</span>}
                 </dt>
                 <dd className="flex min-w-0 items-start gap-2 text-sm">
                   {isNull

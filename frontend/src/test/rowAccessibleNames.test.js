@@ -73,6 +73,11 @@ const EXEMPT_CLICK = new Map([
   ['components/ui/CodeEditor.jsx:<span>',
     'Satır numarası oluğu: düzenleyicinin kendisi (textarea) klavyeyle tam erişilebilir ve satır ' +
     'seçimi orada yapılır; oluk yalnız fare kısayolu.'],
+  ['components/admin/sql/SqlEditor.jsx:<div>',
+    'SQL Playground otomatik tamamlama listesi (WAI-ARIA combobox + listbox, aria-activedescendant): odak HER ZAMAN ' +
+    'düzenleyicide (textarea) kalır, seçenek seçimi oradan Ok tuşları + Enter / Tab ile yapılır (Escape kapatır, ' +
+    'Ctrl/⌘+Space açar). Seçeneğe odak vermek (tabIndex) deseni bozar ve imleci düzenleyiciden koparır; tıklama yalnız ' +
+    'fare kısayolu. Klavye yolu SqlPlaygroundEnrich.test.jsx "B1 tamamlama" ile kanıtlanır.'],
 ])
 
 /**

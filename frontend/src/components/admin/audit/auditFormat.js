@@ -148,6 +148,12 @@ const SPECIAL = {
   AUTH_REQUIRED: 'audit.ev.AUTH_REQUIRED',
   SELF_PASSWORD_CHANGE: 'audit.ev.SELF_PASSWORD_CHANGE',
   SQL_EXECUTE: 'audit.ev.SQL_EXECUTE',
+  SQL_CANCEL: 'audit.ev.SQL_CANCEL',   // SQL Playground zenginleştirmesi (2026-11-13)
+  SQL_EXPLAIN: 'audit.ev.SQL_EXPLAIN',
+  SQL_EXPORT: 'audit.ev.SQL_EXPORT',
+  SQL_SAVED_QUERY_CREATE: 'audit.ev.SQL_SAVED_QUERY_CREATE',
+  SQL_SAVED_QUERY_UPDATE: 'audit.ev.SQL_SAVED_QUERY_UPDATE',
+  SQL_SAVED_QUERY_DELETE: 'audit.ev.SQL_SAVED_QUERY_DELETE',
   SCHEMA_PATCH: 'audit.ev.SCHEMA_PATCH',
   SECRET_REENCRYPT: 'audit.ev.SECRET_REENCRYPT',   // gizli anahtar döndürme (2026-10-11)
   SCRIPTED_SECRET_REVEAL: 'audit.ev.SCRIPTED_SECRET_REVEAL',   // sentetik izlemenin gizli env değeri gösterildi (2026-10-19)
