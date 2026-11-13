@@ -84,6 +84,46 @@ class SqlPlaygroundPostgresTest {
     }
 
     @Test
+    @DisplayName("Aynı adlı kolonlar tekilleştirilir: iki değer de taşınır, columns + renamed_columns; dışa aktarım başlığı aynı")
+    void duplicateColumnNamesKeepBothValues() {
+        Map<String, Object> r = service(null).execute("SELECT a.n AS id, b.n * 10 AS id, 'x' AS name FROM (VALUES (1), (2)) a(n) "
+                + "JOIN (VALUES (1), (2)) b(n) ON a.n = b.n ORDER BY 1", "postgres-it");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        assertThat(r.get("columns")).isEqualTo(List.of("id", "id_2", "name"));
+        assertThat(r.get("renamed_columns")).isEqualTo(List.of(Map.of("original", "id", "name", "id_2")));
+        assertThat(((Number) rows(r).get(0).get("id")).intValue()).isEqualTo(1);
+        assertThat(((Number) rows(r).get(0).get("id_2")).intValue()).isEqualTo(10);
+        assertThat(((Number) rows(r).get(1).get("id_2")).intValue()).isEqualTo(20);
+
+        String[][] labels = new String[1][];
+        SqlPlaygroundService.RunOutcome o = service(null).export(q("SELECT 1 AS id, 2 AS id"), 10, "postgres-it",
+                new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { labels[0] = l; }
+                    @Override public boolean row(Object[] v) { return true; }
+                });
+        assertThat(o.ok()).as("hata: %s", o.error()).isTrue();
+        assertThat(labels[0]).containsExactly("id", "id_2");
+    }
+
+    @Test
+    @DisplayName("Tekilleştirilmiş adla da maske: aynı hassas kolon iki kez seçilince ikisi de maskeli, masked_columns tekil adlarla")
+    void duplicateSensitiveColumnsMasked() {
+        String user = "it-sqlpg-dup-" + System.nanoTime();
+        jdbc().update("INSERT INTO remember_me_tokens (token, username, expires_at) VALUES (?, ?, 0)", "tok-d-" + System.nanoTime(), user);
+        try {
+            Map<String, Object> r = service(null).execute("SELECT r.token, r.token, r.username FROM remember_me_tokens r "
+                    + "WHERE r.username = '" + user + "'", "postgres-it");
+            assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+            assertThat(r.get("columns")).isEqualTo(List.of("token", "token_2", "username"));
+            assertThat(rows(r).get(0).get("token")).isEqualTo(SqlSensitiveColumns.MASK);
+            assertThat(rows(r).get(0).get("token_2")).isEqualTo(SqlSensitiveColumns.MASK);
+            assertThat(r.get("masked_columns")).isEqualTo(List.of("token", "token_2"));
+        } finally {
+            jdbc().update("DELETE FROM remember_me_tokens WHERE username = ?", user);
+        }
+    }
+
+    @Test
     @DisplayName("A1: ifade içinde hassas kolon PostgreSQL'de de çalıştırılmadan reddedilir")
     void sensitiveExpressionRejected() {
         assertThatThrownBy(() -> service(null).execute(
