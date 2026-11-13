@@ -137,7 +137,7 @@ export default function ModalShell({
   open, onClose, title, icon: Icon, size = 'md', busy = false,
   dismissOnBackdrop = true, dismissOnEscape = true, scrollBody = false,
   closeLabel, footer, children, className = '',
-  headerExtra = null, hideClose = false, bodyRef, closeOnNavigate = false,
+  headerExtra = null, hideClose = false, bodyRef, closeOnNavigate = false, shouldReturnFocus,
 }) {
   const t = useT()
   const parentDepth = useContext(DepthCtx)
@@ -161,10 +161,17 @@ export default function ModalShell({
 
   // Odak iadesi: kapanışta tetikleyiciye. Radix yalnız kendi DialogTrigger'ına döner (burada
   // tetik yok), bu yüzden iade kabukta; açılıştaki odağı Radix FocusScope verir.
+  // `shouldReturnFocus` (isteğe bağlı) kapanış ANINDA sorulur: pencere başka bir yere gitmek için
+  // kapanıyorsa (ör. "Öneriyi göster") odağı o hedef alır, eski tetiğe dönülmez — tetik bir sekme
+  // başlığıysa radix-ui 1.8 odakla o sekmeyi yeniden etkinleştirip gidilen yeri geri alırdı.
+  const shouldReturnFocusRef = useRef(shouldReturnFocus)
+  shouldReturnFocusRef.current = shouldReturnFocus
   useEffect(() => {
     if (!open) return
     const previous = document.activeElement
     return () => {
+      const ask = shouldReturnFocusRef.current
+      if (typeof ask === 'function' && ask() === false) return
       if (previous && typeof previous.focus === 'function' && document.contains(previous)) {
         previous.focus()
       }

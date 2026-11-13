@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { Lightbulb, ScanSearch } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
@@ -39,6 +40,8 @@ function urlParts(url) {
 export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recommendations }) {
   const t = useT()
   const locale = useDateLocale()
+  // "Öneriyi göster" pencereyi kapatıp öneriye gider: odak öneriye taşınır, açan öğeye dönmez.
+  const leaving = useRef(false)
   if (!item) return null
   const parts = urlParts(item.url)
   const nr = t('prs.od.notRecorded')
@@ -57,6 +60,7 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
 
   return (
     <ModalShell open onClose={onClose} title={name} icon={ScanSearch} size="md" scrollBody closeLabel={t('app.dismiss')}
+      shouldReturnFocus={() => !leaving.current}
       footer={<Button type="button" variant="outline" className={TOUCH} onClick={onClose}>{t('app.dismiss')}</Button>}>
       <div data-slot="prs-od" data-verdict={v} className="flex min-w-0 flex-col gap-4 text-sm">
         <div className="flex min-w-0 flex-col gap-1">
@@ -122,7 +126,7 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
                   <SmallBadge tone={FINDING_TONE[c] || 'muted'}>{findingLabel(c, t)}</SmallBadge>
                   {onGoRec && recOf(c) && (
                     <Button type="button" variant="ghost" size="sm" data-slot="prs-od-gorec" className={cn('h-7 px-2 text-xs', TOUCH)}
-                      onClick={() => onGoRec(recOf(c))}>
+                      onClick={() => { leaving.current = true; onGoRec(recOf(c)) }}>
                       <Lightbulb aria-hidden="true" />{t('prs.od.goRec')}
                     </Button>
                   )}
