@@ -153,6 +153,7 @@ public class NocController {
     public ResponseEntity<Map<String, Object>> coverage(@RequestParam(name = "team_id", required = false) Long teamId,
                                                         @RequestParam(required = false) String type,
                                                         @RequestParam(name = "summary", required = false, defaultValue = "false") boolean summaryOnly,
+                                                        @RequestParam(name = "by_team", required = false, defaultValue = "false") boolean byTeam,
                                                         HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         NocType t = null;
@@ -166,8 +167,12 @@ public class NocController {
         Predicate<NocMonitorDirectory.Row> vis = r -> visible(session, r);
         Predicate<NocMonitorDirectory.Row> edit = r -> canEdit(session, r.type(), r.teamId());
         // ?summary=1 (Genel Bakış şeridi): yalnız sayılar — satır listesi kurulmaz (2026-10-09, performans)
-        if (summaryOnly) return ok(coverage.compute(teamId, t, vis, edit, Map.of(), false));
-        return ok(coverage.compute(teamId, t, vis, edit, teamNames()));
+        // ?by_team=1 (2026-11-13, Takımlar → kapsam panosu): özete takım başına {total, covered, paused} eklenir
+        // Parametre yoksa çağrı BİREBİR eskisi (eski aşırı yükleme).
+        if (summaryOnly) return ok(byTeam ? coverage.compute(teamId, t, vis, edit, Map.of(), false, true)
+                                          : coverage.compute(teamId, t, vis, edit, Map.of(), false));
+        return ok(byTeam ? coverage.compute(teamId, t, vis, edit, teamNames(), true, true)
+                         : coverage.compute(teamId, t, vis, edit, teamNames()));
     }
 
     // ── İzleme başına aç/kapa ────────────────────────────────────────────────

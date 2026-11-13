@@ -159,6 +159,28 @@ class NocPersistenceTest {
     }
 
     @Test
+    @DisplayName("by_team (2026-11-13, takım kapsam panosu): takım başına total/covered/paused; parametresiz özet DEĞİŞMEZ")
+    @SuppressWarnings("unchecked")
+    void byTeamSummary() {
+        group("NOC Ana", true, true);
+        ping("p-on.example.com", A, true, true, null);
+        ping("p-off.example.com", A, true, false, null);
+        ping("p-paused.example.com", A, false, true, null);
+        ping("p-b.example.com", B, true, true, null);
+        Map<String, Object> plain = coverage.compute(null, null, r -> true, r -> true, Map.of(), false);
+        Map<String, Object> withTeams = coverage.compute(null, null, r -> true, r -> true, Map.of(), false, true);
+        assertThat((Map<String, Object>) plain.get("summary")).doesNotContainKey("by_team");
+        Map<String, Object> s = (Map<String, Object>) withTeams.get("summary");
+        Map<String, Map<String, Integer>> byTeam = (Map<String, Map<String, Integer>>) s.get("by_team");
+        assertThat(byTeam.get(String.valueOf(A))).containsEntry("total", 3).containsEntry("covered", 1).containsEntry("paused", 1);
+        assertThat(byTeam.get(String.valueOf(B))).containsEntry("total", 1).containsEntry("covered", 1).containsEntry("paused", 0);
+        // diğer özet alanları by_team olmadan aynı
+        Map<String, Object> rest = new java.util.LinkedHashMap<>(s);
+        rest.remove("by_team");
+        assertThat(rest).isEqualTo(plain.get("summary"));
+    }
+
+    @Test
     @DisplayName("kapsam: nedenler (PAUSED/MONITOR_OFF/TYPE_DISABLED/NO_ACTIVE_GROUP), özet ve tür kırılımı")
     void reasonsAndSummary() {
         group("NOC Ana", true, true);

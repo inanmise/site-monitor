@@ -108,6 +108,8 @@ public final class AuditEventCatalog {
             "CERT_TLS_PROFILE_RESCAN",      // TLS profili (protokol / zımbalama) elle yeniden tarandı (2026-10-10)
             "CHANGE_LOG_DENIED",
             "CLIENT_ERROR_REPORT",
+            "CONTACT_BULK_CREATE",          // bir kullanıcı seçili takımlara toplu eskalasyon kişisi olarak eklendi (2026-11-13)
+            "CONTACT_BULK_UPDATE",          // seçili eskalasyon kişileri toplu etkinleştirildi / pasifleştirildi / seviye / takım (2026-11-13)
             "CONTACT_CREATE",
             "CONTACT_DELETE",
             "CONTACT_UPDATE",

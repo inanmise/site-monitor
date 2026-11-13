@@ -147,7 +147,7 @@ public class NotificationGroupService {
      * kayıtlar / doğrudan veritabanı müdahalesi / ileride eklenecek bir yazma yolu onu delebilir;
      * garanti gönderim anında da durmalı.
      */
-    static List<String> deliverableEmails(String csv) {
+    public static List<String> deliverableEmails(String csv) {
         List<String> out = new ArrayList<>();
         for (String e : parseEmails(csv)) {
             if (DELIVERABLE.matcher(e).matches()) out.add(e);

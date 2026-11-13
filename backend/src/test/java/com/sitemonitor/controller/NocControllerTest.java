@@ -253,6 +253,18 @@ class NocControllerTest {
     }
 
     @Test
+    @DisplayName("kapsam ?summary=1&by_team=1 (2026-11-13, takım kapsam panosu): takım kırılımlı özet istenir; parametresiz çağrı eski aşırı yüklemede")
+    void coverageSummaryByTeam() throws Exception {
+        when(coverage.compute(any(), any(), any(), any(), any(), eq(false), eq(true)))
+                .thenReturn(Map.of("summary", Map.of("by_team", Map.of(String.valueOf(TEAM_A), Map.of("total", 3, "covered", 2, "paused", 0)))));
+        mvc.perform(get("/api/noc/coverage").param("summary", "1").param("by_team", "1").session(userA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.by_team." + TEAM_A + ".covered").value(2));
+        verify(coverage).compute(isNull(), isNull(), any(), any(), any(), eq(false), eq(true));
+        verify(coverage, never()).compute(any(), any(), any(), any(), any(), eq(false));
+    }
+
+    @Test
     @DisplayName("kapsam görünürlük yüklemi: kendi takımı + envanter kökenlide UG takımı; başka takım görünmez")
     void visibilityPredicate() {
         var own = new NocMonitorDirectory.Row(NocType.PING, 1, "a", "a", TEAM_A, null, true, true, null, false);
