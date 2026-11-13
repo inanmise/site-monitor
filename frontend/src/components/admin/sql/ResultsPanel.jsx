@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertOctagon, ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Braces, CheckCircle2, ChevronDown, Clipboard, Columns3, Download,
-  FileJson, FileSpreadsheet, GitCompare, Lock, OctagonX, Play, ScanSearch, Search, ServerCog, ShieldAlert, Sheet as SheetIcon,
+  FileJson, FileSpreadsheet, GitCompare, Lock, TriangleAlert, OctagonX, Play, ScanSearch, Search, ServerCog, ShieldAlert, Sheet as SheetIcon,
   Table2, Timer, WrapText, X,
 } from 'lucide-react'
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
 import { copyText } from '../../../utils/copyText.js'
-import { downloadBlob } from '../../../utils/csvExport.js'
 import { clientFailure } from '../../../utils/errorMessages.js'
 import { usePagination } from '../../../hooks/usePagination.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -28,13 +27,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import SqlRowDetailModal from '../SqlRowDetailModal.jsx'
 import ChoiceToggle from './ChoiceToggle.jsx'
-import { EXPORT_LIMITS, excelSheet } from './sqlLibraryModel.js'
+import { duplicateColumnNames, selectListNames } from './columnNames.js'
+import { EXPORT_LIMITS } from './sqlLibraryModel.js'
 import {
   MASK_TEXT, MAX_ROWS, QUERY_TIMEOUT_SEC, cellText, columnTypes, downloadText, filterRows, formatDuration, offsetToLineCol,
   parseSqlError, resultColumns, rowsToCsv, rowsToJson, rowsToTsv, sortRows, stampedFile,
 } from './sqlUtils.js'
 
-const TYPE_SHORT = { number: 'num', boolean: 'bool', datetime: 'time', json: 'json', text: 'text', null: 'null' }
+const TYPE_SHORT = { number: 'num', boolean: 'bool', date: 'date', datetime: 'datetime', json: 'json', text: 'text', null: 'null' }
 
 /** Hücre içeriği: NULL rozeti, sayı sağa hizalı, mantıksal renkli, JSON eş aralıklı; maskeli kolon kilitli "••••". */
 function Cell({ value, type, masked = false }) {
@@ -42,7 +42,7 @@ function Cell({ value, type, masked = false }) {
   if (value == null) return <Badge variant="outline" className="h-5 border-dashed px-1.5 text-[10px] font-medium text-muted-foreground">NULL</Badge>
   if (typeof value === 'boolean') return <span className={cn('font-mono text-xs', value ? 'text-success' : 'text-muted-foreground')}>{String(value)}</span>
   if (typeof value === 'object') return <span className="font-mono text-xs text-muted-foreground">{cellText(value)}</span>
-  if (type === 'datetime') return <span className="font-mono text-xs">{String(value)}</span>
+  if (type === 'datetime' || type === 'date') return <span className="font-mono text-xs">{String(value)}</span>
   return String(value)
 }
 
@@ -140,6 +140,11 @@ export default function ResultsPanel({
   const cols = useMemo(() => resultColumns(rows), [rows])
   const types = useMemo(() => columnTypes(rows, cols), [rows, cols])
   const masked = useMemo(() => new Set(Array.isArray(result?.masked_columns) ? result.masked_columns : []), [result])
+  // Aynı adlı kolonlar (sunucu satırı ad → değer haritası: ikincinin değeri düşer) — sunucu kolon listesi gönderirse o,
+  // yoksa sorgu metninden çıkarılan çıktı adları; yalnız NOT (veri ekranda zaten yok)
+  const dupCols = useMemo(() => (result && !result.error && !result.cancelled
+    ? duplicateColumnNames(Array.isArray(result.columns) ? result.columns : selectListNames(result.ranSql ?? ''))
+    : []), [result])
   const rowNo = useMemo(() => new Map(rows.map((r, i) => [r, i + 1])), [rows])
 
   const [filter, setFilter] = useState('')
@@ -174,9 +179,8 @@ export default function ResultsPanel({
   const exportFile = async (kind) => {
     if (kind === 'xlsx') {
       try {
-        const mod = await import('../../../utils/xlsxWriter.js')
-        const bytes = mod.buildXlsx([excelSheet(view, visibleCols, types)])
-        if (!downloadBlob(stampedFile('query', 'xlsx'), new Blob([bytes], { type: mod.XLSX_MIME }))) { toast.error(t('sql.res.downloadFailed')); return }
+        const { downloadSqlExcel } = await import('./sqlExcelExport.js')
+        if (!downloadSqlExcel(view, visibleCols, types, 'query')) { toast.error(t('sql.res.downloadFailed')); return }
       } catch (e) {
         const f = clientFailure(e, { fallback: t('sql.res.xlsxFailed'), chunk: t('te.pageUpdated') })
         toast.error(f.message, { details: f.details })
@@ -373,7 +377,7 @@ export default function ResultsPanel({
                       className={cn('h-auto w-full gap-1.5 rounded-none px-3 py-1.5 font-normal', types[c] === 'number' ? 'justify-end' : 'justify-start')}>
                       <span className="flex min-w-0 flex-col items-start leading-tight">
                         <span className="max-w-[18rem] text-xs font-semibold whitespace-normal text-foreground [overflow-wrap:anywhere]">{c}</span>
-                        <span className="inline-flex items-center gap-1 text-[10px] tracking-wide text-muted-foreground uppercase">
+                        <span lang="en" className="inline-flex items-center gap-1 text-[10px] tracking-wide text-muted-foreground uppercase">
                           {masked.has(c) && <Lock aria-hidden="true" className="size-3" data-slot="sql-masked-head" />}
                           {masked.has(c) ? t('sql.mask.short') : (TYPE_SHORT[types[c]] ?? types[c])}
                         </span>
@@ -457,6 +461,11 @@ export default function ResultsPanel({
       {resultView === 'table' && masked.size > 0 && hasRows && !running && (
         <p data-slot="sql-masked-note" className="m-0 flex flex-wrap items-center gap-1.5 border-b px-3 py-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
           <Lock aria-hidden="true" className="size-3.5 shrink-0" />{t('sql.mask.note', [...masked].join(', '))}
+        </p>
+      )}
+      {resultView === 'table' && dupCols.length > 0 && !running && (
+        <p data-slot="sql-dup-note" className="m-0 flex flex-wrap items-center gap-1.5 border-b bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 [overflow-wrap:anywhere] dark:text-amber-200">
+          <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />{t('sql.dup.note', dupCols.join(', '))}
         </p>
       )}
       {resultView === 'table' && capped && !running && (

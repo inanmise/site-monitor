@@ -44,7 +44,7 @@ export function lexForFormat(src) {
     if (c === '-' && c1 === '-') {
       let j = s.indexOf('\n', i)
       if (j < 0) j = n
-      push('lcomment', s.slice(i, j).replace(/\s+$/, ''))
+      push('lcomment', s.slice(i, j).trimEnd())
       i = j
       continue
     }
@@ -138,7 +138,7 @@ export function formatSql(src) {
   const contIndent = (lv) => (lv.sub ? lv.base + (lv.clause ? 1 : 0) : lv.base + 1)
 
   const breakLine = (indent) => {
-    if (lineHasCode) lines.push(line.replace(/\s+$/, ''))
+    if (lineHasCode) lines.push(line.trimEnd())
     line = INDENT.repeat(indent)
     lineHasCode = false
   }
@@ -233,7 +233,7 @@ export function formatSql(src) {
     emit(out, space)
     if (tk.t === 'lcomment') mustBreak = true
   }
-  if (lineHasCode) lines.push(line.replace(/\s+$/, ''))
+  if (lineHasCode) lines.push(line.trimEnd())
   return lines.join('\n')
 }
 

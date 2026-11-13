@@ -327,7 +327,7 @@ const SqlEditor = forwardRef(function SqlEditor({
               style={{ top: comp.top, left: comp.left, maxHeight: comp.maxH, width: comp.width }}
               className="absolute z-20 max-w-[calc(100%-0.5rem)] overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
               {comp.items.map((it, i) => (
-                <div key={`${it.kind}:${it.label}`} id={`${listId}-o${i}`} role="option" aria-selected={i === comp.active}
+                <div role="option" key={`${it.kind}:${it.label}`} id={`${listId}-o${i}`} aria-selected={i === comp.active}
                   data-kind={it.kind}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => accept(it)}

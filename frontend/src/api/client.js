@@ -238,6 +238,17 @@ function sqlRunBody(sql, opts = {}) {
  * ağ hatası çevrilmiş metinle; `status` yanıtta (eski sunucu 404 / 405 ayırt edilsin). Başlıklar: `X-Export-Rows`,
  * `X-Export-Truncated`, `X-Export-Max-Rows`, `X-Masked-Columns`.
  */
+/**
+ * `X-Masked-Columns` başlığı: virgüllü liste, her ad UTF-8 yüzde kodlu (sunucu `headerList`: harf / rakam / `_-.` dışı her bayt
+ * `%XX`; ad içindeki virgül de kodlu) → önce virgülle ayrılır, sonra her ad çözülür. Bozuk kodlama → ad olduğu gibi.
+ */
+export function maskedColumnsHeader(value) {
+  return String(value || '').split(',').map((part) => {
+    const p = part.trim()
+    try { return decodeURIComponent(p) } catch { return p }
+  }).filter(Boolean)
+}
+
 async function sqlExportFile(body, { signal } = {}) {
   let res
   try {
@@ -274,7 +285,7 @@ async function sqlExportFile(body, { signal } = {}) {
     rows: Number.isFinite(rows) ? rows : null,
     truncated: String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true',
     maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
-    masked: String(headerOf(res, 'X-Masked-Columns') || '').split(',').map((s) => s.trim()).filter(Boolean),
+    masked: maskedColumnsHeader(headerOf(res, 'X-Masked-Columns')),
   }
   if (body?.format === 'json') {
     let json

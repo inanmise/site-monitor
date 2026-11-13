@@ -29,11 +29,12 @@ export function cellText(v) {
 }
 
 /**
- * Sütun tipi çıkarımı (ilk 200 değer): number · boolean · datetime · json · text · null (hepsi NULL).
+ * Sütun tipi çıkarımı (ilk 200 değer): number · boolean · date (yalnız `yyyy-MM-dd`) · datetime (saatli; sunucu yerel
+ * `yyyy-MM-ddTHH:mm:ss[.SSS]` ya da `…Z`) · json · text · null (hepsi NULL).
  * Sunucu sonuç kümesinde tip bilgisi döndürmüyor (API boşluğu) — başlıktaki tip ipucu buradan gelir.
  */
 export function inferType(values) {
-  let seen = 0, num = 0, bool = 0, date = 0, json = 0
+  let seen = 0, num = 0, bool = 0, date = 0, dayOnly = 0, json = 0
   let i = 0
   for (const v of values) {
     if (i++ >= 200) break
@@ -42,12 +43,12 @@ export function inferType(values) {
     if (typeof v === 'number' || typeof v === 'bigint') num++
     else if (typeof v === 'boolean') bool++
     else if (typeof v === 'object') json++
-    else if (typeof v === 'string' && ISO_DATE.test(v)) date++
+    else if (typeof v === 'string' && ISO_DATE.test(v)) { date++; if (v.length === 10) dayOnly++ }
   }
   if (!seen) return 'null'
   if (num === seen) return 'number'
   if (bool === seen) return 'boolean'
-  if (date === seen) return 'datetime'
+  if (date === seen) return dayOnly === seen ? 'date' : 'datetime'
   if (json === seen) return 'json'
   return 'text'
 }
@@ -249,3 +250,6 @@ export function shortType(t) {
 export function tableQuery(name) {
   return `SELECT *\nFROM ${name}\nLIMIT 100;`
 }
+
+/** Zaman ekseni / tarih sıralaması olan türler (gün ya da saatli zaman). */
+export const isTimeType = (type) => type === 'datetime' || type === 'date'

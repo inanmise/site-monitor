@@ -60,7 +60,14 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const STATS_EXPORT = 'components/stats/statsExport.js'
     // 2026-11-13: Olaylar dışa aktarımı — IncidentsPage Excel yazıcısını YALNIZ tıklamada import() ile alır
     const INCIDENTS_EXPORT = 'components/IncidentsPage.jsx'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT].sort())
+    // 2026-11-13: SQL Playground Excel'i (ekran sonucu + sunucuda tam dışa aktarım) — tek tembel modül; SqlPlayground ve
+    // sonuç paneli onu YALNIZ tıklamada import() ile alır (aşağıda)
+    const SQL_EXPORT = 'components/admin/sql/sqlExcelExport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT].sort())
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)sqlExcelExport(\.js)?$/.test(s))).map((x) => x.rel),
+      'SQL dışa aktarım modülü statik içe aktarılmaz').toEqual([])
+    expect(FILES.filter(({ src }) => /import\(\s*'\.\/(sql\/)?sqlExcelExport\.js'\s*\)/.test(src)).map((x) => x.rel).sort())
+      .toEqual(['components/admin/SqlPlayground.jsx', 'components/admin/sql/ResultsPanel.jsx'])
     const incidents = FILES.find((x) => x.rel === INCIDENTS_EXPORT)
     expect(staticImports(incidents.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Olaylar Excel yazıcısını statik içe aktarmaz').toEqual([])
     const stats = FILES.find((x) => x.rel === STATS_EXPORT)

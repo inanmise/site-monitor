@@ -224,6 +224,64 @@ describe('SqlPlayground zenginleştirme', () => {
     expect(await screen.findByText(/doesn’t support full exports|tam dışa aktarımı desteklemiyor/)).toBeInTheDocument()
   })
 
+  it('İnceleme DÜŞÜK 5: aynı adlı kolonlar — ekranda not; tam Excel’de başlıklar ayrışır, ikinci kolonun değeri kaybolmaz', async () => {
+    const created = []
+    URL.createObjectURL = vi.fn((blob) => { created.push(blob); return 'blob:z' })
+    URL.revokeObjectURL = vi.fn()
+    api.admin.sqlExecute.mockResolvedValueOnce({ success: true, ok: true, rowCount: 1, rows: [{ id: 1, name: 'a' }], masked_columns: [] })
+    api.admin.sqlExport.mockResolvedValueOnce({ success: true, rows: 1, truncated: false,
+      json: { success: true, data: { columns: ['id', 'name', 'id'], rows: [[1, 'a', 7001]], row_count: 1 } } })
+    render(<SqlPlayground />)
+    await typeSql('SELECT a.id, a.name, b.id FROM a JOIN b ON b.a_id = a.id')
+    ctrlEnter()
+    const region = await resultRegion()
+    const note = await waitFor(() => { const n = region.querySelector('[data-slot="sql-dup-note"]'); expect(n).not.toBeNull(); return n })
+    expect(note).toHaveTextContent(/Columns with the same name: id|Aynı adlı kolonlar: id/)
+    pressMenuTrigger(within(region).getByRole('button', { name: /^(Export|Dışa aktar)$/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Full Excel|Tam Excel/ }))
+    await waitFor(() => expect(created).toHaveLength(1))
+    const { unzipSync, strFromU8 } = await import('fflate')
+    const files = unzipSync(new Uint8Array(await created[0].arrayBuffer()))
+    const sheet = strFromU8(files[Object.keys(files).find((k) => k.endsWith('worksheets/sheet1.xml'))])
+    expect(sheet).toContain('id_2')
+    expect(sheet).toContain('7001')
+    expect(await screen.findByText(/id → id_2/)).toBeInTheDocument()
+
+    // Ayrı adlar → not yok
+    api.admin.sqlExecute.mockResolvedValueOnce({ success: true, ok: true, rowCount: 1, rows: [{ a_id: 1, b_id: 2 }], masked_columns: [] })
+    await typeSql('SELECT a.id AS a_id, b.id AS b_id FROM a, b')
+    ctrlEnter()
+    await waitFor(() => expect(api.admin.sqlExecute).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('[data-slot="sql-dup-note"]')).toBeNull())
+  })
+
+  it('İnceleme D: yalnız gün değerli kolon "date", saatli "datetime" etiketi alır (İngilizce kısaltma, TİME olmaz)', async () => {
+    api.admin.sqlExecute.mockResolvedValueOnce({ success: true, ok: true, rowCount: 2, masked_columns: [],
+      rows: [{ day: '2026-11-13', at: '2026-11-13T09:30:00.123' }, { day: '2026-11-14', at: '2026-11-14T06:00:00Z' }] })
+    render(<SqlPlayground />)
+    await typeSql('SELECT day, at FROM t')
+    ctrlEnter()
+    const region = await resultRegion()
+    const dayHead = await within(region).findByRole('button', { name: /Sort by day|day kolonuna göre/ })
+    const atHead = within(region).getByRole('button', { name: /Sort by at|at kolonuna göre/ })
+    expect(dayHead.querySelector('[lang="en"]')).toHaveTextContent(/^date$/)
+    expect(atHead.querySelector('[lang="en"]')).toHaveTextContent(/^datetime$/)
+  })
+
+  it('İnceleme A: düzenleyici araçları telefonda iki sütunlu ızgarada; örnek seçici etiketi kırpılmaz', async () => {
+    mobile.on = true
+    render(<SqlPlayground />)
+    await screen.findByRole('textbox', { name: /SQL query|SQL sorgusu/ })
+    const actions = document.querySelector('[data-slot="sql-editor-actions"]')
+    expect(actions.className.split(/\s+/)).toContain('grid-cols-2')
+    const picker = within(actions).getByRole('button', { name: /^(Sample Queries|Örnek Sorgular)/ })
+    expect(picker.querySelector('span').className.split(/\s+/)).not.toContain('truncate')
+    // İnceleme B: açılır pencere görünüm alanına sığar (Radix'in kalan yüksekliği sınır, liste içeride kayar)
+    fireEvent.click(picker)
+    const pop = await waitFor(() => { const p = document.querySelector('[data-slot="sql-samples"]'); expect(p).not.toBeNull(); return p })
+    expect(pop.className).toContain('max-h-(--radix-popover-content-available-height)')
+  })
+
   it('C1 plan: menüden EXPLAIN → özet + ağaç + sıralı tarama uyarısı; 200 + ok:false hata; 409 SQL_EXPLAIN_UNSUPPORTED nötr', async () => {
     api.admin.sqlExplain.mockResolvedValueOnce({ success: true, ok: true, analyzed: false, plan: [{ Plan: {
       'Node Type': 'Seq Scan', 'Relation Name': 'alerts', 'Total Cost': 12.5, 'Plan Rows': 40, 'Startup Cost': 0,
@@ -316,11 +374,16 @@ describe('SqlPlayground zenginleştirme', () => {
     const list = await within(panel).findByRole('list', { name: /Past queries|Geçmiş sorgular/ })
     const items = list.querySelectorAll('[data-slot="sql-history-item"]')
     expect([...items].map((i) => i.getAttribute('data-state'))).toEqual(['slow', 'error'])
-    expect(within(panel).getByText(/1–25 of 30|1–25 \/ 30/)).toBeInTheDocument()
-    expect(api.admin.sqlHistoryPage.mock.calls[0][0]).toBe('scope=mine&page=0&size=25')
+    // Standart sunucu sayfalaması (useServerPagination, pencere ön ayarı 10) + PaginationBar
+    const pager = panel.querySelector('[data-slot="sql-history-pager"] [data-slot="pagination-bar"]')
+    expect(pager).toHaveTextContent(/1–10 of 30|1–10 \/ 30/)
+    expect(api.admin.sqlHistoryPage.mock.calls[0][0]).toBe('scope=mine&page=0&size=10')
+    fireEvent.click(within(pager).getByRole('button', { name: /^(Next|Sonraki)/ }))
+    await waitFor(() => expect(api.admin.sqlHistoryPage.mock.calls.at(-1)[0]).toBe('scope=mine&page=1&size=10'))
 
     fireEvent.click(within(within(panel).getByRole('group', { name: /Filter by status|Duruma göre süz/ })).getByRole('button', { name: /^(Failed|Başarısız)$/ }))
-    await waitFor(() => expect(api.admin.sqlHistoryPage.mock.calls.at(-1)[0]).toContain('status=error'))
+    // Süzgeç değişince sayfa 1'e döner (render sırasında; mount'ta sıfırlama yok)
+    await waitFor(() => expect(api.admin.sqlHistoryPage.mock.calls.at(-1)[0]).toBe('status=error&scope=mine&page=0&size=10'))
 
     fireEvent.click(within(items[0]).getByRole('button', { name: /Open in a new tab|Yeni sekmede aç/ }))
     await waitFor(() => expect(document.querySelectorAll('[data-slot="sql-tab"]')).toHaveLength(2))

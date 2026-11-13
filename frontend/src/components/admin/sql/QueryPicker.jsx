@@ -44,18 +44,18 @@ export default function QueryPicker({ kind, items, onPick, className }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className={cn('min-w-0', className)} aria-label={t('sql.pick.trigger', label, list.length)}>
-          <Icon /> <span className="min-w-0 truncate">{label}</span>
+        <Button type="button" variant="outline" size="sm" className={cn('h-auto min-h-8 min-w-0 whitespace-normal', className)} aria-label={t('sql.pick.trigger', label, list.length)}>
+          <Icon /> <span className="min-w-0 text-left [overflow-wrap:anywhere]">{label}</span>
           {list.length > 0 && <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[10px] tabular-nums">{list.length}</Badge>}
           <ChevronDown aria-hidden="true" className="size-3.5 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" collisionPadding={8} data-slot={`sql-${kind}`}
-        className="z-(--z-menu) w-[min(32rem,calc(100vw-1rem))] p-0">
-        <Command>
+        className="z-(--z-menu) flex max-h-(--radix-popover-content-available-height) w-[min(32rem,calc(100vw-1rem))] flex-col p-0">
+        <Command className="min-h-0">
           <CommandInput className="text-base md:text-sm"
             placeholder={samples ? t('sql.pick.searchSamples') : t('sql.pick.searchHistory')} />
-          <CommandList className="max-h-[min(26rem,60dvh)]">
+          <CommandList className="max-h-[min(26rem,60dvh)] min-h-0">
             <CommandEmpty>{samples ? t('sql.noSamples') : t('sql.noHistory')}</CommandEmpty>
             {samples && groupSamples(list).map((g, gi) => (
               <CommandGroup key={g.category ?? '_'} data-slot="sql-sample-group" data-category={g.category ?? undefined}

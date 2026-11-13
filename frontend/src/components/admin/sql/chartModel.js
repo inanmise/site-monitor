@@ -1,4 +1,4 @@
-import { cellText } from './sqlUtils.js'
+import { cellText, isTimeType } from './sqlUtils.js'
 
 /**
  * Sonuçtan grafik modeli (2026-11-13, C2) — yalnız EKRANDAKİ satırlar (≤ 1000). Çubuk / çizgi: X + 1–2 sayısal seri;
@@ -25,7 +25,7 @@ export function chartColumns(cols, types, masked = new Set()) {
   for (const c of cols || []) {
     const ty = types?.[c]
     if (ty === 'number' && !masked.has(c)) numeric.push(c)
-    if (ty === 'datetime') time.push(c)
+    if (isTimeType(ty)) time.push(c)
     if (ty !== 'json' && ty !== 'null') category.push(c)
   }
   return { numeric, time, category }
@@ -80,14 +80,14 @@ export function chartData(rows, spec, types) {
   }
   let points = list.map((r, i) => {
     const p = { x: spec.x ? labelOf(r?.[spec.x], i) : String(i + 1), _t: null }
-    if (spec.x && types?.[spec.x] === 'datetime') {
+    if (spec.x && isTimeType(types?.[spec.x])) {
       const ms = Date.parse(String(r?.[spec.x]))
       p._t = Number.isFinite(ms) ? ms : null
     }
     spec.ys.forEach((y) => { p[y] = toNum(r?.[y]) })
     return p
   })
-  if (spec.x && types?.[spec.x] === 'datetime') {
+  if (spec.x && isTimeType(types?.[spec.x])) {
     points = points.filter((p) => p._t != null).sort((a, b) => a._t - b._t)
   }
   let truncated = false

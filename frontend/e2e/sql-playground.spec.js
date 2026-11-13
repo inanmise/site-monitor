@@ -35,10 +35,16 @@ const SAVED = [
     mine: true, can_edit: true, created_at: '2026-11-10T09:00:00', updated_at: '2026-11-10T09:00:00', version: 0 },
 ]
 
+// Canlı denemedeki gibi çok sayıda örnek (42, 6 kategori) — 390 px'te seçicinin üstü ekran dışına taşıyordu (inceleme Ek B)
+const SAMPLE_CATS = ['alerts', 'teams', 'system', 'certs', 'monitors', 'users']
 const SAMPLES = [
   { id: 'open-alerts', category: 'alerts', label: 'Açık alarmlar', description: 'Şu an açık olan alarmlar; en yenisi en üstte.', sql: 'SELECT * FROM alerts WHERE resolved = false' },
   { id: 'teams', category: 'teams', label: 'Takımlar', description: 'Takım listesi ve yöneticileri.', sql: 'SELECT * FROM teams' },
   { id: 'sched', category: 'system', label: 'Zamanlayıcı kilitleri', description: 'Kimin hangi kilidi tuttuğu.', sql: 'SELECT * FROM scheduler_lock' },
+  ...Array.from({ length: 39 }, (_, i) => ({
+    id: `extra-${i + 1}`, category: SAMPLE_CATS[i % SAMPLE_CATS.length],
+    label: `Örnek sorgu ${i + 1} — uzun bir başlık ki satır sarsın`, description: 'Kısa açıklama: ne döndürdüğünü anlatır.', sql: `SELECT ${i + 1}`,
+  })),
 ]
 
 const HISTORY_PAGE = {
@@ -120,6 +126,26 @@ function clippedIn(sel) {
     const cs = getComputedStyle(el)
     if (!['hidden', 'clip'].includes(cs.overflowX)) continue
     if (el.scrollWidth > el.clientWidth + 1) out.push((el.textContent || '').trim().slice(0, 40))
+    if (out.length > 5) break
+  }
+  return out
+}
+
+/** Sıkışan etiketler: metni sığmayan düğmeler ve genişliği 0'a düşen metin kutuları (inceleme Ek A — 390 px araç çubuğu). */
+function squeezedLabels(sel) {
+  const root = document.querySelector(sel)
+  if (!root) return ['NO_ROOT']
+  const out = []
+  for (const b of root.querySelectorAll('button')) {
+    const r = b.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    const name = (b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 30)
+    if (b.scrollWidth > b.clientWidth + 1) out.push(`taşan düğme "${name}"`)
+    for (const s of b.querySelectorAll('span')) {
+      if (s.classList.contains('sr-only') || !(s.textContent || '').trim()) continue
+      const sr = s.getBoundingClientRect()
+      if (sr.width < 1 || s.scrollWidth > s.clientWidth + 1) out.push(`sıkışan etiket "${(s.textContent || '').trim().slice(0, 30)}" ${Math.round(sr.width)}`)
+    }
     if (out.length > 5) break
   }
   return out
@@ -210,10 +236,34 @@ for (const vp of VIEWPORTS) {
 
       expect(await page.evaluate(overflowIn, '[data-slot="sql-playground"]'), 'yatay taşma').toEqual([])
       expect(await page.evaluate(clippedIn, '[data-slot="sql-tabs"]'), 'sekmelerde kırpılan metin').toEqual([])
+      // Düzenleyici araç çubuğu (inceleme Ek A): "Örnek Sorgular" / "Geçmiş" etiketleri sıkışmaz, kırpılmaz
+      expect(await page.evaluate(clippedIn, '[data-slot="sql-editor-actions"]'), 'araç çubuğunda kırpılan metin').toEqual([])
+      expect(await page.evaluate(squeezedLabels, '[data-slot="sql-editor-actions"]'), 'araç çubuğunda sıkışan etiket').toEqual([])
+      expect(await page.evaluate(overflowIn, '[data-slot="sql-editor-actions"]'), 'araç çubuğunda taşma').toEqual([])
       if (vp.touch) {
         expect(await page.evaluate(smallTargets, '[data-slot="sql-tabs"]'), 'sekmelerde küçük hedef').toEqual([])
         expect(await page.evaluate(smallTargets, '[data-slot="sql-editor-card"] > div:first-child'), 'araç çubuğunda küçük hedef').toEqual([])
+        expect(await page.evaluate(smallTargets, '[data-slot="sql-editor-actions"]'), 'düzenleyici düğmelerinde küçük hedef').toEqual([])
       }
+
+      // Örnek seçici (inceleme Ek B): açılır pencerenin üstü ekranda, arama alanı görünür, alt kenar ekran içinde.
+      // Tetikleyici ekranın ortasına getirilir (canlı denemedeki konum): ne üstte ne altta tam liste sığar — sınır
+      // yoksa açılır pencere yukarı çevrilip üstü ekran dışına taşıyordu (y = -20).
+      const samplesBtn = page.getByRole('button', { name: /^Örnek Sorgular \(42\)$/ })
+      await page.evaluate(() => { document.body.style.paddingBottom = '1200px' })
+      await samplesBtn.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+      const tb = await samplesBtn.boundingBox()
+      expect(Math.abs(tb.y + tb.height / 2 - vp.height / 2), 'tetikleyici ekranın ortasına yakın').toBeLessThan(vp.height * 0.15)
+      await samplesBtn.click()
+      const pop = page.locator('[data-slot="sql-samples"]')
+      await expect(pop).toBeVisible()
+      await expect.poll(async () => Math.round((await pop.boundingBox())?.y ?? -1)).toBeGreaterThanOrEqual(0)
+      const pbox = await pop.boundingBox()
+      expect(pbox.y + pbox.height, 'seçicinin alt kenarı ekranda').toBeLessThanOrEqual(vp.height + 1)
+      expect(pbox.x + pbox.width, 'seçicinin sağ kenarı ekranda').toBeLessThanOrEqual(vp.width + 1)
+      await expect(page.getByPlaceholder('Örneklerde ara…')).toBeInViewport()
+      await page.keyboard.press('Escape')
+      await expect(pop).toHaveCount(0)
     })
 
     test('çalıştır → maskeli sonuç, grafik, plan, karşılaştırma; görünümler sığar', async ({ page }) => {
@@ -288,8 +338,8 @@ for (const vp of VIEWPORTS) {
 
       // Örnekler kategoriye göre
       await toEditorTab(page, vp)
-      await page.getByRole('button', { name: /^Örnek Sorgular \(3\)$/ }).click()
-      await expect(page.locator('[data-slot="sql-sample-group"]')).toHaveCount(3)
+      await page.getByRole('button', { name: /^Örnek Sorgular \(42\)$/ }).click()
+      await expect(page.locator('[data-slot="sql-sample-group"]')).toHaveCount(6)
       await expect(page.locator('[data-slot="sql-sample-desc"]').first()).toBeVisible()
       await page.keyboard.press('Escape')
 

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, History, Play, Plus, Search, SquarePen, X } from 'lucide-react'
+import { History, Play, Plus, Search, SquarePen, X } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
+import { useServerPagination } from '../../../hooks/useServerPagination.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import Field from '../../ui/Field.jsx'
+import PaginationBar from '../../ui/PaginationBar.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -13,7 +15,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
 import ChoiceToggle from './ChoiceToggle.jsx'
 import {
-  HISTORY_PAGE_SIZE, HISTORY_Q_MAX, SLOW_MS_DEFAULT, filterLocalHistory, historyQuery, historyRangeError, historyState, isPagedHistory,
+  HISTORY_Q_MAX, SLOW_MS_DEFAULT, filterLocalHistory, historyQuery, historyRangeError, historyState, isPagedHistory,
 } from './sqlLibraryModel.js'
 import { formatDuration, relativeFrom } from './sqlUtils.js'
 
@@ -40,7 +42,6 @@ export default function HistoryPanel({ open, onOpenChange, onUse, onOpenTab, onR
   const [scope, setScope] = useState('mine')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [page, setPage] = useState(0)
   const [state, setState] = useState({ loading: false, error: null, rows: [], total: null, paged: true, slowMs: SLOW_MS_DEFAULT, fromError: null })
   const [reload, setReload] = useState(0)
   const seq = useRef(0)
@@ -49,17 +50,20 @@ export default function HistoryPanel({ open, onOpenChange, onUse, onOpenTab, onR
     const h = setTimeout(() => setQDebounced(q), 300)
     return () => clearTimeout(h)
   }, [q])
-  useEffect(() => { setPage(0) }, [qDebounced, status, scope, from, to])
+  // Standart sunucu sayfalaması: süzgeç değişince sayfa 1 (mount'ta sıfırlama YOK), boyut kalıcı (`sm.pageSize.sqlHistory`)
+  const sp = useServerPagination({ listKey: 'sqlHistory', preset: 'modal', resetDeps: [qDebounced, status, scope, from, to] })
+  const { bind, apiPage, pageSize } = sp
 
   const rangeError = historyRangeError(from, to)
   useEffect(() => {
     if (!open || rangeError) return
     const my = ++seq.current
     setState((s) => ({ ...s, loading: true, error: null, fromError: null }))
-    const qs = historyQuery({ q: qDebounced, status, scope, from, to, page, size: HISTORY_PAGE_SIZE })
+    const qs = historyQuery({ q: qDebounced, status, scope, from, to, page: apiPage, size: pageSize })
     api.admin.sqlHistoryPage(qs).then((r) => {
       if (my !== seq.current) return
       if (r?.success && isPagedHistory(r)) {
+        bind(r)
         setState({ loading: false, error: null, rows: Array.isArray(r.data) ? r.data : [], total: Number(r.total), paged: true,
           slowMs: Number(r.slow_ms) || SLOW_MS_DEFAULT, fromError: null })
       } else if (r?.success && Array.isArray(r.data)) {
@@ -74,12 +78,7 @@ export default function HistoryPanel({ open, onOpenChange, onUse, onOpenTab, onR
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('sql.hist.loadError') }))
     })
-  }, [open, qDebounced, status, scope, from, to, page, reload, rangeError, t])
-
-  const total = state.total ?? 0
-  const pageCount = state.paged ? Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE)) : 1
-  const startN = total ? page * HISTORY_PAGE_SIZE + 1 : 0
-  const endN = state.paged ? Math.min(total, (page + 1) * HISTORY_PAGE_SIZE) : state.rows.length
+  }, [open, qDebounced, status, scope, from, to, apiPage, pageSize, reload, rangeError, t, bind])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -170,17 +169,9 @@ export default function HistoryPanel({ open, onOpenChange, onUse, onOpenTab, onR
             </ul>
           )}
         </div>
-        {state.paged && total > 0 && (
-          <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground" data-slot="sql-history-pager">
-            <span className="tabular-nums" aria-live="polite">{t('sql.hist.range', startN.toLocaleString(locale), endN.toLocaleString(locale), total.toLocaleString(locale))}</span>
-            <span className="flex gap-1">
-              <Button type="button" variant="outline" size="icon" disabled={page <= 0 || state.loading} onClick={() => setPage((p) => p - 1)} aria-label={t('sql.hist.prev')}>
-                <ChevronLeft />
-              </Button>
-              <Button type="button" variant="outline" size="icon" disabled={page + 1 >= pageCount || state.loading} onClick={() => setPage((p) => p + 1)} aria-label={t('sql.hist.next')}>
-                <ChevronRight />
-              </Button>
-            </span>
+        {state.paged && (
+          <div className="border-t px-3 pb-2" data-slot="sql-history-pager">
+            <PaginationBar {...sp.bar} />
           </div>
         )}
       </SheetContent>

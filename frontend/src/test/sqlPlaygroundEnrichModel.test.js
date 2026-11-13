@@ -20,6 +20,8 @@ import {
   savedBody, savedIdFromSearch, savedLink, savedUpdateBody, unwrapExportJson, validateSaved,
 } from '../components/admin/sql/sqlLibraryModel.js'
 import { DBQ_DRAFT_KEY, DRAFT_TTL_MS, takeDbQueryDraft, writeDbQueryDraft } from '../utils/sqlDbQueryDraft.js'
+import { duplicateColumnNames, selectListNames, uniqueColumnNames } from '../components/admin/sql/columnNames.js'
+import { inferType, isTimeType } from '../components/admin/sql/sqlUtils.js'
 import { OWNER_KEY, PERSONAL_PREFIXES, clearPersonalStorage, personalKey } from '../utils/personalStorage.js'
 
 /**
@@ -417,12 +419,12 @@ describe('A4 / D1 / D2 / C3 · kitaplık modelleri', () => {
     expect(sh.rows).toEqual([['id', 'n', 'j'], [7, 'x', '{"a":1}']])
     expect(unwrapExportJson([{ a: 1 }]).rows).toHaveLength(1)
     expect(unwrapExportJson({ success: true, data: [{ a: 1 }] }).rows).toHaveLength(1)
-    expect(unwrapExportJson({ columns: ['a', 'b'], rows: [[1, 2]] })).toEqual({ rows: [{ a: 1, b: 2 }], columns: ['a', 'b'] })
+    expect(unwrapExportJson({ columns: ['a', 'b'], rows: [[1, 2]] })).toMatchObject({ rows: [{ a: 1, b: 2 }], columns: ['a', 'b'], renamed: [] })
     expect(unwrapExportJson('x')).toBeNull()
     // Sunucunun akış yazıcısı (SqlExportWriter): {success, data: {columns, rows: [[…]], row_count, truncated, max_rows, masked_columns}}
     expect(unwrapExportJson({ success: true, data: { columns: ['id', 'pw'], rows: [[1, '••••'], [2, null]], row_count: 2, truncated: false } }))
-      .toEqual({ rows: [{ id: 1, pw: '••••' }, { id: 2, pw: null }], columns: ['id', 'pw'] })
-    expect(unwrapExportJson({ success: true, data: { columns: [], rows: [] } })).toEqual({ rows: [], columns: [] })
+      .toMatchObject({ rows: [{ id: 1, pw: '••••' }, { id: 2, pw: null }], columns: ['id', 'pw'] })
+    expect(unwrapExportJson({ success: true, data: { columns: [], rows: [] } })).toMatchObject({ rows: [], columns: [] })
   })
 })
 
@@ -436,5 +438,65 @@ describe('D4 · izleme taslağı', () => {
     writeDbQueryDraft('SELECT 2', 1000)
     expect(takeDbQueryDraft(1000 + DRAFT_TTL_MS + 1)).toBeNull()
     expect(writeDbQueryDraft('   ')).toBe(false)
+  })
+})
+
+// ── Son inceleme düzeltmeleri (2026-11-13) ─────────────────────────────────────────────────────────────────────────
+describe('İnceleme: doğrusal biçimlendirici (DÜŞÜK 8)', () => {
+  it('uzun boşluk dizisi sondan doğrusal kırpılır (eski sondaki-boşluk düzenli ifadesi karesel ilerlerdi)', () => {
+    const spaces = ' '.repeat(150_000)
+    const t0 = Date.now()
+    const a = formatSql(`select a -- not${spaces}x\nfrom t`)
+    const half = ' '.repeat(90_000)   // FORMAT_MAX_CHARS (200 000) altında kalsın — üstü olduğu gibi döner
+    const b = formatSql(`select a${half}, b from t -- son${half}`)
+    expect(Date.now() - t0).toBeLessThan(1500)
+    expect(a).toContain('-- not')
+    expect(b).toMatch(/-- son$/)
+    expect(lexForFormat(`-- x${spaces}`)[0].v).toBe('-- x')
+  })
+})
+
+describe('İnceleme: aynı adlı kolonlar (DÜŞÜK 5)', () => {
+  it('JSON dışa aktarımı: başlıklar ayrışır, her hücre KENDİ konumundan (sessiz veri kaybı yok)', () => {
+    const r = unwrapExportJson({ success: true, data: { columns: ['id', 'id', 'ID', 'id_2'], rows: [[1, 2, 3, 4], [5, null, 7, 8]] } })
+    expect(r.columns).toEqual(['id', 'id_3', 'ID_4', 'id_2'])
+    expect(r.rows).toEqual([{ id: 1, id_3: 2, ID_4: 3, id_2: 4 }, { id: 5, id_3: null, ID_4: 7, id_2: 8 }])
+    expect(r.renamed).toEqual([{ from: 'id', to: 'id_3' }, { from: 'ID', to: 'ID_4' }])
+    expect(unwrapExportJson({ success: true, data: { columns: ['a', 'b'], rows: [[1, 2]] } }).renamed).toEqual([])
+    // Nesne satırlarında ikinci değer zaten yok: başlık bir kez, düşen ad bildirilir
+    expect(unwrapExportJson({ columns: ['id', 'id'], rows: [{ id: 1 }] })).toMatchObject({ columns: ['id'], collapsed: ['id'] })
+  })
+  it('ekran sonucu: en dış SELECT listesinin çıktı adları (PostgreSQL ad kuralının yaklaşığı)', () => {
+    const T = [
+      ['SELECT a.id, b.id FROM a JOIN b ON b.a_id = a.id', ['id', 'id']],
+      ['SELECT a.id AS x, b.id y, count(*), count(b.id) FROM a', ['x', 'y', 'count', 'count']],
+      ['select "Ad Soyad", u.name::text, 1 + 2, case when x then 1 end, t.* from t', ['Ad Soyad', 'name', '?column?', 'case', null]],
+      ['WITH c AS (SELECT id, id FROM x) SELECT DISTINCT ON (a) a, b FROM c -- , a', ['a', 'b']],
+      ['SELECT coalesce(a, b) total, f(x) OVER (PARTITION BY y), s.fn(z) FROM t', ['total', 'f', 'fn']],
+      ['SELECT x IS NULL, NOT y, \'lit\' FROM t', ['?column?', '?column?', '?column?']],
+      ['UPDATE t SET a = 1', []],
+    ]
+    for (const [sql, want] of T) expect(selectListNames(sql), sql).toEqual(want)
+    expect(duplicateColumnNames(['id', 'ID', 'x', null, null, 'x', 'id'])).toEqual(['ID', 'x'])
+    expect(duplicateColumnNames(selectListNames('SELECT a.id, b.name FROM a, b'))).toEqual([])
+    expect(uniqueColumnNames(['', null, 'a']).names).toEqual(['column', 'column_2', 'a'])
+  })
+})
+
+describe('İnceleme: tarih türü ve tamamlama sınırı', () => {
+  it('yalnız gün → date; saatli (yerel ya da Z) → datetime; karışık → datetime', () => {
+    expect(inferType(['2026-11-13', null, '2026-01-02'])).toBe('date')
+    expect(inferType(['2026-11-13T09:30:00', '2026-11-13T09:30:00.123'])).toBe('datetime')
+    expect(inferType(['2026-11-13T06:30:00Z'])).toBe('datetime')
+    expect(inferType(['2026-11-13', '2026-11-13T09:30:00'])).toBe('datetime')
+    expect(isTimeType('date') && isTimeType('datetime') && !isTimeType('text')).toBe(true)
+    expect(defaultChartSpec(['day', 'n'], { day: 'date', n: 'number' })).toEqual({ kind: 'line', x: 'day', ys: ['n'] })
+  })
+  it('niteleyicili kolon önerisi tablonun TÜM kolonlarını verir (u. → 60 kolonun hepsi, username dahil)', () => {
+    const cols = [...Array.from({ length: 59 }, (_, i) => ({ column_name: `a_col_${String(i).padStart(2, '0')}` })), { column_name: 'username' }]
+    const aliases = parseAliases('SELECT u. FROM app_users u')
+    const r = completionItems({ start: 9, prefix: '', qualifier: 'u' }, { tables: [{ table_name: 'app_users' }], columnsMap: { app_users: cols }, aliases })
+    expect(r.items).toHaveLength(60)
+    expect(r.items.map((i) => i.label)).toContain('username')
   })
 })
