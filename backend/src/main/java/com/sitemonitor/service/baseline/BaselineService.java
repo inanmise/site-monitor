@@ -230,10 +230,47 @@ public class BaselineService {
 
     /**
      * Günlük budama ({@code BaselinePruneJob}, küme genelinde tek pod) — izleme başına en yeni
-     * {@link BaselineSampleStore#KEEP_PER_MONITOR} satırı tutar. Ana anahtar kapalıyken de koşar (örnekler saklı kalır).
-     * {@code stop}: pod kapanıyor / bütçe doldu → yarıda bırakır (ertesi gün kalanı budar).
+     * {@link BaselineSampleStore#KEEP_PER_MONITOR} satırı tutar; MEVSİMSEL izlemede ayrıca mevsimsel okumanın ihtiyaç duyduğu
+     * süreyi korur ({@link BaselineSampleStore#seasonalKeepFromMs}) — yalnız satır sayısına göre budama kısa aralıklı izlemede
+     * dünü / geçen haftayı silip tabanı kalıcı olarak değerlendirilemez bırakıyordu. Ana anahtar kapalıyken de koşar (örnekler
+     * saklı kalır). {@code stop}: pod kapanıyor / bütçe doldu → yarıda bırakır (ertesi gün kalanı budar).
      */
     public BaselineSampleStore.PruneResult prune(java.util.function.BooleanSupplier stop) {
-        return store.prune(BaselineSampleStore.KEEP_PER_MONITOR, stop);
+        return store.prune(BaselineSampleStore.KEEP_PER_MONITOR, seasonNeeds(), System.currentTimeMillis(), stop);
+    }
+
+    /** En uzun koruma: yapılandırması okunamayan / bulunmayan izleme için güvenli varsayılan (haftalık, en büyük pencere). */
+    static final BaselineSampleStore.SeasonNeed LONGEST_NEED =
+            new BaselineSampleStore.SeasonNeed(BaselineSampleStore.WEEK_MS, BaselineParams.WINDOW_MAX);
+
+    /**
+     * Budama planı — yapılandırma tablosundan TAZE okunur (ana anahtardan bağımsız): açık ve mevsimsiz → {@code null} (yalnız
+     * satır sınırı); açık ve mevsimsel → periyot + pencere; açık yapılandırması olmayan (silinmiş / kapalı ama örneği kalmış)
+     * izleme ya da okuma hatası → {@link #LONGEST_NEED} (veri silmede şüphede koru).
+     */
+    BaselineSampleStore.SeasonNeeds seasonNeeds() {
+        if (configRepo == null) return (t, id) -> LONGEST_NEED;
+        Map<String, BaselineSampleStore.SeasonNeed> needs = new HashMap<>();
+        java.util.Set<String> plain = new java.util.HashSet<>();
+        try {
+            for (MonitorBaselineConfig c : configRepo.findByEnabledTrue()) {
+                if (c == null || c.getMonitorType() == null || c.getMonitorId() == null) continue;
+                String k = key(c.getMonitorType(), c.getMonitorId());
+                BaselineParams p = c.toParams().normalized();
+                if (!p.seasonal()) { plain.add(k); continue; }
+                long period = BaselineParams.SEASON_WEEKLY.equals(p.season()) ? BaselineSampleStore.WEEK_MS : BaselineSampleStore.DAY_MS;
+                needs.put(k, new BaselineSampleStore.SeasonNeed(period, p.window()));
+            }
+        } catch (RuntimeException e) {
+            log.warn("Taban çizgisi budama planı okunamadı ({}) — her izleme en uzun mevsimsel süreyle korunuyor",
+                    e.getClass().getSimpleName());
+            return (t, id) -> LONGEST_NEED;
+        }
+        return (t, id) -> {
+            String k = key(t, id);
+            if (plain.contains(k)) return null;
+            BaselineSampleStore.SeasonNeed n = needs.get(k);
+            return n != null ? n : LONGEST_NEED;
+        };
     }
 }

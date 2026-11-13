@@ -34,10 +34,10 @@ public class BaselineSampleStore {
     public static final String TABLE = "monitor_baseline_samples";
     public static final int QUERY_TIMEOUT_SECONDS = 10;
     /**
-     * İzleme başına tutulan en çok satır (buda). Mevsimsiz okuma pencere üst sınırının (200) iki katını ({@code recentNeed})
-     * ister; MEVSİMSEL okuma ise aynı günün/haftanın saatine düşen örnekleri toplar — bunun için çok daha fazla geçmiş gerekir
-     * (günlük mevsimsellik kısa aralıklı izlemelerde birkaç günde dolar; haftalık mevsimsellik yalnız yeterli geçmişi olan —
-     * genelde uzun aralıklı — izlemelerde anlamlıdır, yetersizken dürüstçe "örnek yetersiz" denir).
+     * İzleme başına budamada her zaman tutulan en yeni satır sayısı. Mevsimsiz okuma pencere üst sınırının (200) iki katını
+     * ({@code recentNeed}) ister — bu sınır yeter. MEVSİMSEL okuma en az bir periyot önceki, günün/haftanın aynı saatine düşen
+     * örnekleri toplar; bunun için satır sınırı yetmez (30 sn aralıkta 1500 satır 12,5 saattir) — budama mevsimsel izlemede ayrıca
+     * {@link #seasonalKeepFromMs} süresini korur (hata taraması 2026-11-13, son inceleme).
      */
     public static final int KEEP_PER_MONITOR = 1500;
 
@@ -164,18 +164,60 @@ public class BaselineSampleStore {
     /** Budama sonucu: silinen satır + işlenen izleme + bütçe / durdurma nedeniyle yarıda kaldı mı. */
     public record PruneResult(int deleted, int monitors, boolean partial) {}
 
+    /** Mevsimsel izlemenin budamada korunacak geçmişi: periyot (gün / hafta) + okuma penceresi ({@code window}). */
+    public record SeasonNeed(long periodMs, int window) {}
+
+    /** Budama planı: izleme → mevsim ihtiyacı; {@code null} = mevsimsiz (yalnız satır sınırı). */
+    @FunctionalInterface
+    public interface SeasonNeeds {
+        SeasonNeed need(String type, long monitorId);
+    }
+
+    /** Mevsimsel korumada okuma penceresinin güvenlik çarpanı (yoğunluk tahmini gürültüsü). */
+    static final double SEASON_KEEP_FACTOR = 1.25;
+    /** Mevsimsel korumanın ek payı (ms) — tolerans penceresinin üstüne. */
+    static final long SEASON_KEEP_MARGIN_MS = 3_600_000L;
+
     /**
-     * İzleme başına en yeni {@code keepPerMonitor} satırı tutar, gerisini siler (pencere ihtiyacından çok büyük). Günlük budama
-     * işi ({@code BaselinePruneJob}) bunu çağırır. Önce sınırı aşan izlemeler (tek gruplu sorgu), sonra izleme başına sınır satırı
+     * Mevsimsel izlemede budamanın KORUYACAĞI en eski an (saf): okuma en az bir periyot önceki her periyotta ±tolerans
+     * penceresinden örnek toplar; son periyottaki satır sayısından pencere başına örnek ({@code perWindow}) tahmin edilir ve
+     * {@code window × 1,25} örneğe yetecek {@code n} periyot (1 ≤ n ≤ window + 1) + tolerans + 1 sa korunur. Kısa aralıkta n = 1
+     * (dünün / geçen haftanın aynı saati yeter), seyrek aralıkta n büyür (satır sayısı yine küçük kalır).
+     */
+    static long seasonalKeepFromMs(SeasonNeed need, long nowMs, long rowsLastPeriod) {
+        long period = Math.max(1, need.periodMs());
+        int window = Math.max(1, need.window());
+        double perWindow = rowsLastPeriod * (2.0 * SEASON_TOLERANCE_MIN_MS) / period;
+        long maxN = window + 1L;
+        long n = perWindow <= 0 ? maxN : (long) Math.ceil(window * SEASON_KEEP_FACTOR / perWindow);
+        n = Math.max(1, Math.min(maxN, n));
+        return nowMs - n * period - SEASON_TOLERANCE_MIN_MS - SEASON_KEEP_MARGIN_MS;
+    }
+
+    /**
+     * İzleme başına en yeni {@code keepPerMonitor} satırı tutar, gerisini siler — YALNIZ satır sınırı (mevsimsiz kural); günlük
+     * budama işi ({@code BaselinePruneJob}) mevsime duyarlı {@link #prune(int, SeasonNeeds, long, java.util.function.BooleanSupplier)}
+     * aşırı yüklemesini çağırır. Önce sınırı aşan izlemeler (tek gruplu sorgu), sonra izleme başına sınır satırı
      * (dizinden) ve en çok {@value #PRUNE_CHUNK} satırlık dilimlerle silme — tek dev ifade yerine (ilk budamada tablo büyük
      * olabilir; uzun kilit ve zaman aşımı olmasın). {@code stop} her dilimden önce sorulur (pod kapanıyor / bütçe doldu).
      */
     public PruneResult prune(int keepPerMonitor, java.util.function.BooleanSupplier stop) {
-        return prune(keepPerMonitor, stop, PRUNE_CHUNK);
+        return prune(keepPerMonitor, null, System.currentTimeMillis(), stop, PRUNE_CHUNK);
+    }
+
+    /** Mevsime duyarlı budama (günlük iş): bir satır yalnız en yeni {@code keepPerMonitor} satırın DIŞINDAYSA VE izlemenin
+     *  mevsimsel ihtiyacından ({@link #seasonalKeepFromMs}) eskiyse silinir; {@code needs} null ya da izleme için null →
+     *  yalnız satır sınırı. */
+    public PruneResult prune(int keepPerMonitor, SeasonNeeds needs, long nowMs, java.util.function.BooleanSupplier stop) {
+        return prune(keepPerMonitor, needs, nowMs, stop, PRUNE_CHUNK);
     }
 
     /** {@link #prune(int, java.util.function.BooleanSupplier)} dilim boyu verilerek (testler küçük dilimle çok dilimi sınar). */
     PruneResult prune(int keepPerMonitor, java.util.function.BooleanSupplier stop, int chunk) {
+        return prune(keepPerMonitor, null, System.currentTimeMillis(), stop, chunk);
+    }
+
+    PruneResult prune(int keepPerMonitor, SeasonNeeds needs, long nowMs, java.util.function.BooleanSupplier stop, int chunk) {
         if (pruneJdbc == null) return new PruneResult(0, 0, false);
         int keep = Math.max(1, keepPerMonitor);
         int step = Math.max(1, chunk);
@@ -199,11 +241,21 @@ public class BaselineSampleStore {
                     (rs, n) -> new long[] { rs.getLong(1), rs.getLong(2) }, type, id, keep);
             if (edge.isEmpty()) continue;
             long ms = edge.get(0)[0], rowId = edge.get(0)[1];
+            // Mevsimsel izleme: satır sınırının dışında olsa da ihtiyaç duyulan süredeki satırlar KORUNUR (en az bir periyot
+            // önceki aynı saat örnekleri — yalnız satır sayısına göre budama kısa aralıkta dünü / geçen haftayı silerdi).
+            SeasonNeed need = needs == null ? null : needs.need(type, id);
+            long keepFrom = Long.MAX_VALUE;
+            if (need != null) {
+                Long rows = long_.queryForObject("SELECT COUNT(*) FROM " + TABLE
+                        + " WHERE monitor_type = ? AND monitor_id = ? AND checked_ms >= ?", Long.class,
+                        type, id, nowMs - Math.max(1, need.periodMs()));
+                keepFrom = seasonalKeepFromMs(need, nowMs, rows == null ? 0 : rows);
+            }
             while (true) {
                 if (stop != null && stop.getAsBoolean()) return new PruneResult(deleted, monitors, true);
                 int n = long_.update("DELETE FROM " + TABLE + " WHERE id IN (SELECT id FROM " + TABLE
                         + " WHERE monitor_type = ? AND monitor_id = ? AND (checked_ms < ? OR (checked_ms = ? AND id <= ?)) "
-                        + "ORDER BY checked_ms, id LIMIT ?)", type, id, ms, ms, rowId, step);
+                        + "AND checked_ms < ? ORDER BY checked_ms, id LIMIT ?)", type, id, ms, ms, rowId, keepFrom, step);
                 deleted += n;
                 if (n < step) break;
             }

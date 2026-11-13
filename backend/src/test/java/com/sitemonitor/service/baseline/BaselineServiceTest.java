@@ -226,4 +226,39 @@ class BaselineServiceTest {
         assertThat(stopped.deleted()).isZero();
         assertThat(store.count(HTTP, 1)).isEqualTo(20);
     }
+
+    private void fill(long id, long newest, long stepMs, int n) {
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) rows.add(new Object[] { HTTP, id, newest - i * stepMs, 100L + (i % 5), false, newest });
+        mp.jdbc().batchUpdate("INSERT INTO " + BaselineSampleStore.TABLE
+                + " (monitor_type, monitor_id, checked_ms, value_ms, breach, created_ms) VALUES (?, ?, ?, ?, ?, ?)", rows);
+    }
+
+    @Test
+    void budama_yapilandirmaya_gore_mevsimi_korur_bilinmeyende_en_uzun() {
+        // Son inceleme (YÜKSEK): günlük budama yalnız satır sayısına bakıyordu — mevsimsel izlemenin dünkü aynı saati silinip
+        // taban kalıcı olarak değerlendirilemez kalıyordu. Plan yapılandırmadan: günlük → dünü korur, mevsimsiz → satır sınırı,
+        // yapılandırması olmayan / okunamayan → en uzun (haftalık, en büyük pencere).
+        long now = System.currentTimeMillis();
+        MonitorBaselineConfig daily = cfg(1, true);
+        daily.setSeason(BaselineParams.SEASON_DAILY);
+        when(configRepo.findByEnabledTrue()).thenReturn(List.of(daily, cfg(2, true)));
+        fill(1, now - 60_000L, 60_000L, 1_700);   // 1 dk, ~28 sa
+        fill(2, now - 60_000L, 60_000L, 1_700);
+        fill(3, now - 60_000L, 60_000L, 1_700);   // yapılandırması yok
+
+        svc.prune(() -> false);
+
+        assertThat(store.count(HTTP, 2)).as("mevsimsiz: satır sınırı").isEqualTo(BaselineSampleStore.KEEP_PER_MONITOR);
+        assertThat(store.count(HTTP, 1)).as("günlük: dün + pay korunur").isBetween(1_520, 1_540);
+        long D = BaselineSampleStore.DAY_MS;
+        assertThat(store.readSeasonal(HTTP, 1, now, 30, D, Math.floorMod(now, D), BaselineSampleStore.SEASON_TOLERANCE_MIN_MS)
+                .samples()).as("dünün aynı saati budamadan sonra okunur").hasSize(30);
+        assertThat(store.count(HTTP, 3)).as("yapılandırması yok → en uzun koruma").isEqualTo(1_700);
+
+        when(configRepo.findByEnabledTrue()).thenThrow(new RuntimeException("db yok"));
+        fill(4, now - 60_000L, 60_000L, 1_700);
+        svc.prune(() -> false);
+        assertThat(store.count(HTTP, 4)).as("plan okunamadı → en uzun koruma, hiçbir şey silinmez").isEqualTo(1_700);
+    }
 }
