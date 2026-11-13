@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookMarked, ChevronLeft, ChevronRight, Link2, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react'
+import { BookMarked, Link2, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
+import { useServerPagination } from '../../../hooks/useServerPagination.js'
 import { copyText } from '../../../utils/copyText.js'
 import { useDialog } from '../../ui/Dialog.jsx'
+import PaginationBar from '../../ui/PaginationBar.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { useToast } from '../../ui/Toast.jsx'
@@ -43,7 +45,6 @@ export default function SavedQueriesPanel({ open, onOpenChange, onOpen, onEdit, 
   const [qd, setQd] = useState('')
   const [tag, setTag] = useState('')
   const [tagD, setTagD] = useState('')
-  const [page, setPage] = useState(0)
   const [state, setState] = useState({ loading: false, error: null, rows: [], total: 0, unsupported: false })
   const [reload, setReload] = useState(0)
   const seq = useRef(0)
@@ -51,15 +52,19 @@ export default function SavedQueriesPanel({ open, onOpenChange, onOpen, onEdit, 
   onUnsupportedRef.current = onUnsupported
 
   useEffect(() => { const h = setTimeout(() => { setQd(q); setTagD(tag) }, 300); return () => clearTimeout(h) }, [q, tag])
-  useEffect(() => { setPage(0) }, [scope, qd, tagD])
+  // Standart sunucu sayfalaması: süzgeç değişince sayfa 1 (mount'ta sıfırlama YOK), boyut kalıcı (`sm.pageSize.sqlSaved`)
+  const sp = useServerPagination({ listKey: 'sqlSaved', preset: 'modal', resetDeps: [scope, qd, tagD] })
+  const { bind, apiPage, pageSize, setTotal } = sp
 
   useEffect(() => {
     if (!open) return
     const my = ++seq.current
     setState((s) => ({ ...s, loading: true, error: null }))
-    api.admin.sqlSavedList(savedQuery({ scope, q: qd, tag: tagD, page })).then((r) => {
+    api.admin.sqlSavedList(savedQuery({ scope, q: qd, tag: tagD, page: apiPage, size: pageSize })).then((r) => {
       if (my !== seq.current) return
       if (r?.success && Array.isArray(r.data)) {
+        if (Number.isFinite(Number(r.total))) bind(r)
+        else setTotal(r.data.length)
         setState({ loading: false, error: null, rows: r.data, total: Number.isFinite(Number(r.total)) ? Number(r.total) : r.data.length, unsupported: false })
       } else if (r?.status === 404 || r?.status === 405) {
         setState({ loading: false, error: null, rows: [], total: 0, unsupported: true })
@@ -71,7 +76,7 @@ export default function SavedQueriesPanel({ open, onOpenChange, onOpen, onEdit, 
       if (my !== seq.current) return
       setState((s) => ({ ...s, loading: false, error: e?.message || t('sql.saved.loadError') }))
     })
-  }, [open, scope, qd, tagD, page, reload, reloadKey, t])
+  }, [open, scope, qd, tagD, apiPage, pageSize, reload, reloadKey, t, bind, setTotal])
 
   const remove = async (row) => {
     const ok = await showConfirm({ title: t('sql.saved.deleteTitle'), message: t('sql.saved.deleteMsg', row.title), confirmText: t('sql.saved.delete') })
@@ -84,7 +89,6 @@ export default function SavedQueriesPanel({ open, onOpenChange, onOpen, onEdit, 
     else toast.error(t('sql.res.copyFailed'))
   }
 
-  const pageCount = Math.max(1, Math.ceil(state.total / SAVED_PAGE_SIZE))
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-xl" data-slot="sql-saved-panel">
@@ -163,13 +167,9 @@ export default function SavedQueriesPanel({ open, onOpenChange, onOpen, onEdit, 
             </ul>
           )}
         </div>
-        {!state.unsupported && state.total > SAVED_PAGE_SIZE && (
-          <div className="flex items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-            <span className="tabular-nums" aria-live="polite">{t('sql.hist.range', (page * SAVED_PAGE_SIZE + 1).toLocaleString(locale), Math.min(state.total, (page + 1) * SAVED_PAGE_SIZE).toLocaleString(locale), state.total.toLocaleString(locale))}</span>
-            <span className="flex gap-1">
-              <Button type="button" variant="outline" size="icon" disabled={page <= 0 || state.loading} onClick={() => setPage((p) => p - 1)} aria-label={t('sql.hist.prev')}><ChevronLeft /></Button>
-              <Button type="button" variant="outline" size="icon" disabled={page + 1 >= pageCount || state.loading} onClick={() => setPage((p) => p + 1)} aria-label={t('sql.hist.next')}><ChevronRight /></Button>
-            </span>
+        {!state.unsupported && !state.error && (
+          <div className="border-t px-3 pb-2" data-slot="sql-saved-pager">
+            <PaginationBar {...sp.bar} />
           </div>
         )}
       </SheetContent>

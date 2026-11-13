@@ -5,7 +5,9 @@ import { KEYWORDS } from './sqlHighlight.jsx'
  * tabloların kolonları); ağ isteği yalnız sorguda geçen tablonun kolonları henüz yüklenmediyse ({@link completionItems}
  * `needColumns` döner — çağıran yükler). Dize / yorum / dolar bloğu içinde ÖNERİ YOK. Doğrusal tarama, sınırlı çıktı.
  */
-export const COMPLETION_LIMIT = 40
+export const COMPLETION_LIMIT = 200
+/** Takma ad / tablo niteleyicili (`u.`) kolon önerisi: tablonun TÜM kolonları (liste kaydırılır). */
+export const QUALIFIED_LIMIT = 2000
 const SCAN_MAX = 200_000
 
 const isNameStart = (c) => /[A-Za-z_]/.test(c)
@@ -229,5 +231,6 @@ export function completionItems(ctx, { tables = [], columnsMap = {}, aliases = n
   items.sort((a, b) => a.rank - b.rank || kindOrder[a.kind] - kindOrder[b.kind] || a.label.localeCompare(b.label))
   // Yazılanın aynısı tek öneri ise liste gereksiz
   const exact = items.length === 1 && items[0].label.toLowerCase() === ctx.prefix.toLowerCase()
-  return { items: exact ? [] : items.slice(0, limit).map((it) => ({ label: it.label, insert: it.insert, kind: it.kind, detail: it.detail })), needColumns }
+  const cap = ctx.qualifier ? Math.max(limit, QUALIFIED_LIMIT) : limit
+  return { items: exact ? [] : items.slice(0, cap).map((it) => ({ label: it.label, insert: it.insert, kind: it.kind, detail: it.detail })), needColumns }
 }

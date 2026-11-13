@@ -6959,6 +6959,8 @@ export const TR = {
   'sql.diag.jumpIn':     '{1} tablosuna git ({0} kolonuyla başvuruyor)',
   'sql.diag.showInDiagram': 'Diyagramda göster',
   'sql.diag.stats':      '{0} ilişkili tablo · {1} ilişki ({2} gerçek FK, {3} çıkarım) · {4} ilişkisiz',
+  'sql.dup.note': 'Aynı adlı kolonlar: {0} — sonuçta yalnız ilkinin değeri görünür. Kolonlara farklı takma ad verin (ör. a.id AS a_id).',
+  'sql.exp.dupRenamed': 'Aynı adlı kolonlar Excel’de ayrıldı: {0}.',
   'sql.plan.cancelledHint': 'Plan isteği isteğiniz üzerine durduruldu; plan oluşmadı. Yeniden isteyebilirsiniz.',
   'sql.exp.cancelled': 'Tam dışa aktarım durduruldu; dosya oluşturulmadı.',
   // SQL Playground zenginleştirme (2026-11-13)

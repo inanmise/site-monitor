@@ -9,7 +9,6 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { runWithConcurrency } from '../../utils/concurrentQueue.js'
 import { navigateTo } from '../../utils/navigate.js'
-import { downloadBlob } from '../../utils/csvExport.js'
 import { clientFailure } from '../../utils/errorMessages.js'
 import { writeDbQueryDraft } from '../../utils/sqlDbQueryDraft.js'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -39,12 +38,12 @@ import SqlEditor from './sql/SqlEditor.jsx'
 import SqlTabsBar, { tabTitle } from './sql/SqlTabsBar.jsx'
 import { pushRun, snapshotRun } from './sql/compareModel.js'
 import { parseAliases } from './sql/sqlComplete.js'
-import { excelSheet, paramTypesOf, savedIdFromSearch, unwrapExportJson } from './sql/sqlLibraryModel.js'
+import { paramTypesOf, savedIdFromSearch, unwrapExportJson } from './sql/sqlLibraryModel.js'
 import { MAX_PARAMS, buildParamsBody, extractParams, paramErrorsFromResponse, syncParamState } from './sql/sqlParams.js'
 import {
   MAX_TABS, addTab, closeOthers, closeTab, duplicateTab, findSavedTab, initialTabs, loadTabs, saveTabs, updateTab,
 } from './sql/sqlTabs.js'
-import { MAX_ROWS, QUERY_TIMEOUT_SEC, columnTypes, resultColumns, stampedFile, tableQuery, wordAt } from './sql/sqlUtils.js'
+import { MAX_ROWS, QUERY_TIMEOUT_SEC, columnTypes, resultColumns, tableQuery, wordAt } from './sql/sqlUtils.js'
 
 const ResultChart = lazy(() => import('./sql/ResultChart.jsx'))
 
@@ -329,16 +328,19 @@ export default function SqlPlayground() {
     const r = running
     if (!r?.runId) return
     setStopping(true)
+    // İptal kabul edildiyse "durduruluyor" çalıştırma bitene dek kalır (run'ın finally'si temizler); aksi her yolda temizlenir
+    let accepted = false
     try {
       const res = await api.admin.sqlCancel(r.runId)
-      if (res?.success && res.cancelled) toast.info(t('sql.stop.requested'))
+      accepted = Boolean(res?.success && res.cancelled)
+      if (accepted) toast.info(t('sql.stop.requested'))
       else if (res?.success) toast.info(t(res.reason === 'other_pod_unreachable' ? 'sql.stop.otherPod' : 'sql.stop.alreadyDone'))
       else if (isOldServer(res)) toast.info(t('sql.stop.unsupported'))
       else toast.error(res?.error || t('sql.stop.failed'))
-      if (!(res?.success && res.cancelled)) setStopping(false)
     } catch (e) {
       toast.error(e?.message || t('sql.stop.failed'))
-      setStopping(false)
+    } finally {
+      if (!accepted || !runningRef.current) setStopping(false)
     }
   }, [running, t, toast])
 
@@ -399,10 +401,12 @@ export default function SqlPlayground() {
       const body = unwrapExportJson(r.json)
       if (!body) { toast.error(t('sql.exp.failed')); return }
       const cols = body.columns ?? resultColumns(body.rows)
-      const mod = await import('../../utils/xlsxWriter.js')
-      const bytes = mod.buildXlsx([excelSheet(body.rows, cols, columnTypes(body.rows, cols))])
-      if (!downloadBlob(stampedFile('sql', 'xlsx'), new Blob([bytes], { type: mod.XLSX_MIME }))) { toast.error(t('sql.res.downloadFailed')); return }
-      toast.success(`${t('sql.exp.done', 'Excel', body.rows.length)}${note}`)
+      const { downloadSqlExcel } = await import('./sql/sqlExcelExport.js')
+      if (!downloadSqlExcel(body.rows, cols, columnTypes(body.rows, cols), 'sql')) { toast.error(t('sql.res.downloadFailed')); return }
+      const renamedNote = body.renamed?.length
+        ? ` ${t('sql.exp.dupRenamed', body.renamed.slice(0, 5).map((x) => `${x.from} → ${x.to}`).join(', ') + (body.renamed.length > 5 ? ` +${body.renamed.length - 5}` : ''))}`
+        : ''
+      toast.success(`${t('sql.exp.done', 'Excel', body.rows.length)}${note}${renamedNote}`)
     } catch (e) {
       const f = clientFailure(e, { fallback: t('sql.exp.failed'), chunk: t('te.pageUpdated') })
       toast.error(f.message, { details: f.details })
@@ -619,20 +623,21 @@ export default function SqlPlayground() {
             <PanelLeft /> {t('sql.schema')}
           </Button>
         )}
-        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
-          <QueryPicker kind="samples" items={samples} onPick={(s) => writeEditor(s, { replace: true })} className="flex-1 pointer-coarse:h-10 sm:flex-none" />
-          <QueryPicker kind="history" items={history} onPick={(s) => writeEditor(s, { replace: true })} className="flex-1 pointer-coarse:h-10 sm:flex-none" />
+        {/* Telefonda iki sütunlu ızgara (6 eylem tek satıra sıkışıp etiketleri 0 genişliğe inmesin); sm ve üstünde satır */}
+        <div data-slot="sql-editor-actions" className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+          <QueryPicker kind="samples" items={samples} onPick={(s) => writeEditor(s, { replace: true })} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
+          <QueryPicker kind="history" items={history} onPick={(s) => writeEditor(s, { replace: true })} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
           <Button type="button" variant="outline" size="sm" onClick={() => editorRef.current?.format()} disabled={!sql.trim()}
-            data-slot="sql-format" aria-keyshortcuts={IS_MAC ? 'Meta+Shift+F' : 'Control+Shift+F'} className="flex-1 pointer-coarse:h-10 sm:flex-none">
+            data-slot="sql-format" aria-keyshortcuts={IS_MAC ? 'Meta+Shift+F' : 'Control+Shift+F'} className="w-full pointer-coarse:h-10 sm:w-auto">
             <WandSparkles /> {t('sql.fmt.label')}
           </Button>
           {savedSupported && (
             <>
-              <Button type="button" variant="outline" size="sm" onClick={() => setSavedOpen(true)} data-slot="sql-saved-open" className="flex-1 pointer-coarse:h-10 sm:flex-none">
+              <Button type="button" variant="outline" size="sm" onClick={() => setSavedOpen(true)} data-slot="sql-saved-open" className="w-full pointer-coarse:h-10 sm:w-auto">
                 <BookMarked /> {t('sql.saved.short')}
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={() => openSave('update')} disabled={!sql.trim()} data-slot="sql-save"
-                className="flex-1 pointer-coarse:h-10 sm:flex-none">
+                className="w-full pointer-coarse:h-10 sm:w-auto">
                 <BookmarkPlus /> {activeTab.savedId != null && activeTab.savedMine !== false ? t('sql.saved.saveShort') : t('sql.saved.saveNew')}
               </Button>
             </>

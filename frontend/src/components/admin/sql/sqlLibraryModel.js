@@ -1,4 +1,5 @@
 import { changedFields } from '../../../utils/changedFields.js'
+import { duplicateColumnNames, uniqueColumnNames } from './columnNames.js'
 import { cellText } from './sqlUtils.js'
 
 /**
@@ -187,8 +188,14 @@ export function excelSheet(rows, cols, types, name = 'SQL') {
 }
 
 /**
- * Sunucu JSON dışa aktarım gövdesi → satırlar + kolonlar. Biçim (sözleşme ayrıntı vermiyor): satır nesneleri dizisi ya
- * da `{ rows | data: [...], columns?: [...] }`. Tanınmazsa null.
+ * Sunucu JSON dışa aktarım gövdesi → satırlar + kolonlar. Sunucu biçimi (`SqlExportWriter`):
+ * `{ success, data: { columns: [...], rows: [[...]] } }`; ayrıca satır nesneleri dizisi ya da `{ rows | data: [...], columns? }`
+ * okunur. Tanınmazsa null.
+ *
+ * <p>Aynı adlı kolonlar (DÜŞÜK 5, 2026-11-13): satırlar DİZİ olarak gelince başlıklar benzersizleştirilir (`id`, `id_2`) ve
+ * her hücre KENDİ konumundan okunur — `SELECT a.id, b.id` iki kolonun değerini de taşır; `renamed` hangi başlıkların
+ * değiştiğini söyler. Satırlar nesneyse aynı adlı ikinci kolonun değeri zaten yoktur: başlık bir kez yazılır (`collapsed`).
+ * @returns {{ rows: Object[], columns: string[]|null, renamed: Array<{from, to}>, collapsed: string[] }|null}
  */
 export function unwrapExportJson(body) {
   let rows = null
@@ -201,8 +208,16 @@ export function unwrapExportJson(body) {
     if (Array.isArray(body.columns)) columns = body.columns
   }
   if (!rows) return null
-  if (rows.length && Array.isArray(rows[0]) && Array.isArray(columns)) {
-    rows = rows.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i] ?? null])))
+  const cols = Array.isArray(columns) ? columns.map((c) => (c == null ? '' : String(c))) : null
+  if (!cols) return { rows, columns: null, renamed: [], collapsed: [] }
+  const arrayRows = rows.length ? Array.isArray(rows[0]) : true
+  if (arrayRows) {
+    const { names, renamed } = uniqueColumnNames(cols)
+    const out = rows.map((r) => Object.fromEntries(names.map((c, i) => [c, Array.isArray(r) ? (r[i] ?? null) : null])))
+    return { rows: out, columns: names, renamed, collapsed: [] }
   }
-  return { rows, columns: Array.isArray(columns) ? columns.map(String) : null }
+  const collapsed = duplicateColumnNames(cols)
+  const seen = new Set()
+  const unique = cols.filter((c) => { const k = c.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true })
+  return { rows, columns: unique, renamed: [], collapsed }
 }

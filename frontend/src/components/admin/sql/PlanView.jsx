@@ -3,7 +3,7 @@ import { AlertTriangle, ChevronDown, Gauge, Info, OctagonX, Play, ScanSearch } f
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
-import { LoadingBlock } from '../../ui/Progress.jsx'
+import { LoadingBlock, ProgressBar } from '../../ui/Progress.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -134,9 +134,9 @@ export default function PlanView({ state, onExplain, canRun, className }) {
                   {n.filter && <code className="font-mono text-[11px] break-all whitespace-pre-wrap text-muted-foreground">{String(n.filter)}</code>}
                   {pct != null && (
                     <div className="flex items-center gap-2">
-                      <span aria-hidden="true" className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-                        <span className={cn('block h-full rounded-full', n.seqScan ? 'bg-amber-500' : 'bg-primary/60')} style={{ width: `${pct}%` }} />
-                      </span>
+                      <div className="min-w-0 flex-1" data-slot="sql-plan-share">
+                        <ProgressBar value={pct} size="sm" decorative tone={n.seqScan ? 'warn' : undefined} />
+                      </div>
                       <span className="w-12 shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">{t('sql.plan.share', pct)}</span>
                     </div>
                   )}

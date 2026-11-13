@@ -6945,6 +6945,8 @@ export const EN = {
   'sql.diag.jumpIn':     'Go to {1} (references it via {0})',
   'sql.diag.showInDiagram': 'Show in diagram',
   'sql.diag.stats':      '{0} related tables · {1} relationships ({2} real FK, {3} inferred) · {4} unrelated',
+  'sql.dup.note': 'Columns with the same name: {0} — the result shows only the first one’s value. Give them different aliases (e.g. a.id AS a_id).',
+  'sql.exp.dupRenamed': 'Columns with the same name were kept apart in Excel: {0}.',
   'sql.plan.cancelledHint': 'The plan request was stopped at your request, so no plan was produced. You can ask for it again.',
   'sql.exp.cancelled': 'The full export was stopped, so no file was created.',
   // SQL Playground zenginleştirme (2026-11-13)
