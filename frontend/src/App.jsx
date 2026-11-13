@@ -2486,7 +2486,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.admin.Icon} title={t('app.adminTitle')} description={t('app.adminDesc')} />
-                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} globalAdmin={globalAdmin} />
+                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} globalAdmin={globalAdmin} manageTeamIds={manageTeamIds} />
               </div>
             )}
 

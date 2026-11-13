@@ -13,6 +13,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
+import GroupBulkActions from './bulk/GroupBulkActions.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
@@ -297,6 +298,24 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
   const teamOptions = writableTeamIds.map(id => ({ value: id, label: teamMap[id] ?? `#${id}` }))
 
+  // ── Toplu işlem (2026-11-13): seçim yalnız YAZILABİLİR (can_write) ve görünen gruplarda; süzgeç değişince düşer ──
+  const [selected, setSelected] = useState(() => new Set())
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev
+      const ids = new Set(visible.map((g) => g.id))
+      const next = new Set([...prev].filter((id) => ids.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [visible])
+  const selectable = visible.filter((g) => g.can_write)
+  const selectedGroups = visible.filter((g) => selected.has(g.id))
+  const allSelected = selectable.length > 0 && selectable.every((g) => selected.has(g.id))
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(selectable.map((g) => g.id)))
+  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const anySelectable = selectable.length > 0
+  const bulkTeams = writableTeamIds.map((id) => ({ id, name: teamMap[id] ?? `#${id}` }))
+
   const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
   return (
     <section data-slot="notify-groups" className="mb-8 flex min-w-0 flex-col gap-4">
@@ -350,6 +369,12 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         </AlertBanner>
       )}
 
+      {!loading && !loadError && (
+        <GroupBulkActions selected={selectedGroups} groups={groups} counts={usageCounts}
+          onClear={() => setSelected(new Set())} onDone={load} teamOptions={bulkTeams}
+          teamNameOf={(id) => (id == null ? null : teamMap[String(id)] ?? null)} />
+      )}
+
       {loading ? (
         <StatusBlock tone="neutral" title={t('ng.loading')} />
       ) : loadError ? (
@@ -371,6 +396,13 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           <Table className="text-sm">
             <TableHeader className="bg-muted/50">
               <TableRow className="hover:bg-transparent">
+                {anySelectable && (
+                  <TableHead className="w-10 px-2">
+                    <label className="-m-2 flex size-10 cursor-pointer items-center justify-center">
+                      <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label={t('ng.bulk.selectAll')} data-slot="ng-select-all" />
+                    </label>
+                  </TableHead>
+                )}
                 <TableHead>{t('ng.colName')}</TableHead>
                 <TableHead>{t('ng.colTeam')}</TableHead>
                 <TableHead>{t('ng.colEmails')}</TableHead>
@@ -383,7 +415,17 @@ export default function NotificationGroups({ teams = [], systemRole }) {
               {visible.map(g => {
                 const count = (g.emails ?? []).length
                 return (
-                  <TableRow key={g.id}>
+                  <TableRow key={g.id} data-group-id={g.id} data-state={selected.has(g.id) ? 'selected' : undefined}>
+                    {anySelectable && (
+                      <TableCell className="w-10 px-2 align-top">
+                        {g.can_write && (
+                          <label className="-m-2 flex size-10 cursor-pointer items-center justify-center">
+                            <Checkbox checked={selected.has(g.id)} onCheckedChange={() => toggleOne(g.id)}
+                              aria-label={t('ng.bulk.selectOne', g.name)} data-slot="ng-select" />
+                          </label>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="whitespace-normal">
                       <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
                         <strong className="font-semibold [overflow-wrap:anywhere]">{g.name}</strong>

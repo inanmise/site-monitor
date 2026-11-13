@@ -1552,6 +1552,8 @@ export const api = {
     reassign: (id, targetGroupId) => request(`/notification-groups/${id}/reassign`, {
       method: 'POST', body: JSON.stringify({ target_group_id: targetGroupId ?? null }),
     }),
+    /** Toplu işlem (2026-11-13): { action: delete | set_team | make_default, ids, team_id? } → satır satır sonuç. */
+    bulk: (body) => request('/notification-groups/bulk', { method: 'POST', body: JSON.stringify(body) }),
   },
 
   /**
@@ -1564,11 +1566,12 @@ export const api = {
      *  (sözleşmedeki düz dizi DEĞİL; NocController.groupOptions). E-posta YOK. */
     groupOptions: () => request('/noc/groups/options'),
     /** { summary: { total, covered, not_covered, paused, by_type, active_groups, disabled_types }, items: [...] } */
-    coverage: ({ teamId, type, summary } = {}) => {
+    coverage: ({ teamId, type, summary, byTeam } = {}) => {
       const qs = new URLSearchParams()
       if (teamId != null && teamId !== '') qs.set('team_id', String(teamId))
       if (type) qs.set('type', String(type))
       if (summary) qs.set('summary', '1')   // yalnız sayılar (Genel Bakış şeridi) — items gelmez
+      if (byTeam) qs.set('by_team', '1')    // özete takım başına {total, covered, paused} (Takımlar → kapsam panosu, 2026-11-13)
       const q = qs.toString()
       return request(`/noc/coverage${q ? `?${q}` : ''}`)
     },
@@ -2001,6 +2004,10 @@ export const api = {
     addContact: (contact) => request('/admin/contacts', { method: 'POST', body: JSON.stringify(contact) }),
     updateContact: (id, contact) => request(`/admin/contacts/${id}`, { method: 'PUT', body: JSON.stringify(contact) }),
     deleteContact: (id) => request(`/admin/contacts/${id}`, { method: 'DELETE' }),
+    /** Toplu işlem (2026-11-13): { action: activate | deactivate | set_level | set_team, ids, min_alert_level?, team_id? }. */
+    bulkContacts: (body) => request('/admin/contacts/bulk', { method: 'POST', body: JSON.stringify(body) }),
+    /** Bir kullanıcıyı seçili takımlara eskalasyon kişisi ekler: { team_ids, user_id, role, min_alert_level }. */
+    bulkCreateContacts: (body) => request('/admin/contacts/bulk-create', { method: 'POST', body: JSON.stringify(body) }),
 
     // Alert Events
     /**

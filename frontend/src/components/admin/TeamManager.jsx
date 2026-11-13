@@ -6,7 +6,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import {
   UsersRound, PenLine, Headset, Plus, CircleCheck, CirclePause, TriangleAlert, Siren, History, Gauge, ScanSearch,
-  Trash2, Users, UserPlus, BellRing, CalendarClock, Share2, Forward,
+  Trash2, Users, UserPlus, BellRing, CalendarClock, Share2, Forward, Star, LayoutList, LayoutGrid,
 } from 'lucide-react'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import UserEditModal from './UserEditModal.jsx'
@@ -28,6 +28,12 @@ import { useElementWidthState } from '../../hooks/useElementWidth.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import TeamGapsPanel, { TEAM_TOUCH_CHIP } from './teams/TeamGapsPanel.jsx'
 import TeamGapBadge from './teams/TeamGapBadge.jsx'
+import TeamCoverageBoard from './teams/TeamCoverageBoard.jsx'
+import TeamBulkDefaultGroup from './teams/TeamBulkDefaultGroup.jsx'
+import TeamBulkContact from './teams/TeamBulkContact.jsx'
+import { buildBoard, BOARD_FILTERS } from './teams/coverageBoardModel.js'
+import { manageScope } from './bulk/bulkModel.js'
+import SegmentedControl from '../ui/SegmentedControl.jsx'
 import {
   TEAM_GAPS, CORE_GAPS, TEAM_SORTS, DEFAULT_TEAM_SORT, teamGaps, gapCounts, matchesGaps, hasCoreGap, parseGapParam,
   gapParam, sortTeams,
@@ -133,7 +139,8 @@ const TEAM_CARDS_TWO_COL_PX = 640
  * `onJump(tabId, params)`: Yönetim paneli içinde başka bir alt sekmeye SÜZGEÇLİ geçiş (AdminPanel.jump) — eksik
  * bilgi düzeltme kısayolları (eskalasyon kişisi / bildirim grubu) takımı süzülmüş açar. Verilmezse `applyTabView`.
  */
-export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null, onJump }) {
+export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null, onJump,
+  manageTeamIds = null }) {
   const t = useT()
   const toast = useToast()
   const phone = useIsMobile()
@@ -195,6 +202,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [ldapAuditTeam, setLdapAuditTeam] = useState(null)   // AD ile üyelik denetimi (2026-09-26)
   const [oncallTeam, setOncallTeam] = useState(null)         // nöbet çizelgesi penceresi (2026-10-11)
   const [oncallNow, setOncallNow] = useState({})             // takım kimliği → şu anki nöbetçi {name, until}
+  // Kapsam panosu (2026-11-13): nöbet okuması hangi takımlar için BAŞARILI oldu (null = okunamadı / henüz) — yanıtta
+  // olmayan ama sorulan takım "nöbetçi yok"tur; sorulmamış / okunamamış takım "bilinmiyor".
+  const [oncallKnown, setOncallKnown] = useState(null)
+  const [oncallState, setOncallState] = useState('loading')  // loading | ready | failed
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
   // Zengin süzgeçler (2026-09-20, kullanıcı bildirimi): durum, müdür, açık alarm, lider, haftalık — URL'de g_*
   const [fActive, setFActive]   = useState(() => readUrlParam('g_active', ''))     // '' | 'active' | 'inactive'
@@ -206,9 +217,13 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [gapSel, setGapSel]   = useState(() => parseGapParam(readUrlParam('g_miss', '')))
   const [gapMode, setGapMode] = useState(() => (readUrlParam('g_mmode', '') === 'all' ? 'all' : 'any'))
   const [sort, setSort]       = useState(() => { const v = readUrlParam('g_sort', ''); return TEAM_SORTS.includes(v) ? v : DEFAULT_TEAM_SORT })
+  // Görünüm (2026-11-13): liste | kapsam panosu (g_tview=board) + pano süzgeci (g_bfilter)
+  const [view, setView] = useState(() => (readUrlParam('g_tview', '') === 'board' ? 'board' : 'list'))
+  const [boardFilter, setBoardFilter] = useState(() => { const v = readUrlParam('g_bfilter', ''); return BOARD_FILTERS.includes(v) ? v : 'all' })
   useUrlQuerySync({ g_q: q, g_active: fActive, g_mgr: fManager, g_alerts: fAlerts, g_leader: fLeader, g_weekly: fWeekly,
     g_miss: gapParam(gapSel), g_mmode: gapSel.length >= 2 && gapMode === 'all' ? 'all' : null,
-    g_sort: sort === DEFAULT_TEAM_SORT ? null : sort })
+    g_sort: sort === DEFAULT_TEAM_SORT ? null : sort,
+    g_tview: view === 'board' ? 'board' : null, g_bfilter: view === 'board' && boardFilter !== 'all' ? boardFilter : null })
   const filterActive = !!(fActive || fManager || fAlerts || fLeader || fWeekly)
   const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_active', '') || readUrlParam('g_mgr', '') || readUrlParam('g_alerts', '') || readUrlParam('g_leader', '') || readUrlParam('g_weekly', '')))
   const clearFilters = () => { setQ(''); setFActive(''); setFManager(''); setFAlerts(''); setFLeader(''); setFWeekly(''); setGapSel([]); setGapMode('any') }
@@ -238,10 +253,14 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   async function loadOncall(list = teams) {
     try {
       const ids = (list || []).map((x) => x.id).slice(0, 200)
-      if (!ids.length || !api.oncall?.current) return
+      if (!ids.length || !api.oncall?.current) { setOncallState(ids.length ? 'failed' : 'ready'); setOncallKnown(new Set()); return }
       const r = await api.oncall.current(ids)
-      if (r?.success) setOncallNow(Object.fromEntries((r.data || []).map((p) => [String(p.team_id), p])))
-    } catch { /* nöbetçi satırı gösterilmez */ }
+      if (r?.success) {
+        setOncallNow(Object.fromEntries((r.data || []).map((p) => [String(p.team_id), p])))
+        setOncallKnown(new Set(ids.map(String)))
+        setOncallState('ready')
+      } else { setOncallKnown(null); setOncallState('failed') }
+    } catch { setOncallKnown(null); setOncallState('failed') /* nöbetçi satırı gösterilmez; panoda "bilinmiyor" */ }
   }
 
   /** Satır sayaçları — ayrı istek: liste sayaç gecikse de gelir (best-effort). Gelmezse sayaca dayalı eksikler
@@ -560,6 +579,97 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     }
   }
 
+  // ── Toplu düzeltme + kapsam panosu (2026-11-13, yönetim zenginleştirmesi (h)) ──────────────────────────────────────
+  // Yönetim kapsamı (K2 `/me.manage_team_ids`): null = bilinmiyor → önizleme "sunucu denetleyecek" der, satırı reddetmez.
+  const canManageTeam = useMemo(() => manageScope({ globalAdmin: isGlobal, manageIds: manageTeamIds }), [isGlobal, manageTeamIds])
+  const [fixDialog, setFixDialog] = useState(null)   // { kind: 'group' | 'contact', teams: [team] }
+  const openFix = (kind, list) => { if (list.length > 0) setFixDialog({ kind, teams: list }) }
+  const selectedTeams = teams.filter((tm) => selected.has(tm.id))
+
+  // Pano parçaları — ilk pano açılışında okunur (liste görünümü ek istek atmaz). Her parça AYRI: biri düşerse o boyut
+  // "bilinmiyor" (asla "eksik"), diğerleri çizilir. contacts / groups: dizi | null; noc: by_team haritası | null.
+  const [board, setBoard] = useState({ contacts: null, groups: null, noc: null })
+  const [boardParts, setBoardParts] = useState({})   // parça → loading | ready | failed
+  async function loadPart(key, fetcher, pick) {
+    setBoardParts((prev) => ({ ...prev, [key]: 'loading' }))
+    try {
+      const r = await fetcher()
+      if (r?.success) {
+        setBoard((prev) => ({ ...prev, [key]: pick(r) }))
+        setBoardParts((prev) => ({ ...prev, [key]: 'ready' }))
+      } else {
+        setBoard((prev) => ({ ...prev, [key]: null }))
+        setBoardParts((prev) => ({ ...prev, [key]: 'failed' }))
+      }
+    } catch {
+      setBoard((prev) => ({ ...prev, [key]: null }))
+      setBoardParts((prev) => ({ ...prev, [key]: 'failed' }))
+    }
+  }
+  function loadBoardParts() {
+    loadPart('contacts', () => api.admin.getContacts(), (r) => r.data ?? [])
+    loadPart('groups', () => api.notificationGroups.list(), (r) => r.data?.groups ?? [])
+    loadPart('noc', () => api.noc.coverage({ summary: true, byTeam: true }), (r) => r.data?.summary?.by_team ?? null)
+  }
+  useEffect(() => {
+    if (view === 'board' && Object.keys(boardParts).length === 0) loadBoardParts()
+  }, [view]) // eslint-disable-line react-hooks/exhaustive-deps
+  const afterFix = () => { setSelected(new Set()); load(); if (boardParts.contacts || boardParts.groups) loadBoardParts() }
+  const retryBoard = () => {
+    for (const [k, v] of Object.entries(boardParts)) {
+      if (v !== 'failed') continue
+      if (k === 'contacts') loadPart('contacts', () => api.admin.getContacts(), (r) => r.data ?? [])
+      if (k === 'groups') loadPart('groups', () => api.notificationGroups.list(), (r) => r.data?.groups ?? [])
+      if (k === 'noc') loadPart('noc', () => api.noc.coverage({ summary: true, byTeam: true }), (r) => r.data?.summary?.by_team ?? null)
+    }
+    if (oncallState === 'failed') loadOncall()
+  }
+  /** Pano için kişi durumu — `personState` ile aynı kural (pasif = eksik, kapsam dışı = görünmüyor, liste yok = bilinmiyor). */
+  const peopleOf = (team) => {
+    if (!usersReady) return { leader: { state: 'unknown' }, manager: { state: 'unknown' } }
+    const lid = leaderIdOf(team)
+    const ls = personState(lid)
+    const mgr = managerOf(team)
+    const manual = manualManagerId(team)
+    const manager = mgr?.label ? { state: 'ok', label: mgr.label, manual: !!mgr.manual }
+      : manual != null && personState(manual) === 'unknown' ? { state: 'hidden' } : { state: 'missing' }
+    return {
+      leader: ls === 'ok' ? { state: 'ok', label: userMap[lid] } : ls === 'unknown' ? { state: 'hidden' } : { state: 'missing' },
+      manager,
+    }
+  }
+  const inactiveUserIds = useMemo(() => {
+    const active = new Set(users.map((u) => String(u.id)))
+    return new Set([...userIdsAll].filter((id) => !active.has(id)))
+  }, [users, userIdsAll])
+  const boardModel = useMemo(() => (view !== 'board' ? null : buildBoard(filteredTeams, {
+    stats: statsReady ? stats : null,
+    contacts: board.contacts, inactiveIds: inactiveUserIds, groups: board.groups,
+    oncall: oncallState === 'ready' ? { byTeam: new Map(Object.entries(oncallNow)), known: oncallKnown } : null,
+    noc: board.noc ? { byTeam: board.noc } : null,
+    people: peopleOf,
+  })), [view, filteredTeams, stats, statsReady, board, inactiveUserIds, oncallState, oncallNow, oncallKnown, usersReady, userMap, managerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+  const boardPartStates = {
+    groups: boardParts.groups, contacts: boardParts.contacts, noc: boardParts.noc,
+    oncall: oncallState === 'failed' ? 'failed' : oncallState === 'loading' ? 'loading' : 'ready',
+    stats: statsFailed && !statsReady ? 'failed' : statsReady ? 'ready' : 'loading',
+  }
+  /** Pano satırının "Düzelt" menüsü — yalnız kullanıcının yapabildiği düzeltmeler. */
+  const boardFixFor = (row) => {
+    const team = teams.find((tm) => tm.id === row.teamId)
+    if (!team) return []
+    const editable = canEditRow(team.id)
+    return [
+      { label: t('tcb.fixEdit'), icon: <PenLine />, onClick: () => openEdit(team), hidden: !editable },
+      { label: t('tcb.fixDefaultGroup'), icon: <Star />, onClick: () => openFix('group', [team]), hidden: !canManage },
+      { label: t('tcb.fixAddContact'), icon: <UserPlus />, onClick: () => openFix('contact', [team]), hidden: !canManage },
+      { label: t('team.menuGroups'), icon: <BellRing />, onClick: () => jumpAdmin('notifyGroups', { g_team: String(team.id) }) },
+      { label: t('team.menuContacts'), icon: <Siren />, onClick: () => jumpAdmin('contacts', { g_team: String(team.id) }) },
+      { label: t('oncall.menu'), icon: <CalendarClock />, onClick: () => setOncallTeam(team) },
+      { label: t('tcb.fixNoc'), icon: <Headset />, onClick: () => navigateTo('noc', { n_view: 'coverage', n_team: String(team.id) }) },
+    ]
+  }
+
   // ── Özet kartları (2026-10-11): toplam / aktif / pasif / eksik bilgisi olan / alarmdaki — tıklanınca süzer ──
   const activeCount = teams.filter((tm) => tm.active).length
   const coreGapTeams = teams.filter((tm) => hasCoreGap(gapsOf(tm))).length
@@ -713,6 +823,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           <p className="mt-0.5 text-sm text-muted-foreground">{t('team.subtitle')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Görünüm (2026-11-13): liste | kapsam panosu — aynı süzgeç / arama / seçim */}
+          <SegmentedControl value={view} onChange={setView} ariaLabel={t('tcb.viewLabel')}
+            itemClassName="max-sm:h-10" className="max-sm:w-full max-sm:[&>*]:flex-1"
+            options={[{ value: 'list', label: t('tcb.viewList'), icon: LayoutList }, { value: 'board', label: t('tcb.viewBoard'), icon: LayoutGrid }]} />
           <Button variant="outline" className="max-sm:h-10 pointer-coarse:h-10" title={t('team.exportCsv')} onClick={exportCsv}>
             <Download aria-hidden="true" /> {t('team.exportCsv')}
           </Button>
@@ -793,11 +907,23 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                 options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />
             </span>
           )}
+          {/* Toplu düzeltme (2026-11-13): eksik bilgi kataloğunun toplu düzeltilebilen kalemleri — önizlemeli pencere açar */}
+          <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" data-action="fix-default-group"
+            onClick={() => openFix('group', selectedTeams)} disabled={bulkBusy}><Star aria-hidden="true" /> {t('team.bulk.defaultGroup')}</Button>
+          <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" data-action="fix-contact"
+            onClick={() => openFix('contact', selectedTeams)} disabled={bulkBusy}><UserPlus aria-hidden="true" /> {t('team.bulk.addContact')}</Button>
           <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
+      {view === 'board' && boardModel && (
+        <TeamCoverageBoard rows={boardModel.rows} summary={boardModel.summary} parts={boardPartStates} onRetry={retryBoard}
+          filter={boardFilter} onFilter={setBoardFilter} selected={selected} onToggle={toggleOne}
+          canSelect={(id) => canManage && canEditRow(id)} fixActionsFor={boardFixFor} />
+      )}
+
       {/* Liste — kap genişliğine göre sıkı tablo ya da kartlar (2026-10-11) */}
+      {view !== 'board' && (
       <div ref={setBoxEl} data-slot="tm-list" data-view={cards ? 'cards' : 'table'} className="min-w-0">
         {cards ? (
           <div className="flex flex-col gap-2">
@@ -879,9 +1005,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           </div>
         )}
       </div>
+      )}
 
-      {/* Sayfalama — proje standardı PaginationBar (istemci-taraflı, 2026-09-20) */}
-      {filteredTeams.length > 0 && <PaginationBar {...pager} />}
+      {/* Sayfalama — proje standardı PaginationBar (istemci-taraflı, 2026-09-20); pano tüm süzülmüş takımları gösterir */}
+      {view !== 'board' && filteredTeams.length > 0 && <PaginationBar {...pager} />}
 
       <AdminChangeHistory resource="TEAM" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
@@ -969,6 +1096,11 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)} globalAdmin={globalAdmin}
           onClose={() => setManageTeam(null)} onChanged={() => { loadStats(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
       )}
+      <TeamBulkDefaultGroup open={fixDialog?.kind === 'group'} teams={fixDialog?.kind === 'group' ? fixDialog.teams : []}
+        onClose={() => setFixDialog(null)} onDone={afterFix}
+        onCreateGroup={(teamId) => { setFixDialog(null); jumpAdmin('notifyGroups', { g_team: String(teamId) }) }} />
+      <TeamBulkContact open={fixDialog?.kind === 'contact'} teams={fixDialog?.kind === 'contact' ? fixDialog.teams : []}
+        users={users} canManage={canManageTeam} onClose={() => setFixDialog(null)} onDone={afterFix} />
       {oncallTeam && (
         <OnCallScheduleModal team={oncallTeam} onClose={() => setOncallTeam(null)} onSaved={() => loadOncall()} />
       )}
