@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T13:14:49Z",
+  "generatedAt": "2026-11-13T16:20:34Z",
   "repo": "inanmise/site-monitor",
-  "count": 826,
+  "count": 827,
   "releases": [
+    {
+      "version": "20.197.1",
+      "tag": "v20.197.1",
+      "releasedAt": "2026-11-13T16:20:27Z",
+      "commit": "dd414de5720e9c313d9e8ee594e930b00c56d234",
+      "prevVersion": "20.197.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "68f3beb0",
+          "subject": "SQL Playground 3. tur — hassas kolon bekçisi kapalı başarısızlık, alan biçiminde çağrı, konum biçimleri, dış LIMIT, sürücü nesneleri, bellek bütçesi"
+        },
+        {
+          "type": "fix",
+          "scope": "sql",
+          "breaking": false,
+          "sha": "90d2e9be",
+          "subject": "SQL Playground 3. tur ön yüz bulguları — kaydırma, seçim, biçimlendirici, tamamlama, kayıt sürümü"
+        },
+        {
+          "type": "fix",
+          "scope": "page-integrity",
+          "breaking": false,
+          "sha": "10b0f8f2",
+          "subject": "gerileme taraması düzeltmeleri — açılış teyidi, hedefli ölçüm, kalıcı silme tabanı, AD düzenle"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.197.0",
       "tag": "v20.197.0",
