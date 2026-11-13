@@ -3,16 +3,19 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Users } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { useElementWidthState } from '../../hooks/useElementWidth.js'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { healthTone, sortScorecard, statsNum, statsPct } from './statsInsights.js'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 
 /**
  * Birleşik takım karnesi (2026-11-13, İstatistikler #13) — eski "takım karşılaştırması"nın yerine. Takım başına:
- * sertifika sağlığı (tablonun takım süzgeciyle AYNI kural: SY ∪ UG; temiz / değerlendirilen), 30 gün altı, dolmuş + hatalı,
+ * sertifika sağlığı (tablonun takım süzgeciyle AYNI kural: YÜKLÜ sertifikalar içinde SY ∪ UG; kapsamlı kullanıcıda liste yalnız
+ * birincil takımın (SY) dilimidir, sunucu özetleri ise SY ∪ UG sayar — sayfa bunu not olarak söyler), 30 gün altı, dolmuş + hatalı,
  * açık alarm (TÜM türler, `alerts.read`), son 30 günde açılan alarm, SLA ihlali (izleme / ihlal) ve veri kalitesi puanı
  * (`data_quality.view`). Okunamayan / izinsiz parça "—" (asla 0); 7/24 kapsamı ucuz bir kaynağı olmadığı için yok.
  * Başlıktan sıralama (bilinmeyen her yönde sona). Satır tıklaması bugünkü davranış: tabloyu o takıma süzer. KAP ≥ 860 px
@@ -32,14 +35,44 @@ const COLS = [
   { key: 'dq', label: 'stx.scDq' },
 ]
 
-export default function TeamScorecard({ rows, onTeam, selectedTeam, alertsKnown, slaKnown, dqKnown }) {
+export default function TeamScorecard({ rows, onTeam, selectedTeam, alertsKnown, slaKnown, dqKnown, status = 'ok', onRetry }) {
   const t = useT()
   const isMobile = useIsMobile()
   const [width, setEl] = useElementWidthState()
   const [sort, setSort] = useState({ key: 'health', dir: 'asc' })
   const sorted = useMemo(() => sortScorecard(rows, sort.key, sort.dir), [rows, sort])
   const cards = isMobile || (width > 0 && width < TABLE_MIN_PX)
-  if (!rows?.length) return null
+  // Satır yok: takım listesi yükleniyor / okunamadı / gerçekten boş — üçü ayrı, matristeki gibi (inceleme 2026-11-13;
+  // eskiden kart sessizce kayboluyordu)
+  if (!rows?.length) {
+    let body
+    if (status === 'loading') {
+      body = (
+        <div data-slot="stats-score-loading" aria-busy="true">
+          <span role="status" className="sr-only">{t('stv.loading')}</span>
+          <Skeleton className="h-28 rounded-lg" />
+        </div>
+      )
+    } else if (status === 'failed') {
+      body = (
+        <div data-slot="stats-score-failed">
+          <StatusBlock tone="danger" title={t('stx.scFailed')} description={t('stx.failedHint')} className="rounded-xl border border-dashed py-8 md:py-8"
+            actions={onRetry ? <Button type="button" variant="outline" className="pointer-coarse:h-10 max-sm:h-10" onClick={onRetry}>{t('stx.retry')}</Button> : null} />
+        </div>
+      )
+    } else {
+      body = <div data-slot="stats-score-empty"><StatusBlock tone="neutral" title={t('stx.scEmpty')} className="rounded-xl border border-dashed py-8 md:py-8" /></div>
+    }
+    return (
+      <Card data-slot="stats-scorecard" data-layout="empty" className="min-w-0 gap-3 py-4 shadow-xs">
+        <CardHeader className="gap-1 px-4 sm:px-6">
+          <CardTitle role="heading" aria-level={3} className="flex items-center gap-2 text-base"><Users aria-hidden="true" className="size-4 text-primary" />{t('stx.scTitle')}</CardTitle>
+          <CardDescription>{t('stx.scDesc')}</CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">{body}</CardContent>
+      </Card>
+    )
+  }
   const onSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : (key === 'health' || key === 'dq' ? 'asc' : 'desc') }))
   const nameOf = (r) => (r.teamless ? t('stv.teamless') : r.name || t('stv.teamUnknown'))
   const cell = { t, alertsKnown, slaKnown, dqKnown }

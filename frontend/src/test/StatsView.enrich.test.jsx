@@ -4,13 +4,13 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
-const perm = vi.hoisted(() => ({ value: {} }))
+const perm = vi.hoisted(() => ({ value: {}, scope: null }))
 vi.mock('../contexts/PermissionsProvider.jsx', async (orig) => {
   const real = await orig()
   return {
     ...real,
     usePermissions: () => ({
-      perms: perm.value, scope: null, canView: (r) => !!perm.value[r], canEdit: () => false, canExecute: () => false,
+      perms: perm.value, scope: perm.scope, canView: (r) => !!perm.value[r], canEdit: () => false, canExecute: () => false,
       refresh: () => {}, loaded: true, failed: false,
     }),
   }
@@ -74,6 +74,7 @@ function renderView(props = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   perm.value = {}
+  perm.scope = null
   window.history.replaceState(null, '', '/?tab=stats')
   api.getExecutiveStats.mockResolvedValue({ success: true, data: EXEC })
   api.getRenewalTimeliness.mockResolvedValue({ success: true, data: { windows: [{ months: 3, on_time_pct: 90, renewals: 9, before_expiry: 9, after_expiry: 0, last_minute: 1, lapses: 1 }] } })
@@ -231,3 +232,70 @@ describe('StatsView zenginleştirme — boş / hata durumları', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="stats-renewal"] [data-slot="stats-src-unsupported"]')).not.toBeNull())
   })
 })
+
+describe('StatsView zenginleştirme — inceleme düzeltmeleri (2026-11-13)', () => {
+  it('kapsamlı kullanıcı + listede olmayan UG alanı → "UG de dahil" notu; tümünü gören ya da kapsam bilinmeyen → not yok', () => {
+    const lean = { mode: 'domains', teams: [{ team_id: 1, team_name: LONG, sy_domains: ['ok.example.com'], ug_domains: ['baska-takim.example.com'] }] }
+    perm.scope = { monitoring_all: false }
+    const { unmount } = renderView({ teamStats: lean })
+    expect(document.querySelector('[data-slot="stats-ug-note"]')).not.toBeNull()
+    unmount()
+    perm.scope = { monitoring_all: true }
+    const second = renderView({ teamStats: lean })
+    expect(document.querySelector('[data-slot="stats-ug-note"]')).toBeNull()
+    second.unmount()
+    perm.scope = null
+    renderView({ teamStats: lean })
+    expect(document.querySelector('[data-slot="stats-ug-note"]')).toBeNull()
+  })
+
+  it('UG alanı listede zaten varsa (ayrışma yok) not çıkmaz', () => {
+    perm.scope = { monitoring_all: false }
+    renderView({ teamStats: { mode: 'domains', teams: [{ team_id: 1, team_name: 'A', sy_domains: [], ug_domains: ['ok.example.com'] }] } })
+    expect(document.querySelector('[data-slot="stats-ug-note"]')).toBeNull()
+  })
+
+  it('karne satırsız: takım listesi yükleniyor → iskelet; okunamadı → hata + yeniden dene (Yenile); boş → nötr', async () => {
+    const onRefresh = vi.fn(async () => {})
+    // Başka kaynaktan da satır gelmesin (SLA takım kırılımı boş) — karne yalnız takım listesine bakar
+    api.getExecutiveStats.mockResolvedValue({ success: true, data: { ...EXEC, sla: { ...EXEC.sla, by_team: [] } } })
+    const a = renderView({ certs: [], teamStats: null, teamStatsStatus: 'loading' })
+    await waitFor(() => expect(document.querySelector('[data-slot="stats-score-loading"]')).not.toBeNull())
+    expect(screen.getByText(both('stx.scTitle'))).toBeInTheDocument()
+    a.unmount()
+    const b = renderView({ certs: [], teamStats: null, teamStatsStatus: 'failed', onRefresh })
+    const failed = await waitFor(() => {
+      const el = document.querySelector('[data-slot="stats-score-failed"]')
+      if (!el) throw new Error('yok')
+      return el
+    })
+    fireEvent.click(within(failed).getByRole('button', { name: both('stx.retry') }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled())
+    b.unmount()
+    renderView({ certs: [], teamStats: { mode: 'domains', teams: [] }, teamStatsStatus: 'ok' })
+    await waitFor(() => expect(document.querySelector('[data-slot="stats-score-empty"]')).not.toBeNull())
+  })
+
+  it('yenileme penceresi saklama süresiyle kısaldıysa etiket açıkça söyler (asla sessizce "12 ay"); sağlık satırı son günün tarihi', async () => {
+    api.getRenewalTimeliness.mockResolvedValue({ success: true, data: { retention_days: 180, windows: [
+      { months: 3, clamped: false, effective_days: 92, on_time_pct: 90, renewals: 9, before_expiry: 9, after_expiry: 0, last_minute: 1, lapses: 1 },
+      { months: 12, clamped: true, effective_days: 180, on_time_pct: 80, renewals: 8, before_expiry: 8, after_expiry: 0, last_minute: 0, lapses: 2 }] } })
+    api.getHealthSeries.mockResolvedValue({ success: true, data: { scope: 'org', org_allowed: true, teams: [], collecting_since: '2026-11-01',
+      points: [{ day: '2026-11-11', total: 4, evaluated: 4, ok: 3, health_pct: 75 }, { day: '2026-11-12', total: 4, evaluated: 4, ok: 2, health_pct: 50 }] } })
+    renderView()
+    const w12 = await waitFor(() => {
+      const el = document.querySelector('[data-slot="stats-renewal-win"][data-months="12"]')
+      if (!el) throw new Error('yok')
+      return el
+    })
+    expect(w12.getAttribute('data-clamped')).toBe('true')
+    expect(w12.textContent).toMatch(has('stx.renWindowClamped', 12, '180'))
+    const w3 = document.querySelector('[data-slot="stats-renewal-win"][data-months="3"]')
+    expect(w3.textContent).toMatch(has('stx.renWindow', 3))
+    expect(w3.textContent).toMatch(/bitişe 7 günden az kala|less than 7 days before expiry/)
+    const health = document.querySelector('[data-slot="stats-health"]')
+    await waitFor(() => expect(health.textContent).toMatch(/12\/11\/2026|12\.11\.2026/))
+    expect(health.textContent).not.toMatch(/Bugün|Today/)
+  })
+})
+

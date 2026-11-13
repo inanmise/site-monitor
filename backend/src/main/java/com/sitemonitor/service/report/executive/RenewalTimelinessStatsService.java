@@ -2,14 +2,19 @@ package com.sitemonitor.service.report.executive;
 
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.service.RenewalForecastService;
+import com.sitemonitor.service.retention.RetentionCatalog;
+import com.sitemonitor.service.retention.RetentionPolicy;
+import com.sitemonitor.service.retention.RetentionService;
 import com.sitemonitor.util.TtlMemo;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,6 +35,13 @@ import java.util.function.Predicate;
  * <p>Maliyet: parmak izi grupları Vade Takvimi'nin kurum geneli belleğinden ({@code RenewalForecastService.sharedRenewalGroups},
  * ek sorgu yok); kapsam süzgeci (SY ya da UG takımı görülebilen AKTİF envanter alan adları) her çağrıda uygulanır. Sonuç
  * kapsam anahtarı başına {@code site.monitor.stats-renewal.cache-ms} (varsayılan 5 dk) bellekte.
+ *
+ * <p><b>Veri saklama sınırı (inceleme 2026-11-13):</b> parmak izi grupları {@code certificate_checks}'ten gelir ve o tablo
+ * {@code site.monitor.series.certificate.retention-days} (varsayılan 180, en az 30) gün tutulur. Daha eski bir pencere
+ * yenilemelerin ESKİ parmak izini göremez (yenileme sayılmaz) ama yenilenmeden dolanları görür → oran sistematik düşük
+ * çıkardı. Her pencere saklama süresiyle sınırlanır: etkin başlangıç = max(pencere başı, şimdi − saklama günü); yanıt
+ * {@code effective_days}, {@code effective_from}, {@code clamped} taşır, arayüz kısalan pencereyi açıkça yazar. Saklama
+ * günü CANLI okunur (RetentionService.effectiveDays — gece temizliğinin kullandığı değer); bellek anahtarında da durur.
  */
 @Service
 @RequiredArgsConstructor
@@ -47,12 +59,36 @@ public class RenewalTimelinessStatsService {
     long cacheMs;
     private final TtlMemo<Map<String, Object>> memo = new TtlMemo<>(500);
 
+    /** Saklama gününün kaynağı — yoksa (elle kurulan testler) politikanın varsayılanı. */
+    @Autowired(required = false)
+    RetentionService retentionService;
+
     public Map<String, Object> build(Predicate<Long> canViewTeam, String scopeKey) {
-        return memo.get(scopeKey, cacheMs, false, () -> compute(canViewTeam, Instant.now()));
+        int retention = retentionDays();
+        return memo.get(scopeKey + "|r" + retention, cacheMs, false, () -> compute(canViewTeam, Instant.now(), retention));
+    }
+
+    /** {@code certificate_checks} için ETKİN saklama günü (gece temizliğinin değeri). Bilinmiyorsa politika varsayılanı. */
+    int retentionDays() {
+        RetentionPolicy p = RetentionCatalog.byId("series-certificate").orElse(null);
+        if (p == null) return 180;
+        try {
+            if (retentionService != null) {
+                int d = retentionService.effectiveDays(p);
+                if (d > 0) return d;
+            }
+        } catch (RuntimeException e) {
+            // Okunamadı → varsayılan (en kısa makul pencere değil ama ayarlanmamış ortamın gerçek değeri)
+        }
+        return p.defaultDays();
     }
 
     /** Test edilebilir çekirdek — {@code now} enjekte edilir. Okuma hatası fırlar (arayüz "okunamadı" der, asla %0). */
     Map<String, Object> compute(Predicate<Long> canViewTeam, Instant now) {
+        return compute(canViewTeam, now, retentionDays());
+    }
+
+    Map<String, Object> compute(Predicate<Long> canViewTeam, Instant now, int retentionDays) {
         Set<String> domains = new HashSet<>();
         for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
             if (r == null || r.length < 2 || r[0] == null) continue;
@@ -73,7 +109,10 @@ public class RenewalTimelinessStatsService {
         }
         List<Map<String, Object>> windows = new ArrayList<>();
         for (int months : WINDOWS) {
-            Instant from = now.atZone(IST).minusMonths(months).toInstant();
+            Instant nominal = now.atZone(IST).minusMonths(months).toInstant();
+            Instant oldest = now.minus(retentionDays, ChronoUnit.DAYS);
+            boolean clamped = oldest.isAfter(nominal);
+            Instant from = clamped ? oldest : nominal;
             // Hedef süre burada sınıf için kullanılmaz (oran yalnız "dolmadan" ayrımına bakar) → 0
             List<RenewalTimelinessSection.Renewal> rs = RenewalTimelinessSection.detect(groups, from, now, d -> 0, null);
             List<RenewalTimelinessSection.Lapse> ls = RenewalTimelinessSection.lapses(groups, from, now, now, null);
@@ -89,6 +128,9 @@ public class RenewalTimelinessStatsService {
             Map<String, Object> w = new LinkedHashMap<>();
             w.put("months", months);
             w.put("from", ISO.format(from));
+            w.put("nominal_from", ISO.format(nominal));
+            w.put("effective_days", ChronoUnit.DAYS.between(from, now));
+            w.put("clamped", clamped);
             w.put("renewals", rs.size());
             w.put("before_expiry", before);
             w.put("after_expiry", after);
@@ -100,6 +142,7 @@ public class RenewalTimelinessStatsService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("windows", windows);
         out.put("domains", domains.size());
+        out.put("retention_days", retentionDays);
         out.put("generated_at", ISO.format(now));
         return out;
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarPlus, Grid3x3, Inbox, Plus, RefreshCw, SearchX } from 'lucide-react'
+import { CalendarPlus, Grid3x3, Inbox, Info, Plus, RefreshCw, SearchX } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -135,6 +135,16 @@ export default function StatsView({
   const issuerOpts = useMemo(() => issuerOptions(certs, applyFilters(certs, { ...base, issuers: [] }, dtm)), [certs, base, dtm])
   const mxRows = useMemo(() => matrixRows(certs, teams, allTiers ? TIERS : PROD_TIERS), [certs, teams, allTiers])
   const slaBlock = exec?.sla && !exec.sla.error_msg ? exec.sla : null
+  // Kapsamlı (kurumun tamamını görmeyen) kullanıcıda `/certificates` yalnız SY dilimini getirir; sunucu özetleri (yönetici
+  // özeti, yenileme oranı, sağlık eğrisi) SY ∪ UG sayar. Sayılar GERÇEKTEN ayrışabildiğinde (görülen bir takımın UG alanı
+  // listede yok) kısa bir not (inceleme 2026-11-13). Kapsam bilinmiyorsa (eski sunucu) not yok.
+  const ugBeyondList = useMemo(() => {
+    if (perm.scope?.monitoring_all !== false) return false
+    const lean = teamStats?.mode === 'domains' && Array.isArray(teamStats.teams) ? teamStats.teams : null
+    if (!lean) return false
+    const have = new Set((certs || []).map((c) => c.domain))
+    return lean.some((tm) => (tm.ug_domains || []).some((d) => !have.has(d)))
+  }, [perm.scope, teamStats, certs])
   const scRows = useMemo(() => teamScorecard({
     teams, certs, alerts: src.teamAlerts.data, sla: slaBlock, dq: src.dq.data,
   }), [teams, certs, src.teamAlerts.data, slaBlock, src.dq.data])
@@ -282,7 +292,12 @@ export default function StatsView({
           className="rounded-xl border border-dashed" />
       )}
 
-      <ExecutiveSummary source={src.exec} onRetry={reloadSrc} />
+      <ExecutiveSummary source={src.exec} onRetry={reloadSrc} canMonitoring={perm.canView('monitoring.read')} />
+      {ugBeyondList && (
+        <p data-slot="stats-ug-note" className="-mt-3 mb-0 flex items-start gap-2 text-xs text-muted-foreground">
+          <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('stx.ugNote')}
+        </p>
+      )}
 
       <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
         <AlarmTrendCard source={src.noise} onRetry={reloadSrc} />
@@ -302,7 +317,8 @@ export default function StatsView({
       </div>
 
       <TeamScorecard rows={scRows} onTeam={onScoreTeam} selectedTeam={teamId}
-        alertsKnown={!!src.teamAlerts.data} slaKnown={!!slaBlock} dqKnown={!!src.dq.data} />
+        alertsKnown={!!src.teamAlerts.data} slaKnown={Array.isArray(slaBlock?.by_team)} dqKnown={!!src.dq.data}
+        status={teamStatsStatus || 'ok'} onRetry={onRefresh ? refresh : undefined} />
 
       {hasCerts && (
         <>

@@ -77,7 +77,7 @@ public class ExecutiveStatsService {
 
     /** Eski imza — bellek yok, alarm bloğu dahil (testler ve iç çağıranlar). */
     public Map<String, Object> build(Predicate<Long> canViewTeam) {
-        return compute(canViewTeam, true);
+        return compute(canViewTeam, true, true);
     }
 
     /**
@@ -85,9 +85,19 @@ public class ExecutiveStatsService {
      * {@code alertsVisible} = {@code alerts.read/view} izni — yoksa alarm bloğu hiç okunmaz ({@code alerts.visible=false}).
      */
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean alertsVisible, String scopeKey, boolean fresh) {
+        return build(canViewTeam, alertsVisible, true, scopeKey, fresh);
+    }
+
+    /**
+     * {@code monitorsVisible} = {@code monitoring.read/view} izni (inceleme 2026-11-13): yoksa en kötü SLA satırları izleme
+     * ADI ve KİMLİĞİ taşımaz (yalnız tür + yüzde + kötü saat) — arayüz satırı bağlantısız çizer. Sayılar (izleme / ihlal,
+     * takım kırılımı) kapsamla zaten sınırlı ve kalır.
+     */
+    public Map<String, Object> build(Predicate<Long> canViewTeam, boolean alertsVisible, boolean monitorsVisible, String scopeKey,
+                                     boolean fresh) {
         long ttl = fresh && execCacheMs > 0 ? Math.min(execCacheMs, FRESH_MIN_MS) : execCacheMs;
-        String key = scopeKey == null ? null : scopeKey + "|a" + (alertsVisible ? 1 : 0);
-        return execMemo.get(key, ttl, false, () -> compute(canViewTeam, alertsVisible));
+        String key = scopeKey == null ? null : scopeKey + "|a" + (alertsVisible ? 1 : 0) + "|m" + (monitorsVisible ? 1 : 0);
+        return execMemo.get(key, ttl, false, () -> compute(canViewTeam, alertsVisible, monitorsVisible));
     }
 
     /** Son kontrol özeti — alan adı → (durum, kalan gün). */
@@ -111,14 +121,16 @@ public class ExecutiveStatsService {
         int openAlerts;
     }
 
-    private Map<String, Object> compute(Predicate<Long> canViewTeam, boolean alertsVisible) {
+    private Map<String, Object> compute(Predicate<Long> canViewTeam, boolean alertsVisible, boolean monitorsVisible) {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<Long, String> teamNames = new LinkedHashMap<>();
         try { teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName())); } catch (Exception ignored) { }
 
         // ── Sertifikalar ─────────────────────────────────────────────────────────────────────
-        // Takım satırı SY ∪ UG (2026-11-13): sertifika hem sorumlu hem uygulama takımının satırında sayılır — tablonun takım
-        // süzgeci (statsModel.resolveTeam) ile aynı kural. Kurum toplamı her sertifikayı BİR kez sayar.
+        // Takım satırı SY ∪ UG (2026-11-13): sertifika hem sorumlu hem uygulama takımının satırında sayılır. Kurum toplamı her
+        // sertifikayı BİR kez sayar. DİKKAT (inceleme 2026-11-13): kapsamlı kullanıcıda {@code /certificates} yalnız SY dilimini
+        // getirir, burası tüm aktif envanterin SY ∪ UG'sini sayar — İstatistikler sayfası farkı kullanıcıya not olarak söyler
+        // (liste ile özet aynı sayıyı göstermeyebilir; CLAUDE.md bilinen sınır).
         Map<String, Object> certs = new LinkedHashMap<>();
         Map<Long, TeamAcc> perTeam = new LinkedHashMap<>();   // anahtar takım; -1 = takımsız
         Set<String> visibleDomains = new HashSet<>();
@@ -222,8 +234,10 @@ public class ExecutiveStatsService {
             worst.sort(Comparator.comparingDouble((Map<String, Object> m) -> (Double) m.get("up_pct"))
                     .thenComparing(m -> String.valueOf(m.get("type"))).thenComparing(m -> (Long) m.get("id")));
             List<Map<String, Object>> top = new ArrayList<>(worst.subList(0, Math.min(5, worst.size())));
-            nameWorst(top);
+            if (monitorsVisible) nameWorst(top);
+            else for (Map<String, Object> w : top) { w.remove("id"); w.remove("team_id"); }   // izinsiz: ad / kimlik yok
             sla.put("target_pct", target); sla.put("monitors", monitors); sla.put("breaches", breaches);
+            sla.put("monitors_visible", monitorsVisible);
             sla.put("worst", top);
             List<Map<String, Object>> byTeam = new ArrayList<>();
             slaByTeam.forEach((tid, c) -> {
@@ -236,6 +250,8 @@ public class ExecutiveStatsService {
         out.put("sla", sla);
 
         // ── Takım karşılaştırması ─────────────────────────────────────────────────────────────
+        // Eski istemci uyumu (2026-11-13): yeni İstatistikler arayüzü bu diziyi OKUMAZ (karne istemcide); dağıtım sırasında
+        // eski sürüm sekmeleri okuyabildiği için bu sürümde kalır — sonraki sürümde kaldırılabilir.
         List<Map<String, Object>> teams = new ArrayList<>();
         boolean alertsRead = alertsVisible && !alerts.containsKey("error_msg");
         for (Map.Entry<Long, TeamAcc> e : perTeam.entrySet()) {

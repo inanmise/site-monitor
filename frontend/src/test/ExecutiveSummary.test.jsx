@@ -80,6 +80,30 @@ describe('ExecutiveSummary', () => {
     expect(JSON.stringify(nav.mock.calls[0][0].detail)).toContain('"monitor":"10"')
   })
 
+  it('SLA hedefi ve değerler iki ondalık (99,95 "%100" değil, 99,86 "%99,9" değil); izleme izni yok → satır bağlantısız, ad yok', () => {
+    const nav = vi.fn()
+    window.addEventListener('sm:navigate', nav)
+    const data = { ...DATA, sla: { ...DATA.sla, target_pct: 99.95, monitors_visible: false,
+      worst: [{ type: 'http', up_pct: 99.86, bad_hours: 2 }, { type: 'ping', up_pct: 99.949 }] } }
+    render(<ExecutiveSummary source={ok(data)} />)
+    expect(screen.getByText(/SLA ihlali \(hedef %99,95\)|SLA breaches \(target 99\.95%\)/)).toBeInTheDocument()
+    const rows = [...document.querySelectorAll('[data-slot="exs-sla-row"]')]
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.tagName === 'DIV' && r.getAttribute('data-linked') === 'false')).toBe(true)
+    expect(rows[0].textContent).toMatch(/99[,.]86/)
+    expect(rows[1].textContent).toMatch(/99[,.]94/)     // aşağı kesilir — hedef 99,95 gibi görünmez
+    expect(rows[0].textContent).not.toMatch(/#/)
+    expect(document.querySelector('[data-slot="exs-sla-noperm"]')).not.toBeNull()
+    fireEvent.click(rows[0])
+    window.removeEventListener('sm:navigate', nav)
+    expect(nav).not.toHaveBeenCalled()
+  })
+
+  it('istemci tarafı izin yok (canMonitoring=false) → sunucu ad gönderse bile satır bağlantısız', () => {
+    render(<ExecutiveSummary source={ok(DATA)} canMonitoring={false} />)
+    expect([...document.querySelectorAll('[data-slot="exs-sla-row"]')].every((r) => r.tagName === 'DIV')).toBe(true)
+  })
+
   it('kaynak: yükleniyor iskelet; ilk okuma düştü → okunamadı + yeniden dene; izinsiz (hidden) → yalnız başlık', () => {
     const { container, rerender } = render(<ExecutiveSummary source={{ status: 'loading', data: null }} />)
     expect(container.querySelector('[data-slot="stats-src-loading"]')).not.toBeNull()

@@ -8,7 +8,7 @@ import {
   resolveTeam, secFlagsOf, weekWindows, withTeamless, applyFilters, matrixRows,
 } from '../components/stats/statsModel.js'
 import {
-  alarmTrend, caDistribution, freshestCommon, healthTone, securityCounts, sortScorecard, statsPct, teamScorecard, tierDistribution,
+  alarmTrend, caDistribution, freshestCommon, healthTone, securityCounts, slaPct, sortScorecard, statsPct, teamScorecard, tierDistribution,
   weekHistogram,
 } from '../components/stats/statsInsights.js'
 import { matrixSheetRows, scorecardSheetRows, summaryRows, tableSheetRows } from '../components/stats/statsExportModel.js'
@@ -33,6 +33,30 @@ describe('statsPct — sayfaya özel yüzde', () => {
     expect(statsPct('x')).toBe('—')
     setDateLocale('en')
     expect(statsPct(97.5)).toBe('97.5%')
+  })
+})
+
+describe('slaPct — SLA hedefi ve hedefle karşılaştırılan değer (inceleme 2026-11-13)', () => {
+  it('iki ondalık: hedef 99,95 "%100" değil; ölçülen değer AŞAĞI kesilir — hedefin altındaki asla hedefte / üstünde görünmez', () => {
+    setDateLocale('tr')
+    expect(slaPct(99.95)).toBe('%99,95')
+    expect(slaPct(99.9)).toBe('%99,9')
+    expect(statsPct(99.95)).toBe('%100')           // eski tek ondalık hatası (oracle)
+    expect(slaPct(99.86, { floor: true })).toBe('%99,86')   // kayan nokta: 99,86 × 100 = 9985,999…
+    expect(slaPct(99.949, { floor: true })).toBe('%99,94')  // hedef 99,95'in altında kalır (yuvarlamayla %99,95 olurdu)
+    expect(slaPct(99.8999, { floor: true })).toBe('%99,89')
+    expect(slaPct(97.25, { floor: true })).toBe('%97,25')
+    expect(slaPct(null)).toBe('—')
+    setDateLocale('en')
+    expect(slaPct(99.95)).toBe('99.95%')
+    // Hedefin altındaki her değer, biçimlenmiş hâliyle de hedeften küçük
+    for (const target of [99.9, 99.95, 99.99]) {
+      for (let k = 1; k <= 50; k++) {
+        const v = target - k * 0.0007
+        const shown = Number(slaPct(v, { floor: true }).replace('%', ''))
+        expect(shown, `${v} < ${target}`).toBeLessThan(target)
+      }
+    }
   })
 })
 
@@ -174,6 +198,20 @@ describe('takım karnesi', () => {
     expect(c).toMatchObject({ name: 'C', certs: null, alerts: { open: 2, last30: 5 }, dq: { score: 80 } })
   })
 
+  it('eski sunucu sla.by_team göndermez → takım SLA bilgisi BİLİNMİYOR (0 / 0 değil); sertifikasız takım adı yalın listeden', () => {
+    const rows = teamScorecard({
+      teams, certs,
+      alerts: { teams: [{ team_id: 2, team_name: null, open: 1, last30: 2 }] },
+      sla: { target_pct: 99.9, monitors: 3, breaches: 1 },   // by_team yok
+    })
+    for (const r of rows) expect(r.sla).toBeNull()
+    // Takım B'nin sertifikası yok (zzz listede değil) ama alarmı var: adı yalın listeden, "Bilinmeyen takım" değil
+    expect(rows.find((r) => r.id === 2)).toMatchObject({ name: 'B', certs: null, alerts: { open: 1, last30: 2 } })
+    // SLA kırılımı ad taşımaz: yalnız SLA'sı olan sertifikasız takım da adını listeden alır
+    const slaOnly = teamScorecard({ teams, certs, sla: { by_team: [{ team_id: 2, monitors: 5, breaches: 0 }] } })
+    expect(slaOnly.find((r) => r.id === 2)).toMatchObject({ name: 'B', sla: { breaches: 0, monitors: 5 } })
+  })
+
   it('sıralama: bilinmeyen her yönde sona; sağlık tonu eşikleri; bilinmiyor nötr', () => {
     const rows = [{ name: 'x', certs: null }, { name: 'y', certs: { health: 50 } }, { name: 'z', certs: { health: 99 } }]
     expect(sortScorecard(rows, 'health', 'asc').map((r) => r.name)).toEqual(['y', 'z', 'x'])
@@ -187,6 +225,9 @@ describe('alarm eğilimi, tazelik, dışa aktarım satırları', () => {
     expect(alarmTrend(null)).toBeNull()
     const tr = alarmTrend({ series: [{ date: '2026-11-01', count: 2 }, { date: '2026-11-02', count: 5 }], total: 7, mttr_minutes: 30 })
     expect(tr).toMatchObject({ total: 7, peak: 5, mttr: 30 })
+    // Hiç alarm yokken "çözülen %0" yok → bilinmiyor (inceleme 2026-11-13)
+    expect(alarmTrend({ series: [{ date: '2026-11-01', count: 0 }], total: 0, resolved_pct: 0, mttr_minutes: null }).resolvedPct).toBeNull()
+    expect(alarmTrend({ series: [], total: 4, resolved_pct: 50 }).resolvedPct).toBe(50)
     expect(freshestCommon('2026-11-13T10:00:00', Date.parse('2026-11-13T09:00:00Z'))).toBe(Date.parse('2026-11-13T09:00:00Z'))
     expect(freshestCommon(null, undefined)).toBeNull()
   })

@@ -52,7 +52,9 @@ const EXEC = {
 const NOISE = { days: 30, total: 31, critical: 4, resolved_pct: 87.1, mttr_minutes: 142,
   series: Array.from({ length: 30 }, (_, i) => ({ date: new Date(NOW - (29 - i) * DAY).toISOString().slice(0, 10), count: (i * 7) % 5 })) }
 const TEAM_ALERTS = { teams: [{ team_id: 1, team_name: LONG_A, open: 4, last30: 18 }, { team_id: 2, team_name: LONG_B, open: 3, last30: 13 }] }
-const RENEWAL = { windows: [3, 6, 12].map((m, i) => ({ months: m, renewals: 10 + i * 8, before_expiry: 9 + i * 7, after_expiry: 1, last_minute: 2, lapses: i, on_time_pct: [90, 88.9, 84.6][i] })) }
+// 6 / 12 ay saklama süresiyle (180 gün) kırpılmış — uzun "kısmi" etiketi telefonda da sığmalı
+const RENEWAL = { retention_days: 180, windows: [3, 6, 12].map((m, i) => ({ months: m, renewals: 10 + i * 8, before_expiry: 9 + i * 7, after_expiry: 1, last_minute: 2, lapses: i,
+  on_time_pct: [90, 88.9, 84.6][i], clamped: m > 3, effective_days: m > 3 ? 180 : 92 })) }
 const HEALTH = { scope: 'org', org_allowed: true, teams: [{ id: 1, name: LONG_A }, { id: 2, name: LONG_B }], today: iso(0).slice(0, 10),
   collecting_since: iso(-20 * DAY).slice(0, 10),
   points: Array.from({ length: 21 }, (_, i) => ({ day: iso(-(20 - i) * DAY).slice(0, 10), total: 23, evaluated: 22, ok: 12 + (i % 4), under30: 6,
@@ -149,6 +151,7 @@ for (const vp of VIEWPORTS) {
       await expect(view.locator('[data-slot="exs-sla-row"]')).toHaveCount(2)
       await expect(view.locator('[data-slot="stats-week"]')).toHaveCount(12)
       await expect(view.locator('[data-slot="stats-renewal-win"]')).toHaveCount(3)
+      await expect(view.locator('[data-slot="stats-renewal-win"][data-clamped="true"]')).toHaveCount(2)
       await expect(view.locator('[data-slot="stats-trend-stat"][data-stat="mttr"]')).toContainText(/2,4|2\.4/)
       if (vp.score) await expect(view.locator('[data-slot="stats-scorecard"]')).toHaveAttribute('data-layout', vp.score)
       await expect(view.locator('[data-slot="stats-score-row"][data-team="none"]'), 'takımsız satır').toHaveCount(1)

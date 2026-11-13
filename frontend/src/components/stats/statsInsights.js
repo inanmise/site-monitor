@@ -18,6 +18,19 @@ export function statsPct(v, dash = '—') {
   return formatPercent(Number(v).toLocaleString(dateLocale(), { maximumFractionDigits: 1 }))
 }
 
+/**
+ * SLA yüzdesi (inceleme 2026-11-13): hedef ve hedefle karşılaştırılan her değer EN ÇOK İKİ ondalıkla — tek ondalık
+ * 99,95 hedefini "%100", 99,86'yı "%99,9" yazıyordu (hedefin altındaki izleme hedefi geçmiş gibi). `floor` (ölçülen değer
+ * için) iki ondalığa AŞAĞI keser: hedefin altındaki bir değer hiçbir zaman hedefe eşit ya da üstünde görünmez. Kayan nokta
+ * kalıntısı (99,86 × 100 = 9985,999…) için küçük bir pay eklenir.
+ */
+export function slaPct(v, { floor = false } = {}, dash = '—') {
+  if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return dash
+  const n = Number(v)
+  const shown = floor ? Math.floor(n * 100 + 1e-7) / 100 : n
+  return formatPercent(shown.toLocaleString(dateLocale(), { maximumFractionDigits: 2 }))
+}
+
 /** Tam sayı (yerel binlik ayırıcı); sayı değilse tire. */
 export function statsNum(v, dash = '—') {
   if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return dash
@@ -98,7 +111,8 @@ const idKey = (v) => (v == null ? null : String(v))
 
 /**
  * Takım karnesi satırları — her takım için bilinen parçalar; okunamayan / izinsiz kaynak `null` (çizimde "—").
- *  - sertifika: İSTEMCİ sayımı, tablonun takım süzgeciyle AYNI kural (SY ∪ UG ∩ yüklü sertifikalar; `bucketOf`):
+ *  - sertifika: İSTEMCİ sayımı, tablonun takım süzgeciyle AYNI kural (SY ∪ UG ∩ YÜKLÜ sertifikalar; `bucketOf`) — kapsamlı
+ *    kullanıcıda yüklü liste yalnız SY dilimidir, bu yüzden sunucu özetinin (SY ∪ UG) sayısından az olabilir:
  *    `ok`, `under30` (0–30 gün), `expired`, `error`, `unchecked`; sağlık % = temiz / değerlendirilen.
  *  - alarm: `/api/admin/alerts/team-stats` (tüm türler; `open`, `last30`) — `alerts` null ise bilinmiyor.
  *  - SLA: yönetici özetinin `sla.by_team` (ihlal / monitör) — `sla` null ise bilinmiyor.
@@ -107,10 +121,16 @@ const idKey = (v) => (v == null ? null : String(v))
  */
 export function teamScorecard({ teams = [], certs = [], alerts = null, sla = null, dq = null }) {
   const byDomain = new Map((certs || []).map((c) => [c.domain, c]))
+  // Takım adları yalın takım listesinden (inceleme 2026-11-13): sertifikası olmayan ama izlemesi / alarmı olan takım da
+  // adıyla çıkar (SLA kırılımı ad taşımaz — "Bilinmeyen takım" yazıyordu)
+  const knownNames = new Map()
+  for (const tm of teams || []) if (!tm.teamless && tm.name) knownNames.set(idKey(tm.id), tm.name)
+  // Eski sunucu `sla.by_team` göndermez: o zaman takım SLA'sı BİLİNMİYOR (her takımı 0 / 0 yazmak yanlış olurdu)
+  const slaTeams = sla && Array.isArray(sla.by_team) ? sla.by_team : null
   const rows = new Map()
   const row = (id, name) => {
     const k = idKey(id)
-    if (!rows.has(k)) rows.set(k, { id, name: name || null, certs: null, alerts: null, sla: null, dq: null })
+    if (!rows.has(k)) rows.set(k, { id, name: name || knownNames.get(k) || null, certs: null, alerts: null, sla: null, dq: null })
     const r = rows.get(k)
     if (!r.name && name) r.name = name
     return r
@@ -140,8 +160,8 @@ export function teamScorecard({ teams = [], certs = [], alerts = null, sla = nul
       row(a.team_id, a.team_name).alerts = { open: Number(a.open ?? 0), last30: Number(a.last30 ?? 0) }
     }
   }
-  if (sla) {
-    for (const s of sla.by_team || []) {
+  if (slaTeams) {
+    for (const s of slaTeams) {
       if (s?.team_id == null) continue
       row(s.team_id, null).sla = { breaches: Number(s.breaches ?? 0), monitors: Number(s.monitors ?? 0) }
     }
@@ -155,7 +175,7 @@ export function teamScorecard({ teams = [], certs = [], alerts = null, sla = nul
   // Bir kaynak OKUNDUYSA, o kaynakta görünmeyen takımın değeri gerçek sıfırdır (alarm / ihlal yok) — bilinmiyor değil.
   for (const r of rows.values()) {
     if (alerts && r.alerts == null && !r.teamless) r.alerts = { open: 0, last30: 0 }
-    if (sla && r.sla == null && !r.teamless) r.sla = { breaches: 0, monitors: 0 }
+    if (slaTeams && r.sla == null && !r.teamless) r.sla = { breaches: 0, monitors: 0 }
   }
   return [...rows.values()]
 }
@@ -204,7 +224,8 @@ export function alarmTrend(noise) {
     total: Number(noise.total ?? series.reduce((s, p) => s + p.count, 0)),
     critical: noise.critical ?? null,
     mttr: noise.mttr_minutes ?? null,
-    resolvedPct: noise.resolved_pct ?? null,
+    // Hiç alarm yokken "çözülen %0" anlamsız (inceleme 2026-11-13) → bilinmiyor
+    resolvedPct: Number(noise.total ?? series.reduce((s, p) => s + p.count, 0)) === 0 ? null : (noise.resolved_pct ?? null),
     peak: series.reduce((m, p) => Math.max(m, p.count), 0),
   }
 }

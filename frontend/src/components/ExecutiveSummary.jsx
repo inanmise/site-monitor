@@ -3,7 +3,7 @@ import { useT } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { ProgressBar } from './ui/Progress.jsx'
 import SourceGate from './stats/SourceGate.jsx'
-import { statsNum, statsPct } from './stats/statsInsights.js'
+import { slaPct, statsNum, statsPct } from './stats/statsInsights.js'
 import { TYPE_META } from './monitoring/overviewMeta.js'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -59,7 +59,7 @@ function Kpi({ tone, icon: Icon, label, value, sub, extra, onClick, slot }) {
   )
 }
 
-export default function ExecutiveSummary({ source, onRetry }) {
+export default function ExecutiveSummary({ source, onRetry, canMonitoring }) {
   const t = useT()
   return (
     <section data-slot="exs" className="flex min-w-0 flex-col gap-3" aria-label={t('exs.title')}>
@@ -68,13 +68,13 @@ export default function ExecutiveSummary({ source, onRetry }) {
         <p className="m-0 text-sm text-muted-foreground">{t('stv.opsDesc')}</p>
       </div>
       <SourceGate source={source} onRetry={onRetry} skeletonClassName="h-28 rounded-xl" failedTitle={t('stx.execFailed')}>
-        {(data) => <ExecutiveBody data={data} onRetry={onRetry} />}
+        {(data) => <ExecutiveBody data={data} onRetry={onRetry} canMonitoring={canMonitoring} />}
       </SourceGate>
     </section>
   )
 }
 
-function ExecutiveBody({ data, onRetry }) {
+function ExecutiveBody({ data, onRetry, canMonitoring }) {
   const t = useT()
   const c = data.certs || {}, a = data.alerts || {}, s = data.sla || {}
   const certsFailed = !!c.error_msg, alertsFailed = !!a.error_msg, slaFailed = !!s.error_msg
@@ -116,45 +116,62 @@ function ExecutiveBody({ data, onRetry }) {
             sub={alertsFailed ? t('stx.unreadable') : <>{t('exs.alertsSub', statsNum(a.critical ?? 0))} <Delta n={a.delta} last={a.opened_last30} prev={a.opened_prev30} /></>}
             onClick={() => navigateTo('alerthistory', { view: 'open' })} />
         )}
-        <Kpi slot="sla" tone={toneOf(breaches, 2, 5)} icon={Gauge} label={t('exs.sla', statsPct(s.target_pct ?? 99.9))} value={breaches == null ? '—' : statsNum(breaches)}
+        <Kpi slot="sla" tone={toneOf(breaches, 2, 5)} icon={Gauge} label={t('exs.sla', slaPct(s.target_pct ?? 99.9))} value={breaches == null ? '—' : statsNum(breaches)}
           sub={slaFailed ? t('stx.unreadable') : t('exs.slaSub', statsNum(s.monitors ?? 0), data.window_days ?? 30)}
           onClick={() => navigateTo('monitoring', { mo_ck: 'failed', mo_win: '168' })} />
       </div>
-      {!slaFailed && worst.length > 0 && <SlaWorst rows={worst} target={s.target_pct} />}
+      {!slaFailed && worst.length > 0 && <SlaWorst rows={worst} target={s.target_pct} monitorsVisible={s.monitors_visible !== false && canMonitoring !== false} />}
     </div>
   )
 }
 
 /** SLA'sı en kötü izlemeler (en çok 5) — ad + tür + oran; satır izlemeyi açar. */
-function SlaWorst({ rows, target }) {
+function SlaWorst({ rows, target, monitorsVisible = true }) {
   const t = useT()
   return (
     <Card data-slot="exs-sla-worst" className="min-w-0 gap-2 py-3.5 shadow-xs">
       <CardHeader className="gap-1 px-4">
         <CardTitle role="heading" aria-level={3} className="flex items-center gap-2 text-sm"><Gauge aria-hidden="true" className="size-4 text-primary" />{t('stx.slaWorstTitle')}</CardTitle>
-        <CardDescription className="text-xs">{t('stx.slaWorstDesc', statsPct(target ?? 99.9))}</CardDescription>
+        <CardDescription className="text-xs">{t('stx.slaWorstDesc', slaPct(target ?? 99.9))}</CardDescription>
+        {!monitorsVisible && <p data-slot="exs-sla-noperm" className="m-0 text-xs text-muted-foreground">{t('stx.slaNoMonitorPerm')}</p>}
       </CardHeader>
       <CardContent className="px-2 sm:px-3">
         <ul className="m-0 flex min-w-0 list-none flex-col p-0">
-          {rows.map((w) => {
+          {rows.map((w, i) => {
             const meta = TYPE_META[w.type]
-            const name = w.name || t('stx.monitorNo', w.id)
-            return (
-              <li key={`${w.type}:${w.id}`} className="min-w-0 border-b last:border-b-0">
-                <Button type="button" variant="ghost" data-slot="exs-sla-row" data-type={w.type} data-id={w.id}
-                  aria-label={t('stx.openMonitor', name)} disabled={!meta}
-                  onClick={() => meta && navigateTo(meta.tab, { monitor: String(w.id) })}
-                  className="h-auto min-h-11 w-full justify-start gap-3 rounded-md px-2 py-2 text-left font-normal whitespace-normal">
-                  {meta && <meta.Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {meta ? t(meta.labelKey) : w.type}{w.bad_hours != null ? ` · ${t('stx.badHours', statsNum(w.bad_hours))}` : ''}
-                    </span>
+            const typeLabel = meta ? t(meta.labelKey) : w.type
+            // İzleme okuma izni yok → sunucu ad / kimlik göndermez: satır bağlantısız, yalnız tür + yüzde (inceleme 2026-11-13)
+            const linkable = monitorsVisible && meta && w.id != null
+            const name = w.name || (w.id != null ? t('stx.monitorNo', w.id) : typeLabel)
+            const body = (
+              <>
+                {meta && <meta.Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {w.id != null ? typeLabel : ''}{w.id != null && w.bad_hours != null ? ' · ' : ''}{w.bad_hours != null ? t('stx.badHours', statsNum(w.bad_hours)) : ''}
                   </span>
-                  <b className="shrink-0 text-destructive tabular-nums">{statsPct(w.up_pct)}</b>
-                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                </Button>
+                </span>
+                {/* Ölçülen değer AŞAĞI kesilir: hedefin altındaki izleme hedefi geçmiş gibi görünmez */}
+                <b className="shrink-0 text-destructive tabular-nums">{slaPct(w.up_pct, { floor: true })}</b>
+              </>
+            )
+            return (
+              <li key={`${w.type}:${w.id ?? `n${i}`}`} className="min-w-0 border-b last:border-b-0">
+                {linkable ? (
+                  <Button type="button" variant="ghost" data-slot="exs-sla-row" data-type={w.type} data-id={w.id}
+                    aria-label={t('stx.openMonitor', name)}
+                    onClick={() => navigateTo(meta.tab, { monitor: String(w.id) })}
+                    className="h-auto min-h-11 w-full justify-start gap-3 rounded-md px-2 py-2 text-left font-normal whitespace-normal">
+                    {body}
+                    <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                ) : (
+                  <div data-slot="exs-sla-row" data-type={w.type} data-linked="false"
+                    className="flex min-h-11 w-full items-center gap-3 px-2 py-2 text-sm">
+                    {body}
+                  </div>
+                )}
               </li>
             )
           })}

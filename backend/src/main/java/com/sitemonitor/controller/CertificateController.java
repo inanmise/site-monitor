@@ -540,8 +540,10 @@ public class CertificateController {
         List<Long> scope = SessionScope.monitoringViewTeamIds(session);
         String key = com.sitemonitor.util.TtlMemo.scopeKey(scope == null, scope);
         boolean alerts = permissionService.allows(session, "alerts.read", "view");
+        // En kötü SLA satırının izleme adı / kimliği yalnız izleme okuma izniyle (inceleme 2026-11-13)
+        boolean monitors = permissionService.allows(session, "monitoring.read", "view");
         return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId),
-                alerts, key, isFreshParam(fresh)), "timestamp", now()));
+                alerts, monitors, key, isFreshParam(fresh)), "timestamp", now()));
     }
 
     /** {@code fresh=1|true} — sayfanın Yenile düğmesi. */

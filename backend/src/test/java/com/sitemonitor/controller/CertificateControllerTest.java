@@ -1234,15 +1234,17 @@ class CertificateControllerTest {
     @DisplayName("2026-09-12: GET /stats/executive gövdeyi servisten kapsam predicate'iyle döner (2026-11-13: bellek anahtarı + alarm izni + fresh)")
     void executiveStats() throws Exception {
         org.mockito.Mockito.when(executiveStatsService.build(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean(),
-                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                        org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(java.util.Map.of("certs", java.util.Map.of("total", 5, "health_pct", 80.0), "teams", java.util.List.of()));
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"))).thenReturn(false);
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
         mvc.perform(get("/api/stats/executive?fresh=1").session(teamSession(5L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.certs.total").value(5))
                 .andExpect(jsonPath("$.data.certs.health_pct").value(80.0));
         // Alarm izni yok → servis alarm bloğunu OKUMAZ; anahtar = kapsam (takım 5); fresh iletilir
-        verify(executiveStatsService).build(any(), eq(false), eq(com.sitemonitor.util.TtlMemo.scopeKey(false, List.of(5L))), eq(true));
+        // İzleme okuma izni → en kötü SLA adları istenir (izin yoksa false; servis testi adı / kimliği siler)
+        verify(executiveStatsService).build(any(), eq(false), eq(true), eq(com.sitemonitor.util.TtlMemo.scopeKey(false, List.of(5L))), eq(true));
     }
 
     @Test

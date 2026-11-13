@@ -44,9 +44,12 @@ export function RenewalTimelinessCard({ source, onRetry }) {
                 const tone = renewalTone(w.on_time_pct)
                 const denom = Number(w.renewals || 0) + Number(w.lapses || 0)
                 return (
-                  <li key={w.months} data-slot="stats-renewal-win" data-months={w.months} data-tone={tone}
+                  <li key={w.months} data-slot="stats-renewal-win" data-months={w.months} data-tone={tone} data-clamped={w.clamped ? 'true' : undefined}
                     className="flex min-w-0 flex-col gap-1 rounded-lg border bg-card px-3 py-2.5">
-                    <span className="text-xs font-semibold text-muted-foreground">{t('stx.renWindow', w.months)}</span>
+                    {/* Veri saklama pencereyi kısalttıysa ASLA sessizce "12 ay" denmez (inceleme 2026-11-13) */}
+                    <span className="text-xs font-semibold text-muted-foreground">
+                      {w.clamped ? t('stx.renWindowClamped', w.months, statsNum(w.effective_days)) : t('stx.renWindow', w.months)}
+                    </span>
                     <b className={cn('text-2xl leading-tight font-extrabold tabular-nums', TONE[tone])}>{statsPct(w.on_time_pct)}</b>
                     <span className="text-xs text-muted-foreground">
                       {denom === 0 ? t('stx.renNone') : t('stx.renSub', statsNum(w.before_expiry), statsNum(denom))}
@@ -113,7 +116,7 @@ function HealthBody({ data, team, onTeam }) {
       ) : (
         <>
           <p className="m-0 text-sm">
-            {t('stx.hsLast', statsPct(last?.health_pct), statsNum(last?.ok), statsNum(last?.evaluated))}
+            {t('stx.hsLast', last?.day ? formatDateOnly(last.day) : '—', statsPct(last?.health_pct), statsNum(last?.ok), statsNum(last?.evaluated))}
             {data.collecting_since && <span className="text-muted-foreground"> · {t('stx.hsSince', formatDateOnly(data.collecting_since))}</span>}
           </p>
           <div aria-hidden="true" className="min-w-0">

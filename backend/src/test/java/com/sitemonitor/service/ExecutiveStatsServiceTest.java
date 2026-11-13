@@ -218,6 +218,23 @@ class ExecutiveStatsServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("2026-11-13 inceleme: izleme okuma izni yok → en kötü SLA satırı ad / kimlik / takım taşımaz (yalnız tür + yüzde), ad sorgusu yok; ayrı bellek anahtarı")
+    void slaWorstWithoutMonitoringPermission() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "execCacheMs", 60_000L);
+        Map<String, Object> sla = m(svc.build(t -> true, true, false, "ALL", false), "sla");
+        List<Map<String, Object>> worst = (List<Map<String, Object>>) sla.get("worst");
+        assertThat(worst).hasSize(1);
+        assertThat(worst.get(0)).containsEntry("type", "http").containsKey("up_pct")
+                .doesNotContainKey("id").doesNotContainKey("name").doesNotContainKey("team_id");
+        assertThat(sla).containsEntry("monitors_visible", false).containsEntry("breaches", 1);
+        org.mockito.Mockito.verify(sparklineService, org.mockito.Mockito.never()).monitorNames(anyString(), any());
+        // İzinli çağrı aynı kapsam için AYRI hesaplanır (izinsiz sonuç paylaşılmaz)
+        List<Map<String, Object>> named = (List<Map<String, Object>>) m(svc.build(t -> true, true, true, "ALL", false), "sla").get("worst");
+        assertThat(named.get(0)).containsEntry("id", 10L).containsEntry("name", "Ödeme API");
+    }
+
+    @Test
     @DisplayName("2026-11-13 eşitlik: son kontroller Pano önbelleğinden (getAllLatest) okununca sonuç latest_checks okumasıyla BİREBİR aynı")
     void latestFromCertCacheEqualsRepository() {
         Map<String, Object> fromRepo = svc.build(t -> true);

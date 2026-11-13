@@ -25,7 +25,8 @@ export function summaryRows({ t, kpi, exec, security, renewal, filters }) {
   }
   push(t('stx.xl.slaBreaches'), s.error_msg ? null : s.breaches)
   push(t('stx.xl.slaMonitors'), s.error_msg ? null : s.monitors)
-  for (const w of renewal?.windows || []) push(t('stx.renWindow', w.months), w.on_time_pct)
+  // Saklama süresiyle kısalan pencere Excel / PDF'te de açıkça yazılır (asla sessizce "12 ay")
+  for (const w of renewal?.windows || []) push(w.clamped ? t('stx.renWindowClamped', w.months, w.effective_days) : t('stx.renWindow', w.months), w.on_time_pct)
   if (security) {
     push(t('stx.xl.flagged'), security.flagged)
     push(t('stx.secUngraded'), security.ungraded)
