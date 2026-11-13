@@ -12399,6 +12399,7 @@ export const EN = {
   'stx.hsCollecting': 'Collecting data since {0} — the line appears after a few days.',
   'stx.hsCollectingSoon': 'Data collection is starting — the first daily snapshot is written within an hour.',
   'stx.hsNoCerts': 'This team has no monitored certificates — the health line is drawn only for teams with certificates. A newly added certificate appears with the next day’s snapshot.',
+  'stx.hsTeamPending': 'This team’s certificates were added after today’s daily snapshot — the health line starts with tomorrow’s snapshot.',
   'stx.hsLast': 'As of {0}: {1} ({2} of {3} clean)',
   'stx.hsSince': 'since {0}',
   'stx.scTitle': 'Team scorecard',

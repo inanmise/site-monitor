@@ -166,13 +166,30 @@ public class CertHealthDailyService {
             since = jdbc.queryForObject(SQL_FIRST, String.class, key);
         }
         boolean noCerts = false;
-        if (key != null && key != ORG_KEY && since == null) {
-            noCerts = jdbc.queryForObject(SQL_FIRST, String.class, ORG_KEY) != null;
+        boolean firstPending = false;
+        if (key != null && key != ORG_KEY && since == null && jdbc.queryForObject(SQL_FIRST, String.class, ORG_KEY) != null) {
+            // Görüntüler yazılıyor ama takımın satırı yok. Sertifikası CANLI envanterde varsa (günün görüntüsünden sonra
+            // eklendi ya da taşındı) "sertifika yok" yanlış olur — ilk görüntü yarın yazılır (gerileme taraması 2026-11-13).
+            Boolean live = teamHasLiveInventory(key);
+            if (Boolean.TRUE.equals(live)) firstPending = true;
+            else if (Boolean.FALSE.equals(live)) noCerts = true;
+            // null (envanter okunamadı) → ikisi de false: arayüz "toplanıyor" der, asla "sertifika yok" demez
         }
         out.put("points", points);
         out.put("collecting_since", since);
         out.put("no_certificates", noCerts);
+        out.put("first_snapshot_pending", firstPending);
         return out;
+    }
+
+    /** Takımın aktif envanterde SY ya da UG olarak kaydı var mı (görüntü işinin sayım kuralı); okunamazsa null (bilinmiyor). */
+    private Boolean teamHasLiveInventory(Long teamId) {
+        try {
+            return inventoryRepo.existsByTeamIdAndActiveTrue(teamId) || inventoryRepo.existsByUgTeamIdAndActiveTrue(teamId);
+        } catch (RuntimeException e) {
+            log.debug("Sağlık serisi: takım {} envanteri okunamadı: {}", teamId, e.toString());
+            return null;
+        }
     }
 
     /** Görünür takımlar (ad sırasında) içinde pencerede satırı olan ilki; hiçbiri yoksa ilk görünür takım. */

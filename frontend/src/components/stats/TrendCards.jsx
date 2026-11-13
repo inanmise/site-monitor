@@ -124,6 +124,9 @@ function HealthBody({ data, team, onTeam }) {
         // Görüntüler yazılıyor ama bu takımın hiç satırı yok: takımda izlenen sertifika yok (hata taraması 2026-11-13 —
         // eskiden sonsuza dek "ilk görüntü bir saat içinde yazılır" diyordu)
         <p data-slot="stats-health-nocerts" className="m-0 text-sm text-muted-foreground">{t('stx.hsNoCerts')}</p>
+      ) : points.length === 0 && data.first_snapshot_pending === true ? (
+        // Takımın sertifikası günün görüntüsünden sonra eklendi / taşındı: ilk satır yarın yazılır (gerileme taraması 2026-11-13)
+        <p data-slot="stats-health-pending" className="m-0 text-sm text-muted-foreground">{t('stx.hsTeamPending')}</p>
       ) : points.length < 2 ? (
         <p data-slot="stats-health-collecting" className="m-0 text-sm text-muted-foreground">
           {data.collecting_since ? t('stx.hsCollecting', formatDateOnly(data.collecting_since)) : t('stx.hsCollectingSoon')}
