@@ -306,6 +306,136 @@ class SqlPlaygroundPostgresTest {
         assertThat(String.valueOf(rows(r).get(0).get("d"))).isEqualTo("2026-11-13");
     }
 
+    // ── 3. tur (2026-11-13) ──────────────────────────────────────────────────────────────────────────────────
+
+    private static final String SECRET = "tok-R3B-SECRET-7731";
+
+    @Test
+    @DisplayName("3. tur YÜKSEK 1 / ORTA 2: her atlatma PostgreSQL 16'da GERÇEKTEN veri döndürür, servis ise çalıştırmadan reddeder")
+    void bypassVectorsAreRealButRejected() {
+        jdbc().execute("CREATE TABLE it_r3b_secrets (id int, name text, api_token text)");
+        jdbc().update("INSERT INTO it_r3b_secrets VALUES (1, 'n1', ?), (2, 'n2', ?)", SECRET, SECRET + "b");
+        jdbc().execute("CREATE FUNCTION it_r3b_dump(r it_r3b_secrets) RETURNS text LANGUAGE sql AS $$ SELECT r.api_token $$");
+        try {
+            SqlPlaygroundService svc = service(null);
+            assertThat(svc.sensitiveSchema().isRowFunction("it_r3b_dump")).as("canlı pg_proc listesi").isTrue();
+            List<String> leaking = List.of(
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM it_r3b_secrets * s",
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM it_r3b_secrets * AS s",
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM public.it_r3b_secrets * s",
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM ONLY it_r3b_secrets s",
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM ONLY (it_r3b_secrets) s",
+                    "SELECT to_jsonb(s)->>'api_token' AS t FROM it_r3b_secrets s TABLESAMPLE SYSTEM (100)",
+                    "SELECT to_jsonb(rows)->>'api_token' AS t FROM it_r3b_secrets rows",
+                    "SELECT to_jsonb(\"ROWS\")->>'api_token' AS t FROM it_r3b_secrets \"ROWS\"",
+                    "SELECT to_jsonb(exists)->>'api_token' AS t FROM it_r3b_secrets exists",
+                    "SELECT s.to_jsonb::text AS t FROM it_r3b_secrets s",
+                    "SELECT s.row_to_json::text AS t FROM it_r3b_secrets s",
+                    "SELECT s.concat AS t FROM it_r3b_secrets s",
+                    "SELECT s.quote_literal AS t FROM it_r3b_secrets s",
+                    "SELECT s.record_out::text AS t FROM it_r3b_secrets s",
+                    "SELECT it_r3b_secrets.json_agg::text AS t FROM it_r3b_secrets",
+                    "SELECT public.it_r3b_secrets.to_jsonb::text AS t FROM public.it_r3b_secrets",
+                    "SELECT x.to_jsonb::text AS t FROM (SELECT * FROM it_r3b_secrets) x",
+                    "WITH c AS (SELECT * FROM it_r3b_secrets) SELECT c.json_build_array::text AS t FROM c",
+                    "SELECT s.it_r3b_dump AS t FROM it_r3b_secrets s");
+            for (String sql : leaking) {
+                List<String> raw = jdbc().queryForList(sql, String.class);
+                assertThat(String.join(",", raw)).as("PostgreSQL bu yazımla değeri döndürmeli: %s", sql).contains(SECRET);
+                assertThatThrownBy(() -> svc.execute(sql, "postgres-it")).as(sql).isInstanceOf(SensitiveColumnException.class);
+            }
+            // Konum numarası biçimleri PostgreSQL 16'da konumdur (sıralama kâhini) — servis reddeder
+            List<String> ordinal = List.of(
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY 0x2",
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY 0_2",
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY 0b10",
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY 0o2",
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY (2)",
+                    "SELECT name, api_token FROM it_r3b_secrets ORDER BY - -2",
+                    "SELECT name FROM (SELECT * FROM it_r3b_secrets ORDER BY (3) DESC LIMIT 1) d",
+                    "SELECT api_token FROM it_r3b_secrets GROUP BY DISTINCT 1",
+                    "SELECT api_token, count(*) AS c FROM it_r3b_secrets GROUP BY ROLLUP (1)",
+                    "SELECT name, api_token FROM it_r3b_secrets GROUP BY (name, 2)");
+            for (String sql : ordinal) {
+                assertThat(jdbc().queryForList(sql)).as("PostgreSQL bunu çalıştırmalı: %s", sql).isNotEmpty();
+                assertThatThrownBy(() -> svc.execute(sql, "postgres-it")).as(sql).isInstanceOf(SensitiveColumnException.class);
+            }
+            // Düz yazım çalışır ve maskelenir
+            Map<String, Object> ok = svc.execute("SELECT s.name, s.api_token FROM it_r3b_secrets s ORDER BY 1", "postgres-it");
+            assertThat(ok.get("ok")).as("hata: %s", ok.get("error")).isEqualTo(true);
+            assertThat(rows(ok).get(0).get("api_token")).isEqualTo(SqlSensitiveColumns.MASK);
+        } finally {
+            jdbc().execute("DROP FUNCTION IF EXISTS it_r3b_dump(it_r3b_secrets)");
+            jdbc().execute("DROP TABLE IF EXISTS it_r3b_secrets");
+        }
+    }
+
+    @Test
+    @DisplayName("3. tur ORTA 3: yalnız dış LIMIT tavana iner — alt sorgudaki LIMIT 5000 doğru sayılır, dize bozulmaz")
+    void onlyOuterLimitLowered() {
+        Map<String, Object> r = service(null).execute(
+                "SELECT count(*) AS c FROM (SELECT g FROM generate_series(1, 5000) g LIMIT 5000) s", "postgres-it");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        assertThat(((Number) rows(r).get(0).get("c")).intValue()).isEqualTo(5000);
+        assertThat(rows(service(null).execute("SELECT 'limit 5000' AS note", "postgres-it")).get(0).get("note"))
+                .isEqualTo("limit 5000");
+    }
+
+    @Test
+    @DisplayName("3. tur DÜŞÜK 4: dizi / jsonb / interval / point / sonsuz / MÖ / timetz JSON'a güvenli; ekran ve dışa aktarım")
+    void driverObjectsJsonSafe() throws Exception {
+        String sql = "SELECT ARRAY[1, 2] AS a, ARRAY[ARRAY[1, 2], ARRAY[3, 4]] AS m, ARRAY['x', NULL] AS s, "
+                + "'{\"x\":1}'::jsonb AS j, '{\"y\":2}'::json AS js, '1 day'::interval AS iv, '(1,2)'::point AS p, "
+                + "'infinity'::timestamp AS ts, '-infinity'::timestamp AS nts, 'infinity'::date AS d, "
+                + "'infinity'::timestamptz AS tz, '0001-01-01 BC'::date AS bc, '12:30+03'::timetz AS ttz, "
+                + "'12:30:15.5'::time AS t, ARRAY['2026-01-01 10:00:00+03'::timestamptz] AS tza, "
+                + "ARRAY['{\"k\":1}'::jsonb] AS ja, 'NaN'::float8 AS f, 'ab'::bytea AS b";
+        Map<String, Object> r = service(null).execute(sql, "postgres-it");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        Map<String, Object> row = rows(r).get(0);
+        assertThat(row.get("a")).isEqualTo(List.of(1, 2));
+        assertThat(row.get("m")).isEqualTo(List.of(List.of(1, 2), List.of(3, 4)));
+        assertThat(row.get("s")).isEqualTo(java.util.Arrays.asList("x", null));
+        assertThat(row.get("j")).isEqualTo("{\"x\": 1}");
+        assertThat(row.get("js")).isEqualTo("{\"y\":2}");
+        assertThat(row.get("iv")).isEqualTo("1 day");
+        assertThat(row.get("p")).isEqualTo("(1,2)");
+        assertThat(row.get("ts")).isEqualTo("infinity");
+        assertThat(row.get("nts")).isEqualTo("-infinity");
+        assertThat(row.get("d")).isEqualTo("infinity");
+        assertThat(row.get("tz")).isEqualTo("infinity");
+        assertThat(row.get("bc")).isEqualTo("0001-01-01 BC");
+        assertThat(row.get("ttz")).isEqualTo("12:30:00+03");
+        assertThat(row.get("t")).isEqualTo("12:30:15.5");
+        assertThat((String) row.get("tza")).startsWith("{").endsWith("}");
+        assertThat(row.get("ja")).isEqualTo(List.of("{\"k\": 1}"));   // jsonb[] → sürücü öğeleri metin verir
+        // Yanıt gövdesi JSON'a yazılabilir — eskiden PgArray Jackson'da 500 veriyordu, jsonb sürücü iç alanlarıyla dönüyordu
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(r);
+        assertThat(json).contains("\"a\":[1,2]").doesNotContain("\"type\":\"jsonb\"").doesNotContain("999999999");
+
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (com.sitemonitor.service.sqlplayground.SqlExportWriter w = new com.sitemonitor.service.sqlplayground.SqlExportWriter("json", out)) {
+            SqlPlaygroundService.RunOutcome o = service(null).export(q(sql), 10, "postgres-it", w);
+            assertThat(o.ok()).as("hata: %s", o.error()).isTrue();
+            w.finish(o.rows(), o.truncated(), 10, o.maskedColumns());
+        }
+        String exported = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(exported).contains("infinity").contains("0001-01-01 BC").contains("1 day").doesNotContain("PgArray");
+    }
+
+    @Test
+    @DisplayName("3. tur DÜŞÜK 5: ekran sorgusu bellek bütçesi — büyük hücreler kesilir, toplam bütçede okuma durur")
+    void screenBudgetOnPostgres() {
+        Map<String, Object> r = service(null).execute("SELECT repeat('x', 300000) AS v FROM generate_series(1, 200)", "postgres-it");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        assertThat(r.get("truncated")).isEqualTo(true);
+        assertThat(r.get("truncated_reason")).isEqualTo("bytes");
+        int n = rows(r).size();
+        assertThat(n).isGreaterThan(0).isLessThan(200);
+        assertThat(r.get("truncated_cells")).isEqualTo(n);
+        assertThat((String) rows(r).get(0).get("v")).hasSize(SqlPlaygroundService.CELL_MAX_CHARS + 1);
+    }
+
     @Test
     @DisplayName("A2: başka pod durdurur — kayıt satırı + pg_stat_activity etiketi eşleşince pg_cancel_backend")
     void crossPodCancel() throws Exception {
