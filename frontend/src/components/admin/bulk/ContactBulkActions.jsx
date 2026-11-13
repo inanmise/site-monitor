@@ -20,7 +20,7 @@ const ICONS = { activate: CircleCheck, deactivate: CirclePause, set_level: BellR
  * @param canManage  (teamId) → true | false | null — `bulkModel.manageScope`
  * @param teamOptions taşıma hedefi olabilecek takımlar [{ id, name }] (yönetim kapsamı süzülmüş)
  */
-export default function ContactBulkActions({ selected = [], onClear, onDone, canManage, isAdmin = false, teamOptions = [], teamNameOf }) {
+export default function ContactBulkActions({ selected = [], onClear, onDone, canManage, isAdmin = false, teamOptions = [], teamNameOf, capped = false }) {
   const t = useT()
   const [action, setAction] = useState(null)
   const [level, setLevel] = useState('')
@@ -54,7 +54,7 @@ export default function ContactBulkActions({ selected = [], onClear, onDone, can
 
   return (
     <>
-      <BulkSelectionBar count={selected.length} onClear={onClear} slot="ec-bulk-bar">
+      <BulkSelectionBar count={selected.length} onClear={onClear} slot="ec-bulk-bar" capped={capped}>
         <BulkButton onClick={() => open('activate')} data-action="activate"><CircleCheck aria-hidden="true" /> {t('ec.bulk.activate')}</BulkButton>
         <BulkButton onClick={() => open('deactivate')} data-action="deactivate"><CirclePause aria-hidden="true" /> {t('ec.bulk.deactivate')}</BulkButton>
         <BulkButton onClick={() => open('set_level')} data-action="set_level"><BellRing aria-hidden="true" /> {t('ec.bulk.setLevel')}</BulkButton>

@@ -6,7 +6,7 @@ import SearchableSelect from '../../ui/SearchableSelect.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { Button } from '@/components/shadcn/button'
 import BulkPreviewDialog from '../bulk/BulkPreviewDialog.jsx'
-import { defaultGroupPlan, defaultGroupRequests, deliverableCount, summarizeResult } from '../bulk/bulkModel.js'
+import { activeCount, defaultGroupPlan, defaultGroupRequests, summarizeResult } from '../bulk/bulkModel.js'
 
 /**
  * Takımlar → toplu düzeltme: "varsayılan bildirim grubu ata" (2026-11-13, yönetim zenginleştirmesi (h)).
@@ -54,12 +54,18 @@ export default function TeamBulkDefaultGroup({ open, onClose, teams = [], onDone
   }
 
   const byTeam = new Map(plan.map((p) => [String(p.teamId), p]))
+  /** Seçenek etiketi ETKİN adres sayısıyla (pasif hesaplara ait adresler sayılmaz); bilinmiyorsa öyle söyler. */
+  const optionLabel = (g) => {
+    const n = activeCount(g)
+    if (n == null) return t('team.bulk.dg.optionUnknown', g.name)
+    return n === 1 ? t('team.bulk.dg.optionActive.one', g.name) : t('team.bulk.dg.optionActive', g.name, n)
+  }
   const rowInfo = (r) => {
     const p = byTeam.get(String(r.teamId))
     if (!p) return null
-    const current = p.current
-      ? (p.currentUsable ? t('team.bulk.dg.current', p.current.name) : t('team.bulk.dg.currentUnusable', p.current.name))
-      : t('team.bulk.dg.noCurrent')
+    const CURRENT_KEY = { ok: 'team.bulk.dg.current', noEmails: 'team.bulk.dg.currentUnusable',
+      allPassive: 'team.bulk.dg.currentAllPassive', unknown: 'team.bulk.dg.currentUnknown' }
+    const current = p.current ? t(CURRENT_KEY[p.currentState] || 'team.bulk.dg.current', p.current.name) : t('team.bulk.dg.noCurrent')
     return (
       <span className="mt-1 flex min-w-0 flex-col gap-1.5">
         <span data-slot="tbdg-current" className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{current}</span>
@@ -69,7 +75,7 @@ export default function TeamBulkDefaultGroup({ open, onClose, teams = [], onDone
               placeholder={t('team.bulk.dg.pick')}
               onChange={(v) => setChoices((prev) => ({ ...prev, [String(p.teamId)]: v }))}
               options={[{ value: '', label: t('team.bulk.dg.pick') },
-                ...p.candidates.map((g) => ({ value: String(g.id), label: deliverableCount(g) === 1 ? t('team.bulk.dg.option.one', g.name) : t('team.bulk.dg.option', g.name, deliverableCount(g)) }))]} />
+                ...p.candidates.map((g) => ({ value: String(g.id), label: optionLabel(g) }))]} />
           </span>
         ) : onCreateGroup && (
           <Button type="button" variant="link" className="h-auto w-fit p-0 text-xs pointer-coarse:min-h-10"

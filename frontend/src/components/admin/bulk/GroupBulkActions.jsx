@@ -21,15 +21,15 @@ const ICONS = { delete: Trash2, set_team: FolderInput, make_default: Star }
  * Önizleme kullanım sayılarını (`usageCounts`) kullanır; sayılar okunamadıysa satır "sunucu denetleyecek" olur —
  * "kullanılmıyor" diye silmeye yönlendirmez. Sunucu silmeden / taşımadan hemen önce kullanımı yeniden denetler.
  */
-export default function GroupBulkActions({ selected = [], groups = [], counts = null, onClear, onDone, teamOptions = [], teamNameOf }) {
+export default function GroupBulkActions({ selected = [], groups = [], counts = null, stamped = null, capped = false, onClear, onDone, teamOptions = [], teamNameOf }) {
   const t = useT()
   const [action, setAction] = useState(null)
   const [teamId, setTeamId] = useState('')
   const [fieldError, setFieldError] = useState(null)
 
   const open = (a) => { setAction(a); setTeamId(''); setFieldError(null) }
-  const plan = useMemo(() => action ? planGroups(selected, action, { teamId, counts, groups }) : null,
-    [selected, action, teamId, counts, groups])
+  const plan = useMemo(() => action ? planGroups(selected, action, { teamId, counts, groups, stamped }) : null,
+    [selected, action, teamId, counts, groups, stamped])
 
   async function confirm() {
     const body = { action, ids: selected.map((g) => g.id) }
@@ -45,7 +45,7 @@ export default function GroupBulkActions({ selected = [], groups = [], counts = 
 
   return (
     <>
-      <BulkSelectionBar count={selected.length} onClear={onClear} slot="ng-bulk-bar">
+      <BulkSelectionBar count={selected.length} onClear={onClear} slot="ng-bulk-bar" capped={capped}>
         <BulkButton variant="destructive" onClick={() => open('delete')} data-action="delete"><Trash2 aria-hidden="true" /> {t('ng.bulk.delete')}</BulkButton>
         {teamOptions.length > 0 && (
           <BulkButton onClick={() => open('set_team')} data-action="set_team"><FolderInput aria-hidden="true" /> {t('ng.bulk.setTeam')}</BulkButton>

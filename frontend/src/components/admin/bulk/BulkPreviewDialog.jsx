@@ -70,6 +70,9 @@ export default function BulkPreviewDialog({
   const reasonText = (r) => {
     if (r.reason === 'in_use' && r.usage != null) return Number(r.usage) === 1 ? t('adm.bulk.reason.in_use_one') : t('adm.bulk.reason.in_use_n', r.usage)
     if (r.reason === 'already_exists' && r.existingLevel) return t('adm.bulk.reason.already_exists_level', t(`ec.level.${String(r.existingLevel).toLowerCase()}`))
+    if (r.reason === 'stamped_open_alerts' && r.openAlerts != null) {
+      return Number(r.openAlerts) === 1 ? t('adm.bulk.reason.stamped_open_alerts_one') : t('adm.bulk.reason.stamped_open_alerts_n', r.openAlerts)
+    }
     return t(`adm.bulk.reason.${r.reason}`)
   }
   const stateBadge = (r) => {

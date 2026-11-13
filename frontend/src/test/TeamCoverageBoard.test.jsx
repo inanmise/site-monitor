@@ -33,10 +33,10 @@ const TEAMS = [
 const STATS = { 1: { members: 2, monitors: 3, domains: 1 }, 2: { members: 1, monitors: 2 }, 3: { members: 1, monitors: 1 } }
 const CONTACTS = [{ id: 1, team_id: 1, user_id: 8, min_alert_level: 'WARNING', active: true }]
 const GROUPS = [
-  { id: 10, team_id: 1, name: 'Ödeme Nöbet', emails: ['n@example.com'], is_default: true, active: true, can_write: true },
-  { id: 30, team_id: 3, name: 'Çağrı Tek', emails: ['c@example.com'], is_default: false, active: true, can_write: true },
-  { id: 20, team_id: 2, name: 'Arşiv A', emails: ['a@example.com'], is_default: false, active: true, can_write: true },
-  { id: 21, team_id: 2, name: 'Arşiv B', emails: ['b@example.com'], is_default: false, active: true, can_write: true },
+  { id: 10, team_id: 1, name: 'Ödeme Nöbet', emails: ['n@example.com'], inactive_emails: [], is_default: true, active: true, can_write: true },
+  { id: 30, team_id: 3, name: 'Çağrı Tek', emails: ['c@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true },
+  { id: 20, team_id: 2, name: 'Arşiv A', emails: ['a@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true },
+  { id: 21, team_id: 2, name: 'Arşiv B', emails: ['b@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true },
 ]
 
 const boardRow = (id) => document.querySelector(`[data-slot="tcb-row"][data-team-id="${id}"]`)
@@ -90,6 +90,35 @@ describe('Takımlar — kapsam panosu', () => {
     await waitFor(() => expect(boardRow(3).querySelector('[data-slot="tcb-esc"]').getAttribute('data-state')).toBe('gap'))
     expect(api.admin.getContacts).toHaveBeenCalledTimes(2)
     expect(api.notificationGroups.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('kullanıcı listesi okunamazsa eskalasyon BİLİNMİYOR (pasif kişi etkin sayılmaz) ve şerit bunu söyler; yeniden dene sayaçları + kullanıcıları okur', async () => {
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_tview=board')
+    api.admin.getUsers.mockResolvedValueOnce({ success: false, error: 'x' })
+    api.admin.teamStats.mockResolvedValueOnce({ success: false, error: 'x' })
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await waitFor(() => expect(boardRow(1)).toBeTruthy())
+    await waitFor(() => expect(document.querySelector('[data-slot="tcb-parts"]')?.textContent).toMatch(/kullanıcı listesi|user list/))
+    expect(boardRow(1).querySelector('[data-slot="tcb-esc"]').getAttribute('data-state')).toBe('unknown')
+    expect(document.querySelector('[data-slot="tcb-parts"]').textContent).toMatch(/takım sayaçları|team counters/)
+    fireEvent.click(within(document.querySelector('[data-slot="tcb-parts"]')).getByRole('button'))
+    await waitFor(() => expect(boardRow(1).querySelector('[data-slot="tcb-esc"]').getAttribute('data-state')).toBe('ok'))
+    expect(api.admin.getUsers).toHaveBeenCalledTimes(2)
+    expect(api.admin.teamStats).toHaveBeenCalledTimes(2)
+  })
+
+  it('pano süzgeci (KPI) değişince görünmeyen takımlar seçimden düşer', async () => {
+    window.history.replaceState({}, '', '/?tab=admin&g_tab=teams&g_tview=board')
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await waitFor(() => expect(boardRow(3)?.querySelector('[data-slot="tcb-esc"]').getAttribute('data-state')).toBe('gap'))
+    fireEvent.click(within(boardRow(1)).getByRole('checkbox'))
+    fireEvent.click(within(boardRow(3)).getByRole('checkbox'))
+    await waitFor(() => expect(document.querySelector('[data-testid="tm-bulk-bar"]')?.textContent).toMatch(/2/))
+    // "Kritik boşluk" süzgeci → yalnız takım 3 görünür; takım 1 seçimden düşer
+    fireEvent.click([...document.querySelectorAll('[data-slot="tcb-board"] [data-slot="stat-item"]')].find((b) => b.getAttribute('data-key') === 'critGap'))
+    await waitFor(() => expect(boardRow(1)).toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-testid="tm-bulk-bar"]').textContent).toMatch(/(?:^|[^0-9])1 (?:takım seçili|teams selected)/))
+    expect(within(boardRow(3)).getByRole('checkbox')).toHaveAttribute('data-state', 'checked')
   })
 
   it('pano satırı "Düzelt" menüsü takım için ilgili düzeltmeleri sunar', async () => {

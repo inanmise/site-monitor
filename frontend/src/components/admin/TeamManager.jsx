@@ -31,8 +31,8 @@ import TeamGapBadge from './teams/TeamGapBadge.jsx'
 import TeamCoverageBoard from './teams/TeamCoverageBoard.jsx'
 import TeamBulkDefaultGroup from './teams/TeamBulkDefaultGroup.jsx'
 import TeamBulkContact from './teams/TeamBulkContact.jsx'
-import { buildBoard, BOARD_FILTERS } from './teams/coverageBoardModel.js'
-import { manageScope } from './bulk/bulkModel.js'
+import { buildBoard, BOARD_FILTERS, filterBoard } from './teams/coverageBoardModel.js'
+import { BULK_MAX, addCapped, manageScope } from './bulk/bulkModel.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import {
   TEAM_GAPS, CORE_GAPS, TEAM_SORTS, DEFAULT_TEAM_SORT, teamGaps, gapCounts, matchesGaps, hasCoreGap, parseGapParam,
@@ -454,8 +454,21 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   // ── Toplu işlem (2026-09-20): sayfadaki seçim → tek istek; sunucu her takımı kendi kapsam zincirinden geçirir ──
   const selectableIds = pagedTeams.filter((tm) => canEditRow(tm.id)).map((tm) => tm.id)
   const allPageSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
-  const toggleAllPage = () => setSelected((prev) => { const n = new Set(prev); if (allPageSelected) selectableIds.forEach((id) => n.delete(id)); else selectableIds.forEach((id) => n.add(id)); return n })
-  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  // Seçim tavanı (2026-11-13): toplu uçlar en çok BULK_MAX kimlik alır — seçim tavanda durur ve bunu söyler.
+  const [capHit, setCapHit] = useState(false)
+  useEffect(() => { if (selected.size === 0) setCapHit(false) }, [selected])
+  const toggleAllPage = () => {
+    if (allPageSelected) { setSelected((prev) => { const n = new Set(prev); selectableIds.forEach((id) => n.delete(id)); return n }); return }
+    const { next, capped } = addCapped(selected, selectableIds)
+    setSelected(next)
+    setCapHit(capped)
+  }
+  const toggleOne = (id) => {
+    if (selected.has(id)) { setSelected((prev) => { const n = new Set(prev); n.delete(id); return n }); return }
+    const { next, capped } = addCapped(selected, [id])
+    if (capped) { setCapHit(true); return }
+    setSelected(next)
+  }
   async function runBulk(action, extra = {}) {
     const labels = { activate: t('team.bulkActivate'), deactivate: t('team.bulkDeactivate'), set_manager: t('team.bulkSetManager'),
       weekly_reminder_on: t('team.bulkReminderOn'), weekly_reminder_off: t('team.bulkReminderOff'), weekly_availability_on: t('team.bulkAvailOn'), weekly_availability_off: t('team.bulkAvailOff') }
@@ -623,6 +636,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       if (k === 'noc') loadPart('noc', () => api.noc.coverage({ summary: true, byTeam: true }), (r) => r.data?.summary?.by_team ?? null)
     }
     if (oncallState === 'failed') loadOncall()
+    if (statsFailed && !statsReady) loadStats()
+    if (usersFailed && !usersReady) loadUsers()
   }
   /** Pano için kişi durumu — `personState` ile aynı kural (pasif = eksik, kapsam dışı = görünmüyor, liste yok = bilinmiyor). */
   const peopleOf = (team) => {
@@ -644,15 +659,31 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   }, [users, userIdsAll])
   const boardModel = useMemo(() => (view !== 'board' ? null : buildBoard(filteredTeams, {
     stats: statsReady ? stats : null,
-    contacts: board.contacts, inactiveIds: inactiveUserIds, groups: board.groups,
+    // Pasif kullanıcı listesi bilinmeden kişi sayımı pasifleri "etkin" sayar (yanlış yeşil) — kullanıcılar gelene dek
+    // eskalasyon BİLİNMİYOR.
+    contacts: usersReady ? board.contacts : null, inactiveIds: inactiveUserIds, groups: board.groups,
     oncall: oncallState === 'ready' ? { byTeam: new Map(Object.entries(oncallNow)), known: oncallKnown } : null,
     noc: board.noc ? { byTeam: board.noc } : null,
     people: peopleOf,
   })), [view, filteredTeams, stats, statsReady, board, inactiveUserIds, oncallState, oncallNow, oncallKnown, usersReady, userMap, managerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Görünmeyen takımlar seçimden düşer (kişi / grup seçimindeki gibi): liste görünümünde süzülmüş liste, panoda
+  // pano süzgecinden (KPI) geçen satırlar. Toplu düzeltme yalnız görünen seçimle çalışır.
+  const visibleTeamIds = useMemo(() => (view === 'board' && boardModel
+    ? new Set(filterBoard(boardModel.rows, boardFilter).map((r) => r.teamId))
+    : new Set(filteredTeams.map((tm) => tm.id))), [view, boardModel, boardFilter, filteredTeams])
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev
+      const next = new Set([...prev].filter((id) => visibleTeamIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [visibleTeamIds])
+
   const boardPartStates = {
     groups: boardParts.groups, contacts: boardParts.contacts, noc: boardParts.noc,
     oncall: oncallState === 'failed' ? 'failed' : oncallState === 'loading' ? 'loading' : 'ready',
     stats: statsFailed && !statsReady ? 'failed' : statsReady ? 'ready' : 'loading',
+    users: usersFailed && !usersReady ? 'failed' : usersReady ? 'ready' : 'loading',
   }
   /** Pano satırının "Düzelt" menüsü — yalnız kullanıcının yapabildiği düzeltmeler. */
   const boardFixFor = (row) => {
@@ -894,6 +925,11 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         <div data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}
           className="flex flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2">
           <span className="mr-1 font-bold">{t('team.selected', selected.size)}</span>
+          {capHit && (
+            <span data-slot="bulk-cap-note" role="status" className="basis-full text-xs text-amber-800 dark:text-amber-300 [overflow-wrap:anywhere]">
+              {t('adm.bulk.capNote', BULK_MAX)}
+            </span>
+          )}
           <Button variant="secondary" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</Button>
           <Button variant="destructive" size="sm" className="max-sm:h-10 pointer-coarse:h-10" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</Button>
           <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">

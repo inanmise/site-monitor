@@ -28,9 +28,9 @@ const CONTACTS = [
   { id: 13, user_id: 3, name: LONG_B, email: 'b@example.com', role: 'MANAGER', min_alert_level: 'CRITICAL', active: true, team_id: 3 },
 ]
 const GROUPS = [
-  { id: 21, team_id: 1, name: LONG_GROUP, emails: ['nobet@example.com'], is_default: true, active: true, can_write: true },
-  { id: 22, team_id: 2, name: 'Ödeme Alarm Alıcıları', emails: ['odeme@example.com'], is_default: false, active: true, can_write: true },
-  { id: 23, team_id: 2, name: 'Ödeme Yedek', emails: ['yedek@example.com'], is_default: false, active: true, can_write: true },
+  { id: 21, team_id: 1, name: LONG_GROUP, emails: ['nobet@example.com'], inactive_emails: [], is_default: true, active: true, can_write: true },
+  { id: 22, team_id: 2, name: 'Ödeme Alarm Alıcıları', emails: ['odeme@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true },
+  { id: 23, team_id: 2, name: 'Ödeme Yedek', emails: ['yedek@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true },
 ]
 
 async function mock(page, calls) {
@@ -50,7 +50,7 @@ async function mock(page, calls) {
     else if (p === '/api/admin/contacts/all') body = { success: true, data: CONTACTS }
     else if (p === '/api/admin/contacts/webhook-status') body = { success: true, data: {} }
     else if (p === '/api/notification-groups') body = { success: true, data: { groups: GROUPS, writable_team_ids: ['1', '2', '3'], team_emails: { 1: 'dijital@example.com', 2: '', 3: 'kis@example.com' } } }
-    else if (p === '/api/notification-groups/usage-counts') body = { success: true, data: { counts: { 22: 4 } } }
+    else if (p === '/api/notification-groups/usage-counts') body = { success: true, data: { counts: { 22: 4 }, stamped_open_alerts: {} } }
     else if (p === '/api/notification-groups/history') body = { success: true, data: { items: [], truncated: false, hidden: 0 } }
     else if (p === '/api/noc/coverage') body = { success: true, data: { summary: { by_team: { 1: { total: 10, covered: 10, paused: 0 }, 2: { total: 3, covered: 1, paused: 0 } } } } }
     else if (p === '/api/oncall/current') body = { success: true, data: [{ team_id: 1, name: LONG_A, until: '2026-11-14T06:00:00', active: true }] }
@@ -253,6 +253,35 @@ for (const vp of VIEWPORTS) {
       await dlg.locator('[data-slot="bulk-close"]').click()
       // Tam sayfa görüntüsü EN SONDA (fullPage dokunmatik öykünmesini sıfırlar)
       await page.screenshot({ path: `test-results/admin-bulk-board-${vp.name}.png`, fullPage: true })
+    })
+  })
+}
+
+// İnceleme #3 (2026-11-13): geniş ekranda pano TABLO dalı kabını taşmaz (sütunlar kap içinde %100; sabit px sütun yok).
+for (const width of [1440, 1920]) {
+  test.describe(`Takımlar kapsam panosu tablo — ${width}`, () => {
+    test.use({ viewport: { width, height: 900 } })
+
+    test('tablo dalı: kap taşmaz, ad kesilmez', async ({ page }) => {
+      test.setTimeout(60_000)
+      await mock(page, [])
+      await page.goto('/?tab=admin&g_tab=teams&g_tview=board')
+      const list = page.locator('[data-slot="tcb-list"]')
+      await expect(page.locator('[data-slot="tcb-row"]')).toHaveCount(3, { timeout: 20_000 })
+      await expect(list).toHaveAttribute('data-view', 'table')
+      await page.waitForTimeout(300)
+      const over = await page.evaluate(() => {
+        const out = []
+        const box = document.querySelector('[data-slot="tcb-list"]')
+        for (const el of [box, ...box.querySelectorAll('[data-slot="table-container"], table, td, th')]) {
+          if (el.scrollWidth > el.clientWidth + 1) out.push(`${el.tagName.toLowerCase()} ${el.scrollWidth}>${el.clientWidth}`)
+        }
+        return out
+      })
+      expect(over, 'taşan tablo öğesi').toEqual([])
+      expect(await pageOverflow(page), 'sayfa yatay taşması').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clippedText, '[data-slot="tcb-list"]'), 'kesilen ad').toEqual([])
+      await page.screenshot({ path: `test-results/admin-bulk-board-table-${width}.png`, fullPage: true })
     })
   })
 }

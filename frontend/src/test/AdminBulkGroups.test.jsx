@@ -6,14 +6,14 @@ import { render, screen, fireEvent, waitFor, within } from './test-utils'
  * "kullanılıyor / varsayılan" atlamalarını öngörür, kullanım okunamadıysa "sunucu denetleyecek" der (asla "kullanılmıyor").
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
-const state = vi.hoisted(() => ({ groups: [], counts: {}, countsFail: false }))
+const state = vi.hoisted(() => ({ groups: [], counts: {}, countsFail: false, stamped: {} }))
 
 vi.mock('../api/client', () => ({
   formatDateSec: (v) => v ?? '',
   api: withApiFallback({
     notificationGroups: {
       list: vi.fn(async () => ({ success: true, data: { groups: state.groups, writable_team_ids: ['1', '2'], team_emails: { 1: 'a@x', 2: 'b@x' } } })),
-      usageCounts: vi.fn(async () => (state.countsFail ? { success: false } : { success: true, data: { counts: state.counts } })),
+      usageCounts: vi.fn(async () => (state.countsFail ? { success: false } : { success: true, data: { counts: state.counts, stamped_open_alerts: state.stamped } })),
       bulk: vi.fn(),
       history: vi.fn(async () => ({ success: true, data: { items: [], truncated: false, hidden: 0 } })),
     },
@@ -23,7 +23,7 @@ vi.mock('../api/client', () => ({
 const { api } = await import('../api/client')
 const NotificationGroups = (await import('../components/admin/NotificationGroups.jsx')).default
 const TEAMS = [{ id: 1, name: 'SY-A' }, { id: 2, name: 'SY-B' }]
-const grp = (id, name, over = {}) => ({ id, team_id: 1, name, emails: ['a@example.com'], is_default: false, active: true, can_write: true, ...over })
+const grp = (id, name, over = {}) => ({ id, team_id: 1, name, emails: ['a@example.com'], inactive_emails: [], is_default: false, active: true, can_write: true, ...over })
 const rowOf = (id) => document.querySelector(`[data-group-id="${id}"]`)
 
 beforeEach(() => {
@@ -32,6 +32,7 @@ beforeEach(() => {
   state.countsFail = false
   state.groups = [grp(10, 'Kullanilan'), grp(11, 'Bos'), grp(12, 'Ana', { is_default: true }), grp(13, 'Salt okunur', { can_write: false })]
   state.counts = { 10: 2 }
+  state.stamped = {}
 })
 
 describe('NotificationGroups — toplu işlem', () => {
@@ -80,5 +81,29 @@ describe('NotificationGroups — toplu işlem', () => {
     fireEvent.mouseDown(within(dlg).getByRole('combobox'))
     fireEvent.mouseDown((await screen.findAllByRole('option')).find((o) => o.textContent === 'SY-B'))
     await waitFor(() => expect(dlg.querySelector('[data-slot="bulk-preview-row"]').getAttribute('data-reason')).toBe('name_taken'))
+  })
+
+  it('takıma taşı: açık alarma damgalı grup önizlemede atlanacak (sayısıyla), damga bilinmiyorsa "sunucu denetleyecek"', async () => {
+    state.stamped = { 11: 2 }
+    render(<NotificationGroups teams={TEAMS} />)
+    await waitFor(() => expect(rowOf(11)).toBeTruthy())
+    fireEvent.click(within(rowOf(11)).getByRole('checkbox'))
+    fireEvent.click(await waitFor(() => document.querySelector('[data-slot="ng-bulk-bar"] [data-action="set_team"]')))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(dlg).getByRole('combobox'))
+    fireEvent.mouseDown((await screen.findAllByRole('option')).find((o) => o.textContent === 'SY-B'))
+    await waitFor(() => expect(dlg.querySelector('[data-slot="bulk-preview-row"]').getAttribute('data-reason')).toBe('stamped_open_alerts'))
+    expect(dlg.textContent).toMatch(/2 açık alarma|2 open alarms/)
+  })
+
+  it('tümünü seç en çok 200 grup seçer ve bunu söyler', async () => {
+    state.groups = Array.from({ length: 205 }, (_, i) => grp(1000 + i, `Grup ${i}`))
+    state.counts = {}
+    render(<NotificationGroups teams={TEAMS} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="ng-select-all"]')).toBeTruthy())
+    fireEvent.click(document.querySelector('[data-slot="ng-select-all"]'))
+    const bar = await waitFor(() => { const b = document.querySelector('[data-slot="ng-bulk-bar"]'); expect(b).toBeTruthy(); return b })
+    expect(bar.textContent).toMatch(/200/)
+    expect(bar.querySelector('[data-slot="bulk-cap-note"]').textContent).toMatch(/200/)
   })
 })

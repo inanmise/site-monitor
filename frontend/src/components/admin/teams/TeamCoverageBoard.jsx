@@ -46,11 +46,11 @@ export default function TeamCoverageBoard({
   const shown = useMemo(() => sortBoard(filterBoard(rows, filter)), [rows, filter])
   const failedParts = Object.entries(parts).filter(([, s]) => s === 'failed').map(([k]) => k)
   const loadingParts = Object.entries(parts).filter(([, s]) => s === 'loading').map(([k]) => k)
-  const kpiValue = (n, known, part) => (parts[part] === 'loading' ? '…' : known ? n : '—')
+  const kpiValue = (n, known, part) => ([].concat(part).some((p) => parts[p] === 'loading') ? '…' : known ? n : '—')
   const kpis = [
     { key: 'all', Icon: UsersRound, cls: 'total', label: t('tcb.kpi.all'), value: summary.teams },
     { key: 'noRecipient', Icon: MailX, cls: 'critical', label: t('tcb.kpi.noRecipient'), value: kpiValue(summary.noRecipient, summary.deliveryKnown, 'groups'), hint: t('tcb.kpi.noRecipientHint') },
-    { key: 'critGap', Icon: ShieldX, cls: 'critical', label: t('tcb.kpi.critGap'), value: kpiValue(summary.critGap, summary.escalationKnown, 'contacts'), hint: t('tcb.kpi.critGapHint') },
+    { key: 'critGap', Icon: ShieldX, cls: 'critical', label: t('tcb.kpi.critGap'), value: kpiValue(summary.critGap, summary.escalationKnown, ['contacts', 'users']), hint: t('tcb.kpi.critGapHint') },
     { key: 'noDefault', Icon: BellOff, cls: 'warning', label: t('tcb.kpi.noDefault'), value: kpiValue(summary.noDefault, summary.groupKnown, 'groups'), hint: t('tcb.kpi.noDefaultHint') },
     { key: 'noOncall', Icon: CalendarClock, cls: 'paused', label: t('tcb.kpi.noOncall'), value: kpiValue(summary.noOncall, summary.oncallKnown, 'oncall'), hint: t('tcb.kpi.noOncallHint') },
   ]
@@ -116,28 +116,33 @@ export default function TeamCoverageBoard({
             <Table className="table-fixed text-[13px]">
               <TableHeader className="bg-muted/50">
                 <TableRow className="hover:bg-transparent [&>th]:h-auto [&>th]:py-2 [&>th]:align-bottom [&>th]:text-xs [&>th]:whitespace-normal">
-                  <TableHead className="w-10 px-2"><span className="sr-only">{t('team.selectAll')}</span></TableHead>
-                  <TableHead className="w-[18%]">{t('tcb.col.team')}</TableHead>
+                  {/* Sütunlar kap içinde %100 (sabit px sütun yok): table-fixed tablo kabını asla taşmaz (1000–1920 px). "Düzelt"
+                      menüsü ayrı dar sütunda değil, takım hücresinde (dar sütunda düğme hücreyi taşıyordu). */}
+                  <TableHead className="w-[4%] px-2"><span className="sr-only">{t('team.selectAll')}</span></TableHead>
+                  <TableHead className="w-[20%]">{t('tcb.col.team')}</TableHead>
                   <TableHead className="w-[19%]">{t('tcb.col.hierarchy')}</TableHead>
-                  <TableHead className="w-[22%]">{t('tcb.col.delivery')}</TableHead>
-                  <TableHead className="w-[15%]">{t('tcb.col.escalation')}</TableHead>
+                  <TableHead className="w-[20%]">{t('tcb.col.delivery')}</TableHead>
+                  <TableHead className="w-[16%]">{t('tcb.col.escalation')}</TableHead>
                   <TableHead className="w-[12%]">{t('tcb.col.oncall')}</TableHead>
                   <TableHead className="w-[9%]">{t('tcb.col.noc')}</TableHead>
-                  <TableHead className="w-28"><span className="sr-only">{t('tcb.fix')}</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {shown.map((r) => (
                   <TableRow key={r.teamId} data-slot="tcb-row" data-team-id={r.teamId} data-state={selected?.has(r.teamId) ? 'selected' : undefined}
-                    className="align-top [&>td]:whitespace-normal">
+                    className="align-top [&>td]:align-top [&>td]:whitespace-normal">
                     <TableCell className="px-2">{selectCell(r)}</TableCell>
-                    <TableCell><TeamCell r={r} t={t} /></TableCell>
+                    <TableCell>
+                      <span className="flex min-w-0 flex-col items-start gap-2">
+                        <TeamCell r={r} t={t} />
+                        <FixMenu r={r} t={t} items={fixActionsFor(r)} />
+                      </span>
+                    </TableCell>
                     <TableCell><Hierarchy r={r} t={t} /></TableCell>
                     <TableCell><Delivery r={r} t={t} /></TableCell>
                     <TableCell><Escalation r={r} t={t} /></TableCell>
                     <TableCell><Oncall r={r} t={t} /></TableCell>
                     <TableCell><Noc r={r} t={t} /></TableCell>
-                    <TableCell className="text-right"><FixMenu r={r} t={t} items={fixActionsFor(r)} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

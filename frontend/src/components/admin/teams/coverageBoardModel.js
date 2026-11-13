@@ -42,15 +42,17 @@ export function defaultGroupState(teamId, groups) {
 }
 
 /**
- * Alarm e-postası takım düzeyinde birine ulaşıyor mu: ok (varsayılan grup ya da takım adresi), none (ikisi de yok ya da
- * varsayılanın tüm adresleri pasif), unknown (takım adresi boş ve grup durumu bilinmiyor).
+ * Alarm e-postası takım düzeyinde birine ulaşıyor mu: ok (etkin alıcılı varsayılan grup ya da takım adresi), none (ikisi
+ * de yok ya da varsayılanın tüm adresleri pasif), unknown. Bilinmeyen varsayılan grup takım adresi olsa da BİLİNMİYOR'dur:
+ * tüm adresleri pasif bir varsayılan sonucu "ulaşmıyor"a çevirir (grup uygulanır, takım adresine dönülmez). Aynı nedenle
+ * etkin adres sayısı bilinmeyen (`delivered` null) varsayılan da "bilinmiyor"dur — asla yeşil değil.
  */
 export function deliveryState(team, dg) {
   const email = String(team?.email ?? '').trim()
-  if (dg.state === 'allPassive') return 'none'
-  if (dg.state === 'ok') return 'ok'
-  if (email) return 'ok'
   if (dg.state === 'unknown') return 'unknown'
+  if (dg.state === 'allPassive') return 'none'
+  if (dg.state === 'ok') return dg.delivered == null ? 'unknown' : 'ok'
+  if (email) return 'ok'
   return 'none'
 }
 
@@ -126,7 +128,8 @@ function summarize(rows) {
     noDefault: count(boardIssue.noDefault),
     noOncall: count(boardIssue.noOncall),
     // Boyut bilinmiyor mu (KPI "—"): hiçbir satırda bilinmiyorsa
-    deliveryKnown: rows.length === 0 || rows.some((r) => r.delivery !== 'unknown'),
+    // Ulaşım: TEK bilinmeyen satır bile sayıyı alt sınıra çevirir → "—" (alıcısız takım sayısı asla eksik gösterilmez)
+    deliveryKnown: rows.every((r) => r.delivery !== 'unknown'),
     escalationKnown: rows.length === 0 || rows.some((r) => r.escalation != null && r.escalation.tone !== 'unknown'),
     groupKnown: rows.length === 0 || rows.some((r) => r.defaultGroup.state !== 'unknown'),
     oncallKnown: rows.length === 0 || rows.some((r) => r.oncall.state !== 'unknown'),

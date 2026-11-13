@@ -7,7 +7,7 @@ import {
  * Takımlar → kapsam panosu modeli (2026-11-13, (h)). Kural: okunamayan boyut BİLİNMİYOR'dur — eksik sayılmaz, yeşil
  * çizilmez; varsayılan grubun tüm adresleri pasifse grup uygulanır ama posta düşer → takım adresi olsa da "ulaşmıyor".
  */
-const g = (id, team, over = {}) => ({ id, team_id: team, name: `G${id}`, emails: ['a@example.com'], is_default: true, active: true, ...over })
+const g = (id, team, over = {}) => ({ id, team_id: team, name: `G${id}`, emails: ['a@example.com'], inactive_emails: [], is_default: true, active: true, ...over })
 
 describe('varsayılan grup + ulaşım', () => {
   it('grup durumları', () => {
@@ -17,17 +17,20 @@ describe('varsayılan grup + ulaşım', () => {
     expect(defaultGroupState(1, [g(1, 1, { inactive_emails: ['A@example.com'] })]).state).toBe('allPassive')
     expect(defaultGroupState(1, [g(1, 1, { emails: ['a@example.com', 'b@example.com'], inactive_emails: ['a@example.com'] })])).toMatchObject({ state: 'ok', delivered: 1 })
     // pasif listesi bilinmiyorsa (eski sunucu) "ok" ama teslim sayısı bilinmiyor
-    expect(defaultGroupState(1, [g(1, 1)])).toMatchObject({ state: 'ok', delivered: null })
+    expect(defaultGroupState(1, [g(1, 1, { inactive_emails: undefined })])).toMatchObject({ state: 'ok', delivered: null })
     // eski yumuşak silinmiş varsayılan sayılmaz
     expect(defaultGroupState(1, [g(1, 1, { active: false })]).state).toBe('none')
   })
-  it('ulaşım: tüm adresleri pasif varsayılan takım adresi olsa da "none"; takım adresi yok + grup bilinmiyor → unknown', () => {
+  it('ulaşım: tüm adresleri pasif varsayılan takım adresi olsa da "none"; bilinmeyen varsayılan takım adresi olsa da unknown', () => {
     expect(deliveryState({ email: 'x@example.com' }, { state: 'allPassive' })).toBe('none')
     expect(deliveryState({ email: 'x@example.com' }, { state: 'none' })).toBe('ok')
-    expect(deliveryState({ email: '' }, { state: 'ok' })).toBe('ok')
+    expect(deliveryState({ email: '' }, { state: 'ok', delivered: 2 })).toBe('ok')
     expect(deliveryState({ email: ' ' }, { state: 'noEmails' })).toBe('none')
     expect(deliveryState({ email: '' }, { state: 'unknown' })).toBe('unknown')
-    expect(deliveryState({ email: 'x@example.com' }, { state: 'unknown' })).toBe('ok')
+    // İnceleme #2: grup bilinmiyorsa takım adresi "yeşil" yapmaz — tüm-pasif bir varsayılan sonucu "ulaşmıyor"a çevirirdi
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'unknown' })).toBe('unknown')
+    // Etkin adres sayısı bilinmeyen varsayılan (pasif listesi okunamadı) da bilinmiyor
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'ok', delivered: null })).toBe('unknown')
   })
 })
 
@@ -66,13 +69,18 @@ describe('pano', () => {
     expect(byId[1].escalation.tone).toBe('ok')
     expect(byId[3].escalation.tone).toBe('gap')
     expect(byId[2].delivery).toBe('none')
-    expect(b.summary).toMatchObject({ teams: 3, noRecipient: 1, critGap: 1, noDefault: 2, noOncall: 3 })
+    expect(b.summary).toMatchObject({ teams: 3, noRecipient: 1, critGap: 1, noDefault: 2, noOncall: 3, deliveryKnown: true })
+    // Tek bir bilinmeyen ulaşım satırı (pasif listesi okunamayan varsayılan) "Alıcısız" KPI'sını "—"ye çevirir
+    const partial = buildBoard(teams, { stats, contacts, groups: [g(10, 1, { inactive_emails: undefined })], oncall, noc: { byTeam: {} } })
+    expect(partial.rows.find((r) => r.teamId === 1).delivery).toBe('unknown')
+    expect(partial.summary.deliveryKnown).toBe(false)
     const unknown = buildBoard(teams, { stats, contacts: null, groups: null, oncall: null, noc: null })
     expect(unknown.rows.every((r) => r.escalation === null && r.defaultGroup.state === 'unknown' && r.oncall.state === 'unknown')).toBe(true)
-    expect(unknown.summary).toMatchObject({ critGap: 0, noDefault: 0, noOncall: 0, escalationKnown: false, groupKnown: false, oncallKnown: false })
-    // takım adresi olan satırlar grup bilinmese de ulaşır
+    expect(unknown.summary).toMatchObject({ critGap: 0, noDefault: 0, noOncall: 0, escalationKnown: false, groupKnown: false,
+      oncallKnown: false, deliveryKnown: false, noRecipient: 0 })
+    // Grup bilinmiyorsa takım adresi olan satır da BİLİNMİYOR (tüm-pasif varsayılan sonucu çevirirdi) — asla yeşil değil
     expect(unknown.rows.find((r) => r.teamId === 2).delivery).toBe('unknown')
-    expect(unknown.rows.find((r) => r.teamId === 1).delivery).toBe('ok')
+    expect(unknown.rows.find((r) => r.teamId === 1).delivery).toBe('unknown')
   })
   it('süzgeç + sıralama: en sorunlu takım önce', () => {
     const b = buildBoard(teams, { stats, contacts, groups, oncall, noc: { byTeam: {} } })

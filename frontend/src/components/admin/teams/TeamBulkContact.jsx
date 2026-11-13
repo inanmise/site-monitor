@@ -38,8 +38,9 @@ export default function TeamBulkContact({ open, onClose, teams = [], users = [],
     return () => { alive = false }
   }, [open])
 
-  const plan = useMemo(() => contactCreatePlan(teams, contacts, userId || null, { canManage, level }),
-    [teams, contacts, userId, canManage, level])
+  const userEmail = useMemo(() => users.find((u) => String(u.id) === String(userId))?.email ?? null, [users, userId])
+  const plan = useMemo(() => contactCreatePlan(teams, contacts, userId || null, { canManage, level, userEmail }),
+    [teams, contacts, userId, canManage, level, userEmail])
 
   async function confirm() {
     const res = await api.admin.bulkCreateContacts({

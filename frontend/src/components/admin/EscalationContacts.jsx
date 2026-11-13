@@ -21,7 +21,7 @@ import ToneBadge, { OrgRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch } from './ListToolbar.jsx'
 import CoveragePanel from './contacts/CoveragePanel.jsx'
 import ContactBulkActions from './bulk/ContactBulkActions.jsx'
-import { manageScope } from './bulk/bulkModel.js'
+import { addCapped, manageScope } from './bulk/bulkModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
@@ -131,12 +131,21 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const selectedContacts = useMemo(() => filteredContacts.filter((c) => selected.has(c.id)), [filteredContacts, selected])
   const pageSelectable = pagedContacts.filter(canSelect).map((c) => c.id)
   const allPageSelected = pageSelectable.length > 0 && pageSelectable.every((id) => selected.has(id))
-  const toggleAllPage = () => setSelected((prev) => {
-    const n = new Set(prev)
-    if (allPageSelected) pageSelectable.forEach((id) => n.delete(id)); else pageSelectable.forEach((id) => n.add(id))
-    return n
-  })
-  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  // Seçim tavanı (sunucu MAX_ITEMS = BULK_MAX): sayfa seçimi tavanda durur ve bunu söyler.
+  const [capHit, setCapHit] = useState(false)
+  useEffect(() => { if (selected.size === 0) setCapHit(false) }, [selected])
+  const toggleAllPage = () => {
+    if (allPageSelected) { setSelected((prev) => { const n = new Set(prev); pageSelectable.forEach((id) => n.delete(id)); return n }); return }
+    const { next, capped } = addCapped(selected, pageSelectable)
+    setSelected(next)
+    setCapHit(capped)
+  }
+  const toggleOne = (id) => {
+    if (selected.has(id)) { setSelected((prev) => { const n = new Set(prev); n.delete(id); return n }); return }
+    const { next, capped } = addCapped(selected, [id])
+    if (capped) { setCapHit(true); return }
+    setSelected(next)
+  }
   const moveTargets = useMemo(() => teams.filter((tm) => canManageTeam(tm.id) !== false), [teams, canManageTeam])
 
   useEffect(() => { load(); loadUsers(); loadStats() }, [])
@@ -342,7 +351,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       </div>
 
       {canManage && (
-        <ContactBulkActions selected={selectedContacts} onClear={() => setSelected(new Set())} onDone={load}
+        <ContactBulkActions selected={selectedContacts} capped={capHit} onClear={() => setSelected(new Set())} onDone={load}
           canManage={canManageTeam} isAdmin={isAdmin} teamOptions={moveTargets}
           teamNameOf={(id) => (id == null ? null : teamMap[id] || null)} />
       )}

@@ -14,6 +14,7 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import GroupBulkActions from './bulk/GroupBulkActions.jsx'
+import { addCapped } from './bulk/bulkModel.js'
 import ToneBadge from './ToneBadge.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
@@ -53,6 +54,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const [groups, setGroups] = useState([])
   // Kullanım sayıları (grup id → referans adedi) — null = henüz/okunamadı (rozet "—"; bilinmeyen ≠ kullanılmıyor).
   const [usageCounts, setUsageCounts] = useState(null)
+  const [stampedCounts, setStampedCounts] = useState(null)
   const [writableTeamIds, setWritableTeamIds] = useState([])
   const [teamEmails, setTeamEmails] = useState({})
   const [loading, setLoading] = useState(true)
@@ -93,7 +95,9 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     try {
       const r = await api.notificationGroups.usageCounts?.()
       setUsageCounts(r?.success ? (r.data?.counts || {}) : null)
-    } catch { setUsageCounts(null) }
+      // Açık alarma damgalı grup sayıları (toplu taşıma önizlemesi). Yok / null = bilinmiyor → "sunucu denetleyecek".
+      setStampedCounts(r?.success && r.data?.stamped_open_alerts && typeof r.data.stamped_open_alerts === 'object' ? r.data.stamped_open_alerts : null)
+    } catch { setUsageCounts(null); setStampedCounts(null) }
   }
 
   async function load() {
@@ -311,8 +315,21 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   const selectable = visible.filter((g) => g.can_write)
   const selectedGroups = visible.filter((g) => selected.has(g.id))
   const allSelected = selectable.length > 0 && selectable.every((g) => selected.has(g.id))
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(selectable.map((g) => g.id)))
-  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  // Seçim tavanı (sunucu MAX_ITEMS = BULK_MAX): "tümünü seç" en çok BULK_MAX seçer ve bunu söyler.
+  const [capHit, setCapHit] = useState(false)
+  useEffect(() => { if (selected.size === 0) setCapHit(false) }, [selected])
+  const toggleAll = () => {
+    if (allSelected) { setSelected(new Set()); return }
+    const { next, capped } = addCapped(new Set(), selectable.map((g) => g.id))
+    setSelected(next)
+    setCapHit(capped)
+  }
+  const toggleOne = (id) => {
+    if (selected.has(id)) { setSelected((prev) => { const n = new Set(prev); n.delete(id); return n }); return }
+    const { next, capped } = addCapped(selected, [id])
+    if (capped) { setCapHit(true); return }
+    setSelected(next)
+  }
   const anySelectable = selectable.length > 0
   const bulkTeams = writableTeamIds.map((id) => ({ id, name: teamMap[id] ?? `#${id}` }))
 
@@ -370,7 +387,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
       )}
 
       {!loading && !loadError && (
-        <GroupBulkActions selected={selectedGroups} groups={groups} counts={usageCounts}
+        <GroupBulkActions selected={selectedGroups} groups={groups} counts={usageCounts} stamped={stampedCounts} capped={capHit}
           onClear={() => setSelected(new Set())} onDone={load} teamOptions={bulkTeams}
           teamNameOf={(id) => (id == null ? null : teamMap[String(id)] ?? null)} />
       )}
