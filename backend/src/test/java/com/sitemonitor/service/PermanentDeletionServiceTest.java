@@ -342,14 +342,14 @@ class PermanentDeletionServiceTest {
 
         service.deleteInventory(gone);
 
-        verify(baselineConfigService).remove("port", derivedPort.getId());
-        verify(baselineConfigService).remove("dns", derivedDns.getId());
-        verify(baselineConfigService, never()).remove("port", standalonePort.getId());
+        verify(baselineConfigService).removeInOwnTransaction("port", derivedPort.getId());
+        verify(baselineConfigService).removeInOwnTransaction("dns", derivedDns.getId());
+        verify(baselineConfigService, never()).removeInOwnTransaction("port", standalonePort.getId());
 
         DnsMonitor solo = dns("solo.example.com", "A", true);
         service.deleteStandalonePort(standalonePort);
         service.deleteStandaloneDns(solo);
-        verify(baselineConfigService).remove("port", standalonePort.getId());
-        verify(baselineConfigService).remove("dns", solo.getId());
+        verify(baselineConfigService).removeInOwnTransaction("port", standalonePort.getId());
+        verify(baselineConfigService).removeInOwnTransaction("dns", solo.getId());
     }
 }

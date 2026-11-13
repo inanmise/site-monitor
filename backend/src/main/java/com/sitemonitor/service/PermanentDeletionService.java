@@ -61,7 +61,7 @@ public class PermanentDeletionService {
     /**
      * Dinamik taban çizgisi yapılandırması + örnekleri (hata taraması 2026-11-13 #7): türev / bağımsız Port-DNS kalıcı silmesinde
      * de silinir — eskiden kalıyordu (etkin satır, Grafana benimseme sayacı silinmiş izlemeyi sayıyordu). İsteğe bağlı: elle
-     * kurulan testlerde yoktur. Örnek silmesi kendi bağlantısında (NOT_SUPPORTED) — bu işlemi bozamaz.
+     * kurulan testlerde yoktur. Temizlik commit SONRASI kendi işleminde koşar ({@link #removeBaseline}) — bu işlemi bozamaz.
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
@@ -223,13 +223,32 @@ public class PermanentDeletionService {
         }
     }
 
-    /** Silinen izlemenin taban çizgisi yapılandırması + örnekleri; bean yoksa (testler) atlanır. */
+    /**
+     * Silinen izlemenin taban çizgisi yapılandırması + örnekleri; bean yoksa (testler) atlanır. Gerileme taraması 2026-11-13
+     * (bulgu 3): temizlik silme işlemine KATILMAZ — işlem commit olduktan SONRA kendi işleminde koşar. Eskiden çağıranın
+     * işlemine katılan {@code remove} bir hatada (sorgu zaman aşımı, bağlantı) dış işlemi rollback-only işaretliyor, buradaki
+     * catch WARN yazıp devam etse de commit {@code UnexpectedRollbackException} ile düşüyordu (silme 500; örnekler zaten
+     * kendi bağlantısında silinmişti). Geri alınan silmede taban da durur (izleme hâlâ var). İşlem yoksa hemen koşar.
+     */
     private void removeBaseline(String type, Long id) {
-        if (baselineConfigService == null) return;
-        try {
-            baselineConfigService.remove(type, id);
-        } catch (RuntimeException e) {
-            log.warn("Silinen izlemenin taban çizgisi kayıtları silinemedi ({}#{}): {}", type, id, e.getMessage());
+        if (baselineConfigService == null || id == null) return;
+        Runnable cleanup = () -> {
+            try {
+                baselineConfigService.removeInOwnTransaction(type, id);
+            } catch (RuntimeException e) {
+                log.warn("Silinen izlemenin taban çizgisi kayıtları silinemedi ({}#{}): {}", type, id, e.getMessage());
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            cleanup.run();
+                        }
+                    });
+        } else {
+            cleanup.run();
         }
     }
 

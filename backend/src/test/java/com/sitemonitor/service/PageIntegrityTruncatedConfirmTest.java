@@ -147,6 +147,56 @@ class PageIntegrityTruncatedConfirmTest {
         verify(esc, times(1)).processConfirmedOutage(eq(HOME), eq(EscalationService.TYPE_PAGE_INTEGRITY), anyString(), any());
     }
 
+    // ── Gerileme taraması 2026-11-13 (bulgu 1): paylaşılan şablon kaynağı ──────────────────────────────────────────────
+    private static final String SHARED = HOME + "assets/ortak.css";
+
+    /** Tarama: sayfa 1..5'te İKİŞER kırık (listeye girer), paylaşılan kaynak yalnız ilk görüldüğü ANA SAYFAYA atfedilir (1 sorun
+     *  → listeye girmez, "unlisted"). Teyit: sayfa 1..5 yeniden ölçülür, kendi kırıkları geçmiştir; {@code sharedOnPages}
+     *  doğruysa paylaşılan kaynak o sayfalarda da yüklenip TEMİZ çıkar. */
+    private void runSharedResourceChain(boolean sharedOnPages) {
+        List<PageCheckerService.ResourceIssue> all = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            all.add(new PageCheckerService.ResourceIssue(page(i) + "/a.png", "IMG", page(i), "BROKEN", true, 404, 9L));
+            all.add(new PageCheckerService.ResourceIssue(page(i) + "/b.png", "IMG", page(i), "BROKEN", true, 404, 9L));
+        }
+        all.add(new PageCheckerService.ResourceIssue(SHARED, "CSS", HOME, "BROKEN", true, 502, 9L));   // geçici CDN takılması
+        stub(HOME, "SITE_CRAWL", reachable(all));
+        for (int i = 1; i <= 5; i++) {
+            java.util.Set<String> clean = sharedOnPages
+                    ? java.util.Set.of(SHARED, page(i) + "/a.png", page(i) + "/b.png")
+                    : java.util.Set.of(page(i) + "/a.png", page(i) + "/b.png");
+            stub(page(i), "SINGLE_PAGE", new PageCheckerService.PageCheckResult("OK", true, 200, 120L, clean.size(),
+                    0, 0, 0, 1, null, null, null, List.of(), null, clean));
+        }
+        PageMonitor m = monitor(1);
+        Map<String, Object> r = ReflectionTestUtils.invokeMethod(scheduler, "recheckPage", m, false, "SITE_CRAWL");
+        assertThat(r).containsEntry("problem_pages_truncated", true);
+        @SuppressWarnings("unchecked") List<String> listed = (List<String>) r.get("problem_pages");
+        assertThat(listed).as("ana sayfa listeye girmez").doesNotContain(HOME).hasSize(5);
+        List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), integ = new ArrayList<>();
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, down, integ, true);
+        assertThat(integ).hasSize(1);
+        assertThat(integ.get(0).up()).isFalse();
+        mos.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integ);   // zamanlı tur → teyit zinciri
+        chain.drain();
+    }
+
+    @Test
+    @DisplayName("bulgu 1: paylaşılan kaynak listedeki sayfalarda yeniden ölçülüp TEMİZ çıktı → taramanın listeye girmeyen "
+            + "(ana sayfa) bayat kopyası sayılmaz → geçici, alarm AÇILMAZ (eskiden her teyit 'down' → sahte alarm ~24 sa)")
+    void sharedResourceRemeasuredClean_unlistedCopyIgnored() {
+        runSharedResourceChain(true);
+        verify(esc, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("bulgu 1 kontrol: paylaşılan kaynak listedeki sayfalarda yeniden ÖLÇÜLMEDİYSE listeye girmeyen sayfanın "
+            + "bulgusu kötümser sayılmaya devam eder → alarm AÇILIR")
+    void sharedResourceNotRemeasured_stillCounts() {
+        runSharedResourceChain(false);
+        verify(esc, times(1)).processConfirmedOutage(eq(HOME), eq(EscalationService.TYPE_PAGE_INTEGRITY), anyString(), any());
+    }
+
     @Test
     @DisplayName("kontrol: ölçülmeyen sayfalar kötümser sayıldığı hâlde eşik tutmuyor (2 + 3 = 5 < 7) → geçici, alarm yok")
     void belowThresholdEvenPessimistic_transient() {

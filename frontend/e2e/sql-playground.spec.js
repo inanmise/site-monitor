@@ -55,7 +55,7 @@ const HISTORY_PAGE = {
   ],
 }
 
-async function mock(page, state) {
+async function mock(page, state, { tables = null } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
   await mockApi(page, { perms: { 'monitoring.crud': { view: true, edit: true } } })
   const json = (body, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) })
@@ -65,6 +65,7 @@ async function mock(page, state) {
     const p = u.pathname
     let body = {}
     try { body = req.postDataJSON() || {} } catch { body = {} }
+    if (tables && p === '/api/admin/sql/tables') return route.fulfill(json({ success: true, data: tables }))
     if (p === '/api/admin/sql/execute') {
       state.executes.push(body)
       if (/pg_sleep/.test(body.sql || '')) {
@@ -356,5 +357,173 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="sql-history-panel"]'), 'geçmişte küçük hedef').toEqual([])
       await page.screenshot({ path: `test-results/sql-playground-${vp.name}.png`, fullPage: true })
     })
+  })
+}
+
+// ── 3. tur tarama (2026-11-13): grafik / karşılaştırma panelde kaydırılabilir (bulgu 1), parametre formu açıkken sonuç paneli
+// ızgaranın içinde (bulgu 13), uzun öneri listesinde etkin öğe görünür ve liste düzenleyici kutusuyla kırpılmaz (bulgu 4).
+// Ölçüm gerçek tarayıcıda: 1280×900 ve 1920×1080 (masaüstü), 768 ve 390 (dokunmatik).
+
+/**
+ * Hedefin TAMAMI sonuç gövdesinden erişilebilir mi: gövde KULLANICININ kaydırabildiği bir kap (overflow-y auto / scroll),
+ * gövdenin kendisi bölümün (overflow-hidden) görünen alanında ve hedef gövdenin içerik alanında (üstü 0'dan, altı
+ * scrollHeight'tan taşmıyor — her parçası bir kaydırma konumunda görünür). Bölüm KENDİSİ kaydırılmamış. Masaüstünde fare
+ * tekerleği gövdeyi gerçekten kaydırır (içerik taşıyorsa).
+ */
+async function reachInResultBody(page, targetSel, { wheel }) {
+  const body = page.locator('[data-slot="sql-result-body"]')
+  await body.evaluate((el) => { el.scrollTop = 0 })
+  let wheelScrolled = null
+  if (wheel) {
+    const b = await body.boundingBox()
+    await page.mouse.move(b.x + b.width / 2, b.y + Math.min(b.height / 2, 40))
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, 300)
+    await page.waitForTimeout(150)
+    wheelScrolled = await body.evaluate((el) => el.scrollTop)
+  }
+  return page.evaluate((sel) => {
+    const bodyEl = document.querySelector('[data-slot="sql-result-body"]')
+    const section = document.querySelector('[data-slot="sql-result"]')
+    const t = document.querySelector(sel)
+    if (!bodyEl || !section || !t) return { missing: true }
+    const br = bodyEl.getBoundingClientRect()
+    const sr = section.getBoundingClientRect()
+    const tr = t.getBoundingClientRect()
+    const top = tr.top - br.top + bodyEl.scrollTop
+    const bottom = tr.bottom - br.top + bodyEl.scrollTop
+    return {
+      overflowY: getComputedStyle(bodyEl).overflowY,
+      sectionScrolled: section.scrollTop,
+      bodyInSection: br.top >= sr.top - 1 && br.bottom <= sr.bottom + 1,
+      reachable: top >= -1 && bottom <= bodyEl.scrollHeight + 1,
+      overflowing: bodyEl.scrollHeight > bodyEl.clientHeight + 1,
+      target: [Math.round(top), Math.round(bottom)], body: [Math.round(bodyEl.clientHeight), Math.round(bodyEl.scrollHeight)],
+    }
+  }, targetSel).then((r) => ({ ...r, wheelScrolled }))
+}
+
+function expectReachable(r, what) {
+  expect(r.missing, `${what}: öğe yok`).toBeUndefined()
+  expect(r.overflowY, `${what}: sonuç gövdesi kaydırılabilir`).toMatch(/auto|scroll/)
+  expect(r.sectionScrolled, `${what}: gizli taşmalı bölüm kendisi kaydırılmadı`).toBe(0)
+  expect(r.bodyInSection, `${what}: gövde bölümün görünen alanında ${JSON.stringify(r)}`).toBe(true)
+  expect(r.reachable, `${what}: tamamı gövdeden erişilebilir ${JSON.stringify(r)}`).toBe(true)
+  if (r.wheelScrolled != null && r.overflowing) expect(r.wheelScrolled, `${what}: fare tekerleği gövdeyi kaydırır`).toBeGreaterThan(0)
+}
+
+const R3_VIEWPORTS = [
+  { name: 'laptop900', width: 1280, height: 900, touch: false },
+  { name: 'wide', width: 1920, height: 1080, touch: false },
+  { name: 'tablet', width: 768, height: 1024, touch: true },
+  { name: 'phone', width: 390, height: 844, touch: true },
+]
+const MANY_TABLES = Array.from({ length: 40 }, (_, i) => ({ table_name: `tbl_${String(i).padStart(2, '0')}_kayitlari`, live_rows: i * 10 }))
+
+for (const vp of R3_VIEWPORTS) {
+  test.describe(`SQL Playground 3. tur yerleşim — ${vp.name} ${vp.width}×${vp.height}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('grafik ve karşılaştırma sonuç panelinde kesilmez, kaydırılarak tamamı görülür', async ({ page }) => {
+      test.setTimeout(120_000)
+      const state = { executes: [], cancels: [], saved: [] }
+      await mock(page, state)
+      await page.goto('/?tab=sqlplayground')
+      await expect(editorTa(page)).toBeVisible({ timeout: 30_000 })
+      await editorTa(page).fill('SELECT id, day, team, alerts, password_hash FROM daily_alerts')
+      await editorTa(page).press('Escape')
+      await editorTa(page).press('Control+Enter')
+      await expect.poll(() => state.executes.length).toBe(1)
+      await toResultsTab(page, vp)
+      const result = page.locator('[data-slot="sql-result"]')
+      const view = result.getByRole('group', { name: 'Sonuç görünümü' })
+      await view.getByRole('button', { name: 'Grafik' }).click()
+      const svg = page.locator('[data-slot="sql-chart"] svg.recharts-surface').first()
+      await expect(svg).toBeVisible({ timeout: 20_000 })
+      expectReachable(await reachInResultBody(page, '[data-slot="sql-chart"] svg.recharts-surface', { wheel: !vp.touch }), 'grafik')
+
+      // İkinci çalıştırma → karşılaştırma: "Silinen" bölümü de panelden erişilebilir
+      await toEditorTab(page, vp)
+      await editorTa(page).press('Control+Enter')
+      await expect.poll(() => state.executes.length).toBe(2)
+      await toResultsTab(page, vp)
+      await view.getByRole('button', { name: 'Karşılaştır' }).click()
+      await expect(page.locator('[data-slot="sql-compare-removed"]')).toHaveCount(1)
+      expectReachable(await reachInResultBody(page, '[data-slot="sql-compare-removed"]', { wheel: !vp.touch }), '"Silinen" bölümü')
+      expect(await page.evaluate(overflowIn, '[data-slot="sql-result"]'), 'sonuçta yatay taşma').toEqual([])
+    })
+
+    test('uzun öneri listesi: düzenleyici kutusuyla kırpılmaz, ↓ ile etkin öğe görünür kalır', async ({ page }) => {
+      test.setTimeout(90_000)
+      const state = { executes: [], cancels: [], saved: [] }
+      await mock(page, state, { tables: MANY_TABLES })
+      await page.goto('/?tab=sqlplayground')
+      await expect(editorTa(page)).toBeVisible({ timeout: 30_000 })
+      await editorTa(page).fill('SELECT * FROM ')
+      await editorTa(page).click()
+      await editorTa(page).press('End')
+      await page.keyboard.type('tbl')
+      const lb = page.getByRole('listbox', { name: 'Öneriler' })
+      await expect(lb).toBeVisible()
+      await expect(lb.getByRole('option')).toHaveCount(40)
+      const box = await lb.boundingBox()
+      expect(box.height, 'liste en az 5 satır yüksekliğinde (sıkışmadı)').toBeGreaterThanOrEqual(5 * 32)
+      expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+      expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
+      expect(box.y).toBeGreaterThanOrEqual(-1)
+      for (let i = 0; i < 12; i++) await editorTa(page).press('ArrowDown')
+      const active = await page.evaluate(() => {
+        const ta = document.querySelector('textarea[aria-activedescendant]')
+        const id = ta?.getAttribute('aria-activedescendant')
+        const opt = id ? document.getElementById(id) : null
+        const list = document.querySelector('[data-slot="sql-completion"]')
+        if (!opt || !list) return { missing: true, id }
+        const o = opt.getBoundingClientRect()
+        const l = list.getBoundingClientRect()
+        return { index: [...list.children].indexOf(opt), visible: o.top >= l.top - 1 && o.bottom <= l.bottom + 1, opt: [Math.round(o.top), Math.round(o.bottom)], list: [Math.round(l.top), Math.round(l.bottom)] }
+      })
+      expect(active.index).toBe(12)
+      expect(active.visible, `etkin öğe listenin görünen kısmında ${JSON.stringify(active)}`).toBe(true)
+      await editorTa(page).press('Enter')
+      await expect(editorTa(page)).toHaveValue('SELECT * FROM tbl_12_kayitlari')
+      await expect(lb).toHaveCount(0)
+    })
+
+    if (!vp.touch) {
+      test('parametre formu açıkken sonuç paneli ızgaranın içinde; form kendi içinde kayar', async ({ page }) => {
+        test.setTimeout(90_000)
+        const state = { executes: [], cancels: [], saved: [] }
+        await mock(page, state)
+        await page.goto('/?tab=sqlplayground')
+        await expect(editorTa(page)).toBeVisible({ timeout: 30_000 })
+        const measure = () => page.evaluate(() => {
+          const r = (sel) => { const e = document.querySelector(sel); if (!e) return null; const b = e.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, height: b.height } }
+          const f = document.querySelector('[data-slot="sql-params"]')
+          return {
+            grid: r('[data-slot="sql-workspace"]'), result: r('[data-slot="sql-result"]'), params: r('[data-slot="sql-params"]'),
+            paramsScrollable: f ? getComputedStyle(f).overflowY : null, paramsOverflow: f ? f.scrollHeight - f.clientHeight : null,
+          }
+        })
+        // 3 parametre (tek satır) ve 12 parametre (form taşar → kendi içinde kayar)
+        for (const n of [3, 12]) {
+          const where = Array.from({ length: n }, (_, i) => `c${i} = :param_${i}`).join(' AND ')
+          await editorTa(page).fill(`SELECT id, team FROM alerts WHERE ${where}`)
+          await editorTa(page).press('Escape')
+          await expect(page.locator('[data-slot="sql-params"] [data-param]')).toHaveCount(n)
+          const m = await measure()
+          expect(m.result.bottom, `sonuç paneli ızgaranın altına inmedi (${n} parametre) ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.grid.bottom + 1)
+          expect(m.params.bottom, `form sonuç panelinin üstünde ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.result.top + 1)
+          expect(m.result.height, 'sonuç paneli en az boyunda').toBeGreaterThanOrEqual(223)
+          if (m.paramsOverflow > 0) {
+            expect(m.paramsScrollable, 'taşan form kaydırılabilir').toMatch(/auto|scroll/)
+            const last = page.locator(`[data-slot="sql-params"] [data-param="param_${n - 1}"] input`)
+            await last.scrollIntoViewIfNeeded()
+            await expect(last).toBeInViewport()
+            const after = await measure()
+            expect(after.result.bottom, 'form kaydırılınca da panel ızgarada').toBeLessThanOrEqual(after.grid.bottom + 1)
+          }
+        }
+        expect(await page.evaluate(overflowIn, '[data-slot="sql-playground"]'), 'yatay taşma').toEqual([])
+      })
+    }
   })
 }

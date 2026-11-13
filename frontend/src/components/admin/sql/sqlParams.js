@@ -239,11 +239,21 @@ export function paramErrorsFromResponse(res) {
   return Object.keys(out).length ? out : null
 }
 
-/** Sekmenin parametre durumunu sorgudaki adlara göre tamamlar (yeni ad → tahmini tür, boş değer). Değişmezse aynı nesne. */
+/**
+ * Sekmenin parametre durumunu sorgudaki adlara göre eşitler: yeni ad → tahmini tür, boş değer; sorguda ARTIK GEÇMEYEN ve
+ * değeri BOŞ ad silinir (`:region_name` yazılırken oluşan `:r`, `:re`, `:reg`… ara adları birikmesin). Değer girilmiş ad,
+ * sorgudan geçici olarak çıksa da (yazım düzeltmesi) korunur. Değişmezse aynı nesne.
+ */
 export function syncParamState(names, state) {
   const cur = state && typeof state === 'object' ? state : {}
+  const want = new Set(names || [])
   let changed = false
-  const next = { ...cur }
+  const next = {}
+  for (const [k, v] of Object.entries(cur)) {
+    const hasValue = v && typeof v === 'object' && v.value != null && String(v.value) !== ''
+    if (!want.has(k) && !hasValue) { changed = true; continue }
+    next[k] = v
+  }
   for (const name of names || []) {
     if (!next[name]) { next[name] = { value: '', type: guessParamType(name) }; changed = true }
   }

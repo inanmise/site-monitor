@@ -27,7 +27,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
@@ -62,9 +61,6 @@ public class SqlPlaygroundService {
 
     private static final Pattern STARTS_WITH_SELECT_OR_WITH =
         Pattern.compile("^\\s*(select|with)\\b", Pattern.CASE_INSENSITIVE);
-
-    private static final Pattern LIMIT_CLAUSE =
-        Pattern.compile("\\blimit\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -276,6 +272,35 @@ public class SqlPlaygroundService {
     public static final int EXPORT_JSON_MAX_ROWS = 20_000;
     static final int EXPORT_TIMEOUT_SEC = 120;
     static final int EXPORT_FETCH_SIZE = 500;
+
+    /**
+     * Ekran sorgusu bellek bütçesi (2026-11-13, 3. tur): sürücü imleciyle {@value #SCREEN_FETCH_SIZE}'er satır okunur
+     * (eskiden 0 = bütün sonuç bir kerede belleğe); hücre en çok {@code min(CELL_MAX_CHARS, RESULT_MAX_CHARS / kolon)}
+     * karakter (fazlası kesilir, sonuna "…", {@code truncated_cells} sayılır); toplam {@value #RESULT_MAX_CHARS}
+     * karakteri aşacak satırda okuma durur ({@code truncated: true, truncated_reason: "bytes"}).
+     * {@code SELECT repeat('x', 1000000) FROM generate_series(1, 1000)} artık ≈ 1 GB değil ≈ 8 M karakter tutar.
+     */
+    static final int SCREEN_FETCH_SIZE = 100;
+    static final int RESULT_MAX_CHARS = 8_000_000;
+    static final int CELL_MAX_CHARS = 100_000;
+    /** Çok kolonlu sonuçta hücre sınırının alt tabanı. */
+    static final int CELL_MIN_CHARS = 1_000;
+    /** Kesilen hücrenin sonuna eklenen işaret. */
+    static final String CELL_TRUNCATED_MARK = "…";
+
+    /**
+     * Bir satırı (bileşik değeri) TEK argümanla alabilen fonksiyonlar: ilk argüman {@code record} / çok biçimli /
+     * bileşik tür (ya da bileşik üstü etki alanı) ve en çok bir zorunlu argüman. PostgreSQL {@code u.f} yazımını
+     * {@code u}'nun {@code f} kolonu yoksa {@code f(u)} çağrısı yapar — bekçi bu adları satır kaynağı niteleyicisiyle
+     * reddeder ({@code SqlSensitiveGuard.R_ATTRIBUTE_FUNCTION}).
+     */
+    static final String ROW_FUNCTIONS_SQL = "SELECT DISTINCT p.proname FROM pg_catalog.pg_proc p "
+            + "JOIN pg_catalog.pg_type t ON t.oid = p.proargtypes[0] "
+            + "WHERE p.pronargs >= 1 AND p.pronargs - p.pronargdefaults <= 1 "
+            + "AND (t.typname IN ('record', 'anyelement', 'anynonarray', 'anycompatible', 'anycompatiblenonarray', 'any') "
+            + "OR t.typtype = 'c' "
+            + "OR (t.typtype = 'd' AND EXISTS (SELECT 1 FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype AND b.typtype = 'c')))";
+
     /** Hassas kolon şeması önbelleği (canlı information_schema taraması). */
     static final long SENSITIVE_SCHEMA_TTL_MS = 300_000L;
     static final long SENSITIVE_SCHEMA_RETRY_MS = 30_000L;
@@ -343,14 +368,23 @@ public class SqlPlaygroundService {
                 for (Map<String, Object> r : rows) {
                     String t = str(r.get("table_name")), c = str(r.get("column_name"));
                     if (t == null || c == null) continue;
-                    cols.computeIfAbsent(t.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(c.toLowerCase(Locale.ROOT));
+                    // Kolon adı TAM (harf duyarlı) — hassas desen kendisi küçültür; alan biçiminde çağrı kuralı tam adla karşılaştırır
+                    cols.computeIfAbsent(t.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(c);
                 }
             }
         } catch (Exception e) {
             readOk = false;
             log.debug("SQL Playground: hassas kolon şeması okunamadı (statik katalog kullanılıyor): {}", e.toString());
         }
-        s = SqlSensitiveColumns.schemaOf(cols);
+        // Satırı tek argüman alan fonksiyonlar (u.to_jsonb ≡ to_jsonb(u) — alan biçiminde çağrı, 3. tur): canlı katalog
+        // tabanla BİRLEŞTİRİLİR; okunamazsa (H2 / yetki) yalnız taban liste — kural daralmaz.
+        List<String> rowFns = null;
+        try {
+            rowFns = jdbcTemplate.queryForList(ROW_FUNCTIONS_SQL, String.class);
+        } catch (Exception e) {
+            log.debug("SQL Playground: satır alan fonksiyon listesi okunamadı (taban liste kullanılıyor): {}", e.toString());
+        }
+        s = SqlSensitiveColumns.schemaOf(cols, rowFns);
         sensitiveSchema = s;
         sensitiveSchemaAt = readOk ? now : now - SENSITIVE_SCHEMA_TTL_MS + SENSITIVE_SCHEMA_RETRY_MS;
         return s;
@@ -364,7 +398,8 @@ public class SqlPlaygroundService {
     /**
      * Ekran sorgusu: ≤ {@value #MAX_ROWS} satır, {@value #QUERY_TIMEOUT_SEC} sn. Yanıt anahtarları eskisiyle aynı
      * ({@code ok, rows, rowCount, durationMs, executedSql, error}) + {@code run_id}, {@code masked_columns},
-     * {@code cancelled}. Hassas kolon reddi geçmişe başarısız satır yazar ve {@link SensitiveColumnException} fırlatır.
+     * {@code cancelled} + bellek bütçesi ({@code truncated}, {@code truncated_reason} "rows" | "bytes" | null,
+     * {@code truncated_cells}). Hassas kolon reddi geçmişe başarısız satır yazar ve {@link SensitiveColumnException} fırlatır.
      */
     public Map<String, Object> execute(QueryRequest req, String executedBy) {
         String rawSql = req.sql();
@@ -372,12 +407,33 @@ public class SqlPlaygroundService {
         String capped = enforceLimit(p.sanitized(), MAX_ROWS);
         List<Map<String, Object>> rows = new ArrayList<>();
         List<List<Map<String, String>>> renamedOut = new ArrayList<>(1);
-        RunOutcome o = run(capped, req.params(), req.runId(), executedBy, "execute", QUERY_TIMEOUT_SEC, 0,
+        boolean[] budgetHit = {false};
+        int[] truncatedCells = {0};
+        RunOutcome o = run(capped, req.params(), req.runId(), executedBy, "execute", QUERY_TIMEOUT_SEC, SCREEN_FETCH_SIZE,
                 p.verdict().mentionsSensitive(), new RowSink() {
                     String[] labels;
-                    @Override public void columns(String[] l) { labels = l; }
+                    int cellCap = CELL_MAX_CHARS;
+                    long total;
+                    @Override public void columns(String[] l) {
+                        labels = l;
+                        cellCap = Math.min(CELL_MAX_CHARS, Math.max(CELL_MIN_CHARS, RESULT_MAX_CHARS / Math.max(1, l.length)));
+                    }
                     @Override public void renamedColumns(List<Map<String, String>> r) { renamedOut.add(r); }
                     @Override public boolean row(Object[] values) {
+                        long rowChars = 0;
+                        int cut = 0;
+                        for (int i = 0; i < values.length; i++) {
+                            Object v = fitCell(values[i], cellCap);
+                            if (v != values[i]) cut++;
+                            values[i] = v;
+                            rowChars += approxChars(v);
+                        }
+                        if (!rows.isEmpty() && total + rowChars > RESULT_MAX_CHARS) {
+                            budgetHit[0] = true;
+                            return false;
+                        }
+                        total += rowChars;
+                        truncatedCells[0] += cut;
                         Map<String, Object> m = new org.springframework.util.LinkedCaseInsensitiveMap<>(values.length);
                         for (int i = 0; i < values.length; i++) m.putIfAbsent(labels[i], values[i]);
                         rows.add(m);
@@ -387,8 +443,11 @@ public class SqlPlaygroundService {
         String storedError = maskParamValues(o.error(), req.params());
         if (!o.ok()) {
             rows.clear();
+            budgetHit[0] = false;
+            truncatedCells[0] = 0;
             log.warn("SQL Playground query failed: user={} cancelled={} err={}", executedBy, o.cancelled(), storedError);
         }
+        String truncatedReason = budgetHit[0] ? "bytes" : o.ok() && rows.size() >= MAX_ROWS ? "rows" : null;
         saveHistory(rawSql, executedBy, o.ok(), o.ok() ? rows.size() : null, o.durationMs(), storedError, o.cancelled());
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -405,7 +464,43 @@ public class SqlPlaygroundService {
         // Sıralı, TEKİL kolon adları (satır anahtarları bunlar) + yeniden adlandırılanlar (aynı adlı kolonlar)
         result.put("columns",         o.labels() == null ? List.of() : List.of(o.labels()));
         result.put("renamed_columns", renamedOut.isEmpty() ? List.of() : renamedOut.get(0));
+        // Bellek bütçesi (3. tur): "rows" = satır tavanına ulaşıldı (fazlası olabilir), "bytes" = karakter bütçesi doldu
+        result.put("truncated",        truncatedReason != null);
+        result.put("truncated_reason", truncatedReason);
+        result.put("truncated_cells",  truncatedCells[0]);
         return result;
+    }
+
+    /**
+     * Ekran hücresi sınırı: {@code cap} karakteri aşan metin kesilir (vekil çift bölünmez) + {@link #CELL_TRUNCATED_MARK};
+     * aşan ikili veri {@code [binary N bytes]}; aşan liste metne çevrilip kesilir. Aynı nesne dönerse kesilmedi. Maske ve
+     * şifreli değer denetimi ÖNCE (hücre okunurken) uygulanır — kesme maskeyi açmaz.
+     */
+    static Object fitCell(Object v, int cap) {
+        if (v instanceof String s) return s.length() > cap ? cut(s, cap) + CELL_TRUNCATED_MARK : v;
+        if (v instanceof byte[] b) return approxChars(b) > cap ? "[binary " + b.length + " bytes]" : v;
+        if (v instanceof java.util.Collection<?> c && approxChars(c) > cap) return cut(String.valueOf(c), cap) + CELL_TRUNCATED_MARK;
+        return v;
+    }
+
+    private static String cut(String s, int cap) {
+        if (s.length() <= cap) return s;
+        int end = cap;
+        if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) end--;
+        return s.substring(0, end);
+    }
+
+    /** Hücrenin yanıttaki yaklaşık karakter boyu (JSON; ikili = base64). Liste öğeleri sınırlı (en çok 10 000, 6 boyut). */
+    static long approxChars(Object v) {
+        if (v == null) return 4;
+        if (v instanceof CharSequence cs) return cs.length() + 2L;
+        if (v instanceof byte[] b) return (b.length + 2L) / 3 * 4 + 2;
+        if (v instanceof java.util.Collection<?> c) {
+            long sum = 2;
+            for (Object e : c) sum += approxChars(e) + 1;
+            return sum;
+        }
+        return 24;
     }
 
     /**
@@ -946,17 +1041,42 @@ public class SqlPlaygroundService {
      * <p>Sarmalamak guvenli: giris tek statement ve salt-okunurdur (bkz. validateReadOnly +
      * execute'un salt-okunur islemi), dolayisiyla alt sorgu olarak kosmasi anlami degistirmez.
      */
-    private String enforceLimit(String sql, int cap) {
+    static String enforceLimit(String sql, int cap) {
         String inner = sql.endsWith(";") ? sql.substring(0, sql.length() - 1) : sql;
-        // 1) Tavani ASAN acik bir LIMIT varsa dusurulur — DB'nin bosuna 5000 satir uretmesini onler.
-        Matcher m = LIMIT_CLAUSE.matcher(inner);
-        if (m.find() && parseLimit(m.group(1)) > cap) {
-            inner = inner.substring(0, m.start()) + "LIMIT " + cap + inner.substring(m.end());
-        }
+        // 1) EN DIŞ sorgunun (derinlik 0) tavani ASAN acik LIMIT'i dusurulur — DB'nin bosuna 5000 satir uretmesini onler.
+        //    Yalniz sozcuk cozumleyiciyle bulunan derinlik-0 LIMIT belirteci degisir (2026-11-13, 3. tur): eskiden ilk
+        //    "limit N" metni HER YERDE tavana inerdi — alt sorgudaki LIMIT 5000 (count(*) 1000 donerdi, sessizce yanlis) ya
+        //    da 'limit 5000' dizesi bozulurdu.
+        inner = lowerOuterLimit(inner, cap);
         // 2) DIS tavan HER KOSULDA eklenir. Eskiden ic LIMIT tavanin altindaysa hicbir sinir
         //    konmuyordu; oysa o LIMIT bir ALT sorguda olabilir ve dis kartezyen carpim milyonlarca
         //    satir dondurup queryForList ile hepsini bellege alabilir (yalniz 30 sn timeout sinirlar).
         return "SELECT * FROM (" + inner + ") AS _capped LIMIT " + cap;
+    }
+
+    /**
+     * Derinlik 0'daki ilk {@code LIMIT <düz ondalık tamsayı>} {@code cap}'i aşıyorsa sayıyı {@code cap} yapar; başka her
+     * şey (alt sorgu / CTE / dize / {@code LIMIT ALL} / {@code LIMIT (…)} / 0x… biçimi) aynen kalır — dış tavan zaten
+     * sınırlar. Çözümlenemeyen metin aynen döner.
+     */
+    static String lowerOuterLimit(String sql, int cap) {
+        SqlLexer.Lexed lx = SqlLexer.lex(sql, DbType.POSTGRESQL);
+        if (lx.error() != null) return sql;
+        List<SqlLexer.Token> tok = lx.tokens();
+        int depth = 0;
+        for (int k = 0; k < tok.size(); k++) {
+            SqlLexer.Token t = tok.get(k);
+            if (t.isSymbol('(')) { depth++; continue; }
+            if (t.isSymbol(')')) { depth = Math.max(0, depth - 1); continue; }
+            if (depth != 0 || !t.isWord("LIMIT") || k + 1 >= tok.size()) continue;
+            SqlLexer.Token num = tok.get(k + 1);
+            if (num.kind() != SqlLexer.Kind.NUMBER || !num.text().chars().allMatch(Character::isDigit)) return sql;
+            if (k + 2 < tok.size() && tok.get(k + 2).start() == num.end()
+                    && tok.get(k + 2).kind() != SqlLexer.Kind.SYMBOL) return sql;   // 0x… / 1_000 — dokunma
+            if (parseLimit(num.text()) <= cap) return sql;
+            return sql.substring(0, num.start()) + cap + sql.substring(num.end());
+        }
+        return sql;
     }
 
     private static long parseLimit(String digits) {

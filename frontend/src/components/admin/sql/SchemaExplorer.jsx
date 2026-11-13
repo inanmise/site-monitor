@@ -11,6 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
+import { matchesSearchText } from '../../../utils/monitorFilters.js'
 import { formatCompact, relativeFrom, shortType } from './sqlUtils.js'
 
 function KeyTag({ kind, title }) {
@@ -38,12 +39,19 @@ export default function SchemaExplorer({
   const [open, setOpen] = useState(() => new Set())
   const [loadingCols, setLoadingCols] = useState(() => new Set())
 
+  // Arama projenin ortak katlama kuralıyla (Türkçe İ / ı, aksanlar — `foldSearchText`): tr-TR'de "CRITICAL" açıklaması
+  // "critical" aramasında bulunur (yerel küçük harf `crıtıcal` verirdi).
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    if (!needle) return tables || []
-    return (tables || []).filter((tb) => tb.table_name.toLowerCase().includes(needle)
-      || (columnsMap?.[tb.table_name] || []).some((c) => c.column_name.toLowerCase().includes(needle))
-      || String(dictionary?.tables?.[tb.table_name]?.description || '').toLocaleLowerCase().includes(needle))
+    if (!q.trim()) return tables || []
+    return (tables || []).filter((tb) => {
+      const dict = dictionary?.tables?.[tb.table_name]
+      return matchesSearchText(q, [
+        tb.table_name,
+        ...(columnsMap?.[tb.table_name] || []).map((c) => c.column_name),
+        dict?.description,
+        ...(dict?.columns && typeof dict.columns === 'object' ? Object.values(dict.columns) : []),
+      ])
+    })
   }, [tables, q, columnsMap, dictionary])
 
   const toggle = async (name) => {

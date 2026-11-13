@@ -12,6 +12,28 @@ const SCAN_MAX = 200_000
 
 const isNameStart = (c) => /[A-Za-z_]/.test(c)
 const isNamePart = (c) => /[A-Za-z0-9_$]/.test(c)
+const IDENT_RE = /[\p{L}\p{Nd}_$]/u
+
+/**
+ * `'` bir `E'…'` (ters bölü kaçışlı) dizeyi mi açıyor: önceki karakter E / e ve ondan önce tanımlayıcı karakteri yok —
+ * sunucunun (`SqlParams` / `SqlLexer`) ve `sqlParams.scanParams`'ın kuralı.
+ */
+function escapeString(s, i) {
+  return s[i] === "'" && i > 0 && (s[i - 1] === 'E' || s[i - 1] === 'e') && (i < 2 || !IDENT_RE.test(s[i - 2]))
+}
+
+/** Tırnaklı bölümün kapanış dizini (kapanış tırnağının konumu; kapanmazsa metnin uzunluğu). `''` / `""` ikilenmesi kaçıştır. */
+function quotedClose(s, i) {
+  const c = s[i]
+  const backslash = escapeString(s, i)
+  let j = i + 1
+  while (j < s.length) {
+    if (backslash && s[j] === '\\') { j += 2; continue }
+    if (s[j] === c) { if (s[j + 1] === c) { j += 2; continue } break }
+    j++
+  }
+  return Math.min(j, s.length)
+}
 
 /** İmleçten önceki metin bir dize / yorum / dolar bloğu / tırnaklı ad içinde mi (doğrusal ileri tarama). */
 export function insideLiteral(text, caret) {
@@ -38,11 +60,7 @@ export function insideLiteral(text, caret) {
       continue
     }
     if (c === "'" || c === '"') {
-      let j = i + 1
-      while (j < s.length) {
-        if (s[j] === c) { if (s[j + 1] === c) { j += 2; continue } break }
-        j++
-      }
+      const j = quotedClose(s, i)
       if (j >= end) return true
       i = j + 1
       continue
@@ -114,9 +132,7 @@ export function parseAliases(text) {
     if (c === '-' && s[i + 1] === '-') { const nl = s.indexOf('\n', i); i = nl < 0 ? s.length : nl + 1; continue }
     if (c === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); i = e < 0 ? s.length : e + 2; continue }
     if (c === "'" || c === '"') {
-      let j = i + 1
-      while (j < s.length) { if (s[j] === c) { if (s[j + 1] === c) { j += 2; continue } break } j++ }
-      i = j + 1
+      i = quotedClose(s, i) + 1
       words.push({ t: 'lit', v: '' })
       continue
     }
@@ -203,7 +219,10 @@ export function completionItems(ctx, { tables = [], columnsMap = {}, aliases = n
 
   if (ctx.qualifier) {
     const q = ctx.qualifier.toLowerCase()
-    const table = aliases.get(q) ?? tableSet.get(q) ?? null
+    // Takma ad tablonun YAZILDIĞI biçimi döndürür (`FROM TEAMS t`); kolon önbelleği ve tablo listesi sunucunun adlarıyla
+    // (PostgreSQL tırnaksız adı küçük harfe katlar) — arama küçük harfe normalize edilir
+    const raw = aliases.get(q) ?? null
+    const table = (raw != null ? tableSet.get(String(raw).toLowerCase()) : null) ?? tableSet.get(q) ?? raw
     if (!table) return { items: [], needColumns: [] }
     for (const c of colsOf(table)) {
       const r = matchRank(c.column_name, ctx.prefix)

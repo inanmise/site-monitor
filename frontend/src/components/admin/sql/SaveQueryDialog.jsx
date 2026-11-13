@@ -26,6 +26,8 @@ const CLIENT_ERR = {
  * paylaşım, SQL (sekmeden) + parametre TÜRLERİ (değer asla). Düzenleme: yalnız DEĞİŞEN alanlar + `version`; değişiklik yoksa
  * istek gönderilmez. 409 `CONCURRENT_MODIFICATION` → "başkası değiştirdi" bandı + güncel sürümü yükle (girilenler korunur);
  * 409 `SQL_SAVED_TITLE_EXISTS` başlığın altında; 400 `sql_text` (salt-okunur / hassas kolon kuralı) bantta; `SQL_SAVED_LIMIT` bantta.
+ * `sql == null` (güncellemede) = panelden düzenleme: SQL hiç gönderilmez — çakışma sonrası yüklenen son sürümün SQL'i
+ * paneldeki eski metinle geri yazılmaz.
  *
  * @param mode 'create' | 'update'
  * @param base güncellenen kayıt (update) — `{ id, title, description, tags, shared, sql_text, version }`
@@ -50,7 +52,9 @@ export default function SaveQueryDialog({ open, mode = 'create', base, sql, para
     setBanner(null)
   }, [open, mode, base])
 
-  const formFull = useMemo(() => ({ ...form, tags: normalizeTags(form.tags), sql_text: sql ?? '' }), [form, sql])
+  const metaOnly = mode === 'update' && sql == null
+  const formFull = useMemo(() => ({ ...form, tags: normalizeTags(form.tags), sql_text: metaOnly ? (current?.sql_text ?? '') : (sql ?? '') }),
+    [form, sql, metaOnly, current])
   const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e)) }
   const errText = (k) => {
     const e = errors[k]
@@ -69,7 +73,7 @@ export default function SaveQueryDialog({ open, mode = 'create', base, sql, para
   }
 
   const save = async () => {
-    const v = validateSaved(formFull)
+    const v = validateSaved(formFull, { checkSql: !metaOnly })
     if (v) {
       setErrors(v)
       if (v.sql_text) setBanner({ tone: 'danger', text: t(CLIENT_ERR[v.sql_text], 100000) })
@@ -80,7 +84,7 @@ export default function SaveQueryDialog({ open, mode = 'create', base, sql, para
     try {
       let r
       if (mode === 'update' && current?.id != null) {
-        const body = savedUpdateBody(formFull, current, paramTypes)
+        const body = savedUpdateBody(formFull, current, paramTypes, { includeSql: !metaOnly })
         if (!body) { toast.info(t('sql.saved.noChange')); onClose?.(); return }
         r = await api.admin.sqlSavedUpdate(current.id, body)
       } else {

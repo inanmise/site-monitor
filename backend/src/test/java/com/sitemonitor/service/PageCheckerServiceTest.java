@@ -121,6 +121,27 @@ class PageCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("Gerileme taraması 2026-11-13 (bulgu 1): SINGLE_PAGE gerçekten ölçülüp TEMİZ çıkan kaynakları bildirir — "
+            + "kırık kaynak ve süre dolduğu için ölçülmeyen kaynak listede YOK; tarama listeyi doldurmaz")
+    void singlePage_reportsCleanResources() {
+        var broken = checker.check(base + "/broken", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(broken.cleanResources()).as("sağlam script ölçüldü").anyMatch(u -> u.endsWith("/app.js"));
+        assertThat(broken.cleanResources()).as("kırık img temiz sayılmaz").noneMatch(u -> u.contains("/missing.png"));
+
+        var ok = checker.check(base + "/ok", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(ok.cleanResources()).hasSize(3);
+
+        var crawl = checker.check(base + "/site", "SITE_CRAWL", 5000, 2000, 5, null, 2, 50, 60);
+        assertThat(crawl.cleanResources()).as("tarama yolu izlemez").isEmpty();
+
+        // EN SON (asılı işleyici test sunucusunu tutar): 5 sn duvar saati tavanı, asılı img (10 sn) süre içinde ölçülemez →
+        // temiz SAYILMAZ (ölçülmedi ≠ sağlıklı)
+        var hung = checker.check(base + "/hangres", "SINGLE_PAGE", 30_000, 2000, 5, null, 2, 50, 5);
+        assertThat(hung.mainReachable()).isTrue();
+        assertThat(hung.cleanResources()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Erişilemez ana sayfa (500) → DOWN, mainReachable=false")
     void mainError_down() {
         var r = checker.check(base + "/down500", "SINGLE_PAGE", 5000, 2000, 5, null, 2, 50, 60);

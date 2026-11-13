@@ -116,8 +116,13 @@ export default function SqlPlayground() {
   const art = rt[activeTab.id] || {}
   const setRtTab = useCallback((id, patch) => setRt((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...(typeof patch === 'function' ? patch(prev[id] || {}) : patch) } })), [])
 
+  // Bu tarayıcı sekmesinin gördüğü sekme kimlikleri: depoda olup burada hiç görülmeyen sekme BAŞKA bir tarayıcı sekmesinindir
+  // ve yazarken korunur (iki tarayıcı sekmesi aynı taslak anahtarına yazıyor — birinin taslağı ötekini silmesin).
+  const knownTabIds = useRef(null)
+  if (!knownTabIds.current) knownTabIds.current = new Set(tabsState.tabs.map((x) => x.id))
   useEffect(() => {
-    const h = setTimeout(() => { setDraftWarn(!saveTabs(tabsState).ok) }, 400)
+    for (const tb of tabsState.tabs) knownTabIds.current.add(tb.id)
+    const h = setTimeout(() => { setDraftWarn(!saveTabs(tabsState, undefined, { known: knownTabIds.current }).ok) }, 400)
     return () => clearTimeout(h)
   }, [tabsState])
 
@@ -138,7 +143,11 @@ export default function SqlPlayground() {
     })
   }, [])
 
-  const [selection, setSelection] = useState('')
+  // Seçim, ait olduğu sekmeyle birlikte tutulur: etkin sekme değişince (kapatma, çoğaltma, kayıtlı sorgu açma, sekme
+  // tıklaması) eski seçim TEK yerde geçersizleşir — kapanan sekmenin seçili metni başka sekmede çalışmaz.
+  const [selState, setSelState] = useState({ tabId: null, text: '' })
+  const selection = selState.tabId === activeTab.id ? selState.text : ''
+  const clearSelection = useCallback(() => setSelState({ tabId: null, text: '' }), [])
   const [running, setRunning] = useState(null)   // { tabId, runId, kind: 'execute' | 'explain' }
   const [stopping, setStopping] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -460,15 +469,15 @@ export default function SqlPlayground() {
     writeEditor(tableQuery(name), { replace: true })
   }, [writeEditor])
 
-  const onCaret = useCallback((c) => setSelection(c.text || ''), [])
+  const onCaret = useCallback((c) => setSelState({ tabId: activeRef.current.id, text: c.text || '' }), [])
 
   // ── Sekme işlemleri ──
   const addNewTab = useCallback((init = {}) => {
     if (tabsRef.current.tabs.length >= MAX_TABS) { toast.error(t('sql.tabs.full', MAX_TABS)); return }
     setTabsState((s) => addTab(s, init))
-    setSelection('')
+    clearSelection()
     if (layout === 'phone') setPhoneTab('editor')
-  }, [layout, t, toast])
+  }, [layout, t, toast, clearSelection])
   const closeOneTab = useCallback(async (id) => {
     const tab = tabsState.tabs.find((x) => x.id === id)
     if (!tab) return
@@ -502,9 +511,23 @@ export default function SqlPlayground() {
     if (!tab.sql.trim()) { toast.error(t('sql.saved.err.sqlRequired')); return }
     const types = paramTypesOf(extractParams(tab.sql), tab.params)
     if (mode === 'update' && tab.savedId != null && tab.savedMine !== false) {
-      const r = await api.admin.sqlSavedGet(tab.savedId)
-      if (r?.success) { setSaveDlg({ mode: 'update', base: r.data ?? r, sql: tab.sql, paramTypes: types, tabId: tab.id }); return }
-      // Kayıt artık yok / erişilemiyor → yeni kayıt olarak kaydetme penceresi (bağ kopar)
+      let r
+      try {
+        r = await api.admin.sqlSavedGet(tab.savedId)
+      } catch (e) {
+        toast.error(e?.message || t('sql.saved.readOneError'))
+        return
+      }
+      if (r?.success) {
+        const fresh = r.data ?? r
+        // Sürüm denetimi SEKMENİN yüklediği sürümle: sekme v1'den düzenlenirken başka yerde v2 kaydedildiyse sunucu 409
+        // verir (çakışma bandı + "son sürümü yükle") — taze kaydın sürümü gönderilseydi v2 sessizce ezilirdi.
+        const base = tab.savedVersion != null ? { ...fresh, version: tab.savedVersion } : fresh
+        setSaveDlg({ mode: 'update', base, sql: tab.sql, paramTypes: types, tabId: tab.id })
+        return
+      }
+      // Yalnız 404 (kayıt artık yok) bağı koparır; geçici hata (5xx / 503 / ağ) bağı korur ve söyler
+      if (r?.status !== 404) { toast.error(r?.error || t('sql.saved.readOneError')); return }
       toast.info(t('sql.saved.linkLost'))
       setTabsState((s) => updateTab(s, tab.id, { savedId: null, savedVersion: null, savedSql: null, savedMine: null }))
     }
@@ -514,14 +537,24 @@ export default function SqlPlayground() {
     const dlg = saveDlg
     setSavedReload((n) => n + 1)
     if (!dlg?.tabId || !row?.id) return
-    setTabsState((s) => updateTab(s, dlg.tabId, (tb) => ({
-      ...tb, savedId: row.id, savedVersion: row.version ?? null, savedSql: row.sql_text ?? dlg.sql, savedMine: true,
-      title: row.title ?? tb.title,
-    })))
+    setTabsState((s) => updateTab(s, dlg.tabId, (tb) => {
+      if (dlg.sql == null) {
+        // Panelden üst bilgi düzenlemesi: sekmenin SQL'i bu kayıtla yazılmadı. Sürüm yalnız kayıttaki SQL sekmenin bildiği
+        // kayıtlı SQL ile aynıysa ilerler — başka oturum SQL'i değiştirdiyse sekmeden kaydet yine 409 alır (ezmez).
+        const sameSql = row.sql_text != null && row.sql_text === tb.savedSql
+        return { ...tb, title: row.title ?? tb.title, ...(sameSql ? { savedVersion: row.version ?? tb.savedVersion } : {}) }
+      }
+      return {
+        ...tb, savedId: row.id, savedVersion: row.version ?? null, savedSql: row.sql_text ?? dlg.sql, savedMine: true,
+        title: row.title ?? tb.title,
+      }
+    }))
   }, [saveDlg])
 
+  // Panelden düzenleme yalnız başlık / açıklama / etiket / paylaşımı değiştirir: `sql: null` → pencere SQL göndermez
+  // (çakışma sonrası "son sürümü yükle" ile gelen başka oturumun SQL'i paneldeki eski metinle geri yazılmasın).
   const editSavedRow = useCallback((row) => {
-    setSaveDlg({ mode: 'update', base: row, sql: row.sql_text, paramTypes: null, tabId: findSavedTab(tabsRef.current, row.id)?.id ?? null })
+    setSaveDlg({ mode: 'update', base: row, sql: null, paramTypes: null, tabId: findSavedTab(tabsRef.current, row.id)?.id ?? null })
   }, [])
   const markSavedUnsupported = useCallback(() => setSavedSupported(false), [])
 
@@ -607,9 +640,9 @@ export default function SqlPlayground() {
   ]
 
   const tabsBar = (
-    <SqlTabsBar state={tabsState} running={running?.tabId} onSelect={(id) => { setTabsState((s) => ({ ...s, active: id })); setSelection('') }}
+    <SqlTabsBar state={tabsState} running={running?.tabId} onSelect={(id) => { setTabsState((s) => ({ ...s, active: id })); clearSelection() }}
       onAdd={() => addNewTab()} onClose={closeOneTab} onRename={renameTab}
-      onDuplicate={(id) => setTabsState((s) => duplicateTab(s, id))} onCloseOthers={closeOtherTabs} />
+      onDuplicate={(id) => setTabsState((s) => duplicateTab(s, id))} onCloseOthers={closeOtherTabs} className="shrink-0" />
   )
 
   const editorCard = (cls) => (
@@ -647,7 +680,7 @@ export default function SqlPlayground() {
       </div>
       <SqlEditor key={activeTab.id} ref={editorRef} value={sql} onChange={setSql} onRun={(sel) => run(sel ?? undefined)} onCaret={onCaret}
         label={t('sql.editorLabel')} placeholder={t('sql.editorPlaceholder')} className="min-h-0 flex-1"
-        statusExtra={t('sql.ed.status2', IS_MAC ? '⌘' : 'Ctrl')} completion={completion}
+        statusExtra={t('sql.ed.status2', IS_MAC ? '⌘' : 'Ctrl', 'Ctrl')} completion={completion}
         onFormatted={(changed) => { if (!changed) toast.info(t('sql.fmt.unchanged')) }} />
       {draftWarn && (
         <p data-slot="sql-draft-warn" role="status" className="m-0 border-t bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 dark:text-amber-200">
@@ -657,9 +690,12 @@ export default function SqlPlayground() {
     </section>
   )
 
-  const paramsForm = paramNames.length > 0 && (
+  // Masaüstünde ızgara yüksekliği sabit: form SIKIŞABİLİR (min-h-24, içi kaydırılır) ve sonuç panelinin esas boyu en az
+  // boyuyla aynıdır (flex-[1_1_14rem]) — form açıkken sütun taşmaz, sonuç paneli ızgaranın altına inmez. Telefon / tablette
+  // sayfa kayar, form içeriği kadar (en çok max-h-64).
+  const paramsForm = (cls) => paramNames.length > 0 && (
     <ParamsForm names={paramNames} state={activeTab.params} errors={art.paramErrors} onChange={setParam}
-      className="max-h-64 shrink-0 overflow-y-auto" />
+      className={cn('max-h-64 overflow-y-auto', cls)} />
   )
 
   const resultRows = art.result && !art.result.error && !art.result.cancelled && Array.isArray(art.result.rows) ? art.result.rows : []
@@ -697,7 +733,7 @@ export default function SqlPlayground() {
         <TabsContent value="editor" forceMount className="flex flex-col gap-3 data-[state=inactive]:hidden">
           {tabsBar}
           {editorCard('h-[55dvh] min-h-72')}
-          {paramsForm}
+          {paramsForm('shrink-0')}
         </TabsContent>
         <TabsContent value="results" forceMount className="data-[state=inactive]:hidden">
           {resultsPanel('', true)}
@@ -712,7 +748,7 @@ export default function SqlPlayground() {
       <div className="flex min-w-0 flex-col gap-3">
         {tabsBar}
         {editorCard('h-80')}
-        {paramsForm}
+        {paramsForm('shrink-0')}
         {resultsPanel('max-h-[80dvh] min-h-80')}
         <Sheet open={explorerOpen} onOpenChange={setExplorerOpen}>
           <SheetContent side="left" className="w-[min(24rem,90vw)] gap-0 p-0 sm:max-w-sm">
@@ -727,13 +763,13 @@ export default function SqlPlayground() {
     )
   } else {
     body = (
-      <div className="grid h-[calc(100dvh-14.5rem)] min-h-[40rem] grid-cols-[18rem_minmax(0,1fr)] gap-3 xl:grid-cols-[20rem_minmax(0,1fr)]">
+      <div data-slot="sql-workspace" className="grid h-[calc(100dvh-14.5rem)] min-h-[40rem] grid-cols-[18rem_minmax(0,1fr)] gap-3 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <SchemaExplorer {...explorerProps} />
         <div className="flex min-h-0 min-w-0 flex-col gap-3">
           {tabsBar}
           {editorCard('h-[36%] min-h-44 shrink-0')}
-          {paramsForm}
-          {resultsPanel('min-h-56 flex-1')}
+          {paramsForm('min-h-24 shrink')}
+          {resultsPanel('min-h-56 flex-[1_1_14rem]')}
         </div>
       </div>
     )

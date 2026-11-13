@@ -8138,7 +8138,10 @@ public class SchedulerService {
                 integrityProbes.remove(id, p);   // takılı: süre tavanlarını çok aştı → bırakılır, yenisi başlayabilir
                 log.warn("Hedefli kurtarma ölçümü {} dakikadır bitmedi, bırakıldı: {}", (now - started) / 60_000L, m.getUrl());
             } else {
-                integrityProbes.remove(id, p);
+                // Gerileme taraması 2026-11-13 (bulgu 2): biten sonucu YALNIZ girdiyi silen iş parçacığı tüketir. Elle
+                // değerlendirme (@Async) ile sık tarama tıkı aynı ölçümü görürse ikisi de "up" dönüp kurtarma sayacını tek
+                // ölçümden iki kez ilerletmesin — kaybeden kanıtsız döner (kalem yok, yeni ölçüm de başlatmaz).
+                if (!integrityProbes.remove(id, p)) return null;
                 ProbeResult done = p.result().getNow(null);
                 boolean fresh = done != null && !p.invalid().get() && p.pages().equals(pages)
                         && p.leaderSince() == leaderSince && now >= done.finishedAt()
@@ -8159,7 +8162,7 @@ public class SchedulerService {
             return null;
         }
         if (np.result().isDone()) {   // aynı iş parçacığında koşan yürütücü (test) ya da anında biten ölçüm
-            integrityProbes.remove(id, np);
+            if (!integrityProbes.remove(id, np)) return null;   // bulgu 2: başka bir değerlendirme bu sonucu zaten tüketti
             ProbeResult r = np.result().getNow(null);
             return r != null && !np.invalid().get() ? r.status() : null;
         }
@@ -8549,6 +8552,7 @@ public class SchedulerService {
         int unmeasured = 0;
         // E5: eşik (minBrokenResources) kümülatif uygulanır → sayfa sayfa kısa-devre YOK, tüm sorunlar toplanır.
         java.util.LinkedHashMap<String, PageCheckerService.ResourceIssue> found = new java.util.LinkedHashMap<>();
+        java.util.Set<String> remeasuredClean = new java.util.HashSet<>();   // listedeki sayfalarda yüklenip TEMİZ çıkanlar
         for (String page : pages.stream().filter(java.util.Objects::nonNull).distinct()
                 .limit(INTEGRITY_RECHECK_MAX_PAGES).toList()) {
             PageCheckerService.PageCheckResult res = pageCheckerService.check(
@@ -8563,11 +8567,18 @@ public class SchedulerService {
             for (PageCheckerService.ResourceIssue i : res.issues()) {
                 found.putIfAbsent(i.resourceUrl() != null ? i.resourceUrl() : "", i);   // site genelinde tekil (tarama gibi)
             }
+            remeasuredClean.addAll(res.cleanResources());
         }
         int remeasured = found.size();
         if (unlisted != null) {
             for (PageCheckerService.ResourceIssue i : unlisted) {
-                if (i != null) found.putIfAbsent(i.resourceUrl() != null ? i.resourceUrl() : "", i);   // yeniden ölçülen kazanır
+                if (i == null) continue;
+                String key = i.resourceUrl() != null ? i.resourceUrl() : "";
+                // Gerileme taraması 2026-11-13 (bulgu 1): tarama paylaşılan kaynağı İLK görüldüğü (listeye girmeyen) sayfaya
+                // atfeder. Aynı adres listedeki bir sayfada yeniden ölçülüp TEMİZ yüklendiyse taramanın bayat kopyası artık
+                // kanıt değildir → sayılmaz. Yeniden ölçülmeyen adresin sorunu ise kötümser sayılmaya devam eder.
+                if (remeasuredClean.contains(key)) continue;
+                found.putIfAbsent(key, i);   // yeniden ölçülen kazanır
             }
         }
         if (PageCheckerService.resultAlarmWorthy(m, found.values()))

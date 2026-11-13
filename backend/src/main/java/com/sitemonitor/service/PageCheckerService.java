@@ -61,13 +61,32 @@ public class PageCheckerService {
     /**
      * @param failure ana sayfa alınamadığında (DOWN) / yapılandırma hatasında (CONFIG_ERROR) NEDEN (2026-10-05, hata
      *                teşhisi) — çekimin istisnasından sınıflandırılır. Diğer durumlarda null. Yalnız üst veri.
+     * @param cleanResources SINGLE_PAGE kontrolünde GERÇEKTEN ölçülüp TEMİZ çıkan (sorunsuz yüklenen) kaynak adresleri —
+     *                kırpılmış listenin açılış teyidi taramanın bayat bulgusunu bununla düşer (2026-11-13 gerileme taraması
+     *                bulgu 1). Süre dolduğu için ölçülmeyen kaynak buraya GİRMEZ. Diğer yollarda (tarama, DOWN) boş.
      */
     public record PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
                                   int totalResources, int brokenResources, int timeoutResources,
                                   int mixedContentCount,
                                   int pagesCrawled, String contentHash, Long bodyBytes, String error,
                                   List<ResourceIssue> issues,
-                                  com.sitemonitor.service.failure.CheckFailure failure) {
+                                  com.sitemonitor.service.failure.CheckFailure failure,
+                                  Set<String> cleanResources) {
+
+        public PageCheckResult {
+            cleanResources = cleanResources == null ? Set.of() : Set.copyOf(cleanResources);
+        }
+
+        /** Geriye uyum: temiz kaynak listesi izlenmez (DOWN / CONFIG_ERROR / tarama). */
+        public PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
+                               int totalResources, int brokenResources, int timeoutResources,
+                               int mixedContentCount,
+                               int pagesCrawled, String contentHash, Long bodyBytes, String error,
+                               List<ResourceIssue> issues,
+                               com.sitemonitor.service.failure.CheckFailure failure) {
+            this(status, mainReachable, httpStatus, responseMs, totalResources, brokenResources, timeoutResources,
+                    mixedContentCount, pagesCrawled, contentHash, bodyBytes, error, issues, failure, null);
+        }
 
         /** Geriye uyum: nedensiz (testler ve sağlıklı/DEGRADED sonuçlar). */
         public PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
@@ -76,7 +95,7 @@ public class PageCheckerService {
                                int pagesCrawled, String contentHash, Long bodyBytes, String error,
                                List<ResourceIssue> issues) {
             this(status, mainReachable, httpStatus, responseMs, totalResources, brokenResources, timeoutResources,
-                    mixedContentCount, pagesCrawled, contentHash, bodyBytes, error, issues, null);
+                    mixedContentCount, pagesCrawled, contentHash, bodyBytes, error, issues, null, null);
         }
     }
 
@@ -217,10 +236,11 @@ public class PageCheckerService {
         }
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
         List<Resource> resources = inventory(main.body(), url, url, rootHost, excludes);
-        List<ResourceIssue> issues = verifyAll(resources, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline);
+        Set<String> clean = new HashSet<>();
+        List<ResourceIssue> issues = verifyAll(resources, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline, clean);
         long ms = System.currentTimeMillis() - start;
         return summarize(issues, resources.size(), 1, main.status(), ms, sha256(main.body()),
-                (long) main.body().length);
+                (long) main.body().length, clean);
     }
 
     // ── SITE_CRAWL ───────────────────────────────────────────────────────────
@@ -280,7 +300,7 @@ public class PageCheckerService {
                 if (verified.add(r.url())) fresh.add(r);
             }
             totalResources += fresh.size();
-            allIssues.addAll(verifyAll(fresh, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline));
+            allIssues.addAll(verifyAll(fresh, pageHttps, rootHost, timeoutMs, slowMs, concurrency, deadline, null));
 
             // Same-origin a[href] linkleri kuyruğa (derinlik+1)
             if (depth < maxDepth) {
@@ -311,15 +331,22 @@ public class PageCheckerService {
     }
 
     // ── Kaynak doğrulama ─────────────────────────────────────────────────────
+    /** Ölçülmeyen kaynak işareti (süre doldu / kesildi) — "sağlıklı" (null) ile karışmasın; kimlikle karşılaştırılır. */
+    private static final ResourceIssue NOT_MEASURED = new ResourceIssue(null, null, null, null, false, null, null);
+
+    /**
+     * @param clean null değilse: gerçekten ölçülüp TEMİZ çıkan kaynakların adresleri buraya eklenir (süre dolduğu için
+     *              ölçülmeyen ya da hata veren kaynak eklenmez).
+     */
     private List<ResourceIssue> verifyAll(List<Resource> resources, boolean pageHttps, String rootHost,
-                                          int timeoutMs, int slowMs, int concurrency, long deadline) {
+                                          int timeoutMs, int slowMs, int concurrency, long deadline, Set<String> clean) {
         if (resources.isEmpty()) return List.of();
         Semaphore gate = new Semaphore(concurrency);
         List<CompletableFuture<ResourceIssue>> futures = new ArrayList<>();
         for (Resource r : resources) {
             final boolean viaProxy = VIA_PROXY.get();   // gönderim anında yakala (işçi iş parçacığı ThreadLocal'ı görmez)
             futures.add(CompletableFuture.supplyAsync(() -> {
-                if (System.currentTimeMillis() > deadline) return null;   // deadline geçti → çalıştırma
+                if (System.currentTimeMillis() > deadline) return NOT_MEASURED;   // deadline geçti → çalıştırma
                 VIA_PROXY.set(viaProxy);
                 try {
                     gate.acquire();
@@ -327,18 +354,21 @@ public class PageCheckerService {
                     finally { gate.release(); VIA_PROXY.remove(); }
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    return null;
+                    return NOT_MEASURED;
                 }
             }, core.executor()));
         }
         List<ResourceIssue> issues = new ArrayList<>();
-        for (CompletableFuture<ResourceIssue> f : futures) {
+        for (int k = 0; k < futures.size(); k++) {
+            CompletableFuture<ResourceIssue> f = futures.get(k);
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0) break;   // deadline doldu → kalanları bırak (kısmi ama tutarlı sonuç)
             try {
                 // Deadline'ı aşan join YAPMA — kalan future'lar sanal-thread'te düşer (her fetch'in kendi timeout'u var).
                 ResourceIssue i = f.get(remaining, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (i == NOT_MEASURED) continue;
                 if (i != null) issues.add(i);
+                else if (clean != null && resources.get(k).url() != null) clean.add(resources.get(k).url());
             } catch (java.util.concurrent.TimeoutException te) {
                 break;   // deadline'a takıldı → kısmi sonuç
             } catch (Exception e) {
@@ -511,6 +541,11 @@ public class PageCheckerService {
     // ── Yardımcılar ──────────────────────────────────────────────────────────
     private PageCheckResult summarize(List<ResourceIssue> issues, int total, int pages, int httpStatus,
                                       long ms, String hash, Long bytes) {
+        return summarize(issues, total, pages, httpStatus, ms, hash, bytes, null);
+    }
+
+    private PageCheckResult summarize(List<ResourceIssue> issues, int total, int pages, int httpStatus,
+                                      long ms, String hash, Long bytes, Set<String> clean) {
         // KIRIK ve ZAMAN AŞIMI AYRI sayaçlar (2026-08-04): kesin kırık URL ile yanıt vermeyen URL
         // aynı sayaçta toplanmaz — UI/e-posta/istatistik ayrı gösterir. DEGRADED kararı ikisini de kapsar
         // (timeout toggle'ı kapalıysa demote SchedulerService.recheckPage'te yapılır).
@@ -521,7 +556,8 @@ public class PageCheckerService {
             else if ("TIMEOUT".equals(i.issueType())) timeouts++;
         }
         String status = (broken > 0 || timeouts > 0 || mixed > 0) ? "DEGRADED" : "OK";
-        return new PageCheckResult(status, true, httpStatus, ms, total, broken, timeouts, mixed, pages, hash, bytes, null, issues);
+        return new PageCheckResult(status, true, httpStatus, ms, total, broken, timeouts, mixed, pages, hash, bytes, null,
+                issues, null, clean);
     }
 
     private static int clampConcurrency(int c) { return Math.max(1, Math.min(20, c)); }
