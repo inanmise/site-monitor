@@ -59,11 +59,20 @@ export function isListableResult(r) {
   return u.length > 0 && !u.endsWith('$')
 }
 
+/** Kimlik aramasının sayfa boyu = sunucunun tavanı (AdminController.searchUsers: size ≤ 200). */
+export const EXISTING_LOOKUP_PAGE_SIZE = 200
+/** Kimlik aramasında en çok okunan sayfa (≤ 2 000 eşleşen satır) — kısa ad binlerce kişiyle eşleşse de istek sınırlı. */
+export const EXISTING_LOOKUP_MAX_PAGES = 10
+
 /**
  * AD aramasındaki "Düzenle" için kullanıcının TAM satırını sunucudan okur (2026-11-13 hata taraması). Kullanıcı listesi
  * sunucuda sayfalı: kişi o anki sayfada değilse düzenleyici yalnız `{id}` ile açılıyor, form boş kuruluyordu (kaydetmek
  * rolü düşürür, profil alanlarını siler). Önce elde olan satırlar, sonra kullanıcı adı süzgeçli dizin araması; kimlik
  * BİREBİR eşleşmezse null (çağıran düzenleyiciyi AÇMAZ). Ağ hatası fırlar (çağıran gösterir).
+ *
+ * Gerileme taraması 2026-11-13 (bulgu 4): arama `%ad%` içerir eşleşmesidir ve kullanıcı adına göre sıralıdır — kısa bir
+ * ad ("ali") yüzlerce kişiyle eşleşir, aranan kişi ilk sayfada olmayabilir. Kimlik bulunana kadar sayfalar SINIRLI
+ * gezilir (sunucu sırası kullanıcı adı + kimlik ile kararlı; son sayfada ya da tavanda durulur).
  * @returns {Promise<object|null>}
  */
 export async function loadExistingUserRow(adminApi, id, username, rows = []) {
@@ -73,9 +82,16 @@ export async function loadExistingUserRow(adminApi, id, username, rows = []) {
   if (onPage && String(onPage.username ?? '').trim()) return onPage
   const name = String(username ?? '').trim()
   if (!name || typeof adminApi?.searchUsers !== 'function') return null
-  // JS toLowerCase yerel ayardan bağımsızdır ("I" → "i"); sunucu zaten küçültür (LIKE).
-  const res = await adminApi.searchUsers({ q: name.toLowerCase(), field: 'username', page: 0, size: 50 })
-  const list = res?.success && Array.isArray(res.data) ? res.data : []
-  const row = list.find(same)
-  return row && String(row.username ?? '').trim() ? row : null
+  for (let page = 0; page < EXISTING_LOOKUP_MAX_PAGES; page++) {
+    // JS toLowerCase yerel ayardan bağımsızdır ("I" → "i"); sunucu zaten küçültür (LIKE).
+    const res = await adminApi.searchUsers({
+      q: name.toLowerCase(), field: 'username', page, size: EXISTING_LOOKUP_PAGE_SIZE,
+    })
+    if (!res?.success || !Array.isArray(res.data)) return null
+    const row = res.data.find(same)
+    if (row) return String(row.username ?? '').trim() ? row : null
+    const totalPages = Number(res.total_pages)
+    if (res.data.length < EXISTING_LOOKUP_PAGE_SIZE || (Number.isFinite(totalPages) && page + 1 >= totalPages)) return null
+  }
+  return null
 }

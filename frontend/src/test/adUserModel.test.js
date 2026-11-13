@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   AD_SEARCH_MIN, buildProvisionPayload, provisionErrors, matchDerivedTeams, resultBadges, canProvision,
-  isListableResult, loadExistingUserRow,
+  isListableResult, loadExistingUserRow, EXISTING_LOOKUP_PAGE_SIZE, EXISTING_LOOKUP_MAX_PAGES,
 } from '../components/admin/aduser/adUserModel.js'
 
 describe('adUserModel', () => {
@@ -88,7 +88,31 @@ describe('adUserModel', () => {
     it('sayfada değilse kullanıcı adı süzgeçli dizin aramasından kimliği BİREBİR eşleşen satırı okur', async () => {
       const api = { searchUsers: vi.fn().mockResolvedValue({ success: true, data: [{ id: 76, username: 'MP601460' }, FULL] }) }
       expect(await loadExistingUserRow(api, '77', 'MP60146', [{ id: 1, username: 'X' }])).toBe(FULL)
-      expect(api.searchUsers).toHaveBeenCalledWith({ q: 'mp60146', field: 'username', page: 0, size: 50 })
+      expect(api.searchUsers).toHaveBeenCalledWith({ q: 'mp60146', field: 'username', page: 0, size: EXISTING_LOOKUP_PAGE_SIZE })
+      expect(api.searchUsers).toHaveBeenCalledTimes(1)
+    })
+    // Gerileme taraması 2026-11-13 (bulgu 4): kısa ad ("ali") içerir aramasıyla yüzlerce kişiyle eşleşir — kişi ilk sayfada
+    // olmasa da (sınırlı) sayfa gezilerek bulunur; eskiden yalnız ilk 50 satır okunup "tam kayıt okunamadı" deniyordu.
+    it('kişi ilk sayfada değilse sonraki sayfalar gezilir; son sayfada ve tavanda durur', async () => {
+      const filler = (from) => Array.from({ length: EXISTING_LOOKUP_PAGE_SIZE }, (_, i) => ({ id: from + i, username: `ali${from + i}` }))
+      const target = { id: 9001, username: 'ali', system_role: 'USER', title: 'Uzman' }
+      const pages = [filler(1), filler(1000), [target]]
+      const api = { searchUsers: vi.fn(async ({ page }) => ({ success: true, data: pages[page] ?? [], total_pages: pages.length })) }
+      expect(await loadExistingUserRow(api, 9001, 'ali')).toBe(target)
+      expect(api.searchUsers.mock.calls.map(([p]) => p.page)).toEqual([0, 1, 2])
+
+      const short = { searchUsers: vi.fn(async ({ page }) => ({ success: true, data: page === 0 ? filler(1) : [], total_pages: 1 })) }
+      expect(await loadExistingUserRow(short, 9001, 'ali')).toBeNull()
+      expect(short.searchUsers).toHaveBeenCalledTimes(1)   // total_pages = 1 → ikinci istek yok
+
+      const endless = { searchUsers: vi.fn(async ({ page }) => ({ success: true, data: filler(page * 1000 + 20000) })) }   // total_pages yok
+      expect(await loadExistingUserRow(endless, 9001, 'ali')).toBeNull()
+      expect(endless.searchUsers).toHaveBeenCalledTimes(EXISTING_LOOKUP_MAX_PAGES)
+
+      const failing = { searchUsers: vi.fn(async ({ page }) => (page === 0
+        ? { success: true, data: filler(1), total_pages: 5 } : { success: false, error: 'x' })) }
+      expect(await loadExistingUserRow(failing, 9001, 'ali')).toBeNull()
+      expect(failing.searchUsers).toHaveBeenCalledTimes(2)
     })
     it('eşleşme yok / okunamadı / kullanıcı adı yok → null (düzenleyici açılmaz); yalnız {id} taşıyan satır kabul edilmez', async () => {
       expect(await loadExistingUserRow({ searchUsers: vi.fn().mockResolvedValue({ success: true, data: [] }) }, 77, 'MP60146')).toBeNull()

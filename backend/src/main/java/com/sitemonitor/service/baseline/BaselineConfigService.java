@@ -120,6 +120,24 @@ public class BaselineConfigService {
         if (baselineService != null) baselineService.invalidate();
     }
 
+    /**
+     * {@link #remove} ile aynı temizlik, ama KENDİ işleminde (gerileme taraması 2026-11-13, bulgu 3): kalıcı silme işlemi
+     * commit olduktan SONRA çağrılır ({@code PermanentDeletionService}). Çağıranın işlemine katılan {@code remove} bir hatada
+     * o işlemi rollback-only işaretliyor, envanter / Port-DNS silmesi commit'te {@code UnexpectedRollbackException} ile
+     * düşüyordu. Örnek silmesinin hatası burada yutulur (yapılandırma satırı yine silinir); yapılandırma silmesinin hatası
+     * yalnız BU işlemi geri alır ve çağırana fırlar (çağıran yutar).
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void removeInOwnTransaction(String type, long monitorId) {
+        repo.deleteByMonitorTypeAndMonitorId(type, monitorId);
+        try {
+            store.deleteForMonitor(type, monitorId);
+        } catch (RuntimeException e) {
+            log.warn("Silinen izlemenin taban çizgisi örnekleri silinemedi ({}#{}): {}", type, monitorId, e.getMessage());
+        }
+        if (baselineService != null) baselineService.invalidate();
+    }
+
     /** Hedef (URL/host) değişti ama izleme duruyor: yalnız örnekleri temizle (yapılandırma kalır). */
     public void clearSamples(String type, long monitorId) {
         store.deleteForMonitor(type, monitorId);

@@ -427,6 +427,57 @@ class PageIntegritySourceRecheckTest {
         assertThat(queued).as("takılı iş bırakıldı → yenisi").hasSize(2);
     }
 
+    /** Silahlanınca ilk iki {@code get} çağrısını bir bariyerde buluşturur — iki değerlendirme aynı bitmiş ölçümü GÖRÜR. */
+    @SuppressWarnings("serial")
+    private static final class RacingProbes extends java.util.concurrent.ConcurrentHashMap<Long, SchedulerService.IntegrityProbe> {
+        final java.util.concurrent.atomic.AtomicInteger armed = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(2);
+
+        @Override
+        public SchedulerService.IntegrityProbe get(Object key) {
+            SchedulerService.IntegrityProbe v = super.get(key);
+            if (armed.getAndDecrement() > 0) {
+                try { barrier.await(5, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) { /* süre doldu */ }
+            }
+            return v;
+        }
+    }
+
+    @Test
+    @DisplayName("Gerileme taraması 2026-11-13 (bulgu 2): elle değerlendirme ile sık tarama tıkı AYNI bitmiş ölçümü görse de "
+            + "sonucu yalnız girdiyi silen tüketir → tek ölçümden TEK 'up' kalemi (kurtarma sayacı +2 ilerlemez)")
+    void finishedProbeIsConsumedOnce() throws Exception {
+        RacingProbes racing = new RacingProbes();
+        ReflectionTestUtils.setField(scheduler, "integrityProbes", racing);
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        evaluateHome(m, new ArrayList<>());   // ölçüm başlar
+        queued.poll().run();                  // ölçüm biter: temiz ("up")
+
+        racing.armed.set(2);
+        List<MonitoringOutageService.SweepItem> a = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<MonitoringOutageService.SweepItem> b = java.util.Collections.synchronizedList(new ArrayList<>());
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var fa = pool.submit(() -> evaluateHome(m, a));
+            var fb = pool.submit(() -> evaluateHome(m, b));
+            fa.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            fb.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(racing.barrier.isBroken()).as("iki değerlendirme aynı ölçümü gördü (bariyer buluştu)").isFalse();
+        List<MonitoringOutageService.SweepItem> all = new ArrayList<>(a);
+        all.addAll(b);
+        assertThat(all).as("bitmiş ölçüm yalnız BİR kez tüketilir").hasSize(1);
+        assertThat(all.get(0).up()).isTrue();
+        assertThat(queued).as("kaybeden yeni ölçüm de başlatmaz").isEmpty();
+    }
+
     @Test
     @DisplayName("İnceleme 2026-11-13 (DÜŞÜK 4): kuyrukta bekleyen ölçüm kapanış başladıktan sonra ÖLÇMEZ (skipped)")
     void queuedProbeDoesNotMeasureAfterShutdownStarted() {
