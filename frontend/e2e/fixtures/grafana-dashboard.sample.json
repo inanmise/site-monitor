@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 14 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 15 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -8984,7 +8984,7 @@
     }, {
       "type" : "state-timeline",
       "title" : "Kendi kendini izleme kontrolleri",
-      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu ve dağıtık kontrol kuyruğu kontrollerinin durumu, zamanla.",
+      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu, dağıtık kontrol kuyruğu ve veritabanı doluluğu kontrollerinin durumu, zamanla.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -13810,6 +13810,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 14,
+  "version" : 15,
   "weekStart" : "monday"
 }

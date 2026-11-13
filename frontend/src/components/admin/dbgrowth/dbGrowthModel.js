@@ -66,7 +66,11 @@ export function formatNumber(v, maxFraction = 0) {
   return Number(v).toLocaleString(dateLocale(), { maximumFractionDigits: maxFraction })
 }
 
-const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+/**
+ * İkili (IEC) birimler: hesap 1024 tabanlı olduğu için "GiB" yazılır — kapasite ayarı, bekçi metni ve Grafana aynı
+ * birimi kullanır (bağımsız inceleme 2026-11-13: "GB" yazıp 1024 tabanıyla hesaplamak kullanıcıyı %7 yanıltıyordu).
+ */
+const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
 
 /** Bayt → okunur boyut (1024 tabanı, eksi değerde "−"); bilinmiyorsa '—'. */
 export function formatBytes(v) {
@@ -228,6 +232,52 @@ export function retentionText(r, t) {
   return mode
 }
 
+/**
+ * Öneri gövdesinin i18n anahtarı. Yasal tutma açıkken kısaltma adayı "ilk gece ≈N satır silinir" DEMEZ: hold kapanana
+ * dek hiçbir satır silinmez (sunucu `params.hold`).
+ */
+export function findingBodyKey(f) {
+  if (f?.code === 'SHORTEN_CANDIDATE' && f?.params?.hold === true) return 'dbg.adv.SHORTEN_CANDIDATE.bodyHold'
+  return `dbg.adv.${f?.code}.body`
+}
+
+/**
+ * Aynı ayar anahtarını paylaşan tablolar: kısaltma bu ayarın HEPSİNİ birlikte değiştirir (ör. bildirim günlükleri
+ * anahtarı beş tabloyu yönetir). Tek tablo → null.
+ */
+export function affectedText(f, t) {
+  const p = f?.params || {}
+  const count = Number(p.affected_count)
+  if (!Number.isFinite(count) || count <= 1) return null
+  const names = Array.isArray(p.affected_tables) ? p.affected_tables.filter(Boolean) : []
+  return names.length
+    ? t('dbg.adv.affects', formatNumber(count), names.join(', '))
+    : t('dbg.adv.affectsCount', formatNumber(count))
+}
+
+/**
+ * "Uygula" onayının kapısı: canlı tahmin okunmadan ya da güncel süre okunamadan uygulanmaz; güncel süre önerilenden
+ * kısa ya da eşitse öneri eskidir (uygulamak süreyi UZATIRDI — eski bir analiz satırından açılan pencere).
+ * loading · unknown · stale · ok.
+ */
+export function applyGate(est, estError, days) {
+  if (estError) return 'unknown'
+  if (!est) return 'loading'
+  if (!isNum(est.current_days) || !isNum(days)) return 'unknown'
+  return Number(est.current_days) <= Number(days) ? 'stale' : 'ok'
+}
+
+/**
+ * Analiz eksik mi: kısmi / bilinmeyen sonuç ya da tam olmayan herhangi bir bölüm. Eksik bir analizde "öneri yok"
+ * demek yanıltır — okunamayan bölümün önerisi zaten yok.
+ */
+export function analysisIncomplete(result) {
+  if (!result || result.supported === false) return false
+  if (result.status && result.status !== 'OK') return true
+  const sections = result.sections || {}
+  return Object.values(sections).some((s) => s !== 'ok')
+}
+
 /** Bir öneri satırının i18n parametreleri — `dbg.adv.<KOD>.body` metninin {0}, {1}… yerleri. */
 export function findingArgs(f, t) {
   const p = f?.params || {}
@@ -290,7 +340,7 @@ export function needsCompliance(dataClass) {
 
 /** Analiz bölüm durumu → rozet tonu. */
 export function sectionTone(status) {
-  return { ok: 'success', failed: 'danger', skipped: 'muted' }[status] || 'muted'
+  return { ok: 'success', partial: 'warning', failed: 'danger', skipped: 'muted' }[status] || 'muted'
 }
 
 /** Analiz sonuç durumu → rozet tonu (OK yalnız tam başarıda yeşil; kısmi uyarı; desteklenmiyor gri). */

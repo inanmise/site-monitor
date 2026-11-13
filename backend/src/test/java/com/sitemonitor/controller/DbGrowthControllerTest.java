@@ -149,6 +149,27 @@ class DbGrowthControllerTest {
     }
 
     @Test
+    @DisplayName("pod'da analiz sürerken 409 ve dakikalık hak HARCANMAZ (önce meşgul denetimi — 2026-11-13 inceleme)")
+    void busyDoesNotSpendQuota() throws Exception {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("status", "OK");
+        r.put("findings", List.of());
+        when(analysis.run(anyString())).thenReturn(Optional.of(r));
+        MockHttpSession s = session("busyops", "ADMIN", true);
+        when(analysis.busy()).thenReturn(true);
+        for (int i = 0; i < 5; i++) {
+            mvc.perform(post("/api/admin/system/db-growth/analysis").session(s)).andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("DB_ANALYSIS_BUSY"));
+        }
+        verify(analysis, never()).run(anyString());
+        when(analysis.busy()).thenReturn(false);
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(post("/api/admin/system/db-growth/analysis").session(s)).andExpect(status().isOk());
+        }
+        mvc.perform(post("/api/admin/system/db-growth/analysis").session(s)).andExpect(status().isTooManyRequests());
+    }
+
+    @Test
     @DisplayName("son analiz: okuma izniyle; hiç yoksa null")
     void latest() throws Exception {
         when(analysis.latest()).thenReturn(null);

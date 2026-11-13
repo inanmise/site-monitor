@@ -6,8 +6,11 @@ import {
   ADVISOR_CODES, SEVERITIES, ACTIONS, RANGES, DEFAULT_RANGE, HORIZONS, ANALYSIS_SECTIONS,
   CAPACITY_CRITICAL_PCT, CAPACITY_CRITICAL_DAYS, CAPACITY_WARN_PCT, CAPACITY_WARN_DAYS,
   formatBytes, formatSignedBytes, formatDay, usedTone, daysTone, layoutFor, viewState, totalChartRows, tableChartData,
-  findingAction, findingArgs, parseCapacity, normalizeRange, retentionText,
+  findingAction, findingArgs, parseCapacity, normalizeRange, retentionText, findingBodyKey, affectedText, applyGate,
+  analysisIncomplete, sectionTone, monitorTypeLabel, MONITOR_TABS,
 } from '../components/admin/dbgrowth/dbGrowthModel.js'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * Veritabanı büyümesi modeli (2026-11-13). Sabitler Java'daki karşılıklarıyla AYNI olmalı — test Java kaynağını okur
@@ -52,14 +55,15 @@ describe('Java ile aynı sabitler', () => {
 })
 
 describe('biçimler', () => {
-  it('bayt: 1024 tabanı, eksi işareti, bilinmeyen "—" (0 değil)', () => {
+  it('bayt: 1024 tabanı ikili (IEC) birimle, eksi işareti, bilinmeyen "—" (0 değil)', () => {
     expect(formatBytes(null)).toBe('—')
     expect(formatBytes(undefined)).toBe('—')
     expect(formatBytes('')).toBe('—')
     expect(formatBytes(0)).toBe('0 B')
-    expect(formatBytes(1536 * MB)).toBe('1,5 GB')
-    expect(formatBytes(-300 * MB)).toBe('−300 MB')
-    expect(formatSignedBytes(2 * GB)).toBe('+2 GB')
+    expect(formatBytes(1536 * MB)).toBe('1,5 GiB')
+    expect(formatBytes(-300 * MB)).toBe('−300 MiB')
+    expect(formatBytes(2048)).toBe('2 KiB')
+    expect(formatSignedBytes(2 * GB)).toBe('+2 GiB')
     expect(formatSignedBytes(null)).toBe('—')
   })
   it('saf gün saat dilimi kaymadan biçimlenir', () => {
@@ -158,7 +162,7 @@ describe('öneriler', () => {
   })
   it('her kod için parametre üretilir, ham sayı yerine biçim', () => {
     const args = findingArgs(shorten, t)
-    expect(args).toEqual(['port_checks', '%25', '1 GB', '90', '30', '1.000', '10 MB', 'dbg.estMethod.histogram'])
+    expect(args).toEqual(['port_checks', '%25', '1 GiB', '90', '30', '1.000', '10 MiB', 'dbg.estMethod.histogram'])
     for (const code of ADVISOR_CODES) expect(Array.isArray(findingArgs({ code, params: {} }, t))).toBe(true)
     expect(findingArgs({ code: 'CAPACITY', params: { used_pct: 86, db_bytes: GB, capacity_bytes: 2 * GB, days_until_full: null } }, t)[3])
       .toBe('dbg.adv.noForecast')
@@ -172,5 +176,58 @@ describe('kapasite girdisi', () => {
     expect(parseCapacity('1,5', 1000)).toEqual({ error: 'notInteger' })
     expect(parseCapacity('-3', 1000)).toEqual({ error: 'notInteger' })
     expect(parseCapacity('1001', 1000)).toEqual({ error: 'tooLarge' })
+  })
+})
+
+describe('bağımsız inceleme düzeltmeleri (2026-11-13)', () => {
+  const shorten = { code: 'SHORTEN_CANDIDATE', action: 'apply_retention', policy_id: 'p', setting_key: 'k', suggested_days: 30,
+    current_days: 90, table: 'notification_logs', params: {} }
+  it('yasal tutmada kısaltma gövdesi "ilk gece silinir" DEMEZ', () => {
+    expect(findingBodyKey(shorten)).toBe('dbg.adv.SHORTEN_CANDIDATE.body')
+    expect(findingBodyKey({ ...shorten, params: { hold: true } })).toBe('dbg.adv.SHORTEN_CANDIDATE.bodyHold')
+    expect(findingBodyKey({ code: 'NO_RULE', params: { hold: true } })).toBe('dbg.adv.NO_RULE.body')
+    expect(TR['dbg.adv.SHORTEN_CANDIDATE.bodyHold']).toMatch(/hiçbir satır silinmez/)
+    expect(TR['dbg.adv.SHORTEN_CANDIDATE.bodyHold']).not.toMatch(/ilk gece/)
+  })
+  it('ortak ayar anahtarı: birden çok tablo adıyla söylenir, tek tabloda sessiz', () => {
+    expect(affectedText(shorten, t)).toBeNull()
+    expect(affectedText({ ...shorten, params: { affected_count: 1 } }, t)).toBeNull()
+    expect(affectedText({ ...shorten, params: { affected_count: 3, affected_tables: ['a', 'b', 'c'] } }, t))
+      .toBe('dbg.adv.affects(3|a, b, c)')
+    expect(affectedText({ ...shorten, params: { affected_count: 2 } }, t)).toBe('dbg.adv.affectsCount(2)')
+  })
+  it('Uygula kapısı: güncel süre okunmadan / okunamazsa / önerilenden kısa-eşitse kapalı', () => {
+    expect(applyGate(null, null, 30)).toBe('loading')
+    expect(applyGate(null, 'hata', 30)).toBe('unknown')
+    expect(applyGate({ current_days: null }, null, 30)).toBe('unknown')
+    expect(applyGate({ current_days: 30 }, null, 30)).toBe('stale')
+    expect(applyGate({ current_days: 14 }, null, 30)).toBe('stale')
+    expect(applyGate({ current_days: 90 }, null, 30)).toBe('ok')
+  })
+  it('eksik analiz: kısmi / bilinmeyen sonuç ya da tam olmayan bölüm', () => {
+    expect(analysisIncomplete(null)).toBe(false)
+    expect(analysisIncomplete({ status: 'OK', sections: { policies: 'ok', vacuum: 'ok' } })).toBe(false)
+    expect(analysisIncomplete({ status: 'OK', sections: { policies: 'partial' } })).toBe(true)
+    expect(analysisIncomplete({ status: 'PARTIAL', sections: {} })).toBe(true)
+    expect(analysisIncomplete({ status: 'UNSUPPORTED', supported: false })).toBe(false)
+    expect(sectionTone('partial')).toBe('warning')
+    expect(sectionTone('ok')).toBe('success')
+  })
+  it('sıcak izleme türlerinin hepsinin TR + EN adı var (ham anahtar görünmez)', () => {
+    for (const type of Object.keys(MONITOR_TABS)) {
+      expect(TR[`alh.mtype.${type}`], type).toBeTruthy()
+      expect(EN[`alh.mtype.${type}`], type).toBeTruthy()
+    }
+    expect(monitorTypeLabel('dbquery', (k) => TR[k])).toBe('Veritabanı sorgusu')
+    expect(monitorTypeLabel('tuhaf', (k) => TR[k])).toBe(TR['dbg.monTypeOther'])
+  })
+  it('kapasite metinleri ikili birim (GiB) ve WAL notu taşır', () => {
+    for (const d of [TR, EN]) {
+      expect(d['dbg.cap.value']).toBe('{0} GiB')
+      expect(d['dbg.cap.field']).toMatch(/GiB/)
+      expect(d['dbg.cap.hint']).toMatch(/WAL/)
+      expect(d['help.set.site.monitor.db.capacity-gb']).toMatch(/GiB/)
+      expect(d['help.set.site.monitor.db.capacity-gb']).toMatch(/WAL/)
+    }
   })
 })

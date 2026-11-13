@@ -190,19 +190,28 @@ public class DbHealthAnalysisService {
             }
         }
         boolean complete = true;
+        boolean partial = false;
         for (RetentionPolicy p : list) {
             Map<String, Object> m = new LinkedHashMap<>();
             int days = retention.effectiveDays(p);
             m.put("policy_id", p.id());
             m.put("table", p.table());
             m.put("days", days);
-            m.put("min_days", p.minDays());
+            int floor = DbGrowthAdvisor.keyFloor(p);   // ayarı paylaşan kuralların en büyük tabanı
+            m.put("min_days", floor);
             m.put("configurable", p.configurable());
             m.put("data_class", p.dataClass().name());
             String oldest = null;
             if (budget.left()) {
-                oldest = source.oldest(p);
-                if (oldest == null) m.put("oldest_unknown", true);
+                try {
+                    oldest = source.oldest(p);
+                    if (oldest == null) m.put("oldest_unknown", true);   // boş tablo
+                } catch (RuntimeException e) {
+                    // Zaman aşımı / okuma hatası: bölüm "kısmi" (2026-11-13 inceleme — sessizce "tamam" sayılıyordu)
+                    partial = true;
+                    m.put("oldest_unknown", true);
+                    m.put("oldest_failed", true);
+                }
             } else {
                 complete = false;
                 m.put("oldest_unknown", true);
@@ -213,7 +222,7 @@ public class DbHealthAnalysisService {
             m.put("oldest_age_days", age == null ? null : Math.round(age * 10.0) / 10.0);
             boolean plain = "{t}".equals(p.where());
             m.put("behind", age != null && plain && days > 0 && age > days + DbGrowthAdvisor.BEHIND_SLACK_DAYS);
-            Integer suggested = p.configurable() && days > p.minDays() ? DbGrowthAdvisor.suggestDays(days, p.minDays()) : null;
+            Integer suggested = p.configurable() && days > floor ? DbGrowthAdvisor.suggestDays(days, floor) : null;
             m.put("suggested_days", suggested);
             List<String> bounds = hist.get(p.table() + "." + p.timeColumn());
             if (suggested != null && bounds != null) {
@@ -227,7 +236,7 @@ public class DbHealthAnalysisService {
             }
             out.add(m);
         }
-        status.put("policies", complete ? "ok" : "skipped");
+        status.put("policies", !complete ? "skipped" : partial ? "partial" : "ok");
         return out;
     }
 
@@ -353,8 +362,21 @@ public class DbHealthAnalysisService {
     private Long store(Instant start, Instant end, long ms, String actor, String pod, String status, Map<String, Object> result) {
         try {
             String body = json.writeValueAsString(result);
-            jdbc.update(SQL_INSERT, ISO.format(start), ISO.format(end), ms, trim(actor, 120), trim(pod, 120), status, body);
-            Long id = jdbc.queryForObject("SELECT MAX(id) FROM db_health_analysis_runs", Long.class);
+            // Kendi satırının kimliği (MAX(id) öteki pod'un aynı anda yazdığı satırı dönebilirdi — 2026-11-13 inceleme)
+            org.springframework.jdbc.support.GeneratedKeyHolder keys = new org.springframework.jdbc.support.GeneratedKeyHolder();
+            jdbc.update(con -> {
+                java.sql.PreparedStatement ps = con.prepareStatement(SQL_INSERT, new String[]{"id"});
+                ps.setString(1, ISO.format(start));
+                ps.setString(2, ISO.format(end));
+                ps.setLong(3, ms);
+                ps.setString(4, trim(actor, 120));
+                ps.setString(5, trim(pod, 120));
+                ps.setString(6, status);
+                ps.setString(7, body);
+                return ps;
+            }, keys);
+            Number key = keys.getKey();
+            Long id = key == null ? null : key.longValue();
             jdbc.update("DELETE FROM db_health_analysis_runs WHERE started_at < ?", ISO.format(start.minus(Duration.ofDays(KEEP_DAYS))));
             List<Long> nth = jdbc.query(SQL_NTH_ID, (rs, i) -> rs.getLong(1));
             if (!nth.isEmpty()) jdbc.update("DELETE FROM db_health_analysis_runs WHERE id < ?", nth.get(0));

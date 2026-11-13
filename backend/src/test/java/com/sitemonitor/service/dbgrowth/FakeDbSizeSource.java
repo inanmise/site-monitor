@@ -15,6 +15,9 @@ class FakeDbSizeSource implements DbSizeSource {
     long dbBytes = 10L << 30;
     List<TableSize> tables = new ArrayList<>();
     Map<String, String> oldest = new HashMap<>();
+    /** Tablo → en eski kayıt okumasında fırlatılacak hata (zaman aşımı benzetimi). */
+    Map<String, RuntimeException> oldestFails = new HashMap<>();
+    RuntimeException dbSizeFails;
     Map<String, List<String>> histograms = new HashMap<>();
     Long count;
     RuntimeException countFails;
@@ -31,6 +34,7 @@ class FakeDbSizeSource implements DbSizeSource {
 
     @Override public long databaseBytes() {
         dbSizeCalls.incrementAndGet();
+        if (dbSizeFails != null) throw dbSizeFails;
         return dbBytes;
     }
 
@@ -38,6 +42,7 @@ class FakeDbSizeSource implements DbSizeSource {
 
     @Override public String oldest(RetentionPolicy p) {
         oldestCalls.incrementAndGet();
+        if (oldestFails.containsKey(p.table())) throw oldestFails.get(p.table());
         return oldest.get(p.table());
     }
 

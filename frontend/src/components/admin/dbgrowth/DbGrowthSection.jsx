@@ -57,8 +57,9 @@ export default function DbGrowthSection({ isAdmin = false }) {
 
   useEffect(() => { load(false) }, [load])
 
-  const afterApply = useCallback(() => {
-    toast.success(t('dbg.apply.done'))
+  const afterApply = useCallback((info) => {
+    // Yasal tutma açıkken "ilk gece temizliğinde uygulanır" yanıltır: hold kapanana dek hiçbir satır silinmez.
+    toast.success(info?.hold ? t('dbg.apply.doneHold') : t('dbg.apply.done'))
     load(true)
   }, [load, t, toast])
 
@@ -96,14 +97,21 @@ export default function DbGrowthSection({ isAdmin = false }) {
   }
 
   const capKnown = data.capacity_gb != null
-  const usedValue = capKnown ? formatPct(k.used_pct) : '—'
-  const usedSub = capKnown
-    ? t('dbg.kpi.usedOf', formatBytes(k.current_bytes), formatBytes(Number(data.capacity_gb) * 1024 ** 3))
-    : t('dbg.kpi.noCapacity')
+  // Boyut okunamadıysa doluluk "%0" değil "—" (sunucu used_pct'yi null gönderir)
+  const sizeKnown = k.current_bytes != null
+  const usedValue = capKnown && sizeKnown ? formatPct(k.used_pct) : '—'
+  const usedSub = !capKnown
+    ? t('dbg.kpi.noCapacity')
+    : sizeKnown
+      ? t('dbg.kpi.usedOf', formatBytes(k.current_bytes), formatBytes(Number(data.capacity_gb) * 1024 ** 3))
+      : t('dbg.kpi.sizeUnknown')
+  const stale = data.forecast_stale === true
   let fullValue = '—'
   let fullSub = t('dbg.kpi.noCapacity')
   if (capKnown) {
-    if (data.forecast_basis === 'none') fullSub = t('dbg.kpi.noForecast')
+    if (!sizeKnown) fullSub = t('dbg.kpi.sizeUnknown')
+    else if (stale) fullSub = t('dbg.kpi.staleForecast', formatNumber(data.snapshot_age_days))
+    else if (data.forecast_basis === 'none') fullSub = t('dbg.kpi.noForecast')
     else if (k.days_until_full != null) {
       fullValue = t('dbg.daysCount', formatNumber(k.days_until_full))
       fullSub = k.days_until_full_estimate ? t('dbg.kpi.estimate') : t('dbg.kpi.fromHistory')
@@ -135,9 +143,10 @@ export default function DbGrowthSection({ isAdmin = false }) {
             sub={k.growth_30d_bytes == null ? t('dbg.kpi.needDays') : null} />
           <Tile id="projection90" t={t} wrapText label={t('dbg.kpi.projection90')} value={formatBytes(k.projection_90d_bytes)}
             sub={k.projection_90d_bytes != null ? est(k.projection_90d_estimate) : t('dbg.kpi.noForecast')} />
-          <Tile id="used" t={t} wrapText label={t('dbg.kpi.used')} value={usedValue} sub={usedSub} tone={capKnown ? usedTone(k.used_pct) : 'neutral'} />
+          <Tile id="used" t={t} wrapText label={t('dbg.kpi.used')} value={usedValue} sub={usedSub}
+            tone={capKnown && sizeKnown ? usedTone(k.used_pct) : 'neutral'} />
           <Tile id="full" t={t} wrapText label={t('dbg.kpi.full')} value={fullValue} sub={fullSub}
-            tone={capKnown && k.days_until_full != null ? daysTone(k.days_until_full) : 'neutral'} />
+            tone={capKnown && !stale && k.days_until_full != null ? daysTone(k.days_until_full) : 'neutral'} />
         </div>
       </div>
 
@@ -150,7 +159,16 @@ export default function DbGrowthSection({ isAdmin = false }) {
           </AlertBanner>
         </div>
       )}
-      {data.hold_active && <AlertBanner tone="warning" className="mb-0">{t('dbg.holdActive')}</AlertBanner>}
+      {stale && (
+        <div data-slot="dbg-stale" data-age={data.snapshot_age_days ?? undefined}>
+          <AlertBanner tone="warning" className="mb-0" title={t('dbg.staleTitle', formatNumber(data.snapshot_age_days))}>
+            {t('dbg.staleBody', formatNumber(data.stale_after_days))}
+          </AlertBanner>
+        </div>
+      )}
+      {data.hold_active && (
+        <div data-slot="dbg-hold"><AlertBanner tone="warning" className="mb-0">{t('dbg.holdActive')}</AlertBanner></div>
+      )}
 
       <Panel data-slot="dbg-capacity" title={t('dbg.cap.title')}
         right={data.can_edit_capacity && (
@@ -191,7 +209,7 @@ export default function DbGrowthSection({ isAdmin = false }) {
   )
 }
 
-/** Kapasite (GB) — GLOBAL yönetici; boş ya da 0 = bilinmiyor (bekçi denetimi NA olur). Sunucu alan hatası alanın altında. */
+/** Kapasite (GiB, 1024³ bayt) — GLOBAL yönetici; boş ya da 0 = bilinmiyor (bekçi denetimi NA olur). Sunucu alan hatası alanın altında. */
 function CapacityDialog({ t, current, max, onClose, onSaved }) {
   const [value, setValue] = useState(current != null ? String(current) : '')
   const [error, setError] = useState(null)

@@ -1,5 +1,6 @@
 package com.sitemonitor.service.dbgrowth;
 
+import com.sitemonitor.service.retention.RetentionCatalog;
 import com.sitemonitor.service.retention.RetentionPolicy;
 
 import java.util.ArrayList;
@@ -146,6 +147,36 @@ public final class DbGrowthAdvisor {
         return new Finding("CAPACITY", sev, null, null, null, null, null, null, null, null, null, null, "none", p);
     }
 
+    /**
+     * Aynı ayar anahtarını paylaşan ayarlanabilir kurallar — bir anahtarı kısaltmak HEPSİNİ birden kısaltır (ör.
+     * {@code site.monitor.notification.retention-days} beş tabloyu yönetir; 2026-11-13 inceleme). Anahtarsız kural → yalnız kendisi.
+     */
+    public static List<RetentionPolicy> keySiblings(RetentionPolicy p) {
+        if (p == null) return List.of();
+        if (p.settingKey() == null) return List.of(p);
+        List<RetentionPolicy> out = new ArrayList<>();
+        for (RetentionPolicy x : RetentionCatalog.ALL) {
+            if (x.configurable() && p.settingKey().equals(x.settingKey())) out.add(x);
+        }
+        if (out.isEmpty()) out.add(p);
+        return out;
+    }
+
+    /** Anahtarın ortak tabanı: paylaşan kuralların EN BÜYÜK alt sınırı (hiçbiri tabanının altına inmesin). */
+    public static int keyFloor(RetentionPolicy p) {
+        int floor = p == null ? 0 : p.minDays();
+        for (RetentionPolicy x : keySiblings(p)) floor = Math.max(floor, x.minDays());
+        return floor;
+    }
+
+    /** Paylaşan kurallardan biri kişisel / güvenlik denetimi verisi mi (uyum uyarısı). */
+    public static boolean keyNeedsCompliance(RetentionPolicy p) {
+        for (RetentionPolicy x : keySiblings(p)) {
+            if (x.dataClass() == RetentionPolicy.DataClass.PERSONAL || x.dataClass() == RetentionPolicy.DataClass.SECURITY_AUDIT) return true;
+        }
+        return false;
+    }
+
     static List<Finding> forTable(TableFacts t, Context ctx, long dbBytes) {
         List<Finding> out = new ArrayList<>();
         RetentionPolicy p = t.primary();
@@ -155,10 +186,11 @@ public final class DbGrowthAdvisor {
         boolean hold = ctx != null && ctx.holdActive();
 
         // ── Kısaltma adayı ──
-        if (ageRule && p.configurable() && eff != null && eff > p.minDays() && t.totalBytes() >= SHORTEN_MIN_BYTES) {
+        int floor = p == null ? 0 : keyFloor(p);
+        if (ageRule && p.configurable() && eff != null && eff > floor && t.totalBytes() >= SHORTEN_MIN_BYTES) {
             double eqShare = t.equilibriumBytes() != null && dbBytes > 0 ? t.equilibriumBytes() / dbBytes : 0;
             if (share > SHORTEN_SHARE || eqShare > SHORTEN_SHARE) {
-                Integer suggested = suggestDays(eff, p.minDays());
+                Integer suggested = suggestDays(eff, floor);
                 if (suggested != null) {
                     double frac = t.purgeFraction() != null ? clamp01(t.purgeFraction())
                             : uniformPurgeFraction(t.oldestAgeDays(), eff, suggested);
@@ -167,7 +199,8 @@ public final class DbGrowthAdvisor {
                     long bytes = Math.round(t.totalBytes() * frac);
                     boolean pressure = ctx != null && ((ctx.usedPct() != null && ctx.usedPct() >= CAPACITY_WARN_PCT)
                             || (ctx.forecastFromHistory() && ctx.daysUntilFull() != null && ctx.daysUntilFull() <= CAPACITY_WARN_DAYS));
-                    String sev = share >= SHORTEN_WARN_SHARE || pressure ? "warn" : "info";
+                    // Yasal tutmada kısaltma hold kalkana dek hiçbir satır silmez → yalnız bilgi
+                    String sev = hold ? "info" : share >= SHORTEN_WARN_SHARE || pressure ? "warn" : "info";
                     Map<String, Object> prm = new LinkedHashMap<>();
                     prm.put("share_pct", round1(share * 100));
                     prm.put("table_bytes", t.totalBytes());
@@ -175,9 +208,13 @@ public final class DbGrowthAdvisor {
                         prm.put("equilibrium_bytes", Math.round(t.equilibriumBytes()));
                         prm.put("equilibrium_after_bytes", Math.round(t.equilibriumBytes() * suggested / eff));
                     }
-                    prm.put("compliance", p.dataClass() == RetentionPolicy.DataClass.PERSONAL
-                            || p.dataClass() == RetentionPolicy.DataClass.SECURITY_AUDIT);
-                    out.add(new Finding("SHORTEN_CANDIDATE", sev, t.name(), p.id(), p.settingKey(), eff, suggested, p.minDays(),
+                    prm.put("compliance", keyNeedsCompliance(p));
+                    List<String> affected = new ArrayList<>();
+                    for (RetentionPolicy x : keySiblings(p)) if (!affected.contains(x.table())) affected.add(x.table());
+                    prm.put("affected_count", affected.size());
+                    prm.put("affected_tables", affected.size() > 20 ? affected.subList(0, 20) : affected);
+                    prm.put("hold", hold);
+                    out.add(new Finding("SHORTEN_CANDIDATE", sev, t.name(), p.id(), p.settingKey(), eff, suggested, floor,
                             rows, bytes, method, p.dataClass().name(), "apply_retention", prm));
                 }
             }

@@ -86,7 +86,7 @@ public class PgDbSizeSource implements DbSizeSource {
         try {
             Object v = readJdbc.queryForObject("SELECT MIN(" + p.timeColumn() + ") FROM " + p.table(), Object.class);
             return normalize(v);
-        } catch (RuntimeException e) {
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             return null;
         }
     }

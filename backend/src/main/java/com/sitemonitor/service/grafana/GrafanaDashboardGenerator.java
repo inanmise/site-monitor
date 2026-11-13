@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 14;
+    public static final int DASHBOARD_REVISION = 15;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1766,8 +1766,8 @@ public final class GrafanaDashboardGenerator {
             add(maint);
 
             Panel checks = new Panel("state-timeline", t("Kendi kendini izleme kontrolleri", "Self-monitoring checks"),
-                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu ve dağıtık kontrol kuyruğu kontrollerinin durumu, zamanla.",
-                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database, clock alignment and distributed check queue checks over time."));
+                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu, dağıtık kontrol kuyruğu ve veritabanı doluluğu kontrollerinin durumu, zamanla.",
+                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database, clock alignment, distributed check queue and database capacity checks over time."));
             checks.w = 16; checks.h = 8;
             checks.target("max by (check) (" + metric(MonitoringMetricNames.WATCHDOG_CHECK) + ")", "{{check}}", false);
             Map<String, Object> to = new LinkedHashMap<>();

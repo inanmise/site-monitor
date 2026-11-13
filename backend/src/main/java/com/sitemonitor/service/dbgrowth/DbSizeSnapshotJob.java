@@ -58,7 +58,8 @@ public class DbSizeSnapshotJob {
         }
         Runnable body = () -> schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
             try {
-                if (!service.snapshotWritten(now)) service.writeSnapshot(now);
+                // Kapanış başladıysa tablo döngüsü yarıda bırakır (sonraki tık / pod yeniden dener)
+                if (!service.snapshotWritten(now)) service.writeSnapshot(now, schedulerService::sideJobsStopping);
             } catch (RuntimeException e) {
                 log.warn("Veritabanı büyümesi günlük görüntüsü yazılamadı — sonraki saat yeniden denenecek: {}", e.toString());
             }

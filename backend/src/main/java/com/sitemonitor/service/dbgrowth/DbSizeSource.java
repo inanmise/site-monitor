@@ -20,7 +20,10 @@ public interface DbSizeSource {
     /** Geçerli şemadaki kullanıcı tabloları — boyutlar ve istatistik sayaçları (tek deyim). */
     List<TableSize> tables();
 
-    /** Yaş kuralının zaman kolonunda en eski değer (UTC ISO, 19 karakter); okunamadı / süre doldu / tablo boş → null. */
+    /**
+     * Yaş kuralının zaman kolonunda en eski değer (UTC ISO, 19 karakter); tablo boş → null. Okuma hatası / zaman aşımı
+     * İSTİSNA fırlatır (analiz bölümü "kısmi" der; görüntü işi null yazar) — 2026-11-13 inceleme.
+     */
     String oldest(RetentionPolicy policy);
 
     /**

@@ -63,7 +63,7 @@ public class DbGrowthService {
     public static final int DEFAULT_RANGE = 90;
     /** Grafikte ayrı çizilen en büyük tablo sayısı. */
     public static final int TOP_TABLES = 8;
-    /** Kapasite üst sınırı (GB) — ayar doğrulaması. */
+    /** Kapasite üst sınırı (GiB) — ayar doğrulaması. */
     public static final int MAX_CAPACITY_GB = 1_000_000;
 
     static final ZoneId IST = ZoneId.of("Europe/Istanbul");
@@ -76,6 +76,12 @@ public class DbGrowthService {
     /** Görüntü işinde en eski kayıt okumalarının toplam bütçesi. */
     static final long OLDEST_BUDGET_MS = 90_000;
     static final long GB = 1024L * 1024L * 1024L;
+    /**
+     * Son günlük görüntü bu kadar günden eskiyse (İstanbul günü) tahmin BAYAT sayılır: dolma günü hesaplanmaz, kendi kendini
+     * izleme yalnız canlı kullanıma bakar, Grafana dolma günü serisi yazılmaz (2026-11-13 inceleme — durmuş görüntü işi bayat
+     * çapadan geri sayıp sonunda sahte "≈0 günde dolar" üretiyordu).
+     */
+    public static final int STALE_SNAPSHOT_DAYS = 3;
 
     static final String SQL_EXISTS = "SELECT COUNT(*) FROM db_size_daily WHERE snap_day = ? AND table_name = '*'";
     static final String SQL_INSERT = "INSERT INTO db_size_daily(snap_day, table_name, total_bytes, table_bytes, index_bytes, "
@@ -127,11 +133,22 @@ public class DbGrowthService {
      * bilinmiyor ya da 10 yıl içinde dolmuyor ({@code fillsWithinHorizon} ayırır).
      */
     public record CapacityFacts(Boolean supported, long capacityBytes, Long usedBytes, Double usedPct, Integer daysUntilFull,
-                                boolean fillsWithinHorizon, int historyPoints, String lastSnapshotDay) {}
+                                boolean fillsWithinHorizon, int historyPoints, String lastSnapshotDay, Integer snapshotAgeDays) {
+        /** Eski biçim (görüntü yaşı bilinmiyor). */
+        public CapacityFacts(Boolean supported, long capacityBytes, Long usedBytes, Double usedPct, Integer daysUntilFull,
+                             boolean fillsWithinHorizon, int historyPoints, String lastSnapshotDay) {
+            this(supported, capacityBytes, usedBytes, usedPct, daysUntilFull, fillsWithinHorizon, historyPoints, lastSnapshotDay, null);
+        }
+
+        /** Son görüntü {@link #STALE_SNAPSHOT_DAYS} günden eski mi (tahmin kullanılmaz). */
+        public boolean forecastStale() {
+            return snapshotAgeDays != null && snapshotAgeDays > STALE_SNAPSHOT_DAYS;
+        }
+    }
 
     // ── Ayar ──────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Kapasite (GB); 0 / geçersiz = bilinmiyor. */
+    /** Kapasite (GiB, 1024³ bayt); 0 / geçersiz = bilinmiyor. */
     public int capacityGb() {
         int v = settings.getInt(CAPACITY_KEY, 0);
         return v > 0 && v <= MAX_CAPACITY_GB ? v : 0;
@@ -161,6 +178,14 @@ public class DbGrowthService {
      * zaman aşımlı MIN ile (toplam {@value #OLDEST_BUDGET_MS} ms bütçe; bütçe biterse kalanlar null). Dönüş: satır sayısı.
      */
     public int writeSnapshot(Instant now) {
+        return writeSnapshot(now, () -> false);
+    }
+
+    /**
+     * {@link #writeSnapshot(Instant)} + kapanış denetimi: {@code stopping} her tablodan önce sorulur; kapanış başladıysa HİÇBİR
+     * satır yazılmadan çıkılır (0) — sonraki tık günü yeniden dener (2026-11-13 inceleme).
+     */
+    public int writeSnapshot(Instant now, java.util.function.BooleanSupplier stopping) {
         if (!Boolean.TRUE.equals(source.supported())) return 0;
         String day = LocalDate.ofInstant(now, IST).toString();
         String created = ISO.format(now);
@@ -170,13 +195,24 @@ public class DbGrowthService {
         long deadline = System.nanoTime() + OLDEST_BUDGET_MS * 1_000_000L;
         List<Object[]> rows = new ArrayList<>();
         for (DbSizeSource.TableSize t : tables) {
+            if (stopping != null && stopping.getAsBoolean()) {
+                log.info("Veritabanı büyümesi görüntüsü kapanış nedeniyle yarıda bırakıldı ({}); sonraki tık yeniden dener", day);
+                return 0;
+            }
             if (t == null || t.name() == null || t.name().length() > 128) continue;
             String oldest = null;
             RetentionPolicy p = agePolicy(t.name());
-            if (p != null && System.nanoTime() < deadline) oldest = source.oldest(p);
+            if (p != null && System.nanoTime() < deadline) {
+                try {
+                    oldest = source.oldest(p);
+                } catch (RuntimeException e) {
+                    log.debug("Veritabanı büyümesi: en eski kayıt okunamadı ({}): {}", p.table(), e.toString());
+                }
+            }
             rows.add(new Object[]{day, t.name(), t.totalBytes(), t.tableBytes(), t.indexBytes(), t.liveRows(), t.deadRows(),
                     t.insTotal(), t.delTotal(), oldest, writer, created});
         }
+        if (stopping != null && stopping.getAsBoolean()) return 0;
         if (!rows.isEmpty()) jdbc.batchUpdate(SQL_INSERT, rows);
         jdbc.update(SQL_INSERT, day, ALL, dbBytes, null, null, null, null, null, null, null, writer, created);
         liveBytes = dbBytes;
@@ -253,6 +289,11 @@ public class DbGrowthService {
         view.put("first_day", firstDay);
         view.put("last_day", lastDay);
         view.put("snapshot_today", today.toString().equals(lastDay));
+        Integer snapshotAge = lastDay == null ? null : (int) Math.max(0, ChronoUnit.DAYS.between(LocalDate.parse(lastDay), today));
+        boolean stale = snapshotAge != null && snapshotAge > STALE_SNAPSHOT_DAYS;
+        view.put("snapshot_age_days", snapshotAge);
+        view.put("forecast_stale", stale);
+        view.put("stale_after_days", STALE_SNAPSHOT_DAYS);
 
         boolean liveOnly = lastDay == null;
         LocalDate anchorDay = liveOnly ? today : LocalDate.parse(lastDay);
@@ -294,6 +335,8 @@ public class DbGrowthService {
         }
 
         Long live = liveDbBytes(now);
+        // Boyut hiç okunamadıysa doluluk BİLİNMİYOR (sahte %0 değil — 2026-11-13 inceleme)
+        boolean currentKnown = live != null || dbAnchor != null;
         double current = live != null ? live : dbAnchor != null ? dbAnchor : 0;
         if (dbAnchor == null) dbAnchor = live == null ? null : live.doubleValue();
         view.put("current_bytes", live != null ? live : dbAnchor == null ? null : Math.round(dbAnchor));
@@ -365,11 +408,13 @@ public class DbGrowthService {
             }
             Double coldRate = null;
             if (fit == null && rowsPerDay != null) {
-                coldRate = saturated ? 0.0 : rowsPerDay * bytesPerRow;
+                // Yasal tutmada temizlik silmez → dolmuş tablo da büyümeye devam eder (2026-11-13 inceleme)
+                coldRate = saturated && !hold ? 0.0 : rowsPerDay * bytesPerRow;
                 coldSum += coldRate;
                 anyCold = true;
             }
-            Double eq = age == null || ageDays <= 0 ? null : DbGrowthForecast.equilibrium(total, ageOld, ageDays);
+            // Yasal tutma açıkken denge sınırı YOK: gece temizliği satır silmez, tablo doğrusal büyür (iyimser tahmin olmasın)
+            Double eq = hold || age == null || ageDays <= 0 ? null : DbGrowthForecast.equilibrium(total, ageOld, ageDays);
             TableInput in = new TableInput(name, total, fit, coldRate, eq);
             inputs.add(in);
             rateByTable.put(name, fit != null ? Double.valueOf(fit.slope()) : coldRate);   // Double: düz double + null kutusu açılıp NPE verirdi
@@ -416,7 +461,7 @@ public class DbGrowthService {
         Integer daysFull = null;
         boolean fillsWithin = false;
         Double usedPct = null;
-        if (capBytes > 0) usedPct = Math.round(current / capBytes * 1000.0) / 10.0;
+        if (capBytes > 0 && currentKnown) usedPct = Math.round(current / capBytes * 1000.0) / 10.0;
         if (!"none".equals(basis)) {
             double anchor = dbAnchor;
             for (int d = 1; d <= DbGrowthForecast.HORIZONS[DbGrowthForecast.HORIZONS.length - 1]; d++) {
@@ -439,7 +484,7 @@ public class DbGrowthService {
                 m.put("high", Math.round(p.high()));
                 horizons.add(m);
             }
-            if (capBytes > 0) {
+            if (capBytes > 0 && currentKnown && !stale) {
                 if (current >= capBytes) {
                     daysFull = 0;
                     fillsWithin = true;
@@ -467,7 +512,7 @@ public class DbGrowthService {
         kpis.put("projection_90d_estimate", !"history".equals(basis));
         kpis.put("used_pct", usedPct);
         kpis.put("days_until_full", daysFull);
-        kpis.put("fills_within_horizon", capBytes > 0 && !"none".equals(basis) ? fillsWithin : null);
+        kpis.put("fills_within_horizon", capBytes > 0 && currentKnown && !stale && !"none".equals(basis) ? fillsWithin : null);
         kpis.put("days_until_full_estimate", !"history".equals(basis));
         view.put("kpis", kpis);
 
@@ -477,7 +522,7 @@ public class DbGrowthService {
 
         // ── Öneriler ──
         DbGrowthAdvisor.Context ctx = new DbGrowthAdvisor.Context(Math.round(current), capBytes, usedPct, daysFull,
-                dbFit != null, hold);
+                dbFit != null && !stale, hold);
         List<DbGrowthAdvisor.Finding> findings = DbGrowthAdvisor.advise(facts, ctx);
         List<Map<String, Object>> fv = new ArrayList<>();
         Map<String, List<String>> codesByTable = new HashMap<>();
@@ -490,7 +535,7 @@ public class DbGrowthService {
 
         CapacityFacts cf = new CapacityFacts(true, capBytes, live != null ? live : dbAnchor == null ? null : Math.round(dbAnchor),
                 usedPct, dbFit != null ? daysFull : null, dbFit != null && fillsWithin, dbFit == null ? dbPoints.size() : dbFit.points(),
-                lastDay);
+                lastDay, snapshotAge);
         return new Computed(now.toEpochMilli(), view, cf, facts, ctx);
     }
 
@@ -571,9 +616,15 @@ public class DbGrowthService {
 
     // ── "Kısaltırsam ne silinir" ──────────────────────────────────────────────────────────────────────────
 
+    /** Kısaltma tahmininde zaman aşımlı COUNT'ların toplam bütçesi (ayarı paylaşan kurallar sırayla sayılır). */
+    static final long WHAT_IF_COUNT_BUDGET_MS = 15_000;
+
     /**
-     * Kuralı {@code days} güne kısaltmanın İLK gece silinecek satır tahmini: önce kuralın kendi WHERE'iyle zaman aşımlı COUNT
-     * (5 sn), süre dolarsa histogram, o da yoksa tekdüze varsayım. Değişiklik YAPMAZ. Geçersiz kural / gün → alan hatası.
+     * Kuralın AYAR ANAHTARINI {@code days} güne kısaltmanın İLK gece silinecek satır tahmini. Anahtar birden çok kuralı
+     * yönetiyorsa (ör. bildirim günlükleri beş tablo) HEPSİ listelenir — kısaltma hepsini birden etkiler (2026-11-13 inceleme).
+     * Kural başına: önce kuralın kendi WHERE'iyle zaman aşımlı COUNT (5 sn; toplam {@value #WHAT_IF_COUNT_BUDGET_MS} ms), süre
+     * dolarsa histogram, o da yoksa tekdüze varsayım. Taban = paylaşan kuralların EN BÜYÜK alt sınırı. Değişiklik YAPMAZ.
+     * Yasal tutma açıksa {@code hold_active}: hold kalkana dek hiçbir satır silinmez (sayılar "hold kalkınca" anlamındadır).
      */
     public Map<String, Object> whatIf(String policyId, int days) {
         RetentionPolicy p = policyId == null ? null : RetentionCatalog.byId(policyId.trim()).orElse(null);
@@ -581,9 +632,11 @@ public class DbGrowthService {
             throw new FieldValidationException("policy", Msg.t("Bu saklama kuralı ayarlanabilir değil ya da bilinmiyor: " + policyId,
                     "This retention rule is unknown or cannot be changed: " + policyId));
         }
-        if (days < p.minDays()) {
-            throw new FieldValidationException("days", Msg.t(p.table() + " için en az " + p.minDays() + " gün girilmelidir (girilen: " + days + ")",
-                    p.table() + " requires at least " + p.minDays() + " days (entered: " + days + ")"));
+        List<RetentionPolicy> siblings = DbGrowthAdvisor.keySiblings(p);
+        int floor = DbGrowthAdvisor.keyFloor(p);
+        if (days < floor) {
+            throw new FieldValidationException("days", Msg.t(p.settingKey() + " için en az " + floor + " gün girilmelidir (girilen: " + days + ")",
+                    p.settingKey() + " requires at least " + floor + " days (entered: " + days + ")"));
         }
         Instant now = clock.get();
         Map<String, Object> out = new LinkedHashMap<>();
@@ -592,15 +645,47 @@ public class DbGrowthService {
         out.put("setting_key", p.settingKey());
         out.put("current_days", retention.effectiveDays(p));
         out.put("days", days);
-        out.put("min_days", p.minDays());
+        out.put("min_days", floor);
         out.put("data_class", p.dataClass().name());
-        out.put("compliance", p.dataClass() == RetentionPolicy.DataClass.PERSONAL || p.dataClass() == RetentionPolicy.DataClass.SECURITY_AUDIT);
+        out.put("compliance", DbGrowthAdvisor.keyNeedsCompliance(p));
+        out.put("hold_active", retention.holdActive());
+        out.put("affected_count", siblings.size());
         Boolean pg = source.supported();
         out.put("supported", Boolean.TRUE.equals(pg));
-        if (!Boolean.TRUE.equals(pg)) return out;
-        String cutoff = cutoffFor(p, days, now);
-        out.put("cutoff", cutoff);
+        List<Map<String, Object>> rowsOut = new ArrayList<>();
+        long deadline = System.nanoTime() + WHAT_IF_COUNT_BUDGET_MS * 1_000_000L;
+        Long sumRows = 0L, sumBytes = 0L;
+        for (RetentionPolicy x : siblings) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("policy_id", x.id());
+            m.put("table", x.table());
+            m.put("data_class", x.dataClass().name());
+            m.put("min_days", x.minDays());
+            m.put("current_days", retention.effectiveDays(x));
+            m.put("compliance", x.dataClass() == RetentionPolicy.DataClass.PERSONAL || x.dataClass() == RetentionPolicy.DataClass.SECURITY_AUDIT);
+            if (Boolean.TRUE.equals(pg)) {
+                estimateInto(m, x, days, now, System.nanoTime() < deadline);
+                Long r = m.get("rows") instanceof Number n ? n.longValue() : null;
+                Long b = m.get("bytes_estimate") instanceof Number n ? n.longValue() : null;
+                sumRows = sumRows == null || r == null ? null : sumRows + r;
+                sumBytes = sumBytes == null || b == null ? null : sumBytes + b;
+            }
+            if (x.id().equals(p.id())) {
+                // İstenen kuralın değerleri üst düzeyde de (eski arayüz sözleşmesi)
+                for (String k : List.of("cutoff", "rows", "rows_method", "table_bytes", "live_rows", "bytes_estimate")) out.put(k, m.get(k));
+            }
+            rowsOut.add(m);
+        }
+        out.put("policies", rowsOut);
+        out.put("total_rows", Boolean.TRUE.equals(pg) ? sumRows : null);
+        out.put("total_bytes_estimate", Boolean.TRUE.equals(pg) ? sumBytes : null);
+        return out;
+    }
 
+    /** Bir kuralın ilk gece silinecek satır tahmini (COUNT → histogram → tekdüze) — {@code m}'ye yazar. */
+    private void estimateInto(Map<String, Object> m, RetentionPolicy p, int days, Instant now, boolean countAllowed) {
+        String cutoff = cutoffFor(p, days, now);
+        m.put("cutoff", cutoff);
         Long totalBytes = null, live = null;
         String oldest = null;
         try {
@@ -614,7 +699,7 @@ public class DbGrowthService {
         } catch (RuntimeException e) {
             log.debug("Veritabanı büyümesi: tablo görüntüsü okunamadı: {}", e.toString());
         }
-        Long rows = source.countOlder(p, cutoff);
+        Long rows = countAllowed ? source.countOlder(p, cutoff) : null;
         String method = rows == null ? null : "count";
         if (rows == null && live != null && p.timeColumn() != null) {
             try {
@@ -636,13 +721,12 @@ public class DbGrowthService {
                 method = "uniform";
             }
         }
-        out.put("rows", rows);
-        out.put("rows_method", method);
-        out.put("table_bytes", totalBytes);
-        out.put("live_rows", live);
-        out.put("bytes_estimate", rows == null || totalBytes == null || live == null || live <= 0 ? null
+        m.put("rows", rows);
+        m.put("rows_method", method);
+        m.put("table_bytes", totalBytes);
+        m.put("live_rows", live);
+        m.put("bytes_estimate", rows == null || totalBytes == null || live == null || live <= 0 ? null
                 : Math.round((double) totalBytes * Math.min(rows, live) / live));
-        return out;
     }
 
     // ── Yardımcılar ───────────────────────────────────────────────────────────────────────────────────────

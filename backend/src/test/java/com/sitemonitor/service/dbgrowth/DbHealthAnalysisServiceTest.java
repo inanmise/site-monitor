@@ -103,6 +103,26 @@ class DbHealthAnalysisServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("en eski kayıt okuması zaman aşımına uğrarsa kurallar bölümü 'partial' ve koşu PARTIAL; kayıt kimliği kendi satırı")
+    void oldestTimeoutIsPartialAndOwnId() {
+        source.oldestFails.put("port_checks", new org.springframework.dao.QueryTimeoutException("canceling statement"));
+        // başka bir pod aynı anda bir satır yazmış olsun — kendi kimliğimiz MAX(id) değil, INSERT'in döndürdüğü
+        Map<String, Object> r = svc.run("admin").orElseThrow();
+        assertThat(((Map<String, Object>) r.get("sections")).get("policies")).isEqualTo("partial");
+        assertThat(r.get("status")).isEqualTo("PARTIAL");
+        Map<String, Object> port = ((List<Map<String, Object>>) r.get("policies")).stream()
+                .filter(p -> "series-port".equals(p.get("policy_id"))).findFirst().orElseThrow();
+        assertThat(port.get("oldest_failed")).isEqualTo(true);
+        Long id = (Long) r.get("run_id");
+        assertThat(id).isEqualTo(jdbc.queryForObject("SELECT id FROM db_health_analysis_runs WHERE actor = 'admin'", Long.class));
+        jdbc.update("INSERT INTO db_health_analysis_runs(started_at, actor, status) VALUES ('2026-11-13T10:00:01', 'other-pod', 'OK')");
+        source.oldestFails.clear();
+        Map<String, Object> r2 = svc.run("admin2").orElseThrow();
+        assertThat(r2.get("run_id")).isEqualTo(jdbc.queryForObject("SELECT id FROM db_health_analysis_runs WHERE actor = 'admin2'", Long.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("bir bölüm okunamazsa PARTIAL — o bölüm 'failed', bulgusu 'sorun yok' sayılmaz; bütçe biterse kalanlar 'skipped'")
     void partialAndBudget() {
         source.vacuumFails = new RuntimeException("timeout");

@@ -148,6 +148,10 @@ public final class WatchdogMessages {
         if (f.get("days_until_full") instanceof Number d) {
             sb.append(en ? " At the current growth rate it fills up in about " + d.intValue() + " day(s)."
                     : " Bugünkü büyüme hızıyla yaklaşık " + d.intValue() + " gün içinde dolar.");
+        } else if (Boolean.TRUE.equals(f.get("forecast_stale"))) {
+            Object age = f.get("snapshot_age_days");
+            sb.append(en ? " Daily snapshots have not been taken for " + age + " day(s); the forecast is ignored and usage alone decides."
+                    : " Günlük görüntüler " + age + " gündür alınamıyor; tahmin kullanılmıyor, karar yalnız kullanıma göre.");
         } else if (!Boolean.TRUE.equals(f.get("forecast"))) {
             sb.append(en ? " Not enough daily snapshots for a forecast yet; usage alone decides."
                     : " Tahmin için henüz yeterli günlük görüntü yok; karar yalnız kullanıma göre.");
@@ -158,11 +162,11 @@ public final class WatchdogMessages {
         return sb.toString();
     }
 
-    /** Bayt → "12,3 GB" / "12.3 GB". */
+    /** Bayt → "12,3 GiB" / "12.3 GiB" (1024 tabanı — kapasite ayarı GiB, 2026-11-13 inceleme). */
     static String bytes(Object v, boolean en) {
         if (!(v instanceof Number n)) return "?";
         double b = n.doubleValue();
-        String[] u = {"B", "KB", "MB", "GB", "TB"};
+        String[] u = {"B", "KiB", "MiB", "GiB", "TiB"};
         int i = 0;
         while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
         return String.format(en ? Locale.ROOT : Locale.forLanguageTag("tr"), i == 0 ? "%.0f" : "%.1f", b) + " " + u[i];

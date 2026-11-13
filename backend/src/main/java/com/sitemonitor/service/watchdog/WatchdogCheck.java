@@ -64,7 +64,7 @@ public enum WatchdogCheck {
             "Distributed check jobs are not being claimed or their results are not being evaluated; monitors may not be checked on time. "
                     + "Check the workers and the sweep leader on the Cluster card; if needed, turn the master switch off (types return to the classic sweep)."),
     /**
-     * Veritabanı doluluğu (2026-11-13, Veritabanı büyümesi): kapasite (GB) tanımlıyken kullanım %85'i geçti ya da geçmişe dayalı
+     * Veritabanı doluluğu (2026-11-13, Veritabanı büyümesi): kapasite (GiB) tanımlıyken kullanım %85'i geçti ya da geçmişe dayalı
      * tahmin 30 gün içinde dolacağını söylüyor (en az 7 günlük görüntü varken; yoksa yalnız kullanım). Kapasite tanımsız ya da
      * veritabanı PostgreSQL değil → uygulanmaz; ölçülemezse bilinmiyor (sayaçlar değişmez).
      */

@@ -34,6 +34,11 @@ class MonitoringMetricsDbGrowthTest {
         Families none = MonitoringMetricsExporter.dbGrowthFamilies(g);
         assertThat(none.get(MonitoringMetricNames.DB_SIZE_BYTES)).hasSize(1);
         assertThat(none.get(MonitoringMetricNames.DB_DAYS_UNTIL_FULL)).isEmpty();
+        // Bayat görüntü (> 3 gün): dolma günü serisi YOK, boyut var
+        when(g.capacityFacts()).thenReturn(new CapacityFacts(true, 100L << 30, 42L << 30, 42.0, 5, true, 14, "2026-11-01", 12));
+        Families stale = MonitoringMetricsExporter.dbGrowthFamilies(g);
+        assertThat(stale.get(MonitoringMetricNames.DB_SIZE_BYTES)).hasSize(1);
+        assertThat(stale.get(MonitoringMetricNames.DB_DAYS_UNTIL_FULL)).isEmpty();
         assertThat(MonitoringMetricNames.def(MonitoringMetricNames.DB_SIZE_BYTES).scope()).isEqualTo(MonitoringMetricNames.Scope.CLUSTER);
         assertThat(MonitoringMetricNames.def(MonitoringMetricNames.DB_DAYS_UNTIL_FULL).scope()).isEqualTo(MonitoringMetricNames.Scope.CLUSTER);
     }

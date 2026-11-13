@@ -96,6 +96,27 @@ class WatchdogDbCapacityTest {
     }
 
     @Test
+    @DisplayName("görüntüler 3 günden eski → tahmin YOK SAYILIR (bayat çapadan geri sayım yok), karar yalnız canlı kullanıma göre")
+    void staleSnapshotIgnoresForecast() {
+        long cap = 100 * GB;
+        CapacityFacts stale = new CapacityFacts(true, cap, Math.round(cap * 0.5), 50.0, 0, true, 14, "2026-11-01", 12);
+        WatchdogProbes.Probe p = run(growth(100, stale));
+        assertThat(p.result()).isEqualTo(Result.OK);
+        assertThat(p.facts().get("forecast_stale")).isEqualTo(true);
+        assertThat(p.facts().get("forecast")).isEqualTo(false);
+        assertThat(p.facts()).doesNotContainKey("days_until_full");
+        assertThat(p.facts().get("snapshot_age_days")).isEqualTo(12);
+        assertThat(WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, p.facts(), false)).contains("12 gündür alınamıyor");
+        assertThat(WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, p.facts(), true)).contains("12 day(s)");
+        // kullanım yine karar verir
+        CapacityFacts staleFull = new CapacityFacts(true, cap, Math.round(cap * 0.9), 90.0, null, false, 14, "2026-11-01", 12);
+        assertThat(run(growth(100, staleFull)).result()).isEqualTo(Result.PROBLEM);
+        // 3 gün → hâlâ geçerli tahmin
+        CapacityFacts fresh = new CapacityFacts(true, cap, Math.round(cap * 0.5), 50.0, 20, true, 14, "2026-11-10", 3);
+        assertThat(run(growth(100, fresh)).result()).isEqualTo(Result.PROBLEM);
+    }
+
+    @Test
     @DisplayName("okunamadı → UNKNOWN (istisna ya da kullanım bilinmiyor) — sayaçlar değişmez")
     void unknown() {
         DbGrowthService g = mock(DbGrowthService.class);
@@ -112,8 +133,8 @@ class WatchdogDbCapacityTest {
         WatchdogProbes.Probe p = run(growth(100, facts(86, 20, 14)));
         String tr = WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, p.facts(), false);
         String en = WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, p.facts(), true);
-        assertThat(tr).contains("100,0 GB").contains("%86,0").contains("20 gün");
-        assertThat(en).contains("100.0 GB").contains("86.0%").contains("20 day");
+        assertThat(tr).contains("100,0 GiB").contains("%86,0").contains("20 gün");
+        assertThat(en).contains("100.0 GiB").contains("86.0%").contains("20 day");
         WatchdogProbes.Probe s = run(growth(100, facts(50, null, 2)));
         assertThat(WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, s.facts(), false)).contains("yeterli günlük görüntü yok");
         assertThat(WatchdogMessages.detail(WatchdogCheck.DB_CAPACITY, java.util.Map.of("reason", "capacity_unknown"), false))

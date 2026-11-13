@@ -95,6 +95,42 @@ class DbGrowthAdvisorTest {
     }
 
     @Test
+    @DisplayName("ayarı paylaşan kurallar: kardeşler, ortak taban = en büyük alt sınır, öneri hepsini sayar (2026-11-13 inceleme)")
+    void sharedSettingKey() {
+        RetentionPolicy notif = policy("notification-logs");
+        List<RetentionPolicy> sib = DbGrowthAdvisor.keySiblings(notif);
+        assertThat(sib).extracting(RetentionPolicy::table)
+                .contains("notification_logs", "domain_expiry_reminders", "noc_deliveries", "alert_escalation_steps", "quiet_digest_items");
+        assertThat(sib).allSatisfy(x -> assertThat(x.settingKey()).isEqualTo(notif.settingKey()));
+        int floor = sib.stream().mapToInt(RetentionPolicy::minDays).max().orElseThrow();
+        assertThat(DbGrowthAdvisor.keyFloor(notif)).isEqualTo(floor);
+        // tek kurallı anahtar: yalnız kendisi
+        RetentionPolicy port = policy("series-port");
+        assertThat(DbGrowthAdvisor.keySiblings(port)).allSatisfy(x -> assertThat(x.settingKey()).isEqualTo(port.settingKey()));
+        assertThat(DbGrowthAdvisor.keySiblings(null)).isEmpty();
+        // sertifika serisi: iki tablo
+        RetentionPolicy cert = policy("series-certificate");
+        TableFacts t = facts("certificate_checks", 3 * GB, GB, GB, 1_000_000L, 0L, 0L, "series-certificate", 730, 800.0, null, false);
+        Finding f = DbGrowthAdvisor.advise(List.of(t), ctx(10 * GB)).stream()
+                .filter(x -> x.code().equals("SHORTEN_CANDIDATE")).findFirst().orElseThrow();
+        assertThat(f.minDays()).isEqualTo(DbGrowthAdvisor.keyFloor(cert));
+        assertThat((Integer) f.params().get("affected_count")).isEqualTo(DbGrowthAdvisor.keySiblings(cert).stream()
+                .map(RetentionPolicy::table).distinct().toList().size()).isGreaterThanOrEqualTo(2);
+        assertThat((List<String>) f.params().get("affected_tables")).contains("certificate_checks", "tls_grade_changes");
+    }
+
+    @Test
+    @DisplayName("yasal tutma açıkken kısaltma adayı yalnız BİLGİ (hold kalkana dek hiçbir satır silinmez) ve hold işareti taşır")
+    void shortenUnderLegalHoldIsInfo() {
+        TableFacts big = facts("audit_log", 3 * GB, GB, GB, 1_000_000L, 0L, 0L, "audit-log", 365, 400.0, null, false);
+        Context hold = new Context(10 * GB, 0, null, null, false, true);
+        Finding f = DbGrowthAdvisor.advise(List.of(big), hold).stream()
+                .filter(x -> x.code().equals("SHORTEN_CANDIDATE")).findFirst().orElseThrow();
+        assertThat(f.severity()).isEqualTo("info");
+        assertThat(f.params().get("hold")).isEqualTo(true);
+    }
+
+    @Test
     @DisplayName("kısaltma YOK: küçük pay, küçük tablo, tabanda, ayarlanamaz kural")
     void noShorten() {
         assertThat(codes(DbGrowthAdvisor.advise(List.of(facts("port_checks", 500 * MB, 300 * MB, 100 * MB, 1L, 0L, 0L,

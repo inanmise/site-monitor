@@ -2,6 +2,7 @@ package com.sitemonitor.service.dbgrowth;
 
 import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.retention.RetentionCatalog;
 import com.sitemonitor.service.retention.RetentionPolicy;
 import com.sitemonitor.service.retention.RetentionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,7 +75,12 @@ class DbGrowthServiceTest {
 
     /** 14 gün: veritabanı 10 GB + 100 MB/gün, port_checks 6 GB + 100 MB/gün (en eski kayıt 30 gün önce, saklama 180). */
     private void seedFourteenDays() {
-        LocalDate today = LocalDate.parse(TODAY);
+        seedFourteenDays(0);
+    }
+
+    /** Aynı seri, son görüntü bugünden {@code ageDays} gün önce biter (görüntü işi durmuş). */
+    private void seedFourteenDays(int ageDays) {
+        LocalDate today = LocalDate.parse(TODAY).minusDays(ageDays);
         String oldest = NOW.minus(30, ChronoUnit.DAYS).toString().substring(0, 19);
         for (int i = 0; i < 14; i++) {
             String day = today.minusDays(13 - i).toString();
@@ -192,6 +198,85 @@ class DbGrowthServiceTest {
         assertThat(t.get("daily_growth_bytes")).isNull();
         assertThat(t.get("daily_growth_estimate")).isEqualTo(false);
         assertThat(v.get("forecast_basis")).isEqualTo("none");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("son görüntü 3 günden eski → tahmin BAYAT: dolma günü yok (görünüm + olgular), uyarı alanları; 3 gün → hâlâ geçerli")
+    void staleSnapshotForecast() {
+        seedFourteenDays(5);
+        capacity(20);
+        Map<String, Object> v = svc.overview(30, false);
+        assertThat(v.get("snapshot_age_days")).isEqualTo(5);
+        assertThat(v.get("forecast_stale")).isEqualTo(true);
+        Map<String, Object> k = (Map<String, Object>) v.get("kpis");
+        assertThat(k.get("days_until_full")).isNull();
+        assertThat(k.get("fills_within_horizon")).isNull();
+        assertThat(k.get("used_pct")).isNotNull();                 // canlı kullanım yine hesaplanır
+        DbGrowthService.CapacityFacts f = svc.capacityFacts();
+        assertThat(f.daysUntilFull()).isNull();
+        assertThat(f.forecastStale()).isTrue();
+        assertThat(f.snapshotAgeDays()).isEqualTo(5);
+
+        jdbc.update("DELETE FROM db_size_daily");
+        seedFourteenDays(3);
+        svc.invalidate();
+        Map<String, Object> ok = svc.overview(30, false);
+        assertThat(ok.get("forecast_stale")).isEqualTo(false);
+        assertThat(((Map<String, Object>) ok.get("kpis")).get("days_until_full")).isNotNull();
+        assertThat(svc.capacityFacts().forecastStale()).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("yasal tutma açık → denge sınırı yok (doğrusal büyüme), henüz dolmadı önerisi yok, kısaltma adayı yalnız bilgi + hold işareti")
+    void legalHoldIsLinear() {
+        seedFourteenDays();
+        when(retention.holdActive()).thenReturn(true);
+        Map<String, Object> v = svc.overview(30, false);
+        assertThat(v.get("hold_active")).isEqualTo(true);
+        Map<String, Object> port = ((List<Map<String, Object>>) v.get("tables")).get(0);
+        assertThat(port.get("equilibrium_bytes")).isNull();
+        assertThat((List<String>) port.get("findings")).doesNotContain("NOT_SATURATED");
+        List<Map<String, Object>> findings = (List<Map<String, Object>>) v.get("findings");
+        Map<String, Object> shorten = findings.stream().filter(f -> "SHORTEN_CANDIDATE".equals(f.get("code"))).findFirst().orElseThrow();
+        assertThat(shorten.get("severity")).isEqualTo("info");
+        assertThat(((Map<String, Object>) shorten.get("params")).get("hold")).isEqualTo(true);
+        assertThat(findings).anySatisfy(f -> assertThat(f.get("code")).isEqualTo("LEGAL_HOLD"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("boyut hiç okunamadı → doluluk BİLİNMİYOR (null), sahte %0 değil")
+    void unknownSizeIsNotZeroPercent() {
+        capacity(100);
+        source.dbSizeFails = new RuntimeException("db down");
+        Map<String, Object> v = svc.overview(90, false);
+        assertThat(((Map<String, Object>) v.get("kpis")).get("used_pct")).isNull();
+        assertThat(svc.capacityFacts().usedPct()).isNull();
+        assertThat(svc.capacityFacts().usedBytes()).isNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("ayar anahtarını paylaşan kurallar: whatIf hepsini listeler, taban en büyük alt sınır, uyum herhangi biri kişiselse")
+    void whatIfSharedKey() {
+        RetentionPolicy notif = RetentionCatalog.byId("notification-logs").orElseThrow();
+        List<RetentionPolicy> siblings = DbGrowthAdvisor.keySiblings(notif);
+        assertThat(siblings).hasSizeGreaterThanOrEqualTo(5);
+        int floor = siblings.stream().mapToInt(RetentionPolicy::minDays).max().orElseThrow();
+        Map<String, Object> w = svc.whatIf("notification-logs", Math.max(floor, 90));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) w.get("policies");
+        assertThat(rows).extracting(m -> m.get("table"))
+                .contains("notification_logs", "domain_expiry_reminders", "noc_deliveries", "alert_escalation_steps", "quiet_digest_items");
+        assertThat(w.get("affected_count")).isEqualTo(siblings.size());
+        assertThat(w.get("min_days")).isEqualTo(floor);
+        assertThat(w.get("compliance")).isEqualTo(siblings.stream().anyMatch(x -> x.dataClass() == RetentionPolicy.DataClass.PERSONAL
+                || x.dataClass() == RetentionPolicy.DataClass.SECURITY_AUDIT));
+        if (floor > 1) assertThatThrownBy(() -> svc.whatIf("notification-logs", floor - 1)).isInstanceOf(FieldValidationException.class);
+        // tek kurallı anahtar: liste tek satır
+        assertThat((List<?>) svc.whatIf("series-port", 90).get("policies")).hasSize(DbGrowthAdvisor.keySiblings(
+                RetentionCatalog.byId("series-port").orElseThrow()).size());
     }
 
     @Test

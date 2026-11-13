@@ -37,7 +37,7 @@ import java.util.Optional;
  *   <li>{@code GET /api/admin/system/db-growth?range=30|90|365&fresh=} — görünüm ({@code system_health.read/view}).</li>
  *   <li>{@code GET …/what-if?policy=&days=} — kısaltmanın ilk gece sileceği satır tahmini (GLOBAL yönetici; zaman aşımlı
  *       COUNT → kişi başına dakikada {@value #WHAT_IF_PER_MINUTE}).</li>
- *   <li>{@code PUT …/capacity} — kapasite (GB) — GLOBAL yönetici; {@code AppSettingsService.save} üzerinden (GLOBAL_ONLY
+ *   <li>{@code PUT …/capacity} — kapasite (GiB) — GLOBAL yönetici; {@code AppSettingsService.save} üzerinden (GLOBAL_ONLY
  *       kapısı + aynı doğrulama), denetim {@code DB_CAPACITY_SETTINGS_SAVE}.</li>
  *   <li>{@code POST …/analysis} — salt okunur sağlık analizi ({@code system_health.actions/execute}); kişi başına dakikada
  *       {@value #ANALYSIS_PER_MINUTE} (429), pod'da süren analiz varken 409 {@code DB_ANALYSIS_BUSY}; denetim
@@ -104,14 +104,14 @@ public class DbGrowthController {
             try {
                 v = raw instanceof Number n ? (int) Math.round(n.doubleValue()) : Integer.parseInt(String.valueOf(raw).trim());
             } catch (NumberFormatException e) {
-                throw new FieldValidationException("capacity_gb", Msg.t("Kapasite tam sayı (GB) olmalı.",
-                        "Capacity must be a whole number of GB."));
+                throw new FieldValidationException("capacity_gb", Msg.t("Kapasite tam sayı (GiB) olmalı.",
+                        "Capacity must be a whole number of GiB."));
             }
         }
         if (v < 0 || v > DbGrowthService.MAX_CAPACITY_GB) {
             throw new FieldValidationException("capacity_gb", Msg.t(
-                    "Kapasite 0 ile " + DbGrowthService.MAX_CAPACITY_GB + " GB arasında olmalı (0 = bilinmiyor).",
-                    "Capacity must be between 0 and " + DbGrowthService.MAX_CAPACITY_GB + " GB (0 = unknown)."));
+                    "Kapasite 0 ile " + DbGrowthService.MAX_CAPACITY_GB + " GiB arasında olmalı (0 = bilinmiyor).",
+                    "Capacity must be between 0 and " + DbGrowthService.MAX_CAPACITY_GB + " GiB (0 = unknown)."));
         }
         int before = growth.capacityGb();
         if (before != v) {
@@ -129,18 +129,14 @@ public class DbGrowthController {
     @PostMapping("/analysis")
     public ResponseEntity<Map<String, Object>> runAnalysis(HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "system_health.actions", "execute");
+        // Önce meşgul denetimi: pod'da analiz sürerken dakikalık hak harcanmaz (2026-11-13 inceleme)
+        if (analysis.busy()) throw busy();
         if (!allow(analysisCalls, actor(session), ANALYSIS_PER_MINUTE, System.currentTimeMillis())) {
             return rateLimited(Msg.t("Dakikada en çok " + ANALYSIS_PER_MINUTE + " analiz çalıştırılabilir; biraz bekleyip yeniden deneyin.",
                     "At most " + ANALYSIS_PER_MINUTE + " analyses per minute; wait a moment and try again."));
         }
         Optional<Map<String, Object>> run = analysis.run(actor(session));
-        if (run.isEmpty()) {
-            throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("DB_ANALYSIS_BUSY", Msg.t(
-                    "Bu pod'da şu an başka bir veritabanı analizi sürüyor; birkaç saniye sonra yeniden deneyin. Sonuç bitince "
-                            + "\"Son analiz\" olarak görünür.",
-                    "Another database analysis is running on this pod right now; try again in a few seconds. Its result "
-                            + "appears as the latest analysis when it finishes."));
-        }
+        if (run.isEmpty()) throw busy();
         Map<String, Object> r = run.get();
         Object findings = r.get("findings");
         auditService.recordAction("DB_HEALTH_ANALYSIS_RUN", session, request, "SYSTEM", "db-growth",
@@ -156,6 +152,14 @@ public class DbGrowthController {
         data.put("analysis", analysis.latest());
         data.put("running", analysis.busy());
         return ok(Map.of("data", data));
+    }
+
+    private static RuntimeException busy() {
+        return new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("DB_ANALYSIS_BUSY", Msg.t(
+                "Bu pod'da şu an başka bir veritabanı analizi sürüyor; birkaç saniye sonra yeniden deneyin. Sonuç bitince "
+                        + "\"Son analiz\" olarak görünür.",
+                "Another database analysis is running on this pod right now; try again in a few seconds. Its result "
+                        + "appears as the latest analysis when it finishes."));
     }
 
     /** Ayarlar → Veri Saklama'yı görebiliyor mu ({@code RetentionAdminController.requireAccess} ile aynı kural). */

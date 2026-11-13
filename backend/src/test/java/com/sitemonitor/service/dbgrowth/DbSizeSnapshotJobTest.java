@@ -58,7 +58,7 @@ class DbSizeSnapshotJobTest {
         when(svc.snapshotWritten(any())).thenReturn(true);
         job(svc, sched, true, AFTER_FIVE).tick();
         verify(sched, never()).runWithSchedulerLock(any(), any());
-        verify(svc, never()).writeSnapshot(any());
+        verify(svc, never()).writeSnapshot(any(), any());
     }
 
     @Test
@@ -71,8 +71,12 @@ class DbSizeSnapshotJobTest {
         doAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return null; })
                 .when(sched).runWithSchedulerLock(eq(DbSizeSnapshotJob.LOCK_NAME), any());
         job(svc, sched, true, AFTER_FIVE).tick();
-        verify(svc).writeSnapshot(AFTER_FIVE);
-        when(svc.writeSnapshot(any())).thenThrow(new RuntimeException("boom"));
+        // kapanış denetimi geçirilir: yan iş kapanırken tablo döngüsü yarıda bırakılır
+        org.mockito.ArgumentCaptor<java.util.function.BooleanSupplier> stop = org.mockito.ArgumentCaptor.forClass(java.util.function.BooleanSupplier.class);
+        verify(svc).writeSnapshot(eq(AFTER_FIVE), stop.capture());
+        when(sched.sideJobsStopping()).thenReturn(true);
+        org.assertj.core.api.Assertions.assertThat(stop.getValue().getAsBoolean()).isTrue();
+        when(svc.writeSnapshot(any(), any())).thenThrow(new RuntimeException("boom"));
         job(svc, sched, true, AFTER_FIVE).tick();   // istisna dışarı sızmaz
     }
 

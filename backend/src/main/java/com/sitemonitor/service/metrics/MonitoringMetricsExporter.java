@@ -1105,7 +1105,8 @@ public class MonitoringMetricsExporter {
         if (c == null || !Boolean.TRUE.equals(c.supported())) return null;
         Families t = new Families();
         if (c.usedBytes() != null) t.add(MonitoringMetricNames.DB_SIZE_BYTES, c.usedBytes());
-        if (c.daysUntilFull() != null) t.add(MonitoringMetricNames.DB_DAYS_UNTIL_FULL, c.daysUntilFull());
+        // Bayat görüntüden (> 3 gün) dolma günü yazılmaz — seri yok, sahte geri sayım değil
+        if (c.daysUntilFull() != null && !c.forecastStale()) t.add(MonitoringMetricNames.DB_DAYS_UNTIL_FULL, c.daysUntilFull());
         return t;
     }
 

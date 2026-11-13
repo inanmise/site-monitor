@@ -599,7 +599,11 @@ public class WatchdogProbes {
         f.put("threshold_pct", (long) DB_CAPACITY_PCT);
         f.put("threshold_days", DB_CAPACITY_DAYS);
         f.put("history_points", c.historyPoints());
-        boolean forecast = c.historyPoints() >= com.sitemonitor.service.dbgrowth.DbGrowthForecast.MIN_POINTS;
+        // Görüntü işi durmuşsa (son görüntü > 3 gün) tahmin bayat çapadan geri sayardı → yok sayılır, karar yalnız kullanıma göre
+        boolean stale = c.forecastStale();
+        if (c.snapshotAgeDays() != null) f.put("snapshot_age_days", c.snapshotAgeDays());
+        if (stale) f.put("forecast_stale", true);
+        boolean forecast = !stale && c.historyPoints() >= com.sitemonitor.service.dbgrowth.DbGrowthForecast.MIN_POINTS;
         f.put("forecast", forecast);
         Integer days = forecast ? c.daysUntilFull() : null;
         if (days != null) f.put("days_until_full", days);

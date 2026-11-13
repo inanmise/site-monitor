@@ -50,7 +50,8 @@ const VIEW = {
   findings: [
     { code: 'SHORTEN_CANDIDATE', severity: 'warn', table: 'activity_log', policy_id: 'activity-log', setting_key: 'site.monitor.activity.retention-days',
       current_days: 365, suggested_days: 180, min_days: 90, est_rows: 41_200_000, est_bytes: 9.4 * GB, est_method: 'uniform', data_class: 'PERSONAL',
-      action: 'apply_retention', params: { share_pct: 26.4, table_bytes: 28 * GB, compliance: true } },
+      action: 'apply_retention', params: { share_pct: 26.4, table_bytes: 28 * GB, compliance: true, affected_count: 2,
+        affected_tables: ['activity_log', LONG] } },
     { code: 'NO_RULE', severity: 'warn', table: LONG, action: 'code', params: { growth_30d_bytes: 3 * GB, table_bytes: 27 * GB } },
     { code: 'NOT_SATURATED', severity: 'info', table: 'http_checks', policy_id: 'series-http', setting_key: 'site.monitor.series.http.retention-days',
       current_days: 90, min_days: 30, data_class: 'OPERATIONAL', action: 'open_retention',
@@ -84,19 +85,29 @@ const RETENTION = {
   ],
 }
 
-async function mock(page, saved) {
+/** Ayar anahtarını paylaşan iki tablo (bağımsız inceleme 2026-11-13): pencere ikisini de tahminiyle listeler. */
+const WHAT_IF = {
+  policy_id: 'activity-log', table: 'activity_log', setting_key: 'site.monitor.activity.retention-days',
+  current_days: 365, days: 180, min_days: 90, data_class: 'PERSONAL', compliance: true, hold_active: false, affected_count: 2, supported: true,
+  rows: 40_812_000, rows_method: 'count', table_bytes: 28 * GB, live_rows: 82_000_000, bytes_estimate: 9.3 * GB,
+  total_rows: 41_012_000, total_bytes_estimate: 9.4 * GB,
+  policies: [
+    { policy_id: 'activity-log', table: 'activity_log', data_class: 'PERSONAL', min_days: 90, current_days: 365, compliance: true,
+      rows: 40_812_000, rows_method: 'count', bytes_estimate: 9.3 * GB },
+    { policy_id: 'activity-extra', table: LONG, data_class: 'OPERATIONAL', min_days: 30, current_days: 365, compliance: false,
+      rows: 200_000, rows_method: 'histogram', bytes_estimate: 100 * MB },
+  ],
+}
+
+async function mock(page, saved, { view = VIEW, whatIf = WHAT_IF } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
   await mockApi(page)
   const json = (body) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   await page.route((u) => new URL(u).pathname.startsWith('/api/admin/system/db-growth'), (route) => {
     const p = new URL(route.request().url()).pathname
     if (p.endsWith('/analysis/latest')) return route.fulfill(json({ success: true, data: { analysis: ANALYSIS, running: false } }))
-    if (p.endsWith('/what-if')) {
-      return route.fulfill(json({ success: true, data: { policy_id: 'activity-log', table: 'activity_log', setting_key: 'site.monitor.activity.retention-days',
-        current_days: 365, days: 180, min_days: 90, data_class: 'PERSONAL', compliance: true, supported: true, rows: 40_812_000, rows_method: 'count',
-        table_bytes: 28 * GB, live_rows: 82_000_000, bytes_estimate: 9.3 * GB } }))
-    }
-    return route.fulfill(json({ success: true, data: VIEW }))
+    if (p.endsWith('/what-if')) return route.fulfill(json({ success: true, data: whatIf }))
+    return route.fulfill(json({ success: true, data: view }))
   })
   await page.route((u) => new URL(u).pathname === '/api/admin/retention/settings', (route) => {
     try { saved.push(JSON.parse(route.request().postData() || '{}')) } catch { saved.push(null) }
@@ -183,7 +194,7 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/db-growth-${vp.name}.png`, fullPage: true })
     })
 
-    test('Uygula: uyum uyarısı + kesin sayım; Veri Saklama kayıt ucu aynı anahtarla çağrılır', async ({ page }) => {
+    test('Uygula: ortak anahtarın tüm tabloları, uyum uyarısı + kesin sayım; Veri Saklama kayıt ucu aynı anahtarla çağrılır', async ({ page }) => {
       test.setTimeout(90_000)
       const saved = []
       await mock(page, saved)
@@ -193,9 +204,15 @@ for (const vp of VIEWPORTS) {
       await sec.locator('[data-slot="dbg-apply"]').first().click()
       const dlg = page.locator('[data-slot="dbg-apply-dialog"]')
       await expect(dlg).toBeVisible()
-      await expect(dlg.locator('[data-slot="dbg-apply-estimate"]')).toContainText('40.812.000')
+      await expect(dlg.locator('[data-slot="dbg-apply-estimate"]')).toContainText('41.012.000')
+      await expect(dlg.locator('[data-slot="dbg-apply-policy"]')).toHaveCount(2)
+      await expect(dlg.locator('[data-slot="dbg-apply-policy"]').first()).toContainText('40.812.000')
+      await expect(dlg.locator(`[data-slot="dbg-apply-policy"][data-table="${LONG}"]`)).toBeVisible()
       await expect(dlg).toContainText('Uyum onayı gerektiren veri')
+      await expect(page.locator('[data-slot="dbg-apply-confirm"]')).toHaveAttribute('data-variant', 'destructive')
+      await expect(page.locator('[data-slot="dbg-apply-confirm"]')).toBeEnabled()
       expect(await page.evaluate(overflowIn, '[data-slot="dbg-apply-dialog"]'), 'pencerede taşma').toEqual([])
+      expect(await page.evaluate(clippedIn, '[data-slot="dbg-apply-dialog"]'), 'pencerede kırpılan metin').toEqual([])
       if (vp.touch) {
         const small = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')]
           .map((b) => b.getBoundingClientRect()).filter((r) => r.height > 0 && r.height < 39.5).length)
@@ -204,6 +221,32 @@ for (const vp of VIEWPORTS) {
       await page.locator('[data-slot="dbg-apply-confirm"]').click()
       await expect(dlg).toHaveCount(0)
       expect(saved).toEqual([{ values: { 'site.monitor.activity.retention-days': '180' } }])
+    })
+
+    test('eski görüntü + yasal tutma: bantlar sığar; eskimiş öneride onay kapalı', async ({ page }) => {
+      test.setTimeout(90_000)
+      const saved = []
+      const view = {
+        ...VIEW, hold_active: true, forecast_stale: true, snapshot_age_days: 6, stale_after_days: 3,
+        kpis: { ...VIEW.kpis, days_until_full: null, fills_within_horizon: null },
+        findings: VIEW.findings.map((f) => (f.code === 'SHORTEN_CANDIDATE' ? { ...f, severity: 'info', params: { ...f.params, hold: true } } : f)),
+      }
+      await mock(page, saved, { view, whatIf: { ...WHAT_IF, hold_active: true, current_days: 180 } })
+      await page.goto('/?tab=health&sec=dbgrowth')
+      const sec = page.locator('[data-slot="dbg-section"]')
+      await expect(sec).toHaveAttribute('data-state', 'ready', { timeout: 30_000 })
+      await expect(sec.locator('[data-slot="dbg-stale"]')).toContainText('6 gündür alınamıyor')
+      await expect(sec.locator('[data-kpi="full"]')).toHaveAttribute('data-tone', 'neutral')
+      await expect(sec.locator('[data-slot="dbg-finding"]').first()).toContainText('hold kapanana dek hiçbir satır silinmez')
+      expect(await page.evaluate(overflowIn, '[data-slot="dbg-section"]'), 'yatay taşma').toEqual([])
+      expect(await page.evaluate(clippedIn, '[data-slot="dbg-section"]'), 'kırpılan metin').toEqual([])
+      await sec.locator('[data-slot="dbg-apply"]').first().click()
+      const dlg = page.locator('[data-slot="dbg-apply-dialog"]')
+      await expect(dlg.locator('[data-slot="dbg-apply-stale"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="dbg-apply-hold"]')).toBeVisible()
+      await expect(page.locator('[data-slot="dbg-apply-confirm"]')).toBeDisabled()
+      expect(await page.evaluate(overflowIn, '[data-slot="dbg-apply-dialog"]'), 'pencerede taşma').toEqual([])
+      expect(saved).toEqual([])
     })
 
     test("Veri Saklama'da aç → politika açılır ve vurgulanır", async ({ page }) => {

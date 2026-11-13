@@ -7,7 +7,7 @@ import ToneBadge from '../ToneBadge.jsx'
 import { Panel } from '../httpmetrics/HttpParts.jsx'
 import { Button } from '@/components/shadcn/button'
 import DbGrowthFindings from './DbGrowthFindings.jsx'
-import { ANALYSIS_SECTIONS, analysisTone, formatNumber, sectionTone } from './dbGrowthModel.js'
+import { ANALYSIS_SECTIONS, analysisIncomplete, analysisTone, formatNumber, sectionTone } from './dbGrowthModel.js'
 
 /**
  * İstek üzerine salt okunur veritabanı sağlık analizi (2026-11-13): vacuum durumu, dizin şişmesi, kullanılmayan dizinler,
@@ -57,6 +57,8 @@ export default function DbGrowthAnalysis({ t, canAnalyze, canApply, canOpenReten
 
   const sections = result?.sections || {}
   const bloat = result?.index_bloat
+  // Eksik analizde "öneri yok" yanıltır: okunamayan bölümün önerisi zaten yok
+  const incomplete = analysisIncomplete(result)
   return (
     <Panel data-slot="dbg-analysis" title={t('dbg.an.title')}
       right={canAnalyze && (
@@ -101,6 +103,11 @@ export default function DbGrowthAnalysis({ t, canAnalyze, canApply, canOpenReten
                   </li>
                 ))}
               </ul>
+              {incomplete && (
+                <div data-slot="dbg-analysis-incomplete">
+                  <AlertBanner tone="warning" className="mb-0">{t('dbg.an.incomplete')}</AlertBanner>
+                </div>
+              )}
               {bloat && sections.index_bloat === 'ok' && (
                 <p data-slot="dbg-analysis-bloat" className="m-0 text-xs text-muted-foreground">
                   {t('dbg.an.bloatSummary', formatNumber(bloat.checked), formatNumber((result.findings || []).filter((f) => f.code === 'INDEX_BLOAT').length),
@@ -108,7 +115,8 @@ export default function DbGrowthAnalysis({ t, canAnalyze, canApply, canOpenReten
                 </p>
               )}
               <DbGrowthFindings findings={result.findings} t={t} canApply={canApply} canOpenRetention={canOpenRetention}
-                onApplied={onApplied} slot="dbg-analysis-findings" />
+                onApplied={onApplied} slot="dbg-analysis-findings"
+                emptyText={incomplete ? t('dbg.an.noneIncomplete') : undefined} />
             </>
           )}
         </div>
