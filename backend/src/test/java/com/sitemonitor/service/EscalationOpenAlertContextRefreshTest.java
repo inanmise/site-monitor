@@ -13,7 +13,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -61,11 +60,22 @@ class EscalationOpenAlertContextRefreshTest {
         when(writer.writeValues(anyLong(), any(), anyBoolean())).thenReturn(1);
     }
 
-    private void openAlarm(Map<String, Object> ctx) {
+    /** Tazelemeyi isteyen izleme (id 6, takım 7) — açık alarmın sahibi olmalı (inceleme 2026-11-13, DÜŞÜK 7). */
+    private static final Map<String, Object> OWNER = Map.of("monitor_id", 6L, "team_id", 7L);
+
+    private AlertEvent alarm(long id, long teamId, String contextJson) {
         AlertEvent e = new AlertEvent();
-        e.setId(140L); e.setDomain(URL); e.setAlertType(EscalationService.TYPE_PAGE_INTEGRITY); e.setResolved(false);
-        e.setContextJson(json.writeValueAsString(ctx));
-        when(repo.findOpenAlert(URL, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(Optional.of(e));
+        e.setId(id); e.setDomain(URL); e.setAlertType(EscalationService.TYPE_PAGE_INTEGRITY); e.setResolved(false);
+        e.setTeamId(teamId);
+        e.setContextJson(contextJson);
+        return e;
+    }
+
+    private void openAlarm(Map<String, Object> ctx) {
+        Map<String, Object> c = new LinkedHashMap<>(ctx);
+        c.putIfAbsent("monitor_id", 6);
+        when(repo.findOpenAlerts(URL, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(List.of(alarm(140L, 7L, json.writeValueAsString(c))));
     }
 
     @Test
@@ -82,7 +92,7 @@ class EscalationOpenAlertContextRefreshTest {
         patch.put("problem_pages", List.of(URL + "sozlesmeler"));
         patch.put("problem_pages_truncated", true);
 
-        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, patch)).isTrue();
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER, patch)).isTrue();
         ArgumentCaptor<Map<String, Object>> values = ArgumentCaptor.forClass(Map.class);
         verify(writer).writeValues(eq(140L), values.capture(), eq(true));
         assertThat(values.getValue()).containsOnlyKeys("contextJson");
@@ -101,15 +111,45 @@ class EscalationOpenAlertContextRefreshTest {
         ctx.put("problem_pages_truncated", false);
         openAlarm(ctx);
         Map<String, Object> same = new LinkedHashMap<>(ctx);
-        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, same)).isFalse();
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER, same)).isFalse();
         verify(writer, never()).writeValues(anyLong(), any(), anyBoolean());
 
-        when(repo.findOpenAlert(URL, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(Optional.empty());
-        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY,
+        when(repo.findOpenAlerts(URL, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(List.of());
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER,
                 Map.of("integrity_scope", "HOME"))).isFalse();
         verify(writer, never()).writeValues(anyLong(), any(), anyBoolean());
 
-        assertThatThrownBy(() -> service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY,
+        assertThatThrownBy(() -> service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER,
                 Map.of("bilinmeyen_anahtar", 9))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-11-13 (DÜŞÜK 7): okunamayan bağlam YAZILMAZ — yalnız yamayla yeniden yazmak alarm anını silerdi")
+    void unreadableContextIsNotOverwritten() {
+        when(repo.findOpenAlerts(URL, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(List.of(alarm(140L, 7L, "{bozuk-json")));
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER,
+                Map.of("integrity_scope", "CRAWL"))).isFalse();
+        verify(writer, never()).writeValues(anyLong(), any(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-11-13 (DÜŞÜK 7): aynı URL'yi izleyen BAŞKA takımın açık alarmının kaynağı değişmez; "
+            + "sahibin (daha eski) alarmı tazelenir")
+    void onlyTheOwnersAlarmIsRefreshed() {
+        AlertEvent other = alarm(150L, 8L, json.writeValueAsString(Map.of("monitor_id", 99, "team_id", 8,
+                "integrity_scope", "HOME")));
+        when(repo.findOpenAlerts(URL, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(List.of(other));
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER,
+                Map.of("integrity_scope", "CRAWL"))).as("yalnız başka takımın alarmı açık").isFalse();
+        verify(writer, never()).writeValues(anyLong(), any(), anyBoolean());
+
+        AlertEvent mine = alarm(140L, 7L, json.writeValueAsString(Map.of("monitor_id", 6, "team_id", 7,
+                "integrity_scope", "HOME")));
+        when(repo.findOpenAlerts(URL, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(List.of(other, mine));   // en yeni önde
+        assertThat(service.refreshOpenAlertContext(URL, EscalationService.TYPE_PAGE_INTEGRITY, OWNER,
+                Map.of("integrity_scope", "CRAWL"))).isTrue();
+        verify(writer).writeValues(eq(140L), any(), eq(true));
+        verify(writer, never()).writeValues(eq(150L), any(), anyBoolean());
     }
 }

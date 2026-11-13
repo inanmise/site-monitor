@@ -21789,6 +21789,7 @@ export const TR = {
   'pgdx.finding.RESOURCES_BROKEN.title': 'Kırık kaynaklar var',
   'pgdx.finding.RESOURCES_BROKEN.body': '{total} kaynaktan {count} tanesi yüklenemedi (404/410, sunucu hatası ya da bağlantı hatası); {alarm} tanesi izlemenin alarmına sayılıyor. Örnek: {sample}',
   'pgdx.finding.RESOURCES_BROKEN.body.below_threshold': '{total} kaynaktan {count} tanesi yüklenemedi; {alarm} tanesi alarma sayılabilir ama izlemenin eşiği en az {min} kırık kaynak olduğundan izleme alarm AÇMAZ. Örnek: {sample}',
+  'pgdx.finding.RESOURCES_BROKEN.body.below_threshold_other': '{total} kaynaktan {count} tanesi yüklenemedi; {alarm} tanesi alarma sayılabilir. Kırıklar tek başına izlemenin eşiğine (en az {min} kırık kaynak) ulaşmıyor, ama bu kontrolde alarma sayılan zaman aşımı ya da mixed content sorunu olduğundan izleme yine alarm AÇAR. Örnek: {sample}',
   'pgdx.finding.RESOURCES_TIMEOUT.title': 'Yanıt vermeyen kaynaklar',
   'pgdx.finding.RESOURCES_TIMEOUT.body': '{count} kaynak {ms} ms içinde yanıt vermedi; {alarm} tanesi alarma sayılıyor. Kaynağın sunucusu yavaş ya da podun o adrese erişimi kısıtlı olabilir.',
   'pgdx.finding.MIXED_CONTENT.title': 'Güvensiz (http://) kaynaklar',
