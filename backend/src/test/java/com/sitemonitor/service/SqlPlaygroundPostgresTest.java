@@ -91,6 +91,113 @@ class SqlPlaygroundPostgresTest {
                 .isInstanceOf(SensitiveColumnException.class);
         assertThatThrownBy(() -> service(null).execute("SELECT to_jsonb(u) FROM app_users u", "postgres-it"))
                 .isInstanceOf(SensitiveColumnException.class);
+        // Satır karşılaştırma kâhini (inceleme YÜKSEK 1): hiçbir hassas kolon adı geçmeden bütün satır değer olur
+        assertThatThrownBy(() -> service(null).execute(
+                "SELECT 1 WHERE ROW(1, 'admin') < (SELECT * FROM app_users WHERE id = 1)", "postgres-it"))
+                .isInstanceOf(SensitiveColumnException.class);
+        assertThatThrownBy(() -> service(null).execute(
+                "SELECT 1 WHERE ROW('a', 'b') < (TABLE spring_session)", "postgres-it"))
+                .isInstanceOf(SensitiveColumnException.class);
+    }
+
+    @Test
+    @DisplayName("Zaman biçimleri: date → yyyy-MM-dd, timestamp → yerel ISO (kaymasız), timestamptz → UTC …Z")
+    void timeFormats() {
+        Map<String, Object> r = service(null).execute("SELECT DATE '2026-11-13' AS d, TIMESTAMP '2026-11-13 10:05:00' AS ts, "
+                + "TIMESTAMP '2026-11-13 10:05:00.123456' AS tsu, TIMESTAMPTZ '2026-11-13 10:05:00+03' AS tz", "postgres-it");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        Map<String, Object> row = rows(r).get(0);
+        assertThat(row.get("d")).isEqualTo("2026-11-13");
+        assertThat(row.get("ts")).isEqualTo("2026-11-13T10:05:00");
+        assertThat(row.get("tsu")).isEqualTo("2026-11-13T10:05:00.123456");
+        assertThat(row.get("tz")).isEqualTo("2026-11-13T07:05:00.000Z");
+    }
+
+    @Test
+    @DisplayName("İnceleme DÜŞÜK 4: veritabanında standard_conforming_strings kapalı olsa da işlem boyunca açık (havuz dışı dışa aktarım dahil)")
+    void standardConformingStringsForced() {
+        String db = jdbc().queryForObject("SELECT current_database()", String.class);
+        try {
+            jdbc().execute("ALTER DATABASE \"" + db.replace("\"", "\"\"") + "\" SET standard_conforming_strings = off");
+        } catch (Exception e) {
+            org.junit.jupiter.api.Assumptions.abort("veritabanı ayarı değiştirilemiyor: " + e.getMessage());
+        }
+        try {
+            List<Object[]> got = new ArrayList<>();
+            SqlPlaygroundService.RunOutcome o = service(null).export(
+                    q("SELECT current_setting('standard_conforming_strings') AS s"), 10, "postgres-it",
+                    new SqlPlaygroundService.RowSink() {
+                        @Override public void columns(String[] l) { }
+                        @Override public boolean row(Object[] v) { got.add(v); return true; }
+                    });
+            assertThat(o.ok()).as("hata: %s", o.error()).isTrue();
+            assertThat(got.get(0)[0]).isEqualTo("on");
+        } finally {
+            jdbc().execute("ALTER DATABASE \"" + db.replace("\"", "\"\"") + "\" RESET standard_conforming_strings");
+        }
+    }
+
+    @Test
+    @DisplayName("İnceleme ORTA 2 / canlı A: dışa aktarım İKİNCİ getirmede bloklanmışken Durdur → sorgu kesilir, durduruldu, pg_stat_activity'den çıkar")
+    void exportCancelWhileBlockedInFetch() throws Exception {
+        SqlRunRegistry reg = new SqlRunRegistry(jdbc(), "it-pod-x", "pod-x");
+        SqlPlaygroundService a = service(reg);
+        String runId = "it-exp-cancel-" + System.nanoTime();
+        java.util.concurrent.atomic.AtomicInteger seen = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch firstBatch = new java.util.concurrent.CountDownLatch(1);
+        CompletableFuture<SqlPlaygroundService.RunOutcome> f = CompletableFuture.supplyAsync(() -> a.export(
+                new SqlPlaygroundService.QueryRequest(
+                        "SELECT g FROM (SELECT generate_series(1, 400000000) AS g) s WHERE g <= 600 OR md5(g::text) = 'x'",
+                        Map.of(), runId),
+                50_000, "alice", new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { }
+                    @Override public boolean row(Object[] v) {
+                        if (seen.incrementAndGet() == SqlPlaygroundService.EXPORT_FETCH_SIZE) firstBatch.countDown();
+                        return true;
+                    }
+                }));
+        assertThat(firstBatch.await(60, TimeUnit.SECONDS)).as("ilk getirme gelmedi").isTrue();
+        Thread.sleep(500);   // ikinci getirme (yavaş tarama) başlasın
+        long t0 = System.currentTimeMillis();
+        assertThat(a.cancel(runId, "alice").cancelled()).isTrue();
+        SqlPlaygroundService.RunOutcome o = f.get(30, TimeUnit.SECONDS);
+        assertThat(o.ok()).isFalse();
+        assertThat(o.cancelled()).as("sonuç: %s", o.error()).isTrue();
+        assertThat(System.currentTimeMillis() - t0).isLessThan(15_000);
+        assertThat(seen.get()).isLessThan(50_000);
+        long until = System.currentTimeMillis() + 5_000;
+        long active;
+        do {
+            active = jdbc().queryForObject("SELECT COUNT(*) FROM pg_stat_activity WHERE application_name = ? AND state = 'active'",
+                    Long.class, SqlRunRegistry.appNameOf(runId));
+            if (active > 0) Thread.sleep(100);
+        } while (active > 0 && System.currentTimeMillis() < until);
+        assertThat(active).isZero();
+    }
+
+    @Test
+    @DisplayName("İnceleme ORTA 2: dışa aktarım okuma döngüsündeyken (satırlar arası) Durdur → bir sonraki satırda kesilir")
+    void exportCancelInReadLoop() throws Exception {
+        SqlRunRegistry reg = new SqlRunRegistry(jdbc(), "it-pod-y", "pod-y");
+        SqlPlaygroundService a = service(reg);
+        String runId = "it-exp-loop-" + System.nanoTime();
+        java.util.concurrent.atomic.AtomicInteger seen = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        CompletableFuture<SqlPlaygroundService.RunOutcome> f = CompletableFuture.supplyAsync(() -> a.export(
+                new SqlPlaygroundService.QueryRequest("SELECT g FROM generate_series(1, 40000) g", Map.of(), runId),
+                50_000, "alice", new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { }
+                    @Override public boolean row(Object[] v) {
+                        if (seen.incrementAndGet() == 100) started.countDown();
+                        try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                        return true;
+                    }
+                }));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(a.cancel(runId, "alice").cancelled()).isTrue();
+        SqlPlaygroundService.RunOutcome o = f.get(30, TimeUnit.SECONDS);
+        assertThat(o.cancelled()).as("sonuç: %s", o.error()).isTrue();
+        assertThat(seen.get()).isLessThan(40_000);
     }
 
     @Test

@@ -34,8 +34,11 @@ import java.util.Set;
  *   <li>{@link #R_ALIAS_LIST}: tablo / alt sorgu / CTE kolon takma ad listesi — hassas kolon başka adla anılabilir.</li>
  *   <li>{@link #R_EXPRESSION}: hassas kolon adı (ya da onun takma adı) çıplak dış seçim öğesi dışında.</li>
  *   <li>{@link #R_WHOLE_ROW}: tablo / takma ad / CTE adı DEĞER olarak ({@code to_jsonb(u)}, {@code u::text},
- *       {@code SELECT app_users FROM app_users}, fonksiyon içinde {@code u.*}).</li>
- *   <li>{@link #R_ORDINAL}: {@code ORDER BY 3} / {@code GROUP BY 1} hassas ya da {@code *} öğesine konumla başvuru.</li>
+ *       {@code SELECT app_users FROM app_users}, fonksiyon içinde {@code u.*}) ve ifade konumunda {@code (SELECT * …)} /
+ *       {@code (TABLE …)} (satır karşılaştırma kâhini) — {@code *} / {@code TABLE} yalnız en dış seçim listesinde,
+ *       türetilmiş tabloda, CTE gövdesinde, {@code EXISTS} içinde.</li>
+ *   <li>{@link #R_ORDINAL}: en dışta {@code ORDER BY 3} / {@code GROUP BY 1} hassas ya da {@code *} öğesine konumla
+ *       başvuru; alt sorguda ve {@code DISTINCT ON} içinde her konum numarası.</li>
  * </ol>
  * Sözcük çözümleme {@link SqlLexer} (doğrusal, lehçe-bilinçli: dize / yorum / dolar tırnağı ayrılır); analiz belirteç
  * düzeyinde ve TEMKİNLİ — belirsiz durumda reddeder (ör. tablo takma adıyla aynı adlı kolon). Tüm geçişler doğrusaldır.
@@ -144,10 +147,12 @@ public final class SqlSensitiveGuard {
         // ── Parantez eşleşmesi + derinlik ────────────────────────────────────────────────────────────────────
         int[] depth = new int[n];
         int[] match = new int[n];
+        int[] enclosing = new int[n];   // belirteci içeren en içteki '(' (yoksa -1)
         java.util.Arrays.fill(match, -1);
         Deque<Integer> open = new ArrayDeque<>();
         for (int k = 0; k < n; k++) {
             depth[k] = open.size();
+            enclosing[k] = open.isEmpty() ? -1 : open.peek();
             Token t = tok.get(k);
             if (t.isSymbol('(')) open.push(k);
             else if (t.isSymbol(')')) {
@@ -171,8 +176,10 @@ public final class SqlSensitiveGuard {
         boolean[] tableRef = new boolean[n];
         boolean[] aliasDef = new boolean[n];
         boolean[] cteDef = new boolean[n];
+        boolean[] derivedOpen = new boolean[n];   // FROM'daki türetilmiş tablonun '(' (çıktısı kökenle izlenir)
+        boolean[] cteBodyOpen = new boolean[n];   // CTE gövdesinin '(' (çıktısı kökenle izlenir)
         Set<String> rowSources = new HashSet<>();
-        String aliasListAt = scanRowSources(tok, match, tableRef, aliasDef, cteDef, rowSources);
+        String aliasListAt = scanRowSources(tok, match, tableRef, aliasDef, cteDef, rowSources, derivedOpen, cteBodyOpen);
         if (aliasListAt != null) return Verdict.reject(aliasListAt, R_ALIAS_LIST);
 
         // ── Dış seçim listesi ────────────────────────────────────────────────────────────────────────────────
@@ -239,25 +246,75 @@ public final class SqlSensitiveGuard {
             return Verdict.reject(unquoted(t), R_WHOLE_ROW);
         }
 
-        // ── ORDER BY / GROUP BY konum başvurusu ───────────────────────────────────────────────────────────────
-        if (starItem || !sensitiveItems.isEmpty()) {
-            for (int k = listEnd; k < n; k++) {
-                if (depth[k] != 0) continue;
-                Token t = tok.get(k);
-                if (!(t.isWord("ORDER") || t.isWord("GROUP"))) continue;
-                if (k + 1 >= n || !tok.get(k + 1).isWord("BY")) continue;
-                int s = k + 2;
-                for (int x = s; x <= n; x++) {
-                    boolean end = x == n || (depth[x] == 0 && (tok.get(x).isSymbol(',')
-                            || (tok.get(x).kind() == Kind.WORD && CLAUSE_END.contains(tok.get(x).upper()))));
-                    if (!end) continue;
-                    if (x > s && tok.get(s).kind() == Kind.NUMBER && isInteger(tok.get(s).text())) {
-                        int ord = parseOrdinal(tok.get(s).text());
-                        if (starItem || sensitiveItems.contains(ord)) return Verdict.reject(tok.get(s).text(), R_ORDINAL);
-                    }
-                    if (x == n || !tok.get(x).isSymbol(',')) break;
-                    s = x + 1;
+        // ── * ve TABLE yalnız çıktısı kökenle izlenen yerde ───────────────────────────────────────────────────
+        // İfade konumundaki (SELECT * …) / (TABLE …) bütün satırı DEĞER yapar: ROW(…) < (SELECT * FROM app_users …),
+        // IN / ANY / ALL (SELECT * …), ARRAY(SELECT * …), GREATEST(ROW…, (TABLE …)) sözlük sırasıyla karşılaştırılır —
+        // hiçbir hassas kolon adı geçmeden ikili aramayla değeri okuyan bir kâhin. Serbest: en dış seçim listesi, FROM'daki
+        // türetilmiş tablo ve CTE gövdesi (çıktıları köken maskesiyle izlenir), EXISTS ( … ) (yalnız var / yok döner),
+        // count(*) (parantez içi, seçim öğesi değil). Tek geçiş: her grup için son SELECT tutulur; tek başına bir seçim
+        // öğesi olan '*' (öncesi SELECT / DISTINCT / ALL / ',' / DISTINCT ON (…), sonrası ',' / ')' / liste sonu) o
+        // SELECT'e aittir — 'a * b' çarpımı değildir.
+        int[] lastSelect = new int[n + 1];   // dizin: enclosing + 1
+        java.util.Arrays.fill(lastSelect, -1);
+        for (int k = 0; k < n; k++) {
+            Token t = tok.get(k);
+            int slot = enclosing[k] + 1;
+            if (t.isWord("SELECT")) {
+                lastSelect[slot] = k;
+                continue;
+            }
+            if (t.isWord("TABLE") && k + 1 < n && tok.get(k + 1).isName()) {
+                if (!originTracked(tok, k, enclosing, derivedOpen, cteBodyOpen)) {
+                    return Verdict.reject(unquoted(tok.get(k + 1)), R_WHOLE_ROW);
                 }
+                continue;
+            }
+            if (!t.isSymbol('*') || k == 0 || lastSelect[slot] < 0) continue;
+            Token prev = tok.get(k - 1);
+            boolean starItemStart = prev.isWord("SELECT") || prev.isWord("DISTINCT") || prev.isWord("ALL") || prev.isSymbol(',')
+                    || (prev.isSymbol(')') && match[k - 1] >= 2 && tok.get(match[k - 1] - 1).isWord("ON")
+                        && tok.get(match[k - 1] - 2).isWord("DISTINCT"));
+            if (!starItemStart) continue;
+            boolean itemEnd = k + 1 == n || tok.get(k + 1).isSymbol(',') || tok.get(k + 1).isSymbol(')')
+                    || (tok.get(k + 1).kind() == Kind.WORD && SELECT_LIST_END.contains(tok.get(k + 1).upper()));
+            if (!itemEnd) continue;
+            if (!originTracked(tok, lastSelect[slot], enclosing, derivedOpen, cteBodyOpen)) {
+                return Verdict.reject("*", R_WHOLE_ROW);
+            }
+        }
+
+        // ── ORDER BY / GROUP BY / DISTINCT ON konum başvurusu ─────────────────────────────────────────────────
+        // En dış sorgunun ORDER BY / GROUP BY'ında yalnız * ya da hassas öğeye başvuran konum reddedilir; alt sorgularda
+        // (türetilmiş tablo, CTE, ifade, pencere) ve DISTINCT ON içinde HER konum numarası reddedilir — iç seçim listesi
+        // izlenmez ve sıralama / gruplama hassas değere göre yapılabilir (sıralama kâhini).
+        for (int k = 0; k < n; k++) {
+            Token t = tok.get(k);
+            boolean orderGroup = (t.isWord("ORDER") || t.isWord("GROUP")) && k + 1 < n && tok.get(k + 1).isWord("BY");
+            boolean distinctOn = t.isWord("DISTINCT") && k + 2 < n && tok.get(k + 1).isWord("ON")
+                    && tok.get(k + 2).isSymbol('(') && match[k + 2] > k + 2;
+            if (!orderGroup && !distinctOn) continue;
+            boolean outerOrder = orderGroup && depth[k] == 0;
+            int d = distinctOn ? depth[k] + 1 : depth[k];
+            int s = distinctOn ? k + 3 : k + 2;
+            int stop = distinctOn ? match[k + 2] : n;
+            for (int x = s; x <= stop; x++) {
+                // İç parantez grupları atlanır (her belirteç yalnız kendi derinliğindeki tarama tarafından ziyaret edilir
+                // — iç içe ORDER BY'larda da doğrusal)
+                if (x < stop && tok.get(x).isSymbol('(') && match[x] > x && match[x] < stop) {
+                    x = match[x];
+                    continue;
+                }
+                boolean end = x == stop || depth[x] < d || (depth[x] == d && (tok.get(x).isSymbol(',')
+                        || (tok.get(x).kind() == Kind.WORD && CLAUSE_END.contains(tok.get(x).upper()))));
+                if (!end) continue;
+                if (x > s && tok.get(s).kind() == Kind.NUMBER && isInteger(tok.get(s).text())) {
+                    int ord = parseOrdinal(tok.get(s).text());
+                    if (!outerOrder || starItem || sensitiveItems.contains(ord)) {
+                        return Verdict.reject(tok.get(s).text(), R_ORDINAL);
+                    }
+                }
+                if (x == stop || depth[x] != d || !tok.get(x).isSymbol(',')) break;
+                s = x + 1;
             }
         }
         return Verdict.pass(true);
@@ -267,7 +324,8 @@ public final class SqlSensitiveGuard {
 
     /** @return kolon takma ad listesi görülen adın metni (ret), yoksa null */
     private static String scanRowSources(List<Token> tok, int[] match, boolean[] tableRef, boolean[] aliasDef,
-                                         boolean[] cteDef, Set<String> rowSources) {
+                                         boolean[] cteDef, Set<String> rowSources, boolean[] derivedOpen,
+                                         boolean[] cteBodyOpen) {
         int n = tok.size();
         // CTE tanımları: WITH [RECURSIVE] ad [ (kolonlar) ] AS [NOT] [MATERIALIZED] ( … ) [, …]
         for (int k = 0; k < n; k++) {
@@ -290,6 +348,7 @@ public final class SqlSensitiveGuard {
                 if (q < n && tok.get(q).isWord("NOT")) q++;
                 if (q < n && tok.get(q).isWord("MATERIALIZED")) q++;
                 if (q >= n || !tok.get(q).isSymbol('(') || match[q] < q) break;
+                cteBodyOpen[q] = true;
                 p = match[q] + 1;
                 if (p < n && tok.get(p).isSymbol(',')) p++;
                 else break;
@@ -309,6 +368,7 @@ public final class SqlSensitiveGuard {
                 if (cur.inFrom && (cur.expectRef || cur.functionPending)) {
                     child.refGroup = true;
                     child.functionGroup = cur.functionPending;
+                    if (!cur.functionPending) derivedOpen[k] = true;
                     // Parantezli referans: alt sorgu değilse iç içe birleşim — içi de bir FROM listesidir
                     Token first = k + 1 < tok.size() ? tok.get(k + 1) : null;
                     boolean subquery = first != null && (first.isWord("SELECT") || first.isWord("WITH")
@@ -411,6 +471,18 @@ public final class SqlSensitiveGuard {
         }
         if (rowSources != null) rowSources.add(low(tok.get(p)));
         return p;
+    }
+
+    /**
+     * {@code SELECT} / {@code TABLE} belirtecinin çıktısı köken maskesiyle izlenen bir yerde mi: en dış sorgu, FROM'daki
+     * türetilmiş tablo, CTE gövdesi ya da {@code EXISTS ( … )}.
+     */
+    private static boolean originTracked(List<Token> tok, int k, int[] enclosing, boolean[] derivedOpen,
+                                         boolean[] cteBodyOpen) {
+        int p = enclosing[k];
+        if (p < 0) return true;
+        if (derivedOpen[p] || cteBodyOpen[p]) return true;
+        return p > 0 && tok.get(p - 1).isWord("EXISTS");
     }
 
     // ── Seçim öğesi ───────────────────────────────────────────────────────────────────────────────────────────

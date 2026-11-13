@@ -51,13 +51,23 @@ public final class SqlResultColumns {
         public OriginUnavailableException(Throwable cause) { super("origin unavailable", cause, false, false); }
     }
 
+    /** Zaman türü: değer biçimi (2026-11-13). */
+    static final int K_OTHER = 0, K_DATE = 1, K_TIMESTAMP = 2, K_TIMESTAMPTZ = 3;
+
+    private static final java.time.format.DateTimeFormatter LOCAL_SECONDS =
+            java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss");
+    private static final java.time.format.DateTimeFormatter UTC_MILLIS =
+            java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
+
     private final String[] labels;
     private final boolean[] masked;
+    private final int[] kinds;
     private final Set<String> maskedLabels = new LinkedHashSet<>();
 
-    private SqlResultColumns(String[] labels, boolean[] masked) {
+    private SqlResultColumns(String[] labels, boolean[] masked, int[] kinds) {
         this.labels = labels;
         this.masked = masked;
+        this.kinds = kinds;
         for (int i = 0; i < labels.length; i++) if (masked[i]) maskedLabels.add(labels[i]);
     }
 
@@ -66,6 +76,7 @@ public final class SqlResultColumns {
         int n = md.getColumnCount();
         String[] labels = new String[n];
         boolean[] masked = new boolean[n];
+        int[] kinds = new int[n];
         Object pg = null;
         if (PG_MD != null) {
             try {
@@ -96,8 +107,9 @@ public final class SqlResultColumns {
             masked[i] = schema.isSensitive(table, column)
                     || schema.isSensitiveName(column)
                     || schema.isSensitiveName(labels[i]);
+            kinds[i] = timeKind(md, col);
         }
-        return new SqlResultColumns(labels, masked);
+        return new SqlResultColumns(labels, masked, kinds);
     }
 
     public int size() { return labels.length; }
@@ -115,7 +127,7 @@ public final class SqlResultColumns {
      * Satırın i. hücresi — maskeli kolon ya da şifreli değer biçimi {@link SqlSensitiveColumns#MASK} olur (null null kalır).
      */
     public Object cell(ResultSet rs, int i) throws SQLException {
-        Object v = JdbcUtils.getResultSetValue(rs, i + 1);
+        Object v = read(rs, i);
         if (v == null) return null;
         if (masked[i]) return SqlSensitiveColumns.MASK;
         if (SqlSensitiveColumns.isEncryptedValue(v)) {
@@ -123,5 +135,72 @@ public final class SqlResultColumns {
             return SqlSensitiveColumns.MASK;
         }
         return v;
+    }
+
+    /**
+     * Hücre değeri — zaman türleri metne çevrilir (JVM saat dilimine göre kaydırılmaz):
+     * {@code date} → {@code yyyy-MM-dd}; zamansız {@code timestamp} → yerel {@code yyyy-MM-ddTHH:mm:ss[.SSS]} (milisaniye
+     * altı varsa mikro / nano basamakları); {@code timestamptz} → UTC {@code yyyy-MM-ddTHH:mm:ss.SSSZ} (eski biçim).
+     * Önceden {@code java.sql.Date} JSON'da UTC'ye kaymış gece yarısı ({@code …T21:00:00.000Z}, bir gün geride) olarak dönüyordu.
+     */
+    private Object read(ResultSet rs, int i) throws SQLException {
+        int col = i + 1;
+        try {
+            switch (kinds[i]) {
+                case K_DATE -> {
+                    java.time.LocalDate d = rs.getObject(col, java.time.LocalDate.class);
+                    return d == null ? null : formatDate(d);
+                }
+                case K_TIMESTAMP -> {
+                    java.time.LocalDateTime t = rs.getObject(col, java.time.LocalDateTime.class);
+                    return t == null ? null : formatLocal(t);
+                }
+                case K_TIMESTAMPTZ -> {
+                    java.time.OffsetDateTime t = rs.getObject(col, java.time.OffsetDateTime.class);
+                    return t == null ? null : formatInstant(t.toInstant());
+                }
+                default -> { }
+            }
+        } catch (SQLException | RuntimeException e) {
+            // Sürücü türü çeviremedi (ör. sonsuz tarih) — metin karşılığı
+            String s = rs.getString(col);
+            return s;
+        }
+        return JdbcUtils.getResultSetValue(rs, col);
+    }
+
+    static int timeKind(ResultSetMetaData md, int col) {
+        int type;
+        String name;
+        try {
+            type = md.getColumnType(col);
+            name = md.getColumnTypeName(col);
+        } catch (SQLException e) {
+            return K_OTHER;
+        }
+        String n = name == null ? "" : name.toLowerCase(java.util.Locale.ROOT);
+        if (type == java.sql.Types.TIMESTAMP_WITH_TIMEZONE || n.equals("timestamptz") || n.contains("with time zone")) {
+            return n.startsWith("time") && !n.startsWith("timestamp") ? K_OTHER : K_TIMESTAMPTZ;
+        }
+        if (type == java.sql.Types.DATE || n.equals("date")) return K_DATE;
+        if (type == java.sql.Types.TIMESTAMP || n.equals("timestamp") || n.startsWith("timestamp")) return K_TIMESTAMP;
+        return K_OTHER;
+    }
+
+    static String formatDate(java.time.LocalDate d) {
+        return d.toString();
+    }
+
+    static String formatLocal(java.time.LocalDateTime t) {
+        String base = LOCAL_SECONDS.format(t);
+        int nano = t.getNano();
+        if (nano == 0) return base;
+        if (nano % 1_000_000 == 0) return base + String.format(".%03d", nano / 1_000_000);
+        if (nano % 1_000 == 0) return base + String.format(".%06d", nano / 1_000);
+        return base + String.format(".%09d", nano);
+    }
+
+    static String formatInstant(java.time.Instant t) {
+        return UTC_MILLIS.format(t);
     }
 }

@@ -78,6 +78,24 @@ public class SqlPlaygroundController {
     private final Map<String, Deque<Long>> exportCalls = new HashMap<>();
     private final Semaphore exportSlots = new Semaphore(EXPORT_POD_CONCURRENCY);
 
+    /** Açılışta silinecek kalıntı dışa aktarım dosyasının en küçük yaşı (en uzun dışa aktarımın çok üstü). */
+    static final long EXPORT_TEMP_STALE_MS = 60L * 60 * 1000;
+
+    /**
+     * Dışa aktarım ortasında ölen JVM'in bıraktığı geçici dosyaları siler (önek + 1 saatten eski; en çok 10 000 giriş).
+     * Pod başına geçici dizin; aynı dizini paylaşan başka bir süreç (yerel geliştirme) 1 saatten yeni dosyasını korur.
+     */
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void cleanupStaleExportFiles() {
+        try {
+            int n = SqlExportWriter.cleanupStaleTempFiles(Path.of(System.getProperty("java.io.tmpdir")),
+                    EXPORT_TEMP_STALE_MS, System.currentTimeMillis(), 10_000);
+            if (n > 0) log.info("SQL Playground: {} kalıntı dışa aktarım dosyası silindi", n);
+        } catch (Exception e) {
+            log.debug("SQL Playground: kalıntı dışa aktarım dosyaları temizlenemedi: {}", e.toString());
+        }
+    }
+
     // ── Şema keşfi ────────────────────────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/tables")
@@ -249,9 +267,9 @@ public class SqlPlaygroundController {
             }
             int cap = "json".equals(fmt) ? SqlPlaygroundService.EXPORT_JSON_MAX_ROWS : SqlPlaygroundService.EXPORT_CSV_MAX_ROWS;
             attempted = true;
-            tmp = Files.createTempFile("sqlpg-export-", "." + fmt);
+            tmp = Files.createTempFile(SqlExportWriter.TEMP_PREFIX, "." + fmt);
             SqlPlaygroundService.RunOutcome o;
-            boolean charLimit;
+            boolean byteLimit;
             try (OutputStream os = Files.newOutputStream(tmp); SqlExportWriter w = new SqlExportWriter(fmt, os)) {
                 try {
                     o = service.export(req, cap, actor, w);
@@ -260,14 +278,14 @@ public class SqlPlaygroundController {
                     rejectColumn = e.getColumn();
                     throw e;
                 }
-                charLimit = w.charLimitHit();
+                byteLimit = w.byteLimitHit();
                 runIdOut = o.runId();
-                if (o.ok()) w.finish(o.rows(), o.truncated() || charLimit, cap, o.maskedColumns());
+                if (o.ok()) w.finish(o.rows(), o.truncated() || byteLimit, cap, o.maskedColumns());
             }
             ok = o.ok();
             cancelled = o.cancelled();
             rows = o.rows();
-            truncated = o.truncated() || charLimit;
+            truncated = o.truncated() || byteLimit;
             maskedCount = o.maskedColumns().size();
             if (!o.ok()) {
                 if (o.cancelled()) {
@@ -286,7 +304,7 @@ public class SqlPlaygroundController {
                     .build().toString());
             response.setHeader("X-Export-Rows", String.valueOf(rows));
             response.setHeader("X-Export-Truncated", String.valueOf(truncated));
-            if (truncated) response.setHeader("X-Export-Truncated-Reason", charLimit ? "bytes" : "rows");
+            if (truncated) response.setHeader("X-Export-Truncated-Reason", byteLimit ? "bytes" : "rows");
             response.setHeader("X-Export-Max-Rows", String.valueOf(cap));
             response.setHeader("X-Masked-Columns", headerList(o.maskedColumns()));
             response.setHeader("X-Run-Id", o.runId());

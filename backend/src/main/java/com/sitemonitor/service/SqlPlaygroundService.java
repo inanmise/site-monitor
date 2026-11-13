@@ -54,7 +54,10 @@ public class SqlPlaygroundService {
         "\\b(pg_read_file|pg_read_binary_file|pg_stat_file|pg_ls_dir|pg_ls_logdir|pg_ls_waldir|pg_ls_tmpdir|"
       + "pg_ls_archive_statusdir|pg_read_server_files|lo_import|lo_export|lo_get|lo_put|lo_from_bytea|"
       + "dblink|dblink_connect|dblink_exec|dblink_send_query|postgres_fdw|pg_sleep|pg_sleep_for|"
-      + "pg_terminate_backend|pg_cancel_backend|pg_reload_conf|set_config)\\b",
+      + "pg_terminate_backend|pg_cancel_backend|pg_reload_conf|set_config|"
+        // Danışma kilitleri (2026-11-13): oturum düzeyi kilit havuza dönen bağlantıda kalır ve uygulamanın kendi
+        // kilitlerini (denetim zinciri, şema yamaları) bekletir — try / xact / unlock dahil hepsi
+      + "pg_advisory\\w*|pg_try_advisory\\w*)\\b",
         Pattern.CASE_INSENSITIVE);
 
     private static final Pattern STARTS_WITH_SELECT_OR_WITH =
@@ -362,13 +365,7 @@ public class SqlPlaygroundService {
      */
     public Map<String, Object> execute(QueryRequest req, String executedBy) {
         String rawSql = req.sql();
-        Prepared p;
-        try {
-            p = prepare(rawSql, req.params(), true);
-        } catch (SensitiveColumnException e) {
-            saveHistory(rawSql, executedBy, false, null, 0, e.getMessage(), false);
-            throw e;
-        }
+        Prepared p = prepareOrRecord(req, executedBy);
         String capped = enforceLimit(p.sanitized(), MAX_ROWS);
         List<Map<String, Object>> rows = new ArrayList<>();
         RunOutcome o = run(capped, req.params(), req.runId(), executedBy, "execute", QUERY_TIMEOUT_SEC, 0,
@@ -382,11 +379,12 @@ public class SqlPlaygroundService {
                         return rows.size() < MAX_ROWS;
                     }
                 });
+        String storedError = maskParamValues(o.error(), req.params());
         if (!o.ok()) {
             rows.clear();
-            log.warn("SQL Playground query failed: user={} cancelled={} err={}", executedBy, o.cancelled(), o.error());
+            log.warn("SQL Playground query failed: user={} cancelled={} err={}", executedBy, o.cancelled(), storedError);
         }
-        saveHistory(rawSql, executedBy, o.ok(), o.ok() ? rows.size() : null, o.durationMs(), o.error(), o.cancelled());
+        saveHistory(rawSql, executedBy, o.ok(), o.ok() ? rows.size() : null, o.durationMs(), storedError, o.cancelled());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ok",          o.ok());
@@ -409,7 +407,7 @@ public class SqlPlaygroundService {
      * hata durumunda {@code ok:false, error, cancelled}.
      */
     public Map<String, Object> explain(QueryRequest req, boolean analyze, String user) {
-        Prepared p = prepare(req.sql(), req.params(), true);
+        Prepared p = prepareOrRecord(req, user);
         String inner = p.sanitized().endsWith(";") ? p.sanitized().substring(0, p.sanitized().length() - 1) : p.sanitized();
         String sql = "EXPLAIN (FORMAT JSON" + (analyze ? ", ANALYZE, BUFFERS" : "") + ") " + inner;
         String[] json = new String[1];
@@ -419,7 +417,7 @@ public class SqlPlaygroundService {
                 json[0] = values.length == 0 || values[0] == null ? null : String.valueOf(values[0]);
                 return false;
             }
-        }, true);
+        }, true, false);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", o.ok());
         out.put("analyzed", analyze);
@@ -448,7 +446,7 @@ public class SqlPlaygroundService {
      * {@code sink}'e tek tek verilir, bellekte biriktirilmez.
      */
     public RunOutcome export(QueryRequest req, int cap, String user, RowSink sink) {
-        Prepared p = prepare(req.sql(), req.params(), true);
+        Prepared p = prepareOrRecord(req, user);
         String capped = enforceLimit(p.sanitized(), cap + 1);
         int[] written = {0};
         boolean[] truncated = {false};
@@ -460,9 +458,48 @@ public class SqlPlaygroundService {
                         written[0]++;
                         return sink.row(values);
                     }
-                });
+                }, false, true);
         return new RunOutcome(o.ok(), o.cancelled(), o.error(), o.labels(), o.maskedColumns(), written[0], truncated[0],
                 o.durationMs(), o.runId());
+    }
+
+    /**
+     * {@link #prepare} — hassas kolon reddi çalıştırma, plan ve dışa aktarımda AYNI iz bırakır: geçmişe başarısız satır
+     * (sorgu çalıştırılmadı) + {@link SensitiveColumnException} yeniden fırlatılır.
+     */
+    private Prepared prepareOrRecord(QueryRequest req, String user) {
+        try {
+            return prepare(req.sql(), req.params(), true);
+        } catch (SensitiveColumnException e) {
+            saveHistory(req.sql(), user, false, null, 0, e.getMessage(), false);
+            throw e;
+        }
+    }
+
+    /** Parametre değerinin maskesi. */
+    static final String PARAM_MASK = "***";
+
+    /**
+     * Saklanan / günlüğe yazılan hata metninden parametre DEĞERLERİNİ çıkarır (sözleşme: değerler geçmişe yazılmaz).
+     * PostgreSQL / H2 dönüşüm hataları değeri alıntılar ({@code invalid input syntax for type integer: "abc"}): tırnaklı
+     * biçimler her uzunlukta, çıplak geçişler ≥ 3 karakterde maskelenir (kısa değer satır / konum numarasını bozmasın).
+     * İstemciye dönen yanıt değeri taşıyabilir (kullanıcının kendi girdisi). Sınırlı: ≤ 20 parametre × metin uzunluğu.
+     */
+    static String maskParamValues(String error, Map<String, SqlParams.Param> params) {
+        if (error == null || error.isEmpty() || params == null || params.isEmpty()) return error;
+        String out = error;
+        List<String> values = new ArrayList<>();
+        for (SqlParams.Param prm : params.values()) {
+            if (prm == null || prm.value() == null || prm.value().isEmpty()) continue;
+            values.add(prm.value());
+        }
+        // Uzun değer önce — kısa bir değer uzun olanın parçasıysa maskesi yarım kalmasın
+        values.sort((x, y) -> Integer.compare(y.length(), x.length()));
+        for (String v : values) {
+            out = out.replace("\"" + v + "\"", "\"" + PARAM_MASK + "\"").replace("'" + v + "'", "'" + PARAM_MASK + "'");
+            if (v.trim().length() >= 3) out = out.replace(v, PARAM_MASK);
+        }
+        return out;
     }
 
     /** A2: yalnız sorguyu başlatan kullanıcı durdurabilir. */
@@ -487,83 +524,39 @@ public class SqlPlaygroundService {
 
     private RunOutcome run(String sql, Map<String, SqlParams.Param> params, String runId, String user, String kind,
                            int timeoutSec, int fetchSize, boolean failClosed, RowSink sink) {
-        return run(sql, params, runId, user, kind, timeoutSec, fetchSize, failClosed, sink, false);
+        return run(sql, params, runId, user, kind, timeoutSec, fetchSize, failClosed, sink, false, false);
     }
 
     /**
      * Ortak çalıştırıcı: salt-okunur, otomatik commit KAPALI işlem (her zaman geri alınır); PostgreSQL'de işlem başında
-     * {@code transaction_read_only} + çalıştırma etiketi ({@code application_name}, {@code SET LOCAL}) + arka uç pid'i;
-     * çalışan ifade kayıt defterine bağlanır (durdurma); sonuç kolonları maskelenir. {@code postgresOnly} (EXPLAIN) →
-     * PostgreSQL değilse 409 {@code SQL_EXPLAIN_UNSUPPORTED}.
+     * {@code transaction_read_only} + {@code standard_conforming_strings} + çalıştırma etiketi ({@code application_name},
+     * hepsi {@code SET LOCAL}) + arka uç pid'i; çalışan ifade kayıt defterine bağlanır (durdurma + süre bekçisi); okuma
+     * döngüsü her satırda durdurma / süre denetler; sonuç kolonları maskelenir. {@code postgresOnly} (EXPLAIN) →
+     * PostgreSQL değilse 409 {@code SQL_EXPLAIN_UNSUPPORTED}. {@code offPool} (dışa aktarım): havuz DIŞI tek kullanımlık
+     * bağlantı — uzun okuma havuzdan bağlantı tutmaz (Hikari sızıntı uyarısı yok) ve kapanınca oturum durumu da biter.
      */
     private RunOutcome run(String sql, Map<String, SqlParams.Param> params, String runId, String user, String kind,
-                           int timeoutSec, int fetchSize, boolean failClosed, RowSink sink, boolean postgresOnly) {
+                           int timeoutSec, int fetchSize, boolean failClosed, RowSink sink, boolean postgresOnly,
+                           boolean offPool) {
         SqlRunRegistry reg = registry();
         SqlRunRegistry.Run run = reg.start(runId, user, kind, fingerprint(sql));
         long t0 = System.currentTimeMillis();
+        long deadline = t0 + timeoutSec * 1000L;
         SqlSensitiveColumns.Schema schema = sensitiveSchema();
         String[][] labelsOut = {new String[0]};
         List<String> masked = new ArrayList<>();
+        Body body = con -> runOn(con, sql, params, run, reg, timeoutSec, fetchSize, failClosed, sink, postgresOnly,
+                deadline, schema, labelsOut, masked);
         try {
-            Object res = playgroundTemplate().execute((org.springframework.jdbc.core.ConnectionCallback<Object>) con -> {
-                boolean pg = isPostgres(con);
-                if (postgresOnly && !pg) {
-                    throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("SQL_EXPLAIN_UNSUPPORTED",
-                            com.sitemonitor.util.Msg.t(
-                                    "Sorgu planı yalnız PostgreSQL veritabanında gösterilebilir; bu ortamın veritabanı PostgreSQL değil.",
-                                    "The query plan can only be shown on a PostgreSQL database; this environment's database isn't PostgreSQL."));
+            Object res;
+            java.sql.Connection own = offPool ? openOffPool() : null;
+            if (own != null) {
+                try (java.sql.Connection con = own) {
+                    res = body.apply(con);
                 }
-                SqlParams.Bound bound = SqlParams.bind(sql, pg);
-                boolean prevAuto = con.getAutoCommit();
-                java.sql.Statement st = null;
-                java.sql.ResultSet rs = null;
-                try {
-                    con.setAutoCommit(false);
-                    Integer pid = null;
-                    if (pg) {
-                        try (java.sql.PreparedStatement ps = con.prepareStatement(
-                                "SELECT pg_backend_pid(), set_config('transaction_read_only', 'on', true), "
-                                        + "set_config('application_name', ?, true)")) {
-                            ps.setString(1, run.appName());
-                            try (java.sql.ResultSet r0 = ps.executeQuery()) {
-                                if (r0.next()) pid = r0.getInt(1);
-                            }
-                        }
-                    }
-                    if (bound.isEmpty()) {
-                        st = con.createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
-                    } else {
-                        java.sql.PreparedStatement ps = con.prepareStatement(bound.jdbcSql(),
-                                java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
-                        SqlParams.apply(ps, bound, params);
-                        st = ps;
-                    }
-                    st.setQueryTimeout(timeoutSec);
-                    if (fetchSize > 0) st.setFetchSize(fetchSize);
-                    reg.attach(run, st, pid);
-                    rs = bound.isEmpty() ? st.executeQuery(sql) : ((java.sql.PreparedStatement) st).executeQuery();
-                    SqlResultColumns cols = SqlResultColumns.of(rs.getMetaData(), schema, failClosed);
-                    labelsOut[0] = cols.labels();
-                    try {
-                        sink.columns(cols.labels());
-                        int n = cols.size();
-                        while (rs.next()) {
-                            Object[] vals = new Object[n];
-                            for (int i = 0; i < n; i++) vals[i] = cols.cell(rs, i);
-                            if (!sink.row(vals)) break;
-                        }
-                    } catch (java.io.IOException io) {
-                        throw new java.io.UncheckedIOException(io);
-                    }
-                    masked.addAll(cols.maskedLabels());
-                    return Boolean.TRUE;
-                } finally {
-                    if (rs != null) try { rs.close(); } catch (Exception ignored) { }
-                    if (st != null) try { st.close(); } catch (Exception ignored) { }
-                    try { con.rollback(); } catch (Exception ignored) { }
-                    try { con.setAutoCommit(prevAuto); } catch (Exception ignored) { }
-                }
-            });
+            } else {
+                res = playgroundTemplate().execute((org.springframework.jdbc.core.ConnectionCallback<Object>) body::apply);
+            }
             long dur = System.currentTimeMillis() - t0;
             if (res == null) {
                 return new RunOutcome(false, false, com.sitemonitor.util.Msg.t(
@@ -573,6 +566,8 @@ public class SqlPlaygroundService {
             return new RunOutcome(true, false, null, labelsOut[0], masked, 0, false, dur, run.runId());
         } catch (SqlRunRegistry.CancelledException e) {
             return cancelledOutcome(run, labelsOut[0], masked, t0);
+        } catch (SqlRunRegistry.TimedOutException e) {
+            return timedOutOutcome(run, timeoutSec, labelsOut[0], masked, t0);
         } catch (SqlResultColumns.OriginUnavailableException e) {
             log.warn("SQL Playground: kolon kökeni okunamadı, hassas tablo içeren sonuç gösterilmedi (user={}): {}", user,
                     e.getCause() == null ? e.toString() : e.getCause().toString());
@@ -590,16 +585,133 @@ public class SqlPlaygroundService {
             throw e;
         } catch (Exception e) {
             if (isCancellation(e) && reg.cancelRequested(run)) return cancelledOutcome(run, labelsOut[0], masked, t0);
-            String error = isCancellation(e)
-                    ? com.sitemonitor.util.Msg.t(
-                            "Sorgu zaman aşımına uğradı (en çok " + timeoutSec + " sn) ve durduruldu. Sorguyu daraltın (WHERE, LIMIT) ya da planına bakın.",
-                            "The query timed out (at most " + timeoutSec + " s) and was stopped. Narrow the query (WHERE, LIMIT) or check its plan.")
-                    : errorMessage(e);
-            return new RunOutcome(false, false, error, labelsOut[0], masked, 0, false,
+            if (isCancellation(e) || run.timedOut()) return timedOutOutcome(run, timeoutSec, labelsOut[0], masked, t0);
+            return new RunOutcome(false, false, errorMessage(e), labelsOut[0], masked, 0, false,
                     System.currentTimeMillis() - t0, run.runId());
         } finally {
             reg.finish(run);
         }
+    }
+
+    /** Bağlantı üzerinde çalıştırma gövdesi (havuz içi {@code ConnectionCallback} ya da havuz dışı bağlantı). */
+    @FunctionalInterface
+    private interface Body {
+        Object apply(java.sql.Connection con) throws java.sql.SQLException;
+    }
+
+    private Object runOn(java.sql.Connection con, String sql, Map<String, SqlParams.Param> params, SqlRunRegistry.Run run,
+                         SqlRunRegistry reg, int timeoutSec, int fetchSize, boolean failClosed, RowSink sink,
+                         boolean postgresOnly, long deadline, SqlSensitiveColumns.Schema schema, String[][] labelsOut,
+                         List<String> masked) throws java.sql.SQLException {
+        boolean pg = isPostgres(con);
+        if (postgresOnly && !pg) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("SQL_EXPLAIN_UNSUPPORTED",
+                    com.sitemonitor.util.Msg.t(
+                            "Sorgu planı yalnız PostgreSQL veritabanında gösterilebilir; bu ortamın veritabanı PostgreSQL değil.",
+                            "The query plan can only be shown on a PostgreSQL database; this environment's database isn't PostgreSQL."));
+        }
+        SqlParams.Bound bound = SqlParams.bind(sql, pg);
+        boolean prevAuto = con.getAutoCommit();
+        java.sql.Statement st = null;
+        java.sql.ResultSet rs = null;
+        try {
+            con.setAutoCommit(false);
+            Integer pid = null;
+            if (pg) {
+                // standard_conforming_strings: sözcük çözümleyici '\' karakterini dize içinde kaçış saymaz (PostgreSQL
+                // varsayılanı); kapalı bir veritabanında bekçi atlatılamasın diye işlem boyunca açık.
+                try (java.sql.PreparedStatement ps = con.prepareStatement(
+                        "SELECT pg_backend_pid(), set_config('transaction_read_only', 'on', true), "
+                                + "set_config('standard_conforming_strings', 'on', true), "
+                                + "set_config('application_name', ?, true)")) {
+                    ps.setString(1, run.appName());
+                    try (java.sql.ResultSet r0 = ps.executeQuery()) {
+                        if (r0.next()) pid = r0.getInt(1);
+                    }
+                }
+            }
+            if (bound.isEmpty()) {
+                st = con.createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
+            } else {
+                java.sql.PreparedStatement ps = con.prepareStatement(bound.jdbcSql(),
+                        java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
+                SqlParams.apply(ps, bound, params);
+                st = ps;
+            }
+            st.setQueryTimeout(timeoutSec);
+            if (fetchSize > 0) st.setFetchSize(fetchSize);
+            reg.attach(run, st, pid, timeoutSec);
+            rs = bound.isEmpty() ? st.executeQuery(sql) : ((java.sql.PreparedStatement) st).executeQuery();
+            SqlResultColumns cols = SqlResultColumns.of(rs.getMetaData(), schema, failClosed);
+            labelsOut[0] = cols.labels();
+            try {
+                sink.columns(cols.labels());
+                int n = cols.size();
+                while (true) {
+                    reg.checkContinue(run, deadline);
+                    if (!rs.next()) break;
+                    Object[] vals = new Object[n];
+                    for (int i = 0; i < n; i++) vals[i] = cols.cell(rs, i);
+                    if (!sink.row(vals)) break;
+                }
+            } catch (java.io.IOException io) {
+                throw new java.io.UncheckedIOException(io);
+            }
+            masked.addAll(cols.maskedLabels());
+            return Boolean.TRUE;
+        } finally {
+            // Önce bekçi durur ve ifade çözülür — bırakılan bağlantıya iptal gitmez
+            reg.detach(run);
+            if (rs != null) try { rs.close(); } catch (Exception ignored) { }
+            if (st != null) try { st.close(); } catch (Exception ignored) { }
+            try { con.rollback(); } catch (Exception ignored) { }
+            if (pg) {
+                // Oturum düzeyi danışma kilidi havuza dönen bağlantıda kalmasın (metin kapısı engeller; ikinci kat)
+                try (java.sql.Statement u = con.createStatement()) {
+                    u.execute("SELECT pg_advisory_unlock_all()");
+                } catch (Exception e) {
+                    log.debug("SQL Playground: danışma kilitleri bırakılamadı: {}", e.toString());
+                }
+                try { con.rollback(); } catch (Exception ignored) { }
+            }
+            try { con.setAutoCommit(prevAuto); } catch (Exception ignored) { }
+        }
+    }
+
+    /**
+     * Havuz dışı tek kullanımlık bağlantı (dışa aktarım) — Hikari yapılandırmasıyla aynı adres / kullanıcı / sürücü
+     * özellikleri (soket zaman aşımı dahil), salt-okunur. Açılamazsa null (çağıran havuzu kullanır).
+     */
+    private java.sql.Connection openOffPool() {
+        try {
+            javax.sql.DataSource ds = jdbcTemplate.getDataSource();
+            if (ds == null || !ds.isWrapperFor(com.zaxxer.hikari.HikariDataSource.class)) return null;
+            com.zaxxer.hikari.HikariDataSource h = ds.unwrap(com.zaxxer.hikari.HikariDataSource.class);
+            if (h.getJdbcUrl() == null) return null;
+            java.util.Properties p = new java.util.Properties();
+            p.putAll(h.getDataSourceProperties());
+            if (h.getUsername() != null) p.setProperty("user", h.getUsername());
+            if (h.getPassword() != null) p.setProperty("password", h.getPassword());
+            p.putIfAbsent("ApplicationName", "sitemonitor-sqlpg-export");
+            java.sql.Connection c = java.sql.DriverManager.getConnection(h.getJdbcUrl(), p);
+            try {
+                c.setReadOnly(true);
+            } catch (java.sql.SQLException e) {
+                log.debug("SQL Playground: havuz dışı bağlantı salt-okunur yapılamadı: {}", e.toString());
+            }
+            return c;
+        } catch (Exception e) {
+            log.debug("SQL Playground: havuz dışı bağlantı açılamadı, havuz kullanılıyor: {}", e.toString());
+            return null;
+        }
+    }
+
+    private static RunOutcome timedOutOutcome(SqlRunRegistry.Run run, int timeoutSec, String[] labels, List<String> masked,
+                                              long t0) {
+        return new RunOutcome(false, false, com.sitemonitor.util.Msg.t(
+                "Sorgu zaman aşımına uğradı (en çok " + timeoutSec + " sn) ve durduruldu. Sorguyu daraltın (WHERE, LIMIT) ya da planına bakın.",
+                "The query timed out (at most " + timeoutSec + " s) and was stopped. Narrow the query (WHERE, LIMIT) or check its plan."),
+                labels, masked, 0, false, System.currentTimeMillis() - t0, run.runId());
     }
 
     private static RunOutcome cancelledOutcome(SqlRunRegistry.Run run, String[] labels, List<String> masked, long t0) {
