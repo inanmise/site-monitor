@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Database, HardDrive, Trash2, Clock, PlayCircle, History, ShieldAlert,
   Lock, FileText, Users, Shield, FileBox, Activity, GitCompareArrows,
@@ -8,6 +8,7 @@ import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
+import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
@@ -74,6 +75,38 @@ export default function RetentionSettings({ readOnly = false }) {
   }, [toast, t])
 
   useEffect(() => { load(true) }, [load])
+
+  // Derin bağlantı (2026-11-13, Sistem Sağlığı → Veritabanı büyümesi "Veri Saklama'da aç"): ?ret_focus=<politika id> ilk
+  // yüklemede politikanın sınıfını ve satırını açar, satıra kaydırır ve birkaç saniye vurgular. Bilinmeyen kimlik yok sayılır.
+  const [focusId] = useState(() => readUrlParam('ret_focus'))
+  const [focused, setFocused] = useState(null)
+  const focusDone = useRef(false)
+  useEffect(() => {
+    if (focusDone.current || !focusId || !data) return
+    focusDone.current = true
+    // Tek seferlik: param adresten silinir — bölüm değiştirip dönünce satır yeniden odaklanmasın (geçmiş kaydı eklenmez)
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('ret_focus')
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+    } catch { /* jsdom / eski tarayıcı */ }
+    const p = (data.policies || []).find((x) => x.id === focusId)
+    if (!p) return
+    setOpenClasses((s) => new Set(s).add(p.data_class))
+    setOpenRows((s) => new Set(s).add(p.id))
+    setFocused(p.id)
+  }, [data, focusId])
+  useEffect(() => {
+    if (!focused) return undefined
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0)
+    raf(() => {
+      const el = document.querySelector(`[data-policy-id="${focused}"]`)
+      el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+      el?.focus?.({ preventScroll: true })
+    })
+    const tm = setTimeout(() => setFocused(null), 6000)
+    return () => clearTimeout(tm)
+  }, [focused])
 
   // Paneller yalnız açılınca yüklenir (SystemHealth deseni). Koşum listesi kendi panelinde
   // (RetentionRunsPanel) sunucu-taraflı sayfalanır ve kendini yükler.
@@ -333,7 +366,7 @@ export default function RetentionSettings({ readOnly = false }) {
                     expanded={openRows.has(p.id)} onToggle={() => toggleRow(p.id)}
                     onChange={(v) => setEdited(e => ({ ...e, [p.setting_key]: v }))}
                     approval={data.approvals?.[p.id]} onApprove={() => approve(p)}
-                    disabled={saving || readOnly} />
+                    disabled={saving || readOnly} focused={focused === p.id} />
                 ))}
               </div>
             ),

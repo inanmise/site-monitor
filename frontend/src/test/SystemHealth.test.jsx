@@ -31,6 +31,11 @@ const { adminProxy } = vi.hoisted(() => {
     evaluateWatchdog: vi.fn(),
     testWatchdog: vi.fn(),
     pushLog: { summary: vi.fn() },
+    // Veritabanı büyümesi (2026-11-13): bölüm açılınca okunur — PostgreSQL olmayan kurulum yanıtı yeter
+    dbGrowth: {
+      get: vi.fn(() => Promise.resolve({ success: true, data: { supported: false, reason: 'not_postgres', range_days: 90 } })),
+      latestAnalysis: vi.fn(() => Promise.resolve({ success: true, data: { analysis: null, running: false } })),
+    },
   }
   // Vekil: testin AÇIKÇA kontrol ettiği uçlar elle; geri kalan HER metot ilk erişimde üretilir ve boş başarı döner
   // (bileşen yeni bir uç çağırdığı gün "is not a function" ile CI'da işlenmemiş ret üretmesin).
@@ -93,7 +98,7 @@ const WATCHDOG = { status: 'UP', enabled: true, stale: false, interval_seconds: 
   channels: { email_recipients: 2, push_users: 0, webhook: false, reminder_hours: 6, confirm_checks: 2 } }
 
 /** Bölümler — DOM SIRASIYLA (SystemHealth.jsx ORDER). Kendi kendini izleme EN ÜSTTE (2026-10-11), Sürüm & Dağıtım EN SONDA. */
-const SECTIONS = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'http', 'users', 'releases']
+const SECTIONS = ['watchdog', 'sys', 'sched', 'db', 'dbgrowth', 'integrations', 'heartbeat', 'http', 'users', 'releases']
 
 const toggles = () => [...document.querySelectorAll('[data-slot="stats-toggle"]')]
 const toggleOf = (sec) => document.querySelector(`[data-section="${sec}"] [data-slot="stats-toggle"]`)

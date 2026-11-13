@@ -2237,6 +2237,17 @@ export const api = {
     },
     getDbStats: () => request('/admin/system/db-stats'),
     getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),
+    // Veritabanı büyümesi (2026-11-13): günlük boyut geçmişi + tahmin, tablo önerileri, istek üzerine sağlık analizi.
+    dbGrowth: {
+      get: (range = 90, fresh = false) =>
+        request(`/admin/system/db-growth?range=${range}${fresh ? '&fresh=1' : ''}`),
+      whatIf: (policy, days) => request(
+        `/admin/system/db-growth/what-if?policy=${encodeURIComponent(policy)}&days=${encodeURIComponent(days)}`),
+      saveCapacity: (capacityGb) => request('/admin/system/db-growth/capacity',
+        { method: 'PUT', body: JSON.stringify({ capacity_gb: capacityGb }) }),
+      runAnalysis: () => request('/admin/system/db-growth/analysis', { method: 'POST' }),
+      latestAnalysis: () => request('/admin/system/db-growth/analysis/latest'),
+    },
     getSmtpLogs: (days) =>
       request(`/admin/system/smtp-logs${days ? `?days=${days}` : ''}`),
     // SMTP Gönderim Logu v2 (2026-09-19): sunucu taraflı arama/özet/dışa aktarma/detay/yeniden gönderim.
