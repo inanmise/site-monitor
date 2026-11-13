@@ -12319,6 +12319,7 @@ export const TR = {
   'stx.hsNoTeam': 'Serisini görebileceğiniz bir takım yok.',
   'stx.hsCollecting': 'Veri {0} tarihinden beri toplanıyor — eğri birkaç gün sonra çizilir.',
   'stx.hsCollectingSoon': 'Veri toplanmaya başlıyor — ilk günlük görüntü bir saat içinde yazılır.',
+  'stx.hsNoCerts': 'Bu takımda izlenen sertifika yok — sağlık eğrisi yalnız sertifikası olan takım için çizilir. Yeni eklenen sertifika ertesi günün görüntüsüyle görünür.',
   'stx.hsLast': '{0} itibarıyla {1} ({2} / {3} temiz)',
   'stx.hsSince': '{0} tarihinden beri',
   'stx.scTitle': 'Takım karnesi',
@@ -12723,6 +12724,7 @@ export const TR = {
   'chg7.opened': '{0} alarm açıldı',
   'chg7.resolved': '{0} çözüldü',
   'chg7.none': 'değişiklik yok',
+  'chg7.unknown': 'bazı sayılar okunamadı (bilinmiyor, sıfır değil)',
   // Yenileme yükü (2026-09-12, #9)
   'forecast.loadTitle': 'Yenileme yükü — önümüzdeki 12 ay',
   'forecast.loadPeak': '{0} sertifika dolacak · zirve {1}: {2}',

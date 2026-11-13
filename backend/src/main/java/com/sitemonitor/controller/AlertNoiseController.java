@@ -69,12 +69,20 @@ public class AlertNoiseController {
     /**
      * Takım kırılımı (2026-09-16): takım başına açık / kapalı / son 7 gün / son 30 gün alarm sayısı.
      * Kapsam listeyle AYNI: global görüntüleyici değilse yalnız kendi takımları (takımsız alarmlar da yok).
+     * Okuma hatası (hata taraması 2026-11-13) → 503 {@code DB_UNAVAILABLE}: istemci "okunamadı + yeniden dene" der, asla
+     * boş tablo / her takıma 0.
      */
     @GetMapping("/alerts/team-stats")
     public ResponseEntity<Map<String, Object>> teamStats(HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
         boolean global = SessionScope.seesAllMonitoring(session);   // + 7/24 operatörü (2026-10-04, salt okuma)
-        return ResponseEntity.ok(Map.of("success", true,
-                "data", teamStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), global)));
+        try {
+            return ResponseEntity.ok(Map.of("success", true,
+                    "data", teamStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), global)));
+        } catch (AlertTeamStatsService.UnavailableException e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("success", false, "code", "DB_UNAVAILABLE",
+                    "error", Msg.t("Takımların alarm sayıları şu an okunamıyor; veritabanına geçici olarak ulaşılamıyor olabilir. Birkaç saniye sonra yeniden deneyin.",
+                            "Alert counts per team can’t be read right now; the database may be briefly unreachable. Try again in a few seconds.")));
+        }
     }
 }

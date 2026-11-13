@@ -84,7 +84,9 @@ function ExecutiveBody({ data, onRetry, canMonitoring }) {
   // Eski sunucu `evaluated` göndermez → ok + under30 + expired + error (sunucunun paydası)
   const evaluated = c.evaluated ?? (c.total != null ? (c.total - (c.unchecked ?? 0)) : null)
   const open = alertsFailed ? null : a.open ?? null
-  const breaches = slaFailed ? null : s.breaches ?? null
+  // Hiç ölçülen izleme yokken "0 ihlal" bilgi değildir (hata taraması 2026-11-13: yeşil "0") → "—" ve nötr
+  const slaMeasured = Number(s.monitors) > 0
+  const breaches = slaFailed || !slaMeasured ? null : s.breaches ?? null
   const failedParts = [certsFailed && t('stx.part.certs'), alertsFailed && t('stx.part.alerts'), slaFailed && t('stx.part.sla')].filter(Boolean)
   const worst = Array.isArray(s.worst) ? s.worst : []
   const tiles = alertsHidden ? 'sm:grid-cols-2' : 'sm:grid-cols-3'

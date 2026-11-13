@@ -595,13 +595,18 @@ public class CertificateController {
                 certHealthDailyService.series(days, teamId, global, tid -> SessionScope.canViewMonitoring(session, tid)), "timestamp", now()));
     }
 
-    /** "Son 7 günde ne değişti" (2026-09-12, #7). */
+    /**
+     * "Son 7 günde ne değişti" (2026-09-12, #7). Alarm sayıları yalnız {@code alerts.read/view} iznine (hata taraması
+     * 2026-11-13): yoksa {@code alerts_opened} / {@code alerts_resolved} null + {@code alerts_visible=false}.
+     */
     @GetMapping("/stats/changes")
     public ResponseEntity<Map<String, Object>> getRecentChanges(@RequestParam(defaultValue = "7") int days, HttpSession session) {
         // Bellek anahtarı = izleme görüş kapsamı (yüklem yalnız kapsama bağlı: canViewMonitoring ⇔ monitoringViewTeamIds)
         List<Long> scope = SessionScope.monitoringViewTeamIds(session);
         String key = com.sitemonitor.util.TtlMemo.scopeKey(scope == null, scope);
-        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canViewMonitoring(session, teamId), key), "timestamp", now()));
+        boolean alerts = permissionService.allows(session, "alerts.read", "view");
+        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days,
+                teamId -> SessionScope.canViewMonitoring(session, teamId), alerts, key), "timestamp", now()));
     }
 
     /**

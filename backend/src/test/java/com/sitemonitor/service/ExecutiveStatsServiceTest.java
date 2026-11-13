@@ -96,7 +96,7 @@ class ExecutiveStatsServiceTest {
         Map<String, Object> c = m(b, "certs");
         assertThat(c).containsEntry("total", 8).containsEntry("ok", 3).containsEntry("under30", 1).containsEntry("under7", 1)
                 .containsEntry("expired", 2).containsEntry("error", 1).containsEntry("unchecked", 1);
-        assertThat((Double) c.get("health_pct")).isEqualTo(42.9);   // 3 / 7
+        assertThat((Double) c.get("health_pct")).isEqualTo(42.8);   // 3 / 7 = 42,857… → AŞAĞI kesilir (hata taraması 2026-11-13)
         Map<String, Object> a = m(b, "alerts");
         assertThat(a).containsEntry("open", 2).containsEntry("critical", 1).containsEntry("opened_last30", 2).containsEntry("opened_prev30", 2).containsEntry("delta", 0);
         Map<String, Object> s = m(b, "sla");
@@ -258,5 +258,67 @@ class ExecutiveStatsServiceTest {
         org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(1)).findActiveDomainTeams();
         svc.build(t -> true, false, "ALL", false);   // alarm izni ayrı anahtar
         org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findActiveDomainTeams();
+    }
+
+    @Test
+    @DisplayName("hata taraması 2026-11-13: okunamayan bloğu olan özet bellekte TUTULMAZ — sonraki çağrı (fresh olmadan da) yeniden hesaplar; başarılı sonuç tutulur")
+    void unreadableBlockIsNotMemoised() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "execCacheMs", 60_000L);
+        org.mockito.Mockito.doThrow(new RuntimeException("db down")).when(alertEventRepo).findOpenStatRows();
+        assertThat(m(svc.build(t -> true, true, "ALL", false), "alerts")).containsKey("error_msg");
+        org.mockito.Mockito.doReturn(List.<Object[]>of(open(1L, "soon.example.com", "CRITICAL"))).when(alertEventRepo).findOpenStatRows();
+        Map<String, Object> again = svc.build(t -> true, true, "ALL", false);
+        assertThat(m(again, "alerts")).doesNotContainKey("error_msg").containsEntry("open", 1);
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findActiveDomainTeams();
+        svc.build(t -> true, true, "ALL", false);   // başarılı sonuç bellekten
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findActiveDomainTeams();
+        assertThat(ExecutiveStatsService.hasUnreadableBlock(Map.of("sla", Map.of("error_msg", "X")))).isTrue();
+        assertThat(ExecutiveStatsService.hasUnreadableBlock(Map.of("alerts", Map.of("visible", false)))).isFalse();
+    }
+
+    private void changesFixture() {
+        CertificateInventory fresh = inv("new.example.com", 1L); fresh.setCreatedAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        fresh.setId(101L);
+        when(inventoryRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(fresh));
+        when(certificateCheckRepo.domainsWithFingerprintChangeSince(anyString())).thenReturn(List.of());
+    }
+
+    @Test
+    @DisplayName("hata taraması 2026-11-13: /stats/changes alarm sayıları yalnız alerts.read ile — izinsiz null + alerts_visible=false, alarm sorgusu yok")
+    void recentChangesAlertsNeedPermission() {
+        changesFixture();
+        Map<String, Object> c = svc.recentChanges(7, t -> t != null && t == 1L, false, null);
+        assertThat(c).containsEntry("added", 1).containsEntry("alerts_visible", false);
+        assertThat(c.get("alerts_opened")).isNull();
+        assertThat(c.get("alerts_resolved")).isNull();
+        assertThat(c).containsKeys("alerts_opened", "alerts_resolved");   // alan adları korunur (eski istemci)
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString());
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByResolvedAtGreaterThanEqual(anyString());
+        assertThat(svc.recentChanges(7, t -> t != null && t == 1L, true, null)).containsEntry("alerts_visible", true)
+                .containsEntry("alerts_opened", 1);
+    }
+
+    @Test
+    @DisplayName("hata taraması 2026-11-13: /stats/changes okunamayan blok null (asla 0); envanter düşerse ona dayanan her sayı null; kısmi sonuç bellekte tutulmaz")
+    void recentChangesReadFailureIsNullAndNotMemoised() {
+        changesFixture();
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "changesCacheMs", 60_000L);
+        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(alertEventRepo).findByResolvedAtGreaterThanEqual(anyString());
+        Map<String, Object> c = svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1");
+        assertThat(c).containsEntry("added", 1).containsEntry("alerts_opened", 1);
+        assertThat(c.get("alerts_resolved")).isNull();
+        // Kısmi sonuç saklanmadı: düzelen sorgu bir sonraki çağrıda okunur
+        org.mockito.Mockito.doReturn(List.of()).when(alertEventRepo).findByResolvedAtGreaterThanEqual(anyString());
+        assertThat(svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1")).containsEntry("alerts_resolved", 0);
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findAllByOrderByDomainAsc();
+        svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1");   // tam sonuç bellekten
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findAllByOrderByDomainAsc();
+
+        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(inventoryRepo).findAllByOrderByDomainAsc();
+        Map<String, Object> noInv = svc.recentChanges(7, t -> t != null && t == 1L);
+        for (String k : List.of("added", "removed", "renewed", "alerts_opened", "alerts_resolved")) {
+            if ("removed".equals(k)) continue;   // geçmiş deposu yok (dilimli kurulum) → 0 sözleşmesi
+            assertThat(noInv.get(k)).as(k).isNull();
+        }
     }
 }

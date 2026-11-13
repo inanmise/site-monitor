@@ -13,7 +13,8 @@ import java.util.Map;
  *   <li>Durum {@code error} → {@code error} (kalan gün bilinse de).</li>
  *   <li>Kalan gün &lt; 0 → {@code expired}; ≤ 30 → {@code under30} (≤ 7 ise ayrıca {@code under7}); aksi → {@code ok}.</li>
  * </ul>
- * {@code evaluated} = toplam − kontrol edilmemiş; sağlık % = temiz / değerlendirilen (hiç değerlendirilmeyen → null).
+ * {@code evaluated} = toplam − kontrol edilmemiş; sağlık % = temiz / değerlendirilen, bir ondalığa aşağı kesilir (hiç
+ * değerlendirilmeyen → null).
  */
 public final class CertHealthCounts {
 
@@ -47,8 +48,19 @@ public final class CertHealthCounts {
 
     /** Temiz / değerlendirilen, bir ondalık; değerlendirilen yoksa null. */
     public Double healthPct() {
-        int ev = evaluated();
-        return ev == 0 ? null : Math.round(1000.0 * ok / ev) / 10.0;
+        return healthPct(ok, evaluated());
+    }
+
+    /**
+     * Sağlık yüzdesi — TEK kural (yönetici özeti, günlük seri, istemcide takım karnesi {@code statsInsights.healthPctOf}):
+     * temiz / değerlendirilen, bir ondalığa AŞAĞI kesilir (hata taraması 2026-11-13: yuvarlama 1999 / 2000'i "%100" yazıyor,
+     * tek sorunlu sertifikayı saklıyordu — %100 yalnız gerçekten hepsi temizken). {@code 1000.0 * ok} tam sayıdır; tam bölünen
+     * oran kayan noktada da tam çıkar, tam bölünmeyen ise en yakın tam sayıya ≥ 1 / değerlendirilen uzaktır — {@code floor} güvenli.
+     * Değerlendirilen 0 (ya da altı) → null.
+     */
+    public static Double healthPct(int ok, int evaluated) {
+        if (evaluated <= 0) return null;
+        return Math.floor(1000.0 * ok / evaluated) / 10.0;
     }
 
     /** Yönetici özeti {@code certs} bloğunun alanları (sıra sabit). */
