@@ -174,16 +174,45 @@ function TeamScore({ score, t }) {
   return <Badge variant={SCORE_BADGE[band]} data-slot="noise-score" data-band={band} className="tabular-nums">{score} · {label}</Badge>
 }
 
+/**
+ * Olaylar sayfasının "Gürültü analizi" bağlantısı (2026-11-13): `?nz_open=1[&nz_team=<id>]` paneli açık ve takımı seçili
+ * başlatır. Okuma yan etkisizdir (StrictMode başlatıcıyı iki kez çağırır); anahtarlar bağlandıktan sonra adresten silinir.
+ */
+function readNoiseLink() {
+  try {
+    const p = new URLSearchParams(window.location.search)
+    const open = p.get('nz_open') === '1'
+    const team = p.get('nz_team')
+    if (!open && !team) return null
+    return { open, team: team && /^\d{1,18}$/.test(team) ? team : null }
+  } catch { return null }
+}
+
 export default function AlertNoisePanel({ onPickDomain, onPickDay, onOpenAlert }) {
   const t = useT()
   const isMobile = useIsMobile()
   const [days, setDays] = useState(7)
-  const [team, setTeam] = useState('all')
+  const [link] = useState(readNoiseLink)
+  const [team, setTeam] = useState(() => link?.team || 'all')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   // Varsayilan KAPALI, tercih OTURUMLUK (2026-09-17 kullanici karari) - takim kirilimiyla ayni kural.
-  const [open, setOpen] = useState(() => { try { return sessionStorage.getItem('alh-noise-open') === 'true' } catch { return false } })
+  const [open, setOpen] = useState(() => {
+    if (link?.open) return true
+    try { return sessionStorage.getItem('alh-noise-open') === 'true' } catch { return false }
+  })
+  const sectionRef = useRef(null)
+  // Bağlantı anahtarları bir kez tüketilir (adreste kalırsa her dönüşte panel yeniden açılırdı); panel görünür kaydırılır.
+  useEffect(() => {
+    if (!link) return
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('nz_open'); url.searchParams.delete('nz_team')
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
+    } catch { /* yoksay */ }
+    try { sectionRef.current?.scrollIntoView?.({ block: 'start' }) } catch { /* jsdom */ }
+  }, [link])
   const reqRef = useRef(0)
   // Isı haritası hücresi ayrıntısı (gün × saat) — null = kapalı
   const [slot, setSlot] = useState(null)
@@ -231,7 +260,7 @@ export default function AlertNoisePanel({ onPickDomain, onPickDay, onOpenAlert }
 
   return (
     <Collapsible open={open} onOpenChange={toggle} asChild>
-      <section aria-label={t('noise.title')} className="min-w-0">
+      <section ref={sectionRef} aria-label={t('noise.title')} className="min-w-0">
         <Card className="gap-0 py-0 shadow-none">
           <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left font-semibold outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50">
             <Activity size={16} aria-hidden="true" />

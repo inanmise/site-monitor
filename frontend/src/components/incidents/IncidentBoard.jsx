@@ -26,17 +26,20 @@ function LaneHeader({ lane, count, id }) {
   )
 }
 
-function LaneBody({ lane, rows, onOpen, selectedId, wide = false }) {
+function LaneBody({ lane, rows, onOpen, selectedId, wide = false, paged = false, cardProps }) {
   const t = useT()
   if (rows.length === 0) {
-    return <p data-slot="lane-empty" className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">{t(LANE_META[lane].emptyKey)}</p>
+    // Birden çok sayfa varsa şerit yalnız BU sayfayı gösterir: "açık olay yok" demek yanlış olurdu (2026-11-13).
+    const key = paged && lane !== 'resolved' ? `incov.laneEmptyPage.${lane}` : LANE_META[lane].emptyKey
+    return <p data-slot="lane-empty" data-paged={paged || undefined} className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">{t(key)}</p>
   }
   return (
     // wide (tablet, iki sütuna yayılan şerit): kartlar iki sütunda; geniş ekranda tek sütun
     <ul className={cn('m-0 flex list-none flex-col gap-2 p-0', wide && 'md:grid md:grid-cols-2 md:items-start lg:flex lg:flex-col')}>
       {rows.map((inc) => (
         <li key={inc.id} className="min-w-0">
-          <IncidentCard inc={inc} onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)} />
+          <IncidentCard inc={inc} onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)}
+            {...(cardProps ? cardProps(inc) : {})} />
         </li>
       ))}
     </ul>
@@ -61,8 +64,11 @@ export function BoardSkeleton() {
  * Pano görünümü — durum şeritleri: Açık → Üzerinde çalışılıyor (onaylı) → Çözüldü. Yüklenen sayfanın satırları
  * şeritlere dağıtılır (sayfalama çubuğu altta aynen durur). Telefonda şeritler shadcn Tabs olur (sekme başına sayı);
  * tablette 2, geniş ekranda 3 sütun. Şeritlerin kendi kaydırması yok: sayfa kayar (mobilde iç kaydırma tuzak).
+ *
+ * <p>`paged`: sonuç birden çok sayfaysa boş şerit "bu sayfada … yok" der (kümede yok değil). `cardProps(inc)` karta
+ * ek özellik verir ("Yeni" işareti, telefonda hızlı Onayla / Çöz).
  */
-export default function IncidentBoard({ rows, onOpen, selectedId, phone = false }) {
+export default function IncidentBoard({ rows, onOpen, selectedId, phone = false, paged = false, cardProps }) {
   const t = useT()
   const uid = useId()
   const [tab, setTab] = useState('open')
@@ -85,7 +91,7 @@ export default function IncidentBoard({ rows, onOpen, selectedId, phone = false 
         </TabsList>
         {LANES.map((lane) => (
           <TabsContent key={lane} value={lane} className="mt-1 min-w-0">
-            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} />
+            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} paged={paged} cardProps={cardProps} />
           </TabsContent>
         ))}
       </Tabs>
@@ -102,7 +108,7 @@ export default function IncidentBoard({ rows, onOpen, selectedId, phone = false 
           <section key={lane} data-slot="incident-lane" data-lane={lane} aria-labelledby={hid}
             className={cn('min-w-0 rounded-xl border bg-muted/30 p-2', wide && 'md:col-span-2 lg:col-span-1')}>
             <LaneHeader lane={lane} count={byLane[lane].length} id={hid} />
-            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} wide={wide} />
+            <LaneBody lane={lane} rows={byLane[lane]} onOpen={onOpen} selectedId={selectedId} wide={wide} paged={paged} cardProps={cardProps} />
           </section>
         )
       })}

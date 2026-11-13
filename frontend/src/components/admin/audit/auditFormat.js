@@ -272,6 +272,7 @@ const SPECIAL = {
   // Değer dışa aktarımı (E23, 2026-10-18): JSON / CSV; ayrıntıda süzgeç + rapor / satır sayısı
   TECH_ERROR_REPORT_EXPORT: 'audit.ev.TECH_ERROR_REPORT_EXPORT',
   ACTIVITY_EXPORT: 'audit.ev.ACTIVITY_EXPORT',   // Kayıtlar → Aktivite tam dışa aktarımı (2026-11-05)
+  INCIDENTS_EXPORT: 'audit.ev.INCIDENTS_EXPORT',   // Olaylar CSV / Excel dışa aktarımı (2026-11-13)
   TECH_ERROR_REPORT_UPDATE: 'audit.ev.TECH_ERROR_REPORT_UPDATE',
   TECH_ERROR_REPORT_APPROVAL_REQUEST: 'audit.ev.TECH_ERROR_REPORT_APPROVAL_REQUEST',
   TECH_ERROR_REPORT_APPROVE: 'audit.ev.TECH_ERROR_REPORT_APPROVE',

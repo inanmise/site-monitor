@@ -1,4 +1,4 @@
-import { MessageSquare, Clock } from 'lucide-react'
+import { MessageSquare, Clock, UserCheck, CheckCircle2 } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -6,8 +6,8 @@ import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { Card } from '@/components/shadcn/card'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
-import { isOpen, isAcked, laneOf, isForeign } from './incidentsModel.js'
+import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon, RecurrenceBadge, NewBadge } from './IncidentBadges.jsx'
+import { isOpen, isAcked, laneOf, isForeign, canActOn } from './incidentsModel.js'
 import LiveDuration from './LiveDuration.jsx'
 
 /** Örtünün (başlık düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard ile aynı desen). */
@@ -21,8 +21,12 @@ const LAYER = 'relative z-10'
  * klavye tek durakta (başlık) Enter/Space ile açar. Takım rozeti örtünün üstüne çıkar (üye penceresi).
  * Sol renk şeridi YOK; durum/önem rozetle. Seçili (açık detay / derin bağlantı) kart TÜM çerçevesiyle vurgulanır.
  * Başka ekibin olayı (`can_manage:false`, 2026-09-28) kilit rozeti taşır — kartın kendi eylemi yok, detay salt okunur.
+ *
+ * <p>2026-11-13: ad ve ileti KESİLMEZ (sarar); tekrarlayan imza rozeti; son yenilemede gelen olayda "Yeni" işareti
+ * (`isNew`); `quickActions` (telefonda) açık + işlem yapılabilir olayda Onayla / Çöz düğmeleri (40 px, örtünün üstünde).
  */
-export default function IncidentCard({ inc, onOpen, selected = false, showStatus = false, className }) {
+export default function IncidentCard({ inc, onOpen, selected = false, showStatus = false, className, isNew = false,
+  quickActions = false, onAck, onResolve }) {
   const t = useT()
   const dateLocale = useDateLocale()
   const name = inc.monitor?.name || inc.domain || '—'
@@ -30,9 +34,10 @@ export default function IncidentCard({ inc, onOpen, selected = false, showStatus
   const n = inc.comment_count ?? 0
   return (
     <Card data-slot="incident-card" data-status={inc.status} data-lane={laneOf(inc)} data-incident-id={inc.id}
-      data-selected={selected || undefined} data-foreign={isForeign(inc) || undefined}
+      data-selected={selected || undefined} data-foreign={isForeign(inc) || undefined} data-new={isNew || undefined}
       className={cn('relative min-w-0 gap-0 overflow-hidden py-0 shadow-xs transition-colors hover:border-primary/50',
         open && !selected && 'border-destructive/30',
+        isNew && !selected && 'border-primary/60 bg-primary/[0.04]',
         selected && 'border-primary ring-2 ring-primary/40', className)}>
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-3 pt-2.5">
         <SeverityBadge level={inc.alert_level} />
@@ -40,6 +45,8 @@ export default function IncidentCard({ inc, onOpen, selected = false, showStatus
         {open && isAcked(inc) && <AckBadge />}
         <RootCauseChip rc={inc.root_cause} withLabel={false} />
         {isForeign(inc) && <ReadOnlyBadge compact />}
+        {isNew && <NewBadge />}
+        <RecurrenceBadge count={inc.recurrence_7d} />
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground tabular-nums" title={inc.started_at}>
           <Clock aria-hidden="true" className="size-3" />
           {/* Süre kendi saatiyle tazelenir (yaprak) — kart saniyede bir yeniden çizilmez (2026-10-09) */}
@@ -55,14 +62,14 @@ export default function IncidentCard({ inc, onOpen, selected = false, showStatus
           'hover:bg-transparent hover:text-foreground dark:hover:bg-transparent',
           'focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50')}>
         <MonitorTypeIcon type={inc.monitor?.type} className="mt-px" />
-        <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title={name}>{name}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>
       </Button>
 
-      {inc.message && <p className="mt-1.5 line-clamp-1 px-3 text-xs text-muted-foreground [overflow-wrap:anywhere]" title={inc.message}>{inc.message}</p>}
+      {inc.message && <p className="mt-1.5 px-3 text-xs text-muted-foreground [overflow-wrap:anywhere]">{inc.message}</p>}
 
       <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t px-3 py-2 text-xs text-muted-foreground">
         {(inc.team_name || inc.team_id != null)
-          ? <span className={cn(LAYER, 'min-w-0')}><TeamBadge as="span" teamId={inc.team_id} teamName={inc.team_name} /></span>
+          ? <span className={cn(LAYER, 'min-w-0')}><TeamBadge as="span" wrap teamId={inc.team_id} teamName={inc.team_name} /></span>
           : <span className="italic">{t('incov.noTeam')}</span>}
         <span className="ml-auto inline-flex items-center gap-2 whitespace-nowrap">
           <span className="inline-flex items-center gap-1" title={n === 1 ? t('incov.commentOne') : t('incov.comments', n)}>
@@ -74,6 +81,23 @@ export default function IncidentCard({ inc, onOpen, selected = false, showStatus
           <span title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</span>
         </span>
       </div>
+
+      {quickActions && open && canActOn(inc) && (onAck || onResolve) && (
+        <div data-slot="incident-quick-actions" className={cn(LAYER, 'flex flex-wrap gap-2 border-t px-3 py-2')}>
+          {!isAcked(inc) && onAck && (
+            <Button type="button" variant="outline" size="sm" className="h-10 flex-1" onClick={() => onAck(inc)}
+              aria-label={`${t('incov.ack')}: ${name}`}>
+              <UserCheck aria-hidden="true" />{t('incov.ack')}
+            </Button>
+          )}
+          {onResolve && (
+            <Button type="button" variant="outline" size="sm" className="h-10 flex-1" onClick={() => onResolve(inc)}
+              aria-label={`${t('incov.resolve')}: ${name}`}>
+              <CheckCircle2 aria-hidden="true" />{t('incov.resolve')}
+            </Button>
+          )}
+        </div>
+      )}
     </Card>
   )
 }

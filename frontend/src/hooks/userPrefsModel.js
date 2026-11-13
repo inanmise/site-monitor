@@ -263,6 +263,8 @@ export const VIEW_SPECS = Object.freeze({
   'incident-history': Object.freeze({ prefix: 'ih_', exclude: ['ih_id', 'ih_page', 'ih_ps'] }),
   /** Kayıtlar → Aktivite (2026-11-05) — activityModel.LIST_URL_KEYS; rota (`act`, `amon`, `atl*`) geçicidir, girmez. */
   activity: Object.freeze({ keys: ['atype', 'astatus', 'arange', 'afrom', 'ato', 'aq', 'ateam', 'aactor', 'agroup', 'areason', 'amf', 'amfl'] }),
+  /** Olaylar (2026-11-13) — incidentsModel.URL_KEYS + görünüm / sıralama / kapsam; açık olay (`incident`) ve sayfa girmez. */
+  incidents: Object.freeze({ keys: ['stat', 'type', 'q', 'from', 'to', 'level', 'team', 'inc_rec', 'view', 'sort', 'scope'] }),
 })
 
 /** İki parametre kümesi aynı mı (sıra önemsiz). */

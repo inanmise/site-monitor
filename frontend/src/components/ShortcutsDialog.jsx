@@ -83,6 +83,16 @@ export default function ShortcutsDialog({ open, onClose, tabs = [] }) {
           { id: 'image-step', label: t('shortcuts.imageStep'), chords: [['→'], ['←']] },
         ],
       },
+      // Olaylar sayfası (2026-11-13): yalnız sekme kullanıcıya açıkken — sayfa da aynı listeyi kendi içinde gösterir
+      tabIds.has('incidents') && {
+        id: 'incidents', title: t('shortcuts.grp.incidents'), hint: t('incov.kbd.hint'), rows: [
+          { id: 'inc-move', label: t('incov.kbd.move'), chords: [['J'], ['K']] },
+          { id: 'inc-open', label: t('incov.kbd.open'), chords: [['↵']] },
+          { id: 'inc-ack', label: t('incov.kbd.ack'), chords: [['A']] },
+          { id: 'inc-resolve', label: t('incov.kbd.resolve'), chords: [['R']] },
+          { id: 'inc-comment', label: t('incov.kbd.comment'), chords: [['C']] },
+        ],
+      },
     ].filter(Boolean)
   }, [open, mac, tabs, tabIds, t])
 

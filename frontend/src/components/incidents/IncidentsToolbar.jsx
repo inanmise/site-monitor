@@ -8,11 +8,14 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { InputGroup, InputGroupInput, InputGroupAddon } from '@/components/shadcn/input-group'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, SheetClose } from '@/components/shadcn/sheet'
 import { Label } from '@/components/shadcn/label'
+import { Switch } from '@/components/shadcn/switch'
 import { cn } from '@/lib/utils'
-import { statusOf, activeFilters, SEVERITY_ORDER, severityMeta } from './incidentsModel.js'
+import { statusOf, activeFilters, LEVEL_OPTIONS, severityMeta } from './incidentsModel.js'
 
 /** Seçicilerin ortak kabı: NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için `*:w-full`. */
 const SEL = 'w-full *:w-full sm:w-auto'
+/** Dokunmatikte 40 px (shadcn NativeSelect 36 px). */
+const SEL_TOUCH = 'pointer-coarse:h-10'
 /** Yazarken arama bu kadar duraklamadan sonra uygulanır (her tuşta istek yok); Enter / odak kaybı hemen uygular. */
 export const SEARCH_DEBOUNCE_MS = 250
 
@@ -21,8 +24,10 @@ export const SEARCH_DEBOUNCE_MS = 250
  * Etkin süzgeçler aşağıda çip olarak listelenir (× ile tek tek, "Temizle" ile hepsi). Kök neden çipleri
  * (canlı sayı, sunucudan) telefonda yatay kayan tek satır, geniş ekranda sarar.
  *
- * Sunucu yalnız durum / kök neden / arama / tarih süzer; önem ve takım YÜKLENEN SAYFAYA uygulanır — bunu
- * sayfa gövdesindeki not söyler (`incov.pageFacetNote`), araç çubuğu ayrım yapmadan aynı görünümde sunar.
+ * 2026-11-13: önem (tek seviye ya da "kritik ve yüksek"), takım (sunucunun takım seçenekleri — ADI ile; adı okunamayan
+ * seçili takım "Takım (adı okunamadı)", ham kimlik asla) ve "Yalnız tekrarlayanlar" anahtarı SUNUCUDA uygulanır. Eski
+ * sunucu bunları bilmezse sayfa yüklenen sayfaya uygular ve gövde notu söyler (`incov.pageFacetNote`). "Tüm nedenler"
+ * çipinin sayısı kök neden süzgecinden BAĞIMSIZ toplamdır (tür sayılarının toplamı).
  *
  * <p>`busy`: yavaş yüklemede (sayfa ~180 ms geciktirir) süzgeç satırının sonunda duran küçük Spinner — sonuçlar yerinde
  * soluk kalır, satır yüksekliği değişmez. Arama yazarken 250 ms duraklamada uygulanır (Enter / odak kaybı hemen).
@@ -56,11 +61,16 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
   const active = activeFilters(filters)
   const status = statusOf(filters.stat)
   const pills = Object.entries(typeCounts || {}).sort((a, b) => b[1] - a[1])
+  // "Tüm nedenler": tür sayıları kök neden süzgecinden bağımsız sayılır → toplamları süzgeçsiz toplamdır (seçili türün
+  // sayısını DEĞİL hepsini gösterir). Tür sayısı yoksa liste toplamı.
+  const allCauses = pills.length ? pills.reduce((sum, [, c]) => sum + (Number(c) || 0), 0) : total
+  const teamList = teams.some((tm) => tm.id === String(filters.team)) || !filters.team
+    ? teams : [...teams, { id: String(filters.team), name: t('incov.chip.teamUnknown') }]
   const typeLabel = (type) => (t(`incov.type.${type}`) !== `incov.type.${type}` ? t(`incov.type.${type}`) : type)
 
   const statusSelect = (
     <div className={SEL}>
-      <NativeSelect aria-label={t('incov.colStatus')} value={status}
+      <NativeSelect aria-label={t('incov.colStatus')} value={status} className={SEL_TOUCH}
         onChange={(e) => patch({ stat: e.target.value === 'ongoing' ? 'open' : e.target.value === 'resolved' ? 'resolved' : '' })}>
         <NativeSelectOption value="all">{t('incov.statusAll')}</NativeSelectOption>
         <NativeSelectOption value="ongoing">{t('incov.ongoing')}</NativeSelectOption>
@@ -70,17 +80,19 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
   )
   const severitySelect = (
     <div className={SEL}>
-      <NativeSelect aria-label={t('incov.severity')} value={filters.level} onChange={(e) => patch({ level: e.target.value })}>
+      <NativeSelect aria-label={t('incov.severity')} value={filters.level} className={SEL_TOUCH} onChange={(e) => patch({ level: e.target.value })}>
         <NativeSelectOption value="">{t('incov.severityAll')}</NativeSelectOption>
-        {SEVERITY_ORDER.map((lvl) => <NativeSelectOption key={lvl} value={lvl}>{t(severityMeta(lvl).key)}</NativeSelectOption>)}
+        {LEVEL_OPTIONS.map((lvl) => (
+          <NativeSelectOption key={lvl} value={lvl}>{lvl.includes(',') ? t('incov.severityCritHigh') : t(severityMeta(lvl).key)}</NativeSelectOption>
+        ))}
       </NativeSelect>
     </div>
   )
   const teamSelect = (
     <div className={SEL}>
-      <NativeSelect aria-label={t('incov.colTeam')} value={filters.team} onChange={(e) => patch({ team: e.target.value })}>
+      <NativeSelect aria-label={t('incov.colTeam')} value={filters.team} className={SEL_TOUCH} onChange={(e) => patch({ team: e.target.value })}>
         <NativeSelectOption value="">{t('incov.teamAll')}</NativeSelectOption>
-        {teams.map((tm) => <NativeSelectOption key={tm.id} value={tm.id}>{tm.name}</NativeSelectOption>)}
+        {teamList.map((tm) => <NativeSelectOption key={tm.id} value={tm.id}>{tm.name}</NativeSelectOption>)}
       </NativeSelect>
     </div>
   )
@@ -91,6 +103,13 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
       <DateTimeField dateOnly clearable className={phone ? '' : 'dtf-inline'} placeholder={t('incov.until')}
         value={filters.until} onChange={(v) => patch({ until: v || '' })} />
     </div>
+  )
+  const recurring = (
+    <Label className="flex min-h-9 cursor-pointer items-center gap-2 text-sm font-medium pointer-coarse:min-h-10">
+      <Switch data-slot="incidents-recurring" checked={filters.recurring === '1'}
+        onCheckedChange={(on) => patch({ recurring: on ? '1' : '' })} />
+      {t('incov.recurFilter')}
+    </Label>
   )
   const search = (
     <InputGroup className="w-full sm:w-64">
@@ -138,6 +157,7 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('incov.severity')}{severitySelect}</Label>
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('incov.colTeam')}{teamSelect}</Label>
                 <div className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">{t('incov.colStarted')}{dates}</div>
+                {recurring}
               </div>
               <SheetFooter className="flex-row justify-between">
                 <Button type="button" variant="ghost" onClick={clearAll} disabled={active.length === 0}><FilterX aria-hidden="true" />{t('incov.clearFilters')}</Button>
@@ -150,7 +170,7 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
         <div className="flex flex-wrap items-center gap-2">
           {/* "Süzgeçleri temizle" burada TEKRARLANMAZ (etkin çip satırında var): süzgeç seçilince satır sarıp kartları
               aşağı itiyordu (1280 ölçümü, titreme bildirimi 2026-09-28). */}
-          {statusSelect}{severitySelect}{teamSelect}{search}{dates}
+          {statusSelect}{severitySelect}{teamSelect}{search}{dates}{recurring}
           {busySlot}
         </div>
       )}
@@ -161,9 +181,11 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
           {active.map((f) => {
             const label = labelsFor(f)
             return (
-              <Badge key={f.key} variant="outline" data-filter={f.key} className="h-7 gap-1 rounded-full bg-primary/5 pr-1 pl-2.5 font-medium">
-                <span className="max-w-[14rem] truncate">{label}</span>
-                <Button type="button" variant="ghost" size="icon-xs" className="size-5 rounded-full pointer-coarse:size-7"
+              <Badge key={f.key} variant="outline" data-filter={f.key}
+                className="h-auto min-h-7 max-w-full gap-1 overflow-visible rounded-md bg-primary/5 py-0.5 pr-1 pl-2.5 font-medium whitespace-normal">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
+                <Button type="button" variant="ghost" size="icon-xs"
+                  className="relative size-5 shrink-0 rounded-full pointer-coarse:size-7 pointer-coarse:after:absolute pointer-coarse:after:-inset-1.5 pointer-coarse:after:content-['']"
                   aria-label={t('incov.removeFilter', label)}
                   onClick={() => patch(f.patch)}>
                   <X aria-hidden="true" className="size-3" />
@@ -171,7 +193,7 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
               </Badge>
             )
           })}
-          <Button type="button" variant="link" size="xs" className="h-7 px-1 text-muted-foreground" onClick={clearAll}>{t('incov.clearFilters')}</Button>
+          <Button type="button" variant="link" size="xs" className="h-7 px-1 text-muted-foreground pointer-coarse:h-10" onClick={clearAll}>{t('incov.clearFilters')}</Button>
         </div>
       )}
 
@@ -179,7 +201,7 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
       {pills.length > 0 && (
         <div role="group" aria-label={t('incov.colRootCause')}
           className={cn('-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:thin] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0')}>
-          {[['', t('incov.allCauses'), total], ...pills.map(([type, count]) => [type, typeLabel(type), count])].map(([type, label, count]) => {
+          {[['', t('incov.allCauses'), allCauses], ...pills.map(([type, count]) => [type, typeLabel(type), count])].map(([type, label, count]) => {
             const on = type ? filters.rootCause === type : !filters.rootCause
             return (
               <Button key={type || 'all'} type="button" variant={on ? 'default' : 'outline'} size="sm" aria-pressed={on}

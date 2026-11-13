@@ -129,6 +129,9 @@ describe('userPrefsModel — kayıtlı görünümler', () => {
       .toEqual({ mo_status: 'down', mo_fav: '1' })
     expect(pickParams('?ih_q=a&ih_id=7&ih_sev=HIGH', VIEW_SPECS['incident-history'])).toEqual({ ih_q: 'a', ih_sev: 'HIGH' })
     expect(pickParams('?view=closed&alert=12&level=HIGH&page=3', VIEW_SPECS.alerthistory)).toEqual({ view: 'closed', level: 'HIGH' })
+    // Olaylar (2026-11-13): açık olay (incident) ve sayfa görünüme girmez; tekrarlayan süzgeci (inc_rec) girer
+    expect(pickParams('?tab=incidents&level=CRITICAL,HIGH&team=5&inc_rec=1&incident=9&page=2&scope=all', VIEW_SPECS.incidents))
+      .toEqual({ level: 'CRITICAL,HIGH', team: '5', inc_rec: '1', scope: 'all' })
     expect(sameParams({ a: '1', b: '2' }, { b: '2', a: '1' })).toBe(true)
     expect(sameParams({ a: '1' }, { a: '1', b: '2' })).toBe(false)
   })

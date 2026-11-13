@@ -48,6 +48,15 @@ describe('AlertNoisePanel', () => {
     ] }
   const openPanel = () => fireEvent.click(screen.getByRole('button', { name: /Gürültü analizi|Noise analysis/ }))
 
+  it('Olaylar sayfasının bağlantısı (?nz_open=1&nz_team=5): panel açık + takım seçili başlar; anahtarlar adresten silinir (2026-11-13)', async () => {
+    window.history.replaceState({}, '', '/?tab=alerthistory&nz_open=1&nz_team=5')
+    api.admin.getAlertNoise.mockResolvedValue({ success: true, data: DATA })
+    render(<AlertNoisePanel onPickDomain={vi.fn()} />)
+    await waitFor(() => expect(api.admin.getAlertNoise).toHaveBeenCalledWith(7, 5))
+    await waitFor(() => expect(window.location.search).toBe('?tab=alerthistory'))
+    window.history.replaceState({}, '', '/')
+  })
+
   it('kapalı başlar (istek yok); açınca 7 gün yüklenir; hedef tıklanınca onPickDomain; 30 gün seçince yeniden ister', async () => {
     api.admin.getAlertNoise.mockResolvedValue({ success: true, data: DATA })
     const onPick = vi.fn()
