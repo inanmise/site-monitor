@@ -332,3 +332,55 @@ describe('UserManager — kapsamlı müdür (UIA-13 / A7 / A8)', () => {
     expect(opts).toEqual(['USER', 'TEAM_ADMIN'])
   })
 })
+
+// ── 2026-11-13 hata taraması: AD aramasındaki "Düzenle" — liste sayfasında olmayan kişi TAM satırla açılır ────────────────
+describe('UserManager — AD aramasından "Düzenle"', () => {
+  const FAR = {
+    id: 99, username: 'UZAK1', display_name: 'Uzak Kişi Uzunadoğlu (Ödeme Sistemleri Uygulama Geliştirme)',
+    email: 'uzak@example.com', system_role: 'TEAM_ADMIN', team_ids: [9], team_id: 9, active: true,
+    auth_source: 'LDAP', title: 'Kıdemli Uzman', phone: '5551112233', manager_sicil: 'S42',
+  }
+  let directory = []
+  beforeEach(() => {
+    vi.clearAllMocks()
+    directory = [FAR]
+    // Liste sayfası FAR'ı İÇERMEZ (sunucu sayfalı); kullanıcı adı süzgeçli arama onu bulur
+    api.admin.searchUsers.mockImplementation((p) => Promise.resolve(p?.field === 'username'
+      ? { success: true, data: directory, total: directory.length, page: 0 }
+      : { success: true, data: USERS, total: USERS.length, page: 0, active_admin_count: 2 }))
+    api.admin.adUserSearch.mockResolvedValue({ success: true, results: [
+      { dn: 'cn=99,dc=x', username: 'UZAK1', display_name: FAR.display_name, email: FAR.email, exists_locally: true, local_user_id: 99 },
+    ] })
+  })
+
+  async function openEditFromAd() {
+    await screen.findByText('ali')
+    fireEvent.click(document.querySelector('[data-slot="aduser-open"]'))
+    fireEvent.change(await waitFor(() => {
+      const el = document.querySelector('[data-slot="aduser-search"]')
+      if (!el) throw new Error('arama kutusu yok')
+      return el
+    }), { target: { value: 'uzak' } })
+    await waitFor(() => expect(document.querySelector('[data-slot="aduser-edit-existing"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-slot="aduser-edit-existing"]'))
+  }
+
+  it('düzenleyici kişinin TAM satırıyla açılır (rol / profil boş kurulmaz) — kimlik + kullanıcı adı süzgeciyle okunur', async () => {
+    renderUm()
+    await openEditFromAd()
+    await waitFor(() => expect(document.querySelector('[data-slot="user-editor"][data-user-id="99"]')).not.toBeNull())
+    expect(api.admin.searchUsers).toHaveBeenCalledWith(expect.objectContaining({ q: 'uzak1', field: 'username' }))
+    expect(screen.getByDisplayValue('UZAK1')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Kıdemli Uzman')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="ued-incomplete"]')).toBeNull()
+  })
+
+  it('tam satır okunamazsa düzenleyici AÇILMAZ, hata bildirilir', async () => {
+    directory = []
+    renderUm()
+    await openEditFromAd()
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
+    expect(document.querySelector('[data-slot="user-editor"]')).toBeNull()
+    expect(api.admin.updateUser).not.toHaveBeenCalled()
+  })
+})

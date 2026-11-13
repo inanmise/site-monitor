@@ -1073,6 +1073,7 @@ public class UserService {
      * AD özniteliklerinden doldurulur. ROL / ORG ROLÜ / TAKIMLAR yöneticinin SEÇİMİDİR (kullanıcı kararı:
      * "yönetici eklemeden önce seçer") ve KİLİTLENİR ({@code roleLocked/orgRoleLocked/teamLocked},
      * takım kaynağı {@link UserTeamSource#MANUAL}) → kişi sonradan giriş yapınca LDAP provizyonu bunları EZMEZ.
+     * İstisna (2026-11-13): org rolü SEÇİLMEDİYSE kilitlenmez — ilk girişte AD'den türetilir.
      * Çağıran (controller) yalnız global admin'e açar, var olanı 409 ile reddeder ve denetimi yazar.
      */
     @Transactional
@@ -1101,8 +1102,12 @@ public class UserService {
         // ── Rol / org / takım — yönetici seçimi, KİLİTLİ (LDAP provizyonu ezmesin) ──
         user.setSystemRole(systemRole != null ? systemRole : "USER");
         user.setRoleLocked(true);
-        user.setOrgRole(orgRole != null && !orgRole.isBlank() ? orgRole : null);
-        user.setOrgRoleLocked(true);
+        boolean orgRoleChosen = orgRole != null && !orgRole.isBlank();
+        user.setOrgRole(orgRoleChosen ? orgRole : null);
+        // Org rolü yalnız yönetici SEÇTİYSE kilitlenir (2026-11-13 hata taraması): seçilmediyse kilitsiz kalır ve ilk girişte
+        // AD'den türetilir (PO / MANAGER / BOLUM_BASKANI / TECH — LdapProvisioningService.applyOrgRole). Eskiden "rol yok"
+        // da kilitleniyordu; AD'de PO olan kişi ilk girişte de PO olmuyor, PO onayı / org rolüne bağlı push grupları onu atlıyordu.
+        user.setOrgRoleLocked(orgRoleChosen);
         applyTeams(user, teams);
         if (primaryTeamId != null && teams.contains(primaryTeamId)) user.setTeamId(primaryTeamId);
         user.setTeamLocked(true);

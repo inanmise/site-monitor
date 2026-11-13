@@ -7,7 +7,7 @@ import SearchableSelect from '../../ui/SearchableSelect.jsx'
 import MultiTeamSelect from '../../ui/MultiTeamSelect.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
-import { FORM_LOCK_KEY, ORG_ROLES, makePrimary, predictedPrimary, roleOptionsFor } from './userEditorModel.js'
+import { FORM_LOCK_KEY, ORG_ROLES, isKeptTeamless, makePrimary, predictedPrimary, roleOptionsFor } from './userEditorModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -262,10 +262,14 @@ export function TeamsSection({ ed }) {
     )
   }
 
-  const liveHint = !err.error && !roleAdmin && selected.length === 0 && editable ? t('usr.teamsRequired') : undefined
+  // Kayıtta zaten takımsız kullanıcı (2026-11-13): takım zorunlu değil (validateForm ile aynı kural) — "zorunlu" ipucu yerine
+  // durumu söyleyen not; takım eklemek isteğe bağlı.
+  const keptTeamless = !roleAdmin && isKeptTeamless(form, { mode: ed.mode, baseline: ed.baseline })
+  const liveHint = !err.error && !roleAdmin && selected.length === 0 && editable
+    ? t(keptTeamless ? 'ued.teamlessKept' : 'usr.teamsRequired') : undefined
   return (
-    <div data-slot="ued-teams" className="flex min-w-0 flex-col gap-3">
-      <Field label={t('usr.teamsLabel')} required={editable && !roleAdmin} hintTone="warn"
+    <div data-slot="ued-teams" data-teamless={keptTeamless ? 'true' : undefined} className="flex min-w-0 flex-col gap-3">
+      <Field label={t('usr.teamsLabel')} required={editable && !roleAdmin && !keptTeamless} hintTone="warn"
         hint={liveHint || (roleAdmin && selected.length === 0 ? t('ued.adminNoTeam') : undefined)} {...err}>
         {({ id }) => (
           <MultiTeamSelect id={id} value={selected} disabled={!editable} searchThreshold={2} placeholder={t('usr.teamsPlaceholder')}

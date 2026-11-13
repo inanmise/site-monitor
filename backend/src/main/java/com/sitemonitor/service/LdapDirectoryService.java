@@ -175,9 +175,10 @@ public class LdapDirectoryService {
      * Verilen metin kullanıcı adı (sAMAccountName), görünen ad (displayName), e-posta ve cn (sicil) içinde
      * {@code *metin*} olarak aranır. Değer önce {@link #escapeFilter} ile kaçışlanır (kullanıcının yazdığı
      * {@code *} ( ) \ zararsızlaşır — LDAP filtre injection yok), sonra etrafına LİTERAL {@code *} konur.
+     * Yalnız KULLANICI HESAPLARI döner ({@link #buildSearchFilter}: posta kişisi / bilgisayar hesabı / grup değil).
      * Sonuç {@code limit} ile sınırlı (≤ {@link #MAX_MATCHES}); her kayıt özet döner (dn, kullanıcı adı,
      * görünen ad, e-posta, unvan, departman). Tam özellikler/gruplar için {@link #queryUser} ya da
-     * {@link #findUser} kullanılır.
+     * {@link #lookupUser} kullanılır. Bağlantı / okuma hatası → {@link DirectoryUnavailableException}.
      */
     public List<Map<String, Object>> searchUsers(String query, int limit) {
         if (query == null || query.isBlank()) {
@@ -191,18 +192,12 @@ public class LdapDirectoryService {
             throw new IllegalArgumentException("Base DN yapılandırılmamış");
         }
         int cap = Math.max(1, Math.min(limit <= 0 ? 25 : limit, MAX_MATCHES));
-        String q = escapeFilter(query.trim());
-        String userAttr = (s.getUserAttribute() != null && !s.getUserAttribute().isBlank())
-                ? s.getUserAttribute() : "sAMAccountName";
+        String userAttr = searchUserAttr(s);
         String dispAttr = (s.getDisplayAttribute() != null && !s.getDisplayAttribute().isBlank())
                 ? s.getDisplayAttribute() : "displayName";
         String mailAttr = (s.getEmailAttribute() != null && !s.getEmailAttribute().isBlank())
                 ? s.getEmailAttribute() : "mail";
-        String or = "(|(" + userAttr + "=*" + q + "*)(" + dispAttr + "=*" + q + "*)"
-                + "(" + mailAttr + "=*" + q + "*)(cn=*" + q + "*))";
-        String base = s.getUserSearchFilter();
-        String filter = (base != null && !base.isBlank() && !base.contains("{{username}}"))
-                ? "(&" + base + or + ")" : or;
+        String filter = buildSearchFilter(s, query.trim());
 
         List<Map<String, Object>> out = new ArrayList<>();
         try (LdapConn conn = open(s)) {
@@ -217,9 +212,12 @@ public class LdapDirectoryService {
                 while (results.hasMore() && out.size() < cap) {
                     SearchResult r = results.next();
                     Map<String, Object> a = readAttributes(r.getAttributes());
+                    String username = firstAttr(a, userAttr, null);
+                    // Savunma: kullanıcı adı olmayan (posta kişisi) ya da "$" ile biten (bilgisayar) kayıt listelenmez.
+                    if (!isUserAccountName(username)) continue;
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("dn", r.getNameInNamespace());
-                    m.put("username", firstAttr(a, userAttr, null));
+                    m.put("username", username);
                     m.put("displayName", firstAttr(a, dispAttr, null));
                     m.put("email", firstAttr(a, mailAttr, null));
                     m.put("title", firstAttr(a, "title", null));
@@ -230,10 +228,82 @@ public class LdapDirectoryService {
                 // AD referral chasing / count cap — return what we collected so far.
             }
             return out;
-        } catch (RuntimeException re) {
-            throw re;
+        } catch (IllegalArgumentException iae) {
+            throw iae;
         } catch (Exception e) {
-            throw new IllegalStateException(rootMessage(e), e);
+            // Bağlantı / bind / okuma hatası "sonuç yok" DEĞİLDİR (2026-11-13 hata taraması) — çağıran 503 der.
+            throw new DirectoryUnavailableException(rootMessage(e), e);
+        }
+    }
+
+    /** AD'de normal kullanıcı hesabının {@code sAMAccountType} değeri (SAM_USER_OBJECT; bilgisayar 805306369, grup 268435456). */
+    public static final String AD_NORMAL_USER_ACCOUNT = "805306368";
+
+    /** Arama ve görüntülemenin kullanıcı-adı özniteliği (ayarda yoksa {@code sAMAccountName}). */
+    private static String searchUserAttr(LdapSettings s) {
+        return (s.getUserAttribute() != null && !s.getUserAttribute().isBlank())
+                ? s.getUserAttribute() : "sAMAccountName";
+    }
+
+    /**
+     * AD'DEN KULLANICI ARAMA süzgeci (2026-11-13 hata taraması — saf, birim testi). Yalnız bu uçta kullanılır; GİRİŞ /
+     * provizyon süzgeçlerine ({@link #buildUserFilter}) dokunmaz.
+     *
+     * <p>Arama, ayarın temel süzgecinin ({@code (objectclass=person)}) yanında KENDİ sabit kullanıcı koşulunu taşır:
+     * kullanıcı-adı özniteliği var ({@code (sAMAccountName=*)} — AD posta kişisinde yoktur) ve AD'de
+     * {@code (sAMAccountType=805306368)} (normal kullanıcı hesabı — bilgisayar {@code PC01$} ve grup dışlanır). AD
+     * koşulu yalnız kullanıcı özniteliği {@code sAMAccountName} iken eklenir (AD olmayan dizinde bu öznitelik yoktur;
+     * süzgeç hiçbir şey döndürmezdi). Temel süzgeç bir {@code {{username}}} şablonuysa düşer — sabit koşul yine uygulanır.
+     */
+    String buildSearchFilter(LdapSettings s, String query) {  // package-private: birim testi
+        String q = escapeFilter(query);
+        String userAttr = searchUserAttr(s);
+        String dispAttr = (s.getDisplayAttribute() != null && !s.getDisplayAttribute().isBlank())
+                ? s.getDisplayAttribute() : "displayName";
+        String mailAttr = (s.getEmailAttribute() != null && !s.getEmailAttribute().isBlank())
+                ? s.getEmailAttribute() : "mail";
+        String or = "(|(" + userAttr + "=*" + q + "*)(" + dispAttr + "=*" + q + "*)"
+                + "(" + mailAttr + "=*" + q + "*)(cn=*" + q + "*))";
+        String userClause = "(" + userAttr + "=*)"
+                + ("sAMAccountName".equalsIgnoreCase(userAttr) ? "(sAMAccountType=" + AD_NORMAL_USER_ACCOUNT + ")" : "");
+        String base = s.getUserSearchFilter();
+        String plainBase = (base != null && !base.isBlank() && !base.contains("{{username}}")) ? base : "";
+        return "(&" + plainBase + userClause + or + ")";
+    }
+
+    /** Kullanıcı hesabı adı mı: boş değil ve {@code $} ile bitmiyor (AD bilgisayar hesapları {@code PC01$}). */
+    public static boolean isUserAccountName(String username) {
+        return username != null && !username.isBlank() && !username.strip().endsWith("$");
+    }
+
+    /**
+     * AD kaydı bir NORMAL kullanıcı hesabı mı (AD'den çekme savunması, 2026-11-13). Ad {@code $} ile bitmemeli;
+     * {@code sAMAccountType} varsa {@value #AD_NORMAL_USER_ACCOUNT} olmalı; {@code objectClass} bilgisayar / kişi
+     * (contact) / grup içermemeli. Öznitelik yoksa (AD olmayan dizin) yalnız ad kuralı uygulanır.
+     */
+    public static boolean isUserAccount(Map<String, Object> attrs, String username) {
+        if (!isUserAccountName(username)) return false;
+        String type = firstAttr(attrs, "sAMAccountType", null);
+        if (type != null && !AD_NORMAL_USER_ACCOUNT.equals(type.trim())) return false;
+        if (attrs != null) {
+            for (Map.Entry<String, Object> e : attrs.entrySet()) {
+                if (!"objectClass".equalsIgnoreCase(e.getKey())) continue;
+                List<?> values = e.getValue() instanceof List<?> l ? l : List.of(String.valueOf(e.getValue()));
+                for (Object v : values) {
+                    String c = String.valueOf(v).trim();
+                    if (c.equalsIgnoreCase("computer") || c.equalsIgnoreCase("contact") || c.equalsIgnoreCase("group")) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Dizine ulaşılamadı / okunamadı (bağlantı, bind, zaman aşımı, yapılandırma eksik) — "kayıt yok"tan AYRI (2026-11-13). */
+    public static class DirectoryUnavailableException extends RuntimeException {
+        public DirectoryUnavailableException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
@@ -317,7 +387,38 @@ public class LdapDirectoryService {
         return searchUnique(s, buildUserFilter(s, username.trim(), null), "user=" + username);
     }
 
+    /**
+     * {@link #findUser} ile AYNI arama (giriş filtresi, tek kayıt şartı) — yalnız AD'den kullanıcı ekleme uçları için
+     * (2026-11-13 hata taraması): bulunamadı / belirsiz → boş, ama bağlantı / bind / okuma hatası ve eksik yapılandırma
+     * {@link DirectoryUnavailableException} fırlatır. {@link #findUser} her hatayı yutup boş dönüyordu; AD erişilemezken
+     * ekran "AD'de bu kullanıcı bulunamadı" diyordu. Giriş / eşitleme yolları {@link #findUser}'ı kullanmaya devam eder.
+     */
+    public Optional<Map<String, Object>> lookupUser(String username) {
+        if (username == null || username.isBlank()) return Optional.empty();
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()
+                || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            throw new DirectoryUnavailableException("LDAP host / base DN yapılandırılmamış", null);
+        }
+        String what = "user=" + username;
+        try {
+            return searchUniqueOrThrow(s, buildUserFilter(s, username.trim(), null), what);
+        } catch (Exception e) {
+            throw new DirectoryUnavailableException(rootMessage(e), e);
+        }
+    }
+
     private Optional<Map<String, Object>> searchUnique(LdapSettings s, String filter, String what) {
+        try {
+            return searchUniqueOrThrow(s, filter, what);
+        } catch (Exception e) {
+            log.debug("LDAP lookup {} failed: {}", what, rootMessage(e));
+            return Optional.empty();
+        }
+    }
+
+    /** Tek kayıt araması: 0 / 2+ eşleşme → boş; bağlantı / okuma hatası → istisna (çağıran karar verir). */
+    private Optional<Map<String, Object>> searchUniqueOrThrow(LdapSettings s, String filter, String what) throws Exception {
         try (LdapConn conn = open(s)) {
             SearchControls c = new SearchControls();
             c.setSearchScope(SearchControls.SUBTREE_SCOPE);
@@ -341,9 +442,6 @@ public class LdapDirectoryService {
             Map<String, Object> a = readAttributes(first.getAttributes());
             a.put("_dn", first.getNameInNamespace());
             return Optional.of(a);
-        } catch (Exception e) {
-            log.debug("LDAP lookup {} failed: {}", what, rootMessage(e));
-            return Optional.empty();
         }
     }
 

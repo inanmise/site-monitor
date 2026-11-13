@@ -24,6 +24,7 @@ import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { CARD_CHECK, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
 import { UserPlus, BellOff, Search } from 'lucide-react'
 import AdUserSearch from './aduser/AdUserSearch.jsx'
+import { loadExistingUserRow } from './aduser/adUserModel.js'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditor from './user-editor/UserEditor.jsx'
 import BulkDeactivateWizard from './BulkDeactivateWizard.jsx'
@@ -347,6 +348,25 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   function openAdd() { setMsg(null); setModal('add') }
   const [adSearch, setAdSearch] = useState(false)   // AD'den ara penceresi (2026-11-11, global admin)
   function openEdit(user) { setMsg(null); setModal(user) }
+
+  // AD aramasındaki "Düzenle" (2026-11-13 hata taraması): kişi listenin o anki sayfasında değilse düzenleyici eskiden
+  // yalnız `{ id }` ile açılıyordu — form boş kurulur, kaydetmek rolü düşürür, profili siler. Önce TAM satır okunur;
+  // okunamazsa düzenleyici AÇILMAZ (hata bildirimi). Sıra korumalı: geç gelen eski yanıt yenisini ezmez.
+  const editSeq = useRef(0)
+  async function editExisting(id, username) {
+    setAdSearch(false)
+    if (id == null) return
+    const seq = ++editSeq.current
+    try {
+      const row = await loadExistingUserRow(api.admin, id, username, users)
+      if (seq !== editSeq.current) return
+      if (row) openEdit(row)
+      else toast.error(t('aduser.editLoadFailed'))
+    } catch (e) {
+      if (seq !== editSeq.current) return
+      toast.error(e?.message || t('aduser.editLoadFailed'))
+    }
+  }
 
   async function unlock(id) {
     const res = await api.admin.unlockUser(id)
@@ -825,7 +845,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
       {adSearch && globalAdmin && (
         <AdUserSearch teams={teams} onClose={() => setAdSearch(false)} onAdded={refresh}
-          onEditExisting={(id) => { setAdSearch(false); if (id != null) { refresh(); setModal({ id }) } }} />
+          onEditExisting={editExisting} />
       )}
 
       {globalAdmin && (

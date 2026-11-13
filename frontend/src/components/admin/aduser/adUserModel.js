@@ -52,3 +52,30 @@ export function resultBadges(r = {}) {
 export function canProvision(r = {}) {
   return r.exists_locally !== true
 }
+
+/** Görüntülenebilir AD sonucu: kullanıcı adı var ve "$" ile bitmiyor (posta kişisi / bilgisayar hesabı değil). */
+export function isListableResult(r) {
+  const u = String(r?.username ?? '').trim()
+  return u.length > 0 && !u.endsWith('$')
+}
+
+/**
+ * AD aramasındaki "Düzenle" için kullanıcının TAM satırını sunucudan okur (2026-11-13 hata taraması). Kullanıcı listesi
+ * sunucuda sayfalı: kişi o anki sayfada değilse düzenleyici yalnız `{id}` ile açılıyor, form boş kuruluyordu (kaydetmek
+ * rolü düşürür, profil alanlarını siler). Önce elde olan satırlar, sonra kullanıcı adı süzgeçli dizin araması; kimlik
+ * BİREBİR eşleşmezse null (çağıran düzenleyiciyi AÇMAZ). Ağ hatası fırlar (çağıran gösterir).
+ * @returns {Promise<object|null>}
+ */
+export async function loadExistingUserRow(adminApi, id, username, rows = []) {
+  if (id == null) return null
+  const same = (u) => u != null && String(u.id) === String(id)
+  const onPage = (rows || []).find(same)
+  if (onPage && String(onPage.username ?? '').trim()) return onPage
+  const name = String(username ?? '').trim()
+  if (!name || typeof adminApi?.searchUsers !== 'function') return null
+  // JS toLowerCase yerel ayardan bağımsızdır ("I" → "i"); sunucu zaten küçültür (LIKE).
+  const res = await adminApi.searchUsers({ q: name.toLowerCase(), field: 'username', page: 0, size: 50 })
+  const list = res?.success && Array.isArray(res.data) ? res.data : []
+  const row = list.find(same)
+  return row && String(row.username ?? '').trim() ? row : null
+}

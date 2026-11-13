@@ -105,6 +105,23 @@ class UserServiceAdProvisionTest {
     }
 
     @Test
+    @DisplayName("Org rolü yalnız SEÇİLDİYSE kilitlenir; seçilmediyse kilitsiz → ilk girişte AD'den türetilir (2026-11-13)")
+    void orgRoleLockedOnlyWhenChosen() {
+        AppUser none = service.provisionAdUser("n1", adAttrs(), "USER", null, List.of(5L), null);
+        assertThat(none.getOrgRole()).isNull();
+        assertThat(none.getOrgRoleLocked()).isFalse();
+        AppUser blank = service.provisionAdUser("n2", adAttrs(), "USER", "  ", List.of(5L), null);
+        assertThat(blank.getOrgRole()).isNull();
+        assertThat(blank.getOrgRoleLocked()).isFalse();
+        AppUser po = service.provisionAdUser("n3", adAttrs(), "USER", "PO", List.of(5L), null);
+        assertThat(po.getOrgRole()).isEqualTo("PO");
+        assertThat(po.getOrgRoleLocked()).isTrue();
+        // Sistem rolü kilidi değişmedi: her durumda kilitli
+        assertThat(none.getRoleLocked()).isTrue();
+        assertThat(po.getRoleLocked()).isTrue();
+    }
+
+    @Test
     @DisplayName("Birincil takım: kümedeyse korunur, değilse ilk eleman")
     void primaryTeamHonoured() {
         assertThat(service.provisionAdUser("a", adAttrs(), "USER", null, List.of(5L, 9L), 9L).getTeamId()).isEqualTo(9L);

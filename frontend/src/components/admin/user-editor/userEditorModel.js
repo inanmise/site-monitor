@@ -208,14 +208,26 @@ export function validateForm(form, { mode, viewerRole, ownTeamId, baseline } = {
   if (unchangedEmail) { /* dokunulmadı */ }
   else if (!email) errs.email = { key: 'ued.emailRequired' }
   else if (!EMAIL_RE.test(email)) errs.email = { key: 'usr.emailInvalid' }
+  const keptTeamless = isKeptTeamless(form, { mode, baseline })
   if (form.system_role !== 'ADMIN') {
     if (viewerRole === 'TEAM_ADMIN') {
       if (ownTeamId == null) errs.teams = { key: 'ued.teamAdminNoTeam' }
-    } else if (!(form.team_ids || []).length) {
+    } else if (!(form.team_ids || []).length && !keptTeamless) {
       errs.teams = { key: 'usr.teamsRequired' }
     }
   }
   return errs
+}
+
+/**
+ * Kayıtta ZATEN takımsız olan ADMIN dışı kullanıcı, takım kümesine dokunulmadan mı düzenleniyor (2026-11-13 hata
+ * taraması)? Son takım çıkarılabildiği için (2026-11-11) böyle hesaplar var; takım zorunluluğu bu durumda yeniden
+ * denetlenmez ("değişmeyen değer yeniden doğrulanmaz") — buildPayload kümeyi göndermez, sunucu da dokunmaz. Küme
+ * değişirse ya da kayıtlı rol ADMIN'ken başka bir role inilirse kural eskisi gibi uygulanır. Ekle kipinde hep false.
+ */
+export function isKeptTeamless(form, { mode, baseline } = {}) {
+  return mode !== 'add' && baseline != null && baseline.system_role !== 'ADMIN'
+    && !(baseline.team_ids || []).length && !(form?.team_ids || []).length
 }
 
 /** Hata haritası → sekme başına hatalı alan sayısı. */
