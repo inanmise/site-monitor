@@ -5771,17 +5771,26 @@ public class EscalationService {
      * geri kalanı (alarm anı) korunur. HEDEFLİ yazım: yalnız {@code contextJson}, yalnız alarm hâlâ AÇIKSA
      * ({@link AlertEventFieldWriter}) — okunan olay kaydedilmez, arada kapanan alarm yeniden açılmaz. Değişiklik yoksa yazmaz.
      *
+     * <p>İnceleme 2026-11-13 (DÜŞÜK 7): yalnız {@code ownerCtx}'in SAHİBİ olduğu açık alarm tazelenir ({@link #closableBy} —
+     * aynı URL'yi izleyen başka bir takımın alarmının kaynağı değişmez); mevcut bağlam OKUNAMIYORSA hiç yazılmaz (yalnız
+     * yamayla yeniden yazmak alarm anının geri kalanını silerdi).
+     *
+     * @param ownerCtx tazelemeyi isteyen izlemenin sahiplik bağlamı ({@code monitor_id}, {@code team_id}); null = sahip bilinmez
      * @return bağlam yazıldıysa true
      */
-    public boolean refreshOpenAlertContext(String domain, String alertType, Map<String, Object> patch) {
+    public boolean refreshOpenAlertContext(String domain, String alertType, Map<String, Object> ownerCtx,
+                                           Map<String, Object> patch) {
         if (patch == null || patch.isEmpty() || fieldWriter == null) return false;
         for (String k : patch.keySet()) {
             if (!RESOLVED_CONTEXT_KEYS.contains(k))
                 throw new IllegalArgumentException("Alarm bağlamında tazelenemeyen anahtar: " + k);
         }
-        Optional<AlertEvent> open = alertEventRepo.findOpenAlert(domain, alertType);
-        if (open.isEmpty() || open.get().getId() == null) return false;
-        Map<String, Object> current = deserializeContext(open.get().getContextJson());
+        AlertEvent open = alertEventRepo.findOpenAlerts(domain, alertType).stream()
+                .filter(e -> e.getId() != null && closableBy(e, ownerCtx)).findFirst().orElse(null);   // en yeni sahibin alarmı
+        if (open == null) return false;
+        String raw = open.getContextJson();
+        Map<String, Object> current = deserializeContext(raw);
+        if (current == null && raw != null && !raw.isBlank()) return false;   // okunamayan bağlam → yazma yok
         Map<String, Object> next = current != null ? new LinkedHashMap<>(current) : new LinkedHashMap<>();
         boolean changed = false;
         for (Map.Entry<String, Object> en : patch.entrySet()) {
@@ -5795,7 +5804,7 @@ public class EscalationService {
         try { json = objectMapper.writeValueAsString(next); } catch (Exception e) { return false; }
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("contextJson", json);
-        return fieldWriter.writeValues(open.get().getId(), values, true) > 0;
+        return fieldWriter.writeValues(open.getId(), values, true) > 0;
     }
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?

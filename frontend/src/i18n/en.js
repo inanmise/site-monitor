@@ -21771,6 +21771,7 @@ export const EN = {
   'pgdx.finding.RESOURCES_BROKEN.title': 'There are broken resources',
   'pgdx.finding.RESOURCES_BROKEN.body': '{count} of {total} resources could not be loaded (404/410, server error or connection error); {alarm} of them count towards the monitor\'s alert. Example: {sample}',
   'pgdx.finding.RESOURCES_BROKEN.body.below_threshold': '{count} of {total} resources could not be loaded; {alarm} of them could count towards an alert, but the monitor\'s threshold is at least {min} broken resources, so the monitor does NOT open an alert. Example: {sample}',
+  'pgdx.finding.RESOURCES_BROKEN.body.below_threshold_other': '{count} of {total} resources could not be loaded; {alarm} of them could count towards an alert. The broken resources alone do not reach the monitor\'s threshold (at least {min} broken resources), but this check also has a timeout or mixed content issue that counts, so the monitor still opens an alert. Example: {sample}',
   'pgdx.finding.RESOURCES_TIMEOUT.title': 'Resources that did not respond',
   'pgdx.finding.RESOURCES_TIMEOUT.body': "{count} resources did not respond within {ms} ms; {alarm} of them count towards the alert. The resource's server may be slow, or the pod's access to that address may be restricted.",
   'pgdx.finding.MIXED_CONTENT.title': 'Insecure (http://) resources',

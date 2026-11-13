@@ -141,8 +141,8 @@ class PageIntegritySourceRecheckTest {
     }
 
     @Test
-    @DisplayName("O-b4 maliyet: yeniden ölçülen kaynak sayfa sayısı tavanlı (5); bulgu 2: kırpılmış listenin eşik altı "
-            + "ölçümü sağlık kanıtı değil → 'skipped' (eskiden 'up' → geçici sayılıp alarm hiç açılmıyordu)")
+    @DisplayName("O-b4 maliyet: yeniden ölçülen kaynak sayfa sayısı tavanlı (5); inceleme 2026-11-13 (ORTA 2): listeye "
+            + "girmeyen sayfaların TARAMA bulgusu açılış teyidinde sayılır (yeniden ölçülen 5 sayfa temiz olsa da eşik tutar)")
     void recheckIsCapped() {
         PageMonitor m = crawlMonitor();
         List<PageCheckerService.ResourceIssue> many = new ArrayList<>();
@@ -151,18 +151,20 @@ class PageIntegritySourceRecheckTest {
         Map<String, Object> r = crawl(m);
         assertThat((List<?>) r.get("problem_pages")).hasSize(SchedulerService.INTEGRITY_RECHECK_MAX_PAGES);
         assertThat(r).containsEntry("problem_pages_truncated", true);
+        assertThat((List<?>) r.get(SchedulerService.INTEGRITY_UNLISTED_ISSUES)).as("6.–8. sayfaların bulgusu").hasSize(3);
 
         scheduler.evaluatePageNow(m, r);
         MonitoringOutageService.SweepItem it = integrityItems().get(0);
-        assertThat(it.ctxExtra()).containsEntry("problem_pages_truncated", true);
+        assertThat(it.ctxExtra()).containsEntry("problem_pages_truncated", true)
+                .doesNotContainKey(SchedulerService.INTEGRITY_UNLISTED_ISSUES);   // alarm bağlamına girmez
         when(pageChecker.check(anyString(), eq("SINGLE_PAGE"), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(),
                 anyInt(), anyBoolean())).thenReturn(reachable(List.of()));
-        assertThat(it.recheck().get().get("status")).as("görülmeyen sorunlu sayfalar ölçülmedi").isEqualTo("skipped");
+        Map<String, Object> st = it.recheck().get();
+        assertThat(st.get("status")).as("listedeki 5 sayfa temiz ama 6.–8. sayfaların tarama bulgusu eşiği (1) tutar")
+                .isEqualTo("down");
+        assertThat(String.valueOf(st.get("error"))).contains("tarama bulgusu");
         verify(pageChecker, times(SchedulerService.INTEGRITY_RECHECK_MAX_PAGES)).check(anyString(), eq("SINGLE_PAGE"),
                 anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(), anyInt(), anyBoolean());
-        // Kırpılmış listede eşik (1) yine görülürse → "down" (teyit)
-        stub(HOME + "sayfa-1", "SINGLE_PAGE", reachable(List.of(broken(HOME + "sayfa-1"))));
-        assertThat(it.recheck().get().get("status")).isEqualTo("down");
     }
 
     @Test
@@ -259,15 +261,19 @@ class PageIntegritySourceRecheckTest {
         for (int i = 1; i <= 7; i++) many.add(broken(HOME + "s" + i));
         stub(HOME, "SITE_CRAWL", reachable(many));
         ReflectionTestUtils.invokeMethod(scheduler, "runPageCrawlsLocked");
+        ArgumentCaptor<Map<String, Object>> owner = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map<String, Object>> patch = ArgumentCaptor.forClass(Map.class);
-        verify(escalation).refreshOpenAlertContext(eq(HOME), eq(EscalationService.TYPE_PAGE_INTEGRITY), patch.capture());
+        verify(escalation).refreshOpenAlertContext(eq(HOME), eq(EscalationService.TYPE_PAGE_INTEGRITY), owner.capture(),
+                patch.capture());
+        assertThat(owner.getValue()).as("yalnız bu izlemenin alarmı (DÜŞÜK 7)").containsEntry("monitor_id", 6L)
+                .containsEntry("team_id", 7L);
         assertThat(patch.getValue()).containsEntry("integrity_scope", "CRAWL").containsEntry("problem_pages_truncated", true);
         assertThat((List<String>) patch.getValue().get("problem_pages")).hasSize(5);
 
         clearInvocations(escalation);
         stub(HOME, "SITE_CRAWL", reachable(List.of()));   // temiz tarama → kaynak tazelenmez (kurtarma yolu ayrı)
         ReflectionTestUtils.invokeMethod(scheduler, "runPageCrawlsLocked");
-        verify(escalation, never()).refreshOpenAlertContext(anyString(), anyString(), any());
+        verify(escalation, never()).refreshOpenAlertContext(anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -336,6 +342,106 @@ class PageIntegritySourceRecheckTest {
         ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m, r, d, i, false);
         assertThat(i).hasSize(1);
         assertThat(i.get(0).up()).isTrue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<Long, SchedulerService.IntegrityProbe> probes() {
+        return (Map<Long, SchedulerService.IntegrityProbe>) ReflectionTestUtils.getField(scheduler, "integrityProbes");
+    }
+
+    private void evaluateHome(PageMonitor m, List<MonitoringOutageService.SweepItem> integ) {
+        ReflectionTestUtils.invokeMethod(scheduler, "addPageSweepItems", m,
+                raw("main_up", true, "integrity_up", true, "check_mode", "SINGLE_PAGE"), new ArrayList<>(), integ, false);
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-13 (ORTA 3): bayatlamış ama BİTMEMİŞ ölçüm varken aynı izleme için ikinci iş gönderilmez "
+            + "(sayfa listesi değişti / alarm kapandı); bitince sonucu atılır ve sıradaki başlar")
+    void staleInFlightProbeIsNotDuplicated() {
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        PageMonitor m = crawlMonitor();
+        String other = HOME + "yeni";
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        stub(other, "SINGLE_PAGE", reachable(List.of()));
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        List<MonitoringOutageService.SweepItem> integ = new ArrayList<>();
+        evaluateHome(m, integ);
+        assertThat(queued).hasSize(1);
+
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP, other)));
+        evaluateHome(m, integ);
+        assertThat(queued).as("liste değişti ama eski iş kuyrukta → ikinci iş YOK").hasSize(1);
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY)).thenReturn(null);   // alarm kapandı
+        evaluateHome(m, integ);
+        assertThat(queued).hasSize(1);
+        assertThat(probes()).as("uçuştaki iş işaretli kalır").containsKey(6L);
+
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP, other)));
+        queued.poll().run();   // eski iş biter (eski liste, geçersiz) — sonucu kanıt sayılmaz
+        evaluateHome(m, integ);
+        assertThat(integ).as("eski işin up sonucu kullanılmaz").isEmpty();
+        assertThat(queued).as("eski iş bitti → sıradaki başladı").hasSize(1);
+        queued.poll().run();
+        evaluateHome(m, integ);
+        assertThat(integ).hasSize(1);
+        assertThat(integ.get(0).up()).isTrue();
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-13 (ORTA 3): tazelik ölçümün BİTİŞİNDEN sayılır — kuyrukta 15 dk bekleyip yeni biten "
+            + "sonuç kullanılır; bitişinden 15 dk sonra okunan sonuç bayattır; 30 dk'dan uzun SÜREN iş takılı sayılıp bırakılır")
+    void probeFreshnessCountsFromFinish() {
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000_000L);
+        ReflectionTestUtils.setField(scheduler, "integrityProbeClock", (java.util.function.LongSupplier) clock::get);
+        PageMonitor m = crawlMonitor();
+        stub(DEEP, "SINGLE_PAGE", reachable(List.of()));
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        List<MonitoringOutageService.SweepItem> integ = new ArrayList<>();
+        evaluateHome(m, integ);
+        clock.addAndGet(15 * 60_000L);   // kuyrukta 15 dk bekledi (geçerlilik: 2 × 300 sn aralık + 60 sn = 11 dk)
+        queued.poll().run();
+        evaluateHome(m, integ);
+        assertThat(integ).as("yeni biten sonuç taze").hasSize(1);
+
+        integ.clear();
+        evaluateHome(m, integ);   // yeni ölçüm başlar
+        queued.poll().run();
+        clock.addAndGet(15 * 60_000L);   // bitişinden 15 dk sonra okunuyor
+        evaluateHome(m, integ);
+        assertThat(integ).as("bitişinden geçerlilik süresi geçti → bayat").isEmpty();
+        assertThat(queued).as("bayat sonuç atıldı → yenisi başladı").hasSize(1);
+
+        probes().get(6L).startedAt().set(clock.get());   // iş başladı ama bitmiyor (takıldı)
+        clock.addAndGet(SchedulerService.INTEGRITY_PROBE_STUCK_MS - 60_000L);
+        evaluateHome(m, integ);
+        assertThat(queued).as("süren iş: ikinci iş yok").hasSize(1);
+        clock.addAndGet(2 * 60_000L);
+        evaluateHome(m, integ);
+        assertThat(queued).as("takılı iş bırakıldı → yenisi").hasSize(2);
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-13 (DÜŞÜK 4): kuyrukta bekleyen ölçüm kapanış başladıktan sonra ÖLÇMEZ (skipped)")
+    void queuedProbeDoesNotMeasureAfterShutdownStarted() {
+        java.util.concurrent.ConcurrentLinkedQueue<Runnable> queued = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        ReflectionTestUtils.setField(scheduler, "integrityProbeExecutor", (java.util.concurrent.Executor) queued::add);
+        PageMonitor m = crawlMonitor();
+        when(escalation.openAlertContext(HOME, EscalationService.TYPE_PAGE_INTEGRITY))
+                .thenReturn(Map.of("integrity_scope", "CRAWL", "problem_pages", List.of(DEEP)));
+        evaluateHome(m, new ArrayList<>());
+        SchedulerService.IntegrityProbe p = probes().get(6L);
+        ReflectionTestUtils.setField(scheduler, "shutdownStarted", true);
+        queued.poll().run();
+        verify(pageChecker, never()).check(anyString(), anyString(), anyInt(), anyInt(), anyInt(), any(), anyInt(), anyInt(),
+                anyInt(), anyBoolean());
+        assertThat(p.result().join().status()).isEqualTo("skipped");
     }
 
     @Test

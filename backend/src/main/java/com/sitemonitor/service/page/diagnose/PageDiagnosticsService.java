@@ -310,7 +310,9 @@ public class PageDiagnosticsService extends PageDiagSupport {
                     "sample", displayUrl(c.firstBroken));
             if (belowThreshold) {
                 p.put("min", c.minBroken);
-                p.put("reason", "below_threshold");
+                // İnceleme 2026-11-13 (DÜŞÜK 5): kırıklar eşiğin altında ama alarma sayılan zaman aşımı / mixed content varsa
+                // izleme YİNE alarm açar — metin "açmaz" demesin ("yalnız kırıklar eşiğe ulaşmıyor" varyantı).
+                p.put("reason", c.alarmWorthy ? "below_threshold_other" : "below_threshold");
             }
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.RESOURCES_BROKEN,
                     c.alarmBroken > 0 && !belowThreshold ? HttpDiagFindings.FAIL : HttpDiagFindings.WARN, key, p));
