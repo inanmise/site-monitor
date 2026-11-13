@@ -84,8 +84,11 @@ export function normalizeTags(input) {
   return out
 }
 
-/** Form denetimi → `{ alan: kod }` ya da null. Kodlar: required · tooLong · tooMany · tagTooLong · sqlRequired · sqlTooLong. */
-export function validateSaved(form) {
+/**
+ * Form denetimi → `{ alan: kod }` ya da null. Kodlar: required · tooLong · tooMany · tagTooLong · sqlRequired · sqlTooLong.
+ * `checkSql: false` = yalnız üst bilgi düzenlemesi (panel) — SQL gönderilmez, denetlenmez.
+ */
+export function validateSaved(form, { checkSql = true } = {}) {
   const e = {}
   const title = String(form?.title ?? '').trim()
   if (!title) e.title = 'required'
@@ -95,8 +98,8 @@ export function validateSaved(form) {
   if (tags.length > SAVED_TAGS_MAX) e.tags = 'tooMany'
   else if (tags.some((t) => t.length > SAVED_TAG_LEN)) e.tags = 'tagTooLong'
   const sql = String(form?.sql_text ?? '')
-  if (!sql.trim()) e.sql_text = 'sqlRequired'
-  else if (sql.length > SAVED_SQL_MAX) e.sql_text = 'sqlTooLong'
+  if (checkSql && !sql.trim()) e.sql_text = 'sqlRequired'
+  else if (checkSql && sql.length > SAVED_SQL_MAX) e.sql_text = 'sqlTooLong'
   return Object.keys(e).length ? e : null
 }
 
@@ -116,12 +119,17 @@ export function savedBody(form, paramTypes) {
 /**
  * Güncelleme gövdesi: yalnız değişen alanlar + `version`. Değişiklik yoksa null (istek gönderilmez). Parametre türleri
  * yalnız SQL değiştiğinde gider (satır yanıtı türleri döndürmüyor — her seferinde "değişti" sayılmasın).
+ * `includeSql: false` (panelden düzenleme) → `sql_text` / `params` HİÇ gönderilmez; kayıttaki SQL ne olursa olsun korunur.
  */
-export function savedUpdateBody(form, base, paramTypes) {
+export function savedUpdateBody(form, base, paramTypes, { includeSql = true } = {}) {
   const next = savedBody(form, null)
   const prev = base ? savedBody({
     title: base.title, description: base.description ?? '', tags: base.tags ?? [], shared: base.shared, sql_text: base.sql_text,
   }, null) : null
+  if (!includeSql) {
+    delete next.sql_text
+    if (prev) delete prev.sql_text
+  }
   const diff = changedFields(next, prev)
   if (diff.sql_text != null && paramTypes && Object.keys(paramTypes).length) diff.params = paramTypes
   if (!Object.keys(diff).length) return null

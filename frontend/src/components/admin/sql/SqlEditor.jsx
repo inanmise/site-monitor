@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useT } from '../../../i18n/index.jsx'
 import { Textarea } from '@/components/shadcn/textarea'
 import { cn } from '@/lib/utils'
@@ -13,6 +14,8 @@ const LINE_H = 24
 const PAD = 12
 const OPTION_H = 32
 const LIST_MAX_ITEMS = 8
+/** Öneri listesinin görünüm kenarlarından payı (px). */
+const EDGE = 8
 
 /**
  * SQL düzenleyici — shadcn Textarea + sözdizimi boyası + satır cetveli. Bağımlılık yok.
@@ -36,7 +39,10 @@ const LIST_MAX_ITEMS = 8
  * `takma_ad.` sonrası o tablonun kolonları). Metin alanı `textbox` rolünde KALIR (`aria-autocomplete="list"`,
  * `aria-controls`, `aria-expanded`, `aria-activedescendant`); ↑ / ↓ gezinir, Enter / Tab kabul, Esc kapatır,
  * Ctrl+Boşluk zorla açar. Programatik yazım (şema gezgini, örnek) öneri AÇMAZ. Liste katman sözleşmesini bozmaz:
- * `pre` + `textarea` aynen, liste ikisinin ÜSTÜNDE ayrı bir mutlak öğe.
+ * `pre` + `textarea` aynen; liste `document.body`'ye portal ile, görünüme göre SABİT konumda çizilir — düzenleyici kutusu
+ * (ve kartın `overflow-hidden`'ı) küçük olsa da liste kırpılmaz, imlecin altında ya da üstünde görünümün sığan kısmını
+ * kullanır (en çok 8 satır). ↑ / ↓ ile etkin öğe listenin görünen kısmına kaydırılır. Sayfa kayınca / boyut değişince
+ * liste kapanır (imleçten kopmasın).
  * <p><b>Biçimlendir</b> (B2): Ctrl/⌘+Shift+F ya da `format()` — `formatSql` (doğrusal; dize / yorum / dolar bloğu
  * korunur), geri alma yığını korunarak yazılır.
  */
@@ -48,6 +54,7 @@ const SqlEditor = forwardRef(function SqlEditor({
   const codeRef = useRef(null)
   const gutterRef = useRef(null)
   const boxRef = useRef(null)
+  const listRef = useRef(null)
   const measureRef = useRef(null)
   const programmatic = useRef(false)
   const wantCols = useRef(false)
@@ -78,24 +85,27 @@ const SqlEditor = forwardRef(function SqlEditor({
     if (needColumns.length) { wantCols.current = true; completion.onNeedColumns?.(needColumns) }
     if (!items.length) { setComp(null); return }
     const ta = taRef.current
-    const box = boxRef.current
     const { line, col } = offsetToLineCol(val, ctx.start)
     const chW = (measureRef.current?.getBoundingClientRect?.().width || 0) / 10
     const sl = ta?.scrollLeft || 0
     const st = ta?.scrollTop || 0
-    const w = box?.clientWidth || 0
-    const h = box?.clientHeight || 0
-    const listW = w ? Math.min(320, w - 8) : 320
-    let left = PAD + (col - 1) * chW - sl
-    if (w) left = Math.max(4, Math.min(left, w - listW - 4))
+    // Görünüme göre (position: fixed): kutunun ekrandaki yeri + imleç konumu; liste görünüm içinde kalır
+    const rect = boxRef.current?.getBoundingClientRect?.() || { left: 0, top: 0 }
+    const vw = document.documentElement?.clientWidth || window.innerWidth || 0
+    // Görünen alanın alt kenarı (dokunmatik klavye açıkken görsel görünüm daha kısadır)
+    const vv = window.visualViewport
+    const vh = vv?.height ? vv.offsetTop + vv.height : (window.innerHeight || document.documentElement?.clientHeight || 0)
+    const listW = vw ? Math.max(160, Math.min(320, vw - EDGE * 2)) : 320
+    let left = rect.left + PAD + (col - 1) * chW - sl
+    if (vw) left = Math.max(EDGE, Math.min(left, vw - listW - EDGE))
     const want = Math.min(items.length, LIST_MAX_ITEMS) * OPTION_H + 8
-    const below = PAD + line * LINE_H - st
-    const above = PAD + (line - 1) * LINE_H - st
+    const below = rect.top + PAD + line * LINE_H - st
+    const above = rect.top + PAD + (line - 1) * LINE_H - st
     let top = below
     let maxH = want
-    if (h) {
-      const spaceBelow = h - below - 4
-      const spaceAbove = above - 4
+    if (vh) {
+      const spaceBelow = vh - below - EDGE
+      const spaceAbove = above - EDGE
       if (spaceBelow < want && spaceAbove > spaceBelow) {
         maxH = Math.max(OPTION_H * 2, Math.min(want, spaceAbove))
         top = above - maxH
@@ -106,6 +116,39 @@ const SqlEditor = forwardRef(function SqlEditor({
       top, left: Math.max(0, left), maxH, width: listW,
     }))
   }, [completion])
+
+  // Etkin öğe listenin görünen kısmında kalır (↑ / ↓ ile 8. satırın ötesine inilince liste kayar). `scrollIntoView` değil:
+  // o sayfayı da kaydırabilirdi; yalnız listenin kendi kaydırması ayarlanır.
+  const activeIdx = comp?.active ?? -1
+  const compItems = comp?.items
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || activeIdx < 0) return
+    const opt = list.children[activeIdx]
+    if (!opt) return
+    const top = opt.offsetTop
+    const bottom = top + opt.offsetHeight
+    if (top < list.scrollTop) list.scrollTop = top
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight
+  }, [activeIdx, compItems])
+
+  // Liste görünüme sabit: sayfa (ya da bir üst kap) kayınca ya da boyut değişince imleçten kopmasın diye kapanır.
+  // Listenin kendi kaydırması sayılmaz.
+  const listOpen = Boolean(comp)
+  useEffect(() => {
+    if (!listOpen) return undefined
+    const close = (e) => {
+      if (e?.type === 'scroll' && e.target instanceof Node && listRef.current?.contains(e.target)) return
+      if (e?.type === 'scroll' && e.target === taRef.current) return
+      setComp(null)
+    }
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [listOpen])
 
   // Kolonlar yüklenince (öneri onları beklerken) liste tazelenir — yalnız düzenleyici odaktaysa
   useEffect(() => {
@@ -322,10 +365,10 @@ const SqlEditor = forwardRef(function SqlEditor({
               'absolute inset-0 size-full min-h-0 resize-none overflow-auto rounded-none border-0 bg-transparent px-3 py-3 whitespace-pre text-transparent caret-foreground shadow-none field-sizing-fixed',
               'selection:bg-primary/25 selection:text-transparent focus-visible:ring-0 dark:bg-transparent')}
           />
-          {comp && (
-            <div id={listId} role="listbox" aria-label={t('sql.ac.label')} data-slot="sql-completion"
+          {comp && typeof document !== 'undefined' && createPortal(
+            <div ref={listRef} id={listId} role="listbox" aria-label={t('sql.ac.label')} data-slot="sql-completion"
               style={{ top: comp.top, left: comp.left, maxHeight: comp.maxH, width: comp.width }}
-              className="absolute z-20 max-w-[calc(100%-0.5rem)] overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+              className="fixed z-(--z-menu) max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
               {comp.items.map((it, i) => (
                 <div role="option" key={`${it.kind}:${it.label}`} id={`${listId}-o${i}`} aria-selected={i === comp.active}
                   data-kind={it.kind}
@@ -337,7 +380,8 @@ const SqlEditor = forwardRef(function SqlEditor({
                   <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase">{t(`sql.ac.kind.${it.kind}`)}</span>
                 </div>
               ))}
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       </div>

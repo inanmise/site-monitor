@@ -1,5 +1,6 @@
 import { downloadBlob, toCsv } from '../../../utils/csvExport.js'
 import { neutraliseFormula } from '../../../utils/csv.js'
+import { scanParams } from './sqlParams.js'
 
 /**
  * SQL Playground — saf yardımcılar (sunum yok, test edilebilir).
@@ -164,7 +165,9 @@ export function caretInfo(text, start, end) {
  *    (varsa) PostgreSQL gövdesi `ERROR: … Hint: … Position: N`. Spring 6+ `getMessage()` nedeni EKLEMEDİĞİ için
  *    gövde çoğu zaman YOKTUR (API boşluğu) — o zaman özet "sözdizimi reddedildi" olur, ham metin ayrıntıda kalır.
  *
- * Konum (Position) sunucunun sardığı sorguya göredir; kullanıcının metnine yorum içermiyorsa geri eşlenir.
+ * Konum (Position) sunucunun sardığı sorguya göredir; kullanıcının metnine yorum içermiyorsa geri eşlenir. Parametreli
+ * sorguda PostgreSQL konumu `:ad` yerine `$1`, `$2`… geçen metne göredir — yer tutucu uzunluk farkları geri alınır
+ * ({@link unmapParamOffset}); konum bir yer tutucunun içindeyse o yer tutucunun başı gösterilir.
  *
  * @returns {{ kind: 'guard'|'grammar'|'timeout'|'db', summary: string|null, hint: string|null, detail: string|null,
  *             position: number|null, editorOffset: number|null, raw: string }}
@@ -183,12 +186,32 @@ export function parseSqlError(message, { rejected = false, executedSql = '', sql
 
   let editorOffset = null
   if (position && !/--|\/\*/.test(sql) && executedSql.startsWith(CAP_PREFIX)) {
-    const inner = position - 1 - CAP_PREFIX.length
     const lead = sql.length - sql.trimStart().length
     const body = sql.trim().replace(/;$/, '')
+    const inner = unmapParamOffset(body, position - 1 - CAP_PREFIX.length)
     if (inner >= 0 && inner <= body.length) editorOffset = lead + inner
   }
   return { kind, summary, hint, detail, position, editorOffset, raw }
+}
+
+/**
+ * Sunucuya giden metindeki konum → kullanıcının metnindeki konum. Sunucu her `:ad` geçişini JDBC `?` ile bağlar, PostgreSQL
+ * sürücüsü onları sırayla `$1`, `$2`… yazar (gerçek `?` işleci `??` → `?`, uzunluk değişmez). Parametresiz metinde aynen döner.
+ */
+export function unmapParamOffset(body, sentOffset) {
+  if (!(sentOffset >= 0)) return sentOffset
+  const { occurrences } = scanParams(body)
+  let delta = 0
+  let k = 0
+  for (const o of occurrences) {
+    k++
+    const sentLen = 1 + String(k).length
+    const sentStart = o.start + delta
+    if (sentOffset < sentStart) break
+    if (sentOffset < sentStart + sentLen) return o.start
+    delta += sentLen - (o.end - o.start)
+  }
+  return sentOffset - delta
 }
 
 /** Tek sözcüğün sınırları (hata konumunu düzenleyicide seçmek için). */

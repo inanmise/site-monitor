@@ -81,7 +81,10 @@ export default function ResultChart({ rows, masked }) {
                     update({ ys: ys.filter(Boolean) })
                   }}>
                   {i > 0 && <NativeSelectOption value={NONE}>—</NativeSelectOption>}
-                  {numeric.map((c) => <NativeSelectOption key={c} value={c}>{c}</NativeSelectOption>)}
+                  {/* Diğer seride seçili kolon bu seride seçilemez (aynı kolon iki kez = yinelenen seri) */}
+                  {numeric.map((c) => (
+                    <NativeSelectOption key={c} value={c} disabled={spec.ys.some((y, j) => j !== i && y === c)}>{c}</NativeSelectOption>
+                  ))}
                 </NativeSelect>
               </div>
             )}
@@ -117,7 +120,7 @@ export default function ResultChart({ rows, masked }) {
               <ChartTooltip content={<ChartTooltipContent />} />
               <ChartLegend content={<ChartLegendContent className="flex-wrap pt-2 text-xs" />} />
               {spec.ys.map((y, i) => (
-                <Line key={y} dataKey={`s${i}`} stroke={`var(--color-s${i})`} strokeWidth={2} dot={built.data.length <= 60}
+                <Line key={`s${i}`} dataKey={`s${i}`} stroke={`var(--color-s${i})`} strokeWidth={2} dot={built.data.length <= 60}
                   connectNulls={false} isAnimationActive={false} />
               ))}
             </LineChart>
@@ -128,7 +131,7 @@ export default function ResultChart({ rows, masked }) {
               <YAxis width={48} tickLine={false} axisLine={false} tick={{ fontSize: 10 }} />
               <ChartTooltip content={<ChartTooltipContent />} />
               <ChartLegend content={<ChartLegendContent className="flex-wrap pt-2 text-xs" />} />
-              {spec.ys.map((y, i) => <Bar key={y} dataKey={`s${i}`} fill={`var(--color-s${i})`} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}
+              {spec.ys.map((y, i) => <Bar key={`s${i}`} dataKey={`s${i}`} fill={`var(--color-s${i})`} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}
             </BarChart>
           )}
         </ChartContainer>

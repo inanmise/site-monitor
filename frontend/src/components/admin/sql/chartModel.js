@@ -47,7 +47,8 @@ export function normalizeSpec(spec, cols, types, masked) {
   if (!def) return null
   if (!spec || !CHART_KINDS.includes(spec.kind)) return def
   const { numeric } = chartColumns(cols, types, masked)
-  const ys = (spec.ys || []).filter((y) => numeric.includes(y)).slice(0, spec.kind === 'pie' ? 1 : MAX_SERIES)
+  // Aynı kolon iki seride olamaz (yinelenen seri — grafik anahtarı çakışır, açıklamada iki kez görünür)
+  const ys = [...new Set((spec.ys || []).filter((y) => numeric.includes(y)))].slice(0, spec.kind === 'pie' ? 1 : MAX_SERIES)
   const x = spec.x == null || (cols || []).includes(spec.x) ? spec.x : def.x
   return { kind: spec.kind, x, ys: ys.length ? ys : def.ys.slice(0, 1) }
 }

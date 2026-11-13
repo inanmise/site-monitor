@@ -1,4 +1,5 @@
 import { personalKey } from '../../../utils/personalStorage.js'
+import { extractParams } from './sqlParams.js'
 
 /**
  * SQL Playground çoklu sekme + taslak (2026-11-13, B3) — saf model + kişisel depolama.
@@ -7,11 +8,17 @@ import { personalKey } from '../../../utils/personalStorage.js'
  * uzunluğu — tarayıcı kotası karakter sayar). Depolama anahtarı `sm.sql.tabs:<kullanıcı>` (`personalStorage`
  * PERSONAL_PREFIXES — çıkışta / kullanıcı değişince silinir; sunucuya eşitlenmez). Kalıcı olan yalnız: başlık, SQL,
  * parametre değer / türleri, bağlı kayıtlı sorgu (kimlik + sürüm). Sonuçlar, plan ve karşılaştırma geçmişi BELLEKTE.
+ *
+ * <p>İki tarayıcı sekmesi aynı anahtara yazar: yazmadan önce depodaki güncel durum okunur ve BU sayfanın hiç görmediği
+ * sekmeler (başka tarayıcı sekmesinin açtıkları) korunur ({@link mergeForeignTabs}); bu sayfanın gördüğü ama kapattığı
+ * sekmeler düşer. Aynı sekmeyi iki sayfa düzenlerse son yazan kazanır.
  */
 export const TABS_KEY = 'sm.sql.tabs'
 export const MAX_TABS = 10
 export const MAX_TABS_BYTES = 200 * 1024
 export const MAX_TITLE = 120
+/** Sekme başına saklanan parametre değeri sayısı — önce sorguda GEÇEN adlar (yazarken oluşan ara adlar budanır). */
+export const MAX_STORED_PARAMS = 40
 
 function rid() {
   try { if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID() } catch { /* yok */ }
@@ -45,7 +52,11 @@ function cleanTab(t) {
   if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !t.id) return null
   const params = {}
   if (t.params && typeof t.params === 'object') {
-    for (const [k, v] of Object.entries(t.params).slice(0, 40)) {
+    // Sınır sorgudaki MEVCUT adlara önce uygulanır: eski / ara adlar 40'ı doldurup gerçek parametrenin değerini düşürmesin
+    const present = new Set(typeof t.sql === 'string' ? extractParams(t.sql) : [])
+    const entries = Object.entries(t.params)
+    const ordered = [...entries.filter(([k]) => present.has(k)), ...entries.filter(([k]) => !present.has(k))]
+    for (const [k, v] of ordered.slice(0, MAX_STORED_PARAMS)) {
       if (/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(k) && v && typeof v === 'object') {
         params[k] = { value: typeof v.value === 'string' ? v.value.slice(0, 1000) : '', type: typeof v.type === 'string' ? v.type : 'text' }
       }
@@ -99,9 +110,28 @@ export function loadTabs(owner) {
   try { return parseTabs(store()?.getItem(personalKey(TABS_KEY, owner)) ?? null) } catch { return null }
 }
 
-/** Kişisel depoya yaz. @returns {{ ok: boolean, size: number }} */
-export function saveTabs(state, owner) {
-  const r = serializeTabs(state)
+/**
+ * Başka tarayıcı sekmesinin sekmelerini korur: depodaki (`stored`) sekmelerden bu sayfanın HİÇ görmediği (`known`
+ * dışında) ve kendi durumunda olmayanlar bizimkilerin arkasına eklenir (en çok {@link MAX_TABS}). Etkin sekme bizimki.
+ */
+export function mergeForeignTabs(ours, stored, known) {
+  if (!stored?.tabs?.length || !known) return ours
+  const own = new Set((ours?.tabs || []).map((t) => t.id))
+  const foreign = stored.tabs.filter((t) => !own.has(t.id) && !known.has(t.id))
+  if (!foreign.length) return ours
+  return { ...ours, tabs: [...ours.tabs, ...foreign].slice(0, MAX_TABS) }
+}
+
+/**
+ * Kişisel depoya yaz. `known` (bu sayfanın gördüğü sekme kimlikleri) verilirse depodaki güncel durum okunup başka
+ * tarayıcı sekmesinin sekmeleri korunur. @returns {{ ok: boolean, size: number }}
+ */
+export function saveTabs(state, owner, { known = null } = {}) {
+  let next = state
+  if (known) {
+    try { next = mergeForeignTabs(state, parseTabs(store()?.getItem(personalKey(TABS_KEY, owner)) ?? null), known) } catch { next = state }
+  }
+  const r = serializeTabs(next)
   if (!r.ok) return { ok: false, size: r.size }
   try { store()?.setItem(personalKey(TABS_KEY, owner), r.text); return { ok: true, size: r.size } } catch { return { ok: false, size: r.size } }
 }
