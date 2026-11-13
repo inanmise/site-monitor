@@ -11352,6 +11352,12 @@ export const TR = {
   'audit.ev.AUTH_REQUIRED': 'Kimlik doğrulama gerekli',
   'audit.ev.SELF_PASSWORD_CHANGE': 'Parola değiştirildi',
   'audit.ev.SQL_EXECUTE': 'SQL çalıştırıldı',
+  'audit.ev.SQL_CANCEL': 'SQL sorgusu durduruldu',
+  'audit.ev.SQL_EXPLAIN': 'SQL sorgu planı alındı',
+  'audit.ev.SQL_EXPORT': 'SQL sonucu dışa aktarıldı',
+  'audit.ev.SQL_SAVED_QUERY_CREATE': 'Kayıtlı SQL sorgusu oluşturuldu',
+  'audit.ev.SQL_SAVED_QUERY_UPDATE': 'Kayıtlı SQL sorgusu güncellendi',
+  'audit.ev.SQL_SAVED_QUERY_DELETE': 'Kayıtlı SQL sorgusu silindi',
   'audit.ev.SCHEMA_PATCH': 'Şema güncellemesi',
   // Gizli anahtar döndürme (2026-10-11)
   'audit.ev.SECRET_REENCRYPT': 'Gizli değerler yeni anahtarla yeniden şifrelendi',

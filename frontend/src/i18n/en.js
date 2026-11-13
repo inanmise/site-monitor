@@ -11336,6 +11336,12 @@ export const EN = {
   'audit.ev.AUTH_REQUIRED': 'Authentication required',
   'audit.ev.SELF_PASSWORD_CHANGE': 'Password changed',
   'audit.ev.SQL_EXECUTE': 'SQL executed',
+  'audit.ev.SQL_CANCEL': 'SQL query stopped',
+  'audit.ev.SQL_EXPLAIN': 'SQL query plan read',
+  'audit.ev.SQL_EXPORT': 'SQL result exported',
+  'audit.ev.SQL_SAVED_QUERY_CREATE': 'Saved SQL query created',
+  'audit.ev.SQL_SAVED_QUERY_UPDATE': 'Saved SQL query updated',
+  'audit.ev.SQL_SAVED_QUERY_DELETE': 'Saved SQL query deleted',
   'audit.ev.SCHEMA_PATCH': 'Schema patch',
   // Secret key rotation (2026-10-11)
   'audit.ev.SECRET_REENCRYPT': 'Secrets re-encrypted with the new key',
