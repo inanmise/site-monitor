@@ -56,6 +56,7 @@ export function useStatsSources({ permsLoaded = true, canMonitoring = false, can
   const reload = useCallback(async (fresh = false) => {
     if (!permsLoaded) return
     setBusy(true)
+    try {
     const jobs = [
       run('exec', () => api.getExecutiveStats(fresh)),
       run('renewal', () => api.getRenewalTimeliness()),
@@ -70,7 +71,11 @@ export function useStatsSources({ permsLoaded = true, canMonitoring = false, can
     if (canDataQuality) jobs.push(run('dq', () => api.dataQuality.summary(fresh)))
     else hide('dq')
     await Promise.allSettled(jobs)
-    if (alive.current) { setBusy(false); setLoadedAt(Date.now()) }
+    if (alive.current) setLoadedAt(Date.now())
+    } finally {
+      // Kaynak kapısı (busyFlagFinally): beklenmedik bir hata da bayrağı temizler.
+      if (alive.current) setBusy(false)
+    }
   }, [permsLoaded, canMonitoring, canAlerts, canDataQuality, run, hide, loadHealth, healthTeam])
 
   // İlk yükleme + izinler değişince; 5 dakikada bir görünür sekmede
