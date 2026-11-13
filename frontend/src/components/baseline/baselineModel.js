@@ -67,13 +67,34 @@ export function rangeOf(field, form) {
   }
 }
 
-/** Hazırlık durumu: kapalı / taban kuruluyor (n/min) / hazır. */
-export function readiness(form, sampleCount) {
+/** Hazırlığı etkileyen parametreler (kayıtlı ile formdaki farklıysa sunucunun hesabı bu forma ait değildir). */
+const READINESS_PARAMS = ['window', 'min_samples', 'season']
+
+/**
+ * Hazırlık durumu (2026-11-13, hata taraması #8). Kaynak SUNUCU: GET yanıtı {@code global_enabled} (ana anahtar) ve kayıtlı
+ * yapılandırmanın GERÇEK değerlendirme penceresindeki örnek sayısını ({@code ready_state} / {@code ready_samples} /
+ * {@code ready_min}) taşır — toplam örnek sayısı (mevsimselde eşleşmeyen saatler dâhil) "hazır" demeye yetmez. Bilinmeyen
+ * asla yeşil değildir: ana anahtar kapalı → nötr; kayıtlı değil / ayar değişti → bilgi; eski sunucu (alan yok) → toplamdan
+ * yalnız "kuruluyor" ya da nötr "doğrulanamıyor".
+ */
+export function readiness(form, cfg) {
   if (!form || !form.enabled) return { tone: 'muted', state: 'off' }
-  const n = Number(sampleCount) || 0
-  const min = Number(form.min_samples) || 10
+  if (cfg && cfg.global_enabled === false) return { tone: 'muted', state: 'switchOff' }
+  if (!cfg || !cfg.enabled) return { tone: 'info', state: 'notSaved' }
+  const saved = formFromConfig(cfg)
+  if (READINESS_PARAMS.some((k) => String(form[k]) !== String(saved[k]))) return { tone: 'info', state: 'pending' }
+  const min = Number(cfg.ready_min) || Number(saved.min_samples) || 10
+  if (typeof cfg.ready_state === 'string') {
+    const n = Number(cfg.ready_samples) || 0
+    if (cfg.ready_state === 'ready') return { tone: 'ok', state: 'ready', n }
+    if (cfg.ready_state === 'insufficient') return { tone: 'muted', state: 'insufficient', n, min }
+    if (cfg.ready_state === 'building') return { tone: 'info', state: 'building', n, min }
+    return { tone: 'muted', state: 'unknown' }
+  }
+  // Eski sunucu: yalnız toplam örnek sayısı — "hazır" doğrulanamaz (mevsimsel eşleşme / ana anahtar bilinmiyor)
+  const n = Number(cfg.sample_count) || 0
   if (n < min) return { tone: 'info', state: 'building', n, min }
-  return { tone: 'ok', state: 'ready', n }
+  return { tone: 'muted', state: 'unverified', n }
 }
 
 /** Form, kaynak yapılandırmasından farklı mı (kaydet düğmesi). */

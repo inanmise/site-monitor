@@ -480,26 +480,43 @@ public class MonitoringController {
 
     // ── Dinamik taban çizgisi (2026-11-12) — yanıt-süresi anomalisi (izleme-başına opt-in, 7 tür ortak uç) ──────────────
 
-    /** Bir izlemenin taban-çizgisi için çözümü: takım, alarm anahtarı (url/host/domain/ad), SLOW alarm tipi. */
-    private record BaselineRef(Long teamId, String key, String slowType) {}
+    /**
+     * Bir izlemenin taban-çizgisi için çözümü: ETKİN takım (yetki kapıları), alarm anahtarı (url/host/domain/ad), SLOW alarm tipi
+     * ve sahiplik bağlamı (sessiz kapanış yalnız bu izlemenin olayını kapatsın).
+     */
+    private record BaselineRef(Long teamId, String key, String slowType, Map<String, Object> owner) {}
 
-    /** Tür + kimlikten izlemeyi yükler; yoksa / desteklenmeyen tür → null. Alarm anahtarı her türün SLOW kaleminin domain'i. */
+    /**
+     * Tür + kimlikten izlemeyi yükler; yoksa / desteklenmeyen tür → null. Alarm anahtarı her türün SLOW kaleminin domain'i.
+     * Port / DNS'te takım ETKİN takımdır ({@link #effectiveTeam} — türev satırda envanterin takımı; listedeki {@code can_edit} de
+     * ondan): saklanan takımla yetki vermek envanteri taşınmış türev satırda eski takıma GET/PUT izni veriyor, yeni sahibi
+     * dışarıda bırakıyordu (hata taraması 2026-11-13 #5).
+     */
     private BaselineRef resolveBaselineMonitor(String type, Long id) {
         return switch (type == null ? "" : type) {
             case com.sitemonitor.service.baseline.BaselineTypes.HTTP -> httpMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_HTTP_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_HTTP_SLOW,
+                            ownerCtx(m.getId(), m.getTeamId(), null))).orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.KEYWORD -> keywordMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_KEYWORD_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_KEYWORD_SLOW,
+                            ownerCtx(m.getId(), m.getTeamId(), null))).orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.PING -> pingMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getHost(), EscalationService.TYPE_PING_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getHost(), EscalationService.TYPE_PING_SLOW,
+                            ownerCtx(m.getId(), m.getTeamId(), null))).orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.PORT -> portMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getHost(), EscalationService.TYPE_PORT_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()), m.getHost(),
+                            EscalationService.TYPE_PORT_SLOW, ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId())))
+                    .orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED -> pageSpeedMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_PAGESPEED_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getUrl(), EscalationService.TYPE_PAGESPEED_SLOW,
+                            ownerCtx(m.getId(), m.getTeamId(), null))).orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED -> scriptedMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getName(), EscalationService.TYPE_SCRIPTED_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(m.getTeamId(), m.getName(), EscalationService.TYPE_SCRIPTED_SLOW,
+                            ownerCtx(m.getId(), m.getTeamId(), null))).orElse(null);
             case com.sitemonitor.service.baseline.BaselineTypes.DNS -> dnsMonitorRepo.findById(id)
-                    .map(m -> new BaselineRef(m.getTeamId(), m.getDomain(), EscalationService.TYPE_DNS_SLOW)).orElse(null);
+                    .map(m -> new BaselineRef(effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()), m.getDomain(),
+                            EscalationService.TYPE_DNS_SLOW, ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId())))
+                    .orElse(null);
             default -> null;
         };
     }
@@ -543,7 +560,7 @@ public class MonitoringController {
         }
         if (res.transition() && ref.key() != null)
             escalationService.resolveOpenAlertsSilently(ref.key(), java.util.Set.of(ref.slowType()),
-                    "Sistem (taban çizgisi değişti)", ownerCtx(id, ref.teamId(), null));
+                    "Sistem (taban çizgisi değişti)", ref.owner());
         auditService.recordAction("MONITOR_UPDATE", session, "BaselineConfig", type + ":" + id, ref.key(),
                 "{\"baseline_enabled\":" + res.nowEnabled() + "}");
         return ok(baselineConfigService.view(type, id));
@@ -843,6 +860,8 @@ public class MonitoringController {
         }
         // İstek parmak izi geri yüklemeden ÖNCE (hata avı 2026-11-06 H4#3: istek tanımı geri dönerse içerik temeli geçersiz)
         String kwPrevRequestFp = entity instanceof KeywordMonitor kwBefore ? keywordRequestFingerprint(kwBefore) : null;
+        // Dinamik taban hedefi geri yüklemeden ÖNCE (hata taraması 2026-11-13 #7: güncellemeyle aynı örnek temizliği)
+        String baselineTargetBefore = baselineTargetOf(resolved, entity);
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
         if (!skippedFields.isEmpty()) maskedSkipped = maskedSkipped.stream().filter(f -> !"rulesJson".equals(f)).toList();
@@ -938,6 +957,7 @@ public class MonitoringController {
         } else {
             saveRestored(resolved, entity);
         }
+        clearBaselineSamplesIfTargetChanged(resolved, id, baselineTargetBefore, entity);
         if (dbqScheduleChanged) dbqRestoredScheduleChanged(dbq);
         if (dbq != null && dbq.getId() != null && before.get("active") instanceof Boolean wasOn
                 && !wasOn.equals(Boolean.TRUE.equals(dbq.getActive()))) dbqActiveChanged(dbq.getId());
@@ -999,6 +1019,51 @@ public class MonitoringController {
         if (!secretsCleared.isEmpty()) out.put("secrets_cleared", secretsCleared);   // kw O-1: kaynak değişti, parola silindi
         if (dbqPlan != null) out.put("plan_warning", dbqPlanApi(dbqPlan));
         return ok(out);
+    }
+
+    /**
+     * Dinamik taban çizgisinin ölçtüğü HEDEF (hata taraması 2026-11-13 #7) — güncelleme yollarının örnek temizleme kuralıyla
+     * aynı: HTTP / içerik / sayfa hızı URL, ping host, port host:port, DNS alan adı (küçük harf), sentetik betik + ortam (ad değişimi
+     * hedefi değiştirmez). Taban çizgisi olmayan tür → null.
+     */
+    private static String baselineTargetOf(String kind, Object entity) {
+        return switch (kind) {
+            case MonitorHistoryService.HTTP -> ((HttpMonitor) entity).getUrl();
+            case MonitorHistoryService.KEYWORD -> ((KeywordMonitor) entity).getUrl();
+            case MonitorHistoryService.PAGESPEED -> ((com.sitemonitor.model.PageSpeedMonitor) entity).getUrl();
+            case MonitorHistoryService.PING -> ((com.sitemonitor.model.PingMonitor) entity).getHost();
+            case MonitorHistoryService.PORT -> {
+                var m = (com.sitemonitor.model.PortMonitor) entity;
+                yield m.getHost() + ":" + m.getPort();
+            }
+            case MonitorHistoryService.DNS -> {
+                String d = ((DnsMonitor) entity).getDomain();
+                yield d == null ? null : d.toLowerCase(Locale.ROOT);
+            }
+            case MonitorHistoryService.SCRIPTED -> {
+                var m = (com.sitemonitor.model.ScriptedMonitor) entity;
+                yield String.valueOf(m.getScript()) + "|env|" + m.getEnvJson();
+            }
+            default -> null;
+        };
+    }
+
+    /** Geri yükleme taban çizgisinin hedefini değiştirdiyse eski yanıt-süresi örnekleri yeni hedefe karışmasın — temizle. */
+    private void clearBaselineSamplesIfTargetChanged(String kind, Long id, String before, Object entity) {
+        if (baselineConfigService == null || before == null || id == null) return;
+        String after = baselineTargetOf(kind, entity);
+        if (Objects.equals(before, after)) return;
+        String type = switch (kind) {
+            case MonitorHistoryService.HTTP -> com.sitemonitor.service.baseline.BaselineTypes.HTTP;
+            case MonitorHistoryService.KEYWORD -> com.sitemonitor.service.baseline.BaselineTypes.KEYWORD;
+            case MonitorHistoryService.PAGESPEED -> com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED;
+            case MonitorHistoryService.PING -> com.sitemonitor.service.baseline.BaselineTypes.PING;
+            case MonitorHistoryService.PORT -> com.sitemonitor.service.baseline.BaselineTypes.PORT;
+            case MonitorHistoryService.DNS -> com.sitemonitor.service.baseline.BaselineTypes.DNS;
+            case MonitorHistoryService.SCRIPTED -> com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED;
+            default -> null;
+        };
+        if (type != null) baselineConfigService.clearSamples(type, id);
     }
 
     /** Geri yüklemede alarm kuralı için izlemenin alarm anahtarı, türleri ve sahiplik bağlamı (güncelleme yollarıyla aynı). */

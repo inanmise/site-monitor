@@ -263,6 +263,14 @@ final class EmailSamples {
         alert("alert-ping-slow", "[Site Monitor] YÜKSEK · gw.example.com — yanıt süresi yükseldi",
                 "gw.example.com yanıt süresi taban çizgisinin üstüne çıktı (p95 340 ms, taban 40 ms).", "gw.example.com", "HIGH", "PING_SLOW", null,
                 map("detail", "p95 340 ms / taban 40 ms", "checked_at", "2026-09-26T07:00:00Z", "team_name", "Takım A"));
+        // 2026-11-13 (dinamik taban hata taraması #9): öğrenen bant alarmı — ölçülen değer + olağan bant + karar satırı
+        alert("alert-ping-slow-baseline", "[Site Monitor] YÜKSEK · gw.example.com · Ping Yavaş Yanıt",
+                "YÜKSEK: gw.example.com ping yanıt süresi dinamik tabanın (öğrenilen olağan aralığın) dışında — 340 ms; olağan bant "
+                        + "35 – 45 ms (ortalama 40 ms). Bu bir kesinti değildir; süre olağan banda döndüğünde alarm otomatik kapanır.",
+                "gw.example.com", "HIGH", "PING_SLOW", null,
+                map("host", "gw.example.com", "response_ms", 340, "baseline", true, "baseline_mean", 40.2, "baseline_low", 35.1,
+                        "baseline_high", 45.3, "baseline_level", "warning", "baseline_deviation", 42.7, "monitor_id", 12,
+                        "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A"));
         alert("alert-accessibility", "[Site Monitor KRİTİK] " + LONG_HOST + " — Erişim Kesintisi",
                 "KRİTİK: " + LONG_HOST + " adresine erişilemiyor.", LONG_HOST, "CRITICAL", "ACCESSIBILITY", null,
                 map("port", 443, "first_failure_at", "2026-09-26T07:00:00", "last_error",
@@ -424,6 +432,10 @@ final class EmailSamples {
                 "Takım A", null);
         resolved("resolved-scripted-slow", "[Site Monitor ✅ ÇÖZÜLDÜ] Ödeme akışı", TR, "SCRIPTED_SLOW", "HIGH", "Sistem (otomatik)",
                 "2026-09-26T06:42:00", "2026-09-26T05:00:00", map("duration_ms", 8120, "threshold_ms", 5000), "Takım A", null);
+        resolved("resolved-scripted-slow-baseline", "[Site Monitor ✅ ÇÖZÜLDÜ] Ödeme akışı", TR, "SCRIPTED_SLOW", "HIGH",
+                "Sistem (otomatik)", "2026-09-26T06:42:00", "2026-09-26T05:00:00",
+                map("response_ms", 8120, "baseline", true, "baseline_mean", 3900.0, "baseline_low", 3100.0, "baseline_high", 4700.0),
+                "Takım A", null);
         // 2026-10-31: veritabanı sorgu izlemesi çözümü — alarm anındaki ihlal + çözüm anındaki son çalıştırma
         Map<String, Object> dbRes = dbQueryCtx();
         dbRes.remove(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS);

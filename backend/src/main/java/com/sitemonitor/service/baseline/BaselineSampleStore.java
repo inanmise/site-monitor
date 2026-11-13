@@ -23,7 +23,7 @@ import java.util.List;
  * <p>Her ifade KENDİ sorgu zaman aşımlı şablonunda ({@value #QUERY_TIMEOUT_SECONDS} sn) ve sınıf düzeyinde
  * {@code @Transactional(NOT_SUPPORTED)} — çağıranın (tarama) işlemine katılmaz, bir PostgreSQL hatası onu bozamaz. Tablo
  * yoksa (ilk açılışın ilk saniyeleri) okuma boş, ekleme sessiz atlar; {@link BaselineSchemaPatch} hazır olduğunu bildirince
- * ({@link #markReady}) açılır. v1 MEVSİMSİZ: yalnız yakın geçmiş (en yeni N örnek); mevsimsel okuma sonraki artımda.</p>
+ * ({@link #markReady}) açılır. Okuma: mevsimsiz en yeni N örnek ({@link #readRecent}) ya da mevsimsel ({@link #readSeasonal}).</p>
  */
 @Slf4j
 @Component
@@ -60,10 +60,13 @@ public class BaselineSampleStore {
             "CREATE INDEX IF NOT EXISTS idx_mbs_monitor ON " + TABLE + " (monitor_type, monitor_id, checked_ms)";
 
     private final JdbcTemplate jdbc;
+    /** Budamanın uzun zaman aşımlı şablonu (yalnız günlük budama işi; tarama yolu {@link #jdbc} — 10 sn). */
+    private final JdbcTemplate pruneJdbc;
     private volatile boolean ready;
 
     public BaselineSampleStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc == null ? null : EvalStateSql.withQueryTimeout(jdbc, QUERY_TIMEOUT_SECONDS);
+        this.pruneJdbc = jdbc == null ? null : EvalStateSql.withQueryTimeout(jdbc, PRUNE_QUERY_TIMEOUT_SECONDS);
     }
 
     /** {@link BaselineSchemaPatch} tabloyu kurunca çağrılır. */
@@ -111,24 +114,28 @@ public class BaselineSampleStore {
     }
 
     /**
-     * MEVSİMSEL okuma: {@code beforeMs}'ten önceki, günün/haftanın AYNI konumuna (saatine) ± {@code toleranceMs} düşen en yeni
-     * {@code limit} örnek, yeniden eskiye. Dairesel uzaklık {@code LEAST(|Δ|, period−|Δ|)} ile hesaplanır (gün sonu ↔ gün başı
-     * sarması doğru). {@code complete=false} (muhafazakâr): mevsimsel geçmişin tamamı okunmadı varsayılır — kontrollü uyumun
-     * "geçmişi kaplıyor" kolu mevsimselde devre dışı kalır, yalnız {@code window} uzunluğundaki ihlal dizisi uyum sağlar
-     * (yavaş ve güvenli; mevsimsel taban kararlı olmalı). {@code nowPos} = {@code beforeMs}'in periyot içindeki konumu (çağıran
-     * hesaplar). H2 + PostgreSQL ortak: {@code MOD/ABS/LEAST}.
+     * MEVSİMSEL okuma: EN AZ BİR PERİYOT ÖNCEKİ (dün / geçen hafta ve öncesi), günün/haftanın AYNI konumuna (saatine)
+     * ± {@code toleranceMs} düşen en yeni {@code limit} örnek, yeniden eskiye. Üst sınır {@code beforeMs − periodMs +
+     * toleranceMs}: bugünün (bu haftanın) son yarım saatindeki örnekler "aynı saat" SAYILMAZ — aksi hâlde kısa aralıklı izlemede
+     * pencere tamamen son 30 dakikadan dolar ve mevsimsellik fiilen mevsimsiz olurdu (hata taraması 2026-11-13 #3). Dairesel
+     * uzaklık {@code LEAST(|Δ|, period−|Δ|)} ile hesaplanır (gün sonu ↔ gün başı sarması doğru). {@code complete=false}
+     * (muhafazakâr): mevsimsel geçmişin tamamı okunmadı varsayılır — kontrollü uyumun "geçmişi kaplıyor" kolu mevsimselde
+     * devre dışı kalır, yalnız {@code window} uzunluğundaki ihlal dizisi uyum sağlar. {@code nowPos} = {@code beforeMs}'in
+     * periyot içindeki konumu (çağıran hesaplar). H2 + PostgreSQL ortak: {@code MOD/ABS/LEAST}.
      */
     public History readSeasonal(String type, long monitorId, long beforeMs, int limit,
                                 long periodMs, long nowPos, long toleranceMs) {
         if (jdbc == null || !BaselineTypes.supported(type) || limit <= 0 || periodMs <= 0) return History.EMPTY;
+        // En az bir periyot önceki örnekler: dünün aynı saatinin ±tol penceresinin en yeni ucu (before − period + tol)
+        long upper = Math.min(beforeMs - 1, beforeMs - periodMs + Math.max(0, toleranceMs));
         try {
             List<Sample> rows = jdbc.query(
                     "SELECT value_ms, breach FROM " + TABLE + " WHERE monitor_type = ? AND monitor_id = ? "
-                            + "AND checked_ms < ? "
+                            + "AND checked_ms <= ? "
                             + "AND LEAST(ABS(MOD(checked_ms, ?) - ?), ? - ABS(MOD(checked_ms, ?) - ?)) <= ? "
                             + "ORDER BY checked_ms DESC, id DESC LIMIT ?",
                     (rs, n) -> new Sample(rs.getLong(1), rs.getBoolean(2)),
-                    type, monitorId, beforeMs, periodMs, nowPos, periodMs, periodMs, nowPos, toleranceMs, limit);
+                    type, monitorId, upper, periodMs, nowPos, periodMs, periodMs, nowPos, toleranceMs, limit);
             return new History(rows, false, false);   // complete=false (muhafazakâr) — bkz. javadoc
         } catch (BadSqlGrammarException missing) {
             ready = false;
@@ -149,20 +156,66 @@ public class BaselineSampleStore {
         }
     }
 
+    /** Budamanın tek silme ifadesinde en çok sileceği satır (uzun kilit / zaman aşımı olmasın). */
+    static final int PRUNE_CHUNK = 5_000;
+    /** Budama ifadelerinin sorgu zaman aşımı (sn) — yan iş iş parçacığında koşar; ilk budama büyük tabloda uzun sürebilir. */
+    static final int PRUNE_QUERY_TIMEOUT_SECONDS = 120;
+
+    /** Budama sonucu: silinen satır + işlenen izleme + bütçe / durdurma nedeniyle yarıda kaldı mı. */
+    public record PruneResult(int deleted, int monitors, boolean partial) {}
+
     /**
-     * İzleme başına en yeni {@value #KEEP_PER_MONITOR} satırı tutar, gerisini siler (pencere ihtiyacından çok büyük). Tek
-     * ifade, H2 + PostgreSQL'de pencere işleviyle. Günlük budama (retention) bunu çağırır.
+     * İzleme başına en yeni {@code keepPerMonitor} satırı tutar, gerisini siler (pencere ihtiyacından çok büyük). Günlük budama
+     * işi ({@code BaselinePruneJob}) bunu çağırır. Önce sınırı aşan izlemeler (tek gruplu sorgu), sonra izleme başına sınır satırı
+     * (dizinden) ve en çok {@value #PRUNE_CHUNK} satırlık dilimlerle silme — tek dev ifade yerine (ilk budamada tablo büyük
+     * olabilir; uzun kilit ve zaman aşımı olmasın). {@code stop} her dilimden önce sorulur (pod kapanıyor / bütçe doldu).
      */
-    public int prune(int keepPerMonitor) {
-        if (jdbc == null) return 0;
+    public PruneResult prune(int keepPerMonitor, java.util.function.BooleanSupplier stop) {
+        return prune(keepPerMonitor, stop, PRUNE_CHUNK);
+    }
+
+    /** {@link #prune(int, java.util.function.BooleanSupplier)} dilim boyu verilerek (testler küçük dilimle çok dilimi sınar). */
+    PruneResult prune(int keepPerMonitor, java.util.function.BooleanSupplier stop, int chunk) {
+        if (pruneJdbc == null) return new PruneResult(0, 0, false);
         int keep = Math.max(1, keepPerMonitor);
+        int step = Math.max(1, chunk);
+        JdbcTemplate long_ = pruneJdbc;
+        List<Object[]> over;
         try {
-            return jdbc.update("DELETE FROM " + TABLE + " WHERE id IN ("
-                    + "SELECT id FROM (SELECT id, ROW_NUMBER() OVER "
-                    + "(PARTITION BY monitor_type, monitor_id ORDER BY checked_ms DESC, id DESC) rn FROM " + TABLE + ") t "
-                    + "WHERE t.rn > ?)", keep);
+            over = long_.query("SELECT monitor_type, monitor_id FROM " + TABLE
+                            + " GROUP BY monitor_type, monitor_id HAVING COUNT(*) > ?",
+                    (rs, n) -> new Object[] { rs.getString(1), rs.getLong(2) }, keep);
         } catch (BadSqlGrammarException missing) {
-            return 0;
+            return new PruneResult(0, 0, false);
+        }
+        int deleted = 0, monitors = 0;
+        for (Object[] m : over) {
+            if (stop != null && stop.getAsBoolean()) return new PruneResult(deleted, monitors, true);
+            String type = (String) m[0];
+            long id = (Long) m[1];
+            // Silinecek EN YENİ satır = (keep+1). en yeni; okuma sırasıyla aynı (checked_ms DESC, id DESC)
+            List<long[]> edge = long_.query("SELECT checked_ms, id FROM " + TABLE + " WHERE monitor_type = ? AND monitor_id = ? "
+                            + "ORDER BY checked_ms DESC, id DESC LIMIT 1 OFFSET ?",
+                    (rs, n) -> new long[] { rs.getLong(1), rs.getLong(2) }, type, id, keep);
+            if (edge.isEmpty()) continue;
+            long ms = edge.get(0)[0], rowId = edge.get(0)[1];
+            while (true) {
+                if (stop != null && stop.getAsBoolean()) return new PruneResult(deleted, monitors, true);
+                int n = long_.update("DELETE FROM " + TABLE + " WHERE id IN (SELECT id FROM " + TABLE
+                        + " WHERE monitor_type = ? AND monitor_id = ? AND (checked_ms < ? OR (checked_ms = ? AND id <= ?)) "
+                        + "ORDER BY checked_ms, id LIMIT ?)", type, id, ms, ms, rowId, step);
+                deleted += n;
+                if (n < step) break;
+            }
+            monitors++;
+        }
+        return new PruneResult(deleted, monitors, false);
+    }
+
+    /** {@link #prune(int, java.util.function.BooleanSupplier)} durdurmasız (testler / tanılama); hata → 0. */
+    public int prune(int keepPerMonitor) {
+        try {
+            return prune(keepPerMonitor, null).deleted();
         } catch (RuntimeException e) {
             log.debug("Taban çizgisi örnekleri budanamadı: {}", e.getMessage());
             return 0;

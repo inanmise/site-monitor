@@ -163,4 +163,51 @@ class BaselineSampleStoreH2Test {
         assertThat(v.breached()).isTrue();
         assertThat(v.mean()).isEqualTo(100.0);
     }
+
+    // ── 2026-11-13 hata taraması ────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void mevsimsel_bugunun_son_yarim_saati_ayni_saat_sayilmaz() {
+        long DAY = BaselineSampleStore.DAY_MS, tol = BaselineSampleStore.SEASON_TOLERANCE_MIN_MS;
+        long now = T0 + 10 * DAY;
+        long nowPos = Math.floorMod(now, DAY);
+        store.append(HTTP, 1, now - 5 * 60_000L, 555, false);    // 5 dk önce (bugün) → GİRMEZ (#3)
+        store.append(HTTP, 1, now - 25 * 60_000L, 556, false);   // 25 dk önce (bugün) → GİRMEZ
+        store.append(HTTP, 1, now - DAY, 100, false);            // tam 24 sa önce → girer
+        store.append(HTTP, 1, now - DAY + 25 * 60_000L, 101, false);   // dün, şimdiden 25 dk sonrası (±30 dk içinde) → girer
+        store.append(HTTP, 1, now - DAY - 25 * 60_000L, 102, false);   // dün, 25 dk öncesi → girer
+        History h = store.readSeasonal(HTTP, 1, now, 50, DAY, nowPos, tol);
+        assertThat(h.samples()).extracting(BaselineMath.Sample::value).containsExactly(101.0, 100.0, 102.0);
+    }
+
+    @Test
+    void mevsimsel_haftalik_bu_haftanin_ornekleri_sayilmaz() {
+        long WEEK = BaselineSampleStore.WEEK_MS, tol = BaselineSampleStore.SEASON_TOLERANCE_MIN_MS;
+        long now = T0 + 10 * WEEK;
+        store.append(HTTP, 1, now - 10 * 60_000L, 900, false);   // bu hafta (10 dk önce) → girmez
+        store.append(HTTP, 1, now - WEEK, 100, false);           // geçen hafta aynı an → girer
+        History h = store.readSeasonal(HTTP, 1, now, 50, WEEK, Math.floorMod(now, WEEK), tol);
+        assertThat(h.samples()).extracting(BaselineMath.Sample::value).containsExactly(100.0);
+    }
+
+    @Test
+    void budama_dilimlerle_ve_sinir_satiri_dahil() {
+        JdbcTemplate j = mp.jdbc();
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        for (int i = 1; i <= 1_200; i++) rows.add(new Object[] { HTTP, 1L, T0 + i, 100L, false, T0 });
+        j.batchUpdate("INSERT INTO " + BaselineSampleStore.TABLE
+                + " (monitor_type, monitor_id, checked_ms, value_ms, breach, created_ms) VALUES (?, ?, ?, ?, ?, ?)", rows);
+        store.append(HTTP, 2, T0, 100, false);   // sınırın altında — dokunulmaz
+        BaselineSampleStore.PruneResult r = store.prune(150, null, 500);   // küçük dilim: 500 + 500 + 50 (H2'de hızlı)
+        assertThat(r.deleted()).isEqualTo(1_050);
+        assertThat(r.monitors()).isEqualTo(1);
+        assertThat(r.partial()).isFalse();
+        assertThat(store.count(HTTP, 1)).isEqualTo(150);
+        assertThat(store.count(HTTP, 2)).isEqualTo(1);
+        // en yeniler kaldı
+        History h = store.readRecent(HTTP, 1, Long.MAX_VALUE, 1);
+        assertThat(h.samples()).hasSize(1);
+        assertThat(j.queryForObject("SELECT MIN(checked_ms) FROM " + BaselineSampleStore.TABLE + " WHERE monitor_id = 1",
+                Long.class)).isEqualTo(T0 + 1_051);
+    }
 }

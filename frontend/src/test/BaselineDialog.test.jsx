@@ -40,12 +40,37 @@ describe('BaselineDialog', () => {
     expect(slot('baseline-window')).toBeFalsy()   // kapalı → parametre yok
   })
 
-  it('aç → parametreler + hazırlık (taban kuruluyor) görünür', async () => {
+  it('aç → parametreler + hazırlık (kaydedilince kurulur) görünür', async () => {
     mount()
     await waitFor(() => expect(slot('baseline-enable')).toBeTruthy())
     fireEvent.click(document.querySelector('[role="switch"]'))
     await waitFor(() => expect(slot('baseline-window')).toBeTruthy())
-    expect(slot('baseline-readiness').textContent).toMatch(/4 \/ 10/)   // kuruluyor
+    expect(slot('baseline-readiness').getAttribute('data-state')).toBe('notSaved')   // henüz kaydedilmedi
+  })
+
+  it('kayıtlı açık yapılandırma: sunucunun pencere sayısı (kuruluyor n/min)', async () => {
+    api.monitoring.getBaseline.mockResolvedValue({ success: true, data: { ...CONFIG, enabled: true, defaults: false,
+      global_enabled: true, sample_count: 400, ready_state: 'building', ready_samples: 4, ready_min: 10 } })
+    mount()
+    await waitFor(() => expect(slot('baseline-readiness')).toBeTruthy())
+    expect(slot('baseline-readiness').getAttribute('data-state')).toBe('building')
+    expect(slot('baseline-readiness').textContent).toMatch(/4 \/ 10/)   // toplam 400 değil, değerlendirme penceresi
+  })
+
+  it('ana anahtar kapalı → nötr bant, "hazır" (yeşil) değil', async () => {
+    api.monitoring.getBaseline.mockResolvedValue({ success: true, data: { ...CONFIG, enabled: true, defaults: false,
+      global_enabled: false, sample_count: 400, ready_state: 'ready', ready_samples: 30, ready_min: 10 } })
+    mount()
+    await waitFor(() => expect(slot('baseline-readiness')).toBeTruthy())
+    expect(slot('baseline-readiness').getAttribute('data-state')).toBe('switchOff')
+    expect(slot('baseline-readiness').textContent).not.toMatch(/hazır|ready/i)
+  })
+
+  it('eski sunucu (hazırlık alanı yok): çok örnek olsa da yeşil "hazır" denmez', async () => {
+    api.monitoring.getBaseline.mockResolvedValue({ success: true, data: { ...CONFIG, enabled: true, defaults: false, sample_count: 400 } })
+    mount()
+    await waitFor(() => expect(slot('baseline-readiness')).toBeTruthy())
+    expect(slot('baseline-readiness').getAttribute('data-state')).toBe('unverified')
   })
 
   it('sınır dışı değer → istemci alan hatası, PUT yok', async () => {

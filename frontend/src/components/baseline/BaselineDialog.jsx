@@ -13,6 +13,21 @@ import { Switch } from '@/components/shadcn/switch'
 import { Input } from '@/components/shadcn/input'
 import { BASELINE_DEFAULTS, DIRECTIONS, SEASONS, formFromConfig, isDirty, rangeOf, readiness, toBody, validate } from './baselineModel.js'
 
+/** Hazırlık bandının metni (durum → çeviri; bilinmeyen durum asla "hazır" değildir). */
+function readinessText(t, ready) {
+  switch (ready.state) {
+    case 'building': return t('baseline.ready.building', ready.n, ready.min)
+    case 'ready': return t('baseline.ready.ready', ready.n)
+    case 'insufficient': return t('baseline.ready.insufficient', ready.n, ready.min)
+    case 'switchOff': return t('baseline.ready.switchOff')
+    case 'notSaved': return t('baseline.ready.notSaved')
+    case 'pending': return t('baseline.ready.pending')
+    case 'unverified': return t('baseline.ready.unverified', ready.n)
+    case 'unknown': return t('baseline.ready.unknown')
+    default: return t('baseline.ready.off')
+  }
+}
+
 /**
  * HTTP izlemesinin dinamik taban çizgisi (yanıt-süresi anomalisi) yapılandırması — izleme detayından açılan ayrı diyalog
  * (uçtan uca tanılama deseni gibi; büyük HTTP formuna dokunmaz). GET/PUT bağımsız: /monitoring/http/{id}/baseline. shadcn +
@@ -23,7 +38,6 @@ export default function BaselineDialog({ type = 'http', monitorId, monitorName, 
   const toast = useToast()
   const [cfg, setCfg] = useState(null)
   const [form, setForm] = useState(BASELINE_DEFAULTS)
-  const [sampleCount, setSampleCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [errors, setErrors] = useState({})
@@ -39,14 +53,14 @@ export default function BaselineDialog({ type = 'http', monitorId, monitorName, 
       if (!alive || my !== seq.current) return
       if (res?.success) {
         const d = res.data || {}
-        setCfg(d); setForm(formFromConfig(d)); setSampleCount(Number(d.sample_count) || 0)
+        setCfg(d); setForm(formFromConfig(d))
       } else setLoadError(res?.error || t('baseline.loadFailed'))
     }).catch((e) => { if (alive && my === seq.current) setLoadError(e?.message || t('baseline.loadFailed')) })
       .finally(() => { if (alive && my === seq.current) setLoading(false) })
     return () => { alive = false }
   }, [type, monitorId])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ready = useMemo(() => readiness(form, sampleCount), [form, sampleCount])
+  const ready = useMemo(() => readiness(form, cfg), [form, cfg])
   const dirty = useMemo(() => isDirty(form, cfg), [form, cfg])
 
   function set(field, value) {
@@ -119,11 +133,9 @@ export default function BaselineDialog({ type = 'http', monitorId, monitorName, 
 
           {form.enabled && (
             <>
-              <div data-slot="baseline-readiness">
+              <div data-slot="baseline-readiness" data-state={ready.state}>
                 <AlertBanner tone={ready.tone === 'ok' ? 'success' : ready.tone === 'info' ? 'info' : 'muted'}>
-                  {ready.state === 'building' ? t('baseline.ready.building', ready.n, ready.min)
-                    : ready.state === 'ready' ? t('baseline.ready.ready', ready.n)
-                    : t('baseline.ready.off')}
+                  {readinessText(t, ready)}
                 </AlertBanner>
               </div>
 
@@ -142,7 +154,7 @@ export default function BaselineDialog({ type = 'http', monitorId, monitorName, 
                       value={form.k_warning} onChange={(e) => set('k_warning', e.target.value)} data-slot="baseline-k-warning" />
                   )}
                 </Field>
-                <Field label={t('baseline.kCritical')} error={fieldError('k_critical')} name="k_critical">
+                <Field label={t('baseline.kCritical')} hint={t('baseline.kCriticalHint')} error={fieldError('k_critical')} name="k_critical">
                   {({ id, describedBy, invalid }) => (
                     <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type="number" step="0.1" min="1" max="10"
                       value={form.k_critical} onChange={(e) => set('k_critical', e.target.value)} data-slot="baseline-k-critical" />

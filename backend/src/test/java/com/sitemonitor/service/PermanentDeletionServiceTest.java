@@ -66,6 +66,7 @@ class PermanentDeletionServiceTest {
     @Autowired JdbcTemplate jdbc;
 
     @MockitoBean EscalationService escalationService;
+    @MockitoBean com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
 
     private static final String NOW = "2026-10-07T10:00:00";
     private static final String GONE = "gone.example.com";
@@ -327,5 +328,28 @@ class PermanentDeletionServiceTest {
         service.deleteStandaloneDns(mx);
         assertThat(count("monitor_guide", "target = ?", "zone.example.com")).as("son izleme de gidince rehber öksüz — gider").isZero();
         verify(escalationService, never()).closeAlertsOnInventoryDelete(anyString());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("dinamik taban: envanter silmesinde TÜREV Port/DNS'in, bağımsız silmede o izlemenin taban yapılandırması + örnekleri silinir; bağımsız kalan izlemeninki kalır")
+    void purgeRemovesBaselineConfigAndSamples() {
+        CertificateInventory gone = inventory(GONE, 8443, 5L, null);
+        PortMonitor derivedPort = port(GONE, 8443, false);
+        PortMonitor standalonePort = port(GONE, 9000, true);
+        DnsMonitor derivedDns = dns(GONE, "A", false);
+        when(escalationService.closeAlertsOnInventoryDelete(GONE)).thenReturn(0);
+
+        service.deleteInventory(gone);
+
+        verify(baselineConfigService).remove("port", derivedPort.getId());
+        verify(baselineConfigService).remove("dns", derivedDns.getId());
+        verify(baselineConfigService, never()).remove("port", standalonePort.getId());
+
+        DnsMonitor solo = dns("solo.example.com", "A", true);
+        service.deleteStandalonePort(standalonePort);
+        service.deleteStandaloneDns(solo);
+        verify(baselineConfigService).remove("port", standalonePort.getId());
+        verify(baselineConfigService).remove("dns", solo.getId());
     }
 }
