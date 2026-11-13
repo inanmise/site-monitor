@@ -299,7 +299,13 @@ public final class AuditEventCatalog {
             "SMTP_SETTINGS_SAVE",
             "SMTP_TEST",
             "SMTP_TEST_EMAIL",
+            "SQL_CANCEL",                 // SQL Playground: çalışan sorguyu durdurma (2026-11-13)
             "SQL_EXECUTE",
+            "SQL_EXPLAIN",                // SQL Playground: sorgu planı (2026-11-13)
+            "SQL_EXPORT",                 // SQL Playground: büyük dışa aktarım (2026-11-13)
+            "SQL_SAVED_QUERY_CREATE",     // SQL Playground kayıtlı sorgular (2026-11-13)
+            "SQL_SAVED_QUERY_DELETE",
+            "SQL_SAVED_QUERY_UPDATE",
             "STORM_SETTINGS_SAVE",
             "SYSTEM_DELETED_RECORDS_PURGE",   // eski çöp kutusunun tek seferlik kalıcı temizliği (2026-10-07, DeletedRecordsPurge)
             "SYSTEM_DEPLOYMENT_BACKFILL",
@@ -492,7 +498,7 @@ public final class AuditEventCatalog {
 
         // Zincirin yeniden başlatılması bir SİSTEM olayıdır (arayüz auditFormat.eventClass da ev-system der) — AUDIT_ → DATA'dan ÖNCE
         if (t.equals("AUDIT_CHAIN_RESTART")) return SYSTEM;
-        if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
+        if (t.startsWith("AUDIT_") || t.startsWith("SQL_") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 
         // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motorunu değiştiren platform işlemi — SETTINGS sonekinden ÖNCE

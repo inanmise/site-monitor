@@ -102,8 +102,8 @@ class SqlSamplesIntegrationTest {
                 String error = (String) result.get("error");
                 if (error == null) continue;
                 String msg = error.toLowerCase();
-                if (usesPgOnly && isFunctionError(msg)) {
-                    // expected — H2 lacks the PG-specific function
+                if (usesPgOnly && (isFunctionError(msg) || msg.contains("pg_stat_user_tables"))) {
+                    // expected — H2 lacks the PG-specific function / catalog view (PostgresOnlySqlPostgresTest runs them on PG)
                     continue;
                 }
                 if (isColumnOrTableError(msg)) {
