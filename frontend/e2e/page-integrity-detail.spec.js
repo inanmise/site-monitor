@@ -16,9 +16,9 @@ const LONG_URL = 'https://cok-uzun-bir-alt-alan-adi.odeme-servisleri.example.com
 
 const HISTORY = { success: true, data: { items: [
   { id: 9001, monitor_id: 1, status: 'DEGRADED', ok: false, http_status: 200, response_ms: 20835,
-    broken_resources: 1, timeout_count: 4, mixed_content_count: 0, total_resources: 45, pages_crawled: 3,
+    broken_resources: 1, timeout_count: 1, mixed_content_count: 0, total_resources: 45, pages_crawled: 3,
     checked_at: CHECKED, failure_reason: 'RESOURCES_BROKEN',
-    failure_detail: JSON.stringify({ phase: 'CONTENT', broken: 1, timeouts: 4, mixed: 0, total_resources: 45 }) },
+    failure_detail: JSON.stringify({ phase: 'CONTENT', broken: 1, timeouts: 1, mixed: 0, total_resources: 45 }) },
 ], counts: { total: 1, fail: 1, errors: 0 }, buckets: [], alerts: [], total: 1, page: 0, size: 50 } }
 
 const ISSUES = { success: true, data: [
@@ -100,6 +100,17 @@ for (const vp of VIEWPORTS) {
       await expect(rows.first()).toContainText(LONG_URL)
       // E4: neden metni (BROKEN_404 → "bulunamadı / not found")
       await expect(rows.first()).toContainText(/bulunamad|not found/i)
+      // 2026-11-13 bulgu 7: satır KONTROL KİMLİĞİYLE okunur; sayaç (1 kırık + 1 zaman aşımı) = 2 satır → "eksik" denmez
+      await expect(dialog.locator('[data-slot="page-hist-issues-partial"]')).toHaveCount(0)
+      // 2026-11-13 bulgu 10: "Bulunduğu sayfa" bağlantısının dokunmatik isabet alanı ≥ 40 px (görünmez ::after)
+      if (touch) {
+        const hit = await dialog.locator('[data-slot="page-issue-source-link"]').first().evaluate((a) => {
+          const r = a.getBoundingClientRect()
+          const af = getComputedStyle(a, '::after')
+          return af.position === 'absolute' ? r.height - (parseFloat(af.top) || 0) - (parseFloat(af.bottom) || 0) : r.height
+        })
+        expect(hit, `"Bulunduğu sayfa" dokunma hedefi @${vp.name}`).toBeGreaterThanOrEqual(39.5)
+      }
 
       await page.waitForTimeout(300)
       const m = await page.evaluate(measure, '[role="dialog"]')
@@ -108,5 +119,31 @@ for (const vp of VIEWPORTS) {
       const ib = await issues.boundingBox()
       expect(ib.x + ib.width, `@${vp.name}: sorunlu kaynak listesi sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
     })
+
+  // 2026-11-13 bulgu 11: kartın etiket rozeti uzun etiketi KIRPMAZ (eskiden max-w-40 + truncate) — sarar, kart düzeni bozulmaz
+  test(`uzun etiket kartta tam ve sarılı görünür @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    const LONG_TAG = 'odeme-servisleri-kritik-musteri-yuzlu-uretim-ortami-etiketi'
+    await page.route((u) => new URL(u).pathname === '/api/monitoring/page', json({ success: true, data: [
+      { id: 501, name: 'www.example.com', url: 'https://www.example.com/', mode: 'SINGLE_PAGE', active: true, status: 'OK',
+        team_id: 1, team_name: 'Takım A', group_name: 'Kurumsal Web', tags: `${LONG_TAG},prod`, interval_seconds: 300,
+        broken_resources: 0, timeout_count: 0, mixed_content_count: 0, total_resources: 40,
+        checked_at: new Date(Date.now() - 60_000).toISOString().slice(0, 19) },
+    ] }))
+    await page.goto('/?tab=page')
+    const tag = page.locator('[data-page-tag]', { hasText: LONG_TAG }).first()
+    await tag.waitFor({ timeout: 20_000 })
+    const m = await tag.evaluate((el) => {
+      const card = el.closest('[data-slot="card"]')
+      const r = el.getBoundingClientRect(), c = card.getBoundingClientRect()
+      return { clipped: el.scrollWidth > el.clientWidth + 1, text: el.textContent, right: r.right, cardRight: c.right,
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth }
+    })
+    expect(m.text, `@${vp.name}: etiket metni tam`).toBe(LONG_TAG)
+    expect(m.clipped, `@${vp.name}: etiket kırpılıyor`).toBe(false)
+    expect(m.right, `@${vp.name}: etiket kartın dışına taşıyor`).toBeLessThanOrEqual(m.cardRight + 1)
+    expect(m.overflow, `@${vp.name}: sayfa yatay kayıyor`).toBeLessThanOrEqual(1)
+  })
  })
 }

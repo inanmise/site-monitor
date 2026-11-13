@@ -2502,6 +2502,33 @@ public class EscalationService {
         return body;
     }
 
+    /**
+     * Dinamik taban (öğrenen bant) yavaşlık alarmının iletisi — 7 türün hepsi (hata taraması 2026-11-13 #9). Sabit yolun
+     * metinleri "eşiği aştı" diyor ve bant bağlamının anahtarlarını (ör. PING {@code rtt_ms}, sentetik {@code duration_ms})
+     * okumadığı için postada ne ölçülen değer ne bant görünüyordu. Seviye sözcüğü {@link #withLevelWord} ile seviyeden gelir.
+     */
+    private static String baselineSlowMessage(String domain, String alertType, Map<String, Object> ctx) {
+        Object url = ctx.getOrDefault("url", domain);
+        String subject = switch (alertType) {
+            case TYPE_HTTP_SLOW -> url + " HTTP izlemesinde yanıt süresi";
+            case TYPE_KEYWORD_SLOW -> url + " içerik izlemesinde yanıt süresi";
+            case TYPE_PORT_SLOW -> domain + " üzerindeki " + ctx.get("port") + "/" + ctx.getOrDefault("protocol", "TCP")
+                    + " portunun yanıt süresi";
+            case TYPE_PING_SLOW -> ctx.getOrDefault("host", domain) + " ping yanıt süresi";
+            case TYPE_PAGESPEED_SLOW -> url + " sayfa yükleme süresi";
+            case TYPE_SCRIPTED_SLOW -> domain + " senaryosunun koşum süresi";
+            case TYPE_DNS_SLOW -> domain + " için " + ctx.getOrDefault("record_type", "") + " DNS sorgusunun süresi";
+            default -> domain + " yanıt süresi";
+        };
+        Object raw = ctx.get("response_ms");
+        String measured = EmailTemplateBuilder.msText(raw == null ? null : String.valueOf(raw));
+        String band = EmailTemplateBuilder.baselineBandText(ctx);
+        return "YÜKSEK: " + subject + " dinamik tabanın (öğrenilen olağan aralığın) dışında"
+                + (measured != null ? " — " + measured : "")
+                + (band != null ? "; olağan bant " + band : "") + ". "
+                + "Bu bir kesinti değildir; süre olağan banda döndüğünde alarm otomatik kapanır.";
+    }
+
     /** UTC ISO damgayı "gg.aa SS:dd" (Europe/Istanbul) kısa biçime çevirir; bozuksa olduğu gibi. */
     private static String formatIstanbulShort(String iso) {
         try {
@@ -2516,6 +2543,7 @@ public class EscalationService {
     private String monitoringMessageBody(String domain, String alertType, String alertLevel,
                                          Map<String, Object> ctx) {
         if (ctx == null || ctx.isEmpty()) return buildMessage(domain, alertType, alertLevel, null);
+        if (EmailTemplateBuilder.isBaselineSlow(alertType, ctx)) return baselineSlowMessage(domain, alertType, ctx);
         switch (alertType) {
             case TYPE_PORT_DOWN -> {
                 Object port = ctx.get("port");
@@ -5659,6 +5687,9 @@ public class EscalationService {
     public static final java.util.List<String> RESOLVED_CONTEXT_KEYS = List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
                                  "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
+                                 // Dinamik taban bant alarmı (hata taraması 2026-11-13 #9): elle yeniden gönderim / çözüm postası
+                                 // ölçülen değeri ve öğrenilen bandı anlık görüntüden okur.
+                                 "baseline", "baseline_mean", "baseline_low", "baseline_high", "baseline_level", "baseline_deviation",
                                  // team_id: AÇILIŞ yolu "ctx'te team_id varsa ugTeamId = null" diyor
                                  // (bağımsız izleme takım-özeldir). Damga snapshot'a girmezse çözüm ve
                                  // "tekrar bildir" yolları aynı kararı veremiyor ve envanterin UG
@@ -5668,6 +5699,11 @@ public class EscalationService {
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
                                  "problem_resources", "problem_rows", "problem_total", "detail",
+                                 // E3 (2026-11-13 düzeltme): teyit / kurtarma ayarları — alarm detayının "N kez doğrulandı,
+                                 // giderilince M kez doğrulanıp kapanır" satırı (AdminController.confirmInfoFromContext) ve
+                                 // yeniden gönderim postasının "Doğrulama" satırı bunları ANLIK GÖRÜNTÜDEN okur.
+                                 "monitor_confirm_attempts", "monitor_confirm_interval_ms",
+                                 "monitor_recovery_checks", "monitor_recovery_interval_ms",
                                  // Kanal bastirma damgalari: cozum yolu ctx'i olaydan geri okuyor;
                                  // bu anahtarlar kalicilastirilmazsa "e-postayi kapattim ama COZULDU
                                  // maili geliyor" paritesizligi olusuyordu.
@@ -5685,7 +5721,7 @@ public class EscalationService {
                                  "duration_ms", "failed_checks", "error",
                                  // O-b4: sayfa bütünlüğü bulgusunun KAYNAĞI (HOME / CRAWL) ve crawl'daki sorunlu
                                  // sayfalar — kurtarma doğrulaması aynı kaynağı yeniden ölçer (SchedulerService).
-                                 "integrity_scope", "problem_pages",
+                                 "integrity_scope", "problem_pages", "problem_pages_truncated",
                                  // ALERTS-2 (2026-10-22): bakım penceresinde algılanan DNS / alan adı DEĞİŞİKLİĞİ pencere bitince
                                  // bu anlık görüntüden bildiriliyor — anahtarlar yokken ileti eski/yeni değersiz genel metne
                                  // dönüyor, e-postanın ESKİ / YENİ kutuları boş gidiyordu.
@@ -5727,6 +5763,48 @@ public class EscalationService {
             Map<String, Object> c = deserializeContext(e.getContextJson());
             return c != null ? c : Map.<String, Object>of();
         }).orElse(null);
+    }
+
+    /**
+     * Bulgu 1 (2026-11-13, sayfa bütünlüğü): bu anahtarın AÇIK alarmının bağlamındaki verilen anahtarları tazeler (null değer
+     * = anahtarı sil). Yalnız anlık görüntü listesindeki ({@link #RESOLVED_CONTEXT_KEYS}) anahtarlar yazılabilir; bağlamın
+     * geri kalanı (alarm anı) korunur. HEDEFLİ yazım: yalnız {@code contextJson}, yalnız alarm hâlâ AÇIKSA
+     * ({@link AlertEventFieldWriter}) — okunan olay kaydedilmez, arada kapanan alarm yeniden açılmaz. Değişiklik yoksa yazmaz.
+     *
+     * <p>İnceleme 2026-11-13 (DÜŞÜK 7): yalnız {@code ownerCtx}'in SAHİBİ olduğu açık alarm tazelenir ({@link #closableBy} —
+     * aynı URL'yi izleyen başka bir takımın alarmının kaynağı değişmez); mevcut bağlam OKUNAMIYORSA hiç yazılmaz (yalnız
+     * yamayla yeniden yazmak alarm anının geri kalanını silerdi).
+     *
+     * @param ownerCtx tazelemeyi isteyen izlemenin sahiplik bağlamı ({@code monitor_id}, {@code team_id}); null = sahip bilinmez
+     * @return bağlam yazıldıysa true
+     */
+    public boolean refreshOpenAlertContext(String domain, String alertType, Map<String, Object> ownerCtx,
+                                           Map<String, Object> patch) {
+        if (patch == null || patch.isEmpty() || fieldWriter == null) return false;
+        for (String k : patch.keySet()) {
+            if (!RESOLVED_CONTEXT_KEYS.contains(k))
+                throw new IllegalArgumentException("Alarm bağlamında tazelenemeyen anahtar: " + k);
+        }
+        AlertEvent open = alertEventRepo.findOpenAlerts(domain, alertType).stream()
+                .filter(e -> e.getId() != null && closableBy(e, ownerCtx)).findFirst().orElse(null);   // en yeni sahibin alarmı
+        if (open == null) return false;
+        String raw = open.getContextJson();
+        Map<String, Object> current = deserializeContext(raw);
+        if (current == null && raw != null && !raw.isBlank()) return false;   // okunamayan bağlam → yazma yok
+        Map<String, Object> next = current != null ? new LinkedHashMap<>(current) : new LinkedHashMap<>();
+        boolean changed = false;
+        for (Map.Entry<String, Object> en : patch.entrySet()) {
+            Object v = en.getValue();
+            if (java.util.Objects.equals(next.get(en.getKey()), v)) continue;
+            if (v == null) next.remove(en.getKey()); else next.put(en.getKey(), v);
+            changed = true;
+        }
+        if (!changed) return false;
+        String json;
+        try { json = objectMapper.writeValueAsString(next); } catch (Exception e) { return false; }
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("contextJson", json);
+        return fieldWriter.writeValues(open.getId(), values, true) > 0;
     }
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?

@@ -46,10 +46,37 @@ describe('baselineModel', () => {
     expect(e.season).toBe('invalid')
   })
 
-  it('readiness: kapalı / kuruluyor / hazır', () => {
-    expect(readiness({ enabled: false }, 100)).toMatchObject({ state: 'off', tone: 'muted' })
-    expect(readiness({ enabled: true, min_samples: 10 }, 4)).toMatchObject({ state: 'building', tone: 'info', n: 4, min: 10 })
-    expect(readiness({ enabled: true, min_samples: 10 }, 30)).toMatchObject({ state: 'ready', tone: 'ok', n: 30 })
+  it('readiness: kapalı / kuruluyor / hazır — kaynak sunucunun değerlendirme penceresi', () => {
+    const saved = { enabled: true, direction: 'up', k_warning: 2.5, k_critical: 3.5, window: 30, min_samples: 10, season: 'none' }
+    const form = formFromConfig(saved)
+    expect(readiness({ enabled: false }, saved)).toMatchObject({ state: 'off', tone: 'muted' })
+    expect(readiness(form, { ...saved, global_enabled: true, ready_state: 'building', ready_samples: 4, ready_min: 10 }))
+      .toMatchObject({ state: 'building', tone: 'info', n: 4, min: 10 })
+    expect(readiness(form, { ...saved, global_enabled: true, ready_state: 'ready', ready_samples: 30, ready_min: 10 }))
+      .toMatchObject({ state: 'ready', tone: 'ok', n: 30 })
+  })
+
+  it('readiness: bilinmeyen ASLA yeşil değil (hata taraması #8)', () => {
+    const saved = { enabled: true, direction: 'up', k_warning: 2.5, k_critical: 3.5, window: 30, min_samples: 10, season: 'daily' }
+    const form = formFromConfig(saved)
+    // Ana anahtar kapalı → nötr (toplam örnek çok olsa da)
+    expect(readiness(form, { ...saved, global_enabled: false, sample_count: 900, ready_state: 'ready', ready_samples: 30 }))
+      .toMatchObject({ state: 'switchOff', tone: 'muted' })
+    // Mevsimselde eşleşen örnek yetersiz → nötr (toplam 900 olsa da)
+    expect(readiness(form, { ...saved, global_enabled: true, sample_count: 900, ready_state: 'insufficient', ready_samples: 3, ready_min: 10 }))
+      .toMatchObject({ state: 'insufficient', tone: 'muted', n: 3, min: 10 })
+    // Eski sunucu (ready_state / global_enabled yok): toplam ≥ min → doğrulanamaz (nötr), yeşil değil
+    expect(readiness(form, { ...saved, sample_count: 900 })).toMatchObject({ state: 'unverified', tone: 'muted', n: 900 })
+    expect(readiness(form, { ...saved, sample_count: 4 })).toMatchObject({ state: 'building', tone: 'info', n: 4, min: 10 })
+    // Kayıtlı değil (yeni açılıyor) → bilgi; pencere / min / mevsim değişti → yeniden hesaplanacak
+    expect(readiness(form, { ...saved, enabled: false, global_enabled: true })).toMatchObject({ state: 'notSaved', tone: 'info' })
+    expect(readiness({ ...form, window: 60 }, { ...saved, global_enabled: true, ready_state: 'ready', ready_samples: 30 }))
+      .toMatchObject({ state: 'pending', tone: 'info' })
+    // k / yön değişimi hazırlığı etkilemez
+    expect(readiness({ ...form, k_warning: 3 }, { ...saved, global_enabled: true, ready_state: 'ready', ready_samples: 30 }))
+      .toMatchObject({ state: 'ready' })
+    // Tanınmayan durum → nötr
+    expect(readiness(form, { ...saved, global_enabled: true, ready_state: 'weird' })).toMatchObject({ state: 'unknown', tone: 'muted' })
   })
 
   it('rangeOf: alan aralıkları', () => {

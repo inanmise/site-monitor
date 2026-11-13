@@ -2517,9 +2517,10 @@ export const api = {
       ).toString()
       return request(`/monitoring/page/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getPageIssues:     (id, { issueType, days, limit } = {}) => {
+    // checkId (2026-11-13): yalnız o kontrolün sorunları (eski sunucu yok sayar → pencere listesi döner, istemci süzer)
+    getPageIssues:     (id, { issueType, days, limit, checkId } = {}) => {
       const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ issueType, days, limit }).filter(([, v]) => v != null && v !== '')),
+        Object.fromEntries(Object.entries({ issueType, days, limit, checkId }).filter(([, v]) => v != null && v !== '')),
       ).toString()
       return request(`/monitoring/page/${id}/issues${q ? `?${q}` : ''}`)
     },

@@ -81,6 +81,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.KeywordCheckerService keywordChecker;
     /** kw-be2 Aşama 2: içerik değişimi temeli (alan enjeksiyonu; varsayılan cevaplar = temel yok). */
     @MockitoBean com.sitemonitor.service.keyword.content.KeywordChangeBaselineService keywordBaselines;
+    /** Dinamik taban çizgisi yapılandırması (alan enjeksiyonu; hata taraması 2026-11-13 #5 / #7). */
+    @MockitoBean com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
     @MockitoBean PingMonitorRepository pingMonitorRepo;
     @MockitoBean PingCheckRepository pingCheckRepo;
     @MockitoBean com.sitemonitor.service.PingCheckerService pingChecker;
@@ -168,6 +170,94 @@ class MonitoringControllerTest {
         s.setAttribute("username", "u");
         s.setAttribute("systemRole", role);
         return s;
+    }
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("Dinamik taban hata taraması 2026-11-13 (#5 etkin takım, #7 geri yüklemede örnek temizliği)")
+    class BaselineBugHunt20261113 {
+
+        private MockHttpSession memberOf(Long teamId) {
+            MockHttpSession s = sessionWithTeam("USER", teamId);
+            s.setAttribute("viewTeamIds", List.of(teamId));
+            s.setAttribute("manageTeamIds", List.of(teamId));
+            return s;
+        }
+
+        /** Envanter-TÜREVİ Port satırı: saklanan takım 5, envanter kaydı sonradan takım 9'a taşınmış. */
+        private com.sitemonitor.model.PortMonitor derivedPort() {
+            com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+            m.setId(7L); m.setName("Ödeme portu"); m.setHost("pay.example.com"); m.setPort(443);
+            m.setTeamId(5L); m.setStandalone(false); m.setActive(true);
+            CertificateInventory moved = inv("pay.example.com");
+            moved.setTeamId(9L);
+            when(inventoryRepo.findByDomain("pay.example.com")).thenReturn(Optional.of(moved));
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+            return m;
+        }
+
+        @Test
+        @DisplayName("#5 GET: türev Port'ta yetki ETKİN takımdan (envanter) — yeni sahip okur, eski (saklanan) takım 403")
+        void derivedPortGetUsesEffectiveTeam() throws Exception {
+            derivedPort();
+            when(baselineConfigService.view("port", 7L)).thenReturn(java.util.Map.of("enabled", false));
+            mvc.perform(get("/api/monitoring/baseline/port/7").session(memberOf(9L))).andExpect(status().isOk());
+            mvc.perform(get("/api/monitoring/baseline/port/7").session(memberOf(5L))).andExpect(status().isForbidden());
+        }
+
+        @Test
+        @DisplayName("#5 PUT: yeni sahip kaydeder (aç↔kapa geçişi YALNIZ bu izlemenin olayını kapatır), eski takım 403 — hiçbir şey yazılmaz")
+        void derivedPortPutUsesEffectiveTeam() throws Exception {
+            derivedPort();
+            when(baselineConfigService.save(eq("port"), eq(7L), any())).thenReturn(
+                    new com.sitemonitor.service.baseline.BaselineConfigService.SaveResult(true, false, java.util.Map.of()));
+            when(baselineConfigService.view("port", 7L)).thenReturn(java.util.Map.of("enabled", false));
+
+            mvc.perform(put("/api/monitoring/baseline/port/7").session(memberOf(5L))
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                    .andExpect(status().isForbidden());
+            verify(baselineConfigService, never()).save(anyString(), anyLong(), any());
+
+            mvc.perform(put("/api/monitoring/baseline/port/7").session(memberOf(9L))
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                    .andExpect(status().isOk());
+            verify(baselineConfigService).save(eq("port"), eq(7L), any());
+            // Türev satırın alarm bağlamı takım damgası taşımaz → sahiplik izleme kimliğiyle (ownerCtxDual)
+            verify(escalationService).resolveOpenAlertsSilently(eq("pay.example.com"),
+                    eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_PORT_SLOW)), eq("Sistem (taban çizgisi değişti)"),
+                    eq(java.util.Map.of("monitor_id", 7L)));
+        }
+
+        private com.sitemonitor.model.HttpMonitor http(String url) {
+            com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+            m.setId(11L); m.setName("Ödeme"); m.setUrl(url); m.setTeamId(5L); m.setActive(true); m.setIntervalSeconds(60);
+            when(httpMonitorRepo.findById(11L)).thenReturn(Optional.of(m));
+            return m;
+        }
+
+        private void stubRestore(String snapshot) {
+            com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+            r.setId(1L); r.setResourceKind("HTTP"); r.setResourceId(11L); r.setResourceName("Ödeme");
+            r.setSeq(0); r.setEventType("UPDATE"); r.setTeamId(5L); r.setSnapshot(snapshot);
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("HTTP", 11L, 0)).thenReturn(Optional.of(r));
+        }
+
+        @Test
+        @DisplayName("#7 geri yükleme URL'yi (taban hedefini) değiştirirse yanıt-süresi örnekleri temizlenir (güncellemeyle aynı)")
+        void restoreTargetChangeClearsSamples() throws Exception {
+            http("https://yeni.example.com/");
+            stubRestore("{\"url\":\"https://eski.example.com/\"}");
+            mvc.perform(post("/api/monitoring/changes/http/11/0/restore").session(memberOf(5L))).andExpect(status().isOk());
+            verify(baselineConfigService).clearSamples("http", 11L);
+        }
+
+        @Test
+        @DisplayName("#7 hedefi değiştirmeyen geri yükleme (yalnız aralık) örneklere DOKUNMAZ")
+        void restoreWithoutTargetChangeKeepsSamples() throws Exception {
+            http("https://ayni.example.com/");
+            stubRestore("{\"url\":\"https://ayni.example.com/\",\"intervalSeconds\":300}");
+            mvc.perform(post("/api/monitoring/changes/http/11/0/restore").session(memberOf(5L))).andExpect(status().isOk());
+            verify(baselineConfigService, never()).clearSamples(anyString(), anyLong());
+        }
     }
 
     private static CertificateInventory inv(String domain) {
@@ -554,6 +644,74 @@ class MonitoringControllerTest {
                         .content("{\"name\":\"hack\"}"))
                 .andExpect(status().isForbidden());
         org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+    }
+
+    // ── Sayfa bütünlüğü 2026-11-13 hata taraması ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Bulgu 9: minBrokenResources 1–100 dışı → 400 VALIDATION_FAILED + alan (sessiz kırpma yok); kayıt / grup yok")
+    void createPage_minBrokenOutOfRange_fieldError() throws Exception {
+        when(pageMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        for (String v : new String[]{"150", "0", "2.5"}) {
+            mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.com\",\"teamId\":1,"
+                                    + "\"minBrokenResources\":" + v + "}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("minBrokenResources"));
+        }
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+        org.mockito.Mockito.verify(monitoringGroupService, never()).getOrCreateFor(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Bulgu 9: güncellemede sınır dışı eşik alarm KAPATMADAN (active:false ile gelse de) reddedilir; kayıtlı "
+            + "değerle aynısı denetlenmez; geçerli değer kaydedilir")
+    void updatePage_minBrokenValidatedBeforeSideEffects() throws Exception {
+        com.sitemonitor.model.PageMonitor m = pageMon(5L, "https://x.com", 1L);
+        m.setMinBrokenResources(4);
+        when(pageMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+        when(pageMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false,\"minBrokenResources\":101}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("minBrokenResources"));
+        org.mockito.Mockito.verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any(), any());
+        org.mockito.Mockito.verify(pageMonitorRepo, never()).save(any());
+
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"minBrokenResources\":4}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.min_broken_resources").value(4));
+        mvc.perform(put("/api/monitoring/page/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"minBrokenResources\":100}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.min_broken_resources").value(100));
+    }
+
+    @Test
+    @DisplayName("Bulgu 7: /page/{id}/issues?checkId= o kontrolün TÜM sorunlarını döner (pencere sınırı yok); başka izlemenin "
+            + "kontrol satırı sızmaz")
+    void pageIssues_byCheckId() throws Exception {
+        when(pageMonitorRepo.findById(9L)).thenReturn(Optional.of(pageMon(9L, "https://x.com", 1L)));
+        com.sitemonitor.model.PageResourceIssue own = new com.sitemonitor.model.PageResourceIssue();
+        own.setId(1L); own.setCheckId(77L); own.setMonitorId(9L); own.setResourceUrl("https://x.com/a.js");
+        own.setIssueType("BROKEN");
+        com.sitemonitor.model.PageResourceIssue foreign = new com.sitemonitor.model.PageResourceIssue();
+        foreign.setId(2L); foreign.setCheckId(77L); foreign.setMonitorId(10L); foreign.setResourceUrl("https://gizli/b.js");
+        foreign.setIssueType("BROKEN");
+        when(pageResourceIssueRepo.findByCheckIdOrderByIdAsc(77L)).thenReturn(List.of(own, foreign));
+
+        mvc.perform(get("/api/monitoring/page/9/issues").param("checkId", "77").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].resource_url").value("https://x.com/a.js"));
+        org.mockito.Mockito.verify(pageResourceIssueRepo, never()).findFiltered(any(), any(), any(), anyInt());
     }
 
     @Test

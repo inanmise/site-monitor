@@ -554,6 +554,7 @@ public class EmailTemplateBuilder {
             String sFailed = strCtx(ctx, "failed_checks");
             if (sFailed != null && !sFailed.isBlank()) rows.add(Row.of("Düşen Doğrulamalar", sFailed));
         }
+        rows.addAll(baselineResolvedRows(alertType, ctx));   // dinamik taban bant alarmı (taban kapalıysa boş)
         if (durHuman != null) rows.add(Row.of("Alarm Süresi", durHuman));
         if (resolvedAt != null) rows.add(Row.of("Çözülme", formatHuman(resolvedAt)));
         rows.add(Row.of("Çözen", resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)"));
@@ -630,6 +631,7 @@ public class EmailTemplateBuilder {
             String sFailed = strCtx(ctx, "failed_checks");
             if (sFailed != null && !sFailed.isBlank()) sb.append("\nDüşen Doğrulamalar: ").append(sFailed);
         }
+        for (Row r : baselineResolvedRows(alertType, ctx)) sb.append("\n").append(r.label()).append(": ").append(r.text());
         if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
         if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
         sb.append("\nÇözen: ").append(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)");
@@ -685,6 +687,24 @@ public class EmailTemplateBuilder {
             if (val != null) rows.add(Row.of("Ölçülen Değer (güncel)", val));
             String dur = strCtx(ctx, "resolved_duration_ms");
             if (dur != null) rows.add(Row.of("Süre (güncel)", dur + " ms"));
+        }
+        return rows;
+    }
+
+    /**
+     * Dinamik taban bant alarmının çözüm satırları (HTML + düz metin ortak; hata taraması 2026-11-13 #9): alarm anındaki ölçülen
+     * değer ve öğrenilen olağan bant. Anahtarlar olayın anlık görüntüsünden ({@link EscalationService#RESOLVED_CONTEXT_KEYS}).
+     * Taban bağlamı yoksa boş — çözüm postası birebir aynı.
+     */
+    static List<Row> baselineResolvedRows(String alertType, Map<String, Object> ctx) {
+        List<Row> rows = new ArrayList<>();
+        if (ctx == null || alertType == null || !BASELINE_SLOW_TYPES.contains(alertType)
+                || !"true".equalsIgnoreCase(strCtx(ctx, "baseline"))) return rows;
+        String measured = msText(strCtx(ctx, "response_ms"));
+        if (measured != null) rows.add(Row.of("Ölçülen Değer (alarm anı)", measured));
+        if (strCtx(ctx, "baseline_low") != null || strCtx(ctx, "baseline_high") != null || strCtx(ctx, "baseline_mean") != null) {
+            String band = baselineBandText(ctx);
+            if (band != null) rows.add(Row.of("Dinamik Taban (alarm anı)", band));
         }
         return rows;
     }
@@ -870,8 +890,65 @@ public class EmailTemplateBuilder {
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
         }
+        if (isBaselineSlow(m.alertType(), c)) {
+            // Dinamik taban bant alarmı (hata taraması 2026-11-13 #9): ölçülen değer + öğrenilen olağan bant. HTTP'nin
+            // "Yanıt Süresi" satırı değeri zaten gösterir. Taban kapalı izlemede bu blok YOK (çıktı birebir aynı).
+            if (!isHttp(m.alertType())) addIf(out, "Ölçülen Değer", msText(strCtx(c, "response_ms")));
+            addIf(out, "Dinamik Taban", baselineBandText(c));
+            addIf(out, "Taban Kararı", baselineVerdictText(c));
+        }
         addIf(out, "Sorumlu Takım", m.teamName());
         return out;
+    }
+
+    /** Dinamik taban çizgisinin desteklediği yavaşlık türleri ({@code BaselineTypes} ile aynı yedi tür). */
+    static final java.util.Set<String> BASELINE_SLOW_TYPES = java.util.Set.of("HTTP_SLOW", "KEYWORD_SLOW", "PORT_SLOW",
+            "PING_SLOW", "PAGESPEED_SLOW", "SCRIPTED_SLOW", "DNS_SLOW");
+
+    /** Bağlam öğrenen-bant alarmı mı (SLOW builder {@code baseline=true} yazar; anlık görüntüde saklanır). */
+    static boolean isBaselineSlow(String alertType, Map<String, Object> c) {
+        return c != null && alertType != null && BASELINE_SLOW_TYPES.contains(alertType) && "true".equalsIgnoreCase(strCtx(c, "baseline"));
+    }
+
+    /** Milisaniye metni (yuvarlak) — sayı değilse null. */
+    static String msText(String v) {
+        Long n = roundMs(v);
+        return n == null ? null : n + " ms";
+    }
+
+    private static Long roundMs(String v) {
+        if (v == null) return null;
+        try {
+            double d = Double.parseDouble(v.trim());
+            return Double.isFinite(d) ? Math.round(d) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Öğrenilen olağan bant: "95 – 105 ms (ortalama 100 ms)"; uçlardan biri yoksa yalnız olan. */
+    static String baselineBandText(Map<String, Object> c) {
+        Long low = roundMs(strCtx(c, "baseline_low")), high = roundMs(strCtx(c, "baseline_high"));
+        Long mean = roundMs(strCtx(c, "baseline_mean"));
+        String band = low != null && high != null ? low + " – " + high + " ms"
+                : high != null ? "≤ " + high + " ms" : low != null ? "≥ " + low + " ms" : null;
+        if (band == null) return mean != null ? "ortalama " + mean + " ms" : null;
+        return mean != null ? band + " (ortalama " + mean + " ms)" : band;
+    }
+
+    /** Karar satırı: "Dinamik tabanın dışında (sapma 4,2σ)" — seviye sözcüğü YAZILMAZ (rozet ve "Seviye" satırı söyler). */
+    static String baselineVerdictText(Map<String, Object> c) {
+        String dev = strCtx(c, "baseline_deviation");
+        String sigma = null;
+        if (dev != null) {
+            try {
+                double d = Double.parseDouble(dev.trim());
+                if (Double.isFinite(d)) sigma = String.format(Locale.forLanguageTag("tr"), "%.1f", d) + "σ";
+            } catch (NumberFormatException ignore) {
+                // sayı değil → sapma yazılmaz
+            }
+        }
+        return "Dinamik tabanın dışında" + (sigma != null ? " (sapma " + sigma + ")" : "");
     }
 
     private String shortSummary(AlertMail m) {

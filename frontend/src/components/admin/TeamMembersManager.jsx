@@ -68,10 +68,14 @@ export default function TeamMembersManager({ team, users = [], canManage, global
   async function remove(u) {
     // Son takım da çıkarılabilir (2026-11-11): engelleme YOK — yalnız "takımsız kalacak" diye uyarırız.
     const willBeTeamless = (u.team_ids || []).filter((tid) => tid !== team.id).length === 0
+    // Uyarı kime göre (2026-11-13 hata taraması): takımsız ADMIN dışı kişiyi takım / kapsamlı yöneticiler artık göremez,
+    // yalnız global yönetici geri ekleyebilir — metin bunu söyler. ADMIN / AUDIT hesabı genel yetkili; "kapsamı boşalır"
+    // demek yanlıştı, ayrı metin.
+    const globalAccount = GLOBAL_ONLY_ROLES.has(String(u?.system_role || '').toUpperCase())
     const ok = await showConfirm({
       title: t('team.memberRemoveTitle'),
       message: willBeTeamless
-        ? t('team.memberRemoveTeamlessMsg', u.display_name || u.username, team.name)
+        ? t(globalAccount ? 'team.memberRemoveTeamlessAdminMsg' : 'team.memberRemoveTeamlessMsg', u.display_name || u.username, team.name)
         : t('team.memberRemoveMsg', u.display_name || u.username, team.name),
       confirmText: t('team.memberRemove'),
       variant: 'danger',

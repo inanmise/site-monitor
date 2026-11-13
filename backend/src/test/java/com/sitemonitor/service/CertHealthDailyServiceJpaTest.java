@@ -170,6 +170,28 @@ class CertHealthDailyServiceJpaTest {
     }
 
     @Test
+    @DisplayName("gerileme taraması 2026-11-13: sertifikası günün görüntüsünden SONRA eklenen takım — 'sertifika yok' değil, ilk görüntü bekleniyor (SY ve UG)")
+    void certificateAddedAfterTodaysSnapshot() {
+        Team c = new Team(); c.setName("Takım C"); c.setActive(true); Long teamC = teamRepo.save(c).getId();
+        Team d = new Team(); d.setName("Takım D"); d.setActive(true); Long teamD = teamRepo.save(d).getId();
+        svc.writeDailySnapshot(Instant.now());
+        // Görüntüden sonra: C'ye SY olarak, D'ye yalnız UG olarak sertifika geldi
+        inv("late-sy.example.com", teamC, null);
+        inv("late-ug.example.com", teamA, teamD);
+        for (Long t : List.of(teamC, teamD)) {
+            Map<String, Object> s = svc.series(90, t, false, x -> true);
+            assertThat(s).containsEntry("team_id", t).containsEntry("no_certificates", false).containsEntry("first_snapshot_pending", true);
+            assertThat(pts(s)).isEmpty();
+        }
+        // Yalnız pasif kaydı olan takım gerçekten "sertifika yok"
+        Team e = new Team(); e.setName("Takım E"); e.setActive(true); Long teamE = teamRepo.save(e).getId();
+        CertificateInventory gone = inv("paused-e.example.com", teamE, null); gone.setActive(false); inventoryRepo.save(gone);
+        assertThat(svc.series(90, teamE, false, x -> true)).containsEntry("no_certificates", true).containsEntry("first_snapshot_pending", false);
+        // Satırı olan takım ikisini de işaretlemez
+        assertThat(svc.series(90, teamA, false, x -> true)).containsEntry("no_certificates", false).containsEntry("first_snapshot_pending", false);
+    }
+
+    @Test
     @DisplayName("hata taraması 2026-11-13: seri yüzdesi aşağı kesilir (sayaçla aynı kural)")
     void seriesHealthIsFloored() {
         jdbc.update("INSERT INTO cert_health_daily(snap_day, team_key, total, evaluated, ok, under30, under7, expired, error_count, created_at) "

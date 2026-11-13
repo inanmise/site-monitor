@@ -5407,6 +5407,7 @@ public class SchedulerService {
         stopSweepLeaderRenewer();
         releaseSweepLeadership();
         shutdownManualRunPool();
+        stopIntegrityProbes();   // sayfa bütünlüğü hedefli ölçümü (bulgu 4) — beklemeden
         stopSideJobs();   // R3-1 3e: yan işler (ortak süreyle) durur, kilitleri SONRA bırakılır — koşan işin kilidi bırakılmasın
         // Bu pod'un iş kilitleri (2026-10-21, çok pod R1-A, MP-08): zamanlayıcı durduktan ve manuel koşu havuzu kapandıktan
         // SONRA bırakılır — ölen pod'un kilidi işi (izleyici, eskalasyon adımları, …) süre boyunca kümede durdurmasın.
@@ -6730,7 +6731,7 @@ public class SchedulerService {
                 m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), slow = new ArrayList<>();
-            addPageSpeedSweepItems(m, checkResult, down, slow);
+            addPageSpeedSweepItems(m, baselinePageSpeedManual(m, checkResult), down, slow);   // taban: bant kararı (#1)
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_DOWN, down, true);
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_SLOW, slow, true);
         } catch (Exception e) {
@@ -6745,7 +6746,7 @@ public class SchedulerService {
                 m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> fail = new ArrayList<>(), slow = new ArrayList<>();
-            addScriptedSweepItems(m, checkResult, fail, slow);
+            addScriptedSweepItems(m, baselineScriptedManual(m, checkResult), fail, slow);   // taban: bant kararı (#1)
             // Elle kontrolün başlatabileceği kurtarma zincirinin yeniden koşumları ELLE k6 kotasından (D-10).
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, onManualK6Quota(fail), true);
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, onManualK6Quota(slow), true);
@@ -6964,8 +6965,9 @@ public class SchedulerService {
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_PING_DOWN, downItem == null ? List.of() : List.of(downItem), true);
             // Manuel "Çalıştır" yavaşlığı da değerlendirir — yalnız KAPANIŞ için (2026-09-29: elle kontrol
-            // alarm açmaz); hızlanan hedefin açık yavaşlık alarmı elle kontrolde de kapanabilir.
-            MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, r);   // D-7: ölçülemediyse null
+            // alarm açmaz); hızlanan hedefin açık yavaşlık alarmı elle kontrolde de kapanabilir. Taban açıksa bant kararı
+            // (örnek yazmadan) — sabit yolun sentetik "up"ı açık bant alarmını sahte kapatmasın (hata taraması 2026-11-13 #1).
+            MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, baselinePingManual(m, r));   // D-7: ölçülemediyse null
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_PING_SLOW, slowItem == null ? List.of() : List.of(slowItem), true);
         } catch (Exception e) {
@@ -7069,19 +7071,28 @@ public class SchedulerService {
 
     /**
      * Taban çizgisi AÇIK bir izlemenin ZAMANLANMIŞ kontrolünde (lider): bant kararını {@code r}'ye {@code baseline_*} olarak
-     * enjekte eder ve örneği (değer + ihlal) yazar. Kapalı / bean yok / ölçülemedi → {@code r} değişmez, builder sabit eşik
-     * yolunu kullanır. İki yerden çağrılır (klasik sweep + dağıtık apply) — tek kaynak, ikisi sapmaz.
+     * enjekte eder ve örneği (değer + ihlal) yazar. Kapalı / bean yok → {@code r} değişmez, builder sabit eşik yolunu kullanır.
+     * Yapılandırma açılıştan beri HİÇ okunamadıysa (durum BİLİNMİYOR — hata taraması 2026-11-13 #10) yalnız {@code CTX_ON}
+     * yazılır: builder kalem üretmez (ne açar ne kapatır), sabit yolun sentetik "up"ı açık bant alarmını sahte kapatmaz; örnek
+     * yazılmaz. İki yerden çağrılır (klasik sweep + dağıtık apply) — tek kaynak, ikisi sapmaz.
      */
     private void applyBaselineScheduled(String type, Long monitorId, Long respMs, boolean measured, Map<String, Object> r) {
-        if (baselineService == null || monitorId == null || !baselineService.enabledFor(type, monitorId)) return;
-        // Taban çizgisi AÇIK → SLOW builder öğrenen-bant dalını alır. Bu izlemede ölçülemediyse (hata / süre yok)
-        // CTX_EVALUATED YAZILMAZ → builder kalem üretmez (D-7): sabit eşiğin "up" sentetiği, hedef ölçülemezken açık
+        if (baselineService == null || monitorId == null) return;
+        com.sitemonitor.service.baseline.BaselineService.State st = baselineService.state(type, monitorId);
+        if (st == com.sitemonitor.service.baseline.BaselineService.State.DISABLED) return;
+        // Taban çizgisi AÇIK (ya da bilinmiyor) → SLOW builder öğrenen-bant dalını alır. Bu izlemede ölçülemediyse (hata /
+        // süre yok) CTX_EVALUATED YAZILMAZ → builder kalem üretmez (D-7): sabit eşiğin "up" sentetiği, hedef ölçülemezken açık
         // bant alarmını SAHTE kapatmasın. Örnek de yalnız ÖLÇÜLEN değerde yazılır.
         r.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
-        if (respMs == null || !measured) return;
+        if (st != com.sitemonitor.service.baseline.BaselineService.State.ENABLED || respMs == null || !measured) return;
         com.sitemonitor.service.baseline.BaselineMath.Verdict v =
                 baselineService.evaluateScheduled(type, monitorId, respMs, System.currentTimeMillis(), null);
         if (v == null) { r.remove(com.sitemonitor.service.baseline.BaselineService.CTX_ON); return; }   // yarış: config kapandı → sabit eşik yolu
+        putBaselineVerdict(r, respMs, v);
+    }
+
+    /** Bant kararını {@code r}'ye {@code baseline_*} anahtarlarıyla yazar (zamanlanmış + elle yol ortak). */
+    private static void putBaselineVerdict(Map<String, Object> r, Long respMs, com.sitemonitor.service.baseline.BaselineMath.Verdict v) {
         r.put(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE, respMs);
         r.put(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED, v.evaluated());
         if (v.level() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL, v.level());
@@ -7092,6 +7103,29 @@ public class SchedulerService {
         if (v.note() != null) r.put(com.sitemonitor.service.baseline.BaselineService.CTX_NOTE, v.note());
     }
 
+    /**
+     * ELLE "Şimdi kontrol et" sonucunun taban çizgisi bağlamı (hata taraması 2026-11-13 #1). Elle yol (ve takipçiden gelen
+     * kutusundan liderin değerlendirdiği elle sonuç — ikisi de {@code evaluate*Now}'dan geçer) eskiden {@code baseline_*}
+     * enjekte etmiyordu: sabit eşik yolu (yavaşlık kapalıysa sentetik "up" / eşik altı = sağlıklı) kurtarma zincirini sabit
+     * recheck'le başlatıp açık BANT alarmını hedef hâlâ yavaşken "ÇÖZÜLDÜ" diye kapatıyordu. Artık taban açıksa (ya da
+     * bilinmiyorsa) {@code CTX_ON} konur ve karar {@code evaluateRecheck} ile ÖRNEK YAZMADAN verilir; değerlendirilemezse (taban
+     * kuruluyor / ölçülemedi / bilinmiyor) builder kalem üretmez. Kapalıysa {@code r} AYNEN döner (bugünkü davranış). Çağıranın
+     * haritası değiştirilmez (elle uç onu yanıtta da döndürebilir) — kopya döner.
+     */
+    private Map<String, Object> baselineManual(String type, Long monitorId, Long respMs, boolean measured, Map<String, Object> r) {
+        if (baselineService == null || monitorId == null || r == null) return r;
+        com.sitemonitor.service.baseline.BaselineService.State st = baselineService.state(type, monitorId);
+        if (st == com.sitemonitor.service.baseline.BaselineService.State.DISABLED) return r;
+        Map<String, Object> out = new LinkedHashMap<>(r);
+        out.put(com.sitemonitor.service.baseline.BaselineService.CTX_ON, true);
+        if (st != com.sitemonitor.service.baseline.BaselineService.State.ENABLED || respMs == null || !measured) return out;
+        com.sitemonitor.service.baseline.BaselineMath.Verdict v =
+                baselineService.evaluateRecheck(type, monitorId, respMs, System.currentTimeMillis(), null);
+        if (v == null) return r;   // yarış: config kapandı → sabit eşik yolu (bugünkü)
+        putBaselineVerdict(out, respMs, v);
+        return out;
+    }
+
     /** HTTP için taban çizgisi enjeksiyonu (klasik sweep + dağıtık apply ortak). */
     private void baselineHttpScheduled(HttpMonitor m, Map<String, Object> r) {
         Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
@@ -7099,12 +7133,19 @@ public class SchedulerService {
                 r.get("error") == null && respMs != null, r);
     }
 
+    /** HTTP elle sonucu — zamanlanmışla AYNI ölçüm kuralı, örnek yazmadan ({@link #baselineManual}). */
+    private Map<String, Object> baselineHttpManual(HttpMonitor m, Map<String, Object> r) {
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        return baselineManual(com.sitemonitor.service.baseline.BaselineTypes.HTTP, m.getId(), respMs,
+                r.get("error") == null && respMs != null, r);
+    }
+
     /**
      * Taban-çizgisi SLOW kalemi — TÜM TÜRLER ORTAK. Türün KENDİ bağlamı ({@code slowCtx}: monitor_name / anahtar / id /
      * confirm / recovery / team / group) verilir; karar, {@code detail} ve recheck ortaktır. Taban HENÜZ KURULUYORSA
      * ({@code baseline_evaluated=false}) kalem YOK (D-7: karar yok = sağlıklı değil → açık alarm sahte kapanmaz).
-     * Değerlendirildiyse yavaş = bant dışı (uyarı/kritik). {@code detail} KARARLI ({@code SLOW_DETAIL}) — zincir anahtarı
-     * bant kaydıkça değişmesin.
+     * Değerlendirildiyse yavaş = bant dışı (uyarı/kritik; kritik → {@code alert_level=CRITICAL}). {@code detail} KARARLI
+     * ({@code SLOW_DETAIL}) — zincir anahtarı bant kaydıkça değişmesin.
      */
     private MonitoringOutageService.SweepItem baselineSlowItem(String alertType, String domainKey,
             com.sitemonitor.model.MonitorAlertPrefs prefs, Map<String, Object> slowCtx, Map<String, Object> r,
@@ -7119,6 +7160,10 @@ public class SchedulerService {
         slowCtx.put("baseline_low", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LOW));
         slowCtx.put("baseline_level", level);
         slowCtx.put("baseline_deviation", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_DEVIATION));
+        // Kritik katsayıyı aşan sapma alarmı KRİTİK seviyede açar / açık alarmı yükseltir (dbquery ANOMALY ilkesi; hata taraması
+        // 2026-11-13 #6). Uyarı aşımında seviye yazılmaz → chanCtx izlemenin kendi seviyesini koyar (sabit yolla aynı).
+        if (com.sitemonitor.service.baseline.BaselineMath.LEVEL_CRITICAL.equals(level))
+            slowCtx.put("alert_level", com.sitemonitor.model.MonitorAlertPrefs.LEVEL_CRITICAL);
         return new MonitoringOutageService.SweepItem(alertType, domainKey,
                 com.sitemonitor.service.baseline.BaselineService.SLOW_DETAIL, !slow, null, chanCtx(slowCtx, prefs), recheck);
     }
@@ -7232,6 +7277,13 @@ public class SchedulerService {
         applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.PING, m.getId(), rtt, measured, r);
     }
 
+    /** Ping elle sonucu — zamanlanmışla AYNI ölçüm kuralı, örnek yazmadan. */
+    private Map<String, Object> baselinePingManual(PingMonitor m, Map<String, Object> r) {
+        Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = "up".equals(r.get("status")) && !Boolean.TRUE.equals(r.get("na")) && rtt != null;
+        return baselineManual(com.sitemonitor.service.baseline.BaselineTypes.PING, m.getId(), rtt, measured, r);
+    }
+
     private MonitoringOutageService.SweepItem pingBaselineSlowItem(PingMonitor m, Map<String, Object> r) {
         Map<String, Object> slowCtx = new LinkedHashMap<>();
         slowCtx.put("monitor_name", m.getName());
@@ -7264,6 +7316,14 @@ public class SchedulerService {
         applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), respMs, measured, r);
     }
 
+    /** Sayfa hızı elle sonucu — zamanlanmışla AYNI ölçüm kuralı, örnek yazmadan. */
+    private Map<String, Object> baselinePageSpeedManual(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r) {
+        if (m == null || r == null) return r;   // eski davranış: builder kendi hatasını verir
+        Long respMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = !Boolean.TRUE.equals(r.get("config_error")) && Boolean.TRUE.equals(r.get("reachable")) && respMs != null;
+        return baselineManual(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), respMs, measured, r);
+    }
+
     private MonitoringOutageService.SweepItem pageSpeedBaselineSlowItem(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r) {
         Map<String, Object> slowCtx = new LinkedHashMap<>();
         slowCtx.put("monitor_name", m.getName());
@@ -7291,6 +7351,14 @@ public class SchedulerService {
         // Yalnız PASS koşumunun süresi geçerli; düşen / atlanan (altyapı) koşum tabana girmesin.
         boolean measured = !Boolean.TRUE.equals(r.get("skipped")) && Boolean.TRUE.equals(r.get("up")) && durMs != null;
         applyBaselineScheduled(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, m.getId(), durMs, measured, r);
+    }
+
+    /** Sentetik elle sonucu — zamanlanmışla AYNI ölçüm kuralı, örnek yazmadan. */
+    private Map<String, Object> baselineScriptedManual(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r) {
+        if (m == null || r == null) return r;   // eski davranış: builder kendi hatasını verir
+        Long durMs = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        boolean measured = !Boolean.TRUE.equals(r.get("skipped")) && Boolean.TRUE.equals(r.get("up")) && durMs != null;
+        return baselineManual(com.sitemonitor.service.baseline.BaselineTypes.SCRIPTED, m.getId(), durMs, measured, r);
     }
 
     private MonitoringOutageService.SweepItem scriptedBaselineSlowItem(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r) {
@@ -7381,7 +7449,7 @@ public class SchedulerService {
                     EscalationService.TYPE_HTTP_DOWN, List.of(httpSweepItem(m, r)), true);
             // Yavaşlık da yalnız KAPANIŞ için (elle kontrol alarm açmaz). Yavaşlık kapalı / ölçülemedi → kalem yok:
             // boş liste handleSweepResults'ta anında döner (yavaşlığı kullanmayan izlemede davranış aynı).
-            MonitoringOutageService.SweepItem slowItem = httpSlowSweepItem(m, r);
+            MonitoringOutageService.SweepItem slowItem = httpSlowSweepItem(m, baselineHttpManual(m, r));   // taban: bant kararı (#1)
             if (slowItem != null) {
                 monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SLOW, List.of(slowItem), true);
             }
@@ -7787,11 +7855,13 @@ public class SchedulerService {
         if (crawlers.isEmpty()) return;
         List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
+        List<Map.Entry<com.sitemonitor.model.PageMonitor, Map<String, Object>>> crawled = new ArrayList<>();
         // Tek site anda: SIRALI (fan-out YOK) — tek-pod yük + nezaket.
         for (com.sitemonitor.model.PageMonitor m : crawlers) {
             try {
                 Map<String, Object> r = recheckPage(m, false, "SITE_CRAWL");
                 addPageSweepItems(m, r, downSweep, integritySweep, true);   // günlük crawl (bu dalda hedefli ölçüm zaten koşmaz)
+                crawled.add(Map.entry(m, r));
             } catch (Exception e) {
                 log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
             }
@@ -7800,7 +7870,36 @@ public class SchedulerService {
         catch (Exception e) { log.warn("Page crawl DOWN processing failed: {}", e.getMessage(), e); }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
         catch (Exception e) { log.warn("Page crawl INTEGRITY processing failed: {}", e.getMessage(), e); }
+        for (var e : crawled) refreshOpenCrawlSource(e.getKey(), e.getValue());
         log.debug("Page crawl complete: {} sites", crawlers.size());
+    }
+
+    /**
+     * Bulgu 1 (2026-11-13): günlük derin tarama hâlâ SORUNLU dediğinde açık bütünlük alarmının KAYNAĞI tazelenir — sorunlu
+     * sayfalar + kırpılma bayrağı + kapsam CRAWL. Bağlam yalnız açılışta yazılıyordu: alarmdaki (en çok 5) sayfa düzelip başka
+     * sayfalar kırıldığında sık taramanın hedefli ölçümü ESKİ listeye bakıp alarmı kapatıyor, sonraki günlük tarama yeniden
+     * açıyordu (sahte kapanış + yeni ilk bildirim). Ana sayfa kaynaklı (HOME) açık alarm da CRAWL'a geçer: derin bulgu varken
+     * ana sayfa temizliği kanıt değildir (D-7). Daha önce başlamış hedefli ölçümün sonucu bu taramadan sonra kanıt sayılmaz.
+     * Hedefli yazım (yalnız bağlam, yalnız açık alarm); hata yutulur — tarama ve alarm kararı etkilenmez.
+     */
+    private void refreshOpenCrawlSource(com.sitemonitor.model.PageMonitor m, Map<String, Object> r) {
+        if (m == null || r == null || !"SITE_CRAWL".equalsIgnoreCase(String.valueOf(r.get("check_mode")))) return;
+        if (!Boolean.TRUE.equals(r.get("main_up")) || Boolean.TRUE.equals(r.get("integrity_up"))) return;
+        List<String> pages = stringList(r.get("problem_pages"));
+        if (pages.isEmpty()) return;
+        invalidateIntegrityProbe(m.getId());
+        try {
+            Map<String, Object> patch = new LinkedHashMap<>();
+            patch.put("integrity_scope", "CRAWL");
+            patch.put("problem_pages", pages);
+            patch.put("problem_pages_truncated", Boolean.TRUE.equals(r.get("problem_pages_truncated")));
+            Map<String, Object> owner = new LinkedHashMap<>();   // inceleme 2026-11-13 (DÜŞÜK 7): yalnız bu izlemenin alarmı
+            owner.put("monitor_id", m.getId());
+            if (m.getTeamId() != null) owner.put("team_id", m.getTeamId());
+            escalationService.refreshOpenAlertContext(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY, owner, patch);
+        } catch (Exception e) {
+            log.debug("Açık bütünlük alarmının kaynağı tazelenemedi {}: {}", m.getUrl(), e.getMessage());
+        }
     }
 
     /** Bir page kontrol sonucundan iki SweepItem (DOWN + INTEGRITY) üretip ilgili listelere ekler. */
@@ -7862,7 +7961,15 @@ public class SchedulerService {
         if (!integrityMeasured) return;
         integ.put("integrity_scope", crawlCheck ? "CRAWL" : "HOME");
         List<String> problemPages = crawlCheck && !integrityUp ? stringList(r.get("problem_pages")) : List.of();
-        if (!problemPages.isEmpty()) integ.put("problem_pages", problemPages);
+        // Bulgu 1/2 (2026-11-13): tarama 5'ten FAZLA sayfada sorun bulduysa liste kırpılmıştır — bayrak alarm bağlamına
+        // yazılır (hedefli kapanış kapısı). İnceleme 2026-11-13 (ORTA 2): açılış teyidi listeye girmeyen sayfaların tarama
+        // bulgusunu yeniden ölçülen sorunlara ekler (recheckIntegrityPages) — eşik yalnız ilk 5 sayfayla ölçülmez.
+        boolean pagesTruncated = !problemPages.isEmpty() && Boolean.TRUE.equals(r.get("problem_pages_truncated"));
+        List<PageCheckerService.ResourceIssue> unlisted = pagesTruncated ? unlistedIssuesOf(r) : List.of();
+        if (!problemPages.isEmpty()) {
+            integ.put("problem_pages", problemPages);
+            integ.put("problem_pages_truncated", pagesTruncated);
+        }
         java.util.function.Supplier<Map<String, Object>> homeRecheck = () -> {
             Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
             if (Boolean.TRUE.equals(p.get("config_error"))) return Map.of("status", "up");
@@ -7874,14 +7981,15 @@ public class SchedulerService {
             recheck = homeRecheck;
         } else if (!integrityUp) {
             // Bulgu: kaynağı yeniden ölç (derin → sorunlu sayfalar; ana sayfa → ana sayfa).
-            recheck = problemPages.isEmpty() ? homeRecheck : () -> recheckIntegrityPages(m, problemPages);
+            recheck = problemPages.isEmpty() ? homeRecheck : () -> recheckIntegrityPages(m, problemPages, unlisted);
         } else if (!crawlMonitor) {
             recheck = homeRecheck;   // SINGLE_PAGE izlemesi: ana sayfa kapsamın tamamı
         } else if (crawlCheck) {
             // Tam crawl temiz → kurtarma doğrulaması açık alarmın KAYNAĞINA bakar (tembel: yalnız zincir koşunca okunur).
+            // Tam taramanın kendisi temiz olduğundan (kanıt tam) kırpılmış listenin temizliği burada yeterlidir.
             recheck = () -> {
                 List<String> openPages = openIntegrityProblemPages(m);
-                return openPages.isEmpty() ? homeRecheck.get() : recheckIntegrityPages(m, openPages);
+                return openPages.isEmpty() ? homeRecheck.get() : recheckIntegrityPages(m, openPages, List.of());
             };
         } else {
             // Crawl izlemesinde yalnız ANA SAYFA turu temiz. D-7: ana sayfa temizliği tüm sitenin temiz olduğunu
@@ -7899,24 +8007,24 @@ public class SchedulerService {
                 recheck = homeRecheck;   // ana sayfa kaynaklı alarm: ana sayfa kapsamın tamamı
             } else {
                 List<String> openPages = "CRAWL".equals(scope) ? stringList(openCtx.get("problem_pages")) : List.of();
-                if (openPages.isEmpty()) return;   // alarm yok / kaynaksız eski alarm → günlük crawl kapatır (D-7)
-                // Perf (2026-11-12 inceleme): zamanlı sweep'te hedefli kurtarma ölçümü HER tıkta değil, izleme başına en
-                // çok kurtarma kadencesinde (taban 120 sn) koşar — açık alarm süresince sık tarama thread'ini her tıkta
-                // 5 sayfa çekmekle meşgul etmez. Ölçüm yapılmayan tık MOS kurtarma sayacı için NÖTRdür (reconcileRecoveries
-                // yalnız KALEM GELEN anahtarı işler; sayaç yalnız sahibe ait DOWN kalemde sıfırlanır) → kapanış biraz
-                // yavaşlar ama sağlam kalır, D-7 ve flapping korunur. Elle kontrol (evaluatePageNow, @Async — istek
-                // thread'i DEĞİL — scheduledSweep=false) seyrek/kullanıcı tetikli olduğundan her seferinde ölçer.
-                if (scheduledSweep && !integrityRecoveryProbeDue(m)) return;
-                Map<String, Object> probe;
-                try { probe = recheckIntegrityPages(m, openPages); }
-                catch (Exception e) {
-                    log.debug("Sık taramada hedefli kurtarma ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
-                    return;   // ölçülemedi → kalem yok (alarm açık kalır, günlük crawl doğrular)
+                // Bulgu 1 (2026-11-13): kırpılmış sorunlu-sayfa listesi (taramada 5'ten fazla sorunlu sayfa vardı) KISMİ
+                // kanıttır — listedeki sayfaların temizlenmesi diğerlerinin temiz olduğunu kanıtlamaz (D-7). Kapanış yalnız
+                // TEMİZ günlük taramaya kalır. Bayraksız eski alarmda tam 5 sayfa = kırpılmış olabilir → aynı tutucu karar.
+                if (openPages.isEmpty() || integrityPagesTruncated(openCtx, openPages)) {
+                    invalidateIntegrityProbe(m.getId());
+                    return;   // alarm yok / kaynaksız eski alarm / kısmi kanıt → günlük crawl kapatır (D-7)
                 }
-                if (!"up".equals(String.valueOf(probe.get("status")))) return;   // hâlâ sorunlu / ölçülemedi → kalem yok
+                // Perf (2026-11-12 inceleme): zamanlı sweep'te hedefli kurtarma ölçümü HER tıkta değil, izleme başına en
+                // çok kurtarma kadencesinde (taban 120 sn) koşar. Ölçüm yapılmayan tık MOS kurtarma sayacı için NÖTRdür
+                // (reconcileRecoveries yalnız KALEM GELEN anahtarı işler) → kapanış biraz yavaşlar ama sağlam kalır, D-7 ve
+                // flapping korunur. Bulgu 4 (2026-11-13): ölçüm artık bu çağrının İÇİNDE koşmaz (5 sayfa × 120 sn sık tarama
+                // döngüsünü, dağıtık sonuç boşaltıcısını ve elle değerlendirmeyi dakikalarca tutuyordu) — ayrı sınırlı
+                // yürütücüde başlar, sonucu bu izlemenin SONRAKİ değerlendirmesinde okunur (takeIntegrityProbe).
+                String probe = takeIntegrityProbe(m, openPages, scheduledSweep);
+                if (!"up".equals(probe)) return;   // ölçüm sürüyor / hâlâ sorunlu / ölçülemedi → kalem yok
                 integ.put("integrity_scope", "CRAWL");                 // kurtarma kalemi kaynağı taşır (tutarlılık)
                 integ.put("problem_pages", openPages);
-                recheck = () -> recheckIntegrityPages(m, openPages);   // kurtarma zinciri de hedefli sayfaları ölçer
+                recheck = () -> recheckIntegrityPages(m, openPages, List.of());   // kurtarma zinciri de hedefli sayfaları ölçer
             }
         }
         integritySweep.add(new MonitoringOutageService.SweepItem(
@@ -7957,6 +8065,159 @@ public class SchedulerService {
         if (prev != null && now - prev < periodMs) return false;
         integrityRecoveryProbeAt.put(m.getId(), now);
         return true;
+    }
+
+    /** Bulgu 1: açık alarm bağlamındaki sorunlu-sayfa listesi kırpılmış mı. Bayrak yoksa (eski alarm) tavan dolu liste
+     *  kırpılmış SAYILIR — bilinmeyen kısmi kanıt sağlık kanıtı olamaz. */
+    static boolean integrityPagesTruncated(Map<String, Object> ctx, List<String> pages) {
+        Object f = ctx == null ? null : ctx.get("problem_pages_truncated");
+        if (f instanceof Boolean b) return b;
+        if (f != null) return Boolean.parseBoolean(String.valueOf(f));
+        return pages != null && pages.size() >= INTEGRITY_RECHECK_MAX_PAGES;
+    }
+
+    /**
+     * Bulgu 4 (2026-11-13): sık taramanın HEDEFLİ kurtarma ölçümü (açık CRAWL alarmının sorunlu sayfaları, en çok 5 sayfa ×
+     * izlemenin süre tavanı) değerlendirme döngüsünün DIŞINDA koşar. İzleme başına en çok bir ölçüm sürer; biten ölçümün
+     * sonucu bu izlemenin bir SONRAKİ değerlendirmesinde (klasik tarama tıkı, dağıtık sonuç uygulaması ya da elle kontrol)
+     * okunup tüketilir. Sonuç yalnız AYNI sayfa listesi, AYNI liderlik dönemi ve tazelik sınırı içinde geçerlidir
+     * ({@link #integrityProbeTtlMs}); günlük taramanın yeni bulgusu eski ölçümü geçersiz kılar ({@link #refreshOpenCrawlSource}).
+     * Kapanış kuralları değişmez: "up" sonucu kurtarma kalemini üretir, kapanışı yine kurtarma zinciri (taze ölçümlerle) verir.
+     *
+     * <p>İnceleme 2026-11-13 (ORTA 3): tazelik ölçümün BİTTİĞİ andan sayılır (kuyrukta bekleme sonucu bayatlatmaz) ve izleme
+     * başına UÇUŞTA tek iş vardır — bayatlamış (sayfa listesi / liderlik değişti, günlük tarama geçersiz kıldı) ama henüz
+     * bitmemiş iş varken aynı izleme için yenisi gönderilmez (çift trafik yok); bitince sonucu atılır, sıradaki başlar.
+     * Yalnız {@link #INTEGRITY_PROBE_STUCK_MS}'den uzun SÜREN (kuyrukta beklemeyen) iş takılı sayılıp bırakılır.
+     */
+    record IntegrityProbe(List<String> pages, long leaderSince,
+                          java.util.concurrent.atomic.AtomicLong startedAt,
+                          java.util.concurrent.atomic.AtomicBoolean invalid,
+                          java.util.concurrent.CompletableFuture<ProbeResult> result) {
+        IntegrityProbe(List<String> pages, long leaderSince) {
+            this(pages, leaderSince, new java.util.concurrent.atomic.AtomicLong(),
+                    new java.util.concurrent.atomic.AtomicBoolean(), new java.util.concurrent.CompletableFuture<>());
+        }
+    }
+
+    /** Hedefli ölçümün sonucu ve BİTİŞ anı (tazelik buradan sayılır). */
+    record ProbeResult(String status, long finishedAt) {}
+
+    private final java.util.concurrent.ConcurrentHashMap<Long, IntegrityProbe> integrityProbes = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Hedefli ölçüm yürütücüsü — ilk ölçümde kurulur (sınırlı: {@value #INTEGRITY_PROBE_THREADS} iş parçacığı, kuyruk
+     *  {@value #INTEGRITY_PROBE_QUEUE}); testler aynı iş parçacığında çalıştıran yürütücü koyar. */
+    private volatile java.util.concurrent.Executor integrityProbeExecutor;
+    /** Hedefli ölçümün saati (tazelik / takılma hesabı) — testler sabit saat koyar. */
+    private volatile java.util.function.LongSupplier integrityProbeClock = System::currentTimeMillis;
+    static final int INTEGRITY_PROBE_THREADS = 2;
+    static final int INTEGRITY_PROBE_QUEUE = 64;
+    /** Hedefli ölçüm sonucunun asgari geçerlilik süresi (bitişten); izleme aralığı uzunsa 2 × aralık + 60 sn. */
+    static final long INTEGRITY_PROBE_MIN_TTL_MS = 10 * 60_000L;
+    /** Başlamış ölçümün takılı sayıldığı süre — süre tavanları (5 sayfa × izlemenin wall-clock tavanı) bunun çok altında. */
+    static final long INTEGRITY_PROBE_STUCK_MS = 30 * 60_000L;
+
+    static long integrityProbeTtlMs(com.sitemonitor.model.PageMonitor m) {
+        long interval = m != null && m.getIntervalSeconds() != null && m.getIntervalSeconds() > 0 ? m.getIntervalSeconds() : 300;
+        return Math.max(INTEGRITY_PROBE_MIN_TTL_MS, 2 * interval * 1000L + 60_000L);
+    }
+
+    /**
+     * Hedefli ölçümün HAZIR sonucunu tüketir ya da (sırası geldiyse) yeni ölçüm başlatır — çağıranı asla ölçüm kadar
+     * bekletmez. Döner: {@code "up" | "down" | "skipped"} (sonuç hazır) ya da {@code null} (ölçüm sürüyor / başlatılmadı).
+     */
+    private String takeIntegrityProbe(com.sitemonitor.model.PageMonitor m, List<String> pages, boolean scheduledSweep) {
+        Long id = m.getId();
+        if (id == null) return null;
+        long now = integrityProbeClock.getAsLong();
+        long leaderSince = sweepLeaderSinceMs();
+        IntegrityProbe p = integrityProbes.get(id);
+        if (p != null) {
+            if (!p.result().isDone()) {
+                long started = p.startedAt().get();
+                if (started == 0L || now < started || now - started <= INTEGRITY_PROBE_STUCK_MS) return null;   // uçuşta
+                integrityProbes.remove(id, p);   // takılı: süre tavanlarını çok aştı → bırakılır, yenisi başlayabilir
+                log.warn("Hedefli kurtarma ölçümü {} dakikadır bitmedi, bırakıldı: {}", (now - started) / 60_000L, m.getUrl());
+            } else {
+                integrityProbes.remove(id, p);
+                ProbeResult done = p.result().getNow(null);
+                boolean fresh = done != null && !p.invalid().get() && p.pages().equals(pages)
+                        && p.leaderSince() == leaderSince && now >= done.finishedAt()
+                        && now - done.finishedAt() <= integrityProbeTtlMs(m);
+                if (fresh && "up".equals(done.status())) return "up";
+                // bayat / hâlâ sorunlu / ölçülemedi → kalem yok; sıradaki ölçüm (kadansa uygunsa) hemen başlar — kapanış
+                // sonuç başına bir değerlendirme aralığı geç kalmasın
+            }
+        }
+        if (stopping() || (scheduledSweep && !integrityRecoveryProbeDue(m))) return null;
+        IntegrityProbe np = new IntegrityProbe(List.copyOf(pages), leaderSince);
+        if (integrityProbes.putIfAbsent(id, np) != null) return null;
+        try {
+            integrityProbeExecutor().execute(() -> runIntegrityProbe(m, np));
+        } catch (RuntimeException e) {   // kuyruk dolu / kapanıyor → bu tık ölçüm yok, sonraki tık yeniden dener
+            integrityProbes.remove(id, np);
+            log.debug("Hedefli kurtarma ölçümü kuyruğa alınamadı {}: {}", m.getUrl(), e.toString());
+            return null;
+        }
+        if (np.result().isDone()) {   // aynı iş parçacığında koşan yürütücü (test) ya da anında biten ölçüm
+            integrityProbes.remove(id, np);
+            ProbeResult r = np.result().getNow(null);
+            return r != null && !np.invalid().get() ? r.status() : null;
+        }
+        return null;
+    }
+
+    /** Hedefli ölçüm görevi (yürütücüde). İnceleme 2026-11-13 (DÜŞÜK 4): kuyrukta beklerken kapanış başladıysa ÖLÇMEZ. */
+    private void runIntegrityProbe(com.sitemonitor.model.PageMonitor m, IntegrityProbe p) {
+        p.startedAt().set(integrityProbeClock.getAsLong());
+        String status;
+        if (stopping()) {
+            status = "skipped";   // pod kapanıyor → yeni ağ trafiği yok; sonuç zaten kanıt sayılmaz
+        } else {
+            try {
+                status = String.valueOf(recheckIntegrityPages(m, p.pages(), List.of()).get("status"));
+            } catch (Throwable t) {
+                log.debug("Hedefli kurtarma ölçümü başarısız {}: {}", m.getUrl(), t.toString());
+                status = "skipped";   // ölçülemedi → kalem yok (alarm açık kalır, günlük crawl doğrular)
+            }
+        }
+        p.result().complete(new ProbeResult(status, integrityProbeClock.getAsLong()));
+    }
+
+    /**
+     * Bu izlemenin hedefli ölçümü artık kanıt sayılmaz (günlük tarama yeni bulgu yazdı / kapanış hedefi kalmadı). Bitmiş girdi
+     * silinir; UÇUŞTAKİ girdi yerinde kalır (geçersiz işaretli) — bitmeden aynı izleme için ikinci iş gönderilmez.
+     */
+    private void invalidateIntegrityProbe(Long id) {
+        if (id == null) return;
+        IntegrityProbe p = integrityProbes.get(id);
+        if (p == null) return;
+        p.invalid().set(true);
+        if (p.result().isDone()) integrityProbes.remove(id, p);
+    }
+
+    private java.util.concurrent.Executor integrityProbeExecutor() {
+        java.util.concurrent.Executor ex = integrityProbeExecutor;
+        if (ex != null) return ex;
+        synchronized (integrityProbes) {
+            if (integrityProbeExecutor == null) {
+                java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+                java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
+                        INTEGRITY_PROBE_THREADS, INTEGRITY_PROBE_THREADS, 60, java.util.concurrent.TimeUnit.SECONDS,
+                        new java.util.concurrent.LinkedBlockingQueue<>(INTEGRITY_PROBE_QUEUE), r -> {
+                            Thread t = new Thread(r, "page-integrity-probe-" + n.incrementAndGet());
+                            t.setDaemon(true);
+                            return t;
+                        });
+                pool.allowCoreThreadTimeOut(true);
+                integrityProbeExecutor = pool;
+            }
+            return integrityProbeExecutor;
+        }
+    }
+
+    /** Kapanış: hedefli ölçüm havuzu BEKLEMEDEN kesilir (ortak kapanış bütçesine dokunmaz; sonuç zaten kanıt sayılmaz). */
+    private void stopIntegrityProbes() {
+        if (integrityProbeExecutor instanceof java.util.concurrent.ExecutorService es) es.shutdownNow();
+        integrityProbes.clear();
     }
 
     private static List<String> stringList(Object v) {
@@ -8060,12 +8321,25 @@ public class SchedulerService {
         // ölçümü bulgunun kaynağına bakar (derin crawl bulgusu ana sayfayla "geçici" sayılmasın).
         // E5 (2026-11-12): alarm-uygunluk minBrokenResources eşiğiyle kümülatif karar (varsayılan 1 = eski davranış).
         boolean alarmWorthy = PageCheckerService.resultAlarmWorthy(m, res.issues());
-        java.util.LinkedHashSet<String> problemPages = new java.util.LinkedHashSet<>();
+        List<String> problemPages = List.of();
+        boolean problemPagesTruncated = false;
+        List<PageCheckerService.ResourceIssue> unlistedIssues = List.of();
         if (alarmWorthy) {
+            // Bulgu 1/2 (2026-11-13): sayfa başına alarm-uygun sorun sayısı; 5'ten fazla sorunlu sayfa varsa EN ÇOK sorunlu 5
+            // sayfa seçilir (teyit ölçümünün eşiği görebilme şansı en yüksek) ve liste "kırpılmış" işaretlenir.
+            java.util.LinkedHashMap<String, Integer> perPage = new java.util.LinkedHashMap<>();
             for (PageCheckerService.ResourceIssue i : res.issues()) {
                 if (!issueAlarmWorthy(m, i)) continue;
-                if (problemPages.size() < INTEGRITY_RECHECK_MAX_PAGES)
-                    problemPages.add(i.sourcePage() != null && !i.sourcePage().isBlank() ? i.sourcePage() : m.getUrl());
+                perPage.merge(integritySourcePage(m, i), 1, Integer::sum);
+            }
+            problemPages = integrityProblemPages(perPage);
+            problemPagesTruncated = perPage.size() > INTEGRITY_RECHECK_MAX_PAGES;
+            if (problemPagesTruncated) {
+                // İnceleme 2026-11-13 (ORTA 2): listeye GİRMEYEN sayfaların alarm-uygun sorunları — teyit ölçümü onları yeniden
+                // ölçemez; açılış kararında taramanın bulgusu olarak sayılır (yalnız bellek içi, alarm bağlamına yazılmaz).
+                java.util.Set<String> listed = new java.util.HashSet<>(problemPages);
+                unlistedIssues = res.issues().stream().filter(i -> issueAlarmWorthy(m, i))
+                        .filter(i -> !listed.contains(integritySourcePage(m, i))).toList();
             }
         }
         boolean mainUp = res.mainReachable();
@@ -8148,6 +8422,11 @@ public class SchedulerService {
         // (tab-delimited "tür\tURL\tHTTP" — EmailTemplateBuilder hizalı tablo kurar; tab URL'de asla geçmez).
         List<PageCheckerService.ResourceIssue> shownIssues = alertTimeout ? res.issues()
                 : res.issues().stream().filter(i -> !"TIMEOUT".equals(i.issueType())).toList();
+        // Bulgu 6 (2026-11-13): alarmı TETİKLEYEN kaynaklar öne (sıra kararlı) — ilk 10 satırı yavaş / belirsiz kaynaklar
+        // doldurup asıl kırık kaynağı "+N daha"nın arkasına itmesin.
+        shownIssues = shownIssues.stream()
+                .sorted(java.util.Comparator.comparingInt((PageCheckerService.ResourceIssue i) -> issueAlarmWorthy(m, i) ? 0 : 1))
+                .toList();
         final int PROBLEM_LIMIT = 10;
         String problemList = null, problemRows = null;
         int problemTotal = shownIssues.size();
@@ -8184,12 +8463,49 @@ public class SchedulerService {
         out.put("mixed_content_count", res.mixedContentCount());
         if (problemList != null) out.put("problem_resources", problemList);
         if (problemRows != null) { out.put("problem_rows", problemRows); out.put("problem_total", problemTotal); }
-        if (mainUp && !problemPages.isEmpty()) out.put("problem_pages", new ArrayList<>(problemPages));
+        if (mainUp && !problemPages.isEmpty()) {
+            out.put("problem_pages", new ArrayList<>(problemPages));
+            if (problemPagesTruncated) {
+                out.put("problem_pages_truncated", true);
+                if (!unlistedIssues.isEmpty()) out.put(INTEGRITY_UNLISTED_ISSUES, unlistedIssues);
+            }
+        }
         return out;
+    }
+
+    /** Sorunun KAYNAK sayfası (sayfa başına sayım ve listeye girme kararı için tek kural). */
+    private static String integritySourcePage(com.sitemonitor.model.PageMonitor m, PageCheckerService.ResourceIssue i) {
+        return i.sourcePage() != null && !i.sourcePage().isBlank() ? i.sourcePage() : m.getUrl();
+    }
+
+    /**
+     * İnceleme 2026-11-13 (ORTA 2): kırpılmış listede teyit ölçümünün göremeyeceği (listeye girmeyen sayfalardaki) alarm-uygun
+     * tarama bulguları — yalnız günlük taramanın BELLEK İÇİ sonucunda (lider; dağıtık işe ve alarm bağlamına girmez).
+     */
+    static final String INTEGRITY_UNLISTED_ISSUES = "integrity_unlisted_issues";
+
+    private static List<PageCheckerService.ResourceIssue> unlistedIssuesOf(Map<String, Object> r) {
+        if (!(r.get(INTEGRITY_UNLISTED_ISSUES) instanceof java.util.Collection<?> c)) return List.of();
+        return c.stream().filter(PageCheckerService.ResourceIssue.class::isInstance)
+                .map(PageCheckerService.ResourceIssue.class::cast).toList();
     }
 
     /** O-b4: bir bütünlük bulgusunun teyit/kurtarma yeniden ölçümünde bakılan AZAMİ kaynak sayfa (tek pod maliyet tavanı). */
     static final int INTEGRITY_RECHECK_MAX_PAGES = 5;
+
+    /**
+     * Bulgu 1/2 (2026-11-13): sorunlu sayfa listesi — en çok {@link #INTEGRITY_RECHECK_MAX_PAGES} sayfa. Tavanı aşarsa EN ÇOK
+     * alarm-uygun sorun taşıyan sayfalar seçilir (eşit sayıda ilk görülen önce), seçilenler ilk görülme sırasıyla döner.
+     */
+    static List<String> integrityProblemPages(java.util.LinkedHashMap<String, Integer> perPage) {
+        if (perPage == null || perPage.isEmpty()) return List.of();
+        if (perPage.size() <= INTEGRITY_RECHECK_MAX_PAGES) return new ArrayList<>(perPage.keySet());
+        java.util.Set<String> keep = perPage.keySet().stream()
+                .sorted(java.util.Comparator.comparingInt((String p) -> perPage.get(p)).reversed())   // kararlı: eşitte ilk görülen
+                .limit(INTEGRITY_RECHECK_MAX_PAGES)
+                .collect(java.util.stream.Collectors.toSet());
+        return perPage.keySet().stream().filter(keep::contains).toList();
+    }
 
     /**
      * Tek sorun alarm-uygun mu? countsForAlarm (BLOCKED/SLOW hiç; LINK yalnız 404/410; alt-kaynak broken/timeout) + izleme
@@ -8212,15 +8528,26 @@ public class SchedulerService {
      * wall-clock tavanıyla. Hüküm: herhangi bir sayfada alarm-uygun sorun → "down"; hepsi ölçüldü ve temiz → "up";
      * sayfa kaldırıldıysa (404/410) o kaynağın bulgusu artık sunulmuyor → temiz sayılır; ölçülemeyen sayfa (zaman aşımı,
      * 5xx, engelli) varsa ve sorun bulunmadıysa → "skipped" (ölçülemedi ≠ sağlıklı).
+     *
+     * <p>Bulgu 2 (2026-11-13): sorunlar kaynak adresiyle TEKİLLEŞTİRİLİR — derin tarama da kaynağı site genelinde bir kez
+     * sayar; ortak şablon kaynağı her sayfada ayrı sayılınca tek kırık kaynakla eşik aşılıyor, kurtarma "down" kalıyordu.
+     *
+     * <p>İnceleme 2026-11-13 (ORTA 2): {@code unlisted} = kırpılmış listede (taramada 5'ten fazla sorunlu sayfa) teyidin
+     * yeniden ölçemediği sayfaların TARAMA bulguları. Yalnız AÇILIŞ teyidinde verilir ve yeniden ölçülen sorunlara (adresle
+     * tekil) eklenir: toplam eşiği aşıyorsa "down" — eskiden eşik en sorunlu 5 sayfanın toplamından büyükse ya da ilk 5 sayfa
+     * düzelip 6.+ bozuk kaldıysa teyit "skipped" deyip zinciri iptal ediyor, alarm her gün yeniden HİÇ açılmıyordu. Ölçülmeyen
+     * sayfalar kötümser sayıldığı hâlde eşik tutmuyorsa bulgu artık geçerli değildir → "up" (geçici). KAPANIŞ tarafında
+     * kullanılmaz (boş liste): kırpılmış listenin temizliği sağlığı kanıtlamaz; kapanış temiz günlük taramaya kalır (D-7).
      */
-    private Map<String, Object> recheckIntegrityPages(com.sitemonitor.model.PageMonitor m, List<String> pages) {
+    private Map<String, Object> recheckIntegrityPages(com.sitemonitor.model.PageMonitor m, List<String> pages,
+                                                      java.util.Collection<PageCheckerService.ResourceIssue> unlisted) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 4000;
         int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
         int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
         int maxCheckSec = appSettings.getInt("site.monitor.page.max-check-seconds", 120);
         int unmeasured = 0;
         // E5: eşik (minBrokenResources) kümülatif uygulanır → sayfa sayfa kısa-devre YOK, tüm sorunlar toplanır.
-        List<PageCheckerService.ResourceIssue> found = new ArrayList<>();
+        java.util.LinkedHashMap<String, PageCheckerService.ResourceIssue> found = new java.util.LinkedHashMap<>();
         for (String page : pages.stream().filter(java.util.Objects::nonNull).distinct()
                 .limit(INTEGRITY_RECHECK_MAX_PAGES).toList()) {
             PageCheckerService.PageCheckResult res = pageCheckerService.check(
@@ -8232,10 +8559,20 @@ public class SchedulerService {
                 if (hs == null || (hs != 404 && hs != 410)) unmeasured++;   // 404/410 = kaynak sayfa kaldırıldı
                 continue;
             }
-            found.addAll(res.issues());
+            for (PageCheckerService.ResourceIssue i : res.issues()) {
+                found.putIfAbsent(i.resourceUrl() != null ? i.resourceUrl() : "", i);   // site genelinde tekil (tarama gibi)
+            }
         }
-        if (PageCheckerService.resultAlarmWorthy(m, found))
-            return Map.of("status", "down", "error", "kaynak sayfalarda sorun sürüyor");
+        int remeasured = found.size();
+        if (unlisted != null) {
+            for (PageCheckerService.ResourceIssue i : unlisted) {
+                if (i != null) found.putIfAbsent(i.resourceUrl() != null ? i.resourceUrl() : "", i);   // yeniden ölçülen kazanır
+            }
+        }
+        if (PageCheckerService.resultAlarmWorthy(m, found.values()))
+            return Map.of("status", "down", "error", found.size() > remeasured
+                    ? "kaynak sayfalarda sorun sürüyor (yeniden ölçülemeyen sayfaların tarama bulgusu dahil)"
+                    : "kaynak sayfalarda sorun sürüyor");
         return unmeasured > 0 ? Map.of("status", "skipped", "error", unmeasured + " kaynak sayfa ölçülemedi")
                               : Map.of("status", "up");
     }

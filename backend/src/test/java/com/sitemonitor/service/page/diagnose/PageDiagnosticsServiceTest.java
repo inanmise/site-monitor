@@ -366,6 +366,49 @@ class PageDiagnosticsServiceTest {
     }
 
     @Test
+    @DisplayName("bulgu 5 (2026-11-13): E5 eşiği uygulanır — eşiğin altındaki kırık izleme gibi OK (uyarı, below_threshold); "
+            + "eşiğe ulaşınca fail")
+    void minBrokenThreshold_sameDecisionAsMonitor() {
+        PageMonitor mon = monitor(base + "/page");
+        mon.setMinBrokenResources(3);
+        PageCheckResult one = ok(5, List.of(issue("https://shop.example.test/a.png", "IMG", "BROKEN", true, 404, 9L)));
+        Map<String, Object> data = service(fakeChecker(one, one), null).diagnose(mon, true);
+        assertThat(m(data.get("verdict"))).containsEntry("status", "warn").containsEntry("code", "RESOURCES_BROKEN");
+        assertThat(list(data.get("paths")).get(0)).containsEntry("outcome", "ok");
+        assertThat(m(list(data.get("paths")).get(0).get("client_check"))).containsEntry("ok", true);
+        assertThat(m(data.get("page"))).containsEntry("monitor_ok", true);
+        assertThat(m(finding(data, "RESOURCES_BROKEN").get("params")))
+                .containsEntry("reason", "below_threshold").containsEntry("min", 3);
+
+        PageCheckResult three = ok(5, List.of(
+                issue("https://shop.example.test/a.png", "IMG", "BROKEN", true, 404, 9L),
+                issue("https://shop.example.test/b.png", "IMG", "BROKEN", true, 404, 9L),
+                issue("https://shop.example.test/c.png", "IMG", "BROKEN", true, 404, 9L)));
+        Map<String, Object> at = service(fakeChecker(three, three), null).diagnose(mon, true);
+        assertThat(m(at.get("verdict"))).containsEntry("status", "fail").containsEntry("code", "RESOURCES_BROKEN");
+        assertThat(m(at.get("page"))).containsEntry("monitor_ok", false);
+        assertThat(m(finding(at, "RESOURCES_BROKEN").get("params"))).doesNotContainKey("reason");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-11-13 (DÜŞÜK 5): kırık eşiğin altında ama alarma sayılan zaman aşımı var → izleme alarm "
+            + "AÇAR; kırık bulgusu 'açmaz' demez (below_threshold_other)")
+    void belowThresholdBrokenWithAlarmingTimeout_notAQuietText() {
+        PageMonitor mon = monitor(base + "/page");
+        mon.setMinBrokenResources(3);
+        PageCheckResult r = ok(6, List.of(
+                issue("https://shop.example.test/a.png", "IMG", "BROKEN", true, 404, 9L),
+                issue("https://shop.example.test/slow.css", "CSS", "TIMEOUT", true, null, 4000L)));
+        Map<String, Object> data = service(fakeChecker(r, r), null).diagnose(mon, true);
+        assertThat(m(data.get("page"))).containsEntry("monitor_ok", false);
+        assertThat(m(data.get("verdict"))).containsEntry("status", "fail");
+        Map<String, Object> broken = finding(data, "RESOURCES_BROKEN");
+        assertThat(broken).containsEntry("severity", "warn");
+        assertThat(m(broken.get("params"))).containsEntry("reason", "below_threshold_other").containsEntry("min", 3);
+        assertThat(finding(data, "RESOURCES_TIMEOUT")).containsEntry("severity", "fail");
+    }
+
+    @Test
     @DisplayName("mixed content: alarm açıkken fail, kapalıyken uyarı; belirsiz + yavaş kaynak bilgi bulguları")
     void mixedContent_blocked_slow() {
         PageCheckResult r = ok(8, List.of(

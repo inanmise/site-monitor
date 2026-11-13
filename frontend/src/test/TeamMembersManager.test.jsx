@@ -91,3 +91,47 @@ describe('TeamMembersManager — ADMIN / AUDIT hedefleri yalnız global yönetic
     expect(document.querySelector('[data-slot="team-member-admin-hint"]')).toBeNull()
   })
 })
+
+// ── 2026-11-13 hata taraması: takımsız bırakma uyarısı kimin geri ekleyebileceğini söyler; ADMIN / AUDIT için ayrı metin ──
+describe('TeamMembersManager — takımsız bırakma uyarısı', () => {
+  const ROWS = [
+    { id: 31, username: 'son1', display_name: 'Son Takımlı Kişi', active: true, system_role: 'USER', team_id: 5, team_ids: [5] },
+    { id: 32, username: 'iki1', display_name: 'İki Takımlı Kişi', active: true, system_role: 'USER', team_id: 5, team_ids: [5, 9] },
+    { id: 33, username: 'adm1', display_name: 'Global Yönetici', active: true, system_role: 'ADMIN', team_id: 5, team_ids: [5] },
+  ]
+  beforeEach(() => {
+    api.admin.getTeamUsers.mockResolvedValue({ success: true, data: ROWS })
+    api.admin.removeTeamMember.mockResolvedValue({ success: true, data: { removed: true, became_teamless: true } })
+    confirmMock.mockResolvedValue(false)
+  })
+  const removeAndMessage = async (name) => {
+    confirmMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name} — (Remove|Çıkar)$`) }))
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
+    return confirmMock.mock.calls[0][0].message
+  }
+
+  it('son takımı çıkarılan USER: yalnız global yöneticinin görebileceği / geri ekleyebileceği söylenir', async () => {
+    render(<TeamMembersManager team={team} users={[]} canManage globalAdmin onClose={() => {}} />)
+    await screen.findByTestId('team-members')
+    const msg = await removeAndMessage('Son Takımlı Kişi')
+    expect(msg).toMatch(/takımsız|teamless/i)
+    expect(msg).toMatch(/yalnız global yöneticiler|only global administrators/i)
+  })
+
+  it('başka takımı kalan kullanıcıda takımsız uyarısı yok', async () => {
+    render(<TeamMembersManager team={team} users={[]} canManage globalAdmin onClose={() => {}} />)
+    await screen.findByTestId('team-members')
+    const msg = await removeAndMessage('İki Takımlı Kişi')
+    expect(msg).not.toMatch(/takımsız|teamless|global/i)
+  })
+
+  it('ADMIN / AUDIT hesabı: ayrı metin — genel yetkileri değişmez, "görünürlük kapsamı boşalır" denmez', async () => {
+    render(<TeamMembersManager team={team} users={[]} canManage globalAdmin onClose={() => {}} />)
+    await screen.findByTestId('team-members')
+    const msg = await removeAndMessage('Global Yönetici')
+    expect(msg).toMatch(/ADMIN \/ AUDIT/)
+    expect(msg).not.toMatch(/görünürlük kapsamı boşalır|visibility scope becomes empty/i)
+    expect(msg).toMatch(/global yönetici|global administrator/i)
+  })
+})

@@ -3064,13 +3064,26 @@ public class AdminController {
         // KURTARMA ayarları — alarm detayında "hangi kaynak / nasıl bir hata" ve "açılmadan önce N kez doğrulandı,
         // giderilince otomatik kapanır". Yönlendirme bağlamı (team_id, grup) AÇILMAZ; yalnız kaynak + doğrulama alanları.
         if (EscalationService.TYPE_PAGE_INTEGRITY.equals(ev.getAlertType())) {
-            Map<String, Object> ctx = parsePageAlertContext(ev.getContextJson());
-            List<Map<String, Object>> pi = pageIssuesFromContext(ctx);
-            if (!pi.isEmpty()) body.put("page_issues", pi);
-            Map<String, Object> ci = confirmInfoFromContext(ctx);
-            if (!ci.isEmpty()) body.put("confirm_info", ci);
+            body.putAll(pageAlertDetail(parsePageAlertContext(ev.getContextJson())));
         }
         return ok(body);
+    }
+
+    /**
+     * E2/E3: sayfa bütünlüğü alarm detayının ek alanları — {@code page_issues} (+ {@code page_issues_total}) ve
+     * {@code confirm_info}. Bulgu 6 (2026-11-13): bağlamda en çok 10 kaynak satırı tutulur; TOPLAM sorun sayısı ayrıca döner
+     * ki arayüz "+N kaynak daha" diyebilsin (eskiden 60 sorunlu alarmda 10 satır görünüp kalanı hiç anılmıyordu).
+     */
+    static Map<String, Object> pageAlertDetail(Map<String, Object> ctx) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> pi = pageIssuesFromContext(ctx);
+        if (!pi.isEmpty()) {
+            out.put("page_issues", pi);
+            if (ctx.get("problem_total") instanceof Number n) out.put("page_issues_total", n.intValue());
+        }
+        Map<String, Object> ci = confirmInfoFromContext(ctx);
+        if (!ci.isEmpty()) out.put("confirm_info", ci);
+        return out;
     }
 
     /** E2/E3: alarm bağlam JSON'unu güvenli ayrıştır (bozuk/boş → boş Map). Asla fırlatmaz. */

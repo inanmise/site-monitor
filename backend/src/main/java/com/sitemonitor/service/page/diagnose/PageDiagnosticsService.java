@@ -184,6 +184,11 @@ public class PageDiagnosticsService extends PageDiagSupport {
     static final class Counts {
         int total, broken, timeouts, mixed, blocked, slow, firstPartyProblems, thirdPartyProblems, thirdPartyAlarm, alarm,
                 alarmBroken, alarmTimeouts;
+        /** Bulgu 5 (2026-11-13): izlemenin ALARM kararı — E5 eşiği ({@code minBrokenResources}) uygulanmış
+         *  {@link PageCheckerService#resultAlarmWorthy}; sweep ile aynı kural (eskiden "alarma sayılan sorun &gt; 0"). */
+        boolean alarmWorthy;
+        /** İzlemenin en az kırık kaynak eşiği ({@link PageCheckerService#minBrokenResources}). */
+        int minBroken = 1;
         final Set<String> thirdPartyHosts = new LinkedHashSet<>();
         String firstProblemFirstParty, firstProblemThirdParty, firstBroken, firstMixed, firstBlocked, slowestUrl;
         Long slowestMs;
@@ -236,10 +241,10 @@ public class PageDiagnosticsService extends PageDiagSupport {
             String recorded = res.status();
             if (!alertTimeout && c.timeouts > 0 && c.broken == 0 && c.mixed == 0) recorded = "OK";   // sweep'le aynı kural
             ev.recordedStatus = recorded;
-            ev.monitorOk = c.alarm == 0;
+            ev.monitorOk = !c.alarmWorthy;   // bulgu 5: izlemeyle AYNI karar (E5 eşiği dahil)
             if (raw == null) {
-                ev.outcome = c.alarm > 0 ? "fail" : "ok";
-                if (c.alarm > 0) ev.failedStep = "resources";
+                ev.outcome = c.alarmWorthy ? "fail" : "ok";
+                if (c.alarmWorthy) ev.failedStep = "resources";
             }
             if (analyze) resourceFindings(ev, c, res, m, key, client.elapsedMs(), capSeconds, resourceCap);
             if (raw == null && "ok".equals(ev.outcome)) {
@@ -258,6 +263,8 @@ public class PageDiagnosticsService extends PageDiagSupport {
     static Counts count(PageCheckResult res, PageMonitor m) {
         Counts c = new Counts();
         c.total = res.totalResources();
+        c.alarmWorthy = PageCheckerService.resultAlarmWorthy(m, res.issues());
+        c.minBroken = PageCheckerService.minBrokenResources(m);
         for (ResourceIssue i : res.issues()) {
             String type = i.issueType() == null ? "" : i.issueType();
             boolean alarm = PageCheckerService.issueAlarmWorthy(m, i);
@@ -297,10 +304,18 @@ public class PageDiagnosticsService extends PageDiagSupport {
                                          long clientMs, int capSeconds, int resourceCap) {
         boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());
         if (c.broken > 0) {
+            // Bulgu 5: alarma sayılan kırıklar eşiğin ALTINDAysa izleme alarm açmaz → uyarı + "eşiğin altında" metni
+            boolean belowThreshold = c.alarmBroken > 0 && c.alarmBroken < c.minBroken;
+            Map<String, Object> p = RawHttpProbe.params("count", c.broken, "alarm", c.alarmBroken, "total", c.total,
+                    "sample", displayUrl(c.firstBroken));
+            if (belowThreshold) {
+                p.put("min", c.minBroken);
+                // İnceleme 2026-11-13 (DÜŞÜK 5): kırıklar eşiğin altında ama alarma sayılan zaman aşımı / mixed content varsa
+                // izleme YİNE alarm açar — metin "açmaz" demesin ("yalnız kırıklar eşiğe ulaşmıyor" varyantı).
+                p.put("reason", c.alarmWorthy ? "below_threshold_other" : "below_threshold");
+            }
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.RESOURCES_BROKEN,
-                    c.alarmBroken > 0 ? HttpDiagFindings.FAIL : HttpDiagFindings.WARN, key,
-                    RawHttpProbe.params("count", c.broken, "alarm", c.alarmBroken, "total", c.total,
-                            "sample", displayUrl(c.firstBroken))));
+                    c.alarmBroken > 0 && !belowThreshold ? HttpDiagFindings.FAIL : HttpDiagFindings.WARN, key, p));
         }
         if (c.timeouts > 0) {
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.RESOURCES_TIMEOUT,
@@ -461,7 +476,7 @@ public class PageDiagnosticsService extends PageDiagSupport {
             c.put("failure_reason", null);
             return c;
         }
-        c.put("ok", r.mainReachable() && count(r, m).alarm == 0);
+        c.put("ok", r.mainReachable() && !count(r, m).alarmWorthy);   // bulgu 5: E5 eşiği dahil izlemenin kararı
         c.put("main_reachable", r.mainReachable());
         c.put("http_status", r.httpStatus());
         c.put("response_ms", r.responseMs());

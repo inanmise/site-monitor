@@ -473,3 +473,43 @@ describe('UserEditor — kapsamlı müdür, kapsam dışı takım', () => {
     expect(api.admin.updateUser.mock.calls[0][1].org_role).toBe('')
   })
 })
+
+// ── 2026-11-13 hata taraması ────────────────────────────────────────────────────────────────────────────────────────────
+describe('UserEditor — eksik satır savunması ve takımsız kullanıcı', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    perms.set = new Set()
+    api.admin.updateUser.mockResolvedValue({ success: true, data: LOCAL })
+  })
+
+  it('yalnız {id} taşıyan satırla açılırsa uyarı + Kaydet KAPALI; bir alan değişse de (Ctrl+Enter dâhil) istek gitmez', async () => {
+    renderEditor({ user: { id: 77 } })
+    expect(dialog().querySelector('[data-slot="ued-incomplete"]')).not.toBeNull()
+    openTab(/^(Profil|Profile)/)
+    fireEvent.change(screen.getByLabelText(/^(Ünvan|Title)/), { target: { value: 'Kıdemli Uzman' } })
+    expect(saveBtn()).toBeDisabled()
+    fireEvent.keyDown(dialog().querySelector('[data-slot="user-editor"]'), { key: 'Enter', ctrlKey: true })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(api.admin.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('tam satırda uyarı yok', () => {
+    renderEditor()
+    expect(dialog().querySelector('[data-slot="ued-incomplete"]')).toBeNull()
+  })
+
+  it('kayıtta zaten takımsız USER: takıma dokunmadan ünvan kaydedilir (takım hatası yok, team_ids gitmez)', async () => {
+    renderEditor({ user: { ...LOCAL, team_ids: [], team_id: null } })
+    openTab(/^(Profil|Profile)/)
+    fireEvent.change(screen.getByLabelText(/^(Ünvan|Title)/), { target: { value: 'Kıdemli Uzman' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
+    const body = api.admin.updateUser.mock.calls[0][1]
+    expect(body.title).toBe('Kıdemli Uzman')
+    expect(body).not.toHaveProperty('team_ids')
+    // "zorunlu" ipucu / yıldızı yerine durumu söyleyen not (doğrulamayla AYNI kural)
+    expect(dialog().querySelector('[data-slot="ued-teams"]')).toHaveAttribute('data-teamless', 'true')
+    expect(dialog().querySelector('[data-slot="ued-teams"]').textContent).not.toMatch(/En az bir takım|At least one team/)
+    expect(dialog().querySelector('[data-slot="ued-teams"]').textContent).toMatch(/şu an takımsız|currently has no team/)
+  })
+})

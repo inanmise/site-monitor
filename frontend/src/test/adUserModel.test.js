@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   AD_SEARCH_MIN, buildProvisionPayload, provisionErrors, matchDerivedTeams, resultBadges, canProvision,
+  isListableResult, loadExistingUserRow,
 } from '../components/admin/aduser/adUserModel.js'
 
 describe('adUserModel', () => {
@@ -63,6 +64,43 @@ describe('adUserModel', () => {
     it('canProvision yalnız yerelde yoksa', () => {
       expect(canProvision({ exists_locally: false })).toBe(true)
       expect(canProvision({ exists_locally: true })).toBe(false)
+    })
+  })
+
+  // ── 2026-11-13 hata taraması ──
+  describe('isListableResult (posta kişisi / bilgisayar hesabı listelenmez)', () => {
+    it('kullanıcı adı olmayan ya da "$" ile biten satır listelenmez', () => {
+      expect(isListableResult({ username: 'MP1' })).toBe(true)
+      expect(isListableResult({ username: null, display_name: 'Posta Kişisi' })).toBe(false)
+      expect(isListableResult({ username: '  ' })).toBe(false)
+      expect(isListableResult({ username: 'PC01$' })).toBe(false)
+      expect(isListableResult(null)).toBe(false)
+    })
+  })
+
+  describe('loadExistingUserRow (AD "Düzenle" → TAM satır)', () => {
+    const FULL = { id: 77, username: 'MP60146', email: 'a@x.com', system_role: 'TEAM_ADMIN', title: 'Uzman', team_ids: [5] }
+    it('satır o anki sayfadaysa sunucuya gitmeden onu döner', async () => {
+      const api = { searchUsers: vi.fn() }
+      expect(await loadExistingUserRow(api, 77, 'MP60146', [FULL])).toBe(FULL)
+      expect(api.searchUsers).not.toHaveBeenCalled()
+    })
+    it('sayfada değilse kullanıcı adı süzgeçli dizin aramasından kimliği BİREBİR eşleşen satırı okur', async () => {
+      const api = { searchUsers: vi.fn().mockResolvedValue({ success: true, data: [{ id: 76, username: 'MP601460' }, FULL] }) }
+      expect(await loadExistingUserRow(api, '77', 'MP60146', [{ id: 1, username: 'X' }])).toBe(FULL)
+      expect(api.searchUsers).toHaveBeenCalledWith({ q: 'mp60146', field: 'username', page: 0, size: 50 })
+    })
+    it('eşleşme yok / okunamadı / kullanıcı adı yok → null (düzenleyici açılmaz); yalnız {id} taşıyan satır kabul edilmez', async () => {
+      expect(await loadExistingUserRow({ searchUsers: vi.fn().mockResolvedValue({ success: true, data: [] }) }, 77, 'MP60146')).toBeNull()
+      expect(await loadExistingUserRow({ searchUsers: vi.fn().mockResolvedValue({ success: false, error: 'x' }) }, 77, 'MP60146')).toBeNull()
+      expect(await loadExistingUserRow({ searchUsers: vi.fn() }, 77, '')).toBeNull()
+      expect(await loadExistingUserRow({ searchUsers: vi.fn() }, null, 'MP60146')).toBeNull()
+      const api = { searchUsers: vi.fn().mockResolvedValue({ success: true, data: [{ id: 77 }] }) }
+      expect(await loadExistingUserRow(api, 77, 'MP60146', [{ id: 77 }])).toBeNull()
+    })
+    it('ağ hatası çağırana fırlar', async () => {
+      const api = { searchUsers: vi.fn().mockRejectedValue(new Error('Sunucuya ulaşılamadı')) }
+      await expect(loadExistingUserRow(api, 77, 'MP60146')).rejects.toThrow('Sunucuya ulaşılamadı')
     })
   })
 })

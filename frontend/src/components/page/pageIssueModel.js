@@ -22,7 +22,10 @@ export function issueReasonKey(issue) {
   switch (type) {
     case 'MIXED_CONTENT': return 'MIXED_CONTENT'
     case 'TIMEOUT':       return 'TIMEOUT'
-    case 'BLOCKED':       return 'BLOCKED'
+    // BLOCKED iki kaynaktan gelir (sunucu PageCheckerService.classifyStatus / verifyOne): HTTP durumu VARSA hedef sunucu
+    // yanıt verdi ama reddetti / geçici olarak sunmadı (401/403/429/451/503 ve diğer 4xx — WAF, hız sınırı, bakım);
+    // durum YOKSA istek hiç atılmadı (iç/özel IP güvenlik kuralı ya da üçüncü taraf adı kurum DNS'inde çözülmedi).
+    case 'BLOCKED':       return s != null ? 'BLOCKED_HTTP' : 'BLOCKED'
     case 'SLOW':          return 'SLOW'
     case 'BROKEN':
       if (s == null) return 'BROKEN_NO_RESPONSE'
@@ -39,4 +42,29 @@ export function issueReasonKey(issue) {
 export function issuesForCheckedAt(issues, checkedAt) {
   if (!Array.isArray(issues) || !checkedAt) return []
   return issues.filter(r => r && r.checked_at === checkedAt)
+}
+
+/**
+ * Bulgu 7 (2026-11-13): kontrol geçmişi satırının sorunları — `?checkId=` yanıtından süzülür. Satır `check_id` taşıyorsa
+ * kontrol kimliğiyle eşleşir (aynı saniyedeki iki kontrol karışmaz), taşımıyorsa `checked_at` ile. Eski sunucu `checkId`'yi
+ * yok sayıp pencere listesini döndürürse de doğru satırlar kalır (pencere dışındaysa liste eksik kalabilir — bkz.
+ * {@link expectedIssueCount}).
+ */
+export function issuesForCheck(rows, check) {
+  if (!Array.isArray(rows) || !check) return []
+  const id = check.id != null ? String(check.id) : null
+  return rows.filter((r) => r && (r.check_id != null && id != null
+    ? String(r.check_id) === id
+    : r.checked_at === check.checked_at))
+}
+
+/**
+ * Kontrolün sayaçlarından EN AZ kaç sorun satırı beklendiği (kırık + zaman aşımı + mixed; belirsiz / yavaş satırlar
+ * sayaçta yok, bu yüzden "en az"). Sayaç okunamıyorsa null — "eksik" iddiası yalnız bilinen sayıyla yapılır.
+ */
+export function expectedIssueCount(check) {
+  if (!check) return null
+  const parts = [check.broken_resources, check.timeout_count, check.mixed_content_count]
+  if (parts.every((v) => v == null)) return null
+  return parts.reduce((s, v) => s + (Number.isFinite(Number(v)) && v != null ? Number(v) : 0), 0)
 }

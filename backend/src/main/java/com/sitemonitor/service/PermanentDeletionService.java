@@ -59,6 +59,14 @@ public class PermanentDeletionService {
     private final EscalationService escalationService;
 
     /**
+     * Dinamik taban çizgisi yapılandırması + örnekleri (hata taraması 2026-11-13 #7): türev / bağımsız Port-DNS kalıcı silmesinde
+     * de silinir — eskiden kalıyordu (etkin satır, Grafana benimseme sayacı silinmiş izlemeyi sayıyordu). İsteğe bağlı: elle
+     * kurulan testlerde yoktur. Örnek silmesi kendi bağlantısında (NOT_SUPPORTED) — bu işlemi bozamaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
+
+    /**
      * Envanter silmesinin sonucu — denetim ayrıntısı ve yanıt için.
      *
      * @param rows tablo → silinen satır sayısı (yalnız sıfırdan büyükler)
@@ -189,6 +197,7 @@ public class PermanentDeletionService {
                     "DELETE FROM monitor_check_hourly WHERE monitor_type = 'PORT' AND monitor_key = ?", key));
             count(rows, "diagnostic_runs", jdbc.update("DELETE FROM diagnostic_runs WHERE domain = ?", "port-monitor:" + id));
             count(rows, "port_monitors", jdbc.update("DELETE FROM port_monitors WHERE id = ?", id));
+            removeBaseline(com.sitemonitor.service.baseline.BaselineTypes.PORT, id);
         }
         for (String target : targets) {
             int cut = target.lastIndexOf(':');
@@ -206,10 +215,21 @@ public class PermanentDeletionService {
             count(rows, "dns_records", jdbc.update("DELETE FROM dns_records WHERE monitor_id = ?", id));
             count(rows, "diagnostic_runs", jdbc.update("DELETE FROM diagnostic_runs WHERE domain = ?", "dns-monitor:" + id));
             count(rows, "dns_monitors", jdbc.update("DELETE FROM dns_monitors WHERE id = ?", id));
+            removeBaseline(com.sitemonitor.service.baseline.BaselineTypes.DNS, id);
         }
         for (String target : new java.util.LinkedHashSet<>(targets)) {
             Integer left = jdbc.queryForObject("SELECT COUNT(*) FROM dns_monitors WHERE domain = ?", Integer.class, target);
             if (left == null || left == 0) purgeNotesAndGuide("DNS", target, rows);
+        }
+    }
+
+    /** Silinen izlemenin taban çizgisi yapılandırması + örnekleri; bean yoksa (testler) atlanır. */
+    private void removeBaseline(String type, Long id) {
+        if (baselineConfigService == null) return;
+        try {
+            baselineConfigService.remove(type, id);
+        } catch (RuntimeException e) {
+            log.warn("Silinen izlemenin taban çizgisi kayıtları silinemedi ({}#{}): {}", type, id, e.getMessage());
         }
     }
 

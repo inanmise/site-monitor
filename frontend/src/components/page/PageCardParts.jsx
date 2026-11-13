@@ -296,9 +296,11 @@ export function PageTags({ monitor, max = 3 }) {
   return (
     <span data-slot="page-tags" className="flex min-w-0 flex-wrap items-center gap-1">
       <span className="sr-only">{t('page.card.tags')}</span>
+      {/* Bulgu 11 (2026-11-13): uzun etiket KIRPILMAZ — sarar (adlar / uzun metin kuralı); sabit yükseklik yok */}
       {shown.map((tag) => (
-        <Badge key={tag} variant="secondary" className="h-5 max-w-40 rounded-md px-1.5 text-[10.5px] font-medium">
-          <span className="truncate">{tag}</span>
+        <Badge key={tag} variant="secondary" data-page-tag=""
+          className="h-auto min-h-5 max-w-full overflow-visible rounded-md px-1.5 py-0.5 text-left text-[10.5px] leading-tight font-medium whitespace-normal [overflow-wrap:anywhere]">
+          {tag}
         </Badge>
       ))}
       {rest.length > 0 && (

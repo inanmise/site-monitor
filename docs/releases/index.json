@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T07:20:44Z",
+  "generatedAt": "2026-11-13T10:39:20Z",
   "repo": "inanmise/site-monitor",
-  "count": 824,
+  "count": 825,
   "releases": [
+    {
+      "version": "20.196.2",
+      "tag": "v20.196.2",
+      "releasedAt": "2026-11-13T10:39:15Z",
+      "commit": "161678ccbc0d3d5be4fef9671178fec58b628b8b",
+      "prevVersion": "20.196.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "9b8d125c",
+          "subject": "sayfa bütünlüğü bağımsız inceleme — kırpılmış listede açılış teyidi, hedefli ölçüm uçuşu, kapanış, tanılama metni, kaynak tazeleme sahipliği"
+        },
+        {
+          "type": "fix",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "828d3565",
+          "subject": "günlük budama mevsimsel tabanı korur"
+        },
+        {
+          "type": "fix",
+          "scope": "baseline",
+          "breaking": false,
+          "sha": "8fe020a0",
+          "subject": "dinamik taban — elle kontrol bant kararı, günlük budama, mevsimsel pencere, anahtar kapanışı ve posta"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "d72916bf",
+          "subject": "sayfa bütünlüğü E1–E5 hata taraması — hedefli kapanış kanıtı, eşik, teyit bilgisi, ölçüm döngü dışında"
+        },
+        {
+          "type": "fix",
+          "scope": "users",
+          "breaking": false,
+          "sha": "113558d8",
+          "subject": "AD'den ekleme — tam satırla düzenleme, kullanıcı-hesabı süzgeci, AD erişilemez/kapalı kodları, takımsız kayıt"
+        },
+        {
+          "type": "fix",
+          "scope": "stats,admin",
+          "breaking": false,
+          "sha": "4ea89f0c",
+          "subject": "gerileme taraması — sağlık serisinde yanlış \"sertifika yok\", kişi listesinde eksik Pasif rozeti"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.196.1",
       "tag": "v20.196.1",

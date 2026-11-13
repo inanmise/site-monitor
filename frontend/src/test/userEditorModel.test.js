@@ -146,6 +146,24 @@ describe('userEditorModel — doğrulama', () => {
     expect(validateForm(base, { mode: 'edit', viewerRole: 'TEAM_ADMIN', ownTeamId: null }).teams.key).toBe('ued.teamAdminNoTeam')
   })
 
+  it('2026-11-13: KAYITTA zaten takımsız ADMIN dışı kullanıcı — küme değişmediyse takım zorunluluğu yeniden denetlenmez', () => {
+    const teamless = { ...toForm(USER), team_ids: [] }
+    const ctx = { mode: 'edit', viewerRole: 'ADMIN', baseline: teamless }
+    // başka bir alan (ünvan) değişti, takım kümesi değişmedi → kaydedilebilir; yük takım göndermez
+    const edited = { ...teamless, title: 'Kıdemli Uzman' }
+    expect(validateForm(edited, ctx)).toEqual({})
+    expect(buildPayload(edited, ctx)).not.toHaveProperty('team_ids')
+    // takımlı kullanıcının bütün takımlarını kaldırmak (küme DEĞİŞTİ) hâlâ engellenir
+    const withTeams = toForm(USER)
+    expect(validateForm({ ...withTeams, team_ids: [] }, { mode: 'edit', viewerRole: 'ADMIN', baseline: withTeams }).teams.key).toBe('usr.teamsRequired')
+    // takımsız ADMIN'i ADMIN dışı role indirmek takım ister
+    const teamlessAdmin = { ...teamless, system_role: 'ADMIN' }
+    expect(validateForm({ ...teamlessAdmin, system_role: 'USER' }, { mode: 'edit', viewerRole: 'ADMIN', baseline: teamlessAdmin }).teams.key)
+      .toBe('usr.teamsRequired')
+    // ekle kipinde taban yok → kural aynen
+    expect(validateForm({ ...emptyForm(), username: 'a', password: 'abcd', email: 'a@b.co' }, { mode: 'add' }).teams.key).toBe('usr.teamsRequired')
+  })
+
   it('hata → sekme sayımı ve ilk hatalı sekme', () => {
     const errs = { email: 'x', teams: 'y', title: 'z', phone: 'w' }
     expect(errorCountsByTab(errs)).toEqual({ account: 1, teams: 1, profile: 2 })

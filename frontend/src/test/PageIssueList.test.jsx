@@ -42,6 +42,34 @@ describe('PageIssueList (E1/E2/E4: sorunlu kaynak detayı)', () => {
     expect(screen.getByText(/\+3/)).toBeTruthy()
   })
 
+  it('bulgu 6: bilinen TOPLAM verilirse "+N kaynak daha" ona göre sayılır; eski "… +N" satırı yinelenmez', () => {
+    render(<PageIssueList total={60} issues={[
+      { resource_type: 'JS', resource_url: 'https://x/a.js', issue_type: 'BROKEN', http_status: 404 },
+      { resource_type: 'IMG', resource_url: 'https://x/b.png', issue_type: 'SLOW', http_status: 200 },
+      { more: '… +58 daha' },
+    ]} />)
+    expect(document.querySelectorAll('[data-slot="page-issue-row"]').length).toBe(2)
+    expect(document.querySelector('[data-slot="page-issue-rest"]').textContent).toMatch(/58/)
+    expect(screen.queryByText('… +58 daha')).toBeNull()
+  })
+
+  it('bulgu 8: durum kodlu BLOCKED "hedef reddetti / WAF / hız sınırı" der, SSRF demez; kod metne girer', () => {
+    render(<PageIssueList issues={[{ resource_type: 'IMG', resource_url: 'https://x/c.png', issue_type: 'BLOCKED', http_status: 503 }]} />)
+    const row = document.querySelector('[data-slot="page-issue-row"]').textContent
+    expect(row).toMatch(/WAF/)
+    expect(row).toMatch(/503/)
+    expect(row).not.toMatch(/SSRF/)
+  })
+
+  it('bulgu 10: "Bulunduğu sayfa" bağlantısının dokunmatik isabet alanı (::after) var', () => {
+    render(<PageIssueList issues={[{ resource_type: 'JS', resource_url: 'https://x/a.js', source_page: 'https://x/urunler',
+      issue_type: 'BROKEN', http_status: 404 }]} />)
+    const link = document.querySelector('[data-slot="page-issue-source-link"]')
+    expect(link).not.toBeNull()
+    expect(link.className).toMatch(/pointer-coarse:after:-inset-y-3/)
+    expect(link.className).toMatch(/relative/)
+  })
+
   it('boş / geçersiz liste → hiçbir şey çizmez', () => {
     const { container, rerender } = render(<PageIssueList issues={[]} />)
     expect(container.querySelector('[data-slot="page-issue-list"]')).toBeNull()

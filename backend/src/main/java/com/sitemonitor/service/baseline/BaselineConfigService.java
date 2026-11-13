@@ -62,6 +62,19 @@ public class BaselineConfigService {
         out.put("season", p.season());
         out.put("sample_count", store.count(type, monitorId));
         out.put("defaults", c == null);
+        // Hazırlık (hata taraması 2026-11-13 #8): toplam örnek sayısı "hazır" demeye yetmez (mevsimselde yalnız eşleşen saatler
+        // sayılır, ana anahtar kapalı olabilir). Ana anahtar bellekten; hazırlık GERÇEK değerlendirme penceresinden (tek okuma,
+        // örnek yazmaz) — yalnız kayıtlı ve açık yapılandırmada.
+        if (baselineService != null) {
+            out.put("global_enabled", baselineService.switchOn());
+            if (c != null && c.isEnabled()) {
+                BaselineMath.Verdict v = baselineService.readiness(type, monitorId, p);
+                out.put("ready_state", v.evaluated() ? "ready"
+                        : BaselineMath.NOTE_INSUFFICIENT_SAMPLES.equals(v.note()) ? "insufficient" : "building");
+                out.put("ready_samples", v.samples());
+                out.put("ready_min", v.minSamples());
+            }
+        }
         return out;
     }
 

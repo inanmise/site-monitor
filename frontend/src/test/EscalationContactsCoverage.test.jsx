@@ -84,4 +84,16 @@ describe('EscalationContacts — kapsam matrisi', () => {
     expect(within(dlg).getByText('SY-B')).toBeInTheDocument()
     expect(within(dlg).getByText(/WARNING|UYARI/)).toBeInTheDocument()
   })
+
+  it('gerileme taraması 2026-11-13: kapsam dışındaki pasif kullanıcıya bağlı kişi — sunucunun user_active=false alanı "Pasif" rozetini çizer', async () => {
+    // Kullanıcı listesi (kapsamla süzülü) 99'u içermez; yalnız sunucunun kişi satırı onun pasif olduğunu söyler
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [
+      ...CONTACTS,
+      { id: 3, user_id: 99, user_active: false, name: 'Kapsam Dışı Pasif', email: 'pasif@x', role: 'MANAGER', min_alert_level: 'CRITICAL', active: true, team_id: 6 },
+    ] })
+    renderEc()
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="contact-user-inactive"]')).toHaveLength(1))
+    const row = document.querySelector('[data-slot="contact-user-inactive"]').closest('tr')
+    expect(row.textContent).toContain('Kapsam Dışı Pasif')
+  })
 })

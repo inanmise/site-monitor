@@ -1,6 +1,9 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.config.CorrelationIdFilter;
+import com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException;
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.LdapSettings;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.LdapDirectoryService;
 import com.sitemonitor.service.LdapProvisioningService;
@@ -52,12 +55,38 @@ public class AdUserController {
         }
     }
 
+    /** AD ekleme uçlarının LDAP kapısı: yapılandırılmamış → 409 {@code LDAP_NOT_CONFIGURED}; KAPALI → 409 {@code LDAP_DISABLED}. */
     private void requireLdapConfigured() {
         if (!ldapSettings.isConfigured()) {
-            throw new IllegalStateException(Msg.t(
+            throw new CodedConflictException(CODE_LDAP_NOT_CONFIGURED, Msg.t(
                     "LDAP / Active Directory yapılandırılmamış — önce Ayarlar → LDAP'tan bağlantıyı tanımlayın.",
                     "LDAP / Active Directory is not configured — set it up under Settings → LDAP first."));
         }
+        // LDAP kapalıyken (2026-11-13 hata taraması) arama yine AD'ye bağlanıyor, çekme de GİRİŞ YAPAMAYACAK LDAP hesapları
+        // açıyordu (kapalı LDAP'ta AD hesabı oturum açamaz). Ayarın "etkin" bayrağı kapalıysa hiçbir AD işlemi yapılmaz.
+        LdapSettings s = ldapSettings.getOrDefaults();
+        if (s == null || !Boolean.TRUE.equals(s.getEnabled())) {
+            throw new CodedConflictException(CODE_LDAP_DISABLED, Msg.t(
+                    "LDAP / Active Directory bağlantısı kapalı — AD'den kullanıcı aranamaz ve eklenemez. Önce Ayarlar → LDAP'tan bağlantıyı etkinleştirin; kapalıyken eklenen AD hesabı giriş yapamazdı.",
+                    "The LDAP / Active Directory connection is turned off — users can't be searched in or added from AD. Turn it on under Settings → LDAP first; an AD account added while it is off couldn't sign in."));
+        }
+    }
+
+    public static final String CODE_LDAP_NOT_CONFIGURED = "LDAP_NOT_CONFIGURED";
+    public static final String CODE_LDAP_DISABLED = "LDAP_DISABLED";
+    public static final String CODE_AD_UNAVAILABLE = "AD_UNAVAILABLE";
+    public static final String CODE_AD_NOT_USER_ACCOUNT = "AD_NOT_USER_ACCOUNT";
+
+    /**
+     * AD'ye ulaşılamadı / okunamadı → 503 {@code AD_UNAVAILABLE} (2026-11-13 hata taraması): eskiden detay ve çekme hatayı
+     * yutup 404 "AD'de bu kullanıcı bulunamadı" diyordu. Kök neden yalnız günlüğe yazılır (sunucu adı / port istemciye gitmez).
+     */
+    @ExceptionHandler(LdapDirectoryService.DirectoryUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> adUnavailable(LdapDirectoryService.DirectoryUnavailableException e) {
+        log.warn("AD'ye ulaşılamadı (AD'den kullanıcı ekleme): {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(err(CODE_AD_UNAVAILABLE, Msg.t(
+                "Active Directory'ye şu an ulaşılamıyor ya da yanıtı okunamadı — kullanıcının AD'de olup olmadığı bilinmiyor. Birkaç saniye sonra yeniden deneyin; sürerse Ayarlar → LDAP'taki bağlantıyı \"Bağlantıyı test et\" ile denetleyin.",
+                "Active Directory can't be reached right now or its answer couldn't be read — it isn't known whether the user is in AD. Try again in a few seconds; if it keeps happening, check the connection under Settings → LDAP with \"Test connection\".")));
     }
 
     // ── Arama ──────────────────────────────────────────────────────────────
@@ -75,6 +104,9 @@ public class AdUserController {
         List<Map<String, Object>> results = new ArrayList<>(raw.size());
         for (Map<String, Object> r : raw) {
             String username = str(r.get("username"));
+            // Kullanıcı adı olmayan (posta kişisi) ya da bilgisayar hesabı ("PC01$") listelenmez — "Görüntüle" boş adla
+            // istek atıyordu, bilgisayar hesabı kullanıcı olarak çekilebiliyordu (2026-11-13 hata taraması).
+            if (!LdapDirectoryService.isUserAccountName(username)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("dn", r.get("dn"));
             m.put("username", username);
@@ -98,7 +130,7 @@ public class AdUserController {
         if (username == null || username.isBlank()) {
             throw new IllegalArgumentException(Msg.t("Kullanıcı adı boş olamaz", "Username cannot be blank"));
         }
-        Optional<Map<String, Object>> found = directoryService.findUser(username);
+        Optional<Map<String, Object>> found = directoryService.lookupUser(username);   // erişilemez → 503 (adUnavailable)
         if (found.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(err("AD_USER_NOT_FOUND",
                     Msg.t("AD'de bu kullanıcı bulunamadı (ya da birden çok eşleşti).",
@@ -138,6 +170,7 @@ public class AdUserController {
         if (username == null || username.isBlank()) {
             throw new IllegalArgumentException(Msg.t("Kullanıcı adı boş olamaz", "Username cannot be blank"));
         }
+        if (!LdapDirectoryService.isUserAccountName(username)) return notUserAccount();   // "PC01$" — AD'ye gitmeden
         // Zaten yerelde var mı → 409 + mevcut kayıt (çift ekleme engellenir)
         Optional<AppUser> existing = userService.findByUsername(UserService.normalizeUsername(username));
         if (existing.isPresent()) {
@@ -150,7 +183,7 @@ public class AdUserController {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(resp);
         }
         // AD'den TAZE öznitelikleri çek (provision bunları profil alanlarına yazar)
-        Optional<Map<String, Object>> found = directoryService.findUser(username);
+        Optional<Map<String, Object>> found = directoryService.lookupUser(username);   // erişilemez → 503 (adUnavailable)
         if (found.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(err("AD_USER_NOT_FOUND",
                     Msg.t("AD'de bu kullanıcı bulunamadı (ya da birden çok eşleşti).",
@@ -158,6 +191,9 @@ public class AdUserController {
         }
         Map<String, Object> attrs = found.get();
         String canonical = adStr(attrs, "sAMAccountName", username);   // AD kanonik adı
+        // Savunma (2026-11-13 hata taraması): yalnız NORMAL kullanıcı hesabı çekilir — bilgisayar hesabı ("PC01$"),
+        // posta kişisi (contact) ya da grup değil (sAMAccountType / objectClass).
+        if (!LdapDirectoryService.isUserAccount(attrs, canonical)) return notUserAccount();
         String systemRole = str(body.get("system_role"));
         String orgRole = str(body.get("org_role"));
         Collection<Long> teamIds = longList(body.get("team_ids"));
@@ -235,6 +271,15 @@ public class AdUserController {
         r.put("success", false);
         r.put("code", code);
         r.put("error", message);
+        String rid = CorrelationIdFilter.current();   // hata sözleşmesi: istek kimliği (destek için)
+        if (rid != null) r.put("request_id", rid);
         return r;
+    }
+
+    /** 400 {@code AD_NOT_USER_ACCOUNT}: bilgisayar hesabı / posta kişisi / grup kullanıcı olarak çekilmez. */
+    private ResponseEntity<Map<String, Object>> notUserAccount() {
+        return ResponseEntity.badRequest().body(err(CODE_AD_NOT_USER_ACCOUNT, Msg.t(
+                "Bu AD kaydı bir kullanıcı hesabı değil (bilgisayar hesabı, posta kişisi ya da grup) — sisteme kullanıcı olarak eklenemez.",
+                "This AD entry isn't a user account (a computer account, mail contact or group) — it can't be added as a user.")));
     }
 }

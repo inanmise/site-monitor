@@ -80,6 +80,21 @@ class PageAlarmThresholdTest {
     }
 
     @Test
+    @DisplayName("Bulgu 9 (2026-11-13): özellik öncesi satır (sütun NULL) 1 okunur — değişiklik geçmişi / denetim farkında "
+            + "ilk kayıtta '— → 1' gürültüsü olmaz")
+    void legacyNullReadsAsOneInHistorySnapshot() {
+        PageMonitor before = monitor(null);
+        PageMonitor after = monitor(1);
+        assertThat(before.getMinBrokenResources()).isEqualTo(1);
+        assertThat(AuditDiff.snapshot(before, "minBrokenResources")).containsEntry("minBrokenResources", 1);
+        assertThat(AuditDiff.diff(AuditDiff.snapshot(before, "minBrokenResources", "name"),
+                AuditDiff.snapshot(after, "minBrokenResources", "name"))).isNull();
+        // gerçek değişiklik yine görünür
+        assertThat(AuditDiff.diff(AuditDiff.snapshot(before, "minBrokenResources"),
+                AuditDiff.snapshot(monitor(4), "minBrokenResources"))).contains("minBrokenResources");
+    }
+
+    @Test
     @DisplayName("null güvenliği: null izleme / null liste false")
     void nullSafety() {
         assertThat(PageCheckerService.resultAlarmWorthy(null, List.of(broken("a.js")))).isFalse();
