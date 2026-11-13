@@ -116,6 +116,10 @@ export default function UserEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
+  // Eksik satır savunması (2026-11-13 hata taraması): düzenleyici yalnız `{id}` gibi eksik bir satırla açılırsa form boş
+  // kurulur (kullanıcı adı / e-posta / profil boş, rol USER); kaydetmek rolü düşürür, profil alanlarını siler. Kullanıcı
+  // adı olmayan satırla kayıt yapılmaz — kayıt düğmesi kapalı, uyarı gösterilir.
+  const incomplete = !isAdd && !String(user?.username ?? '').trim()
   const baseline = useMemo(() => (isAdd ? emptyForm() : toForm(user)), [isAdd, user])
   // Düzenlemede taban kayıt gövdesine de girer (değişmeyen takım kümesi / temizlenen org rolü / değişmeyen e-posta —
   // userEditorModel.buildPayload / validateForm, 20.165.1 UIA-1 / A2 / A3).
@@ -174,7 +178,7 @@ export default function UserEditor({
   }, [tab, fe.errors])
 
   async function save() {
-    if (saving || isView) return
+    if (saving || isView || incomplete) return
     const raw = validateForm(form, ctx)
     const keys = Object.keys(raw)
     if (keys.length > 0) {
@@ -300,7 +304,7 @@ export default function UserEditor({
     canTerminate: !isAdd && editable && globalAdmin && !guards.self && !!user?.username,
     canSeeDevices: !isAdd && !!user?.id && canView('audit_log.read'), devicesOpen, setDevicesOpen,
     onOpenDirectory: ldap && globalAdmin && onOpenDirectory ? openDirectory : null,
-    changes, dirty, saving, errorCount, save, requestClose, startEdit,
+    changes, dirty, saving, errorCount, save, requestClose, startEdit, incomplete, baseline: isAdd ? null : baseline,
   }
 
   const tabs = ['account', 'teams', 'profile', ...(isAdd ? [] : ['security'])]
@@ -341,6 +345,13 @@ export default function UserEditor({
               })}
             </TabsList>
           </div>
+          {incomplete && !isView && (
+            <div data-slot="ued-incomplete" className="mt-3">
+              <AlertBanner tone="warning" role="alert" className="mb-0" title={t('ued.incompleteTitle')}>
+                {t('ued.incompleteBody')}
+              </AlertBanner>
+            </div>
+          )}
           {serverError && (
             <AlertBanner tone="danger" role="alert" className="mt-3 mb-0" title={t('ued.saveFailed')}
               onDismiss={() => setServerError(null)} dismissLabel={t('app.close')}>{serverError}</AlertBanner>

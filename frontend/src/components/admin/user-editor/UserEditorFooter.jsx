@@ -94,7 +94,7 @@ export default function UserEditorFooter({ ed }) {
           <>
             <Button type="button" variant="secondary" onClick={ed.requestClose} disabled={saving}>{t('usr.cancel')}</Button>
             <Button type="button" onClick={ed.save} aria-busy={saving || undefined} data-slot="ued-save"
-              disabled={saving || (!isAdd && changes.length === 0)}>
+              disabled={saving || ed.incomplete || (!isAdd && changes.length === 0)}>
               {saving ? <Spinner size={16} decorative /> : <Save aria-hidden="true" />}
               {saving ? t('usr.saving') : t('usr.save')}
             </Button>

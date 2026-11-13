@@ -16,7 +16,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadc
 import { cn } from '@/lib/utils'
 import { ORG_ROLES, roleOptionsFor } from '../user-editor/userEditorModel.js'
 import {
-  AD_SEARCH_MIN, buildProvisionPayload, provisionErrors, matchDerivedTeams, canProvision,
+  AD_SEARCH_MIN, buildProvisionPayload, provisionErrors, matchDerivedTeams, canProvision, isListableResult,
 } from './adUserModel.js'
 
 /**
@@ -43,6 +43,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailErr, setDetailErr] = useState(null)
+  const [detailErrCode, setDetailErrCode] = useState(null)   // AD_UNAVAILABLE → yeniden dene
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ systemRole: 'USER', orgRole: '', teamIds: [], primaryTeamId: null })
   const [errors, setErrors] = useState({})
@@ -62,7 +63,8 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
       try {
         const res = await api.admin.adUserSearch(q)
         if (seq !== searchSeq.current) return
-        if (res?.success) setResults(res.results || [])
+        // Kullanıcı adı olmayan (posta kişisi) / bilgisayar ("PC01$") satırı gösterilmez (2026-11-13 hata taraması)
+        if (res?.success) setResults((res.results || []).filter(isListableResult))
         else { setResults([]); setSearchErr(res?.error || t('aduser.searchFailed')) }
       } catch (e) {
         if (seq !== searchSeq.current) return
@@ -75,24 +77,25 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
   }, [query, t])
 
   async function openDetail(username) {
+    if (!username) return
     setSelected(username); setAdding(false); setProvErr(null); setErrors({})
     setForm({ systemRole: 'USER', orgRole: '', teamIds: [], primaryTeamId: null })
     const seq = ++detailSeq.current
-    setDetailLoading(true); setDetail(null); setDetailErr(null)
+    setDetailLoading(true); setDetail(null); setDetailErr(null); setDetailErrCode(null)
     try {
       const res = await api.admin.adUserDetail(username)
       if (seq !== detailSeq.current) return
       if (res?.success) setDetail(res.data)
-      else setDetailErr(res?.error || t('aduser.detailFailed'))
+      else { setDetailErr(res?.error || t('aduser.detailFailed')); setDetailErrCode(res?.code || null) }
     } catch (e) {
       if (seq !== detailSeq.current) return
-      setDetailErr(e?.message || t('aduser.detailFailed'))
+      setDetailErr(e?.message || t('aduser.detailFailed')); setDetailErrCode(null)
     } finally {
       if (seq === detailSeq.current) setDetailLoading(false)
     }
   }
 
-  function backToList() { setSelected(null); setDetail(null); setDetailErr(null); setAdding(false); setProvErr(null) }
+  function backToList() { setSelected(null); setDetail(null); setDetailErr(null); setDetailErrCode(null); setAdding(false); setProvErr(null) }
 
   function startAdding() {
     const suggested = matchDerivedTeams(detail?.derived_teams, teams)
@@ -116,7 +119,8 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
       }
       if (res?.code === 'USER_EXISTS') {
         setProvErr(res.error || t('aduser.existsBody'))
-        setDetail((d) => ({ ...(d || {}), exists_locally: true, local_user_id: res.user?.id }))
+        setDetail((d) => ({ ...(d || {}), exists_locally: true, local_user_id: res.user?.id,
+          username: d?.username || res.user?.username || selected }))
       } else {
         setProvErr(res?.error || t('aduser.addFailed'))
       }
@@ -128,7 +132,8 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
   }
 
   const roleOptions = roleOptionsFor('ADMIN', form.systemRole, { globalAdmin: true }).map((r) => ({ value: r, label: r }))
-  const orgOptions = [{ value: '', label: t('usr.orgRoleNone') }, ...ORG_ROLES.map((r) => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]
+  // Org rolü seçilmezse kilitlenmez, ilk girişte AD'den belirlenir (2026-11-13 hata taraması — sunucu provisionAdUser)
+  const orgOptions = [{ value: '', label: t('aduser.orgRoleFromAd') }, ...ORG_ROLES.map((r) => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]
   const teamOptions = (teams || []).map((tm) => ({ value: tm.id, label: tm.name }))
   const primaryOptions = form.teamIds.map((id) => {
     const tm = (teams || []).find((x) => x.id === id)
@@ -190,7 +195,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                         {exists ? (
                           <Button variant="outline" size="sm" className="shrink-0 pointer-coarse:min-h-10"
                             data-slot="aduser-edit-existing"
-                            onClick={() => { onEditExisting?.(r.local_user_id); onClose?.() }}>
+                            onClick={() => { onEditExisting?.(r.local_user_id, r.username); onClose?.() }}>
                             <UserCheck aria-hidden="true" />{t('aduser.editExisting')}</Button>
                         ) : (
                           <Button variant="secondary" size="sm" className="shrink-0 pointer-coarse:min-h-10"
@@ -213,7 +218,14 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
               <ArrowLeft aria-hidden="true" />{t('aduser.back')}</Button>
 
             {detailLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-4" />{t('aduser.loading')}</div>}
-            {detailErr && <div data-slot="aduser-detail-error"><AlertBanner tone="danger">{detailErr}</AlertBanner></div>}
+            {detailErr && (
+              <div data-slot="aduser-detail-error" data-code={detailErrCode || undefined}>
+                <AlertBanner tone="danger" actions={detailErrCode === 'AD_UNAVAILABLE' ? (
+                  <Button variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="aduser-detail-retry"
+                    onClick={() => openDetail(selected)}>{t('aduser.retry')}</Button>
+                ) : undefined}>{detailErr}</AlertBanner>
+              </div>
+            )}
 
             {detail && (
               <>
@@ -249,7 +261,7 @@ export default function AdUserSearch({ teams = [], onClose, onAdded, onEditExist
                       {t('aduser.existsBody')}
                       {detail.local_user_id != null && (
                         <Button variant="outline" size="sm" className="ms-2 pointer-coarse:min-h-10" data-slot="aduser-edit-existing"
-                          onClick={() => { onEditExisting?.(detail.local_user_id); onClose?.() }}>
+                          onClick={() => { onEditExisting?.(detail.local_user_id, detail.username || selected); onClose?.() }}>
                           <UserCheck aria-hidden="true" />{t('aduser.editExisting')}</Button>
                       )}
                     </AlertBanner>
