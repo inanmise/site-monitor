@@ -158,6 +158,14 @@ describe('sağlık serisi: eksik gün boşluk, sertifikasız takım (bulgu 4 + 8
     expect(document.querySelector('[data-slot="stats-health-collecting"]')).toBeNull()
   })
 
+  it('first_snapshot_pending → "ilk görüntü yarın" (sertifika var, görüntüden sonra eklendi) — "sertifika yok" değil', () => {
+    render(<HealthSeriesCard source={ok({ scope: 'team', team_id: 7, org_allowed: false, teams: [{ id: 7, name: 'T' }], points: [], collecting_since: null, no_certificates: false, first_snapshot_pending: true })}
+      onRetry={vi.fn()} team={null} onTeam={vi.fn()} />)
+    expect(document.querySelector('[data-slot="stats-health-pending"]')?.textContent).toMatch(has('stx.hsTeamPending'))
+    expect(document.querySelector('[data-slot="stats-health-nocerts"]')).toBeNull()
+    expect(document.querySelector('[data-slot="stats-health-collecting"]')).toBeNull()
+  })
+
   it('no_certificates yoksa eski "toplanıyor" iletisi', () => {
     render(<HealthSeriesCard source={ok({ scope: 'org', org_allowed: true, teams: [], points: [], collecting_since: null })}
       onRetry={vi.fn()} team={null} onTeam={vi.fn()} />)

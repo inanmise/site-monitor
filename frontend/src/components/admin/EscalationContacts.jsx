@@ -428,7 +428,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 )}
                 <TableCell className="max-w-[16rem] whitespace-normal">
                   <UserBadge displayName={c.name} email={c.email} inline size="sm" />
-                  {c.user_id != null && inactiveUserIds?.has(String(c.user_id)) && (
+                  {c.user_id != null && (c.user_active === false || inactiveUserIds?.has(String(c.user_id))) && (
                     <Badge variant="destructive" data-slot="contact-user-inactive" title={t('team.contactInactiveTip')}
                       className="mt-1 flex w-fit">
                       <UserX aria-hidden="true" /> {t('team.memberInactive')}

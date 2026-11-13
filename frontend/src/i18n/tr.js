@@ -12414,6 +12414,7 @@ export const TR = {
   'stx.hsCollecting': 'Veri {0} tarihinden beri toplanıyor — eğri birkaç gün sonra çizilir.',
   'stx.hsCollectingSoon': 'Veri toplanmaya başlıyor — ilk günlük görüntü bir saat içinde yazılır.',
   'stx.hsNoCerts': 'Bu takımda izlenen sertifika yok — sağlık eğrisi yalnız sertifikası olan takım için çizilir. Yeni eklenen sertifika ertesi günün görüntüsüyle görünür.',
+  'stx.hsTeamPending': 'Bu takımın sertifikaları bugünkü günlük görüntüden sonra eklendi — sağlık eğrisi ilk kez yarının görüntüsüyle çizilir.',
   'stx.hsLast': '{0} itibarıyla {1} ({2} / {3} temiz)',
   'stx.hsSince': '{0} tarihinden beri',
   'stx.scTitle': 'Takım karnesi',
