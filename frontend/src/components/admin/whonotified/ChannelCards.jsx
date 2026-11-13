@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { Mail, Users, Webhook, BellRing, Timer } from 'lucide-react'
+import { Mail, Users, Webhook, BellRing, Timer, PhoneCall } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
 import HintPopover from '../../ui/HintPopover.jsx'
@@ -115,8 +115,10 @@ function DelayBadge({ minutes }) {
 const roleLabel = (t, role) => (role ? t(`ec.role.${String(role).toLowerCase()}`) : '')
 
 // 'globalContact' kaynağı 2026-09-28'de kalktı: eskalasyon kişileri yalnız takımın kendi kişileridir (sunucu kuralı).
-const SOURCE_TONE = { group: 'info', team: 'neutral', contact: 'muted' }
-const SOURCE_ICON = { group: Users, team: Mail }
+const SOURCE_TONE = { group: 'info', team: 'neutral', contact: 'muted', oncall: 'info' }
+const SOURCE_ICON = { group: Users, team: Mail, oncall: PhoneCall }
+/** E-posta kanalının hariç gerekçeleri (2026-11-13 zincir izi) — push kodlarından ayrı sözlük (`wn.reason.*`). */
+export const EMAIL_EXCLUDE_REASONS = ['NO_EMAIL', 'INACTIVE_ADDRESS', 'INACTIVE_ACCOUNT', 'LEVEL_THRESHOLD', 'TEAM_ONLY', 'SAME_ADDRESS']
 
 export function EmailCard({ view, level, cardRef }) {
   const t = useT()
@@ -124,6 +126,7 @@ export function EmailCard({ view, level, cardRef }) {
   const whyOf = (r) => {
     if (r.source === 'group') return t('wn.why.group', r.groupName)
     if (r.source === 'team') return t('wn.why.team')
+    if (r.source === 'oncall') return t('wn.why.oncall', lvl(level))
     return t('wn.why.contact', lvl(r.minLevel), lvl(level))
   }
   return (
@@ -146,7 +149,10 @@ export function EmailCard({ view, level, cardRef }) {
                 description={r.email}
                 extra={r.also.length > 0 && (
                   <p data-slot="wn-also" className="text-xs text-muted-foreground">
-                    {t('wn.alsoContact', r.also.map((a) => a.name).join(', '))}
+                    {[
+                      r.also.some((a) => !a.oncall) && t('wn.alsoContact', r.also.filter((a) => !a.oncall).map((a) => a.name).join(', ')),
+                      r.also.some((a) => a.oncall) && t('wn.alsoOncall', r.also.filter((a) => a.oncall).map((a) => a.name).join(', ')),
+                    ].filter(Boolean).join(' · ')}
                   </p>
                 )}
                 actions={<CopyButton value={r.email} label={t('wn.copyEmail', r.email)} copiedLabel={t('wn.copied')}
@@ -194,7 +200,9 @@ export function WebhookCard({ view, cardRef, className }) {
 /** Bilgilendirilmeyenler — değerlendirilip elenen kişiler ve gerekçesi (push kararı / e-posta adresi yok). */
 export function ExcludedList({ view }) {
   const t = useT()
-  const reasonText = (code) => (code === 'NO_EMAIL' ? t('wn.reason.NO_EMAIL') : pushReasonText(t, code))
+  const reasonText = (code, channel) => (channel === 'email'
+    ? (EMAIL_EXCLUDE_REASONS.includes(code) ? t(`wn.reason.${code}`) : code)
+    : pushReasonText(t, code))
   if (view.excluded.length === 0) {
     return <p className="px-1 py-2 text-sm text-muted-foreground">{t('wn.excludedNone')}</p>
   }
@@ -209,9 +217,11 @@ export function ExcludedList({ view }) {
               {x.channel === 'push' ? <BellRing aria-hidden="true" /> : <Mail aria-hidden="true" />}
               {x.channel === 'push' ? t('wn.channelPush') : t('wn.channelEmail')}
             </ToneBadge>
-            <DecisionBadge decision={x.reason} className="max-w-full whitespace-normal">{reasonText(x.reason)}</DecisionBadge>
+            <DecisionBadge decision={x.reason} className="max-w-full whitespace-normal">{reasonText(x.reason, x.channel)}</DecisionBadge>
+            {x.reason === 'LEVEL_THRESHOLD' && x.minLevel && <LevelBadge level={x.minLevel} prefix="≥ " />}
           </>}
-          description={x.channel === 'email' ? roleLabel(t, x.sub) : x.sub} mono={x.channel !== 'email'}
+          description={x.channel === 'email' ? [roleLabel(t, x.sub), x.address].filter(Boolean).join(' · ') : x.sub}
+          mono={x.channel !== 'email'}
         />
       ))}
     </ItemGroup>

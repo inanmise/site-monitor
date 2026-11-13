@@ -1064,6 +1064,9 @@ public class EscalationService {
             if (!seen.add(team[0].toLowerCase())) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("email", team[0]); m.put("team", team[1]); m.put("source", team[2]); m.put("kind", "TEAM");
+            // Zincir izi (2026-11-13): yalnız pasif hesaplara ait adres gönderimde süzülür (InactiveRecipientGuard) — satır
+            // listede kalır, düşeceği işaretlenir. Anahtar yalnız düşecekse yazılır (diğer satırlar bugünkü biçimde).
+            if (inactiveOnly(team[0])) m.put("inactive_only", true);
             emails.add(m);
         }
         // Gönderimle AYNI kapsam (EscalationContactScope, 2026-09-28): takımın kendi kontakları; yedek yok. Eski
@@ -1102,6 +1105,7 @@ public class EscalationService {
             boolean dup = !delayed && c.getEmail() != null && !seen.add(c.getEmail().trim().toLowerCase());
             m.put("email_duplicate", dup);   // takım adresiyle aynıysa tek mail gider
             if (delayed) m.put("delay_minutes", c.getDelayMinutes());
+            if (inactiveOnly(c.getEmail())) m.put("inactive_only", true);   // zincir izi: adres pasif hesaba ait → düşer
             contactRows.add(m);
             if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
                 Map<String, Object> w = new LinkedHashMap<>();
@@ -1129,6 +1133,83 @@ public class EscalationService {
         // Alarm iletimi (2026-11-05): takımın (+ UG) iletim alıcıları — yönlendirme yoksa alan HİÇ eklenmez (bugünkü yanıt).
         List<Map<String, Object>> forwards = simulateForwards(teamId, ug, standaloneMonitor);
         if (forwards != null) out.put("forwards", forwards);
+        // Zincir izi (2026-11-13, yönetim zenginleştirmesi #3): DAHİL EDİLMEYEN kişiler gerekçesiyle + nöbetçi. Ek alanlar;
+        // eski istemci yok sayar. Kararlar gönderimle aynı kuraldan türetilir (seviye eşiği, yalnız-takım kuralı, pasif hesap).
+        out.put("excluded_contacts", simulateExcludedContacts(teamId, ug, lvl, managers, contacts, seen));
+        List<Map<String, Object>> oncall = simulateOnCall(teamId, ug, lvl, seen);
+        if (!oncall.isEmpty()) out.put("oncall", oncall);
+        return out;
+    }
+
+    /** Zincir izi: adres yalnız pasif hesaplara mı ait (gönderim süzgeci bunu düşürür). Süzgeç yoksa false. */
+    private boolean inactiveOnly(String email) {
+        try {
+            return inactiveGuard != null && email != null && !email.isBlank() && inactiveGuard.isInactiveOnlyEmail(email);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Sahip takımların (SY + UG) etkin kişilerinden bu senaryoda alıcı OLMAYANLAR ve gerekçesi (gönderimle aynı kural):
+     * {@code TEAM_ONLY} — bağımsız izlemenin UYARI alarmı yalnız takıma gider; {@code INACTIVE_ACCOUNT} — kişi pasif
+     * kullanıcıya bağlı; {@code SAME_ADDRESS} — aynı adres başka satırla zaten alıyor; {@code LEVEL_THRESHOLD} — kişinin
+     * eşiği alarm seviyesinin üstünde. Takım başına tek sorgu ({@code findByTeamIdAndActiveTrueOrderByRoleAsc}).
+     */
+    private List<Map<String, Object>> simulateExcludedContacts(Long teamId, Long ug, String lvl, boolean managers,
+                                                               List<EscalationContact> included, Set<String> seen) {
+        Set<Long> includedIds = new HashSet<>();
+        for (EscalationContact c : included) if (c.getId() != null) includedIds.add(c.getId());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Long owner : java.util.Arrays.asList(teamId, ug)) {
+            if (owner == null) continue;
+            List<EscalationContact> all;
+            try {
+                all = contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(owner);
+            } catch (RuntimeException e) {
+                log.debug("Simülatör: hariç kişiler okunamadı (takım {}): {}", owner, e.toString());
+                continue;
+            }
+            for (EscalationContact c : all) {
+                if (c.getId() != null && includedIds.contains(c.getId())) continue;
+                String reason;
+                if (!managers) reason = "TEAM_ONLY";
+                else if (inactiveGuard != null && inactiveGuard.isInactiveContact(c)) reason = "INACTIVE_ACCOUNT";
+                else if (c.getEmail() != null && seen.contains(c.getEmail().trim().toLowerCase())
+                        && levelRank(c.getMinAlertLevel()) <= levelRank(lvl)) reason = "SAME_ADDRESS";
+                else reason = "LEVEL_THRESHOLD";
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", c.getId()); m.put("name", c.getName()); m.put("email", c.getEmail());
+                m.put("role", c.getRole()); m.put("min_level", c.getMinAlertLevel()); m.put("team_id", c.getTeamId());
+                m.put("reason", reason);
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
+    private static int levelRank(String level) {
+        Integer r = level == null ? null : LEVEL_ORDER.get(level.trim().toUpperCase(Locale.ROOT));
+        return r == null ? Integer.MAX_VALUE : r;
+    }
+
+    /**
+     * Zincir izi: bu seviyede alarmla birlikte bilgilendirilecek nöbetçiler ({@link #oncallFor} — yalnız YÜKSEK / KRİTİK ve
+     * "nöbetçiye de bildir" açık takım). Adres zaten zincirde varsa {@code duplicate} (tek e-posta), pasif hesaba aitse
+     * {@code inactive_only}. Satır sırası gönderimle aynı.
+     */
+    private List<Map<String, Object>> simulateOnCall(Long teamId, Long ug, String lvl, Set<String> seen) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (var p : oncallFor(teamId, ug, lvl)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("team_id", p.teamId());
+            m.put("name", p.displayName() != null && !p.displayName().isBlank() ? p.displayName() : p.username());
+            m.put("email", p.email());
+            String e = p.email() == null ? "" : p.email().trim().toLowerCase();
+            m.put("duplicate", !e.isEmpty() && !seen.add(e));
+            if (inactiveOnly(p.email())) m.put("inactive_only", true);
+            out.add(m);
+        }
         return out;
     }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useId } from 'react'
-import { Users, Star, Mail, Plus, Trash2, Pencil, History, CircleAlert, BellOff, MailX } from 'lucide-react'
+import { Users, Star, Mail, Plus, Trash2, Pencil, History, CircleAlert, BellOff, MailX, UserX } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -16,7 +16,7 @@ import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
-import { usageOf, filterGroups, groupKpis } from './notifyGroupCleanupModel.js'
+import { usageOf, filterGroups, groupKpis, recipientState, deadGroups, emailCount } from './notifyGroupCleanupModel.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { Button } from '@/components/shadcn/button'
@@ -153,6 +153,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     { key: 'total',    Icon: Mail,    label: t('ng.kpi.total'),    value: kpis.total,             cls: 'total' },
     { key: 'unused',   Icon: BellOff, label: t('ng.kpi.unused'),   value: kpis.unused ?? '—',     cls: 'warning' },
     { key: 'noEmails', Icon: MailX,   label: t('ng.kpi.noEmails'), value: kpis.noEmails,          cls: 'warning' },
+    // Alıcı önizlemesi (2026-11-13): yalnız pasif hesaba ait adres taşıyan gruplar (bilinmiyorsa "—")
+    { key: 'passive',  Icon: UserX,   label: t('ng.kpi.passive'),  value: kpis.passive ?? '—',    cls: 'warning' },
     { key: 'inactive', Icon: Trash2,  label: t('ng.kpi.inactive'), value: kpis.inactive,          cls: 'paused' },
   ]
   const onKpi = (k) => setFStatus((cur) => (k === 'total' ? 'all' : cur === k ? 'all' : k))
@@ -175,14 +177,19 @@ export default function NotificationGroups({ teams = [], systemRole }) {
    */
   const teamsAtRisk = useMemo(() => {
     const scope = new Set([...groups.map(g => String(g.team_id)), ...writableTeamIds])
+    // Adressiz varsayılan grup takım adresinin yerini TUTMAZ (sunucu adressiz grubu atlar, takım adresine düşer) —
+    // eskiden onu da "varsayılanı var" sayıp takım adresi boşken uyarıyı yutuyorduk.
     const hasDefault = new Set(
-      groups.filter(g => g.active && g.is_default).map(g => String(g.team_id)))
+      groups.filter(g => g.active && g.is_default && emailCount(g) > 0).map(g => String(g.team_id)))
     return [...scope]
       .filter(id => !fTeam || String(fTeam) === id)
       .filter(id => !hasDefault.has(id))
       .filter(id => !String(teamEmails[id] ?? '').trim())
       .map(id => teamMap[id] ?? `#${id}`)
   }, [groups, writableTeamIds, teamEmails, teamMap, fTeam])
+
+  /** Alarmı kimseye ulaştırmayan, devredeki gruplar (tüm adresleri pasif hesaplara ait) — takım süzgecine uyar. */
+  const dead = useMemo(() => deadGroups(kpiGroups, usageCounts), [kpiGroups, usageCounts])
 
   const emailList = (form.emails || '').split(',').map(s => s.trim()).filter(Boolean)
   const overLimit = emailList.length > MAX_EMAILS
@@ -327,6 +334,16 @@ export default function NotificationGroups({ teams = [], systemRole }) {
         <MonitorStatsBar dense items={statItems} activeFilter={fStatus === 'all' ? 'total' : fStatus} onStatClick={onKpi} className="mb-0" />
       )}
 
+      {/* Sessiz kayıp: devredeki grubun TÜM adresleri pasif hesaplara ait → alarm e-postası kimseye gitmez (2026-11-13) */}
+      {!loading && !loadError && dead.length > 0 && (
+        <AlertBanner tone="danger" title={t('ng.deadTitle')} className="mb-0">
+          <span data-slot="ng-dead-banner">
+            {t('ng.deadBody').replace('{groups}',
+              dead.map(g => `${g.name} (${teamMap[String(g.team_id)] ?? `#${g.team_id}`})`).join(', '))}
+          </span>
+        </AlertBanner>
+      )}
+
       {!loading && !loadError && teamsAtRisk.length > 0 && (
         <AlertBanner tone="warning" title={t('ng.riskTitle')} className="mb-0">
           {t('ng.riskBody').replace('{teams}', teamsAtRisk.join(', '))}
@@ -375,12 +392,13 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                         )}
                         {!g.active && <ToneBadge tone="muted" className="line-through">{t('ng.deletedBadge')}</ToneBadge>}
                         {g.active !== false && <UsageBadge count={usageOf(g, usageCounts)} t={t} />}
+                        {g.active !== false && <RecipientBadge state={recipientState(g)} t={t} />}
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</TableCell>
                     <TableCell>
                       {/* Dokun / tıkla → tanımlı adresler listelenir (2026-09-20; D2: hover-only balon → HintPopover) */}
-                      <EmailChip emails={g.emails ?? []} label={t('ng.emailCount').replace('{n}', count)} title={t('ng.colEmails')} />
+                      <EmailChip state={recipientState(g)} label={t('ng.emailCount').replace('{n}', count)} t={t} />
                     </TableCell>
                     <TableCell data-col="audit" className="hidden align-top text-xs whitespace-normal md:table-cell">
                       <span data-slot="ng-audit-line" className="flex flex-wrap items-center gap-1" title={g.created_by || ''}>
@@ -598,24 +616,57 @@ function DefaultCheckbox({ checked, onChange, label }) {
  * eski yalnız-hover portal baloncuğu (`.ng-mailchip` / `.ng-mailpop`) telefonda HİÇ açılmıyordu; artık
  * ui/HintPopover (shadcn Popover, tetik Button; Escape/dışarı dokunuş kapatır). Test kancası `data-slot="ng-mailchip"`.
  */
-function EmailChip({ emails, label, title }) {
+function EmailChip({ state, label, t }) {
+  const { total, known, delivered, dropped } = state
   const chip = (
-    <span data-slot="ng-mailchip" className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+    <span data-slot="ng-mailchip" data-dropped={known ? dropped.length : 'unknown'}
+      className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
       <Mail aria-hidden="true" className="size-3" /> {label}
     </span>
   )
-  if (!emails.length) return chip
+  if (!total) return chip
+  // Birleşik alıcı önizlemesi (2026-11-13): teslim edilecekler + gönderimde düşecekler (yalnız pasif hesaba ait) ayrı
   return (
     <HintPopover triggerClassName="rounded-full pointer-coarse:min-h-10"
       content={(
-        <span className="flex flex-col gap-1">
-          <span className="font-semibold">{title} · {emails.length}</span>
-          <ul className="flex list-none flex-col gap-0.5 p-0">{emails.map(e => <li key={e} className="font-mono break-all">{e}</li>)}</ul>
+        <span data-slot="ng-recipients-preview" className="flex max-w-80 flex-col gap-2">
+          <span className="flex flex-col gap-0.5">
+            <span className="font-semibold">
+              {known ? t('ng.rcpt.delivered').replace('{n}', delivered.length) : t('ng.rcpt.all').replace('{n}', total)}
+            </span>
+            {delivered.length > 0
+              ? <ul className="flex list-none flex-col gap-0.5 p-0">{delivered.map(e => <li key={e} className="font-mono break-all">{e}</li>)}</ul>
+              : <span className="text-destructive">{t('ng.rcpt.none')}</span>}
+          </span>
+          {known && dropped.length > 0 && (
+            <span className="flex flex-col gap-0.5">
+              <span className="font-semibold">{t('ng.rcpt.dropped').replace('{n}', dropped.length)}</span>
+              <ul className="flex list-none flex-col gap-0.5 p-0">
+                {dropped.map(e => (
+                  <li key={e} data-slot="ng-mail-dropped" className="font-mono break-all text-muted-foreground line-through">{e}</li>
+                ))}
+              </ul>
+              <span className="text-muted-foreground">{t('ng.rcpt.droppedWhy')}</span>
+            </span>
+          )}
+          {!known && <span className="text-muted-foreground" data-slot="ng-rcpt-unknown">{t('ng.rcpt.unknown')}</span>}
         </span>
       )}>
       {chip}
     </HintPopover>
   )
+}
+
+/**
+ * Alıcı rozeti (2026-11-13): tüm adresler pasif hesaplara ait → "Etkin alıcı yok" (tehlike: grup uygulanır, posta düşer,
+ * takım adresine dönülmez); bir kısmı → "N pasif adres" (uyarı). Bilinmiyorsa ya da sorun yoksa rozet yok.
+ */
+function RecipientBadge({ state, t }) {
+  if (!state.known || !state.inactive) return null
+  if (state.allPassive) {
+    return <ToneBadge tone="danger" data-slot="ng-recipients" data-state="none"><UserX aria-hidden="true" /> {t('ng.rcpt.noneBadge')}</ToneBadge>
+  }
+  return <ToneBadge tone="warning" data-slot="ng-recipients" data-state="partial"><UserX aria-hidden="true" /> {t('ng.rcpt.passiveBadge', state.inactive)}</ToneBadge>
 }
 
 /** Kullanım rozeti (2026-11-12): N izleme (nötr) · kullanılmıyor (uyarı) · bilinmiyor (—, counts okunamadı). */

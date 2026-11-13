@@ -228,6 +228,60 @@ class InactiveRecipientNotificationTest {
         return e;
     }
 
+    // ── Zincir izi (2026-11-13, "Kim bilgilendirilir?" #3): hariç kalanların gerekçesi + düşecek pasif adres + nöbetçi ──
+
+    @Test
+    @DisplayName("Simülatör zincir izi: pasif kişi INACTIVE_ACCOUNT, eşiği yüksek kişi LEVEL_THRESHOLD olarak hariç listesinde")
+    @SuppressWarnings("unchecked")
+    void simulator_excludedContactsCarryReason() {
+        db.add(contact(11L, TEAM_B, B_TECH, "TECH", "CRITICAL"));
+        Map<String, Object> sim = service.simulateRecipients(TEAM_B, "HIGH", false, null);
+        List<Map<String, Object>> excluded = (List<Map<String, Object>>) sim.get("excluded_contacts");
+        assertThat(excluded).extracting(m -> m.get("id"), m -> m.get("reason"))
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(10L, "INACTIVE_ACCOUNT"),
+                        org.assertj.core.groups.Tuple.tuple(11L, "LEVEL_THRESHOLD"));
+        assertThat((List<Map<String, Object>>) sim.get("contacts")).isEmpty();
+        // KRİTİK'te eşik engeli kalkar: yalnız pasif kişi hariç
+        List<Map<String, Object>> crit = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "CRITICAL", false, null).get("excluded_contacts");
+        assertThat(crit).extracting(m -> m.get("reason")).containsExactly("INACTIVE_ACCOUNT");
+    }
+
+    @Test
+    @DisplayName("Simülatör zincir izi: bağımsız izlemenin UYARI alarmı yalnız takıma — tüm kişiler TEAM_ONLY ile hariç")
+    @SuppressWarnings("unchecked")
+    void simulator_teamOnlyLevel() {
+        db.add(contact(11L, TEAM_B, B_TECH, "TECH", "WARNING"));
+        List<Map<String, Object>> excluded = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "WARNING", true, null).get("excluded_contacts");
+        assertThat(excluded).extracting(m -> m.get("reason")).containsOnly("TEAM_ONLY").hasSize(2);
+    }
+
+    @Test
+    @DisplayName("Simülatör zincir izi: yalnız pasif hesaba ait takım adresi işaretlenir (gönderimde düşer); diğer satır işaretsiz")
+    @SuppressWarnings("unchecked")
+    void simulator_marksInactiveOnlyTeamAddress() {
+        team(7L, "Takım P", B_MANAGER);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) service.simulateRecipients(7L, "HIGH", false, null).get("team_emails");
+        assertThat(rows).singleElement().satisfies(r -> assertThat(r.get("inactive_only")).isEqualTo(true));
+        List<Map<String, Object>> b = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "HIGH", false, null).get("team_emails");
+        assertThat(b).singleElement().satisfies(r -> assertThat(r).doesNotContainKey("inactive_only"));
+    }
+
+    @Test
+    @DisplayName("Simülatör zincir izi: nöbetçi satırı (YÜKSEK), zincirde olan adres duplicate; UYARI'da nöbetçi alanı yok")
+    @SuppressWarnings("unchecked")
+    void simulator_onCallRows() {
+        com.sitemonitor.service.oncall.OnCallService onCall = org.mockito.Mockito.mock(com.sitemonitor.service.oncall.OnCallService.class);
+        ReflectionTestUtils.setField(service, "onCallService", onCall);
+        when(onCall.notifyTargets(anyCollection())).thenReturn(Map.of(TEAM_B,
+                new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(TEAM_B, 55L, "N55555", "Nöbetçi Kişi", B_MAIL, true, false, null)));
+        List<Map<String, Object>> oncall = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "HIGH", false, null).get("oncall");
+        assertThat(oncall).singleElement().satisfies(r -> {
+            assertThat(r.get("name")).isEqualTo("Nöbetçi Kişi");
+            assertThat(r.get("duplicate")).isEqualTo(true);      // takım adresiyle aynı → tek e-posta
+        });
+        assertThat(service.simulateRecipients(TEAM_B, "WARNING", false, null)).doesNotContainKey("oncall");
+    }
+
     private Map<String, Object> hijackedResult(String domain) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("domain", domain); r.put("status", "valid"); r.put("warning", false); r.put("days_remaining", 300);

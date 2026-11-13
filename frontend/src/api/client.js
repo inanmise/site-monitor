@@ -1924,6 +1924,13 @@ export const api = {
       for (const ty of types || []) qs.append('types', ty)
       return request(`/admin/history?${qs.toString()}`)
     },
+    // Çapraz yönetim değişiklik akışı (2026-11-13): areas = teams|users|contacts|thresholds|groups|forwards|sharing|oncall
+    historyFeed: ({ areas = [], actor = '', days = 30, page = 0, size = 25 } = {}) => {
+      const qs = new URLSearchParams({ days: String(days), page: String(page), size: String(size) })
+      if (areas.length) qs.set('areas', areas.join(','))
+      if (actor && actor.trim()) qs.set('actor', actor.trim())
+      return request(`/admin/history/feed?${qs.toString()}`)
+    },
     // Tier bazlı eşikler + etki önizleme (2026-09-20)
     createThreshold: (data) => request('/admin/thresholds', { method: 'POST', body: JSON.stringify(data) }),
     deleteThreshold: (id) => request(`/admin/thresholds/${id}`, { method: 'DELETE' }),

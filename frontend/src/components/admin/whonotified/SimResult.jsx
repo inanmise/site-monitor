@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Activity, Award, BellOff, BellRing, Info, Mail, UserPlus, Users, UserX, Webhook } from 'lucide-react'
+import { Activity, Award, BellOff, BellRing, Download, Info, Mail, UserPlus, Users, UserX, Webhook } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import MonitorStatsBar from '../../MonitorStatsBar.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -11,11 +11,27 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardContent } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-import { EmailCard, ExcludedList, LevelBadge, WebhookCard } from './ChannelCards.jsx'
+import { EmailCard, ExcludedList, LevelBadge, WebhookCard, EMAIL_EXCLUDE_REASONS } from './ChannelCards.jsx'
+import { csvRows } from '../../../utils/csv.js'
+import { downloadBlob } from '../../../utils/csvExport.js'
 import NocNote from './NocNote.jsx'
 import ForwardsCard from './ForwardsCard.jsx'
 import { PushCard } from './PushDecisions.jsx'
-import { buildView } from './whoNotifiedModel.js'
+import { buildView, recipientCsvRows, pushReasonText } from './whoNotifiedModel.js'
+
+/** Alıcı listesini CSV indir (2026-11-13): dahil olanlar + hariç kalanlar gerekçesiyle, ekranın dilinde. */
+function exportCsv(view, data, level, t) {
+  const rows = recipientCsvRows(view, {
+    header: [t('wn.csv.channel'), t('wn.csv.name'), t('wn.csv.address'), t('wn.csv.source'), t('wn.csv.status'), t('wn.csv.reason')],
+    channel: (c) => (c === 'push' ? t('wn.channelPush') : c === 'webhook' ? t('wn.tileWebhook') : t('wn.channelEmail')),
+    source: (s) => { const k = `wn.src.${s}`; const v = t(k); return v === k ? (s || '') : v },
+    yes: t('wn.csv.yes'), no: t('wn.csv.no'), later: (m) => t('wn.delayBadge', m),
+    reason: (code, ch) => (ch === 'push' ? pushReasonText(t, code) : EMAIL_EXCLUDE_REASONS.includes(code) ? t(`wn.reason.${code}`) : code),
+  })
+  const slug = String(data?.team_name || 'takim').toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'takim'
+  downloadBlob(`kim-bilgilendirilir-${slug}-${String(data?.level || level).toLowerCase()}.csv`,
+    new Blob(['\ufeff' + csvRows(rows)], { type: 'text/csv;charset=utf-8' }))
+}
 
 /** Kart/bölüme kaydır + odak (özet kutucukları "listeye git" eylemidir, süzgeç değil). */
 function reveal(el) {
@@ -76,6 +92,10 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
         <LevelBadge level={data?.level || level} />
         <Badge variant="outline" className="gap-1.5 font-medium"><KindIcon aria-hidden="true" />{kindLabel}</Badge>
         {refreshing && <Spinner size={14} label={t('sim.loading')} />}
+        <Button type="button" variant="outline" size="sm" data-slot="wn-export" className="ml-auto h-10 md:h-8 pointer-coarse:h-10"
+          onClick={() => exportCsv(view, data, level, t)}>
+          <Download aria-hidden="true" /> {t('wn.export')}
+        </Button>
       </div>
       <p data-slot="wn-live" aria-live="polite" className="sr-only">
         {refreshing ? '' : pushFull

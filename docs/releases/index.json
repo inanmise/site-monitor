@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-12T23:26:10Z",
+  "generatedAt": "2026-11-13T00:07:11Z",
   "repo": "inanmise/site-monitor",
-  "count": 821,
+  "count": 822,
   "releases": [
+    {
+      "version": "20.195.0",
+      "tag": "v20.195.0",
+      "releasedAt": "2026-11-13T00:07:04Z",
+      "commit": "35ee115df64885fbf81df2ac9f57c151f39e387b",
+      "prevVersion": "20.194.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "35ee115d",
+          "subject": "\"Kim bilgilendirilir?\" zincir izi, seviye karşılaştırma ve CSV"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "c197bfe1",
+          "subject": "çapraz yönetim değişiklik akışı (Denetim → Değişiklik akışı)"
+        },
+        {
+          "type": "feat",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "2d898ae8",
+          "subject": "bildirim grubu alıcı önizlemesi — pasif hesaba düşen adresler"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.194.0",
       "tag": "v20.194.0",

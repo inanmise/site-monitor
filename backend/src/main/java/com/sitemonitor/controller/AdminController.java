@@ -184,6 +184,12 @@ public class AdminController {
     private final com.sitemonitor.service.WebhookService webhookService;                       // eskalasyon webhook testi (2026-09-20)
     private final com.sitemonitor.service.TeamAdminService teamAdminService;                   // takım sayaçları / etki / taşıma (2026-09-20)
     private final com.sitemonitor.service.AdminOverviewService adminOverviewService;           // özet şeridi (2026-09-20)
+
+    /** Çapraz yönetim değişiklik akışı (2026-11-13). İsteğe bağlı: dilim testleri bean'siz kurulur → uç boş akış döner. */
+    private com.sitemonitor.service.AdminActivityFeedService activityFeedService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setActivityFeedService(com.sitemonitor.service.AdminActivityFeedService s) { this.activityFeedService = s; }
     private final EscalationContactRepository contactRepo;
     private final AlertEventRepository alertEventRepo;
     private final NotificationLogRepository notificationLogRepo;
@@ -1770,6 +1776,114 @@ public class AdminController {
         }
         return null;
     }
+
+    // ── Çapraz yönetim değişiklik akışı (2026-11-13) ───────────────────────────
+
+    /** Gün süzgecinin kabul ettiği değerler (0 = tümü). */
+    static final List<Integer> FEED_DAYS = List.of(1, 7, 30, 90, 365, 0);
+    /** Alan → arayüz işlem etiketinden düşülen olay türü öneki ({@code hist.act.<kalan>}). */
+    private static final Map<String, String> FEED_PREFIX = Map.of(
+            "teams", "TEAM_", "users", "USER_", "contacts", "CONTACT_", "thresholds", "THRESHOLD_",
+            "groups", "NOTIFICATION_GROUP_", "forwards", "ALERT_FORWARD_", "sharing", "TEAM_ACCESS_GRANT_", "oncall", "ONCALL_");
+
+    /**
+     * Yönetim alanlarının değişikliklerini tek akışta döner — "kim, neyi, ne zaman değiştirdi". Alan başına izin ve
+     * kapsam, sekme geçmişleriyle AYNI: takım/kişi/grup/iletim/nöbet görüş kapsamıyla, paylaşım yönetim kapsamıyla
+     * (paylaşım ekranının kuralı), kullanıcılar ve eşikler yalnız global yöneticiye. Hiç izinli alan yoksa 403.
+     *
+     * @param areas istenen alanlar (CSV; boş = izinli tümü; izinli olmayan / bilinmeyen yok sayılır)
+     * @param actor yalnız bu kişinin değişiklikleri (kullanıcı adı, harf duyarsız)
+     * @param days  son N gün (1, 7, 30, 90, 365; 0 = tümü; başka değer → 30)
+     */
+    @GetMapping("/history/feed")
+    public ResponseEntity<Map<String, Object>> adminHistoryFeed(
+            @RequestParam(required = false) List<String> areas,
+            @RequestParam(required = false) String actor,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size,
+            HttpSession session) {
+        if (actor != null && actor.length() > 200) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("actor", com.sitemonitor.util.Msg.t(
+                    "Kişi süzgeci en çok 200 karakter olabilir.", "The person filter can be at most 200 characters."));
+        }
+        boolean gv = SessionScope.isGlobalViewer(session);
+        List<Long> view = gv ? null : nullToEmpty(SessionScope.viewTeamIds(session));
+        List<Long> manage = gv ? null : nullToEmpty(SessionScope.manageTeamIds(session));
+        boolean global = isAdmin(session);
+        List<com.sitemonitor.service.AdminActivityFeedService.Access> permitted = new ArrayList<>();
+        if (permissionService.allows(session, "teams.list", "view")) permitted.add(feedAccess("teams", view));
+        if (global && permissionService.allows(session, "users.list", "view")) permitted.add(feedAccess("users", null));
+        if (permissionService.allows(session, "contacts.list", "view")) permitted.add(feedAccess("contacts", view));
+        if (global && permissionService.allows(session, "thresholds.read", "view")) permitted.add(feedAccess("thresholds", null));
+        if (permissionService.allows(session, "notification.groups", "view")) permitted.add(feedAccess("groups", view));
+        if (permissionService.allows(session, "alerts.forwards", "view")) permitted.add(feedAccess("forwards", view));
+        if (permissionService.allows(session, "teams.sharing", "view")) permitted.add(feedAccess("sharing", manage));
+        if (permissionService.allows(session, "oncall.read", "view")) permitted.add(feedAccess("oncall", view));
+        if (permitted.isEmpty()) throw new SecurityException("Değişiklik akışını görme yetkiniz yok");
+
+        Set<String> wanted = new LinkedHashSet<>();
+        if (areas != null) for (String a : areas) if (a != null) for (String part : a.split(",")) if (!part.isBlank()) wanted.add(part.trim());
+        List<com.sitemonitor.service.AdminActivityFeedService.Access> chosen = wanted.isEmpty() ? permitted
+                : permitted.stream().filter(a -> wanted.contains(a.area())).toList();
+        int d = FEED_DAYS.contains(days) ? days : 30;
+        String since = d == 0 ? "" : java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minus(java.time.Duration.ofDays(d)));
+
+        var svc = activityFeedService;
+        var feed = svc == null || chosen.isEmpty()
+                ? new com.sitemonitor.service.AdminActivityFeedService.Feed(List.of(), 0, Math.max(0, page), Math.max(1, Math.min(size, 200)), false, 0)
+                : svc.feed(chosen, actor, since, page, size);
+
+        Map<Long, String> teamNames = new LinkedHashMap<>();
+        teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (var e : feed.items()) {
+            var r = e.row();
+            String prefix = FEED_PREFIX.getOrDefault(e.area(), "");
+            String type = r.getEventType();
+            String name = historyName(r.getDetail());
+            if (name == null && e.teamId() != null && "TEAM".equals(r.getResourceType())) name = teamNames.get(e.teamId());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId());
+            m.put("at", r.getEventTime());
+            m.put("actor", r.getActor());
+            m.put("area", e.area());
+            m.put("action", type != null && type.startsWith(prefix) ? type.substring(prefix.length()) : type);
+            m.put("event_type", type);
+            m.put("resource_type", r.getResourceType());
+            m.put("resource_id", r.getResourceId());
+            m.put("name", name);
+            m.put("team_id", e.teamId());
+            m.put("team_name", e.teamId() != null ? teamNames.get(e.teamId()) : null);
+            m.put("changes", r.getChanges());
+            // Fark taşımayan olaylarda (iletim / paylaşım / nöbet) JSON ayrıntı anlık görüntü olarak gösterilir;
+            // kullanıcı kimlikleri UserRefResponseAdvice ile görüntüleyiciye göre opaklaşır (detail alanı kapsamda).
+            String det = r.getDetail();
+            m.put("detail", det != null && det.trim().startsWith("{") ? det : null);
+            m.put("ip", r.getIpAddress());
+            m.put("outcome", r.getOutcome());
+            items.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("total", feed.total());
+        out.put("page", feed.page());
+        out.put("size", feed.size());
+        out.put("total_pages", feed.totalPages());
+        out.put("truncated", feed.truncated());
+        out.put("hidden", feed.hidden());
+        out.put("days", d);
+        out.put("areas", permitted.stream().map(com.sitemonitor.service.AdminActivityFeedService.Access::area).toList());
+        out.put("selected_areas", chosen.stream().map(com.sitemonitor.service.AdminActivityFeedService.Access::area).toList());
+        return ok(IdentityMask.forSession(out, session));
+    }
+
+    private static com.sitemonitor.service.AdminActivityFeedService.Access feedAccess(String area, List<Long> teams) {
+        return new com.sitemonitor.service.AdminActivityFeedService.Access(area, teams);
+    }
+
+    private static List<Long> nullToEmpty(List<Long> l) { return l == null ? List.of() : l; }
 
     // ── Alert Thresholds (ADMIN only) ─────────────────────────────────────────
 

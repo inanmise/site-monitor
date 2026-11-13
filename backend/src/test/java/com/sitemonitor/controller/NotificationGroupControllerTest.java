@@ -52,6 +52,7 @@ class NotificationGroupControllerTest {
     @MockitoBean NotificationGroupService groupService;
     @MockitoBean com.sitemonitor.service.NotificationGroupUsageService usageService;
     @MockitoBean com.sitemonitor.service.NotificationGroupHistoryService historyService;
+    @MockitoBean com.sitemonitor.service.InactiveRecipientGuard inactiveGuard;
     @MockitoBean TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
@@ -636,5 +637,34 @@ class NotificationGroupControllerTest {
                 .andExpect(jsonPath("$.data.groups[0].id").value((int) GROUP_A))
                 .andExpect(jsonPath("$.data.groups[0].can_write").value(true))
                 .andExpect(jsonPath("$.data.team_emails.1").value("takim1@example.com"));
+    }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: satır gönderimde düşecek (yalnız pasif hesaba ait) adresleri taşır")
+    void list_carriesInactiveEmails() throws Exception {
+        when(groupRepo.findByTeamIdAndActiveTrueOrderByNameAsc(TEAM_A))
+                .thenReturn(List.of(group(GROUP_A, TEAM_A)));
+        when(groupService.toDto(any())).thenReturn(new java.util.LinkedHashMap<>(
+                java.util.Map.of("id", GROUP_A, "emails", List.of("ok@x.com", "gone@x.com"))));
+        when(inactiveGuard.inactiveOnlyEmailsOf(any())).thenReturn(List.of("gone@x.com"));
+
+        mvc.perform(get("/api/notification-groups").param("teamId", "1").session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groups[0].inactive_emails.length()").value(1))
+                .andExpect(jsonPath("$.data.groups[0].inactive_emails[0]").value("gone@x.com"));
+    }
+
+    @Test
+    @DisplayName("Alıcı önizlemesi: pasif listesi okunamadıysa alan null (bilinmiyor) — boş liste DEĞİL")
+    void list_inactiveEmailsUnknown() throws Exception {
+        when(groupRepo.findByTeamIdAndActiveTrueOrderByNameAsc(TEAM_A))
+                .thenReturn(List.of(group(GROUP_A, TEAM_A)));
+        when(groupService.toDto(any())).thenReturn(new java.util.LinkedHashMap<>(
+                java.util.Map.of("id", GROUP_A, "emails", List.of("gone@x.com"))));
+        when(inactiveGuard.inactiveOnlyEmailsOf(any())).thenReturn(null);
+
+        mvc.perform(get("/api/notification-groups").param("teamId", "1").session(userOfA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groups[0].inactive_emails").value(org.hamcrest.Matchers.nullValue()));
     }
 }

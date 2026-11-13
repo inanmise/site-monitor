@@ -16,6 +16,7 @@ const TeamManager = lazy(() => import('./TeamManager.jsx'))
 const UserManager = lazy(() => import('./UserManager.jsx'))
 const TeamAccessManager = lazy(() => import('./access/TeamAccessManager.jsx'))
 const AlertForwardManager = lazy(() => import('./forwards/AlertForwardManager.jsx'))
+const AdminChangeFeed = lazy(() => import('./AdminChangeFeed.jsx'))
 
 const TAB_GROUPS = [
   {
@@ -45,6 +46,14 @@ const TAB_GROUPS = [
       { id: 'users', labelKey: 'admin.tabUsers', adminOnly: false },
       // Erişim paylaşımı (2026-10-12): herkes görür ("Sizinle paylaşılanlar"); paylaşım ekleme takımı yönetene açık
       { id: 'sharing', labelKey: 'admin.tabSharing', adminOnly: false },
+    ],
+  },
+  {
+    // Çapraz değişiklik akışı (2026-11-13): yönetim alanlarının değişiklikleri tek akışta. Herkes görür; hangi alanların
+    // listeleneceğine (ve takım kapsamına) sunucu karar verir, hiç izinli alan yoksa ekran "yetki yok" der.
+    groupKey: 'admin.groupAudit',
+    tabs: [
+      { id: 'changes', labelKey: 'admin.tabChanges', adminOnly: false },
     ],
   },
 ]
@@ -137,6 +146,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
           )}
           {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} onJump={jump} />}
           {activeTab === 'sharing'    && <TeamAccessManager />}
+          {activeTab === 'changes'    && <AdminChangeFeed />}
           {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}
           </LazySection>
         </TabsContent>

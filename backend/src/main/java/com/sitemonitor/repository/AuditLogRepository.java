@@ -216,6 +216,23 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     org.springframework.data.domain.Page<AuditLog> findByResourceTypeAndEventTypeIn(String resourceType, java.util.Collection<String> eventTypes, Pageable pageable);
     org.springframework.data.domain.Page<AuditLog> findByResourceTypeAndResourceIdAndEventTypeIn(String resourceType, String resourceId, java.util.Collection<String> eventTypes, Pageable pageable);
 
+    /**
+     * Çapraz yönetim değişiklik akışı (2026-11-13): yönetim alanlarının olay türleri (birleşim) + zaman alt sınırı, en
+     * yeniden ({@code idx_audit_type_time}). Global görücüde sayfalı (toplam gerçek); kapsamlı görüntüleyicide pencere.
+     */
+    @Query(value = "SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime DESC, a.id DESC",
+           countQuery = "SELECT COUNT(a) FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since")
+    org.springframework.data.domain.Page<AuditLog> findAdminFeed(@Param("types") Collection<String> types,
+                                                                  @Param("since") String since, Pageable pageable);
+
+    /** Çapraz akış — tek kişinin değişiklikleri (harf duyarsız aktör; çağıran küçük harfe çevirir). */
+    @Query(value = "SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor"
+                 + " ORDER BY a.eventTime DESC, a.id DESC",
+           countQuery = "SELECT COUNT(a) FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor")
+    org.springframework.data.domain.Page<AuditLog> findAdminFeedByActor(@Param("types") Collection<String> types,
+                                                                         @Param("since") String since,
+                                                                         @Param("actor") String actor, Pageable pageable);
+
     /** Bir kullanıcının tüm eylemleri. */
     List<AuditLog> findByActorIdOrderByEventTimeDesc(Long actorId, Pageable pageable);
 

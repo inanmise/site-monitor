@@ -59,9 +59,13 @@ public class InactiveRecipientGuard {
     @Value("${site.monitor.notify.inactive-cache-ms:60000}")
     private long cacheMs = 60_000L;
 
-    /** Tazeleme anı (ms) + pasif kimlikler + yalnız pasife ait adresler (küçük harf, kırpılmış). */
-    record Snapshot(Set<Long> ids, Set<String> emails, long atMs) {
-        static final Snapshot EMPTY = new Snapshot(Set.of(), Set.of(), 0L);
+    /**
+     * Tazeleme anı (ms) + pasif kimlikler + yalnız pasife ait adresler (küçük harf, kırpılmış). {@code known}: liste en az bir
+     * kez başarıyla okundu mu — okunamadıysa süzgeç fail-open çalışır ama önizleme "pasif adres yok" DİYEMEZ (bilinmiyor).
+     */
+    record Snapshot(Set<Long> ids, Set<String> emails, long atMs, boolean known) {
+        Snapshot(Set<Long> ids, Set<String> emails, long atMs) { this(ids, emails, atMs, true); }
+        static final Snapshot EMPTY = new Snapshot(Set.of(), Set.of(), 0L, false);
         boolean none() { return ids.isEmpty() && emails.isEmpty(); }
     }
 
@@ -96,7 +100,7 @@ public class InactiveRecipientGuard {
         // SİLİNMEZ, bayat işaretlenir (TeamAccessGrantService deseni): yeniden okuma hata verirse önceki liste kullanılır —
         // eskiden boşaltma görüntüyü attığı için veritabanı hıçkırığında süzgeç TÜM pod'larda kalkıyordu (inceleme C-2)
         Snapshot s = snapshot;
-        snapshot = s == null ? null : new Snapshot(s.ids(), s.emails(), Long.MIN_VALUE / 2);
+        snapshot = s == null ? null : new Snapshot(s.ids(), s.emails(), Long.MIN_VALUE / 2, s.known());
     }
 
     private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
@@ -140,7 +144,7 @@ public class InactiveRecipientGuard {
             log.warn("Pasif kullanıcı listesi okunamadı — bildirim süzgeci bu tur uygulanmıyor: {}", e.toString());
             // Bir önceki anlık görüntü varsa onunla sür; yoksa süzgeçsiz (fail-open). Kısa süre sonra yeniden denenir.
             Snapshot keep = previous != null ? previous : Snapshot.EMPTY;
-            return new Snapshot(keep.ids(), keep.emails(), now - Math.max(0L, cacheMs - 5_000L));
+            return new Snapshot(keep.ids(), keep.emails(), now - Math.max(0L, cacheMs - 5_000L), keep.known());
         }
     }
 
@@ -164,6 +168,23 @@ public class InactiveRecipientGuard {
     public boolean isInactiveOnlyEmail(String email) {
         String e = norm(email);
         return e != null && snapshot().emails().contains(e);
+    }
+
+    /**
+     * Önizleme (bildirim grubu alıcıları, 2026-11-13): verilen adreslerden YALNIZ pasif hesaplara ait olanlar, verilen sırada
+     * ve yazıldığı gibi. Pasif listesi hiç okunamadıysa {@code null} — arayüz "pasif adres yok" demez, "bilinmiyor" der.
+     * Gönderim süzgeciyle aynı bellek görüntüsünden okur; çağrı başına sorgu yoktur.
+     */
+    public List<String> inactiveOnlyEmailsOf(java.util.Collection<String> emails) {
+        Snapshot s = snapshot();
+        if (!s.known()) return null;
+        if (emails == null || emails.isEmpty() || s.emails().isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String e : emails) {
+            String n = norm(e);
+            if (n != null && s.emails().contains(n) && !out.contains(e)) out.add(e);
+        }
+        return out;
     }
 
     /**

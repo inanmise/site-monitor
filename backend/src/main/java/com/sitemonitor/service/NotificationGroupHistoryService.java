@@ -138,7 +138,7 @@ public class NotificationGroupHistoryService {
      * Ayrıştırıcı ikisini de kabul eder — takım hiç değişmediği için pratikte farkta çıkmaz, ama
      * ileride bir taşıma eklenirse okunur kalması bedavaya gelir.
      */
-    private Map<Long, Long> resolveTeams(List<AuditLog> rows) {
+    Map<Long, Long> resolveTeams(List<AuditLog> rows) {
         Map<Long, Long> teamOf = new HashMap<>();
         for (NotificationGroup g : groupRepo.findAll()) teamOf.put(g.getId(), g.getTeamId());
         for (AuditLog r : rows) {

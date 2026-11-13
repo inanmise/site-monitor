@@ -22,6 +22,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import MaskedValue from '../ui/MaskedValue.jsx'
 import { relTimeOrRaw as relTime } from '../../utils/relativeTime.js'
+import { eventKind, parseChanges, isDiffShape, fmtValue } from './historyFormat.js'
 
 /** Tablo ölçüleri (shadcn Data Table görünümü: soluk başlık, satır vurgusu) + ikincil metin + dipnot. */
 const TH = 'h-9 px-3 text-[0.75em] tracking-wide text-muted-foreground uppercase'
@@ -32,32 +33,8 @@ const CHIP = 'h-7 max-sm:h-10 rounded-full px-2.5 text-[0.78em] font-semibold te
 /** Özet çiplerinde en fazla kaç alan (kalanı "+N"). */
 const SUMMARY_LIMIT = 2
 
-/** Olay türü → rozet tonu (`ev-*`, Denetim Kaydı ile aynı dağarcık → ToneBadge.EventBadge). */
-function eventKind(action) {
-  const a = String(action || '')
-  if (a.endsWith('CREATE') || a.endsWith('MEMBER_ADD')) return 'ev-create'
-  if (a.endsWith('DELETE') || a.endsWith('MEMBER_REMOVE') || a === 'ACCOUNT_LOCKED') return 'ev-delete'
-  if (a.endsWith('UPDATE') || a.includes('UNLOCK') || a.includes('RESET') || a.includes('NOTIFICATIONS') || a.includes('ACCESS')) return 'ev-edit'
-  return 'ev-other'
-}
-
-function parseChanges(raw) {
-  if (!raw) return null
-  try { const o = JSON.parse(raw); return o && typeof o === 'object' && !Array.isArray(o) ? o : null } catch { return null }
-}
-/** Fark biçimi mi ({"alan":{"from":…,"to":…}}) — içerikten karar (eski kayıtlar da doğru okunsun). */
-function isDiffShape(obj) {
-  const vals = Object.values(obj)
-  return vals.length > 0 && vals.every(v => v && typeof v === 'object' && !Array.isArray(v) && ('from' in v || 'to' in v))
-}
-function fmt(t, v) {
-  if (v === true) return t('ng.histYes')
-  if (v === false) return t('ng.histNo')
-  if (v === null || v === undefined || v === '') return t('ng.histEmptyValue')
-  if (Array.isArray(v)) return v.join(', ')
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
+// Rozet tonu, fark / anlık görüntü ayrıştırması ve değer biçimi ortak modülde (çapraz değişiklik akışıyla aynı).
+const fmt = fmtValue
 // "3 dk önce" — Aktivite Logu ile aynı `act.rel.*` dağarcığı; tam zaman ipucunda / açılımda. `relTime` ortak
 // yardımcıdan (utils/relativeTime.relTimeOrRaw — öneri 29): boş damga "—", çözülemeyen damga olduğu gibi; çıktı aynı.
 

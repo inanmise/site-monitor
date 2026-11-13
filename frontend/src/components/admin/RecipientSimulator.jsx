@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { RotateCw, Users } from 'lucide-react'
+import { RotateCw, Users, Columns3 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
@@ -9,6 +9,8 @@ import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import { SettingsHeader } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
 import ScenarioForm from './whonotified/ScenarioForm.jsx'
+import CollapsibleSection from '../ui/CollapsibleSection.jsx'
+import LevelCompare from './whonotified/LevelCompare.jsx'
 import SimResult, { HowDecided, ResultSkeleton } from './whonotified/SimResult.jsx'
 import { DEFAULT_KIND, DEFAULT_LEVEL, normId, normKind, normLevel } from './whonotified/whoNotifiedModel.js'
 
@@ -113,6 +115,9 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
     setGroupId('')   // grup takıma aittir
   }
   const rerun = () => setRunKey((k) => k + 1)
+  // Seviye karşılaştırması (2026-11-13): kapalı başlar — açılınca 3 simülasyon (her seviye) yüklenir.
+  const [compareOpen, setCompareOpen] = useState(false)
+  const scenario = { teamId: Number(teamId), kind, groupId: groupId ? Number(groupId) : null, ugTeamId: effectiveUg ? Number(effectiveUg) : null }
   // Kuruluma geçişte takım süzgeci yalnız yöneticide taşınır (diğer rolde o süzgecin denetimi görünmüyor).
   const navParams = isAdmin && teamId ? { g_team: teamId } : undefined
 
@@ -150,6 +155,14 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
         ugTeamId={effectiveUg} onUgTeamChange={(v) => setUgTeamId(normId(v))}
         onRun={rerun} running={result.loading} />
       {body}
+      {teamId && result.data && (
+        <div data-slot="wn-compare-section">
+          <CollapsibleSection open={compareOpen} onOpenChange={setCompareOpen} icon={Columns3}
+            label={t('wn.cmp.title')} hint={t('wn.cmp.hint')} contentClassName="pt-2">
+            {compareOpen && <LevelCompare scenario={scenario} />}
+          </CollapsibleSection>
+        </div>
+      )}
       <HowDecided />
     </section>
   )
