@@ -79,11 +79,12 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
   const confirmRef = useRef(null)
   // Diyalog acilmadan ONCEKI odak — kapaninca oraya geri verilir.
   const returnFocusRef = useRef(null)
-  // Başlık/mesaj/ipucu id'leri: aria-labelledby/describedby bunlara bağlı. Başlık id'si ELLE
+  // Başlık/ipucu id'leri: aria-labelledby/describedby bunlara bağlı. Başlık id'si ELLE
   // veriliyor çünkü metin girişi de adını başlıktan alıyor (Radix'in iç id'si dışarı açık değil).
+  // Mesajın id'si Radix'e bırakılır: radix-ui 1.8 açıklama varken kendi id'sini aria-describedby'a
+  // EKLER, elle id verilirse o ek id boşa düşerdi; açıklama yoksa öznitelik hiç yazılmaz.
   const uid = useId()
   const titleId = `${uid}-title`
-  const messageId = `${uid}-message`
   const noteId = `${uid}-note`
   const hintId = `${uid}-note-hint`
   const v = VARIANTS[dialog.variant] ?? VARIANTS.info
@@ -140,7 +141,6 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
         role={dialog.type === 'alert' ? 'alertdialog' : 'dialog'}
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={dialog.message ? messageId : undefined}
         onOpenAutoFocus={focusInitial}
         onCloseAutoFocus={(e) => e.preventDefault()}
         onKeyDown={handleKeyDown}
@@ -153,7 +153,7 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
           </AlertDialogMedia>
           <AlertDialogTitle id={titleId}>{dialog.title}</AlertDialogTitle>
           {dialog.message && (
-            <AlertDialogDescription id={messageId} className="whitespace-pre-line">
+            <AlertDialogDescription className="whitespace-pre-line">
               {dialog.message}
             </AlertDialogDescription>
           )}
