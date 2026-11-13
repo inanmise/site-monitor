@@ -244,13 +244,22 @@ export const ACTIVITY_TYPE = Object.freeze({
   http: 'HTTP', ping: 'PING', port: 'PORT', dns: 'DNS', domain: 'DOMAIN', keyword: 'KEYWORD',
   page: 'PAGE', pagespeed: 'PAGESPEED', scripted: 'SCRIPTED', dbquery: 'DBQUERY',
 })
-/** Kanıt olarak istenen Aktivite durumları (uyarı veren kontroller dahil). */
-export const EVIDENCE_STATUSES = 'ERROR,TIMEOUT,WARNING'
+/**
+ * Kanıt olarak istenen Aktivite durumları (uyarı veren kontroller dahil). UNKNOWN (2026-11-13 hata taraması): ölçülemeyen
+ * kontrol (WHOIS yanıt vermedi, ICMP yok …) — DOMAINMON_UNKNOWN gibi olayların asıl kanıtı; rozeti nötr, yeşil değil.
+ */
+export const EVIDENCE_STATUSES = 'ERROR,TIMEOUT,WARNING,UNKNOWN'
+/**
+ * Kanıt yalnız KONTROL satırlarıdır (`group=check` — Aktivite ucunun olay grubu): alarm satırları (ALERT_TRIGGERED /
+ * ALERT_ESCALATED) aynı izleme kimliği ve ERROR / WARNING durumuyla yazılır, süzgeçsiz sorgu alarmın açılışını "başarısız
+ * kontrol" diye listeliyordu (2026-11-13 hata taraması).
+ */
+export const EVIDENCE_GROUP = 'check'
 /** Kanıt penceresinin açılıştan önceki payı: teyit kontrolleri olaydan önce çalışır. */
 export const EVIDENCE_LEAD_MS = 15 * 60 * 1000
 
 /**
- * Olayın kontrol kanıtı sorgusu — `{ monitor: 'HTTP:42', from, to?, status: 'ERROR,TIMEOUT,WARNING' }` (UTC, zone'suz —
+ * Olayın kontrol kanıtı sorgusu — `{ monitor: 'HTTP:42', from, to?, status, group: 'check' }` (UTC, zone'suz —
  * Aktivite ucu zone'suz değeri UTC okur). WARNING DAHİL (2026-11-13 inceleme): Aktivite kaydı HTTP hata kodunu, içerik
  * koşulunu, k6 FAIL'i, sorgu ihlalini ve yavaş yanıtı WARNING yazar — yalnız ERROR / TIMEOUT sormak HTTP 500'lü HTTP_DOWN
  * olayında "başarısız kontrol yok" diyordu. İzleme kimliği yoksa (sertifika olayı, silinmiş izleme) `null`.
@@ -263,9 +272,35 @@ export function evidenceQuery(inc) {
   if (!start) return null
   const from = new Date(start.getTime() - EVIDENCE_LEAD_MS).toISOString().slice(0, 19)
   const end = !isOpen(inc) && inc.resolved_at ? parseUtc(inc.resolved_at) : null
-  const out = { monitor: `${type}:${m.monitor_id}`, from, status: EVIDENCE_STATUSES }
+  const out = { monitor: `${type}:${m.monitor_id}`, from, status: EVIDENCE_STATUSES, group: EVIDENCE_GROUP }
   if (end) out.to = new Date(end.getTime() + 60 * 1000).toISOString().slice(0, 19)
   return out
+}
+
+/**
+ * Kontrol kayıtları izleyiciden gizli mi — sunucu `check_records_visible:false` (izlemenin Aktivite kayıtları başka takımın
+ * kapsamında yazılıyor; ör. envanter türevi Port / DNS'te UG üyesi). Alan yoksa (eski sunucu) bugünkü davranış: sorulur.
+ */
+export const checkRecordsHidden = (inc) => inc?.check_records_visible === false
+
+/**
+ * "Alarm Geçmişi'nde aç" çizilir mi — sunucu `can_open_alert` (Alarm Geçmişi tekil okuma kuralı: görüş + paylaşım kapsamı,
+ * envanter SY / UG kolu, 7/24 / global). Alan yoksa (eski sunucu) bugünkü kural: kendi olayı ya da 7/24 konsolu.
+ */
+export function canOpenAlertHistory(inc, scope) {
+  if (typeof inc?.can_open_alert === 'boolean') return inc.can_open_alert
+  return !isForeign(inc) || scope?.noc_console === true
+}
+
+/**
+ * İstek anında "Çözüldü (24 sa)" penceresi (2026-11-13 hata taraması): `params` süzgeç değişince bir kez kurulur; dakikalık
+ * sessiz yenileme aynı nesneyle gittiği için pencere saatlerce açık sayfada 24 saati aşıyordu. Her istek (liste, dışa
+ * aktarım) gönderilmeden önce sınır ŞİMDİYE göre yeniden hesaplanır; `params` — dolayısıyla istek anahtarı ve "yeni olay"
+ * tespiti — değişmez. `resolvedSince` yoksa aynı nesne döner.
+ */
+export function withFreshWindow(params, nowMs) {
+  if (!params?.resolvedSince) return params
+  return { ...params, resolvedSince: iso24hAgo(nowMs) }
 }
 
 /** Paylaşılabilir derin bağlantı — uygulama düzeyi `incident` anahtarı (App.jsx / e-postalarla aynı biçim). */

@@ -2045,7 +2045,7 @@ public class AdminController {
                     ? List.of()
                     : contactRepo.findByTeamIdInAndActiveTrueOrderByRoleAsc(scope);
         }
-        return ok(Map.of("data", contacts));
+        return ok(Map.of("data", withUserActive(contacts)));
     }
 
     @GetMapping("/contacts/all")
@@ -2060,7 +2060,27 @@ public class AdminController {
                     ? List.of()
                     : contactRepo.findByTeamIdInOrderByRoleAsc(scope);
         }
-        return ok(Map.of("data", contacts));
+        return ok(Map.of("data", withUserActive(contacts)));
+    }
+
+    /**
+     * Kişi satırlarına bağlı kullanıcının etkinliğini yazar ({@code user_active}, saklanmaz) — tek dar sorgu. Okunamazsa
+     * alan boş kalır (istemci kendi kullanıcı listesine döner: bugünkü davranış). Silinmiş kullanıcı → null (bilinmiyor).
+     */
+    private List<EscalationContact> withUserActive(List<EscalationContact> contacts) {
+        Set<Long> ids = new HashSet<>();
+        for (EscalationContact c : contacts) if (c.getUserId() != null) ids.add(c.getUserId());
+        if (ids.isEmpty()) return contacts;
+        try {
+            Map<Long, Boolean> active = new HashMap<>();
+            for (Object[] r : userRepo.findActiveFlagsByIds(ids)) {
+                if (r != null && r.length > 1 && r[0] instanceof Number n) active.put(n.longValue(), !Boolean.FALSE.equals(r[1]));
+            }
+            for (EscalationContact c : contacts) if (c.getUserId() != null) c.setUserActive(active.get(c.getUserId()));
+        } catch (RuntimeException e) {
+            log.debug("Kişi listesi: kullanıcı etkinliği okunamadı: {}", e.toString());
+        }
+        return contacts;
     }
 
     /**
@@ -2089,11 +2109,31 @@ public class AdminController {
                 ? escalationService.simulateRecipients(teamId, level, standalone, groupId)
                 : escalationService.simulateRecipients(teamId, level, standalone, groupId, ugTeamId));
         out.put("team_name", teamRepo.findById(teamId).map(Team::getName).orElse(null));
+        // Nöbetçi kim (2026-11-13 hata taraması): /oncall/current ile AYNI kapı — oncall.read izni yoksa satırlar kalır (e-posta
+        // sayısı gönderimle aynı) ama ad / e-posta düşer (`hidden`). Gönderim etkilenmez.
+        if (out.get("oncall") instanceof List<?> oc && !permissionService.allows(session, "oncall.read", "view")) {
+            out.put("oncall", hideOnCallPeople(oc));
+        }
         // Push ayağı (2026-09-28) — kişi kararları opt-out/org rolü taşır, görünürlük PushDecisionAccess'te: global
         // yönetici her takım, takımı YÖNETEN tüm üyeler, üye yalnız kendi satırı, diğerleri yalnız kanal durumu.
         out.putAll(PushDecisionAccess.pushLeg(session, teamId, String.valueOf(out.get("level")), standalone,
                 userPushRecipientResolver, userPushService));
         return ok(Map.of("data", out));
+    }
+
+    /** Simülatörün nöbetçi satırları — ad ve e-posta olmadan (takım, yinelenen / pasif işaretleri kalır). */
+    static List<Map<String, Object>> hideOnCallPeople(List<?> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : rows) {
+            if (!(o instanceof Map<?, ?> m)) continue;
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("team_id", m.get("team_id"));
+            h.put("hidden", true);
+            h.put("duplicate", m.get("duplicate"));
+            if (Boolean.TRUE.equals(m.get("inactive_only"))) h.put("inactive_only", true);
+            out.add(h);
+        }
+        return out;
     }
 
     /**
@@ -2265,7 +2305,9 @@ public class AdminController {
                         ? u.getDisplayName() : u.getUsername());
                 c.setEmail(u.getEmail());
             }
-        } else {
+        } else if (body.containsKey("user_id") || body.containsKey("name") || body.containsKey("email")) {
+            // 2026-11-13 hata taraması: düzenleme formu yalnız DEĞİŞEN alanları gönderir — kullanıcı bağı / ad / e-posta
+            // gövdede hiç yoksa kişinin bağına dokunulmaz (eskiden anahtarsız gövde bağı sessizce koparıyordu).
             String name = (String) body.get("name");
             String email = (String) body.get("email");
             // Elle girilen e-posta (2026-10-08): YENİ değer biçim denetiminden geçer; boş bugünkü gibi serbest, saklı
@@ -2284,8 +2326,10 @@ public class AdminController {
         if (role != null) c.setRole(role);
         String minAlertLevel = (String) body.get("min_alert_level");
         c.setMinAlertLevel(minAlertLevel != null ? minAlertLevel : (c.getMinAlertLevel() != null ? c.getMinAlertLevel() : "WARNING"));
-        c.setWebhookUrl((String) body.get("webhook_url"));
-        c.setWebhookType((String) body.get("webhook_type"));
+        // Webhook yalnız gövdede varsa yazılır (2026-11-13 hata taraması: değişen-alan gövdesi açık formun gönderilmeyen
+        // alanını null'a çevirmesin). Silmek için açıkça null gönderilir.
+        if (body.containsKey("webhook_url")) c.setWebhookUrl((String) body.get("webhook_url"));
+        if (body.containsKey("webhook_type")) c.setWebhookType((String) body.get("webhook_type"));
         Object active = body.get("active");
         c.setActive(active instanceof Boolean ? (Boolean) active : (c.getActive() != null ? c.getActive() : true));
         // Zamana bağlı eskalasyon adımı (2026-10-01, opt-in): anahtar GÖNDERİLMEZSE dokunulmaz (eski istemci / form gecikmesiz
@@ -3845,7 +3889,9 @@ public class AdminController {
         int phoneMode  = presenceMode(hasPhone);
         int emailMode  = presenceMode(hasEmail);
         int nocMode    = presenceMode(noc);
-        int onlineMode = presenceMode(online);
+        // Kim çevrimiçi — KİŞİ bazında yalnız global görüntüleyiciye (2026-11-13 inceleme): varlık uç noktası bilerek yalnız
+        // sayı verir, lastSeenAt / activeSessionId @JsonIgnore; global olmayan izleyicide süzgeç yok sayılır.
+        int onlineMode = global ? presenceMode(online) : 0;
         // Koleksiyon nöbetçileri — JPQL boş IN tuzağı: uygulanmıyorsa List.of(-1L) + bayrak.
         boolean scoped = scopeTeams != null;
         List<Long> scopeTeamsArg = scoped ? scopeTeams : List.of(-1L);
@@ -3854,10 +3900,12 @@ public class AdminController {
         Instant now = Instant.now();
         String nowIso = ISO.format(now);
         String onlineThreshold = ISO.format(now.minusSeconds(Math.max(1L, directoryActiveWindowSeconds)));
-        String loginFromDay  = dayPrefix(loginFrom);
-        String loginToDay    = dayPrefix(loginTo);
-        String createdFromDay = dayPrefix(createdFrom);
-        String createdToDay   = dayPrefix(createdTo);
+        // Tarih aralığı İstanbul günü (ekran o saati gösterir); depolama UTC → gün sınırları UTC anına çevrilir, bitiş hariç
+        // (2026-11-13 inceleme: UTC gün önekiyle 00:00–03:00 arası girişler önceki güne düşüyordu).
+        String loginFromDay  = istanbulDayStartUtc(loginFrom, 0);
+        String loginToDay    = istanbulDayStartUtc(loginTo, 1);
+        String createdFromDay = istanbulDayStartUtc(createdFrom, 0);
+        String createdToDay   = istanbulDayStartUtc(createdTo, 1);
 
         PageRequest pr = PageRequest.of(page, size, directorySort(sort, dir));
         Page<AppUser> p = userRepo.findDirectory(qParam, fieldParam, roleParam, orgRoleParam, effTeamId,
@@ -3923,10 +3971,17 @@ public class AdminController {
     }
 
     /** Tarih süzgeci GÜN öneki (yyyy-MM-dd) — zaman biçiminden bağımsız; boş/kısa → null. */
-    private static String dayPrefix(String v) {
+    /** İstanbul gününün (yyyy-MM-dd, + {@code plusDays}) başlangıcı UTC metni olarak; geçersiz / boş → null (süzgeç yok). */
+    static String istanbulDayStartUtc(String v, int plusDays) {
         if (v == null) return null;
         String d = v.trim();
-        return d.length() >= 10 ? d.substring(0, 10) : null;
+        if (d.length() < 10) return null;
+        try {
+            return ISO.format(java.time.LocalDate.parse(d.substring(0, 10)).plusDays(plusDays)
+                    .atStartOfDay(java.time.ZoneId.of("Europe/Istanbul")).toInstant());
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** JPQL boş IN tuzağı: boş liste → nöbetçi [-1L]. */

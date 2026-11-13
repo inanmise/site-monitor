@@ -114,4 +114,45 @@ class AdminHistoryServiceTest {
         assertThat(service.history("USER", "42", null, null, 0, 25).items()).hasSize(1);
         assertThatThrownBy(() -> service.history("MONITOR", null, null, null, 0, 25)).isInstanceOf(IllegalArgumentException.class);
     }
+    @Test
+    @DisplayName("2026-11-13 hata taraması: taşınan kişinin geçmişi KENDİ zamanındaki takımda — A eski satırları + taşımayı görür, B yalnız taşımayı ve sonrasını")
+    void movedContact_rowsBelongToTheirOwnTime() {
+        EscalationContact live = new EscalationContact(); live.setId(5L); live.setTeamId(2L);   // kişi ŞİMDİ B'de
+        when(contactRepo.findAll()).thenReturn(List.of(live));
+        AuditLog editInA = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "5", "{\"role\":{\"from\":\"PO\",\"to\":\"TECH\"}}");
+        AuditLog move = row(2, "CONTACT_UPDATE", "ESCALATION_CONTACT", "5", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        AuditLog editInB = row(3, "CONTACT_UPDATE", "ESCALATION_CONTACT", "5", "{\"minAlertLevel\":{\"from\":\"WARNING\",\"to\":\"HIGH\"}}");
+        when(auditRepo.findByResourceTypeAndEventTypeIn(eq("ESCALATION_CONTACT"), anyCollection(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(editInB, move, editInA)));
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(List.of(editInB, move, editInA));
+
+        var a = service.history("ESCALATION_CONTACT", null, null, Set.of(1L), 0, 50);
+        assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(2L, 1L);
+        assertThat(a.items()).extracting(AdminHistoryService.Entry::teamId).containsExactly(2L, 1L);
+        var b = service.history("ESCALATION_CONTACT", null, null, Set.of(2L), 0, 50);
+        assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(3L, 2L);
+        assertThat(a.hidden()).isZero();
+        // Global görücü: her satır kendi zamanındaki takımla
+        var all = service.history("ESCALATION_CONTACT", null, null, null, 0, 50);
+        assertThat(all.items()).extracting(AdminHistoryService.Entry::teamId).containsExactly(2L, 2L, 1L);
+    }
+
+    @Test
+    @DisplayName("2026-11-13 hata taraması: silinmiş + taşınmış kişi — taşımadan sonraki satır son taşımanın hedef takımında")
+    void deletedMovedContact_lastMoveTarget() {
+        when(contactRepo.findAll()).thenReturn(List.of());                     // kişi SİLİNMİŞ
+        AuditLog move = row(2, "CONTACT_UPDATE", "ESCALATION_CONTACT", "6", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        AuditLog editInB = row(3, "CONTACT_UPDATE", "ESCALATION_CONTACT", "6", "{\"role\":{\"from\":\"PO\",\"to\":\"TECH\"}}");
+        AuditLog editInA = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "6", "{\"role\":{\"from\":\"TECH\",\"to\":\"PO\"}}");
+        when(auditRepo.findByResourceTypeAndEventTypeIn(eq("ESCALATION_CONTACT"), anyCollection(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(editInB, editInA)));             // taşıma satırı okunanlarda yok
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(List.of(editInB, move, editInA));
+        var b = service.history("ESCALATION_CONTACT", null, null, Set.of(2L), 0, 50);
+        assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(3L);
+        var a = service.history("ESCALATION_CONTACT", null, null, Set.of(1L), 0, 50);
+        assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(1L);
+        assertThat(a.hidden()).isZero();
+    }
 }

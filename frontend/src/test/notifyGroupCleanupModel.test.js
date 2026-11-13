@@ -15,6 +15,12 @@ describe('notifyGroupCleanupModel — usageOf / isUnused', () => {
     expect(isUnused(g(1), null)).toBe(false)            // bilinmiyor → kullanılmıyor DEME
     expect(isUnused(g(1, { active: false }), { 1: 0 })).toBe(false)
   })
+  it('takımın varsayılan grubu açık referansı olmasa da kullanımda (alarmlar ona gider) — süzgeç ve KPI dışı', () => {
+    const def = g(7, { is_default: true, emails: ['a@x'] })
+    expect(isUnused(def, {})).toBe(false)
+    expect(filterGroups([def, g(8)], 'unused', {}).map(x => x.id)).toEqual([8])
+    expect(groupKpis([def, g(8)], {}).unused).toBe(1)
+  })
 })
 
 describe('notifyGroupCleanupModel — filterGroups', () => {

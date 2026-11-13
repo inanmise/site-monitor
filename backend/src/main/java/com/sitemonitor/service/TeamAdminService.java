@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -126,6 +127,15 @@ public class TeamAdminService {
 
     void setAlertForwards(com.sitemonitor.service.forward.AlertForwardService s) { this.alertForwards = s; }
 
+    /**
+     * Takım adresi yalnız pasif hesaplara mı ait (2026-11-13 hata taraması, kapsam panosu): gönderim süzgeci böyle adresi
+     * düşürür — takım adresi "var" diye ulaşım yeşil görünmesin. Alan enjeksiyonu: yokken alan {@code null} (bilinmiyor).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(InactiveRecipientGuard g) { this.inactiveGuard = g; }
+
     /** Taşıma çakışması: hedef takımda aynı adlı kanal / şablon ya da hedefin sınırı dolu → 409, HİÇBİR şey taşınmaz. */
     public static class MoveConflictException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
         public MoveConflictException(String code, String message) { super(code, message, null); }
@@ -141,11 +151,18 @@ public class TeamAdminService {
         return m;
     }
 
-    /** Takım id → {members, domains, monitors, open_alerts, contacts, groups}. Tek geçiş, takım başına sorgu yok. */
+    /**
+     * Takım id → {members, domains, ug_domains, monitors, open_alerts, contacts, groups, members_inactive, email_inactive_only}.
+     * Tek geçiş, takım başına sorgu yok. {@code ug_domains} (2026-11-13 hata taraması): takımın UG olarak bağlı olduğu aktif
+     * envanter kaydı (UG = SY olan kayıt sayılmaz) — sertifika alarmı UG takımına KENDİ kişileriyle de gider; yalnız-UG takımı
+     * "varlık yok" sayılmasın. {@code email_inactive_only}: takım adresinin TÜM parçaları yalnız pasif hesaplara ait mi
+     * (adres yoksa {@code false}; pasif listesi okunamazsa / süzgeç yoksa {@code null} = bilinmiyor).
+     */
     public Map<Long, Map<String, Object>> stats() {
-        // [members, domains, monitors, open_alerts, contacts, groups, members_inactive]
+        // [members, domains, monitors, open_alerts, contacts, groups, members_inactive, ug_domains]
         Map<Long, int[]> c = new LinkedHashMap<>();
-        for (var t : teamRepo.findAll()) c.put(t.getId(), new int[7]);
+        Map<Long, String> teamEmails = new HashMap<>();
+        for (var t : teamRepo.findAll()) { c.put(t.getId(), new int[8]); teamEmails.put(t.getId(), t.getEmail()); }
         for (AppUser u : userRepo.findAll()) {
             LinkedHashSet<Long> ids = new LinkedHashSet<>();
             if (u.getTeamId() != null) ids.add(u.getTeamId());
@@ -153,7 +170,10 @@ public class TeamAdminService {
             boolean inactive = !Boolean.TRUE.equals(u.getActive());
             for (Long id : ids) { bump(c, id, 0); if (inactive) bump(c, id, 6); }
         }
-        for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) bump(c, i.getTeamId(), 1);
+        for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+            bump(c, i.getTeamId(), 1);
+            if (i.getUgTeamId() != null && !i.getUgTeamId().equals(i.getTeamId())) bump(c, i.getUgTeamId(), 7);
+        }
         for (var e : monitorRepos().entrySet()) {
             for (MonitorSchedule m : e.getValue().findAll()) if (Boolean.TRUE.equals(m.getActive())) bump(c, m.getTeamId(), 2);
         }
@@ -168,9 +188,29 @@ public class TeamAdminService {
             m.put("open_alerts", v[3]); m.put("contacts", v[4]); m.put("groups", v[5]);
             // 2026-10-02: üye sayısının pasif kısmı (members = toplam, pasifler dâhil) — arayüz "N aktif · M pasif" yazar.
             m.put("members_inactive", v[6]);
+            m.put("ug_domains", v[7]);
+            m.put("email_inactive_only", emailInactiveOnly(teamEmails.get(e.getKey())));
             out.put(e.getKey(), m);
         }
         return out;
+    }
+
+    /** Takım adresi (virgül / noktalı virgülle çoklu olabilir) yalnız pasif hesaplara mı ait; adres yok → false; bilinmiyor → null. */
+    private Boolean emailInactiveOnly(String email) {
+        if (email == null || email.isBlank()) return false;
+        if (inactiveGuard == null) return null;
+        List<String> parts = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String p : email.split("[,;]")) {
+            if (!p.isBlank() && seen.add(p.trim().toLowerCase(java.util.Locale.ROOT))) parts.add(p.trim());
+        }
+        if (parts.isEmpty()) return false;
+        try {
+            List<String> passive = inactiveGuard.inactiveOnlyEmailsOf(parts);
+            return passive == null ? null : passive.size() >= parts.size();
+        } catch (RuntimeException ex) {
+            return null;
+        }
     }
 
     private static void bump(Map<Long, int[]> c, Long teamId, int idx) {

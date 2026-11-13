@@ -177,4 +177,21 @@ class AdminActivityFeedServiceTest {
         assertThat(f.truncated()).isTrue();
         verifyNoInteractions(contactRepo, groupHistory);              // gereksiz tablo okuması yok
     }
+    @Test
+    @DisplayName("2026-11-13 hata taraması: taşınan kişinin taşıma satırı İKİ takıma görünür; taşımadan önceki satır eski takımda kalır")
+    void contactMoveRowVisibleToBothTeams() {
+        EscalationContact c = new EscalationContact();
+        c.setId(30L); c.setTeamId(2L);                                            // kişi ŞİMDİ B'de
+        when(contactRepo.findAll()).thenReturn(List.of(c));
+        AuditLog move = row(2, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        AuditLog before = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"role\":{\"from\":\"PO\",\"to\":\"TECH\"}}");
+        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(move, before)));
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
+                .thenReturn(List.of(move, before));
+        var a = service.feed(List.of(acc("contacts", List.of(1L))), null, "", 0, 25);
+        assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(2L, 1L);
+        assertThat(a.items()).extracting(AdminActivityFeedService.Entry::teamId).containsExactly(2L, 1L);
+        var b = service.feed(List.of(acc("contacts", List.of(2L))), null, "", 0, 25);
+        assertThat(b.items()).extracting(e -> e.row().getId()).containsExactly(2L);
+    }
 }

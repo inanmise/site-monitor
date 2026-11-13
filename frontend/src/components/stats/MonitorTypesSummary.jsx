@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 /**
  * İzleme türleri özeti (2026-11-13, İstatistikler #8): İzleme Panosu yanıtından tür başına kompakt kart — son 24 saat başarı
  * oranı, sorunlu / gecikmiş / açık alarm sayısı. Ton İzleme Panosu kuralıyla (`typeTone`): okunamayan tür, hepsi bilinmeyen
- * tür ve okunamayan alarmlar NÖTR (asla yeşil). Kart → `?tab=monitoring&mo_type=<tür>`. Yalnız `monitoring.read` iznine.
+ * tür ve okunamayan alarmlar NÖTR (asla yeşil); başarı oranı bilinmeyen tür ("—") de iyi tonda çizilmez. Kart → `?tab=monitoring&mo_type=<tür>`. Yalnız `monitoring.read` iznine.
  * Test kancaları: `data-slot="stats-mtypes"`, kart `stats-mtype` + `data-type` + `data-tone`.
  */
 const TONE = {
@@ -50,9 +50,12 @@ function TypeGrid({ ov }) {
     <ul className="m-0 grid min-w-0 list-none grid-cols-1 gap-2 p-0 @md:grid-cols-2 @4xl:grid-cols-3">
       {rows.map((ty) => {
         const meta = TYPE_META[ty.type]
-        const tone = typeTone(ty, { alertsUnknown })
         const gone = ty.unavailable === true, statsGone = ty.stats_unavailable === true
         const pct = gone || statsGone ? null : successPct(ty)
+        // Başarı oranı bilinmiyorken (okunamadı ya da yalnız duraklatılmış izleme) "iyi" ton yok (hata taraması 2026-11-13:
+        // yeşil "—"). Alarm / sorunlu bulgusu (kötü / uyarı) gerçek kalır; İzleme Panosu'nun kendi kartı değişmedi.
+        const baseTone = typeTone(ty, { alertsUnknown })
+        const tone = pct == null && baseTone === 'ok' ? 'neutral' : baseTone
         const down = Number(ty.down || 0), stale = Number(ty.stale || 0), open = Number(ty.open_alerts || 0)
         const label = t(meta.labelKey)
         return (
@@ -70,7 +73,7 @@ function TypeGrid({ ov }) {
                     alertsUnknown ? '—' : statsNum(open))}
                 </span>
               </span>
-              <span className={cn('shrink-0 text-right text-lg font-bold tabular-nums', TONE[tone])}>{statsPct(pct)}</span>
+              <span className={cn('shrink-0 text-right text-lg font-bold tabular-nums', TONE[pct == null ? 'neutral' : tone])}>{statsPct(pct)}</span>
               <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
             </Button>
           </li>

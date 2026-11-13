@@ -247,6 +247,20 @@ class InactiveRecipientNotificationTest {
     }
 
     @Test
+    @DisplayName("2026-11-13 hata taraması: eşiği yüksek kişinin adresi zaten zincirde alıcıysa (takım adresi) SAME_ADDRESS — 'almaz' denmez")
+    @SuppressWarnings("unchecked")
+    void simulator_sameAddressBeatsLevelThreshold() {
+        db.add(contact(11L, TEAM_B, B_MAIL, "TECH", "CRITICAL"));     // takım adresiyle AYNI adres, eşik KRİTİK
+        List<Map<String, Object>> excluded = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "HIGH", false, null).get("excluded_contacts");
+        assertThat(excluded).filteredOn(m -> Long.valueOf(11L).equals(m.get("id")))
+                .singleElement().satisfies(m -> assertThat(m.get("reason")).isEqualTo("SAME_ADDRESS"));
+        // Yalnız-takım kuralı (bağımsız UYARI) da adres zaten alıyorsa SAME_ADDRESS
+        List<Map<String, Object>> warn = (List<Map<String, Object>>) service.simulateRecipients(TEAM_B, "WARNING", true, null).get("excluded_contacts");
+        assertThat(warn).filteredOn(m -> Long.valueOf(11L).equals(m.get("id")))
+                .singleElement().satisfies(m -> assertThat(m.get("reason")).isEqualTo("SAME_ADDRESS"));
+    }
+
+    @Test
     @DisplayName("Simülatör zincir izi: bağımsız izlemenin UYARI alarmı yalnız takıma — tüm kişiler TEAM_ONLY ile hariç")
     @SuppressWarnings("unchecked")
     void simulator_teamOnlyLevel() {

@@ -16,6 +16,51 @@ describe('contactsCoverageModel — coversLevel (sunucu eşiği)', () => {
   })
 })
 
+describe('contactsCoverageModel — 2026-11-13 hata taraması (bilinmeyen ≠ etkin, yalnız-UG takım)', () => {
+  const teams = [{ id: 1, name: 'A' }, { id: 2, name: 'B' }]
+  it('kullanıcı listesi okunamadı (inactiveIds null): kullanıcıya bağlı kişi BİLİNMİYOR; bağsız (webhook) kişi kesin', () => {
+    expect(contactNotifies({ active: true, user_id: 9 }, null)).toBeNull()
+    expect(contactNotifies({ active: true }, null)).toBe(true)
+    expect(contactNotifies({ active: false, user_id: 9 }, null)).toBe(false)
+  })
+  it('kapsamlı liste: listede olmayan kullanıcıya bağlı kişi bilinmiyor; listede olan karar verir', () => {
+    expect(contactNotifies({ active: true, user_id: 9 }, new Set(), new Set(['5']))).toBeNull()
+    expect(contactNotifies({ active: true, user_id: 5 }, new Set(), new Set(['5']))).toBe(true)
+    expect(contactNotifies({ active: true, user_id: 5 }, new Set(['5']), new Set(['5']))).toBe(false)
+  })
+  it('sunucunun user_active alanı istemci listesinden önce gelir (kapsam dışı kullanıcı artık bilinmiyor değil)', () => {
+    expect(contactNotifies({ active: true, user_id: 9, user_active: false }, new Set(), new Set(['5']))).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: true }, new Set(), new Set(['5']))).toBe(true)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: true }, null)).toBe(true)
+    expect(contactNotifies({ active: false, user_id: 9, user_active: true }, null)).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_active: null }, new Set(), new Set(['5']))).toBeNull()
+  })
+  it('durumu bilinmeyen kişi: kesin kapsam yoksa takım "bilinmiyor" (ne yeşil ne boşluk); "+N?" sayısı', () => {
+    const stats = { 1: { monitors: 2 }, 2: { monitors: 1 } }
+    const contacts = [
+      { id: 1, team_id: 1, user_id: 9, min_alert_level: 'WARNING', active: true },
+      { id: 2, team_id: 2, min_alert_level: 'WARNING', active: true },        // bağsız → kesin
+    ]
+    const { rows, summary } = buildCoverage(contacts, teams, null, stats)
+    const a = rows.find(r => r.teamId === 1)
+    expect(a).toMatchObject({ tone: 'unknown', unknownReason: 'users', uncertain: 1 })
+    expect(a.counts).toEqual({ WARNING: 0, HIGH: 0, CRITICAL: 0 })
+    expect(a.maybe).toEqual({ WARNING: 1, HIGH: 1, CRITICAL: 1 })
+    expect(rows.find(r => r.teamId === 2).tone).toBe('ok')
+    expect(summary).toMatchObject({ unknown: 1, gap: 0, ok: 1, usersKnown: false })
+    // Kesin kişi kararı belirliyorsa bilinmeyen kişi sonucu değiştirmez → karar verilir
+    const both = buildCoverage([...contacts, { id: 3, team_id: 1, min_alert_level: 'WARNING', active: true }], teams, null, stats)
+    expect(both.rows.find(r => r.teamId === 1).tone).toBe('ok')
+    // Kişisi hiç olmayan takım bilinmeyenden bağımsız GERÇEK boşluk
+    expect(buildCoverage([], teams, null, stats).rows.every(r => r.tone === 'gap')).toBe(true)
+  })
+  it('yalnız UG olarak bağlı takım (ug_domains) varlıklı sayılır → kişisizse boşluk, "varlık yok" değil', () => {
+    const { rows } = buildCoverage([], teams, new Set(), { 1: { monitors: 0, domains: 0, ug_domains: 3 }, 2: { monitors: 0 } })
+    expect(rows.find(r => r.teamId === 1)).toMatchObject({ assets: 3, tone: 'gap' })
+    expect(rows.find(r => r.teamId === 2).tone).toBe('noAssets')
+  })
+})
+
 describe('contactsCoverageModel — contactNotifies', () => {
   const passive = new Set(['9'])
   it('aktif + kullanıcısız → gönderir; webhook-yalnız (user_id yok) sayılır', () => {

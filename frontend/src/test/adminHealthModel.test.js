@@ -10,7 +10,9 @@ describe('adminHealthModel — buildHealthSignals', () => {
     const sigs = buildHealthSignals(overview, 2)
     expect(sigs.map(s => s.code)).toEqual(['SINGLE_ADMIN', 'ESCALATION_GAP', 'TEAM_NO_EMAIL', 'TEAM_NO_LEADER', 'USER_ATTENTION'])
     const attn = sigs.find(s => s.code === 'USER_ATTENTION')
-    expect(attn).toMatchObject({ count: 6, tab: 'users', severe: false, params: { g_status: 'locked' } })
+    // Birden çok tür → süzgeçsiz sekme (sayı ile tıklama hedefi tutarlı), kırılım kutucukta (2026-11-13 hata taraması)
+    expect(attn).toMatchObject({ count: 6, tab: 'users', severe: false, params: {} })
+    expect(attn.parts).toEqual([{ key: 'locked', count: 1 }, { key: 'never', count: 3 }, { key: 'dormant', count: 2 }])
     expect(sigs.find(s => s.code === 'ESCALATION_GAP')).toMatchObject({ count: 2, tab: 'contacts', severe: true })
     expect([...HEALTH_SEVERE]).toContain('ESCALATION_GAP')
   })
@@ -37,6 +39,16 @@ describe('adminHealthModel — buildHealthSignals', () => {
     expect(sigs.some(s => s.code === 'SINGLE_ADMIN')).toBe(false)
   })
 
+  it('USER_ATTENTION tek tür: o türün süzgeci (kilitli → g_status)', () => {
+    expect(buildHealthSignals({ warnings: [{ code: 'USER_LOCKED', count: 2 }] }, null)
+      .find(s => s.code === 'USER_ATTENTION').params).toEqual({ g_status: 'locked' })
+  })
+
+  it('ESCALATION_GAP en az N: { count, atLeast } kutucuğu atLeast taşır', () => {
+    const s = buildHealthSignals({ warnings: [] }, { count: 2, atLeast: true }).find(x => x.code === 'ESCALATION_GAP')
+    expect(s).toMatchObject({ count: 2, atLeast: true, severe: true })
+  })
+
   it('USER_ATTENTION param önceliği: kilitli yoksa atıl (dormant_days), o da yoksa hiç-giriş', () => {
     expect(buildHealthSignals({ dormant_days: 120, warnings: [{ code: 'USER_DORMANT', count: 2 }] }, null)
       .find(s => s.code === 'USER_ATTENTION').params).toEqual({ g_dormant: '120' })
@@ -57,5 +69,9 @@ describe('adminHealthModel — escalationGapFrom', () => {
     expect(escalationGapFrom({ summary: { gap: 3, statsKnown: true } }, true)).toBe(3)
     expect(escalationGapFrom({ summary: { gap: 0, statsKnown: true } }, true)).toBe(0)
     expect(escalationGapFrom(null, true)).toBeNull()
+  })
+  it('2026-11-13 hata taraması: kapsamı bilinmeyen takım varsa boşluk yok → null (yeşil değil); kesin boşluk varsa "en az N"', () => {
+    expect(escalationGapFrom({ summary: { gap: 0, unknown: 2, statsKnown: true } }, true)).toBeNull()
+    expect(escalationGapFrom({ summary: { gap: 3, unknown: 1, statsKnown: true } }, true)).toEqual({ count: 3, atLeast: true })
   })
 })

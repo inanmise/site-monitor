@@ -1829,6 +1829,34 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("2026-11-13 hata taraması: simülatör nöbetçinin adını / e-postasını oncall.read izni olmadan vermez (satır kalır, gizli)")
+    void simulateRecipients_oncallHiddenWithoutOncallRead() throws Exception {
+        java.util.Map<String, Object> sim = new java.util.LinkedHashMap<>();
+        sim.put("level", "HIGH");
+        java.util.Map<String, Object> p = new java.util.LinkedHashMap<>();
+        p.put("team_id", 1L); p.put("name", "Nöbetçi Ayşe"); p.put("email", "ayse@x.com"); p.put("duplicate", false);
+        sim.put("oncall", new java.util.ArrayList<>(List.of(p)));
+        when(escalationService.simulateRecipients(1L, "HIGH", false, null)).thenAnswer(i -> new java.util.LinkedHashMap<>(sim));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team(); team.setId(1L); team.setName("Takım A");
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(team));
+        when(userPushRecipientResolver.explain(1L, "HIGH")).thenReturn(List.of());
+
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("oncall.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "1").param("level", "HIGH").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.oncall[0].hidden").value(true))
+                .andExpect(jsonPath("$.data.oncall[0].team_id").value(1))
+                .andExpect(jsonPath("$.data.oncall[0].name").doesNotExist())
+                .andExpect(jsonPath("$.data.oncall[0].email").doesNotExist());
+
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("oncall.read"), eq("view"))).thenReturn(true);
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "1").param("level", "HIGH").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.oncall[0].name").value("Nöbetçi Ayşe"))
+                .andExpect(jsonPath("$.data.oncall[0].email").value("ayse@x.com"));
+    }
+
+    @Test
     @DisplayName("GET /recipients/simulate?ugTeamId: UG servise geçer; kapsamlı kullanıcı görüş alanı dışındaki UG'yi soramaz (404)")
     void simulateRecipients_ugTeam_scoped() throws Exception {
         when(escalationService.simulateRecipients(2L, "HIGH", false, null, 5L))
@@ -2445,6 +2473,37 @@ class AdminControllerTest {
                         .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"delay_minutes\":0}"))
                 .andExpect(status().isOk());
         assertThat(existing.getDelayMinutes()).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-11-13 hata taraması: değişen-alan gövdesi — gönderilmeyen webhook / kullanıcı bağı / aktiflik / seviye / takım DOKUNULMAZ (toplu işlem geri alınmaz)")
+    void updateContact_partialBody_keepsUnsentFields() throws Exception {
+        EscalationContact existing = contact("kisi@test.com", "TECH");
+        existing.setId(1L); existing.setTeamId(1L); existing.setUserId(77L); existing.setName("Kişi Bir");
+        existing.setWebhookUrl("https://hooks.example.com/abc"); existing.setWebhookType("SLACK");
+        existing.setActive(false); existing.setMinAlertLevel("HIGH");
+        when(contactRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"MANAGER\"}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getRole()).isEqualTo("MANAGER");
+        assertThat(existing.getWebhookUrl()).isEqualTo("https://hooks.example.com/abc");
+        assertThat(existing.getWebhookType()).isEqualTo("SLACK");
+        assertThat(existing.getUserId()).isEqualTo(77L);
+        assertThat(existing.getName()).isEqualTo("Kişi Bir");
+        assertThat(existing.getEmail()).isEqualTo("kisi@test.com");
+        assertThat(existing.getActive()).isFalse();
+        assertThat(existing.getMinAlertLevel()).isEqualTo("HIGH");
+        assertThat(existing.getTeamId()).isEqualTo(1L);
+
+        // Açıkça null gönderilen webhook silinir (formdan "webhook'u kaldır")
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"webhook_url\":null}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getWebhookUrl()).isNull();
+        assertThat(existing.getWebhookType()).isEqualTo("SLACK");
     }
 
     @Test
@@ -4113,15 +4172,49 @@ class AdminControllerTest {
         ArgumentCaptor<org.springframework.data.domain.Pageable> pc =
                 ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
         // q→%no%, field=username, status=active, source=LDAP, phoneMode=1(var), emailMode=2(yok), otpReady=true,
-        // nocMode=1, onlineMode=1, loginFromDay=2026-01-01, createdToDay=2026-12-31; sıralama Pageable'da doğrulanır
+        // nocMode=1, onlineMode=1, loginFrom = İstanbul 2026-01-01 başı (UTC), createdTo = İstanbul 2026-12-31 sonu (hariç, UTC); sıralama Pageable'da doğrulanır
         org.mockito.Mockito.verify(userRepo).findDirectory(eq("%no%"), eq("username"), isNull(), isNull(), isNull(),
                 anyBoolean(), any(), eq("active"), eq("LDAP"), eq(1), eq(2), eq(true), eq(1), any(), eq(1), any(),
-                eq("2026-01-01"), isNull(), isNull(), eq("2026-12-31"), isNull(), eq(false), any(), pc.capture());
+                eq("2025-12-31T21:00:00"), isNull(), isNull(), eq("2026-12-31T21:00:00"), isNull(), eq(false), any(), pc.capture());
         org.springframework.data.domain.Sort.Order primary = pc.getValue().getSort().getOrderFor("lastLoginAt");
         assertThat(primary).isNotNull();
         assertThat(primary.getDirection()).isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
         assertThat(primary.getNullHandling()).isEqualTo(org.springframework.data.domain.Sort.NullHandling.NULLS_LAST);
         assertThat(pc.getValue().getSort().getOrderFor("id")).isNotNull();   // id ikincil (kararlı sayfalama)
+    }
+
+    @Test
+    @DisplayName("GET /users/search: çevrimiçi süzgeci kişi bazında yalnız global görüntüleyiciye — TEAM_ADMIN'de yok sayılır (2026-11-13)")
+    void searchUsers_onlineFilterIgnoredForNonGlobal() throws Exception {
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(get("/api/admin/users/search").param("online", "yes").session(teamAdminSession()))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(userRepo).findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), eq(0), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("GET /contacts/all: bağlı kullanıcının etkinliği satıra user_active olarak yazılır (tek dar sorgu); bağsız / silinmiş → yok (2026-11-13)")
+    void listContacts_carriesUserActive() throws Exception {
+        com.sitemonitor.model.EscalationContact passive = new com.sitemonitor.model.EscalationContact();
+        passive.setId(1L); passive.setUserId(9L); passive.setRole("MANAGER"); passive.setTeamId(2L); passive.setActive(true);
+        com.sitemonitor.model.EscalationContact gone = new com.sitemonitor.model.EscalationContact();
+        gone.setId(2L); gone.setUserId(77L); gone.setRole("PO"); gone.setTeamId(2L); gone.setActive(true);
+        com.sitemonitor.model.EscalationContact hook = new com.sitemonitor.model.EscalationContact();
+        hook.setId(3L); hook.setRole("TECH"); hook.setTeamId(2L); hook.setActive(true); hook.setWebhookUrl("https://x.example/h");
+        when(contactRepo.findAll()).thenReturn(List.of(passive, gone, hook));
+        when(userRepo.findActiveFlagsByIds(any())).thenReturn(List.<Object[]>of(new Object[]{9L, false}));
+        mvc.perform(get("/api/admin/contacts/all").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].user_active").value(false))
+                .andExpect(jsonPath("$.data[1].user_active").doesNotExist())
+                .andExpect(jsonPath("$.data[2].user_active").doesNotExist());
     }
 
     private MockHttpSession authSession() {

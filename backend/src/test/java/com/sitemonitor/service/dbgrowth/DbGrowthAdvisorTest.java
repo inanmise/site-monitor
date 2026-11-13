@@ -187,6 +187,34 @@ class DbGrowthAdvisorTest {
     }
 
     @Test
+    @DisplayName("hata taraması (2026-11-13): tahmini (histogram) en eski kayıt ya da henüz temizlik görmemiş ayar 'geride' demez; yeni değişen ayar kısaltma önermez")
+    void estimatedOldestAndRetentionChange() {
+        TableFacts real = facts("port_checks", 2 * GB, GB, GB / 2, 10_000_000L, 0L, 0L, "series-port", 90, 174.0, null, false);
+        assertThat(codes(DbGrowthAdvisor.advise(List.of(real), ctx(10 * GB)))).contains("CLEANUP_BEHIND", "SHORTEN_CANDIDATE");
+        TableFacts estimated = new TableFacts(real.name(), real.totalBytes(), real.tableBytes(), real.indexBytes(), real.liveRows(),
+                real.deadRows(), real.growth30Bytes(), real.primary(), real.policies(), real.effectiveDays(), real.oldestAgeDays(),
+                null, false, null, null, true, false, false);
+        assertThat(codes(DbGrowthAdvisor.advise(List.of(estimated), ctx(10 * GB)))).doesNotContain("CLEANUP_BEHIND").contains("SHORTEN_CANDIDATE");
+        // son koşu başarısızsa tahmini en eskiyle de uyarılır (gerçek sinyal)
+        TableFacts estimatedFailed = new TableFacts(real.name(), real.totalBytes(), real.tableBytes(), real.indexBytes(), real.liveRows(),
+                real.deadRows(), real.growth30Bytes(), real.primary(), real.policies(), real.effectiveDays(), real.oldestAgeDays(),
+                null, true, null, null, true, false, false);
+        assertThat(codes(DbGrowthAdvisor.advise(List.of(estimatedFailed), ctx(10 * GB)))).contains("CLEANUP_BEHIND");
+        TableFacts pending = new TableFacts(real.name(), real.totalBytes(), real.tableBytes(), real.indexBytes(), real.liveRows(),
+                real.deadRows(), real.growth30Bytes(), real.primary(), real.policies(), real.effectiveDays(), real.oldestAgeDays(),
+                null, false, null, null, false, true, true);
+        assertThat(codes(DbGrowthAdvisor.advise(List.of(pending), ctx(10 * GB)))).doesNotContain("CLEANUP_BEHIND", "SHORTEN_CANDIDATE");
+        TableFacts recent = new TableFacts(real.name(), real.totalBytes(), real.tableBytes(), real.indexBytes(), real.liveRows(),
+                real.deadRows(), real.growth30Bytes(), real.primary(), real.policies(), real.effectiveDays(), real.oldestAgeDays(),
+                null, false, null, null, false, false, true);
+        assertThat(codes(DbGrowthAdvisor.advise(List.of(recent), ctx(10 * GB)))).contains("CLEANUP_BEHIND").doesNotContain("SHORTEN_CANDIDATE");
+        // kopyalayıcılar bayrakları taşır
+        assertThat(pending.withPurge(0.5, "histogram").cleanupPending()).isTrue();
+        assertThat(estimated.withOldest(100.0, null).oldestEstimated()).isFalse();
+        assertThat(recent.withOldest(100.0, null).retentionChangedRecently()).isTrue();
+    }
+
+    @Test
     @DisplayName("ölü satır ≥ %20 ve ≥ 10k → DEAD_TUPLES (≥ %50 warn); TOAST ≥ %50 ve ≥ 100 MB → TOAST_HEAVY")
     void deadAndToast() {
         TableFacts dead = facts("port_checks", 100 * MB, 80 * MB, 10 * MB, 30_000L, 40_000L, 0L, "series-port", 180, 50.0, null, false);

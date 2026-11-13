@@ -301,6 +301,25 @@ describe('NotificationGroups', () => {
     expect(await screen.findByText(/Showing the history of/i)).toBeTruthy()
   })
 
+  it('2026-11-13 hata taraması: düzenleme YALNIZ değişen alanları gönderir — bayat "varsayılan" kutusu toplu işlemi geri almaz; değişiklik yoksa istek yok', async () => {
+    state.groups = [group({ is_default: false })]
+    render(<NotificationGroups teams={TEAMS} systemRole="USER" />)
+    await screen.findByText('Ödeme Nöbetçi')
+
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByText(/^Edit$/))
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Save$/ })).toBeNull())
+    expect(api.notificationGroups.update).not.toHaveBeenCalled()
+
+    pressMenuTrigger(screen.getByRole('button', { name: /Actions/i }))
+    fireEvent.click(await screen.findByText(/^Edit$/))
+    fireEvent.change(await screen.findByLabelText(/Group name/), { target: { value: 'Gece Nöbeti' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(api.notificationGroups.update).toHaveBeenCalled())
+    expect(api.notificationGroups.update).toHaveBeenCalledWith(10, { name: 'Gece Nöbeti' })
+  })
+
   it('Yazma yetkisi olmayan satırda YALNIZ geçmiş sunulur, yazma eylemleri ÇİZİLMEZ', async () => {
     state.groups = [group({ can_write: false })]
     state.writable = []

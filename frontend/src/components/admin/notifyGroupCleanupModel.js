@@ -9,10 +9,14 @@ export function usageOf(group, counts) {
   return Number.isFinite(Number(n)) ? Number(n) : 0
 }
 
-/** Yalnız AKTİF grup "kullanılmayan" sayılır (pasif/silinmiş grup zaten ayrı). counts bilinmiyorsa false (iddia etmeyiz). */
+/**
+ * Yalnız AKTİF grup "kullanılmayan" sayılır (pasif/silinmiş grup zaten ayrı). counts bilinmiyorsa false (iddia etmeyiz).
+ * Takımın VARSAYILAN grubu açık referansı olmasa da devrededir: grup seçmemiş her takım alarmı ona gider (deadGroups ile
+ * aynı kural) — "kullanılmıyor" deyip silmeye yönlendirmek alarmları takım adresine düşürürdü (2026-11-13 inceleme).
+ */
 export function isUnused(group, counts) {
   if (!group || counts == null) return false
-  return group.active !== false && usageOf(group, counts) === 0
+  return group.active !== false && group.is_default !== true && usageOf(group, counts) === 0
 }
 
 /** Grup etkin adres sayısı (birleşik alıcı) — boşsa adressiz. */
@@ -78,7 +82,7 @@ export function filterGroups(groups = [], filter, counts) {
  */
 export function groupKpis(groups = [], counts) {
   const active = groups.filter((g) => g.active !== false)
-  const unused = counts == null ? null : active.filter((g) => usageOf(g, counts) === 0).length
+  const unused = counts == null ? null : active.filter((g) => isUnused(g, counts)).length
   const noEmails = active.filter((g) => emailCount(g) === 0).length
   const inactive = groups.filter((g) => g.active === false).length
   const withEmails = active.filter((g) => emailCount(g) > 0)

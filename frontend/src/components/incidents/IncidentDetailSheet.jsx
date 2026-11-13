@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon, MonitorLink, ResolvedBy } from './IncidentBadges.jsx'
 import {
   buildTimeline, incidentHref, incidentLink, isOpen, isAcked, rowName, MONITOR_TYPE_LABEL_KEY, isForeign, canActOn, canDeleteIncident,
-  canCommentOn, canDeleteComment, canNotifyOn, asAlert,
+  canCommentOn, canDeleteComment, canNotifyOn, asAlert, canOpenAlertHistory,
 } from './incidentsModel.js'
 import { NocCallSummary } from '../admin/alerts/NocCallLog.jsx'   // 7/24 arama kayıtları — salt okunur özet (2026-09-27)
 // Zenginleştirme (2026-11-13): Alarm Geçmişi'nin parçaları — teslimat paneli, fırtına push'u, nöbetçi, olay kaydı köprüsü
@@ -159,9 +159,9 @@ export default function IncidentDetailSheet({
   const foreign = isForeign(incident)
   const perms = usePermissions()
   const nocOperator = perms.canEdit('noc_calls.write')
-  // Alarm Geçmişi tekil okuması sunucuda requireAlertReadScope: kendi kapsamı ya da tüm uyarıları gören (7/24 konsolu) —
-  // başka ekibin org geneli okunan olayında bağlantı 403'e götürürdü (2026-11-13 inceleme)
-  const canOpenAlert = !foreign || perms.scope?.noc_console === true
+  // Alarm Geçmişi tekil okuması sunucuda requireAlertReadScope: karar sunucunun `can_open_alert` bayrağından (görüntüleme
+  // paylaşımı ve envanter host'u üzerinden okunan olay da açılır — 2026-11-13 hata taraması); eski sunucuda önceki kural
+  const canOpenAlert = canOpenAlertHistory(incident, perms.scope)
   // Bildirim geçmişi (e-posta günlüğü + push + fırtına push'u): alerts.read + takım kapsamı. Başka ekibin olayında HİÇ
   // istenmez — alıcılar takım içi veri (uç 403 döner, boşuna istek olurdu).
   const deliveries = useIncidentDeliveries(foreign ? null : id, deliveryNonce)

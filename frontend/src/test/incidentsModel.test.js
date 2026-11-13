@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   laneOf, clientFacet, summarize, buildTimeline, serverParams, statusOf, filtersFromUrl, filtersToUrl, sortFromUrl,
   incidentHref, activeFilters, teamOptions, FILTER_DEFAULTS, parseLevels, summaryFromServer, minutesText, isSelectable,
-  canCommentOn, canDeleteComment, canNotifyOn, evidenceQuery, asAlert, ackable,
+  canCommentOn, canDeleteComment, canNotifyOn, evidenceQuery, asAlert, ackable, withFreshWindow, canOpenAlertHistory,
+  checkRecordsHidden, iso24hAgo,
 } from '../components/incidents/incidentsModel.js'
 
 const open = { id: 1, status: 'ongoing', acknowledged: false, alert_level: 'CRITICAL', team_id: 5, started_at: '2026-07-10T10:00:00' }
@@ -105,8 +106,11 @@ describe('incidentsModel — saf yardımcılar', () => {
 
   it('evidenceQuery: izleme kimliği + tür → Aktivite sorgusu (açılıştan 15 dk önce, çözümden 1 dk sonra); sertifika olayı null', () => {
     const inc = { status: 'resolved', started_at: '2026-11-12T10:00:00', resolved_at: '2026-11-12T11:00:00', monitor: { type: 'http', monitor_id: 42 } }
-    expect(evidenceQuery(inc)).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', to: '2026-11-12T11:01:00', status: 'ERROR,TIMEOUT,WARNING' })
-    expect(evidenceQuery({ ...inc, status: 'ongoing' })).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', status: 'ERROR,TIMEOUT,WARNING' })
+    // Yalnız KONTROL satırları (alarm satırı ALERT_TRIGGERED aynı izleme + ERROR ile yazılır) ve ölçülemeyen (UNKNOWN) dahil
+    expect(evidenceQuery(inc)).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00', to: '2026-11-12T11:01:00',
+      status: 'ERROR,TIMEOUT,WARNING,UNKNOWN', group: 'check' })
+    expect(evidenceQuery({ ...inc, status: 'ongoing' })).toEqual({ monitor: 'HTTP:42', from: '2026-11-12T09:45:00',
+      status: 'ERROR,TIMEOUT,WARNING,UNKNOWN', group: 'check' })
     expect(evidenceQuery({ ...inc, monitor: { type: 'cert', monitor_id: null } })).toBeNull()
     expect(evidenceQuery({ ...inc, monitor: { type: 'http', monitor_id: null } })).toBeNull()
     expect(evidenceQuery({ ...inc, monitor: { type: 'dbquery', monitor_id: 3 } }).monitor).toBe('DBQUERY:3')
@@ -163,5 +167,30 @@ describe('incidentsModel — saf yardımcılar', () => {
     expect(activeFilters({ ...FILTER_DEFAULTS, q: 'a', team: '5' }).map(f => f.key)).toEqual(['q', 'team'])
     expect(teamOptions([{ team_id: 6, team_name: 'Takım B' }, { team_id: 5, team_name: 'Takım A' }, { team_id: null }], [{ team_id: 5, team_name: 'Takım A' }]))
       .toEqual([{ id: '5', name: 'Takım A' }, { id: '6', name: 'Takım B' }])
+  })
+
+  it('hata taraması 2026-11-13: istek anında 24 sa penceresi, Alarm Geçmişi bağlantısı ve kontrol kaydı bayrağı sunucudan', () => {
+    const t0 = Date.UTC(2026, 10, 13, 12, 0, 0)
+    const params = serverParams({ ...FILTER_DEFAULTS, stat: 'resolved24' }, { by: '', dir: 'desc' }, t0)
+    expect(params.resolvedSince).toBe('2026-11-12T12:00:00')
+    // saatler sonra: pencere şimdiye göre — params (istek anahtarı) DEĞİŞMEZ
+    const later = withFreshWindow(params, t0 + 5 * 3600 * 1000)
+    expect(later.resolvedSince).toBe(iso24hAgo(t0 + 5 * 3600 * 1000))
+    expect(later.resolvedSince).toBe('2026-11-12T17:00:00')
+    expect(params.resolvedSince).toBe('2026-11-12T12:00:00')
+    expect({ ...later, resolvedSince: undefined }).toEqual({ ...params, resolvedSince: undefined })
+    const plain = serverParams({ ...FILTER_DEFAULTS }, { by: '', dir: 'desc' }, t0)
+    expect(withFreshWindow(plain, t0 + 1)).toBe(plain)
+
+    // can_open_alert sunucudan; alan yoksa eski kural (kendi olayı ya da 7/24 konsolu)
+    expect(canOpenAlertHistory({ can_manage: false, can_open_alert: true }, {})).toBe(true)
+    expect(canOpenAlertHistory({ can_manage: true, can_open_alert: false }, { noc_console: true })).toBe(false)
+    expect(canOpenAlertHistory({ can_manage: false }, {})).toBe(false)
+    expect(canOpenAlertHistory({ can_manage: false }, { noc_console: true })).toBe(true)
+    expect(canOpenAlertHistory({ can_manage: true }, null)).toBe(true)
+
+    expect(checkRecordsHidden({ check_records_visible: false })).toBe(true)
+    expect(checkRecordsHidden({ check_records_visible: true })).toBe(false)
+    expect(checkRecordsHidden({})).toBe(false)
   })
 })

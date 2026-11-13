@@ -25,6 +25,14 @@ public class EscalationContact {
     @Column(name = "user_id")
     private Long userId;
 
+    /**
+     * Bağlı kullanıcı etkin mi — yalnız kişi listesi uçlarında doldurulur, SAKLANMAZ (2026-11-13 son inceleme): kapsamlı
+     * müdürün kullanıcı listesi kapsamla süzülü olduğu için kapsam dışı kullanıcıya bağlı kişinin pasifliğini istemci
+     * bilemiyordu (kapsam matrisi sürekli "bilinmiyor"). null = bağsız ya da bilinmiyor.
+     */
+    @Transient
+    private Boolean userActive;
+
     private String name;
 
     private String email;

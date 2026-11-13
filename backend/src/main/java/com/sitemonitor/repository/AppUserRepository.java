@@ -187,6 +187,10 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
          + "WHERE u.active = true AND (u.teamId IN :teamIds OR tid IN :teamIds)")
     List<Object[]> findActiveMemberRowsOfTeams(@Param("teamIds") Collection<Long> teamIds);
 
+    /** Kimlik → etkin bayrağı (dar: fotoğraf vb. okunmaz) — eskalasyon kişisi listesinin {@code user_active} alanı. */
+    @Query("SELECT u.id, u.active FROM AppUser u WHERE u.id IN :ids")
+    List<Object[]> findActiveFlagsByIds(@Param("ids") Collection<Long> ids);
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);
@@ -388,17 +392,17 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
         +     "AND (u.mustChangePassword IS NULL OR u.mustChangePassword = false) "
         +     "AND ((u.phone IS NOT NULL AND TRIM(u.phone) <> '') OR (u.email IS NOT NULL AND TRIM(u.email) <> '')))) AND "
         + "(:nocMode = 0 OR "
-        +   "(:nocMode = 1 AND u.active = true AND (u.teamId IN :nocTeams OR EXISTS (SELECT tn FROM u.teamIds tn WHERE tn IN :nocTeams))) OR "
-        +   "(:nocMode = 2 AND NOT (u.active = true AND (u.teamId IN :nocTeams OR EXISTS (SELECT tn2 FROM u.teamIds tn2 WHERE tn2 IN :nocTeams))))) AND "
+        +   "(:nocMode = 1 AND u.active = true AND ((u.teamId IS NOT NULL AND u.teamId IN :nocTeams) OR EXISTS (SELECT tn FROM u.teamIds tn WHERE tn IN :nocTeams))) OR "
+        +   "(:nocMode = 2 AND NOT (u.active = true AND ((u.teamId IS NOT NULL AND u.teamId IN :nocTeams) OR EXISTS (SELECT tn2 FROM u.teamIds tn2 WHERE tn2 IN :nocTeams))))) AND "
         + "(:onlineMode = 0 OR "
         +   "(:onlineMode = 1 AND u.activeSessionId IS NOT NULL AND u.activeSessionId NOT LIKE 'TERMINATED:%' "
         +                    "AND u.lastSeenAt IS NOT NULL AND u.lastSeenAt >= :onlineThreshold) OR "
         +   "(:onlineMode = 2 AND (u.activeSessionId IS NULL OR u.activeSessionId LIKE 'TERMINATED:%' "
         +                    "OR u.lastSeenAt IS NULL OR u.lastSeenAt < :onlineThreshold))) AND "
-        + "(:loginFromDay IS NULL OR (u.lastLoginAt IS NOT NULL AND SUBSTRING(u.lastLoginAt, 1, 10) >= :loginFromDay)) AND "
-        + "(:loginToDay IS NULL OR (u.lastLoginAt IS NOT NULL AND SUBSTRING(u.lastLoginAt, 1, 10) <= :loginToDay)) AND "
-        + "(:createdFromDay IS NULL OR (u.createdAt IS NOT NULL AND SUBSTRING(u.createdAt, 1, 10) >= :createdFromDay)) AND "
-        + "(:createdToDay IS NULL OR (u.createdAt IS NOT NULL AND SUBSTRING(u.createdAt, 1, 10) <= :createdToDay)) AND "
+        + "(:loginFromDay IS NULL OR (u.lastLoginAt IS NOT NULL AND REPLACE(u.lastLoginAt, ' ', 'T') >= :loginFromDay)) AND "
+        + "(:loginToDay IS NULL OR (u.lastLoginAt IS NOT NULL AND REPLACE(u.lastLoginAt, ' ', 'T') < :loginToDay)) AND "
+        + "(:createdFromDay IS NULL OR (u.createdAt IS NOT NULL AND REPLACE(u.createdAt, ' ', 'T') >= :createdFromDay)) AND "
+        + "(:createdToDay IS NULL OR (u.createdAt IS NOT NULL AND REPLACE(u.createdAt, ' ', 'T') < :createdToDay)) AND "
         + "(:dormantBefore IS NULL OR u.lastLoginAt IS NULL OR u.lastLoginAt < :dormantBefore) AND "
         + "(:neverOnly = false OR u.lastLoginAt IS NULL)")
     Page<AppUser> findDirectory(@Param("q") String q,

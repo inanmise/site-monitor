@@ -166,7 +166,7 @@ public class AdminActivityFeedService {
 
     /** Satırın takımı — okunan satırlar için TEK seferlik tablo okumalarıyla (kişi ve grup tabloları yalnız gerekirse). */
     private final class Resolver {
-        private Map<Long, Long> contactTeams;
+        private Map<Long, NotificationGroupHistoryService.RowTeams> contactTeams;
         private Map<Long, NotificationGroupHistoryService.RowTeams> groupTeams;
         private final List<AuditLog> rows;
 
@@ -179,7 +179,8 @@ public class AdminActivityFeedService {
             switch (area) {
                 case "teams", "forwards", "sharing", "oncall" -> { return AdminHistoryService.parseLong(r.getResourceId()); }
                 case "contacts" -> {
-                    if (contactTeams == null) contactTeams = liveContactTeams();
+                    // Satırın KENDİ zamanındaki takımı (2026-11-13 hata taraması: kişi taşıması — eski geçmiş eski takımda)
+                    if (contactTeams == null) contactTeams = contactTeams();
                     return AdminHistoryService.teamOf("ESCALATION_CONTACT", r, contactTeams);
                 }
                 case "groups" -> {
@@ -192,14 +193,29 @@ public class AdminActivityFeedService {
             }
         }
 
-        /** Satırı görebilen takımlar: grup satırında satırın kendi zamanı (taşıma = iki taraf), diğerlerinde gösterim takımı. */
+        /** Satırı görebilen takımlar: grup / kişi satırında satırın kendi zamanı (taşıma = iki taraf), diğerlerinde gösterim takımı. */
         Set<Long> visibleOf(String area, AuditLog r, Long team) {
             if ("groups".equals(area)) {
                 if (groupTeams == null) groupTeams = groupTeams();
                 NotificationGroupHistoryService.RowTeams rt = groupTeams.get(r.getId());
                 return rt == null ? Set.of() : rt.visible();
             }
+            if ("contacts".equals(area) && team != null) {
+                if (contactTeams == null) contactTeams = contactTeams();
+                NotificationGroupHistoryService.RowTeams rt = contactTeams.get(r.getId());
+                return rt == null ? Set.of(team) : rt.visible();
+            }
             return team == null ? Set.of() : Set.of(team);
+        }
+
+        private Map<Long, NotificationGroupHistoryService.RowTeams> contactTeams() {
+            List<AuditLog> contactRows = new ArrayList<>();
+            for (AuditLog r : rows) if (ContactHistoryTeams.RESOURCE.equals(r.getResourceType())) contactRows.add(r);
+            try {
+                return ContactHistoryTeams.rowTeams(contactRows, liveContactTeams(), auditRepo);
+            } catch (RuntimeException e) {
+                return Map.of();                     // takımı çözülemeyen kişi satırı kapsamlıya gizlenir
+            }
         }
 
         private Map<Long, NotificationGroupHistoryService.RowTeams> groupTeams() {

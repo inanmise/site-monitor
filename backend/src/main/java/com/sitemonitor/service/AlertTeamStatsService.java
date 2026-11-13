@@ -1,7 +1,5 @@
 package com.sitemonitor.service;
 
-import com.sitemonitor.model.AlertEvent;
-import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
@@ -49,46 +47,57 @@ public class AlertTeamStatsService {
         long open, closed, last7, last30;
     }
 
+    /**
+     * Okuma hatası (hata taraması 2026-11-13): envanter ya da alarm okunamazsa fırlar — eskiden yutulup BOŞ tablo dönüyordu,
+     * İstatistikler takım karnesi her takıma "0 alarm", Alarm Geçmişi paneli "takım yok" yazıyordu. Denetleyici 503 döner.
+     */
+    public static class UnavailableException extends RuntimeException {
+        public UnavailableException(Throwable cause) { super("alarm takım kırılımı okunamadı", cause); }
+    }
+
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean globalViewer) {
         Map<String, Long> domainTeam = new LinkedHashMap<>();
         Map<String, Long> domainUg = new LinkedHashMap<>();
-        try {
-            for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-                if (i.getDomain() == null) continue;
-                if (i.getTeamId() != null) domainTeam.put(i.getDomain(), i.getTeamId());
-                if (i.getUgTeamId() != null) domainUg.put(i.getDomain(), i.getUgTeamId());
-            }
-        } catch (Exception e) {
-            log.debug("takım kırılımı: envanter okunamadı: {}", e.toString());
-        }
-
         String since30 = ISO.format(Instant.now().minus(WINDOW_DAYS, ChronoUnit.DAYS));
         String since7 = ISO.format(Instant.now().minus(7, ChronoUnit.DAYS));
+        List<Object[]> events = new ArrayList<>();
+        try {
+            // Dar izdüşüm (2026-11-13, performans): tam envanter / alarm entity'si (context_json dahil) okunmaz
+            for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
+                if (r == null || r.length < 2 || r[0] == null) continue;
+                String domain = String.valueOf(r[0]);
+                if (r[1] instanceof Number n) domainTeam.put(domain, n.longValue());
+                if (r.length > 2 && r[2] instanceof Number u) domainUg.put(domain, u.longValue());
+            }
+            events.addAll(alertEventRepo.findOpenTeamStatRows());                                  // açıklar: pencereden bağımsız
+            events.addAll(alertEventRepo.findTeamStatRowsSince(since30));
+        } catch (RuntimeException e) {
+            log.warn("takım kırılımı: envanter / alarm okunamadı: {}", e.toString());
+            throw new UnavailableException(e);
+        }
 
         Map<Long, Row> rows = new LinkedHashMap<>();
         Row unassigned = new Row();
         long totalOpen = 0, totalClosed = 0, total7 = 0, total30 = 0;
 
-        List<AlertEvent> events = new ArrayList<>();
-        try {
-            events.addAll(alertEventRepo.findAllOpenOrderBySeverity());                              // açıklar: pencereden bağımsız
-            events.addAll(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since30));
-        } catch (Exception e) {
-            log.debug("takım kırılımı: alarm okunamadı: {}", e.toString());
-        }
-
         java.util.Set<Long> seen = new java.util.HashSet<>();
-        for (AlertEvent e : events) {
-            if (e.getId() != null && !seen.add(e.getId())) continue;   // iki sorgunun kesişimi bir kez sayılır
+        for (Object[] r : events) {
+            if (r == null || r.length < 5) continue;
+            Long id = r[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            Long teamId = r[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            String eventDomain = r[2] == null ? null : String.valueOf(r[2]);
+            Boolean resolved = r[3] instanceof Boolean b ? b : null;
+            String createdAt = r[4] == null ? null : String.valueOf(r[4]);
+            if (id != null && !seen.add(id)) continue;   // iki sorgunun kesişimi bir kez sayılır
             // Alarmın takımları (2026-10-22, ALERTS-3 / DATA-5): damga + envanterin SY ve UG takımı — hücre penceresinin
             // açtığı Alarm Geçmişi süzgeciyle (teamId = X → damga ya da envanter SY / UG) AYNI küme; böylece satırdaki
             // "(N)" pencerede listelenen satır sayısına eşit olur ve UG takımı kendi alarmlarını görür. Toplamlar her
             // alarmı BİR kez sayar.
             java.util.LinkedHashSet<Long> owners = new java.util.LinkedHashSet<>();
-            if (e.getTeamId() != null) owners.add(e.getTeamId());
-            if (e.getDomain() != null) {
-                Long sy = domainTeam.get(e.getDomain());
-                Long ug = domainUg.get(e.getDomain());
+            if (teamId != null) owners.add(teamId);
+            if (eventDomain != null) {
+                Long sy = domainTeam.get(eventDomain);
+                Long ug = domainUg.get(eventDomain);
                 if (sy != null) owners.add(sy);
                 if (ug != null) owners.add(ug);
             }
@@ -100,14 +109,13 @@ public class AlertTeamStatsService {
                 for (Long t : owners) if (canViewTeam.test(t)) targets.add(rows.computeIfAbsent(t, k -> new Row()));
                 if (targets.isEmpty()) continue;
             }
-            boolean open = !Boolean.TRUE.equals(e.getResolved());
-            String createdAt = e.getCreatedAt();
+            boolean open = !Boolean.TRUE.equals(resolved);
             boolean in30 = createdAt != null && createdAt.compareTo(since30) >= 0;
             boolean in7 = createdAt != null && createdAt.compareTo(since7) >= 0;
-            for (Row r : targets) {
-                if (open) r.open++; else r.closed++;
-                if (in30) r.last30++;
-                if (in7) r.last7++;
+            for (Row acc : targets) {
+                if (open) acc.open++; else acc.closed++;
+                if (in30) acc.last30++;
+                if (in7) acc.last7++;
             }
             if (open) totalOpen++; else totalClosed++;
             if (in30) total30++;

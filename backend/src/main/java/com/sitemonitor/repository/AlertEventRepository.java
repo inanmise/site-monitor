@@ -90,6 +90,18 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT e.teamId, e.domain, e.createdAt FROM AlertEvent e WHERE e.createdAt >= :since")
     List<Object[]> findCreatedStatRowsSince(@Param("since") String since);
 
+    /**
+     * Alarm takım kırılımı ({@code AlertTeamStatsService}, 2026-11-13 performans): AÇIK alarmlar — tam entity ({@code context_json}
+     * dahil) yerine yalnız okunan sütunlar (Alarm Geçmişi paneli + İstatistikler 5 dk yoklaması).
+     * Sütunlar: {@code [id, teamId, domain, resolved, createdAt]}.
+     */
+    @Query("SELECT e.id, e.teamId, e.domain, e.resolved, e.createdAt FROM AlertEvent e WHERE e.resolved = false")
+    List<Object[]> findOpenTeamStatRows();
+
+    /** {@link #findOpenTeamStatRows} kardeşi: pencerede AÇILAN alarmlar, aynı sütunlar. */
+    @Query("SELECT e.id, e.teamId, e.domain, e.resolved, e.createdAt FROM AlertEvent e WHERE e.createdAt >= :since")
+    List<Object[]> findTeamStatRowsSince(@Param("since") String since);
+
     /** Öksüz alarm temizliği (2026-11-06, performans PF3 #3): verilen türlerdeki AÇIK alarmların alan anahtarları (tekil). Tüm açık
      *  alarmları ({@code context_json} dahil) okuyup Java'da süzmek yerine; {@code idx_ae_storm_scan (resolved, alert_type, …)} önekiyle. */
     @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND e.alertType IN :types AND e.domain IS NOT NULL")
@@ -835,12 +847,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scope") List<Long> scope);
 
     /**
-     * Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki DAMGASIZ olayların envanter SY / UG takımları
-     * ({@code [teamId, ugTeamId, count]}) — sertifika gibi envanter üzerinden yönlenen olaylar damgasız açılır.
+     * Olaylar takım süzgeci seçenekleri (2026-11-13): kapsamdaki olayların — DAMGALI olanlar DAHİL — alan adının envanter
+     * SY / UG takımları ({@code [e.teamId, inv.teamId, inv.ugTeamId, count]}). Liste süzgeci ({@link #INCIDENTS_FILTER},
+     * {@code :teamId}) damgalı olayı da envanter SY / UG takımıyla eşleştirir; sayım o kuralla aynı olsun diye damga da
+     * döner — çağıran damganın kendisini (zaten {@link #countIncidentStampedTeams}'te sayılır) envanter kolundan düşer.
+     * Envanter alan adı tekil olduğundan her olay en çok bir satırda sayılır (2026-11-13 hata taraması: yalnız damgasız
+     * olaylar sayılıyordu — seçenek 12 dediği takımda liste 31 olay gösteriyordu).
      */
-    @Query("SELECT inv.teamId, inv.ugTeamId, COUNT(e) FROM AlertEvent e, CertificateInventory inv "
-            + "WHERE e.teamId IS NULL AND inv.domain = e.domain AND " + INCIDENTS_FILTER + " GROUP BY inv.teamId, inv.ugTeamId")
-    List<Object[]> countIncidentInventoryTeams(
+    @Query("SELECT e.teamId, inv.teamId, inv.ugTeamId, COUNT(e) FROM AlertEvent e, CertificateInventory inv "
+            + "WHERE inv.domain = e.domain AND " + INCIDENTS_FILTER + " GROUP BY e.teamId, inv.teamId, inv.ugTeamId")
+    List<Object[]> countIncidentInventoryOwners(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,

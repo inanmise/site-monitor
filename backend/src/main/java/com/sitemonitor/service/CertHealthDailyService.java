@@ -51,6 +51,8 @@ public class CertHealthDailyService {
     static final String SQL_SERIES = "SELECT snap_day, total, evaluated, ok, under30, under7, expired, error_count "
             + "FROM cert_health_daily WHERE team_key = ? AND snap_day >= ? ORDER BY snap_day";
     static final String SQL_FIRST = "SELECT MIN(snap_day) FROM cert_health_daily WHERE team_key = ?";
+    /** Pencerede satırı olan takım kovaları — kapsamlı kullanıcının varsayılan takımı verisi olan takım olsun. */
+    static final String SQL_TEAMS_WITH_DATA = "SELECT DISTINCT team_key FROM cert_health_daily WHERE snap_day >= ? AND team_key <> 0";
 
     private final JdbcTemplate jdbc;
     private final CertificateInventoryRepository inventoryRepo;
@@ -119,8 +121,13 @@ public class CertHealthDailyService {
     // ── Okuma ────────────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Seri. {@code teamId} null → tüm izlemeyi görene kurum, kapsamlıya ilk görünür (ada göre) takım. Çağıran {@code teamId}'nin
-     * görülebilirliğini denetlemiş olmalı. Okuma hatası fırlar (arayüz "okunamadı" der, asla boş seri).
+     * Seri. {@code teamId} null → tüm izlemeyi görene kurum, kapsamlıya pencerede VERİSİ OLAN ilk görünür (ada göre) takım
+     * (hiçbirinin yoksa ilk görünür takım). Çağıran {@code teamId}'nin görülebilirliğini denetlemiş olmalı. Okuma hatası fırlar
+     * (arayüz "okunamadı" der, asla boş seri).
+     *
+     * <p>{@code no_certificates} (hata taraması 2026-11-13): seçilen takımın hiç görüntü satırı yok ama kurumunki var →
+     * görüntüler yazılıyor, bu takımda sertifika yok (görüntü yalnız sertifikası olan takıma satır yazar). Eskiden arayüz
+     * sonsuza dek "ilk görüntü bir saat içinde yazılır" diyordu.
      */
     public Map<String, Object> series(int days, Long teamId, boolean global, Predicate<Long> canViewTeam) {
         int d = Math.max(7, Math.min(MAX_DAYS, days));
@@ -134,7 +141,7 @@ public class CertHealthDailyService {
         Long key;
         if (teamId != null) key = teamId;
         else if (global) key = ORG_KEY;
-        else key = teams.isEmpty() ? null : (Long) teams.get(0).get("id");
+        else key = teams.isEmpty() ? null : defaultTeam(teams, d);
         Map<String, Object> out = new LinkedHashMap<>();
         String today = LocalDate.now(IST).toString();
         out.put("days", d);
@@ -153,13 +160,27 @@ public class CertHealthDailyService {
                 p.put("day", rs.getString(1));
                 p.put("total", total); p.put("evaluated", evaluated); p.put("ok", ok);
                 p.put("under30", rs.getInt(5)); p.put("under7", rs.getInt(6)); p.put("expired", rs.getInt(7)); p.put("error", rs.getInt(8));
-                p.put("health_pct", evaluated == 0 ? null : Math.round(1000.0 * ok / evaluated) / 10.0);
+                p.put("health_pct", CertHealthCounts.healthPct(ok, evaluated));
                 points.add(p);
             }, key, from);
             since = jdbc.queryForObject(SQL_FIRST, String.class, key);
         }
+        boolean noCerts = false;
+        if (key != null && key != ORG_KEY && since == null) {
+            noCerts = jdbc.queryForObject(SQL_FIRST, String.class, ORG_KEY) != null;
+        }
         out.put("points", points);
         out.put("collecting_since", since);
+        out.put("no_certificates", noCerts);
         return out;
+    }
+
+    /** Görünür takımlar (ad sırasında) içinde pencerede satırı olan ilki; hiçbiri yoksa ilk görünür takım. */
+    private Long defaultTeam(List<Map<String, Object>> teams, int days) {
+        java.util.Set<Long> withData = new java.util.HashSet<>();
+        String from = LocalDate.now(IST).minusDays(days - 1L).toString();
+        jdbc.query(SQL_TEAMS_WITH_DATA, rs -> { withData.add(rs.getLong(1)); }, from);
+        for (Map<String, Object> t : teams) if (withData.contains((Long) t.get("id"))) return (Long) t.get("id");
+        return (Long) teams.get(0).get("id");
     }
 }

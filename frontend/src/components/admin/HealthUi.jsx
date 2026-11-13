@@ -81,7 +81,7 @@ export function KpiCard({ kpiKey, icon: Icon, value, label, sub, tone, onClick, 
         {value}{delta}
       </span>
       <span className="text-[10.5px] font-bold tracking-widest text-muted-foreground uppercase">{label}</span>
-      {sub ? <span className="min-w-0 max-w-full truncate text-[11px] text-muted-foreground">{sub}</span> : null}
+      {sub ? <span data-slot="kpi-sub" className="min-w-0 max-w-full text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{sub}</span> : null}
       {spark ? <span className="mt-auto w-full pt-1">{spark}</span> : null}
     </>
   )

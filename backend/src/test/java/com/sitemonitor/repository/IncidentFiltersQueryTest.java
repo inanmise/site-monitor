@@ -139,9 +139,35 @@ class IncidentFiltersQueryTest {
         assertThat(alerts.countIncidentStampedTeams(null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
                 null, null, false, null, false, false, NONE)).extracting(r -> r[0] + "=" + r[1])
                 .containsExactlyInAnyOrder(A + "=3", B + "=3");
-        assertThat(alerts.countIncidentInventoryTeams(null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
-                null, null, false, null, false, false, NONE)).extracting(r -> r[0] + "/" + r[1] + "=" + r[2])
-                .containsExactly("null/" + C + "=1");
+        assertThat(alerts.countIncidentInventoryOwners(null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
+                null, null, false, null, false, false, NONE)).extracting(r -> r[0] + "/" + r[1] + "/" + r[2] + "=" + r[3])
+                .containsExactly("null/null/" + C + "=1");
+    }
+
+    @Test
+    @DisplayName("takım seçeneği sayısı = o takımla süzülen liste toplamı: damgalı olay da envanter SY/UG takımında sayılır, çift sayım yok")
+    void teamOptionCountsMatchListFilter() {
+        // damgalı (A) olay, alan adının envanteri SY = B, UG = C → B ve C süzgecinde de listelenir
+        save("stamped-inv.example.com", A, "PING_DOWN", "HIGH", false, false, "2026-11-12T05:00:00", null);
+        inv("stamped-inv.example.com", B, C);
+        // damga = SY = UG → A için TEK sayım
+        save("same-team.example.com", A, "PORT_DOWN", "WARNING", false, false, "2026-11-12T06:00:00", null);
+        inv("same-team.example.com", A, A);
+        java.util.Map<Long, Long> counts = new java.util.HashMap<>();
+        for (Object[] r : alerts.countIncidentStampedTeams(null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
+                null, null, false, null, false, false, NONE)) counts.merge(((Number) r[0]).longValue(), ((Number) r[1]).longValue(), Long::sum);
+        for (Object[] r : alerts.countIncidentInventoryOwners(null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
+                null, null, false, null, false, false, NONE)) {
+            for (Long team : com.sitemonitor.controller.IncidentsController.inventoryOnlyTeams(r))
+                counts.merge(team, ((Number) r[3]).longValue(), Long::sum);
+        }
+        for (long team : List.of(A, B, C)) {
+            long listed = alerts.countIncidentsFiltered(null, null, null, null, null, null, false, AlertEventRepository.NO_LEVELS,
+                    null, team, false, null, false, false, NONE);
+            assertThat(counts.getOrDefault(team, 0L)).as("takım %d seçenek sayısı", team).isEqualTo(listed);
+        }
+        assertThat(counts.get(B)).isEqualTo(4L);   // 3 damgalı + 1 envanter SY
+        assertThat(counts.get(C)).isEqualTo(2L);   // cert-ug + envanter UG
     }
 
     @Test

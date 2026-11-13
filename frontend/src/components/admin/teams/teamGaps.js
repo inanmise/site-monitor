@@ -69,7 +69,8 @@ export function teamGaps(team, { stats = null, hasLeader = null, hasManager = nu
       case 'inactive_members': missing = (num(s.members_inactive) ?? 0) > 0; break
       case 'contacts': missing = num(s.contacts) === 0; break
       case 'groups': missing = num(s.groups) === 0; break
-      case 'assets': missing = num(s.domains) === 0 && num(s.monitors) === 0; break
+      // UG olarak bağlı alan adı da varlıktır (sertifika alarmı UG takımına da gider) — kapsam matrisi / panoyla aynı (2026-11-13)
+      case 'assets': missing = num(s.domains) === 0 && num(s.monitors) === 0 && (num(s.ug_domains) ?? 0) === 0; break
       default: missing = false
     }
     if (missing) out.push(g.key)

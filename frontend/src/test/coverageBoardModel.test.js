@@ -23,7 +23,13 @@ describe('varsayılan grup + ulaşım', () => {
   })
   it('ulaşım: tüm adresleri pasif varsayılan takım adresi olsa da "none"; bilinmeyen varsayılan takım adresi olsa da unknown', () => {
     expect(deliveryState({ email: 'x@example.com' }, { state: 'allPassive' })).toBe('none')
-    expect(deliveryState({ email: 'x@example.com' }, { state: 'none' })).toBe('ok')
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'none' }, false)).toBe('ok')
+    // 2026-11-13 hata taraması: takım adresi yalnız pasif hesaplara aitse posta süzgeçte düşer → ulaşmıyor; bilinmiyorsa
+    // (sunucu alanı yok / okunamadı) BİLİNMİYOR — adres var diye yeşil değil
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'none' }, true)).toBe('none')
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'noEmails' }, true)).toBe('none')
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'none' }, null)).toBe('unknown')
+    expect(deliveryState({ email: 'x@example.com' }, { state: 'none' })).toBe('unknown')
     expect(deliveryState({ email: '' }, { state: 'ok', delivered: 2 })).toBe('ok')
     expect(deliveryState({ email: ' ' }, { state: 'noEmails' })).toBe('none')
     expect(deliveryState({ email: '' }, { state: 'unknown' })).toBe('unknown')
@@ -58,7 +64,8 @@ describe('pano', () => {
     { id: 2, name: 'Arşiv', email: '', active: true },
     { id: 3, name: 'Çağrı', email: 'cagri@example.com', active: true },
   ]
-  const stats = { 1: { monitors: 3 }, 2: { monitors: 0, domains: 0 }, 3: { monitors: 2 } }
+  const stats = { 1: { monitors: 3, email_inactive_only: false }, 2: { monitors: 0, domains: 0, email_inactive_only: false },
+    3: { monitors: 2, email_inactive_only: false } }
   const contacts = [{ id: 1, team_id: 1, min_alert_level: 'WARNING', active: true }]
   const groups = [g(10, 1)]
   const oncall = { byTeam: new Map(), known: new Set(['1', '2', '3']) }
@@ -81,6 +88,25 @@ describe('pano', () => {
     // Grup bilinmiyorsa takım adresi olan satır da BİLİNMİYOR (tüm-pasif varsayılan sonucu çevirirdi) — asla yeşil değil
     expect(unknown.rows.find((r) => r.teamId === 2).delivery).toBe('unknown')
     expect(unknown.rows.find((r) => r.teamId === 1).delivery).toBe('unknown')
+  })
+  it('2026-11-13 hata taraması: varsayılansız takımın adresi yalnız pasif hesaba aitse "ulaşmıyor" (satır işaretli); sayaçlar okunamazsa bilinmiyor', () => {
+    const st = { ...stats, 3: { monitors: 2, email_inactive_only: true } }
+    const b = buildBoard(teams, { stats: st, contacts, groups, oncall, noc: { byTeam: {} } })
+    const r3 = b.rows.find((r) => r.teamId === 3)
+    expect(r3.delivery).toBe('none')
+    expect(r3.emailInactiveOnly).toBe(true)
+    expect(b.summary.noRecipient).toBe(2)
+    const noStats = buildBoard(teams, { stats: null, contacts, groups, oncall, noc: { byTeam: {} } })
+    expect(noStats.rows.find((r) => r.teamId === 3).delivery).toBe('unknown')
+    expect(noStats.summary.deliveryKnown).toBe(false)
+  })
+  it('2026-11-13 hata taraması: yalnız UG olarak bağlı takım varlıklı sayılır; durumu bilinmeyen kişi eskalasyonu "bilinmiyor" yapar', () => {
+    const st = { ...stats, 3: { monitors: 0, domains: 0, ug_domains: 2, email_inactive_only: false } }
+    const b = buildBoard(teams, { stats: st, contacts, groups, oncall, noc: { byTeam: {} } })
+    expect(b.rows.find((r) => r.teamId === 3).escalation.tone).toBe('gap')
+    const linked = [{ id: 1, team_id: 1, user_id: 77, min_alert_level: 'WARNING', active: true }]
+    const scoped = buildBoard(teams, { stats, contacts: linked, inactiveIds: new Set(), knownIds: new Set(['5']), groups, oncall, noc: { byTeam: {} } })
+    expect(scoped.rows.find((r) => r.teamId === 1).escalation.tone).toBe('unknown')
   })
   it('süzgeç + sıralama: en sorunlu takım önce', () => {
     const b = buildBoard(teams, { stats, contacts, groups, oncall, noc: { byTeam: {} } })

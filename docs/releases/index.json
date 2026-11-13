@@ -1,9 +1,79 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-13T03:07:17Z",
+  "generatedAt": "2026-11-13T07:20:44Z",
   "repo": "inanmise/site-monitor",
-  "count": 823,
+  "count": 824,
   "releases": [
+    {
+      "version": "20.196.1",
+      "tag": "v20.196.1",
+      "releasedAt": "2026-11-13T07:20:34Z",
+      "commit": "c857b2786ff90654cf508abcdc9c16cbe1b40e54",
+      "prevVersion": "20.196.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 7,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "c857b278",
+          "subject": "son inceleme — kişi user_active, taşıma izi süzgeci, genel bakış tazeleme aralığı, UG varlık, bekleyen tablo"
+        },
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "aefb0978",
+          "subject": "kişi geçmişi takımı, değişen-alan formları, simülatör ve kapsam bilinmeyenleri"
+        },
+        {
+          "type": "fix",
+          "scope": "stats",
+          "breaking": false,
+          "sha": "49d58d4d",
+          "subject": "okunamayan blok bellekte kalmaz, bilinmeyen asla 0 / yeşil değil"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "754c7040",
+          "subject": "veritabanı büyümesi tahmin ve öneri hataları (tarama 2026-11-13)"
+        },
+        {
+          "type": "fix",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "087eef77",
+          "subject": "kontrol kanıtı, bağlantı kararları, takım sayımı ve 24 sa penceresi"
+        },
+        {
+          "type": "fix",
+          "scope": "admin",
+          "breaking": false,
+          "sha": "aba14bee",
+          "subject": "dizin görünümü, 7/24 ve tarih süzgeçleri, varsayılan grup kullanımı, KPI alt satırı"
+        },
+        {
+          "type": "fix",
+          "scope": "health",
+          "breaking": false,
+          "sha": "3322eaef",
+          "subject": "boş tabloda bayat histogram en eski kayıt sayılmaz"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.196.0",
       "tag": "v20.196.0",

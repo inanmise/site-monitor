@@ -123,6 +123,37 @@ class DbHealthAnalysisServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("analiz KENDİ okuduğu en eski kaydı kullanır: görüntü 'geride' dese de analizin MIN'i genç / tablo boş → CLEANUP_BEHIND yok, kendi satırıyla çelişmez (2026-11-13 hata taraması)")
+    void analysisUsesItsOwnOldest() {
+        // bugünün görüntüsü: port_checks gerçek MIN 200 gün (saklama 180) → büyüme görünümü "geride" der
+        jdbc.update("INSERT INTO db_size_daily(snap_day, table_name, total_bytes, table_bytes, index_bytes, live_rows, dead_rows, "
+                + "ins_total, del_total, oldest_at) VALUES ('2026-11-13', 'port_checks', ?, ?, ?, 1000000, 0, 0, 0, '2026-04-27T10:00:00')",
+                2L << 30, 1L << 30, 1L << 29);
+        jdbc.update("INSERT INTO db_size_daily(snap_day, table_name, total_bytes) VALUES ('2026-11-13', '*', ?)", 10L << 30);
+        List<Map<String, Object>> viewFindings = (List<Map<String, Object>>) growth.overview(30, false).get("findings");
+        assertThat(viewFindings).anyMatch(f -> "CLEANUP_BEHIND".equals(f.get("code")) && "port_checks".equals(f.get("table")));
+
+        // analiz anında gece temizliği koşmuş: MIN 100 gün
+        source.oldest.put("port_checks", "2026-08-05T10:00:00");
+        Map<String, Object> r = svc.run("admin").orElseThrow();
+        Map<String, Object> port = ((List<Map<String, Object>>) r.get("policies")).stream()
+                .filter(p -> "series-port".equals(p.get("policy_id"))).findFirst().orElseThrow();
+        assertThat(port.get("behind")).isEqualTo(false);
+        assertThat((List<Map<String, Object>>) r.get("findings"))
+                .noneMatch(f -> "CLEANUP_BEHIND".equals(f.get("code")) && "port_checks".equals(f.get("table")));
+
+        // tablo boşalmış (MIN null): "en eski bilinmiyor" + uyarı yok
+        source.oldest.remove("port_checks");
+        Map<String, Object> empty = svc.run("admin").orElseThrow();
+        Map<String, Object> port2 = ((List<Map<String, Object>>) empty.get("policies")).stream()
+                .filter(p -> "series-port".equals(p.get("policy_id"))).findFirst().orElseThrow();
+        assertThat(port2.get("oldest_unknown")).isEqualTo(true);
+        assertThat((List<Map<String, Object>>) empty.get("findings"))
+                .noneMatch(f -> "CLEANUP_BEHIND".equals(f.get("code")) && "port_checks".equals(f.get("table")));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("bir bölüm okunamazsa PARTIAL — o bölüm 'failed', bulgusu 'sorun yok' sayılmaz; bütçe biterse kalanlar 'skipped'")
     void partialAndBudget() {
         source.vacuumFails = new RuntimeException("timeout");

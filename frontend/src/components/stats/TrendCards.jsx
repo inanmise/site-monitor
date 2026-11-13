@@ -4,7 +4,7 @@ import { formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import SourceGate from './SourceGate.jsx'
-import { statsNum, statsPct } from './statsInsights.js'
+import { fillHealthDays, statsNum, statsPct } from './statsInsights.js'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { CartesianGrid, ChartContainer, ChartTooltip, ChartTooltipContent, Line, LineChart, XAxis, YAxis } from '@/components/shadcn/chart'
 import { cn } from '@/lib/utils'
@@ -18,8 +18,9 @@ import { cn } from '@/lib/utils'
  *
  * <b>90 günlük sağlık</b> (`/api/stats/health-series`): günlük görüntülerden temiz / değerlendirilen %. Tüm izlemeyi gören
  * kurum serisini ya da bir takımı seçer; kapsamlı kullanıcı yalnız kendi takımlarından BİRİNİ seçer (takımlar toplanmaz).
- * Veri dağıtımdan itibaren birikir — "şu tarihten beri toplanıyor" boş durumu. Test kancaları: `data-slot="stats-renewal"`,
- * `stats-renewal-win` (+ `data-months`), `stats-health`, `stats-health-team`.
+ * Veri dağıtımdan itibaren birikir — "şu tarihten beri toplanıyor" boş durumu; görüntüler yazılırken hiç satırı olmayan takım
+ * "bu takımda izlenen sertifika yok" (`no_certificates`). Eksik gün grafikte boşluk. Test kancaları: `data-slot="stats-renewal"`,
+ * `stats-renewal-win` (+ `data-months`), `stats-health`, `stats-health-team`, `stats-health-nocerts`, `stats-health-dot`.
  */
 const TONE = { ok: 'text-success', warn: 'text-amber-700 dark:text-amber-300', bad: 'text-destructive', neutral: 'text-muted-foreground' }
 
@@ -95,10 +96,20 @@ function HealthBody({ data, team, onTeam }) {
     return out
   }, [data, t])
   const current = data.scope === 'org' ? 'org' : data.team_id != null ? String(data.team_id) : (team ?? '')
-  const points = Array.isArray(data.points) ? data.points : []
+  const points = useMemo(() => (Array.isArray(data.points) ? data.points : []), [data.points])
   const config = useMemo(() => ({ health: { label: t('stx.hsSeries'), color: 'var(--chart-2, var(--primary))' } }), [t])
-  const chart = points.map((p) => ({ day: p.day, label: p.day.slice(5), health: p.health_pct }))
+  // Görüntüsü olmayan gün null (boşluk görünür; çizgi üstünden geçmez) — hata taraması 2026-11-13
+  const chart = useMemo(() => fillHealthDays(points, data.today), [points, data.today])
   const last = points.length ? points[points.length - 1] : null
+  // Komşuları boş tek değer sıfır uzunlukta çizgi olur ve görünmezdi → yalnız onlara nokta (Metrikler `mx-dot` deseni)
+  const lonelyDot = (props) => {
+    const { cx, cy, index } = props
+    const v = chart[index]?.health
+    const k = `hd-${index}`
+    if (typeof v !== 'number' || cx == null || cy == null) return <g key={k} />
+    if (typeof chart[index - 1]?.health === 'number' || typeof chart[index + 1]?.health === 'number') return <g key={k} />
+    return <circle key={k} data-slot="stats-health-dot" cx={cx} cy={cy} r={2.5} fill="var(--color-health)" stroke="none" />
+  }
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {options.length > 1 && (
@@ -109,6 +120,10 @@ function HealthBody({ data, team, onTeam }) {
       )}
       {data.scope === 'none' ? (
         <p data-slot="stats-health-noscope" className="m-0 text-sm text-muted-foreground">{t('stx.hsNoTeam')}</p>
+      ) : points.length === 0 && data.no_certificates === true ? (
+        // Görüntüler yazılıyor ama bu takımın hiç satırı yok: takımda izlenen sertifika yok (hata taraması 2026-11-13 —
+        // eskiden sonsuza dek "ilk görüntü bir saat içinde yazılır" diyordu)
+        <p data-slot="stats-health-nocerts" className="m-0 text-sm text-muted-foreground">{t('stx.hsNoCerts')}</p>
       ) : points.length < 2 ? (
         <p data-slot="stats-health-collecting" className="m-0 text-sm text-muted-foreground">
           {data.collecting_since ? t('stx.hsCollecting', formatDateOnly(data.collecting_since)) : t('stx.hsCollectingSoon')}
@@ -126,7 +141,8 @@ function HealthBody({ data, team, onTeam }) {
                 <XAxis dataKey="label" tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={20} fontSize={11} />
                 <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={40} fontSize={11} />
                 <ChartTooltip cursor={false} content={<ChartTooltipContent labelKey="day" />} />
-                <Line dataKey="health" type="monotone" stroke="var(--color-health)" strokeWidth={2} dot={chart.length < 3} connectNulls={false} isAnimationActive={false} />
+                <Line dataKey="health" type="monotone" stroke="var(--color-health)" strokeWidth={2} dot={lonelyDot} activeDot={{ r: 3 }}
+                  connectNulls={false} isAnimationActive={false} />
               </LineChart>
             </ChartContainer>
           </div>

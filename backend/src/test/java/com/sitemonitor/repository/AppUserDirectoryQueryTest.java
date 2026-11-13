@@ -138,6 +138,17 @@ class AppUserDirectoryQueryTest {
     }
 
     @Test
+    @DisplayName("7/24 'Hayır': takımı olmayan aktif kullanıcı da listelenir (NULL teamId IN … UNKNOWN tuzağı, 2026-11-13)")
+    void nocNoIncludesTeamless() {
+        save(u("BIRINCIL7"), 7L);
+        save(u("TAKIMSIZ"), null);
+        assertThat(run(null, null, null, null, 0, 0, false, 2, List.of(7L), 0, null, null, null, null, null))
+                .containsExactly("TAKIMSIZ");
+        assertThat(run(null, null, null, null, 0, 0, false, 1, List.of(7L), 0, null, null, null, null, null))
+                .containsExactly("BIRINCIL7");
+    }
+
+    @Test
     @DisplayName("çevrimiçi: canlı oturum + eşikten taze lastSeenAt; TERMINATED / bayat / oturumsuz = çevrimdışı")
     void online() {
         AppUser on = u("CEVRIMICI"); on.setActiveSessionId("sess-1"); on.setLastSeenAt("2026-11-12T11:59:30"); save(on, 1L);
@@ -152,18 +163,20 @@ class AppUserDirectoryQueryTest {
     }
 
     @Test
-    @DisplayName("tarih aralığı: son giriş + oluşturulma GÜN önekli (zaman biçiminden bağımsız); from/to dahil")
+    @DisplayName("tarih aralığı: sınırlar İstanbul günü başlarının UTC anı (bitiş hariç); boşluklu eski biçim de karşılaştırılır")
     void dateRange() {
         AppUser a = u("OCAK"); a.setLastLoginAt("2026-01-15T08:00:00"); a.setCreatedAt("2025-12-01T00:00:00Z"); save(a, 1L);
         AppUser b = u("HAZIRAN"); b.setLastLoginAt("2026-06-15T08:00:00"); b.setCreatedAt("2026-06-10 09:30:00"); save(b, 1L); // boşluklu biçim
         AppUser c = u("HIC"); c.setLastLoginAt(null); c.setCreatedAt("2026-06-20T00:00:00"); save(c, 1L);
+        // İstanbul 1 Şubat 01:30 = UTC 31 Ocak 22:30 → "1 Şubat'tan itibaren" süzgecine GİRER (UTC gün öneki onu dışlıyordu)
+        AppUser d = u("GECE"); d.setLastLoginAt("2026-01-31T22:30:00"); d.setCreatedAt("2026-05-31 22:00:00"); save(d, 1L);
 
-        // son giriş 2026-02-01 .. 2026-12-31 → yalnız HAZIRAN (OCAK eski, HIC null)
-        assertThat(run(null, null, null, null, 0, 0, false, 0, null, 0, "2026-02-01", "2026-12-31", null, null, null))
-                .containsExactly("HAZIRAN");
-        // oluşturulma 2026-06-01 .. 2026-06-30 → HAZIRAN (boşluklu) + HIC; OCAK (2025) hariç
-        assertThat(run(null, null, null, null, 0, 0, false, 0, null, 0, null, null, "2026-06-01", "2026-06-30", null))
-                .containsExactlyInAnyOrder("HAZIRAN", "HIC");
+        // son giriş İstanbul 2026-02-01 .. 2026-12-31 (UTC [2026-01-31T21:00, 2026-12-31T21:00)) → HAZIRAN + GECE
+        assertThat(run(null, null, null, null, 0, 0, false, 0, null, 0, "2026-01-31T21:00:00", "2026-12-31T21:00:00", null, null, null))
+                .containsExactlyInAnyOrder("HAZIRAN", "GECE");
+        // oluşturulma İstanbul 2026-06-01 .. 2026-06-30 → HAZIRAN (boşluklu) + HIC + GECE (UTC 31 Mayıs 22:00 = İstanbul 1 Haziran)
+        assertThat(run(null, null, null, null, 0, 0, false, 0, null, 0, null, null, "2026-05-31T21:00:00", "2026-06-30T21:00:00", null))
+                .containsExactlyInAnyOrder("HAZIRAN", "HIC", "GECE");
     }
 
     @Test

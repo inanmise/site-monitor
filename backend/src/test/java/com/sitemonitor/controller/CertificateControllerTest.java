@@ -1248,6 +1248,23 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("hata taraması 2026-11-13: GET /stats/changes alarm iznini servise iletir (izinsiz → alarm sayıları okunmaz); anahtar kapsam")
+    void recentChanges_alertsPermission() throws Exception {
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("days", 7); body.put("added", 1); body.put("alerts_opened", null); body.put("alerts_visible", false);
+        when(executiveStatsService.recentChanges(anyInt(), any(), anyBoolean(), any())).thenReturn(body);
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/stats/changes?days=7").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.added").value(1))
+                .andExpect(jsonPath("$.data.alerts_visible").value(false));
+        verify(executiveStatsService).recentChanges(eq(7), any(), eq(false), eq(com.sitemonitor.util.TtlMemo.scopeKey(false, List.of(5L))));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"))).thenReturn(true);
+        mvc.perform(get("/api/stats/changes?days=30").session(teamSession(5L))).andExpect(status().isOk());
+        verify(executiveStatsService).recentChanges(eq(30), any(), eq(true), any());
+    }
+
+    @Test
     @DisplayName("2026-11-13: GET /stats/teams?view=domains yalın biçim (kapsam); parametresiz çağrı eski biçimi verir")
     void teamStats_leanView() throws Exception {
         when(certService.getTeamDomainLists(List.of(5L))).thenReturn(java.util.Map.of("mode", "domains", "teams", List.of(

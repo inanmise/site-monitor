@@ -300,8 +300,11 @@ export function findingArgs(f, t) {
       return [tbl, formatNumber(p.oldest_age_days, 1), formatNumber(p.retention_days),
         p.last_run_failed ? t('dbg.adv.lastRunFailed') : '']
     case 'DEAD_TUPLES':
+      // Görüntüden gelen bulgu son vacuum anını TAŞIMAZ (anahtar yok) — o zaman cümle yazılmaz; "hiç çalışmamış" yalnız
+      // analizin anahtarı null döndüğünde (2026-11-13 hata taraması: her ölü satır bulgusu "henüz çalışmamış" diyordu)
       return [tbl, formatPct(p.dead_pct), formatNumber(p.dead_rows),
-        p.last_autovacuum ? t('dbg.adv.lastAutovacuum', p.last_autovacuum.replace('T', ' ').slice(0, 16)) : t('dbg.adv.noAutovacuum')]
+        p.last_autovacuum ? t('dbg.adv.lastAutovacuum', p.last_autovacuum.replace('T', ' ').slice(0, 16))
+          : Object.prototype.hasOwnProperty.call(p, 'last_autovacuum') ? t('dbg.adv.noAutovacuum') : '']
     case 'TOAST_HEAVY':
       return [tbl, formatBytes(p.toast_bytes), formatPct(p.toast_pct)]
     case 'INDEX_BLOAT':

@@ -13,12 +13,27 @@ export function coversLevel(minLevel, level) {
   return (RANK[minLevel] ?? 0) <= (RANK[level] ?? 0)
 }
 
-/** Kişi GERÇEKTEN bildirim gönderir mi: aktif VE pasif kullanıcıya bağlı değil. Webhook-yalnız kişi (user_id yok) her
- *  zaman sayılır — pasif KULLANICI süzgeci onu düşürmez (InactiveRecipientGuard yalnız kullanıcı-bağlı adresi düşürür). */
-export function contactNotifies(c, inactiveIds) {
+/**
+ * Kişi GERÇEKTEN bildirim gönderir mi: aktif VE pasif kullanıcıya bağlı değil. Webhook-yalnız kişi (user_id yok) her
+ * zaman sayılır — pasif KULLANICI süzgeci onu düşürmez (InactiveRecipientGuard yalnız kullanıcı-bağlı adresi düşürür).
+ *
+ * Dönüş `true | false | null`. `null` = BİLİNMİYOR (2026-11-13 hata taraması): kullanıcı listesi okunamadı
+ * (`inactiveIds === null`) ya da kişinin bağlı olduğu kullanıcı görüntüleyicinin listesinde yok (`knownIds` verilmiş ve
+ * kimliği içermiyor — kapsamlı müdürün /admin/users listesi kapsamla süzülüdür, dışındaki kullanıcının pasif olup olmadığı
+ * bilinmez). Bilinmeyen kişi "gönderiyor" SAYILMAZ (yanlış yeşil) ve "göndermiyor" da sayılmaz (sahte boşluk).
+ */
+export function contactNotifies(c, inactiveIds, knownIds) {
   if (!c || c.active === false) return false
   const uid = c.user_id != null && c.user_id !== '' ? String(c.user_id) : null
-  if (uid && inactiveIds && typeof inactiveIds.has === 'function' && inactiveIds.has(uid)) return false
+  if (!uid) return true
+  // Sunucunun kişi satırına yazdığı bağlı kullanıcı etkinliği önce gelir (2026-11-13 son inceleme): kapsamlı müdürün
+  // kullanıcı listesi kapsamla süzülü olduğundan kapsam dışı kullanıcının durumu istemcide bilinmezdi. Yoksa (eski sunucu,
+  // okunamadı, silinmiş kullanıcı) istemcinin kendi listesine düşülür.
+  if (c.user_active === false) return false
+  if (c.user_active === true) return true
+  if (inactiveIds === null) return null
+  if (inactiveIds && typeof inactiveIds.has === 'function' && inactiveIds.has(uid)) return false
+  if (knownIds && typeof knownIds.has === 'function' && !knownIds.has(uid)) return null
   return true
 }
 
@@ -26,42 +41,62 @@ export function contactNotifies(c, inactiveIds) {
  * Takım × seviye kapsamı. Her takım için seviyede BİLDİRİM GÖNDERECEK etkin kişi sayısı + dürüst ton.
  *
  * Ton (yanıltmaz):
- *  - `noAssets` (bilgi, boşluk DEĞİL): takımın aktif izlenen varlığı yok → alarm üretmez, eksik demek değil.
+ *  - `noAssets` (bilgi, boşluk DEĞİL): takımın aktif izlenen varlığı yok → alarm üretmez, eksik demek değil. Varlık =
+ *    izlemeler + SY olarak bağlı envanter + UG olarak bağlı envanter (`ug_domains`, 2026-11-13 hata taraması: sertifika
+ *    alarmı UG takımına KENDİ kişileriyle de gider — yalnız-UG takım "varlık yok" sayılırsa boşluğu görünmezdi).
  *  - `gap` (kırmızı): varlık var ama CRITICAL kapsamı 0 → en sert alarmda bile hiç eskalasyon yok (yalnız takım-maili).
  *  - `partial` (amber): CRITICAL ≥ 1 ama HIGH kapsamı 0 → kritik tırmanır, yüksek tırmanmaz (tüm kişiler CRITICAL eşikli).
  *  - `ok` (yeşil): varlık var, HIGH ve CRITICAL kapsanıyor.
+ *  - `unknown`: varlık sayısı ya da (bağlı kullanıcısının durumu bilinmeyen kişiler yüzünden) kapsam kararı bilinmiyor.
+ *    `counts` kesin gönderenleri, `maybe` durumu bilinmeyenleri sayar; karar ancak bilinmeyenler sonucu değiştirmiyorsa verilir.
  *
  * WARNING sütunu BİLGİ amaçlıdır, boşluk olarak işaretlenmez: standalone UYARI alarmı tasarımca takım-maili (kişi
  * eklenmez); sertifika uyarısı ise kişi kullanır. Sunucu tarafı eşleştirme AdminController + EscalationContactScope.
+ *
+ * @param inactiveIds pasif kullanıcı kimlikleri (Set) — `null` = kullanıcı listesi okunamadı (bilinmiyor)
+ * @param knownIds    görüntüleyicinin listesindeki TÜM kullanıcı kimlikleri (Set) — yalnız liste kapsamla süzülüyse verilir
  */
-export function buildCoverage(contacts = [], teams = [], inactiveIds = new Set(), stats = {}) {
+export function buildCoverage(contacts = [], teams = [], inactiveIds = new Set(), stats = {}, knownIds = null) {
   // Varlık sayıları hiç yüklenmediyse (teamStats okunamadı) takımı YANLIŞÇA "varlık yok" göstermeyiz — bilinmeyen ≠ eksik.
   const haveStats = stats && typeof stats === 'object' && Object.keys(stats).length > 0
   const byTeam = new Map()
   for (const c of contacts || []) {
-    if (!contactNotifies(c, inactiveIds)) continue
+    const n = contactNotifies(c, inactiveIds, knownIds)
+    if (n === false) continue
     if (c.team_id == null || c.team_id === '') continue
     const k = String(c.team_id)
     if (!byTeam.has(k)) byTeam.set(k, [])
-    byTeam.get(k).push(c)
+    byTeam.get(k).push({ c, sure: n === true })
   }
   const statAt = (id) => stats?.[String(id)] || stats?.[id] || {}
   const rows = (teams || []).map((team) => {
     const list = byTeam.get(String(team.id)) || []
     const counts = { WARNING: 0, HIGH: 0, CRITICAL: 0 }
-    for (const c of list) for (const lvl of COVERAGE_LEVELS) if (coversLevel(c.min_alert_level, lvl)) counts[lvl]++
+    const maybe = { WARNING: 0, HIGH: 0, CRITICAL: 0 }
+    for (const { c, sure } of list) {
+      for (const lvl of COVERAGE_LEVELS) if (coversLevel(c.min_alert_level, lvl)) (sure ? counts : maybe)[lvl]++
+    }
     const s = statAt(team.id)
-    const assets = haveStats ? (Number(s.monitors) || 0) + (Number(s.domains) || 0) : null
+    const assets = haveStats ? (Number(s.monitors) || 0) + (Number(s.domains) || 0) + (Number(s.ug_domains) || 0) : null
     let tone
     const gapLevels = []
+    const upCrit = counts.CRITICAL + maybe.CRITICAL
+    const upHigh = counts.HIGH + maybe.HIGH
     if (!haveStats) tone = 'unknown'                                    // varlık bilinmiyor → boşluk/temiz iddia edilmez
     else if (assets <= 0) tone = 'noAssets'
-    else if (counts.CRITICAL === 0) { tone = 'gap'; gapLevels.push('CRITICAL'); if (counts.HIGH === 0) gapLevels.push('HIGH') }
-    else if (counts.HIGH === 0) { tone = 'partial'; gapLevels.push('HIGH') }
+    else if (upCrit === 0) { tone = 'gap'; gapLevels.push('CRITICAL'); if (upHigh === 0) gapLevels.push('HIGH') }
+    else if (counts.CRITICAL === 0) tone = 'unknown'                    // kritik kapsam bilinmeyen kişilere bağlı
+    else if (upHigh === 0) { tone = 'partial'; gapLevels.push('HIGH') }
+    else if (counts.HIGH === 0) tone = 'unknown'                        // yüksek kapsam bilinmeyen kişilere bağlı
     else tone = 'ok'
-    return { teamId: team.id, teamName: team.name || '', assets, counts, tone, gapLevels, total: list.length }
+    const uncertain = list.filter((x) => !x.sure).length
+    const unknownReason = tone !== 'unknown' ? null : (!haveStats ? 'stats' : 'users')
+    return { teamId: team.id, teamName: team.name || '', assets, counts, maybe, uncertain, tone, unknownReason, gapLevels, total: list.length }
   })
-  const summary = { teams: rows.length, withAssets: 0, ok: 0, partial: 0, gap: 0, noAssets: 0, unknown: 0, statsKnown: haveStats }
+  const summary = {
+    teams: rows.length, withAssets: 0, ok: 0, partial: 0, gap: 0, noAssets: 0, unknown: 0, statsKnown: haveStats,
+    usersKnown: inactiveIds !== null,
+  }
   for (const r of rows) { summary[r.tone] = (summary[r.tone] || 0) + 1; if (r.assets > 0) summary.withAssets++ }
   return { rows, summary }
 }
