@@ -76,6 +76,7 @@ public final class WatchdogMessages {
             case DATABASE -> database(f, en);
             case CLOCK_SKEW -> clockSkew(f, en);
             case CHECK_QUEUE -> checkQueue(f, en);
+            case DB_CAPACITY -> dbCapacity(f, en);
         };
     }
 
@@ -136,6 +137,35 @@ public final class WatchdogMessages {
 
     private static long num(Object o) {
         return o instanceof Number n ? n.longValue() : 0L;
+    }
+
+    /** Veritabanı doluluğu (2026-11-13): kullanım, kapasite, (varsa) tahmini dolma günü ve eşikler. */
+    private static String dbCapacity(Map<String, Object> f, boolean en) {
+        String used = bytes(f.get("used_bytes"), en), cap = bytes(f.get("capacity_bytes"), en);
+        String pct = f.get("used_pct") instanceof Number n ? String.format(en ? Locale.ROOT : Locale.forLanguageTag("tr"), "%.1f", n.doubleValue()) : "?";
+        StringBuilder sb = new StringBuilder(en ? "Database " + used + " of " + cap + " (" + pct + "%)."
+                : "Veritabanı " + used + " / " + cap + " (%" + pct + ").");
+        if (f.get("days_until_full") instanceof Number d) {
+            sb.append(en ? " At the current growth rate it fills up in about " + d.intValue() + " day(s)."
+                    : " Bugünkü büyüme hızıyla yaklaşık " + d.intValue() + " gün içinde dolar.");
+        } else if (!Boolean.TRUE.equals(f.get("forecast"))) {
+            sb.append(en ? " Not enough daily snapshots for a forecast yet; usage alone decides."
+                    : " Tahmin için henüz yeterli günlük görüntü yok; karar yalnız kullanıma göre.");
+        }
+        Object tp = f.get("threshold_pct"), td = f.get("threshold_days");
+        sb.append(en ? " (limits: " + tp + "% used or " + td + " days to full)"
+                : " (sınırlar: %" + tp + " kullanım ya da dolmaya " + td + " gün)");
+        return sb.toString();
+    }
+
+    /** Bayt → "12,3 GB" / "12.3 GB". */
+    static String bytes(Object v, boolean en) {
+        if (!(v instanceof Number n)) return "?";
+        double b = n.doubleValue();
+        String[] u = {"B", "KB", "MB", "GB", "TB"};
+        int i = 0;
+        while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+        return String.format(en ? Locale.ROOT : Locale.forLanguageTag("tr"), i == 0 ? "%.0f" : "%.1f", b) + " " + u[i];
     }
 
     private static String database(Map<String, Object> f, boolean en) {
@@ -229,6 +259,12 @@ public final class WatchdogMessages {
                     : "Uygulanmaz: dağıtık kontroller kapalı (bütün türler tarama liderinde koşar).";
             case "no_check_store" -> en ? "Not applicable: the check job queue is not available on this pod."
                     : "Uygulanmaz: kontrol işi kuyruğu bu pod'da yok.";
+            case "capacity_unknown" -> en ? "Not applicable: the database capacity is not set (System Health → Database growth)."
+                    : "Uygulanmaz: veritabanı kapasitesi tanımlı değil (Sistem Sağlığı → Veritabanı büyümesi).";
+            case "not_postgres" -> en ? "Not applicable: database growth is measured on PostgreSQL only."
+                    : "Uygulanmaz: veritabanı büyümesi yalnız PostgreSQL'de ölçülür.";
+            case "no_db_growth" -> en ? "Not applicable: database growth tracking is not available on this pod."
+                    : "Uygulanmaz: veritabanı büyümesi izlemesi bu pod'da yok.";
             case "overview_unavailable", "probe_failed" -> en ? "Could not be measured this round." : "Bu turda ölçülemedi.";
             default -> en ? "Not applicable." : "Uygulanmaz.";
         };

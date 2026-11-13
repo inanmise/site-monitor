@@ -174,7 +174,7 @@ class WatchdogCheckQueueTest {
     }
 
     @Test
-    @DisplayName("katalog: anahtar check_queue, varsayılan orta önem, iki dilde ad ve sorun cümlesi; katalogda SON sırada")
+    @DisplayName("katalog: anahtar check_queue, varsayılan orta önem, iki dilde ad ve sorun cümlesi; db_capacity'den (2026-11-13) hemen önce")
     void catalog() {
         assertThat(WatchdogCheck.byKey("check_queue")).isEqualTo(WatchdogCheck.CHECK_QUEUE);
         assertThat(WatchdogCheck.CHECK_QUEUE.severity()).isEqualTo(WatchdogCheck.Severity.MEDIUM);
@@ -183,7 +183,8 @@ class WatchdogCheckQueueTest {
         assertThat(WatchdogCheck.CHECK_QUEUE.problemTr()).isNotBlank();
         assertThat(WatchdogCheck.CHECK_QUEUE.problemEn()).isNotBlank();
         WatchdogCheck[] all = WatchdogCheck.values();
-        assertThat(all[all.length - 1]).isEqualTo(WatchdogCheck.CHECK_QUEUE);
-        assertThat(all).hasSize(8);
+        assertThat(all[all.length - 2]).isEqualTo(WatchdogCheck.CHECK_QUEUE);
+        assertThat(all[all.length - 1]).isEqualTo(WatchdogCheck.DB_CAPACITY);
+        assertThat(all).hasSize(9);
     }
 }

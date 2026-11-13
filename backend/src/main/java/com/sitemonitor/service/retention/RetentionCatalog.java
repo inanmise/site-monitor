@@ -193,6 +193,17 @@ public final class RetentionCatalog {
                 7, 1, false, DataClass.OPERATIONAL,
                 "SiteMonitor'ün kendi çalışma metrikleri (JVM, havuzlar, HTTP, günlük olayları) — pod başına dakikada bir satır "
                 + "(Sistem Sağlığı → Metrikler, 2026-10-13). Kısa tutulur."),
+        // ── Veritabanı büyümesi (2026-11-13, Sistem Sağlığı → Veritabanı büyümesi) ──────────────────────────────
+        new RetentionPolicy("db-size-daily", "db_size_daily", "snap_day", TimeKind.DATE10,
+                "site.monitor.db.size-history.retention-days", 730, 90, false, "{t}", Mode.AGE, false,
+                DataClass.OPERATIONAL,
+                "Veritabanı ve tablo boyutlarının günlük görüntüsü (gün × tablo başına bir satır, ~160 satır / gün): büyüme "
+                + "eğrisi, tahmin ve saklama önerileri buradan hesaplanır. Tahmin son 30 güne bakar; uzun geçmiş yıllık eğilim "
+                + "için. Kişisel veri yok."),
+        info("db-health-analysis-runs", "db_health_analysis_runs", Mode.EXTERNAL, DataClass.PERSONAL,
+                "İstek üzerine koşan veritabanı sağlık analizinin sonuçları (koşturan kullanıcı adı, bulgular, tablo / dizin "
+                + "adları ve sayılar — SQL metni ya da satır verisi yok). DbHealthAnalysisService her koşudan sonra kendisi "
+                + "budar: en yeni 50 koşu ve 180 günden yenisi kalır."),
         guarded("login-anomaly", "login_anomaly_incident", "opened_at", "site.monitor.failed-login.retention-days",
                 365, 7, "resolved = true AND {t}", DataClass.SECURITY_AUDIT,
                 "Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. "

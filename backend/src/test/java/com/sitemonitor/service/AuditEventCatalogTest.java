@@ -137,6 +137,16 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @org.junit.jupiter.api.DisplayName("veritabanı büyümesi (2026-11-13): analiz SİSTEM, kapasite kaydı AYAR")
+    void dbGrowthEvents() {
+        assertThat(AuditEventCatalog.contains("DB_HEALTH_ANALYSIS_RUN")).isTrue();
+        assertThat(AuditEventCatalog.contains("DB_CAPACITY_SETTINGS_SAVE")).isTrue();
+        assertThat(AuditEventCatalog.categoryOf("DB_HEALTH_ANALYSIS_RUN")).isEqualTo(AuditEventCatalog.SYSTEM);
+        assertThat(AuditEventCatalog.categoryOf("DB_CAPACITY_SETTINGS_SAVE")).isEqualTo(AuditEventCatalog.SETTINGS);
+        assertThat(AuditEventCatalog.categoryOf("DBQUERY_CONNECTION_CREATE")).isEqualTo(AuditEventCatalog.MONITOR);
+    }
+
+    @Test
     @DisplayName("katalogdaki hiçbir tür OTHER'da kalmamalı (kural her türü tanımalı)")
     void everyCatalogTypeHasRealCategory() {
         List<String> uncategorised = AuditEventCatalog.TYPES.stream()

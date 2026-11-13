@@ -333,6 +333,16 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-11-13: veritabanı büyümesi — kapasite (dolma tahmini + kendi kendini izleme eşiği) ve görüntü saklaması GLOBAL_ONLY")
+    void dbGrowthKeys_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                com.sitemonitor.service.dbgrowth.DbGrowthService.CAPACITY_KEY,
+                com.sitemonitor.service.dbgrowth.DbGrowthService.HISTORY_KEY);
+        assertThat(AppSettingsCatalog.byKey(com.sitemonitor.service.dbgrowth.DbGrowthService.CAPACITY_KEY).type())
+                .isEqualTo(AppSettingsCatalog.Type.INT);
+    }
+
+    @Test
     @DisplayName("isScopedAdmin / isScopedAdminInRequest: ADMIN + viewTeamIds dolu = müdür; global ADMIN ve USER değil; bağlam yoksa false")
     void scopedAdminDetection() {
         try {

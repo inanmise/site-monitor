@@ -62,7 +62,18 @@ public enum WatchdogCheck {
             "Dağıtık kontrol işleri sahiplenilmiyor ya da sonuçları değerlendirilmiyor; izlemeler zamanında kontrol edilmiyor olabilir. "
                     + "Küme kartında işçileri ve tarama liderini denetleyin; gerekirse ana anahtarı kapatın (türler klasik taramaya döner).",
             "Distributed check jobs are not being claimed or their results are not being evaluated; monitors may not be checked on time. "
-                    + "Check the workers and the sweep leader on the Cluster card; if needed, turn the master switch off (types return to the classic sweep).");
+                    + "Check the workers and the sweep leader on the Cluster card; if needed, turn the master switch off (types return to the classic sweep)."),
+    /**
+     * Veritabanı doluluğu (2026-11-13, Veritabanı büyümesi): kapasite (GB) tanımlıyken kullanım %85'i geçti ya da geçmişe dayalı
+     * tahmin 30 gün içinde dolacağını söylüyor (en az 7 günlük görüntü varken; yoksa yalnız kullanım). Kapasite tanımsız ya da
+     * veritabanı PostgreSQL değil → uygulanmaz; ölçülemezse bilinmiyor (sayaçlar değişmez).
+     */
+    DB_CAPACITY("db_capacity", Severity.MEDIUM,
+            "Veritabanı doluluğu", "Database capacity",
+            "Veritabanı disk kapasitesine yaklaşıyor ya da büyüme hızıyla yakında dolacak. Sistem Sağlığı → Veritabanı büyümesi'nde "
+                    + "hangi tabloların büyüdüğüne ve saklama önerilerine bakın; gerekirse diski büyütün.",
+            "The database is close to its disk capacity or will fill up soon at its current growth rate. Check which tables grow and "
+                    + "the retention suggestions under System Health → Database growth; enlarge the disk if needed.");
 
     public enum Severity { CRITICAL, HIGH, MEDIUM }
 

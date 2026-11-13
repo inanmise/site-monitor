@@ -120,6 +120,8 @@ public final class AuditEventCatalog {
             "DBQUERY_TEMPLATE_CREATE",    // takım sorgu şablonu eklendi
             "DBQUERY_TEMPLATE_DELETE",    // takım sorgu şablonu silindi
             "DBQUERY_TEMPLATE_UPDATE",    // takım sorgu şablonu düzenlendi
+            "DB_CAPACITY_SETTINGS_SAVE",  // veritabanı disk kapasitesi (GB) kaydedildi (2026-11-13, Veritabanı büyümesi)
+            "DB_HEALTH_ANALYSIS_RUN",     // salt okunur veritabanı sağlık analizi çalıştırıldı (2026-11-13) — durum + bulgu sayısı
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
@@ -493,6 +495,8 @@ public final class AuditEventCatalog {
 
         // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motorunu değiştiren platform işlemi — SETTINGS sonekinden ÖNCE
         if (t.startsWith("K6_")) return SYSTEM;
+        // Veritabanı sağlık analizi (2026-11-13) — platform işlemi; kapasite kaydı (DB_CAPACITY_SETTINGS_SAVE) SETTINGS kuralına düşer
+        if (t.startsWith("DB_HEALTH_")) return SYSTEM;
         if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 
