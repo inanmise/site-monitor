@@ -4113,15 +4113,31 @@ class AdminControllerTest {
         ArgumentCaptor<org.springframework.data.domain.Pageable> pc =
                 ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
         // q→%no%, field=username, status=active, source=LDAP, phoneMode=1(var), emailMode=2(yok), otpReady=true,
-        // nocMode=1, onlineMode=1, loginFromDay=2026-01-01, createdToDay=2026-12-31; sıralama Pageable'da doğrulanır
+        // nocMode=1, onlineMode=1, loginFrom = İstanbul 2026-01-01 başı (UTC), createdTo = İstanbul 2026-12-31 sonu (hariç, UTC); sıralama Pageable'da doğrulanır
         org.mockito.Mockito.verify(userRepo).findDirectory(eq("%no%"), eq("username"), isNull(), isNull(), isNull(),
                 anyBoolean(), any(), eq("active"), eq("LDAP"), eq(1), eq(2), eq(true), eq(1), any(), eq(1), any(),
-                eq("2026-01-01"), isNull(), isNull(), eq("2026-12-31"), isNull(), eq(false), any(), pc.capture());
+                eq("2025-12-31T21:00:00"), isNull(), isNull(), eq("2026-12-31T21:00:00"), isNull(), eq(false), any(), pc.capture());
         org.springframework.data.domain.Sort.Order primary = pc.getValue().getSort().getOrderFor("lastLoginAt");
         assertThat(primary).isNotNull();
         assertThat(primary.getDirection()).isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
         assertThat(primary.getNullHandling()).isEqualTo(org.springframework.data.domain.Sort.NullHandling.NULLS_LAST);
         assertThat(pc.getValue().getSort().getOrderFor("id")).isNotNull();   // id ikincil (kararlı sayfalama)
+    }
+
+    @Test
+    @DisplayName("GET /users/search: çevrimiçi süzgeci kişi bazında yalnız global görüntüleyiciye — TEAM_ADMIN'de yok sayılır (2026-11-13)")
+    void searchUsers_onlineFilterIgnoredForNonGlobal() throws Exception {
+        when(userRepo.findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), anyInt(), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        when(userRepo.countBySystemRoleAndActiveTrue("ADMIN")).thenReturn(1L);
+
+        mvc.perform(get("/api/admin/users/search").param("online", "yes").session(teamAdminSession()))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(userRepo).findDirectory(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                anyInt(), anyInt(), anyBoolean(), anyInt(), any(), eq(0), any(),
+                any(), any(), any(), any(), any(), anyBoolean(), any(), any());
     }
 
     private MockHttpSession authSession() {

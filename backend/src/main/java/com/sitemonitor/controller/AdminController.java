@@ -3845,7 +3845,9 @@ public class AdminController {
         int phoneMode  = presenceMode(hasPhone);
         int emailMode  = presenceMode(hasEmail);
         int nocMode    = presenceMode(noc);
-        int onlineMode = presenceMode(online);
+        // Kim çevrimiçi — KİŞİ bazında yalnız global görüntüleyiciye (2026-11-13 inceleme): varlık uç noktası bilerek yalnız
+        // sayı verir, lastSeenAt / activeSessionId @JsonIgnore; global olmayan izleyicide süzgeç yok sayılır.
+        int onlineMode = global ? presenceMode(online) : 0;
         // Koleksiyon nöbetçileri — JPQL boş IN tuzağı: uygulanmıyorsa List.of(-1L) + bayrak.
         boolean scoped = scopeTeams != null;
         List<Long> scopeTeamsArg = scoped ? scopeTeams : List.of(-1L);
@@ -3854,10 +3856,12 @@ public class AdminController {
         Instant now = Instant.now();
         String nowIso = ISO.format(now);
         String onlineThreshold = ISO.format(now.minusSeconds(Math.max(1L, directoryActiveWindowSeconds)));
-        String loginFromDay  = dayPrefix(loginFrom);
-        String loginToDay    = dayPrefix(loginTo);
-        String createdFromDay = dayPrefix(createdFrom);
-        String createdToDay   = dayPrefix(createdTo);
+        // Tarih aralığı İstanbul günü (ekran o saati gösterir); depolama UTC → gün sınırları UTC anına çevrilir, bitiş hariç
+        // (2026-11-13 inceleme: UTC gün önekiyle 00:00–03:00 arası girişler önceki güne düşüyordu).
+        String loginFromDay  = istanbulDayStartUtc(loginFrom, 0);
+        String loginToDay    = istanbulDayStartUtc(loginTo, 1);
+        String createdFromDay = istanbulDayStartUtc(createdFrom, 0);
+        String createdToDay   = istanbulDayStartUtc(createdTo, 1);
 
         PageRequest pr = PageRequest.of(page, size, directorySort(sort, dir));
         Page<AppUser> p = userRepo.findDirectory(qParam, fieldParam, roleParam, orgRoleParam, effTeamId,
@@ -3923,10 +3927,17 @@ public class AdminController {
     }
 
     /** Tarih süzgeci GÜN öneki (yyyy-MM-dd) — zaman biçiminden bağımsız; boş/kısa → null. */
-    private static String dayPrefix(String v) {
+    /** İstanbul gününün (yyyy-MM-dd, + {@code plusDays}) başlangıcı UTC metni olarak; geçersiz / boş → null (süzgeç yok). */
+    static String istanbulDayStartUtc(String v, int plusDays) {
         if (v == null) return null;
         String d = v.trim();
-        return d.length() >= 10 ? d.substring(0, 10) : null;
+        if (d.length() < 10) return null;
+        try {
+            return ISO.format(java.time.LocalDate.parse(d.substring(0, 10)).plusDays(plusDays)
+                    .atStartOfDay(java.time.ZoneId.of("Europe/Istanbul")).toInstant());
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /** JPQL boş IN tuzağı: boş liste → nöbetçi [-1L]. */

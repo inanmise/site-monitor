@@ -61,7 +61,7 @@ describe('UserManager — zenginleştirme', () => {
 
   // ── Dizin zenginleştirme (2026-11-12): alan-bazlı arama, hesap durumu/çevrimiçi süzgeci, sıralama, rozetler ──
   it('alan-bazlı arama + hesap durumu + çevrimiçi süzgeci + sıralama sunucuya eşlenir', async () => {
-    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
+    render(<UserManager systemRole="ADMIN" globalAdmin teams={TEAMS} currentUsername="admin" />)
     await screen.findByText('Ali')
     // Arama alanını Sicil yap → field: 'employee'
     fireEvent.mouseDown(screen.getByLabelText(/Arama alanı|Search field/))
@@ -79,6 +79,14 @@ describe('UserManager — zenginleştirme', () => {
     // "Son giriş" başlığına tıkla → sort: 'lastLogin', dir: 'desc' (varsayılan yön)
     fireEvent.click(screen.getByRole('button', { name: /Son giriş sütununa göre sırala|Sort by Last login/ }))
     await waitFor(() => expect(api.admin.searchUsers).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'lastLogin', dir: 'desc' })))
+  })
+
+  it('çevrimiçi süzgeci kişi bazında yalnız global görüntüleyiciye: kapsamlı müdürde gösterilmez (2026-11-13)', async () => {
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
+    await screen.findByText('Ali')
+    fireEvent.click(screen.getByRole('button', { name: /Süzgeçler|Filters/ }))
+    await screen.findByLabelText(/Hesap durumu|Account status/)
+    expect(screen.queryByLabelText(/^Çevrimiçi$|^Online$/)).toBeNull()
   })
 
   it('çevrimiçi / 7/24 rozetleri: online_ids / noc_ids yanıtından satıra çizilir', async () => {

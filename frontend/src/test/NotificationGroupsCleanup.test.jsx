@@ -49,6 +49,16 @@ describe('NotificationGroups — temizlik', () => {
     expect(document.querySelectorAll('[data-slot="ng-usage"][data-usage="0"]').length).toBe(2)   // g11, g12
   })
 
+  it('takımın varsayılan grubu açık referansı olmasa da "kullanılmıyor" sayılmaz (rozet yok, KPI dışı)', async () => {
+    state.groups = [grp(10, 'Kullanilan'), grp(11, 'Bos-A'), grp(13, 'Varsayilan', { is_default: true })]
+    render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
+    await screen.findByText('Varsayilan')
+    await waitFor(() => expect(document.querySelector('[data-slot="ng-usage"][data-usage="3"]')).toBeTruthy())
+    expect(document.querySelectorAll('[data-slot="ng-usage"][data-usage="0"]').length).toBe(1)   // yalnız g11
+    const unused = document.querySelector('[data-slot="stat-item"][data-key="unused"] [data-slot="stat-value"]')
+    expect(unused.textContent).toBe('1')
+  })
+
   it('"Kullanılmayan" KPI kartı listeyi süzer (yalnız 0 kullanımlı aktif gruplar)', async () => {
     render(<NotificationGroups teams={TEAMS} systemRole="ADMIN" />)
     await screen.findByText('Kullanilan')

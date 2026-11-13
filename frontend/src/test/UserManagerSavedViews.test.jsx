@@ -66,6 +66,6 @@ describe('UserManager — kayıtlı görünümler (B7)', () => {
     const list = api.me.savePreferences.mock.calls.at(-1)[0].savedViews['admin-users']
     expect(list.at(-1).name).toBe('Benim görünümüm')
     // snapshot = viewFromFilters(varsayılan süzgeçler): field all, sort username asc
-    expect(list.at(-1).params).toMatchObject({ field: 'all', sort: 'username', dir: 'asc', status: '', q: '' })
+    expect(list.at(-1).params).toEqual({ field: 'all', sort: 'username', dir: 'asc' })   // boşlar ve kapalı otp yazılmaz
   })
 })

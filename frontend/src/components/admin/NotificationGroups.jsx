@@ -450,7 +450,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                           <ToneBadge tone="success"><Star aria-hidden="true" /> {t('ng.default')}</ToneBadge>
                         )}
                         {!g.active && <ToneBadge tone="muted" className="line-through">{t('ng.deletedBadge')}</ToneBadge>}
-                        {g.active !== false && <UsageBadge count={usageOf(g, usageCounts)} t={t} />}
+                        {g.active !== false && <UsageBadge count={usageOf(g, usageCounts)} isDefault={g.is_default === true} t={t} />}
                         {g.active !== false && <RecipientBadge state={recipientState(g)} t={t} />}
                       </span>
                     </TableCell>
@@ -729,7 +729,10 @@ function RecipientBadge({ state, t }) {
 }
 
 /** Kullanım rozeti (2026-11-12): N izleme (nötr) · kullanılmıyor (uyarı) · bilinmiyor (—, counts okunamadı). */
-function UsageBadge({ count, t }) {
+function UsageBadge({ count, isDefault = false, t }) {
+  // Varsayılan grup açık referansı olmasa da devrede (grup seçmemiş takım alarmları ona gider): "kullanılmıyor" denmez,
+  // "Varsayılan" rozeti zaten durumunu söyler (2026-11-13 inceleme).
+  if (count === 0 && isDefault) return null
   if (count == null) {
     return <ToneBadge tone="muted" data-slot="ng-usage" data-usage="unknown" title={t('ng.usageUnknown')}>—</ToneBadge>
   }

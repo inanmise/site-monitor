@@ -72,11 +72,25 @@ export const EMPTY_FILTERS = {
 //    bunu kişisel tercihlerde (savedViews.admin-users) saklar ve onApply ile geri yükler. Geçici durum (onlineIds vb.) girmez.
 const VIEW_KEYS = Object.keys(EMPTY_FILTERS)
 
-/** Geçerli süzgeç durumundan saklanabilir görünüm anlık görüntüsü (yalnız tanımlı süzgeç anahtarları). */
+/**
+ * Geçerli süzgeç durumundan saklanabilir görünüm anlık görüntüsü (yalnız tanımlı süzgeç anahtarları). Sunucu boş değeri
+ * saklamaz ve her değeri METNE çevirir (UserPreferencesService.normalizeParams): boş anahtar yazılmaz, `otp` yalnız açıkken
+ * '1' olarak yazılır — yoksa kayıttan dönen `"false"` metni okurken açık sayılıyor ve "etkin görünüm" işareti hiç
+ * eşleşmiyordu (2026-11-13 inceleme).
+ */
 export function viewFromFilters(f = {}) {
   const out = {}
-  for (const k of VIEW_KEYS) out[k] = k === 'otp' ? !!f[k] : (f[k] ?? '')
+  for (const k of VIEW_KEYS) {
+    if (k === 'otp') { if (f.otp === true) out.otp = '1'; continue }
+    const v = f[k] == null ? '' : String(f[k])
+    if (v !== '') out[k] = v
+  }
   return out
+}
+
+/** Saklanmış `otp` değeri: yeni biçim '1', eski kayıtlar boolean ya da sunucunun yazdığı "true"/"false" metni. */
+function otpOn(x) {
+  return x === true || x === 1 || x === '1' || x === 'true'
 }
 
 /** Saklanan görünüm → tam, DOĞRULANMIŞ süzgeç durumu (eksik/bozuk değerler güvenli varsayılana döner; bilinmeyen anahtar atlanır). */
@@ -96,7 +110,7 @@ export function filtersFromView(v = {}) {
     source: SOURCE_VALUES.includes(s.source) ? s.source : '',
     phone: tri(s.phone),
     email: tri(s.email),
-    otp: !!s.otp,
+    otp: otpOn(s.otp),
     noc: tri(s.noc),
     online: tri(s.online),
     loginFrom: str(s.loginFrom),

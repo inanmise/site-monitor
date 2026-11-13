@@ -3,6 +3,7 @@ import {
   buildSearchParams, hasActiveDirectoryFilter, nextSort, safeSort, EMPTY_FILTERS,
   SEARCH_FIELDS, STATUS_VALUES, SORT_FIELDS, viewFromFilters, filtersFromView,
 } from '../components/admin/usersDirectoryModel.js'
+import { sameParams } from '../hooks/userPrefsModel.js'
 
 describe('usersDirectoryModel — buildSearchParams', () => {
   it('boş süzgeç: varsayılanlar atlanır (field all, sort username asc), codeLoginReady false', () => {
@@ -101,13 +102,25 @@ describe('usersDirectoryModel — kayıtlı görünümler (B7)', () => {
     sort: 'lastLogin', dir: 'desc',
   }
 
-  it('viewFromFilters: yalnız tanımlı süzgeç anahtarları, otp boolean; geçici alanlar (onlineIds) girmez', () => {
+  it('viewFromFilters: yalnız dolu süzgeç anahtarları, otp açıkken "1"; geçici alanlar (onlineIds) girmez', () => {
     const snap = viewFromFilters({ ...FULL, onlineIds: new Set([1]), extra: 'x' })
     expect(Object.keys(snap).sort()).toEqual(Object.keys(EMPTY_FILTERS).sort())
-    expect(snap).toMatchObject(FULL)
-    expect(snap.otp).toBe(true)
+    expect(snap).toMatchObject({ ...FULL, otp: '1' })
     expect(snap.onlineIds).toBeUndefined()
     expect(snap.extra).toBeUndefined()
+    // boş değerler ve kapalı otp yazılmaz (sunucu boşları atar → "etkin görünüm" eşleşmesi tutarlı)
+    expect(viewFromFilters(EMPTY_FILTERS)).toEqual({ field: 'all', sort: 'username', dir: 'asc' })
+  })
+
+  it('sunucu gidiş-dönüşü: kapalı otp "false" metni olarak dönse bile açılmaz; eski "true" / true açık kalır', () => {
+    // UserPreferencesService.normalizeParams her değeri metne çevirip boşları atar — aynısı burada
+    const serverRoundTrip = (v) => Object.fromEntries(Object.entries(v).map(([k, x]) => [k, String(x)]).filter(([, x]) => x !== ''))
+    const saved = serverRoundTrip(viewFromFilters({ ...EMPTY_FILTERS, status: 'locked' }))
+    expect(filtersFromView(saved).otp).toBe(false)
+    expect(sameParams(viewFromFilters({ ...EMPTY_FILTERS, status: 'locked' }), saved)).toBe(true)
+    expect(filtersFromView({ otp: 'false' }).otp).toBe(false)   // 20.195–20.196 kayıtları
+    expect(filtersFromView({ otp: 'true' }).otp).toBe(true)
+    expect(filtersFromView({ otp: true }).otp).toBe(true)
   })
 
   it('filtersFromView: tam + doğrulanmış durum; eksik/bozuk değerler güvenli varsayılana döner', () => {

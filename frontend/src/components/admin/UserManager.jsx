@@ -136,6 +136,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   // müdüre ve TEAM_ADMIN'e düzenle / parola sıfırla / sil için 403 verir — menüde bu satırlarda yok.
   const elevatedTarget = (u) => !globalAdmin && (u?.system_role === 'ADMIN' || u?.system_role === 'AUDIT')
   const isAudit = systemRole === 'AUDIT'
+  // Kim çevrimiçi süzgeci kişi bazında yalnız global görüntüleyiciye (sunucu isAdminOrAudit; diğerlerinde yok sayılır, 2026-11-13)
+  const canFilterOnline = !!globalAdmin || isAudit
   const canSeeAllTeams = isAdmin || isAudit   // takım filtresi yalnız bunlara görünür
   const { showConfirm } = useDialog()
   const [users, setUsers] = useState([])
@@ -183,7 +185,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [fEmail, setFEmail] = useState(() => readUrlParam('g_email', ''))
   const [fOtp, setFOtp] = useState(() => readUrlParam('g_otp', '') === '1')
   const [fNoc, setFNoc] = useState(() => readUrlParam('g_noc', ''))
-  const [fOnline, setFOnline] = useState(() => readUrlParam('g_online', ''))
+  const [fOnline, setFOnline] = useState(() => (canFilterOnline ? readUrlParam('g_online', '') : ''))
   const [fLoginFrom, setFLoginFrom] = useState(() => readUrlParam('g_lf', ''))
   const [fLoginTo, setFLoginTo] = useState(() => readUrlParam('g_lt', ''))
   const [fCreatedFrom, setFCreatedFrom] = useState(() => readUrlParam('g_cf', ''))
@@ -223,7 +225,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const applyView = (view) => {
     const f = filtersFromView(view)
     setQ(f.q); setFField(f.field); setFRole(f.role); setFOrgRole(f.orgRole); setFTeam(f.team); setFDormant(f.dormant)
-    setFStatus(f.status); setFSource(f.source); setFPhone(f.phone); setFEmail(f.email); setFOtp(f.otp); setFNoc(f.noc); setFOnline(f.online)
+    setFStatus(f.status); setFSource(f.source); setFPhone(f.phone); setFEmail(f.email); setFOtp(f.otp); setFNoc(f.noc); setFOnline(canFilterOnline ? f.online : '')
     setFLoginFrom(f.loginFrom); setFLoginTo(f.loginTo); setFCreatedFrom(f.createdFrom); setFCreatedTo(f.createdTo)
     setSortField(f.sort); setSortDir(f.dir)
   }
@@ -661,9 +663,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             <FilterField label={t('usr.nocFilter')}>
               <SearchableSelect value={fNoc} onChange={setFNoc} ariaLabel={t('usr.nocFilter')} options={triOpts} />
             </FilterField>
-            <FilterField label={t('usr.onlineFilter')}>
-              <SearchableSelect value={fOnline} onChange={setFOnline} ariaLabel={t('usr.onlineFilter')} options={triOpts} />
-            </FilterField>
+            {canFilterOnline && (
+              <FilterField label={t('usr.onlineFilter')}>
+                <SearchableSelect value={fOnline} onChange={setFOnline} ariaLabel={t('usr.onlineFilter')} options={triOpts} />
+              </FilterField>
+            )}
             <FilterField label={t('usr.otpFilter')}>
               <label className="flex h-9 items-center gap-2 text-sm">
                 <Checkbox checked={fOtp} onCheckedChange={(v) => setFOtp(!!v)} aria-label={t('usr.otpFilter')} data-slot="um-otp" />

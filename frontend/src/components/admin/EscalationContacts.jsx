@@ -336,7 +336,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             options={[{ value: '', label: t('ec.allRoles') },
               ...ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))]} />
         </div>
-        <div className="w-full min-w-0 sm:w-44">
+        <div className="w-full min-w-0 sm:w-56">
           <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')} ariaLabel={t('flt.level')}
             options={[{ value: '', label: t('ec.allLevels') },
               ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
