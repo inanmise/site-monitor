@@ -43,6 +43,11 @@ public final class DbGrowthAdvisor {
     static final double NO_RULE_GROWTH_RATIO = 0.05;
     static final double BOUNDED_GROWTH_RATIO = 0.10;
     static final double BEHIND_SLACK_DAYS = 1.5;
+    /**
+     * Saklama ayarı değiştikten sonra kısaltma önerisinin susturulduğu gün sayısı: kısaltma dosyayı küçültmez (boşalan yer
+     * tablonun içinde yeniden kullanılır), pay aynı kaldığı için öneri her gün bir sonraki kısaltmayı isterdi (90 → 30 → …).
+     */
+    public static final int SHORTEN_COOLDOWN_DAYS = 30;
     static final long DEAD_MIN_ROWS = 10_000;
     static final double DEAD_PCT = 20.0;
     static final double DEAD_WARN_PCT = 50.0;
@@ -55,14 +60,46 @@ public final class DbGrowthAdvisor {
     /** Önerilen gün değerleri (hızlı seçim çipleriyle uyumlu). */
     static final int[] NICE_DAYS = {7, 14, 30, 60, 90, 180, 365, 730, 1095};
 
-    /** Bir tablonun ölçümleri ve saklama bağlamı. {@code primary} = tablonun yaş kuralı (yoksa ilk kuralı; katalog dışı → null). */
+    /**
+     * Bir tablonun ölçümleri ve saklama bağlamı. {@code primary} = tablonun yaş kuralı (yoksa ilk kuralı; katalog dışı → null).
+     *
+     * <p>Hata taraması düzeltmeleri (2026-11-13): {@code oldestEstimated} = en eski kayıt gerçek MIN değil, {@code pg_stats}
+     * histogramının ilk sınırı (bayat olabilir — silinen satırlardan kalır) → "temizlik geride" kararına girmez.
+     * {@code cleanupPending} = saklama ayarı son gerçek gece temizliğinden SONRA değişti (yeni süreyle henüz temizlik koşmadı)
+     * → "temizlik geride" yok. {@code retentionChangedRecently} = ayar son {@value DbGrowthAdvisor#SHORTEN_COOLDOWN_DAYS} gün içinde
+     * değişti → kısaltma önerisi yok (dosya küçülmediği için pay aynı kalır; öneri kendi kendini zincirlerdi).
+     */
     public record TableFacts(String name, long totalBytes, Long tableBytes, Long indexBytes, Long liveRows, Long deadRows,
                              Long growth30Bytes, RetentionPolicy primary, List<RetentionPolicy> policies, Integer effectiveDays,
                              Double oldestAgeDays, Double equilibriumBytes, boolean lastRunFailed,
-                             Double purgeFraction, String purgeMethod) {
+                             Double purgeFraction, String purgeMethod, boolean oldestEstimated, boolean cleanupPending,
+                             boolean retentionChangedRecently) {
 
         public TableFacts {
             policies = policies == null ? List.of() : List.copyOf(policies);
+        }
+
+        /** Eski biçim: en eski kayıt gerçek MIN, ayar değişikliği bilinmiyor. */
+        public TableFacts(String name, long totalBytes, Long tableBytes, Long indexBytes, Long liveRows, Long deadRows,
+                          Long growth30Bytes, RetentionPolicy primary, List<RetentionPolicy> policies, Integer effectiveDays,
+                          Double oldestAgeDays, Double equilibriumBytes, boolean lastRunFailed,
+                          Double purgeFraction, String purgeMethod) {
+            this(name, totalBytes, tableBytes, indexBytes, liveRows, deadRows, growth30Bytes, primary, policies, effectiveDays,
+                    oldestAgeDays, equilibriumBytes, lastRunFailed, purgeFraction, purgeMethod, false, false, false);
+        }
+
+        /** Aynı olgular, analizin kesin "kısaltırsam ne silinir" oranıyla. */
+        public TableFacts withPurge(Double fraction, String method) {
+            return new TableFacts(name, totalBytes, tableBytes, indexBytes, liveRows, deadRows, growth30Bytes, primary, policies,
+                    effectiveDays, oldestAgeDays, equilibriumBytes, lastRunFailed, fraction, method, oldestEstimated, cleanupPending,
+                    retentionChangedRecently);
+        }
+
+        /** Aynı olgular, gerçek MIN ile okunmuş en eski kayıt yaşıyla (null = boş tablo) ve ona göre denge boyutuyla. */
+        public TableFacts withOldest(Double ageDays, Double equilibrium) {
+            return new TableFacts(name, totalBytes, tableBytes, indexBytes, liveRows, deadRows, growth30Bytes, primary, policies,
+                    effectiveDays, ageDays, equilibrium, lastRunFailed, purgeFraction, purgeMethod, false, cleanupPending,
+                    retentionChangedRecently);
         }
 
         Long toastBytes() {
@@ -187,7 +224,8 @@ public final class DbGrowthAdvisor {
 
         // ── Kısaltma adayı ──
         int floor = p == null ? 0 : keyFloor(p);
-        if (ageRule && p.configurable() && eff != null && eff > floor && t.totalBytes() >= SHORTEN_MIN_BYTES) {
+        if (ageRule && p.configurable() && eff != null && eff > floor && t.totalBytes() >= SHORTEN_MIN_BYTES
+                && !t.retentionChangedRecently() && !t.cleanupPending()) {
             double eqShare = t.equilibriumBytes() != null && dbBytes > 0 ? t.equilibriumBytes() / dbBytes : 0;
             if (share > SHORTEN_SHARE || eqShare > SHORTEN_SHARE) {
                 Integer suggested = suggestDays(eff, floor);
@@ -252,9 +290,11 @@ public final class DbGrowthAdvisor {
             }
         }
 
-        // ── Temizlik geride ── (yalnız düz yaş kuralı — koruyucu WHERE'li kurallar eski satırı BİLEREK tutar)
+        // ── Temizlik geride ── (yalnız düz yaş kuralı — koruyucu WHERE'li kurallar eski satırı BİLEREK tutar). Yaş kararı yalnız
+        // gerçek MIN'den ve yalnız mevcut süreyle en az bir gece temizliği koştuysa (yeni kısaltılmış süre "geride" değildir).
         if (ageRule && !hold && eff != null && eff > 0 && "{t}".equals(p.where())) {
-            boolean behind = t.oldestAgeDays() != null && t.oldestAgeDays() > eff + BEHIND_SLACK_DAYS;
+            boolean behind = !t.oldestEstimated() && !t.cleanupPending()
+                    && t.oldestAgeDays() != null && t.oldestAgeDays() > eff + BEHIND_SLACK_DAYS;
             if (behind || t.lastRunFailed()) {
                 Map<String, Object> prm = new LinkedHashMap<>();
                 prm.put("oldest_age_days", t.oldestAgeDays() == null ? null : round1(t.oldestAgeDays()));

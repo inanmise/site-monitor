@@ -341,6 +341,185 @@ class DbGrowthServiceTest {
         assertThat(pii.get("compliance")).isEqualTo(true);
     }
 
+    // ── 2026-11-13 hata taraması ──────────────────────────────────────────────────────────────────────────
+
+    /** Tam satır: tablo / gün / boyut / canlı / ekleme / silme / en eski. */
+    private void rowFull(String day, String table, long total, long live, long ins, long del, String oldest) {
+        jdbc.update("INSERT INTO db_size_daily(snap_day, table_name, total_bytes, table_bytes, index_bytes, live_rows, dead_rows, "
+                + "ins_total, del_total, oldest_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", day, table, total, total / 2, total / 4,
+                live, 0L, ins, del, oldest);
+    }
+
+    private static String daysAgo(int d) {
+        return NOW.minus(d, ChronoUnit.DAYS).toString().substring(0, 19);
+    }
+
+    private static Map<String, Object> table(Map<String, Object> view, String name) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tables = (List<Map<String, Object>>) view.get("tables");
+        return tables.stream().filter(m -> name.equals(m.get("name"))).findFirst().orElseThrow();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> findingCodes(Map<String, Object> view, String tableName) {
+        return ((List<Map<String, Object>>) view.get("findings")).stream()
+                .filter(f -> tableName.equals(f.get("table"))).map(f -> (String) f.get("code")).toList();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("ekle-sil döngüsündeki tablo (1 canlı satır, günde binlerce ekleme + silme) sahte büyüme üretmez — geçmiş kipte dolma günü / soğuk başlangıç KPI")
+    void churnTableIsNotFakeGrowth() {
+        // geçmiş kip: veritabanı + port_checks 14 gün, scheduler_lock yalnız son 3 gündür görüntüde (yeni tablo → eğim yok)
+        seedFourteenDays();
+        capacity(20);
+        for (int i = 0; i < 3; i++) {
+            String day = LocalDate.parse(TODAY).minusDays(2 - i).toString();
+            rowFull(day, "scheduler_lock", 49_152, 1, 700_000L + i * 100_000L, 699_999L + i * 100_000L, null);
+        }
+        Map<String, Object> v = svc.overview(30, false);
+        assertThat(v.get("forecast_basis")).isEqualTo("history");
+        assertThat(table(v, "scheduler_lock").get("daily_growth_bytes")).isEqualTo(0L);
+        assertThat(((Map<String, Object>) v.get("kpis")).get("days_until_full")).isEqualTo(90);
+        assertThat(svc.capacityFacts().daysUntilFull()).isEqualTo(90);   // bekçi / Grafana'ya giden değer
+
+        // soğuk başlangıç (3 günlük görüntü): KPI = gerçek boyut artışı (port 100 MB/gün) + döngü tablosu 0
+        jdbc.update("DELETE FROM db_size_daily");
+        for (int i = 0; i < 3; i++) {
+            String day = LocalDate.parse(TODAY).minusDays(2 - i).toString();
+            rowFull(day, "port_checks", 6 * GB + i * 100 * MB, 1_000_000, 1_000_000L + i * 50_000L, 0, daysAgo(30));
+            rowFull(day, "scheduler_lock", 49_152, 1, 700_000L + i * 100_000L, 699_999L + i * 100_000L, null);
+            row(day, "*", 10 * GB + i * 100 * MB, null, null);
+        }
+        svc.invalidate();
+        Map<String, Object> cold = svc.overview(30, false);
+        assertThat(cold.get("forecast_basis")).isEqualTo("cold_start");
+        assertThat(((Map<String, Object>) cold.get("kpis")).get("daily_growth_bytes")).isEqualTo(100 * MB);
+        assertThat(table(cold, "scheduler_lock").get("daily_growth_bytes")).isEqualTo(0L);
+        assertThat(table(cold, "port_checks").get("daily_growth_estimate")).isEqualTo(true);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("dolu tabloda en eski MIN okunamadı (zaman aşımı) + bayat histogram: satır/gün histogramın kendi son sınırına göre (0 değil), 'temizlik geride' yalnız gerçek MIN'den")
+    void staleHistogramOnFullTable() {
+        rowFull(TODAY, "port_checks", 6 * GB, 1_000_000, 5_000_000, 0, null);   // MIN yok
+        row(TODAY, "*", 10 * GB, null, null);
+        List<String> bounds = new java.util.ArrayList<>();
+        for (int d = 200; d >= 10; d -= 19) bounds.add(daysAgo(d));     // son ANALYZE 10 gün önce, ilk sınır saklamanın (180) ötesinde
+        source.histograms.put("port_checks.checked_at", bounds);
+        Map<String, Object> v = svc.overview(30, false);
+        Map<String, Object> port = table(v, "port_checks");
+        assertThat(port.get("rows_per_day_method")).isEqualTo("histogram");
+        assertThat((Double) port.get("rows_per_day")).isGreaterThan(0.0);
+        assertThat(port.get("oldest_source")).isEqualTo("histogram");
+        assertThat(findingCodes(v, "port_checks")).doesNotContain("CLEANUP_BEHIND");
+        // gerçek MIN aynı yaşı söylerse uyarı verilir
+        jdbc.update("UPDATE db_size_daily SET oldest_at = ? WHERE table_name = 'port_checks'", daysAgo(200));
+        svc.invalidate();
+        assertThat(findingCodes(svc.overview(30, false), "port_checks")).contains("CLEANUP_BEHIND");
+    }
+
+    @Test
+    @DisplayName("saklama kısaltıldı, gece temizliği henüz koşmadı → 'temizlik geride' yok; kısaltma önerisi 30 gün susar (dosya küçülmez, zincir yok)")
+    void retentionChangeSuppressesFalseFindings() {
+        jdbc.execute("CREATE TABLE app_settings (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, setting_key VARCHAR(150) NOT NULL, "
+                + "setting_value TEXT, updated_at VARCHAR(255), updated_by VARCHAR(255))");
+        org.mockito.Mockito.doAnswer(inv -> {
+            RetentionPolicy p = inv.getArgument(0);
+            return "series-port".equals(p.id()) ? 90 : p.defaultDays();
+        }).when(retention).effectiveDays(any());
+        for (int i = 0; i < 14; i++) {
+            String day = LocalDate.parse(TODAY).minusDays(13 - i).toString();
+            rowFull(day, "port_checks", 6 * GB, 1_000_000, 1_000_000L + i * 50_000L, i * 50_000L, daysAgo(174));
+            row(day, "*", 10 * GB, null, null);
+        }
+        com.sitemonitor.repository.RetentionRunRepository runs = mock(com.sitemonitor.repository.RetentionRunRepository.class);
+        com.sitemonitor.repository.RetentionRunItemRepository items = mock(com.sitemonitor.repository.RetentionRunItemRepository.class);
+        com.sitemonitor.model.RetentionRun run = new com.sitemonitor.model.RetentionRun();
+        run.setId(1L);
+        run.setStartedAt("2026-11-13T00:30:00");                         // bu gecenin temizliği (İstanbul 03:30)
+        when(runs.findFirstByDryRunFalseOrderByStartedAtDesc()).thenReturn(java.util.Optional.of(run));
+        when(items.findByRunIdInOrderByIdAsc(any())).thenReturn(List.of());
+        svc.setRunRepo(runs);
+        svc.setItemRepo(items);
+        String key = RetentionCatalog.byId("series-port").orElseThrow().settingKey();
+
+        // ayar hiç değişmedi: 174 gün > 90 + 1,5 → geride + kısaltma önerisi (90 → 30)
+        Map<String, Object> before = svc.overview(30, false);
+        assertThat(findingCodes(before, "port_checks")).contains("CLEANUP_BEHIND", "SHORTEN_CANDIDATE");
+
+        // "Uygula" az önce (temizlikten SONRA): yeni süre henüz uygulanmadı → ikisi de yok
+        jdbc.update("INSERT INTO app_settings(setting_key, setting_value, updated_at) VALUES (?, '90', ?)", key, "2026-11-13T09:00:00");
+        svc.invalidate();
+        assertThat(findingCodes(svc.overview(30, false), "port_checks")).doesNotContain("CLEANUP_BEHIND", "SHORTEN_CANDIDATE");
+
+        // değişiklik 2 gün önce, temizlik ondan sonra koştu → geride (gerçek), kısaltma hâlâ susturulmuş (30 gün)
+        jdbc.update("UPDATE app_settings SET updated_at = ?", "2026-11-11T09:00:00");
+        svc.invalidate();
+        Map<String, Object> after = svc.overview(30, false);
+        assertThat(findingCodes(after, "port_checks")).contains("CLEANUP_BEHIND").doesNotContain("SHORTEN_CANDIDATE");
+
+        // 40 gün sonra öneri yeniden değerlendirilir
+        jdbc.update("UPDATE app_settings SET updated_at = ?", "2026-10-04T09:00:00");
+        svc.invalidate();
+        assertThat(findingCodes(svc.overview(30, false), "port_checks")).contains("SHORTEN_CANDIDATE");
+    }
+
+    @Test
+    @DisplayName("yasal tutma yeni açıldı: dolmuş tablonun geçmiş eğimi ~0 olsa da tahmin brüt eklemeyle büyür (iyimser değil)")
+    void legalHoldSaturatedTableGrows() {
+        for (int i = 0; i < 14; i++) {
+            String day = LocalDate.parse(TODAY).minusDays(13 - i).toString();
+            rowFull(day, "port_checks", 6 * GB, 1_000_000, 1_000_000L + i * 50_000L, i * 50_000L, daysAgo(181));
+            row(day, "*", 10 * GB, null, null);
+        }
+        capacity(20);
+        Map<String, Object> normal = table(svc.overview(30, false), "port_checks");
+        assertThat(normal.get("daily_growth_bytes")).isEqualTo(0L);
+        assertThat(normal.get("daily_growth_estimate")).isEqualTo(false);
+        assertThat(svc.capacityFacts().daysUntilFull()).isNull();          // büyümüyor → 10 yılda dolmaz
+
+        when(retention.holdActive()).thenReturn(true);                    // başka bir pod'da açıldı — bellek de düşer
+        Map<String, Object> held = table(svc.overview(30, false), "port_checks");
+        assertThat((Long) held.get("daily_growth_bytes")).isGreaterThan(300 * MB);   // 50 000 satır/gün × ~6,4 KB
+        assertThat(held.get("daily_growth_estimate")).isEqualTo(true);
+        assertThat(svc.capacityFacts().daysUntilFull()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("kapasite başka bir pod'da kaydedildi (bu pod'da invalidate yok): olgular hemen yeni kapasiteyle — bekçi UNKNOWN'a düşmez")
+    void capacityChangeOnAnotherPodIsSeen() {
+        seedFourteenDays();
+        DbGrowthService.CapacityFacts none = svc.capacityFacts();
+        assertThat(none.capacityBytes()).isZero();
+        assertThat(none.usedPct()).isNull();
+        capacity(20);                                                     // ayar tazelemesiyle gelen yeni değer
+        DbGrowthService.CapacityFacts f = svc.capacityFacts();
+        assertThat(f.capacityBytes()).isEqualTo(20 * GB);
+        assertThat(f.usedPct()).isNotNull();
+        assertThat(f.daysUntilFull()).isEqualTo(90);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("30 günlük büyüme: −30. / −31. gün görüntüsü yoksa 30 güne en yakın görüntü, 30 güne ölçekli; kural dışı büyüme yine yakalanır")
+    void growth30WithMissingDays() {
+        LocalDate today = LocalDate.parse(TODAY);
+        for (int d = 40; d >= 0; d--) {
+            if (d == 30 || d == 31) continue;                             // iki günlük boşluk
+            String day = today.minusDays(d).toString();
+            row(day, "*", 20 * GB - d * 100 * MB, null, null);
+            row(day, "custom_blob_table", 5 * GB - d * 100 * MB, null, null);
+        }
+        Map<String, Object> v = svc.overview(30, false);
+        // en yakın taban −29. gün: 2 900 MB × 30 / 29 = 3 000 MB
+        assertThat(((Map<String, Object>) v.get("kpis")).get("growth_30d_bytes")).isEqualTo(3_000 * MB);
+        assertThat(table(v, "custom_blob_table").get("growth_30d_bytes")).isEqualTo(3_000 * MB);
+        assertThat(findingCodes(v, "custom_blob_table")).contains("NO_RULE");
+        assertThat(DbGrowthService.growthOver(List.of(), null, 30)).isNull();
+    }
+
     @Test
     @DisplayName("kısaltırsam: gün ve saat kovası kuralları kesimi kırpar (RetentionService ile aynı biçim)")
     void cutoffFormats() {

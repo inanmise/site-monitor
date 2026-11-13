@@ -18,10 +18,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -116,21 +118,35 @@ public class DbHealthAnalysisService {
             }
             Map<String, Double> purge = new HashMap<>();
             Map<String, String> purgeMethod = new HashMap<>();
-            result.put("policies", policies(budget, status, purge, purgeMethod, start));
+            // Analizin KENDİ okuduğu en eski kayıt yaşı (kural kimliği → gün; null değer = boş tablo). Okuma başarısızsa anahtar yok.
+            Map<String, Double> ownOldest = new HashMap<>();
+            Set<String> pending = new HashSet<>();
+            if (base != null) {
+                for (TableFacts f : base.tableFacts()) if (f.cleanupPending() && f.primary() != null) pending.add(f.primary().id());
+            }
+            result.put("policies", policies(budget, status, purge, purgeMethod, ownOldest, pending, start));
             List<Map<String, Object>> vac = vacuum(budget, status, findings);
             result.put("vacuum", vac);
             result.put("hot_monitors", hotMonitors(budget, status, findings, start));
             result.put("index_bloat", indexBloat(budget, status, findings));
             result.put("unused_indexes", unusedIndexes(budget, status, findings));
-            // Genel bulgular: büyüme görünümünün tablo olguları + bu analizin kesin "kısaltırsam ne silinir" oranı
+            // Genel bulgular: büyüme görünümünün tablo olguları + bu analizin KENDİ okuduğu en eski kayıt (görüntüdeki değer ya
+            // da bayat histogram tahmini yerine — analiz kendi "en eski bilinmiyor / geride değil" satırıyla çelişmesin) + kesin
+            // "kısaltırsam ne silinir" oranı
             if (base != null && base.ctx() != null) {
                 List<TableFacts> facts = new ArrayList<>();
                 for (TableFacts f : base.tableFacts()) {
                     String pid = f.primary() == null ? null : f.primary().id();
+                    TableFacts x = f;
+                    if (pid != null && ownOldest.containsKey(pid)) {
+                        Double age = ownOldest.get(pid);
+                        Integer eff = f.effectiveDays();
+                        Double eq = base.ctx().holdActive() || eff == null || eff <= 0 ? null
+                                : DbGrowthForecast.equilibrium(f.totalBytes(), age, eff);
+                        x = x.withOldest(age, eq);
+                    }
                     Double frac = pid == null ? null : purge.get(pid);
-                    facts.add(frac == null ? f : new TableFacts(f.name(), f.totalBytes(), f.tableBytes(), f.indexBytes(), f.liveRows(),
-                            f.deadRows(), f.growth30Bytes(), f.primary(), f.policies(), f.effectiveDays(), f.oldestAgeDays(),
-                            f.equilibriumBytes(), f.lastRunFailed(), frac, purgeMethod.get(pid)));
+                    facts.add(frac == null ? x : x.withPurge(frac, purgeMethod.get(pid)));
                 }
                 for (Finding f : DbGrowthAdvisor.advise(facts, base.ctx())) {
                     // Ölü satır bulgusunu vacuum bölümü (son otomatik vacuum anıyla) yazdıysa görüntüdeki kopyası atlanır
@@ -173,7 +189,8 @@ public class DbHealthAnalysisService {
     }
 
     private List<Map<String, Object>> policies(Budget budget, Map<String, String> status, Map<String, Double> purge,
-                                               Map<String, String> purgeMethod, Instant now) {
+                                               Map<String, String> purgeMethod, Map<String, Double> ownOldest,
+                                               Set<String> pending, Instant now) {
         List<Map<String, Object>> out = new ArrayList<>();
         List<RetentionPolicy> list = new ArrayList<>();
         for (RetentionPolicy p : RetentionCatalog.ALL) {
@@ -206,6 +223,7 @@ public class DbHealthAnalysisService {
                 try {
                     oldest = source.oldest(p);
                     if (oldest == null) m.put("oldest_unknown", true);   // boş tablo
+                    ownOldest.put(p.id(), DbGrowthService.ageDaysOf(oldest, now));
                 } catch (RuntimeException e) {
                     // Zaman aşımı / okuma hatası: bölüm "kısmi" (2026-11-13 inceleme — sessizce "tamam" sayılıyordu)
                     partial = true;
@@ -221,7 +239,10 @@ public class DbHealthAnalysisService {
             Double age = DbGrowthService.ageDaysOf(oldest, now);
             m.put("oldest_age_days", age == null ? null : Math.round(age * 10.0) / 10.0);
             boolean plain = "{t}".equals(p.where());
-            m.put("behind", age != null && plain && days > 0 && age > days + DbGrowthAdvisor.BEHIND_SLACK_DAYS);
+            // Ayar son gece temizliğinden sonra değiştiyse yeni süre henüz uygulanmadı — "geride" değil (öneri kuralıyla aynı)
+            boolean cleanupPending = pending.contains(p.id());
+            if (cleanupPending) m.put("cleanup_pending", true);
+            m.put("behind", !cleanupPending && age != null && plain && days > 0 && age > days + DbGrowthAdvisor.BEHIND_SLACK_DAYS);
             Integer suggested = p.configurable() && days > floor ? DbGrowthAdvisor.suggestDays(days, floor) : null;
             m.put("suggested_days", suggested);
             List<String> bounds = hist.get(p.table() + "." + p.timeColumn());
