@@ -68,7 +68,7 @@ class SqlPlaygroundServiceTest {
         h2Jdbc.execute("CREATE TABLE c (id BIGINT)");
         h2Jdbc.execute("CREATE TABLE sql_running_queries (run_id VARCHAR(64) PRIMARY KEY, owner_username VARCHAR(100), "
                 + "instance_id VARCHAR(100), pod VARCHAR(100), backend_pid INTEGER, app_name VARCHAR(64), kind VARCHAR(16), "
-                + "sql_fingerprint VARCHAR(32), started_ms BIGINT, started_at VARCHAR(30), cancel_requested BOOLEAN)");
+                + "sql_fingerprint VARCHAR(32), started_ms BIGINT, started_at VARCHAR(30), cancel_requested BOOLEAN, heartbeat_ms BIGINT)");
         h2 = new SqlPlaygroundService(h2Jdbc, historyRepo);
     }
 
@@ -388,6 +388,84 @@ class SqlPlaygroundServiceTest {
         assertThat(all.truncated()).isFalse();
     }
 
+    @Test
+    @DisplayName("İnceleme DÜŞÜK 6: hassas kolon reddi plan ve dışa aktarımda da geçmişe başarısız satır yazar")
+    void explainAndExportRejectionLeavesHistory() {
+        assertThatThrownBy(() -> h2.explain(q("SELECT md5(password_hash) FROM app_users"), false, "admin"))
+                .isInstanceOf(SensitiveColumnException.class);
+        assertThatThrownBy(() -> h2.export(q("SELECT username FROM app_users ORDER BY password_hash"), 10, "admin",
+                new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { }
+                    @Override public boolean row(Object[] v) { return true; }
+                })).isInstanceOf(SensitiveColumnException.class);
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo, times(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).allSatisfy(h -> {
+            assertThat(h.getSuccess()).isFalse();
+            assertThat(h.getErrorMessage()).contains("password_hash");
+        });
+    }
+
+    @Test
+    @DisplayName("İnceleme DÜŞÜK 6: parametre DEĞERİ geçmişe yazılan hata metninde maskelenir (yanıtta kalabilir)")
+    void paramValueMaskedInStoredError() {
+        Map<String, Object> r = h2.execute(new SqlPlaygroundService.QueryRequest("SELECT CAST(:x AS INT) AS v",
+                Map.of("x", new SqlParams.Param("gizli-deger-77", "text")), null), "admin");
+        assertThat(r.get("ok")).isEqualTo(false);
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getErrorMessage()).isNotBlank().doesNotContain("gizli-deger-77");
+        assertThat(saved.getValue().getSqlText()).contains(":x").doesNotContain("gizli-deger-77");
+        assertThat(SqlPlaygroundService.maskParamValues("invalid input syntax for type integer: \"ab\"",
+                Map.of("x", new SqlParams.Param("ab", "text"))))
+                .isEqualTo("invalid input syntax for type integer: \"***\"");
+        assertThat(SqlPlaygroundService.maskParamValues("satır 1 konum 12: 1", Map.of("x", new SqlParams.Param("1", "number"))))
+                .isEqualTo("satır 1 konum 12: 1");   // kısa çıplak değer metni bozmaz
+        assertThat(SqlPlaygroundService.maskParamValues(null, Map.of())).isNull();
+    }
+
+    @Test
+    @DisplayName("İnceleme C: date → yyyy-MM-dd, zamansız timestamp → yerel ISO (kaymasız), timestamptz → UTC …Z")
+    void dateAndTimestampFormats() {
+        Map<String, Object> r = h2.execute("SELECT DATE '2026-11-13' AS d, TIMESTAMP '2026-11-13 10:05:00' AS ts, "
+                + "TIMESTAMP '2026-11-13 10:05:00.123' AS tsm, TIMESTAMP '2026-11-13 10:05:00.123456' AS tsu, "
+                + "TIMESTAMP WITH TIME ZONE '2026-11-13 10:05:00+03:00' AS tz, CAST(NULL AS DATE) AS dn", "admin");
+        assertThat(r.get("ok")).as("hata: %s", r.get("error")).isEqualTo(true);
+        Map<String, Object> row = rows(r).get(0);
+        assertThat(row.get("d")).isEqualTo("2026-11-13");
+        assertThat(row.get("ts")).isEqualTo("2026-11-13T10:05:00");
+        assertThat(row.get("tsm")).isEqualTo("2026-11-13T10:05:00.123");
+        assertThat(row.get("tsu")).isEqualTo("2026-11-13T10:05:00.123456");
+        assertThat(row.get("tz")).isEqualTo("2026-11-13T07:05:00.000Z");
+        assertThat(row.get("dn")).isNull();
+    }
+
+    @Test
+    @DisplayName("İnceleme ORTA 2: dışa aktarım okuma döngüsündeyken Durdur → döngü bir sonraki satırda kesilir, sonuç durduruldu")
+    void exportCancelledInReadLoop() throws Exception {
+        SqlRunRegistry reg = new SqlRunRegistry(h2Jdbc, "inst-x", "pod-x");
+        h2.setRunRegistry(reg);
+        String runId = "run-export-loop-1";
+        int[] seen = {0};
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        CompletableFuture<SqlPlaygroundService.RunOutcome> f = CompletableFuture.supplyAsync(() -> h2.export(
+                new SqlPlaygroundService.QueryRequest("SELECT \"X\" FROM SYSTEM_RANGE(1, 20000)", Map.of(), runId), 50_000, "alice",
+                new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { }
+                    @Override public boolean row(Object[] v) {
+                        if (++seen[0] == 10) started.countDown();
+                        try { Thread.sleep(2); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                        return true;
+                    }
+                }));
+        assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(h2.cancel(runId, "alice").cancelled()).isTrue();
+        SqlPlaygroundService.RunOutcome o = f.get(20, TimeUnit.SECONDS);
+        assertThat(o.ok()).isFalse();
+        assertThat(o.cancelled()).isTrue();
+        assertThat(seen[0]).isLessThan(20_000);
+    }
+
     // ── Tehlikeli fonksiyon engeli (SELECT-only kuralının YAKALAYAMADIĞI yüzey) ──
 
     /**
@@ -410,6 +488,12 @@ class SqlPlaygroundServiceTest {
             "SELECT pg_cancel_backend(123)",
             "SELECT pg_reload_conf()",
             "SELECT set_config('x', 'y', false)",
+            // danışma kilitleri (inceleme ORTA 3): oturum kilidi havuza dönen bağlantıda kalır
+            "SELECT pg_advisory_lock(424242)",
+            "SELECT pg_try_advisory_lock(1)",
+            "SELECT pg_advisory_xact_lock(1, 2)",
+            "SELECT pg_advisory_lock_shared(1)",
+            "SELECT pg_advisory_unlock_all()",
     })
     void execute_forbiddenFunctions_rejected(String sql) {
         assertThatThrownBy(() -> service.execute(sql, "admin"))

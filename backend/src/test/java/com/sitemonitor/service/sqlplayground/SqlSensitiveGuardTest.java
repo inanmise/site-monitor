@@ -100,6 +100,42 @@ class SqlSensitiveGuardTest {
         {"SELECT * FROM app_users ORDER BY 3", SqlSensitiveGuard.R_ORDINAL},
         {"SELECT username, password_hash FROM app_users ORDER BY 2", SqlSensitiveGuard.R_ORDINAL},
         {"SELECT password_hash, count(*) FROM app_users GROUP BY 1", SqlSensitiveGuard.R_ORDINAL},
+        // ── satır karşılaştırma kâhini (inceleme 2026-11-13, YÜKSEK 1): ifade konumunda (SELECT * …) / (TABLE …) ───────
+        {"SELECT 1 WHERE ROW(1, 'admin', '$2a$10$a', 's', 1, 'e', true) < (SELECT * FROM app_users WHERE id = 1)",
+                SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 FROM teams WHERE ROW(1, 'x') < ANY (SELECT * FROM app_users)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 FROM teams WHERE ROW(1, 'x') <= ALL (SELECT * FROM app_users)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 FROM teams WHERE ('a', 'b') IN (SELECT * FROM spring_session)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 WHERE ROW('a', 'b') < (TABLE spring_session)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 WHERE ROW('a', 'b') < ANY (TABLE spring_session)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT ARRAY(SELECT * FROM app_users)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT GREATEST(ROW(1, 'a'), (SELECT * FROM app_users LIMIT 1))", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT (SELECT DISTINCT * FROM app_users LIMIT 1) > ROW(1)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 FROM teams t WHERE ROW(1) < (SELECT ALL * FROM app_users)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 WHERE ROW(1) < (SELECT id, * FROM app_users LIMIT 1)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"WITH c AS (SELECT * FROM app_users) SELECT 1 WHERE ROW(1) < (SELECT * FROM c)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"WITH c AS (SELECT * FROM app_users) SELECT 1 WHERE ROW(1) < (TABLE c)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT 1 WHERE ROW(1) < (SELECT * FROM (SELECT * FROM app_users) x)", SqlSensitiveGuard.R_WHOLE_ROW},
+        {"SELECT username FROM app_users WHERE id IN (SELECT * FROM teams)", SqlSensitiveGuard.R_WHOLE_ROW},
+        // çıktısı kökenle izlenen yerde * / TABLE serbest; EXISTS yalnız var / yok döner; count(*) seçim öğesi değil
+        {"SELECT * FROM (SELECT * FROM app_users) x", "ok"},
+        {"SELECT * FROM app_users JOIN LATERAL (SELECT * FROM teams t WHERE t.id = app_users.team_id) z ON true", "ok"},
+        {"WITH c AS (SELECT * FROM app_users) SELECT * FROM c", "ok"},
+        {"SELECT * FROM (TABLE app_users) x", "ok"},
+        {"WITH c AS (TABLE app_users) SELECT * FROM c", "ok"},
+        {"SELECT count(*) FROM app_users", "ok"},
+        {"SELECT 1 WHERE EXISTS (SELECT * FROM app_users)", "ok"},
+        {"SELECT username FROM app_users u WHERE NOT EXISTS (SELECT * FROM teams t WHERE t.id = u.team_id)", "ok"},
+        {"SELECT 1 FROM teams WHERE id IN (SELECT id * 2 FROM app_users)", "ok"},
+        {"SELECT (SELECT count(*) FROM app_users) AS n", "ok"},
+        // alt sorguda / DISTINCT ON'da konum numarası her zaman (sıralama kâhini)
+        {"SELECT * FROM (SELECT * FROM app_users ORDER BY 3) x LIMIT 1", SqlSensitiveGuard.R_ORDINAL},
+        {"SELECT x.username FROM (SELECT username, id FROM app_users GROUP BY 1, 2) x", SqlSensitiveGuard.R_ORDINAL},
+        {"WITH c AS (SELECT * FROM app_users ORDER BY 3 LIMIT 1) SELECT * FROM c", SqlSensitiveGuard.R_ORDINAL},
+        {"SELECT DISTINCT ON (2) username, password_hash FROM app_users", SqlSensitiveGuard.R_ORDINAL},
+        {"SELECT username, row_number() OVER (ORDER BY 1) FROM app_users", SqlSensitiveGuard.R_ORDINAL},
+        {"SELECT username FROM app_users ORDER BY 1", "ok"},
+        {"SELECT DISTINCT ON (username) username FROM app_users ORDER BY username", "ok"},
         // ── her zaman ───────────────────────────────────────────────────────────────────────────────────────────
         {"SELECT histogram_bounds FROM pg_stats WHERE tablename = 'app_users'", SqlSensitiveGuard.R_STATS},
         {"SELECT * FROM pg_catalog.pg_statistic", SqlSensitiveGuard.R_STATS},
@@ -164,9 +200,21 @@ class SqlSensitiveGuardTest {
         for (int i = 0; i < 5_000; i++) nest.append("(SELECT id FROM app_users WHERE id IN ");
         nest.append("(1)");
         for (int i = 0; i < 5_000; i++) nest.append(')');
+        // İç içe ORDER BY / seçim listesindeki alt sorgular: her tarama yalnız kendi derinliğini ziyaret eder
+        StringBuilder ord = new StringBuilder("SELECT username FROM app_users ORDER BY ");
+        for (int i = 0; i < 5_000; i++) ord.append("(SELECT 1 ORDER BY ");
+        ord.append("username");
+        for (int i = 0; i < 5_000; i++) ord.append(')');
+        StringBuilder sel = new StringBuilder("SELECT ");
+        for (int i = 0; i < 5_000; i++) sel.append("(SELECT ");
+        sel.append("1");
+        for (int i = 0; i < 5_000; i++) sel.append(" FROM app_users LIMIT 1)");
+        sel.append(" FROM app_users");
         assertTimeoutPreemptively(Duration.ofSeconds(3), () -> {
             assertThat(SqlSensitiveGuard.check(big, SCHEMA).ok()).isTrue();
             SqlSensitiveGuard.check(nest.toString(), SCHEMA);
+            SqlSensitiveGuard.check(ord.toString(), SCHEMA);
+            SqlSensitiveGuard.check(sel.toString(), SCHEMA);
         });
     }
 }

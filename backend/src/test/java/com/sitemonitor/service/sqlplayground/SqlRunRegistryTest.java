@@ -33,7 +33,7 @@ class SqlRunRegistryTest {
         jdbc = new JdbcTemplate(ds);
         jdbc.execute("CREATE TABLE sql_running_queries (run_id VARCHAR(64) PRIMARY KEY, owner_username VARCHAR(100) NOT NULL, "
                 + "instance_id VARCHAR(100), pod VARCHAR(100), backend_pid INTEGER, app_name VARCHAR(64), kind VARCHAR(16), "
-                + "sql_fingerprint VARCHAR(32), started_ms BIGINT, started_at VARCHAR(30), cancel_requested BOOLEAN)");
+                + "sql_fingerprint VARCHAR(32), started_ms BIGINT, started_at VARCHAR(30), cancel_requested BOOLEAN, heartbeat_ms BIGINT)");
         podA = new SqlRunRegistry(jdbc, "inst-a", "pod-a");
         podB = new SqlRunRegistry(jdbc, "inst-b", "pod-b");
     }
@@ -109,6 +109,75 @@ class SqlRunRegistryTest {
         podA.finish(r);
         assertThat(SqlRunRegistry.appNameOf("run-0000005")).startsWith("sm-sqlpg-").hasSize(25)
                 .isEqualTo(SqlRunRegistry.appNameOf("run-0000005")).isNotEqualTo(SqlRunRegistry.appNameOf("run-0000006"));
+    }
+
+    @Test
+    @DisplayName("Süre bekçisi (inceleme ORTA 2): süre dolunca ifade iptal edilir ve çalıştırma zaman aşımı işaretlenir")
+    void watchdogExpiresRun() throws Exception {
+        SqlRunRegistry.Run r = podA.start("run-0000010", "alice", "export", "fp");
+        Statement st = mock(Statement.class);
+        podA.attach(r, st, null, 1);
+        long until = System.currentTimeMillis() + 5_000;
+        while (!r.timedOut() && System.currentTimeMillis() < until) Thread.sleep(50);
+        assertThat(r.timedOut()).isTrue();
+        verify(st).cancel();
+        assertThatThrownBy(() -> podA.checkContinue(r, Long.MAX_VALUE)).isInstanceOf(SqlRunRegistry.TimedOutException.class);
+        podA.finish(r);
+    }
+
+    @Test
+    @DisplayName("Süre bekçisi çözülen (bitmiş) çalıştırmaya iptal göndermez")
+    void watchdogNeverFiresAfterDetach() throws Exception {
+        SqlRunRegistry.Run r = podA.start("run-0000011", "alice", "export", "fp");
+        Statement st = mock(Statement.class);
+        podA.attach(r, st, null, 1);
+        podA.detach(r);
+        Thread.sleep(2_300);
+        org.mockito.Mockito.verifyNoInteractions(st);
+        assertThat(r.timedOut()).isFalse();
+        podA.finish(r);
+    }
+
+    @Test
+    @DisplayName("Okuma döngüsü denetimi: süre aşımı, aynı pod durdurması ve başka pod'un tablo işareti satırlar arasında yakalanır")
+    void checkContinue() {
+        long[] now = {1_000_000L};
+        podA.setClock(() -> now[0]);
+        SqlRunRegistry.Run r = podA.start("run-0000012", "alice", "export", "fp");
+        podA.attach(r, mock(Statement.class), 4242);
+        podA.checkContinue(r, now[0] + 10_000);   // geçer
+        now[0] += 10_001;
+        assertThatThrownBy(() -> podA.checkContinue(r, 1_010_000L)).isInstanceOf(SqlRunRegistry.TimedOutException.class);
+        podA.finish(r);
+
+        now[0] = 2_000_000L;
+        SqlRunRegistry.Run r2 = podA.start("run-0000013", "alice", "export", "fp");
+        podA.attach(r2, mock(Statement.class), 4243);
+        // Başka pod işareti yazar (H2: pg_cancel_backend yok → other_pod_unreachable), sahibi pod döngüde görür
+        assertThat(podB.cancel("run-0000013", "alice").reason()).isEqualTo(SqlRunRegistry.REASON_UNREACHABLE);
+        assertThatThrownBy(() -> podA.checkContinue(r2, Long.MAX_VALUE)).isInstanceOf(SqlRunRegistry.CancelledException.class);
+        assertThat(r2.cancelRequested()).isTrue();
+        podA.finish(r2);
+
+        SqlRunRegistry.Run r3 = podA.start("run-0000014", "alice", "export", "fp");
+        podA.attach(r3, mock(Statement.class), null);
+        podA.cancel("run-0000014", "alice");
+        assertThatThrownBy(() -> podA.checkContinue(r3, Long.MAX_VALUE)).isInstanceOf(SqlRunRegistry.CancelledException.class);
+        podA.finish(r3);
+    }
+
+    @Test
+    @DisplayName("Bayat temizliği son tazelemeye bakar: eski başlangıç + taze heartbeat silinmez")
+    void staleSweepHonoursHeartbeat() {
+        long now = System.currentTimeMillis();
+        jdbc.update("INSERT INTO sql_running_queries (run_id, owner_username, instance_id, started_ms, heartbeat_ms) VALUES (?,?,?,?,?)",
+                "long-run-0001", "x", "other", now - SqlRunRegistry.STALE_MS - 60_000, now - 1_000);
+        jdbc.update("INSERT INTO sql_running_queries (run_id, owner_username, instance_id, started_ms, heartbeat_ms) VALUES (?,?,?,?,?)",
+                "dead-run-0001", "x", "other", now - SqlRunRegistry.STALE_MS - 60_000, now - SqlRunRegistry.STALE_MS - 1_000);
+        SqlRunRegistry.Run r = podA.start("run-0000015", "a", "execute", "fp");
+        assertThat(jdbc.queryForList("SELECT run_id FROM sql_running_queries ORDER BY run_id", String.class))
+                .contains("long-run-0001").doesNotContain("dead-run-0001");
+        podA.finish(r);
     }
 
     @Test

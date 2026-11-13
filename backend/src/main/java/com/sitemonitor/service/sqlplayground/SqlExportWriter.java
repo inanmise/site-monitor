@@ -22,17 +22,23 @@ import java.util.List;
  * {@code {"success":true,"data":{"columns":[…],"rows":[[…]],"row_count":n,"truncated":b,"max_rows":m,"masked_columns":[…]}}}
  * — satırlar DİZİ (aynı adlı iki kolon kaybolmasın), değerler düz metin / sayı / mantıksal (zaman damgaları metin).
  *
- * <p>Yazılan karakter {@link #MAX_CHARS}'ı aşınca okuma durur ({@link #charLimitHit()}) — dosya sınırsız büyümez.
+ * <p>Yazılan UTF-8 bayt {@link #MAX_BYTES}'ı aşınca okuma durur ({@link #byteLimitHit()}) — dosya sınırsız büyümez
+ * (karakter saymak Türkçe / emoji metinde dosyayı 3–4 katına çıkarabilirdi).
+ *
+ * <p>Geçici dosya adı {@link #TEMP_PREFIX} ile başlar; dışa aktarım ortasında ölen JVM'in bıraktığı dosyaları açılışta
+ * {@link #cleanupStaleTempFiles} siler (önek + yaş).
  */
 public final class SqlExportWriter implements SqlPlaygroundService.RowSink, AutoCloseable {
 
-    /** Dışa aktarım dosyasının üst sınırı (karakter ≈ bayt). */
-    public static final long MAX_CHARS = 256L * 1024 * 1024;
+    /** Dışa aktarım dosyasının üst sınırı (UTF-8 bayt). */
+    public static final long MAX_BYTES = 256L * 1024 * 1024;
+    /** Geçici dosya öneki (açılış temizliği bununla eşleşir). */
+    public static final String TEMP_PREFIX = "sqlpg-export-";
 
     private final boolean json;
     private final CountingWriter out;
     private JsonGenerator gen;
-    private long charLimit = MAX_CHARS;
+    private long byteLimit = MAX_BYTES;
     private boolean limitHit;
     private int rows;
 
@@ -51,7 +57,7 @@ public final class SqlExportWriter implements SqlPlaygroundService.RowSink, Auto
     }
 
     /** Testler. */
-    void setCharLimit(long limit) { this.charLimit = limit; }
+    void setByteLimit(long limit) { this.byteLimit = limit; }
 
     @Override
     public void columns(String[] labels) throws IOException {
@@ -78,7 +84,7 @@ public final class SqlExportWriter implements SqlPlaygroundService.RowSink, Auto
             out.write(Csv.row(cells));
         }
         rows++;
-        if (out.count() > charLimit) {
+        if (out.count() > byteLimit) {
             limitHit = true;
             return false;
         }
@@ -108,7 +114,7 @@ public final class SqlExportWriter implements SqlPlaygroundService.RowSink, Auto
         out.flush();
     }
 
-    public boolean charLimitHit() { return limitHit; }
+    public boolean byteLimitHit() { return limitHit; }
 
     public int rows() { return rows; }
 
@@ -148,7 +154,7 @@ public final class SqlExportWriter implements SqlPlaygroundService.RowSink, Auto
         return String.valueOf(v);
     }
 
-    /** Yazılan karakteri sayan sarmalayıcı. */
+    /** Yazılan metnin UTF-8 bayt boyunu sayan sarmalayıcı (vekil çift = 4 bayt; tek vekil kodlayıcıda '?' = 1). */
     static final class CountingWriter extends Writer {
         private final Writer w;
         private long count;
@@ -157,10 +163,47 @@ public final class SqlExportWriter implements SqlPlaygroundService.RowSink, Auto
 
         long count() { return count; }
 
-        @Override public void write(char[] cbuf, int off, int len) throws IOException { w.write(cbuf, off, len); count += len; }
-        @Override public void write(int c) throws IOException { w.write(c); count++; }
-        @Override public void write(String s, int off, int len) throws IOException { w.write(s, off, len); count += len; }
+        @Override public void write(char[] cbuf, int off, int len) throws IOException {
+            w.write(cbuf, off, len);
+            for (int i = off; i < off + len; i++) count += utf8Len(cbuf[i]);
+        }
+        @Override public void write(int c) throws IOException { w.write(c); count += utf8Len((char) c); }
+        @Override public void write(String s, int off, int len) throws IOException {
+            w.write(s, off, len);
+            for (int i = off; i < off + len; i++) count += utf8Len(s.charAt(i));
+        }
         @Override public void flush() throws IOException { w.flush(); }
         @Override public void close() throws IOException { w.close(); }
+
+        /** Tek UTF-16 birimi: ASCII 1, ≤ U+07FF 2, vekil yarısı 2 (çift = 4), diğerleri 3. */
+        static int utf8Len(char c) {
+            if (c < 0x80) return 1;
+            if (c < 0x800 || Character.isSurrogate(c)) return 2;
+            return 3;
+        }
+    }
+
+    /**
+     * Ölen JVM'in bıraktığı dışa aktarım dosyalarını siler: dizindeki {@link #TEMP_PREFIX} önekli, {@code maxAgeMs}'den eski
+     * düzenli dosyalar (en çok {@code maxEntries} giriş taranır). Hata yutulur; silinen sayısı döner.
+     */
+    public static int cleanupStaleTempFiles(java.nio.file.Path dir, long maxAgeMs, long nowMs, int maxEntries) {
+        int deleted = 0, seen = 0;
+        if (dir == null) return 0;
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = java.nio.file.Files.newDirectoryStream(dir, TEMP_PREFIX + "*")) {
+            for (java.nio.file.Path f : ds) {
+                if (++seen > maxEntries) break;
+                try {
+                    if (!java.nio.file.Files.isRegularFile(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                    long age = nowMs - java.nio.file.Files.getLastModifiedTime(f).toMillis();
+                    if (age > maxAgeMs && java.nio.file.Files.deleteIfExists(f)) deleted++;
+                } catch (Exception ignored) {
+                    // başka bir süreç sildi / erişim yok — geç
+                }
+            }
+        } catch (Exception ignored) {
+            // dizin okunamadı
+        }
+        return deleted;
     }
 }

@@ -40,12 +40,26 @@ import java.util.function.LongSupplier;
 @Component
 public class SqlRunRegistry {
 
-    /** Bayat kayıt eşiği: en uzun sorgu (dışa aktarım 120 sn) + pay. */
+    /** Bayat kayıt eşiği: son tazelemeden ({@code heartbeat_ms}, yoksa başlangıç) bu yana — ölen pod'un kalıntısı. */
     public static final long STALE_MS = 180_000L;
     /** Bayat temizliği en çok bu sıklıkta. */
     static final long STALE_SWEEP_EVERY_MS = 60_000L;
     /** Biten çalıştırma belleği (aynı pod "bitti" yanıtı için). */
     static final int FINISHED_MEMORY = 1000;
+    /** Çalışan sorgunun satırı bu aralıkla tazelenir ({@code heartbeat_ms}) — uzun dışa aktarım bayat sayılmaz. */
+    static final long HEARTBEAT_MS = 30_000L;
+    /** Okuma döngüsünde başka pod'un durdurma işareti en çok bu aralıkla okunur. */
+    static final long DB_CANCEL_CHECK_MS = 2_000L;
+    /** Süre sınırı bekçisi: sürücünün kendi zaman aşımına (yalnız ilk çalıştırma) pay. */
+    static final long WATCHDOG_GRACE_MS = 1_000L;
+
+    /**
+     * Süre sınırı ve canlılık bekçisi — tek, daemon iş parçacığı. pgjdbc {@code setQueryTimeout}'u yalnız ilk
+     * {@code execute}'ta kurar; imleçli okumada sonraki getirmeler ({@code ResultSet.next()}) sayaçsızdır ve
+     * {@code PgStatement.cancel()} ifade boşta iken hiçbir şey yapmaz. Bekçi süre dolunca çalıştırmayı "zaman aşımı" işaretler,
+     * ifadeyi iptal eder ve PostgreSQL'de arka ucu etiket eşleşmesiyle durdurur.
+     */
+    private static volatile java.util.concurrent.ScheduledThreadPoolExecutor watchdog;
 
     public static final String REASON_NOT_FOUND = "not_found";
     public static final String REASON_FINISHED = "finished";
@@ -93,6 +107,11 @@ public class SqlRunRegistry {
         private Statement statement;
         private boolean cancelRequested;
         private boolean dbRow;
+        private volatile Integer pid;
+        private volatile boolean timedOut;
+        private volatile long lastDbCheckMs;
+        private java.util.concurrent.ScheduledFuture<?> timer;
+        private java.util.concurrent.ScheduledFuture<?> beat;
 
         Run(String runId, String owner, String kind, String fingerprint, long startedMs) {
             this.runId = runId;
@@ -107,6 +126,8 @@ public class SqlRunRegistry {
         public String owner() { return owner; }
         public String appName() { return appName; }
         public synchronized boolean cancelRequested() { return cancelRequested; }
+        /** Süre sınırı aşıldı (bekçi ya da okuma döngüsü). */
+        public boolean timedOut() { return timedOut; }
 
         synchronized void requestCancel() {
             cancelRequested = true;
@@ -126,6 +147,25 @@ public class SqlRunRegistry {
         }
 
         synchronized void unbind() { statement = null; }
+
+        /** Bekçi: hâlâ bağlıysa zaman aşımı işaretler ve ifadeyi iptal eder; bağlı değilse (bitti) false. */
+        synchronized boolean expire() {
+            if (statement == null) return false;
+            timedOut = true;
+            try {
+                statement.cancel();
+            } catch (Exception e) {
+                log.debug("SQL Playground: ifade süre sınırında durdurulamadı ({}): {}", runId, e.toString());
+            }
+            return true;
+        }
+
+        synchronized boolean bound() { return statement != null; }
+    }
+
+    /** Süre sınırı aşıldı — sorgu durduruldu (zaman aşımı yanıtı). */
+    public static final class TimedOutException extends RuntimeException {
+        public TimedOutException() { super("timed out", null, false, false); }
     }
 
     /** Durdurma istendiği için sorgu başlamadı. */
@@ -177,7 +217,26 @@ public class SqlRunRegistry {
      * Durdurma zaten istendiyse {@link CancelledException}.
      */
     public void attach(Run r, Statement st, Integer pid) {
+        attach(r, st, pid, 0);
+    }
+
+    /**
+     * {@link #attach(Run, Statement, Integer)} + süre sınırı bekçisi ({@code timeoutSec} > 0: başlangıçtan
+     * {@code timeoutSec} sn + pay sonra zaman aşımı) + satır tazeleme ({@link #HEARTBEAT_MS}).
+     */
+    public void attach(Run r, Statement st, Integer pid, int timeoutSec) {
         r.bind(st);
+        r.pid = pid;
+        if (timeoutSec > 0) {
+            long delay = Math.max(0L, r.startedMs + timeoutSec * 1000L + WATCHDOG_GRACE_MS - clock.getAsLong());
+            try {
+                synchronized (r) {
+                    r.timer = watchdog().schedule(() -> onTimeout(r), delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+                }
+            } catch (Exception e) {
+                log.debug("SQL Playground: süre bekçisi kurulamadı: {}", e.toString());
+            }
+        }
         if (jdbc == null) return;
         try {
             jdbc.update("INSERT INTO sql_running_queries (run_id, owner_username, instance_id, pod, backend_pid, app_name, "
@@ -185,6 +244,14 @@ public class SqlRunRegistry {
                     r.runId, r.owner, instanceId, pod, pid, r.appName, r.kind, r.fingerprint, r.startedMs,
                     Instant.ofEpochMilli(r.startedMs).toString(), Boolean.FALSE);
             r.dbRow = true;
+            try {
+                synchronized (r) {
+                    r.beat = watchdog().scheduleWithFixedDelay(() -> heartbeat(r), HEARTBEAT_MS, HEARTBEAT_MS,
+                            java.util.concurrent.TimeUnit.MILLISECONDS);
+                }
+            } catch (Exception e) {
+                log.debug("SQL Playground: satır tazeleme kurulamadı: {}", e.toString());
+            }
         } catch (DuplicateKeyException e) {
             // Aynı kimlik başka bir pod'da koşuyor — kayıt sahibi o; bu çalıştırma yine koşar (yalnız aynı pod durdurur)
             log.debug("SQL Playground: run_id başka pod'da kayıtlı: {}", r.runId);
@@ -206,9 +273,52 @@ public class SqlRunRegistry {
         }
     }
 
+    /**
+     * Okuma döngüsünden her satırda çağrılır: durdurma istendiyse {@link CancelledException}, süre dolduysa
+     * {@link TimedOutException}; başka pod'un tablodaki durdurma işareti en çok {@link #DB_CANCEL_CHECK_MS}'de bir okunur.
+     * Bellek denetimi ucuzdur (satır başına iki uçucu okuma).
+     */
+    public void checkContinue(Run r, long deadlineMs) {
+        if (r.cancelRequested()) throw new CancelledException();
+        long now = clock.getAsLong();
+        if (r.timedOut || now > deadlineMs) {
+            r.timedOut = true;
+            throw new TimedOutException();
+        }
+        if (r.dbRow && jdbc != null && now - r.lastDbCheckMs >= DB_CANCEL_CHECK_MS) {
+            r.lastDbCheckMs = now;
+            try {
+                List<Boolean> v = jdbc.queryForList("SELECT cancel_requested FROM sql_running_queries WHERE run_id = ?",
+                        Boolean.class, r.runId);
+                if (!v.isEmpty() && Boolean.TRUE.equals(v.get(0))) {
+                    r.requestCancel();
+                    throw new CancelledException();
+                }
+            } catch (CancelledException e) {
+                throw e;
+            } catch (Exception e) {
+                log.debug("SQL Playground: durdurma işareti okunamadı: {}", e.toString());
+            }
+        }
+    }
+
+    /**
+     * İfade kapatılmadan / bağlantı bırakılmadan ÖNCE: bekçi ve tazeleme durur, ifade çözülür — bırakılan bağlantıda
+     * hiçbir iptal gönderilmez.
+     */
+    public void detach(Run r) {
+        synchronized (r) {
+            if (r.timer != null) r.timer.cancel(false);
+            if (r.beat != null) r.beat.cancel(false);
+            r.timer = null;
+            r.beat = null;
+        }
+        r.unbind();
+    }
+
     /** Çalıştırma bitti: bellek + tablo satırı silinir (finally). */
     public void finish(Run r) {
-        r.unbind();
+        detach(r);
         local.remove(r.runId, r);
         synchronized (finished) { finished.put(r.runId, r.owner); }
         if (r.dbRow && jdbc != null) {
@@ -228,7 +338,11 @@ public class SqlRunRegistry {
         Run r = local.get(runId);
         if (r != null) {
             if (!owner.equals(r.owner)) return new CancelResult(false, REASON_NOT_FOUND);
+            boolean bound = r.bound();
             r.requestCancel();
+            // PostgreSQL: imleçli okumada ifade boşta görünür ve Statement.cancel() bir şey yapmaz — sürmekte olan
+            // getirmeyi arka uç iptaliyle kes (etiket eşleşmesi: bırakılmış bağlantıya iptal gitmez)
+            if (bound) pgCancelOwn(r);
             return new CancelResult(true, null);
         }
         synchronized (finished) {
@@ -271,12 +385,59 @@ public class SqlRunRegistry {
 
     // ── Yardımcılar ───────────────────────────────────────────────────────────────────────────────────────────
 
+    /** Bekçi: süre doldu — zaman aşımı işareti, ifade iptali, PostgreSQL'de arka uç iptali. */
+    private void onTimeout(Run r) {
+        if (!r.expire()) return;
+        log.info("SQL Playground: sorgu süre sınırında durduruluyor (run={}, tür={})", r.runId, r.kind);
+        pgCancelOwn(r);
+    }
+
+    /** Bu pod'un çalıştırmasının arka ucunu durdurur — yalnız {@code application_name} etiketi hâlâ eşleşiyorsa. */
+    private void pgCancelOwn(Run r) {
+        Integer pid = r.pid;
+        if (pid == null || jdbc == null || !isPostgres()) return;
+        try {
+            jdbc.queryForList("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE pid = ? AND application_name = ?",
+                    Boolean.class, pid, r.appName);
+        } catch (Exception e) {
+            log.debug("SQL Playground: arka uç durdurulamadı ({}): {}", r.runId, e.toString());
+        }
+    }
+
+    /** Çalışan sorgunun satırını tazeler — bayat temizliği uzun süren dışa aktarımı silmez. */
+    private void heartbeat(Run r) {
+        if (!r.dbRow || jdbc == null || !r.bound()) return;
+        try {
+            jdbc.update("UPDATE sql_running_queries SET heartbeat_ms = ? WHERE run_id = ? AND instance_id = ?",
+                    clock.getAsLong(), r.runId, instanceId);
+        } catch (Exception e) {
+            log.debug("SQL Playground: çalışan sorgu satırı tazelenemedi: {}", e.toString());
+        }
+    }
+
+    private static java.util.concurrent.ScheduledThreadPoolExecutor watchdog() {
+        java.util.concurrent.ScheduledThreadPoolExecutor w = watchdog;
+        if (w != null) return w;
+        synchronized (SqlRunRegistry.class) {
+            if (watchdog == null) {
+                java.util.concurrent.ScheduledThreadPoolExecutor x = new java.util.concurrent.ScheduledThreadPoolExecutor(1, task -> {
+                    Thread t = new Thread(task, "sqlpg-watchdog");
+                    t.setDaemon(true);
+                    return t;
+                });
+                x.setRemoveOnCancelPolicy(true);
+                watchdog = x;
+            }
+            return watchdog;
+        }
+    }
+
     private void sweepStale() {
         long now = clock.getAsLong();
         if (jdbc == null || now - lastStaleSweep < STALE_SWEEP_EVERY_MS) return;
         lastStaleSweep = now;
         try {
-            jdbc.update("DELETE FROM sql_running_queries WHERE started_ms < ?", now - STALE_MS);
+            jdbc.update("DELETE FROM sql_running_queries WHERE COALESCE(heartbeat_ms, started_ms) < ?", now - STALE_MS);
         } catch (Exception e) {
             log.debug("SQL Playground: bayat çalışan sorgu kayıtları silinemedi: {}", e.toString());
         }
@@ -296,7 +457,7 @@ public class SqlRunRegistry {
     }
 
     /** {@code SET LOCAL application_name} etiketi — kısa (PostgreSQL 63 bayt), kimliğe bağlı, tahmin edilemez değil ama benzersiz. */
-    static String appNameOf(String runId) {
+    public static String appNameOf(String runId) {
         try {
             byte[] d = MessageDigest.getInstance("SHA-256").digest(runId.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder("sm-sqlpg-");

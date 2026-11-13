@@ -11,7 +11,7 @@ import lombok.Setter;
 
 /**
  * Çalışan SQL Playground sorgusu (2026-11-13, A2) — başka bir pod'a düşen "durdur" isteği sorguyu bu satırdan bulur
- * ({@code SqlRunRegistry}). Satır sorgu başlarken yazılır, bitince silinir; ölen pod'un kalıntısı 3 dakika sonra temizlenir.
+ * ({@code SqlRunRegistry}). Satır sorgu başlarken yazılır, bitince silinir; ölen pod'un kalıntısı son tazelemeden ({@code heartbeat_ms}) 3 dakika sonra temizlenir.
  * Yalnız JDBC ile yazılır; varlık şemayı kurar.
  */
 @Entity
@@ -57,4 +57,8 @@ public class SqlRunningQuery {
 
     @Column(name = "cancel_requested")
     private Boolean cancelRequested;
+
+    /** Son tazeleme (sorgu sürerken 30 sn'de bir) — bayat temizliği buna bakar; null = hiç tazelenmedi (başlangıç). */
+    @Column(name = "heartbeat_ms")
+    private Long heartbeatMs;
 }
