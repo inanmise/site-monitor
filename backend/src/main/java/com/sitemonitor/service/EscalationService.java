@@ -1173,10 +1173,14 @@ public class EscalationService {
             for (EscalationContact c : all) {
                 if (c.getId() != null && includedIds.contains(c.getId())) continue;
                 String reason;
-                if (!managers) reason = "TEAM_ONLY";
+                // Adres zincirde ZATEN alıcıysa (takım adresi / grup / başka kişi) posta o adrese gider — kişinin kendi eşiği,
+                // yalnız-takım kuralı ya da pasif bağı ne olursa olsun "almaz" denmez (2026-11-13 hata taraması: eşiği yüksek
+                // kişi "Bilgilendirilmeyenler"de görünürken adresi gruptan postayı alıyordu; önizleme = gönderim). Adres
+                // yalnız pasif hesaplara aitse gönderim süzgeci onu düşürür — o zaman zincirdeki satır da almaz.
+                String addr = c.getEmail() == null ? "" : c.getEmail().trim().toLowerCase();
+                if (!addr.isEmpty() && seen.contains(addr) && !inactiveOnly(c.getEmail())) reason = "SAME_ADDRESS";
+                else if (!managers) reason = "TEAM_ONLY";
                 else if (inactiveGuard != null && inactiveGuard.isInactiveContact(c)) reason = "INACTIVE_ACCOUNT";
-                else if (c.getEmail() != null && seen.contains(c.getEmail().trim().toLowerCase())
-                        && levelRank(c.getMinAlertLevel()) <= levelRank(lvl)) reason = "SAME_ADDRESS";
                 else reason = "LEVEL_THRESHOLD";
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("id", c.getId()); m.put("name", c.getName()); m.put("email", c.getEmail());

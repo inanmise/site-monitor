@@ -662,10 +662,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     // Pasif kullanıcı listesi bilinmeden kişi sayımı pasifleri "etkin" sayar (yanlış yeşil) — kullanıcılar gelene dek
     // eskalasyon BİLİNMİYOR.
     contacts: usersReady ? board.contacts : null, inactiveIds: inactiveUserIds, groups: board.groups,
+    // Kapsamla süzülmüş kullanıcı listesinde olmayan kullanıcıya bağlı kişi "bilinmiyor" (2026-11-13 hata taraması)
+    knownIds: usersListComplete ? null : userIdsAll,
     oncall: oncallState === 'ready' ? { byTeam: new Map(Object.entries(oncallNow)), known: oncallKnown } : null,
     noc: board.noc ? { byTeam: board.noc } : null,
     people: peopleOf,
-  })), [view, filteredTeams, stats, statsReady, board, inactiveUserIds, oncallState, oncallNow, oncallKnown, usersReady, userMap, managerEntries]) // eslint-disable-line react-hooks/exhaustive-deps
+  })), [view, filteredTeams, stats, statsReady, board, inactiveUserIds, oncallState, oncallNow, oncallKnown, usersReady, userMap, managerEntries, userIdsAll, usersListComplete]) // eslint-disable-line react-hooks/exhaustive-deps
   // Görünmeyen takımlar seçimden düşer (kişi / grup seçimindeki gibi): liste görünümünde süzülmüş liste, panoda
   // pano süzgecinden (KPI) geçen satırlar. Toplu düzeltme yalnız görünen seçimle çalışır.
   const visibleTeamIds = useMemo(() => (view === 'board' && boardModel

@@ -148,6 +148,15 @@ public class NotificationGroupController {
         return new ArrayList<>(out);
     }
 
+    /** Kapsamlı görüntüleyicinin görebildiği grupların kimlikleri (silinmişler dahil — liste ucunun includeInactive kümesi). */
+    private Set<Long> visibleGroupIds(HttpSession session) {
+        List<Long> scope = readableTeamIds(session);
+        Set<Long> ids = new HashSet<>();
+        if (scope.isEmpty()) return ids;
+        for (NotificationGroup g : groupRepo.findByTeamIdInOrderByTeamIdAscNameAsc(scope)) if (g.getId() != null) ids.add(g.getId());
+        return ids;
+    }
+
     /** Görülebilir takımlar — global görücü hepsini, diğerleri görüş kapsamını. */
     private List<Long> readableTeamIds(HttpSession session) {
         if (SessionScope.isGlobalViewer(session)) {
@@ -262,7 +271,14 @@ public class NotificationGroupController {
             throw new SecurityException("Bu grubu düzenleme yetkiniz yok");
 
         Map<String, Object> before = AuditDiff.snapshot(g, FIELDS);
-        var in = groupService.validate(str(body.get("name")), emails(body.get("emails")), bool(body.get("is_default")));
+        // Yalnız gönderilen alanlar değişir (2026-11-13 hata taraması): düzenleme formu yalnız DEĞİŞEN alanları gönderir;
+        // gönderilmeyen ad / adresler kayıtlı değerinde kalır, gönderilmeyen is_default bayrağa DOKUNMAZ — açık formun bayat
+        // "varsayılan" kutusu toplu "varsayılan yap"ı geri almaz (false) ya da eski grubu yeniden varsayılan yapmaz (true).
+        var in = groupService.validate(
+                body.containsKey("name") ? str(body.get("name")) : g.getName(),
+                body.containsKey("emails") ? emails(body.get("emails")) : NotificationGroupService.parseEmails(g.getEmails()),
+                bool(body.get("is_default")));
+        if (!body.containsKey("is_default")) in = in.keepingDefault();
         NotificationGroup saved = groupService.update(g, in, actor(session), actorName(session));
 
         auditService.recordAction("NOTIFICATION_GROUP_UPDATE", session, "NOTIFICATION_GROUP",
@@ -313,8 +329,11 @@ public class NotificationGroupController {
     @GetMapping("/usage-counts")
     public ResponseEntity<Map<String, Object>> usageCounts(HttpSession session) {
         permissionService.require(session, PERM, "view");
+        // Kapsam (2026-11-13 hata taraması): yalnız GÖREBİLDİĞİ takımların grupları — liste ucuyla aynı kural
+        // (readableTeamIds). Eskiden tüm takımların grup kimlikleri ve açık alarm sayıları izin sahibi herkese dönüyordu.
+        Set<Long> visible = SessionScope.isGlobalViewer(session) ? null : visibleGroupIds(session);
         Map<String, Object> counts = new java.util.LinkedHashMap<>();
-        usageService.usageCounts().forEach((id, n) -> counts.put(String.valueOf(id), n));
+        usageService.usageCounts().forEach((id, n) -> { if (visible == null || visible.contains(id)) counts.put(String.valueOf(id), n); });
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("counts", counts);
         // Açık alarma damgalı grup sayıları (toplu taşıma önizlemesi "atlanacak" diyebilsin). Okunamazsa ya da sayım
@@ -323,7 +342,9 @@ public class NotificationGroupController {
         Map<String, Object> sm = null;
         if (st != null) {
             sm = new LinkedHashMap<>();
-            for (Map.Entry<Long, Integer> e : st.entrySet()) sm.put(String.valueOf(e.getKey()), e.getValue());
+            for (Map.Entry<Long, Integer> e : st.entrySet()) {
+                if (visible == null || visible.contains(e.getKey())) sm.put(String.valueOf(e.getKey()), e.getValue());
+            }
         }
         data.put("stamped_open_alerts", sm);
         return ok(data);

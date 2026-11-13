@@ -6,8 +6,8 @@
 
 export const HEALTH_SEVERE = new Set(['NO_ADMIN', 'SINGLE_ADMIN', 'ESCALATION_GAP', 'TEAM_NO_EMAIL'])
 
-function sig(code, count, tab, params, severe) {
-  return { code, count, tab, params: params || {}, severe: !!severe, category: categoryOf(code) }
+function sig(code, count, tab, params, severe, extra) {
+  return { code, count, tab, params: params || {}, severe: !!severe, category: categoryOf(code), ...(extra || {}) }
 }
 
 function categoryOf(code) {
@@ -17,12 +17,18 @@ function categoryOf(code) {
   return 'users'
 }
 
-/** Kullanıcı "dikkat isteyen" kutucuğunun derin-bağlantı süzgeci: kilitli varsa duruma, yoksa atıl/hiç giriş filtresine. */
+/**
+ * Kullanıcı "dikkat isteyen" kutucuğunun derin-bağlantı süzgeci. Sayı ile tıklama hedefi TUTARLI olmalı (2026-11-13 hata
+ * taraması: kutucuk kilitli + hiç giriş + atıl TOPLAMINI gösterip tıklayınca yalnız birini süzüyordu — 51 → 1 kilitli).
+ * Yalnız TEK tür varsa o süzgeç; birden fazlaysa süzgeçsiz Kullanıcılar sekmesi (orada üç ayrı KPI kartı kırılımı verir) ve
+ * kutucuk kırılımı kendisi yazar (`parts`).
+ */
 function userAttentionParams(count, overview) {
-  if (count('USER_LOCKED') > 0) return { g_status: 'locked' }
-  if (count('USER_DORMANT') > 0) return { g_dormant: String(overview?.dormant_days || 90) }
-  if (count('USER_NEVER_LOGGED_IN') > 0) return { g_dormant: 'never' }
-  return {}
+  const kinds = ['USER_LOCKED', 'USER_DORMANT', 'USER_NEVER_LOGGED_IN'].filter((k) => count(k) > 0)
+  if (kinds.length !== 1) return {}
+  if (kinds[0] === 'USER_LOCKED') return { g_status: 'locked' }
+  if (kinds[0] === 'USER_DORMANT') return { g_dormant: String(overview?.dormant_days || 90) }
+  return { g_dormant: 'never' }
 }
 
 /**
@@ -39,7 +45,11 @@ export function buildHealthSignals(overview, escalationGap) {
   // ── Ağır (severe) ──
   if (has('NO_ADMIN')) out.push(sig('NO_ADMIN', 0, 'users', { g_role: 'ADMIN' }, true))
   else if (has('SINGLE_ADMIN')) out.push(sig('SINGLE_ADMIN', 1, 'users', { g_role: 'ADMIN' }, true))
-  if (typeof escalationGap === 'number' && escalationGap > 0) out.push(sig('ESCALATION_GAP', escalationGap, 'contacts', {}, true))
+  // Boşluk sayısı: sayı ya da { count, atLeast } (bazı takımların kişi durumu okunamadı → "en az N")
+  const gapCount = typeof escalationGap === 'number' ? escalationGap : escalationGap?.count
+  if (typeof gapCount === 'number' && gapCount > 0) {
+    out.push(sig('ESCALATION_GAP', gapCount, 'contacts', {}, true, escalationGap?.atLeast ? { atLeast: true } : null))
+  }
   if (has('TEAM_NO_EMAIL')) out.push(sig('TEAM_NO_EMAIL', count('TEAM_NO_EMAIL'), 'teams', {}, true))
 
   // ── Uyarı (warn) ──
@@ -48,14 +58,24 @@ export function buildHealthSignals(overview, escalationGap) {
   if (has('CONTACT_INACTIVE')) out.push(sig('CONTACT_INACTIVE', count('CONTACT_INACTIVE'), 'contacts', {}, false))
 
   const attn = count('USER_LOCKED') + count('USER_NEVER_LOGGED_IN') + count('USER_DORMANT')
-  if (attn > 0) out.push(sig('USER_ATTENTION', attn, 'users', userAttentionParams(count, overview), false))
+  if (attn > 0) {
+    const parts = [['locked', 'USER_LOCKED'], ['never', 'USER_NEVER_LOGGED_IN'], ['dormant', 'USER_DORMANT']]
+      .filter(([, code]) => count(code) > 0).map(([key, code]) => ({ key, count: count(code) }))
+    out.push(sig('USER_ATTENTION', attn, 'users', userAttentionParams(count, overview), false, { parts }))
+  }
 
   // Kararlı sıralama: ağırlar önce, üretim sırası korunur
   return out.map((s, i) => ({ s, i })).sort((a, b) => (Number(b.s.severe) - Number(a.s.severe)) || (a.i - b.i)).map(({ s }) => s)
 }
 
-/** Eskalasyon kapsam boşluğu sayısı — contactsCoverageModel çıktısından; veri eksikse null (bilinmiyor → kutucuk yok). */
+/**
+ * Eskalasyon kapsam boşluğu sayısı — contactsCoverageModel çıktısından; veri eksikse null (bilinmiyor → kutucuk yok).
+ * Bazı takımların kapsamı bilinmiyorsa (bağlı kullanıcının durumu okunamadı, 2026-11-13 hata taraması): kesin boşluk varsa
+ * `{ count, atLeast: true }` ("en az N"), yoksa null — "boşluk yok" diye yeşil denmez.
+ */
 export function escalationGapFrom(coverage, contactsOk) {
   if (!contactsOk || !coverage || !coverage.summary || !coverage.summary.statsKnown) return null
-  return coverage.summary.gap || 0
+  const gap = coverage.summary.gap || 0
+  if ((coverage.summary.unknown || 0) > 0) return gap > 0 ? { count: gap, atLeast: true } : null
+  return gap
 }

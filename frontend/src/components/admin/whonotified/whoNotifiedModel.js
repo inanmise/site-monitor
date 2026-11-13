@@ -131,6 +131,13 @@ export function buildView(data) {
   // zaten varsa aynı satıra not düşer (tek e-posta); pasif hesaba aitse hariç.
   const oncall = Array.isArray(data?.oncall) ? data.oncall : []
   for (const [i, p] of oncall.entries()) {
+    // oncall.read izni yoksa sunucu adı / e-postayı vermez (`hidden`, 2026-11-13 hata taraması): satır yine e-posta
+    // alıcısı sayılır (gönderim değişmez) ama adsız gösterilir. Yinelenen / pasif-yalnız gizli satır sayılmaz.
+    if (p?.hidden === true) {
+      if (p?.duplicate === true || p?.inactive_only === true) continue
+      emails.push({ key: `oncall:${i}`, email: '', name: '', source: 'oncall', hidden: true, also: [] })
+      continue
+    }
     const address = lower(p?.email)
     const name = p?.name || String(p?.email || '').trim() || '—'
     if (!address) continue
@@ -286,7 +293,7 @@ export function recipientCsvRows(view, labels) {
   const rows = [labels.header]
   for (const e of view.emails) {
     const notes = (e.also || []).map((a) => a.name).join(', ')
-    rows.push([labels.channel('email'), e.name || '', e.email, labels.source(e.source),
+    rows.push([labels.channel('email'), e.name || (e.hidden ? labels.hiddenName || '' : ''), e.email, labels.source(e.source),
       e.delayMinutes != null ? labels.later(e.delayMinutes) : labels.yes, notes])
   }
   for (const w of view.webhooks) {

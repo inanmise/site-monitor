@@ -152,8 +152,17 @@ public class NotificationGroupHistoryService {
      * ileride bir taşıma eklenirse okunur kalması bedavaya gelir.
      */
     Map<Long, Long> resolveTeams(List<AuditLog> rows) {
-        Map<Long, Long> teamOf = new HashMap<>();
-        for (NotificationGroup g : groupRepo.findAll()) teamOf.put(g.getId(), g.getTeamId());
+        return resolveTeams(rows, liveTeams());
+    }
+
+    private Map<Long, Long> liveTeams() {
+        Map<Long, Long> live = new HashMap<>();
+        for (NotificationGroup g : groupRepo.findAll()) live.put(g.getId(), g.getTeamId());
+        return live;
+    }
+
+    private static Map<Long, Long> resolveTeams(List<AuditLog> rows, Map<Long, Long> live) {
+        Map<Long, Long> teamOf = new HashMap<>(live);
         for (AuditLog r : rows) {
             Long gid = parseLong(r.getResourceId());
             if (gid == null || teamOf.containsKey(gid)) continue;
@@ -175,8 +184,11 @@ public class NotificationGroupHistoryService {
      * <ol>
      *   <li>Taşıma satırı ({@code changes} içinde {@code teamId} farkı) → gösterim yeni takım, görünür iki takım.</li>
      *   <li>Anlık görüntü satırı (oluşturma / silme: düz {@code teamId}) → o anki takım.</li>
-     *   <li>Diğerleri → kendinden SONRAKİ ilk taşımanın {@code from}'u; sonra taşıma yoksa güncel takım (canlı satır ya da
-     *       silme anlık görüntüsü — {@link #resolveTeams}).</li>
+     *   <li>Diğerleri → kendinden SONRAKİ ilk taşımanın {@code from}'u; sonra taşıma yoksa canlı grubun takımı; grup
+     *       silinmişse kendinden ÖNCEKİ son taşımanın {@code to}'su, taşıma hiç yoksa anlık görüntü ({@link #resolveTeams}).
+     *       2026-11-13 hata taraması: silinmiş + taşınmış grupta kişi süzgeci silme satırını dışarıda bırakınca "güncel takım"
+     *       okunan OLUŞTURMA anlık görüntüsünden (taşımadan ÖNCEKİ takım) kuruluyordu — taşımadan sonraki satır eski takıma
+     *       yazılıyordu.</li>
      * </ol>
      * Taşıma izi, okunan satırlardan bağımsız olarak grubun güncelleme satırlarından okunur (TEK sorgu, tavanlı) — akışın
      * kişi / tarih süzgeci taşıma satırını dışarıda bıraksa da eski satır yanlış takıma yazılmaz.
@@ -184,7 +196,8 @@ public class NotificationGroupHistoryService {
     public Map<Long, RowTeams> rowTeams(List<AuditLog> rows) {
         Map<Long, RowTeams> out = new HashMap<>();
         if (rows == null || rows.isEmpty()) return out;
-        Map<Long, Long> current = resolveTeams(rows);
+        Map<Long, Long> live = liveTeams();
+        Map<Long, Long> current = resolveTeams(rows, live);
         Set<String> ids = new HashSet<>();
         for (AuditLog r : rows) if (parseLong(r.getResourceId()) != null) ids.add(r.getResourceId().trim());
         Map<Long, List<long[]>> moves = new HashMap<>();   // grup → [denetim kimliği, from, to] (kimliğe göre artan)
@@ -211,10 +224,18 @@ public class NotificationGroupHistoryService {
             }
             Long team = flatTeam(r.getChanges());
             if (team == null && gid != null) {
-                for (long[] m : moves.getOrDefault(gid, List.of())) {
-                    if (m[0] > r.getId()) { team = m[1]; break; }
+                List<long[]> list = moves.getOrDefault(gid, List.of());
+                boolean later = false;
+                for (long[] m : list) {
+                    if (m[0] > r.getId()) { team = m[1]; later = true; break; }
                 }
-                if (team == null) team = current.get(gid);
+                if (!later) {
+                    if (live.containsKey(gid)) team = live.get(gid);
+                    else {
+                        for (long[] m : list) if (m[0] < r.getId()) team = m[2];   // silinmiş grup: son taşımanın hedefi
+                        if (team == null) team = current.get(gid);
+                    }
+                }
             }
             out.put(r.getId(), new RowTeams(team, team == null ? Set.of() : Set.of(team)));
         }

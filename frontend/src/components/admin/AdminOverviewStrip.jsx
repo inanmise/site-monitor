@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Users, UsersRound, Mail, BellRing, SlidersHorizontal, AlertTriangle, CheckCircle2,
-  ShieldX, ShieldAlert, UserX, ArrowRight, Activity } from 'lucide-react'
+  ShieldX, ShieldAlert, UserX, ArrowRight, Activity, CircleHelp } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
@@ -33,10 +33,13 @@ const HEALTH_ICON = {
 }
 const PHONE_WARN_LIMIT = 2
 
-export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) {
+export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0, usersListComplete = false }) {
   const t = useT()
   const [data, setData] = useState(null)
-  const [gap, setGap] = useState(null)            // eskalasyon kapsam boşluğu sayısı (number) ya da null (bilinmiyor)
+  // Eskalasyon kapsam boşluğu: sayı | { count, atLeast } | null (bilinmiyor). `gapState` loading | ready | unknown —
+  // bilinmezken "Sağlık uyarısı yok" yeşili çizilmez (2026-11-13 hata taraması).
+  const [gap, setGap] = useState(null)
+  const [gapState, setGapState] = useState('loading')
   const [error, setError] = useState(false)
 
   // Sayaçlar + uyarılar: sekme değişiminde (refreshKey) tazelenir — eskisi gibi tek çağrı.
@@ -47,24 +50,31 @@ export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) 
     return () => { alive = false }
   }, [refreshKey])
 
-  // Eskalasyon kapsam boşluğu girdileri (ağır liste uçları) YALNIZ bir kez — sekme değişiminde tekrar çekilmez (maliyet).
+  // Eskalasyon kapsam boşluğu girdileri: sekme değişiminde (refreshKey) TAZELENİR (2026-11-13 hata taraması: yalnız ilk
+  // açılışta okunuyordu — kişi / grup eklenince ya da sekme değişince boşluk bayat kalıyordu). Yeni okuma gelene dek önceki
+  // değer görünür (yanıp sönme yok); geç gelen eski yanıt yenisini ezmez (sıra numarası).
   // #1'in test edilmiş buildCoverage'ı ile boşluk sayısı; biri okunamazsa escalationGapFrom null döner → kutucuk çizilmez.
+  const gapSeq = useRef(0)
   useEffect(() => {
-    let alive = true
+    const my = ++gapSeq.current
     Promise.allSettled([api.admin.getContacts?.(), api.admin.getUsers?.(), api.admin.teamStats?.()])
       .then(([co, us, st]) => {
-        if (!alive) return
+        if (my !== gapSeq.current) return
         const contactsOk = co.status === 'fulfilled' && !!co.value?.success
         const contacts = contactsOk ? (co.value.data || []) : []
-        const users = us.status === 'fulfilled' && us.value?.success ? (us.value.data || []) : []
-        const inactiveIds = new Set(users.filter((u) => u.active === false).map((u) => String(u.id)))
+        const usersOk = us.status === 'fulfilled' && !!us.value?.success
+        const users = usersOk ? (us.value.data || []) : []
+        // Kullanıcı listesi okunamazsa pasif kümesi BİLİNMİYOR (null) — boş küme "pasif yok" diye okunur, yanlış yeşil verirdi
+        const inactiveIds = usersOk ? new Set(users.filter((u) => u.active === false).map((u) => String(u.id))) : null
+        const knownIds = usersOk && !usersListComplete ? new Set(users.map((u) => String(u.id))) : null
         const stats = st.status === 'fulfilled' && st.value?.success ? (st.value.data || {}) : {}
         const teams = Object.keys(stats).map((id) => ({ id: Number(id), name: '' }))
-        setGap(escalationGapFrom(buildCoverage(contacts, teams, inactiveIds, stats), contactsOk))
+        const g = escalationGapFrom(buildCoverage(contacts, teams, inactiveIds, stats, knownIds), contactsOk)
+        setGap(g)
+        setGapState(g == null ? 'unknown' : 'ready')
       })
-      .catch(() => { /* boşluk kutucuğu çizilmez; strip yine çalışır */ })
-    return () => { alive = false }
-  }, [])
+      .catch(() => { if (my === gapSeq.current) { setGap(null); setGapState('unknown') } })
+  }, [refreshKey, usersListComplete])
 
   if (error || !data) return null
   const c = data.counts || {}
@@ -87,7 +97,7 @@ export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) 
           c.threshold_tiers > 0 ? t('aov.tierRows', c.threshold_tiers) : null)}
       </div>
 
-      <HealthTiles signals={signals} onJump={onJump} />
+      <HealthTiles signals={signals} onJump={onJump} gapState={gapState} />
     </div>
   )
 }
@@ -96,7 +106,7 @@ export default function AdminOverviewStrip({ isAdmin, onJump, refreshKey = 0 }) 
  * Sağlık kutucukları (fetch'siz, saf sunum — strip ile e2e harness'ı AYNI bileşeni kullanır). Ağır (danger) önce,
  * uyarı (amber) sonra; telefonda ilk {@link PHONE_WARN_LIMIT} + "+N daha". Her kutucuk tıklanınca sekme + süzgeç.
  */
-export function HealthTiles({ signals = [], onJump }) {
+export function HealthTiles({ signals = [], onJump, gapState = 'ready' }) {
   const t = useT()
   const phone = useIsMobile()
   const [showAll, setShowAll] = useState(false)
@@ -109,11 +119,16 @@ export function HealthTiles({ signals = [], onJump }) {
       <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
         <Activity aria-hidden="true" className="size-3.5" /> {t('aov.healthTitle')}
       </div>
-      {signals.length === 0 ? (
+      {signals.length === 0 ? (gapState === 'ready' ? (
         <span className="inline-flex items-center gap-1.5 text-sm text-success">
           <CheckCircle2 aria-hidden="true" className="size-3.5" /> {t('aov.allClear')}
         </span>
       ) : (
+        // Eskalasyon kapsamı bilinmiyor / denetleniyor: yeşil "her şey yolunda" denmez — nötr metin
+        <span data-slot="overview-health-unknown" data-state={gapState} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+          <CircleHelp aria-hidden="true" className="size-3.5" /> {t(gapState === 'loading' ? 'aov.allClearChecking' : 'aov.allClearUnknown')}
+        </span>
+      )) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {visible.map((s) => <HealthTile key={s.code} s={s} t={t} onJump={onJump} />)}
           {hidden > 0 && (
@@ -139,7 +154,15 @@ function HealthTile({ s, t, onJump }) {
           ? cn(TONE_CLASS.danger, 'border-destructive/40 hover:bg-destructive/15 hover:text-destructive')
           : cn(TONE_CLASS.warning, 'border-amber-500/40 hover:bg-amber-500/20 hover:text-amber-800 dark:hover:text-amber-200'))}>
       <Icon aria-hidden="true" className="size-4 shrink-0" />
-      <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{t(`aov.w.${s.code}`, s.count)}</span>
+      <span className="flex min-w-0 flex-col">
+        <span className="text-sm font-semibold [overflow-wrap:anywhere]">{t(s.atLeast ? `aov.w.${s.code}_MIN` : `aov.w.${s.code}`, s.count)}</span>
+        {/* Kırılım (kilitli / hiç giriş / atıl): birden fazla tür varsa kutucuk süzgeçsiz açılır, kırılım burada yazılır */}
+        {Array.isArray(s.parts) && s.parts.length > 1 && (
+          <span data-slot="overview-health-parts" className="text-xs font-normal [overflow-wrap:anywhere]">
+            {s.parts.map((p) => t(`aov.attn.${p.key}`, p.count)).join(' · ')}
+          </span>
+        )}
+      </span>
       <ArrowRight aria-hidden="true" className="ms-auto size-4 shrink-0 opacity-60" />
     </Button>
   )

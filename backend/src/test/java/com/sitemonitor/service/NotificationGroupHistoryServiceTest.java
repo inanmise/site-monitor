@@ -239,4 +239,19 @@ class NotificationGroupHistoryServiceTest {
         assertThat(teams.get(2L).team()).isEqualTo(TEAM_A);
         assertThat(teams.get(2L).visible()).containsExactly(TEAM_A);
     }
+    @Test
+    @DisplayName("2026-11-13 hata taraması: silinmiş + taşınmış grup — kişi süzgeci silme satırını dışarıda bırakınca taşımadan SONRAKİ satır yeni takıma çözülür (oluşturma anlık görüntüsüne değil)")
+    void deletedMovedGroup_rowAfterMoveBelongsToNewTeam() {
+        when(groupRepo.findAll()).thenReturn(List.of());                        // grup SİLİNMİŞ
+        AuditLog create = row(1, "NOTIFICATION_GROUP_CREATE", "10", "{\"name\":\"Nöbet\",\"teamId\":1}");
+        AuditLog move = row(2, "NOTIFICATION_GROUP_UPDATE", "10", "{\"teamId\":{\"from\":1,\"to\":2}}");
+        AuditLog editInB = row(3, "NOTIFICATION_GROUP_UPDATE", "10", "{\"name\":{\"from\":\"Nöbet\",\"to\":\"Gece\"}}");
+        when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(any(), eq("NOTIFICATION_GROUP_UPDATE"), any(), any(Pageable.class)))
+                .thenReturn(List.of(editInB, move));
+        // Akışın kişi süzgeci: yalnız oluşturma + taşımadan sonraki düzenleme okunmuş (taşıma ve silme satırları yok)
+        var teams = service().rowTeams(List.of(editInB, create));
+        assertThat(teams.get(3L).team()).isEqualTo(TEAM_B);
+        assertThat(teams.get(3L).visible()).containsExactly(TEAM_B);
+        assertThat(teams.get(1L).team()).isEqualTo(TEAM_A);                   // oluşturma kendi anında A
+    }
 }

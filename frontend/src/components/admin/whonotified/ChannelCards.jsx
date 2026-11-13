@@ -136,17 +136,20 @@ export function EmailCard({ view, level, cardRef }) {
         <ItemGroup className="gap-2">
           {view.emails.map((r) => {
             const label = t(`wn.src.${r.source}`)
+            // Gizli nöbetçi (oncall.read izni yok, 2026-11-13): adsız satır — alır ama kim olduğu gösterilmez
+            const title = r.hidden ? t('wn.oncallHidden') : (r.name || r.email)
             return (
-              <RecipientItem key={r.key} source={r.source}
-                media={<PersonAvatar name={r.name} ident={r.email} icon={SOURCE_ICON[r.source]} />}
-                title={r.name || r.email}
+              <RecipientItem key={r.key} source={r.source} data-hidden={r.hidden ? 'true' : undefined}
+                media={<PersonAvatar name={title} ident={r.email} icon={SOURCE_ICON[r.source]} />}
+                title={title}
                 badges={<>
-                  <WhyBadge tone={SOURCE_TONE[r.source]} label={label} why={whyOf(r)} who={r.name || r.email} />
+                  <WhyBadge tone={SOURCE_TONE[r.source]} label={label} why={whyOf(r)} who={title} />
                   {r.role && <OrgRoleBadge role={r.role}>{roleLabel(t, r.role)}</OrgRoleBadge>}
                   {r.minLevel && <LevelBadge level={r.minLevel} prefix="≥ " />}
                   <DelayBadge minutes={r.delayMinutes ?? null} />
                 </>}
-                description={r.email}
+                description={r.hidden ? t('wn.oncallHiddenDesc') : r.email}
+                mono={!r.hidden}
                 extra={r.also.length > 0 && (
                   <p data-slot="wn-also" className="text-xs text-muted-foreground">
                     {[
@@ -155,8 +158,8 @@ export function EmailCard({ view, level, cardRef }) {
                     ].filter(Boolean).join(' · ')}
                   </p>
                 )}
-                actions={<CopyButton value={r.email} label={t('wn.copyEmail', r.email)} copiedLabel={t('wn.copied')}
-                  variant="ghost" className="size-10 md:size-8" />}
+                actions={r.email ? <CopyButton value={r.email} label={t('wn.copyEmail', r.email)} copiedLabel={t('wn.copied')}
+                  variant="ghost" className="size-10 md:size-8" /> : null}
               />
             )
           })}

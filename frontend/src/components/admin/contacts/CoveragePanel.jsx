@@ -22,13 +22,13 @@ import {
  * hizalı (contactsCoverageModel ↔ EscalationContactScope). Test kancaları: data-slot="contacts-coverage|cov-toggle|
  * cov-row|cov-cell|cov-quickadd", data-team, data-tone, data-level.
  */
-export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, stats = {}, canManage = false, onQuickAdd }) {
+export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, knownIds = null, stats = {}, canManage = false, onQuickAdd }) {
   const t = useT()
   const [listRef, listWidth] = useElementWidth()
   const [filter, setFilter] = useState('all')
 
   const { rows, summary } = useMemo(
-    () => buildCoverage(contacts, teams, inactiveIds, stats), [contacts, teams, inactiveIds, stats])
+    () => buildCoverage(contacts, teams, inactiveIds, stats, knownIds), [contacts, teams, inactiveIds, stats, knownIds])
   // Boşluk YÜZEYE çıksın: veri yüklenince (ve kullanıcı henüz dokunmadıysa) paneli bir kez otomatik aç. useState
   // başlangıç değeri ilk render'da (veri boş) hesaplanırdı; efektle gerçek boşluk sayısına göre açılır.
   const [open, setOpen] = useState(false)
@@ -49,19 +49,23 @@ export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, 
     { key: 'partial',  Icon: ShieldAlert, label: t('ec.cov.kpi.partial'),  value: summary.partial,  cls: 'warning' },
     { key: 'ok',       Icon: ShieldCheck, label: t('ec.cov.kpi.ok'),       value: summary.ok,       cls: 'valid' },
     { key: 'noAssets', Icon: Minus,       label: t('ec.cov.kpi.noAssets'), value: summary.noAssets, cls: 'paused' },
+    // Bağlı kullanıcısının durumu bilinmeyen kişiler yüzünden karar verilemeyen takımlar (2026-11-13 hata taraması)
+    ...(summary.unknown > 0 ? [{ key: 'unknown', Icon: Minus, label: t('ec.cov.kpi.unknown'), value: summary.unknown, cls: 'paused' }] : []),
   ] : [
     { key: 'all',      Icon: ShieldCheck, label: t('ec.cov.kpi.all'),      value: summary.teams,    cls: 'total' },
     { key: 'unknown',  Icon: Minus,       label: t('ec.cov.kpi.unknown'),  value: summary.unknown,  cls: 'paused' },
   ]
   const onKpi = (k) => setFilter((cur) => (cur === k ? 'all' : k))
 
+  // Bilinmeyen kapsamlı takım varken "tüm takımlarda kapsanıyor" yeşili çizilmez (bilinmeyen ≠ yeşil).
   const headTone = !summary.statsKnown ? 'muted'
-    : summary.gap > 0 ? 'danger' : summary.partial > 0 ? 'warning' : 'success'
+    : summary.gap > 0 ? 'danger' : summary.partial > 0 ? 'warning' : summary.unknown > 0 ? 'muted' : 'success'
   const HeadIcon = !summary.statsKnown ? Minus
-    : summary.gap > 0 ? ShieldX : summary.partial > 0 ? ShieldAlert : ShieldCheck
+    : summary.gap > 0 ? ShieldX : summary.partial > 0 ? ShieldAlert : summary.unknown > 0 ? Minus : ShieldCheck
   const headText = !summary.statsKnown ? t('ec.cov.statsUnavailable')
     : summary.gap > 0 ? t('ec.cov.summaryGap', summary.gap)
-    : summary.partial > 0 ? t('ec.cov.summaryPartial', summary.partial) : t('ec.cov.summaryOk')
+    : summary.partial > 0 ? t('ec.cov.summaryPartial', summary.partial)
+    : summary.unknown > 0 ? t('ec.cov.summaryUnknown', summary.unknown) : t('ec.cov.summaryOk')
   const headColor = headTone === 'danger' ? 'text-destructive'
     : headTone === 'warning' ? 'text-amber-600 dark:text-amber-400'
     : headTone === 'muted' ? 'text-muted-foreground' : 'text-success'
@@ -116,9 +120,9 @@ export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, 
                             <span className="mt-0.5 block text-xs text-muted-foreground">{r.assets == null ? t('ec.cov.assetsUnknown') : t('ec.cov.assets', r.assets)}</span>
                           </TableCell>
                           {COVERAGE_LEVELS.map((lvl) => (
-                            <TableCell key={lvl} className="text-center"><LevelCount count={r.counts[lvl]} level={lvl} assets={r.assets} /></TableCell>
+                            <TableCell key={lvl} className="text-center"><LevelCount count={r.counts[lvl]} maybe={r.maybe?.[lvl] ?? 0} level={lvl} assets={r.assets} t={t} /></TableCell>
                           ))}
-                          <TableCell><StatusBadge tone={r.tone} t={t} /></TableCell>
+                          <TableCell><StatusBadge tone={r.tone} reason={r.unknownReason} t={t} /></TableCell>
                           {canManage && (
                             <TableCell className="text-right">
                               {(r.tone === 'gap' || r.tone === 'partial') && (
@@ -145,8 +149,9 @@ export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, 
 }
 
 /** Seviye hücresi: kapsam sayısı; varlık varken 0 → CRITICAL kırmızı / HIGH amber (boşluk), WARNING nötr (bilgi). */
-function LevelCount({ count, level, assets }) {
-  const tone = cellTone(count, level, assets)
+function LevelCount({ count, maybe = 0, level, assets, t }) {
+  // Durumu bilinmeyen kişi varken 0 hücresi boşluk diye boyanmaz (2026-11-13 hata taraması) — "+N?" ile yazılır
+  const tone = maybe > 0 && count === 0 ? 'muted' : cellTone(count, level, assets)
   const cls = {
     covered: 'text-foreground',
     danger: 'text-destructive font-bold',
@@ -157,6 +162,11 @@ function LevelCount({ count, level, assets }) {
     <span data-slot="cov-cell" data-level={level} data-celltone={tone} className={cn('inline-flex items-center justify-center gap-1 tabular-nums', cls)}>
       {tone === 'covered' && <Check aria-hidden="true" className="size-3.5 text-success" />}
       {count}
+      {maybe > 0 && (
+        <span data-slot="cov-maybe" title={t?.('ec.cov.maybe', maybe)} className="text-muted-foreground">
+          <span aria-hidden="true">+{maybe}?</span><span className="sr-only">{t?.('ec.cov.maybe', maybe)}</span>
+        </span>
+      )}
     </span>
   )
 }
@@ -171,13 +181,13 @@ function TeamName({ children }) {
   )
 }
 
-function StatusBadge({ tone, t }) {
+function StatusBadge({ tone, reason, t }) {
   const map = {
     gap:      ['danger',  t('ec.cov.tone.gap')],
     partial:  ['warning', t('ec.cov.tone.partial')],
     ok:       ['success', t('ec.cov.tone.ok')],
     noAssets: ['muted',   t('ec.cov.tone.noAssets')],
-    unknown:  ['muted',   t('ec.cov.tone.unknown')],
+    unknown:  ['muted',   reason === 'users' ? t('ec.cov.tone.unknownUsers') : t('ec.cov.tone.unknown')],
   }
   const [bt, label] = map[tone] || map.unknown
   return <ToneBadge tone={bt} className="whitespace-normal">{label}</ToneBadge>
@@ -188,14 +198,14 @@ function CoverageCard({ row, t, canManage, onQuickAdd }) {
     <li data-slot="cov-row" data-team={row.teamId} data-tone={row.tone} className="rounded-md border bg-background p-3">
       <div className="flex flex-wrap items-center gap-2">
         <TeamName>{row.teamName}</TeamName>
-        <StatusBadge tone={row.tone} t={t} />
+        <StatusBadge tone={row.tone} reason={row.unknownReason} t={t} />
         <span className="ms-auto text-xs text-muted-foreground">{row.assets == null ? t('ec.cov.assetsUnknown') : t('ec.cov.assets', row.assets)}</span>
       </div>
       <div className="mt-2 grid grid-cols-3 gap-2">
         {COVERAGE_LEVELS.map((lvl) => (
           <div key={lvl} className="rounded-sm bg-muted/40 px-2 py-1.5 text-center">
             <span className="block text-[0.7rem] text-muted-foreground">{t(`ec.level.${lvl.toLowerCase()}`)}</span>
-            <LevelCount count={row.counts[lvl]} level={lvl} assets={row.assets} />
+            <LevelCount count={row.counts[lvl]} maybe={row.maybe?.[lvl] ?? 0} level={lvl} assets={row.assets} t={t} />
           </div>
         ))}
       </div>

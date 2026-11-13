@@ -130,7 +130,8 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
   // özet şeridi (KpiCard ızgarası), sekme şeridi ve içerik aynı genişlikte tek blok okunur.
   return (
     <div className="mt-1 w-full min-w-0">
-      <AdminOverviewStrip isAdmin={isAdmin} onJump={jump} refreshKey={activeTab} />
+      <AdminOverviewStrip isAdmin={isAdmin} onJump={jump} refreshKey={activeTab}
+        usersListComplete={!!globalAdmin || systemRole === 'AUDIT'} />
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full gap-4 sm:gap-5">
         <GroupedTabStrip groups={groups} t={t} />
 

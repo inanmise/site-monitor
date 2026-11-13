@@ -16,8 +16,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Yönetim Paneli "Değişiklik Geçmişi" (2026-09-20): eşik / eskalasyon kişisi / takım / kullanıcı için
@@ -58,8 +56,6 @@ public class AdminHistoryService {
 
     static final int WINDOW_MAX = 2_000;
     static final int SIZE_MAX = 200;
-    private static final Pattern TEAM_IN_CHANGES = Pattern.compile("\"teamId\"\\s*:\\s*(\\d+)");
-    private static final Pattern TEAM_TO_IN_CHANGES = Pattern.compile("\"teamId\"\\s*:\\s*\\{[^}]*\"to\"\\s*:\\s*(\\d+)");
 
     private final AuditLogRepository auditRepo;
     private final EscalationContactRepository contactRepo;
@@ -93,7 +89,7 @@ public class AdminHistoryService {
             Page<AuditLog> pg = byId
                     ? auditRepo.findByResourceTypeAndResourceIdAndEventTypeIn(resource, resourceId, wanted, PageRequest.of(p, s, sort))
                     : auditRepo.findByResourceTypeAndEventTypeIn(resource, wanted, PageRequest.of(p, s, sort));
-            Map<Long, Long> contactTeams = "ESCALATION_CONTACT".equals(resource) ? liveContactTeams() : Map.of();
+            Map<Long, NotificationGroupHistoryService.RowTeams> contactTeams = contactRowTeams(resource, pg.getContent());
             List<Entry> out = new ArrayList<>();
             for (AuditLog r : pg.getContent()) out.add(new Entry(r, teamOf(resource, r, contactTeams)));
             return new History(out, pg.getTotalElements(), p, s, false, 0);
@@ -104,14 +100,17 @@ public class AdminHistoryService {
         List<AuditLog> scanned = byId
                 ? auditRepo.findByResourceTypeAndResourceIdAndEventTypeIn(resource, resourceId, wanted, PageRequest.of(0, WINDOW_MAX, sort)).getContent()
                 : auditRepo.findByResourceTypeAndEventTypeIn(resource, wanted, PageRequest.of(0, WINDOW_MAX, sort)).getContent();
-        Map<Long, Long> contactTeams = "ESCALATION_CONTACT".equals(resource) ? liveContactTeams() : Map.of();
+        Map<Long, NotificationGroupHistoryService.RowTeams> contactTeams = contactRowTeams(resource, scanned);
         List<Entry> visible = new ArrayList<>();
         int hidden = 0;
         for (AuditLog r : scanned) {
             Long team = teamOf(resource, r, contactTeams);
             // Kapalı tarafa düş: takımı bilinmeyen satır kapsamlı kullanıcıya gösterilmez.
             if (team == null) { hidden++; continue; }
-            if (!allowedTeams.contains(team)) continue;
+            // Kişi taşıma satırı İKİ takıma da görünür (2026-11-13 hata taraması — eski takımın müdürü taşımayı görür)
+            NotificationGroupHistoryService.RowTeams rt = "ESCALATION_CONTACT".equals(resource) ? contactTeams.get(r.getId()) : null;
+            boolean any = rt != null ? NotificationGroupHistoryService.visibleTo(rt, allowedTeams) : allowedTeams.contains(team);
+            if (!any) continue;
             visible.add(new Entry(r, team));
         }
         int from = Math.min(p * s, visible.size());
@@ -127,19 +126,22 @@ public class AdminHistoryService {
         return m;
     }
 
-    /** Satırın takımı: TEAM → kaynak kimliği; kişi → canlı satır, yoksa anlık görüntü/fark içindeki teamId. */
-    static Long teamOf(String resource, AuditLog r, Map<Long, Long> contactTeams) {
+    /** Kişi satırlarının KENDİ zamanındaki takımları ({@link ContactHistoryTeams}); kişi kaynağı değilse boş. */
+    private Map<Long, NotificationGroupHistoryService.RowTeams> contactRowTeams(String resource, List<AuditLog> rows) {
+        if (!"ESCALATION_CONTACT".equals(resource) || rows == null || rows.isEmpty()) return Map.of();
+        return ContactHistoryTeams.rowTeams(rows, liveContactTeams(), auditRepo);
+    }
+
+    /**
+     * Satırın takımı: TEAM → kaynak kimliği; kişi → satırın KENDİ zamanındaki takımı (taşıma izi + canlı satır + anlık
+     * görüntü, {@link ContactHistoryTeams}). Çözülemezse null.
+     */
+    static Long teamOf(String resource, AuditLog r, Map<Long, NotificationGroupHistoryService.RowTeams> contactTeams) {
         Long rid = parseLong(r.getResourceId());
         if ("TEAM".equals(resource)) return rid;
         if ("ESCALATION_CONTACT".equals(resource)) {
-            if (rid != null && contactTeams.containsKey(rid)) return contactTeams.get(rid);
-            String ch = r.getChanges();
-            if (ch != null) {
-                Matcher to = TEAM_TO_IN_CHANGES.matcher(ch);
-                if (to.find()) return Long.valueOf(to.group(1));
-                Matcher m = TEAM_IN_CHANGES.matcher(ch);
-                if (m.find()) return Long.valueOf(m.group(1));
-            }
+            NotificationGroupHistoryService.RowTeams rt = contactTeams == null ? null : contactTeams.get(r.getId());
+            return rt == null ? null : rt.team();
         }
         return null;
     }

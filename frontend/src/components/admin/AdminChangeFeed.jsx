@@ -21,7 +21,9 @@ import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { relTimeOrRaw as relTime } from '../../utils/relativeTime.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import { eventKind, parseChanges, isDiffShape, fmtValue } from './historyFormat.js'
-import { FEED_AREAS, FEED_DAYS, DEFAULT_DAYS, normDays, parseAreas, toggleArea, layoutFor, rowPayload } from './adminChangeFeedModel.js'
+import {
+  FEED_AREAS, FEED_DAYS, DEFAULT_DAYS, normDays, parseAreas, toggleArea, layoutFor, rowPayload, feedFieldLabel, feedValue,
+} from './adminChangeFeedModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -96,29 +98,30 @@ export default function AdminChangeFeed() {
 
   const areaLabel = (a) => t(`cf.area.${a}`)
   const actLabel = (a) => { const k = `hist.act.${a}`; const s = t(k); return s === k ? String(a || '').toLowerCase().replace(/_/g, ' ') : s }
-  const fieldLabel = (f) => { const k = `hist.f.${f}`; const s = t(k); return s === k ? f : s }
+  const fieldLabel = (f) => feedFieldLabel(t, f)
+  const val = (f, v) => feedValue(t, f, v, fmtValue)
 
   const model = (r) => {
     const payload = rowPayload(r, parseChanges, isDiffShape)
     const all = !payload ? [] : payload.kind === 'diff'
       ? Object.entries(payload.data).map(([f, c]) => {
-        const from = fmtValue(t, c?.from), to = fmtValue(t, c?.to)
+        const from = val(f, c?.from), to = val(f, c?.to)
         return { key: f, label: fieldLabel(f), diff: true, from, to, full: `${fieldLabel(f)}: ${from} → ${to}` }
       })
-      : Object.keys(payload.data).map(f => ({ key: f, label: fieldLabel(f), diff: false, full: `${fieldLabel(f)}: ${fmtValue(t, payload.data[f])}` }))
+      : Object.keys(payload.data).map(f => ({ key: f, label: fieldLabel(f), diff: false, full: `${fieldLabel(f)}: ${val(f, payload.data[f])}` }))
     const limit = payload?.kind === 'diff' ? SUMMARY_LIMIT : SUMMARY_LIMIT + 1
     return { payload, chips: all.slice(0, limit), more: Math.max(0, all.length - limit) }
   }
 
   const detail = (r, m) => (m.payload.kind === 'diff' ? (
     <DiffTable fieldLabel={t('audit.diffField')} fromLabel={t('audit.diffFrom')} toLabel={t('audit.diffTo')}
-      rows={Object.entries(m.payload.data).map(([f, c]) => [f, fieldLabel(f), fmtValue(t, c?.from), fmtValue(t, c?.to)])} />
+      rows={Object.entries(m.payload.data).map(([f, c]) => [f, fieldLabel(f), val(f, c?.from), val(f, c?.to)])} />
   ) : (
     <div className="flex flex-col gap-1 text-xs">
       <div className="text-muted-foreground">{String(r.action).endsWith('DELETE') ? t('ng.histSnapshotOld') : t('ng.histSnapshotNew')}</div>
       <ul className="mt-1 ml-1 flex list-none flex-col gap-0.5 p-0">
         {Object.entries(m.payload.data).map(([f, v]) => (
-          <li key={f} className="flex flex-wrap gap-x-2"><span className="font-semibold">{fieldLabel(f)}</span><span className="font-mono break-all">{fmtValue(t, v)}</span></li>
+          <li key={f} className="flex flex-wrap gap-x-2"><span className="font-semibold">{fieldLabel(f)}</span><span className="font-mono break-all">{val(f, v)}</span></li>
         ))}
       </ul>
     </div>

@@ -25,7 +25,7 @@ function exportCsv(view, data, level, t) {
     header: [t('wn.csv.channel'), t('wn.csv.name'), t('wn.csv.address'), t('wn.csv.source'), t('wn.csv.status'), t('wn.csv.reason')],
     channel: (c) => (c === 'push' ? t('wn.channelPush') : c === 'webhook' ? t('wn.tileWebhook') : t('wn.channelEmail')),
     source: (s) => { const k = `wn.src.${s}`; const v = t(k); return v === k ? (s || '') : v },
-    yes: t('wn.csv.yes'), no: t('wn.csv.no'), later: (m) => t('wn.delayBadge', m),
+    yes: t('wn.csv.yes'), no: t('wn.csv.no'), later: (m) => t('wn.delayBadge', m), hiddenName: t('wn.oncallHidden'),
     reason: (code, ch) => (ch === 'push' ? pushReasonText(t, code) : EMAIL_EXCLUDE_REASONS.includes(code) ? t(`wn.reason.${code}`) : code),
   })
   const slug = String(data?.team_name || 'takim').toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'takim'

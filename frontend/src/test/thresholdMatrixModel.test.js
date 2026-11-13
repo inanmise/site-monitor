@@ -14,7 +14,9 @@ describe('thresholdMatrixModel — buildThresholdMatrix', () => {
 
     const t1 = m.find(r => r.tier === 1)
     expect(t1).toMatchObject({ inherited: false, impact: 12 })
-    expect(t1.override).toEqual({ critical: true, high: true, warning: true, reAlert: true })
+    // Yeniden-uyarı tier satırında KULLANILMAZ (sunucu varsayılanı okur) → etkin değer varsayılan, "özel" değil
+    expect(t1.override).toEqual({ critical: true, high: true, warning: true, reAlert: false })
+    expect(t1.reAlert).toBe(24)
 
     const t2 = m.find(r => r.tier === 2)   // kendi satırı yok → devralır
     expect(t2).toMatchObject({ inherited: true, days: { critical: 7, high: 15, warning: 30 }, impact: 8 })
@@ -26,6 +28,18 @@ describe('thresholdMatrixModel — buildThresholdMatrix', () => {
 
     // Sınıflandırılmamış = varsayılan(40) − kendi satırı OLMAYAN tier'lar (2,4) = 40 − (8+6) = 26
     expect(unclassified).toBe(26)
+  })
+
+  it('2026-11-13 hata taraması: varsayılan 12 sa, tier satırı kayıtlı 24 sa → tier etkin 12 sa ve özel DEĞİL', () => {
+    const rows = [
+      { id: 1, tier: null, critical_days: 7, high_days: 15, warning_days: 30, re_alert_interval_hours: 12 },
+      { id: 2, tier: 2, critical_days: 7, high_days: 15, warning_days: 30, re_alert_interval_hours: 24, active: true },
+    ]
+    const m = buildThresholdMatrix(rows, {}).rows
+    expect(m[0].reAlert).toBe(12)
+    const t2 = m.find(r => r.tier === 2)
+    expect(t2.reAlert).toBe(12)
+    expect(t2.override.reAlert).toBe(false)
   })
 
   it('kayıt yoksa yerleşik varsayılan; etki null; sınıflandırılmamış null', () => {

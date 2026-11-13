@@ -49,7 +49,7 @@ export default function TeamCoverageBoard({
   const kpiValue = (n, known, part) => ([].concat(part).some((p) => parts[p] === 'loading') ? '…' : known ? n : '—')
   const kpis = [
     { key: 'all', Icon: UsersRound, cls: 'total', label: t('tcb.kpi.all'), value: summary.teams },
-    { key: 'noRecipient', Icon: MailX, cls: 'critical', label: t('tcb.kpi.noRecipient'), value: kpiValue(summary.noRecipient, summary.deliveryKnown, 'groups'), hint: t('tcb.kpi.noRecipientHint') },
+    { key: 'noRecipient', Icon: MailX, cls: 'critical', label: t('tcb.kpi.noRecipient'), value: kpiValue(summary.noRecipient, summary.deliveryKnown, ['groups', 'stats']), hint: t('tcb.kpi.noRecipientHint') },
     { key: 'critGap', Icon: ShieldX, cls: 'critical', label: t('tcb.kpi.critGap'), value: kpiValue(summary.critGap, summary.escalationKnown, ['contacts', 'users']), hint: t('tcb.kpi.critGapHint') },
     { key: 'noDefault', Icon: BellOff, cls: 'warning', label: t('tcb.kpi.noDefault'), value: kpiValue(summary.noDefault, summary.groupKnown, 'groups'), hint: t('tcb.kpi.noDefaultHint') },
     { key: 'noOncall', Icon: CalendarClock, cls: 'paused', label: t('tcb.kpi.noOncall'), value: kpiValue(summary.noOncall, summary.oncallKnown, 'oncall'), hint: t('tcb.kpi.noOncallHint') },
@@ -207,7 +207,12 @@ function Delivery({ r, t }) {
       <span className="flex min-w-0 items-start gap-1 text-xs">
         <Mail aria-hidden="true" className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
         {r.email
-          ? <span className="[overflow-wrap:anywhere]">{r.email}</span>
+          ? <span className="flex min-w-0 flex-col">
+              <span className="[overflow-wrap:anywhere]">{r.email}</span>
+              {r.emailInactiveOnly === true && (
+                <span data-slot="tcb-email-passive" className="font-medium text-destructive">{t('tcb.email.passive')}</span>
+              )}
+            </span>
           : <span className="font-medium text-destructive">{t('team.gap.email.label')}</span>}
       </span>
       <span className="flex min-w-0 items-start gap-1 text-xs">

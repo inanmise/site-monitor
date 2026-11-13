@@ -107,22 +107,32 @@ describe('EscalationContacts', () => {
     expect(toastMock.success).not.toHaveBeenCalled()
   })
 
-  it('düzenleme kaydında payload sayısal alanları ÇEVİRİR ve doğru id ile güncellenir', async () => {
+  it('düzenleme kaydı YALNIZ değişen alanları doğru id ile gönderir (2026-11-13 hata taraması: toplu işlem geri alınmasın)', async () => {
     renderEc()
     await screen.findByText('Ali V')
 
     pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
     fireEvent.click(await screen.findByText(/^Edit$|^Düzenle$/i))
+    fireEvent.change(await screen.findByLabelText(/Webhook URL/i), { target: { value: 'https://hooks.example.com/yeni' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Active$|^Aktif$/ }))
     fireEvent.click(await screen.findByRole('button', { name: /^Save$|^Kaydet$/i }))
 
     await waitFor(() => expect(api.admin.updateContact).toHaveBeenCalled())
     const [id, payload] = api.admin.updateContact.mock.calls[0]
     expect(id).toBe(1)
-    expect(payload.user_id).toBe(7)          // string DEĞİL sayı
-    expect(payload.team_id).toBe(5)
-    expect(payload.role).toBe('PO')
-    expect(payload.min_alert_level).toBe('WARNING')
+    // Açık formun bayat aktiflik / seviye / takım / bağ değerleri GİTMEZ (sunucu gönderilmeyen alana dokunmaz)
+    expect(payload).toEqual({ webhook_url: 'https://hooks.example.com/yeni', active: false })
     expect(api.admin.addContact).not.toHaveBeenCalled()   // düzenleme create'e düşmemeli
+  })
+
+  it('değişiklik yoksa düzenleme isteği HİÇ gitmez, pencere kapanır', async () => {
+    renderEc()
+    await screen.findByText('Ali V')
+    pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
+    fireEvent.click(await screen.findByText(/^Edit$|^Düzenle$/i))
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$|^Kaydet$/i }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Save$|^Kaydet$/i })).toBeNull())
+    expect(api.admin.updateContact).not.toHaveBeenCalled()
   })
 
   it('kaydetme sunucuda reddedilirse modal KAPANMAZ ve liste yeniden yüklenmez', async () => {
@@ -132,6 +142,7 @@ describe('EscalationContacts', () => {
 
     pressMenuTrigger(screen.getAllByRole('button', { name: /actions|işlem/i })[0])
     fireEvent.click(await screen.findByText(/^Edit$|^Düzenle$/i))
+    fireEvent.change(await screen.findByLabelText(/Webhook URL/i), { target: { value: 'https://hooks.example.com/yeni' } })
     const saveBtn = await screen.findByRole('button', { name: /^Save$|^Kaydet$/i })
     fireEvent.click(saveBtn)
 
