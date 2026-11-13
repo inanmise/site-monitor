@@ -7892,7 +7892,7 @@ export const EN = {
   'baseline.minSamples':   'Minimum samples',
   'baseline.minSamplesHint': 'Samples needed for the usual range (5 … window).',
   'baseline.season':       'Seasonality',
-  'baseline.seasonHint':   'Daily / weekly: compares the response time with samples from ±30 min of the same time yesterday (or last week); needs at least one day (week) of history. At most 1500 samples are kept per monitor: daily needs an interval of at least 1 min; weekly collects about 9 samples at the same time — set the minimum samples to 8 or less.',
+  'baseline.seasonHint':   'Daily / weekly: compares the response time with samples from ±30 min of the same time yesterday (or last week); needs at least one day (week) of history. With a short interval (about 6 min or less) the previous day (week) is enough; with a sparse interval few samples fall on the same time, so enough samples take several days (weeks) and no alarm is raised meanwhile.',
   'baseline.season.none':  'None',
   'baseline.season.daily': 'Daily',
   'baseline.season.weekly': 'Weekly',

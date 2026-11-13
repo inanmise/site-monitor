@@ -7907,7 +7907,7 @@ export const TR = {
   'baseline.minSamples':   'En az örnek',
   'baseline.minSamplesHint': 'Olağan aralık için gereken en az örnek (5 … pencere).',
   'baseline.season':       'Mevsimsellik',
-  'baseline.seasonHint':   'Günlük / haftalık: yanıt süresini dünün (ya da geçen haftanın) aynı saatindeki ±30 dk örnekleriyle karşılaştırır; en az bir günlük (haftalık) geçmiş gerekir. İzleme başına en çok 1500 örnek saklanır: günlükte aralık en az 1 dk olmalı; haftalıkta aynı saatte yaklaşık 9 örnek birikir — en az örnek sayısını 8 ya da altına çekin.',
+  'baseline.seasonHint':   'Günlük / haftalık: yanıt süresini dünün (ya da geçen haftanın) aynı saatindeki ±30 dk örnekleriyle karşılaştırır; en az bir günlük (haftalık) geçmiş gerekir. Kısa aralıkta (yaklaşık 6 dk ve altı) önceki gün (hafta) yeter; seyrek aralıkta aynı saate az örnek düştüğü için yeterli örnek birkaç gün (hafta) sürer, bu sürede alarm verilmez.',
   'baseline.season.none':  'Yok',
   'baseline.season.daily': 'Günlük',
   'baseline.season.weekly': 'Haftalık',
