@@ -139,6 +139,8 @@ class BulkTargetedWritesQueriesTest {
     }
 
     @Test
+    @Transactional   // sınıfın NOT_SUPPORTED'ını ezer: denetim deposunda silme yok — satırlar test sonunda GERİ ALINIR (ortak H2 bağlamında
+                     // kalırsa AuditLogRepositoryTest'in sayımlarını bozar; 2026-11-13 PR #111 CI'ı)
     @DisplayName("grup güncelleme izi: kaynak + olay türü + kimlik listesiyle okunur (taşıma satırlarının zamana göre çözümü)")
     void groupUpdateTrail() {
         AuditLog u = new AuditLog();
@@ -152,7 +154,7 @@ class BulkTargetedWritesQueriesTest {
         other.setResourceType("NOTIFICATION_GROUP");
         other.setResourceId("55");
         other.setEventTime("2026-11-13T11:00:00");
-        // Denetim deposu yalnız ekleme yapar (silme yüzeyi yok) — satırlar test bağlamının H2'sinde kalır.
+        // Denetim deposu yalnız ekleme yapar (silme yüzeyi yok) — bu test işlemli, satırlar sonunda geri alınır.
         auditRepo.save(u);
         auditRepo.save(other);
         List<AuditLog> trail = auditRepo.findByResourceTypeAndEventTypeAndResourceIdIn(

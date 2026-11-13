@@ -32,7 +32,10 @@ async function smallTargets(root) {
       const cs = getComputedStyle(b)
       if (cs.visibility === 'hidden' || cs.display === 'none') continue
       if (b.closest('[hidden], [aria-hidden="true"]')) continue
-      if (r.height < 39.5) out.push(`${b.tagName.toLowerCase()}:${(b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 24)} ${Math.round(r.height)}`)
+      // Seçim kutusu (shadcn Checkbox = button[role=checkbox]) 40 px'lik <label> içinde: dokunma alanı etiketin kendisi
+      // (toplu seçim, 2026-11-13 — admin-bulk.spec ile aynı kural)
+      const h = b.getAttribute('role') === 'checkbox' ? Math.max(r.height, b.closest('label')?.getBoundingClientRect().height ?? 0) : r.height
+      if (h < 39.5) out.push(`${b.tagName.toLowerCase()}:${(b.getAttribute('aria-label') || b.textContent || '').trim().slice(0, 24)} ${Math.round(r.height)}`)
     }
     return out
   })
