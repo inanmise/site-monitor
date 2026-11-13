@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertOctagon, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, ChevronDown, Clipboard, Columns3, Download, FileJson,
-  FileSpreadsheet, Play, Search, ShieldAlert, Timer, WrapText, X,
+  AlertOctagon, ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Braces, CheckCircle2, ChevronDown, Clipboard, Columns3, Download,
+  FileJson, FileSpreadsheet, GitCompare, Lock, OctagonX, Play, ScanSearch, Search, ServerCog, ShieldAlert, Sheet as SheetIcon,
+  Table2, Timer, WrapText, X,
 } from 'lucide-react'
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
 import { copyText } from '../../../utils/copyText.js'
+import { downloadBlob } from '../../../utils/csvExport.js'
+import { clientFailure } from '../../../utils/errorMessages.js'
 import { usePagination } from '../../../hooks/usePagination.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
@@ -24,15 +27,18 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import SqlRowDetailModal from '../SqlRowDetailModal.jsx'
+import ChoiceToggle from './ChoiceToggle.jsx'
+import { EXPORT_LIMITS, excelSheet } from './sqlLibraryModel.js'
 import {
-  MAX_ROWS, QUERY_TIMEOUT_SEC, cellText, columnTypes, downloadText, filterRows, formatDuration, offsetToLineCol,
+  MASK_TEXT, MAX_ROWS, QUERY_TIMEOUT_SEC, cellText, columnTypes, downloadText, filterRows, formatDuration, offsetToLineCol,
   parseSqlError, resultColumns, rowsToCsv, rowsToJson, rowsToTsv, sortRows, stampedFile,
 } from './sqlUtils.js'
 
 const TYPE_SHORT = { number: 'num', boolean: 'bool', datetime: 'time', json: 'json', text: 'text', null: 'null' }
 
-/** Hücre içeriği: NULL rozeti, sayı sağa hizalı, mantıksal renkli, JSON eş aralıklı. */
-function Cell({ value, type }) {
+/** Hücre içeriği: NULL rozeti, sayı sağa hizalı, mantıksal renkli, JSON eş aralıklı; maskeli kolon kilitli "••••". */
+function Cell({ value, type, masked = false }) {
+  if (masked && value != null) return <MaskedCell />
   if (value == null) return <Badge variant="outline" className="h-5 border-dashed px-1.5 text-[10px] font-medium text-muted-foreground">NULL</Badge>
   if (typeof value === 'boolean') return <span className={cn('font-mono text-xs', value ? 'text-success' : 'text-muted-foreground')}>{String(value)}</span>
   if (typeof value === 'object') return <span className="font-mono text-xs text-muted-foreground">{cellText(value)}</span>
@@ -40,8 +46,39 @@ function Cell({ value, type }) {
   return String(value)
 }
 
+function MaskedCell() {
+  const t = useT()
+  return (
+    <span data-slot="sql-masked-cell" className="inline-flex items-center gap-1 text-muted-foreground">
+      <Lock aria-hidden="true" className="size-3" /><span aria-hidden="true">{MASK_TEXT}</span><span className="sr-only">{t('sql.mask.cell')}</span>
+    </span>
+  )
+}
+
 /** Hata görünümü: özet + ipucu + konum ("düzenleyicide göster") + teknik ayrıntı (ham metin, kopyalanabilir). */
 function ErrorView({ result, onRevealError, t }) {
+  const code = result.code ?? result.errorInfo?.code
+  // Hassas kolon reddi (A1): sorgu ÇALIŞMADI — kolonun yalnız en dış seçimde çıplak seçilebildiği anlatılır
+  if (code === 'SQL_SENSITIVE_COLUMN') {
+    return (
+      <div className="flex flex-col gap-3 p-3" data-slot="sql-error-sensitive">
+        <AlertBanner tone="danger" role="alert" title={t('sql.err.sensitiveTitle')} icon={Lock} className="mb-0">
+          <span data-slot="sql-error-summary" className="block break-words">{result.error}</span>
+          <span className="mt-1 block text-xs">{t('sql.err.sensitiveHint')}</span>
+        </AlertBanner>
+      </div>
+    )
+  }
+  if (code === 'SQL_PARAM_MISSING' || code === 'SQL_PARAM_INVALID' || code === 'SQL_PARAM_TOO_MANY') {
+    return (
+      <div className="flex flex-col gap-3 p-3" data-slot="sql-error-param">
+        <AlertBanner tone="danger" role="alert" title={t('sql.err.paramTitle')} icon={Braces} className="mb-0">
+          <span data-slot="sql-error-summary" className="block break-words">{result.error}</span>
+          <span className="mt-1 block text-xs">{t('sql.err.paramHint')}</span>
+        </AlertBanner>
+      </div>
+    )
+  }
   const info = parseSqlError(result.error, { rejected: result.success === false, executedSql: result.executedSql || '', sql: result.ranSql || '' })
   const title = {
     guard: t('sql.err.guardTitle'), grammar: t('sql.err.grammarTitle'),
@@ -91,13 +128,18 @@ function ErrorView({ result, onRevealError, t }) {
  * sayfalama (usePagination + PaginationBar). Satıra tıklama / Enter → satır ayrıntısı (önceki/sonraki gezintisiyle);
  * Ctrl/⌘+C odaklı satırı TSV kopyalar. Telefonda tablo yerine satır kartları (ilk 3 alan + "N alan daha").
  */
-export default function ResultsPanel({ result, running, elapsedMs, phone = false, samples, onPickSample, onRevealError, className }) {
+export default function ResultsPanel({
+  result, running, elapsedMs, phone = false, samples, onPickSample, onRevealError, className,
+  resultView = 'table', onViewChange, chartSlot = null, planSlot = null, compareSlot = null,
+  onServerExport = null, serverExport = null, onCancelExport, onStop, stopping = false,
+}) {
   const t = useT()
   const locale = useDateLocale()
   const toast = useToast()
-  const rows = useMemo(() => (result && !result.error && Array.isArray(result.rows) ? result.rows : []), [result])
+  const rows = useMemo(() => (result && !result.error && !result.cancelled && Array.isArray(result.rows) ? result.rows : []), [result])
   const cols = useMemo(() => resultColumns(rows), [rows])
   const types = useMemo(() => columnTypes(rows, cols), [rows, cols])
+  const masked = useMemo(() => new Set(Array.isArray(result?.masked_columns) ? result.masked_columns : []), [result])
   const rowNo = useMemo(() => new Map(rows.map((r, i) => [r, i + 1])), [rows])
 
   const [filter, setFilter] = useState('')
@@ -129,9 +171,24 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
     if (await copyText(text)) toast.success(t('sql.res.copied', list.length))
     else toast.error(t('sql.res.copyFailed'))
   }
-  const exportFile = (kind) => {
-    if (kind === 'csv') downloadText(stampedFile('query', 'csv'), rowsToCsv(view, visibleCols), 'text/csv')
-    else downloadText(stampedFile('query', 'json'), rowsToJson(view, visibleCols), 'application/json')
+  const exportFile = async (kind) => {
+    if (kind === 'xlsx') {
+      try {
+        const mod = await import('../../../utils/xlsxWriter.js')
+        const bytes = mod.buildXlsx([excelSheet(view, visibleCols, types)])
+        if (!downloadBlob(stampedFile('query', 'xlsx'), new Blob([bytes], { type: mod.XLSX_MIME }))) { toast.error(t('sql.res.downloadFailed')); return }
+      } catch (e) {
+        const f = clientFailure(e, { fallback: t('sql.res.xlsxFailed'), chunk: t('te.pageUpdated') })
+        toast.error(f.message, { details: f.details })
+        return
+      }
+      toast.success(t('sql.res.exported', 'Excel', view.length))
+      return
+    }
+    const ok = kind === 'csv'
+      ? downloadText(stampedFile('query', 'csv'), rowsToCsv(view, visibleCols), 'text/csv')
+      : downloadText(stampedFile('query', 'json'), rowsToJson(view, visibleCols), 'application/json')
+    if (ok === false) { toast.error(t('sql.res.downloadFailed')); return }
     toast.success(t('sql.res.exported', kind.toUpperCase(), view.length))
   }
   const openAt = (i) => setDetail(i)
@@ -139,9 +196,17 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
   const hasRows = rows.length > 0
   const capped = hasRows && (result?.rowCount ?? rows.length) >= MAX_ROWS
   const status = running ? (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums" aria-live="polite">
+    <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground tabular-nums" aria-live="polite">
       <Timer aria-hidden="true" className="size-3.5" />{t('sql.res.running', formatDuration(elapsedMs))}
+      {onStop && (
+        <Button type="button" variant="outline" size="sm" onClick={onStop} disabled={stopping} data-slot="sql-stop-inline"
+          className="h-7 text-destructive pointer-coarse:h-10">
+          <OctagonX /> {stopping ? t('sql.stop.stopping') : t('sql.stop.label')}
+        </Button>
+      )}
     </span>
+  ) : result?.cancelled ? (
+    <Badge variant="outline" className="gap-1 text-muted-foreground" data-slot="sql-cancelled-badge"><OctagonX aria-hidden="true" />{t('sql.stop.stopped')}</Badge>
   ) : result?.error ? (
     <Badge variant="destructive" className="gap-1"><AlertOctagon aria-hidden="true" />{t('sql.res.failed')}</Badge>
   ) : result ? (
@@ -151,6 +216,9 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
       </Badge>
       <Badge variant="outline" className="gap-1 font-normal text-muted-foreground tabular-nums"><Timer aria-hidden="true" />{formatDuration(result.durationMs)}</Badge>
       {filter && <Badge variant="secondary" className="font-normal tabular-nums">{t('sql.res.matching', view.length.toLocaleString(locale))}</Badge>}
+      {masked.size > 0 && (
+        <Badge variant="outline" className="gap-1 font-normal" data-slot="sql-masked-badge"><Lock aria-hidden="true" />{t('sql.mask.badge', masked.size)}</Badge>
+      )}
     </span>
   ) : null
 
@@ -204,18 +272,43 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
         <DropdownMenuContent align="end" className="z-(--z-menu) w-64">
           <DropdownMenuLabel className="font-normal text-muted-foreground">{t('sql.res.exportScope', view.length.toLocaleString(locale))}</DropdownMenuLabel>
           <DropdownMenuItem onSelect={() => exportFile('csv')}><FileSpreadsheet /> {t('sql.res.downloadCsv')}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => exportFile('xlsx')} data-slot="sql-export-xlsx"><SheetIcon /> {t('sql.res.downloadXlsx')}</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => exportFile('json')}><FileJson /> {t('sql.res.downloadJson')}</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => copyRows(view, 'tsv')}><Clipboard /> {t('sql.res.copyTsv')}</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => copyRows(view, 'json')}><Clipboard /> {t('sql.res.copyJson')}</DropdownMenuItem>
+          {onServerExport && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="font-normal whitespace-normal text-muted-foreground">{t('sql.exp.fullHeading')}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => onServerExport('csv')} disabled={Boolean(serverExport?.busy)} data-slot="sql-export-full-csv">
+                <ServerCog /> {t('sql.exp.fullCsv', EXPORT_LIMITS.csv.toLocaleString(locale))}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onServerExport('xlsx')} disabled={Boolean(serverExport?.busy)} data-slot="sql-export-full-xlsx">
+                <ServerCog /> {t('sql.exp.fullXlsx', EXPORT_LIMITS.json.toLocaleString(locale))}
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
   )
 
   let body
-  if (running) {
+  if (resultView === 'chart' && !running) {
+    body = chartSlot
+  } else if (resultView === 'plan') {
+    body = planSlot
+  } else if (resultView === 'compare' && !running) {
+    body = compareSlot
+  } else if (running) {
     body = <LoadingBlock label={t('sql.res.running', formatDuration(elapsedMs))} size={20} />
+  } else if (result?.cancelled) {
+    body = (
+      <div data-slot="sql-result-cancelled">
+        <StatusBlock icon={OctagonX} title={t('sql.stop.stoppedTitle')} description={t('sql.stop.stoppedHint')} className="py-8" />
+      </div>
+    )
   } else if (!result) {
     body = (
       <StatusBlock icon={Play} title={t('sql.res.emptyTitle')} description={t('sql.res.emptyHint')} className="py-8"
@@ -253,7 +346,7 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
                 {lead.map((c) => (
                   <span key={c} className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)] gap-2 text-sm">
                     <span className="truncate font-mono text-xs text-muted-foreground">{c}</span>
-                    <span className="min-w-0 truncate"><Cell value={row[c]} type={types[c]} /></span>
+                    <span className="min-w-0 truncate"><Cell value={row[c]} type={types[c]} masked={masked.has(c)} /></span>
                   </span>
                 ))}
               </Button>
@@ -276,11 +369,14 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
                   <TableHead key={c} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
                     className={cn('h-auto p-0', types[c] === 'number' && 'text-right')}>
                     <Button type="button" variant="ghost" size="sm" onClick={() => toggleSort(c)}
-                      aria-label={t('sql.res.sortBy', c, TYPE_SHORT[types[c]] ?? types[c])}
+                      aria-label={t('sql.res.sortBy', c, masked.has(c) ? t('sql.mask.short') : (TYPE_SHORT[types[c]] ?? types[c]))}
                       className={cn('h-auto w-full gap-1.5 rounded-none px-3 py-1.5 font-normal', types[c] === 'number' ? 'justify-end' : 'justify-start')}>
                       <span className="flex min-w-0 flex-col items-start leading-tight">
-                        <span className="max-w-[18rem] truncate text-xs font-semibold text-foreground">{c}</span>
-                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">{TYPE_SHORT[types[c]] ?? types[c]}</span>
+                        <span className="max-w-[18rem] text-xs font-semibold whitespace-normal text-foreground [overflow-wrap:anywhere]">{c}</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] tracking-wide text-muted-foreground uppercase">
+                          {masked.has(c) && <Lock aria-hidden="true" className="size-3" data-slot="sql-masked-head" />}
+                          {masked.has(c) ? t('sql.mask.short') : (TYPE_SHORT[types[c]] ?? types[c])}
+                        </span>
                       </span>
                       <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground/60')} />
                     </Button>
@@ -307,8 +403,8 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
                     <TableCell key={c}
                       className={cn('px-3 align-top', types[c] === 'number' && 'text-right tabular-nums',
                         wrap ? 'max-w-[28rem] break-words whitespace-pre-wrap' : 'max-w-[20rem] truncate')}
-                      title={!wrap && row[c] != null ? cellText(row[c]) : undefined}>
-                      <Cell value={row[c]} type={types[c]} />
+                      title={!wrap && row[c] != null && !masked.has(c) ? cellText(row[c]) : undefined}>
+                      <Cell value={row[c]} type={types[c]} masked={masked.has(c)} />
                     </TableCell>
                   ))}
                   <TableCell className="px-1 py-0.5 align-top" onClick={(e) => e.stopPropagation()}>
@@ -333,22 +429,46 @@ export default function ResultsPanel({ result, running, elapsedMs, phone = false
       className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm', className)}>
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
         <h3 className="text-sm font-semibold">{t('sql.res.title')}</h3>
+        {onViewChange && (
+          <ChoiceToggle ariaLabel={t('sql.view.label')} value={resultView} onChange={onViewChange} options={[
+            { value: 'table', label: t('sql.view.table'), icon: Table2, hideLabel: phone, ariaLabel: t('sql.view.table') },
+            { value: 'chart', label: t('sql.view.chart'), icon: BarChart3, hideLabel: phone, ariaLabel: t('sql.view.chart') },
+            { value: 'plan', label: t('sql.view.plan'), icon: ScanSearch, hideLabel: phone, ariaLabel: t('sql.view.plan') },
+            { value: 'compare', label: t('sql.view.compare'), icon: GitCompare, hideLabel: phone, ariaLabel: t('sql.view.compare') },
+          ]} />
+        )}
         {status}
         {result?.finishedAt && !running && (
           <span className="text-xs text-muted-foreground">{new Date(result.finishedAt).toLocaleTimeString(locale)}</span>
         )}
-        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">{resultView === 'table' && toolbar}</div>
       </div>
-      {capped && !running && (
+      {serverExport?.busy && (
+        <div data-slot="sql-export-busy" className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-xs">
+          <Timer aria-hidden="true" className="size-3.5 text-muted-foreground" />
+          <span role="status" className="min-w-0">{t('sql.exp.busy', serverExport.format === 'csv' ? 'CSV' : 'Excel')}</span>
+          {onCancelExport && (
+            <Button type="button" variant="outline" size="sm" className="ml-auto h-7 pointer-coarse:h-10" onClick={onCancelExport}>
+              <OctagonX /> {t('sql.stop.label')}
+            </Button>
+          )}
+        </div>
+      )}
+      {resultView === 'table' && masked.size > 0 && hasRows && !running && (
+        <p data-slot="sql-masked-note" className="m-0 flex flex-wrap items-center gap-1.5 border-b px-3 py-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          <Lock aria-hidden="true" className="size-3.5 shrink-0" />{t('sql.mask.note', [...masked].join(', '))}
+        </p>
+      )}
+      {resultView === 'table' && capped && !running && (
         <AlertBanner tone="warning" title={t('sql.res.cappedTitle', MAX_ROWS.toLocaleString(locale))} className="m-3 mb-0">
           {t('sql.res.cappedHint')}
         </AlertBanner>
       )}
       <div className={cn('flex min-h-0 flex-1 flex-col', phone && 'overflow-y-auto')}>{body}</div>
-      {hasRows && !running && view.length > 0 && (
+      {resultView === 'table' && hasRows && !running && view.length > 0 && (
         <div className="shrink-0 border-t px-3 py-2"><PaginationBar {...pager} /></div>
       )}
-      {result?.executedSql && !running && (
+      {resultView === 'table' && result?.executedSql && !running && (
         <Collapsible className="shrink-0 border-t">
           <CollapsibleTrigger asChild>
             <Button type="button" variant="ghost" size="sm" className="group/exec h-8 w-full justify-start rounded-none px-3 text-xs font-normal text-muted-foreground">

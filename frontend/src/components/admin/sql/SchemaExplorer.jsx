@@ -25,10 +25,12 @@ function KeyTag({ kind, title }) {
  * Kolon satırında PK/FK rozeti: FK ilişki yanıtından (gerçek FK + `*_id` çıkarımı, hedef tabloyla), PK tablo ayrıntısı
  * açıldıysa oradan (liste ucu PK/FK döndürmüyor — API boşluğu). Tablo adına dokunmak `SELECT * … LIMIT 100` yazar,
  * kolona dokunmak adını imlecin yerine ekler. Satır menüsü: ayrıntı, diyagramda göster, adı ekle.
+ * Veri sözlüğü (2026-11-13, D3): `dictionary` (`{ tables: { ad: { description, columns: { kolon: açıklama } } } }`) varsa
+ * tablo ve kolon açıklamaları adın altında (sararak) görünür ve aramaya dahil olur; uç yoksa (eski sunucu) hiç çizilmez.
  */
 export default function SchemaExplorer({
   tables, loading, error, onRefresh, columnsMap, onLoadColumns, fkMap, pkMap,
-  onQuery, onInsert, onDetails, onDiagram, className, headerless = false,
+  onQuery, onInsert, onDetails, onDiagram, className, headerless = false, dictionary = null,
 }) {
   const t = useT()
   const locale = useDateLocale()
@@ -40,8 +42,9 @@ export default function SchemaExplorer({
     const needle = q.trim().toLowerCase()
     if (!needle) return tables || []
     return (tables || []).filter((tb) => tb.table_name.toLowerCase().includes(needle)
-      || (columnsMap?.[tb.table_name] || []).some((c) => c.column_name.toLowerCase().includes(needle)))
-  }, [tables, q, columnsMap])
+      || (columnsMap?.[tb.table_name] || []).some((c) => c.column_name.toLowerCase().includes(needle))
+      || String(dictionary?.tables?.[tb.table_name]?.description || '').toLocaleLowerCase().includes(needle))
+  }, [tables, q, columnsMap, dictionary])
 
   const toggle = async (name) => {
     const next = new Set(open)
@@ -115,6 +118,7 @@ export default function SchemaExplorer({
               const changed = relativeFrom(tb.last_change_at, locale)
               const fks = fkMap?.get(name)
               const pks = pkMap?.[name] ? new Set(pkMap[name]) : null
+              const dict = dictionary?.tables?.[name] || null
               return (
                 <li key={name} data-state={isOpen ? 'open' : undefined} className="data-[state=open]:bg-muted/30">
                   <div className="flex min-w-0 items-center gap-0.5 px-1.5 hover:bg-muted/50">
@@ -126,12 +130,15 @@ export default function SchemaExplorer({
                     <SimpleTooltip content={metaTip(tb)} side="right">
                       <Button type="button" variant="ghost" onClick={() => onQuery(name)} aria-label={t('sql.ex.queryTable', name)}
                         className="h-auto min-w-0 flex-1 flex-col items-start gap-0 px-1.5 py-1.5 text-left font-normal hover:bg-transparent pointer-coarse:min-h-10">
-                        <span className="w-full truncate font-mono text-[13px] font-medium">{name}</span>
+                        <span className="w-full font-mono text-[13px] font-medium whitespace-normal [overflow-wrap:anywhere]">{name}</span>
                         <span className="flex w-full flex-wrap gap-x-2 text-[11px] leading-tight text-muted-foreground">
                           {rows != null && <span className="tabular-nums">{t('sql.diag.rowsShort', rows)}</span>}
                           {cols && <span className="tabular-nums">{t('sql.ex.colsShort', cols.length)}</span>}
                           {changed && <span>{t('sql.ex.changed', changed)}</span>}
                         </span>
+                        {dict?.description && (
+                          <span data-slot="sql-dict-table" className="w-full text-[11px] leading-snug whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">{dict.description}</span>
+                        )}
                       </Button>
                     </SimpleTooltip>
                     <SimpleTooltip content={t('sql.td.open')}>
@@ -153,16 +160,18 @@ export default function SchemaExplorer({
                       ) : (cols || []).map((c) => {
                         const fk = fks?.get(c.column_name)
                         const kind = pks?.has(c.column_name) ? 'pk' : fk ? 'fk' : null
+                        const colDesc = dict?.columns?.[c.column_name] || null
                         return (
                           <li key={c.column_name}>
                             <Button type="button" variant="ghost" size="xs" onClick={() => onInsert(c.column_name)}
                               aria-label={t('sql.ex.insertCol', `${name}.${c.column_name}`)}
                               title={fk ? `${c.column_name} → ${fk.to}${fk.inferred ? ` (${t('sql.diag.inferredShort')})` : ''}` : c.data_type}
-                              className="h-7 w-full justify-start gap-2 px-2 font-normal pointer-coarse:h-9">
+                              className="h-auto min-h-7 w-full flex-wrap justify-start gap-x-2 gap-y-0 px-2 py-1 font-normal pointer-coarse:min-h-9">
                               <KeyTag kind={kind} />
-                              <span className="min-w-0 flex-1 truncate text-left font-mono text-xs">{c.column_name}</span>
-                              {fk && <span className="max-w-[40%] truncate font-mono text-[10.5px] text-emerald-700 dark:text-emerald-300">→ {fk.to}</span>}
+                              <span className="min-w-0 flex-1 text-left font-mono text-xs whitespace-normal [overflow-wrap:anywhere]">{c.column_name}</span>
+                              {fk && <span className="max-w-[45%] font-mono text-[10.5px] whitespace-normal text-emerald-700 [overflow-wrap:anywhere] dark:text-emerald-300">→ {fk.to}</span>}
                               {!fk && <span className="shrink-0 text-[10.5px] text-muted-foreground">{shortType(c.data_type)}{c.is_nullable === 'YES' ? '?' : ''}</span>}
+                              {colDesc && <span data-slot="sql-dict-column" className="basis-full pl-[30px] text-left text-[10.5px] leading-snug whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">{colDesc}</span>}
                             </Button>
                           </li>
                         )

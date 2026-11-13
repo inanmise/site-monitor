@@ -220,6 +220,79 @@ async function downloadIncidentsCsv(qs) {
 }
 
 /**
+ * SQL Playground istek gövdesi (2026-11-13): eski çağrı `{ sql }` aynen; çalıştırma kimliği / parametreler / ANALYZE /
+ * biçim yalnız verilirse eklenir (eski sunucu tanımadığı alanları yok sayar).
+ */
+function sqlRunBody(sql, opts = {}) {
+  const body = { sql }
+  if (opts.runId) body.run_id = opts.runId
+  if (opts.params && Object.keys(opts.params).length) body.params = opts.params
+  if (opts.analyze) body.analyze = true
+  if (opts.format) body.format = opts.format
+  return body
+}
+
+/**
+ * SQL Playground büyük dışa aktarma (2026-11-13, C3): ham `fetch` (gövde akışla gelir). CSV → ortak indirme (`downloadBlob`);
+ * JSON → gövde çağırana (Excel istemcide üretilir). 401 oturum yolu, 429 bekleme önerisi (`Retry-After`), JSON olmayan /
+ * ağ hatası çevrilmiş metinle; `status` yanıtta (eski sunucu 404 / 405 ayırt edilsin). Başlıklar: `X-Export-Rows`,
+ * `X-Export-Truncated`, `X-Export-Max-Rows`, `X-Masked-Columns`.
+ */
+async function sqlExportFile(body, { signal } = {}) {
+  let res
+  try {
+    res = await fetch(`${BASE}/admin/sql/export`, {
+      method: 'POST', credentials: 'include', ...(signal ? { signal } : {}),
+      headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() }, body: JSON.stringify(body),
+    })
+  } catch (e) {
+    if (e?.name === 'AbortError') return { success: false, status: 0, code: 'ABORTED', error: null }
+    return networkFailurePayload()
+  }
+  if (!res.ok) {
+    recordFailure('/admin/sql/export', res.status)
+    if (res.status === 401) pingSessionPath()
+    let errBody = null
+    try { errBody = await res.json() } catch { errBody = null }
+    if (!errBody || typeof errBody !== 'object' || Array.isArray(errBody)) {
+      const p = nonJsonErrorPayload(res.status, res)
+      p.status = res.status
+      return p
+    }
+    const normalized = normalizeErrorBody(errBody, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false
+    normalized.status = res.status
+    const ra = Number(headerOf(res, 'Retry-After'))
+    if (Number.isFinite(ra) && ra > 0) normalized.retryAfter = ra
+    return normalized
+  }
+  const rows = Number(headerOf(res, 'X-Export-Rows'))
+  const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
+  const meta = {
+    rows: Number.isFinite(rows) ? rows : null,
+    truncated: String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true',
+    maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
+    masked: String(headerOf(res, 'X-Masked-Columns') || '').split(',').map((s) => s.trim()).filter(Boolean),
+  }
+  if (body?.format === 'json') {
+    let json
+    try { json = await res.json() } catch { return nonJsonErrorPayload(res.status, res) }
+    return { success: true, json, ...meta }
+  }
+  let blob
+  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  const p = (n) => String(n).padStart(2, '0')
+  const d = new Date()
+  const name = plain ? plain[1] : `sql-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
+  if (!downloadBlob(name, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return { success: true, name, ...meta }
+}
+
+/**
  * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
  * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
  */
@@ -2206,9 +2279,21 @@ export const api = {
     sqlListColumns: (table) => request(`/admin/sql/tables/${encodeURIComponent(table)}/columns`),
     sqlTableDetails: (table) => request(`/admin/sql/tables/${encodeURIComponent(table)}/details`),
     sqlRelations:   () => request('/admin/sql/relationships'),
-    sqlExecute:     (sql) => request('/admin/sql/execute', { method: 'POST', body: JSON.stringify({ sql }) }),
+    // `opts` (2026-11-13): { runId, params } — çalıştırma kimliği (Durdur) ve `:ad` parametreleri; verilmezse gövde eskisi gibi { sql }
+    sqlExecute:     (sql, opts) => request('/admin/sql/execute', { method: 'POST', body: JSON.stringify(sqlRunBody(sql, opts)) }),
     sqlHistory:     () => request('/admin/sql/history'),
     sqlSamples:     () => request('/admin/sql/samples'),
+    // SQL Playground zenginleştirme (2026-11-13). withStatus: eski sunucu (uç yok) 404 / 405 → çağıran "bu sürümde yok" der
+    sqlCancel:      (runId) => request('/admin/sql/cancel', { method: 'POST', body: JSON.stringify({ run_id: runId }), withStatus: true, timeoutMs: 20000 }),
+    sqlExplain:     (sql, opts) => request('/admin/sql/explain', { method: 'POST', body: JSON.stringify(sqlRunBody(sql, opts)), withStatus: true }),
+    sqlExport:      (sql, opts = {}) => sqlExportFile(sqlRunBody(sql, opts), { signal: opts.signal }),
+    sqlHistoryPage: (qs) => request(`/admin/sql/history?${qs}`, { withStatus: true }),
+    sqlSavedList:   (qs) => request(`/admin/sql/saved?${qs}`, { withStatus: true }),
+    sqlSavedGet:    (id) => request(`/admin/sql/saved/${encodeURIComponent(id)}`, { withStatus: true }),
+    sqlSavedCreate: (body) => request('/admin/sql/saved', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    sqlSavedUpdate: (id, body) => request(`/admin/sql/saved/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    sqlSavedDelete: (id) => request(`/admin/sql/saved/${encodeURIComponent(id)}`, { method: 'DELETE', withStatus: true }),
+    sqlDictionary:  () => request('/admin/sql/dictionary', { withStatus: true }),
 
     // System health
     getSystemHealth: () => request('/admin/system'),

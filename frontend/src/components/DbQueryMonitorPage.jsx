@@ -33,6 +33,7 @@ import {
   LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat, Network, CircleCheckBig, Wand2, Layers,
 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
+import { takeDbQueryDraft } from '../utils/sqlDbQueryDraft.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -258,6 +259,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [tplOpen, setTplOpen] = useState(false)
   const [advOpen, setAdvOpen] = useState(false)
   const [wizard, setWizard] = useState(null)       // { key, initialForm } — Hızlı ekle sihirbazı açık
+  // SQL Playground'dan gelen taslak (2026-11-13, D4): form bir kez SQL dolu açılır; bant bağlantı türü PostgreSQL değilse uyarır
+  const [fromPlayground, setFromPlayground] = useState(false)
+  const playgroundDraftTaken = useRef(false)
   const [bulkOpen, setBulkOpen] = useState(null)   // { baseBody, baseName, teamId, dbType, profileId, succeeded } — toplu oluşturma
   const [detailTab, setDetailTab] = useState('summary')
   const deepLinkTab = useDeepLinkTab('summary')
@@ -456,6 +460,17 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       ...(tpl.interval_seconds > 0 ? { schedule: { ...DEFAULT_SCHEDULE, interval_seconds: tpl.interval_seconds } } : {}),
     })
   }
+  // D4: liste ilk kez yüklenince (taslak tek kullanımlık — okununca silinir) yeni izleme formu SQL dolu açılır
+  useEffect(() => {
+    if (playgroundDraftTaken.current || loading || !canWrite) return
+    playgroundDraftTaken.current = true
+    const draft = takeDbQueryDraft()
+    if (!draft) return
+    openNew({ sqlText: draft.sql })
+    setFromPlayground(true)
+  }, [loading, canWrite]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!modal) setFromPlayground(false) }, [modal])
+
   function openEdit(row) {
     // Güncel satır: detay kopyası bayat olabilir — form ondan kurulursa kayıt eski değerleri sessizce geri yazar.
     const m = freshestRow(row, monitors)
@@ -966,6 +981,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           {formTeamId == null && !connectionLocked && <FormHint full={false}>{t('dbq.form.connectionNeedsTeam')}</FormHint>}
         </DbqSection>
 
+        {fromPlayground && modal === 'new' && (
+          <div data-slot="dbq-from-playground" data-tone={form.dbType && form.dbType !== 'POSTGRESQL' ? 'warning' : 'info'}>
+            <AlertBanner tone={form.dbType && form.dbType !== 'POSTGRESQL' ? 'warning' : 'info'} className="mb-0">
+              {form.dbType && form.dbType !== 'POSTGRESQL' ? t('dbq.fromSql.otherType') : t('dbq.fromSql.info')}
+            </AlertBanner>
+          </div>
+        )}
         <QuerySection form={form} onSqlChange={onSqlChange} sqlError={fe.errors.sql_text} violations={sqlViolations}
           teamId={formTeamId} dbType={form.dbType || null}
           onPickTemplate={onPickTemplate} onSaveTemplate={() => setSaveTplOpen(true)}
