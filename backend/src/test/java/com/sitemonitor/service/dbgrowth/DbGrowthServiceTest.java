@@ -186,6 +186,25 @@ class DbGrowthServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("boş tablo: bayat histogram en eski kayıt sayılmaz → 'temizlik geride' / doyma yok (canlı veri, 2026-11-13)")
+    void emptyTableIgnoresStaleHistogram() {
+        source.dbBytes = 2 * GB;
+        source.tables = List.of(new DbSizeSource.TableSize("scripted_drafts", 139_264, 32_768, 65_536, 0, 0, 0, 0));
+        // satırlar silinmiş, pg_stats 90 gün önceki değerleri tutuyor
+        source.histograms.put("scripted_drafts.updated_at",
+                List.of(NOW.minus(91, ChronoUnit.DAYS).toString().substring(0, 19), NOW.minus(60, ChronoUnit.DAYS).toString().substring(0, 19)));
+        Map<String, Object> v = svc.overview(90, false);
+        Map<String, Object> t = ((List<Map<String, Object>>) v.get("tables")).get(0);
+        assertThat(t.get("name")).isEqualTo("scripted_drafts");
+        assertThat(t.get("oldest_at")).isNull();
+        assertThat(t.get("oldest_source")).isNull();
+        assertThat(t.get("saturation_pct")).isNull();
+        assertThat((List<Map<String, Object>>) v.get("findings"))
+                .noneMatch(f -> "CLEANUP_BEHIND".equals(f.get("code")) && "scripted_drafts".equals(f.get("table")));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("hızı hiç bilinmeyen tablo (eğim yok, sayaç / histogram / en eski yok) çökmez: büyüme null, tahmin bayrağı yok")
     void tableWithoutAnyRate() {
         capacity(100);

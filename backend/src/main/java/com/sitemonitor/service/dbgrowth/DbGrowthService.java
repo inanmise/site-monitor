@@ -378,7 +378,9 @@ public class DbGrowthService {
             String oldestAt = last.oldestAt();
             String oldestSource = oldestAt == null ? null : "min";
             List<String> bounds = age == null ? null : histograms.get(age.table() + "." + age.timeColumn());
-            if (oldestAt == null && bounds != null && !bounds.isEmpty()) {
+            // Boş tabloda MIN null'dır ve doğrudur: pg_stats histogramı silinen satırlardan kalır (bayat) — ona düşmek
+            // boş tabloya "temizlik geride" / doyma yazıyordu (canlı veride scripted_drafts, 2026-11-13).
+            if (oldestAt == null && bounds != null && !bounds.isEmpty() && last.live() != null && last.live() > 0) {
                 oldestAt = normalizeBound(bounds.get(0));
                 oldestSource = "histogram";
             }
