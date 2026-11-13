@@ -293,6 +293,9 @@ public class SqlPlaygroundService {
     /** Satır alıcısı (dışa aktarım). {@code row} false dönerse okuma durur. */
     public interface RowSink {
         void columns(String[] labels) throws java.io.IOException;
+
+        /** Tekilleştirmede yeniden adlandırılan kolonlar (yalnız bilgi; varsayılan yok sayar). */
+        default void renamedColumns(List<Map<String, String>> renamed) { }
         boolean row(Object[] values) throws java.io.IOException;
     }
 
@@ -368,10 +371,12 @@ public class SqlPlaygroundService {
         Prepared p = prepareOrRecord(req, executedBy);
         String capped = enforceLimit(p.sanitized(), MAX_ROWS);
         List<Map<String, Object>> rows = new ArrayList<>();
+        List<List<Map<String, String>>> renamedOut = new ArrayList<>(1);
         RunOutcome o = run(capped, req.params(), req.runId(), executedBy, "execute", QUERY_TIMEOUT_SEC, 0,
                 p.verdict().mentionsSensitive(), new RowSink() {
                     String[] labels;
                     @Override public void columns(String[] l) { labels = l; }
+                    @Override public void renamedColumns(List<Map<String, String>> r) { renamedOut.add(r); }
                     @Override public boolean row(Object[] values) {
                         Map<String, Object> m = new org.springframework.util.LinkedCaseInsensitiveMap<>(values.length);
                         for (int i = 0; i < values.length; i++) m.putIfAbsent(labels[i], values[i]);
@@ -397,6 +402,9 @@ public class SqlPlaygroundService {
         result.put("masked_columns", o.maskedColumns());
         result.put("cancelled",      o.cancelled());
         result.put("params",         p.paramNames().size());
+        // Sıralı, TEKİL kolon adları (satır anahtarları bunlar) + yeniden adlandırılanlar (aynı adlı kolonlar)
+        result.put("columns",         o.labels() == null ? List.of() : List.of(o.labels()));
+        result.put("renamed_columns", renamedOut.isEmpty() ? List.of() : renamedOut.get(0));
         return result;
     }
 
@@ -646,6 +654,7 @@ public class SqlPlaygroundService {
             labelsOut[0] = cols.labels();
             try {
                 sink.columns(cols.labels());
+                sink.renamedColumns(cols.renamed());
                 int n = cols.size();
                 while (true) {
                     reg.checkContinue(run, deadline);

@@ -64,8 +64,12 @@ public final class SqlResultColumns {
     private final int[] kinds;
     private final Set<String> maskedLabels = new LinkedHashSet<>();
 
-    private SqlResultColumns(String[] labels, boolean[] masked, int[] kinds) {
+    /** Tekilleştirmede yeniden adlandırılan kolonlar: {@code {original, name}} (yoksa boş). */
+    private final List<java.util.Map<String, String>> renamed;
+
+    private SqlResultColumns(String[] labels, boolean[] masked, int[] kinds, List<java.util.Map<String, String>> renamed) {
         this.labels = labels;
+        this.renamed = renamed;
         this.masked = masked;
         this.kinds = kinds;
         for (int i = 0; i < labels.length; i++) if (masked[i]) maskedLabels.add(labels[i]);
@@ -109,7 +113,8 @@ public final class SqlResultColumns {
                     || schema.isSensitiveName(labels[i]);
             kinds[i] = timeKind(md, col);
         }
-        return new SqlResultColumns(labels, masked, kinds);
+        List<java.util.Map<String, String>> renamed = new ArrayList<>();
+        return new SqlResultColumns(uniqueLabels(labels, renamed), masked, kinds, java.util.Collections.unmodifiableList(renamed));
     }
 
     public int size() { return labels.length; }
@@ -117,6 +122,49 @@ public final class SqlResultColumns {
     public String label(int i) { return labels[i]; }
 
     public String[] labels() { return labels.clone(); }
+
+    /** Tekilleştirmede yeniden adlandırılan kolonlar ({@code [{original, name}]}, yoksa boş). */
+    public List<java.util.Map<String, String>> renamed() { return renamed; }
+
+    /**
+     * Sonuç kolon adlarını tekilleştirir (2026-11-13): {@code SELECT a.id, b.id} iki kolonu aynı adla döndürür ve satır
+     * nesnesinde ikinci değer birincinin üstüne yazılırdı (sessiz veri kaybı). İlk geçiş aynen kalır, sonrakiler
+     * {@code ad_2}, {@code ad_3} … — büyük/küçük harf duyarsız (satır haritası öyle), sonuçta ZATEN var olan bir adla ya da
+     * daha önce verilmiş bir adla çakışmaz. Döngü sınırlı: n kolonda en çok 2n + 1 aday denenir (engel ≤ 2n ad).
+     * Benzersiz kolonlu sorguda dizi birebir aynı döner.
+     */
+    static String[] uniqueLabels(String[] raw, List<java.util.Map<String, String>> renamedOut) {
+        int n = raw.length;
+        String[] out = new String[n];
+        Set<String> original = new java.util.HashSet<>();
+        for (String l : raw) original.add(key(l));
+        Set<String> used = new java.util.HashSet<>();
+        java.util.Map<String, Integer> nextSuffix = new java.util.HashMap<>();   // aynı adın sonraki geçişi kaldığı yerden
+        for (int i = 0; i < n; i++) {
+            String l = raw[i] == null ? "" : raw[i];
+            if (used.add(key(l))) {
+                out[i] = l;
+                continue;
+            }
+            String name = null;
+            int k = nextSuffix.getOrDefault(key(l), 2);
+            for (; k <= 2 * n + 2 && name == null; k++) {
+                String cand = l + "_" + k;
+                String ck = key(cand);
+                if (!original.contains(ck) && !used.contains(ck)) name = cand;
+            }
+            nextSuffix.put(key(l), k);
+            if (name == null) name = l + "_" + (i + 1) + "_" + n;   // erişilemez — yine de tekil bir ad
+            used.add(key(name));
+            out[i] = name;
+            renamedOut.add(java.util.Map.of("original", l, "name", name));
+        }
+        return out;
+    }
+
+    private static String key(String s) {
+        return s == null ? "" : s.toLowerCase(java.util.Locale.ROOT);
+    }
 
     public boolean masked(int i) { return masked[i]; }
 

@@ -466,6 +466,18 @@ class SqlPlaygroundServiceTest {
         assertThat(seen[0]).isLessThan(20_000);
     }
 
+    // Aynı adlı kolonların tekilleştirilmesi: H2 türetilmiş tabloda (_capped sarmalayıcısı) aynı adlı kolonu reddeder —
+    // sorgu düzeyindeki testler SqlPlaygroundPostgresTest'te, ad kuralı SqlResultColumnsTest'te.
+
+    @Test
+    @DisplayName("Benzersiz kolonlu sorgu değişmez: columns = sıralı adlar, renamed_columns boş")
+    void uniqueColumnsUnchanged() {
+        Map<String, Object> r = h2.execute("SELECT id, name FROM teams ORDER BY id", "admin");
+        assertThat(r.get("columns")).isEqualTo(List.of("id", "name"));
+        assertThat(r.get("renamed_columns")).isEqualTo(List.of());
+        assertThat(rows(r).get(0)).containsOnlyKeys("id", "name");
+    }
+
     // ── Tehlikeli fonksiyon engeli (SELECT-only kuralının YAKALAYAMADIĞI yüzey) ──
 
     /**
