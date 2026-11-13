@@ -512,4 +512,87 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(jsonPath("$.data[1].id").value(3))
                 .andExpect(jsonPath("$.data[1].can_manage").value(true));
     }
+
+    // ══ 2026-11-13 hata taraması: satırın bağlantı kararları sunucudan ══════════════════════════════════════════════
+
+    /** Takım OWN'un USER'ı + FOREIGN takımında görüntüleme paylaşımı (grant VIEW). */
+    private static MockHttpSession viewGrantee() {
+        MockHttpSession s = user();
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(FOREIGN)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("can_open_alert = Alarm Geçmişi tekil okuma kuralı: görüntüleme paylaşımı ve envanter host'u üzerinden okunan olay da açılır")
+    void canOpenAlert_followsAlertReadScope() throws Exception {
+        // Liste (scope=all): yabancı olay — USER için kapalı, VIEW paylaşımı olan için AÇIK (eylem yine yok)
+        mvc.perform(get("/api/monitoring/incidents").param("scope", "all").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(2))
+                .andExpect(jsonPath("$.data[0].can_open_alert").value(false))
+                .andExpect(jsonPath("$.data[1].can_open_alert").value(true))
+                .andExpect(jsonPath("$.data[2].can_open_alert").value(true));   // envanter UG = OWN
+        mvc.perform(get("/api/monitoring/incidents").param("scope", "all").session(viewGrantee()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_manage").value(false))
+                .andExpect(jsonPath("$.data[0].can_open_alert").value(true));
+        // 7/24 operatörü ve global görüntüleyici her olayı açar
+        mvc.perform(get("/api/monitoring/incidents/2").session(nocOperator()))
+                .andExpect(jsonPath("$.data.can_open_alert").value(true));
+        mvc.perform(get("/api/monitoring/incidents/2").session(audit()))
+                .andExpect(jsonPath("$.data.can_open_alert").value(true));
+        // Tekil: başka takımın BAĞIMSIZ Ping olayı, host'un envanter UG'si OWN → sahip değil ama Alarm Geçmişi'nde açılır
+        switchOn(false);
+        AlertEvent ping = event(4L, FOREIGN, "ug.example.com");
+        ping.setAlertType("PING_DOWN");
+        ping.setContextJson("{\"team_id\":9,\"monitor_id\":31}");
+        when(alertEventRepo.findById(4L)).thenReturn(Optional.of(ping));
+        mvc.perform(get("/api/monitoring/incidents/4").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_manage").value(false))
+                .andExpect(jsonPath("$.data.can_open_alert").value(true));
+    }
+
+    @Test
+    @DisplayName("check_records_visible: envanter türevi Port olayının kontrol kayıtları SY takımıyla yazılır — UG üyesi olayı 'kendi' görür ama kayıtları göremez")
+    void checkRecordsVisible_followsActivityScope() throws Exception {
+        AlertEvent port = event(5L, null, "ug.example.com");   // damgasız, envanter SY = FOREIGN, UG = OWN
+        port.setAlertType("PORT_DOWN");
+        when(alertEventRepo.findById(5L)).thenReturn(Optional.of(port));
+        com.sitemonitor.model.PortMonitor pm = new com.sitemonitor.model.PortMonitor();
+        pm.setId(55L); pm.setName("ug.example.com:443"); pm.setHost("ug.example.com"); pm.setPort(443); pm.setTeamId(FOREIGN);
+        when(portMonitorRepo.findAll()).thenReturn(List.of(pm));
+
+        // UG üyesi (OWN): olay kendi (envanter UG) — izleme bağı var, ama Aktivite kayıtları FOREIGN takımıyla → görünmez
+        mvc.perform(get("/api/monitoring/incidents/5").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_manage").value(true))
+                .andExpect(jsonPath("$.data.monitor.monitor_id").value(55))
+                .andExpect(jsonPath("$.data.check_records_visible").value(false));
+        // SY üyesi, görüntüleme paylaşımı olan ve 7/24 operatörü kayıtları görür
+        mvc.perform(get("/api/monitoring/incidents/5").session(session("kisif", "USER", List.of(FOREIGN), List.of())))
+                .andExpect(jsonPath("$.data.check_records_visible").value(true));
+        mvc.perform(get("/api/monitoring/incidents/5").session(viewGrantee()))
+                .andExpect(jsonPath("$.data.check_records_visible").value(true));
+        mvc.perform(get("/api/monitoring/incidents/5").session(nocOperator()))
+                .andExpect(jsonPath("$.data.check_records_visible").value(true));
+        // Liste aynı kuralı taşır; kendi takımının HTTP izlemesi görünür; yabancı satırda (izleme kimliği yok) alan yok
+        when(alertEventRepo.findIncidentsFiltered(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(port, ownEv, foreignEv)));
+        mvc.perform(get("/api/monitoring/incidents").param("scope", "all").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].check_records_visible").value(false))
+                .andExpect(jsonPath("$.data[1].check_records_visible").value(true))
+                .andExpect(jsonPath("$.data[2].check_records_visible").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("checkRecordsVisible: kapsam null = tümü; takımsız izleme yalnız tüm kapsamda; kapsam dışı takım hayır")
+    void checkRecordsVisibleRule() {
+        org.assertj.core.api.Assertions.assertThat(IncidentsController.checkRecordsVisible(9L, null)).isTrue();
+        org.assertj.core.api.Assertions.assertThat(IncidentsController.checkRecordsVisible(null, null)).isTrue();
+        org.assertj.core.api.Assertions.assertThat(IncidentsController.checkRecordsVisible(null, List.of(5L))).isFalse();
+        org.assertj.core.api.Assertions.assertThat(IncidentsController.checkRecordsVisible(9L, List.of(5L))).isFalse();
+        org.assertj.core.api.Assertions.assertThat(IncidentsController.checkRecordsVisible(5L, List.of(5L))).isTrue();
+    }
 }

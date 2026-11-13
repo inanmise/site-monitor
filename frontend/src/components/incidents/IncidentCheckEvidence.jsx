@@ -11,7 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { errorInfoOf } from '../../utils/errorMessages.js'
-import { evidenceQuery, EVIDENCE_LIMIT, isForeign } from './incidentsModel.js'
+import { evidenceQuery, EVIDENCE_LIMIT, isForeign, checkRecordsHidden } from './incidentsModel.js'
 
 const SECTION = 'mt-5 mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase'
 
@@ -23,21 +23,24 @@ function inApp(e, tab, params, onLeave) {
   navigateTo(tab, params)
 }
 
-/** Satır durum rozeti tonu — hata / zaman aşımı kırmızı, uyarı amber. */
+/** Satır durum rozeti tonu — hata / zaman aşımı kırmızı, uyarı amber, ölçülemedi (UNKNOWN) NÖTR (asla yeşil). */
 const STATUS_TONE = {
   ERROR: 'border-destructive/40 bg-destructive/10 text-destructive',
   TIMEOUT: 'border-destructive/40 bg-destructive/10 text-destructive',
   WARNING: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  UNKNOWN: 'border-border bg-muted text-muted-foreground',
 }
 
 /**
- * "Kontrol kanıtları" (2026-11-13) — olay süresince bu izlemenin BAŞARISIZ, ZAMAN AŞIMI ve UYARI veren kontrolleri,
- * Aktivite kaydından (`/api/activity?monitor=TYPE:id&from&to&status=ERROR,TIMEOUT,WARNING` — HTTP hata kodu, içerik
- * koşulu, k6 FAIL, sorgu ihlali ve yavaş yanıt WARNING yazılır). Her satır Aktivite ayrıntı sayfasına
- * (`?tab=activity&act=<id>`) gider; "İzleme zaman çizelgesi" `amon` görünümünü açar; ilk başarısızlık için "Aynı anda
+ * "Kontrol kanıtları" (2026-11-13) — olay süresince bu izlemenin BAŞARISIZ, ZAMAN AŞIMI, UYARI veren ve ÖLÇÜLEMEYEN
+ * (UNKNOWN) kontrolleri, Aktivite kaydından (`/api/activity?monitor=TYPE:id&from&to&status=…&group=check` — HTTP hata
+ * kodu, içerik koşulu, k6 FAIL, sorgu ihlali ve yavaş yanıt WARNING yazılır; `group=check` alarm satırlarını dışarıda
+ * tutar). Her satır Aktivite ayrıntı sayfasına (`?tab=activity&act=<id>`) gider; "İzleme zaman çizelgesi" `amon`
+ * görünümünü açar; ilk başarısızlık için "Aynı anda
  * başka ne oldu?" (RelatedActivityPanel — yalnız görüş kapsamındaki kayıtlar).
  *
- * <p>Bilinmeyen ≠ yok: izin yoksa (`monitoring.read`) "görme yetkiniz yok", olay bir izleme kimliğine bağlanamadıysa
+ * <p>Bilinmeyen ≠ yok: izin yoksa (`monitoring.read`) ya da kayıtlar başka takımın kapsamında yazılıyorsa (sunucu
+ * `check_records_visible:false`) "görme yetkiniz yok", olay bir izleme kimliğine bağlanamadıysa
  * (sertifika / silinmiş izleme) "bağlanamadı", okuma başarısızsa "okunamadı + yeniden dene" — hiçbiri "başarısız kontrol
  * yok" demez. Pencere: açılıştan 15 dk önce (teyit kontrolleri) → çözüm (ya da şimdi).
  */
@@ -51,13 +54,16 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
   const known = perms?.loaded !== false && Object.prototype.hasOwnProperty.call(perms?.perms || {}, 'monitoring.read')
   const permAllowed = !known || perms.canView('monitoring.read')
   const [state, setState] = useState({ loading: true, failed: false, denied: false, rows: [], total: null })
+  // Kontrol kayıtları başka takımın kapsamında yazılıyorsa (sunucu `check_records_visible:false`) SORULMAZ — Aktivite
+  // listesi onları süzer, boş yanıt "başarısız kontrol yok" diye okunurdu (2026-11-13 hata taraması)
+  const recordsHidden = checkRecordsHidden(incident)
   const allowed = permAllowed && !state.denied
   const [showRelated, setShowRelated] = useState(false)
   const seq = useRef(0)
   const key = query ? JSON.stringify(query) : null
 
   const load = useCallback(() => {
-    if (!key || !permAllowed) return
+    if (!key || !permAllowed || recordsHidden) return
     const my = ++seq.current
     setState((s) => ({ ...s, loading: true, failed: false }))
     Promise.resolve().then(() => api.getActivity({ ...JSON.parse(key), page: 0, size: EVIDENCE_LIMIT }))
@@ -72,7 +78,7 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
           setState({ loading: false, failed: !denied, denied, rows: [], total: null })
         }
       })
-  }, [key, permAllowed])
+  }, [key, permAllowed, recordsHidden])
   useEffect(() => { load() }, [load])
 
   const monitor = incident?.monitor
@@ -84,7 +90,14 @@ export default function IncidentCheckEvidence({ incident, onLeave }) {
     : null
 
   let body
-  if (!allowed) {
+  if (query && recordsHidden) {
+    body = (
+      <p data-slot="incident-evidence-state" data-state="records-hidden" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+        <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{t('incov.evidence.recordsHidden')}</span>
+      </p>
+    )
+  } else if (!allowed) {
     body = (
       <p data-slot="incident-evidence-state" data-state="no-access" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
         <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('incov.evidence.noAccess')}

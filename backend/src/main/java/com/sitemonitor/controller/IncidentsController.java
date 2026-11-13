@@ -175,7 +175,8 @@ public class IncidentsController {
     private List<Map<String, Object>> rowsFor(List<AlertEvent> events, List<Long> own, HttpSession session) {
         if (events.isEmpty()) return List.of();
         Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(events, own);
-        Map<Long, Map<String, Object>> monitors = resolveMonitors(events, inv);
+        Map<Long, Long> monitorTeams = new HashMap<>();
+        Map<Long, Map<String, Object>> monitors = resolveMonitors(events, inv, monitorTeams);
         Map<Long, Long> commentCounts = commentCounts(events);
         TeamInfo teams = resolveTeams(events, inv);
         Set<Long> owned = ownedIds(events, actScope(session), inv);   // eylem sahipliği ≠ okuma (paylaşım VIEW, 2026-10-12)
@@ -187,10 +188,63 @@ public class IncidentsController {
         // eylem bayrakları (can_manage/can_act/can_delete) yine KENDİ kapsamından.
         Delivery delivery = deliveryFor(events, e -> access.noc() || owned.contains(e.getId()));
         Map<String, Long> recurrence = recurrenceFor(events);
+        List<Long> checkScope = checkRecordScope(session);
+        boolean seesAllAlerts = seesAllAlerts(session);
+        List<Long> alertRead = SessionScope.viewTeamIdsWithGrants(session);
         return events.stream()
                 .map(e -> toDto(e, monitors, commentCounts, teams,
-                        access.forRow(owned.contains(e.getId()), notifyOwned.contains(e.getId())), delivery, inv, recurrence))
+                        access.forRow(owned.contains(e.getId()), notifyOwned.contains(e.getId())), delivery, inv, recurrence,
+                        new RowLinks(checkRecordsVisible(monitorTeams.get(e.getId()), checkScope),
+                                seesAllAlerts || alertReadable(e, inv, alertRead))))
                 .toList();
+    }
+
+    /**
+     * Satırın bağlantı kararları (2026-11-13 hata taraması): {@code checkRecordsVisible} — olayın izlemesinin Aktivite
+     * kontrol kayıtları izleyiciye görünür mü ({@link #checkRecordsVisible}); {@code canOpenAlert} — Alarm Geçmişi tekil
+     * okuması ({@code AdminController.requireAlertReadScope}) bu olayı açar mı.
+     */
+    private record RowLinks(boolean checkRecordsVisible, boolean canOpenAlert) {}
+
+    /**
+     * Aktivite LİSTESİNİN kapsamı — {@code ActivityController.scope} ile BİREBİR: 7/24 operatörü / global görüntüleyici
+     * {@code null} (tümü), diğerleri görüş kapsamı + erişim paylaşımı (oturumda görüş kapsamı yoksa null = tümü, aynen).
+     */
+    private static List<Long> checkRecordScope(HttpSession session) {
+        return SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIdsWithGrants(session);
+    }
+
+    /**
+     * Kontrol kayıtları görünür mü (2026-11-13 hata taraması): her kontrol satırı Aktivite kaydına izleme SATIRININ
+     * {@code teamId}'siyle yazılır (envanter türevi Port / DNS'te envanterin SY takımı) ve Aktivite listesi
+     * {@code team_id IN kapsam} ile süzer. UG takımı üyesi olayı envanter kuralıyla "kendi" görür ama o kayıtları göremez —
+     * kanıt bölümü "başarısız kontrol yok" diyordu. {@code monitorTeam} null (izleme takımsız) yalnız tüm kapsamda görünür.
+     */
+    static boolean checkRecordsVisible(Long monitorTeam, List<Long> scope) {
+        return scope == null || (monitorTeam != null && scope.contains(monitorTeam));
+    }
+
+    /** {@code AdminController.seesAllAlerts} ile aynı: global görüntüleyici ya da 7/24 operatörü. */
+    private boolean seesAllAlerts(HttpSession session) {
+        return SessionScope.isGlobalViewer(session) || nocCommenter(session);
+    }
+
+    /**
+     * {@code AdminController.requireAlertReadScope}'un takım kolu (2026-11-13 hata taraması): damga + alan adının envanter
+     * SY / UG takımı (bağımsız olayda da — Alarm Geçmişi okuması envanter kolunu taşır) görüş + paylaşım kapsamında mı.
+     * Envanter satırı çağırandan ({@link #inventoryFor} damgası kapsam dışı olayın alan adını yükler); {@code read} null →
+     * hayır (Alarm Geçmişi kuralı).
+     */
+    static boolean alertReadable(AlertEvent e, Map<String, List<com.sitemonitor.model.CertificateInventory>> inv,
+                                 List<Long> read) {
+        if (read == null || read.isEmpty()) return false;
+        if (e.getTeamId() != null && read.contains(e.getTeamId())) return true;
+        if (e.getDomain() == null || inv == null) return false;
+        for (com.sitemonitor.model.CertificateInventory i : inv.getOrDefault(e.getDomain(), List.of())) {
+            if ((i.getTeamId() != null && read.contains(i.getTeamId()))
+                    || (i.getUgTeamId() != null && read.contains(i.getUgTeamId()))) return true;
+        }
+        return false;
     }
 
     private static List<Long> nullToEmpty(List<Long> v) { return v == null ? List.of() : v; }
@@ -317,16 +371,33 @@ public class IncidentsController {
         }
     }
 
-    /** Tam damga — uzunluk / karakter sınırı (sorguya giden serbest metin); boş → null. */
-    private static String stampOrNull(String raw, String field) {
+    /**
+     * Tam damga → depolamayla karşılaştırılabilir UTC metni ({@code yyyy-MM-ddTHH:mm:ss}); boş → null. 2026-11-13 hata
+     * taraması: değer sözlük sırasıyla karşılaştırıldığı için {@code …+03:00} / {@code …Z} taşıyan damga dilim YOK
+     * SAYILARAK işleniyordu (İstanbul gece yarısı UTC 00:00 gibi). Artık ayrıştırılır: dilimli değer UTC'ye çevrilir,
+     * dilimsiz değer UTC sayılır (bugünkü gibi), yalnız gün ({@code resolvedSince}) UTC gün başıdır (bugünkü sözlük
+     * davranışı). Ayrıştırılamayan → 400 {@code VALIDATION_FAILED} + alan. Karakter / uzunluk ön denetimi düz (doğrusal).
+     */
+    static String stampOrNull(String raw, String field) {
         if (raw == null || raw.isBlank()) return null;
         String v = raw.trim();
-        if (!STAMP.matcher(v).matches()) {
-            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, com.sitemonitor.util.Msg.t(
-                    "Zaman değeri geçersiz: yyyy-AA-gg ya da yyyy-AA-ggTSS:dd:ss biçiminde girin.",
-                    "Invalid time value: use yyyy-MM-dd or yyyy-MM-ddTHH:mm:ss."));
+        if (!STAMP.matcher(v).matches()) throw invalidStamp(field);
+        try {
+            if (DAY.matcher(v).matches()) return ISO.format(java.time.LocalDate.parse(v).atStartOfDay(ZoneOffset.UTC).toInstant());
+            int t = v.indexOf('T');
+            boolean zoned = v.endsWith("Z") || (t > 0 && (v.indexOf('+', t) > 0 || v.indexOf('-', t) > 0));
+            Instant at = zoned ? java.time.OffsetDateTime.parse(v).toInstant()
+                    : java.time.LocalDateTime.parse(v).toInstant(ZoneOffset.UTC);
+            return ISO.format(at);
+        } catch (java.time.DateTimeException e) {
+            throw invalidStamp(field);
         }
-        return v;
+    }
+
+    private static com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException invalidStamp(String field) {
+        return new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, com.sitemonitor.util.Msg.t(
+                "Zaman değeri geçersiz: yyyy-AA-gg, yyyy-AA-ggTSS:dd:ss ya da saat dilimli ISO biçiminde (…Z, …+03:00) girin.",
+                "Invalid time value: use yyyy-MM-dd, yyyy-MM-ddTHH:mm:ss or an ISO time with a zone (…Z, …+03:00)."));
     }
 
     private Page<AlertEvent> page(Filters f, ScopeQuery sq, org.springframework.data.domain.Pageable p) {
@@ -519,7 +590,7 @@ public class IncidentsController {
     private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts,
                                       TeamInfo teams, RowAccess access, Delivery delivery,
                                       Map<String, List<com.sitemonitor.model.CertificateInventory>> inv,
-                                      Map<String, Long> recurrence) {
+                                      Map<String, Long> recurrence, RowLinks links) {
         Map<String, Object> ctx = deserialize(e.getContextJson());
         Map<String, Object> dto = new LinkedHashMap<>();
         dto.put("id",            e.getId());
@@ -568,10 +639,17 @@ public class IncidentsController {
         dto.put("in_maintenance", ctx != null && ctx.get(com.sitemonitor.service.EscalationService.CTX_DETECTED_IN_MAINTENANCE) != null);
         Long rec = recurrence == null ? null : recurrence.get(recurrenceKey(e.getDomain(), e.getAlertType()));
         if (rec != null) dto.put("recurrence_7d", rec);
+        // Alarm Geçmişi'nde açılabilir mi (2026-11-13 hata taraması): sunucunun tekil alarm okuma kuralı — görüntüleme
+        // paylaşımıyla ya da envanter host'u üzerinden okunan olay da açılır; arayüz bağlantıyı yalnız buna göre çizer.
+        dto.put("can_open_alert", links != null && links.canOpenAlert());
         if (!access.full() && monitor.containsKey("monitor_id")) {
             Map<String, Object> slim = new LinkedHashMap<>(monitor);
             slim.put("monitor_id", null);
             dto.put("monitor", slim);
+        } else if (monitor.get("monitor_id") != null && links != null) {
+            // Kontrol kanıtı sorulabilir mi (2026-11-13 hata taraması): izlemenin Aktivite kayıtları izleyicinin
+            // kapsamında mı — değilse arayüz "görme yetkiniz yok" der, boş listeyi "başarısız kontrol yok" saymaz.
+            dto.put("check_records_visible", links.checkRecordsVisible());
         }
         if (access.full()) {
             ownerFacts(dto, e, delivery);
@@ -762,6 +840,13 @@ public class IncidentsController {
      */
     private Map<Long, Map<String, Object>> resolveMonitors(List<AlertEvent> events,
                                                            Map<String, List<com.sitemonitor.model.CertificateInventory>> inv) {
+        return resolveMonitors(events, inv, null);
+    }
+
+    /** {@code teamsOut} (null olabilir): seçilen izleme SATIRININ takımı, olay kimliğine göre — kontrol kaydı kapsamı için. */
+    private Map<Long, Map<String, Object>> resolveMonitors(List<AlertEvent> events,
+                                                           Map<String, List<com.sitemonitor.model.CertificateInventory>> inv,
+                                                           Map<Long, Long> teamsOut) {
         Map<Long, Map<String, Object>> byEvent = new HashMap<>();
         if (events.isEmpty()) return byEvent;
         Map<String, Set<String>> keys = new HashMap<>();
@@ -782,6 +867,7 @@ public class IncidentsController {
             m.put("tab",  tabFor(fam));
             m.put("monitor_id", ref != null ? ref[1] : null);
             byEvent.put(e.getId(), m);
+            if (teamsOut != null && ref != null && ref.length > 2 && ref[2] instanceof Number n) teamsOut.put(e.getId(), n.longValue());
         }
         return byEvent;
     }
@@ -920,12 +1006,18 @@ public class IncidentsController {
         AlertEvent ev = requireAlert(id);
         boolean owned = requireIncidentReadable(session, ev);
         List<AlertEvent> one = List.of(ev);
-        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(one, null);
+        // Kapsam listesiyle (listeyle aynı): damgası kapsam dışı olayın envanteri de okunur — Alarm Geçmişi bağlantı kararı
+        // envanter SY / UG kolunu ister. Diğer alanlar değişmez (damgalı / bağımsız olayda envanter kullanılmaz).
+        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(one, ownScope(session));
         TeamInfo teams = resolveTeams(one, inv);
         boolean notify = SessionScope.isGlobalViewer(session) || incidentOwnedBy(ev, SessionScope.viewTeamIds(session));
-        return ok(Map.of("data", toDto(ev, resolveMonitors(one, inv), commentCounts(one), teams,
+        Map<Long, Long> monitorTeams = new HashMap<>();
+        Map<Long, Map<String, Object>> monitors = resolveMonitors(one, inv, monitorTeams);
+        RowLinks links = new RowLinks(checkRecordsVisible(monitorTeams.get(ev.getId()), checkRecordScope(session)),
+                seesAllAlerts(session) || alertReadable(ev, inv, SessionScope.viewTeamIdsWithGrants(session)));
+        return ok(Map.of("data", toDto(ev, monitors, commentCounts(one), teams,
                 accessFor(session).forRow(owned, notify), deliveryFor(one, e -> owned || nocCommenter(session)), inv,
-                recurrenceFor(one))));
+                recurrenceFor(one), links)));
     }
 
     // ── Özet (2026-11-13) ─────────────────────────────────────────────────────────
@@ -1091,11 +1183,25 @@ public class IncidentsController {
         }
     }
 
+    /**
+     * Envanter satırının ({@code [damga, SY, UG, sayı]}) bu olaylara EK katkısı — liste süzgecinin kuralıyla: olay T takımında
+     * damga ya da envanter SY / UG T ise listelenir; damga zaten damgalı sayımda, SY = UG tek sayılır. Açık: sorgu testi
+     * (repository paketi) aynı kuralı kullanır.
+     */
+    public static java.util.Set<Long> inventoryOnlyTeams(Object[] r) {
+        Long stamp = r[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        java.util.Set<Long> out = new java.util.LinkedHashSet<>();
+        for (int i = 1; i <= 2; i++) {
+            if (r[i] instanceof Number n && !Long.valueOf(n.longValue()).equals(stamp)) out.add(n.longValue());
+        }
+        return out;
+    }
+
     /** Takım seçeneklerinin geriye bakışı (gün) — açık olaylar her zaman sayılır. */
     static final int TEAM_OPTION_DAYS = 90;
 
     /**
-     * Takım süzgeci seçenekleri — kapsamdaki olayların takımları (damgalı olay + damgasız olayın envanter SY/UG takımı),
+     * Takım süzgeci seçenekleri — kapsamdaki olayların takımları (damga + alan adının envanter SY/UG takımı; liste süzgeciyle aynı kural),
      * adlarıyla, Türkçe abece sırasında. Ham kimlik çipi yok: adı okunamayan takım listeye girmez. Düşerse null.
      */
     private List<Map<String, Object>> teamOptions(ScopeQuery sq) {
@@ -1111,11 +1217,9 @@ public class IncidentsController {
                         AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
                     if (r[0] != null) counts.merge(((Number) r[0]).longValue(), ((Number) r[1]).longValue(), Long::sum);
                 }
-                for (Object[] r : alertEventRepo.countIncidentInventoryTeams(res, since, null, null, null, false,
+                for (Object[] r : alertEventRepo.countIncidentInventoryOwners(res, since, null, null, null, false,
                         AlertEventRepository.NO_LEVELS, null, null, false, null, sq.scoped(), sq.outside(), sq.ids())) {
-                    long n = ((Number) r[2]).longValue();
-                    if (r[0] != null) counts.merge(((Number) r[0]).longValue(), n, Long::sum);
-                    if (r[1] != null && !r[1].equals(r[0])) counts.merge(((Number) r[1]).longValue(), n, Long::sum);
+                    for (Long team : inventoryOnlyTeams(r)) counts.merge(team, ((Number) r[3]).longValue(), Long::sum);
                 }
             }
             if (counts.isEmpty()) return List.of();
