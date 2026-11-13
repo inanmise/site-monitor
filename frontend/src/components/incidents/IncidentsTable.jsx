@@ -109,10 +109,10 @@ export default function IncidentsTable({
                   onCheckedChange={(on) => selection.setMany(selectable.map((r) => String(r.id)), on === true)} />
               </TableHead>
             )}
-            {sortHead('severity', 'incov.severity', 'w-[7.5rem]')}
+            {sortHead('severity', 'incov.severity', 'w-[7rem]')}
             {/* Olay sütunu: otomatik tablo yerleşimi nowrap komşular yüzünden bunu 12 karaktere sıkıştırıyordu → alt sınır */}
-            <TableHead className={cn(TH, 'min-w-[16rem]')}>{t('incov.colIncident')}</TableHead>
-            {sortHead('status', 'incov.colStatus', 'w-[8.5rem]')}
+            <TableHead className={cn(TH, 'min-w-[14rem]')}>{t('incov.colIncident')}</TableHead>
+            {sortHead('status', 'incov.colStatus', 'w-[7.5rem]')}
             <TableHead className={cn(TH, 'hidden min-w-[9rem] lg:table-cell')}>{t('incov.colTeam')}</TableHead>
             {sortHead('started', 'incov.colStarted', 'min-w-[7rem]')}
             <TableHead className={cn(TH, 'whitespace-nowrap')}>{t('incov.colDuration')}</TableHead>
@@ -146,7 +146,7 @@ export default function IncidentsTable({
                   </TableCell>
                 )}
                 <TableCell><SeverityBadge level={inc.alert_level} /></TableCell>
-                <TableCell className="min-w-[16rem] max-w-[32rem] whitespace-normal">
+                <TableCell className="min-w-[14rem] max-w-[32rem] whitespace-normal">
                   <div className="flex min-w-0 items-start gap-2">
                     <MonitorTypeIcon type={inc.monitor?.type} />
                     <div className="min-w-0">
