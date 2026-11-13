@@ -186,7 +186,16 @@ public class NotificationGroupService {
     private static final int MAX_NAME = 100;
 
     /** Doğrulanmış, normalize edilmiş grup girdisi. */
-    public record GroupInput(String name, List<String> emails, boolean makeDefault) {}
+    /**
+     * @param keepDefault güncellemede varsayılan bayrağına DOKUNMA (gövdede {@code is_default} yok — 2026-11-13 hata
+     *                    taraması: açık düzenleme formunun bayat bayrağı toplu "varsayılan yap"ı geri almasın)
+     */
+    public record GroupInput(String name, List<String> emails, boolean makeDefault, boolean keepDefault) {
+        public GroupInput(String name, List<String> emails, boolean makeDefault) { this(name, emails, makeDefault, false); }
+
+        /** Aynı girdi, varsayılan bayrağı değiştirilmeden (güncellemede gövdede {@code is_default} yokken). */
+        public GroupInput keepingDefault() { return new GroupInput(name, emails, false, true); }
+    }
 
     /**
      * Ham gövdeyi doğrular ve normalize eder.
@@ -259,6 +268,9 @@ public class NotificationGroupService {
         g.setUpdatedBy(actor);
         g.setUpdatedByName(actorName);
         g = groupRepo.save(g);
+        if (in.keepDefault()) {
+            return g;                   // gövdede is_default yok → bayrak olduğu gibi (toplu "varsayılan yap" korunur)
+        }
         if (in.makeDefault()) {
             makeDefault(g);
         } else if (Boolean.TRUE.equals(g.getIsDefault())) {

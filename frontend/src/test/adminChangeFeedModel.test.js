@@ -3,8 +3,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   FEED_AREAS, FEED_DAYS, DEFAULT_DAYS, normDays, parseAreas, toggleArea, layoutFor, FEED_TABLE_MIN_PX, rowPayload,
+  feedFieldLabel, feedValue,
 } from '../components/admin/adminChangeFeedModel.js'
-import { parseChanges, isDiffShape, eventKind } from '../components/admin/historyFormat.js'
+import { parseChanges, isDiffShape, eventKind, fmtValue } from '../components/admin/historyFormat.js'
 
 // Çapraz yönetim değişiklik akışı (2026-11-13): alan / gün listeleri sunucuyla AYNI (Java kaynağı okunur).
 const JAVA = path.resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor')
@@ -58,6 +59,41 @@ describe('adminChangeFeedModel — rowPayload', () => {
     expect(d).toEqual({ kind: 'snapshot', data: { scope: 'ALL', recipient: 'T' } })
     expect(rowPayload({ changes: null, detail: '{}' }, parseChanges, isDiffShape)).toBeNull()
     expect(rowPayload({ changes: 'bozuk', detail: null }, parseChanges, isDiffShape)).toBeNull()
+  })
+})
+
+describe('adminChangeFeedModel — 2026-11-13 hata taraması: alan etiketi + kod çevirisi', () => {
+  const dict = {
+    'cf.f.grant_id': 'Paylaşım no', 'cf.f.unsuccessful': 'Başarısız', 'hist.f.teamId': 'Takım', 'ng.f.isDefault': 'Varsayılan', 'cf.v.grantee.USER': 'Kişi',
+    'access.level.EDIT': 'Düzenleme', 'oncall.weekly': 'Haftalık', 'fwd.scope.all': 'Tüm izlemeler', 'fwd.rcpt.members': 'Seçilen üyeler',
+    'ec.level.high': 'YÜKSEK', 'cf.v.status.SENT': 'Gönderildi', 'cf.v.status.FAILED': 'Gönderilemedi', 'cf.v.noteSet': 'Var',
+    'ng.histEmptyValue': '—', 'ng.histYes': 'Evet', 'ng.histNo': 'Hayır',
+  }
+  const t = (k) => dict[k] ?? k
+  it('etiket sırası cf.f → hist.f → ng.f → ham ad', () => {
+    expect(feedFieldLabel(t, 'grant_id')).toBe('Paylaşım no')
+    expect(feedFieldLabel(t, 'teamId')).toBe('Takım')
+    expect(feedFieldLabel(t, 'isDefault')).toBe('Varsayılan')
+    expect(feedFieldLabel(t, 'bilinmeyen_alan')).toBe('bilinmeyen_alan')
+    expect(feedFieldLabel(t, 'failed')).toBe('Başarısız')   // anahtar adı hata kapısına takılmasın diye takma ad
+  })
+  it('kod değerleri çevrilir; sözlükte olmayan değer fmtValue ile', () => {
+    expect(feedValue(t, 'grantee_type', 'USER', fmtValue)).toBe('Kişi')
+    expect(feedValue(t, 'level_before', 'EDIT', fmtValue)).toBe('Düzenleme')
+    expect(feedValue(t, 'rotation', 'WEEKLY', fmtValue)).toBe('Haftalık')
+    expect(feedValue(t, 'scope_kind', 'ALL', fmtValue)).toBe('Tüm izlemeler')
+    expect(feedValue(t, 'recipient_kind', 'MEMBERS', fmtValue)).toBe('Seçilen üyeler')
+    expect(feedValue(t, 'minAlertLevel', 'HIGH', fmtValue)).toBe('YÜKSEK')
+    expect(feedValue(t, 'webhook_type', 'SLACK', fmtValue)).toBe('Slack')
+    expect(feedValue(t, 'status', 'SENT', fmtValue)).toBe('Gönderildi')
+    expect(feedValue(t, 'status', 'FAILED: 404', fmtValue)).toBe('Gönderilemedi: 404')
+    expect(feedValue(t, 'note_hash', 'a1b2', fmtValue)).toBe('Var')
+    expect(feedValue(t, 'enabled', true, fmtValue)).toBe('Evet')
+    expect(feedValue(t, 'level', 'GARIP', fmtValue)).toBe('GARIP')
+  })
+  it('iletim güncellemesinin iç farkı ({"changes":{alan:{from,to}}}) fark olarak döner', () => {
+    const p = rowPayload({ changes: null, detail: '{"forward_id":3,"changes":{"enabled":{"from":true,"to":false}}}' }, parseChanges, isDiffShape)
+    expect(p).toEqual({ kind: 'diff', data: { enabled: { from: true, to: false } } })
   })
 })
 

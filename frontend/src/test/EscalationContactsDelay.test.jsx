@@ -116,14 +116,16 @@ describe('EscalationContacts — eskalasyon gecikmesi', () => {
     expect(api.admin.addContact.mock.calls[0][0].delay_minutes).toBe(15)
   })
 
-  it('gecikmesiz kişiyi düzenleme: gövde değişmez (anahtar yok)', async () => {
+  it('gecikmesiz kişiyi düzenleme: gecikme dokunulmazsa anahtar yok (yalnız değişen alan gider)', async () => {
     await openEdit(0)
     expect(screen.getByRole('spinbutton', { name: DELAY })).toHaveValue(null)
+    fireEvent.change(screen.getByLabelText(/Webhook URL/i), { target: { value: 'https://hooks.example.com/x' } })
     fireEvent.click(screen.getByRole('button', { name: SAVE }))
     await waitFor(() => expect(api.admin.updateContact).toHaveBeenCalled())
     const [id, payload] = api.admin.updateContact.mock.calls[0]
     expect(id).toBe(1)
     expect(payload).not.toHaveProperty('delay_minutes')
+    expect(payload).toEqual({ webhook_url: 'https://hooks.example.com/x' })
   })
 
   it('gecikmeli kişiyi düzenleme: alan mevcut değeri gösterir; silinirse açıkça null gider (anlık davranışa dönüş)', async () => {

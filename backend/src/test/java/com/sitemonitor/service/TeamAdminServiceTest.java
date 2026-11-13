@@ -106,6 +106,36 @@ class TeamAdminServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-13 hata taraması: stats ug_domains (UG = SY sayılmaz) + takım adresi yalnız pasif hesaba mı ait (bilinmiyor = null)")
+    void stats_ugDomainsAndTeamEmailInactiveOnly() {
+        CertificateInventory ugOnly = inv("ug.example.com", 7L); ugOnly.setUgTeamId(9L);
+        CertificateInventory sameUg = inv("same.example.com", 9L); sameUg.setUgTeamId(9L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(ugOnly, sameUg));
+        Team a = team(7, "A"); a.setEmail("pasif@x.com");
+        Team b = team(9, "B"); b.setEmail("aktif@x.com; pasif@x.com");
+        Team c = team(11, "C");
+        when(teamRepo.findAll()).thenReturn(List.of(a, b, c));
+
+        // Süzgeç yokken bilinmiyor (null); adres yoksa false
+        Map<Long, Map<String, Object>> s0 = service.stats();
+        assertThat(s0.get(7L)).containsEntry("ug_domains", 0).containsEntry("email_inactive_only", null);
+        assertThat(s0.get(9L)).containsEntry("ug_domains", 1);
+        assertThat(s0.get(11L)).containsEntry("email_inactive_only", false);
+
+        InactiveRecipientGuard guard = org.mockito.Mockito.mock(InactiveRecipientGuard.class);
+        when(guard.inactiveOnlyEmailsOf(any())).thenAnswer(i -> {
+            java.util.Collection<String> in = i.getArgument(0);
+            return in.stream().filter(e -> e.startsWith("pasif")).toList();
+        });
+        service.setInactiveGuard(guard);
+        Map<Long, Map<String, Object>> s = service.stats();
+        assertThat(s.get(7L)).containsEntry("email_inactive_only", true);
+        assertThat(s.get(9L)).containsEntry("email_inactive_only", false);     // bir parça etkin
+        org.mockito.Mockito.doReturn(null).when(guard).inactiveOnlyEmailsOf(any());   // pasif listesi okunamadı
+        assertThat(service.stats().get(7L)).containsEntry("email_inactive_only", null);
+    }
+
+    @Test
     @DisplayName("impact: bağlı varlıklar adlarıyla, empty=false; boş takımda empty=true")
     @SuppressWarnings("unchecked")
     void impact() {

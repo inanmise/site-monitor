@@ -30,6 +30,7 @@ import { Label } from '@/components/shadcn/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import { userRefValue } from '../../utils/userRef'
+import { changedFields } from '../../utils/changedFields.js'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
@@ -42,6 +43,33 @@ export const DELAY_MIN = 1
 export const DELAY_MAX = 1440
 /** Kişinin etkin gecikmesi (dk) ya da null (anlık). */
 export const contactDelay = (c) => (Number(c?.delay_minutes) > 0 ? Number(c.delay_minutes) : null)
+
+/** Kayıtlı kişi → düzenleme formu. */
+export function contactToForm(c) {
+  return {
+    user_id: c.user_id ? String(c.user_id) : '',
+    role: c.role || 'TECH',
+    min_alert_level: c.min_alert_level || 'WARNING',
+    webhook_url: c.webhook_url || '',
+    webhook_type: c.webhook_type || 'TEAMS',
+    active: c.active !== false,
+    team_id: c.team_id ?? '',
+    delay_minutes: contactDelay(c) != null ? String(contactDelay(c)) : '',
+  }
+}
+
+/** Form → istek gövdesi (gecikme hariç — ayrı kural). Düzenlemede kayıtlı hâlin gövdesiyle karşılaştırılır. */
+export function contactPayload(form) {
+  return {
+    user_id: form.user_id ? userRefValue(form.user_id) : null,   // opak kimlik Number()'a çevrilmez (2026-10-08)
+    role: form.role,
+    min_alert_level: form.min_alert_level,
+    webhook_url: form.webhook_url || null,
+    webhook_type: form.webhook_type || null,
+    active: form.active,
+    team_id: form.team_id ? Number(form.team_id) : null,
+  }
+}
 
 /**
  * Formdaki gecikme metni → { value, invalid }. Boş = null (anlık). Değer 1–1440 tam sayı olmalı; 0 da geçersiz
@@ -73,7 +101,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   // Takım başına aktif varlık sayısı (izleme + envanter) — kapsam matrisinin "boşluk gerçek mi" kapısı (2026-11-12).
   const [stats, setStats]       = useState({})
   // Pasif kullanıcıya bağlı kişiler (2026-10-02): bildirim ALMAZLAR — listede belirgin "Pasif" rozeti. Seçici aktif-yalnız kalır.
-  const [inactiveUserIds, setInactiveUserIds] = useState(() => new Set())
+  // null = kullanıcı listesi OKUNAMADI (2026-11-13 hata taraması): kapsam matrisi bağlı kişileri "gönderiyor" saymaz.
+  const [inactiveUserIds, setInactiveUserIds] = useState(null)   // yüklenene dek bilinmiyor
+  // Listedeki TÜM kimlikler — yalnız liste kapsamla süzülüyse (global görücü değil) matrise verilir: listede olmayan
+  // kullanıcıya bağlı kişinin pasif olup olmadığı bilinmez.
+  const [knownUserIds, setKnownUserIds] = useState(null)
+  const usersListComplete = !!globalAdmin || systemRole === 'AUDIT'
   const [modal, setModal]   = useState(null)
   const [form, setForm]     = useState(emptyContact)
   const [saving, setSaving] = useState(false)
@@ -173,12 +206,19 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   }
 
   async function loadUsers() {
-    const res = await api.admin.getUsers()
-    if (res?.success) {
-      const all = res.data ?? []   // data null gelirse ekran cokmesin
-      setUsers(all.filter(u => u.active))
-      setInactiveUserIds(new Set(all.filter(u => u.active === false).map(u => String(u.id))))
-    }
+    try {
+      const res = await api.admin.getUsers()
+      if (res?.success) {
+        const all = res.data ?? []   // data null gelirse ekran cokmesin
+        setUsers(all.filter(u => u.active))
+        setInactiveUserIds(new Set(all.filter(u => u.active === false).map(u => String(u.id))))
+        setKnownUserIds(new Set(all.map(u => String(u.id))))
+        return
+      }
+    } catch { /* aşağıda: bilinmiyor */ }
+    // Okunamadı: pasif kümesi BİLİNMİYOR — boş küme "pasif yok" diye okunur ve matris yanlış yeşil verirdi.
+    setInactiveUserIds(null)
+    setKnownUserIds(null)
   }
 
   async function loadDeliveries() {
@@ -218,16 +258,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   }
   function openEdit(c) {
     setMsg(null)
-    setForm({
-      user_id: c.user_id ? String(c.user_id) : '',
-      role: c.role || 'TECH',
-      min_alert_level: c.min_alert_level || 'WARNING',
-      webhook_url: c.webhook_url || '',
-      webhook_type: c.webhook_type || 'TEAMS',
-      active: c.active !== false,
-      team_id: c.team_id ?? '',
-      delay_minutes: contactDelay(c) != null ? String(contactDelay(c)) : '',
-    })
+    setForm(contactToForm(c))
     setModal(c)
   }
 
@@ -235,21 +266,17 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     // Gecikme alanı: hata alanın altında (tost değil); ilk hatalı alana kaydırılır.
     const delay = parseDelayInput(form.delay_minutes)
     if (fe.check({ delay_minutes: delay.invalid && t('ec.delayInvalid') })) return
+    const full = contactPayload(form)
+    // Düzenlemede YALNIZ değişen alanlar gönderilir (2026-11-13 hata taraması): form açıkken yapılan toplu pasifleştirme /
+    // seviye / takım taşıma, formun bayat değerleriyle geri alınmasın (sunucu gönderilmeyen alana dokunmaz).
+    const payload = modal === 'add' ? full : changedFields(full, contactPayload(contactToForm(modal)))
+    // Gecikme YALNIZ gerektiğinde gönderilir: boş alan + gecikmesiz kişi → anahtar yok (sunucu anahtar yoksa alana
+    // dokunmaz). Var olan gecikme silindiyse açıkça null gider (anlık davranışa dönüş).
+    if (modal === 'add') { if (delay.value != null) payload.delay_minutes = delay.value }
+    else if (delay.value !== contactDelay(modal)) payload.delay_minutes = delay.value
+    if (modal !== 'add' && Object.keys(payload).length === 0) { setModal(null); return }   // değişiklik yok → istek yok
     setSaving(true)
     try {
-      const payload = {
-        user_id: form.user_id ? userRefValue(form.user_id) : null,   // opak kimlik Number()'a çevrilmez (2026-10-08)
-        role: form.role,
-        min_alert_level: form.min_alert_level,
-        webhook_url: form.webhook_url || null,
-        webhook_type: form.webhook_type || null,
-        active: form.active,
-        team_id: form.team_id ? Number(form.team_id) : null,
-      }
-      // Gecikme YALNIZ gerektiğinde gönderilir: boş alan + gecikmesiz kişi → payload bugünküyle AYNI (anahtar yok;
-      // sunucu anahtar yoksa alana dokunmaz). Var olan gecikme silindiyse açıkça null gider (anlık davranışa dönüş).
-      if (delay.value != null) payload.delay_minutes = delay.value
-      else if (modal !== 'add' && contactDelay(modal) != null) payload.delay_minutes = null
       const res = modal === 'add'
         ? await api.admin.addContact(payload)
         : await api.admin.updateContact(modal.id, payload)
@@ -323,7 +350,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       {/* Kapsam matrisi (2026-11-12): takım × seviye eskalasyon boşlukları — en sert alarmda kişisi olmayan takımları
           yüzeye çıkarır. Kişiler HİÇ yüklenemediyse çizilmez (sahte boşluk göstermemek için — bilinmeyen ≠ eksik). */}
       {!(loadError && contacts.length === 0) && (
-        <CoveragePanel contacts={contacts} teams={teams} inactiveIds={inactiveUserIds} stats={stats}
+        <CoveragePanel contacts={contacts} teams={teams} inactiveIds={inactiveUserIds}
+          knownIds={usersListComplete ? null : knownUserIds} stats={stats}
           canManage={canManage} onQuickAdd={openAddForGap} />
       )}
 
@@ -400,7 +428,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 )}
                 <TableCell className="max-w-[16rem] whitespace-normal">
                   <UserBadge displayName={c.name} email={c.email} inline size="sm" />
-                  {c.user_id != null && inactiveUserIds.has(String(c.user_id)) && (
+                  {c.user_id != null && inactiveUserIds?.has(String(c.user_id)) && (
                     <Badge variant="destructive" data-slot="contact-user-inactive" title={t('team.contactInactiveTip')}
                       className="mt-1 flex w-fit">
                       <UserX aria-hidden="true" /> {t('team.memberInactive')}

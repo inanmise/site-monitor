@@ -304,6 +304,28 @@ class NotificationGroupServiceTest {
         }
 
         @Test
+        @DisplayName("2026-11-13 hata taraması: gövdede is_default yoksa (keepingDefault) varsayılan bayrağına DOKUNULMAZ — toplu 'varsayılan yap' geri alınmaz")
+        void update_keepDefault_leavesFlagAlone() {
+            NotificationGroup existing = group(10L, TEAM_A, "Nöbet", "n@example.com", true, true);
+            when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+            NotificationGroup g = service.update(existing,
+                    new NotificationGroupService.GroupInput("Gece", List.of("n@example.com"), false).keepingDefault(),
+                    "burak", "Burak");
+
+            assertThat(g.getIsDefault()).isTrue();
+            assertThat(g.getName()).isEqualTo("Gece");
+            verify(repo, never()).clearOtherDefaults(anyLong(), anyLong());
+
+            NotificationGroup other = group(11L, TEAM_A, "Eski", "e@example.com", false, true);
+            NotificationGroup o = service.update(other,
+                    new NotificationGroupService.GroupInput("Eski", List.of("e@example.com"), true).keepingDefault(),
+                    "burak", "Burak");
+            assertThat(o.getIsDefault()).isFalse();
+            verify(repo, never()).clearOtherDefaults(anyLong(), anyLong());
+        }
+
+        @Test
         @DisplayName("update + varsayılan iste: diğerleri indirilir")
         void update_makeDefault_demotesOthers() {
             NotificationGroup existing = group(10L, TEAM_A, "Nöbet", "n@example.com", false, true);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildView, normId, normKind, normLevel, parseTeamSource } from '../components/admin/whonotified/whoNotifiedModel.js'
+import { buildView, normId, normKind, normLevel, parseTeamSource, recipientCsvRows } from '../components/admin/whonotified/whoNotifiedModel.js'
 
 /**
  * "Kim bilgilendirilir?" görünüm modeli — karar SUNUCUNUNDUR; model yalnız biçimler. Burada pinlenen: tekil adres
@@ -142,6 +142,21 @@ describe('whoNotifiedModel — zincir izi', () => {
       ['Pasif Kişi', 'INACTIVE_ACCOUNT'],
     ])
     expect(v.excluded.find((x) => x.name === 'Üst Eşik')).toMatchObject({ minLevel: 'CRITICAL', address: 'ust@x.com' })
+  })
+
+  it('2026-11-13 hata taraması: oncall.read izni yok → nöbetçi satırı adsız (hidden) ama alıcı sayılır; yinelenen / pasif gizli satır sayılmaz', () => {
+    const v = buildView({ ...base, oncall: [
+      { team_id: 1, hidden: true, duplicate: false },
+      { team_id: 1, hidden: true, duplicate: true },
+      { team_id: 1, hidden: true, duplicate: false, inactive_only: true },
+    ] })
+    const hidden = v.emails.filter((e) => e.source === 'oncall')
+    expect(hidden).toHaveLength(1)
+    expect(hidden[0]).toMatchObject({ hidden: true, email: '', name: '' })
+    expect(v.counts.email).toBe(3)    // takim + mudur + gizli nöbetçi
+    const rows = recipientCsvRows(v, { header: ['h'], channel: (c) => c, source: (s) => s, yes: 'Y', no: 'N', later: () => 'L',
+      reason: (c) => c, hiddenName: 'Gizli nöbetçi' })
+    expect(rows.find((r) => r[3] === 'oncall')[1]).toBe('Gizli nöbetçi')
   })
 
   it('eski sunucu (iz alanı yok): sayı sunucunun email_total değeri, hariç listesi bugünkü gibi', () => {

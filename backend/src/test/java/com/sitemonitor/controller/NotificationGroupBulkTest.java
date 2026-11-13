@@ -271,6 +271,30 @@ class NotificationGroupBulkTest {
     }
 
     @Test
+    @DisplayName("2026-11-13 hata taraması: usage-counts kapsamlı görüntüleyiciye yalnız GÖREBİLDİĞİ takımların gruplarını döner (başka takımın grup kimliği / açık alarm sayısı sızmaz)")
+    void usageCounts_scopedToVisibleTeams() throws Exception {
+        when(usageService.usageCounts()).thenReturn(Map.of(11L, 3, 20L, 5));
+        when(alertRepo.countOpenByNotificationGroup()).thenReturn(List.<Object[]>of(new Object[] { 13L, 2L }, new Object[] { 20L, 4L }));
+        when(groupRepo.findByTeamIdInOrderByTeamIdAscNameAsc(any())).thenAnswer(i -> {
+            java.util.Collection<?> teams = i.getArgument(0);
+            return store.stream().filter(g -> teams.contains(g.getTeamId())).toList();
+        });
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/notification-groups/usage-counts")
+                        .session(userOfA()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts['11']").value(3))
+                .andExpect(jsonPath("$.data.counts['20']").doesNotExist())
+                .andExpect(jsonPath("$.data.stamped_open_alerts['13']").value(2))
+                .andExpect(jsonPath("$.data.stamped_open_alerts['20']").doesNotExist());
+        // Global görücü değişmez: hepsi
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/notification-groups/usage-counts")
+                        .session(global()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.counts['20']").value(5))
+                .andExpect(jsonPath("$.data.stamped_open_alerts['20']").value(4));
+    }
+
+    @Test
     @DisplayName("geçersiz eylem / boş seçim 400 alan hatası; etkinleştirme eylemi YOK (active=false eski yumuşak silmedir)")
     void validation() throws Exception {
         mvc.perform(post("/api/notification-groups/bulk").session(global()).contentType(MediaType.APPLICATION_JSON)

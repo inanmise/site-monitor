@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import AdminOverviewStrip from '../components/admin/AdminOverviewStrip.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
-  api: withApiFallback({ admin: { overview: vi.fn() } }),
+  api: withApiFallback({ admin: { overview: vi.fn(), teamStats: vi.fn(), getContacts: vi.fn(), getUsers: vi.fn() } }),
 }))
 // Telefon kipi (jsdom medya sorgusu görmez → kanca mock'lanır)
 const mobile = vi.hoisted(() => ({ on: false }))
@@ -63,12 +63,19 @@ describe('AdminOverviewStrip', () => {
     // Tek kutucuk — ayrı USER_LOCKED/DORMANT/NEVER çipi yok (toplanmış)
     const codes = [...container.querySelectorAll('[data-warning]')].map(b => b.getAttribute('data-warning'))
     expect(codes).toEqual(['USER_ATTENTION'])
+    // 2026-11-13 hata taraması: üç tür birden → süzgeçsiz sekme (sayı 4, süzgeç tek türü göstermez); kırılım kutucukta
+    expect(chip.closest('button').querySelector('[data-slot="overview-health-parts"]').textContent)
+      .toMatch(/1 (kilitli|locked).*1 (hiç giriş yapmamış|never signed in).*2 (atıl|dormant)/)
     fireEvent.click(chip)
-    expect(jump).toHaveBeenCalledWith('users', { g_status: 'locked' })   // kilitli öncelikli süzgeç
+    expect(jump).toHaveBeenCalledWith('users', {})
   })
 
   it('admin değilse eşik KPI\\u0027si yok; uyarı yoksa "temiz" satırı; hata → hiç çizilmez', async () => {
     api.admin.overview.mockResolvedValue({ success: true, data: { counts: { teams: 1, users: 2, contacts: 0, groups: 0, threshold_default: { warning: 30, high: 15, critical: 7 } }, warnings: [] } })
+    // Kapsam boşluğu girdileri okunabilir (takım varlıksız → boşluk 0) — "temiz" yeşili ancak boşluk BİLİNİNCE
+    api.admin.teamStats.mockResolvedValue({ success: true, data: { 1: { monitors: 0, domains: 0 } } })
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [] })
+    api.admin.getUsers.mockResolvedValue({ success: true, data: [] })
     render(<AdminOverviewStrip isAdmin={false} onJump={() => {}} />)
     expect(await screen.findByText(/Sağlık uyarısı yok|No health warnings/)).toBeInTheDocument()
     expect(screen.queryByText('30/15/7')).toBeNull()
@@ -76,6 +83,42 @@ describe('AdminOverviewStrip', () => {
     const { container } = render(<AdminOverviewStrip isAdmin onJump={() => {}} />)
     await new Promise(r => setTimeout(r, 20))
     expect(container.querySelector('[data-testid="admin-overview"]')).toBeNull()
+  })
+})
+
+/** 2026-11-13 hata taraması: eskalasyon kapsam boşluğu bilinmezken yeşil "temiz" yok; sekme değişiminde tazelenir. */
+describe('AdminOverviewStrip — kapsam boşluğu', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mobile.on = false
+    api.admin.overview.mockResolvedValue({ success: true, data: { counts: { teams: 1, users: 2, contacts: 1, groups: 0 }, warnings: [] } })
+    api.admin.teamStats.mockResolvedValue({ success: true, data: { 1: { monitors: 3, domains: 0 } } })
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [{ id: 1, team_id: 1, user_id: 9, min_alert_level: 'WARNING', active: true }] })
+    api.admin.getUsers.mockResolvedValue({ success: true, data: [{ id: 9, active: false }] })
+  })
+  afterEach(() => {
+    for (const k of ['teamStats', 'getContacts', 'getUsers']) api.admin[k].mockReset()
+  })
+
+  it('kullanıcı listesi okunamazsa pasif kişi etkin sayılmaz: boşluk bilinmiyor → kutucuk yok, nötr metin (yeşil değil)', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: false })
+    render(<AdminOverviewStrip isAdmin onJump={() => {}} />)
+    const el = await screen.findByText(/eskalasyon kapsamı denetlenemedi|escalation coverage couldn.t be checked/)
+    expect(el.closest('[data-slot="overview-health-unknown"]')).toHaveAttribute('data-state', 'unknown')
+    expect(screen.queryByText(/^Sağlık uyarısı yok$|^No health warnings$/)).toBeNull()
+    expect(document.querySelector('[data-warning="ESCALATION_GAP"]')).toBeNull()
+  })
+
+  it('pasif kişiye bağlı tek kişi → gerçek boşluk; sekme değişince (refreshKey) girdiler yeniden okunur', async () => {
+    const { rerender } = render(<AdminOverviewStrip isAdmin onJump={() => {}} refreshKey="contacts" />)
+    expect(await screen.findByText(/1 takımda kritik eskalasyon boşluğu|1 team\(s\) with a critical escalation gap/)).toBeInTheDocument()
+    expect(api.admin.getContacts).toHaveBeenCalledTimes(1)
+    // Kişi etkinleşti (aktif kullanıcıya bağlandı) → sekme değişimi boşluğu tazeler
+    api.admin.getUsers.mockResolvedValue({ success: true, data: [{ id: 9, active: true }] })
+    rerender(<AdminOverviewStrip isAdmin onJump={() => {}} refreshKey="teams" />)
+    await waitFor(() => expect(api.admin.getContacts).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('[data-warning="ESCALATION_GAP"]')).toBeNull())
+    expect(await screen.findByText(/^Sağlık uyarısı yok$|^No health warnings$/)).toBeInTheDocument()
   })
 })
 

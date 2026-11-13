@@ -34,12 +34,15 @@ export function buildThresholdMatrix(rows = [], impact = {}) {
   for (const n of TIERS) {
     const own = byTier.get(n)
     const days = own ? daysOf(own) : defDays
-    const reAlert = own ? Number(own.re_alert_interval_hours ?? defReAlert) : defReAlert
+    // Yeniden-uyarı aralığını sunucu YALNIZ varsayılan satırdan okur (EscalationService.processResults /
+    // reAlertIntervalHours) — tier satırındaki değer kullanılmaz (ThresholdEditor de böyle der). 2026-11-13 hata taraması:
+    // matris tier'ın kayıtlı değerini "etkin" ve "özel" gösteriyordu; varsayılan 24 → 12 sa olunca tier "24 saat" görünüyordu.
+    const reAlert = defReAlert
     const override = own ? {
       critical: days.critical !== defDays.critical,
       high: days.high !== defDays.high,
       warning: days.warning !== defDays.warning,
-      reAlert: reAlert !== defReAlert,
+      reAlert: false,
     } : { critical: false, high: false, warning: false, reAlert: false }
     out.push({ tier: n, builtin: false, days, reAlert, override, inherited: !own, impact: scopeTotal(impact, n), row: own || null })
   }

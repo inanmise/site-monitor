@@ -136,6 +136,32 @@ class NotificationGroupControllerTest {
     }
 
     @Test
+    @DisplayName("2026-11-13 hata taraması: değişen-alan gövdesi — gönderilmeyen ad / adresler kayıtlı değerde, gönderilmeyen is_default bayrağa dokunmaz")
+    void update_partialBody_keepsStoredValuesAndDefaultFlag() throws Exception {
+        org.mockito.ArgumentCaptor<NotificationGroupService.GroupInput> in =
+                org.mockito.ArgumentCaptor.forClass(NotificationGroupService.GroupInput.class);
+        when(groupService.validate(any(), any(), anyBoolean())).thenAnswer(i ->
+                new NotificationGroupService.GroupInput(i.getArgument(0), i.getArgument(1), i.getArgument(2)));
+        mvc.perform(put("/api/notification-groups/{id}", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Gece\"}"))
+                .andExpect(status().isOk());
+        verify(groupService).validate(eq("Gece"), eq(List.of("n" + GROUP_A + "@example.com")), eq(false));
+        verify(groupService).update(any(), in.capture(), any(), any());
+        assertThat(in.getValue().keepDefault()).isTrue();
+
+        mvc.perform(put("/api/notification-groups/{id}", GROUP_A)
+                        .session(userOfA)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"is_default\":false}"))
+                .andExpect(status().isOk());
+        verify(groupService, org.mockito.Mockito.times(2)).update(any(), in.capture(), any(), any());
+        assertThat(in.getValue().keepDefault()).isFalse();
+        assertThat(in.getValue().name()).isEqualTo("Nöbet " + GROUP_A);
+    }
+
+    @Test
     @DisplayName("USER kendi takımına grup oluşturur")
     void user_createsOwnTeamGroup() throws Exception {
         mvc.perform(post("/api/notification-groups")

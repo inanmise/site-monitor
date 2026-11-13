@@ -46,14 +46,20 @@ export function defaultGroupState(teamId, groups) {
  * de yok ya da varsayılanın tüm adresleri pasif), unknown. Bilinmeyen varsayılan grup takım adresi olsa da BİLİNMİYOR'dur:
  * tüm adresleri pasif bir varsayılan sonucu "ulaşmıyor"a çevirir (grup uygulanır, takım adresine dönülmez). Aynı nedenle
  * etkin adres sayısı bilinmeyen (`delivered` null) varsayılan da "bilinmiyor"dur — asla yeşil değil.
+ *
+ * Takım adresine düşülüyorsa (varsayılan yok / adressiz) adresin YALNIZ pasif hesaplara ait olup olmadığı da sayılır
+ * (2026-11-13 hata taraması): gönderim süzgeci böyle adresi düşürür. `emailInactiveOnly` sunucunun
+ * `/admin/teams/stats` → `email_inactive_only` alanıdır: true → ulaşmıyor, false → ulaşıyor, null / yok → bilinmiyor.
  */
-export function deliveryState(team, dg) {
+export function deliveryState(team, dg, emailInactiveOnly) {
   const email = String(team?.email ?? '').trim()
   if (dg.state === 'unknown') return 'unknown'
   if (dg.state === 'allPassive') return 'none'
   if (dg.state === 'ok') return dg.delivered == null ? 'unknown' : 'ok'
-  if (email) return 'ok'
-  return 'none'
+  if (!email) return 'none'
+  if (emailInactiveOnly === true) return 'none'
+  if (emailInactiveOnly === false) return 'ok'
+  return 'unknown'
 }
 
 /** Nöbet: `oncall` = { byTeam: Map(teamId → kişi), known: Set(teamId) | null }. Bilinen ama kaydı olmayan takım = none. */
@@ -89,20 +95,23 @@ export function nocState(teamId, noc) {
  *                   people: (team) → { leader: {label, state}, manager: {label, state, manual} } }
  */
 export function buildBoard(teams = [], parts = {}) {
-  const { stats = null, contacts = null, inactiveIds = new Set(), groups = null, oncall = null, noc = null, people = () => ({}) } = parts
+  const { stats = null, contacts = null, inactiveIds = new Set(), knownIds = null, groups = null, oncall = null, noc = null,
+    people = () => ({}) } = parts
   // Eskalasyon kapsamı contactsCoverageModel ile AYNI kural (sunucu EscalationContactScope ile hizalı). Kişiler okunamadıysa
   // tüm takımlar için null (bilinmiyor).
-  const cov = contacts == null ? null : buildCoverage(contacts, teams, inactiveIds, stats || {})
+  const cov = contacts == null ? null : buildCoverage(contacts, teams, inactiveIds, stats || {}, knownIds)
   const covById = cov ? new Map(cov.rows.map((r) => [String(r.teamId), r])) : null
   const rows = teams.map((team) => {
     const dg = defaultGroupState(team.id, groups)
-    const delivery = deliveryState(team, dg)
+    const st = stats ? (stats[String(team.id)] || stats[team.id]) : null
+    const emailInactiveOnly = st && typeof st.email_inactive_only === 'boolean' ? st.email_inactive_only : null
+    const delivery = deliveryState(team, dg, emailInactiveOnly)
     const c = covById ? covById.get(String(team.id)) : null
     const escalation = c ? { counts: c.counts, tone: c.tone, gapLevels: c.gapLevels, assets: c.assets } : null
     const p = people(team) || {}
     return {
       teamId: team.id, teamName: team.name || '', active: team.active !== false,
-      email: String(team.email ?? '').trim(),
+      email: String(team.email ?? '').trim(), emailInactiveOnly,
       leader: p.leader || { state: 'unknown' }, manager: p.manager || { state: 'unknown' },
       defaultGroup: dg, delivery, escalation,
       oncall: oncallState(team.id, oncall), noc: nocState(team.id, noc),
