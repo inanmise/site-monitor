@@ -22,7 +22,8 @@ import java.util.Map;
  * (davranış birebir eskisi gibi).
  *
  * <p>Açık yapılandırmalar bellek anlık görüntüsünden okunur ({@code config-cache-ms}, öntanımlı 30 sn; kaydetme yolu
- * {@link #invalidate} çağırır, öteki pod'lar en çok 30 sn'de görür). Değerlendirme YALNIZ lider üzerinde çağrılır (SLOW
+ * {@link #invalidate} çağırır, öteki pod'lar en çok 30 sn'de görür). Okuma düşerse {@value #FAILED_RETRY_MS} ms sonra yeniden
+ * denenir; açılıştan beri HİÇ okunamadıysa durum {@link State#UNKNOWN} (çağıran SLOW kalemi üretmez). Değerlendirme YALNIZ lider üzerinde çağrılır (SLOW
  * item'ları yalnız lider kurar), bu yüzden ayrı lider kapısı yoktur; global anahtar yine de bir emniyet valfidir.</p>
  */
 @Slf4j
@@ -57,7 +58,22 @@ public class BaselineService {
 
     private volatile Map<String, MonitorBaselineConfig> enabledSnapshot = Map.of();
     private volatile long loadedAt;
+    /** En az bir yapılandırma okuması BAŞARILI oldu mu — olmadıysa açık izlemeler BİLİNMİYOR ({@link State#UNKNOWN}). */
+    private volatile boolean everLoaded;
+    /** Son okuma başarısız mı — öyleyse yeniden deneme {@link #FAILED_RETRY_MS} sonra (30 sn değil). */
+    private volatile boolean lastFailed;
+    private volatile long lastFailureWarnAt;
     private final Object refreshLock = new Object();
+
+    /** Başarısız yapılandırma okumasının yeniden deneme aralığı (ms) — hata taraması 2026-11-13 #10. */
+    static final long FAILED_RETRY_MS = 5_000L;
+
+    /**
+     * Bir izlemenin taban çizgisi durumu (hata taraması 2026-11-13 #10). {@link #UNKNOWN} = açılıştan beri yapılandırma hiç
+     * okunamadı: hangi izlemenin bant kullandığı bilinmez — çağıran SLOW kalemi ÜRETMEZ (ne açar ne kapatır), sabit eşiğin
+     * sentetik "up"ı açık bant alarmını sahte kapatmasın. Başarılı bir anlık görüntü varken okuma hatası onu korur (bilinir).
+     */
+    public enum State { DISABLED, ENABLED, UNKNOWN }
 
     public BaselineService(MonitorBaselineConfigRepository configRepo, BaselineSampleStore store) {
         this.configRepo = configRepo;
@@ -78,17 +94,38 @@ public class BaselineService {
         }
     }
 
-    /** Açık yapılandırmayı döndürür (yoksa / kapalıysa null) — 30 sn'lik bellek anlık görüntüsünden. */
+    /** Ana anahtar açık mı (CANLI) — API / diyalog "ana anahtar kapalı" bandı için. */
+    public boolean switchOn() {
+        return globalEnabled();
+    }
+
+    /** Açık yapılandırmayı döndürür (yoksa / kapalıysa / bilinmiyorsa null) — 30 sn'lik bellek anlık görüntüsünden. */
     public MonitorBaselineConfig config(String type, long monitorId) {
         if (!globalEnabled() || configRepo == null || !BaselineTypes.supported(type)) return null;
-        Map<String, MonitorBaselineConfig> snap = enabledSnapshot;
-        if (System.currentTimeMillis() - loadedAt > Math.max(1000, cacheMs)) snap = refresh();
-        return snap.get(key(type, monitorId));
+        return snapshot().get(key(type, monitorId));
+    }
+
+    /**
+     * Bu izlemenin taban çizgisi durumu: ana anahtar kapalı / bean yok / desteklenmeyen tür → {@link State#DISABLED}; hiç
+     * başarılı okuma yoksa {@link State#UNKNOWN}; aksi hâlde anlık görüntüde açık mı.
+     */
+    public State state(String type, long monitorId) {
+        if (!globalEnabled() || configRepo == null || !BaselineTypes.supported(type)) return State.DISABLED;
+        Map<String, MonitorBaselineConfig> snap = snapshot();
+        if (!everLoaded) return State.UNKNOWN;
+        return snap.containsKey(key(type, monitorId)) ? State.ENABLED : State.DISABLED;
+    }
+
+    private Map<String, MonitorBaselineConfig> snapshot() {
+        long ttl = lastFailed ? FAILED_RETRY_MS : Math.max(1000, cacheMs);
+        if (System.currentTimeMillis() - loadedAt > ttl) return refresh();
+        return enabledSnapshot;
     }
 
     private Map<String, MonitorBaselineConfig> refresh() {
         synchronized (refreshLock) {
-            if (System.currentTimeMillis() - loadedAt <= Math.max(1000, cacheMs)) return enabledSnapshot;
+            long ttl = lastFailed ? FAILED_RETRY_MS : Math.max(1000, cacheMs);
+            if (System.currentTimeMillis() - loadedAt <= ttl) return enabledSnapshot;
             try {
                 List<MonitorBaselineConfig> rows = configRepo.findByEnabledTrue();
                 Map<String, MonitorBaselineConfig> m = new HashMap<>(rows.size() * 2);
@@ -97,8 +134,18 @@ public class BaselineService {
                         m.put(key(c.getMonitorType(), c.getMonitorId()), c);
                 }
                 enabledSnapshot = Map.copyOf(m);
+                everLoaded = true;
+                lastFailed = false;
             } catch (RuntimeException e) {
-                log.debug("Taban çizgisi yapılandırması yenilenemedi (önceki anlık görüntü korunuyor): {}", e.getMessage());
+                lastFailed = true;
+                long now = System.currentTimeMillis();
+                if (now - lastFailureWarnAt > 60_000L) {
+                    lastFailureWarnAt = now;
+                    log.warn("Taban çizgisi yapılandırması okunamadı ({}) — {}; {} sn sonra yeniden denenecek", e.getClass().getSimpleName(),
+                            everLoaded ? "önceki anlık görüntü korunuyor"
+                                    : "hiç okunamadığı için bant izlemelerinde yavaşlık kalemi üretilmiyor",
+                            FAILED_RETRY_MS / 1000);
+                }
             }
             loadedAt = System.currentTimeMillis();
             return enabledSnapshot;
@@ -118,8 +165,7 @@ public class BaselineService {
     /** Taban çizgisi açık izleme var mı (bellek) — çağıran gereksiz işten kaçınır. */
     public boolean anyEnabled() {
         if (!globalEnabled() || configRepo == null) return false;
-        if (System.currentTimeMillis() - loadedAt > Math.max(1000, cacheMs)) refresh();
-        return !enabledSnapshot.isEmpty();
+        return !snapshot().isEmpty();
     }
 
     /**
@@ -138,9 +184,9 @@ public class BaselineService {
 
     /**
      * Geçmiş okuma planı: mevsimsiz → en yeni N örnek ({@link BaselineSampleStore#readRecent}); mevsimsel → günün/haftanın
-     * aynı saatine ± {@value BaselineSampleStore#SEASON_TOLERANCE_MIN_MS} ms düşen örnekler
-     * ({@link BaselineSampleStore#readSeasonal}). Tolerans SABİT (±30 dk) — zamanlanmış değerlendirme ve recheck AYNI pencereyi
-     * görsün (aralığa bağlasaydık uzun aralıklı izlemede recheck daha dar bir pencere okuyup teyidi zayıflatabilirdi).
+     * aynı saatine ± {@value BaselineSampleStore#SEASON_TOLERANCE_MIN_MS} ms düşen ve EN AZ BİR PERİYOT önceki örnekler
+     * ({@link BaselineSampleStore#readSeasonal} — bugünün / bu haftanın son yarım saati "aynı saat" sayılmaz; hata taraması
+     * 2026-11-13 #3). Tolerans SABİT (±30 dk) — zamanlanmış değerlendirme ve recheck AYNI pencereyi görsün.
      * {@code intervalSec} imza kararlılığı için tutulur (v1'de kullanılmaz). {@code beforeMs} zamanlanmışta kontrol anı,
      * recheck'te recheck anı.
      */
@@ -152,6 +198,17 @@ public class BaselineService {
         long nowPos = Math.floorMod(beforeMs, period);
         return store.readSeasonal(type, monitorId, beforeMs, p.window(), period, nowPos,
                 BaselineSampleStore.SEASON_TOLERANCE_MIN_MS);
+    }
+
+    /**
+     * Kayıtlı yapılandırmanın hazırlığı (diyalog — hata taraması 2026-11-13 #8): GERÇEK değerlendirme penceresi okunur (mevsimsel
+     * seçimde yalnız eşleşen saatler) ve karar matematiğinin örnek sayısı / notu döner; örnek YAZMAZ. Değer önemsizdir (örnek
+     * seçimi değere bağlı değil).
+     */
+    public Verdict readiness(String type, long monitorId, BaselineParams params) {
+        BaselineParams p = (params == null ? BaselineParams.defaults() : params).normalized();
+        History h = readHistory(type, monitorId, System.currentTimeMillis(), p, null);
+        return BaselineMath.evaluate(0, h, p);
     }
 
     /**
@@ -171,8 +228,12 @@ public class BaselineService {
         store.deleteForMonitor(type, monitorId);
     }
 
-    /** Günlük budama (lider) — izleme başına en yeni {@link BaselineSampleStore#KEEP_PER_MONITOR} satırı tutar. */
-    public int prune() {
-        return store.prune(BaselineSampleStore.KEEP_PER_MONITOR);
+    /**
+     * Günlük budama ({@code BaselinePruneJob}, küme genelinde tek pod) — izleme başına en yeni
+     * {@link BaselineSampleStore#KEEP_PER_MONITOR} satırı tutar. Ana anahtar kapalıyken de koşar (örnekler saklı kalır).
+     * {@code stop}: pod kapanıyor / bütçe doldu → yarıda bırakır (ertesi gün kalanı budar).
+     */
+    public BaselineSampleStore.PruneResult prune(java.util.function.BooleanSupplier stop) {
+        return store.prune(BaselineSampleStore.KEEP_PER_MONITOR, stop);
     }
 }

@@ -2502,6 +2502,33 @@ public class EscalationService {
         return body;
     }
 
+    /**
+     * Dinamik taban (öğrenen bant) yavaşlık alarmının iletisi — 7 türün hepsi (hata taraması 2026-11-13 #9). Sabit yolun
+     * metinleri "eşiği aştı" diyor ve bant bağlamının anahtarlarını (ör. PING {@code rtt_ms}, sentetik {@code duration_ms})
+     * okumadığı için postada ne ölçülen değer ne bant görünüyordu. Seviye sözcüğü {@link #withLevelWord} ile seviyeden gelir.
+     */
+    private static String baselineSlowMessage(String domain, String alertType, Map<String, Object> ctx) {
+        Object url = ctx.getOrDefault("url", domain);
+        String subject = switch (alertType) {
+            case TYPE_HTTP_SLOW -> url + " HTTP izlemesinde yanıt süresi";
+            case TYPE_KEYWORD_SLOW -> url + " içerik izlemesinde yanıt süresi";
+            case TYPE_PORT_SLOW -> domain + " üzerindeki " + ctx.get("port") + "/" + ctx.getOrDefault("protocol", "TCP")
+                    + " portunun yanıt süresi";
+            case TYPE_PING_SLOW -> ctx.getOrDefault("host", domain) + " ping yanıt süresi";
+            case TYPE_PAGESPEED_SLOW -> url + " sayfa yükleme süresi";
+            case TYPE_SCRIPTED_SLOW -> domain + " senaryosunun koşum süresi";
+            case TYPE_DNS_SLOW -> domain + " için " + ctx.getOrDefault("record_type", "") + " DNS sorgusunun süresi";
+            default -> domain + " yanıt süresi";
+        };
+        Object raw = ctx.get("response_ms");
+        String measured = EmailTemplateBuilder.msText(raw == null ? null : String.valueOf(raw));
+        String band = EmailTemplateBuilder.baselineBandText(ctx);
+        return "YÜKSEK: " + subject + " dinamik tabanın (öğrenilen olağan aralığın) dışında"
+                + (measured != null ? " — " + measured : "")
+                + (band != null ? "; olağan bant " + band : "") + ". "
+                + "Bu bir kesinti değildir; süre olağan banda döndüğünde alarm otomatik kapanır.";
+    }
+
     /** UTC ISO damgayı "gg.aa SS:dd" (Europe/Istanbul) kısa biçime çevirir; bozuksa olduğu gibi. */
     private static String formatIstanbulShort(String iso) {
         try {
@@ -2516,6 +2543,7 @@ public class EscalationService {
     private String monitoringMessageBody(String domain, String alertType, String alertLevel,
                                          Map<String, Object> ctx) {
         if (ctx == null || ctx.isEmpty()) return buildMessage(domain, alertType, alertLevel, null);
+        if (EmailTemplateBuilder.isBaselineSlow(alertType, ctx)) return baselineSlowMessage(domain, alertType, ctx);
         switch (alertType) {
             case TYPE_PORT_DOWN -> {
                 Object port = ctx.get("port");
@@ -5659,6 +5687,9 @@ public class EscalationService {
     public static final java.util.List<String> RESOLVED_CONTEXT_KEYS = List.of("keyword", "operator", "match_count", "occurrences",
                                  "url", "host", "ip_version", "monitor_id", "condition",
                                  "http_status", "last_error", "response_ms", "threshold_ms", "port", "protocol",
+                                 // Dinamik taban bant alarmı (hata taraması 2026-11-13 #9): elle yeniden gönderim / çözüm postası
+                                 // ölçülen değeri ve öğrenilen bandı anlık görüntüden okur.
+                                 "baseline", "baseline_mean", "baseline_low", "baseline_high", "baseline_level", "baseline_deviation",
                                  // team_id: AÇILIŞ yolu "ctx'te team_id varsa ugTeamId = null" diyor
                                  // (bağımsız izleme takım-özeldir). Damga snapshot'a girmezse çözüm ve
                                  // "tekrar bildir" yolları aynı kararı veremiyor ve envanterin UG

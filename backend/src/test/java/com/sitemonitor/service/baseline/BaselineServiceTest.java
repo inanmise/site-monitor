@@ -162,4 +162,68 @@ class BaselineServiceTest {
         assertThat(svc.evaluateScheduled(HTTP, 1, 500, T0 + 1000, 60)).isNull();   // CANLI kapandı → değerlendirme yok
         assertThat(svc.anyEnabled()).isFalse();
     }
+
+    // ── 2026-11-13 hata taraması ────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void ilk_okuma_basarisiz_bilinmiyor_ve_5sn_sonra_yeniden_denenir() {
+        when(configRepo.findByEnabledTrue())
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"))
+                .thenReturn(List.of(cfg(1, true)));
+        svc.invalidate();
+        // #10: hiç okunamadı → BİLİNMİYOR (kapalı DEĞİL), config null (değerlendirme yok)
+        assertThat(svc.state(HTTP, 1)).isEqualTo(BaselineService.State.UNKNOWN);
+        assertThat(svc.config(HTTP, 1)).isNull();
+        // Başarısız okuma 30 sn değil ~5 sn sonra yeniden denenir
+        ReflectionTestUtils.setField(svc, "loadedAt", System.currentTimeMillis() - (BaselineService.FAILED_RETRY_MS + 1_000));
+        assertThat(svc.state(HTTP, 1)).isEqualTo(BaselineService.State.ENABLED);
+        assertThat(svc.state(HTTP, 2)).isEqualTo(BaselineService.State.DISABLED);   // başarılı okuma: yapılandırma yok = kapalı
+    }
+
+    @Test
+    void okuma_hatasi_onceki_basarili_goruntuyu_korur() {
+        enable(1);
+        assertThat(svc.state(HTTP, 1)).isEqualTo(BaselineService.State.ENABLED);
+        when(configRepo.findByEnabledTrue()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        svc.invalidate();
+        assertThat(svc.state(HTTP, 1)).isEqualTo(BaselineService.State.ENABLED);   // bilinen görüntü korunur
+        assertThat(svc.config(HTTP, 1)).isNotNull();
+    }
+
+    @Test
+    void ana_anahtar_kapali_ya_da_desteklenmeyen_tur_kapali_sayilir() {
+        when(configRepo.findByEnabledTrue()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        svc.invalidate();
+        assertThat(svc.state("domain", 1)).isEqualTo(BaselineService.State.DISABLED);
+        ReflectionTestUtils.setField(svc, "globalEnabled", false);
+        assertThat(svc.state(HTTP, 1)).isEqualTo(BaselineService.State.DISABLED);   // kapalı anahtar: kesin kapalı (sabit yol)
+        assertThat(svc.switchOn()).isFalse();
+    }
+
+    @Test
+    void hazirlik_mevsimselde_yalniz_gecmis_gunlerin_ayni_saatini_sayar() {
+        long now = System.currentTimeMillis(), DAY = BaselineSampleStore.DAY_MS;
+        BaselineParams daily = new BaselineParams(BaselineParams.DIRECTION_UP, 2.5, 3.5, 30, 10, BaselineParams.SEASON_DAILY);
+        // Son 30 dakikada 25 örnek (bugün) — "aynı saat" SAYILMAZ (#3) → taban hazır değil
+        for (int i = 0; i < 25; i++) store.append(HTTP, 1, now - (i + 1) * 60_000L, 100, false);
+        Verdict v = svc.readiness(HTTP, 1, daily);
+        assertThat(v.evaluated()).isFalse();
+        assertThat(v.samples()).isZero();
+        // Dün aynı saatin ±30 dk'sında 12 örnek → hazır (12 örnek)
+        for (int i = 0; i < 12; i++) store.append(HTTP, 1, now - DAY - (i + 1) * 60_000L, 100, false);
+        Verdict ready = svc.readiness(HTTP, 1, daily);
+        assertThat(ready.evaluated()).isTrue();
+        assertThat(ready.samples()).isEqualTo(12);
+    }
+
+    @Test
+    void budama_izleme_basina_sinir_ve_durdurma() {
+        for (int i = 1; i <= 20; i++) store.append(HTTP, 1, T0 + i * 1000, 100, false);
+        assertThat(svc.prune(() -> false).deleted()).isZero();  // 20 ≤ KEEP_PER_MONITOR
+        assertThat(store.count(HTTP, 1)).isEqualTo(20);
+        BaselineSampleStore.PruneResult stopped = store.prune(5, () -> true);   // durdur → hiçbir şey silinmez, yarıda
+        assertThat(stopped.partial()).isTrue();
+        assertThat(stopped.deleted()).isZero();
+        assertThat(store.count(HTTP, 1)).isEqualTo(20);
+    }
 }
