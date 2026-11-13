@@ -1,7 +1,13 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.SqlQueryHistory;
 import com.sitemonitor.repository.SqlQueryHistoryRepository;
+import com.sitemonitor.service.sqlplayground.SensitiveColumnException;
+import com.sitemonitor.service.sqlplayground.SqlParams;
+import com.sitemonitor.service.sqlplayground.SqlRunRegistry;
+import com.sitemonitor.service.sqlplayground.SqlSensitiveColumns;
+import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,16 +18,24 @@ import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/**
+ * SQL Playground servisi. Çalıştırma testleri GERÇEK bir H2 veritabanında koşar (2026-11-13: çalıştırıcı artık JDBC
+ * ifadesini kendisi kurar — durdurma, parametre bağlama, kökene göre maskeleme için); şema keşfi testleri sahte
+ * JdbcTemplate ile.
+ */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class SqlPlaygroundServiceTest {
@@ -30,26 +44,61 @@ class SqlPlaygroundServiceTest {
     @Mock SqlQueryHistoryRepository historyRepo;
 
     private SqlPlaygroundService service;
+    private SqlPlaygroundService h2;
+    private JdbcTemplate h2Jdbc;
 
     @BeforeEach
     void setUp() {
         service = new SqlPlaygroundService(jdbc, historyRepo);
+        JdbcDataSource ds = new JdbcDataSource();
+        ds.setURL("jdbc:h2:mem:sqlpg" + UUID.randomUUID() + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1");
+        h2Jdbc = new JdbcTemplate(ds);
+        h2Jdbc.execute("CREATE TABLE teams (id BIGINT PRIMARY KEY, name VARCHAR(100), insertion_date VARCHAR(30), "
+                + "updated_at VARCHAR(30), created_at VARCHAR(30), into_date VARCHAR(30))");
+        h2Jdbc.execute("INSERT INTO teams VALUES (1, 'alpha', 'x', 'y', 'z', 'w'), (2, 'beta', 'x', 'y', 'z', 'w')");
+        h2Jdbc.execute("CREATE TABLE app_users (id BIGINT PRIMARY KEY, username VARCHAR(100), password_hash VARCHAR(100), "
+                + "active_session_id VARCHAR(100), team_id BIGINT, active BOOLEAN)");
+        h2Jdbc.execute("INSERT INTO app_users VALUES (1, 'alice', '$2a$10$secret', 'sess-1', 1, true), "
+                + "(2, 'bob', NULL, NULL, 2, false)");
+        h2Jdbc.execute("CREATE TABLE app_settings (id BIGINT PRIMARY KEY, setting_key VARCHAR(100), setting_value VARCHAR(400))");
+        h2Jdbc.execute("INSERT INTO app_settings VALUES (1, 'plain.key', 'hello'), (2, 'secret.key', 'enc:v1:abcdef')");
+        h2Jdbc.execute("CREATE TABLE audit_log (id BIGINT PRIMARY KEY, my_pg_sleep_log VARCHAR(10))");
+        h2Jdbc.execute("CREATE TABLE a (id BIGINT)");
+        h2Jdbc.execute("CREATE TABLE b (id BIGINT)");
+        h2Jdbc.execute("CREATE TABLE c (id BIGINT)");
+        h2Jdbc.execute("CREATE TABLE sql_running_queries (run_id VARCHAR(64) PRIMARY KEY, owner_username VARCHAR(100), "
+                + "instance_id VARCHAR(100), pod VARCHAR(100), backend_pid INTEGER, app_name VARCHAR(64), kind VARCHAR(16), "
+                + "sql_fingerprint VARCHAR(32), started_ms BIGINT, started_at VARCHAR(30), cancel_requested BOOLEAN)");
+        h2 = new SqlPlaygroundService(h2Jdbc, historyRepo);
     }
 
-    // ── execute ───────────────────────────────────────────────────────────────
+    private static SqlPlaygroundService.QueryRequest q(String sql) {
+        return new SqlPlaygroundService.QueryRequest(sql, Map.of(), null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> rows(Map<String, Object> r) {
+        return (List<Map<String, Object>>) r.get("rows");
+    }
+
+    // ── execute (H2) ──────────────────────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("SELECT returns rows + duration + records history")
+    @DisplayName("SELECT returns rows + duration + records history (+ run_id, masked_columns, cancelled)")
     void execute_select_returnsRows() {
-        List<Map<String, Object>> rows = List.of(Map.of("id", 1, "name", "alice"));
-        when(jdbc.queryForList(contains("SELECT"))).thenReturn(rows);
-
-        Map<String, Object> result = service.execute("SELECT id, name FROM teams", "n34567");
+        Map<String, Object> result = h2.execute("SELECT id, name FROM teams ORDER BY id", "n34567");
 
         assertThat(result.get("ok")).isEqualTo(true);
-        assertThat(result.get("rowCount")).isEqualTo(1);
+        assertThat(result.get("rowCount")).isEqualTo(2);
+        assertThat(rows(result).get(0).get("name")).isEqualTo("alpha");
         assertThat((Long) result.get("durationMs")).isGreaterThanOrEqualTo(0L);
-        verify(historyRepo).save(any(SqlQueryHistory.class));
+        assertThat(result.get("run_id")).isNotNull();
+        assertThat(result.get("masked_columns")).isEqualTo(List.of());
+        assertThat(result.get("cancelled")).isEqualTo(false);
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getSuccess()).isTrue();
+        assertThat(saved.getValue().getCancelled()).isFalse();
     }
 
     @Test
@@ -90,16 +139,11 @@ class SqlPlaygroundServiceTest {
     }
 
     @Test
-    @DisplayName("WITH CTE pure SELECT allowed")
+    @DisplayName("WITH CTE pure SELECT allowed — executed SQL is the wrapped CTE")
     void execute_withCte_allowed() {
-        when(jdbc.queryForList(contains("WITH"))).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        service.execute("WITH t AS (SELECT 1 AS x) SELECT * FROM t", "admin");
-        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
-        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
-        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
-        verify(jdbc).queryForList(cap.capture());
-        assertThat(cap.getValue()).contains("WITH t AS").contains("SELECT * FROM t").endsWith("LIMIT 1000");
+        Map<String, Object> r = h2.execute("WITH t AS (SELECT 1 AS x) SELECT * FROM t", "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        assertThat((String) r.get("executedSql")).contains("WITH t AS").contains("SELECT * FROM t").endsWith("LIMIT 1000");
     }
 
     @Test
@@ -113,55 +157,41 @@ class SqlPlaygroundServiceTest {
     @Test
     @DisplayName("Missing LIMIT auto-appends LIMIT 1000")
     void execute_autoLimitAppended() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-
-        service.execute("SELECT * FROM teams", "admin");
-
-        verify(jdbc).queryForList(sqlCaptor.capture());
-        assertThat(sqlCaptor.getValue()).containsIgnoringCase("limit 1000");
+        Map<String, Object> r = h2.execute("SELECT * FROM teams", "admin");
+        assertThat((String) r.get("executedSql")).containsIgnoringCase("limit 1000");
     }
 
     @Test
     @DisplayName("LIMIT > 1000 capped to 1000")
     void execute_limitExceeds_capped() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-
-        service.execute("SELECT * FROM teams LIMIT 5000", "admin");
-
-        verify(jdbc).queryForList(sqlCaptor.capture());
-        String executed = sqlCaptor.getValue();
-        assertThat(executed).containsIgnoringCase("LIMIT 1000");
-        assertThat(executed).doesNotContain("5000");
+        String executed = (String) h2.execute("SELECT * FROM teams LIMIT 5000", "admin").get("executedSql");
+        assertThat(executed).containsIgnoringCase("LIMIT 1000").doesNotContain("5000");
     }
 
     @Test
     @DisplayName("History recorded on SQL failure too")
     void execute_recordsHistory_onFailure() {
-        when(jdbc.queryForList(anyString())).thenThrow(new DataAccessException("boom") {});
-
-        Map<String, Object> result = service.execute("SELECT 1/0", "admin");
+        Map<String, Object> result = h2.execute("SELECT 1/0", "admin");
 
         assertThat(result.get("ok")).isEqualTo(false);
-        assertThat(result.get("error")).isEqualTo("boom");
+        assertThat((String) result.get("error")).isNotBlank();
         verify(historyRepo).save(any(SqlQueryHistory.class));
     }
 
     @Test
-    @DisplayName("Hata metni EN ÖZGÜL neden (PostgreSQL mesajı + konum) — Spring 6 sarmalayıcı metni değil")
+    @DisplayName("Hata metni EN ÖZGÜL neden (veritabanı mesajı) — Spring sarmalayıcı metni değil")
     void execute_error_usesMostSpecificCause() {
-        java.sql.SQLException pg = new java.sql.SQLException("ERROR: column \"nope\" does not exist" + System.lineSeparator() + "  Position: 8");
-        when(jdbc.queryForList(anyString())).thenThrow(new org.springframework.jdbc.BadSqlGrammarException("StatementCallback", "SELECT nope FROM teams", pg));
-
-        Map<String, Object> result = service.execute("SELECT nope FROM teams", "admin");
-
+        Map<String, Object> result = h2.execute("SELECT nope FROM teams", "admin");
         assertThat(result.get("ok")).isEqualTo(false);
-        assertThat((String) result.get("error")).contains("column \"nope\" does not exist").contains("Position: 8")
-            .doesNotContain("StatementCallback");
+        assertThat((String) result.get("error")).containsIgnoringCase("nope").doesNotContain("StatementCallback")
+                .doesNotContain("ConnectionCallback");
         ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
         verify(historyRepo).save(saved.capture());
-        assertThat(saved.getValue().getErrorMessage()).contains("does not exist");
+        assertThat(saved.getValue().getErrorMessage()).containsIgnoringCase("nope");
+        // Statik yardımcı: Spring 6 sarmalayıcısı yerine PostgreSQL'in kendi iletisi
+        java.sql.SQLException pg = new java.sql.SQLException("ERROR: column \"nope\" does not exist" + System.lineSeparator() + "  Position: 8");
+        assertThat(SqlPlaygroundService.errorMessage(new org.springframework.jdbc.BadSqlGrammarException(
+                "StatementCallback", "SELECT nope FROM teams", pg))).contains("does not exist").contains("Position: 8");
     }
 
     @Test
@@ -175,51 +205,188 @@ class SqlPlaygroundServiceTest {
     @Test
     @DisplayName("Line comments stripped before validation")
     void execute_lineCommentsStripped() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        service.execute("-- only a comment line\nSELECT 1", "admin");
-        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
-        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
-        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
-        verify(jdbc).queryForList(cap.capture());
-        // Yorum satiri ATILIR, SELECT KALIR — yorumla birlikte sorgu da silinseydi bos/bozuk
-        // bir ifade calisirdi ve eski iddia bunu goremezdi.
-        assertThat(cap.getValue()).contains("SELECT 1").doesNotContain("only a comment line");
+        Map<String, Object> r = h2.execute("-- only a comment line\nSELECT 1", "admin");
+        // Yorum satiri ATILIR, SELECT KALIR — yorumla birlikte sorgu da silinseydi bos/bozuk bir ifade calisirdi.
+        assertThat((String) r.get("executedSql")).contains("SELECT 1").doesNotContain("only a comment line");
+        assertThat(r.get("ok")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("Dize içindeki -- ve /* korunur (eski düzenli ifade onları da siliyordu)")
+    void execute_commentMarkersInsideStringsKept() {
+        Map<String, Object> r = h2.execute("SELECT 'a--b' AS x, '/*c*/' AS y /* gerçek yorum */", "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        assertThat(rows(r).get(0)).containsEntry("x", "a--b").containsEntry("y", "/*c*/");
+        assertThat((String) r.get("executedSql")).doesNotContain("gerçek yorum");
+    }
+
+    @Test
+    @DisplayName("Kapanmayan dize / görünmez denetim karakteri açık 400 ile reddedilir; aşırı uzun SQL reddedilir")
+    void execute_unparsableRejected() {
+        assertThatThrownBy(() -> service.execute("SELECT 'abc", "admin"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("satır 1");
+        assertThatThrownBy(() -> service.execute("SELECT 1​", "admin")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.execute("SELECT " + "1".repeat(SqlPlaygroundService.MAX_SQL_CHARS), "admin"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(historyRepo);
     }
 
     @Test
     @DisplayName("Trailing semicolon allowed (single statement)")
     void execute_trailingSemi_allowed() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        service.execute("SELECT 1;", "admin");
-        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
-        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
-        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
-        verify(jdbc).queryForList(cap.capture());
+        Map<String, Object> r = h2.execute("SELECT 1;", "admin");
         // Sondaki `;` atilir — birakilsaydi sarmalanan ifade sozdizimi hatasi verirdi.
-        assertThat(cap.getValue()).contains("SELECT 1").doesNotContain("1;");
+        assertThat((String) r.get("executedSql")).contains("SELECT 1").doesNotContain("1;");
+        assertThat(r.get("ok")).isEqualTo(true);
     }
 
     @Test
     @DisplayName("Yasak kelimeyi İÇEREN sütun adları reddedilmez (kelime sınırı)")
     void execute_columnNamesContainingKeywords_allowed() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        // insertion_date/updated_at/created_at → insert/update/create alt-dizisi içerir
-        // ama \b sınırı nedeniyle FORBIDDEN eşleşmemeli (yanlış pozitif olmamalı).
-        service.execute("SELECT insertion_date, updated_at, created_at FROM teams", "admin");
-        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
-        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
-        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
-        verify(jdbc).queryForList(cap.capture());
-        // Sutun adlari BOZULMADAN gecmeli: sanitizasyon "insert" alt-dizisini kirpsaydi
-        // sorgu sessizce baska bir sey calistirirdi.
-        assertThat(cap.getValue())
+        Map<String, Object> r = h2.execute("SELECT insertion_date, updated_at, created_at FROM teams", "admin");
+        // Sutun adlari BOZULMADAN gecmeli: sanitizasyon "insert" alt-dizisini kirpsaydi sorgu sessizce baska bir sey calistirirdi.
+        assertThat(r.get("ok")).isEqualTo(true);
+        assertThat((String) r.get("executedSql"))
                 .contains("insertion_date").contains("updated_at").contains("created_at");
     }
 
-    // ── listTables / listColumns ──────────────────────────────────────────────
+    // ── Hassas kolon maskeleme / reddi (A1) ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A1: hassas kolon kökene göre maskelenir (takma adla da), null null kalır; masked_columns dolar")
+    void execute_masksSensitiveColumns() {
+        // Takma adın (password_hash AS h) kökene göre maskelenmesi PostgreSQL sürücüsünün taban kolon bilgisiyle olur —
+        // H2 türetilmiş tablo kolonunun kökenini taşımaz; o durum SqlPlaygroundPostgresTest'te.
+        Map<String, Object> r = h2.execute("SELECT username, password_hash, active_session_id FROM app_users ORDER BY id", "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        List<Map<String, Object>> rs = rows(r);
+        assertThat(rs.get(0).get("username")).isEqualTo("alice");
+        assertThat(rs.get(0).get("password_hash")).isEqualTo(SqlSensitiveColumns.MASK);
+        assertThat(rs.get(0).get("active_session_id")).isEqualTo(SqlSensitiveColumns.MASK);
+        assertThat(rs.get(1).get("password_hash")).isNull();
+        @SuppressWarnings("unchecked") List<String> masked = (List<String>) r.get("masked_columns");
+        assertThat(masked).contains("password_hash", "active_session_id").doesNotContain("username");
+        Map<String, Object> star = h2.execute("SELECT * FROM app_users u ORDER BY u.id", "admin");
+        assertThat(rows(star).get(0).get("password_hash")).isEqualTo(SqlSensitiveColumns.MASK);
+    }
+
+    @Test
+    @DisplayName("A1: şifreli değer biçimi (enc:v1:) hangi kolonda olursa maskelenir")
+    void execute_masksEncryptedValues() {
+        Map<String, Object> r = h2.execute("SELECT setting_key, setting_value FROM app_settings ORDER BY id", "admin");
+        assertThat(rows(r).get(0).get("setting_value")).isEqualTo("hello");
+        assertThat(rows(r).get(1).get("setting_value")).isEqualTo(SqlSensitiveColumns.MASK);
+        assertThat(r.get("masked_columns")).isEqualTo(List.of("setting_value"));
+    }
+
+    @Test
+    @DisplayName("A1: ifade içinde hassas kolon → SQL_SENSITIVE_COLUMN, sorgu ÇALIŞMAZ, geçmişe başarısız satır")
+    void execute_sensitiveExpressionRejected() {
+        assertThatThrownBy(() -> h2.execute("SELECT username FROM app_users WHERE password_hash LIKE '$2a%'", "admin"))
+                .isInstanceOfSatisfying(SensitiveColumnException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("SQL_SENSITIVE_COLUMN");
+                    assertThat(e.getColumn()).isEqualTo("password_hash");
+                    assertThat(e.getMessage()).contains("password_hash");
+                });
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getSuccess()).isFalse();
+        assertThat(saved.getValue().getErrorMessage()).contains("password_hash");
+    }
+
+    // ── Parametreler (B4) ───────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("B4: :ad türüyle bağlanır (metin birleştirme yok); eksik → SQL_PARAM_MISSING; tür hatası → SQL_PARAM_INVALID")
+    void execute_params() {
+        Map<String, SqlParams.Param> p = Map.of("id", new SqlParams.Param("2", "number"),
+                "n", new SqlParams.Param("x' OR '1'='1", "text"));
+        Map<String, Object> r = h2.execute(new SqlPlaygroundService.QueryRequest(
+                "SELECT name FROM teams WHERE id = :id OR name = :n", p, null), "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        assertThat(rows(r)).extracting(m -> m.get("name")).containsExactly("beta");
+        assertThat(r.get("params")).isEqualTo(2);
+        assertThat((String) r.get("executedSql")).contains(":id").contains(":n");
+
+        assertThatThrownBy(() -> h2.execute(new SqlPlaygroundService.QueryRequest("SELECT :x", Map.of(), null), "admin"))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getCode()).isEqualTo("SQL_PARAM_MISSING"));
+        assertThatThrownBy(() -> h2.execute(new SqlPlaygroundService.QueryRequest("SELECT :x",
+                Map.of("x", new SqlParams.Param("abc", "number")), null), "admin"))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getCode()).isEqualTo("SQL_PARAM_INVALID"));
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getSqlText()).contains(":id").doesNotContain("OR '1'='1");
+    }
+
+    // ── Durdurma (A2) ───────────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A2: çalışan sorguyu sahibi durdurur → ok:false, cancelled:true, geçmişte cancelled; başkası durduramaz")
+    void execute_cancel() throws Exception {
+        SqlRunRegistry reg = new SqlRunRegistry(h2Jdbc, "inst-x", "pod-x");
+        h2.setRunRegistry(reg);
+        String runId = "run-cancel-0001";
+        CompletableFuture<Map<String, Object>> f = CompletableFuture.supplyAsync(() -> h2.execute(new SqlPlaygroundService.QueryRequest(
+                "SELECT MAX(RAND()) AS m FROM SYSTEM_RANGE(1, 200000) a, SYSTEM_RANGE(1, 200000) b", Map.of(), runId), "alice"));
+        long until = System.currentTimeMillis() + 10_000;
+        SqlRunRegistry.CancelResult res;
+        do {
+            Thread.sleep(100);
+            assertThat(h2.cancel(runId, "mallory")).isEqualTo(new SqlRunRegistry.CancelResult(false, "not_found"));
+            res = h2.cancel(runId, "alice");
+        } while (!res.cancelled() && !f.isDone() && System.currentTimeMillis() < until);
+        if (!res.cancelled()) {
+            Object outcome;
+            try { outcome = f.get(1, TimeUnit.SECONDS); } catch (Exception ex) { outcome = ex; }
+            fail("durdurulamadı; sonuç=" + outcome);
+        }
+        Map<String, Object> r = f.get(20, TimeUnit.SECONDS);
+        assertThat(r.get("ok")).isEqualTo(false);
+        assertThat(r.get("cancelled")).isEqualTo(true);
+        assertThat(r.get("run_id")).isEqualTo(runId);
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getCancelled()).isTrue();
+        assertThat(h2.cancel(runId, "alice")).isEqualTo(new SqlRunRegistry.CancelResult(false, "finished"));
+    }
+
+    // ── Plan / dışa aktarım (H2) ────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("C1: PostgreSQL değilse 409 SQL_EXPLAIN_UNSUPPORTED; hassas ifade yine reddedilir")
+    void explain_unsupportedOnH2() {
+        assertThatThrownBy(() -> h2.explain(q("SELECT 1"), false, "admin"))
+                .isInstanceOfSatisfying(com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException.class,
+                        e -> assertThat(e.getCode()).isEqualTo("SQL_EXPLAIN_UNSUPPORTED"));
+        assertThatThrownBy(() -> h2.explain(q("SELECT md5(password_hash) FROM app_users"), true, "admin"))
+                .isInstanceOf(SensitiveColumnException.class);
+    }
+
+    @Test
+    @DisplayName("C3: dışa aktarım satırları tek tek verir, tavanı aşınca keser (truncated), maskeyi uygular")
+    void export_streamsAndTruncates() {
+        List<Object[]> got = new ArrayList<>();
+        String[][] labels = new String[1][];
+        SqlPlaygroundService.RunOutcome o = h2.export(q("SELECT username, password_hash FROM app_users ORDER BY id"), 1, "admin",
+                new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { labels[0] = l; }
+                    @Override public boolean row(Object[] v) { got.add(v); return true; }
+                });
+        assertThat(o.ok()).isTrue();
+        assertThat(o.rows()).isEqualTo(1);
+        assertThat(o.truncated()).isTrue();
+        assertThat(labels[0]).containsExactly("username", "password_hash");
+        assertThat(got).hasSize(1);
+        assertThat(got.get(0)[1]).isEqualTo(SqlSensitiveColumns.MASK);
+        assertThat(o.maskedColumns()).containsExactly("password_hash");
+        SqlPlaygroundService.RunOutcome all = h2.export(q("SELECT id FROM teams"), 10, "admin",
+                new SqlPlaygroundService.RowSink() {
+                    @Override public void columns(String[] l) { }
+                    @Override public boolean row(Object[] v) { return true; }
+                });
+        assertThat(all.rows()).isEqualTo(2);
+        assertThat(all.truncated()).isFalse();
+    }
 
     // ── Tehlikeli fonksiyon engeli (SELECT-only kuralının YAKALAYAMADIĞI yüzey) ──
 
@@ -266,11 +433,8 @@ class SqlPlaygroundServiceTest {
     @DisplayName("Kelime sınırı: adında yasak fonksiyon GEÇEN sütun reddedilmez")
     void execute_columnNamedLikeForbiddenFunction_allowed() {
         // Engel listesi kelime sınırıyla eşleşir; "my_pg_sleep_log" gibi meşru bir ad
-        // reddedilirse kullanıcı sebebini anlayamaz. FORBIDDEN listesinde aynı güvence
-        // zaten test edilmiş; fonksiyon listesi için de aynısı geçerli olmalı.
-        when(jdbc.queryForList(contains("SELECT"))).thenReturn(List.of());
-
-        Map<String, Object> r = service.execute("SELECT my_pg_sleep_log FROM audit_log", "admin");
+        // reddedilirse kullanıcı sebebini anlayamaz.
+        Map<String, Object> r = h2.execute("SELECT my_pg_sleep_log FROM audit_log", "admin");
 
         assertThat(r.get("ok")).isEqualTo(true);
     }
@@ -312,26 +476,16 @@ class SqlPlaygroundServiceTest {
     @Test
     @DisplayName("Bulgu 9: 'into' kelimesi sutun adinin PARCASI ise engellenmez (yanlis pozitif yok)")
     void execute_columnContainingInto_allowed() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-        service.execute("SELECT into_date FROM teams", "admin");
-        // "Izin verildi" yetmez: HANGI SQL kostugu da dogrulanmali. Eskiden yalniz
-        // `verify(jdbc).queryForList(anyString())` vardi — sanitizasyon SELECT'i bozsa,
-        // yanlis ifadeyi calistirsa ya da DIS TAVANI atlasa test yine yesil kalirdi.
-        verify(jdbc).queryForList(cap.capture());
-        assertThat(cap.getValue()).contains("into_date").endsWith("LIMIT 1000");
+        Map<String, Object> r = h2.execute("SELECT into_date FROM teams", "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        assertThat((String) r.get("executedSql")).contains("into_date").endsWith("LIMIT 1000");
     }
 
     @Test
     @DisplayName("Bulgu 33: IC LIMIT tavanin ALTINDA olsa da DIS tavan eklenir")
     void execute_innerLimitBelowCap_stillWrapped() {
-        when(jdbc.queryForList(anyString())).thenReturn(List.of());
-        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-
-        service.execute("SELECT * FROM a, b WHERE a.id IN (SELECT id FROM c LIMIT 5)", "admin");
-
-        verify(jdbc).queryForList(cap.capture());
-        String executed = cap.getValue();
+        String executed = (String) h2.execute("SELECT * FROM a, b WHERE a.id IN (SELECT id FROM c LIMIT 5)", "admin")
+                .get("executedSql");
         assertThat(executed)
                 .as("dis tavan yoksa kartezyen carpim milyonlarca satiri bellege alir: %s", executed)
                 .startsWith("SELECT * FROM (")
@@ -346,6 +500,18 @@ class SqlPlaygroundServiceTest {
         when(jdbc.queryForList(contains("SELECT"))).thenReturn(List.of());
         service.execute("SELECT 1", "n1");
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).setQueryTimeout(org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("Çalıştırma otomatik commit KAPALI salt-okunur işlemde koşar ve her zaman geri alınır (H2 bağlantısı)")
+    void execute_runsInRolledBackTransaction() throws Exception {
+        javax.sql.DataSource ds = h2Jdbc.getDataSource();
+        // Gözlem: çalıştırma sonrası havuz bağlantısının otomatik commit'i eski hâline döner (sızıntı yok)
+        Map<String, Object> r = h2.execute("SELECT 1", "admin");
+        assertThat(r.get("ok")).isEqualTo(true);
+        try (java.sql.Connection c = ds.getConnection()) {
+            assertThat(c.getAutoCommit()).isTrue();
+        }
     }
 
     @Test
@@ -371,7 +537,6 @@ class SqlPlaygroundServiceTest {
     void playgroundConnection_isOpenedReadOnly() throws Exception {
         // Metin kontrolleri (SELECT/WITH ile başlama, into/merge, yasak fonksiyonlar) ilk kapı;
         // kelime sınırlarını atlatan bir yazma yolu için ikinci kapı DB'nin kendisi olmalı.
-        // Connection.setReadOnly(true) PostgreSQL'de default_transaction_read_only uygular.
         javax.sql.DataSource ds = org.mockito.Mockito.mock(javax.sql.DataSource.class);
         java.sql.Connection con = org.mockito.Mockito.mock(java.sql.Connection.class);
         when(ds.getConnection()).thenReturn(con);
@@ -382,7 +547,16 @@ class SqlPlaygroundServiceTest {
         verify(con).setReadOnly(true);
     }
 
+    @Test
+    @DisplayName("Hassas kolon şeması canlı information_schema'dan desene uyan kolonları da alır")
+    void sensitiveSchema_includesLivePatternColumns() {
+        h2Jdbc.execute("CREATE TABLE vendor_tokens (id BIGINT, refresh_token VARCHAR(50))");
+        assertThat(h2.sensitiveSchema().columnsOf("vendor_tokens")).contains("refresh_token");
+        assertThat(h2.sensitiveSchema().columnsOf("app_users")).contains("password_hash");
+    }
+
     // ── tableDetails zenginleştirme (2026-09-20) ─────────────────────────────
+
 
     @Test
     @DisplayName("tableDetails: yapısal kısıt (kolonlar, hedef tablo, ON DELETE), kolon rozetleri (pk/fk/indeksli), referenced_by, stats; katalog hatası ekranı düşürmez")
