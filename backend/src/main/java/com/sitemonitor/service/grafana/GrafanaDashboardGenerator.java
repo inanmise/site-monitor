@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 16;
+    public static final int DASHBOARD_REVISION = 17;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1521,11 +1521,11 @@ public final class GrafanaDashboardGenerator {
                                     + "code, timeout)."),
                     guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"down\"") + "))", "pagespeed"), "short",
                     thresholds(GREEN, null, RED, 1), "background", links() ? url("tab=pagespeed&stat=down") : null).size(4, 8));
-            add(stat(t("Sayfa hızı — ölçülmemiş", "Page speed — not measured"),
-                    t("Henüz hiç ölçülmemiş etkin sayfa hızı izlemeleri (yeni eklenmiş ya da hiç koşmamış). Bilinmeyen durumdur — "
-                                    + "sağlıklı sayılmaz.",
-                            "Active page speed monitors without any measurement yet (newly added or never run). An unknown state — not "
-                                    + "counted as healthy."),
+            add(stat(t("Sayfa hızı — bilinmiyor", "Page speed — unknown"),
+                    t("Henüz hiç ölçülmemiş ya da son ölçümü kısmi kalıp (süre / boyut / kaynak tavanı) bir eşiği karara "
+                                    + "bağlanamamış etkin sayfa hızı izlemeleri. Bilinmeyen durumdur — sağlıklı sayılmaz.",
+                            "Active page speed monitors without any measurement yet, or whose last measurement was partial (time, size "
+                                    + "or resource cap) and left a threshold undecided. An unknown state — not counted as healthy."),
                     guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"unknown\"") + "))", "pagespeed"), "short",
                     thresholds(GREEN, null, GREY, 1), "background", null).size(4, 8));
 
@@ -1543,13 +1543,14 @@ public final class GrafanaDashboardGenerator {
 
             Panel states = new Panel("timeseries", t("Sayfa hızı durumları zaman içinde", "Page speed states over time"),
                     t("Sayfa hızı izlemelerinin son ölçüme göre durumu, zaman içinde yığılmış: eşik içinde, bütçeyi aşan, açılamayan, "
-                                    + "ölçülmemiş, duraklatılmış. Takım süzgecine uyar.",
+                                    + "bilinmiyor (ölçülmemiş ya da kısmi ölçüm), bütçe tanımsız, duraklatılmış. Takım süzgecine uyar.",
                             "Page speed monitors by the state of their last measurement over time, stacked: within budget, over budget, "
-                                    + "not loading, not measured, paused. Follows the team filter."));
+                                    + "not loading, unknown (never measured or a partial measurement), no budget defined, paused. Follows "
+                                    + "the team filter."));
             states.w = o.perMonitor() ? 12 : 24; states.h = 8;
             String[][] st = {{"ok", t("Eşik içinde", "Within budget"), GREEN}, {"over_budget", t("Bütçeyi aşan", "Over budget"), AMBER},
-                    {"down", t("Açılamayan", "Not loading"), RED}, {"unknown", t("Ölçülmemiş", "Not measured"), GREY},
-                    {"paused", t("Duraklatılmış", "Paused"), BLUE}};
+                    {"down", t("Açılamayan", "Not loading"), RED}, {"unknown", t("Bilinmiyor", "Unknown"), GREY},
+                    {"no_budget", t("Bütçe tanımsız", "No budget defined"), PURPLE}, {"paused", t("Duraklatılmış", "Paused"), BLUE}};
             Map<String, String> sc = new LinkedHashMap<>();
             for (String[] s : st) {
                 states.target("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"" + s[0] + "\"") + "))", s[1], false);
@@ -1595,6 +1596,7 @@ public final class GrafanaDashboardGenerator {
             table.valueColumn("B", t("TTFB", "TTFB"), "ms", thresholds("text", null), "auto", null);
             table.valueColumn("C", t("Ağırlık", "Weight"), "bytes", thresholds("text", null), "auto", null);
             table.valueColumn("D", t("İstek", "Requests"), "short", thresholds("text", null), "auto", null);
+            // Bütçe değeri yalnız karara bağlanmış ölçümde yazılır — kısmi ölçüm / bütçesiz izleme boş hücredir (bilinmiyor ≠ 0).
             table.valueColumn("E", t("Bütçe", "Budget"), "none", null, "color-text", List.of(valueMap(new Object[][]{
                     {0, t("Eşik içinde", "Within budget"), GREEN}, {1, t("Aştı", "Over budget"), AMBER}})));
             table.sortBy(t("Yükleme", "Load"), true);

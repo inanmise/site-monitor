@@ -402,6 +402,11 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
         th.put("max_ttfb_ms", m.getMaxTtfbMs());
         th.put("max_page_kb", m.getMaxPageKb());
         th.put("max_requests", m.getMaxRequests());
+        th.put("min_page_kb", m.getMinPageKb());
+        th.put("max_js_kb", m.getMaxJsKb());
+        th.put("max_img_kb", m.getMaxImgKb());
+        th.put("max_font_kb", m.getMaxFontKb());
+        th.put("max_third_party_kb", m.getMaxThirdPartyKb());
         b.put("thresholds", th);
         b.put("measured", res == null ? null : measured(res));
         List<Map<String, Object>> metrics = new ArrayList<>();
@@ -451,7 +456,7 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
         Map<String, Object> x = new LinkedHashMap<>();
         x.put("status", res.status());
         x.put("http_status", res.statusCode());
-        x.put("ttfb_ms", res.ttfbMs());
+        x.put("ttfb_ms", res.serverTtfbMs());
         x.put("server_ms", res.phases() == null ? null : res.phases().serverMs());
         x.put("html_ms", res.htmlMs());
         x.put("total_ms", res.totalMs());
@@ -572,6 +577,11 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
         th.put("max_ttfb_ms", m.getMaxTtfbMs());
         th.put("max_page_kb", m.getMaxPageKb());
         th.put("max_requests", m.getMaxRequests());
+        th.put("min_page_kb", m.getMinPageKb());
+        th.put("max_js_kb", m.getMaxJsKb());
+        th.put("max_img_kb", m.getMaxImgKb());
+        th.put("max_font_kb", m.getMaxFontKb());
+        th.put("max_third_party_kb", m.getMaxThirdPartyKb());
         mon.put("thresholds", th);
         return mon;
     }

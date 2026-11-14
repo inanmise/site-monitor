@@ -287,27 +287,49 @@ public final class MonitoringMetricsModel {
 
     // ── Sayfa Hızı (2026-11-14, madde 20) ─────────────────────────────────────────────────────────────────
 
-    /** Sayfa hızı durumları — pano bu sırayla çizer. */
-    public static final List<String> PAGESPEED_STATES = List.of("ok", "over_budget", "down", "unknown", "paused");
+    /**
+     * Sayfa hızı durumları — pano bu sırayla çizer. {@code unknown}: hiç ölçülmedi YA DA son ölçüm kısmi ve bir eşik kararsız
+     * kaldı (inceleme B1); {@code no_budget}: sayfa alındı ama izlemede hiç eşik tanımlı değil (inceleme F7).
+     */
+    public static final List<String> PAGESPEED_STATES = List.of("ok", "over_budget", "down", "unknown", "no_budget", "paused");
 
     /**
      * Bir sayfa hızı izlemesi + son ölçümü. {@code ok} null = hiç ölçülmedi (bilinmiyor); {@code breached} = son ölçümün aşılan
-     * eşikleri (virgüllü; boş = eşik içinde).
+     * eşikleri (virgüllü; boş = eşik içinde); {@code undecided} = kararsız eşikler (kısmi ölçüm); {@code budgetDefined} =
+     * izlemede en az bir eşik var.
      */
     public record PageSpeedRow(long id, String name, String url, String group, Long teamId, boolean active,
-                               Boolean ok, Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requests, String breached) {
+                               Boolean ok, Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requests, String breached,
+                               String undecided, boolean budgetDefined) {
+
+        /** İnceleme öncesi biçim — kararsız eşik yok, bütçe tanımlı. */
+        public PageSpeedRow(long id, String name, String url, String group, Long teamId, boolean active,
+                            Boolean ok, Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requests, String breached) {
+            this(id, name, url, group, teamId, active, ok, loadMs, ttfbMs, totalBytes, requests, breached, null, true);
+        }
 
         String state() {
             if (!active) return "paused";
             if (ok == null) return "unknown";
             if (!ok) return "down";
-            return breached == null || breached.isBlank() ? "ok" : "over_budget";
+            if (!breachedKeys().isEmpty()) return "over_budget";
+            if (!budgetDefined) return "no_budget";
+            return keys(undecided).isEmpty() ? "ok" : "unknown";
         }
 
-        List<String> breachedKeys() {
-            if (breached == null || breached.isBlank()) return List.of();
+        List<String> breachedKeys() { return keys(breached); }
+
+        /** Bütçe değeri: kanıtlı aşım 1, karara bağlanmış "içinde" 0; bütçe yok ya da kararsız → null (seri YAZILMAZ). */
+        Integer budgetBreached() {
+            if (!budgetDefined) return null;
+            if (!breachedKeys().isEmpty()) return 1;
+            return keys(undecided).isEmpty() ? 0 : null;
+        }
+
+        private static List<String> keys(String csv) {
+            if (csv == null || csv.isBlank()) return List.of();
             List<String> out = new ArrayList<>();
-            for (String k : breached.split(",")) {
+            for (String k : csv.split(",")) {
                 String t = k.trim().toUpperCase(Locale.ROOT);
                 if (!t.isEmpty()) out.add(t);
             }
@@ -375,7 +397,8 @@ public final class MonitoringMetricsModel {
             if (r.ttfbMs() != null && r.ttfbMs() >= 0) f.add(MonitoringMetricNames.PAGESPEED_TTFB_MS, r.ttfbMs(), kv);
             if (r.totalBytes() != null && r.totalBytes() >= 0) f.add(MonitoringMetricNames.PAGESPEED_BYTES, r.totalBytes(), kv);
             if (r.requests() != null && r.requests() >= 0) f.add(MonitoringMetricNames.PAGESPEED_REQUESTS, r.requests(), kv);
-            f.add(MonitoringMetricNames.PAGESPEED_BUDGET_BREACHED, r.breachedKeys().isEmpty() ? 0 : 1, kv);
+            Integer bb = r.budgetBreached();
+            if (bb != null) f.add(MonitoringMetricNames.PAGESPEED_BUDGET_BREACHED, bb, kv);
         }
     }
 

@@ -330,11 +330,20 @@ class PageSpeedCheckerServiceTest {
     }
 
     @Test
-    @DisplayName("Gerçek TTFB (madde 2): eşik gerçek isteğin ilk baytına bakar — faz probunun 401'ine değil")
-    void ttfbThresholdUsesTheRealRequest() {
-        // Kimlik isteyen sayfa: kimliksiz istek (faz probu) 401 alır ve hemen döner; kimlikli gerçek istek 600 ms bekler.
+    @DisplayName("TTFB (madde 2, inceleme B2): faz probu izlemenin koşullarıyla — kimlik + UA gider, yönlendirme izlenir; SON adımın sunucu fazı eşiğe girer")
+    void ttfbThresholdUsesTheMonitorsConditions() {
+        // /eski → 301 → /auth-yavas. Kimliksiz istek 401'i HEMEN alır; kimlikli istek 600 ms bekler. Eski prob kimliksizdi ve
+        // yönlendirme izlemiyordu: 301'in (ya da 401'in) birkaç ms'sini ölçer, eşik hiç aşılmazdı.
+        server.createContext("/eski", ex -> {
+            record(ex);
+            ex.getResponseHeaders().add("Location", "/auth-yavas");
+            ex.sendResponseHeaders(301, -1);
+            ex.close();
+        });
+        java.util.List<String> probeUas = new java.util.concurrent.CopyOnWriteArrayList<>();
         server.createContext("/auth-yavas", ex -> {
             record(ex);
+            probeUas.add(String.valueOf(ex.getRequestHeaders().getFirst("User-Agent")));
             boolean authed = ex.getRequestHeaders().getFirst("Authorization") != null;
             if (!authed) { ex.sendResponseHeaders(401, -1); ex.close(); return; }
             try { Thread.sleep(600); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -343,16 +352,59 @@ class PageSpeedCheckerServiceTest {
             ex.sendResponseHeaders(200, b.length);
             try (OutputStream os = ex.getResponseBody()) { os.write(b); }
         });
-        PageSpeedMonitor m = monitor("/auth-yavas");
+        PageSpeedMonitor m = monitor("/eski");
         m.setBasicAuthUser("u");
         m.setBasicAuthPassEnc("p");
+        m.setUserAgent("Izleme-UA/1.0");
         m.setMaxTtfbMs(300);
         var r = checker.check(m);
         assertThat(r.reachable()).isTrue();
-        assertThat(r.ttfbMs()).isGreaterThanOrEqualTo(550);
-        // Prob kimliksizdi ve 401'i hızlı aldı; eşik o sayıya bakmıyor
+        // eşiğin okuduğu sayı = probun SON adımının sunucu fazı (kimlikli 200'ün 600 ms'si)
+        assertThat(r.serverTtfbMs()).isNotNull().isGreaterThanOrEqualTo(550);
+        assertThat(r.measurement().ttfbMs()).isEqualTo(r.serverTtfbMs());
         assertThat(r.breached()).contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_TTFB);
-        assertThat(r.measurement().ttfbMs()).isEqualTo((int) r.ttfbMs());
+        // prob da izlemenin UA'sını gönderdi (eski "SiteMonitor-PhaseProbe" değil)
+        assertThat(probeUas).isNotEmpty().allMatch("Izleme-UA/1.0"::equals);
+    }
+
+    @Test
+    @DisplayName("TTFB (inceleme B2): faz probu her ölçümde TAZE bağlantı açar — havuz sıcaklığı sayıyı değiştirmez (bağlantı kapatılır)")
+    void phaseProbeOpensAFreshConnectionEachTime() throws Exception {
+        java.util.List<String> conn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        server.createContext("/taze", ex -> {
+            conn.add(String.valueOf(ex.getRequestHeaders().getFirst("Connection")));
+            byte[] b = "<html><body>x</body></html>".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/html");
+            ex.sendResponseHeaders(200, b.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(b); }
+        });
+        var t = new com.sitemonitor.service.page.HttpPhaseProbe.Target(base + "/taze", 5000, "UA", java.util.Map.of(), false);
+        var p1 = phaseProbe.measure(t);
+        var p2 = phaseProbe.measure(t);
+        assertThat(p1.serverMs()).isNotNull();
+        assertThat(p2.serverMs()).isNotNull();
+        // her adım "Connection: close" ile kendi soketini açıp kapatır — paylaşılan havuz yok
+        assertThat(conn).hasSize(2).allMatch(c -> c.equalsIgnoreCase("close"));
+    }
+
+    @Test
+    @DisplayName("TTFB (inceleme B1 / B2): prob ölçemezse TTFB BİLİNMİYOR — 0 değil; tanımlı TTFB eşiği kararsız, ölçüm 'eşik içinde' sayılmaz")
+    void ttfbUnknownWhenProbeFails() {
+        var stub = new com.sitemonitor.service.page.HttpPhaseProbe(new SsrfGuard(appSettings)) {
+            @Override public Phases measure(Target target) { return new Phases(null, null, null, null, "ölçülemedi"); }
+        };
+        SecretCipher cipher = mock(SecretCipher.class);
+        PublicSuffixService psl = new PublicSuffixService();
+        psl.load();
+        var c = new PageSpeedCheckerService(core, stub, psl, appSettings, cipher);
+        PageSpeedMonitor m = monitor("/");
+        m.setMaxTtfbMs(5000);
+        var r = c.check(m);
+        assertThat(r.reachable()).isTrue();
+        assertThat(r.serverTtfbMs()).isNull();
+        assertThat(r.breached()).isEmpty();
+        assertThat(r.undecided()).containsExactly(com.sitemonitor.service.page.PageSpeedRules.BREACH_TTFB);
+        assertThat(r.status()).isEqualTo("OK");
     }
 
     @Test

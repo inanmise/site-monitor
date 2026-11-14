@@ -37,14 +37,14 @@
               "team_id": 8,
               "pagespeed_status": "OK",
               "response_ms": 1200,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 200000,
               "request_count": 14,
               "http_status": 200,
               "bytes_truncated": false,
               "breached_metrics": [],
               "ps_thresholds": "LOAD\t3000\t1200\t0\t0\nSIZE\t500\t195\t0\t0",
-              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145\ndownload\t220",
+              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145",
               "alert_level": "WARNING"
             },
             "recheck": true
@@ -66,7 +66,7 @@
               "team_id": 8,
               "pagespeed_status": "SLOW",
               "response_ms": 5200,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 1020000,
               "request_count": 14,
               "http_status": 200,
@@ -78,7 +78,7 @@
               "heavy_rows": "OTHER\thttps://b.example.com/hero.jpg\t878\nOTHER\thttps://cdn.example.net/app.js\t117",
               "heavy_total": 2,
               "ps_thresholds": "LOAD\t3000\t5200\t1\t0\nSIZE\t500\t996\t1\t1",
-              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145\ndownload\t220",
+              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145",
               "ps_partial": true,
               "alert_level": "WARNING"
             },
@@ -101,7 +101,7 @@
               "team_id": 8,
               "pagespeed_status": "DOWN",
               "response_ms": 90,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 0,
               "request_count": 14,
               "http_status": 503,
@@ -129,7 +129,7 @@
               "team_id": 8,
               "pagespeed_status": "CONFIG_ERROR",
               "response_ms": 0,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 0,
               "request_count": 14,
               "bytes_truncated": false,
@@ -166,14 +166,14 @@
               "team_id": 8,
               "pagespeed_status": "OK",
               "response_ms": 1200,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 200000,
               "request_count": 14,
               "http_status": 200,
               "bytes_truncated": false,
               "breached_metrics": [],
               "ps_thresholds": "LOAD\t3000\t1200\t0\t0\nSIZE\t500\t195\t0\t0",
-              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145\ndownload\t220",
+              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145",
               "detail": "eşikler içinde",
               "alert_level": "WARNING"
             },
@@ -196,7 +196,7 @@
               "team_id": 8,
               "pagespeed_status": "SLOW",
               "response_ms": 5200,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 1020000,
               "request_count": 14,
               "http_status": 200,
@@ -208,7 +208,7 @@
               "heavy_rows": "OTHER\thttps://b.example.com/hero.jpg\t878\nOTHER\thttps://cdn.example.net/app.js\t117",
               "heavy_total": 2,
               "ps_thresholds": "LOAD\t3000\t5200\t1\t0\nSIZE\t500\t996\t1\t1",
-              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145\ndownload\t220",
+              "ps_phases": "dns\t5\nconnect\t10\ntls\t20\nserver\t145",
               "ps_partial": true,
               "detail": "yükleme 5200 ms · boyut ≥ 996 KB eşiği aştı",
               "alert_level": "WARNING"
@@ -232,7 +232,7 @@
               "team_id": 8,
               "pagespeed_status": "CONFIG_ERROR",
               "response_ms": 0,
-              "ttfb_ms": 180,
+              "ttfb_ms": 145,
               "total_bytes": 0,
               "request_count": 14,
               "bytes_truncated": false,
@@ -265,6 +265,7 @@
             "cssBytes": null,
             "cssCount": null,
             "dnsMs": 5,
+            "downloadMs": null,
             "errorMessage": null,
             "failedCount": 0,
             "failureDetail": null,
@@ -292,7 +293,8 @@
             "timeTruncated": false,
             "tlsMs": 20,
             "totalBytes": 200000,
-            "ttfbMs": 180
+            "ttfbMs": 145,
+            "undecidedMetrics": null
           }
         }
       ]
@@ -313,7 +315,7 @@
           "ok": true,
           "http_status": 200,
           "response_ms": 1200,
-          "ttfb_ms": 180,
+          "ttfb_ms": 145,
           "total_bytes": 200000,
           "request_count": 14
         },
@@ -344,6 +346,7 @@
             "cssBytes": null,
             "cssCount": null,
             "dnsMs": 5,
+            "downloadMs": null,
             "errorMessage": null,
             "failedCount": 0,
             "failureDetail": null,
@@ -371,7 +374,8 @@
             "timeTruncated": false,
             "tlsMs": 20,
             "totalBytes": 1020000,
-            "ttfbMs": 180
+            "ttfbMs": 145,
+            "undecidedMetrics": null
           }
         }
       ]
@@ -469,7 +473,7 @@
           "ok": true,
           "http_status": 200,
           "response_ms": 5200,
-          "ttfb_ms": 180,
+          "ttfb_ms": 145,
           "total_bytes": 1020000,
           "request_count": 14
         },
@@ -500,6 +504,7 @@
             "cssBytes": null,
             "cssCount": null,
             "dnsMs": 5,
+            "downloadMs": null,
             "errorMessage": "HTTP 503",
             "failedCount": 0,
             "failureDetail": "{\"phase\":\"RESPONSE\",\"http_status\":503,\"target\":\"c.example.com\",\"via\":\"direct\",\"timeout_ms\":10000}",
@@ -527,7 +532,8 @@
             "timeTruncated": null,
             "tlsMs": 20,
             "totalBytes": 0,
-            "ttfbMs": 180
+            "ttfbMs": 145,
+            "undecidedMetrics": null
           }
         }
       ]
@@ -548,7 +554,7 @@
           "ok": false,
           "http_status": 503,
           "response_ms": 90,
-          "ttfb_ms": 180,
+          "ttfb_ms": 145,
           "total_bytes": 0,
           "request_count": 14,
           "error": "HTTP 503"
@@ -580,6 +586,7 @@
             "cssBytes": null,
             "cssCount": null,
             "dnsMs": 5,
+            "downloadMs": null,
             "errorMessage": "URL'de host yok",
             "failedCount": 0,
             "failureDetail": "{\"phase\":\"POLICY\"}",
@@ -607,7 +614,8 @@
             "timeTruncated": null,
             "tlsMs": 20,
             "totalBytes": 0,
-            "ttfbMs": 180
+            "ttfbMs": 145,
+            "undecidedMetrics": null
           }
         }
       ]
@@ -628,7 +636,7 @@
           "ok": false,
           "http_status": null,
           "response_ms": 0,
-          "ttfb_ms": 180,
+          "ttfb_ms": 145,
           "total_bytes": 0,
           "request_count": 14,
           "error": "URL'de host yok"

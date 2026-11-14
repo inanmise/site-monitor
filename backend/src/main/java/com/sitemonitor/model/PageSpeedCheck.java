@@ -111,6 +111,21 @@ public class PageSpeedCheck {
     @Column(name = "breached_metrics", length = 60)
     private String breachedMetrics;
 
+    /**
+     * Kararı VERİLEMEYEN tanımlı eşikler, virgülle (2026-11-14, inceleme B1): kısmi ölçümde (süre / bayt / kaynak tavanı)
+     * eşiğin altında kalan bayt değeri ya da ölçülemeyen TTFB. Bu ölçüm o eşikler için "uygun" SAYILMAZ: bütçe uyumuna
+     * girmez, Grafana bütçe değeri yazmaz, arayüz "bilinmiyor" der. Null / boş = hepsi karara bağlandı (eski satır da).
+     */
+    @Column(name = "undecided_metrics", length = 60)
+    private String undecidedMetrics;
+
+    /**
+     * HTML gövdesinin GERÇEK istekte inme süresi (ms; başlıklar → gövde sonu — SSRF kapısı / DNS dahil değil, inceleme B6d).
+     * Faz kırılımının "indirme" fazı bunu okur. Null = bilinmiyor (eski satır ya da sayfa alınamadı).
+     */
+    @Column(name = "download_ms")
+    private Integer downloadMs;
+
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 

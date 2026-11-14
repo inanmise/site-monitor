@@ -1156,7 +1156,8 @@ public class MonitoringMetricsExporter {
                     c == null ? null : !Boolean.FALSE.equals(c.getOk()),
                     c == null ? null : c.getResponseMs(), c == null ? null : c.getTtfbMs(),
                     c == null ? null : c.getTotalBytes(), c == null ? null : c.getRequestCount(),
-                    c == null ? null : c.getBreachedMetrics()));
+                    c == null ? null : c.getBreachedMetrics(), c == null ? null : c.getUndecidedMetrics(),
+                    com.sitemonitor.service.page.PageSpeedRules.budgetDefined(m)));
         }
         return l;
     }

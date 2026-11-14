@@ -9,8 +9,10 @@ import {
   counterRows, issueRows, issueMeta, pageReportExtra, recordedTone, ruleRows,
 } from '../components/page/diagnose/pageDiagnoseModel.js'
 import {
-  formatValue, metricRows, pageSpeedReportExtra, phaseRows, resourceRows, statusTone, thresholdChips,
+  METRIC_KEYS, METRIC_LABEL, formatValue, metricRows, pageSpeedReportExtra, phaseRows, resourceRows, statusTone, thresholdChips,
 } from '../components/pagespeed/diagnose/pageSpeedDiagnoseModel.js'
+import fs from 'node:fs'
+import path from 'node:path'
 import { pageBroken, pagePathDiffers, speedMonitor, speedSlow } from './helpers/pageDiagnoseFixtures.js'
 
 /** Sözlükten gerçek `t` (useT ile aynı {N} doldurma; eksik anahtarda anahtarın kendisi). */
@@ -216,5 +218,33 @@ describe('pageSpeedDiagnoseModel', () => {
     expect(text).toContain(`${EN['pspd.metricLoad']}: 9100 ms / 5000 ms — ${EN['psdx.metric.breached']} (+4100 ms)`)
     expect(text).toContain(EN['psdx.analysis.heaviest'])
     expect(text).toMatch(/Time to first byte 1200 ms \(!\)/)
+  })
+})
+
+describe('Sayfa Hızı tanılama — tüm eşik anahtarları (2026-11-14, inceleme B7)', () => {
+  const rules = fs.readFileSync(path.resolve(__dirname,
+    '../../../backend/src/main/java/com/sitemonitor/service/page/PageSpeedRules.java'), 'utf8')
+
+  it('METRIC_KEYS = Java PageSpeedRules.BREACH_KEYS (aynı sıra); her anahtarın TR + EN etiketi var', () => {
+    const block = /BREACH_KEYS = List\.of\(([^;]*)\);/.exec(rules)[1]
+    const consts = [...block.matchAll(/BREACH_([A-Z]+)/g)].map((m) => m[1])
+    const value = (c) => new RegExp(`BREACH_${c} = "([A-Z]+)"`).exec(rules)[1]
+    expect(METRIC_KEYS).toEqual(consts.map(value))
+    for (const k of METRIC_KEYS) {
+      expect(TR[METRIC_LABEL[k]], k).toBeTruthy()
+      expect(EN[METRIC_LABEL[k]], k).toBeTruthy()
+    }
+  })
+
+  it('tür bütçesi ve asgari boyut satırları atılmaz; asgari boyut çipi "≥" der', () => {
+    const rows = metricRows({ metrics: [
+      { key: 'JS', value: 900, limit: 500, unit: 'KB', breached: true, over: 400 },
+      { key: 'MINSIZE', value: 10, limit: 50, unit: 'KB', breached: true, over: 40 },
+    ] })
+    expect(rows.map((r) => r.key)).toEqual(['JS', 'MINSIZE'])
+    expect(rows[0]).toMatchObject({ breached: true, over: 400, limit: 500 })
+    const chips = thresholdChips({ max_js_kb: 500, min_page_kb: 50, max_third_party_kb: 0 }, tr)
+    expect(chips.map((c) => c.key)).toEqual(['MINSIZE', 'JS'])
+    expect(chips[0].text).toBe(`${TR['pspd.minPageKb']} ≥ 50 KB`)
   })
 })

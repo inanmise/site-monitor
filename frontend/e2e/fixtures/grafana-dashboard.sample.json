@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 16 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 17 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -5783,8 +5783,8 @@
     "id" : 54
   }, {
     "type" : "stat",
-    "title" : "Sayfa hızı — ölçülmemiş",
-    "description" : "Henüz hiç ölçülmemiş etkin sayfa hızı izlemeleri (yeni eklenmiş ya da hiç koşmamış). Bilinmeyen durumdur — sağlıklı sayılmaz.",
+    "title" : "Sayfa hızı — bilinmiyor",
+    "description" : "Henüz hiç ölçülmemiş ya da son ölçümü kısmi kalıp (süre / boyut / kaynak tavanı) bir eşiği karara bağlanamamış etkin sayfa hızı izlemeleri. Bilinmeyen durumdur — sağlıklı sayılmaz.",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -5992,7 +5992,7 @@
   }, {
     "type" : "timeseries",
     "title" : "Sayfa hızı durumları zaman içinde",
-    "description" : "Sayfa hızı izlemelerinin son ölçüme göre durumu, zaman içinde yığılmış: eşik içinde, bütçeyi aşan, açılamayan, ölçülmemiş, duraklatılmış. Takım süzgecine uyar.",
+    "description" : "Sayfa hızı izlemelerinin son ölçüme göre durumu, zaman içinde yığılmış: eşik içinde, bütçeyi aşan, açılamayan, bilinmiyor (ölçülmemiş ya da kısmi ölçüm), bütçe tanımsız, duraklatılmış. Takım süzgecine uyar.",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -6062,13 +6062,25 @@
       }, {
         "matcher" : {
           "id" : "byName",
-          "options" : "Ölçülmemiş"
+          "options" : "Bilinmiyor"
         },
         "properties" : [ {
           "id" : "color",
           "value" : {
             "mode" : "fixed",
             "fixedColor" : "#8E8E8E"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Bütçe tanımsız"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "purple"
           }
         } ]
       }, {
@@ -6126,9 +6138,20 @@
       "editorMode" : "code",
       "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"unknown\"}))",
       "instant" : false,
-      "legendFormat" : "Ölçülmemiş",
+      "legendFormat" : "Bilinmiyor",
       "range" : true,
       "refId" : "D"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"no_budget\"}))",
+      "instant" : false,
+      "legendFormat" : "Bütçe tanımsız",
+      "range" : true,
+      "refId" : "E"
     }, {
       "datasource" : {
         "type" : "prometheus",
@@ -6139,7 +6162,7 @@
       "instant" : false,
       "legendFormat" : "Duraklatılmış",
       "range" : true,
-      "refId" : "E"
+      "refId" : "F"
     } ],
     "transformations" : [ ],
     "options" : {
@@ -14715,6 +14738,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 16,
+  "version" : 17,
   "weekStart" : "monday"
 }

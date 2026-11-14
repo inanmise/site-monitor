@@ -1637,6 +1637,15 @@ public class EmailTemplateBuilder {
 
     static String psThresholdText(PsRow r) {
         if (r.threshold() == null || r.threshold().isBlank()) return "—";
+        if ("BAND".equals(r.key()) && r.threshold().contains("|")) {
+            // Bant satırı (inceleme B6b): alt|üst|yön — yön yukarı ≤ üst, aşağı ≥ alt, iki yön alt – üst.
+            String[] p = r.threshold().split("\\|", -1);
+            String lo = p.length > 0 ? p[0] : "", hi = p.length > 1 ? p[1] : "", dir = p.length > 2 ? p[2] : "";
+            if ("down".equals(dir) && !lo.isEmpty()) return "≥ " + lo + " ms";
+            if ("up".equals(dir) && !hi.isEmpty()) return "≤ " + hi + " ms";
+            if (!lo.isEmpty() && !hi.isEmpty()) return lo + " – " + hi + " ms";
+            return hi.isEmpty() ? (lo.isEmpty() ? "—" : "≥ " + lo + " ms") : "≤ " + hi + " ms";
+        }
         return ("MINSIZE".equals(r.key()) ? "≥ " : "≤ ") + r.threshold() + psUnit(r.key());
     }
 
@@ -1675,9 +1684,9 @@ public class EmailTemplateBuilder {
         return parts.isEmpty() ? null : String.join(" · ", parts);
     }
 
-    /** Süre kırılımının dürüst notu: DNS / bağlantı / TLS / sunucu ayrı bir bağlantıda ölçülür, eşik gerçek isteğe bakar. */
-    static final String PS_PHASES_NOTE = "DNS, bağlantı, TLS ve sunucu süreleri ayrı, taze bir bağlantıda ölçülür (yalnız bilgi); "
-            + "TTFB eşiği gerçek isteğin ilk baytına bakar.";
+    /** Süre kırılımının dürüst notu (inceleme B2): fazlar SON adımda taze bağlantıyla ölçülür, TTFB = sunucu fazı. */
+    static final String PS_PHASES_NOTE = "DNS, bağlantı, TLS ve sunucu süreleri izlemenin koşullarıyla (kimlik, başlıklar, vekil, "
+            + "yönlendirmeler) taze bir bağlantıda ölçülür; TTFB eşiği sunucu süresine bakar, HTML indirme gerçek isteğin süresidir.";
 
     private static String psTypeLabel(String t) {
         return switch (t == null ? "" : t) {

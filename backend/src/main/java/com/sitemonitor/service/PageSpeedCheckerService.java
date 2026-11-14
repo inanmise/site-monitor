@@ -64,9 +64,21 @@ public class PageSpeedCheckerService {
                          List<String> breached, String error, List<Measured> resources,
                          HttpPhaseProbe.Phases phases, int skippedLazy,
                          com.sitemonitor.service.failure.CheckFailure failure,
-                         boolean timeTruncated, TypeBreakdown breakdown) {
+                         boolean timeTruncated, TypeBreakdown breakdown,
+                         List<String> undecided, Long downloadMs) {
 
         public boolean reachable() { return "OK".equals(status) || "SLOW".equals(status); }
+
+        /** Kararsız eşik ve indirme süresi yok (inceleme öncesi imza) — test ve geriye uyum. */
+        public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
+                      long totalBytes, int requestCount, int failedCount, boolean capped,
+                      boolean bytesTruncated, List<String> breached, String error, List<Measured> resources,
+                      HttpPhaseProbe.Phases phases, int skippedLazy,
+                      com.sitemonitor.service.failure.CheckFailure failure,
+                      boolean timeTruncated, TypeBreakdown breakdown) {
+            this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
+                    breached, error, resources, phases, skippedLazy, failure, timeTruncated, breakdown, List.of(), null);
+        }
 
         /** Süre tavanı yok, kırılım yok (2026-11-14 öncesi tam imza) — test ve geriye uyum. */
         public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
@@ -75,16 +87,23 @@ public class PageSpeedCheckerService {
                       HttpPhaseProbe.Phases phases, int skippedLazy,
                       com.sitemonitor.service.failure.CheckFailure failure) {
             this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
-                    breached, error, resources, phases, skippedLazy, failure, false, null);
+                    breached, error, resources, phases, skippedLazy, failure, false, null, List.of(), null);
         }
+
+        /**
+         * TTFB — eşiğin, kartın, geçmişin ve önerinin okuduğu TEK sayı (2026-11-14, inceleme B2): faz probunun SON adımındaki
+         * SUNUCU fazı (izlemenin koşullarıyla, taze bağlantıda). Prob ölçemediyse null = BİLİNMİYOR (0 değil, "uygun" değil).
+         * {@link #ttfbMs()} bileşeni ana isteğin (havuz sıcaklığına bağlı) ilk baytıdır — yalnız iç bilgi.
+         */
+        public Integer serverTtfbMs() { return phases == null ? null : phases.serverMs(); }
 
         /** Toplam / tür baytları ALT SINIR mı: bayt tavanı, süre tavanı ya da kaynak tavanı (madde 4). */
         public boolean lowerBound() { return bytesTruncated || timeTruncated || capped; }
 
-        /** Eşik karşılaştırmasının girdisi — TTFB GERÇEK isteğin ilk baytı (madde 2). */
+        /** Eşik karşılaştırmasının girdisi — TTFB faz probunun sunucu fazı ({@link #serverTtfbMs()}; null = bilinmiyor). */
         public PageSpeedRules.Measurement measurement() {
             TypeBreakdown b = breakdown;
-            return new PageSpeedRules.Measurement((int) totalMs, (int) ttfbMs, totalBytes, requestCount,
+            return new PageSpeedRules.Measurement((int) totalMs, serverTtfbMs(), totalBytes, requestCount,
                     b == null ? null : b.jsBytes(), b == null ? null : b.imgBytes(), b == null ? null : b.fontBytes(),
                     b == null ? null : b.thirdPartyBytes(), lowerBound());
         }
@@ -256,18 +275,17 @@ public class PageSpeedCheckerService {
                     List.of(), MonitorUrls.CONFIG_ERROR_MSG, List.of(), HttpPhaseProbe.NONE, 0,
                     com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR));
         }
-        // Faz kırılımı ÖNCE ölçülür (taze bağlantı): HttpClient havuzu ısındıktan sonra ölçmek
-        // "sıcak" bir rakam verirdi ve karşılaştırılabilirliği bozardı. Prob ASIL ölçümün ön
-        // şartı değildir — başarısız olursa fazlar null kalır, kontrol normal sürer.
-        // Vekil yolunda prob ANLAMSIZ: ham soket hedefe değil vekile bağlanır, DNS/TCP/TLS fazları hedefi değil
-        // vekili ölçer. Ölçülemeyen faz null kalır (sıfır yazmak olmayan bir hızı iddia etmek olurdu).
-        HttpPhaseProbe.Phases phases = viaProxy
-                ? new HttpPhaseProbe.Phases(null, null, null, null, "vekil üzerinden faz kırılımı ölçülmez")
-                : phaseProbe.measure(url, timeoutMs);
+        Map<String, String> headers = buildHeaders(dnt, basicAuth, customHeaders);
+        // Faz kırılımı ve TTFB (2026-11-14, inceleme B2): HER adımda TAZE bağlantıyla, izlemenin GERÇEK koşullarıyla (UA,
+        // kimlik, özel başlıklar, vekil kararı) ve yönlendirmeler SON adrese kadar izlenerek ölçülür. TTFB eşiği SON adımın
+        // sunucu fazına bakar — anlamı "sunucu ne kadar düşündü" olarak kaldı; ana isteğin ilk baytı HttpClient havuzunun
+        // o anki sıcaklığına bağlıydı (zamanlanmış kontrol soğuk, 30 sn sonraki teyit sıcak → eşik arada salınıyordu).
+        // Prob ASIL ölçümün ön şartı değildir: ölçemezse TTFB bilinmiyor kalır (eşik değerlendirilmez), kontrol sürer.
+        HttpPhaseProbe.Phases phases = phaseProbe.measure(
+                new HttpPhaseProbe.Target(url, timeoutMs, userAgent, headers, viaProxy));
 
         long start = System.currentTimeMillis();
         long deadline = start + maxSeconds * 1000L;
-        Map<String, String> headers = buildHeaders(dnt, basicAuth, customHeaders);
 
         PageFetchCore.FetchOptions htmlOpts = PageFetchCore.FetchOptions
                 .body(timeoutMs, userAgent).withHeaders(headers).counting().withProxy(viaProxy);
@@ -318,17 +336,22 @@ public class PageSpeedCheckerService {
         long totalMs = System.currentTimeMillis() - start;
         TypeBreakdown breakdown = breakdownOf(main.bytes(), loadable, measured);
 
+        // HTML gövdesinin GERÇEK istekte inme süresi (başlıklar → gövde sonu; SSRF kapısı / DNS dahil değil — inceleme B6d).
+        Long downloadMs = main.bodyMs() >= 0 ? main.bodyMs() : null;
         Result unrated = new Result("OK", main.status(), main.ttfbMs(), main.durationMs(), totalMs,
                 totalBytes, requestCount, failed, capped, bytesTruncated, List.of(), null, measured,
-                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown);
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, List.of(), downloadMs);
         List<String> breached = thresholds == null ? List.of()
                 : PageSpeedRules.evaluate(thresholds, unrated.measurement());
+        // Kanıtlanamayan tanımlı eşikler (inceleme B1): kısmi ölçümde eşiğin altında kalan bayt değeri, ölçülemeyen TTFB …
+        List<String> undecided = thresholds == null ? List.of()
+                : PageSpeedRules.undecided(thresholds, unrated.measurement(), breached);
 
         // Eşik aşımı bir PERFORMANS olayıdır, kesinti değil: status SLOW, ok=true kalır.
         String status = breached.isEmpty() ? "OK" : "SLOW";
         return new Result(status, main.status(), main.ttfbMs(), main.durationMs(), totalMs,
                 totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured,
-                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown);
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, undecided, downloadMs);
     }
 
     /**

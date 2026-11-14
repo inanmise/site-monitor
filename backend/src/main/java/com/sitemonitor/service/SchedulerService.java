@@ -280,6 +280,12 @@ public class SchedulerService {
     private com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
     @Autowired
     private com.sitemonitor.repository.PageSpeedResourceRepository pageSpeedResourceRepo;
+    /**
+     * Sayfa Hızı taban çizgisi (inceleme B3): bant kuruluyken açık PAGESPEED_SLOW alarmının sebebini okumak için — YALNIZ o
+     * durumda, tek indeksli sorgu. Yoksa (elle kurulmuş testler) sebep okunamadı sayılır ve bugünkü "kalem yok" kuralı geçer.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.AlertEventRepository pageSpeedAlertRepo;
 
     /** Senaryo İzleme — alan enjeksiyonu (aynı desen). */
     @Autowired
@@ -1624,6 +1630,9 @@ public class SchedulerService {
         for (String c : new String[]{"max_js_kb", "max_img_kb", "max_font_kb", "max_third_party_kb", "min_page_kb"}) {
             patch("ALTER TABLE pagespeed_monitors ADD COLUMN " + c + " INTEGER");
         }
+        // İnceleme düzeltmeleri (2026-11-14): kararsız eşikler (B1) + HTML gövdesinin inme süresi (B6d).
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN undecided_metrics VARCHAR(60)");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN download_ms INTEGER");
 
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
@@ -7360,7 +7369,10 @@ public class SchedulerService {
      * <ul>
      *   <li>Bant değerlendirildi: yavaş = bant dışı VEYA başka eşik aşıldı.</li>
      *   <li>Bant HENÜZ kuruluyor / bilinmiyor: başka eşik aşıldıysa kalem "down" (sabit eşik kanıttır); aşılmadıysa kalem YOK
-     *       (D-7: yükleme hakkında karar yok — açık bir bant alarmı "sağlıklı" sayılıp sahte kapanmasın).</li>
+     *       (D-7: yükleme hakkında karar yok — açık bir bant alarmı "sağlıklı" sayılıp sahte kapanmasın). İstisna (inceleme
+     *       B3): açık PAGESPEED_SLOW alarmı YÜKLEME dışı bir eşikle açılmışsa (kayıtlı sebebinde LOAD yok) ve sayfa ölçülüp o
+     *       eşikler artık içindeyse kalem "up" — yalnız bu durumda tek indeksli okumayla; sebep okunamazsa bugünkü kural.</li>
+     *   <li>Kanıtlı ihlal yokken yükleme dışı bir eşik KARARSIZSA (kısmi ölçüm, ölçülemeyen TTFB — inceleme B1) kalem YOK.</li>
      * </ul>
      * Bant alarmının ölçüleri ({@code baseline_*}) yalnız bant DIŞINDAYKEN bağlama yazılır — TTFB yüzünden açılan alarm
      * postası "dinamik tabanın dışında" demesin. Teyit anahtarı PAGESPEED_SLOW'da {@code detail}'siz (MonitoringOutageService).
@@ -7368,20 +7380,31 @@ public class SchedulerService {
     private MonitoringOutageService.SweepItem pageSpeedBaselineSlowItem(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r,
                                                                        Map<String, Object> baseCtx) {
         List<String> others = pageSpeedNonLoadBreaches(r);
+        List<String> undecided = pageSpeedUndecided(r, true);
         boolean evaluated = Boolean.TRUE.equals(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_EVALUATED));
-        if (!evaluated && others.isEmpty()) return null;
+        if (!evaluated && others.isEmpty()) {
+            // Bant karar veremiyor (kuruluyor / bilinmiyor). Açık alarm yükleme DIŞI bir eşikle açıldıysa ve sayfa ölçülüp o
+            // eşikler artık içindeyse (kararsız eşik de yoksa) alarm kapanabilmeli (inceleme B3); aksi hâlde bugünkü kural.
+            if (!Boolean.TRUE.equals(r.get("reachable")) || !undecided.isEmpty() || !openPageSpeedSlowWithoutLoad(m)) return null;
+        }
         String level = evaluated ? (String) r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LEVEL) : null;
         boolean bandSlow = level != null && !com.sitemonitor.service.baseline.BaselineMath.LEVEL_NONE.equals(level);
         boolean slow = bandSlow || !others.isEmpty();
+        // Kanıtlı ihlal yok ama yükleme dışı bir eşik kararsız (kısmi ölçüm / TTFB ölçülemedi) → "eşik içinde" denemez (B1).
+        if (!slow && !undecided.isEmpty()) return null;
         Map<String, Object> slowCtx = new LinkedHashMap<>(baseCtx);
         List<String> keys = new ArrayList<>();
         if (bandSlow) keys.add(com.sitemonitor.service.page.PageSpeedRules.BREACH_LOAD);
         keys.addAll(others);
         slowCtx.put("breached_metrics", keys);
-        if (evaluated) {
+        // Eşik tablosu (inceleme B6a/b): bant kipinde SABİT yükleme satırı hiçbir zaman sebep değildir — her durumda düşer;
+        // bant değerlendirildiyse yerine yönüyle bant satırı gelir (yukarı: ≤ üst · aşağı: ≥ alt · iki yön: alt – üst).
+        if (r.get(PS_THRESHOLDS) != null || evaluated) {
             Object value = r.get(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE);
-            slowCtx.put(PS_THRESHOLDS, pageSpeedBandTable((String) r.get(PS_THRESHOLDS),
-                    r.get(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH), value, bandSlow));
+            String band = evaluated ? pageSpeedBandThreshold(r.get(com.sitemonitor.service.baseline.BaselineService.CTX_LOW),
+                    r.get(com.sitemonitor.service.baseline.BaselineService.CTX_HIGH), pageSpeedBandDirection(m)) : null;
+            String table = pageSpeedBandTable((String) r.get(PS_THRESHOLDS), band, value, bandSlow);
+            if (table != null) slowCtx.put(PS_THRESHOLDS, table);
         }
         if (bandSlow) {
             slowCtx.put("response_ms", r.get(com.sitemonitor.service.baseline.BaselineService.CTX_VALUE));
@@ -7418,7 +7441,70 @@ public class SchedulerService {
             out.put("status", "down");
             return out;
         }
-        return baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), ms, measured);
+        Map<String, Object> band = baselineSlowRecheck(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), ms, measured);
+        String st = band == null ? null : String.valueOf(band.get("status"));
+        boolean undecided = measured && !pageSpeedUndecided(p, true).isEmpty();
+        // Bant "içinde" dese de kararsız bir eşik varken "up" denmez (inceleme B1) — kanıt yok.
+        if ("up".equals(st) && undecided) return pageSpeedSkipped(ms);
+        // Bant kuruluyor / bilinmiyor (atlandı): alarm yükleme DIŞI bir eşikle açıldıysa ve o eşikler artık içindeyse "up" (B3).
+        if ("skipped".equals(st) && measured && !undecided && openPageSpeedSlowWithoutLoad(m)) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("response_ms", ms);
+            out.put("status", "up");
+            return out;
+        }
+        return band;
+    }
+
+    private static Map<String, Object> pageSpeedSkipped(Long ms) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (ms != null) out.put("response_ms", ms);
+        out.put("status", "skipped");
+        return out;
+    }
+
+    /** JSON bağlam okuyucu (açık alarmın kayıtlı sebebi, inceleme B3). */
+    private static final com.fasterxml.jackson.databind.ObjectMapper PAGESPEED_CTX_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /**
+     * Bu izlemenin AÇIK PAGESPEED_SLOW alarmı yükleme DIŞI bir eşikle mi açıldı (kayıtlı {@code breached_metrics} dolu ve
+     * {@code LOAD} içermiyor)? Tek indeksli okuma, yalnız bant karar veremezken çağrılır (inceleme B3). Alarm yok, sebep
+     * boş / okunamıyor ya da depo yok → false (bugünkü "kalem yok" kuralı korunur — kapatma ancak kanıtla).
+     */
+    boolean openPageSpeedSlowWithoutLoad(com.sitemonitor.model.PageSpeedMonitor m) {
+        if (pageSpeedAlertRepo == null || m == null || m.getUrl() == null) return false;
+        try {
+            java.util.Optional<com.sitemonitor.model.AlertEvent> open =
+                    pageSpeedAlertRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGESPEED_SLOW);
+            if (open.isEmpty() || open.get().getContextJson() == null) return false;
+            com.fasterxml.jackson.databind.JsonNode b = PAGESPEED_CTX_JSON.readTree(open.get().getContextJson()).get("breached_metrics");
+            List<String> keys = new ArrayList<>();
+            if (b != null && b.isArray()) { for (com.fasterxml.jackson.databind.JsonNode k : b) keys.add(k.asText()); }
+            else if (b != null && b.isTextual()) { for (String k : b.asText().split(",")) if (!k.isBlank()) keys.add(k.trim()); }
+            return !keys.isEmpty() && !keys.contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_LOAD);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** İzlemenin bant yönü (up | down | both) — bellekteki yapılandırma anlık görüntüsünden; bilinmiyorsa null. */
+    private String pageSpeedBandDirection(com.sitemonitor.model.PageSpeedMonitor m) {
+        if (baselineService == null || m == null || m.getId() == null) return null;
+        try {
+            com.sitemonitor.model.MonitorBaselineConfig c =
+                    baselineService.config(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId());
+            return c == null ? null : c.getDirection();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Bant satırının eşik alanı: {@code alt|üst|yön} (posta yönüne göre yazar); hiçbiri yoksa null. */
+    static String pageSpeedBandThreshold(Object low, Object high, String direction) {
+        String lo = low instanceof Number n ? String.valueOf(Math.round(n.doubleValue())) : "";
+        String hi = high instanceof Number n ? String.valueOf(Math.round(n.doubleValue())) : "";
+        if (lo.isEmpty() && hi.isEmpty()) return null;
+        return lo + "|" + hi + "|" + (direction == null ? "" : direction.trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     // ── SCRIPTED ────────────────────────────────────────────────────────────
@@ -8804,16 +8890,41 @@ public class SchedulerService {
         // yavaşlık alarmını sayfa çökükken "ÇÖZÜLDÜ" diye kapatıyordu. Artık ölçüm yoksa kalem ÜRETİLMEZ; yeniden ölçüm
         // "skipped" döner. Yapılandırma hatası sentetik "up" ile asılı alarmı kapatmaya devam eder.
         if (!cfgError && !up) return;
+        // Kısmi ölçüm (inceleme B1): ihlal kanıtlanmadı ama tanımlı bir eşik kararsız (alt sınır eşiğin altında, TTFB
+        // ölçülemedi) → "eşik içinde" DENEMEZ; kalem ÜRETİLMEZ (D-7 deseni) — açık bayt-bütçesi alarmı gerçek boyut
+        // bilinmezken sahte "ÇÖZÜLDÜ" ile kapanmasın. Kanıtlı bir ihlal varsa kalem yine "down"dur.
+        if (!cfgError && withinThresholds && !pageSpeedUndecided(r, false).isEmpty()) return;
         String slowDetail = pageSpeedBreachDetail(r);
         Map<String, Object> slowCtx = new LinkedHashMap<>(ctx);
         slowCtx.put("detail", slowDetail);
         slowSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), slowDetail,
                 withinThresholds, withinThresholds ? null : slowDetail, chanCtx(slowCtx, m),
-                () -> { Map<String, Object> p = recheckPageSpeed(m, false);
-                        if (Boolean.TRUE.equals(p.get("config_error"))) return Map.of("status", "up");
-                        if (!Boolean.TRUE.equals(p.get("reachable"))) return Map.of("status", "skipped");
-                        return Map.of("status", Boolean.TRUE.equals(p.get("within_thresholds")) ? "up" : "down"); }));
+                () -> pageSpeedSlowRecheck(recheckPageSpeed(m, false))));
+    }
+
+    /**
+     * Sabit eşikli SLOW teyit / kurtarma kararı (inceleme B1): yapılandırma hatası → up; sayfa alınamadı → skipped (D-7);
+     * kanıtlı ihlal → down; ihlal yok ama kararsız eşik var → skipped (kanıt yok — "up" deyip alarmı kapatmaz); aksi up.
+     */
+    static Map<String, Object> pageSpeedSlowRecheck(Map<String, Object> p) {
+        if (Boolean.TRUE.equals(p.get("config_error"))) return Map.of("status", "up");
+        if (!Boolean.TRUE.equals(p.get("reachable"))) return Map.of("status", "skipped");
+        if (!Boolean.TRUE.equals(p.get("within_thresholds"))) return Map.of("status", "down");
+        return Map.of("status", pageSpeedUndecided(p, false).isEmpty() ? "up" : "skipped");
+    }
+
+    /** Ölçümün kararsız eşikleri ({@code undecided}); {@code bandMode}: taban çizgisi açık → yükleme eşiği bandındır, atlanır. */
+    static List<String> pageSpeedUndecided(Map<String, Object> r, boolean bandMode) {
+        List<String> out = new ArrayList<>();
+        if (r != null && r.get("undecided") instanceof List<?> list) {
+            for (Object o : list) {
+                String k = String.valueOf(o);
+                if (bandMode && com.sitemonitor.service.page.PageSpeedRules.BREACH_LOAD.equals(k)) continue;
+                out.add(k);
+            }
+        }
+        return out;
     }
 
     /** Aşılan eşikleri okunur tek satıra çevirir (e-posta konusu ve alarm detayı). */
@@ -8837,9 +8948,8 @@ public class SchedulerService {
                 case "TTFB" -> parts.add("TTFB " + r.getOrDefault("ttfb_ms", "?") + " ms");
                 // Kırpılmış ölçümde rakam alt sınırdır; e-postada da "≥" ile gösterilir ki
                 // alarmı okuyan kişi eksik bir sayıya bakıp yanlış karar vermesin.
-                case "SIZE" -> parts.add("boyut "
-                        + (Boolean.TRUE.equals(r.get("bytes_truncated")) || Boolean.TRUE.equals(r.get("time_truncated")) ? "≥ " : "")
-                        + kb(r.get("total_bytes")) + " KB");
+                // "≥" TEK kural (inceleme B6c): bayt / süre / kaynak tavanı — PageSpeedRules.lowerBoundFor ile aynı.
+                case "SIZE" -> parts.add("boyut " + ge + kb(r.get("total_bytes")) + " KB");
                 case "REQUESTS" -> parts.add(r.getOrDefault("request_count", "?") + " istek");
                 case "MINSIZE" -> parts.add("boyut " + kb(r.get("total_bytes")) + " KB (beklenenden küçük)");
                 case "JS" -> parts.add("JS " + ge + kb(r.get("js_bytes")) + " KB");
@@ -8858,8 +8968,9 @@ public class SchedulerService {
     static final String PS_PARTIAL = "ps_partial";
 
     /**
-     * Faz süreleri TSV ({@code ad\tms}, ölçülen fazlar): dns / connect / tls / server faz probundan (ayrı, taze bağlantı —
-     * yalnız bilgi), download = HTML gövdesinin GERÇEK istekte inmesi (html_ms − ttfb_ms). Hiçbiri yoksa null.
+     * Faz süreleri TSV ({@code ad\tms}, ölçülen fazlar): dns / connect / tls / server faz probunun SON adımından (taze
+     * bağlantı, izlemenin koşullarıyla; server = TTFB), download = HTML gövdesinin GERÇEK istekte inmesi ({@code download_ms}).
+     * Hiçbiri yoksa null.
      */
     static String pageSpeedPhasesText(Map<String, Object> r) {
         StringBuilder sb = new StringBuilder();
@@ -8869,9 +8980,11 @@ public class SchedulerService {
                 sb.append(p[0]).append('\t').append(n.longValue());
             }
         }
-        if (r.get("html_ms") instanceof Number h && r.get("ttfb_ms") instanceof Number tb && h.longValue() >= tb.longValue()) {
+        // İndirme fazı = GERÇEK istekte HTML gövdesinin inme süresi (download_ms; inceleme B6d — eskiden html_ms − ttfb_ms
+        // farkı SSRF kapısının DNS süresini de taşıyordu ve TTFB artık başka bir bağlantıdan ölçülüyor).
+        if (r.get("download_ms") instanceof Number dl) {
             if (sb.length() > 0) sb.append('\n');
-            sb.append("download").append('\t').append(h.longValue() - tb.longValue());
+            sb.append("download").append('\t').append(dl.longValue());
         }
         return sb.length() == 0 ? null : sb.toString();
     }
@@ -8888,19 +9001,25 @@ public class SchedulerService {
         return out;
     }
 
-    /** Eşik tablosunun yükleme satırını bant satırıyla değiştirir ({@code BAND\tüst-sınır\tölçülen\tihlal\t0}). */
-    private static String pageSpeedBandTable(String table, Object high, Object value, boolean bandSlow) {
+    /**
+     * Bant kipinde eşik tablosu (inceleme B6a): SABİT yükleme satırı DÜŞER (bant kipinde sebep olamaz); {@code band} doluysa
+     * (bant değerlendirildi) en başa {@code BAND\talt|üst|yön\tölçülen\tihlal\t0} satırı gelir. Kalan satır yoksa null.
+     */
+    static String pageSpeedBandTable(String table, String band, Object value, boolean bandSlow) {
         StringBuilder sb = new StringBuilder();
-        sb.append("BAND").append('\t').append(high instanceof Number h ? String.valueOf(Math.round(h.doubleValue())) : "")
-          .append('\t').append(value instanceof Number v ? String.valueOf(v.longValue()) : "")
-          .append('\t').append(bandSlow ? '1' : '0').append('\t').append('0');
+        if (band != null) {
+            sb.append("BAND").append('\t').append(band)
+              .append('\t').append(value instanceof Number v ? String.valueOf(v.longValue()) : "")
+              .append('\t').append(bandSlow ? '1' : '0').append('\t').append('0');
+        }
         if (table != null) {
             for (String line : table.split("\n")) {
                 if (line.isBlank() || line.startsWith("LOAD\t")) continue;
-                sb.append('\n').append(line);
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(line);
             }
         }
-        return sb.toString();
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private static String kb(Object bytes) {
@@ -8933,7 +9052,8 @@ public class SchedulerService {
             // ok = SAYFA ALINABİLDİ Mİ. Eşik aşımı burayı FALSE YAPMAZ — yoksa yavaş sayfa uptime'ı düşürürdü.
             pc.setOk(reachable);
             pc.setStatusCode(res.statusCode());
-            pc.setTtfbMs((int) res.ttfbMs());
+            // TTFB = faz probunun SON adımındaki sunucu fazı (inceleme B2); ölçülemediyse NULL (bilinmiyor, 0 değil).
+            pc.setTtfbMs(res.serverTtfbMs());
             pc.setHtmlMs((int) res.htmlMs());
             pc.setResponseMs((int) res.totalMs());
             pc.setTotalBytes(res.totalBytes());
@@ -8957,6 +9077,10 @@ public class SchedulerService {
                 }
             }
             pc.setBreachedMetrics(com.sitemonitor.service.page.PageSpeedRules.joinBreaches(res.breached()));
+            if (reachable) {
+                pc.setUndecidedMetrics(com.sitemonitor.service.page.PageSpeedRules.joinBreaches(res.undecided()));
+                pc.setDownloadMs(res.downloadMs() == null ? null : (int) Math.min(Integer.MAX_VALUE, res.downloadMs()));
+            }
             // TTFB faz kırılımı: sıçramanın hangi fazdan geldiği sonradan da okunabilsin.
             pc.setDnsMs(res.phases().dnsMs());
             pc.setConnectMs(res.phases().connectMs());
@@ -8989,7 +9113,7 @@ public class SchedulerService {
         activity.put("ok", reachable);
         activity.put("http_status", res.statusCode());
         activity.put("response_ms", res.totalMs());
-        activity.put("ttfb_ms", res.ttfbMs());
+        activity.put("ttfb_ms", res.serverTtfbMs());
         activity.put("total_bytes", res.totalBytes());
         activity.put("request_count", res.requestCount());
         if (res.error() != null) activity.put("error", res.error());
@@ -9002,11 +9126,13 @@ public class SchedulerService {
         out.put("reachable", reachable);
         out.put("within_thresholds", res.breached().isEmpty());
         out.put("breached", res.breached());
+        // Kararsız eşikler (inceleme B1): ihlal yokken biri bile varsa ölçüm "eşik içinde" SAYILMAZ (kalem / teyit bilinmiyor).
+        out.put("undecided", res.undecided() == null ? List.of() : res.undecided());
         if (cfgError) out.put("config_error", true);
         out.put("error", res.error());
         out.put("http_status", res.statusCode());
         out.put("response_ms", res.totalMs());
-        out.put("ttfb_ms", res.ttfbMs());
+        out.put("ttfb_ms", res.serverTtfbMs());
         out.put("dns_ms", res.phases().dnsMs());
         out.put("connect_ms", res.phases().connectMs());
         out.put("tls_ms", res.phases().tlsMs());
@@ -9019,6 +9145,7 @@ public class SchedulerService {
         // 2026-11-14 (Sayfa Hızı zenginleştirme): kısmi ölçüm bayrakları, HTML süresi, tür kırılımı ve eşik tablosu (alarm postası).
         if (reachable) {
             out.put("html_ms", res.htmlMs());
+            if (res.downloadMs() != null) out.put("download_ms", res.downloadMs());
             out.put("capped", res.capped());
             out.put("time_truncated", res.timeTruncated());
             PageSpeedCheckerService.TypeBreakdown bd = res.breakdown();

@@ -59,8 +59,11 @@ public final class PageSpeedDiagFindings {
             SLOW_DNS, SLOW_CONNECT, SLOW_TLS, SLOW_SERVER, SLOW_DOWNLOAD, LARGE_BODY, SLOW_RESOURCES, HEAVY_RESOURCES,
             PROXY_SLOWER, DIRECT_SLOWER, MEASUREMENT_PARTIAL, RESOURCES_FAILED);
 
-    /** Eşik metrikleri ({@code THRESHOLD_BREACH} varyantları) — {@code PageSpeedRules.BREACH_*} ile aynı. */
-    public static final List<String> METRICS = List.of("LOAD", "TTFB", "SIZE", "REQUESTS");
+    /**
+     * Eşik metrikleri ({@code THRESHOLD_BREACH} varyantları) — {@code PageSpeedRules.BREACH_KEYS} ile AYNI liste (2026-11-14,
+     * inceleme B7: tür bütçeleri JS / IMG / FONT / THIRD ve asgari boyut MINSIZE da tanılama tablosunda görünür).
+     */
+    public static final List<String> METRICS = com.sitemonitor.service.page.PageSpeedRules.BREACH_KEYS;
 
     /** Hüküm — Sayfa Bütünlüğü ile aynı kural, "ok" kodu {@link #PAGESPEED_OK}. */
     public static Map<String, Object> verdict(List<Map<String, Object>> findings, String monitorOutcome, String monitorFailedStep) {

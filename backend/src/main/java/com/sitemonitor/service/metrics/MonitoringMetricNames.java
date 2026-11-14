@@ -258,9 +258,9 @@ public final class MonitoringMetricNames {
                 "Total page weight of the last page speed measurement in bytes (a lower bound when a cap cut it)"));
         l.add(new Def(PAGESPEED_REQUESTS, Scope.ENTITY, MONITOR_LABELS, "Requests of the last page speed measurement"));
         l.add(new Def(PAGESPEED_BUDGET_BREACHED, Scope.ENTITY, MONITOR_LABELS,
-                "1 when the last page speed measurement went over a threshold or a type budget, 0 when within; absent when the page could not be measured"));
+                "1 when the last page speed measurement went over a threshold or a type budget, 0 when within; absent when the page could not be measured, the measurement was partial and a threshold stayed undecided, or the monitor defines no threshold"));
         l.add(new Def(PAGESPEED_PAGES, Scope.AGGREGATE, List.of("team", "team_id", "state"),
-                "Page speed monitors per team and last state (ok, over_budget, down, unknown, paused; zeros included)"));
+                "Page speed monitors per team and last state (ok, over_budget, down, unknown = never measured or a partial measurement left a threshold undecided, no_budget = no threshold defined, paused; zeros included)"));
         l.add(new Def(PAGESPEED_BREACHES, Scope.AGGREGATE, List.of("team", "team_id", "metric"),
                 "Active page speed monitors whose last measurement went over the threshold, per team and metric (LOAD, TTFB, SIZE, "
                         + "REQUESTS, MINSIZE, JS, IMG, FONT, THIRD; zeros included)"));

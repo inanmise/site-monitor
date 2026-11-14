@@ -43,11 +43,12 @@ public final class PageSpeedRules {
             BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD);
 
     /**
-     * Bir ölçümün eşiklerle karşılaştırılan değerleri (2026-11-14). {@code ttfbMs} GERÇEK kontrol isteğinin ilk baytıdır
-     * (izlemenin UA / kimlik / başlık / yönlendirme / vekil kararıyla; yönlendirme zinciri dahil) — madde 2: ayrı faz probu
-     * eşiği artık ETKİLEMEZ. {@code lowerBound}: toplam / tür baytları ALT SINIR (bayt ya da süre tavanı, kaynak tavanı);
-     * üst eşik aşımı yine geçerli bir ihlaldir ama asgari boyut eşiği ALT SINIRLA değerlendirilmez (gerçek boyut daha
-     * büyük olabilir — sahte "sayfa küçük" alarmı olmasın). Tür baytı null = ölçülemedi (ihlal üretmez).
+     * Bir ölçümün eşiklerle karşılaştırılan değerleri (2026-11-14). {@code ttfbMs} = faz probunun SON adımının SUNUCU
+     * fazı: izlemenin UA / kimlik / özel başlık / vekil kararıyla, yönlendirmeler izlenerek, TAZE bir bağlantıda (inceleme
+     * B2 — anlam "sunucu süresi" olarak kaldı, koşullar gerçek isteğe eşitlendi); null = ölçülemedi. {@code lowerBound}:
+     * toplam / tür baytları ALT SINIR (bayt ya da süre tavanı, kaynak tavanı) — üst eşik aşımı yine KANITTIR ama eşiğin
+     * altındaki alt sınır bir şey kanıtlamaz (gerçek değer daha büyük olabilir): {@link #undecided} onu BİLİNMİYOR sayar.
+     * Tür baytı null = ölçülemedi (ihlal üretmez, tanımlı eşikte BİLİNMİYOR).
      */
     public record Measurement(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount,
                               Long jsBytes, Long imgBytes, Long fontBytes, Long thirdPartyBytes, boolean lowerBound) {
@@ -102,6 +103,32 @@ public final class PageSpeedRules {
         return out;
     }
 
+    /**
+     * Kararı VERİLEMEYEN tanımlı eşikler (2026-11-14, inceleme B1) — {@code breached} içinde olmayan ve ölçümle kanıtlanamayan
+     * anahtarlar: değer ölçülemedi (null) ya da ölçüm ALT SINIR ve eşik aşılmadı (gerçek değer daha büyük olabilir); asgari
+     * boyutta alt sınır eşiğin ALTINDA (gerçek değer üstünde olabilir). Bu anahtarlar "eşik içinde" SAYILMAZ: ihlal yoksa
+     * SLOW kalemi üretilmez (açık alarm sahte kapanmaz), yeniden ölçüm "atlandı" döner, bütçe uyumu bu ölçümü saymaz.
+     * Alt sınır olan değer eşiği AŞIYORSA ihlal kanıtlıdır (gerçek değer daha da büyük) — o anahtar burada yer almaz.
+     */
+    public static List<String> undecided(PageSpeedMonitor m, Measurement x, List<String> breached) {
+        List<String> out = new ArrayList<>(2);
+        if (m == null || x == null) return out;
+        java.util.Set<String> b = breached == null ? java.util.Set.of() : new java.util.HashSet<>(breached);
+        for (String k : BREACH_KEYS) {
+            Integer th = thresholdOf(m, k);
+            if (b.contains(k) || th == null) continue;
+            if (measuredOf(x, k) == null) { out.add(k); continue; }
+            if (!lowerBoundFor(x, k)) continue;
+            // Asgari boyut: alt sınır eşiğin ÜSTÜNDEYSE gerçek değer de üstündedir (kanıtlı geçti); ALTINDAYSA bilinmiyor.
+            if (BREACH_MINSIZE.equals(k)) {
+                if (x.totalBytes() < th * 1024L) out.add(k);
+            } else {
+                out.add(k);   // üst eşik: alt sınır eşiğin altında → gerçek değer üstünde olabilir
+            }
+        }
+        return out;
+    }
+
     private static boolean exceeds(Integer measured, Integer threshold) {
         return threshold != null && threshold > 0 && measured != null && measured > threshold;
     }
@@ -133,6 +160,16 @@ public final class PageSpeedRules {
         return v == null || v <= 0 ? null : v;
     }
 
+    /**
+     * İzlemede en az bir eşik / tür bütçesi / asgari boyut tanımlı mı (inceleme F7). Tanımlı değilse "bütçe uyumu"
+     * anlamsızdır: kart / ayrıntı / kutu "bütçe tanımlı değil" der, Grafana bütçe değeri yazmaz, bütçe uyumu null döner.
+     */
+    public static boolean budgetDefined(PageSpeedMonitor m) {
+        if (m == null) return false;
+        for (String k : BREACH_KEYS) if (thresholdOf(m, k) != null) return true;
+        return false;
+    }
+
     /** Ölçülen değer anahtarın birimiyle (ms / KB tam sayı / adet); ölçülemediyse null. */
     public static Long measuredOf(Measurement x, String key) {
         if (x == null || key == null) return null;
@@ -151,7 +188,10 @@ public final class PageSpeedRules {
 
     private static Long kbOf(Long bytes) { return bytes == null ? null : bytes / 1024; }
 
-    /** Anahtarın değeri alt sınır mı (bayt metrikleri, toplam kısmi olduğunda) — postada / arayüzde "≥" ile gösterilir. */
+    /**
+     * Anahtarın değeri alt sınır mı (bayt metrikleri, ölçüm kısmi olduğunda: bayt tavanı, süre tavanı ya da kaynak tavanı) —
+     * postada / arayüzde "≥" ile gösterilir; TEK kural (alarm metni {@code SchedulerService.pageSpeedBreachText} de bunu okur).
+     */
     public static boolean lowerBoundFor(Measurement x, String key) {
         if (x == null || !x.lowerBound() || key == null) return false;
         return switch (key) {

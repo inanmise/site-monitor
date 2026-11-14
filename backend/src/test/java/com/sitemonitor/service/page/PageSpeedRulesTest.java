@@ -57,13 +57,12 @@ class PageSpeedRulesTest {
         }
 
         /**
-         * TTFB eşiği GERÇEK kontrol isteğinin ilk baytına bakar (2026-11-14, madde 2 — bilinçli davranış değişikliği).
-         *
-         * <p>Eskiden eşik ayrı faz probunun sunucu süresine bakıyordu; prob kimlik / özel başlık göndermiyor ve yönlendirmeyi
-         * izlemiyordu — kimlik isteyen sayfada 401'in, yönlenen sayfada 301'in süresini ölçüyordu. Artık faz probu eşiği ETKİLEMEZ.
+         * TTFB eşiği ölçümün TTFB değerine bakar (2026-11-14, madde 2 + inceleme B2): bu değer faz probunun SON adımının sunucu
+         * fazıdır — prob artık izlemenin kimliği / UA'sı / özel başlıkları / vekiliyle ve yönlendirmeleri izleyerek, taze bağlantıda
+         * ölçer (eski prob kimliksiz, yönlendirme izlemeyen bir GET'ti: 401'in ya da 301'in süresini ölçüyordu).
          */
         @Test
-        @DisplayName("TTFB eşiği gerçek isteğin TTFB'sine bakar (faz probu eşiği etkilemez)")
+        @DisplayName("TTFB eşiği ölçümün TTFB değerine bakar (kesin büyüktür)")
         void ttfbThresholdUsesRealRequest() {
             var m = withThresholds(0, 500, 0, 0);
 
@@ -95,6 +94,46 @@ class PageSpeedRulesTest {
             // Alt sınır olan bayt bile aşıyorsa gerçek değer de aşar → ihlal geçerli
             var lower = new PageSpeedRules.Measurement(null, null, 1000L * 1024, null, 101L * 1024, null, null, null, true);
             assertThat(PageSpeedRules.evaluate(m, lower)).containsExactly(PageSpeedRules.BREACH_JS);
+        }
+
+        @Test
+        @DisplayName("Kararsız eşikler (inceleme B1): ölçülemeyen değer ya da eşiğin ALTINDAKİ alt sınır kanıt değildir; aşan alt sınır ihlaldir")
+        void undecidedThresholds() {
+            var m = withThresholds(3000, 500, 4000, 100);
+            m.setMaxJsKb(100);
+            m.setMinPageKb(50);
+            // tam ölçüm, hepsi içinde → kararsız yok
+            var full = new PageSpeedRules.Measurement(1000, 200, 1000L * 1024, 50, 50L * 1024, null, null, null, false);
+            assertThat(PageSpeedRules.undecided(m, full, PageSpeedRules.evaluate(m, full))).isEmpty();
+            // kısmi (alt sınır) ölçüm: boyut / JS eşiğin altında → gerçek değer üstünde olabilir → kararsız; asgari boyut üstünde → kanıtlı
+            var partial = new PageSpeedRules.Measurement(1000, 200, 1000L * 1024, 50, 50L * 1024, null, null, null, true);
+            assertThat(PageSpeedRules.undecided(m, partial, PageSpeedRules.evaluate(m, partial)))
+                    .containsExactly(PageSpeedRules.BREACH_SIZE, PageSpeedRules.BREACH_JS);
+            // kısmi ölçümde asgari boyutun ALTINDAKİ alt sınır → kararsız (gerçek boyut büyük olabilir); ihlal sayılmaz
+            var small = new PageSpeedRules.Measurement(1000, 200, 10L * 1024, 50, 1L * 1024, null, null, null, true);
+            assertThat(PageSpeedRules.evaluate(m, small)).doesNotContain(PageSpeedRules.BREACH_MINSIZE);
+            assertThat(PageSpeedRules.undecided(m, small, PageSpeedRules.evaluate(m, small))).contains(PageSpeedRules.BREACH_MINSIZE);
+            // alt sınır eşiği AŞIYORSA ihlal kanıtlıdır — kararsız listesinde yer almaz
+            var over = new PageSpeedRules.Measurement(1000, 200, 5000L * 1024, 50, 50L * 1024, null, null, null, true);
+            var overBreached = PageSpeedRules.evaluate(m, over);
+            assertThat(overBreached).contains(PageSpeedRules.BREACH_SIZE);
+            assertThat(PageSpeedRules.undecided(m, over, overBreached)).doesNotContain(PageSpeedRules.BREACH_SIZE).contains(PageSpeedRules.BREACH_JS);
+            // TTFB ölçülemedi (prob hatası) → tanımlı TTFB eşiği kararsız; tanımsız eşik hiç listelenmez
+            var noTtfb = new PageSpeedRules.Measurement(1000, null, 1000L * 1024, 50, 50L * 1024, null, null, null, false);
+            assertThat(PageSpeedRules.undecided(m, noTtfb, PageSpeedRules.evaluate(m, noTtfb))).containsExactly(PageSpeedRules.BREACH_TTFB);
+            assertThat(PageSpeedRules.undecided(withThresholds(null, null, null, null), noTtfb, List.of())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Bütçe tanımlı mı (inceleme F7): herhangi bir eşik / tür bütçesi / asgari boyut > 0; hepsi boş ya da 0 → hayır")
+        void budgetDefined() {
+            assertThat(PageSpeedRules.budgetDefined(withThresholds(null, null, null, null))).isFalse();
+            assertThat(PageSpeedRules.budgetDefined(withThresholds(0, 0, 0, 0))).isFalse();
+            var m = withThresholds(null, null, null, null);
+            m.setMaxThirdPartyKb(10);
+            assertThat(PageSpeedRules.budgetDefined(m)).isTrue();
+            assertThat(PageSpeedRules.budgetDefined(withThresholds(null, 300, null, null))).isTrue();
+            assertThat(PageSpeedRules.budgetDefined(null)).isFalse();
         }
 
         @Test

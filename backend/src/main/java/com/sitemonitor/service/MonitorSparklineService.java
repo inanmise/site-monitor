@@ -38,9 +38,26 @@ public class MonitorSparklineService {
      * {@code breachExpr} (yalnız Sayfa Hızı, 2026-11-14): ALINABİLEN kontrolün eşik aşımı — kullanılabilirliğe GİRMEZ, ayrı
      * "bütçe uyumu" sayısı olarak döner ({@code breach}, {@code budget_pct}).
      */
-    record Kind(String table, String monitorTable, String msCol, String failExpr, String breachExpr) {
-        Kind(String table, String monitorTable, String msCol, String failExpr) { this(table, monitorTable, msCol, failExpr, null); }
+    record Kind(String table, String monitorTable, String msCol, String failExpr, String breachExpr,
+                String undecidedExpr, String budgetDefinedExpr) {
+        Kind(String table, String monitorTable, String msCol, String failExpr) { this(table, monitorTable, msCol, failExpr, null, null, null); }
     }
+
+    /**
+     * Sayfa Hızı bütçe uyumu ifadeleri (inceleme B1 / F7). {@code breach}: kanıtlı eşik aşımı. {@code undecided}: aşım yok ama
+     * tanımlı bir eşik KARARSIZ (kısmi ölçüm / ölçülemeyen TTFB) — bu ölçüm uyuma SAYILMAZ (ne uyumlu ne ihlal; paydadan
+     * çıkar). {@code budgetDefined}: izlemede hiç eşik yoksa bütçe uyumu null ("bütçe tanımlı değil").
+     */
+    static final String PAGESPEED_LOADED = "CASE WHEN " + verdict("ok", "error_message IS NOT NULL") + " = 1 THEN 0";
+    static final String PAGESPEED_BREACH = PAGESPEED_LOADED
+            + " WHEN breached_metrics IS NOT NULL AND breached_metrics <> '' THEN 1 ELSE 0 END";
+    static final String PAGESPEED_UNDECIDED = PAGESPEED_LOADED
+            + " WHEN breached_metrics IS NOT NULL AND breached_metrics <> '' THEN 0"
+            + " WHEN undecided_metrics IS NOT NULL AND undecided_metrics <> '' THEN 1 ELSE 0 END";
+    static final String PAGESPEED_BUDGET_DEFINED = "COALESCE(max_load_ms, 0) > 0 OR COALESCE(max_ttfb_ms, 0) > 0"
+            + " OR COALESCE(max_page_kb, 0) > 0 OR COALESCE(max_requests, 0) > 0 OR COALESCE(min_page_kb, 0) > 0"
+            + " OR COALESCE(max_js_kb, 0) > 0 OR COALESCE(max_img_kb, 0) > 0 OR COALESCE(max_font_kb, 0) > 0"
+            + " OR COALESCE(max_third_party_kb, 0) > 0";
 
     /**
      * Hata ifadeleri KONTROLÜN KENDİ HÜKMÜNDEN okunur (DATA-1, 2026-10-22): {@code ok} / {@code open} sütunu — saatlik
@@ -63,9 +80,7 @@ public class MonitorSparklineService {
         KINDS.put("keyword",   new Kind("keyword_results",  "keyword_monitors",   "response_ms", verdict("ok", "error IS NOT NULL")));
         KINDS.put("page",      new Kind("page_checks",      "page_monitors",      "response_ms", verdict("ok", "error IS NOT NULL")));
         KINDS.put("pagespeed", new Kind("pagespeed_checks", "pagespeed_monitors", "response_ms",
-                verdict("ok", "error_message IS NOT NULL"),
-                "CASE WHEN " + verdict("ok", "error_message IS NOT NULL") + " = 1 THEN 0"
-                        + " WHEN breached_metrics IS NOT NULL AND breached_metrics <> '' THEN 1 ELSE 0 END"));
+                verdict("ok", "error_message IS NOT NULL"), PAGESPEED_BREACH, PAGESPEED_UNDECIDED, PAGESPEED_BUDGET_DEFINED));
         KINDS.put("scripted",  new Kind("scripted_checks",  "scripted_monitors",  "duration_ms",
                 verdict("ok", "error IS NOT NULL OR exit_code <> 0 OR checks_failed > 0")));
         // Veritabanı sorgusu (2026-10-31): kesinti YALNIZ sorgunun çalıştırılamaması (ok = FALSE). Kural ihlali (status
@@ -367,12 +382,12 @@ public class MonitorSparklineService {
         for (Long id : ids) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("n", 0); m.put("fail", 0); m.put("up_pct", null); m.put("bad_hours", 0);
-            if (budget) { m.put("breach", 0); m.put("budget_pct", null); }
+            if (budget) { m.put("breach", 0); m.put("undecided", 0); m.put("budget_pct", null); }
             List<Map<String, Object>> wl = new ArrayList<>();
             for (int w : wins) {
                 Map<String, Object> wm = new LinkedHashMap<>();
                 wm.put("days", w); wm.put("n", 0); wm.put("fail", 0); wm.put("up_pct", null); wm.put("bad_hours", 0);
-                if (budget) { wm.put("breach", 0); wm.put("budget_pct", null); }
+                if (budget) { wm.put("breach", 0); wm.put("undecided", 0); wm.put("budget_pct", null); }
                 wm.put("slots", new ArrayList<Map<String, Object>>());
                 wl.add(wm);
             }
@@ -382,33 +397,39 @@ public class MonitorSparklineService {
 
         // Adet / hata — tüm pencere + her dönem tek geçişte. Parametre sırası: select listesindeki dönem ?'leri, sonra WHERE.
         // Bütçe ihlali (yalnız breachExpr'li tür) her sütun grubunun SONUNA eklenir: [n, fail, (breach)] × (tüm, dönemler).
-        int stride = budget ? 3 : 2;
+        int stride = budget ? 4 : 2;
         StringBuilder sql = new StringBuilder("SELECT monitor_id, COUNT(*), SUM(fail)");
-        if (budget) sql.append(", SUM(breach)");
+        if (budget) sql.append(", SUM(breach), SUM(undecided)");
         List<Object> args = new ArrayList<>();
         for (String wf : winFrom) {
             sql.append(", SUM(CASE WHEN checked_at >= ? THEN 1 ELSE 0 END), SUM(CASE WHEN checked_at >= ? THEN fail ELSE 0 END)");
             args.add(wf); args.add(wf);
-            if (budget) { sql.append(", SUM(CASE WHEN checked_at >= ? THEN breach ELSE 0 END)"); args.add(wf); }
+            if (budget) {
+                sql.append(", SUM(CASE WHEN checked_at >= ? THEN breach ELSE 0 END), SUM(CASE WHEN checked_at >= ? THEN undecided ELSE 0 END)");
+                args.add(wf); args.add(wf);
+            }
         }
         IdFilter f = IdFilter.of(ids, restrict);   // O-7: görünür kümeyle daralt
         sql.append(" FROM (SELECT monitor_id, checked_at, ").append(k.failExpr()).append(" AS fail");
-        if (budget) sql.append(", ").append(k.breachExpr()).append(" AS breach");
+        if (budget) sql.append(", ").append(k.breachExpr()).append(" AS breach, ").append(k.undecidedExpr()).append(" AS undecided");
         sql.append(" FROM ").append(k.table())
            .append(" WHERE checked_at >= ?").append(f.sql()).append(") t GROUP BY monitor_id");
         args.add(from);
         args.addAll(f.args());
-        int head = budget ? 5 : 4;   // pencere sütunlarının başladığı indeks (1 tabanlı)
+        int head = budget ? 6 : 4;   // pencere sütunlarının başladığı indeks (1 tabanlı)
         jdbc.query(sql.toString(), rs -> {
             Map<String, Object> m = out.get(rs.getLong(1));
             if (m == null) return;
             m.put("n", rs.getInt(2)); m.put("fail", rs.getInt(3));
-            if (budget) m.put("breach", rs.getInt(4));
+            if (budget) { m.put("breach", rs.getInt(4)); m.put("undecided", rs.getInt(5)); }
             List<Map<String, Object>> wl = windowsOf(m);
             for (int i = 0; i < wl.size(); i++) {
                 wl.get(i).put("n", rs.getInt(head + stride * i));
                 wl.get(i).put("fail", rs.getInt(head + 1 + stride * i));
-                if (budget) wl.get(i).put("breach", rs.getInt(head + 2 + stride * i));
+                if (budget) {
+                    wl.get(i).put("breach", rs.getInt(head + 2 + stride * i));
+                    wl.get(i).put("undecided", rs.getInt(head + 3 + stride * i));
+                }
             }
         }, args.toArray());
 
@@ -443,27 +464,44 @@ public class MonitorSparklineService {
             }
         }, badArgs.toArray());
 
-        for (Map<String, Object> m : out.values()) {
+        // Bütçe tanımlı izlemeler (inceleme F7) — tek sorgu; okunamazsa bilinmiyor (bütçe uyumu yine hesaplanır, bayrak yazılmaz).
+        java.util.Set<Long> withBudget = null;
+        if (budget && k.budgetDefinedExpr() != null) {
+            try {
+                withBudget = new java.util.HashSet<>(jdbc.queryForList("SELECT id FROM " + k.monitorTable()
+                        + " WHERE " + k.budgetDefinedExpr(), Long.class));
+            } catch (Exception e) {
+                log.debug("Bütçe tanımı okunamadı ({}): {}", type, e.toString());
+            }
+        }
+        for (Map.Entry<Long, Map<String, Object>> e : out.entrySet()) {
+            Map<String, Object> m = e.getValue();
+            boolean defined = withBudget == null || withBudget.contains(e.getKey());
             m.put("up_pct", pct((Integer) m.get("n"), (Integer) m.get("fail")));
-            if (budget) m.put("budget_pct", budgetPct(m));
+            if (budget) {
+                if (withBudget != null) m.put("budget_defined", defined);
+                m.put("budget_pct", defined ? budgetPct(m) : null);
+            }
             for (Map<String, Object> wm : windowsOf(m)) {
                 wm.put("up_pct", pct((Integer) wm.get("n"), (Integer) wm.get("fail")));
-                if (budget) wm.put("budget_pct", budgetPct(wm));
+                if (budget) wm.put("budget_pct", defined ? budgetPct(wm) : null);
             }
         }
         return out;
     }
 
     /**
-     * Bütçe uyumu (Sayfa Hızı, 2026-11-14): sayfanın ALINABİLDİĞİ kontrollerin kaçta kaçı tüm eşiklerin içinde kaldı (2 hane,
-     * ihlal varken 100 gösterilmez). Alınamayan kontrol bütçe hakkında bir şey söylemez — paydaya girmez; hiç alınamadıysa null
-     * (bilinmiyor, 0 değil).
+     * Bütçe uyumu (Sayfa Hızı, 2026-11-14): sayfanın ALINABİLDİĞİ ve eşikleri KARARA BAĞLANABİLEN kontrollerin kaçta kaçı
+     * tüm eşiklerin içinde kaldı (2 hane, ihlal varken 100 gösterilmez). Alınamayan kontrol bütçe hakkında bir şey söylemez;
+     * kısmi ölçümde kararsız kalan kontrol de (inceleme B1) — ikisi de paydaya girmez. Payda 0 → null (bilinmiyor, 0 değil).
      */
     static Double budgetPct(Map<String, Object> m) {
         int loaded = (Integer) m.get("n") - (Integer) m.get("fail");
         int breach = m.get("breach") instanceof Integer b ? b : 0;
-        if (loaded <= 0) return null;
-        return com.sitemonitor.util.AvailabilityMath.pct(loaded, Math.max(0, loaded - breach), 2);
+        int undecided = m.get("undecided") instanceof Integer u ? u : 0;
+        int decided = loaded - undecided;
+        if (decided <= 0) return null;
+        return com.sitemonitor.util.AvailabilityMath.pct(decided, Math.max(0, decided - breach), 2);
     }
 
     /**

@@ -3864,6 +3864,39 @@ class MonitoringControllerTest {
         }
 
         @Test
+        @DisplayName("Sayfa Hızı (inceleme B8): geri yükleme asgari > azami boyut bırakacaksa 400 minPageKb, HİÇBİR ŞEY kaydedilmez")
+        void restore_pageSpeedMinAboveMax_isRejected() throws Exception {
+            com.sitemonitor.model.PageSpeedMonitor ps = new com.sitemonitor.model.PageSpeedMonitor();
+            ps.setId(12L); ps.setUrl("https://ps.example.com/"); ps.setTeamId(5L); ps.setActive(true);
+            ps.setMinPageKb(500); ps.setMaxPageKb(4000);
+            when(pageSpeedMonitorRepo.findById(12L)).thenReturn(Optional.of(ps));
+            // Eski kayıt: asgari boyut yokken azami 300 KB'tı — bugünkü asgari 500 KB ile çelişir.
+            stubRestore("PAGESPEED", 12L, "{\"maxPageKb\":300}");
+
+            mvc.perform(post("/api/monitoring/changes/pagespeed/12/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("minPageKb"));
+            verify(pageSpeedMonitorRepo, never()).save(any());
+            verify(monitorHistory, never()).record(eq("PAGESPEED"), eq(12L), anyString(), any(), eq("RESTORE"), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Sayfa Hızı (inceleme B8): asgari ≤ azami kalan geri yükleme normal yapılır")
+        void restore_pageSpeedMinBelowMax_isApplied() throws Exception {
+            com.sitemonitor.model.PageSpeedMonitor ps = new com.sitemonitor.model.PageSpeedMonitor();
+            ps.setId(12L); ps.setUrl("https://ps.example.com/"); ps.setTeamId(5L); ps.setActive(true);
+            ps.setMinPageKb(200); ps.setMaxPageKb(4000);
+            when(pageSpeedMonitorRepo.findById(12L)).thenReturn(Optional.of(ps));
+            stubRestore("PAGESPEED", 12L, "{\"maxPageKb\":300}");
+
+            mvc.perform(post("/api/monitoring/changes/pagespeed/12/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isOk());
+            assertThat(ps.getMaxPageKb()).isEqualTo(300);
+            verify(pageSpeedMonitorRepo).save(ps);
+        }
+
+        @Test
         @DisplayName("Maskeli alan geri YAZILMAZ — gerçek sır '***' ile ezilmez, atlandığı bildirilir")
         void restore_neverWritesMaskedValues() throws Exception {
             when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))

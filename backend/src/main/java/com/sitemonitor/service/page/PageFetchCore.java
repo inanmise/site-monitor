@@ -240,15 +240,24 @@ public class PageFetchCore {
      * @param failure     aktarım hatasının SINIFLANDIRMASI (2026-10-05, hata teşhisi) — istisnanın kendisinden, yakalandığı
      *                    yerde; engelleme / yönlendirme sınırı da dahil. Başarılı (HTTP yanıtı gelen) çekimde null. Yalnız
      *                    üst veri: status/error/blocked anlamı DEĞİŞMEDİ.
+     * @param bodyMs      SON yanıtın gövdesinin inme süresi — başlıklar geldikten gövde bitene kadar (SSRF kapısı / DNS
+     *                    DAHİL DEĞİL; 2026-11-14 Sayfa Hızı faz kırılımı). Bilinmiyorsa (hata, yönlendirme sınırı) {@code -1}.
      */
     public record Fetch(int status, long ttfbMs, long durationMs, long bytes, byte[] body,
                         String error, boolean blocked, boolean truncated,
-                        com.sitemonitor.service.failure.CheckFailure failure) {
+                        com.sitemonitor.service.failure.CheckFailure failure, long bodyMs) {
+
+        /** Geriye uyum: gövde süresi bilinmiyor. */
+        public Fetch(int status, long ttfbMs, long durationMs, long bytes, byte[] body,
+                     String error, boolean blocked, boolean truncated,
+                     com.sitemonitor.service.failure.CheckFailure failure) {
+            this(status, ttfbMs, durationMs, bytes, body, error, blocked, truncated, failure, -1L);
+        }
 
         /** Geriye uyum: sınıflandırmasız (yanıt gelen çekim). */
         public Fetch(int status, long ttfbMs, long durationMs, long bytes, byte[] body,
                      String error, boolean blocked, boolean truncated) {
-            this(status, ttfbMs, durationMs, bytes, body, error, blocked, truncated, null);
+            this(status, ttfbMs, durationMs, bytes, body, error, blocked, truncated, null, -1L);
         }
     }
 
@@ -803,7 +812,9 @@ public class PageFetchCore {
                     }
                 }
                 if (digest != null && !truncated && (opts.wantBody() || opts.countBytes())) sink.contentHash = hex(digest.digest());
-                return new Fetch(sc, ttfb, System.currentTimeMillis() - start, count, body, null, false, truncated);
+                long doneAt = System.currentTimeMillis();
+                return new Fetch(sc, ttfb, doneAt - start, count, body, null, false, truncated, null,
+                        Math.max(0L, doneAt - headersAt));
             }
             return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, "çok fazla yönlendirme", false, false,
                     redirectLimit(opts, current));

@@ -169,4 +169,30 @@ class PageSpeedResourceRepositoryTest {
         assertThat(urls(1, PageSpeedResource.KEEP_BREACH)).containsExactly("https://www.example.com/delil.js");
         assertThat(urls(2, PageSpeedResource.KEEP_LATEST)).containsExactly("https://www.example.com/baska.js");
     }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("İnceleme B4: ihlalin başladığı ölçüm hem LATEST hem BREACH yazılır — ölçüm seçilince TEK kopya (liste, sayı, süzgeç)")
+    void checkPage_oneCopyPerCheck() {
+        repo.saveAll(List.of(
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/1.js", "JS", 900, 200, false),
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/2.png", "IMG", 500, 200, true),
+                res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/1.js", "JS", 900, 200, false),
+                res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/2.png", "IMG", 500, 200, true),
+                // ihlal anı olmayan son ölçüm: yalnız LATEST — o da tek kopya döner
+                res(2, 30L, PageSpeedResource.KEEP_LATEST, "https://b/x.js", "JS", 100, 200, false)));
+        var all = com.sitemonitor.controller.MonitoringController.ResFilter.of(null, null, false);
+        var page = repo.checkPage(1L, 20L, all.allTypes(), all.types(), all.party(), all.failed(),
+                org.springframework.data.domain.PageRequest.of(0, 50));
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getContent()).extracting(PageSpeedResource::getKeepReason).containsOnly(PageSpeedResource.KEEP_BREACH);
+        assertThat(repo.countByMonitorIdAndCheckId(1L, 20L)).isEqualTo(2);
+        long facetTotal = repo.checkFacets(1L, 20L).stream().mapToLong(row -> ((Number) row[3]).longValue()).sum();
+        assertThat(facetTotal).isEqualTo(2);
+        assertThat(repo.checkPage(2L, 30L, all.allTypes(), all.types(), all.party(), all.failed(),
+                org.springframework.data.domain.PageRequest.of(0, 50)).getTotalElements()).isEqualTo(1);
+        // İnceleme B5: CSV son ölçümün kimliğini BİR KEZ okur
+        assertThat(repo.latestCheckId(1L)).isEqualTo(20L);
+        assertThat(repo.latestCheckId(99L)).isNull();
+    }
 }

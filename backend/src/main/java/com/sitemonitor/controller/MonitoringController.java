@@ -915,6 +915,21 @@ public class MonitoringController {
             return badRequest("Geri yüklenecek bir fark yok — ayarlar zaten o andaki gibi");
         List<String> applied = MonitorHistoryService.changedFields(effective);
 
+        // Sayfa Hızı (2026-11-14, inceleme B8): geri yükleme güncellemeyle aynı "asgari ≤ azami boyut" kuralına uyar — eski bir
+        // kayıt (asgari boyut yokken) daha küçük bir azami boyut taşıyorsa bugünkü asgari boyutla çelişebilir; çelişirse 400,
+        // HİÇBİR ŞEY yazılmaz (varlık ayrık, kaydedilmeden dönülür). Aksi hâlde izleme kalıcı SIZE ya da MINSIZE alarmı verirdi.
+        if (entity instanceof com.sitemonitor.model.PageSpeedMonitor psr
+                && (applied.contains("minPageKb") || applied.contains("maxPageKb"))
+                && psr.getMinPageKb() != null && psr.getMaxPageKb() != null
+                && psr.getMinPageKb() > 0 && psr.getMaxPageKb() > 0 && psr.getMinPageKb() > psr.getMaxPageKb()) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("minPageKb",
+                    com.sitemonitor.util.Msg.t(
+                            "Bu kayda geri dönülemez: o andaki azami sayfa boyutu bugünkü asgari sayfa boyutundan küçük. "
+                                    + "Önce asgari boyutu düzenleyin, sonra yeniden deneyin.",
+                            "This entry can't be restored: its maximum page size is smaller than today's minimum page size. "
+                                    + "Edit the minimum size first, then try again."));
+        }
+
         // Sentetik izlemede alarm ANAHTARI izleme ADIDIR (2026-10-16, inceleme): geri yükleme güncellemeyle aynı kuralları
         // uygular — ad takım içinde tekil, ad değişirse açık alarm yeni ada taşınır, duraklatmaya dönülürse açık alarm kapanır.
         // Aksi halde eski adla "hayalet" alarm kalıyordu (paylaşımla geri yükleme de bu yolu kullanır).
@@ -5882,7 +5897,9 @@ public class MonitoringController {
                 new CsvColumn<>("other_bytes", com.sitemonitor.model.PageSpeedCheck::getOtherBytes),
                 new CsvColumn<>("other_count", com.sitemonitor.model.PageSpeedCheck::getOtherCount),
                 new CsvColumn<>("first_party_bytes", com.sitemonitor.model.PageSpeedCheck::getFirstPartyBytes),
-                new CsvColumn<>("third_party_bytes", com.sitemonitor.model.PageSpeedCheck::getThirdPartyBytes)), response);
+                new CsvColumn<>("third_party_bytes", com.sitemonitor.model.PageSpeedCheck::getThirdPartyBytes),
+                new CsvColumn<>("undecided_metrics", com.sitemonitor.model.PageSpeedCheck::getUndecidedMetrics),
+                new CsvColumn<>("download_ms", com.sitemonitor.model.PageSpeedCheck::getDownloadMs)), response);
     }
 
     @PostMapping("/pagespeed/{id}/check")
@@ -5950,8 +5967,9 @@ public class MonitoringController {
         out.put("status",         r.status());
         out.put("reachable",      r.reachable());
         out.put("http_status",    r.statusCode());
-        out.put("ttfb_ms",        r.ttfbMs());
+        out.put("ttfb_ms",        r.serverTtfbMs());   // sunucu fazı (inceleme B2); null = ölçülemedi
         out.put("html_ms",        r.htmlMs());
+        out.put("download_ms",    r.downloadMs());
         out.put("response_ms",    r.totalMs());
         out.put("total_bytes",    r.totalBytes());
         out.put("request_count",  r.requestCount());
@@ -6035,6 +6053,9 @@ public class MonitoringController {
         var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR
         if (deny != null) return deny;
         ResFilter flt = ResFilter.of(type, party, failed);
+        // Son ölçüm seçiliyse kontrol kimliği BİR KEZ okunur ve o ölçüm sayfalanır (inceleme B5): LATEST üzerinde ofsetle
+        // sayfalamak, araya giren yeni bir ölçümün (replaceLatest) satırlarını eskilerle karıştırıyordu.
+        final Long snapshot = checkId != null ? checkId : pageSpeedResourceRepo.latestCheckId(id);
         try {
             response.setStatus(200);
             response.setContentType("text/csv;charset=UTF-8");
@@ -6047,9 +6068,9 @@ public class MonitoringController {
             int rows = 0;
             for (int pno = 0; rows < PAGESPEED_RES_CSV_MAX; pno++) {
                 org.springframework.data.domain.Pageable pg = PageRequest.of(pno, 1000);
-                var chunk = (checkId != null
-                        ? pageSpeedResourceRepo.checkPage(id, checkId, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)
-                        : pageSpeedResourceRepo.latestPage(id, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)).getContent();
+                if (snapshot == null) break;   // kırılım yok → yalnız başlık satırı
+                var chunk = pageSpeedResourceRepo.checkPage(id, snapshot, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)
+                        .getContent();
                 if (chunk.isEmpty()) break;
                 for (com.sitemonitor.model.PageSpeedResource r : chunk) {
                     if (!id.equals(r.getMonitorId())) continue;
@@ -6446,6 +6467,9 @@ public class MonitoringController {
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
+        // Bütçe tanımlı mı (inceleme F7): hiçbir eşik / tür bütçesi / asgari boyut yoksa "bütçe tanımlı değil" — kart, ayrıntı
+        // ve kutu bunu "uyumlu" saymaz.
+        item.put("budget_defined", com.sitemonitor.service.page.PageSpeedRules.budgetDefined(m));
         if (latest != null) {
             item.put("status",         Boolean.FALSE.equals(latest.getOk()) ? "DOWN"
                                        : (blank(latest.getBreachedMetrics()) ? "OK" : "SLOW"));
@@ -6478,6 +6502,11 @@ public class MonitoringController {
             item.put("third_party_bytes", latest.getThirdPartyBytes());
             item.put("breached_metrics", blank(latest.getBreachedMetrics()) ? List.of()
                                        : List.of(latest.getBreachedMetrics().split(",")));
+            // İnceleme düzeltmeleri (2026-11-14): kararı verilemeyen eşikler (kısmi ölçüm / ölçülemeyen TTFB — B1) ve HTML
+            // gövdesinin gerçek istekte inme süresi (B6d). Anahtar HEP yazılır (boş liste / null) — yeni sunucu işareti.
+            item.put("undecided_metrics", blank(latest.getUndecidedMetrics()) ? List.of()
+                                       : List.of(latest.getUndecidedMetrics().split(",")));
+            item.put("download_ms",    latest.getDownloadMs());
             item.put("error",          latest.getErrorMessage());
             item.put("last_check",     latest.getCheckedAt());
         }

@@ -28,7 +28,20 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
      * checkId'si gecildiginde o izlemenin kaynak sayisini sizdiriyordu (satirlar zaten filtrelenip
      * bosaliyor, ama sayi "0 / 57" diye ekrana geliyordu).
      */
-    long countByMonitorIdAndCheckId(Long monitorId, Long checkId);
+    @Query("SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.checkId = :checkId " + ONE_COPY)
+    long countByMonitorIdAndCheckId(@Param("monitorId") Long monitorId, @Param("checkId") Long checkId);
+
+    /**
+     * Aynı ölçümün TEK kopyası (inceleme B4): ihlalin başladığı ölçümün satırları hem LATEST hem BREACH olarak yazılır — ölçüm
+     * seçilince ikisi birden dönüp liste / CSV / sayaçlar iki kat oluyordu. BREACH kopyası varsa yalnız o (kalıcı delil),
+     * yoksa LATEST. {@code :monitorId} / {@code :checkId} adlı parametreleri kullanır.
+     */
+    String ONE_COPY = "AND (r.keepReason = 'BREACH' OR NOT EXISTS (SELECT 1 FROM PageSpeedResource b WHERE b.monitorId = r.monitorId "
+            + "AND b.checkId = r.checkId AND b.keepReason = 'BREACH')) ";
+
+    /** Son ölçümün (LATEST) kontrol kimliği — CSV bir kez okur ve o ölçümü sayfalar (inceleme B5); kırılım yoksa null. */
+    @Query("SELECT MAX(r.checkId) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST'")
+    Long latestCheckId(@Param("id") Long id);
 
     /** Bir eşik-ihlali anının kırılımı (delil). */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.checkId = :checkId ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")
@@ -52,9 +65,9 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
             @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
 
     /** Bir ihlal anının (checkId) kırılımı, süzgeçli ve sayfalı — izleme kimliğiyle birlikte (başka izlemenin satırı dönmez). */
-    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + FILTER
+    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY + FILTER
                  + "ORDER BY r.bytes DESC NULLS LAST, r.id ASC",
-           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + FILTER)
+           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY + FILTER)
     org.springframework.data.domain.Page<PageSpeedResource> checkPage(@Param("id") Long id, @Param("checkId") Long checkId,
             @Param("allTypes") boolean allTypes, @Param("types") java.util.Collection<String> types,
             @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
@@ -67,7 +80,7 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
 
     /** Süzgeç sayaçları — bir ihlal anı. */
     @Query("SELECT r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END, COUNT(r) "
-         + "FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId "
+         + "FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY
          + "GROUP BY r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END")
     List<Object[]> checkFacets(@Param("id") Long id, @Param("checkId") Long checkId);
 

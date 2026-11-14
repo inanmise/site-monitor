@@ -270,7 +270,11 @@ class PageSpeedDiagnosticsServiceTest {
         Map<String, Object> ps = m(data.get("pagespeed"));
         assertThat(ps).containsEntry("analyzed", true);
         assertThat(list(ps.get("routes"))).hasSize(1);
-        assertThat(list(ps.get("metrics"))).extracting(x -> x.get("key")).containsExactly("LOAD", "TTFB", "SIZE", "REQUESTS");
+        // inceleme B7: tür bütçeleri ve asgari boyut da (PageSpeedRules.BREACH_KEYS sırası); tanımsız eşik satırı limit=null
+        assertThat(list(ps.get("metrics"))).extracting(x -> x.get("key"))
+                .containsExactly("LOAD", "TTFB", "SIZE", "REQUESTS", "MINSIZE", "JS", "IMG", "FONT", "THIRD");
+        assertThat(list(ps.get("metrics")).get(5)).containsEntry("limit", null).containsEntry("breached", false);
+        assertThat(m(ps.get("thresholds"))).containsKeys("min_page_kb", "max_js_kb", "max_img_kb", "max_font_kb", "max_third_party_kb");
         verify(caAutoPin, never()).pinFromServer(anyString(), anyInt(), anyString());
     }
 
