@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-14T01:53:34Z",
+  "generatedAt": "2026-11-14T02:54:38Z",
   "repo": "inanmise/site-monitor",
-  "count": 830,
+  "count": 831,
   "releases": [
+    {
+      "version": "20.198.0",
+      "tag": "v20.198.0",
+      "releasedAt": "2026-11-14T02:54:30Z",
+      "commit": "db90629f267e7dff8b4ea69da97c171759eb1dd2",
+      "prevVersion": "20.197.4",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "mydash",
+          "breaking": false,
+          "sha": "db90629f",
+          "subject": "zaman serisi kutuları — inceleme düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": "mydash",
+          "breaking": false,
+          "sha": "b1a15408",
+          "subject": "zaman serisi kutuları — alarm eğilimi, favori yanıt süreleri, 7 günlük erişilebilirlik"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.197.4",
       "tag": "v20.197.4",

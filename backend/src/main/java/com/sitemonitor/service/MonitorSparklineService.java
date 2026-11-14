@@ -83,6 +83,53 @@ public class MonitorSparklineService {
     }
 
     /**
+     * Monitörün takımı (null = takımsız), adı (boş ad null), etkin mi (duraklatılmış = false; boş = etkin) ve — YALNIZ Port /
+     * DNS'te — kullanıcının eklediği bağımsız satır mı ({@code standalone}; diğer türlerde null) ile envanter eşleşmesinin
+     * anahtarı ({@code host}: Port'ta host, DNS'te alan adı; diğer türlerde null). Envanter TÜREVİ Port / DNS satırı da
+     * envanterin takımını taşır ({@code MonitoringController} / {@code DerivedMonitorTeamSync}) — takım alanı "türev mi"
+     * sorusunu cevaplamaz, {@code standalone} cevaplar.
+     */
+    public record MonitorRef(Long teamId, String name, boolean active, Boolean standalone, String host) {
+        /** Port / DNS dışındaki türler (bağımsızlık ve envanter anahtarı yok). */
+        public MonitorRef(Long teamId, String name, boolean active) { this(teamId, name, active, null, null); }
+    }
+
+    /** Envanter eşleşmesi için ek sütun: Port → host, DNS → alan adı (İzleme Panosu {@code portSpec} / {@code dnsSpec}). */
+    private static final Map<String, String> INVENTORY_KEY_COLUMN = Map.of("port", "host", "dns", "domain");
+
+    /**
+     * Monitör id → (takım, ad, etkin [, bağımsız, envanter anahtarı]) — türün TÜM monitörleri, tek dar sorgu (2026-11-14,
+     * Kişisel Panom 7 günlük erişilebilirlik: kurum geneli görüntü kapsam süzgecini, en kötü satırların adını ve "ölçülmemiş"
+     * sayımının envanter-pasif kuralını bu haritadan alır; {@link #monitorNames} 1000 kimlikle sınırlıdır). URL / hedef
+     * BİLEREK okunmaz — sorgu dizgisinde gizli değer taşıyabilir; Port'un host'u ve DNS'in alan adı yalnız aktif envanterle
+     * eşleştirmek için okunur, hiçbir yanıta yazılmaz.
+     */
+    public Map<Long, MonitorRef> monitorRefs(String type) {
+        Kind k = KINDS.get(type);
+        Map<Long, MonitorRef> out = new HashMap<>();
+        if (k == null) return out;
+        String keyCol = INVENTORY_KEY_COLUMN.get(type);
+        String extra = keyCol == null ? "" : ", standalone, " + keyCol + " AS inv_key";
+        jdbc.query("SELECT id, team_id, name, active" + extra + " FROM " + k.monitorTable(), rs -> {
+            long id = rs.getLong("id");
+            long tid = rs.getLong("team_id");
+            Long team = rs.wasNull() ? null : tid;
+            String n = rs.getString("name");
+            boolean active = rs.getBoolean("active");
+            if (rs.wasNull()) active = true;   // eski satır: sütun boş = etkin (varlık varsayılanı)
+            String name = n == null || n.isBlank() ? null : n;
+            if (keyCol == null) {
+                out.put(id, new MonitorRef(team, name, active));
+                return;
+            }
+            boolean sa = rs.getBoolean("standalone");
+            Boolean standalone = rs.wasNull() ? Boolean.FALSE : sa;   // varlık varsayılanı false (envanter türevi)
+            out.put(id, new MonitorRef(team, name, active, standalone, rs.getString("inv_key")));
+        });
+        return out;
+    }
+
+    /**
      * Monitör id → ad (2026-11-13, İstatistikler SLA ihlal listesi): yalnız verilen (en çok {@link #IN_LIMIT}) id'ler, tek dar
      * sorgu. Ad boş (eski türev satır) olan monitör haritada olmaz — çağıran "#id" yazar.
      */
@@ -151,6 +198,40 @@ public class MonitorSparklineService {
         if (all == null || visible == null || visible.isEmpty()) return out;
         all.forEach((id, v) -> { if (visible.contains(id)) out.put(id, v); });
         return out;
+    }
+
+    /** {@link #sparklinesFor} kümesinin tavanı (kimlik süzgeci: favori tavanı 200 ile aynı). */
+    public static final int FOR_IDS_MAX = 200;
+    /** {@link #sparklinesFor} belleğindeki en çok anahtar (tür × saat × kimlik kümesi; dolunca süresi geçenler, sonra hepsi atılır). */
+    static final int FOR_IDS_MEMO_KEYS = 64;
+
+    /** Küçük kimlik kümesinin sonucu — ortak önbellekle ({@code monitor-sparklines}, 60 sn) aynı ömür. 0 → bellek kapalı. */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.sparklines.ids-cache-ms:60000}")
+    long idsCacheMs;
+
+    /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. */
+    private com.sitemonitor.util.TtlMemo<Map<Long, Map<String, Object>>> idsMemo = new com.sitemonitor.util.TtlMemo<>(FOR_IDS_MEMO_KEYS);
+
+    /**
+     * Küçük, ÖNCEDEN KAPSAMLANMIŞ kimlik kümesinin trendi (2026-11-14, Kişisel Panom "favorilerin yanıt süresi"): tek favorisi
+     * olan duvar ekranı türün tüm filosunu ({@link #sparklinesAll}) dakikada bir yeniden hesaplatmasın — sorgu
+     * {@code monitor_id IN (…)} ile daraltılır (≤ {@value #FOR_IDS_MAX} kimlik, saat penceresi {@value #MAX_HOURS} ile
+     * sınırlı). Sonuç kimlik kümesinin TAM belirlediği değerdir (kapsam süzgeci çağıranda, kümeye uygulanmış olarak gelir),
+     * bu yüzden pod başına {@code tür:saat:sıralı kimlikler} anahtarıyla paylaşılır. Her izlemenin sonucu yalnız kendi
+     * satırlarından hesaplandığından {@code subset(sparklinesAll(...), ids)} ile BİREBİRDİR. Saklanan değer paylaşılır —
+     * değiştirilmemelidir.
+     *
+     * @param ids var olan ve görünür monitör kimlikleri (çağıran süzer); boş → boş harita
+     */
+    public Map<Long, Map<String, Object>> sparklinesFor(String type, int hours, Set<Long> ids) {
+        if (ids == null || ids.isEmpty() || !supports(type)) return new LinkedHashMap<>();
+        if (ids.size() > FOR_IDS_MAX) throw new IllegalArgumentException("en çok " + FOR_IDS_MAX + " kimlik");
+        int h = Math.max(1, Math.min(MAX_HOURS, hours));
+        List<Long> sorted = new ArrayList<>(ids);
+        Collections.sort(sorted);
+        StringBuilder key = new StringBuilder(type).append(':').append(h).append(':');
+        for (int i = 0; i < sorted.size(); i++) { if (i > 0) key.append(','); key.append(sorted.get(i)); }
+        return idsMemo.get(key.toString(), idsCacheMs, false, () -> sparklines(type, h, new LinkedHashSet<>(sorted), true));
     }
 
     /**

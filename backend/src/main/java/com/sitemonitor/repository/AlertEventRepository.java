@@ -91,6 +91,35 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<Object[]> findCreatedStatRowsSince(@Param("since") String since);
 
     /**
+     * Kişisel Panom "Alarm eğilimi" (2026-11-14): {@code since}'ten beri AÇILAN alarmlar — sahip (damgalı takım + hedef) ve UTC
+     * saat kovası ({@code yyyy-MM-ddTHH}) başına gruplu sayım; aynı hedefin bir saatte yüz kez açılıp kapanması tek satırdır
+     * (ham satır taşınmaz). Kapsam çağıranda (Alarm Geçmişi kuralı: damga ya da envanterin SY / UG'si).
+     * İndeks: {@code alert_events(created_at)}. Sütunlar: {@code [teamId, domain, hourBucket, count, criticalCount]}.
+     */
+    @Query("""
+            SELECT e.teamId, e.domain, SUBSTRING(e.createdAt, 1, 13), COUNT(e),
+                   SUM(CASE WHEN UPPER(e.alertLevel) = 'CRITICAL' THEN 1 ELSE 0 END)
+            FROM AlertEvent e
+            WHERE e.createdAt >= :since
+            GROUP BY e.teamId, e.domain, SUBSTRING(e.createdAt, 1, 13)
+            """)
+    List<Object[]> countOpenedByOwnerAndHour(@Param("since") String since);
+
+    /**
+     * Kişisel Panom "Alarm eğilimi" (2026-11-14): {@code since}'ten beri KAPANAN alarmlar (açılış tarihinden bağımsız) — sahip
+     * ve UTC saat kovası başına gruplu sayım; sessiz kapanışlar (silme / duraklatma) ayrıca sayılır. İndeks:
+     * {@code idx_ae_resolved_at}. Sütunlar: {@code [teamId, domain, hourBucket, count, silentCount]}.
+     */
+    @Query("""
+            SELECT e.teamId, e.domain, SUBSTRING(e.resolvedAt, 1, 13), COUNT(e),
+                   SUM(CASE WHEN e.resolvedSilently = true THEN 1 ELSE 0 END)
+            FROM AlertEvent e
+            WHERE e.resolved = true AND e.resolvedAt >= :since
+            GROUP BY e.teamId, e.domain, SUBSTRING(e.resolvedAt, 1, 13)
+            """)
+    List<Object[]> countClosedByOwnerAndHour(@Param("since") String since);
+
+    /**
      * Alarm takım kırılımı ({@code AlertTeamStatsService}, 2026-11-13 performans): AÇIK alarmlar — tam entity ({@code context_json}
      * dahil) yerine yalnız okunan sütunlar (Alarm Geçmişi paneli + İstatistikler 5 dk yoklaması).
      * Sütunlar: {@code [id, teamId, domain, resolved, createdAt]}.

@@ -1102,6 +1102,9 @@ export const api = {
     /** İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki açık alarmların izleme türü başına özeti.
      *  Sunucu sonucu kapsam başına ~15 sn paylaşır (2026-10-01); `fresh=true` (alarm eylemi sonrası) belleği atlar. */
     openAlerts: (fresh = false) => request(fresh === true ? '/me/open-alerts?fresh=1' : '/me/open-alerts'),
+    /** Kişisel Panom "Alarm eğilimi" (2026-11-14): görüş kapsamındaki alarmların açılan / kapanan sayısı — `24h` (saatlik
+     *  kovalar) ya da `7d` (İstanbul günleri). Yetki yoksa `{visible:false}`; sunucuda kurum geneli 30 sn bellek. */
+    alertTrend: (range = '24h') => request(`/me/alert-trend?range=${encodeURIComponent(range)}`),
     /** Geçmiş (2026-09-20): çözülmüş alarmlar 30 gün, sayfalı. */
     inboxHistory: (page = 0, size = 25) => request(`/me/inbox?view=history&page=${page}&size=${size}`),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
@@ -2818,7 +2821,14 @@ export const api = {
     // HTTP / Website
     getHttpMonitors:   () => request('/monitoring/http'),
     // Kart mini trendi (2026-09-12): tür başına tek toplu istek — saatlik kovalar + son 5 kontrol
-    getSparklines: (type, hours = 24) => request(`/monitoring/sparklines?type=${encodeURIComponent(type)}&hours=${hours}`),
+    /** `ids` (2026-11-14, Kişisel Panom favorileri): virgüllü kimlik listesi — yanıt yalnız bu izlemeleri taşır (kapsamı
+     *  genişletmez; eski sunucu parametreyi yok sayar ve türün tüm görünür izlemelerini döndürür). */
+    getSparklines: (type, hours = 24, ids = null) => request(
+      `/monitoring/sparklines?type=${encodeURIComponent(type)}&hours=${hours}`
+      + (Array.isArray(ids) && ids.length ? `&ids=${encodeURIComponent(ids.join(','))}` : '')),
+    /** Kişisel Panom "7 günlük erişilebilirlik" (2026-11-14): görüş kapsamındaki izlemelerin son 7 günde ölçülen
+     *  erişilebilirliği, SLA hedefi ve hedefin altındaki izlemeler. Sunucuda kurum geneli 60 sn bellek. */
+    getAvailabilityWeek: () => request('/monitoring/availability-week'),
     // Kullanılabilirlik / SLA (2026-09-12, #11): 30 günlük oran + hedef
     getSla: (type, days = 30) => request(`/monitoring/sla?type=${encodeURIComponent(type)}&days=${days}`),
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),
