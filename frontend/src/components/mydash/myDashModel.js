@@ -52,6 +52,10 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'alert_trend',       size: 'md', tab: 'alerthistory', perm: 'alerts.read' },
   { type: 'fav_response',      size: 'md', tab: 'monitoring',   perm: 'monitoring.read' },
   { type: 'availability_week', size: 'sm', tab: 'monitoring',   perm: 'monitoring.read' },
+  // Sayfa Hızı (2026-11-14, madde 21): en yavaş sayfalar (sıralama — TV'de liste) ve eşik / bütçe aşan sayfalar (renkli panel
+  // olabilir). Kaynak mevcut sayfa hızı listesi; yalnız "Kutu ekle"den — varsayılan düzende ve hazır düzenlerde YOK
+  { type: 'pagespeed_slowest',     size: 'md', tab: 'pagespeed', perm: 'monitoring.read' },
+  { type: 'pagespeed_over_budget', size: 'md', tab: 'pagespeed', perm: 'monitoring.read' },
   // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])
@@ -335,6 +339,8 @@ export const DETAIL_ONLY_TYPES = Object.freeze(new Set([
   'oncall', 'activity', 'service_grid', 'type_heatmap', 'team_matrix',
   // Zaman serisi (2026-11-14): grafik + satır listesi — tek sayıya inmez (7 günlük erişilebilirlik göstergesi panel olur)
   'alert_trend', 'fav_response',
+  // Sayfa Hızı (2026-11-14): "en yavaş" bir SIRALAMA — tek sayıya inmez, TV'de liste olarak kalır
+  'pagespeed_slowest',
 ]))
 
 /**
