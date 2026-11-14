@@ -62,7 +62,7 @@ FROM ${PREVIOUS_IMAGE:-previous-release-none} AS previous-release
 
 # ── Stage 1: React build ─────────────────────────────
 # Node 24 LTS = the CI version (Node 20 reached end-of-life on 2026-04-30).
-FROM node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-build
+FROM node:26.13.0-alpine3.24@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
