@@ -24,6 +24,9 @@ const EXEMPT = new Set([
   // İstatistikler (2026-11-13): 12 haftalık bitiş histogramı — çubuk genişliği o haftanın SAYISININ en büyük haftaya oranı
   // (veri grafiği; tek değerli role="progressbar" anlamı yanlış olurdu)
   path.join('components', 'stats', 'ExpiryHistogram.jsx'),
+  // Görsel aracı (2026-11-14): önce / sonra karşılaştırma kaydırıcısı — genişlik, özgün görselin GÖRÜNEN kısmının kırpma
+  // payı (role="slider" ayrı tutamakta); doluluk çubuğu değil, role="progressbar" anlamı yanlış olurdu
+  path.join('components', 'page', 'resourcescan', 'imagetool', 'ImageCompareDialog.jsx'),
 ])
 
 function walk(dir, acc = []) {
