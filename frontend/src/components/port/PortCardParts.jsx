@@ -177,8 +177,8 @@ export function PortResultPanel({ monitor: m, result }) {
 }
 
 /**
- * KOMPAKT uç nokta satırı (yoğunluk = Kompakt) — kartın TEK ikincil satırı: `:port` · kontrol türü · (varsa) ad. Sarmaz;
- * ad kırpılır. Yol / "usually …" / IP ailesi / sıklık çipleri Zengin görünümde ({@link PortEndpointChips}).
+ * KOMPAKT uç nokta satırı (yoğunluk = Kompakt) — kartın TEK ikincil satırı: `:port` · kontrol türü · (varsa) ad. Rozetler
+ * yan yana; uzun ad kesilmez, kendi içinde sarar (2026-11-14). Yol / "usually …" / IP ailesi / sıklık çipleri Zengin görünümde ({@link PortEndpointChips}).
  * Satır örtünün altında: dokunmak detayı açar. Test kancaları Zengin'le ortak: port-endpoint (`data-density="compact"`) ·
  * port-number · port-protocol · port-name.
  */
@@ -194,7 +194,7 @@ export function PortCompactEndpoint({ monitor: m, name, className }) {
         className={cn(CHIP, 'font-mono font-bold tracking-[.03em]', PROTO_TONE[proto] || 'text-muted-foreground')}>
         {proto}
       </Badge>
-      {name && <span data-slot="port-name" className="min-w-0 truncate text-xs text-muted-foreground">{name}</span>}
+      {name && <span data-slot="port-name" className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{name}</span>}
     </div>
   )
 }

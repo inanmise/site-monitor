@@ -20,6 +20,7 @@ import HttpMonitorCard from '../components/http/HttpMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import { CARD_CHECK } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   httpFailureReason, isCustomExpected, metaRow, methodOf, requestChips, responseView, statusVerdict,
 } from '../components/http/httpCardModel.js'
@@ -293,19 +294,26 @@ describe('HttpMonitorCard', () => {
     expect(onOpen).toHaveBeenCalledTimes(1)
     expect(slot(container, 'meta-team')).not.toBeNull()
     expect(slot(container, 'http-name').textContent).toBe('Corporate site')
+    // izleme adı sarar, tek satıra kırpılmaz (2026-11-14)
+    expectWraps(slot(container, 'http-name'), 'izleme adı')
     expect(slot(container, 'http-interval').textContent).toBe('every 10 min')
     expect(container.querySelector('[data-slot="ping-tags"]').textContent).toMatch(/prod/)
   })
 
-  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, çip tetiği 40 px, uzun URL kırpılır, istek satırı sarar', () => {
+  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, çip tetiği 40 px, uzun URL SARAR (kesilmez), istek satırı sarar', () => {
     const longUrl = 'https://odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com/giris/kullanici?lang=tr&utm_source=kampanya'
     const { container } = renderCard({ url: longUrl, expected_status: '200' })
     expect(slot(container, 'monitor-metrics').className).toMatch(/(^|\s)grid-cols-2(\s|$)/)
     expect(screen.getByRole('button', { name: /— Copy URL$/ }).className).toContain('pointer-coarse:size-10')
     expect(screen.getByRole('button', { name: `${longUrl} — Expects 200` }).className).toContain('pointer-coarse:min-h-10')
+    // 2026-11-14 (kullanıcı kararı): uzun adres ve izleme adı kartta kesilmez — başlık düğmesi ve içteki metin sarar
+    // (paylaşılan MonitorCardTitle'ın varsayılanı; kart kendi kırpmasını eklemez)
     const title = container.querySelector('[data-monitor-open]')
-    expect(title.querySelector('.truncate')).not.toBeNull()
+    expectTitleWraps(title)
     expect(title.className).toMatch(/min-w-0/)
+    // başlık https şemasını yazmaz (yalnız düz http vurgulanır); host + yol + sorgu TAM durur, tam adres title'da
+    expect(title.textContent).toBe(longUrl.replace(/^https:\/\//, ''))
+    expect(title.querySelector('span').getAttribute('title')).toBe(longUrl)
     expect(slot(container, 'http-request').className).toMatch(/flex-wrap/)
     expect(slot(container, 'http-reason')).toBeNull()
   })
@@ -334,6 +342,7 @@ describe('HttpMonitorCard — Kompakt / Zengin', () => {
     expect(screen.getByRole('button', { name: `${URL_} — open details` })).toBeInTheDocument()
     const sub = slot(container, 'card-compact-sub')
     expect(slot(sub, 'http-name').textContent).toBe('Corporate site')
+    expectWraps(slot(sub, 'http-name'), 'kompakt ad')   // kompakt ikincil satır da kesilmez (2026-11-14)
     expect(slot(sub, 'meta-team').textContent).toMatch(/Takım A/)
     expect(compactValue(container, 'status').textContent).toBe('200HTTP')
     expect(compactValue(container, 'status')).toHaveAttribute('data-tone', 'ok')

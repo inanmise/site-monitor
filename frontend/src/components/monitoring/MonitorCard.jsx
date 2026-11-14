@@ -200,10 +200,14 @@ export function MonitorCardTop({ end, className, children }) {
 }
 
 /**
- * Kartın GERÇEK düğmesi — başlık metni (alan adı / URL / host). `::after` kartın tamamını örter
+ * Kartın GERÇEK düğmesi — başlık metni (alan adı / URL / host / ad). `::after` kartın tamamını örter
  * (stretched button); odak halkası da o örtüde çizilir, yani klavyeyle kartın tamamı vurgulanır.
- * Uzun metin kırpılır; tam metin `title` ile yalnız METNİN üzerinde görünür (örtünün değil) — tam metin
- * her türde detay penceresinin başlığında da durur (dokunmatikte oradan okunur).
+ *
+ * <p>Uzun metin KESİLMEZ, sarar (2026-11-14, kullanıcı kararı — "adlar ve uzun metin kesilmez"; her izleme kartında
+ * varsayılan): düğmenin `whitespace-nowrap`'ı `whitespace-normal`'a çevrilir, iç metin `[overflow-wrap:anywhere]` ile
+ * boşluksuz uzun alan adını / URL'i de kartın genişliğinde kırar (tek satır kırpması ya da satır sınırı yok). Kart
+ * dosyaları bunu kapatmaz; yalnız yazı tipi / boşluk / genişlik verir. `title` iç metinde kalır (fareyle tam metin;
+ * Port'ta host:port gibi görünenden fazlasını da taşır).
  */
 export function MonitorCardTitle({ onOpen, label, title, className, children }) {
   return (
@@ -214,13 +218,13 @@ export function MonitorCardTitle({ onOpen, label, title, className, children }) 
       onClick={onOpen}
       aria-label={label}
       className={cn(
-        'mb-3 flex h-auto w-full min-w-0 justify-start rounded-none p-0 text-left text-[15px] leading-tight font-bold tracking-[-.02em] text-foreground',
+        'mb-3 flex h-auto w-full min-w-0 justify-start rounded-none p-0 text-left text-[15px] leading-tight font-bold tracking-[-.02em] text-foreground whitespace-normal',
         'hover:bg-transparent hover:text-foreground dark:hover:bg-transparent',
         'focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50',
         className,
       )}
     >
-      <span className="min-w-0 truncate" title={title}>{children}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]" title={title}>{children}</span>
     </Button>
   )
 }

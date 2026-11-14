@@ -1702,7 +1702,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         metni 14 satır / 1500 karaktere kadar üretiyor (ERR_MAX_*) ve tek satır
                         ekranı dolduruyordu. Hücre TEK satırlık NEDENİ gösterir (O4, 2026-10-31: kartın neden satırıyla
                         aynı kural — düşen doğrulamanın adı / zaman aşımı / düşen eşik / hatanın özü; eskiden FAIL'de iki
-                        nokta ile biten etiket satırıydı); tam metin `title`'da (MonitorCardTitle ile aynı desen). */}
+                        nokta ile biten etiket satırıydı); tam metin `title`'da. */}
                     {c.error
                       ? <span className="upt-rt-error cursor-pointer" title={c.error}
                           onClick={toggle}>

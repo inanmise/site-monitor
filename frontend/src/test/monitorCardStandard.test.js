@@ -232,6 +232,48 @@ describe('izleme listesi kart standardı', () => {
     expect(missing).toEqual([])
   })
 
+  /**
+   * ADLAR VE UZUN METİN KESİLMEZ (2026-11-14, kullanıcı kararı): kart başlığı (MonitorCardTitle), başlığın altındaki
+   * izleme ADI satırı ve kompakt yoğunluğun ikincil satırındaki ad (CardCompactSub / Port'un kompakt uç nokta satırı)
+   * tek satıra kırpılmaz ve satır sınırı almaz; sarma paylaşılan başlığın VARSAYILANI. Bilinçli tek satırlık NEDEN /
+   * özet satırları (`*-reason`, `*-why`, CardCompactReason), ölçü değerleri, rozetler ve alt çubuk zamanı kapsam dışı.
+   * Gerçek tarayıcı ölçümü: e2e/monitor-card-titles.spec.js.
+   */
+  it('kart başlığı, izleme adı satırı ve kompakt alt satırdaki ad kesilmez (truncate / line-clamp / nowrap yok)', () => {
+    const CLIP = /(^|[\s'"`])(truncate|line-clamp-\d+|whitespace-nowrap|text-ellipsis)(?=[\s'"`]|$)|\[&>span\]:(truncate|line-clamp)/
+    const offenders = []
+    const shared = read('monitoring/MonitorCard')
+    const fn = shared.slice(shared.indexOf('export function MonitorCardTitle'), shared.indexOf('export function MonitorCardContent'))
+    expect(fn.length, 'MonitorCardTitle kaynağı bulunamadı').toBeGreaterThan(100)
+    if (!/whitespace-normal/.test(fn)) offenders.push('MonitorCardTitle → whitespace-normal yok')
+    if (CLIP.test(fn)) offenders.push('MonitorCardTitle → kırpma sınıfı')
+    if (!/\[overflow-wrap:anywhere\]/.test(fn)) offenders.push('MonitorCardTitle → [overflow-wrap:anywhere] yok')
+    const files = [...new Set([...Object.values(CARD_MODULES).flat(), 'UptimePage', 'ping/PingCardParts', 'port/PortCardParts', 'scripted/ScriptedCardParts'])]
+    let titles = 0
+    let names = 0
+    for (const f of files) {
+      const src = read(f)
+      // MonitorCardTitle kullanımı: açılıştan kapanışa kadar hiçbir kırpma sınıfı yok
+      for (const [chunk] of src.matchAll(/<MonitorCardTitle\b[\s\S]*?<\/MonitorCardTitle>/g)) {
+        titles++
+        if (CLIP.test(chunk)) offenders.push(`${f} → MonitorCardTitle kırpma sınıfı alıyor`)
+        // className={SABİT} ile verilen başlık sınıfı da kırpmaz (Alan Adı kartının TITLE sabiti)
+        const id = chunk.match(/className=\{([A-Z_]+)\}/)?.[1]
+        const def = id && src.match(new RegExp(`const ${id} = ([^\\n]+(?:\\n[ \\t]+[^\\n]+)*)`))
+        if (def && CLIP.test(def[1])) offenders.push(`${f} → ${id} kırpma sınıfı taşıyor`)
+      }
+      // ad satırları: <tür>-name kancası ve kompakt alt satırın ad yuvası (data-slot={nameSlot})
+      for (const [tag] of src.matchAll(/data-slot=(?:"[a-z]+-name"|\{nameSlot\})[^>]*>/g)) {
+        names++
+        if (CLIP.test(tag)) offenders.push(`${f} → ${tag.slice(0, 60)}… kırpılıyor`)
+        else if (!/\[overflow-wrap:anywhere\]/.test(tag)) offenders.push(`${f} → ${tag.slice(0, 60)}… uzun kelimeyi kırmıyor`)
+      }
+    }
+    expect(titles, 'on bir kartın başlığı taranmadı').toBeGreaterThanOrEqual(11)
+    expect(names, 'ad satırları taranmadı').toBeGreaterThanOrEqual(9)
+    expect(offenders).toEqual([])
+  })
+
   it('durum sınıfı paylaşılan sözlükten seçilir (uydurma sınıf = tarayıcı varsayılanı)', () => {
     // 'warn' senaryo izlemesine ozel MESRU dorduncu durum (kismi gecis) ve App.css:2892'de
     // TANIMLI. Listeye alinmasi, uydurma bir sinifin gozden kacmasina izin vermez.

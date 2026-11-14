@@ -19,7 +19,7 @@ const msText = (ms) => {
   return p ? `${p.num} ${p.unit}` : null
 }
 
-/** Başlık URL'i: şema yalnız https DEĞİLSE (amber — düz http bir bulgudur), host vurgulu, yol + sorgu soluk. Kırpma MonitorCardTitle'da. */
+/** Başlık URL'i: şema yalnız https DEĞİLSE (amber — düz http bir bulgudur), host vurgulu, yol + sorgu soluk. Uzun adres sarar (MonitorCardTitle). */
 export function PageUrlText({ url }) {
   const { scheme, host, path } = urlParts(url)
   return (

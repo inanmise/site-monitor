@@ -21,6 +21,12 @@ updates:
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # 4.1.1'de SABİT (2026-11-14): 4.1.2 ve sonrası (4.2.3 dahil) Node / Vitest altında yüklenmiyor —
+      # esm/index.common.js uzantısız `./Editor.common` içe aktarıyor (ERR_MODULE_NOT_FOUND; PR #117 birim
+      # testleri bununla düştü). package.json'da da tam sürüm yazılı. Üst akış düzeltince bu kuralı kaldırın.
+      - dependency-name: "@uiw/react-md-editor"
+        versions: [">4.1.1"]
 
   # GitHub Actions (SHA-pinned → dependabot pin'leri günceller)
   - package-ecosystem: "github-actions"

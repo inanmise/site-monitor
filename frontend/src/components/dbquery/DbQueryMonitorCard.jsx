@@ -68,9 +68,8 @@ export default function DbQueryMonitorCard({
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.name} /></span>
         </MonitorCardTop>
-        {/* Ad SARAR (adlar kesilmez — kalıcı kural): MonitorCardTitle'ın tek satır kırpması burada kapatılır. */}
-        <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.name)} title={m.name}
-          className="mb-1.5 whitespace-normal [&>span]:whitespace-normal [&>span]:[overflow-wrap:anywhere]">{m.name}</MonitorCardTitle>
+        {/* Ad SARAR (adlar kesilmez — kalıcı kural; paylaşılan MonitorCardTitle'ın varsayılanı). */}
+        <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.name)} title={m.name} className="mb-1.5">{m.name}</MonitorCardTitle>
         <ConnectionLine monitor={m} />
         {!compact && m.purpose && (
           <p data-slot="dbq-purpose" className="mt-1.5 line-clamp-2 min-w-0 text-xs leading-snug text-muted-foreground [overflow-wrap:anywhere]">

@@ -68,10 +68,10 @@ export default function ScriptedMonitorCard({
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.name} /></span>
         </MonitorCardTop>
-        {/* Senaryo adları uzun olur ("Ödeme akışı — sepete ekle, adres, …"): Zengin'de tek satırda kırpmak yerine EN FAZLA
-            İKİ satır; Kompakt'ta tek satır (ızgara ritmi). Tam ad başlığın title'ında ve detay penceresinin başlığında. */}
-        <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.name)} title={m.name}
-          className={compact ? 'mb-0' : 'mb-0 [&>span]:line-clamp-2 [&>span]:break-words [&>span]:whitespace-normal'}>{m.name}</MonitorCardTitle>
+        {/* Senaryo adları uzun olur ("Ödeme akışı — sepete ekle, adres, …"): iki yoğunlukta da KESİLMEZ, sarar (2026-11-14,
+            kullanıcı kararı — adlar ve uzun metin kesilmez; MonitorCardTitle varsayılanı; eskiden Zengin'de iki satır, Kompakt'ta
+            tek satır). Tam ad ayrıca başlığın title'ında ve detay penceresinin başlığında. */}
+        <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.name)} title={m.name} className="mb-0">{m.name}</MonitorCardTitle>
         <ScenarioTarget target={target} rowLabel={m.name} />
         {compact
           ? <ScenarioChips monitor={m} warningsOnly className="mt-2" />

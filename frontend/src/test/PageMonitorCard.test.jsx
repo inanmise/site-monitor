@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
 import PageMonitorCard from '../components/page/PageMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import { CARD_CHECK, MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import { exclusionCount, httpTone, humanizeMs, integrityResult, pageFailure, urlParts } from '../components/page/pageCardModel.js'
 
 const stamp = (msAgo) => new Date(Date.now() - msAgo).toISOString().slice(0, 19)
@@ -168,6 +169,9 @@ describe('PageMonitorCard', () => {
     expect(title.querySelector('[data-slot="page-url-scheme"]')).toBeNull()
     expect(title.querySelector('[title]')).toHaveAttribute('title', 'https://shop.example.com/checkout?step=2')
     expect(https.container.querySelector('[data-slot="page-name"]').textContent).toBe('Checkout')
+    // URL başlığı ve ad kesilmez, sarar (2026-11-14, adlar ve uzun metin kesilmez)
+    expectTitleWraps(title)
+    expectWraps(https.container.querySelector('[data-slot="page-name"]'), 'izleme adı')
     https.unmount()
     const http = renderCard({ url: 'http://legacy.example.com/' })
     expect(screen.getByRole('button', { name: /^http:\/\/legacy\.example\.com\/ — open details$/ }).querySelector('[data-slot="page-url-scheme"]').textContent).toBe('http://')
@@ -263,6 +267,7 @@ describe('PageMonitorCard — Kompakt / Zengin yoğunluk', () => {
     expect(card).toHaveAttribute('data-density', 'compact')
     for (const s of richOnly) expect(q(card, s), s).toBeNull()
     expect(q(card, 'page-name').textContent).toBe('Kurumsal site')
+    expectWraps(q(card, 'page-name'), 'kompakt ad')
     const sum = q(card, 'page-compact')
     expect(sum).toHaveAttribute('data-tone', 'crit')
     expect(q(sum, 'page-compact-counts').textContent).toMatch(/^123 \/ 132resources OK123 of 132 resources loaded without problems$/)

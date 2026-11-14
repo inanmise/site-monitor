@@ -184,8 +184,8 @@ export function PingCheckedAt({ at, now = Date.now() }) {
  * çipleri, grup/etiket/vekil ve ikincil ölçüler yalnız Zengin'de (MonitorCardRich). */
 
 /**
- * Kompakt kartın İKİNCİL satırı (en fazla bir satır): başlıktan farklıysa izlemenin adı (kırpılır, tam metin
- * `title`'da ve detay penceresinde) + YALNIZ takım rozeti (grup, etiket, vekil Zengin'de). Takım rozeti tıklanınca üye
+ * Kompakt kartın İKİNCİL satırı: başlıktan farklıysa izlemenin adı (KESİLMEZ, sarar — 2026-11-14, adlar ve uzun metin
+ * kesilmez; boşluksuz uzun ad da `[overflow-wrap:anywhere]` ile kırılır) + YALNIZ takım rozeti (grup, etiket, vekil Zengin'de). Takım rozeti tıklanınca üye
  * penceresini açar → örtünün üstünde (CARD_LAYER). `nameSlot`: Zengin'deki ad satırıyla AYNI test kancası (`ping-name` /
  * `http-name` / `keyword-name`).
  *
@@ -200,7 +200,7 @@ export function CardCompactSub({ name, nameSlot, monitor }) {
   if (!name && !team) return null
   return (
     <div data-slot="card-compact-sub" className="mt-1 flex min-w-0 items-center gap-2 text-xs leading-5 text-muted-foreground pointer-coarse:min-h-11">
-      {name && <span data-slot={nameSlot} className="min-w-0 flex-1 truncate" title={name}>{name}</span>}
+      {name && <span data-slot={nameSlot} className="min-w-0 flex-1 [overflow-wrap:anywhere]">{name}</span>}
       {team && (
         <span data-slot="meta-team" className={cn(CARD_LAYER, 'ml-auto flex min-w-0 shrink items-center text-[11px]', name && 'max-w-[55%]')}>
           <TeamBadge teamId={monitor.team_id} teamName={team} />

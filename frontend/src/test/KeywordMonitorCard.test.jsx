@@ -20,6 +20,7 @@ import KeywordMonitorCard from '../components/keyword/KeywordMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import { CARD_CHECK } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   LONG_KEYWORD, alertTrigger, failureReason, highlightParts, httpTone, metaRow, msText, proxyMode, responseAssessment,
   ruleLabel, ruleOf, verdictOf,
@@ -332,19 +333,22 @@ describe('KeywordMonitorCard', () => {
     // meta + etiketler + ad + sıklık
     expect(slot(container, 'meta-team')).not.toBeNull()
     expect(slot(container, 'keyword-name').textContent).toBe('Corporate site')
+    expectWraps(slot(container, 'keyword-name'), 'izleme adı')   // ad sarar, kırpılmaz (2026-11-14)
     expect(slot(container, 'keyword-interval').textContent).toBe('every 5 min')
     expect(container.querySelector('[data-slot="ping-tags"]').textContent).toMatch(/prod/)
   })
 
-  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, uzun URL/kelime kırpılır (min-w-0 + break-all), düz http şeması görünür', () => {
+  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, uzun URL SARAR (kesilmez), uzun kelime çipi kırılır (break-all), düz http şeması görünür', () => {
     const { container } = renderCard({
       url: 'http://odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com/giris/kullanici?lang=tr&utm_source=kampanya',
     })
     expect(slot(container, 'monitor-metrics').className).toMatch(/(^|\s)grid-cols-2(\s|$)/)
     expect(screen.getByRole('button', { name: /— Copy URL$/ }).className).toContain('pointer-coarse:size-10')
+    // 2026-11-14 (kullanıcı kararı — adlar ve uzun metin kesilmez): uzun adres tek satıra kırpılmaz, kartın genişliğinde sarar
     const title = container.querySelector('[data-monitor-open]')
-    expect(title.querySelector('.truncate')).not.toBeNull()
+    expectTitleWraps(title)
     expect(title.textContent.startsWith('http://')).toBe(true)
+    expect(title.textContent).toContain('odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com/giris/kullanici?lang=tr&utm_source=kampanya')
     expect(slot(container, 'keyword-chip').className).toMatch(/max-w-full/)
     expect(slot(container, 'keyword-chip').querySelector('.break-all')).not.toBeNull()
   })
@@ -373,6 +377,7 @@ describe('KeywordMonitorCard — Kompakt / Zengin', () => {
     for (const s of RICH_ONLY) expect(slot(container, s), s).toBeNull()
     const sub = slot(container, 'card-compact-sub')
     expect(slot(sub, 'keyword-name').textContent).toBe('Corporate site')
+    expectWraps(slot(sub, 'keyword-name'), 'kompakt ad')
     expect(slot(sub, 'meta-team').textContent).toMatch(/Takım A/)
     const row = slot(container, 'keyword-compact')
     expect(row).toHaveAttribute('data-result', 'found')

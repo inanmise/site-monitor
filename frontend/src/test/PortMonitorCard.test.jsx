@@ -20,6 +20,7 @@ import PortMonitorCard from '../components/port/PortMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import { CARD_CHECK, MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   connectAssessment, endpointText, portResult, protocolOf, serviceName, sourceOf,
 } from '../components/port/portCardModel.js'
@@ -289,17 +290,20 @@ describe('PortMonitorCard', () => {
     }
     expect(onOpen).toHaveBeenCalledTimes(1)   // hiçbiri detayı açmadı
     expect(document.querySelector('[data-slot="port-name"]').textContent).toBe('Edge router')
+    expectWraps(document.querySelector('[data-slot="port-name"]'), 'izleme adı')   // ad sarar (2026-11-14)
     expect(document.querySelector('[data-slot="meta-team"]')).not.toBeNull()
   })
 
-  it('telefon: ölçüler her genişlikte iki sütun, uç nokta satırı SARAR, host kırpılır (uzun ad / IPv6), dokunmatikte 40 px hedefler; son kontrol göreli + tam zaman', () => {
+  it('telefon: ölçüler her genişlikte iki sütun, uç nokta satırı SARAR, uzun host SARAR (kesilmez), dokunmatikte 40 px hedefler; son kontrol göreli + tam zaman', () => {
     const { container } = renderCard({ host: 'odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com', port: 8443, protocol: 'HTTP', send_data: '/health/ready' },
       { spark: sparkOf([10, 12, 20]) })
     expect(container.querySelector('[data-slot="monitor-metrics"]').className).toMatch(/(^|\s)grid-cols-2(\s|$)/)
     expect(container.querySelector('[data-slot="port-endpoint"]').className).toMatch(/(^|\s)flex-wrap(\s|$)/)
     expect(container.querySelector('[data-slot="port-path"]').className).toMatch(/(^|\s)truncate(\s|$)/)
+    // 2026-11-14 (kullanıcı kararı — adlar ve uzun metin kesilmez): host tek satıra kırpılmaz, sarar; title host:port'u taşır
+    expectTitleWraps(container.querySelector('[data-monitor-open]'))
     const titleText = container.querySelector('[data-monitor-open] > span')
-    expect(titleText.className).toMatch(/(^|\s)truncate(\s|$)/)
+    expect(titleText.textContent).toBe('odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com')
     expect(titleText).toHaveAttribute('title', 'odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com:8443')
     const copy = screen.getByRole('button', { name: /Copy address|Adresi kopyala/ })
     expect(copy.className).toContain('pointer-coarse:size-10')
@@ -331,14 +335,14 @@ describe('PortMonitorCard — Kompakt / Zengin yoğunluk', () => {
     expect(card).toHaveAttribute('data-density', 'compact')
     for (const s of richOnly) expect(q(card, s), s).toBeNull()
     expect(card.querySelector('[data-chip]')).toBeNull()                       // aile / sıklık çipleri yok
-    // TEK ikincil satır: :port · tür · ad (sarmaz, ad kırpılır)
+    // TEK ikincil satır: :port · tür · ad (rozetler yan yana kalır; uzun ad kesilmez, kendi içinde sarar — 2026-11-14)
     const ep = q(card, 'port-endpoint')
     expect(ep).toHaveAttribute('data-density', 'compact')
     expect(ep.className).not.toMatch(/flex-wrap/)
     expect(q(ep, 'port-number').textContent).toBe(':8443')
     expect(q(ep, 'port-protocol')).toHaveAttribute('data-protocol', 'HTTP')
     expect(q(ep, 'port-name').textContent).toBe('Ödeme API')
-    expect(q(ep, 'port-name').className).toMatch(/(^|\s)truncate(\s|$)/)
+    expectWraps(q(ep, 'port-name'), 'kompakt ad')
     expect(card.querySelectorAll('[data-slot="port-name"]')).toHaveLength(1)   // ad bir kez
     // ana ölçü: hüküm + süre
     const sum = q(card, 'port-compact')
