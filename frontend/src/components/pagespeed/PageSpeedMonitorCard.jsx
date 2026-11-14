@@ -1,7 +1,7 @@
 import { AlertTriangle, Info } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { formatPercent } from '../../i18n/dateLocale.js'
+import { formatPercent, formatRatePercent } from '../../i18n/dateLocale.js'
 import { relativeTime } from '../admin/audit/auditFormat.js'
 import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
@@ -16,7 +16,7 @@ import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter,
   MonitorCardRich, MonitorCardPending, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
-import { breachWeek, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
+import { breachWeek, budgetCompliance, complianceTone, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
 
 /**
  * Sayfa Hızı izleme KARTI (2026-09-27 yeniden tasarım — shadcn, mobil duyarlı).
@@ -107,6 +107,8 @@ export default function PageSpeedMonitorCard({
           <div className={CARD_LAYER}>
             <MonitorSpark rowLabel={m.url} spark={spark} sla={sla} slaTarget={slaTarget} slaDays={slaDays} />
           </div>
+          {/* Bütçe uyumu (2026-11-14, madde 5): erişilebilirlik "sayfa yüklenebildi mi"; eşik içinde kalma ayrı yüzde */}
+          <BudgetComplianceChip sla={sla} days={slaDays} />
           {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
           <BreachWeekChip w7={week7} w14={week14} />
         </MonitorCardRich>
@@ -264,7 +266,7 @@ function BudgetMeter({ meter }) {
         </span>
         {meter.lowerBound && d && (
           // "≥" neden? — dokunmatikte de açılan açıklama (HintPopover); ikon 20 px, dokunmatikte ::after ile 40 px alan.
-          <HintPopover content={meter.key === 'size' ? t('pspd.truncatedHint') : t('pspd.cappedWarn')}
+          <HintPopover content={meter.timeCut ? t('pspd.partialTip') : meter.key === 'size' ? t('pspd.truncatedHint') : t('pspd.cappedWarn')}
             aria-label={t('pspd.card.lowerBound', label)}
             triggerClassName={cn(CARD_LAYER, 'size-5 shrink-0 text-muted-foreground hover:text-foreground pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5')}>
             <Info aria-hidden="true" className="size-3.5" />
@@ -288,6 +290,34 @@ function BudgetMeter({ meter }) {
       )}
       {tone && <span className="sr-only">{t(SR_TONE[tone])}</span>}
     </div>
+  )
+}
+
+const COMPLIANCE_TONE = {
+  ok: 'border-success/40 text-success',
+  warn: 'border-amber-500/45 text-amber-700 dark:text-amber-400',
+  crit: 'border-destructive/35 text-destructive',
+  none: 'text-muted-foreground',
+}
+
+/**
+ * Bütçe uyumu çipi (2026-11-14): son N günde YÜKLENEBİLEN ölçümlerin yüzde kaçı tüm eşikler içinde kaldı. Sunucu alanı
+ * göndermiyorsa (eski sunucu) çizilmez; hiç yüklenen ölçüm yoksa "yüklenen ölçüm yok" — bilinmeyen değer asla yeşil değil.
+ */
+function BudgetComplianceChip({ sla, days = 30 }) {
+  const t = useT()
+  const c = budgetCompliance(sla, days)
+  if (!c) return null
+  const tone = complianceTone(c.pct)
+  const text = c.pct == null ? t('pspd.card.budgetComplianceNone') : t('pspd.card.budgetCompliance', formatRatePercent(c.pct), days)
+  return (
+    <HintPopover content={t('pspd.budgetComplianceTip', days)} aria-label={text}
+      triggerClassName={cn(CARD_LAYER, 'mt-1.5 mr-1.5 max-w-full rounded-full pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0')}>
+      <Badge variant="outline" data-slot="pspd-budget-compliance" data-tone={tone}
+        className={cn('max-w-full overflow-visible rounded-md px-2.5 py-0.5 text-[11px] font-medium tabular-nums', COMPLIANCE_TONE[tone])}>
+        <span className="whitespace-normal">{text}</span>
+      </Badge>
+    </HintPopover>
   )
 }
 

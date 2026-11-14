@@ -81,21 +81,22 @@ export function budgetRatio(value, budget) {
  * <p>Son ölçümde sunucu metriği İHLAL saydıysa (`breached`) ton her zaman `crit` — durum rozeti de "Eşik aşıldı" diyor;
  * eşik sonradan gevşetildiyse bile karar bir sonraki ölçüme kadar geçerli.
  *
- * <p>TTFB istisnası: sunucu TTFB eşiğini SUNUCU bekleme süresine (faz kırılımı, `server_ms`) karşı değerlendirir;
- * kartta görünen `ttfb_ms` ise DNS + TCP + TLS'i de içerir ve liste yanıtında `server_ms` yok. Görünen değer bütçeyi
- * geçtiği hâlde sunucu ihlal saymadıysa "aşıldı" demek durum rozetiyle çelişirdi → `warn`.
+ * <p>TTFB istisnası KALDIRILDI (2026-11-14, Sayfa Hızı 1. sürüm): sunucu TTFB eşiğini artık kartta görünen değerin TA
+ * KENDİSİNE — kontrolün gerçek isteğinin ilk baytına — karşı değerlendirir; eski "sunucu bekleme süresi" kuralı gitti.
+ * Çağıranların geçtiği `key` artık okunmaz (imza geriye dönük uyumlu).
  */
-export function meterTone({ key, ratio, breached = false }) {
+export function meterTone({ ratio, breached = false } = {}) {
   if (breached) return 'crit'
   if (ratio == null) return null
-  if (ratio > 1) return key === 'ttfb' ? 'warn' : 'crit'
+  if (ratio > 1) return 'crit'
   if (ratio > NEAR_BUDGET) return 'warn'
   return 'ok'
 }
 
 /**
  * Bir kartın dört ölçeri — bileşenin çizdiği her şey (değer parçaları, bütçe, oran, ton, alt sınır bayrağı).
- * `lowerBound`: değer gerçek değerin ALT SINIRI (boyut okuma tavanında kesildi / istek tavanına ulaşıldı).
+ * `lowerBound`: değer gerçek değerin ALT SINIRI (boyut okuma tavanında kesildi / istek tavanına ulaşıldı / ölçüm süre
+ * tavanına takıldı — `time_truncated`, 2026-11-14: yükleme süresi ve boyut tartılamayan kaynaklar kadar eksik).
  */
 export function metersFor(m) {
   const breached = new Set(Array.isArray(m?.breached_metrics) ? m.breached_metrics.map((k) => String(k).trim().toUpperCase()) : [])
@@ -104,10 +105,15 @@ export function metersFor(m) {
     const budget = budgetFor(m, metric.key)
     const ratio = budgetRatio(value, budget)
     const isBreached = breached.has(metric.breach)
-    const lowerBound = metric.key === 'size' ? !!m?.bytes_truncated : metric.key === 'requests' ? !!m?.capped : false
+    const timeCut = m?.time_truncated === true
+    const lowerBound = metric.key === 'size' ? (!!m?.bytes_truncated || timeCut)
+      : metric.key === 'requests' ? !!m?.capped
+      : metric.key === 'load' ? timeCut : false
     return {
       ...metric,
       value, budget, ratio, breached: isBreached, lowerBound,
+      // Alt sınırın NEDENİ süre tavanı mı (açıklama metni ona göre seçilir)
+      timeCut: lowerBound && timeCut && (metric.key === 'load' || (metric.key === 'size' && !m?.bytes_truncated)),
       tone: meterTone({ key: metric.key, ratio, breached: isBreached }),
       display: displayParts(metric.key, value, lowerBound),
       budgetDisplay: budget == null ? null : displayParts(metric.key, budget, false),
@@ -119,7 +125,7 @@ export function metersFor(m) {
 /**
  * Kompakt kartın NEDEN satırı (2026-09-27, kart yoğunluğu): bütçeyi AŞAN ölçerler — ana ölçü (`exclude`, yükleme)
  * hariç; onu kompakt kartın ana satırı zaten kırmızı gösterir. Ton kuralı ölçerlerle birebir (`meterTone`): sunucu
- * ihlali her zaman sayılır, görünen TTFB'nin bütçeyi geçmesi sayılmaz (sunucu server_ms'e bakar → `warn`).
+ * ihlali her zaman sayılır, bütçeyi geçen değer de (TTFB dahil — 2026-11-14'ten beri sunucu aynı değere bakar).
  */
 export function overBudgetMeters(meters, exclude = 'load') {
   return (Array.isArray(meters) ? meters : []).filter((mt) => mt.key !== exclude && mt.tone === 'crit')
@@ -143,16 +149,39 @@ export function partsText(parts, reqUnit = '') {
 }
 
 /**
- * Haftalık eşik üstü karşılaştırması — 7 ve 14 günlük SLA pencerelerinden: bu hafta = 7 günün `fail`'i, geçen hafta
- * = 14 gün − 7 gün (MonitorSparklineService'te sayfa hızı için "fail" = eşik aşımı YA DA hata). 14 günlük pencerede
- * hiç kontrol yoksa karşılaştırma yok (`null`).
+ * Haftalık eşik üstü karşılaştırması — 7 ve 14 günlük SLA pencerelerinden: bu hafta = 7 günün sayısı, geçen hafta
+ * = 14 gün − 7 gün. Sayılan alan: sunucu `breach` gönderiyorsa (2026-11-14) YÜKLENEBİLEN ölçümlerden eşiği aşanlar;
+ * göndermiyorsa (eski sunucu) `fail` = eşik aşımı YA DA hata. 14 günlük pencerede hiç kontrol yoksa karşılaştırma yok.
  */
 export function breachWeek(w7, w14) {
   if (!w7 || !w14 || !w14.n) return null
-  const thisWeek = Math.max(0, Number(w7.fail) || 0)
-  const lastWeek = Math.max(0, (Number(w14.fail) || 0) - thisWeek)
+  const field = w7.breach != null && w14.breach != null ? 'breach' : 'fail'
+  const thisWeek = Math.max(0, Number(w7[field]) || 0)
+  const lastWeek = Math.max(0, (Number(w14[field]) || 0) - thisWeek)
   const delta = thisWeek - lastWeek
   return { thisWeek, lastWeek, delta, trend: delta > 0 ? 'worse' : delta < 0 ? 'better' : 'same' }
+}
+
+/**
+ * Bütçe uyumu (2026-11-14, madde 5): kartın erişilebilirliği artık "sayfa yüklenebildi mi"; eşik içinde kalma ayrı bir
+ * yüzde. `sla.budget_pct` (sunucu: yüklenebilen ölçümlerden tüm eşikler içinde kalanların yüzdesi) yoksa `null` — eski
+ * sunucu ya da hiç yüklenen ölçüm yok. Bilinmeyen değer ASLA 100 sayılmaz.
+ *
+ * @returns {{ pct: number|null, loaded: number, days: number } | null}
+ */
+export function budgetCompliance(sla, days = 30) {
+  if (!sla || typeof sla !== 'object' || !('budget_pct' in sla)) return null
+  const loaded = Math.max(0, (Number(sla.n) || 0) - (Number(sla.fail) || 0))
+  const pct = sla.budget_pct == null || !Number.isFinite(Number(sla.budget_pct)) ? null : Number(sla.budget_pct)
+  return { pct, loaded, days }
+}
+
+/** Bütçe uyumu tonu: tüm ölçümler eşik içinde → ok; ≥ %95 → warn; altı → crit; bilinmiyor → none. */
+export function complianceTone(pct) {
+  if (pct == null) return 'none'
+  if (pct >= 100) return 'ok'
+  if (pct >= 95) return 'warn'
+  return 'crit'
 }
 
 /**
