@@ -63,10 +63,12 @@ public final class ScanImageLimiter {
     /** Alınan hak: uçuştaki sayıyı ve pod yuvasını tutar; {@link #close()} bırakır. */
     public final class Ticket implements AutoCloseable {
         private final State state;
+        private final long stamp;
         private boolean closed;
 
-        private Ticket(State state) {
+        private Ticket(State state, long stamp) {
             this.state = state;
+            this.stamp = stamp;
         }
 
         @Override
@@ -79,6 +81,23 @@ public final class ScanImageLimiter {
                 if (state.inFlight > 0) state.inFlight--;
             }
             if (pod != null) pod.release();
+        }
+
+        /**
+         * Kabul GERİ alınır: hak bırakılır VE dakika penceresindeki damgası silinir — sonraki bir denetimin (ör. kaynak
+         * sunucu sınırı) reddettiği istek kişinin dakika sayısına girmez. Kapatılmış hakta yalnız ilk çağrı damgayı siler.
+         */
+        public void refund() {
+            boolean first;
+            synchronized (this) {
+                first = !closed;
+            }
+            if (first) {
+                synchronized (state) {
+                    state.starts.removeLastOccurrence(stamp);
+                }
+            }
+            close();
         }
     }
 
@@ -104,13 +123,22 @@ public final class ScanImageLimiter {
             if (pod != null && !pod.tryAcquire()) return new Decision(null, 0, true);
             s.starts.addLast(now);
             s.inFlight++;
-            return new Decision(new Ticket(s), 0, false);
+            return new Decision(new Ticket(s, now), 0, false);
         }
     }
 
     /** Testler için: pod'un boştaki yuvası (sınırsızsa -1). */
     int freePodSlots() {
         return pod == null ? -1 : pod.availablePermits();
+    }
+
+    /** Testler için: kişinin dakika penceresindeki kabul sayısı (kayıt yoksa 0). */
+    int recentStarts(String user) {
+        State s = users.get(user);
+        if (s == null) return 0;
+        synchronized (s) {
+            return s.starts.size();
+        }
     }
 
     /** Testler için: izlenen kişi sayısı. */

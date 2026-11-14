@@ -13,9 +13,11 @@ import com.sitemonitor.service.page.scan.PageResourceImageService.ImageResult;
 import com.sitemonitor.service.page.scan.PageResourceImageService.Projection;
 import com.sitemonitor.service.page.scan.PageResourceImageService.Replacement;
 import com.sitemonitor.util.Msg;
+import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -53,7 +56,12 @@ import java.util.Map;
  * {@code Content-Disposition: attachment}, {@code X-Content-Type-Options: nosniff}, {@code Cache-Control: no-store}.
  * Denetim {@code PAGE_RESOURCE_IMAGE_DOWNLOAD} yalnız BAŞARILI indirmede (adres sorgusuz; gövde asla). Bu uçların gövdeleri
  * günlüğe yazılmaz ({@code RequestLoggingFilter}).
+ *
+ * <p><b>Yük sınırı yazma boyunca tutulur.</b> Başarılı indirmenin hakkı ({@link ImageResult#lease()}) gövde istemciye YAZILANA
+ * ya da istemci kopana dek bırakılmaz: gövde bu yöntemin içinde yanıt akışına yazılır, hak {@code finally}'de bırakılır
+ * (yavaş okuyan istemci kişinin / pod'un eşzamanlılık hakkını tutar — bellek ve iş parçacığı sayılır).
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/monitoring/page")
 @RequiredArgsConstructor
@@ -76,8 +84,9 @@ public class PageResourceImageController {
      * {@code X-Image-Type}, okunabildiyse {@code X-Image-Width} / {@code X-Image-Height}). Hata kodları:
      * {@code VALIDATION_FAILED} (400, {@code url}), {@code RESOURCE_SCAN_NOT_FOUND} (404), {@code RESOURCE_SCAN_ITEMS_GONE} (409),
      * {@code RESOURCE_IMAGE_NOT_FOUND} (404), {@code RESOURCE_IMAGE_URL_MASKED} (409), {@code RESOURCE_IMAGE_TOO_LARGE} (413),
-     * {@code RATE_LIMITED} / {@code RESOURCE_IMAGE_BUSY} (429), {@code BLOCKED} (400), {@code RESOURCE_IMAGE_FETCH_FAILED} (502),
-     * {@code RESOURCE_IMAGE_UNSUPPORTED} (415).
+     * {@code RATE_LIMITED} / {@code RESOURCE_IMAGE_BUSY} / {@code RESOURCE_IMAGE_HOST_LIMITED} (429), {@code BLOCKED} (400),
+     * {@code RESOURCE_IMAGE_FETCH_FAILED} (502; {@code reason} {@code TLS_DOWNGRADE} = https adres http'ye yönlendirdi),
+     * {@code RESOURCE_IMAGE_UNSUPPORTED} (415). 200'de son adım https ise {@code X-Image-Tls-Verified: true|false}.
      */
     @PostMapping("/{id}/resource-scans/{scanId}/image")
     public ResponseEntity<?> image(@PathVariable Long id, @PathVariable Long scanId,
@@ -93,25 +102,22 @@ public class PageResourceImageController {
         String url = urlOf(body == null ? null : body.get("url"), "url");
 
         ImageResult r = images.image(m.getId(), scanId, url, m.getUseProxy(), userKey(session));
+        try {
+            return respond(r, m, scanId, url, session, response);
+        } finally {
+            r.release();   // yük hakkı: gövde yazıldıktan / istemci koptuktan SONRA
+        }
+    }
+
+    private ResponseEntity<?> respond(ImageResult r, PageMonitor m, Long scanId, String url, HttpSession session,
+                                      HttpServletResponse response) {
         return switch (r.outcome()) {
             case OK -> {
-                String type = r.type();
                 auditService.recordAction("PAGE_RESOURCE_IMAGE_DOWNLOAD", session, "PAGE_MONITOR", String.valueOf(m.getId()),
                         AuditDetail.of("name", m.getName(), "scan_id", scanId, "url", AuditDetail.safeTarget(url),
-                                "bytes", r.body().length, "type", type), null);
-                // Genel süzgecin yazdığı iki başlık ÜZERİNE yazılır (yinelenen başlık olmasın)
-                response.setHeader("X-Content-Type-Options", "nosniff");
-                response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-                HttpHeaders h = new HttpHeaders();
-                h.setContentType(MediaType.parseMediaType(ImageDimensions.mime(type)));
-                h.setContentLength(r.body().length);
-                h.set(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(fileName(url, type)));
-                h.set("X-Image-Type", type);
-                if (r.width() != null && r.height() != null) {
-                    h.set("X-Image-Width", String.valueOf(r.width()));
-                    h.set("X-Image-Height", String.valueOf(r.height()));
-                }
-                yield ResponseEntity.ok().headers(h).body(r.body());
+                                "bytes", r.body().length, "type", r.type()), null);
+                writeImage(response, r, url);
+                yield null;   // yanıt yazıldı (Spring gövde yazmaz)
             }
             case SCAN_NOT_FOUND -> scanNotFound();
             case ITEMS_GONE -> itemsGone();
@@ -140,6 +146,12 @@ public class PageResourceImageController {
                             + " görsel. " + r.retryAfterSeconds() + " sn sonra yeniden deneyin.",
                     "You downloaded images too often — at most " + PageResourceImageService.IMAGES_PER_MINUTE
                             + " per minute per person. Try again in " + r.retryAfterSeconds() + " s."));
+            case HOST_LIMITED -> tooMany("RESOURCE_IMAGE_HOST_LIMITED", r.retryAfterSeconds(), Msg.t(
+                    "Bu sitenin görselleri çok sık indirildi — aynı siteden dakikada en çok "
+                            + PageResourceImageService.IMAGES_PER_HOST_MINUTE + " görsel. " + r.retryAfterSeconds()
+                            + " sn sonra yeniden deneyin.",
+                    "Images from this site were downloaded too often — at most " + PageResourceImageService.IMAGES_PER_HOST_MINUTE
+                            + " per minute from the same site. Try again in " + r.retryAfterSeconds() + " s."));
             case BUSY -> tooMany("RESOURCE_IMAGE_BUSY", r.retryAfterSeconds(), Msg.t(
                     "Şu an aynı anda indirilebilen görsel sayısı dolu (kişi başına " + PageResourceImageService.IMAGES_PER_USER
                             + ", sunucuda " + PageResourceImageService.IMAGES_PER_POD + "). Birkaç saniye sonra yeniden deneyin.",
@@ -151,7 +163,15 @@ public class PageResourceImageController {
                     "The image address (or an address it redirects to) was blocked by a security rule (internal / forbidden "
                             + "address); it was not downloaded."));
             case FETCH_FAILED -> {
-                Map<String, Object> b = errorBody("RESOURCE_IMAGE_FETCH_FAILED", r.httpStatus() != null
+                Map<String, Object> b = errorBody("RESOURCE_IMAGE_FETCH_FAILED",
+                        PageResourceImageService.REASON_TLS_DOWNGRADE.equals(r.reason())
+                        ? Msg.t("Görselin güvenli (https) adresi şifresiz (http) bir adrese yönlendiriyor; araya girilebilen bu "
+                                        + "adımdan alınan bayt özgün sayılamayacağı için görsel indirilmedi. Görseli sitenin "
+                                        + "kendisinden indirin.",
+                                "The image's secure (https) address redirects to an unencrypted (http) address; bytes taken "
+                                        + "from that step could have been altered in transit, so the image was not downloaded. "
+                                        + "Download it from the site itself.")
+                        : r.httpStatus() != null
                         ? Msg.t("Site görsel için HTTP " + r.httpStatus() + " döndürdü; görsel indirilemedi. Görsel kaldırılmış "
                                         + "ya da erişim kısıtlanmış olabilir — analizi yeniden çalıştırın.",
                                 "The site returned HTTP " + r.httpStatus() + " for the image; it could not be downloaded. The image "
@@ -177,7 +197,8 @@ public class PageResourceImageController {
      * {@code images} en çok {@value PageResourceImageService#MAX_PROJECTION_IMAGES}). 200 = {@code {algorithm_version, capped,
      * applied, ignored, before, after, reused_components}}. Yazma yok, dış istek yok, denetim yok. Hata kodları:
      * {@code VALIDATION_FAILED} (400), {@code RESOURCE_SCAN_NOT_FOUND} (404), {@code RESOURCE_SCAN_NOT_DONE} /
-     * {@code RESOURCE_SCAN_ITEMS_GONE} / {@code RESOURCE_SCAN_NOT_PROJECTABLE} (409), {@code RATE_LIMITED} (429).
+     * {@code RESOURCE_SCAN_ITEMS_GONE} / {@code RESOURCE_SCAN_NOT_PROJECTABLE} (409), {@code RATE_LIMITED} /
+     * {@code RESOURCE_PROJECTION_BUSY} (429).
      */
     @PostMapping("/{id}/resource-scans/{scanId}/image-projection")
     public ResponseEntity<Map<String, Object>> projection(@PathVariable Long id, @PathVariable Long scanId,
@@ -213,12 +234,49 @@ public class PageResourceImageController {
                 b.put("reason", p.reason());
                 yield json(409).body(b);
             }
+            case BUSY -> tooMany("RESOURCE_PROJECTION_BUSY", p.retryAfterSeconds(), Msg.t(
+                    "Şu an aynı anda yapılabilen \"not ne olurdu?\" hesabı sayısı dolu (kişi başına "
+                            + PageResourceImageService.PROJECTIONS_PER_USER + ", sunucuda "
+                            + PageResourceImageService.PROJECTIONS_PER_POD + "). Birkaç saniye sonra yeniden deneyin.",
+                    "The number of grade projections that can run at the same time is used up ("
+                            + PageResourceImageService.PROJECTIONS_PER_USER + " per person, "
+                            + PageResourceImageService.PROJECTIONS_PER_POD + " on the server). Try again in a few seconds."));
             case RATE -> tooMany("RATE_LIMITED", p.retryAfterSeconds(), Msg.t(
                     "Çok sık hesaplattınız — kişi başına dakikada en çok " + PageResourceImageService.PROJECTIONS_PER_MINUTE
                             + " projeksiyon. " + p.retryAfterSeconds() + " sn sonra yeniden deneyin.",
                     "You asked too often — at most " + PageResourceImageService.PROJECTIONS_PER_MINUTE
                             + " projections per minute per person. Try again in " + p.retryAfterSeconds() + " s."));
         };
+    }
+
+    /**
+     * Başarılı indirmenin yanıtı: başlıklar + ham baytlar doğrudan yanıt akışına (çağıranın hakkı yazma boyunca tutulur).
+     * İstemci koparsa ({@code ClientAbortException} — bir {@link IOException}) sessizce biter: yanıt zaten başlamıştır, hata
+     * gövdesi yazılamaz; hak çağıranın {@code finally}'sinde bırakılır.
+     */
+    static void writeImage(HttpServletResponse response, ImageResult r, String url) {
+        String type = r.type();
+        byte[] body = r.body();
+        response.setStatus(200);
+        response.setContentType(ImageDimensions.mime(type));
+        response.setContentLengthLong(body.length);
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(fileName(url, type)));
+        // Genel süzgecin yazdığı iki başlık ÜZERİNE yazılır (yinelenen başlık olmasın)
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
+        response.setHeader("X-Image-Type", type);
+        if (r.width() != null && r.height() != null) {
+            response.setHeader("X-Image-Width", String.valueOf(r.width()));
+            response.setHeader("X-Image-Height", String.valueOf(r.height()));
+        }
+        if (r.tlsVerified() != null) response.setHeader("X-Image-Tls-Verified", String.valueOf(r.tlsVerified()));
+        try {
+            ServletOutputStream os = response.getOutputStream();
+            os.write(body);
+            os.flush();
+        } catch (IOException clientGone) {
+            log.debug("Kaynak analizi görseli yazılırken istemci koptu: {}", clientGone.getClass().getSimpleName());
+        }
     }
 
     // ── Gövde doğrulaması ───────────────────────────────────────────────────────────────────

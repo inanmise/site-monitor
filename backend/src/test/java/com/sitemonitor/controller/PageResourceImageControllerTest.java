@@ -12,6 +12,9 @@ import com.sitemonitor.service.page.scan.PageResourceImageService.ImageResult;
 import com.sitemonitor.service.page.scan.PageResourceImageService.Projection;
 import com.sitemonitor.service.page.scan.PageResourceImageService.ProjectionOutcome;
 import com.sitemonitor.service.page.scan.PageResourceImageService.Replacement;
+import com.sitemonitor.service.page.scan.ScanImageLimiter;
+import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,16 +23,21 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -510,5 +518,157 @@ class PageResourceImageControllerTest {
         assertThat(PageResourceImageController.replacements(null)).isEmpty();
         assertThat(PageResourceImageController.useMeasured(null)).isFalse();
         assertThat(PageResourceImageController.useMeasured(Boolean.TRUE)).isTrue();
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-14) ────────────────────────────────────────────────
+
+    /** Gövdesi yazılırken bekleyen (yavaş istemci) ya da kopan istemciyi taklit eden yanıt. */
+    static final class GatedResponse extends MockHttpServletResponse {
+        final CountDownLatch writing = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final boolean abort;
+        volatile int written;
+
+        GatedResponse(boolean abort) {
+            this.abort = abort;
+        }
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            return new ServletOutputStream() {
+                @Override
+                public boolean isReady() {
+                    return true;
+                }
+
+                @Override
+                public void setWriteListener(WriteListener l) {
+                }
+
+                @Override
+                public void write(int b) throws IOException {
+                    write(new byte[]{(byte) b}, 0, 1);
+                }
+
+                @Override
+                public void write(byte[] b, int off, int len) throws IOException {
+                    writing.countDown();
+                    if (abort) throw new IOException("Broken pipe");   // istemci koptu (ClientAbortException)
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) throw new IOException("zaman aşımı");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException(e);
+                    }
+                    written += len;
+                }
+            };
+        }
+    }
+
+    /** Yük hakkı: pod'da tek yuva — hak tutulurken başka kişi "meşgul" alır. */
+    static boolean podBusy(ScanImageLimiter lim) {
+        ScanImageLimiter.Decision d = lim.tryAcquire("u:yoklama");
+        if (d.allowed()) d.ticket().close();
+        return d.busy();
+    }
+
+    @Test
+    @DisplayName("yük hakkı gövde YAZILANA dek tutulur (yavaş istemci); yazma bitince bırakılır — Spring gövde yazmaz (null döner)")
+    void leaseHeldUntilBodyWritten() throws Exception {
+        ScanImageLimiter lim = new ScanImageLimiter(60, 2, 1, () -> 1_000L);
+        ScanImageLimiter.Ticket ticket = lim.tryAcquire("u:2").ticket();
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.OK, PNG, "png", 1200, 800, 0, null, null, null, Boolean.TRUE, ticket));
+        PageResourceImageController controller = new PageResourceImageController(pageMonitorRepo, permissionService, images,
+                auditService);
+        GatedResponse slow = new GatedResponse(false);
+        AtomicReference<Object> returned = new AtomicReference<>("-");
+        Thread t = new Thread(() -> returned.set(controller.image(61L, 900L, Map.of("url", URL), session("USER", 5L, 2L), slow)));
+        t.start();
+        assertThat(slow.writing.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(podBusy(lim)).as("gövde yazılırken hak tutuluyor").isTrue();
+        slow.release.countDown();
+        t.join(10_000);
+        assertThat(t.isAlive()).isFalse();
+        assertThat(returned.get()).as("yanıt yöntemin içinde yazıldı").isNull();
+        assertThat(slow.written).isEqualTo(PNG.length);
+        assertThat(slow.getStatus()).isEqualTo(200);
+        assertThat(slow.getContentType()).isEqualTo("image/png");
+        assertThat(slow.getHeader("Content-Length")).isEqualTo(String.valueOf(PNG.length));
+        assertThat(slow.getHeader("X-Image-Tls-Verified")).isEqualTo("true");
+        assertThat(podBusy(lim)).as("yazma bitti: hak bırakıldı").isFalse();
+        verify(auditService).recordAction(eq("PAGE_RESOURCE_IMAGE_DOWNLOAD"), any(HttpSession.class), eq("PAGE_MONITOR"),
+                eq("61"), anyString(), isNull());
+    }
+
+    @Test
+    @DisplayName("istemci yazma sırasında koparsa (ClientAbortException) yöntem sessizce biter ve yük hakkı yine bırakılır")
+    void leaseReleasedOnClientAbort() {
+        ScanImageLimiter lim = new ScanImageLimiter(60, 2, 1, () -> 1_000L);
+        ScanImageLimiter.Ticket ticket = lim.tryAcquire("u:2").ticket();
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.OK, PNG, "png", null, null, 0, null, null, null, null, ticket));
+        PageResourceImageController controller = new PageResourceImageController(pageMonitorRepo, permissionService, images,
+                auditService);
+        GatedResponse gone = new GatedResponse(true);
+        Object r = controller.image(61L, 900L, Map.of("url", URL), session("USER", 5L, 2L), gone);
+        assertThat(r).isNull();
+        assertThat(gone.writing.getCount()).as("yazma denendi").isZero();
+        assertThat(podBusy(lim)).as("kopan istemci hakkı tutmaz").isFalse();
+        assertThat(gone.getHeader("X-Image-Tls-Verified")).as("TLS hükmü yoksa başlık yok").isNull();
+    }
+
+    @Test
+    @DisplayName("ret sonucunda da (hak taşımasa) release çağrısı zararsız; hak taşıyan ret beklenmez ama bırakılır")
+    void leaseReleasedOnEveryOutcome() throws Exception {
+        ScanImageLimiter lim = new ScanImageLimiter(60, 2, 1, () -> 1_000L);
+        ScanImageLimiter.Ticket ticket = lim.tryAcquire("u:2").ticket();
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.UNSUPPORTED, null, null, null, null, 0, null, null, null, null, ticket));
+        mvc.perform(json(IMAGE, urlBody(URL), admin())).andExpect(status().is(415));
+        assertThat(podBusy(lim)).isFalse();
+    }
+
+    @Test
+    @DisplayName("200: X-Image-Tls-Verified yalnız TLS hükmü varsa (true / false); http son adımda yok")
+    void tlsVerifiedHeader() throws Exception {
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.OK, PNG, "png", 1, 1, 0, null, null, null, Boolean.FALSE, null));
+        mvc.perform(json(IMAGE, urlBody(URL), admin())).andExpect(status().isOk())
+                .andExpect(header().string("X-Image-Tls-Verified", "false"))
+                .andExpect(content().bytes(PNG));
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString())).thenReturn(okPng());
+        mvc.perform(json(IMAGE, urlBody(URL), admin())).andExpect(status().isOk())
+                .andExpect(header().doesNotExist("X-Image-Tls-Verified"));
+    }
+
+    @Test
+    @DisplayName("429 RESOURCE_IMAGE_HOST_LIMITED (+ Retry-After, retry_after_seconds); 502 reason TLS_DOWNGRADE kendi metniyle; projeksiyon 429 RESOURCE_PROJECTION_BUSY + Retry-After: 2 — denetlenmez")
+    void newCodes() throws Exception {
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.HOST_LIMITED, null, null, null, null, 23, null, null, null));
+        mvc.perform(json(IMAGE, urlBody(URL), admin())).andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "23"))
+                .andExpect(jsonPath("$.code").value("RESOURCE_IMAGE_HOST_LIMITED"))
+                .andExpect(jsonPath("$.retry_after_seconds").value(23))
+                .andExpect(jsonPath("$.error").isNotEmpty());
+
+        when(images.image(anyLong(), anyLong(), anyString(), any(), anyString()))
+                .thenReturn(new ImageResult(ImageOutcome.FETCH_FAILED, null, null, null, null, 0,
+                        PageResourceImageService.REASON_TLS_DOWNGRADE, null, null));
+        mvc.perform(json(IMAGE, urlBody(URL), admin())).andExpect(status().is(502))
+                .andExpect(jsonPath("$.code").value("RESOURCE_IMAGE_FETCH_FAILED"))
+                .andExpect(jsonPath("$.reason").value("TLS_DOWNGRADE"))
+                .andExpect(jsonPath("$.http_status").doesNotExist())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("https")));
+
+        when(images.project(anyLong(), anyLong(), anyBoolean(), anyList(), anyString()))
+                .thenReturn(new Projection(ProjectionOutcome.BUSY, null, 2, null));
+        mvc.perform(json(PROJECTION, "{}", admin())).andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "2"))
+                .andExpect(jsonPath("$.code").value("RESOURCE_PROJECTION_BUSY"))
+                .andExpect(jsonPath("$.retry_after_seconds").value(2));
+        verifyNoAudit();
     }
 }

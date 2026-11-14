@@ -6,20 +6,25 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitemonitor.service.HttpCheckerService;
 import com.sitemonitor.service.PageCheckerService;
 import com.sitemonitor.service.ProxyPolicyService;
 import com.sitemonitor.service.SecretMask;
 import com.sitemonitor.service.SsrfGuard;
+import com.sitemonitor.service.TrustEvaluator;
 import com.sitemonitor.service.page.PageFetchCore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -36,6 +41,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -84,6 +90,19 @@ public class PageResourceImageService {
     static final long TOTAL_BUDGET_MAX_MS = 130_000L;
     /** Projeksiyonda saklanan puanı yeniden kullanılan bileşenler. */
     public static final List<String> REUSED_COMPONENTS = List.of("render_blocking");
+    /**
+     * Aynı kaynak sunucudan (adresin host'u) pod başına dakikadaki en çok görsel indirme — kurumsal çıkış adresinden tek bir
+     * siteye yük (toplu indirme). Kişi sınırından ayrı; reddedilen istek kişinin dakika sayısına girmez.
+     */
+    public static final int IMAGES_PER_HOST_MINUTE = 30;
+    /** Kişi başına / pod genelinde aynı anda en çok projeksiyon (her biri nesne listesini ayrıştırır, hesabı iki kez koşar). */
+    public static final int PROJECTIONS_PER_USER = 2, PROJECTIONS_PER_POD = 4;
+    /** {@code FETCH_FAILED.reason}: https adres http'ye yönlendirdi; özgün baytlar şifresiz adımdan alınmaz. */
+    public static final String REASON_TLS_DOWNGRADE = "TLS_DOWNGRADE";
+    /** Görsel dizini belleği: ömrü (ms), en çok tarama, tarama başına adres karakteri bütçesi (aşan dizin bellekte tutulmaz). */
+    static final long INDEX_TTL_MS = 10_000L;
+    static final int INDEX_MAX_ENTRIES = 8;
+    static final long INDEX_MAX_CHARS = 1_000_000L;
 
     static final String SQL_ITEMS = "SELECT items_json FROM page_resource_scans WHERE id = ? AND monitor_id = ?";
     static final String SQL_STATE = "SELECT status, algorithm_version, items_kept FROM page_resource_scans "
@@ -101,9 +120,20 @@ public class PageResourceImageService {
 
     @Autowired(required = false)
     private ProxyPolicyService proxyPolicy;
+    /** Son adımın TLS zincirinin güven değerlendirmesi (sistem deposu + kurumsal paket); yoksa başlık yazılmaz. */
+    @Autowired(required = false)
+    private TrustEvaluator trustEvaluator;
 
+    private final LongSupplier clock;
     private final ScanImageLimiter imageLimiter;
     private final ScanImageLimiter projectionLimiter;
+    /** Kaynak sunucu (host) başına dakika sınırı — yalnız sayar (eşzamanlılık yok). */
+    private volatile ScanImageLimiter hostLimiter;
+    /** Görsel dizini belleği (erişim sıralı; kilidi kendisi) — toplu indirmede nesne listesi bir kez ayrıştırılır. */
+    private final Map<IndexKey, CachedIndex> index = new LinkedHashMap<>(16, 0.75f, true);
+    private volatile long indexMaxChars = INDEX_MAX_CHARS;
+    /** Nesne listesinin veritabanından okunma sayısı (testler / gözlem). */
+    private final AtomicLong itemReads = new AtomicLong();
     /** Uçuştaki indirmelerin istemcileri (kapanışta hemen kesilir). */
     private final Set<PageFetchCore.ScanClients> active = ConcurrentHashMap.newKeySet();
     private volatile boolean stopping;
@@ -121,8 +151,11 @@ public class PageResourceImageService {
         this.core = core;
         this.pageChecker = pageChecker;
         this.scans = scans;
-        this.imageLimiter = new ScanImageLimiter(IMAGES_PER_MINUTE, IMAGES_PER_USER, IMAGES_PER_POD, clock);
-        this.projectionLimiter = new ScanImageLimiter(PROJECTIONS_PER_MINUTE, 0, 0, clock);
+        this.clock = clock == null ? System::currentTimeMillis : clock;
+        this.imageLimiter = new ScanImageLimiter(IMAGES_PER_MINUTE, IMAGES_PER_USER, IMAGES_PER_POD, this.clock);
+        this.projectionLimiter = new ScanImageLimiter(PROJECTIONS_PER_MINUTE, PROJECTIONS_PER_USER, PROJECTIONS_PER_POD,
+                this.clock);
+        this.hostLimiter = new ScanImageLimiter(IMAGES_PER_HOST_MINUTE, 0, 0, this.clock);
     }
 
     /** Testler için (alan enjeksiyonu yerine). */
@@ -130,15 +163,41 @@ public class PageResourceImageService {
         this.proxyPolicy = p;
     }
 
+    /** Testler için (alan enjeksiyonu yerine). */
+    void setTrustEvaluator(TrustEvaluator t) {
+        this.trustEvaluator = t;
+    }
+
     /** Testler için: indirme sınırlayıcısı. */
     ScanImageLimiter imageLimiter() {
         return imageLimiter;
     }
 
+    /** Testler için: projeksiyon sınırlayıcısı. */
+    ScanImageLimiter projectionLimiter() {
+        return projectionLimiter;
+    }
+
+    /** Testler için: kaynak sunucu sınırı (dakikada {@code perMinute}). */
+    void setHostLimit(int perMinute) {
+        this.hostLimiter = new ScanImageLimiter(perMinute, 0, 0, clock);
+    }
+
+    /** Testler için: dizin belleğinin tarama başına karakter bütçesi. */
+    void setIndexMaxChars(long chars) {
+        this.indexMaxChars = chars;
+    }
+
+    /** Testler için: nesne listesinin veritabanından okunma sayısı. */
+    long itemReads() {
+        return itemReads.get();
+    }
+
     // ── 1) Özgün görsel ─────────────────────────────────────────────────────────────────────
 
     public enum ImageOutcome {
-        OK, SCAN_NOT_FOUND, ITEMS_GONE, NOT_FOUND, MASKED, TOO_LARGE, RATE, BUSY, BLOCKED, FETCH_FAILED, UNSUPPORTED
+        OK, SCAN_NOT_FOUND, ITEMS_GONE, NOT_FOUND, MASKED, TOO_LARGE, RATE, BUSY, HOST_LIMITED, BLOCKED, FETCH_FAILED,
+        UNSUPPORTED
     }
 
     /**
@@ -150,10 +209,38 @@ public class PageResourceImageService {
      * @param retryAfterSeconds {@code RATE} / {@code BUSY} için önerilen bekleme
      * @param reason            {@code FETCH_FAILED}: ulaşılamama nedeni ({@code CheckFailureReason} adı); site yanıt verdiyse null
      * @param httpStatus        {@code FETCH_FAILED}: sitenin 2xx olmayan yanıt kodu; yoksa null
-     * @param knownBytes        {@code TOO_LARGE}: taramanın ölçtüğü boyut (çekilmeden reddedildiyse); bilinmiyorsa null
+     * @param knownBytes        {@code TOO_LARGE}: bilinen boyut — taramanın ölçtüğü (çekilmeden reddedildi) ya da sunucunun
+     *                          bildirdiği ({@code Content-Length}; gövde okunmadı); okunurken aşıldıysa null
+     * @param tlsVerified       {@code OK}: son adım https ise zincir güvenilir (sistem deposu / kurumsal paket) VE adı
+     *                          kapsıyor mu; son adım http ise ya da değerlendirici yoksa null
+     * @param lease             {@code OK}: yük sınırı hakkı — yanıt YAZILANA (ya da istemci kopana) dek tutulur; çağıran
+     *                          {@link #release()} ile bırakır (yazma sırasında bellek + iş parçacığı sayılır)
      */
     public record ImageResult(ImageOutcome outcome, byte[] body, String type, Integer width, Integer height,
-                              long retryAfterSeconds, String reason, Integer httpStatus, Long knownBytes) {
+                              long retryAfterSeconds, String reason, Integer httpStatus, Long knownBytes,
+                              Boolean tlsVerified, ScanImageLimiter.Ticket lease) {
+
+        /** Hak ve TLS hükmü olmadan (ret sonuçları, testler). */
+        public ImageResult(ImageOutcome outcome, byte[] body, String type, Integer width, Integer height,
+                           long retryAfterSeconds, String reason, Integer httpStatus, Long knownBytes) {
+            this(outcome, body, type, width, height, retryAfterSeconds, reason, httpStatus, knownBytes, null, null);
+        }
+
+        ImageResult withLease(ScanImageLimiter.Ticket t) {
+            return new ImageResult(outcome, body, type, width, height, retryAfterSeconds, reason, httpStatus, knownBytes,
+                    tlsVerified, t);
+        }
+
+        ImageResult withTls(Boolean verified) {
+            return new ImageResult(outcome, body, type, width, height, retryAfterSeconds, reason, httpStatus, knownBytes,
+                    verified, lease);
+        }
+
+        /** Yük sınırı hakkını bırakır (yoksa / bırakılmışsa etkisiz). */
+        public void release() {
+            if (lease != null) lease.close();
+        }
+
         static ImageResult of(ImageOutcome o) {
             return new ImageResult(o, null, null, null, null, 0, null, null, null);
         }
@@ -172,6 +259,17 @@ public class PageResourceImageService {
 
     /** Nesne listesi araması: tarama var mı, liste saklanıyor mu, eşleşen GÖRSEL satırı (yoksa null). */
     record Lookup(boolean scanFound, boolean itemsKept, StoredImage image) {}
+
+    /** Dizin belleği anahtarı — İZLEME de anahtarda: başka izlemenin aynı kimlikli taraması asla eşleşmez. */
+    private record IndexKey(long scanId, long monitorId) {}
+
+    private record CachedIndex(long loadedAt, Map<String, StoredImage> images) {}
+
+    /**
+     * Nesne listesinin GÖRSEL dizini: adres → ilk görsel satırı ({@code images}; bütçeyi aştıysa null — bellekte tutulmaz) +
+     * istenen adresin eşleşmesi ({@code match}).
+     */
+    record ImageIndex(Map<String, StoredImage> images, StoredImage match) {}
 
     /**
      * Taramanın bulduğu TEK görselin özgün baytları (kapılar — izin + takımda çalıştırma — çağıranda geçmiş olmalı).
@@ -201,8 +299,23 @@ public class PageResourceImageService {
             return d.busy() ? ImageResult.busy()
                     : new ImageResult(ImageOutcome.RATE, null, null, null, null, d.retryAfterSeconds(), null, null, null);
         }
-        try (ScanImageLimiter.Ticket ticket = d.ticket()) {
-            return fetch(url, viaProxy(img.via(), url, proxyMode));
+        ScanImageLimiter.Ticket ticket = d.ticket();
+        ImageResult r = null;
+        try {
+            // Kaynak sunucu sınırı: reddedilirse kişinin hakkı GERİ alınır (dakika sayısına girmez)
+            String host = ProxyPolicyService.hostOf(url);
+            ScanImageLimiter.Decision h = hostLimiter.tryAcquire("h:" + (host == null ? "?" : host));
+            if (!h.allowed()) {
+                ticket.refund();
+                return new ImageResult(ImageOutcome.HOST_LIMITED, null, null, null, null, h.retryAfterSeconds(), null, null,
+                        null);
+            }
+            h.ticket().close();   // yalnız sayar
+            r = fetch(url, viaProxy(img.via(), url, proxyMode));
+            // Başarılı sonuçta hak yanıt YAZILANA dek çağıranda kalır (bellek + iş parçacığı yazma boyunca sayılır)
+            return r.outcome() == ImageOutcome.OK ? r.withLease(ticket) : r;
+        } finally {
+            if (r == null || r.outcome() != ImageOutcome.OK) ticket.close();
         }
     }
 
@@ -211,12 +324,26 @@ public class PageResourceImageService {
      * alınmaz, eşleşmede okuma durur), en çok {@value #MAX_ITEMS} nesne. Okunamayan / bozuk liste "saklanmıyor" sayılır.
      */
     Lookup lookup(long scanId, long monitorId, String url) {
+        IndexKey key = new IndexKey(scanId, monitorId);
+        long now = clock.getAsLong();
+        synchronized (index) {
+            CachedIndex c = index.get(key);
+            if (c != null) {
+                // Geçerli bellek: liste yeniden okunmaz (toplu indirme). Saat geri alınmışsa bellek geçersiz sayılır.
+                if (now >= c.loadedAt() && now - c.loadedAt() < INDEX_TTL_MS) return new Lookup(true, true, c.images().get(url));
+                index.remove(key);
+            }
+        }
+        itemReads.incrementAndGet();
+        long budget = indexMaxChars;
         Lookup lk = jdbc.query(SQL_ITEMS, rs -> {
             if (!rs.next()) return new Lookup(false, false, null);
             Reader reader = rs.getCharacterStream(1);
             if (reader == null) return new Lookup(true, false, null);
             try {
-                return new Lookup(true, true, findImage(reader, url));
+                ImageIndex idx = parseIndex(reader, url, budget);
+                if (idx.images() != null) remember(key, now, idx.images());
+                return new Lookup(true, true, idx.match());
             } catch (IOException | RuntimeException e) {
                 log.warn("Kaynak analizi {} nesne listesi okunamadı: {}", scanId, e.getClass().getSimpleName());
                 return new Lookup(true, false, null);
@@ -225,10 +352,33 @@ public class PageResourceImageService {
         return lk == null ? new Lookup(false, false, null) : lk;
     }
 
+    private void remember(IndexKey key, long now, Map<String, StoredImage> images) {
+        synchronized (index) {
+            index.put(key, new CachedIndex(now, Collections.unmodifiableMap(images)));
+            var it = index.entrySet().iterator();
+            while (index.size() > INDEX_MAX_ENTRIES && it.hasNext()) {
+                it.next();
+                it.remove();   // en eski erişilen
+            }
+        }
+    }
+
     /** {@code items_json} akışında adresi {@code url} olan ilk GÖRSEL nesnesi; yoksa null. Okuyucu bu çağrıda kapatılır. */
     static StoredImage findImage(Reader itemsJson, String url) throws IOException {
+        return parseIndex(itemsJson, url, 0).match();
+    }
+
+    /**
+     * Nesne listesini AKIŞLA (en çok {@value #MAX_ITEMS} nesne) okuyup GÖRSEL dizinini kurar: adres → ilk görsel satırı.
+     * Adreslerin toplam uzunluğu {@code budgetChars}'ı aşarsa (ya da bütçe ≤ 0) dizin tutulmaz ({@code images} null) ve
+     * eşleşme bulununca okuma durur. Okuyucu bu çağrıda kapatılır.
+     */
+    static ImageIndex parseIndex(Reader itemsJson, String url, long budgetChars) throws IOException {
+        Map<String, StoredImage> images = budgetChars > 0 ? new HashMap<>() : null;
+        long chars = 0;
+        StoredImage match = null;
         try (JsonParser p = STREAM.createParser(itemsJson)) {
-            if (p.nextToken() != JsonToken.START_ARRAY) return null;
+            if (p.nextToken() != JsonToken.START_ARRAY) return new ImageIndex(images == null ? null : Map.of(), null);
             int read = 0;
             while (p.nextToken() == JsonToken.START_OBJECT && read < MAX_ITEMS) {
                 read++;
@@ -252,13 +402,19 @@ public class PageResourceImageService {
                         default -> { /* okunmayan düz alan */ }
                     }
                 }
-                if (url.equals(u) && PageResourceDiscovery.IMAGE.equals(category)) {
-                    // Boyut "biliniyor": gövdeden sayılmış ve kesilmemiş ya da başlıktan; gövdesiz / indirilmemiş satırda bilinmiyor
-                    boolean known = bytes > 0 && !truncated && !ScanItem.SIZE_UNKNOWN.equals(sizeSource);
-                    return new StoredImage(via, bytes, known);
+                if (u == null || !PageResourceDiscovery.IMAGE.equals(category)) continue;
+                // Boyut "biliniyor": gövdeden sayılmış ve kesilmemiş ya da başlıktan; gövdesiz / indirilmemiş satırda bilinmiyor
+                boolean known = bytes > 0 && !truncated && !ScanItem.SIZE_UNKNOWN.equals(sizeSource);
+                StoredImage si = new StoredImage(via, bytes, known);
+                if (match == null && u.equals(url)) match = si;
+                if (images != null && !images.containsKey(u)) {
+                    chars += u.length();
+                    if (chars > budgetChars) images = null;   // bütçe aşıldı: dizin bellekte tutulmayacak
+                    else images.put(u, si);
                 }
+                if (images == null && match != null) break;   // yalnız eşleşme aranıyor ve bulundu
             }
-            return null;
+            return new ImageIndex(images, match);
         }
     }
 
@@ -287,17 +443,17 @@ public class PageResourceImageService {
         active.add(clients);
         try {
             if (stopping) return ImageResult.busy();
-            // Saklanan ve açılmış gövde tavanı = sınır + 1: fazlası hiç tamponlanmaz, tavanı aşan gövde ayırt edilir
-            PageFetchCore.ScanTuning tuning = new PageFetchCore.ScanTuning(clients, PageFetchCore.ACCEPT_ENCODING,
-                    MAX_IMAGE_BYTES + 1, MAX_IMAGE_BYTES + 1);
+            // Özgün baytlar: Accept-Encoding identity, ön boyutlu okuma, https → http adımı reddi, TLS zinciri. Saklanan ve
+            // açılmış gövde tavanı = sınır + 1: fazlası hiç tamponlanmaz, tavanı aşan gövde ayırt edilir
+            PageFetchCore.ScanTuning tuning = PageFetchCore.ScanTuning.original(clients, MAX_IMAGE_BYTES + 1);
             PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(timeout, ua, null, true, false, viaProxy);
-            Future<PageFetchCore.MetaFetch> f;
+            Future<PageFetchCore.OriginalFetch> f;
             try {
-                f = core.executor().submit(() -> core.fetchWithMeta(url, "GET", o, 0, tuning));
+                f = core.executor().submit(() -> core.fetchOriginal(url, o, tuning));
             } catch (RejectedExecutionException closing) {
                 return ImageResult.busy();
             }
-            PageFetchCore.MetaFetch mf;
+            PageFetchCore.OriginalFetch mf;
             try {
                 mf = f.get(totalBudgetMs(timeout), TimeUnit.MILLISECONDS);
             } catch (TimeoutException te) {
@@ -310,10 +466,32 @@ public class PageResourceImageService {
             } catch (ExecutionException | CancellationException e) {
                 return ImageResult.failed("TRANSPORT_ERROR", null);
             }
-            return classify(mf.fetch());
+            if (mf.downgradeRefused()) return ImageResult.failed(REASON_TLS_DOWNGRADE, null);
+            ImageResult r = classify(mf.fetch());
+            if (r.outcome() != ImageOutcome.OK) return r;
+            String finalUrl = mf.meta() == null || mf.meta().finalUrl() == null ? url : mf.meta().finalUrl();
+            return r.withTls(tlsVerdict(finalUrl, mf.peerChain()));
         } finally {
             active.remove(clients);
             clients.shutdownNow();
+        }
+    }
+
+    /**
+     * Son adımın TLS hükmü: http → null (başlık yok); https → zincir sistem deposu ya da kurumsal paketle güvenilir
+     * ({@link TrustEvaluator}) VE yaprak sertifika son adımın adını kapsıyor mu. Değerlendirici yoksa null. Çekim trust-all
+     * bağlamla yapılır (iç sitelerin olağandışı CA'ları çalışmaya devam eder); güvenilmeyen zincir REDDEDİLMEZ, işaretlenir.
+     */
+    Boolean tlsVerdict(String finalUrl, X509Certificate[] chain) {
+        if (finalUrl == null || !finalUrl.regionMatches(true, 0, "https:", 0, 6)) return null;
+        TrustEvaluator te = trustEvaluator;
+        if (te == null) return null;
+        if (chain == null || chain.length == 0) return Boolean.FALSE;
+        try {
+            String host = ProxyPolicyService.hostOf(finalUrl);
+            return te.evaluate(chain).trusted() && HttpCheckerService.hostnameMatches(chain[0], host);
+        } catch (RuntimeException e) {
+            return Boolean.FALSE;
         }
     }
 
@@ -328,7 +506,9 @@ public class PageResourceImageService {
         if (f.status() < 200 || f.status() >= 300) return ImageResult.failed(null, f.status());
         byte[] body = f.body();
         if (f.bytes() > MAX_IMAGE_BYTES || (body != null && body.length > MAX_IMAGE_BYTES)) {
-            return ImageResult.of(ImageOutcome.TOO_LARGE);
+            // Gövde okunmadıysa (sunucunun bildirdiği boyut tavanı aşıyordu) bilinen boyut yanıta eklenir
+            Long declared = body == null && f.truncated() ? Long.valueOf(f.bytes()) : null;
+            return new ImageResult(ImageOutcome.TOO_LARGE, null, null, null, null, 0, null, null, declared);
         }
         String type = ImageDimensions.type(body);
         if (type == null) return ImageResult.of(ImageOutcome.UNSUPPORTED);
@@ -356,7 +536,7 @@ public class PageResourceImageService {
      */
     public record Replacement(String url, long bytes, Integer width, Integer height, String type) {}
 
-    public enum ProjectionOutcome { OK, SCAN_NOT_FOUND, NOT_DONE, ITEMS_GONE, NOT_PROJECTABLE, RATE }
+    public enum ProjectionOutcome { OK, SCAN_NOT_FOUND, NOT_DONE, ITEMS_GONE, NOT_PROJECTABLE, RATE, BUSY }
 
     /** {@code reason}: {@code NOT_PROJECTABLE} için {@code algorithm} (eski algoritma sürümü) | {@code baseline}. */
     public record Projection(ProjectionOutcome outcome, Map<String, Object> data, long retryAfterSeconds, String reason) {
@@ -396,7 +576,10 @@ public class PageResourceImageService {
         if (!Objects.equals(state[1], PageResourceAnalyzer.ALGORITHM_VERSION)) return Projection.notProjectable(REASON_ALGORITHM);
 
         ScanImageLimiter.Decision d = projectionLimiter.tryAcquire(userKey);
-        if (!d.allowed()) return new Projection(ProjectionOutcome.RATE, null, Math.max(1, d.retryAfterSeconds()), null);
+        if (!d.allowed()) {
+            return d.busy() ? new Projection(ProjectionOutcome.BUSY, null, BUSY_RETRY_SECONDS, null)
+                    : new Projection(ProjectionOutcome.RATE, null, Math.max(1, d.retryAfterSeconds()), null);
+        }
         try (ScanImageLimiter.Ticket ticket = d.ticket()) {
             Row row = readRow(scanId, monitorId);
             if (row == null) return Projection.of(ProjectionOutcome.SCAN_NOT_FOUND);
@@ -574,8 +757,12 @@ public class PageResourceImageService {
 
     // ── Kapanış ─────────────────────────────────────────────────────────────────────────────
 
-    /** Yalnız bayrak + uçuştaki istekleri kes (beklemez): yeni indirme alınmaz, sürenler hemen düşer. */
+    /**
+     * Yalnız bayrak + uçuştaki istekleri kes (beklemez): yeni indirme alınmaz, sürenler hemen düşer. Erken sırada
+     * ({@code HIGHEST_PRECEDENCE + 5}): bildirim havuzu boşaltmasının ≤ 20 sn beklemesi sırasında yeni indirme başlamaz.
+     */
     @EventListener(ContextClosedEvent.class)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 5)
     public void onContextClosed(ContextClosedEvent e) {
         stopping = true;
         for (PageFetchCore.ScanClients c : active) c.shutdownNow();
