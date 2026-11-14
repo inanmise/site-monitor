@@ -5,6 +5,7 @@ import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.PageCheckerService;
 import com.sitemonitor.service.PublicSuffixService;
 import com.sitemonitor.service.SsrfGuard;
+import com.sitemonitor.service.TrustEvaluator;
 import com.sitemonitor.service.page.PageFetchCore;
 import com.sitemonitor.service.page.scan.PageResourceImageService.ImageOutcome;
 import com.sitemonitor.service.page.scan.PageResourceImageService.ImageResult;
@@ -13,6 +14,17 @@ import com.sitemonitor.service.page.scan.PageResourceImageService.ProjectionOutc
 import com.sitemonitor.service.page.scan.PageResourceImageService.Replacement;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,12 +37,25 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.imageio.ImageIO;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
 import javax.sql.DataSource;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.SecureRandom;
+import java.security.Security;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
+import java.util.Date;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,6 +75,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -83,6 +109,12 @@ class PageResourceImageServiceTest {
     final CountDownLatch slowRelease = new CountDownLatch(1);
     final AtomicInteger slowWaiting = new AtomicInteger();
     final AtomicLong growSent = new AtomicLong();
+    final AtomicLong declaredSent = new AtomicLong();
+    /** Yolun son isteğindeki Accept-Encoding. */
+    final Map<String, String> acceptEncoding = new ConcurrentHashMap<>();
+    AppSettingsService settings;
+    /** Kurumsal CA paketi (TrustEvaluator ayarı). */
+    volatile String caBundle = "";
 
     byte[] hero, photo, gif, bmp, noise, webp, avif;
 
@@ -119,6 +151,14 @@ class PageResourceImageServiceTest {
         ByteArrayOutputStream gz = new ByteArrayOutputStream();
         try (GZIPOutputStream g = new GZIPOutputStream(gz)) { g.write(hero); }
         byte[] heroGz = gz.toByteArray();
+        // Sıkıştırma bombası: PNG imzası + 30 MB sıfır → ~30 KB gzip (sunucu identity isteğini yok sayar)
+        ByteArrayOutputStream bombOut = new ByteArrayOutputStream();
+        try (GZIPOutputStream g = new GZIPOutputStream(bombOut)) {
+            g.write(hero, 0, 64);
+            byte[] zeros = new byte[1 << 20];
+            for (int i = 0; i < 30; i++) g.write(zeros);
+        }
+        byte[] gzBomb = bombOut.toByteArray();
 
         String gallery = """
                 <html><head><link rel="stylesheet" href="/s.css"><link rel="icon" href="/fav.png">
@@ -129,6 +169,7 @@ class PageResourceImageServiceTest {
                   <img src="/photo.jpg"> <img src="/anim.gif"> <img src="/pic.webp"> <img src="/dot.bmp"> <img src="/pic.avif">
                   <img src="/vector.svg"> <img src="/fake.png"> <img src="/flaky.png"> <img src="/redir.png"> <img src="/hop.png">
                   <img src="/grow.png"> <img src="/big.png"> <img src="/gz.png"> <img src="/slow.png">
+                  <img src="/declared.png"> <img src="/gzbomb.png">
                   <img src="/secret.png?token=GIZLI123">
                   <img src="/g%C3%B6rsel%20ad%C4%B1.final.png">
                   <a href="/about">about</a>
@@ -148,6 +189,7 @@ class PageResourceImageServiceTest {
         server.createContext("/", ex -> {
             String path = ex.getRequestURI().getPath();
             hits.computeIfAbsent(path, k -> new AtomicInteger()).incrementAndGet();
+            acceptEncoding.put(path, String.valueOf(ex.getRequestHeaders().getFirst("Accept-Encoding")));
             byte[] body;
             int status = 200;
             String ct;
@@ -198,6 +240,18 @@ class PageResourceImageServiceTest {
                     body = hero; ct = "image/png";
                 }
                 case "/big.png" -> { stream(ex, 30 * MB, new AtomicLong(), 30 * MB); return; }
+                case "/declared.png" -> {
+                    // Taramada küçük; sonra 30 MB BİLDİRİR — gövde hiç okunmamalı
+                    if (afterScan) { stream(ex, 30 * MB, declaredSent, 30 * MB); return; }
+                    body = hero; ct = "image/png";
+                }
+                case "/gzbomb.png" -> {
+                    ex.getResponseHeaders().add("Content-Type", "image/png");
+                    ex.getResponseHeaders().add("Content-Encoding", "gzip");
+                    ex.sendResponseHeaders(200, gzBomb.length);
+                    try (OutputStream os = ex.getResponseBody()) { os.write(gzBomb); }
+                    return;
+                }
                 case "/slow.png" -> {
                     if (afterScan) {
                         slowWaiting.incrementAndGet();
@@ -215,9 +269,11 @@ class PageResourceImageServiceTest {
         base = "http://127.0.0.1:" + server.getAddress().getPort();
 
         AppSettingsService s = mock(AppSettingsService.class);
+        settings = s;
         when(s.getBoolean("site.monitor.monitoring.allow-loopback-targets", false)).thenReturn(true);
         when(s.getBoolean("site.monitor.monitoring.allow-internal-targets", true)).thenReturn(true);
         when(s.getInt(anyString(), anyInt())).thenAnswer(a -> a.getArgument(1));
+        when(s.getString(eq(TrustEvaluator.CA_BUNDLE_KEY), anyString())).thenAnswer(a -> caBundle);
         PageFetchCore core = new PageFetchCore(new SsrfGuard(s));
         core.init();
         checker = mock(PageCheckerService.class);
@@ -258,11 +314,15 @@ class PageResourceImageServiceTest {
     }
 
     PageMonitor monitor(long id, String path) {
+        return monitorAt(id, base + path);
+    }
+
+    PageMonitor monitorAt(long id, String url) {
         PageMonitor m = new PageMonitor();
         m.setId(id);
         m.setTeamId(7L);
         m.setName("Galeri");
-        m.setUrl(base + path);
+        m.setUrl(url);
         return m;
     }
 
@@ -273,7 +333,11 @@ class PageResourceImageServiceTest {
 
     /** Taramayı çalıştırır, DONE olmasını bekler; tarama kimliğini döner. */
     long scanDone(long monitorId, String path) throws InterruptedException {
-        PageResourceScanService.Start st = scans.start(monitor(monitorId, path), "u:tarayan", "Ayşe");
+        return scanDoneAt(monitorId, base + path);
+    }
+
+    long scanDoneAt(long monitorId, String url) throws InterruptedException {
+        PageResourceScanService.Start st = scans.start(monitorAt(monitorId, url), "u:tarayan", "Ayşe");
         assertThat(st.outcome()).isEqualTo(PageResourceScanService.Outcome.STARTED);
         long id = ((Number) st.scan().get("id")).longValue();
         long until = System.currentTimeMillis() + 30_000;
@@ -298,7 +362,14 @@ class PageResourceImageServiceTest {
     }
 
     ImageResult download(long monitorId, long scanId, String path) {
-        return images.image(monitorId, scanId, base + path, null, "u:1");
+        return imageNow(monitorId, scanId, base + path, null, "u:1");
+    }
+
+    /** Servis çağrısı + yük hakkının bırakılması (denetleyici gövdeyi yazdıktan sonra böyle bırakır). */
+    ImageResult imageNow(long monitorId, long scanId, String url, String proxyMode, String user) {
+        ImageResult r = images.image(monitorId, scanId, url, proxyMode, user);
+        r.release();
+        return r;
     }
 
     // ── Nesne alanları (yeni tarama) ────────────────────────────────────────────────────────
@@ -354,7 +425,7 @@ class PageResourceImageServiceTest {
 
         // Yüzde kodlu ad: taramanın döndürdüğü adres BİREBİR gönderilir
         String encoded = (String) item(1, id, ".final.png").get("url");
-        ImageResult named = images.image(1, id, encoded, null, "u:2");
+        ImageResult named = imageNow(1, id, encoded, null, "u:2");
         assertThat(named.outcome()).as(encoded).isEqualTo(ImageOutcome.OK);
         assertThat(named.body()).isEqualTo(hero);
     }
@@ -377,16 +448,17 @@ class PageResourceImageServiceTest {
         assertThat(download(1, id, "/v.mp4").outcome()).as("medya görsel değil").isEqualTo(ImageOutcome.NOT_FOUND);
         assertThat(download(1, id, "/HERO.png").outcome()).as("birebir eşleşme (harf duyarlı)").isEqualTo(ImageOutcome.NOT_FOUND);
         assertThat(download(1, id, "/hero.png#x").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
-        assertThat(images.image(1, id, "http://169.254.169.254/latest/meta-data/", null, "u:1").outcome())
+        assertThat(imageNow(1, id, "http://169.254.169.254/latest/meta-data/", null, "u:1").outcome())
                 .isEqualTo(ImageOutcome.NOT_FOUND);
-        assertThat(images.image(1, id, "file:///etc/passwd", null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
-        assertThat(images.image(1, id, " ", null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
-        assertThat(images.image(1, id, "x".repeat(5000), null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        assertThat(imageNow(1, id, "file:///etc/passwd", null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        assertThat(imageNow(1, id, " ", null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        assertThat(imageNow(1, id, "x".repeat(5000), null, "u:1").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
 
         assertThat(download(2, id, "/hero.png").outcome()).as("tarama başka izlemenin").isEqualTo(ImageOutcome.SCAN_NOT_FOUND);
         assertThat(download(1, id + 999, "/hero.png").outcome()).isEqualTo(ImageOutcome.SCAN_NOT_FOUND);
 
         jdbc.update("UPDATE page_resource_scans SET items_json = NULL, items_kept = FALSE WHERE id = ?", id);
+        clock.addAndGet(PageResourceImageService.INDEX_TTL_MS + 1);   // görsel dizini belleği (≤ 10 sn) geçti
         assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.ITEMS_GONE);
         jdbc.update("UPDATE page_resource_scans SET items_json = '[{bozuk', items_kept = TRUE WHERE id = ?", id);
         assertThat(download(1, id, "/hero.png").outcome()).as("bozuk liste = saklanmıyor").isEqualTo(ImageOutcome.ITEMS_GONE);
@@ -407,7 +479,7 @@ class PageResourceImageServiceTest {
         String stored = (String) item(1, id, "/secret.png").get("url");
         assertThat(stored).contains("*****").doesNotContain("GIZLI123");
         int before = hitsOf("/secret.png");
-        assertThat(images.image(1, id, stored, null, "u:1").outcome()).isEqualTo(ImageOutcome.MASKED);
+        assertThat(imageNow(1, id, stored, null, "u:1").outcome()).isEqualTo(ImageOutcome.MASKED);
         assertThat(download(1, id, "/secret.png?token=GIZLI123").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
         assertThat(hitsOf("/secret.png")).isEqualTo(before);
     }
@@ -508,32 +580,40 @@ class PageResourceImageServiceTest {
             assertThat(images.imageLimiter().freePodSlots()).isZero();
 
             int heroBefore = hitsOf("/hero.png");
-            ImageResult userBusy = images.image(1, id, base + "/hero.png", null, "u:a");
+            ImageResult userBusy = imageNow(1, id, base + "/hero.png", null, "u:a");
             assertThat(userBusy.outcome()).isEqualTo(ImageOutcome.BUSY);
             assertThat(userBusy.retryAfterSeconds()).isEqualTo(PageResourceImageService.BUSY_RETRY_SECONDS);
-            assertThat(images.image(1, id, base + "/hero.png", null, "u:c").outcome()).as("pod dolu").isEqualTo(ImageOutcome.BUSY);
+            assertThat(imageNow(1, id, base + "/hero.png", null, "u:c").outcome()).as("pod dolu").isEqualTo(ImageOutcome.BUSY);
             assertThat(hitsOf("/hero.png")).as("reddedilen istek siteye gitmez").isEqualTo(heroBefore);
 
             slowRelease.countDown();
+            List<ImageResult> done = new ArrayList<>();
             for (Future<ImageResult> f : running) {
                 ImageResult r = f.get(20, TimeUnit.SECONDS);
                 assertThat(r.outcome()).isEqualTo(ImageOutcome.OK);
                 assertThat(r.type()).isEqualTo("bmp");
+                assertThat(r.lease()).as("başarılı sonuç hakkı taşır").isNotNull();
+                done.add(r);
             }
+            // Çekim bitti ama gövde henüz yazılmadı: haklar TUTULUR (yavaş istemci belleği / iş parçacığını sayar)
+            assertThat(images.imageLimiter().freePodSlots()).as("yazma bitene dek yuvalar dolu").isZero();
+            assertThat(imageNow(1, id, base + "/hero.png", null, "u:c").outcome()).isEqualTo(ImageOutcome.BUSY);
+            done.forEach(ImageResult::release);
+            done.forEach(ImageResult::release);   // ikinci bırakma zararsız
             assertThat(images.imageLimiter().freePodSlots()).isEqualTo(PageResourceImageService.IMAGES_PER_POD);
-            assertThat(images.image(1, id, base + "/hero.png", null, "u:a").outcome()).isEqualTo(ImageOutcome.OK);
+            assertThat(imageNow(1, id, base + "/hero.png", null, "u:a").outcome()).isEqualTo(ImageOutcome.OK);
         } finally {
             pool.shutdownNow();
         }
 
         // İstisna (çekimden önce): izin finally'de bırakılır, sonraki istek çalışır
         when(checker.effectiveUserAgent()).thenThrow(new IllegalStateException("patladı"));
-        assertThatThrownBy(() -> images.image(1, id, base + "/hero.png", null, "u:z")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> imageNow(1, id, base + "/hero.png", null, "u:z")).isInstanceOf(IllegalStateException.class);
         assertThat(images.imageLimiter().freePodSlots()).isEqualTo(PageResourceImageService.IMAGES_PER_POD);
         org.mockito.Mockito.reset(checker);
         when(checker.effectiveUserAgent()).thenReturn("SiteMonitor-Test");
-        assertThat(images.image(1, id, base + "/hero.png", null, "u:z").outcome()).isEqualTo(ImageOutcome.OK);
-        assertThat(images.image(1, id, base + "/hero.png", null, "u:z").outcome()).as("iki eşzamanlı hak da geri geldi")
+        assertThat(imageNow(1, id, base + "/hero.png", null, "u:z").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(imageNow(1, id, base + "/hero.png", null, "u:z").outcome()).as("iki eşzamanlı hak da geri geldi")
                 .isEqualTo(ImageOutcome.OK);
     }
 
@@ -541,22 +621,23 @@ class PageResourceImageServiceTest {
     @DisplayName("dakikada 60: reddedilen / elenen istekler sayılmaz; 61. indirme RATE + bekleme; pencere geçince yeniden")
     void perMinuteLimit() throws Exception {
         long id = scanDone(1, "/gallery");
+        images.setHostLimit(10_000);   // bu test kişi sınırı içindir; kaynak sunucu sınırı ayrı testte
         for (int i = 0; i < 20; i++) {
-            assertThat(images.image(1, id, base + "/not-in-scan.png", null, "u:9").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+            assertThat(imageNow(1, id, base + "/not-in-scan.png", null, "u:9").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
         }
         // Site hatası veren indirme siteyi çağırdı → sayılır
-        assertThat(images.image(1, id, base + "/flaky.png", null, "u:9").outcome()).isEqualTo(ImageOutcome.FETCH_FAILED);
+        assertThat(imageNow(1, id, base + "/flaky.png", null, "u:9").outcome()).isEqualTo(ImageOutcome.FETCH_FAILED);
         for (int i = 1; i < PageResourceImageService.IMAGES_PER_MINUTE; i++) {
-            assertThat(images.image(1, id, base + "/dot.bmp", null, "u:9").outcome()).as("indirme " + i).isEqualTo(ImageOutcome.OK);
+            assertThat(imageNow(1, id, base + "/dot.bmp", null, "u:9").outcome()).as("indirme " + i).isEqualTo(ImageOutcome.OK);
         }
         int before = hitsOf("/dot.bmp");
-        ImageResult limited = images.image(1, id, base + "/dot.bmp", null, "u:9");
+        ImageResult limited = imageNow(1, id, base + "/dot.bmp", null, "u:9");
         assertThat(limited.outcome()).isEqualTo(ImageOutcome.RATE);
         assertThat(limited.retryAfterSeconds()).isBetween(1L, 60L);
         assertThat(hitsOf("/dot.bmp")).isEqualTo(before);
-        assertThat(images.image(1, id, base + "/dot.bmp", null, "u:10").outcome()).as("başka kişi etkilenmez").isEqualTo(ImageOutcome.OK);
+        assertThat(imageNow(1, id, base + "/dot.bmp", null, "u:10").outcome()).as("başka kişi etkilenmez").isEqualTo(ImageOutcome.OK);
         clock.addAndGet(61_000);
-        assertThat(images.image(1, id, base + "/dot.bmp", null, "u:9").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(imageNow(1, id, base + "/dot.bmp", null, "u:9").outcome()).isEqualTo(ImageOutcome.OK);
     }
 
     // ── Projeksiyon ─────────────────────────────────────────────────────────────────────────
@@ -785,5 +866,228 @@ class PageResourceImageServiceTest {
         assertThat(items).extracting(i -> i.parent).containsExactly(-1, 0, 1, 0);
         assertThat(items).extracting(i -> i.seq).containsExactly(0, 1, 2, 3);
         assertThat(PageResourceImageService.restore(rows).get(2)).as("her çağrıda yeni kopya").isNotSameAs(items.get(2));
+    }
+
+    // ── İnceleme düzeltmeleri (2026-11-14) ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("özgün baytlar: istek Accept-Encoding: identity taşır; sunucu yine sıkıştırırsa açılır, açılmış gövde tavanı aşarsa TOO_LARGE (bilinen boyut yok)")
+    void identityEncodingAndGzipStillCapped() throws Exception {
+        long id = scanDone(1, "/gallery");
+        assertThat(acceptEncoding.get("/hero.png")).as("taramanın sayım isteği").isNotEqualTo("identity");
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(acceptEncoding.get("/hero.png")).isEqualTo("identity");
+        ImageResult gz = download(1, id, "/gz.png");
+        assertThat(gz.outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(gz.body()).isEqualTo(hero);
+        assertThat(acceptEncoding.get("/gz.png")).isEqualTo("identity");
+        ImageResult bomb = download(1, id, "/gzbomb.png");
+        assertThat(bomb.outcome()).as("30 MB'a açılan gövde").isEqualTo(ImageOutcome.TOO_LARGE);
+        assertThat(bomb.knownBytes()).isNull();
+        assertThat(bomb.body()).isNull();
+    }
+
+    @Test
+    @DisplayName("sunucu tavanı aşan boyut BİLDİRİRSE gövde hiç okunmaz: TOO_LARGE + bilinen boyut; 30 MB'ın yalnız soket tamponu kadarı gider")
+    void declaredOverCapIsNotTransferred() throws Exception {
+        long id = scanDone(1, "/gallery");
+        assertThat(item(1, id, "/declared.png").get("bytes")).as("taramada küçüktü").isEqualTo(hero.length);
+        ImageResult r = download(1, id, "/declared.png");
+        assertThat(r.outcome()).isEqualTo(ImageOutcome.TOO_LARGE);
+        assertThat(r.knownBytes()).isEqualTo(30 * MB);
+        assertThat(declaredSent.get()).as("gövde okunmadı").isLessThan(CAP / 2);
+    }
+
+    @Test
+    @DisplayName("görsel dizini belleği: toplu indirmede nesne listesi BİR kez okunur; aynı tarama kimliği başka izlemede asla eşleşmez; süre dolunca yeniden; bütçeyi aşan dizin tutulmaz (eşleşme yine çalışır)")
+    void imageIndexIsMemoised() throws Exception {
+        long id = scanDone(1, "/gallery");
+        assertThat(images.itemReads()).isZero();
+        for (int i = 0; i < 15; i++) {
+            assertThat(download(1, id, "/yok-" + i + ".png").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        }
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(download(1, id, "/dot.bmp").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(download(1, id, "/s.css").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        assertThat(images.itemReads()).as("18 istek, tek okuma").isEqualTo(1);
+
+        assertThat(download(2, id, "/hero.png").outcome()).as("aynı tarama kimliği, başka izleme").isEqualTo(ImageOutcome.SCAN_NOT_FOUND);
+        assertThat(images.itemReads()).isEqualTo(2);
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(images.itemReads()).isEqualTo(2);
+
+        clock.addAndGet(PageResourceImageService.INDEX_TTL_MS + 1);
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(images.itemReads()).as("süre doldu: yeniden okundu").isEqualTo(3);
+
+        images.setIndexMaxChars(10);
+        clock.addAndGet(PageResourceImageService.INDEX_TTL_MS + 1);
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(download(1, id, "/dot.bmp").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(download(1, id, "/yok.png").outcome()).isEqualTo(ImageOutcome.NOT_FOUND);
+        assertThat(images.itemReads()).as("bütçeyi aşan dizin bellekte tutulmaz").isEqualTo(6);
+
+        // Saat geri alınırsa bellek geçersiz sayılır
+        images.setIndexMaxChars(PageResourceImageService.INDEX_MAX_CHARS);
+        assertThat(download(1, id, "/hero.png").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(images.itemReads()).isEqualTo(7);
+        clock.addAndGet(-60_000);
+        assertThat(download(1, id, "/dot.bmp").outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(images.itemReads()).isEqualTo(8);
+    }
+
+    @Test
+    @DisplayName("parseIndex: ilk GÖRSEL satırı kazanır, görsel olmayanlar dizinde yok, bütçe aşılınca dizin düşer ama eşleşme bulunur")
+    void parseIndexRules() throws Exception {
+        String json = "[{\"url\":\"https://a.test/x.png\",\"category\":\"CSS\"},"
+                + "{\"url\":\"https://a.test/x.png\",\"category\":\"IMAGE\",\"bytes\":10,\"via\":\"proxy\"},"
+                + "{\"url\":\"https://a.test/x.png\",\"category\":\"IMAGE\",\"bytes\":99,\"via\":\"direct\"},"
+                + "{\"url\":\"https://a.test/y.png\",\"category\":\"IMAGE\",\"bytes\":5,\"truncated\":true}]";
+        PageResourceImageService.ImageIndex idx = PageResourceImageService.parseIndex(new java.io.StringReader(json),
+                "https://a.test/y.png", 1000);
+        assertThat(idx.images()).containsOnlyKeys("https://a.test/x.png", "https://a.test/y.png");
+        assertThat(idx.images().get("https://a.test/x.png").bytes()).as("ilk görsel satırı").isEqualTo(10);
+        assertThat(idx.images().get("https://a.test/x.png").via()).isEqualTo("proxy");
+        assertThat(idx.match().sizeKnown()).as("kesik satırın boyutu bilinmiyor").isFalse();
+        PageResourceImageService.ImageIndex over = PageResourceImageService.parseIndex(new java.io.StringReader(json),
+                "https://a.test/y.png", 25);
+        assertThat(over.images()).isNull();
+        assertThat(over.match()).isNotNull();
+        assertThat(PageResourceImageService.parseIndex(new java.io.StringReader("{}"), "x", 100).images()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("kaynak sunucu sınırı: aynı host'tan dakikada 30 indirme (kişilerden bağımsız); 31. → HOST_LIMITED + bekleme, siteye gitmez, kişinin dakika sayısına girmez; pencere geçince yeniden")
+    void perUpstreamHostLimit() throws Exception {
+        long id = scanDone(1, "/gallery");
+        for (int i = 0; i < PageResourceImageService.IMAGES_PER_HOST_MINUTE; i++) {
+            assertThat(imageNow(1, id, base + "/dot.bmp", null, "u:h" + (i % 3)).outcome()).as("indirme " + i)
+                    .isEqualTo(ImageOutcome.OK);
+        }
+        int before = hitsOf("/dot.bmp");
+        int startsBefore = images.imageLimiter().recentStarts("u:h0");
+        ImageResult limited = imageNow(1, id, base + "/dot.bmp", null, "u:h0");
+        assertThat(limited.outcome()).isEqualTo(ImageOutcome.HOST_LIMITED);
+        assertThat(limited.retryAfterSeconds()).isBetween(1L, 60L);
+        assertThat(hitsOf("/dot.bmp")).as("siteye gidilmedi").isEqualTo(before);
+        assertThat(images.imageLimiter().recentStarts("u:h0")).as("kişinin hakkı geri alındı").isEqualTo(startsBefore);
+        assertThat(images.imageLimiter().freePodSlots()).isEqualTo(PageResourceImageService.IMAGES_PER_POD);
+        clock.addAndGet(61_000);
+        assertThat(imageNow(1, id, base + "/dot.bmp", null, "u:h0").outcome()).isEqualTo(ImageOutcome.OK);
+    }
+
+    @Test
+    @DisplayName("projeksiyon eşzamanlılığı: kişi başına 2, pod'da 4 — fazlası BUSY (bekleme 2 sn) ve sayılmaz; hak bırakılınca yeniden")
+    void projectionConcurrencyLimit() throws Exception {
+        long id = scanDone(5, "/proj");
+        ScanImageLimiter lim = images.projectionLimiter();
+        ScanImageLimiter.Ticket a = lim.tryAcquire("u:p").ticket();
+        ScanImageLimiter.Ticket b = lim.tryAcquire("u:p").ticket();
+        Projection busy = images.project(5, id, false, List.of(), "u:p");
+        assertThat(busy.outcome()).isEqualTo(ProjectionOutcome.BUSY);
+        assertThat(busy.retryAfterSeconds()).isEqualTo(PageResourceImageService.BUSY_RETRY_SECONDS);
+        assertThat(busy.data()).isNull();
+        assertThat(lim.recentStarts("u:p")).as("reddedilen sayılmaz").isEqualTo(2);
+        a.close();
+        assertThat(images.project(5, id, false, List.of(), "u:p").outcome()).isEqualTo(ProjectionOutcome.OK);
+        ScanImageLimiter.Ticket q = lim.tryAcquire("u:q").ticket();
+        ScanImageLimiter.Ticket r = lim.tryAcquire("u:r").ticket();
+        ScanImageLimiter.Ticket t = lim.tryAcquire("u:s").ticket();
+        Projection podBusy = images.project(5, id, false, List.of(), "u:t");
+        assertThat(podBusy.outcome()).as("pod dolu (b + q + r + s)").isEqualTo(ProjectionOutcome.BUSY);
+        assertThat(lim.recentStarts("u:t")).isZero();
+        b.close();
+        q.close();
+        r.close();
+        t.close();
+        assertThat(images.project(5, id, false, List.of(), "u:t").outcome()).isEqualTo(ProjectionOutcome.OK);
+    }
+
+    static String pem(X509Certificate c) throws Exception {
+        return "-----BEGIN CERTIFICATE-----\n"
+                + Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII)).encodeToString(c.getEncoded())
+                + "\n-----END CERTIFICATE-----\n";
+    }
+
+    @Test
+    @DisplayName("TLS: https son adımda zincir değerlendirilir (güvenilmeyen → false ama İNDİRİLİR, kurumsal pakette → true); https → http yönlendirmesi izlenmez (TLS_DOWNGRADE, http hedefe gidilmez); http son adım ve değerlendiricisiz → null")
+    void tlsVerdictAndDowngrade() throws Exception {
+        // Düz http son adım: başlık yok (galeri taraması ÖNCE — sonrası afterScan davranışlarını açar)
+        long plain = scanDone(1, "/gallery");
+        images.setTrustEvaluator(new TrustEvaluator(settings));
+        ImageResult http = download(1, plain, "/hero.png");
+        assertThat(http.outcome()).isEqualTo(ImageOutcome.OK);
+        assertThat(http.tlsVerified()).as("http son adım: başlık yok").isNull();
+        assertThat(images.tlsVerdict("https://localhost/x.png", null)).as("zincir okunamadı").isFalse();
+        assertThat(images.tlsVerdict("http://localhost/x.png", null)).isNull();
+
+        Security.addProvider(new BouncyCastleProvider());
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+        kpg.initialize(2048);
+        KeyPair kp = kpg.generateKeyPair();
+        X500Name name = new X500Name("CN=localhost, O=SiteMonitor Image Tool Test");
+        Instant now = Instant.now();
+        JcaX509v3CertificateBuilder cb = new JcaX509v3CertificateBuilder(name, BigInteger.valueOf(System.nanoTime()),
+                Date.from(now.minus(1, ChronoUnit.HOURS)), Date.from(now.plus(2, ChronoUnit.DAYS)), name, kp.getPublic());
+        cb.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+        cb.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, "localhost")));
+        X509Certificate cert = new JcaX509CertificateConverter().setProvider("BC")
+                .getCertificate(cb.build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").build(kp.getPrivate())));
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load(null, null);
+        ks.setKeyEntry("server", kp.getPrivate(), new char[0], new X509Certificate[]{cert});
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, new char[0]);
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(kmf.getKeyManagers(), null, new SecureRandom());
+
+        HttpsServer tls = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
+        tls.setHttpsConfigurator(new HttpsConfigurator(ctx));
+        tls.setExecutor(serverPool);
+        byte[] page = "<html><body><img src=\"/ok.png\"> <img src=\"/down.png\"></body></html>".getBytes(StandardCharsets.UTF_8);
+        tls.createContext("/", ex -> {
+            String path = ex.getRequestURI().getPath();
+            if ("/down.png".equals(path)) {
+                ex.getResponseHeaders().add("Location", base + "/hero.png");   // https → http
+                ex.sendResponseHeaders(302, -1);
+                ex.close();
+                return;
+            }
+            byte[] body = "/tls".equals(path) ? page : "/ok.png".equals(path) ? hero : null;
+            if (body == null) {
+                ex.sendResponseHeaders(404, -1);
+                ex.close();
+                return;
+            }
+            ex.getResponseHeaders().add("Content-Type", "/tls".equals(path) ? "text/html; charset=utf-8" : "image/png");
+            ex.sendResponseHeaders(200, body.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(body); }
+        });
+        tls.start();
+        try {
+            String tbase = "https://localhost:" + tls.getAddress().getPort();
+            long id = scanDoneAt(9, tbase + "/tls");
+            images.setTrustEvaluator(new TrustEvaluator(settings));
+
+            ImageResult untrusted = imageNow(9, id, tbase + "/ok.png", null, "u:t");
+            assertThat(untrusted.outcome()).as("güvenilmeyen zincir REDDEDİLMEZ").isEqualTo(ImageOutcome.OK);
+            assertThat(untrusted.body()).isEqualTo(hero);
+            assertThat(untrusted.tlsVerified()).isFalse();
+
+            caBundle = pem(cert);
+            assertThat(imageNow(9, id, tbase + "/ok.png", null, "u:t").tlsVerified()).as("kurumsal pakette").isTrue();
+
+            int heroHits = hitsOf("/hero.png");
+            ImageResult down = imageNow(9, id, tbase + "/down.png", null, "u:t");
+            assertThat(down.outcome()).isEqualTo(ImageOutcome.FETCH_FAILED);
+            assertThat(down.reason()).isEqualTo(PageResourceImageService.REASON_TLS_DOWNGRADE);
+            assertThat(down.httpStatus()).isNull();
+            assertThat(hitsOf("/hero.png")).as("şifresiz hedefe gidilmedi").isEqualTo(heroHits);
+
+            images.setTrustEvaluator(null);
+            assertThat(imageNow(9, id, tbase + "/ok.png", null, "u:t").tlsVerified()).as("değerlendirici yok").isNull();
+        } finally {
+            tls.stop(0);
+        }
     }
 }

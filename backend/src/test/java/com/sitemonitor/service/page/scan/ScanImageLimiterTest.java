@@ -84,6 +84,28 @@ class ScanImageLimiterTest {
     }
 
     @Test
+    @DisplayName("refund: kabul geri alınır — hak bırakılır ve dakika damgası silinir; ikinci çağrı / kapatılmış hakta çağrı damga silmez")
+    void refund() {
+        ScanImageLimiter l = new ScanImageLimiter(2, 1, 1, now::get);
+        ScanImageLimiter.Ticket t = l.tryAcquire("u:1").ticket();
+        assertThat(l.recentStarts("u:1")).isEqualTo(1);
+        t.refund();
+        assertThat(l.recentStarts("u:1")).isZero();
+        assertThat(l.freePodSlots()).isEqualTo(1);
+        t.refund();
+        t.close();
+        assertThat(l.freePodSlots()).as("çift bırakma yuvayı iki kez vermez").isEqualTo(1);
+        for (int i = 0; i < 5; i++) l.tryAcquire("u:1").ticket().refund();
+        assertThat(l.recentStarts("u:1")).as("geri alınanlar sayılmaz").isZero();
+        ScanImageLimiter.Ticket a = l.tryAcquire("u:1").ticket();
+        a.close();
+        l.tryAcquire("u:1").ticket().close();
+        assertThat(l.tryAcquire("u:1").allowed()).as("dakikada 2").isFalse();
+        a.refund();
+        assertThat(l.recentStarts("u:1")).as("kapatılmış hak geri alınamaz").isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("eşzamanlılık sınırı olmayan kullanım (projeksiyon): yalnız dakika penceresi; anahtarsız kişi tek kovada")
     void rateOnly() {
         ScanImageLimiter l = new ScanImageLimiter(2, 0, 0, now::get);

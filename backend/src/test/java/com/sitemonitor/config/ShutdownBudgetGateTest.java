@@ -466,4 +466,32 @@ class ShutdownBudgetGateTest {
         assertThat(spring).as("Spring bütçesi 3-4 ile değişmedi").isEqualTo(91);
         assertThat(preStop + spring).as("toplam 101 < 120").isEqualTo(101);
     }
+
+    /**
+     * Kaynak analizi görsel aracı (2026-11-14, inceleme): indirme servisinin kapanış dinleyicisi ERKEN sırada
+     * ({@code HIGHEST_PRECEDENCE + 5} — kiradan, aktarıcıdan, 3-3 / 3-4 işçilerinden ve dizin bakımından sonra, bildirim
+     * boşaltmasının ≤ 20 sn beklemesinden ÖNCE) yalnız bayrak kaldırır ve uçuştaki istemcileri {@code shutdownNow} ile keser:
+     * boşaltma beklerken yeni indirme başlamaz. Beklemez, veritabanına gitmez; {@code @PreDestroy} beklemesi yok.
+     */
+    @Test
+    @DisplayName("görsel aracı: indirme kapanış dinleyicisi +5 (boşaltmadan önce), yalnız bayrak + shutdownNow; yok etme beklemesi yok")
+    void resourceImageDownloadsStopBeforeTheNotifyDrain() throws Exception {
+        String svc = Files.readString(Path.of("src/main/java/com/sitemonitor/service/page/scan/PageResourceImageService.java"),
+                StandardCharsets.UTF_8);
+        int order = listenerOrder(com.sitemonitor.service.page.scan.PageResourceImageService.class, "pageResourceImageService");
+        assertThat(order).isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE + 5);
+        int lease = listenerOrder(com.sitemonitor.service.SchedulerService.class, "schedulerService");
+        int chunks = listenerOrder(com.sitemonitor.service.certsweep.CertChunkWorker.class, "certChunkWorker");
+        int drain = new org.springframework.context.event.ApplicationListenerMethodAdapter("notifyExecutorDrain",
+                NotifyExecutorDrain.class, NotifyExecutorDrain.class.getMethod("onContextClosed")).getOrder();
+        assertThat(order).as("kiradan ve parça işçisinden SONRA").isGreaterThan(lease).isGreaterThan(chunks);
+        assertThat(order).as("bildirim boşaltmasından ÖNCE").isLessThan(drain);
+
+        String closed = methodBody(svc, "public void onContextClosed(");
+        assertThat(closed).as("onContextClosed: bayrak + kesme").contains("stopping = true").contains("shutdownNow()");
+        assertThat(closed).as("onContextClosed: bekleme / veritabanı yok").doesNotContain(".join(")
+                .doesNotContain("awaitTermination(").doesNotContain("waitMs(").doesNotContain("sleep(")
+                .doesNotContain("jdbc.");
+        assertThat(svc).as("yok etme anında bekleme yok").doesNotContain("@PreDestroy").doesNotContain("awaitTermination(");
+    }
 }
