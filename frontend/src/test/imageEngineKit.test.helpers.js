@@ -210,8 +210,12 @@ export function resampleOracle(src, srcW, srcH, dstW, dstH) {
 // ── sahte dosyalar + sahte platform ───────────────────────────────────────────────────────────────────────────────
 const registry = new WeakMap()
 
-/** Gerçek başlıklı (SOI + JFIF + SOF0 + EOI) en küçük "JPEG" — pikselleri sahte platform kayıttan verir. */
-export function fakeJpegBlob(image, { padBytes = 0, exifTiff = null, icc = false } = {}) {
+/**
+ * Gerçek başlıklı (SOI + JFIF + SOF0 [+ SOS + entropi] + EOI) en küçük "JPEG" — pikselleri sahte platform kayıttan verir.
+ * `padBytes` ≥ 10 ise dosya büyüklüğü bir SOS bölümü + o kadar "entropi" baytıyla (EOI'den ÖNCE — gerçek JPEG gibi)
+ * sağlanır; toplam boyut başlık + padBytes kalır. (EOI'den SONRAKİ bayt dosya eki sayılır ve ayıklanır.)
+ */
+export function fakeJpegBlob(image, { padBytes = 0, exifTiff = null, icc = false, trailer = 0 } = {}) {
   const parts = [[0xff, 0xd8], [0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]]
   if (exifTiff) {
     const len = 2 + 6 + exifTiff.length
@@ -219,10 +223,13 @@ export function fakeJpegBlob(image, { padBytes = 0, exifTiff = null, icc = false
   }
   if (icc) parts.push([0xff, 0xe2, 0, 16, ...[...'ICC_PROFILE'].map((c) => c.charCodeAt(0)), 0, 1, 1])
   parts.push([0xff, 0xc0, 0, 11, 8, (image.height >> 8) & 255, image.height & 255, (image.width >> 8) & 255, image.width & 255, 1, 1, 0x11, 0])
-  parts.push([0xff, 0xd9])
+  const sos = padBytes >= 10
+  if (sos) parts.push([0xff, 0xda, 0, 8, 1, 1, 0, 0, 0x3f, 0])
   const head = Uint8Array.from(parts.flat())
-  const bytes = new Uint8Array(head.length + padBytes)
+  const body = sos ? padBytes - 10 : 0
+  const bytes = new Uint8Array(head.length + body + 2 + (sos ? 0 : padBytes) + trailer)
   bytes.set(head)
+  bytes.set([0xff, 0xd9], head.length + body)
   const blob = new Blob([bytes], { type: 'image/jpeg' })
   registry.set(blob, image)
   return blob

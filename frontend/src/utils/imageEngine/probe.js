@@ -131,6 +131,10 @@ function probeGif(b) {
       frames += 1
       if (frames >= 2) { out.animated = true; break }
       if (o + 10 > b.length) return out
+      // İlk karenin konum + ölçüsü: tarayıcı (Chromium) tuvali ilk kareye göre BÜYÜTÜR — mantıksal ekran 1×1 olup
+      // 7500×7500 kare taşıyan GIF küçük görünür ama dev çözülür (sıkıştırma bombası). Ölçü = ikisinin büyüğü.
+      out.width = Math.max(out.width, u16le(b, o + 1) + u16le(b, o + 5))
+      out.height = Math.max(out.height, u16le(b, o + 3) + u16le(b, o + 7))
       const lf = b[o + 9]
       o += 10 + ((lf & 0x80) ? 3 * (1 << ((lf & 7) + 1)) : 0) + 1     // + LZW en küçük kod boyu
       if (!skipSubBlocks()) return out

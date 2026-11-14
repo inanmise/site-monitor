@@ -32,7 +32,8 @@ function writeU32(out, o, v) {
 }
 
 /** Bir PNG parçası: uzunluk + tür + veri + CRC. `parts` veri dilimleri (kopyasız birleştirilir). */
-function chunk(type, parts) {
+/** Tek PNG parçası: uzunluk + tür + veri + CRC. `parts` ardışık yazılan veri parçalarıdır. */
+export function pngChunk(type, parts) {
   let len = 0
   for (const p of parts) len += p.length
   const out = new Uint8Array(12 + len)
@@ -55,9 +56,9 @@ export function textChunk(keyword, text) {
   if (latin) {
     const body = new Uint8Array(value.length)
     for (let i = 0; i < value.length; i++) body[i] = value.charCodeAt(i)
-    return chunk('tEXt', [kwBytes, new Uint8Array([0]), body])
+    return pngChunk('tEXt', [kwBytes, new Uint8Array([0]), body])
   }
-  return chunk('iTXt', [kwBytes, new Uint8Array([0, 0, 0, 0, 0]), new TextEncoder().encode(value)])
+  return pngChunk('iTXt', [kwBytes, new Uint8Array([0, 0, 0, 0, 0]), new TextEncoder().encode(value)])
 }
 
 /** Gerçek renk çıktısı için içerik: tümü opak mı, tümü gri mi. */
@@ -180,11 +181,11 @@ export async function encodePng(image, opts = {}) {
       plte[i * 3] = image.palette[i * 4]; plte[i * 3 + 1] = image.palette[i * 4 + 1]; plte[i * 3 + 2] = image.palette[i * 4 + 2]
       if (image.palette[i * 4 + 3] !== 255) alphaCount = i + 1
     }
-    extra.push(chunk('PLTE', [plte]))
+    extra.push(pngChunk('PLTE', [plte]))
     if (alphaCount > 0) {
       const trns = new Uint8Array(alphaCount)
       for (let i = 0; i < alphaCount; i++) trns[i] = image.palette[i * 4 + 3]
-      extra.push(chunk('tRNS', [trns]))
+      extra.push(pngChunk('tRNS', [trns]))
     }
   } else if (image.rgba) {
     const src = image.rgba
@@ -225,9 +226,9 @@ export async function encodePng(image, opts = {}) {
   writeU32(ihdr, 4, height)
   ihdr[8] = bitDepth
   ihdr[9] = colorType
-  const parts = [Uint8Array.from(SIGNATURE), chunk('IHDR', [ihdr]), ...extra]
+  const parts = [Uint8Array.from(SIGNATURE), pngChunk('IHDR', [ihdr]), ...extra]
   for (const t of opts.text || []) parts.push(textChunk(t.keyword, t.text))
-  parts.push(chunk('IDAT', best), chunk('IEND', []))
+  parts.push(pngChunk('IDAT', best), pngChunk('IEND', []))
   const bytes = new Uint8Array(totalLength(parts))
   let o = 0
   for (const p of parts) { bytes.set(p, o); o += p.length }

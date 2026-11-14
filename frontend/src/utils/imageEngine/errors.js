@@ -6,9 +6,13 @@ export const OUTPUT_FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'sma
 export const RESIZE_METHODS = Object.freeze(['none', 'scale', 'fit', 'cover', 'thumb'])
 export const ERROR_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED',
   'BROWSER_UNSUPPORTED', 'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
+// Sözleşmedeki 13 not + inceleme sonrası EKLENENLER (2026-11-14, sona eklenir, adlar kalıcı):
+//  METADATA_STRIPPED    — özgün dosya korundu (KEPT_ORIGINAL) ama üstverisi kayıpsız ayıklandı; görüntü baytları aynı
+//  ALPHA_COLORS_ROUNDED — kayıpsız PNG, ama yarı saydam piksellerin renk değerleri tarayıcı çözmesinde yuvarlandı
+//                         (görünüm aynı); benzerlik bu yüzden null
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED',
   'WEBP_UNAVAILABLE', 'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED',
-  'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED'])
+  'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
 
 /** Çıktı / girdi türü → MIME. */
 export const MIME = Object.freeze({ jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',

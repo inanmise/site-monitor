@@ -686,3 +686,189 @@ test.describe('görsel motoru — gerçek tarayıcı', () => {
     expect(r.after.type).toBe('png')
   })
 })
+
+test.describe('görsel motoru — bağımsız inceleme düzeltmeleri (2026-11-14, gerçek Chromium)', () => {
+  test('korunan ÖZGÜN dosyada GPS / EXIF / metin SIZMAZ: düşük kaliteli JPEG / WebP / PNG özgün kalır ama üstverisi ayıklanır; pikseller aynı', async ({ page }) => {
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, meta, pixels, pngInfo, sum } = window.__ie
+      const enc = (s) => new TextEncoder().encode(s)
+      const rational = (...pairs) => { const b = new Uint8Array(pairs.length * 8); const dv = new DataView(b.buffer); pairs.forEach(([n, d], i) => { dv.setUint32(i * 8, n, true); dv.setUint32(i * 8 + 4, d, true) }); return b }
+      const gps = [{ tag: 1, type: 2, count: 2, value: enc('N\u0000') }, { tag: 2, type: 5, count: 3, value: rational([41, 1], [0, 1], [4932, 100]) },
+        { tag: 3, type: 2, count: 2, value: enc('E\u0000') }, { tag: 4, type: 5, count: 3, value: rational([28, 1], [58, 1], [4212, 100]) }]
+      const bytesOf = async (b) => new Uint8Array(await b.arrayBuffer())
+      const maxDiff = async (x, y) => { const a = await pixels(x); const b = await pixels(y); let d = a.width === b.width && a.height === b.height ? 0 : 999; for (let i = 0; d < 999 && i < a.data.length; i++) d = Math.max(d, Math.abs(a.data[i] - b.data[i])); return d }
+      // İncelemedeki yeniden üretim: tuvalin q 0,45 JPEG'i + GPS EXIF, varsayılan seçenekler
+      const plain = await bytesOf(await gen.photo(800, 600, 'image/jpeg', 0.45))
+      const src = new Blob([meta.insertJpegExif(plain, meta.buildExif({ gps, creation: '2026:11:14 09:30:00' }))], { type: 'image/jpeg' })
+      const jpg = await engine.processImage(src, {})
+      const jOut = await bytesOf(jpg.blob)
+      // aynı dosya EXIF yönü 6 ile: yön KORUNUR (pikseller döndürülmedi), GPS gider
+      const rotSrc = new Blob([meta.insertJpegExif(plain, meta.buildExif({ gps, orientation: 6 }))], { type: 'image/jpeg' })
+      const rot = await engine.processImage(rotSrc, {})
+      const rotInfo = await engine.inspectImage(rot.blob)
+      // WebP: EXIF parçası + VP8X bayrağı
+      const wplain = await bytesOf(await gen.photo(800, 600, 'image/webp', 0.45))
+      const wsrc = new Blob([meta.insertWebpExif(wplain, meta.buildExif({ gps }))], { type: 'image/webp' })
+      const webp = await engine.processImage(wsrc, {})
+      const wOut = await bytesOf(webp.blob)
+      // PNG: motorun kendi paletli çıktısına konum metni eklenir → yeniden işlenince özgün kalır, metin gider
+      const first = await engine.processImage(await gen.logo(400, 260), {})
+      const fb = await bytesOf(first.blob)
+      const tEXt = (() => {
+        const data = enc('Location\u000041.0082,28.9784')
+        const type = enc('tEXt')
+        const all = new Uint8Array(12 + data.length)
+        new DataView(all.buffer).setUint32(0, data.length)
+        all.set(type, 4); all.set(data, 8)
+        let c = 0xffffffff
+        for (let i = 4; i < 8 + data.length; i++) { c ^= all[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)) }
+        new DataView(all.buffer).setUint32(8 + data.length, (c ^ 0xffffffff) >>> 0)
+        return all
+      })()
+      const withText = new Uint8Array(fb.length + tEXt.length)
+      withText.set(fb.subarray(0, 33)); withText.set(tEXt, 33); withText.set(fb.subarray(33), 33 + tEXt.length)
+      const pngSrc = new Blob([withText], { type: 'image/png' })
+      const png = await engine.processImage(pngSrc, {})
+      return {
+        src: src.size, jpg: sum(jpg), jMeta: meta.readMetadata(jOut, 'jpeg').present, jExif: meta.findJpegExif(jOut), jDiff: await maxDiff(src, jpg.blob),
+        jIsOriginal: jpg.blob === src,
+        rot: sum(rot), rotInfo, rotMeta: meta.readMetadata(await bytesOf(rot.blob), 'jpeg').present, rotDiff: await maxDiff(rotSrc, rot.blob),
+        wsrc: wsrc.size, webp: sum(webp), wExif: meta.findWebpExif(wOut), wFlags: wOut[20], wDiff: await maxDiff(wsrc, webp.blob),
+        pngSrc: pngSrc.size, png: sum(png), pngText: (await pngInfo(png.blob)).text, pngSrcText: (await pngInfo(pngSrc)).text, pngSame: png.blob.size === fb.length && (await bytesOf(png.blob)).every((v, i) => v === fb[i]),
+      }
+    })
+    console.log(`korunan özgün: JPEG ${r.src} B → ${r.jpg.bytes} B (EXIF ayıklandı), WebP ${r.wsrc} B → ${r.webp.bytes} B, PNG ${r.pngSrc} B → ${r.png.bytes} B`)
+    // JPEG: özgün korundu (kodlama küçültmedi) — ama GPS'siz yeni dosya
+    expect(r.jpg).toMatchObject({ kept: true, type: 'jpeg', similarity: 1, resized: false })
+    expect(r.jpg.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    expect(r.jIsOriginal).toBe(false)
+    expect(r.jpg.original.metadata).toEqual({ copyright: false, creation: true, location: true })
+    expect(r.jMeta).toEqual({ copyright: false, creation: false, location: false })
+    expect(r.jExif).toBeNull()
+    expect(r.jpg.bytes).toBe(r.jpg.blobSize)
+    expect(r.jpg.bytes).toBeLessThan(r.src)
+    expect(r.jpg.savingPct).toBeGreaterThan(0)
+    expect(r.jDiff).toBe(0)                                                    // görüntü verisi bayt bayt aynı
+    // yön korunur (dosya hâlâ dik görünür), GPS gider
+    expect(r.rot).toMatchObject({ kept: true, width: 600, height: 800 })
+    expect(r.rot.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    expect(r.rotInfo).toMatchObject({ width: 600, height: 800 })
+    expect(r.rotMeta.location).toBe(false)
+    expect(r.rotDiff).toBe(0)
+    // WebP
+    expect(r.webp).toMatchObject({ kept: true, type: 'webp' })
+    expect(r.webp.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    expect(r.wExif).toBeNull()
+    expect(r.wFlags & 0x08).toBe(0)                                            // VP8X EXIF bayrağı temizlendi
+    expect(r.wDiff).toBe(0)
+    // PNG
+    expect(r.pngSrcText).toEqual(['Location\u000041.0082,28.9784'])
+    expect(r.png).toMatchObject({ kept: true, type: 'png' })
+    expect(r.png.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    expect(r.pngText).toEqual([])
+    expect(r.pngSame).toBe(true)
+  })
+
+  test('GIF sıkıştırma bombası: Chromium tuvali ilk kareye göre büyütür → başlık da öyle okur; 1 × 1 ekranlı 7500 × 7500 kare ÇÖZÜLMEDEN reddedilir', async ({ page }) => {
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, failure, sum } = window.__ie
+      // olumlu denetim: 1 × 1 ekran, (10, 20)'de 100 × 50 kare — tarayıcı kaç piksel çözüyor?
+      const framed = gen.gifFramed(1, 1, 10, 20, 100, 50)
+      const bmp = await createImageBitmap(framed)
+      const decoded = [bmp.width, bmp.height]
+      bmp.close()
+      const info = await engine.inspectImage(framed)
+      const res = await engine.processImage(framed, { format: 'png' })
+      const bomb = gen.gifFramed(1, 1, 0, 0, 7500, 7500, false)
+      return {
+        decoded, info, res: sum(res), bombSize: bomb.size,
+        inspect: await failure(engine.inspectImage(bomb)),
+        preview: await failure(engine.decodeForPreview(bomb, { maxSide: 400 })),
+        process: await failure(engine.processImage(bomb, {})),
+      }
+    })
+    expect(r.decoded).toEqual([110, 70])                                       // Chromium: ekran değil, kare belirler
+    expect(r.info).toMatchObject({ type: 'gif', width: 110, height: 70 })
+    expect([r.res.width, r.res.height]).toEqual([110, 70])
+    expect(r.bombSize).toBeLessThan(100)
+    const tooMany = { code: 'TOO_MANY_PIXELS', params: { width: 7500, height: 7500, maxPixels: 50_000_000, maxSide: 30_000 } }
+    expect(r.inspect).toMatchObject(tooMany)
+    expect(r.preview).toMatchObject(tooMany)
+    expect(r.process).toMatchObject(tooMany)
+  })
+
+  test('kayıpsız PNG: yarı saydam pikselde "birebir" denmez (benzerlik null + ALPHA_COLORS_ROUNDED); opak görselde 1', async ({ page }) => {
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      return {
+        logo: sum(await engine.processImage(await gen.logo(300, 200), { format: 'png', quality: 100 })),
+        checker: sum(await engine.processImage(await gen.checker(64, 64), { format: 'png', quality: 100 })),
+      }
+    })
+    expect(r.logo.similarity).toBeNull()
+    expect(r.logo.notes).toContain('ALPHA_COLORS_ROUNDED')
+    expect(r.checker.similarity).toBe(1)
+    expect(r.checker.notes).not.toContain('ALPHA_COLORS_ROUNDED')
+  })
+
+  test('ESKİ PAKET (dağıtım sonrası): Worker betiği / çekirdek parçası sunucuda yoksa BROWSER_UNSUPPORTED stale_bundle; dosya duruyorsa normal yedek', async ({ page }) => {
+    // 1) Worker betiği 404, paket dosyası da yok → eski paket
+    await open(page)
+    await page.route('**/imageEngine/engine.worker.js*', (route) => route.fulfill({ status: 404, body: 'yok' }))
+    await page.route('**/imageEngine/index.js*', (route) => (route.request().method() === 'HEAD' ? route.fulfill({ status: 404 }) : route.continue()))
+    const stale = await page.evaluate(async () => {
+      const { engine, gen, failure } = window.__ie
+      const support = await engine.engineSupport()
+      return { support, err: await failure(engine.processImage(await gen.logo(40, 30), {})) }
+    })
+    expect(stale.support).toMatchObject({ worker: false, staleBundle: true })
+    expect(stale.err).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // 2) yalnız Worker betiği yüklenemiyor (paket dosyası duruyor): eski paket DEĞİL — ana iş parçacığı yedeği çalışır
+    await open(page)
+    await page.route('**/imageEngine/engine.worker.js*', (route) => route.fulfill({ status: 404, body: 'yok' }))
+    const fallback = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const support = await engine.engineSupport()
+      return { support, res: sum(await engine.processImage(await gen.logo(40, 30), {})) }
+    })
+    expect(fallback.support).toEqual({ worker: false, webp: true })
+    expect(fallback.res.type).toBe('png')
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // 3) Worker'sız tarayıcıda çekirdek parçası yok + paket dosyası yok → eski paket
+    await open(page, '?noworker=1')
+    await page.route('**/imageEngine/core.js*', (route) => route.fulfill({ status: 404, body: 'yok' }))
+    await page.route('**/imageEngine/index.js*', (route) => (route.request().method() === 'HEAD' ? route.fulfill({ status: 404 }) : route.continue()))
+    const inline = await page.evaluate(async () => {
+      const { engine, gen, failure } = window.__ie
+      const support = await engine.engineSupport()
+      return { support, err: await failure(engine.processImage(await gen.logo(40, 30), {})) }
+    })
+    expect(inline.support).toMatchObject({ worker: false, staleBundle: true })
+    expect(inline.err).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+  })
+
+  test('Worker yokken PNG paleti + benzerlik ölçümü parçalı: büyük görselde ana iş parçacığı uzun süre kilitlenmez', async ({ page }) => {
+    await open(page, '?noworker=1')
+    const r = await page.evaluate(async () => {
+      const { engine, gen, heartbeat, sum } = window.__ie
+      const src = await gen.photo(1700, 1300, 'image/png')                     // 2,2 MP, çok renkli: palet tasarımı + kovalama + SSIM
+      const hb = heartbeat()
+      const t0 = performance.now()
+      const res = await engine.processImage(src, { format: 'png', quality: 'auto' })
+      const ms = performance.now() - t0
+      return { res: sum(res), beat: hb.stop(), ms }
+    })
+    console.log(`Worker yok, 1700×1300 PNG (palet ${r.res.colors ?? 'gerçek renk'}): ${Math.round(r.ms)} ms; ana iş parçacığının en uzun aralığı ${Math.round(r.beat.worst)} ms`)
+    expect(r.res.type).toBe('png')
+    expect(r.beat.beats).toBeGreaterThan(10)
+    // Yerelde parçalı ≈ 0,25 sn, parçasız ≈ 0,5 sn en uzun aralık; CI (2 vCPU) birkaç kat yavaş — sınır geniş tutulur.
+    // Ayırt edici kapı birim testtedir (imageEngineCooperative.test.js: bekleme sayısı + birebir aynı sonuç).
+    expect(r.beat.worst).toBeLessThan(1200)
+  })
+})

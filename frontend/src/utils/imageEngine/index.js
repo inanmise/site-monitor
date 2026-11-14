@@ -9,9 +9,14 @@
 //
 // İş kuyruğu: Worker başına aynı anda TEK iş; sıradakiler bekler. İptal (`signal`) çalışan işte Worker'ı SONLANDIRIR
 // (iş anında kesilir; bir sonraki iş için yenisi açılır), bekleyen işi kuyruktan çıkarır → EngineError('CANCELLED').
+//
+// Eski paket (dağıtım sonrası): Worker betiği ya da çekirdek parçası artık sunucuda yoksa (açık sekme, yeni sürüm)
+// hata BROWSER_UNSUPPORTED { reason: 'stale_bundle' } olur — arayüz "sayfa güncellendi, yenileyin" diyebilsin. Ayrım:
+// Worker HİÇ ileti göndermeden düştüyse / çekirdek içe aktarılamadıysa bu paketin KENDİ dosyası (import.meta.url)
+// sunucuya sorulur: 404 / 410 → eski paket; erişilebiliyorsa gerçek Worker hatası (`worker_failed`).
 import { ENGINE_LIMITS, ERROR_CODES, EngineError, toEngineError } from './errors.js'
 import { normalizeOptions } from './options.js'
-import { probeBlob } from './probe.js'
+import { checkLimits, probeBlob } from './probe.js'
 import { decodeBitmap } from './platform.js'
 
 export { ENGINE_LIMITS, OUTPUT_FORMATS, RESIZE_METHODS, ERROR_CODES, NOTE_CODES, EngineError } from './errors.js'
@@ -29,9 +34,38 @@ let idleTimer = null
 let supportPromise = null
 let corePromise = null
 let inlineChain = Promise.resolve()
+let staleBundle = false
+/** İleti göndermiş (betiği yüklenmiş) Worker'lar. */
+const spoke = new WeakSet()
+const STALE_CHECK_TIMEOUT_MS = 5000
 
 const cancelled = () => new EngineError('CANCELLED')
-const loadCore = () => (corePromise ||= import('./core.js'))
+const staleError = () => new EngineError('BROWSER_UNSUPPORTED', { reason: 'stale_bundle' })
+function loadCore() {
+  if (!corePromise) {
+    // Başarısız içe aktarma bellekte tutulmaz (geçici ağ hatasından sonra yeniden denenebilsin)
+    corePromise = import('./core.js').catch((e) => { corePromise = null; throw e })
+  }
+  return corePromise
+}
+
+/**
+ * Bu paketin kendi dosyası sunucuda yok mu (404 / 410)? Evet ise sayfa eski sürümden kalmıştır. Ağ hatası, süre aşımı,
+ * başka durum kodu → hayır (bilinmiyorsa eski paket denmez). Süre sınırlı.
+ */
+async function bundleGone() {
+  if (typeof fetch !== 'function') return false
+  const ac = typeof AbortController === 'function' ? new AbortController() : null
+  const timer = setTimeout(() => { try { ac?.abort() } catch { /* yok */ } }, STALE_CHECK_TIMEOUT_MS)
+  try {
+    const res = await fetch(import.meta.url, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin', signal: ac?.signal })
+    return res?.status === 404 || res?.status === 410
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 function emit(onProgress, phase, fraction) {
   if (typeof onProgress !== 'function') return
@@ -66,6 +100,11 @@ function settle(job, fn) {
 
 function pump() {
   if (current) return
+  if (staleBundle && queue.length) {                       // eski paket: Worker açılmaz, sıradakiler hemen biter
+    const rest = queue
+    queue = []
+    rest.forEach((job) => settle(job, () => job.reject(staleError())))
+  }
   if (!queue.length) {
     clearTimeout(idleTimer)
     if (worker) idleTimer = setTimeout(killWorker, IDLE_TERMINATE_MS)      // boşta bellek tutmasın
@@ -105,6 +144,7 @@ function cancelJob(job) {
 }
 
 function onMessage(w, e) {
+  spoke.add(w)
   if (w !== worker) return
   const m = e?.data || {}
   const job = current
@@ -120,8 +160,17 @@ function onMessage(w, e) {
 function onWorkerError(w) {
   if (w !== worker) return
   const job = current
-  if (job) failCurrent(job, new EngineError('BROWSER_UNSUPPORTED', { reason: 'worker_failed' }))
-  else killWorker()
+  if (!job) { killWorker(); return }
+  if (spoke.has(w)) { failCurrent(job, new EngineError('BROWSER_UNSUPPORTED', { reason: 'worker_failed' })); return }
+  // Hiç ileti gelmeden düştü: betik yüklenemedi. Eski paket mi (dağıtım sonrası 404), gerçek bir Worker hatası mı?
+  current = null
+  killWorker()
+  clearTimeout(job.timer)
+  bundleGone().then((gone) => {
+    if (gone) staleBundle = true
+    settle(job, () => job.reject(gone ? staleError() : new EngineError('BROWSER_UNSUPPORTED', { reason: 'worker_failed' })))
+    pump()
+  })
 }
 
 function submit(kind, payload, { signal, onProgress, timeoutMs }) {
@@ -144,16 +193,26 @@ async function detectSupport() {
       if (s && s.ok) return { worker: true, webp: !!s.webp }
     } catch { /* Worker kurulamadı / yanıt vermedi: ana iş parçacığı */ }
   }
+  if (staleBundle) return { worker: false, webp: false, staleBundle: true }
   let webp = false
   try {
     const core = await loadCore()
     const s = await core.browserSupport()
     webp = !!(s.ok && s.webp)
-  } catch { /* çekirdek yüklenemedi: destek yok say */ }
+  } catch {
+    // çekirdek yüklenemedi: eski paket mi?
+    if (await bundleGone()) {
+      staleBundle = true
+      return { worker: false, webp: false, staleBundle: true }
+    }
+  }
   return { worker: false, webp }
 }
 
-/** Bu tarayıcı ne yapabiliyor (bir kez hesaplanır). `worker` = iş Web Worker'da koşar; `webp` = WebP KODLAYABİLİYOR. */
+/**
+ * Bu tarayıcı ne yapabiliyor (bir kez hesaplanır). `worker` = iş Web Worker'da koşar; `webp` = WebP KODLAYABİLİYOR.
+ * `staleBundle: true` (yalnız o durumda, EK alan) = sayfa eski sürümden kalmış, motor dosyaları sunucuda yok.
+ */
 export function engineSupport() {
   if (!supportPromise) supportPromise = detectSupport()
   return supportPromise
@@ -176,7 +235,13 @@ export async function inspectImage(blob) {
 function runInline(blob, opts, { signal, onProgress }) {
   const job = async () => {
     if (signal?.aborted) throw cancelled()
-    const core = await loadCore()
+    let core
+    try {
+      core = await loadCore()
+    } catch (e) {
+      if (await bundleGone()) { staleBundle = true; throw staleError() }
+      throw e
+    }
     return core.processInBrowser(blob, opts, { signal, onProgress, cooperative: true })
   }
   const p = inlineChain.then(job, job)
@@ -202,26 +267,30 @@ export async function processImage(blob, options, extra) {
     if (signal?.aborted) throw cancelled()
     const support = await engineSupport()
     if (signal?.aborted) throw cancelled()
+    if (staleBundle || support.staleBundle) throw staleError()
     const raw = support.worker
       ? await submit('process', { blob, options: opts }, { signal, onProgress, timeoutMs: JOB_TIMEOUT_MS })
       : await runInline(blob, opts, { signal, onProgress })
     if (signal?.aborted) throw cancelled()
-    // Özgün dosya korunduysa çağıranın verdiği Blob'un KENDİSİ döner (kopya yok)
-    return raw.kept ? { ...raw, blob } : raw
+    // Özgün dosya DEĞİŞMEDEN korunduysa çağıranın verdiği Blob'un KENDİSİ döner (kopya yok); üstverisi ayıklanmış
+    // özgün dosya (METADATA_STRIPPED) çekirdekten yeni Blob olarak gelir
+    return raw.kept && !raw.blob ? { ...raw, blob } : raw
   } catch (e) {
     throw toEngineError(e)
   }
 }
 
 /**
- * Önce / sonra görünümü için: Blob → ImageBitmap (EXIF yönü uygulanmış). Sınırlar çözmeden önce denetlenir.
- * `extra.maxSide` (isteğe bağlı): uzun kenarı bundan büyük görsel küçültülerek çözülür (önizleme belleği).
+ * Önce / sonra görünümü için: Blob → ImageBitmap (EXIF yönü uygulanmış). Sınırlar çözmeden ÖNCE başlıktan denetlenir
+ * (TOO_MANY_PIXELS); çözülen bitmap başlıktakinden büyükse kapatılır → TOO_MANY_PIXELS `reason: 'header_mismatch'`.
+ * `extra.maxSide` (isteğe bağlı): uzun kenarı bundan büyük görsel tarayıcıda küçültülerek çözülür (önizleme belleği).
  */
 export async function decodeForPreview(blob, extra) {
   const { signal, maxSide } = extra || {}
   try {
     if (signal?.aborted) throw cancelled()
     const info = await probeBlob(blob)
+    checkLimits(info.width, info.height)                    // başlıktaki ölçü sınırı aşıyorsa hiç çözülmez
     if (signal?.aborted) throw cancelled()
     const bitmap = await decodeBitmap(blob, info, maxSide)
     if (signal?.aborted) {
@@ -243,5 +312,7 @@ export function _resetForTests() {
   queue = []
   pending.forEach((job) => settle(job, () => job.reject(cancelled())))
   supportPromise = null
+  corePromise = null
   inlineChain = Promise.resolve()
+  staleBundle = false
 }

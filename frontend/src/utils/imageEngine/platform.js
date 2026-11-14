@@ -2,7 +2,7 @@
 // Worker'da OffscreenCanvas, ana iş parçacığı yedeğinde OffscreenCanvas yoksa DOM tuvali kullanılır. Her çözme /
 // kodlama sözü SÜREYLE sınırlıdır; bellek / tuval hatası "asılı kalma" değil EngineError olur; ImageBitmap ve tuvaller
 // işi biten yerde kapatılır / sıfırlanır (iOS Safari'de toplam tuval belleği sınırlı).
-import { EngineError, withTimeout } from './errors.js'
+import { ENGINE_LIMITS, EngineError, withTimeout } from './errors.js'
 
 const DECODE_TIMEOUT_MS = 45_000
 const ENCODE_TIMEOUT_MS = 90_000
@@ -221,12 +221,29 @@ export const browserPlatform = {
   },
 }
 
-/** Önizleme için çözme (ana iş parçacığı): EXIF yönü uygulanmış ImageBitmap; `maxSide` verilirse küçültülmüş. */
-export function decodeBitmap(blob, info, maxSide) {
+/**
+ * Önizleme için çözme (ana iş parçacığı): EXIF yönü uygulanmış ImageBitmap; `maxSide` verilirse küçültülmüş.
+ * Çözülen bitmap başlıkta okunandan (ya da istenen küçültmeden) BÜYÜKSE hemen kapatılır → TOO_MANY_PIXELS
+ * (`reason: 'header_mismatch'`): yalan başlıklı dosya önizlemede de dev tuval bırakmaz. Alan ve uzun kenar
+ * karşılaştırılır (yön uygulanınca en ve boy yer değiştirebilir).
+ */
+export async function decodeBitmap(blob, info, maxSide) {
   let options
+  let expectW = info?.width > 0 ? info.width : 0
+  let expectH = info?.height > 0 ? info.height : 0
   if (maxSide && info && Math.max(info.width, info.height) > maxSide) {
     const f = maxSide / Math.max(info.width, info.height)
     options = { resizeWidth: Math.max(1, Math.round(info.width * f)), resizeHeight: Math.max(1, Math.round(info.height * f)), resizeQuality: 'high' }
+    expectW = options.resizeWidth
+    expectH = options.resizeHeight
   }
-  return bitmapOf(blob, options)
+  const bitmap = await bitmapOf(blob, options)
+  const w = bitmap.width
+  const h = bitmap.height
+  if (w * h > expectW * expectH || Math.max(w, h) > Math.max(expectW, expectH)) {
+    try { bitmap.close?.() } catch { /* yok */ }
+    throw new EngineError('TOO_MANY_PIXELS', { width: w, height: h, maxPixels: ENGINE_LIMITS.maxPixels, maxSide: ENGINE_LIMITS.maxSide,
+      reason: 'header_mismatch' })
+  }
+  return bitmap
 }

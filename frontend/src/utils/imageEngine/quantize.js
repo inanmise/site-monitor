@@ -9,6 +9,8 @@
 // bir palet rengine, tam saydam piksel de görünür bir renge düşmez (saydam kenarda pus / hale olmaz).
 // Belirlenimci: aynı girdi → aynı palet ve aynı dizinler. Tüm döngüler girdi boyuyla ya da sabitlerle sınırlıdır.
 
+import { drive, runSteps } from './steps.js'
+
 const S_R = Math.sqrt(0.5)
 const S_G = 1
 const S_B = Math.sqrt(0.45)
@@ -42,15 +44,23 @@ function keyOf(r, g, b, a, bits) {
   return ((r & m) | ((g & m) << 8) | ((b & m) << 16) | (aq << 24)) >>> 0
 }
 
-function tryHistogram(data, n, bits) {
+/** Histogram parçası: kaç piksel (ana iş parçacığında parçalar arasında sayfaya nefes aldırılır). */
+const HIST_CHUNK = 1 << 18
+/** Palet tasarımında k-ortalama atamasının parça boyu (girdi sayısı). */
+const REFINE_CHUNK = 8192
+
+function histStart(data, n, bits) {
   const size = 1 << TABLE_BITS
-  const mask = size - 1
-  const keys = new Uint32Array(size)
-  const counts = new Uint32Array(size)
-  let used = 0
   const aligned = LITTLE_ENDIAN && data.byteOffset % 4 === 0 && data.buffer.byteLength >= data.byteOffset + n * 4
-  const px = aligned ? new Uint32Array(data.buffer, data.byteOffset, n) : null
-  for (let p = 0; p < n; p++) {
+  return { bits, mask: size - 1, keys: new Uint32Array(size), counts: new Uint32Array(size), used: 0,
+    px: aligned ? new Uint32Array(data.buffer, data.byteOffset, n) : null }
+}
+
+/** [from, to) piksellerini tabloya ekler (düz fonksiyon: sıcak döngü). Farklı renk sınırı aşılırsa false. */
+function histChunk(st, data, from, to) {
+  const { keys, counts, mask, px, bits } = st
+  let used = st.used
+  for (let p = from; p < to; p++) {
     let key
     if (px && bits === 0) {
       key = px[p]
@@ -62,7 +72,7 @@ function tryHistogram(data, n, bits) {
     let slot = hashKey(key, TABLE_BITS)
     for (;;) {
       if (counts[slot] === 0) {
-        if (used >= MAX_UNIQUE) return null
+        if (used >= MAX_UNIQUE) { st.used = used; return false }
         keys[slot] = key
         counts[slot] = 1
         used += 1
@@ -72,27 +82,43 @@ function tryHistogram(data, n, bits) {
       slot = (slot + 1) & mask
     }
   }
+  st.used = used
+  return true
+}
+
+function histFinish(st) {
+  const { keys, counts, used } = st
+  const size = keys.length
   const outKeys = new Uint32Array(used)
   const outCounts = new Uint32Array(used)
   for (let s = 0, o = 0; s < size; s++) if (counts[s] !== 0) { outKeys[o] = keys[s]; outCounts[o] = counts[s]; o += 1 }
-  return { keys: outKeys, counts: outCounts, unique: used, bits }
+  return { keys: outKeys, counts: outCounts, unique: used, bits: st.bits }
+}
+
+function* histogramSteps(data, pixelCount) {
+  for (let bits = 0; bits <= 4; bits++) {
+    const st = histStart(data, pixelCount, bits)
+    let ok = true
+    for (let p = 0; ok && p < pixelCount; p += HIST_CHUNK) {
+      ok = histChunk(st, data, p, Math.min(pixelCount, p + HIST_CHUNK))
+      yield
+    }
+    if (ok) return histFinish(st)
+  }
+  // 4 bit atılınca en çok 16^4 = 65 536 anahtar kalır: buraya gelinmez
+  throw new RangeError('histogram')
 }
 
 /** Renk histogramı. @returns {{ keys: Uint32Array, counts: Uint32Array, unique: number, bits: number }} */
 export function buildHistogram(data, pixelCount) {
-  for (let bits = 0; bits <= 4; bits++) {
-    const h = tryHistogram(data, pixelCount, bits)
-    if (h) return h
-  }
-  // 4 bit atılınca en çok 16^4 = 65 536 anahtar kalır: buraya gelinmez
-  throw new RangeError('histogram')
+  return runSteps(histogramSteps(data, pixelCount))
 }
 
 /**
  * Histogramı palet tasarımı girdilerine çevirir (gerekirse ≤ MAX_DESIGN_ENTRIES'e kovalar; kova rengi ağırlıklı
  * ortalamadır). Girdiler sınıfa göre sıralıdır: önce opak (a = 255), sonra yarı saydam; tam saydam ayrı bildirilir.
  */
-function designEntries(hist) {
+function* designSteps(hist) {
   let { keys, counts } = hist
   let n = keys.length
   let r = new Float64Array(n)
@@ -135,6 +161,7 @@ function designEntries(hist) {
       if (used > size * 0.7) { overflow = true; break }
       sr[slot] += r[i] * w[i]; sg[slot] += g[i] * w[i]; sb[slot] += b[i] * w[i]; sa[slot] += a[i] * w[i]; sw[slot] += w[i]
     }
+    yield
     if (overflow) continue
     const nr = new Float64Array(used)
     const ng = new Float64Array(used)
@@ -322,37 +349,47 @@ export function nearestBrute(cent, from, to, q0, q1, q2, q3) {
   return best
 }
 
+/** k-ortalama ataması: [from, to) girdileri en yakın merkeze; toplamlar `st`te (sıra değişmez → sonuç aynı). */
+function assignRange(st, coords, weights, cent, from, to) {
+  const { search, sums, ws, cFrom } = st
+  let sse = st.sse
+  for (let e = from; e < to; e++) {
+    const o = e * 4
+    const q0 = coords[o]
+    const q1 = coords[o + 1]
+    const q2 = coords[o + 2]
+    const q3 = coords[o + 3]
+    const ci = nearestIn(search, cent, q0, q1, q2, q3)
+    const c = ci * 4
+    const d0 = cent[c] - q0
+    const d1 = cent[c + 1] - q1
+    const d2 = cent[c + 2] - q2
+    const d3 = cent[c + 3] - q3
+    const w = weights[e]
+    sse += (d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3) * w
+    const j = (ci - cFrom) * 4
+    sums[j] += q0 * w; sums[j + 1] += q1 * w; sums[j + 2] += q2 * w; sums[j + 3] += q3 * w
+    ws[ci - cFrom] += w
+  }
+  st.sse = sse
+}
+
 /** Bir sınıfın (girdi aralığı [eFrom, eTo), merkez aralığı [cFrom, cTo)) k-ortalama iyileştirmesi; kare hata döner. */
-function refine(coords, weights, eFrom, eTo, cent, cFrom, cTo, passes) {
+function* refineSteps(coords, weights, eFrom, eTo, cent, cFrom, cTo, passes) {
   const k = cTo - cFrom
   if (k === 0 || eTo === eFrom) return 0
-  const sums = new Float64Array(k * 4)
-  const ws = new Float64Array(k)
-  let sse = 0
+  const st = { search: null, sums: new Float64Array(k * 4), ws: new Float64Array(k), cFrom, sse: 0 }
   for (let pass = 0; pass <= passes; pass++) {
-    const search = buildSearch(cent, cFrom, cTo)
-    sums.fill(0)
-    ws.fill(0)
-    sse = 0
-    for (let e = eFrom; e < eTo; e++) {
-      const o = e * 4
-      const q0 = coords[o]
-      const q1 = coords[o + 1]
-      const q2 = coords[o + 2]
-      const q3 = coords[o + 3]
-      const ci = nearestIn(search, cent, q0, q1, q2, q3)
-      const c = ci * 4
-      const d0 = cent[c] - q0
-      const d1 = cent[c + 1] - q1
-      const d2 = cent[c + 2] - q2
-      const d3 = cent[c + 3] - q3
-      const w = weights[e]
-      sse += (d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3) * w
-      const j = (ci - cFrom) * 4
-      sums[j] += q0 * w; sums[j + 1] += q1 * w; sums[j + 2] += q2 * w; sums[j + 3] += q3 * w
-      ws[ci - cFrom] += w
+    st.search = buildSearch(cent, cFrom, cTo)
+    st.sums.fill(0)
+    st.ws.fill(0)
+    st.sse = 0
+    for (let e = eFrom; e < eTo; e += REFINE_CHUNK) {
+      assignRange(st, coords, weights, cent, e, Math.min(eTo, e + REFINE_CHUNK))
+      yield
     }
     if (pass === passes) break                              // son tur yalnız hatayı ölçer
+    const { sums, ws } = st
     for (let i = 0; i < k; i++) {
       if (!(ws[i] > 0)) continue                             // boş küme: merkez yerinde kalır
       const c = (cFrom + i) * 4
@@ -360,7 +397,7 @@ function refine(coords, weights, eFrom, eTo, cent, cFrom, cTo, passes) {
       cent[c + 2] = sums[i * 4 + 2] / ws[i]; cent[c + 3] = sums[i * 4 + 3] / ws[i]
     }
   }
-  return sse
+  return st.sse
 }
 
 const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v))
@@ -389,8 +426,20 @@ function sortPalette(colors) {
  *   (piksel başına, 4 kanal toplamı; 0 = kayıpsız).
  */
 export function buildPalette(data, pixelCount, maxColors = 256) {
+  return runSteps(paletteSteps(data, pixelCount, maxColors))
+}
+
+/**
+ * `buildPalette`in adım adım sürümü: `tick` verilirse (ana iş parçacığı yedeği) her parçadan sonra beklenir — büyük
+ * görselde sayfa donmaz, iptal araya girer. `tick` yoksa eşzamanlı ile aynı. Sonuç birebir aynıdır.
+ */
+export function buildPaletteAsync(data, pixelCount, maxColors = 256, tick) {
+  return drive(paletteSteps(data, pixelCount, maxColors), tick)
+}
+
+function* paletteSteps(data, pixelCount, maxColors) {
   const limit = Math.max(2, Math.min(256, maxColors | 0))
-  const hist = buildHistogram(data, pixelCount)
+  const hist = yield* histogramSteps(data, pixelCount)
   if (hist.bits === 0 && hist.unique <= limit) {
     const colors = []
     for (let i = 0; i < hist.unique; i++) {
@@ -399,7 +448,7 @@ export function buildPalette(data, pixelCount, maxColors = 256) {
     }
     return finishPalette(sortPalette(colors), true, 0)
   }
-  const d = designEntries(hist)
+  const d = yield* designSteps(hist)
   const total = d.opaqueCount + d.semiCount
   const hasT = d.transparentWeight > 0
   let budget = limit - (hasT ? 1 : 0)
@@ -427,6 +476,7 @@ export function buildPalette(data, pixelCount, maxColors = 256) {
     const parts = splitBox(d.coords, splitW, order, boxes[pick])
     if (!parts) { boxes[pick].sse = 0; continue }
     boxes.splice(pick, 1, parts[0], parts[1])
+    if ((boxes.length & 7) === 0) yield
   }
   // Merkezler: opak kutular önce, yarı saydamlar sonra (girdi sırası da öyle)
   const isOpaqueBox = (bx) => !mixed && bx.hi <= d.opaqueCount
@@ -449,10 +499,10 @@ export function buildPalette(data, pixelCount, maxColors = 256) {
   for (const bx of ob) trueMean(bx, ci++)
   for (const bx of sb) trueMean(bx, ci++)
   let sse
-  if (mixed) sse = refine(d.coords, d.weights, 0, total, cent, 0, k, KMEANS_PASSES)
+  if (mixed) sse = yield* refineSteps(d.coords, d.weights, 0, total, cent, 0, k, KMEANS_PASSES)
   else {
-    sse = refine(d.coords, d.weights, 0, d.opaqueCount, cent, 0, ob.length, KMEANS_PASSES)
-      + refine(d.coords, d.weights, d.opaqueCount, total, cent, ob.length, k, KMEANS_PASSES)
+    sse = (yield* refineSteps(d.coords, d.weights, 0, d.opaqueCount, cent, 0, ob.length, KMEANS_PASSES))
+      + (yield* refineSteps(d.coords, d.weights, d.opaqueCount, total, cent, ob.length, k, KMEANS_PASSES))
   }
   const totalWeight = d.transparentWeight + d.weights.reduce((x, y) => x + y, 0)
   // Merkez → 8 bit RGBA; yinelenenler birleşir
