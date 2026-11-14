@@ -293,19 +293,28 @@ describe('HttpMonitorCard', () => {
     expect(onOpen).toHaveBeenCalledTimes(1)
     expect(slot(container, 'meta-team')).not.toBeNull()
     expect(slot(container, 'http-name').textContent).toBe('Corporate site')
+    // izleme adı sarar, tek satıra kırpılmaz (2026-11-14)
+    expect(slot(container, 'http-name').className).not.toMatch(/(^|\s)truncate(\s|$)/)
+    expect(slot(container, 'http-name').className).toContain('[overflow-wrap:anywhere]')
     expect(slot(container, 'http-interval').textContent).toBe('every 10 min')
     expect(container.querySelector('[data-slot="ping-tags"]').textContent).toMatch(/prod/)
   })
 
-  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, çip tetiği 40 px, uzun URL kırpılır, istek satırı sarar', () => {
+  it('telefon: ölçüler iki sütun, kopyala 40 px dokunma, çip tetiği 40 px, uzun URL SARAR (kesilmez), istek satırı sarar', () => {
     const longUrl = 'https://odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com/giris/kullanici?lang=tr&utm_source=kampanya'
     const { container } = renderCard({ url: longUrl, expected_status: '200' })
     expect(slot(container, 'monitor-metrics').className).toMatch(/(^|\s)grid-cols-2(\s|$)/)
     expect(screen.getByRole('button', { name: /— Copy URL$/ }).className).toContain('pointer-coarse:size-10')
     expect(screen.getByRole('button', { name: `${longUrl} — Expects 200` }).className).toContain('pointer-coarse:min-h-10')
+    // 2026-11-14 (kullanıcı kararı): uzun adres ve izleme adı kartta kesilmez — başlık düğmesi ve içteki metin sarar
     const title = container.querySelector('[data-monitor-open]')
-    expect(title.querySelector('.truncate')).not.toBeNull()
+    expect(title.className).toMatch(/(^|\s)whitespace-normal(\s|$)/)
+    expect(title.className).toContain('[&>span]:whitespace-normal')
+    expect(title.className).toContain('[&>span]:[overflow-wrap:anywhere]')
     expect(title.className).toMatch(/min-w-0/)
+    // başlık https şemasını yazmaz (yalnız düz http vurgulanır); host + yol + sorgu TAM durur, tam adres title'da
+    expect(title.textContent).toBe(longUrl.replace(/^https:\/\//, ''))
+    expect(title.querySelector('span').getAttribute('title')).toBe(longUrl)
     expect(slot(container, 'http-request').className).toMatch(/flex-wrap/)
     expect(slot(container, 'http-reason')).toBeNull()
   })

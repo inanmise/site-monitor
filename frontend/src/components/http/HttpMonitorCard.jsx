@@ -82,18 +82,19 @@ export default function HttpMonitorCard({
           )}
           <span className={CARD_LAYER}><MaintenanceBadge target={m.url} /></span>
         </MonitorCardTop>
-        {/* URL: host vurgulu, yol soluk, uzunsa kırpılır — tam metin başlığın title'ında ve detay penceresinde.
+        {/* URL: host vurgulu, yol soluk. Uzun adres SARAR (2026-11-14, kullanıcı kararı — adlar ve uzun metin kesilmez):
+            MonitorCardTitle'ın tek satır kırpması burada kapatılır; tam adres ayrıca `title`'da ve detay penceresinde.
             Kopyala düğmesi URL'in hemen yanında (köşedeki düğme izlemenin BAĞLANTISINI kopyalar). */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.url)} title={m.url}
-            className="mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[13.5px] font-medium tracking-normal">
+            className="mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[13.5px] font-medium tracking-normal whitespace-normal [&>span]:whitespace-normal [&>span]:[overflow-wrap:anywhere]">
             <HttpUrlText url={m.url} />
           </MonitorCardTitle>
           <CopyButton value={m.url} label={t('a11y.rowAction', m.url, t('keyword.card.copyUrl'))} copiedLabel={t('keyword.card.urlCopied')}
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
         {compact ? <CardCompactSub name={subName} nameSlot="http-name" monitor={m} />
-          : subName && <p data-slot="http-name" className="mt-0.5 truncate text-xs text-muted-foreground" title={subName}>{subName}</p>}
+          : subName && <p data-slot="http-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{subName}</p>}
       </MonitorCardHeader>
       <MonitorCardContent className={cn(!compact && 'mt-2.5', (compact || !hasMeta) && 'pb-2')}>
         {compact && (
