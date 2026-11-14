@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-14T00:39:39Z",
+  "generatedAt": "2026-11-14T01:53:34Z",
   "repo": "inanmise/site-monitor",
-  "count": 829,
+  "count": 830,
   "releases": [
+    {
+      "version": "20.197.4",
+      "tag": "v20.197.4",
+      "releasedAt": "2026-11-14T01:53:23Z",
+      "commit": "137e88dc72759e41909364a6d35056f3504c55b1",
+      "prevVersion": "20.197.3",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "137e88dc",
+          "subject": "tüm izleme kartlarında uzun başlık, ad ve kompakt alt satır sarar"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.197.3",
       "tag": "v20.197.3",
