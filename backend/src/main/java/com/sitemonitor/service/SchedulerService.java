@@ -7338,18 +7338,6 @@ public class SchedulerService {
         return baselineManual(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, m.getId(), respMs, measured, r);
     }
 
-    /**
-     * Sayfa Hızı'nın taban çizgisi SLOW kalemi (2026-11-14, madde 3) — ortak {@link #baselineSlowItem}'dan AYRI, çünkü bant
-     * YALNIZ yükleme süresi eşiğinin yerini alır: diğer eşikler (TTFB, boyut, istek, tür bütçeleri, asgari boyut) aynı kalemde
-     * alarm üretmeye devam eder.
-     * <ul>
-     *   <li>Bant değerlendirildi: yavaş = bant dışı VEYA başka eşik aşıldı.</li>
-     *   <li>Bant HENÜZ kuruluyor / bilinmiyor: başka eşik aşıldıysa kalem "down" (sabit eşik kanıttır); aşılmadıysa kalem YOK
-     *       (D-7: yükleme hakkında karar yok — açık bir bant alarmı "sağlıklı" sayılıp sahte kapanmasın).</li>
-     * </ul>
-     * Bant alarmının ölçüleri ({@code baseline_*}) yalnız bant DIŞINDAYKEN bağlama yazılır — TTFB yüzünden açılan alarm
-     * postası "dinamik tabanın dışında" demesin. Teyit anahtarı PAGESPEED_SLOW'da {@code detail}'siz (MonitoringOutageService).
-     */
     /** Bağlamı izlemeden kuran kısa biçim (birim testleri yansımayla çağırır). */
     private MonitoringOutageService.SweepItem pageSpeedBaselineSlowItem(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r) {
         Map<String, Object> ctx = new LinkedHashMap<>();
@@ -7365,6 +7353,18 @@ public class SchedulerService {
         return pageSpeedBaselineSlowItem(m, r, ctx);
     }
 
+    /**
+     * Sayfa Hızı'nın taban çizgisi SLOW kalemi (2026-11-14, madde 3) — ortak {@link #baselineSlowItem}'dan AYRI, çünkü bant
+     * YALNIZ yükleme süresi eşiğinin yerini alır: diğer eşikler (TTFB, boyut, istek, tür bütçeleri, asgari boyut) aynı kalemde
+     * alarm üretmeye devam eder.
+     * <ul>
+     *   <li>Bant değerlendirildi: yavaş = bant dışı VEYA başka eşik aşıldı.</li>
+     *   <li>Bant HENÜZ kuruluyor / bilinmiyor: başka eşik aşıldıysa kalem "down" (sabit eşik kanıttır); aşılmadıysa kalem YOK
+     *       (D-7: yükleme hakkında karar yok — açık bir bant alarmı "sağlıklı" sayılıp sahte kapanmasın).</li>
+     * </ul>
+     * Bant alarmının ölçüleri ({@code baseline_*}) yalnız bant DIŞINDAYKEN bağlama yazılır — TTFB yüzünden açılan alarm
+     * postası "dinamik tabanın dışında" demesin. Teyit anahtarı PAGESPEED_SLOW'da {@code detail}'siz (MonitoringOutageService).
+     */
     private MonitoringOutageService.SweepItem pageSpeedBaselineSlowItem(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r,
                                                                        Map<String, Object> baseCtx) {
         List<String> others = pageSpeedNonLoadBreaches(r);
