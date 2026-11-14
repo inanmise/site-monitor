@@ -78,6 +78,18 @@ function scrollParent(el) {
   return null
 }
 
+/**
+ * Öğeyi YALNIZ en yakın kaydırma kabında başa getirir (8 px pay) — `scrollIntoView` gibi ataları (pencere kutusu, sayfa)
+ * kaydırmaz. Kaydırılabilir kap yoksa hiçbir şey yapmaz.
+ */
+export function revealInScroller(el, pad = 8) {
+  const sp = el ? scrollParent(el) : null
+  if (!sp) return false
+  const delta = el.getBoundingClientRect().top - sp.getBoundingClientRect().top - pad
+  sp.scrollTop = Math.max(0, sp.scrollTop + delta)
+  return true
+}
+
 export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, active = true, onShow }) {
   const t = useT()
   const locale = useDateLocale()
@@ -566,7 +578,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       }
       // Hedefin bölüm başlığıyla birlikte görünmesi için: sayaç → nesne bölümünün başı; diğerleri kendisi
       const anchor = focusReq.target === 'count' ? (el.closest('[data-slot="prs-objects"]') || el) : el
-      try { anchor.scrollIntoView?.({ block: 'start', behavior: 'auto' }) } catch { /* eski tarayıcı */ }
+      // YALNIZ en yakın kaydırma kabı kaydırılır (2026-11-15 hata): `scrollIntoView` tüm ataları kaydırıyordu — pencere
+      // kutusu da dahil; gövde sonuna dayanan hedefte başlık ve eylem simgeleri yukarı itilip kayboluyordu.
+      revealInScroller(anchor)
       try { el.focus?.({ preventScroll: true }) } catch { el.focus?.() }
       finish()
     }

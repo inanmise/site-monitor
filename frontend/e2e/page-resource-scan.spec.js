@@ -341,6 +341,47 @@ for (const vp of VIEWPORTS) {
       await checker(page, dlg)('paylaşılan karşılaştırma')
     })
 
+    test('2026-11-15 hata: başlıktaki eylem simgeleri hep görünür — iç kaydırma pencere kutusunu kaydırmaz', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      await page.goto('/?tab=page&monitor=100&mtab=resources')
+      const dlg = page.locator(DIALOG)
+      const root = dlg.locator(ROOT)
+      await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      await root.locator('[data-slot="prs-start"]').click()
+      await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
+      const actions = dlg.locator('[data-slot="monitor-modal-actions"]')
+      await expect(actions).toBeInViewport()
+      // Kök neden: gövdedeki MUTLAK konumlu öğeler (sr-only metinler, görsel aracının `empty:sr-only` durum satırı) gövdeyle
+      // değil kutuyla konumlanır ve kutunun kaydırılabilir alanını uzatır. Kutu `overflow: hidden` iken böyle bir öğeye ya da
+      // gövde sonundaki bir öğeye yapılan kaydırma KUTUYU kaydırıyor, başlık + eylemler yukarı itilip kayboluyordu (kullanıcı
+      // geri kaydıramıyordu). `overflow: clip` ile kutu hiç kaymaz.
+      const boxScroll = await dlg.evaluate((box) => {
+        const body = box.querySelector('[data-slot="modal-shell-body"]')
+        const out = []
+        const abs = [...body.querySelectorAll('*')].filter((el) => getComputedStyle(el).position === 'absolute')
+        const target = abs[abs.length - 1]
+        if (target) { target.scrollIntoView({ block: 'start', behavior: 'auto' }); out.push(box.scrollTop) }
+        const flow = [...body.querySelectorAll('*')].filter((el) => getComputedStyle(el).position === 'static' && el.getBoundingClientRect().height > 0)
+        flow[flow.length - 1].scrollIntoView({ block: 'start', behavior: 'auto' })
+        out.push(box.scrollTop)
+        return { out, abs: abs.length }
+      })
+      expect(boxScroll.abs, `@${vp.name}: senaryo mutlak konumlu öğe içermeli`).toBeGreaterThan(0)
+      expect(boxScroll.out, `@${vp.name}: pencere kutusu kaydı — başlık görünmez olur`).toEqual(boxScroll.out.map(() => 0))
+      await expect(actions).toBeInViewport()
+      // Bileşenin kendi odak isteği de (pano → nesne listesi → pano) yalnız gövdeyi kaydırır
+      const count = root.locator('[data-slot="prs-show-objects"], [data-slot="prs-count"]').first()
+      if (await count.count()) {
+        await count.click()
+        await page.waitForTimeout(300)
+        expect(await dlg.evaluate((box) => box.scrollTop)).toBe(0)
+        await expect(actions).toBeInViewport()
+      }
+      // Kapat düğmesi tıklanabilir (görünür ve üstünde başka öğe yok)
+      await expect(actions.getByRole('button').last()).toBeVisible()
+    })
+
     test('r177: süren analiz — iptal onayı, "İptal ediliyor"; sığar', async ({ page }) => {
       test.setTimeout(90_000)
       const state = await routes(page, { runningForever: true })
