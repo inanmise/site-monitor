@@ -57,32 +57,73 @@ class PageSpeedRulesTest {
         }
 
         /**
-         * TTFB eşiği SUNUCU bekleme süresine bakar.
+         * TTFB eşiği GERÇEK kontrol isteğinin ilk baytına bakar (2026-11-14, madde 2 — bilinçli davranış değişikliği).
          *
-         * <p>Eski tek-parça {@code ttfbMs} DNS + TCP + TLS + yönlendirme zincirini de içeriyordu
-         * ve bağlantı havuzu sıcakken 41 ms, soğukken ~3 sn okunuyordu; eşik o rakama bakınca
-         * sunucu hiç yavaşlamamışken alarm üretiyordu.
+         * <p>Eskiden eşik ayrı faz probunun sunucu süresine bakıyordu; prob kimlik / özel başlık göndermiyor ve yönlendirmeyi
+         * izlemiyordu — kimlik isteyen sayfada 401'in, yönlenen sayfada 301'in süresini ölçüyordu. Artık faz probu eşiği ETKİLEMEZ.
          */
         @Test
-        @DisplayName("TTFB eşiği serverMs'e bakar; bağlantı kurma maliyeti alarm ÜRETMEZ")
-        void ttfbThresholdUsesServerPhase() {
+        @DisplayName("TTFB eşiği gerçek isteğin TTFB'sine bakar (faz probu eşiği etkilemez)")
+        void ttfbThresholdUsesRealRequest() {
             var m = withThresholds(0, 500, 0, 0);
 
-            // Toplam 2955 ms ama sunucu yalnız 53 ms düşündü → ihlal YOK.
-            assertThat(PageSpeedRules.evaluate(m, null, 2955, 53, null, null)).isEmpty();
-            // Sunucunun kendisi yavaşladıysa ihlal VAR.
-            assertThat(PageSpeedRules.evaluate(m, null, 2955, 501, null, null))
+            assertThat(PageSpeedRules.evaluate(m, null, 501, null, null))
+                    .containsExactly(PageSpeedRules.BREACH_TTFB);
+            assertThat(PageSpeedRules.evaluate(m, null, 500, null, null)).isEmpty();
+            // Ölçüm kaydının kendisi: prob sunucu süresi taşınmaz, yalnız gerçek TTFB
+            assertThat(PageSpeedRules.evaluate(m, PageSpeedRules.Measurement.basic(null, 2955, null, null)))
                     .containsExactly(PageSpeedRules.BREACH_TTFB);
         }
 
         @Test
-        @DisplayName("Faz ölçülemediyse eski ttfb'ye düşülür — eşik sessizce devre dışı KALMAZ")
-        void fallsBackToLegacyTtfbWhenPhaseMissing() {
-            var m = withThresholds(0, 500, 0, 0);
+        @DisplayName("Tür bütçeleri KB girilir, ölçüm bayt; kesin büyüktür; ölçülemeyen tür ihlal üretmez")
+        void typeBudgets() {
+            var m = withThresholds(null, null, null, null);
+            m.setMaxJsKb(100);
+            m.setMaxImgKb(200);
+            m.setMaxFontKb(50);
+            m.setMaxThirdPartyKb(300);
+            var at = new PageSpeedRules.Measurement(null, null, 1000L * 1024, null,
+                    100L * 1024, 200L * 1024, 50L * 1024, 300L * 1024, false);
+            assertThat(PageSpeedRules.evaluate(m, at)).isEmpty();   // tam eşik serbest
+            var over = new PageSpeedRules.Measurement(null, null, 1000L * 1024, null,
+                    100L * 1024 + 1, 200L * 1024 + 1, 50L * 1024 + 1, 300L * 1024 + 1, false);
+            assertThat(PageSpeedRules.evaluate(m, over)).containsExactly(PageSpeedRules.BREACH_JS, PageSpeedRules.BREACH_IMG,
+                    PageSpeedRules.BREACH_FONT, PageSpeedRules.BREACH_THIRD);
+            var unknown = new PageSpeedRules.Measurement(null, null, 1000L * 1024, null, null, null, null, null, false);
+            assertThat(PageSpeedRules.evaluate(m, unknown)).isEmpty();
+            // Alt sınır olan bayt bile aşıyorsa gerçek değer de aşar → ihlal geçerli
+            var lower = new PageSpeedRules.Measurement(null, null, 1000L * 1024, null, 101L * 1024, null, null, null, true);
+            assertThat(PageSpeedRules.evaluate(m, lower)).containsExactly(PageSpeedRules.BREACH_JS);
+        }
 
-            assertThat(PageSpeedRules.evaluate(m, null, 501, null, null, null))
-                    .containsExactly(PageSpeedRules.BREACH_TTFB);
-            assertThat(PageSpeedRules.evaluate(m, null, 500, null, null, null)).isEmpty();
+        @Test
+        @DisplayName("Asgari boyut: kesin küçükse ihlal (SLOW anahtarı MINSIZE); alt sınır toplamla karar verilmez")
+        void minimumSize() {
+            var m = withThresholds(null, null, null, null);
+            m.setMinPageKb(20);
+            assertThat(PageSpeedRules.evaluate(m, PageSpeedRules.Measurement.basic(null, null, 20L * 1024, null))).isEmpty();
+            assertThat(PageSpeedRules.evaluate(m, PageSpeedRules.Measurement.basic(null, null, 20L * 1024 - 1, null)))
+                    .containsExactly(PageSpeedRules.BREACH_MINSIZE);
+            var lower = new PageSpeedRules.Measurement(null, null, 1024L, null, null, null, null, null, true);
+            assertThat(PageSpeedRules.evaluate(m, lower)).isEmpty();
+            // 0 = eşik yok
+            m.setMinPageKb(0);
+            assertThat(PageSpeedRules.evaluate(m, PageSpeedRules.Measurement.basic(null, null, 1L, null))).isEmpty();
+        }
+
+        @Test
+        @DisplayName("Eşik tablosu: yalnız TANIMLI eşikler, ölçülen KB/ms, ihlal ve alt sınır bayrakları; eşik yoksa null")
+        void thresholdTable() {
+            var m = withThresholds(3000, 500, null, null);
+            m.setMaxJsKb(100);
+            m.setMinPageKb(10);
+            var x = new PageSpeedRules.Measurement(3500, 400, 50L * 1024, 12, 150L * 1024, null, null, null, true);
+            String t = PageSpeedRules.thresholdTable(m, x, List.of(PageSpeedRules.BREACH_LOAD, PageSpeedRules.BREACH_JS));
+            assertThat(t).isEqualTo("LOAD\t3000\t3500\t1\t0\nTTFB\t500\t400\t0\t0\nMINSIZE\t10\t50\t0\t1\nJS\t100\t150\t1\t1");
+            assertThat(PageSpeedRules.thresholdTable(withThresholds(null, null, null, null), x, List.of())).isNull();
+            assertThat(PageSpeedRules.breachDetail(m, List.of(PageSpeedRules.BREACH_JS, PageSpeedRules.BREACH_MINSIZE), x))
+                    .isEqualTo("JS:100>150,MINSIZE:10>50");
         }
 
         @Test

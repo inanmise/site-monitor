@@ -5736,7 +5736,10 @@ public class EscalationService {
                                  // ipuçlarını anlık görüntüden okur. "excerpt" BİLİNÇLİ YOK: sayfa alıntısı yalnız açılış postasında.
                                  "failure_detail", "hints",
                                  // kw-be2 Aşama 2: kural özeti (KEYWORD) + içerik değişimi özeti ve temelin zamanı (KEYWORD_CHANGED)
-                                 "rules_summary", "change_summary", "changed_lines", "baseline_taken_at");
+                                 "rules_summary", "change_summary", "changed_lines", "baseline_taken_at",
+                                 // Sayfa Hızı postası (2026-11-14, madde 1): eşik → ölçülen tablosu, süre kırılımı, kısmi ölçüm ve
+                                 // en ağır kaynaklar (heavy_rows sweep'te zaten hesaplanıyordu ama hiç çizilmiyordu; URL sorgusu maskeli).
+                                 "ps_thresholds", "ps_phases", "ps_partial", "heavy_rows", "heavy_total");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

@@ -257,31 +257,30 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
         return ev;
     }
 
-    /** Eşik metriği: değer, sınır, fark, birim — TTFB eşiği izlemeyle aynı SUNUCU süresine bakar (faz yoksa tek parça TTFB). */
+    /**
+     * Eşik metriği: değer, sınır, fark, birim — izlemenin kuralıyla AYNI değer (PageSpeedRules.measuredOf). 2026-11-14 (madde 2):
+     * TTFB eşiği artık GERÇEK isteğin ilk baytına bakar (faz probunun sunucu süresine değil); tür bütçeleri ve asgari boyut
+     * da desteklenir ({@code MINSIZE}'da "fark" eşiğin ALTINDAKİ miktardır).
+     */
     static Map<String, Object> metric(String metric, PageSpeedMonitor m, PageSpeedCheckerService.Result res) {
-        Long value;
-        Integer limit;
-        String unit;
-        switch (metric) {
-            case PageSpeedRules.BREACH_LOAD -> { value = res.totalMs(); limit = m.getMaxLoadMs(); unit = "ms"; }
-            case PageSpeedRules.BREACH_TTFB -> {
-                Integer server = res.phases() == null ? null : res.phases().serverMs();
-                value = server != null ? Long.valueOf(server.longValue()) : Long.valueOf(res.ttfbMs());
-                limit = m.getMaxTtfbMs();
-                unit = "ms";
-            }
-            case PageSpeedRules.BREACH_SIZE -> { value = res.totalBytes() / 1024; limit = m.getMaxPageKb(); unit = "KB"; }
-            case PageSpeedRules.BREACH_REQUESTS -> { value = (long) res.requestCount(); limit = m.getMaxRequests(); unit = "req"; }
-            default -> { return null; }
-        }
+        if (metric == null || !PageSpeedRules.BREACH_KEYS.contains(metric)) return null;
+        Long value = PageSpeedRules.measuredOf(res.measurement(), metric);
+        Integer limit = PageSpeedRules.thresholdOf(m, metric);
+        String unit = switch (metric) {
+            case PageSpeedRules.BREACH_LOAD, PageSpeedRules.BREACH_TTFB -> "ms";
+            case PageSpeedRules.BREACH_REQUESTS -> "req";
+            default -> "KB";
+        };
         boolean active = limit != null && limit > 0;
+        boolean min = PageSpeedRules.BREACH_MINSIZE.equals(metric);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("key", metric);
         out.put("value", value);
         out.put("limit", active ? limit : null);
         out.put("unit", unit);
         out.put("breached", res.breached() != null && res.breached().contains(metric));
-        out.put("over", active && value != null && value > limit ? value - limit : null);
+        out.put("over", !active || value == null ? null
+                : min ? (value < limit ? limit - value : null) : (value > limit ? value - limit : null));
         out.put("ratio", active && value != null ? Math.round(value * 100.0 / limit) : null);
         return out;
     }

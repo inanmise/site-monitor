@@ -79,6 +79,19 @@ final class EmailSamples {
                 svc.buildResolutionEmailText(domain, type, by, at, created, ctx), "ok");
     }
 
+    /** Sayfa Hızı alarm bağlamı (2026-11-14): eşik tablosu TSV'si, faz süreleri, kısmi ölçüm, en ağır kaynaklar. */
+    private static Map<String, Object> pageSpeedCtx() {
+        return map("monitor_name", "Ödeme portalı", "url", LONG_URL, "monitor_id", 61L, "response_ms", 6200, "ttfb_ms", 410,
+                "total_bytes", 3_480_000L, "request_count", 142, "breached_metrics", List.of("LOAD", "JS"),
+                "ps_thresholds", "LOAD\t3000\t6200\t1\t0\nTTFB\t800\t410\t0\t0\nSIZE\t4000\t3398\t0\t1\n"
+                        + "JS\t800\t1450\t1\t1\nTHIRD\t500\t\t0\t0",
+                "ps_phases", "dns\t12\nconnect\t28\ntls\t46\nserver\t310\ndownload\t180",
+                "ps_partial", true,
+                "heavy_rows", "JS\thttps://cdn.example.com/bundle/main.9f3a.js?v=*****\t820\nIMG\t" + LONG_URL + "/hero.jpg\t610\n"
+                        + "FONT\thttps://fonts.example.com/inter.woff2\t96",
+                "heavy_total", 142, "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 97L);
+    }
+
     private static Map<String, Object> map(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) m.put(String.valueOf(kv[i]), kv[i + 1]);
@@ -344,6 +357,10 @@ final class EmailSamples {
                 LONG_URL, "HIGH", "HTTP_SLOW", null,
                 map("url", LONG_URL, "http_status", 200, "response_ms", 4200, "threshold_ms", 2000, "monitor_id", 44,
                         "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 94L));
+        // 2026-11-14 (Sayfa Hızı 1. sürüm): eşik tablosu (her ihlal), kısmi ölçüm notu, süre kırılımı ve en ağır kaynaklar
+        alert("alert-pagespeed-slow", "[Site Monitor] YÜKSEK · Ödeme portalı · Sayfa Hızı Eşik Aşımı",
+                "YÜKSEK: " + LONG_URL + " sayfa hızı eşiği aştı — yükleme 6200 ms (eşik 3000 ms), JavaScript 1450 KB (bütçe 800 KB).",
+                LONG_URL, "HIGH", "PAGESPEED_SLOW", null, pageSpeedCtx());
         // 2026-11-05: alarm iletimi — sahip takımın postasının AYNISI, gövdenin başında iletim bandı (uzun AD takım adlarıyla)
         alert("alert-forwarded", "[Site Monitor] YÜKSEK · Ödeme portalı · HTTP Yavaş Yanıt",
                 "YÜKSEK: " + LONG_URL + " HTTP izlemesinde yanıt süresi eşiği aşıldı — 4200 ms (eşik 2000 ms).",
@@ -436,6 +453,9 @@ final class EmailSamples {
                 "Sistem (otomatik)", "2026-09-26T06:42:00", "2026-09-26T05:00:00",
                 map("response_ms", 8120, "baseline", true, "baseline_mean", 3900.0, "baseline_low", 3100.0, "baseline_high", 4700.0),
                 "Takım A", null);
+        // 2026-11-14 (Sayfa Hızı 1. sürüm): çözüm postası — alarm anının eşik tablosu, süre kırılımı, en ağır kaynakları
+        resolved("resolved-pagespeed", "[Site Monitor ✅ ÇÖZÜLDÜ] Ödeme portalı", LONG_URL, "PAGESPEED_SLOW", "HIGH",
+                "Sistem (otomatik)", "2026-09-26T06:42:00", "2026-09-26T05:00:00", pageSpeedCtx(), "Takım A", null);
         // 2026-10-31: veritabanı sorgu izlemesi çözümü — alarm anındaki ihlal + çözüm anındaki son çalıştırma
         Map<String, Object> dbRes = dbQueryCtx();
         dbRes.remove(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS);

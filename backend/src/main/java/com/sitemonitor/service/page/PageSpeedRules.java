@@ -28,6 +28,34 @@ public final class PageSpeedRules {
     public static final String BREACH_TTFB = "TTFB";
     public static final String BREACH_SIZE = "SIZE";
     public static final String BREACH_REQUESTS = "REQUESTS";
+    // 2026-11-14 (Sayfa Hızı zenginleştirme madde 11 / 12). Anahtarlar YALNIZ büyük harf: arayüzün delil ayrıştırıcısı
+    // ({@code KEY:eşik>ölçülen}) anahtarı [A-Z]+ ile okur; {@code breached_metrics} kolonu 60 karakter — dokuz anahtarın
+    // hepsi 49 karakter eder.
+    /** Sayfa beklenenden KÜÇÜK (asgari boyut eşiğinin altında). */
+    public static final String BREACH_MINSIZE = "MINSIZE";
+    public static final String BREACH_JS = "JS";
+    public static final String BREACH_IMG = "IMG";
+    public static final String BREACH_FONT = "FONT";
+    public static final String BREACH_THIRD = "THIRD";
+
+    /** Bütün anahtarlar, eşik tablosu / alarm postası / arayüz sırasıyla. */
+    public static final List<String> BREACH_KEYS = List.of(BREACH_LOAD, BREACH_TTFB, BREACH_SIZE, BREACH_REQUESTS,
+            BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD);
+
+    /**
+     * Bir ölçümün eşiklerle karşılaştırılan değerleri (2026-11-14). {@code ttfbMs} GERÇEK kontrol isteğinin ilk baytıdır
+     * (izlemenin UA / kimlik / başlık / yönlendirme / vekil kararıyla; yönlendirme zinciri dahil) — madde 2: ayrı faz probu
+     * eşiği artık ETKİLEMEZ. {@code lowerBound}: toplam / tür baytları ALT SINIR (bayt ya da süre tavanı, kaynak tavanı);
+     * üst eşik aşımı yine geçerli bir ihlaldir ama asgari boyut eşiği ALT SINIRLA değerlendirilmez (gerçek boyut daha
+     * büyük olabilir — sahte "sayfa küçük" alarmı olmasın). Tür baytı null = ölçülemedi (ihlal üretmez).
+     */
+    public record Measurement(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount,
+                              Long jsBytes, Long imgBytes, Long fontBytes, Long thirdPartyBytes, boolean lowerBound) {
+        /** Yalnız dört temel metrik (tür kırılımı yok). */
+        public static Measurement basic(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount) {
+            return new Measurement(loadMs, ttfbMs, totalBytes, requestCount, null, null, null, null, false);
+        }
+    }
 
     /**
      * Hangi eşikler aşıldı. Boş liste = ihlal yok.
@@ -43,37 +71,113 @@ public final class PageSpeedRules {
      */
     public static List<String> evaluate(PageSpeedMonitor m, Integer loadMs, Integer ttfbMs,
                                         Long totalBytes, Integer requestCount) {
-        return evaluate(m, loadMs, ttfbMs, null, totalBytes, requestCount);
+        return evaluate(m, Measurement.basic(loadMs, ttfbMs, totalBytes, requestCount));
     }
 
     /**
-     * @param serverMs SUNUCU bekleme süresi (faz kırılımından); {@code null} ise eski tek-parça
-     *                 {@code ttfbMs}'e düşülür.
+     * Bütün eşikler (2026-11-14). TTFB eşiği {@link Measurement#ttfbMs()}'e — GERÇEK isteğin ilk baytına — bakar (madde 2).
      *
-     * <p>TTFB eşiği neden {@code serverMs}'e bakar: eski {@code ttfbMs} DNS + TCP + TLS +
-     * yönlendirme zincirini de içeriyordu ve bağlantı havuzu sıcakken 41 ms, soğukken ~3 sn
-     * okunuyordu. Eşik o rakama bakınca sunucu hiç yavaşlamamışken alarm üretiyordu — ölçtüğü
-     * şey sunucunun değil BİZİM bağlantı kurma maliyetimizdi. Fazlar ölçülemediyse (eski kayıt,
-     * prob başarısız) eskiye düşmek zorunlu: eşiği sessizce devre dışı bırakmak, alarmı
-     * kaybetmek olurdu.
+     * <p><b>Eskiden</b> TTFB eşiği ayrı faz probunun "sunucu bekleme" süresine bakıyordu; o prob kendi UA'sıyla, kimlik /
+     * özel başlık göndermeden ve yönlendirme İZLEMEDEN tek bir GET atıyordu. Kimlik isteyen sayfada eşik 401'in, yönlenen
+     * sayfada 301'in süresini ölçüyordu — sayfanın kendisini değil. Artık eşik, kartta / geçmişte / "Şimdi Dene" önerisinde
+     * görünen TTFB ile AYNI sayıdır (tek TTFB). Faz kırılımı (DNS / bağlantı / TLS / sunucu) yalnız bilgi olarak kalır.
+     *
+     * <p>Kurallar: eşik null ya da ≤ 0 değerlendirilmez; karşılaştırma KESİN (tam eşik ihlal değil); ölçülemeyen (null)
+     * metrik ihlal üretmez; KB eşikleri bayta TEK yerde (burada) çevrilir (1 KB = 1024 bayt). Asgari boyut ({@code minPageKb})
+     * KESİN küçüktür ve toplam alt sınırsa değerlendirilmez.
      */
-    public static List<String> evaluate(PageSpeedMonitor m, Integer loadMs, Integer ttfbMs,
-                                        Integer serverMs, Long totalBytes, Integer requestCount) {
+    public static List<String> evaluate(PageSpeedMonitor m, Measurement x) {
         List<String> out = new ArrayList<>(4);
-        if (m == null) return out;
-        if (exceeds(loadMs, m.getMaxLoadMs())) out.add(BREACH_LOAD);
-        if (exceeds(serverMs != null ? serverMs : ttfbMs, m.getMaxTtfbMs())) out.add(BREACH_TTFB);
+        if (m == null || x == null) return out;
+        if (exceeds(x.loadMs(), m.getMaxLoadMs())) out.add(BREACH_LOAD);
+        if (exceeds(x.ttfbMs(), m.getMaxTtfbMs())) out.add(BREACH_TTFB);
         // Boyut eşiği KB cinsinden girilir, ölçüm bayt — çevrim TEK yerde olsun diye burada.
-        if (m.getMaxPageKb() != null && m.getMaxPageKb() > 0 && totalBytes != null
-                && totalBytes > m.getMaxPageKb() * 1024L) {
-            out.add(BREACH_SIZE);
-        }
-        if (exceeds(requestCount, m.getMaxRequests())) out.add(BREACH_REQUESTS);
+        if (exceedsKb(x.totalBytes(), m.getMaxPageKb())) out.add(BREACH_SIZE);
+        if (exceeds(x.requestCount(), m.getMaxRequests())) out.add(BREACH_REQUESTS);
+        if (belowKb(x.totalBytes(), m.getMinPageKb(), x.lowerBound())) out.add(BREACH_MINSIZE);
+        if (exceedsKb(x.jsBytes(), m.getMaxJsKb())) out.add(BREACH_JS);
+        if (exceedsKb(x.imgBytes(), m.getMaxImgKb())) out.add(BREACH_IMG);
+        if (exceedsKb(x.fontBytes(), m.getMaxFontKb())) out.add(BREACH_FONT);
+        if (exceedsKb(x.thirdPartyBytes(), m.getMaxThirdPartyKb())) out.add(BREACH_THIRD);
         return out;
     }
 
     private static boolean exceeds(Integer measured, Integer threshold) {
         return threshold != null && threshold > 0 && measured != null && measured > threshold;
+    }
+
+    private static boolean exceedsKb(Long bytes, Integer thresholdKb) {
+        return thresholdKb != null && thresholdKb > 0 && bytes != null && bytes > thresholdKb * 1024L;
+    }
+
+    /** Asgari boyut: ölçülen KESİN küçükse ihlal; alt sınır olan toplamla karar verilmez (gerçeği daha büyük olabilir). */
+    private static boolean belowKb(Long bytes, Integer minKb, boolean lowerBound) {
+        return minKb != null && minKb > 0 && bytes != null && !lowerBound && bytes < minKb * 1024L;
+    }
+
+    /** Eşiğin (izlemenin şu anki ayarı) değeri — anahtarın birimiyle (ms / KB / adet); tanımlı değilse null. */
+    public static Integer thresholdOf(PageSpeedMonitor m, String key) {
+        if (m == null || key == null) return null;
+        Integer v = switch (key) {
+            case BREACH_LOAD -> m.getMaxLoadMs();
+            case BREACH_TTFB -> m.getMaxTtfbMs();
+            case BREACH_SIZE -> m.getMaxPageKb();
+            case BREACH_REQUESTS -> m.getMaxRequests();
+            case BREACH_MINSIZE -> m.getMinPageKb();
+            case BREACH_JS -> m.getMaxJsKb();
+            case BREACH_IMG -> m.getMaxImgKb();
+            case BREACH_FONT -> m.getMaxFontKb();
+            case BREACH_THIRD -> m.getMaxThirdPartyKb();
+            default -> null;
+        };
+        return v == null || v <= 0 ? null : v;
+    }
+
+    /** Ölçülen değer anahtarın birimiyle (ms / KB tam sayı / adet); ölçülemediyse null. */
+    public static Long measuredOf(Measurement x, String key) {
+        if (x == null || key == null) return null;
+        return switch (key) {
+            case BREACH_LOAD -> x.loadMs() == null ? null : x.loadMs().longValue();
+            case BREACH_TTFB -> x.ttfbMs() == null ? null : x.ttfbMs().longValue();
+            case BREACH_SIZE, BREACH_MINSIZE -> kbOf(x.totalBytes());
+            case BREACH_REQUESTS -> x.requestCount() == null ? null : x.requestCount().longValue();
+            case BREACH_JS -> kbOf(x.jsBytes());
+            case BREACH_IMG -> kbOf(x.imgBytes());
+            case BREACH_FONT -> kbOf(x.fontBytes());
+            case BREACH_THIRD -> kbOf(x.thirdPartyBytes());
+            default -> null;
+        };
+    }
+
+    private static Long kbOf(Long bytes) { return bytes == null ? null : bytes / 1024; }
+
+    /** Anahtarın değeri alt sınır mı (bayt metrikleri, toplam kısmi olduğunda) — postada / arayüzde "≥" ile gösterilir. */
+    public static boolean lowerBoundFor(Measurement x, String key) {
+        if (x == null || !x.lowerBound() || key == null) return false;
+        return switch (key) {
+            case BREACH_SIZE, BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Eşik TABLOSU (2026-11-14, madde 1 — alarm postası): TANIMLI her eşik için bir satır, TSV
+     * {@code ANAHTAR\teşik\tölçülen\tihlal(1|0)\talt-sınır(1|0)}. Ölçülemeyen değer boş bırakılır. {@code breached}
+     * kontrolün KENDİ kararıdır (ihlal delili ile aynı kaynak) — burada yeniden hesaplanmaz. Hiç eşik yoksa null.
+     */
+    public static String thresholdTable(PageSpeedMonitor m, Measurement x, List<String> breached) {
+        if (m == null) return null;
+        java.util.Set<String> b = breached == null ? java.util.Set.of() : new java.util.HashSet<>(breached);
+        StringBuilder sb = new StringBuilder();
+        for (String k : BREACH_KEYS) {
+            Integer th = thresholdOf(m, k);
+            if (th == null) continue;
+            Long v = measuredOf(x, k);
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(k).append('\t').append(th).append('\t').append(v == null ? "" : v).append('\t')
+              .append(b.contains(k) ? '1' : '0').append('\t').append(lowerBoundFor(x, k) ? '1' : '0');
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     /**
@@ -83,24 +187,25 @@ public final class PageSpeedRules {
      */
     public static String breachDetail(PageSpeedMonitor m, List<String> breaches, Integer loadMs,
                                       Integer ttfbMs, Long totalBytes, Integer requestCount) {
+        return breachDetail(m, breaches, Measurement.basic(loadMs, ttfbMs, totalBytes, requestCount));
+    }
+
+    /**
+     * İhlal delili, ölçüm anının değerleriyle (2026-11-14: dokuz anahtar). Biçim değişmedi: {@code ANAHTAR:eşik>ölçülen};
+     * ">" yalnız ayırıcıdır — asgari boyutta da "eşik → ölçülen" diye okunur ({@code MINSIZE:50>12}). KB anahtarları KB yazılır
+     * (bayt yazmak kullanıcıyı her seferinde bölmeye zorlardı).
+     */
+    public static String breachDetail(PageSpeedMonitor m, List<String> breaches, Measurement x) {
         if (m == null || breaches == null || breaches.isEmpty()) return null;
         List<String> parts = new ArrayList<>(breaches.size());
         for (String b : breaches) {
-            switch (b) {
-                case BREACH_LOAD     -> parts.add(pair(BREACH_LOAD, m.getMaxLoadMs(), loadMs));
-                case BREACH_TTFB     -> parts.add(pair(BREACH_TTFB, m.getMaxTtfbMs(), ttfbMs));
-                // Boyut eşiği KB girilir, ölçüm bayt: delil de KB cinsinden yazılır ki eşikle
-                // aynı birimde okunsun (bayt yazmak kullanıcıyı her seferinde bölmeye zorlardı).
-                case BREACH_SIZE     -> parts.add(pair(BREACH_SIZE, m.getMaxPageKb(),
-                        totalBytes == null ? null : (int) (totalBytes / 1024)));
-                case BREACH_REQUESTS -> parts.add(pair(BREACH_REQUESTS, m.getMaxRequests(), requestCount));
-                default              -> parts.add(b);
-            }
+            if (BREACH_KEYS.contains(b)) parts.add(pair(b, thresholdOf(m, b), measuredOf(x, b)));
+            else parts.add(b);
         }
         return String.join(",", parts);
     }
 
-    private static String pair(String key, Integer threshold, Integer measured) {
+    private static String pair(String key, Integer threshold, Long measured) {
         return key + ":" + (threshold == null ? "?" : threshold) + ">" + (measured == null ? "?" : measured);
     }
 

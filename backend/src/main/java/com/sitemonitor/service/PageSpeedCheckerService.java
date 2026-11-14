@@ -63,9 +63,31 @@ public class PageSpeedCheckerService {
                          boolean bytesTruncated,
                          List<String> breached, String error, List<Measured> resources,
                          HttpPhaseProbe.Phases phases, int skippedLazy,
-                         com.sitemonitor.service.failure.CheckFailure failure) {
+                         com.sitemonitor.service.failure.CheckFailure failure,
+                         boolean timeTruncated, TypeBreakdown breakdown) {
 
         public boolean reachable() { return "OK".equals(status) || "SLOW".equals(status); }
+
+        /** Süre tavanı yok, kırılım yok (2026-11-14 öncesi tam imza) — test ve geriye uyum. */
+        public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
+                      long totalBytes, int requestCount, int failedCount, boolean capped,
+                      boolean bytesTruncated, List<String> breached, String error, List<Measured> resources,
+                      HttpPhaseProbe.Phases phases, int skippedLazy,
+                      com.sitemonitor.service.failure.CheckFailure failure) {
+            this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
+                    breached, error, resources, phases, skippedLazy, failure, false, null);
+        }
+
+        /** Toplam / tür baytları ALT SINIR mı: bayt tavanı, süre tavanı ya da kaynak tavanı (madde 4). */
+        public boolean lowerBound() { return bytesTruncated || timeTruncated || capped; }
+
+        /** Eşik karşılaştırmasının girdisi — TTFB GERÇEK isteğin ilk baytı (madde 2). */
+        public PageSpeedRules.Measurement measurement() {
+            TypeBreakdown b = breakdown;
+            return new PageSpeedRules.Measurement((int) totalMs, (int) ttfbMs, totalBytes, requestCount,
+                    b == null ? null : b.jsBytes(), b == null ? null : b.imgBytes(), b == null ? null : b.fontBytes(),
+                    b == null ? null : b.thirdPartyBytes(), lowerBound());
+        }
 
         /** Nedensiz biçim (2026-10-05 öncesi tam imza) — ölçüm sonucu, test ve geriye uyum. */
         public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
@@ -83,6 +105,56 @@ public class PageSpeedCheckerService {
             this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount,
                     capped, bytesTruncated, breached, error, resources, HttpPhaseProbe.NONE, 0, null);
         }
+    }
+
+    /**
+     * Ölçümün tür kırılımı (2026-11-14, madde 9) — her kontrolde saklanır (pagespeed_checks). Bayt = ÖLÇÜLEN (telden); adet =
+     * sayfanın istediği (envanter; ölçülemeyen de sayılır — istek sayısıyla aynı kural). {@code htmlBytes} ana belge;
+     * img = IMG + FAVICON, other = IFRAME + OTHER. Birinci + üçüncü taraf = toplam bayt (ana belge birinci taraftır).
+     */
+    public record TypeBreakdown(long htmlBytes, long jsBytes, int jsCount, long cssBytes, int cssCount,
+                                long imgBytes, int imgCount, long fontBytes, int fontCount,
+                                long otherBytes, int otherCount, long firstPartyBytes, long thirdPartyBytes) {}
+
+    /** {@link #normalizeType} türünü kırılım kovasına indirger: js | css | img | font | other. */
+    public static String bucketOf(String type) {
+        return switch (normalizeType(type)) {
+            case "JS" -> "js";
+            case "CSS" -> "css";
+            case "IMG", "FAVICON" -> "img";
+            case "FONT" -> "font";
+            default -> "other";
+        };
+    }
+
+    /** Envanter (adet) + ölçülenler (bayt) + ana belge → kırılım. Saf. */
+    static TypeBreakdown breakdownOf(long htmlBytes, List<PageFetchCore.Resource> inventory, List<Measured> measured) {
+        long js = 0, css = 0, img = 0, font = 0, other = 0, third = 0;
+        int jsN = 0, cssN = 0, imgN = 0, fontN = 0, otherN = 0;
+        for (PageFetchCore.Resource r : inventory) {
+            switch (bucketOf(r.type())) {
+                case "js" -> jsN++;
+                case "css" -> cssN++;
+                case "img" -> imgN++;
+                case "font" -> fontN++;
+                default -> otherN++;
+            }
+        }
+        long total = htmlBytes;
+        for (Measured x : measured) {
+            long b = Math.max(0L, x.bytes());
+            total += b;
+            if (x.thirdParty()) third += b;
+            switch (bucketOf(x.type())) {
+                case "js" -> js += b;
+                case "css" -> css += b;
+                case "img" -> img += b;
+                case "font" -> font += b;
+                default -> other += b;
+            }
+        }
+        return new TypeBreakdown(htmlBytes, js, jsN, css, cssN, img, imgN, font, fontN, other, otherN,
+                total - third, third);
     }
 
     private final PageFetchCore core;
@@ -199,6 +271,8 @@ public class PageSpeedCheckerService {
 
         PageFetchCore.FetchOptions htmlOpts = PageFetchCore.FetchOptions
                 .body(timeoutMs, userAgent).withHeaders(headers).counting().withProxy(viaProxy);
+        // TTFB (madde 2): bu GERÇEK isteğin ilk baytı — izlemenin UA'sı, kimliği, özel başlıkları, vekil kararı ve yönlendirme
+        // zinciri dahil. Eşik, kart, geçmiş ve "Şimdi Dene" önerisi aynı sayıyı okur; faz probu yalnız bilgi verir.
         PageFetchCore.Fetch main = core.fetch(url, "GET", htmlOpts);
 
         if (main.blocked() || main.status() == 0 || main.status() >= 400 || main.body() == null) {
@@ -242,26 +316,32 @@ public class PageSpeedCheckerService {
         // bizim sınırımız, sayfanın davranışı değil. Envanterin kendi tavanı `capped` ile bildirilir.
         int requestCount = 1 + loadable.size();
         long totalMs = System.currentTimeMillis() - start;
+        TypeBreakdown breakdown = breakdownOf(main.bytes(), loadable, measured);
 
+        Result unrated = new Result("OK", main.status(), main.ttfbMs(), main.durationMs(), totalMs,
+                totalBytes, requestCount, failed, capped, bytesTruncated, List.of(), null, measured,
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown);
         List<String> breached = thresholds == null ? List.of()
-                : PageSpeedRules.evaluate(thresholds, (int) totalMs, (int) main.ttfbMs(),
-                        phases.serverMs(), totalBytes, requestCount);
+                : PageSpeedRules.evaluate(thresholds, unrated.measurement());
 
         // Eşik aşımı bir PERFORMANS olayıdır, kesinti değil: status SLOW, ok=true kalır.
         String status = breached.isEmpty() ? "OK" : "SLOW";
         return new Result(status, main.status(), main.ttfbMs(), main.durationMs(), totalMs,
                 totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured,
-                phases, inv.skippedLazy());
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown);
     }
 
-    /** Tartım sonucu: satırlar + toplam bayt bütçesinin dolup dolmadığı. */
-    private record Weighed(List<Measured> rows, boolean budgetExhausted) {}
+    /**
+     * Tartım sonucu: satırlar + toplam bayt bütçesinin dolup dolmadığı + DUVAR SAATİ tavanının ölçümü kesip kesmediği
+     * (madde 4: süre dolunca indirilmemiş kaynaklar sessizce atlanıyordu; toplam "tam" görünüyordu).
+     */
+    private record Weighed(List<Measured> rows, boolean budgetExhausted, boolean timeCut) {}
 
     /** Alt kaynakları sınırlı eşzamanlılıkla, deadline'a VE toplam bayt bütçesine saygılı tartar. */
     private Weighed weighAll(List<PageFetchCore.Resource> resources, String rootHost, int timeoutMs,
                              int concurrency, String userAgent, Map<String, String> headers, long deadline,
                              boolean viaProxy) {
-        if (resources.isEmpty()) return new Weighed(List.of(), false);
+        if (resources.isEmpty()) return new Weighed(List.of(), false, false);
         // Sayfa ve alt kaynaklar AYNI yoldan gider (Sayfa Bütünlüğü ile aynı sözleşme).
         PageFetchCore.FetchOptions opts = PageFetchCore.FetchOptions
                 .weigh(timeoutMs, userAgent).withHeaders(headers).withProxy(viaProxy);
@@ -270,6 +350,8 @@ public class PageSpeedCheckerService {
         // (500 × 10 MB = 5 GB). Tek pod'da bant genişliği ve CPU gerçek sınırlar.
         final long budget = maxTotalMeasuredBytes();
         java.util.concurrent.atomic.AtomicLong spent = new java.util.concurrent.atomic.AtomicLong();
+        // Süre tavanı bir kaynağı ATLATTI mı (kapıdan önce / kapıda / toplama döngüsünde) — madde 4.
+        java.util.concurrent.atomic.AtomicBoolean timeCut = new java.util.concurrent.atomic.AtomicBoolean();
         List<CompletableFuture<Measured>> futures = new ArrayList<>(resources.size());
         for (PageFetchCore.Resource r : resources) {
             futures.add(CompletableFuture.supplyAsync(() -> {
@@ -277,13 +359,15 @@ public class PageSpeedCheckerService {
                 // aşağıda, kapının İÇİNDE. supplyAsync tüm görevleri hemen kuyruğa attığı için
                 // yalnız burada bakmak bütçeyi ETKİSİZ bırakıyordu: hepsi henüz spent=0 iken
                 // geçip kapıda sıraya giriyor, sonra sırayla İNDİRİYORdu.
-                if (System.currentTimeMillis() > deadline || spent.get() >= budget) return null;
+                if (System.currentTimeMillis() > deadline) { timeCut.set(true); return null; }
+                if (spent.get() >= budget) return null;
                 try {
                     gate.acquire();
                     try {
                         // Kapının İÇİNDE, isteği atmadan hemen önce: en güncel harcamayı görür.
                         // Eşzamanlılık N ise en fazla N-1 kaynak tavanı aşabilir (sınırlı taşma).
-                        if (System.currentTimeMillis() > deadline || spent.get() >= budget) return null;
+                        if (System.currentTimeMillis() > deadline) { timeCut.set(true); return null; }
+                        if (spent.get() >= budget) return null;
                         Measured m = weighOne(r, rootHost, opts);
                         spent.addAndGet(m.bytes());
                         return m;
@@ -297,17 +381,18 @@ public class PageSpeedCheckerService {
         List<Measured> out = new ArrayList<>(resources.size());
         for (CompletableFuture<Measured> f : futures) {
             long remaining = deadline - System.currentTimeMillis();
-            if (remaining <= 0) break;   // deadline doldu → kalanları bırak (kısmi ama tutarlı ölçüm)
+            if (remaining <= 0) { timeCut.set(true); break; }   // deadline doldu → kalanları bırak (kısmi, İŞARETLİ)
             try {
                 Measured x = f.get(remaining, TimeUnit.MILLISECONDS);
                 if (x != null) out.add(x);
             } catch (java.util.concurrent.TimeoutException te) {
+                timeCut.set(true);
                 break;
             } catch (Exception e) {
                 /* bu kaynak düştü → atla, ölçümün geri kalanı geçerli */
             }
         }
-        return new Weighed(out, spent.get() >= budget);
+        return new Weighed(out, spent.get() >= budget, timeCut.get());
     }
 
     /**

@@ -33,16 +33,26 @@ public class MonitorSparklineService {
     public static final int MAX_HOURS = 24 * 7;
     static final int LAST_N = 5;
 
-    /** Tür → (kontrol tablosu, monitör tablosu, süre sütunu, hata ifadesi). Sütunlar Hibernate snake_case. */
-    record Kind(String table, String monitorTable, String msCol, String failExpr) {}
+    /**
+     * Tür → (kontrol tablosu, monitör tablosu, süre sütunu, hata ifadesi[, bütçe ihlali ifadesi]). Sütunlar Hibernate snake_case.
+     * {@code breachExpr} (yalnız Sayfa Hızı, 2026-11-14): ALINABİLEN kontrolün eşik aşımı — kullanılabilirliğe GİRMEZ, ayrı
+     * "bütçe uyumu" sayısı olarak döner ({@code breach}, {@code budget_pct}).
+     */
+    record Kind(String table, String monitorTable, String msCol, String failExpr, String breachExpr) {
+        Kind(String table, String monitorTable, String msCol, String failExpr) { this(table, monitorTable, msCol, failExpr, null); }
+    }
 
     /**
      * Hata ifadeleri KONTROLÜN KENDİ HÜKMÜNDEN okunur (DATA-1, 2026-10-22): {@code ok} / {@code open} sütunu — saatlik
      * özetler (izleme panosu, durum sayfası) da bunu sayar. Eskiden yalnız {@code error IS NOT NULL} sayılıyordu: HTTP
      * durum kodu uyuşmazlığı (503) ve anahtar kelime koşulu {@code error=NULL, ok=false} yazar → kart "%100 SLA", yeşil
      * son-5 gösteriyordu. {@code ok IS NULL} (sütundan önceki eski satır) için eski {@code error} kuralı yedektir. DNS:
-     * yalnız sorgu HATASI kesintidir — planlı kayıt değişikliği ({@code changed}) kesinti DEĞİLDİR. Sayfa Hızı'nda eşik
-     * aşımı kartın "sorunlu" saydığı durum olarak kalır (kart bunu gösterir; ok yalnız sayfanın alınıp alınamadığıdır).
+     * yalnız sorgu HATASI kesintidir — planlı kayıt değişikliği ({@code changed}) kesinti DEĞİLDİR.
+     *
+     * <p><b>Sayfa Hızı (2026-11-14, madde 5):</b> kullanılabilirlik = "sayfa alınabildi mi" ({@code ok}), DİĞER türlerle ve
+     * saatlik özetlerle / durum sayfasıyla / izleme panosuyla AYNI kural. Eskiden eşik aşımı da hata sayılıyordu: kartın SLA'sı
+     * düşük, panonun kullanılabilirliği yüksek görünüyordu. Eşik aşımı artık ayrı bir sayıdır ({@code breach}) ve kart onu
+     * "bütçe uyumu" diye gösterir.
      */
     static final Map<String, Kind> KINDS = new LinkedHashMap<>();
     static {
@@ -53,7 +63,9 @@ public class MonitorSparklineService {
         KINDS.put("keyword",   new Kind("keyword_results",  "keyword_monitors",   "response_ms", verdict("ok", "error IS NOT NULL")));
         KINDS.put("page",      new Kind("page_checks",      "page_monitors",      "response_ms", verdict("ok", "error IS NOT NULL")));
         KINDS.put("pagespeed", new Kind("pagespeed_checks", "pagespeed_monitors", "response_ms",
-                "CASE WHEN ok = FALSE OR error_message IS NOT NULL OR (breached_metrics IS NOT NULL AND breached_metrics <> '') THEN 1 ELSE 0 END"));
+                verdict("ok", "error_message IS NOT NULL"),
+                "CASE WHEN " + verdict("ok", "error_message IS NOT NULL") + " = 1 THEN 0"
+                        + " WHEN breached_metrics IS NOT NULL AND breached_metrics <> '' THEN 1 ELSE 0 END"));
         KINDS.put("scripted",  new Kind("scripted_checks",  "scripted_monitors",  "duration_ms",
                 verdict("ok", "error IS NOT NULL OR exit_code <> 0 OR checks_failed > 0")));
         // Veritabanı sorgusu (2026-10-31): kesinti YALNIZ sorgunun çalıştırılamaması (ok = FALSE). Kural ihlali (status
@@ -351,13 +363,16 @@ public class MonitorSparklineService {
 
         Map<Long, Map<String, Object>> out = new LinkedHashMap<>();
         if (ids.isEmpty()) return out;
+        boolean budget = k.breachExpr() != null;   // Sayfa Hızı: ayrı bütçe uyumu sayısı (madde 5)
         for (Long id : ids) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("n", 0); m.put("fail", 0); m.put("up_pct", null); m.put("bad_hours", 0);
+            if (budget) { m.put("breach", 0); m.put("budget_pct", null); }
             List<Map<String, Object>> wl = new ArrayList<>();
             for (int w : wins) {
                 Map<String, Object> wm = new LinkedHashMap<>();
                 wm.put("days", w); wm.put("n", 0); wm.put("fail", 0); wm.put("up_pct", null); wm.put("bad_hours", 0);
+                if (budget) { wm.put("breach", 0); wm.put("budget_pct", null); }
                 wm.put("slots", new ArrayList<Map<String, Object>>());
                 wl.add(wm);
             }
@@ -366,25 +381,34 @@ public class MonitorSparklineService {
         }
 
         // Adet / hata — tüm pencere + her dönem tek geçişte. Parametre sırası: select listesindeki dönem ?'leri, sonra WHERE.
+        // Bütçe ihlali (yalnız breachExpr'li tür) her sütun grubunun SONUNA eklenir: [n, fail, (breach)] × (tüm, dönemler).
+        int stride = budget ? 3 : 2;
         StringBuilder sql = new StringBuilder("SELECT monitor_id, COUNT(*), SUM(fail)");
+        if (budget) sql.append(", SUM(breach)");
         List<Object> args = new ArrayList<>();
         for (String wf : winFrom) {
             sql.append(", SUM(CASE WHEN checked_at >= ? THEN 1 ELSE 0 END), SUM(CASE WHEN checked_at >= ? THEN fail ELSE 0 END)");
             args.add(wf); args.add(wf);
+            if (budget) { sql.append(", SUM(CASE WHEN checked_at >= ? THEN breach ELSE 0 END)"); args.add(wf); }
         }
         IdFilter f = IdFilter.of(ids, restrict);   // O-7: görünür kümeyle daralt
-        sql.append(" FROM (SELECT monitor_id, checked_at, ").append(k.failExpr()).append(" AS fail FROM ").append(k.table())
+        sql.append(" FROM (SELECT monitor_id, checked_at, ").append(k.failExpr()).append(" AS fail");
+        if (budget) sql.append(", ").append(k.breachExpr()).append(" AS breach");
+        sql.append(" FROM ").append(k.table())
            .append(" WHERE checked_at >= ?").append(f.sql()).append(") t GROUP BY monitor_id");
         args.add(from);
         args.addAll(f.args());
+        int head = budget ? 5 : 4;   // pencere sütunlarının başladığı indeks (1 tabanlı)
         jdbc.query(sql.toString(), rs -> {
             Map<String, Object> m = out.get(rs.getLong(1));
             if (m == null) return;
             m.put("n", rs.getInt(2)); m.put("fail", rs.getInt(3));
+            if (budget) m.put("breach", rs.getInt(4));
             List<Map<String, Object>> wl = windowsOf(m);
             for (int i = 0; i < wl.size(); i++) {
-                wl.get(i).put("n", rs.getInt(4 + 2 * i));
-                wl.get(i).put("fail", rs.getInt(5 + 2 * i));
+                wl.get(i).put("n", rs.getInt(head + stride * i));
+                wl.get(i).put("fail", rs.getInt(head + 1 + stride * i));
+                if (budget) wl.get(i).put("breach", rs.getInt(head + 2 + stride * i));
             }
         }, args.toArray());
 
@@ -421,9 +445,25 @@ public class MonitorSparklineService {
 
         for (Map<String, Object> m : out.values()) {
             m.put("up_pct", pct((Integer) m.get("n"), (Integer) m.get("fail")));
-            for (Map<String, Object> wm : windowsOf(m)) wm.put("up_pct", pct((Integer) wm.get("n"), (Integer) wm.get("fail")));
+            if (budget) m.put("budget_pct", budgetPct(m));
+            for (Map<String, Object> wm : windowsOf(m)) {
+                wm.put("up_pct", pct((Integer) wm.get("n"), (Integer) wm.get("fail")));
+                if (budget) wm.put("budget_pct", budgetPct(wm));
+            }
         }
         return out;
+    }
+
+    /**
+     * Bütçe uyumu (Sayfa Hızı, 2026-11-14): sayfanın ALINABİLDİĞİ kontrollerin kaçta kaçı tüm eşiklerin içinde kaldı (2 hane,
+     * ihlal varken 100 gösterilmez). Alınamayan kontrol bütçe hakkında bir şey söylemez — paydaya girmez; hiç alınamadıysa null
+     * (bilinmiyor, 0 değil).
+     */
+    static Double budgetPct(Map<String, Object> m) {
+        int loaded = (Integer) m.get("n") - (Integer) m.get("fail");
+        int breach = m.get("breach") instanceof Integer b ? b : 0;
+        if (loaded <= 0) return null;
+        return com.sitemonitor.util.AvailabilityMath.pct(loaded, Math.max(0, loaded - breach), 2);
     }
 
     /**

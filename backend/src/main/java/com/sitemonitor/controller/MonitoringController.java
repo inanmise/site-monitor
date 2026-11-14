@@ -5685,7 +5685,12 @@ public class MonitoringController {
             "userAgent", "sendDnt", "useProxy", "excludeTrackers", "trackerPatterns",
             "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc", "resourceConcurrency",
             "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
-            "tags", "notifyEmail", "notifyWebhook", "nocNotify", "nocGroupIds" };
+            "tags", "notifyEmail", "notifyWebhook", "nocNotify", "nocGroupIds",
+            // 2026-11-14 (Sayfa Hızı zenginleştirme, madde 7): alarm seviyesi ve bildirim grubu değişiklik geçmişine / denetime
+            // HİÇ girmiyordu (alan listesinde yoktu) — biri seviyeyi CRITICAL'e çekse geçmişte iz kalmıyordu.
+            "alertLevel", "notificationGroupId",
+            // Madde 11 / 12: tür bütçeleri ve asgari sayfa boyutu eşiği
+            "maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -5718,6 +5723,7 @@ public class MonitoringController {
         // Paylaşım takımına YENİ kayıt (inceleme 5): bildirim yönlendirmesi varsayılan dışında seçilemez — güncellemedeki
         // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageSpeedMonitor());
+        requirePageSpeedBudgets(body, null);   // tür bütçeleri + asgari boyut (2026-11-14): 400 alan hatası, yan etkiden ÖNCE
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         if (pageSpeedMonitorRepo.existsDuplicate(url, teamId, null))
@@ -5752,6 +5758,7 @@ public class MonitoringController {
         return pageSpeedMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
+            requirePageSpeedBudgets(body, m);   // tür bütçeleri + asgari boyut (2026-11-14): alarm kapatma / kayıttan ÖNCE
             if (body.get("name") != null) m.setName((String) body.get("name"));
             if (body.get("url")  != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -5856,7 +5863,26 @@ public class MonitoringController {
                 new CsvColumn<>("connect_ms", com.sitemonitor.model.PageSpeedCheck::getConnectMs),
                 new CsvColumn<>("tls_ms", com.sitemonitor.model.PageSpeedCheck::getTlsMs),
                 new CsvColumn<>("server_ms", com.sitemonitor.model.PageSpeedCheck::getServerMs),
-                new CsvColumn<>("error", com.sitemonitor.model.PageSpeedCheck::getErrorMessage)), response);
+                new CsvColumn<>("error", com.sitemonitor.model.PageSpeedCheck::getErrorMessage),
+                // 2026-11-14 (Sayfa Hızı zenginleştirme, madde 4 / 8 / 9): kısmi ölçüm bayrakları, gizli kalan ölçüler, tür kırılımı.
+                // Boş hücre = bilinmiyor (eski satır), 0 değil.
+                new CsvColumn<>("capped", com.sitemonitor.model.PageSpeedCheck::getCapped),
+                new CsvColumn<>("time_truncated", com.sitemonitor.model.PageSpeedCheck::getTimeTruncated),
+                new CsvColumn<>("html_ms", com.sitemonitor.model.PageSpeedCheck::getHtmlMs),
+                new CsvColumn<>("skipped_lazy", com.sitemonitor.model.PageSpeedCheck::getSkippedLazy),
+                new CsvColumn<>("html_bytes", com.sitemonitor.model.PageSpeedCheck::getHtmlBytes),
+                new CsvColumn<>("js_bytes", com.sitemonitor.model.PageSpeedCheck::getJsBytes),
+                new CsvColumn<>("js_count", com.sitemonitor.model.PageSpeedCheck::getJsCount),
+                new CsvColumn<>("css_bytes", com.sitemonitor.model.PageSpeedCheck::getCssBytes),
+                new CsvColumn<>("css_count", com.sitemonitor.model.PageSpeedCheck::getCssCount),
+                new CsvColumn<>("img_bytes", com.sitemonitor.model.PageSpeedCheck::getImgBytes),
+                new CsvColumn<>("img_count", com.sitemonitor.model.PageSpeedCheck::getImgCount),
+                new CsvColumn<>("font_bytes", com.sitemonitor.model.PageSpeedCheck::getFontBytes),
+                new CsvColumn<>("font_count", com.sitemonitor.model.PageSpeedCheck::getFontCount),
+                new CsvColumn<>("other_bytes", com.sitemonitor.model.PageSpeedCheck::getOtherBytes),
+                new CsvColumn<>("other_count", com.sitemonitor.model.PageSpeedCheck::getOtherCount),
+                new CsvColumn<>("first_party_bytes", com.sitemonitor.model.PageSpeedCheck::getFirstPartyBytes),
+                new CsvColumn<>("third_party_bytes", com.sitemonitor.model.PageSpeedCheck::getThirdPartyBytes)), response);
     }
 
     @PostMapping("/pagespeed/{id}/check")
@@ -5932,6 +5958,14 @@ public class MonitoringController {
         out.put("failed_count",   r.failedCount());
         out.put("capped",         r.capped());
         out.put("bytes_truncated", r.bytesTruncated());
+        // 2026-11-14: süre tavanı, faz kırılımı (bilgi), atlanan lazy kaynak ve tür kırılımı — deneme sonucu da tam görünsün
+        out.put("time_truncated", r.timeTruncated());
+        out.put("skipped_lazy",   r.skippedLazy());
+        out.put("dns_ms",         r.phases() == null ? null : r.phases().dnsMs());
+        out.put("connect_ms",     r.phases() == null ? null : r.phases().connectMs());
+        out.put("tls_ms",         r.phases() == null ? null : r.phases().tlsMs());
+        out.put("server_ms",      r.phases() == null ? null : r.phases().serverMs());
+        putBreakdown(out, r.breakdown());
         out.put("error",          r.error());
         List<Map<String, Object>> rows = new ArrayList<>();
         List<PageSpeedCheckerService.Measured> heavy = new ArrayList<>(r.resources());
@@ -5950,29 +5984,132 @@ public class MonitoringController {
     @GetMapping("/pagespeed/{id}/resources")
     public ResponseEntity<Map<String, Object>> pageSpeedResources(@PathVariable Long id,
             @RequestParam(required = false) Long checkId,
-            @RequestParam(defaultValue = "50") int limit, HttpSession session) {
+            @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer size,
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(required = false) String type, @RequestParam(required = false) String party,
+            @RequestParam(defaultValue = "false") boolean failed, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
         if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
         var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR: başka takımın kırılımı okunamaz
         if (deny != null) return deny;
-        int cap = Math.max(1, Math.min(limit, 500));
-        List<com.sitemonitor.model.PageSpeedResource> rows = checkId != null
-                ? pageSpeedResourceRepo.findByCheck(checkId, cap)
-                : pageSpeedResourceRepo.findHeaviest(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST, cap);
-        // Başka bir izlemenin checkId'si ile veri sızmasın: dönen satırlar bu izlemeye ait olmalı.
-        rows = rows.stream().filter(r -> id.equals(r.getMonitorId())).toList();
-        // Kirpma GORUNUR olmali: 50 satir, 300 kaynakli bir sayfanin TAMAMI sanilirsa kullanici
-        // agirligin nereden geldigini yanlis okur.
+        // Sunucu tarafı sayfalama (2026-11-14, madde 6): 50 satır tavanı kalktı. Eski istemci (page yok) ilk sayfayı `limit`
+        // boyunda alır — davranışı aynı. Sorgu izleme kimliğiyle sınırlı: başka izlemenin checkId'siyle satır / sayı sızmaz.
+        int pageSize = Math.max(1, Math.min(size != null ? size : limit, PAGESPEED_RES_PAGE_MAX));
+        int pageNo = Math.max(0, page == null ? 0 : page);
+        ResFilter flt = ResFilter.of(type, party, failed);
+        org.springframework.data.domain.Pageable pg = PageRequest.of(pageNo, pageSize);
+        var p = checkId != null
+                ? pageSpeedResourceRepo.checkPage(id, checkId, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)
+                : pageSpeedResourceRepo.latestPage(id, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg);
+        // Kirpma GORUNUR olmali: süzgeçsiz toplam (kırılımdaki tüm kaynaklar) + süzgeçli toplam ayrı ayrı döner.
         long total = checkId != null
                 ? pageSpeedResourceRepo.countByMonitorIdAndCheckId(id, checkId)
                 : pageSpeedResourceRepo.countByMonitorIdAndKeepReason(id, com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("resources", rows.stream().map(this::resourceToMap).toList());
+        out.put("resources", p.getContent().stream().filter(r -> id.equals(r.getMonitorId())).map(this::resourceToMap).toList());
         out.put("total", total);
+        out.put("filtered_total", p.getTotalElements());
+        out.put("page", p.getNumber());
+        out.put("size", pageSize);
+        out.put("facets", resourceFacets(checkId != null ? pageSpeedResourceRepo.checkFacets(id, checkId)
+                : pageSpeedResourceRepo.latestFacets(id)));
         out.put("breaches", pageSpeedResourceRepo.breachSnapshots(id, 20).stream()
                 .map(a -> Map.of("check_id", a[0], "checked_at", a[1])).toList());
         return ok(out);
+    }
+
+    /**
+     * Seçili ölçümün (son ölçüm ya da bir ihlal anı) TÜM kaynakları CSV olarak (2026-11-14, madde 6) — 1000'lik sayfalarla
+     * AKITILIR (bellekte tüm liste tutulmaz), satır sayısı ölçümün kendi kaynak tavanıyla sınırlı + {@value #PAGESPEED_RES_CSV_MAX}
+     * güvenlik tavanı. Sütunlar hücre kaçışlı (formül nötr). {@code truncated}: o kaynağın bayt sayımı tavanda kesildi (≥).
+     */
+    @GetMapping("/pagespeed/{id}/resources/export")
+    public ResponseEntity<?> pageSpeedResourcesCsv(@PathVariable Long id, @RequestParam(required = false) Long checkId,
+            @RequestParam(required = false) String type, @RequestParam(required = false) String party,
+            @RequestParam(defaultValue = "false") boolean failed,
+            HttpSession session, jakarta.servlet.http.HttpServletResponse response) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR
+        if (deny != null) return deny;
+        ResFilter flt = ResFilter.of(type, party, failed);
+        try {
+            response.setStatus(200);
+            response.setContentType("text/csv;charset=UTF-8");
+            response.setHeader(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"pagespeed-resources-"
+                    + id + (checkId != null ? "-" + checkId : "") + ".csv\"");
+            java.io.Writer w = new java.io.OutputStreamWriter(response.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8);
+            w.write(0xFEFF);
+            w.write(com.sitemonitor.util.Csv.row("url", "type", "bytes", "truncated", "duration_ms", "http_status",
+                    "third_party", "failed", "checked_at"));
+            int rows = 0;
+            for (int pno = 0; rows < PAGESPEED_RES_CSV_MAX; pno++) {
+                org.springframework.data.domain.Pageable pg = PageRequest.of(pno, 1000);
+                var chunk = (checkId != null
+                        ? pageSpeedResourceRepo.checkPage(id, checkId, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)
+                        : pageSpeedResourceRepo.latestPage(id, flt.allTypes(), flt.types(), flt.party(), flt.failed(), pg)).getContent();
+                if (chunk.isEmpty()) break;
+                for (com.sitemonitor.model.PageSpeedResource r : chunk) {
+                    if (!id.equals(r.getMonitorId())) continue;
+                    boolean f = r.getStatusCode() == null || r.getStatusCode() >= 400;
+                    w.write(com.sitemonitor.util.Csv.row(r.getUrl(), r.getType(), r.getBytes(), Boolean.TRUE.equals(r.getTruncated()),
+                            r.getDurationMs(), r.getStatusCode(), Boolean.TRUE.equals(r.getThirdParty()), f, r.getCheckedAt()));
+                    if (++rows >= PAGESPEED_RES_CSV_MAX) break;
+                }
+                if (chunk.size() < 1000) break;
+            }
+            w.flush();
+            return null;   // yanıt yazıldı
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("CSV yazımı başarısız", e);
+        }
+    }
+
+    /** Kaynak listesinin sayfa boyutu tavanı (arayüz 25 / 50 / 100 seçer). */
+    static final int PAGESPEED_RES_PAGE_MAX = 200;
+    /** CSV güvenlik tavanı — kaynak tavanı ayarının en büyük değeri (10000) kadar. */
+    static final int PAGESPEED_RES_CSV_MAX = 10_000;
+
+    /** Kaynak süzgeci: tür kovası (all|js|css|img|font|other), taraf (all|first|third), yalnız alınamayan. */
+    public record ResFilter(boolean allTypes, java.util.List<String> types, int party, boolean failed) {
+        public static ResFilter of(String type, String party, boolean failed) {
+            java.util.List<String> types = switch (type == null ? "" : type.toLowerCase(Locale.ROOT)) {
+                case "js" -> java.util.List.of("JS");
+                case "css" -> java.util.List.of("CSS");
+                case "img" -> java.util.List.of("IMG", "FAVICON");
+                case "font" -> java.util.List.of("FONT");
+                case "other" -> java.util.List.of("IFRAME", "OTHER");
+                default -> null;
+            };
+            int p = switch (party == null ? "" : party.toLowerCase(Locale.ROOT)) {
+                case "first" -> 1;
+                case "third" -> 2;
+                default -> 0;
+            };
+            // IN listesi asla boş geçilmez (bazı sürücüler "IN ()" sözdizimini reddeder); tümü seçiliyken bayrak kısa devre yapar.
+            return new ResFilter(types == null, types == null ? java.util.List.of("OTHER") : types, p, failed);
+        }
+    }
+
+    /** Gruplu sayaçlar → {type: {js, css, img, font, other}, party: {first, third}, failed}. */
+    private static Map<String, Object> resourceFacets(List<Object[]> rows) {
+        Map<String, Long> types = new LinkedHashMap<>();
+        for (String b : new String[]{"js", "css", "img", "font", "other"}) types.put(b, 0L);
+        long first = 0, third = 0, failedN = 0;
+        for (Object[] r : rows) {
+            long n = r[3] instanceof Number x ? x.longValue() : 0L;
+            String bucket = PageSpeedCheckerService.bucketOf(r[0] == null ? null : r[0].toString());
+            types.merge(bucket, n, Long::sum);
+            if (Boolean.TRUE.equals(r[1])) third += n; else first += n;
+            if (r[2] instanceof Number fv && fv.intValue() == 1) failedN += n;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("type", types);
+        out.put("party", Map.of("first", first, "third", third));
+        out.put("failed", failedN);
+        return out;
     }
 
     /**
@@ -6011,6 +6148,53 @@ public class MonitoringController {
         }
         Map<String, Object> out = new LinkedHashMap<>(buildResponseSeries(projected, range[0], range[1], false));
         out.put("metric", metric);
+        return ok(out);
+    }
+
+    /**
+     * Tür kırılımı zaman serisi (2026-11-14, madde 15): aralık genişliğine göre kovalanmış (dakika / 10 dk / saat / gün —
+     * yanıt süresi grafiğiyle aynı kova kuralı) ORTALAMA bayt — html / js / css / img / font / other. Kovadaki hiçbir satırda
+     * kırılım yoksa (eski satır, alınamayan sayfa) değerler null: grafik boşluk çizer, 0 değil. Yükleme yolu tek sorgu, tavanlı.
+     */
+    @GetMapping("/pagespeed/{id}/type-series")
+    public ResponseEntity<Map<String, Object>> pageSpeedTypeSeries(@PathVariable Long id,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "30") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR
+        if (deny != null) return deny;
+        String[] range = resolveRange(from, to, days);
+        int len = bucketKeyLen(range[0], range[1]);
+        List<Object[]> raw = pageSpeedCheckRepo.typeSeriesRaw(id, range[0], range[1], SERIES_RAW_CAP);
+        // satırlar yeniden eskiye gelir → eskiden yeniye kovala
+        java.util.TreeMap<String, long[]> sums = new java.util.TreeMap<>();   // [html, js, css, img, font, other, n]
+        for (int i = raw.size() - 1; i >= 0; i--) {
+            Object[] r = raw.get(i);
+            String ts = r[0] == null ? null : r[0].toString();
+            if (ts == null) continue;
+            String key = ts.length() > len ? ts.substring(0, len) : ts;
+            long[] acc = sums.computeIfAbsent(key, k -> new long[7]);
+            if (!(r[1] instanceof Number)) continue;   // kırılım yok → yalnız kova var (boşluk)
+            for (int c = 0; c < 6; c++) acc[c] += r[1 + c] instanceof Number n ? n.longValue() : 0L;
+            acc[6]++;
+        }
+        List<Map<String, Object>> points = new ArrayList<>(sums.size());
+        String[] names = {"html", "js", "css", "img", "font", "other"};
+        sums.forEach((k, acc) -> {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("ts", bucketIso(k, len));
+            for (int c = 0; c < 6; c++) p.put(names[c], acc[6] == 0 ? null : Math.round(acc[c] / (double) acc[6]));
+            p.put("n", acc[6]);
+            points.add(p);
+        });
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("points", points);
+        out.put("bucket_len", len);
+        out.put("from", range[0]);
+        out.put("to", range[1]);
+        out.put("truncated", raw.size() >= SERIES_RAW_CAP);
         return ok(out);
     }
 
@@ -6056,6 +6240,12 @@ public class MonitoringController {
         applyThreshold(body, "maxTtfbMs",   m::setMaxTtfbMs);
         applyThreshold(body, "maxPageKb",   m::setMaxPageKb);
         applyThreshold(body, "maxRequests", m::setMaxRequests);
+        // Tür bütçeleri + asgari boyut (2026-11-14, madde 11 / 12) — biçim requirePageSpeedBudgets'te doğrulandı; burada yalnız uygulanır.
+        applyKbThreshold(body, "maxJsKb",         m::setMaxJsKb);
+        applyKbThreshold(body, "maxImgKb",        m::setMaxImgKb);
+        applyKbThreshold(body, "maxFontKb",       m::setMaxFontKb);
+        applyKbThreshold(body, "maxThirdPartyKb", m::setMaxThirdPartyKb);
+        applyKbThreshold(body, "minPageKb",       m::setMinPageKb);
 
         if (body.containsKey("userAgent")) m.setUserAgent(blank(body.get("userAgent")) ? null : body.get("userAgent").toString().trim());
         if (body.get("sendDnt") instanceof Boolean b) m.setSendDnt(b);
@@ -6093,6 +6283,77 @@ public class MonitoringController {
         }
     }
 
+    /** KB eşiği (yeni alanlar): sayı → tam sayı, açık null / boş → kaldır, yoksa dokunma. Doğrulama {@link #requirePageSpeedBudgets}. */
+    private static void applyKbThreshold(Map<String, Object> body, String key, java.util.function.Consumer<Integer> setter) {
+        if (!body.containsKey(key)) return;
+        Object v = body.get(key);
+        if (v == null || (v instanceof String s && s.isBlank())) { setter.accept(null); return; }
+        if (v instanceof Number n && n.doubleValue() >= 0 && n.doubleValue() <= PAGESPEED_KB_MAX) setter.accept(n.intValue());
+    }
+
+    /** Tür bütçesi / asgari boyut üst sınırı (KB) — 10 GB; daha büyük değer bir yazım hatasıdır. */
+    static final int PAGESPEED_KB_MAX = 10_000_000;
+    static final String[] PAGESPEED_KB_FIELDS = {"maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb"};
+
+    /**
+     * Tür bütçeleri ve asgari sayfa boyutu (2026-11-14, madde 11 / 12): 0 ile {@value #PAGESPEED_KB_MAX} arası TAM sayı (KB) ya
+     * da boş; asgari boyut azami boyuttan büyük olamaz. Gelmeyen ya da kayıtlı değerle AYNI alan yeniden denetlenmez (eski kayıt
+     * düzenlenebilir kalır). Hata → 400 {@code VALIDATION_FAILED} + alan. Yan etkiden ÖNCE çağrılır.
+     */
+    static void requirePageSpeedBudgets(Map<String, Object> body, com.sitemonitor.model.PageSpeedMonitor stored) {
+        if (body == null) return;
+        for (String key : PAGESPEED_KB_FIELDS) {
+            if (!body.containsKey(key)) continue;
+            Object v = body.get(key);
+            if (v == null || (v instanceof String s && s.isBlank())) continue;
+            Integer old = stored == null ? null : storedKb(stored, key);
+            if (v instanceof Number n && old != null && n.doubleValue() == old.doubleValue()) continue;
+            boolean ok = v instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())
+                    && n.doubleValue() >= 0 && n.doubleValue() <= PAGESPEED_KB_MAX;
+            if (!ok) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key,
+                    com.sitemonitor.util.Msg.t("Bu eşik 0 ile 10.000.000 arasında bir tam sayı (KB) olmalı ya da boş bırakılmalı.",
+                            "This threshold must be a whole number of KB between 0 and 10,000,000, or left empty."));
+        }
+        if (!body.containsKey("minPageKb") && !body.containsKey("maxPageKb")) return;
+        Integer min = body.containsKey("minPageKb") ? kbOf(body.get("minPageKb")) : stored == null ? null : stored.getMinPageKb();
+        Integer max = body.containsKey("maxPageKb") ? kbOf(body.get("maxPageKb")) : stored == null ? null : stored.getMaxPageKb();
+        Integer oldMin = stored == null ? null : stored.getMinPageKb();
+        Integer oldMax = stored == null ? null : stored.getMaxPageKb();
+        boolean changed = !java.util.Objects.equals(min, oldMin) || !java.util.Objects.equals(max, oldMax);
+        if (changed && min != null && max != null && min > 0 && max > 0 && min > max)
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("minPageKb",
+                    com.sitemonitor.util.Msg.t("Asgari sayfa boyutu azami sayfa boyutundan büyük olamaz.",
+                            "The minimum page size cannot be larger than the maximum page size."));
+    }
+
+    private static Integer kbOf(Object v) {
+        return v instanceof Number n ? Integer.valueOf(n.intValue()) : null;
+    }
+
+    private static Integer storedKb(com.sitemonitor.model.PageSpeedMonitor m, String key) {
+        return switch (key) {
+            case "maxJsKb" -> m.getMaxJsKb();
+            case "maxImgKb" -> m.getMaxImgKb();
+            case "maxFontKb" -> m.getMaxFontKb();
+            case "maxThirdPartyKb" -> m.getMaxThirdPartyKb();
+            case "minPageKb" -> m.getMinPageKb();
+            default -> null;
+        };
+    }
+
+    /** Tür kırılımı → yanıt anahtarları (madde 9); kırılım yoksa hiç yazılmaz (bilinmiyor ≠ 0). */
+    private static void putBreakdown(Map<String, Object> out, PageSpeedCheckerService.TypeBreakdown b) {
+        if (b == null) return;
+        out.put("html_bytes", b.htmlBytes());
+        out.put("js_bytes", b.jsBytes());       out.put("js_count", b.jsCount());
+        out.put("css_bytes", b.cssBytes());     out.put("css_count", b.cssCount());
+        out.put("img_bytes", b.imgBytes());     out.put("img_count", b.imgCount());
+        out.put("font_bytes", b.fontBytes());   out.put("font_count", b.fontCount());
+        out.put("other_bytes", b.otherBytes()); out.put("other_count", b.otherCount());
+        out.put("first_party_bytes", b.firstPartyBytes());
+        out.put("third_party_bytes", b.thirdPartyBytes());
+    }
+
     /** Eşik alanı: sayı → uygula (negatif 0'a kırpılır), açık null → eşiği kaldır, yoksa dokunma. */
     private void applyThreshold(Map<String, Object> body, String key, java.util.function.Consumer<Integer> setter) {
         if (!body.containsKey(key)) return;
@@ -6128,6 +6389,8 @@ public class MonitoringController {
         im.put("http_status", r.getStatusCode());
         im.put("third_party", r.getThirdParty());
         im.put("truncated", Boolean.TRUE.equals(r.getTruncated()));
+        // Alınamadı mı (ölçüm motorunun kuralı: durum kodu yok ya da ≥ 400) — süzgeçle aynı tanım (2026-11-14)
+        im.put("failed", r.getStatusCode() == null || r.getStatusCode() >= 400);
         im.put("checked_at", r.getCheckedAt());
         return im;
     }
@@ -6152,6 +6415,12 @@ public class MonitoringController {
         item.put("max_ttfb_ms",          m.getMaxTtfbMs());
         item.put("max_page_kb",          m.getMaxPageKb());
         item.put("max_requests",         m.getMaxRequests());
+        // Tür bütçeleri + asgari boyut (2026-11-14, madde 11 / 12)
+        item.put("max_js_kb",            m.getMaxJsKb());
+        item.put("max_img_kb",           m.getMaxImgKb());
+        item.put("max_font_kb",          m.getMaxFontKb());
+        item.put("max_third_party_kb",   m.getMaxThirdPartyKb());
+        item.put("min_page_kb",          m.getMinPageKb());
         item.put("user_agent",           m.getUserAgent());
         item.put("send_dnt",             m.getSendDnt());
         item.put("exclude_trackers",     m.getExcludeTrackers());
@@ -6190,6 +6459,23 @@ public class MonitoringController {
             item.put("failed_count",   latest.getFailedCount());
             item.put("capped",         latest.getCapped());
             item.put("bytes_truncated", Boolean.TRUE.equals(latest.getBytesTruncated()));
+            // 2026-11-14 (madde 4 / 8 / 9): süre tavanı (null = eski satır, bilinmiyor), saklanan ama gösterilmeyen ölçüler
+            // (faz kırılımı yalnız bilgi — TTFB eşiği gerçek isteğe bakar), tür kırılımı (null = bilinmiyor; ASLA 0 sayılmaz).
+            item.put("time_truncated", latest.getTimeTruncated());
+            item.put("dns_ms",         latest.getDnsMs());
+            item.put("connect_ms",     latest.getConnectMs());
+            item.put("tls_ms",         latest.getTlsMs());
+            item.put("server_ms",      latest.getServerMs());
+            item.put("skipped_lazy",   latest.getSkippedLazy());
+            item.put("breach_detail",  latest.getBreachDetail());
+            item.put("html_bytes",     latest.getHtmlBytes());
+            item.put("js_bytes",       latest.getJsBytes());     item.put("js_count",    latest.getJsCount());
+            item.put("css_bytes",      latest.getCssBytes());    item.put("css_count",   latest.getCssCount());
+            item.put("img_bytes",      latest.getImgBytes());    item.put("img_count",   latest.getImgCount());
+            item.put("font_bytes",     latest.getFontBytes());   item.put("font_count",  latest.getFontCount());
+            item.put("other_bytes",    latest.getOtherBytes());  item.put("other_count", latest.getOtherCount());
+            item.put("first_party_bytes", latest.getFirstPartyBytes());
+            item.put("third_party_bytes", latest.getThirdPartyBytes());
             item.put("breached_metrics", blank(latest.getBreachedMetrics()) ? List.of()
                                        : List.of(latest.getBreachedMetrics().split(",")));
             item.put("error",          latest.getErrorMessage());

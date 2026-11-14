@@ -4455,12 +4455,198 @@ class MonitoringControllerTest {
         var foreign = new com.sitemonitor.model.PageSpeedResource();
         foreign.setMonitorId(99L);           // BAŞKA izlemenin satırı
         foreign.setUrl("https://gizli/x.js");
-        when(pageSpeedResourceRepo.findByCheck(eq(77L), anyInt())).thenReturn(List.of(foreign));
+        // Sorgu izleme kimliğiyle sınırlı (2026-11-14) — yine de dönen bir satır başka izlemeninse elenir (savunma).
+        when(pageSpeedResourceRepo.checkPage(eq(1L), eq(77L), anyBoolean(), any(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(foreign)));
         when(pageSpeedResourceRepo.breachSnapshots(eq(1L), anyInt())).thenReturn(List.of());
 
         mvc.perform(get("/api/monitoring/pagespeed/1/resources?checkId=77").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.resources.length()").value(0));
+    }
+
+    // ── Sayfa Hızı zenginleştirme 1. sürüm (2026-11-14) ─────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("PSR1: kaynak listesi sunucuda sayfalanır + süzülür; sayaçlar ve süzgeçli toplam döner")
+    void pageSpeedResources_pagesAndFilters() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        var r = new com.sitemonitor.model.PageSpeedResource();
+        r.setMonitorId(1L); r.setUrl("https://cdn.x/app.js"); r.setType("JS"); r.setBytes(4000L);
+        r.setStatusCode(404); r.setThirdParty(true);
+        when(pageSpeedResourceRepo.latestPage(eq(1L), anyBoolean(), any(), anyInt(), anyBoolean(), any()))
+                .thenAnswer(i -> new org.springframework.data.domain.PageImpl<>(List.of(r), i.getArgument(5), 12));
+        when(pageSpeedResourceRepo.countByMonitorIdAndKeepReason(1L, "LATEST")).thenReturn(120L);
+        when(pageSpeedResourceRepo.latestFacets(1L)).thenReturn(List.<Object[]>of(
+                new Object[]{"JS", true, 1, 3L}, new Object[]{"IMG", false, 0, 5L}, new Object[]{"FAVICON", false, 1, 1L}));
+        when(pageSpeedResourceRepo.breachSnapshots(eq(1L), anyInt())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/resources?page=1&size=5&type=js&party=third&failed=true")
+                        .session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resources[0].url").value("https://cdn.x/app.js"))
+                .andExpect(jsonPath("$.data.resources[0].failed").value(true))
+                .andExpect(jsonPath("$.data.total").value(120))
+                .andExpect(jsonPath("$.data.filtered_total").value(12))
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.size").value(5))
+                .andExpect(jsonPath("$.data.facets.type.js").value(3))
+                .andExpect(jsonPath("$.data.facets.type.img").value(6))
+                .andExpect(jsonPath("$.data.facets.party.third").value(3))
+                .andExpect(jsonPath("$.data.facets.party.first").value(6))
+                .andExpect(jsonPath("$.data.facets.failed").value(4));
+
+        verify(pageSpeedResourceRepo).latestPage(eq(1L), eq(false), eq(List.of("JS")), eq(2), eq(true),
+                eq(org.springframework.data.domain.PageRequest.of(1, 5)));
+
+        // Eski istemci (page yok, limit=50) → ilk sayfa 50 satır; tavan 200
+        mvc.perform(get("/api/monitoring/pagespeed/1/resources?size=5000").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value(200));
+    }
+
+    @Test
+    @DisplayName("PSR1: kaynak CSV'si TÜM satırları akıtır, formül nötr, alınamadı + kesildi sütunu taşır")
+    void pageSpeedResources_csvExport() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        var a = new com.sitemonitor.model.PageSpeedResource();
+        a.setMonitorId(1L); a.setUrl("=cmd|' /C calc'!A0"); a.setType("JS"); a.setBytes(10L); a.setStatusCode(200);
+        a.setTruncated(true);
+        var b = new com.sitemonitor.model.PageSpeedResource();
+        b.setMonitorId(1L); b.setUrl("https://a.com/b.css"); b.setType("CSS"); b.setBytes(5L);
+        when(pageSpeedResourceRepo.checkPage(eq(1L), eq(9L), anyBoolean(), any(), anyInt(), anyBoolean(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(a, b)));
+
+        String body = mvc.perform(get("/api/monitoring/pagespeed/1/resources/export?checkId=9").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("pagespeed-resources-1-9.csv")))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(body).contains("url,type,bytes,truncated,duration_ms,http_status,third_party,failed,checked_at");
+        assertThat(body).doesNotContain("\n=cmd");          // formül hücresi kaçışlı
+        assertThat(body).contains("'=cmd");
+        assertThat(body).contains("https://a.com/b.css,CSS,5,false,,,false,true");
+    }
+
+    @Test
+    @DisplayName("PSR1: kaynak CSV'si başka takımın izlemesinde 403")
+    void pageSpeedResourcesCsv_foreignTeam_forbidden() throws Exception {
+        when(pageSpeedMonitorRepo.findById(9L)).thenReturn(Optional.of(psMon(9L, "https://x.com", 2L)));
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(1L));
+        mvc.perform(get("/api/monitoring/pagespeed/9/resources/export").session(s)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/pagespeed/9/type-series").session(s)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PSR1: tür kırılımı serisi kovalanır; kırılımı olmayan kova null (boşluk), 0 değil")
+    void pageSpeedTypeSeries_gapsAreNull() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        // yeniden eskiye: [checkedAt, html, js, css, img, font, other]
+        when(pageSpeedCheckRepo.typeSeriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(List.<Object[]>of(
+                new Object[]{"2026-11-12T10:00:00", null, null, null, null, null, null},
+                new Object[]{"2026-11-11T11:00:00", 300L, 3000L, 100L, 5000L, 0L, 10L},
+                new Object[]{"2026-11-11T10:00:00", 100L, 1000L, 100L, 3000L, 0L, 10L}));
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/type-series?from=2026-10-01T00:00:00&to=2026-11-14T00:00:00")
+                        .session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.points.length()").value(2))
+                .andExpect(jsonPath("$.data.points[0].ts").value("2026-11-11T00:00:00"))
+                .andExpect(jsonPath("$.data.points[0].js").value(2000))
+                .andExpect(jsonPath("$.data.points[0].img").value(4000))
+                .andExpect(jsonPath("$.data.points[0].n").value(2))
+                .andExpect(jsonPath("$.data.points[1].ts").value("2026-11-12T00:00:00"))
+                .andExpect(jsonPath("$.data.points[1].js").doesNotExist())
+                .andExpect(jsonPath("$.data.points[1].n").value(0));
+    }
+
+    @Test
+    @DisplayName("PSR1: tür bütçeleri + asgari boyut — biçim / aralık / asgari > azami 400 alan hatası, kayıt yok")
+    void pageSpeedBudgets_validation() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setMaxPageKb(1000);
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        for (String bad : new String[]{"{\"maxJsKb\":-1}", "{\"maxImgKb\":\"abc\"}", "{\"maxFontKb\":1.5}",
+                "{\"maxThirdPartyKb\":20000000}"}) {
+            String field = bad.substring(2, bad.indexOf('"', 2));
+            mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(bad))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value(field));
+        }
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"minPageKb\":2000}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("minPageKb"));
+        verify(pageSpeedMonitorRepo, org.mockito.Mockito.never()).save(any());
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"maxJsKb\":300,\"maxImgKb\":800,\"maxFontKb\":120,\"maxThirdPartyKb\":400,\"minPageKb\":50}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.max_js_kb").value(300))
+                .andExpect(jsonPath("$.data.min_page_kb").value(50));
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getMaxImgKb()).isEqualTo(800);
+        assertThat(cap.getValue().getMaxFontKb()).isEqualTo(120);
+        assertThat(cap.getValue().getMaxThirdPartyKb()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("PSR1: kayıtlı (eski) tutarsız değer değişmedikçe yeniden denetlenmez; açık null bütçeyi kaldırır")
+    void pageSpeedBudgets_unchangedNotRevalidated() throws Exception {
+        var existing = psMon(5L, "https://x.com", 1L);
+        existing.setMaxPageKb(100);
+        existing.setMinPageKb(500);          // elle bozulmuş eski kayıt
+        existing.setMaxJsKb(300);
+        when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(existing));
+        when(pageSpeedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/pagespeed/5").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"yeni\",\"minPageKb\":500,\"maxJsKb\":null}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PageSpeedMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageSpeedMonitor.class);
+        verify(pageSpeedMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getMaxJsKb()).isNull();
+        assertThat(cap.getValue().getMinPageKb()).isEqualTo(500);
+    }
+
+    @Test
+    @DisplayName("PSR1: liste satırı süre tavanı, faz kırılımı, atlanan tembel kaynak ve tür kırılımını taşır (eski satır null)")
+    void pageSpeedList_carriesHiddenValuesAndBreakdown() throws Exception {
+        var m = psMon(1L, "https://a.com", 1L);
+        m.setMaxJsKb(250);
+        var c = new com.sitemonitor.model.PageSpeedCheck();
+        c.setMonitorId(1L); c.setCheckedAt("2026-11-14T10:00:00"); c.setOk(true);
+        c.setTimeTruncated(true); c.setDnsMs(12); c.setConnectMs(30); c.setTlsMs(40); c.setServerMs(200);
+        c.setSkippedLazy(4); c.setJsBytes(300_000L); c.setJsCount(12); c.setThirdPartyBytes(90_000L);
+        c.setBreachedMetrics("JS"); c.setBreachDetail("JS 293 KB > 250 KB");
+        var old = new com.sitemonitor.model.PageSpeedCheck();
+        old.setMonitorId(2L); old.setCheckedAt("2026-11-14T10:00:00"); old.setOk(true);
+        when(pageSpeedCheckRepo.findLatestPerMonitor()).thenReturn(List.of(c, old));
+        when(pageSpeedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m, psMon(2L, "https://b.com", 1L)));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/pagespeed").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].max_js_kb").value(250))
+                .andExpect(jsonPath("$.data[0].time_truncated").value(true))
+                .andExpect(jsonPath("$.data[0].dns_ms").value(12))
+                .andExpect(jsonPath("$.data[0].server_ms").value(200))
+                .andExpect(jsonPath("$.data[0].skipped_lazy").value(4))
+                .andExpect(jsonPath("$.data[0].js_bytes").value(300000))
+                .andExpect(jsonPath("$.data[0].js_count").value(12))
+                .andExpect(jsonPath("$.data[0].status").value("SLOW"))
+                .andExpect(jsonPath("$.data[0].breach_detail").value("JS 293 KB > 250 KB"))
+                .andExpect(jsonPath("$.data[1].time_truncated").doesNotExist())
+                .andExpect(jsonPath("$.data[1].js_bytes").doesNotExist());
     }
 
     @Test

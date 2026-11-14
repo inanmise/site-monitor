@@ -338,6 +338,9 @@ public class EmailTemplateBuilder {
         }
         d.keyValue("Ayrıntılar", detailRows(m));
         if (isDbQuery(m.alertType())) dbQuerySections(d, m.ctx());
+        // Sayfa Hızı (2026-11-14, madde 1): eşik → ölçülen tablosu, süre kırılımı, en ağır kaynaklar. Yeni bağlam anahtarı
+        // yoksa (eski alarmın anlık görüntüsü) hiçbir şey eklenmez — posta bayt bayt aynı.
+        if (hasPageSpeedDetail(m.alertType(), m.ctx())) pageSpeedSections(d, m.ctx());
         // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
         // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel adımları.
         manualSourceSection(d, m);   // yalnız elle yüklenen sertifikada (ctx anahtarı yoksa hiçbir şey eklenmez)
@@ -402,6 +405,7 @@ public class EmailTemplateBuilder {
         sb.append('\n');
         for (Row r : detailRows(m)) sb.append(r.label()).append(": ").append(r.text()).append('\n');
         if (isDbQuery(m.alertType())) sb.append(dbQueryText(m.ctx()));
+        if (hasPageSpeedDetail(m.alertType(), m.ctx())) sb.append(pageSpeedText(m.ctx()));   // HTML ile aynı bilgi
         // HTML paritesi: envanter bölümleri metin sürümde de aynı sırayla yer alır.
         String manualSrc = m.ctx() == null ? null : strCtx(m.ctx(), EscalationService.CTX_MANUAL_SOURCE);
         if (manualSrc != null) sb.append('\n').append(manualSrc).append('\n');
@@ -535,6 +539,7 @@ public class EmailTemplateBuilder {
             }
         }
         if (ctx != null && isDbQuery(alertType)) rows.addAll(dbQueryResolvedRows(alertType, ctx));
+        if (hasPageSpeedDetail(alertType, ctx)) rows.addAll(pageSpeedResolvedRows(alertType, ctx));   // Sayfa Hızı (2026-11-14)
         String durHuman = durationHuman(createdAt, resolvedAt);
         // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU.
         // Nobetci "ne duzeldi" bilgisini alamiyor, jenerik "alarm kapandi" cumlesiyle kaliyordu.
@@ -613,6 +618,9 @@ public class EmailTemplateBuilder {
         }
         if (ctx != null && isDbQuery(alertType)) {   // HTML ile aynı bilgi (veritabanı sorgusu)
             for (Row r : dbQueryResolvedRows(alertType, ctx)) sb.append("\n").append(r.label()).append(": ").append(r.text());
+        }
+        if (hasPageSpeedDetail(alertType, ctx)) {   // HTML ile aynı bilgi (Sayfa Hızı)
+            for (Row r : pageSpeedResolvedRows(alertType, ctx)) sb.append("\n").append(r.label()).append(": ").append(r.text());
         }
         String durHuman = durationHuman(createdAt, resolvedAt);
         if (ctx != null && "SCRIPTED_SLOW".equals(alertType)) {   // HTML ile ayni bilgi
@@ -705,6 +713,31 @@ public class EmailTemplateBuilder {
         if (strCtx(ctx, "baseline_low") != null || strCtx(ctx, "baseline_high") != null || strCtx(ctx, "baseline_mean") != null) {
             String band = baselineBandText(ctx);
             if (band != null) rows.add(Row.of("Dinamik Taban (alarm anı)", band));
+        }
+        return rows;
+    }
+
+    /**
+     * Sayfa Hızı alarmının çözüm satırları (2026-11-14, madde 1; HTML + düz metin ortak): hangi alarm, alarm anının eşik
+     * tablosu, süre kırılımı ve en ağır kaynaklar. Anahtarlar olayın anlık görüntüsünden
+     * ({@link EscalationService#RESOLVED_CONTEXT_KEYS}); yeni anahtar yoksa çağrılmaz (çözüm postası birebir aynı).
+     */
+    static List<Row> pageSpeedResolvedRows(String alertType, Map<String, Object> ctx) {
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.of("Çözülen Alarm", "PAGESPEED_DOWN".equals(alertType) ? "Sayfa Hızı Ölçülemiyor" : "Sayfa Hızı Eşik Aşımı"));
+        List<PsRow> th = pageSpeedThresholdRows(strCtx(ctx, "ps_thresholds"));
+        if (!th.isEmpty()) {
+            List<String> lines = new ArrayList<>();
+            for (PsRow r : th) lines.add(psLine(r));
+            rows.add(new Row("Eşikler (alarm anı)", MailKit.bullets(lines.stream().map(MailKit::esc).toList()), String.join("; ", lines)));
+        }
+        String ph = pageSpeedPhasesLine(strCtx(ctx, "ps_phases"));
+        if (ph != null) rows.add(Row.of("Süre Kırılımı (alarm anı)", ph));
+        if (boolCtx(ctx, "ps_partial")) rows.add(Row.of("Ölçüm", PS_PARTIAL_TEXT));
+        String heavy = strCtx(ctx, "heavy_rows");
+        if (heavy != null && !heavy.isBlank()) {
+            Integer total = intCtx(ctx, "heavy_total");
+            rows.add(new Row("En Ağır Kaynaklar (alarm anı)", pageSpeedHeavyHtml(heavy, total), pageSpeedHeavyText(heavy, total)));
         }
         return rows;
     }
@@ -1551,6 +1584,198 @@ public class EmailTemplateBuilder {
         return sb.toString();
     }
 
+
+    // ── Sayfa Hızı postası (2026-11-14, madde 1) ─────────────────────────────
+    /** Eşik tablosunun bir satırı ({@code SchedulerService}/{@code PageSpeedRules.thresholdTable} TSV'si). */
+    record PsRow(String key, String threshold, String measured, boolean breached, boolean lowerBound) {}
+
+    /** Ölçümün kısmi olduğunu söyleyen tek cümle (HTML + düz metin). */
+    static final String PS_PARTIAL_TEXT = "Kısmi ölçüm — süre, boyut ya da kaynak tavanına takıldı; bayt değerleri ALT SINIRDIR (≥).";
+
+    /** Sayfa Hızı alarmı ve YENİ bağlam anahtarlarından biri var mı — yoksa posta bugünküyle birebir. */
+    static boolean hasPageSpeedDetail(String alertType, Map<String, Object> c) {
+        return isPageSpeed(alertType) && c != null
+                && (strCtx(c, "ps_thresholds") != null || strCtx(c, "ps_phases") != null || boolCtx(c, "ps_partial"));
+    }
+
+    static List<PsRow> pageSpeedThresholdRows(String tsv) {
+        List<PsRow> out = new ArrayList<>();
+        if (tsv == null || tsv.isBlank()) return out;
+        for (String line : tsv.split("\n")) {
+            if (line.isBlank()) continue;
+            String[] p = line.split("\t", -1);
+            if (p.length < 4) continue;
+            out.add(new PsRow(p[0], p[1], p[2], "1".equals(p[3]), p.length > 4 && "1".equals(p[4])));
+            if (out.size() >= 12) break;   // sınırlı (dokuz anahtar + bant)
+        }
+        return out;
+    }
+
+    static String psLabel(String key) {
+        return switch (key == null ? "" : key) {
+            case "LOAD" -> "Yükleme süresi";
+            case "BAND" -> "Yükleme süresi (dinamik taban)";
+            case "TTFB" -> "İlk bayt (TTFB)";
+            case "SIZE" -> "Sayfa boyutu";
+            case "REQUESTS" -> "İstek sayısı";
+            case "MINSIZE" -> "Asgari sayfa boyutu";
+            case "JS" -> "JavaScript";
+            case "IMG" -> "Görseller";
+            case "FONT" -> "Yazı tipleri";
+            case "THIRD" -> "Üçüncü taraf";
+            default -> key;
+        };
+    }
+
+    private static String psUnit(String key) {
+        return switch (key == null ? "" : key) {
+            case "LOAD", "BAND", "TTFB" -> " ms";
+            case "REQUESTS" -> "";
+            default -> " KB";
+        };
+    }
+
+    static String psThresholdText(PsRow r) {
+        if (r.threshold() == null || r.threshold().isBlank()) return "—";
+        return ("MINSIZE".equals(r.key()) ? "≥ " : "≤ ") + r.threshold() + psUnit(r.key());
+    }
+
+    static String psMeasuredText(PsRow r) {
+        if (r.measured() == null || r.measured().isBlank()) return "—";
+        return (r.lowerBound() ? "≥ " : "") + r.measured() + psUnit(r.key());
+    }
+
+    static String psStateText(PsRow r) {
+        if (r.measured() == null || r.measured().isBlank()) return "Ölçülemedi";
+        if ("BAND".equals(r.key())) return r.breached() ? "Bant dışında" : "Bant içinde";
+        return r.breached() ? ("MINSIZE".equals(r.key()) ? "Beklenenden küçük" : "Aşıldı") : "Eşik içinde";
+    }
+
+    private static String psLine(PsRow r) {
+        return psLabel(r.key()) + ": " + psMeasuredText(r) + " (eşik " + psThresholdText(r) + ") — " + psStateText(r);
+    }
+
+    /** Faz TSV'si → "DNS 12 ms · Bağlantı 30 ms · TLS 45 ms · Sunucu 220 ms · HTML indirme 300 ms"; boşsa null. */
+    static String pageSpeedPhasesLine(String tsv) {
+        if (tsv == null || tsv.isBlank()) return null;
+        List<String> parts = new ArrayList<>();
+        for (String line : tsv.split("\n")) {
+            String[] p = line.split("\t", -1);
+            if (p.length < 2 || p[1].isBlank()) continue;
+            String label = switch (p[0]) {
+                case "dns" -> "DNS";
+                case "connect" -> "Bağlantı";
+                case "tls" -> "TLS";
+                case "server" -> "Sunucu";
+                case "download" -> "HTML indirme";
+                default -> null;
+            };
+            if (label != null) parts.add(label + " " + p[1] + " ms");
+        }
+        return parts.isEmpty() ? null : String.join(" · ", parts);
+    }
+
+    /** Süre kırılımının dürüst notu: DNS / bağlantı / TLS / sunucu ayrı bir bağlantıda ölçülür, eşik gerçek isteğe bakar. */
+    static final String PS_PHASES_NOTE = "DNS, bağlantı, TLS ve sunucu süreleri ayrı, taze bir bağlantıda ölçülür (yalnız bilgi); "
+            + "TTFB eşiği gerçek isteğin ilk baytına bakar.";
+
+    private static String psTypeLabel(String t) {
+        return switch (t == null ? "" : t) {
+            case "IMG" -> "Görsel";
+            case "CSS" -> "CSS";
+            case "JS" -> "JS";
+            case "FONT" -> "Yazı tipi";
+            case "IFRAME" -> "Çerçeve";
+            case "FAVICON" -> "Simge";
+            default -> "Diğer";
+        };
+    }
+
+    /** En ağır kaynaklar (TSV {@code tür\tURL\tKB}) — tür · kısaltılmış URL · KB, ≤ 10 satır; URL kırılabilir. */
+    static String pageSpeedHeavyHtml(String tsv, Integer total) {
+        List<MailKit.Col> cols = List.of(MailKit.Col.nw("Tür"), MailKit.Col.of("Kaynak"), MailKit.Col.num("KB"));
+        List<List<MailKit.Cell>> cells = new ArrayList<>();
+        int shown = 0;
+        for (String line : tsv.split("\n")) {
+            if (line.isBlank() || shown >= 10) continue;
+            String[] p = line.split("\t", -1);
+            cells.add(List.of(MailKit.Cell.of(psTypeLabel(p.length > 0 ? p[0] : "")),
+                    MailKit.Cell.html("<span class=\"mono\" style=\"font-family:" + MailTokens.MONO
+                            + ";word-break:break-all;overflow-wrap:anywhere\">" + esc(truncUrl(p.length > 1 ? p[1] : "")) + "</span>",
+                            truncUrl(p.length > 1 ? p[1] : "")),
+                    MailKit.Cell.of(p.length > 2 ? p[2] : "")));
+            shown++;
+        }
+        String html = MailKit.dataTable(cols, cells, false);
+        if (total != null && total > shown) {
+            html += "<div style=\"padding:6px 0 0;font-size:12px;line-height:18px;color:" + MailTokens.MUTED + "\">… ve "
+                    + (total - shown) + " kaynak daha (toplam " + total + ")</div>";
+        }
+        return html;
+    }
+
+    static String pageSpeedHeavyText(String tsv, Integer total) {
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (String line : tsv.split("\n")) {
+            if (line.isBlank() || shown >= 10) continue;
+            String[] p = line.split("\t", -1);
+            sb.append(psTypeLabel(p.length > 0 ? p[0] : "")).append(" · ").append(p.length > 1 ? p[1] : "")
+              .append(" · ").append(p.length > 2 ? p[2] : "").append(" KB\n");
+            shown++;
+        }
+        if (total != null && total > shown) sb.append("… ve ").append(total - shown).append(" kaynak daha (toplam ").append(total).append(')');
+        return sb.toString().trim();
+    }
+
+    /** Alarm postasının Sayfa Hızı bölümleri: eşik tablosu, kısmi ölçüm notu, süre kırılımı, en ağır kaynaklar. */
+    private static void pageSpeedSections(MailDoc d, Map<String, Object> c) {
+        List<PsRow> th = pageSpeedThresholdRows(strCtx(c, "ps_thresholds"));
+        if (!th.isEmpty()) {
+            List<MailKit.Col> cols = List.of(MailKit.Col.of("Ölçü"), MailKit.Col.nw("Eşik"), MailKit.Col.nw("Ölçülen"), MailKit.Col.nw("Durum"));
+            List<List<MailKit.Cell>> rows = new ArrayList<>();
+            for (PsRow r : th) {
+                boolean unmeasured = r.measured() == null || r.measured().isBlank();
+                String color = r.breached() ? Tone.WARNING.text : unmeasured ? MailTokens.MUTED : MailTokens.SUCCESS;
+                rows.add(List.of(MailKit.Cell.of(psLabel(r.key())), MailKit.Cell.of(psThresholdText(r)),
+                        MailKit.Cell.of(psMeasuredText(r), r.breached() ? color : null, r.breached()),
+                        MailKit.Cell.of(psStateText(r), color, r.breached())));
+            }
+            d.heading("Eşikler");
+            d.table(cols, rows);
+        }
+        if (boolCtx(c, "ps_partial")) d.note(PS_PARTIAL_TEXT);
+        String ph = pageSpeedPhasesLine(strCtx(c, "ps_phases"));
+        if (ph != null) {
+            d.heading("Süre Kırılımı");
+            d.paragraph(ph);
+            d.note(PS_PHASES_NOTE);
+        }
+        String heavy = strCtx(c, "heavy_rows");
+        if (heavy != null && !heavy.isBlank()) {
+            d.heading("En Ağır Kaynaklar");
+            Integer total = intCtx(c, "heavy_total");
+            d.raw(pageSpeedHeavyHtml(heavy, total), pageSpeedHeavyText(heavy, total));
+        }
+    }
+
+    /** Düz metin paritesi (HTML ile aynı bilgi, aynı sıra). */
+    static String pageSpeedText(Map<String, Object> c) {
+        StringBuilder sb = new StringBuilder();
+        List<PsRow> th = pageSpeedThresholdRows(strCtx(c, "ps_thresholds"));
+        if (!th.isEmpty()) {
+            sb.append("\nEşikler:\n");
+            for (PsRow r : th) sb.append("- ").append(psLine(r)).append('\n');
+        }
+        if (boolCtx(c, "ps_partial")) sb.append(PS_PARTIAL_TEXT).append('\n');
+        String ph = pageSpeedPhasesLine(strCtx(c, "ps_phases"));
+        if (ph != null) sb.append("\nSüre Kırılımı: ").append(ph).append('\n').append(PS_PHASES_NOTE).append('\n');
+        String heavy = strCtx(c, "heavy_rows");
+        if (heavy != null && !heavy.isBlank()) {
+            sb.append("\nEn Ağır Kaynaklar:\n").append(pageSpeedHeavyText(heavy, intCtx(c, "heavy_total"))).append('\n');
+        }
+        return sb.toString();
+    }
 
     // ── Değer/format yardımcıları ────────────────────────────────────────────
     private static void addIf(List<Row> out, String label, String value) {

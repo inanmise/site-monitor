@@ -78,7 +78,35 @@ public class PageSpeedCheck {
     @Column(name = "bytes_truncated")
     private Boolean bytesTruncated = false;
 
-    /** Aşılan eşikler, virgülle: {@code LOAD,TTFB,SIZE,REQUESTS}. Boş/null = ihlal yok.
+    /**
+     * Ölçüm DUVAR SAATİ tavanında ({@code site.monitor.pagespeed.max-check-seconds}) kesildi mi (2026-11-14, madde 4): süre
+     * dolunca indirilmemiş alt kaynaklar atlanır, toplam bayt / tür kırılımı ALT SINIRDIR ve arayüz "≥" ile kısmi rozeti
+     * gösterir. Null = bu sütundan önce yazılmış satır (bilinmiyor; eski satırlarda yalnız {@code capped} / {@code bytesTruncated}
+     * vardı). Yalnız sayfa alınabilen ölçümde yazılır.
+     */
+    @Column(name = "time_truncated")
+    private Boolean timeTruncated;
+
+    // ── Tür kırılımı (2026-11-14, madde 9): bu ölçümün kaynaklarından hesaplanır, ÖLÇÜMLE BİRLİKTE saklanır (kırılım tablosu
+    // yalnız son ölçüm + ihlal anını tuttuğu için zaman içindeki dağılım ancak burada görülebilir). Bayt = ölçülen (telden,
+    // sıkıştırılmış); adet = sayfanın istediği kaynak sayısı (istek sayısıyla aynı kural — ölçülemeyen de sayılır). Null =
+    // bilinmiyor (eski satır ya da sayfa alınamadı), ASLA 0 sayılmaz. html = ana belge; img favicon'u, other iframe ve
+    // diğerlerini içerir; birinci + üçüncü taraf baytı toplamı = totalBytes.
+    @Column(name = "html_bytes")  private Long htmlBytes;
+    @Column(name = "js_bytes")    private Long jsBytes;
+    @Column(name = "js_count")    private Integer jsCount;
+    @Column(name = "css_bytes")   private Long cssBytes;
+    @Column(name = "css_count")   private Integer cssCount;
+    @Column(name = "img_bytes")   private Long imgBytes;
+    @Column(name = "img_count")   private Integer imgCount;
+    @Column(name = "font_bytes")  private Long fontBytes;
+    @Column(name = "font_count")  private Integer fontCount;
+    @Column(name = "other_bytes") private Long otherBytes;
+    @Column(name = "other_count") private Integer otherCount;
+    @Column(name = "first_party_bytes") private Long firstPartyBytes;
+    @Column(name = "third_party_bytes") private Long thirdPartyBytes;
+
+    /** Aşılan eşikler, virgülle: {@code LOAD,TTFB,SIZE,REQUESTS,MINSIZE,JS,IMG,FONT,THIRD} (en uzun hâli 49 karakter). Boş/null = ihlal yok.
      *  Serbest metin değil sabit anahtar listesidir — UI ve e-posta bunu çevirir. */
     @Column(name = "breached_metrics", length = 60)
     private String breachedMetrics;

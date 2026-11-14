@@ -34,6 +34,43 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
     @Query("SELECT r FROM PageSpeedResource r WHERE r.checkId = :checkId ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")
     List<PageSpeedResource> findByCheck(@Param("checkId") Long checkId, @Param("limit") int limit);
 
+    // ── Sunucu tarafı sayfalama + süzgeç (2026-11-14, Sayfa Hızı zenginleştirme madde 6) ─────────────────────────────────
+    // 50 satır tavanı kaldırıldı: arayüz sayfalar, CSV seçili ölçümün TÜM satırlarını akıtır. Süzgeçler:
+    //  allTypes / types — tür kovası (TYPE_ALL ya da ilgili normalize türler); party 0 tümü, 1 birinci taraf, 2 üçüncü taraf;
+    //  failed — yalnız alınamayan (durum kodu yok ya da ≥ 400; ölçüm motorunun "failed" kuralı). Sıra: bayt azalan, kimlik
+    //  artan (benzersiz bağ kırıcı — sayfalar arası satır yinelenmez / kaybolmaz).
+    String FILTER = "AND (:allTypes = TRUE OR r.type IN :types) "
+            + "AND (:party = 0 OR (:party = 1 AND (r.thirdParty = FALSE OR r.thirdParty IS NULL)) OR (:party = 2 AND r.thirdParty = TRUE)) "
+            + "AND (:failed = FALSE OR r.statusCode IS NULL OR r.statusCode >= 400) ";
+
+    /** Son ölçümün (LATEST) kırılımı, süzgeçli ve sayfalı. */
+    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST' " + FILTER
+                 + "ORDER BY r.bytes DESC NULLS LAST, r.id ASC",
+           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST' " + FILTER)
+    org.springframework.data.domain.Page<PageSpeedResource> latestPage(@Param("id") Long id,
+            @Param("allTypes") boolean allTypes, @Param("types") java.util.Collection<String> types,
+            @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
+
+    /** Bir ihlal anının (checkId) kırılımı, süzgeçli ve sayfalı — izleme kimliğiyle birlikte (başka izlemenin satırı dönmez). */
+    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + FILTER
+                 + "ORDER BY r.bytes DESC NULLS LAST, r.id ASC",
+           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + FILTER)
+    org.springframework.data.domain.Page<PageSpeedResource> checkPage(@Param("id") Long id, @Param("checkId") Long checkId,
+            @Param("allTypes") boolean allTypes, @Param("types") java.util.Collection<String> types,
+            @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
+
+    /** Süzgeç sayaçları (tek gruplu sorgu): [tür, üçüncü taraf, alınamadı (1/0), adet] — LATEST. */
+    @Query("SELECT r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END, COUNT(r) "
+         + "FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST' "
+         + "GROUP BY r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END")
+    List<Object[]> latestFacets(@Param("id") Long id);
+
+    /** Süzgeç sayaçları — bir ihlal anı. */
+    @Query("SELECT r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END, COUNT(r) "
+         + "FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId "
+         + "GROUP BY r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END")
+    List<Object[]> checkFacets(@Param("id") Long id, @Param("checkId") Long checkId);
+
     /** İhlal anları listesi (hangi ölçümlerin donmuş kırılımı var) — en yeniden eskiye. */
     @Query("SELECT DISTINCT r.checkId, r.checkedAt FROM PageSpeedResource r "
          + "WHERE r.monitorId = :id AND r.keepReason = 'BREACH' ORDER BY r.checkedAt DESC LIMIT :limit")
