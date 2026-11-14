@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Görsel motoru İZOLE HARNESS — yalnız Playwright içindir, ürüne GİRMEZ (vite build yalnız index.html'i alır).
+
+      Motor (src/utils/imageEngine) gerçek tarayıcıda, GERÇEK Web Worker + OffscreenCanvas + tarayıcı kodlayıcılarıyla
+      koşar; girdiler sayfada üretilir (tuval → Blob). Arayüz yok: senaryolar `window.__ie` üstünden sürülür.
+        ?noworker=1   Worker'ı kapatır (ana iş parçacığı yedeği sınanır)
+    -->
+    <title>Görsel motoru harness</title>
+    <style>
+      body { margin: 0; padding: 16px; font-family: system-ui, sans-serif; background: #fff; }
+    </style>
+  </head>
+  <body>
+    <p id="status">yükleniyor…</p>
+    <script type="module" src="./image-engine.harness.js"></script>
+  </body>
+</html>
