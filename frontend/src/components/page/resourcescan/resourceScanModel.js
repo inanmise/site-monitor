@@ -1918,8 +1918,9 @@ export function compareScans(a, b) {
 /**
  * Görünümler: pano, nesne listesi, şelale, geçmiş, karşılaştırma (URL `prs_v`; pano varsayılan — yazılmaz). prs3:
  * `audit` (fe1 — ayrıntılı denetim, `audit-<alan>`), `trend` (eğilim) ve `pages` (çok sayfalı analizin sayfaları).
+ * `tool` (2026-11-14): "Görsel aracı" — yüklenen / taramadan gönderilen görsellerin tarayıcıda optimize edildiği görünüm.
  */
-export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare', 'audit', 'trend', 'pages']
+export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare', 'audit', 'trend', 'pages', 'tool']
 export const URL_SCAN = 'prs'
 export const URL_VIEW = 'prs_v'
 export const URL_OTHER = 'prs_b'
@@ -1934,14 +1935,14 @@ export function sectionOfView(view) {
   if (view === 'objects' || view === 'waterfall') return 'objects'
   if (view === 'history' || view === 'compare') return 'history'
   if (view === AUDIT_VIEW) return 'audit'
-  if (view === 'trend' || view === 'pages') return view
+  if (view === 'trend' || view === 'pages' || view === 'tool') return view
   return 'overview'
 }
 export function viewOf(section, objectsMode, historyMode) {
   if (section === 'objects') return objectsMode === 'waterfall' ? 'waterfall' : 'objects'
   if (section === 'history') return historyMode === 'compare' ? 'compare' : 'history'
   if (section === 'audit') return AUDIT_VIEW
-  if (section === 'trend' || section === 'pages') return section
+  if (section === 'trend' || section === 'pages' || section === 'tool') return section
   return 'dash'
 }
 
@@ -2195,22 +2196,47 @@ export function recommendationSheetRows(recs, t, locale, items = null) {
   ]
 }
 
-/** Görseller sayfası: en büyük görseller (boyut, ölçü, 4G süresi, sayfadaki payı). */
-export function imageSheetRows(images, pageBytes, t, locale) {
+/**
+ * Görseller sayfası: en büyük görseller (boyut, ölçü, 4G süresi, sayfadaki payı).
+ *
+ * `processed` (2026-11-14, görsel aracı — kullanıcı kararı 12): bu sekmede TARAYICIDA işlenen görseller
+ * (`[{ url, cells: [ölçülen optimize boyut (bayt), kazanç, yeni ölçü, biçim] }]`). Verilirse (en az bir kayıt) dört sütun
+ * eklenir; işlenmemiş görselde hücreler BOŞ kalır (asla 0). İşlenmiş ama "en büyükler" listesinde olmayan görseller
+ * (`items`'tan) listenin sonuna eklenir — işlenen hiçbir görsel sessizce dışarıda kalmaz. Verilmezse sayfa eskisiyle aynıdır.
+ */
+export function imageSheetRows(images, pageBytes, t, locale, processed = null, items = null) {
   const top = Array.isArray(images?.top) ? images.top : []
   const pb = num(pageBytes)
+  const done = new Map()
+  for (const p of Array.isArray(processed) ? processed : []) {
+    if (typeof p?.url === 'string' && Array.isArray(p.cells)) done.set(p.url, p.cells)
+  }
+  const extra = done.size > 0
+  const rows = extra ? [...top] : top
+  if (extra) {
+    const listed = new Set(top.map((it) => it?.url))
+    const byUrl = new Map((Array.isArray(items) ? items : []).map((it) => [it?.url, it]))
+    for (const url of done.keys()) {
+      if (listed.has(url)) continue
+      rows.push(byUrl.get(url) || { url })
+    }
+  }
+  const head = [t('prs.export.col.url'), t('prs.export.col.bytes'), t('prs.export.col.size'), t('prs.export.col.dimensions'),
+    t('prs.export.col.est4g'), t('prs.export.col.share'), t('prs.export.col.optimized')]
+  if (extra) head.push(t('prs.it.export.bytes'), t('prs.it.export.saving'), t('prs.it.export.dims'), t('prs.it.export.format'))
   return [
-    [t('prs.export.col.url'), t('prs.export.col.bytes'), t('prs.export.col.size'), t('prs.export.col.dimensions'),
-      t('prs.export.col.est4g'), t('prs.export.col.share'), t('prs.export.col.optimized')],
-    ...top.map((it) => {
+    head,
+    ...rows.map((it) => {
       const est = estImageMs(it.bytes, images)
       const b = num(it.bytes)
       const opt = optimizedImage(it)
-      return [
+      const row = [
         it.url ?? '', b, formatSize(b, { truncated: it.truncated === true, locale }), dimensionsText(it),
         est !== null ? formatMs(est, locale) : '', pb && b !== null ? formatPct((b / pb) * 100, locale) : '',
         opt ? formatSize(opt.optimized, { locale }) : '',
       ]
+      if (extra) row.push(...(done.get(it.url) || ['', '', '', '']))
+      return row
     }),
   ]
 }

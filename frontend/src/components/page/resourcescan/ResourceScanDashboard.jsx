@@ -15,6 +15,10 @@ import {
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, DeltaChip, Section, signed, TONE_BAR, TONE_STROKE, TONE_TEXT, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import ResourceScanCategoryScores from './ResourceScanCategoryScores.jsx'
+import ImageActions from './imagetool/ImageActions.jsx'
+import { ImageBulkButton } from './imagetool/ImageBulk.jsx'
+import GradeProjectionCard from './imagetool/GradeProjectionCard.jsx'
+import { largeImages } from './imagetool/imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
@@ -32,6 +36,8 @@ const THIRD_TABLE_MIN_PX = 640
  * önem sırasıyla ilk 6, gerisi "Tümünü göster" ile (her öneri ayrıca kendi denetim alanında listelenir).
  */
 export const RECS_PREVIEW = 6
+/** Bu önerilerde "büyük görselleri optimize edip indir (ZIP)" düğmesi çizilir (görsel aracı, 2026-11-14). */
+const IMAGE_BULK_RECS = new Set(['LARGE_IMAGES', 'OVERSIZED_IMAGE_DIMENSIONS'])
 
 /**
  * Kaynak analizi → PANO (2026-10-31; r177 yeniden düzen): ÖNCE ne yapmalı — not + "notu en çok düşüren 3 şey" (kayıp
@@ -41,6 +47,7 @@ export const RECS_PREVIEW = 6
  */
 export default function ResourceScanDashboard({
   scan, analysis, prev, history, selectedId, onCategory, onShowObjects, objectsAvailable, items, onSelectScan, onGoRec, onAudit, focusRec,
+  onStart = null, starting = false, running = false,
 }) {
   const t = useT()
   const locale = useDateLocale()
@@ -62,7 +69,8 @@ export default function ResourceScanDashboard({
         <CategoryBreakdown analysis={analysis} scan={scan} t={t} locale={locale} onCategory={onCategory} objectsAvailable={objectsAvailable} />
         <ScoreBreakdown analysis={analysis} t={t} locale={locale} />
       </div>
-      <ImageImpact analysis={analysis} scan={scan} t={t} locale={locale} />
+      <ImageImpact analysis={analysis} scan={scan} t={t} locale={locale} items={items} />
+      <GradeProjectionCard scan={scan} analysis={analysis} onStart={onStart} starting={starting} running={running} />
       <ThirdParties analysis={analysis} items={items} t={t} locale={locale} />
       <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="py-6" />}>
         <ResourceScanTrend items={history} selectedId={selectedId} onSelect={onSelectScan} />
@@ -419,7 +427,7 @@ export function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable
           {t('prs.rec.hosts', hosts.join(', '))}
         </p>
       )}
-      {(saving || canShow || area) && (
+      {(saving || canShow || area || (IMAGE_BULK_RECS.has(rec.code) && objectsAvailable)) && (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {saving && (
             <ToneBadge tone="info" className={CHIP} data-slot="prs-rec-saving">
@@ -433,6 +441,7 @@ export function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable
               <ListFilter aria-hidden="true" />{t('prs.rec.showObjects', formatNumber(byFinding ? count : urls.length, locale))}
             </Button>
           )}
+          {IMAGE_BULK_RECS.has(rec.code) && objectsAvailable && <ImageBulkButton items={items} />}
           {area && (
             <Button type="button" variant="ghost" size="sm" data-slot="prs-rec-audit" data-area={area} className={TOUCH}
               aria-label={t('prs.deep.recAuditFor', title, t(`prs.deep.area.${area}`))} onClick={() => onAudit(area)}>
@@ -462,9 +471,13 @@ export function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable
 }
 
 /** Büyük görsellerin sayfa hızına etkisi — ayrıntılı rapor (görseller ÇİZİLMEZ; adres, ölçü, boyut, 4G süresi, pay). */
-function ImageImpact({ analysis, scan, t, locale }) {
+function ImageImpact({ analysis, scan, t, locale, items }) {
   const img = analysis?.images
   if (!img) return null
+  // Toplu indirme: analizin büyük görselleri (LARGE_IMAGES önerisiyle aynı küme); nesne ayrıntısı saklanmıyorsa düğme nedenini söyler
+  const hasLarge = Number(img.large_count) > 0 || largeImages(items).length > 0
+  // Satır eylemi nesne listesindeki AYNI satırı kullanır (önerilen genişlik alanları orada); liste saklanmıyorsa `top` satırı
+  const byUrl = new Map((Array.isArray(items) ? items : []).map((x) => [x?.url, x]))
   const top = (Array.isArray(img.top) ? img.top : []).slice(0, TOP_IMAGES_MAX)
   const pageBytes = Number(scan?.page_bytes) || 0
   const share = img.share_pct ?? (pageBytes > 0 && img.bytes != null ? (img.bytes / pageBytes) * 100 : null)
@@ -483,7 +496,8 @@ function ImageImpact({ analysis, scan, t, locale }) {
           : null].filter(Boolean).join(' · ') || null },
   ]
   return (
-    <Section slot="prs-images" icon={ImageIcon} title={t('prs.img.title')} description={t(measured ? 'prs.img.descMeasured' : 'prs.img.desc')}>
+    <Section slot="prs-images" icon={ImageIcon} title={t('prs.img.title')} description={t(measured ? 'prs.img.descMeasured' : 'prs.img.desc')}
+      actions={hasLarge ? <ImageBulkButton items={items} /> : undefined}>
       <p data-slot="prs-img-summary" className={cn('m-0 text-sm text-foreground', WRAP)}>
         {Number(img.count) > 0
           ? t('prs.img.summary', formatPct(share, locale, 0), formatSize(img.bytes, { locale }), formatMs(img.est_ms_4g, locale),
@@ -547,6 +561,8 @@ function ImageImpact({ analysis, scan, t, locale }) {
                       <ProgressBar value={Math.max(1, Math.min(100, pct))} max={100} size="sm" decorative />
                     </div>
                   )}
+                  {/* Görsel aracı: özgün / optimize / küçültülmüş indirme (sunucu `top` satırı nesne satırının kopyasıdır) */}
+                  <ImageActions item={byUrl.get(it.url) || { category: 'IMAGE', ...it }} className="pl-7" />
                 </li>
               )
             })}
