@@ -212,8 +212,20 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         for (String candidate : new String[] { uri, once, percentDecode(once) }) {
             String norm = candidate.replaceAll(";[^/]*", "").replaceAll("/{2,}", "/").toLowerCase(Locale.ROOT);
             if (BODY_NEVER_LOGGED.stream().anyMatch(norm::startsWith)) return true;
+            if (resourceScanImagePath(norm)) return true;
         }
         return false;
+    }
+
+    /**
+     * Kaynak analizi görsel uçları (2026-11-14): {@code /api/monitoring/page/{id}/resource-scans/{scanId}/image} yanıtı ham
+     * GÖRSEL baytıdır (metin olarak günlüğe basılmaz), isteği ve {@code …/image-projection} gövdesi izlenen sitenin nesne
+     * adreslerini taşır. Kimlikler yolun ortasında olduğu için önek listesine yazılamaz — düzenli ifadesiz, doğrusal denetim.
+     */
+    private static boolean resourceScanImagePath(String norm) {
+        if (!norm.startsWith("/api/monitoring/page/")) return false;
+        int scans = norm.indexOf("/resource-scans/");
+        return scans >= 0 && norm.indexOf("/image", scans) >= 0;
     }
 
     private static String percentDecode(String s) {

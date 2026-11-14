@@ -92,6 +92,14 @@ public final class ScanItem {
     /** ETag / Last-Modified var mı — yalnız bellekte (doğrulayıcı kuralı). */
     public boolean validator;
 
+    // ── Görsel aracı (2026-11-14) — yalnız yeni taramalarda, yalnız görselde ──
+    /**
+     * Görseli gösteren öğenin SAYISAL {@code width} / {@code height} özniteliği (piksel); yoksa / sayısal değilse / aynı görsel
+     * boyutsuz bir öğede de kullanılıyorsa null. Önerilen hedef genişlik ({@code suggested_width}) bundan türetilir
+     * ({@link PageResourceAnalyzer#suggestWidth}); nota etkisi yok.
+     */
+    public Integer declaredWidth, declaredHeight;
+
     /** Tahmin için: bu nesneyi bulduran stil dosyasının sırası (yoksa -1 = HTML). */
     public int parent = -1;
     /** Keşif sırası (HTML = 0). */
@@ -156,6 +164,9 @@ public final class ScanItem {
         c.gifFrames = gifFrames;
         c.h3Advertised = h3Advertised;
         c.validator = validator;
+        // Öğeye aittir (lazy / fromCss gibi): çok sayfalı taramada o sayfanın adayından yeniden yazılır
+        c.declaredWidth = declaredWidth;
+        c.declaredHeight = declaredHeight;
         // Analizin yazdıkları: startMs = null, findings boş, renderBlocking = false, integrity / thirdPartyCategory = null,
         // parent = -1, seq = 0 (yeni nesnenin varsayılanları)
         return c;
@@ -192,7 +203,93 @@ public final class ScanItem {
         m.put("verdict", verdict);
         m.put("via", via);
         if (optimizedBytes != null) m.put("optimized_bytes", optimizedBytes);
+        // ── görsel aracı (2026-11-14): yalnız görselde ve yalnız varsa (eski kayıtta yok — okuyan "bilinmiyor" sayar) ──
+        if (PageResourceDiscovery.IMAGE.equals(category)) {
+            if (declaredWidth != null) m.put("declared_width", declaredWidth);
+            if (declaredHeight != null) m.put("declared_height", declaredHeight);
+            PageResourceAnalyzer.WidthSuggestion s = PageResourceAnalyzer.suggestWidth(width, declaredWidth);
+            if (s != null) {
+                m.put("suggested_width", s.width());
+                m.put("suggested_reason", s.reason());
+            }
+        }
         return m;
+    }
+
+    /**
+     * Saklanan nesne satırından ({@code items_json} — {@link #toMap()} / {@link #toDeepMap()} çıktısı) nesneyi geri kurar
+     * (2026-11-14, "not ne olurdu?" projeksiyonu: analiz saklanan nesnelerin KOPYASI üzerinde yeniden koşar). Saklanmayan
+     * alanlar varsayılanında kalır: {@code parent} (çağıran {@code found_in}'den bağlar), {@code seq}, {@code redirectMs},
+     * tam {@code contentHash} (ilk 16 karakter saklanır), {@code gifFrames}, {@code h3Advertised}, {@code validator}. Türü
+     * beklenenden farklı alan yok sayılır (bozuk kayıt fırlatmaz); türetilen {@code suggested_*} okunmaz.
+     */
+    @SuppressWarnings("unchecked")
+    public static ScanItem fromStored(Map<String, Object> m) {
+        ScanItem it = new ScanItem();
+        if (m == null) return it;
+        it.url = str(m.get("url"));
+        it.category = str(m.get("category"));
+        it.contentType = str(m.get("content_type"));
+        it.status = (int) num(m.get("status"), 0);
+        it.bytes = num(m.get("bytes"), 0);
+        it.truncated = Boolean.TRUE.equals(m.get("truncated"));
+        String size = str(m.get("size_source"));
+        it.sizeSource = size == null ? SIZE_BODY : size;
+        it.ttfbMs = num(m.get("ttfb_ms"), 0);
+        it.durationMs = num(m.get("duration_ms"), 0);
+        it.startMs = m.get("start_ms") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        it.thirdParty = Boolean.TRUE.equals(m.get("third_party"));
+        it.compressed = Boolean.TRUE.equals(m.get("compressed"));
+        it.cacheTtlS = m.get("cache_ttl_s") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        it.width = intObj(m.get("width"));
+        it.height = intObj(m.get("height"));
+        it.redirects = (int) num(m.get("redirects"), 0);
+        it.fromCss = Boolean.TRUE.equals(m.get("from_css"));
+        it.pageLoad = Boolean.TRUE.equals(m.get("page_load"));
+        it.lazy = Boolean.TRUE.equals(m.get("lazy"));
+        it.error = str(m.get("error"));
+        it.host = str(m.get("host"));
+        it.foundIn = str(m.get("found_in"));
+        it.finalUrl = str(m.get("final_url"));
+        if (m.get("headers") instanceof Map<?, ?> h) {
+            Map<String, String> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : h.entrySet()) {
+                if (e.getKey() instanceof String k) copy.put(k, e.getValue() == null ? null : String.valueOf(e.getValue()));
+            }
+            it.headers = copy;
+        }
+        if (m.get("findings") instanceof java.util.Collection<?> f) {
+            for (Object o : f) if (o instanceof String s) it.findings.add(s);
+        }
+        it.verdict = str(m.get("verdict"));
+        it.via = str(m.get("via"));
+        it.optimizedBytes = m.get("optimized_bytes") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        it.httpVersion = str(m.get("http_version"));
+        it.contentHash = str(m.get("content_hash"));
+        it.minified = m.get("minified") instanceof Boolean b ? b : null;
+        if (m.get("library") instanceof Map<?, ?> lib) {
+            it.libraryName = str(((Map<String, Object>) lib).get("name"));
+            it.libraryVersion = str(((Map<String, Object>) lib).get("version"));
+        }
+        it.sourceMap = str(m.get("source_map"));
+        it.renderBlocking = Boolean.TRUE.equals(m.get("render_blocking"));
+        it.integrity = m.get("integrity") instanceof Boolean b ? b : null;
+        it.thirdPartyCategory = str(m.get("third_party_category"));
+        it.declaredWidth = intObj(m.get("declared_width"));
+        it.declaredHeight = intObj(m.get("declared_height"));
+        return it;
+    }
+
+    private static String str(Object o) {
+        return o instanceof String s ? s : null;
+    }
+
+    private static long num(Object o, long def) {
+        return o instanceof Number n ? n.longValue() : def;
+    }
+
+    private static Integer intObj(Object o) {
+        return o instanceof Number n ? Integer.valueOf(n.intValue()) : null;
     }
 
     /**

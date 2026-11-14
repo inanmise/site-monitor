@@ -179,23 +179,17 @@ public final class PageResourceAnalyzer {
 
         long loadMs = simulate(items);
 
-        List<ScanItem> page = new ArrayList<>();
+        List<ScanItem> page = pageItems(items);
         List<ScanItem> docs = new ArrayList<>();
         List<ScanItem> links = new ArrayList<>();
         int notLoaded = 0;
         for (ScanItem it : items) {
             it.findings.clear();
             if (it != html && it.skipped()) { notLoaded++; continue; }   // indirilmedi: hiçbir toplama girmez
-            if (it.pageLoad) page.add(it);
-            else if (DOCUMENT.equals(it.category)) docs.add(it);
+            if (it.pageLoad) continue;                                     // sayfa nesnesi — pageItems() ile aynı kural
+            if (DOCUMENT.equals(it.category)) docs.add(it);
             else links.add(it);
         }
-        long pageBytes = sum(page);
-        List<ScanItem> images = page.stream().filter(PageResourceAnalyzer::isImage).toList();
-        long imageBytes = sum(images);
-        int pageFailed = (int) page.stream().filter(ScanItem::failed).count();
-        // Özet "açılmayan nesne" = sayfa nesneleri (istek kutucuğu ve hatalar puanıyla aynı); kırık belge / bağlantı ayrı öneri.
-        int failed = pageFailed;
 
         // ── Derin bölüm A (performans bileşeni de buradan: oluşturmayı engelleyenler) ─────────
         LoadingAnalysis.Result loading = LoadingAnalysis.build(items, page, ctx.html(), ctx);
@@ -204,63 +198,19 @@ public final class PageResourceAnalyzer {
         Integer rbScore = !loading.blockingKnown() ? null
                 : Math.min(curve(loading.blockingBytes() / (double) KB, RENDER_BLOCKING_CURVE_KB),
                         curve(loading.blockingCount(), RENDER_BLOCKING_COUNT_CURVE));
+        Long rbValue = loading.blockingKnown() ? Long.valueOf(loading.blockingBytes()) : null;
 
-        // ── Alt puanlar ─────────────────────────────────────────────────────────────────
-        List<ScanItem> largeImages = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
-        int imageScore = Math.min(curve(imageBytes / (double) MB, IMAGE_CURVE_MB),
-                Math.max(0, 100 - 8 * largeImages.size()));
-        List<ScanItem> texts = page.stream().filter(PageResourceAnalyzer::compressibleText).toList();
-        int compressionPct = texts.isEmpty() ? 100
-                : (int) Math.round(100.0 * texts.stream().filter(i -> i.compressed).count() / texts.size());
-        List<ScanItem> statics = page.stream().filter(PageResourceAnalyzer::cacheableStatic).toList();
-        int cachingPct = statics.isEmpty() ? 100 : (int) Math.round(statics.stream()
-                .mapToDouble(i -> i.cacheTtlS == null ? 0 : i.cacheTtlS >= CACHE_GOOD_S ? 1.0 : i.cacheTtlS >= CACHE_OK_S ? 0.5 : 0)
-                .sum() * 100.0 / statics.size());
-
-        List<Map<String, Object>> scores = new ArrayList<>();
-        Map<String, Integer> s = new LinkedHashMap<>();
-        s.put("load_time", curve(loadMs, LOAD_CURVE));
-        s.put("page_weight", curve(pageBytes / (double) MB, WEIGHT_CURVE_MB));
-        s.put("images", imageScore);
-        s.put("requests", curve(page.size(), REQUEST_CURVE));
-        s.put("server_response", curve(html.ttfbMs, TTFB_CURVE));
-        s.put("render_blocking", rbScore);
-        s.put("errors", curve(pageFailed, ERROR_CURVE));
-        s.put("compression", compressionPct);
-        s.put("caching", cachingPct);
-        Map<String, Object[]> values = Map.of(
-                "load_time", new Object[]{loadMs, "ms"},
-                "page_weight", new Object[]{pageBytes, "bytes"},
-                "images", new Object[]{imageBytes, "bytes"},
-                "requests", new Object[]{page.size(), "count"},
-                "server_response", new Object[]{html.ttfbMs, "ms"},
-                "render_blocking", new Object[]{loading.blockingKnown() ? loading.blockingBytes() : null, "bytes"},
-                "errors", new Object[]{pageFailed, "count"},
-                "compression", new Object[]{compressionPct, "pct"},
-                "caching", new Object[]{cachingPct, "pct"});
-        // Bilinmeyen bileşen (null puan) ağırlığa girmez: not = Σ puan × ağırlık / Σ BİLİNEN ağırlık; kayıp aynı paydayla, böylece
-        // kayıpların toplamı yine 100 − not'u açıklar. Hepsi bilinirken payda 100 → algoritma 3'ün ilk hâliyle birebir.
-        int knownWeight = 0;
-        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) if (s.get(w.getKey()) != null) knownWeight += w.getValue();
-        double weighted = 0;
-        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) {
-            Integer sc = s.get(w.getKey());
-            if (sc != null) weighted += sc * w.getValue();
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("key", w.getKey());
-            row.put("score", sc);
-            row.put("weight", w.getValue());
-            row.put("value", values.get(w.getKey())[0]);
-            row.put("unit", values.get(w.getKey())[1]);
-            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık; bilinmiyorsa null)
-            Object[] target = TARGETS.get(w.getKey());
-            row.put("full_at", target[0]);
-            row.put("zero_at", target[1]);
-            row.put("lost", sc == null ? null : Math.round(w.getValue() * (100 - sc) * 10.0 / knownWeight) / 10.0);
-            scores.add(row);
-        }
-        int grade = knownWeight == 0 ? 0 : (int) Math.round(weighted / knownWeight);
-        String letter = letter(grade);
+        // ── Alt puanlar + not — projeksiyonla ({@link #performance}) AYNI kod ───────────────────
+        Scored scored = score(html, page, loadMs, rbScore, rbValue);
+        long pageBytes = scored.pageBytes();
+        List<ScanItem> images = scored.images();
+        long imageBytes = scored.imageBytes();
+        // Özet "açılmayan nesne" = sayfa nesneleri (istek kutucuğu ve hatalar puanıyla aynı); kırık belge / bağlantı ayrı öneri.
+        int failed = scored.pageFailed();
+        List<ScanItem> largeImages = scored.largeImages();
+        List<Map<String, Object>> scores = scored.scores();
+        int grade = scored.grade();
+        String letter = scored.letter();
 
         // ── Kategoriler ─────────────────────────────────────────────────────────────────
         Map<String, long[]> cat = new LinkedHashMap<>();
@@ -369,6 +319,149 @@ public final class PageResourceAnalyzer {
         return new Result(grade, letter, loadMs, html.ttfbMs, html.durationMs, pageBytes, page.size(), imageBytes,
                 images.size(), docs.size(), sum(docs), links.size(), sum(links), failed, lim.capped(), analysis,
                 sumOf(page, JS), sumOf(page, CSS), sumOf(page, FONT), security.score(), audit.seoScore(), audit.a11yScore());
+    }
+
+    // ── Performans notu (analiz ve "not ne olurdu?" projeksiyonu AYNI kodu çalıştırır) ─────────────
+
+    /** Sayfa nesneleri: HTML + sayfa yükü nesneleri, indirilmeyenler ({@code skipped}) hariç — tüm toplamların kümesi. */
+    static List<ScanItem> pageItems(List<ScanItem> items) {
+        ScanItem html = items.get(0);
+        List<ScanItem> page = new ArrayList<>();
+        for (ScanItem it : items) {
+            if (it != html && it.skipped()) continue;   // indirilmedi: hiçbir toplama girmez
+            if (it.pageLoad) page.add(it);
+        }
+        return page;
+    }
+
+    /** {@link #score} sonucu: toplamlar + bileşen satırları + not. */
+    private record Scored(long pageBytes, List<ScanItem> images, long imageBytes, int pageFailed, List<ScanItem> largeImages,
+                          List<Map<String, Object>> scores, int grade, String letter) {}
+
+    /**
+     * Alt puanlar ve 100 üzerinden not — TEK kopya. {@code rbScore} / {@code rbValue}: oluşturmayı engelleyen bileşenin puanı ve
+     * değeri (bayt); HTML olgularına dayanır, bu yüzden çağıran verir ({@link #analyze} hesaplar, projeksiyon saklananı geçer).
+     */
+    private static Scored score(ScanItem html, List<ScanItem> page, long loadMs, Integer rbScore, Object rbValue) {
+        long pageBytes = sum(page);
+        List<ScanItem> images = page.stream().filter(PageResourceAnalyzer::isImage).toList();
+        long imageBytes = sum(images);
+        int pageFailed = (int) page.stream().filter(ScanItem::failed).count();
+
+        List<ScanItem> largeImages = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
+        int imageScore = Math.min(curve(imageBytes / (double) MB, IMAGE_CURVE_MB),
+                Math.max(0, 100 - 8 * largeImages.size()));
+        List<ScanItem> texts = page.stream().filter(PageResourceAnalyzer::compressibleText).toList();
+        int compressionPct = texts.isEmpty() ? 100
+                : (int) Math.round(100.0 * texts.stream().filter(i -> i.compressed).count() / texts.size());
+        List<ScanItem> statics = page.stream().filter(PageResourceAnalyzer::cacheableStatic).toList();
+        int cachingPct = statics.isEmpty() ? 100 : (int) Math.round(statics.stream()
+                .mapToDouble(i -> i.cacheTtlS == null ? 0 : i.cacheTtlS >= CACHE_GOOD_S ? 1.0 : i.cacheTtlS >= CACHE_OK_S ? 0.5 : 0)
+                .sum() * 100.0 / statics.size());
+
+        List<Map<String, Object>> scores = new ArrayList<>();
+        Map<String, Integer> s = new LinkedHashMap<>();
+        s.put("load_time", curve(loadMs, LOAD_CURVE));
+        s.put("page_weight", curve(pageBytes / (double) MB, WEIGHT_CURVE_MB));
+        s.put("images", imageScore);
+        s.put("requests", curve(page.size(), REQUEST_CURVE));
+        s.put("server_response", curve(html.ttfbMs, TTFB_CURVE));
+        s.put("render_blocking", rbScore);
+        s.put("errors", curve(pageFailed, ERROR_CURVE));
+        s.put("compression", compressionPct);
+        s.put("caching", cachingPct);
+        Map<String, Object[]> values = Map.of(
+                "load_time", new Object[]{loadMs, "ms"},
+                "page_weight", new Object[]{pageBytes, "bytes"},
+                "images", new Object[]{imageBytes, "bytes"},
+                "requests", new Object[]{page.size(), "count"},
+                "server_response", new Object[]{html.ttfbMs, "ms"},
+                "render_blocking", new Object[]{rbValue, "bytes"},
+                "errors", new Object[]{pageFailed, "count"},
+                "compression", new Object[]{compressionPct, "pct"},
+                "caching", new Object[]{cachingPct, "pct"});
+        // Bilinmeyen bileşen (null puan) ağırlığa girmez: not = Σ puan × ağırlık / Σ BİLİNEN ağırlık; kayıp aynı paydayla, böylece
+        // kayıpların toplamı yine 100 − not'u açıklar. Hepsi bilinirken payda 100 → algoritma 3'ün ilk hâliyle birebir.
+        int knownWeight = 0;
+        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) if (s.get(w.getKey()) != null) knownWeight += w.getValue();
+        double weighted = 0;
+        for (Map.Entry<String, Integer> w : WEIGHTS.entrySet()) {
+            Integer sc = s.get(w.getKey());
+            if (sc != null) weighted += sc * w.getValue();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", w.getKey());
+            row.put("score", sc);
+            row.put("weight", w.getValue());
+            row.put("value", values.get(w.getKey())[0]);
+            row.put("unit", values.get(w.getKey())[1]);
+            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık; bilinmiyorsa null)
+            Object[] target = TARGETS.get(w.getKey());
+            row.put("full_at", target[0]);
+            row.put("zero_at", target[1]);
+            row.put("lost", sc == null ? null : Math.round(w.getValue() * (100 - sc) * 10.0 / knownWeight) / 10.0);
+            scores.add(row);
+        }
+        int grade = knownWeight == 0 ? 0 : (int) Math.round(weighted / knownWeight);
+        return new Scored(pageBytes, images, imageBytes, pageFailed, largeImages, scores, grade, letter(grade));
+    }
+
+    /**
+     * Performans notunun özeti (2026-11-14, "not ne olurdu?" projeksiyonu).
+     *
+     * @param largeImages büyük görsel sayısı (≥ {@value #LARGE_IMAGE_LIMIT_KB} KB; görseller puanından her biri 8 düşürür)
+     * @param scores      bileşen satırları — analizin {@code scores} listesiyle aynı biçim ve sıra
+     */
+    public record Performance(int grade, String letter, long loadMs, long pageBytes, long imageBytes, int largeImages,
+                              List<Map<String, Object>> scores) {}
+
+    /**
+     * YALNIZ performans notunu hesaplar — {@link #analyze}'ın çalıştırdığı kodun AYNISI (şelale tahmini, sayfa nesneleri, alt
+     * puanlar, ağırlıklı not); derin bölümler, öneriler ve bulgular hesaplanmaz. Oluşturmayı engelleyen bileşen HTML olgularına
+     * dayandığı (ve bitmiş analiz için saklanmadığı) için puanı ve değeri çağırandan gelir: saklanan analizin satırı. Görsel
+     * boyutu değişince o bileşen değişmez (görsel oluşturmayı engellemez), bu yüzden yeniden kullanmak hesabı bozmaz.
+     *
+     * @param items               0. sıra HTML; {@code startMs} bu çağrıda yazılır (kopya verin)
+     * @param renderBlockingScore saklanan bileşen puanı; bilinmiyorsa null (not kalan ağırlıklarla normalize edilir)
+     * @param renderBlockingValue saklanan bileşen değeri (bayt); bilinmiyorsa null
+     */
+    public static Performance performance(List<ScanItem> items, Integer renderBlockingScore, Object renderBlockingValue) {
+        if (items == null || items.isEmpty()) throw new IllegalArgumentException("HTML satırı yok");
+        long loadMs = simulate(items);
+        Scored sc = score(items.get(0), pageItems(items), loadMs, renderBlockingScore, renderBlockingValue);
+        return new Performance(sc.grade(), sc.letter(), loadMs, sc.pageBytes(), sc.imageBytes(), sc.largeImages().size(),
+                sc.scores());
+    }
+
+    // ── Önerilen hedef genişlik (2026-11-14, görsel aracı) ──────────────────────────────────────────
+
+    /** Bildirilen boyut bilinmiyorken çok geniş görsele önerilen genişlik (px). */
+    public static final int SUGGESTED_MAX_WIDTH = 1920;
+    /** {@code suggested_reason} değerleri. */
+    public static final String SUGGEST_DECLARED = "declared", SUGGEST_MAX_WIDTH = "max_width";
+
+    /** Önerilen hedef genişlik + nedeni ({@code declared} | {@code max_width}). */
+    public record WidthSuggestion(int width, String reason) {}
+
+    /**
+     * Görsele önerilen hedef genişlik — nota etkisi YOK (yalnız nesne alanı {@code suggested_width} / {@code suggested_reason}):
+     * <ul>
+     *   <li>{@code declared}: doğal genişlik, bildirilen genişliğin 2 katının en az %10 üstündeyse (doğal ≥ 2,2 × bildirilen)
+     *       → 2 × bildirilen (retina);</li>
+     *   <li>{@code max_width}: aksi halde doğal genişlik {@value #OVERSIZED_WIDTH}'den büyükse → {@value #SUGGESTED_MAX_WIDTH};</li>
+     *   <li>yoksa öneri yok (null).</li>
+     * </ul>
+     * Öneri hiçbir zaman doğal genişlikten büyük değildir. Doğal genişlik bilinmiyorsa null.
+     */
+    public static WidthSuggestion suggestWidth(Integer naturalWidth, Integer declaredWidth) {
+        if (naturalWidth == null || naturalWidth <= 0) return null;
+        long natural = naturalWidth;
+        if (declaredWidth != null && declaredWidth > 0 && natural * 10L >= declaredWidth * 22L) {
+            return new WidthSuggestion((int) Math.min(natural, declaredWidth * 2L), SUGGEST_DECLARED);
+        }
+        if (natural > OVERSIZED_WIDTH) {
+            return new WidthSuggestion((int) Math.min(natural, SUGGESTED_MAX_WIDTH), SUGGEST_MAX_WIDTH);
+        }
+        return null;
     }
 
     /** {score, letter?}; puan hesaplanamadıysa {@code {score: null}} (uydurma 0 / 100 yok). */

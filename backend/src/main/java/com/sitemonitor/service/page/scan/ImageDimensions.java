@@ -38,6 +38,94 @@ public final class ImageDimensions {
         return s != null && s.width() > 0 && s.height() > 0 && s.width() <= MAX_SIDE && s.height() <= MAX_SIDE;
     }
 
+    // ── Tür — YALNIZ sihirli baytlardan (2026-11-14, görsel aracı: taramanın bulduğu görselin indirilmesi) ──
+
+    /** {@link #type} değerleri (API sözleşmesi: {@code X-Image-Type}). */
+    public static final String PNG = "png", JPEG = "jpeg", GIF = "gif", WEBP = "webp", BMP = "bmp", AVIF = "avif";
+
+    /** Geçerli BMP DIB başlığı boyutları (çekirdek, INFO ve sürümleri) — iki baytlık "BM" tek başına tür sayılmaz. */
+    private static final int[] BMP_DIB_SIZES = {12, 16, 40, 52, 56, 64, 108, 124};
+    /** {@code ftyp} kutusunda bakılan en çok uyumlu marka. */
+    private static final int MAX_FTYP_BRANDS = 64;
+
+    /**
+     * Gövdenin türü — sunucunun {@code Content-Type} başlığı ya da adresin uzantısı ASLA kullanılmaz: PNG (8 baytlık imza),
+     * JPEG ({@code FF D8 FF}), GIF ({@code GIF87a} / {@code GIF89a}), WebP ({@code RIFF….WEBP}), BMP ({@code BM} + bilinen DIB
+     * başlığı boyutu), AVIF ({@code ftyp} kutusunda {@code avif} / {@code avis} markası). Başka her şey (SVG, HTML hata
+     * sayfası, ICO, TIFF, HEIC, boş gövde) → {@code null}. Döngü {@value #MAX_FTYP_BRANDS} markayla sınırlı; asla fırlatmaz.
+     */
+    public static String type(byte[] b) {
+        if (b == null || b.length < 12) return null;
+        if ((b[0] & 0xFF) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G'
+                && b[4] == 0x0D && b[5] == 0x0A && b[6] == 0x1A && b[7] == 0x0A) return PNG;
+        if ((b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8 && (b[2] & 0xFF) == 0xFF) return JPEG;
+        if (b[0] == 'G' && b[1] == 'I' && b[2] == 'F' && b[3] == '8' && (b[4] == '7' || b[4] == '9') && b[5] == 'a') return GIF;
+        if (b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F' && b[8] == 'W' && b[9] == 'E' && b[10] == 'B'
+                && b[11] == 'P') return WEBP;
+        if (b[0] == 'B' && b[1] == 'M' && b.length >= 26) {
+            int dib = le32(b, 14);
+            for (int ok : BMP_DIB_SIZES) if (dib == ok) return BMP;
+            return null;
+        }
+        if (b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p') return avifBrand(b) ? AVIF : null;
+        return null;
+    }
+
+    /** {@code ftyp} kutusunun ana ya da uyumlu markalarında {@code avif} / {@code avis} var mı (kutu boyutu ve girdiyle sınırlı). */
+    private static boolean avifBrand(byte[] b) {
+        long size = be32(b, 0) & 0xFFFFFFFFL;
+        if (size < 16) return false;                       // 64 bitlik boyut (1) ya da bozuk kutu: kabul edilmez
+        int end = (int) Math.min(Math.min(size, b.length), 16L + 4L * MAX_FTYP_BRANDS);
+        if (isAvif(b, 8)) return true;                     // ana marka (12–15: küçük sürüm)
+        for (int i = 16; i + 4 <= end; i += 4) if (isAvif(b, i)) return true;
+        return false;
+    }
+
+    private static boolean isAvif(byte[] b, int o) {
+        return b[o] == 'a' && b[o + 1] == 'v' && b[o + 2] == 'i' && (b[o + 3] == 'f' || b[o + 3] == 's');
+    }
+
+    /** Türün MIME adı ({@code image/…}); bilinmeyen tür → null. */
+    public static String mime(String type) {
+        if (type == null) return null;
+        return switch (type) {
+            case PNG -> "image/png";
+            case JPEG -> "image/jpeg";
+            case GIF -> "image/gif";
+            case WEBP -> "image/webp";
+            case BMP -> "image/bmp";
+            case AVIF -> "image/avif";
+            default -> null;
+        };
+    }
+
+    /** Türün dosya uzantısı (noktasız; JPEG → {@code jpg}); bilinmeyen tür → null. */
+    public static String extension(String type) {
+        return type == null || mime(type) == null ? null : JPEG.equals(type) ? "jpg" : type;
+    }
+
+    /**
+     * {@link #read} + AVIF: AVIF'te boyut {@code ispe} kutusundan (ilk {@value #HEAD_BYTES} bayt içinde, en büyük alanlı olan —
+     * ızgaralı görselde döşemeler daha küçüktür). Yalnız bilgi içindir (indirme yanıtının {@code X-Image-Width} / {@code -Height}
+     * başlığı); tarama ölçümü ({@link #read}) değişmez. Okunamazsa null.
+     */
+    public static Size readAny(byte[] b) {
+        Size s = read(b);
+        if (s != null || b == null || !AVIF.equals(type(b))) return s;
+        try {
+            int end = Math.min(b.length, HEAD_BYTES) - 16;
+            Size best = null;
+            for (int i = 4; i <= end; i++) {
+                if (b[i] != 'i' || b[i + 1] != 's' || b[i + 2] != 'p' || b[i + 3] != 'e') continue;
+                Size c = new Size(be32(b, i + 8), be32(b, i + 12));
+                if (valid(c) && (best == null || (long) c.width() * c.height() > (long) best.width() * best.height())) best = c;
+            }
+            return best;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /**
      * Çözme bilgisi (2026-11, ölçülmüş görsel kazancının bellek izni — inceleme O-2): yalnız PNG ve JPEG.
      *

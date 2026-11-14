@@ -16,6 +16,7 @@ import {
   statusText, thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, Section, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
+import ImageActions from './imagetool/ImageActions.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
@@ -369,6 +370,7 @@ function ObjectRow({ item, total, t, locale, onOpen }) {
           {item.error && <span data-slot="prs-obj-problem" className={cn('text-[11px]', broken ? 'text-destructive' : 'text-muted-foreground', WRAP)}>{problemText(item.error, t)}</span>}
           <Flags item={item} t={t} locale={locale} />
           <DetailButton item={item} t={t} onOpen={onOpen} />
+          <ImageActions item={item} />
         </div>
       </TableCell>
       <TableCell className="align-top text-xs whitespace-normal"><TypeText item={item} t={t} /></TableCell>
@@ -423,6 +425,7 @@ function ObjectCard({ item, t, locale, onOpen }) {
       {item.error && <span data-slot="prs-obj-problem" className={cn('text-xs', broken ? 'text-destructive' : 'text-muted-foreground', WRAP)}>{problemText(item.error, t)}</span>}
       <Flags item={item} t={t} locale={locale} />
       <DetailButton item={item} t={t} onOpen={onOpen} />
+      <ImageActions item={item} />
     </li>
   )
 }

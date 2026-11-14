@@ -225,6 +225,42 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("2026-11-14: kaynak analizi görsel uçları — istek gövdesi (nesne adresleri) ve yanıt (ham görsel baytı / projeksiyon) hiçbir biçimde loglanmaz")
+    void trace_resourceScanImage_bodiesNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String requestBody = "{\"url\":\"https://ic.example.test/gorsel/GIZLI-ADRES.png\"}";
+        byte[] image = "?PNG-SAHTE-GORSEL-BAYTLARI".getBytes(StandardCharsets.ISO_8859_1);
+        image[0] = (byte) 0x89;
+        for (String uri : new String[] { "/api/monitoring/page/61/resource-scans/900/image",
+                "/api/monitoring/page/61/resource-scans/900/image-projection",
+                "/api/monitoring/page;x=1/61/resource-scans/900/image", "/api//monitoring/Page/61/resource-scans/900/image",
+                "/api/%6Donitoring/page/61/resource-scans/900/image", "/api/monitoring/page/61/resource-scans/900/%69mage" }) {
+            assertThat(RequestLoggingFilter.bodyNeverLogged(new MockHttpServletRequest("POST", uri))).as(uri).isTrue();
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
+            req.setContentType("application/json");
+            req.setContent(requestBody.getBytes(StandardCharsets.UTF_8));
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            filter.doFilter(req, resp, (request, response) -> {
+                request.getInputStream().readAllBytes();
+                response.setContentType("image/png");
+                response.getOutputStream().write(image);
+            });
+            assertThat(resp.getContentAsByteArray()).as("yanıt bozulmaz").isEqualTo(image);
+            String all = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (a, b) -> a + "\n" + b);
+            assertThat(all).as(uri).contains(RequestLoggingFilter.BODY_OMITTED)
+                    .doesNotContain("GIZLI-ADRES").doesNotContain("SAHTE-GORSEL");
+        }
+        // Tarama listesi / tek tarama uçları kapsam dışı (bugünkü davranış)
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("GET", "/api/monitoring/page/61/resource-scans/900"))).isFalse();
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("POST", "/api/monitoring/page/61/resource-scans"))).isFalse();
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("GET", "/api/monitoring/http/61/image"))).isFalse();
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

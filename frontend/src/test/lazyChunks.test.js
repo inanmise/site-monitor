@@ -162,6 +162,63 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(staticImports(read('components/page/resourcescan/resourceScanModel.js')).some((s) => /chart|recharts|jspdf|xlsx/.test(s))).toBe(false)
   })
 
+  it('Kaynak analizi → Görsel aracı (2026-11-14): görsel motoru yalnız tek bağdaştırıcıdan import() ile; araç görünümü ve pencereleri tembel', () => {
+    // Motor (utils/imageEngine — Web Worker + kodlayıcılar) HİÇBİR dosyadan statik içe aktarılmaz; onu yalnız
+    // imagetool/engineClient.js, o da `import()` ile yükler (motorun kendi iç dosyaları kapsam dışı).
+    const engineRe = /(^|\/)imageEngine(\/|$)/
+    const outside = FILES.filter(({ rel: r }) => !r.startsWith('utils/imageEngine/'))
+    expect(outside.filter(({ src }) => staticImports(src).some((s) => engineRe.test(s))).map((x) => x.rel)).toEqual([])
+    expect(outside.filter(({ src }) => dynamicImports(src).some((s) => engineRe.test(s))).map((x) => x.rel))
+      .toEqual(['components/page/resourcescan/imagetool/engineClient.js'])
+    // Araç görünümü sekmede tembel; karşılaştırma ve duyarlı set pencereleri bağlam dosyasında tembel — başka statik kullanıcı yok
+    const tab = 'components/page/resourcescan/ResourceScanTab.jsx'
+    expect(hasStatic(tab, /imagetool\/ImageToolView(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(tab, /imagetool\/ImageToolView\.jsx$/)).toBe(true)
+    const ctx = 'components/page/resourcescan/imagetool/ImageToolContext.jsx'
+    expect(hasDynamic(ctx, /\/ImageCompareDialog\.jsx$/)).toBe(true)
+    expect(hasDynamic(ctx, /\/ResponsiveSetDialog\.jsx$/)).toBe(true)
+    const lazyOnly = /(^|\/)(ImageToolView|ImageCompareDialog|ResponsiveSetDialog)(\.jsx)?$/
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => lazyOnly.test(s))).map((x) => x.rel)).toEqual([])
+    // ZIP paketleyici (fflate) görsel aracında da yalnız import() ile; izleme sayfası yalnız içe aktarmasız "süren iş" kaydını alır
+    const tool = FILES.filter(({ rel: r }) => r.startsWith('components/page/resourcescan/imagetool/'))
+    expect(tool.filter(({ src }) => staticImports(src).some((s) => /^fflate$|xlsxWriter|^jspdf|recharts/.test(s))).map((x) => x.rel)).toEqual([])
+    expect(staticImports(read('components/page/resourcescan/imagetool/imageToolBusy.js'))).toEqual([])
+    const page = 'components/PageMonitorPage.jsx'
+    expect(staticImports(read(page)).filter((s) => /imagetool\//.test(s))).toEqual(['./page/resourcescan/imagetool/imageToolBusy.js'])
+  })
+
+  it('Görsel motoru (2026-11-14): kamu arayüzü yalnız küçük modülleri statik alır; ağır çekirdek Worker\'da ya da import(\'./core.js\') ile', () => {
+    const E = 'utils/imageEngine/'
+    const engineFiles = FILES.filter(({ rel: r }) => r.startsWith(E))
+    const base = (s) => s.replace(/^\.\//, '').replace(/\.js$/, '')
+    // index.js: yalnız sabitler / seçenek doğrulama / başlık okuma / önizleme çözmesi (statik); çekirdek yalnız import()
+    const LIGHT = ['errors', 'options', 'probe', 'platform']
+    expect(staticImports(read(`${E}index.js`)).map(base).sort()).toEqual([...LIGHT].sort())
+    expect([...new Set(dynamicImports(read(`${E}index.js`)))]).toEqual(['./core.js'])      // yorum satırı da geçer: tekil küme
+    expect(read(`${E}index.js`)).toMatch(/new Worker\(new URL\('\.\/engine\.worker\.js', import\.meta\.url\)/)
+    // Küçük modüller ağır parçaları (pipeline, kodlayıcılar, nicemleyici, fflate) içe aktarmaz
+    for (const f of LIGHT) {
+      expect(staticImports(read(`${E}${f}.js`)).map(base).every((s) => LIGHT.includes(s)), f).toBe(true)
+    }
+    // core.js'i statik olarak YALNIZ Worker alır; Worker dosyasını hiçbir modül içe aktarmaz (yalnız new URL ile kurulur)
+    // Motorun iç dosyasını kim alıyor: motor dizininden `./x.js`, dışarıdan `imageEngine/x` (başka dizinlerdeki aynı adlı
+    // dosyalar — ör. manualcert/extract/core.js — sayılmaz)
+    const importers = (name) => FILES.filter(({ rel: r, src }) => staticImports(src).some((s) =>
+      (r.startsWith(E) && new RegExp(`^\\./${name}(\\.js)?$`).test(s)) || new RegExp(`imageEngine/${name}(\\.js)?$`).test(s)))
+      .map((x) => x.rel).sort()
+    expect(importers('core')).toEqual([`${E}engine.worker.js`])
+    expect(importers('engine\\.worker')).toEqual([])
+    // pipeline (ve onun aldığı pngWriter → fflate) yalnız çekirdekten; motor dışından hiçbir dosya motorun iç dosyasını almaz
+    expect(importers('pipeline')).toEqual([`${E}core.js`])
+    // üst veri ayıklayıcı (strip — METADATA_STRIPPED) da çekirdek yolundadır: yalnız pipeline alır, o da pngWriter'ı alır
+    expect(importers('strip')).toEqual([`${E}pipeline.js`])
+    expect(importers('pngWriter')).toEqual([`${E}pipeline.js`, `${E}strip.js`])
+    const outsideUsers = FILES.filter(({ rel: r }) => !r.startsWith(E))
+      .filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => /imageEngine\/(?!index(\.js)?$)/.test(s))).map((x) => x.rel)
+    expect(outsideUsers).toEqual([])
+    expect(engineFiles.length).toBeGreaterThan(10)
+  })
+
   it('Aktivite: ayrıntı sayfası, izleme zaman çizelgesi ve Excel yazıcısı yalnız açılınca yüklenir (2026-11-05)', () => {
     const log = 'components/ActivityLog.jsx'
     expect(hasStatic(log, /activity\/detail\/ActivityDetailPage(\.jsx)?$|activity\/timeline\/MonitorTimelineView(\.jsx)?$/)).toBe(false)

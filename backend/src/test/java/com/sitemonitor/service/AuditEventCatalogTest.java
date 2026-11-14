@@ -117,6 +117,13 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("kaynak analizi görsel aracı (2026-11-14): PAGE_RESOURCE_IMAGE_DOWNLOAD katalogda ve İZLEME kategorisinde")
+    void pageResourceImageDownloadIsMonitor() {
+        assertThat(AuditEventCatalog.contains("PAGE_RESOURCE_IMAGE_DOWNLOAD")).isTrue();
+        assertThat(AuditEventCatalog.categoryOf("PAGE_RESOURCE_IMAGE_DOWNLOAD")).isEqualTo(AuditEventCatalog.MONITOR);
+    }
+
+    @Test
     @DisplayName("denetim zinciri yeniden başlatma (2026-10-23): katalogda ve SİSTEM kategorisinde (arayüzdeki ev-system ile aynı)")
     void auditChainRestartIsSystem() {
         assertThat(AuditEventCatalog.contains(AuditService.EVENT_CHAIN_RESTART)).isTrue();

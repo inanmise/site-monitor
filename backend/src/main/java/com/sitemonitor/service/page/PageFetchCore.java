@@ -126,18 +126,43 @@ public class PageFetchCore {
      * (bellek tepesi: stil gövdesi taramanın karakter sınırına göre açılır — inceleme H15). {@code null} = izleme davranışı.
      */
     public record ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes,
-                             boolean hash, int sampleHead, int sampleTail, boolean pageHeaders) {
+                             boolean hash, int sampleHead, int sampleTail, boolean pageHeaders, boolean original) {
         /** Algoritma 2 ayarı: özet / örnek / sayfa başlığı yakalama yok. */
         public ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes) {
-            this(clients, acceptEncoding, maxBodyBytes, maxDecodedBytes, false, 0, 0, false);
+            this(clients, acceptEncoding, maxBodyBytes, maxDecodedBytes, false, 0, 0, false, false);
         }
 
         /** Aynı ayar + derin yakalama (algoritma 3): gövde özeti, betik örneği (baş / son bayt), ana sayfa başlıkları. */
         public ScanTuning capture(boolean hash, int sampleHead, int sampleTail, boolean pageHeaders) {
             return new ScanTuning(clients, acceptEncoding, maxBodyBytes, maxDecodedBytes, hash, Math.max(0, sampleHead),
-                    Math.max(0, sampleTail), pageHeaders);
+                    Math.max(0, sampleTail), pageHeaders, original);
+        }
+
+        /**
+         * Görsel aracı (2026-11-14): bir nesnenin ÖZGÜN baytları — {@code Accept-Encoding: identity} (sunucu yine de
+         * sıkıştırırsa bugünkü gibi {@code maxBytes} tavanıyla açılır), gövde {@code Content-Length}'ten ön boyutlu tampona
+         * okunur (büyüyen tamponların kopyası yok), bildirilen boyut tavana ulaşıyorsa gövde HİÇ okunmaz, https → http
+         * yönlendirme adımı reddedilir ve son adımın TLS zinciri yakalanır ({@link #fetchOriginal}).
+         *
+         * @param maxBytes saklanan ve açılmış gövde tavanı (çağıranın sınırı + 1: tavanı aşan gövde ayırt edilir)
+         */
+        public static ScanTuning original(ScanClients clients, int maxBytes) {
+            return new ScanTuning(clients, ACCEPT_ENCODING_IDENTITY, maxBytes, maxBytes, false, 0, 0, false, true);
         }
     }
+
+    /** Görsel aracı: sıkıştırılmamış gövde iste (özgün baytlar; açma yolu / iki kat tampon yok). */
+    public static final String ACCEPT_ENCODING_IDENTITY = "identity";
+    /** Yakalanan TLS zincirinde tutulan en çok sertifika. */
+    static final int MAX_PEER_CHAIN = 10;
+
+    /**
+     * {@link #fetchOriginal} sonucu.
+     *
+     * @param peerChain        son adımın TLS sunucu zinciri (yaprak önce); düz http son adımda / okunamazsa null
+     * @param downgradeRefused bir https adımı http'ye yönlendirdi ve İZLENMEDİ (fetch'in durumu o yönlendirmenin kodu)
+     */
+    public record OriginalFetch(Fetch fetch, Meta meta, X509Certificate[] peerChain, boolean downgradeRefused) {}
 
     /**
      * Kaynak analizinin derin yakalaması (2026-11, algoritma 3) — YALNIZ ayarlı ({@link ScanTuning}) çekimde dolar; izleme
@@ -280,6 +305,9 @@ public class PageFetchCore {
         byte[] head;
         long redirectMs;
         Long finalTtfbMs;
+        // ── görsel aracı (yalnız ScanTuning.original) ──
+        X509Certificate[] peerChain;
+        boolean downgradeRefused;
         // ── derin yakalama (yalnız ayarlı çekim) ──
         boolean deep;
         HttpClient.Version version;
@@ -551,6 +579,56 @@ public class PageFetchCore {
         return new MetaFetch(f, sink.toMeta());
     }
 
+    /**
+     * Görsel aracı (2026-11-14): bir nesnenin özgün baytları ({@link ScanTuning#original} ayarıyla GET). SSRF her adımda,
+     * süre / tavan kuralları {@link #fetchWithMeta} ile aynıdır; ek olarak https → http adımı izlenmez ve son adımın TLS
+     * sunucu zinciri döner (güven DEĞERLENDİRMESİ çağıranda — çekim trust-all bağlamla yapılır). Hiçbir zaman fırlatmaz.
+     */
+    public OriginalFetch fetchOriginal(String url, FetchOptions opts, ScanTuning tuning) {
+        if (tuning == null || !tuning.original()) throw new IllegalArgumentException("original tuning required");
+        MetaSink sink = new MetaSink(0);
+        Fetch f = fetch(url, "GET", opts, sink, tuning);
+        return new OriginalFetch(f, sink.toMeta(), sink.peerChain, sink.downgradeRefused);
+    }
+
+    /**
+     * Bildirilen boyut ({@code declared}, 0 ≤ declared &lt; max) kadar TEK seferde ayrılan tampona okur — büyüyen tamponların
+     * birleştirme kopyası yok. Gövde bildirilenden kısaysa kırpılır; uzunsa (yalancı {@code Content-Length}) kalan
+     * {@code max}'a dek eklenir. Bildirim yoksa / tavana ulaşıyorsa {@code readNBytes(max)}. Okuma her durumda {@code max} ile
+     * sınırlı.
+     */
+    static byte[] readPresized(InputStream is, int max, long declared) throws java.io.IOException {
+        if (declared < 0 || declared >= max) return is.readNBytes(max);
+        byte[] buf = new byte[(int) declared];
+        int n = is.readNBytes(buf, 0, buf.length);
+        if (n < buf.length) return java.util.Arrays.copyOf(buf, n);
+        int next = is.read();
+        if (next < 0) return buf;
+        byte[] rest = is.readNBytes(max - buf.length - 1);
+        byte[] out = new byte[buf.length + 1 + rest.length];
+        System.arraycopy(buf, 0, out, 0, buf.length);
+        out[buf.length] = (byte) next;
+        System.arraycopy(rest, 0, out, buf.length + 1, rest.length);
+        return out;
+    }
+
+    /** Yanıtın TLS sunucu zinciri (yaprak önce, en çok {@value #MAX_PEER_CHAIN}); TLS yoksa / okunamazsa null. */
+    private static X509Certificate[] peerChain(HttpResponse<?> resp) {
+        try {
+            javax.net.ssl.SSLSession session = resp.sslSession().orElse(null);
+            if (session == null) return null;
+            java.security.cert.Certificate[] peer = session.getPeerCertificates();
+            List<X509Certificate> out = new ArrayList<>();
+            for (java.security.cert.Certificate c : peer) {
+                if (out.size() >= MAX_PEER_CHAIN) break;
+                if (c instanceof X509Certificate x) out.add(x);
+            }
+            return out.isEmpty() ? null : out.toArray(new X509Certificate[0]);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private Fetch fetch(String url, String method, FetchOptions opts, MetaSink sink, ScanTuning tuning) {
         long start = System.currentTimeMillis();
         // Kendi SSRF/DNS kontrolumuzun suresi TTFB'ye YAZILMAZ: hedefin yavasligi degil bizim
@@ -571,6 +649,8 @@ public class PageFetchCore {
         final String originHost = hostOf(url) == null ? "" : hostOf(url);
         // Derin yakalama YALNIZ ayarlı (kaynak analizi) çekimde; izleme çekiminde hiçbir ek iş yok (bayt-özdeş yol).
         final boolean deep = sink != null && tuning != null;
+        // Görsel aracı (özgün baytlar): ön boyutlu okuma, https → http adımı reddi, TLS zinciri — yalnız bu ayarda.
+        final boolean original = sink != null && tuning != null && tuning.original();
         if (deep) sink.deep = true;
         try {
             for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -635,6 +715,15 @@ public class PageFetchCore {
                         if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); sink.finalTtfbMs = hopTtfb; }
                         return new Fetch(sc, ttfb, System.currentTimeMillis() - start, 0L, null, null, false, false);
                     }
+                    if (original && SafeRedirect.isDowngrade(URI.create(current), URI.create(next))) {
+                        // Özgün baytlar yeniden dağıtılabilir: şifresiz adım (araya girilebilir) izlenmez
+                        sink.finalUrl = current;
+                        sink.headers = resp.headers();
+                        sink.finalTtfbMs = hopTtfb;
+                        sink.downgradeRefused = true;
+                        return new Fetch(sc, ttfb, System.currentTimeMillis() - start, 0L, null,
+                                "https adresi http'ye yönlendirdi — izlenmedi", false, false);
+                    }
                     if (sink != null) {
                         sink.redirects++;
                         sink.redirectMs += Math.max(0L, System.currentTimeMillis() - hopStart - hopGuard);
@@ -652,6 +741,7 @@ public class PageFetchCore {
                     sink.version = resp.version();
                     if (tuning.pageHeaders()) sink.capturePageHeaders(resp.headers());
                 }
+                if (original) sink.peerChain = peerChain(resp);
                 java.security.MessageDigest digest = deep && tuning.hash() ? sha256() : null;
                 try (InputStream bodyIn = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
                     // Özet istenirse tel baytları akışla özetlenir (gövde tutulmaz); aksi halde aynı akış.
@@ -663,13 +753,20 @@ public class PageFetchCore {
                         // boyutu" etiketini yine yalancı yapardı.
                         // Süre dolarsa BodyDeadlineException → aşağıdaki catch: kesik gövdeyi ayrıştırmak
                         // sahte "sayfa değişti"/eksik envanter üretirdi, hata olarak raporlanır.
-                        byte[] raw = is.readNBytes(maxBody);
-                        count = raw.length;
-                        body = decode(raw, encoding, maxDecoded);
-                        if (opts.countBytes()) {                   // tavanın ötesini SAY (sakla değil)
-                            Drained d = drain(is, MAX_COUNT_BYTES - count);
-                            count += d.bytes();
-                            truncated = count >= MAX_COUNT_BYTES || d.timedOut();
+                        long declared = original ? resp.headers().firstValueAsLong("content-length").orElse(-1L) : -1L;
+                        if (original && declared >= maxBody) {
+                            // Görsel aracı: bildirilen boyut tavana ulaşıyor — gövde HİÇ okunmaz (boşa aktarım yok)
+                            count = declared;
+                            truncated = true;
+                        } else {
+                            byte[] raw = original ? readPresized(is, maxBody, declared) : is.readNBytes(maxBody);
+                            count = raw.length;
+                            body = decode(raw, encoding, maxDecoded);
+                            if (opts.countBytes()) {                   // tavanın ötesini SAY (sakla değil)
+                                Drained d = drain(is, MAX_COUNT_BYTES - count);
+                                count += d.bytes();
+                                truncated = count >= MAX_COUNT_BYTES || d.timedOut();
+                            }
                         }
                     } else if (opts.countBytes()) {
                         boolean headTimedOut = false;

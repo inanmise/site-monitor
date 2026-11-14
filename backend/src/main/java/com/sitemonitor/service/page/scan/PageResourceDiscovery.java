@@ -88,13 +88,30 @@ public final class PageResourceDiscovery {
      * @param lazy      geç yüklenir (loading=lazy, otomatik oynatılmayan medya) — yükleme süresi tahminine girmez
      * @param fromCss   bir stil metninden ({@code url()}, {@code @import}) bulundu
      * @param notLoaded tarayıcı İNDİRMEZ (ör. {@code preload="none"} medya) — listelenir, ölçülmez
+     * @param declaredWidth  görseli gösteren öğenin sayısal {@code width} özniteliği (2026-11-14, görsel aracı); yoksa /
+     *                       sayısal değilse / aynı görsel boyutsuz bir öğede de kullanılıyorsa null
+     * @param declaredHeight o öğenin sayısal {@code height} özniteliği; yoksa null
      */
-    public record Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss, boolean notLoaded) {
+    public record Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss, boolean notLoaded,
+                            Integer declaredWidth, Integer declaredHeight) {
         /** Geriye uyum: indirilen aday. */
         public Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss) {
             this(url, category, pageLoad, lazy, fromCss, false);
         }
+
+        /** Geriye uyum: bildirilen boyut yok. */
+        public Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss, boolean notLoaded) {
+            this(url, category, pageLoad, lazy, fromCss, notLoaded, null, null);
+        }
+
+        /** Aynı aday + görseli gösteren öğenin bildirdiği boyut. */
+        public Candidate withDeclared(Integer width, Integer height) {
+            return new Candidate(url, category, pageLoad, lazy, fromCss, notLoaded, width, height);
+        }
     }
+
+    /** Kabul edilen en büyük bildirilen kenar (bozuk öznitelik saçma bir sayı vermesin). */
+    static final int MAX_DECLARED_SIDE = 100_000;
 
     /**
      * Bir HTML gövdesinin keşif sonucu.
@@ -145,6 +162,8 @@ public final class PageResourceDiscovery {
         Map<String, Candidate> docs = new LinkedHashMap<>();
         Map<String, Candidate> links = new LinkedHashMap<>();
         int[] excluded = {0};
+        // Görseli gösteren öğelerin bildirdiği boyut (anahtar → {genişlik, yükseklik, boyutsuz kullanım var mı})
+        Map<String, int[]> declared = new java.util.HashMap<>();
 
         // Sıra: önce oluşturmayı engelleyenler (stil, betik), sonra görseller, medya, çerçeveler — tarayıcının
         // isteme sırasına yakın; yükleme tahmini bu sırayla bağlantılara dağıtır.
@@ -185,19 +204,29 @@ public final class PageResourceDiscovery {
             }
             if (img != null) pictureImgs.add(img);
             boolean lazy = img != null && "lazy".equalsIgnoreCase(img.attr("loading").trim());
-            add(page, pictureUrl(pic), IMAGE, true, lazy, false, false, self, exclude, excluded);
+            String pu = pictureUrl(pic);
+            add(page, pu, IMAGE, true, lazy, false, false, self, exclude, excluded);
+            // Bildirilen boyut: seçilen <source>'un kendi width'i varsa o, yoksa <img>'inki
+            Element sized = pictureSource(pic);
+            if (sized == null || declaredDim(sized, "width") == null) sized = img;
+            noteDeclared(declared, page, pu, sized);
         }
         for (Element el : doc.select("img")) {
             if (pictureImgs.contains(el)) continue;
             String u = imageUrl(el);
             boolean lazy = "lazy".equalsIgnoreCase(el.attr("loading").trim());
             add(page, u, IMAGE, true, lazy, false, false, self, exclude, excluded);
+            noteDeclared(declared, page, u, el);
         }
         for (Element el : doc.select("input[type=image][src]")) {
             add(page, abs(el, "src"), IMAGE, true, false, false, false, self, exclude, excluded);
+            noteDeclared(declared, page, abs(el, "src"), el);
         }
         // Afiş görseli preload'tan bağımsız istenir
-        for (Element el : doc.select("video[poster]")) add(page, abs(el, "poster"), IMAGE, true, false, false, false, self, exclude, excluded);
+        for (Element el : doc.select("video[poster]")) {
+            add(page, abs(el, "poster"), IMAGE, true, false, false, false, self, exclude, excluded);
+            noteDeclared(declared, page, abs(el, "poster"), el);
+        }
         for (Element el : doc.select("video, audio")) {
             boolean autoplay = el.hasAttr("autoplay");
             String preload = el.hasAttr("preload") ? el.attr("preload").trim().toLowerCase(Locale.ROOT) : null;
@@ -253,8 +282,73 @@ public final class PageResourceDiscovery {
         }
         String base = doc.baseUri();
         // Bir URL hem belge hem bağlantı listesinde olamaz (anahtar aynı) — yukarıdaki ayrım uzantıya göre tekildir.
-        return new Found(List.copyOf(page.values()), List.copyOf(docs.values()), List.copyOf(links.values()),
+        return new Found(withDeclared(page, declared), List.copyOf(docs.values()), List.copyOf(links.values()),
                 inline, excluded[0], base == null || base.isBlank() ? pageUrl : base);
+    }
+
+    // ── Bildirilen boyut (2026-11-14, görsel aracı: önerilen hedef genişlik) ───────────────
+
+    /**
+     * Öğenin SAYISAL {@code width} / {@code height} özniteliği (piksel): yalnız rakam, isteğe bağlı {@code px} soneki;
+     * 1–{@value #MAX_DECLARED_SIDE}. Yüzde ({@code 100%}), {@code auto}, boş ya da başka birim → null (ekran boyutu bilinmez).
+     * Doğrusal; en çok 12 karakter okunur.
+     */
+    static Integer declaredDim(Element el, String attr) {
+        if (el == null) return null;
+        String raw = el.attr(attr).trim();
+        if (raw.isEmpty() || raw.length() > 12) return null;
+        int i = 0;
+        long v = 0;
+        while (i < raw.length() && raw.charAt(i) >= '0' && raw.charAt(i) <= '9') {
+            v = v * 10 + (raw.charAt(i) - '0');
+            i++;
+        }
+        if (i == 0) return null;
+        String rest = raw.substring(i).trim();
+        if (!rest.isEmpty() && !rest.equalsIgnoreCase("px")) return null;
+        return v >= 1 && v <= MAX_DECLARED_SIDE ? (int) v : null;
+    }
+
+    /**
+     * Görseli gösteren bir öğenin bildirdiği boyutu adayın anahtarına işler. Aynı görsel birden çok öğede kullanılıyorsa EN
+     * GENİŞ kullanım geçerlidir (küçük kullanıma göre küçültmek büyük kullanımı bulandırırdı); herhangi bir kullanım boyutsuzsa
+     * (ekran boyutu bilinmiyor) bildirilen boyut YOK sayılır. Plana girmeyen (hariç tutulan, geçersiz) adres işlenmez.
+     */
+    private static void noteDeclared(Map<String, int[]> declared, Map<String, Candidate> page, String url, Element sized) {
+        String k = candidateKey(url);
+        if (k == null) return;
+        Candidate c = page.get(k);
+        if (c == null || !IMAGE.equals(c.category())) return;
+        int[] d = declared.computeIfAbsent(k, x -> new int[3]);
+        Integer w = declaredDim(sized, "width");
+        if (w == null) {
+            d[2] = 1;
+            return;
+        }
+        if (w > d[0]) {
+            Integer h = declaredDim(sized, "height");
+            d[0] = w;
+            d[1] = h == null ? 0 : h;
+        }
+    }
+
+    private static List<Candidate> withDeclared(Map<String, Candidate> page, Map<String, int[]> declared) {
+        if (declared.isEmpty()) return List.copyOf(page.values());
+        List<Candidate> out = new ArrayList<>(page.size());
+        for (Map.Entry<String, Candidate> e : page.entrySet()) {
+            int[] d = declared.get(e.getKey());
+            Candidate c = e.getValue();
+            out.add(d != null && d[2] == 0 && d[0] > 0 ? c.withDeclared(d[0], d[1] > 0 ? d[1] : null) : c);
+        }
+        return List.copyOf(out);
+    }
+
+    /** {@link #add} ile AYNI normalleştirme: adayın anahtarı; plana girmeyecek adres → null. */
+    private static String candidateKey(String url) {
+        if (url == null || url.isBlank() || url.length() > MAX_URL_CHARS) return null;
+        String u = PageFetchCore.normalizeUrl(url);
+        if (!PageFetchCore.isHttp(u) || u.length() > MAX_URL_CHARS) return null;
+        return key(u);
     }
 
     /** {@code <img>}'in indirilecek adresi (mutlak): {@code src}, yoksa {@code srcset}'in ilki; yoksa boş. */
@@ -269,15 +363,22 @@ public final class PageResourceDiscovery {
      */
     public static String pictureUrl(Element pic) {
         Element img = null;
-        List<Element> sources = new ArrayList<>();
         for (Element ch : pic.children()) {
-            if ("source".equals(ch.normalName()) && !ch.attr("srcset").isBlank()) sources.add(ch);
-            else if (img == null && "img".equals(ch.normalName())) img = ch;
+            if (img == null && "img".equals(ch.normalName())) img = ch;
         }
-        Element chosen = pickPictureSource(sources);
+        Element chosen = pictureSource(pic);
         String u = chosen != null ? firstSrcset(chosen) : "";
         if (u.isBlank() && img != null) u = imageUrl(img);
         return u;
+    }
+
+    /** {@code <picture>}'ın seçilen {@code <source srcset>}'i ({@link #pictureUrl} ile aynı seçim); yoksa null. */
+    private static Element pictureSource(Element pic) {
+        List<Element> sources = new ArrayList<>();
+        for (Element ch : pic.children()) {
+            if ("source".equals(ch.normalName()) && !ch.attr("srcset").isBlank()) sources.add(ch);
+        }
+        return pickPictureSource(sources);
     }
 
     /** {@code <picture>}'ın kaynakları içinde ilk desteklenen tür; {@code max-width} medyalı olanlar (mobil) sona kalır. */

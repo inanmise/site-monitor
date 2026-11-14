@@ -1,9 +1,121 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-14T02:54:38Z",
+  "generatedAt": "2026-11-14T05:16:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 831,
+  "count": 832,
   "releases": [
+    {
+      "version": "20.199.0",
+      "tag": "v20.199.0",
+      "releasedAt": "2026-11-14T05:15:57Z",
+      "commit": "1385ae081327bcffe080c74753177423d5d5aaa9",
+      "prevVersion": "20.198.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "1385ae08",
+          "subject": "görsel motoru tarayıcı katmanı (platform.js) testleri"
+        },
+        {
+          "type": "test",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "8411fd6b",
+          "subject": "karşılaştırma kaydırıcısı ilerleme bekçisinde gerekçeli istisna"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "933e43e8",
+          "subject": "görsel aracı — motor kodları ve son entegrasyon"
+        },
+        {
+          "type": "docs",
+          "scope": "page",
+          "breaking": false,
+          "sha": "0764d919",
+          "subject": "görsel aracı — arka uç ve motor notları inceleme düzeltmeleriyle güncel"
+        },
+        {
+          "type": "fix",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "64e35b93",
+          "subject": "motor — inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "c5954a73",
+          "subject": "görsel aracı — inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "8a2960c9",
+          "subject": "görsel indirme ucu — inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "cf2bd771",
+          "subject": "görsel aracı — gerçek motorla entegrasyon"
+        },
+        {
+          "type": "feat",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "83b36c4e",
+          "subject": "tarayıcı görsel motoru — gama doğru küçültme, paletli PNG, kalite araması"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "29172ece",
+          "subject": "görsel aracı — sunucunun son ayrıntıları, toplu düğme telefonda taşmaz, kılavuz"
+        },
+        {
+          "type": "feat",
+          "scope": "page",
+          "breaking": false,
+          "sha": "95fb2afe",
+          "subject": "kaynak analizi görsel indirme ucu ve not projeksiyonu"
+        },
+        {
+          "type": "feat",
+          "scope": "page",
+          "breaking": false,
+          "sha": "18f64307",
+          "subject": "kaynak analizi görsel aracı — indirme menüsü, toplu ZIP, karşılaştırma, not projeksiyonu"
+        },
+        {
+          "type": "chore",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "ff422d2c",
+          "subject": "görsel motoru kamu arayüzü taslağı (ortak sözleşme)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.198.0",
       "tag": "v20.198.0",
