@@ -85,9 +85,12 @@ export function budgetRatio(value, budget) {
  * KENDİSİNE — kontrolün gerçek isteğinin ilk baytına — karşı değerlendirir; eski "sunucu bekleme süresi" kuralı gitti.
  * Çağıranların geçtiği `key` artık okunmaz (imza geriye dönük uyumlu).
  */
-export function meterTone({ ratio, breached = false } = {}) {
+export function meterTone({ ratio, breached = false, lowerBound = false } = {}) {
   if (breached) return 'crit'
   if (ratio == null) return null
+  // Alt sınır (kısmi ölçüm) bütçenin altındaysa gerçek değer bütçeyi aşmış olabilir — "rahat" / "sınırda" denmez, nötr
+  // kalır (inceleme B1; sunucu bu eşiği KARARSIZ sayar). Bütçeyi aşan alt sınır ise kanıttır.
+  if (lowerBound && ratio <= 1) return null
   if (ratio > 1) return 'crit'
   if (ratio > NEAR_BUDGET) return 'warn'
   return 'ok'
@@ -104,7 +107,8 @@ export function metersFor(m) {
     const value = measuredFor(m, metric.key)
     const budget = budgetFor(m, metric.key)
     const ratio = budgetRatio(value, budget)
-    const isBreached = breached.has(metric.breach)
+    // Asgari boyut ihlali (MINSIZE) da boyut ölçerinde görünür (inceleme F2) — eskiden azami boyut yoksa ölçer yeşildi.
+    const isBreached = breached.has(metric.breach) || (metric.key === 'size' && breached.has('MINSIZE'))
     const timeCut = m?.time_truncated === true
     const lowerBound = metric.key === 'size' ? (!!m?.bytes_truncated || timeCut)
       : metric.key === 'requests' ? !!m?.capped
@@ -114,7 +118,7 @@ export function metersFor(m) {
       value, budget, ratio, breached: isBreached, lowerBound,
       // Alt sınırın NEDENİ süre tavanı mı (açıklama metni ona göre seçilir)
       timeCut: lowerBound && timeCut && (metric.key === 'load' || (metric.key === 'size' && !m?.bytes_truncated)),
-      tone: meterTone({ key: metric.key, ratio, breached: isBreached }),
+      tone: meterTone({ key: metric.key, ratio, breached: isBreached, lowerBound }),
       display: displayParts(metric.key, value, lowerBound),
       budgetDisplay: budget == null ? null : displayParts(metric.key, budget, false),
       percent: ratio == null ? null : Math.round(ratio * 100),
@@ -129,6 +133,16 @@ export function metersFor(m) {
  */
 export function overBudgetMeters(meters, exclude = 'load') {
   return (Array.isArray(meters) ? meters : []).filter((mt) => mt.key !== exclude && mt.tone === 'crit')
+}
+
+/**
+ * Ölçer DIŞI ihlaller (inceleme F2): tür bütçeleri (JS / görsel / font / üçüncü taraf) ve asgari boyut — dört ölçerde
+ * görünmedikleri için kart ve kompakt neden satırı bunları ayrıca adlandırır. Sıra sunucunun BREACH_KEYS sırası.
+ */
+export const EXTRA_BREACH_KEYS = ['MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD']
+export function extraBreaches(m) {
+  const b = new Set(Array.isArray(m?.breached_metrics) ? m.breached_metrics.map((k) => String(k).trim().toUpperCase()) : [])
+  return EXTRA_BREACH_KEYS.filter((k) => b.has(k))
 }
 
 /** Değer → { prefix, num, unit } (istek sayısında birim çağıranın i18n'inden gelir: `unit: null`). */
@@ -169,11 +183,14 @@ export function breachWeek(w7, w14) {
  *
  * @returns {{ pct: number|null, loaded: number, days: number } | null}
  */
-export function budgetCompliance(sla, days = 30) {
+export function budgetCompliance(sla, days = 30, budgetDefined) {
   if (!sla || typeof sla !== 'object' || !('budget_pct' in sla)) return null
   const loaded = Math.max(0, (Number(sla.n) || 0) - (Number(sla.fail) || 0))
-  const pct = sla.budget_pct == null || !Number.isFinite(Number(sla.budget_pct)) ? null : Number(sla.budget_pct)
-  return { pct, loaded, days }
+  // Hiç eşik / bütçe tanımlı değilse uyum anlamsızdır (inceleme F7): "%100" yeşil değil, "bütçe tanımlı değil" (nötr).
+  // Kaynak: izleme satırının `budget_defined`'ı ya da sunucunun `sla.budget_defined`'ı; ikisi de yoksa eski davranış.
+  const noBudget = budgetDefined === false || sla.budget_defined === false
+  const pct = noBudget || sla.budget_pct == null || !Number.isFinite(Number(sla.budget_pct)) ? null : Number(sla.budget_pct)
+  return { pct, loaded, days, noBudget }
 }
 
 /** Bütçe uyumu tonu: tüm ölçümler eşik içinde → ok; ≥ %95 → warn; altı → crit; bilinmiyor → none. */

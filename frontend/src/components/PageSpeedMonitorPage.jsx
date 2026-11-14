@@ -5,6 +5,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
+import HintPopover from './ui/HintPopover.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -47,6 +48,7 @@ import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/rec
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import PageSpeedMonitorCard from './pagespeed/PageSpeedMonitorCard.jsx'
 import { budgetCompliance, budgetFor } from './pagespeed/pageSpeedCardModel.js'
+import { failureKind } from './pagespeed/pageSpeedInsightsModel.js'
 import PageSpeedInsights from './pagespeed/PageSpeedInsights.jsx'
 import { useServerPagination } from '../hooks/useServerPagination.js'
 import { formatRatePercent } from '../i18n/dateLocale.js'
@@ -204,8 +206,11 @@ function pageSpeedHistoryExtra(c, t) {
   return (
     <span data-slot="pspd-hist-extra" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
       {c.time_truncated && (
-        <Badge variant="warning" data-slot="pspd-hist-partial" title={t('pspd.partialTip')}
-          className="h-auto overflow-visible rounded-md px-1.5 py-px text-[10.5px] whitespace-normal">{t('pspd.partial')}</Badge>
+        <HintPopover content={t('pspd.partialTip')} aria-label={`${t('pspd.partial')}: ${t('pspd.partialTip')}`}
+          triggerClassName="relative rounded-md pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5">
+          <Badge variant="warning" data-slot="pspd-hist-partial"
+            className="h-auto overflow-visible rounded-md px-1.5 py-px text-[10.5px] whitespace-normal">{t('pspd.partial')}</Badge>
+        </HintPopover>
       )}
       {parts.length > 0 && <span className="[overflow-wrap:anywhere]">{parts.join(' · ')}</span>}
       {types.length > 0 && <span className="[overflow-wrap:anywhere]">{types.join(' · ')}</span>}
@@ -272,6 +277,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [resFailed, setResFailed] = useState(false)
   const [resFacets, setResFacets] = useState(null)
   const [resFiltered, setResFiltered] = useState(null)   // süzgece uyan toplam (eski sunucu: null)
+  // Sunucu süzgeç + sayfalama uyguluyor mu (yanıtta `filtered_total`) — eski pod'da süzgeç ve sayfa çubuğu GİZLİ (inceleme F5):
+  // eski pod parametreleri yok sayar, "yalnız alınamayan" işaretliyken tüm satırları gösterirdi. Bilinmeden önce (ilk okuma)
+  // süzgeçler gösterilir (yeni sunucu varsayımı — sayfa ilk açıldığında titremesin).
+  const [resServerPaged, setResServerPaged] = useState(true)
   const [resCsvBusy, setResCsvBusy] = useState(false)
   const rsp = useServerPagination({ listKey: 'pagespeed-resources', preset: 'page',
     resetDeps: [selected?.id ?? null, resCheckId, resType, resParty, resFailed] })
@@ -426,7 +435,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       if (!res?.success) {
         // Okunamadı: sessiz yenilemede son iyi kırılım KALIR (hata şeridiyle), ilk okumada boş + hata bloğu
         setResError(res?.error || t('pspd.resLoadFailed'))
-        if (!silent) { setResources([]); setResTotal(0); setBreaches([]) }
+        if (!silent) { setResources([]); setResTotal(0); setBreaches([]); rsp.setTotal(null) }   // F6: önceki toplam kalmasın
         return
       }
       const rows = res.data?.resources ?? []
@@ -437,12 +446,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       // Eski sunucu `filtered_total` göndermez (tek sayfa, sayfalama yok) → çubuk görünen satır sayısına göre
       const filtered = res.data?.filtered_total
       setResFiltered(filtered ?? null)
-      rsp.setTotal(filtered ?? rows.length)
+      // Eski sunucu süzgeç / sayfa parametrelerini YOK SAYAR (inceleme F5): süzgeçler ve sayfa çubuğu gizlenir, toplam null
+      setResServerPaged(filtered != null)
+      rsp.setTotal(filtered != null ? filtered : null)
       setResError(null)
     } catch (e) {
       if (seq === resSeq.current) {
         setResError(e?.message || t('pspd.resLoadFailed'))
-        if (!silent) { setResources([]); setResTotal(0); setBreaches([]) }
+        if (!silent) { setResources([]); setResTotal(0); setBreaches([]); rsp.setTotal(null) }
       }
     } finally {
       if (seq === resSeq.current) setResLoading(false)
@@ -452,6 +463,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   function openDetail(m) {
     resSeq.current++            // onceki izlemenin ucusan yaniti bu modali DOLDURMASIN
     setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null); setResError(null)
+    rsp.setTotal(null)   // inceleme F6: önceki izlemenin "1–50 / 312" çubuğu yeni izleme okunurken görünmesin
     setResType('all'); setResParty('all'); setResFailed(false); setResFacets(null); setResFiltered(null)
     setDetailTab(deepLinkTab()); setMetric('load')
     setSpeedDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
@@ -734,7 +746,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       const res = await api.monitoring.downloadPageSpeedResourcesCsv(selected.id, {
         checkId: resCheckId ?? undefined, type: resType, party: resParty, failed: resFailed })
       if (res?.success) return
-      if (res?.status === 404 || res?.status === 405) { exportResourcesCsv(); return }
+      // Eski pod (uç yok) → görünen satırların istemci CSV'si, bunu SÖYLEYEREK (inceleme F5); yeni sunucunun kodsuz 404'ü
+      // izlemenin silindiğidir — bayat satırlar indirilmez (inceleme F12).
+      const kind = failureKind(res)
+      if (kind === 'unsupported') { exportResourcesCsv(); toast.info(t('pspd.res.csvShownOnly')); return }
+      if (kind === 'gone') { toast.error(t('pspd.monitorGone')); return }
       toast.error(res?.error || t('pspd.res.csvFailed'))
     } catch {
       toast.error(t('pspd.res.csvFailed'))
@@ -1132,8 +1148,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           {testResult.error
             ? testResult.error
             : <>
-                {testResult.response_ms} ms · TTFB {testResult.ttfb_ms} ms
-                {' · '}{formatBytes(testResult.total_bytes, testResult.bytes_truncated)}
+                {/* Süre tavanına takılan deneme (inceleme F4): yükleme süresi ve boyut ALT SINIR ("≥"); TTFB ölçülemediyse "—" */}
+                {testResult.time_truncated ? '≥ ' : ''}{testResult.response_ms} ms · TTFB {testResult.ttfb_ms != null ? `${testResult.ttfb_ms} ms` : '—'}
+                {' · '}{formatBytes(testResult.total_bytes, testResult.bytes_truncated || testResult.time_truncated === true)}
                 {' · '}{testResult.request_count} {t('pspd.mRequests')}
                 {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
                 {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
@@ -1294,14 +1311,23 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               hint: t('pspd.ins.skippedLazyHint') },
             // Bütçe uyumu (madde 5) — erişilebilirlikten AYRI; eski sunucu alanı göndermiyorsa satır yok
             (() => {
-              const c = budgetCompliance(sla.data[String(selected.id)], sla.days || 30)
-              return c && { key: 'budget', value: c.pct == null ? '—' : formatRatePercent(c.pct), label: t('pspd.budgetCompliance'),
-                hint: t('pspd.budgetComplianceTip', sla.days || 30) }
+              // Bütçe tanımsızsa "%100" yeşil değil "Bütçe tanımlı değil" (inceleme F7)
+              const c = budgetCompliance(sla.data[String(selected.id)], sla.days || 30, selected.budget_defined)
+              return c && { key: 'budget', value: c.noBudget ? t('pspd.card.budgetUndefined') : c.pct == null ? '—' : formatRatePercent(c.pct),
+                label: t('pspd.budgetCompliance'), hint: c.noBudget ? t('pspd.card.noBudgetTip') : t('pspd.budgetComplianceTip', sla.days || 30) }
             })(),
             selected.last_check && { key: 'last', value: formatDateSec(selected.last_check), label: t('pspd.lastCheck'), time: true },
           ]} />
           {selected.error && (
             <AlertBanner tone="danger" role="alert" icon={AlertTriangle} className="mt-3.5">{selected.error}</AlertBanner>
+          )}
+          {/* Son ölçümün ihlal delili (inceleme F2): tür bütçeleri ve asgari boyut dört özet değerinde görünmez — hangi eşiğin
+              aşıldığı (ölçüm anındaki eşik → ölçülen) burada adıyla. Geçmiş satırlarıyla aynı bileşen. */}
+          {Array.isArray(selected.breached_metrics) && selected.breached_metrics.length > 0 && (
+            <div data-slot="pspd-detail-breaches" className="mt-3.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={SECTION_LABEL}>{t('pspd.detailBreaches')}</span>
+              <BreachEvidence metrics={selected.breached_metrics.join(',')} detail={selected.breach_detail} t={t} />
+            </div>
           )}
           {selected.capped && (
             <AlertBanner tone="warning" className="mt-3.5">{t('pspd.cappedWarn')}</AlertBanner>
@@ -1347,7 +1373,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   <Download size={12} />{t('pspd.res.csvAll')}</Button>
               </div>
               {/* Süzgeçler (2026-11-14, madde 6): tür / taraf / yalnız alınamayan — sayılar seçili ölçümün tamamından */}
-              <div data-slot="pspd-res-filters" className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
+              {resServerPaged && <div data-slot="pspd-res-filters" className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
                 <SearchableSelect value={resType} onChange={setResType} ariaLabel={t('pspd.res.typeLabel')} searchThreshold={99}
                   options={[{ value: 'all', label: t('pspd.res.typeAll') },
                     ...['js', 'css', 'img', 'font', 'other'].map((k) => ({ value: k,
@@ -1364,14 +1390,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" data-slot="pspd-res-clear"
                     onClick={() => { setResType('all'); setResParty('all'); setResFailed(false) }}>{t('pspd.res.clearFilters')}</Button>
                 )}
-              </div>
+              </div>}
               {/* Sunucu en agir N kaynagi dondurur. Kirpildiysa bunu SOYLEMEK zorunlu: yoksa
                   kullanici 50 satiri sayfanin tamami sanip agirligin nereden geldigini yanlis okur. */}
               <p className="mb-2 text-xs text-muted-foreground">
                 {t('pspd.resHint')}
                 {/* Toplam (sayfalı sunucu) ya da eski sunucunun kırpma notu — kırpma GÖRÜNÜR olmalı */}
                 {resFiltered != null
-                  ? (resTotal > 0 && ` ${resFiltered !== resTotal ? t('pspd.res.filtered', resFiltered, resTotal) : t('pspd.res.total', resTotal)}`)
+                  ? (resTotal > 0 && ` ${resFiltered !== resTotal ? t('pspd.res.filtered', resFiltered, resTotal) : (resTotal === 1 ? t('pspd.res.total.one') : t('pspd.res.total', resTotal))}`)
                   : (resTotal > resources.length && resources.length > 0 && ` ${t('pspd.resTruncated', resources.length, resTotal)}`)}
                 {/* Kirilimin KENDI zamani. Sayfa alinamadiginda son iyi kirilim KORUNUYOR (silmek,
                     kullanici tam da "bozulmadan once neye benziyordu" diye baktigi anda tabloyu

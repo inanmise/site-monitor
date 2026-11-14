@@ -105,8 +105,8 @@ describe('pageSpeedCardModel — saf yardımcılar', () => {
   it('budgetCompliance / complianceTone (2026-11-14): alan yoksa null, yüklenen ölçüm yoksa pct null — asla yeşil değil', () => {
     expect(budgetCompliance(null)).toBeNull()
     expect(budgetCompliance({ n: 10, fail: 0, up_pct: 100 })).toBeNull()              // eski sunucu
-    expect(budgetCompliance({ n: 10, fail: 2, budget_pct: 87.5 })).toEqual({ pct: 87.5, loaded: 8, days: 30 })
-    expect(budgetCompliance({ n: 3, fail: 3, budget_pct: null }, 7)).toEqual({ pct: null, loaded: 0, days: 7 })
+    expect(budgetCompliance({ n: 10, fail: 2, budget_pct: 87.5 })).toEqual({ pct: 87.5, loaded: 8, days: 30, noBudget: false })
+    expect(budgetCompliance({ n: 3, fail: 3, budget_pct: null }, 7)).toEqual({ pct: null, loaded: 0, days: 7, noBudget: false })
     expect(complianceTone(null)).toBe('none')
     expect(complianceTone(100)).toBe('ok')
     expect(complianceTone(96)).toBe('warn')

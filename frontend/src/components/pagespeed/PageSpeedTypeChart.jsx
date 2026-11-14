@@ -6,7 +6,7 @@ import { axisWidth, formatTick, maxTicksFor, niceTimeTicks } from '../responsech
 import { formatBytes } from '../../utils/formatBytes.js'
 import { formatDateSec } from '../../api/client'
 import { ChartContainer, ChartTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from '@/components/shadcn/chart'
-import { TYPE_KEYS, hasTypeData, typeSeriesData } from './pageSpeedInsightsModel.js'
+import { MIN_BAR_PX, TYPE_KEYS, hasTypeData, rebucketTypeSeries, typeSeriesData } from './pageSpeedInsightsModel.js'
 
 /** Tür renkleri — durum tonu DEĞİL (yeşil / kırmızı / amber yok): mavi / mor ve karışımları, gri. */
 export const TYPE_COLOR = {
@@ -46,13 +46,15 @@ export default function PageSpeedTypeChart({ points, truncated = false }) {
   const t = useT()
   const uid = useId().replace(/:/g, '')
   const [measureRef, width] = useElementWidth()
-  const data = useMemo(() => typeSeriesData(points), [points])
-  const ready = hasTypeData(data)
-  const gaps = ready && data.some((r) => TYPE_KEYS.every((k) => r[k] == null))
-  const domain = [data[0]?.x ?? 0, data.at(-1)?.x ?? 1]
-  const maxKb = data.reduce((mx, r) => Math.max(mx, TYPE_KEYS.reduce((s, k) => s + (r[k] ?? 0), 0)), 0)
-  const yWidth = axisWidth([formatBytes(Math.round(maxKb * 1024)), '0 B'])
+  const raw = useMemo(() => typeSeriesData(points), [points])
+  const ready = hasTypeData(raw)
+  const gaps = ready && raw.some((r) => TYPE_KEYS.every((k) => r[k] == null))
+  const rawMaxKb = raw.reduce((mx, r) => Math.max(mx, TYPE_KEYS.reduce((s, k) => s + (r[k] ?? 0), 0)), 0)
+  const yWidth = axisWidth([formatBytes(Math.round(rawMaxKb * 1024)), '0 B'])
   const plotWidth = Math.max(0, (width || 640) - yWidth - 40)
+  // Çubuk başına en az MIN_BAR_PX: fazla kova gruplanır (inceleme F3) — yoksa 168–720 kovada çubuklar görünmez oluyordu
+  const data = useMemo(() => rebucketTypeSeries(raw, Math.floor(plotWidth / MIN_BAR_PX)), [raw, plotWidth])
+  const domain = [data[0]?.x ?? 0, data.at(-1)?.x ?? 1]
   const { ticks, step, span } = useMemo(() => niceTimeTicks(domain[0], domain[1], maxTicksFor(plotWidth)), [domain[0], domain[1], plotWidth]) // eslint-disable-line react-hooks/exhaustive-deps
   const config = Object.fromEntries(TYPE_KEYS.map((k) => [k, { label: t(`pspd.type.${k}`), color: TYPE_COLOR[k] }]))
 
@@ -84,6 +86,15 @@ export default function PageSpeedTypeChart({ points, truncated = false }) {
       {gaps && <p data-slot="pspd-type-chart-gap-note" className="m-0 mt-1.5 text-xs text-muted-foreground">{t('pspd.typeChart.gapNote')}</p>}
       {truncated && <p className="m-0 mt-1 text-xs text-muted-foreground">{t('pspd.typeChart.truncated')}</p>}
       <p id={`pspd-tc-${uid}`} className="sr-only">{t('pspd.typeChart.aria')}</p>
+      {/* Değerlerin metin karşılığı (inceleme F13): ekran okuyucu yalnız genel cümleyi değil, her kovanın tür baytlarını okur */}
+      <ul data-slot="pspd-type-chart-values" className="sr-only">
+        {data.filter((r) => TYPE_KEYS.some((k) => r[k] != null)).map((r) => (
+          <li key={r.x}>
+            {formatDateSec(new Date(r.x).toISOString())}: {TYPE_KEYS.filter((k) => r[k] != null)
+              .map((k) => `${t(`pspd.type.${k}`)} ${formatBytes(Math.round(r[k] * 1024))}`).join(', ')}
+          </li>
+        ))}
+      </ul>
     </figure>
   )
 }

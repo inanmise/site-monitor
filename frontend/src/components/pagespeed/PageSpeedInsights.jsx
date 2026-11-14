@@ -8,7 +8,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { phasesOf, typeBreakdownOf } from './pageSpeedInsightsModel.js'
+import { failureKind, phasesOf, typeBreakdownOf } from './pageSpeedInsightsModel.js'
 
 const PageSpeedTypeChart = lazy(() => import('./PageSpeedTypeChart.jsx'))
 
@@ -103,7 +103,7 @@ function TypeBreakdown({ m, t }) {
                   <span className="font-medium">{t(`pspd.type.${r.key}`)}</span>
                   <span className="text-muted-foreground tabular-nums">
                     <strong className="text-foreground">{formatBytes(r.bytes, partial)}</strong>
-                    {r.count != null && <> · {t('pspd.ins.typeCount', r.count)}</>}
+                    {r.count != null && <> · {r.count === 1 ? t('pspd.ins.typeCount.one') : t('pspd.ins.typeCount', r.count)}</>}
                   </span>
                 </div>
                 <ProgressBar size="sm" className="mt-1 h-1.5" decorative value={r.bytes} max={b.total > 0 ? b.total : 1} />
@@ -141,8 +141,7 @@ function TypeSeries({ monitorId, t }) {
       .then((res) => {
         if (my !== seq.current) return
         if (res?.success) setState({ status: 'ready', data: res.data })
-        else if (res?.status === 404 || res?.status === 405 || res?.code === 'NOT_FOUND') setState({ status: 'unsupported', data: null })
-        else setState({ status: 'error', data: null })
+        else setState({ status: failureKind(res), data: null })
       })
       .catch(() => { if (my === seq.current) setState({ status: 'error', data: null }) })
     return () => { seq.current++ }
@@ -160,6 +159,8 @@ function TypeSeries({ monitorId, t }) {
         <LoadingBlock label={t('modal.loading')} />
       ) : state.status === 'unsupported' ? (
         <p className="m-0 text-sm text-muted-foreground">{t('pspd.typeChart.unsupported')}</p>
+      ) : state.status === 'gone' ? (
+        <p data-slot="pspd-type-series-gone" className="m-0 text-sm text-muted-foreground">{t('pspd.monitorGone')}</p>
       ) : state.status === 'error' ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-destructive">
           <span>{t('pspd.typeChart.loadFailed')}</span>

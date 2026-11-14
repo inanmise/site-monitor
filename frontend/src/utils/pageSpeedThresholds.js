@@ -64,7 +64,9 @@ export function suggestThresholds(r) {
  * Arayüz bu durumda öneriyi gizlemez ama uyarır — karar kullanıcınındır.
  */
 export function suggestionIsPartial(r) {
-  return Boolean(r?.capped) || Boolean(r?.bytes_truncated)
+  // Süre tavanı da (inceleme F4): kesilen ölçümün yükleme süresi ve boyutu alt sınırdır — ondan türeyen eşik ilk tam
+  // ölçümde hemen aşılırdı.
+  return Boolean(r?.capped) || Boolean(r?.bytes_truncated) || r?.time_truncated === true
 }
 
 /** Tür bütçeleri + asgari boyut alanları (2026-11-14) — sunucu kuralının istemci aynası (MonitoringController.requirePageSpeedBudgets). */

@@ -24,6 +24,10 @@ const msText = (ms, lowerBound) => {
   return p ? `${lowerBound ? '≥ ' : ''}${p.num} ${p.unit}` : '—'
 }
 
+/** "N sayfa alınamadı" / "N sayfa ölçülmedi" — İngilizcede tekil (inceleme F9). */
+const downText = (t, n) => (n === 1 ? t('mydash.psp.downCount.one') : t('mydash.psp.downCount', n))
+const unknownText = (t, n) => (n === 1 ? t('mydash.psp.unknownCount.one') : t('mydash.psp.unknownCount', n))
+
 /** Aşılan ölçü → kısa etiket anahtarı (kutu satırı dar). */
 const METRIC_KEY = {
   LOAD: 'pspd.mLoad', TTFB: 'pspd.mTtfb', SIZE: 'pspd.mSize', REQUESTS: 'pspd.mRequests', MINSIZE: 'pspd.minPageKb',
@@ -38,12 +42,13 @@ export function PageSpeedSlowestWidget({ frame, refreshKey }) {
   const t = useT()
   const { data, loading, error, at } = useWidgetData(fetchPageSpeedMonitors, { refreshKey })
   const s = pageSpeedSlowest(data, listLimit(frame.widget.size, frame.tv, 5))
-  const top = s.rows[0]
+  // Başlık ve ton etiketi TÜM ölçülenlerden (inceleme F1) — görüntü sınırı (küçük boyutta 0 satır) onları değiştirmez.
+  const top = s.slowest
   const toneLabel = s.hidden ? t('mydash.noAccess')
-    : s.down > 0 ? t('mydash.psp.downCount', s.down)
-    : s.rows.some((r) => r.over) ? t('mydash.psp.overLoadCount', s.rows.filter((r) => r.over).length)
+    : s.down > 0 ? downText(t, s.down)
+    : s.overLoad > 0 ? (s.overLoad === 1 ? t('mydash.psp.overLoadCount.one') : t('mydash.psp.overLoadCount', s.overLoad))
     : s.active === 0 ? t('mydash.psp.none')
-    : s.unknown > 0 ? t('mydash.psp.unknownCount', s.unknown)
+    : s.unknown > 0 ? unknownText(t, s.unknown)
     : t('mydash.allClear')
   return (
     <WidgetCard frame={frame} Icon={Gauge} title={t('mydash.w.pagespeed_slowest')} tab="pagespeed"
@@ -93,10 +98,12 @@ export function PageSpeedOverBudgetWidget({ frame, refreshKey }) {
   const { data, loading, error, at } = useWidgetData(fetchPageSpeedMonitors, { refreshKey })
   const s = pageSpeedOverBudget(data, listLimit(frame.widget.size, frame.tv, 5))
   const toneLabel = s.hidden ? t('mydash.noAccess')
-    : s.over > 0 ? t('mydash.psp.overCount', s.over)
+    : s.over > 0 ? (s.over === 1 ? t('mydash.psp.overCount.one') : t('mydash.psp.overCount', s.over))
     : s.active === 0 ? t('mydash.psp.none')
-    : s.down > 0 ? t('mydash.psp.downCount', s.down)
-    : s.unknown > 0 ? t('mydash.psp.unknownCount', s.unknown)
+    : s.down > 0 ? downText(t, s.down)
+    : s.unknown > 0 ? unknownText(t, s.unknown)
+    // inceleme F7: bütçesi tanımsız izleme "eşik içinde" sayılmaz — hepsi bütçesizse "sorun yok" denmez
+    : s.ok === 0 && s.noBudget > 0 ? t('mydash.psp.noBudget')
     : t('mydash.allClear')
   const open = linkTo(frame, 'pagespeed', SLOW_PARAMS)
   const metricsText = (ms) => ms.map((k) => (METRIC_KEY[k] ? t(METRIC_KEY[k]) : k)).join(', ')

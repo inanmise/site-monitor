@@ -16,7 +16,7 @@ import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter,
   MonitorCardRich, MonitorCardPending, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
-import { breachWeek, budgetCompliance, complianceTone, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
+import { breachWeek, budgetCompliance, complianceTone, extraBreaches, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
 
 /**
  * Sayfa Hızı izleme KARTI (2026-09-27 yeniden tasarım — shadcn, mobil duyarlı).
@@ -103,14 +103,19 @@ export default function PageSpeedMonitorCard({
               className="grid grid-cols-2 gap-2 @xl:grid-cols-4">
               {meters.map((mt) => <BudgetMeter key={mt.key} meter={mt} />)}
             </div>
+            <ExtraBreaches monitor={m} />
           </div>
           <div className={CARD_LAYER}>
             <MonitorSpark rowLabel={m.url} spark={spark} sla={sla} slaTarget={slaTarget} slaDays={slaDays} />
           </div>
-          {/* Bütçe uyumu (2026-11-14, madde 5): erişilebilirlik "sayfa yüklenebildi mi"; eşik içinde kalma ayrı yüzde */}
-          <BudgetComplianceChip sla={sla} days={slaDays} />
-          {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
-          <BreachWeekChip w7={week7} w14={week14} />
+          {/* Çipler TEK sarmalayıcıda (inceleme F10): satırlar arası 20 px — dokunmatikteki ±10 px alanlar ne birbirine ne alt
+              çubuğa taşar (mb-2, eski BreachWeekChip ölçümü). */}
+          <div data-slot="pspd-chips" className="mt-1.5 mb-2 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-5">
+            {/* Bütçe uyumu (2026-11-14, madde 5): erişilebilirlik "sayfa yüklenebildi mi"; eşik içinde kalma ayrı yüzde */}
+            <BudgetComplianceChip sla={sla} days={slaDays} budgetDefined={m.budget_defined} />
+            {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
+            <BreachWeekChip w7={week7} w14={week14} />
+          </div>
         </MonitorCardRich>
       </MonitorCardContent>
 
@@ -124,6 +129,27 @@ export default function PageSpeedMonitorCard({
         ) : ''}
       </MonitorCardFooter>
     </MonitorCard>
+  )
+}
+
+/** Ölçer dışı ihlal anahtarı → eşiğin adı (formdaki alan etiketleri: "JavaScript bütçesi", "Asgari sayfa boyutu"). */
+const BREACH_LABEL = {
+  MINSIZE: 'pspd.minPageKb', JS: 'pspd.maxJsKb', IMG: 'pspd.maxImgKb', FONT: 'pspd.maxFontKb', THIRD: 'pspd.maxThirdPartyKb',
+}
+
+/**
+ * Ölçer DIŞI ihlaller satırı (inceleme F2): tür bütçeleri ve asgari boyut dört ölçerde görünmez — eskiden durum "Eşik
+ * aşıldı" derken hiçbir ölçer kırmızı değildi. Yoksa hiç çizilmez.
+ */
+function ExtraBreaches({ monitor: m }) {
+  const t = useT()
+  const extra = extraBreaches(m)
+  if (!extra.length) return null
+  return (
+    <p data-slot="pspd-extra-breaches" className="mt-2 flex min-w-0 items-start gap-1.5 text-xs leading-snug font-medium text-destructive">
+      <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">{t('pspd.card.extraBreaches', extra.map((k) => t(BREACH_LABEL[k])).join(', '))}</span>
+    </p>
   )
 }
 
@@ -152,10 +178,13 @@ function CompactSummary({ monitor: m, meters, down }) {
     reason = { kind: 'error', text: String(m.error) }
   } else {
     const over = overBudgetMeters(meters)
-    if (over.length) {
+    const extra = extraBreaches(m)
+    if (over.length || extra.length) {
       // İstek sayısında birim yazılmaz: etiket zaten "İstek" ("İstek 120 (eşik 100)", "istek" tekrarı yok).
       const unitFor = (mt) => (mt.key === 'requests' ? '' : reqUnit)
       const items = over.map((mt) => t('pspd.card.overItem', t(mt.labelKey), partsText(mt.display, unitFor(mt)), partsText(mt.budgetDisplay, unitFor(mt))))
+      // Ölçer dışı ihlaller (tür bütçeleri, asgari boyut — inceleme F2): adıyla; boyut ölçeri MINSIZE'ı zaten gösterir.
+      for (const k of extra) if (!(k === 'MINSIZE' && over.some((mt) => mt.key === 'size'))) items.push(t(BREACH_LABEL[k]))
       reason = { kind: 'budget', text: t('pspd.card.overReason', items.join(' · ')) }
     }
   }
@@ -304,15 +333,16 @@ const COMPLIANCE_TONE = {
  * Bütçe uyumu çipi (2026-11-14): son N günde YÜKLENEBİLEN ölçümlerin yüzde kaçı tüm eşikler içinde kaldı. Sunucu alanı
  * göndermiyorsa (eski sunucu) çizilmez; hiç yüklenen ölçüm yoksa "yüklenen ölçüm yok" — bilinmeyen değer asla yeşil değil.
  */
-function BudgetComplianceChip({ sla, days = 30 }) {
+function BudgetComplianceChip({ sla, days = 30, budgetDefined }) {
   const t = useT()
-  const c = budgetCompliance(sla, days)
+  const c = budgetCompliance(sla, days, budgetDefined)
   if (!c) return null
-  const tone = complianceTone(c.pct)
-  const text = c.pct == null ? t('pspd.card.budgetComplianceNone') : t('pspd.card.budgetCompliance', formatRatePercent(c.pct), days)
+  const tone = c.noBudget ? 'none' : complianceTone(c.pct)
+  const text = c.noBudget ? t('pspd.card.budgetUndefined')
+    : c.pct == null ? t('pspd.card.budgetComplianceNone') : t('pspd.card.budgetCompliance', formatRatePercent(c.pct), days)
   return (
-    <HintPopover content={t('pspd.budgetComplianceTip', days)} aria-label={text}
-      triggerClassName={cn(CARD_LAYER, 'mt-1.5 mr-1.5 max-w-full rounded-full pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0')}>
+    <HintPopover content={c.noBudget ? t('pspd.card.noBudgetTip') : t('pspd.budgetComplianceTip', days)} aria-label={text}
+      triggerClassName={cn(CARD_LAYER, 'max-w-full rounded-full pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0')}>
       <Badge variant="outline" data-slot="pspd-budget-compliance" data-tone={tone}
         className={cn('max-w-full overflow-visible rounded-md px-2.5 py-0.5 text-[11px] font-medium tabular-nums', COMPLIANCE_TONE[tone])}>
         <span className="whitespace-normal">{text}</span>
@@ -343,8 +373,8 @@ function BreachWeekChip({ w7, w14 }) {
   return (
     <HintPopover content={`${t('pspd.breachWeekTip')}\n${t('pspd.breachWeek', w.thisWeek, w.lastWeek)}`}
       aria-label={`${count}, ${spoken}`}
-      // mb-2: dokunmatikteki 40 px alan (::after ±10 px) alt çubuğun eylem düğmeleriyle ÇAKIŞMASIN (Playwright ölçümü).
-      triggerClassName={cn(CARD_LAYER, 'mt-1.5 mb-2 max-w-full rounded-full pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0')}>
+      // Kenar boşlukları sarmalayıcıda (pspd-chips, inceleme F10): mb-2 alt çubukla, gap-y-5 iki çip satırı arasında.
+      triggerClassName={cn(CARD_LAYER, 'max-w-full rounded-full pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:inset-x-0')}>
       <Badge variant="outline" data-slot="breach-week" data-trend={w.trend}
         className={cn('max-w-full gap-1.5 px-2.5 py-0.5 text-[11px] font-medium tabular-nums', TREND_TONE[w.trend])}>
         <span className="truncate">{count}</span>
