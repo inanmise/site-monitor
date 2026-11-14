@@ -13,11 +13,11 @@ import { ProgressBar, Spinner } from '../../../ui/Progress.jsx'
 import ToneBadge from '../../../admin/ToneBadge.jsx'
 import { formatNumber, formatPct, formatSize, plural } from '../resourceScanModel.js'
 import { CHIP, Section, SmallBadge, TOUCH, WRAP } from '../ResourceScanParts.jsx'
-import { ResultLine, TlsUnverifiedNote } from './ImageActions.jsx'
+import { ReloadPageButton, ResultLine, StaleBundleNotice, TlsUnverifiedNote } from './ImageActions.jsx'
 import ImageSettingsFields from './ImageSettingsFields.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
 import {
-  TOOL_MAX_FILES, dimsText, metadataAvailable, pctText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
+  TOOL_MAX_FILES, dimsText, isStaleBundleProblem, metadataAvailable, pctText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -172,6 +172,7 @@ export default function ImageToolView({ onBack }) {
             <ArrowLeft aria-hidden="true" />{t('prs.it.tool.back')}
           </Button>
         )}>
+        {support.staleBundle === true && <StaleBundleNotice t={t} />}
         <p data-slot="prs-it-privacy" className={cn('m-0 flex items-start gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground', WRAP)}>
           <ShieldCheck aria-hidden="true" className="mt-px size-4 shrink-0" />
           <span className={WRAP}>{t('prs.it.tool.privacy')} {t('prs.it.tool.privacyScan')}</span>
@@ -331,7 +332,10 @@ function QueueRow({ entry, store, ctx, stale, blocked, panelFormat, onDownload, 
         </div>
       )}
       {entry.state === 'failed' && entry.problem && (
-        <p data-slot="prs-it-entry-problem" className={cn('m-0 text-xs text-destructive', WRAP)}>{problemLine(entry.problem, t, locale)}</p>
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
+          <p data-slot="prs-it-entry-problem" className={cn('m-0 text-xs text-destructive', WRAP)}>{problemLine(entry.problem, t, locale)}</p>
+          {isStaleBundleProblem(entry.problem) && <ReloadPageButton t={t} />}
+        </div>
       )}
       {entry.result && !processing && <ResultLine result={entry.result} t={t} locale={locale} className="text-xs" />}
       {entry.tlsVerified === false && <TlsUnverifiedNote t={t} className="text-xs" />}

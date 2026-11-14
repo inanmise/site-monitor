@@ -210,7 +210,9 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(importers('engine\\.worker')).toEqual([])
     // pipeline (ve onun aldığı pngWriter → fflate) yalnız çekirdekten; motor dışından hiçbir dosya motorun iç dosyasını almaz
     expect(importers('pipeline')).toEqual([`${E}core.js`])
-    expect(importers('pngWriter')).toEqual([`${E}pipeline.js`])
+    // üst veri ayıklayıcı (strip — METADATA_STRIPPED) da çekirdek yolundadır: yalnız pipeline alır, o da pngWriter'ı alır
+    expect(importers('strip')).toEqual([`${E}pipeline.js`])
+    expect(importers('pngWriter')).toEqual([`${E}pipeline.js`, `${E}strip.js`])
     const outsideUsers = FILES.filter(({ rel: r }) => !r.startsWith(E))
       .filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => /imageEngine\/(?!index(\.js)?$)/.test(s))).map((x) => x.rel)
     expect(outsideUsers).toEqual([])

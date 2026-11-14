@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Columns2, Download, ImageDown, Info, Scaling, ShieldAlert, SlidersHorizontal, Wrench, X, Zap } from 'lucide-react'
+import { ChevronDown, Columns2, Download, ImageDown, Info, RotateCw, Scaling, ShieldAlert, SlidersHorizontal, Wrench, X, Zap } from 'lucide-react'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
 import { focusFormError } from '../../../../utils/formErrors.js'
 import { useToast } from '../../../ui/Toast.jsx'
 import ModalShell from '../../../ui/ModalShell.jsx'
 import ErrorDetails from '../../../ui/ErrorDetails.jsx'
+import AlertBanner from '../../../ui/AlertBanner.jsx'
 import { Spinner } from '../../../ui/Progress.jsx'
 import { formatNumber, formatPct } from '../resourceScanModel.js'
 import { SmallBadge, TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import ImageSettingsFields from './ImageSettingsFields.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
 import {
-  imageUnavailable, isImageItem, noteText, optimizeSettings, phaseText, problemLine, resizeSettings, resultLine, resultMeta, resultTone,
-  savingPctOf, similarityText, suggestedWidth, suggestionText, validateSettings,
+  imageUnavailable, isImageItem, isStaleBundleProblem, noteText, optimizeSettings, phaseText, problemLine, resizeSettings, resultLine,
+  resultMeta, resultTone, savingPctOf, similarityText, suggestedWidth, suggestionText, validateSettings, visibleNotes,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import {
@@ -46,6 +47,8 @@ function Actions({ ctx, item, className, showSuggestion }) {
   const { store, scanId } = ctx
   const entry = useTopic(store, `scan:${scanId}\n${item.url}`, () => store.scanEntry(scanId, item.url))
   const [custom, setCustom] = useState(false)
+  // Sayfa eski sürümden (motor dosyaları sunucuda yok): menü "yenileyin" der, motor gerektiren seçenekler sunulmaz
+  const stale = useTopic(store, 'support', () => store.support()).staleBundle === true
   const why = imageUnavailable(item, ctx)
   const suggestion = suggestedWidth(item)
   const busy = entry.state === 'fetching' || entry.state === 'processing'
@@ -86,6 +89,18 @@ function Actions({ ctx, item, className, showSuggestion }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" collisionPadding={8} data-slot="prs-it-menu-content"
             className="z-(--z-menu) max-w-[min(22rem,calc(100vw-1rem))]">
+            {stale && (
+              <>
+                <DropdownMenuLabel data-slot="prs-it-stale" className="flex items-start gap-2 text-xs font-normal whitespace-normal text-warning">
+                  <RotateCw aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+                  <span className={WRAP}>{t('prs.it.stale.menu')}</span>
+                </DropdownMenuLabel>
+                <DropdownMenuItem className={ITEM} data-action="reload" onSelect={reloadPage}>
+                  <RotateCw aria-hidden="true" />{t('prs.it.reload')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             {why ? (
               <DropdownMenuLabel data-slot="prs-it-unavailable" data-reason={why}
                 className="flex items-start gap-2 text-xs font-normal whitespace-normal text-muted-foreground">
@@ -98,6 +113,7 @@ function Actions({ ctx, item, className, showSuggestion }) {
                 <DropdownMenuItem className={ITEM} disabled={busy} data-action="original" onSelect={() => { store.downloadOriginal(scanId, item) }}>
                   <ImageDown aria-hidden="true" />{t('prs.it.menu.original')}
                 </DropdownMenuItem>
+                {!stale && (<>
                 <DropdownMenuItem className={ITEM} disabled={busy} data-action="optimize"
                   onSelect={() => { store.optimizeScanImage(scanId, item, optimizeSettings(), { mode: 'optimized' }) }}>
                   <Zap aria-hidden="true" />{t('prs.it.menu.optimize')}
@@ -116,6 +132,7 @@ function Actions({ ctx, item, className, showSuggestion }) {
                   onSelect={() => { toTool(suggestion ? resizeSettings(suggestion.width) : null) }}>
                   <Wrench aria-hidden="true" />{t('prs.it.menu.tool')}
                 </DropdownMenuItem>
+                </>)}
               </>
             )}
           </DropdownMenuContent>
@@ -143,6 +160,7 @@ function Actions({ ctx, item, className, showSuggestion }) {
         {entry.problem && !busy && (
           <span data-slot="prs-it-problem" className="flex min-w-0 flex-col gap-1 text-destructive">
             <span className={WRAP}>{problemLine(entry.problem, t, locale)}</span>
+            {isStaleBundleProblem(entry.problem) && <ReloadPageButton t={t} className="w-fit" />}
             {entry.problem.kind === 'server' && <ErrorDetails info={entry.problem.res} />}
           </span>
         )}
@@ -153,6 +171,31 @@ function Actions({ ctx, item, className, showSuggestion }) {
         <CustomSizeDialog item={item} suggestion={suggestion} store={store} scanId={scanId} onClose={() => setCustom(false)}
           onTool={(settings) => toTool(settings)} />
       )}
+    </div>
+  )
+}
+
+/** Sayfayı yeniden yükler (bayat paket — kullanıcı basınca; otomatik yeniden yükleme yok). */
+export function reloadPage() {
+  try { window.location.reload() } catch { /* test ortamı */ }
+}
+
+/** "Sayfayı yenile" düğmesi (bayat paket sorununun yanında). */
+export function ReloadPageButton({ t, className }) {
+  return (
+    <Button type="button" variant="outline" size="sm" data-slot="prs-it-reload" className={cn('h-7 gap-1.5 px-2 text-xs', TOUCH, className)} onClick={reloadPage}>
+      <RotateCw aria-hidden="true" />{t('prs.it.reload')}
+    </Button>
+  )
+}
+
+/** Sayfa eski sürümden kalmış (motor dosyaları sunucuda yok): araç ve menüler "tarayıcı desteklemiyor" değil bunu söyler. */
+export function StaleBundleNotice({ t, className }) {
+  return (
+    <div data-slot="prs-it-stale-banner" className={className}>
+      <AlertBanner tone="warning" icon={RotateCw} className="mb-0" title={t('prs.it.eng.BROWSER_UNSUPPORTED.stale')} actions={<ReloadPageButton t={t} />}>
+        <span className={WRAP}>{t('prs.it.stale.body')}</span>
+      </AlertBanner>
     </div>
   )
 }
@@ -189,9 +232,9 @@ export function ResultLine({ result, t, locale, className }) {
           {[meta, sim ? t('prs.it.res.similarity', sim) : null].filter(Boolean).join(' · ')}
         </span>
       )}
-      {result.notes?.length > 0 && (
+      {visibleNotes(result).length > 0 && (
         <span data-slot="prs-it-notes" className="flex min-w-0 flex-wrap gap-1">
-          {result.notes.map((c) => <SmallBadge key={c} tone={c === 'TARGET_NOT_REACHED' ? 'warning' : 'muted'} data-note={c}>{noteText(c, t)}</SmallBadge>)}
+          {visibleNotes(result).map((c) => <SmallBadge key={c} tone={c === 'TARGET_NOT_REACHED' ? 'warning' : 'muted'} data-note={c}>{noteText(c, t)}</SmallBadge>)}
         </span>
       )}
     </span>

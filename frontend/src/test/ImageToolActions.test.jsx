@@ -186,7 +186,8 @@ describe('tarama görseli — "İndir" menüsü', () => {
     ['409 nesneler gitmiş', { success: false, status: 409, code: 'RESOURCE_SCAN_ITEMS_GONE' }, /nesne ayrıntısı kullanılamıyor: analiz henüz bitmedi ya da ayrıntı artık saklanmıyor/],
     ['415 desteklenmeyen', { success: false, status: 415, code: 'RESOURCE_IMAGE_UNSUPPORTED' }, /desteklenen bir görsel değil/],
     ['eski sunucu (kodsuz 404)', { success: false, status: 404 }, /bu sürümü görsel indirmeyi ve not hesabını desteklemiyor/],
-    ['izleme görünmüyor (404 NOT_FOUND)', { success: false, status: 404, code: 'NOT_FOUND' }, /Bu izleme artık sizin için görünmüyor/],
+    ['izleme görünmüyor (404 RESOURCE_MONITOR_NOT_FOUND)', { success: false, status: 404, code: 'RESOURCE_MONITOR_NOT_FOUND' }, /Bu izleme artık sizin için görünmüyor/],
+    ['eski pod (404 genel NOT_FOUND)', { success: false, status: 404, code: 'NOT_FOUND' }, /bu sürümü görsel indirmeyi ve not hesabını desteklemiyor/],
     ['süre sınırı', { success: false, status: 0, code: 'REQUEST_TIMEOUT', timedOut: true }, /Görsel 3 dakika içinde alınamadı/],
     ['eski sunucu (405)', { success: false, status: 405 }, /bu sürümü görsel indirmeyi ve not hesabını desteklemiyor/],
     ['403', { success: false, status: 403, code: 'FORBIDDEN' }, /bu işlem için yetkiniz yok/],
@@ -437,6 +438,7 @@ describe('"Görseller optimize edilse not ne olurdu?" kartı', () => {
 
   it.each([
     ['kodsuz 404', { success: false, status: 404 }],
+    ['genel NOT_FOUND 404 (eski pod)', { success: false, status: 404, code: 'NOT_FOUND' }],
     ['405', { success: false, status: 405 }],
   ])('eski sunucu (%s): "bu sürümde yok" der, hesapla düğmesi kalkar, hata gibi görünmez', async (_n, res) => {
     api.monitoring.resourceScanImageProjection.mockResolvedValue(res)

@@ -11,6 +11,7 @@ import { isImageWorkBusy, resetImageWorkForTests } from '../components/page/reso
 import {
   bulkPlan, encodePathPrefix, mappingRows, maskMetadata, metadataAvailable, nameKey, optimizeSettings, outputName, pictureSnippet,
   resizeSettings, responsiveWidths, safeFileBase, serverProblemCode, serverProblemText, uniqueName,
+  engineProblemText, isStaleBundleProblem, resultLine, resultSummary, resultTone, similarityText, visibleNotes,
 } from '../components/page/resourcescan/imagetool/imageToolModel.js'
 
 // Görsel aracı — bağımsız inceleme düzeltmeleri (2026-11-14): her madde, düzeltme geri alınınca DÜŞEN bir testle kilitli.
@@ -242,13 +243,15 @@ describe('13 — dosya adları ve 404 kuralı', () => {
     expect(download.mock.calls.at(-1)[0]).toBe('hero-opt.jpg')
   })
 
-  it('404: kodsuz / 405 = eski sunucu; NOT_FOUND = izleme artık görünmüyor; kendi kodlu 404\'ler kendisi', () => {
+  it('404: genel NOT_FOUND / kodsuz / 405 = eski sunucu; RESOURCE_MONITOR_NOT_FOUND = izleme artık görünmüyor; kendi kodlu 404\'ler kendisi', () => {
     expect(serverProblemCode({ success: false, status: 404 })).toBe('unsupported')
     expect(serverProblemCode({ success: false, status: 405 })).toBe('unsupported')
-    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('monitor_gone')
+    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('unsupported')
+    expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_MONITOR_NOT_FOUND' })).toBe('monitor_gone')
     expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_SCAN_NOT_FOUND' })).toBe('RESOURCE_SCAN_NOT_FOUND')
     expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_IMAGE_NOT_FOUND' })).toBe('RESOURCE_IMAGE_NOT_FOUND')
-    expect(serverProblemText({ success: false, status: 404, code: 'NOT_FOUND' }, tr, 'tr-TR')).toMatch(/Bu izleme artık sizin için görünmüyor/)
+    expect(serverProblemText({ success: false, status: 404, code: 'RESOURCE_MONITOR_NOT_FOUND' }, tr, 'tr-TR')).toMatch(/Bu izleme artık sizin için görünmüyor/)
+    expect(serverProblemText({ success: false, status: 404, code: 'NOT_FOUND' }, tr, 'tr-TR')).toMatch(/bu sürümü görsel indirmeyi/)
     for (const k of ['prs.it.srv.monitor_gone', 'prs.it.srv.timeout', 'prs.it.bulk.continues', 'prs.it.bulk.countOversized', 'prs.it.bulk.countOversized.one']) {
       expect(TR[k], k).toBeTruthy()
       expect(EN[k], k).toBeTruthy()
@@ -379,5 +382,72 @@ describe('sunucunun yeni sonuçları — site başına hız sınırı, https →
     expect(waits).toEqual([9000])
     expect(fetchImage).toHaveBeenCalledTimes(2)
     expect(download).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('son entegrasyon — motor kodları (METADATA_STRIPPED, ALPHA_COLORS_ROUNDED, header_mismatch, stale_bundle)', () => {
+  const stripped = (over = {}) => resultSummary({ blob: {}, type: 'jpeg', bytes: 380_000, width: 3000, height: 2000, savingPct: 5, kept: true, resized: false, cropped: false,
+    quality: null, colors: null, similarity: 1, notes: ['KEPT_ORIGINAL', 'METADATA_STRIPPED'], original: { type: 'jpeg', bytes: 400_000, width: 3000, height: 2000 }, ...over })
+
+  it('özgün korunup üst verisi ayıklandıysa: satır "görüntü aynı, yalnız üst veri kaldırıldı" + kazanç; "aynen bırakıldı" notu gizlenir', () => {
+    const s = stripped()
+    expect(resultTone(s)).toBe('kept')
+    expect(resultLine(s, tr, 'tr-TR')).toMatch(/^Görüntü aynı, yalnız üst veri kaldırıldı: 391 KB → 371 KB \(−%5\)$/)
+    expect(visibleNotes(s)).toEqual(['METADATA_STRIPPED'])
+    // Bayt farkı yoksa kazançsız biçim; ayıklama yoksa eski "küçültülemedi" metni
+    expect(resultLine(stripped({ bytes: 400_000, savingPct: 0 }), tr, 'tr-TR')).toBe(tr('prs.it.res.keptStrippedSame', '391 KB'))
+    const plain = stripped({ bytes: 400_000, savingPct: 0, notes: ['KEPT_ORIGINAL'] })
+    expect(resultLine(plain, tr, 'tr-TR')).toBe(tr('prs.it.res.kept', '391 KB'))
+    expect(visibleNotes(plain)).toEqual(['KEPT_ORIGINAL'])
+    // Eşleşme listesi aynı kuralla: not sütununda yalnız ayıklama notu
+    const rows = mappingRows([{ source: 'a', name: 'a.jpg', summary: s }], tr)
+    expect(rows[1][8]).toBe(TR['prs.it.note.METADATA_STRIPPED'])
+  })
+
+  it('ALPHA_COLORS_ROUNDED: benzerlik null → "ölçülmedi" (değer uydurulmaz); not metni var', () => {
+    const s = resultSummary({ blob: {}, type: 'png', bytes: 90_000, width: 500, height: 500, savingPct: 40, kept: false, similarity: null, notes: ['ALPHA_COLORS_ROUNDED'],
+      original: { type: 'png', bytes: 150_000, width: 500, height: 500 } })
+    expect(similarityText(s, 'tr-TR')).toBe(null)
+    expect(visibleNotes(s)).toEqual(['ALPHA_COLORS_ROUNDED'])
+    expect(TR['prs.it.note.ALPHA_COLORS_ROUNDED']).toMatch(/yuvarlanmış olabilir/)
+  })
+
+  it('header_mismatch ve stale_bundle kendi metinleri; bayat paket sorunu tanınır', () => {
+    expect(engineProblemText('TOO_MANY_PIXELS', { reason: 'header_mismatch', width: 9000, height: 9000, maxSide: 30000 }, tr, 'tr-TR'))
+      .toBe(TR['prs.it.eng.TOO_MANY_PIXELS.header'])
+    expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'stale_bundle' }, tr, 'tr-TR')).toBe('Sayfa güncellendi — yenileyin.')
+    expect(engineProblemText('BROWSER_UNSUPPORTED', {}, tr, 'tr-TR')).toBe(TR['prs.it.eng.BROWSER_UNSUPPORTED'])
+    expect(isStaleBundleProblem({ kind: 'engine', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })).toBe(true)
+    expect(isStaleBundleProblem({ kind: 'engine', code: 'BROWSER_UNSUPPORTED', params: { reason: 'memory' } })).toBe(false)
+    for (const k of ['prs.it.note.METADATA_STRIPPED', 'prs.it.note.ALPHA_COLORS_ROUNDED', 'prs.it.eng.TOO_MANY_PIXELS.header', 'prs.it.eng.BROWSER_UNSUPPORTED.stale',
+      'prs.it.stale.body', 'prs.it.stale.menu', 'prs.it.reload', 'prs.it.res.keptStripped', 'prs.it.res.keptStrippedSame']) {
+      expect(TR[k], k).toBeTruthy()
+      expect(EN[k], k).toBeTruthy()
+    }
+  })
+
+  it('depo: motor "bayat paket" derse destek "stale" olur (WebP / tarayıcı iddiası yok); motor işleri sunucudan görsel İNDİRMEDEN düşer', async () => {
+    const engine = { ...fakeEngine(), engineSupport: async () => ({ worker: false, webp: false, staleBundle: true }) }
+    const fetchImage = okFetch()
+    const { store, download } = make({ engine, fetchImage })
+    await store.ensureSupport()
+    expect(store.support()).toMatchObject({ state: 'stale', staleBundle: true, webp: false })
+    expect(await store.optimizeScanImage(SCAN, img('hero.jpg'), optimizeSettings(), { mode: 'optimized' })).toEqual({ ok: false })
+    expect(isStaleBundleProblem(store.scanEntry(SCAN, img('hero.jpg').url).problem)).toBe(true)
+    const bulk = await store.startBulk({ scanId: SCAN, items: [img('a.jpg')], canRun: true, itemsKept: true, t: tr, locale: 'tr-TR', baseName: 'site' })
+    expect(bulk.result).toMatchObject({ kind: 'none', first: 'Sayfa güncellendi — yenileyin.' })
+    expect(fetchImage).not.toHaveBeenCalled()
+    expect(download).not.toHaveBeenCalled()
+    // Özgün dosya motor istemez: yine iner
+    expect(await store.downloadOriginal(SCAN, img('hero.jpg'))).toEqual({ ok: true })
+  })
+
+  it('depo: işlem sırasında bayat paket hatası gelirse destek "stale" olur (menü / araç "yenileyin" der)', async () => {
+    const stale = Object.assign(new Error('BROWSER_UNSUPPORTED'), { name: 'EngineError', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    const engine = { ...fakeEngine(), processImage: async () => { throw stale } }
+    const { store } = make({ engine })
+    await store.optimizeScanImage(SCAN, img('hero.jpg'), optimizeSettings(), { mode: 'optimized' })
+    expect(isStaleBundleProblem(store.scanEntry(SCAN, img('hero.jpg').url).problem)).toBe(true)
+    expect(store.support().staleBundle).toBe(true)
   })
 })

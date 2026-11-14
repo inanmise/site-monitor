@@ -27,6 +27,8 @@ import { api } from '../api/client'
 import { ImageBulkButton } from '../components/page/resourcescan/imagetool/ImageBulk.jsx'
 import ImageCompareDialog, { PREVIEW_DECODE_MAX_SIDE, fitRect } from '../components/page/resourcescan/imagetool/ImageCompareDialog.jsx'
 import ImageSettingsFields from '../components/page/resourcescan/imagetool/ImageSettingsFields.jsx'
+import ImageToolView from '../components/page/resourcescan/imagetool/ImageToolView.jsx'
+import { ResultLine } from '../components/page/resourcescan/imagetool/ImageActions.jsx'
 import ResponsiveSetDialog, { SET_FORMATS, defaultSetFormat } from '../components/page/resourcescan/imagetool/ResponsiveSetDialog.jsx'
 import { DEFAULT_SETTINGS, resultSummary } from '../components/page/resourcescan/imagetool/imageToolModel.js'
 
@@ -271,5 +273,48 @@ describe('sunucunun yeni sonuçları — satır ve not kartı', () => {
     expect(slot('prs-it-proj-failed').querySelector('[data-slot="alert"]').getAttribute('data-tone')).toBe('info')
     expect(slot('prs-it-proj-failed')).toHaveTextContent('başka not hesaplarını işliyor. Yaklaşık 2 saniye')
     expect(slot('prs-it-proj-run')).not.toBeNull()
+  })
+})
+
+describe('son entegrasyon — ekran: üst veri ayıklama, bayat paket', () => {
+  const staleError = () => Object.assign(new Error('BROWSER_UNSUPPORTED'), { name: 'EngineError', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+  const openMenu = async () => {
+    const { pressMenuTrigger } = await import('./helpers/dropdownMenu.js')
+    pressMenuTrigger(slot('prs-it-menu'))
+    return waitFor(() => { const m = slot('prs-it-menu-content'); expect(m).not.toBeNull(); return m })
+  }
+
+  it('özgün korunup üst verisi ayıklanan sonuç: dürüst satır, "aynen bırakıldı" notu yok', () => {
+    const sum = resultSummary({ blob: {}, type: 'jpeg', bytes: 380_000, width: 3000, height: 2000, savingPct: 5, kept: true, similarity: 1,
+      notes: ['KEPT_ORIGINAL', 'METADATA_STRIPPED'], original: { type: 'jpeg', bytes: 400_000, width: 3000, height: 2000 } })
+    render(<ResultLine result={sum} t={tr} locale="tr-TR" />)
+    expect(slot('prs-it-result')).toHaveTextContent('Görüntü aynı, yalnız üst veri kaldırıldı: 391 KB → 371 KB (−%5)')
+    expect(slot('prs-it-result').querySelector('[data-note="KEPT_ORIGINAL"]')).toBeNull()
+    expect(slot('prs-it-result').querySelector('[data-note="METADATA_STRIPPED"]')).not.toBeNull()
+  })
+
+  it('bayat paket: satır "Sayfa güncellendi — yenileyin." + "Sayfayı yenile"; menü yenilemeyi ve yalnız özgün indirmeyi sunar', async () => {
+    const engine = fakeEngine({ processImage: vi.fn(async () => { throw staleError() }) })
+    const { store } = setup({ engine, ui: <ImageActions item={img('hero.jpg')} /> })
+    await act(async () => { await store.optimizeScanImage(SCAN, img('hero.jpg'), { ...DEFAULT_SETTINGS }, { mode: 'optimized' }) })
+    await waitFor(() => expect(slot('prs-it-problem')).not.toBeNull())
+    expect(slot('prs-it-problem')).toHaveTextContent('Sayfa güncellendi — yenileyin.')
+    expect(slot('prs-it-problem')).not.toHaveTextContent('desteklemiyor')
+    expect(slot('prs-it-reload')).toHaveTextContent('Sayfayı yenile')
+    const menu = await openMenu()
+    expect(slot('prs-it-stale', menu)).toHaveTextContent('Sayfa güncellendi')
+    expect(menu.querySelector('[data-action="reload"]')).not.toBeNull()
+    expect(menu.querySelector('[data-action="original"]')).not.toBeNull()
+    expect(menu.querySelector('[data-action="optimize"]')).toBeNull()
+    expect(menu.querySelector('[data-action="tool"]')).toBeNull()
+  })
+
+  it('araç görünümü: motor desteği "bayat paket" ise yenileme bandı (tarayıcı desteklemiyor değil); WebP "üretemiyor" denmez', async () => {
+    const engine = fakeEngine({ engineSupport: async () => ({ worker: false, webp: false, staleBundle: true }) })
+    setup({ engine, ui: <ImageToolView onBack={() => {}} /> })
+    const banner = await waitFor(() => { const b = slot('prs-it-stale-banner'); expect(b).not.toBeNull(); return b })
+    expect(banner).toHaveTextContent('Sayfa güncellendi — yenileyin.')
+    expect(slot('prs-it-reload', banner)).not.toBeNull()
+    expect(document.body.textContent).not.toContain(TR['prs.it.set.webpOff'])
   })
 })

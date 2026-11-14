@@ -49,7 +49,7 @@ import java.util.Map;
  * <p><b>Yetki.</b> Görsel indirmek sunucunun izlenen siteyi ÇAĞIRMASI demektir → "Şimdi kontrol et" kuralı (analizi başlatmanın
  * kapısı): {@code monitoring.trigger/execute} + izlemenin takımında çalıştırma kapsamı ({@link SessionScope#canExecuteTeam},
  * EXECUTE+ paylaşım dahil). Projeksiyon analizi okuma kapısıdır ({@code monitoring.read/view} +
- * {@link SessionScope#canViewMonitoring}). Göremediği izleme 404 (varlığı sızmaz).
+ * {@link SessionScope#canViewMonitoring}). Göremediği izleme 404 {@code RESOURCE_MONITOR_NOT_FOUND} (varlığı sızmaz).
  *
  * <p><b>Sunucu açık vekil değildir.</b> Yalnız o taramanın saklanan nesne listesindeki, adresi birebir eşleşen GÖRSEL nesnesi
  * çekilir (ayrıntı: {@link PageResourceImageService}). Yanıt asla belge olarak çizilemez: tür sihirli baytlardan,
@@ -82,7 +82,8 @@ public class PageResourceImageController {
     /**
      * Gövde {@code {"url": "<nesnenin taramada dönen adresi>"}}. 200 = ham baytlar ({@code Content-Type} sihirli baytlardan,
      * {@code X-Image-Type}, okunabildiyse {@code X-Image-Width} / {@code X-Image-Height}). Hata kodları:
-     * {@code VALIDATION_FAILED} (400, {@code url}), {@code RESOURCE_SCAN_NOT_FOUND} (404), {@code RESOURCE_SCAN_ITEMS_GONE} (409),
+     * {@code VALIDATION_FAILED} (400, {@code url}), {@code RESOURCE_MONITOR_NOT_FOUND} (404), {@code RESOURCE_SCAN_NOT_FOUND} (404),
+     * {@code RESOURCE_SCAN_ITEMS_GONE} (409),
      * {@code RESOURCE_IMAGE_NOT_FOUND} (404), {@code RESOURCE_IMAGE_URL_MASKED} (409), {@code RESOURCE_IMAGE_TOO_LARGE} (413),
      * {@code RATE_LIMITED} / {@code RESOURCE_IMAGE_BUSY} / {@code RESOURCE_IMAGE_HOST_LIMITED} (429), {@code BLOCKED} (400),
      * {@code RESOURCE_IMAGE_FETCH_FAILED} (502; {@code reason} {@code TLS_DOWNGRADE} = https adres http'ye yönlendirdi),
@@ -196,7 +197,8 @@ public class PageResourceImageController {
      * Gövde {@code {"use_measured": bool, "images": [{"url", "bytes", "width"?, "height"?, "type"?}]}} (ikisi de isteğe bağlı;
      * {@code images} en çok {@value PageResourceImageService#MAX_PROJECTION_IMAGES}). 200 = {@code {algorithm_version, capped,
      * applied, ignored, before, after, reused_components}}. Yazma yok, dış istek yok, denetim yok. Hata kodları:
-     * {@code VALIDATION_FAILED} (400), {@code RESOURCE_SCAN_NOT_FOUND} (404), {@code RESOURCE_SCAN_NOT_DONE} /
+     * {@code VALIDATION_FAILED} (400), {@code RESOURCE_MONITOR_NOT_FOUND} (404), {@code RESOURCE_SCAN_NOT_FOUND} (404),
+     * {@code RESOURCE_SCAN_NOT_DONE} /
      * {@code RESOURCE_SCAN_ITEMS_GONE} / {@code RESOURCE_SCAN_NOT_PROJECTABLE} (409), {@code RATE_LIMITED} /
      * {@code RESOURCE_PROJECTION_BUSY} (429).
      */
@@ -477,8 +479,16 @@ public class PageResourceImageController {
         return json(status).body(errorBody(code, msg));
     }
 
+    /**
+     * İzleme yok ya da oturum onu göremiyor: KENDİ kodu (arayüz "izleme artık sana görünmüyor" der). Genel {@code NOT_FOUND}
+     * değil — o, yeni ucu tanımayan ESKİ pod'un yanıtıdır ({@code SpaNotFoundAdvice}) ve arayüz onu "bu sürümde yok" diye okur.
+     * Gövde {@code GlobalExceptionHandler.CodedNotFoundException} biçimiyle aynıdır; istisna atılmaz, çünkü bu uçların hata
+     * yanıtı istemci {@code Accept: image/*} gönderse de HER ZAMAN JSON'dur ({@link #json}).
+     */
+    public static final String MONITOR_NOT_FOUND_CODE = "RESOURCE_MONITOR_NOT_FOUND";
+
     private static ResponseEntity<Map<String, Object>> notFound() {
-        return error(404, "NOT_FOUND", Msg.t("Sayfa Bütünlüğü izlemesi bulunamadı ya da görüntüleme yetkiniz yok.",
+        return error(404, MONITOR_NOT_FOUND_CODE, Msg.t("Sayfa Bütünlüğü izlemesi bulunamadı ya da görüntüleme yetkiniz yok.",
                 "Page integrity monitor not found, or you are not allowed to view it."));
     }
 

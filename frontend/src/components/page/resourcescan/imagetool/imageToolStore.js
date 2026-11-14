@@ -132,7 +132,10 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
         try { limits = await engine.engineLimits() } catch { ok = false }
         try { s = await engine.engineSupport() } catch { ok = false }
         if (disposed) return support
-        support = Object.freeze({ state: ok ? 'ready' : 'unknown', webp: s?.webp === true, worker: s?.worker === true, limits: limits || defaultEngine.FALLBACK_LIMITS })
+        // Bayat paket (dağıtımdan sonra eski sayfa): "hazır" sayılmaz — WebP / tarayıcı desteği hakkında yanlış söz söylenmez
+        const stale = s?.staleBundle === true
+        support = Object.freeze({ state: stale ? 'stale' : ok ? 'ready' : 'unknown', webp: !stale && s?.webp === true, worker: !stale && s?.worker === true,
+          limits: limits || defaultEngine.FALLBACK_LIMITS, ...(stale ? { staleBundle: true } : {}) })
         emit('support')
         return support
       })()
@@ -216,14 +219,25 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
   }
 
   /** Motoru çağırır; `EngineError` sorun kaydına çevrilir. Dönüş: `{ ok, result }` | `{ ok: false, problem }` | `{ aborted }`. */
+  const STALE_PROBLEM = Object.freeze({ kind: 'engine', code: 'BROWSER_UNSUPPORTED', params: Object.freeze({ reason: 'stale_bundle' }) })
+  /** Bir işlem bayat paket hatası verdi: destek durumu "bayat" olur (menüler / araç "yenileyin" der). */
+  const markStale = () => {
+    if (support.staleBundle) return
+    support = Object.freeze({ ...support, state: 'stale', webp: false, worker: false, staleBundle: true })
+    emit('support')
+  }
   async function runEngine(blob, options, signal, onProgress) {
+    if (support.staleBundle) return { ok: false, problem: STALE_PROBLEM }
     try {
       const result = await engine.processImage(blob, options, { signal, onProgress })
       if (!result || !result.blob) return { ok: false, problem: { kind: 'engine', code: 'other', params: {} } }
       return { ok: true, result }
     } catch (e) {
       if (signal?.aborted || e?.code === 'CANCELLED' || e?.name === 'AbortError') return { aborted: true }
-      if (defaultEngine.isEngineError(e)) return { ok: false, problem: { kind: 'engine', code: e.code, params: e.params || {} } }
+      if (defaultEngine.isEngineError(e)) {
+        if (e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'stale_bundle') markStale()
+        return { ok: false, problem: { kind: 'engine', code: e.code, params: e.params || {} } }
+      }
       return { ok: false, problem: { kind: 'engine', code: 'other', params: {}, technical: e?.message || null } }
     }
   }
@@ -235,6 +249,8 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
   async function optimizeScanImage(scanId, item, settings, { mode = 'optimized', silent = false } = {}) {
     const key = keyOf(scanId, item.url)
     await ensureSupport()
+    // Bayat paket: görsel sunucudan boşuna indirilmez — satır "sayfa güncellendi, yenileyin" der
+    if (support.staleBundle) { setScan(key, { state: 'failed', problem: STALE_PROBLEM }); return { ok: false } }
     const options = buildOptions(settings, support.limits)
     if (!options) { setScan(key, { state: 'failed', problem: { kind: 'engine', code: 'INVALID_OPTIONS', params: {} } }); return { ok: false } }
     const optKey = optionsKey(options)
@@ -548,6 +564,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     const finishWith = (result) => { setBulk({ state: 'finished', scanId, result: Object.freeze(result) }); return { ok: result.kind === 'done' || result.kind === 'partial', result } }
     try {
       await ensureSupport()
+      if (support.staleBundle) return finishWith({ kind: 'none', missing: plan.length, stopped: null, first: problemLine(STALE_PROBLEM, t, locale) })
       writer = await createZipWriter()
       const zip = writer
       const used = new Set([nameKey(MISSING_FILE), nameKey(t('prs.it.zip.mappingFile'))])

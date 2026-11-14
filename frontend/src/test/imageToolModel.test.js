@@ -358,8 +358,9 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(serverProblemCode({ success: false, status: 403, code: 'FORBIDDEN' })).toBe('forbidden')
     expect(serverProblemCode({ success: false, status: 429 })).toBe('RATE_LIMITED')
     expect(serverProblemCode({ success: false, status: 0 })).toBe('network')
-    // Kodlu 404'ler eski sunucu DEĞİL: NOT_FOUND = izleme artık sana görünmüyor (inceleme 13); yalnız kodsuz 404 / 405 "bu sürümde yok"
-    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('monitor_gone')
+    // Görülemeyen izleme KENDİ koduyla (RESOURCE_MONITOR_NOT_FOUND); genel NOT_FOUND / kodsuz 404 / 405 = eski pod, "bu sürümde yok"
+    expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_MONITOR_NOT_FOUND' })).toBe('monitor_gone')
+    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('unsupported')
     expect(serverProblemCode({ success: false, status: 404 })).toBe('unsupported')
     expect(serverProblemCode({ success: false, status: 405 })).toBe('unsupported')
     expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_SCAN_NOT_FOUND' })).toBe('RESOURCE_SCAN_NOT_FOUND')

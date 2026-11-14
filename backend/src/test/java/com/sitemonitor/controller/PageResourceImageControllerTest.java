@@ -206,10 +206,16 @@ class PageResourceImageControllerTest {
     @DisplayName("kapılar = analizi başlatma: izin yok 403; başka takım / bilinmeyen izleme 404; VIEW paylaşım ve AUDIT 403; EXECUTE paylaşım 200 — reddedilende servis ve denetim çağrılmaz")
     void imageGates() throws Exception {
         MockHttpSession other = session("USER", 9L, 3L);
+        // Görülemeyen / bilinmeyen izleme KENDİ koduyla (genel NOT_FOUND eski pod'un "uç yok" yanıtıdır — arayüz ayırır)
         mvc.perform(json(IMAGE, urlBody(URL), other))
-                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("RESOURCE_MONITOR_NOT_FOUND"))
+                .andExpect(jsonPath("$.success").value(false)).andExpect(jsonPath("$.error").isNotEmpty());
         mvc.perform(json("/api/monitoring/page/404/resource-scans/900/image", urlBody(URL), admin()))
-                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value(PageResourceImageController.MONITOR_NOT_FOUND_CODE));
+        // İstemci görsel kabul etse de hata yanıtı JSON'dur
+        mvc.perform(json(IMAGE, urlBody(URL), other).accept("image/*"))
+                .andExpect(status().isNotFound()).andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("RESOURCE_MONITOR_NOT_FOUND"));
 
         MockHttpSession viewGrant = session("USER", 9L, 4L);
         viewGrant.setAttribute("grantViewTeamIds", List.of(5L));
@@ -372,9 +378,9 @@ class PageResourceImageControllerTest {
     @DisplayName("projeksiyon kapıları = okuma: izin yok 403; başka takım / bilinmeyen izleme 404; VIEW paylaşım ve AUDIT okur")
     void projectionGates() throws Exception {
         mvc.perform(json(PROJECTION, "{}", session("USER", 9L, 3L)))
-                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("RESOURCE_MONITOR_NOT_FOUND"));
         mvc.perform(json("/api/monitoring/page/404/resource-scans/900/image-projection", "{}", admin()))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("RESOURCE_MONITOR_NOT_FOUND"));
         verify(images, never()).project(anyLong(), anyLong(), anyBoolean(), anyList(), anyString());
 
         MockHttpSession viewGrant = session("USER", 9L, 4L);

@@ -14,6 +14,22 @@ export const FALLBACK_LIMITS = Object.freeze({ maxInputBytes: 25 * 1024 * 1024, 
 
 let modulePromise = null
 
+/**
+ * Bayat paket hatası (motorun `BROWSER_UNSUPPORTED { reason: 'stale_bundle' }` hatasıyla AYNI biçim): motor modülünün
+ * kendisi yüklenemezse (dağıtımdan sonra eski sayfanın parça dosyası sunucuda yok) motor hiç inmediği için kendi hatasını
+ * veremez — arayüz yine "sayfa güncellendi, yenileyin" desin ("tarayıcı desteklemiyor" değil).
+ */
+export function staleBundleError() {
+  return Object.assign(new Error('BROWSER_UNSUPPORTED'), { name: 'EngineError', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+}
+async function engineModule() {
+  try {
+    return await loadEngine()
+  } catch {
+    throw staleBundleError()
+  }
+}
+
 /** Motor modülü — tek sefer yüklenir; yükleme BAŞARISIZ olursa (bayat paket) sonraki çağrı yeniden dener. */
 export function loadEngine() {
   if (!modulePromise) {
@@ -35,12 +51,20 @@ export async function engineLimits() {
   }
 }
 
-/** Bu tarayıcı ne yapabiliyor: `{ worker, webp }` (motor yüklenemezse ikisi de false — WebP seçeneği kapalı görünür). */
+/**
+ * Bu tarayıcı ne yapabiliyor: `{ worker, webp }`. Sayfa eski sürümden kalmışsa (motor ya da onun parçaları sunucuda yok)
+ * EK alan `staleBundle: true` — arayüz "sayfa güncellendi, yenileyin" der. Motor yüklenemezse de öyledir.
+ */
 export async function engineSupport() {
+  let m
   try {
-    const m = await loadEngine()
+    m = await loadEngine()
+  } catch {
+    return { worker: false, webp: false, staleBundle: true }
+  }
+  try {
     const s = await m.engineSupport()
-    return { worker: s?.worker === true, webp: s?.webp === true }
+    return { worker: s?.worker === true, webp: s?.webp === true, ...(s?.staleBundle === true ? { staleBundle: true } : {}) }
   } catch {
     return { worker: false, webp: false }
   }
@@ -48,19 +72,19 @@ export async function engineSupport() {
 
 /** Başlık okuması (tam çözme yok) — `EngineError` fırlatabilir. */
 export async function inspectImage(blob) {
-  const m = await loadEngine()
+  const m = await engineModule()
   return m.inspectImage(blob)
 }
 
 /** Tek görseli optimize eder — `EngineError` fırlatabilir (`code` ∈ ERROR_CODES). */
 export async function processImage(blob, options, extra) {
-  const m = await loadEngine()
+  const m = await engineModule()
   return m.processImage(blob, options, extra)
 }
 
 /** Önce / sonra görünümü için: Blob → ImageBitmap (çağıran `close()` eder). */
 export async function decodeForPreview(blob, extra) {
-  const m = await loadEngine()
+  const m = await engineModule()
   return m.decodeForPreview(blob, extra)
 }
 

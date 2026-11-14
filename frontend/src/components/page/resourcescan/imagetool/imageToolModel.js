@@ -45,7 +45,7 @@ export const PHASES = Object.freeze(['decode', 'resize', 'encode', 'search'])
 /** Motor not kodları (sözleşme §2 `NOTE_CODES`) — her biri TR + EN metin taşır (`prs.it.note.<KOD>`). */
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE',
   'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED', 'SMART_CROP',
-  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED'])
+  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
 /** Motor hata kodları (sözleşme §2 `ERROR_CODES`) — her biri TR + EN metin taşır (`prs.it.eng.<KOD>`). */
 export const ENGINE_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED', 'BROWSER_UNSUPPORTED',
   'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
@@ -481,7 +481,17 @@ export function resultLine(sum, t, locale) {
   if (!sum || sum.bytes === null) return ''
   const size = (x) => formatSize(x, { locale })
   const tone = resultTone(sum)
-  if (tone === 'kept') return t('prs.it.res.kept', size(sum.bytes))
+  if (tone === 'kept') {
+    // Özgün korundu ama üst verisi kayıpsız ayıklandı: dosya temizlenmiş KOPYADIR; baytlar / kazanç onu anlatır
+    if ((sum.notes || []).includes('METADATA_STRIPPED')) {
+      const before = num(sum.original?.bytes)
+      const pct = savingPctOf(sum)
+      return before !== null && before > sum.bytes && pct !== null && pct > 0
+        ? t('prs.it.res.keptStripped', size(before), size(sum.bytes), pctText(pct, locale))
+        : t('prs.it.res.keptStrippedSame', size(sum.bytes))
+    }
+    return t('prs.it.res.kept', size(sum.bytes))
+  }
   if (tone === 'unknown') return size(sum.bytes)
   const before = num(sum.original?.bytes)
   if (tone === 'larger') return t('prs.it.res.larger', size(before), size(sum.bytes), pctText(growthPctOf(sum), locale))
@@ -518,6 +528,18 @@ export function similarityText(sum, locale) {
   return formatPct(Math.floor(s * 1000) / 10, locale, 1)
 }
 
+/**
+ * Gösterilecek notlar: özgün korunduysa ama üst verisi ayıklandıysa (`METADATA_STRIPPED`) "aynen bırakıldı" diyen
+ * `KEPT_ORIGINAL` gösterilmez — dosya artık temizlenmiş bir kopyadır (görüntü aynı), yalan söylenmez.
+ */
+export function visibleNotes(sum) {
+  const notes = Array.isArray(sum?.notes) ? sum.notes : []
+  return notes.includes('METADATA_STRIPPED') ? notes.filter((c) => c !== 'KEPT_ORIGINAL') : notes
+}
+
+/** Bayat paket sorunu mu (sayfa eski sürümden — yeniden yükleme gerekir). */
+export const isStaleBundleProblem = (p) => p?.kind === 'engine' && p?.code === 'BROWSER_UNSUPPORTED' && p?.params?.reason === 'stale_bundle'
+
 /** Not kodunun metni (bilinmeyen kod → genel not). */
 export const noteText = (code, t) => t(NOTE_CODES.includes(code) ? `prs.it.note.${code}` : 'prs.it.note.other')
 /** Aşama adı. */
@@ -533,9 +555,9 @@ export function serverProblemCode(res) {
   // İstemcinin süre sınırı (api/client IMAGE_FETCH_TIMEOUT_MS) — kendi metni ("ağ yok" değil)
   if (code === 'REQUEST_TIMEOUT' || res?.timedOut === true) return 'timeout'
   const st = Number(res?.status) || 0
-  // YENİ sunucunun 404'ü kodludur: RESOURCE_SCAN_NOT_FOUND / RESOURCE_IMAGE_NOT_FOUND (yukarıda) ya da NOT_FOUND = izleme
-  // artık sana görünmüyor. Yalnız KODSUZ 404 (ya da 405) "bu sürümde yok" demektir.
-  if (st === 404 && code === 'NOT_FOUND') return 'monitor_gone'
+  // YENİ sunucunun 404'leri kendi kodunu taşır: RESOURCE_SCAN_NOT_FOUND / RESOURCE_IMAGE_NOT_FOUND (yukarıda) ve görülemeyen
+  // izleme RESOURCE_MONITOR_NOT_FOUND. Genel NOT_FOUND (ya da kodsuz 404 / 405) ESKİ pod'un "uç yok" yanıtıdır → "bu sürümde yok".
+  if (code === 'RESOURCE_MONITOR_NOT_FOUND') return 'monitor_gone'
   if (st === 401) return 'session'
   if (st === 403) return 'forbidden'
   if (st === 429) return 'RATE_LIMITED'
@@ -598,6 +620,8 @@ export function engineProblemText(code, params, t, locale) {
     const size = num(p.bytes)
     return size !== null && size > 0 ? t('prs.it.eng.TOO_LARGE.size', formatSize(size, { locale }), max) : t('prs.it.eng.TOO_LARGE', max)
   }
+  // Dosya başlığındakinden büyük çözüldü: güvenlik için açılmadı (ölçü sınırı metni değil)
+  if (code === 'TOO_MANY_PIXELS' && p.reason === 'header_mismatch') return t('prs.it.eng.TOO_MANY_PIXELS.header')
   if (code === 'TOO_MANY_PIXELS') {
     const mp = formatNumber(Math.round((num(p.maxPixels) ?? num(p.max_pixels) ?? 50_000_000) / 1_000_000), locale)
     const w = num(p.width)
@@ -611,6 +635,7 @@ export function engineProblemText(code, params, t, locale) {
   const reason = typeof p.reason === 'string' ? p.reason : ''
   if (code === 'DECODE_FAILED' && reason === 'timeout') return t('prs.it.eng.DECODE_FAILED.timeout')
   if (code === 'BROWSER_UNSUPPORTED' && reason === 'memory') return t('prs.it.eng.BROWSER_UNSUPPORTED.memory')
+  if (code === 'BROWSER_UNSUPPORTED' && reason === 'stale_bundle') return t('prs.it.eng.BROWSER_UNSUPPORTED.stale')
   if (code === 'ENCODE_FAILED' && reason === 'timeout') return t('prs.it.eng.ENCODE_FAILED.timeout')
   if (code === 'ENCODE_FAILED' && reason === 'unsupported_type') return t('prs.it.eng.ENCODE_FAILED.type')
   return t(ENGINE_CODES.includes(code) ? `prs.it.eng.${code}` : 'prs.it.eng.other')
@@ -646,7 +671,7 @@ export function mappingRows(files, t) {
     return [
       f.source ?? '', f.name ?? '', csvNumber(s.original?.bytes ?? null), csvNumber(s.bytes ?? null),
       dimsText(s.original?.width, s.original?.height), dimsText(s.width, s.height), s.type ? typeLabel(s.type) : '',
-      csvNumber(pct), (s.notes || []).map((c) => noteText(c, t)).join(' | '),
+      csvNumber(pct), visibleNotes(s).map((c) => noteText(c, t)).join(' | '),
       // Özgünün aktarımı doğrulandı mı (sunucunun X-Image-Tls-Verified başlığı): evet / hayır; bilinmiyorsa (http, yüklenen dosya) boş
       f.tlsVerified === true ? t('prs.it.map.yes') : f.tlsVerified === false ? t('prs.it.map.no') : '',
     ]
