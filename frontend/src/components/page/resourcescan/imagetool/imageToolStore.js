@@ -1,11 +1,13 @@
 import { downloadBlob } from '../../../../utils/csvExport.js'
+import { onSessionReset } from '../../../../utils/sessionResetBus.js'
 import * as defaultEngine from './engineClient.js'
+import { registerImageStore } from './imageToolBusy.js'
 import { runImageBulk } from './imageBulk.js'
 import { bytesOfBlob, createZipWriter } from './imageZip.js'
 import {
-  DEFAULT_SETTINGS, MISSING_FILE, SERVER_CONCURRENCY, TOOL_MAX_FILES, baseNameOfUrl, buildOptions, bulkPlan, mappingCsv, missingText,
-  optimizeSettings, optionsKey, outputName, problemLine, resizeSettings, resultSummary, splitName, suggestedWidth, uniqueName,
-  validateSettings, zipFileName,
+  DEFAULT_SETTINGS, MISSING_FILE, SERVER_CONCURRENCY, TOOL_MAX_FILES, baseNameOfUrl, buildOptions, bulkPlan, mappingCsv, maskMetadata,
+  metadataAvailable, missingText, nameKey, optimizeSettings, optionsKey, outputName, problemLine, resizeSettings, resultSummary, splitName,
+  suggestedWidth, uniqueName, validateSettings, zipFileName,
 } from './imageToolModel.js'
 
 /**
@@ -72,6 +74,11 @@ function semaphore(max) {
 export function createImageToolStore({ fetchImage, engine = defaultEngine, download = downloadBlob, sleep = null } = {}) {
   const topics = new Map()
   let disposed = false
+  // Sekme sökülünce süren toplu indirme / ZIP İPTAL EDİLMEZ (inceleme 2026-11-14: uygulama içi gezinme sessizce iptal
+  // ediyordu): depo "bırakılır", iş sürer ve ZIP iner; bitince kendini kapatır. Oturum sıfırlanınca (çıkış) hemen kapanır.
+  let released = false
+  let offReset = () => {}
+  let offRegistry = () => {}
   const on = (topic, fn) => {
     let set = topics.get(topic)
     if (!set) { set = new Set(); topics.set(topic, set) }
@@ -184,6 +191,8 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
       bytes: sizeOf(res.blob), type: res.type || null, width: res.width ?? item.width ?? null, height: res.height ?? item.height ?? null,
       name: res.name || outputName(base, res.type),
       base,
+      // Sunucunun X-Image-Tls-Verified başlığı: false = özgünün aktarımı doğrulanamadı (uyarı gösterilir, indirme engellenmez)
+      tlsVerified: res.tlsVerified === true ? true : res.tlsVerified === false ? false : null,
     })
     putBlob(origKey(key), res.blob)
     return { ok: true, blob: res.blob, meta }
@@ -232,7 +241,9 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     const prior = scan.get(key)
     const cachedBlob = prior?.result?.optKey === optKey ? getBlob(resKey(key, optKey)) : null
     if (cachedBlob && prior?.result) {
-      const started = silent || download(prior.result.name, cachedBlob) !== false
+      const base = prior.original?.base || baseNameOfUrl(item.url)
+      const cachedName = outputName(base, prior.result.type, { mode, width: prior.result.resized ? prior.result.width : null })
+      const started = silent || download(cachedName, cachedBlob) !== false
       setScan(key, { state: 'done', problem: started ? null : { kind: 'client', code: 'download' } })
       return { ok: started, cached: true }
     }
@@ -281,6 +292,13 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     return out
   }
 
+  /** Karşılaştırma yapılabilir mi: özgün ve sonuç Blob'u İKİSİ de bellekte (bakış LRU sırasını değiştirmez). */
+  const hasScanBlobs = (scanId, url) => {
+    const key = keyOf(scanId, url)
+    const e = scan.get(key)
+    return Boolean(e?.result && blobs.has(origKey(key)) && blobs.has(resKey(key, e.result.optKey)))
+  }
+
   /** Karşılaştırma için bellekteki Blob'lar (düşmüşse null — çağıran düğmeyi göstermez). */
   const scanBlobs = (scanId, url) => {
     const key = keyOf(scanId, url)
@@ -310,7 +328,9 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     emit(`qp:${id}`)
   }
   const entryProgress = (id) => progress.get(id) || NO_PROGRESS
-  const settingsOf = (entry) => entry.own || settings
+  // Seçenekler kullanıcının GÖRDÜĞÜNDEN kurulur: o üst veri türü hiçbir işlenmiş görselde yoksa "koru" etkisizdir
+  // (anahtar ekranda kapalı / devre dışıyken ayar açık kalmış olsa da — ör. "Temizle"den sonra yeni GPS'li fotoğraf).
+  const settingsOf = (entry) => maskMetadata(entry.own || settings, metadataAvailable(queue))
   /** Bir satırın geçerli ayar anahtarı (ayar geçersizse null). */
   const currentKey = (entry) => {
     const o = buildOptions(settingsOf(entry), support.limits)
@@ -356,7 +376,8 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
         const key = keyOf(entry.scan.scanId, entry.scan.url)
         const optKey = optionsKey(options)
         putBlob(resKey(key, optKey), out.result.blob)
-        setScan(key, { state: 'done', result: Object.freeze({ ...summary, name, optKey }), problem: null })
+        const rowName = outputName(entry.base, summary.type, { mode: summary.resized ? 'width' : 'optimized', width: summary.resized ? summary.width : null })
+        setScan(key, { state: 'done', result: Object.freeze({ ...summary, name: rowName, optKey }), problem: null })
         bumpResults()
       }
     } finally {
@@ -367,11 +388,11 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
 
   /** Bekleyenleri SIRAYLA işler (tek seferde bir görsel — işlem yoğun). Sınırlı döngü. */
   async function pump() {
-    if (pumping || disposed) return
+    if (pumping || disposed || released) return
     pumping = true
     try {
       await ensureSupport()
-      for (let guard = 0; guard < 5000 && !disposed; guard += 1) {
+      for (let guard = 0; guard < 5000 && !disposed && !released; guard += 1) {
         const next = queue.find((e) => e.state === 'waiting' && buildOptions(settingsOf(e), support.limits))
         if (!next) break
         await runEntry(next.id)
@@ -381,12 +402,12 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     }
   }
 
-  const addEntry = ({ source, name, blob, own = null, scanRef = null, info = null }) => {
+  const addEntry = ({ source, name, blob, own = null, scanRef = null, info = null, tlsVerified = null }) => {
     const id = nextId
     nextId += 1
     const base = splitName(name).base || 'image'
     entryFiles.set(id, { source: blob, result: null })
-    return Object.freeze({ id, source, name, base, bytes: sizeOf(blob), info, state: 'waiting', result: null, problem: null, own, usedKey: null, scan: scanRef })
+    return Object.freeze({ id, source, name, base, bytes: sizeOf(blob), info, state: 'waiting', result: null, problem: null, own, usedKey: null, scan: scanRef, tlsVerified })
   }
 
   /**
@@ -420,7 +441,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
       if (!got.ok) { setScan(key, { state: 'failed', problem: { kind: 'server', res: got.res } }); return { ok: false } }
       setScan(key, { state: scan.get(key)?.result ? 'done' : 'idle', original: got.meta, action: null })
       if (queue.length >= TOOL_MAX_FILES) return { ok: false, full: true }
-      const e = addEntry({ source: 'scan', name: got.meta.name, blob: got.blob, own, scanRef: Object.freeze({ scanId, url: item.url }) })
+      const e = addEntry({ source: 'scan', name: got.meta.name, blob: got.blob, own, scanRef: Object.freeze({ scanId, url: item.url }), tlsVerified: got.meta.tlsVerified ?? null })
       setQueue([...queue, e])
       pump()
       return { ok: true, id: e.id }
@@ -478,7 +499,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     let writer = null
     try {
       writer = await createZipWriter()
-      const used = new Set([MISSING_FILE, t('prs.it.zip.mappingFile').toLocaleLowerCase('tr')])
+      const used = new Set([nameKey(MISSING_FILE), nameKey(t('prs.it.zip.mappingFile'))])
       const rows = []
       for (let i = 0; i < done.length; i += 1) {
         if (disposed) return { ok: false, aborted: true }
@@ -487,7 +508,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
         if (!f?.result) continue
         const entryName = uniqueName(e.result.name, used)
         writer.add(entryName, await bytesOfBlob(f.result))
-        rows.push({ source: e.scan?.url || e.name, name: entryName, summary: e.result })
+        rows.push({ source: e.scan?.url || e.name, name: entryName, summary: e.result, tlsVerified: e.tlsVerified ?? null })
         setZip({ running: true, done: i + 1, total: done.length })
       }
       if (!rows.length) return { ok: false, empty: true }
@@ -500,6 +521,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     } finally {
       writer?.abort()
       setZip(null)
+      closeIfReleased()
     }
   }
 
@@ -515,9 +537,9 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
    * @param {{ scanId, items: object[], canRun: boolean, itemsKept: boolean, resize: boolean, format: string, t: Function,
    *           locale: string, baseName: string }} p
    */
-  async function startBulk({ scanId, items, canRun, itemsKept, resize = true, format = 'keep', t, locale, baseName }) {
-    if (bulkCtl) return { ok: false, busy: true }
-    const { plan, skipped, truncated } = bulkPlan(items, { canRun, itemsKept })
+  async function startBulk({ scanId, items, canRun, itemsKept, resize = true, format = 'keep', t, locale, baseName, finding = 'LARGE_IMAGES' }) {
+    if (bulkCtl || disposed) return { ok: false, busy: true }
+    const { plan, skipped, truncated } = bulkPlan(items, { canRun, itemsKept }, finding)
     if (!plan.length) return { ok: false, empty: true, skipped: skipped.length }
     const ctl = new AbortController()
     bulkCtl = ctl
@@ -528,7 +550,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
       await ensureSupport()
       writer = await createZipWriter()
       const zip = writer
-      const used = new Set([MISSING_FILE, t('prs.it.zip.mappingFile').toLocaleLowerCase('tr')])
+      const used = new Set([nameKey(MISSING_FILE), nameKey(t('prs.it.zip.mappingFile'))])
       const settingsFor = (item) => {
         const s = resize ? suggestedWidth(item) : null
         return s ? resizeSettings(s.width, { format }) : optimizeSettings({ format })
@@ -558,7 +580,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
           const key = keyOf(scanId, item.url)
           dropBlob(origKey(key))
           setScan(key, { state: 'done', original: original.meta, result: Object.freeze({ ...summary, name: entryName, optKey: optionsKey(result.options) }), problem: null })
-          return { name: entryName, summary }
+          return { name: entryName, summary, tlsVerified: original.meta?.tlsVerified ?? null }
         },
         onProgress: (p) => {
           if (ctl.signal.aborted) return
@@ -571,7 +593,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
       const files = []
       const missing = skipped.map((s) => ({ source: s.item.url, text: problemLine({ kind: 'unavailable', reason: s.reason }, t, locale) }))
       for (const o of res.outcomes) {
-        if (o.ok) files.push({ source: o.item.url, name: o.entry.name, summary: o.entry.summary })
+        if (o.ok) files.push({ source: o.item.url, name: o.entry.name, summary: o.entry.summary, tlsVerified: o.entry.tlsVerified ?? null })
         else if (o.reason === 'skipped') missing.push({ source: o.item.url, text: t(o.status === 401 ? 'prs.it.zip.skippedSession' : 'prs.it.zip.skippedForbidden') })
         else missing.push({ source: o.item.url, text: problemLine(o.reason === 'server' ? { kind: 'server', res: o.res } : o.problem, t, locale) })
       }
@@ -590,6 +612,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     } finally {
       writer?.abort()
       if (bulkCtl === ctl) bulkCtl = null
+      closeIfReleased()
     }
   }
   const cancelBulk = () => {
@@ -599,8 +622,29 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
   }
   const dismissBulk = () => { if (!bulkCtl) setBulk(null) }
 
+  /** Bırakılmış depo, süren iş bitince kapanır. */
+  function closeIfReleased() {
+    if (released && !disposed && !isBulkRunning() && zipState?.running !== true) dispose()
+  }
+  /**
+   * Sekme söküldü: toplu indirme ya da ZIP sürmüyorsa hemen kapanır; sürüyorsa öteki işler (satır indirmeleri, araç
+   * kuyruğu) iptal edilir, toplu iş / ZIP sürer ve bitince depo kendini kapatır (ZIP yine iner).
+   */
+  function release() {
+    if (disposed) return
+    released = true
+    if (!isBulkRunning() && zipState?.running !== true) { dispose(); return }
+    // Satır indirmeleri ve araç kuyruğunun işlenmesi durur; kuyruk ve dosyaları süren araç ZIP'i okuyabilsin diye iş
+    // bitene dek kalır (kapanışta `dispose` bırakır) — yarıda bırakılmış ZIP'ten dosya sessizce düşmez
+    for (const c of scanCtl.values()) c.abort()
+    for (const c of entryCtl.values()) c.abort()
+    scanCtl.clear(); entryCtl.clear()
+  }
+
   function dispose() {
     disposed = true
+    offReset()
+    offRegistry()
     for (const c of scanCtl.values()) c.abort()
     for (const c of entryCtl.values()) c.abort()
     bulkCtl?.abort()
@@ -609,13 +653,16 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     queue = Object.freeze([])
   }
 
+  offReset = onSessionReset(() => dispose())
+  offRegistry = registerImageStore({ isBusy: () => !disposed && (isBulkRunning() || zipState?.running === true) })
+
   return {
     on,
     // anlık görüntüler
     scanEntry, queue: () => queue, settings: () => settings, support: () => support, bulk: () => bulk, zip: () => zipState,
     entryProgress, resultsVersion: () => resultsVersion,
     // tarama görselleri
-    downloadOriginal, optimizeScanImage, sendToTool, cancelScan, processedFor, scanBlobs,
+    downloadOriginal, optimizeScanImage, sendToTool, cancelScan, processedFor, scanBlobs, hasScanBlobs,
     // araç
     ensureSupport, addFiles, removeEntry, clearQueue, retryEntry, reprocess, setSettings, setOwnSettings, entryBlobs, downloadEntry, zipQueue,
     isStale, currentKey,
@@ -623,6 +670,8 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     startBulk, cancelBulk, dismissBulk, isBulkRunning,
     isBusy: () => isBulkRunning() || zipState?.running === true,
     dispose,
+    release,
+    isReleased: () => released,
     isDisposed: () => disposed,
   }
 }

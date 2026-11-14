@@ -427,7 +427,7 @@ describe('önce / sonra karşılaştırması', () => {
 })
 
 describe('duyarlı görsel seti', () => {
-  function open({ width = 1000, format = 'keep' } = {}) {
+  function open({ width = 1000, format = 'jpeg' } = {}) {
     const store = createImageToolStore({ fetchImage: vi.fn(), engine: fakeEngine(), download: vi.fn(() => true) })
     const view = render(<ResponsiveSetDialog name="Kapak Görseli.png" base="Kapak Görseli" blob={blobOf(400 * 1024)} format={format}
       info={width == null ? null : { width, height: Math.round((width * 2) / 3), type: 'png' }} store={store} onClose={() => {}} />)
@@ -435,24 +435,25 @@ describe('duyarlı görsel seti', () => {
   }
   const rows = () => slots('prs-it-rs-row')
 
-  it('doğal genişliği aşmayan genişlikler üretilir (1000 → 480, 768); tek ZIP + hazır kod; dosya adları ZIP\'tekiyle aynı', async () => {
+  it('doğal genişliği aşmayan genişlikler + doğal genişlik üretilir (1000 → 480, 768, 1000); tek ZIP + hazır kod; dosya adları ZIP\'tekiyle aynı', async () => {
     open()
-    expect(rows().map((r) => r.getAttribute('data-width'))).toEqual(['480', '768'])
-    expect(slot('prs-it-rs')).toHaveTextContent('Bu görselden şu genişlikler üretilir (piksel): 480 · 768.')
+    expect(rows().map((r) => r.getAttribute('data-width'))).toEqual(['480', '768', '1000'])
+    expect(slot('prs-it-rs')).toHaveTextContent('Bu görselden şu genişlikler üretilir (piksel): 480 · 768 · 1.000.')
     expect(slot('prs-it-rs-nocode')).not.toBeNull()
     expect(slot('prs-it-rs-zip')).toBeDisabled()
     fireEvent.click(slot('prs-it-rs-go'))
     await waitFor(() => expect(rows().every((r) => r.getAttribute('data-state') === 'done')).toBe(true))
-    expect(eng.processImage).toHaveBeenCalledTimes(2)
-    expect(eng.processImage.mock.calls.map((c) => c[1].resize)).toEqual([{ method: 'scale', width: 480 }, { method: 'scale', width: 768 }])
+    expect(eng.processImage).toHaveBeenCalledTimes(3)
+    expect(eng.processImage.mock.calls.map((c) => c[1].resize)).toEqual([{ method: 'scale', width: 480 }, { method: 'scale', width: 768 }, { method: 'scale', width: 1000 }])
+    expect(eng.processImage.mock.calls.map((c) => c[1].format)).toEqual(['jpeg', 'jpeg', 'jpeg'])
     expect(rows()[0]).toHaveTextContent('kapak-gorseli-480w.jpg')
     const code = slot('prs-it-rs-snippet').textContent
-    expect(code).toBe('<img src="kapak-gorseli-768w.jpg" srcset="kapak-gorseli-480w.jpg 480w, kapak-gorseli-768w.jpg 768w" sizes="100vw" alt="" width="768" height="512" loading="lazy" decoding="async">')
+    expect(code).toBe('<img src="kapak-gorseli-1000w.jpg" srcset="kapak-gorseli-480w.jpg 480w, kapak-gorseli-768w.jpg 768w, kapak-gorseli-1000w.jpg 1000w" sizes="100vw" alt="" width="1000" height="667" loading="lazy" decoding="async">')
     fireEvent.click(slot('prs-it-rs-zip'))
-    await screen.findByText('2 genişlik ve hazır kod ZIP olarak indirildi.')
+    await screen.findByText('3 genişlik ve hazır kod ZIP olarak indirildi.')
     expect(downloads[0].name).toMatch(/^kapak-gorseli-duyarli-set-\d{8}-\d{4}\.zip$/)
     const files = unzipSync(new Uint8Array(await downloads[0].blob.arrayBuffer()))
-    expect(Object.keys(files).sort()).toEqual(['kapak-gorseli-480w.jpg', 'kapak-gorseli-768w.jpg', 'snippet.html'])
+    expect(Object.keys(files).sort()).toEqual(['kapak-gorseli-1000w.jpg', 'kapak-gorseli-480w.jpg', 'kapak-gorseli-768w.jpg', 'snippet.html'])
     expect(strFromU8(files['snippet.html']).trim()).toBe(code)
   })
 
@@ -467,11 +468,11 @@ describe('duyarlı görsel seti', () => {
     let code = slot('prs-it-rs-snippet').textContent
     expect(code).toContain('alt="Ürün &quot;kapağı&quot; &lt;yeni&gt;"')
     expect(code).toContain('sizes="(max-width: 768px) 100vw, 50vw"')
-    expect(code).toContain('srcset="/img/kapak-gorseli-480w.webp 480w, /img/kapak-gorseli-768w.webp 768w"')
+    expect(code).toContain('srcset="/img/kapak-gorseli-480w.webp 480w, /img/kapak-gorseli-768w.webp 768w, /img/kapak-gorseli-1000w.webp 1000w"')
     fireEvent.click(within(slot('prs-it-rs-kind')).getByRole('button', { name: 'picture' }))
     code = slot('prs-it-rs-snippet').textContent
     expect(code.split('\n')[0]).toBe('<picture>')
-    expect(code).toContain('<source type="image/webp" srcset="/img/kapak-gorseli-480w.webp 480w, /img/kapak-gorseli-768w.webp 768w"')
+    expect(code).toContain('<source type="image/webp" srcset="/img/kapak-gorseli-480w.webp 480w, /img/kapak-gorseli-768w.webp 768w, /img/kapak-gorseli-1000w.webp 1000w"')
     expect(code).toContain('<img src="/img/Kapak%20G%C3%B6rseli.png"')
     const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
     fireEvent.click(slot('prs-it-rs-copy'))
@@ -493,10 +494,10 @@ describe('duyarlı görsel seti', () => {
     eng.processImage.mockImplementationOnce(async () => { throw engineError('ENCODE_FAILED') })
     const first = open()
     fireEvent.click(slot('prs-it-rs-go'))
-    await waitFor(() => expect(rows().map((r) => r.getAttribute('data-state'))).toEqual(['failed', 'done']))
+    await waitFor(() => expect(rows().map((r) => r.getAttribute('data-state'))).toEqual(['failed', 'done', 'done']))
     expect(rows()[0]).toHaveTextContent('Görsel sıkıştırılamadı')
     expect(rows()[0]).toHaveTextContent('Üretilemedi')
-    expect(slot('prs-it-rs-snippet').textContent).toContain('srcset="kapak-gorseli-768w.jpg 768w"')
+    expect(slot('prs-it-rs-snippet').textContent).toContain('srcset="kapak-gorseli-768w.jpg 768w, kapak-gorseli-1000w.jpg 1000w"')
     first.unmount()
     const gate = deferred()
     let seenSignal = null

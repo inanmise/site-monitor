@@ -23,7 +23,8 @@ const BULK_FORMATS = ['keep', 'webp', 'smallest']
  * bağlı "önerilen genişliğe küçült" ve çıktı biçimi); "Başlat" toplu işi DEPODA başlatır — durum çubuğu sekmenin
  * üstündedir (`ImageBulkStatus`), bölüm değiştirilse de iş sürer. Bağlam yoksa düğme çizilmez.
  */
-export function ImageBulkButton({ items, variant = 'outline', size = 'sm', className }) {
+export function ImageBulkButton({ items, finding = 'LARGE_IMAGES', variant = 'outline', size = 'sm', className }) {
+  const oversized = finding === 'OVERSIZED_IMAGE_DIMENSIONS'
   const t = useT()
   const ctx = useImageTool()
   const [open, setOpen] = useState(false)
@@ -32,14 +33,15 @@ export function ImageBulkButton({ items, variant = 'outline', size = 'sm', class
     <>
       <Button type="button" variant={variant} size={size} data-slot="prs-it-bulk-open" className={cn(TOUCH, 'h-auto min-h-8 max-w-full py-1 text-left whitespace-normal [overflow-wrap:anywhere]', className)}
         onClick={() => setOpen(true)}>
-        <FileArchive aria-hidden="true" />{t('prs.it.bulk.open')}
+        <FileArchive aria-hidden="true" />{t(oversized ? 'prs.it.bulk.openOversized' : 'prs.it.bulk.open')}
       </Button>
-      {open && <BulkDialog ctx={ctx} items={items} onClose={() => setOpen(false)} />}
+      {open && <BulkDialog ctx={ctx} items={items} finding={oversized ? 'OVERSIZED_IMAGE_DIMENSIONS' : 'LARGE_IMAGES'} onClose={() => setOpen(false)} />}
     </>
   )
 }
 
-function BulkDialog({ ctx, items, onClose }) {
+function BulkDialog({ ctx, items, finding, onClose }) {
+  const oversized = finding === 'OVERSIZED_IMAGE_DIMENSIONS'
   const t = useT()
   const locale = useDateLocale()
   const { store, scanId, canRun, itemsKept } = ctx
@@ -48,7 +50,7 @@ function BulkDialog({ ctx, items, onClose }) {
   const [resize, setResize] = useState(true)
   const [format, setFormat] = useState('keep')
   useEffect(() => { store.ensureSupport() }, [store])
-  const { plan, skipped, truncated } = useMemo(() => bulkPlan(items, { canRun, itemsKept }), [items, canRun, itemsKept])
+  const { plan, skipped, truncated } = useMemo(() => bulkPlan(items, { canRun, itemsKept }, finding), [items, canRun, itemsKept, finding])
   const withSuggestion = useMemo(() => plan.filter((it) => suggestedWidth(it)).length, [plan])
   const totalBytes = plan.reduce((a, it) => a + (Number(it.bytes) || 0), 0)
   const running = bulk?.state === 'running'
@@ -59,11 +61,11 @@ function BulkDialog({ ctx, items, onClose }) {
   const blocker = !canRun ? 'no_permission' : !itemsKept ? 'items_gone' : null
 
   const start = () => {
-    store.startBulk({ scanId, items, canRun, itemsKept, resize, format, t, locale, baseName: ctx.monitorName || t('prs.it.zip.toolBase') })
+    store.startBulk({ scanId, items, canRun, itemsKept, resize, format, t, locale, baseName: ctx.monitorName || t('prs.it.zip.toolBase'), finding })
     onClose()
   }
   return (
-    <ModalShell open onClose={onClose} title={t('prs.it.bulk.title')} icon={FileArchive} size="md" scrollBody closeLabel={t('app.dismiss')}
+    <ModalShell open onClose={onClose} title={t(oversized ? 'prs.it.bulk.titleOversized' : 'prs.it.bulk.title')} icon={FileArchive} size="md" scrollBody closeLabel={t('app.dismiss')}
       footer={(
         <>
           <Button type="button" variant="outline" className={TOUCH} onClick={onClose}>{t('app.dismiss')}</Button>
@@ -72,16 +74,16 @@ function BulkDialog({ ctx, items, onClose }) {
           </Button>
         </>
       )}>
-      <div data-slot="prs-it-bulk-dialog" data-count={plan.length} className="flex min-w-0 flex-col gap-3 text-sm">
+      <div data-slot="prs-it-bulk-dialog" data-count={plan.length} data-finding={finding} className="flex min-w-0 flex-col gap-3 text-sm">
         {blocker ? (
           <p data-slot="prs-it-bulk-blocked" data-reason={blocker} className={cn('m-0 flex items-start gap-2 text-muted-foreground', WRAP)}>
             <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />{t(`prs.it.na.${blocker}`)}
           </p>
         ) : plan.length === 0 ? (
-          <p data-slot="prs-it-bulk-none" className={cn('m-0 text-muted-foreground', WRAP)}>{t(skipped.length ? 'prs.it.bulk.noneFetchable' : 'prs.it.bulk.none')}</p>
+          <p data-slot="prs-it-bulk-none" className={cn('m-0 text-muted-foreground', WRAP)}>{t(oversized ? (skipped.length ? 'prs.it.bulk.noneFetchableOversized' : 'prs.it.bulk.noneOversized') : (skipped.length ? 'prs.it.bulk.noneFetchable' : 'prs.it.bulk.none'))}</p>
         ) : (
           <p data-slot="prs-it-bulk-count" className={cn('m-0 text-foreground', WRAP)}>
-            {plural(t, 'prs.it.bulk.count', plan.length, formatNumber(plan.length, locale), formatSize(totalBytes, { locale }))}
+            {plural(t, oversized ? 'prs.it.bulk.countOversized' : 'prs.it.bulk.count', plan.length, formatNumber(plan.length, locale), formatSize(totalBytes, { locale }))}
           </p>
         )}
         {running && <p data-slot="prs-it-bulk-busy" className="m-0 text-xs text-muted-foreground">{t('prs.it.bulk.alreadyRunning')}</p>}

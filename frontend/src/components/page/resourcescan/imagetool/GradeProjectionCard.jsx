@@ -75,7 +75,8 @@ export default function GradeProjectionCard({ scan, analysis, onStart = null, st
   // Bu analizde projeksiyon yapılamaz: nötr durum (hata bandı değil, "değişmez" de değil)
   const notProjectable = failCode === 'RESOURCE_SCAN_NOT_PROJECTABLE'
   const gone = itemsGone || failCode === 'RESOURCE_SCAN_ITEMS_GONE'
-  const waitOnly = failCode === 'RATE_LIMITED'
+  // Sınır / eşzamanlılık: hata değil, "birazdan yeniden dene" bilgisi (nötr)
+  const waitOnly = failCode === 'RATE_LIMITED' || failCode === 'RESOURCE_PROJECTION_BUSY'
   const newScan = ctx.canRun && onStart && !running && (
     <Button type="button" variant="outline" size="sm" className={TOUCH} onClick={onStart} disabled={starting} data-slot="prs-it-proj-new-scan">
       <RotateCw aria-hidden="true" />{t('prs.restart')}

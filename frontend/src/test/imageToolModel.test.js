@@ -11,7 +11,7 @@ import {
   baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, imageUnavailable, isImageItem, isSvgItem, largeImages, mappingCsv,
   mappingRows, missingText, noteText, optimizeSettings, optionsKey, outputName, phaseText, pictureSnippet, problemLine, processedCells,
   projectionImages, projectionView, resizeSettings, responsiveWidths, resultLine, resultMeta, resultSummary, safeFileBase, savingPctOf,
-  growthPctOf, pctText, pngPaletteColors, resultTone,
+  growthPctOf, nameKey, pctText, pngPaletteColors, resultTone,
   serverProblemCode, serverProblemText, settingsSummary, similarityText, slugFileBase, splitName, suggestedWidth, suggestionText,
   uniqueName, validateSettings, zipFileName,
 } from '../components/page/resourcescan/imagetool/imageToolModel.js'
@@ -63,11 +63,13 @@ describe('görsel aracı — kod listeleri motorun ve sözleşmenin listeleriyle
     // Sözleşmedeki kodlar (image-tool-contract.md §1): yeni uçların döndürebildiği hata kodları
     const CONTRACT = ['RESOURCE_SCAN_NOT_FOUND', 'RESOURCE_SCAN_ITEMS_GONE', 'RESOURCE_IMAGE_NOT_FOUND', 'RESOURCE_IMAGE_URL_MASKED',
       'RESOURCE_IMAGE_TOO_LARGE', 'RESOURCE_IMAGE_FETCH_FAILED', 'BLOCKED', 'RESOURCE_IMAGE_UNSUPPORTED', 'RATE_LIMITED', 'RESOURCE_IMAGE_BUSY',
-      'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE']
+      'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE', 'RESOURCE_IMAGE_HOST_LIMITED', 'RESOURCE_PROJECTION_BUSY']
     expect([...SERVER_CODES].sort()).toEqual([...CONTRACT].sort())
     const need = [...CONTRACT.map((c) => `prs.it.srv.${c}`), ...CLIENT_PROBLEMS.map((c) => `prs.it.srv.${c}`),
       'prs.it.srv.RATE_LIMITED.wait', 'prs.it.srv.RESOURCE_IMAGE_BUSY.wait', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.http', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.reason',
-      'prs.it.srv.RESOURCE_IMAGE_TOO_LARGE.size', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.baseline']
+      'prs.it.srv.RESOURCE_IMAGE_TOO_LARGE.size', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.baseline',
+      'prs.it.srv.RESOURCE_IMAGE_HOST_LIMITED.wait', 'prs.it.srv.RESOURCE_PROJECTION_BUSY.wait', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.TLS_DOWNGRADE',
+      'prs.it.tls.unverified']
     for (const k of need) {
       expect(typeof TR[k] === 'string' && TR[k].trim().length >= 25, `TR ${k}`).toBe(true)
       expect(typeof EN[k] === 'string' && EN[k].trim().length >= 25, `EN ${k}`).toBe(true)
@@ -251,7 +253,8 @@ describe('görsel aracı — dosya adları (ZIP)', () => {
     expect(outputName('hero', 'jpeg')).toBe('hero.jpg')
     expect(outputName('hero', 'webp', { mode: 'optimized' })).toBe('hero-opt.webp')
     expect(outputName('hero', 'png', { mode: 'width', width: 1200 })).toBe('hero-1200w.png')
-    expect(outputName('hero', 'png', { mode: 'width', width: null })).toBe('hero.png')
+    // Genişlik yoksa (doğal genişlikte, büyütülmedi) özgünle AYNI ad DEĞİL — inceleme 13
+    expect(outputName('hero', 'png', { mode: 'width', width: null })).toBe('hero-opt.png')
     expect(outputName('hero', 'tuhaf')).toBe('hero.img')
   })
 
@@ -266,7 +269,7 @@ describe('görsel aracı — dosya adları (ZIP)', () => {
     expect(uniqueName('adsiz', used)).toBe('adsiz')
     expect(uniqueName('adsiz', used)).toBe('adsiz-2')
     // Ayrılmış adlar (eşleşme listesi, missing.txt) görsel adıyla çakışmaz
-    const reserved = new Set(['missing.txt', 'eslesme.csv'])
+    const reserved = new Set([nameKey('missing.txt'), nameKey('eslesme.csv')])
     expect(uniqueName('missing.txt', reserved)).toBe('missing-2.txt')
   })
 
@@ -355,8 +358,13 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(serverProblemCode({ success: false, status: 403, code: 'FORBIDDEN' })).toBe('forbidden')
     expect(serverProblemCode({ success: false, status: 429 })).toBe('RATE_LIMITED')
     expect(serverProblemCode({ success: false, status: 0 })).toBe('network')
-    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('unsupported')
+    // Kodlu 404'ler eski sunucu DEĞİL: NOT_FOUND = izleme artık sana görünmüyor (inceleme 13); yalnız kodsuz 404 / 405 "bu sürümde yok"
+    expect(serverProblemCode({ success: false, status: 404, code: 'NOT_FOUND' })).toBe('monitor_gone')
+    expect(serverProblemCode({ success: false, status: 404 })).toBe('unsupported')
     expect(serverProblemCode({ success: false, status: 405 })).toBe('unsupported')
+    expect(serverProblemCode({ success: false, status: 404, code: 'RESOURCE_SCAN_NOT_FOUND' })).toBe('RESOURCE_SCAN_NOT_FOUND')
+    // İstemcinin süre sınırı kendi metnidir ("sunucuya ulaşılamadı" değil — inceleme 11)
+    expect(serverProblemCode({ success: false, status: 0, code: 'REQUEST_TIMEOUT', timedOut: true })).toBe('timeout')
     expect(serverProblemCode({ success: false, status: 500, code: 'INTERNAL_ERROR' })).toBe('other')
     expect(serverProblemCode({ success: false, status: 200, code: 'DOWNLOAD_FAILED' })).toBe('download')
     // 404 RESOURCE_IMAGE_NOT_FOUND "eski sunucu" SAYILMAZ (kendi kodu var)
@@ -442,7 +450,7 @@ describe('görsel aracı — eşleşme listesi (CSV) ve missing.txt', () => {
   it('mappingRows: başlık + satırlar; sayılar gerçek sayı, bilinmeyen boş (0 değil)', () => {
     const rows = mappingRows(files, t)
     expect(rows[0]).toEqual(['prs.it.map.source', 'prs.it.map.file', 'prs.it.map.oldBytes', 'prs.it.map.newBytes', 'prs.it.map.oldDims', 'prs.it.map.newDims',
-      'prs.it.map.format', 'prs.it.map.saving', 'prs.it.map.notes'])
+      'prs.it.map.format', 'prs.it.map.saving', 'prs.it.map.notes', 'prs.it.map.tlsVerified'])
     expect(rows).toHaveLength(4)
     expect(rows[1][1]).toBe('hero.webp')
     expect(rows[1][4]).toBe('3000×2000')
@@ -465,7 +473,7 @@ describe('görsel aracı — eşleşme listesi (CSV) ve missing.txt', () => {
     expect(lines[2]).toContain('"a,b ""c"".png"')
     expect(lines[2].startsWith('=')).toBe(false)            // formül koruması
     expect(lines[2]).not.toMatch(/^"=HYPERLINK/)
-    expect(lines[3]).toMatch(/^adsiz\.png,adsiz\.png,,,,,,,$/)   // bilinmeyenler boş hücre
+    expect(lines[3]).toMatch(/^adsiz\.png,adsiz\.png,,,,,,,,$/)   // bilinmeyenler (aktarım doğrulaması dahil) boş hücre
   })
 
   it('missingText: BOM + başlık + satırlar + öneri, CRLF', () => {
@@ -480,7 +488,7 @@ describe('görsel aracı — duyarlı set ve hazır kod', () => {
     expect([...RESPONSIVE_WIDTHS]).toEqual([480, 768, 1280, 1920])
     expect(responsiveWidths(3000)).toEqual([480, 768, 1280, 1920])
     expect(responsiveWidths(1280)).toEqual([480, 768, 1280])
-    expect(responsiveWidths(1000)).toEqual([480, 768])
+    expect(responsiveWidths(1000)).toEqual([480, 768, 1000])          // doğal genişlik iki adımın arasında → sete girer
     expect(responsiveWidths(300)).toEqual([300])
     expect(responsiveWidths(null)).toEqual([])
     expect(responsiveWidths('abc')).toEqual([])
@@ -514,7 +522,7 @@ describe('görsel aracı — duyarlı set ve hazır kod', () => {
     expect(html).not.toMatch(/alt=""><script/)
     expect(html).toContain('alt="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"')
     expect(html).toContain('sizes="100vw&quot; onload=&quot;x"')
-    expect(html).toContain('src="/a&quot;b/kapak%20g%C3%B6rseli-480w.jpg"')
+    expect(html).toContain('src="/a%22b/kapak%20g%C3%B6rseli-480w.jpg"')      // önek yol parçası parçası kodlanır (inceleme 7)
     expect(html.match(/"/g).length % 2).toBe(0)
     expect(escapeAttr('a&b<c>"d')).toBe('a&amp;b&lt;c&gt;&quot;d')
     expect(pictureSnippet({ files: [], alt: 'x' })).toBe('')

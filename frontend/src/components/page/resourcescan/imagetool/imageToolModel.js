@@ -52,7 +52,12 @@ export const ENGINE_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'T
 /** Sunucunun görsel / projeksiyon uçlarının hata kodları (sözleşme §1.1, §1.2) — her biri `prs.it.srv.<KOD>`. */
 export const SERVER_CODES = Object.freeze(['RESOURCE_SCAN_NOT_FOUND', 'RESOURCE_SCAN_ITEMS_GONE', 'RESOURCE_IMAGE_NOT_FOUND',
   'RESOURCE_IMAGE_URL_MASKED', 'RESOURCE_IMAGE_TOO_LARGE', 'RESOURCE_IMAGE_FETCH_FAILED', 'RESOURCE_IMAGE_UNSUPPORTED',
-  'RESOURCE_IMAGE_BUSY', 'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE', 'RATE_LIMITED', 'BLOCKED'])
+  'RESOURCE_IMAGE_BUSY', 'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE', 'RATE_LIMITED', 'BLOCKED',
+  'RESOURCE_IMAGE_HOST_LIMITED', 'RESOURCE_PROJECTION_BUSY'])
+/** Bekleme önerisi taşıyan sınır kodları (`.wait` metni; toplu indirme 429'da bekler, projeksiyon kartı nötr bilgi gösterir). */
+export const WAIT_CODES = Object.freeze(['RATE_LIMITED', 'RESOURCE_IMAGE_BUSY', 'RESOURCE_IMAGE_HOST_LIMITED', 'RESOURCE_PROJECTION_BUSY'])
+/** Sunucunun `RESOURCE_IMAGE_FETCH_FAILED.reason` değerlerinden CheckFailureReason OLMAYANLAR — kendi metinleri var. */
+const FETCH_OWN_REASONS = Object.freeze({ TLS_DOWNGRADE: 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.TLS_DOWNGRADE' })
 /** Projeksiyonun yapılamama nedenleri (sunucu `reason`) → metin anahtarı (bilinmeyen neden → genel metin). */
 const NOT_PROJECTABLE_KEYS = Object.freeze({
   algorithm: 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm',
@@ -61,7 +66,7 @@ const NOT_PROJECTABLE_KEYS = Object.freeze({
 /** Projeksiyonda HİÇ yeniden hesaplanmayan bileşen: yükleme tahmini ölçülen sürelerden gelir, bayttan değil (sunucu). */
 export const PROJECTION_FIXED_COMPONENTS = Object.freeze(['load_time'])
 /** Sunucu kodu olmayan istemci durumları (`prs.it.srv.<kod>`). */
-export const CLIENT_PROBLEMS = Object.freeze(['unsupported', 'session', 'forbidden', 'network', 'download', 'other'])
+export const CLIENT_PROBLEMS = Object.freeze(['unsupported', 'session', 'forbidden', 'network', 'download', 'other', 'timeout', 'monitor_gone'])
 /** Tarama görselinin indirilememe nedenleri (`prs.it.na.<neden>`). */
 export const UNAVAILABLE_REASONS = Object.freeze(['no_permission', 'items_gone', 'masked', 'svg', 'broken', 'too_large', 'no_url'])
 
@@ -141,11 +146,15 @@ export function suggestionText(s, t, locale) {
  * eski analizde aynı kuralla istemcinin hesapladığı — `withFindings`) LARGE_IMAGES taşıyanlar, bulgu listesi hiç yoksa
  * ≥ 200 KB IMAGE nesneleri; büyükten küçüğe, adres tekil.
  */
-export function largeImages(items) {
+export const BULK_SETS = Object.freeze(['LARGE_IMAGES', 'OVERSIZED_IMAGE_DIMENSIONS'])
+
+export function largeImages(items, finding = 'LARGE_IMAGES') {
   const list = (Array.isArray(items) ? items : []).filter(isImageItem)
-  const picked = list.filter((it) => (Array.isArray(it.findings)
-    ? it.findings.includes('LARGE_IMAGES')
-    : (num(it.bytes) ?? 0) >= LARGE_IMAGE_BYTES))
+  // Bulgu listesi yoksa (eski analiz) önerinin KENDİ kuralı: büyük = ≥ 200 KB; boyutu fazla = doğal genişlik > 2000
+  const fallback = finding === 'OVERSIZED_IMAGE_DIMENSIONS'
+    ? (it) => (num(it.width) ?? 0) > OVERSIZED_WIDTH
+    : (it) => (num(it.bytes) ?? 0) >= LARGE_IMAGE_BYTES
+  const picked = list.filter((it) => (Array.isArray(it.findings) ? it.findings.includes(finding) : fallback(it)))
   const seen = new Set()
   const out = []
   for (const it of picked) {
@@ -161,10 +170,10 @@ export function largeImages(items) {
  * (ZIP'teki `missing.txt`'ye yazılır — sessizce atlanmaz).
  * @returns {{ plan: object[], skipped: { item, reason }[], truncated: number }}
  */
-export function bulkPlan(items, ctx) {
+export function bulkPlan(items, ctx, finding = 'LARGE_IMAGES') {
   const plan = []
   const skipped = []
-  for (const it of largeImages(items)) {
+  for (const it of largeImages(items, BULK_SETS.includes(finding) ? finding : 'LARGE_IMAGES')) {
     const why = imageUnavailable(it, ctx)
     if (why) skipped.push({ item: it, reason: why })
     else plan.push(it)
@@ -221,6 +230,33 @@ export function validateSettings(s, limits = {}) {
   }
   if (!HEX.test(String(s.background || ''))) errs.background = { key: 'prs.it.v.background', args: [] }
   return Object.keys(errs).length ? errs : null
+}
+
+/**
+ * Üst veri türleri: işlenmiş görsellerde hangi tür VAR (`{ copyright, creation, location }`; hiç işlenmemişse hepsi
+ * false). Ayar paneli anahtarı yalnız var olan tür için açar — {@link maskMetadata} seçenekleri buna göre keser.
+ */
+export function metadataAvailable(entries) {
+  const m = { copyright: false, creation: false, location: false }
+  for (const e of entries || []) {
+    // Sonucu olan her satır (yeniden işlenmek üzere "bekliyor"a dönmüş olsa da — kaynak dosyası, dolayısıyla üst verisi aynı)
+    if (!e?.result) continue
+    const md = e.result.original?.metadata
+    if (md) for (const k of Object.keys(m)) if (md[k] === true) m[k] = true
+  }
+  return m
+}
+
+/**
+ * Gizlilik (inceleme 2026-11-14): "koru" anahtarı ekranda KAPALI / devre dışı görünürken (o tür hiçbir işlenmiş görselde
+ * yok) ayar yine açık kalmışsa (ör. "Temizle"den sonra) seçeneğe GİRMEZ — motor yalnız kullanıcının gördüğünü uygular.
+ */
+export function maskMetadata(s, available) {
+  if (!s) return s
+  const a = available || {}
+  const next = { ...s, keepCopyright: s.keepCopyright === true && a.copyright === true, keepCreation: s.keepCreation === true && a.creation === true,
+    keepLocation: s.keepLocation === true && a.location === true }
+  return next.keepCopyright === s.keepCopyright && next.keepCreation === s.keepCreation && next.keepLocation === s.keepLocation ? s : next
 }
 
 /** Geçerli ayar → motor seçenekleri (sözleşme §2 `processImage` `options`). Geçersiz ayarda null. */
@@ -281,14 +317,24 @@ export function splitName(name) {
  * uçtaki boşluk / nokta temizlenir, en çok 100 karakter; boş kalırsa `fallback`.
  */
 export function safeFileBase(name, fallback = 'image') {
+  // Denetim karakterleri ve yön (bidi) denetimi — "gpj.exe" gibi tersine okunan adlar üretilemez
   // eslint-disable-next-line no-control-regex
-  let s = String(name ?? '').slice(0, 400).replace(/[\u0000-\u001f\u007f]/g, '').replace(/[/\\:*?"<>|]/g, '-').replace(/^\.+/, '').trim()
+  let s = String(name ?? '').slice(0, 400).replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/[/\\:*?"<>|]/g, '-').replace(/^\.+/, '').trim()
   let end = s.length
   while (end > 0 && (s[end - 1] === '.' || s[end - 1] === ' ')) end -= 1
   s = s.slice(0, end)
   if (s.length > 100) s = s.slice(0, 100)
-  return s || fallback
+  if (!s) return fallback
+  // Windows'a ayrılmış aygıt adları (CON, PRN, AUX, NUL, COM1–9, LPT1–9 — uzantılı da) çıkarılamaz: sonuna "_"
+  const stem = s.split('.')[0].trim().toUpperCase()
+  if (WINDOWS_RESERVED.test(stem)) {
+    const dot = s.indexOf('.')
+    s = dot >= 0 ? `${s.slice(0, dot)}_${s.slice(dot)}` : `${s}_`
+  }
+  return s
 }
+const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/
 
 /** HTML'de kaçışsız kullanılabilen ad gövdesi (duyarlı set): yalnız a–z, 0–9, "-", "_"; Türkçe harfler sadeleşir. */
 export function slugFileBase(name, fallback = 'image') {
@@ -326,13 +372,19 @@ export function outputName(base, type, { mode = 'replace', width = null } = {}) 
   const b = safeFileBase(base)
   const ext = extOfType(type)
   if (mode === 'width' && posInt(width) !== null) return `${b}-${posInt(width)}w.${ext}`
-  if (mode === 'optimized') return `${b}-opt.${ext}`
+  if (mode === 'optimized' || mode === 'width') return `${b}-opt.${ext}`
   return `${b}.${ext}`
 }
 
-/** Aynı ad ikinci kez gelirse `ad-2.jpg`, `ad-3.jpg` … (büyük / küçük harf duyarsız; `used` = Set, güncellenir). */
+/**
+ * Dosya adının TEKİLLİK anahtarı: dil-bağımsız büyük harf (NTFS / APFS adları büyük-küçük harf duyarsız karşılaştırır;
+ * Türkçe katlama 'I' → 'ı' yapardı ve "IMG_01.jpg" ile "img_01.jpg" ayrı sayılıp açılışta çakışırdı) + NFC.
+ */
+export const nameKey = (s) => String(s ?? '').normalize('NFC').toUpperCase()
+
+/** Aynı ad ikinci kez gelirse `ad-2.jpg`, `ad-3.jpg` … (büyük / küçük harf duyarsız; `used` = {@link nameKey} kümesi). */
 export function uniqueName(name, used) {
-  const key = (s) => s.toLocaleLowerCase('tr')
+  const key = nameKey
   if (!used.has(key(name))) { used.add(key(name)); return name }
   const { base, ext } = splitName(name)
   for (let i = 2; i < 10_000; i += 1) {
@@ -478,7 +530,12 @@ export function serverProblemCode(res) {
   const code = typeof res?.code === 'string' ? res.code : ''
   if (SERVER_CODES.includes(code)) return code
   if (code === 'DOWNLOAD_FAILED') return 'download'
+  // İstemcinin süre sınırı (api/client IMAGE_FETCH_TIMEOUT_MS) — kendi metni ("ağ yok" değil)
+  if (code === 'REQUEST_TIMEOUT' || res?.timedOut === true) return 'timeout'
   const st = Number(res?.status) || 0
+  // YENİ sunucunun 404'ü kodludur: RESOURCE_SCAN_NOT_FOUND / RESOURCE_IMAGE_NOT_FOUND (yukarıda) ya da NOT_FOUND = izleme
+  // artık sana görünmüyor. Yalnız KODSUZ 404 (ya da 405) "bu sürümde yok" demektir.
+  if (st === 404 && code === 'NOT_FOUND') return 'monitor_gone'
   if (st === 401) return 'session'
   if (st === 403) return 'forbidden'
   if (st === 429) return 'RATE_LIMITED'
@@ -496,7 +553,7 @@ export function serverProblemText(res, t, locale) {
   const code = serverProblemCode(res)
   if (code === 'other') return (typeof res?.error === 'string' && res.error.trim()) ? res.error : t('prs.it.srv.other')
   if (code === 'network') return (typeof res?.error === 'string' && res.error.trim()) ? res.error : t('prs.it.srv.network')
-  if (code === 'RATE_LIMITED' || code === 'RESOURCE_IMAGE_BUSY') {
+  if (WAIT_CODES.includes(code)) {
     const wait = num(res?.retryAfter) ?? num(res?.retry_after_seconds)
     return wait !== null && wait > 0 ? t(`prs.it.srv.${code}.wait`, formatNumber(Math.ceil(wait), locale)) : t(`prs.it.srv.${code}`)
   }
@@ -511,6 +568,9 @@ export function serverProblemText(res, t, locale) {
     return t(key || 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE')
   }
   if (code === 'RESOURCE_IMAGE_FETCH_FAILED') {
+    // https → http yönlendirmesi: sunucu izlemedi (CheckFailureReason değil — chkfail.* değil, kendi metni)
+    const own = typeof res?.reason === 'string' ? FETCH_OWN_REASONS[res.reason] : null
+    if (own) return t(own)
     const hs = num(res?.http_status)
     if (hs !== null && hs > 0) return t('prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.http', String(hs))
     const why = typeof res?.reason === 'string' && res.reason ? problemText(res.reason, t) : ''
@@ -579,7 +639,7 @@ export function problemLine(problem, t, locale) {
  */
 export function mappingRows(files, t) {
   const head = [t('prs.it.map.source'), t('prs.it.map.file'), t('prs.it.map.oldBytes'), t('prs.it.map.newBytes'), t('prs.it.map.oldDims'),
-    t('prs.it.map.newDims'), t('prs.it.map.format'), t('prs.it.map.saving'), t('prs.it.map.notes')]
+    t('prs.it.map.newDims'), t('prs.it.map.format'), t('prs.it.map.saving'), t('prs.it.map.notes'), t('prs.it.map.tlsVerified')]
   const rows = (files || []).map((f) => {
     const s = f.summary || {}
     const pct = savingPctOf(s)
@@ -587,6 +647,8 @@ export function mappingRows(files, t) {
       f.source ?? '', f.name ?? '', csvNumber(s.original?.bytes ?? null), csvNumber(s.bytes ?? null),
       dimsText(s.original?.width, s.original?.height), dimsText(s.width, s.height), s.type ? typeLabel(s.type) : '',
       csvNumber(pct), (s.notes || []).map((c) => noteText(c, t)).join(' | '),
+      // Özgünün aktarımı doğrulandı mı (sunucunun X-Image-Tls-Verified başlığı): evet / hayır; bilinmiyorsa (http, yüklenen dosya) boş
+      f.tlsVerified === true ? t('prs.it.map.yes') : f.tlsVerified === false ? t('prs.it.map.no') : '',
     ]
   })
   return [head, ...rows]
@@ -613,7 +675,10 @@ export function responsiveWidths(naturalWidth) {
   const n = posInt(naturalWidth)
   if (n === null) return []
   const list = RESPONSIVE_WIDTHS.filter((w) => w <= n)
-  return list.length ? list : [n]
+  // Doğal genişlik iki adımın arasındaysa (ör. 1919 ya da 1000) o da sete girer — en geniş ekranda tam çözünürlük
+  // kaybolmasın. 1920'den genişte eklenmez: 1920 önerilen üst sınırdır (daha genişi "boyutu fazla" bulgusudur).
+  if (n < RESPONSIVE_WIDTHS[RESPONSIVE_WIDTHS.length - 1] && !list.includes(n)) list.push(n)
+  return list
 }
 
 /** HTML öznitelik değeri kaçışı. */
@@ -621,7 +686,27 @@ export function escapeAttr(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-const srcsetOf = (files, prefix) => files.map((f) => `${prefix}${encodeURI(f.name)} ${f.width}w`).join(', ')
+/**
+ * Önek (klasör / CDN adresi) yol parçası parçası kodlanır (`encodeURIComponent`): boşluk, "#", "?", "," srcset'i ya da
+ * adresi bozmaz; "https://alan" kökeni ve "/" ayırıcıları korunur. Öznitelik kaçışı ayrıca (escapeAttr) yapılır.
+ */
+export function encodePathPrefix(prefix) {
+  const raw = String(prefix ?? '')
+  if (!raw) return ''
+  const m = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)(.*)$/i.exec(raw)
+  const origin = m ? m[1] : ''
+  const rest = m ? m[2] : raw
+  const enc = rest.split('/').map((seg) => {
+    let s = seg
+    try { s = decodeURIComponent(seg) } catch { /* zaten kodlanmamış */ }
+    return encodeURIComponent(s)
+  }).join('/')
+  return origin + enc
+}
+const fileUrl = (prefix, name) => `${encodePathPrefix(prefix)}${encodeURIComponent(String(name ?? ''))}`
+const srcsetOf = (files, prefix) => files.map((f) => `${fileUrl(prefix, f.name)} ${f.width}w`).join(', ')
+/** `<source>` sırası: modern biçim önce; tarayıcı tanıdığı İLK türü seçer. */
+const SOURCE_ORDER = ['avif', 'webp', 'png', 'jpeg', 'gif', 'bmp']
 
 /**
  * Hazır HTML: `kind` = `img` (`<img srcset sizes>`) ya da `picture` (`<picture><source type srcset sizes><img></picture>` —
@@ -635,19 +720,28 @@ export function pictureSnippet({ files, alt = '', sizes = '100vw', kind = 'img',
   if (!list.length) return ''
   const largest = list[list.length - 1]
   const pre = String(prefix ?? '')
-  const srcset = escapeAttr(srcsetOf(list, pre))
   const sz = escapeAttr(String(sizes ?? '').trim() || '100vw')
   const dims = posInt(largest.height) !== null ? ` width="${largest.width}" height="${posInt(largest.height)}"` : ''
+  // Türe göre gruplar: bir srcset'te TEK tür olur (karışık türler `<source type>` ile yanlış söylenmesin)
+  const groups = new Map()
+  for (const f of list) {
+    const k = String(f.type || '').toLowerCase()
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(f)
+  }
+  const types = [...groups.keys()].sort((a, b) => (SOURCE_ORDER.indexOf(a) + 99 * (SOURCE_ORDER.indexOf(a) < 0)) - (SOURCE_ORDER.indexOf(b) + 99 * (SOURCE_ORDER.indexOf(b) < 0)))
   if (kind === 'picture') {
-    const fb = escapeAttr(`${pre}${encodeURI(fallbackName || largest.name)}`)
+    const fb = escapeAttr(fileUrl(pre, fallbackName || largest.name))
     return [
       '<picture>',
-      `  <source type="${escapeAttr(mimeOfType(largest.type))}" srcset="${srcset}" sizes="${sz}">`,
+      ...types.map((k) => `  <source type="${escapeAttr(mimeOfType(k))}" srcset="${escapeAttr(srcsetOf(groups.get(k), pre))}" sizes="${sz}">`),
       `  <img src="${fb}" alt="${escapeAttr(alt)}"${dims} loading="lazy" decoding="async">`,
       '</picture>',
     ].join('\n')
   }
-  return `<img src="${escapeAttr(`${pre}${encodeURI(largest.name)}`)}" srcset="${srcset}" sizes="${sz}" alt="${escapeAttr(alt)}"${dims} loading="lazy" decoding="async">`
+  // <img srcset> türü söylemez: en büyük dosyanın türündeki grup (karışıksa yalnız o tür — tutarlı set)
+  const own = groups.get(String(largest.type || '').toLowerCase()) || list
+  return `<img src="${escapeAttr(fileUrl(pre, largest.name))}" srcset="${escapeAttr(srcsetOf(own, pre))}" sizes="${sz}" alt="${escapeAttr(alt)}"${dims} loading="lazy" decoding="async">`
 }
 
 // ── "Not ne olurdu?" projeksiyonu ───────────────────────────────────────────

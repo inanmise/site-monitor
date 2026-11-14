@@ -1,7 +1,6 @@
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { api } from '../../../../api/client'
 import { createImageToolStore } from './imageToolStore.js'
-import { registerImageStore } from './imageToolBusy.js'
 
 // Önce / sonra karşılaştırması ve duyarlı set pencereleri yalnız açılınca iner
 const ImageCompareDialog = lazy(() => import('./ImageCompareDialog.jsx'))
@@ -24,8 +23,10 @@ export function useTopic(store, topic, read) {
 }
 
 /**
- * Sekme başına depo. Sekme sökülünce süren işler iptal edilir, bellekteki görseller bırakılır. (StrictMode'da etki
- * iki kez koşar: ilk temizlik depoyu kapatır → ikinci koşuda yenisi kurulur.)
+ * Sekme başına depo. Sekme sökülünce depo BIRAKILIR (`release`): satır işleri ve araç kuyruğu iptal edilir, bellekteki
+ * görseller bırakılır; süren toplu indirme / ZIP ise SÜRER ve ZIP iner (uygulama içi gezinme — sekme değiştirme, Geri,
+ * pencereyi kapatma — onu sessizce iptal etmez). Çıkışta (oturum sıfırlama) depo hemen kapanır. (StrictMode'da etki iki
+ * kez koşar: ilk temizlik boştaki depoyu kapatır → ikinci koşuda yenisi kurulur.)
  */
 export function useImageToolStore(monitorId) {
   const make = useCallback(() => createImageToolStore({
@@ -34,8 +35,8 @@ export function useImageToolStore(monitorId) {
   const [store, setStore] = useState(make)
   useEffect(() => {
     let s = store
-    if (s.isDisposed()) { s = make(); setStore(s) }
-    return () => s.dispose()
+    if (s.isDisposed() || s.isReleased()) { s = make(); setStore(s) }
+    return () => s.release()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [make])
   return store
@@ -44,7 +45,7 @@ export function useImageToolStore(monitorId) {
 /**
  * Sağlayıcı: depo + seçili analizin künyesi (`scanId`, `canRun` = "Şimdi kontrol et" kapısı, `itemsKept` = nesne ayrıntısı
  * saklanıyor mu) + araç görünümüne geçiş. Karşılaştırma ve duyarlı set pencereleri burada TEK örnek olarak yaşar.
- * Toplu indirme / ZIP sürerken sekme kapatılırsa tarayıcı sorar (`beforeunload`).
+ * Toplu indirme / ZIP sürerken tarayıcı sekmesi kapatılırsa tarayıcı sorar (`beforeunload` — imageToolBusy kaydı).
  */
 export function ImageToolProvider({ store, monitorId, scanId, canRun, itemsKept, monitorName, onOpenTool, children }) {
   const [compare, setCompare] = useState(null)       // { title, original: Blob, result: Blob, summary }
@@ -55,17 +56,6 @@ export function ImageToolProvider({ store, monitorId, scanId, canRun, itemsKept,
     openTool: onOpenTool, openCompare, openResponsive }),
   [store, monitorId, scanId, canRun, itemsKept, monitorName, onOpenTool, openCompare, openResponsive])
 
-  useEffect(() => registerImageStore(store), [store])
-  useEffect(() => {
-    const onLeave = (e) => {
-      if (!store.isBusy()) return undefined
-      e.preventDefault()
-      e.returnValue = ''
-      return ''
-    }
-    window.addEventListener('beforeunload', onLeave)
-    return () => window.removeEventListener('beforeunload', onLeave)
-  }, [store])
 
   return (
     <ImageToolContext.Provider value={value}>

@@ -441,7 +441,7 @@ export function RecItem({ rec, items, t, locale, onShowObjects, objectsAvailable
               <ListFilter aria-hidden="true" />{t('prs.rec.showObjects', formatNumber(byFinding ? count : urls.length, locale))}
             </Button>
           )}
-          {IMAGE_BULK_RECS.has(rec.code) && objectsAvailable && <ImageBulkButton items={items} />}
+          {IMAGE_BULK_RECS.has(rec.code) && objectsAvailable && <ImageBulkButton items={items} finding={rec.code} />}
           {area && (
             <Button type="button" variant="ghost" size="sm" data-slot="prs-rec-audit" data-area={area} className={TOUCH}
               aria-label={t('prs.deep.recAuditFor', title, t(`prs.deep.area.${area}`))} onClick={() => onAudit(area)}>

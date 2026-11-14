@@ -391,11 +391,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  // Kaynak analizinde toplu görsel indirme / ZIP sürüyorsa pencere kapatılınca iş iptal olur ve hiçbir şey inmez — önce sorulur
+  // Kaynak analizinde toplu görsel indirme / ZIP sürüyorsa pencere kapanınca iş İPTAL OLMAZ (arka planda sürer, ZIP iner) —
+  // kullanıcıya söylenir (inceleme 2026-11-14: uygulama içi gezinme işi sessizce kesiyordu)
   async function closeDetail() {
-    if (isImageWorkBusy() && !(await showConfirm({
-      title: t('prs.it.leave.title'), message: t('prs.it.leave.body'), confirmText: t('prs.it.leave.confirm'), cancelText: t('prs.it.leave.stay'), variant: 'danger',
-    }))) return
+    if (isImageWorkBusy()) toast.info(t('prs.it.bulk.continues'))
     checkIssuesGen.current++; setCheckIssues({}); setSelected(null); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null)
   }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */

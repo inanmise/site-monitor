@@ -14,6 +14,8 @@ import { cn } from '@/lib/utils'
 
 /** Önizleme tuvalinin tavanı: çok büyük görsel tuvale KÜÇÜLTÜLEREK çizilir (bellek) — söylenir. */
 export const PREVIEW_MAX_SIDE = 4096
+/** Çözme tavanı: motor görseli uzun kenarı en çok bu kadar olacak şekilde çözer (50 MP özgün tam çözülmez — bellek). */
+export const PREVIEW_DECODE_MAX_SIDE = 2560
 export const PREVIEW_MAX_PIXELS = 12_000_000
 const ZOOMS = ['fit', '100', '200']
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
@@ -37,7 +39,22 @@ export function dividerKey(key, pos, shift = false) {
   return null
 }
 
-function draw(canvas, bitmap, size) {
+/**
+ * Görseli kutuya KENDİ oranıyla sığdırır (zarflama): kapla / küçük resim yöntemlerinde çıktının oranı özgününkinden farklıdır —
+ * özgün çıktının oranına GERİLMEZ, ortalanır, kalan alan boş kalır. Dönüş: `{ x, y, w, h }` (tuval pikseli).
+ */
+export function fitRect(srcW, srcH, boxW, boxH) {
+  const sw = Math.max(1, Number(srcW) || 1)
+  const sh = Math.max(1, Number(srcH) || 1)
+  const bw = Math.max(1, Number(boxW) || 1)
+  const bh = Math.max(1, Number(boxH) || 1)
+  const k = Math.min(bw / sw, bh / sh)
+  const w = Math.max(1, Math.round(sw * k))
+  const h = Math.max(1, Math.round(sh * k))
+  return { x: Math.round((bw - w) / 2), y: Math.round((bh - h) / 2), w, h }
+}
+
+function draw(canvas, bitmap, size, rect = null) {
   if (!canvas || !bitmap) return false
   try {
     canvas.width = size.width
@@ -45,18 +62,22 @@ function draw(canvas, bitmap, size) {
     const c = canvas.getContext?.('2d')
     if (!c) return false
     c.clearRect(0, 0, size.width, size.height)
-    c.drawImage(bitmap, 0, 0, size.width, size.height)
+    const r = rect || { x: 0, y: 0, w: size.width, h: size.height }
+    c.drawImage(bitmap, r.x, r.y, r.w, r.h)
     return true
   } catch {
     return false
   }
 }
 
+const closeQuietly = (b) => { try { b?.close?.() } catch { /* zaten kapalı */ } }
+
 /**
  * ÖNCE / SONRA karşılaştırması (2026-11-14, kullanıcı kararı 5): sürüklenebilir bölücü (fare + dokunma; klavye: oklar,
  * Home / End), yakınlaştırma (sığdır / %100 / %200), kaydırarak gezinme, iki bayt boyutu ve motor ölçtüyse benzerlik
  * değeri. Görseller `<canvas>` üzerine çizilir (`decodeForPreview` — `<img src=blob:>` YOK, CSP değişmez). Solda ÖNCE
- * (özgün), sağda SONRA (çıktı); %100 = ÇIKTININ gerçek pikselleri, özgün aynı kutuya ölçeklenir. Pencere kapanınca
+ * (özgün), sağda SONRA (çıktı); %100 = ÇIKTININ gerçek pikselleri, özgün aynı kutuya KENDİ oranıyla (zarflanarak) sığar —
+ * kapla / küçük resimde gerilmez. Çözme `PREVIEW_DECODE_MAX_SIDE` tavanıyla yapılır (bellek). Pencere kapanınca
  * bit eşlemler kapatılır (`ImageBitmap.close`) ve süren çözme iptal edilir.
  */
 export default function ImageCompareDialog({ title, original, result, summary, onClose }) {
@@ -79,19 +100,30 @@ export default function ImageCompareDialog({ title, original, result, summary, o
     const ctl = new AbortController()
     let cancelled = false
     ;(async () => {
-      try {
-        const [b, a] = await Promise.all([
-          engine.decodeForPreview(original, { signal: ctl.signal }),
-          engine.decodeForPreview(result, { signal: ctl.signal }),
-        ])
-        if (cancelled) { b?.close?.(); a?.close?.(); return }
-        bitmaps.current = { before: b, after: a }
-        sizes.current = { before: previewSize(b.width, b.height), after: previewSize(a.width, a.height) }
-        setState({ status: 'ready', problem: null, scaled: sizes.current.before.scaled || sizes.current.after.scaled })
-      } catch (e) {
+      // allSettled: biri başarısız ya da iptal olsa da ÖTEKİNİN çözülmüş bit eşlemi kapatılır (bellek sızmaz)
+      const settled = await Promise.allSettled([
+        engine.decodeForPreview(original, { signal: ctl.signal, maxSide: PREVIEW_DECODE_MAX_SIDE }),
+        engine.decodeForPreview(result, { signal: ctl.signal, maxSide: PREVIEW_DECODE_MAX_SIDE }),
+      ])
+      const [b, a] = settled.map((x) => (x.status === 'fulfilled' ? x.value : null))
+      if (cancelled || !b || !a) {
+        closeQuietly(b)
+        closeQuietly(a)
         if (cancelled) return
+        const e = settled.find((x) => x.status === 'rejected')?.reason
         setState({ status: 'failed', problem: engine.isEngineError(e) ? { code: e.code, params: e.params } : { code: 'other', params: {} }, scaled: false })
+        return
       }
+      bitmaps.current = { before: b, after: a }
+      // İki tuval de ÇIKTININ (çözülmüş) ölçüsündedir; özgün o kutuya KENDİ oranıyla sığar (kapla / küçük resimde gerilmez).
+      // Ekrandaki %100 yine çıktının gerçek pikselleridir (CSS ölçüsü — aşağıda natW / natH).
+      const outW = summary?.width || a.width
+      const box = previewSize(a.width, a.height)
+      const origW = summary?.original?.width || b.width
+      const origH = summary?.original?.height || b.height
+      sizes.current = { before: box, after: box, beforeRect: fitRect(origW, origH, box.width, box.height) }
+      const decodedSmaller = a.width < outW || b.width < origW
+      setState({ status: 'ready', problem: null, scaled: box.scaled || decodedSmaller })
     })()
     return () => {
       cancelled = true
@@ -101,13 +133,15 @@ export default function ImageCompareDialog({ title, original, result, summary, o
       try { after?.close?.() } catch { /* zaten kapalı */ }
       bitmaps.current = { before: null, after: null }
     }
+    // Özet (ölçüler) aynı Blob çiftine aittir; yalnız Blob'lar değişince yeniden çözülür
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original, result])
 
   // Çizim: tuvaller hazır olunca bir kez (yakınlaştırma yalnız CSS boyutunu değiştirir)
   useLayoutEffect(() => {
     if (state.status !== 'ready') return
     draw(afterRef.current, bitmaps.current.after, sizes.current.after)
-    draw(beforeRef.current, bitmaps.current.before, sizes.current.before)
+    draw(beforeRef.current, bitmaps.current.before, sizes.current.before, sizes.current.beforeRect)
   }, [state.status])
 
   // Görünüm alanının ölçüsü ("sığdır" için)
@@ -122,8 +156,9 @@ export default function ImageCompareDialog({ title, original, result, summary, o
     return () => ro.disconnect()
   }, [state.status])
 
-  const natW = bitmaps.current.after?.width || summary?.width || 1
-  const natH = bitmaps.current.after?.height || summary?.height || 1
+  // %100 = çıktının GERÇEK pikselleri (önizleme küçültülerek çözülmüş olsa da kutu gerçek ölçüde)
+  const natW = summary?.width || bitmaps.current.after?.width || 1
+  const natH = summary?.height || bitmaps.current.after?.height || 1
   const fitScale = box.w > 0 && box.h > 0 ? Math.min(1, box.w / natW, box.h / natH) : 1
   const scale = zoom === '200' ? 2 : zoom === '100' ? 1 : fitScale
   const stageW = Math.max(1, Math.round(natW * scale))
@@ -210,7 +245,8 @@ export default function ImageCompareDialog({ title, original, result, summary, o
                   {/* Alt katman: SONRA (çıktı); üstte solda kırpılı: ÖNCE (özgün) */}
                   <canvas ref={afterRef} data-slot="prs-it-cmp-after" aria-hidden="true" className="absolute inset-0 block size-full" />
                   <div aria-hidden="true" className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: `${pos}%` }}>
-                    <canvas ref={beforeRef} data-slot="prs-it-cmp-before" className="block max-w-none" style={{ width: stageW, height: stageH }} />
+                    <canvas ref={beforeRef} data-slot="prs-it-cmp-before" className="block max-w-none" style={{ width: stageW, height: stageH }}
+                      data-rect={sizes.current.beforeRect ? [sizes.current.beforeRect.x, sizes.current.beforeRect.y, sizes.current.beforeRect.w, sizes.current.beforeRect.h].join(',') : undefined} />
                   </div>
                   <span aria-hidden="true" className="pointer-events-none absolute top-1.5 left-1.5 rounded bg-background/85 px-1.5 py-0.5 text-[11px] font-semibold text-foreground shadow-xs">{t('prs.it.cmp.before')}</span>
                   <span aria-hidden="true" className="pointer-events-none absolute top-1.5 right-1.5 rounded bg-background/85 px-1.5 py-0.5 text-[11px] font-semibold text-foreground shadow-xs">{t('prs.it.cmp.after')}</span>

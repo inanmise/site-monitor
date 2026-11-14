@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Columns2, Download, ImageDown, Info, Scaling, SlidersHorizontal, Wrench, X, Zap } from 'lucide-react'
+import { ChevronDown, Columns2, Download, ImageDown, Info, Scaling, ShieldAlert, SlidersHorizontal, Wrench, X, Zap } from 'lucide-react'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
 import { focusFormError } from '../../../../utils/formErrors.js'
 import { useToast } from '../../../ui/Toast.jsx'
@@ -61,7 +61,8 @@ function Actions({ ctx, item, className, showSuggestion }) {
     if (!b) { toast.info(t('prs.it.cmp.evicted')); return }
     ctx.openCompare({ title: item.url, original: b.original, result: b.result, summary: b.summary })
   }
-  const canCompare = entry.state === 'done' && entry.result && !entry.result.kept
+  // Toplu indirmede özgün / sonuç Blob'u bellekte TUTULMAZ — düğme yalnız ikisi de varken (yoksa her tık başarısız olurdu)
+  const canCompare = entry.state === 'done' && entry.result && !entry.result.kept && store.hasScanBlobs(scanId, item.url)
 
   return (
     <div data-slot="prs-it-actions" data-state={entry.state} data-unavailable={why || undefined}
@@ -132,7 +133,7 @@ function Actions({ ctx, item, className, showSuggestion }) {
           </Button>
         )}
       </div>
-      <div data-slot="prs-it-status" role="status" aria-live="polite" className={cn('flex min-w-0 flex-col gap-1 text-xs empty:hidden', WRAP)}>
+      <div data-slot="prs-it-status" role="status" aria-live="polite" className={cn('flex min-w-0 flex-col gap-1 text-xs empty:sr-only', WRAP)}>
         {entry.state === 'fetching' && <span className="text-muted-foreground">{t('prs.it.st.fetching')}</span>}
         {entry.state === 'processing' && (
           <span className="text-muted-foreground tabular-nums">
@@ -146,12 +147,26 @@ function Actions({ ctx, item, className, showSuggestion }) {
           </span>
         )}
         {entry.result && !busy && <ResultLine result={entry.result} t={t} locale={locale} />}
+        {entry.original?.tlsVerified === false && !busy && <TlsUnverifiedNote t={t} />}
       </div>
       {custom && (
         <CustomSizeDialog item={item} suggestion={suggestion} store={store} scanId={scanId} onClose={() => setCustom(false)}
           onTool={(settings) => toTool(settings)} />
       )}
     </div>
+  )
+}
+
+/**
+ * Özgünün aktarımı doğrulanamadı (sunucu: `X-Image-Tls-Verified: false` — sertifika zinciri sistem / kurum deposunca
+ * güvenilmiyor ya da adı kapsamıyor). İndirme ENGELLENMEZ (iç siteler) ama gizlenmez: bu baytlar yeniden yayınlanabilir.
+ */
+export function TlsUnverifiedNote({ t, className }) {
+  return (
+    <span data-slot="prs-it-tls-unverified" className={cn('flex min-w-0 items-start gap-1.5 text-warning', className)}>
+      <ShieldAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+      <span className={WRAP}>{t('prs.it.tls.unverified')}</span>
+    </span>
   )
 }
 

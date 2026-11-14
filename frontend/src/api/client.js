@@ -77,16 +77,34 @@ async function fetchTechErrorPdf(id, signal = null) {
  * `code`, çevrilmiş `error`, `retryAfter` (sn — 429), sunucunun ek alanları (`max_bytes`, `reason`, `http_status`) korunur.
  * `signal` ile iptal `{ aborted: true }` döner (hata değil). 401 oturum yolunu çalıştırır.
  */
-async function fetchResourceScanImage(id, scanId, url, signal = null) {
+/**
+ * Görsel indirmenin istemci süre sınırı (2026-11-14 inceleme): sunucunun kendi tavanı ≈ 130 sn (2 × istek süresi + 10 sn);
+ * istemci 3 dakikadan sonra bırakır — asılı bir yanıt kuyruğu / toplu indirmeyi sonsuza dek bekletmez. Süre dolması
+ * `REQUEST_TIMEOUT` (kendi metni), çağıranın iptali `aborted` (hata değil).
+ */
+export const IMAGE_FETCH_TIMEOUT_MS = 180_000
+
+async function fetchResourceScanImage(id, scanId, url, signal = null, timeoutMs = IMAGE_FETCH_TIMEOUT_MS) {
   const path = `/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}/image`
+  const dl = deadlineSignal(signal, timeoutMs)
+  try {
+    return await readResourceScanImage(path, url, signal, dl.signal)
+  } finally {
+    dl.done()
+  }
+}
+
+async function readResourceScanImage(path, url, signal, sig) {
+  // Çağıranın iptali mi, süre mi: sinyal kesildiyse çağıranınki kesik değilse süre dolmuştur
+  const ended = () => (signal?.aborted ? { success: false, status: 0, aborted: true, error: null } : { ...noResponsePayload('timeout'), timedOut: true })
   let res
   try {
     res = await fetch(`${BASE}${path}`, {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
-      body: JSON.stringify({ url }), ...(signal ? { signal } : {}),
+      body: JSON.stringify({ url }), ...(sig ? { signal: sig } : {}),
     })
   } catch (e) {
-    if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return ended()
     return networkFailurePayload()
   }
   if (!res.ok) {
@@ -113,7 +131,7 @@ async function fetchResourceScanImage(id, scanId, url, signal = null) {
   try {
     blob = await res.blob()
   } catch (e) {
-    if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return ended()
     return networkFailurePayload()
   }
   const disp = headerOf(res, 'Content-Disposition') || ''
@@ -123,7 +141,10 @@ async function fetchResourceScanImage(id, scanId, url, signal = null) {
   try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
   const dim = (h) => { const n = Number(headerOf(res, h)); return Number.isInteger(n) && n > 0 ? n : null }
   const type = String(headerOf(res, 'X-Image-Type') || '').trim().toLowerCase() || null
-  return { success: true, blob, name, type, width: dim('X-Image-Width'), height: dim('X-Image-Height') }
+  // Son atlama https ise sunucu sertifika zincirini değerlendirir: true / false; http ya da değerlendirilemediyse başlık YOK → null
+  const tls = String(headerOf(res, 'X-Image-Tls-Verified') || '').trim().toLowerCase()
+  const tlsVerified = tls === 'true' ? true : tls === 'false' ? false : null
+  return { success: true, blob, name, type, width: dim('X-Image-Width'), height: dim('X-Image-Height'), tlsVerified }
 }
 
 /**
@@ -2704,7 +2725,7 @@ export const api = {
     // Görsel aracı (2026-11-14): taramanın bulduğu bir görselin özgün baytları (ikili yanıt; kapı = "Şimdi kontrol et") ve
     // "not ne olurdu?" projeksiyonu (kapı = analizi okuma; sunucu dışarı istek atmaz, bir şey yazmaz). 404 / 405 kodsuz =
     // eski sunucu → ekran "bu sürümde desteklenmiyor" der (isEndpointUnsupported).
-    resourceScanImage: (id, scanId, url, { signal } = {}) => fetchResourceScanImage(id, scanId, url, signal),
+    resourceScanImage: (id, scanId, url, { signal, timeoutMs } = {}) => fetchResourceScanImage(id, scanId, url, signal, timeoutMs),
     resourceScanImageProjection: (id, scanId, body) => request(
       `/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}/image-projection`,
       { method: 'POST', body: JSON.stringify(body || {}), withStatus: true }),

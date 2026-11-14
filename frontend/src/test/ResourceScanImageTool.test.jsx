@@ -27,6 +27,7 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { flushUrlQuerySync } from '../hooks/useUrlQuerySync.js'
 import ResourceScanTab from '../components/page/resourcescan/ResourceScanTab.jsx'
 import { isImageWorkBusy, resetImageWorkForTests } from '../components/page/resourcescan/imagetool/imageToolBusy.js'
+import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { scanDetail, scanHistory, scanItems } from './helpers/resourceScanFixtures.js'
 
 const MONITOR = { id: 100, name: 'Kurumsal Ana Sayfa', url: 'https://www.example.com/' }
@@ -214,7 +215,7 @@ describe('pano: görsel etkisi kartı, toplu indirme ve "not ne olurdu?"', () =>
     await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100))
   })
 
-  it('toplu indirme: sekmenin üstündeki çubuk ilerlemeyi ve sonucu yazar; sürerken "süren iş" kaydı doludur (pencere kapanırken sorulur)', async () => {
+  it('toplu indirme: sekmenin üstündeki çubuk ilerlemeyi ve sonucu yazar; sürerken "süren iş" kaydı doludur (tarayıcı sekmesi kapatılırsa sorulur)', async () => {
     let release
     const hold = new Promise((r) => { release = r })
     api.monitoring.resourceScanImage.mockImplementation(async () => { await hold; return { success: true, blob: blobOf(1600 * 1024), name: 'banner.webp', type: 'webp', width: 3840, height: 2160 } })
@@ -249,17 +250,55 @@ describe('pano: görsel etkisi kartı, toplu indirme ve "not ne olurdu?"', () =>
     expect(api.monitoring.resourceScanImage).not.toHaveBeenCalled()
   })
 
-  it('sekme sökülünce süren işler kesilir ve "süren iş" kaydı boşalır', async () => {
+  it('sekme sökülünce (uygulama içi gezinme) toplu indirme SÜRER ve ZIP iner; bitince "süren iş" kaydı boşalır', async () => {
     let release
-    api.monitoring.resourceScanImage.mockImplementation(() => new Promise((r) => { release = r }))
+    const hold = new Promise((r) => { release = r })
+    api.monitoring.resourceScanImage.mockImplementation(async () => { await hold; return { success: true, blob: blobOf(1600 * 1024), name: 'banner.webp', type: 'webp', width: 3840, height: 2160 } })
     const view = await mount()
     fireEvent.click(slot('prs-it-bulk-open', slot('prs-images')))
     await waitFor(() => expect(slot('prs-it-bulk-start')).not.toBeNull())
     fireEvent.click(slot('prs-it-bulk-start'))
     await waitFor(() => expect(isImageWorkBusy()).toBe(true))
     view.unmount()
+    expect(isImageWorkBusy()).toBe(true)                                   // iş sessizce kesilmedi
+    release()
+    await waitFor(() => expect(downloaded).toHaveLength(1))
+    expect(downloaded[0]).toMatch(/^kurumsal-ana-sayfa-optimize-gorseller-\d{8}-\d{4}\.zip$/)
     expect(isImageWorkBusy()).toBe(false)
-    release?.({ success: false, status: 0 })
+  })
+
+  it('çıkışta (oturum sıfırlama) süren toplu indirme kesilir: hiçbir şey inmez, "süren iş" kaydı boşalır', async () => {
+    let release
+    const hold = new Promise((r) => { release = r })
+    api.monitoring.resourceScanImage.mockImplementation(async () => { await hold; return { success: true, blob: blobOf(1600 * 1024), name: 'banner.webp', type: 'webp', width: 3840, height: 2160 } })
+    const view = await mount()
+    fireEvent.click(slot('prs-it-bulk-open', slot('prs-images')))
+    await waitFor(() => expect(slot('prs-it-bulk-start')).not.toBeNull())
+    fireEvent.click(slot('prs-it-bulk-start'))
+    await waitFor(() => expect(isImageWorkBusy()).toBe(true))
+    view.unmount()
+    emitSessionReset()
+    expect(isImageWorkBusy()).toBe(false)
+    release()
+    await new Promise((r) => setTimeout(r, 30))
     expect(downloaded).toEqual([])
+  })
+
+  it('"boyutu fazla" önerisinin toplu düğmesi KENDİ kümesini açar (büyük görsel kümesini değil)', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      const d = scanDetail(scanId)
+      const wide = d.items.find((it) => Array.isArray(it.findings) && it.findings.includes('OVERSIZED_IMAGE_DIMENSIONS'))
+      d.analysis.recommendations = [...d.analysis.recommendations,
+        { code: 'OVERSIZED_IMAGE_DIMENSIONS', severity: 'medium', params: { count: 1, max_width: 2000 }, saving_bytes: null, saving_ms: null, item_urls: wide ? [wide.url] : [] }]
+      return Promise.resolve(ok(d))
+    })
+    await mount()
+    const rec = await waitFor(() => { const r = document.querySelector('[data-slot="prs-rec"][data-code="OVERSIZED_IMAGE_DIMENSIONS"]'); expect(r).not.toBeNull(); return r })
+    const btn = slot('prs-it-bulk-open', rec)
+    expect(btn).toHaveTextContent('Ölçüsü büyük görselleri küçültüp indir (ZIP)')
+    fireEvent.click(btn)
+    await waitFor(() => expect(slot('prs-it-bulk-dialog')?.getAttribute('data-finding')).toBe('OVERSIZED_IMAGE_DIMENSIONS'))
+    const large = document.querySelector('[data-slot="prs-rec"][data-code="LARGE_IMAGES"]')
+    expect(slot('prs-it-bulk-open', large)).toHaveTextContent('Büyük görselleri optimize edip indir (ZIP)')
   })
 })

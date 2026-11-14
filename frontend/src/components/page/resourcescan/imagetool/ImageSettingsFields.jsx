@@ -77,7 +77,7 @@ export default function ImageSettingsFields({
               {({ labelId, describedBy }) => (
                 <Slider min={1} max={100} step={1} value={[Number(s.quality) || 1]} disabled={disabled} data-slot="prs-it-quality"
                   aria-describedby={describedBy} className="py-2 pointer-coarse:py-3"
-                  thumbProps={{ 'aria-labelledby': labelId, className: 'block size-4 shrink-0 rounded-full border border-primary bg-white shadow-sm ring-ring/50 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden pointer-coarse:size-6' }}
+                  thumbProps={{ 'aria-labelledby': labelId, className: 'relative block size-4 shrink-0 rounded-full border border-primary bg-white shadow-sm ring-ring/50 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden pointer-coarse:size-6 pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-10 pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2' }}
                   onValueChange={(v) => onChange({ quality: v[0] })} />
               )}
             </Field>

@@ -13,11 +13,11 @@ import { ProgressBar, Spinner } from '../../../ui/Progress.jsx'
 import ToneBadge from '../../../admin/ToneBadge.jsx'
 import { formatNumber, formatPct, formatSize, plural } from '../resourceScanModel.js'
 import { CHIP, Section, SmallBadge, TOUCH, WRAP } from '../ResourceScanParts.jsx'
-import { ResultLine } from './ImageActions.jsx'
+import { ResultLine, TlsUnverifiedNote } from './ImageActions.jsx'
 import ImageSettingsFields from './ImageSettingsFields.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
 import {
-  TOOL_MAX_FILES, dimsText, pctText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
+  TOOL_MAX_FILES, dimsText, metadataAvailable, pctText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -125,14 +125,9 @@ export default function ImageToolView({ onBack }) {
   const before = done.reduce((a, e) => a + (e.result.original?.bytes ?? 0), 0)
   const after = done.reduce((a, e) => a + (e.result.bytes ?? 0), 0)
   const savedPct = before > 0 && after < before ? ((before - after) / before) * 100 : 0
-  // Üst veri anahtarları: kuyruktaki İŞLENMİŞ görsellerde hangi türler var (hiç işlenmediyse bilinmiyor)
-  const metadata = useMemo(() => {
-    if (!done.length) return null
-    const m = { copyright: false, creation: false, location: false }
-    for (const e of done) for (const k of Object.keys(m)) if (e.result.original?.metadata?.[k]) m[k] = true
-    return m
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue])
+  // Üst veri anahtarları: kuyruktaki İŞLENMİŞ görsellerde hangi türler var (hiç işlenmediyse bilinmiyor). Depo da
+  // seçenekleri AYNI kuraldan kurar (metadataAvailable): ekranda kapalı / devre dışı görünen "koru" etkisizdir
+  const metadata = useMemo(() => (queue.some((e) => e.result) ? metadataAvailable(queue) : null), [queue])
   const wide = width === 0 || width >= TOOL_WIDE_MIN_PX
   const full = queue.length >= TOOL_MAX_FILES
 
@@ -339,6 +334,7 @@ function QueueRow({ entry, store, ctx, stale, blocked, panelFormat, onDownload, 
         <p data-slot="prs-it-entry-problem" className={cn('m-0 text-xs text-destructive', WRAP)}>{problemLine(entry.problem, t, locale)}</p>
       )}
       {entry.result && !processing && <ResultLine result={entry.result} t={t} locale={locale} className="text-xs" />}
+      {entry.tlsVerified === false && <TlsUnverifiedNote t={t} className="text-xs" />}
 
       <div data-slot="prs-it-entry-actions" className="flex min-w-0 flex-wrap items-center gap-1.5">
         {entry.state === 'done' && (

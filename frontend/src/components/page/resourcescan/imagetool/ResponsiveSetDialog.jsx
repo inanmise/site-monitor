@@ -17,15 +17,31 @@ import { useTopic } from './ImageToolContext.jsx'
 import { bytesOfBlob, createZipWriter } from './imageZip.js'
 import {
   buildOptions, dimsText, engineProblemText, extOfType, pctText, pictureSnippet, phaseText, resizeSettings, responsiveWidths, resultSummary, savingPctOf,
-  slugFileBase, typeLabel, uniqueName, zipFileName,
+  nameKey, slugFileBase, typeLabel, uniqueName, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { cn } from '@/lib/utils'
 
-/** Sette "en küçük biçim" yok: her genişlik aynı biçimde olmalı (`<source type>` tek tür söyler). */
-const SET_FORMATS = ['keep', 'webp', 'jpeg', 'png']
+/**
+ * Sette yalnız AÇIK biçimler (inceleme 2026-11-14): "aynı biçim" ya da "en küçük" yolu yok — motor açıkça istenen biçime
+ * her genişlikte dönüştürür (özgün korunursa da aynı türdür), böylece setin bütün dosyaları TEK türdedir ve `<source type>`
+ * doğru söyler (GIF / BMP / AVIF özgünü doğal genişlikte araya karışmaz).
+ */
+export const SET_FORMATS = ['webp', 'jpeg', 'png']
+
+/**
+ * Setin varsayılan biçimi: panelin açık biçimi; yoksa WebP (destek henüz bilinmiyorsa da — çoğu tarayıcı üretir, seçim
+ * sonradan değişmesin); tarayıcı WebP üretemiyorsa saydam / PNG / GIF görselde PNG, ötekinde JPEG.
+ * @param {boolean|null} webp tarayıcı WebP üretebilir mi (null = bilinmiyor)
+ */
+export function defaultSetFormat(format, info, webp) {
+  if (SET_FORMATS.includes(format) && (format !== 'webp' || webp !== false)) return format
+  if (webp !== false) return 'webp'
+  const t = String(info?.type || '').toLowerCase()
+  return info?.hasAlpha === true || t === 'png' || t === 'gif' ? 'png' : 'jpeg'
+}
 const SNIPPET_FILE = 'snippet.html'
 
 /**
@@ -42,7 +58,8 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
   const support = useTopic(store, 'support', () => store.support())
   const widths = useMemo(() => responsiveWidths(info?.width), [info?.width])
   const slug = useMemo(() => slugFileBase(base || name), [base, name])
-  const [fmt, setFmt] = useState(SET_FORMATS.includes(format) ? format : 'keep')
+  const [fmtChoice, setFmt] = useState(null)
+  const fmt = fmtChoice ?? defaultSetFormat(format, info, support.state === 'ready' ? support.webp === true : null)
   const [alt, setAlt] = useState('')
   const [sizes, setSizes] = useState('100vw')
   const [prefix, setPrefix] = useState('')
@@ -73,7 +90,7 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
     setRunning(true)
     setRows(widths.map((w) => ({ width: w, state: 'waiting', phase: null, summary: null, name: null, problem: null })))
     const live = () => alive.current && seq.current === mine && !c.signal.aborted
-    const used = new Set([SNIPPET_FILE])
+    const used = new Set([nameKey(SNIPPET_FILE)])
     try {
       // Sınırlı döngü: en çok dört genişlik, sırayla
       for (const w of widths) {
