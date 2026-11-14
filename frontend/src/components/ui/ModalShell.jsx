@@ -93,7 +93,16 @@ const SIZE_CLASS = {
 
 // scrollBody: kutu sütun-flex + tavan; gövde `min-h-0` ŞART — flex öğesinin varsayılan
 // `min-height:auto`'su içeriğe göre büyür ve overflow hiç devreye girmez (altlık aşağı kaçar).
-const SCROLL_BOX = 'flex max-h-[min(88vh,calc(100dvh-2rem))] flex-col overflow-hidden'
+// `overflow-clip` (hidden DEĞİL, 2026-11-15 hata: "Kaynak analizi sekmesinde sağ üstteki düzenle / çalıştır / kapat
+// simgeleri kayboluyor, başka sekmeye geçince geri geliyor"): `overflow: hidden` bir kutu kullanıcı kaydıramasa da
+// PROGRAMLA kaydırılabilir — gövdedeki bir `scrollIntoView` / `focus()` gövde sonuna dayanınca kalan farkı KUTUYU
+// kaydırarak kapatıyor, başlık + eylemler yukarı itilip görünmez oluyordu (kutu kaydırılamadığı için geri gelmiyordu;
+// sekme değişip içerik kısalınca tarayıcı sıfırlıyordu). `clip` hiçbir kaydırmaya izin vermez — yalnız gövde kayar.
+// Kutunun taşması gövdedeki MUTLAK konumlu öğelerden gelir (sr-only metinler, görsel aracının `empty:sr-only` durum
+// satırı, grafik ipucu): gövde konumlandırılmamış olduğundan içerdiren blokları KUTUDUR, gövdeyle kaymaz, kutunun
+// kaydırılabilir alanını binlerce piksel uzatır (ölçüm: 3570 / 702 px). `overflow: clip` bilmeyen eski tarayıcı (Safari < 16)
+// eskisi gibi `hidden` kullanır.
+const SCROLL_BOX = 'flex max-h-[min(88vh,calc(100dvh-2rem))] flex-col overflow-hidden supports-[overflow:clip]:overflow-clip'
 const SCROLL_BODY = '-mr-1 min-h-0 flex-1 overflow-y-auto pr-1'
 const PLAIN_BOX = 'max-h-[calc(100dvh-2rem)] overflow-y-auto'
 
