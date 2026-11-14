@@ -67,7 +67,8 @@ export default function PageMonitorCard({
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.url} /></span>
         </MonitorCardTop>
-        {/* URL: host vurgulu, yol + sorgu soluk; uzunsa kırpılır — tam adres başlığın title'ında ve detay penceresinde.
+        {/* URL: host vurgulu, yol + sorgu soluk; uzun adres SARAR (2026-11-14 — MonitorCardTitle varsayılanı), tam adres
+            ayrıca başlığın title'ında ve detay penceresinde.
             Kopyala düğmesi URL'in hemen yanında (köşedeki düğme izlemenin BAĞLANTISINI kopyalar). */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.url)} title={m.url}
@@ -77,7 +78,7 @@ export default function PageMonitorCard({
           <CopyButton value={m.url} label={t('a11y.rowAction', m.url, t('page.card.copyUrl'))} copiedLabel={t('page.card.urlCopied')}
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
-        {name && name !== m.url && <p data-slot="page-name" className="mt-0.5 truncate text-xs text-muted-foreground">{name}</p>}
+        {name && name !== m.url && <p data-slot="page-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{name}</p>}
         <MonitorCardRich>
           <PageScopeChips monitor={m} className="mt-2 mb-2.5" />
         </MonitorCardRich>

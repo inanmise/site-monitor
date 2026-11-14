@@ -82,12 +82,12 @@ export default function HttpMonitorCard({
           )}
           <span className={CARD_LAYER}><MaintenanceBadge target={m.url} /></span>
         </MonitorCardTop>
-        {/* URL: host vurgulu, yol soluk. Uzun adres SARAR (2026-11-14, kullanıcı kararı — adlar ve uzun metin kesilmez):
-            MonitorCardTitle'ın tek satır kırpması burada kapatılır; tam adres ayrıca `title`'da ve detay penceresinde.
+        {/* URL: host vurgulu, yol soluk. Uzun adres SARAR (2026-11-14, kullanıcı kararı — adlar ve uzun metin kesilmez;
+            paylaşılan MonitorCardTitle'ın varsayılanı); tam adres ayrıca `title`'da ve detay penceresinde.
             Kopyala düğmesi URL'in hemen yanında (köşedeki düğme izlemenin BAĞLANTISINI kopyalar). */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.url)} title={m.url}
-            className="mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[13.5px] font-medium tracking-normal whitespace-normal [&>span]:whitespace-normal [&>span]:[overflow-wrap:anywhere]">
+            className="mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[13.5px] font-medium tracking-normal">
             <HttpUrlText url={m.url} />
           </MonitorCardTitle>
           <CopyButton value={m.url} label={t('a11y.rowAction', m.url, t('keyword.card.copyUrl'))} copiedLabel={t('keyword.card.urlCopied')}

@@ -17,20 +17,18 @@ import {
 import { alarmMatchesStatus, expiryTone, lifeOf, planChipOf } from './domainCardModel.js'
 
 /**
- * Uzun alan adı (IDN punycode / uzun etiket) en fazla İKİ satıra kırılır, taşmaz: başlık düğmesinin iç metni `truncate`
- * taşır (paylaşılan MonitorCardTitle) — burada iki satırlık kırpmaya çevrilir. Tam ad `title`'da ve detayın başlığında.
+ * Uzun alan adı (IDN punycode / uzun etiket) KESİLMEZ, kartın genişliğinde sarar (2026-11-14, kullanıcı kararı — adlar ve
+ * uzun metin kesilmez; eskiden iki satıra kırpılıyordu). Sarma paylaşılan MonitorCardTitle'ın varsayılanı; burada yalnız
+ * yazı tipi ve genişlik. Tam ad ayrıca `title`'da ve detayın başlığında.
  */
-const TITLE = cn(
-  'mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[14.5px] leading-snug font-semibold tracking-normal whitespace-normal',
-  '[&>span]:line-clamp-2 [&>span]:break-all [&>span]:whitespace-normal',
-)
+const TITLE = 'mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[14.5px] leading-snug font-semibold tracking-normal'
 
 /**
  * Alan Adı (Domain) Süre Bitişi izleme KARTI (2026-09-27 yeniden tasarım — shadcn, mobil duyarlı). Paylaşılan
  * MonitorCard ailesinden kurulur (stretched button, sol şerit YOK, duraklatılmış/alarm görünümü MonitorCard'da); içerik
  * dili panodaki sertifika kartıyla aynı (tonlu kahraman panel, kalan süre çubuğu, plan çipi). Okuma sırası:
- *   durum satırı (seçim · durum · alarm · bakım · Değişti — kaynak etiketi · bağlantı) → alan adı (eş aralıklı, en fazla
- *   iki satır, kopyala) + isteğe bağlı ad → registrar → KAHRAMAN PANEL (kalan gün · bitiş tarihi · kalan kayıt süresi
+ *   durum satırı (seçim · durum · alarm · bakım · Değişti — kaynak etiketi · bağlantı) → alan adı (eş aralıklı, sarar,
+ *   kopyala) + isteğe bağlı ad → registrar → KAHRAMAN PANEL (kalan gün · bitiş tarihi · kalan kayıt süresi
  *   çubuğu · yenileme planı çipi / kısayolu; bitiş bilinmiyorsa neden) → koruma çipleri (transfer kilidi · DNSSEC ·
  *   kara liste · NS) → EPP durum kodları (önem sırasıyla dört + "+N") → takım/grup · etiketler → son kontrol (göreli,
  *   tam zaman ipucunda) + eylemler (telefonda Şimdi kontrol et + "Diğer işlemler").
@@ -82,7 +80,7 @@ export default function DomainMonitorCard({
           <span className={CARD_LAYER}><MaintenanceBadge target={m.domain} /></span>
           <DomainChangedChip monitor={m} />
         </MonitorCardTop>
-        {/* Alan adı: eş aralıklı, en fazla iki satır. Kopyala düğmesi ADI kopyalar (köşedeki düğme izlemenin BAĞLANTISINI). */}
+        {/* Alan adı: eş aralıklı, uzunsa sarar. Kopyala düğmesi ADI kopyalar (köşedeki düğme izlemenin BAĞLANTISINI). */}
         <div className="flex min-w-0 items-start gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.domain)} title={m.domain} className={TITLE}>
             {m.domain}
@@ -92,7 +90,7 @@ export default function DomainMonitorCard({
             variant="ghost" buttonSize="icon-xs" size={12} className={cn(CARD_COPY, 'shrink-0 pointer-coarse:-my-2')} />
         </div>
         <MonitorCardRich>
-          {name && name !== m.domain && <p data-slot="domain-name" className="mt-0.5 truncate text-xs text-muted-foreground" title={name}>{name}</p>}
+          {name && name !== m.domain && <p data-slot="domain-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{name}</p>}
           <DomainRegistrarLine monitor={m} />
         </MonitorCardRich>
       </MonitorCardHeader>

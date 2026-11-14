@@ -71,7 +71,7 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.host} /></span>
         </MonitorCardTop>
-        {/* Host: eş aralıklı (IP / IPv6 okunur), uzunsa kırpılır — tam metin başlığın title'ında ve detay penceresinde.
+        {/* Host: eş aralıklı (IP / IPv6 okunur); uzun host SARAR (2026-11-14 — MonitorCardTitle varsayılanı).
             Kopyala düğmesi host'un hemen yanında (terminale yapıştırmak için; köşedeki düğme BAĞLANTI kopyalar). */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.host)} title={m.host}
@@ -80,7 +80,7 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
         {compact ? <CardCompactSub name={subName} nameSlot="ping-name" monitor={m} />
-          : subName && <p data-slot="ping-name" className="mt-0.5 truncate text-xs text-muted-foreground">{subName}</p>}
+          : subName && <p data-slot="ping-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{subName}</p>}
         <MonitorCardRich><PingProtocolChips monitor={m} className="mt-1.5 mb-2.5" /></MonitorCardRich>
       </MonitorCardHeader>
       <MonitorCardContent className={cn((compact || !hasMeta) && 'pb-2')}>

@@ -104,7 +104,7 @@ export default function DnsMonitorCard({
           <CopyButton value={m.domain} label={t('dns.cardCopy', m.domain)} copiedLabel={t('dns.cardCopied')}
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
-        {name && <p data-slot="dns-name" className={cn('truncate text-xs text-muted-foreground', compact ? 'mb-2' : 'mb-2.5')} title={name}>{name}</p>}
+        {name && <p data-slot="dns-name" className={cn('text-xs text-muted-foreground [overflow-wrap:anywhere]', compact ? 'mb-2' : 'mb-2.5')}>{name}</p>}
       </MonitorCardHeader>
 
       <MonitorCardContent>

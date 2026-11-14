@@ -45,7 +45,7 @@ export function ScenarioTarget({ target, rowLabel }) {
     <div data-slot="scripted-target" className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
       <Globe aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="sr-only">{t('scripted.card.target')} </span>
-      <span className="min-w-0 truncate font-mono" title={target.url}>{target.host}</span>
+      <span className="min-w-0 font-mono [overflow-wrap:anywhere]" title={target.url}>{target.host}</span>
       {more > 0 && (
         <span data-slot="scripted-more-hosts" className="shrink-0 font-medium">
           <span aria-hidden="true">+{more}</span><span className="sr-only">{more === 1 ? t('scripted.card.moreHost1') : t('scripted.card.moreHosts', more)}</span>

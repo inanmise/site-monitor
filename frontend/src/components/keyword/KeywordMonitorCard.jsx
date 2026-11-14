@@ -69,7 +69,7 @@ export default function KeywordMonitorCard({
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.url} /></span>
         </MonitorCardTop>
-        {/* URL: host vurgulu, yol soluk, uzunsa kırpılır — tam metin başlığın title'ında ve detay penceresinde.
+        {/* URL: host vurgulu, yol soluk; uzun adres SARAR (2026-11-14, adlar ve uzun metin kesilmez — MonitorCardTitle varsayılanı).
             Kopyala düğmesi URL'in hemen yanında (köşedeki düğme izlemenin BAĞLANTISINI kopyalar). */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', m.url)} title={m.url}
@@ -80,7 +80,7 @@ export default function KeywordMonitorCard({
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
         {compact ? <CardCompactSub name={subName} nameSlot="keyword-name" monitor={m} />
-          : subName && <p data-slot="keyword-name" className="mt-0.5 truncate text-xs text-muted-foreground" title={subName}>{subName}</p>}
+          : subName && <p data-slot="keyword-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{subName}</p>}
       </MonitorCardHeader>
       <MonitorCardContent className={cn(!compact && 'mt-2.5', (compact || !hasMeta) && 'pb-2')}>
         {compact && (
