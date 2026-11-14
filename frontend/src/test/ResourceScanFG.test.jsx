@@ -292,10 +292,10 @@ describe('sayfalar görünümü (G)', () => {
   it('site analizinde "Sayfalar" sekmesi: toplamlar, en kötü sayfalar, tablo, açılamayan / taranmayan sayfa, ortak kaynaklar', async () => {
     await mount()
     expect(slot('prs-sec-pages')).not.toBeNull()
-    // 6 bölüm (Denetim + Eğilim + Sayfalar dahil) → telefonda 3 + 3 (iki satır; eşit sütunda adlar 360 px'te sığmıyordu)
+    // 7 bölüm (Denetim + Eğilim + Sayfalar + Görsel aracı dahil) → telefonda 4 + 3 (iki satır; eşit sütunda adlar 360 px'te sığmıyordu)
     const list = document.querySelector('[data-slot="prs-sections"] [role="tablist"]')
-    expect(list.getAttribute('data-count')).toBe('6')
-    expect(list.getAttribute('data-cols')).toBe('3')
+    expect(list.getAttribute('data-count')).toBe('7')
+    expect(list.getAttribute('data-cols')).toBe('4')
     openTab(/^Sayfalar/)
     await waitFor(() => expect(slot('prs-site')).not.toBeNull())
     expect(slot('prs-site').getAttribute('data-state')).toBe('ok')
@@ -329,7 +329,7 @@ describe('sayfalar görünümü (G)', () => {
     fireEvent.click(document.querySelector('[data-slot="prs-history-row"][data-id="12"]'))
     await waitFor(() => expect(slot('prs-hero')).not.toBeNull())
     expect(slot('prs-sec-pages')).toBeNull()
-    expect(document.querySelector('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-count')).toBe('5')
+    expect(document.querySelector('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-count')).toBe('6')
     expect(document.querySelector('[data-slot="prs-sections"] [role="tablist"]').getAttribute('data-cols')).toBe('3')
   })
 

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ChartSpline, CircleAlert, FileSpreadsheet, FileText, Globe, History, Hourglass, Info, Layers, LayoutDashboard, Link2, List,
+  ChartSpline, CircleAlert, FileSpreadsheet, FileText, Globe, History, Hourglass, Images, Info, Layers, LayoutDashboard, Link2, List,
   ListChecks, RefreshCw, RotateCw, ScanSearch, Square, TriangleAlert,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
@@ -34,6 +34,10 @@ import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudge
 import ResourceScanStart from './ResourceScanStart.jsx'
 import ResourceScanSite from './ResourceScanSite.jsx'
 import { isEndpointUnsupported, isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
+// Görsel aracı (2026-11-14): depo + bağlam sekmede; araç görünümü, karşılaştırma ve duyarlı set pencereleri tembel
+import { ImageToolProvider, useImageToolStore } from './imagetool/ImageToolContext.jsx'
+import { ImageBulkStatus } from './imagetool/ImageBulk.jsx'
+import { processedCells } from './imagetool/imageToolModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
@@ -43,6 +47,8 @@ import { cn } from '@/lib/utils'
 const ResourceScanAudit = lazy(() => import('./ResourceScanAudit.jsx'))
 // Eğilim görünümü grafik (recharts) taşır — yalnız sekme açılınca iner (prs3 F2)
 const ResourceScanTrendView = lazy(() => import('./ResourceScanTrendView.jsx'))
+// Görsel aracı görünümü yalnız açılınca iner (motor ayrıca, ilk işlemde)
+const ImageToolView = lazy(() => import('./imagetool/ImageToolView.jsx'))
 
 /**
  * Sayfa bütünlüğü detayı → "Kaynak analizi" sekmesi (2026-10-31, kullanıcı isteği; r177 yeniden düzen). YALNIZ kullanıcı
@@ -110,6 +116,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const [budgetOpen, setBudgetOpen] = useState(false)
   const [siteIgnoredId, setSiteIgnoredId] = useState(null)
   const budget = useResourceBudget(monitorId, monitor?.can_edit === true)
+  // Görsel aracı deposu: bu sekmede işlenen görseller (bellekte), araç kuyruğu ve toplu indirme — sekme sökülünce bırakılır
+  const imageStore = useImageToolStore(monitorId)
+  const goToolRef = useRef(() => {})
+  const goTool = useCallback(() => goToolRef.current(), [])
 
   const alive = useRef(true)
   const histSeq = useRef(0)
@@ -120,6 +130,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   runningRef.current = running
   const activeRef = useRef(active)
   activeRef.current = active
+  const sectionRef = useRef(section)
+  sectionRef.current = section
   const ctxRef = useRef({})
   ctxRef.current = { toast, t, monitor, onShow }
   const cacheRef = useRef(new Map())                    // analiz kimliği → ayrıntı (tamamlanmış / bitmiş analizler)
@@ -246,7 +258,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       detailSeq.current += 1
       changeSelection(scan.id)
       setDetail({ state: 'ok', id: scan.id, data: data?.scan ? data : { scan, analysis: null, items: null, items_kept: false }, error: null })
-      setSection('overview')
+      // Görsel aracında çalışan kullanıcı araçtan çıkarılmaz (kuyruğu ekranda kalsın) — bitiş tostu yine çıkar
+      if (sectionRef.current !== 'tool') setSection('overview')
     }
     const wasHere = startedHere(monitorId, scan.id)
     forgetStarted(monitorId, scan.id)
@@ -456,7 +469,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       const args = { monitor, scan: d.scan, analysis: d.analysis, items: d.items_kept === false ? null : (enriched ?? d.items), t, locale,
         detailRuns: hist.data?.limits?.detail_runs ?? 20,
         // prs3 F3: yönetici özeti — bütçe değerlendirmesi ve önceki tamamlanmış analizle karşılaştırma
-        budget: d.budget ?? null, prev: previousDone(items, d.scan.id) }
+        budget: d.budget ?? null, prev: previousDone(items, d.scan.id),
+        // Görsel aracı (kullanıcı kararı 12): bu sekmede işlenen görsellerin ölçülmüş yeni boyut / kazanç / ölçü / biçimi
+        processed: imageStore.processedFor(d.scan.id).map((p) => ({ url: p.url, cells: processedCells(p.summary, locale) })) }
       if (kind === 'xlsx') mod.exportResourceScanXlsx(args)
       else await mod.exportResourceScanPdf(args)
       if (alive.current) toast.success(t(kind === 'xlsx' ? 'prs.export.xlsxDone' : 'prs.export.pdfDone'))
@@ -485,9 +500,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   // prs3 G: "Sayfalar" yalnız çok sayfalı analizde; seçili analiz yüklenmiş ve site değilse görünüm panoya düşer
   const siteAvailable = done && isSiteScan(selScan, sel?.analysis)
   const shownSection = section === 'pages' && sel && !siteAvailable ? 'overview' : section
-  // Görünen bölüm sekmesi sayısı (pano, nesneler, eğilim, geçmiş + site analizinde Sayfalar). Yeni bir bölüm sekmesi
-  // eklenirse BURAYA da eklenir — telefon ızgarası (sectionTabCols) bu sayıya göre satıra böler.
-  const sectionCount = 5 + (siteAvailable ? 1 : 0)
+  // Görünen bölüm sekmesi sayısı (pano, nesneler, denetim, eğilim, geçmiş, görsel aracı + site analizinde Sayfalar). Yeni
+  // bir bölüm sekmesi eklenirse BURAYA da eklenir — telefon ızgarası (sectionTabCols) bu sayıya göre satıra böler.
+  const sectionCount = 6 + (siteAvailable ? 1 : 0)
   const sectionCols = sectionTabCols(sectionCount)
   // Sekme rozeti: "analiz edilen / toplam" (geçmiş ve Sayfalar başlığıyla AYNI anlam; hepsi analiz edildiyse tek sayı)
   const siteTotals = siteAvailable ? siteModel(sel?.analysis?.site)?.totals ?? null : null
@@ -527,6 +542,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       if (tg === 'running') return root.querySelector('[data-slot="prs-running"]')
       if (tg === 'objects') return root.querySelector('[data-focus-target="prs-objects"]')
       if (tg === 'audit') return root.querySelector('[data-focus-target="prs-audit"]')
+      if (tg === 'tool') return root.querySelector('[data-focus-target="prs-it-tool"]')
       // Öneri kodları yalnız [A-Z_] — seçicide kaçış gerekmez (jsdom'da CSS.escape yok)
       if (typeof tg === 'string' && tg.startsWith('rec:') && /^[A-Z_]+$/.test(tg.slice(4))) return root.querySelector(`[data-slot="prs-rec"][data-code="${tg.slice(4)}"]`)
       return null
@@ -544,7 +560,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       if (!el) {
         frames += 1
         // Ayrıntılı denetim tembel parçada (ilk açılışta indirilir) — hedef ~3 sn beklenir; diğerleri ~20 kare (sınırlı)
-        if (frames < (focusReq.target === 'audit' ? 180 : 20)) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
+        if (frames < (focusReq.target === 'audit' || focusReq.target === 'tool' ? 180 : 20)) raf = (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : setTimeout(run, 16))
         else finish()
         return
       }
@@ -585,6 +601,14 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (AUDIT_AREAS.includes(next)) setArea(next)
     setSection('audit')
     requestFocus('audit')
+  }
+
+  /** Görsel aracına geçiş (tarama görselinin "Görsel aracında aç"ı, boş durumdaki düğme): açık nesne penceresi kapanır. */
+  goToolRef.current = () => {
+    rememberDash()
+    setOpenItem(null)
+    setSection('tool')
+    requestFocus('tool')
   }
 
   /** Denetimdeki "Nesneleri göster" — bulgu süzgeciyle TAM nesne listesi (kapsam: tümü). */
@@ -662,8 +686,17 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   )
   const finished = selScan && !isRunning(selScan)
   const showOld = done && latestDone != null && selectedId !== latestDone
+  // Henüz tamamlanmış analiz yokken de araç açılabilir (yükleme için analiz gerekmez): boş durumun yerinde çizilir
+  const toolOnly = !hasFinished && section === 'tool'
+  const toolView = (onBack) => (
+    <Suspense fallback={<LoadingBlock label={t('prs.it.tool.loading')} className="py-6" />}>
+      <ImageToolView onBack={onBack} />
+    </Suspense>
+  )
 
   return (
+    <ImageToolProvider store={imageStore} monitorId={monitorId} scanId={selectedId} canRun={canRun} itemsKept={objectsAvailable}
+      monitorName={monitor?.name || monitor?.url || ''} onOpenTool={goTool}>
     <div ref={rootRef} data-slot="prs-root" data-state="ok" data-view={view} className="flex min-w-0 flex-col gap-3">
       {/* Başlık: ad + seçili analizin künyesi, eylemler. sm+ genişlikte eylemler TEK satır (shrink-0, sarmaz); kalan genişliği
           ad + künye sütunu alır ve metnini sarar — uzun künye düğmeleri alt satıra itmez. Telefonda düğmeler sarabilir. */}
@@ -719,9 +752,12 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
         onResume={() => { setPollState('ok'); setPollNonce((n) => n + 1) }} siteIgnored={siteIgnoredId === running.id}
         onCancel={canRun && cancelSupported ? cancel : null} cancelling={cancelling} cancelRequested={cancelRequested === running.id} />}
 
-      {!hasFinished && !running && (
-        <EmptyState canRun={canRun} startBtn={startBtn} t={t} />
+      <ImageBulkStatus />
+
+      {!hasFinished && !running && !toolOnly && (
+        <EmptyState canRun={canRun} startBtn={startBtn} t={t} onTool={goTool} />
       )}
+      {toolOnly && toolView(() => setSection('overview'))}
 
       {hasFinished && (
         <Tabs value={shownSection} onValueChange={onSectionChange} data-slot="prs-sections" className="min-w-0 gap-3">
@@ -750,9 +786,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
               <History aria-hidden="true" />{t('prs.sec.history')}
               <Badge variant="secondary" className="h-4 min-w-4 rounded-full px-1.5 py-0 text-[10.5px] leading-4 font-bold tabular-nums max-sm:hidden">{formatNumber(items.length, locale)}</Badge>
             </TabsTrigger>
+            <TabsTrigger value="tool" data-slot="prs-sec-tool" className={cn(TAB, TOUCH)}><Images aria-hidden="true" />{t('prs.it.tab')}</TabsTrigger>
           </TabsList>
 
-          {showOld && (
+          {showOld && shownSection !== 'tool' && (
             <div data-slot="prs-old-run">
               <AlertBanner tone="info" className="mb-0" icon={History}
                 actions={<Button type="button" variant="outline" size="sm" className={TOUCH} data-slot="prs-latest"
@@ -838,6 +875,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
                 requestFocus('hero')
               }} />
           </TabsContent>
+
+          <TabsContent value="tool" className="min-w-0">
+            {shownSection === 'tool' && toolView(null)}
+          </TabsContent>
         </Tabs>
       )}
 
@@ -848,6 +889,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
       <BudgetDialog open={budgetOpen} onClose={() => setBudgetOpen(false)} monitorId={monitorId} budget={budget} onSaved={onBudgetSaved} />
     </div>
+    </ImageToolProvider>
   )
 }
 
@@ -892,7 +934,7 @@ function MethodText({ t }) {
   )
 }
 
-function EmptyState({ canRun, startBtn, t }) {
+function EmptyState({ canRun, startBtn, t, onTool }) {
   // Ana düğme açıklamanın HEMEN altında (r177 — eskiden olgu listesinin altında, ekranın dışında kalıyordu); yetkisiz
   // kullanıcıya davet başlığı yerine "Henüz analiz yok" ve not en üstte
   return (
@@ -904,6 +946,12 @@ function EmptyState({ canRun, startBtn, t }) {
           : <p data-slot="prs-cannot-run" className="m-0 text-sm text-muted-foreground">{t('prs.cannotRun')}</p>}
       </div>
       {canRun && startBtn}
+      {/* Görsel aracı analiz gerektirmez: sekmeyi gören herkes kendi görsellerini burada optimize edebilir */}
+      {onTool && (
+        <Button type="button" variant="outline" data-slot="prs-empty-tool" className={TOUCH} onClick={onTool}>
+          <Images aria-hidden="true" />{t('prs.it.tool.openFromEmpty')}
+        </Button>
+      )}
       <ul data-slot="prs-empty-facts" className="m-0 grid w-full max-w-2xl list-none grid-cols-1 gap-2 p-0 text-left sm:grid-cols-2">
         {['server', 'js', 'estimate', 'docs'].map((k) => (
           <li key={k} className="flex min-w-0 gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

@@ -41,8 +41,10 @@ const noteSheetRows = (analysis, t, locale) => [[t('prs.note.title')], ...noteRo
  * Excel (.xlsx): Özet, Yönetici özeti (prs3), Puan, Türler, Nesneler, Öneriler, Görseller, Üçüncü taraflar, A–E ayrıntılı
  * denetim sayfaları (yalnız analizde olanlar), Sayfalar + Ortak kaynaklar (site analizi), Notlar.
  */
-export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, locale, detailRuns = 20, budget = null, prev = null }) {
+export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, locale, detailRuns = 20, budget = null, prev = null, processed = null }) {
   const tp = thirdPartyRows(analysis, items)
+  // Görsel aracı: bu sekmede işlenen görsellerin ölçülmüş sonuçları (varsa dört sütun eklenir; yoksa sayfa eskisiyle aynı)
+  const imageRows = imageSheetRows(analysis?.images, scan?.page_bytes, t, locale, processed, items)
   const sheets = [
     { name: t('prs.export.sheet.summary'), rows: summarySheetRows(monitor, scan, analysis, t, locale, fmtDate), freezeHeader: true, widths: [34, 70] },
     { name: t('prs.pdf.sheet.exec'), rows: executiveSheetRows({ scan, analysis, budget, prev, t, locale }), headerRows: 1, widths: [40, 70, 24, 24] },
@@ -54,8 +56,8 @@ export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, loca
       : { name: t('prs.export.sheet.objects'), rows: [[notKeptText(t, detailRuns, locale)]], headerRows: 0, widths: [90] },
     { name: t('prs.export.sheet.recommendations'), rows: recommendationSheetRows(analysis?.recommendations, t, locale, items), freezeHeader: true,
       widths: [12, 44, 90, 24, 80, 10] },
-    { name: t('prs.export.sheet.images'), rows: imageSheetRows(analysis?.images, scan?.page_bytes, t, locale), freezeHeader: true,
-      autoFilter: true, widths: [80, 14, 14, 14, 14, 12, 14] },
+    { name: t('prs.export.sheet.images'), rows: imageRows, freezeHeader: true,
+      autoFilter: true, widths: [80, 14, 14, 14, 14, 12, 14, ...(imageRows[0].length > 7 ? [16, 12, 14, 10] : [])] },
   ]
   if (tp && tp.rows.length) {
     sheets.push({ name: t('prs.export.sheet.thirdParties'), rows: thirdPartySheetRows(tp, t, locale), freezeHeader: true, widths: [44, 10, 14, 14, 12, 40] })
@@ -78,7 +80,7 @@ export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, loca
  * bayt grafiği, önceki analizle karşılaştırma, A–E özetleri, site analizi), ardından ayrıntı: özet, puan bileşenleri,
  * öneriler, türler, en büyük görseller, üçüncü taraflar, notlar, nesneler.
  */
-export async function exportResourceScanPdf({ monitor, scan, analysis, items, t, locale, detailRuns = 20, budget = null, prev = null }) {
+export async function exportResourceScanPdf({ monitor, scan, analysis, items, t, locale, detailRuns = 20, budget = null, prev = null, processed = null }) {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
@@ -133,10 +135,14 @@ export async function exportResourceScanPdf({ monitor, scan, analysis, items, t,
   section(t('prs.cat.title'))
   table(categorySheetRows(analysis?.categories, scan?.page_bytes, t, locale).map((r) => [r[0], r[1], r[2], r[4], r[5]]))
 
-  const imgs = imageSheetRows(analysis?.images, scan?.page_bytes, t, locale)
+  const imgs = imageSheetRows(analysis?.images, scan?.page_bytes, t, locale, processed, items)
   if (imgs.length > 1) {
     section(t('prs.img.topTitle'))
-    table(imgs.map((r) => [r[0], r[2], r[6], r[3], r[4], r[5]]), { columnStyles: { 0: { cellWidth: 340 } } })
+    // Bu sekmede işlenen görsel varsa: ölçülen optimize boyut (insan okunur), kazanç, yeni ölçü, biçim sütunları da
+    const measured = imgs[0].length > 7
+    const size = (v) => (typeof v === 'number' ? formatSize(v, { locale }) : v)
+    table(imgs.map((r, i) => [r[0], r[2], r[6], r[3], r[4], r[5], ...(measured ? [i === 0 ? r[7] : size(r[7]), r[8], r[9], r[10]] : [])]),
+      { columnStyles: { 0: { cellWidth: measured ? 240 : 340 } } })
   }
 
   const tp = thirdPartyRows(analysis, items)

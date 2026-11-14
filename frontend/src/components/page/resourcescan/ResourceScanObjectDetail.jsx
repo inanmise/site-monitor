@@ -9,6 +9,9 @@ import {
   thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, cacheText,
 } from './resourceScanModel.js'
 import { CHIP, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
+import ImageActions from './imagetool/ImageActions.jsx'
+import { useImageTool } from './imagetool/ImageToolContext.jsx'
+import { isImageItem } from './imagetool/imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
@@ -42,6 +45,7 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
   const locale = useDateLocale()
   // "Öneriyi göster" pencereyi kapatıp öneriye gider: odak öneriye taşınır, açan öğeye dönmez.
   const leaving = useRef(false)
+  const imageTool = useImageTool()
   if (!item) return null
   const parts = urlParts(item.url)
   const nr = t('prs.od.notRecorded')
@@ -102,6 +106,13 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
           {isPageLoad(item) && <Row label={t('prs.export.col.cache')} value={cacheText(item, t, locale)} />}
           {item.error && <Row label={t('prs.export.col.problem')} slot="prs-od-problem" value={problemText(item.error, t)} />}
         </Group>
+
+        {imageTool && isImageItem(item) && (
+          // Görsel aracı (2026-11-14): özgün / optimize / küçültülmüş indirme, önerilen genişlik ve gerekçesi
+          <Group title={t('prs.it.od.title')} slot="prs-od-image">
+            <ImageActions item={item} />
+          </Group>
+        )}
 
         <DeepGroup item={item} t={t} />
 

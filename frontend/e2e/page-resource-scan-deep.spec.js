@@ -134,10 +134,10 @@ for (const vp of VIEWPORTS) {
       await expect(tiles).toHaveCount(4)
       await expect(tiles.nth(3)).toHaveAttribute('data-tone', 'muted')
       await expect(tiles.nth(3)).toContainText('—')
-      // Bölüm sekmeleri (5: Denetim + Eğilim dahil) hiçbiri kırpılmıyor; lg+ tek satır, telefon ve tablette 3 + 2
-      // (sectionTabCols — tablet ızgarası: satır içi düzen Linux yazı tipiyle sığmayıp tek sekmeyi alta düşürüyordu)
+      // Bölüm sekmeleri (6: Denetim + Eğilim + Görsel aracı dahil) hiçbiri kırpılmıyor; lg+ tek satır, telefon ve tablette
+      // 3 + 3 (sectionTabCols — tablet ızgarası: satır içi düzen Linux yazı tipiyle sığmayıp tek sekmeyi alta düşürüyordu)
       const secTabs = root.locator('[data-slot="prs-sections"] > [role="tablist"] [role="tab"]')
-      await expect(secTabs).toHaveCount(5)
+      await expect(secTabs).toHaveCount(6)
       const tops = await secTabs.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)))
       if (vp.width >= 1024) {
         expect(Math.max(...tops) - Math.min(...tops), `@${vp.name}: bölüm sekmeleri tek satır değil`).toBeLessThanOrEqual(1)
