@@ -82,9 +82,12 @@ export function AlertTrendWidget({ frame, refreshKey }) {
   const since = s.from ? { from: s.from } : {}
   const openedParams = { view: 'all', ...since }
   const closedParams = { view: 'closed', ...since }
+  // Başlıktaki "sayfayı aç" da sayılar gibi davranır (inceleme 2026-11-14): dönem değişirken yeni dönemin başlangıcı henüz
+  // bilinmez — eski dönemin `from`u TAŞINMAZ, Alarm Geçmişi dönem süzgeçsiz açılır
+  const headerParams = !s.valid ? undefined : pending ? { view: 'all' } : openedParams
   return (
     <WidgetCard frame={frame} Icon={ChartColumn} title={t('mydash.w.alert_trend')} tab="alerthistory"
-      tabParams={s.valid ? openedParams : undefined} loading={loading} error={error} at={at} tone={s.tone} toneLabel={toneLabel}>
+      tabParams={headerParams} loading={loading} error={error} at={at} tone={s.tone} toneLabel={toneLabel}>
       {s.hidden ? <Empty tone="muted" text={t('mydash.noAccessBody')} tv={frame.tv} />
         : s.unsupported ? <Unsupported t={t} tv={frame.tv} />
         : !s.valid ? <Empty tone="muted" icon={CircleHelp} text={t('mydash.noData')} tv={frame.tv} />
@@ -416,7 +419,7 @@ export function AvailabilityWeekWidget({ frame, refreshKey }) {
                   meta={t('mydash.avail.rowMeta', typeLabel(w.type, t), w.checks.toLocaleString(numLocale(lang)), w.failed.toLocaleString(numLocale(lang)))}
                   onClick={linkTo(frame, typeTab(w.type), { monitor: w.id })} hint={t('mydash.linkDetail')}
                   trail={(
-                    <ToneBadge tone={w.upPct != null && s.target != null && w.upPct < s.target - AVAIL_DANGER_GAP ? 'danger' : 'warning'}
+                    <ToneBadge tone={w.exact != null && s.target != null && w.exact < s.target - AVAIL_DANGER_GAP ? 'danger' : 'warning'}
                       className="h-auto rounded-md whitespace-normal tabular-nums">{formatPct(w.upPct, lang, 2)}</ToneBadge>
                   )} />
               ))}

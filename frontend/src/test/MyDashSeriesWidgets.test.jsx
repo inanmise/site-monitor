@@ -151,12 +151,17 @@ describe('Panom — Alarm eğilimi', () => {
     api.me.alertTrend.mockImplementation((range) => (range === '7d' ? week.promise : Promise.resolve({ success: true, data: trendDay() })))
     render(<Shell initial={layout('alert_trend')}><MyDashPage /></Shell>)
     await waitFor(() => expect(q('alert_trend', 'mydash-trend-chart')).not.toBeNull())
+    fireEvent.click(q('alert_trend', 'mydash-open'))   // başlık bağlantısı gösterilen dönemi taşır
+    expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { view: 'all', from: FROM_DAY } })
     const group = q('alert_trend', 'mydash-trend-range')
     fireEvent.click(within(group).getByRole('radio', { name: EN['mydash.trend.range.7d'] }))
     await waitFor(() => expect(api.me.alertTrend).toHaveBeenCalledWith('7d'))
     expect(localStorage.getItem('sm.mydash.trend')).toBe('7d')
     expect(q('alert_trend', 'mydash-trend-body')).toHaveAttribute('aria-busy', 'true')
     expect(q('alert_trend', 'mydash-trend-opened').tagName).not.toBe('BUTTON')
+    // İnceleme 2026-11-14: yeni dönem yüklenirken başlık bağlantısı ESKİ dönemin `from`unu taşımaz — süzgeçsiz açar
+    fireEvent.click(q('alert_trend', 'mydash-open'))
+    expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { view: 'all' } })
     // başlık hâlâ GÖSTERİLEN verinin dönemini söyler
     expect(q('alert_trend', 'mydash-trend-period')).toHaveTextContent(EN['mydash.trend.period.24h'])
     await act(async () => { week.resolve({ success: true, data: trendWeek() }) })
@@ -170,6 +175,8 @@ describe('Panom — Alarm eğilimi', () => {
     expect(widget('alert_trend').querySelector('[data-slot="mydash-widget-tone"]')).toHaveTextContent('7 more closed')
     fireEvent.click(q('alert_trend', 'mydash-trend-closed'))
     expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { view: 'closed', from: FROM_WEEK } })
+    fireEvent.click(q('alert_trend', 'mydash-open'))   // yüklenen dönem geldi: başlık bağlantısı onun başlangıcıyla
+    expect(navs.at(-1)).toEqual({ tab: 'alerthistory', params: { view: 'all', from: FROM_WEEK } })
   })
 
   it('saklı dönemle açılır; dönemde alarm yok → yeşil "yeni alarm yok", grafik yerine açıklama', async () => {
@@ -421,8 +428,13 @@ function FavOnly() {
 
 // ── 7 günlük erişilebilirlik ─────────────────────────────────────────────────────────────────────────────────────
 
-const week = (over = {}) => ({ days: 7, target_pct: 99.9, monitors: 12, unmeasured: 1, checks: 40000, failed: 12, availability_pct: 99.97,
-  meets_target: true, below_target: 0, by_type: [], worst: [], generated_at: '2026-11-14T08:30:00', ...over })
+// Gerçekçi yanıt: oran değiştirilirse hata sayısı ona göre (istemci hükmü ve aşağı kesme kesin orandan — kontrol / hata — okur)
+const week = (over = {}) => {
+  const base = { days: 7, target_pct: 99.9, monitors: 12, unmeasured: 1, checks: 40000, failed: 12, availability_pct: 99.97,
+    meets_target: true, below_target: 0, by_type: [], worst: [], generated_at: '2026-11-14T08:30:00' }
+  if (over.availability_pct != null && !('failed' in over)) base.failed = Math.round(base.checks * (100 - over.availability_pct) / 100)
+  return { ...base, ...over }
+}
 const WORST = [
   { type: 'http', id: 4, name: LONG_NAME, up_pct: 97.5, checks: 2000, failed: 50, bad_hours: 6 },
   { type: 'ping', id: 9, name: 'Şube yönlendiricisi', up_pct: 99.4, checks: 1000, failed: 6, bad_hours: 2 },
@@ -478,6 +490,26 @@ describe('Panom — 7 günlük erişilebilirlik', () => {
     expect(q('availability_week', 'mydash-avail-measured')).toHaveTextContent('Monitors below target: 2')
     expect(q('availability_week', 'mydash-gauge-value')).toBeNull()   // değer ölçeğin altında → yay boş, sayı ve renk söyler
     expect(q('availability_week', 'mydash-avail-value')).toHaveTextContent('97.2%')
+  })
+
+  it('inceleme 2026-11-14: 199.791 / 200.000 (%99,8955) hedef 99,9 — sunucu "99,90" yazsa da yeşil DEĞİL; değer ve satır 99,89 yazılır', async () => {
+    const near = week({ checks: 200000, failed: 209, availability_pct: 99.9, meets_target: false, below_target: 1,
+      worst: [{ type: 'http', id: 4, name: 'Sınırda izleme', up_pct: 99.9, checks: 200000, failed: 209, bad_hours: 3 }] })
+    api.monitoring.getAvailabilityWeek.mockResolvedValue({ success: true, data: near })
+    const r = render(<Shell initial={layout('availability_week', 'md')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(q('availability_week', 'mydash-avail-worst')).not.toBeNull())
+    expect(widget('availability_week')).toHaveAttribute('data-tone', 'warning')
+    expect(q('availability_week', 'mydash-avail-value')).toHaveTextContent('99.89%')
+    expect(q('availability_week', 'mydash-avail-value')).not.toHaveTextContent('99.9%Target')
+    expect(q('availability_week', 'mydash-avail-verdict')).toHaveTextContent('0.01 points below target.')
+    expect(widget('availability_week').querySelector('[data-slot="mydash-avail-worst"] li')).toHaveTextContent('99.89%')
+    r.unmount()
+    clearSharedFetches()
+    // Eski (yuvarlanmış değerden karar veren) sunucu "hedefte" dese de kesin oran altındaysa yeşil olmaz
+    api.monitoring.getAvailabilityWeek.mockResolvedValue({ success: true, data: { ...near, meets_target: true } })
+    render(<Shell initial={layout('availability_week', 'sm', 'stat')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(widget('availability_week')).toHaveAttribute('data-tone', 'warning'))
+    expect(widget('availability_week')).toHaveTextContent('99.89%')
   })
 
   it('ölçüm yok → gri "ölçüm yok" (yeşil değil), yay ve hedef çentiği çizilmez; izleme yoksa ayrı metin', async () => {

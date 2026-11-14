@@ -342,4 +342,65 @@ class MonitorSparklineServiceTest {
         assertThat(refs.get(3L)).isEqualTo(new MonitorSparklineService.MonitorRef(7L, null, true));   // sütun boş = etkin
         assertThat(svc.monitorRefs("domain")).isEmpty();
     }
+
+    @Test
+    @DisplayName("monitorRefs Port / DNS (inceleme 2026-11-14): bağımsızlık + envanter anahtarı (host / alan adı) okunur; türev satır takımını taşır, boş standalone = türev")
+    void monitorRefs_portAndDnsCarryStandaloneAndHost() {
+        jdbc.update("DROP TABLE IF EXISTS port_monitors");
+        jdbc.update("DROP TABLE IF EXISTS dns_monitors");
+        jdbc.update("CREATE TABLE port_monitors(id BIGINT PRIMARY KEY, team_id BIGINT, name VARCHAR(200), host VARCHAR(200), active BOOLEAN, standalone BOOLEAN)");
+        jdbc.update("CREATE TABLE dns_monitors(id BIGINT PRIMARY KEY, team_id BIGINT, name VARCHAR(200), domain VARCHAR(200), active BOOLEAN, standalone BOOLEAN)");
+        jdbc.update("INSERT INTO port_monitors VALUES (1, 5, 'odeme:443', 'odeme.example.com', TRUE, FALSE), (2, 5, 'eski', 'Eski.Example.com', TRUE, NULL), (3, 9, 'bagimsiz', 'x.example.com', TRUE, TRUE)");
+        jdbc.update("INSERT INTO dns_monitors VALUES (1, 5, 'odeme', 'odeme.example.com', FALSE, FALSE)");
+        Map<Long, MonitorSparklineService.MonitorRef> port = svc.monitorRefs("port");
+        assertThat(port.get(1L)).isEqualTo(new MonitorSparklineService.MonitorRef(5L, "odeme:443", true, false, "odeme.example.com"));
+        assertThat(port.get(2L)).isEqualTo(new MonitorSparklineService.MonitorRef(5L, "eski", true, false, "Eski.Example.com"));   // ham, harf korunur
+        assertThat(port.get(3L).standalone()).isTrue();
+        assertThat(svc.monitorRefs("dns").get(1L)).isEqualTo(new MonitorSparklineService.MonitorRef(5L, "odeme", false, false, "odeme.example.com"));
+    }
+
+    @Test
+    @DisplayName("sparklinesFor (inceleme 2026-11-14): küçük kümenin sonucu tüm filonun o kümeye düşen kısmıyla BİREBİR; sorgu monitor_id IN ile daraltılır; sonuç TTL boyunca paylaşılır; tavan 200")
+    void sparklinesFor_equalsSubsetOfFleet_restrictedAndMemoised() {
+        java.util.List<String> sqls = new java.util.ArrayList<>();
+        JdbcTemplate recording = new JdbcTemplate(jdbc.getDataSource()) {
+            @Override
+            public void query(String sql, org.springframework.jdbc.core.RowCallbackHandler rch, Object... args) {
+                sqls.add(sql);
+                super.query(sql, rch, args);
+            }
+        };
+        MonitorSparklineService rec = new MonitorSparklineService(recording);
+        long[] clock = {1_000_000L};
+        org.springframework.test.util.ReflectionTestUtils.setField(rec, "idsCacheMs", 60_000L);
+        org.springframework.test.util.ReflectionTestUtils.setField(rec, "idsMemo",
+                new com.sitemonitor.util.TtlMemo<Map<Long, Map<String, Object>>>(8, () -> clock[0]));
+        check(1, 5, 200L, null);
+        check(1, 65, 300L, "timeout");
+        check(2, 10, 150L, null);
+        check(3, 20, 180L, null);
+        check(3, 30, null, "refused");
+
+        Map<Long, Map<String, Object>> fleet = MonitorSparklineService.subset(rec.sparklinesAll("http", 24), Set.of(1L, 3L));
+        sqls.clear();
+        Map<Long, Map<String, Object>> small = rec.sparklinesFor("http", 24, Set.of(3L, 1L));
+        assertThat(small).isEqualTo(fleet).containsOnlyKeys(1L, 3L);
+        assertThat(sqls).isNotEmpty().allSatisfy(q -> assertThat(q).contains("monitor_id IN ("));
+
+        // TTL içinde aynı küme (sıra farkı da) yeniden sorgulanmaz; TTL sonrası taze sonuç
+        sqls.clear();
+        check(1, 1, 100L, null);
+        assertThat(rec.sparklinesFor("http", 24, new java.util.LinkedHashSet<>(List.of(1L, 3L)))).isEqualTo(small);
+        assertThat(sqls).isEmpty();
+        clock[0] += 60_001;
+        assertThat(rec.sparklinesFor("http", 24, Set.of(1L, 3L)).get(1L)).containsEntry("n", 3);
+        assertThat(sqls).isNotEmpty();
+
+        assertThat(rec.sparklinesFor("http", 24, Set.of())).isEmpty();
+        assertThat(rec.sparklinesFor("domain", 24, Set.of(1L))).isEmpty();
+        java.util.Set<Long> tooMany = new java.util.HashSet<>();
+        for (long i = 1; i <= MonitorSparklineService.FOR_IDS_MAX + 1; i++) tooMany.add(i);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> rec.sparklinesFor("http", 24, tooMany))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

@@ -245,9 +245,41 @@ export function gaugeFraction(pct, target) {
 }
 
 /**
- * `/api/monitoring/availability-week` yanıtı → ekran özeti. Hüküm sunucunun `meets_target` alanından (gösterilen iki
- * ondalıklı değerle aynı karşılaştırma); alan yoksa değer ve hedeften. Ton: ölçüm / hedef yok → gri; hedefte → yeşil;
- * hedefin en çok {@link AVAIL_DANGER_GAP} puan altı → turuncu; daha düşük → kırmızı.
+ * Ölçülen değeri iki ondalığa AŞAĞI keser — İstatistikler sayfasının kuralının (`statsInsights.slaPct(v, { floor: true })`)
+ * BİREBİR kopyası, kayan nokta payı dahil (99,86 × 100 = 9985,999…). `statsInsights.js` buraya ALINMAZ: istatistik modeli
+ * sertifika tablosu modelini de çeker ve Panom parçasına binerdi; iki kural `seriesModel.test.js`'te aynı değerlerle sınanır.
+ */
+export function floorPct2(v) {
+  const x = num(v)
+  return x == null ? null : Math.floor(x * 100 + 1e-7) / 100
+}
+
+/**
+ * Hedefin ALTINDAKİ bir değerin gösterimi (inceleme 2026-11-14): kesin orandan (kontrol / hata biliniyorsa) iki ondalığa aşağı
+ * kesilir; kayan nokta payı yüzünden hedefe eşit çıkarsa bir adım (0,01) aşağı alınır — hedefin altındaki değer ASLA hedefte
+ * ya da üstünde yazılmaz (sunucunun iki ondalıklı yukarı yuvarlaması %99,8955'i "99,90" yazıyordu).
+ */
+export function belowTargetPct(exact, target) {
+  let f = floorPct2(exact)
+  const t = num(target)
+  if (f == null) return null
+  if (t != null && f >= t) f = Math.floor(t * 100 - 1e-7) / 100
+  return f
+}
+
+/** Kesin oran (yüzde): başarılı ÷ kontrol × 100; kontrol yoksa null. */
+export function exactPct(checks, failed) {
+  const c = n(checks)
+  if (c <= 0) return null
+  return ((c - Math.min(Math.max(0, n(failed)), c)) * 100) / c
+}
+
+/**
+ * `/api/monitoring/availability-week` yanıtı → ekran özeti. Hüküm KESİN orandan (inceleme 2026-11-14): sunucunun
+ * `meets_target`'ı (artık kesin oranla) VE kontrol / hata sayısından hesaplanan oran — HERHANGİ biri "altında" diyorsa
+ * altındadır (yeşil yalnız ikisi de "hedefte" iken); ikisi de yoksa gösterim değeri. Hedefin altındaki değer gösterimde aşağı kesilir ({@link belowTargetPct}) — "99,90 · hedef 99,9" ile
+ * turuncu ton yan yana gelmez. Ton: ölçüm / hedef yok → gri; hedefte → yeşil; hedefin en çok {@link AVAIL_DANGER_GAP} puan
+ * altı → turuncu; daha düşük → kırmızı.
  */
 export function availabilitySummary(data) {
   const base = { hidden: false, unsupported: false, valid: false, pct: null, target: null, meets: null, days: 7, monitors: 0,
@@ -256,19 +288,35 @@ export function availabilitySummary(data) {
   if (data.unsupported === true) return { ...base, unsupported: true }
   if (data.visible === false) return { ...base, hidden: true }
   if (!('availability_pct' in data) || !('target_pct' in data)) return base
-  const pct = num(data.availability_pct), target = num(data.target_pct)
-  const meets = pct == null || target == null ? null : typeof data.meets_target === 'boolean' ? data.meets_target : pct >= target
+  const shown = num(data.availability_pct), target = num(data.target_pct)
+  const exact = exactPct(data.checks, data.failed)
+  const serverMeets = typeof data.meets_target === 'boolean' ? data.meets_target : null
+  const exactMeets = exact != null && target != null ? exact >= target : null
+  const meets = shown == null || target == null ? null
+    : serverMeets === false || exactMeets === false ? false
+    : serverMeets ?? exactMeets ?? shown >= target
+  const value = exact ?? shown   // tonu belirleyen değer (kesin)
+  const pct = shown == null || meets !== false ? shown : belowTargetPct(value, target)
   const worst = (Array.isArray(data.worst) ? data.worst : []).filter((w) => w && typeof w === 'object' && w.id != null && typeof w.type === 'string')
-    .map((w) => ({ type: w.type, id: w.id, name: typeof w.name === 'string' && w.name.trim() ? w.name : null, upPct: num(w.up_pct),
-      checks: n(w.checks), failed: n(w.failed), badHours: n(w.bad_hours) }))
+    .map((w) => {
+      const wExact = exactPct(w.checks, w.failed)
+      const wShown = num(w.up_pct)
+      const wValue = wExact ?? wShown
+      const wBelow = target != null && wValue != null && wValue < target
+      return { type: w.type, id: w.id, name: typeof w.name === 'string' && w.name.trim() ? w.name : null,
+        upPct: wBelow ? belowTargetPct(wValue, target) : wShown, exact: wValue,
+        checks: n(w.checks), failed: n(w.failed), badHours: n(w.bad_hours) }
+    })
   const byType = (Array.isArray(data.by_type) ? data.by_type : []).filter((x) => x && typeof x.type === 'string')
     .map((x) => ({ type: x.type, monitors: n(x.monitors), pct: num(x.availability_pct), belowTarget: n(x.below_target) }))
   const scale = gaugeScale(target)
   return {
-    ...base, valid: true, pct, target, meets, days: n(data.days) || 7, monitors: n(data.monitors), unmeasured: n(data.unmeasured),
+    ...base, valid: true, pct, target, meets, days: n(data.days) || 7, monitors: n(data.monitors),
+    // null = sunucu bilmiyor (aktif envanter okunamadı) — 0 ile karıştırılmaz
+    unmeasured: num(data.unmeasured),
     belowTarget: n(data.below_target), checks: n(data.checks), failed: n(data.failed), worst, byType,
     fraction: gaugeFraction(pct, target),
     targetFraction: target == null ? null : Math.min(1, Math.max(0, (target - scale.lo) / (scale.hi - scale.lo))),
-    tone: pct == null || target == null ? 'muted' : meets ? 'success' : pct >= target - AVAIL_DANGER_GAP ? 'warning' : 'danger',
+    tone: shown == null || target == null ? 'muted' : meets ? 'success' : value >= target - AVAIL_DANGER_GAP ? 'warning' : 'danger',
   }
 }

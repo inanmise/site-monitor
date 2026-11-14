@@ -1,5 +1,6 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.service.MonitorSparklineService.MonitorRef;
 import com.sitemonitor.util.TtlMemo;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,10 +34,12 @@ import static org.mockito.Mockito.when;
 
 /**
  * Kişisel Panom "7 günlük erişilebilirlik" (2026-11-14). Kanıtlar: (1) kontrol ağırlıklı oran, hata varken asla %100, ölçüm
- * yoksa null (asla %0 / %100); (2) hedef canlı ayardan, hüküm gösterilen değerden; (3) kapsam çağrı başına: tümünü gören,
- * kapsamlı müdür / USER (takımsız türev satır görünmez), paylaşım; (4) ölçülmemiş izleme ayrı sayılır; (5) en kötüler hedefin
- * altındakiler, en düşük önce, tavanlı; (6) kurum geneli görüntü paylaşılır — iki kapsam TTL içinde tür başına TEK okuma, 7
- * günlük ortak SLA önbelleği; (7) bir tür okunamazsa istisna (kısmi toplam yok) ve saklanmaz.
+ * yoksa null (asla %0 / %100); (2) hedef canlı ayardan, hüküm KESİN orandan (yuvarlanmış gösterimden değil); (3) kapsam çağrı
+ * başına: tümünü gören, kapsamlı müdür / USER (takımsız satır görünmez), paylaşım; (4) ölçülmemiş = taranan ama kontrolsüz
+ * izleme — duraklatılmış ve envanteri pasif türev Port / DNS satırı (İzleme Panosu kuralı) sayılmaz; (5) en kötüler hedefin
+ * altındakiler, en düşük önce, tavanlı; (6) kurum geneli görüntü paylaşılır — iki kapsam TTL içinde tür başına TEK okuma; kaynak
+ * kartların ısıttığı 30 GÜNLÜK ortak SLA önbelleğinin 7 günlük dönemi (ayrı 7 günlük tarama yok); (7) bir tür okunamazsa
+ * istisna (kısmi toplam yok) ve saklanmaz.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -43,10 +47,12 @@ class AvailabilityWeekServiceTest {
 
     @Mock MonitorSparklineService sparklineService;
     @Mock AppSettingsService appSettings;
+    @Mock CertificateInventoryRepository inventoryRepo;
     AvailabilityWeekService svc;
     long[] memoClock = {1_000_000L};
     final Map<String, Map<Long, MonitorRef>> refs = new HashMap<>();
     final Map<String, Map<Long, Map<String, Object>>> avail = new HashMap<>();
+    final List<String> activeInventory = new ArrayList<>();
 
     private static final Predicate<Long> ALL = t -> true;
 
@@ -61,10 +67,11 @@ class AvailabilityWeekServiceTest {
         when(appSettings.getDouble(eq("site.monitor.sla.target-pct"), anyDouble())).thenReturn(99.9);
         when(sparklineService.monitorRefs(anyString())).thenAnswer(i -> refs.getOrDefault(i.getArgument(0, String.class), Map.of()));
         when(sparklineService.availabilityAll(anyString(), anyInt())).thenAnswer(i -> avail.getOrDefault(i.getArgument(0, String.class), Map.of()));
+        when(inventoryRepo.findActiveDomains()).thenAnswer(i -> new ArrayList<>(activeInventory));
     }
 
     private AvailabilityWeekService service(long cacheMs) {
-        AvailabilityWeekService s = new AvailabilityWeekService(sparklineService, appSettings);
+        AvailabilityWeekService s = new AvailabilityWeekService(sparklineService, appSettings, inventoryRepo);
         ReflectionTestUtils.setField(s, "cacheMs", cacheMs);
         ReflectionTestUtils.setField(s, "orgMemo", new TtlMemo<AvailabilityWeekService.OrgWeek>(2, () -> memoClock[0]));
         return s;
@@ -76,10 +83,32 @@ class AvailabilityWeekServiceTest {
     }
 
     private void monitor(String type, long id, Long team, String name, boolean active, int n, int fail, int badHours) {
-        refs.computeIfAbsent(type, k -> new HashMap<>()).put(id, new MonitorRef(team, name, active));
+        put(type, id, new MonitorRef(team, name, active), n, fail, badHours);
+    }
+
+    /** Port / DNS satırı: {@code standalone} false = envanter türevi (envanterin takımını taşır), {@code host} envanter anahtarı. */
+    private void network(String type, long id, Long team, String name, boolean standalone, String host, int n) {
+        put(type, id, new MonitorRef(team, name, true, standalone, host), n, 0, 0);
+    }
+
+    /**
+     * Ortak SLA önbelleğinin 30 GÜNLÜK sonucu ({@code tür:30}) gibi: 7 günlük sayım {@code windows[days = 7]} döneminde; üst
+     * düzey (30 gün) ve diğer dönemler BİLEREK farklı — servis yanlış alanı okursa sayılar tutmaz (inceleme 2026-11-14).
+     */
+    private void put(String type, long id, MonitorRef ref, int n, int fail, int badHours) {
+        refs.computeIfAbsent(type, k -> new HashMap<>()).put(id, ref);
         Map<String, Object> a = new LinkedHashMap<>();
-        a.put("n", n); a.put("fail", fail); a.put("bad_hours", badHours);
-        a.put("up_pct", MonitorSparklineService.pct(n, fail));
+        a.put("n", n * 4 + 7); a.put("fail", fail * 4 + 3); a.put("bad_hours", badHours * 4 + 1);
+        a.put("up_pct", MonitorSparklineService.pct(n * 4 + 7, fail * 4 + 3));
+        List<Map<String, Object>> windows = new ArrayList<>();
+        for (int d : new int[] {1, 7, 15, 30}) {
+            Map<String, Object> w = new LinkedHashMap<>();
+            int wn = d == 7 ? n : n + d * 3, wf = d == 7 ? fail : fail + d;
+            w.put("days", d); w.put("n", wn); w.put("fail", wf); w.put("bad_hours", d == 7 ? badHours : badHours + d);
+            w.put("up_pct", MonitorSparklineService.pct(wn, wf));
+            windows.add(w);
+        }
+        a.put("windows", windows);
         avail.computeIfAbsent(type, k -> new HashMap<>()).put(id, a);
     }
 
@@ -106,8 +135,10 @@ class AvailabilityWeekServiceTest {
         assertThat(worst.get(1)).containsEntry("name", null);
         assertThat(list(out, "by_type")).extracting(m -> m.get("type")).containsExactly("http", "ping", "dns");
         assertThat(list(out, "by_type").get(0)).containsEntry("monitors", 2L).containsEntry("availability_pct", 97.5).containsEntry("below_target", 1L);
-        // 7 günlük ortak önbellek anahtarı okunur (30 günlük DEĞİL); izlemesi olmayan tür için SLA taraması yok
-        verify(sparklineService).availabilityAll("http", 7);
+        // İnceleme 2026-11-14: kartların ısıttığı 30 günlük ortak anahtar okunur, 7 gün onun dönemi — ayrı 7 günlük tarama YOK;
+        // izlemesi olmayan tür için SLA taraması yok
+        verify(sparklineService).availabilityAll("http", 30);
+        verify(sparklineService, never()).availabilityAll(anyString(), eq(7));
         verify(sparklineService, never()).availabilityAll(eq("scripted"), anyInt());
     }
 
@@ -132,11 +163,11 @@ class AvailabilityWeekServiceTest {
     }
 
     @Test
-    @DisplayName("kapsam çağrı başına: USER / kapsamlı müdür yalnız takımlarını (takımsız türev satır yok), paylaşım ekler, tümünü gören hepsini")
+    @DisplayName("kapsam çağrı başına: USER / kapsamlı müdür yalnız takımlarını (takımsız satır yok), paylaşım ekler, tümünü gören hepsini")
     void scopeIsAppliedPerCall() {
         monitor("http", 1, 5L, "Benim", 1_000, 0, 0);
         monitor("http", 2, 9L, "Başka takım", 1_000, 500, 9);
-        monitor("port", 3, null, "Envanter türevi", 1_000, 100, 4);
+        monitor("http", 3, null, "Takımsız eski satır", 1_000, 100, 4);
         monitor("http", 4, 5L, "Yeni", 0, 0, 0);
 
         Map<String, Object> mine = svc.build(teams(5L));
@@ -156,15 +187,53 @@ class AvailabilityWeekServiceTest {
     }
 
     @Test
-    @DisplayName("ölçülmemiş = kontrolü olmayan ETKİN + TAKIMLI izleme: duraklatılmış ve takımsız (envanter türevi) satır sayılmaz; duraklatılmışın penceredeki ölçümü sayılır")
-    void unmeasuredCountsOnlyActiveOwnedMonitors() {
-        monitor("http", 1, 5L, "Etkin, kontrolsüz", true, 0, 0, 0);          // sayılır
-        monitor("http", 2, 5L, "Duraklatılmış, kontrolsüz", false, 0, 0, 0); // beklenen durum — sayılmaz
-        monitor("port", 3, null, "Envanter türevi, kontrolsüz", true, 0, 0, 0); // envanteri pasif olabilir — sayılmaz
-        monitor("http", 4, 5L, "Dün duraklatıldı", false, 1_000, 10, 1);     // penceredeki ölçümü gerçek — orana girer
+    @DisplayName("ölçülmemiş = TARANAN ama kontrolsüz izleme: duraklatılmış ve envanteri pasif türev Port / DNS satırı (takımlı da olsa) sayılmaz — İzleme Panosu kuralı; duraklatılmışın penceredeki ölçümü sayılır")
+    void unmeasuredFollowsTheOverviewRule() {
+        activeInventory.addAll(List.of("aktif.example.com", "Aktif.Example.com.tr"));
+        monitor("http", 1, 5L, "Etkin, kontrolsüz", true, 0, 0, 0);                     // sayılır
+        monitor("http", 2, 5L, "Duraklatılmış, kontrolsüz", false, 0, 0, 0);            // beklenen durum — sayılmaz
+        network("port", 3, 5L, "Türev, envanteri aktif", false, "aktif.example.com", 0); // taranır — sayılır
+        network("port", 4, 5L, "Türev, envanteri pasif", false, "pasif.example.com", 0); // tarama atlar — sayılmaz
+        network("dns", 5, 5L, "Türev, harf farkı", false, "aktif.example.com.tr", 0);    // ham eşleşme: harf farkı = pasif
+        network("port", 6, 5L, "Bağımsız, envanterde yok", true, "baska.example.com", 0); // bağımsız hep taranır — sayılır
+        monitor("http", 7, 5L, "Dün duraklatıldı", false, 1_000, 10, 1);                // penceredeki ölçümü gerçek — orana girer
         Map<String, Object> out = svc.build(ALL);
-        assertThat(out).containsEntry("unmeasured", 1L).containsEntry("monitors", 1L)
+        assertThat(out).containsEntry("unmeasured", 3L).containsEntry("monitors", 1L)
                 .containsEntry("checks", 1_000L).containsEntry("failed", 10L).containsEntry("availability_pct", 99.0);
+        verify(inventoryRepo, times(1)).findActiveDomains();   // görüntü başına bir kez
+    }
+
+    @Test
+    @DisplayName("aktif envanter okunamazsa: türev satır varsa ölçülmemiş sayısı BİLİNMİYOR (null, yanlış sayı değil); türev satır yoksa sayı kesin; oran etkilenmez")
+    void unmeasuredUnknownWhenInventoryUnreadable() {
+        when(inventoryRepo.findActiveDomains()).thenThrow(new IllegalStateException("db"));
+        monitor("http", 1, 5L, "Etkin, kontrolsüz", true, 0, 0, 0);
+        monitor("http", 2, 5L, "Ölçülen", true, 1_000, 0, 0);
+        Map<String, Object> direct = svc.build(ALL);
+        assertThat(direct).containsEntry("unmeasured", 1L).containsEntry("availability_pct", 100.0).containsEntry("monitors", 1L);
+
+        network("port", 3, 5L, "Türev, kontrolsüz", false, "pasif.example.com", 0);
+        Map<String, Object> unknown = svc.build(ALL);
+        assertThat(unknown).containsEntry("unmeasured", null).containsEntry("availability_pct", 100.0).containsEntry("monitors", 1L);
+    }
+
+    @Test
+    @DisplayName("hedef altı hüküm KESİN orandan: 199.791 / 200.000 = %99,8955 → gösterim 99,90 ama hedef 99,9'un ALTINDA (asla yeşil değil); tam hedefte olan hedefte")
+    void verdictFromTheExactRatio() {
+        monitor("http", 1, 5L, "Sınırda", 200_000, 209, 3);   // 199.791 başarılı
+        Map<String, Object> out = svc.build(ALL);
+        assertThat(out).containsEntry("availability_pct", 99.9)   // yuvarlanmış gösterim
+                .containsEntry("meets_target", false).containsEntry("below_target", 1L);
+        assertThat(list(out, "worst")).extracting(m -> m.get("id")).containsExactly(1L);
+        assertThat(list(out, "by_type").get(0)).containsEntry("below_target", 1L);
+
+        refs.clear(); avail.clear();
+        monitor("http", 1, 5L, "Tam hedefte", 1_000, 1, 0);    // 999 / 1000 = %99,9 tam
+        assertThat(svc.build(ALL)).containsEntry("meets_target", true).containsEntry("below_target", 0L);
+
+        assertThat(AvailabilityWeekService.meetsTarget(200_000, 209, 99.9)).isFalse();
+        assertThat(AvailabilityWeekService.meetsTarget(200_000, 200, 99.9)).isTrue();
+        assertThat(AvailabilityWeekService.meetsTarget(0, 0, 99.9)).isNull();
     }
 
     @Test
@@ -193,7 +262,7 @@ class AvailabilityWeekServiceTest {
         assertThat(cached.build(teams(5L))).containsEntry("monitors", 1L).containsEntry("below_target", 0L);
         assertThat(cached.build(teams(9L))).containsEntry("monitors", 1L).containsEntry("below_target", 1L);
         for (String type : MonitorSparklineService.KINDS.keySet()) verify(sparklineService, times(1)).monitorRefs(type);
-        verify(sparklineService, times(1)).availabilityAll("http", 7);
+        verify(sparklineService, times(1)).availabilityAll("http", 30);
 
         memoClock[0] += 60_001;
         monitor("http", 3, 5L, "C", 1_000, 0, 0);

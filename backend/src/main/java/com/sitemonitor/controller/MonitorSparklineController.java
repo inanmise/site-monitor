@@ -58,15 +58,20 @@ public class MonitorSparklineController {
         Map<Long, Map<String, Object>> result;
         if (only != null && only.isEmpty()) {
             result = Map.of();   // süzgeç verildi ama geçerli kimlik yok — "hepsi"ne DÖNÜLMEZ
+        } else if (only != null) {
+            // İnceleme 2026-11-14: kimlik süzgeci varken türün TÜM filosu hesaplanmaz (tek favorili duvar ekranı dakikada bir
+            // filoyu taratıyordu) — var olan ve görünür kimlikler ∩ istenen, daraltılmış sorguyla (monitor_id IN, ≤ 200). Kapsam
+            // kuralı aynen: tümünü gören tüm VAR OLAN izlemeler, diğerleri görünür olanlar; kimlik yalnız DARALTIR.
+            Set<Long> wanted = global ? new java.util.HashSet<>(sparklineService.monitorTeams(type).keySet()) : visibleMonitors(type, session);
+            wanted.retainAll(only);
+            result = wanted.isEmpty() ? Map.of() : sparklineService.sparklinesFor(type, h, wanted);
         } else if (global) {
-            Map<Long, Map<String, Object>> all = sparklineService.sparklinesAll(type, h);
-            result = only == null ? all : MonitorSparklineService.subset(all, only);
+            result = sparklineService.sparklinesAll(type, h);
         } else {
             // Performans 2026-11-06 (PF2 #2): kapsamlı kullanıcı da ortak (global) önbellekten okur, görünür kümeyle BELLEKTE
             // süzülür — her izlemenin sonucu yalnız kendi satırlarından hesaplanır, çıktı kendi sorgusuyla birebir. Kapsamlı tavan
             // (24 sa) korunur.
             Set<Long> visible = visibleMonitors(type, session);
-            if (only != null) visible.retainAll(only);   // yalnız daraltır — görünmeyen kimlik istenmiş olsa da dönmez
             result = visible.isEmpty() ? Map.of() : MonitorSparklineService.subset(sparklineService.sparklinesAll(type, h), visible);
         }
         Map<String, Object> data = new LinkedHashMap<>();

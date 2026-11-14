@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
   AVAIL_DANGER_GAP, FAV_CHART_TYPES, FAV_ROWS, FAV_ROWS_TV, TREND_DEFAULT_RANGE, TREND_RANGES, alertTrendSummary, availabilitySummary,
-  favPlan, favRows, favSummary, gaugeFraction, gaugeScale, hourKey, hourSlots, isForbidden, isUnsupported, readTrendRange, statusOf,
-  trendPointLabels, trendTickIndexes, writeTrendRange,
+  belowTargetPct, exactPct, favPlan, favRows, favSummary, floorPct2, gaugeFraction, gaugeScale, hourKey, hourSlots, isForbidden,
+  isUnsupported, readTrendRange, statusOf, trendPointLabels, trendTickIndexes, writeTrendRange,
 } from '../components/mydash/seriesModel.js'
+import { slaPct } from '../components/stats/statsInsights.js'
 import {
   DEFAULT_TYPES, DETAIL_ONLY_TYPES, NOC_PRESET, STAT_PRESET, WIDGET_CATALOG, tvDetail, typeVisible,
 } from '../components/mydash/myDashModel.js'
@@ -267,8 +268,13 @@ describe('7 günlük erişilebilirlik', () => {
     expect(gaugeFraction('', 99.9)).toBeNull()
   })
 
-  const week = (over = {}) => ({ days: 7, target_pct: 99.9, monitors: 12, unmeasured: 1, checks: 40000, failed: 10, availability_pct: 99.97,
-    meets_target: true, below_target: 0, by_type: [], worst: [], ...over })
+  // Gerçekçi yanıt: kontrol / hata sayısı gösterilen oranla TUTARLI (istemci hükmü ve aşağı kesme kesin orandan okur)
+  const week = (over = {}) => {
+    const pct = 'availability_pct' in over ? over.availability_pct : 99.97
+    const checks = pct == null ? 0 : 100000
+    return { days: 7, target_pct: 99.9, monitors: 12, unmeasured: 1, checks, failed: pct == null ? 0 : Math.round(checks * (100 - pct) / 100),
+      availability_pct: pct, meets_target: true, below_target: 0, by_type: [], worst: [], ...over }
+  }
 
   it('yetkisiz / desteklenmeyen / tanınmayan yanıt: gri, geçersiz', () => {
     for (const d of [null, 'x', {}, { availability_pct: 99 }, { target_pct: 99.9 }]) {
@@ -305,9 +311,45 @@ describe('7 günlük erişilebilirlik', () => {
     expect(s.fraction).toBeCloseTo(0.45, 6)
     expect(s.targetFraction).toBeCloseTo(0.9, 6)
     expect(s.worst).toEqual([
-      { type: 'http', id: 4, name: 'Ödeme API', upPct: 97.5, checks: 2000, failed: 50, badHours: 6 },
-      { type: 'ping', id: 9, name: null, upPct: 99.1, checks: 1000, failed: 9, badHours: 2 },
+      { type: 'http', id: 4, name: 'Ödeme API', upPct: 97.5, exact: 97.5, checks: 2000, failed: 50, badHours: 6 },
+      { type: 'ping', id: 9, name: null, upPct: 99.1, exact: 99.1, checks: 1000, failed: 9, badHours: 2 },
     ])
     expect(s.byType).toEqual([{ type: 'http', monitors: 5, pct: 99.2, belowTarget: 1 }])
+  })
+
+  it('aşağı kesme İstatistikler kuralının BİREBİR kopyası (statsInsights.slaPct floor; Panom parçasına alınmaz)', () => {
+    const shownBy = (v) => Number(slaPct(v, { floor: true }).replace(/[^\d.,-]/g, '').replace(',', '.'))
+    for (const v of [99.86, 99.949, 99.8999, 97.25, 99.8955, 100, 0, 12.345, 99.99999, 98.9, 99.45]) {
+      expect(floorPct2(v)).toBe(shownBy(v))
+    }
+    expect(floorPct2(null)).toBeNull()
+  })
+
+  it('hedef altındaki değer ASLA hedefte yazılmaz: kesin orandan aşağı kesilir, hedefe eşit çıkarsa bir adım aşağı', () => {
+    expect(exactPct(200000, 209)).toBeCloseTo(99.8955, 10)
+    expect(exactPct(0, 0)).toBeNull()
+    expect(exactPct(10, 99)).toBe(0)          // hata kontrolü aşamaz
+    expect(belowTargetPct(99.8955, 99.9)).toBe(99.89)
+    expect(belowTargetPct(99.9, 99.9)).toBe(99.89)       // (sunucunun yukarı yuvarladığı değer) — hedefle eşit yazılmaz
+    expect(belowTargetPct(99.949, 99.95)).toBe(99.94)
+    expect(belowTargetPct(97.25, 99.9)).toBe(97.25)
+    expect(belowTargetPct(null, 99.9)).toBeNull()
+  })
+
+  it('199.791 / 200.000 (%99,8955) hedef 99,9: sunucu yuvarlaması "99,90" + eski "hedefte" bayrağı olsa da yeşil DEĞİL, 99,89 yazılır', () => {
+    const near = { days: 7, target_pct: 99.9, monitors: 1, unmeasured: 0, checks: 200000, failed: 209, availability_pct: 99.9,
+      below_target: 1, by_type: [], worst: [{ type: 'http', id: 1, name: 'Sınırda', up_pct: 99.9, checks: 200000, failed: 209, bad_hours: 3 }] }
+    for (const flag of [false, true, undefined]) {
+      const s = availabilitySummary(flag === undefined ? near : { ...near, meets_target: flag })
+      expect(s).toMatchObject({ meets: false, tone: 'warning', pct: 99.89 })
+      expect(s.worst[0]).toMatchObject({ upPct: 99.89 })
+    }
+    // Tam hedefte (999 / 1000) yeşil
+    expect(availabilitySummary({ ...near, checks: 1000, failed: 1, meets_target: true, worst: [] })).toMatchObject({ meets: true, tone: 'success', pct: 99.9 })
+  })
+
+  it('ölçülmemiş sayısı bilinmiyorsa (null) 0 sayılmaz', () => {
+    expect(availabilitySummary(week({ unmeasured: null })).unmeasured).toBeNull()
+    expect(availabilitySummary(week({ unmeasured: 4 })).unmeasured).toBe(4)
   })
 })
