@@ -193,7 +193,7 @@ function pageSpeedHistoryExtra(c, t) {
   for (const k of ['dns', 'connect', 'tls', 'server']) {
     if (c[`${k}_ms`] != null) parts.push(`${t(`pspd.ins.${k}`)} ${c[`${k}_ms`]} ms`)
   }
-  if (c.failed_count != null && c.failed_count > 0) parts.push(`${t('pspd.ins.failed')} ${c.failed_count}`)
+  if (c.failed_count != null && c.failed_count > 0) parts.push(`${t('pspd.ins.unloaded')} ${c.failed_count}`)
   if (c.skipped_lazy != null && c.skipped_lazy > 0) parts.push(`${t('pspd.ins.skippedLazy')} ${c.skipped_lazy}`)
   const types = []
   for (const k of ['js', 'img', 'css', 'font']) {
@@ -1288,7 +1288,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
             { key: 'req', value: selected.request_count ?? '—', label: t('pspd.mRequests') },
             // Saklanan ama eskiden gösterilmeyen ölçüler (madde 8): HTML süresi, alınamayan, atlanan tembel kaynak
             selected.html_ms != null && { key: 'html', value: `${selected.html_ms} ms`, label: t('pspd.ins.htmlMs') },
-            selected.failed_count != null && { key: 'failed', value: selected.failed_count, label: t('pspd.ins.failed'),
+            selected.failed_count != null && { key: 'failed', value: selected.failed_count, label: t('pspd.ins.unloaded'),
               valueClassName: selected.failed_count > 0 ? 'text-destructive' : undefined },
             selected.skipped_lazy != null && { key: 'lazy', value: selected.skipped_lazy, label: t('pspd.ins.skippedLazy'),
               hint: t('pspd.ins.skippedLazyHint') },
@@ -1358,7 +1358,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       label: resFacets?.party?.[k] != null ? `${t(`pspd.res.party.${k}`)} (${resFacets.party[k]})` : t(`pspd.res.party.${k}`) }))]} />
                 <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs pointer-coarse:min-h-10">
                   <Checkbox checked={resFailed} onCheckedChange={(v) => setResFailed(v === true)} data-slot="pspd-res-failed" />
-                  <span>{t('pspd.res.failedOnly')}{resFacets?.failed != null ? ` (${resFacets.failed})` : ''}</span>
+                  <span>{t('pspd.res.unloadedOnly')}{resFacets?.failed != null ? ` (${resFacets.failed})` : ''}</span>
                 </label>
                 {(resType !== 'all' || resParty !== 'all' || resFailed) && (
                   <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" data-slot="pspd-res-clear"
@@ -1424,7 +1424,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                               {formatBytes(r.bytes, r.truncated)}</TableCell>
                             <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</TableCell>
                             <TableCell className={cn('hidden text-right tabular-nums sm:table-cell', r.http_status != null && r.http_status >= 400 && 'text-destructive')}>
-                              {r.http_status ?? (r.failed ? <span className="text-destructive">{t('pspd.res.failedBadge')}</span> : '—')}</TableCell>
+                              {r.http_status ?? (r.failed ? <span className="text-destructive">{t('pspd.res.unloadedBadge')}</span> : '—')}</TableCell>
                             <TableCell className="hidden md:table-cell">{r.third_party ? t('pspd.thirdParty') : t('pspd.firstParty')}</TableCell>
                           </TableRow>
                         )
