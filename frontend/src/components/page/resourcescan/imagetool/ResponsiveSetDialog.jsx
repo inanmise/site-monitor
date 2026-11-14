@@ -10,13 +10,13 @@ import Field from '../../../ui/Field.jsx'
 import SegmentedControl from '../../../ui/SegmentedControl.jsx'
 import { Spinner } from '../../../ui/Progress.jsx'
 import ToneBadge from '../../../admin/ToneBadge.jsx'
-import { formatNumber, formatPct, formatSize } from '../resourceScanModel.js'
+import { formatNumber, formatSize } from '../resourceScanModel.js'
 import { CHIP, TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import * as engine from './engineClient.js'
 import { useTopic } from './ImageToolContext.jsx'
 import { bytesOfBlob, createZipWriter } from './imageZip.js'
 import {
-  buildOptions, dimsText, engineProblemText, extOfType, pictureSnippet, phaseText, resizeSettings, responsiveWidths, resultSummary, savingPctOf,
+  buildOptions, dimsText, engineProblemText, extOfType, pctText, pictureSnippet, phaseText, resizeSettings, responsiveWidths, resultSummary, savingPctOf,
   slugFileBase, typeLabel, uniqueName, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -209,7 +209,7 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
                       {r.state === 'done' && (
                         <span className={cn('text-muted-foreground tabular-nums', WRAP)}>
                           {[r.name, dimsText(r.summary.width, r.summary.height), typeLabel(r.summary.type), formatSize(r.summary.bytes, { locale }),
-                            pct !== null && pct > 0 ? t('prs.it.rs.vsOriginal', formatPct(pct, locale, 0)) : null].filter(Boolean).join(' · ')}
+                            pct !== null && pct > 0 ? t('prs.it.rs.vsOriginal', pctText(pct, locale)) : null].filter(Boolean).join(' · ')}
                         </span>
                       )}
                       {r.state === 'failed' && <span className={cn('text-destructive', WRAP)}>{engineProblemText(r.problem?.code, r.problem?.params, t, locale)}</span>}

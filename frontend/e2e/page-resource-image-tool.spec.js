@@ -5,10 +5,10 @@
 // penceresi, duyarlı set penceresi ve "not ne olurdu?" kartı. Her aşamada: ekran dışına taşan öğe yok, sayfa / pencere
 // gövdesi yatay kaymaz, metin kırpılmaz, dokunmatikte hedefler ≥ 40 px.
 //
-// API tamamen taklit (sunucu paketi ayrı gelir — sözleşmedeki tel biçimi). GÖRSEL MOTORU da ayrı pakettir: yerleşim
-// senaryoları motor modülünün yerine KÜÇÜK BİR TAKLİT motor koyar (Vite geliştirme sunucusunun modül isteği yakalanır) —
-// böylece ekran her durumda (işlendi / başarısız) motordan bağımsız sınanır. Gerçek motora ihtiyaç duyan senaryolar
-// (gerçek sıkıştırma kazancı, hedef boyut, WebP) dosyanın sonunda `test.fixme` ile işaretlidir: "engine not merged".
+// API tamamen taklit (sözleşmedeki tel biçimi). Yerleşim senaryoları motor modülünün yerine KÜÇÜK BİR TAKLİT motor koyar
+// (Vite geliştirme sunucusunun modül isteği yakalanır) — böylece ekran her durumda (işlendi / başarısız) motordan bağımsız
+// sınanır. Dosyanın sonundaki "gerçek motor" senaryoları taklit KOYMAZ: gerçek motor (utils/imageEngine, Web Worker) gerçek
+// bir PNG logo ve JPEG fotoğrafı işler; ekrandaki boyut / kazanç / not / karşılaştırma sayıları motorun sonucuyla karşılaştırılır.
 import { readFileSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
 import { unzipSync, strFromU8 } from 'fflate'
@@ -59,6 +59,29 @@ function makePng(width, height, seed = 7) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 6 })), chunk('IEND', Buffer.alloc(0))])
 }
 const PNG = makePng(1200, 800)
+
+/** Logo benzeri PNG: beyaz zemin, 4 düz renkli şekil (az renk), zayıf sıkıştırma (deflate düzey 1) — gerçek bir dışa aktarım gibi. */
+function makeLogoPng(width, height) {
+  const raw = Buffer.alloc(height * (1 + width * 3))
+  const COL = [[255, 255, 255], [129, 51, 135], [100, 166, 79], [33, 37, 41], [242, 193, 78]]
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (1 + width * 3)
+    for (let x = 0; x < width; x += 1) {
+      let c = 0
+      const dx = x - width * 0.25
+      const dy = y - height * 0.5
+      if (dx * dx + dy * dy < (height * 0.32) ** 2) c = 1
+      else if (x > width * 0.45 && x < width * 0.9 && y > height * 0.3 && y < height * 0.45) c = 3
+      else if (x > width * 0.45 && x < width * 0.75 && y > height * 0.55 && y < height * 0.7) c = 2
+      else if (x > width * 0.78 && x < width * 0.9 && y > height * 0.55 && y < height * 0.7) c = 4
+      raw[row + 1 + x * 3] = COL[c][0]; raw[row + 2 + x * 3] = COL[c][1]; raw[row + 3 + x * 3] = COL[c][2]
+    }
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 2
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw, { level: 1 })), chunk('IEND', Buffer.alloc(0))])
+}
+const LOGO = makeLogoPng(1000, 500)
 const PNG_SMALL = makePng(640, 400, 11)
 
 // ── Taklit motor (sözleşme §2 arayüzü; tarayıcının kendi tuvaliyle yeniden kodlar) ───────────────────────────
@@ -590,11 +613,8 @@ for (const vp of VIEWPORTS) {
       expect(state.images).toHaveLength(0)                                // yüklenen dosya sunucuya gitmez
     })
 
-    // ── GERÇEK MOTOR gerektiren senaryolar (taklit motor YOK) ─────────────────────────────────────────────
-    // Motor paketi (utils/imageEngine) bu dalda yalnız sözleşme taslağıdır: her çağrı BROWSER_UNSUPPORTED ile reddedilir.
-    // Paketler birleşince `fixme` kaldırılır.
+    // ── GERÇEK MOTOR senaryoları (taklit motor YOK — useFakeEngine çağrılmaz) ───────────────────────────────
     test('gerçek motor: PNG fark edilir kayıp olmadan küçülür; benzerlik ölçülür; karşılaştırma gerçek pikselleri çizer', async ({ page }) => {
-      test.fixme(true, 'engine not merged')
       await routes(page)
       const root = await open(page, '&prs_v=tool')
       const view = root.locator('[data-slot="prs-it-view"]')
@@ -615,8 +635,118 @@ for (const vp of VIEWPORTS) {
       await dialogChecker(page, CMP)('gerçek motor — karşılaştırma')
     })
 
-    test('gerçek motor: hedef boyut (200 KB) tutturulur ya da "hedefe inilemedi" notu düşer; WebP desteği seçeneği belirler', async ({ page }) => {
-      test.fixme(true, 'engine not merged')
+    test('gerçek motor: PNG logo ve JPEG fotoğraf — ekrandaki boyut / kazanç / not / karşılaştırma sayıları motorun sonucu', async ({ page }) => {
+      test.setTimeout(240_000)
+      await routes(page)
+      const root = await open(page, '&prs_v=tool')
+      const view = root.locator('[data-slot="prs-it-view"]')
+      await expect(view).toBeVisible({ timeout: 20_000 })
+      // Gerçek JPEG fotoğraf: tarayıcının kendi kodlayıcısıyla (degrade + doku + şekiller, kalite 0,97)
+      const jpegB64 = await page.evaluate(async () => {
+        const c = document.createElement('canvas')
+        c.width = 1600; c.height = 1000
+        const g = c.getContext('2d')
+        const grad = g.createLinearGradient(0, 0, 1600, 1000)
+        grad.addColorStop(0, '#1d4e89'); grad.addColorStop(0.5, '#f2c14e'); grad.addColorStop(1, '#2a9d8f')
+        g.fillStyle = grad; g.fillRect(0, 0, 1600, 1000)
+        for (let k = 0; k < 60; k += 1) {
+          g.fillStyle = `hsl(${(k * 37) % 360} 60% 50% / .45)`
+          g.beginPath(); g.arc((k * 397) % 1600, (k * 211) % 1000, 30 + (k % 70), 0, Math.PI * 2); g.fill()
+        }
+        const img = g.getImageData(0, 0, 1600, 1000)
+        let seed = 7
+        for (let i = 0; i < img.data.length; i += 4) {
+          seed = (seed * 1103515245 + 12345) & 0x7fffffff
+          const n = ((seed >> 16) & 15) - 8
+          img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n
+        }
+        g.putImageData(img, 0, 0)
+        const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.97))
+        const buf = new Uint8Array(await blob.arrayBuffer())
+        let bin = ''
+        for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+        return btoa(bin)
+      })
+      const JPEG = Buffer.from(jpegB64, 'base64')
+      expect([...JPEG.slice(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+      await view.locator('[data-slot="prs-it-file-input"]').setInputFiles([
+        { name: 'sirket-logosu.png', mimeType: 'image/png', buffer: LOGO },
+        { name: 'kampanya-fotografi.jpg', mimeType: 'image/jpeg', buffer: JPEG },
+      ])
+      const rows = view.locator('[data-slot="prs-it-entry"]')
+      await expect(rows).toHaveCount(2)
+      await expect(view.locator('[data-slot="prs-it-entry"][data-state="done"]')).toHaveCount(2, { timeout: 180_000 })
+
+      // Ekrandaki metin, uygulamanın KENDİ biçimlendiricileriyle motorun sayılarından üretilmiş olmalı
+      const fmt = (v) => page.evaluate(async (x) => {
+        const m = await import('/src/components/page/resourcescan/resourceScanModel.js')
+        const tm = await import('/src/components/page/resourcescan/imagetool/imageToolModel.js')
+        return { before: m.formatSize(x.before, { locale: 'en-GB' }), after: m.formatSize(x.after, { locale: 'en-GB' }), pct: tm.pctText(x.saving, 'en-GB') }
+      }, v)
+      const check = async (row, source, sig) => {
+        const result = row.locator('[data-slot="prs-it-result"]')
+        await expect(result).toBeVisible()
+        const a = await result.evaluate((el) => ({ bytes: Number(el.dataset.bytes), before: Number(el.dataset.before), saving: el.dataset.saving === undefined ? null : Number(el.dataset.saving),
+          tone: el.dataset.tone, sim: el.dataset.similarity === undefined ? null : Number(el.dataset.similarity), text: el.textContent }))
+        // Özgün boyut = yüklenen dosya; sonuç boyutu = indirilen dosya (motorun Blob'u)
+        expect(a.before).toBe(source.length)
+        const dl = page.waitForEvent('download')
+        await row.locator('[data-slot="prs-it-entry-download"]').click()
+        const out = readFileSync(await (await dl).path())
+        expect(out.length, 'gösterilen sonuç boyutu = indirilen dosya').toBe(a.bytes)
+        expect([...out.slice(0, sig.length)]).toEqual(sig)
+        expect(a.tone).toBe('smaller')
+        expect(a.bytes).toBeLessThan(a.before)
+        // Motorun yüzdesi baytlarla tutarlı ve sahte 0 değil
+        expect(a.saving).not.toBeNull()
+        expect(a.saving).toBeGreaterThan(0)
+        expect(Math.abs(a.saving - ((a.before - a.bytes) / a.before) * 100)).toBeLessThan(0.2)
+        const f = await fmt({ before: a.before, after: a.bytes, saving: a.saving })
+        expect(a.text).toContain(`${f.before} → ${f.after} (−${f.pct})`)
+        expect(a.text).not.toMatch(/\(−0%\)|no saving|kept/)
+        return { ...a, out }
+      }
+      const logoRow = rows.filter({ hasText: 'sirket-logosu.png' })
+      const photoRow = rows.filter({ hasText: 'kampanya-fotografi.jpg' })
+      const logo = await check(logoRow, LOGO, [0x89, 0x50, 0x4e, 0x47])          // "aynı biçim": PNG kalır
+      const photo = await check(photoRow, JPEG, [0xff, 0xd8, 0xff])
+      // Logo paletli PNG: renk sayısı motorun sonucundan, gösterilir; fotoğrafta kalite + benzerlik (ölçüldü — "bilinmiyor" değil)
+      await expect(logoRow.locator('[data-slot="prs-it-result"]')).toContainText(/\d+ colours/)
+      expect(photo.sim).toBeGreaterThan(0.8)
+      expect(photo.sim).toBeLessThanOrEqual(1)
+      await expect(photoRow.locator('[data-slot="prs-it-result"]')).toContainText(/quality \d+/)
+      await expect(photoRow.locator('[data-slot="prs-it-result"]')).toContainText(/similarity \d/)
+      // Notlar motorun not kodlarıyla aynı (ham kod değil, metin): yalnız bilinen kodlar
+      const notes = await view.locator('[data-slot="prs-it-notes"] [data-note]').evaluateAll((els) => els.map((e) => [e.dataset.note, e.textContent]))
+      const known = new Set(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE', 'TARGET_NOT_REACHED', 'METADATA_PRESERVED',
+        'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED'])
+      for (const [code, text] of notes) { expect(known.has(code), code).toBe(true); expect(text).not.toContain(code) }
+      // Özet satırı toplam önce → sonra (sahte "kazanç yok" değil)
+      const total = await fmt({ before: LOGO.length + JPEG.length, after: logo.bytes + photo.bytes, saving: 0 })
+      await expect(view.locator('[data-slot="prs-it-summary"]')).toContainText(`${total.before} → ${total.after}`)
+      await expect(view.locator('[data-slot="prs-it-summary"]')).not.toContainText('no saving')
+
+      // Karşılaştırma penceresi: aynı sayılar + ölçülmüş benzerlik
+      await photoRow.locator('[data-slot="prs-it-entry-compare"]').click()
+      const cmp = page.locator(CMP)
+      await expect(cmp.locator('[data-slot="prs-it-compare-dialog"]')).toHaveAttribute('data-status', 'ready', { timeout: 30_000 })
+      const sizes = cmp.locator('[data-slot="prs-it-cmp-sizes"]')
+      await expect(sizes).toHaveAttribute('data-before', String(JPEG.length))
+      await expect(sizes).toHaveAttribute('data-after', String(photo.bytes))
+      await expect(sizes).toHaveAttribute('data-saving', String(photo.saving))
+      const pf = await fmt({ before: JPEG.length, after: photo.bytes, saving: photo.saving })
+      await expect(sizes).toContainText(pf.before)
+      await expect(sizes).toContainText(pf.after)
+      await expect(cmp.locator('[data-slot="prs-it-cmp-saving"]')).toHaveText(pf.pct)
+      await expect(cmp.locator('[data-slot="prs-it-cmp-similarity"]')).toHaveAttribute('data-known', 'true')
+      await expect(cmp.locator('[data-slot="prs-it-cmp-similarity"]')).not.toContainText('not measured')
+      await dialogChecker(page, CMP)('gerçek motor — fotoğraf karşılaştırması')
+      await page.keyboard.press('Escape')
+      await expect(cmp).toHaveCount(0)
+      await checker(page)('gerçek motor — logo + fotoğraf işlendi')
+    })
+
+    test('gerçek motor: hedef boyut (100 KB) tutturulur ya da "hedefe inilemedi" notu düşer; WebP desteği seçeneği belirler', async ({ page }) => {
       await routes(page)
       const root = await open(page, '&prs_v=tool')
       const view = root.locator('[data-slot="prs-it-view"]')
@@ -637,7 +767,6 @@ for (const vp of VIEWPORTS) {
     })
 
     test('gerçek motor: tarama görselinin "Küçült + optimize et" indirmesi önerilen genişlikte bir dosya üretir', async ({ page }) => {
-      test.fixme(true, 'engine not merged')
       await routes(page)
       const root = await open(page)
       await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })

@@ -378,17 +378,69 @@ export function savingPctOf(sum) {
   return b >= a ? 0 : Math.floor(((a - b) / a) * 1000) / 10
 }
 
+/**
+ * Yüzde metni: küçük değer SAHTE 0'a yuvarlanmaz — 1'in altı 2 ondalık, 10'un altı 1 ondalık; 0'dan büyük ama 0,01'in
+ * altı "<%0,01". Bilinmeyen (null) → ''.
+ */
+export function pctText(p, locale) {
+  const v = num(p)
+  if (v === null) return ''
+  if (v > 0 && v < 0.01) return `<${formatPct(0.01, locale, 2)}`
+  // 99,6 → "%100" yazılmaz (gerçekte bir şey kaldı): 99'un üstü bir ondalıkla, aşağı yuvarlanarak (en çok %99,9)
+  if (v > 99 && v < 100) return formatPct(Math.min(99.9, Math.floor(v * 10) / 10), locale, 1)
+  return formatPct(v, locale, v < 1 ? 2 : v < 10 ? 1 : 0)
+}
+
+/**
+ * Sonucun sınıfı: `kept` (motor özgünü korudu), `smaller`, `same` (aynı bayt), `larger` (açıkça istenen biçime
+ * dönüşüm özgünden büyük çıktı — motor yine üretir, `savingPct` 0), `unknown` (özgün boyut bilinmiyor).
+ */
+export function resultTone(sum) {
+  if (!sum || sum.bytes === null || sum.bytes === undefined) return 'unknown'
+  if (sum.kept) return 'kept'
+  const before = num(sum.original?.bytes)
+  if (before === null || before <= 0) return 'unknown'
+  if (sum.bytes > before) return 'larger'
+  if (sum.bytes === before) return 'same'
+  return 'smaller'
+}
+
+/** Büyüme yüzdesi (yalnız `larger` sonuçta; değilse null). */
+export function growthPctOf(sum) {
+  if (resultTone(sum) !== 'larger') return null
+  const before = num(sum.original?.bytes)
+  return Math.ceil(((sum.bytes - before) / before) * 1000) / 10
+}
+
+/** PNG çıktısında elle kalite → palet renk sayısı (motor kuralı: 100 = kayıpsız → null; altı round(256·(q/100)²), en az 8). */
+export function pngPaletteColors(q) {
+  const v = num(q)
+  if (v === null || v >= 100 || v < 1) return null
+  return Math.max(8, Math.round(256 * (v / 100) ** 2))
+}
+
 export const dimsText = (w, h) => (num(w) !== null && num(h) !== null ? `${num(w)}×${num(h)}` : '')
 
-/** "1,6 MB → 400 KB (−%75)"; küçülmediyse / özgün korunduysa "küçültülemedi — özgün dosya korundu". */
+/**
+ * Sonuç satırı: "1,6 MB → 400 KB (−%75)". Motor özgünü koruduysa "küçültülemedi — özgün dosya korundu"; açıkça istenen
+ * biçime dönüşüm özgünden BÜYÜK çıktıysa "… (özgünden %12 büyük)"; aynı baytsa "kazanç yok" — hiçbiri "korundu" sayılmaz.
+ */
 export function resultLine(sum, t, locale) {
   if (!sum || sum.bytes === null) return ''
+  const size = (x) => formatSize(x, { locale })
+  const tone = resultTone(sum)
+  if (tone === 'kept') return t('prs.it.res.kept', size(sum.bytes))
+  if (tone === 'unknown') return size(sum.bytes)
+  const before = num(sum.original?.bytes)
+  if (tone === 'larger') return t('prs.it.res.larger', size(before), size(sum.bytes), pctText(growthPctOf(sum), locale))
   const pct = savingPctOf(sum)
-  const before = sum.original?.bytes
-  if (sum.kept || pct === 0 || before === null || before === undefined) {
-    return sum.kept || pct === 0 ? t('prs.it.res.kept', formatSize(sum.bytes, { locale })) : formatSize(sum.bytes, { locale })
+  if (tone === 'same' || pct === null || pct <= 0) {
+    // Motorun yüzdesi 0 ama bayt azaldıysa (yuvarlama) baytlardan hesaplanır — sahte "kazanç yok" yazılmaz
+    const fromBytes = before > 0 && sum.bytes < before ? ((before - sum.bytes) / before) * 100 : 0
+    if (tone === 'smaller' && fromBytes > 0) return t('prs.img.optimizedTo', size(before), size(sum.bytes), pctText(fromBytes, locale))
+    return t('prs.it.res.noSaving', size(before), size(sum.bytes))
   }
-  return t('prs.img.optimizedTo', formatSize(before, { locale }), formatSize(sum.bytes, { locale }), formatPct(pct, locale, pct < 10 ? 1 : 0))
+  return t('prs.img.optimizedTo', size(before), size(sum.bytes), pctText(pct, locale))
 }
 
 /** Sonucun ikinci satırı: "3000×2000 → 1200×800 · WebP · kalite 78". */
@@ -467,14 +519,40 @@ export function serverProblemText(res, t, locale) {
   return t(`prs.it.srv.${code}`)
 }
 
-/** Motor hatasının metni (`code` ∈ {@link ENGINE_CODES}; bilinmeyen kod → genel metin). */
+/** Motorun algıladığı desteklenmeyen tür (`UNSUPPORTED_FORMAT.detected`) → kendi metni; `unknown` / tanınmayan → genel. */
+const UNSUPPORTED_KEYS = Object.freeze({
+  svg: 'prs.it.eng.UNSUPPORTED_FORMAT.svg', pdf: 'prs.it.eng.UNSUPPORTED_FORMAT.pdf', tiff: 'prs.it.eng.UNSUPPORTED_FORMAT.tiff',
+  heic: 'prs.it.eng.UNSUPPORTED_FORMAT.heic', empty: 'prs.it.eng.UNSUPPORTED_FORMAT.empty',
+})
+
+/**
+ * Motor hatasının metni (`code` ∈ {@link ENGINE_CODES}; bilinmeyen kod → genel metin). Motorun parametreleri
+ * (`errors.js`) yardım ettiği yerde kullanılır: algılanan tür (SVG / PDF / TIFF / HEIC / boş), dosya boyutu ve sınır,
+ * piksel ölçüsü ve sınırlar, zaman aşımı / bellek / üretilemeyen biçim. Ham neden kodu (`reason`) hiçbir zaman yazılmaz.
+ */
 export function engineProblemText(code, params, t, locale) {
   const p = params && typeof params === 'object' ? params : {}
-  if (code === 'TOO_LARGE') return t('prs.it.eng.TOO_LARGE', formatSize(num(p.maxBytes) ?? num(p.max_bytes) ?? SERVER_MAX_BYTES, { locale }))
-  if (code === 'TOO_MANY_PIXELS') {
-    const mp = num(p.maxPixels) ?? num(p.max_pixels) ?? 50_000_000
-    return t('prs.it.eng.TOO_MANY_PIXELS', formatNumber(Math.round(mp / 1_000_000), locale))
+  if (code === 'UNSUPPORTED_FORMAT') return t(UNSUPPORTED_KEYS[typeof p.detected === 'string' ? p.detected : ''] || 'prs.it.eng.UNSUPPORTED_FORMAT')
+  if (code === 'TOO_LARGE') {
+    const max = formatSize(num(p.maxBytes) ?? num(p.max_bytes) ?? SERVER_MAX_BYTES, { locale })
+    const size = num(p.bytes)
+    return size !== null && size > 0 ? t('prs.it.eng.TOO_LARGE.size', formatSize(size, { locale }), max) : t('prs.it.eng.TOO_LARGE', max)
   }
+  if (code === 'TOO_MANY_PIXELS') {
+    const mp = formatNumber(Math.round((num(p.maxPixels) ?? num(p.max_pixels) ?? 50_000_000) / 1_000_000), locale)
+    const w = num(p.width)
+    const h = num(p.height)
+    const side = num(p.maxSide)
+    if (w !== null && h !== null && side !== null) {
+      return t('prs.it.eng.TOO_MANY_PIXELS.dims', formatNumber(w, locale), formatNumber(h, locale), mp, formatNumber(side, locale))
+    }
+    return t('prs.it.eng.TOO_MANY_PIXELS', mp)
+  }
+  const reason = typeof p.reason === 'string' ? p.reason : ''
+  if (code === 'DECODE_FAILED' && reason === 'timeout') return t('prs.it.eng.DECODE_FAILED.timeout')
+  if (code === 'BROWSER_UNSUPPORTED' && reason === 'memory') return t('prs.it.eng.BROWSER_UNSUPPORTED.memory')
+  if (code === 'ENCODE_FAILED' && reason === 'timeout') return t('prs.it.eng.ENCODE_FAILED.timeout')
+  if (code === 'ENCODE_FAILED' && reason === 'unsupported_type') return t('prs.it.eng.ENCODE_FAILED.type')
   return t(ENGINE_CODES.includes(code) ? `prs.it.eng.${code}` : 'prs.it.eng.other')
 }
 

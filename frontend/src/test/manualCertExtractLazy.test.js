@@ -34,15 +34,30 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     // İkinci istisna (2026-10-17, C12): kanalın yıl arşivi (`techerror/yearArchive.js`) akışlı ZIP'i fflate ile yazar —
     // YALNIZ dinamik `import('fflate')` ile (arşiv düğmesine basılınca); statik içe aktarma açılış paketine sokardı.
     const YEAR_ARCHIVE = 'components/techerror/yearArchive.js'
+    // Üçüncü istisna (2026-11-14, kaynak analizi görsel aracı): görsel motorunun PNG yazıcısı (`utils/imageEngine/pngWriter.js`)
+    // fflate'i STATİK alır, ama kendisine yalnız motorun ağır çekirdeğinden ulaşılır — Worker paketi (`engine.worker.js`) ya
+    // da ana iş parçacığı yedeği `import('./core.js')`; motorun kamu arayüzü (`index.js`) de yalnız `import()` ile yüklenir
+    // (lazyChunks.test.js). Yani fflate açılış paketine bu yoldan da GİRMEZ.
+    const PNG_WRITER = 'utils/imageEngine/pngWriter.js'
+    // Dördüncü istisna (2026-11-14): görsel aracının akışlı ZIP yazıcısı (`imagetool/imageZip.js`) fflate'i YALNIZ dinamik
+    // `import('fflate')` ile yükler (ZIP istenince) — yıl arşivi gibi.
+    const IMAGE_ZIP = 'components/page/resourcescan/imagetool/imageZip.js'
+    const FFLATE_OK = new Set([XLSX_WRITER, YEAR_ARCHIVE, PNG_WRITER, IMAGE_ZIP])
     const offenders = FILES.filter(({ f, rel: r, src }) => !f.startsWith(EXTRACT)
-      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || (s === 'fflate' && r !== XLSX_WRITER && r !== YEAR_ARCHIVE)))
+      && anyImports(src).some((s) => s === 'node-forge' || s.startsWith('node-forge/') || (s === 'fflate' && !FFLATE_OK.has(r))))
       .map((x) => x.rel)
     expect(offenders).toEqual([])
     const archive = FILES.find((x) => x.rel === YEAR_ARCHIVE)
     expect(staticImports(archive.src).filter((s) => s === 'fflate'), 'yıl arşivi fflate\'i statik içe aktarmaz').toEqual([])
+    const imageZip = FILES.find((x) => x.rel === IMAGE_ZIP)
+    expect(staticImports(imageZip.src).filter((s) => s === 'fflate'), 'görsel ZIP yazıcısı fflate\'i statik içe aktarmaz').toEqual([])
+    // PNG yazıcısını motorun içinden yalnız ağır çekirdek / Worker içe aktarır; kamu arayüzü (index.js) almaz
+    const pngUsers = FILES.filter(({ src }) => anyImports(src).some((s) => /(^|\/)pngWriter(\.js)?$/.test(s))).map((x) => x.rel).sort()
+    expect(pngUsers.every((r) => r.startsWith('utils/imageEngine/') && r !== 'utils/imageEngine/index.js'), pngUsers.join(', ')).toBe(true)
     const users = FILES.filter(({ src }) => anyImports(src).some((s) => s.startsWith('node-forge') || s === 'fflate')).map((x) => x.rel).sort()
     // 2026-10-09: ZIP açma core.js'ten extract/zip.js'e taşındı (akışlı Inflate + kayıt sınırı) — yine extract/ altında.
-    expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', YEAR_ARCHIVE, XLSX_WRITER].sort())
+    expect(users).toEqual(['components/manualcert/extract/crypto.js', 'components/manualcert/extract/zip.js', YEAR_ARCHIVE, XLSX_WRITER,
+      PNG_WRITER, IMAGE_ZIP].sort())
   })
 
   it('Excel yazıcısı (fflate) yalnız tembel dışa aktarma modüllerinden gelir; onlar her yerde import() ile yüklenir', () => {

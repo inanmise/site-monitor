@@ -11,8 +11,8 @@ import { SmallBadge, TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import ImageSettingsFields from './ImageSettingsFields.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
 import {
-  imageUnavailable, isImageItem, noteText, optimizeSettings, phaseText, problemLine, resizeSettings, resultLine, resultMeta, similarityText,
-  suggestedWidth, suggestionText, validateSettings,
+  imageUnavailable, isImageItem, noteText, optimizeSettings, phaseText, problemLine, resizeSettings, resultLine, resultMeta, resultTone,
+  savingPctOf, similarityText, suggestedWidth, suggestionText, validateSettings,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import {
@@ -159,9 +159,16 @@ function Actions({ ctx, item, className, showSuggestion }) {
 export function ResultLine({ result, t, locale, className }) {
   const meta = resultMeta(result, t, locale)
   const sim = similarityText(result, locale)
+  const tone = resultTone(result)
+  const saving = savingPctOf(result)
+  // Ölçü öznitelikleri motorun sonucundan (sınama ve inceleme için: ekrandaki sayı motorun sayısı mı?)
   return (
-    <span data-slot="prs-it-result" data-kept={result.kept ? 'true' : undefined} className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <span className={cn('font-semibold tabular-nums', result.kept ? 'text-muted-foreground' : 'text-success', WRAP)}>{resultLine(result, t, locale)}</span>
+    <span data-slot="prs-it-result" data-kept={result.kept ? 'true' : undefined} data-tone={tone}
+      data-bytes={result.bytes ?? undefined} data-before={result.original?.bytes ?? undefined} data-saving={saving ?? undefined}
+      data-similarity={result.similarity ?? undefined} className={cn('flex min-w-0 flex-col gap-1', className)}>
+      <span className={cn('font-semibold tabular-nums', tone === 'smaller' ? 'text-success' : tone === 'larger' ? 'text-warning' : 'text-muted-foreground', WRAP)}>
+        {resultLine(result, t, locale)}
+      </span>
       {(meta || sim) && (
         <span className={cn('text-[11px] text-muted-foreground tabular-nums', WRAP)}>
           {[meta, sim ? t('prs.it.res.similarity', sim) : null].filter(Boolean).join(' · ')}

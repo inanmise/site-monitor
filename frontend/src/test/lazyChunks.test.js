@@ -187,6 +187,36 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(staticImports(read(page)).filter((s) => /imagetool\//.test(s))).toEqual(['./page/resourcescan/imagetool/imageToolBusy.js'])
   })
 
+  it('Görsel motoru (2026-11-14): kamu arayüzü yalnız küçük modülleri statik alır; ağır çekirdek Worker\'da ya da import(\'./core.js\') ile', () => {
+    const E = 'utils/imageEngine/'
+    const engineFiles = FILES.filter(({ rel: r }) => r.startsWith(E))
+    const base = (s) => s.replace(/^\.\//, '').replace(/\.js$/, '')
+    // index.js: yalnız sabitler / seçenek doğrulama / başlık okuma / önizleme çözmesi (statik); çekirdek yalnız import()
+    const LIGHT = ['errors', 'options', 'probe', 'platform']
+    expect(staticImports(read(`${E}index.js`)).map(base).sort()).toEqual([...LIGHT].sort())
+    expect([...new Set(dynamicImports(read(`${E}index.js`)))]).toEqual(['./core.js'])      // yorum satırı da geçer: tekil küme
+    expect(read(`${E}index.js`)).toMatch(/new Worker\(new URL\('\.\/engine\.worker\.js', import\.meta\.url\)/)
+    // Küçük modüller ağır parçaları (pipeline, kodlayıcılar, nicemleyici, fflate) içe aktarmaz
+    for (const f of LIGHT) {
+      expect(staticImports(read(`${E}${f}.js`)).map(base).every((s) => LIGHT.includes(s)), f).toBe(true)
+    }
+    // core.js'i statik olarak YALNIZ Worker alır; Worker dosyasını hiçbir modül içe aktarmaz (yalnız new URL ile kurulur)
+    // Motorun iç dosyasını kim alıyor: motor dizininden `./x.js`, dışarıdan `imageEngine/x` (başka dizinlerdeki aynı adlı
+    // dosyalar — ör. manualcert/extract/core.js — sayılmaz)
+    const importers = (name) => FILES.filter(({ rel: r, src }) => staticImports(src).some((s) =>
+      (r.startsWith(E) && new RegExp(`^\\./${name}(\\.js)?$`).test(s)) || new RegExp(`imageEngine/${name}(\\.js)?$`).test(s)))
+      .map((x) => x.rel).sort()
+    expect(importers('core')).toEqual([`${E}engine.worker.js`])
+    expect(importers('engine\\.worker')).toEqual([])
+    // pipeline (ve onun aldığı pngWriter → fflate) yalnız çekirdekten; motor dışından hiçbir dosya motorun iç dosyasını almaz
+    expect(importers('pipeline')).toEqual([`${E}core.js`])
+    expect(importers('pngWriter')).toEqual([`${E}pipeline.js`])
+    const outsideUsers = FILES.filter(({ rel: r }) => !r.startsWith(E))
+      .filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => /imageEngine\/(?!index(\.js)?$)/.test(s))).map((x) => x.rel)
+    expect(outsideUsers).toEqual([])
+    expect(engineFiles.length).toBeGreaterThan(10)
+  })
+
   it('Aktivite: ayrıntı sayfası, izleme zaman çizelgesi ve Excel yazıcısı yalnız açılınca yüklenir (2026-11-05)', () => {
     const log = 'components/ActivityLog.jsx'
     expect(hasStatic(log, /activity\/detail\/ActivityDetailPage(\.jsx)?$|activity\/timeline\/MonitorTimelineView(\.jsx)?$/)).toBe(false)

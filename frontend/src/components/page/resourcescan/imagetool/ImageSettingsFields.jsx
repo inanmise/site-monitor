@@ -4,7 +4,7 @@ import Field from '../../../ui/Field.jsx'
 import SegmentedControl from '../../../ui/SegmentedControl.jsx'
 import { formatNumber } from '../resourceScanModel.js'
 import { WRAP } from '../ResourceScanParts.jsx'
-import { FORMATS, METHODS, QUALITY_MODES } from './imageToolModel.js'
+import { FORMATS, METHODS, QUALITY_MODES, pngPaletteColors } from './imageToolModel.js'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
@@ -43,7 +43,9 @@ export default function ImageSettingsFields({
     <div data-slot="prs-it-settings" className="flex min-w-0 flex-col">
       {sections.format && (
         <Field label={t('prs.it.set.format')} name="format"
-          hint={supportKnown && !webp ? t('prs.it.set.webpOff') : t(`prs.it.set.formatHint.${s.format}`)}>
+          hint={supportKnown && !webp ? t('prs.it.set.webpOff')
+            : ['jpeg', 'png', 'webp'].includes(s.format) ? `${t(`prs.it.set.formatHint.${s.format}`)} ${t('prs.it.set.formatConvertNote')}`
+              : t(`prs.it.set.formatHint.${s.format}`)}>
           {({ id, describedBy }) => (
             <NativeSelect id={id} aria-describedby={describedBy} value={s.format} disabled={disabled} data-slot="prs-it-format"
               className={TOUCH_INPUT} onChange={(e) => onChange({ format: e.target.value })}>
@@ -68,7 +70,10 @@ export default function ImageSettingsFields({
             )}
           </Field>
           {s.qualityMode === 'manual' && (
-            <Field label={t('prs.it.set.qualityValue', formatNumber(s.quality, locale))} name="quality" error={err('quality')}>
+            <Field label={t('prs.it.set.qualityValue', formatNumber(s.quality, locale))} name="quality" error={err('quality')}
+              hint={s.format === 'jpeg' || s.format === 'webp' ? undefined
+                : pngPaletteColors(s.quality) === null ? t('prs.it.set.qualityPngLossless')
+                  : t('prs.it.set.qualityPngPalette', formatNumber(Number(s.quality), locale), formatNumber(pngPaletteColors(s.quality), locale))}>
               {({ labelId, describedBy }) => (
                 <Slider min={1} max={100} step={1} value={[Number(s.quality) || 1]} disabled={disabled} data-slot="prs-it-quality"
                   aria-describedby={describedBy} className="py-2 pointer-coarse:py-3"

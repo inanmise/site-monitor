@@ -4,10 +4,10 @@ import { useT, useDateLocale } from '../../../../i18n/index.jsx'
 import ModalShell from '../../../ui/ModalShell.jsx'
 import StatusBlock from '../../../ui/StatusBlock.jsx'
 import { LoadingBlock } from '../../../ui/Progress.jsx'
-import { formatPct, formatSize } from '../resourceScanModel.js'
+import { formatSize } from '../resourceScanModel.js'
 import { TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import * as engine from './engineClient.js'
-import { engineProblemText, resultMeta, savingPctOf, similarityText } from './imageToolModel.js'
+import { engineProblemText, growthPctOf, pctText, resultMeta, savingPctOf, similarityText } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
@@ -161,6 +161,7 @@ export default function ImageCompareDialog({ title, original, result, summary, o
   const onStageUp = () => { if (drag.current?.kind === 'pan') drag.current = null }
 
   const pct = savingPctOf(summary)
+  const growth = growthPctOf(summary)
   const sim = similarityText(summary, locale)
   const before = summary?.original?.bytes ?? original?.size ?? null
   const after = summary?.bytes ?? result?.size ?? null
@@ -171,11 +172,14 @@ export default function ImageCompareDialog({ title, original, result, summary, o
       <div data-slot="prs-it-compare-dialog" data-status={state.status} data-zoom={zoom} className="flex min-w-0 flex-col gap-3">
         <p className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{title}</p>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-          <dl data-slot="prs-it-cmp-sizes" className="m-0 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
+          <dl data-slot="prs-it-cmp-sizes" data-before={before ?? undefined} data-after={after ?? undefined} data-saving={pct ?? undefined} className="m-0 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
             <div className="flex gap-1.5"><dt className="text-muted-foreground">{t('prs.it.cmp.before')}</dt><dd className="m-0 font-semibold">{formatSize(before, { locale })}</dd></div>
             <div className="flex gap-1.5"><dt className="text-muted-foreground">{t('prs.it.cmp.after')}</dt><dd className="m-0 font-semibold">{formatSize(after, { locale })}</dd></div>
             {pct !== null && pct > 0 && (
-              <div className="flex gap-1.5"><dt className="text-muted-foreground">{t('prs.it.cmp.saving')}</dt><dd className="m-0 font-semibold text-success">{formatPct(pct, locale, pct < 10 ? 1 : 0)}</dd></div>
+              <div className="flex gap-1.5"><dt className="text-muted-foreground">{t('prs.it.cmp.saving')}</dt><dd data-slot="prs-it-cmp-saving" className="m-0 font-semibold text-success">{pctText(pct, locale)}</dd></div>
+            )}
+            {growth !== null && (
+              <div className="flex gap-1.5"><dt className="text-muted-foreground">{t('prs.it.cmp.larger')}</dt><dd data-slot="prs-it-cmp-larger" className="m-0 font-semibold text-warning">{pctText(growth, locale)}</dd></div>
             )}
             <div data-slot="prs-it-cmp-similarity" data-known={sim ? 'true' : 'false'} className="flex gap-1.5">
               <dt className="text-muted-foreground">{t('prs.it.cmp.similarity')}</dt>

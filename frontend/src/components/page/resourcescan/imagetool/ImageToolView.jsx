@@ -17,7 +17,7 @@ import { ResultLine } from './ImageActions.jsx'
 import ImageSettingsFields from './ImageSettingsFields.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
 import {
-  TOOL_MAX_FILES, dimsText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
+  TOOL_MAX_FILES, dimsText, pctText, phaseText, problemLine, settingsSummary, typeLabel, validateSettings, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -244,8 +244,11 @@ export default function ImageToolView({ onBack }) {
                 <p data-slot="prs-it-summary" role="status" aria-live="polite" className={cn('m-0 text-xs text-muted-foreground tabular-nums', WRAP)}>
                   {queue.length === 0 ? t('prs.it.tool.empty')
                     : done.length > 0
-                      ? plural(t, 'prs.it.tool.summaryDone', queue.length, formatNumber(queue.length, locale), formatNumber(done.length, locale),
-                        formatSize(before, { locale }), formatSize(after, { locale }), formatPct(savedPct, locale, savedPct < 10 ? 1 : 0))
+                      ? (savedPct > 0
+                        ? plural(t, 'prs.it.tool.summaryDone', queue.length, formatNumber(queue.length, locale), formatNumber(done.length, locale),
+                          formatSize(before, { locale }), formatSize(after, { locale }), pctText(savedPct, locale))
+                        : plural(t, 'prs.it.tool.summaryDoneNoSaving', queue.length, formatNumber(queue.length, locale), formatNumber(done.length, locale),
+                          formatSize(before, { locale }), formatSize(after, { locale })))
                       : plural(t, 'prs.it.tool.summary', queue.length, formatNumber(queue.length, locale))}
                 </p>
                 {queue.length > 0 && (

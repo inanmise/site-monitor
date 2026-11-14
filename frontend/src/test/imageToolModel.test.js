@@ -11,6 +11,7 @@ import {
   baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, imageUnavailable, isImageItem, isSvgItem, largeImages, mappingCsv,
   mappingRows, missingText, noteText, optimizeSettings, optionsKey, outputName, phaseText, pictureSnippet, problemLine, processedCells,
   projectionImages, projectionView, resizeSettings, responsiveWidths, resultLine, resultMeta, resultSummary, safeFileBase, savingPctOf,
+  growthPctOf, pctText, pngPaletteColors, resultTone,
   serverProblemCode, serverProblemText, settingsSummary, similarityText, slugFileBase, splitName, suggestedWidth, suggestionText,
   uniqueName, validateSettings, zipFileName,
 } from '../components/page/resourcescan/imagetool/imageToolModel.js'
@@ -290,10 +291,49 @@ describe('görsel aracı — sonuç özeti ve metinleri', () => {
     expect(savingPctOf(null)).toBe(null)
   })
 
+  it('pctText: küçük yüzde sahte 0 olmaz (1 altı 2 ondalık, 10 altı 1 ondalık, 0,01 altı "<"); bilinmeyen boş', () => {
+    expect(pctText(75, 'tr-TR')).toBe('%75')
+    expect(pctText(7.25, 'tr-TR')).toBe('%7,3')
+    expect(pctText(0.4, 'tr-TR')).toBe('%0,4')
+    expect(pctText(0.004, 'tr-TR')).toBe('<%0,01')
+    expect(pctText(0, 'tr-TR')).toBe('%0')
+    expect(pctText(null, 'tr-TR')).toBe('')
+    expect(pctText(12.5, 'en-GB')).toBe('13%')
+    expect(pctText(99.64, 'tr-TR')).toBe('%99,6')          // "%100" yazılmaz — bir şey kaldı
+    expect(pctText(99.97, 'en-GB')).toBe('99.9%')
+    expect(pctText(100, 'en-GB')).toBe('100%')
+  })
+
+  it('pngPaletteColors: motor kuralı — 100 kayıpsız (null), altı round(256·(q/100)²), en az 8', () => {
+    expect(pngPaletteColors(100)).toBe(null)
+    expect(pngPaletteColors(90)).toBe(207)
+    expect(pngPaletteColors(50)).toBe(64)
+    expect(pngPaletteColors(10)).toBe(8)
+    expect(pngPaletteColors(1)).toBe(8)
+    expect(pngPaletteColors('')).toBe(null)
+    expect(pngPaletteColors(0)).toBe(null)
+  })
+
   it('resultLine / resultMeta / similarityText', () => {
     expect(resultLine(summary(), tr, 'tr-TR')).toMatch(/→/)
     expect(resultLine(summary({ kept: true, bytes: 600_000, savingPct: 0 }), t, 'tr-TR')).toMatch(/^prs\.it\.res\.kept\(/)
     expect(resultLine(resultSummary({ blob: {} }), t, 'tr-TR')).toBe('')
+    // Gerçek motor: açıkça istenen biçime dönüşüm özgünden BÜYÜK çıkabilir (savingPct 0, kept false) — "korundu" denmez
+    const larger = summary({ bytes: 720_000, savingPct: 0, kept: false })
+    expect(resultTone(larger)).toBe('larger')
+    expect(growthPctOf(larger)).toBe(20)
+    expect(resultLine(larger, t, 'tr-TR')).toBe('prs.it.res.larger(586 KB|703 KB|%20)')
+    const same = summary({ bytes: 600_000, savingPct: 0, kept: false })
+    expect(resultTone(same)).toBe('same')
+    expect(resultLine(same, t, 'tr-TR')).toBe('prs.it.res.noSaving(586 KB|586 KB)')
+    // Motor yüzdesi 0 ama bayt azaldı (yuvarlama): baytlardan hesaplanır, sahte "kazanç yok" yok
+    const tiny = summary({ bytes: 599_700, savingPct: 0 })
+    expect(resultTone(tiny)).toBe('smaller')
+    expect(resultLine(tiny, t, 'tr-TR')).toBe('prs.img.optimizedTo(586 KB|586 KB|%0,05)')
+    expect(resultTone(summary({ kept: true, bytes: 600_000 }))).toBe('kept')
+    expect(resultTone(summary({ original: { bytes: null } }))).toBe('unknown')
+    expect(resultTone(null)).toBe('unknown')
+    expect(growthPctOf(summary())).toBe(null)
     expect(resultMeta(summary(), t, 'tr-TR')).toBe('3000×2000 → 1200×800 · JPEG → WebP · prs.it.res.quality(78)')
     expect(resultMeta(summary({ type: 'jpeg', width: 3000, height: 2000, quality: null }), t, 'tr-TR')).toBe('3000×2000 · JPEG')
     expect(resultMeta(summary({ type: 'png', colors: 256, quality: null }), t, 'tr-TR')).toContain('prs.it.res.colors(256)')
@@ -345,10 +385,43 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(serverProblemText({ status: 404 }, t, 'tr-TR')).toBe('prs.it.srv.unsupported')
   })
 
+  it('motor parametre metinleri ve yeni sonuç / ayar metinleri TR + EN dolu (≥ 25 karakter iletiler)', () => {
+    const need = ['prs.it.eng.UNSUPPORTED_FORMAT.svg', 'prs.it.eng.UNSUPPORTED_FORMAT.pdf', 'prs.it.eng.UNSUPPORTED_FORMAT.tiff',
+      'prs.it.eng.UNSUPPORTED_FORMAT.heic', 'prs.it.eng.UNSUPPORTED_FORMAT.empty', 'prs.it.eng.TOO_LARGE.size', 'prs.it.eng.TOO_MANY_PIXELS.dims',
+      'prs.it.eng.DECODE_FAILED.timeout', 'prs.it.eng.BROWSER_UNSUPPORTED.memory', 'prs.it.eng.ENCODE_FAILED.timeout', 'prs.it.eng.ENCODE_FAILED.type',
+      'prs.it.set.qualityPngLossless', 'prs.it.set.qualityPngPalette', 'prs.it.set.formatConvertNote']
+    for (const k of need) {
+      expect(typeof TR[k] === 'string' && TR[k].trim().length >= 25, `TR ${k}`).toBe(true)
+      expect(typeof EN[k] === 'string' && EN[k].trim().length >= 25, `EN ${k}`).toBe(true)
+    }
+    for (const k of ['prs.it.res.larger', 'prs.it.res.noSaving', 'prs.it.cmp.larger']) {
+      expect(TR[k] && EN[k], k).toBeTruthy()
+    }
+    // Küçük resim dolgusu görselin KENDİ arka planıdır; arka plan rengi yalnız saydam → JPEG içindir (motor davranışı)
+    expect(EN['prs.it.note.THUMB_PADDED']).toMatch(/own background/)
+    expect(EN['prs.it.set.methodHint.thumb']).toMatch(/own background/)
+    expect(EN['prs.it.set.backgroundHint']).toMatch(/only/)
+  })
+
   it('engineProblemText / problemLine: her motor kodunun kendi metni; sınır değerleri iletide; bilinmeyen → genel', () => {
     for (const c of engine.ERROR_CODES) expect(engineProblemText(c, {}, t, 'tr-TR')).toMatch(new RegExp(`^prs\\.it\\.eng\\.${c}`))
     expect(engineProblemText('TOO_LARGE', { maxBytes: 25 * 1024 * 1024 }, t, 'tr-TR')).toBe('prs.it.eng.TOO_LARGE(25 MB)')
     expect(engineProblemText('TOO_MANY_PIXELS', { maxPixels: 50_000_000 }, t, 'tr-TR')).toBe('prs.it.eng.TOO_MANY_PIXELS(50)')
+    // Motorun gerçek parametreleri (utils/imageEngine/errors.js): algılanan tür, boyut, ölçü, neden — ham kod yazılmaz
+    expect(engineProblemText('UNSUPPORTED_FORMAT', { detected: 'svg' }, t, 'tr-TR')).toBe('prs.it.eng.UNSUPPORTED_FORMAT.svg')
+    for (const d of ['pdf', 'tiff', 'heic', 'empty']) expect(engineProblemText('UNSUPPORTED_FORMAT', { detected: d }, t, 'tr-TR')).toBe(`prs.it.eng.UNSUPPORTED_FORMAT.${d}`)
+    expect(engineProblemText('UNSUPPORTED_FORMAT', { detected: 'unknown' }, t, 'tr-TR')).toBe('prs.it.eng.UNSUPPORTED_FORMAT')
+    expect(engineProblemText('TOO_LARGE', { bytes: 30 * 1024 * 1024, maxBytes: 25 * 1024 * 1024 }, t, 'tr-TR')).toBe('prs.it.eng.TOO_LARGE.size(30 MB|25 MB)')
+    expect(engineProblemText('TOO_MANY_PIXELS', { width: 12000, height: 9000, maxPixels: 50_000_000, maxSide: 30000 }, t, 'tr-TR'))
+      .toBe('prs.it.eng.TOO_MANY_PIXELS.dims(12.000|9.000|50|30.000)')
+    expect(engineProblemText('DECODE_FAILED', { reason: 'timeout' }, t, 'tr-TR')).toBe('prs.it.eng.DECODE_FAILED.timeout')
+    expect(engineProblemText('DECODE_FAILED', { reason: 'header' }, t, 'tr-TR')).toBe('prs.it.eng.DECODE_FAILED')
+    expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'memory' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED.memory')
+    expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'worker' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED')
+    expect(engineProblemText('ENCODE_FAILED', { reason: 'timeout' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED.timeout')
+    expect(engineProblemText('ENCODE_FAILED', { reason: 'unsupported_type' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED.type')
+    expect(engineProblemText('ENCODE_FAILED', { reason: 'internal', name: 'TypeError' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED')
+    expect(engineProblemText('INVALID_OPTIONS', { field: 'resize.width', reason: 'range' }, t, 'tr-TR')).toBe('prs.it.eng.INVALID_OPTIONS')
     expect(engineProblemText('YENI', {}, t, 'tr-TR')).toBe('prs.it.eng.other')
     expect(problemLine({ kind: 'engine', code: 'DECODE_FAILED', params: {} }, t, 'tr-TR')).toBe('prs.it.eng.DECODE_FAILED')
     expect(problemLine({ kind: 'server', res: { status: 401 } }, t, 'tr-TR')).toBe('prs.it.srv.session')
