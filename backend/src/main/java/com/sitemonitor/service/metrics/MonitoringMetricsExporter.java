@@ -166,6 +166,9 @@ public class MonitoringMetricsExporter {
     private AlertStormRepository stormRepo;
     private TeamRepository teamRepo;
     private com.sitemonitor.repository.MonitorBaselineConfigRepository baselineConfigRepo;   // dinamik taban çizgisi benimseme
+    /** Sayfa Hızı (2026-11-14, madde 20): izlemeler + izleme başına son ölçüm (iki indeksli sorgu, kurum aileleri turunda). */
+    private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    private com.sitemonitor.repository.PageSpeedCheckRepository pageSpeedCheckRepo;
     private JdbcTemplate jdbc;
     private WatchdogService watchdog;
     private ClusterScheduleService cluster;
@@ -261,6 +264,8 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) public void setStormRepo(AlertStormRepository v) { this.stormRepo = v; }
     @Autowired(required = false) public void setTeamRepo(TeamRepository v) { this.teamRepo = v; }
     @Autowired(required = false) public void setBaselineConfigRepo(com.sitemonitor.repository.MonitorBaselineConfigRepository v) { this.baselineConfigRepo = v; }
+    @Autowired(required = false) public void setPageSpeedMonitorRepo(com.sitemonitor.repository.PageSpeedMonitorRepository v) { this.pageSpeedMonitorRepo = v; }
+    @Autowired(required = false) public void setPageSpeedCheckRepo(com.sitemonitor.repository.PageSpeedCheckRepository v) { this.pageSpeedCheckRepo = v; }
     @Autowired(required = false) public void setJdbc(JdbcTemplate v) { this.jdbc = v; }
     @Autowired(required = false) @Lazy public void setWatchdog(WatchdogService v) { this.watchdog = v; }
     @Autowired(required = false) @Lazy public void setCluster(ClusterScheduleService v) { this.cluster = v; }
@@ -647,6 +652,13 @@ public class MonitoringMetricsExporter {
             return m;
         });
         if (baselineCounts != null) MonitoringMetricsModel.baseline(f, baselineCounts);
+
+        // Sayfa Hızı (2026-11-14, madde 20): izleme + son ölçüm → takım × durum / ölçü toplamları ve izleme başına satırlar.
+        // Okunamazsa aile düşer (source_up{source="pagespeed"} = 0) — sahte 0 yok. Depo yoksa kaynak satırı da yazılmaz.
+        if (teams != null && pageSpeedMonitorRepo != null && pageSpeedCheckRepo != null) {
+            List<MonitoringMetricsModel.PageSpeedRow> ps = read(sources, "pagespeed", this::readPageSpeedRows);
+            if (ps != null) MonitoringMetricsModel.pageSpeed(f, ps, teams, perEntity, maxEntities);
+        }
 
         // Envanter sahipleri (alarm sahipliği + sertifika UG takımı) — bir kez okunur
         Map<String, Owners> owners = read(sources, "inventory", () -> {
@@ -1129,6 +1141,26 @@ public class MonitoringMetricsExporter {
     }
 
     /** Kaynak okuma: başarı → değer + {@code source=1}; istisna → null + {@code source=0}; bağımlılık yok (null) → yazılmaz. */
+    /** Sayfa hızı izlemeleri + izleme başına son ölçüm → model satırları (iki sorgu; tur başına bir kez). */
+    private List<MonitoringMetricsModel.PageSpeedRow> readPageSpeedRows() {
+        Map<Long, com.sitemonitor.model.PageSpeedCheck> latest = new HashMap<>();
+        for (com.sitemonitor.model.PageSpeedCheck c : pageSpeedCheckRepo.findLatestPerMonitor()) {
+            if (c != null && c.getMonitorId() != null) latest.put(c.getMonitorId(), c);
+        }
+        List<MonitoringMetricsModel.PageSpeedRow> l = new ArrayList<>();
+        for (com.sitemonitor.model.PageSpeedMonitor m : pageSpeedMonitorRepo.findAllByOrderByNameAsc()) {
+            if (m == null || m.getId() == null) continue;
+            com.sitemonitor.model.PageSpeedCheck c = latest.get(m.getId());
+            l.add(new MonitoringMetricsModel.PageSpeedRow(m.getId(), m.getName() != null ? m.getName() : m.getUrl(), m.getUrl(),
+                    m.getGroupName(), m.getTeamId(), !Boolean.FALSE.equals(m.getActive()),
+                    c == null ? null : !Boolean.FALSE.equals(c.getOk()),
+                    c == null ? null : c.getResponseMs(), c == null ? null : c.getTtfbMs(),
+                    c == null ? null : c.getTotalBytes(), c == null ? null : c.getRequestCount(),
+                    c == null ? null : c.getBreachedMetrics()));
+        }
+        return l;
+    }
+
     private <T> T read(Map<String, Boolean> sources, String name, Supplier<T> supplier) {
         try {
             T v = supplier.get();

@@ -102,6 +102,70 @@ class MonitoringMetricsModelTest {
     }
 
     @Test
+    @DisplayName("sayfa hızı: takım × durum ve takım × ölçü sıfırlarla; izleme başına satır yalnız ölçülmüş etkin sayfada; tavan aşan sayfayı korur")
+    void pageSpeedFamilies() {
+        List<MonitoringMetricsModel.PageSpeedRow> rows = List.of(
+                new MonitoringMetricsModel.PageSpeedRow(1, "Ana sayfa", "https://www.example.com/?token=gizli", "Web", 14L, true,
+                        true, 1800, 220, 900_000L, 42, ""),
+                new MonitoringMetricsModel.PageSpeedRow(2, "Ödeme", "https://pay.example.com", null, 14L, true,
+                        true, 4200, 300, 3_000_000L, 120, "LOAD, js"),
+                new MonitoringMetricsModel.PageSpeedRow(3, "Kapalı", "https://down.example.com", null, 14L, true,
+                        false, 30_000, null, 0L, 0, null),
+                new MonitoringMetricsModel.PageSpeedRow(4, "Yeni", "https://new.example.com", null, 15L, true,
+                        null, null, null, null, null, null),
+                new MonitoringMetricsModel.PageSpeedRow(5, "Eski", "https://old.example.com", null, null, false,
+                        true, 900, 100, 10_000L, 5, "SIZE"));
+        Families f = new Families();
+        MonitoringMetricsModel.pageSpeed(f, rows, DIR, true, 100);
+
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "14", "state", "ok"))).isEqualTo(1);
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "14", "state", "over_budget"))).isEqualTo(1);
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "14", "state", "down"))).isEqualTo(1);
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "14", "state", "unknown"))).isEqualTo(0);   // sıfır dahil
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "15", "state", "unknown"))).isEqualTo(1);
+        assertThat(value(f, PAGESPEED_PAGES, Map.of("team_id", "0", "state", "paused"))).isEqualTo(1);
+        assertThat(f.get(PAGESPEED_PAGES)).hasSize(3 * MonitoringMetricsModel.PAGESPEED_STATES.size());
+
+        assertThat(value(f, PAGESPEED_BREACHES, Map.of("team_id", "14", "metric", "LOAD"))).isEqualTo(1);
+        assertThat(value(f, PAGESPEED_BREACHES, Map.of("team_id", "14", "metric", "JS"))).isEqualTo(1);   // küçük harf okunur
+        assertThat(value(f, PAGESPEED_BREACHES, Map.of("team_id", "14", "metric", "TTFB"))).isEqualTo(0);
+        assertThat(value(f, PAGESPEED_BREACHES, Map.of("team_id", "0", "metric", "SIZE"))).isEqualTo(0);  // duraklatılmış sayılmaz
+        assertThat(f.get(PAGESPEED_BREACHES)).hasSize(3 * com.sitemonitor.service.page.PageSpeedRules.BREACH_KEYS.size());
+
+        // İzleme başına: yalnız ölçülmüş ETKİN sayfalar (1, 2); alınamayan / ölçülmemiş / duraklatılmış satırsız (bilinmiyor ≠ 0)
+        assertThat(value(f, PAGESPEED_LOAD_MS, Map.of("monitor_id", "2", "type", "pagespeed"))).isEqualTo(4200);
+        assertThat(value(f, PAGESPEED_TTFB_MS, Map.of("monitor_id", "1"))).isEqualTo(220);
+        assertThat(value(f, PAGESPEED_BYTES, Map.of("monitor_id", "1"))).isEqualTo(900_000);
+        assertThat(value(f, PAGESPEED_REQUESTS, Map.of("monitor_id", "2"))).isEqualTo(120);
+        assertThat(value(f, PAGESPEED_BUDGET_BREACHED, Map.of("monitor_id", "1"))).isEqualTo(0);
+        assertThat(value(f, PAGESPEED_BUDGET_BREACHED, Map.of("monitor_id", "2"))).isEqualTo(1);
+        for (String id : List.of("3", "4", "5")) {
+            assertThat(has(f, PAGESPEED_LOAD_MS, Map.of("monitor_id", id))).isFalse();
+            assertThat(has(f, PAGESPEED_BUDGET_BREACHED, Map.of("monitor_id", id))).isFalse();
+        }
+        // Hedef yalnız şema + ana bilgisayar + yol — sorgu dizesi asla etikette değil
+        assertThat(f.get(PAGESPEED_LOAD_MS)).allSatisfy(r -> assertThat(r.labels().get("target")).doesNotContain("token"));
+
+        // İzleme başına kapalı → yalnız toplamlar
+        Families off = new Families();
+        MonitoringMetricsModel.pageSpeed(off, rows, DIR, false, 100);
+        assertThat(off.get(PAGESPEED_LOAD_MS)).isEmpty();
+        assertThat(off.get(PAGESPEED_PAGES)).isNotEmpty();
+
+        // Tavan: eşiği aşan sayfa korunur, tavan işaretlenir
+        Families capped = new Families();
+        MonitoringMetricsModel.pageSpeed(capped, rows, DIR, true, 1);
+        assertThat(capped.get(PAGESPEED_LOAD_MS)).hasSize(1);
+        assertThat(value(capped, PAGESPEED_LOAD_MS, Map.of("monitor_id", "2"))).isEqualTo(4200);
+        assertThat(capped.capped()).containsKey("monitors");
+
+        // Okunamayan kaynak (null) → hiç satır
+        Families none = new Families();
+        MonitoringMetricsModel.pageSpeed(none, null, DIR, true, 100);
+        assertThat(none.get(PAGESPEED_PAGES)).isEmpty();
+    }
+
+    @Test
     @DisplayName("izlemeler: durum kodu, up 1/0 (gecikmiş/duraklatılmış yok), yanıt / son kontrol / alarm alanları; toplamlar her durumu sıfırla yazar")
     void monitorRowsAndAggregates() {
         Families f = new Families();

@@ -163,6 +163,45 @@ class MonitoringMetricsExporterTest {
     }
 
     @Test
+    @DisplayName("sayfa hızı (madde 20): izleme + son ölçüm → durum / ölçü toplamları ve izleme başına satırlar; okunamazsa aile "
+            + "düşer, kaynak 0; depo yoksa kaynak satırı da yok")
+    void pageSpeedMeters() {
+        assertThat(exists(MonitoringMetricNames.PAGESPEED_PAGES)).as("depo yokken aile yok").isFalse();
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", "pagespeed")).isFalse();
+
+        com.sitemonitor.repository.PageSpeedMonitorRepository psm = mock(com.sitemonitor.repository.PageSpeedMonitorRepository.class);
+        com.sitemonitor.repository.PageSpeedCheckRepository psc = mock(com.sitemonitor.repository.PageSpeedCheckRepository.class);
+        exporter.setPageSpeedMonitorRepo(psm);
+        exporter.setPageSpeedCheckRepo(psc);
+        com.sitemonitor.model.PageSpeedMonitor m1 = new com.sitemonitor.model.PageSpeedMonitor();
+        m1.setId(31L); m1.setName("Ödeme sayfası"); m1.setUrl("https://pay.example.com"); m1.setTeamId(14L); m1.setActive(true);
+        com.sitemonitor.model.PageSpeedMonitor m2 = new com.sitemonitor.model.PageSpeedMonitor();
+        m2.setId(32L); m2.setName("Yeni"); m2.setUrl("https://new.example.com"); m2.setTeamId(14L); m2.setActive(true);
+        com.sitemonitor.model.PageSpeedCheck c1 = new com.sitemonitor.model.PageSpeedCheck();
+        c1.setMonitorId(31L); c1.setOk(true); c1.setResponseMs(4100); c1.setTtfbMs(250); c1.setTotalBytes(2_000_000L);
+        c1.setRequestCount(80); c1.setBreachedMetrics("LOAD,IMG");
+        when(psm.findAllByOrderByNameAsc()).thenReturn(List.of(m1, m2));
+        when(psc.findLatestPerMonitor()).thenReturn(List.of(c1));
+
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_PAGES, "team_id", "14", "state", "over_budget")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_PAGES, "team_id", "14", "state", "unknown")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_PAGES, "team_id", "14", "state", "ok")).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_BREACHES, "team_id", "14", "metric", "IMG")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_LOAD_MS, "monitor_id", "31")).isEqualTo(4100);
+        assertThat(gauge(MonitoringMetricNames.PAGESPEED_BUDGET_BREACHED, "monitor_id", "31")).isEqualTo(1);
+        assertThat(exists(MonitoringMetricNames.PAGESPEED_LOAD_MS, "monitor_id", "32")).as("ölçülmemiş sayfa → değer yok").isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "pagespeed")).isEqualTo(1);
+
+        when(psc.findLatestPerMonitor()).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.PAGESPEED_PAGES)).as("okunamadı → aile düşer, sahte 0 yok").isFalse();
+        assertThat(exists(MonitoringMetricNames.PAGESPEED_LOAD_MS)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "pagespeed")).isEqualTo(0);
+    }
+
+    @Test
     @DisplayName("tam tur: izleme, alarm, sertifika, alan adı, fırtına, bildirim, push, kendi sağlığı, lider, kilit, veritabanı, bakım")
     void fullRefresh() {
         MonitoringMetricsExporter.Status s = exporter.refresh();
