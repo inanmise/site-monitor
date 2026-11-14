@@ -33,6 +33,7 @@ import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import { CARD_CHECK, MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   alarmMatchesStatus, blacklistOf, cardSourceTag, eppChips, expiryKey, expiryTone, lifeOf, lockOf, nsOf, planChipOf,
   statusKey, unknownReasonOf,
@@ -146,6 +147,7 @@ describe('DomainMonitorCard — Zengin', () => {
     expect(container.querySelector('[data-slot="domain-expiry"] time')).toHaveAttribute('dateTime', expiryKey(base))
     expect(screen.getByText('Example Registrar Ltd.')).toHaveAttribute('title', 'Example Registrar Ltd. · IANA 9999')
     expect(container.querySelector('[data-slot="domain-name"]').textContent).toBe('Kurumsal site')
+    expectWraps(container.querySelector('[data-slot="domain-name"]'), 'izleme adı')   // ad sarar (2026-11-14)
     expect(container.querySelector('[data-slot="meta-team"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="domain-plan"]')).toBeNull()
     expect(card.className).not.toMatch(/border-l-|before:/)   // sol şerit YOK
@@ -358,12 +360,14 @@ describe('DomainMonitorCard — Zengin', () => {
     expect(screen.queryByRole('button', { name: /More actions|Diğer işlemler/ })).toBeNull()
   })
 
-  it('uzun alan adı iki satıra kırılır (taşmaz); dokunmatikte 40 px hedefler; son kontrol göreli + tam zaman', () => {
+  it('uzun alan adı KESİLMEZ, sarar (satır sınırı yok, taşmaz); dokunmatikte 40 px hedefler; son kontrol göreli + tam zaman', () => {
     const long = 'odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com'
     const { container } = renderCard({ domain: long, name: long, status_codes: ['clientHold', 'a', 'b', 'c', 'd'], ns_resolves: false })
     const text = container.querySelector('[data-monitor-open] > span')
-    expect(container.querySelector('[data-monitor-open]').className).toMatch(/\[&>span\]:line-clamp-2/)
-    expect(container.querySelector('[data-monitor-open]').className).toMatch(/\[&>span\]:break-all/)
+    // 2026-11-14 (kullanıcı kararı — adlar ve uzun metin kesilmez): eskiden iki satıra kırpılıyordu; şimdi tamamı görünür
+    expectTitleWraps(container.querySelector('[data-monitor-open]'))
+    expect(container.querySelector('[data-monitor-open]').className).not.toMatch(/break-all/)
+    expect(text.textContent).toBe(long)
     expect(text).toHaveAttribute('title', long)
     expect(container.querySelector('[data-slot="domain-name"]')).toBeNull()   // ad = alan adı → ikinci satır yok
     for (const h of container.querySelectorAll('[data-chip] ')) {

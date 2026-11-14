@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within, act } from './test-utils.jsx'
 import DnsMonitorCard from '../components/dns/DnsMonitorCard.jsx'
 import { formatTtl, responseTone, splitValues, unexpectedValues, mxParts, LONG_VALUE } from '../components/dns/dnsValue.js'
 import { MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import { EN } from '../i18n/en.js'
@@ -245,6 +246,9 @@ describe('DnsMonitorCard', () => {
     expect(time.textContent).toMatch(/12 min ago/)
     expect(time.querySelector('time')).toHaveAttribute('dateTime', expect.stringMatching(/^\d{4}-\d\d-\d\dT/))
     expect(slot(card, 'dns-name').textContent).toBe('Mail exchangers')
+    // ad ve alan adı başlığı kesilmez, sarar (2026-11-14, adlar ve uzun metin kesilmez)
+    expectWraps(slot(card, 'dns-name'), 'izleme adı')
+    expectTitleWraps(card.querySelector('[data-monitor-open]'))
   })
 
   it('telefon: değer kopyala düğmeleri dokunmatikte 40 px ve görünür; değerler kırılarak sarar (yatay taşma yok)', () => {
@@ -283,6 +287,7 @@ describe('DnsMonitorCard — Kompakt / Zengin yoğunluk', () => {
     expect(within(card).getByText('Healthy')).toBeInTheDocument()
     expect(slot(card, 'dns-record-type').textContent).toBe('Record Type: A')
     expect(slot(card, 'dns-name').textContent).toBe('Kurumsal site')
+    expectWraps(slot(card, 'dns-name'), 'kompakt ad')
     const sum = slot(card, 'dns-compact')
     expect(sum).toHaveAttribute('data-count', '3')
     expect(slot(sum, 'dns-compact-value').textContent).toBe('203.0.113.10')

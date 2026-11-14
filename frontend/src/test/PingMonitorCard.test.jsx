@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
 import PingMonitorCard from '../components/ping/PingMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import { CARD_CHECK } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   failureReason, intervalText, latencyBaseline, lossTone, pingStatusKey, rttAssessment, signedPercent,
 } from '../components/ping/pingCardModel.js'
@@ -214,6 +215,8 @@ describe('PingMonitorCard', () => {
     const chips = [...container.querySelectorAll('[data-slot="ping-protocol"] [data-chip]')].map((c) => c.textContent)
     expect(chips).toEqual(['ICMPv6', 'IPv6', expect.stringMatching(/^5 (packets|paket)$/), expect.stringMatching(/every 5 min|her 5 dk/)])
     expect(container.querySelector('[data-slot="ping-name"]').textContent).toBe('Core router')
+    expectWraps(container.querySelector('[data-slot="ping-name"]'), 'izleme adı')   // ad sarar (2026-11-14)
+    expectTitleWraps(container.querySelector('[data-monitor-open]'))         // host başlığı sarar
     const tags = container.querySelector('[data-slot="ping-tags"]')
     expect([...tags.querySelectorAll('[data-slot="badge"]')].map((b) => b.textContent)).toEqual(['prod', 'network', 'edge', '+2dr, critical'])
     expect(container.querySelector('[data-slot="meta-team"]')).not.toBeNull()
@@ -257,6 +260,8 @@ describe('PingMonitorCard — Kompakt / Zengin', () => {
     expect(screen.getByRole('button', { name: /^gw\.example\.com — (open details|detayları aç)$/ })).toBeInTheDocument()
     const sub = slot(container, 'card-compact-sub')
     expect(slot(sub, 'ping-name').textContent).toBe('Core router')
+    expectWraps(slot(sub, 'ping-name'), 'kompakt ad')   // kompakt ikincil satır da kesilmez (2026-11-14)
+    expect(slot(sub, 'ping-name')).not.toHaveAttribute('title')   // metin tamamen görünür; ipucu gereksiz
     expect(slot(sub, 'meta-team').textContent).toMatch(/Takım A/)
     expect(sub.textContent).not.toMatch(/Core Network|prod/)          // grup/etiket yalnız Zengin'de
     // dokunmatikte satır 44 px (takım rozetinin 40 px'lik ::after dokunma alanı satırın içinde kalır), rozet sağa yaslı

@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
 import ScriptedMonitorCard from '../components/scripted/ScriptedMonitorCard.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 import { CARD_CHECK, MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   checkCounts, durationAssessment, errorGist, failedCheckNames, humanizeMs, isBrowserScript, runFailure, scenarioTarget, versionDrift,
 } from '../components/scripted/scriptedCardModel.js'
@@ -209,6 +210,10 @@ describe('ScriptedMonitorCard', () => {
     }, { onOpen })
     const target = container.querySelector('[data-slot="scripted-target"]')
     expect(target.textContent).toBe('Target: portal.example.com+1and 1 more host')
+    // hedef host kesilmez, sarar (2026-11-14); tam adres ipucunda
+    const host = target.querySelector('span.font-mono')
+    expectWraps(host, 'hedef host')
+    expect(host).toHaveAttribute('title', 'https://portal.example.com')
     fireEvent.click(screen.getByRole('button', { name: 'Portal login — Copy target URL' }))
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://portal.example.com'))
     expect(onOpen).not.toHaveBeenCalled()
@@ -217,7 +222,7 @@ describe('ScriptedMonitorCard', () => {
     expect(tag.textContent).toBe('k6 · browser')
   })
 
-  it('başlık GERÇEK düğme ve detayı açar (uzun ad iki satıra kadar); seçim kutusu/eylemler detayı AÇMAZ; adlar satırı taşır', () => {
+  it('başlık GERÇEK düğme ve detayı açar (uzun ad KESİLMEZ, sarar); seçim kutusu/eylemler detayı AÇMAZ; adlar satırı taşır', () => {
     const onOpen = vi.fn()
     const onSel = vi.fn()
     renderCard({}, {
@@ -227,7 +232,7 @@ describe('ScriptedMonitorCard', () => {
     })
     const title = screen.getByRole('button', { name: 'Portal login — open details' })
     expect(title).toHaveAttribute('data-monitor-open', 'true')
-    expect(title.className).toContain('[&>span]:line-clamp-2')
+    expectTitleWraps(title)   // 2026-11-14: eskiden iki satır sınırı vardı; ad artık tamamen görünür
     fireEvent.click(title)
     expect(onOpen).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Portal login for bulk action' }))
@@ -315,9 +320,9 @@ describe('ScriptedMonitorCard — yoğunluk (Kompakt / Zengin)', () => {
     const meta = container.querySelector('[data-slot="monitor-card-meta"]')
     expect(meta.children).toHaveLength(1)
     expect(meta.querySelector('[data-slot="meta-team"]')).toHaveTextContent('Takım A')
-    // Başlık tek satır (iki satır sınırı yalnız Zengin'de) ve detayı açar; seçim ve eylemler çalışır
+    // Başlık Kompakt'ta da KESİLMEZ, sarar (2026-11-14; eskiden tek satıra kırpılıyordu) ve detayı açar; seçim ve eylemler çalışır
     const title = screen.getByRole('button', { name: 'Portal login — open details' })
-    expect(title.className).not.toContain('line-clamp-2')
+    expectTitleWraps(title)
     fireEvent.click(title)
     expect(onOpen).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Portal login for bulk action' }))

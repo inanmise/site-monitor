@@ -125,7 +125,7 @@ export default function PageSpeedMonitorCard({
   )
 }
 
-/** Başlık URL'i: şema yalnız https DEĞİLSE (soluk), host vurgulu, yol + sorgu soluk; kırpma MonitorCardTitle'da. */
+/** Başlık URL'i: şema yalnız https DEĞİLSE (soluk), host vurgulu, yol + sorgu soluk; uzun adres sarar (MonitorCardTitle). */
 function UrlText({ url }) {
   const { scheme, host, path } = urlParts(url)
   return (

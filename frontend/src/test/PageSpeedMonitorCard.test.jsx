@@ -6,6 +6,7 @@ import {
 } from '../components/pagespeed/pageSpeedCardModel.js'
 import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 import { MonitorStatusBadge, CARD_CHECK } from '../components/monitoring/MonitorCard.jsx'
+import { expectTitleWraps } from './helpers/cardWrap.js'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import { Checkbox } from '@/components/shadcn/checkbox'
 
@@ -247,6 +248,7 @@ describe('PageSpeedMonitorCard — haftalık çip, durumlar, başlık', () => {
     const title = screen.getByRole('button', { name: /^https:\/\/www\.example\.com\/giris\?lang=tr — (open details|detayları aç)$/ })
     expect(title).toHaveAttribute('data-monitor-open', 'true')
     expect(title.textContent).toBe('www.example.com/giris?lang=tr')
+    expectTitleWraps(title)   // uzun adres kesilmez, sarar (2026-11-14)
     fireEvent.click(title)
     expect(onOpen).toHaveBeenCalledTimes(1)
   })

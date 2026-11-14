@@ -21,8 +21,8 @@ import { endpointText, portResult, sourceOf } from './portCardModel.js'
 /**
  * Port izleme KARTI (2026-09-27 yeniden tasarım — shadcn, mobil duyarlı). Paylaşılan MonitorCard ailesinden kurulur
  * (stretched button, sol şerit YOK, duraklatılmış/alarm görünümü MonitorCard'da). Okuma sırası:
- *   durum satırı (seçim · Açık/Kapalı · alarm · bakım · bağlantı) → UÇ NOKTA: host (eş aralıklı; IPv6 / uzun ad kırpılır,
- *   tamamı başlığın title'ında ve detayda) + host:port kopyala + isteğe bağlı ad → `:port` · kontrol türü · (HTTP yolu) ·
+ *   durum satırı (seçim · Açık/Kapalı · alarm · bakım · bağlantı) → UÇ NOKTA: host (eş aralıklı; IPv6 / uzun ad sarar,
+ *   host:port başlığın title'ında ve detayda) + host:port kopyala + isteğe bağlı ad → `:port` · kontrol türü · (HTTP yolu) ·
  *   "usually PostgreSQL" · IP ailesi · sıklık → SONUÇ PANELİ (durum + tek satırlık neden) → bağlantı süresi + 24 sa
  *   ortalaması → mini trend + 30 gün erişilebilirlik → kaynak (Bağımsız / Envanterden) · takım/grup/vekil yolu ·
  *   etiketler → son kontrol (göreli, tam zaman ipucunda) + eylemler.
@@ -71,7 +71,7 @@ export default function PortMonitorCard({
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
           <span className={CARD_LAYER}><MaintenanceBadge target={m.host} /></span>
         </MonitorCardTop>
-        {/* Host: eş aralıklı (IP / IPv6 okunur), uzunsa kırpılır. Kopyala düğmesi host:port'u kopyalar (IPv6 köşeli
+        {/* Host: eş aralıklı (IP / IPv6 okunur), uzun host SARAR (2026-11-14). Kopyala düğmesi host:port'u kopyalar (IPv6 köşeli
             parantezle — terminale/istemciye aynen yapıştırılır); köşedeki düğme izlemenin BAĞLANTISINI kopyalar. */}
         <div className="flex min-w-0 items-center gap-1">
           <MonitorCardTitle onOpen={onOpen} label={t('mon.openDetailFor', rowLabel)} title={endpoint}
@@ -80,11 +80,11 @@ export default function PortMonitorCard({
             variant="ghost" buttonSize="icon-xs" size={12} className={CARD_COPY} />
         </div>
         {compact ? (
-          // Kompakt: TEK ikincil satır — :port · tür · ad (sarmaz, ad kırpılır)
+          // Kompakt: TEK ikincil satır — :port · tür · ad (rozetler yan yana; uzun ad kesilmez, kendi içinde sarar)
           <PortCompactEndpoint monitor={m} name={name && name !== m.host ? name : null} className="mt-1 mb-2" />
         ) : (
           <>
-            {name && name !== m.host && <p data-slot="port-name" className="mt-0.5 truncate text-xs text-muted-foreground" title={name}>{name}</p>}
+            {name && name !== m.host && <p data-slot="port-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{name}</p>}
             <PortEndpointChips monitor={m} rowLabel={rowLabel} className="mt-1.5 mb-2.5" />
           </>
         )}

@@ -21,6 +21,7 @@ import SimpleTooltip from '../components/ui/SimpleTooltip.jsx'
 import HintPopover from '../components/ui/HintPopover.jsx'
 import { TabsContent } from '@/components/shadcn/tabs'
 import { Button } from '@/components/shadcn/button'
+import { expectTitleWraps } from './helpers/cardWrap.js'
 
 /**
  * İzleme sayfalarının ORTAK shadcn kabukları (2026-09-25 geçişi): kart (stretched button), detay
@@ -51,6 +52,16 @@ describe('MonitorCard — stretched button (R18)', () => {
     expect(open.tagName).toBe('BUTTON')
     fireEvent.click(open)
     expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
+  it('başlık VARSAYILAN olarak sarar — tek satır kırpması / satır sınırı yok, tam metin ayrıca title\'da (2026-11-14)', () => {
+    draw()
+    const open = screen.getByRole('button', { name: 'a.example.com — detayları aç' })
+    expectTitleWraps(open)
+    expect(open.querySelector(':scope > span')).toHaveAttribute('title', 'a.example.com')
+    // stretched örtü korunur: kartın tamamına tıklama yine detayı açar
+    expect(open.className).toContain('after:absolute')
+    expect(open.className).toContain('after:inset-0')
   })
 
   it('içteki etkileşimli öğeye basmak detayı AÇMAZ (örtünün üstünde, ayrı düğme)', () => {
