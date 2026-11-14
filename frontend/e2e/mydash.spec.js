@@ -16,9 +16,48 @@ const MATRIX_MONITORS = MATRIX_TEAMS.flatMap(([id, name], i) => ['http', 'ping',
   .map((type, j) => ({ id: id * 100 + j, team_id: id, team_name: name, type, active: true, status: (i + j) % 5 === 0 ? 'down' : (i + j) % 7 === 0 ? 'stale' : 'up' })))
   .concat([{ id: 999, team_id: null, team_name: null, type: 'http', active: true, status: 'up' }])
 
+// Zaman serisi kutuları (2026-11-14): alarm eğilimi, favorilerin yanıt süresi, 7 günlük erişilebilirlik — gerçek uzunlukta adlar
+const LONG_MONITOR = 'Kurumsal İnternet Şubesi — Ödeme Onay Servisi Sağlık Kontrolü (Dijital Kanallar / Bireysel ve Kurumsal Bankacılık)'
+const SERIES_FAVORITES = [
+  { type: 'http', id: 11, name: LONG_MONITOR }, { type: 'ping', id: 12, name: 'Çekirdek yönlendirici (veri merkezi A)' },
+  { type: 'dns', id: 13, name: 'kurumsal.example.com A kaydı' }, { type: 'http', id: 14, name: 'Kart başvuru formu' },
+  { type: 'domain', id: 15, name: 'example.com' },
+]
+const hourAgo = (h) => new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - h * 3_600_000).toISOString().slice(0, 13)
+function sparkOf(seed, { failing = false, gaps = false } = {}) {
+  const buckets = []
+  for (let h = 23; h >= 0; h--) {
+    if (gaps && h % 5 === 2) continue                                  // kontrolü olmayan saatler — çizgide boşluk
+    const allFail = failing && h < 2
+    buckets.push({ t: hourAgo(h), n: 6, fail: allFail ? 6 : 0, ms: allFail ? null : 90 + seed * 40 + ((h * 37 + seed * 11) % 70) })
+  }
+  return { n: buckets.length * 6, fail: failing ? 12 : 0, up_pct: failing ? 91.3 : 100, buckets,
+    last: [{ at: new Date().toISOString().slice(0, 19), ok: !failing, ms: failing ? null : 128 + seed * 40 }] }
+}
+function trendOf(range) {
+  const week = range === '7d'
+  const n = week ? 7 : 24
+  const step = week ? 86_400_000 : 3_600_000
+  // Günlük kovalar İstanbul günü: UTC 21:00 = İstanbul gece yarısı
+  const end = week ? Math.floor((Date.now() + 3 * 3_600_000) / step) * step - 3 * 3_600_000 : Math.floor(Date.now() / step) * step
+  const buckets = Array.from({ length: n }, (_, i) => {
+    const at = end - (n - 1 - i) * step
+    return { t: new Date(at).toISOString().slice(0, 19), ...(week ? { day: new Date(at + 3 * 3_600_000).toISOString().slice(0, 10) } : {}),
+      opened: week ? 3 + ((i * 5) % 9) : (i % 6 === 1 ? 4 : i % 4 === 0 ? 1 : 0), closed: week ? 2 + ((i * 3) % 7) : (i % 6 === 2 ? 3 : 0) }
+  })
+  const sum = (k) => buckets.reduce((a, b) => a + b[k], 0)
+  return { visible: true, range: week ? '7d' : '24h', bucket: week ? 'day' : 'hour', from: buckets[0].t, to: new Date().toISOString().slice(0, 19),
+    buckets, totals: { opened: sum('opened'), closed: sum('closed'), critical: 2, closed_silent: 1 } }
+}
+const SERIES_DASHBOARD = { v: 1, widgets: [
+  { id: 'alert-trend', type: 'alert_trend', size: 'md' }, { id: 'availability-week', type: 'availability_week', size: 'sm' },
+  { id: 'fav-response', type: 'fav_response', size: 'md' }] }
+
 let saved = []
-async function mock(page, { dashboard = null, noc = false } = {}) {
+let seriesCalls = []
+async function mock(page, { dashboard = null, noc = false, favorites = null } = {}) {
   saved = []
+  seriesCalls = []
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -36,8 +75,28 @@ async function mock(page, { dashboard = null, noc = false } = {}) {
       if (req.method() === 'PUT') {
         const b = JSON.parse(req.postData() || '{}')
         saved.push(b)
-        body = { success: true, prefs: { ...(dashboard ? { dashboard } : {}), ...b } }
-      } else body = { success: true, prefs: dashboard ? { dashboard } : {} }
+        body = { success: true, prefs: { ...(dashboard ? { dashboard } : {}), ...(favorites ? { favorites } : {}), ...b } }
+      } else body = { success: true, prefs: { ...(dashboard ? { dashboard } : {}), ...(favorites ? { favorites } : {}) } }
+    } else if (p === '/api/me/alert-trend') {
+      const range = new URL(req.url()).searchParams.get('range') || '24h'
+      seriesCalls.push(`trend:${range}`)
+      body = { success: true, data: trendOf(range) }
+    } else if (p === '/api/monitoring/availability-week') {
+      seriesCalls.push('availability')
+      body = { success: true, data: { days: 7, target_pct: 99.9, monitors: 118, unmeasured: 2, checks: 1184320, failed: 6514, availability_pct: 99.45,
+        meets_target: false, below_target: 7, by_type: [{ type: 'http', monitors: 60, checks: 600000, failed: 5000, availability_pct: 99.17, below_target: 5 }],
+        worst: [
+          { type: 'http', id: 11, name: LONG_MONITOR, up_pct: 97.52, checks: 20160, failed: 500, bad_hours: 14 },
+          { type: 'ping', id: 12, name: 'Çekirdek yönlendirici (veri merkezi A)', up_pct: 99.31, checks: 10080, failed: 70, bad_hours: 5 },
+          { type: 'dbquery', id: 31, name: 'Başarısız ödeme işlemleri — son 15 dakika', up_pct: 99.6, checks: 2016, failed: 8, bad_hours: 3 }],
+        generated_at: new Date().toISOString().slice(0, 19) } }
+    } else if (p === '/api/monitoring/sparklines') {
+      const u = new URL(req.url())
+      const type = u.searchParams.get('type')
+      seriesCalls.push(`spark:${type}:${u.searchParams.get('ids') || ''}`)
+      const data = type === 'http' ? { 11: sparkOf(1, { gaps: true }), 14: sparkOf(3) }
+        : type === 'ping' ? { 12: sparkOf(0, { failing: true }) } : {}       // dns:13 yanıtta yok → "bulunamadı"
+      body = { success: true, type, hours: 24, data }
     } else if (p === '/api/me/open-alerts') {
       body = { success: true, data: { total: 3, oldest_open_at: '2026-10-11T05:00:00', oldest_severe_at: '2026-10-11T07:00:00', tabs: { http: { count: 3, unacked: 2, levels: { critical: 1, high: 1, warning: 1, other: 0 }, items: [
         { id: 7, domain: 'odeme-servisleri-uzun-alan-adi.kurumsal.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: '2026-10-11T08:00:00', team_name: LONG_TEAM },
@@ -276,6 +335,108 @@ for (const vp of VIEWPORTS) {
       await expect(page).toHaveURL(/c_win=30/)
     })
 
+    test('2026-11-14: zaman serisi kutuları — alarm eğilimi, favorilerin yanıt süresi, 7 günlük erişilebilirlik; taşma / kesilme yok, hedefler ≥ 40 px', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page, { dashboard: SERIES_DASHBOARD, favorites: SERIES_FAVORITES })
+      await page.goto('/?tab=mydash')
+      const root = page.locator('[data-slot="mydash-page"]')
+      const trend = root.locator('[data-slot="mydash-widget"][data-type="alert_trend"]')
+      const avail = root.locator('[data-slot="mydash-widget"][data-type="availability_week"]')
+      const fav = root.locator('[data-slot="mydash-widget"][data-type="fav_response"]')
+      // Alarm eğilimi: 24 saatlik kovalar, seyrek eksen etiketleri birbirine değmez ve grafiğin içinde kalır
+      await expect(trend.locator('[data-slot="mydash-trend-col"]')).toHaveCount(24, { timeout: 20_000 })
+      await expect(trend.locator('[data-slot="mydash-trend-opened"]')).toBeVisible()
+      // Erişilebilirlik: hedefin altında (turuncu), değer göstergenin içinde
+      await expect(avail).toHaveAttribute('data-tone', 'warning')
+      await expect(avail.locator('[data-slot="mydash-avail-value"]')).toContainText('99')
+      // Favoriler: süre ölçen 4 favori (alan adı kaydı listelenmez, notu var); hata veren önde; uzun ad sarar
+      await expect(fav.locator('[data-slot="mydash-fav-row"]')).toHaveCount(4)
+      await expect(fav.locator('[data-slot="mydash-fav-row"]').first()).toContainText('Çekirdek yönlendirici')
+      await expect(fav).toContainText(LONG_MONITOR)
+      await expect(fav.locator('[data-slot="mydash-fav-skipped"]')).toBeVisible()
+      await expect(fav).toHaveAttribute('data-tone', 'danger')
+      // tür başına tek istek, yalnız favori kimlikleriyle; alan adı kaydı istenmez
+      expect([...new Set(seriesCalls.filter((c) => c.startsWith('spark:')))].sort()).toEqual(['spark:dns:13', 'spark:http:11,14', 'spark:ping:12'])
+      await page.waitForTimeout(300)
+
+      const measure = async (label) => {
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${label}: yatay taşma`).toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="mydash-page"]'), `${label}: kırpılan metin`).toEqual([])
+        const overflow = await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-widget"]')]
+          .filter((w) => w.scrollWidth > w.clientWidth + 1).map((w) => w.getAttribute('data-type')))
+        expect(overflow, `${label}: kutu içi taşma`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), `${label}: küçük hedef`).toEqual([])
+        // Çizimler kartın içinde: eksen etiketleri çarpışmaz / taşmaz, mini grafik ve gösterge kutudan çıkmaz
+        const geo = await page.evaluate(() => {
+          const out = []
+          const chart = document.querySelector('[data-slot="mydash-trend-chart"]')
+          if (chart) {
+            const cr = chart.getBoundingClientRect()
+            const ticks = [...chart.querySelectorAll('[data-slot="mydash-trend-tick"]')].map((el) => el.getBoundingClientRect())
+            ticks.forEach((r, i) => {
+              if (r.left < cr.left - 1 || r.right > cr.right + 1) out.push(`etiket ${i} grafiğin dışında`)
+              if (i > 0 && r.left < ticks[i - 1].right + 2) out.push(`etiket ${i} öncekine değiyor`)
+            })
+            if (!ticks.length) out.push('eksen etiketi yok')
+          }
+          for (const sel of ['[data-slot="mydash-spark"]', '[data-slot="mydash-gauge"]', '[data-slot="mydash-avail-value"]', '[data-slot="mydash-fav-last"]']) {
+            for (const el of document.querySelectorAll(sel)) {
+              const card = el.closest('[data-slot="card"]').getBoundingClientRect()
+              const r = el.getBoundingClientRect()
+              if (r.width === 0 || r.left < card.left - 1 || r.right > card.right + 1 || r.bottom > card.bottom + 1) out.push(`${sel} kartın dışında`)
+              // Mini grafik kendi boyutunda (düğme içindeki svg kuralı 16 px'e indirmesin)
+              if (sel.includes('spark') && (r.width < 80 || r.height < 24)) out.push(`mini grafik küçülmüş ${Math.round(r.width)}x${Math.round(r.height)}`)
+            }
+          }
+          // Gösterge sayısı yayın dışına taşmaz
+          const g = document.querySelector('[data-slot="mydash-gauge"]')?.getBoundingClientRect()
+          const v = document.querySelector('[data-slot="mydash-avail-value"]')?.getBoundingClientRect()
+          if (g && v && (v.left < g.left - 1 || v.right > g.right + 1 || v.top < g.top - 1)) out.push('gösterge değeri yayın dışında')
+          return out
+        })
+        expect(geo, `${label}: çizim yerleşimi`).toEqual([])
+      }
+      await measure('24 saat')
+      expect(await page.evaluate(() => [...document.querySelectorAll('[data-slot="mydash-page"] [data-link="true"]')]
+        .filter((b) => !b.hasAttribute('data-slot') || getComputedStyle(b).borderTopWidth !== '0px').map((b) => b.textContent.slice(0, 30))), 'kenarlıklı bağlantı').toEqual([])
+
+      // Dönem değişimi: 7 gün (günlük kovalar); seçim tarayıcıda saklanır
+      await trend.locator('[data-slot="mydash-trend-range"]').getByRole('radio', { name: /^(7 days|7 gün)$/ }).click()
+      await expect(trend.locator('[data-slot="mydash-trend-col"]')).toHaveCount(7)
+      await expect(trend.locator('[data-slot="mydash-trend-tick"]')).toHaveCount(7)
+      expect(seriesCalls).toContain('trend:7d')
+      expect(await page.evaluate(() => localStorage.getItem('sm.mydash.trend'))).toBe('7d')
+      await page.waitForTimeout(200)
+      await measure('7 gün')
+
+      // Düzenleme kipi: araç çubukları dahil dokunmatik hedefler; erişilebilirlik kutusunda renkli panel düğmesi var, diğer ikisinde yok
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await expect(root.locator('[data-slot="mydash-widget-tools"]')).toHaveCount(3)
+      await expect(avail.locator('[data-slot="mydash-style"]')).toBeVisible()
+      await expect(trend.locator('[data-slot="mydash-style"]')).toHaveCount(0)
+      await expect(fav.locator('[data-slot="mydash-style"]')).toHaveCount(0)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="mydash-page"]'), 'küçük hedef (düzenleme)').toEqual([])
+      // "Kutu ekle" kaldırılan kutuyu adıyla yeniden sunar; eklenince sona gelir ve verisiyle dolar
+      await fav.locator('[data-slot="mydash-remove"]').click()
+      await expect(root.locator('[data-slot="mydash-widget"]')).toHaveCount(2)
+      await page.locator('[data-slot="mydash-add"]').click()
+      const item = page.locator('[data-slot="mydash-catalog-item"][data-type="fav_response"]')
+      await expect(item).toBeVisible()
+      await expect(item).toContainText(/Favourites: response time|Favorilerin yanıt süresi/)
+      await item.getByRole('button').click()
+      await expect.poll(() => saved.at(-1)?.dashboard?.widgets?.map((w) => w.type)).toEqual(['alert_trend', 'availability_week', 'fav_response'])
+      await page.keyboard.press('Escape')
+      await page.locator('[data-slot="mydash-edit"]').click()
+      await expect(fav.locator('[data-slot="mydash-fav-row"]')).toHaveCount(4)
+      // Tam sayfa görüntüsü dokunmatik ölçümlerden SONRA (fullPage dokunmatik öykünmeyi sıfırlar)
+      await page.screenshot({ path: `test-results/mydash-series-${vp.name}.png`, fullPage: true })
+      // Sayı Alarm Geçmişi'ni dönem başlangıcıyla açar
+      await trend.locator('[data-slot="mydash-trend-closed"]').click()
+      await expect(page).toHaveURL(/tab=alerthistory/)
+      await expect(page).toHaveURL(/view=closed/)
+      await expect(page).toHaveURL(/from=\d{4}-\d\d-\d\dT/)
+    })
+
     test('TV kipi ekranı kaplar, sayfalar döner, Esc ile kapanır', async ({ page }) => {
       test.setTimeout(120_000)
       const dashboard = { v: 1, widgets: [
@@ -332,12 +493,21 @@ test.describe('Panom TV — 1920×1080 duvar ekranı', () => {
       { id: 'storms', type: 'storms', size: 'sm' }, { id: 'watchdog', type: 'watchdog', size: 'sm' },
       { id: 'status-services', type: 'status_services', size: 'lg' }, { id: 'data-quality', type: 'data_quality', size: 'sm' },
       { id: 'activity', type: 'activity', size: 'md' }, { id: 'team-matrix', type: 'team_matrix', size: 'lg' },
-      { id: 'service-grid', type: 'service_grid', size: 'md' }, { id: 'type-heatmap', type: 'type_heatmap', size: 'sm' }] }
-    await mock(page, { dashboard })
+      { id: 'service-grid', type: 'service_grid', size: 'md' }, { id: 'type-heatmap', type: 'type_heatmap', size: 'sm' },
+      // Zaman serisi kutuları (2026-11-14): eğilim ve favoriler ayrıntılı kutu, erişilebilirlik tek hücrelik renkli panel
+      { id: 'alert-trend', type: 'alert_trend', size: 'md' }, { id: 'fav-response', type: 'fav_response', size: 'md' },
+      { id: 'availability-week', type: 'availability_week', size: 'sm' }] }
+    await mock(page, { dashboard, favorites: SERIES_FAVORITES })
     await page.goto('/?tab=mydash&md_tv=1')
     const tv = page.locator('[data-slot="mydash-tv"]')
     await expect(tv.locator('[data-slot="mydash-widget"]').first()).toBeVisible({ timeout: 20_000 })
     await expect(tv.locator('[data-slot="mydash-widget-foot"]').first()).toBeVisible()
+    // Üç kutu da TV'de çizilir: eğilim grafiğiyle, favoriler satırlarıyla (tıklanmaz), erişilebilirlik renkli panel olarak
+    await expect(tv.locator('[data-slot="mydash-widget"][data-type="alert_trend"] [data-slot="mydash-trend-col"]')).toHaveCount(24)
+    await expect(tv.locator('[data-slot="mydash-widget"][data-type="alert_trend"] [data-slot="mydash-trend-range"]')).toHaveCount(0)
+    await expect(tv.locator('[data-slot="mydash-widget"][data-type="fav_response"] [data-slot="mydash-fav-row"]')).toHaveCount(3)   // TV: orta kutu 3 satır
+    await expect(tv.locator('[data-slot="mydash-widget"][data-type="availability_week"]')).toHaveAttribute('data-stat', 'on')
+    await expect(tv.locator('[data-slot="mydash-widget"][data-type="alert_trend"] [data-link="true"], [data-slot="mydash-widget"][data-type="fav_response"] [data-link="true"]')).toHaveCount(0)
     const pages = Number(await tv.getAttribute('data-pages'))
     for (let i = 0; i < pages; i++) {
       await expect(tv).toHaveAttribute('data-page', String(i + 1))
@@ -480,6 +650,68 @@ for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }, { 
           if (vp.failAlerts && i === 0) await expect(tv.locator('[data-slot="mydash-widget-failed"][data-short="true"]').first()).toBeVisible()
           if (i < pages - 1) await tv.locator('[data-slot="mydash-tv-next"]').click()
         }
+      }
+    })
+  })
+}
+
+// Zaman serisi kutuları küçük duvar ekranlarında (2026-11-14): eğilim ve favoriler AYRINTILI kutudur (tek hücreye inmez) —
+// sıkı TV düzeniyle ~300 px'lik hücreye sığmalı: hiçbir öğe kartının dışına taşmaz, sayfa okunmaz ölçüde küçültülmez, kaymaz.
+for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }]) {
+  test.describe(`Panom TV — zaman serisi küçük duvar ${vp.width}×${vp.height}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height } })
+    test('eğilim + favoriler + erişilebilirlik: taşma, kırpılma, aşırı küçültme yok', async ({ page }) => {
+      test.setTimeout(120_000)
+      const dashboard = { v: 1, widgets: [
+        { id: 'alert-trend', type: 'alert_trend', size: 'md' }, { id: 'availability-week', type: 'availability_week', size: 'sm' },
+        { id: 'fav-response', type: 'fav_response', size: 'md' }, { id: 'alerts-open', type: 'alerts_open', size: 'md' },
+        { id: 'monitor-health', type: 'monitor_health', size: 'md' }, { id: 'cert-expiring', type: 'cert_expiring', size: 'sm' }] }
+      await mock(page, { dashboard, favorites: SERIES_FAVORITES })
+      await page.addInitScript(() => { try { localStorage.setItem('sm.mydash.tv', JSON.stringify({ interval: 0, panels: 'stat', density: 'compact' })) } catch { /* yok */ } })
+      await page.goto('/?tab=mydash&md_tv=1')
+      const tv = page.locator('[data-slot="mydash-tv"]')
+      await expect(tv.locator('[data-slot="mydash-widget"][data-type="alert_trend"] [data-slot="mydash-trend-col"]')).toHaveCount(24, { timeout: 20_000 })
+      await expect(tv.locator('[data-slot="mydash-widget"][data-type="fav_response"] [data-slot="mydash-fav-row"]')).toHaveCount(3)
+      for (const panels of ['stat', 'detail']) {
+        if (panels === 'detail') {
+          // Ayrıntılı görünüm: erişilebilirlik de gösterge olarak çizilir (liste / ölçüm satırı yok). Küçük ekranda kutu başka
+          // sayfaya düşebilir (tüm sayfalar DOM'da kalır) — görünürlük değil, çizilmiş olması denetlenir; yerleşim aşağıda sayfa sayfa
+          await tv.locator('[data-slot="mydash-tv-panels"]').click()
+          const detail = tv.locator('[data-slot="mydash-widget"][data-type="availability_week"]')
+          await expect(detail.locator('[data-slot="mydash-gauge"]')).toBeAttached()
+          await expect(detail.locator('[data-slot="mydash-avail-worst"], [data-slot="mydash-avail-measured"]')).toHaveCount(0)
+        }
+        const pages = Number(await tv.getAttribute('data-pages'))
+        for (let i = 0; i < pages; i++) {
+          await expect(tv).toHaveAttribute('data-page', String(i + 1))
+          await page.waitForTimeout(350)
+          const r = await page.evaluate(() => {
+            const m = document.querySelector('[data-slot="mydash-tv"] main')
+            const g = m.querySelector('[data-slot="mydash-tv-page"][data-active="true"]')
+            const over = []
+            for (const c of g.querySelectorAll('[data-slot="mydash-widget"] [data-slot="card"]')) {
+              const cr = c.getBoundingClientRect()
+              const bad = [...c.querySelectorAll('*')].filter((el) => {
+                if (el.closest('.sr-only')) return false
+                const b = el.getBoundingClientRect()
+                return b.width > 0 && b.height > 0 && (b.bottom > cr.bottom + 1 || b.right > cr.right + 1 || b.top < cr.top - 1 || b.left < cr.left - 1)
+              })
+              if (bad.length) over.push(`${c.closest('[data-slot="mydash-widget"]').getAttribute('data-type')} ${bad[0].tagName}.${bad[0].getAttribute('data-slot') || ''}`)
+            }
+            // Eğilim çubukları gerçekten çizildi (esnek yükseklik yüzde yüksekliği sıfırlamadı)
+            const bars = [...g.querySelectorAll('[data-slot="mydash-trend-col"][data-opened="4"] span')].map((b) => Math.round(b.getBoundingClientRect().height))
+            return { fit: Number(m.getAttribute('data-fit')), clipped: m.hasAttribute('data-clipped'), over, bars }
+          })
+          const label = `${panels} s${i + 1}`
+          expect(r.over, `${label}: kart taşması`).toEqual([])
+          expect(r.clipped, `${label}: sayfa kayıyor`).toBe(false)
+          expect(r.fit, `${label}: çok küçültüldü`).toBeGreaterThanOrEqual(0.85)
+          if (r.bars.length) expect(Math.max(...r.bars), `${label}: eğilim çubuğu çizilmedi`).toBeGreaterThanOrEqual(30)
+          expect(await page.evaluate(clipped, '[data-slot="mydash-tv"]'), `${label}: kırpılan metin`).toEqual([])
+          if (i === 0) await page.screenshot({ path: `test-results/mydash-tv-series-${vp.width}-${panels}.png` })
+          if (i < pages - 1) await tv.locator('[data-slot="mydash-tv-next"]').click()
+        }
+        // Renkli panel ayarı değişince TV birinci sayfadan başlar (sayfa kümesi değişir) — sonraki tur için geri dönmek gerekmez
       }
     })
   })

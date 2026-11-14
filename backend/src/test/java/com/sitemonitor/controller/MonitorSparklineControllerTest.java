@@ -111,6 +111,43 @@ class MonitorSparklineControllerTest {
         verify(sparklineService, org.mockito.Mockito.never()).availability(org.mockito.ArgumentMatchers.anyString(), anyInt(), org.mockito.ArgumentMatchers.anySet());
     }
 
+    @Test
+    @DisplayName("ids (2026-11-14, Kişisel Panom favorileri): yanıt görünür küme ∩ istenen kimlikler — kapsamı ASLA genişletmez; geçersiz süzgeç 'hepsi'ne dönmez")
+    void idsFilterOnlyNarrows() throws Exception {
+        Map<Long, Long> teams = new HashMap<>();
+        teams.put(1L, 5L); teams.put(2L, 9L); teams.put(3L, 5L);
+        when(sparklineService.monitorTeams("http")).thenReturn(teams);
+        Map<Long, Map<String, Object>> all = new HashMap<>();
+        all.put(1L, Map.of("n", 3)); all.put(2L, Map.of("n", 7)); all.put(3L, Map.of("n", 1));
+        when(sparklineService.sparklinesAll(eq("http"), anyInt())).thenReturn(all);
+
+        // Kapsamlı kullanıcı (takım 5): 1 ve 3 görünür; 2 başka takımın — istense de DÖNMEZ
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").param("ids", "3, 2,abc,-4,,3").session(teamUser(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.3.n").value(1))
+                .andExpect(jsonPath("$.data.1").doesNotExist())
+                .andExpect(jsonPath("$.data.2").doesNotExist());
+        // Global görüntüleyici: yalnız istenenler
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").param("ids", "2").session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.2.n").value(7))
+                .andExpect(jsonPath("$.data.1").doesNotExist());
+        // Süzgeç verildi ama geçerli kimlik yok → boş (tüm liste DEĞİL)
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").param("ids", "abc").session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+        // Aşırı uzun parametre ayrıştırılmadan reddedilir
+        mvc.perform(get("/api/monitoring/sparklines").param("type", "http").param("ids", "1,".repeat(2100)).session(globalAdmin()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("ids"));
+        assertThat(all).hasSize(3);   // paylaşılan önbellek haritası değiştirilmedi
+        assertThat(MonitorSparklineController.parseIds(null)).isNull();
+        assertThat(MonitorSparklineController.parseIds("7,7, 8")).containsExactly(7L, 8L);
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 300; i++) many.append(i).append(',');
+        assertThat(MonitorSparklineController.parseIds(many.toString())).hasSize(MonitorSparklineController.IDS_MAX);
+    }
+
     // ── Maliyet sınırı (prod kapısı 2026-09-25, O-7) ───────────────────────────────────────────
 
     private static MockHttpSession globalAdmin() {

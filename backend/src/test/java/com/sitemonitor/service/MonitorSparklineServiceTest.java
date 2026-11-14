@@ -328,4 +328,18 @@ class MonitorSparklineServiceTest {
         assertThat(MonitorSparklineService.KINDS.get("port").failExpr()).startsWith("CASE WHEN open = FALSE");
         assertThat(MonitorSparklineService.KINDS.get("dns").failExpr()).isEqualTo("CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END");
     }
+
+    @Test
+    @DisplayName("monitorRefs (2026-11-14, Kişisel Panom 7 günlük erişilebilirlik): id → (takım, ad, etkin) tek dar sorgu; boş ad null, takımsız satır korunur, boş etkin = etkin; bilinmeyen tür boş")
+    void monitorRefs() {
+        jdbc.update("DROP TABLE IF EXISTS ping_monitors");
+        jdbc.update("CREATE TABLE ping_monitors(id BIGINT PRIMARY KEY, team_id BIGINT, name VARCHAR(200), host VARCHAR(200), active BOOLEAN)");
+        jdbc.update("INSERT INTO ping_monitors VALUES (1, 5, 'Ağ geçidi', '10.0.0.1', TRUE), (2, NULL, '  ', '10.0.0.2', FALSE), (3, 7, NULL, '10.0.0.3', NULL)");
+        Map<Long, MonitorSparklineService.MonitorRef> refs = svc.monitorRefs("ping");
+        assertThat(refs).hasSize(3);
+        assertThat(refs.get(1L)).isEqualTo(new MonitorSparklineService.MonitorRef(5L, "Ağ geçidi", true));
+        assertThat(refs.get(2L)).isEqualTo(new MonitorSparklineService.MonitorRef(null, null, false));
+        assertThat(refs.get(3L)).isEqualTo(new MonitorSparklineService.MonitorRef(7L, null, true));   // sütun boş = etkin
+        assertThat(svc.monitorRefs("domain")).isEmpty();
+    }
 }

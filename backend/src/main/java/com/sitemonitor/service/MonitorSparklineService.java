@@ -82,6 +82,31 @@ public class MonitorSparklineService {
         return out;
     }
 
+    /** Monitörün takımı (null = takımsız / envanter türevi), adı (boş ad null) ve etkin mi (duraklatılmış = false; boş = etkin). */
+    public record MonitorRef(Long teamId, String name, boolean active) { }
+
+    /**
+     * Monitör id → (takım, ad, etkin) — türün TÜM monitörleri, tek dar sorgu (2026-11-14, Kişisel Panom 7 günlük
+     * erişilebilirlik: kurum geneli görüntü kapsam süzgecini ve en kötü satırların adını bu haritadan alır;
+     * {@link #monitorNames} 1000 kimlikle sınırlıdır). Hedef (URL / host) BİLEREK okunmaz — sorgu dizgisinde gizli değer
+     * taşıyabilir.
+     */
+    public Map<Long, MonitorRef> monitorRefs(String type) {
+        Kind k = KINDS.get(type);
+        Map<Long, MonitorRef> out = new HashMap<>();
+        if (k == null) return out;
+        jdbc.query("SELECT id, team_id, name, active FROM " + k.monitorTable(), rs -> {
+            long id = rs.getLong("id");
+            long tid = rs.getLong("team_id");
+            Long team = rs.wasNull() ? null : tid;
+            String n = rs.getString("name");
+            boolean active = rs.getBoolean("active");
+            if (rs.wasNull()) active = true;   // eski satır: sütun boş = etkin (varlık varsayılanı)
+            out.put(id, new MonitorRef(team, n == null || n.isBlank() ? null : n, active));
+        });
+        return out;
+    }
+
     /**
      * Monitör id → ad (2026-11-13, İstatistikler SLA ihlal listesi): yalnız verilen (en çok {@link #IN_LIMIT}) id'ler, tek dar
      * sorgu. Ad boş (eski türev satır) olan monitör haritada olmaz — çağıran "#id" yazar.

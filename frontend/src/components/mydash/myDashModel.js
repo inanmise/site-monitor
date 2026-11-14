@@ -47,6 +47,11 @@ export const WIDGET_CATALOG = Object.freeze([
   { type: 'team_matrix',     size: 'lg', tab: 'monitoring',   perm: 'monitoring.read' },
   // Veri kuralları (2026-11-05, dbq2 C5): veritabanı sorgu izlemelerinin ihlal / hata özeti — "Şu an ihlalde" süzgeciyle açar
   { type: 'data_rules',      size: 'md', tab: 'dbquery',      perm: 'monitoring.read' },
+  // Zaman serisi paketi (2026-11-14): alarm eğilimi (açılan / kapanan, 24 sa | 7 gün), favori izlemelerin yanıt süresi ve
+  // 7 günlük erişilebilirlik göstergesi. Yalnız "Kutu ekle"den — varsayılan düzende ve hazır düzenlerde YOK (data_rules gibi)
+  { type: 'alert_trend',       size: 'md', tab: 'alerthistory', perm: 'alerts.read' },
+  { type: 'fav_response',      size: 'md', tab: 'monitoring',   perm: 'monitoring.read' },
+  { type: 'availability_week', size: 'sm', tab: 'monitoring',   perm: 'monitoring.read' },
   // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])
@@ -326,7 +331,11 @@ export function statStyleOf(widget, tv, tvPanels) {
 }
 
 /** Renkli panel (tek büyük sayı) görünümü OLMAYAN kutular — liste / ızgara; TV'de okunur yükseklik ister. */
-export const DETAIL_ONLY_TYPES = Object.freeze(new Set(['oncall', 'activity', 'service_grid', 'type_heatmap', 'team_matrix']))
+export const DETAIL_ONLY_TYPES = Object.freeze(new Set([
+  'oncall', 'activity', 'service_grid', 'type_heatmap', 'team_matrix',
+  // Zaman serisi (2026-11-14): grafik + satır listesi — tek sayıya inmez (7 günlük erişilebilirlik göstergesi panel olur)
+  'alert_trend', 'fav_response',
+]))
 
 /**
  * TV'de kutu ayrıntılı mı çizilecek (liste / ızgara — tek hücreye sığmaz): renkli paneli hiç olmayan tür ya da renkli panel
