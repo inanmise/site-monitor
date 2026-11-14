@@ -11377,6 +11377,7 @@ export const EN = {
   'audit.ev.PAGE_RESOURCE_SCAN_RUN': 'Page integrity resource analysis started',
   'audit.ev.PAGE_RESOURCE_SCAN_CANCEL': 'Page integrity resource analysis cancelled',
   'audit.ev.PAGE_RESOURCE_BUDGET_SAVE': 'Page integrity resource analysis budget saved',
+  'audit.ev.PAGE_RESOURCE_IMAGE_DOWNLOAD': 'Page integrity resource analysis image downloaded',
   'audit.ev.PAGE_DIAGNOSTICS_RUN': 'Page integrity diagnosis run',
   'audit.ev.PAGESPEED_DIAGNOSTICS_RUN': 'Page speed diagnosis run',
   'audit.ev.CERT_MANUAL_UPLOAD': 'Certificate uploaded from a file',

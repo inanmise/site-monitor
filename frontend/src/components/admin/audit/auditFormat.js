@@ -216,6 +216,7 @@ const SPECIAL = {
   PAGE_RESOURCE_SCAN_RUN: 'audit.ev.PAGE_RESOURCE_SCAN_RUN',
   PAGE_RESOURCE_SCAN_CANCEL: 'audit.ev.PAGE_RESOURCE_SCAN_CANCEL',
   PAGE_RESOURCE_BUDGET_SAVE: 'audit.ev.PAGE_RESOURCE_BUDGET_SAVE',   // kaynak analizi bütçesi (2026-11)
+  PAGE_RESOURCE_IMAGE_DOWNLOAD: 'audit.ev.PAGE_RESOURCE_IMAGE_DOWNLOAD',   // kaynak analizi görseli indirildi (2026-11-14)
   PAGESPEED_DIAGNOSTICS_RUN: 'audit.ev.PAGESPEED_DIAGNOSTICS_RUN',
   // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / başladı / uzat / hemen bitir / bitti / iptal /
   // duyuru e-postası + bakım başlayınca kesilen oturum — kural adı/eylem eşlemesine uymaz

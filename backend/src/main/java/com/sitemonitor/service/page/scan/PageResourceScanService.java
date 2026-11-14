@@ -1315,6 +1315,11 @@ public class PageResourceScanService {
             int frames = ImageDimensions.gifFrames(meta.head());
             if (frames > 0) it.gifFrames = frames;
         }
+        // Görsel aracı (2026-11-14): görseli gösteren öğenin bildirdiği boyut (önerilen hedef genişlik bundan türetilir)
+        if (PageResourceDiscovery.IMAGE.equals(it.category)) {
+            it.declaredWidth = c.declaredWidth();
+            it.declaredHeight = c.declaredHeight();
+        }
         return it;
     }
 
@@ -2063,6 +2068,10 @@ public class PageResourceScanService {
             ScanItem it = hit.item().measurementCopy();
             it.lazy = cand.lazy();
             it.fromCss = cand.fromCss();
+            // Bildirilen boyut bu sayfanın öğesine aittir (önbellekteki kopya ilk sayfanınkini taşır)
+            boolean image = PageResourceDiscovery.IMAGE.equals(it.category);
+            it.declaredWidth = image ? cand.declaredWidth() : null;
+            it.declaredHeight = image ? cand.declaredHeight() : null;
             it.foundIn = parent == null ? FOUND_IN_PAGE : parent.c.url();
             p.item = it;
             p.cached = hit;

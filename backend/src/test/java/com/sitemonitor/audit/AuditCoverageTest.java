@@ -100,6 +100,11 @@ class AuditCoverageTest {
         EXEMPT.put("MonitoringController#scriptedSchedulePreview",
                 "Sentetik izleme ZAMANLAMA ÖNİZLEMESİ (2026-10-31, k6r): dbquery önizlemesinin aynısı — sonraki çalışmaları saf "
               + "hesapla bulur, hiçbir kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");
+        EXEMPT.put("PageResourceImageController#projection",
+                "Kaynak analizi \"not ne olurdu?\" PROJEKSİYONU (2026-11-14, görsel aracı): saklanan analizin nesne listesinin "
+              + "kopyası üzerinde notu bellekte yeniden hesaplar — veritabanına yazmaz, dış istek atmaz. POST yalnız görsel "
+              + "boyutları gövdesi taşıdığı için; sunucunun siteyi çağırdığı görsel indirme (PAGE_RESOURCE_IMAGE_DOWNLOAD) "
+              + "denetlenir. Kullanıcı başına dakikada 30.");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");
