@@ -391,7 +391,7 @@ class PageSpeedCheckerServiceTest {
     @DisplayName("TTFB (inceleme B1 / B2): prob ölçemezse TTFB BİLİNMİYOR — 0 değil; tanımlı TTFB eşiği kararsız, ölçüm 'eşik içinde' sayılmaz")
     void ttfbUnknownWhenProbeFails() {
         var stub = new com.sitemonitor.service.page.HttpPhaseProbe(new SsrfGuard(appSettings)) {
-            @Override public Phases measure(Target target) { return new Phases(null, null, null, null, "ölçülemedi"); }
+            @Override public Phases measure(Target target, long hardDeadlineMs) { return new Phases(null, null, null, null, "ölçülemedi"); }
         };
         SecretCipher cipher = mock(SecretCipher.class);
         PublicSuffixService psl = new PublicSuffixService();
@@ -405,6 +405,26 @@ class PageSpeedCheckerServiceTest {
         assertThat(r.breached()).isEmpty();
         assertThat(r.undecided()).containsExactly(com.sitemonitor.service.page.PageSpeedRules.BREACH_TTFB);
         assertThat(r.status()).isEqualTo("OK");
+    }
+
+    @Test
+    @DisplayName("Zaman aşımı kuralı (2026-11-15): faz probu kontrolün bütçesinin İÇİNDE — en çok yarısı (max-check-seconds / 2)")
+    void phaseProbeRunsInsideTheCheckBudget() {
+        java.util.concurrent.atomic.AtomicLong seen = new java.util.concurrent.atomic.AtomicLong();
+        var stub = new com.sitemonitor.service.page.HttpPhaseProbe(new SsrfGuard(appSettings)) {
+            @Override public Phases measure(Target target, long hardDeadlineMs) {
+                seen.set(hardDeadlineMs);
+                return new Phases(1, 1, null, 10, null);
+            }
+        };
+        PublicSuffixService psl = new PublicSuffixService();
+        psl.load();
+        var c = new PageSpeedCheckerService(core, stub, psl, appSettings, mock(SecretCipher.class));
+        long before = System.currentTimeMillis();
+        c.check(monitor("/"));
+        long budgetMs = Math.max(10, appSettings.getInt("site.monitor.pagespeed.max-check-seconds", 120)) * 1000L;
+        assertThat(seen.get()).as("son tarih verilmeli (0 = sınırsız olurdu)").isGreaterThan(before);
+        assertThat(seen.get() - before).as("prob bütçenin en çok yarısını kullanır").isLessThanOrEqualTo(budgetMs / 2 + 50);
     }
 
     @Test

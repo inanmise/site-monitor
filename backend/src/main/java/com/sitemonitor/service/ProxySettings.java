@@ -77,8 +77,19 @@ public class ProxySettings {
      * @throws java.io.IOException vekile bağlanılamadı ya da vekil tüneli reddetti (durum satırı mesajda)
      */
     public java.net.Socket openConnectTunnel(String targetHost, int targetPort, int timeoutMs) throws java.io.IOException {
+        return openConnectTunnel(targetHost, targetPort, timeoutMs, null);
+    }
+
+    /**
+     * {@link #openConnectTunnel(String, int, int)} + {@code onSocket}: ham soket bağlanmadan ÖNCE çağırana verilir
+     * (2026-11-15, zaman aşımı kuralı). Çağıran bir bekçiyle onu süre dolunca kapatabilir — bağlantı ya da tünel yanıtı
+     * okunurken bile (yavaş damlatan bir vekilde her okuma yalnız {@code timeoutMs} ile sınırlıdır, toplamı değil).
+     */
+    public java.net.Socket openConnectTunnel(String targetHost, int targetPort, int timeoutMs,
+                                             java.util.function.Consumer<java.net.Socket> onSocket) throws java.io.IOException {
         if (!enabled()) throw new java.io.IOException("vekil tanımlı değil");
         java.net.Socket raw = new java.net.Socket();
+        if (onSocket != null) onSocket.accept(raw);
         try {
             raw.connect(new java.net.InetSocketAddress(host, port), timeoutMs);
             raw.setSoTimeout(timeoutMs);

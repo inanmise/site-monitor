@@ -193,12 +193,26 @@ async function downloadAlarmFeedExport(qs) {
  * süzgeçlerle — sunucu akıtır. Sözleşme {@link downloadAlarmFeedExport} ile aynı: 401 oturum yolu, JSON olmayan / ağ hatası
  * çevrilmiş metin, tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`.
  */
-async function downloadPageSpeedResourcesCsv(id, qs) {
+export const EXPORT_FETCH_TIMEOUT_MS = 180_000
+
+async function downloadPageSpeedResourcesCsv(id, qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15, zaman aşımı kuralı): istek VE gövde okuması tek son tarihle sınırlı — asılı bir bağlantı
+  // indirmeyi sonsuza dek bekletmez; süre dolunca çevrilmiş "zaman aşımı" metni döner.
+  const dl = deadlineSignal(null, timeoutMs)
+  try {
+    return await readPageSpeedResourcesCsv(id, qs, dl.signal)
+  } finally {
+    dl.done()
+  }
+}
+
+async function readPageSpeedResourcesCsv(id, qs, sig) {
   const path = `/monitoring/pagespeed/${encodeURIComponent(id)}/resources/export`
   let res
   try {
-    res = await fetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-  } catch {
+    res = await fetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(sig ? { signal: sig } : {}) })
+  } catch (e) {
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
     return networkFailurePayload()
   }
   if (!res.ok) {
@@ -215,7 +229,12 @@ async function downloadPageSpeedResourcesCsv(id, qs) {
     return normalized
   }
   let blob
-  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  try {
+    blob = await res.blob()
+  } catch (e) {
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
+    return networkFailurePayload()
+  }
   const disp = headerOf(res, 'Content-Disposition') || ''
   const plain = /filename="?([^";]+)"?/.exec(disp)
   const name = plain ? plain[1] : `pagespeed-resources-${id}.csv`

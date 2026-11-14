@@ -112,4 +112,97 @@ class HttpPhaseProbeTest {
         assertThat(p.error()).isNotNull();
         verify(ssrfGuard, times(0)).validate(anyString());
     }
+
+    // ── Zaman aşımı kuralı (2026-11-15) — her adım KESİN son tarihte kesilir ───────────────────────────────
+
+    /** Bağlantıyı kabul edip isteği okuyan, sonra durum satırını {@code dripMs} arayla BAYT BAYT gönderen sunucu. */
+    private static Thread dripServer(ServerSocket server, long dripMs) {
+        Thread t = new Thread(() -> {
+            try (java.net.Socket s = server.accept()) {
+                s.getInputStream().read(new byte[2048]);
+                java.io.OutputStream out = s.getOutputStream();
+                for (int i = 0; i < 100_000; i++) {   // sonlu (test bitince soket kapanır)
+                    out.write('H');
+                    out.flush();
+                    Thread.sleep(dripMs);
+                }
+            } catch (Exception ignored) { /* bekçi soketi kapattı */ }
+        });
+        t.setDaemon(true);
+        t.start();
+        return t;
+    }
+
+    @Test
+    @DisplayName("Damlatan sunucu: her okuma zaman aşımının (5 sn) çok altında kalsa da ölçüm son tarihte kesilir")
+    void dripServer_isCutAtTheDeadline() throws Exception {
+        // Not: bazı Windows güvenlik yazılımları döngü (loopback) üzerindeki HTTP yanıtını tamamlanana dek tutar; o makinede
+        // baytlar hiç gelmez. Okuma zaman aşımı (5 sn) son tarihten (1,5 sn) büyük tutulduğu için iki ortamda da kesen bekçidir.
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            dripServer(server, 200);   // her bayt 200 ms'de — okuma zaman aşımı HİÇ dolmaz; bekçi olmasa 8192 × 200 ms sürerdi
+            when(ssrfGuard.validate(anyString())).thenReturn(List.of(InetAddress.getLoopbackAddress()));
+            long t0 = System.nanoTime();
+            HttpPhaseProbe.Phases p = probe().measure(new HttpPhaseProbe.Target(
+                    "http://drip.invalid:" + server.getLocalPort() + "/", 5000, "UA", java.util.Map.of(), false),
+                    System.currentTimeMillis() + 1500);
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(ms).as("son tarih 1,5 sn").isLessThan(3500);
+            assertThat(p.error()).isEqualTo(HttpPhaseProbe.DEADLINE_ERROR);
+            assertThat(p.serverMs()).as("süre dolan ölçümde TTFB bilinmiyor").isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("Çağıranın son tarihi (kontrolün bütçesi) 3 × zaman aşımından önce gelirse ona uyulur")
+    void callerDeadlineWins() throws Exception {
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            dripServer(server, 200);
+            when(ssrfGuard.validate(anyString())).thenReturn(List.of(InetAddress.getLoopbackAddress()));
+            long t0 = System.nanoTime();
+            HttpPhaseProbe.Phases p = probe().measure(new HttpPhaseProbe.Target(
+                    "http://drip.invalid:" + server.getLocalPort() + "/", 10_000, "UA", java.util.Map.of(), false),
+                    System.currentTimeMillis() + 800);
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(ms).as("çağıranın 800 ms son tarihi; 3 × 10 sn değil").isLessThan(2500);
+            assertThat(p.error()).isEqualTo(HttpPhaseProbe.DEADLINE_ERROR);
+        }
+    }
+
+    @Test
+    @DisplayName("Yanıt vermeyen vekil (CONNECT yanıtı gelmez): tünel okuması da son tarihte kesilir")
+    void silentProxyTunnel_isCutAtTheDeadline() throws Exception {
+        try (ServerSocket proxy = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            Thread t = new Thread(() -> {
+                try (java.net.Socket s = proxy.accept()) {
+                    java.io.InputStream in = s.getInputStream();
+                    while (in.read() != -1) { /* CONNECT isteğini yut, ASLA yanıtlama */ }
+                } catch (Exception ignored) { /* bekçi kapattı */ }
+            });
+            t.setDaemon(true);
+            t.start();
+            com.sitemonitor.service.ProxySettings ps = org.mockito.Mockito.mock(com.sitemonitor.service.ProxySettings.class);
+            when(ps.enabled()).thenReturn(true);
+            when(ps.openConnectTunnel(anyString(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt(),
+                    org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> {
+                java.util.function.Consumer<java.net.Socket> cb = inv.getArgument(3);
+                java.net.Socket raw = new java.net.Socket();
+                cb.accept(raw);
+                raw.connect(proxy.getLocalSocketAddress(), 5000);
+                raw.setSoTimeout(5000);
+                String crlf = new String(new char[] { 13, 10 });
+                raw.getOutputStream().write(("CONNECT x:443 HTTP/1.1" + crlf + crlf).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                raw.getInputStream().read();   // vekil yanıtı — gelmez; bekçi soketi kapatınca düşer
+                return raw;
+            });
+            when(ssrfGuard.validate(anyString())).thenReturn(List.of(InetAddress.getLoopbackAddress()));
+            HttpPhaseProbe hp = probe();
+            hp.setProxySettings(ps);
+            long t0 = System.nanoTime();
+            HttpPhaseProbe.Phases p = hp.measure(new HttpPhaseProbe.Target(
+                    "https://example.invalid/", 5000, "UA", java.util.Map.of(), true), System.currentTimeMillis() + 700);
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(ms).as("tünel okuması 5 sn zaman aşımını beklemez; son tarihte (700 ms) kesilir").isLessThan(2500);
+            assertThat(p.error()).isEqualTo(HttpPhaseProbe.DEADLINE_ERROR);
+        }
+    }
 }

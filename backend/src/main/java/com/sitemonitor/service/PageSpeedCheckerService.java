@@ -281,11 +281,15 @@ public class PageSpeedCheckerService {
         // sunucu fazına bakar — anlamı "sunucu ne kadar düşündü" olarak kaldı; ana isteğin ilk baytı HttpClient havuzunun
         // o anki sıcaklığına bağlıydı (zamanlanmış kontrol soğuk, 30 sn sonraki teyit sıcak → eşik arada salınıyordu).
         // Prob ASIL ölçümün ön şartı değildir: ölçemezse TTFB bilinmiyor kalır (eşik değerlendirilmez), kontrol sürer.
+        // Süre (2026-11-15, zaman aşımı kuralı): prob kontrolün duvar-saati bütçesinin İÇİNDE koşar ve en çok YARISINI kullanır
+        // (kalan yarı asıl ölçüme kalır; dağıtık işin kirası bu bütçeye göre hesaplanır). Yük süresi probdan SONRA başlar —
+        // prob ölçülen sayfa yükünü değiştirmez.
+        long checkStart = System.currentTimeMillis();
+        long deadline = checkStart + maxSeconds * 1000L;
         HttpPhaseProbe.Phases phases = phaseProbe.measure(
-                new HttpPhaseProbe.Target(url, timeoutMs, userAgent, headers, viaProxy));
+                new HttpPhaseProbe.Target(url, timeoutMs, userAgent, headers, viaProxy), checkStart + maxSeconds * 500L);
 
         long start = System.currentTimeMillis();
-        long deadline = start + maxSeconds * 1000L;
 
         PageFetchCore.FetchOptions htmlOpts = PageFetchCore.FetchOptions
                 .body(timeoutMs, userAgent).withHeaders(headers).counting().withProxy(viaProxy);

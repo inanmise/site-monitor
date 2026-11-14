@@ -110,6 +110,50 @@ public class HttpPhaseProbe {
      */
     public record Target(String url, int timeoutMs, String userAgent, java.util.Map<String, String> headers, boolean viaProxy) {}
 
+    /**
+     * Adım bekçisi (2026-11-15, zaman aşımı kuralı): soket okuma zaman aşımı yalnız TEK {@code read} çağrısını sınırlar — bir
+     * baytı zaman aşımından hemen önce gönderen ("damlatan") bir sunucu TLS el sıkışmasını, durum satırını (8192 bayt) ve
+     * başlıkları (200 satır) saatlerce uzatabilirdi. Bekçi adımın kalan süresi dolunca soketi KAPATIR; bloklu okuma / bağlanma
+     * / el sıkışma hemen düşer. Tek daemon iş parçacığı, iptal edilen görev kuyruktan silinir.
+     */
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor DEADLINE = deadlinePool();
+
+    private static java.util.concurrent.ScheduledThreadPoolExecutor deadlinePool() {
+        java.util.concurrent.ScheduledThreadPoolExecutor ex = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread th = new Thread(r, "page-phase-deadline");
+            th.setDaemon(true);
+            return th;
+        });
+        ex.setRemoveOnCancelPolicy(true);
+        return ex;
+    }
+
+    /** Bir adımın soketini süre dolunca kapatan bekçi tutamağı. */
+    static final class Guard {
+        private final java.util.concurrent.atomic.AtomicReference<Socket> socket = new java.util.concurrent.atomic.AtomicReference<>();
+        private final java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        /** Bekçi ateşledi: kayıtlı soketi kapat. */
+        void fire() {
+            fired.set(true);
+            closeQuietly(socket.get());
+        }
+
+        /** Soketi bekçiye bağlar; bekçi zaten ateşlediyse soketi hemen kapatır (sonraki bağlanma / okuma düşer). */
+        void register(Socket s) {
+            socket.set(s);
+            if (fired.get()) closeQuietly(s);
+        }
+
+        boolean fired() { return fired.get(); }
+
+        private static void closeQuietly(Socket s) {
+            if (s != null) try { s.close(); } catch (Exception ignored) { /* kapanış */ }
+        }
+    }
+
+    static final String DEADLINE_ERROR = "faz ölçümü süre sınırını aştı";
+
     /** Geriye uyum (2026-11-14 öncesi imza): kimliksiz, vekilsiz ölçüm — yönlendirme de izlenir. */
     public Phases measure(String url, int timeoutMs) {
         return measure(new Target(url, timeoutMs, LEGACY_USER_AGENT, java.util.Map.of(), false));
@@ -129,18 +173,39 @@ public class HttpPhaseProbe {
      * http için mutlak biçimli istek kullanılır; DNS fazı vekilde olduğu için null kalır ve bağlantı fazı tüneli de içerir.
      */
     public Phases measure(Target t) {
+        return measure(t, 0L);
+    }
+
+    /**
+     * {@link #measure(Target)} + çağıranın KESİN üst sınırı ({@code hardDeadlineMs}, epoch ms; ≤ 0 = yok): Sayfa Hızı
+     * kontrolü probu kendi duvar-saati bütçesinin içinde tutar (2026-11-15, zaman aşımı kuralı — prob eskiden bütçenin
+     * dışında koşuyordu). Zincirin tavanı {@code min(3 × timeout, hardDeadlineMs)}; her adım bekçiyle bu son tarihte kesilir.
+     */
+    public Phases measure(Target t, long hardDeadlineMs) {
         if (t == null || t.url() == null) return new Phases(null, null, null, null, "geçersiz URL");
         int to = Math.max(1000, t.timeoutMs());
         // Tüm zincirin mutlak tavanı: her adım kendi zaman aşımıyla sınırlı, ama altı adım art arda sınırsız beklemesin.
         long deadline = System.currentTimeMillis() + to * 3L;
+        if (hardDeadlineMs > 0) deadline = Math.min(deadline, hardDeadlineMs);
         String originHost = PageFetchCore.hostOf(t.url());
         String current = t.url();
         String method = "GET";
         try {
             for (int hop = 0; hop <= PageFetchCore.MAX_REDIRECTS; hop++) {
-                if (System.currentTimeMillis() > deadline) return new Phases(null, null, null, null, "faz ölçümü süre sınırını aştı");
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return new Phases(null, null, null, null, DEADLINE_ERROR);
                 boolean extras = originHost != null && originHost.equalsIgnoreCase(PageFetchCore.hostOf(current));
-                Hop h = hop(current, method, t, extras, to);
+                Guard guard = new Guard();
+                java.util.concurrent.ScheduledFuture<?> watch =
+                        DEADLINE.schedule(guard::fire, remaining, java.util.concurrent.TimeUnit.MILLISECONDS);
+                Hop h;
+                try {
+                    // Okuma zaman aşımı adım başına `to`; adımın TOPLAM süresini bekçi keser (kalan süre dolunca soket kapanır).
+                    h = hop(current, method, t, extras, to, guard);
+                } finally {
+                    watch.cancel(false);
+                }
+                if (guard.fired()) return new Phases(h.dnsMs, h.connectMs, h.tlsMs, null, DEADLINE_ERROR);
                 if (h.error != null) return new Phases(h.dnsMs, h.connectMs, h.tlsMs, null, h.error);
                 if (com.sitemonitor.service.SafeRedirect.isRedirect(h.status) && h.location != null) {
                     String next = com.sitemonitor.service.SafeRedirect.nextHop(current, h.location);
@@ -168,7 +233,7 @@ public class HttpPhaseProbe {
         String error;
     }
 
-    private Hop hop(String url, String method, Target t, boolean extras, int to) {
+    private Hop hop(String url, String method, Target t, boolean extras, int to, Guard guard) {
         Hop h = new Hop();
         Socket plain = null;
         try {
@@ -191,14 +256,18 @@ public class HttpPhaseProbe {
                 return h;
             }
             int guardMs = msSince(t0);
+            // Ad çözümü (JVM'de kesilemez; işletim sistemi çözücüsünün süresiyle sınırlı) sürerken süre dolduysa bağlanılmaz.
+            if (guard.fired()) { h.error = DEADLINE_ERROR; return h; }
 
             long t1 = System.nanoTime();
             if (viaProxy) {
                 if (proxySettings == null || !proxySettings.enabled()) { h.error = "vekil tanımlı değil"; return h; }
                 if (https) {
-                    plain = proxySettings.openConnectTunnel(host, port, to);   // CONNECT host:port (vekil kimliği dahil)
+                    // CONNECT host:port (vekil kimliği dahil); soket bağlanmadan bekçiye verilir — tünel yanıtı da kesilebilir
+                    plain = proxySettings.openConnectTunnel(host, port, to, guard::register);
                 } else {
                     plain = new Socket();
+                    guard.register(plain);
                     plain.connect(new InetSocketAddress(proxySettings.host(), proxySettings.port()), to);
                 }
             } else {
@@ -206,6 +275,7 @@ public class HttpPhaseProbe {
                 if (vetted == null || vetted.isEmpty()) { h.error = "adres çözülemedi"; return h; }
                 InetAddress addr = vetted.get(0);
                 plain = new Socket();
+                guard.register(plain);
                 plain.connect(new InetSocketAddress(addr, port), to);
             }
             plain.setSoTimeout(to);
