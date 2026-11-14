@@ -47,6 +47,7 @@ const IMAGE_BULK_RECS = new Set(['LARGE_IMAGES', 'OVERSIZED_IMAGE_DIMENSIONS'])
  */
 export default function ResourceScanDashboard({
   scan, analysis, prev, history, selectedId, onCategory, onShowObjects, objectsAvailable, items, onSelectScan, onGoRec, onAudit, focusRec,
+  onStart = null, starting = false, running = false,
 }) {
   const t = useT()
   const locale = useDateLocale()
@@ -69,7 +70,7 @@ export default function ResourceScanDashboard({
         <ScoreBreakdown analysis={analysis} t={t} locale={locale} />
       </div>
       <ImageImpact analysis={analysis} scan={scan} t={t} locale={locale} items={items} />
-      <GradeProjectionCard scan={scan} analysis={analysis} />
+      <GradeProjectionCard scan={scan} analysis={analysis} onStart={onStart} starting={starting} running={running} />
       <ThirdParties analysis={analysis} items={items} t={t} locale={locale} />
       <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="py-6" />}>
         <ResourceScanTrend items={history} selectedId={selectedId} onSelect={onSelectScan} />

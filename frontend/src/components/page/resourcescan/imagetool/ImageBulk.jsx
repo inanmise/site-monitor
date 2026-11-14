@@ -30,7 +30,7 @@ export function ImageBulkButton({ items, variant = 'outline', size = 'sm', class
   if (!ctx) return null
   return (
     <>
-      <Button type="button" variant={variant} size={size} data-slot="prs-it-bulk-open" className={cn(TOUCH, 'h-auto min-h-8 py-1 whitespace-normal', className)}
+      <Button type="button" variant={variant} size={size} data-slot="prs-it-bulk-open" className={cn(TOUCH, 'h-auto min-h-8 max-w-full py-1 text-left whitespace-normal [overflow-wrap:anywhere]', className)}
         onClick={() => setOpen(true)}>
         <FileArchive aria-hidden="true" />{t('prs.it.bulk.open')}
       </Button>

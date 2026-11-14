@@ -24,6 +24,9 @@ import { createImageToolStore } from '../components/page/resourcescan/imagetool/
 import ImageActions from '../components/page/resourcescan/imagetool/ImageActions.jsx'
 import { ImageBulkButton, ImageBulkStatus } from '../components/page/resourcescan/imagetool/ImageBulk.jsx'
 import GradeProjectionCard from '../components/page/resourcescan/imagetool/GradeProjectionCard.jsx'
+import { TR } from '../i18n/tr.js'
+
+const RENDER_BLOCKING_LABEL = TR['prs.score.render_blocking']
 
 const SCAN = 12
 const slot = (name, root = document) => root.querySelector(`[data-slot="${name}"]`)
@@ -93,7 +96,11 @@ describe('tarama görseli — "İndir" menüsü', () => {
   it('bağlam yokken ve görsel olmayan nesnede hiçbir şey çizilmez (eski ekranlar değişmez)', () => {
     render(<ImageActions item={img('hero.jpg')} />)
     expect(slot('prs-it-actions')).toBeNull()
-    setup({ ui: <ImageActions item={{ category: 'SCRIPT', url: 'https://ornek.example.com/app.js', bytes: 10 }} /> })
+    const other = setup({ ui: <ImageActions item={{ category: 'SCRIPT', url: 'https://ornek.example.com/app.js', bytes: 10 }} /> })
+    expect(slot('prs-it-actions')).toBeNull()
+    other.unmount()
+    // Favicon sunucuda indirilemez (404 RESOURCE_IMAGE_NOT_FOUND) — menü hiç sunulmaz
+    setup({ ui: <ImageActions item={img('favicon.png', 4 * 1024, { category: 'FAVICON', width: 32, height: 32 })} /> })
     expect(slot('prs-it-actions')).toBeNull()
   })
 
@@ -176,7 +183,7 @@ describe('tarama görseli — "İndir" menüsü', () => {
     ['429 sınır', { success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 41 }, /Yaklaşık 41 saniye sonra yeniden deneyin/],
     ['429 meşgul', { success: false, status: 429, code: 'RESOURCE_IMAGE_BUSY', retryAfter: 2 }, /başka görsel isteklerini işliyor\. Yaklaşık 2 saniye/],
     ['409 maskeli', { success: false, status: 409, code: 'RESOURCE_IMAGE_URL_MASKED' }, /gizli değer maskelendiği için sunucu bu görseli alamaz/],
-    ['409 nesneler gitmiş', { success: false, status: 409, code: 'RESOURCE_SCAN_ITEMS_GONE' }, /nesne ayrıntısı artık saklanmıyor/],
+    ['409 nesneler gitmiş', { success: false, status: 409, code: 'RESOURCE_SCAN_ITEMS_GONE' }, /nesne ayrıntısı kullanılamıyor: analiz henüz bitmedi ya da ayrıntı artık saklanmıyor/],
     ['415 desteklenmeyen', { success: false, status: 415, code: 'RESOURCE_IMAGE_UNSUPPORTED' }, /desteklenen bir görsel değil/],
     ['eski sunucu (404 NOT_FOUND)', { success: false, status: 404, code: 'NOT_FOUND' }, /bu sürümü görsel indirmeyi ve not hesabını desteklemiyor/],
     ['eski sunucu (405)', { success: false, status: 405 }, /bu sürümü görsel indirmeyi ve not hesabını desteklemiyor/],
@@ -388,15 +395,18 @@ describe('"Görseller optimize edilse not ne olurdu?" kartı', () => {
     expect(slot('prs-it-proj-after').getAttribute('data-tone')).not.toBe('muted')
     expect(slot('prs-it-proj-diff')).toHaveTextContent('+17 puan')
     const kpis = slots('prs-it-proj-kpi')
-    expect(kpis.map((k) => k.getAttribute('data-key'))).toEqual(['page', 'images', 'load', 'large'])
+    // Yükleme tahmini projeksiyonda değişmez (ölçülen sürelerden gelir) — optimizasyonun sonucu gibi gösterilmez
+    expect(kpis.map((k) => k.getAttribute('data-key'))).toEqual(['page', 'images', 'large'])
     expect(kpis[0]).toHaveTextContent('5 MB → 2,6 MB')
-    expect(kpis[3]).toHaveTextContent('6 → 0')
+    expect(kpis[2]).toHaveTextContent('6 → 0')
     const rows = slots('prs-it-proj-row')
     expect(rows.map((r) => r.getAttribute('data-key'))).toEqual(['images', 'page_weight', 'caching'])
     expect(rows[0].getAttribute('data-changed')).toBe('true')
     expect(rows[0]).toHaveTextContent('20 → 92')
     expect(rows[2].getAttribute('data-changed')).toBe('false')
     expect(slot('prs-it-proj-applied')).toHaveTextContent('4 görselin boyutu değiştirilerek hesaplandı.')
+    expect(slot('prs-it-proj-applied')).toHaveTextContent('Yüklenme tahmini ve puanı burada değişmez')
+    expect(slot('prs-it-proj-applied')).not.toHaveTextContent('saklanan puanla')
     expect(slot('prs-it-proj-partial')).toBeNull()
   })
 
@@ -455,9 +465,74 @@ describe('"Görseller optimize edilse not ne olurdu?" kartı', () => {
     await waitFor(() => expect(slot('prs-it-proj-result')).not.toBeNull())
   })
 
+  it.each([
+    ['algorithm', 'eski bir analiz sürümüyle yapıldığı için'],
+    ['baseline', 'saklanan verisi notunu yeniden üretmeye yetmediği için'],
+  ])('yapılamayan projeksiyon (409 NOT_PROJECTABLE, %s): nötr durum + "Yeniden analiz et"; hata bandı ve "değişmez" yok', async (reason, text) => {
+    api.monitoring.resourceScanImageProjection.mockResolvedValue({ success: false, status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason, error: 'x' })
+    const onStart = vi.fn()
+    setup({ ui: <GradeProjectionCard scan={scan} analysis={analysis} onStart={onStart} /> })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-na')).not.toBeNull())
+    expect(slot('prs-it-proj-na').getAttribute('data-reason')).toBe(reason)
+    expect(slot('prs-it-proj-na')).toHaveTextContent(text)
+    expect(slot('prs-it-proj-failed')).toBeNull()
+    expect(slot('prs-it-proj-result')).toBeNull()
+    expect(slot('prs-it-proj-diff')).toBeNull()
+    expect(slot('prs-it-proj-run')).toBeNull()
+    fireEvent.click(slot('prs-it-proj-new-scan'))
+    expect(onStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('yapılamayan projeksiyon: çalıştırma yetkisi yoksa ya da analiz sürüyorsa yeniden analiz düğmesi yok', async () => {
+    api.monitoring.resourceScanImageProjection.mockResolvedValue({ success: false, status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'algorithm' })
+    const a = setup({ canRun: false, ui: <GradeProjectionCard scan={scan} analysis={analysis} onStart={vi.fn()} /> })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-na')).not.toBeNull())
+    expect(slot('prs-it-proj-new-scan')).toBeNull()
+    a.unmount()
+    setup({ ui: <GradeProjectionCard scan={scan} analysis={analysis} onStart={vi.fn()} running={{ id: 9 }} /> })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-na')).not.toBeNull())
+    expect(slot('prs-it-proj-new-scan')).toBeNull()
+  })
+
+  it('sunucu "nesne ayrıntısı yok" derse (409 ITEMS_GONE) nötr durum; 429 bilgi tonunda bekleme süresiyle', async () => {
+    api.monitoring.resourceScanImageProjection.mockResolvedValueOnce({ success: false, status: 409, code: 'RESOURCE_SCAN_ITEMS_GONE' })
+    const a = setup({ ui: card })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-gone')).not.toBeNull())
+    expect(slot('prs-it-proj-failed')).toBeNull()
+    a.unmount()
+    api.monitoring.resourceScanImageProjection.mockResolvedValueOnce({ success: false, status: 429, code: 'RATE_LIMITED', retryAfter: 20 })
+    setup({ ui: card })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-failed')).not.toBeNull())
+    expect(slot('prs-it-proj-failed').getAttribute('data-code')).toBe('RATE_LIMITED')
+    expect(slot('prs-it-proj-failed').querySelector('[data-slot="alert"]').getAttribute('data-tone')).toBe('info')
+    expect(slot('prs-it-proj-failed')).toHaveTextContent('20')
+    expect(slot('prs-it-proj-run')).not.toBeNull()
+  })
+
+  it('reused_components: bileşen "yeniden hesaplanmadı" işaretlenir ve yöntem notunda adıyla geçer; yükleme satırı da sabittir', async () => {
+    const both = (side) => ({ ...side, scores: { ...side.scores, render_blocking: { score: 64, lost: 3.6 }, load_time: { score: 70, lost: 6 } } })
+    api.monitoring.resourceScanImageProjection.mockResolvedValue({ success: true, data: data({ reused_components: ['render_blocking'], before: both(data().before), after: both(data().after) }) })
+    setup({ ui: card })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-result')).not.toBeNull())
+    const row = (k) => slots('prs-it-proj-row').find((r) => r.getAttribute('data-key') === k)
+    expect(row('render_blocking').getAttribute('data-fixed')).toBe('true')
+    expect(row('render_blocking').getAttribute('data-changed')).toBe('false')
+    expect(within(row('render_blocking')).getByText('yeniden hesaplanmadı')).not.toBeNull()
+    expect(row('load_time').getAttribute('data-fixed')).toBe('true')
+    expect(row('images').getAttribute('data-fixed')).toBeNull()
+    expect(slot('prs-it-proj-applied')).toHaveTextContent('saklanan puanla hesaplandı')
+    expect(slot('prs-it-proj-applied')).toHaveTextContent(RENDER_BLOCKING_LABEL)
+  })
+
   it('nesne ayrıntısı saklanmayan analizde düğme yok, nedeni yazılır', () => {
     setup({ itemsKept: false, ui: card })
-    expect(slot('prs-it-proj-gone')).toHaveTextContent('nesne ayrıntısı artık saklanmıyor')
+    expect(slot('prs-it-proj-gone')).toHaveTextContent('nesne ayrıntısı kullanılamıyor')
     expect(slot('prs-it-proj-run')).toBeNull()
   })
 

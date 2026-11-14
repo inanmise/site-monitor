@@ -52,7 +52,14 @@ export const ENGINE_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'T
 /** Sunucunun görsel / projeksiyon uçlarının hata kodları (sözleşme §1.1, §1.2) — her biri `prs.it.srv.<KOD>`. */
 export const SERVER_CODES = Object.freeze(['RESOURCE_SCAN_NOT_FOUND', 'RESOURCE_SCAN_ITEMS_GONE', 'RESOURCE_IMAGE_NOT_FOUND',
   'RESOURCE_IMAGE_URL_MASKED', 'RESOURCE_IMAGE_TOO_LARGE', 'RESOURCE_IMAGE_FETCH_FAILED', 'RESOURCE_IMAGE_UNSUPPORTED',
-  'RESOURCE_IMAGE_BUSY', 'RESOURCE_SCAN_NOT_DONE', 'RATE_LIMITED', 'BLOCKED'])
+  'RESOURCE_IMAGE_BUSY', 'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE', 'RATE_LIMITED', 'BLOCKED'])
+/** Projeksiyonun yapılamama nedenleri (sunucu `reason`) → metin anahtarı (bilinmeyen neden → genel metin). */
+const NOT_PROJECTABLE_KEYS = Object.freeze({
+  algorithm: 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm',
+  baseline: 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.baseline',
+})
+/** Projeksiyonda HİÇ yeniden hesaplanmayan bileşen: yükleme tahmini ölçülen sürelerden gelir, bayttan değil (sunucu). */
+export const PROJECTION_FIXED_COMPONENTS = Object.freeze(['load_time'])
 /** Sunucu kodu olmayan istemci durumları (`prs.it.srv.<kod>`). */
 export const CLIENT_PROBLEMS = Object.freeze(['unsupported', 'session', 'forbidden', 'network', 'download', 'other'])
 /** Tarama görselinin indirilememe nedenleri (`prs.it.na.<neden>`). */
@@ -442,7 +449,14 @@ export function serverProblemText(res, t, locale) {
     return wait !== null && wait > 0 ? t(`prs.it.srv.${code}.wait`, formatNumber(Math.ceil(wait), locale)) : t(`prs.it.srv.${code}`)
   }
   if (code === 'RESOURCE_IMAGE_TOO_LARGE') {
-    return t('prs.it.srv.RESOURCE_IMAGE_TOO_LARGE', formatSize(num(res?.max_bytes) ?? SERVER_MAX_BYTES, { locale }))
+    const max = formatSize(num(res?.max_bytes) ?? SERVER_MAX_BYTES, { locale })
+    // `bytes` yalnız analizin kendi ölçtüğü boyut zaten sınırın üstündeyse gelir
+    const size = num(res?.bytes)
+    return size !== null && size > 0 ? t('prs.it.srv.RESOURCE_IMAGE_TOO_LARGE.size', formatSize(size, { locale }), max) : t('prs.it.srv.RESOURCE_IMAGE_TOO_LARGE', max)
+  }
+  if (code === 'RESOURCE_SCAN_NOT_PROJECTABLE') {
+    const key = NOT_PROJECTABLE_KEYS[typeof res?.reason === 'string' ? res.reason : '']
+    return t(key || 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE')
   }
   if (code === 'RESOURCE_IMAGE_FETCH_FAILED') {
     const hs = num(res?.http_status)
@@ -593,6 +607,11 @@ export function projectionView(data) {
   const before = side(data.before)
   const after = side(data.after)
   const keys = [...new Set([...Object.keys(before.scores), ...Object.keys(after.scores)])].slice(0, 40)
+  // Sunucunun iki tarafta da SAKLI puanını kullandığı bileşenler (ör. render_blocking — saklanmayan HTML gerekir)
+  const reused = Array.isArray(data.reused_components)
+    ? [...new Set(data.reused_components.filter((k) => typeof k === 'string' && /^[a-z0-9_]{1,40}$/.test(k)))].slice(0, 10)
+    : []
+  const fixedSet = new Set([...PROJECTION_FIXED_COMPONENTS, ...reused])
   const rows = keys.map((key) => {
     const b = before.scores[key] || {}
     const a = after.scores[key] || {}
@@ -601,13 +620,16 @@ export function projectionView(data) {
     const lb = num(b.lost)
     const la = num(a.lost)
     const gained = lb !== null && la !== null ? Math.round((lb - la) * 10) / 10 : null
-    return { key, labelKey: scoreLabelKey(key), before: sb, after: sa, lostBefore: lb, lostAfter: la, gained,
-      changed: (sb !== null && sa !== null && sb !== sa) || (gained !== null && gained !== 0) }
+    const fixed = fixedSet.has(key)
+    return { key, labelKey: scoreLabelKey(key), before: sb, after: sa, lostBefore: lb, lostAfter: la, gained: fixed ? null : gained, fixed,
+      reused: reused.includes(key),
+      changed: !fixed && ((sb !== null && sa !== null && sb !== sa) || (gained !== null && gained !== 0)) }
   }).sort((x, y) => (Number(y.changed) - Number(x.changed)) || ((y.gained ?? 0) - (x.gained ?? 0)))
   const diff = (a, b) => (a !== null && b !== null ? a - b : null)
   return {
     capped: data.capped === true,
     applied: num(data.applied), ignored: num(data.ignored), algorithmVersion: num(data.algorithm_version),
+    reused, reusedLabelKeys: reused.map((k) => scoreLabelKey(k)),
     before, after,
     gradeDiff: diff(after.grade, before.grade),
     pageBytesDiff: diff(after.pageBytes, before.pageBytes),

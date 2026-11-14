@@ -810,7 +810,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
                   onCategory={(c) => goObjects({ ...DEFAULT_FILTERS, sort: filters.sort, scope: 'all', types: [c] })}
                   onShowObjects={showRecObjects}
                   onSelectScan={(id) => { if (id !== selectedId) { select(id); requestFocus('hero') } }}
-                  onGoRec={goRec} onAudit={goAudit}
+                  onGoRec={goRec} onAudit={goAudit} onStart={startPage} starting={starting} running={running}
                   focusRec={typeof focusReq?.target === 'string' && focusReq.target.startsWith('rec:') ? { code: focusReq.target.slice(4), seq: focusReq.seq } : null} />
               )}
             </SelectedView>

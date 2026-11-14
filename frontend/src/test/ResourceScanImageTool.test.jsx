@@ -24,6 +24,7 @@ vi.mock('../components/page/resourcescan/imagetool/engineClient.js', () => eng)
 
 import { api } from '../api/client'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import { flushUrlQuerySync } from '../hooks/useUrlQuerySync.js'
 import ResourceScanTab from '../components/page/resourcescan/ResourceScanTab.jsx'
 import { isImageWorkBusy, resetImageWorkForTests } from '../components/page/resourcescan/imagetool/imageToolBusy.js'
 import { scanDetail, scanHistory, scanItems } from './helpers/resourceScanFixtures.js'
@@ -89,12 +90,12 @@ describe('"Görsel aracı" bölümü', () => {
     openTab(/^Görsel aracı/)
     await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
     expect(slot('prs-root').getAttribute('data-view')).toBe('tool')
-    await waitFor(() => expect(window.location.search).toContain('prs_v=tool'))
+    await waitFor(() => { flushUrlQuerySync(); expect(window.location.search).toContain('prs_v=tool') }, { timeout: 5000 })
     expect(slot('prs-it-drop')).toHaveTextContent('Görselleri buraya sürükleyip bırakın')
     expect(slot('prs-it-back')).toBeNull()                    // sekmeler varken geri düğmesi gereksiz
     openTab(/^Pano/)
     await waitFor(() => expect(slot('prs-hero')).not.toBeNull())
-    await waitFor(() => expect(window.location.search).not.toContain('prs_v=tool'))     // adres yazımı gecikmeli (debounce)
+    await waitFor(() => { flushUrlQuerySync(); expect(window.location.search).not.toContain('prs_v=tool') }, { timeout: 5000 })     // adres yazımı gecikmeli (debounce)
   })
 
   it('paylaşılan bağlantı (prs_v=tool) doğrudan aracı açar; eski analiz şeridi araçta çizilmez', async () => {
@@ -112,7 +113,7 @@ describe('"Görsel aracı" bölümü', () => {
     fireEvent.click(within(slot('prs-empty')).getByRole('button', { name: 'Görsel aracını aç' }))
     await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
     expect(slot('prs-empty')).toBeNull()
-    await waitFor(() => expect(window.location.search).toContain('prs_v=tool'))
+    await waitFor(() => { flushUrlQuerySync(); expect(window.location.search).toContain('prs_v=tool') }, { timeout: 5000 })
     fireEvent.change(slot('prs-it-file-input'), { target: { files: [new File([new Uint8Array(4000)], 'yuklenen.png', { type: 'image/png' })] } })
     await waitFor(() => expect(slot('prs-it-entry')?.getAttribute('data-state')).toBe('done'))
     expect(api.monitoring.resourceScanImage).not.toHaveBeenCalled()         // yüklenen dosya sunucuya gitmez
@@ -198,11 +199,19 @@ describe('pano: görsel etkisi kartı, toplu indirme ve "not ne olurdu?"', () =>
     expect(slot('prs-it-projection')).not.toBeNull()
     api.monitoring.resourceScanImageProjection.mockResolvedValue(ok({ capped: false, applied: 2, ignored: 0,
       before: { grade: 72, letter: 'C', page_bytes: 3_565_158, image_bytes: 2_202_009, load_ms: 2450, large_images: 2, scores: { images: { score: 40, lost: 9 } } },
-      after: { grade: 81, letter: 'B', page_bytes: 2_202_009, image_bytes: 838_860, load_ms: 1900, large_images: 0, scores: { images: { score: 90, lost: 1.5 } } } }))
+      after: { grade: 81, letter: 'B', page_bytes: 2_202_009, image_bytes: 838_860, load_ms: 2450, large_images: 0, scores: { images: { score: 90, lost: 1.5 } } } }))
     fireEvent.click(slot('prs-it-proj-run'))
     await waitFor(() => expect(slot('prs-it-proj-result')).not.toBeNull())
     expect(api.monitoring.resourceScanImageProjection).toHaveBeenCalledWith(100, 12, { use_measured: true })
     expect(slot('prs-it-proj-diff')).toHaveTextContent('+9 puan')
+    // Sunucu bu analizi projekte edemezse (eski algoritma): nötr durum; "Yeniden analiz et" sekmenin başlatıcısını çağırır
+    api.monitoring.resourceScanImageProjection.mockResolvedValueOnce({ success: false, status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'algorithm', error: 'x' })
+    api.monitoring.startResourceScan.mockResolvedValueOnce({ success: false, status: 500, error: 'Analiz başlatılamadı, birkaç saniye sonra yeniden deneyin.' })
+    fireEvent.click(slot('prs-it-proj-run'))
+    await waitFor(() => expect(slot('prs-it-proj-na')).not.toBeNull())
+    expect(slot('prs-it-proj-result')).toBeNull()
+    fireEvent.click(slot('prs-it-proj-new-scan'))
+    await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100))
   })
 
   it('toplu indirme: sekmenin üstündeki çubuk ilerlemeyi ve sonucu yazar; sürerken "süren iş" kaydı doludur (pencere kapanırken sorulur)', async () => {

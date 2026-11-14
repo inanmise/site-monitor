@@ -8,7 +8,7 @@ import { FALLBACK_LIMITS } from '../components/page/resourcescan/imagetool/engin
 import {
   BULK_MAX_IMAGES, CLIENT_PROBLEMS, DEFAULT_SETTINGS, ENGINE_CODES, FORMATS, METHODS, NOTE_CODES, PHASES, PROJECTION_MAX_IMAGES,
   QUALITY_MODES, RESPONSIVE_WIDTHS, SERVER_CODES, SERVER_MAX_BYTES, TOOL_MAX_FILES, UNAVAILABLE_REASONS,
-  baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, imageUnavailable, isSvgItem, largeImages, mappingCsv,
+  baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, imageUnavailable, isImageItem, isSvgItem, largeImages, mappingCsv,
   mappingRows, missingText, noteText, optimizeSettings, optionsKey, outputName, phaseText, pictureSnippet, problemLine, processedCells,
   projectionImages, projectionView, resizeSettings, responsiveWidths, resultLine, resultMeta, resultSummary, safeFileBase, savingPctOf,
   serverProblemCode, serverProblemText, settingsSummary, similarityText, slugFileBase, splitName, suggestedWidth, suggestionText,
@@ -62,10 +62,11 @@ describe('görsel aracı — kod listeleri motorun ve sözleşmenin listeleriyle
     // Sözleşmedeki kodlar (image-tool-contract.md §1): yeni uçların döndürebildiği hata kodları
     const CONTRACT = ['RESOURCE_SCAN_NOT_FOUND', 'RESOURCE_SCAN_ITEMS_GONE', 'RESOURCE_IMAGE_NOT_FOUND', 'RESOURCE_IMAGE_URL_MASKED',
       'RESOURCE_IMAGE_TOO_LARGE', 'RESOURCE_IMAGE_FETCH_FAILED', 'BLOCKED', 'RESOURCE_IMAGE_UNSUPPORTED', 'RATE_LIMITED', 'RESOURCE_IMAGE_BUSY',
-      'RESOURCE_SCAN_NOT_DONE']
+      'RESOURCE_SCAN_NOT_DONE', 'RESOURCE_SCAN_NOT_PROJECTABLE']
     expect([...SERVER_CODES].sort()).toEqual([...CONTRACT].sort())
     const need = [...CONTRACT.map((c) => `prs.it.srv.${c}`), ...CLIENT_PROBLEMS.map((c) => `prs.it.srv.${c}`),
-      'prs.it.srv.RATE_LIMITED.wait', 'prs.it.srv.RESOURCE_IMAGE_BUSY.wait', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.http', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.reason']
+      'prs.it.srv.RATE_LIMITED.wait', 'prs.it.srv.RESOURCE_IMAGE_BUSY.wait', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.http', 'prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.reason',
+      'prs.it.srv.RESOURCE_IMAGE_TOO_LARGE.size', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm', 'prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.baseline']
     for (const k of need) {
       expect(typeof TR[k] === 'string' && TR[k].trim().length >= 25, `TR ${k}`).toBe(true)
       expect(typeof EN[k] === 'string' && EN[k].trim().length >= 25, `EN ${k}`).toBe(true)
@@ -94,6 +95,9 @@ describe('görsel aracı — kod listeleri motorun ve sözleşmenin listeleriyle
 describe('görsel aracı — indirilebilirlik ve önerilen genişlik', () => {
   it('imageUnavailable: yetki → saklanmayan nesneler → adres yok → maskeli → SVG → açılmamış → sınırdan büyük → null', () => {
     expect(imageUnavailable(img(), { canRun: false, itemsKept: true })).toBe('no_permission')
+    // Yalnız IMAGE kategorisi indirilebilir: favicon sunucuda 404 RESOURCE_IMAGE_NOT_FOUND alır → menü hiç sunulmaz
+    expect(isImageItem(img())).toBe(true)
+    expect(isImageItem(img({ category: 'FAVICON' }))).toBe(false)
     expect(imageUnavailable(img(), { canRun: true, itemsKept: false })).toBe('items_gone')
     expect(imageUnavailable(img({ url: '' }), { canRun: true })).toBe('no_url')
     expect(imageUnavailable(img({ url: 'https://ornek.example.com/a.jpg?token=*****' }), { canRun: true })).toBe('masked')
@@ -324,6 +328,13 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(serverProblemText({ status: 429, code: 'RESOURCE_IMAGE_BUSY', retry_after_seconds: 2 }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_IMAGE_BUSY.wait(2)')
     expect(serverProblemText({ status: 429, code: 'RATE_LIMITED' }, t, 'tr-TR')).toBe('prs.it.srv.RATE_LIMITED')
     expect(serverProblemText({ status: 413, code: 'RESOURCE_IMAGE_TOO_LARGE', max_bytes: 25 * 1024 * 1024 }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_IMAGE_TOO_LARGE(25 MB)')
+    // Analizin kendi ölçtüğü boyut zaten sınırın üstündeyse sunucu `bytes` da yollar → ileti iki değeri de söyler
+    expect(serverProblemText({ status: 413, code: 'RESOURCE_IMAGE_TOO_LARGE', max_bytes: 26214400, bytes: 31457280 }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_IMAGE_TOO_LARGE.size(30 MB|25 MB)')
+    // Projeksiyon yapılamıyor: nedenine göre metin (bilinmeyen neden → genel metin, hata kodu sızmaz)
+    expect(serverProblemText({ status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'algorithm' }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.algorithm')
+    expect(serverProblemText({ status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'baseline' }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE.baseline')
+    expect(serverProblemText({ status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'yeni' }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_SCAN_NOT_PROJECTABLE')
+    expect(serverProblemCode({ status: 409, code: 'RESOURCE_SCAN_NOT_PROJECTABLE' })).toBe('RESOURCE_SCAN_NOT_PROJECTABLE')
     expect(serverProblemText({ status: 502, code: 'RESOURCE_IMAGE_FETCH_FAILED', http_status: 404 }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED.http(404)')
     expect(serverProblemText({ status: 502, code: 'RESOURCE_IMAGE_FETCH_FAILED' }, t, 'tr-TR')).toBe('prs.it.srv.RESOURCE_IMAGE_FETCH_FAILED')
     expect(serverProblemText({ status: 502, code: 'RESOURCE_IMAGE_FETCH_FAILED', reason: 'CONNECT_TIMEOUT' }, t, 'tr-TR')).toMatch(/^prs\.it\.srv\.RESOURCE_IMAGE_FETCH_FAILED\.reason\(/)
@@ -461,9 +472,25 @@ describe('görsel aracı — "not ne olurdu?" görünüm modeli', () => {
     expect(v.applied).toBe(4)
     expect(v.ignored).toBe(1)
     expect(v.rows.map((r) => r.key)).toEqual(['images', 'page_weight', 'load_time', 'caching'])
-    expect(v.rows[0]).toMatchObject({ before: 20, after: 92, gained: 10.8, changed: true })
-    expect(v.rows[3]).toMatchObject({ changed: false, gained: 0 })
-    expect(v.changedCount).toBe(3)
+    expect(v.rows[0]).toMatchObject({ before: 20, after: 92, gained: 10.8, changed: true, fixed: false })
+    // Yükleme tahmini ölçülen sürelerden gelir: sunucu farklı dönse bile "değişti" / "kazanıldı" SAYILMAZ (sunucu kuralı)
+    expect(v.rows[2]).toMatchObject({ key: 'load_time', fixed: true, changed: false, gained: null })
+    expect(v.rows[3]).toMatchObject({ changed: false, gained: 0, fixed: false })
+    expect(v.changedCount).toBe(2)
+    expect(v.reused).toEqual([])
+    expect(v.reusedLabelKeys).toEqual([])
+  })
+
+  it('reused_components: iki tarafta saklı puan kullanılan bileşen "yeniden hesaplanmadı" sayılır; geçersiz adlar atılır', () => {
+    const v = projectionView(data({
+      reused_components: ['render_blocking', 'render_blocking', 'Bad Key!', 42, 'x'.repeat(41)],
+      before: { ...data().before, scores: { ...data().before.scores, render_blocking: { score: 60, lost: 4 } } },
+      after: { ...data().after, scores: { ...data().after.scores, render_blocking: { score: 60, lost: 4 } } },
+    }))
+    expect(v.reused).toEqual(['render_blocking'])
+    expect(v.reusedLabelKeys).toEqual(['prs.score.render_blocking'])
+    expect(v.rows.find((r) => r.key === 'render_blocking')).toMatchObject({ fixed: true, reused: true, changed: false, gained: null })
+    expect(projectionView(data({ reused_components: 'render_blocking' })).reused).toEqual([])
   })
 
   it('sınırlı (kısmi) analiz işaretlenir; bilinmeyen not null kalır (fark da null — 0 uydurulmaz)', () => {

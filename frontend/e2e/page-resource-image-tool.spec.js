@@ -111,7 +111,7 @@ async function useFakeEngine(page, mode = 'ok') {
 }
 
 /** Sahte sunucu: geçmiş, ayrıntı, görsel baytları (ikili), not projeksiyonu. */
-async function routes(page, { canRun = true, image = 'ok' } = {}) {
+async function routes(page, { canRun = true, image = 'ok', projection = 'ok' } = {}) {
   await mockApi(page)
   const state = { images: [], projections: [] }
   await page.route(PATH(/^\/api\/monitoring\/page\/100\/resource-scans$/), json({ success: true, data: scanHistory({ canRun }) }))
@@ -133,11 +133,13 @@ async function routes(page, { canRun = true, image = 'ok' } = {}) {
     let body = null
     try { body = JSON.parse(route.request().postData() || 'null') } catch { body = null }
     state.projections.push(body)
-    return json({ success: true, data: { algorithm_version: 3, capped: false, applied: 2, ignored: 0,
+    if (projection === 'notProjectable') return json({ success: false, code: 'RESOURCE_SCAN_NOT_PROJECTABLE', reason: 'algorithm', error: 'x' }, 409)(route)
+    // Sunucunun son biçimi: yükleme tahmini ve puanı İKİ TARAFTA AYNI; render_blocking saklı puanla (reused_components)
+    return json({ success: true, data: { algorithm_version: 3, capped: false, applied: 2, ignored: 0, reused_components: ['render_blocking'],
       before: { grade: 72, letter: 'C', page_bytes: 3_565_158, image_bytes: 2_202_009, load_ms: 2450, large_images: 2,
-        scores: { images: { score: 40, lost: 9 }, page_weight: { score: 55, lost: 9 }, load_time: { score: 62, lost: 9.5 }, caching: { score: 75, lost: 2.5 } } },
-      after: { grade: 84, letter: 'B', page_bytes: 2_202_009, image_bytes: 838_860, load_ms: 1900, large_images: 0,
-        scores: { images: { score: 92, lost: 1.2 }, page_weight: { score: 78, lost: 4.4 }, load_time: { score: 74, lost: 6.5 }, caching: { score: 75, lost: 2.5 } } } } })(route)
+        scores: { images: { score: 40, lost: 9 }, page_weight: { score: 55, lost: 9 }, load_time: { score: 62, lost: 9.5 }, render_blocking: { score: 70, lost: 3 }, caching: { score: 75, lost: 2.5 } } },
+      after: { grade: 84, letter: 'B', page_bytes: 2_202_009, image_bytes: 838_860, load_ms: 2450, large_images: 0,
+        scores: { images: { score: 92, lost: 1.2 }, page_weight: { score: 78, lost: 4.4 }, load_time: { score: 62, lost: 9.5 }, render_blocking: { score: 70, lost: 3 }, caching: { score: 75, lost: 2.5 } } } } })(route)
   })
   return state
 }
@@ -193,6 +195,20 @@ function smallTargets(sel) {
   return out
 }
 
+/**
+ * "İndir" menüsünü açar ve açılış animasyonunun bitmesini bekler (ölçüm animasyon ortasında yapılırsa öğeler %95
+ * ölçekle küçük görünür). Radix, menü kapandıktan hemen sonraki (~150 ms) basışı yutar — açılmadıysa yeniden basılır.
+ */
+async function openMenu(page, trigger) {
+  const content = page.locator('[data-slot="prs-it-menu-content"]')
+  await expect(content).toHaveCount(0)
+  await expect(async () => {
+    if (!(await content.isVisible())) await trigger.click()
+    await expect(content).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 10_000 })
+  await content.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+  return content
+}
 /** Açık menünün (gövdeye taşınır) ekrana sığması ve dokunma hedefleri. */
 function menuBox() {
   const m = document.querySelector('[data-slot="prs-it-menu-content"]')
@@ -429,8 +445,7 @@ for (const vp of VIEWPORTS) {
 
       // 2) Menü: ekrana sığar, seçenekler kırpılmaz, dokunmatikte ≥ 40 px
       const firstActions = card.locator('[data-slot="prs-it-actions"]').first()
-      await firstActions.locator('[data-slot="prs-it-menu"]').click()
-      await expect(page.locator('[data-slot="prs-it-menu-content"]')).toBeVisible()
+      await openMenu(page, firstActions.locator('[data-slot="prs-it-menu"]'))
       const mb = await page.evaluate(menuBox)
       expect(mb.left, `@${vp.name}: menü solda taşıyor`).toBeGreaterThanOrEqual(0)
       expect(mb.right, `@${vp.name}: menü sağda taşıyor`).toBeLessThanOrEqual(mb.vw + 1)
@@ -446,14 +461,14 @@ for (const vp of VIEWPORTS) {
       expect(state.images).toEqual([BIG.url])
 
       // 4) Optimize edilmiş: gerçek önce → sonra satırı; ikinci tık sunucudan yeniden İSTEMEZ
-      await firstActions.locator('[data-slot="prs-it-menu"]').click()
+      await openMenu(page, firstActions.locator('[data-slot="prs-it-menu"]'))
       const dl2 = page.waitForEvent('download')
       await page.locator('[data-slot="prs-it-menu-content"] [data-action="optimize"]').click()
       expect((await dl2).suggestedFilename()).toBe('kampanya-ana-sayfa-banner-1-opt.jpg')
       await expect(firstActions.locator('[data-slot="prs-it-result"]')).toBeVisible()
       await expect(firstActions.locator('[data-slot="prs-it-result"]')).toContainText('→')
       await expect(firstActions.locator('[data-slot="prs-it-compare"]')).toBeVisible()
-      await firstActions.locator('[data-slot="prs-it-menu"]').click()
+      await openMenu(page, firstActions.locator('[data-slot="prs-it-menu"]'))
       const dl3 = page.waitForEvent('download')
       await page.locator('[data-slot="prs-it-menu-content"] [data-action="optimize"]').click()
       await dl3
@@ -461,7 +476,7 @@ for (const vp of VIEWPORTS) {
       await check('pano — işlenmiş görsel satırı')
 
       // 5) Özel boyut penceresi: boş genişlikte hata alanın altında; geçerliyse iner
-      await firstActions.locator('[data-slot="prs-it-menu"]').click()
+      await openMenu(page, firstActions.locator('[data-slot="prs-it-menu"]'))
       await page.locator('[data-slot="prs-it-menu-content"] [data-action="custom"]').click()
       const custom = page.locator(CUSTOM)
       await expect(custom).toBeVisible()
@@ -483,7 +498,10 @@ for (const vp of VIEWPORTS) {
       await expect(proj.locator('[data-slot="prs-it-proj-result"]')).toBeVisible()
       await expect(proj.locator('[data-slot="prs-it-proj-before"]')).toContainText('72')
       await expect(proj.locator('[data-slot="prs-it-proj-after"]')).toContainText('84')
-      await expect(proj.locator('[data-slot="prs-it-proj-row"]')).toHaveCount(4)
+      await expect(proj.locator('[data-slot="prs-it-proj-row"]')).toHaveCount(5)
+      // Yükleme tahmini optimizasyonun sonucu gibi gösterilmez: KPI yok, satırı "yeniden hesaplanmadı"
+      await expect(proj.locator('[data-slot="prs-it-proj-kpi"]')).toHaveCount(3)
+      await expect(proj.locator('[data-slot="prs-it-proj-row"][data-fixed="true"]')).toHaveCount(2)
       expect(state.projections[0]).toEqual({ use_measured: true })
       await check('not kartı — sonuç')
       await proj.locator('[data-slot="prs-it-proj-basis"]').getByRole('button').nth(1).click()
@@ -527,19 +545,27 @@ for (const vp of VIEWPORTS) {
 
     test('sunucu görseli vermezse / sınıra takılırsa satır nedenini söyler; yetkisiz görüntüleyicide menü açıklar', async ({ page }) => {
       await useFakeEngine(page, 'ok')
-      const state = await routes(page, { image: 'limited' })
+      const state = await routes(page, { image: 'limited', projection: 'notProjectable' })
       const root = await open(page)
       await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
       const card = root.locator('[data-slot="prs-images"]')
       await card.scrollIntoViewIfNeeded()
       const actions = card.locator('[data-slot="prs-it-actions"]').first()
-      await actions.locator('[data-slot="prs-it-menu"]').click()
+      await openMenu(page, actions.locator('[data-slot="prs-it-menu"]'))
       await page.locator('[data-slot="prs-it-menu-content"] [data-action="optimize"]').click()
       await expect(actions.locator('[data-slot="prs-it-problem"]')).toBeVisible()
       await expect(actions.locator('[data-slot="prs-it-problem"]')).toContainText('30')
       await expect(actions.locator('[data-slot="prs-it-result"]')).toHaveCount(0)
       expect(state.images).toHaveLength(1)
       await checker(page)('pano — sınır iletisi')
+      // Eski algoritmalı analiz: not kartı hata bandı değil nötr durum + "Yeniden analiz et"
+      const proj = root.locator('[data-slot="prs-it-projection"]')
+      await proj.scrollIntoViewIfNeeded()
+      await proj.locator('[data-slot="prs-it-proj-run"]').click()
+      await expect(proj.locator('[data-slot="prs-it-proj-na"]')).toHaveAttribute('data-reason', 'algorithm')
+      await expect(proj.locator('[data-slot="prs-it-proj-failed"]')).toHaveCount(0)
+      await expect(proj.locator('[data-slot="prs-it-proj-new-scan"]')).toBeVisible()
+      await checker(page)('not kartı — yapılamıyor')
     })
 
     test('çalıştırma yetkisi olmayan görüntüleyici: menü nedenini söyler, araç yine açılır', async ({ page }) => {
@@ -549,7 +575,7 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
       const card = root.locator('[data-slot="prs-images"]')
       await card.scrollIntoViewIfNeeded()
-      await card.locator('[data-slot="prs-it-menu"]').first().click()
+      await openMenu(page, card.locator('[data-slot="prs-it-menu"]').first())
       const na = page.locator('[data-slot="prs-it-unavailable"]')
       await expect(na).toBeVisible()
       await expect(na).toHaveAttribute('data-reason', 'no_permission')
@@ -617,7 +643,7 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
       const actions = root.locator('[data-slot="prs-images"] [data-slot="prs-it-actions"]').first()
       await actions.scrollIntoViewIfNeeded()
-      await actions.locator('[data-slot="prs-it-menu"]').click()
+      await openMenu(page, actions.locator('[data-slot="prs-it-menu"]'))
       const dl = page.waitForEvent('download')
       await page.locator('[data-slot="prs-it-menu-content"] [data-action="resize"]').click()
       await dl
