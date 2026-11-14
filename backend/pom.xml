@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
@@ -111,17 +111,17 @@
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark</artifactId>
-            <version>0.30.1</version>
+            <version>0.32.0</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>0.30.1</version>
+            <version>0.32.0</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark-ext-task-list-items</artifactId>
-            <version>0.30.1</version>
+            <version>0.32.0</version>
         </dependency>
         <!-- Apache PDFBox — aylık sertifika envanteri raporunun PDF ekini SUNUCUDA üretir.
              Apache-2.0 (kurumsal bağımlılık politikası için en temiz lisans); ekrandaki dışa
@@ -186,13 +186,13 @@
         <dependency>
             <groupId>dnsjava</groupId>
             <artifactId>dnsjava</artifactId>
-            <version>3.6.5</version>
+            <version>3.7.1</version>
         </dependency>
         <!-- jsoup — sayfa-bütünlüğü (PageCheckerService) HTML parse + kaynak envanteri -->
         <dependency>
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
-            <version>1.23.2</version>
+            <version>1.24.1</version>
         </dependency>
         <!-- RE2J — anahtar kelime izlemesinin DÜZENLİ İFADE kuralları (kw 2026-11-05, kullanıcı onaylı). Doğrusal zamanlı
              motor: kullanıcı deseni java.util.regex'e ASLA verilmez (geri izleme → ReDoS, kesintisiz). Bkz. SafeRegex. -->
@@ -305,7 +305,7 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.15</version>
+                <version>0.8.16</version>
                 <executions>
                     <execution>
                         <id>prepare-agent</id>
