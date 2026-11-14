@@ -9,14 +9,15 @@ import { placeWindow, planResize, planThumbObject, shrinkDims } from './geometry
 import { createResampler } from './resample.js'
 import { createSharpener, sharpenAmount } from './sharpen.js'
 import { ANALYSIS_SIDE, detectObject, smartCropOffset } from './smartcrop.js'
-import { DITHER_MIN_MSE, buildPalette, expandPalette, remapPixels } from './quantize.js'
-import { encodePng } from './pngWriter.js'
-import { assembleSample, extractSample, samplePlan, similarity } from './ssim.js'
+import { DITHER_MIN_MSE, buildPaletteAsync, expandPalette, remapPixels } from './quantize.js'
+import { encodePng, textChunk } from './pngWriter.js'
+import { insertPngChunks, pngExifChunk, stripMetadata } from './strip.js'
+import { assembleSample, extractSample, samplePlan, similarityAsync } from './ssim.js'
 import { insertJpegExif, insertWebpExif, planMetadata, readMetadata } from './metadata.js'
 import {
   MAX_DIM_STEPS, MAX_SEARCH_ENCODES, PALETTE_MAX_MSE, PNG_COLOR_LADDER, QUALITY_RANGE, SIMILARITY_TARGET,
-  TARGET_QUALITY_FLOOR, bestQualityUnder, flattenOnto, hasTransparency, pickForTarget, pickSmallest,
-  pngColorsForQuality, resolveFormats, savingPct, searchQuality, shouldKeepOriginal,
+  TARGET_QUALITY_FLOOR, bestQualityUnder, flattenOntoAsync, hasTransparency, pickForTarget, pickSmallest,
+  keepEligible, pngColorsForQuality, resolveFormats, savingPct, searchQuality, shouldKeepOriginal,
 } from './search.js'
 
 /** Bu piksel sayısına kadar PNG'nin gerçek renk kodlaması da doğrudan denenir (üstünde önce bant karşılaştırması). */
@@ -69,6 +70,11 @@ export function makeCtx(env) {
     cooperative: !!cooperative,
     /** Saf modüllere verilen `tick`: yalnız iptal / nefes gerektiğinde tanımlı (Worker'da boş → hiç beklenmez). */
     tick: signal || cooperative ? checkpoint : undefined,
+    /**
+     * Adım adım hesaplara (palet tasarımı, benzerlik, zemine bindirme) verilen `tick`: YALNIZ ana iş parçacığı
+     * yedeğinde tanımlı — Worker'da bu hesaplar eşzamanlı, tek seferde koşar (araya bekleme girmez).
+     */
+    stepTick: cooperative ? checkpoint : undefined,
     progress(phase, fraction) {
       if (typeof onProgress !== 'function') return
       const f = fraction < 0 ? 0 : fraction > 1 ? 1 : fraction
@@ -97,10 +103,13 @@ async function planGeometry(src, opts) {
         const sy = src.height / thumb.height
         const bbox = { x0: Math.floor(obj.bbox.x0 * sx), y0: Math.floor(obj.bbox.y0 * sy),
           x1: Math.min(src.width, Math.ceil(obj.bbox.x1 * sx)), y1: Math.min(src.height, Math.ceil(obj.bbox.y1 * sy)) }
+        // null: nesnenin oranı kutudan çok farklı (dolgulu pencere sınırları aşardı) → akıllı kırpmaya düşülür
         objectPlan = planThumbObject(src.width, src.height, opts.resize.width, opts.resize.height, bbox)
-        background = obj.background
-        if (objectPlan.padded) notes.push('THUMB_PADDED')
-        else if (objectPlan.cropped) notes.push('SMART_CROP')
+        if (objectPlan) {
+          background = obj.background
+          if (objectPlan.padded) notes.push('THUMB_PADDED')
+          else if (objectPlan.cropped) notes.push('SMART_CROP')
+        }
       }
     }
     if (objectPlan) plan = objectPlan
@@ -117,11 +126,14 @@ async function planGeometry(src, opts) {
 async function materialise(src, plan, background, ctx) {
   const win = plan.window
   const { outW, outH } = plan
+  checkLimits(win.w, win.h)                                   // okunacak pencere de sınır içinde (dolgulu thumb dahil)
+  checkLimits(outW, outH)
   const out = new Uint8ClampedArray(outW * outH * 4)
   const identity = win.w === outW && win.h === outH
   const rowsPerStrip = Math.max(8, Math.min(1024, Math.floor((ctx.cooperative ? STRIP_PIXELS_COOPERATIVE : STRIP_PIXELS) / win.w)))
   const phase = identity ? 'decode' : 'resize'
   let sawAlpha = false
+  let sawPartial = false
   let push
   let finish = () => {}
   if (identity) {
@@ -139,11 +151,65 @@ async function materialise(src, plan, background, ctx) {
     const n = Math.min(rowsPerStrip, win.h - y)
     const strip = await src.readRows(win.x, win.y + y, win.w, n, background)
     if (!sawAlpha) sawAlpha = hasTransparency(strip, n * win.w)
+    if (sawAlpha && !sawPartial) sawPartial = hasPartialAlpha(strip, n * win.w)
     push(strip, n)
     ctx.progress(phase, identity ? 0.5 + 0.5 * ((y + n) / win.h) : (y + n) / win.h)
   }
   finish()
-  return { data: out, width: outW, height: outH, hasAlpha: identity ? sawAlpha : hasTransparency(out, outW * outH), sourceAlpha: sawAlpha }
+  return { data: out, width: outW, height: outH, hasAlpha: identity ? sawAlpha : hasTransparency(out, outW * outH), sourceAlpha: sawAlpha,
+    partialAlpha: sawPartial }
+}
+
+/** 0 < a < 255 olan piksel var mı (tarayıcı bunları önçarpımlı saklar: renk değerleri yuvarlanır). */
+function hasPartialAlpha(rgba, pixelCount) {
+  for (let i = 3, end = pixelCount * 4; i < end; i += 4) { const a = rgba[i]; if (a !== 0 && a !== 255) return true }
+  return false
+}
+
+/**
+ * "Asla daha kötü" kuralının döndüreceği ÖZGÜN dosya — ama üstverisi ayıklanmış: görüntü baytları aynı kalır, EXIF /
+ * XMP / IPTC / yorum / metin / dosya sonu ekleri atılır; yalnız `preserve`in istediği türler (ve özgün EXIF yönü —
+ * pikseller döndürülmediği için gerekir) en küçük blokla yeniden yazılır.
+ * @returns {Promise<{ bytes: Uint8Array|null, size: number, notes: string[] }|null>} `bytes` null = dosya hiç değişmedi
+ *   (çağıranın Blob'u döner). `null` = güvenle ayıklanamadı → özgün dosya DÖNMEZ (üstveri sızmasın), normal sonuç döner.
+ */
+async function keptOriginal(blob, info, meta, preserve) {
+  let bytes
+  try { bytes = await readBlob(blob) } catch { return null }
+  const s = stripMetadata(bytes, info.type)
+  if (!s) return null
+  if (!s.removed) return { bytes: null, size: bytes.length, notes: [] }
+  const writable = info.type === 'jpeg' || info.type === 'webp' || info.type === 'png'
+  const plan = writable ? planMetadata(meta, preserve, info.type, s.orientation) : { exif: null, text: [], kept: [], dropped: [] }
+  let kept = plan.kept
+  let dropped = plan.dropped
+  let out = s.bytes
+  const needOrientation = s.orientation >= 2 && s.orientation <= 8
+  let written = true
+  if (info.type === 'png') {
+    const chunks = plan.text.map((t) => textChunk(t.keyword, t.text))
+    if (plan.exif) chunks.push(pngExifChunk(plan.exif))
+    if (chunks.length) {
+      const withChunks = insertPngChunks(out, s.insertAt, chunks)
+      if (withChunks) out = withChunks
+      else written = false
+    }
+  } else if (plan.exif) {
+    const withExif = info.type === 'jpeg' ? insertJpegExif(out, plan.exif) : insertWebpExif(out, plan.exif)
+    if (withExif && withExif !== out) out = withExif
+    else written = false
+  } else if (needOrientation) {
+    written = false                                           // GIF / BMP / AVIF yön taşımaz (buraya gelinmez)
+  }
+  if (!written) {
+    if (needOrientation) return null                          // yönsüz özgün dosya YANLIŞ görünürdü: normal işlenir
+    dropped = [...dropped, ...kept]
+    kept = []
+  }
+  const notes = ['METADATA_STRIPPED']
+  if (kept.length) notes.push('METADATA_PRESERVED')
+  if (dropped.length) notes.push('METADATA_NOT_PRESERVED')
+  return { bytes: out, size: out.length, notes }
 }
 
 /** Bellekteki görseli (hedef boyut kipi) daha küçük ölçüye indirir — aynı süzgeç + netleştirme. */
@@ -172,7 +238,8 @@ async function openLossy(type, image, opts, env, ctx) {
   const notes = []
   let img = image
   if (type === 'jpeg' && image.hasAlpha) {
-    img = { data: flattenOnto(image.data, image.width * image.height, opts.backgroundRgb), width: image.width, height: image.height, hasAlpha: false }
+    img = { data: await flattenOntoAsync(image.data, image.width * image.height, opts.backgroundRgb, ctx.stepTick),
+      width: image.width, height: image.height, hasAlpha: false }
     notes.push('ALPHA_FLATTENED')
   }
   const plan = samplePlan(img.width, img.height)
@@ -183,7 +250,7 @@ async function openLossy(type, image, opts, env, ctx) {
   const encode = async (q) => { await ctx.checkpoint(); return session.encode(mime, q / 100) }
   const measure = async (blob) => {
     const tiles = await platform.decodeRegions(blob, plan.tiles, img.width, img.height)
-    return similarity(ref, assembleSample(tiles, plan), plan.width, plan.height)
+    return similarityAsync(ref, assembleSample(tiles, plan), plan.width, plan.height, ctx.stepTick)
   }
   const auto = async (lo, hi, onStep) => {
     if (plan.whole) {
@@ -202,7 +269,7 @@ async function openLossy(type, image, opts, env, ctx) {
       const b = await proxy.encode(mime, q / 100)
       const px = await platform.decodeRegions(b, whole, plan.width, plan.height)
       onStep()
-      return { similarity: similarity(ref, px[0], plan.width, plan.height) }
+      return { similarity: await similarityAsync(ref, px[0], plan.width, plan.height, ctx.stepTick) }
     }, lo, hi, SIMILARITY_TARGET, MAX_SEARCH_ENCODES - 1)
     const blob = await encode(found.q)
     return { q: found.q, blob, size: blob.size, similarity: await measure(blob), encodes: found.encodes + 1 }
@@ -266,7 +333,7 @@ export async function runPng(image, mode, text, ctx, hopelessAbove = 0) {
   const { width, height } = image
   await ctx.checkpoint()
   ctx.progress('encode', 0)
-  const pal = buildPalette(image.data, width * height, mode.colors || 256)
+  const pal = await buildPaletteAsync(image.data, width * height, mode.colors || 256, ctx.stepTick)
   await ctx.checkpoint()
   let usePalette = true
   if (!pal.exact) {
@@ -288,7 +355,8 @@ export async function runPng(image, mode, text, ctx, hopelessAbove = 0) {
   let sim = 1
   if (!pal.exact) {
     const plan = samplePlan(width, height)
-    sim = similarity(extractSample(image.data, width, height, plan), sampleFromIndices(indices, pal.palette, width, plan), plan.width, plan.height)
+    sim = await similarityAsync(extractSample(image.data, width, height, plan), sampleFromIndices(indices, pal.palette, width, plan),
+      plan.width, plan.height, ctx.stepTick)
   }
   await ctx.checkpoint()
   const png = await encodePng({ width, height, indices, palette: pal.palette, colors: pal.colors }, { text, tick: ctx.tick })
@@ -422,6 +490,20 @@ async function fitPng(work, start, target, text, ctx) {
 const orderNotes = (set) => NOTE_CODES.filter((n) => set.has(n))
 
 /**
+ * Çözülen görsel başlıkta okunandan BÜYÜK olamaz (yalan başlık / tarayıcının ilk kareye göre büyüttüğü GIF):
+ * büyükse TOO_MANY_PIXELS (`reason: 'header_mismatch'`). Yalnız alan ve uzun kenar karşılaştırılır (yön uygulanınca
+ * en ve boy yer değiştirebilir).
+ */
+export function assertDecodedWithinProbe(width, height, info) {
+  const pw = info?.width > 0 ? info.width : 0
+  const ph = info?.height > 0 ? info.height : 0
+  if (width * height > pw * ph || Math.max(width, height) > Math.max(pw, ph)) {
+    throw new EngineError('TOO_MANY_PIXELS', { width, height, maxPixels: ENGINE_LIMITS.maxPixels, maxSide: ENGINE_LIMITS.maxSide,
+      reason: 'header_mismatch' })
+  }
+}
+
+/**
  * TEK görseli işler. @param {Blob} blob @param {object} rawOptions sözleşme §2 seçenekleri
  * @param {{ platform: object, signal?: AbortSignal, onProgress?: Function, cooperative?: boolean }} env
  * @returns {Promise<object>} EngineResult — `kept` ise `blob` null döner (çağıran özgün Blob'u koyar)
@@ -453,6 +535,7 @@ export async function processCore(blob, rawOptions, env) {
     srcW = src.width
     srcH = src.height
     if (!(srcW > 0 && srcH > 0)) throw new EngineError('DECODE_FAILED', { reason: 'empty' })
+    assertDecodedWithinProbe(srcW, srcH, info)                // yalan başlık: çözülen, başlıktakinden büyük
     checkLimits(srcW, srcH)
     ctx.progress('decode', 0.5)
     const geo = await planGeometry(src, opts)
@@ -533,17 +616,30 @@ export async function processCore(blob, rawOptions, env) {
   const sameDimensions = final.width === srcW && final.height === srcH && !plan.cropped && !plan.padded
   if (opts.targetBytes != null && final.size > opts.targetBytes) notes.add('TARGET_NOT_REACHED')
 
-  if (shouldKeepOriginal({ requestedFormat: opts.format, sourceType: info.type, outType: final.type, sameDimensions,
-    outBytes: final.size, sourceBytes })) {
-    // Özgün dosya zaten daha küçük: olduğu gibi döner (üstverisi ve animasyonu da onunla kalır)
-    const keptNotes = new Set(['KEPT_ORIGINAL'])
-    if (notes.has('WEBP_UNAVAILABLE')) keptNotes.add('WEBP_UNAVAILABLE')
-    if (notes.has('NOT_UPSCALED')) keptNotes.add('NOT_UPSCALED')
-    if (opts.targetBytes != null && sourceBytes > opts.targetBytes) keptNotes.add('TARGET_NOT_REACHED')
-    return { blob: null, type: info.type, mime, width: srcW, height: srcH, bytes: sourceBytes, original, savingPct: 0,
-      quality: null, colors: null, similarity: 1, resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes) }
+  // "Asla daha kötü": özgün dosya (üstverisi ayıklanmış) çıktıdan küçük ya da eşitse o döner. Ayıklanamayan dosya
+  // (bozuk yapı, AVIF'te EXIF / XMP …) DÖNMEZ — üstveri sızmasın diye normal sonuç verilir.
+  const keepRule = { requestedFormat: opts.format, sourceType: info.type, outType: final.type, sameDimensions }
+  if (keepEligible(keepRule)) {
+    await ctx.checkpoint()
+    const k = await keptOriginal(blob, info, meta, opts.preserve)
+    if (k && shouldKeepOriginal({ ...keepRule, outBytes: final.size, sourceBytes: k.size })) {
+      const keptNotes = new Set(['KEPT_ORIGINAL', ...k.notes])
+      if (notes.has('WEBP_UNAVAILABLE')) keptNotes.add('WEBP_UNAVAILABLE')
+      if (notes.has('NOT_UPSCALED')) keptNotes.add('NOT_UPSCALED')
+      if (opts.targetBytes != null && k.size > opts.targetBytes) keptNotes.add('TARGET_NOT_REACHED')
+      return { blob: k.bytes ? new Blob([k.bytes], { type: mime }) : null, type: info.type, mime, width: srcW, height: srcH,
+        bytes: k.size, original, savingPct: savingPct(sourceBytes, k.size), quality: null, colors: null, similarity: 1,
+        resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes) }
+    }
   }
 
+  // Kayıpsız iddiası (benzerlik 1) yarı saydam piksellerde DOĞRU DEĞİL: tarayıcı çözerken renkleri önçarpımlı saklar,
+  // düşük saydamlıktaki renk değerleri yuvarlanır (her zeminde görünüm aynı). Ölçülemez → benzerlik null + not.
+  let similarityOut = final.similarity
+  if (final.type === 'png' && final.similarity === 1 && sameDimensions && work.partialAlpha) {
+    similarityOut = null
+    notes.add('ALPHA_COLORS_ROUNDED')
+  }
   if (info.orientation && info.orientation !== 1) notes.add('ORIENTATION_APPLIED')
   if (info.animated) notes.add('ANIMATION_DROPPED')
   if (info.icc) notes.add('COLOR_PROFILE_CONVERTED')
@@ -552,7 +648,7 @@ export async function processCore(blob, rawOptions, env) {
   return {
     blob: outBlob, type: final.type, mime: outMime, width: final.width, height: final.height, bytes: final.size, original,
     savingPct: savingPct(sourceBytes, final.size), quality: final.quality, colors: final.colors,
-    similarity: final.similarity == null ? null : Math.round(final.similarity * 10000) / 10000,
+    similarity: similarityOut == null ? null : Math.round(similarityOut * 10000) / 10000,
     resized: final.width !== srcW || final.height !== srcH, cropped: !!plan.cropped, kept: false, notes: orderNotes(notes),
   }
 }

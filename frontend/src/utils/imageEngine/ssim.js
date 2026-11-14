@@ -12,6 +12,8 @@
 // alanda 3 düzeylik (görünmez) ortalama kayması pencereyi 0,87'ye düşürür. Kalibrasyonda (gerçek, koyu alanlı
 // fotoğraf) bu, benzerliğin kaliteyle TEK YÖNLÜ artmasını bozuyordu (kalite 70 < kalite 60) — ikili arama tek
 // yönlülüğe dayanır. Orta tonlarda etkisi yoktur (128'e karşı 131 → 0,9997).
+import { drive, runSteps } from './steps.js'
+
 const C1 = 650.25          // (0,1 × 255)²
 const C2 = 58.5225         // (0,03 × 255)²
 const SCALE_WEIGHTS = [0.5, 0.3, 0.2]
@@ -22,17 +24,34 @@ const CHROMA_NORM = 400
 export const SAMPLE_MAX_PIXELS = 3_000_000
 export const TILE = 512
 const TILES_PER_AXIS = 3
+/** Adım adım (ana iş parçacığı) ölçümde bir parçanın yaklaşık piksel sayısı. */
+const STEP_PIXELS = 1 << 18
 
-/** RGBA → luma düzlemi; `backdrop` (0..255) saydam pikselin bindirileceği zemin parlaklığı. */
-export function lumaPlane(rgba, w, h, backdrop = 255) {
-  const n = w * h
-  const out = new Float32Array(n)
-  for (let p = 0, i = 0; p < n; p++, i += 4) {
+/** `w` genişlikte bir parçaya kaç satır düşer (en az 1). */
+const rowsPerStep = (w) => Math.max(1, Math.floor(STEP_PIXELS / Math.max(1, w)))
+
+/** [from, to) piksellerinin parlaklığı (düz fonksiyon: sıcak döngü). */
+function lumaRange(rgba, out, from, to, backdrop) {
+  for (let p = from, i = from * 4; p < to; p++, i += 4) {
     const y = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2]
     const a = rgba[i + 3]
     out[p] = a === 255 ? y : (y * a + backdrop * (255 - a)) / 255
   }
+}
+
+function* lumaSteps(rgba, w, h, backdrop) {
+  const n = w * h
+  const out = new Float32Array(n)
+  for (let p = 0; p < n; p += STEP_PIXELS) {
+    lumaRange(rgba, out, p, Math.min(n, p + STEP_PIXELS), backdrop)
+    yield
+  }
   return out
+}
+
+/** RGBA → luma düzlemi; `backdrop` (0..255) saydam pikselin bindirileceği zemin parlaklığı. */
+export function lumaPlane(rgba, w, h, backdrop = 255) {
+  return runSteps(lumaSteps(rgba, w, h, backdrop))
 }
 
 /** 2×2 kutu ortalamasıyla yarıya indirir (tek sayıda kalan son satır / sütun atılır). */
@@ -60,26 +79,10 @@ function ssimWindow(sa, sb, saa, sbb, sab, count) {
   return ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2))
 }
 
-/**
- * İki düzlemin ortalama SSIM'i: 8×8 pencere, 4 piksel adım. 8 pikselden dar / kısa görselde tek pencere.
- * @returns {number} −1..1 (özdeş düzlemler için tam 1)
- */
-export function ssimPlane(a, b, w, h) {
-  if (w < 8 || h < 8) {
-    let sa = 0; let sb = 0; let saa = 0; let sbb = 0; let sab = 0
-    const n = w * h
-    for (let i = 0; i < n; i++) { const x = a[i]; const y = b[i]; sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y }
-    return n > 0 ? ssimWindow(sa, sb, saa, sbb, sab, n) : 1
-  }
-  const cw = w >> 2
-  const ch = h >> 2
-  const cells = cw * ch
-  const A = new Float64Array(cells)
-  const B = new Float64Array(cells)
-  const AA = new Float64Array(cells)
-  const BB = new Float64Array(cells)
-  const AB = new Float64Array(cells)
-  for (let cy = 0; cy < ch; cy++) {
+/** 4×4 hücre toplamları: hücre satırları [cyFrom, cyTo) (düz fonksiyon: sıcak döngü). */
+function cellRows(a, b, w, cw, T, cyFrom, cyTo) {
+  const { A, B, AA, BB, AB } = T
+  for (let cy = cyFrom; cy < cyTo; cy++) {
     for (let dy = 0; dy < 4; dy++) {
       const row = (cy * 4 + dy) * w
       for (let cx = 0; cx < cw; cx++) {
@@ -93,9 +96,14 @@ export function ssimPlane(a, b, w, h) {
       }
     }
   }
-  let sum = 0
-  let count = 0
-  for (let cy = 0; cy + 1 < ch; cy++) {
+}
+
+/** Pencere satırları [cyFrom, cyTo): SSIM toplamı `acc`ta birikir (sıra değişmez → sonuç aynı). */
+function windowRows(T, cw, acc, cyFrom, cyTo) {
+  const { A, B, AA, BB, AB } = T
+  let sum = acc.sum
+  let count = acc.count
+  for (let cy = cyFrom; cy < cyTo; cy++) {
     for (let cx = 0; cx + 1 < cw; cx++) {
       const c0 = cy * cw + cx
       const c1 = c0 + 1
@@ -106,7 +114,45 @@ export function ssimPlane(a, b, w, h) {
       count += 1
     }
   }
-  return count > 0 ? sum / count : 1
+  acc.sum = sum
+  acc.count = count
+}
+
+function* ssimSteps(a, b, w, h) {
+  if (w < 8 || h < 8) return ssimPlaneTiny(a, b, w, h)
+  const cw = w >> 2
+  const ch = h >> 2
+  const cells = cw * ch
+  const T = { A: new Float64Array(cells), B: new Float64Array(cells), AA: new Float64Array(cells),
+    BB: new Float64Array(cells), AB: new Float64Array(cells) }
+  const step = Math.max(1, rowsPerStep(w) >> 2)           // hücre satırı = 4 piksel satırı
+  for (let cy = 0; cy < ch; cy += step) {
+    cellRows(a, b, w, cw, T, cy, Math.min(ch, cy + step))
+    yield
+  }
+  const acc = { sum: 0, count: 0 }
+  const wStep = Math.max(1, Math.floor(STEP_PIXELS / Math.max(1, cw)))
+  for (let cy = 0; cy + 1 < ch; cy += wStep) {
+    windowRows(T, cw, acc, cy, Math.min(ch - 1, cy + wStep))
+    yield
+  }
+  return acc.count > 0 ? acc.sum / acc.count : 1
+}
+
+/** 8 pikselden dar / kısa düzlem: tek pencere. */
+function ssimPlaneTiny(a, b, w, h) {
+  let sa = 0; let sb = 0; let saa = 0; let sbb = 0; let sab = 0
+  const n = w * h
+  for (let i = 0; i < n; i++) { const x = a[i]; const y = b[i]; sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y }
+  return n > 0 ? ssimWindow(sa, sb, saa, sbb, sab, n) : 1
+}
+
+/**
+ * İki düzlemin ortalama SSIM'i: 8×8 pencere, 4 piksel adım. 8 pikselden dar / kısa görselde tek pencere.
+ * @returns {number} −1..1 (özdeş düzlemler için tam 1)
+ */
+export function ssimPlane(a, b, w, h) {
+  return runSteps(ssimSteps(a, b, w, h))
 }
 
 /** Sınama kâhini: her pencereyi baştan toplayan yalın SSIM (üretimde kullanılmaz). */
@@ -130,7 +176,7 @@ export function ssimPlaneSimple(a, b, w, h) {
   return count > 0 ? sum / count : 1
 }
 
-function multiScale(pa, pb, w, h) {
+function* multiScaleSteps(pa, pb, w, h) {
   let a = pa
   let b = pb
   let cw = w
@@ -138,23 +184,35 @@ function multiScale(pa, pb, w, h) {
   let total = 0
   let weight = 0
   for (let s = 0; s < SCALE_WEIGHTS.length; s++) {
-    total += ssimPlane(a, b, cw, ch) * SCALE_WEIGHTS[s]
+    total += (yield* ssimSteps(a, b, cw, ch)) * SCALE_WEIGHTS[s]
     weight += SCALE_WEIGHTS[s]
     if (s === SCALE_WEIGHTS.length - 1 || cw < 32 || ch < 32) break
     const ha = half(a, cw, ch)
+    yield
     const hb = half(b, cw, ch)
+    yield
     a = ha.plane; b = hb.plane; cw = ha.w; ch = ha.h
   }
   return total / weight
 }
 
-/** 1/4 ölçekte (4×4 kutu) Cb / Cr ortalama kare farkı. */
-function chromaMse(x, y, w, h) {
+function* chromaSteps(x, y, w, h) {
   const cw = w >> 2
   const ch = h >> 2
   if (cw < 1 || ch < 1) return 0
-  let sum = 0
-  for (let cy = 0; cy < ch; cy++) {
+  const acc = { sum: 0 }
+  const step = Math.max(1, rowsPerStep(w) >> 2)
+  for (let cy = 0; cy < ch; cy += step) {
+    chromaRows(x, y, w, cw, acc, cy, Math.min(ch, cy + step))
+    yield
+  }
+  return acc.sum / (cw * ch)
+}
+
+/** 1/4 ölçekte (4×4 kutu) Cb / Cr kare farkı toplamı: hücre satırları [cyFrom, cyTo) (düz fonksiyon). */
+function chromaRows(x, y, w, cw, acc, cyFrom, cyTo) {
+  let sum = acc.sum
+  for (let cy = cyFrom; cy < cyTo; cy++) {
     for (let cx = 0; cx < cw; cx++) {
       let db = 0
       let dr = 0
@@ -175,7 +233,7 @@ function chromaMse(x, y, w, h) {
       sum += db * db * 0.3186 + dr * dr * 0.5084          // (0,564)², (0,713)²: Cb / Cr ölçekleri
     }
   }
-  return sum / (cw * ch)
+  acc.sum = sum
 }
 
 /**
@@ -183,12 +241,31 @@ function chromaMse(x, y, w, h) {
  * @param {Uint8Array|Uint8ClampedArray} x kaynak @param {Uint8Array|Uint8ClampedArray} y aday
  */
 export function similarity(x, y, w, h) {
+  return runSteps(similaritySteps(x, y, w, h))
+}
+
+/**
+ * `similarity`nin adım adım sürümü: `tick` verilirse (ana iş parçacığı yedeği) her parçadan sonra beklenir — büyük
+ * görselde sayfa donmaz, iptal araya girer. Sonuç eşzamanlı sürümle birebir aynıdır.
+ */
+export function similarityAsync(x, y, w, h, tick) {
+  return drive(similaritySteps(x, y, w, h), tick)
+}
+
+function* similaritySteps(x, y, w, h) {
   let alpha = false
   const n = w * h
   for (let i = 3; i < n * 4; i += 4) if (x[i] !== 255 || y[i] !== 255) { alpha = true; break }
-  let s = multiScale(lumaPlane(x, w, h, 255), lumaPlane(y, w, h, 255), w, h)
-  if (alpha) s = Math.min(s, multiScale(lumaPlane(x, w, h, 0), lumaPlane(y, w, h, 0), w, h))
-  const penalty = Math.min(1, chromaMse(x, y, w, h) / CHROMA_NORM) * 0.1
+  yield
+  const lx = yield* lumaSteps(x, w, h, 255)
+  const ly = yield* lumaSteps(y, w, h, 255)
+  let s = yield* multiScaleSteps(lx, ly, w, h)
+  if (alpha) {
+    const dx = yield* lumaSteps(x, w, h, 0)
+    const dy = yield* lumaSteps(y, w, h, 0)
+    s = Math.min(s, yield* multiScaleSteps(dx, dy, w, h))
+  }
+  const penalty = Math.min(1, (yield* chromaSteps(x, y, w, h)) / CHROMA_NORM) * 0.1
   const out = s * (1 - penalty)
   return out < 0 ? 0 : out > 1 ? 1 : out
 }

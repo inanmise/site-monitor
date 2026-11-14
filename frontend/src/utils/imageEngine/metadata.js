@@ -6,6 +6,7 @@
 
 const TYPE_SIZE = [0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8]
 const TAG_COPYRIGHT = 0x8298
+const TAG_ORIENTATION = 0x0112
 const TAG_EXIF_IFD = 0x8769
 const TAG_GPS_IFD = 0x8825
 const TAG_DATETIME = 0x0132
@@ -123,10 +124,13 @@ export function buildExif(fields) {
   const copyright = fields.copyrightBytes && fields.copyrightBytes.length ? fields.copyrightBytes : null
   const creation = fields.creation ? toExifDate(fields.creation) : null
   const gps = fields.gps && fields.gps.length ? fields.gps : null
-  if (!copyright && !creation && !gps) return null
+  // Yön (1–8; 1 = varsayılan, yazılmaz): YALNIZ özgün dosya korunduğunda — pikseller döndürülmemiştir, etiket gerekir
+  const orientation = Number.isInteger(fields.orientation) && fields.orientation >= 2 && fields.orientation <= 8 ? fields.orientation : 0
+  if (!copyright && !creation && !gps && !orientation) return null
   const bytesOf = (s) => { const o = new Uint8Array(s.length + 1); for (let i = 0; i < s.length; i++) o[i] = s.charCodeAt(i) & 0x7f; return o }
   const withNul = (u) => { const o = new Uint8Array(u.length + 1); o.set(u); return o }
   const ifd0 = []
+  if (orientation) ifd0.push({ tag: TAG_ORIENTATION, type: 3, count: 1, value: Uint8Array.from([orientation, 0]) })
   if (copyright) ifd0.push({ tag: TAG_COPYRIGHT, type: 2, value: withNul(copyright) })
   if (creation) ifd0.push({ tag: TAG_EXIF_IFD, type: 4, pointer: 'exif' })
   if (gps) ifd0.push({ tag: TAG_GPS_IFD, type: 4, pointer: 'gps' })
@@ -369,11 +373,13 @@ export function insertWebpExif(webp, tiff) {
  * @returns {{ exif: Uint8Array|null, text: {keyword:string,text:string}[], kept: string[], dropped: string[] }}
  *   `kept` / `dropped`: istenen VE kaynakta bulunan türlerden yazılan / yazılamayan.
  */
-export function planMetadata(meta, preserve, outType) {
+export function planMetadata(meta, preserve, outType, orientation = 1) {
   const want = ['copyright', 'creation', 'location'].filter((k) => preserve?.[k] && meta?.present?.[k])
   const plan = { exif: null, text: [], kept: [], dropped: [] }
-  if (!want.length) return plan
+  const keepOrientation = orientation >= 2 && orientation <= 8
+  if (!want.length && !keepOrientation) return plan
   if (outType === 'png') {
+    if (keepOrientation) plan.exif = buildExif({ orientation })        // PNG: eXIf parçası olarak (yalnız yön)
     for (const k of want) {
       if (k === 'copyright') { plan.text.push({ keyword: 'Copyright', text: meta.copyright }); plan.kept.push(k) }
       else if (k === 'creation') { plan.text.push({ keyword: 'Creation Time', text: toIsoDate(meta.creation) }); plan.kept.push(k) }
@@ -381,7 +387,7 @@ export function planMetadata(meta, preserve, outType) {
     }
     return plan
   }
-  const fields = {}
+  const fields = keepOrientation ? { orientation } : {}
   for (const k of want) {
     if (k === 'copyright') {
       fields.copyrightBytes = meta.copyrightBytes || new TextEncoder().encode(meta.copyright).slice(0, MAX_TEXT)

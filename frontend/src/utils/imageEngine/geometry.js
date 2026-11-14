@@ -1,6 +1,7 @@
 // Görsel motoru — hedef ölçü hesabı (saf). Hiçbir yöntem BÜYÜTMEZ; en-boy oranı `scale` / `fit`te korunur, `cover` /
 // `thumb` kutunun oranına kırpar. Pencere (`window`) kaynak pikselleridir; `thumb`ın nesne kipinde görselin DIŞINA
 // taşabilir (taşan yer zemin rengiyle doldurulur).
+import { ENGINE_LIMITS } from './errors.js'
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(v)))
 
@@ -73,6 +74,7 @@ export function placeWindow(plan, srcW, srcH, offset) {
 }
 
 /**
+ * `null` döner: pencere `ENGINE_LIMITS`i aşardı (çağıran akıllı kırpmaya düşer).
  * `thumb` — düz zemin üstünde serbest duran NESNE bulunduğunda: nesnenin tamamını (küçük bir payla) içeren, kutunun
  * oranındaki pencere. Pencere görselin dışına taşarsa `padded` (taşan yer zemin rengiyle dolar). Nesne kutudan küçükse
  * büyütülmez: pencere kutu kadar kaynak pikseli alır (1:1).
@@ -95,6 +97,9 @@ export function planThumbObject(srcW, srcH, boxW, boxH, bbox) {
     // Pencere görsele sığıyorsa içeride tutulur (gereksiz dolgu olmasın); sığmıyorsa nesne ortalanır
     return len <= srcLen ? Math.max(0, Math.min(srcLen - len, start)) : start
   }
+  // Nesnenin oranı kutudan çok farklıysa (ince uzun nesne, uzun ince kutu) dolgulu pencere görselin binlerce katı
+  // olabilir: sınırları aşan pencere okunmaz — çağıran akıllı kırpmaya (cover) düşer
+  if (ww > ENGINE_LIMITS.maxSide || wh > ENGINE_LIMITS.maxSide || ww * wh > ENGINE_LIMITS.maxPixels) return null
   const window = { x: place(cx, ww, srcW), y: place(cy, wh, srcH), w: ww, h: wh }
   const padded = window.x < 0 || window.y < 0 || window.x + ww > srcW || window.y + wh > srcH
   return {

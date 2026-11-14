@@ -2,6 +2,8 @@
 // çözümü, "asla daha kötü" kuralı. Kodlayıcı dışarıdan verilir (testte sahte kodlayıcı) — her arama KODLAMA SAYISIYLA
 // sınırlıdır.
 
+import { drive, runSteps } from './steps.js'
+
 /**
  * Otomatik kalitenin tutturması gereken benzerlik (ssim.js `similarity`): bunun üstü "görsel olarak eşdeğer".
  * Kalibrasyon (2026-11-14, Chromium kodlayıcıları, 1400 px'e indirilmiş 6 gerçek fotoğraf): tipik ayrıntılı fotoğrafta
@@ -143,13 +145,22 @@ export function pngColorsForQuality(quality) {
 }
 
 /**
- * "Asla daha kötü": ölçü değişmediyse ve çıktı özgün dosyadan küçük değilse özgün dosya döner. Aynı biçimde her
- * zaman; biçim AÇIKÇA istenmediyse (keep / smallest) dönüştürülmüş çıktı için de (özgün zaten daha küçük).
+ * "Asla daha kötü" kuralı uygulanabilir mi (boyuttan bağımsız): ölçü değişmedi ve çıktı aynı biçimde ya da biçim AÇIKÇA
+ * istenmedi (keep / smallest).
  */
-export function shouldKeepOriginal({ requestedFormat, sourceType, outType, sameDimensions, outBytes, sourceBytes }) {
-  if (!sameDimensions || outBytes < sourceBytes) return false
+export function keepEligible({ requestedFormat, sourceType, outType, sameDimensions }) {
+  if (!sameDimensions) return false
   if (outType === sourceType) return true
   return requestedFormat === 'keep' || requestedFormat === 'smallest'
+}
+
+/**
+ * "Asla daha kötü": kural uygulanabiliyor ve çıktı özgün dosyadan küçük değilse özgün dosya döner. `sourceBytes` =
+ * dönecek özgün dosyanın boyu (üstverisi ayıklanmış hâli — pipeline.js `keptOriginal`).
+ */
+export function shouldKeepOriginal({ requestedFormat, sourceType, outType, sameDimensions, outBytes, sourceBytes }) {
+  if (outBytes < sourceBytes) return false
+  return keepEligible({ requestedFormat, sourceType, outType, sameDimensions })
 }
 
 /** Tasarruf yüzdesi: 0..100, bir ondalık, aşağı yuvarlanır. */
@@ -160,9 +171,29 @@ export function savingPct(sourceBytes, outBytes) {
 
 /** Saydam pikselleri düz renge bindirir (gama kodlu — tarayıcının sayfada yaptığıyla aynı). Yeni tampon döner. */
 export function flattenOnto(rgba, pixelCount, rgb) {
+  return runSteps(flattenSteps(rgba, pixelCount, rgb))
+}
+
+/** `flattenOnto`nun adım adım sürümü (`tick` → ana iş parçacığında parçalar arasında beklenir; sonuç aynı). */
+export function flattenOntoAsync(rgba, pixelCount, rgb, tick) {
+  return drive(flattenSteps(rgba, pixelCount, rgb), tick)
+}
+
+const FLATTEN_STEP = 1 << 18
+
+function* flattenSteps(rgba, pixelCount, rgb) {
   const out = new Uint8ClampedArray(pixelCount * 4)
+  for (let p = 0; p < pixelCount; p += FLATTEN_STEP) {
+    flattenRange(rgba, out, p, Math.min(pixelCount, p + FLATTEN_STEP), rgb)
+    yield
+  }
+  return out
+}
+
+/** [from, to) piksellerini zemine bindirir (düz fonksiyon: sıcak döngü). */
+function flattenRange(rgba, out, from, to, rgb) {
   const [br, bg, bb] = rgb
-  for (let p = 0, i = 0; p < pixelCount; p++, i += 4) {
+  for (let p = from, i = from * 4; p < to; p++, i += 4) {
     const a = rgba[i + 3]
     if (a === 255) {
       out[i] = rgba[i]; out[i + 1] = rgba[i + 1]; out[i + 2] = rgba[i + 2]
@@ -176,7 +207,6 @@ export function flattenOnto(rgba, pixelCount, rgb) {
     }
     out[i + 3] = 255
   }
-  return out
 }
 
 /** Görselde opak olmayan piksel var mı. */

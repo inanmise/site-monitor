@@ -119,6 +119,29 @@ const gen = {
   },
   /** Hazır baytlardan Blob. */
   bytes(arr, type = '') { return new Blob([Uint8Array.from(arr)], { type }) },
+  /**
+   * Mantıksal ekranı `sw × sh`, tek karesi (x, y)'de `w × h` olan GIF. `data = true` → geçerli LZW (4 renk; her iki
+   * pikselde bir CLEAR — kod genişliği 3 bitte kalır); false → en küçük (geçersiz) veri (çözmeden reddedilecek dosya).
+   */
+  gifFramed(sw, sh, x, y, w, h, data = true) {
+    const le = (v) => [v & 255, (v >> 8) & 255]
+    let image = [2, 2, 0x44, 1, 0]
+    if (data) {
+      const codes = []
+      for (let p = 0; p < w * h; p++) { if (p % 2 === 0) codes.push(4); codes.push(((p >> 3) & 1) ? 1 : 2) }
+      codes.push(5)
+      const bytes = []
+      let acc = 0
+      let bits = 0
+      for (const c of codes) { acc |= c << bits; bits += 3; while (bits >= 8) { bytes.push(acc & 255); acc >>= 8; bits -= 8 } }
+      if (bits > 0) bytes.push(acc & 255)
+      image = [2]
+      for (let i = 0; i < bytes.length; i += 255) { const part = bytes.slice(i, i + 255); image.push(part.length, ...part) }
+      image.push(0)
+    }
+    const head = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, ...le(sw), ...le(sh), 0x81, 0, 0, 255, 0, 0, 0, 0, 255, 0, 255, 0, 255, 255, 255]
+    return new Blob([Uint8Array.from([...head, 0x2c, ...le(x), ...le(y), ...le(w), ...le(h), 0, ...image, 0x3b])], { type: 'image/gif' })
+  },
   /** En küçük iki kareli GIF (1 × 1). */
   animatedGif() {
     const frame = [0x21, 0xf9, 4, 0, 5, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0]

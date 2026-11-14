@@ -82,7 +82,7 @@ describe('görsel motoru — seçenek doğrulama', () => {
       'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
     expect(NOTE_CODES).toEqual(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE',
       'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED',
-      'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED'])
+      'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
   })
 })
 
@@ -167,6 +167,24 @@ describe('görsel motoru — hedef ölçü hesabı', () => {
     expect(c.window.w).toBe(300)
     expect(c.window.h).toBe(300)
     expect(c.padded).toBe(true)
+  })
+
+  it('thumb nesne kipi: dolgulu pencere ENGINE_LIMITS i aşacaksa plan YOK (null → akıllı kırpma); sınırda geçer', () => {
+    // 20 000 × 1 000 beyaz görselde ince yatay nesne, 100 × 3 000 lik (uzun ince) kutu: oranı korumak için pencere
+    // 20 160 × 604 800 olurdu (12 milyar piksel) — tuval / okuma şeridi bu ölçüde AÇILMAZ
+    const wide = planThumbObject(20000, 1000, 100, 3000, { x0: 1000, y0: 495, x1: 19000, y1: 505 })
+    expect(wide).toBeNull()
+    // tersi: ince dikey nesne, geniş kutu
+    expect(planThumbObject(1000, 20000, 3000, 100, { x0: 495, y0: 1000, x1: 505, y1: 19000 })).toBeNull()
+    // yalnız uzun kenar sınırı (alan küçük)
+    expect(planThumbObject(30000, 10, 30000, 10, { x0: 0, y0: 0, x1: 30000, y1: 10 })).toBeNull()
+    // olağan oranlar etkilenmez
+    expect(planThumbObject(2000, 1000, 300, 300, { x0: 800, y0: 300, x1: 1200, y1: 700 })).not.toBeNull()
+    for (const p of [planThumbObject(2000, 1000, 300, 300, { x0: 0, y0: 0, x1: 2000, y1: 1000 }), planThumbObject(500, 500, 30, 300, { x0: 0, y0: 240, x1: 500, y1: 260 })]) {
+      expect(p.window.w).toBeLessThanOrEqual(ENGINE_LIMITS.maxSide)
+      expect(p.window.h).toBeLessThanOrEqual(ENGINE_LIMITS.maxSide)
+      expect(p.window.w * p.window.h).toBeLessThanOrEqual(ENGINE_LIMITS.maxPixels)
+    }
   })
 
   it('hedef boyut kipi: küçültme oranı korur, kenar 16 pikselin altına inmez', () => {

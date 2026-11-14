@@ -113,6 +113,30 @@ describe('görsel motoru — kamu arayüzü (sözleşme §2)', () => {
   })
 })
 
+describe('görsel motoru — önizleme çözmesinde yalan başlık (inceleme 2026-11-14)', () => {
+  it('çözülen bitmap başlıktakinden (ya da istenen küçültmeden) BÜYÜKSE hemen kapatılır → TOO_MANY_PIXELS header_mismatch', async () => {
+    const big = { width: 9000, height: 9000, close: vi.fn() }
+    const ok = { width: 8, height: 6, close: vi.fn() }
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => big))
+    const blob = await pngBlob(8, 6)
+    await expect(engine.decodeForPreview(blob)).rejects.toMatchObject({ code: 'TOO_MANY_PIXELS',
+      params: { width: 9000, height: 9000, reason: 'header_mismatch' } })
+    expect(big.close).toHaveBeenCalledTimes(1)
+    // küçültmeli çözme: tarayıcı istenenden büyük verirse yine reddedilir; yön değişimi (en ↔ boy) sorun değil
+    const wide = await pngBlob(800, 600)
+    const rotated = { width: 150, height: 200, close: vi.fn() }
+    globalThis.createImageBitmap.mockImplementationOnce(async () => rotated)
+    expect(await engine.decodeForPreview(wide, { maxSide: 200 })).toBe(rotated)
+    const tooBig = { width: 800, height: 600, close: vi.fn() }
+    globalThis.createImageBitmap.mockImplementationOnce(async () => tooBig)
+    await expect(engine.decodeForPreview(wide, { maxSide: 200 })).rejects.toMatchObject({ params: { reason: 'header_mismatch' } })
+    expect(tooBig.close).toHaveBeenCalledTimes(1)
+    globalThis.createImageBitmap.mockImplementationOnce(async () => ok)
+    expect(await engine.decodeForPreview(blob)).toBe(ok)
+    expect(ok.close).not.toHaveBeenCalled()
+  })
+})
+
 describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
   beforeEach(() => { vi.stubGlobal('Worker', FakeWorker) })
 
@@ -149,6 +173,72 @@ describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
     const r = await p
     expect(r.blob).toBe(blob)
     expect(r.kept).toBe(true)
+  })
+
+  it('üstverisi ayıklanmış özgün dosya (kept + yeni Blob): çekirdeğin verdiği TEMİZ Blob döner, özgün değil', async () => {
+    const blob = await pngBlob()
+    const clean = new Blob([9, 9], { type: 'image/png' })
+    const p = engine.processImage(blob, {})
+    await flush()
+    const w = live()[0]
+    w.reply({ id: w.job.id, type: 'result', result: { ...RESULT, blob: clean, kept: true, type: 'png', notes: ['KEPT_ORIGINAL', 'METADATA_STRIPPED'] } })
+    const r = await p
+    expect(r.blob).toBe(clean)
+    expect(r.blob).not.toBe(blob)
+  })
+
+  it('ESKİ PAKET: Worker HİÇ ileti göndermeden düşer + paket dosyası sunucuda yok (404) → BROWSER_UNSUPPORTED stale_bundle', async () => {
+    const fetchMock = vi.fn(async () => ({ status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    FakeWorker.auto = false
+    const support = engine.engineSupport()
+    await flush()
+    const first = live()[0]
+    first.onerror({ preventDefault() {} })                                 // betik yüklenemedi (dağıtım sonrası 404)
+    expect(await support).toEqual({ worker: false, webp: false, staleBundle: true })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toMatch(/imageEngine\/index\.js/)
+    expect(init).toMatchObject({ method: 'HEAD', cache: 'no-store' })
+    expect(first.terminated).toBe(true)
+    // sonraki işler Worker açmadan, beklemeden aynı hatayla biter
+    const before = FakeWorker.instances.length
+    await expect(engine.processImage(await pngBlob(), {})).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    expect(FakeWorker.instances.length).toBe(before)
+  })
+
+  it('iş sırasında yeni açılan Worker yüklenemezse: paket varsa (200) worker_failed, yoksa (410) stale_bundle; konuşmuş Worker çökmesi sorulmaz', async () => {
+    let status = 200
+    const fetchMock = vi.fn(async () => ({ status }))
+    vi.stubGlobal('fetch', fetchMock)
+    // destek yanıtlandı (Worker konuştu); iş sırasında çöker → sunucuya SORULMAZ, worker_failed
+    const a = engine.processImage(await pngBlob(), {})
+    await flush()
+    live()[0].onerror({ preventDefault() {} })
+    await expect(a).rejects.toMatchObject({ params: { reason: 'worker_failed' } })
+    expect(fetchMock).not.toHaveBeenCalled()
+    // sonraki iş yeni Worker açar; o Worker hiç konuşmadan düşer → paket sorulur: 200 → worker_failed
+    const b = engine.processImage(await pngBlob(), {})
+    await flush()
+    live()[0].onerror({ preventDefault() {} })
+    await expect(b).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'worker_failed' } })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // aynı durum, paket kaldırılmış (410) → stale_bundle; bekleyen iş de aynı hatayla biter
+    status = 410
+    const c = engine.processImage(await pngBlob(), {})
+    const d = engine.processImage(await pngBlob(), {})
+    await flush()
+    live()[0].onerror({ preventDefault() {} })
+    await expect(c).rejects.toMatchObject({ params: { reason: 'stale_bundle' } })
+    await expect(d).rejects.toMatchObject({ params: { reason: 'stale_bundle' } })
+    // ağ hatası "eski paket" sayılmaz: destek sorgusunda konuşmadan düşen Worker → ana iş parçacığı yedeği (jsdom: destek yok)
+    engine._resetForTests()
+    FakeWorker.auto = false
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('ağ yok') }))
+    const sup = engine.engineSupport()
+    await flush()
+    live()[0].onerror({ preventDefault() {} })
+    expect(await sup).toEqual({ worker: false, webp: false })
   })
 
   it('aynı anda TEK iş: ikinci iş birincisi bitince gönderilir', async () => {

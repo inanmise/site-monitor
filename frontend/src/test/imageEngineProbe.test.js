@@ -112,6 +112,18 @@ describe('görsel motoru — başlıktan ölçü / saydamlık / animasyon', () =
     expect(probeBytes(gif(320, 200, { frames: 2, frameBytes: 5000 })).animated).toBe(true)
   })
 
+  it('GIF sıkıştırma bombası: ölçü = mantıksal ekran ile İLK KARENİN sağ / alt kenarının büyüğü (Chromium tuvali öyle büyütür)', () => {
+    // mantıksal ekran 1 × 1, ilk kare (10, 20)'de 100 × 50 → tarayıcıda 110 × 70 çözülür
+    const framed = (sw, sh, x, y, w, h) => Uint8Array.from([...enc('GIF89a'), ...u16le(sw), ...u16le(sh), 0, 0, 0,
+      0x2c, ...u16le(x), ...u16le(y), ...u16le(w), ...u16le(h), 0, 2, 1, 0, 0, 0x3b])
+    expect(probeBytes(framed(1, 1, 10, 20, 100, 50))).toMatchObject({ type: 'gif', width: 110, height: 70 })
+    expect(probeBytes(framed(200, 100, 0, 0, 10, 10))).toMatchObject({ width: 200, height: 100 })   // ekran büyükse o
+    // 1 × 1 ekranlı, 7500 × 7500 kareli dosya: çözmeden reddedilir
+    expect(code(() => probeBytes(framed(1, 1, 0, 0, 7500, 7500)))).toEqual(['TOO_MANY_PIXELS',
+      { width: 7500, height: 7500, maxPixels: 50_000_000, maxSide: 30_000 }])
+    expect(code(() => probeBytes(framed(1, 1, 30000, 0, 1, 1)))[0]).toBe('TOO_MANY_PIXELS')        // konum da sayılır
+  })
+
   it('WebP (VP8 / VP8L / VP8X), BMP ve AVIF', () => {
     expect(probeBytes(webp('VP8 ', 800, 600))).toMatchObject({ type: 'webp', width: 800, height: 600, hasAlpha: false })
     expect(probeBytes(webp('VP8L', 801, 601, 1))).toMatchObject({ width: 801, height: 601, hasAlpha: true })

@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { estimatePalettePng, makeCtx, processCore, runPng, supportCore } from '../utils/imageEngine/pipeline.js'
+import { assertDecodedWithinProbe, estimatePalettePng, makeCtx, processCore, runPng, supportCore } from '../utils/imageEngine/pipeline.js'
 import { buildPalette } from '../utils/imageEngine/quantize.js'
 import { encodePng } from '../utils/imageEngine/pngWriter.js'
-import { buildExif, parseExif, findJpegExif } from '../utils/imageEngine/metadata.js'
+import { buildExif, parseExif, findJpegExif, readMetadata } from '../utils/imageEngine/metadata.js'
+import { exifOrientation } from '../utils/imageEngine/probe.js'
 import { ENGINE_LIMITS, NOTE_CODES } from '../utils/imageEngine/errors.js'
 import { MAX_SEARCH_ENCODES, SIMILARITY_TARGET, TARGET_QUALITY_FLOOR } from '../utils/imageEngine/search.js'
 import {
-  decodePng, fakeJpegBlob, fakePlatform, logoWithAlpha, photoLike, readFakeLossy, registerBlob, rng, solid,
+  decodePng, fakeJpegBlob, fakePlatform, logoWithAlpha, photoLike, pngChunks, readFakeLossy, registerBlob, rng, solid,
 } from './imageEngineKit.test.helpers.js'
 
 // Piksel döngüleri kapsam (v8) ölçümüyle birkaç kat yavaşlar (CI: 2 vCPU): varsayılan 15 sn yerine geniş süre sınırı.
@@ -39,10 +40,12 @@ describe('görsel motoru — iş akışı: sonuç biçimi ve temel akış', () =
     expect(r.colors).toBeGreaterThan(1)
     expect(r.colors).toBeLessThanOrEqual(256)
     expect(r.quality).toBeNull()
-    expect(r.similarity).toBe(1)                                        // ≤ 256 renk: palet birebir
+    // ≤ 256 renk: palet çözülen piksellerle birebir — ama kenardaki YARI SAYDAM piksellerin rengi tarayıcının
+    // önçarpımlı çözmesinde yuvarlanmış olabilir: "birebir" denmez (benzerlik bilinmiyor + not)
+    expect(r.similarity).toBeNull()
     expect(r.resized).toBe(false)
     expect(r.cropped).toBe(false)
-    expect(r.notes).toEqual([])
+    expect(r.notes).toEqual(['ALPHA_COLORS_ROUNDED'])
     expect(r.savingPct).toBeGreaterThan(90)
     expect(r.original).toEqual({ type: 'png', mime: 'image/png', width: w, height: h, bytes: src.size, hasAlpha: true, animated: false,
       metadata: { copyright: false, creation: false, location: false } })
@@ -212,7 +215,7 @@ describe('görsel motoru — iş akışı: biçimler', () => {
     const logoBlob = await pngBlob(logoWithAlpha(64, 64), 64, 64, { level: 0 })
     const a = await run(logoBlob, { format: 'webp' }, noWebp)
     expect(a.type).toBe('png')
-    expect(a.notes).toEqual(['WEBP_UNAVAILABLE'])
+    expect(a.notes).toEqual(['WEBP_UNAVAILABLE', 'ALPHA_COLORS_ROUNDED'])   // logonun yumuşatılmış kenarı yarı saydam
     const b = await run(fakeJpegBlob({ data: photoLike(64, 64, 1), width: 64, height: 64 }, { padBytes: 50000 }), { format: 'webp' }, noWebp)
     expect(b.type).toBe('jpeg')
     expect(b.notes).toEqual(['WEBP_UNAVAILABLE'])
@@ -227,7 +230,8 @@ describe('görsel motoru — iş akışı: biçimler', () => {
     const platform = fakePlatform()
     const logo = await run(await pngBlob(logoWithAlpha(128, 128), 128, 128, { level: 0 }), { format: 'smallest' }, platform)
     expect(logo.type).toBe('png')
-    expect(logo.similarity).toBe(1)
+    expect(logo.similarity).toBeNull()
+    expect(logo.notes).toEqual(['ALPHA_COLORS_ROUNDED'])
     // Fotoğraf: üç biçim ayrı ayrı üretilir; "smallest" eşiği geçenlerin en küçüğünü vermelidir (sahte kodlayıcıda
     // hangisinin kazandığı önemli değil — kural önemli; gerçek kodlayıcılarla sonuç e2e'de ölçülür)
     const photoBlob = () => pngBlob(photoLike(200, 150, 6, 30), 200, 150)
@@ -283,11 +287,17 @@ describe('görsel motoru — iş akışı: biçimler', () => {
   })
 
   it('GIF / BMP kaynak "keep" ile PNG e, AVIF / WebP kaynak WebP e gider; animasyon ve renk profili notları', async () => {
-    const img = { data: logoWithAlpha(48, 48), width: 48, height: 48 }
+    // GIF yarı saydamlık taşımaz (piksel ya opak ya tam saydam): sahte pikseller de öyle
+    const img = { data: Uint8ClampedArray.from(logoWithAlpha(48, 48), (v, i) => ((i & 3) === 3 ? (v >= 128 ? 255 : 0) : v)), width: 48, height: 48 }
     // iki kareli GIF başlığı (pikseller sahte platformdan)
     const gif = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 48, 0, 48, 0, 0, 0, 0]
-    for (let f = 0; f < 2; f++) gif.push(0x2c, 0, 0, 0, 0, 48, 0, 48, 0, 0, 2, 1, 0, 0)
-    gif.push(0x3b, ...new Array(20000).fill(0))
+    // kare verisi şişirilir (alt bloklar): sonlandırıcıdan SONRAKİ bayt dosya eki sayılır ve ayıklanırdı
+    for (let f = 0; f < 2; f++) {
+      gif.push(0x2c, 0, 0, 0, 0, 48, 0, 48, 0, 0, 2)
+      for (let k = 0; k < 40; k++) gif.push(255, ...new Array(255).fill(0))
+      gif.push(0)
+    }
+    gif.push(0x3b)
     const g = await run(registerBlob(Uint8Array.from(gif), img, 'image/gif'), { format: 'keep' })
     expect(g.type).toBe('png')
     expect(g.original.type).toBe('gif')
@@ -556,5 +566,137 @@ describe('görsel motoru — iş akışı: sınırlar, hatalar, iptal', () => {
     expect(await supportCore(fakePlatform({ webp: false }))).toEqual({ ok: true, webp: false })
     expect(await supportCore({ available: async () => false, canEncode: async () => true })).toEqual({ ok: false, webp: false })
     expect(await supportCore({ available: async () => { throw new Error('x') }, canEncode: async () => true })).toEqual({ ok: false, webp: false })
+  })
+})
+
+describe('görsel motoru — iş akışı: korunan ÖZGÜN dosyada üstveri sızmaz (inceleme 2026-11-14)', () => {
+  const rational = (...pairs) => { const b = new Uint8Array(pairs.length * 8); const dv = new DataView(b.buffer); pairs.forEach(([n, d], i) => { dv.setUint32(i * 8, n, true); dv.setUint32(i * 8 + 4, d, true) }); return b }
+  const GPS = [
+    { tag: 1, type: 2, count: 2, value: enc('N\u0000') },
+    { tag: 2, type: 5, count: 3, value: rational([41, 1], [0, 1], [4932, 100]) },
+    { tag: 3, type: 2, count: 2, value: enc('E\u0000') },
+    { tag: 4, type: 5, count: 3, value: rational([28, 1], [58, 1], [4212, 100]) },
+  ]
+  const img = { data: photoLike(120, 90, 8), width: 120, height: 90 }
+  const tiffAll = (extra = {}) => buildExif({ gps: GPS, creation: '2026:11:14 09:30:00', copyrightBytes: enc('© Biz'), ...extra })
+
+  it('GPS li JPEG kodlamayla küçülmüyor: özgün döner ama EXIF / ek ATILMIŞ; bayt ve tasarruf ayıklanmış dosyanınki', async () => {
+    const tiff = tiffAll()
+    const src = fakeJpegBlob(img, { padBytes: 400, exifTiff: tiff, trailer: 25 })
+    const r = await run(src, {})
+    expect(r.kept).toBe(true)
+    expect(r.type).toBe('jpeg')
+    expect(r.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    expect(r.blob).not.toBeNull()                                           // yeni (temiz) dosya — özgün Blob değil
+    const out = await bytesOf(r.blob)
+    expect(r.blob.type).toBe('image/jpeg')
+    expect(r.bytes).toBe(out.length)
+    expect(out.length).toBe(src.size - (2 + 2 + 6 + tiff.length) - 25)      // APP1 bölümü + dosya sonu eki
+    expect(r.savingPct).toBe(Math.floor((1 - out.length / src.size) * 1000) / 10)
+    expect(r.savingPct).toBeGreaterThan(0)
+    expect(r.similarity).toBe(1)
+    expect(findJpegExif(out)).toBeNull()
+    expect(readMetadata(out, 'jpeg').present).toEqual({ copyright: false, creation: false, location: false })
+    expect(r.original.metadata).toEqual({ copyright: true, creation: true, location: true })
+    // görüntü verisi (SOS sonrası entropi baytları) aynı kalır
+    const orig = await bytesOf(src)
+    expect(Array.from(out.subarray(out.length - 402))).toEqual(Array.from(orig.subarray(orig.length - 25 - 402, orig.length - 25)))
+  })
+
+  it('preserve ile: YALNIZ istenen türler en küçük EXIF bloğuyla geri yazılır (METADATA_PRESERVED)', async () => {
+    const src = fakeJpegBlob(img, { padBytes: 400, exifTiff: tiffAll() })
+    const r = await run(src, { preserve: { location: true } })
+    expect(r.kept).toBe(true)
+    expect(r.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_PRESERVED', 'METADATA_STRIPPED'])
+    const out = await bytesOf(r.blob)
+    const exif = parseExif(out, findJpegExif(out).t, findJpegExif(out).end)
+    expect(exif.gps.map((e) => e.tag)).toEqual([1, 2, 3, 4])
+    expect(exif.creation).toBeNull()
+    expect(exif.copyrightBytes).toBeNull()
+  })
+
+  it('EXIF yönü: pikseller döndürülmediği için yön en küçük EXIF ile KALIR; GPS gider', async () => {
+    const src = fakeJpegBlob({ data: photoLike(40, 60, 1), width: 40, height: 60 }, { padBytes: 400, exifTiff: tiffAll({ orientation: 6 }) })
+    const r = await run(src, {})
+    expect(r.kept).toBe(true)
+    expect(r.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    const out = await bytesOf(r.blob)
+    const at = findJpegExif(out)
+    expect(exifOrientation(out, at.t, at.end)).toBe(6)
+    expect(parseExif(out, at.t, at.end)).toEqual({ copyrightBytes: null, creation: null, gps: null })
+  })
+
+  it('güvenle ayıklanamayan yapı (EOI olmayan JPEG): özgün dosya DÖNMEZ — normal (yeniden kodlanmış) sonuç', async () => {
+    const tiff = tiffAll()
+    const bytes = Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, ((tiff.length + 8) >> 8) & 255, (tiff.length + 8) & 255, 0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff,
+      0xff, 0xc0, 0, 11, 8, 0, 90, 0, 120, 1, 1, 0x11, 0, 0xff, 0xda, 0, 8, 1, 1, 0, 0, 0x3f, 0, 1, 2, 3])
+    const r = await run(registerBlob(bytes, img, 'image/jpeg'), {})
+    expect(r.kept).toBe(false)
+    expect(r.notes).not.toContain('KEPT_ORIGINAL')
+    expect(r.bytes).toBeGreaterThan(bytes.length)                         // daha büyük — ama üstveri sızmaz
+  })
+
+  it('PNG: metin parçalı (konum) özgün korunurken parça atılır; görüntü baytları aynı', async () => {
+    const first = await run(await pngBlob(logoWithAlpha(64, 40), 64, 40, { level: 0 }), {})
+    const clean = await bytesOf(first.blob)
+    const text = (await encodePng({ width: 1, height: 1, rgba: solid(1, 1, [0, 0, 0, 0]) }, { text: [{ keyword: 'Location', text: '41.0082,28.9784' }] })).bytes
+    // metin parçası (uzunluk + tür + veri + CRC) bulunur ve temiz dosyanın IHDR'sinden sonra eklenir
+    let o = 8
+    let chunk = null
+    for (let g = 0; g < 20 && o < text.length; g++) {
+      const len = (text[o] << 24 >>> 0) + (text[o + 1] << 16) + (text[o + 2] << 8) + text[o + 3]
+      if (String.fromCharCode(...text.subarray(o + 4, o + 8)) === 'tEXt') { chunk = text.subarray(o, o + 12 + len); break }
+      o += 12 + len
+    }
+    expect(chunk).not.toBeNull()
+    const withText = new Uint8Array(clean.length + chunk.length)
+    withText.set(clean.subarray(0, 33)); withText.set(chunk, 33); withText.set(clean.subarray(33), 33 + chunk.length)
+    const r = await run(new Blob([withText], { type: 'image/png' }), {})
+    expect(r.kept).toBe(true)
+    expect(r.notes).toEqual(['KEPT_ORIGINAL', 'METADATA_STRIPPED'])
+    const out = await bytesOf(r.blob)
+    expect(Array.from(out)).toEqual(Array.from(clean))
+    expect(pngChunks(out).map((c) => c.type)).not.toContain('tEXt')
+  })
+
+  it('üstverisiz özgün: hiçbir şey değişmez — blob null (çağıranın Blob u döner), not yalnız KEPT_ORIGINAL', async () => {
+    const tiny = fakeJpegBlob(img, { padBytes: 0 })
+    const r = await run(tiny, {})
+    expect(r.blob).toBeNull()
+    expect(r.notes).toEqual(['KEPT_ORIGINAL'])
+  })
+})
+
+describe('görsel motoru — iş akışı: yalan başlık + yarı saydam kayıpsız (inceleme 2026-11-14)', () => {
+  it('çözülen görsel başlıktakinden BÜYÜKSE: TOO_MANY_PIXELS (header_mismatch); çözülen kapatılır', async () => {
+    const platform = fakePlatform()
+    const gif = [...enc('GIF89a'), 10, 0, 10, 0, 0, 0, 0, 0x2c, 0, 0, 0, 0, 10, 0, 10, 0, 0, 2, 1, 0, 0, 0x3b]
+    const lie = registerBlob(Uint8Array.from(gif), { data: solid(40, 30, [1, 2, 3, 255]), width: 40, height: 30 }, 'image/gif')
+    await expect(run(lie, {}, platform)).rejects.toMatchObject({ code: 'TOO_MANY_PIXELS', params: { width: 40, height: 30, reason: 'header_mismatch' } })
+    expect(platform.stats.closed).toBe(1)
+    // yön uygulanınca en / boy yer değiştirebilir: alan ve uzun kenar aynıysa sorun yok
+    expect(() => assertDecodedWithinProbe(60, 40, { width: 40, height: 60 })).not.toThrow()
+    expect(() => assertDecodedWithinProbe(41, 60, { width: 40, height: 60 })).toThrow(expect.objectContaining({ code: 'TOO_MANY_PIXELS' }))
+    expect(() => assertDecodedWithinProbe(10, 61, { width: 40, height: 60 })).toThrow(expect.objectContaining({ code: 'TOO_MANY_PIXELS' }))
+    // ilk karesi ekrandan büyük GIF: başlık o ölçüyü verir, iş biter
+    const framed = [...enc('GIF89a'), 1, 0, 1, 0, 0, 0, 0, 0x2c, 0, 0, 0, 0, 40, 0, 30, 0, 0, 2, 1, 0, 0, 0x3b]
+    const ok = await run(registerBlob(Uint8Array.from(framed), { data: solid(40, 30, [1, 2, 3, 255]), width: 40, height: 30 }, 'image/gif'), { format: 'png' })
+    expect([ok.width, ok.height]).toEqual([40, 30])
+  })
+
+  it('kayıpsız PNG yalnız OPAK / tam saydam piksellerde "birebir"; yarı saydam piksel varsa benzerlik null + ALPHA_COLORS_ROUNDED', async () => {
+    const opaque = new Uint8ClampedArray(solid(20, 20, [10, 20, 30, 255]))
+    for (let i = 0; i < 40; i++) opaque[i * 4 + 3] = 0                        // tam saydam satırlar: yuvarlanma yok
+    const a = await run(await pngBlob(opaque, 20, 20, { level: 0 }), { format: 'png', quality: 100 })
+    expect(a.similarity).toBe(1)
+    expect(a.notes).not.toContain('ALPHA_COLORS_ROUNDED')
+    const semi = new Uint8ClampedArray(opaque)
+    semi[3] = 7                                                                // tek yarı saydam piksel
+    const b = await run(await pngBlob(semi, 20, 20, { level: 0 }), { format: 'png', quality: 100 })
+    expect(b.similarity).toBeNull()
+    expect(b.notes).toContain('ALPHA_COLORS_ROUNDED')
+    // ölçü değişirse (küçültme) benzerlik küçültülmüş görsele göredir: not yazılmaz
+    const c = await run(await pngBlob(semi, 20, 20, { level: 0 }), { format: 'png', quality: 100, resize: { method: 'scale', width: 10 } })
+    expect(c.notes).not.toContain('ALPHA_COLORS_ROUNDED')
   })
 })
