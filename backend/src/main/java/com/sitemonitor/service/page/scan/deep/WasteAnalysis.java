@@ -208,6 +208,9 @@ public final class WasteAnalysis {
                 Map<String, Object> r = new LinkedHashMap<>();
                 r.put("url", DeepUrls.mask(it.url));
                 r.put("ttl_s", ttl == null ? null : Math.max(-1, ttl));
+                // Algoritma 4: satırın önbellek sınıfı (arayüz -1 / null ömrü "önbelleğe alınmıyor" diye değil sınıfıyla yazar)
+                if (it.cacheClass != null) r.put("cache_class", it.cacheClass);
+                if (it.cacheHeuristicS != null) r.put("cache_heuristic_s", it.cacheHeuristicS);
                 versionedShort.add(r);
                 versionedItems.add(it);
             }

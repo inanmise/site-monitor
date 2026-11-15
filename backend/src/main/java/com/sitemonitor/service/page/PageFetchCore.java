@@ -204,6 +204,32 @@ public class PageFetchCore {
     static final int MAX_COOKIES = 50;
     /** Birleştirilen aynı adlı başlık satırı tavanı (algoritma 4, {@code Cache-Control} / {@code Pragma}). */
     static final int MAX_JOINED_VALUES = 8;
+    /** Birleşik başlık değerinin tavanı (saklanan başlıkların sınırıyla aynı). */
+    static final int MAX_JOINED_CHARS = 300;
+
+    /**
+     * Aynı adlı başlık satırları virgülle birleşik (algoritma 4: ikinci bir {@code Cache-Control} satırındaki {@code no-store}
+     * kaybolmasın). En çok {@value #MAX_JOINED_VALUES} satıra bakılır (boşlar dahil). İlk dolu satır gerekirse
+     * {@value #MAX_JOINED_CHARS} karaktere kırpılır (tek satırın eski kuralı); SONRAKİ satırlar yalnız BÜTÜN sığarsa eklenir —
+     * yarım yönerge ({@code no-st}, {@code max-age=3}) asla yazılmaz, sığmayan satır atlanır ve sonraki kısa satır yine
+     * eklenebilir. Hiç dolu satır yoksa null.
+     */
+    public static String joinHeaderValues(List<String> all) {
+        if (all == null || all.isEmpty()) return null;
+        StringBuilder b = new StringBuilder();
+        int seen = 0;
+        for (String v : all) {
+            if (++seen > MAX_JOINED_VALUES) break;
+            if (v == null || v.isBlank()) continue;
+            String t = v.trim();
+            if (b.length() == 0) {
+                b.append(t.length() > MAX_JOINED_CHARS ? t.substring(0, MAX_JOINED_CHARS) : t);
+            } else if (b.length() + 2 + t.length() <= MAX_JOINED_CHARS) {
+                b.append(", ").append(t);
+            }
+        }
+        return b.length() == 0 ? null : b.toString();
+    }
     /** Sayfa başlığı değerinin tavanı (CSP uzun olabilir; yalnız bellekte, değerlendirme için). */
     static final int PAGE_HEADER_MAX = 8192;
     /** Örnek için çözülecek en çok bayt (sıkıştırma bombası: bunun ötesi çözülmeden yalnız sayılır). */
@@ -404,22 +430,9 @@ public class PageFetchCore {
                     xCache, redirectMs, finalTtfbMs, scanMeta());
         }
 
-        /**
-         * Aynı adlı başlık satırları virgülle birleşik (algoritma 4: ikinci bir {@code Cache-Control} satırındaki
-         * {@code no-store} kaybolmasın) — en çok {@code MAX_JOINED_VALUES} satır, sonuç {@link #clip} ile sınırlı; yoksa null.
-         */
+        /** Aynı adlı başlık satırları birleşik ({@link PageFetchCore#joinHeaderValues}); yoksa null. */
         private static String joined(java.net.http.HttpHeaders h, String name) {
-            List<String> all = h.allValues(name);
-            if (all.isEmpty()) return null;
-            StringBuilder b = new StringBuilder();
-            int n = 0;
-            for (String v : all) {
-                if (v == null || v.isBlank()) continue;
-                if (n++ >= MAX_JOINED_VALUES || b.length() > 300) break;
-                if (b.length() > 0) b.append(", ");
-                b.append(v.trim());
-            }
-            return b.length() == 0 ? null : clip(b.toString());
+            return joinHeaderValues(h.allValues(name));
         }
 
         /** Başlık değerleri sınırlı tutulur (dev bir başlık belleği / DB'yi şişirmesin). */

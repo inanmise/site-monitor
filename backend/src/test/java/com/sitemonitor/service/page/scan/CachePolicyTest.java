@@ -6,8 +6,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import com.sitemonitor.service.page.PageFetchCore;
+
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -68,10 +72,18 @@ class CachePolicyTest {
             "max-age=600                         | -        | future  | -     | -   | short      | 600   | 0",
             "-                                   | no-cache | future  | -     | -   | none       | -1    | 0",
             "-                                   | no-cache | -       | \"e\" | -   | revalidate | -1    | 0.5",
-            "max-age=86400                       | no-cache | -       | -     | -   | stored     | 86400 | 1.0",
-            "public                              | no-cache | -       | -     | -   | heuristic? | -     | -",
+            // Chromium kuralı (2026-11-15): yanıttaki Pragma: no-cache, Cache-Control'de ömür olsa da no-cache sayılır
+            "max-age=86400                       | no-cache | -       | -     | -   | none       | -1    | 0",
+            "max-age=86400                       | no-cache | -       | \"e\" | -   | revalidate | -1    | 0.5",
+            "public                              | no-cache | -       | -     | lm  | revalidate | -1    | 0.5",
+            "no-store                            | no-cache | -       | \"e\" | -   | no_store   | -1    | 0",
+            "max-age=86400                       | x-no-cache | -     | -     | -   | stored     | 86400 | 1.0",
             "no-cache=\"Set-Cookie\", max-age=600| -        | -       | -     | -   | short      | 600   | 0",
             "no-cache=\"Set-Cookie, X-A\", max-age=7200| -  | -       | -     | -   | stored     | 7200  | 0.5",
+            // Tırnak içinde kaçırılmış tırnak tırnağı kapatmaz: ardından gelen no-store ayrı yönergedir / tırnak içinde metindir
+            "no-cache=\"a\\\"b\", no-store          | -        | -       | -     | -   | no_store   | -1    | 0",
+            "no-cache=\"a\\\"b, no-store\"          | -        | -       | -     | -   | none       | -     | 0",
+            "no-cache=\"a\\\"b\", max-age=86400     | -        | -       | -     | -   | stored     | 86400 | 1.0",
             "s-maxage=86400                      | -        | -       | -     | -   | none       | -     | 0",
             "s-maxage=86400                      | -        | -       | -     | lm  | heuristic  | -     | 0.5",
             "public, s-maxage=600, max-age=7200  | -        | -       | -     | -   | stored     | 7200  | 0.5",
@@ -85,10 +97,22 @@ class CachePolicyTest {
             "max-age=600, max-age=86400          | -        | -       | -     | -   | short      | 600   | 0",
             "MAX-AGE = \"86400\"                 | -        | -       | -     | -   | stored     | 86400 | 1.0",
             "max-age=99999999999999999999        | -        | -       | -     | -   | stored     | 2147483648 | 1.0",
+            // RFC 9110 §5.6.7 tarih biçimleri (DATE = Sun, 15 Nov 2026 10:00:00 GMT): gün adı doğrulanmaz
+            "-                                   | -        | Tuesday, 17-Nov-26 10:00:00 GMT | - | - | stored | 172800 | 1.0",
+            "-                                   | -        | Tue Nov 17 10:00:00 2026 | -     | -   | stored     | 172800| 1.0",
+            "-                                   | -        | Wed Nov  4 10:00:00 2026 | -     | -   | none       | 0     | 0",
+            "-                                   | -        | Fri, 17 Nov 2026 10:00:00 GMT | - | -   | stored     | 172800| 1.0",
+            "-                                   | -        | 17 Nov 2026 10:00:00 GMT | -     | -   | stored     | 172800| 1.0",
+            "-                                   | -        | Tue, 17 Nov 2026 13:00:00 +0300 | - | - | stored     | 172800| 1.0",
+            "-                                   | -        | Sunday, 06-Nov-94 08:49:37 GMT | - | - | none     | 0     | 0",
+            "-                                   | -        | Mon, 31 Feb 2027 10:00:00 GMT | - | -   | none       | 0     | 0",
+            "-                                   | -        | Tue, 17 Nov 2026 25:00:00 GMT | - | -   | none       | 0     | 0",
+            "-                                   | -        | -       | -     | Mon, 16 Oct 2026 10:00:00 GMT | heuristic | - | 0.5",
+            "-                                   | -        | -       | -     | Friday, 16-Oct-26 10:00:00 GMT | heuristic | - | 0.5",
+            "-                                   | -        | -       | -     | Fri Oct 16 10:00:00 2026 | heuristic | - | 0.5",
     })
     void truthTable(String cc, String pragma, String expires, String etag, String lm, String cls, String ttl, String credit) {
-        // "public" + Pragma: Cache-Control VAR → Pragma sayılmaz; ömür yok, doğrulayıcı yok → none (tablodaki "?" satırı)
-        String expected = "heuristic?".equals(cls) ? CachePolicy.NONE : cls;
+        String expected = cls;
         CachePolicy.Policy p = CachePolicy.classify(v(cc), v(pragma), v(expires), DATE, v(etag), v(lm), 0L);
         assertThat(p.cacheClass()).isEqualTo(expected);
         assertThat(p.ttlS()).isEqualTo(ttl == null || ttl.equals("-") ? null : Long.valueOf(ttl.trim()));
@@ -117,7 +141,7 @@ class CachePolicyTest {
     }
 
     @Test
-    @DisplayName("Expires: Date yoksa şimdiye göre; boş Cache-Control yok sayılır (Pragma sayılır)")
+    @DisplayName("Expires: Date yoksa şimdiye göre; boş Cache-Control yok sayılır; Pragma: no-cache her durumda sayılır")
     void expiresAndBlank() {
         assertThat(CachePolicy.classify(null, null, FUTURE, null, null, null, NOW).ttlS()).isEqualTo(172_800L);
         assertThat(CachePolicy.classify("   ", "no-cache", null, null, "\"e\"", null, NOW).cacheClass())
@@ -135,9 +159,79 @@ class CachePolicyTest {
         assertThat(d.get(0)[1]).isNull();
         // kapanmayan tırnak: kalan metin tek değer — taşma / döngü yok
         assertThat(CachePolicy.directives("no-cache=\"a, b")).hasSize(1);
+        // kaçırılmış tırnak tırnağı kapatmaz; sondaki tek ters bölü taşmaz
+        assertThat(CachePolicy.directives("no-cache=\"a\\\"b\", no-store")).extracting(x -> x[0])
+                .containsExactly("no-cache", "no-store");
+        assertThat(CachePolicy.directives("no-cache=\"a\\\"b, no-store\"")).extracting(x -> x[0]).containsExactly("no-cache");
+        assertThat(CachePolicy.directives("no-cache=\"a\\")).hasSize(1);
         assertThat(CachePolicy.deltaSeconds("")).isZero();
         assertThat(CachePolicy.deltaSeconds("-5")).isZero();
         assertThat(CachePolicy.deltaSeconds("120")).isEqualTo(120L);
+    }
+
+    @Test
+    @DisplayName("tarih: üç biçim, gün adı yok sayılır, iki haneli yıl 50 yıl kuralı, bölge; bozuk → yedek değer")
+    void httpDates() {
+        long imf = ZonedDateTime.parse("Sun, 06 Nov 1994 08:49:37 GMT", DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
+        long fb = Long.MIN_VALUE;
+        for (String s : List.of("Sun, 06 Nov 1994 08:49:37 GMT", "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994",
+                "Thu, 06 Nov 1994 08:49:37 GMT", "06 Nov 1994 08:49:37 GMT", "sun, 06 nov 1994 08:49:37 gmt",
+                "Sun, 06 Nov 1994 11:49:37 +0300", "Nov 6 08:49:37 1994", "Sunday, 06-Nov-1994 08:49:37 GMT")) {
+            assertThat(CachePolicy.parseHttpDate(s, NOW, fb)).as(s).isEqualTo(imf);
+        }
+        // İki haneli yıl: şimdi 2026 → "76" 2076 (tam 50 yıl ileri), "77" 1977 (50 yıldan fazla ileri), "26" 2026
+        assertThat(CachePolicy.parseHttpDate("Wed, 01-Jan-76 00:00:00 GMT", NOW, fb))
+                .isEqualTo(ZonedDateTime.parse("2076-01-01T00:00:00Z").toInstant().toEpochMilli());
+        assertThat(CachePolicy.parseHttpDate("Sat, 01-Jan-77 00:00:00 GMT", NOW, fb))
+                .isEqualTo(ZonedDateTime.parse("1977-01-01T00:00:00Z").toInstant().toEpochMilli());
+        assertThat(CachePolicy.parseHttpDate("Thu, 01-Jan-26 00:00:00 GMT", NOW, fb))
+                .isEqualTo(ZonedDateTime.parse("2026-01-01T00:00:00Z").toInstant().toEpochMilli());
+        // Artık saniye 59 sayılır
+        assertThat(CachePolicy.parseHttpDate("Sun, 06 Nov 1994 08:49:60 GMT", NOW, fb)).isEqualTo(imf + 22_000);
+        for (String bad : List.of("0", "-1", "dün", "Sun", "Sun, 06 Foo 1994 08:49:37 GMT", "Sun, 06 Nov 94x 08:49:37 GMT",
+                "Sun, 06 Nov 1994 08:49 GMT", "Sun, 06 Nov 1994 08:49:37 EST", "Sun, 06-Nov 1994 08:49:37 GMT",
+                "Sun, 06 Nov 1994 08:49:37 GMT extra", "Sun, 06 Nov 199 08:49:37 GMT", "x".repeat(65))) {
+            assertThat(CachePolicy.parseHttpDate(bad, NOW, fb)).as(bad).isEqualTo(fb);
+        }
+    }
+
+    @Test
+    @DisplayName("tek doğrulayıcı kuralı: boş ETag / Last-Modified doğrulayıcı değil — kısa ömür + boş ETag kredi 0")
+    void blankValidator() {
+        assertThat(CachePolicy.hasValidator("", "  ")).isFalse();
+        assertThat(CachePolicy.hasValidator(null, null)).isFalse();
+        assertThat(CachePolicy.hasValidator("\"e\"", null)).isTrue();
+        assertThat(CachePolicy.hasValidator(null, LM)).isTrue();
+        CachePolicy.Policy p = CachePolicy.classify("max-age=600", null, null, DATE, "", null, 0L);
+        assertThat(p.cacheClass()).isEqualTo(CachePolicy.SHORT);
+        assertThat(p.validator()).isFalse();
+        assertThat(CachePolicy.credit(p.cacheClass(), p.ttlS(), p.validator())).isZero();
+        assertThat(CachePolicy.classify("no-cache", null, null, DATE, " ", "", 0L).cacheClass()).isEqualTo(CachePolicy.NONE);
+    }
+
+    @Test
+    @DisplayName("birleşik Cache-Control satırları: sonraki satır yalnız BÜTÜN sığarsa eklenir — yarım yönerge (no-st / max-age=3) yazılmaz")
+    void joinedHeaderLines() {
+        String first290 = "max-age=60, ext=" + "a".repeat(274);
+        assertThat(first290).hasSize(290);
+        String j = PageFetchCore.joinHeaderValues(List.of(first290, "no-store"));
+        assertThat(j).hasSize(300).endsWith(", no-store");
+        assertThat(CachePolicy.classify(j, null, null, DATE, null, null, 0L).cacheClass()).isEqualTo(CachePolicy.NO_STORE);
+        String first295 = "max-age=60, ext=" + "a".repeat(279);
+        String cut = PageFetchCore.joinHeaderValues(List.of(first295, "no-store"));
+        assertThat(cut).as("sığmayan satır yarım yazılmaz").isEqualTo(first295);
+        assertThat(CachePolicy.classify(cut, null, null, DATE, null, null, 0L).cacheClass()).isEqualTo(CachePolicy.SHORT);
+        String first285 = "max-age=60, ext=" + "a".repeat(269);
+        String skip = PageFetchCore.joinHeaderValues(List.of(first285, "max-age=360000, immutable", "  ", "no-store"));
+        assertThat(skip).as("sığmayan satır atlanır, sonraki kısa satır eklenir").isEqualTo(first285 + ", no-store");
+        assertThat(skip).doesNotContain("max-age=3600");
+        // Tek uzun satır eski kuralla kırpılır; 8 satırdan sonrasına bakılmaz; boş / yok → null
+        assertThat(PageFetchCore.joinHeaderValues(List.of("x".repeat(400)))).hasSize(300);
+        List<String> many = new ArrayList<>(Collections.nCopies(8, "public"));
+        many.add("no-store");
+        assertThat(PageFetchCore.joinHeaderValues(many)).doesNotContain("no-store");
+        assertThat(PageFetchCore.joinHeaderValues(List.of(" ", ""))).isNull();
+        assertThat(PageFetchCore.joinHeaderValues(List.of())).isNull();
     }
 
     @Test
@@ -151,6 +245,9 @@ class CachePolicyTest {
                 .as("sınırın ötesindeki no-store okunmaz → ömürsüz, doğrulayıcısız").isEqualTo(CachePolicy.NONE);
         String quotes = "\"".repeat(500_000);
         assertThat(CachePolicy.directives(quotes).size()).isLessThanOrEqualTo(1);
+        String escapes = "\"" + "\\".repeat(500_000);
+        assertThat(CachePolicy.directives(escapes).size()).isLessThanOrEqualTo(1);
+        assertThat(CachePolicy.parseHttpDate(" ".repeat(60) + "x".repeat(10), NOW, -7L)).isEqualTo(-7L);
         assertThat(CachePolicy.deltaSeconds("9".repeat(100_000))).isEqualTo(CachePolicy.MAX_DELTA_S);
     }
 

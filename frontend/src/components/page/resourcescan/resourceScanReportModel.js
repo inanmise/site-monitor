@@ -1143,7 +1143,9 @@ export function deepSheets(analysis, t, locale) {
       const b = isObj(W.caching.buckets) ? W.caching.buckets : {}
       block(rows, t('prs.pdf.xl.caching'), [t('prs.pdf.xl.bucket'), t('prs.export.col.count')],
         [['none', b.none], ['lt_1h', b.lt_1h], ['lt_1d', b.lt_1d], ['lt_7d', b.lt_7d], ['ge_7d', b.ge_7d]]
-          .map(([k, v]) => [t(`prs.pdf.cache.${k}`), num(v) ?? 0]))
+          // Algoritma 4 (sınıflı analiz): ömrü 0 / verilmemiş kova "önbellek yok" değil — doğrulanan / tahmini ömürlüler de burada
+          .map(([k, v]) => [k === 'none' && isObj(W.caching.classes) ? t('prs.deep.cache.bucket.noneClasses') : t(`prs.pdf.cache.${k}`),
+            num(v) ?? 0]))
       // Algoritma 4: önbellek sınıfları (ham kod asla yazılmaz — sınıf adı ve pratik anlamı)
       if (isObj(W.caching.classes)) {
         const cl = W.caching.classes

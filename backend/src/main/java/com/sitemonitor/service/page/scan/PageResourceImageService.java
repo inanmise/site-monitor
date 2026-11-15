@@ -568,6 +568,12 @@ public class PageResourceImageService {
 
     /** {@code NOT_PROJECTABLE} nedenleri. */
     public static final String REASON_ALGORITHM = "algorithm", REASON_BASELINE = "baseline";
+    /**
+     * Projeksiyonu verilebilen algoritma sürümleri: 3 ve 4. Sürüm 4'ün kodu sürüm 3 satırlarını birebir yeniden kurar (sınıfı
+     * kaydedilmemiş nesne önbellek puanında eski ömür kuralına düşer — {@code CachePolicy.creditOf}); yeniden kurulamayan bir satırı
+     * yine taban denetimi ({@code sameAsStored}) reddeder.
+     */
+    static final Set<Integer> PROJECTABLE_VERSIONS = Set.of(3, PageResourceAnalyzer.ALGORITHM_VERSION);
 
     /** Projeksiyonun okuduğu satır. */
     private record Row(String status, boolean capped, Integer grade, Long loadMs, Long pageBytes, Long imageBytes,
@@ -590,7 +596,7 @@ public class PageResourceImageService {
         if (state == null) return Projection.of(ProjectionOutcome.SCAN_NOT_FOUND);
         if (!PageResourceScanService.DONE.equals(state[0])) return Projection.of(ProjectionOutcome.NOT_DONE);
         if (!Boolean.TRUE.equals(state[2])) return Projection.of(ProjectionOutcome.ITEMS_GONE);
-        if (!Objects.equals(state[1], PageResourceAnalyzer.ALGORITHM_VERSION)) return Projection.notProjectable(REASON_ALGORITHM);
+        if (!(state[1] instanceof Integer v) || !PROJECTABLE_VERSIONS.contains(v)) return Projection.notProjectable(REASON_ALGORITHM);
 
         ScanImageLimiter.Decision d = projectionLimiter.tryAcquire(userKey);
         if (!d.allowed()) {

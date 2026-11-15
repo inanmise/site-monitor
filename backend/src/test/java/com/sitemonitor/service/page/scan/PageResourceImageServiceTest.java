@@ -175,6 +175,13 @@ class PageResourceImageServiceTest {
                   <a href="/about">about</a>
                 </body></html>
                 """;
+        // Dünkü (algoritma 3) satır benzetimi: her durağan nesnenin önbellek puanı eski ve yeni kuralda AYNI (uzun saklanan,
+        // 2 sa saklanan, başlıksız, boş ETag'li kısa ömür) — sınıf alanları silinip sürüm 3 yazılınca taban birebir kurulmalı
+        String v3page = """
+                <html><head><link rel="stylesheet" href="/v3.css"><script src="/v3.js"></script></head><body>
+                  <img src="/v3.png" width="300" height="200"> <img src="/v3blank.png" width="300" height="200">
+                </body></html>
+                """;
         String proj = """
                 <html><head><link rel="stylesheet" href="/s.css"><script src="/a.js"></script></head><body>
                   <img src="/noise.png"> <img src="/hero.png"> <img src="/photo.jpg">
@@ -196,6 +203,10 @@ class PageResourceImageServiceTest {
             switch (path) {
                 case "/gallery" -> { body = gallery.getBytes(StandardCharsets.UTF_8); ct = "text/html; charset=utf-8"; }
                 case "/proj" -> { body = proj.getBytes(StandardCharsets.UTF_8); ct = "text/html; charset=utf-8"; }
+                case "/v3page" -> { body = v3page.getBytes(StandardCharsets.UTF_8); ct = "text/html; charset=utf-8"; }
+                case "/v3.css" -> { body = "a{}".repeat(300).getBytes(StandardCharsets.UTF_8); ct = "text/css"; }
+                case "/v3.js" -> { body = "y".repeat(3000).getBytes(StandardCharsets.UTF_8); ct = "application/javascript"; }
+                case "/v3.png", "/v3blank.png" -> { body = hero; ct = "image/png"; }
                 case "/s.css" -> { body = "body{background:url(/bg.png)}".getBytes(StandardCharsets.UTF_8); ct = "text/css"; }
                 case "/a.js" -> { body = "x".repeat(4000).getBytes(StandardCharsets.UTF_8); ct = "application/javascript"; }
                 case "/about" -> { body = "<html>about</html>".getBytes(StandardCharsets.UTF_8); ct = "text/html"; }
@@ -271,6 +282,13 @@ class PageResourceImageServiceTest {
                     ex.getResponseHeaders().add("Last-Modified", "Sun, 01 Nov 2026 10:00:00 GMT");
                 }
                 case "/noise.png" -> ex.getResponseHeaders().add("Last-Modified", "Sun, 01 Nov 2026 10:00:00 GMT");
+                case "/v3.css" -> ex.getResponseHeaders().add("Cache-Control", "max-age=604800");
+                case "/v3.png" -> ex.getResponseHeaders().add("Cache-Control", "max-age=7200");
+                case "/v3blank.png" -> {
+                    // Boş ETag satırı doğrulayıcı DEĞİL (tek kural): doğrulayıcısız kısa ömür → puan 0
+                    ex.getResponseHeaders().add("Cache-Control", "max-age=600");
+                    ex.getResponseHeaders().add("ETag", "");
+                }
                 default -> { }
             }
             ex.sendResponseHeaders(status, body.length);
@@ -717,6 +735,53 @@ class PageResourceImageServiceTest {
         assertThat(messyBefore.get("grade")).isEqualTo(messyScan.get("grade"));
         assertThat(((Number) messyBefore.get("load_ms")).longValue()).isEqualTo(((Number) messyScan.get("load_ms")).longValue());
         assertThat(get(m.data(), "after").toString()).isEqualTo(messyBefore.toString());
+    }
+
+    @Test
+    @DisplayName("projeksiyon: dünkü (algoritma 3) satır da hesaplanır — sınıfsız nesne eski ömür kuralıyla, taban birebir; boş ETag doğrulayıcı değil")
+    void projectionAcceptsAlgorithm3Rows() throws Exception {
+        long id = scanDone(7, "/v3page");
+        Map<String, Object> blank = item(7, id, "/v3blank.png");
+        assertThat(blank).containsEntry("cache_class", "short");
+        ScanItem restored = ScanItem.fromStored(blank);
+        assertThat(restored.validator).as("boş ETag doğrulayıcı değil").isFalse();
+        assertThat(CachePolicy.creditOf(restored)).isZero();
+        Map<String, Object> withEmptyEtag = new java.util.LinkedHashMap<>(blank);
+        Map<String, Object> headers = new java.util.LinkedHashMap<>(get(blank, "headers"));
+        headers.put("etag", "");
+        withEmptyEtag.put("headers", headers);
+        assertThat(ScanItem.fromStored(withEmptyEtag).validator).as("kayıttan geri kurma da aynı kural").isFalse();
+        assertThat(images.project(7, id, false, List.of(), "u:1").outcome()).isEqualTo(ProjectionOutcome.OK);
+
+        // Sürüm 3 satırı: sınıf alanları yok (sürüm 3 hiç yazmadı)
+        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+        String json = jdbc.queryForObject("SELECT items_json FROM page_resource_scans WHERE id = ?", String.class, id);
+        List<Map<String, Object>> raw = om.readValue(json,
+                new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+        for (Map<String, Object> m : raw) {
+            m.remove("cache_class");
+            m.remove("cache_heuristic_s");
+        }
+        jdbc.update("UPDATE page_resource_scans SET items_json = ?, algorithm_version = 3 WHERE id = ?", om.writeValueAsString(raw), id);
+        Map<String, Object> one = scans.one(id, 7);
+        Map<String, Object> scan = get(one, "scan");
+        List<Map<String, Object>> storedScores = get(get(one, "analysis"), "scores");
+        Projection p = images.project(7, id, false, List.of(), "u:2");
+        assertThat(p.outcome()).as("sürüm 3 satırı").isEqualTo(ProjectionOutcome.OK);
+        assertThat(p.data()).containsEntry("algorithm_version", 3);
+        Map<String, Object> before = get(p.data(), "before");
+        assertThat(before.get("grade")).isEqualTo(scan.get("grade"));
+        for (Map<String, Object> sc : storedScores) {
+            Map<String, Object> mine = scoreOf(before, (String) sc.get("key"));
+            assertThat(mine.get("score")).as(sc.get("key") + " puanı").isEqualTo(sc.get("score"));
+        }
+
+
+        // Sürüm 2 hâlâ reddedilir
+        jdbc.update("UPDATE page_resource_scans SET algorithm_version = 2 WHERE id = ?", id);
+        Projection old = images.project(7, id, false, List.of(), "u:3");
+        assertThat(old.outcome()).isEqualTo(ProjectionOutcome.NOT_PROJECTABLE);
+        assertThat(old.reason()).isEqualTo("algorithm");
     }
 
     @Test

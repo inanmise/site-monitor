@@ -186,5 +186,13 @@ export function withCacheClassesV4(data) {
   d.analysis.recommendations = recs
   d.analysis.waste.caching.classes = counts
   d.analysis.waste.caching.repeat_visit_requests = 17
+  // Sürümlü ama kısa önbellekli satırlar (algoritma 4: satır sınıfı taşır; sınıfsız satır = eski pod / sınıfı yazılmamış)
+  const urlOf = (end) => d.items.find((i) => i.url.endsWith(end)).url
+  d.analysis.waste.caching.versioned_short = [
+    { url: urlOf('/js/async.js'), ttl_s: -1, cache_class: 'revalidate' },
+    { url: urlOf('/img/kullanilmayan.png'), ttl_s: null, cache_class: 'heuristic', cache_heuristic_s: 259_200 },
+    { url: urlOf('/js/old.js'), ttl_s: null },
+  ]
+  d.analysis.waste.caching.versioned_short_total = 3
   return d
 }

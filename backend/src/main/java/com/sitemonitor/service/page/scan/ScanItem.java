@@ -273,8 +273,9 @@ public final class ScanItem {
                 if (e.getKey() instanceof String k) copy.put(k, e.getValue() == null ? null : String.valueOf(e.getValue()));
             }
             it.headers = copy;
-            // Doğrulayıcı saklanmaz; kaydedilen başlıklardan çıkar (yalnız derin yakalamada yazılırlar — çekimdeki kuralla aynı)
-            it.validator = copy.get("etag") != null || copy.get("last_modified") != null;
+            // Doğrulayıcı saklanmaz; kaydedilen başlıklardan çıkar (yalnız derin yakalamada yazılırlar) — çekimdeki ve sınıftaki
+            // TEK kural: boş olmayan ETag / Last-Modified (CachePolicy.hasValidator)
+            it.validator = CachePolicy.hasValidator(copy.get("etag"), copy.get("last_modified"));
         }
         if (m.get("findings") instanceof java.util.Collection<?> f) {
             for (Object o : f) if (o instanceof String s) it.findings.add(s);

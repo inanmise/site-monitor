@@ -174,6 +174,16 @@ describe('algoritma 4 — önbellek sınıfları (gerçek #1 dökümünden türe
       expect(within(rev).getByRole('button')).toBeTruthy()          // "Nesneleri göster" (bulgu süzgeci)
       expect(rows.find((r) => r.getAttribute('data-class') === 'stored').querySelector('button')).toBeNull()
       expect(slots('prs-deep-tile').find((x) => x.getAttribute('data-key') === 'repeatReq').textContent).toMatch(/17/)
+      // Kovalar ve sürümlü satırlar sınıf listesiyle çelişmez: "önbellek yok" / "önbelleğe alınmaz" yazılmaz (doğrulanan ve
+      // tahmini ömürlü dosyalar yarım puanlıdır)
+      const buckets = slot('prs-b-cache-buckets')
+      expect(buckets.textContent).not.toContain(D['prs.deep.cache.bucket.none'])
+      expect(buckets.textContent).toContain(D['prs.deep.cache.bucket.noneClasses'])
+      expect(buckets.querySelector('span[data-bucket="none"]').className).not.toMatch(/bg-destructive/)
+      const ver = slot('prs-b-cache-versioned')
+      for (const k of ['prs.obj.cacheNoStore', 'prs.obj.cacheNone', 'prs.deep.cache.bucket.none']) expect(ver.textContent).not.toContain(D[k])
+      expect(ver.textContent).toContain(D['prs.cache.class.revalidate'])
+      expect(ver.textContent).toContain(D['prs.deep.cache.noLifetime'])
     }, 30_000)
   }
 

@@ -1416,7 +1416,8 @@ public class PageResourceScanService {
             // http/1.1 sunar) — host ölçümündeki "vekilli ölçülmez" kuralıyla aynı: bilinmiyor (inceleme O-5).
             it.httpVersion = "proxy".equals(via) ? null : sm.httpVersion();
             it.contentHash = probe || it.truncated ? null : sm.contentHash();
-            it.validator = sm.etag() != null || sm.lastModified() != null;
+            // Tek doğrulayıcı kuralı (boş ETag / Last-Modified doğrulayıcı değil) — sınıfla aynı (CachePolicy.hasValidator)
+            it.validator = cache.validator();
             it.h3Advertised = sm.altSvc() != null && h3(sm.altSvc());
         }
         if (PageResourceDiscovery.IMAGE.equals(it.category) && meta.head() != null) {

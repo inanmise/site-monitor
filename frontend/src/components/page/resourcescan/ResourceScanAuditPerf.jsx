@@ -1,9 +1,9 @@
 import { Ban, Copy, Database, FileCode2, Image as ImageIcon, Link2, Map as MapIcon, Server, Signal, Type } from 'lucide-react'
 import { ProgressBar } from '../../ui/Progress.jsx'
 import {
-  CACHE_BUCKET_TONE, CACHE_CLASS_TONE, areaData, areaUnreadable, cacheText, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
+  CACHE_CLASS_TONE, areaData, areaUnreadable, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
   formatSize, hintMore, hintRows, HINT_STATE_TONE, hostReasonText, hostRows, htmlStats, imageIssueGroups, isHttp1, libraryVersionRows, plural,
-  profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows,
+  profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows, versionedTtlText,
 } from './resourceScanModel.js'
 import {
   EmptyLine, KindBadge, NotInScan, ResponsiveRows, ShowObjectsButton, StatTiles, StateChip, UrlCell, UrlList,
@@ -328,14 +328,14 @@ function CachingBlock({ data, ctx }) {
               {/* Kova dağılımı (süs — değerler aşağıdaki listede yazılı); genişlik flex-grow ile (sayıyla orantılı) */}
               <div aria-hidden="true" className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
                 {v.buckets.filter((b) => (b.count ?? 0) > 0).map((b) => (
-                  <span key={b.key} data-bucket={b.key} className={cn('h-full', BUCKET_BG[CACHE_BUCKET_TONE[b.key]])} style={{ flexGrow: b.count }} />
+                  <span key={b.key} data-bucket={b.key} className={cn('h-full', BUCKET_BG[b.tone])} style={{ flexGrow: b.count }} />
                 ))}
               </div>
               <ul className="m-0 grid min-w-0 list-none grid-cols-1 gap-1 p-0 min-[420px]:grid-cols-2">
                 {v.buckets.map((b) => (
                   <li key={b.key} data-slot="prs-b-cache-bucket" data-bucket={b.key} data-count={b.count ?? ''} className="flex min-w-0 items-center gap-2 text-xs">
-                    <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-sm', BUCKET_BG[CACHE_BUCKET_TONE[b.key]])} />
-                    <span className={cn('flex-1 text-foreground', WRAP)}>{t(`prs.deep.cache.bucket.${b.key}`)}</span>
+                    <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-sm', BUCKET_BG[b.tone])} />
+                    <span className={cn('flex-1 text-foreground', WRAP)}>{t(b.labelKey)}</span>
                     <span className="shrink-0 text-muted-foreground tabular-nums">
                       {formatNumber(b.count, locale)}{b.share != null ? ` · ${formatPct(b.share, locale, 0)}` : ''}
                     </span>
@@ -364,8 +364,8 @@ function CachingBlock({ data, ctx }) {
                 more={v.versionedShort.more} rowKey={(r) => r.url} caption={t('prs.deep.cache.versionedTitle')}
                 columns={[
                   { key: 'url', primary: true, head: t('prs.deep.col.resource'), cell: (r) => <UrlCell url={r.url} t={t} item={ctx.itemOf(r.url)} onOpenItem={ctx.onOpenItem} /> },
-                  // null = önbellek başlığı yok, -1 = no-store / no-cache (be1) — model metniyle
-                  { key: 'ttl', head: t('prs.deep.col.ttl'), align: 'right', className: 'w-[24%]', cell: (r) => cacheText({ cache_ttl_s: r.ttlS }, t, locale) },
+                  // Algoritma 4: satırın sınıfıyla (null / -1 ömür "önbelleğe alınmıyor" yazılmaz); eski analizde eski metin
+                  { key: 'ttl', head: t('prs.deep.col.ttl'), align: 'right', className: 'w-[24%]', cell: (r) => versionedTtlText(r, v.classes !== null, t, locale) },
                 ]} />
             </div>
           )}

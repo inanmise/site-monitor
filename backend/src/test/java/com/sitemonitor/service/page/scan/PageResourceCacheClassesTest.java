@@ -152,4 +152,30 @@ class PageResourceCacheClassesTest {
         assertThat(classes.keySet()).containsExactlyElementsOf(CachePolicy.CLASSES);
         assertThat(caching).containsEntry("repeat_visit_bytes", 100 * KB).containsEntry("repeat_visit_requests", 6);
     }
+
+    @Test
+    @DisplayName("waste.caching.versioned_short: her satır nesnenin sınıfını taşır (arayüz -1 / boş ömrü \"önbelleğe alınmıyor\" yazmasın); sınıfsız eski nesne sınıfsız")
+    void versionedShortRowsCarryClass() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(100, 300, 40 * KB));
+        items.add(cls("https://a.com/app.3f2a9c1d.js", "JS", CachePolicy.REVALIDATE, -1L, true));
+        ScanItem heu = cls("https://a.com/lib.4b8e7f21.css", "CSS", CachePolicy.HEURISTIC, null, true);
+        heu.cacheHeuristicS = 3L * 86_400;
+        items.add(heu);
+        items.add(cls("https://a.com/old.5c9d0e12.png", "IMAGE", null, -1L, false));
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        Map<String, Object> caching = get(get(r.analysis(), "waste"), "caching");
+        List<Map<String, Object>> rows = get(caching, "versioned_short");
+        Map<String, Map<String, Object>> byUrl = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) byUrl.put((String) row.get("url"), row);
+        assertThat(byUrl).containsOnlyKeys("https://a.com/app.3f2a9c1d.js", "https://a.com/lib.4b8e7f21.css",
+                "https://a.com/old.5c9d0e12.png");
+        assertThat(byUrl.get("https://a.com/app.3f2a9c1d.js")).containsEntry("cache_class", "revalidate")
+                .doesNotContainKey("cache_heuristic_s");
+        assertThat(byUrl.get("https://a.com/lib.4b8e7f21.css")).containsEntry("cache_class", "heuristic")
+                .containsEntry("ttl_s", null);
+        assertThat(((Number) byUrl.get("https://a.com/lib.4b8e7f21.css").get("cache_heuristic_s")).longValue())
+                .isEqualTo(3L * 86_400);
+        assertThat(byUrl.get("https://a.com/old.5c9d0e12.png")).as("sınıfsız nesne").doesNotContainKey("cache_class");
+    }
 }

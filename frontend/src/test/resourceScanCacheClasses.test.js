@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   CACHE_CLASSES, CACHE_CLASS_FINDING, CACHE_CLASS_TONE, CACHE_FINDINGS, FINDING_CODES, FINDING_TONE, REC_CODES, REC_PLURAL, SCORE_RECS,
-  areaOfRec, cacheClassOf, cacheText, cachingView, recommendationArgs, withFindings,
+  areaOfRec, cacheBucketLabel, cacheClassOf, cacheText, cachingView, compareScans, recommendationArgs, versionedTtlText, withFindings,
 } from '../components/page/resourcescan/resourceScanModel.js'
 import { deepSheets, executiveSections } from '../components/page/resourcescan/resourceScanReportModel.js'
 import { TR } from '../i18n/tr.js'
@@ -173,5 +173,79 @@ describe('rapor — sınıf satırı ve Excel bloğu çevrili', () => {
     expect(lines.some((l) => l.startsWith('Önbellek sınıfları'))).toBe(false)
     const rows = deepSheets(analysis(null), t(TR), 'tr-TR').find((s) => s.key === 'waste').rows
     expect(rows.some((r) => r[0] === TR['prs.pdf.xl.cacheClasses'])).toBe(false)
+  })
+})
+
+describe('bağımsız inceleme düzeltmeleri (2026-11-15)', () => {
+  const t = (k, ...a) => (k in TR ? a.reduce((x, v, i) => x.replace(`{${i}}`, String(v)), TR[k]) : k)
+
+  it('kova: sınıflı analizde ömürsüz kova "önbellek yok" değil, uyarı tonlu; eski analizde eski ad ve tehlike tonu', () => {
+    expect(cacheBucketLabel('none', true)).toEqual({ labelKey: 'prs.deep.cache.bucket.noneClasses', tone: 'warning' })
+    expect(cacheBucketLabel('none', false)).toEqual({ labelKey: 'prs.deep.cache.bucket.none', tone: 'danger' })
+    expect(cacheBucketLabel('ge_7d', true)).toEqual({ labelKey: 'prs.deep.cache.bucket.ge_7d', tone: 'success' })
+    for (const D of [TR, EN]) {
+      expect(D['prs.deep.cache.bucket.noneClasses']).toBeTruthy()
+      expect(D['prs.deep.cache.noLifetime']).toBeTruthy()
+      expect(D['prs.deep.cache.bucket.noneClasses']).not.toBe(D['prs.deep.cache.bucket.none'])
+    }
+    const v4 = cachingView({ caching: { buckets: { none: 4, ge_7d: 1 }, classes: { revalidate: 2, heuristic: 2 } } })
+    expect(v4.buckets.find((b) => b.key === 'none')).toMatchObject({ labelKey: 'prs.deep.cache.bucket.noneClasses', tone: 'warning' })
+    const v3 = cachingView({ caching: { buckets: { none: 4, ge_7d: 1 } } })
+    expect(v3.buckets.find((b) => b.key === 'none')).toMatchObject({ labelKey: 'prs.deep.cache.bucket.none', tone: 'danger' })
+  })
+
+  it('sürümlü kısa önbellek satırı: sınıflı satır sınıfıyla, sınıfsız satır sınıflı analizde "ömür verilmemiş" — asla "önbelleğe alınmaz"', () => {
+    const v = cachingView({
+      caching: {
+        buckets: {}, classes: { revalidate: 1, heuristic: 1 }, versioned_short: [
+          { url: 'https://a/app.3f2a9c1d.js', ttl_s: -1, cache_class: 'revalidate' },
+          { url: 'https://a/lib.4b8e7f21.css', ttl_s: null, cache_class: 'heuristic', cache_heuristic_s: 259_200 },
+          { url: 'https://a/old.5c9d0e12.png', ttl_s: null },
+          { url: 'https://a/x.6d0e1f23.png', ttl_s: 600, cache_class: 'short' },
+        ],
+      },
+    })
+    const texts = v.versionedShort.rows.map((r) => versionedTtlText(r, true, t, 'tr'))
+    expect(texts[0]).toBe(TR['prs.cache.class.revalidate'])
+    expect(texts[1]).toBe(t('prs.obj.cacheHeuristicTtl', '3 g'))
+    expect(texts[2]).toBe(TR['prs.deep.cache.noLifetime'])
+    expect(texts[3]).toBe(t('prs.obj.cacheShortTtl', '10 dk'))
+    for (const x of texts) {
+      expect(x).not.toBe(TR['prs.obj.cacheNoStore'])
+      expect(x).not.toBe(TR['prs.obj.cacheNone'])
+    }
+    // eski analiz (sınıf yok): eski metin değişmedi
+    expect(versionedTtlText({ ttlS: -1, cacheClass: null }, false, t, 'tr')).toBe(TR['prs.obj.cacheNoStore'])
+    expect(versionedTtlText({ ttlS: null, cacheClass: null }, false, t, 'tr')).toBe(TR['prs.obj.cacheNone'])
+  })
+
+  it('karşılaştırma: sürüm 3 → 4 önbellek kodları TEK aile (NO_CACHE çözüldü + CACHE_* yeni yazılmaz); aynı sürümde tek tek', () => {
+    const mk = (id, ver, codes, start) => ({
+      scan: { id, started_at: start, algorithm_version: ver, grade: 70 },
+      analysis: { algorithm_version: ver, recommendations: codes.map((c) => ({ code: c, severity: 'low', params: {} })) },
+      items: null,
+    })
+    const oldAt = '2026-11-01T10:00:00Z'
+    const newAt = '2026-11-15T10:00:00Z'
+    const b = mk(2, 4, ['CACHE_NONE', 'CACHE_REVALIDATE', 'LARGE_IMAGES', 'SLOW_SERVER'], newAt)
+    const c = compareScans(mk(1, 3, ['NO_CACHE', 'LARGE_IMAGES'], oldAt), b)
+    expect(c.algoMismatch).toBe(true)
+    expect(c.recNew.map((r) => r.code)).toEqual(['SLOW_SERVER'])
+    expect(c.recResolved.map((r) => r.code)).toEqual([])
+    // aile yalnız bir tarafta yoksa yeni / çözülen olur
+    expect(compareScans(mk(1, 3, ['LARGE_IMAGES'], oldAt), b).recNew.map((r) => r.code))
+      .toEqual(['CACHE_NONE', 'CACHE_REVALIDATE', 'SLOW_SERVER'])
+    expect(compareScans(mk(1, 3, ['NO_CACHE'], oldAt), mk(2, 4, [], newAt)).recResolved.map((r) => r.code)).toEqual(['NO_CACHE'])
+    // aynı sürüm (4 → 4): sınıf kodları tek tek karşılaştırılır
+    const same = compareScans(mk(1, 4, ['CACHE_NONE'], oldAt), mk(2, 4, ['CACHE_REVALIDATE'], newAt))
+    expect(same.recNew.map((r) => r.code)).toEqual(['CACHE_REVALIDATE'])
+    expect(same.recResolved.map((r) => r.code)).toEqual(['CACHE_NONE'])
+  })
+
+  it('sınıf açıklaması puan kuralını doğru söyler (kısa ömür + doğrulayıcı ve 1 sa – 1 gün saklanan da yarım puan)', () => {
+    expect(TR['prs.deep.cache.classesDesc']).toMatch(/1 saat – 1 gün/)
+    expect(TR['prs.deep.cache.classesDesc']).toMatch(/kısa ömürlü/)
+    expect(EN['prs.deep.cache.classesDesc']).toMatch(/1 hour – 1 day/)
+    expect(EN['prs.deep.cache.classesDesc']).toMatch(/short-lived/)
   })
 })

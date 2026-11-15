@@ -99,6 +99,7 @@ class PageResourceScanCacheClassesTest {
                 }
                 case "/j/pragma.js" -> {
                     body = "var d=4;".repeat(200).getBytes(); ct = "application/javascript";
+                    h.add("Cache-Control", "public, max-age=86400");    // Chromium: Pragma: no-cache ömrü yine geçersiz kılar
                     h.add("Pragma", "no-cache");
                     h.add("Last-Modified", LAST_MODIFIED);
                 }
@@ -186,7 +187,8 @@ class PageResourceScanCacheClassesTest {
         assertThat((String) get(get(twoLines, "headers"), "cache_control")).contains("max-age=86400").contains("no-store");
         assertThat(item(items, "/j/revalidate.js")).containsEntry("cache_class", "revalidate");
         Map<String, Object> pragma = item(items, "/j/pragma.js");
-        assertThat(pragma).as("Cache-Control yokken Pragma: no-cache + Last-Modified").containsEntry("cache_class", "revalidate");
+        assertThat(pragma).as("Cache-Control: max-age=86400 olsa da Pragma: no-cache + Last-Modified (Chromium kuralı)")
+                .containsEntry("cache_class", "revalidate");
         assertThat((Map<String, Object>) get(pragma, "headers")).containsEntry("pragma", "no-cache");
         Map<String, Object> heuristic = item(items, "/i/heuristic.png");
         assertThat(heuristic).containsEntry("cache_class", "heuristic").containsEntry("cache_ttl_s", null);

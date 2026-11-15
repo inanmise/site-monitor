@@ -1595,26 +1595,53 @@ export const CACHE_BUCKETS = ['none', 'lt_1h', 'lt_1d', 'lt_7d', 'ge_7d']
 export const CACHE_BUCKET_TONE = { none: 'danger', lt_1h: 'warning', lt_1d: 'warning', lt_7d: 'info', ge_7d: 'success' }
 
 /**
- * Önbellek görünümü: kovalar (sayı + pay), doğrulayıcısı (ETag / Last-Modified) olmayan sayısı, sürümlü ama kısa
- * önbellekli dosyalar, CDN isabet / ıska / bilinmiyor, ikinci ziyaret tahmini (bayt + yüzde). Blok yoksa null.
+ * Kovanın adı (i18n anahtarı) ve tonu. Algoritma 4 analizinde (sınıf sayıları var) `none` kovası "önbellek yok" DEĞİLDİR: ömrü 0 /
+ * verilmemiş her nesneyi (her ziyarette doğrulanan, tarayıcının tahmin ettiği ömür dahil — yarım puanlılar) toplar; sınıf listesi
+ * ayrıntıyı söyler → "Ömür yok (sınıf listesine bakın)", uyarı tonu. Sınıfsız (eski) analizde eski ad ve ton.
+ */
+export function cacheBucketLabel(key, hasClasses) {
+  if (key === 'none' && hasClasses) return { labelKey: 'prs.deep.cache.bucket.noneClasses', tone: 'warning' }
+  return { labelKey: `prs.deep.cache.bucket.${key}`, tone: CACHE_BUCKET_TONE[key] }
+}
+
+/**
+ * Sürümlü ama kısa önbellekli dosya satırının ömür metni. Satır sınıf taşıyorsa (algoritma 4) sınıfıyla (`cacheText`); sınıfsız
+ * satırda analiz sınıflıysa 0 / boş ömür "önbelleğe alınmıyor" değil "Ömür verilmemiş" yazılır; eski analizde eski metin.
+ */
+export function versionedTtlText(row, hasClasses, t, locale) {
+  if (row?.cacheClass) {
+    return cacheText({ cache_ttl_s: row.ttlS, cache_class: row.cacheClass, cache_heuristic_s: row.heuristicS }, t, locale)
+  }
+  if (hasClasses && (row?.ttlS === null || row?.ttlS === undefined || row.ttlS <= 0)) return t('prs.deep.cache.noLifetime')
+  return cacheText({ cache_ttl_s: row?.ttlS }, t, locale)
+}
+
+/**
+ * Önbellek görünümü: kovalar (sayı + pay + ad / ton), doğrulayıcısı (ETag / Last-Modified) olmayan sayısı, sürümlü ama kısa
+ * önbellekli dosyalar (satır başına sınıf), CDN isabet / ıska / bilinmiyor, ikinci ziyaret tahmini (bayt + yüzde). Blok yoksa null.
  */
 export function cachingView(waste) {
   const c = waste?.caching
   if (!isObj(c)) return null
   const b = isObj(c.buckets) ? c.buckets : {}
-  const counts = CACHE_BUCKETS.map((k) => ({ key: k, count: num(b[k]) }))
+  // Algoritma 4: sınıf sayıları (birinci taraf önbelleklenebilir durağan nesneler — önbellek puanıyla aynı küme); yoksa null
+  const cl = isObj(c.classes) ? c.classes : null
+  const counts = CACHE_BUCKETS.map((k) => ({ key: k, count: num(b[k]), ...cacheBucketLabel(k, cl !== null) }))
   const total = counts.reduce((s, r) => s + (r.count ?? 0), 0)
   const buckets = counts.map((r) => ({ ...r, share: total > 0 && r.count !== null ? (r.count / total) * 100 : null }))
   const cdn = isObj(c.cdn) ? { hit: num(c.cdn.hit), miss: num(c.cdn.miss), unknown: num(c.cdn.unknown) } : null
   const vs = listOf(c, 'versioned_short')
-  // Algoritma 4: sınıf sayıları (birinci taraf önbelleklenebilir durağan nesneler — önbellek puanıyla aynı küme); yoksa null
-  const cl = isObj(c.classes) ? c.classes : null
   const classes = cl ? CACHE_CLASSES.map((k) => ({ key: k, count: num(cl[k]), finding: CACHE_CLASS_FINDING[k] || null })) : null
   return {
     buckets, total, noValidator: num(c.no_validator), cdn, classes,
     classTotal: classes ? classes.reduce((sum, r) => sum + (r.count ?? 0), 0) : null,
     repeatRequests: num(c.repeat_visit_requests),
-    versionedShort: vs ? { ...vs, rows: vs.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, ttlS: num(r.ttl_s) })) } : null,
+    versionedShort: vs ? {
+      ...vs,
+      rows: vs.rows.filter((r) => strOrNull(r?.url)).map((r) => ({
+        url: r.url, ttlS: num(r.ttl_s), cacheClass: cacheClassOf(r), heuristicS: num(r.cache_heuristic_s),
+      })),
+    } : null,
     repeatBytes: num(c.repeat_visit_bytes), repeatPct: num(c.repeat_visit_pct),
   }
 }
@@ -1929,13 +1956,16 @@ export function compareScans(a, b) {
       const n = cn.get(c) || { bytes: 0, count: 0 }
       return { category: c, oldBytes: o.bytes, newBytes: n.bytes, oldCount: o.count, newCount: n.count, diff: n.bytes - o.bytes }
     })
-  // Öneriler: yeni çıkan / çözülen (ALL_GOOD sayılmaz)
+  // Öneriler: yeni çıkan / çözülen (ALL_GOOD sayılmaz). Algoritma sürümleri farklıysa önbellek kodları (eski NO_CACHE ve
+  // algoritma 4'ün CACHE_* sınıfları) TEK aile sayılır: aynı dosyalar için "NO_CACHE çözüldü + CACHE_* yeni" yazılmaz — aile
+  // yalnız bir tarafta hiç yoksa yeni / çözülen olur (kod adı değişti, sitede bir şey değişmedi)
+  const familyOf = (c) => (algoOld !== algoNew && CACHE_FINDINGS.has(c) ? '#cache' : c)
   const codes = (an) => new Set((Array.isArray(an?.recommendations) ? an.recommendations : []).map((r) => r?.code)
-    .filter((c) => c && c !== 'ALL_GOOD'))
+    .filter((c) => c && c !== 'ALL_GOOD').map(familyOf))
   const ro = codes(older.analysis)
   const rn = codes(newer.analysis)
-  const recNew = (Array.isArray(newer.analysis?.recommendations) ? newer.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !ro.has(r.code))
-  const recResolved = (Array.isArray(older.analysis?.recommendations) ? older.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !rn.has(r.code))
+  const recNew = (Array.isArray(newer.analysis?.recommendations) ? newer.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !ro.has(familyOf(r.code)))
+  const recResolved = (Array.isArray(older.analysis?.recommendations) ? older.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !rn.has(familyOf(r.code)))
   let objects = null
   if (Array.isArray(older.items) && Array.isArray(newer.items)) {
     const map = (list) => {
