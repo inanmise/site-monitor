@@ -423,6 +423,60 @@ class K6RealContractTest {
         assertThat(r.details().failureDetail()).contains("\"error_code\":1110");
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("Sürüm yoklaması Go sürümünü de okur (2026-11-16; motor sayfası GODEBUG uyarısı buna bakar)")
+    void versionProbeReadsGoVersion(Engine e) {
+        ScriptedCheckerService svc = service(e);
+        K6Profile p = svc.profiles().active();
+        assertThat(p.goVersion()).as("k6 version çıktısında Go sürümü okunamadı: " + p.version()).startsWith("go1.");
+        assertThat(K6Profile.goMajorMinor(p.goVersion())).isNotNull();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("ÖLÇÜM (2026-11-16): yakalanmamış Promise reddi — k6 çıkış 0, 'Uncaught (in promise)' level=error satırı "
+            + "→ ERROR (2.3 ve 2.4 aynı; 2.4 satıra yalnız hint / source=stacktrace ekler)")
+    void unhandledRejectionIsError(Engine e) {
+        ScriptedCheckerService svc = service(e);
+        var r = run(svc, """
+                import http from 'k6/http';
+                import { check } from 'k6';
+                export default function () {
+                  check(http.get(__ENV.U + '/ok', { timeout: '10s' }), { ok: (x) => x.status === 200 });
+                  Promise.reject(new Error('reddedildi'));
+                }
+                """);
+        assertThat(r.exitCode()).isZero();
+        assertThat(r.status()).isEqualTo("ERROR");
+        assertThat(r.error()).contains("reddedildi");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("ÖLÇÜM (2026-11-16): default() hiç bitmeyen bir Promise döndürür — 2.4+ 'did not finish' level=error basar "
+            + "→ ERROR; 2.3 sessiz geçer → PASS (2.3 → 2.4 geçişinin bilinen davranış farkı; gölge tarama REGRESSION gösterir)")
+    void pendingPromiseDiffersByVersion(Engine e) {
+        ScriptedCheckerService svc = service(e);
+        K6Profile p = svc.profiles().active();
+        var r = run(svc, """
+                import http from 'k6/http';
+                import { check } from 'k6';
+                export default function () {
+                  check(http.get(__ENV.U + '/ok', { timeout: '10s' }), { ok: (x) => x.status === 200 });
+                  return new Promise(() => {});
+                }
+                """);
+        assertThat(r.exitCode()).isZero();
+        boolean atLeast24 = p.versionKnown() && (p.major() > 2 || (p.major() == 2 && p.minor() >= 4));
+        if (atLeast24) {
+            assertThat(r.status()).isEqualTo("ERROR");
+            assertThat(r.error()).contains("did not finish");
+        } else {
+            assertThat(r.status()).as(r.error()).isEqualTo("PASS");
+        }
+    }
+
     @org.junit.jupiter.api.Test
     @DisplayName("İsteğe bağlı: 2.0'dan eski gerçek ikili (K6_BIN_LEGACY) bulunur ama 'desteklenmeyen sürüm' — koşmaz")
     void legacyBinaryIsUnsupported() {

@@ -170,6 +170,39 @@ class K6EngineControllerTest {
     }
 
     @Test
+    @DisplayName("Motor satırı go_version + godebug_ignored (2026-11-16): Go 1.26 motorda boş, Go 1.27 adayda kaldırılan "
+            + "kaçışlar; Go sürümü bilinmeyen motorda boş (tahmin yok); tanımsız rol null kalır")
+    @SuppressWarnings("unchecked")
+    void engineGoVersionAndIgnoredGodebug() {
+        K6Profile active = K6Profile.fromVersionOutput("k6", "k6 v2.3.0 (commit/e088784614, go1.26.8, linux/amd64)", 1L);
+        K6Profile cand = K6Profile.fromVersionOutput("/opt/k6-candidate/k6", "k6 v2.9.0 (commit/abc, go1.27.2, linux/amd64)", 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(active, v220, cand));
+        stored.put(K6EngineSettings.KEY_GODEBUG, "tlsrsakex=1,tlssha1=1,tls3des=0");
+        Map<String, Object> eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        Map<String, Object> a = (Map<String, Object>) eng.get("active");
+        Map<String, Object> r = (Map<String, Object>) eng.get("rollback");
+        Map<String, Object> c = (Map<String, Object>) eng.get("candidate");
+        assertThat(a.get("go_version")).isEqualTo("go1.26.8");
+        assertThat((List<String>) a.get("godebug_ignored")).isEmpty();
+        assertThat(r.get("go_version")).isNull();                      // "k6 v2.2.0" çıktısında Go yok
+        assertThat((List<String>) r.get("godebug_ignored")).isEmpty();
+        assertThat(c.get("go_version")).isEqualTo("go1.27.2");
+        assertThat((List<String>) c.get("godebug_ignored")).containsExactly("tlsrsakex");   // tls3des=0 kayıp değil
+
+        // Bugünkü gerçek aday (k6 v2.4.0, go1.26.11): hiçbir şey yok sayılmaz
+        K6Profile real240 = K6Profile.fromVersionOutput("/opt/k6-candidate/k6",
+                "k6 v2.4.0 (commit/dd9395906d, go1.26.11, linux/amd64)", 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(active, null, real240));
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat(((Map<String, Object>) eng.get("candidate")).get("go_version")).isEqualTo("go1.26.11");
+        assertThat((List<String>) ((Map<String, Object>) eng.get("candidate")).get("godebug_ignored")).isEmpty();
+        assertThat(eng.get("rollback")).isNull();
+        // Eski tek argümanlı yardımcı: alanlar var, liste boş
+        assertThat(K6EngineController.profileDto(cand)).containsEntry("go_version", "go1.27.2")
+                .containsEntry("godebug_ignored", List.of());
+    }
+
+    @Test
     @DisplayName("Ayar kaydı: geçersiz GODEBUG alan hatası (godebug) — hiçbir şey yazılmaz")
     void saveRejectsBadGodebug() {
         assertThatThrownBy(() -> ctl.save(Map.of("godebug", "gctrace=1"), session(true), new MockHttpServletRequest()))

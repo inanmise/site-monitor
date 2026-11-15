@@ -14,8 +14,11 @@ const VIEWPORTS = [
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_MONITOR = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Giriş Senaryosu (Dijital Kanallar / Bireysel Bankacılık)'
 const LONG_BIN = '/opt/sitemonitor/k6/releases/v2.3.0/linux-amd64/k6-with-a-very-long-directory-name-for-wrapping'
-const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03' }
-const CANDIDATE = { bin: LONG_BIN, available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:04' }
+// 2026-11-16: motor başına Go sürümü + aday Go 1.27 ile derlenmişse yok sayılan TLS kaçışları uyarı bandı (yerleşim denetimi)
+const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03',
+  go_version: 'go1.26.8', godebug_ignored: [] }
+const CANDIDATE = { bin: LONG_BIN, available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:04',
+  go_version: 'go1.27.2', godebug_ignored: ['tlsrsakex', 'tls3des'] }
 const GODEBUG_KEYS = ['tlsrsakex', 'tls3des', 'tlssha1', 'x509negativeserial', 'rsa1024min', 'tlsmlkem', 'tlssecpmlkem']
   .map((key) => ({ key, description: `${key} açıklaması` }))
 
@@ -136,6 +139,10 @@ for (const vp of VIEWPORTS) {
       await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
       await expect(root.locator('[data-slot="k6e-engine"]')).toHaveCount(3)
       await expect(root.locator('[data-slot="k6e-gd"]')).toHaveCount(7)
+      await expect(root.locator('[data-slot="k6e-engine-go"]')).toHaveCount(2)
+      await expect(root.locator('[data-slot="k6e-engine"][data-role="candidate"] [data-slot="k6e-engine-godebug-ignored"]'))
+        .toContainText('tlsrsakex, tls3des')
+      await expect(root.locator('[data-slot="k6e-engine"][data-role="active"] [data-slot="k6e-engine-godebug-ignored"]')).toHaveCount(0)
       await expect(root.locator('[data-slot="k6e-detail"]')).toBeVisible({ timeout: 10_000 })
       await expect(root.locator('[data-slot="k6e-res-row"]')).toHaveCount(4)
       const list = root.locator('[data-slot="k6e-res-list"]')

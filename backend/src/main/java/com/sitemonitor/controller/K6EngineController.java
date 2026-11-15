@@ -121,10 +121,12 @@ public class K6EngineController {
         ScriptedCheckerService.Profiles p = checker.profiles();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("pod", SchedulerService.hostname());
+        // GODEBUG kayıtlı değeri (gevşek okuma): her motorda, o motorun Go sürümünün YOK SAYDIĞI kaçışlar (2026-11-16).
+        String godebug = current(K6EngineSettings.KEY_GODEBUG);
         Map<String, Object> engines = new LinkedHashMap<>();
-        engines.put("active", profileDto(p.active()));
-        engines.put("rollback", profileDto(p.rollback()));
-        engines.put("candidate", profileDto(p.candidate()));
+        engines.put("active", profileDto(p.active(), godebug));
+        engines.put("rollback", profileDto(p.rollback(), godebug));
+        engines.put("candidate", profileDto(p.candidate(), godebug));
         out.put("engines", engines);
         // En eski desteklenen k6 (2026-10-30): daha eski bir ikili "desteklenmeyen sürüm" olarak görünür, koşmaz.
         out.put("min_version", K6Profile.MIN_SUPPORTED_VERSION);
@@ -173,6 +175,15 @@ public class K6EngineController {
     }
 
     static Map<String, Object> profileDto(K6Profile p) {
+        return profileDto(p, null);
+    }
+
+    /**
+     * Motor satırı. Ek alanlar (2026-11-16, k6 2.3 → 2.4 geçişi — eski istemci yok sayar): {@code go_version} = ikilinin
+     * derlendiği Go sürümü (okunamadıysa null); {@code godebug_ignored} = kayıtlı GODEBUG kaçışlarından bu motorun Go
+     * sürümünün KALDIRDIĞI (yok saydığı) anahtarlar — Go sürümü bilinmiyorsa boş (asla tahmin edilmez).
+     */
+    static Map<String, Object> profileDto(K6Profile p, String godebug) {
         if (p == null) return null;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("bin", p.bin());
@@ -180,6 +191,8 @@ public class K6EngineController {
         m.put("version", p.version());
         m.put("unsupported", p.unsupported());
         m.put("probed_at", p.probedAtMs() <= 0 ? null : ISO.format(Instant.ofEpochMilli(p.probedAtMs())));
+        m.put("go_version", p.goVersion());
+        m.put("godebug_ignored", K6EngineSettings.ignoredGodebugKeys(godebug, p.goVersion()));
         return m;
     }
 

@@ -97,6 +97,52 @@ class K6EngineSettingsTest {
     }
 
     @Test
+    @DisplayName("Kaldırılan GODEBUG kaçışları (2026-11-16): Go 1.27+ motorda yalnız eski davranışı getiren değer yok sayılır; "
+            + "Go 1.26 (k6 2.3 / 2.4) ve bilinmeyen Go sürümünde liste BOŞ")
+    void ignoredGodebugKeys() {
+        String stored = "tlsrsakex=1,tls3des=1,tlssha1=1,tlsmlkem=0";
+        // Bugünkü ikililer go1.26.x → hiçbiri yok sayılmaz
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go1.26.8")).isEmpty();
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go1.26.11")).isEmpty();
+        // Go 1.27 ve sonrası: tlsrsakex + tls3des (kayıt sırasıyla); tlssha1 / tlsmlkem kaldırılmadı
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go1.27.0")).containsExactly("tlsrsakex", "tls3des");
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go1.27rc1")).containsExactly("tlsrsakex", "tls3des");
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go1.30.2")).containsExactly("tlsrsakex", "tls3des");
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go2.0")).containsExactly("tlsrsakex", "tls3des");
+        // =0 zaten yeni (zorunlu) davranış — kayıp yok, uyarı yok
+        assertThat(K6EngineSettings.ignoredGodebugKeys("tlsrsakex=0,tls3des=0", "go1.27.0")).isEmpty();
+        // Go sürümü bilinmiyor / okunamıyor → asla tahmin edilmez
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, null)).isEmpty();
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "devel")).isEmpty();
+        assertThat(K6EngineSettings.ignoredGodebugKeys(stored, "go")).isEmpty();
+        // Kayıt boş / kapalı / bozuk → boş; bozuk parça atlanır (gevşek okuma)
+        assertThat(K6EngineSettings.ignoredGodebugKeys(null, "go1.27.0")).isEmpty();
+        assertThat(K6EngineSettings.ignoredGodebugKeys("none", "go1.27.0")).isEmpty();
+        assertThat(K6EngineSettings.ignoredGodebugKeys("gctrace=1,TLS3DES=1", "go1.28.1")).containsExactly("tls3des");
+        // Tablo izinli anahtarların alt kümesi (kaldırılan bir anahtar izin listesinden düşmüş olmasın)
+        assertThat(K6EngineSettings.godebugKeys().keySet()).containsAll(K6EngineSettings.godebugRemovals().keySet());
+    }
+
+    @Test
+    @DisplayName("Aday ikili varsayılanı (2026-11-16): application.properties = /opt/k6-candidate/k6 = Dockerfile'ın aday "
+            + "ikiliyi kopyaladığı yol; etkin ikili varsayılanı k6 kalır; yol kayıt doğrulamasından geçer")
+    void candidateDefaultMatchesImage() throws Exception {
+        String props = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src", "main", "resources", "application.properties"), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(props).contains("site.monitor.scripted.k6-bin-candidate=${SCRIPTED_K6_BIN_CANDIDATE:/opt/k6-candidate/k6}");
+        assertThat(props).contains("site.monitor.scripted.k6-bin=${SCRIPTED_K6_BIN:k6}");
+        String dockerfile = java.nio.file.Files.readString(java.nio.file.Path.of("..", "Dockerfile"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(dockerfile).contains("COPY --from=k6-bin /k6-candidate /opt/k6-candidate/k6");
+        assertThat(dockerfile).contains("COPY --from=k6-bin /k6 /usr/bin/k6");
+        assertThat(dockerfile).contains("chmod 0111 /usr/bin/k6 /opt/k6-candidate/k6");
+        assertThat(dockerfile).containsPattern("(?m)^ARG K6_CANDIDATE_VERSION=\\d+\\.\\d+\\.\\d+$");
+        assertThat(dockerfile).containsPattern("(?m)^ARG K6_CANDIDATE_SHA256_AMD64=[0-9a-f]{64}$");
+        assertThat(dockerfile).containsPattern("(?m)^ARG K6_CANDIDATE_SHA256_ARM64=[0-9a-f]{64}$");
+        K6EngineSettings.validate(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY, "/opt/k6-candidate/k6");
+    }
+
+    @Test
     @DisplayName("'none' = kapalı: doğrulamadan geçer, çalışma anında boş, ekranda boş (inceleme L1)")
     void offSentinel() {
         assertThat(K6EngineSettings.isOff(null)).isTrue();

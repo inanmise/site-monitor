@@ -193,6 +193,33 @@ export function engineState(p) {
 }
 
 /**
+ * Durum rozeti tonu. Bulunamayan ADAY nötrdür (2026-11-16): aday yolu varsayılan olarak imajdaki ikilidir
+ * (/opt/k6-candidate/k6); yerel geliştirmede ya da adayı taşımayan bir imajda o dosya yoktur ve hiçbir izleme etkilenmez —
+ * tehlike tonu yanlış alarm olurdu. Etkin / yedek ikili bulunamazsa tehlike kalır.
+ */
+export function engineTone(role, state) {
+  if (state === 'running') return 'success'
+  if (state === 'unset') return 'muted'
+  if (state === 'missing' && role === 'candidate') return 'muted'
+  return 'danger'
+}
+
+/** İkilinin derlendiği Go sürümü (`go1.26.11`); eski sunucu ya da okunamadı → null. */
+export function goVersionOf(p) {
+  const v = p?.go_version
+  return typeof v === 'string' && v.trim() ? v.trim() : null
+}
+
+/**
+ * Bu motorun Go sürümünün YOK SAYDIĞI kayıtlı GODEBUG kaçışları (sunucu `godebug_ignored`, 2026-11-16) — yalnız metin
+ * öğeleri; alan yoksa (eski sunucu) ya da dizi değilse boş. Boş liste = uyarı yok.
+ */
+export function godebugIgnored(p) {
+  const v = p?.godebug_ignored
+  return Array.isArray(v) ? v.filter((k) => typeof k === 'string' && k.trim()).map((k) => k.trim()) : []
+}
+
+/**
  * Geçiş hazırlığı — SON tarama(lar)dan. Sunucu tarama sürerken ve başka sürüm koşan pod varken (ya da pod sürümleri
  * okunamazken) geçişi reddeder (`blocked`). Tam kapsamlı (ALL) en yeni tarama esas alınır; ondan sonra yalnız seçili
  * izlemeler yeniden tarandıysa bilgi satırı eklenir. `scansKnown: false` = tarama geçmişi okunmadı / okunamadı (o zaman

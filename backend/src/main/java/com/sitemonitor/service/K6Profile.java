@@ -17,9 +17,17 @@ import java.util.regex.Pattern;
  * @param version     görünen sürüm metni ({@code v2.3.0}); okunamadıysa çıktının kısa hâli ya da null
  * @param major       sürümün büyük numarası; okunamadıysa -1
  * @param probedAtMs  yoklama anı (epoch ms)
+ * @param goVersion   ikilinin derlendiği Go sürümü ({@code go1.26.11}; 2026-11-16, k6 2.3 → 2.4 geçişi) — aynı
+ *                    {@code k6 version} çıktısından okunur; okunamazsa null. GODEBUG kaçışlarının bu motorda geçerli
+ *                    olup olmadığı buna bağlıdır ({@link K6EngineSettings#ignoredGodebugKeys}).
  */
 public record K6Profile(String bin, boolean available, String version, int major, int minor, int patch,
-                        long probedAtMs) {
+                        long probedAtMs, String goVersion) {
+
+    /** Go sürümsüz profil (Go sürümü bilinmiyor) — 2026-11-16 öncesi imza; kaynak uyumluluğu için. */
+    public K6Profile(String bin, boolean available, String version, int major, int minor, int patch, long probedAtMs) {
+        this(bin, available, version, major, minor, patch, probedAtMs, null);
+    }
 
     /**
      * {@code k6 version} satırı: program adı (ilk sözcük — {@code k6}, {@code k6.exe} ya da yeniden adlandırılmış bir ikili)
@@ -41,7 +49,7 @@ public record K6Profile(String bin, boolean available, String version, int major
 
     /** k6 bulunamadı / {@code version} başarısız. */
     public static K6Profile unavailable(String bin, long now) {
-        return new K6Profile(bin, false, null, -1, -1, -1, now);
+        return new K6Profile(bin, false, null, -1, -1, -1, now, null);
     }
 
     /**
@@ -55,11 +63,96 @@ public record K6Profile(String bin, boolean available, String version, int major
         Matcher m = VERSION.matcher(output);
         if (!m.find()) {
             String s = output.strip();
-            return new K6Profile(bin, true, s.length() > 40 ? s.substring(0, 40) : s, -1, -1, -1, now);
+            // Geliştirme derlemesi ({@code k6 (devel) (go1.26.8, …)}): k6 sürümü yok ama Go sürümü okunabilir.
+            return new K6Profile(bin, true, s.length() > 40 ? s.substring(0, 40) : s, -1, -1, -1, now,
+                    goVersionIn(output, 0, false));
         }
         K6Profile p = new K6Profile(bin, true, "v" + m.group(1) + "." + m.group(2) + "." + m.group(3),
-                Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), now);
+                Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), now,
+                goVersionIn(output, m.start(), true));
         return p.tooOld() ? p.asUnsupported() : p;
+    }
+
+    /** Go sürümü taramasının üst sınırı (karakter) — yoklama çıktısı zaten 4 KB ile sınırlı; yine de sabit tavan. */
+    static final int GO_SCAN_MAX_CHARS = 4096;
+    /** Okunan Go sürümü metninin üst sınırı ({@code go1.26.11rc1} gibi). */
+    static final int GO_VERSION_MAX_CHARS = 24;
+
+    /**
+     * {@code k6 version} çıktısında {@code from} konumundaki satırdan başlayarak İLK Go sürümü belirtecini okur:
+     * {@code go<büyük>.<küçük>[.<yama>][<ek>]} — ör. {@code (commit/dd9395906d, go1.26.11, linux/amd64)}. Belirteç önünde
+     * harf / rakam olmamalı ({@code argo1.2} sayılmaz). DOĞRUSAL tarama, düzenli ifade yok; en çok {@link #GO_SCAN_MAX_CHARS}
+     * karakter okunur. {@code lineOnly}: sürüm satırı bulunduysa yalnız O satır taranır (önceki / sonraki günlük
+     * satırlarındaki bir metin Go sürümü sanılmaz); geliştirme derlemesinde (sürüm satırı yok) çıktının başından taranır.
+     * Bulunamazsa null.
+     */
+    static String goVersionIn(String output, int from, boolean lineOnly) {
+        if (output == null || from < 0 || from >= output.length()) return null;
+        int end = Math.min(output.length(), from + GO_SCAN_MAX_CHARS);
+        if (lineOnly) {
+            int nl = output.indexOf('\n', from);
+            if (nl >= 0 && nl < end) end = nl;   // sürüm satırı bulundu → yalnız o satır
+        }
+        for (int i = from; i + 3 < end; i++) {
+            if (output.charAt(i) != 'g' || output.charAt(i + 1) != 'o') continue;
+            if (i > from && Character.isLetterOrDigit(output.charAt(i - 1))) continue;
+            String v = readGoToken(output, i + 2, end);
+            if (v != null) return "go" + v;
+        }
+        return null;
+    }
+
+    /** {@code <rakam>+.<rakam>+[.<rakam>+][<harf/rakam>…]} — geçerliyse belirteç (go'suz), değilse null. Sınırlı. */
+    private static String readGoToken(String s, int start, int end) {
+        int i = start;
+        int dots = 0;
+        int digitsInPart = 0;
+        StringBuilder sb = new StringBuilder();
+        while (i < end && sb.length() < GO_VERSION_MAX_CHARS) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') {
+                digitsInPart++;
+            } else if (c == '.' && digitsInPart > 0 && dots < 2) {
+                dots++;
+                digitsInPart = 0;
+            } else {
+                break;
+            }
+            sb.append(c);
+            i++;
+        }
+        if (dots < 1 || digitsInPart == 0) return null;   // en az go<a>.<b>
+        // Ön sürüm eki (rc1, beta2): yalnız harf + rakam, belirteç sınırı içinde.
+        while (i < end && sb.length() < GO_VERSION_MAX_CHARS && Character.isLetterOrDigit(s.charAt(i)) && s.charAt(i) < 0x80) {
+            sb.append(s.charAt(i));
+            i++;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Go sürüm metninden {@code {büyük, küçük}} ({@code go1.26.11} → {@code {1, 26}}); okunamazsa null. Yalnız
+     * {@code go<a>.<b>} başı okunur, ek ({@code rc1}) yok sayılır.
+     */
+    public static int[] goMajorMinor(String goVersion) {
+        if (goVersion == null || !goVersion.startsWith("go") || goVersion.length() > GO_VERSION_MAX_CHARS) return null;
+        int i = 2;
+        int major = 0;
+        int minor = 0;
+        int n = 0;
+        while (i < goVersion.length() && Character.isDigit(goVersion.charAt(i)) && n < 4) {
+            major = major * 10 + (goVersion.charAt(i++) - '0');
+            n++;
+        }
+        if (n == 0 || i >= goVersion.length() || goVersion.charAt(i) != '.') return null;
+        i++;
+        n = 0;
+        while (i < goVersion.length() && Character.isDigit(goVersion.charAt(i)) && n < 4) {
+            minor = minor * 10 + (goVersion.charAt(i++) - '0');
+            n++;
+        }
+        if (n == 0) return null;
+        return new int[]{major, minor};
     }
 
     /** Sürüm numarası okunabildi mi. */
@@ -80,6 +173,6 @@ public record K6Profile(String bin, boolean available, String version, int major
     }
 
     private K6Profile asUnsupported() {
-        return new K6Profile(bin, false, version, major, minor, patch, probedAtMs);
+        return new K6Profile(bin, false, version, major, minor, patch, probedAtMs, goVersion);
     }
 }
