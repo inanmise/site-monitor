@@ -3,6 +3,7 @@ import { formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import { formatBytes } from '../../../utils/formatBytes.js'
 import { cn } from '@/lib/utils'
+import { ProgressBar } from '../../ui/Progress.jsx'
 
 const WRAP = '[overflow-wrap:anywhere]'
 
@@ -84,9 +85,8 @@ export default function PageSpeedGradeCard({ grade, checkedAt, isLatest, older =
                 <span className={cn('font-medium text-foreground', WRAP)}>{t(`pspd.grade.comp.${c.key}`)}</span>
                 <span className="tabular-nums text-muted-foreground">{valueText(c.key, c.value, t)} · {t('pspd.grade.points', c.score)}</span>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-border" aria-hidden="true">
-                <div className="h-full rounded-full bg-[var(--chart-1)]" style={{ width: `${c.score}%` }} />
-              </div>
+              {/* Puan metin olarak hemen üstte yazılı → çubuk dekoratif (ekran okuyucuya ikinci kez duyurulmaz) */}
+              <ProgressBar value={c.score} max={100} size="md" decorative />
             </li>
           ))}
         </ul>
