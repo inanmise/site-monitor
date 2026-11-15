@@ -314,4 +314,59 @@ class MonitoringControllerPageSpeedScheduleTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         assertThat(good).contains("\"valid\":true").contains("\"effective_interval_seconds\":600");
     }
+
+    @Test
+    @DisplayName("L1: saklı planın AYNISI yeniden doğrulanmaz — 'hiç çalışmaz' hâle gelmiş cron'lu izlemede ad düzenlemesi 200")
+    void update_unchangedSchedule_notRevalidated() throws Exception {
+        var m = live(44L);
+        m.setScheduleMode("CRON");
+        m.setCronExpression("0 9 29 2 *");   // 29 Şubat: 366 günlük ufukta tetik yok → yeni kayıtta DBQUERY_NEVER_RUNS
+        m.setIntervalSeconds(86_400);
+        when(pageSpeedMonitorRepo.findById(44L)).thenReturn(Optional.of(m));
+        stubCreateSave(new java.util.ArrayList<>());
+        update(44L, "{\"name\":\"yeni ad\",\"intervalSeconds\":86400,\"schedule_mode\":\"CRON\","
+                + "\"cron_expression\":\"0 9 29 2 *\",\"windows\":[],\"blackouts\":[],\"skip_holidays\":false,\"skip_dates\":[]}", 200);
+        assertThat(m.getName()).isEqualTo("yeni ad");   // kayıt geçti (400 yok)
+        // Değişen (yine hiç çalışmayan) plan doğrulanır → 400
+        String bad = update(44L, "{\"schedule_mode\":\"CRON\",\"cron_expression\":\"0 9 30 2 *\"}", 400);
+        assertThat(bad).contains("DBQUERY_SCHEDULE_NEVER_RUNS");
+    }
+
+    private void stubRestoreRow(long id, String snapshot) {
+        com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+        r.setTeamId(5L);
+        r.setSnapshot(snapshot);
+        r.setResourceKind("PAGESPEED");
+        r.setResourceId(id);
+        r.setResourceName("hiz-" + id);
+        r.setSeq(1);
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PAGESPEED", id, 1)).thenReturn(Optional.of(r));
+    }
+
+    @Test
+    @DisplayName("geri yükleme zamanlamayı döndürür: doğrulanır, etkin aralık yeniden hesaplanır, plan sıfırlanır")
+    void restore_schedule_validatedAndReplanned() throws Exception {
+        var m = live(45L);
+        when(pageSpeedMonitorRepo.findById(45L)).thenReturn(Optional.of(m));
+        when(pageSpeedMonitorRepo.save(any(com.sitemonitor.model.PageSpeedMonitor.class))).thenAnswer(i -> i.getArgument(0));
+        stubRestoreRow(45L, "{\"scheduleMode\":\"CRON\",\"cronExpression\":\"0 8 * * *\",\"intervalSeconds\":1800}");
+        mvc.perform(post("/api/monitoring/changes/pagespeed/45/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        assertThat(m.getScheduleMode()).isEqualTo("CRON");
+        assertThat(m.getIntervalSeconds()).isEqualTo(86_400);
+        verify(schedulerService).pageSpeedScheduleChanged(45L);
+    }
+
+    @Test
+    @DisplayName("bugünkü kurallardan geçmeyen zamanlamaya geri dönülemez (400, kayıt ve plan sıfırlama yok)")
+    void restore_invalidSchedule_400() throws Exception {
+        var m = live(46L);
+        when(pageSpeedMonitorRepo.findById(46L)).thenReturn(Optional.of(m));
+        stubRestoreRow(46L, "{\"scheduleMode\":\"CRON\",\"cronExpression\":\"bozuk ifade\"}");
+        mvc.perform(post("/api/monitoring/changes/pagespeed/46/1/restore").session(session("ADMIN")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("cron_expression"));
+        verify(pageSpeedMonitorRepo, never()).save(any());
+        verify(schedulerService, never()).pageSpeedScheduleChanged(anyLong());
+    }
 }

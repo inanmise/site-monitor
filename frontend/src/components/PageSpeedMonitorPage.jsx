@@ -29,6 +29,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import ScheduleEditor from './dbquery/ScheduleEditor.jsx'
 import { durationText as schedDurationText, intervalProblem, windowProblems } from './dbquery/scheduleModel.js'
 import { serverFieldErrors } from './dbquery/dbqueryPageModel.js'
+import { isScheduled } from './scripted/scriptedCardModel.js'
 import {
   DEFAULT_SCRIPTED_SCHEDULE, scheduleBodyKeys, scheduleEditorValue, scheduleErrorsOf, scheduleFromScriptedRow,
   scheduleProblems, SCHEDULE_ERROR_KEYS,
@@ -105,6 +106,9 @@ const PAGESPEED_MIN_INTERVAL = 300
 /** Zamanlama sorun kodu → alan altı metni (sentetik izlemeyle aynı kodlar, Sayfa Hızı tabanı). */
 function scheduleErrorMap(form, t) {
   const codes = scheduleProblems(form, { intervalProblem, windowProblems, minInterval: PAGESPEED_MIN_INTERVAL })
+  // Planı olmayan (düz aralık, süzgeç yok) izlemede sunucu yalnız 5 dk tabanını uygular, üst sınır yok — API ile kurulmuş
+  // 7 günden uzun aralık başka bir alanın düzenlenmesini engellemesin (inceleme L2, 2026-11-15)
+  if (codes.interval_seconds === 'interval_max' && !isScheduled({ ...(form?.schedule || {}) })) delete codes.interval_seconds
   const out = {}
   for (const [k, code] of Object.entries(codes)) {
     out[k] = code === 'cron_required' ? t('scripted.f.cronRequired') : t(`dbq.sched.v.${code}`, schedDurationText(PAGESPEED_MIN_INTERVAL, t))

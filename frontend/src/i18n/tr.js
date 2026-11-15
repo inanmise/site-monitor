@@ -16914,8 +16914,6 @@ export const TR = {
   'http.adv.detailSlow':        'Yavaş yanıt alarmı',
   'http.adv.detailSlowValue':   '{0} ms üstü',
   // ── Sayfa Hızı ──
-  'pspd.iv5m': '5 dk', 'pspd.iv15m': '15 dk', 'pspd.iv30m': '30 dk',
-  'pspd.iv1h': '1 sa', 'pspd.iv6h': '6 sa', 'pspd.iv24h': '24 sa',
   'pspd.title':    'Sayfa Hızı İzleme',
   'pspd.subtitle': 'Sayfanın ne kadar sürede yüklendiğini ve ne kadar ağırlaştığını ölçer: ilk bayt süresi, toplam yükleme, transfer boyutu ve istek sayısı.',
   'pspd.typeInfo': 'Sayfa Hızı, sayfanın AĞIRLIĞINI ve SÜRESİNİ ölçer. "Sayfa ayakta mı" sorusu HTTP izlemesinin, "kaynaklar kırık mı" sorusu Sayfa Bütünlüğü izlemesinin işidir.',
