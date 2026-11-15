@@ -12,6 +12,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import NotificationGroupSelect from '../ui/NotificationGroupSelect.jsx'
 import NocNotifyField from '../noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from '../noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from '../noc/forms/nocFormModel.js'
 import { INVENTORY_FLAGS, emptyFlags } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryContacts.js'
@@ -236,6 +237,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   useEffect(() => {
     if (mode !== 'edit' && routingLocked) setForm(prev => withRoutingDefaults(prev, INVENTORY_ROUTING_DEFAULTS))
   }, [mode, routingLocked])
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   const teamPickable = mode === 'edit' ? (canMoveTeam && fieldsEnabled && !sharedOnly) : fieldsEnabled
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
@@ -434,6 +436,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
       if (!confirmed) return
     }
 
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'SSL', monitorId: mode === 'edit' ? record?.id : null,
+      nocNotify: form.noc_notify, locked: routingLocked })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, noc_notify: true }))
+
     setSaving(true)
     try {
       setMsg(null)
@@ -458,7 +466,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         notification_group_id: form.notification_group_id ? Number(form.notification_group_id) : null,
         // 7/24 izleme ekibi (2026-09-27) — yine SNAKE_CASE (varlığa bağlanan gövde; dokuz izleme ucu camelCase alır).
         // Sunucu yalnız gövdede GELEN anahtarı yazar; burada ikisi de her zaman gönderilir. [] → null = varsayılan gruplar.
-        noc_notify:         !!form.noc_notify,
+        noc_notify:         noc.nocNotify,
         noc_group_ids:      nocGroupIdsBody(form.noc_group_ids),
         group_name:         form.group_name?.trim() || null,
         tags:               form.tags?.trim() || null,   // formda alan yoktu → düzenleme etiketleri SİLİYORDU (2026-09-18)
@@ -498,6 +506,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         : await api.admin.addInventory(payload)
       setSaving(false)
       if (res?.success) {
+        noc.done(res.data?.id)
         toast.success(t('inv.saved'))
         if ((res.alertsClosed ?? 0) > 0) {
           toast.success(t('inv.deactivatedAlerts', res.alertsClosed))
@@ -895,6 +904,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             )}
           </FormField>
         </FormGrid>
+        {nocConfirm.dialog}
       </MonitorFormModal>
       {/* Tanılama YAZILAN değerle koşar — kaydetmeden deneme. */}
       {showDiag && (

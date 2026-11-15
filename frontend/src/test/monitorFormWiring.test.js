@@ -102,10 +102,15 @@ describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
 const NOC_MONITOR_LINKS = [
   { name: 'EMPTY varsayılanı (kapalı)', re: /nocNotify:\s*false,\s*nocGroupIds:\s*\[\]/ },
   { name: 'düzenlemede yükleme', re: /nocNotify:\s*!!m\.noc_notify,\s*nocGroupIds:\s*nocIdsFrom\(m\.noc_group_ids\)/ },
-  { name: 'kaydetme yükü', re: /nocNotify:\s*!!form\.nocNotify,\s*nocGroupIds:\s*nocGroupIdsBody\(form\.nocGroupIds\)/ },
+  // Kayıtta 7/24 onayı (2026-11-15): yük ya formdan ya onayın kararından (`noc.nocNotify`) okur
+  { name: 'kaydetme yükü', re: /nocNotify:\s*(?:!!form\.nocNotify|noc\.nocNotify),\s*nocGroupIds:\s*nocGroupIdsBody\(form\.nocGroupIds\)/ },
   { name: 'JSX alan', re: /<NocNotifyField\b[^>]*\btype="[A-Z]+"[^>]*checked=\{form\.nocNotify\}[^>]*groupIds=\{form\.nocGroupIds\}/ },
   { name: 'alan import', re: /import\s+NocNotifyField\s+from\s+'\.\/noc\/forms\/NocNotifyField\.jsx'/ },
   { name: 'toplu işlem 7/24', re: /<BulkActionBar\b[^>]*\bnocType="[A-Z]+"/ },
+  // Kayıtta 7/24 onayı (2026-11-15): kaydet akışı sorar, pencere formun İÇİNDE çizilir, "bir daha sorma" kayıttan sonra yazılır
+  { name: 'kayıtta 7/24 onayı (ask)', re: /nocConfirm\.ask\(\{\s*type:\s*'[A-Z]+'/ },
+  { name: 'kayıtta 7/24 onayı (pencere)', re: /\{nocConfirm\.dialog\}|nocDialog=\{nocConfirm\.dialog\}/ },
+  { name: 'kayıtta 7/24 onayı (done)', re: /noc\.done\(res\.data\?\.id\)/ },
 ]
 /** Tür anahtarı (sözleşme) — form ve toplu işlem AYNI anahtarı taşımalı (yanlış tür = başka tablonun kaydı). */
 const NOC_TYPE_OF = {
@@ -134,6 +139,7 @@ describe('İzleme formu bağlantı kapısı (7/24 izleme ekibi)', () => {
       // Şablon dizgede ters bölü YOK (kaçış tuzağı): sözcük sınırı yerine açık boşluk sınıfı.
       if (!new RegExp(`<NocNotifyField[^>]*[ ]type="${want}"`).test(src)) wrong.push(`${form} → alan type≠${want}`)
       if (!new RegExp(`<BulkActionBar[^>]*[ ]nocType="${want}"`).test(src)) wrong.push(`${form} → nocType≠${want}`)
+      if (!src.includes(`nocConfirm.ask({ type: '${want}'`)) wrong.push(`${form} → 7/24 onayı type≠${want}`)
     }
     expect(wrong).toEqual([])
   })
@@ -143,7 +149,9 @@ describe('İzleme formu bağlantı kapısı (7/24 izleme ekibi)', () => {
     const links = [
       ['EMPTY varsayılanı (kapalı)', /noc_notify:\s*false,\s*noc_group_ids:\s*\[\]/],
       ['düzenlemede yükleme', /noc_notify:\s*!!item\.noc_notify,[\s\S]{0,80}noc_group_ids:\s*nocIdsFrom\(item\.noc_group_ids\)/],
-      ['kaydetme yükü (snake_case)', /noc_notify:\s*!!form\.noc_notify,[\s\S]{0,80}noc_group_ids:\s*nocGroupIdsBody\(form\.noc_group_ids\)/],
+      ['kaydetme yükü (snake_case)', /noc_notify:\s*(?:!!form\.noc_notify|noc\.nocNotify),[\s\S]{0,80}noc_group_ids:\s*nocGroupIdsBody\(form\.noc_group_ids\)/],
+      ['kayıtta 7/24 onayı (SSL)', /nocConfirm\.ask\(\{\s*type:\s*'SSL'/],
+      ['kayıtta 7/24 onayı (pencere)', /\{nocConfirm\.dialog\}/],
       ['JSX alan (SSL)', /<NocNotifyField\b[^>]*\btype="SSL"[^>]*checked=\{form\.noc_notify\}[^>]*groupIds=\{form\.noc_group_ids\}/],
     ]
     expect(links.filter(([, re]) => !re.test(src)).map(([name]) => name)).toEqual([])
