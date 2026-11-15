@@ -13,13 +13,6 @@ import { GATE_VIEWPORTS, expectLayout, json } from './support/gateChecks.js'
 /** Uygulama açık: Sertifika Panosu başlığındaki sertifika sayısı (kullanıcı menüsü telefonda çekmece kapalıyken yok). */
 const APP_READY = '[data-slot="dash-cert-count"]'
 
-/**
- * Giriş sayfasında dokunmatikte 40 px altı kalan hedefler — ÜRÜN HATASI, raporlandı (yayın öncesi kapı 2026-11-15):
- * dil düğmesi 32 px (`pages/Login.jsx` `lp-lang-btn`, size="sm"), parola göster / gizle 32 px (`lp-eye`, size="icon-sm"),
- * "Sistem yöneticisine bildirin" bağlantı düğmesi 19 px (`lp-help-link`, kendi satırında — satır içi metin istisnası değil).
- */
-const LOGIN_KNOWN_SMALL = [/"(Türkçe|English)" \d+x32$/, /"(Show|Hide) password" 32x32$/, /"Report it to the system admini" \d+x19$/]
-
 const ME = {
   success: true, username: 'demo', display_name: 'Demo Kullanıcı', system_role: 'ADMIN', global_admin: true, weekly_reports_visible: true,
   team_id: 1, team_name: 'Takım A', team_ids: [1], team_names: ['Takım A'], tour: { status: 'dismissed', version: 99 },
@@ -85,7 +78,7 @@ for (const vp of GATE_VIEWPORTS) {
       await sessionRoutes(page, state)
       await page.goto('/')
       await page.waitForSelector('#lp-user', { timeout: 60_000 })
-      await expectLayout(page, 'body', { touch: vp.touch, allowSmall: LOGIN_KNOWN_SMALL, label: `giriş sayfası @${vp.name}` })
+      await expectLayout(page, 'body', { touch: vp.touch, label: `giriş sayfası @${vp.name}` })
       await page.fill('#lp-user', 'demo')
       await page.fill('#lp-pass', 'Parola.2026')
       await page.locator('form.lp-form').evaluate((f) => f.requestSubmit())
@@ -95,7 +88,7 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(confirm).toContainText('If you continue, that session will be closed')
       expect(state.logins).toHaveLength(1)
       expect(state.logins[0]).toMatchObject({ username: 'demo', password: 'Parola.2026', force_login: 'false' })
-      await expectLayout(page, 'body', { touch: vp.touch, allowSmall: LOGIN_KNOWN_SMALL, label: `oturum onayı @${vp.name}` })
+      await expectLayout(page, 'body', { touch: vp.touch, label: `oturum onayı @${vp.name}` })
 
       await page.locator('[data-slot="login-session-confirm"]').click()
       await expect.poll(() => state.logins.length).toBe(2)
@@ -114,7 +107,7 @@ for (const vp of GATE_VIEWPORTS) {
       state.expire = null
       await page.waitForSelector('#lp-user', { timeout: 60_000 })
       await expect(page.getByText('Your session has expired. Please sign in again.')).toBeVisible()
-      await expectLayout(page, 'body', { touch: vp.touch, allowSmall: LOGIN_KNOWN_SMALL, label: `süre doldu bildirimi @${vp.name}` })
+      await expectLayout(page, 'body', { touch: vp.touch, label: `süre doldu bildirimi @${vp.name}` })
     })
 
     test('çıkışta /logout başarısız: bekleyen işaret yazılır, giriş formu açılır, yenileme oturumu geri getirmez', async ({ page }) => {
@@ -136,7 +129,7 @@ for (const vp of GATE_VIEWPORTS) {
       expect(await page.evaluate(() => localStorage.getItem('sm.logout.pending'))).toBeTruthy()
       expect(await page.evaluate(() => sessionStorage.getItem('sm.session.active'))).toBeNull()
       await expect(page.getByText(/the server could not be reached/)).toBeVisible()
-      await expectLayout(page, 'body', { touch: vp.touch, allowSmall: LOGIN_KNOWN_SMALL, label: `çıkış sonrası giriş @${vp.name}` })
+      await expectLayout(page, 'body', { touch: vp.touch, label: `çıkış sonrası giriş @${vp.name}` })
 
       // Yenile: /me SORULMAZ (çerez oturumu geri getirmez), çıkış yeniden denenir, giriş formu kalır
       const meBefore = state.meCalls
@@ -180,7 +173,7 @@ for (const vp of GATE_VIEWPORTS) {
       await page.waitForURL(/[?&]session=inactive/, { timeout: 60_000 })
       await page.waitForSelector('#lp-user', { timeout: 60_000 })
       await expect(page.locator('[data-slot="login-account-inactive"]')).toBeVisible()
-      await expectLayout(page, 'body', { touch: vp.touch, allowSmall: LOGIN_KNOWN_SMALL, label: `pasif bildirimi @${vp.name}` })
+      await expectLayout(page, 'body', { touch: vp.touch, label: `pasif bildirimi @${vp.name}` })
     })
   })
 }

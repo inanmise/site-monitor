@@ -17,7 +17,8 @@ import { useT } from '../../i18n/index.jsx'
  * Tetikte seçili sayısı Badge olarak görünür (ekran okuyucuya "N seçili"); seçili adlar tetiğin ipucunda.
  * Liste seçimde KAPANMAZ (birden çok seçilir). Satıra basış odağı arama kutusundan ÇALMAZ (mousedown
  * preventDefault) — ok tuşları/Enter cmdk kökünde işlemeye devam eder; seçim yalnız cmdk onSelect'te
- * (tık ya da Enter) → bir basış bir kez çevirir.
+ * (tık ya da Enter) → bir basış bir kez çevirir. Dokunmatikte (`pointer-coarse:`) tetik 40 px — 768 px tablette de
+ * (2026-11-15 yayın öncesi e2e kapısı; fare görünümü 32 px kalır).
  */
 export default function FacetedFilter({
   title, icon: Icon = ListFilter, options = [], value = [], onChange, searchPlaceholder, tooltip, className,
@@ -40,7 +41,7 @@ export default function FacetedFilter({
     <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery('') }}>
       <PopoverTrigger asChild>
         <Button type="button" variant="outline" size="sm"
-          className={cn('h-8 border-dashed', className)}
+          className={cn('h-8 border-dashed pointer-coarse:h-10', className)}
           data-active={n > 0 ? 'true' : undefined}
           title={n > 0 ? selectedLabels.join(', ') : tooltip}>
           <Icon />

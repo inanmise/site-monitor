@@ -99,13 +99,11 @@ function smallTargetsIn(sel) {
 }
 
 /**
- * Her kökte geçerli istisnalar (2026-11-15 kapı koşusunda bulundu):
- *  - shadcn Checkbox'ın dokunmatik `::after` vuruş alanı 40 değil 38 px: `pointer-coarse:after:-inset-3` sözde öğeyi
- *    kutunun DOLGU kutusuna (16 − 2 × 1 px kenarlık = 14 px) göre yerleştirir → 14 + 24 = 38 px. ÜRÜN HATASI, raporlandı
- *    (frontend/src/components/shadcn/checkbox.jsx — `-inset-[13px]` 40 px verir); etiket satırı da 40'ın altındaysa görünür.
- *  - Bildirimin (sonner) kapat düğmesi 20 px — bildirimin TAMAMI dokununca kapanır (`Toast.jsx` dismissFromClick); hata değil.
+ * Her kökte geçerli istisna: bildirimin (sonner) kapat düğmesi 20 px — bildirimin TAMAMI dokununca kapanır
+ * (`Toast.jsx` dismissFromClick); hata değil. (2026-11-15 kapı koşusunda bulunan shadcn Checkbox 38 px vuruş alanı
+ * `checkbox.jsx` `-inset-[13px]` ile düzeltildi — artık ölçülür.)
  */
-export const KNOWN_TOUCH = [/^button\[checkbox\] "" \d+x3[89]$/, /^button\[\] "Dismiss notification" 20x20$/]
+export const KNOWN_TOUCH = [/^button\[\] "Dismiss notification" 20x20$/]
 
 /** Bir kökte (pencere / sayfa bölümü) taşma, kırpma ve (dokunmatikte) dokunma hedefi denetimi. */
 export async function expectLayout(page, sel, { touch, label, allowSmall = [], allowClip = [] } = {}) {

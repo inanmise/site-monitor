@@ -10,21 +10,6 @@ import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 import { GATE_VIEWPORTS, expectLayout, expectInViewport, json } from './support/gateChecks.js'
 
-/**
- * ÜRÜN HATALARI, raporlandı (yayın öncesi kapı 2026-11-15) — bu ölçümler kapıdan dışarıda tutulur
- * (`noc/console/NocConsoleList.jsx` AlarmTitle, `NocConsole.jsx` süzgeç çubuğu):
- *  - dokunmatikte alarm başlığı bağlantısı (`noc-con-alert-link`) 26 px, "İzlemeye git" bağlantısı 16 px (inline-flex, kendi
- *    başına bir hedef); tablette takım süzgeci 36 px (`sm:[&_[role=combobox]]:h-9`, pointer-coarse eki yok);
- *  - izleme adının altındaki hedef adres `truncate` ile TEK SATIRDA kesilir (title dokunmatikte görünmez);
- *  - arama kartında eskalasyon kişisinin e-posta (`mailto:`) bağlantısı dokunmatikte 16 px (`noc/console/NocCallDialog.jsx`
- *    `inline-flex ... text-xs`, kendi satırında bağımsız hedef).
- */
-const KNOWN_SMALL = [/^a\[noc-con-alert-link\] "[^"]*" \d+x26$/, /^a\[\] "Go to the monitor: [^"]*" \d+x16$/, /^button\[popover-trigger\] "Team" \d+x36$/]
-const KNOWN_CLIP = [/^span\[\] "https:\/\/odeme-servisleri\.example\.com/]
-const SHEET_KNOWN_SMALL = [/^a\[\] "eskalasyon-sorumlusu@example\.c" \d+x16$/]
-/** "Kimi aradınız?" seçicisinde uzun AD adı tek satırda kesilir (`admin/alerts/NocPersonPicker.jsx` renderPerson `truncate`). */
-const PICKER_KNOWN_CLIP = [/^span\[\] "Ayşegül Nur Karaosmanoğlu-Yıldırımtekin /]
-
 const ago = (min) => new Date(Date.now() - min * 60_000).toISOString().slice(0, 19)
 const LONG_PERSON = 'Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)'
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi'
@@ -98,7 +83,7 @@ for (const vp of GATE_VIEWPORTS) {
       const conRow = consoleRoot.locator('[data-slot="noc-con-row"][data-alert-id="610"]')
       await expect(conRow).toBeVisible({ timeout: 60_000 })
       await expect(conRow.locator('[data-slot="noc-con-no-call"]')).toBeVisible()
-      await expectLayout(page, '[data-slot="noc-console"]', { touch: vp.touch, allowSmall: KNOWN_SMALL, allowClip: KNOWN_CLIP, label: `konsol @${vp.name}` })
+      await expectLayout(page, '[data-slot="noc-console"]', { touch: vp.touch, label: `konsol @${vp.name}` })
 
       await conRow.locator('[data-action="noc-con-call"]').click()
       const dlg = page.getByRole('dialog', { name: /^Call · / })
@@ -115,7 +100,7 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(first.locator('a[href="tel:05000000000"]')).toBeVisible()
       await expect(dlg.locator('[data-slot="noc-sheet-call-list"] [data-slot="noc-sheet-person"]').nth(1).locator('a[href^="tel:"]')).toHaveCount(0)
       await expect(dlg.locator('[data-slot="noc-sheet-manager"] a[href="tel:+905000000001"]')).toBeVisible()
-      await expectLayout(page, '[data-slot="noc-call-dialog"]', { touch: vp.touch, allowSmall: SHEET_KNOWN_SMALL, label: `arama kartı @${vp.name}` })
+      await expectLayout(page, '[data-slot="noc-call-dialog"]', { touch: vp.touch, label: `arama kartı @${vp.name}` })
 
       // Kayıt formu: kişi önseçili (arama listesinin ilki), sonuç seçilmeden istek gitmez — hata "Outcome" alanının altında
       const form = dlg.locator('[data-slot="noc-call-form"]')
@@ -130,7 +115,7 @@ for (const vp of GATE_VIEWPORTS) {
       await personBox.click()
       const picker = page.locator('[data-slot="popover-content"]').last()
       await expect(picker).toBeVisible()
-      await expectLayout(page, '[data-slot="popover-content"]', { touch: vp.touch, allowClip: PICKER_KNOWN_CLIP, label: `kişi seçici @${vp.name}` })
+      await expectLayout(page, '[data-slot="popover-content"]', { touch: vp.touch, label: `kişi seçici @${vp.name}` })
       await picker.getByRole('option', { name: /Müdür A/ }).click()
       await expect(personBox).toContainText('Müdür A')
       await form.getByRole('radio', { name: 'No answer' }).click()
@@ -144,14 +129,14 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(page.getByText('Call logged', { exact: true })).toBeVisible()
       await expect(dlg.locator('[data-slot="noc-call-entry"]')).toHaveCount(1, { timeout: 15_000 })
       await expect(dlg.locator('[data-slot="noc-call-entry"]')).toContainText('Müdür A')
-      await expectLayout(page, '[data-slot="noc-call-dialog"]', { touch: vp.touch, allowSmall: SHEET_KNOWN_SMALL, label: `arama kaydı sonrası @${vp.name}` })
+      await expectLayout(page, '[data-slot="noc-call-dialog"]', { touch: vp.touch, label: `arama kaydı sonrası @${vp.name}` })
 
       // Pencereyi kapat → konsol satırı "son arama" gösterir
       await page.keyboard.press('Escape')
       await expect(dlg).toHaveCount(0)
       await expect(conRow.locator('[data-slot="noc-con-last-call"]')).toContainText('Müdür A', { timeout: 15_000 })
       await expect(conRow.locator('[data-slot="noc-con-no-call"]')).toHaveCount(0)
-      await expectLayout(page, '[data-slot="noc-console"]', { touch: vp.touch, allowSmall: KNOWN_SMALL, allowClip: KNOWN_CLIP, label: `konsol arama sonrası @${vp.name}` })
+      await expectLayout(page, '[data-slot="noc-console"]', { touch: vp.touch, label: `konsol arama sonrası @${vp.name}` })
     })
   })
 }

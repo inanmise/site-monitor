@@ -151,7 +151,7 @@ export default function NocCallDialog({ row, open, onClose, onChanged }) {
                         <span className="font-medium">{c.name}</span>
                         {c.role && <span className="text-xs text-muted-foreground">{c.role}</span>}
                         {c.email && (
-                          <a href={`mailto:${c.email}`} className="inline-flex min-w-0 items-center gap-1 text-xs text-primary [overflow-wrap:anywhere]">
+                          <a href={`mailto:${c.email}`} className="inline-flex min-w-0 items-center gap-1 text-xs text-primary [overflow-wrap:anywhere] pointer-coarse:min-h-10">
                             <Mail aria-hidden="true" className="size-3 shrink-0" />{c.email}
                           </a>
                         )}

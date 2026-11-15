@@ -18,13 +18,6 @@ const row = (id, over = {}) => ({
   resolved: false, acknowledged: false, created_at: ago(40 * 60_000), team_id: 1, team_name: 'Takım A',
   message: 'HTTP 503 Service Unavailable — yük dengeleyici arka uç havuzu boş', act_scope: true, notify_scope: true, ...over,
 })
-// Bilinen ürün hataları (yayın öncesi kapı raporunda; ürün koduna dokunulmadı) — yalnız bu öğeler ölçümden düşülür:
-//  - AlertDetail.jsx:288 — "Kimlik" olgusundaki CopyableRef kopya düğmesi `buttonClassName` almıyor: dokunmatikte 24×24 px;
-//  - ActionNoteDialog.jsx:152 — gerekçe penceresinde alarm hedefi (`action-note-target`) `truncate` ile kesiliyor (title
-//    dokunmatikte açılmaz);
-//  - AlertLists.jsx:48 — alarm kartındaki takım adı TeamBadge `wrap` olmadan çiziliyor: uzun AD takım adı kesiliyor.
-const KNOWN_SMALL = [/"Copy link" 24x24/]
-const KNOWN_CLIP = [/\[action-note-target\]/, /Dijital Kanallar Mobil Bankacılık ve Uzu/]
 const NOTE = 'Ödeme servisi ekibi yük dengeleyicide arka uç havuzunu inceliyor'
 const CLOSED_TEXT = 'The alert was closed meanwhile — there is nothing to acknowledge. Refresh the list.'
 
@@ -124,14 +117,14 @@ for (const vp of GATE_VIEWPORTS) {
       })
       await page.goto('/?tab=alerthistory')
       let body = await openDetail(page, 501)
-      await expectLayout(page, '[data-slot="alert-detail"]', { touch: vp.touch, label: `alarm ayrıntısı @${vp.name}`, allowSmall: KNOWN_SMALL, allowClip: KNOWN_CLIP })
+      await expectLayout(page, '[data-slot="alert-detail"]', { touch: vp.touch, label: `alarm ayrıntısı @${vp.name}` })
 
       // ── Onayla ──
       await body.getByRole('button', { name: 'Acknowledge', exact: true }).click()
       const note = page.locator('[data-action-note]')
       await expect(note).toBeVisible()
       await expectInViewport(note, vp.width, 'gerekçe penceresi')
-      await expectLayout(page, '[data-action-note]', { touch: vp.touch, label: `gerekçe penceresi @${vp.name}`, allowClip: KNOWN_CLIP })
+      await expectLayout(page, '[data-action-note]', { touch: vp.touch, label: `gerekçe penceresi @${vp.name}` })
       // Kısa gerekçe: kural uyarısı, istek gitmez
       await note.getByRole('textbox', { name: /Reason/ }).fill('bakıyoruz')
       await note.locator('[data-action-submit]').click()
@@ -180,7 +173,7 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(dlg).toContainText(CLOSED_TEXT)
       await expect(dlg).toContainText('Your note is still here')
       await expect(dlg.getByRole('textbox', { name: /Reason/ })).toHaveValue(NOTE)
-      await expectLayout(page, '[data-action-note]', { touch: vp.touch, label: `409 metni @${vp.name}`, allowClip: KNOWN_CLIP })
+      await expectLayout(page, '[data-action-note]', { touch: vp.touch, label: `409 metni @${vp.name}` })
     })
 
     test('yalnız push kalan yeniden gönderim + e-posta alarm anında kapalı (SKIPPED_MONITOR_OFF)', async ({ page }) => {
@@ -237,7 +230,7 @@ for (const vp of GATE_VIEWPORTS) {
       // Seçim kutusu yalnız eylem yapılabilen satırda
       await expect(page.locator('[data-alert-card][data-alert-id="501"]').getByRole('checkbox')).toHaveCount(1)
       await expect(page.locator('[data-alert-card][data-alert-id="504"]').getByRole('checkbox')).toHaveCount(0)
-      await expectLayout(page, '.app-main', { touch: vp.touch, label: `alarm listesi @${vp.name}`, allowClip: KNOWN_CLIP })
+      await expectLayout(page, '.app-main', { touch: vp.touch, label: `alarm listesi @${vp.name}` })
 
       const blocked = await openDetail(page, 504)
       for (const name of ['Acknowledge', 'Resolve', 'Re-Notify']) {
@@ -245,7 +238,7 @@ for (const vp of GATE_VIEWPORTS) {
       }
       await expect(blocked.locator('[data-slot="alert-act-blocked"]')).toBeVisible()
       await expect(blocked.locator('[data-slot="alert-act-blocked"]')).toContainText(/only that team|isn't your team's/)
-      await expectLayout(page, '[data-slot="alert-detail"]', { touch: vp.touch, label: `kapalı satır ayrıntısı @${vp.name}`, allowSmall: KNOWN_SMALL, allowClip: KNOWN_CLIP })
+      await expectLayout(page, '[data-slot="alert-detail"]', { touch: vp.touch, label: `kapalı satır ayrıntısı @${vp.name}` })
       const close = page.locator('[data-slot="alert-detail"]').getByRole('button', { name: /^Close$/ }).first()
       if (await close.isVisible().catch(() => false)) await close.click()
       else await page.keyboard.press('Escape')
