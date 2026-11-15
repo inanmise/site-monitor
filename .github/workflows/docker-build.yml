@@ -112,6 +112,7 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.value }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            APK_REFRESH=${{ github.event.head_commit.timestamp }}-${{ github.run_id }}
             GIT_COMMIT=${{ steps.tags.outputs.short_sha }}
             PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
           cache-from: type=gha
