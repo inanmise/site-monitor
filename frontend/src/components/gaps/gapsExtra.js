@@ -18,9 +18,13 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const sameId = (a, b) => a != null && b != null && String(a) === String(b)
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
 
+/** Kimlik parçası: sıralı kimlikler (bekleyen işlerin anahtarında — aynı SAYIDA farklı işler "yeni" sayılsın). */
+const idsKey = (list) => [...new Set((Array.isArray(list) ? list : []).map((x) => (x == null ? '' : String(x))).filter(Boolean))].sort().join('.')
+
 function gap(code, category, severity, team, items, extra = {}) {
   const all = Array.isArray(items) ? items : []
-  const scoped = team ? `${team.id}:${code}` : `k:${code}`
+  // keySuffix: bekleyen işlerde dönem / iş kimlikleri — aynı sayıda ama FARKLI işler "gösterme" kaydına takılmasın
+  const scoped = (team ? `${team.id}:${code}` : `k:${code}`) + (extra.keySuffix ? `:${extra.keySuffix}` : '')
   return {
     key: scoped, category, code, severity, teamId: team?.id ?? null, teamName: team?.name ?? null,
     failing: extra.failing ?? all.length, items: all.slice(0, MAX_EXTRA_ITEMS),
@@ -118,7 +122,9 @@ export function channelReportTasks(team, overview) {
     else if (st === 'draft' || st === 'changed') items.push({ kind: 'channel', id: c.id, name: str(c.name), state: 'unsent', reportId: pr.id ?? null })
   }
   if (items.length === 0) return []
-  return [gap('TASK_CHANNEL_REPORT', 'tasks', 'MEDIUM', team, items, { scope: `c${team.id}` })]
+  const { period } = overviewParts(overview)
+  const per = period && Number.isInteger(period.year) && Number.isInteger(period.month) ? `${period.year}-${period.month}` : 'p'
+  return [gap('TASK_CHANNEL_REPORT', 'tasks', 'MEDIUM', team, items, { scope: `c${team.id}`, keySuffix: `${per}:${idsKey(items.map((i) => i.id))}` })]
 }
 
 /**
@@ -131,14 +137,15 @@ export function approvalTasks(teamList, overview) {
   const approver = new Set(teams.filter((r) => r.can_approve === true && own.has(String(r.id))).map((r) => String(r.id)))
   const items = []
   for (const c of channels) {
-    if (!approver.has(String(c.team_id)) || c.active === false) continue
+    // Onay akışı kaldırılmış kanal (yönetici alıcıları silindi) iş değildir — sunucu kararı APPROVAL_FLOW_REMOVED ile reddeder
+    if (!approver.has(String(c.team_id)) || c.active === false || c.approval_required !== true) continue
     const pr = isObj(c.period_report) ? c.period_report : null
     if (pr && pr.approval?.state === 'pending') {
       items.push({ kind: 'channel', id: c.id, name: str(c.name), reportId: pr.id ?? null, teamId: c.team_id, teamName: own.get(String(c.team_id))?.name ?? null })
     }
   }
   if (items.length === 0) return []
-  return [gap('TASK_APPROVAL_PENDING', 'tasks', 'HIGH', null, items, { scope: 'ka' })]
+  return [gap('TASK_APPROVAL_PENDING', 'tasks', 'HIGH', null, items, { scope: 'ka', keySuffix: idsKey(items.map((i) => i.reportId ?? `c${i.id}`)) })]
 }
 
 /** Bekleyen iş — bana atanmış, süresi geçmiş açık olay aksiyonları (`/api/incidents/actions?mine&overdue&status=open`). */
@@ -148,7 +155,7 @@ export function actionTasks(data) {
   const total = Number.isFinite(Number(data.total)) ? Number(data.total) : list.length
   if (total <= 0) return []
   const items = list.map((a) => ({ kind: 'action', id: a.id, name: str(a.title), due: str(a.due_date), incident: str(a.incident_title) }))
-  return [gap('TASK_ACTIONS_OVERDUE', 'tasks', 'MEDIUM', null, items, { failing: total, scope: 'kt' })]
+  return [gap('TASK_ACTIONS_OVERDUE', 'tasks', 'MEDIUM', null, items, { failing: total, scope: 'kt', keySuffix: idsKey(items.map((i) => i.id)) })]
 }
 
 /**
@@ -164,6 +171,7 @@ export function onCallMembership(views, username) {
     if (!v || v.status !== 'ok') { if (v?.status !== 'skipped') unknown = true; continue }
     const view = v.data
     if (!isObj(view) || view.enabled !== true) continue
+    if (str(view.current?.username)?.toLowerCase() === me) return true          // değiştirme (override) ile şu an nöbetçi
     for (const p of Array.isArray(view.members) ? view.members : []) {
       if (str(p?.username)?.toLowerCase() === me) return true
     }

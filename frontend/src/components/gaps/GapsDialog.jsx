@@ -316,11 +316,15 @@ function CategoryPanel({ category, list, dq, gaps, itemProps, t }) {
       {category === 'team' && dq === 'no' && (
         <p data-slot="gaps-no-permission" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('gaps.noPermission')}</p>
       )}
+      {category === 'tasks' && gaps.tasksUnchecked && (
+        <p data-slot="gaps-tasks-unchecked" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('gaps.categoryUnchecked')}</p>
+      )}
       {category === 'profile' && gaps.prefsFailed && (
         <p data-slot="gaps-prefs-failed" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('gaps.prefsFailed')}</p>
       )}
       {list.length === 0 ? (
-        <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>
+        (category === 'tasks' && gaps.tasksUnchecked) ? null
+          : <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>
       ) : (
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {list.map((g) => <GapItem key={g.key} g={g} {...itemProps} />)}
@@ -359,7 +363,9 @@ function TeamView({ gaps, dq, itemProps, t }) {
             <span className="text-xs text-muted-foreground tabular-nums" data-slot="gaps-team-count">{tn(t, 'gaps.teamCount', grp.gaps.length)}</span>
           </div>
           {grp.gaps.length === 0 ? (
-            <p className={cn('m-0 text-xs text-muted-foreground', WRAP)} data-slot="gaps-team-clean">{t('gaps.teamClean')}</p>
+            gaps.teamChecked?.[String(grp.teamId)] === true
+              ? <p className={cn('m-0 text-xs text-muted-foreground', WRAP)} data-slot="gaps-team-clean">{t('gaps.teamClean')}</p>
+              : <p className={cn('m-0 text-xs text-muted-foreground', WRAP)} data-slot="gaps-team-unchecked">{t('gaps.teamUnchecked')}</p>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {grp.gaps.map((g) => <GapItem key={g.key} g={g} showCategory {...itemProps} />)}

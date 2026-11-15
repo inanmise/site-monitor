@@ -162,6 +162,7 @@ export function collectGaps(input = {}) {
   for (const g of profileGapsOf(profile, ctx, prefsOk ? prefs : null, now)) all.push(g)
   if (isObj(profile) && !profileFailed) readScopes.add('p')
   if (prefsOk) readScopes.add('pp')
+  if (prefsOk && ctx?.onCall != null) readScopes.add('ppo')          // "yalnız kritik" eksiği nöbet bilgisine de bağlı
   noteSource('prefs', prefsStatus)
 
   // ── Takımlar ──
@@ -190,6 +191,16 @@ export function collectGaps(input = {}) {
     noteSource(check, st)
     if (st !== 'ok') return
     for (const team of loaded) { readScopes.add(`${scopePrefix}${team.id}`); all.push(...fn(team, src.data)) }
+  }
+  // Takım başına "her denetim okundu mu" (takıma göre görünümde "eksik yok" ancak hepsi okunduysa); yetkisiz denetim sayılmaz
+  const sharedOk = (src) => ['ok', 'denied'].includes(statusOf(src))
+  const teamChecked = {}
+  for (const t of Array.isArray(teams) ? teams : []) {
+    if (!t || t.id == null) continue
+    const dqSt = dqOf(t).status
+    const ocSt = isObj(t.oncall) ? statusOf(t.oncall) : 'off'
+    teamChecked[String(t.id)] = ['ok', 'skipped', 'denied'].includes(dqSt) && ['ok', 'skipped', 'denied'].includes(ocSt)
+      && sharedOk(groups) && sharedOk(forwards) && sharedOk(channels)
   }
   forEachTeam(groups, 'groups', 'g', groupGaps)
   forEachTeam(forwards, 'forwards', 'f', forwardGaps)
@@ -223,6 +234,9 @@ export function collectGaps(input = {}) {
   const total = GAP_CATEGORIES.reduce((n, c) => n + byCategory[c].length, 0)
   return {
     byCategory, total, hiddenList, marks, allMarks, failedTeams, failedChecks, deniedChecks: [...denied], unsupportedChecks: [...unsupported],
+    loadedTeamIds: loaded.map((t) => t.id), teamChecked,
+    // Bekleyen işler: kanal / aksiyon kaynağı okunmadıysa (okunamadı, bu sürümde yok, yetkiler bilinmiyor) "iş yok" denmez
+    tasksUnchecked: !(sharedOk(channels) && sharedOk(actions)),
     readScopes, teamScores, profileFailed: profileFailed === true, profileKnown, prefsFailed: prefsStatus === 'failed',
   }
 }
@@ -296,19 +310,21 @@ export function parseSeen(raw) {
   return out
 }
 
-/** `Map(kapsam → Map(eksik → sayı))` → sıkıştırılmış dizge (en çok MAX_SEEN girdi). */
+/**
+ * `Map(kapsam → Map(eksik → sayı))` → sıkıştırılmış dizge (en çok MAX_SEEN girdi). Kapsam BÜTÜN yazılır ya da hiç yazılmaz:
+ * yarım yazılan kapsamın yazılmayan eksikleri her açılışta yanlışlıkla "yeni" görünürdü; sığmayan kapsamın tabanı yok sayılır
+ * (taban yoksa "yeni" denmez).
+ */
 export function formatSeen(map) {
   const parts = []
   let count = 0
   for (const [sc, inner] of map) {
+    if (inner.size === 0) continue
+    if (count + inner.size > MAX_SEEN) continue
     const es = []
-    for (const [h, n] of inner) {
-      if (count >= MAX_SEEN) break
-      es.push(`${h}.${Math.max(0, Math.round(n))}`)
-      count++
-    }
-    if (es.length) parts.push(`${sc}:${es.join(',')}`)
-    if (count >= MAX_SEEN) break
+    for (const [h, n] of inner) es.push(`${h}.${Math.max(0, Math.round(n))}`)
+    parts.push(`${sc}:${es.join(',')}`)
+    count += inner.size
   }
   return parts.join(';')
 }

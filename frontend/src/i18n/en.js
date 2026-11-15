@@ -1111,6 +1111,8 @@ export const EN = {
   "gaps.permUnknown": "Your permissions could not be read right now, so this category was not checked. Close the window and open it again from My gaps.",
   "gaps.profileFailed": "Your profile could not be read, so this category could not be checked right now. Close the window and open it again from My gaps.",
   "gaps.emptyCategory": "Nothing to complete in this category.",
+  "gaps.categoryUnchecked": "Some checks in this category could not run or be read; it is not certain that nothing is pending.",
+  "gaps.teamUnchecked": "Some checks for this team could not be read or run; it is not certain that nothing is missing.",
   "gaps.profile.PROFILE_NO_EMAIL.title": "Your e-mail address is missing or invalid",
   "gaps.profile.PROFILE_NO_EMAIL.why": "Alarm, report and reminder e-mails do not reach you.",
   "gaps.profile.PROFILE_NO_PHONE.title": "Your phone number is missing",

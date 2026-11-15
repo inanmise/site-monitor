@@ -230,6 +230,14 @@ describe('eksikler penceresi — model', () => {
     expect(hashKey('a')).toMatch(/^[0-9a-f]{8}$/)
     expect(hashKey('a')).not.toBe(hashKey('b'))
     expect(formatSeen(parseSeen('abcdef12:0000000a.3,0000000b.0'))).toBe('abcdef12:0000000a.3,0000000b.0')
+    // Kapsam bütün yazılır ya da hiç: sığmayan kapsam yarım kalmaz (yarım kapsamın eksik kalanları her açılışta "yeni" olurdu)
+    const big = new Map([['aaaaaaaa', new Map([...Array(MAX_SEEN - 1)].map((_, i) => [i.toString(16).padStart(8, '0'), 1]))]])
+    big.set('bbbbbbbb', new Map([['0000ffff', 1], ['0000fffe', 1]]))
+    big.set('cccccccc', new Map([['0000eeee', 2]]))
+    const back = parseSeen(formatSeen(big))
+    expect(back.has('bbbbbbbb')).toBe(false)
+    expect(back.get('cccccccc')?.size).toBe(1)
+    expect(back.get('aaaaaaaa')?.size).toBe(MAX_SEEN - 1)
   })
 
   it('EN KÖTÜ durum kullanıcı tercihi anahtar sınırına sığar (aşarsa sunucu bütün tercih belgesini 400 ile reddeder)', () => {

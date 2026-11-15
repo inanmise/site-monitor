@@ -1909,10 +1909,12 @@ class TechErrorReportControllerTest {
         when(approvals.approvers(A)).thenReturn(List.of(
                 new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(50L, "Ben", "ben@example.com"),
                 new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(51L, "Öteki", null)));
+        // Kurum geneli genel bakış (AUDIT, takımsız): onaylayıcı okuması YAPILMAZ — yalnız kişinin kendi takımları (inceleme
+        // 2026-11-15: global izleyicide takım başına bir sorgu olurdu)
         mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.teams[?(@.id == 1)].approver_count").value(org.hamcrest.Matchers.contains(2)))
-                .andExpect(jsonPath("$.data.teams[?(@.id == 2)].approver_count").isEmpty());
+                .andExpect(jsonPath("$.data.teams[?(@.id == 1)].approver_count").isEmpty());
+        verify(approvals, never()).approvers(any());
         mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
                 .andExpect(jsonPath("$.data.teams[0].approver_count").value(2))
                 .andExpect(jsonPath("$.data.teams[0].can_approve").value(true));

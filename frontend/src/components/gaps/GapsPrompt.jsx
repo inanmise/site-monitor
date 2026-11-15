@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api } from '../../api/client'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { onSessionReset } from '../../utils/sessionResetBus.js'
+import { applyTabView, navigateTo } from '../../utils/navigate.js'
 import { hasOpenDialog } from '../techerror/capture/panelWindow.js'
 import { useTour } from '../tour/TourProvider.jsx'
 import { decideAutoStart } from '../tour/tourEngine.js'
@@ -72,17 +73,28 @@ function collectFrom(src, extraTeams, username, hidden) {
   })
 }
 
-/** Okunamayan kapsam adları (gösterme kaydı korunsun diye) — veri kalitesi dışı kaynaklar. */
+/**
+ * Okunamayan kapsam adları (gösterme kaydı korunsun diye) — veri kalitesi dışı kaynaklar. Ortak kaynak (gruplar, iletimler,
+ * kanallar) okunamadıysa yüklenen HER takımın o kapsamı korunur; nöbet ya da tercihler okunamadıysa "yalnız kritik" (ppo) da.
+ */
 function failedScopesOf(gaps) {
   const out = []
+  const loaded = gaps?.loadedTeamIds || []
   for (const f of gaps?.failedChecks || []) {
     const prefix = { prefs: 'pp', oncall: 'o', groups: 'g', forwards: 'f', channels: 'c', actions: 'kt' }[f.check]
     if (!prefix) continue
+    if (f.check === 'prefs' || f.check === 'oncall') out.push('ppo')
     if (f.teamId != null) out.push(`${prefix}${f.teamId}`)
     else if (prefix === 'pp' || prefix === 'kt') out.push(prefix)
+    else for (const id of loaded) out.push(`${prefix}${id}`)
   }
   if ((gaps?.failedChecks || []).some((f) => f.check === 'channels')) out.push('ka')
-  return out
+  return [...new Set(out)]
+}
+
+/** Şu an açık sekme (adres çubuğundan). */
+function currentTab() {
+  try { return new URLSearchParams(window.location.search).get('tab') } catch { return null }
 }
 
 /**
@@ -106,6 +118,7 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   const seenFor = useRef(null)        // "son görülen" kaydının yazıldığı okuma (her okumada bir kez)
   const inputs = useRef({ myTeamIds, manageTeamIds })
   inputs.current = { myTeamIds, manageTeamIds }
+  const extraRef = useRef([])          // elle eklenen takımlar (yenilemede yeniden denetlenir)
   const tourRef = useRef(tour)
   tourRef.current = tour
   const can = useMemo(() => ({
@@ -120,6 +133,7 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   const dq = can.dq
   const canRef = useRef(can)
   canRef.current = can
+  extraRef.current = state.extraTeams
 
   useEffect(() => {
     alive.current = true
@@ -161,10 +175,19 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
       isCurrent: () => alive.current && my === seq.current,
     })
     if (!src || !alive.current || my !== seq.current) return null
-    const g = collectFrom(src, [], username, readStored().hidden)
+    // Elle eklenmiş takımlar yenilemede (ve yerinde düzeltmeden sonra) yeniden denetlenir — yenileme onları düşürmesin
+    const keep = (extraRef.current || []).map((t) => t.id).filter((id) => (src.restTeamIds || []).some((x) => String(x) === String(id)))
+    let extra = []
+    if (keep.length > 0) {
+      const more = await loadMoreTeams({ api, can: canRef.current, teamIds: keep, me: src.me, directory: src.directory,
+        isCurrent: () => alive.current && my === seq.current })
+      if (!more || !alive.current || my !== seq.current) return null
+      extra = more
+    }
+    const g = collectFrom(src, extra, username, readStored().hidden)
     const diff = seenDiff(readStored(), g.allMarks, g.readScopes)
     seenFor.current = null
-    setState({ ...IDLE, status: 'ready', src, at: Date.now(), dq: canRef.current.dq, diff })
+    setState({ ...IDLE, status: 'ready', src, at: Date.now(), dq: canRef.current.dq, diff, extraTeams: extra })
     return g
   }, [globalAdmin, username, canKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -295,6 +318,15 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
     return false
   }, [globalAdmin, permsLoaded, canEdit, state.src])
 
+  /** Yerinde düzeltmeden başka sayfaya geçiş (ör. "grup oluştur"): pencere kapanır; aynı sekmeye geçiş yeniden bağlanır. */
+  const fixNavigate = useCallback((link) => {
+    if (!link?.tab) return
+    setFix(null)
+    close()
+    if (currentTab() === link.tab) applyTabView(link.tab, link.params)
+    else navigateTo(link.tab, link.params)
+  }, [close])
+
   const startFix = useCallback((kind, team) => {
     if (kind && team?.id != null) setFix({ kind, team: { id: team.id, name: team.name || '' } })
   }, [])
@@ -304,7 +336,7 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   if (fix) {
     return (
       <Suspense fallback={null}>
-        <GapsFix fix={fix} onClose={endFix} onChanged={load} />
+        <GapsFix fix={fix} onClose={endFix} onChanged={load} onNavigate={fixNavigate} />
       </Suspense>
     )
   }

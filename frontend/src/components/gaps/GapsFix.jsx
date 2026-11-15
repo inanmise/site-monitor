@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { navigateTo } from '../../utils/navigate.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { DEADLINE, LOAD_DEADLINE_MS, withDeadline } from './gapsModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -17,18 +16,19 @@ const OnCallScheduleModal = lazy(() => import('../admin/oncall/OnCallScheduleMod
  * odak tuzağı çakışmasın); kapanınca `onClose`, bir değişiklik yapıldıysa `onChanged` (çağıran taze okuma yapar).
  * `fix` = { kind: 'contact' | 'group' | 'oncall', team: { id, name } }.
  */
-export default function GapsFix({ fix, onClose, onChanged }) {
+export default function GapsFix({ fix, onClose, onChanged, onNavigate }) {
   const t = useT()
   const [users, setUsers] = useState(null)
   const kind = fix?.kind
   const team = fix?.team
 
-  // Eskalasyon kişisi seçicisi: etkin kullanıcılar (kişi dizini; okunamazsa boş liste — pencere "kullanıcı yok" ipucunu verir)
+  // Eskalasyon kişisi seçicisi: Takımlar ekranının listesi (/admin/users — çağıranın kapsamına süzülmüş, sunucunun kabul
+  // edeceği kişiler); etkin olanlar. Okunamazsa boş liste — pencere "kullanıcı yok" ipucunu verir.
   useEffect(() => {
     if (kind !== 'contact') return undefined
     let alive = true
     // Üst süre: gövde takılsa da en geç LOAD_DEADLINE_MS sonra boş listeyle açılır (kullanıcı beklemede kalmaz)
-    Promise.resolve().then(() => withDeadline(api.users.directory(), LOAD_DEADLINE_MS)).then((res) => {
+    Promise.resolve().then(() => withDeadline(api.admin.getUsers(), LOAD_DEADLINE_MS)).then((res) => {
       if (!alive) return
       const list = res !== DEADLINE && res?.success && Array.isArray(res.data) ? res.data : []
       setUsers(list.filter((u) => u && u.active !== false))
@@ -41,7 +41,7 @@ export default function GapsFix({ fix, onClose, onChanged }) {
     <Suspense fallback={null}>
       {kind === 'group' && (
         <TeamBulkDefaultGroup open teams={[team]} onClose={onClose} onDone={onChanged}
-          onCreateGroup={(teamId) => { onClose(); navigateTo('admin', { g_tab: 'notifyGroups', g_team: String(teamId) }) }} />
+          onCreateGroup={(teamId) => onNavigate?.({ tab: 'admin', params: { g_tab: 'notifyGroups', g_team: String(teamId) } })} />
       )}
       {kind === 'contact' && users === null && (
         // Kişi listesi okunurken görünür bekleme penceresi (eksikler penceresi gizli; boş ekran bırakılmaz), kapatılabilir
