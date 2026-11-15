@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T20:10:10Z",
+  "generatedAt": "2026-11-15T22:20:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 847,
+  "count": 848,
   "releases": [
+    {
+      "version": "20.211.1",
+      "tag": "v20.211.1",
+      "releasedAt": "2026-11-15T22:20:06Z",
+      "commit": "82749025bd0ef5a6390c4724a89fb704945d552d",
+      "prevVersion": "20.211.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "82749025",
+          "subject": "prod kapısı raporu 2026-11-15 + 20.209–20.211 operatör notları + kontrol listesi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.211.0",
       "tag": "v20.211.0",

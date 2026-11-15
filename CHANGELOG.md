@@ -3326,7 +3326,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.210.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.211.0...HEAD
+[20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
 [20.210.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.210.0
 [20.208.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.208.0
 [20.186.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.186.3
