@@ -291,7 +291,10 @@ class UserPushForwardTest {
         assertThat(forwardRows(e.getId())).hasSize(2);
 
         await().atMost(Duration.ofSeconds(15)).until(() -> forwardRows(e.getId()).stream().allMatch(d -> "SENT".equals(d.getStatus())));
-        assertThat(gatewayUserIds()).anySatisfy(ids -> assertThat(ids).containsExactlyInAnyOrder("N20001", "N20002"));
+        // Gönderim kümelenmesi zamanlamaya bağlı (sahip satırı boşaltılırken iletim satırları yazılıyorsa ayrı gruplarda
+        // gidebilir — CI 2026-11-16): her alıcı TAM BİR kez, hangi grupta olursa olsun.
+        assertThat(gatewayUserIds().stream().flatMap(List::stream).filter(id -> !"N10001".equals(id)).toList())
+                .containsExactlyInAnyOrder("N20001", "N20002");
     }
 
     @Test
