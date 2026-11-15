@@ -35,11 +35,26 @@ public final class OnCallWeeklyNoticeMail {
     /** Bir nöbet parçası; {@code person} null = bu aralıkta nöbetçi yok. */
     public record Segment(Instant start, Instant end, Person person, boolean override) { }
 
-    /** Bildirim içeriği: takım, kapsanan hafta ve parçalar. */
-    public record Info(String teamName, Instant from, Instant to, List<Segment> segments, String appUrl) {
+    /**
+     * Bildirim içeriği: takım, kapsanan hafta ve parçalar. {@code omitted} = tavan ({@link OnCallRotation#MAX_TIMELINE})
+     * yüzünden listeye girmeyen devir sayısı — e-posta ve push bunu açıkça söyler (sessiz kesme yok).
+     */
+    public record Info(String teamName, Instant from, Instant to, List<Segment> segments, String appUrl, int omitted) {
         public Info {
             segments = segments == null ? List.of() : List.copyOf(segments);
+            omitted = Math.max(0, omitted);
         }
+
+        public Info(String teamName, Instant from, Instant to, List<Segment> segments, String appUrl) {
+            this(teamName, from, to, segments, appUrl, 0);
+        }
+    }
+
+    /** "+3 devir daha gösterilmiyor" / "+3 more handovers not shown" — kesilmediyse null. */
+    public static String omittedText(int omitted, boolean en) {
+        if (omitted <= 0) return null;
+        return en ? "+" + omitted + (omitted == 1 ? " more handover not shown" : " more handovers not shown")
+                : "+" + omitted + " devir daha gösterilmiyor";
     }
 
     private static final String[] DAY_TR = {"Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"};
@@ -95,8 +110,10 @@ public final class OnCallWeeklyNoticeMail {
         String team = blank(in.teamName()) ? "" : in.teamName().trim() + " - ";
         List<Segment> segs = in.segments();
         if (segs.isEmpty()) return team + (en ? "on call this week: nobody" : "bu hafta nöbetçi yok");
+        String more = omittedText(in.omitted(), en);
         if (segs.size() == 1) {
-            return team + (en ? "on call this week: " : "bu hafta nöbetçi: ") + personLabel(segs.get(0).person(), en);
+            return team + (en ? "on call this week: " : "bu hafta nöbetçi: ") + personLabel(segs.get(0).person(), en)
+                    + (more == null ? "" : " (" + more + ")");
         }
         StringBuilder sb = new StringBuilder(team).append(en ? "on call this week: " : "bu hafta nöbet: ")
                 .append(personLabel(segs.get(0).person(), en));
@@ -107,6 +124,7 @@ public final class OnCallWeeklyNoticeMail {
             else sb.append(shortDayTime(s.start(), false)).append(" devir: ");
             sb.append(personLabel(s.person(), en));
         }
+        if (more != null) sb.append(" (").append(more).append(')');
         return sb.toString();
     }
 
@@ -143,6 +161,11 @@ public final class OnCallWeeklyNoticeMail {
         }
         d.table(List.of(Col.nw(en ? "From" : "Başlangıç"), Col.nw(en ? "Until" : "Bitiş"), Col.of(en ? "On call" : "Nöbetçi"),
                 Col.of(en ? "Contact" : "İletişim")), rows, true);
+        String more = omittedText(in.omitted(), en);
+        if (more != null) {
+            d.paragraph(en ? more + " — this week has more handovers than one e-mail lists. See the full schedule in Site Monitor."
+                    : more + " — bu hafta bir e-postanın listeleyebileceğinden fazla devir var. Tam çizelge Site Monitor'de.");
+        }
         d.note(en ? "The schedule and overrides are managed in Site Monitor (Teams → On-call schedule). Your team turned this "
                         + "notice on; the day, time and channels are changed — or the notice turned off — in the same window."
                 : "Nöbet çizelgesi ve yer değiştirmeler Site Monitor'de yönetilir (Takımlar → Nöbet çizelgesi). Bu bildirimi takımınız "

@@ -60,7 +60,7 @@ class OnCallWeeklyNoticeSettingsTest {
         row.setNotifyOncall(false);
         when(schedules.findByTeamId(5L)).thenAnswer(i -> Optional.of(row));
         when(schedules.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(schedules.updateWeeklyNotice(eq(5L), any(), any(), any(), any(), any(), any(), anyString(), any())).thenReturn(1);
+        when(schedules.touchUpdated(eq(5L), anyString(), any())).thenReturn(1);
         when(overrides.findByTeamIdAndEndsAtGreaterThanOrderByStartsAtAscIdAsc(any(), anyString())).thenReturn(List.of());
         when(users.findAllById(any())).thenAnswer(i -> {
             List<AppUser> out = new ArrayList<>();
@@ -88,7 +88,13 @@ class OnCallWeeklyNoticeSettingsTest {
     void enableTargeted() {
         OnCallService.WeeklyNoticeSave r = svc.saveWeeklyNotice(5L, patch(true, null, null, null, null), "u5");
         assertThat(r.changed()).isTrue();
-        verify(schedules).updateWeeklyNotice(eq(5L), eq(true), eq(true), eq(true), eq(1), eq("08:30"), anyString(), anyString(), eq("u5"));
+        verify(schedules).touchUpdated(eq(5L), anyString(), eq("u5"));
+        verify(schedules).setWeeklyNoticeEnabled(5L, true);
+        verify(schedules).setWeeklyNoticeSince(eq(5L), anyString());
+        verify(schedules, never()).setWeeklyNoticeMail(any(), any());
+        verify(schedules, never()).setWeeklyNoticePush(any(), any());
+        verify(schedules, never()).setWeeklyNoticeDay(any(), any());
+        verify(schedules, never()).setWeeklyNoticeTime(any(), any());
         verify(schedules, never()).save(any());
         assertThat(OnCallService.noticeSnapshot(r.schedule())).containsEntry("weeklyNoticeEnabled", true)
                 .containsEntry("weeklyNoticeDay", 1).containsEntry("weeklyNoticeTime", "08:30");
@@ -99,7 +105,26 @@ class OnCallWeeklyNoticeSettingsTest {
     void noChangeNoWrite() {
         OnCallService.WeeklyNoticeSave r = svc.saveWeeklyNotice(5L, patch(false, true, true, 1, "08:30"), "u5");
         assertThat(r.changed()).isFalse();
-        verify(schedules, never()).updateWeeklyNotice(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(schedules, never()).touchUpdated(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("eşzamanlı iki yönetici (biri gün, öteki saat): her kayıt YALNIZ kendi kolonunu yazar — biri ötekini geri almaz")
+    void perColumnWrites() {
+        row.setWeeklyNoticeEnabled(true);
+        row.setWeeklyNoticeDay(1);
+        row.setWeeklyNoticeTime("08:30");
+        svc.saveWeeklyNotice(5L, patch(null, null, null, 3, null), "a");
+        verify(schedules).setWeeklyNoticeDay(5L, 3);
+        verify(schedules, never()).setWeeklyNoticeTime(any(), any());
+        verify(schedules, never()).setWeeklyNoticeEnabled(any(), any());
+        // ikinci yönetici aynı (bayat) satırı okumuştu: gün 1 — gün kolonu yazılmaz, yalnız saat
+        row.setWeeklyNoticeDay(1);
+        row.setWeeklyNoticeSince(null);
+        svc.saveWeeklyNotice(5L, patch(null, null, null, null, "09:15"), "b");
+        verify(schedules).setWeeklyNoticeTime(5L, "09:15");
+        verify(schedules).setWeeklyNoticeDay(any(), any());   // yalnız ilk kayıttan
+        verify(schedules, org.mockito.Mockito.times(2)).setWeeklyNoticeSince(eq(5L), anyString());   // açıkken zamanlama değişti
     }
 
     @Test
@@ -111,7 +136,7 @@ class OnCallWeeklyNoticeSettingsTest {
                 .satisfies(t -> assertThat(field(t)).isEqualTo("weekly_notice.time"));
         assertThatThrownBy(() -> svc.saveWeeklyNotice(5L, patch(true, false, false, null, null), "u5"))
                 .satisfies(t -> assertThat(field(t)).isEqualTo("weekly_notice.mail"));
-        verify(schedules, never()).updateWeeklyNotice(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(schedules, never()).touchUpdated(any(), any(), any());
         // kapalıyken iki kanal da kapatılabilir
         assertThat(svc.saveWeeklyNotice(5L, patch(null, false, false, null, null), "u5").changed()).isTrue();
     }
@@ -135,6 +160,13 @@ class OnCallWeeklyNoticeSettingsTest {
         assertThat(saved.getWeeklyNoticeTime()).isEqualTo("09:15");
         assertThat(saved.getWeeklyNoticeSince()).isNotNull();
         verify(schedules).save(any());
+        // var olan çizelgede bildirim kolonları tam kayıtla değil, yalnız değişenler hedefli UPDATE ile
+        verify(schedules).setWeeklyNoticeEnabled(5L, true);
+        verify(schedules).setWeeklyNoticePush(5L, false);
+        verify(schedules).setWeeklyNoticeDay(5L, 3);
+        verify(schedules).setWeeklyNoticeTime(5L, "09:15");
+        verify(schedules).setWeeklyNoticeSince(eq(5L), anyString());
+        verify(schedules, never()).setWeeklyNoticeMail(any(), any());
         row.setWeeklyNoticeEnabled(null);
         assertThatThrownBy(() -> svc.save(5L, true, "WEEKLY", "2026-11-02T08:30", List.of(11L), false,
                 patch(null, null, null, null, "99:99"), "u5")).isInstanceOf(GlobalExceptionHandler.FieldValidationException.class);
@@ -165,12 +197,17 @@ class OnCallWeeklyNoticeSettingsTest {
         last.setFinishedAt("2026-11-09T05:30:07");
         when(notices.findTopByTeamIdOrderByWeekKeyDescIdDesc(5L)).thenReturn(Optional.of(last));
         when(notices.findByTeamIdAndWeekKey(eq(5L), anyString())).thenReturn(Optional.empty());
+        last.setAttempts(1);
+        last.setPushStatus("delivered");
+        last.setSlotAt("2026-11-09T05:30:00");
         Map<String, Object> v = svc.view(5L, Instant.parse("2026-11-15T10:00:00Z"));
         assertThat((Map<String, Object>) v.get("weekly_notice")).containsEntry("enabled", true).containsEntry("mail", true)
                 .containsEntry("push", true).containsEntry("day", 1).containsEntry("time", "08:30");
         assertThat(v.get("weekly_notice_next")).isEqualTo("2026-11-16T05:30:00");
         assertThat((Map<String, Object>) v.get("weekly_notice_last")).containsEntry("week", "2026-11-09").containsEntry("status", "SENT")
-                .containsEntry("mail", "delivered").containsEntry("push_count", 4).containsEntry("at", "2026-11-09T05:30:07");
+                .containsEntry("mail", "delivered").containsEntry("push_count", 4).containsEntry("at", "2026-11-09T05:30:07")
+                .containsEntry("push", "delivered").containsEntry("attempts", 1).containsEntry("max_attempts", 3)
+                .containsEntry("retry", false).containsEntry("stale", false);
         when(notices.findTopByTeamIdOrderByWeekKeyDescIdDesc(5L)).thenThrow(new IllegalStateException("db"));
         Map<String, Object> bad = svc.view(5L, Instant.parse("2026-11-15T10:00:00Z"));
         assertThat(bad.get("weekly_notice_unreadable")).isEqualTo(true);
@@ -178,10 +215,46 @@ class OnCallWeeklyNoticeSettingsTest {
     }
 
     @Test
+    @DisplayName("sıradaki gönderim: yeniden denenecek FAILED satırı haftayı BİTİRMEZ; deneme hakkı bittiyse gelecek hafta")
+    @SuppressWarnings("unchecked")
+    void nextCountsRetryableFailedAsNotDone() {
+        row.setWeeklyNoticeEnabled(true);
+        OnCallWeeklyNotice failed = new OnCallWeeklyNotice();
+        failed.setWeekKey("2026-11-16");
+        failed.setStatus("FAILED");
+        failed.setAttempts(1);
+        failed.setSlotAt("2026-11-16T05:30:00");
+        failed.setClaimedAt("2026-11-16T05:30:05");
+        failed.setFinishedAt("2026-11-16T05:30:09");
+        failed.setMailStatus("FAILED: bağlantı reddedildi");
+        when(notices.findByTeamIdAndWeekKey(eq(5L), anyString())).thenReturn(Optional.empty());
+        when(notices.findByTeamIdAndWeekKey(5L, "2026-11-16")).thenReturn(Optional.of(failed));
+        when(notices.findTopByTeamIdOrderByWeekKeyDescIdDesc(5L)).thenReturn(Optional.of(failed));
+        Instant mon1000 = Instant.parse("2026-11-16T07:00:00Z");
+        Map<String, Object> v = svc.view(5L, mon1000);
+        assertThat(v.get("weekly_notice_next")).isEqualTo("2026-11-16T05:30:00");          // pencere içinde yeniden denenecek
+        assertThat((Map<String, Object>) v.get("weekly_notice_last")).containsEntry("retry", true).containsEntry("mail", "failed");
+        failed.setAttempts(3);                                                            // deneme hakkı bitti
+        Map<String, Object> done = svc.view(5L, mon1000);
+        assertThat(done.get("weekly_notice_next")).isEqualTo("2026-11-23T05:30:00");
+        assertThat((Map<String, Object>) done.get("weekly_notice_last")).containsEntry("retry", false);
+        // e-postası iletilemeyen PARTIAL da yeniden denenir; e-postası atlanan PARTIAL kesin
+        failed.setAttempts(1);
+        failed.setStatus("PARTIAL");
+        assertThat(svc.view(5L, mon1000).get("weekly_notice_next")).isEqualTo("2026-11-16T05:30:00");
+        failed.setMailStatus("SKIPPED: takımın e-posta adresi yok");
+        assertThat(svc.view(5L, mon1000).get("weekly_notice_next")).isEqualTo("2026-11-23T05:30:00");
+        // bayat SENDING (15 dk'dan eski): sonuç bilinmiyor
+        failed.setStatus("SENDING");
+        failed.setFinishedAt(null);
+        assertThat((Map<String, Object>) svc.view(5L, mon1000).get("weekly_notice_last")).containsEntry("stale", true);
+    }
+
+    @Test
     @DisplayName("posta sonucu sınıfı: ham SMTP metni istemciye gitmez")
     void mailOutcome() {
         assertThat(OnCallService.mailOutcome("SENT")).isEqualTo("delivered");
-        assertThat(OnCallService.mailOutcome("QUEUED_RETRY (421)")).isEqualTo("delivered");
+        assertThat(OnCallService.mailOutcome("QUEUED_RETRY (421)")).isEqualTo("queued");
         assertThat(OnCallService.mailOutcome(OnCallWeeklyNoticeService.MAIL_OFF)).isEqualTo("off");
         assertThat(OnCallService.mailOutcome("SKIPPED: pasif kullanıcı")).isEqualTo("skipped");
         assertThat(OnCallService.mailOutcome("FAILED: smtp.example.com:25 refused")).isEqualTo("failed");

@@ -61,6 +61,12 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     List<NotificationLog> findByTriggerInOrderBySentAtDesc(Collection<String> triggers, Pageable pageable);
 
     /**
+     * Bu gönderimin izi yazıldı mı (haftalık nöbet bildirimi, 2026-11-15): satır kapanamadan pod durduysa süpürme ikinci
+     * bir "sonuç bilinmiyor" izi yazmaz. Konu takım + haftayı taşır.
+     */
+    boolean existsByTriggerAndSubjectAndSentAtGreaterThanEqual(String trigger, String subject, String sentAt);
+
+    /**
      * Bulk count: returns [alertEventId, sentCount, failedCount, webhookSentCount] rows.
      * "SENT" is a single canonical string; "FAILED..." may carry a reason suffix.
      * TAKIM bildirimleri sayılır: 7/24 (NOC) satırları ({@code recipientRole = 'NOC'}) alarm listesindeki

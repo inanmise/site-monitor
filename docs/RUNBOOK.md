@@ -814,9 +814,13 @@ yok) haftada hiçbir şey gönderilmez; o hafta "SKIPPED: nöbet bilgisi yok" di
 - Pod dilim anında çalışmıyorsa aynı gün içinde (gece yarısına yakın dilimde en az 1 saat) gönderir; gün de geçtiyse
   "SKIPPED: zamanı kaçırıldı" izi kalır, gönderilmez.
 - Yarıda kalan gönderim (pod öldü, satır 15 dk'dan uzun SENDING) YENİDEN GÖNDERİLMEZ: UNKNOWN olur ve
-  "FAILED: sonuç bilinmiyor …" izi yazılır. Yalnız hiçbir kanalın ulaşmadığı FAILED aynı gün içinde 10 dk arayla en çok
-  3 kez denenir.
-- Sistem bakımı susturması açıkken o haftanın bildirimi "SKIPPED: sistem bakımı" ile kapanır (telafi yok).
+  "FAILED: sonuç bilinmiyor …" izi yazılır (gönderimin izi zaten yazılmışsa ikinci iz yazılmaz).
+- Aynı gün içinde 10 dk arayla, toplam en çok 3 deneme: hiçbir kanalın ulaşmadığı FAILED (iki kanal yeniden) ve
+  e-postası iletilemeyen PARTIAL (yalnız e-posta; push zaten ulaştı). En-az-bir-kez: posta sunucusu postayı kabul edip
+  yanıtı zaman aşımına uğrattıysa yeniden deneme aynı postayı ikinci kez gönderebilir.
+- Sistem bakımı susturması açıkken gönderim BEKLER (satır yazılmaz); bakım aynı gün içinde biterse bildirim gider. Telafi
+  penceresi bakım sürerken kapanırsa o hafta tek "SKIPPED: sistem bakımı" satırı + izi yazılır.
+- İş yan iş koşucusunda (`oncall-weekly-notice`) koşar; çok takımlı yavaş SMTP turu zamanlayıcı havuzunu tutmaz.
 
 "Bildirim gelmedi" denetimi: pencerenin "Son sonuç" satırı durumu ve nedeni söyler; ayrıntı SMTP günlüğünde (tetikleyici
 "Haftalık nöbet bildirimi", `ONCALL_WEEKLY`) ve push günlüğünde. Veritabanından:
@@ -829,6 +833,10 @@ FROM oncall_weekly_notices ORDER BY week_key DESC, team_id LIMIT 50;
 Bir haftayı elle yeniden göndermek için o satırı silmek yeterlidir — ama yalnız dilimin günü içinde (telafi
 penceresi) iş yeniden gönderir; gün geçtiyse "zamanı kaçırıldı" izi yazılır. Satırı silmeden önce takıma gerçekten ulaşmadığını
 SMTP / push günlüğünden doğrulayın (çift bildirim olmasın).
+
+Dağıtım sırasında (eski + yeni pod birlikte): eski pod `weekly_notice` alanını tanımaz. Pencere bunu "bu sunucu sürümü
+haftalık nöbet bildirimini henüz tanımıyor" diye söyler (ayar kaydedilmemiştir) — dağıtım bitince yeniden kaydedin. Eski
+pod bildirim göndermez.
 
 ## Merkezi izleme alarm akışı
 
