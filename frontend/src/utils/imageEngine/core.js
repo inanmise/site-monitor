@@ -7,14 +7,22 @@
 // saniyelerce dondururdu — platformda AVIF yöntemleri olmayınca iş akışı bugünkü gibi davranır.
 import { processCore, supportCore } from './pipeline.js'
 import { browserPlatform } from './platform.js'
-import { avifAvailable, prepareAvif } from './avifClient.js'
+import { avifAvailable, avifBlocked, getAvifBlock, prepareAvif, setAvifBlock } from './avifClient.js'
 
 /** Motor Worker'ının platformu: tarayıcı tuvali + AVIF kodlayıcı Worker'ı. */
 const workerPlatform = Object.freeze({
   ...browserPlatform,
   avifAvailable: async () => avifAvailable(),
+  /** Yakın zamandaki yükleme hatasının nedeni (`asset_missing` …) ya da null — açık AVIF isteği buna göre biter / döner. */
+  avifBlocked,
   prepareAvif,
 })
+
+/**
+ * AVIF yükleme hatası kaydı (inceleme 2026-11-15): motor Worker'ı boşta kapanıp yeniden açılabilir — kayıt ana iş
+ * parçacığına bildirilir ve sonraki işle geri gelir (`engine.worker.js`). Değer `{ until, detail }` ya da null.
+ */
+export { getAvifBlock, setAvifBlock }
 
 /** TEK görseli işler (sözleşme §2). `env`: { signal?, onProgress?, cooperative? }. */
 export function processInBrowser(blob, options, env = {}) {

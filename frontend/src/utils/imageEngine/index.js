@@ -14,17 +14,17 @@
 // hata BROWSER_UNSUPPORTED { reason: 'stale_bundle' } olur — arayüz "sayfa güncellendi, yenileyin" diyebilsin. Ayrım:
 // Worker HİÇ ileti göndermeden düştüyse / çekirdek içe aktarılamadıysa bu paketin KENDİ dosyası (import.meta.url)
 // sunucuya sorulur: 404 / 410 → eski paket; erişilebiliyorsa gerçek Worker hatası (`worker_failed`).
-import { ENGINE_LIMITS, ERROR_CODES, EngineError, toEngineError } from './errors.js'
+import { AVIF_FAIL_COOLDOWN_MS, ENGINE_LIMITS, ERROR_CODES, EngineError, JOB_TIMEOUT_MS, toEngineError } from './errors.js'
 import { normalizeOptions } from './options.js'
 import { checkLimits, probeBlob } from './probe.js'
 import { decodeBitmap } from './platform.js'
 
-export { ENGINE_LIMITS, OUTPUT_FORMATS, RESIZE_METHODS, ERROR_CODES, NOTE_CODES, EngineError } from './errors.js'
-
-/** Bir işin en uzun süresi: dolarsa Worker sonlandırılır (asılı kalan çözme / kodlama sayfayı bekletmesin). */
-export const JOB_TIMEOUT_MS = 5 * 60_000
+// JOB_TIMEOUT_MS: bir işin en uzun süresi — dolarsa Worker sonlandırılır (asılı kalan çözme / kodlama sayfayı
+// bekletmesin). Değer errors.js'te: iş akışı AVIF süre bütçesini aynı sayıdan hesaplar.
+export { ENGINE_LIMITS, OUTPUT_FORMATS, RESIZE_METHODS, ERROR_CODES, NOTE_CODES, EngineError, JOB_TIMEOUT_MS } from './errors.js'
 const SUPPORT_TIMEOUT_MS = 10_000
 const IDLE_TERMINATE_MS = 30_000
+const AVIF_BLOCK_DETAIL = /^[a-z_]{1,40}$/
 
 let worker = null
 let seq = 0
@@ -35,6 +35,12 @@ let supportPromise = null
 let corePromise = null
 let inlineChain = Promise.resolve()
 let staleBundle = false
+/**
+ * AVIF kodlayıcısı yüklenemedi (süre doldu, ağ, 5xx, bellek, dosya bulunamadı …): motor Worker'ının bildirdiği "şu ana dek
+ * deneme" kaydı `{ until, detail }` (inceleme 2026-11-15). Worker boşta kapanıp yeniden açılsa da sonraki işlere iletilir —
+ * yavaş bağlantıda her görsel 30 sn yükleme beklemesin. TEK nesne (sınırlı bellek); süresi dolunca kendiliğinden geçersiz.
+ */
+let avifBlock = null
 /** İleti göndermiş (betiği yüklenmiş) Worker'lar. */
 const spoke = new WeakSet()
 const STALE_CHECK_TIMEOUT_MS = 5000
@@ -65,6 +71,23 @@ async function bundleGone() {
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Geçerli (süresi dolmamış) AVIF engeli ya da null. */
+function activeAvifBlock() {
+  if (avifBlock && Date.now() < avifBlock.until) return avifBlock
+  avifBlock = null
+  return null
+}
+
+/** Worker'ın bildirdiği AVIF engelini (doğrulayarak, üst sınırla) saklar; geçersiz değer yok sayılır. */
+function rememberAvifBlock(b) {
+  if (!b || typeof b !== 'object') return
+  const until = Number(b.until)
+  const now = Date.now()
+  if (!Number.isFinite(until) || until <= now) return
+  const detail = typeof b.detail === 'string' && AVIF_BLOCK_DETAIL.test(b.detail) ? b.detail : 'unavailable'
+  avifBlock = { until: Math.min(until, now + AVIF_FAIL_COOLDOWN_MS), detail }
 }
 
 function emit(onProgress, phase, fraction) {
@@ -121,7 +144,8 @@ function pump() {
   current = job
   job.timer = setTimeout(() => failCurrent(job, new EngineError('ENCODE_FAILED', { reason: 'timeout' })), job.timeoutMs)
   try {
-    worker.postMessage({ id: job.id, kind: job.kind, ...job.payload })
+    const block = job.kind === 'process' ? activeAvifBlock() : null
+    worker.postMessage({ id: job.id, kind: job.kind, ...job.payload, ...(block ? { avifBlock: { ...block } } : {}) })
   } catch {
     failCurrent(job, new EngineError('BROWSER_UNSUPPORTED', { reason: 'worker' }))
   }
@@ -151,12 +175,14 @@ function onMessage(w, e) {
   if (!job || m.id !== job.id) return
   if (m.type === 'progress') { emit(job.onProgress, m.phase, m.fraction); return }
   current = null
+  if (m.avifBlock) rememberAvifBlock(m.avifBlock)
   if (m.type === 'result') settle(job, () => job.resolve(m.result))
   else if (m.type === 'support') settle(job, () => job.resolve(m.support))
   else {
+    // İşin hatası KALICI kilit koymaz (inceleme 2026-11-15): AVIF kodlayıcı dosyası bulunamasa da (yuvarlanan dağıtımda
+    // isteğin eski pod'a düşmesi) motorun kendisi çalışıyordur — sonraki JPEG / WebP işleri Worker'a gider. Eski paket
+    // kilidi yalnız motorun KENDİ dosyaları sunucuda yoksa (Worker betiği / çekirdek parçası — bundleGone) konur.
     const err = new EngineError(ERROR_CODES.includes(m.code) ? m.code : 'ENCODE_FAILED', m.params || {})
-    // Worker'ın açtığı parça (AVIF kodlayıcısı) sunucuda yoksa: sayfa eski sürümden — sonraki işler hemen biter
-    if (err.code === 'BROWSER_UNSUPPORTED' && err.params?.reason === 'stale_bundle') staleBundle = true
     settle(job, () => job.reject(err))
   }
   pump()
@@ -323,4 +349,5 @@ export function _resetForTests() {
   corePromise = null
   inlineChain = Promise.resolve()
   staleBundle = false
+  avifBlock = null
 }

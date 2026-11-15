@@ -335,18 +335,33 @@ export function fakePlatform({ webp = true, failDecode = false, avif = null } = 
     },
   }
   // AVIF (2026-11-15): `avif` verilirse platform AVIF'i "destekler" — kodlayıcı aynı sahte kayıplı kodlayıcıdır (MIME
-  // image/avif). { available = true, prepareError, encodeError, decodable = true }
+  // image/avif). { available = true, prepareError, encodeError, decodable = true, blocked, clock, encodeMs }
+  //  • `blocked`: platformun `avifBlocked()` yanıtı (yakın zamandaki yükleme hatasının nedeni, ör. 'asset_missing')
+  //  • `clock` ({ t }) + `encodeMs` (sayı ya da piksel → ms): her AVIF kodlaması sahte saati ilerletir; istenen süre sınırı
+  //    (`timeoutMs`, gerçek istemci gibi 90 sn'ye kırpılır) aşılırsa saat sınır kadar ilerler ve süre hatası atılır
   if (avif) {
+    stats.avifTimeouts = []
     platform.avifAvailable = async () => avif.available !== false
+    if (avif.blocked !== undefined) platform.avifBlocked = () => avif.blocked
     platform.prepareAvif = async (image, tuning) => {
       stats.avifPrepared += 1
       stats.avifTuning = tuning
       if (avif.prepareError) throw avif.prepareError
       return {
-        async encode(mime, quality) {
+        async encode(mime, quality, opts) {
           stats.avifEncodes += 1
           stats.avifQualities.push(Math.round(quality * 100))
+          stats.avifTimeouts.push(opts?.timeoutMs ?? null)
           if (avif.encodeError) throw avif.encodeError
+          if (avif.clock && avif.encodeMs) {
+            const ms = typeof avif.encodeMs === 'function' ? avif.encodeMs(image.width * image.height) : avif.encodeMs
+            const cap = Math.min(90_000, opts?.timeoutMs ?? Infinity)
+            if (ms > cap) {
+              avif.clock.t += cap
+              throw new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: cap < 90_000 ? 'time_budget' : 'encode_timeout' })
+            }
+            avif.clock.t += ms
+          }
           return lossy(image, mime, quality)
         },
         close() { stats.sessionsClosed += 1 },

@@ -8,7 +8,7 @@ import { Spinner } from '../../../ui/Progress.jsx'
 import { formatNumber, formatSize, plural } from '../resourceScanModel.js'
 import { TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
-import { BULK_MAX_IMAGES, UNAVAILABLE_REASONS, bulkPlan, suggestedWidth } from './imageToolModel.js'
+import { BULK_MAX_IMAGES, UNAVAILABLE_REASONS, bulkPlan, formatUnavailableKey, suggestedWidth } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
@@ -115,7 +115,7 @@ function BulkDialog({ ctx, items, finding, onClose }) {
               </div>
             </div>
             <Field label={t('prs.it.set.format')} name="bulkFormat" className="mb-0"
-              hint={supportKnown && !webp ? t('prs.it.set.webpOff') : format === 'avif' && off('avif') ? t('prs.it.set.avifOff') : t(`prs.it.set.formatHint.${format}`)}>
+              hint={formatUnavailableKey(format, support) ? t(formatUnavailableKey(format, support)) : t(`prs.it.set.formatHint.${format}`)}>
               {({ id, describedBy }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} value={format} data-slot="prs-it-bulk-format" className="pointer-coarse:h-10"
                   onChange={(e) => setFormat(e.target.value)}>

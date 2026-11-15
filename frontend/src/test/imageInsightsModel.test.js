@@ -47,6 +47,8 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(analysisSummary({ qualityMode: 'manual', resampled: true, sharpened: false }))
       .toMatchObject({ qualityMode: 'manual', resampled: true, sharpened: false })
     expect(analysisSummary({ qualityMode: 'x' }).qualityMode).toBeNull()
+    // 'fixed' (inceleme 2026-11-15): AVIF benzerliği ölçülemedi — arama yapılmadı
+    expect(analysisSummary({ qualityMode: 'fixed' }).qualityMode).toBe('fixed')
     expect(s.output).toBeNull()
     expect(s.candidates).toHaveLength(4)   // ilk 5'ten gif atıldı
     expect(s.colors).toEqual({ count: 12, atLeast: false })
@@ -207,7 +209,7 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     const webpOut = engineResult()
     webpOut.analysis = { ...webpOut.analysis, avifPossible: true }
     expect(insightRecommendations(resultSummary(webpOut)).find((r) => r.code === 'NEXT_GEN').params).toEqual(['avif'])
-    for (const n of ['AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED']) {
+    for (const n of ['AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED', 'AVIF_TIME_LIMIT']) {
       const x = engineResult({ notes: [n] })
       x.analysis = { ...x.analysis, avifPossible: true }
       expect(insightRecommendations(resultSummary(x)).map((r) => r.code), n).not.toContain('NEXT_GEN')
@@ -243,6 +245,10 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(ss.map((s) => s.code).slice(0, 3)).toEqual(['LOCAL', 'CROPPED', 'RESIZED'])
     expect(ss.find((s) => s.code === 'RESIZED').params).toEqual([1920, 1280, true])
     expect(ss.find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([74, 'target', 'webp'])   // 3. = biçim (AVIF metni ayrılır)
+    // AVIF sabit kalite (tarayıcı AVIF açamadı): adımın kipi 'fixed' — "ikili aramayla bulundu" denmesin
+    const fixed = engineResult({ type: 'avif', quality: 68, notes: ['AVIF_NOT_MEASURED'] })
+    fixed.analysis = { ...fixed.analysis, qualityMode: 'fixed' }
+    expect(howWeDid(resultSummary(fixed)).find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([68, 'fixed', 'avif'])
     const sameSize = engineResult({ resized: false })
     sameSize.analysis = { ...sameSize.analysis, resampled: false }
     expect(howWeDid(resultSummary(sameSize)).map((s) => s.code)).not.toContain('RESIZED')
@@ -258,6 +264,7 @@ describe('görsel aracı derin karşılaştırma — model', () => {
       'prs.it.ins.how.METADATA_KEPT', 'prs.it.ins.how.METADATA_REMOVED', 'prs.it.ins.how.RESIZED_PLAIN', 'prs.it.ins.how.QUALITY_MANUAL',
       'prs.it.ins.how.QUALITY_TARGET', 'prs.it.ins.how.PNG_LOSSLESS_PROCESSED', 'prs.it.ins.belowTarget',
       'prs.it.ins.rec.NEXT_GEN_WEBP', 'prs.it.ins.rec.NEXT_GEN_AVIF', 'prs.it.ins.how.AVIF_ENCODER_SS', 'prs.it.ins.how.QUALITY_TARGET_AVIF',
+      'prs.it.ins.how.QUALITY_FIXED_AVIF',
       'prs.it.ins.qualityAvif', 'prs.it.ins.ppiNoField',
       ...['size', 'dims', 'aspect', 'pixels', 'ppi', 'bpp', 'compression', 'color', 'quality', 'subsampling'].map((k) => `prs.it.ins.row.${k}`),
       ...['gray', 'gray-alpha', 'rgb', 'rgba', 'palette', 'cmyk'].map((k) => `prs.it.ins.model.${k}`),

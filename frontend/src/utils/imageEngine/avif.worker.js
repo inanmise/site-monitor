@@ -23,15 +23,28 @@ let image = null
 const fail = (code, params) => Object.assign(new Error(code), { engineCode: code, params })
 const unavailable = (detail) => fail('BROWSER_UNSUPPORTED', { reason: 'avif', detail })
 
-/** WASM'ı indirir (süre sınırlı): 404 / 410 → eski paket (dağıtım sonrası açık kalmış sekme). */
-async function fetchWasm(signal) {
-  let res
+const gone = (res) => res.status === 404 || res.status === 410
+
+async function get(signal, cache) {
   try {
-    res = await fetch(wasmUrl, { credentials: 'same-origin', signal })
+    return await fetch(wasmUrl, { credentials: 'same-origin', signal, ...(cache ? { cache } : {}) })
   } catch {
     throw signal.aborted ? unavailable('load_timeout') : unavailable('wasm_fetch')
   }
-  if (res.status === 404 || res.status === 410) throw fail('BROWSER_UNSUPPORTED', { reason: 'stale_bundle' })
+}
+
+/**
+ * WASM'ı indirir (süre sınırlı — `signal`). 404 / 410 BİR KEZ yeniden denenir (önbelleksiz): yuvarlanan dağıtımda istek
+ * dosyayı henüz taşımayan eski pod'a düşmüş olabilir (inceleme 2026-11-15). İkincisi de 404 / 410 → `asset_missing`
+ * (yalnız AVIF'e özgü: motorun "eski paket" kilidi DEĞİL). Toplam süre çağıranın tek sınırının içinde kalır.
+ */
+async function fetchWasm(signal) {
+  let res = await get(signal, null)
+  if (gone(res)) {
+    try { await res.body?.cancel?.() } catch { /* gövde yok */ }
+    res = await get(signal, 'no-store')
+    if (gone(res)) throw unavailable('asset_missing')
+  }
   if (!res.ok) throw unavailable('wasm_http')
   return res
 }

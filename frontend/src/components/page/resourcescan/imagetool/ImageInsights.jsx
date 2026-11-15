@@ -134,6 +134,8 @@ function stepText(s, t, locale) {
     case 'RESIZED': return t(s.params[2] ? 'prs.it.ins.how.RESIZED' : 'prs.it.ins.how.RESIZED_PLAIN', formatNumber(p0, locale), formatNumber(p1, locale))
     case 'QUALITY_SEARCH':
       if (p1 === 'manual' && p0 != null) return t('prs.it.ins.how.QUALITY_MANUAL', formatNumber(p0, locale))
+      // Tarayıcı AVIF açamadı: benzerlik ölçülemedi, arama YAPILMADI — "ikili aramayla bulundu" denmez
+      if (p1 === 'fixed' && p0 != null) return t('prs.it.ins.how.QUALITY_FIXED_AVIF', formatNumber(p0, locale))
       if (p1 === 'target' && p0 != null) {
         return s.params[2] === 'avif'
           ? t('prs.it.ins.how.QUALITY_TARGET_AVIF', formatNumber(p0, locale), formatNumber(AVIF_TARGET_FLOOR, locale))

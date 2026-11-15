@@ -1022,19 +1022,53 @@ test.describe('görsel motoru — bağımsız inceleme düzeltmeleri (2026-11-14
     expect(r.after).toMatchObject({ type: 'avif', width: 600, height: 400 })
   })
 
-  test('AVIF ESKİ PAKET: WASM sunucuda yok (404) → stale_bundle; WASM 500 → iş düşmez (WebP + AVIF_UNAVAILABLE)', async ({ page, context }) => {
-    test.setTimeout(180000)
-    // 1) 404: dağıtım sonrası eski sekme — iş "sayfayı yenileyin" ile biter
+  test('AVIF KODLAYICI DOSYASI (inceleme 2026-11-15): 404 bir kez → yeniden denenir, iş biter; hep 404 → yalnız açık AVIF düşer (AVIF e özgü), motor kilitlenmez; 500 → WebP + not', async ({ page, context }) => {
+    test.setTimeout(240000)
+    // 1) Yuvarlanan dağıtım: WASM isteği BİR KEZ eski pod'a düşer (404), sonraki istek dosyayı bulur — "en küçük" sonuç
+    //    verir (AVIF dahil), ardından JPEG işi de çalışır; motor "eski paket" kilidine girmez
+    let wasmCalls = 0
+    await context.route(/avif_enc[^/?]*\.wasm$/, (route) => {
+      wasmCalls += 1
+      return wasmCalls === 1 ? route.fulfill({ status: 404, body: 'yok' }) : route.continue()
+    })
+    await open(page)
+    const once = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const src = await gen.photo(300, 200)
+      let small = null
+      let firstErr = null
+      try { small = sum(await engine.processImage(src, { format: 'smallest' })) } catch (e) { firstErr = { code: e?.code, params: e?.params } }
+      const jpeg = sum(await engine.processImage(src, { format: 'jpeg' }))
+      return { small, firstErr, jpeg, support: await engine.engineSupport() }
+    })
+    expect(once.firstErr).toBeNull()
+    expect(['jpeg', 'webp', 'avif', 'png']).toContain(once.small.type)
+    expect(once.small.analysis.candidates.map((c) => c.type)).toContain('avif')        // yeniden deneme dosyayı buldu
+    expect(once.jpeg).toMatchObject({ type: 'jpeg' })
+    expect(once.support).not.toHaveProperty('staleBundle')
+    expect(wasmCalls).toBeGreaterThanOrEqual(2)
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // 2) Dosya hep 404: "en küçük" AVIF'siz biter (not); açık AVIF isteği AVIF'e özgü hatayla düşer — "eski paket"
+    //    DEĞİL; ardından JPEG işi çalışır, destek kilitlenmez
     await context.route(/avif_enc[^/?]*\.wasm$/, (route) => route.fulfill({ status: 404, body: 'yok' }))
     await open(page)
     const gone = await page.evaluate(async () => {
-      const { engine, gen, failure } = window.__ie
-      return { err: await failure(engine.processImage(await gen.photo(300, 200), { format: 'avif' })) }
+      const { engine, gen, sum, failure } = window.__ie
+      const src = await gen.photo(300, 200)
+      const small = sum(await engine.processImage(src, { format: 'smallest' }))
+      const err = await failure(engine.processImage(src, { format: 'avif' }))
+      const jpeg = sum(await engine.processImage(src, { format: 'jpeg' }))
+      return { small, err, jpeg, support: await engine.engineSupport() }
     })
-    expect(gone.err).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    expect(gone.small.notes).toContain('AVIF_UNAVAILABLE')
+    expect(gone.small.analysis.candidates.map((c) => c.type)).not.toContain('avif')
+    expect(gone.err).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
+    expect(gone.jpeg).toMatchObject({ type: 'jpeg' })
+    expect(gone.support).not.toHaveProperty('staleBundle')
     await context.unrouteAll({ behavior: 'ignoreErrors' })
 
-    // 2) 500: geçici sunucu hatası — eski paket DEĞİL; istek WebP'ye döner, "en küçük" AVIF'siz biter (not ile)
+    // 3) 500: geçici sunucu hatası — istek WebP'ye döner, "en küçük" AVIF'siz biter (not ile)
     await context.route(/avif_enc[^/?]*\.wasm$/, (route) => route.fulfill({ status: 500, body: 'hata' }))
     await open(page)
     const flaky = await page.evaluate(async () => {

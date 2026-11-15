@@ -16,7 +16,8 @@ import * as engine from './engineClient.js'
 import { useTopic } from './ImageToolContext.jsx'
 import { bytesOfBlob, createZipWriter } from './imageZip.js'
 import {
-  buildOptions, dimsText, engineProblemText, extOfType, pctText, pictureSnippet, phaseText, resizeSettings, responsiveWidths, resultSummary, savingPctOf,
+  buildOptions, dimsText, engineProblemText, extOfType, formatUnavailableKey, pctText, pictureSnippet, phaseText, resizeSettings, responsiveWidths,
+  resultSummary, savingPctOf,
   nameKey, slugFileBase, typeLabel, uniqueName, zipFileName,
 } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
@@ -214,7 +215,7 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
           <>
             <p className={cn('m-0 text-sm text-foreground', WRAP)}>{t('prs.it.rs.intro', widths.map((w) => formatNumber(w, locale)).join(' · '))}</p>
             <Field label={t('prs.it.set.format')} name="rsFormat"
-              hint={supportKnown && !webp ? t('prs.it.set.webpOff') : fmt === 'avif' && off('avif') ? t('prs.it.set.avifOff') : t('prs.it.rs.formatHint')}>
+              hint={formatUnavailableKey(fmt, support) ? t(formatUnavailableKey(fmt, support)) : t('prs.it.rs.formatHint')}>
               {({ id, describedBy }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} value={fmt} disabled={running} data-slot="prs-it-rs-format"
                   className="pointer-coarse:h-10" onChange={(e) => setFmt(e.target.value)}>

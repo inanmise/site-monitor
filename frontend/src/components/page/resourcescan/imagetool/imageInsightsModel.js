@@ -49,7 +49,8 @@ export function analysisSummary(a) {
   return {
     input: facts(a.input), output: facts(a.output), colors, candidates,
     svgCandidate: a.svgCandidate === true, banding: a.banding === 'bit_depth' || a.banding === 'palette' ? a.banding : null,
-    qualityMode: ['auto', 'manual', 'target'].includes(a.qualityMode) ? a.qualityMode : null,
+    // 'fixed' (inceleme 2026-11-15): AVIF'in benzerliği ölçülemedi (tarayıcı AVIF açamıyor) — arama yapılmadı, sabit kalite
+    qualityMode: ['auto', 'manual', 'target', 'fixed'].includes(a.qualityMode) ? a.qualityMode : null,
     // Bu görsel bu tarayıcıda AVIF'e kodlanabilir miydi (motor yazmadıysa — eski sonuç / AVIF'siz ortam — null)
     avifPossible: typeof a.avifPossible === 'boolean' ? a.avifPossible : null,
     resampled: typeof a.resampled === 'boolean' ? a.resampled : null,
@@ -191,7 +192,7 @@ export function insightRecommendations(sum) {
     const fmts = []
     if (type !== 'webp' && !tried.has('webp') && !notes.has('WEBP_UNAVAILABLE')) fmts.push('webp')
     if (a?.avifPossible === true && !tried.has('avif') && !notes.has('AVIF_UNAVAILABLE') && !notes.has('AVIF_TOO_LARGE')
-      && !notes.has('AVIF_NOT_MEASURED')) fmts.push('avif')
+      && !notes.has('AVIF_NOT_MEASURED') && !notes.has('AVIF_TIME_LIMIT')) fmts.push('avif')
     if (fmts.length) out.push({ code: 'NEXT_GEN', params: fmts })
   }
   if (a?.svgCandidate) out.push({ code: 'SVG', params: [] })
