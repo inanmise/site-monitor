@@ -263,6 +263,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   // SQL Playground'dan gelen taslak (2026-11-13, D4): form bir kez SQL dolu açılır; bant bağlantı türü PostgreSQL değilse uyarır
   const [fromPlayground, setFromPlayground] = useState(false)
   const playgroundDraftTaken = useRef(false)
+  /** Toplu oluşturmanın 7/24 onayı: oluşturulan her izleme için "bir daha sorma" (açılırken konur). */
+  const bulkNocDone = useRef(null)
   const [bulkOpen, setBulkOpen] = useState(null)   // { baseBody, baseName, teamId, dbType, profileId, succeeded } — toplu oluşturma
   const [detailTab, setDetailTab] = useState('summary')
   const deepLinkTab = useDeepLinkTab('summary')
@@ -680,7 +682,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     let body = bodyOf(form)
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: isNew ? null : modal?.id,
-      nocNotify: form.nocNotify, locked: routingLock })
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     if (noc.asked && noc.nocNotify) body = bodyOf(noc.apply(form))   // Evet: 7/24 açık
@@ -726,10 +728,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       sql_text: !form.sqlText.trim() && t('dbq.form.sqlRequired'),
     })) return
     // Kayıtta 7/24 onayı (2026-11-15): toplu oluşturma da bir kayıttır — Evet → gövde 7/24 açık
-    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: routingLock })
+    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     const body = payloadFromForm(noc.apply(form))
+    bulkNocDone.current = noc.done
     setBulkOpen({ baseBody: body, baseName: form.name.trim(), teamId: Number(form.teamId), dbType: form.dbType || null, profileId: form.profileId, results: null })
   }
   /**
@@ -1078,6 +1081,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             baseName={bulkOpen.baseName} initialProfileId={bulkOpen.profileId}
             onDone={(results) => {
               load()
+              for (const r of Array.isArray(results) ? results : []) if (r?.status === 'ok') bulkNocDone.current?.(r.id)
               setBulkOpen((b) => (b ? { ...b, results } : b))
             }} />
         </Suspense>

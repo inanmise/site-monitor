@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/shadcn/field'
 import { loadNocFormOptions } from './useNocFormOptions.js'
 import {
-  addNoAsk, defaultGroupNames, isNoAsk, nocAvailable, NOC_OPTIONS_WAIT_MS, noAskKey, shouldAskNoc, withTimeout,
+  addNoAsk, confirmGroupNames, isNoAsk, nocAvailable, NOC_OPTIONS_WAIT_MS, noAskKey, shouldAskNoc, withTimeout,
 } from './nocSaveConfirmModel.js'
 
 function store() {
@@ -39,12 +39,19 @@ function passThrough(nocNotify) {
  * <p>Kurallar `nocSaveConfirmModel.shouldAskNoc`. Seçenekler en çok {@link NOC_OPTIONS_WAIT_MS} beklenir (çoğunlukla form
  * alanı zaten önbelleğe almıştır); gelmezse sorulmaz. Pencere kapanırsa / bileşen sökülürse bekleyen söz "Vazgeç" ile
  * çözülür — asılı söz kalmaz.
+ *
+ * <p><b>Form kapanırsa kayıt yok (inceleme 2026-11-15):</b> `dialog` formun İÇİNDE bir yuva olarak çizilir; yuva sökülünce
+ * (form kapandı) bekleyen soru "Vazgeç" ile çözülür ve seçenek beklemesi sırasında form kapandıysa / yeniden açıldıysa
+ * `ask` null döner — kullanıcının kapattığı formun kaydı gönderilmez, eski formun sorusu yeni formda çıkmaz.
  */
 export function useNocSaveConfirm() {
   const [dlg, setDlg] = useState(null)
   const resolver = useRef(null)
   const alive = useRef(true)
   const busy = useRef(false)
+  /** Yuva sökülünce artar: bir sorunun başladığı form hâlâ açık mı. */
+  const hostEpoch = useRef(0)
+  const hostCount = useRef(0)
 
   useEffect(() => {
     alive.current = true
@@ -56,7 +63,18 @@ export function useNocSaveConfirm() {
     }
   }, [])
 
-  const ask = useCallback(async ({ type, monitorId = null, nocNotify = false, locked = false } = {}) => {
+  const hostMounted = useCallback(() => {
+    hostCount.current += 1
+    return () => {
+      hostCount.current -= 1
+      hostEpoch.current += 1
+      const r = resolver.current
+      resolver.current = null
+      r?.(null)
+    }
+  }, [])
+
+  const ask = useCallback(async ({ type, monitorId = null, nocNotify = false, locked = false, groupIds = null } = {}) => {
     if (nocNotify || locked) return passThrough(nocNotify)
     const key = noAskKey(type, monitorId)
     if (isNoAsk(store(), key)) return passThrough(false)
@@ -65,14 +83,17 @@ export function useNocSaveConfirm() {
     busy.current = true
     let choice
     let options
+    const epoch = hostEpoch.current
+    const hadHost = hostCount.current > 0
     try {
       options = await withTimeout(loadNocFormOptions(), NOC_OPTIONS_WAIT_MS, null)
+      // Beklerken form kapandı / yeniden açıldı ya da bileşen söküldü → bu kayıt artık istenmiyor
+      if (!alive.current || (hadHost && hostEpoch.current !== epoch)) return null
       const available = nocAvailable(options, type)
       if (!shouldAskNoc({ nocNotify, locked, available, noAsk: false })) return passThrough(false)
-      if (!alive.current) return null
       choice = await new Promise((resolve) => {
         resolver.current = resolve
-        setDlg({ type, isNew: monitorId == null, groups: defaultGroupNames(options?.groups) })
+        setDlg({ type, isNew: monitorId == null, groups: confirmGroupNames(options?.groups, groupIds) })
       })
     } finally {
       busy.current = false
@@ -99,8 +120,18 @@ export function useNocSaveConfirm() {
     r?.(value)
   }, [])
 
-  const dialog = dlg ? <NocSaveConfirmDialog {...dlg} onAnswer={answer} /> : null
+  const dialog = (
+    <NocConfirmHost onMount={hostMounted}>
+      {dlg ? <NocSaveConfirmDialog {...dlg} onAnswer={answer} /> : null}
+    </NocConfirmHost>
+  )
   return { ask, dialog }
+}
+
+/** Formun içindeki yuva: takılınca sayılır, sökülünce (form kapandı) bekleyen soru iptal edilir. */
+function NocConfirmHost({ onMount, children }) {
+  useEffect(() => onMount(), [onMount])
+  return children
 }
 
 /**
