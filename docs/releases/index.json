@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T00:15:15Z",
+  "generatedAt": "2026-11-15T00:57:40Z",
   "repo": "inanmise/site-monitor",
-  "count": 833,
+  "count": 834,
   "releases": [
+    {
+      "version": "20.200.1",
+      "tag": "v20.200.1",
+      "releasedAt": "2026-11-15T00:57:33Z",
+      "commit": "7e6bd16f52e5da2f46dda284520076b73bdc6789",
+      "prevVersion": "20.200.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "7e6bd16f",
+          "subject": "kaynak analizi sekmesinde başlık simgeleri kaybolmasın"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.200.0",
       "tag": "v20.200.0",
