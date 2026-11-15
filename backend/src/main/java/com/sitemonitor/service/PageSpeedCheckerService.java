@@ -186,10 +186,18 @@ public class PageSpeedCheckerService {
      * yoksa sonuç aynen döner. {@code samples} null = geçmiş okunamadı → büyüme eşikleri BİLİNMİYOR (ihlal de sağlık da değil).
      */
     public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples) {
+        return withGrowth(res, m, samples, false);
+    }
+
+    /**
+     * {@link #withGrowth(Result, PageSpeedMonitor, List)} + geçmişin TAM okunup okunmadığı ({@code complete}: okuma sınıra
+     * takılmadı → örnekler referans penceresinin tamamı; bant kontrollü uyumu buna bakar — {@link PageSpeedRules#bandVerdict}).
+     */
+    public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples, boolean complete) {
         if (res == null || m == null || !res.reachable() || !growthConfigured(m)) return res;
         PageSpeedRules.Growth g = samples == null ? PageSpeedRules.Growth.NONE : PageSpeedRules.growthOf(samples);
         if (Boolean.TRUE.equals(m.getGrowthBytesBand()) && samples != null)
-            g = g.withBand(PageSpeedRules.bandVerdict(res.totalBytes(), samples));
+            g = g.withBand(PageSpeedRules.bandVerdict(res.totalBytes(), samples, complete));
         Result withRef = res.decided(res.status(), res.breached(), res.undecided(), g);
         List<String> breached = PageSpeedRules.evaluate(m, withRef.measurement());
         List<String> undecided = PageSpeedRules.undecided(m, withRef.measurement(), breached);

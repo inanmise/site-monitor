@@ -157,6 +157,42 @@ class PageSpeedGrowthRulesTest {
     }
 
     @Test
+    @DisplayName("İnceleme 2026-11-15: TAM okunan geçmişte pencerenin başına dek uzanan (≥ 5) aşım dizisi yeni düzeydir — seyrek "
+            + "izleme bant alarmında kalmaz; okuma kesildiyse (complete=false) uyum yok; dizi başa ulaşmıyorsa eski düzey kalır")
+    void bandAdaptsOnCompleteSparseHistory() {
+        // Günlük izleme: 7 günlük pencerede yalnız 6 örnek, hepsi yeni (bandı aşmış, işaretli) düzeyde
+        List<GrowthSample> sparse = new ArrayList<>();
+        for (int i = 0; i < 6; i++) sparse.add(new GrowthSample(200_000, 10, true));
+        var adopted = PageSpeedRules.bandVerdict(200_000L, sparse, true);
+        assertThat(adopted.evaluated()).isTrue();
+        assertThat(adopted.breached()).isFalse();
+        assertThat(adopted.mean()).isEqualTo(200_000d);
+
+        // aynı örnekler, okuma sınıra takıldı → dizi geçmişin tamamı sayılmaz → taban kurulamaz (karar yok)
+        var cut = PageSpeedRules.bandVerdict(200_000L, sparse, false);
+        assertThat(cut.evaluated()).isFalse();
+        assertThat(PageSpeedRules.bandVerdict(200_000L, sparse)).isEqualTo(cut);   // eski imza = kesik
+
+        // aşım dizisi pencerenin başına ULAŞMIYOR (öncesinde eski düzey var) → eski düzey taban, ihlal sürer
+        List<GrowthSample> mixed = new ArrayList<>(sparse);
+        for (int i = 0; i < 10; i++) mixed.add(new GrowthSample(100_000, 10, false));
+        var kept = PageSpeedRules.bandVerdict(200_000L, mixed, true);
+        assertThat(kept.evaluated()).isTrue();
+        assertThat(kept.breached()).isTrue();
+        assertThat(kept.mean()).isEqualTo(100_000d);
+
+        // withGrowth complete bayrağını banda geçirir
+        PageSpeedMonitor m = growth(null, null, true);
+        m.setId(9L);
+        var res = new com.sitemonitor.service.PageSpeedCheckerService.Result("OK", 200, 100, 200, 1000, 200_000, 10, 0, false, false,
+                List.of(), null, List.of(), null, 0, null, false, null, List.of(), null);
+        assertThat(com.sitemonitor.service.PageSpeedCheckerService.withGrowth(res, m, sparse, true).breached()).isEmpty();
+        assertThat(com.sitemonitor.service.PageSpeedCheckerService.withGrowth(res, m, sparse, true).undecided()).isEmpty();
+        assertThat(com.sitemonitor.service.PageSpeedCheckerService.withGrowth(res, m, sparse, false).undecided())
+                .containsExactly("SIZEBAND");
+    }
+
+    @Test
     @DisplayName("Posta tablosu: büyüme satırı yüzde|medyan, bant alt|üst|up; referans yoksa medyan boş")
     void thresholdTable() {
         PageSpeedMonitor m = growth(20, 30, true);

@@ -130,6 +130,8 @@ class MonitoringControllerPageSpeedGrowthTest {
     @MockitoBean com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendar;
     /** "Sorguyu dene" / "Maliyeti denetle" saatlik küme sayacı (inceleme 2026-10-31, K3) — sahte: varsayılan "sınır yok". */
     @MockitoBean com.sitemonitor.service.dbquery.DbQueryTestQuota dbQueryTestQuota;
+    /** Dinamik yük tabanı (inceleme 2026-11-15): kip / URL değişiminde örnekleri temizlenir. */
+    @MockitoBean com.sitemonitor.service.baseline.BaselineConfigService baselineConfigService;
 
     @BeforeEach
     void stubTeamMap() {
@@ -207,6 +209,7 @@ class MonitoringControllerPageSpeedGrowthTest {
         String body = create("\"growthBytesPct\":25,\"growthRequestsPct\":40,\"growthBytesBand\":true", 200);
         var m = saved.get(0);
         assertThat(m.getExtendedMeasurement()).isTrue();
+        assertThat(m.getGrowthSince()).isNotNull().isEqualTo(m.getCreatedAt());   // referans bu tanımla başlar
         assertThat(m.getGrowthBytesPct()).isEqualTo(25);
         assertThat(m.getGrowthRequestsPct()).isEqualTo(40);
         assertThat(m.getGrowthBytesBand()).isTrue();
@@ -215,7 +218,7 @@ class MonitoringControllerPageSpeedGrowthTest {
 
         saved.clear();
         create("\"extendedMeasurement\":false", 200);
-        assertThat(saved.get(0).getExtendedMeasurement()).isFalse();
+        assertThat(saved.get(0).getExtendedMeasurement()).isNull();   // kapalı = null (2c öncesi izlemeyle aynı değer)
         assertThat(saved.get(0).getGrowthBytesPct()).isNull();
         assertThat(saved.get(0).getGrowthBytesBand()).isNull();
     }
@@ -266,6 +269,125 @@ class MonitoringControllerPageSpeedGrowthTest {
         update(52L, "{\"name\":\"yeni\",\"growthBytesPct\":5000}", 200);
         String bad = update(52L, "{\"growthBytesPct\":4000}", 400);
         assertThat(bad).contains("\"field\":\"growthBytesPct\"");
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-15: ölçüm TANIMI değişince (URL, kip, izleyici, UA, başlık, kimlik) büyüme referansı "
+            + "şimdiden başlar (hedefli yazım); ad gibi başka alanlar referansa dokunmaz")
+    void update_definitionChangeResetsGrowthReference() throws Exception {
+        when(secretCipher.encrypt(anyString())).thenAnswer(i -> "enc:" + i.getArgument(0) + ":" + System.nanoTime());
+        var m = live(53L);
+        when(pageSpeedMonitorRepo.findById(53L)).thenReturn(Optional.of(m));
+        stubCreateSave(new java.util.ArrayList<>());
+
+        update(53L, "{\"name\":\"yeni ad\",\"growthBytesPct\":20,\"maxLoadMs\":4000}", 200);
+        verify(pageSpeedMonitorRepo, never()).updateGrowthSince(anyLong(), anyString());
+        verify(baselineConfigService, never()).clearSamples(anyString(), anyLong());
+
+        String[] changes = {
+                "{\"url\":\"https://baska.example.com/\"}",
+                "{\"userAgent\":\"Ozel/1.0\"}",
+                "{\"excludeTrackers\":true}",
+                "{\"trackerPatterns\":\"*analytics*\"}",
+                "{\"basicAuthUser\":\"svc\"}",
+                "{\"basicAuthPass\":\"gizli\"}",
+                "{\"customHeaders\":\"X-A: 1\"}" };
+        int expected = 0;
+        for (String json : changes) {
+            update(53L, json, 200);
+            verify(pageSpeedMonitorRepo, org.mockito.Mockito.times(++expected)).updateGrowthSince(eq(53L), anyString());
+        }
+        // aynı değerler yeniden gönderilirse (form her kayıtta alanları yollar) değişiklik yok → sıfırlama yok
+        update(53L, "{\"url\":\"https://baska.example.com/\",\"userAgent\":\"Ozel/1.0\",\"excludeTrackers\":true}", 200);
+        verify(pageSpeedMonitorRepo, org.mockito.Mockito.times(expected)).updateGrowthSince(eq(53L), anyString());
+        // varlık kaydı kolonu yazmaz: growth_since yalnız hedefli UPDATE ile değişir
+        assertThat(m.getGrowthSince()).isNull();
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-15: kip değişimi dinamik YÜK tabanının örneklerini de temizler (URL değişimiyle aynı) ve "
+            + "büyüme referansını sıfırlar")
+    void update_modeChangeClearsLoadBaseline() throws Exception {
+        var m = live(54L);
+        when(pageSpeedMonitorRepo.findById(54L)).thenReturn(Optional.of(m));
+        stubCreateSave(new java.util.ArrayList<>());
+        update(54L, "{\"extendedMeasurement\":true}", 200);
+        verify(baselineConfigService).clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, 54L);
+        verify(pageSpeedMonitorRepo).updateGrowthSince(eq(54L), anyString());
+
+        update(54L, "{\"extendedMeasurement\":true}", 200);   // değişmedi → ek temizlik yok
+        verify(baselineConfigService, org.mockito.Mockito.times(1)).clearSamples(anyString(), anyLong());
+
+        update(54L, "{\"extendedMeasurement\":false}", 200);  // kapatıldı → yine temizlenir
+        verify(baselineConfigService, org.mockito.Mockito.times(2))
+                .clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, 54L);
+        assertThat(m.getExtendedMeasurement()).isNull();
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-15: 2c öncesi izlemenin ilk düzenlemesinde formun false değeri sahte geçmiş / denetim "
+            + "satırı yazmaz (kapalı = null saklanır)")
+    void update_falseOnLegacyMonitorIsNoChange() throws Exception {
+        var m = live(55L);   // extendedMeasurement null (2c öncesi)
+        when(pageSpeedMonitorRepo.findById(55L)).thenReturn(Optional.of(m));
+        stubCreateSave(new java.util.ArrayList<>());
+        update(55L, "{\"name\":\"yeni\",\"extendedMeasurement\":false}", 200);
+        assertThat(m.getExtendedMeasurement()).isNull();
+        var changes = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("MONITOR_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                eq("PAGESPEED_MONITOR"), eq("55"), anyString(), changes.capture());
+        assertThat(changes.getValue()).contains("name").doesNotContain("extendedMeasurement");
+        verify(baselineConfigService, never()).clearSamples(anyString(), anyLong());
+        verify(pageSpeedMonitorRepo, never()).updateGrowthSince(anyLong(), anyString());
+    }
+
+    private void stubRestoreRow(long id, String snapshot) {
+        com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
+        r.setTeamId(5L);
+        r.setSnapshot(snapshot);
+        r.setResourceKind("PAGESPEED");
+        r.setResourceId(id);
+        r.setResourceName("hiz-" + id);
+        r.setSeq(1);
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PAGESPEED", id, 1)).thenReturn(Optional.of(r));
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-15: geri yükleme URL'yi değiştirirse büyüme referansı sıfırlanır ve yük tabanı temizlenir")
+    void restore_urlChangeResetsGrowthReference() throws Exception {
+        var m = live(56L);
+        when(pageSpeedMonitorRepo.findById(56L)).thenReturn(Optional.of(m));
+        when(pageSpeedMonitorRepo.save(any(com.sitemonitor.model.PageSpeedMonitor.class))).thenAnswer(i -> i.getArgument(0));
+        stubRestoreRow(56L, "{\"url\":\"https://eski.example.com/\"}");
+        mvc.perform(post("/api/monitoring/changes/pagespeed/56/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        assertThat(m.getUrl()).isEqualTo("https://eski.example.com/");
+        verify(pageSpeedMonitorRepo).updateGrowthSince(eq(56L), anyString());
+        verify(baselineConfigService).clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, 56L);
+    }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-15: geri yükleme yalnız ölçüm KİPİNİ değiştirse de yük tabanı ve büyüme referansı sıfırlanır; "
+            + "tanıma dokunmayan geri yükleme sıfırlamaz")
+    void restore_modeChangeResetsBaselineAndGrowth() throws Exception {
+        var m = live(57L);
+        when(pageSpeedMonitorRepo.findById(57L)).thenReturn(Optional.of(m));
+        when(pageSpeedMonitorRepo.save(any(com.sitemonitor.model.PageSpeedMonitor.class))).thenAnswer(i -> i.getArgument(0));
+        stubRestoreRow(57L, "{\"extendedMeasurement\":true}");
+        mvc.perform(post("/api/monitoring/changes/pagespeed/57/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        assertThat(m.getExtendedMeasurement()).isTrue();
+        verify(baselineConfigService).clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, 57L);
+        verify(pageSpeedMonitorRepo).updateGrowthSince(eq(57L), anyString());
+
+        var n = live(58L);
+        when(pageSpeedMonitorRepo.findById(58L)).thenReturn(Optional.of(n));
+        stubRestoreRow(58L, "{\"maxLoadMs\":4500}");
+        mvc.perform(post("/api/monitoring/changes/pagespeed/58/1/restore").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        assertThat(n.getMaxLoadMs()).isEqualTo(4500);
+        verify(baselineConfigService, never()).clearSamples(anyString(), eq(58L));
+        verify(pageSpeedMonitorRepo, never()).updateGrowthSince(eq(58L), anyString());
     }
 
     @Test

@@ -1651,6 +1651,7 @@ public class SchedulerService {
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_bytes_pct INTEGER");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_requests_pct INTEGER");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_bytes_band BOOLEAN");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_since VARCHAR(30)");   // büyüme referansı başlangıcı (inceleme 2026-11-15)
         patch("ALTER TABLE pagespeed_checks ADD COLUMN extended BOOLEAN");
         patch("ALTER TABLE pagespeed_checks ADD COLUMN manual BOOLEAN");
         patch("ALTER TABLE pagespeed_checks ADD COLUMN recheck BOOLEAN");
@@ -9109,13 +9110,30 @@ public class SchedulerService {
      * → null (BİLİNMİYOR; WARN saatte bir).
      */
     List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> pageSpeedGrowthSamples(Long monitorId, boolean extended) {
+        GrowthRead r = pageSpeedGrowthRead(monitorId, extended, null);
+        return r == null ? null : r.samples();
+    }
+
+    /** Büyüme referansı okuması: örnekler + okuma sınıra takılmadı mı ({@code complete} — bant kontrollü uyumu için). */
+    record GrowthRead(List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> samples, boolean complete) {}
+
+    /**
+     * Pencerenin başı (inceleme 2026-11-15): {@code max(şimdi − 7 gün, growthSince)} — ölçüm TANIMI değişince (URL, kip, hariç
+     * tutma, UA, başlıklar, kimlik) eski tanımın ölçümleri yeni tanımın referansı olmaz. ISO metinleri aynı biçimde (sözlük
+     * sırası = zaman sırası).
+     */
+    static String growthWindowStart(Instant now, String growthSince) {
+        String weekAgo = ISO.format(now.minusMillis(com.sitemonitor.service.page.PageSpeedRules.GROWTH_WINDOW_MS));
+        return growthSince != null && growthSince.compareTo(weekAgo) > 0 ? growthSince : weekAgo;
+    }
+
+    GrowthRead pageSpeedGrowthRead(Long monitorId, boolean extended, String growthSince) {
         if (pageSpeedCheckRepo == null || monitorId == null) return null;
         Instant now = Instant.now();
         try {
-            List<Object[]> rows = pageSpeedCheckRepo.growthWindow(monitorId,
-                    ISO.format(now.minusMillis(com.sitemonitor.service.page.PageSpeedRules.GROWTH_WINDOW_MS)), ISO.format(now),
-                    com.sitemonitor.service.page.PageSpeedRules.GROWTH_READ_LIMIT);
-            return pageSpeedGrowthSamplesOf(rows, extended);
+            int limit = com.sitemonitor.service.page.PageSpeedRules.GROWTH_READ_LIMIT;
+            List<Object[]> rows = pageSpeedCheckRepo.growthWindow(monitorId, growthWindowStart(now, growthSince), ISO.format(now), limit);
+            return new GrowthRead(pageSpeedGrowthSamplesOf(rows, extended), rows == null || rows.size() < limit);
         } catch (Exception e) {
             long t = System.currentTimeMillis();
             if (t - lastGrowthWarnMs > 3_600_000L) {
@@ -9178,7 +9196,11 @@ public class SchedulerService {
         // okunur (sınırlı, zaman aşımlı tek sorgu) ve eşikler büyüme referansıyla yeniden değerlendirilir. Okunamazsa büyüme
         // eşikleri BİLİNMİYOR kalır (ihlal de sağlık da değil).
         if (res != null && res.reachable() && PageSpeedCheckerService.growthConfigured(m)) {
-            res = PageSpeedCheckerService.withGrowth(res, m, pageSpeedGrowthSamples(m.getId(), res.extended()));
+            GrowthRead gr = pageSpeedGrowthRead(m.getId(), res.extended(), m.getGrowthSince());
+            res = PageSpeedCheckerService.withGrowth(res, m, gr == null ? null : gr.samples(), gr != null && gr.complete());
+            // F4 kuralı (inceleme 2026-11-15): büyüme okuması (≤ 5 sn + havuz beklemesi) sırasında işçi işi bırakmış olabilir —
+            // bırakılan iş geçmiş satırı yazmaz.
+            if (workerJobAbandoned()) return abandonedCheckJob();
         }
         boolean cfgError = "CONFIG_ERROR".equals(res.status());
         boolean reachable = res.reachable();

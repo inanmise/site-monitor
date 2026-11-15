@@ -57,7 +57,10 @@ public class MonitorSparklineService {
     static final String PAGESPEED_BUDGET_DEFINED = "COALESCE(max_load_ms, 0) > 0 OR COALESCE(max_ttfb_ms, 0) > 0"
             + " OR COALESCE(max_page_kb, 0) > 0 OR COALESCE(max_requests, 0) > 0 OR COALESCE(min_page_kb, 0) > 0"
             + " OR COALESCE(max_js_kb, 0) > 0 OR COALESCE(max_img_kb, 0) > 0 OR COALESCE(max_font_kb, 0) > 0"
-            + " OR COALESCE(max_third_party_kb, 0) > 0";
+            + " OR COALESCE(max_third_party_kb, 0) > 0"
+            // Büyüme alarmı da bütçedir (inceleme 2026-11-15) — PageSpeedRules.budgetDefined (BREACH_KEYS) ile aynı küme:
+            // yalnız büyüme eşiği / bayt bandı olan izlemenin uyumu "bütçe tanımlı değil" (null) sayılmasın
+            + " OR COALESCE(growth_bytes_pct, 0) > 0 OR COALESCE(growth_requests_pct, 0) > 0 OR growth_bytes_band = TRUE";
 
     /**
      * Hata ifadeleri KONTROLÜN KENDİ HÜKMÜNDEN okunur (DATA-1, 2026-10-22): {@code ok} / {@code open} sütunu — saatlik
