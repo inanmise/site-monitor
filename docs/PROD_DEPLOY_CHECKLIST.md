@@ -642,9 +642,36 @@ Prod 20.185'ten eskiyse geçerlidir (satırın sürümünden eskiyse o satır). 
   SELECT patch_key, applied_at FROM schema_patch_markers
    WHERE patch_key IN ('2026-10-30-k6-settings-normalize', '2026-10-23-audit-chain-restart',
                        '2026-11-06-redundant-index-cleanup', '2026-10-31-holiday-calendar-seed',
-                       '2026-11-14-ad-org-role-lock-repair', '2026-10-18-tech-error-outage-sentence')
+                       '2026-11-14-ad-org-role-lock-repair', '2026-10-18-tech-error-outage-sentence',
+                       '2026-11-15-holiday-calendar-10y')
    ORDER BY applied_at;
   ```
+
+### 20.209 → 20.211 — bir kerelik
+Prod 20.211'den eskiyse geçerlidir. Ayrıntı: [`CHANGELOG.md`](../CHANGELOG.md). Kapı raporu:
+[`PROD_KAPISI_2026-11-15.md`](../PROD_KAPISI_2026-11-15.md).
+
+**Öncesi**
+- [ ] **(< 20.210) [ENGEL] NetScaler sınırları:** gövde ≥ 12 MB, boşta / yanıt zaman aşımı ≥ 960 sn; elle kurulmuş
+      OpenShift Route'ta `haproxy.router.openshift.io/timeout=960s` (yukarıdaki "Her dağıtımda" maddesi).
+- [ ] **(< 20.210) CSP:** NetScaler / Route kendi `Content-Security-Policy` başlığını ekliyorsa `script-src`'de
+      `'wasm-unsafe-eval'` olmalı. Yoksa görsel aracı AVIF üretemez, WebP'ye düşer. Uygulamanın kendi başlığı bunu
+      zaten içerir.
+- [ ] **(< 20.211) Yayın sağlığı:** v20.211.0 Release koşusunda Trivy raporunda Alpine 0, `app.jar` 0, yalnız
+      `usr/bin/k6` 6 HIGH olmalı (k6 2.4.0 sonraki yama sürümünde). Daha fazlası varsa imaj eski katmanla
+      derlenmiştir; `APK_REFRESH` derleme argümanını kontrol edin.
+- [ ] **Kullanıcı duyuruları:**
+  - (< 20.211) **Haftalık nöbet bildirimi** geldi: varsayılan kapalı, takım nöbet çizelgesi penceresinden kendisi açar.
+  - (< 20.210) **Sayfa hızı izlemelerine iki seçenek geldi:**
+    - genişletilmiş ölçüm (yeni izlemelerde açık);
+    - büyüme alarmı (önceki hafta medyanına göre).
+  - (< 20.210) **Tatil takvimi:** 2026–2035 yılları otomatik doldurulur. Tatile bakan izlemelerin planı yenilenir.
+
+**Sonrası**
+- [ ] **(< 20.210)** Bir kerelik işler sorgusunda `2026-11-15-holiday-calendar-10y` görünür (ilk tohumdan sonra).
+      Ayarlar → Tatil takvimi 2035'e dek dolu olmalı.
+- [ ] **(< 20.210)** Görsel aracında bir PNG'yi AVIF'e dönüştürün; sonuç `image/avif` olmalı. Tarayıcı konsolunda CSP
+      hatası olmamalı.
 
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
