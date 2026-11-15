@@ -38,7 +38,8 @@ describe('görsel motoru — seçenek doğrulama', () => {
     expect(invalid([])).toEqual({ field: 'options', reason: 'type' })
     expect(invalid({ resize: 5 })).toEqual({ field: 'resize', reason: 'type' })
     expect(invalid({ resize: { method: 'stretch' } })).toEqual({ field: 'resize.method', reason: 'unknown' })
-    expect(invalid({ format: 'avif' })).toEqual({ field: 'format', reason: 'unknown' })
+    expect(invalid({ format: 'jxl' })).toEqual({ field: 'format', reason: 'unknown' })
+    expect(normalizeOptions({ format: 'avif' }).format).toBe('avif')            // 2026-11-15: AVIF geçerli çıktı biçimi
     expect(invalid({ quality: 'best' })).toEqual({ field: 'quality', reason: 'type' })
     expect(invalid({ quality: 0 })).toEqual({ field: 'quality', reason: 'range' })
     expect(invalid({ quality: 101 })).toEqual({ field: 'quality', reason: 'range' })
@@ -76,13 +77,14 @@ describe('görsel motoru — seçenek doğrulama', () => {
 
   it('sözleşme sabitleri (UI bu adlara göre kodlanır)', () => {
     expect(ENGINE_LIMITS).toEqual({ maxInputBytes: 25 * 1024 * 1024, maxPixels: 50_000_000, maxSide: 30_000 })
-    expect(OUTPUT_FORMATS).toEqual(['keep', 'jpeg', 'png', 'webp', 'smallest'])
+    expect(OUTPUT_FORMATS).toEqual(['keep', 'jpeg', 'png', 'webp', 'smallest', 'avif'])
     expect(RESIZE_METHODS).toEqual(['none', 'scale', 'fit', 'cover', 'thumb'])
     expect(ERROR_CODES).toEqual(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED', 'BROWSER_UNSUPPORTED',
       'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
     expect(NOTE_CODES).toEqual(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE',
       'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED',
-      'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
+      'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED',
+      'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED'])
   })
 })
 

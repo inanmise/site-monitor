@@ -142,7 +142,8 @@ class WebConfigTest {
         }
         assertThat(props.getProperty("server.compression.enabled")).isEqualTo("true");
         assertThat(java.util.List.of(props.getProperty("server.compression.mime-types").split(",")))
-                .contains("text/javascript", "application/javascript", "text/css", "application/json", "image/svg+xml", "application/manifest+json");
+                .contains("text/javascript", "application/javascript", "text/css", "application/json", "image/svg+xml", "application/manifest+json",
+                        "application/wasm");
     }
 
     /**
@@ -150,7 +151,7 @@ class WebConfigTest {
      * Stil tarafındaki 'unsafe-inline' bilerek kalır (shadcn Chart &lt;style&gt; enjekte eder, mail önizlemeleri).
      */
     @Test
-    @DisplayName("CSP: script-src 'self' — 'unsafe-inline' ve 'unsafe-eval' yok; çerçeveleme kapalı")
+    @DisplayName("CSP: script-src 'self' 'wasm-unsafe-eval' — 'unsafe-inline' ve 'unsafe-eval' yok; çerçeveleme kapalı")
     void csp_scriptSrc_hasNoUnsafeInline() throws Exception {
         var res = new org.springframework.mock.web.MockHttpServletResponse();
         new WebConfig().securityHeadersFilter().doFilter(
@@ -158,8 +159,12 @@ class WebConfigTest {
                 new org.springframework.mock.web.MockFilterChain());
         String csp = res.getHeader("Content-Security-Policy");
         String scriptSrc = group(csp, "script-src ([^;]*);");
-        assertThat(scriptSrc.trim()).isEqualTo("'self'");
-        assertThat(csp).doesNotContain("unsafe-eval").contains("frame-ancestors 'none'");
+        // Tam olarak bu iki kaynak: aynı köken + YALNIZ WebAssembly derlemesi (AVIF kodlayıcısı, 2026-11-15).
+        assertThat(scriptSrc.trim().split("\\s+")).containsExactly("'self'", "'wasm-unsafe-eval'");
+        // 'unsafe-eval' / 'unsafe-inline' hiçbir yönergede yok ('wasm-unsafe-eval' içindeki alt dize sayılmaz).
+        assertThat(csp.replace("'wasm-unsafe-eval'", "")).doesNotContain("unsafe-eval");
+        assertThat(scriptSrc).doesNotContain("unsafe-inline");
+        assertThat(csp).contains("frame-ancestors 'none'");
     }
 
     private static String group(String text, String regex) {

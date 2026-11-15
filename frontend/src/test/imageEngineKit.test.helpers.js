@@ -248,8 +248,9 @@ const FAKE_MAGIC = [0x46, 0x4b, 0x45, 0x21]
  * Sahte kayıplı kodlayıcı: kaliteye göre değerleri kaba adımlara yuvarlar, zlib ile sıkıştırır. Gerçek kodlayıcı gibi
  * kalite düştükçe dosya küçülür ve benzerlik azalır (tek yönlü). `encodes` kodlama sayacıdır.
  */
-export function fakePlatform({ webp = true, failDecode = false } = {}) {
-  const stats = { encodes: 0, decodes: 0, regionDecodes: 0, closed: 0, prepared: 0, sessionsClosed: 0 }
+export function fakePlatform({ webp = true, failDecode = false, avif = null } = {}) {
+  const stats = { encodes: 0, decodes: 0, regionDecodes: 0, closed: 0, prepared: 0, sessionsClosed: 0, avifPrepared: 0, avifEncodes: 0,
+    avifQualities: [] }
   const lossy = (image, mime, quality) => {
     const q = Math.round(quality * 100)
     const step = Math.max(1, Math.round((100 - q) / 3))
@@ -319,6 +320,8 @@ export function fakePlatform({ webp = true, failDecode = false } = {}) {
     },
     async decodeRegions(blob, rects, expectW, expectH) {
       stats.regionDecodes += 1
+      // AVIF'i çözemeyen tarayıcı benzetimi
+      if (avif && avif.decodable === false && blob.type === 'image/avif') throw new EngineError('DECODE_FAILED', { reason: 'decoder' })
       const img = await unpack(blob)
       if (img.width !== expectW || img.height !== expectH) throw new EngineError('ENCODE_FAILED', { reason: 'size_mismatch' })
       return rects.map((r) => {
@@ -330,6 +333,25 @@ export function fakePlatform({ webp = true, failDecode = false } = {}) {
         return out
       })
     },
+  }
+  // AVIF (2026-11-15): `avif` verilirse platform AVIF'i "destekler" — kodlayıcı aynı sahte kayıplı kodlayıcıdır (MIME
+  // image/avif). { available = true, prepareError, encodeError, decodable = true }
+  if (avif) {
+    platform.avifAvailable = async () => avif.available !== false
+    platform.prepareAvif = async (image, tuning) => {
+      stats.avifPrepared += 1
+      stats.avifTuning = tuning
+      if (avif.prepareError) throw avif.prepareError
+      return {
+        async encode(mime, quality) {
+          stats.avifEncodes += 1
+          stats.avifQualities.push(Math.round(quality * 100))
+          if (avif.encodeError) throw avif.encodeError
+          return lossy(image, mime, quality)
+        },
+        close() { stats.sessionsClosed += 1 },
+      }
+    }
   }
   return platform
 }

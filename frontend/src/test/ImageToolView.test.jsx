@@ -12,6 +12,7 @@ const eng = vi.hoisted(() => ({
 vi.mock('../components/page/resourcescan/imagetool/engineClient.js', () => eng)
 
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import { TR as tr } from '../i18n/tr.js'
 import { ImageToolProvider } from '../components/page/resourcescan/imagetool/ImageToolContext.jsx'
 import { createImageToolStore } from '../components/page/resourcescan/imagetool/imageToolStore.js'
 import ImageToolView from '../components/page/resourcescan/imagetool/ImageToolView.jsx'
@@ -102,7 +103,7 @@ describe('görsel aracı görünümü', () => {
     expect(slot('prs-it-zip')).toBeNull()
     expect(slot('prs-it-back')).toBeNull()
     const panel = slot('prs-it-settings-panel')
-    await waitFor(() => expect([...slot('prs-it-format', panel).options].map((o) => o.value)).toEqual(['keep', 'jpeg', 'png', 'webp', 'smallest']))
+    await waitFor(() => expect([...slot('prs-it-format', panel).options].map((o) => o.value)).toEqual(['keep', 'jpeg', 'png', 'webp', 'avif', 'smallest']))
     expect(slot('prs-it-method', panel).value).toBe('none')
     expect(slot('prs-it-width', panel)).toBeNull()                    // "boyutu değiştirme"de ölçü alanları yok
     expect(screen.getByRole('button', { name: 'Dosya seç' })).toBeEnabled()
@@ -136,6 +137,46 @@ describe('görsel aracı görünümü', () => {
     fireEvent.paste(document, { clipboardData: { files: [], items: [{ kind: 'file', getAsFile: () => fileOf('yapistirilan.png') }] } })
     await waitFor(() => expect(entries()).toHaveLength(2))
     expect(entries().map((e) => slot('prs-it-entry-name', e).textContent)).toEqual(['birakilan.png', 'yapistirilan.png'])
+  })
+
+  it('yapıştırma yalnız GÖRÜNÜR araca: gizli kapta, başka bileşenin ele aldığı ya da görünüm dışı yazı alanına yapıştırma kuyruğa girmez', async () => {
+    const pasteFile = (target, name) => fireEvent.paste(target, { clipboardData: { files: [], items: [{ kind: 'file', getAsFile: () => fileOf(name) }] } })
+    const view = setup()
+    // (b) kardeş yazı alanı yapıştırmayı kendisi ele alır (Sorun Bildir penceresi gibi: preventDefault) → araç almaz
+    const sibling = document.createElement('textarea')
+    sibling.addEventListener('paste', (e) => e.preventDefault())
+    document.body.appendChild(sibling)
+    pasteFile(sibling, 'baskasi.png')
+    // görünüm dışındaki bir yazı alanına yapılan (ele alınmamış) görsel yapıştırması da alınmaz
+    const outside = document.createElement('input')
+    document.body.appendChild(outside)
+    pasteFile(outside, 'disarida.png')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(entries()).toHaveLength(0)
+    // (c) görünür görünüm: belgeye yapıştırma hâlâ alınır
+    pasteFile(document, 'gorunur.png')
+    await waitFor(() => expect(entries()).toHaveLength(1))
+    // (a) kap gizlenince (zorla bağlı pasif sekme / hidden) belge yapıştırması kuyruğa GİRMEZ
+    const wrapper = slot('prs-it-view').parentElement
+    wrapper.setAttribute('hidden', '')
+    pasteFile(document, 'gizli.png')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(entries()).toHaveLength(1)
+    wrapper.removeAttribute('hidden')
+    // pasif sekme (Radix forceMount: role tabpanel + data-state inactive) de gizli sayılır
+    wrapper.setAttribute('role', 'tabpanel')
+    wrapper.setAttribute('data-state', 'inactive')
+    pasteFile(document, 'pasif-sekme.png')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(entries()).toHaveLength(1)
+    wrapper.setAttribute('data-state', 'active')
+    pasteFile(document, 'etkin-sekme.png')
+    await waitFor(() => expect(entries()).toHaveLength(2))
+    wrapper.removeAttribute('role')
+    wrapper.removeAttribute('data-state')
+    sibling.remove()
+    outside.remove()
+    view.unmount()
   })
 
   it(`sınır: ${TOOL_MAX_FILES} görselden fazlası eklenmez ve KAÇ dosyanın eklenmediği söylenir; kuyruk dolunca dosya seçimi kapanır`, async () => {
@@ -218,6 +259,21 @@ describe('görsel aracı görünümü', () => {
     const webp = [...slot('prs-it-format', panel).options].find((o) => o.value === 'webp')
     expect(webp.disabled).toBe(true)
     expect(webp.textContent).toContain('bu tarayıcıda yok')
+  })
+
+  it('AVIF (2026-11-15): tarayıcı burada üretebiliyorsa seçenek açık, ipucu yavaşlığı söyler; üretemiyorsa kapalı + nedeni', async () => {
+    const { unmount } = setup({ engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp: true, avif: true }) }) })
+    let panel = slot('prs-it-settings-panel')
+    await waitFor(() => expect([...slot('prs-it-format', panel).options].find((o) => o.value === 'avif').disabled).toBe(false))
+    fireEvent.change(slot('prs-it-format', panel), { target: { value: 'avif' } })
+    await waitFor(() => expect(slot('prs-it-format', panel).value).toBe('avif'))
+    expect(panel.textContent).toContain(tr['prs.it.set.formatHint.avif'])
+    unmount()
+    setup({ engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp: true, avif: false }) }) })
+    panel = slot('prs-it-settings-panel')
+    await waitFor(() => expect([...slot('prs-it-format', panel).options].find((o) => o.value === 'avif').disabled).toBe(true))
+    const avif = [...slot('prs-it-format', panel).options].find((o) => o.value === 'avif')
+    expect(avif.textContent).toContain('bu tarayıcıda yok')
   })
 
   it('üst veri anahtarları varsayılan kapalı; yalnız görselde o veri varsa açılabilir', async () => {
@@ -327,6 +383,24 @@ describe('görsel aracı görünümü', () => {
     setup({ onBack })
     fireEvent.click(slot('prs-it-back'))
     expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('bağlam yoksa (sağlayıcısız çizim) çökmez: nötr uyarı + "Sayfayı yenile" düğmesi', () => {
+    const reload = vi.fn()
+    const orig = window.location
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } })
+    try {
+      expect(() => render(<ImageToolView onBack={() => {}} />)).not.toThrow()
+      const box = slot('prs-it-tool-unavailable')
+      expect(box).not.toBeNull()
+      expect(box).toHaveTextContent('Görsel aracı şu an açılamadı — sayfayı yenileyin.')
+      expect(slot('empty', box).getAttribute('data-tone')).toBe('neutral')
+      expect(slot('prs-it-view')).toBeNull()
+      fireEvent.click(within(box).getByRole('button', { name: 'Sayfayı yenile' }))
+      expect(reload).toHaveBeenCalledTimes(1)
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: orig })
+    }
   })
 })
 

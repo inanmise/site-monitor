@@ -30,7 +30,8 @@ const summary = (over = {}) => resultSummary({
 
 describe('görsel aracı — kod listeleri motorun ve sözleşmenin listeleriyle AYNI, her kodun TR + EN metni var', () => {
   it('motorun dışa aktardığı listeler = arayüzün listeleri (biçim, yöntem, hata, not, sınırlar)', () => {
-    expect([...FORMATS]).toEqual([...engine.OUTPUT_FORMATS])
+    // Arayüz sırası farklı olabilir (AVIF "en küçük"ün önünde gösterilir); küme aynı olmalı
+    expect([...FORMATS].sort()).toEqual([...engine.OUTPUT_FORMATS].sort())
     expect([...METHODS]).toEqual([...engine.RESIZE_METHODS])
     expect([...ENGINE_CODES].sort()).toEqual([...engine.ERROR_CODES].sort())
     expect([...NOTE_CODES].sort()).toEqual([...engine.NOTE_CODES].sort())

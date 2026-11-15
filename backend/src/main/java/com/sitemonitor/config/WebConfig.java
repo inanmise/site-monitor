@@ -187,8 +187,10 @@ public class WebConfig implements WebMvcConfigurer {
                 // CSP — React SPA + same-origin API. script-src'de 'unsafe-inline' YOK (2026-10-01, onaylı öneri 5):
                 // index.html yalnız harici modül yükler, sunucu HTML'inde ve ön yüzde satır içi betik / olay işleyicisi
                 // yok. Stil tarafı açık kalır: shadcn Chart <style> enjekte eder, mail önizlemeleri satır içi stil taşır.
+                // 'wasm-unsafe-eval' (2026-11-15): görsel aracının AVIF kodlayıcısı (WebAssembly) derlenebilsin. Yalnız
+                // WebAssembly derlemesini açar; eval / new Function / satır içi betik ('unsafe-eval' / 'unsafe-inline') YOK.
                 res.setHeader("Content-Security-Policy",
-                        "default-src 'self'; script-src 'self'; " +
+                        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; " +
                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
                         "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; " +
                         // frame-src 'self': Sorun Bildirimleri mail geçmişindeki sandbox'lı srcdoc iframe

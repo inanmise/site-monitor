@@ -30,7 +30,7 @@ import {
 export const CACHE_MAX_BYTES = 256 * 1024 * 1024
 const IDLE = Object.freeze({ state: 'idle', phase: null, fraction: null, original: null, result: null, problem: null, action: null })
 const NO_PROGRESS = Object.freeze({ phase: null, fraction: null })
-const SUPPORT_LOADING = Object.freeze({ state: 'loading', webp: false, worker: false, limits: defaultEngine.FALLBACK_LIMITS })
+const SUPPORT_LOADING = Object.freeze({ state: 'loading', webp: false, avif: false, worker: false, limits: defaultEngine.FALLBACK_LIMITS })
 
 const sizeOf = (blob) => (blob && Number.isFinite(blob.size) ? blob.size : 0)
 
@@ -127,14 +127,15 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
     if (!supportPromise) {
       supportPromise = (async () => {
         let limits = defaultEngine.FALLBACK_LIMITS
-        let s = { worker: false, webp: false }
+        let s = { worker: false, webp: false, avif: false }
         let ok = true
         try { limits = await engine.engineLimits() } catch { ok = false }
         try { s = await engine.engineSupport() } catch { ok = false }
         if (disposed) return support
         // Bayat paket (dağıtımdan sonra eski sayfa): "hazır" sayılmaz — WebP / tarayıcı desteği hakkında yanlış söz söylenmez
         const stale = s?.staleBundle === true
-        support = Object.freeze({ state: stale ? 'stale' : ok ? 'ready' : 'unknown', webp: !stale && s?.webp === true, worker: !stale && s?.worker === true,
+        support = Object.freeze({ state: stale ? 'stale' : ok ? 'ready' : 'unknown', webp: !stale && s?.webp === true, avif: !stale && s?.avif === true,
+          worker: !stale && s?.worker === true,
           limits: limits || defaultEngine.FALLBACK_LIMITS, ...(stale ? { staleBundle: true } : {}) })
         emit('support')
         return support
@@ -223,7 +224,7 @@ export function createImageToolStore({ fetchImage, engine = defaultEngine, downl
   /** Bir işlem bayat paket hatası verdi: destek durumu "bayat" olur (menüler / araç "yenileyin" der). */
   const markStale = () => {
     if (support.staleBundle) return
-    support = Object.freeze({ ...support, state: 'stale', webp: false, worker: false, staleBundle: true })
+    support = Object.freeze({ ...support, state: 'stale', webp: false, avif: false, worker: false, staleBundle: true })
     emit('support')
   }
   async function runEngine(blob, options, signal, onProgress) {
