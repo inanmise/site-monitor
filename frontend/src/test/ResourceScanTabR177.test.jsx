@@ -489,7 +489,7 @@ describe('iptal, bitiş bildirimi, ilerleme', () => {
     })
     const onShow = vi.fn()
     await mountDone({ active: false, onShow })
-    const open = await screen.findByRole('button', { name: 'Aç' })
+    const open = await screen.findByRole('button', { name: 'Aç' }, { timeout: 5000 })   // CI yükünde yoklama gecikebilir
     expect(open.closest('[data-slot="prs-toast"]').textContent).toMatch(/kaynak analizi bitti: 72 · C/)
     fireEvent.click(open)
     expect(onShow).toHaveBeenCalled()

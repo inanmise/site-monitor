@@ -157,6 +157,54 @@ class PageResourceSiteScanControllerTest {
     }
 
     @Test
+    @DisplayName("tüm site: crawl=full → tüm site tavanı (20–1000), denetimde crawl; bozuk crawl / resume_from → 400")
+    void fullCrawlBody() throws Exception {
+        when(scans.fullSiteLimits()).thenReturn(new PageResourceScanService.FullSiteLimits(1000, 3600, 30000, 3000));
+        String[] bodies = {"{\"scope\":\"site\",\"crawl\":\"full\"}", "{\"scope\":\"site\",\"crawl\":\"FULL\",\"max_pages\":5}",
+                "{\"scope\":\"site\",\"crawl\":\"full\",\"max_pages\":250}"};
+        for (String body : bodies) {
+            mvc.perform(post("/api/monitoring/page/61/resource-scans").session(session())
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isAccepted());
+        }
+        verify(scans).start(any(PageMonitor.class), anyString(), any(), eq(new PageResourceScanService.SiteOptions(1000, true, null)));
+        verify(scans).start(any(PageMonitor.class), anyString(), any(), eq(new PageResourceScanService.SiteOptions(20, true, null)));
+        verify(scans).start(any(PageMonitor.class), anyString(), any(), eq(new PageResourceScanService.SiteOptions(250, true, null)));
+        verify(auditService, org.mockito.Mockito.atLeastOnce()).recordAction(eq("PAGE_RESOURCE_SCAN_RUN"), any(HttpSession.class),
+                eq("PAGE_MONITOR"), eq("61"), argThat((String d) -> d.contains("\"crawl\":\"full\"")), isNull());
+        for (String[] bad : new String[][]{{"{\"scope\":\"site\",\"crawl\":\"deep\"}", "crawl"},
+                {"{\"scope\":\"site\",\"resume_from\":12}", "resume_from"},
+                {"{\"scope\":\"site\",\"crawl\":\"full\",\"resume_from\":\"x\"}", "resume_from"},
+                {"{\"scope\":\"site\",\"crawl\":\"full\",\"resume_from\":-4}", "resume_from"}}) {
+            mvc.perform(post("/api/monitoring/page/61/resource-scans").session(session())
+                            .contentType(MediaType.APPLICATION_JSON).content(bad[0]))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value(bad[1]));
+        }
+    }
+
+    @Test
+    @DisplayName("sürdürme: önce denetlenir — uygun değilse tarama başlamaz (404 / 409 + kod); uygunsa servise kimlikle gider")
+    void resumeIsValidatedFirst() throws Exception {
+        when(scans.fullSiteLimits()).thenReturn(new PageResourceScanService.FullSiteLimits(1000, 3600, 30000, 3000));
+        when(scans.loadResume(61L, 77L)).thenThrow(new PageResourceScanService.ResumeException("RESOURCE_SCAN_NOTHING_TO_RESUME"));
+        when(scans.loadResume(61L, 78L)).thenThrow(new PageResourceScanService.ResumeException("RESOURCE_SCAN_NOT_FOUND"));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans").session(session())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"scope\":\"site\",\"crawl\":\"full\",\"resume_from\":77}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_NOTHING_TO_RESUME"));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans").session(session())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"scope\":\"site\",\"crawl\":\"full\",\"resume_from\":\"78\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_NOT_FOUND"));
+        verify(scans, never()).start(any(PageMonitor.class), anyString(), any(), any());
+        mvc.perform(post("/api/monitoring/page/61/resource-scans").session(session())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"scope\":\"site\",\"crawl\":\"full\",\"resume_from\":79}"))
+                .andExpect(status().isAccepted());
+        verify(scans).start(any(PageMonitor.class), anyString(), any(), eq(new PageResourceScanService.SiteOptions(1000, true, 79L)));
+    }
+
+    @Test
     @DisplayName("tam sayı kuralı: tam değerli ondalık kabul, büyük sayı kırpılır, NaN / ondalık / eksi işaretli metin değil")
     void wholeNumber() {
         org.assertj.core.api.Assertions.assertThat(PageResourceScanController.wholeNumber(4.0)).isEqualTo(4);

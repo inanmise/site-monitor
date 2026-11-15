@@ -1,10 +1,10 @@
 import { useEffect, useId, useState } from 'react'
-import { ChevronDown, FileText, Globe, Play, RotateCw } from 'lucide-react'
+import { ChevronDown, FileText, Globe, Network, Play, RotateCw } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import Field from '../../ui/Field.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
-import { defaultSitePages, siteLimits, sitePageChoices } from './resourceScanReportModel.js'
+import { defaultSitePages, fullSiteLimits, siteLimits, sitePageChoices } from './resourceScanReportModel.js'
 import { formatMs, formatNumber } from './resourceScanModel.js'
 import { TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -19,11 +19,15 @@ import { cn } from '@/lib/utils'
  * küçük bir pencere açar: sayfa sayısı (2 … sunucu sınırı), ne yapılacağı ve süre sınırı. Eski sunucu gövdeyi
  * (`scope`) bilmez ve tek sayfa analizi başlatır — sekme bunu yanıttan anlar ve söyler (`siteScopeIgnored`).
  */
-export default function ResourceScanStart({ hasFinished, running, starting, limits, onStartPage, onStartSite }) {
+export default function ResourceScanStart({ hasFinished, running, starting, limits, onStartPage, onStartSite, onStartFull }) {
   const t = useT()
   const locale = useDateLocale()
   const [siteOpen, setSiteOpen] = useState(false)
+  const [fullOpen, setFullOpen] = useState(false)
   const { maxPages } = siteLimits(limits)
+  // Tüm site taraması (2026-11-15): yalnız sunucu sınırını gönderiyorsa (eski sunucu → seçenek yok)
+  const full = fullSiteLimits(limits)
+  const fullOffered = full.supported && typeof onStartFull === 'function'
   const busy = starting || Boolean(running)
   const main = running ? t('prs.runningShort') : hasFinished ? t('prs.restart') : t('prs.start')
   return (
@@ -57,12 +61,56 @@ export default function ResourceScanStart({ hasFinished, running, starting, limi
                 <span className={cn('text-xs text-muted-foreground', WRAP)}>{t('prs.site.start.siteHint', formatNumber(maxPages, locale))}</span>
               </span>
             </DropdownMenuItem>
+            {fullOffered && (
+              <DropdownMenuItem data-slot="prs-start-full" className="items-start gap-2.5 py-2 pointer-coarse:min-h-10"
+                onSelect={() => setFullOpen(true)}>
+                <Network aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="font-semibold">{t('prs.crawl.start.title')}</span>
+                  <span className={cn('text-xs text-muted-foreground', WRAP)}>{t('prs.crawl.start.hint', formatNumber(full.maxPages, locale))}</span>
+                </span>
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </ButtonGroup>
       <SiteStartDialog open={siteOpen} onClose={() => setSiteOpen(false)} limits={limits} starting={starting}
         onConfirm={async (n) => { const ok = await onStartSite?.(n); if (ok !== false) setSiteOpen(false) }} />
+      {fullOffered && (
+        <FullSiteStartDialog open={fullOpen} onClose={() => setFullOpen(false)} limits={limits} starting={starting}
+          onConfirm={async () => { const ok = await onStartFull?.(); if (ok !== false) setFullOpen(false) }} />
+      )}
     </>
+  )
+}
+
+/** "Tüm siteyi tara" penceresi: ne yapılacağı, sınırlar ve hedef siteye giden yük. */
+export function FullSiteStartDialog({ open, onClose, limits, starting, onConfirm }) {
+  const t = useT()
+  const locale = useDateLocale()
+  const { maxPages, maxSeconds } = fullSiteLimits(limits)
+  const footer = (
+    <div className="flex w-full flex-wrap items-center justify-end gap-2">
+      <Button type="button" variant="outline" className={TOUCH} onClick={onClose} disabled={starting}>{t('prs.site.dlg.cancel')}</Button>
+      <Button type="button" data-slot="prs-full-confirm" className={TOUCH} disabled={starting} aria-busy={starting || undefined}
+        onClick={() => onConfirm?.()}>
+        {starting ? <Spinner size={14} inline decorative /> : <Network aria-hidden="true" />}{t('prs.crawl.dlg.confirm')}
+      </Button>
+    </div>
+  )
+  return (
+    <ModalShell open={open} onClose={onClose} title={t('prs.crawl.dlg.title')} icon={Network} size="sm" busy={starting} footer={footer}>
+      <div data-slot="prs-full-dialog" className="flex min-w-0 flex-col gap-3">
+        <p className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('prs.crawl.dlg.intro')}</p>
+        <ul data-slot="prs-full-facts" className="m-0 flex list-disc flex-col gap-1 pl-5 text-xs text-muted-foreground">
+          <li className={WRAP}>{t('prs.crawl.dlg.factPages', formatNumber(maxPages, locale))}</li>
+          <li className={WRAP}>{t('prs.crawl.dlg.factTime', formatMs(maxSeconds * 1000, locale))}</li>
+          <li className={WRAP}>{t('prs.site.dlg.factShared')}</li>
+          <li className={WRAP}>{t('prs.crawl.dlg.factTraffic')}</li>
+          <li className={WRAP}>{t('prs.site.dlg.factJs')}</li>
+        </ul>
+      </div>
+    </ModalShell>
   )
 }
 

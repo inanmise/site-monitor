@@ -1,15 +1,20 @@
 import { useMemo, useState } from 'react'
-import { Globe, Layers, Link2, TriangleAlert } from 'lucide-react'
+import { CircleCheck, Globe, Layers, Link2, ListX, Network, Play, TriangleAlert } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
+import PaginationBar from '../../ui/PaginationBar.jsx'
+import { usePagination } from '../../../hooks/usePagination.js'
+import { PAGINATION_PRESETS } from '../../../hooks/paginationPresets.js'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import { categoryLabel, formatMs, formatNumber, formatSize, gradeTone, isCapped, plural, scoreTone } from './resourceScanModel.js'
 import {
-  SITE_SORTS, SITE_TABLE_MIN_PX, pageStatusText, pageStatusTone, recShortLabel, siteCountText, siteModel, sitePageErrorText, sortSitePages,
+  SITE_SORTS, SITE_TABLE_MIN_PX, canResumeCrawl, crawlReasonText, crawlSourceText, pageStatusText, pageStatusTone, recShortLabel,
+  siteCountText, siteModel, sitePageErrorText, sortSitePages,
 } from './resourceScanReportModel.js'
-import { CHIP, Section, UrlText, WRAP } from './ResourceScanParts.jsx'
+import { CHIP, Section, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
+import { Button } from '@/components/shadcn/button'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
@@ -20,14 +25,22 @@ import { cn } from '@/lib/utils'
  * ya da kartlar (not, süre, boyut, istek, güvenlik / SEO / erişilebilirlik puanları, öne çıkan öneriler, benzersiz bayt),
  * ortak kaynaklar (≥ 2 sayfada, bir kez ölçülür). Açılamayan sayfa nedeniyle; süre dolunca taranmayan sayfa ayrı söylenir.
  * Puanı hesaplanamayan "—" (asla 0 / yeşil değil). Adresler kesilmez.
+ *
+ * <p>Tüm site taraması (2026-11-15): tarama özeti (bulunan sayfa, kaynaklar, site haritası, durma nedeni), taranmayan
+ * sayfalar adıyla + nedeniyle ve "Kaldığı yerden sürdür" (çalıştırma izni + bitmemiş kuyruk). Sayfa ve taranmayan sayfa
+ * listeleri sayfalı (1000+ satır).
  */
-export default function ResourceScanSite({ scan, analysis }) {
+export default function ResourceScanSite({ scan, analysis, canRun = false, busy = false, onResume }) {
   const t = useT()
   const locale = useDateLocale()
   const model = useMemo(() => siteModel(analysis?.site), [analysis])
   const [sort, setSort] = useState('grade_asc')
   const [measureRef, width] = useElementWidth()
   const pages = useMemo(() => (model ? sortSitePages(model.pages, sort, locale) : []), [model, sort, locale])
+  const pager = usePagination(pages, { listKey: 'prs-site-pages', preset: 'panel', resetDeps: [sort, scan?.id ?? null] })
+  const unscanned = model?.unscanned ?? []
+  const unPager = usePagination(unscanned, { listKey: 'prs-site-unscanned', preset: 'panel', resetDeps: [scan?.id ?? null] })
+  const pageMin = PAGINATION_PRESETS.panel.sizeOptions[0]
 
   if (!model) {
     return (
@@ -43,6 +56,11 @@ export default function ResourceScanSite({ scan, analysis }) {
   const incomplete = model.incomplete ?? isCapped(scan)
   return (
     <div data-slot="prs-site" data-state="ok" className="flex min-w-0 flex-col gap-3">
+      {model.crawl && (
+        <CrawlSummary crawl={model.crawl} unscannedTotal={model.unscannedTotal} t={t} locale={locale}
+          resume={canRun && canResumeCrawl(scan, model) && typeof onResume === 'function'} busy={busy}
+          onResume={() => onResume(scan.id)} />
+      )}
       <Section slot="prs-site-summary" icon={Globe} title={t('prs.site.title')} titleFocusable
         description={`${siteCountText(tt, t, locale)}; ${t('prs.site.descTail')}`}>
         <ul data-slot="prs-site-totals" className="m-0 grid min-w-0 list-none grid-cols-2 gap-2 p-0 sm:grid-cols-3 lg:grid-cols-5">
@@ -102,7 +120,7 @@ export default function ResourceScanSite({ scan, analysis }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pages.map((p) => (
+                {pager.pageItems.map((p) => (
                   <TableRow key={p.i} data-slot="prs-site-page" data-status={p.status} data-main={p.main ? 'true' : undefined}>
                     <TableCell className="align-top whitespace-normal"><PageCell p={p} t={t} locale={locale} /></TableCell>
                     <TableCell className="align-top whitespace-normal"><GradeBadge p={p} t={t} /></TableCell>
@@ -118,7 +136,7 @@ export default function ResourceScanSite({ scan, analysis }) {
             </Table>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
-              {pages.map((p) => (
+              {pager.pageItems.map((p) => (
                 <li key={p.i} data-slot="prs-site-page" data-status={p.status} data-main={p.main ? 'true' : undefined}
                   className="flex min-w-0 flex-col gap-2 rounded-lg border px-3 py-2.5">
                   <div className="flex min-w-0 items-start gap-2">
@@ -139,7 +157,31 @@ export default function ResourceScanSite({ scan, analysis }) {
             </ul>
           )}
         </div>
+        {pages.length > pageMin && <PaginationBar {...pager} />}
       </Section>
+
+      {model.crawl && model.unscannedTotal > 0 && (
+        <Section slot="prs-site-unscanned" icon={ListX} title={t('prs.crawl.unscannedTitle')} description={t('prs.crawl.unscannedDesc')}>
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+            {unPager.pageItems.map((u) => (
+              <li key={`${u.url}#${u.i}`} data-slot="prs-site-unscanned-row" data-reason={u.reason || undefined}
+                className="flex min-w-0 flex-col gap-1 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <UrlText url={u.url} t={t} className="min-w-0 text-sm sm:flex-1" />
+                <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-unscanned-source">{crawlSourceText(u.source, t)}</ToneBadge>
+                  <span className={WRAP}>{crawlReasonText(u.reason, t)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {unscanned.length > pageMin && <PaginationBar {...unPager} />}
+          {model.unscannedTotal > unscanned.length && (
+            <p data-slot="prs-site-unscanned-more" className="m-0 text-xs text-muted-foreground">
+              {t('prs.crawl.unscannedMore', formatNumber(model.unscannedTotal - unscanned.length, locale), formatNumber(unscanned.length, locale))}
+            </p>
+          )}
+        </Section>
+      )}
 
       <Section slot="prs-site-shared" icon={Link2} title={t('prs.site.sharedTitle')} description={t('prs.site.sharedDesc')}>
         {model.shared.length === 0 ? (
@@ -163,6 +205,69 @@ export default function ResourceScanSite({ scan, analysis }) {
         )}
       </Section>
     </div>
+  )
+}
+
+/** Tüm site taramasının özeti: durum, bulunan / kaynaklar, site haritası, sürdürme. */
+function CrawlSummary({ crawl, unscannedTotal, t, locale, resume, busy, onResume }) {
+  const complete = crawl.complete === true
+  const sm = crawl.sitemap
+  const fmt = (v) => (v == null ? '—' : formatNumber(v, locale))
+  return (
+    <Section slot="prs-crawl" icon={Network} title={t('prs.crawl.title')} data-complete={complete ? 'true' : crawl.complete === false ? 'false' : undefined}>
+      {complete ? (
+        <div data-slot="prs-crawl-complete">
+          <AlertBanner tone="success" className="mb-0" icon={CircleCheck}>{t('prs.crawl.complete')}</AlertBanner>
+        </div>
+      ) : crawl.complete === false ? (
+        <div data-slot="prs-crawl-incomplete">
+          <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>
+            {plural(t, 'prs.crawl.incomplete', unscannedTotal, formatNumber(unscannedTotal, locale), crawlReasonText(crawl.stopReason, t))}
+          </AlertBanner>
+        </div>
+      ) : null}
+      <ul data-slot="prs-crawl-tiles" className="m-0 grid min-w-0 list-none grid-cols-2 gap-2 p-0 sm:grid-cols-4">
+        <Tile k="discovered" label={t('prs.crawl.tile.discovered')} value={fmt(crawl.discovered)} />
+        <Tile k="links" label={t('prs.crawl.tile.fromLinks')} value={fmt(crawl.fromLinks)} />
+        <Tile k="sitemap" label={t('prs.crawl.tile.fromSitemap')} value={fmt(crawl.fromSitemap)} />
+        {crawl.priorPages > 0 && <Tile k="prior" label={t('prs.crawl.tile.prior')} value={fmt(crawl.priorPages)} />}
+      </ul>
+      <ul data-slot="prs-crawl-facts" className="m-0 flex list-disc flex-col gap-1 pl-5 text-xs text-muted-foreground">
+        {sm.found === true && (
+          <li className={WRAP} data-slot="prs-crawl-sitemap">
+            {t('prs.crawl.sitemap.found', fmt(sm.filesRead), fmt(sm.urls), fmt(sm.added))}
+            {sm.fromRobots ? ` ${t('prs.crawl.sitemap.robots')}` : ''}
+          </li>
+        )}
+        {sm.found === false && <li className={WRAP} data-slot="prs-crawl-sitemap-none">{t('prs.crawl.sitemap.none')}</li>}
+        {sm.truncated && <li className={WRAP}>{t('prs.crawl.sitemap.truncated')}</li>}
+        {crawl.dropped > 0 && <li className={WRAP}>{plural(t, 'prs.crawl.dropped', crawl.dropped, formatNumber(crawl.dropped, locale))}</li>}
+        {crawl.resumedFrom != null && crawl.priorPages > 0 && (
+          <li className={WRAP} data-slot="prs-crawl-resumed">
+            {plural(t, 'prs.crawl.resumed', crawl.priorPages, formatNumber(crawl.resumedFrom, locale), formatNumber(crawl.priorPages, locale))}
+          </li>
+        )}
+        {crawl.resumeFailed && <li className={WRAP}>{t('prs.crawl.resumeFailed')}</li>}
+      </ul>
+      {sm.errors.length > 0 && (
+        <div data-slot="prs-crawl-sitemap-errors" className="flex min-w-0 flex-col gap-1">
+          <span className="text-xs font-medium text-muted-foreground">{t('prs.crawl.sitemap.errors')}</span>
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {sm.errors.map((u, i) => <li key={`${u}#${i}`}><UrlText url={u} t={t} className="text-xs" /></li>)}
+          </ul>
+        </div>
+      )}
+      {resume && (
+        <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+          <Button type="button" data-slot="prs-crawl-resume" className={cn(TOUCH, 'self-start')} disabled={busy} onClick={onResume}>
+            <Play aria-hidden="true" />{t('prs.crawl.resume')}
+          </Button>
+          <span className={cn('text-xs text-muted-foreground', WRAP)}>
+            {plural(t, 'prs.crawl.resumeHint', unscannedTotal, formatNumber(unscannedTotal, locale))}
+          </span>
+        </div>
+      )}
+    </Section>
   )
 }
 
@@ -195,6 +300,7 @@ function PageCell({ p, t, locale }) {
       <UrlText url={p.url} t={t} className="text-sm" />
       <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         {p.main && <ToneBadge tone="info" className={CHIP} data-slot="prs-site-main">{t('prs.site.main')}</ToneBadge>}
+        {p.fromScan != null && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-prior">{t('prs.crawl.priorChip')}</ToneBadge>}
         {p.capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-partial">{t('prs.site.partial')}</ToneBadge>}
         {p.status === 'ok' && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
         {p.status === 'ok' && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
