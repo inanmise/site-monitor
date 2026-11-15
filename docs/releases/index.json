@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T10:47:05Z",
+  "generatedAt": "2026-11-15T12:18:29Z",
   "repo": "inanmise/site-monitor",
-  "count": 842,
+  "count": 843,
   "releases": [
+    {
+      "version": "20.208.0",
+      "tag": "v20.208.0",
+      "releasedAt": "2026-11-15T12:18:23Z",
+      "commit": "48d8bcb3da3abec35de0061ccf0015531377b7fb",
+      "prevVersion": "20.207.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "48d8bcb3",
+          "subject": "review fixes — /check limit, targeted plan writes, expired labels, Istanbul day rule"
+        },
+        {
+          "type": "feat",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "aff991a2",
+          "subject": "canlı kalan gün, süresi dolmuş ifadesi, liste süzgeçleri, takvim, Panom kutusu ve toplu yenileme planı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.207.0",
       "tag": "v20.207.0",
