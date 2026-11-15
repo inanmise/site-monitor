@@ -378,4 +378,25 @@ class PageResourceFullSiteScanTest {
         assertThat(site.get("incomplete")).as("bütün sayfalar tarandı: sayfa uyarısı değil, keşif uyarısı").isEqualTo(false);
         assertThat(took).as("15 sn bekletilen harita taramayı bekletmez").isLessThan(14_000);
     }
+
+    @Test
+    @DisplayName("tüm site sınırları 2500 sayfaya göre (2026-11-15): varsayılanlar 2500 / 9000 sn / 75 000 nesne / 7500 MB; aralık dışı değer varsayılana döner")
+    void fullSiteLimitsFor2500Pages() {
+        PageResourceScanService.FullSiteLimits d = svc.fullSiteLimits();
+        assertThat(d.maxPages()).isEqualTo(2500);
+        assertThat(d.maxSeconds()).isEqualTo(9000);
+        assertThat(d.maxObjects()).isEqualTo(75_000);
+        assertThat(d.maxTotalMb()).isEqualTo(7500);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_PAGES), anyInt())).thenReturn(2500);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_SECONDS), anyInt())).thenReturn(10_800);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_OBJECTS), anyInt())).thenReturn(150_000);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_TOTAL_MB), anyInt())).thenReturn(25_000);
+        PageResourceScanService.FullSiteLimits hi = svc.fullSiteLimits();
+        assertThat(List.of(hi.maxPages(), hi.maxSeconds(), hi.maxObjects(), hi.maxTotalMb()))
+                .as("üst sınırlar kabul edilir").containsExactly(2500, 10_800, 150_000, 25_000);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_PAGES), anyInt())).thenReturn(2501);
+        when(settings.getInt(eq(PageResourceScanService.KEY_FULL_MAX_SECONDS), anyInt())).thenReturn(10_801);
+        assertThat(svc.fullSiteLimits().maxPages()).as("aralık dışı → varsayılan").isEqualTo(2500);
+        assertThat(svc.fullSiteLimits().maxSeconds()).isEqualTo(9000);
+    }
 }

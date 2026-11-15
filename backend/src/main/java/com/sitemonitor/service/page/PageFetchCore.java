@@ -181,7 +181,17 @@ public class PageFetchCore {
     public record ScanMeta(String httpVersion, String etag, String lastModified, String age, String altSvc,
                            String sourceMapHeader, String contentHash, byte[] sampleHead, byte[] sampleTail,
                            boolean sampleComplete, String sampleSkipped, List<SeenCookie> cookies,
-                           Map<String, List<String>> pageHeaders) {}
+                           Map<String, List<String>> pageHeaders, String pragma) {
+
+        /** Geriye uyum (algoritma 3): {@code Pragma} yakalanmadı. */
+        public ScanMeta(String httpVersion, String etag, String lastModified, String age, String altSvc,
+                        String sourceMapHeader, String contentHash, byte[] sampleHead, byte[] sampleTail,
+                        boolean sampleComplete, String sampleSkipped, List<SeenCookie> cookies,
+                        Map<String, List<String>> pageHeaders) {
+            this(httpVersion, etag, lastModified, age, altSvc, sourceMapHeader, contentHash, sampleHead, sampleTail,
+                    sampleComplete, sampleSkipped, cookies, pageHeaders, null);
+        }
+    }
 
     /** Görülen çerez başlığı: hangi host'tan + DEĞERSİZ başlık ({@code ad=; Secure; HttpOnly; …}). */
     public record SeenCookie(String host, String header) {}
@@ -192,6 +202,34 @@ public class PageFetchCore {
             "feature-policy", "cross-origin-opener-policy", "cross-origin-resource-policy", "x-robots-tag");
     /** Çekim başına tutulan en çok çerez başlığı. */
     static final int MAX_COOKIES = 50;
+    /** Birleştirilen aynı adlı başlık satırı tavanı (algoritma 4, {@code Cache-Control} / {@code Pragma}). */
+    static final int MAX_JOINED_VALUES = 8;
+    /** Birleşik başlık değerinin tavanı (saklanan başlıkların sınırıyla aynı). */
+    static final int MAX_JOINED_CHARS = 300;
+
+    /**
+     * Aynı adlı başlık satırları virgülle birleşik (algoritma 4: ikinci bir {@code Cache-Control} satırındaki {@code no-store}
+     * kaybolmasın). En çok {@value #MAX_JOINED_VALUES} satıra bakılır (boşlar dahil). İlk dolu satır gerekirse
+     * {@value #MAX_JOINED_CHARS} karaktere kırpılır (tek satırın eski kuralı); SONRAKİ satırlar yalnız BÜTÜN sığarsa eklenir —
+     * yarım yönerge ({@code no-st}, {@code max-age=3}) asla yazılmaz, sığmayan satır atlanır ve sonraki kısa satır yine
+     * eklenebilir. Hiç dolu satır yoksa null.
+     */
+    public static String joinHeaderValues(List<String> all) {
+        if (all == null || all.isEmpty()) return null;
+        StringBuilder b = new StringBuilder();
+        int seen = 0;
+        for (String v : all) {
+            if (++seen > MAX_JOINED_VALUES) break;
+            if (v == null || v.isBlank()) continue;
+            String t = v.trim();
+            if (b.length() == 0) {
+                b.append(t.length() > MAX_JOINED_CHARS ? t.substring(0, MAX_JOINED_CHARS) : t);
+            } else if (b.length() + 2 + t.length() <= MAX_JOINED_CHARS) {
+                b.append(", ").append(t);
+            }
+        }
+        return b.length() == 0 ? null : b.toString();
+    }
     /** Sayfa başlığı değerinin tavanı (CSP uzun olabilir; yalnız bellekte, değerlendirme için). */
     static final int PAGE_HEADER_MAX = 8192;
     /** Örnek için çözülecek en çok bayt (sıkıştırma bombası: bunun ötesi çözülmeden yalnız sayılır). */
@@ -365,7 +403,8 @@ public class PageFetchCore {
                     h == null ? null : clip(h.firstValue("last-modified").orElse(null)),
                     h == null ? null : clip(h.firstValue("age").orElse(null)),
                     h == null ? null : clip(h.firstValue("alt-svc").orElse(null)), sm, contentHash, sampleHead, sampleTail,
-                    sampleComplete, sampleSkipped, cookies == null ? List.of() : List.copyOf(cookies), pageHeaders);
+                    sampleComplete, sampleSkipped, cookies == null ? List.of() : List.copyOf(cookies), pageHeaders,
+                    h == null ? null : joined(h, "pragma"));
         }
 
         Meta toMeta() {
@@ -386,9 +425,14 @@ public class PageFetchCore {
             }
             return new Meta(finalUrl, redirects, clip(headers.firstValue("content-type").orElse(null)),
                     clip(headers.firstValue("content-encoding").orElse(null)), len,
-                    clip(headers.firstValue("cache-control").orElse(null)), clip(headers.firstValue("expires").orElse(null)),
+                    joined(headers, "cache-control"), clip(headers.firstValue("expires").orElse(null)),
                     clip(headers.firstValue("date").orElse(null)), head, clip(headers.firstValue("server").orElse(null)),
                     xCache, redirectMs, finalTtfbMs, scanMeta());
+        }
+
+        /** Aynı adlı başlık satırları birleşik ({@link PageFetchCore#joinHeaderValues}); yoksa null. */
+        private static String joined(java.net.http.HttpHeaders h, String name) {
+            return joinHeaderValues(h.allValues(name));
         }
 
         /** Başlık değerleri sınırlı tutulur (dev bir başlık belleği / DB'yi şişirmesin). */

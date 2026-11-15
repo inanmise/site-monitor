@@ -1,5 +1,7 @@
 package com.sitemonitor.service.page.scan.deep;
 
+import com.sitemonitor.service.page.scan.CachePolicy;
+import com.sitemonitor.service.page.scan.PageResourceAnalyzer;
 import com.sitemonitor.service.page.scan.PageResourceDiscovery;
 import com.sitemonitor.service.page.scan.ScanItem;
 
@@ -24,7 +26,13 @@ import java.util.Set;
  *   <li><b>Küçültülmemiş:</b> örnekten sezgisel ({@link AssetSample}); kazanç tahmin.</li>
  *   <li><b>Kaynak haritası:</b> {@code sourceMappingURL} + HEAD 2xx → açık.</li>
  *   <li><b>Önbellek:</b> süre kovaları, doğrulayıcısız (ETag / Last-Modified yok) birinci taraf durağan nesneler, parmak izli
- *       ama kısa önbellekli adresler, CDN isabeti, tekrar ziyaret tahmini (≥ 1 sa taze ya da doğrulayıcılı → 0 bayt).</li>
+ *       ama kısa önbellekli adresler, CDN isabeti, tekrar ziyaret tahmini.</li>
+ *   <li><b>Algoritma 4 (2026-11-15):</b> {@code caching.classes} = birinci taraf önbelleklenebilir durağan nesnelerin
+ *       {@link CachePolicy} sınıf sayıları (önbellek puanı ve {@code CACHE_*} önerileriyle AYNI küme). Tekrar ziyaret
+ *       {@link CachePolicy#repeatVisit} kuralıyla: her ziyarette doğrulanan nesne bir istek (304) ama ~0 gövde baytı,
+ *       {@code no-store} nesne doğrulayıcısı olsa da tüm gövde; {@code repeat_visit_requests} = yine istek gerektiren sayfa
+ *       nesnesi sayısı. {@code NO_VALIDATOR}: sınıfı bilinen {@code none} / {@code no_store} nesneler girmez (onlar
+ *       {@code CACHE_NONE} / {@code CACHE_NO_STORE} önerisindedir — doğrulayıcı {@code no-store}'da işe yaramaz).</li>
  * </ul>
  */
 public final class WasteAnalysis {
@@ -173,7 +181,10 @@ public final class WasteAnalysis {
         List<ScanItem> noValidator = new ArrayList<>();
         List<Map<String, Object>> versionedShort = new ArrayList<>();
         List<ScanItem> versionedItems = new ArrayList<>();
-        int hit = 0, miss = 0, unknown = 0;
+        Map<String, Integer> classes = new LinkedHashMap<>();
+        for (String c : CachePolicy.CLASSES) classes.put(c, 0);
+        boolean anyClass = false;
+        int hit = 0, miss = 0, unknown = 0, repeatRequests = 0;
         long repeat = 0, total = 0;
         for (ScanItem it : page) {
             total += it.bytes;
@@ -181,18 +192,25 @@ public final class WasteAnalysis {
             if ("hit".equals(cdn)) hit++;
             else if ("miss".equals(cdn)) miss++;
             else unknown++;
-            boolean fresh = it.cacheTtlS != null && it.cacheTtlS >= CACHE_FRESH_S;
-            if (!fresh && !it.validator) repeat += it.bytes;
+            CachePolicy.Repeat rv = CachePolicy.repeatVisit(it);
+            if (rv.body()) repeat += it.bytes;
+            if (rv.request()) repeatRequests++;
+            if (it.cacheClass != null) anyClass = true;
+            if (PageResourceAnalyzer.cacheableStaticObject(it)) classes.merge(CachePolicy.classOf(it), 1, Integer::sum);
             if (it == html || !staticObject(it)) continue;
             Long ttl = it.cacheTtlS;
             String b = ttl == null || ttl <= 0 ? "none" : ttl < CACHE_FRESH_S ? "lt_1h" : ttl < CACHE_DAY_S ? "lt_1d"
                     : ttl < CACHE_WEEK_S ? "lt_7d" : "ge_7d";
             buckets.merge(b, 1, Integer::sum);
-            if (!it.thirdParty && !it.validator && (ttl == null || ttl < CACHE_DAY_S)) noValidator.add(it);
+            boolean noUseForValidator = CachePolicy.NONE.equals(it.cacheClass) || CachePolicy.NO_STORE.equals(it.cacheClass);
+            if (!it.thirdParty && !it.validator && !noUseForValidator && (ttl == null || ttl < CACHE_DAY_S)) noValidator.add(it);
             if (DeepUrls.versioned(it.url) && (ttl == null || ttl < CACHE_WEEK_S)) {
                 Map<String, Object> r = new LinkedHashMap<>();
                 r.put("url", DeepUrls.mask(it.url));
                 r.put("ttl_s", ttl == null ? null : Math.max(-1, ttl));
+                // Algoritma 4: satırın önbellek sınıfı (arayüz -1 / null ömrü "önbelleğe alınmıyor" diye değil sınıfıyla yazar)
+                if (it.cacheClass != null) r.put("cache_class", it.cacheClass);
+                if (it.cacheHeuristicS != null) r.put("cache_heuristic_s", it.cacheHeuristicS);
                 versionedShort.add(r);
                 versionedItems.add(it);
             }
@@ -208,6 +226,10 @@ public final class WasteAnalysis {
         caching.put("cdn", cdn);
         caching.put("repeat_visit_bytes", repeat);
         caching.put("repeat_visit_pct", total <= 0 ? 0.0 : Math.round(repeat * 1000.0 / total) / 10.0);
+        caching.put("repeat_visit_requests", repeatRequests);
+        // Sınıf sayıları yalnız sınıfı kaydedilen (algoritma 4) bir sayfa nesnesi varsa (HTML dahil) — yoksa (sınıfsız test /
+        // eski girdi) yazılmaz; arayüz yokluğu "bu analizde yok" sayar
+        if (anyClass) caching.put("classes", classes);
         json.put("caching", caching);
         if (!versionedShort.isEmpty()) {
             recs.add(new DeepRec("SHORT_CACHE_VERSIONED", versionedShort.size() >= 10 ? DeepRec.MEDIUM : DeepRec.LOW,

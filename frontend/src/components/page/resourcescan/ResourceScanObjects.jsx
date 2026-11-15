@@ -11,7 +11,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, FINDING_CODES, FINDING_TONE, OBJECTS_TABLE_MIN_PX, SCOPES, SORTS, STATUS_FILTERS,
-  activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, findingLabel, formatBytesExact,
+  CACHE_FINDINGS, activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, findingLabel, formatBytesExact,
   formatMs, formatNumber, isPageLoad, itemBytes, itemSizeText, plural, problemText, recTextKey, recommendationArgs, sizeBucket, sortItems,
   statusText, thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
@@ -295,7 +295,8 @@ export function Flags({ item, t, locale }) {
   }
   if (item.lazy === true) out.push(['lazy', 'info', t('prs.obj.lazy')])
   if (item.from_css === true) out.push(['css', 'muted', t('prs.obj.fromCss')])
-  if (isPageLoad(item) && verdictOf(item) === 'ok' && !findings.includes('NO_CACHE') && cacheState(item.cache_ttl_s) === 'ttl') {
+  // Nötr ömür rozeti yalnız önbellek BULGUSU yokken (eski NO_CACHE ya da algoritma 4 CACHE_* — aynı şeyi iki kez söylemesin)
+  if (isPageLoad(item) && verdictOf(item) === 'ok' && !findings.some((c) => CACHE_FINDINGS.has(c)) && cacheState(item.cache_ttl_s) === 'ttl') {
     out.push(['cache', 'muted', cacheText(item, t, locale)])
   }
   if (Number(item.redirects) > 0 && !findings.includes('REDIRECTED_OBJECTS')) {

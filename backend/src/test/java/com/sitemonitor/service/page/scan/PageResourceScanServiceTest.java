@@ -417,7 +417,7 @@ class PageResourceScanServiceTest {
                 .isEqualTo(600L);
         assertThat(PageResourceScanService.cacheTtl(null, "0", null, 0)).isEqualTo(0L);
         assertThat(PageResourceScanService.cacheTtl(null, null, null, 0)).isNull();
-        assertThat(PageResourceScanService.cacheTtl("max-age=abc", null, null, 0)).isNull();
+        assertThat(PageResourceScanService.cacheTtl("max-age=abc", null, null, 0)).as("sayısal olmayan max-age bayat (RFC 9111 §4.2.1)").isEqualTo(0L);
         assertThat(PageResourceScanService.contentType("Text/HTML; charset=UTF-8")).isEqualTo("text/html");
     }
 }

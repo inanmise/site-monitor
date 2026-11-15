@@ -4,7 +4,7 @@ import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import {
-  FINDING_TONE, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, foundInText, hasDeepItem,
+  CACHE_CLASS_TONE, FINDING_TONE, cacheClassOf, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, foundInText, hasDeepItem,
   httpVersionText, isPageLoad, itemBytes, itemLibrary, itemSizeText, optimizedImage, optimizedText, problemText, recsOfFinding, statusText,
   thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, cacheText,
 } from './resourceScanModel.js'
@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
  * `alt_svc` algoritma 3'te (prs3) eklendi — doğrulayıcı, CDN önbelleği ve HTTP/3 duyurusu.
  */
 const HEADER_KEYS = [
-  'content_type', 'content_encoding', 'cache_control', 'expires', 'content_length', 'server', 'x_cache',
+  'content_type', 'content_encoding', 'cache_control', 'pragma', 'expires', 'content_length', 'server', 'x_cache',
   'etag', 'last_modified', 'age', 'cdn_cache', 'alt_svc',
 ]
 /** Küçültme / bütünlük / kaynak haritası yalnız betik ve stilde anlamlı. */
@@ -61,6 +61,8 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
   const found = foundInText(item, t)
   const name = (parts && parts.path.split('/').filter(Boolean).pop()) || parts?.host || item.url || '—'
   const finalUrl = item.final_url === undefined ? undefined : item.final_url
+  // Algoritma 4: önbellek sınıfı (yanıt başlıklarından; eski analizde yok → satır gösterilmez)
+  const cacheClass = cacheClassOf(item)
 
   return (
     <ModalShell open onClose={onClose} title={name} icon={ScanSearch} size="md" scrollBody closeLabel={t('app.dismiss')}
@@ -117,6 +119,14 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
         <DeepGroup item={item} t={t} />
 
         <Group title={t('prs.od.headers')} slot="prs-od-headers">
+          {cacheClass && (
+            <Row label={t('prs.od.cacheClass')} slot="prs-od-cache-class" value={(
+              <span className="flex min-w-0 flex-col items-start gap-1">
+                <SmallBadge tone={CACHE_CLASS_TONE[cacheClass]} data-cache-class={cacheClass}>{t(`prs.cache.class.${cacheClass}`)}</SmallBadge>
+                <span className={cn('text-xs text-muted-foreground', WRAP)}>{t(`prs.cache.why.${cacheClass}`)}</span>
+              </span>
+            )} />
+          )}
           {headers ? HEADER_KEYS.filter((k) => headers[k] != null && headers[k] !== '').map((k) => (
             <Row key={k} label={t(`prs.od.h.${k}`)} value={k === 'cdn_cache' && (headers[k] === 'hit' || headers[k] === 'miss')
               ? t(headers[k] === 'hit' ? 'prs.od.cdnHit' : 'prs.od.cdnMiss')

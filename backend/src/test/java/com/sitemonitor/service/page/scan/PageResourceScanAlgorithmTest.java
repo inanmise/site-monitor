@@ -293,7 +293,7 @@ class PageResourceScanAlgorithmTest {
         assertThat(items.get(0)).containsEntry("found_in", null).containsEntry("final_url", null);
 
         Map<String, Object> analysis = get(one, "analysis");
-        assertThat(analysis.get("algorithm_version")).isEqualTo(3);
+        assertThat(analysis.get("algorithm_version")).isEqualTo(4);
         assertThat(analysis.get("not_loaded_count")).isEqualTo(1);
         List<Map<String, Object>> recs = get(analysis, "recommendations");
         assertThat(recs).extracting(m -> m.get("code")).doesNotContain("BROKEN_LINKS");
@@ -311,14 +311,14 @@ class PageResourceScanAlgorithmTest {
         assertThat(scan.get("redirect_count")).isEqualTo(1);
         assertThat((Long) scan.get("redirect_ms")).isGreaterThanOrEqualTo(250L);
         assertThat((Long) scan.get("ttfb_ms")).as("son adım hızlı").isLessThan(250L).isEqualTo(scan.get("html_ttfb_ms"));
-        assertThat(scan.get("algorithm_version")).isEqualTo(3);
+        assertThat(scan.get("algorithm_version")).isEqualTo(4);
         assertThat(scan.get("owner_pod")).isNotNull();
         assertThat(scan.get("cancelled")).isEqualTo(false);
         List<Map<String, Object>> items = get(one, "items");
         assertThat((String) items.get(0).get("final_url")).endsWith("/r1");
         Map<String, Object> list = svc.list(2, 10);
         Map<String, Object> row = ((List<Map<String, Object>>) list.get("items")).get(0);
-        assertThat(row).containsEntry("redirect_count", 1).containsEntry("algorithm_version", 3).containsEntry("scope", "page");
+        assertThat(row).containsEntry("redirect_count", 1).containsEntry("algorithm_version", 4).containsEntry("scope", "page");
     }
 
     @Test

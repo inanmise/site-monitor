@@ -69,6 +69,8 @@ const SCANS = [
   { name: 'HTML okunamadı', data: () => real.withHtmlUnread(real.realData(1)), prev: () => null },
   { name: 'güvenlik okunamadı + bütçe okunamadı', data: () => real.withBudgetUnreadable(real.withSecurityUnread(real.realData(1))), prev: () => null },
   { name: 'kısmi bütçe + toplamlar', data: () => real.withTotals(real.withBudgetCapped(real.realData(2))), prev: () => null },
+  // algoritma 4 (2026-11-15): önbellek sınıfları — CACHE_* öneri / bulgu, sınıf sayıları, sınıflı nesneler; önceki (sürüm 3) ile
+  { name: 'algoritma 4 önbellek sınıfları', data: () => real.withCacheClassesV4(real.realData(1)), prev: () => real.realData(2).scan },
 ]
 
 beforeEach(() => { calls.text = []; calls.tables = []; xl.sheets = null })

@@ -249,3 +249,53 @@ export function scanDetailV3(id = 12, over = {}) {
 }
 
 export { JS, CSS, CDN_JQ, OLD_JQ, KB, MB }
+
+/**
+ * Algoritma 4 (2026-11-15, önbellek sınıfları) — {@link scanDetailV3}'ün sürüm 4 hâli: nesnelerde `cache_class` (+ sezgiselde
+ * `cache_heuristic_s`, doğrulananda ETag başlığı), eski `NO_CACHE` yerine sınıf başına `CACHE_*` bulgu / öneri,
+ * `waste.caching.classes` + `repeat_visit_requests`. app.bundle.js no-store, jquery-3.5.1 kısa ömür, thumb-00..09 her ziyarette
+ * doğrulanan, thumb-10..14 ömrü verilmemiş (Last-Modified), kalan ömürlüler saklanan.
+ */
+export function scanDetailV4(id = 12, over = {}) {
+  const d = scanDetailV3(id, over)
+  d.scan.algorithm_version = 4
+  d.analysis.algorithm_version = 4
+  const code = { short: 'CACHE_SHORT', revalidate: 'CACHE_REVALIDATE', heuristic: 'CACHE_HEURISTIC', none: 'CACHE_NONE', no_store: 'CACHE_NO_STORE' }
+  const byCode = {}
+  const counts = { stored: 0, short: 0, revalidate: 0, heuristic: 0, none: 0, no_store: 0 }
+  for (const it of d.items) {
+    if (!it.page_load) continue
+    const thumb = /thumb-(\d+)\.jpg$/.exec(it.url)
+    const n = thumb ? Number(thumb[1]) : -1
+    let cls = it.cache_ttl_s !== null && it.cache_ttl_s >= 3600 ? 'stored' : 'none'
+    if (it.url.endsWith('/static/app.bundle.js')) cls = 'no_store'
+    else if (it.url.endsWith('jquery-3.5.1.min.js')) cls = 'short'
+    else if (n >= 0 && n <= 9) {
+      cls = 'revalidate'
+      it.cache_ttl_s = -1
+      it.headers = { ...(it.headers || {}), cache_control: 'no-cache', etag: `"t${n}"` }
+    } else if (n >= 10 && n <= 14) {
+      cls = 'heuristic'
+      it.cache_ttl_s = null
+      it.cache_heuristic_s = 864_000
+      it.headers = { ...(it.headers || {}), last_modified: 'Sun, 01 Nov 2026 10:00:00 GMT' }
+    }
+    it.cache_class = cls
+    it.findings = (it.findings || []).filter((c) => c !== 'NO_CACHE')
+    const firstPartyStatic = !it.third_party && it.status >= 200 && it.status < 300 && it.category !== 'HTML'
+    if (!firstPartyStatic) continue
+    counts[cls]++
+    if (code[cls]) {
+      it.findings.push(code[cls])
+      ;(byCode[code[cls]] = byCode[code[cls]] || []).push(it.url)
+    }
+  }
+  const recs = d.analysis.recommendations.filter((r) => r.code !== 'NO_CACHE')
+  for (const [c, urls] of Object.entries(byCode)) {
+    recs.push({ code: c, severity: 'low', params: { count: urls.length }, saving_bytes: null, saving_ms: null,
+      item_urls: urls.slice(0, 10), item_count: urls.length, finding: c })
+  }
+  d.analysis.recommendations = recs
+  d.analysis.waste.caching = { ...d.analysis.waste.caching, classes: counts, repeat_visit_requests: 21 }
+  return d
+}

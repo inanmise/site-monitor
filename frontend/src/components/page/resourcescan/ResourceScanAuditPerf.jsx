@@ -1,9 +1,9 @@
 import { Ban, Copy, Database, FileCode2, Image as ImageIcon, Link2, Map as MapIcon, Server, Signal, Type } from 'lucide-react'
 import { ProgressBar } from '../../ui/Progress.jsx'
 import {
-  CACHE_BUCKET_TONE, areaData, areaUnreadable, cacheText, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
+  CACHE_CLASS_TONE, areaData, areaUnreadable, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
   formatSize, hintMore, hintRows, HINT_STATE_TONE, hostReasonText, hostRows, htmlStats, imageIssueGroups, isHttp1, libraryVersionRows, plural,
-  profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows,
+  profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows, versionedTtlText,
 } from './resourceScanModel.js'
 import {
   EmptyLine, KindBadge, NotInScan, ResponsiveRows, ShowObjectsButton, StatTiles, StateChip, UrlCell, UrlList,
@@ -328,14 +328,14 @@ function CachingBlock({ data, ctx }) {
               {/* Kova dağılımı (süs — değerler aşağıdaki listede yazılı); genişlik flex-grow ile (sayıyla orantılı) */}
               <div aria-hidden="true" className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
                 {v.buckets.filter((b) => (b.count ?? 0) > 0).map((b) => (
-                  <span key={b.key} data-bucket={b.key} className={cn('h-full', BUCKET_BG[CACHE_BUCKET_TONE[b.key]])} style={{ flexGrow: b.count }} />
+                  <span key={b.key} data-bucket={b.key} className={cn('h-full', BUCKET_BG[b.tone])} style={{ flexGrow: b.count }} />
                 ))}
               </div>
               <ul className="m-0 grid min-w-0 list-none grid-cols-1 gap-1 p-0 min-[420px]:grid-cols-2">
                 {v.buckets.map((b) => (
                   <li key={b.key} data-slot="prs-b-cache-bucket" data-bucket={b.key} data-count={b.count ?? ''} className="flex min-w-0 items-center gap-2 text-xs">
-                    <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-sm', BUCKET_BG[CACHE_BUCKET_TONE[b.key]])} />
-                    <span className={cn('flex-1 text-foreground', WRAP)}>{t(`prs.deep.cache.bucket.${b.key}`)}</span>
+                    <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-sm', BUCKET_BG[b.tone])} />
+                    <span className={cn('flex-1 text-foreground', WRAP)}>{t(b.labelKey)}</span>
                     <span className="shrink-0 text-muted-foreground tabular-nums">
                       {formatNumber(b.count, locale)}{b.share != null ? ` · ${formatPct(b.share, locale, 0)}` : ''}
                     </span>
@@ -344,6 +344,7 @@ function CachingBlock({ data, ctx }) {
               </ul>
             </div>
           ) : <EmptyLine>{t('prs.deep.cache.noBuckets')}</EmptyLine>}
+          <CacheClasses v={v} ctx={ctx} />
           <StatTiles tiles={[
             { k: 'novalidator', label: t('prs.deep.cache.noValidator'), value: formatNumber(v.noValidator, locale),
               tone: (v.noValidator ?? 0) > 0 ? 'warning' : undefined, sub: t('prs.deep.cache.noValidatorSub') },
@@ -351,6 +352,9 @@ function CachingBlock({ data, ctx }) {
               sub: t('prs.deep.cache.cdnUnknown', formatNumber(v.cdn.unknown, locale)) },
             { k: 'repeat', label: t('prs.deep.cache.repeat'), value: v.repeatBytes != null ? `~${fmtSize(v.repeatBytes, locale)}` : '—',
               sub: <><KindBadge kind="estimate" t={t} /> {v.repeatPct != null ? t('prs.deep.cache.repeatSub', formatPct(v.repeatPct, locale, 0)) : t('prs.deep.cache.repeatSubUnknown')}</> },
+            // Algoritma 4: ikinci ziyarette yine istek gereken nesne (doğrulanan nesne gövdesiz 304 de olsa bir istektir)
+            v.repeatRequests != null && { k: 'repeatReq', label: t('prs.deep.cache.repeatRequests'),
+              value: `~${formatNumber(v.repeatRequests, locale)}`, sub: <><KindBadge kind="estimate" t={t} /> {t('prs.deep.cache.repeatRequestsSub')}</> },
           ]} />
           {v.versionedShort && v.versionedShort.rows.length > 0 && (
             <div className="flex min-w-0 flex-col gap-1.5">
@@ -360,8 +364,8 @@ function CachingBlock({ data, ctx }) {
                 more={v.versionedShort.more} rowKey={(r) => r.url} caption={t('prs.deep.cache.versionedTitle')}
                 columns={[
                   { key: 'url', primary: true, head: t('prs.deep.col.resource'), cell: (r) => <UrlCell url={r.url} t={t} item={ctx.itemOf(r.url)} onOpenItem={ctx.onOpenItem} /> },
-                  // null = önbellek başlığı yok, -1 = no-store / no-cache (be1) — model metniyle
-                  { key: 'ttl', head: t('prs.deep.col.ttl'), align: 'right', className: 'w-[24%]', cell: (r) => cacheText({ cache_ttl_s: r.ttlS }, t, locale) },
+                  // Algoritma 4: satırın sınıfıyla (null / -1 ömür "önbelleğe alınmıyor" yazılmaz); eski analizde eski metin
+                  { key: 'ttl', head: t('prs.deep.col.ttl'), align: 'right', className: 'w-[24%]', cell: (r) => versionedTtlText(r, v.classes !== null, t, locale) },
                 ]} />
             </div>
           )}
@@ -369,6 +373,40 @@ function CachingBlock({ data, ctx }) {
         </>
       )}
     </Section>
+  )
+}
+
+/**
+ * Algoritma 4 önbellek sınıfları (birinci taraf önbelleklenebilir durağan nesneler — önbellek puanıyla aynı küme): her
+ * sınıfın adı, sayısı, pratik anlamı ve "Nesneleri göster". Eski analizde (sınıf sayısı yok) hiçbir şey çizilmez.
+ */
+function CacheClasses({ v, ctx }) {
+  const { t, locale } = ctx
+  if (!v.classes) return null
+  const rows = v.classes.filter((c) => (c.count ?? 0) > 0)
+  return (
+    <div data-slot="prs-b-cache-classes" className="flex min-w-0 flex-col gap-1.5">
+      <h5 className="m-0 text-[11px] font-semibold tracking-[.04em] text-muted-foreground uppercase max-sm:text-xs">{t('prs.deep.cache.classesTitle')}</h5>
+      <p className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('prs.deep.cache.classesDesc')}</p>
+      {rows.length === 0 ? <EmptyLine>{t('prs.deep.cache.classesNone')}</EmptyLine> : (
+        <ul className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
+          {rows.map((c) => (
+            <li key={c.key} data-slot="prs-b-cache-class" data-class={c.key} data-count={c.count}
+              className="flex min-w-0 flex-col gap-1 rounded-md border border-border p-2">
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <SmallBadge tone={CACHE_CLASS_TONE[c.key]}>{t(`prs.cache.class.${c.key}`)}</SmallBadge>
+                <span className="text-xs text-foreground tabular-nums">{plural(t, 'prs.deep.cache.classCount', c.count, formatNumber(c.count, locale))}</span>
+              </span>
+              <span className={cn('text-xs text-muted-foreground', WRAP)}>{t(`prs.cache.why.${c.key}`)}</span>
+              {c.finding && (
+                <ShowObjectsButton count={ctx.findingCount(c.finding)} onClick={() => ctx.onShowFinding?.(c.finding)} t={t} locale={locale}
+                  label={t(`prs.cache.class.${c.key}`)} />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

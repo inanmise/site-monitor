@@ -95,9 +95,9 @@ class PageResourceScanPostgresTest {
                 Integer.class, mon + 3)).isEqualTo(20);
         assertThat((List<?>) svc.list(mon + 3, 200).get("items")).hasSize(22);
 
-        // 4b) Algoritma 3: başlatılan satır algorithm_version = 3; iptal tek koşullu UPDATE (gerçek BOOLEAN / BIGINT)
+        // 4b) Algoritma 4: başlatılan satır algorithm_version = 4; iptal tek koşullu UPDATE (gerçek BOOLEAN / BIGINT)
         assertThat(jdbc.queryForObject("SELECT algorithm_version FROM page_resource_scans WHERE id = ?", Integer.class, id))
-                .isEqualTo(3);
+                .isEqualTo(PageResourceAnalyzer.ALGORITHM_VERSION).isEqualTo(4);
         long rt = System.currentTimeMillis();
         jdbc.update("INSERT INTO page_resource_scans (monitor_id, url, status, started_at, started_ms, heartbeat_ms, "
                 + "progress_done, progress_total, capped, items_kept) VALUES (?, 'x', 'RUNNING', ?, ?, ?, 0, 0, FALSE, FALSE)",

@@ -38,7 +38,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -175,10 +174,13 @@ public class PageResourceScanService {
     public static final String KEY_FULL_MAX_SECONDS = "site.monitor.page.resource-scan.full-site-max-seconds";
     public static final String KEY_FULL_MAX_OBJECTS = "site.monitor.page.resource-scan.full-site-max-objects";
     public static final String KEY_FULL_MAX_TOTAL_MB = "site.monitor.page.resource-scan.full-site-max-total-mb";
-    public static final int FULL_MAX_PAGES_DEFAULT = 1000, FULL_MAX_PAGES_MIN = 20, FULL_MAX_PAGES_MAX = 1000;
-    public static final int FULL_MAX_SECONDS_DEFAULT = 3600, FULL_MAX_SECONDS_MIN = 300, FULL_MAX_SECONDS_MAX = 3600;
-    public static final int FULL_MAX_OBJECTS_DEFAULT = 30_000, FULL_MAX_OBJECTS_MIN = 2_000, FULL_MAX_OBJECTS_MAX = 100_000;
-    public static final int FULL_MAX_TOTAL_MB_DEFAULT = 3000, FULL_MAX_TOTAL_MB_MIN = 200, FULL_MAX_TOTAL_MB_MAX = 10_000;
+    // 2026-11-15 (kullanıcı isteği: "tarama sınırlarını 2500 sayfa olacak şekilde arttıralım"): 1000 → 2500 sayfa; süre,
+    // nesne ve indirme bütçeleri aynı oranda (×2,5) büyür — yoksa 2500 sayfalık tarama süreye / nesneye takılırdı.
+    // Bellek: SiteRun önbelleği benzersiz nesne başına bir ölçüm kopyası tutar (≈ 1–2 KB) → 75 000 nesnede ≈ 150 MB üst sınır.
+    public static final int FULL_MAX_PAGES_DEFAULT = 2500, FULL_MAX_PAGES_MIN = 20, FULL_MAX_PAGES_MAX = 2500;
+    public static final int FULL_MAX_SECONDS_DEFAULT = 9000, FULL_MAX_SECONDS_MIN = 300, FULL_MAX_SECONDS_MAX = 10_800;
+    public static final int FULL_MAX_OBJECTS_DEFAULT = 75_000, FULL_MAX_OBJECTS_MIN = 2_000, FULL_MAX_OBJECTS_MAX = 150_000;
+    public static final int FULL_MAX_TOTAL_MB_DEFAULT = 7500, FULL_MAX_TOTAL_MB_MIN = 200, FULL_MAX_TOTAL_MB_MAX = 25_000;
     /** Özet satırının {@code crawl} değeri: tüm site taraması (null = sayfa sayısı seçilen site taraması ya da tek sayfa). */
     public static final String CRAWL_FULL = "full";
     /** Analizde listelenen taranmamış adres tavanı (toplam {@code unscanned_total} ayrıca). */
@@ -1384,7 +1386,17 @@ public class PageResourceScanService {
         it.thirdParty = !first;
         String enc = meta.contentEncoding();
         it.compressed = enc != null && !enc.isBlank() && !"identity".equalsIgnoreCase(enc.trim());
-        it.cacheTtlS = cacheTtl(meta.cacheControl(), meta.expires(), meta.date(), clock.getAsLong());
+        PageFetchCore.ScanMeta scan = meta.scan();
+        // Algoritma 4: önbellek sınıfı yalnız yanıt geldiyse ve doğrulayıcı (ETag / Last-Modified) bilgisi yakalandıysa —
+        // yoksa sınıf yazılmaz (eski ömür kuralına düşülür), uydurulmaz.
+        CachePolicy.Policy cache = CachePolicy.classify(meta.cacheControl(), scan == null ? null : scan.pragma(),
+                meta.expires(), meta.date(), scan == null ? null : scan.etag(), scan == null ? null : scan.lastModified(),
+                clock.getAsLong());
+        it.cacheTtlS = cache.ttlS();
+        if (scan != null && f.status() > 0) {
+            it.cacheClass = cache.cacheClass();
+            it.cacheHeuristicS = cache.heuristicS();
+        }
         it.redirects = meta.redirects();
         it.finalUrl = meta.redirects() > 0 ? meta.finalUrl() : null;
         if (PageResourceDiscovery.IMAGE.equals(it.category) || PageResourceDiscovery.FAVICON.equals(it.category)) {
@@ -1404,7 +1416,8 @@ public class PageResourceScanService {
             // http/1.1 sunar) — host ölçümündeki "vekilli ölçülmez" kuralıyla aynı: bilinmiyor (inceleme O-5).
             it.httpVersion = "proxy".equals(via) ? null : sm.httpVersion();
             it.contentHash = probe || it.truncated ? null : sm.contentHash();
-            it.validator = sm.etag() != null || sm.lastModified() != null;
+            // Tek doğrulayıcı kuralı (boş ETag / Last-Modified doğrulayıcı değil) — sınıfla aynı (CachePolicy.hasValidator)
+            it.validator = cache.validator();
             it.h3Advertised = sm.altSvc() != null && h3(sm.altSvc());
         }
         if (PageResourceDiscovery.IMAGE.equals(it.category) && meta.head() != null) {
@@ -1487,6 +1500,7 @@ public class PageResourceScanService {
             if (sm.etag() != null) h.put("etag", clipHeader(sm.etag()));
             if (sm.lastModified() != null) h.put("last_modified", clipHeader(sm.lastModified()));
             if (sm.age() != null) h.put("age", clipHeader(sm.age()));
+            if (sm.pragma() != null) h.put("pragma", clipHeader(sm.pragma()));
             if (sm.altSvc() != null) h.put("alt_svc", clipHeader(sm.altSvc()));
             String cdn = cdnCache(meta.xCache(), sm.age());
             if (cdn != null) h.put("cdn_cache", cdn);
@@ -1548,40 +1562,12 @@ public class PageResourceScanService {
     }
 
     /**
-     * Önbellek süresi (sn): {@code no-store} / {@code no-cache} → -1, {@code max-age=N} → N, yoksa {@code Expires} −
-     * {@code Date} (yoksa şimdi), hiçbiri yoksa null. Bozuk değer null.
+     * Önbellek süresi (sn): {@code no-store} / çıplak {@code no-cache} → -1, {@code max-age=N} → N (ilk geçen; sayısal değilse
+     * 0 = bayat), yoksa {@code Expires} − {@code Date} (yoksa şimdi; bozuk {@code Expires} → 0), hiçbiri yoksa null. Kural
+     * {@link CachePolicy#classify}'dadır (tek kaynak).
      */
     static Long cacheTtl(String cacheControl, String expires, String date, long nowMs) {
-        if (cacheControl != null) {
-            boolean noCache = false;
-            Long maxAge = null;
-            for (String part : cacheControl.toLowerCase(Locale.ROOT).split(",")) {
-                String d = part.trim();
-                if (d.equals("no-store") || d.equals("no-cache")) noCache = true;
-                else if (d.startsWith("max-age=")) {
-                    try {
-                        maxAge = Math.max(0L, Long.parseLong(d.substring(8).replace("\"", "").trim()));
-                    } catch (NumberFormatException ignore) { /* bozuk değer */ }
-                }
-            }
-            if (noCache) return -1L;
-            if (maxAge != null) return maxAge;
-        }
-        if (expires != null && !expires.isBlank()) {
-            try {
-                long exp = ZonedDateTime.parse(expires.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
-                long ref = nowMs;
-                if (date != null && !date.isBlank()) {
-                    try {
-                        ref = ZonedDateTime.parse(date.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
-                    } catch (RuntimeException ignore) { /* Date bozuk → şimdi */ }
-                }
-                return Math.max(0L, (exp - ref) / 1000L);
-            } catch (RuntimeException e) {
-                return 0L;   // "Expires: 0" / "-1" — süresi geçmiş sayılır
-            }
-        }
-        return null;
+        return CachePolicy.ttl(cacheControl, null, expires, date, nowMs);
     }
 
     private static String decodeText(byte[] body, String contentType) {

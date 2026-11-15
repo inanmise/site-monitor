@@ -149,7 +149,7 @@ class DeepAnalysisTest {
         HtmlFacts f = facts(HTML);
         PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items(), PageResourceAnalyzer.Limits.NONE, ctx(f));
         Map<String, Object> a = r.analysis();
-        assertThat(a.get("algorithm_version")).isEqualTo(3);
+        assertThat(a.get("algorithm_version")).isEqualTo(4);
         assertThat(a).containsKeys("category_scores", "loading", "waste", "media", "security", "html_audit");
         Map<String, Object> cs = get(a, "category_scores");
         assertThat(((Map<String, Object>) cs.get("performance")).get("score")).isEqualTo(r.grade());

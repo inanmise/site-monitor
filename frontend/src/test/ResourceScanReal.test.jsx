@@ -28,7 +28,7 @@ import ResourceScanTab from '../components/page/resourcescan/ResourceScanTab.jsx
 import { resetWatchers } from '../components/page/resourcescan/resourceScanWatcher.js'
 import {
   REAL_MONITOR, realBudget, realDetail, realList, realRunningSite, realStartSite, realTrend, withBudgetCapped, withBudgetUnreadable,
-  withHtmlUnread, withSecurityUnread, withSiteIncomplete, withSitePages, withTotals, withTrendBusy,
+  withCacheClassesV4, withHtmlUnread, withSecurityUnread, withSiteIncomplete, withSitePages, withTotals, withTrendBusy,
 } from './helpers/resourceScanRealFixtures.js'
 
 const slot = (name, root = document) => root.querySelector(`[data-slot="${name}"]`)
@@ -148,6 +148,76 @@ describe('gerçek yanıt — bütün görünümler (TR + EN)', () => {
     const bad = await walk(TR, { pages: false })
     expect(bad).toEqual([])
   }, 30_000)
+})
+
+describe('algoritma 4 — önbellek sınıfları (gerçek #1 dökümünden türetilmiş)', () => {
+  const v4 = (id) => (id === 1 ? { success: true, data: withCacheClassesV4(realDetail(1).data) } : realDetail(id))
+
+  for (const [lang, D] of [['tr', TR], ['en', EN]]) {
+    it(`${lang}: bütün görünümler temiz; israf alanında sınıf listesi; NO_CACHE değil CACHE_* önerileri`, async () => {
+      try { localStorage.setItem(LANG_STORAGE_KEY, lang) } catch { /* yok */ }
+      mockApi({ detail: v4 })
+      await mount(1)
+      const codes = slots('prs-rec').map((r) => r.getAttribute('data-code'))
+      expect(codes).not.toContain('NO_CACHE')
+      const bad = await walk(D, { pages: false })
+      expect(bad).toEqual([])
+      openTab(D['prs.sec.audit'])
+      await waitFor(() => expect(slot('prs-audit')).not.toBeNull(), { timeout: 5000 })
+      fireEvent.mouseDown(slots('prs-audit-tab').find((x) => x.getAttribute('data-area') === 'waste'), { button: 0 })
+      await waitFor(() => expect(slot('prs-b-cache-classes')).not.toBeNull())
+      const rows = slots('prs-b-cache-class')
+      expect(rows.map((r) => r.getAttribute('data-class'))).toEqual(['stored', 'short', 'revalidate', 'heuristic', 'none', 'no_store'])
+      const rev = rows.find((r) => r.getAttribute('data-class') === 'revalidate')
+      expect(rev.textContent).toContain(D['prs.cache.class.revalidate'])
+      expect(rev.textContent).toContain(D['prs.cache.why.revalidate'])
+      expect(within(rev).getByRole('button')).toBeTruthy()          // "Nesneleri göster" (bulgu süzgeci)
+      expect(rows.find((r) => r.getAttribute('data-class') === 'stored').querySelector('button')).toBeNull()
+      expect(slots('prs-deep-tile').find((x) => x.getAttribute('data-key') === 'repeatReq').textContent).toMatch(/17/)
+      // Kovalar ve sürümlü satırlar sınıf listesiyle çelişmez: "önbellek yok" / "önbelleğe alınmaz" yazılmaz (doğrulanan ve
+      // tahmini ömürlü dosyalar yarım puanlıdır)
+      const buckets = slot('prs-b-cache-buckets')
+      expect(buckets.textContent).not.toContain(D['prs.deep.cache.bucket.none'])
+      expect(buckets.textContent).toContain(D['prs.deep.cache.bucket.noneClasses'])
+      expect(buckets.querySelector('span[data-bucket="none"]').className).not.toMatch(/bg-destructive/)
+      const ver = slot('prs-b-cache-versioned')
+      for (const k of ['prs.obj.cacheNoStore', 'prs.obj.cacheNone', 'prs.deep.cache.bucket.none']) expect(ver.textContent).not.toContain(D[k])
+      expect(ver.textContent).toContain(D['prs.cache.class.revalidate'])
+      expect(ver.textContent).toContain(D['prs.deep.cache.noLifetime'])
+    }, 30_000)
+  }
+
+  it('nesne ayrıntısı: sınıf satırı (ad + anlam), Pragma başlığı; rozet sınıf bulgusu, nötr ömür rozeti tekrar etmez', async () => {
+    mockApi({ detail: v4 })
+    await mount(1)
+    openTab(TR['prs.sec.objects'])
+    await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
+    fireEvent.change(slot('prs-search'), { target: { value: 'print.css' } })
+    await waitFor(() => expect(slots('prs-obj')).toHaveLength(1))
+    const row = slot('prs-obj')
+    expect(row.querySelector('[data-finding="CACHE_REVALIDATE"]').textContent).toBe(TR['prs.finding.CACHE_REVALIDATE'])
+    expect(row.querySelector('[data-finding="NO_CACHE"]')).toBeNull()
+    expect(row.querySelector('[data-flag="cache"]')).toBeNull()
+    fireEvent.click(slot('prs-obj-open'))
+    const od = await waitFor(() => { const el = slot('prs-od'); expect(el).not.toBeNull(); return el })
+    const cls = slot('prs-od-cache-class', od)
+    expect(cls.querySelector('[data-cache-class="revalidate"]').textContent).toBe(TR['prs.cache.class.revalidate'])
+    expect(cls.textContent).toContain(TR['prs.cache.why.revalidate'])
+    expect(slot('prs-od-headers', od).textContent).toMatch(/Pragma/)
+    expect(slot('prs-od-headers', od).textContent).toMatch(/no-cache/)
+  })
+
+  it('sezgisel ömürlü nesnenin önbellek metni tahmini ömrü söyler; saklananınki ömrü', async () => {
+    mockApi({ detail: v4 })
+    await mount(1)
+    openTab(TR['prs.sec.objects'])
+    await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
+    fireEvent.change(slot('prs-search'), { target: { value: 'kullanilmayan' } })
+    await waitFor(() => expect(slots('prs-obj')).toHaveLength(1))
+    fireEvent.click(slot('prs-obj-open'))
+    const od = await waitFor(() => { const el = slot('prs-od'); expect(el).not.toBeNull(); return el })
+    expect(od.textContent).toMatch(/Ömür verilmemiş · tarayıcı tahmini ~3 g/)
+  })
 })
 
 describe('gerçek yanıt + inceleme sonrası tel değişiklikleri', () => {
