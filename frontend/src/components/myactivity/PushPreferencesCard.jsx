@@ -24,6 +24,41 @@ import { cn } from '@/lib/utils'
 const CARD = 'min-w-0 gap-3 py-4 shadow-none'
 const TOUCH = 'pointer-coarse:h-10 max-sm:h-10'
 
+/** Derin bağlantı kaydırmasının yerleşim değişimini izleme süresi (ms) — sınırlı; sonra gözlemci kapanır. */
+export const FOLLOW_LAYOUT_MS = 3000
+
+/**
+ * `ma_sec=push` kaydırması tek seferlikti: kartın üstündeki içerik (özet, yan sütun kartları) sonradan yüklenip boy
+ * değiştirince 1280'de kart başlığı görünüm alanının ~30 px üstünde kalıyordu (2026-11-15, yayın öncesi e2e B). Bu yüzden
+ * FOLLOW_LAYOUT_MS boyunca kartın atalarının boyu değişirse kart yeniden başa hizalanır (anında, yumuşak değil). Kullanıcı
+ * kendisi kaydırır / dokunur / tuşa basarsa izleme hemen biter — kişinin kaydırmasıyla yarışılmaz. Dönen işlev temizler.
+ */
+export function followLayout(el, ms = FOLLOW_LAYOUT_MS) {
+  if (!el || typeof ResizeObserver !== 'function' || typeof window === 'undefined') return undefined
+  let done = false
+  const targets = []
+  for (let p = el.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) targets.push(p)
+  const realign = () => { if (!done) { try { el.scrollIntoView?.({ block: 'start' }) } catch { /* yok */ } } }
+  let first = true
+  const ro = new ResizeObserver(() => {
+    // İlk geri çağırma gözlem başlarken gelir (boy değişmedi) — yumuşak kaydırmayı bozmasın
+    if (first) { first = false; return }
+    realign()
+  })
+  targets.forEach((tg) => ro.observe(tg))
+  const stopEvents = ['wheel', 'touchstart', 'keydown', 'pointerdown']
+  const stop = () => {
+    if (done) return
+    done = true
+    ro.disconnect()
+    clearTimeout(timer)
+    stopEvents.forEach((ev) => window.removeEventListener(ev, stop, true))
+  }
+  const timer = setTimeout(stop, ms)
+  stopEvents.forEach((ev) => window.addEventListener(ev, stop, { capture: true, passive: true }))
+  return stop
+}
+
 /**
  * "Bildirim tercihlerim" (2026-10-04, onaylı öneriler 4/5) — Etkinliklerim yan kartı, "push istemiyorum" anahtarının
  * hemen altında. Kişi YALNIZ kendi kaydını yazar (`/api/me/push-*`, kimlik oturumdan).
@@ -86,6 +121,7 @@ export default function PushPreferencesCard({ optOut = false }) {
       const url = new URL(window.location.href)
       if (url.searchParams.has('ma_sec')) { url.searchParams.delete('ma_sec'); window.history.replaceState(window.history.state, '', url) }
     } catch { /* yok */ }
+    return followLayout(el)
   }, [prefs, form])
 
   const dirty = !!(form && saved && !formEqual(form, saved))
@@ -180,7 +216,7 @@ export default function PushPreferencesCard({ optOut = false }) {
   const busy = saving || snoozeBusy
 
   return (
-    <div ref={cardRef} tabIndex={-1} className="outline-none" data-slot="push-prefs-anchor">
+    <div ref={cardRef} tabIndex={-1} className="scroll-mt-18 outline-none md:scroll-mt-4" data-slot="push-prefs-anchor">
     <Card data-slot="push-prefs" data-snoozed={snoozed || undefined} className={CARD}>
       <CardHeader className="gap-1.5 px-4">
         <CardTitle className="flex items-center gap-2 text-sm">
@@ -259,7 +295,7 @@ export default function PushPreferencesCard({ optOut = false }) {
                 ))}
               </ToggleGroup>
               {form.families.length < families.length && (
-                <Button type="button" variant="link" size="sm" className="h-auto self-start p-0 text-xs max-sm:min-h-10"
+                <Button type="button" variant="link" size="sm" className="h-auto self-start p-0 text-xs max-sm:min-h-10 pointer-coarse:min-h-10"
                   onClick={() => { setForm((f) => ({ ...f, families: [...families] })); fe.clear('families') }}>
                   {t('mypush.families.all')}
                 </Button>

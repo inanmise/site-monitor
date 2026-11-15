@@ -57,9 +57,13 @@ export default function PolicyRow({
         expanded && 'shadow-md',
         focused && 'border-primary ring-2 ring-primary/40 outline-none',
         changed && 'border-amber-500/70 bg-amber-500/5 hover:border-amber-500/80')}>
-      <div className="grid grid-cols-[28px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 px-3 py-2.5 sm:px-3.5 xl:grid-cols-[28px_minmax(200px,1.5fr)_minmax(230px,auto)_minmax(280px,1.4fr)] xl:gap-3.5">
+      {/* Tek satır ızgara SATIRIN KENDİ genişliğine göre (@container, ≥ 64rem) — görünüm alanına göre (xl) değil: Ayarlar içerik
+          sütunu 1280'de ~750 px, dört sütun asgarisi ~900 px; ölçüm kümesi `overflow-hidden` kapta kesiliyordu (2026-11-15, e2e B). */}
+      <div className="@container">
+      <div className="grid grid-cols-[28px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 px-3 py-2.5 sm:px-3.5 @5xl:grid-cols-[28px_minmax(200px,1.5fr)_minmax(230px,auto)_minmax(280px,1.4fr)] @5xl:gap-3.5">
+        {/* Dokunmatikte görünmez ::after ile 40 px vuruş alanı (32 + 2 × 4); 28 px sütun ve görünüm değişmez */}
         <Button type="button" variant="ghost" size="icon-sm" onClick={onToggle} aria-expanded={expanded} aria-label={p.table}
-          className="text-muted-foreground hover:text-primary">
+          className="relative text-muted-foreground hover:text-primary pointer-coarse:after:absolute pointer-coarse:after:-inset-1 pointer-coarse:after:content-['']">
           <ChevronRight aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', expanded && 'rotate-90')} />
         </Button>
 
@@ -80,7 +84,7 @@ export default function PolicyRow({
         </div>
 
         {/* Süre kontrolü */}
-        <div className="col-span-2 flex flex-wrap items-center gap-2.5 xl:col-span-1">
+        <div className="col-span-2 flex flex-wrap items-center gap-2.5 @5xl:col-span-1">
           {p.configurable ? (
             <>
               <div role="group" aria-label={t('ret.quickDays', p.table)} className="inline-flex flex-wrap gap-0.5 rounded-lg border bg-muted/50 p-0.5">
@@ -90,7 +94,7 @@ export default function PolicyRow({
                   const chip = (
                     <Button key={d} type="button" size="xs" variant={active ? 'default' : 'ghost'} aria-pressed={active}
                       disabled={disabled || blocked} onClick={() => onChange(String(d))}
-                      className={cn('min-w-9 tabular-nums', !active && 'text-muted-foreground')}>{d}</Button>
+                      className={cn('min-w-9 tabular-nums pointer-coarse:h-10 pointer-coarse:min-w-10', !active && 'text-muted-foreground')}>{d}</Button>
                   )
                   // Devre dışı düğme ipucu almaz (olay üretmez) → span tetik
                   return blocked
@@ -113,8 +117,8 @@ export default function PolicyRow({
           )}
         </div>
 
-        {/* Ölçüm kümesi */}
-        <div className="relative col-span-2 grid grid-cols-2 gap-x-4 gap-y-1.5 pb-2 sm:grid-cols-[repeat(4,auto)] sm:justify-start xl:col-span-1 xl:justify-end">
+        {/* Ölçüm kümesi — dar hücrede alt satıra SARAR (tarih aralığı ~160 px; sabit 4 sütun dar hücrede kesiliyordu) */}
+        <div className="relative col-span-2 flex flex-wrap gap-x-4 gap-y-1.5 pb-2 @5xl:col-span-1 @5xl:justify-end">
           <Metric value={fmtNum(p.rows)} label={t('ret.colRows')} />
           <Metric value={fmtBytes(p.bytes)} label={t('ret.colSize')} />
           <Metric value={`${fmtDay(p.oldest_at)} → ${fmtDay(p.newest_at)}`} label={t('ret.rangeLbl')} mono />
@@ -124,6 +128,7 @@ export default function PolicyRow({
             <ProgressBar value={pct} max={100} size="sm" decorative className="h-[3px]" />
           </div>
         </div>
+      </div>
       </div>
 
       {expanded && (
@@ -160,7 +165,7 @@ export default function PolicyRow({
 /** Ölçüm kümesinin tek hücresi: değer + küçük büyük harf etiket. */
 function Metric({ value, label, mono = false, danger = false }) {
   return (
-    <div className="flex min-w-[52px] flex-col gap-px sm:items-end">
+    <div className="flex min-w-[52px] flex-col gap-px @5xl:items-end">
       <span className={cn('text-[13px] font-bold whitespace-nowrap tabular-nums',
         mono && 'font-mono text-[11.5px] font-semibold text-muted-foreground', danger && 'text-destructive')}>{value}</span>
       <span className="text-[9.5px] font-bold tracking-wider whitespace-nowrap text-muted-foreground/80 uppercase">{label}</span>

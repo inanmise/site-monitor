@@ -159,7 +159,7 @@ export function EmailCard({ view, level, cardRef }) {
                   </p>
                 )}
                 actions={r.email ? <CopyButton value={r.email} label={t('wn.copyEmail', r.email)} copiedLabel={t('wn.copied')}
-                  variant="ghost" className="size-10 md:size-8" /> : null}
+                  variant="ghost" className="size-10 md:pointer-fine:size-8" /> : null}
               />
             )
           })}

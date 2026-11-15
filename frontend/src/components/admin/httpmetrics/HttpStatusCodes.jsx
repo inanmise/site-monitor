@@ -41,7 +41,7 @@ export default function HttpStatusCodes({ t, summary, codes, statusFilter }) {
             {classRows.map(({ c, n }) => (
               <li key={c} data-class={c} className={cn('flex min-w-0 items-center gap-1.5', dim(c) && 'opacity-50')}>
                 <span aria-hidden="true" className="size-2.5 shrink-0 rounded-sm bg-(--dot)" style={{ '--dot': CLASS_COLOR[c] }} />
-                <span className="min-w-0 truncate text-muted-foreground">{t(`hreq.class.${c}`)}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere] text-muted-foreground">{t(`hreq.class.${c}`)}</span>
                 <span className="ml-auto font-semibold text-foreground tabular-nums">{fmtInt(n)}</span>
                 <span className="w-12 text-right text-muted-foreground tabular-nums">{fmtPct(share(n))}</span>
               </li>

@@ -90,7 +90,7 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
       className={cn('@container flex min-w-0 flex-col gap-4 transition-opacity motion-reduce:transition-none', refreshing && 'opacity-60')}>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <div role="heading" aria-level={4} className="text-base font-semibold">{t('wn.result')}</div>
-        {data?.team_name && <TeamBadge teamId={data.team_id} teamName={data.team_name} size={12} static />}
+        {data?.team_name && <TeamBadge wrap teamId={data.team_id} teamName={data.team_name} size={12} static />}
         <LevelBadge level={data?.level || level} />
         <Badge variant="outline" className="gap-1.5 font-medium"><KindIcon aria-hidden="true" />{kindLabel}</Badge>
         {refreshing && <Spinner size={14} label={t('sim.loading')} />}

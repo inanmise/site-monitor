@@ -17,32 +17,6 @@ const WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML
 // Sunucunun ürettiği gerçekçi özet ("işletim sistemi · tarayıcı"); cihaz adı satırı bilinçli tek satır (App.css .dev-row-name)
 const LONG_DEVICE = 'iOS · Safari'
 
-/**
- * BİLİNEN ÜRÜN HATALARI (prod kapısı raporunda; düzeltilince buradan çıkarılır):
- *  - Push bildirimlerim: mesaj `line-clamp-3` (myactivity/PushHistorySection.jsx:256) — tam metne ulaşan açılım / ipucu yok;
- *    uzun push metni (≤ 320 karakter) telefonda, tablette ve dizüstü tablosunda kesiliyor.
- *  - Bildirim tercihlerim "Tümünü seç" bağlantı düğmesi (myactivity/PushPreferencesCard.jsx:262) `max-sm:min-h-10` taşıyor,
- *    `pointer-coarse:` değil — 768 dokunmatik tablette 16 px yüksek.
- */
-const KNOWN = {
-  allowClip: [/span\[ph-message\]/],
-  allowSmall: [/@push-prefs>card-content>field>button \d+×\d+ "Select all"/],
-}
-/**
- *  - Cihazlarım paneli (DeviceHistoryPanel.jsx) dokunmatikte 40 px altı düğmeler: hatırlanan cihaz "Çıkış yaptır" (:300 `size="sm"`,
- *    32 px), "Başarısız denemeler" açma düğmesi (:384 `h-auto py-1`, 32 px), "Tüm hatırlanan cihazlardan çıkış" (:428 `size="sm"`),
- *    "Parolamı değiştir" (:435 `size="sm"`), açılan giriş satırında "Bu girişi ben yapmadım" (:360 `size="xs"`, 24 px) ve
- *    "IP adresini kopyala" (:345 CopyButton varsayılan `icon-sm`, 32×32) — hiçbirinde `pointer-coarse:` boyutu yok.
- */
-const KNOWN_SHEET = {
-  allowSmall: [
-    / \d+×3\d "[^"]*— Sign out"/,
-    /@sheet-content>button \d+×3\d "(Failed sign-in attempts|Sign out all remembered device|Change my password)/,
-    / \d+×24 "[^"]*— This wa/,   // etiket ölçüde 30 karakterde kesilir
-    / 32×32 "Copy IP address"/,
-  ],
-}
-
 let nextId = 100
 function ev(msAgo, type, extra = {}) {
   return {
@@ -131,7 +105,7 @@ for (const vp of VIEWPORTS) {
       const entries = page.locator('[data-slot="activity-entry"]')
       await expect(entries).toHaveCount(6, { timeout: 20_000 })
       await expect(page.locator('[data-slot="push-prefs"] [data-slot="push-snooze"]')).toBeVisible()
-      await checkLayout(page, `myactivity@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `myactivity@${vp.name}`)
 
       const suspicious = entries.filter({ has: page.locator('[data-flag="UNUSUAL_IP"]') })
       await expect(suspicious).toHaveCount(1)
@@ -167,7 +141,7 @@ for (const vp of VIEWPORTS) {
       const rows = sheet.locator('li.dev-row')
       const longRow = rows.filter({ hasText: LONG_DEVICE }).filter({ has: page.getByRole('button', { name: /Sign out$/ }) })
       await expect(longRow).toHaveCount(1)
-      await checkLayout(page, `devices sheet@${vp.name}`, '[role="dialog"]', KNOWN_SHEET)
+      await checkLayout(page, `devices sheet@${vp.name}`, '[role="dialog"]')
 
       // Hatırlanan cihaz: onayla → DELETE → liste tazelenir, satır gider
       await longRow.getByRole('button', { name: `${LONG_DEVICE} — Sign out` }).click()
@@ -186,7 +160,7 @@ for (const vp of VIEWPORTS) {
       const loginRow = rows.filter({ has: page.locator('[aria-expanded]') }).filter({ hasText: LONG_DEVICE })
       await loginRow.getByRole('button', { name: /show or hide details/ }).click()
       await expect(loginRow.locator('.dev-row-detail')).toContainText('198.51.100.7')
-      await checkLayout(page, `devices sheet (row open)@${vp.name}`, '[role="dialog"]', KNOWN_SHEET)
+      await checkLayout(page, `devices sheet (row open)@${vp.name}`, '[role="dialog"]')
       await loginRow.getByRole('button', { name: /This was not me/ }).click()
       await confirmDialog(page, 'Report this sign-in?').getByRole('button', { name: 'Report', exact: true }).click()
       await expect.poll(() => state.reports.length).toBe(1)
@@ -217,14 +191,15 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-slot'))).toBe('push-prefs-anchor')
       await expect.poll(() => new URL(page.url()).searchParams.get('ma_sec')).toBeNull()
       expect(new URL(page.url()).searchParams.get('tab')).toBe('myactivity')
-      // Kart görünüm alanına kaydırıldı (kartın bir kısmı ekranda). Not: kaydırma tercihler yüklenince BİR kez yapılır; 1280'de
-      // yan sütunda kartın üstündeki kartlar (özet yüklenince) sonradan boy değiştirirse kart başlığı ~30 px yukarıda kalabiliyor
-      // — prod kapısı raporunda düşük önemli bulgu; burada yalnız "ekranda" denetlenir.
+      // Kartın BAŞLIĞI görünüm alanında: kaydırma, kartın üstündeki içerik sonradan boy değiştirse de (özet / yan sütun kartları)
+      // kartı yeniden başa hizalar (PushPreferencesCard followLayout — 2026-11-15, e2e B bulgusu: 1280'de başlık ~30 px yukarıda
+      // kalıyordu). Telefonda yapışkan üst çubuk (56 px) başlığı örtmez.
+      const topMin = vp.width < 768 ? 56 : 0
       await expect.poll(async () => {
         const b = await anchor.boundingBox()
-        return !!b && b.y + Math.min(b.height, 200) > 0 && b.y < vp.height - 100
+        return !!b && b.y >= topMin - 1 && b.y < vp.height - 100
       }, { timeout: 10_000 }).toBe(true)
-      await checkLayout(page, `myactivity push deep link@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `myactivity push deep link@${vp.name}`)
       // Yeniden yükleme: anahtar yok, kendiliğinden kaydırma / odak yok
       await page.reload()
       await expect(anchor.locator('[data-slot="push-snooze"]')).toBeVisible({ timeout: 20_000 })

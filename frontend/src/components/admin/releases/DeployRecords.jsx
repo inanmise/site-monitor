@@ -1,7 +1,6 @@
 import { Trash2 } from 'lucide-react'
 import { formatDate, formatDateSec } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
-import HintPopover from '../../ui/HintPopover.jsx'
 import { SortTh, TH } from '../HealthUi.jsx'
 import { CurrentBadge, KindBadge, ShaRef, SourceBadge, fmtAgo, fmtDur } from './DeployBadges.jsx'
 import { DeployCard, deployLabel } from './DeployTimeline.jsx'
@@ -91,7 +90,7 @@ export default function DeployRecords({ rows, narrow, canEdit, onDelete, sort, d
                   {r.commit ? <ShaRef value={r.commit} short={r.commitShort || r.commit.slice(0, 8)} /> : <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell className={cn(TD, 'hidden text-xs @5xl/deploy:table-cell')} title={r.instanceId || undefined}>
-                  <div className="max-w-56 truncate font-mono">{r.pod || r.hostname || '—'}</div>
+                  <div className="max-w-56 font-mono [overflow-wrap:anywhere]">{r.pod || r.hostname || '—'}</div>
                   {(r.node || r.helm?.revision != null) && (
                     <div className="text-muted-foreground">{[r.node, r.helm?.revision != null && `rev ${r.helm.revision}`].filter(Boolean).join(' · ')}</div>
                   )}
@@ -99,11 +98,10 @@ export default function DeployRecords({ rows, narrow, canEdit, onDelete, sort, d
                 <TableCell className={cn(TD, 'max-w-72 min-w-48')}>
                   <SourceBadge source={r.source} />
                   {r.createdBy && <div className="mt-0.5 text-xs text-muted-foreground">{t('deploy.by', r.createdBy)}</div>}
+                  {/* Not (≤ 500 karakter) TAM gösterilir, sarar: iki satır kırpması yalnız 110 karakterden uzun notta açılıyordu —
+                      65–110 karakterlik not dar sütunda okunamıyordu (2026-11-15, yayın öncesi e2e B). */}
                   {r.note && (
-                    // Uzun not dokunmatikte de okunur: ui/HintPopover (yalnız-hover bilgi YOK).
-                    <HintPopover content={r.note.length > 110 ? r.note : null} triggerClassName="mt-0.5 block h-auto w-full text-left whitespace-normal">
-                      <span className="line-clamp-2 text-xs [overflow-wrap:anywhere] text-muted-foreground">{r.note}</span>
-                    </HintPopover>
+                    <p data-slot="deploy-note" className="mt-0.5 text-xs whitespace-pre-line [overflow-wrap:anywhere] text-muted-foreground">{r.note}</p>
                   )}
                 </TableCell>
                 {canEdit && (

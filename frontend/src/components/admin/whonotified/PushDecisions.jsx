@@ -224,7 +224,7 @@ export function PushCard({ view, level, cardRef, filter = 'all', onFilterChange,
       <div className="flex flex-col gap-3">
         <div data-slot="wn-push-toolbar" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <SegmentedControl value={filter} onChange={(v) => onFilterChange?.(v)} ariaLabel={t('wn.pushFilterAria')}
-            className="w-full sm:w-fit [&>[data-slot=toggle-group-item]]:h-10 [&>[data-slot=toggle-group-item]]:flex-auto [&>[data-slot=toggle-group-item]]:px-2 sm:[&>[data-slot=toggle-group-item]]:flex-none sm:[&>[data-slot=toggle-group-item]]:px-3 md:[&>[data-slot=toggle-group-item]]:h-8"
+            className="w-full sm:w-fit [&>[data-slot=toggle-group-item]]:h-10 [&>[data-slot=toggle-group-item]]:flex-auto [&>[data-slot=toggle-group-item]]:px-2 sm:[&>[data-slot=toggle-group-item]]:flex-none sm:[&>[data-slot=toggle-group-item]]:px-3 md:pointer-fine:[&>[data-slot=toggle-group-item]]:h-8"
             options={[
               { value: 'all', label: t('wn.pushFilterAll', push.total) },
               { value: 'yes', label: t('wn.pushFilterYes', counts.push) },
