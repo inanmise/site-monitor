@@ -1,9 +1,114 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-14T05:16:05Z",
+  "generatedAt": "2026-11-15T00:15:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 832,
+  "count": 833,
   "releases": [
+    {
+      "version": "20.200.0",
+      "tag": "v20.200.0",
+      "releasedAt": "2026-11-15T00:15:07Z",
+      "commit": "36a04fa93b051d23acef58edb2514b05c36b18c4",
+      "prevVersion": "20.199.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "36a04fa9",
+          "subject": "faz probu ve CSV indirmesi kesin süre sınırlı"
+        },
+        {
+          "type": "docs",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "7d001514",
+          "subject": "kılavuz PDF'leri yeniden üretildi"
+        },
+        {
+          "type": "docs",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "1e30d484",
+          "subject": "inceleme düzeltmeleri — TTFB ölçümü, kararsız eşik, bütçe tanımsız"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "5d099273",
+          "subject": "bağımsız inceleme düzeltmeleri — arayüz"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "829565d4",
+          "subject": "bağımsız inceleme düzeltmeleri — sunucu tarafı"
+        },
+        {
+          "type": "test",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "77bf7017",
+          "subject": "zenginleştirme e2e — bütçe uyumu, kısmi ölçüm, kırılım, kaynak süzgeçleri"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "67a99594",
+          "subject": "etiket anahtarları hata iletisi kapısına takılmasın"
+        },
+        {
+          "type": "docs",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "45c2df5c",
+          "subject": "sayfa hızı zenginleştirme 1. sürüm — kılavuz ve CLAUDE.md"
+        },
+        {
+          "type": "feat",
+          "scope": "grafana",
+          "breaking": false,
+          "sha": "d2f679dd",
+          "subject": "sayfa hızı ölçümleri ve pano panelleri"
+        },
+        {
+          "type": "feat",
+          "scope": "mydash",
+          "breaking": false,
+          "sha": "ca266415",
+          "subject": "sayfa hızı kutuları — en yavaş sayfalar ve bütçeyi aşan sayfalar"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "6dddf51e",
+          "subject": "sayfa hızı zenginleştirme 1. sürüm — arayüz"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "3cecdb61",
+          "subject": "sayfa hızı zenginleştirme 1. sürüm — sunucu tarafı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.199.0",
       "tag": "v20.199.0",
