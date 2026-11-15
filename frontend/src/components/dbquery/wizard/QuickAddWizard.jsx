@@ -331,7 +331,7 @@ export default function QuickAddWizard({
     const invalid = firstInvalidStep(form, ctx)
     if (invalid) { showErrors(translateErrors(invalid.errors, t), invalid.step); return }
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → pencere açık kalır.
-    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: false })
+    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: false, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((f) => ({ ...f, nocNotify: true }))
     const sendForm = noc.apply(form)

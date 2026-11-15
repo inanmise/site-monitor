@@ -567,7 +567,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     let payload = keywordPayload(sendableForm(form), isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'KEYWORD', monitorId: isNew ? null : modal?.id,
-      nocNotify: form.nocNotify, locked: routingLock })
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     // Evet: yük 7/24 açık formdan yeniden kurulur (düzenlemede yalnız değişen alanlar — nocNotify artık değişti)

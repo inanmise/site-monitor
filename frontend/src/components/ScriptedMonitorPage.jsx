@@ -1106,7 +1106,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     if (fe.check(errs)) return
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'SCRIPTED', monitorId: modal?.id ?? null,
-      nocNotify: form.nocNotify, locked: routingLock })
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     // Değeri boş değişkenler: uyarı (engellemez) — betik onları boş okur

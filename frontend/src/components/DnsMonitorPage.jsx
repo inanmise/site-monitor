@@ -340,7 +340,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     })) return
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'DNS', monitorId: modal === 'new' ? null : modal?.id,
-      nocNotify: form.nocNotify, locked: routingLock })
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
     if (!noc) return
     if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true)

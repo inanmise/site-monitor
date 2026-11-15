@@ -85,6 +85,20 @@ export function defaultGroupNames(groups) {
   return (defaults.length ? defaults : active).map((g) => String(g.name || '')).filter(Boolean)
 }
 
+/**
+ * Pencerede adı geçecek gruplar: formda açıkça seçilmiş 7/24 grupları varsa ("Evet" onlarla kaydedilir) onların etkin
+ * olanları, yoksa varsayılan gruplar ({@link defaultGroupNames}). Bulunamayan kimlik atlanır.
+ */
+export function confirmGroupNames(groups, groupIds) {
+  const ids = (Array.isArray(groupIds) ? groupIds : [])
+    .map((v) => Number(v)).filter((n) => Number.isInteger(n) && n > 0)
+  if (!ids.length) return defaultGroupNames(groups)
+  const want = new Set(ids)
+  return (Array.isArray(groups) ? groups : [])
+    .filter((g) => g && g.active === true && want.has(Number(g.id)))
+    .map((g) => String(g.name || '')).filter(Boolean)
+}
+
 /** Bir sözü en çok `ms` bekler; süre dolarsa `fallback` döner. Zamanlayıcı her durumda temizlenir. */
 export function withTimeout(promise, ms, fallback = null) {
   let timer = null
