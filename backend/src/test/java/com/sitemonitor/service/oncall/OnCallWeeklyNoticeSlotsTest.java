@@ -74,6 +74,21 @@ class OnCallWeeklyNoticeSlotsTest {
         Instant tue = Instant.parse("2026-11-17T06:00:00Z");
         assertThat(OnCallWeeklyNoticeSlots.next(st, tue, k -> false)).isEqualTo(Instant.parse("2026-11-23T05:30:00Z"));
         assertThat(OnCallWeeklyNoticeSlots.next(new OnCallWeeklyNoticeSlots.Settings(false, true, true, 1, "08:30"), sun, k -> false)).isNull();
+
+        // İnceleme 2026-11-15: 08:30 gönderildikten sonra saat 18:00'e (ya da gün Çarşamba'ya) alındı — bu haftanın
+        // dilimi GELECEKTE ama hafta bitti: sıradaki gönderim gelecek haftadır, "bugün 18:00" değil
+        Instant mon1000 = Instant.parse("2026-11-16T07:00:00Z");
+        OnCallWeeklyNoticeSlots.Settings evening = new OnCallWeeklyNoticeSlots.Settings(true, true, true, 1, "18:00");
+        assertThat(OnCallWeeklyNoticeSlots.next(evening, mon1000, Set.of("2026-11-16")::contains))
+                .isEqualTo(Instant.parse("2026-11-23T15:00:00Z"));
+        OnCallWeeklyNoticeSlots.Settings wednesday = new OnCallWeeklyNoticeSlots.Settings(true, true, true, 3, "08:30");
+        assertThat(OnCallWeeklyNoticeSlots.next(wednesday, mon1000, Set.of("2026-11-16")::contains))
+                .isEqualTo(Instant.parse("2026-11-25T05:30:00Z"));
+        // hafta bitmemişse (yeniden denenecek FAILED satırı "bitti" sayılmaz — çağıranın kuralı) bugün 18:00
+        assertThat(OnCallWeeklyNoticeSlots.next(evening, mon1000, k -> false)).isEqualTo(Instant.parse("2026-11-16T15:00:00Z"));
+        // geçmiş dilim penceredeyse ve hafta bitmediyse "az sonra" (geçmiş an), bittiyse gelecek hafta
+        assertThat(OnCallWeeklyNoticeSlots.next(st, mon1000, k -> false)).isEqualTo(Instant.parse("2026-11-16T05:30:00Z"));
+        assertThat(OnCallWeeklyNoticeSlots.next(st, mon1000, k -> true)).isNull();   // bütün haftalar bitti (yalnız test)
     }
 
     @Test

@@ -17,13 +17,17 @@ import com.sitemonitor.service.EscalationService;
 import com.sitemonitor.service.SchedulerService;
 import com.sitemonitor.service.SystemMaintenanceService;
 import com.sitemonitor.service.UserPushService;
+import com.sitemonitor.service.mail.OnCallWeeklyNoticeMail;
+import com.sitemonitor.service.schedule.SideJob;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.AdditionalAnswers;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +51,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -134,7 +141,12 @@ class OnCallWeeklyNoticeServiceTest {
     }
 
     private OnCallWeeklyNoticeService pod() {
-        OnCallWeeklyNoticeService s = new OnCallWeeklyNoticeService(schedules, overrides, users, notices, teams, logs);
+        return pod(notices);
+    }
+
+    private OnCallWeeklyNoticeService pod(OnCallWeeklyNoticeRepository repo) {
+        OnCallWeeklyNoticeService s = new OnCallWeeklyNoticeService(schedules, overrides, users, repo, teams, logs);
+        s.finishBackoffMs = new long[] {0, 0};
         s.setEscalation(escalation);
         s.setEmail(email);
         s.setPush(push);
@@ -242,14 +254,66 @@ class OnCallWeeklyNoticeServiceTest {
     }
 
     @Test
-    @DisplayName("sistem bakımı susturması: gönderilmez, 'SKIPPED: sistem bakımı' izi")
-    void maintenanceMute() {
+    @DisplayName("sistem bakımı (08:00–09:30): sahiplenme yok, satır / iz yok; bakım bitince AYNI GÜN gönderilir (hafta yanmaz)")
+    void maintenanceMuteWaitsWithinWindow() {
         schedule(true, "11", null, null);
         when(maintenance.notificationsMuted()).thenReturn(true);
-        pod().tick(MON_0900);
+        OnCallWeeklyNoticeService p = pod();
+        p.tick(MON_0900);
         assertThat(mails.get()).isZero();
+        assertThat(notices.findAll()).isEmpty();
+        assertThat(traces()).isEmpty();
+        when(maintenance.notificationsMuted()).thenReturn(false);
+        Instant later = MON_0900.plusSeconds(1800);
+        p.clock = Clock.fixed(later, ZoneOffset.UTC);
+        p.tick(later);
+        assertThat(mails.get()).isEqualTo(1);
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
+        assertThat(traces()).singleElement().satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo("SENT · push 3"));
+    }
+
+    @Test
+    @DisplayName("bakım telafi penceresi boyunca sürdü: pencere kapanınca TEK 'SKIPPED: sistem bakımı' satırı + izi (kaçırıldı değil)")
+    void maintenanceThroughWindowEnd() {
+        schedule(true, "11", null, null);
+        when(maintenance.notificationsMuted()).thenReturn(true);
+        OnCallWeeklyNoticeService p = pod();
+        p.tick(MON_0900);
+        Instant tue0005 = Instant.parse("2026-11-16T21:05:00Z");          // Salı 00:05 İstanbul — pencere kapandı
+        p.clock = Clock.fixed(tue0005, ZoneOffset.UTC);
+        p.tick(tue0005);
+        p.tick(tue0005.plusSeconds(600));
+        assertThat(mails.get()).isZero();
+        assertThat(row("2026-11-16")).satisfies(r -> {
+            assertThat(r.getStatus()).isEqualTo(OnCallWeeklyNotice.SKIPPED);
+            assertThat(r.getReason()).isEqualTo("MAINTENANCE");
+        });
         assertThat(traces()).singleElement().satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo("SKIPPED: sistem bakımı"));
+        // bakım bittikten sonra pencere kapandıysa (pod belleğinde işaret var) yine MAINTENANCE — kaçırıldı değil
+        notices.deleteAll();
+        logs.deleteAll();
+        when(maintenance.notificationsMuted()).thenReturn(true);
+        OnCallWeeklyNoticeService q = pod();
+        q.tick(MON_0900);                                                 // bakım: işaret bırakır
+        when(maintenance.notificationsMuted()).thenReturn(false);
+        q.clock = Clock.fixed(tue0005, ZoneOffset.UTC);
+        q.tick(tue0005);
         assertThat(row("2026-11-16").getReason()).isEqualTo("MAINTENANCE");
+    }
+
+    @Test
+    @DisplayName("bakım tam gönderimden önce başladı: sahiplenme BIRAKILIR (satır silinir), bakım bitince gönderilir")
+    void maintenanceStartsAfterClaim_claimReleased() {
+        schedule(true, "11", null, null);
+        when(maintenance.notificationsMuted()).thenReturn(false, true, false);
+        OnCallWeeklyNoticeService p = pod();
+        p.tick(MON_0900);
+        assertThat(mails.get()).isZero();
+        assertThat(notices.findAll()).isEmpty();
+        assertThat(traces()).isEmpty();
+        p.tick(MON_0900.plusSeconds(60));
+        assertThat(mails.get()).isEqualTo(1);
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
     }
 
     @Test
@@ -282,21 +346,52 @@ class OnCallWeeklyNoticeServiceTest {
     }
 
     @Test
-    @DisplayName("e-posta hatası + push ulaştı → PARTIAL (yeniden denenmez); takım adresi yok + push ulaştı → PARTIAL")
+    @DisplayName("e-posta hatası + push ulaştı → PARTIAL; pencere içinde YALNIZ e-posta yeniden denenir (push bir kez), "
+            + "ulaşınca SENT; takım adresi yok + push ulaştı → PARTIAL, yeniden denenmez")
     void partial() {
         schedule(true, "11", null, null);
         mailResult = "FAILED: SMTP 550";
-        pod().tick(MON_0900);
-        pod().tick(MON_0900.plusSeconds(3600));
+        OnCallWeeklyNoticeService p = pod();
+        p.tick(MON_0900);
+        p.tick(MON_0900.plusSeconds(300));                                   // 10 dk dolmadı
         assertThat(mails.get()).isEqualTo(1);
         assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.PARTIAL);
+        assertThat(row("2026-11-16").getPushStatus()).isEqualTo("delivered");
+        p.clock = Clock.fixed(MON_0900.plusSeconds(700), ZoneOffset.UTC);
+        p.tick(MON_0900.plusSeconds(700));
+        assertThat(mails.get()).isEqualTo(2);
+        assertThat(row("2026-11-16")).satisfies(r -> {
+            assertThat(r.getStatus()).isEqualTo(OnCallWeeklyNotice.PARTIAL);
+            assertThat(r.getAttempts()).isEqualTo(2);
+        });
+        mailResult = "SENT";
+        p.clock = Clock.fixed(MON_0900.plusSeconds(1400), ZoneOffset.UTC);
+        p.tick(MON_0900.plusSeconds(1400));
+        assertThat(mails.get()).isEqualTo(3);
+        assertThat(row("2026-11-16")).satisfies(r -> {
+            assertThat(r.getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
+            assertThat(r.getPushCount()).isEqualTo(3);
+            assertThat(r.getAttempts()).isEqualTo(3);
+        });
+        verify(push, times(1)).enqueueTeamNoticeLocalized(anyLong(), anyString(), anyString(), anyString(), anyString(), any(),
+                anyString(), any());
+        assertThat(traces()).hasSize(3).last().satisfies(l ->
+                assertThat(l.getEmailStatus()).isEqualTo("SENT · push: önceki denemede 3 kişi (yeniden gönderilmedi)"));
+        mails.set(0);
+        p.clock = Clock.fixed(MON_0900.plusSeconds(3600), ZoneOffset.UTC);
+        p.tick(MON_0900.plusSeconds(3600));                                  // SENT kesin
+        assertThat(mails.get()).isZero();
         // takım adresi yok + push ulaştı → yine PARTIAL (açık bir kanal ulaşmadı)
         notices.deleteAll();
         logs.deleteAll();
         when(escalation.teamEmailsForMonitor(eq(5L), any())).thenReturn(List.of());
         pod().tick(MON_0900);
-        assertThat(mails.get()).isEqualTo(1);
-        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.PARTIAL);
+        pod().tick(MON_0900.plusSeconds(3600));
+        assertThat(mails.get()).isZero();
+        assertThat(row("2026-11-16")).satisfies(r -> {
+            assertThat(r.getStatus()).isEqualTo(OnCallWeeklyNotice.PARTIAL);
+            assertThat(r.getAttempts()).isEqualTo(1);
+        });
         assertThat(traces()).singleElement().satisfies(l ->
                 assertThat(l.getEmailStatus()).isEqualTo("SKIPPED: takımın e-posta adresi yok · push 3"));
     }
@@ -349,9 +444,8 @@ class OnCallWeeklyNoticeServiceTest {
     @Test
     @DisplayName("ayar dilimden SONRA yapıldıysa geçmiş dilim 'kaçırıldı' sayılmaz (iz yok)")
     void configuredAfterSlotNoMissedTrace() {
-        OnCallSchedule s = schedule(true, "11", null, null);
-        s.setWeeklyNoticeSince("2026-11-17T05:00:00");
-        schedules.save(s);
+        schedule(true, "11", null, null);
+        schedules.setWeeklyNoticeSince(5L, "2026-11-17T05:00:00");     // bildirim kolonları yalnız hedefli UPDATE ile yazılır
         pod().tick(Instant.parse("2026-11-17T06:00:00Z"));
         assertThat(traces()).isEmpty();
         assertThat(notices.findAll()).isEmpty();
@@ -360,10 +454,9 @@ class OnCallWeeklyNoticeServiceTest {
     @Test
     @DisplayName("Pazar 23:30 dilimi Pazartesi 00:10'da (telafi) önceki haftanın anahtarıyla gönderilir")
     void sundayNight() {
-        OnCallSchedule s = schedule(true, "11", null, null);
-        s.setWeeklyNoticeDay(7);
-        s.setWeeklyNoticeTime("23:30");
-        schedules.save(s);
+        schedule(true, "11", null, null);
+        schedules.setWeeklyNoticeDay(5L, 7);
+        schedules.setWeeklyNoticeTime(5L, "23:30");
         pod().tick(Instant.parse("2026-11-22T21:10:00Z"));
         assertThat(mails.get()).isEqualTo(1);
         assertThat(row("2026-11-16").getSlotAt()).isEqualTo("2026-11-22T20:30:00");
@@ -403,6 +496,147 @@ class OnCallWeeklyNoticeServiceTest {
         p.scheduledTick();
         verifyNoInteractions(scheduler);
         assertThat(mails.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("gövde yan iş koşucusunda (sabit gecikmeli, kilit içinde); koşucu üstlenirse zamanlayıcı iş parçacığında koşmaz")
+    void sideJobOffload() {
+        schedule(true, "11", null, null);
+        OnCallWeeklyNoticeService p = pod();
+        SchedulerService scheduler = mock(SchedulerService.class);
+        doAnswer(i -> {
+            ((Runnable) i.getArgument(1)).run();
+            return null;
+        }).when(scheduler).runWithSchedulerLock(eq(OnCallWeeklyNoticeService.LOCK_NAME), any());
+        p.setScheduler(scheduler);
+        p.scheduledTick();                                                    // sahte koşucu üstlenmez → satır içi
+        ArgumentCaptor<SideJob> job = ArgumentCaptor.forClass(SideJob.class);
+        verify(scheduler).offloadSideJob(job.capture());
+        assertThat(job.getValue().name()).isEqualTo(OnCallWeeklyNoticeService.LOCK_NAME);
+        assertThat(job.getValue().heavy()).isTrue();
+        assertThat(job.getValue().fixedDelayMs()).isEqualTo(60_000L);
+        verify(scheduler).runWithSchedulerLock(eq(OnCallWeeklyNoticeService.LOCK_NAME), any());
+        assertThat(mails.get()).isEqualTo(1);
+        when(scheduler.offloadSideJob(any())).thenReturn(true);              // koşucu aldı: gövde burada koşmaz
+        p.scheduledTick();
+        verify(scheduler, times(1)).runWithSchedulerLock(eq(OnCallWeeklyNoticeService.LOCK_NAME), any());
+    }
+
+    @Test
+    @DisplayName("kimse bildirimi açık tutmasa da yarıda kalmış SENDING süpürülür (ucuz kapı: açık takım YA DA bayat satır)")
+    void staleSweepWithoutEnabledTeam() {
+        OnCallWeeklyNotice n = new OnCallWeeklyNotice();
+        n.setTeamId(5L); n.setWeekKey("2026-11-16"); n.setSlotAt("2026-11-16T05:30:00"); n.setStatus(OnCallWeeklyNotice.SENDING);
+        n.setAttempts(1); n.setClaimedAt("2026-11-16T05:30:10"); n.setCreatedAt("2026-11-16T05:30:10");
+        notices.save(n);
+        OnCallWeeklyNoticeService p = pod();
+        assertThat(p.anyEnabled()).isFalse();
+        assertThat(p.anyWork(MON_0900)).isTrue();
+        assertThat(p.anyWork(Instant.parse("2026-11-16T05:35:00Z"))).isFalse();     // henüz bayat değil
+        p.scheduledTick();
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.UNKNOWN);
+        assertThat(p.anyWork(MON_0900)).isFalse();
+    }
+
+    @Test
+    @DisplayName("son durum yazımı geçici hatada yeniden denenir: iki hata, üçüncüde SENT; tek iz")
+    void finishIsRetried() {
+        schedule(true, "11", null, null);
+        OnCallWeeklyNoticeRepository flaky = mock(OnCallWeeklyNoticeRepository.class, AdditionalAnswers.delegatesTo(notices));
+        doThrow(new DataAccessResourceFailureException("db")).doThrow(new DataAccessResourceFailureException("db"))
+                .doAnswer(AdditionalAnswers.delegatesTo(notices))
+                .when(flaky).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        pod(flaky).tick(MON_0900);
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
+        assertThat(traces()).hasSize(1);
+        verify(flaky, times(3)).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("son durum hiç yazılamadı: satır SENDING kalır; süpürme UNKNOWN yapar ama İKİNCİ iz yazmaz, yeniden göndermez")
+    void finishNeverWritten_sweepWritesNoSecondTrace() {
+        schedule(true, "11", null, null);
+        OnCallWeeklyNoticeRepository broken = mock(OnCallWeeklyNoticeRepository.class, AdditionalAnswers.delegatesTo(notices));
+        doThrow(new DataAccessResourceFailureException("db"))
+                .when(broken).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        pod(broken).tick(MON_0900);
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENDING);
+        assertThat(traces()).singleElement().satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo("SENT · push 3"));
+        Instant later = MON_0900.plusSeconds(16 * 60);
+        OnCallWeeklyNoticeService p = pod();
+        p.clock = Clock.fixed(later, ZoneOffset.UTC);
+        assertThat(p.tick(later).unknown()).isEqualTo(1);
+        assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.UNKNOWN);
+        assertThat(traces()).hasSize(1);
+        assertThat(mails.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("bildirim kolonları: eşzamanlı iki yönetici (gün / saat) birbirini ezmez; bayat varlıkla tam çizelge kaydı kolonlara dokunmaz")
+    void noticeColumnsTargeted() {
+        schedule(true, "11", null, null);
+        OnCallSchedule snapshot = schedules.findByTeamId(5L).orElseThrow();
+        OnCallScheduleRepository staleRepo = mock(OnCallScheduleRepository.class, AdditionalAnswers.delegatesTo(schedules));
+        doAnswer(i -> Optional.of(copy(snapshot))).when(staleRepo).findByTeamId(5L);   // ikisi de aynı (bayat) satırı okur
+        OnCallService a = new OnCallService(staleRepo, overrides, users);
+        OnCallService b = new OnCallService(staleRepo, overrides, users);
+        a.saveWeeklyNotice(5L, new OnCallService.WeeklyNoticePatch(null, null, null, 3, null), "a");
+        b.saveWeeklyNotice(5L, new OnCallService.WeeklyNoticePatch(null, null, null, null, "09:15"), "b");
+        OnCallSchedule now = schedules.findByTeamId(5L).orElseThrow();
+        assertThat(now.getWeeklyNoticeDay()).isEqualTo(3);
+        assertThat(now.getWeeklyNoticeTime()).isEqualTo("09:15");
+        // bayat varlıkla eski 7 değişkenli çizelge kaydı: bildirim kolonları geri yazılmaz
+        OnCallService c = new OnCallService(staleRepo, overrides, users);
+        c.save(5L, true, "WEEKLY", "2026-11-02T08:30", List.of(11L), true, "c");
+        OnCallSchedule after = schedules.findByTeamId(5L).orElseThrow();
+        assertThat(after.getNotifyOncall()).isTrue();
+        assertThat(after.getWeeklyNoticeDay()).isEqualTo(3);
+        assertThat(after.getWeeklyNoticeTime()).isEqualTo("09:15");
+        assertThat(after.getWeeklyNoticeEnabled()).isTrue();
+        // çizelge + bildirim birlikte (8 değişkenli): yalnız gönderilen bildirim kolonu yazılır
+        c.save(5L, true, "WEEKLY", "2026-11-02T08:30", List.of(11L), true,
+                new OnCallService.WeeklyNoticePatch(null, false, null, null, null), "c");
+        OnCallSchedule last = schedules.findByTeamId(5L).orElseThrow();
+        assertThat(last.getWeeklyNoticeMail()).isFalse();
+        assertThat(last.getWeeklyNoticeDay()).isEqualTo(3);
+        assertThat(last.getWeeklyNoticeTime()).isEqualTo("09:15");
+    }
+
+    private static OnCallSchedule copy(OnCallSchedule s) {
+        OnCallSchedule c = new OnCallSchedule();
+        c.setId(s.getId());
+        c.setTeamId(s.getTeamId());
+        c.setEnabled(s.getEnabled());
+        c.setRotation(s.getRotation());
+        c.setAnchor(s.getAnchor());
+        c.setMemberIds(s.getMemberIds());
+        c.setNotifyOncall(s.getNotifyOncall());
+        c.setWeeklyNoticeEnabled(s.getWeeklyNoticeEnabled());
+        c.setWeeklyNoticeMail(s.getWeeklyNoticeMail());
+        c.setWeeklyNoticePush(s.getWeeklyNoticePush());
+        c.setWeeklyNoticeDay(s.getWeeklyNoticeDay());
+        c.setWeeklyNoticeTime(s.getWeeklyNoticeTime());
+        c.setWeeklyNoticeSince(s.getWeeklyNoticeSince());
+        c.setUpdatedAt(s.getUpdatedAt());
+        c.setUpdatedBy(s.getUpdatedBy());
+        return c;
+    }
+
+    @Test
+    @DisplayName("çok devirli hafta: listeye sığmayan devirler sessizce düşmez — e-posta ve push '+N devir daha' der")
+    void omittedHandoversAreSaid() {
+        Instant to = SLOT.plus(OnCallWeeklyNoticeSlots.WEEK);
+        List<OnCallWeeklyNoticeMail.Segment> segs = List.of(
+                new OnCallWeeklyNoticeMail.Segment(SLOT, SLOT.plusSeconds(3600),
+                        new OnCallWeeklyNoticeMail.Person("Kişi 11", null, null, true, false), false));
+        OnCallWeeklyNoticeMail.Info info = new OnCallWeeklyNoticeMail.Info("Ödeme Sistemleri", SLOT, to, segs, "", 7);
+        assertThat(OnCallWeeklyNoticeMail.pushText(info, false)).endsWith("(+7 devir daha gösterilmiyor)");
+        assertThat(OnCallWeeklyNoticeMail.pushText(info, true)).endsWith("(+7 more handovers not shown)");
+        assertThat(OnCallWeeklyNoticeMail.build(info, false).html()).contains("+7 devir daha gösterilmiyor");
+        assertThat(OnCallWeeklyNoticeMail.build(info, false).text()).contains("+7 devir daha gösterilmiyor");
+        OnCallWeeklyNoticeMail.Info full = new OnCallWeeklyNoticeMail.Info("Ödeme Sistemleri", SLOT, to, segs, "");
+        assertThat(OnCallWeeklyNoticeMail.pushText(full, false)).doesNotContain("devir daha");
+        assertThat(OnCallWeeklyNoticeMail.build(full, false).html()).doesNotContain("devir daha");
     }
 
     @Test

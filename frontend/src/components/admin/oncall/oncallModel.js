@@ -108,7 +108,7 @@ export function noticeNextState(next, now = Date.now()) {
   return ms <= now ? 'soon' : 'scheduled'
 }
 
-/** Son sonuç rozet tonu. Bilinmeyen / gönderilmedi asla yeşil değil. */
+/** Son sonuç rozet tonu. Bilinmeyen / gönderilmedi / kuyrukta asla yeşil değil. */
 export function noticeStatusTone(status) {
   switch (status) {
     case 'SENT': return 'success'
@@ -116,8 +116,70 @@ export function noticeStatusTone(status) {
     case 'FAILED': return 'danger'
     case 'UNKNOWN': return 'warning'
     case 'SENDING': return 'info'
+    case 'QUEUED': return 'info'
     default: return 'muted'
   }
+}
+
+const ISTANBUL_OFFSET_MS = 3 * 3600_000   // Türkiye saati sabit UTC+3 (sunucu OnCallRotation.TZ ile aynı)
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/**
+ * Sunucunun UTC anı ("yyyy-MM-ddTHH:mm:ss", Z'siz) → Türkiye saati parçaları (tarayıcının saat diliminden bağımsız;
+ * ayar "Türkiye saati" dediği için gösterim de öyle). Gün 1 (Pazartesi) … 7 (Pazar). Okunamazsa null.
+ */
+export function istanbulParts(iso) {
+  if (!iso) return null
+  const ms = Date.parse(String(iso).slice(0, 19) + 'Z')
+  if (!Number.isFinite(ms)) return null
+  const d = new Date(ms + ISTANBUL_OFFSET_MS)
+  const dow = d.getUTCDay() === 0 ? 7 : d.getUTCDay()
+  return { dow, date: `${pad2(d.getUTCDate())}.${pad2(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`,
+    time: `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}` }
+}
+
+/** Hafta anahtarı "2026-11-09" → "09.11.2026" (okunamazsa null). */
+export function weekKeyText(key) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ''))
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : null
+}
+
+/**
+ * Son sonucun ekran görünümü (sunucu alanlarından; eski sunucunun eksik alanı "bilinmiyor", asla yanlış iddia değil):
+ * bayat SENDING → UNKNOWN (+ INTERRUPTED nedeni); e-postası kuyrukta olan SENT → QUEUED ("gönderildi" demez);
+ * `retry` = pending (aynı gün yeniden denenecek) | done (yeniden denenmeyecek) | null (uygulanmaz / eski sunucu);
+ * `push.kind` = off | people (+ arg adet) | notSent | none.
+ */
+export function noticeLastView(last) {
+  if (!last) return null
+  let status = NOTICE_STATUSES.includes(last.status) ? last.status : null
+  let reason = NOTICE_REASONS.includes(last.reason) ? last.reason : null
+  if (status === 'SENDING' && last.stale === true) {
+    status = 'UNKNOWN'
+    reason = reason || 'INTERRUPTED'
+  }
+  if (status === 'SENT' && last.mail === 'queued') status = 'QUEUED'
+  const retriable = status === 'FAILED' || (status === 'PARTIAL' && last.mail === 'failed')
+  const retry = !retriable || typeof last.retry !== 'boolean' ? null : last.retry ? 'pending' : 'done'
+  const count = Number.isFinite(last.push_count) ? last.push_count : null
+  let push = null
+  if (last.push === 'off') push = { kind: 'off' }
+  else if (last.push === 'failed') push = { kind: 'notSent' }
+  else if (last.push === 'skipped' || (last.push === 'delivered' && count === 0)) push = { kind: 'none' }
+  else if (count != null && (last.push === 'delivered' || last.push == null)) push = { kind: 'people', arg: String(count) }
+  return { status, reason, retry, push, attempts: last.attempts, maxAttempts: last.max_attempts }
+}
+
+/**
+ * Bildirim değişikliği gönderildi ama sunucu tanımadı (eski pod, dağıtım sürüyor): başarı yanıtında `weekly_notice`
+ * yok, ya da YALNIZ-bildirim gövdesine bildirim dışı bir alan hatası geldi (eski pod çizelge kaydı sanıp `anchor` ister).
+ * O zaman sessiz kayıp / anlamsız "ilk devir" hatası yerine "bu sürüm desteklemiyor" denir.
+ */
+export function noticeNotSupported(body, res) {
+  if (!body || typeof body !== 'object' || !('weekly_notice' in body)) return false
+  if (res?.success) return !res.data || res.data.weekly_notice == null || typeof res.data.weekly_notice !== 'object'
+  const noticeOnly = Object.keys(body).length === 1
+  return noticeOnly && !!res?.field && !String(res.field).startsWith('weekly_notice')
 }
 
 export const NOTICE_STATUSES = ['SENT', 'PARTIAL', 'SKIPPED', 'FAILED', 'UNKNOWN', 'SENDING']

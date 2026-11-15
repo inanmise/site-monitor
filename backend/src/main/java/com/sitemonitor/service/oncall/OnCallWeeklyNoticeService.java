@@ -23,6 +23,7 @@ import com.sitemonitor.service.mail.MailDoc;
 import com.sitemonitor.service.mail.OnCallWeeklyNoticeMail;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -38,6 +39,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Haftalık nöbet bildirimi (2026-11-15, kullanıcı isteği: "takımın nöbetçi bilgisini her hafta pazartesi günü 08:30'da push
@@ -52,7 +54,10 @@ import java.util.Set;
  *       varsa {@code scheduler_lock} {@value #LOCK_NAME} altında (yenilenen kilit; kapanışta yeni iş başlamaz).</li>
  *   <li><b>Takım × hafta EN ÇOK BİR kez:</b> gönderimden ÖNCE {@code oncall_weekly_notices} satırı eklenir (benzersiz takım ×
  *       hafta — ikinci pod / tur kaybeder), sonuçla kapanır. Yarıda kalan (pod öldü) satır YENİDEN GÖNDERİLMEZ: UNKNOWN + iz.
- *       Yalnız hiçbir kanalın ulaşmadığı FAILED aynı gün içinde {@value #MAX_ATTEMPTS} denemeye kadar yeniden denenir.</li>
+ *       Aynı gün içinde toplam {@value #MAX_ATTEMPTS} denemeye kadar yeniden denenir: hiçbir kanalın ulaşmadığı FAILED ve
+ *       e-postası iletilemeyen PARTIAL (yalnız e-posta). Sistem bakımı susturması sahiplenmeden ÖNCE bakılır: gönderim
+ *       pencere içinde bakımın bitmesini bekler; pencere bakımda kapanırsa tek MAINTENANCE satırı. Gövde yan iş
+ *       koşucusunda koşar (paylaşılan zamanlayıcı havuzu tutulmaz).</li>
  *   <li><b>Telafi:</b> dilim geçtiyse o İstanbul günü içinde gönderilir (09:00'da açılan pod 08:30'u yine gönderir); gün de
  *       geçmişse "zamanı kaçırıldı" izi yazılır (ayar dilimden önce yapıldıysa).</li>
  *   <li><b>Gönderilmeyen karar da iz bırakır:</b> nöbet bilgisi yok (çizelge kapalı / üye yok / hafta boyunca kimse çözülmüyor),
@@ -85,6 +90,13 @@ public class OnCallWeeklyNoticeService {
     /** E-posta kanalı takım ayarıyla kapalı — {@link OnCallService#mailOutcome} bu öneki "off" sayar. */
     public static final String MAIL_OFF = "SKIPPED: e-posta kanalı kapalı (takım ayarı)";
     static final String FAILED_RECIPIENTS = "FAILED: alıcılar okunamadı";
+    /** Push sınıfı (satırda {@code push_status}; ekran "kapalı / N kişi / iletilemedi / alıcı yok" der). */
+    static final String PUSH_DELIVERED = "delivered";
+    static final String PUSH_SKIPPED = "skipped";
+    static final String PUSH_FAILED = "failed";
+    static final String PUSH_OFF = "off";
+    /** Bakımda bekleyen takım × hafta işaretleri (pod belleği) — tavan aşılırsa temizlenir. */
+    static final int MUTED_MARKS_MAX = 10_000;
     static final String FAILED_UNKNOWN = "FAILED: sonuç bilinmiyor — gönderen pod durdu; yeniden gönderilmedi";
 
     // Neden kodları (ekran çevirir; kalıcı)
@@ -115,6 +127,17 @@ public class OnCallWeeklyNoticeService {
 
     /** Test kancası. */
     Clock clock = Clock.systemUTC();
+    /** Tur aralığı = yan iş koşucusundaki sabit gecikme (bitiş + aralık). */
+    @Value("${site.monitor.oncall.weekly-notice.tick-ms:60000}")
+    long tickMs = TICK_MS_DEFAULT;
+    /** Son durum yazımı başarısızsa yeniden deneme beklemeleri (ms; test 0'a çeker) — toplam ≤ 1 sn. */
+    long[] finishBackoffMs = {200, 600};
+    /**
+     * Pencere içinde sistem bakımı yüzünden BEKLEYEN takım × hafta (pod belleği). Pencere bakım sürerken kapanırsa tek
+     * SKIPPED / MAINTENANCE satırı yazılır (kaçırıldı değil). Başka pod turu alırsa işaret yoktur; o zaman "şu an susturulmuş
+     * mu" sorusu karar verir.
+     */
+    private final Set<String> mutedWeeks = ConcurrentHashMap.newKeySet();
     /** Kapanış başladı: yeni takım işlenmez (Spring kapanışta {@code @Scheduled} tıklamayı sürdürür). */
     private volatile boolean closing;
 
@@ -146,23 +169,49 @@ public class OnCallWeeklyNoticeService {
         static final TickResult EMPTY = new TickResult(0, 0, 0, 0, 0);
     }
 
+    /**
+     * Zamanlanmış tık. Ucuz kapı: hiçbir takım açmadıysa VE yarıda kalmış gönderim yoksa iki {@code exists} sorgusu, kilit
+     * yok. Gövde (kilit + tur) pod'un YAN İŞ koşucusunda koşar ({@code SideJob.fixedDelay}: bu pod'daki son turun
+     * bitişinden en erken bir aralık sonra) — e-posta gönderimi takım takım sürer, paylaşılan 8 iş parçacıklı
+     * {@code @Scheduled} havuzunu tutmaz (inceleme 2026-11-15). Koşucu yoksa / üstlenmezse (sahte zamanlayıcı) satır içi.
+     */
     @Scheduled(fixedDelayString = "${site.monitor.oncall.weekly-notice.tick-ms:60000}",
                initialDelayString = "${site.monitor.oncall.weekly-notice.initial-delay-ms:75000}")
     public void scheduledTick() {
         if (closing) return;
-        // Hiçbir takım açmadıysa (bugünkü kurulum): tek boolean sorgu, kilit yok
-        if (!anyEnabled()) return;
-        if (scheduler == null) {
-            tick(Instant.now(clock));
+        if (!anyWork(Instant.now(clock))) return;
+        SchedulerService s = scheduler;
+        if (s == null) {
+            tickAndLog();
             return;
         }
-        scheduler.runWithSchedulerLock(LOCK_NAME, () -> {
-            TickResult r = tick(Instant.now(clock));
-            if (r.sent() + r.skipped() + r.failed() + r.missed() + r.unknown() > 0) {
-                log.info("Haftalık nöbet bildirimi turu: {} gönderildi, {} atlandı, {} başarısız, {} kaçırıldı, {} yarıda kalmış",
-                        r.sent(), r.skipped(), r.failed(), r.missed(), r.unknown());
-            }
-        });
+        Runnable body = () -> {
+            if (!closing) s.runWithSchedulerLock(LOCK_NAME, this::tickAndLog);
+        };
+        if (!s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.fixedDelay(LOCK_NAME, tickMs, body))) body.run();
+    }
+
+    private void tickAndLog() {
+        TickResult r = tick(Instant.now(clock));
+        if (r.sent() + r.skipped() + r.failed() + r.missed() + r.unknown() > 0) {
+            log.info("Haftalık nöbet bildirimi turu: {} gönderildi, {} atlandı, {} başarısız, {} kaçırıldı, {} yarıda kalmış",
+                    r.sent(), r.skipped(), r.failed(), r.missed(), r.unknown());
+        }
+    }
+
+    /** Tur gerekli mi: bildirimi açık takım VAR ya da yarıda kalmış (eşikten eski) SENDING satırı var. */
+    boolean anyWork(Instant now) {
+        return anyEnabled() || staleSendingExists(now);
+    }
+
+    boolean staleSendingExists(Instant now) {
+        try {
+            return notices.existsByStatusAndClaimedAtLessThan(OnCallWeeklyNotice.SENDING,
+                    OnCallWeeklyNoticeSlots.iso(now.minus(STALE_SENDING)));
+        } catch (RuntimeException e) {
+            log.debug("Haftalık nöbet bildirimi: yarıda kalan satır kapısı okunamadı (tablo henüz yok?): {}", e.toString());
+            return false;
+        }
     }
 
     boolean anyEnabled() {
@@ -216,19 +265,47 @@ public class OnCallWeeklyNoticeService {
         for (Instant slot : OnCallWeeklyNoticeSlots.candidates(now, st.day(), st.time())) {
             if (slot.isAfter(now)) continue;
             String key = OnCallWeeklyNoticeSlots.weekKey(slot);
-            OnCallWeeklyNotice row = rows.get(s.getTeamId() + "|" + key);
+            String mark = s.getTeamId() + "|" + key;
+            OnCallWeeklyNotice row = rows.get(mark);
             boolean inWindow = now.isBefore(OnCallWeeklyNoticeSlots.catchUpEnd(slot));
             if (inWindow) {
-                OnCallWeeklyNotice claimed = row == null ? claimNew(s.getTeamId(), key, slot, now)
-                        : retryable(row, now) ? reclaim(row, now) : null;
-                if (claimed != null) {
-                    String status = send(s, st, claimed, slot);
-                    count(status, c);
+                if (row != null && !retryable(row, now)) continue;
+                // Sistem bakımı susturması sahiplenmeden ÖNCE: satır yazılmaz, pencere içinde bakım bitince gönderilir
+                // (08:00–09:00 bakımı 08:30 dilimini yakmaz). Pencere bakım sürerken kapanırsa tek MAINTENANCE satırı.
+                if (muted()) {
+                    noteMuted(mark);
+                    continue;
                 }
-            } else if (row == null && configuredBefore(s, slot)) {
-                if (recordMissed(s.getTeamId(), key, slot, now)) c[3]++;
+                Prev prev = row == null ? null : new Prev(row.getStatus(), row.getAttempts(), row.getFinishedAt());
+                OnCallWeeklyNotice claimed = row == null ? claimNew(s.getTeamId(), key, slot, now) : reclaim(row, now);
+                if (claimed != null) {
+                    String status = send(s, st, claimed, slot, prev);
+                    if (status == null) noteMuted(mark);        // gönderimden hemen önce bakım başladı: bırakıldı
+                    else {
+                        mutedWeeks.remove(mark);
+                        count(status, c);
+                    }
+                }
+            } else if (row == null) {
+                boolean mutedDuring = mutedWeeks.remove(mark);
+                boolean configured = configuredBefore(s, slot);
+                if (mutedDuring || (configured && muted())) {
+                    if (recordFinal(s.getTeamId(), key, slot, now, R_MAINTENANCE, SKIP_MAINTENANCE)) c[1]++;
+                } else if (configured) {
+                    if (recordMissed(s.getTeamId(), key, slot, now)) c[3]++;
+                }
+            } else {
+                mutedWeeks.remove(mark);
             }
         }
+    }
+
+    /** Sahiplenmeden önceki satır durumu (yeniden denemeyi bırakırken geri yazılır). */
+    record Prev(String status, Integer attempts, String finishedAt) { }
+
+    private void noteMuted(String mark) {
+        if (mutedWeeks.size() >= MUTED_MARKS_MAX) mutedWeeks.clear();
+        mutedWeeks.add(mark);
     }
 
     private static void count(String status, int[] c) {
@@ -264,11 +341,23 @@ public class OnCallWeeklyNoticeService {
         }
     }
 
-    /** FAILED satırı yeniden denenebilir mi: deneme sınırı altında ve son denemeden {@link #RETRY_AFTER} geçmiş. */
-    static boolean retryable(OnCallWeeklyNotice row, Instant now) {
-        if (!OnCallWeeklyNotice.FAILED.equals(row.getStatus())) return false;
+    /**
+     * Satır (telafi penceresi içinde) yeniden denenecek mi — aralık hariç: deneme sınırı altında ve FAILED (hiçbir kanal
+     * ulaşmadı) ya da PARTIAL olup e-postası İLETİLEMEDİ (push ulaştı; yeniden yalnız e-posta gider). PARTIAL'ın e-postası
+     * atlandıysa (adres yok / pasif) ya da push'u ulaşmadıysa kesindir. Ekran "sıradaki gönderim" ve "yeniden denenecek mi"
+     * için de bunu okur ({@link OnCallService}).
+     */
+    public static boolean willRetry(OnCallWeeklyNotice row) {
+        if (row == null) return false;
         int attempts = row.getAttempts() == null ? 1 : row.getAttempts();
         if (attempts >= MAX_ATTEMPTS) return false;
+        if (OnCallWeeklyNotice.FAILED.equals(row.getStatus())) return true;
+        return OnCallWeeklyNotice.PARTIAL.equals(row.getStatus()) && "failed".equals(OnCallService.mailOutcome(row.getMailStatus()));
+    }
+
+    /** {@link #willRetry} ve son denemeden {@link #RETRY_AFTER} geçmiş. */
+    static boolean retryable(OnCallWeeklyNotice row, Instant now) {
+        if (!willRetry(row)) return false;
         Instant last = OnCallWeeklyNoticeSlots.parseIso(row.getFinishedAt() != null ? row.getFinishedAt() : row.getClaimedAt());
         return last == null || !now.isBefore(last.plus(RETRY_AFTER));
     }
@@ -276,7 +365,7 @@ public class OnCallWeeklyNoticeService {
     private OnCallWeeklyNotice reclaim(OnCallWeeklyNotice row, Instant now) {
         String stamp = OnCallWeeklyNoticeSlots.iso(now);
         int attempts = row.getAttempts() == null ? 1 : row.getAttempts();
-        int n = notices.reclaimFailed(row.getId(), attempts, stamp, SchedulerService.instanceId());
+        int n = notices.reclaim(row.getId(), row.getStatus(), attempts, stamp, SchedulerService.instanceId());
         if (n != 1) return null;
         row.setStatus(OnCallWeeklyNotice.SENDING);
         row.setClaimedAt(stamp);
@@ -284,14 +373,23 @@ public class OnCallWeeklyNoticeService {
         return row;
     }
 
-    /** Kaçırılan dilim: doğrudan SKIPPED satırı (benzersiz) + iz; ekleyen pod izi yazar. */
+    /** Kaçırılan dilim: doğrudan SKIPPED / MISSED satırı (benzersiz) + iz. */
     boolean recordMissed(Long teamId, String key, Instant slot, Instant now) {
+        return recordFinal(teamId, key, slot, now, R_MISSED,
+                SKIP_MISSED + " (" + OnCallWeeklyNoticeMail.dayTime(slot, false) + ")");
+    }
+
+    /**
+     * Pencere gönderimsiz kapandı: doğrudan SKIPPED satırı (benzersiz — ikinci pod / tur kaybeder) + TEK iz; ekleyen pod
+     * izi yazar. Kaçırıldı (uygulama çalışmıyordu) ya da sistem bakımı pencere boyunca sürdü.
+     */
+    boolean recordFinal(Long teamId, String key, Instant slot, Instant now, String reason, String trace) {
         OnCallWeeklyNotice n = new OnCallWeeklyNotice();
         n.setTeamId(teamId);
         n.setWeekKey(key);
         n.setSlotAt(OnCallWeeklyNoticeSlots.iso(slot));
         n.setStatus(OnCallWeeklyNotice.SKIPPED);
-        n.setReason(R_MISSED);
+        n.setReason(reason);
         n.setAttempts(1);
         n.setClaimedAt(OnCallWeeklyNoticeSlots.iso(now));
         n.setClaimedBy(SchedulerService.instanceId());
@@ -303,10 +401,9 @@ public class OnCallWeeklyNoticeService {
             return false;
         }
         String team = teamName(teamId);
-        log.warn("Haftalık nöbet bildirimi: takım {} için {} dilimi kaçırıldı (uygulama o gün çalışmıyordu) — gönderilmedi",
-                team, OnCallWeeklyNoticeMail.dayTime(slot, false));
-        saveLog(team, List.of(), OnCallWeeklyNoticeMail.subject(team, slot, false), SKIP_MISSED + " ("
-                + OnCallWeeklyNoticeMail.dayTime(slot, false) + ")", null);
+        log.warn("Haftalık nöbet bildirimi: takım {} için {} dilimi gönderilmeden kapandı ({}) — gönderilmedi",
+                team, OnCallWeeklyNoticeMail.dayTime(slot, false), reason);
+        saveLog(team, List.of(), OnCallWeeklyNoticeMail.subject(team, slot, false), trace, null);
         return true;
     }
 
@@ -320,9 +417,11 @@ public class OnCallWeeklyNoticeService {
                 n++;
                 String team = teamName(r.getTeamId());
                 Instant slot = OnCallWeeklyNoticeSlots.parseIso(r.getSlotAt());
+                String subject = OnCallWeeklyNoticeMail.subject(team, slot, false);
                 log.warn("Haftalık nöbet bildirimi: takım {} hafta {} gönderimi yarıda kalmış (damga {}) — yeniden gönderilmedi",
                         team, r.getWeekKey(), r.getClaimedAt());
-                saveLog(team, List.of(), OnCallWeeklyNoticeMail.subject(team, slot, false), FAILED_UNKNOWN, null);
+                // Gönderim izini yazıp satırı kapatamadan duran pod: sonuç günlükte zaten var, ikinci iz yazılmaz
+                if (!tracedSince(subject, r.getClaimedAt())) saveLog(team, List.of(), subject, FAILED_UNKNOWN, null);
             }
         } catch (RuntimeException e) {
             log.debug("Haftalık nöbet bildirimi: yarıda kalan satırlar okunamadı: {}", e.toString());
@@ -330,20 +429,43 @@ public class OnCallWeeklyNoticeService {
         return n;
     }
 
+    /** Bu sahiplenmeden sonra bu takım × haftanın izi yazıldı mı (okunamazsa false — iz yazılır, kayıp değil). */
+    private boolean tracedSince(String subject, String claimedAt) {
+        if (claimedAt == null) return false;
+        try {
+            return notificationLogs.existsByTriggerAndSubjectAndSentAtGreaterThanEqual(TRIGGER, subject, claimedAt);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     // ── Gönderim ─────────────────────────────────────────────────────────────────────────────
 
-    /** Sahiplenilmiş satırı gönderir ve kapatır; satırın son durumunu döner. Asla fırlatmaz. */
+    /** Yeni sahiplenme için (testler). */
     String send(OnCallSchedule s, OnCallWeeklyNoticeSlots.Settings st, OnCallWeeklyNotice row, Instant slot) {
+        return send(s, st, row, slot, null);
+    }
+
+    /**
+     * Sahiplenilmiş satırı gönderir ve kapatır; satırın son durumunu döner. {@code prev} = yeniden denemede satırın önceki
+     * durumu (PARTIAL → yalnız e-posta yeniden gider). Sistem bakımı tam bu anda başladıysa sahiplenme BIRAKILIR ve null
+     * döner (pencere içinde yeniden denenir). Asla fırlatmaz.
+     */
+    String send(OnCallSchedule s, OnCallWeeklyNoticeSlots.Settings st, OnCallWeeklyNotice row, Instant slot, Prev prev) {
         Long teamId = s.getTeamId();
         String teamName = "Takım #" + teamId;
         String subject = OnCallWeeklyNoticeMail.subject(teamName, slot, false);
+        if (muted()) {
+            release(row, prev);
+            return null;
+        }
+        boolean mailOnly = prev != null && OnCallWeeklyNotice.PARTIAL.equals(prev.status());
         try {
             Team team = teams.findById(teamId).orElse(null);
             if (team == null) return finishSkip(row, teamName, subject, SKIP_NO_TEAM, R_NO_TEAM);
             teamName = team.getName() == null || team.getName().isBlank() ? teamName : team.getName();
             subject = OnCallWeeklyNoticeMail.subject(teamName, slot, false);
             if (Boolean.FALSE.equals(team.getActive())) return finishSkip(row, teamName, subject, SKIP_TEAM_INACTIVE, R_TEAM_INACTIVE);
-            if (muted()) return finishSkip(row, teamName, subject, SKIP_MAINTENANCE, R_MAINTENANCE);
             OnCallWeeklyNoticeMail.Info info = weekInfo(s, teamName, slot);
             if (info == null) return finishSkip(row, teamName, subject, SKIP_NO_ONCALL, R_NO_ONCALL);
             if (!st.mail() && !st.push()) return finishSkip(row, teamName, subject, SKIP_CHANNELS_OFF, R_CHANNELS_OFF);
@@ -391,7 +513,12 @@ public class OnCallWeeklyNoticeService {
             Outcome pushOut;
             int queued = 0;
             String pushNote;
-            if (!st.push()) {
+            if (mailOnly) {
+                // Önceki denemede push ulaştı; yeniden yalnız e-posta (push anahtarı zaten tekilleştirir, yine de gönderilmez)
+                pushOut = Outcome.DELIVERED;
+                queued = row.getPushCount() == null ? 0 : row.getPushCount();
+                pushNote = " · push: önceki denemede " + queued + " kişi (yeniden gönderilmedi)";
+            } else if (!st.push()) {
                 pushOut = Outcome.OFF;
                 pushNote = " · push: kapalı (takım ayarı)";
             } else if (push == null) {
@@ -417,13 +544,35 @@ public class OnCallWeeklyNoticeService {
             String status = finalStatus(mail, pushOut);
             String reason = OnCallWeeklyNotice.SKIPPED.equals(status) ? R_NO_RECIPIENT : null;
             saveLog(teamName, to, subject, mailStatus + pushNote, html);
-            finish(row, status, reason, mailStatus, queued, null);
+            finish(row, status, reason, mailStatus, pushClass(pushOut), queued, null);
             return status;
         } catch (RuntimeException e) {
             log.warn("Haftalık nöbet bildirimi hazırlanamadı (takım {}): {}", teamName, e.toString());
             saveLog(teamName, List.of(), subject, "FAILED: haftalık nöbet bildirimi hazırlanamadı (" + e.getClass().getSimpleName() + ")", null);
-            finish(row, OnCallWeeklyNotice.FAILED, R_ERROR, null, 0, e.getClass().getSimpleName());
+            finish(row, OnCallWeeklyNotice.FAILED, R_ERROR, null, null, 0, e.getClass().getSimpleName());
             return OnCallWeeklyNotice.FAILED;
+        }
+    }
+
+    static String pushClass(Outcome o) {
+        return switch (o) {
+            case DELIVERED -> PUSH_DELIVERED;
+            case FAILED -> PUSH_FAILED;
+            case OFF -> PUSH_OFF;
+            default -> PUSH_SKIPPED;
+        };
+    }
+
+    /** Sahiplenmeyi bırakır: yeni satır silinir, yeniden deneme önceki durumuna döner (koşullu; kaybedilirse süpürme kapatır). */
+    private void release(OnCallWeeklyNotice row, Prev prev) {
+        try {
+            if (prev == null || prev.status() == null) notices.deleteClaim(row.getId(), row.getClaimedAt());
+            else notices.revertClaim(row.getId(), row.getClaimedAt(), prev.status(), prev.attempts(), prev.finishedAt());
+            log.info("Haftalık nöbet bildirimi: takım {} hafta {} — sistem bakımı başladı, gönderim bakım bitince yeniden denenecek",
+                    row.getTeamId(), row.getWeekKey());
+        } catch (RuntimeException e) {
+            log.warn("Haftalık nöbet bildirimi sahiplenmesi bırakılamadı (takım {} hafta {}): {}", row.getTeamId(),
+                    row.getWeekKey(), e.toString());
         }
     }
 
@@ -444,22 +593,46 @@ public class OnCallWeeklyNoticeService {
 
     private String finishSkip(OnCallWeeklyNotice row, String teamName, String subject, String status, String reason) {
         saveLog(teamName, List.of(), subject, status, null);
-        finish(row, OnCallWeeklyNotice.SKIPPED, reason, null, 0, null);
+        finish(row, OnCallWeeklyNotice.SKIPPED, reason, null, null, 0, null);
         return OnCallWeeklyNotice.SKIPPED;
     }
 
-    private void finish(OnCallWeeklyNotice row, String status, String reason, String mailStatus, int pushCount, String errorClass) {
-        try {
-            int n = notices.finish(row.getId(), row.getClaimedAt(), status, reason, clip(mailStatus, LOG_FIELD_MAX), pushCount,
-                    clip(errorClass, 120), OnCallWeeklyNoticeSlots.iso(Instant.now(clock)));
-            if (n == 0) {
-                log.warn("Haftalık nöbet bildirimi: takım {} hafta {} sahiplenmesi bu arada değişti — son durum ({}) yazılmadı",
-                        row.getTeamId(), row.getWeekKey(), status);
+    /**
+     * Son durumu yazar; geçici veritabanı hatasında {@link #finishBackoffMs} aralarla yeniden dener (toplam ≤ 1 sn). Hâlâ
+     * yazılamazsa satır SENDING kalır; yarıda kalan satır süpürmesi UNKNOWN'a çeker (yeniden gönderilmez, iz zaten yazıldığı
+     * için ikinci iz de yazılmaz).
+     */
+    private void finish(OnCallWeeklyNotice row, String status, String reason, String mailStatus, String pushStatus, int pushCount,
+                        String errorClass) {
+        String at = OnCallWeeklyNoticeSlots.iso(Instant.now(clock));
+        long[] backoff = finishBackoffMs == null ? new long[0] : finishBackoffMs;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                int n = notices.finish(row.getId(), row.getClaimedAt(), status, reason, clip(mailStatus, LOG_FIELD_MAX), pushStatus,
+                        pushCount, clip(errorClass, 120), at);
+                if (n == 0) {
+                    log.warn("Haftalık nöbet bildirimi: takım {} hafta {} sahiplenmesi bu arada değişti — son durum ({}) yazılmadı",
+                            row.getTeamId(), row.getWeekKey(), status);
+                }
+                return;
+            } catch (RuntimeException e) {
+                if (attempt >= backoff.length || !pause(backoff[attempt])) {
+                    log.warn("Haftalık nöbet bildirimi son durumu yazılamadı (takım {} hafta {} → {}, {} deneme): {}", row.getTeamId(),
+                            row.getWeekKey(), status, attempt + 1, e.toString());
+                    return;
+                }
             }
-        } catch (RuntimeException e) {
-            // Satır SENDING kalır; yarıda kalan satır süpürmesi UNKNOWN'a çeker (yeniden gönderilmez)
-            log.warn("Haftalık nöbet bildirimi son durumu yazılamadı (takım {} hafta {} → {}): {}", row.getTeamId(), row.getWeekKey(),
-                    status, e.toString());
+        }
+    }
+
+    private static boolean pause(long ms) {
+        if (ms <= 0) return true;
+        try {
+            Thread.sleep(ms);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -486,7 +659,8 @@ public class OnCallWeeklyNoticeService {
                 OnCallWeeklyNoticeSlots.iso(slot))) {
             ovs.add(OnCallService.toOverride(o));
         }
-        List<OnCallRotation.Slot> line = OnCallRotation.timeline(cfg, ovs, slot, to, OnCallRotation.MAX_TIMELINE);
+        OnCallRotation.Timeline tl = OnCallRotation.timelineCounted(cfg, ovs, slot, to, OnCallRotation.MAX_TIMELINE);
+        List<OnCallRotation.Slot> line = tl.slots();
         Set<Long> ids = new LinkedHashSet<>();
         for (OnCallRotation.Slot sl : line) if (sl.userId() != null) ids.add(sl.userId());
         if (ids.isEmpty()) return null;
@@ -505,7 +679,7 @@ public class OnCallWeeklyNoticeService {
             }
             segs.add(new OnCallWeeklyNoticeMail.Segment(sl.start(), sl.end(), p, sl.override()));
         }
-        return new OnCallWeeklyNoticeMail.Info(teamName, slot, to, segs, baseUrl());
+        return new OnCallWeeklyNoticeMail.Info(teamName, slot, to, segs, baseUrl(), tl.omitted());
     }
 
     private String baseUrl() {

@@ -116,16 +116,19 @@ public final class OnCallWeeklyNoticeSlots {
     }
 
     /**
-     * Sıradaki gönderim anı: henüz gelmemiş ilk dilim, ya da telafi penceresi açık ve haftası henüz gönderilmemiş (
-     * {@code weekDone} false) geçmiş dilim — o durumda dönen an geçmiştedir ("az sonra gönderilecek"). Kapalı ayar → null.
+     * Sıradaki gönderim anı: haftası henüz BİTMEMİŞ ({@code weekDone} false) ilk dilim — henüz gelmemişse o an; geçmiş ama
+     * telafi penceresi açıksa da o an (geçmişte: "az sonra gönderilecek"). Haftası bitmiş dilim (o hafta zaten gönderildi /
+     * atlandı) GELECEKTE olsa da atlanır: Pazartesi 08:30 gönderildikten sonra saat 18:00'e alınırsa sıradaki gönderim
+     * gelecek haftadır, "bugün 18:00" değil (inceleme 2026-11-15). Kapalı ayar → null.
      */
     public static Instant next(Settings st, Instant now, Predicate<String> weekDone) {
         if (st == null || !st.enabled()) return null;
         LocalDate thisMonday = monday(localDate(now));
         for (int w = -1; w <= 2; w++) {
             Instant slot = slotInWeek(thisMonday.plusWeeks(w), st.day(), st.time());
-            if (slot.isAfter(now)) return slot;
-            if (now.isBefore(catchUpEnd(slot)) && (weekDone == null || !weekDone.test(weekKey(slot)))) return slot;
+            if (!slot.isAfter(now) && !now.isBefore(catchUpEnd(slot))) continue;     // pencere geçti
+            if (weekDone != null && weekDone.test(weekKey(slot))) continue;          // o hafta bitti
+            return slot;
         }
         return null;
     }

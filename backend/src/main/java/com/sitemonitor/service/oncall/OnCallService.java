@@ -235,16 +235,24 @@ public class OnCallService {
     /** Çizelgeyi kaydeder (doğrulamalı). {@code memberIds} sıralı, çözülmüş kullanıcı kimlikleri. */
     public OnCallSchedule save(Long teamId, boolean enabled, String rotation, String anchor, List<Long> memberIds,
                                boolean notifyOncall, String actor) {
-        return save(teamId, enabled, rotation, anchor, memberIds, notifyOncall, null, actor);
+        return saveImpl(teamId, enabled, rotation, anchor, memberIds, notifyOncall, null, actor);
     }
 
     /**
      * Çizelge + haftalık bildirim ayarı tek kayıtta (2026-11-15). {@code notice} null / boş = bildirim kolonlarına dokunulmaz.
-     * Bildirim doğrulaması HER ŞEYDEN ÖNCE (hatalı istek hiçbir şey yazmaz).
+     * Bildirim doğrulaması HER ŞEYDEN ÖNCE (hatalı istek hiçbir şey yazmaz). Tek işlem: çizelgenin tam kaydı bildirim
+     * kolonlarını YAZMAZ (varlıkta {@code updatable = false}); bildirim değişikliği hedefli tek kolonlu UPDATE'lerle gider.
      */
+    @org.springframework.transaction.annotation.Transactional
     public OnCallSchedule save(Long teamId, boolean enabled, String rotation, String anchor, List<Long> memberIds,
                                boolean notifyOncall, WeeklyNoticePatch notice, String actor) {
+        return saveImpl(teamId, enabled, rotation, anchor, memberIds, notifyOncall, notice, actor);
+    }
+
+    private OnCallSchedule saveImpl(Long teamId, boolean enabled, String rotation, String anchor, List<Long> memberIds,
+                                    boolean notifyOncall, WeeklyNoticePatch notice, String actor) {
         OnCallSchedule existing = schedules.findByTeamId(teamId).orElse(null);
+        OnCallSchedule noticeBefore = existing == null ? null : copyNotice(existing);   // okunan bildirim değerleri
         OnCallSchedule draft = existing == null ? new OnCallSchedule() : copyNotice(existing);
         boolean noticeChanged = notice != null && !notice.isEmpty() && applyNotice(draft, notice, Instant.now());
         String rot = OnCallSchedule.DAILY.equalsIgnoreCase(rotation) ? OnCallSchedule.DAILY : OnCallSchedule.WEEKLY;
@@ -300,6 +308,8 @@ public class OnCallService {
         s.setUpdatedAt(ISO.format(Instant.now()));
         s.setUpdatedBy(actor);
         OnCallSchedule saved = schedules.save(s);
+        // Var olan çizelgede bildirim kolonları tam kayıtla YAZILMAZ: yalnız isteğin taşıdığı ve değişen kolonlar hedefli
+        if (noticeChanged && noticeBefore != null) writeNoticeColumns(teamId, notice, noticeBefore, draft);
         memoChanged();
         return saved;
     }
@@ -379,6 +389,7 @@ public class OnCallService {
      * Yalnız haftalık bildirim ayarını kaydeder (çizelgenin geri kalanına dokunmayan hedefli UPDATE). Çizelge kaydedilmemişse
      * 400 ({@code weekly_notice.enabled}). Değişiklik yoksa yazmaz.
      */
+    @org.springframework.transaction.annotation.Transactional
     public WeeklyNoticeSave saveWeeklyNotice(Long teamId, WeeklyNoticePatch patch, String actor) {
         OnCallSchedule existing = schedules.findByTeamId(teamId).orElse(null);
         if (existing == null) {
@@ -387,15 +398,39 @@ public class OnCallService {
         }
         if (patch == null || patch.isEmpty()) return new WeeklyNoticeSave(existing, false);
         Instant now = Instant.now();
-        if (!applyNotice(existing, patch, now)) return new WeeklyNoticeSave(existing, false);
+        OnCallSchedule draft = copyNotice(existing);
+        if (!applyNotice(draft, patch, now)) return new WeeklyNoticeSave(existing, false);
         String stamp = ISO.format(now);
-        int n = schedules.updateWeeklyNotice(teamId, existing.getWeeklyNoticeEnabled(), existing.getWeeklyNoticeMail(),
-                existing.getWeeklyNoticePush(), existing.getWeeklyNoticeDay(), existing.getWeeklyNoticeTime(),
-                existing.getWeeklyNoticeSince(), stamp, actor);
-        if (n == 0) throw new java.util.NoSuchElementException("schedule");
-        existing.setUpdatedAt(stamp);
-        existing.setUpdatedBy(actor);
-        return new WeeklyNoticeSave(existing, true);
+        if (schedules.touchUpdated(teamId, stamp, actor) == 0) throw new java.util.NoSuchElementException("schedule");
+        writeNoticeColumns(teamId, patch, existing, draft);
+        OnCallSchedule out = existing;
+        out.setWeeklyNoticeEnabled(draft.getWeeklyNoticeEnabled());
+        out.setWeeklyNoticeMail(draft.getWeeklyNoticeMail());
+        out.setWeeklyNoticePush(draft.getWeeklyNoticePush());
+        out.setWeeklyNoticeDay(draft.getWeeklyNoticeDay());
+        out.setWeeklyNoticeTime(draft.getWeeklyNoticeTime());
+        out.setWeeklyNoticeSince(draft.getWeeklyNoticeSince());
+        out.setUpdatedAt(stamp);
+        out.setUpdatedBy(actor);
+        return new WeeklyNoticeSave(out, true);
+    }
+
+    /**
+     * Bildirim kolonlarını YALNIZ isteğin taşıdığı ve okunan değerden farklı olanlar için, kolon başına hedefli UPDATE ile
+     * yazar (inceleme 2026-11-15): iki yöneticinin eşzamanlı farklı alan değişikliği (biri gün, öteki saat) birbirini ezmez;
+     * isteğin taşımadığı kolon (bayat okunmuş değer) geri yazılmaz. {@code since} yalnız zamanlama değiştiyse.
+     */
+    private void writeNoticeColumns(Long teamId, WeeklyNoticePatch p, OnCallSchedule before, OnCallSchedule after) {
+        OnCallWeeklyNoticeSlots.Settings b = OnCallWeeklyNoticeSlots.Settings.of(before);
+        OnCallWeeklyNoticeSlots.Settings a = OnCallWeeklyNoticeSlots.Settings.of(after);
+        if (p.enabled() != null && a.enabled() != b.enabled()) schedules.setWeeklyNoticeEnabled(teamId, a.enabled());
+        if (p.mail() != null && a.mail() != b.mail()) schedules.setWeeklyNoticeMail(teamId, a.mail());
+        if (p.push() != null && a.push() != b.push()) schedules.setWeeklyNoticePush(teamId, a.push());
+        if (p.day() != null && a.day() != b.day()) schedules.setWeeklyNoticeDay(teamId, a.day());
+        if (p.time() != null && !a.time().equals(b.time())) schedules.setWeeklyNoticeTime(teamId, a.time());
+        if (!java.util.Objects.equals(before.getWeeklyNoticeSince(), after.getWeeklyNoticeSince())) {
+            schedules.setWeeklyNoticeSince(teamId, after.getWeeklyNoticeSince());
+        }
     }
 
     /** Denetim farkı için ayarın etkin (varsayılanları uygulanmış) hâli; çizelge yoksa boş. */
@@ -479,11 +514,13 @@ public class OnCallService {
         out.put("weekly_notice", wn);
         OnCallWeeklyNoticeRepository repo = weeklyNotices;
         try {
-            Instant next = OnCallWeeklyNoticeSlots.next(st, now,
-                    repo == null ? null : key -> repo.findByTeamIdAndWeekKey(teamId, key).isPresent());
+            // Hafta "bitti" = satırı var ve yeniden denenmeyecek (yeniden denenecek FAILED / e-postası iletilemeyen PARTIAL
+            // bitmiş sayılmaz — inceleme 2026-11-15)
+            Instant next = OnCallWeeklyNoticeSlots.next(st, now, repo == null ? null
+                    : key -> repo.findByTeamIdAndWeekKey(teamId, key).map(r -> !OnCallWeeklyNoticeService.willRetry(r)).orElse(false));
             out.put("weekly_notice_next", next == null ? null : ISO.format(next));
             OnCallWeeklyNotice last = repo == null ? null : repo.findTopByTeamIdOrderByWeekKeyDescIdDesc(teamId).orElse(null);
-            out.put("weekly_notice_last", last == null ? null : lastJson(last));
+            out.put("weekly_notice_last", last == null ? null : lastJson(last, now));
         } catch (RuntimeException e) {
             log.debug("Haftalık nöbet bildirimi kayıtları okunamadı (takım {}): {}", teamId, e.toString());
             out.put("weekly_notice_next", null);
@@ -492,7 +529,11 @@ public class OnCallService {
         }
     }
 
-    private static Map<String, Object> lastJson(OnCallWeeklyNotice n) {
+    /**
+     * Son satır: hafta, durum, neden, an, posta / push sınıfı (ham metin yok), deneme sayısı, {@code retry} (pencere içinde
+     * yeniden denenecek mi — yoksa sonuç kesin) ve {@code stale} (bayat SENDING: sonuç bilinmiyor).
+     */
+    private static Map<String, Object> lastJson(OnCallWeeklyNotice n, Instant now) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("week", n.getWeekKey());
         m.put("status", n.getStatus());
@@ -500,15 +541,29 @@ public class OnCallService {
         m.put("at", n.getFinishedAt() != null ? n.getFinishedAt() : n.getClaimedAt());
         m.put("slot_at", n.getSlotAt());
         m.put("mail", mailOutcome(n.getMailStatus()));
+        m.put("push", n.getPushStatus());
         m.put("push_count", n.getPushCount());
+        m.put("attempts", n.getAttempts());
+        m.put("max_attempts", OnCallWeeklyNoticeService.MAX_ATTEMPTS);
+        Instant slot = OnCallWeeklyNoticeSlots.parseIso(n.getSlotAt());
+        boolean retry = OnCallWeeklyNoticeService.willRetry(n) && slot != null
+                && now.isBefore(OnCallWeeklyNoticeSlots.catchUpEnd(slot));
+        m.put("retry", retry);
+        Instant claimed = OnCallWeeklyNoticeSlots.parseIso(n.getClaimedAt());
+        m.put("stale", OnCallWeeklyNotice.SENDING.equals(n.getStatus()) && claimed != null
+                && claimed.isBefore(now.minus(OnCallWeeklyNoticeService.STALE_SENDING)));
         return m;
     }
 
-    /** Posta durumu → sınıf (ham SMTP metni istemciye gitmez): delivered | skipped | failed | off | null. */
+    /**
+     * Posta durumu → sınıf (ham SMTP metni istemciye gitmez): delivered | queued (posta sunucusu yeniden deneyecek) |
+     * skipped | failed | off | null.
+     */
     static String mailOutcome(String mailStatus) {
         if (mailStatus == null || mailStatus.isBlank()) return null;
         if (mailStatus.startsWith(OnCallWeeklyNoticeService.MAIL_OFF)) return "off";
-        if (mailStatus.startsWith("SENT") || mailStatus.startsWith("QUEUED")) return "delivered";
+        if (mailStatus.startsWith("SENT")) return "delivered";
+        if (mailStatus.startsWith("QUEUED")) return "queued";
         if (mailStatus.startsWith("SKIPPED")) return "skipped";
         return "failed";
     }

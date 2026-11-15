@@ -63,6 +63,10 @@ public class OnCallWeeklyNotice {
     private String mailStatus;
 
     /** Kuyruğa giren push sayısı. */
+    /** Push kanalının sonucu: delivered | skipped | failed | off (null = eski satır / hiç gönderilmedi). */
+    @Column(name = "push_status", length = 16)
+    private String pushStatus;
+
     @Column(name = "push_count")
     private Integer pushCount;
 
