@@ -18,10 +18,49 @@ public interface PageSpeedMonitorRepository extends JpaRepository<PageSpeedMonit
     @Query("SELECT DISTINCT m.url FROM PageSpeedMonitor m WHERE m.url IS NOT NULL")
     List<String> findOrphanCheckKeys();
 
+    /** Zamanlama sorgularının süre sınırı (ms; 2026-11-15) — zamanlayıcı / tatil kaydı iş parçacığı bir kilit beklerken takılmaz. */
+    String SCHEDULE_QUERY_TIMEOUT_MS = "10000";
+
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, ham aralık (sn) — gönderici türün sınırlarına kırpar] (betik /
-     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
-    @Query("SELECT m.id, m.intervalSeconds FROM PageSpeedMonitor m WHERE m.active = true")
+     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır.
+     *  2026-11-15 (Sayfa Hızı 2. sürüm madde 14): + zamanlama kolonları [2 kip, 3 cron, 4 pencereler, 5 yasak pencereler,
+     *  6 tatil atla, 7 ek tarihler, 8 sonraki plan] — sentetik izlemenin izdüşümüyle AYNI düzen (ilk iki kolonun sırası değişmez). */
+    @Query("SELECT m.id, m.intervalSeconds, m.scheduleMode, m.cronExpression, m.windowsJson, m.blackoutJson, "
+         + "m.skipHolidays, m.skipDatesJson, m.nextRunAt FROM PageSpeedMonitor m WHERE m.active = true")
     List<Object[]> findCheckDispatchRows();
+
+    /**
+     * Zamanlayıcının planı (2026-11-15, madde 14): bir sonraki planlı ölçüm ({@code next_run_at}) — hedefli, varlık kaydı
+     * ezmez ({@code updatable = false}). {@code null} = plan sıfırlandı (sonraki tıkta yeni tanımdan kurulur).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE pagespeed_monitors SET next_run_at = :next WHERE id = :id", nativeQuery = true)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
+    int updateNextRunAt(@Param("id") Long id, @Param("next") String next);
+
+    /** Planı İLK kez kuran çağıran: yalnız {@code next_run_at} hâlâ NULL ise yazar (klasik gövde ile gönderim yarışında tek kazanan). */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE pagespeed_monitors SET next_run_at = :next WHERE id = :id AND next_run_at IS NULL", nativeQuery = true)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
+    int updateNextRunAtIfNull(@Param("id") Long id, @Param("next") String next);
+
+    /** Planı ÖNE ÇEKEN çağıran: yalnız okunan değer hâlâ yerindeyse yazar (0 = başka çağıran değiştirdi). */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE pagespeed_monitors SET next_run_at = :next WHERE id = :id AND next_run_at = :prev", nativeQuery = true)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
+    int updateNextRunAtIfEquals(@Param("id") Long id, @Param("prev") String prev, @Param("next") String next);
+
+    /** Tatil takvimi değişince planı yeniden kurulacak aktif izlemeler: [id, zamanlama kipi] (hafif okuma). */
+    @Query("SELECT m.id, m.scheduleMode FROM PageSpeedMonitor m WHERE m.active = true AND m.skipHolidays = true")
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
+    List<Object[]> findHolidayScheduledRows();
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
     long countByTeamIdAndActiveTrue(Long teamId);

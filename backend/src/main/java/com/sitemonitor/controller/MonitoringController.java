@@ -951,6 +951,12 @@ public class MonitoringController {
         boolean k6PlannedBefore = k6 != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(before.get("scheduleMode"),
                 before.get("windowsJson"), before.get("blackoutJson"), before.get("skipHolidays"), before.get("skipDatesJson"));
         if (k6ScheduleChanged) restoreScriptedSchedule(k6);
+        // Sayfa Hızı zamanlaması (madde 14): sentetikle aynı kural — geçersiz tanım 400, plan kayıttan sonra sıfırlanır
+        com.sitemonitor.model.PageSpeedMonitor psE = entity instanceof com.sitemonitor.model.PageSpeedMonitor pm ? pm : null;
+        boolean psScheduleChanged = psE != null && applied.stream().anyMatch(com.sitemonitor.service.ScriptedSchedule.PROPS::contains);
+        boolean psPlannedBefore = psE != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(before.get("scheduleMode"),
+                before.get("windowsJson"), before.get("blackoutJson"), before.get("skipHolidays"), before.get("skipDatesJson"));
+        if (psScheduleChanged) restorePageSpeedSchedule(psE);
 
         // Veritabanı sorgu izlemesi (2026-10-31): geri yükleme güncellemeyle AYNI kuralları uygular — ad tekil (alarm
         // anahtarı, tüm takımlarda), bağlantı aynı takımın, sorgu bugünkü güvenlik kurallarından geçmeli (kurallar sıkılaşmış olabilir), zamanlama
@@ -973,6 +979,7 @@ public class MonitoringController {
             saveRestored(resolved, entity);
         }
         clearBaselineSamplesIfTargetChanged(resolved, id, baselineTargetBefore, entity);
+        if (psScheduleChanged && psE.getId() != null && (psPlannedBefore || com.sitemonitor.service.ScriptedSchedule.hasPlan(psE))) pageSpeedReplan(psE.getId());
         if (dbqScheduleChanged) dbqRestoredScheduleChanged(dbq);
         if (dbq != null && dbq.getId() != null && before.get("active") instanceof Boolean wasOn
                 && !wasOn.equals(Boolean.TRUE.equals(dbq.getActive()))) dbqActiveChanged(dbq.getId());
@@ -5705,7 +5712,9 @@ public class MonitoringController {
             // HİÇ girmiyordu (alan listesinde yoktu) — biri seviyeyi CRITICAL'e çekse geçmişte iz kalmıyordu.
             "alertLevel", "notificationGroupId",
             // Madde 11 / 12: tür bütçeleri ve asgari sayfa boyutu eşiği
-            "maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb" };
+            "maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb",
+            // 2026-11-15 (Sayfa Hızı 2. sürüm madde 14): zamanlama penceresi / cron (sentetik izlemeyle aynı kolonlar)
+            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -5739,6 +5748,7 @@ public class MonitoringController {
         // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageSpeedMonitor());
         requirePageSpeedBudgets(body, null);   // tür bütçeleri + asgari boyut (2026-11-14): 400 alan hatası, yan etkiden ÖNCE
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, null);   // madde 14: 400, yan etkiden ÖNCE
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         if (pageSpeedMonitorRepo.existsDuplicate(url, teamId, null))
@@ -5754,6 +5764,7 @@ public class MonitoringController {
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         applyPageSpeedFields(m, body, session);
+        if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14: kolonlar + etkin aralık
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
@@ -5774,6 +5785,9 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             requirePageSpeedBudgets(body, m);   // tür bütçeleri + asgari boyut (2026-11-14): alarm kapatma / kayıttan ÖNCE
+            // Madde 14: zamanlama doğrulaması da alarm kapatma / kayıttan ÖNCE; plan sıfırlama kararı için önceki tanım
+            com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, m);
+            com.sitemonitor.model.PageSpeedMonitor psBefore = pageSpeedScheduleCopy(m);
             if (body.get("name") != null) m.setName((String) body.get("name"));
             if (body.get("url")  != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -5787,8 +5801,10 @@ public class MonitoringController {
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
+            if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14
             m.setUpdatedAt(ISO.format(Instant.now()));
             com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
+            boolean psReplanned = pageSpeedReplanIfChanged(psBefore, saved);   // madde 14: önce ya da sonra zamanlamalıysa plan sıfırlanır
             if (baselineConfigService != null && _before != null && _before.get("url") != null
                     && !_before.get("url").toString().equals(saved.getUrl()))   // URL (taban çizgisi hedefi) değişti → eski örnekler karışmasın
                 baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, saved.getId());
@@ -5797,8 +5813,10 @@ public class MonitoringController {
             var changeRow = monitorHistory.record(MonitorHistoryService.PAGESPEED, saved.getId(), saved.getName(), saved.getTeamId(),
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.PAGESPEED, saved.getUrl(), session);
-            return ok(enrichPageSpeed(saved, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
-                    openPageSpeedAlarm(saved.getUrl()), SessionScope.isGlobalAdmin(session)));
+            Map<String, Object> row = enrichPageSpeed(saved, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
+                    openPageSpeedAlarm(saved.getUrl()), SessionScope.isGlobalAdmin(session));
+            if (psReplanned) row.put("next_run_at", null);   // plan sıfırlandı: varlıktaki eski plan gösterilmez
+            return ok(row);
         }).orElse(notFound("Sayfa hızı izlemesi bulunamadı"));
     }
 
@@ -6501,6 +6519,10 @@ public class MonitoringController {
         item.put("interval_seconds",     m.getIntervalSeconds());
         item.put("timeout_ms",           m.getTimeoutMs());
         item.put("max_load_ms",          m.getMaxLoadMs());
+        // Madde 14: zamanlama alanları (schedule_mode, cron_expression, windows, blackouts, skip_holidays, skip_dates,
+        // next_run_at — yalnız zamanlamalı izlemede —, effective_interval_seconds); düz aralıkta INTERVAL + boş listeler
+        for (Map.Entry<String, Object> e : com.sitemonitor.service.ScriptedSchedule.api(m).entrySet())
+            if (!"interval_seconds".equals(e.getKey())) item.put(e.getKey(), e.getValue());
         item.put("max_ttfb_ms",          m.getMaxTtfbMs());
         item.put("max_page_kb",          m.getMaxPageKb());
         item.put("max_requests",         m.getMaxRequests());
@@ -9721,6 +9743,9 @@ public class MonitoringController {
                 && com.sitemonitor.service.ScriptedSchedule.hasPlan(current);
         if (!com.sitemonitor.service.ScriptedSchedule.present(body) && !intervalOfPlanned) return null;
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.fromBody(body, current);
+        // Saklı planın AYNISI (form her kayıtta zamanlamayı da gönderir) yeniden doğrulanmaz — L1 (2026-11-15)
+        if (current != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(current)
+                && com.sitemonitor.service.ScriptedSchedule.samePlan(spec, com.sitemonitor.service.ScriptedSchedule.specOf(current))) return spec;
         throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays()));
         return spec;
     }
@@ -9799,6 +9824,98 @@ public class MonitoringController {
         return ok(com.sitemonitor.service.ScriptedSchedule.preview(body, Instant.now(), scriptedHolidays()));
     }
     // ── /k6r D2 ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── Sayfa Hızı zamanlaması (2026-11-15, Sayfa Hızı 2. sürüm madde 14) — hesap ve gövde çevirisi sentetiğinkiyle ortak
+    // (ScriptedSchedule.Kind.PAGESPEED: alt sınır 5 dk, varsayılan 30 dk, "ölçüm" metinleri) ─────────────────────────
+
+    /**
+     * Gövdedeki zamanlamanın tanımı — gövdede zamanlama anahtarı yoksa (ve zamanlamalı izlemede aralık tek başına değişmiyorsa)
+     * {@code null}: kolonlara dokunulmaz (bugünkü yol). Plan gerektiren tanım geçersizse 400 (alan hataları zamanlama
+     * düzenleyicisinin adlarıyla). Düz aralık bugünkü gibi denetlenmez (aralık tabanı {@code PageSpeedRules.clampInterval}).
+     */
+    private com.sitemonitor.service.dbquery.DbQuerySchedule.Spec pageSpeedScheduleOrThrow(Map<String, Object> body,
+                                                                                           com.sitemonitor.model.PageSpeedMonitor current) {
+        boolean intervalOfPlanned = current != null && body != null && body.get("intervalSeconds") != null
+                && com.sitemonitor.service.ScriptedSchedule.hasPlan(current);
+        if (!com.sitemonitor.service.ScriptedSchedule.present(body) && !intervalOfPlanned) return null;
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.fromBody(body, current, com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED);
+        // Saklı planın AYNISI (form her kayıtta zamanlamayı da gönderir) yeniden doğrulanmaz — L1 (2026-11-15)
+        if (current != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(current)
+                && com.sitemonitor.service.ScriptedSchedule.samePlan(spec, com.sitemonitor.service.ScriptedSchedule.specOf(current))) return spec;
+        throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays(), com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED));
+        return spec;
+    }
+
+    /**
+     * Tanımı Sayfa Hızı izlemesine yazar. Plan gerektirmeyen tanım (düz aralık, filtre yok) → zamanlama kolonları NULL (bugünkü
+     * satır) ve aralık {@code applyPageSpeedFields}'in yazdığı (tabana kırpılmış) değer kalır; plan gerektiren tanımda kolonlar +
+     * ETKİN aralık (CRON'da sonraki tetiklerin ortancası).
+     */
+    private void applyPageSpeedSchedule(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, com.sitemonitor.model.PageSpeedMonitor m) {
+        if (spec == null || m == null) return;
+        if (!com.sitemonitor.service.dbquery.DbQuerySchedule.hasPlan(spec)) {
+            m.setScheduleMode(null);
+            m.setCronExpression(null);
+            m.setWindowsJson(null);
+            m.setBlackoutJson(null);
+            m.setSkipHolidays(null);
+            m.setSkipDatesJson(null);
+            return;
+        }
+        com.sitemonitor.service.ScriptedSchedule.apply(spec, m, Instant.now(), scriptedHolidays());
+        // Etkin aralık türün tabanının altına inemez (CRON doğrulaması zaten en az 5 dk ister — savunma)
+        if (m.getIntervalSeconds() != null)
+            m.setIntervalSeconds(com.sitemonitor.service.page.PageSpeedRules.clampInterval(m.getIntervalSeconds()));
+    }
+
+    /** Geri yüklenen zamanlamanın doğrulaması + kolon / etkin aralık yazımı (kayıttan ÖNCE); geçersizse 400. */
+    private void restorePageSpeedSchedule(com.sitemonitor.model.PageSpeedMonitor m) {
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.specOf(m);
+        throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays(), com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED));
+        applyPageSpeedSchedule(spec, m);
+    }
+
+    private static com.sitemonitor.model.PageSpeedMonitor pageSpeedScheduleCopy(com.sitemonitor.model.PageSpeedMonitor m) {
+        com.sitemonitor.model.PageSpeedMonitor c = new com.sitemonitor.model.PageSpeedMonitor();
+        c.setScheduleMode(m.getScheduleMode());
+        c.setIntervalSeconds(m.getIntervalSeconds());
+        c.setCronExpression(m.getCronExpression());
+        c.setWindowsJson(m.getWindowsJson());
+        c.setBlackoutJson(m.getBlackoutJson());
+        c.setSkipHolidays(m.getSkipHolidays());
+        c.setSkipDatesJson(m.getSkipDatesJson());
+        return c;
+    }
+
+    /** @return plan sıfırlandı mı — zamanlama değiştiyse ve izleme önce YA DA sonra zamanlamalıysa. */
+    private boolean pageSpeedReplanIfChanged(com.sitemonitor.model.PageSpeedMonitor before, com.sitemonitor.model.PageSpeedMonitor after) {
+        if (before == null || after == null || after.getId() == null) return false;
+        if (com.sitemonitor.service.ScriptedSchedule.sameSchedule(before, after)) return false;
+        if (!com.sitemonitor.service.ScriptedSchedule.hasPlan(before) && !com.sitemonitor.service.ScriptedSchedule.hasPlan(after)) return false;
+        pageSpeedReplan(after.getId());
+        return true;
+    }
+
+    private void pageSpeedReplan(long monitorId) {
+        try {
+            if (schedulerService != null) schedulerService.pageSpeedScheduleChanged(monitorId);
+        } catch (RuntimeException e) {
+            log.warn("Sayfa Hızı izlemesi #{}: zamanlama değişikliği plana işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    monitorId, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Sayfa Hızı zamanlama önizlemesi: sonraki 10 ölçüm (UTC ISO) + etkin aralık — sentetik / dbquery önizlemesiyle AYNI gövde
+     * ve yanıt; en kısa aralık 5 dk. Saf hesap (tatil takvimi 60 sn önbellekten).
+     */
+    @PostMapping("/pagespeed/schedule-preview")
+    public ResponseEntity<Map<String, Object>> pageSpeedSchedulePreview(@RequestBody(required = false) Map<String, Object> body,
+                                                                        HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return ok(com.sitemonitor.service.ScriptedSchedule.preview(body, Instant.now(), scriptedHolidays(), com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED));
+    }
+    // ── /Sayfa Hızı zamanlaması ──────────────────────────────────────────────────────────────────────────────────
 
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {

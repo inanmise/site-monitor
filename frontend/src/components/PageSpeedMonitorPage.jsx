@@ -26,7 +26,14 @@ import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
-import IntervalSlider from './ui/IntervalSlider.jsx'
+import ScheduleEditor from './dbquery/ScheduleEditor.jsx'
+import { durationText as schedDurationText, intervalProblem, windowProblems } from './dbquery/scheduleModel.js'
+import { serverFieldErrors } from './dbquery/dbqueryPageModel.js'
+import { isScheduled } from './scripted/scriptedCardModel.js'
+import {
+  DEFAULT_SCRIPTED_SCHEDULE, scheduleBodyKeys, scheduleEditorValue, scheduleErrorsOf, scheduleFromScriptedRow,
+  scheduleProblems, SCHEDULE_ERROR_KEYS,
+} from './scripted/scriptedFormModel.js'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
@@ -93,21 +100,22 @@ const PageSpeedDeepTab = lazy(() => import('./pagespeed/deep/PageSpeedDeepTab.js
 
 /** Kontrol aralığı seçenekleri. TABAN 5 dk: bir ölçüm onlarca istek demek — dakikalık ölçüm hem
  *  tek pod'u hem izlenen sistemi boğar. Sunucu da aynı tabanı uygular (form atlanabilir, uç atlanamaz). */
-const INTERVALS = [
-  { value: 300,   labelKey: 'pspd.iv5m'  },
-  { value: 900,   labelKey: 'pspd.iv15m' },
-  { value: 1800,  labelKey: 'pspd.iv30m' },
-  { value: 3600,  labelKey: 'pspd.iv1h'  },
-  { value: 21600, labelKey: 'pspd.iv6h'  },
-  { value: 86400, labelKey: 'pspd.iv24h' },
-]
-const intervalIdx = (secs) => {
-  const i = INTERVALS.findIndex(o => o.value === secs)
-  if (i >= 0) return i
-  let best = 0, bd = Infinity
-  INTERVALS.forEach((o, j) => { const d = Math.abs(o.value - secs); if (d < bd) { bd = d; best = j } })
-  return best
+/** Sayfa Hızı'nın en kısa ölçüm aralığı (sn) — sunucu tabanı ({@code PageSpeedMonitor.MIN_INTERVAL_SECONDS}). */
+const PAGESPEED_MIN_INTERVAL = 300
+
+/** Zamanlama sorun kodu → alan altı metni (sentetik izlemeyle aynı kodlar, Sayfa Hızı tabanı). */
+function scheduleErrorMap(form, t) {
+  const codes = scheduleProblems(form, { intervalProblem, windowProblems, minInterval: PAGESPEED_MIN_INTERVAL })
+  // Planı olmayan (düz aralık, süzgeç yok) izlemede sunucu yalnız 5 dk tabanını uygular, üst sınır yok — API ile kurulmuş
+  // 7 günden uzun aralık başka bir alanın düzenlenmesini engellemesin (inceleme L2, 2026-11-15)
+  if (codes.interval_seconds === 'interval_max' && !isScheduled({ ...(form?.schedule || {}) })) delete codes.interval_seconds
+  const out = {}
+  for (const [k, code] of Object.entries(codes)) {
+    out[k] = code === 'cron_required' ? t('scripted.f.cronRequired') : t(`dbq.sched.v.${code}`, schedDurationText(PAGESPEED_MIN_INTERVAL, t))
+  }
+  return out
 }
+
 const REFRESH_INTERVAL = 60
 // Ayrıntı penceresinin sessiz tazelemesi (sn değil ms). Liste bu aralıktan (eksi pay) yeni yüklendiyse pencere
 // ucu yeniden çağırmaz — kopyasını liste yoklaması zaten tazeledi (2026-11-06, performans PF2 madde 8).
@@ -141,6 +149,7 @@ const METRICS = [
 const emptyForm = {
   name: '', url: '', groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   intervalSeconds: 1800, timeoutMs: 10000,
+  schedule: DEFAULT_SCRIPTED_SCHEDULE,   // zamanlama (2. sürüm madde 14): aralık / cron + pencereler + tatil
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
   maxJsKb: '', maxImgKb: '', maxFontKb: '', maxThirdPartyKb: '', minPageKb: '',
   userAgent: '', sendDnt: false, useProxy: 'OFF', excludeTrackers: false, trackerPatterns: '',
@@ -508,6 +517,18 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
   const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
+  // Zamanlama düzenleyicisinin değeri (aralık formun intervalSeconds'ından) + değişiklik (ilgili hatalar kalkar)
+  const scheduleValue = useMemo(() => scheduleEditorValue(form), [form.schedule, form.intervalSeconds])   // eslint-disable-line react-hooks/exhaustive-deps
+  const onScheduleChange = (patch) => {
+    setForm(f => {
+      const { interval_seconds: iv, ...rest } = patch || {}
+      const next = { ...f }
+      if ('interval_seconds' in (patch || {})) next.intervalSeconds = iv
+      if (Object.keys(rest).length) next.schedule = { ...(f.schedule || DEFAULT_SCRIPTED_SCHEDULE), ...rest }
+      return next
+    })
+    for (const k of SCHEDULE_ERROR_KEYS) fe.clear(k)
+  }
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
@@ -528,6 +549,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       intervalSeconds: m.interval_seconds ?? 1800, timeoutMs: m.timeout_ms ?? 10000,
+      schedule: scheduleFromScriptedRow(m),
       maxLoadMs: m.max_load_ms ?? '', maxTtfbMs: m.max_ttfb_ms ?? '',
       maxPageKb: m.max_page_kb ?? '', maxRequests: m.max_requests ?? '',
       maxJsKb: m.max_js_kb ?? '', maxImgKb: m.max_img_kb ?? '', maxFontKb: m.max_font_kb ?? '',
@@ -612,6 +634,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
       ...kbFieldErrors(form, t, modal && modal !== 'new' ? formFrom(modal) : null),
+      ...scheduleErrorMap(form, t),   // zamanlama: cron boş / aralık tabanı / eksik pencere (sunucu asıl doğrulayıcı)
     })) return
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'PAGESPEED', monitorId: modal === 'new' ? null : modal?.id,
@@ -622,6 +645,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     try {
       const payload = payloadFromForm()
       payload.nocNotify = noc.nocNotify   // 7/24 onayı: Evet → açık
+      // Zamanlama anahtarları (madde 14): yeni kayıtta / kopyada, satır alanları taşıyorsa ya da kullanıcı değiştirdiyse —
+      // eski sürüm podun satırında alan yoksa dokunulmamış form kayıtlı cron / pencereleri SİLMEZ (sentetik kuralı)
+      Object.assign(payload, scheduleBodyKeys({ row: modal, schedule: form.schedule }))
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
       const res = modal === 'new'
         ? await api.monitoring.createPageSpeedMonitor(payload)
@@ -629,6 +655,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       await load(); setSaving(false)
       // Sunucu alan hatası (tür bütçesi / asgari boyut, 2026-11-14): alanın altında, tost değil
       if (!res?.success && KB_FIELDS.includes(res?.field)) { fe.check({ [res.field]: res.error || t('pspd.err.kbRange') }); return }
+      // Zamanlama alan hatası (madde 14): düzenleyicinin ilgili alanının altında
+      if (!res?.success) {
+        const sched = {}
+        for (const [k, v] of Object.entries(serverFieldErrors(res).fields || {})) {
+          if (SCHEDULE_ERROR_KEYS.includes(k)) sched[k] = v
+          else if (k === 'intervalSeconds') sched.interval_seconds = v
+        }
+        if (Object.keys(sched).length) { fe.check(sched); return }
+      }
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
@@ -993,8 +1028,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
         <NocNotifyField disabled={routingLock} type="PAGESPEED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
           onChange={patch => setForm(f => ({ ...f, ...patch }))} />
-        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        {/* Zamanlama (2. sürüm madde 14): aralık ya da cron + izinli / yasak pencereler + tatil + atlanan günler + canlı
+            önizleme — sentetik izleme / veritabanı sorgusuyla AYNI ortak düzenleyici; en kısa aralık 5 dk */}
+        <FormSection title={t('pspd.scheduleTitle')} hint={t('pspd.scheduleHint')}>
+          <div data-slot="pspd-schedule" className="min-w-0">
+            <ScheduleEditor value={scheduleValue} onChange={onScheduleChange} fieldErrors={scheduleErrorsOf(fe.errors)}
+              minIntervalSeconds={PAGESPEED_MIN_INTERVAL} canEditHolidays={globalAdmin}
+              previewApi={api.monitoring.pageSpeedSchedulePreview} />
+          </div>
+        </FormSection>
 
         {/* ── Alarm eşikleri: DÖRDÜ DE opsiyonel ── */}
         <FormSection title={t('pspd.thresholdsTitle')} hint={t('pspd.thresholdsHint')}>

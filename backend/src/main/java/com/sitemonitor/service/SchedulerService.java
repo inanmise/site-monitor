@@ -1635,6 +1635,14 @@ public class SchedulerService {
         patch("ALTER TABLE pagespeed_checks ADD COLUMN download_ms INTEGER");
         // Sayfa Hızı 2. sürüm (2026-11-15): şelale — kaynağın isteğinin sayfa yükü başlangıcına göre atılma anı (NULL = eski satır)
         patch("ALTER TABLE pagespeed_resources ADD COLUMN start_ms INTEGER");
+        // Sayfa Hızı zamanlaması (2026-11-15, madde 14): sentetik izlemeyle aynı kolonlar — hepsi null = bugünkü düz aralık
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN schedule_mode VARCHAR(10)");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN cron_expression VARCHAR(120)");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN windows_json TEXT");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN blackout_json TEXT");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN skip_holidays BOOLEAN");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN skip_dates_json TEXT");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN next_run_at VARCHAR(30)");
 
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
@@ -8788,8 +8796,16 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         List<Map.Entry<com.sitemonitor.model.PageSpeedMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        Set<java.time.LocalDate> holidays = null;   // Sayfa Hızı 2. sürüm madde 14: yalnız zamanlamalı izleme varken okunur
         for (com.sitemonitor.model.PageSpeedMonitor m : monitors) {
-            if (!classicCheckDue("pagespeed", m.getId(), pageSpeedDueInterval(m.getIntervalSeconds()))) continue;   // R3-3 B: ortak kural (R3-3 FX)
+            boolean due;
+            if (ScriptedSchedule.hasPlan(m)) {   // pencere / yasak / tatil / cron → plan (sentetik izlemenin kuralı)
+                if (holidays == null) holidays = dbQueryHolidays();
+                due = pageSpeedPlanDue(m.getId(), ScriptedSchedule.specOf(m), m.getNextRunAt(), holidays, true);
+            } else {
+                due = classicCheckDue("pagespeed", m.getId(), pageSpeedDueInterval(m.getIntervalSeconds()));   // R3-3 B: ortak kural (R3-3 FX)
+            }
+            if (!due) continue;
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPageSpeed(m, false))));
         }
         for (var entry : started) {
@@ -10501,6 +10517,159 @@ public class SchedulerService {
         if (replanned > 0) log.info("Tatil takvimi değişti: {} senaryo izlemesinin planı yeniden kurulacak", replanned);
     }
     // ── /k6r B3 + D2 ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── Sayfa Hızı zamanlaması (2026-11-15, Sayfa Hızı 2. sürüm madde 14) ─────────────────────────────────────────────
+    // Kural sentetik izlemeninkiyle (scriptedPlanDue) AYNI: saf plan dbQueryPlan, küme anahtarı "pagespeed:<id>" (klasik vadeyle
+    // aynı anahtar), planı kuran / öne çeken yalnız koşullu yazımı kazanan; tekrar kontrolleri ve "Şimdi kontrol et" plana
+    // bakmaz. Sentetik yöntemlerine dokunulmadı (risk ayrımı) — burada aynı adımlar Sayfa Hızı deposuyla.
+
+    /** Zamanlamalı Sayfa Hızı izlemesinin bu tıktaki vadesi (klasik gövde ve dağıtık gönderim çağırır). */
+    boolean pageSpeedPlanDue(Long id, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, String storedNext,
+                             Set<java.time.LocalDate> holidays, boolean classic) {
+        if (id == null) return false;
+        String type = com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED;
+        Instant now = Instant.ofEpochMilli(scheduleClock.getAsLong());
+        if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) {
+            // Plan sıfırlanmışsa (next_run_at NULL — zamanlama başka podda değişti) bekletilen dönem ESKİ tanımındır: kısa yol
+            // kullanılmaz, karar aşağıdaki planla verilir (aksi hâlde art arda iki tıkta iki ölçüm — inceleme L4, 2026-11-15)
+            if (parseUtc(storedNext) != null && safeAllowed(dbQueryScheduling, spec, now, holidays)) {
+                if (classic) notePageSpeedClassicCheck(id);
+                return true;
+            }
+        }
+        Instant cronFloor = parseUtc(storedNext) == null && spec != null
+                && com.sitemonitor.service.dbquery.DbQuerySchedule.MODE_CRON.equalsIgnoreCase(spec.mode())
+                ? pageSpeedCronFirstFloor(id, now) : null;
+        DbQueryDuePlan plan = dbQueryPlan(dbQueryScheduling, spec, storedNext, now, holidays, cronFloor);
+        boolean reset = plan.write() && ("first".equals(plan.reason()) || "replanned".equals(plan.reason()));
+        if (reset) {
+            // Klasik gövde ile gönderim aynı anda "first" görürse yalnız koşullu yazımı kazanan anahtarı sıfırlar ve ölçer
+            if (!casPageSpeedNextRun(id, storedNext, plan.next())) return false;
+            resetPageSpeedClusterKey(id);
+        }
+        if (plan.run()) {
+            long nowMs = now.toEpochMilli();
+            long nextMs = plan.next() != null ? plan.next().toEpochMilli() : nowMs + DBQUERY_NEVER_MS;
+            long nominal = Math.max(60_000L, nextMs - nowMs);
+            if (!clusterDue(type + ":" + id, nominal, (prev, ms) -> nextMs)) return false;
+        }
+        if (plan.write() && !reset) writePageSpeedNextRun(id, storedNext, plan.next());
+        if (plan.run() && classic) notePageSpeedClassicCheck(id);
+        return plan.run();
+    }
+
+    private boolean casPageSpeedNextRun(Long id, String storedNext, Instant next) {
+        String iso = next == null ? null : ISO.format(next);
+        try {
+            int n = storedNext == null ? pageSpeedMonitorRepo.updateNextRunAtIfNull(id, iso)
+                    : pageSpeedMonitorRepo.updateNextRunAtIfEquals(id, storedNext, iso);
+            return n > 0;
+        } catch (Exception e) {
+            log.warn("Sayfa Hızı izlemesinin planı kurulamadı (#{}): {} — sonraki tıkta yeniden denenecek", id, e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private void notePageSpeedClassicCheck(Long id) {
+        com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+        if (d != null) d.noteClassicCheck(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED, id);
+    }
+
+    /**
+     * CRON planı sıfırlanınca geri bakış tabanı: şimdi − 2 tık, ama son ölçüm satırından önce değil (Sayfa Hızı ölçüm satırı
+     * zamanlanmış / elle ayrımı taşımaz — elle bir ölçüm de taban sayılır: kaçan tetik koşulmaz, çift ölçüm olmaz). Son satır
+     * okunamazsa geri bakış YOK.
+     */
+    private Instant pageSpeedCronFirstFloor(Long id, Instant now) {
+        long tick = Math.max(1_000L, classicSweepTickMs(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED));
+        Instant floor = now.minusMillis(2 * tick);
+        if (pageSpeedCheckRepo == null) return floor;
+        try {
+            Instant at = pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id)
+                    .map(c -> parseUtc(c.getCheckedAt())).orElse(null);
+            return at != null && at.isAfter(floor) ? at : floor;
+        } catch (Exception e) {
+            log.debug("Sayfa Hızı izlemesinin son ölçümü okunamadı (#{}): {}", id, e.toString());
+            return null;
+        }
+    }
+
+    private void writePageSpeedNextRun(Long id, String storedNext, Instant next) {
+        String iso = next == null ? null : ISO.format(next);
+        if (java.util.Objects.equals(iso, storedNext)) return;
+        try {
+            // Koşullu (inceleme L5, 2026-11-15): tık okuduktan sonra kullanıcı zamanlamayı değiştirip planı sıfırladıysa eski
+            // tanımın sonraki zamanı yeni planın üstüne yazılmaz — satır değişmişse yazım 0 satır, sonraki tık yeni planı kurar
+            if (storedNext == null) pageSpeedMonitorRepo.updateNextRunAtIfNull(id, iso);
+            else pageSpeedMonitorRepo.updateNextRunAtIfEquals(id, storedNext, iso);
+        } catch (Exception e) {
+            log.warn("Sayfa Hızı izlemesinin sonraki ölçümü yazılamadı (#{}): {}", id, e.getClass().getSimpleName());
+        }
+    }
+
+    private void resetPageSpeedClusterKey(Long monitorId) {
+        if (monitorId == null) return;
+        String key = com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED + ":" + monitorId;
+        lastMonitorCheckAt.remove(key);
+        if (clusterSchedule == null) return;
+        try {
+            clusterSchedule.forget(key);
+        } catch (Exception e) {
+            log.warn("Sayfa Hızı izlemesinin küme vadesi sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Sayfa Hızı izlemesinin zamanlaması değişti (güncelleme / geri yükleme — controller YALNIZ önce ya da sonra zamanlamalı
+     * ise çağırır): plan silinir, küme vadesi ve geri verilen dönem sıfırlanır → sonraki tıkta plan YENİ tanımdan kurulur.
+     * Fırlatmaz.
+     */
+    public void pageSpeedScheduleChanged(long monitorId) {
+        java.util.concurrent.ConcurrentHashMap<Long, Long> kept = retainedDue.get(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED);
+        if (kept != null) kept.remove(monitorId);
+        if (pageSpeedMonitorRepo != null) {
+            try {
+                pageSpeedMonitorRepo.updateNextRunAt(monitorId, null);
+            } catch (Exception e) {
+                log.warn("Sayfa Hızı izlemesinin planı sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+            }
+        }
+        resetPageSpeedClusterKey(monitorId);
+    }
+
+    /**
+     * Tatil takvimi değişti (sentetik izlemenin kuralı): tatile bakan aktif izlemelerde CRON planı silinir, küme vadesi
+     * sıfırlanır; aralık kipinde plan silinmez. Fırlatmaz.
+     */
+    public void pageSpeedCalendarChanged() {
+        if (pageSpeedMonitorRepo == null) return;
+        List<Object[]> rows;
+        try {
+            rows = pageSpeedMonitorRepo.findHolidayScheduledRows();
+        } catch (Exception e) {
+            log.warn("Tatil değişimi: Sayfa Hızı izlemeleri okunamadı — planlar sonraki tıkta kendiliğinden düzelir: {}",
+                    e.getClass().getSimpleName());
+            return;
+        }
+        int replanned = 0;
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            Long id = rowLong(r, 0);
+            if (id == null) continue;
+            Object mode = r.length > 1 ? r[1] : null;
+            if (mode != null && com.sitemonitor.service.dbquery.DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(mode).trim())) {
+                try {
+                    pageSpeedMonitorRepo.updateNextRunAt(id, null);
+                } catch (Exception e) {
+                    log.warn("Tatil değişimi: Sayfa Hızı izlemesinin planı sıfırlanamadı (#{}): {}", id, e.getClass().getSimpleName());
+                    continue;
+                }
+            }
+            resetPageSpeedClusterKey(id);
+            replanned++;
+        }
+        if (replanned > 0) log.info("Tatil takvimi değişti: {} Sayfa Hızı izlemesinin planı yeniden kurulacak", replanned);
+    }
+    // ── /Sayfa Hızı zamanlaması ──────────────────────────────────────────────────────────────────────────────────────
 
     /** Bir senaryo kontrol sonucundan SweepItem üretir: SCRIPTED_FAIL (up=PASS) ve opsiyonel SCRIPTED_SLOW. */
     private void addScriptedSweepItems(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r,
@@ -13056,9 +13225,18 @@ public class SchedulerService {
                 }
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> {
+                // Sayfa Hızı 2. sürüm madde 14: zamanlamalı izleme gönderimde de plana uyar (klasik gövdeyle aynı karar)
+                Set<java.time.LocalDate> holidays = null;
                 for (Object[] row : pageSpeedMonitorRepo.findCheckDispatchRows()) {
                     Long id = rowLong(row, 0);
-                    if (id != null) addIfDue(type, id, dispatchIntervalSeconds(type, pageSpeedDueInterval(rowInt(row, 1))), ids);
+                    if (id == null) continue;
+                    if (ScriptedSchedule.rowHasPlan(row)) {
+                        if (holidays == null) holidays = dbQueryHolidays();
+                        if (pageSpeedPlanDue(id, ScriptedSchedule.specOfRow(row), ScriptedSchedule.rowNextRunAt(row), holidays, false))
+                            ids.add(id);
+                    } else {
+                        addIfDue(type, id, dispatchIntervalSeconds(type, pageSpeedDueInterval(rowInt(row, 1))), ids);
+                    }
                 }
             }
             case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> {

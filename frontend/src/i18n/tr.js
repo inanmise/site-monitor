@@ -16914,8 +16914,6 @@ export const TR = {
   'http.adv.detailSlow':        'Yavaş yanıt alarmı',
   'http.adv.detailSlowValue':   '{0} ms üstü',
   // ── Sayfa Hızı ──
-  'pspd.iv5m': '5 dk', 'pspd.iv15m': '15 dk', 'pspd.iv30m': '30 dk',
-  'pspd.iv1h': '1 sa', 'pspd.iv6h': '6 sa', 'pspd.iv24h': '24 sa',
   'pspd.title':    'Sayfa Hızı İzleme',
   'pspd.subtitle': 'Sayfanın ne kadar sürede yüklendiğini ve ne kadar ağırlaştığını ölçer: ilk bayt süresi, toplam yükleme, transfer boyutu ve istek sayısı.',
   'pspd.typeInfo': 'Sayfa Hızı, sayfanın AĞIRLIĞINI ve SÜRESİNİ ölçer. "Sayfa ayakta mı" sorusu HTTP izlemesinin, "kaynaklar kırık mı" sorusu Sayfa Bütünlüğü izlemesinin işidir.',
@@ -17159,6 +17157,8 @@ export const TR = {
   'pspd.modalNew': 'Yeni Sayfa Hızı İzlemesi', 'pspd.modalEdit': 'Sayfa Hızı İzlemesini Düzenle',
   'pspd.url': 'Sayfa URL\'i', 'pspd.urlHint': 'Ölçülecek sayfanın tam adresi. Şema yazılmazsa https:// eklenir.',
   'pspd.name': 'Ad', 'pspd.team': 'Takım', 'pspd.group': 'Grup',
+  'pspd.scheduleTitle': 'Zamanlama',
+  'pspd.scheduleHint': 'Ölçüm sıklığı: belirli aralıkla ya da cron ifadesiyle; isterseniz yalnız izinli saatlerde ölçün, yasak pencerelerde, tatillerde ve seçtiğiniz günlerde atlayın. En kısa aralık 5 dakikadır.',
   'pspd.thresholdsTitle': 'Alarm eşikleri',
   'pspd.thresholdsHint': 'Hepsi opsiyoneldir: boş bıraktığınız metrik alarm ÜRETMEZ. Eşiğin tam değeri ihlal sayılmaz, yalnız üstü sayılır. TTFB, kontrolün kendi isteğinin ilk baytıdır (yönlendirmeler dahil).',
   'pspd.maxLoadMs': 'Azami yükleme süresi', 'pspd.maxTtfbMs': 'Azami TTFB',

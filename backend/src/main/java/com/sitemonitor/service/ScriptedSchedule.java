@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.PageSpeedMonitor;
+import com.sitemonitor.model.PlannedSchedule;
 import com.sitemonitor.model.ScriptedMonitor;
 import com.sitemonitor.service.dbquery.DbQuerySchedule;
 import com.sitemonitor.util.Msg;
@@ -29,6 +31,25 @@ public final class ScriptedSchedule {
 
     private ScriptedSchedule() {}
 
+    /**
+     * Zamanlamayı kullanan tür (2026-11-15, Sayfa Hızı 2. sürüm madde 14): alt sınır, varsayılan aralık ve hata METNİ türe
+     * göre; kolonlar, kodlar ve hesap ortak. {@link #SCRIPTED} = bugünkü sentetik davranış (bayt-özdeş).
+     */
+    public enum Kind {
+        /** Sentetik izleme (k6): en kısa 60 sn, varsayılan 300 sn. */
+        SCRIPTED(DbQuerySchedule.MIN_INTERVAL_SECONDS, 300),
+        /** Sayfa Hızı: en kısa 5 dk ({@link PageSpeedMonitor#MIN_INTERVAL_SECONDS}), varsayılan 30 dk. */
+        PAGESPEED(PageSpeedMonitor.MIN_INTERVAL_SECONDS, 1800);
+
+        public final int minIntervalSeconds;
+        public final int defaultIntervalSeconds;
+
+        Kind(int minIntervalSeconds, int defaultIntervalSeconds) {
+            this.minIntervalSeconds = minIntervalSeconds;
+            this.defaultIntervalSeconds = defaultIntervalSeconds;
+        }
+    }
+
     /** Zamanlama gövde anahtarları (dbquery ScheduleEditor değeriyle AYNI snake_case). Aralık ayrı: {@code intervalSeconds}. */
     public static final List<String> KEYS =
             List.of("schedule_mode", "cron_expression", "windows", "blackouts", "skip_holidays", "skip_dates");
@@ -52,12 +73,12 @@ public final class ScriptedSchedule {
      * İzlemenin plan gerektirip gerektirmediği — UCUZ (JSON ayrıştırmaz): CRON kipi ya da dolu pencere / yasak / tatil / ek
      * tarih kolonu. false = bugünkü düz aralık yolu.
      */
-    public static boolean hasPlan(ScriptedMonitor m) {
+    public static boolean hasPlan(PlannedSchedule m) {
         if (m == null) return false;
         return hasPlan(m.getScheduleMode(), m.getWindowsJson(), m.getBlackoutJson(), m.getSkipHolidays(), m.getSkipDatesJson());
     }
 
-    /** {@link #hasPlan(ScriptedMonitor)} — kolon değerleriyle (gönderim izdüşümü satırı). */
+    /** {@link #hasPlan(PlannedSchedule)} — kolon değerleriyle (gönderim izdüşümü satırı). */
     public static boolean hasPlan(Object scheduleMode, Object windowsJson, Object blackoutJson, Object skipHolidays,
                                   Object skipDatesJson) {
         if (scheduleMode != null && DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(scheduleMode).trim())) return true;
@@ -72,7 +93,7 @@ public final class ScriptedSchedule {
     }
 
     /** Saklı tanım (gevşek okuma — {@link DbQuerySchedule#ofColumns}). */
-    public static DbQuerySchedule.Spec specOf(ScriptedMonitor m) {
+    public static DbQuerySchedule.Spec specOf(PlannedSchedule m) {
         if (m == null) return null;
         return DbQuerySchedule.ofColumns(m.getScheduleMode(), m.getIntervalSeconds(), m.getCronExpression(),
                 m.getWindowsJson(), m.getBlackoutJson(), m.getSkipHolidays(), m.getSkipDatesJson());
@@ -117,6 +138,11 @@ public final class ScriptedSchedule {
      * {@code intervalSeconds}'tan (zamanlama düzenleyicisinin {@code interval_seconds} adı da kabul), yoksa izlemenin aralığı.
      */
     public static DbQuerySchedule.Spec fromBody(Map<String, Object> body, ScriptedMonitor current) {
+        return fromBody(body, current, Kind.SCRIPTED);
+    }
+
+    /** {@link #fromBody(Map, ScriptedMonitor)} — türün varsayılan aralığıyla (saklı aralık yoksa). */
+    public static DbQuerySchedule.Spec fromBody(Map<String, Object> body, PlannedSchedule current, Kind kind) {
         Map<String, Object> merged = new LinkedHashMap<>();
         if (current != null) merged.putAll(api(current));
         merged.remove("next_run_at");
@@ -127,7 +153,8 @@ public final class ScriptedSchedule {
             if (iv != null) merged.put("interval_seconds", iv);
         }
         if (!merged.containsKey("interval_seconds") || merged.get("interval_seconds") == null)
-            merged.put("interval_seconds", current != null && current.getIntervalSeconds() != null ? current.getIntervalSeconds() : 300);
+            merged.put("interval_seconds", current != null && current.getIntervalSeconds() != null ? current.getIntervalSeconds()
+                    : (kind == null ? Kind.SCRIPTED : kind).defaultIntervalSeconds);
         return DbQuerySchedule.fromApi(merged);
     }
 
@@ -135,7 +162,7 @@ public final class ScriptedSchedule {
      * Tanımı izlemeye yazar. Plan gerektirmeyen tanım (düz aralık, filtre yok) → zamanlama kolonları NULL (bugünkü satırla
      * aynı) ve aralık dokunulmaz; aksi halde kolonlar + ETKİN aralık ({@link DbQuerySchedule#columns}).
      */
-    public static void apply(DbQuerySchedule.Spec spec, ScriptedMonitor m, Instant now, Set<LocalDate> holidays) {
+    public static void apply(DbQuerySchedule.Spec spec, PlannedSchedule m, Instant now, Set<LocalDate> holidays) {
         if (spec == null || m == null) return;
         if (!DbQuerySchedule.hasPlan(spec)) {
             m.setScheduleMode(null);
@@ -167,15 +194,21 @@ public final class ScriptedSchedule {
      * değişmeden düzenlenebilir kalır). Kodlar dbquery'ninkiyle AYNI; metinler sentetiğe göre.
      */
     public static List<FieldError> validate(DbQuerySchedule.Spec spec, Instant now, Set<LocalDate> holidays) {
+        return validate(spec, now, holidays, Kind.SCRIPTED);
+    }
+
+    /** {@link #validate(DbQuerySchedule.Spec, Instant, Set)} — türün alt sınırı ve metniyle. */
+    public static List<FieldError> validate(DbQuerySchedule.Spec spec, Instant now, Set<LocalDate> holidays, Kind kind) {
+        Kind k = kind == null ? Kind.SCRIPTED : kind;
         List<FieldError> out = new ArrayList<>();
         if (spec == null) {
             out.add(new FieldError("schedule", DbQuerySchedule.CODE_MODE, msgMode()));
             return out;
         }
         if (!DbQuerySchedule.hasPlan(spec) && isIntervalMode(spec)) return out;
-        List<DbQuerySchedule.FieldError> raw = DbQuerySchedule.validate(spec, MIN_INTERVAL_SECONDS, now, holidays);
+        List<DbQuerySchedule.FieldError> raw = DbQuerySchedule.validate(spec, k.minIntervalSeconds, now, holidays);
         for (DbQuerySchedule.FieldError fe : raw == null ? List.<DbQuerySchedule.FieldError>of() : raw)
-            out.add(new FieldError(fe.field() == null ? "schedule" : fe.field(), fe.code(), message(fe)));
+            out.add(new FieldError(fe.field() == null ? "schedule" : fe.field(), fe.code(), message(fe, k)));
         return out;
     }
 
@@ -186,7 +219,13 @@ public final class ScriptedSchedule {
 
     /** dbquery hata koduna karşılık sentetik izleme metni (ne · neden · ne yapmalı); bilinmeyen kod → dbquery metni. */
     static String message(DbQuerySchedule.FieldError fe) {
+        return message(fe, Kind.SCRIPTED);
+    }
+
+    /** Türün metni: Sayfa Hızı "ölçüm" der, sınır 5 dk; sentetik "senaryo" der (bugünkü metin). */
+    static String message(DbQuerySchedule.FieldError fe, Kind kind) {
         String code = fe.code() == null ? "" : fe.code();
+        if (kind == Kind.PAGESPEED) return pageSpeedMessage(fe, code);
         return switch (code) {
             case DbQuerySchedule.CODE_INTERVAL -> Msg.t(
                     "Zamanlamalı senaryonun çalışma aralığı " + MIN_INTERVAL_SECONDS + " saniye ile 7 gün arasında olmalı · Daha sık "
@@ -208,6 +247,32 @@ public final class ScriptedSchedule {
         };
     }
 
+    /** Sayfa Hızı metinleri (ne · neden · ne yapmalı); alt sınır 5 dk. */
+    private static String pageSpeedMessage(DbQuerySchedule.FieldError fe, String code) {
+        int minMin = Kind.PAGESPEED.minIntervalSeconds / 60;
+        return switch (code) {
+            case DbQuerySchedule.CODE_INTERVAL -> Msg.t(
+                    "Zamanlamalı Sayfa Hızı ölçümünün aralığı " + minMin + " dakika ile 7 gün arasında olmalı · Her ölçüm sayfanın "
+                            + "tüm kaynaklarını indirir; daha sık ölçüm izlenen siteye ve bize yük bindirir · Aralığı bu sınırlar içinde seçin.",
+                    "A scheduled page speed measurement's interval must be between " + minMin + " minutes and 7 days · Each "
+                            + "measurement downloads every resource of the page; measuring more often loads the monitored site and us · "
+                            + "Choose an interval within these limits.");
+            case DbQuerySchedule.CODE_CRON_TOO_FREQUENT -> Msg.t(
+                    "Cron ifadesi çok sık çalışıyor (iki ölçüm arası en az " + minMin + " dakika olmalı) · Her ölçüm sayfanın tüm "
+                            + "kaynaklarını indirir · Daha seyrek bir zamanlama yazın.",
+                    "The cron expression runs too often (at least " + minMin + " minutes between measurements) · Each measurement "
+                            + "downloads every resource of the page · Write a less frequent schedule.");
+            case DbQuerySchedule.CODE_NEVER_RUNS -> Msg.t(
+                    "Bu zamanlamayla sayfa önümüzdeki " + DbQuerySchedule.HORIZON_DAYS + " gün içinde hiç ölçülmez · İzinli pencereler, "
+                            + "yasak pencereler, tatiller ve ek tarihler birlikte tüm zamanları kapatıyor · Pencereleri ya da cron "
+                            + "ifadesini gözden geçirin.",
+                    "With this schedule the page is never measured in the next " + DbQuerySchedule.HORIZON_DAYS + " days · The "
+                            + "allowed windows, blackouts, holidays and extra dates together cover every time · Review the windows or the "
+                            + "cron expression.");
+            default -> fe.message();   // cron sözdizimi, pencere, ek tarih, kip: metin türden bağımsız
+        };
+    }
+
     private static String msgMode() {
         return Msg.t("Zamanlama kipi geçersiz · Kip 'aralık' (INTERVAL) ya da 'cron' (CRON) olmalı · Bir kip seçin.",
                 "The schedule mode is invalid · The mode must be interval (INTERVAL) or cron (CRON) · Choose a mode.");
@@ -220,7 +285,7 @@ public final class ScriptedSchedule {
      * {@code windows}, {@code blackouts}, {@code skip_holidays}, {@code skip_dates}, {@code next_run_at} (yalnız zamanlamalı
      * izlemede; düz aralıkta null), {@code effective_interval_seconds}. Bozuk JSON kolonu boş liste.
      */
-    public static Map<String, Object> api(ScriptedMonitor m) {
+    public static Map<String, Object> api(PlannedSchedule m) {
         Map<String, Object> s = new LinkedHashMap<>();
         DbQuerySchedule.Spec spec = specOf(m);
         boolean planned = hasPlan(m);
@@ -256,6 +321,12 @@ public final class ScriptedSchedule {
      * Düz aralık (filtre yok) da geçerli bir tanımdır: sonraki koşumlar aralıkla gösterilir.
      */
     public static Map<String, Object> preview(Map<String, Object> body, Instant now, Set<LocalDate> holidays) {
+        return preview(body, now, holidays, Kind.SCRIPTED);
+    }
+
+    /** {@link #preview(Map, Instant, Set)} — türün alt sınırı ve metniyle. */
+    public static Map<String, Object> preview(Map<String, Object> body, Instant now, Set<LocalDate> holidays, Kind kind) {
+        Kind kd = kind == null ? Kind.SCRIPTED : kind;
         Map<String, Object> src = new LinkedHashMap<>();
         if (body != null) {
             for (String k : KEYS) if (body.containsKey(k)) src.put(k, body.get(k));
@@ -265,9 +336,9 @@ public final class ScriptedSchedule {
         DbQuerySchedule.Spec spec = DbQuerySchedule.fromApi(src);
         // Önizlemede düz aralık da denetlenir (formda alt sınır gösterilsin) — kayıtta ise yalnız plan gerektiren tanım.
         List<FieldError> errors = new ArrayList<>();
-        List<DbQuerySchedule.FieldError> raw = DbQuerySchedule.validate(spec, MIN_INTERVAL_SECONDS, now, holidays);
+        List<DbQuerySchedule.FieldError> raw = DbQuerySchedule.validate(spec, kd.minIntervalSeconds, now, holidays);
         for (DbQuerySchedule.FieldError fe : raw == null ? List.<DbQuerySchedule.FieldError>of() : raw)
-            errors.add(new FieldError(fe.field() == null ? "schedule" : fe.field(), fe.code(), message(fe)));
+            errors.add(new FieldError(fe.field() == null ? "schedule" : fe.field(), fe.code(), message(fe, kd)));
         Map<String, Object> out = new LinkedHashMap<>();
         List<Map<String, Object>> errOut = new ArrayList<>();
         boolean neverRuns = false;
@@ -294,8 +365,34 @@ public final class ScriptedSchedule {
         return out;
     }
 
+    /**
+     * Gövdeden gelen tanım saklı tanımla AYNI planı mı söylüyor (inceleme 2026-11-15, L1)? Kip, CRON'da ifade, aralık kipinde
+     * aralık, pencereler, yasak pencereler, tatil ve ek tarihler karşılaştırılır (CRON'da aralık etkin aralıktır, planı
+     * değiştirmez). Aynıysa kayıt yeniden DOĞRULANMAZ — başka bir alanı (ad, eşik) düzenleyen kullanıcı, takvim / zaman
+     * ilerledi diye 400 "hiç çalışmaz" almaz ("değişmeyen değer yeniden doğrulanmaz" kuralı). Biri null → false.
+     */
+    public static boolean samePlan(DbQuerySchedule.Spec a, DbQuerySchedule.Spec b) {
+        if (a == null || b == null) return false;
+        boolean cronA = DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(a.mode()));
+        boolean cronB = DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(b.mode()));
+        if (cronA != cronB) return false;
+        if (cronA) {
+            String ca = a.cron() == null ? "" : a.cron().trim();
+            String cb = b.cron() == null ? "" : b.cron().trim();
+            if (!ca.equals(cb)) return false;
+        } else if (!Objects.equals(a.intervalSeconds(), b.intervalSeconds())) {
+            return false;
+        }
+        return Objects.equals(listOrEmpty(a.windows()), listOrEmpty(b.windows()))
+                && Objects.equals(listOrEmpty(a.blackouts()), listOrEmpty(b.blackouts()))
+                && a.skipHolidays() == b.skipHolidays()
+                && Objects.equals(listOrEmpty(a.skipDates()), listOrEmpty(b.skipDates()));
+    }
+
+    private static <T> List<T> listOrEmpty(List<T> l) { return l == null ? List.of() : l; }
+
     /** İki izlemenin zamanlama alanları aynı mı (aralık dahil; plan sıfırlama kararı). */
-    public static boolean sameSchedule(ScriptedMonitor a, ScriptedMonitor b) {
+    public static boolean sameSchedule(PlannedSchedule a, PlannedSchedule b) {
         if (a == null || b == null) return a == b;
         return Objects.equals(a.getScheduleMode(), b.getScheduleMode())
                 && Objects.equals(a.getIntervalSeconds(), b.getIntervalSeconds())

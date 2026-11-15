@@ -16885,8 +16885,6 @@ export const EN = {
   'http.adv.detailSlow':        'Slow response alert',
   'http.adv.detailSlowValue':   'above {0} ms',
   // ── Page Speed ──
-  'pspd.iv5m': '5 min', 'pspd.iv15m': '15 min', 'pspd.iv30m': '30 min',
-  'pspd.iv1h': '1 hr', 'pspd.iv6h': '6 hr', 'pspd.iv24h': '24 hr',
   'pspd.title':    'Page Speed Monitoring',
   'pspd.subtitle': 'Measures how long a page takes to load and how heavy it has become: time to first byte, total load time, transfer size and request count.',
   'pspd.typeInfo': 'Page Speed measures the WEIGHT and TIMING of a page. Whether the page is up at all is what HTTP monitoring answers; whether its resources are broken is what Page Integrity answers.',
@@ -17130,6 +17128,8 @@ export const EN = {
   'pspd.modalNew': 'New Page Speed Monitor', 'pspd.modalEdit': 'Edit Page Speed Monitor',
   'pspd.url': 'Page URL', 'pspd.urlHint': 'The full address of the page to measure. If you leave out the scheme, https:// is added.',
   'pspd.name': 'Name', 'pspd.team': 'Team', 'pspd.group': 'Group',
+  'pspd.scheduleTitle': 'Schedule',
+  'pspd.scheduleHint': 'How often to measure: at a fixed interval or by a cron expression; optionally measure only in allowed hours and skip blocked windows, holidays and the days you pick. The shortest interval is 5 minutes.',
   'pspd.thresholdsTitle': 'Alert thresholds',
   'pspd.thresholdsHint': "All are optional: a metric you leave blank raises no alerts. The threshold value itself is allowed — only going above it counts as a breach. TTFB is the first byte of the check's own request (redirects included).",
   'pspd.maxLoadMs': 'Max load time', 'pspd.maxTtfbMs': 'Max TTFB',
