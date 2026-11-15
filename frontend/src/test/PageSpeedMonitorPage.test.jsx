@@ -103,8 +103,9 @@ describe('PageSpeedMonitorPage', () => {
     expect(screen.getByText(/new page speed monitor|yeni sayfa hızı/i)).toBeInTheDocument()
     // Dört eşik alanı da "eşik yok" yer tutucusuyla ve BOŞ gelir.
     const blanks = screen.getAllByPlaceholderText(/no threshold|eşik yok/i)
-    // Dört eşik + 2026-11-14'ten beri dört tür bütçesi ve asgari boyut — hepsi opsiyonel, boş gelir
-    expect(blanks).toHaveLength(9)
+    // Dört eşik + 2026-11-14'ten beri dört tür bütçesi ve asgari boyut + 2026-11-15'ten beri iki büyüme yüzdesi —
+    // hepsi opsiyonel, boş gelir
+    expect(blanks).toHaveLength(11)
     blanks.forEach(el => expect(el).toHaveValue(null))
   })
 
@@ -587,7 +588,7 @@ describe('PageSpeedMonitorPage', () => {
 
     const blanks = screen.getAllByPlaceholderText(/no threshold|eşik yok/i)
     // Öneri yalnız dört eşiği yazar; tür bütçeleri ve asgari boyut boş kalır (2026-11-14)
-    expect(blanks.map(el => el.value)).toEqual(['7000', '300', '55000', '220', '', '', '', '', ''])
+    expect(blanks.map(el => el.value)).toEqual(['7000', '300', '55000', '220', '', '', '', '', '', '', ''])
 
     await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))

@@ -51,18 +51,35 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
      * okunuyor, dört sayısal kolon taşımak ölçülebilir bir maliyet eklemiyor; buna karşılık kullanıcı
      * metrik değiştirdiğinde DB'ye yeni bir tarama gitmiyor.
      */
-    @Query("SELECT r.checkedAt, r.responseMs, r.ttfbMs, r.totalBytes, r.requestCount, r.ok FROM PageSpeedCheck r "
+    @Query("SELECT r.checkedAt, r.responseMs, r.ttfbMs, r.totalBytes, r.requestCount, r.ok, r.extended FROM PageSpeedCheck r "
          + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
          + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> seriesRaw(@Param("id") Long id, @Param("from") String from,
                              @Param("to") String to, @Param("limit") int limit);
 
     /**
+     * Büyüme alarmı referansı (2026-11-15, Sayfa Hızı 2c madde 13): bir izlemenin [from, to] aralığındaki ölçümleri YENİDEN
+     * ESKİYE — {@code [totalBytes, requestCount, breachedMetrics, ok, capped, bytesTruncated, timeTruncated, extended, manual,
+     * recheck]}. Süzme (tam, aynı kip, zamanlanmış) Java'da yapılır: satır süzgeci dizin aralığını bozmasın, plan sabit kalsın.
+     * Tek izleme kuralı: {@code IN (:id, :id)} + {@code ORDER BY monitorId DESC, checkedAt DESC} + {@code UNTIL_R}; sınırlı
+     * ({@code LIMIT}) ve sorgu zaman aşımlı (5 sn) — kontrol yolunu asla süresiz tutmaz.
+     */
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = "5000"))
+    @Query("SELECT r.totalBytes, r.requestCount, r.breachedMetrics, r.ok, r.capped, r.bytesTruncated, r.timeTruncated, "
+         + "r.extended, r.manual, r.recheck FROM PageSpeedCheck r "
+         + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
+         + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
+    List<Object[]> growthWindow(@Param("id") Long id, @Param("from") String from,
+                                @Param("to") String to, @Param("limit") int limit);
+
+    /**
      * Tür kırılımı serisi (2026-11-14, madde 15): [checkedAt, html, js, css, img, font, other] (bayt). Kırılımı olmayan satır
      * (eski satır ya da sayfa alınamadı) null değerlerle gelir — grafik onu BOŞLUK çizer, 0 değil. Tek izleme kuralı:
      * {@code IN (:id, :id)} + {@code ORDER BY monitorId DESC, checkedAt DESC} + {@code UNTIL_R} (genel planda da dizin).
      */
-    @Query("SELECT r.checkedAt, r.htmlBytes, r.jsBytes, r.cssBytes, r.imgBytes, r.fontBytes, r.otherBytes FROM PageSpeedCheck r "
+    @Query("SELECT r.checkedAt, r.htmlBytes, r.jsBytes, r.cssBytes, r.imgBytes, r.fontBytes, r.otherBytes, r.extended, r.ok "
+         + "FROM PageSpeedCheck r "
          + "WHERE r.monitorId IN (:id, :id) AND r.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_R + " "
          + "ORDER BY r.monitorId DESC, r.checkedAt DESC LIMIT :limit")
     List<Object[]> typeSeriesRaw(@Param("id") Long id, @Param("from") String from,

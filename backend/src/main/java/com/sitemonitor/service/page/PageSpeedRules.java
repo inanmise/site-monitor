@@ -38,9 +38,88 @@ public final class PageSpeedRules {
     public static final String BREACH_FONT = "FONT";
     public static final String BREACH_THIRD = "THIRD";
 
-    /** Bütün anahtarlar, eşik tablosu / alarm postası / arayüz sırasıyla. */
+    // 2026-11-15 (Sayfa Hızı 2c, büyüme alarmı — madde 13): önceki haftanın TAM, aynı kipteki zamanlanmış ölçümlerine göre
+    // büyüme. Anahtarlar YALNIZ büyük harf (arayüz ayrıştırıcısı [A-Z]+); breached_metrics / undecided_metrics kolonları 120
+    // karaktere genişletildi (on iki anahtarın hepsi 75 karakter eder).
+    /** Sayfa ağırlığı önceki haftanın medyanından belirgin büyüdü ({@code growthBytesPct}). */
+    public static final String BREACH_GROWSIZE = "GROWSIZE";
+    /** İstek sayısı önceki haftanın medyanından belirgin arttı ({@code growthRequestsPct}). */
+    public static final String BREACH_GROWREQ = "GROWREQ";
+    /** Sayfa ağırlığı öğrenilen bandın (ortalama + k·σ) üstünde ({@code growthBytesBand}). */
+    public static final String BREACH_SIZEBAND = "SIZEBAND";
+
+    /** Bütün anahtarlar, eşik tablosu / alarm postası / arayüz sırasıyla (sıra KALICI — yalnız SONA eklenir). */
     public static final List<String> BREACH_KEYS = List.of(BREACH_LOAD, BREACH_TTFB, BREACH_SIZE, BREACH_REQUESTS,
-            BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD);
+            BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD, BREACH_GROWSIZE, BREACH_GROWREQ, BREACH_SIZEBAND);
+
+    /** Büyüme anahtarları (eşik birimi yüzde ya da bant; tanılamanın eşik ölçüsüne girmez — tanılama geçmiş okumaz). */
+    public static final List<String> GROWTH_KEYS = List.of(BREACH_GROWSIZE, BREACH_GROWREQ, BREACH_SIZEBAND);
+
+    /** Büyüme yüzdesi sınırları (kayıtta doğrulanır; kayıtlı değer değişmediyse yeniden denetlenmez). */
+    public static final int GROWTH_PCT_MIN = 1, GROWTH_PCT_MAX = 1000;
+    /** Karşılaştırma penceresi: önceki 7 gün. */
+    public static final long GROWTH_WINDOW_MS = 7L * 24 * 3600 * 1000;
+    /** Pencerede en az bu kadar TAM, aynı kipte zamanlanmış ölçüm yoksa karar verilmez (BİLİNMİYOR, ihlal de sağlık da değil). */
+    public static final int GROWTH_MIN_SAMPLES = 5;
+    /** Okunan en çok satır (5 dk tabanla 7 gün = 2016 zamanlanmış ölçüm + teyit / elle satırları). */
+    public static final int GROWTH_READ_LIMIT = 3000;
+    /**
+     * Öğrenilen bayt bandının parametreleri: yukarı yön, uyarı 3σ (kritik 4σ — alarm seviyesi izlemenin kendi seviyesidir),
+     * en yeni 50 tam ölçüm, en az {@value #GROWTH_MIN_SAMPLES}; etkin σ tabanı ortalamanın %2'si (BaselineMath) → bant en dar
+     * ortalama + %6. Bandı aşan örnekler tabandan dışlanır; 50 ardışık aşım yeni düzeyi olağan sayar (kontrollü uyum).
+     */
+    public static final com.sitemonitor.service.baseline.BaselineParams BAND_PARAMS =
+            new com.sitemonitor.service.baseline.BaselineParams(com.sitemonitor.service.baseline.BaselineParams.DIRECTION_UP,
+                    3.0, 4.0, 50, GROWTH_MIN_SAMPLES, com.sitemonitor.service.baseline.BaselineParams.SEASON_NONE);
+
+    /**
+     * Büyüme karşılaştırmasının referansı (önceki 7 günün TAM, aynı kipteki ZAMANLANMIŞ ölçümleri — ölçümden ÖNCE okunur).
+     *
+     * @param samples        kullanılabilir örnek sayısı (tam, aynı kip, zamanlanmış)
+     * @param medianBytes    toplam baytların medyanı (örnek yoksa null)
+     * @param medianRequests istek sayılarının medyanı (örnek yoksa null)
+     * @param band           öğrenilen bayt bandının kararı — bant kapalıysa / değer yokken null; kuruluyorsa {@code evaluated()} false
+     */
+    public record Growth(int samples, Long medianBytes, Integer medianRequests,
+                         com.sitemonitor.service.baseline.BaselineMath.Verdict band) {
+        public static final Growth NONE = new Growth(0, null, null, null);
+
+        /** Medyan karşılaştırmasına yetecek örnek var mı. */
+        public boolean enough() { return samples >= GROWTH_MIN_SAMPLES; }
+
+        /** Aynı referans, bant kararıyla (ölçüm değeri bilindiğinde hesaplanır). */
+        public Growth withBand(com.sitemonitor.service.baseline.BaselineMath.Verdict v) {
+            return new Growth(samples, medianBytes, medianRequests, v);
+        }
+    }
+
+    /** Bir geçmiş örneği (yeniden eskiye): toplam bayt, istek sayısı, o ölçümün bandı aşıp aşmadığı. */
+    public record GrowthSample(long totalBytes, int requestCount, boolean bandBreach) {}
+
+    /**
+     * Geçmişten referans (saf): örnekler YENİDEN ESKİYE. Medyan çift sayıda örnekte alt-orta (tam sayı, kesin — ondalık yok).
+     * Bant kararı ölçüm değerine bağlı olduğu için ayrıca ({@link #bandVerdict}) hesaplanır.
+     */
+    public static Growth growthOf(List<GrowthSample> samples) {
+        if (samples == null || samples.isEmpty()) return new Growth(0, null, null, null);
+        long[] b = new long[samples.size()];
+        int[] r = new int[samples.size()];
+        for (int i = 0; i < samples.size(); i++) { b[i] = samples.get(i).totalBytes(); r[i] = samples.get(i).requestCount(); }
+        java.util.Arrays.sort(b);
+        java.util.Arrays.sort(r);
+        int mid = (samples.size() - 1) / 2;
+        return new Growth(samples.size(), b[mid], r[mid], null);
+    }
+
+    /** Öğrenilen bayt bandı: {@link #BAND_PARAMS} ile {@code BaselineMath} (saf). Değer ya da örnek yoksa null. */
+    public static com.sitemonitor.service.baseline.BaselineMath.Verdict bandVerdict(Long totalBytes, List<GrowthSample> samples) {
+        if (totalBytes == null || samples == null) return null;
+        List<com.sitemonitor.service.baseline.BaselineMath.Sample> pts = new ArrayList<>(samples.size());
+        for (GrowthSample s : samples) pts.add(new com.sitemonitor.service.baseline.BaselineMath.Sample(s.totalBytes(), s.bandBreach()));
+        // complete=false: 7 günlük pencere geçmişin tamamı değildir — kontrollü uyum yalnız pencere uzunluğunda ardışık aşımla
+        return com.sitemonitor.service.baseline.BaselineMath.evaluate(totalBytes,
+                new com.sitemonitor.service.baseline.BaselineMath.History(pts, false, false), BAND_PARAMS);
+    }
 
     /**
      * Bir ölçümün eşiklerle karşılaştırılan değerleri (2026-11-14). {@code ttfbMs} = faz probunun SON adımının SUNUCU
@@ -48,10 +127,18 @@ public final class PageSpeedRules {
      * B2 — anlam "sunucu süresi" olarak kaldı, koşullar gerçek isteğe eşitlendi); null = ölçülemedi. {@code lowerBound}:
      * toplam / tür baytları ALT SINIR (bayt ya da süre tavanı, kaynak tavanı) — üst eşik aşımı yine KANITTIR ama eşiğin
      * altındaki alt sınır bir şey kanıtlamaz (gerçek değer daha büyük olabilir): {@link #undecided} onu BİLİNMİYOR sayar.
-     * Tür baytı null = ölçülemedi (ihlal üretmez, tanımlı eşikte BİLİNMİYOR).
+     * Tür baytı null = ölçülemedi (ihlal üretmez, tanımlı eşikte BİLİNMİYOR). {@code growth} (2026-11-15): büyüme
+     * karşılaştırmasının referansı; null = okunmadı (büyüme eşiği tanımlıysa BİLİNMİYOR).
      */
     public record Measurement(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount,
-                              Long jsBytes, Long imgBytes, Long fontBytes, Long thirdPartyBytes, boolean lowerBound) {
+                              Long jsBytes, Long imgBytes, Long fontBytes, Long thirdPartyBytes, boolean lowerBound,
+                              Growth growth) {
+        /** Büyüme referansı olmadan (2026-11-15 öncesi imza). */
+        public Measurement(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount,
+                           Long jsBytes, Long imgBytes, Long fontBytes, Long thirdPartyBytes, boolean lowerBound) {
+            this(loadMs, ttfbMs, totalBytes, requestCount, jsBytes, imgBytes, fontBytes, thirdPartyBytes, lowerBound, null);
+        }
+
         /** Yalnız dört temel metrik (tür kırılımı yok). */
         public static Measurement basic(Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requestCount) {
             return new Measurement(loadMs, ttfbMs, totalBytes, requestCount, null, null, null, null, false);
@@ -100,7 +187,31 @@ public final class PageSpeedRules {
         if (exceedsKb(x.imgBytes(), m.getMaxImgKb())) out.add(BREACH_IMG);
         if (exceedsKb(x.fontBytes(), m.getMaxFontKb())) out.add(BREACH_FONT);
         if (exceedsKb(x.thirdPartyBytes(), m.getMaxThirdPartyKb())) out.add(BREACH_THIRD);
+        // Büyüme (2026-11-15): yalnız yeterli referans varken; alt sınır olan değer eşiği aşıyorsa yine kanıtlıdır
+        Growth g = x.growth();
+        if (g != null && g.enough()) {
+            if (grewBeyond(x.totalBytes(), g.medianBytes(), m.getGrowthBytesPct())) out.add(BREACH_GROWSIZE);
+            if (grewBeyond(x.requestCount() == null ? null : x.requestCount().longValue(),
+                    g.medianRequests() == null ? null : g.medianRequests().longValue(), m.getGrowthRequestsPct())) out.add(BREACH_GROWREQ);
+        }
+        if (Boolean.TRUE.equals(m.getGrowthBytesBand()) && g != null && g.band() != null && g.band().evaluated()
+                && g.band().breached()) out.add(BREACH_SIZEBAND);
         return out;
+    }
+
+    /**
+     * Değer, medyanın (100 + yüzde)/100 katından KESİN büyük mü — tam sayı aritmetiği (ondalık yuvarlama yok): {@code v·100 >
+     * medyan·(100 + yüzde)}. Yüzde tanımsız / ≤ 0, medyan yok / ≤ 0 ya da değer yok → ihlal değil.
+     */
+    static boolean grewBeyond(Long value, Long median, Integer pct) {
+        if (pct == null || pct <= 0 || value == null || median == null || median <= 0) return false;
+        return value * 100L > median * (100L + pct);
+    }
+
+    /** Medyana göre büyüme yüzdesi (aşağı yuvarlı tam sayı; küçülmede negatif). Hesaplanamıyorsa null. */
+    static Long growthPct(Long value, Long median) {
+        if (value == null || median == null || median <= 0) return null;
+        return Math.floorDiv((value - median) * 100L, median);
     }
 
     /**
@@ -155,6 +266,10 @@ public final class PageSpeedRules {
             case BREACH_IMG -> m.getMaxImgKb();
             case BREACH_FONT -> m.getMaxFontKb();
             case BREACH_THIRD -> m.getMaxThirdPartyKb();
+            case BREACH_GROWSIZE -> m.getGrowthBytesPct();
+            case BREACH_GROWREQ -> m.getGrowthRequestsPct();
+            // Bant açık/kapalı bir anahtardır; "tanımlı" işareti 1 (birimsiz) — tablo / delil üst sınırı ayrıca yazar
+            case BREACH_SIZEBAND -> Boolean.TRUE.equals(m.getGrowthBytesBand()) ? 1 : null;
             default -> null;
         };
         return v == null || v <= 0 ? null : v;
@@ -182,6 +297,15 @@ public final class PageSpeedRules {
             case BREACH_IMG -> kbOf(x.imgBytes());
             case BREACH_FONT -> kbOf(x.fontBytes());
             case BREACH_THIRD -> kbOf(x.thirdPartyBytes());
+            // Büyüme (2026-11-15): medyana göre büyüme YÜZDESİ; yeterli referans yoksa null (= BİLİNMİYOR)
+            case BREACH_GROWSIZE -> x.growth() == null || !x.growth().enough() ? null
+                    : growthPct(x.totalBytes(), x.growth().medianBytes());
+            case BREACH_GROWREQ -> x.growth() == null || !x.growth().enough() || x.growth().medianRequests() == null ? null
+                    : growthPct(x.requestCount() == null ? null : x.requestCount().longValue(),
+                            x.growth().medianRequests().longValue());
+            // Bant: bant KURULDUYSA ölçülen KB; kuruluyorsa null (= BİLİNMİYOR)
+            case BREACH_SIZEBAND -> x.growth() == null || x.growth().band() == null || !x.growth().band().evaluated() ? null
+                    : kbOf(x.totalBytes());
             default -> null;
         };
     }
@@ -196,6 +320,8 @@ public final class PageSpeedRules {
         if (x == null || !x.lowerBound() || key == null) return false;
         return switch (key) {
             case BREACH_SIZE, BREACH_MINSIZE, BREACH_JS, BREACH_IMG, BREACH_FONT, BREACH_THIRD -> true;
+            // Büyüme karşılaştırması TAM ölçüm ister: kısmi ölçümde (süre / bayt / kaynak tavanı) eşiği aşmayan değer kanıt değildir
+            case BREACH_GROWSIZE, BREACH_GROWREQ, BREACH_SIZEBAND -> true;
             default -> false;
         };
     }
@@ -212,12 +338,38 @@ public final class PageSpeedRules {
         for (String k : BREACH_KEYS) {
             Integer th = thresholdOf(m, k);
             if (th == null) continue;
-            Long v = measuredOf(x, k);
+            Long v = GROWTH_KEYS.contains(k) ? growthCurrent(x, k) : measuredOf(x, k);
             if (sb.length() > 0) sb.append('\n');
-            sb.append(k).append('\t').append(th).append('\t').append(v == null ? "" : v).append('\t')
+            sb.append(k).append('\t').append(GROWTH_KEYS.contains(k) ? growthLimit(x, k, th) : String.valueOf(th))
+              .append('\t').append(v == null ? "" : v).append('\t')
               .append(b.contains(k) ? '1' : '0').append('\t').append(lowerBoundFor(x, k) ? '1' : '0');
         }
         return sb.length() == 0 ? null : sb.toString();
+    }
+
+    /**
+     * Büyüme satırının eşik hücresi (alarm postası, 2026-11-15): {@code GROWSIZE} {@code yüzde|medyanKB}, {@code GROWREQ}
+     * {@code yüzde|medyanİstek}, {@code SIZEBAND} {@code altKB|üstKB|up} (bant kuruluyorsa {@code ||up}). Yeterli referans yoksa
+     * medyan boş bırakılır — posta "karşılaştırılamadı" der.
+     */
+    static String growthLimit(Measurement x, String k, Integer th) {
+        Growth g = x == null ? null : x.growth();
+        boolean ok = g != null && g.enough();
+        return switch (k) {
+            case BREACH_GROWSIZE -> th + "|" + (ok && g.medianBytes() != null ? String.valueOf(g.medianBytes() / 1024) : "");
+            case BREACH_GROWREQ -> th + "|" + (ok && g.medianRequests() != null ? String.valueOf(g.medianRequests()) : "");
+            default -> {
+                com.sitemonitor.service.baseline.BaselineMath.Verdict v = g == null ? null : g.band();
+                yield v != null && v.evaluated() && v.low() != null && v.high() != null
+                        ? (long) Math.floor(v.low() / 1024) + "|" + (long) Math.floor(v.high() / 1024) + "|up" : "||up";
+            }
+        };
+    }
+
+    /** Büyüme satırının ölçülen hücresi: şimdiki değer (KB / istek) — referans yoksa da yazılır (posta "şimdi" diyebilsin). */
+    static Long growthCurrent(Measurement x, String k) {
+        if (x == null) return null;
+        return BREACH_GROWREQ.equals(k) ? (x.requestCount() == null ? null : x.requestCount().longValue()) : kbOf(x.totalBytes());
     }
 
     /**
@@ -239,10 +391,19 @@ public final class PageSpeedRules {
         if (m == null || breaches == null || breaches.isEmpty()) return null;
         List<String> parts = new ArrayList<>(breaches.size());
         for (String b : breaches) {
-            if (BREACH_KEYS.contains(b)) parts.add(pair(b, thresholdOf(m, b), measuredOf(x, b)));
+            if (BREACH_SIZEBAND.equals(b)) parts.add(bandPair(x));
+            else if (BREACH_KEYS.contains(b)) parts.add(pair(b, thresholdOf(m, b), measuredOf(x, b)));
             else parts.add(b);
         }
         return String.join(",", parts);
+    }
+
+    /** Bant delili: {@code SIZEBAND:üstKB>ölçülenKB} (bandın ölçüm anındaki üst ucu). */
+    private static String bandPair(Measurement x) {
+        Growth g = x == null ? null : x.growth();
+        Double hi = g == null || g.band() == null ? null : g.band().high();
+        return BREACH_SIZEBAND + ":" + (hi == null ? "?" : String.valueOf((long) Math.floor(hi / 1024))) + ">"
+                + (x == null || x.totalBytes() == null ? "?" : String.valueOf(x.totalBytes() / 1024));
     }
 
     private static String pair(String key, Integer threshold, Long measured) {

@@ -264,6 +264,8 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
      */
     static Map<String, Object> metric(String metric, PageSpeedMonitor m, PageSpeedCheckerService.Result res) {
         if (metric == null || !PageSpeedRules.BREACH_KEYS.contains(metric)) return null;
+        // Büyüme eşikleri (2026-11-15) geçmişe göre karar verir; tanılama geçmiş okumaz → eşik ölçüsüne girmez (satır yok)
+        if (PageSpeedRules.GROWTH_KEYS.contains(metric)) return null;
         Long value = PageSpeedRules.measuredOf(res.measurement(), metric);
         Integer limit = PageSpeedRules.thresholdOf(m, metric);
         String unit = switch (metric) {

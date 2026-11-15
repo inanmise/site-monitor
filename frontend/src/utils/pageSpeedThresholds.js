@@ -95,3 +95,24 @@ export function kbFieldErrors(form, t, base = null) {
       && min > 0 && max > 0 && min > max) out.minPageKb = t('pspd.err.minAboveMax')
   return out
 }
+
+/**
+ * Büyüme alarmı yüzdeleri (2026-11-15, Sayfa Hızı 2c) — sunucu kuralının istemci aynası
+ * (`MonitoringController.requirePageSpeedGrowth`, `PageSpeedRules.GROWTH_PCT_MIN|MAX`): boş geçerli (kapalı); dolu ise 1 ile
+ * 1000 arası TAM sayı. `base` verilirse DEĞİŞMEYEN alan yeniden denetlenmez (eski kayıt düzenlenebilir kalır).
+ */
+export const GROWTH_FIELDS = ['growthBytesPct', 'growthRequestsPct']
+export const GROWTH_PCT_MIN = 1
+export const GROWTH_PCT_MAX = 1000
+
+export function growthFieldErrors(form, t, base = null) {
+  const out = {}
+  for (const key of GROWTH_FIELDS) {
+    const raw = form?.[key]
+    if (raw === '' || raw == null) continue
+    if (base != null && String(base[key] ?? '') === String(raw)) continue
+    const n = Number(raw)
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < GROWTH_PCT_MIN || n > GROWTH_PCT_MAX) out[key] = t('pspd.err.growthRange')
+  }
+  return out
+}

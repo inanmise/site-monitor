@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedResource, Long> {
+public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedResource, Long>, PageSpeedResourceBatchWriter {
 
     /** Son ölçümün kırılımı — en ağırdan hafife. */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = :reason "
@@ -111,10 +111,14 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
      * {@code @Transactional} ŞART: türetilmiş silme sorgularına Spring Data kendiliğinden transaction
      * SARMAZ ve {@code open-in-view=false} olduğu için çağrı tx'siz düşer
      * ({@code RepositoryWriteTransactionGuardTest} bunun kapısıdır).
+     *
+     * <p>TOPLU silme (prod kapısı veri katmanı incelemesi, 2026-11-15): türetilmiş silme satırları önce VARLIK olarak yüklüyor,
+     * sonra tek tek siliyordu — ölçüm başına satır kadar gidiş-dönüş (sayfa başına kaynak tavanı 2000). Tek JPQL DELETE.
      */
     @Transactional
     @Modifying
-    int deleteByMonitorIdAndKeepReason(Long monitorId, String keepReason);
+    @Query("DELETE FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.keepReason = :keepReason")
+    int deleteByMonitorIdAndKeepReason(@Param("monitorId") Long monitorId, @Param("keepReason") String keepReason);
 
     /**
      * Son ölçümün kırılımını DEĞİŞTİR: eski LATEST satırlarını sil + yenilerini yaz — TEK transaction.
@@ -129,8 +133,8 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
      */
     @Transactional
     default void replaceLatest(Long monitorId, List<PageSpeedResource> rows) {
-        deleteByMonitorIdAndKeepReason(monitorId, PageSpeedResource.KEEP_LATEST);
-        saveAll(rows);
+        deleteByMonitorIdAndKeepReason(monitorId, PageSpeedResource.KEEP_LATEST);   // tek toplu DELETE
+        insertAll(rows);   // JDBC toplu INSERT (500'lük öbekler) — aynı transaction
     }
 
     /** İzleme silinince tüm kırılımını temizle. */

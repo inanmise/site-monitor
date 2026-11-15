@@ -142,6 +142,33 @@ public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, Noc
     @Column(name = "min_page_kb")
     private Integer minPageKb;
 
+    // ── Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, Sayfa Hızı 2c — madde 10 / 13) ──────────────────────
+    // Hepsi NULL'lanabilir, varsayılansız: eski kayıt / eski pod = bugünkü davranış.
+
+    /**
+     * Genişletilmiş ölçüm (madde 10): stil dosyalarının başvurduğu kaynaklar (yazı tipi, arka plan görseli, {@code @import},
+     * satır içi stiller — 2 kat) da ölçülür ve sayılan nesneler {@code Accept-Encoding: br} ile istenir (tarayıcının telden
+     * aldığı bayt). Toplamları BÜYÜTÜR: yeni izleme varsayılan AÇIK doğar, mevcut izleme kullanıcı açana dek KAPALI kalır.
+     * Null = kapalı.
+     */
+    @Column(name = "extended_measurement")
+    private Boolean extendedMeasurement;
+
+    /**
+     * Büyüme alarmı (madde 13): sayfa ağırlığı önceki 7 günün TAM, aynı kipteki zamanlanmış ölçümlerinin medyanından bu YÜZDEDEN
+     * fazla büyürse SLOW ({@code GROWSIZE}). 1–1000; null = kapalı.
+     */
+    @Column(name = "growth_bytes_pct")
+    private Integer growthBytesPct;
+
+    /** İstek sayısı önceki haftanın medyanından bu yüzdeden fazla artarsa SLOW ({@code GROWREQ}). 1–1000; null = kapalı. */
+    @Column(name = "growth_requests_pct")
+    private Integer growthRequestsPct;
+
+    /** Öğrenilen bayt bandı (ortalama + k·σ, aynı 7 günlük örnekler) aşılırsa SLOW ({@code SIZEBAND}). Null = kapalı. */
+    @Column(name = "growth_bytes_band")
+    private Boolean growthBytesBand;
+
     // ── Gelişmiş ölçüm seçenekleri ────────────────────────────────────────────
 
     /** Gönderilecek User-Agent; boş/null ise {@link #DEFAULT_UA}. WAF/bot koruması olan sayfalar için gerekir. */

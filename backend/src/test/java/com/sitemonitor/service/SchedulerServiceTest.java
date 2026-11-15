@@ -1650,7 +1650,7 @@ class SchedulerServiceTest {
     @SuppressWarnings("unchecked")
     private java.util.List<com.sitemonitor.model.PageSpeedResource> captureSavedResources() {
         var cap = org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        verify(pageSpeedResourceRepo).saveAll(cap.capture());
+        verify(pageSpeedResourceRepo).insertAll(cap.capture());
         return (java.util.List<com.sitemonitor.model.PageSpeedResource>) cap.getValue();
     }
 
@@ -1685,7 +1685,7 @@ class SchedulerServiceTest {
         verify(pageSpeedResourceRepo).replaceLatest(eq(7L), anyList());
         // Servis ham silme/yazmayı KENDİSİ çağırmamalı: sayılar yalnız replaceLatest'in gövdesinden gelmeli.
         verify(pageSpeedResourceRepo, times(1)).deleteByMonitorIdAndKeepReason(anyLong(), anyString());
-        verify(pageSpeedResourceRepo, times(1)).saveAll(any());
+        verify(pageSpeedResourceRepo, times(1)).insertAll(any());
     }
 
     @Test
@@ -1743,7 +1743,7 @@ class SchedulerServiceTest {
         scheduler.triggerPageSpeedCheck(psMonitor());
 
         verify(pageSpeedResourceRepo, never()).deleteByMonitorIdAndKeepReason(anyLong(), anyString());
-        verify(pageSpeedResourceRepo, never()).saveAll(any());
+        verify(pageSpeedResourceRepo, never()).insertAll(any());
     }
 
     @Test
@@ -1798,7 +1798,7 @@ class SchedulerServiceTest {
         verify(pageSpeedCheckRepo).save(cap.capture());
         assertThat(cap.getValue().getOk()).isFalse();
         assertThat(cap.getValue().getBreachedMetrics()).isNull();
-        verify(pageSpeedResourceRepo, never()).saveAll(any());
+        verify(pageSpeedResourceRepo, never()).insertAll(any());
         assertThat(out.get("reachable")).isEqualTo(false);
     }
 

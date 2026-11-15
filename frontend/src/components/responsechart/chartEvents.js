@@ -31,7 +31,7 @@ export function alarmTone(level) {
  * göre sıralı; değişiklikler 1'den numaralanır (`n` — grafikteki işaret ve altındaki listede aynı numara).
  */
 /** Bilinen değişiklik olayları (etiket `chart.ev.event.<OLAY>`); başkası "değişiklik" diye gösterilir. */
-export const CHANGE_EVENTS = Object.freeze(['CREATE', 'UPDATE', 'RESTORE'])
+export const CHANGE_EVENTS = Object.freeze(['CREATE', 'UPDATE', 'RESTORE', 'MODE'])
 
 export function chartEvents(data, domain) {
   const [d0, d1] = Array.isArray(domain) && domain.length === 2 ? domain : [NaN, NaN]

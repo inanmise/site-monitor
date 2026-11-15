@@ -13,17 +13,21 @@ const arr = (v) => (Array.isArray(v) ? v : [])
  * Eşik metrikleri — sunucunun sırası (`PageSpeedDiagFindings.METRICS` = `PageSpeedRules.BREACH_KEYS`) ve mevcut etiketler.
  * 2026-11-14 (inceleme B7): tür bütçeleri ve asgari boyut da tanılama tablosunda.
  */
-export const METRIC_KEYS = ['LOAD', 'TTFB', 'SIZE', 'REQUESTS', 'MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD']
+export const METRIC_KEYS = ['LOAD', 'TTFB', 'SIZE', 'REQUESTS', 'MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD', 'GROWSIZE', 'GROWREQ', 'SIZEBAND']
 export const METRIC_LABEL = {
   LOAD: 'pspd.metricLoad', TTFB: 'pspd.metricTtfb', SIZE: 'pspd.metricSize', REQUESTS: 'pspd.metricRequests',
   MINSIZE: 'pspd.minPageKb', JS: 'pspd.maxJsKb', IMG: 'pspd.maxImgKb', FONT: 'pspd.maxFontKb', THIRD: 'pspd.maxThirdPartyKb',
+  // Büyüme alarmı (2026-11-15): tanılama geçmiş okumaz → sunucu bu satırları göndermez; yalnız eşik özetinde (çip) görünür
+  GROWSIZE: 'pspd.growthBytes', GROWREQ: 'pspd.growthRequests', SIZEBAND: 'pspd.growthBand',
 }
-/** İzleme satırındaki eşik alanları (snake_case). */
+/** İzleme satırındaki eşik alanları (snake_case). Bant açık / kapalıdır — eşik çipi yok. */
 const THRESHOLD_FIELD = {
   LOAD: 'max_load_ms', TTFB: 'max_ttfb_ms', SIZE: 'max_page_kb', REQUESTS: 'max_requests', MINSIZE: 'min_page_kb',
   JS: 'max_js_kb', IMG: 'max_img_kb', FONT: 'max_font_kb', THIRD: 'max_third_party_kb',
+  GROWSIZE: 'growth_bytes_pct', GROWREQ: 'growth_requests_pct',
 }
-const THRESHOLD_UNIT = { LOAD: 'ms', TTFB: 'ms', SIZE: 'KB', REQUESTS: 'req', MINSIZE: 'KB', JS: 'KB', IMG: 'KB', FONT: 'KB', THIRD: 'KB' }
+const THRESHOLD_UNIT = { LOAD: 'ms', TTFB: 'ms', SIZE: 'KB', REQUESTS: 'req', MINSIZE: 'KB', JS: 'KB', IMG: 'KB', FONT: 'KB', THIRD: 'KB',
+  GROWSIZE: '%', GROWREQ: '%' }
 
 /** Faz anahtarları (zaman çizelgesi `<key>_ms`) — sunucunun `phase_limits` sözlüğüyle aynı ad. */
 export const PHASE_KEYS = ['dns', 'connect', 'proxy', 'tls', 'ttfb', 'download']
@@ -42,6 +46,7 @@ export function formatValue(value, unit) {
   if (!isNum(value)) return '—'
   if (unit === 'ms') return `${value} ms`
   if (unit === 'KB') return formatBytes(value * 1024)
+  if (unit === '%') return `+${value} %`
   return String(value)
 }
 

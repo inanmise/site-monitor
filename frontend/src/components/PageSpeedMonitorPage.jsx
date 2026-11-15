@@ -71,10 +71,11 @@ import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvRows } from '../utils/csv.js'
 import { downloadCsv } from '../utils/csvExport.js'
 import { formatBytes } from '../utils/formatBytes.js'
-import { KB_FIELDS, kbFieldErrors, suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
+import { KB_FIELDS, kbFieldErrors, suggestThresholds, suggestionIsPartial, GROWTH_FIELDS, growthFieldErrors } from '../utils/pageSpeedThresholds.js'
 import { formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { Badge } from '@/components/shadcn/badge'
+import { Switch } from '@/components/shadcn/switch'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -152,6 +153,8 @@ const emptyForm = {
   schedule: DEFAULT_SCRIPTED_SCHEDULE,   // zamanlama (2. sürüm madde 14): aralık / cron + pencereler + tatil
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
   maxJsKb: '', maxImgKb: '', maxFontKb: '', maxThirdPartyKb: '', minPageKb: '',
+  // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, Sayfa Hızı 2c): YENİ izleme genişletilmiş kipte doğar (sunucu da öyle)
+  extendedMeasurement: true, growthBytesPct: '', growthRequestsPct: '', growthBytesBand: false,
   userAgent: '', sendDnt: false, useProxy: 'OFF', excludeTrackers: false, trackerPatterns: '',
   basicAuthUser: '', basicAuthPass: '', customHeaders: '', resourceConcurrency: 5,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30,
@@ -167,6 +170,18 @@ const emptyForm = {
  * değiştirilirse bugünkü değeri göstermek geçmişi yanlış açıklardı; o yüzden satır kendi
  * delilini taşıyor. Delil yoksa (eski kayıt) yalnız metrik adları yazılır.
  */
+/**
+ * Delil sayılarının biçimi (2026-11-15): büyüme anahtarları yüzde ("+20 % → +35 %"), öğrenilen bant KB ("≤ 1100 KB → 1400 KB");
+ * diğerleri olduğu gibi (eski davranış).
+ */
+function breachNums(r) {
+  const k = String(r.key || '')
+  const signed = (v) => (/^-?\d+$/.test(String(v)) ? `${Number(v) >= 0 ? '+' : ''}${v} %` : String(v))
+  if (k === 'GROWSIZE' || k === 'GROWREQ') return { a: signed(r.threshold), b: signed(r.measured) }
+  if (k === 'SIZEBAND') return { a: `≤ ${r.threshold} KB`, b: `${r.measured} KB` }
+  return { a: r.threshold, b: r.measured }
+}
+
 function BreachEvidence({ metrics, detail, t }) {
   const label = (k) => {
     const key = `pspd.breach_${String(k).toLowerCase()}`
@@ -187,7 +202,7 @@ function BreachEvidence({ metrics, detail, t }) {
         <Badge key={r.key} variant="warning" className="items-baseline gap-[5px] px-[7px] py-px text-[11px] font-semibold">
           {label(r.key)}
           {r.threshold != null && (
-            <span data-slot="breach-nums" className="font-mono text-[10.5px] font-normal opacity-90">{r.threshold} → <strong>{r.measured}</strong></span>
+            <span data-slot="breach-nums" className="font-mono text-[10.5px] font-normal opacity-90">{breachNums(r).a} → <strong>{breachNums(r).b}</strong></span>
           )}
         </Badge>
       ))}
@@ -213,9 +228,15 @@ function pageSpeedHistoryExtra(c, t) {
     if (c[`${k}_bytes`] != null && c[`${k}_bytes`] > 0) types.push(`${t(`pspd.type.${k}`)} ${formatBytes(c[`${k}_bytes`], c.time_truncated === true)}`)
   }
   if (c.third_party_bytes != null && c.third_party_bytes > 0) types.push(t('pspd.ins.thirdParty', formatBytes(c.third_party_bytes, c.time_truncated === true)))
-  if (!c.time_truncated && parts.length === 0 && types.length === 0) return null
+  const ext = c.extended === true
+  if (!c.time_truncated && !ext && parts.length === 0 && types.length === 0) return null
   return (
     <span data-slot="pspd-hist-extra" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+      {/* Ölçüm kipi (2026-11-15): genişletilmiş ölçümün toplamı klasikle karşılaştırılmaz — nötr işaret */}
+      {ext && (
+        <Badge variant="outline" data-slot="pspd-hist-extended" title={t('pspd.mode.extendedTip')}
+          className="h-auto overflow-visible rounded-md px-1.5 py-px text-[10.5px] whitespace-normal">{t('pspd.mode.extended')}</Badge>
+      )}
       {c.time_truncated && (
         <HintPopover content={t('pspd.partialTip')} aria-label={`${t('pspd.partial')}: ${t('pspd.partialTip')}`}
           triggerClassName="relative rounded-md pointer-coarse:min-h-0 pointer-coarse:after:absolute pointer-coarse:after:-inset-2.5">
@@ -554,6 +575,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       maxPageKb: m.max_page_kb ?? '', maxRequests: m.max_requests ?? '',
       maxJsKb: m.max_js_kb ?? '', maxImgKb: m.max_img_kb ?? '', maxFontKb: m.max_font_kb ?? '',
       maxThirdPartyKb: m.max_third_party_kb ?? '', minPageKb: m.min_page_kb ?? '',
+      // Eski sunucu alanı göndermiyorsa klasik kip (null = kapalı) — mevcut izleme kendi kipini korur
+      extendedMeasurement: m.extended_measurement === true,
+      growthBytesPct: m.growth_bytes_pct ?? '', growthRequestsPct: m.growth_requests_pct ?? '', growthBytesBand: m.growth_bytes_band === true,
       userAgent: m.user_agent || '', sendDnt: !!m.send_dnt, useProxy: m.use_proxy || 'OFF',
       excludeTrackers: !!m.exclude_trackers, trackerPatterns: m.tracker_patterns || '',
       basicAuthUser: m.basic_auth_user || '', basicAuthPass: '',
@@ -598,6 +622,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       // Tür bütçeleri + asgari boyut (2026-11-14, madde 11 / 12) — eşik kuralı aynı: boş = kaldır
       maxJsKb: thresholdValue(form.maxJsKb), maxImgKb: thresholdValue(form.maxImgKb), maxFontKb: thresholdValue(form.maxFontKb),
       maxThirdPartyKb: thresholdValue(form.maxThirdPartyKb), minPageKb: thresholdValue(form.minPageKb),
+      // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15): boş yüzde = kapalı
+      extendedMeasurement: form.extendedMeasurement === true,
+      growthBytesPct: thresholdValue(form.growthBytesPct), growthRequestsPct: thresholdValue(form.growthRequestsPct),
+      growthBytesBand: form.growthBytesBand === true,
       userAgent: form.userAgent?.trim() || null, sendDnt: form.sendDnt, useProxy: form.useProxy || 'OFF',
       excludeTrackers: form.excludeTrackers, trackerPatterns: form.trackerPatterns?.trim() || null,
       basicAuthUser: form.basicAuthUser?.trim() || null,
@@ -634,6 +662,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
       ...kbFieldErrors(form, t, modal && modal !== 'new' ? formFrom(modal) : null),
+      ...growthFieldErrors(form, t, modal && modal !== 'new' ? formFrom(modal) : null),   // büyüme yüzdesi 1–1000 (2026-11-15)
       ...scheduleErrorMap(form, t),   // zamanlama: cron boş / aralık tabanı / eksik pencere (sunucu asıl doğrulayıcı)
     })) return
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
@@ -655,6 +684,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       await load(); setSaving(false)
       // Sunucu alan hatası (tür bütçesi / asgari boyut, 2026-11-14): alanın altında, tost değil
       if (!res?.success && KB_FIELDS.includes(res?.field)) { fe.check({ [res.field]: res.error || t('pspd.err.kbRange') }); return }
+      // Büyüme alarmı alan hatası (2026-11-15): alanın altında
+      if (!res?.success && GROWTH_FIELDS.includes(res?.field)) { fe.check({ [res.field]: res.error || t('pspd.err.growthRange') }); return }
       // Zamanlama alan hatası (madde 14): düzenleyicinin ilgili alanının altında
       if (!res?.success) {
         const sched = {}
@@ -1081,6 +1112,49 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           </FormGrid>
         </FormSection>
 
+        {/* ── Ölçüm kapsamı (2026-11-15, Sayfa Hızı 2c madde 10): genişletilmiş ölçüm ── */}
+        <FormSection title={t('pspd.extendedTitle')} hint={t('pspd.extendedHint')}>
+          <label data-slot="pspd-extended" className="flex min-h-10 min-w-0 cursor-pointer items-start justify-between gap-3 rounded-md border px-3 py-2">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm font-medium [overflow-wrap:anywhere]">{t('pspd.extended')}</span>
+              <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('pspd.extendedSub')}</span>
+            </span>
+            <Switch checked={form.extendedMeasurement === true} aria-label={t('pspd.extended')} data-slot="pspd-extended-switch"
+              onCheckedChange={(v) => setForm(f => ({ ...f, extendedMeasurement: v === true }))} />
+          </label>
+          {/* Mevcut izlemede kip değişince toplamlar değişir — eşikler ve büyüme referansı yeni kipte yeniden kurulur */}
+          {modal && modal !== 'new' && (modal.extended_measurement === true) !== (form.extendedMeasurement === true) && (
+            <div data-slot="pspd-extended-warn" className="mt-2">
+              <AlertBanner tone="warning" icon={AlertTriangle}>
+                {t(form.extendedMeasurement ? 'pspd.extendedOnWarn' : 'pspd.extendedOffWarn')}
+              </AlertBanner>
+            </div>
+          )}
+        </FormSection>
+
+        {/* ── Büyüme alarmı (2026-11-15, Sayfa Hızı 2c madde 13): önceki haftanın medyanına göre + öğrenilen bant ── */}
+        <FormSection title={t('pspd.growthTitle')} hint={t('pspd.growthHint')}>
+          <div data-slot="pspd-growth" className="min-w-0">
+            <FormGrid>
+              {[['growthBytesPct', 'pspd.growthBytesPct'], ['growthRequestsPct', 'pspd.growthRequestsPct']].map(([key, label]) => (
+                <FormField key={key} label={t(label)} hint={t('pspd.growthPctHint')} {...fe.fieldProps(key)}>
+                  {({ id, describedBy }) => unitInput(id, '%', { min: '1', max: '1000', step: '5', value: form[key], placeholder: t('pspd.noThreshold'),
+                    'aria-describedby': describedBy,
+                    onChange: e => { const v = e.target.value; setForm(f => ({ ...f, [key]: v })); fe.clear(key) } })}
+                </FormField>
+              ))}
+            </FormGrid>
+            <label data-slot="pspd-growth-band" className="mt-3 flex min-h-10 min-w-0 cursor-pointer items-start justify-between gap-3 rounded-md border px-3 py-2">
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium [overflow-wrap:anywhere]">{t('pspd.growthBandLabel')}</span>
+                <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('pspd.growthBandHint')}</span>
+              </span>
+              <Switch checked={form.growthBytesBand === true} aria-label={t('pspd.growthBandLabel')} data-slot="pspd-growth-band-switch"
+                onCheckedChange={(v) => setForm(f => ({ ...f, growthBytesBand: v === true }))} />
+            </label>
+          </div>
+        </FormSection>
+
         {/* Etiketler */}
         <FormSection title={t('pspd.tagsTitle')} required {...fe.fieldProps('tags')}>
           <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
@@ -1382,6 +1456,18 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               <BreachEvidence metrics={selected.breached_metrics.join(',')} detail={selected.breach_detail} t={t} />
             </div>
           )}
+          {/* Ölçüm kipi (2026-11-15): son ölçüm genişletilmiş kipte mi — nötr; izlemenin ayarı farklıysa sonraki ölçümden itibaren */}
+          {(selected.extended === true || selected.extended_measurement === true) && (
+            <div data-slot="pspd-detail-mode" className="mt-3.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span className={SECTION_LABEL}>{t('pspd.mode.title')}</span>
+              <Badge variant="outline" className="h-auto overflow-visible rounded-md whitespace-normal">
+                {t(selected.extended === true ? 'pspd.mode.extended' : 'pspd.mode.classic')}
+              </Badge>
+              {selected.last_check && (selected.extended === true) !== (selected.extended_measurement === true) && (
+                <span data-slot="pspd-detail-mode-next" className="[overflow-wrap:anywhere]">{t('pspd.mode.nextCheck')}</span>
+              )}
+            </div>
+          )}
           {selected.capped && (
             <AlertBanner tone="warning" className="mt-3.5">{t('pspd.cappedWarn')}</AlertBanner>
           )}
@@ -1498,7 +1584,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                         return (
                           <TableRow key={`${r.url}#${i}`}>
                             <TableCell><span className="inline-flex items-center gap-1"><RI size={13} aria-hidden="true" />{r.type}</span></TableCell>
-                            <TableCell className="w-full max-w-0"><span className="block truncate" title={r.url}>{r.url}</span></TableCell>
+                            <TableCell className="w-full max-w-0">
+                              <span className="block truncate" title={r.url}>{r.url}</span>
+                              {/* Genişletilmiş ölçüm (2026-11-15): kaynağı başvuran stil dosyası — tam adres, sarar */}
+                              {r.found_in && (
+                                <span data-slot="pspd-res-foundin" className="mt-0.5 block whitespace-normal text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+                                  {t('pspd.res.foundIn')} {r.found_in}
+                                </span>
+                              )}
+                            </TableCell>
                             <TableCell className="text-right tabular-nums" title={r.truncated ? t('pspd.truncatedHint') : undefined}>
                               {formatBytes(r.bytes, r.truncated)}</TableCell>
                             <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</TableCell>

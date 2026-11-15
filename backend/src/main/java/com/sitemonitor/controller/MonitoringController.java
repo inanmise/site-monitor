@@ -5730,7 +5730,9 @@ public class MonitoringController {
             // Madde 11 / 12: tür bütçeleri ve asgari sayfa boyutu eşiği
             "maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb",
             // 2026-11-15 (Sayfa Hızı 2. sürüm madde 14): zamanlama penceresi / cron (sentetik izlemeyle aynı kolonlar)
-            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson" };
+            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson",
+            // 2026-11-15 (Sayfa Hızı 2c, madde 10 / 13): genişletilmiş ölçüm + büyüme alarmı
+            "extendedMeasurement", "growthBytesPct", "growthRequestsPct", "growthBytesBand" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -5764,6 +5766,7 @@ public class MonitoringController {
         // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageSpeedMonitor());
         requirePageSpeedBudgets(body, null);   // tür bütçeleri + asgari boyut (2026-11-14): 400 alan hatası, yan etkiden ÖNCE
+        requirePageSpeedGrowth(body, null);    // büyüme alarmı (2026-11-15): 400 alan hatası, yan etkiden ÖNCE
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, null);   // madde 14: 400, yan etkiden ÖNCE
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
@@ -5779,6 +5782,9 @@ public class MonitoringController {
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
+        // Genişletilmiş ölçüm (2026-11-15, madde 10): YENİ izleme varsayılan AÇIK doğar; gövde açıkça false derse kapalı
+        // (Kopyala klasik kaynağın kipini taşır). Mevcut izlemelere dokunulmaz (null = kapalı).
+        m.setExtendedMeasurement(true);
         applyPageSpeedFields(m, body, session);
         if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14: kolonlar + etkin aralık
         m.setCreatedAt(now);
@@ -5801,6 +5807,7 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             requirePageSpeedBudgets(body, m);   // tür bütçeleri + asgari boyut (2026-11-14): alarm kapatma / kayıttan ÖNCE
+            requirePageSpeedGrowth(body, m);    // büyüme alarmı (2026-11-15): alarm kapatma / kayıttan ÖNCE
             // Madde 14: zamanlama doğrulaması da alarm kapatma / kayıttan ÖNCE; plan sıfırlama kararı için önceki tanım
             com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, m);
             com.sitemonitor.model.PageSpeedMonitor psBefore = pageSpeedScheduleCopy(m);
@@ -5933,7 +5940,11 @@ public class MonitoringController {
                 new CsvColumn<>("first_party_bytes", com.sitemonitor.model.PageSpeedCheck::getFirstPartyBytes),
                 new CsvColumn<>("third_party_bytes", com.sitemonitor.model.PageSpeedCheck::getThirdPartyBytes),
                 new CsvColumn<>("undecided_metrics", com.sitemonitor.model.PageSpeedCheck::getUndecidedMetrics),
-                new CsvColumn<>("download_ms", com.sitemonitor.model.PageSpeedCheck::getDownloadMs)), response);
+                new CsvColumn<>("download_ms", com.sitemonitor.model.PageSpeedCheck::getDownloadMs),
+                // 2026-11-15 (Sayfa Hızı 2c): ölçüm kipi ve türü — boş = klasik kip / zamanlanmış
+                new CsvColumn<>("extended", com.sitemonitor.model.PageSpeedCheck::getExtended),
+                new CsvColumn<>("manual", com.sitemonitor.model.PageSpeedCheck::getManual),
+                new CsvColumn<>("recheck", com.sitemonitor.model.PageSpeedCheck::getRecheck)), response);
     }
 
     @PostMapping("/pagespeed/{id}/check")
@@ -6018,6 +6029,7 @@ public class MonitoringController {
         out.put("tls_ms",         r.phases() == null ? null : r.phases().tlsMs());
         out.put("server_ms",      r.phases() == null ? null : r.phases().serverMs());
         putBreakdown(out, r.breakdown());
+        out.put("extended",       r.extended());   // 2026-11-15: deneme genişletilmiş kipte mi ölçüldü
         out.put("error",          r.error());
         List<Map<String, Object>> rows = new ArrayList<>();
         List<PageSpeedCheckerService.Measured> heavy = new ArrayList<>(r.resources());
@@ -6124,6 +6136,8 @@ public class MonitoringController {
             // Alt sınır bayraklarının üçü de (inceleme 2026-11-15): kaynak tavanı ve bayt tavanı da ölçümü kısmi yapar
             cm.put("capped", c.getCapped());
             cm.put("bytes_truncated", c.getBytesTruncated());
+            // Ölçüm kipi (2026-11-15): kipleri farklı iki ölçümün toplamları karşılaştırılamaz (arayüz yön göstermez)
+            cm.put("extended", Boolean.TRUE.equals(c.getExtended()));
             out.put("check", cm);
         }
         out.put("resources", rows.stream().filter(r -> id.equals(r.getMonitorId())).map(this::resourceToMap).toList());
@@ -6163,7 +6177,7 @@ public class MonitoringController {
             java.io.Writer w = new java.io.OutputStreamWriter(response.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8);
             w.write(0xFEFF);
             w.write(com.sitemonitor.util.Csv.row("url", "type", "bytes", "truncated", "duration_ms", "http_status",
-                    "third_party", "failed", "checked_at"));
+                    "third_party", "failed", "checked_at", "found_in"));
             int rows = 0;
             for (int pno = 0; rows < PAGESPEED_RES_CSV_MAX; pno++) {
                 org.springframework.data.domain.Pageable pg = PageRequest.of(pno, 1000);
@@ -6175,7 +6189,8 @@ public class MonitoringController {
                     if (!id.equals(r.getMonitorId())) continue;
                     boolean f = r.getStatusCode() == null || r.getStatusCode() >= 400;
                     w.write(com.sitemonitor.util.Csv.row(r.getUrl(), r.getType(), r.getBytes(), Boolean.TRUE.equals(r.getTruncated()),
-                            r.getDurationMs(), r.getStatusCode(), Boolean.TRUE.equals(r.getThirdParty()), f, r.getCheckedAt()));
+                            r.getDurationMs(), r.getStatusCode(), Boolean.TRUE.equals(r.getThirdParty()), f, r.getCheckedAt(),
+                            r.getFoundIn()));
                     if (++rows >= PAGESPEED_RES_CSV_MAX) break;
                 }
                 if (chunk.size() < 1000) break;
@@ -6268,7 +6283,37 @@ public class MonitoringController {
         }
         Map<String, Object> out = new LinkedHashMap<>(buildResponseSeries(projected, range[0], range[1], false));
         out.put("metric", metric);
+        // Ölçüm kipi değişimleri (2026-11-15, madde 10): grafiğin olay katmanında NÖTR işaret — iki yanındaki toplamlar
+        // karşılaştırılamaz. Yalnız sayfa alınabilen ölçümler arasında; bu izlemede hiç değişim yoksa boş liste.
+        out.put("changes", pageSpeedModeChanges(raw, 6, 5));
         return ok(out);
+    }
+
+    /**
+     * Ölçüm kipi değişimleri (2026-11-15, Sayfa Hızı 2c): satırlar YENİDEN ESKİYE gelir ({@code [0]} = zaman); {@code extCol}
+     * kip kolonu, {@code okCol} "sayfa alındı" kolonu. Eskiden yeniye yürünür, alınabilen ardışık iki ölçümün kipi farklıysa
+     * {@code {at, event: "MODE", fields: ["extendedMeasurement"], extended}} — grafiğin olay katmanı biçimi. Kolonu olmayan satır
+     * (eski test / sürüm) atlanır; en çok 100 işaret (en yeniler).
+     */
+    static List<Map<String, Object>> pageSpeedModeChanges(List<Object[]> rowsNewestFirst, int extCol, int okCol) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rowsNewestFirst == null) return out;
+        Boolean prev = null;
+        for (int i = rowsNewestFirst.size() - 1; i >= 0; i--) {
+            Object[] r = rowsNewestFirst.get(i);
+            if (r == null || r.length <= Math.max(extCol, okCol) || !Boolean.TRUE.equals(r[okCol])) continue;
+            boolean ext = Boolean.TRUE.equals(r[extCol]);
+            if (prev != null && prev != ext) {
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("at", r[0] == null ? null : r[0].toString());
+                c.put("event", "MODE");
+                c.put("fields", List.of("extendedMeasurement"));
+                c.put("extended", ext);
+                out.add(c);
+            }
+            prev = ext;
+        }
+        return out.size() > 100 ? new ArrayList<>(out.subList(out.size() - 100, out.size())) : out;
     }
 
     /**
@@ -6311,6 +6356,8 @@ public class MonitoringController {
         });
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("points", points);
+        // Ölçüm kipi değişimleri (2026-11-15): grafik altında nötr not — toplamlar iki yanda karşılaştırılamaz
+        out.put("mode_changes", pageSpeedModeChanges(raw, 7, 8));
         out.put("bucket_len", len);
         out.put("from", range[0]);
         out.put("to", range[1]);
@@ -6366,6 +6413,11 @@ public class MonitoringController {
         applyKbThreshold(body, "maxFontKb",       m::setMaxFontKb);
         applyKbThreshold(body, "maxThirdPartyKb", m::setMaxThirdPartyKb);
         applyKbThreshold(body, "minPageKb",       m::setMinPageKb);
+        // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, madde 10 / 13) — biçim requirePageSpeedGrowth'ta doğrulandı
+        if (body.get("extendedMeasurement") instanceof Boolean b) m.setExtendedMeasurement(b);
+        applyGrowthPct(body, "growthBytesPct",    m::setGrowthBytesPct);
+        applyGrowthPct(body, "growthRequestsPct", m::setGrowthRequestsPct);
+        if (body.containsKey("growthBytesBand")) m.setGrowthBytesBand(Boolean.TRUE.equals(body.get("growthBytesBand")) ? Boolean.TRUE : null);
 
         if (body.containsKey("userAgent")) m.setUserAgent(blank(body.get("userAgent")) ? null : body.get("userAgent").toString().trim());
         if (body.get("sendDnt") instanceof Boolean b) m.setSendDnt(b);
@@ -6400,6 +6452,46 @@ public class MonitoringController {
         if (body.containsKey("customHeaders") && SessionScope.isGlobalAdmin(session)) {
             String raw = blank(body.get("customHeaders")) ? null : body.get("customHeaders").toString();
             m.setCustomHeadersEnc(raw == null ? null : secretCipher.encrypt(raw));
+        }
+    }
+
+    /** Büyüme yüzdesi: sayı (1–1000) → tam sayı, açık null / boş → kapalı, yoksa dokunma. Doğrulama {@link #requirePageSpeedGrowth}. */
+    private static void applyGrowthPct(Map<String, Object> body, String key, java.util.function.Consumer<Integer> setter) {
+        if (!body.containsKey(key)) return;
+        Object v = body.get(key);
+        if (v == null || (v instanceof String s && s.isBlank())) { setter.accept(null); return; }
+        if (v instanceof Number n && n.doubleValue() >= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MIN
+                && n.doubleValue() <= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MAX) setter.accept(n.intValue());
+    }
+
+    static final String[] PAGESPEED_GROWTH_FIELDS = {"growthBytesPct", "growthRequestsPct"};
+
+    /**
+     * Büyüme alarmı yüzdeleri (2026-11-15, madde 13): 1 ile 1000 arası TAM sayı ya da boş (kapalı). Gelmeyen ya da kayıtlı
+     * değerle AYNI alan yeniden denetlenmez (eski kayıt düzenlenebilir kalır). {@code growthBytesBand} / {@code extendedMeasurement}
+     * yalnız mantıksal kabul eder. Hata → 400 {@code VALIDATION_FAILED} + alan. Yan etkiden ÖNCE çağrılır.
+     */
+    static void requirePageSpeedGrowth(Map<String, Object> body, com.sitemonitor.model.PageSpeedMonitor stored) {
+        if (body == null) return;
+        for (String key : PAGESPEED_GROWTH_FIELDS) {
+            if (!body.containsKey(key)) continue;
+            Object v = body.get(key);
+            if (v == null || (v instanceof String s && s.isBlank())) continue;
+            Integer old = stored == null ? null
+                    : "growthBytesPct".equals(key) ? stored.getGrowthBytesPct() : stored.getGrowthRequestsPct();
+            if (v instanceof Number n && old != null && n.doubleValue() == old.doubleValue()) continue;
+            boolean ok = v instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())
+                    && n.doubleValue() >= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MIN
+                    && n.doubleValue() <= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MAX;
+            if (!ok) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key,
+                    com.sitemonitor.util.Msg.t("Büyüme eşiği 1 ile 1000 arasında bir tam sayı (yüzde) olmalı ya da boş bırakılmalı.",
+                            "The growth threshold must be a whole percentage between 1 and 1000, or left empty."));
+        }
+        for (String key : new String[]{"growthBytesBand", "extendedMeasurement"}) {
+            if (!body.containsKey(key)) continue;
+            Object v = body.get(key);
+            if (v != null && !(v instanceof Boolean)) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key,
+                    com.sitemonitor.util.Msg.t("Bu alan açık ya da kapalı olmalı.", "This field must be on or off."));
         }
     }
 
@@ -6497,6 +6589,7 @@ public class MonitoringController {
         im.put("third_party", x.thirdParty());
         im.put("failed", x.failed());
         im.put("truncated", x.truncated());
+        if (x.foundIn() != null) im.put("found_in", x.foundIn());   // genişletilmiş ölçüm: başvuran stil
         return im;
     }
 
@@ -6515,6 +6608,8 @@ public class MonitoringController {
         // Alınamadı mı (ölçüm motorunun kuralı: durum kodu yok ya da ≥ 400) — süzgeçle aynı tanım (2026-11-14)
         im.put("failed", r.getStatusCode() == null || r.getStatusCode() >= 400);
         im.put("checked_at", r.getCheckedAt());
+        // Genişletilmiş ölçüm (2026-11-15): kaynağı başvuran stil dosyası (satır içi stil → sayfa); null = HTML öğesi / eski satır
+        im.put("found_in", r.getFoundIn());
         return im;
     }
 
@@ -6548,6 +6643,11 @@ public class MonitoringController {
         item.put("max_font_kb",          m.getMaxFontKb());
         item.put("max_third_party_kb",   m.getMaxThirdPartyKb());
         item.put("min_page_kb",          m.getMinPageKb());
+        // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, madde 10 / 13) — null = kapalı
+        item.put("extended_measurement", Boolean.TRUE.equals(m.getExtendedMeasurement()));
+        item.put("growth_bytes_pct",     m.getGrowthBytesPct());
+        item.put("growth_requests_pct",  m.getGrowthRequestsPct());
+        item.put("growth_bytes_band",    Boolean.TRUE.equals(m.getGrowthBytesBand()));
         item.put("user_agent",           m.getUserAgent());
         item.put("send_dnt",             m.getSendDnt());
         item.put("exclude_trackers",     m.getExcludeTrackers());
@@ -6613,6 +6713,8 @@ public class MonitoringController {
             item.put("undecided_metrics", blank(latest.getUndecidedMetrics()) ? List.of()
                                        : List.of(latest.getUndecidedMetrics().split(",")));
             item.put("download_ms",    latest.getDownloadMs());
+            // Son ölçümün kipi (2026-11-15): genişletilmiş mi (null = klasik ya da eski satır)
+            item.put("extended",       Boolean.TRUE.equals(latest.getExtended()));
             item.put("error",          latest.getErrorMessage());
             item.put("last_check",     latest.getCheckedAt());
         }

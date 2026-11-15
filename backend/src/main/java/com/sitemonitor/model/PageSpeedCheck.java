@@ -106,9 +106,10 @@ public class PageSpeedCheck {
     @Column(name = "first_party_bytes") private Long firstPartyBytes;
     @Column(name = "third_party_bytes") private Long thirdPartyBytes;
 
-    /** Aşılan eşikler, virgülle: {@code LOAD,TTFB,SIZE,REQUESTS,MINSIZE,JS,IMG,FONT,THIRD} (en uzun hâli 49 karakter). Boş/null = ihlal yok.
+    /** Aşılan eşikler, virgülle: {@code LOAD,TTFB,SIZE,REQUESTS,MINSIZE,JS,IMG,FONT,THIRD,GROWSIZE,GROWREQ,SIZEBAND} (en uzun
+     *  hâli 75 karakter; kolon 2026-11-15'te 120'ye genişletildi). Boş/null = ihlal yok.
      *  Serbest metin değil sabit anahtar listesidir — UI ve e-posta bunu çevirir. */
-    @Column(name = "breached_metrics", length = 60)
+    @Column(name = "breached_metrics", length = 120)
     private String breachedMetrics;
 
     /**
@@ -116,8 +117,24 @@ public class PageSpeedCheck {
      * eşiğin altında kalan bayt değeri ya da ölçülemeyen TTFB. Bu ölçüm o eşikler için "uygun" SAYILMAZ: bütçe uyumuna
      * girmez, Grafana bütçe değeri yazmaz, arayüz "bilinmiyor" der. Null / boş = hepsi karara bağlandı (eski satır da).
      */
-    @Column(name = "undecided_metrics", length = 60)
+    @Column(name = "undecided_metrics", length = 120)
     private String undecidedMetrics;
+
+    /**
+     * Ölçüm GENİŞLETİLMİŞ kipte mi yapıldı (2026-11-15, Sayfa Hızı 2c madde 10): stil dosyalarının başvurduğu kaynaklar da
+     * sayıldı, sayılan nesneler Brotli ile istendi. Yalnız true yazılır; null = klasik kip (eski satır da). Kipler ARASINDA
+     * toplam karşılaştırılmaz: büyüme referansı yalnız aynı kipteki ölçümlerden, geçmiş / grafik kip değişimini işaretler.
+     */
+    @Column(name = "extended")
+    private Boolean extended;
+
+    /** Elle "Şimdi kontrol et" ölçümü (2026-11-15) — yalnız true yazılır; null = zamanlanmış ya da teyit. Büyüme referansına girmez. */
+    @Column(name = "manual")
+    private Boolean manual;
+
+    /** Teyit / kurtarma yeniden ölçümü (2026-11-15) — yalnız true yazılır. Büyüme referansına girmez (zamanlanmış değil). */
+    @Column(name = "recheck")
+    private Boolean recheck;
 
     /**
      * HTML gövdesinin GERÇEK istekte inme süresi (ms; başlıklar → gövde sonu — SSRF kapısı / DNS dahil değil, inceleme B6d).

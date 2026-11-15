@@ -68,6 +68,13 @@ public class PageSpeedResource {
     @Column(name = "start_ms")
     private Integer startMs;
 
+    /**
+     * Kaynağı başvuran stil dosyasının (yönlendirme SONRASI) adresi (2026-11-15, genişletilmiş ölçüm); satır içi stilden
+     * bulunduysa sayfanın kendi adresi. NULL = HTML öğesinden (ya da eski satır / klasik kip).
+     */
+    @Column(name = "found_in", columnDefinition = "TEXT")
+    private String foundIn;
+
     @Column(name = "status_code")
     private Integer statusCode;
 

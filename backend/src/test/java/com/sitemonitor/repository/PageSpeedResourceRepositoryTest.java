@@ -31,6 +31,7 @@ class PageSpeedResourceRepositoryTest {
 
     @Autowired PageSpeedResourceRepository repo;
     @Autowired PageSpeedCheckRepository checks;
+    @Autowired jakarta.persistence.EntityManagerFactory emf;
 
     private static PageSpeedResource row(long monitorId, String url, String reason) {
         PageSpeedResource r = new PageSpeedResource();
@@ -153,6 +154,51 @@ class PageSpeedResourceRepositoryTest {
         assertThat(urls(1, PageSpeedResource.KEEP_LATEST))
                 .as("başarısız değişim son iyi kırılımı SİLMEMELİ")
                 .containsExactly("https://www.example.com/a.js", "https://www.example.com/b.js");
+    }
+
+    /**
+     * Prod kapısı veri katmanı incelemesi (2026-11-15): her sayfa hızı ölçümü son kırılımı yeniden yazar (sayfa başına 2000'e
+     * dek satır, genişletilmiş ölçümle daha çok). Eskiden türetilmiş silme satırları VARLIK olarak yüklüyor ve tek tek siliyor,
+     * {@code saveAll} IDENTITY kimlikle tek tek ekliyordu (≈ 2 × N gidiş-dönüş). Artık TEK toplu DELETE + JDBC toplu INSERT:
+     * Hibernate hiçbir varlık yüklemez / silmez / eklemez, yalnız silme ifadesini hazırlar; satırlar tam ve doğru yazılır.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("replaceLatest ifade sayısı: toplu DELETE + toplu INSERT — varlık yükleme / tek tek silme / ekleme YOK")
+    void replaceLatestStatementCount() {
+        List<PageSpeedResource> old = new java.util.ArrayList<>();
+        for (int i = 0; i < 1200; i++) old.add(row(1, "https://www.example.com/eski-" + i + ".js", PageSpeedResource.KEEP_LATEST));
+        assertThat(repo.insertAll(old)).isEqualTo(1200);
+        List<PageSpeedResource> fresh = new java.util.ArrayList<>();
+        for (int i = 0; i < 1200; i++) {
+            PageSpeedResource r = row(1, "https://www.example.com/yeni-" + i + ".js", PageSpeedResource.KEEP_LATEST);
+            r.setStartMs(i);
+            r.setFoundIn(i == 0 ? "https://www.example.com/site.css" : null);
+            r.setStatusCode(i == 1 ? null : 200);
+            fresh.add(r);
+        }
+
+        org.hibernate.stat.Statistics st = emf.unwrap(org.hibernate.SessionFactory.class).getStatistics();
+        st.setStatisticsEnabled(true);
+        st.clear();
+        repo.replaceLatest(1L, fresh);
+        assertThat(st.getEntityLoadCount()).as("eski satırlar varlık olarak yüklenmez").isZero();
+        assertThat(st.getEntityDeleteCount()).as("tek tek silme yok").isZero();
+        assertThat(st.getEntityInsertCount()).as("Hibernate tek tek eklemez (JDBC toplu)").isZero();
+        assertThat(st.getPrepareStatementCount()).as("Hibernate yalnız toplu silmeyi hazırlar").isLessThanOrEqualTo(1);
+        st.setStatisticsEnabled(false);
+
+        List<PageSpeedResource> all = repo.findAll().stream().filter(r -> r.getMonitorId() == 1L).toList();
+        assertThat(all).hasSize(1200).allMatch(r -> r.getUrl().contains("/yeni-"));
+        PageSpeedResource first = all.stream().filter(r -> r.getUrl().endsWith("/yeni-0.js")).findFirst().orElseThrow();
+        assertThat(first.getFoundIn()).isEqualTo("https://www.example.com/site.css");
+        assertThat(first.getStartMs()).isZero();
+        assertThat(first.getBytes()).isEqualTo(1000L);
+        assertThat(first.getId()).isNotNull();
+        PageSpeedResource second = all.stream().filter(r -> r.getUrl().endsWith("/yeni-1.js")).findFirst().orElseThrow();
+        assertThat(second.getStatusCode()).isNull();
+        assertThat(second.getTruncated()).isFalse();
+        assertThat(repo.insertAll(List.of())).isZero();
     }
 
     @Test

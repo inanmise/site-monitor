@@ -139,7 +139,7 @@ export function overBudgetMeters(meters, exclude = 'load') {
  * Ölçer DIŞI ihlaller (inceleme F2): tür bütçeleri (JS / görsel / font / üçüncü taraf) ve asgari boyut — dört ölçerde
  * görünmedikleri için kart ve kompakt neden satırı bunları ayrıca adlandırır. Sıra sunucunun BREACH_KEYS sırası.
  */
-export const EXTRA_BREACH_KEYS = ['MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD']
+export const EXTRA_BREACH_KEYS = ['MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD', 'GROWSIZE', 'GROWREQ', 'SIZEBAND']
 export function extraBreaches(m) {
   const b = new Set(Array.isArray(m?.breached_metrics) ? m.breached_metrics.map((k) => String(k).trim().toUpperCase()) : [])
   return EXTRA_BREACH_KEYS.filter((k) => b.has(k))
