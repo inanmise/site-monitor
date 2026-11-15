@@ -241,7 +241,7 @@ public class PageResourceImageService {
             if (lease != null) lease.close();
         }
 
-        static ImageResult of(ImageOutcome o) {
+        public static ImageResult of(ImageOutcome o) {
             return new ImageResult(o, null, null, null, null, 0, null, null, null);
         }
 
@@ -285,12 +285,29 @@ public class PageResourceImageService {
         if (!lk.itemsKept()) return ImageResult.of(ImageOutcome.ITEMS_GONE);
         StoredImage img = lk.image();
         if (img == null) return ImageResult.of(ImageOutcome.NOT_FOUND);
+        return fetchStored(url, img.sizeKnown() ? img.bytes() : null, viaProxy(img.via(), url, proxyMode), userKey);
+    }
+
+    /**
+     * Başka bir izlemenin SAKLADIĞI görsel adresinin özgün baytları (Sayfa Hızı → görsel aracı köprüsü, 2026-11-15). Adresin
+     * o izlemenin saklı kaynakları arasında olduğu ve kapılar ÇAĞIRANDA doğrulanmış olmalı; burada aynı kurallar işler:
+     * maskeli adres, yalnız http(s), bilinen boyut tavanı aşıyorsa çekilmez, kişi / pod / kaynak sunucu sınırları, süre tavanı.
+     *
+     * @param knownBytes ölçümün saklı boyutu (bilinmiyorsa null)
+     * @param viaProxy   izlemenin vekil kararı (ölçümün kendi kararıyla aynı)
+     */
+    public ImageResult imageFromStored(String url, Long knownBytes, boolean viaProxy, String userKey) {
+        if (url == null || url.isBlank() || url.length() > MAX_URL_CHARS) return ImageResult.of(ImageOutcome.NOT_FOUND);
+        return fetchStored(url, knownBytes, viaProxy, userKey);
+    }
+
+    private ImageResult fetchStored(String url, Long knownBytes, boolean viaProxy, String userKey) {
         // Maskeli adres gerçek adres değildir (gizli değer saklanmadı) — çekilemez
         if (url.contains(SecretMask.MASK)) return ImageResult.of(ImageOutcome.MASKED);
         if (!PageFetchCore.isHttp(url)) return ImageResult.of(ImageOutcome.NOT_FOUND);
-        // Taramanın ölçtüğü boyut tavanı aşıyorsa hiç çekilmez (25 MiB'lik boş indirme yok)
-        if (img.sizeKnown() && img.bytes() > MAX_IMAGE_BYTES) {
-            return new ImageResult(ImageOutcome.TOO_LARGE, null, null, null, null, 0, null, null, img.bytes());
+        // Ölçülen boyut tavanı aşıyorsa hiç çekilmez (25 MiB'lik boş indirme yok)
+        if (knownBytes != null && knownBytes > MAX_IMAGE_BYTES) {
+            return new ImageResult(ImageOutcome.TOO_LARGE, null, null, null, null, 0, null, null, knownBytes);
         }
         if (stopping) return ImageResult.busy();
         // Yük sınırı doğrulamalardan SONRA: reddedilen (ve yukarıda elenen) istek sayılmaz
@@ -311,7 +328,7 @@ public class PageResourceImageService {
                         null);
             }
             h.ticket().close();   // yalnız sayar
-            r = fetch(url, viaProxy(img.via(), url, proxyMode));
+            r = fetch(url, viaProxy);
             // Başarılı sonuçta hak yanıt YAZILANA dek çağıranda kalır (bellek + iş parçacığı yazma boyunca sayılır)
             return r.outcome() == ImageOutcome.OK ? r.withLease(ticket) : r;
         } finally {

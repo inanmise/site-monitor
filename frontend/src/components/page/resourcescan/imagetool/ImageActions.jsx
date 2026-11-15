@@ -128,11 +128,14 @@ function Actions({ ctx, item, className, showSuggestion }) {
                 <DropdownMenuItem className={ITEM} disabled={busy} data-action="custom" onSelect={() => setCustom(true)}>
                   <SlidersHorizontal aria-hidden="true" />{t('prs.it.menu.custom')}
                 </DropdownMenuItem>
+                {/* "Görsel aracına gönder" yalnız araç görünümü olan yerde (Sayfa Hızı köprüsünde araç sekmesi yok) */}
+                {ctx.openTool && (<>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className={ITEM} disabled={busy} data-action="tool"
                   onSelect={() => { toTool(suggestion ? resizeSettings(suggestion.width) : null) }}>
                   <Wrench aria-hidden="true" />{t('prs.it.menu.tool')}
                 </DropdownMenuItem>
+                </>)}
                 </>)}
               </>
             )}
@@ -172,7 +175,7 @@ function Actions({ ctx, item, className, showSuggestion }) {
       {entry.result && !busy && <ImageInsights result={entry.result} />}
       {custom && (
         <CustomSizeDialog item={item} suggestion={suggestion} store={store} scanId={scanId} onClose={() => setCustom(false)}
-          onTool={(settings) => toTool(settings)} />
+          onTool={ctx.openTool ? (settings) => toTool(settings) : null} />
       )}
     </div>
   )
@@ -288,10 +291,12 @@ function CustomSizeDialog({ item, suggestion, store, scanId, onClose, onTool }) 
       footer={(
         <>
           <Button type="button" variant="outline" className={TOUCH} onClick={onClose}>{t('app.dismiss')}</Button>
-          <Button type="button" variant="outline" className={TOUCH} data-slot="prs-it-custom-tool"
-            onClick={() => { if (validate()) { onTool(form); onClose() } }}>
-            <Wrench aria-hidden="true" />{t('prs.it.menu.tool')}
-          </Button>
+          {onTool && (
+            <Button type="button" variant="outline" className={TOUCH} data-slot="prs-it-custom-tool"
+              onClick={() => { if (validate()) { onTool(form); onClose() } }}>
+              <Wrench aria-hidden="true" />{t('prs.it.menu.tool')}
+            </Button>
+          )}
           <Button type="button" className={TOUCH} data-slot="prs-it-custom-go" onClick={submit}>
             <Download aria-hidden="true" />{t('prs.it.custom.go')}
           </Button>

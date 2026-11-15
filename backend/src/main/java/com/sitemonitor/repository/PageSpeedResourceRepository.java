@@ -43,6 +43,23 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
     @Query("SELECT MAX(r.checkId) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST'")
     Long latestCheckId(@Param("id") Long id);
 
+    /**
+     * Görsel aracı köprüsü (2026-11-15): izlemenin SAKLADIĞI kaynaklar arasında adresi birebir eşleşen görsel satırı (en çok 1;
+     * herhangi bir kopya yeter — boyut kopyalar arasında aynı ölçümün değeridir). Bulunamazsa boş — uç adresi çekmez (sunucu açık
+     * vekil olamaz). Bilerek ORDER BY YOK (inceleme 2026-11-15): "id DESC LIMIT 1" biçimi bulunamayan adreste birincil anahtarı
+     * geriye tarayıp tüm tabloyu okuyabilirdi; böyle izleme kimliği önce gelen indeksle yalnız o izlemenin satırları okunur.
+     */
+    @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.type = 'IMG' AND r.url = :url LIMIT 1")
+    List<PageSpeedResource> findStoredImage(@Param("id") Long id, @Param("url") String url);
+
+    /**
+     * Şelale (2026-11-15): bir ölçümün kaynakları isteğin ATILDIĞI ana göre (start_ms; eski satırda NULL → sonda), ölçümün TEK
+     * kopyası, en çok {@code :limit}. İzleme kimliğiyle sınırlı (başka izlemenin checkId'siyle satır sızmaz).
+     */
+    @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.checkId = :checkId " + ONE_COPY
+            + "ORDER BY r.startMs ASC NULLS LAST, r.id ASC LIMIT :limit")
+    List<PageSpeedResource> waterfall(@Param("monitorId") Long monitorId, @Param("checkId") Long checkId, @Param("limit") int limit);
+
     /** Bir eşik-ihlali anının kırılımı (delil). */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.checkId = :checkId ORDER BY r.bytes DESC NULLS LAST LIMIT :limit")
     List<PageSpeedResource> findByCheck(@Param("checkId") Long checkId, @Param("limit") int limit);

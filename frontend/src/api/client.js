@@ -94,6 +94,17 @@ async function fetchResourceScanImage(id, scanId, url, signal = null, timeoutMs 
   }
 }
 
+/** Sayfa Hızı → görsel aracı köprüsü (2026-11-15): kaynak analizi görseliyle aynı okuma (süre sınırı, hata gövdesi, başlıklar). */
+async function fetchPageSpeedImage(id, url, signal = null, timeoutMs = IMAGE_FETCH_TIMEOUT_MS) {
+  const path = `/monitoring/pagespeed/${encodeURIComponent(id)}/image`
+  const dl = deadlineSignal(signal, timeoutMs)
+  try {
+    return await readResourceScanImage(path, url, signal, dl.signal)
+  } finally {
+    dl.done()
+  }
+}
+
 async function readResourceScanImage(path, url, signal, sig) {
   // Çağıranın iptali mi, süre mi: sinyal kesildiyse çağıranınki kesik değilse süre dolmuştur
   const ended = () => (signal?.aborted ? { success: false, status: 0, aborted: true, error: null } : { ...noResponsePayload('timeout'), timedOut: true })
@@ -2818,6 +2829,14 @@ export const api = {
       ).toString()
       return request(`/monitoring/pagespeed/${id}/resources${q ? `?${q}` : ''}`)
     },
+    // Şelale (2026-11-15, Sayfa Hızı 2. sürüm): ölçümün ana HTML fazları + kaynakları başlangıç anına göre (≤ 2000).
+    // Yanıt: {check_id, check: {…fazlar}|null, resources: [{url, type, bytes, duration_ms, start_ms, http_status, …}],
+    // total, truncated, has_start}. checkId yoksa son ölçüm. Süre sınırlı (varsayılan okuma zaman aşımı).
+    getPageSpeedWaterfall: (id, { checkId } = {}) => request(
+      `/monitoring/pagespeed/${encodeURIComponent(id)}/waterfall${checkId != null ? `?checkId=${encodeURIComponent(checkId)}` : ''}`),
+    // Sayfa Hızı → görsel aracı köprüsü: ölçümün SAKLADIĞI görselin özgün baytları (kaynak analizi görseliyle aynı yanıt biçimi,
+    // aynı süre sınırı ve hata kodları). Adres saklı değilse 404 RESOURCE_IMAGE_NOT_FOUND.
+    pageSpeedImage: (id, url, { signal, timeoutMs } = {}) => fetchPageSpeedImage(id, url, signal, timeoutMs),
     // Seçili ölçümün TÜM kaynakları CSV (sunucu akıtır) — tavan: ölçümün kaynak tavanı.
     downloadPageSpeedResourcesCsv: (id, { checkId, type, party, failed } = {}) => {
       const q = new URLSearchParams(

@@ -6038,6 +6038,71 @@ public class MonitoringController {
     }
 
     /**
+     * Şelale (2026-11-15, Sayfa Hızı 2. sürüm madde 16 / 17): bir ölçümün (varsayılan son ölçüm; {@code checkId} ile bir ihlal
+     * anı) ana HTML fazları ve kaynakları, isteğin ATILDIĞI ana göre sıralı, en çok {@value #PAGESPEED_WATERFALL_MAX} satır
+     * ({@code truncated}). Kapı kaynak listesiyle aynı ({@code monitoring.read/view} + izlemeyi görme). Kaynakların
+     * {@code start_ms}'i bu sürümden önce yazılmamıştır → {@code has_start: false} (arayüz şelale çizmez, söyler).
+     * {@code check}: ölçüm satırı silinmişse (saklama) null — fazlar bilinmiyor.
+     */
+    @GetMapping("/pagespeed/{id}/waterfall")
+    public ResponseEntity<Map<String, Object>> pageSpeedWaterfall(@PathVariable Long id,
+            @RequestParam(required = false) Long checkId, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.PageSpeedMonitor mon = pageSpeedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sayfa hızı izlemesi bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());   // IDOR
+        if (deny != null) return deny;
+        Long target = checkId != null ? checkId : pageSpeedResourceRepo.latestCheckId(id);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("check_id", target);
+        if (target == null) {
+            out.put("check", null);
+            out.put("resources", List.of());
+            out.put("total", 0);
+            out.put("truncated", false);
+            out.put("has_start", false);
+            return ok(out);
+        }
+        List<com.sitemonitor.model.PageSpeedResource> rows =
+                pageSpeedResourceRepo.waterfall(id, target, PAGESPEED_WATERFALL_MAX + 1);
+        boolean truncated = rows.size() > PAGESPEED_WATERFALL_MAX;
+        if (truncated) rows = rows.subList(0, PAGESPEED_WATERFALL_MAX);
+        com.sitemonitor.model.PageSpeedCheck c = pageSpeedCheckRepo.findById(target)
+                .filter(x -> id.equals(x.getMonitorId())).orElse(null);
+        if (c == null) {
+            out.put("check", null);
+        } else {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            cm.put("checked_at", c.getCheckedAt());
+            cm.put("ttfb_ms", c.getTtfbMs());
+            cm.put("html_ms", c.getHtmlMs());
+            cm.put("download_ms", c.getDownloadMs());
+            cm.put("response_ms", c.getResponseMs());
+            cm.put("dns_ms", c.getDnsMs());
+            cm.put("connect_ms", c.getConnectMs());
+            cm.put("tls_ms", c.getTlsMs());
+            cm.put("server_ms", c.getServerMs());
+            cm.put("total_bytes", c.getTotalBytes());
+            cm.put("html_bytes", c.getHtmlBytes());
+            cm.put("request_count", c.getRequestCount());
+            cm.put("failed_count", c.getFailedCount());
+            cm.put("time_truncated", c.getTimeTruncated());
+            // Alt sınır bayraklarının üçü de (inceleme 2026-11-15): kaynak tavanı ve bayt tavanı da ölçümü kısmi yapar
+            cm.put("capped", c.getCapped());
+            cm.put("bytes_truncated", c.getBytesTruncated());
+            out.put("check", cm);
+        }
+        out.put("resources", rows.stream().filter(r -> id.equals(r.getMonitorId())).map(this::resourceToMap).toList());
+        out.put("total", pageSpeedResourceRepo.countByMonitorIdAndCheckId(id, target));
+        out.put("truncated", truncated);
+        out.put("has_start", rows.stream().anyMatch(r -> r.getStartMs() != null));
+        return ok(out);
+    }
+
+    /** Şelalede dönen en çok kaynak (ölçümün kaynak tavanı ayarı 2000 varsayılan; tarayıcı çizimi bu sayıda akıcı kalır). */
+    static final int PAGESPEED_WATERFALL_MAX = 2_000;
+
+    /**
      * Seçili ölçümün (son ölçüm ya da bir ihlal anı) TÜM kaynakları CSV olarak (2026-11-14, madde 6) — 1000'lik sayfalarla
      * AKITILIR (bellekte tüm liste tutulmaz), satır sayısı ölçümün kendi kaynak tavanıyla sınırlı + {@value #PAGESPEED_RES_CSV_MAX}
      * güvenlik tavanı. Sütunlar hücre kaçışlı (formül nötr). {@code truncated}: o kaynağın bayt sayımı tavanda kesildi (≥).
@@ -6407,6 +6472,9 @@ public class MonitoringController {
         im.put("type", r.getType());
         im.put("bytes", r.getBytes());
         im.put("duration_ms", r.getDurationMs());
+        // Şelale (2026-11-15): isteğin sayfa yükü başlangıcına göre atılma anı; eski satırda null
+        im.put("start_ms", r.getStartMs());
+        im.put("check_id", r.getCheckId());
         im.put("http_status", r.getStatusCode());
         im.put("third_party", r.getThirdParty());
         im.put("truncated", Boolean.TRUE.equals(r.getTruncated()));

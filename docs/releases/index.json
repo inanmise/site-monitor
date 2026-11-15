@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T04:32:14Z",
+  "generatedAt": "2026-11-15T05:07:47Z",
   "repo": "inanmise/site-monitor",
-  "count": 838,
+  "count": 839,
   "releases": [
+    {
+      "version": "20.205.0",
+      "tag": "v20.205.0",
+      "releasedAt": "2026-11-15T05:07:38Z",
+      "commit": "5e5327e193fbf94490f10f8224d58d0fd9faec33",
+      "prevVersion": "20.204.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "5e5327e1",
+          "subject": "not kartı bileşen puanı ortak ProgressBar ile (elle yüzde çubuğu bekçisi)"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "8ac3e48d",
+          "subject": "şelale inceleme düzeltmeleri — tek alt sınır kuralı, kesik ölçümde yön yok, silinmiş izleme, eski ölçüm nötr, yüklenirken rapor kapalı, parça süresi"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "f4e5355f",
+          "subject": "şelale, hız notu, iki ölçümü karşılaştırma, PDF / Excel rapor ve görsel aracı köprüsü"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.204.0",
       "tag": "v20.204.0",

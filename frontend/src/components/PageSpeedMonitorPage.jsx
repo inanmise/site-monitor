@@ -89,6 +89,7 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
 const PageSpeedDiagnoseDialog = lazy(() => import('./pagespeed/diagnose/PageSpeedDiagnoseDialog.jsx'))
+const PageSpeedDeepTab = lazy(() => import('./pagespeed/deep/PageSpeedDeepTab.jsx'))
 
 /** Kontrol aralığı seçenekleri. TABAN 5 dk: bir ölçüm onlarca istek demek — dakikalık ölçüm hem
  *  tek pod'u hem izlenen sistemi boğar. Sunucu da aynı tabanı uygular (form atlanabilir, uç atlanamaz). */
@@ -1351,7 +1352,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           <DetailDivider />
           <DetailTabs value={detailTab} onValueChange={setDetailTab} className="mt-0"
             countsFor={{ kind: 'pagespeed', monitorId: selected.id, notesType: 'PAGESPEED', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
-            tabs={[['resources', t('pspd.tabResources')], ['breakdown', t('pspd.tabBreakdown')], ['chart', t('pspd.tabChart')], ['control', t('hist.tab')],
+            tabs={[['resources', t('pspd.tabResources')], ['breakdown', t('pspd.tabBreakdown')], ['deep', t('pspd.tabDeep')], ['chart', t('pspd.tabChart')], ['control', t('hist.tab')],
               ['alerts', t('pspd.tabAlerts')], ['notes', t('pspd.tabNotes')],
               // Yapılandırma geçmişi — kontrol geçmişiyle KARIŞTIRILMAMALI:
               // orası "sayfa ne kadar sürdü", burası "ayarları kim değiştirdi".
@@ -1475,6 +1476,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
             {/* Kırılım (2026-11-14, madde 8 / 9 / 15): süre kırılımı + tür kırılımı + tür kırılımı zaman içinde */}
             <TabsContent value="breakdown">
               <PageSpeedInsights monitor={selected} />
+            </TabsContent>
+
+            {/* Derin analiz (2026-11-15, Sayfa Hızı 2. sürüm madde 16–19, 22): şelale, hız notu, iki ölçümü karşılaştır, rapor,
+                görsel aracı. Tembel parça — sekme açılınca yüklenir. */}
+            <TabsContent value="deep">
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                {detailTab === 'deep' && <PageSpeedDeepTab key={selected.id} monitor={selected} />}
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="chart">
