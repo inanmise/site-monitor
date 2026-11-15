@@ -4498,6 +4498,73 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.resources.length()").value(0));
     }
 
+    // ── Sayfa Hızı 2. sürüm (2026-11-15): şelale ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("PS2: şelale — son ölçüm, ana HTML fazları + başlangıç anına göre kaynaklar; has_start; başka izlemenin satırı / ölçümü elenir")
+    void pageSpeedWaterfall_latestWithPhases() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        when(pageSpeedResourceRepo.latestCheckId(1L)).thenReturn(77L);
+        var r1 = new com.sitemonitor.model.PageSpeedResource();
+        r1.setMonitorId(1L); r1.setCheckId(77L); r1.setUrl("https://a.com/app.css"); r1.setType("CSS"); r1.setBytes(900L);
+        r1.setDurationMs(120); r1.setStartMs(410); r1.setStatusCode(200);
+        var foreign = new com.sitemonitor.model.PageSpeedResource();
+        foreign.setMonitorId(99L); foreign.setCheckId(77L); foreign.setUrl("https://gizli/x.js"); foreign.setStartMs(1);
+        when(pageSpeedResourceRepo.waterfall(eq(1L), eq(77L), anyInt())).thenReturn(List.of(r1, foreign));
+        when(pageSpeedResourceRepo.countByMonitorIdAndCheckId(1L, 77L)).thenReturn(2L);
+        var c = new com.sitemonitor.model.PageSpeedCheck();
+        c.setMonitorId(1L); c.setCheckedAt("2026-11-15T03:00:00"); c.setTtfbMs(180); c.setHtmlMs(390); c.setDnsMs(12);
+        c.setConnectMs(20); c.setTlsMs(40); c.setServerMs(150); c.setRequestCount(2);
+        when(pageSpeedCheckRepo.findById(77L)).thenReturn(Optional.of(c));
+
+        mvc.perform(get("/api/monitoring/pagespeed/1/waterfall").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.check_id").value(77))
+                .andExpect(jsonPath("$.data.check.html_ms").value(390))
+                .andExpect(jsonPath("$.data.check.tls_ms").value(40))
+                .andExpect(jsonPath("$.data.resources.length()").value(1))
+                .andExpect(jsonPath("$.data.resources[0].start_ms").value(410))
+                .andExpect(jsonPath("$.data.resources[0].duration_ms").value(120))
+                .andExpect(jsonPath("$.data.has_start").value(true))
+                .andExpect(jsonPath("$.data.truncated").value(false))
+                .andExpect(jsonPath("$.data.total").value(2));
+        verify(pageSpeedResourceRepo).waterfall(1L, 77L, MonitoringController.PAGESPEED_WATERFALL_MAX + 1);
+
+        // Başka izlemenin ölçüm satırı fazları sızdırmaz
+        var c2 = new com.sitemonitor.model.PageSpeedCheck();
+        c2.setMonitorId(99L);
+        when(pageSpeedCheckRepo.findById(55L)).thenReturn(Optional.of(c2));
+        when(pageSpeedResourceRepo.waterfall(eq(1L), eq(55L), anyInt())).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/pagespeed/1/waterfall?checkId=55").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.check").doesNotExist())
+                .andExpect(jsonPath("$.data.has_start").value(false));
+    }
+
+    @Test
+    @DisplayName("PS2: şelale — kırılım yoksa boş yanıt (hata değil); eski satırlar (start_ms yok) has_start false; görünmeyen izleme 403/404")
+    void pageSpeedWaterfall_emptyOldAndScope() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        when(pageSpeedResourceRepo.latestCheckId(1L)).thenReturn(null);
+        mvc.perform(get("/api/monitoring/pagespeed/1/waterfall").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.check_id").doesNotExist())
+                .andExpect(jsonPath("$.data.resources.length()").value(0))
+                .andExpect(jsonPath("$.data.has_start").value(false));
+
+        var old = new com.sitemonitor.model.PageSpeedResource();
+        old.setMonitorId(1L); old.setCheckId(70L); old.setUrl("https://a.com/x.js");
+        when(pageSpeedResourceRepo.waterfall(eq(1L), eq(70L), anyInt())).thenReturn(List.of(old));
+        when(pageSpeedCheckRepo.findById(70L)).thenReturn(Optional.empty());
+        mvc.perform(get("/api/monitoring/pagespeed/1/waterfall?checkId=70").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resources.length()").value(1))
+                .andExpect(jsonPath("$.data.has_start").value(false));
+
+        mvc.perform(get("/api/monitoring/pagespeed/404/waterfall").session(session("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
     // ── Sayfa Hızı zenginleştirme 1. sürüm (2026-11-14) ─────────────────────────────────────────────────────────────────
 
     @Test

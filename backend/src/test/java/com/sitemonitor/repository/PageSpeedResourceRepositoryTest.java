@@ -195,4 +195,46 @@ class PageSpeedResourceRepositoryTest {
         assertThat(repo.latestCheckId(1L)).isEqualTo(20L);
         assertThat(repo.latestCheckId(99L)).isNull();
     }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("Şelale (2026-11-15): isteğin atıldığı ana göre sıralı, eski satır (start_ms yok) sonda; ölçümün TEK kopyası; başka izleme sızmaz; sınır")
+    void waterfall_orderedByStartOneCopy() {
+        PageSpeedResource a = res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/late.js", "JS", 100, 200, false);
+        a.setStartMs(900);
+        PageSpeedResource b = res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/first.css", "CSS", 100, 200, false);
+        b.setStartMs(10);
+        PageSpeedResource c = res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/old.png", "IMG", 100, 200, false);
+        PageSpeedResource d = res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/mid.js", "JS", 100, 200, false);
+        d.setStartMs(300);
+        PageSpeedResource other = res(2, 20L, PageSpeedResource.KEEP_LATEST, "https://b/x.js", "JS", 100, 200, false);
+        other.setStartMs(1);
+        // İhlal anı: aynı ölçüm hem LATEST hem BREACH → tek kopya (BREACH)
+        PageSpeedResource br1 = res(1, 30L, PageSpeedResource.KEEP_LATEST, "https://a/z.js", "JS", 100, 200, false);
+        br1.setStartMs(5);
+        PageSpeedResource br2 = res(1, 30L, PageSpeedResource.KEEP_BREACH, "https://a/z.js", "JS", 100, 200, false);
+        br2.setStartMs(5);
+        repo.saveAll(List.of(a, b, c, d, other, br1, br2));
+
+        assertThat(repo.waterfall(1L, 20L, 10).stream().map(PageSpeedResource::getUrl).toList())
+                .containsExactly("https://a/first.css", "https://a/mid.js", "https://a/late.js", "https://a/old.png");
+        assertThat(repo.waterfall(1L, 20L, 2)).hasSize(2);
+        assertThat(repo.waterfall(1L, 30L, 10)).hasSize(1);
+        assertThat(repo.waterfall(2L, 30L, 10)).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("Görsel köprüsü: yalnız bu izlemenin saklı GÖRSEL satırı, adres birebir; başka tür / başka izleme / farklı adres boş")
+    void findStoredImage_exactImageOfThisMonitor() {
+        repo.saveAll(List.of(
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/hero.png", "IMG", 420_000, 200, false),
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/app.js", "JS", 1000, 200, false),
+                res(2, 21L, PageSpeedResource.KEEP_LATEST, "https://b/other.png", "IMG", 5, 200, false)));
+        assertThat(repo.findStoredImage(1L, "https://a/hero.png")).singleElement()
+                .satisfies(r -> assertThat(r.getBytes()).isEqualTo(420_000L));
+        assertThat(repo.findStoredImage(1L, "https://a/app.js")).isEmpty();
+        assertThat(repo.findStoredImage(1L, "https://b/other.png")).isEmpty();
+        assertThat(repo.findStoredImage(1L, "https://a/HERO.png")).isEmpty();
+    }
 }

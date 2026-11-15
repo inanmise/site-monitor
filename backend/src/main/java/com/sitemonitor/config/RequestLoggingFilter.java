@@ -223,6 +223,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      * adreslerini taşır. Kimlikler yolun ortasında olduğu için önek listesine yazılamaz — düzenli ifadesiz, doğrusal denetim.
      */
     private static boolean resourceScanImagePath(String norm) {
+        // Sayfa Hızı → görsel aracı köprüsü (2026-11-15): /api/monitoring/pagespeed/{id}/image — yanıt ham görsel baytı
+        if (norm.startsWith("/api/monitoring/pagespeed/") && norm.endsWith("/image")) return true;
         if (!norm.startsWith("/api/monitoring/page/")) return false;
         int scans = norm.indexOf("/resource-scans/");
         return scans >= 0 && norm.indexOf("/image", scans) >= 0;

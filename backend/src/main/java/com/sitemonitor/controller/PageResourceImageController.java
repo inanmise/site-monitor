@@ -3,7 +3,12 @@ package com.sitemonitor.controller;
 import com.sitemonitor.config.CorrelationIdFilter;
 import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.PageMonitor;
+import com.sitemonitor.model.PageSpeedMonitor;
+import com.sitemonitor.model.PageSpeedResource;
 import com.sitemonitor.repository.PageMonitorRepository;
+import com.sitemonitor.repository.PageSpeedMonitorRepository;
+import com.sitemonitor.repository.PageSpeedResourceRepository;
+import com.sitemonitor.service.PageSpeedCheckerService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
@@ -18,6 +23,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -63,7 +69,7 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/monitoring/page")
+@RequestMapping("/api/monitoring")
 @RequiredArgsConstructor
 public class PageResourceImageController {
 
@@ -77,6 +83,14 @@ public class PageResourceImageController {
     private final PageResourceImageService images;
     private final AuditService auditService;
 
+    /** Sayfa Hızı → görsel aracı köprüsü (2026-11-15): alan enjeksiyonu (dilim testleri kurucuyu değiştirmeden kurar). */
+    @Autowired(required = false)
+    private PageSpeedMonitorRepository pageSpeedRepo;
+    @Autowired(required = false)
+    private PageSpeedResourceRepository pageSpeedResourceRepo;
+    @Autowired(required = false)
+    private PageSpeedCheckerService pageSpeedChecker;
+
     // ── 1) Özgün görsel ─────────────────────────────────────────────────────────────────────
 
     /**
@@ -89,7 +103,7 @@ public class PageResourceImageController {
      * {@code RESOURCE_IMAGE_FETCH_FAILED} (502; {@code reason} {@code TLS_DOWNGRADE} = https adres http'ye yönlendirdi),
      * {@code RESOURCE_IMAGE_UNSUPPORTED} (415). 200'de son adım https ise {@code X-Image-Tls-Verified: true|false}.
      */
-    @PostMapping("/{id}/resource-scans/{scanId}/image")
+    @PostMapping("/page/{id}/resource-scans/{scanId}/image")
     public ResponseEntity<?> image(@PathVariable Long id, @PathVariable Long scanId,
                                    @RequestBody(required = false) Map<String, Object> body,
                                    HttpSession session, HttpServletResponse response) {
@@ -104,25 +118,71 @@ public class PageResourceImageController {
 
         ImageResult r = images.image(m.getId(), scanId, url, m.getUseProxy(), userKey(session));
         try {
-            return respond(r, m, scanId, url, session, response);
+            return respond(r, "PAGE_MONITOR", m.getId(), m.getName(), "scan_id", scanId, false, url, session, response);
         } finally {
             r.release();   // yük hakkı: gövde yazıldıktan / istemci koptuktan SONRA
         }
     }
 
-    private ResponseEntity<?> respond(ImageResult r, PageMonitor m, Long scanId, String url, HttpSession session,
+    /**
+     * Sayfa Hızı → görsel aracı köprüsü (2026-11-15, Sayfa Hızı 2. sürüm madde 22). Gövde {@code {"url"}}: adres, izlemenin
+     * SAKLANAN kaynakları (son ölçüm ya da ihlal anı) arasında görsel türünde birebir bulunmalı — sunucu açık vekil olamaz.
+     * Kapılar kaynak analizi görseliyle aynı ({@code monitoring.trigger/execute} + takımda çalıştırma; paylaşım EXECUTE dahil);
+     * vekil kararı ölçümün kendi kararı (izlemenin adresine göre). Yanıt ve hata kodları {@link #image} ile aynı;
+     * {@code RESOURCE_MONITOR_NOT_FOUND} izleme yok / görünmüyor.
+     */
+    @PostMapping("/pagespeed/{id}/image")
+    public ResponseEntity<?> pageSpeedImage(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+                                            HttpSession session, HttpServletResponse response) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        if (pageSpeedRepo == null || pageSpeedResourceRepo == null) return pageSpeedNotFound();
+        PageSpeedMonitor m = pageSpeedRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return pageSpeedNotFound();
+        if (!SessionScope.canExecuteTeam(session, m.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu takımın izlemesinde Sayfa Hızı görseli indiremezsiniz.",
+                    "You cannot download a page speed image on this team's monitor."));
+        }
+        String url = urlOf(body == null ? null : body.get("url"), "url");
+        List<PageSpeedResource> rows = pageSpeedResourceRepo.findStoredImage(m.getId(), url);
+        PageSpeedResource row = rows.isEmpty() ? null : rows.get(0);
+        ImageResult r = row == null ? ImageResult.of(PageResourceImageService.ImageOutcome.NOT_FOUND)
+                : images.imageFromStored(url, row.getBytes(), viaProxy(m), userKey(session));
+        try {
+            return respond(r, "PAGESPEED_MONITOR", m.getId(), m.getName(), "check_id", row == null ? null : row.getCheckId(),
+                    true, url, session, response);
+        } finally {
+            r.release();
+        }
+    }
+
+    private boolean viaProxy(PageSpeedMonitor m) {
+        try {
+            return pageSpeedChecker != null && pageSpeedChecker.viaProxyFor(m);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private ResponseEntity<?> respond(ImageResult r, String resourceType, Long monitorId, String name, String refKey,
+                                      Long refId, boolean pageSpeed, String url, HttpSession session,
                                       HttpServletResponse response) {
         return switch (r.outcome()) {
             case OK -> {
-                auditService.recordAction("PAGE_RESOURCE_IMAGE_DOWNLOAD", session, "PAGE_MONITOR", String.valueOf(m.getId()),
-                        AuditDetail.of("name", m.getName(), "scan_id", scanId, "url", AuditDetail.safeTarget(url),
+                auditService.recordAction("PAGE_RESOURCE_IMAGE_DOWNLOAD", session, resourceType, String.valueOf(monitorId),
+                        AuditDetail.of("name", name, refKey, refId, "url", AuditDetail.safeTarget(url),
                                 "bytes", r.body().length, "type", r.type()), null);
                 writeImage(response, r, url);
                 yield null;   // yanıt yazıldı (Spring gövde yazmaz)
             }
             case SCAN_NOT_FOUND -> scanNotFound();
             case ITEMS_GONE -> itemsGone();
-            case NOT_FOUND -> error(404, "RESOURCE_IMAGE_NOT_FOUND", Msg.t(
+            case NOT_FOUND -> pageSpeed
+                    ? error(404, "RESOURCE_IMAGE_NOT_FOUND", Msg.t(
+                    "Bu adres, ölçümün sakladığı görseller arasında yok. Yalnız son ölçümde (ya da ihlal anında) listelenen "
+                            + "görseller indirilebilir; kaynak listesini yenileyip yeniden deneyin.",
+                    "This address is not among the images the measurement kept. Only images listed in the latest measurement "
+                            + "(or at the moment of a breach) can be downloaded; refresh the resource list and try again."))
+                    : error(404, "RESOURCE_IMAGE_NOT_FOUND", Msg.t(
                     "Bu adres, analizin bulduğu görseller arasında yok. Yalnız analizde listelenen görseller indirilebilir; "
                             + "listeyi yenileyip yeniden deneyin.",
                     "This address is not among the images the analysis found. Only images listed in the analysis can be "
@@ -172,6 +232,11 @@ public class PageResourceImageController {
                                 "The image's secure (https) address redirects to an unencrypted (http) address; bytes taken "
                                         + "from that step could have been altered in transit, so the image was not downloaded. "
                                         + "Download it from the site itself.")
+                        : r.httpStatus() != null && pageSpeed
+                        ? Msg.t("Site görsel için HTTP " + r.httpStatus() + " döndürdü; görsel indirilemedi. Görsel kaldırılmış "
+                                        + "ya da erişim kısıtlanmış olabilir — izlemeyi yeniden kontrol edin.",
+                                "The site returned HTTP " + r.httpStatus() + " for the image; it could not be downloaded. The image "
+                                        + "may have been removed or access may be restricted — check the monitor again.")
                         : r.httpStatus() != null
                         ? Msg.t("Site görsel için HTTP " + r.httpStatus() + " döndürdü; görsel indirilemedi. Görsel kaldırılmış "
                                         + "ya da erişim kısıtlanmış olabilir — analizi yeniden çalıştırın.",
@@ -202,7 +267,7 @@ public class PageResourceImageController {
      * {@code RESOURCE_SCAN_ITEMS_GONE} / {@code RESOURCE_SCAN_NOT_PROJECTABLE} (409), {@code RATE_LIMITED} /
      * {@code RESOURCE_PROJECTION_BUSY} (429).
      */
-    @PostMapping("/{id}/resource-scans/{scanId}/image-projection")
+    @PostMapping("/page/{id}/resource-scans/{scanId}/image-projection")
     public ResponseEntity<Map<String, Object>> projection(@PathVariable Long id, @PathVariable Long scanId,
                                                           @RequestBody(required = false) Map<String, Object> body,
                                                           HttpSession session) {
@@ -490,6 +555,11 @@ public class PageResourceImageController {
     private static ResponseEntity<Map<String, Object>> notFound() {
         return error(404, MONITOR_NOT_FOUND_CODE, Msg.t("Sayfa Bütünlüğü izlemesi bulunamadı ya da görüntüleme yetkiniz yok.",
                 "Page integrity monitor not found, or you are not allowed to view it."));
+    }
+
+    private static ResponseEntity<Map<String, Object>> pageSpeedNotFound() {
+        return error(404, MONITOR_NOT_FOUND_CODE, Msg.t("Sayfa Hızı izlemesi bulunamadı ya da görüntüleme yetkiniz yok.",
+                "Page speed monitor not found, or you are not allowed to view it."));
     }
 
     private static ResponseEntity<Map<String, Object>> scanNotFound() {

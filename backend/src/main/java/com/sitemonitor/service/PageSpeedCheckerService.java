@@ -51,7 +51,18 @@ public class PageSpeedCheckerService {
      */
     public record Measured(String url, String type, long bytes, long durationMs,
                            Integer statusCode, boolean thirdParty, boolean failed,
-                           boolean truncated) {}
+                           boolean truncated, Long startMs) {
+
+        /**
+         * Başlangıç anı bilinmeyen satır (eski imza — testler ve geriye uyum). {@code startMs} (2026-11-15, Sayfa Hızı 2.
+         * sürüm şelale görünümü): kaynağın isteği, sayfa yükünün başlangıcından (ana HTML isteği) kaç ms sonra ATILDI —
+         * ölçülmüş değer (tahmin değil).
+         */
+        public Measured(String url, String type, long bytes, long durationMs, Integer statusCode, boolean thirdParty,
+                        boolean failed, boolean truncated) {
+            this(url, type, bytes, durationMs, statusCode, thirdParty, failed, truncated, null);
+        }
+    }
 
     /**
      * Bir ölçümün tamamı.
@@ -318,7 +329,7 @@ public class PageSpeedCheckerService {
         // kısmi olduğunda çıkıyor.
         boolean capped = inv.capped();
 
-        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy);
+        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy, start);
         List<Measured> measured = weighed.rows();
 
         long totalBytes = main.bytes();
@@ -367,7 +378,7 @@ public class PageSpeedCheckerService {
     /** Alt kaynakları sınırlı eşzamanlılıkla, deadline'a VE toplam bayt bütçesine saygılı tartar. */
     private Weighed weighAll(List<PageFetchCore.Resource> resources, String rootHost, int timeoutMs,
                              int concurrency, String userAgent, Map<String, String> headers, long deadline,
-                             boolean viaProxy) {
+                             boolean viaProxy, long loadStart) {
         if (resources.isEmpty()) return new Weighed(List.of(), false, false);
         // Sayfa ve alt kaynaklar AYNI yoldan gider (Sayfa Bütünlüğü ile aynı sözleşme).
         PageFetchCore.FetchOptions opts = PageFetchCore.FetchOptions
@@ -395,7 +406,7 @@ public class PageSpeedCheckerService {
                         // Eşzamanlılık N ise en fazla N-1 kaynak tavanı aşabilir (sınırlı taşma).
                         if (System.currentTimeMillis() > deadline) { timeCut.set(true); return null; }
                         if (spent.get() >= budget) return null;
-                        Measured m = weighOne(r, rootHost, opts);
+                        Measured m = weighOne(r, rootHost, opts, loadStart);
                         spent.addAndGet(m.bytes());
                         return m;
                     } finally { gate.release(); }
@@ -427,12 +438,14 @@ public class PageSpeedCheckerService {
      * söyleyemez; ağırlık ölçmenin tek yolu GET'tir. (Sayfa Bütünlüğü izlemesi HEAD kullanır çünkü
      * orada soru "var mı", burada "ne kadar".)
      */
-    private Measured weighOne(PageFetchCore.Resource r, String rootHost, PageFetchCore.FetchOptions opts) {
+    private Measured weighOne(PageFetchCore.Resource r, String rootHost, PageFetchCore.FetchOptions opts, long loadStart) {
+        // Şelale (2026-11-15): isteğin ATILDIĞI an, sayfa yükünün başlangıcına göre (saat geri alındıysa 0)
+        long startMs = Math.max(0L, System.currentTimeMillis() - loadStart);
         PageFetchCore.Fetch f = core.fetch(r.url(), "GET", opts);
         boolean thirdParty = !publicSuffixService.sameSite(PageFetchCore.hostOf(r.url()), rootHost);
         boolean failed = f.blocked() || f.status() == 0 || f.status() >= 400;
         return new Measured(r.url(), r.type(), f.bytes(), f.durationMs(),
-                f.status() == 0 ? null : f.status(), thirdParty, failed, f.truncated());
+                f.status() == 0 ? null : f.status(), thirdParty, failed, f.truncated(), startMs);
     }
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────
