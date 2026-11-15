@@ -16885,8 +16885,6 @@ export const EN = {
   'http.adv.detailSlow':        'Slow response alert',
   'http.adv.detailSlowValue':   'above {0} ms',
   // ── Page Speed ──
-  'pspd.iv5m': '5 min', 'pspd.iv15m': '15 min', 'pspd.iv30m': '30 min',
-  'pspd.iv1h': '1 hr', 'pspd.iv6h': '6 hr', 'pspd.iv24h': '24 hr',
   'pspd.title':    'Page Speed Monitoring',
   'pspd.subtitle': 'Measures how long a page takes to load and how heavy it has become: time to first byte, total load time, transfer size and request count.',
   'pspd.typeInfo': 'Page Speed measures the WEIGHT and TIMING of a page. Whether the page is up at all is what HTTP monitoring answers; whether its resources are broken is what Page Integrity answers.',

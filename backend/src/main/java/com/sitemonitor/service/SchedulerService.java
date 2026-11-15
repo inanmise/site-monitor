@@ -10530,7 +10530,9 @@ public class SchedulerService {
         String type = com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED;
         Instant now = Instant.ofEpochMilli(scheduleClock.getAsLong());
         if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) {
-            if (safeAllowed(dbQueryScheduling, spec, now, holidays)) {
+            // Plan sıfırlanmışsa (next_run_at NULL — zamanlama başka podda değişti) bekletilen dönem ESKİ tanımındır: kısa yol
+            // kullanılmaz, karar aşağıdaki planla verilir (aksi hâlde art arda iki tıkta iki ölçüm — inceleme L4, 2026-11-15)
+            if (parseUtc(storedNext) != null && safeAllowed(dbQueryScheduling, spec, now, holidays)) {
                 if (classic) notePageSpeedClassicCheck(id);
                 return true;
             }
@@ -10596,7 +10598,10 @@ public class SchedulerService {
         String iso = next == null ? null : ISO.format(next);
         if (java.util.Objects.equals(iso, storedNext)) return;
         try {
-            pageSpeedMonitorRepo.updateNextRunAt(id, iso);
+            // Koşullu (inceleme L5, 2026-11-15): tık okuduktan sonra kullanıcı zamanlamayı değiştirip planı sıfırladıysa eski
+            // tanımın sonraki zamanı yeni planın üstüne yazılmaz — satır değişmişse yazım 0 satır, sonraki tık yeni planı kurar
+            if (storedNext == null) pageSpeedMonitorRepo.updateNextRunAtIfNull(id, iso);
+            else pageSpeedMonitorRepo.updateNextRunAtIfEquals(id, storedNext, iso);
         } catch (Exception e) {
             log.warn("Sayfa Hızı izlemesinin sonraki ölçümü yazılamadı (#{}): {}", id, e.getClass().getSimpleName());
         }

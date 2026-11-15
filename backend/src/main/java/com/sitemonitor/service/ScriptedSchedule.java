@@ -365,6 +365,32 @@ public final class ScriptedSchedule {
         return out;
     }
 
+    /**
+     * Gövdeden gelen tanım saklı tanımla AYNI planı mı söylüyor (inceleme 2026-11-15, L1)? Kip, CRON'da ifade, aralık kipinde
+     * aralık, pencereler, yasak pencereler, tatil ve ek tarihler karşılaştırılır (CRON'da aralık etkin aralıktır, planı
+     * değiştirmez). Aynıysa kayıt yeniden DOĞRULANMAZ — başka bir alanı (ad, eşik) düzenleyen kullanıcı, takvim / zaman
+     * ilerledi diye 400 "hiç çalışmaz" almaz ("değişmeyen değer yeniden doğrulanmaz" kuralı). Biri null → false.
+     */
+    public static boolean samePlan(DbQuerySchedule.Spec a, DbQuerySchedule.Spec b) {
+        if (a == null || b == null) return false;
+        boolean cronA = DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(a.mode()));
+        boolean cronB = DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(b.mode()));
+        if (cronA != cronB) return false;
+        if (cronA) {
+            String ca = a.cron() == null ? "" : a.cron().trim();
+            String cb = b.cron() == null ? "" : b.cron().trim();
+            if (!ca.equals(cb)) return false;
+        } else if (!Objects.equals(a.intervalSeconds(), b.intervalSeconds())) {
+            return false;
+        }
+        return Objects.equals(listOrEmpty(a.windows()), listOrEmpty(b.windows()))
+                && Objects.equals(listOrEmpty(a.blackouts()), listOrEmpty(b.blackouts()))
+                && a.skipHolidays() == b.skipHolidays()
+                && Objects.equals(listOrEmpty(a.skipDates()), listOrEmpty(b.skipDates()));
+    }
+
+    private static <T> List<T> listOrEmpty(List<T> l) { return l == null ? List.of() : l; }
+
     /** İki izlemenin zamanlama alanları aynı mı (aralık dahil; plan sıfırlama kararı). */
     public static boolean sameSchedule(PlannedSchedule a, PlannedSchedule b) {
         if (a == null || b == null) return a == b;

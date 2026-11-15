@@ -255,4 +255,35 @@ class PageSpeedScheduleSweepTest {
         when(h.pageSpeedRepo.findHolidayScheduledRows()).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
         h.scheduler.pageSpeedCalendarChanged();   // fırlatmaz
     }
+
+    @Test
+    @DisplayName("L5: tık planı okuduktan sonra plan sıfırlandıysa eski tanımın sonraki zamanı yeni planın üstüne yazılmaz")
+    void staleTickDoesNotOverwriteReset() {
+        at("2026-11-09T09:30:10");   // pazartesi, pencerede; plan 09:30
+        PageSpeedMonitor m = weekdayWindow(70);
+        String stored = ISO.format(ist("2026-11-09T09:30:00"));
+        m.setNextRunAt(stored);
+        var spec = ScriptedSchedule.specOf(m);
+        m.setNextRunAt(null);   // kullanıcı kaydı tıkın okumasından SONRA planı sıfırladı
+        assertThat(h.scheduler.pageSpeedPlanDue(70L, spec, stored, java.util.Set.of(), true)).isTrue();
+        assertThat(m.getNextRunAt()).isNull();   // koşullu yazım 0 satır — sonraki tık yeni tanımdan kurar
+        verify(h.pageSpeedRepo, never()).updateNextRunAt(eq(70L), any());
+    }
+
+    @Test
+    @DisplayName("L4: plan sıfırlanmışken bekletilen dönem kısa yolu kullanılmaz — art arda iki tıkta iki ölçüm yok")
+    @SuppressWarnings("unchecked")
+    void retainedPeriodIgnoredAfterPlanReset() {
+        at("2026-11-09T10:00:00");   // pazartesi, pencerede
+        PageSpeedMonitor m = weekdayWindow(71);
+        var spec = ScriptedSchedule.specOf(m);
+        java.util.Map<String, java.util.concurrent.ConcurrentHashMap<Long, Long>> retained =
+                (java.util.Map<String, java.util.concurrent.ConcurrentHashMap<Long, Long>>) ReflectionTestUtils.getField(h.scheduler, "retainedDue");
+        retained.computeIfAbsent(CheckJobTypes.PAGESPEED, k -> new java.util.concurrent.ConcurrentHashMap<>()).put(71L, h.clock.get() - 1_000L);
+        boolean first = h.scheduler.pageSpeedPlanDue(71L, spec, m.getNextRunAt(), java.util.Set.of(), false);
+        assertThat(first).isTrue();
+        assertThat(m.getNextRunAt()).isEqualTo(ISO.format(ist("2026-11-09T10:30:00")));   // plan kuruldu
+        advanceSeconds(60);
+        assertThat(h.scheduler.pageSpeedPlanDue(71L, spec, m.getNextRunAt(), java.util.Set.of(), false)).isFalse();
+    }
 }

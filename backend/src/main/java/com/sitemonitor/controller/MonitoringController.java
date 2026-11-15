@@ -9743,6 +9743,9 @@ public class MonitoringController {
                 && com.sitemonitor.service.ScriptedSchedule.hasPlan(current);
         if (!com.sitemonitor.service.ScriptedSchedule.present(body) && !intervalOfPlanned) return null;
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.fromBody(body, current);
+        // Saklı planın AYNISI (form her kayıtta zamanlamayı da gönderir) yeniden doğrulanmaz — L1 (2026-11-15)
+        if (current != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(current)
+                && com.sitemonitor.service.ScriptedSchedule.samePlan(spec, com.sitemonitor.service.ScriptedSchedule.specOf(current))) return spec;
         throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays()));
         return spec;
     }
@@ -9836,6 +9839,9 @@ public class MonitoringController {
                 && com.sitemonitor.service.ScriptedSchedule.hasPlan(current);
         if (!com.sitemonitor.service.ScriptedSchedule.present(body) && !intervalOfPlanned) return null;
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.fromBody(body, current, com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED);
+        // Saklı planın AYNISI (form her kayıtta zamanlamayı da gönderir) yeniden doğrulanmaz — L1 (2026-11-15)
+        if (current != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(current)
+                && com.sitemonitor.service.ScriptedSchedule.samePlan(spec, com.sitemonitor.service.ScriptedSchedule.specOf(current))) return spec;
         throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays(), com.sitemonitor.service.ScriptedSchedule.Kind.PAGESPEED));
         return spec;
     }

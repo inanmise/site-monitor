@@ -360,10 +360,6 @@ const TREND_TONE = {
   same: 'text-muted-foreground',
 }
 
-/**
- * Haftalık eşik üstü çipi: "Bu hafta eşik aşımı: 6 · ▲4 geçen haftaya göre". Açıklama (ne sayılıyor, iki haftanın
- * ham sayıları) dokunmatikte de açılan HintPopover'da — eski satır yalnız fareyle açılan ipucu taşıyordu.
- */
 /** Zamanlamalı izlemenin çipi: cron metni / aralık + süzgeç ekleri; uzun metin sarar, kesilmez. Düz aralıkta çizilmez. */
 function ScheduleChip({ monitor }) {
   const t = useT()
@@ -378,6 +374,10 @@ function ScheduleChip({ monitor }) {
   )
 }
 
+/**
+ * Haftalık eşik üstü çipi: "Bu hafta eşik aşımı: 6 · ▲4 geçen haftaya göre". Açıklama (ne sayılıyor, iki haftanın
+ * ham sayıları) dokunmatikte de açılan HintPopover'da — eski satır yalnız fareyle açılan ipucu taşıyordu.
+ */
 function BreachWeekChip({ w7, w14 }) {
   const t = useT()
   const w = breachWeek(w7, w14)

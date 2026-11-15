@@ -90,4 +90,35 @@ class PageSpeedScheduleTest {
         // Pazartesi 10:00: son ölçüm cuma 17:40 → pazartesi 09:00 + 10 dk pay geçti → gecikmiş
         assertThat(MonitoringOverviewService.isScriptedStale(m, "2026-11-06T14:40:00", NOW, Set.of())).isTrue();
     }
+
+    @Test
+    @DisplayName("samePlan: aynı plan true; CRON'da aralık farkı plan değil; kip / ifade / pencere / tatil / ek tarih farkı false")
+    void samePlanRule() {
+        DbQuerySchedule.Spec cronA = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "CRON", "cron_expression", "0 9 * * 1-5", "interval_seconds", 86400)));
+        DbQuerySchedule.Spec cronB = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "CRON", "cron_expression", " 0 9 * * 1-5 ", "interval_seconds", 600)));
+        assertThat(ScriptedSchedule.samePlan(cronA, cronB)).isTrue();
+        DbQuerySchedule.Spec cronC = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "CRON", "cron_expression", "0 10 * * 1-5")));
+        assertThat(ScriptedSchedule.samePlan(cronA, cronC)).isFalse();
+        Map<String, Object> win = Map.of("days", List.of(1, 2, 3, 4, 5), "from", "09:00", "to", "18:00");
+        DbQuerySchedule.Spec ivA = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "INTERVAL", "interval_seconds", 1800, "windows", List.of(win))));
+        DbQuerySchedule.Spec ivB = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "INTERVAL", "interval_seconds", 1800, "windows", List.of(win))));
+        assertThat(ScriptedSchedule.samePlan(ivA, ivB)).isTrue();
+        DbQuerySchedule.Spec ivInterval = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "INTERVAL", "interval_seconds", 900, "windows", List.of(win))));
+        assertThat(ScriptedSchedule.samePlan(ivA, ivInterval)).isFalse();
+        DbQuerySchedule.Spec ivHoliday = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "INTERVAL", "interval_seconds", 1800, "windows", List.of(win), "skip_holidays", true)));
+        assertThat(ScriptedSchedule.samePlan(ivA, ivHoliday)).isFalse();
+        assertThat(ScriptedSchedule.samePlan(ivA, cronA)).isFalse();
+        assertThat(ScriptedSchedule.samePlan(ivA, null)).isFalse();
+        // Saklı kolonlardan okunan tanım gövdeden gelenle aynı planı söyler (form her kayıtta zamanlamayı gönderir)
+        PageSpeedMonitor m = new PageSpeedMonitor();
+        ScriptedSchedule.apply(ivA, m, NOW, Set.of());
+        assertThat(ScriptedSchedule.samePlan(ScriptedSchedule.specOf(m), ivB)).isTrue();
+    }
 }
