@@ -409,6 +409,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.domain.dnsbl-budget-ms",                "monitoring", Type.INT),
         new Setting("site.monitor.uptime.recovery-checks",                "monitoring", Type.INT),
         new Setting("site.monitor.uptime.recovery-interval-ms",           "monitoring", Type.INT),
+        // Alan adı alarmlarının AKTİF kurtarma aralığı (2026-11-15) — izlemenin kendi aralığı yoksa; 0 = pasif (eski davranış).
+        new Setting("site.monitor.domain.recovery-interval-ms",           "monitoring", Type.INT),
         // Haftalık erişilebilirlik e-postası (Pazartesi 10:00) aç/kapa — canlı.
         new Setting("site.monitor.weekly-availability.enabled",  "monitoring", Type.BOOL),
         // Aylık sertifika envanteri raporu (ayın son cuması 10:00) — aç/kapa + alıcılar, canlı.

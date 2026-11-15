@@ -1786,6 +1786,157 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("A3 (2026-11-15) PUT /domain/{id}: alan adı değişince ESKİ alan adının DOMAINMON alarmları kayıttan SONRA sessiz kapanır, plan kaldırılır")
+    void updateDomain_domainChange_closesOldAlarmsAndClearsPlan() throws Exception {
+        var m = domainForUpdate();
+        m.setRenewalPlannedAt("2026-12-01");
+        when(publicSuffixService.registrableDomain("yeni.com.tr")).thenReturn("yeni.com.tr");
+        when(domainRenewalPlans.clearForDomainChange(any(), eq("ornek.com.tr"), any())).thenReturn("2026-12-01");
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"yeni.com.tr\"}"))
+                .andExpect(status().isOk());
+        var order = org.mockito.Mockito.inOrder(domainMonitorRepo, escalationService, domainRenewalPlans);
+        order.verify(domainMonitorRepo).save(any(com.sitemonitor.model.DomainMonitor.class));
+        order.verify(escalationService).resolveOpenAlertsSilently(eq("ornek.com.tr"), anyCollection(),
+                eq("Sistem (alan adı değişti)"), org.mockito.ArgumentMatchers.argThat(ctx ->
+                        ctx != null && ctx.get("monitor_id") instanceof Number n && n.longValue() == 6L));
+        order.verify(domainRenewalPlans).clearForDomainChange(any(), eq("ornek.com.tr"), any());
+        verify(auditService).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(), eq("DOMAIN_MONITOR"), eq("6"), any(), any());
+    }
+
+    @Test
+    @DisplayName("A3 (2026-11-15) PUT /domain/{id}: alan adı DEĞİŞMEDİYSE (yalnız ad) eski alarmlara ve plana dokunulmaz")
+    void updateDomain_sameDomain_noClose() throws Exception {
+        domainForUpdate();
+        when(publicSuffixService.registrableDomain("ORNEK.com.tr")).thenReturn("ornek.com.tr");
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"ORNEK.com.tr\",\"name\":\"Yeni ad\"}"))
+                .andExpect(status().isOk());
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), anyCollection(), anyString(), any());
+        verify(domainRenewalPlans, never()).clearForDomainChange(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("A4 (2026-11-15) GET /domain/{id}/registration?live=true: plan zamanlanmış sonuç gibi değerlendirilir; dakikada 6'dan sonra 429 + Retry-After")
+    void domainRegistration_live_evaluatesPlanAndIsRateLimited() throws Exception {
+        var m = domainForUpdate();
+        java.util.Map<String, Object> r = new java.util.HashMap<>(java.util.Map.of("status", "OK", "expiry_date", "2027-12-01"));
+        when(domainChecker.checkManual(any())).thenReturn(r);
+        MockHttpSession s = session("ADMIN");
+        s.setAttribute("username", "live-a4");   // sınırlayıcı pod belleği: başka testlerin kullanıcı penceresinden ayrı
+        for (int i = 0; i < com.sitemonitor.service.DomainLiveLookupLimiter.PER_MINUTE; i++) {
+            mvc.perform(get("/api/monitoring/domain/6/registration").param("live", "true").session(s))
+                    .andExpect(status().isOk());
+        }
+        verify(domainRenewalPlans, org.mockito.Mockito.times(com.sitemonitor.service.DomainLiveLookupLimiter.PER_MINUTE)).onCheckResult(m, r);
+        mvc.perform(get("/api/monitoring/domain/6/registration").param("live", "true").session(s))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        verify(domainChecker, org.mockito.Mockito.times(com.sitemonitor.service.DomainLiveLookupLimiter.PER_MINUTE)).checkManual(any());
+        // canlı olmayan okuma sınırsız
+        mvc.perform(get("/api/monitoring/domain/6/registration").session(s)).andExpect(status().isOk());
+    }
+
+    private com.sitemonitor.model.DomainMonitor bulkDomain(long id, long team, String plannedAt) {
+        var m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(id); m.setDomain("d" + id + ".com.tr"); m.setName("İzleme " + id); m.setTeamId(team); m.setActive(true);
+        m.setRenewalPlannedAt(plannedAt);
+        when(domainMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+        return m;
+    }
+
+    private com.sitemonitor.model.DomainCheck expiryCheck(String expiry) {
+        var c = new com.sitemonitor.model.DomainCheck();
+        c.setExpiryDate(expiry);
+        return c;
+    }
+
+    @Test
+    @DisplayName("D1 (2026-11-15) POST /domain/renewal-plan/bulk set: satır başına tekil kural — yapıldı / bitiş yok / zaten / kapsam dışı / görünmez (ad sızmaz)")
+    void bulkRenewalPlan_set_perRowRules() throws Exception {
+        bulkDomain(1L, 5L, null);
+        bulkDomain(2L, 5L, null);
+        bulkDomain(3L, 5L, "2026-12-20");
+        bulkDomain(4L, 9L, null);       // görünür (paylaşım VIEW) ama yönetilemez
+        bulkDomain(6L, 77L, null);      // hiç görünmez
+        when(domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(eq(1L), eq("NONE"))).thenReturn(Optional.of(expiryCheck("2027-01-10")));
+        when(domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(eq(2L), eq("NONE"))).thenReturn(Optional.empty());
+        when(domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(eq(3L), eq("NONE"))).thenReturn(Optional.of(expiryCheck("2027-01-10")));
+        when(domainRenewalPlans.plan(any(), any(), any(), any(), any())).thenAnswer(i -> i.getArgument(0));
+        MockHttpSession s = session("USER");
+        s.setAttribute("teamId", 5L);
+        s.setAttribute("viewTeamIds", List.of(5L));
+        s.setAttribute("memberTeamIds", List.of(5L));
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(9L)));
+        mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(s)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set\",\"ids\":[1,2,3,4,6,1],\"date\":\"2026-12-20\",\"note\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.done").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(4))
+                .andExpect(jsonPath("$.data.results.length()").value(5))
+                .andExpect(jsonPath("$.data.results[0].status").value("done"))
+                .andExpect(jsonPath("$.data.results[1].reason").value("no_expiry"))
+                .andExpect(jsonPath("$.data.results[2].reason").value("unchanged"))
+                .andExpect(jsonPath("$.data.results[3].reason").value("out_of_scope"))
+                .andExpect(jsonPath("$.data.results[3].name").value("İzleme 4"))
+                .andExpect(jsonPath("$.data.results[4].reason").value("not_found"))
+                .andExpect(jsonPath("$.data.results[4].name").doesNotExist());
+        verify(domainRenewalPlans, org.mockito.Mockito.times(1)).plan(any(), eq("2026-12-20"), any(), eq("2027-01-10"), any());
+        verify(auditService, org.mockito.Mockito.times(1)).recordAction(eq("MONITOR_RENEWAL_PLANNED"), any(), eq("DOMAIN_MONITOR"), eq("1"), any(), any());
+    }
+
+    @Test
+    @DisplayName("D1 (2026-11-15) bulk clear: planı olan kaldırılır (tekil denetim satırı), olmayan atlanır; hata satırı 'failed' + güvenli ileti")
+    void bulkRenewalPlan_clear_andFailure() throws Exception {
+        bulkDomain(1L, 5L, "2026-12-20");
+        bulkDomain(2L, 5L, null);
+        bulkDomain(3L, 5L, "2026-12-21");
+        when(domainRenewalPlans.unplan(argThat(m -> m != null && m.getId() == 1L), any())).thenAnswer(i -> i.getArgument(0));
+        when(domainRenewalPlans.unplan(argThat(m -> m != null && m.getId() == 3L), any())).thenThrow(new RuntimeException("SQLState 23505 secret"));
+        mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"clear\",\"ids\":[1,2,3]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.done").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1))
+                .andExpect(jsonPath("$.data.failed").value(1))
+                .andExpect(jsonPath("$.data.results[1].reason").value("unchanged"))
+                .andExpect(jsonPath("$.data.results[2].status").value("failed"))
+                .andExpect(jsonPath("$.data.results[2].message").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("SQLState"))));
+        verify(auditService, org.mockito.Mockito.times(1)).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(), eq("DOMAIN_MONITOR"), eq("1"), any(), any());
+    }
+
+    @Test
+    @DisplayName("D1 (2026-11-15) bulk doğrulama: boş liste / > 200 / bilinmeyen işlem / bozuk tarih → 400 field, hiçbir şey yazılmaz")
+    void bulkRenewalPlan_validation() throws Exception {
+        String[][] cases = {
+                {"{\"action\":\"set\",\"ids\":[],\"date\":\"2026-12-20\"}", "ids"},
+                {"{\"action\":\"noop\",\"ids\":[1]}", "action"},
+                {"{\"action\":\"set\",\"ids\":[1],\"date\":\"20-12-2026\"}", "date"},
+        };
+        for (String[] c : cases) {
+            mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(c[0]))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value(c[1]));
+        }
+        StringBuilder many = new StringBuilder("[");
+        for (int i = 1; i <= 201; i++) many.append(i == 1 ? "" : ",").append(i);
+        mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"clear\",\"ids\":" + many + "]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("ids"));
+        verify(domainRenewalPlans, never()).plan(any(), any(), any(), any(), any());
+        verify(domainRenewalPlans, never()).unplan(any(), any());
+        verify(domainMonitorRepo, never()).findById(anyLong());
+    }
+
+    @Test
     @DisplayName("2026-11-15 PUT /domain/{id}: geçersiz eşik 400'ü YAN ETKİDEN ÖNCE — duraklatma alarmları kapatmaz, grup oluşturulmaz, kayıt yok")
     void updateDomain_invalidThresholds_noSideEffects() throws Exception {
         domainForUpdate();
@@ -3959,6 +4110,43 @@ class MonitoringControllerTest {
             assertThat(dns.getDomain()).isEqualTo("a.example.com");
             verify(escalationService).resolveOpenAlertsSilently(eq("b.example.com"), anyCollection(),
                     eq("Sistem (domain değişti)"), any());
+        }
+
+        @Test
+        @DisplayName("A3 (2026-11-15): alan adı izlemesinin alan adını geri yükleme ESKİ alan adının DOMAINMON alarmlarını kapatır + planı kaldırır")
+        void restore_domainChange_closesOldAlarmsAndClearsPlan() throws Exception {
+            com.sitemonitor.model.DomainMonitor dom = new com.sitemonitor.model.DomainMonitor();
+            dom.setId(13L); dom.setDomain("yeni.com.tr"); dom.setTeamId(5L); dom.setActive(true); dom.setRenewalPlannedAt("2026-12-01");
+            when(domainMonitorRepo.findById(13L)).thenReturn(Optional.of(dom));
+            when(domainRenewalPlans.clearForDomainChange(any(), eq("yeni.com.tr"), any())).thenReturn("2026-12-01");
+            stubRestore("DOMAIN", 13L, "{\"domain\":\"eski.com.tr\"}");
+
+            mvc.perform(post("/api/monitoring/changes/domain/13/0/restore").session(managerOf(5L))).andExpect(status().isOk());
+
+            assertThat(dom.getDomain()).isEqualTo("eski.com.tr");
+            verify(escalationService).resolveOpenAlertsSilently(eq("yeni.com.tr"), anyCollection(),
+                    eq("Sistem (alan adı değişti)"), org.mockito.ArgumentMatchers.argThat(ctx ->
+                            ctx != null && ctx.get("monitor_id") instanceof Number n && n.longValue() == 13L));
+            verify(domainRenewalPlans).clearForDomainChange(any(), eq("yeni.com.tr"), any());
+            verify(auditService).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(), eq("DOMAIN_MONITOR"), eq("13"), any(), any());
+        }
+
+        @Test
+        @DisplayName("A5 (2026-11-15): geri yükleme aynı takımda zaten izlenen bir alan adına dönemez — 400 field=domain, hiçbir şey yazılmaz")
+        void restore_domainDuplicate_isRejected() throws Exception {
+            com.sitemonitor.model.DomainMonitor dom = new com.sitemonitor.model.DomainMonitor();
+            dom.setId(13L); dom.setDomain("yeni.com.tr"); dom.setTeamId(5L); dom.setActive(true);
+            when(domainMonitorRepo.findById(13L)).thenReturn(Optional.of(dom));
+            when(domainMonitorRepo.existsDuplicate("eski.com.tr", 5L, 13L)).thenReturn(true);
+            stubRestore("DOMAIN", 13L, "{\"domain\":\"eski.com.tr\"}");
+
+            mvc.perform(post("/api/monitoring/changes/domain/13/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("domain"));
+
+            verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), anyCollection(), anyString(), any());
+            verify(domainRenewalPlans, never()).clearForDomainChange(any(), any(), any());
         }
 
         @Test

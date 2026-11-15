@@ -18,7 +18,7 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { DomainChangedChip, DomainEppChips, DomainProtection } from '../DomainCardParts.jsx'
 import {
-  WHOIS_PROVIDER_LABEL, daysTone, expiryKey, expiryTone, fmtExpiry, lifeOf, sourceTag, unknownReasonOf,
+  WHOIS_PROVIDER_LABEL, daysTone, expiryKey, expiryTone, fmtExpiry, lifeOf, liveRow, sourceTag, unknownReasonOf,
 } from '../domainCardModel.js'
 import { fmtClock, fmtLongDay, intervalHours, nextStepsOf, planBlockOf, sourceFamily } from './domainDetailModel.js'
 
@@ -404,8 +404,9 @@ function DetailFacts({ monitor: m, running, onCheck, showCheck }) {
  * @param {Function} onPlanRenewal  yenileme planı penceresi — verilmezse plan bilgisi salt okunur, kısayol yok
  * @param {Function} onDiagnose     Sorun Tanıla (yönetici) — bitiş bilinmiyorken sonraki adım
  */
-export default function DomainDetailHeader({ monitor: m, running = false, onCheck, onPlanRenewal, onDiagnose, className }) {
+export default function DomainDetailHeader({ monitor: rawMonitor, running = false, onCheck, onPlanRenewal, onDiagnose, className }) {
   const t = useT()
+  const m = liveRow(rawMonitor)   // A1: kalan gün bitiş tarihinden canlı (detay satırı sunucu yanıtıyla güncellenir)
   const tone = expiryTone(m.days_remaining)
   const block = planBlockOf(m, !!onPlanRenewal)
   const unknown = tone === 'unknown'

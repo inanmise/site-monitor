@@ -203,6 +203,21 @@ class AppSettingsServiceTest {
     }
 
     @Test
+    @DisplayName("A6 (2026-11-15): alan adı kurtarma aralığı 0 (pasif) ya da 10000–3600000 ms; dışı 400 field, yazılmaz")
+    void domainRecoveryInterval_bounds() {
+        for (String bad : new String[]{"5000", "-1", "3600001"}) {
+            assertThatThrownBy(() -> service.save(values("site.monitor.domain.recovery-interval-ms", bad), "admin"))
+                    .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
+        }
+        assertThat(repo.findBySettingKey("site.monitor.domain.recovery-interval-ms")).isEmpty();
+        assertThat(service.getInt("site.monitor.domain.recovery-interval-ms", 60000)).isEqualTo(60000);   // reddedilen değer yazılmadı
+        service.save(values("site.monitor.domain.recovery-interval-ms", "0"), "admin");
+        assertThat(service.getInt("site.monitor.domain.recovery-interval-ms", -1)).isZero();
+        service.save(values("site.monitor.domain.recovery-interval-ms", "120000"), "admin");
+        assertThat(service.getInt("site.monitor.domain.recovery-interval-ms", -1)).isEqualTo(120000);
+    }
+
+    @Test
     @DisplayName("executor: core > max tek başına tip-geçerli olsa da BİRLİKTE reddedilir; hiçbir satır yazılmaz")
     void executor_crossFieldValidation_rejectsAtomically() {
         // properties: core 20 / max 50 / queue 5000. core=70 → max(50) < core → red

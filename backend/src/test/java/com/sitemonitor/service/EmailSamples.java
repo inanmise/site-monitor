@@ -249,6 +249,15 @@ final class EmailSamples {
                 map("expiry_date", "2026-10-08T12:37:46Z", "registrar", "Örnek Registrar Ltd. Şti.", "source", "RDAP",
                         "status_codes", "client transfer prohibited, client delete prohibited, redemptionPeriod",
                         "nameservers", "ns1.example.com, ns2.example.com", "team_name", "Takım A"));
+        // Süresi GEÇMİŞ (2026-11-15): "-5 gün kaldı" değil "5 gün önce doldu" — alan adı ve sertifika aynı kural.
+        alert("alert-domain-expired", "[Site Monitor] 5 GÜN ÖNCE DOLDU · example.com · Alan adı 5 gün önce doldu",
+                "KRİTİK: example.com alan adının kaydı 5 gün önce doldu (bitiş: 2026-09-21T12:37:46Z). Önerilen aksiyon: registrar üzerinden yenileyin.",
+                "example.com", "CRITICAL", "DOMAINMON_EXPIRY", -5,
+                map("expiry_date", "2026-09-21T12:37:46Z", "registrar", "Örnek Registrar Ltd. Şti.", "source", "RDAP",
+                        "team_name", "Takım A"));
+        alert("alert-cert-expired", "[Site Monitor] 3 GÜN ÖNCE DOLDU · www.example.com · Sertifika 3 gün önce doldu",
+                "KRİTİK: www.example.com adresindeki sertifikanın süresi 3 gün önce doldu.", "www.example.com", "CRITICAL", "EXPIRY", -3,
+                map("not_after", "2026-09-23T00:00:00Z", "issuer_cn", "Example Internal CA", "team_name", "Takım A"));
         alert("alert-domain-status", "[Site Monitor] UYARI · example.org — alan adı durum kodu",
                 "Alan adında kısıtlayıcı bir EPP durum kodu tespit edildi.", "example.org", "WARNING", "DOMAINMON_STATUS", null,
                 map("status_codes", "clientHold", "registrar", "Örnek Registrar", "team_name", "Takım A"));

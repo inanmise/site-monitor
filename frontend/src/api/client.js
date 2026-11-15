@@ -3058,6 +3058,9 @@ export const api = {
     // Yenileme planı (2026-09-22, H) — sertifikadaki forecastPlan/forecastUnplan eşi, izleme kimliğiyle
     domainRenewalPlan:   (id, date, note) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'POST', body: JSON.stringify({ date, note }) }),
     domainRenewalUnplan: (id) => request(`/monitoring/domain/${id}/renewal-plan`, { method: 'DELETE' }),
+    // Toplu yenileme planı (2026-11-15, D1): { action: 'set'|'clear', ids, date?, note? } → satır satır sonuç
+    // Toplu yenileme planı (2026-11-15, D1): ≤ 200 satır; süre sınırlı (sunucu satırları yeniden okur — tekrar güvenli)
+    domainRenewalPlanBulk: (body) => request('/monitoring/domain/renewal-plan/bulk', { method: 'POST', body: JSON.stringify(body), timeoutMs: 120_000 }),
 
     // Ping
     getPingMonitors:   () => request('/monitoring/ping'),

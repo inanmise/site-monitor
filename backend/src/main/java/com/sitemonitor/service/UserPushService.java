@@ -3328,7 +3328,28 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         String nowClock = PushText.istClockNow(Instant.now());
         vals.put("saat", nowClock);
         vals.put("bitis", nowClock);   // çözüm tetiginde "şimdi" = normale dönüş anı
-        return fillTemplate(template(templateKeyFor(event.getAlertType(), trigger), lang), vals);
+        String key = templateKeyFor(event.getAlertType(), trigger);
+        // Süresi GEÇMİŞ süre-bitişi (2026-11-15): "{gun} gün içinde doluyor" şablonu "-5 gün içinde doluyor" yazıyordu. Gün
+        // negatifse yerleşik "N gün önce doldu" metni kullanılır (düzenlenebilir şablon değil — yer tutucuları aynı); gün
+        // pozitif / bilinmiyorken çıktı bayt bayt aynı.
+        if ("expiry".equals(key)) {
+            Integer g = parseIntOrNull(vals.get("gun"));
+            if (g != null && g < 0) {
+                vals.put("gun", String.valueOf(Math.abs(g)));
+                return fillTemplate(PushI18n.isEn(lang) ? EXPIRED_TEMPLATE_EN : EXPIRED_TEMPLATE_TR, vals);
+            }
+        }
+        return fillTemplate(template(key, lang), vals);
+    }
+
+    /** Süresi geçmiş süre-bitişi push metni (Türkçe) — yer tutucular "expiry" şablonuyla aynı. */
+    static final String EXPIRED_TEMPLATE_TR = "{seviye}: {ad} - {ne} {gun} gün önce doldu ({tarih}).";
+    /** Süresi geçmiş süre-bitişi push metni (İngilizce). */
+    static final String EXPIRED_TEMPLATE_EN = "{seviye}: {ad} - {ne} expired {gun} days ago ({tarih}).";
+
+    private static Integer parseIntOrNull(String v) {
+        if (v == null) return null;
+        try { return Integer.parseInt(v.trim()); } catch (NumberFormatException e) { return null; }
     }
 
     /** KEYWORD_CHANGED push'unda {@code {degisen}}: "İçerik" / "Content" + varsa değişen satır sayısı (bağlamdan). */

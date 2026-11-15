@@ -36,9 +36,12 @@ import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
  * `teamChange` (2026-10-31, isteğe bağlı, varsayılan true): false → takım değiştir alanı çizilmez; `teamChangeNote` verilirse
  * yerinde kısa bir bilgi satırı (ör. veritabanı sorgu izlemesi: takım değişimi bağlantı seçimi gerektirir — formdan yapılır,
  * toplu istek her satırda reddedilirdi). Verilmezse çubuk bugünküyle birebir aynı.
+ *
+ * `extra` (2026-11-15, isteğe bağlı): `(chosen, { busy }) => node` — sayfaya özgü ek toplu işlem (ör. alan adı yenileme
+ * planı). Yalnız GÖRÜNÜR seçili satırları alır, silme düğmesinden önce çizilir. Verilmezse çubuk birebir aynı.
  */
 export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType, onPrune,
-  teamChange = true, teamChangeNote = null }) {
+  teamChange = true, teamChangeNote = null, extra = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -185,6 +188,7 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
             <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</Button>
           </ButtonGroup>
         </span>
+        {extra?.(chosen, { busy: !!busy })}
         <Button type="button" variant="destructive" size="sm" className="pointer-coarse:h-10" disabled={!!busy} onClick={del}>
           {busy === 'delete' ? <Spinner size={12} inline decorative /> : <Trash2 size={13} />} {t('bulk.delete')}
         </Button>

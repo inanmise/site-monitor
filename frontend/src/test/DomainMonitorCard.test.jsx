@@ -41,7 +41,9 @@ import {
 
 const DAY = 86_400_000
 /** UTC zaman damgası (Z'siz — sunucunun biçimi), bugünden `days` gün sonra. */
-const dayIso = (days) => new Date(Date.now() + days * DAY).toISOString().slice(0, 19)
+// +1 dk pay: kalan gün bitişten CANLI hesaplanır (A1, zaman damgasında tam gün = floor) — saniyeye kesilen damga tam N gün
+// sonrasının bir tık ÖNCESİNE düşüp N − 1 okunmasın (kayıtlı değerle canlı değer aynı olsun)
+const dayIso = (days) => new Date(Date.now() + days * DAY + 60_000).toISOString().slice(0, 19)
 const stamp = (msAgo) => new Date(Date.now() - msAgo).toISOString().slice(0, 19)
 
 const base = {

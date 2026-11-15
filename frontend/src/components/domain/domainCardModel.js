@@ -20,7 +20,7 @@
  * eşiğini (`warning_days`, yoksa sayfanın 30 günlük "yakında" süzgeci) kullanır.
  */
 import { domainLife, eppKey, eppLabel } from '../../utils/domainEpp.js'
-import { localDayKey } from '../../utils/localDay.js'
+import { daysFromToday, localDayKey } from '../../utils/localDay.js'
 import { dateLocale } from '../../i18n/dateLocale.js'
 
 /** Sayfanın "yakında dolacak" süzgeci / istatistik kartı ve kartın plan kısayolu için TEK kaynak (gün). */
@@ -47,6 +47,36 @@ export function fmtExpiry(iso) {
  */
 export function expiryKey(m) {
   return m?.expiry_date ? localDayKey(String(m.expiry_date)) : null
+}
+
+/**
+ * Kalan gün CANLI (2026-11-15, A1): bitiş tarihinden BUGÜNE — sunucunun `days_remaining`'i son KONTROL anında hesaplanır
+ * (günlük tur; gece yarısını geçince kart bir gün bayatlıyordu). Kural sunucununkiyle AYNI (`DomainCheckerService.daysUntil`
+ * = `utils/localDay.daysFromToday`): yalnız tarih (WHOIS) → yerel takvim günü farkı, zaman damgası (RDAP) → tam gün (floor).
+ * Tarih yok / okunamıyorsa sunucunun kayıtlı değeri (yedek); o da yoksa null.
+ */
+export function liveDays(m, now = Date.now()) {
+  const d = m?.expiry_date ? daysFromToday(String(m.expiry_date), now) : null
+  return Number.isFinite(d) ? d : num(m?.days_remaining)
+}
+
+/**
+ * Satırın kalan gününü canlı değerle döndürür — DEĞİŞMEDİYSE AYNI nesne (kart ızgarası belleği bozulmasın); değiştiyse
+ * kopya (`days_remaining` canlı, `days_remaining_stored` sunucunun son kontrol değeri). Sıralama, süzgeç, sayaç, kart,
+ * detay ve dışa aktarım aynı değeri okusun diye listeye girişte uygulanır.
+ */
+export function liveRow(m, now = Date.now()) {
+  if (!m) return m
+  const d = liveDays(m, now)
+  return d === m.days_remaining ? m : { ...m, days_remaining: d, days_remaining_stored: m.days_remaining ?? null }
+}
+
+/** Listeye {@link liveRow} — hiçbir satır değişmediyse AYNI dizi. */
+export function withLiveDays(list, now = Date.now()) {
+  if (!Array.isArray(list)) return list
+  let changed = false
+  const out = list.map((m) => { const r = liveRow(m, now); if (r !== m) changed = true; return r })
+  return changed ? out : list
 }
 
 /** .tr WHOIS kaynak anahtarı → okunur etiket (cevabı hangi kaynak verdi). */

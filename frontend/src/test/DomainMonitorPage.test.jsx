@@ -347,9 +347,10 @@ describe('DomainMonitorPage', () => {
     await screen.findByText('example.com.tr')
     pressMenuTrigger(screen.getByRole('button', { name: /^(dışa aktar|export)$/i }))
     const items = await screen.findAllByRole('menuitem')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(3)
     expect(items[0]).toHaveTextContent(/csv/i)
     expect(items[1]).toHaveTextContent(/pdf/i)
+    expect(items[2]).toHaveTextContent(/[.]ics/i)   // takvim (2026-11-15, C3)
     items.forEach((it) => expect(it).toHaveTextContent(/1 visible records|görünen 1 kayıt/i))
   })
 
@@ -383,8 +384,9 @@ describe('DomainMonitorPage', () => {
  * karta basmak listeyi TAM o satırlara süzer (diğer süzgeçlerle birlikte çalışan statFilter yolu).
  */
 describe('DomainMonitorPage — istatistik kartları (NS / DNSSEC / kara liste / süresi dolmuş)', () => {
+  // Bitiş tarihi yok → kalan gün sunucunun kayıtlı değeri (A1 yedek yolu); canlı yol DomainMonitorPage.enrich testinde
   const base = { team_name: 'SY-A', group_name: 'Kurumsal', tags: 'prod', status: 'OK', source: 'RDAP', active: true,
-    expiry_date: '2027-01-01', checked_at: '2026-09-26T00:00:00' }
+    expiry_date: null, checked_at: '2026-09-26T00:00:00' }
   const rows = [
     { ...base, id: 11, domain: 'ns-fail.example.com', ns_resolves: false, dnssec: 'signed', blacklist_status: 'CLEAN', days_remaining: 100 },
     { ...base, id: 12, domain: 'ns-unknown.example.com', ns_resolves: null, dnssec: null, blacklist_status: 'UNKNOWN', days_remaining: null },
@@ -446,7 +448,7 @@ describe('DomainMonitorPage — istatistik kartları (NS / DNSSEC / kara liste /
 // kalan gün ARTAN: süresi geçmiş en üstte, eşit günde alan adı A→Z, günü bilinmeyen en sonda; URL'ye yazılmaz.
 // Dokuz türün ortak kuralı (sorunlu → grup → ad) seçicide `default` olarak durur.
 describe('DomainMonitorPage — varsayılan sıra: en az gün önce', () => {
-  const base = { ...monitor, status: 'OK', group_name: null }
+  const base = { ...monitor, status: 'OK', group_name: null, expiry_date: null }   // kayıtlı gün (A1 yedek yolu)
   const LIST = [
     { ...base, id: 21, domain: 'uzun.example.com', days_remaining: 300, group_name: 'A Grubu' },
     { ...base, id: 22, domain: 'bilinmiyor.example.com', days_remaining: null, status: 'UNKNOWN' },

@@ -67,6 +67,26 @@ public class DomainRenewalPlanService {
     }
 
     /**
+     * A3 (2026-11-15): izlemenin alan adı değişti — plan ESKİ alan adına konmuştu (kıyas tabanı da onun bitişiydi), yeni alan adı
+     * için anlamsız. Elle kaldırma gibi: geçmiş satırı ("alan adı değişti") + etkinlik. Plan yoksa hiçbir şey yazılmaz.
+     *
+     * @return kaldırılan planın tarihi; plan yoksa {@code null}
+     */
+    public String clearForDomainChange(DomainMonitor m, String oldDomain, HttpSession session) {
+        if (m == null || m.getRenewalPlannedAt() == null) return null;
+        String was = m.getRenewalPlannedAt();
+        Map<String, Object> before = snapshot(m);
+        clear(m);
+        DomainMonitor saved = repo.save(m);
+        monitorHistory.record(MonitorHistoryService.DOMAIN, saved.getId(), saved.getName(), saved.getTeamId(),
+                MonitorHistoryService.UPDATE, before, snapshot(saved),
+                "renewal-plan: alan adı değişti (" + oldDomain + " → " + saved.getDomain() + "), plan " + was + " kaldırıldı", session);
+        activityLog.recordLifecycle(ActivityLogService.DOMAIN, saved.getId(), saved.getName(), saved.getDomain(), saved.getTeamId(),
+                "RENEWAL_PLAN_CLEARED", str(session, "username"), "alan adı değişti · plan " + was);
+        return was;
+    }
+
+    /**
      * Kontrol sonucu: yenileme tespit edilirse (bitiş, plan anındaki bitişten sonra) planı kapatır.
      * Hata sweep'i kırmaz. @return plan kapatıldıysa true
      */

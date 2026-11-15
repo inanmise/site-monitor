@@ -59,6 +59,9 @@ export const WIDGET_CATALOG = Object.freeze([
   // Eksiklerim (2026-11-15): giriş sonrası eksikler penceresinin özeti — herkese (kendi profili ve takımları; yetkisi olmayan
   // denetimler pencerede "yapılmadı" der). Sayfa yok (tıklama pencereyi açar); yalnız "Kutu ekle"den
   { type: 'my_gaps',               size: 'sm', tab: null,        perm: null },
+  // Alan adları (2026-11-15, C2): en az kalan günden (canlı gün) — kaynak mevcut alan adı listesi; yalnız "Kutu ekle"den,
+  // varsayılan düzende ve hazır düzenlerde YOK
+  { type: 'domain_expiring',       size: 'md', tab: 'domain',    perm: 'monitoring.read' },
   // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])

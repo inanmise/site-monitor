@@ -256,7 +256,7 @@ export function pickParams(search, { keys = [], prefix = null, exclude = [] } = 
  */
 export const VIEW_SPECS = Object.freeze({
   /** Dokuz izleme türü sayfası (utils/monitorFilters.monitorUrlState + Alan Adı'nın sort / dq'su). */
-  monitor: Object.freeze({ keys: ['team', 'via', 'group', 'tag', 'q', 'stat', 'sort', 'dq'] }),
+  monitor: Object.freeze({ keys: ['team', 'via', 'group', 'tag', 'q', 'stat', 'sort', 'dq', 'dr', 'ds', 'dx'] }),   // dr/ds/dx: alan adı ek süzgeçleri (2026-11-15)
   /** İzleme Panosu (`mo_*`). */
   monitoring: Object.freeze({ prefix: 'mo_', exclude: ['mo_dlg'] }),
   /** Alarm Geçmişi (alertHistoryModel.URL_KEYS + görünüm sekmesi). */

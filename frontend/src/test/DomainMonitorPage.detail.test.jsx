@@ -93,7 +93,7 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
   })
 
   it('Domain Kaydı anlık sorgusu taze satırı başlığa işler (son kontrol + kalan gün)', async () => {
-    const fresh = { ...monitor, days_remaining: 19, checked_at: hoursAgo(0) }
+    const fresh = { ...monitor, days_remaining: 19, expiry_date: day(19), checked_at: hoursAgo(0) }   // kalan gün bitişten canlı (A1)
     api.monitoring.getDomainRegistration.mockResolvedValue({ success: true, data: fresh })
     await openFromCard()
     expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('20')
@@ -105,7 +105,7 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
   })
 
   it('başlıktaki "Şimdi kontrol et" sayfanın kontrol yolunu çalıştırır ve sonucu başlığa işler', async () => {
-    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: true, data: { ...monitor, days_remaining: 18, status: 'WARNING' } })
+    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: true, data: { ...monitor, days_remaining: 18, expiry_date: day(18), status: 'WARNING' } })
     await openFromCard()
     fireEvent.click(within(header()).getByRole('button', { name: 'example.com — Check now' }))
     await waitFor(() => expect(api.monitoring.triggerDomainCheck).toHaveBeenCalledWith(1))

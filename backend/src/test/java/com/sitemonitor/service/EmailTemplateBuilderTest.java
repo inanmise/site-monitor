@@ -294,6 +294,33 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: süresi GEÇMİŞ alan adı — HTML metrik + düz metin \"5 gün önce doldu\" (eksi gün yok); geçmemişte bugünkü ifade")
+    void expiredDomain_saysExpiredAgo_htmlEqualsText() {
+        var m = new EmailTemplateBuilder.AlertMail("DOMAINMON_EXPIRY", "CRITICAL", "kartfree.com", null, -5,
+                new LinkedHashMap<>(Map.of("expiry_date", "2026-08-01T12:37:46Z", "registrar", "GoDaddy.com, LLC")), "SY-Takım A");
+        String html = b.buildHtml(m);
+        String text = b.buildText(m);
+        assertThat(html).contains("gün önce doldu").contains("Süresi 5 gün önce doldu")
+                .doesNotContain("-5 gün").doesNotContain("Bitişe -5").doesNotContain("gün kaldı");
+        assertThat(text).contains("[Site Monitor] 5 GÜN ÖNCE DOLDU").contains("Süresi 5 gün önce doldu")
+                .contains("kartfree.com alan adının kaydı 5 gün önce doldu.")
+                .doesNotContain("-5").doesNotContain("GÜN KALDI").doesNotContain("günlük pencere");
+        // süresi GEÇMEMİŞ: ifade aynen (bayt bayt kontrolü EmailSamples / plainText testinde)
+        String ok = b.buildText(domainMail("HIGH", 25));
+        assertThat(ok).contains("[Site Monitor] 25 GÜN KALDI").contains("Bitişe 25 gün / 90 günlük pencere");
+        assertThat(b.buildHtml(domainMail("HIGH", 25))).contains("gün kaldı").doesNotContain("önce doldu");
+    }
+
+    @Test
+    @DisplayName("2026-11-15: süresi GEÇMİŞ sertifika — \"Kalan Gün\" satırı \"Süresi doldu (3 gün önce)\"")
+    void expiredCert_detailRow() {
+        var m = new EmailTemplateBuilder.AlertMail("EXPIRY", "CRITICAL", "app.example.com", "özet", -3,
+                new LinkedHashMap<>(Map.of("not_after", "2026-08-01T00:00:00Z")), null);
+        assertThat(b.buildText(m)).contains("Kalan Gün: Süresi doldu (3 gün önce)").contains("3 GÜN ÖNCE DOLDU");
+        assertThat(b.buildHtml(m)).contains("Süresi doldu (3 gün önce)").doesNotContain("-3");
+    }
+
+    @Test
     @DisplayName("sertifika dalı: CN + kısaltılmış SHA-256 parmak izi render edilir")
     void certRows() {
         Map<String, Object> ctx = new LinkedHashMap<>();

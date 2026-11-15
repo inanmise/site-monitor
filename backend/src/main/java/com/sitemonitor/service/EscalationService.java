@@ -2658,14 +2658,14 @@ public class EscalationService {
                 Object days = ctx.get("ssl_days_remaining");
                 Object detail = ctx.get("detail");
                 return "YÜKSEK: " + url + " içerik izlemesi host'unun TLS sertifikasında sorun" +
-                        (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
+                        (days != null ? sslDaysPhrase(days) : (detail != null ? " — " + detail : "")) + ". " +
                         "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
             }
             case TYPE_KEYWORD_DOMAIN_EXPIRY -> {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object days = ctx.get("domain_days_remaining");
                 return "YÜKSEK: " + dom + " (içerik izlemesi) domain kaydının süresi" +
-                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
+                        (days != null ? expiryPhrase(days) : " dolmak üzere") + ". " +
                         "Kayıt yenilendiğinde alarm otomatik kapanır.";
             }
             case TYPE_KEYWORD_CHANGED -> {
@@ -2714,7 +2714,7 @@ public class EscalationService {
                 Object days = ctx.get("ssl_days_remaining");
                 Object detail = ctx.get("detail");
                 return "YÜKSEK: " + url + " için TLS sertifikası sorunu" +
-                        (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
+                        (days != null ? sslDaysPhrase(days) : (detail != null ? " — " + detail : "")) + ". " +
                         "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
             }
             case TYPE_HTTP_SLOW -> {
@@ -2800,7 +2800,7 @@ public class EscalationService {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object days = ctx.get("domain_days_remaining");
                 return "YÜKSEK: " + dom + " domain kaydının (registrar) süresi" +
-                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") + ". " +
+                        (days != null ? expiryPhrase(days) : " dolmak üzere") + ". " +
                         "Kayıt yenilendiğinde alarm otomatik kapanır.";
             }
             case TYPE_DOMAINMON_EXPIRY -> {
@@ -2812,7 +2812,7 @@ public class EscalationService {
                 // monitoringMessage → withLevelWord ile seviyeden yeniden yazılır (WARNING → "UYARI").
                 return ("CRITICAL".equals(alertLevel) ? "KRİTİK"
                         : "HIGH".equals(alertLevel) ? "YÜKSEK" : "ORTA") + ": " + dom + " alan adının kaydı" +
-                        (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") +
+                        (days != null ? expiryPhrase(days) : " dolmak üzere") +
                         (exp != null ? " (bitiş: " + exp + ")" : "") + (reg != null ? ", registrar: " + reg : "") +
                         ". Önerilen aksiyon: registrar üzerinden yenileyin. Yenilenince alarm otomatik kapanır.";
             }
@@ -4269,11 +4269,12 @@ public class EscalationService {
             // (EmailTemplateBuilder.heroLabel), yani tek mailin konusu ile başlığı çelişiyordu.
             case TYPE_DOMAINMON_TRANSFER_LOCK -> "Alan Adı Transfer Kilidi";
             case TYPE_DOMAINMON_BLACKLIST     -> "Alan Adı Kara Liste";
-            default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + daysRemaining + " gün kaldı)" : "Sertifika Süre Bitişi";
+            default                 -> daysRemaining != null ? "Sertifika Süre Bitişi (" + (daysRemaining < 0
+                    ? Math.abs(daysRemaining) + " gün önce doldu" : daysRemaining + " gün kaldı") + ")" : "Sertifika Süre Bitişi";
         };
         // Konu için doğal-dil özet (typeTr'e göre daha okunur); expiry tiplerinde gün ifadesi.
         String summaryTr = switch (alertType != null ? alertType : "") {
-            case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı " + daysRemaining + " gün içinde doluyor" : "Alan adı süre bitişi";
+            case TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY -> daysRemaining != null ? "Alan adı" + expiryPhrase(daysRemaining) : "Alan adı süre bitişi";
             case TYPE_DOMAINMON_TRANSFER_LOCK -> "Alan adı transfer kilidi kapalı";
             case TYPE_DOMAINMON_BLACKLIST     -> "Alan adı kara listede";
             case TYPE_PAGE_DOWN     -> "Sayfa yüklenemiyor";
@@ -4294,11 +4295,13 @@ public class EscalationService {
             case TYPE_HTTP_DOWN     -> "HTTP/Website erişilemez";
             default -> (alertType == null || alertType.isBlank() || "REVOKED".equals(alertType)
                         || "MISMATCH".equals(alertType) || "CHAIN_BROKEN".equals(alertType))
-                    ? (daysRemaining != null ? "Sertifika " + daysRemaining + " gün içinde doluyor" : "Sertifika süre bitişi")
+                    ? (daysRemaining != null ? "Sertifika" + expiryPhrase(daysRemaining) : "Sertifika süre bitişi")
                     : typeTr;
         };
         // Süre-bitişi ailesinde severity yerine kalan gün öne çıkar: "15 GÜN KALDI" / "ACİL 2 GÜN KALDI".
+        // Süresi GEÇMİŞ (2026-11-15): "ACİL -5 GÜN KALDI" yerine "5 GÜN ÖNCE DOLDU" — e-posta gövdesinin düz metin başlığıyla aynı.
         String daysSeg = (daysRemaining == null || !isDurationAlert(alertType)) ? levelTr
+                : daysRemaining < 0 ? EmailTemplateBuilder.expiredDaysHead(daysRemaining)
                 : (daysRemaining <= 3 ? "ACİL " + daysRemaining + " GÜN KALDI" : daysRemaining + " GÜN KALDI");
         // Subject standardı: [Site Monitor] SEVERITY · monitör ADI · kısa sorun — çıplak URL subject'e
         // girmez (ctx.monitor_name; yoksa domain'in şema-soyulmuş hali). AlertEvent.domain (yönlendirme/
@@ -5472,6 +5475,29 @@ public class EscalationService {
         return alertType != null && MONITORING_ALERT_TYPES.contains(alertType) ? withLevelWord(body, alertLevel) : body;
     }
 
+    /**
+     * Süre-bitişi cümle parçası (2026-11-15): " 14 gün içinde doluyor" ya da süresi GEÇMİŞSE " 5 gün önce doldu" — eskiden
+     * "-5 gün içinde doluyor" yazılıyordu. Sayı okunamazsa (metin) bugünkü ifade aynen. Baştaki boşluk dahildir.
+     */
+    static String expiryPhrase(Object days) {
+        Integer d = intOrNull(days);
+        if (d != null && d < 0) return " " + Math.abs(d) + " gün önce doldu";
+        return " " + days + " gün içinde doluyor";
+    }
+
+    /** TLS sertifikası parçası: " — bitişe 12 gün" ya da süresi geçmişse " — süresi 5 gün önce doldu". */
+    static String sslDaysPhrase(Object days) {
+        Integer d = intOrNull(days);
+        if (d != null && d < 0) return " — süresi " + Math.abs(d) + " gün önce doldu";
+        return " — bitişe " + days + " gün";
+    }
+
+    private static Integer intOrNull(Object v) {
+        if (v instanceof Number n) return n.intValue();
+        if (v == null) return null;
+        try { return Integer.parseInt(String.valueOf(v).trim()); } catch (NumberFormatException e) { return null; }
+    }
+
     private String buildMessageBody(String domain, String alertType, String alertLevel, Integer days) {
         return switch (alertType) {
             case TYPE_ACCESSIBILITY -> "KRİTİK: " + domain +
@@ -5578,7 +5604,7 @@ public class EscalationService {
                     default         -> "UYARI";
                 };
                 yield days != null
-                    ? lvl + ": " + domain + " adresindeki sertifikanın süresi " + days + " gün içinde doluyor."
+                    ? lvl + ": " + domain + " adresindeki sertifikanın süresi" + expiryPhrase(days) + "."
                     : lvl + ": " + domain + " adresindeki sertifikaya erişilemediği için sertifika bilgileri alınamadı (ağ/firewall kaynaklı olabilir).";
             }
         };
