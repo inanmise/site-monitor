@@ -17,7 +17,7 @@ function engineResult(over = {}) {
     original: { bytes: 900_000, width: 2400, height: 1600, type: 'jpeg', hasAlpha: false, animated: false, metadata: {} },
     analysis: {
       input: { bitDepth: 8, colorModel: 'rgb', ppi: { x: 72, y: 72 }, jpeg: { quality: 92, subsampling: '4:2:0', progressive: false } },
-      output: { bitDepth: 8, colorModel: 'rgb', ppi: null, jpeg: null },
+      output: { bitDepth: 8, colorModel: 'rgb', ppi: null, ppiChecked: true, jpeg: null },
       colors: { count: 4096, atLeast: true },
       candidates: [
         { type: 'jpeg', bytes: 240_000, quality: 76, colors: null, similarity: 0.985 },
@@ -39,8 +39,13 @@ describe('görsel aracı derin karşılaştırma — model', () => {
       candidates: [...Array(9)].map((_, i) => ({ type: i === 0 ? 'gif' : 'jpeg', bytes: i * 10 })),
       colors: { count: 12 }, svgCandidate: 'true', banding: 'other',
     })
-    expect(s.input).toEqual({ bitDepth: null, colorModel: null, ppi: null, jpeg: { quality: 90, subsampling: null, progressive: null },
-      paletteSize: null, lossless: null })
+    expect(s.input).toEqual({ bitDepth: null, colorModel: null, ppi: null, ppiChecked: false,
+      jpeg: { quality: 90, subsampling: null, progressive: null }, paletteSize: null, lossless: null })
+    expect(s.qualityMode).toBeNull()
+    expect(s.resampled).toBeNull()
+    expect(analysisSummary({ qualityMode: 'manual', resampled: true, sharpened: false }))
+      .toMatchObject({ qualityMode: 'manual', resampled: true, sharpened: false })
+    expect(analysisSummary({ qualityMode: 'x' }).qualityMode).toBeNull()
     expect(s.output).toBeNull()
     expect(s.candidates).toHaveLength(4)   // ilk 5'ten gif atıldı
     expect(s.colors).toEqual({ count: 12, atLeast: false })
@@ -75,6 +80,16 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(by.pixels.before).toBe('3,84 MP')
     expect(by.ppi.before).toBe('72 PPI')
     expect(by.ppi.after).toBe('Kayıtlı değil')
+    // başlık okunmadıysa (ppiChecked yok) "kayıtlı değil" denmez
+    const unchecked = engineResult()
+    unchecked.analysis = { ...unchecked.analysis, output: { ...unchecked.analysis.output, ppiChecked: false } }
+    expect(Object.fromEntries(insightRows(resultSummary(unchecked), t, 'tr').map((r) => [r.key, r])).ppi.after).toBe('—')
+    // sıkıştırma oranı iki tarafta tek taban (kaynak saydam değil → 3 kanal)
+    expect(by.compression.after).toBe('1:41')
+    // boyut bilinmiyorsa "—"
+    const noBytes = resultSummary(engineResult())
+    noBytes.bytes = null
+    expect(Object.fromEntries(insightRows(noBytes, t, 'tr').map((r) => [r.key, r])).size.after).toBe('—')
     expect(by.bpp.before).toBe('1,88')
     expect(by.compression.before).toBe('1:12,8')
     expect(by.color.before).toBe('RGB · 8 bit')
@@ -111,11 +126,21 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(formatGains(resultSummary(one))).toEqual([])
     const kept = resultSummary(engineResult({ kept: true }))
     expect(formatGains(kept).some((x) => x.chosen)).toBe(false)
+    // seçilen satır SONUCUN boyutuyla (hedef boyut / eklenen üstveri sonrası); hedefin altındaki aday işaretli
+    const fitted = engineResult({ bytes: 150_000, quality: 60 })
+    fitted.analysis.candidates[0].belowTarget = true
+    const fg = formatGains(resultSummary(fitted))
+    expect(fg.find((x) => x.chosen)).toMatchObject({ type: 'webp', bytes: 150_000, quality: 60 })
+    expect(fg.find((x) => x.type === 'jpeg').belowTarget).toBe(true)
+    expect(fg.find((x) => x.chosen).belowTarget).toBe(false)
   })
 
   it('insightRecommendations: afiş genişliği, yeniden kayıt, yeni nesil, SVG, bantlaşma, yüksek kalite', () => {
     const wide = resultSummary(engineResult({ width: 2400, height: 1600, resized: false, type: 'jpeg', quality: 88 }))
     wide.analysis.candidates = [{ type: 'jpeg', bytes: 240_000, quality: 88 }]
+    // otomatik kipte 85'in üstü benzerlik hedefi için seçildi → "yüksek kalite" önerisi yok
+    expect(insightRecommendations(wide).map((r) => r.code)).not.toContain('QUALITY_HIGH')
+    wide.analysis.qualityMode = 'manual'
     const codes = insightRecommendations(wide).map((r) => r.code)
     expect(codes).toEqual(['NEXT_GEN', 'BANNER_WIDTH', 'QUALITY_HIGH', 'JPEG_RESAVE'])
     expect(insightRecommendations(wide).find((r) => r.code === 'BANNER_WIDTH').params).toEqual([2400, BANNER_MAX_WIDTH])
@@ -129,6 +154,10 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     logo.analysis = { ...logo.analysis, candidates: [{ type: 'png', bytes: 4000, colors: 12 }], svgCandidate: true, banding: 'palette' }
     expect(insightRecommendations(resultSummary(logo)).map((r) => r.code)).toEqual(['SVG', 'BANDING'])
     expect(insightRecommendations(null)).toEqual([])
+    // tarayıcı WebP kodlayamıyorsa "yeni nesil biçim" önerilmez
+    const noWebp = resultSummary(engineResult({ type: 'jpeg', notes: ['WEBP_UNAVAILABLE'] }))
+    noWebp.analysis.candidates = [{ type: 'jpeg', bytes: 240_000, quality: 76 }]
+    expect(insightRecommendations(noWebp).map((r) => r.code)).not.toContain('NEXT_GEN')
     for (const r of [...insightRecommendations(wide), ...insightRecommendations(resultSummary(logo))]) expect(INSIGHT_RECS).toContain(r.code)
   })
 
@@ -147,7 +176,21 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(png.map((s) => s.code)).toEqual(['LOCAL', 'PNG_PALETTE', 'METADATA', 'COLOR_PROFILE'])
     expect(png.find((s) => s.code === 'METADATA').params).toEqual(['kept'])
     const lossless = howWeDid(resultSummary(engineResult({ type: 'png', colors: null, resized: false })))
-    expect(lossless.map((s) => s.code)).toContain('PNG_LOSSLESS')
+    expect(lossless.find((s) => s.code === 'PNG_LOSSLESS').params).toEqual([true])
+    const losslessResized = howWeDid(resultSummary(engineResult({ type: 'png', colors: null, resized: true })))
+    expect(losslessResized.find((s) => s.code === 'PNG_LOSSLESS').params).toEqual([false])
+    const rounded = howWeDid(resultSummary(engineResult({ type: 'png', colors: null, resized: false, notes: ['ALPHA_COLORS_ROUNDED'] })))
+    expect(rounded.find((s) => s.code === 'PNG_LOSSLESS').params).toEqual([false])
+    // motor bayrakları: netleştirme, kalite kipi, kırpma
+    const sharp = engineResult({ cropped: true })
+    sharp.analysis = { ...sharp.analysis, resampled: true, sharpened: true, qualityMode: 'target' }
+    const ss = howWeDid(resultSummary(sharp))
+    expect(ss.map((s) => s.code).slice(0, 3)).toEqual(['LOCAL', 'CROPPED', 'RESIZED'])
+    expect(ss.find((s) => s.code === 'RESIZED').params).toEqual([1920, 1280, true])
+    expect(ss.find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([74, 'target'])
+    const sameSize = engineResult({ resized: false })
+    sameSize.analysis = { ...sameSize.analysis, resampled: false }
+    expect(howWeDid(resultSummary(sameSize)).map((s) => s.code)).not.toContain('RESIZED')
     for (const s of [...steps, ...png, ...keptStripped]) expect(HOW_STEPS).toContain(s.code)
   })
 
@@ -157,7 +200,8 @@ describe('görsel aracı derin karşılaştırma — model', () => {
       'prs.it.ins.rec.JPEG_RESAVE', 'prs.it.ins.rec.JPEG_RESAVE_Q', 'prs.it.ins.rec.BANDING_BITS', 'prs.it.ins.rec.BANDING_PALETTE',
       ...HOW_STEPS.map((c) => `prs.it.ins.how.${c}`),
       'prs.it.ins.how.QUALITY_SEARCH_NONE', 'prs.it.ins.how.BROWSER_ENCODER_SS', 'prs.it.ins.how.BROWSER_ENCODER_WEBP',
-      'prs.it.ins.how.METADATA_KEPT', 'prs.it.ins.how.METADATA_REMOVED',
+      'prs.it.ins.how.METADATA_KEPT', 'prs.it.ins.how.METADATA_REMOVED', 'prs.it.ins.how.RESIZED_PLAIN', 'prs.it.ins.how.QUALITY_MANUAL',
+      'prs.it.ins.how.QUALITY_TARGET', 'prs.it.ins.how.PNG_LOSSLESS_PROCESSED', 'prs.it.ins.belowTarget',
       ...['size', 'dims', 'aspect', 'pixels', 'ppi', 'bpp', 'compression', 'color', 'quality', 'subsampling'].map((k) => `prs.it.ins.row.${k}`),
       ...['gray', 'gray-alpha', 'rgb', 'rgba', 'palette', 'cmyk'].map((k) => `prs.it.ins.model.${k}`),
     ]

@@ -14,7 +14,7 @@ function summary(over = {}) {
     original: { bytes: 9_000, width: 200, height: 80, type: 'png', hasAlpha: true },
     analysis: {
       input: { bitDepth: 16, colorModel: 'rgba', ppi: { x: 96, y: 96 } },
-      output: { bitDepth: 4, colorModel: 'palette', paletteSize: 12, ppi: null },
+      output: { bitDepth: 4, colorModel: 'palette', paletteSize: 12, ppi: null, ppiChecked: true },
       colors: { count: 12, atLeast: false },
       candidates: [{ type: 'png', bytes: 4_000, colors: 12 }, { type: 'webp', bytes: 5_200, quality: 80 }],
       svgCandidate: true, banding: 'bit_depth',
