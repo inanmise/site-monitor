@@ -134,3 +134,123 @@ for (const vp of VIEWPORTS) {
     await context.close()
   })
 }
+
+// Zenginleştirme (2026-11-15, A–F paketleri): veri kalitesi dışı takım eksikleri, bekleyen işler, takıma göre görünüm,
+// tek eksiği gizleme, "1 hafta sonra hatırlat" ve yerinde düzeltme düğmesi — gerçek uzunlukta AD adlarıyla, üç boyutta.
+const LONG_TEAM = 'Dijital Kanallar ve Mobil Bankacılık Altyapı Yönetimi (Kurumsal Teknoloji / Uygulama Destek)'
+const LONG_PERSON = 'Ayşegül Karaosmanoğlu-Yıldırım (Bilgi Teknolojileri / Kıdemli Sistem Uzmanı)'
+const json = (body) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+
+for (const vp of VIEWPORTS) {
+  test(`eksikler penceresi zenginleştirme (${vp.name} ${vp.width}): işler, takıma göre, gizle, 1 hafta, yerinde düzelt`, async ({ browser }) => {
+    test.setTimeout(120_000)
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+    const page = await context.newPage()
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await mockApi(page, {
+      role: 'USER', globalAdmin: false, teamIds: [1], gaps: true,
+      perms: {
+        'data_quality.view': { view: true }, 'notification.groups': { view: true, edit: true }, 'oncall.read': { view: true },
+        'oncall.manage': { view: true, edit: true }, 'alerts.forwards': { view: true }, 'tech_error_reports.read': { view: true },
+        'incidents.view': { view: true }, 'contacts.crud': { view: true, edit: true },
+      },
+    })
+    const path = (u) => new URL(u).pathname
+    await page.route((u) => path(u) === '/api/me', (route) => route.fulfill(json({
+      success: true, username: 'demo', user_id: 'u-demo', system_role: 'USER', global_admin: false, weekly_reports_visible: true,
+      team_id: 1, team_name: LONG_TEAM, team_ids: [1], team_names: [LONG_TEAM], manage_team_ids: [1], noc_operator: false,
+      email: 'demo@kurum.com.tr', phone: '0532 123', tour: { status: 'dismissed', version: 99 },
+    })))
+    await page.route((u) => path(u) === '/api/public/login-methods', (route) => route.fulfill(json({ success: true, otp_push: true, push_requires_phone: true })))
+    await page.route((u) => path(u) === '/api/notification-groups', (route) => route.fulfill(json({ success: true, data: { groups: [
+      { id: 31, team_id: 1, name: 'Nöbetçi operasyon ve uygulama destek ekibi bildirim listesi', active: true, is_default: true,
+        emails: ['a@kurum.com.tr', 'b@kurum.com.tr'], inactive_emails: ['a@kurum.com.tr', 'b@kurum.com.tr'] }] } })))
+    await page.route((u) => path(u) === '/api/oncall/teams/1', (route) => route.fulfill(json({ success: true, data: { enabled: true,
+      members: [{ user_id: 'u-x', username: 'aysegul', name: LONG_PERSON, active: false, has_email: true },
+        { user_id: 'u-demo', username: 'demo', name: 'Demo Kullanıcı', active: true, has_email: true }],
+      current: { user_id: 'u-x', active: false, has_email: true } } })))
+    await page.route((u) => path(u) === '/api/alert-forwards', (route) => route.fulfill(json({ success: true, data: { items: [
+      { id: 5, owner_team_id: 1, recipient_team_name: 'Ağ ve Güvenlik Operasyonları Merkezi (Kurumsal Altyapı)', recipient_team_active: false,
+        enabled: true, state: 'recipient_inactive', recipient_address_count: 1, scope_kind: 'ALL', recipient_kind: 'TEAM' }] } })))
+    await page.route((u) => path(u) === '/api/tech-error-reports/overview', (route) => route.fulfill(json({ success: true, data: {
+      teams: [{ id: 1, name: LONG_TEAM, approver_count: 0, can_approve: false }],
+      channels: [
+        { id: 10, team_id: 1, name: 'Mobil Bankacılık Uygulaması (iOS ve Android) Teknik Hata Raporu', active: true, can_report: true,
+          approval_required: true, period_report: null },
+        { id: 11, team_id: 1, name: 'İnternet Şubesi', active: true, can_report: true, approval_required: false,
+          period_report: { id: 40, status: 'draft' } }] } })))
+    await page.route((u) => path(u) === '/api/incidents/actions', (route) => route.fulfill(json({ success: true, data: { total: 7, items: [
+      { id: 1, title: 'Yedekleme betiğinin zaman aşımı değerini artır ve izleme ekle', due_date: '2026-11-01', incident_title: 'Gece yedeklemesi yarıda kaldı' }] } })))
+    await page.route((u) => path(u) === '/api/teams/directory', (route) => route.fulfill(json({ success: true, data: [
+      { id: 1, name: LONG_TEAM, leader_id: 'u-lead', leader_display_name: 'Mehmet Ali Demirtaş (Dijital Kanallar / Takım Lideri)' }] })))
+    await page.goto('/?tab=dashboard')
+
+    const dialog = page.locator(DIALOG)
+    await expect(dialog).toHaveAttribute('data-status', 'ready', { timeout: 20_000 })
+    await expect(dialog).not.toContainText(/gaps\.[a-zA-Z]|dq\.rule\.|undefined|NaN/)
+    const counts = Object.fromEntries(await page.locator('[data-slot="gaps-tab"]').evaluateAll(
+      (els) => els.map((e) => [e.dataset.category, e.dataset.count])))
+    expect(Object.keys(counts)).toEqual(['profile', 'team', 'monitors', 'inventory', 'tasks'])
+    expect(Number(counts.tasks)).toBe(2)                       // kanal raporu + gecikmiş aksiyonlar
+    // Telefon geçersiz + nöbetçi + kodla girişte telefon zorunlu → YÜKSEK; lidere sorma notu
+    await page.locator('[data-slot="gaps-tab"][data-category="profile"]').click()
+    const phone = dialog.locator('[data-slot="gaps-item"][data-code="PROFILE_PHONE_INVALID"]')
+    await expect(phone.locator('[data-severity]').first()).toHaveAttribute('data-severity', 'HIGH')
+    await expect(phone.locator('[data-slot="gaps-ask"]')).toContainText('Mehmet Ali Demirtaş')
+
+    for (const cat of ['profile', 'team', 'tasks']) {
+      await page.locator(`[data-slot="gaps-tab"][data-category="${cat}"]`).click()
+      const bad = await clipped(dialog)
+      expect(bad, `${cat}: kesilen metin ${bad.join(' | ')}`).toEqual([])
+      if (vp.touch) {
+        const small = await smallTargets(dialog)
+        expect(small, `${cat}: 40 px altı hedefler: ${small.join(', ')}`).toEqual([])
+      }
+    }
+    // Takım sekmesi: veri kalitesi dışı eksikler ve yerinde düzeltme düğmeleri (takımı yönetiyor + yetkili)
+    await page.locator('[data-slot="gaps-tab"][data-category="team"]').click()
+    for (const code of ['TEAM_GROUP_ALL_PASSIVE', 'TEAM_ONCALL_MEMBERS', 'TEAM_FORWARD_BROKEN', 'TEAM_CHANNEL_NO_APPROVER']) {
+      await expect(dialog.locator(`[data-slot="gaps-item"][data-code="${code}"]`)).toBeVisible()
+    }
+    await expect(dialog.locator('[data-slot="gaps-item"][data-code="TEAM_ONCALL_MEMBERS"]')).toContainText(LONG_PERSON)
+    await expect(dialog.locator('[data-slot="gaps-item"][data-code="TEAM_GROUP_ALL_PASSIVE"] [data-slot="gaps-inline-fix"]')).toBeVisible()
+
+    // Takıma göre görünüm: takım başlığı (uzun ad sarar), "Size atanmış işler" grubu
+    await dialog.getByRole('button', { name: /^(By team|Takıma göre)$/ }).click()
+    await expect(dialog.locator('[data-slot="gaps-team-view"]')).toBeVisible()
+    await expect(dialog.locator('[data-slot="gaps-team-group"][data-team="mine"]')).toContainText('Yedekleme betiğinin')
+    const badTeam = await clipped(dialog)
+    expect(badTeam, `takıma göre: kesilen metin ${badTeam.join(' | ')}`).toEqual([])
+    const overflow = await dialog.evaluate((el) => {
+      let worst = 0
+      for (const n of el.querySelectorAll('*')) { const r = n.getBoundingClientRect(); if (r.width > 0) worst = Math.max(worst, r.right - window.innerWidth) }
+      return worst
+    })
+    expect(overflow, 'pencere içeriği görünüm alanını aşıyor').toBeLessThanOrEqual(1)
+    if (vp.touch) {
+      const small = await smallTargets(dialog)
+      expect(small, `takıma göre: 40 px altı hedefler: ${small.join(', ')}`).toEqual([])
+    }
+    await page.screenshot({ path: `test-results/login-gaps-enriched-${vp.name}.png` })
+
+    // Tek eksiği gizle → toplamdan düşer, "Gizlenen eksikler" listesi çıkar; geri al
+    const before = Number(await dialog.locator('[data-slot="gaps-total"]').getAttribute('data-total'))
+    await dialog.locator('[data-slot="gaps-item"][data-code="TEAM_FORWARD_BROKEN"] [data-slot="gaps-hide"]').click()
+    await expect(dialog.locator('[data-slot="gaps-total"]')).toHaveAttribute('data-total', String(before - 1))
+    await dialog.locator('[data-slot="gaps-hidden-toggle"]').click()
+    await dialog.locator('[data-slot="gaps-unhide"]').click()
+    await expect(dialog.locator('[data-slot="gaps-total"]')).toHaveAttribute('data-total', String(before))
+
+    // "1 hafta sonra hatırlat" menüsü (dokunmatikte ≥ 40 px öğe)
+    await dialog.locator('[data-slot="gaps-snooze-more"]').click()
+    const week = page.locator('[data-slot="gaps-snooze-week"]')
+    await expect(week).toBeVisible()
+    // offsetHeight: menünün açılış animasyonundaki ölçek dönüşümü ölçümü küçültmesin
+    if (vp.touch) expect(await week.evaluate((el) => el.offsetHeight)).toBeGreaterThanOrEqual(40)
+    await week.click()
+    await expect(dialog).toHaveCount(0)
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('sm.gaps.state') || 'null'))
+    expect(stored?.snoozeUntil).toBeGreaterThan(Date.now() + 6 * 24 * 3600_000)
+    await context.close()
+  })
+}

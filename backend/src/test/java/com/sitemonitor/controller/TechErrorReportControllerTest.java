@@ -1901,6 +1901,40 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("genel bakış (eksikler penceresi 2026-11-15): onay akışlı etkin kanalı olan takım approver_count + can_approve taşır; "
+            + "kanalı olmayan takımda anahtar yok; onay rol izni yoksa can_approve false; okuma düşerse ikisi de null")
+    void overviewApproverFields() throws Exception {
+        channels.get(0).setExecutiveEmails("yonetici@example.com");     // A takımının kanalı onay akışlı
+        when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(true);
+        when(approvals.approvers(A)).thenReturn(List.of(
+                new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(50L, "Ben", "ben@example.com"),
+                new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(51L, "Öteki", null)));
+        // Kurum geneli genel bakış (AUDIT, takımsız): onaylayıcı okuması YAPILMAZ — yalnız kişinin kendi takımları (inceleme
+        // 2026-11-15: global izleyicide takım başına bir sorgu olurdu)
+        mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[?(@.id == 1)].approver_count").isEmpty());
+        verify(approvals, never()).approvers(any());
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.teams[0].approver_count").value(2))
+                .andExpect(jsonPath("$.data.teams[0].can_approve").value(true));
+        verify(approvals, never()).approvers(B);
+
+        when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(false);
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.teams[0].can_approve").value(false));
+
+        // Pasif kanal sayılmaz; okuma düşerse "bilinmiyor" (null) — istemci eksik saymaz
+        when(approvals.approvers(A)).thenThrow(new RuntimeException("db"));
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.teams[0].approver_count").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.teams[0].can_approve").value(org.hamcrest.Matchers.nullValue()));
+        channels.get(0).setActive(false);
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(jsonPath("$.data.teams[0]", org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasKey("approver_count"))));
+    }
+
+    @Test
     @DisplayName("genel bakış: takım satırı library_read taşır — kendi takımı true; YALNIZ paylaşımla görülen takım false")
     void overviewLibraryRead() throws Exception {
         mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))

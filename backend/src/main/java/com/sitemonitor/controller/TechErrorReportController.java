@@ -151,6 +151,20 @@ public class TechErrorReportController {
             m.put("period_report", pr == null ? null : maskSharedPeople(statusDto(pr, service.now()), session, ch.getTeamId()));
             channelRows.add(m);
         }
+        // Eksikler penceresi (2026-11-15): onay akışlı (yönetici alıcısı dolu) ETKİN kanalı olan takımlar — yalnız onlar için
+        // onaylayıcı sayısı ve "bu kullanıcı onaylayabilir mi" hesaplanır (takım başına bir okuma; kanalı olmayan takımda yok)
+        Set<Long> approvalTeams = new HashSet<>();
+        for (TechErrorChannel ch : shown) {
+            if (ch.isActive() && TechErrorApprovalService.approvalRequired(ch)) approvalTeams.add(ch.getTeamId());
+        }
+        boolean mayApprove = permissions.allows(session, APPROVE, "execute");
+        Long me = userId(session);
+        // Yalnız kişinin KENDİ takımları (üyelik + yönetim kapsamı) — eksikler penceresi yalnız onları okur; global izleyicinin
+        // kurum geneli genel bakışında takım başına onaylayıcı okuması yapılmaz (takım sayısı kadar sorgu olurdu)
+        Set<Long> ownTeams = new HashSet<>(SessionScope.memberTeamIds(session));
+        List<Long> managed = SessionScope.manageTeamIds(session);
+        if (managed != null) ownTeams.addAll(managed);
+        approvalTeams.retainAll(ownTeams);
         List<Map<String, Object>> teamRows = new ArrayList<>();
         java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
         List<Team> sortedTeams = new ArrayList<>(teamMap.values());
@@ -166,6 +180,7 @@ public class TechErrorReportController {
             tm.put("can_manage", writer && SessionScope.canManage(session, t.getId()));
             // Takım şablon kütüphanesi (D17) takımın kendi kapsamıyla okunur — paylaşımla görülen takımda yok
             tm.put("library_read", TechErrorTeamTemplateController.canReadLibrary(session, t.getId()));
+            if (approvalTeams.contains(t.getId())) putApprovers(tm, t.getId(), me, mayApprove);
             teamRows.add(tm);
         }
         Map<String, Object> data = new LinkedHashMap<>();
@@ -2100,6 +2115,29 @@ public class TechErrorReportController {
 
     private static String iso(Instant i) {
         return i == null ? null : i.toString();
+    }
+
+    /**
+     * Genel bakış takım satırının onay bilgisi (2026-11-15, eksikler penceresi — eklemeli): {@code approver_count} = aktif PO
+     * üye sayısı (kişi adı / kimliği YOK, yalnız sayı) ve {@code can_approve} = bu kullanıcı onaylayıcı mı (rol izni + PO üye).
+     * Onay servisi yoksa ya da okuma düşerse ikisi de {@code null} — "bilinmiyor"; istemci eksik saymaz.
+     */
+    private void putApprovers(Map<String, Object> tm, Long teamId, Long me, boolean mayApprove) {
+        if (approvals == null) {
+            tm.put("approver_count", null);
+            tm.put("can_approve", null);
+            return;
+        }
+        try {
+            List<TechErrorApprovalService.Approver> apps = approvals.approvers(teamId);
+            tm.put("approver_count", apps.size());
+            boolean mine = false;
+            if (me != null) for (TechErrorApprovalService.Approver a : apps) if (me.equals(a.id())) { mine = true; break; }
+            tm.put("can_approve", mayApprove && mine);
+        } catch (RuntimeException e) {
+            tm.put("approver_count", null);
+            tm.put("can_approve", null);
+        }
     }
 
     private static Long userId(HttpSession session) {

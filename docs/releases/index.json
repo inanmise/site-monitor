@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T10:10:42Z",
+  "generatedAt": "2026-11-15T10:47:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 841,
+  "count": 842,
   "releases": [
+    {
+      "version": "20.207.0",
+      "tag": "v20.207.0",
+      "releasedAt": "2026-11-15T10:46:56Z",
+      "commit": "2a0f1a5481c989aceec8fc949e414cf63aa36fcf",
+      "prevVersion": "20.206.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "gaps",
+          "breaking": false,
+          "sha": "2a0f1a54",
+          "subject": "inceleme düzeltmeleri — iş anahtarlarında dönem / kimlik, ortak kaynak okunamazsa gösterme kaydı korunur, denetlenmeyen kategori \"eksik yok\" demez"
+        },
+        {
+          "type": "feat",
+          "scope": "gaps",
+          "breaking": false,
+          "sha": "97dbe42f",
+          "subject": "eksikler penceresi zenginleştirmesi — takım eksikleri, bekleyen işler, takıma göre görünüm, gizleme, yerinde düzeltme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.206.1",
       "tag": "v20.206.1",

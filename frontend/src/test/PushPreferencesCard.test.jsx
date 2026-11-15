@@ -32,6 +32,32 @@ describe('PushPreferencesCard', () => {
     api.me.getPushPreferences.mockResolvedValue({ ...DEFAULTS })
   })
 
+  it('eksikler penceresinden ma_sec=push ile gelince kart görünür kaydırılır, odaklanır ve parametre bir kez tüketilir', async () => {
+    window.history.replaceState({}, '', '/?tab=myactivity&ma_sec=push')
+    const scroll = vi.fn()
+    const orig = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scroll
+    try {
+      render(<PushPreferencesCard />)
+      await loaded()
+      const anchor = document.querySelector('[data-slot="push-prefs-anchor"]')
+      await waitFor(() => expect(document.activeElement).toBe(anchor))
+      expect(scroll).toHaveBeenCalledTimes(1)
+      expect(new URLSearchParams(window.location.search).get('ma_sec')).toBeNull()
+      expect(new URLSearchParams(window.location.search).get('tab')).toBe('myactivity')
+    } finally {
+      HTMLElement.prototype.scrollIntoView = orig
+      window.history.replaceState({}, '', '/')
+    }
+  })
+
+  it('ma_sec yoksa kart kendiliğinden odak almaz', async () => {
+    window.history.replaceState({}, '', '/?tab=myactivity')
+    render(<PushPreferencesCard />)
+    await loaded()
+    expect(document.activeElement).not.toBe(document.querySelector('[data-slot="push-prefs-anchor"]'))
+  })
+
   it('varsayılan: "All pushes" özeti, susturma yok, Kaydet kapalı (dokunulmamış = gönderim yok)', async () => {
     render(<PushPreferencesCard />)
     expect(await loaded()).toBeDisabled()

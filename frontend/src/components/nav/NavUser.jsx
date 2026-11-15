@@ -4,6 +4,7 @@ import {
   Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard, Check, ClipboardList,
 } from 'lucide-react'
 import { openGapsDialog } from '../gaps/gapsBus.js'
+import { gapsBadgeCount, sessionGapsCount, useGapsSummary } from '../gaps/useGapsSummary.js'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { formatDate } from '../../api/client'
@@ -62,11 +63,12 @@ function IconTile({ children, className }) {
 }
 
 // ── Masaüstü menü parçaları (modül düzeyinde: yeniden çizimde kimlik sabit, odak kaybolmaz) ──
-function Item({ icon, children, shortcut, className, ...rest }) {
+function Item({ icon, children, shortcut, trailing, className, ...rest }) {
   return (
     <DropdownMenuItem className={cn('h-9 gap-2.5 rounded-md px-1.5', className)} {...rest}>
       <IconTile>{icon}</IconTile>
       <span className="min-w-0 flex-1 truncate">{children}</span>
+      {trailing}
       {shortcut && <DropdownMenuShortcut className="mr-1 shrink-0">{shortcut}</DropdownMenuShortcut>}
     </DropdownMenuItem>
   )
@@ -88,13 +90,28 @@ function Radio({ value, children, busy = false, busyLabel }) {
   )
 }
 // ── Telefon sayfası parçaları ──
-function Row({ icon, children, onSelect, className, ...rest }) {
+function Row({ icon, children, onSelect, trailing, className, ...rest }) {
   return (
     <Button type="button" variant="ghost" onClick={onSelect}
       className={cn('h-11 w-full justify-start gap-3 rounded-lg px-2 text-[15px] font-normal', className)} {...rest}>
       <IconTile className="size-8">{icon}</IconTile>
       <span className="min-w-0 flex-1 truncate text-left">{children}</span>
+      {trailing}
     </Button>
+  )
+}
+/**
+ * "Eksiklerim" sayısı (2026-11-15): son okumadaki görünen eksik sayısı — ağ yok (GapsPrompt yayınlar; bu sekmede okunmadıysa
+ * oturumdaki başka sekmenin sayısı). 0 / bilinmiyor → çizilmez. Ekran okuyucuya öğenin adıyla birlikte okunur.
+ */
+function GapsCount({ t }) {
+  const summary = useGapsSummary()
+  const n = gapsBadgeCount(summary, summary ? null : sessionGapsCount())
+  if (n == null) return null
+  return (
+    <span data-slot="user-menu-gaps-count" className="shrink-0 rounded-md bg-amber-500/15 px-1.5 text-[11px] font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+      <span aria-hidden="true">{n}</span><span className="sr-only">{t(n === 1 ? 'gaps.menuCount.one' : 'gaps.menuCount', n)}</span>
+    </span>
   )
 }
 function Caption({ children }) {
@@ -220,7 +237,7 @@ export default function NavUser({
                   {multiTeam && <Row icon={<Users />} onSelect={pick(onOpenTeams)}>{t('nav.myTeams', myTeams.length)}</Row>}
                   <Row icon={<MonitorSmartphone />} onSelect={pick(() => onGo('myactivity'))}>{t('dev.navLink')}</Row>
                   {isAdmin && <Row icon={<Settings />} onSelect={pick(() => onGo('settings'))}>{t('nav.settings')}</Row>}
-                  <Row icon={<ClipboardList />} onSelect={pick(openGaps)} data-slot="user-menu-gaps">{t('gaps.menu')}</Row>
+                  <Row icon={<ClipboardList />} onSelect={pick(openGaps)} data-slot="user-menu-gaps" trailing={<GapsCount t={t} />}>{t('gaps.menu')}</Row>
                   <Row icon={<Lock />} onSelect={pick(onChangePassword)}>{t('nav.changePassword')}</Row>
                 </div>
                 <div data-slot="user-menu-group" data-group="help">
@@ -293,7 +310,7 @@ export default function NavUser({
                 {/* Ayarlar: rol ADMIN — global admin VE kapsamlı müdür (2026-09-10 ürün kararı; sır yüzeyleri AdminSettings
                     içinde kilitli, backend GLOBAL_ONLY/requireNotScopedAdmin uygular). */}
                 {isAdmin && <Item icon={<Settings />} onSelect={() => onGo('settings')}>{t('nav.settings')}</Item>}
-                <Item icon={<ClipboardList />} data-slot="user-menu-gaps"
+                <Item icon={<ClipboardList />} data-slot="user-menu-gaps" trailing={<GapsCount t={t} />}
                   onSelect={() => { openedDialog.current = true; openGaps() }}>{t('gaps.menu')}</Item>
                 <Item icon={<Lock />} onSelect={onChangePassword}>{t('nav.changePassword')}</Item>
               </DropdownMenuGroup>

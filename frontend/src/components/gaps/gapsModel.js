@@ -1,23 +1,36 @@
-// Giriş sonrası eksikler penceresi (2026-11-15, kullanıcı isteği) — SAF model: profil eksikleri (oturumdaki kullanıcı
-// kaydından) + kişinin KENDİ takımlarının veri kalitesi bulguları (`/api/data-quality/teams/{id}`) dört kategoride; ne
-// zaman kendiliğinden gösterileceği (1 gün sonra hatırlat / yeni eksik çıkana dek gösterme). React yok, ağ yok.
+// Giriş sonrası eksikler penceresi (2026-11-15, kullanıcı isteği; zenginleştirme aynı gün) — SAF model: profil eksikleri,
+// kişinin KENDİ takımlarının veri kalitesi bulguları (`/api/data-quality/teams/{id}`), veri kalitesi dışı takım eksikleri
+// (gapsExtra.js) ve bekleyen işler beş kategoride; ne zaman kendiliğinden gösterileceği (erteleme / yeni eksik çıkana dek
+// gösterme), tek tek gizlenen eksikler ve son görülen eksiklerle karşılaştırma ("Yeni" / "düzeldi"). React yok, ağ yok.
+
+import {
+  approvalTasks, actionTasks, channelApproverGaps, channelReportTasks, forwardGaps, groupGaps, oncallGaps,
+} from './gapsExtra.js'
+import { profileGaps as profileGapsOf } from './gapsProfile.js'
 
 /** Kategoriler (sıra = ekrandaki sıra). */
-export const GAP_CATEGORIES = Object.freeze(['profile', 'team', 'monitors', 'inventory'])
-/** Profil eksik kodları. */
-export const PROFILE_GAPS = Object.freeze(['PROFILE_NO_EMAIL', 'PROFILE_NO_PHONE'])
-/** En çok sorgulanan takım (kendi takımları; fazlası notla söylenir). */
+export const GAP_CATEGORIES = Object.freeze(['profile', 'team', 'monitors', 'inventory', 'tasks'])
+/** En çok sorgulanan takım (kendiliğinden yol; fazlası pencerede "sonraki takımlar" / takım seçiciyle). */
 export const MAX_TEAMS = 10
+/** Bir pencerede en çok denetlenen takım (seçiciyle eklenenler dahil) — saklanan kayıt ve istek sayısı sınırlı kalsın. */
+export const MAX_LOADED_TEAMS = 40
 /** Kural başına gösterilen en çok kalem (kalanı "veri kalitesi sayfasında"). */
 export const MAX_ITEMS_PER_GAP = 5
-/** "Daha sonra hatırlat" süresi. */
+/** "Daha sonra hatırlat" süreleri. */
 export const SNOOZE_MS = 24 * 60 * 60 * 1000
+export const SNOOZE_WEEK_MS = 7 * SNOOZE_MS
 /**
- * Saklanan "gösterme" kaydının en çok girdisi. Girdi EKSİK (kural) düzeyindedir, kalem düzeyinde değil: profil 2 + en çok
- * 10 takım × ~20 kural — bu sınıra ulaşılmaz; kalem düzeyi (kural başına 500 kalem) sınırı aşıp pencereyi her girişte
- * yeniden açıyordu (inceleme 2026-11-15).
+ * Saklanan "gösterme" kaydının en çok girdisi. Girdi EKSİK (kural) düzeyindedir: profil 6 + 10 takım × ~21 + 2 iş ≈ 220.
+ * Sınırlar birlikte kullanıcı tercihi anahtar sınırının (`UserPreferencesService.MAX_LOCAL_VALUE`, 16 KB) altında kalır —
+ * aşılırsa sunucu bütün tercih belgesini 400 ile reddeder (gapsModel testi en kötü durumu ölçer).
  */
-export const MAX_DISMISSED = 500
+export const MAX_DISMISSED = 250
+/** Tek tek gizlenen eksiklerin en çok sayısı (en yeniler kalır). */
+export const MAX_HIDDEN = 100
+/** "Son görülen" eksiklerin en çok sayısı (Yeni / düzeldi karşılaştırması). */
+export const MAX_SEEN = 250
+/** Sıkıştırılmış "son görülen" dizgesinin en çok uzunluğu (bozuk / şişmiş değer okunmaz). */
+export const MAX_SEEN_CHARS = 6000
 /** Takım veri kalitesi isteğinin süre sınırı (ms) — istek asla süresiz beklemez. */
 export const TEAM_FETCH_TIMEOUT_MS = 20_000
 /**
@@ -37,41 +50,25 @@ export const GAPS_SESSION_KEY = 'sm.gaps.session'
 export const AUTO_PROMPT_DELAY_MS = 1500
 /** Kullanıcı tercihindeki (yerel ayna) anahtar — UserPreferencesService.LOCAL_KEYS ile aynı. */
 export const GAPS_STATE_KEY = 'sm.gaps.state'
+/** Veri kalitesi dışı denetim adları (okunamadı / yetki yok notları). */
+export const EXTRA_CHECKS = Object.freeze(['prefs', 'groups', 'oncall', 'forwards', 'channels', 'actions'])
 
 const SCOPE_CATEGORY = Object.freeze({ TEAM: 'team', MONITOR: 'monitors', INVENTORY: 'inventory' })
 const SEVERITIES = ['HIGH', 'MEDIUM', 'LOW']
 const SEVERITY_RANK = Object.freeze({ HIGH: 0, MEDIUM: 1, LOW: 2 })
+const HEX8 = /^[0-9a-f]{8}$/
+/** Okunan ama eksiği olmayan kapsamın "son görülen" kaydındaki yer tutucusu (hiçbir eksiğin özetine denk gelmez). */
+const SEEN_PLACEHOLDER = '00000000'
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
 
-/**
- * Yalnız açıkça kullanılamaz adres eksik sayılır: boş, '@' yok / birden çok, yerel ya da alan kısmı boş, boşluk içeriyor.
- * Sunucunun kuralından daha katı DEĞİL (ör. `ayse@localhost` eksik sayılmaz — yanlış uyarı yok).
- */
-function deliverable(email) {
-  if (typeof email !== 'string') return false
-  const e = email.trim()
-  const at = e.indexOf('@')
-  return at > 0 && at === e.lastIndexOf('@') && at < e.length - 1 && !/\s/.test(e)
+/** Profil eksikleri (geriye uyum: eski çağrılar `profileGaps(profile)` ile çalışır; ayrıntı gapsProfile.js'te). */
+export function profileGaps(profile, ctx, prefs, now) {
+  return profileGapsOf(profile, ctx, prefs, now)
 }
 
-/**
- * Profil eksikleri: e-posta yok / bozuk (bildirim gelmez), telefon yok (nöbet arama listesi, kodla giriş). Alan yanıtta
- * HİÇ yoksa (eski sunucu, giriş yanıtı) bilinmiyor sayılır — eksik denmez.
- */
-export function profileGaps(profile) {
-  if (!isObj(profile)) return []
-  const out = []
-  const has = (k) => Object.prototype.hasOwnProperty.call(profile, k)
-  if (has('email') && !deliverable(profile.email)) out.push({ key: 'PROFILE_NO_EMAIL', category: 'profile', code: 'PROFILE_NO_EMAIL', severity: 'HIGH' })
-  if (has('phone') && (typeof profile.phone !== 'string' || !profile.phone.trim())) {
-    out.push({ key: 'PROFILE_NO_PHONE', category: 'profile', code: 'PROFILE_NO_PHONE', severity: 'MEDIUM' })
-  }
-  return out
-}
-
-/** Kişinin kendi takımları: üyesi olduğu + yönettiği (paylaşım / 7/24 genişlemesi YOK), tekil, en çok MAX_TEAMS. */
+/** Kişinin kendi takımları: üyesi olduğu + yönettiği (paylaşım / 7/24 genişlemesi YOK), tekil; ilk MAX_TEAMS + kalanlar. */
 export function ownTeamIds(myTeamIds, manageTeamIds) {
   const seen = new Set()
   const out = []
@@ -84,12 +81,13 @@ export function ownTeamIds(myTeamIds, manageTeamIds) {
       out.push(id)
     }
   }
-  return { ids: out.slice(0, MAX_TEAMS), more: Math.max(0, out.length - MAX_TEAMS) }
+  return { ids: out.slice(0, MAX_TEAMS), more: Math.max(0, out.length - MAX_TEAMS), rest: out.slice(MAX_TEAMS) }
 }
 
 /**
  * Takım veri kalitesi yanıtından eksikler: kusurlu (failing > 0) her kural bir eksik — kategori kuralın kapsamından,
- * kalemler en çok MAX_ITEMS_PER_GAP (`more` = gösterilmeyen). Bilinmeyen kapsam atlanır.
+ * kalemler en çok MAX_ITEMS_PER_GAP (`more` = gösterilmeyen), `points` = kuralın takım puanından götürdüğü puan (yanıtta
+ * yoksa 0). Bilinmeyen kapsam atlanır.
  */
 export function teamGaps(teamId, data) {
   const team = isObj(data?.team) ? data.team : {}
@@ -106,43 +104,170 @@ export function teamGaps(teamId, data) {
       key: `${teamId}:${r.code}`, category, code: r.code, severity: SEVERITIES.includes(r.severity) ? r.severity : 'LOW',
       teamId, teamName, failing, items: items.slice(0, MAX_ITEMS_PER_GAP),
       more: Math.max(0, failing - Math.min(items.length, MAX_ITEMS_PER_GAP)),
+      points: Math.max(0, num(r.points) ?? 0), scope: `t${teamId}`, dq: true,
     })
   }
   return out
 }
 
+/** Takım veri kalitesi başlığı (puan, bant, 7 günlük değişim) — yanıtta yoksa null alanlar. */
+export function teamScore(data) {
+  const t = isObj(data?.team) ? data.team : {}
+  return { score: num(t.score), band: typeof t.band === 'string' ? t.band : null, delta: num(t.delta_7d) }
+}
+
+/** Eski çağrı biçimi (`{id, data|failed|skipped}`) ile yeni (`{id, dq:{status,data}}`) aynı yola. */
+function dqOf(t) {
+  if (isObj(t?.dq)) return t.dq
+  if (t?.failed) return { status: 'failed' }
+  if (t?.skipped) return { status: 'skipped' }
+  if (t && Object.prototype.hasOwnProperty.call(t, 'data')) return { status: 'ok', data: t.data }
+  return { status: 'off' }
+}
+
+const statusOf = (src) => (isObj(src) && typeof src.status === 'string' ? src.status : 'off')
+
 /**
- * Tüm eksikler: `{ byCategory: {profile, team, monitors, inventory}, total, marks, failedTeams, profileKnown }`. Kategoride
- * sıra: önem, sonra takım adı, sonra kural. `marks` = kendiliğinden gösterme kararı için EKSİK düzeyinde işaretler
- * `{ key, n, scope }` (n = kusurlu kayıt sayısı; profil 1). Okunamayan takım `failedTeams`'e girer (bilinmeyen ≠ eksik yok)
- * ve işaretlere katılmaz; uygulanamayan takım (`skipped`: pasif / görünmez — 404) hiçbir yere girmez. `profileKnown`:
- * profil alanları yanıtta vardı (yoksa "tamamlanacak bir şey yok" denmez).
+ * Tüm eksikler. Girdi (hepsi isteğe bağlı): `profile`, `profileFailed`, `ctx` (önem bağlamı), `prefs` + `prefsStatus`
+ * (kişisel push tercihleri), `teams` [{id, name, dq:{status,data}, oncall:{status,data}}], `groups` / `forwards` /
+ * `channels` / `actions` = {status, data}, `hidden` (gizlenen eksik özetleri), `autoTeamIds` (kendiliğinden yolun takımları).
+ * Kaynak durumları: ok | failed | denied (yetki yok) | unsupported (bu sürümde yok) | skipped (uygulanamaz) | off (istenmedi).
+ *
+ * Çıktı: `byCategory` (gizlenenler HARİÇ; kategoride sıra: önem, puan etkisi, takım adı, kural), `total`, `hiddenList`,
+ * `marks` (görünen eksikler — kendiliğinden gösterme ve rozet için `{key, n, scope, auto}`), `allMarks` (gizlenenler dahil —
+ * "Yeni / düzeldi" karşılaştırması), `failedTeams` (veri kalitesi okunamayan takım), `failedChecks` (diğer okunamayan
+ * denetimler), `deniedChecks`, `readScopes`, `teamScores`, `profileFailed`, `profileKnown`.
  */
-export function collectGaps({ profile, profileFailed = false, teams = [] }) {
-  const byCategory = Object.fromEntries(GAP_CATEGORIES.map((c) => [c, []]))
-  const marks = []
+export function collectGaps(input = {}) {
+  const {
+    profile, profileFailed = false, ctx = {}, prefs = null, prefsStatus = 'off', teams = [],
+    groups = null, forwards = null, channels = null, actions = null, hidden = null, autoTeamIds = null, now = Date.now(),
+  } = input
+  const all = []
   const failedTeams = []
-  for (const g of profileGaps(profile)) {
-    byCategory.profile.push(g)
-    marks.push({ key: g.key, n: 1, scope: 'p' })
+  const failedChecks = []
+  const denied = new Set()
+  const unsupported = new Set()
+  const readScopes = new Set()
+  const teamScores = []
+  const hiddenSet = hidden instanceof Set ? hidden : new Set(Array.isArray(hidden) ? hidden : [])
+  const noteSource = (check, st, team = null) => {
+    if (st === 'failed') failedChecks.push({ check, teamId: team?.id ?? null, teamName: team?.name ?? null })
+    else if (st === 'denied') denied.add(check)
+    else if (st === 'unsupported') unsupported.add(check)        // sunucu bu denetimi bu sürümde yapamıyor (404 / 405) — yetki değil
   }
-  for (const t of teams) {
-    if (!t || t.id == null || t.skipped) continue
-    if (t.failed) { failedTeams.push({ id: t.id, name: t.name ?? null }); continue }
-    for (const g of teamGaps(t.id, t.data)) {
-      byCategory[g.category].push(g)
-      marks.push({ key: g.key, n: g.failing, scope: `t${t.id}` })
+
+  // ── Profil ──
+  const prefsOk = prefsStatus === 'ok' && isObj(prefs)
+  for (const g of profileGapsOf(profile, ctx, prefsOk ? prefs : null, now)) all.push(g)
+  if (isObj(profile) && !profileFailed) readScopes.add('p')
+  if (prefsOk) readScopes.add('pp')
+  if (prefsOk && ctx?.onCall != null) readScopes.add('ppo')          // "yalnız kritik" eksiği nöbet bilgisine de bağlı
+  noteSource('prefs', prefsStatus)
+
+  // ── Takımlar ──
+  const loaded = []
+  for (const t of Array.isArray(teams) ? teams : []) {
+    if (!t || t.id == null) continue
+    const dq = dqOf(t)
+    const name = (isObj(dq.data?.team) && typeof dq.data.team.name === 'string' ? dq.data.team.name : null) ?? t.name ?? null
+    const team = { id: t.id, name }
+    if (dq.status === 'skipped') continue
+    loaded.push(team)
+    if (dq.status === 'failed') failedTeams.push({ id: t.id, name: t.name ?? null })
+    else if (dq.status === 'ok') {
+      readScopes.add(`t${t.id}`)
+      for (const g of teamGaps(t.id, dq.data)) all.push(g)
+      teamScores.push({ id: t.id, name, ...teamScore(dq.data) })
+    }
+    const oc = isObj(t.oncall) ? t.oncall : null
+    if (oc) {
+      noteSource('oncall', statusOf(oc), team)
+      if (statusOf(oc) === 'ok') { readScopes.add(`o${t.id}`); all.push(...oncallGaps(team, oc.data)) }
     }
   }
+  const forEachTeam = (src, check, scopePrefix, fn) => {
+    const st = statusOf(src)
+    noteSource(check, st)
+    if (st !== 'ok') return
+    for (const team of loaded) { readScopes.add(`${scopePrefix}${team.id}`); all.push(...fn(team, src.data)) }
+  }
+  // Takım başına "her denetim okundu mu" (takıma göre görünümde "eksik yok" ancak hepsi okunduysa); yetkisiz denetim sayılmaz
+  const sharedOk = (src) => ['ok', 'denied'].includes(statusOf(src))
+  const teamChecked = {}
+  for (const t of Array.isArray(teams) ? teams : []) {
+    if (!t || t.id == null) continue
+    const dqSt = dqOf(t).status
+    const ocSt = isObj(t.oncall) ? statusOf(t.oncall) : 'off'
+    teamChecked[String(t.id)] = ['ok', 'skipped', 'denied'].includes(dqSt) && ['ok', 'skipped', 'denied'].includes(ocSt)
+      && sharedOk(groups) && sharedOk(forwards) && sharedOk(channels)
+  }
+  forEachTeam(groups, 'groups', 'g', groupGaps)
+  forEachTeam(forwards, 'forwards', 'f', forwardGaps)
+  forEachTeam(channels, 'channels', 'c', (team, data) => [...channelApproverGaps(team, data), ...channelReportTasks(team, data)])
+  if (statusOf(channels) === 'ok') { readScopes.add('ka'); all.push(...approvalTasks(loaded, channels.data)) }
+  if (statusOf(actions) === 'ok') { readScopes.add('kt'); all.push(...actionTasks(actions.data)) }
+  noteSource('actions', statusOf(actions))
+
+  // ── Sınıflama, gizleme, işaretler ──
+  const byCategory = Object.fromEntries(GAP_CATEGORIES.map((c) => [c, []]))
+  const hiddenList = []
+  const marks = []
+  const allMarks = []
+  const autoSet = autoTeamIds == null ? null : new Set([...autoTeamIds].map(String))
+  for (const g of all) {
+    if (!byCategory[g.category]) continue
+    const mark = { key: g.key, n: Number.isFinite(g.failing) ? g.failing : 1, scope: g.scope,
+      auto: autoSet == null || g.teamId == null || autoSet.has(String(g.teamId)) }
+    allMarks.push(mark)
+    if (hiddenSet.has(hashKey(g.key))) { hiddenList.push(g); continue }
+    byCategory[g.category].push(g)
+    marks.push(mark)
+  }
+  const coll = typeof Intl !== 'undefined' ? new Intl.Collator('tr', { sensitivity: 'base', numeric: true }) : null
+  const cmp = (a, b) => (SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]) || ((b.points || 0) - (a.points || 0))
+    || (coll ? coll.compare(a.teamName || '', b.teamName || '') : 0) || String(a.code).localeCompare(String(b.code))
+  for (const c of GAP_CATEGORIES) byCategory[c].sort(cmp)
+  hiddenList.sort(cmp)
   const has = (k) => isObj(profile) && Object.prototype.hasOwnProperty.call(profile, k)
   const profileKnown = has('email') && has('phone')
-  const coll = typeof Intl !== 'undefined' ? new Intl.Collator('tr', { sensitivity: 'base', numeric: true }) : null
-  for (const c of GAP_CATEGORIES) {
-    byCategory[c].sort((a, b) => (SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
-      || (coll ? coll.compare(a.teamName || '', b.teamName || '') : 0) || String(a.code).localeCompare(String(b.code)))
-  }
   const total = GAP_CATEGORIES.reduce((n, c) => n + byCategory[c].length, 0)
-  return { byCategory, total, marks, failedTeams, profileFailed: profileFailed === true, profileKnown }
+  return {
+    byCategory, total, hiddenList, marks, allMarks, failedTeams, failedChecks, deniedChecks: [...denied], unsupportedChecks: [...unsupported],
+    loadedTeamIds: loaded.map((t) => t.id), teamChecked,
+    // Bekleyen işler: kanal / aksiyon kaynağı okunmadıysa (okunamadı, bu sürümde yok, yetkiler bilinmiyor) "iş yok" denmez
+    tasksUnchecked: !(sharedOk(channels) && sharedOk(actions)),
+    readScopes, teamScores, profileFailed: profileFailed === true, profileKnown, prefsFailed: prefsStatus === 'failed',
+  }
+}
+
+/**
+ * Takıma göre görünüm: profil dışı eksikler takım başına (sıra: en çok yüksek önemli eksik, sonra takım adı); takımsız işler
+ * (onay bekleyen raporlar, aksiyonlar) `teamId: null` grubunda en sonda. Her grup puan başlığını taşır.
+ */
+export function groupByTeam(gaps) {
+  if (!gaps) return []
+  const groups = new Map()
+  const scoreOf = new Map((gaps.teamScores || []).map((s) => [String(s.id), s]))
+  for (const c of GAP_CATEGORIES) {
+    if (c === 'profile') continue
+    for (const g of gaps.byCategory[c]) {
+      const k = g.teamId == null ? '' : String(g.teamId)
+      if (!groups.has(k)) groups.set(k, { teamId: g.teamId ?? null, teamName: g.teamName ?? null, gaps: [], high: 0, score: scoreOf.get(k) || null })
+      const grp = groups.get(k)
+      grp.gaps.push(g)
+      if (g.severity === 'HIGH') grp.high++
+      if (!grp.teamName && g.teamName) grp.teamName = g.teamName
+    }
+  }
+  // Eksiği olmayan ama puanı okunan takımlar da görünür (eksiksiz takım bilgisi)
+  for (const s of gaps.teamScores || []) {
+    const k = String(s.id)
+    if (!groups.has(k)) groups.set(k, { teamId: s.id, teamName: s.name ?? null, gaps: [], high: 0, score: s })
+  }
+  const coll = typeof Intl !== 'undefined' ? new Intl.Collator('tr', { sensitivity: 'base', numeric: true }) : null
+  return [...groups.values()].sort((a, b) => ((a.teamId == null) - (b.teamId == null)) || (b.high - a.high)
+    || (b.gaps.length - a.gaps.length) || (coll ? coll.compare(a.teamName || '', b.teamName || '') : 0))
 }
 
 /** FNV-1a 32 bit (onaltılık) — saklanan anahtar özetleri kısa olsun, ham kimlik / ad tercih belgesine yazılmasın. */
@@ -157,76 +282,197 @@ export function hashKey(s) {
 }
 
 /**
- * Saklanan durum (bozuksa boş): `{ v: 2, snoozeUntil: ms|null, dismissed: [[eksikÖzeti, kayıtSayısı, kapsamÖzeti]] }`.
- * Özetler 8 haneli onaltılık (ham kimlik / ad / kod yazılmaz). Önceki biçim (v1, yalnız özet dizgeleri — yayınlanmadı)
- * yok sayılır.
+ * "Son görülen" sıkıştırılmış dizge → `Map(kapsamÖzeti → Map(eksikÖzeti → sayı))`. Biçim `kk:ee.n,ee.n;kk:ee.n` (8 haneli
+ * onaltılık özetler). Bozuk parça atlanır; uzunluk ve girdi sayısı sınırlı (döngüler girdiyle sınırlı).
+ */
+export function parseSeen(raw) {
+  const out = new Map()
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_SEEN_CHARS) return out
+  let count = 0
+  for (const part of raw.split(';')) {
+    const i = part.indexOf(':')
+    if (i !== 8) continue
+    const sc = part.slice(0, 8)
+    if (!HEX8.test(sc)) continue
+    const inner = out.get(sc) || new Map()
+    for (const e of part.slice(9).split(',')) {
+      if (count >= MAX_SEEN) break
+      const j = e.indexOf('.')
+      if (j !== 8) continue
+      const h = e.slice(0, 8)
+      const n = Number(e.slice(9))
+      if (!HEX8.test(h) || !Number.isInteger(n) || n < 0) continue
+      inner.set(h, n)
+      count++
+    }
+    if (inner.size) out.set(sc, inner)
+  }
+  return out
+}
+
+/**
+ * `Map(kapsam → Map(eksik → sayı))` → sıkıştırılmış dizge (en çok MAX_SEEN girdi). Kapsam BÜTÜN yazılır ya da hiç yazılmaz:
+ * yarım yazılan kapsamın yazılmayan eksikleri her açılışta yanlışlıkla "yeni" görünürdü; sığmayan kapsamın tabanı yok sayılır
+ * (taban yoksa "yeni" denmez).
+ */
+export function formatSeen(map) {
+  const parts = []
+  let count = 0
+  for (const [sc, inner] of map) {
+    if (inner.size === 0) continue
+    if (count + inner.size > MAX_SEEN) continue
+    const es = []
+    for (const [h, n] of inner) es.push(`${h}.${Math.max(0, Math.round(n))}`)
+    parts.push(`${sc}:${es.join(',')}`)
+    count += inner.size
+  }
+  return parts.join(';')
+}
+
+/**
+ * Saklanan durum (bozuksa boş): `{ v: 2, snoozeUntil, dismissed: [[eksikÖzeti, kayıtSayısı, kapsamÖzeti]], hidden: [özet],
+ * seen: "<sıkıştırılmış>" }`. Özetler 8 haneli onaltılık (ham kimlik / ad / kod yazılmaz). `hidden` ve `seen` 2026-11-15
+ * zenginleştirmesinin EKLEMELİ alanlarıdır — `v` 2 kalır (önceki sürümün istemcisi kaydı okumaya devam eder).
  */
 export function readState(raw) {
   let o = raw
   if (typeof raw === 'string') {
     try { o = JSON.parse(raw) } catch { o = null }
   }
-  if (!isObj(o)) return { v: 2, snoozeUntil: null, dismissed: [] }
+  if (!isObj(o)) return { v: 2, snoozeUntil: null, dismissed: [], hidden: [], seen: '' }
   const snooze = num(o.snoozeUntil)
-  const hex = (x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x)
+  const hex = (x) => typeof x === 'string' && HEX8.test(x)
   const dismissed = (Array.isArray(o.dismissed) ? o.dismissed : [])
     .filter((e) => Array.isArray(e) && e.length === 3 && hex(e[0]) && Number.isInteger(e[1]) && e[1] >= 0 && hex(e[2]))
     .slice(0, MAX_DISMISSED)
-  return { v: 2, snoozeUntil: snooze !== null && snooze > 0 ? snooze : null, dismissed }
+  const hidden = [...new Set((Array.isArray(o.hidden) ? o.hidden : []).filter(hex))].slice(-MAX_HIDDEN)
+  const seen = typeof o.seen === 'string' && o.seen.length <= MAX_SEEN_CHARS ? formatSeen(parseSeen(o.seen)) : ''
+  return { v: 2, snoozeUntil: snooze !== null && snooze > 0 ? snooze : null, dismissed, hidden, seen }
 }
 
 /**
  * Kendiliğinden gösterilsin mi: eksik varsa, ertelenmediyse ve "gösterme" dendiğinden beri YENİ bir eksik çıktıysa ya da
  * bir eksiğin kusurlu kayıt sayısı ARTTIYSA. Düzelen (azalan / kaybolan) eksik pencereyi açmaz. Eksik yoksa gösterilmez.
+ * Gizlenen eksikler ve kendiliğinden yolun dışındaki takımların eksikleri (`auto === false`) sayılmaz.
  */
 export function shouldPrompt(state, marks, now) {
   const s = readState(state)
-  if (!Array.isArray(marks) || marks.length === 0) return false
+  const list = (Array.isArray(marks) ? marks : []).filter((m) => m && m.auto !== false && !s.hidden.includes(hashKey(m.key)))
+  if (list.length === 0) return false
   if (s.snoozeUntil !== null && s.snoozeUntil > now) return false
   const known = new Map(s.dismissed.map((e) => [e[0], e[1]]))
-  return marks.some((m) => {
+  return list.some((m) => {
     const n = known.get(hashKey(m?.key))
     return n === undefined || (Number(m?.n) || 0) > n
   })
 }
 
-/** "Daha sonra hatırlat": 1 gün sonra (gösterme kaydı korunur). */
-export function snoozeState(state, now) {
+/** "Daha sonra hatırlat": varsayılan 1 gün, isteğe 1 hafta (gösterme kaydı korunur). */
+export function snoozeState(state, now, ms = SNOOZE_MS) {
   const s = readState(state)
-  return { ...s, snoozeUntil: now + SNOOZE_MS }
+  const d = ms === SNOOZE_WEEK_MS ? SNOOZE_WEEK_MS : SNOOZE_MS
+  return { ...s, snoozeUntil: now + d }
 }
 
 /**
- * "Bir daha gösterme": şu anki eksikler ve kayıt sayıları hatırlanır. Okunamayan takımların (`failedTeamIds`) önceki
- * kaydı KORUNUR (o takım bu kez okunamadı diye, daha önce gösterilmemesi istenen eksikleri yeniden açılmasın).
+ * "Bir daha gösterme": şu anki eksikler ve kayıt sayıları hatırlanır (kendiliğinden yolun dışındaki takımlarınkiler hariç —
+ * o yol onlara bakmaz). Okunamayan takımların (`failedTeamIds`) ve okunamayan diğer denetimlerin (`failedScopes`, ham kapsam
+ * adları) önceki kaydı KORUNUR (bu kez okunamadı diye daha önce gösterilmemesi istenen eksikleri yeniden açılmasın).
  */
-export function dismissState(state, marks, failedTeamIds = []) {
+export function dismissState(state, marks, failedTeamIds = [], failedScopes = []) {
   const s = readState(state)
   const out = []
   const seen = new Set()
   for (const m of Array.isArray(marks) ? marks : []) {
-    const h = hashKey(m?.key)
+    if (!m || m.auto === false) continue
+    const h = hashKey(m.key)
     if (seen.has(h)) continue
     seen.add(h)
-    out.push([h, Math.max(0, Math.round(Number(m?.n) || 0)), hashKey(m?.scope ?? '')])
+    out.push([h, Math.max(0, Math.round(Number(m.n) || 0)), hashKey(m.scope ?? '')])
   }
-  const keepScopes = new Set((Array.isArray(failedTeamIds) ? failedTeamIds : []).map((id) => hashKey(`t${id}`)))
+  const keepScopes = new Set([
+    ...(Array.isArray(failedTeamIds) ? failedTeamIds : []).map((id) => hashKey(`t${id}`)),
+    ...(Array.isArray(failedScopes) ? failedScopes : []).map((sc) => hashKey(sc)),
+  ])
   for (const e of s.dismissed) {
     if (!seen.has(e[0]) && keepScopes.has(e[2])) { seen.add(e[0]); out.push(e) }
   }
   return { ...s, snoozeUntil: null, dismissed: out.slice(0, MAX_DISMISSED) }
 }
 
-/** Oturuma bağlı yerel kayıt `{ checkedAt, closedAt }` (bozuksa boş). */
+/** Tek eksiği gizle ("bu eksiği gösterme" — geri alınana dek listede ve rozette yok). */
+export function hideState(state, key) {
+  const s = readState(state)
+  const h = hashKey(key)
+  return { ...s, hidden: [...s.hidden.filter((x) => x !== h), h].slice(-MAX_HIDDEN) }
+}
+
+/** Gizlenen eksiği geri al. */
+export function unhideState(state, key) {
+  const s = readState(state)
+  const h = hashKey(key)
+  return { ...s, hidden: s.hidden.filter((x) => x !== h) }
+}
+
+/**
+ * Son görülenlerle karşılaştırma: `newKeys` = kapsamı geçen sefer de okunmuş ve o zaman OLMAYAN eksikler (kapsam hiç
+ * okunmadıysa "yeni" denmez — karşılaştırma tabanı yok); `fixed` = geçen sefer görülen ve kapsamı bu kez de OKUNAN ama artık
+ * olmayan eksik sayısı (okunamayan kapsam düzelmiş sayılmaz). `first` = hiç kayıt yok.
+ */
+export function seenDiff(state, allMarks, readScopes) {
+  const s = readState(state)
+  const seen = parseSeen(s.seen)
+  const read = new Set([...(readScopes || [])].map((sc) => hashKey(sc)))
+  const present = new Set((Array.isArray(allMarks) ? allMarks : []).map((m) => hashKey(m.key)))
+  const newKeys = new Set()
+  for (const m of Array.isArray(allMarks) ? allMarks : []) {
+    const inner = seen.get(hashKey(m.scope ?? ''))
+    if (inner && !inner.has(hashKey(m.key))) newKeys.add(m.key)
+  }
+  let fixed = 0
+  for (const [sc, inner] of seen) {
+    if (!read.has(sc)) continue
+    for (const h of inner.keys()) if (h !== SEEN_PLACEHOLDER && !present.has(h)) fixed++
+  }
+  return { first: seen.size === 0, newKeys, fixed }
+}
+
+/**
+ * Görülenleri güncelle: okunan kapsamlar şimdiki eksiklerle değişir (eksiksiz okunan kapsam da boş girdi olarak tutulmaz,
+ * "kapsam okundu" bilgisi için en az bir eksik gerekmez — taban yoksa yeni denmez), okunamayan kapsamların eski kaydı kalır.
+ */
+export function markSeen(state, allMarks, readScopes) {
+  const s = readState(state)
+  const old = parseSeen(s.seen)
+  const read = new Set([...(readScopes || [])].map((sc) => hashKey(sc)))
+  const next = new Map()
+  // Okunan kapsamlar: boş kapsam da yer tutsun diye her okunan kapsam için bir harita (formatSeen boşları yazmaz → okunan ama
+  // eksiksiz kapsam için yer tutucu yazılır)
+  for (const sc of read) next.set(sc, new Map())
+  for (const m of Array.isArray(allMarks) ? allMarks : []) {
+    const sc = hashKey(m.scope ?? '')
+    if (!read.has(sc)) continue
+    next.get(sc).set(hashKey(m.key), Math.max(0, Math.round(Number(m.n) || 0)))
+  }
+  for (const inner of next.values()) if (inner.size === 0) inner.set(SEEN_PLACEHOLDER, 0)
+  for (const [sc, inner] of old) if (!read.has(sc) && !next.has(sc)) next.set(sc, inner)
+  return { ...s, seen: formatSeen(next) }
+}
+
+/** Oturuma bağlı yerel kayıt `{ checkedAt, closedAt, count }` (bozuksa boş). `count` = son okumadaki görünen eksik sayısı. */
 export function readSession(raw) {
   let o = raw
   if (typeof raw === 'string') {
     try { o = JSON.parse(raw) } catch { o = null }
   }
-  if (!isObj(o)) return { checkedAt: null, closedAt: null }
+  if (!isObj(o)) return { checkedAt: null, closedAt: null, count: null }
   const c = num(o.checkedAt)
   const k = num(o.closedAt)
-  return { checkedAt: c !== null && c > 0 ? c : null, closedAt: k !== null && k > 0 ? k : null }
+  const n = num(o.count)
+  return {
+    checkedAt: c !== null && c > 0 ? c : null, closedAt: k !== null && k > 0 ? k : null,
+    count: n !== null && Number.isInteger(n) && n >= 0 && n < 100_000 ? n : null,
+  }
 }
 
 /**
