@@ -174,10 +174,13 @@ public class PageResourceScanService {
     public static final String KEY_FULL_MAX_SECONDS = "site.monitor.page.resource-scan.full-site-max-seconds";
     public static final String KEY_FULL_MAX_OBJECTS = "site.monitor.page.resource-scan.full-site-max-objects";
     public static final String KEY_FULL_MAX_TOTAL_MB = "site.monitor.page.resource-scan.full-site-max-total-mb";
-    public static final int FULL_MAX_PAGES_DEFAULT = 1000, FULL_MAX_PAGES_MIN = 20, FULL_MAX_PAGES_MAX = 1000;
-    public static final int FULL_MAX_SECONDS_DEFAULT = 3600, FULL_MAX_SECONDS_MIN = 300, FULL_MAX_SECONDS_MAX = 3600;
-    public static final int FULL_MAX_OBJECTS_DEFAULT = 30_000, FULL_MAX_OBJECTS_MIN = 2_000, FULL_MAX_OBJECTS_MAX = 100_000;
-    public static final int FULL_MAX_TOTAL_MB_DEFAULT = 3000, FULL_MAX_TOTAL_MB_MIN = 200, FULL_MAX_TOTAL_MB_MAX = 10_000;
+    // 2026-11-15 (kullanıcı isteği: "tarama sınırlarını 2500 sayfa olacak şekilde arttıralım"): 1000 → 2500 sayfa; süre,
+    // nesne ve indirme bütçeleri aynı oranda (×2,5) büyür — yoksa 2500 sayfalık tarama süreye / nesneye takılırdı.
+    // Bellek: SiteRun önbelleği benzersiz nesne başına bir ölçüm kopyası tutar (≈ 1–2 KB) → 75 000 nesnede ≈ 150 MB üst sınır.
+    public static final int FULL_MAX_PAGES_DEFAULT = 2500, FULL_MAX_PAGES_MIN = 20, FULL_MAX_PAGES_MAX = 2500;
+    public static final int FULL_MAX_SECONDS_DEFAULT = 9000, FULL_MAX_SECONDS_MIN = 300, FULL_MAX_SECONDS_MAX = 10_800;
+    public static final int FULL_MAX_OBJECTS_DEFAULT = 75_000, FULL_MAX_OBJECTS_MIN = 2_000, FULL_MAX_OBJECTS_MAX = 150_000;
+    public static final int FULL_MAX_TOTAL_MB_DEFAULT = 7500, FULL_MAX_TOTAL_MB_MIN = 200, FULL_MAX_TOTAL_MB_MAX = 25_000;
     /** Özet satırının {@code crawl} değeri: tüm site taraması (null = sayfa sayısı seçilen site taraması ya da tek sayfa). */
     public static final String CRAWL_FULL = "full";
     /** Analizde listelenen taranmamış adres tavanı (toplam {@code unscanned_total} ayrıca). */
