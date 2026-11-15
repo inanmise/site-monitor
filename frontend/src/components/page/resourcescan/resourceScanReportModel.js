@@ -432,6 +432,9 @@ function crawlModel(c) {
     fromLinks: num(c.from_links),
     fromSitemap: num(c.from_sitemap),
     dropped: num(c.dropped) ?? 0,
+    droppedAtLeast: c.dropped_at_least === true,
+    // Kuyruk bitti ama keşif kesildi (site haritası evresi tavana / süreye takıldı ya da listelenen harita okunamadı)
+    discoveryIncomplete: c.discovery_incomplete === true,
     priorPages: num(c.prior_pages) ?? 0,
     resumedFrom: num(c.resumed_from),
     resumeFailed: c.resume_failed === true,
@@ -443,6 +446,7 @@ function crawlModel(c) {
       urls: num(sm.urls),
       added: num(sm.added),
       truncated: sm.truncated === true,
+      otherHost: num(sm.other_host) ?? 0,
       errors: arr(sm.errors).filter((e) => typeof e === 'string' && e).slice(0, 10),
     },
   }
@@ -455,6 +459,14 @@ function crawlModel(c) {
 export function canResumeCrawl(scan, model) {
   if (!model?.crawl || scan?.status !== 'DONE') return false
   return model.crawl.complete === false && (model.unscannedTotal ?? 0) > 0
+}
+
+/**
+ * Yarıda kalan (pod durdu / iptal / eskime) ya da başarısız tüm site taraması denetim noktasından sürdürülebilir mi: sunucu
+ * özet satırında `resumable: true` der (denetim noktası var). Kuyruk boşsa sunucu yine reddeder (ileti gösterilir).
+ */
+export function canResumeInterrupted(scan) {
+  return scan?.crawl === 'full' && scan?.resumable === true && (scan?.status === 'INTERRUPTED' || scan?.status === 'FAILED')
 }
 
 /** Sayfa tablosu ↔ kart eşiği (KAP genişliği, px). jsdom 0 → tablo. */
@@ -573,6 +585,8 @@ export function siteModel(site) {
     skipped: num(tt.skipped) ?? pages.filter((p) => p.status === 'skipped').length,
     avgGrade: num(tt.avg_grade),
     uniqueBytes: num(tt.total_unique_bytes),
+    // Sürdürülen taramada tekil boyut yalnız BU taramanın sayfalarından (devralınan satırlar ayrı taramada ölçüldü)
+    uniqueThisRun: tt.unique_scope === 'this_run',
     // Sunucu ortak nesnelerin TAMAMINI sayar, listeyi 50'de keser (`totals.shared`)
     sharedCount: Math.max(arr(site.shared).length, num(tt.shared) ?? 0),
   }

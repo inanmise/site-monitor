@@ -33,8 +33,8 @@ public final class SitemapReader {
     public static final int MAX_LOC_CHARS = 4096;
     /** Açılmış (gzip sonrası) en büyük dosya. */
     public static final long MAX_INFLATED_BYTES = 50L * 1024 * 1024;
-    /** Kök öğenin arandığı baş kısım (site haritası dizini mi?). */
-    static final int ROOT_SCAN_CHARS = 4096;
+    /** Kök öğenin arandığı baş kısım (site haritası dizini mi?) — yorum / işlem talimatı / DOCTYPE atlanır. */
+    static final int ROOT_SCAN_CHARS = 65_536;
 
     private SitemapReader() {}
 
@@ -93,30 +93,104 @@ public final class SitemapReader {
         boolean truncated = false;
         int n = xml.length();
         int i = 0;
+        int extDepth = 0;   // önekli uzantı öğesinin (image:image, video:video …) içindeyiz — oradaki loc sayfa adresi değil
         while (i < n) {
             int lt = xml.indexOf('<', i);
             if (lt < 0) break;
+            if (xml.startsWith("<!--", lt)) {
+                int e = xml.indexOf("-->", lt + 4);
+                if (e < 0) break;
+                i = e + 3;
+                continue;
+            }
+            if (xml.startsWith("<![CDATA[", lt)) {
+                int e = xml.indexOf("]]>", lt + 9);
+                if (e < 0) break;
+                i = e + 3;
+                continue;
+            }
             int gt = xml.indexOf('>', lt + 1);
             if (gt < 0) break;
-            if (isLocOpen(xml, lt + 1, gt)) {
+            char c0 = lt + 1 < n ? xml.charAt(lt + 1) : 0;
+            if (c0 == '?' || c0 == '!') { i = gt + 1; continue; }
+            if (extDepth == 0 && isLocOpen(xml, lt + 1, gt)) {
                 int close = closeOf(xml, gt + 1);
                 if (close < 0) break;
                 if (locs.size() >= MAX_LOCS_PER_FILE) { truncated = true; break; }
                 String v = text(xml, gt + 1, close);
                 if (v != null) locs.add(v);
                 i = close + 1;
-            } else {
-                i = gt + 1;
+                continue;
             }
+            boolean closing = c0 == '/';
+            int nameFrom = closing ? lt + 2 : lt + 1;
+            String name = elementName(xml, nameFrom, gt);
+            String local = localOf(name);
+            if (ENTRY_ELEMENTS.contains(local)) {
+                extDepth = 0;   // bozuk (kapanmamış) uzantı öğesi sonraki kayıtları yutmasın
+            } else if (name.indexOf(':') > 0 && !STANDARD_ELEMENTS.contains(local)) {
+                if (closing) {
+                    if (extDepth > 0) extDepth--;
+                } else if (xml.charAt(gt - 1) != '/') {
+                    extDepth++;
+                }
+            }
+            i = gt + 1;
         }
         return new Parsed(index, locs, truncated);
     }
 
-    /** Kök öğe {@code sitemapindex} mi (baş kısımda, önekli olabilir). */
+    /** Kayıt öğeleri (önekli de olabilir): görüldüğünde uzantı derinliği sıfırlanır. */
+    private static final Set<String> ENTRY_ELEMENTS = Set.of("url", "sitemap", "urlset", "sitemapindex");
+    /** Standart site haritası öğeleri — önekli yazılsa da uzantı sayılmaz. */
+    private static final Set<String> STANDARD_ELEMENTS = Set.of("loc", "lastmod", "changefreq", "priority");
+
+    /** Öğe adı (önek dahil, küçük harf) — {@code from}..{@code gt} arasında, boşluk / {@code /} / {@code >}'e dek, en çok 128 karakter. */
+    private static String elementName(String s, int from, int gt) {
+        int end = from;
+        int lim = Math.min(gt, from + 128);
+        while (end < lim && !Character.isWhitespace(s.charAt(end)) && s.charAt(end) != '/') end++;
+        return s.substring(from, end).toLowerCase(Locale.ROOT);
+    }
+
+    private static String localOf(String name) {
+        int c = name.lastIndexOf(':');
+        return c >= 0 ? name.substring(c + 1) : name;
+    }
+
+    /**
+     * KÖK öğe {@code sitemapindex} mi (önekli olabilir). İşlem talimatı ({@code <?xml-stylesheet …?>}), yorum ve DOCTYPE atlanır;
+     * yalnız ilk öğenin adına bakılır (bir urlset'in stil sayfası ya da ilk adresi "sitemapindex" içerse de urlset kalır).
+     */
     static boolean isIndex(String xml) {
         int lim = Math.min(xml.length(), ROOT_SCAN_CHARS);
-        String head = xml.substring(0, lim).toLowerCase(Locale.ROOT);
-        return head.contains("sitemapindex");
+        int i = 0;
+        while (i < lim) {
+            int lt = xml.indexOf('<', i);
+            if (lt < 0 || lt >= lim) return false;
+            if (xml.startsWith("<?", lt)) {
+                int e = xml.indexOf("?>", lt + 2);
+                if (e < 0) return false;
+                i = e + 2;
+                continue;
+            }
+            if (xml.startsWith("<!--", lt)) {
+                int e = xml.indexOf("-->", lt + 4);
+                if (e < 0) return false;
+                i = e + 3;
+                continue;
+            }
+            if (xml.startsWith("<!", lt)) {
+                int e = xml.indexOf('>', lt + 2);
+                if (e < 0) return false;
+                i = e + 1;
+                continue;
+            }
+            int gt = xml.indexOf('>', lt + 1);
+            if (gt < 0) gt = xml.length();
+            return "sitemapindex".equals(localOf(elementName(xml, lt + 1, gt)));
+        }
+        return false;
     }
 
     /** {@code <loc>} / {@code <ns:loc>} / {@code <loc ...>} açılış etiketi mi ({@code from}..{@code gt} arası). */

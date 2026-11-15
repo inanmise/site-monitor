@@ -69,7 +69,7 @@ export default function ResourceScanSite({ scan, analysis, canRun = false, busy 
           {tt.skipped > 0 && <Tile k="skipped" label={t('prs.site.tile.skipped')} value={formatNumber(tt.skipped, locale)} />}
           <Tile k="avg" label={t('prs.site.tile.avgGrade')} value={tt.avgGrade == null ? '—' : formatNumber(tt.avgGrade, locale)}
             tone={tt.avgGrade == null ? null : scoreTone(tt.avgGrade)} />
-          <Tile k="unique" label={t('prs.site.tile.unique')} value={formatSize(tt.uniqueBytes, { locale })} />
+          <Tile k="unique" label={t(tt.uniqueThisRun ? 'prs.site.tile.uniqueThisRun' : 'prs.site.tile.unique')} value={formatSize(tt.uniqueBytes, { locale })} />
           <Tile k="shared" label={t('prs.site.tile.shared')} value={formatNumber(tt.sharedCount, locale)} />
         </ul>
         {(incomplete || tt.skipped > 0) && (
@@ -220,9 +220,13 @@ function CrawlSummary({ crawl, unscannedTotal, t, locale, resume, busy, onResume
           <AlertBanner tone="success" className="mb-0" icon={CircleCheck}>{t('prs.crawl.complete')}</AlertBanner>
         </div>
       ) : crawl.complete === false ? (
-        <div data-slot="prs-crawl-incomplete">
+        <div data-slot="prs-crawl-incomplete" data-kind={unscannedTotal > 0 ? 'queue' : crawl.stopReason === 'KNOWN_CAP' ? 'known_cap' : 'discovery'}>
           <AlertBanner tone="warning" className="mb-0" icon={TriangleAlert}>
-            {plural(t, 'prs.crawl.incomplete', unscannedTotal, formatNumber(unscannedTotal, locale), crawlReasonText(crawl.stopReason, t))}
+            {unscannedTotal > 0
+              ? plural(t, 'prs.crawl.incomplete', unscannedTotal, formatNumber(unscannedTotal, locale), crawlReasonText(crawl.stopReason, t))
+              : crawl.stopReason === 'KNOWN_CAP'
+                ? plural(t, crawl.droppedAtLeast ? 'prs.crawl.incompleteKnownCapAtLeast' : 'prs.crawl.incompleteKnownCap', crawl.dropped, formatNumber(crawl.dropped, locale))
+                : t('prs.crawl.incompleteDiscovery')}
           </AlertBanner>
         </div>
       ) : null}
@@ -241,7 +245,8 @@ function CrawlSummary({ crawl, unscannedTotal, t, locale, resume, busy, onResume
         )}
         {sm.found === false && <li className={WRAP} data-slot="prs-crawl-sitemap-none">{t('prs.crawl.sitemap.none')}</li>}
         {sm.truncated && <li className={WRAP}>{t('prs.crawl.sitemap.truncated')}</li>}
-        {crawl.dropped > 0 && <li className={WRAP}>{plural(t, 'prs.crawl.dropped', crawl.dropped, formatNumber(crawl.dropped, locale))}</li>}
+        {sm.otherHost > 0 && <li className={WRAP} data-slot="prs-crawl-sitemap-other-host">{plural(t, 'prs.crawl.sitemap.otherHost', sm.otherHost, formatNumber(sm.otherHost, locale))}</li>}
+        {crawl.dropped > 0 && <li className={WRAP}>{plural(t, crawl.droppedAtLeast ? 'prs.crawl.droppedAtLeast' : 'prs.crawl.dropped', crawl.dropped, formatNumber(crawl.dropped, locale))}</li>}
         {crawl.resumedFrom != null && crawl.priorPages > 0 && (
           <li className={WRAP} data-slot="prs-crawl-resumed">
             {plural(t, 'prs.crawl.resumed', crawl.priorPages, formatNumber(crawl.resumedFrom, locale), formatNumber(crawl.priorPages, locale))}
@@ -302,8 +307,9 @@ function PageCell({ p, t, locale }) {
         {p.main && <ToneBadge tone="info" className={CHIP} data-slot="prs-site-main">{t('prs.site.main')}</ToneBadge>}
         {p.fromScan != null && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-prior">{t('prs.crawl.priorChip')}</ToneBadge>}
         {p.capped && <ToneBadge tone="muted" className={CHIP} data-slot="prs-site-partial">{t('prs.site.partial')}</ToneBadge>}
-        {p.status === 'ok' && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
-        {p.status === 'ok' && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
+        {/* Devralınan satırın tekil / ortak sayısı kendi taramasında ölçüldü — bu taramayla karşılaştırılamaz, gösterilmez */}
+        {p.status === 'ok' && p.fromScan == null && p.unique != null && <span className="tabular-nums">{t('prs.site.unique', formatSize(p.unique, { locale }))}</span>}
+        {p.status === 'ok' && p.fromScan == null && p.shared != null && <span className="tabular-nums">{plural(t, 'prs.site.sharedCount', p.shared, formatNumber(p.shared, locale))}</span>}
       </span>
       {p.status === 'failed' && <span data-slot="prs-site-error" className={cn('text-xs text-destructive', WRAP)}>{sitePageErrorText(p, t) || pageStatusText(p.status, t)}</span>}
       {p.status === 'skipped' && <span data-slot="prs-site-skip" className={cn('text-xs text-muted-foreground', WRAP)}>{sitePageErrorText(p, t) || t('prs.site.skippedBody')}</span>}

@@ -26,7 +26,7 @@ import { resetWatchers } from '../components/page/resourcescan/resourceScanWatch
 import { scanSummary } from './helpers/resourceScanFixtures.js'
 import { budgetData, fullSiteDetail as fullDetail, fullSiteHistory as history, siteDetail, trendData } from './helpers/resourceScanFgFixtures.js'
 import {
-  canResumeCrawl, fullSiteLimits, siteModel, siteRowText,
+  canResumeCrawl, canResumeInterrupted, fullSiteLimits, siteModel, siteRowText,
 } from '../components/page/resourcescan/resourceScanReportModel.js'
 import { pollCapMs } from '../components/page/resourcescan/resourceScanModel.js'
 import { TR as tr } from '../i18n/tr.js'
@@ -142,6 +142,57 @@ describe('tüm site taraması — Sayfalar görünümü', () => {
     expect(slot('prs-crawl-sitemap-none')).not.toBeNull()
   })
 
+  it('kuyruk boş ama adres tavanı doldu: "en az N adres" uyarısı, "bütün sayfalar tarandı" ve sürdür yok', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 31
+      ? ok(fullDetail(31, { crawl: { mode: 'full', complete: false, stop_reason: 'KNOWN_CAP', discovered: 20_120, from_links: 20_000,
+        from_sitemap: 0, dropped: 120, dropped_at_least: true, prior_pages: 0, sitemap: { found: false, errors: [] } },
+        unscanned: [], unscanned_total: 0 }))
+      : ok(siteDetail(scanId))))
+    await mount()
+    openTab(/^Sayfalar/)
+    await waitFor(() => expect(slot('prs-crawl')).not.toBeNull())
+    expect(slot('prs-crawl-complete')).toBeNull()
+    const inc = slot('prs-crawl-incomplete')
+    expect(inc.getAttribute('data-kind')).toBe('known_cap')
+    expect(inc.textContent).toMatch(/en az 120 adres daha bulundu/)
+    expect(inc.textContent).not.toMatch(/0 sayfa taranmadı/)
+    expect(slot('prs-crawl').textContent).toMatch(/En az 120 adres daha bulundu ama/)
+    expect(slot('prs-crawl-resume')).toBeNull()
+  })
+
+  it('kuyruk bitti ama keşif eksik (okunamayan harita): keşif uyarısı; başka sunucudaki harita satırı', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 31
+      ? ok(fullDetail(31, { crawl: { mode: 'full', complete: false, stop_reason: null, discovery_incomplete: true, discovered: 40,
+        from_links: 39, from_sitemap: 0, prior_pages: 0,
+        sitemap: { found: false, other_host: 2, errors: ['https://www.example.com/sm.xml'] } }, unscanned: [], unscanned_total: 0 }))
+      : ok(siteDetail(scanId))))
+    await mount()
+    openTab(/^Sayfalar/)
+    await waitFor(() => expect(slot('prs-crawl')).not.toBeNull())
+    expect(slot('prs-crawl-complete')).toBeNull()
+    expect(slot('prs-crawl-incomplete').getAttribute('data-kind')).toBe('discovery')
+    expect(slot('prs-crawl-incomplete').textContent).toMatch(/sayfa keşfi eksik kaldı/)
+    expect(slot('prs-crawl-sitemap-other-host').textContent).toMatch(/Başka bir sunucuda duran 2 site haritası/)
+  })
+
+  it('yarıda kalan tüm site taraması: "Kaldığı yerden sürdür" → resume_from (devralınan satırın tekil boyutu gösterilmez)', async () => {
+    const h = history()
+    const row = scanSummary(40, { status: 'INTERRUPTED', error: 'Pod durdu', scope: 'site', crawl: 'full', resumable: true, grade: null,
+      progress: { done: 10, total: 20, pages_done: 12, pages_total: 300 } })
+    api.monitoring.resourceScans.mockResolvedValue(ok({ ...h, items: [row, ...h.items] }))
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 40 ? ok({ scan: row })
+      : scanId === 31 ? ok(fullDetail(31)) : ok(siteDetail(scanId))))
+    api.monitoring.startResourceScan.mockResolvedValue(ok(scanSummary(63, { status: 'RUNNING', scope: 'site', crawl: 'full',
+      progress: { done: 0, total: 0 }, grade: null, finished_at: null })))
+    window.history.replaceState(null, '', '/?tab=page&monitor=100&mtab=resources&prs=40')
+    render(<ResourceScanTab monitor={MONITOR} pollMs={15} />)
+    const btn = await waitFor(() => { const b = slot('prs-interrupted-resume'); expect(b).not.toBeNull(); return b })
+    expect(slot('prs-interrupted-resume-hint').textContent).toMatch(/kaydedilen son noktadan sürdürülebilir/)
+    fireEvent.click(btn)
+    await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100,
+      { scope: 'site', crawl: 'full', max_pages: 1000, resume_from: 40 }))
+  })
+
   it('geçmiş satırı "Tüm site · 40 / 74 sayfa analiz edildi"', async () => {
     await mount()
     openTab(/^Geçmiş/)
@@ -166,6 +217,17 @@ describe('tüm site taraması — model', () => {
     expect(canResumeCrawl({ status: 'DONE' }, doneModel)).toBe(false)
     const unknown = siteModel(fullDetail(31, { crawl: { mode: 'full' } }).analysis.site)
     expect(canResumeCrawl({ status: 'DONE' }, unknown)).toBe(false)
+  })
+
+  it('canResumeInterrupted: yarıda kalan / başarısız + denetim noktası olan tüm site taraması', () => {
+    expect(canResumeInterrupted({ status: 'INTERRUPTED', crawl: 'full', resumable: true })).toBe(true)
+    expect(canResumeInterrupted({ status: 'FAILED', crawl: 'full', resumable: true })).toBe(true)
+    expect(canResumeInterrupted({ status: 'INTERRUPTED', crawl: 'full', resumable: false })).toBe(false)
+    expect(canResumeInterrupted({ status: 'INTERRUPTED', crawl: 'full' })).toBe(false)
+    expect(canResumeInterrupted({ status: 'DONE', crawl: 'full', resumable: true })).toBe(false)
+    expect(canResumeInterrupted({ status: 'INTERRUPTED', resumable: true })).toBe(false)
+    const m = siteModel(fullDetail(31, { totals: { pages: 40, scanned: 40, failed: 0, skipped: 0, unique_scope: 'this_run' } }).analysis.site)
+    expect(m.totals.uniqueThisRun).toBe(true)
   })
 
   it('siteRowText tüm site önekiyle; pollCapMs tüm site bütçesiyle (≥ 3600 sn)', () => {

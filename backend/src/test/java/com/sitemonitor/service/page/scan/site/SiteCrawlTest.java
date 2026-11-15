@@ -67,6 +67,26 @@ class SiteCrawlTest {
     }
 
     @Test
+    @DisplayName("taşma sayacı tekil: aynı taşan adres birçok sayfada geçse de bir kez sayılır; full() tavanı söyler")
+    void droppedIsUnique() {
+        SiteCrawl c = new SiteCrawl(BASE, null, null, null);
+        int round = 0;
+        while (!c.full()) {
+            List<String> next = new ArrayList<>();
+            for (int i = 0; i < SiteCrawl.MAX_LINKS_PER_PAGE; i++) next.add(BASE + "f" + round + "-" + i);
+            c.offer(next, SiteCrawl.SOURCE_LINK);
+            round++;
+            assertThat(round).as("tavan sınırlı turda dolar").isLessThan(100);
+        }
+        int before = c.dropped();   // tavanı dolduran son turun taşanları (ana sayfa da bilinen sayılır)
+        List<String> extra = List.of(BASE + "x1", BASE + "x2", BASE + "x3");
+        for (int i = 0; i < 5; i++) assertThat(c.offer(extra, SiteCrawl.SOURCE_LINK)).isZero();
+        assertThat(c.dropped()).isEqualTo(before + 3);
+        assertThat(c.droppedAtLeast()).isFalse();
+        assertThat(SiteCrawl.fnv64("a")).isNotEqualTo(SiteCrawl.fnv64("b"));
+    }
+
+    @Test
     @DisplayName("geçersiz köken / boş girdi: hiçbir şey eklenmez, istisna yok")
     void invalidInputs() {
         SiteCrawl c = new SiteCrawl("not a url", null, null, null);

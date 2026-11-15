@@ -335,9 +335,19 @@ public final class SitePages {
             site.put("totals", totals);
         }
         site.put("pages", rows);
+        if (prior != null) {
+            for (Map<String, Object> r : prior) {
+                // Devralınan satır taranmamış ya da kısmi ölçülmüşse site analizi de eksik
+                if (SKIPPED.equals(r.get("status")) || Boolean.TRUE.equals(r.get("capped"))) {
+                    site.put("incomplete", true);
+                    break;
+                }
+            }
+        }
         if (extra != null) {
             site.putAll(extra);
             if (extra.get("unscanned_total") instanceof Number n && n.intValue() > 0) site.put("incomplete", true);
+            if (extra.get("crawl") instanceof Map<?, ?> c && Boolean.FALSE.equals(c.get("complete"))) site.put("incomplete", true);
         }
         return site;
     }
