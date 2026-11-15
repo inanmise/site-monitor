@@ -6087,6 +6087,9 @@ public class MonitoringController {
             cm.put("request_count", c.getRequestCount());
             cm.put("failed_count", c.getFailedCount());
             cm.put("time_truncated", c.getTimeTruncated());
+            // Alt sınır bayraklarının üçü de (inceleme 2026-11-15): kaynak tavanı ve bayt tavanı da ölçümü kısmi yapar
+            cm.put("capped", c.getCapped());
+            cm.put("bytes_truncated", c.getBytesTruncated());
             out.put("check", cm);
         }
         out.put("resources", rows.stream().filter(r -> id.equals(r.getMonitorId())).map(this::resourceToMap).toList());

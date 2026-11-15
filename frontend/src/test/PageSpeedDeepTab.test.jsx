@@ -98,6 +98,31 @@ describe('PageSpeedDeepTab', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')).toBeTruthy())
   })
 
+  it('kodsuz 404 = izleme silinmiş (eski pod sayılmaz); 405 = bu sürümde yok', async () => {
+    api.monitoring.getPageSpeedWaterfall.mockResolvedValueOnce({ success: false, status: 404, error: 'Sayfa hızı izlemesi bulunamadı' })
+    const { unmount } = render(<PageSpeedDeepTab monitor={monitor} />)
+    await el('[data-slot="pspd-deep-gone"]')
+    expect(document.querySelector('[data-slot="pspd-deep-unsupported"]')).toBeNull()
+    unmount()
+    api.monitoring.getPageSpeedWaterfall.mockResolvedValueOnce({ success: false, status: 405 })
+    render(<PageSpeedDeepTab monitor={monitor} />)
+    await el('[data-slot="pspd-deep-unsupported"]')
+  })
+
+  it('son ölçümde kaynak saklanmadıysa not "son ölçüm" diye sunulmaz — nötr ton, tarihiyle', async () => {
+    render(<PageSpeedDeepTab monitor={{ ...monitor, last_check: '2026-11-15T11:30:00' }} />)
+    const g = await el('[data-slot="pspd-grade"]')
+    expect(g.getAttribute('data-older')).toBe('true')
+    expect(g.textContent).toContain('latest measurement with stored resources')
+    expect(g.querySelector('.text-success')).toBeNull()
+  })
+
+  it('aynı tarih: son ölçüm (yeşil ton serbest)', async () => {
+    render(<PageSpeedDeepTab monitor={{ ...monitor, last_check: '2026-11-15T10:00:00' }} />)
+    const g = await el('[data-slot="pspd-grade"]')
+    expect(g.getAttribute('data-older')).toBeNull()
+  })
+
   it('başlangıç anı saklanmamış eski ölçüm: not çizilir, şelale yerine açıklama', async () => {
     api.monitoring.getPageSpeedWaterfall.mockResolvedValue({ ...snapshot(5, {}, [{ url: 'https://x.com/a.js', type: 'JS', start_ms: null, duration_ms: 10, bytes: 5 }]),
       data: { ...snapshot(5, {}, [{ url: 'https://x.com/a.js', type: 'JS', start_ms: null, duration_ms: 10, bytes: 5 }]).data, has_start: false } })
@@ -122,7 +147,8 @@ describe('PageSpeedDeepTab', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')).toBeTruthy())
     fireEvent.change(sel, { target: { value: '33' } })
     await waitFor(() => expect(api.monitoring.getPageSpeedWaterfall).toHaveBeenCalledWith(9, { checkId: '33' }))
-    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]').getAttribute('data-letter')).not.toBe('A'))
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')?.getAttribute('data-letter')).not.toBe('A'))
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')).toBeTruthy())
 
     fireEvent.click(document.querySelector('[data-slot="pspd-deep-compare"]'))
     const dlg = await el('[data-slot="pspd-cmp"]')
@@ -153,6 +179,22 @@ describe('PageSpeedDeepTab', () => {
     await waitFor(() => expect(pdf.disabled).toBe(false))
     fireEvent.click(document.querySelector('[data-slot="pspd-deep-xlsx"]'))
     expect(await screen.findByText(/could not start the download/)).toBeTruthy()
+  })
+
+  it('yeni ölçüm yüklenirken eski anlık görüntü rapora gitmez (rapor düğmeleri kapalı)', async () => {
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: { items: [], breaches: [{ check_id: 33, checked_at: 'b' }] } })
+    let resolveB
+    api.monitoring.getPageSpeedWaterfall.mockImplementation((id, { checkId } = {}) => (checkId == null
+      ? Promise.resolve(snapshot(41)) : new Promise((r) => { resolveB = () => r(snapshot(33, { response_ms: 4200 })) })))
+    render(<PageSpeedDeepTab monitor={monitor} />)
+    await el('[data-slot="pspd-grade"]')
+    const sel = await el('[data-slot="pspd-deep-snapshot"]')
+    fireEvent.change(sel, { target: { value: '33' } })
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-deep-pdf"]').disabled).toBe(true))
+    expect(document.querySelector('[data-slot="pspd-deep-xlsx"]').disabled).toBe(true)
+    expect(document.querySelector('[data-slot="pspd-grade"]')).toBeNull()   // eski not gösterilmez
+    resolveB()
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-deep-pdf"]').disabled).toBe(false))
   })
 
   it('geç gelen eski yanıt atılır (seçici hızlı değişince)', async () => {

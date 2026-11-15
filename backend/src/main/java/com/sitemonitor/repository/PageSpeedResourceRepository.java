@@ -44,10 +44,12 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
     Long latestCheckId(@Param("id") Long id);
 
     /**
-     * Görsel aracı köprüsü (2026-11-15): izlemenin SAKLADIĞI kaynaklar arasında adresi birebir eşleşen görsel satırı (en yenisi
-     * önce; en çok 1). Bulunamazsa boş — uç adresi çekmez (sunucu açık vekil olamaz).
+     * Görsel aracı köprüsü (2026-11-15): izlemenin SAKLADIĞI kaynaklar arasında adresi birebir eşleşen görsel satırı (en çok 1;
+     * herhangi bir kopya yeter — boyut kopyalar arasında aynı ölçümün değeridir). Bulunamazsa boş — uç adresi çekmez (sunucu açık
+     * vekil olamaz). Bilerek ORDER BY YOK (inceleme 2026-11-15): "id DESC LIMIT 1" biçimi bulunamayan adreste birincil anahtarı
+     * geriye tarayıp tüm tabloyu okuyabilirdi; böyle izleme kimliği önce gelen indeksle yalnız o izlemenin satırları okunur.
      */
-    @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.type = 'IMG' AND r.url = :url ORDER BY r.id DESC LIMIT 1")
+    @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.type = 'IMG' AND r.url = :url LIMIT 1")
     List<PageSpeedResource> findStoredImage(@Param("id") Long id, @Param("url") String url);
 
     /**

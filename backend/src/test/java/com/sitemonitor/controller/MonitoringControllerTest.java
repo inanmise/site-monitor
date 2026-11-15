@@ -4515,6 +4515,7 @@ class MonitoringControllerTest {
         var c = new com.sitemonitor.model.PageSpeedCheck();
         c.setMonitorId(1L); c.setCheckedAt("2026-11-15T03:00:00"); c.setTtfbMs(180); c.setHtmlMs(390); c.setDnsMs(12);
         c.setConnectMs(20); c.setTlsMs(40); c.setServerMs(150); c.setRequestCount(2);
+        c.setCapped(true); c.setBytesTruncated(false); c.setTimeTruncated(false);
         when(pageSpeedCheckRepo.findById(77L)).thenReturn(Optional.of(c));
 
         mvc.perform(get("/api/monitoring/pagespeed/1/waterfall").session(session("ADMIN")))
@@ -4522,6 +4523,10 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.check_id").value(77))
                 .andExpect(jsonPath("$.data.check.html_ms").value(390))
                 .andExpect(jsonPath("$.data.check.tls_ms").value(40))
+                // üç alt sınır bayrağı da gider (kaynak tavanı ölçümü kısmi yapar — inceleme 2026-11-15)
+                .andExpect(jsonPath("$.data.check.capped").value(true))
+                .andExpect(jsonPath("$.data.check.bytes_truncated").value(false))
+                .andExpect(jsonPath("$.data.check.time_truncated").value(false))
                 .andExpect(jsonPath("$.data.resources.length()").value(1))
                 .andExpect(jsonPath("$.data.resources[0].start_ms").value(410))
                 .andExpect(jsonPath("$.data.resources[0].duration_ms").value(120))

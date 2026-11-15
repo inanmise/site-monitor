@@ -51,9 +51,10 @@ export function buildWaterfall(data, maxRows = WF_MAX_ROWS) {
   }
   const hasStart = d.has_start === true || resources.some((r) => num(r.start_ms) !== null)
   const htmlMs = num(check?.html_ms)
-  const ttfb = num(check?.ttfb_ms)
+  // İlk bayt (ttfb_ms) AYRI, taze bir bağlantıdaki faz probunun ölçümüdür — ana isteğin ilk baytı saklanmaz; HTML çubuğunun
+  // içine çizilmez (inceleme 2026-11-15: iki ayrı ölçüm aynı eksende yanıltırdı). Fazlar `phases` satırında ayrıca söylenir.
   const html = htmlMs !== null ? {
-    start: 0, end: htmlMs, ttfb: ttfb !== null && ttfb <= htmlMs ? ttfb : null, bytes: num(check?.html_bytes),
+    start: 0, end: htmlMs, bytes: num(check?.html_bytes),
     phases: ['dns', 'connect', 'tls', 'server'].map((k) => ({ key: k, ms: num(check?.[`${k}_ms`]) })).filter((p) => p.ms !== null),
   } : null
   let unknownStart = 0
@@ -118,10 +119,23 @@ export function typeTotals(data) {
   return out
 }
 
+/**
+ * Ölçüm bir ALT SINIR mı (inceleme 2026-11-15 — sunucunun `Result.lowerBound()` kuralı + şelale listesinin kesimi): süre
+ * tavanı (`time_truncated`), kaynak tavanı (`capped`), bayt tavanı (`bytes_truncated`) ya da 2000 satır sınırı (`truncated`).
+ * Not, rapor ve karşılaştırma bu TEK kuralı kullanır.
+ */
+export function isLowerBound(data) {
+  const d = isObj(data) ? data : {}
+  const c = isObj(d.check) ? d.check : {}
+  return c.time_truncated === true || c.capped === true || c.bytes_truncated === true || d.truncated === true
+}
+
 // ── İki ölçümü karşılaştır (madde 17) ───────────────────────────────────────────────────────────────────────────────
 
 /** Karşılaştırılan özet satırları (hepsinde küçük olan iyi). */
 export const CMP_METRICS = Object.freeze(['load', 'ttfb', 'html', 'bytes', 'requests', 'unloaded', 'img', 'js', 'css', 'font', 'third'])
+/** Kesik (alt sınır) ölçümde yönü bilinmeyen satırlar — süre / boyut / sayı kesimle küçülür; ilk bayt ve HTML süresi değil. */
+export const CMP_CUT_SENSITIVE = Object.freeze(['load', 'bytes', 'requests', 'unloaded', 'img', 'js', 'css', 'font', 'third'])
 
 function snapshotMetrics(data) {
   const c = isObj(data?.check) ? data.check : {}
@@ -153,13 +167,16 @@ export const CMP_LIST_MAX = 20
 export function compareSnapshots(a, b) {
   const ma = snapshotMetrics(a)
   const mb = snapshotMetrics(b)
+  const cut = isLowerBound(a) || isLowerBound(b)
   const rows = CMP_METRICS.map((key) => {
     const va = ma[key]
     const vb = mb[key]
     const known = va !== null && vb !== null
     const delta = known ? vb - va : null
     const pct = known && va > 0 ? Math.round(((vb - va) / va) * 1000) / 10 : null
-    return { key, a: va, b: vb, delta, pct, worse: known ? (delta === 0 ? false : delta > 0) : null }
+    // Kesik ölçümde boyut / sayı / süre küçülmesi "iyileşme" değildir — yön verilmez (renk yok)
+    const directional = known && !(cut && CMP_CUT_SENSITIVE.includes(key))
+    return { key, a: va, b: vb, delta, pct, worse: directional ? (delta === 0 ? false : delta > 0) : null }
   })
   const listA = (Array.isArray(a?.resources) ? a.resources : []).filter((r) => isObj(r) && typeof r.url === 'string')
   const listB = (Array.isArray(b?.resources) ? b.resources : []).filter((r) => isObj(r) && typeof r.url === 'string')
@@ -193,7 +210,7 @@ export function compareSnapshots(a, b) {
     removed: { items: removed.sort(byBytes).slice(0, CMP_LIST_MAX), total: removed.length },
     grown: { items: grown.sort(byDelta).slice(0, CMP_LIST_MAX), total: grown.length },
     slower: { items: slower.sort(byDelta).slice(0, CMP_LIST_MAX), total: slower.length },
-    partial: a?.truncated === true || b?.truncated === true,
+    partial: cut,
   }
 }
 
@@ -261,7 +278,7 @@ export function gradeSnapshot(data) {
   const known = comps.filter((x) => x.score !== null)
   const wsum = known.reduce((n, x) => n + x.weight, 0)
   const score = values.load === null || wsum === 0 ? null : Math.round(known.reduce((n, x) => n + x.score * x.weight, 0) / wsum)
-  const partial = c.time_truncated === true || d.truncated === true
+  const partial = isLowerBound(d)
   const recs = []
   const failed = values.unloaded ?? res.filter((r) => r.failed === true).length
   if (failed > 0) recs.push({ code: 'FAILED_RESOURCES', params: [failed], urls: res.filter((r) => r.failed === true).slice(0, 5).map((r) => r.url) })

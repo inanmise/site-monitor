@@ -98,7 +98,6 @@ function PageSpeedWaterfall({ wf, data }) {
 
 function HtmlRow({ html, total, t }) {
   const box = barBox(0, html.end, total)
-  const wait = html.ttfb != null ? barBox(0, html.ttfb, total) : null
   return (
     <li data-slot="pspd-wf-row" data-type="html" className="grid min-w-0 grid-cols-1 gap-1 border-b px-2 py-1.5 @xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] @xl:items-center @xl:gap-2">
       <span className={cn('min-w-0 text-xs font-medium text-foreground', WRAP)}>
@@ -106,7 +105,6 @@ function HtmlRow({ html, total, t }) {
       </span>
       <div className="relative h-3 min-w-0 rounded-sm bg-muted/50" aria-hidden="true">
         <div className="absolute inset-y-0 rounded-sm" style={{ left: `${box.left}%`, width: `${box.width}%`, background: WF_COLORS.html }} />
-        {wait && <div className="absolute inset-y-0 rounded-l-sm bg-background/50" style={{ left: `${wait.left}%`, width: `${wait.width}%` }} />}
       </div>
     </li>
   )

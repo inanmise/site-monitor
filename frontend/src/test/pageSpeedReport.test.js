@@ -100,6 +100,20 @@ for (const [lang, D] of [['tr', TR], ['en', EN]]) {
       expect(dl.files[0]).toMatch(/\.pdf$/)
     })
 
+    it('kaynak tavanında kesilen ölçüm "Kısmi ölçüm: Evet" (yalnız süre tavanı değil)', async () => {
+      const d = data({ capped: true })
+      await exportPageSpeedXlsx({ monitor, data: d, grade: gradeSnapshot(d), t })
+      expect(xl.sheets[0].rows.find((r) => r[0] === D['pspd.rep.partial'])[1]).toBe(D['pspd.rep.yes'])
+    })
+
+    it('kısmi notu PDF\'te sonraki başlıkla üst üste binmez', async () => {
+      const d = data({ time_truncated: true })
+      await exportPageSpeedPdf({ monitor, data: d, grade: gradeSnapshot(d), t })
+      const recsTable = calls.tables[2]   // özet, bileşenler, öneriler
+      const compTable = calls.tables[1]
+      expect(recsTable.startY).toBeGreaterThan(compTable.startY + 40 + 12 + 11)
+    })
+
     it('not hesaplanamadıysa "hesaplanamadı" yazar, sahte 0 değil', async () => {
       const d = data({ response_ms: null })
       await exportPageSpeedXlsx({ monitor, data: d, grade: gradeSnapshot(d), t })
