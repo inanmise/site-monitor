@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client.js'
+import { INFLIGHT_JOIN_MAX_MS } from '../utils/timedFetch.js'
 
 /**
  * Çevrimiçi kullanıcı özeti — TEK paylaşılan yoklayıcı (2026-10-02, kullanıcı isteği: "30 sn'de bir tazelensin").
@@ -18,28 +19,42 @@ const subscribers = new Set()
 let state = { data: null, error: false, at: 0 }
 let timer = null
 let inflight = null
+let inflightAt = 0
+let seq = 0   // her yeni istek bir sıra alır: yalnız EN SON başlayanın yanıtı yazılır / süren isteği bırakır
 
 function emit() {
   subscribers.forEach((fn) => fn(state))
 }
 
-/** Hemen bir kez çeker (aynı anda gelen çağrılar tek isteği paylaşır). */
+/**
+ * Hemen bir kez çeker (aynı anda gelen çağrılar tek isteği paylaşır). {@link INFLIGHT_JOIN_MAX_MS}'den yaşlı süren isteğe
+ * katılınmaz (2026-11-15): asılı bir istek sonraki yoklamaları sonsuza dek bekletemez; geç gelen eski yanıt yazılmaz.
+ */
 export function refreshPresence() {
-  if (inflight) return inflight
-  inflight = (async () => {
+  if (inflight && Date.now() - inflightAt < INFLIGHT_JOIN_MAX_MS) return inflight
+  const my = ++seq
+  inflightAt = Date.now()
+  let settled = false
+  const p = (async () => {
+    let next
     try {
       const res = await api.presence.online()
-      state = res?.success && res.data
+      next = res?.success && res.data
         ? { data: res.data, error: false, at: Date.now() }
         : { ...state, error: true, at: Date.now() }
     } catch {
-      state = { ...state, error: true, at: Date.now() }
+      next = { ...state, error: true, at: Date.now() }
     } finally {
-      inflight = null
+      settled = true
+      if (seq === my) inflight = null
     }
+    if (seq !== my) return
+    state = next
     emit()
   })()
-  return inflight
+  // İstemci eşzamanlı attıysa `finally` atamadan ÖNCE koşmuştur: bitmiş söz süren sayılmasın
+  if (!settled) inflight = p
+  return p
 }
 
 function startTimer() {
@@ -93,4 +108,6 @@ export function resetPresenceForTests() {
   document.removeEventListener('visibilitychange', onVisibility)
   state = { data: null, error: false, at: 0 }
   inflight = null
+  inflightAt = 0
+  seq++
 }

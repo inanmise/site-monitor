@@ -438,6 +438,38 @@ class NocNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: sorgu eşik alarmının 7/24 postası maskeli kolonun değerini TAŞIMAZ — bağlamın ham özeti yerine maskeli alarm iletisi (posta + günlük)")
+    void dbQueryThresholdMaskedColumnNotInNocMail() {
+        monitor(NocType.DBQUERY, 70, true, true, null);
+        AlertEvent e = alert(70, "DBQUERY_THRESHOLD", "CRITICAL", "Bakiye sorgusu");
+        // Saklanan ileti EscalationService.buildMessageBody'de maskelenir (DbQueryMailMask)
+        e.setMessage("YÜKSEK: Bakiye sorgusu veritabanı sorgusunun sonucu tanımlı kuralı ihlal etti — Bakiye: gelen ••••, beklenen ≤ 100.");
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_id", 70L);
+        ctx.put("detail", "Bakiye: gelen 98765432, beklenen ≤ 100");          // HAM özet (maskeli kolonun değeri)
+        ctx.put("last_error", "[DB_THRESHOLD] Bakiye: gelen 98765432, beklenen ≤ 100");
+        svc.onAlertDispatched(e, 10L, e.getDomain(), "CRITICAL", "DBQUERY_THRESHOLD", "INITIAL", ctx);
+
+        ArgumentCaptor<String> sentHtml = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(String[].class), any(), anyString(), sentHtml.capture(), anyString(), any(), anyBoolean(), any());
+        assertThat(sentHtml.getValue()).doesNotContain("98765432").contains("••••");
+        assertThat(lastLog().getMessage()).doesNotContain("98765432").contains("••••");
+    }
+
+    @Test
+    @DisplayName("2026-11-15 kapı: sorgu hatası alarmında 7/24 postası sorgu hata metnini gösterir (ayıklanmış \"error\"), ham ayrıntıyı değil")
+    void dbQueryFailUsesScrubbedError() {
+        AlertEvent e = alert(71, "DBQUERY_FAIL", "CRITICAL", "Q");
+        e.setMessage("ileti");
+        assertThat(NocNotificationService.errorOf(Map.of("error", "bağlantı reddedildi", "detail", "sorgu"), e))
+                .isEqualTo("bağlantı reddedildi");
+        assertThat(NocNotificationService.errorOf(Map.of("detail", "ham özet 42"), e)).isEqualTo("ileti");
+        // Sorgu dışı türler değişmez: "detail" kullanılmaya devam eder
+        AlertEvent p = alert(72, "PING_DOWN", "CRITICAL", "h");
+        assertThat(NocNotificationService.errorOf(Map.of("detail", "zaman aşımı"), p)).isEqualTo("zaman aşımı");
+    }
+
+    @Test
     @DisplayName("fırtına günlük satırı da MASKELİ (on takıma kadar arama listesi taşır)")
     void stormLogRowIsRedacted() {
         monitor(NocType.PORT, 61, true, true, null);

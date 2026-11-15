@@ -66,7 +66,7 @@ describe('görsel motoru — kamu arayüzü (sözleşme §2)', () => {
   })
 
   it('Worker ve tuval olmayan ortamda (jsdom): destek yok; işlem BROWSER_UNSUPPORTED — asılı kalmaz', async () => {
-    expect(await engine.engineSupport()).toEqual({ worker: false, webp: false })
+    expect(await engine.engineSupport()).toEqual({ worker: false, webp: false, avif: false })
     expect(engine.engineSupport()).toBe(engine.engineSupport())            // bir kez hesaplanır
     await expect(engine.processImage(await pngBlob(), {})).rejects.toMatchObject({ name: 'EngineError', code: 'BROWSER_UNSUPPORTED' })
     await expect(engine.decodeForPreview(await pngBlob())).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED' })
@@ -141,7 +141,7 @@ describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
   beforeEach(() => { vi.stubGlobal('Worker', FakeWorker) })
 
   it('destek sorgusu Worker a gider ve bir kez yapılır; modül Worker ı olarak kurulur', async () => {
-    expect(await engine.engineSupport()).toEqual({ worker: true, webp: true })
+    expect(await engine.engineSupport()).toEqual({ worker: true, webp: true, avif: false })
     await engine.engineSupport()
     expect(FakeWorker.instances.length).toBe(1)
     expect(FakeWorker.instances[0].opts).toEqual({ type: 'module' })
@@ -195,7 +195,7 @@ describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
     await flush()
     const first = live()[0]
     first.onerror({ preventDefault() {} })                                 // betik yüklenemedi (dağıtım sonrası 404)
-    expect(await support).toEqual({ worker: false, webp: false, staleBundle: true })
+    expect(await support).toEqual({ worker: false, webp: false, avif: false, staleBundle: true })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
     expect(String(url)).toMatch(/imageEngine\/index\.js/)
@@ -238,7 +238,7 @@ describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
     const sup = engine.engineSupport()
     await flush()
     live()[0].onerror({ preventDefault() {} })
-    expect(await sup).toEqual({ worker: false, webp: false })
+    expect(await sup).toEqual({ worker: false, webp: false, avif: false })
   })
 
   it('aynı anda TEK iş: ikinci iş birincisi bitince gönderilir', async () => {
@@ -345,17 +345,109 @@ describe('görsel motoru — Worker kuyruğu (sahte Worker)', () => {
     expect(w2.terminated).toBe(true)
   })
 
+  it('AVIF: Worker AVIF denenebilir derse destek avif:true; yalnız gerçek true sayılır', async () => {
+    FakeWorker.auto = false
+    let p = engine.engineSupport()
+    await flush()
+    let w = live()[0]
+    w.reply({ id: w.posted[0].id, type: 'support', support: { ok: true, webp: true, avif: true } })
+    expect(await p).toEqual({ worker: true, webp: true, avif: true })
+    engine._resetForTests()
+    FakeWorker.instances = []
+    p = engine.engineSupport()
+    await flush()
+    w = live()[0]
+    w.reply({ id: w.posted[0].id, type: 'support', support: { ok: true, webp: true, avif: 'yes' } })
+    expect(await p).toEqual({ worker: true, webp: true, avif: false })
+  })
+
+  it('AVIF kodlayıcı dosyası bulunamadı (inceleme 2026-11-15): iş AVIF e özgü hatayla biter ama KALICI kilit konmaz — sonraki JPEG işi Worker a gider', async () => {
+    const blob = await pngBlob()
+    const a = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    const w = live()[0]
+    w.reply({ id: w.job.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
+    await expect(a).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
+    const b = engine.processImage(blob, { format: 'jpeg' })
+    await flush()
+    expect(w.job.options.format).toBe('jpeg')                                // iş Worker'a gitti
+    w.reply({ id: w.job.id, type: 'result', result: RESULT })
+    expect(await b).toMatchObject({ type: 'webp' })
+    expect(await engine.engineSupport()).not.toHaveProperty('staleBundle')
+  })
+
+  it('Worker in bir işte bildirdiği stale_bundle (yalnız AVIF yolundan gelebilirdi) da kalıcı kilit KOYMAZ', async () => {
+    const blob = await pngBlob()
+    const a = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    const w = live()[0]
+    w.reply({ id: w.job.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    await expect(a).rejects.toMatchObject({ params: { reason: 'stale_bundle' } })
+    const b = engine.processImage(blob, { format: 'jpeg' })
+    await flush()
+    w.reply({ id: w.job.id, type: 'result', result: RESULT })
+    expect(await b).toMatchObject({ type: 'webp' })
+  })
+
+  it('AVIF yükleme hatası kaydı Worker dan gelir ve SONRAKİ işlere geri yollanır (Worker yeniden açılsa da); süresi dolunca gönderilmez, üst sınırla', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const blob = await pngBlob()
+    const a = engine.processImage(blob, { format: 'smallest' })
+    await flush()
+    let w = live()[0]
+    expect(w.job.avifBlock).toBeUndefined()
+    const until = Date.now() + 60_000
+    w.reply({ id: w.job.id, type: 'result', result: RESULT, avifBlock: { until, detail: 'load_timeout' } })
+    await a
+    // aynı Worker'a giden sonraki iş kaydı taşır
+    const b = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    expect(w.job.avifBlock).toEqual({ until, detail: 'load_timeout' })
+    // iş iptal edilir → Worker sonlandırılır; YENİ Worker'a giden iş de kaydı taşır
+    w.reply({ id: w.job.id, type: 'error', code: 'ENCODE_FAILED', params: {}, avifBlock: { until, detail: 'load_timeout' } })
+    await expect(b).rejects.toMatchObject({ code: 'ENCODE_FAILED' })
+    const ac = new AbortController()
+    const c = engine.processImage(blob, { format: 'avif' }, { signal: ac.signal })
+    await flush()
+    ac.abort()
+    await expect(c).rejects.toMatchObject({ code: 'CANCELLED' })
+    const d = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    w = live()[0]
+    expect(w.job.avifBlock).toEqual({ until, detail: 'load_timeout' })
+    w.reply({ id: w.job.id, type: 'result', result: RESULT })
+    await d
+    // süre dolunca gönderilmez
+    vi.setSystemTime(until + 1)
+    const e = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    expect(live()[0].job.avifBlock).toBeUndefined()
+    live()[0].reply({ id: live()[0].job.id, type: 'result', result: RESULT })
+    await e
+    // üst sınır (5 dk) ve geçersiz neden
+    const f = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    live()[0].reply({ id: live()[0].job.id, type: 'result', result: RESULT, avifBlock: { until: Date.now() + 3_600_000, detail: 'İ<x>' } })
+    await f
+    const g = engine.processImage(blob, { format: 'avif' })
+    await flush()
+    expect(live()[0].job.avifBlock.detail).toBe('unavailable')
+    expect(live()[0].job.avifBlock.until).toBeLessThanOrEqual(Date.now() + 5 * 60_000)
+    live()[0].reply({ id: live()[0].job.id, type: 'result', result: RESULT })
+    await g
+  })
+
   it('Worker destek vermezse (OffscreenCanvas yok) ya da yanıtsız kalırsa ana iş parçacığına düşülür', async () => {
     FakeWorker.auto = false
     const p = engine.engineSupport()
     await flush()
     const w = live()[0]
     w.reply({ id: w.posted[0].id, type: 'support', support: { ok: false, webp: false } })
-    expect(await p).toEqual({ worker: false, webp: false })
+    expect(await p).toEqual({ worker: false, webp: false, avif: false })
     engine._resetForTests()
     // Worker kurulamıyor (CSP / eski tarayıcı)
     vi.stubGlobal('Worker', class { constructor() { throw new Error('engellendi') } })
-    expect(await engine.engineSupport()).toEqual({ worker: false, webp: false })
+    expect(await engine.engineSupport()).toEqual({ worker: false, webp: false, avif: false })
   })
 })
 
@@ -407,8 +499,12 @@ describe('görsel motoru — tembel parça kapısı (kaynak düzeyinde)', () => 
     for (const f of files) if (f.name !== 'index.js') expect(dynamicImports(f.src), f.name).toEqual([])
     expect(staticImports(of('engine.worker.js').src).sort()).toEqual(['./core.js', './errors.js'])
     expect(files.filter((f) => staticImports(f.src).includes('fflate')).map((f) => f.name)).toEqual(['pngWriter.js'])
-    // motor kendi içine kapalı: klasör dışından yalnız fflate
-    for (const f of files) for (const s of staticImports(f.src)) expect(s === 'fflate' || /^\.\/[A-Za-z.]+\.js$/.test(s), `${f.name} → ${s}`).toBe(true)
+    // motor kendi içine kapalı: klasör dışından yalnız fflate — ve AVIF kodlayıcısı (@jsquash/avif) YALNIZ avif.worker.js'te;
+    // AVIF Worker'ı yalnız avifClient.js'ten ADRES olarak (`?worker&url`) alınır (2026-11-15)
+    const allowed = (f, s) => s === 'fflate' || /^\.\/[A-Za-z.]+\.js$/.test(s)
+      || (f.name === 'avif.worker.js' && /^@jsquash\/avif\//.test(s))
+      || (f.name === 'avifClient.js' && s === './avif.worker.js?worker&url')
+    for (const f of files) for (const s of staticImports(f.src)) expect(allowed(f, s), `${f.name} → ${s}`).toBe(true)
   })
 
   it('motorun iç modülleri klasör dışından statik içe aktarılmaz (yalnız index.js kamuya açık)', () => {

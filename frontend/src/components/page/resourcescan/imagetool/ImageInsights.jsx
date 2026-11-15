@@ -3,7 +3,7 @@ import { ChevronDown, Lightbulb, ListChecks, Scale } from 'lucide-react'
 import { useT, useDateLocale } from '../../../../i18n/index.jsx'
 import { formatNumber, formatSize } from '../resourceScanModel.js'
 import { TOUCH, WRAP } from '../ResourceScanParts.jsx'
-import { formatGains, howWeDid, insightRecommendations, insightRows } from './imageInsightsModel.js'
+import { AVIF_TARGET_FLOOR, formatGains, howWeDid, insightRecommendations, insightRows } from './imageInsightsModel.js'
 import { pctText, typeLabel } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -119,6 +119,11 @@ function recText(r, t, locale) {
     case 'QUALITY_HIGH': return t('prs.it.ins.rec.QUALITY_HIGH', formatNumber(p0, locale))
     case 'JPEG_RESAVE': return p0 != null ? t('prs.it.ins.rec.JPEG_RESAVE_Q', formatNumber(p0, locale)) : t('prs.it.ins.rec.JPEG_RESAVE')
     case 'BANDING': return t(p0 === 'bit_depth' ? 'prs.it.ins.rec.BANDING_BITS' : 'prs.it.ins.rec.BANDING_PALETTE')
+    case 'NEXT_GEN': {
+      const set = new Set(r.params)
+      if (set.has('webp') && set.has('avif')) return t('prs.it.ins.rec.NEXT_GEN')
+      return t(set.has('avif') ? 'prs.it.ins.rec.NEXT_GEN_AVIF' : 'prs.it.ins.rec.NEXT_GEN_WEBP')
+    }
     default: return t(`prs.it.ins.rec.${r.code}`)
   }
 }
@@ -129,13 +134,20 @@ function stepText(s, t, locale) {
     case 'RESIZED': return t(s.params[2] ? 'prs.it.ins.how.RESIZED' : 'prs.it.ins.how.RESIZED_PLAIN', formatNumber(p0, locale), formatNumber(p1, locale))
     case 'QUALITY_SEARCH':
       if (p1 === 'manual' && p0 != null) return t('prs.it.ins.how.QUALITY_MANUAL', formatNumber(p0, locale))
-      if (p1 === 'target' && p0 != null) return t('prs.it.ins.how.QUALITY_TARGET', formatNumber(p0, locale))
+      // Tarayıcı AVIF açamadı: benzerlik ölçülemedi, arama YAPILMADI — "ikili aramayla bulundu" denmez
+      if (p1 === 'fixed' && p0 != null) return t('prs.it.ins.how.QUALITY_FIXED_AVIF', formatNumber(p0, locale))
+      if (p1 === 'target' && p0 != null) {
+        return s.params[2] === 'avif'
+          ? t('prs.it.ins.how.QUALITY_TARGET_AVIF', formatNumber(p0, locale), formatNumber(AVIF_TARGET_FLOOR, locale))
+          : t('prs.it.ins.how.QUALITY_TARGET', formatNumber(p0, locale))
+      }
       return p0 != null ? t('prs.it.ins.how.QUALITY_SEARCH', formatNumber(p0, locale)) : t('prs.it.ins.how.QUALITY_SEARCH_NONE')
     case 'PNG_LOSSLESS': return t(p0 === false ? 'prs.it.ins.how.PNG_LOSSLESS_PROCESSED' : 'prs.it.ins.how.PNG_LOSSLESS')
     case 'BROWSER_ENCODER':
       if (p1 === 'webp') return t('prs.it.ins.how.BROWSER_ENCODER_WEBP')
       return p0 ? t('prs.it.ins.how.BROWSER_ENCODER_SS', p0) : t('prs.it.ins.how.BROWSER_ENCODER')
     case 'PNG_PALETTE': return t('prs.it.ins.how.PNG_PALETTE', formatNumber(p0, locale))
+    case 'AVIF_ENCODER': return p0 ? t('prs.it.ins.how.AVIF_ENCODER_SS', p0) : t('prs.it.ins.how.AVIF_ENCODER')
     case 'METADATA': return t(p0 === 'kept' ? 'prs.it.ins.how.METADATA_KEPT' : p0 === 'removed' ? 'prs.it.ins.how.METADATA_REMOVED' : 'prs.it.ins.how.METADATA')
     default: return t(`prs.it.ins.how.${s.code}`)
   }

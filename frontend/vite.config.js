@@ -26,9 +26,13 @@ export default defineConfig({
   // Manuel sertifika ayıklayıcısı (2026-10-08, components/manualcert/extract): forge alt modülleri + fflate YALNIZ
   // tembel parçadan / Web Worker'dan yüklenir. Geliştirme sunucusu bunları ilk kullanımda keşfedip sayfayı yenilemesin
   // (açık sihirbaz kapanırdı) diye baştan ön-paketlenir. Üretim paketine etkisi yok.
+  // AVIF kodlayıcısı (2026-11-15, @jsquash/avif): yalnız AVIF Worker'ından yüklenir; ön-paketlenmez (esbuild WASM'ın
+  // yanındaki Emscripten yapıştırıcısını yeniden paketlerdi) ve geliştirme sunucusu onu ilk kullanımda keşfedip sayfayı
+  // yenilemez. Üretim paketine etkisi yok.
   optimizeDeps: {
     include: ['fflate', ...['forge', 'util', 'md', 'sha1', 'sha256', 'sha512', 'hmac', 'pbkdf2', 'cipher', 'cipherModes', 'aes', 'des', 'rc2']
       .map((m) => `node-forge/lib/${m}.js`)],
+    exclude: ['@jsquash/avif'],
   },
   test: {
     globals: true,

@@ -40,6 +40,17 @@ public interface PageSpeedMonitorRepository extends JpaRepository<PageSpeedMonit
             name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
     int updateNextRunAt(@Param("id") Long id, @Param("next") String next);
 
+    /**
+     * Büyüme referansının başlangıcı (2026-11-15 inceleme düzeltmesi): ölçüm tanımı değişince "şimdi"ye çekilir — hedefli,
+     * varlık kaydı ezmez ({@code updatable = false}).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE pagespeed_monitors SET growth_since = :since WHERE id = :id", nativeQuery = true)
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = SCHEDULE_QUERY_TIMEOUT_MS))
+    int updateGrowthSince(@Param("id") Long id, @Param("since") String since);
+
     /** Planı İLK kez kuran çağıran: yalnız {@code next_run_at} hâlâ NULL ise yazar (klasik gövde ile gönderim yarışında tek kazanan). */
     @org.springframework.transaction.annotation.Transactional
     @Modifying

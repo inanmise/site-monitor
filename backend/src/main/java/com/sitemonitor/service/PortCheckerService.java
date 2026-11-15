@@ -251,16 +251,15 @@ public class PortCheckerService {
 
     /** Tünelde elle HTTP GET — yalnız durum satırı okunur (gövde yok, yönlendirme izlenmez: doğrudan yolla aynı). */
     private static void httpOver(Socket tunnel, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
-        httpOn(tunnel, host, port, timeoutMs, path, expect, result, " · vekil üzerinden");
+        httpOn(tunnel, host, port, port == 443 || port == 8443, timeoutMs, path, expect, result, " · vekil üzerinden");
     }
 
     /**
      * BAĞLI bir sokette (vekil tüneli ya da sabit adrese doğrudan bağlantı) elle HTTP GET: 443/8443'te SNI = {@code host}
      * ile TLS, {@code Host} başlığı = {@code host[:port]}. Yalnız durum satırı okunur.
      */
-    private static void httpOn(Socket base, String host, int port, int timeoutMs, String path, String expect,
+    private static void httpOn(Socket base, String host, int port, boolean https, int timeoutMs, String path, String expect,
                                Map<String, Object> result, String detailSuffix) throws Exception {
-        boolean https = port == 443 || port == 8443;
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
         if (!p.startsWith("/")) p = "/" + p;
         Socket s = https ? tlsOver(base, host, port, timeoutMs) : base;
@@ -345,12 +344,18 @@ public class PortCheckerService {
         return Math.max(HTTP_TOTAL_MIN_MS, 3L * Math.max(1, timeoutMs));
     }
 
+    /** Doğrudan HTTP kontrolünde TLS kullanılan portlar (443 / 8443). Paket-görünür örnek yöntemi: test geçici portta TLS ister
+     *  (sabit 8443'e bağlanan test meşgul makinede atlanıyordu — kapı incelemesi 2026-11-15). */
+    boolean tlsPort(int port) {
+        return port == 443 || port == 8443;
+    }
+
     private void doHttp(InetAddress addr, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
         if (addr != null) {
             doHttpPinned(addr, host, port, timeoutMs, path, expect, result);
             return;
         }
-        boolean https = port == 443 || port == 8443;
+        boolean https = tlsPort(port);
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
         if (!p.startsWith("/")) p = "/" + p;
         URL url = URI.create((https ? "https" : "http") + "://" + host + ":" + port + p).toURL();
@@ -410,7 +415,7 @@ public class PortCheckerService {
         }, totalMs, java.util.concurrent.TimeUnit.MILLISECONDS);
         try (raw) {
             raw.setSoTimeout(timeoutMs);
-            httpOn(raw, host, port, timeoutMs, path, expect, result, "");
+            httpOn(raw, host, port, tlsPort(port), timeoutMs, path, expect, result, "");
         } catch (java.io.IOException | RuntimeException e) {
             if (expired.get()) throw pinnedTimeout(totalMs);
             throw e;

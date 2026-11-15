@@ -157,6 +157,21 @@ test('bozuk asset-history.json bir sonraki kaynağa düşer; readList / listFile
   assert.equal(DEFAULT_RELEASES, 5)
 })
 
+test('AVIF kodlayıcısı (2026-11-15): .wasm ve worker parçaları da taşınır — uzantı süzgeci yok', () => {
+  const wasm = 'avif_enc-DcLz8a1y.wasm'
+  const worker = 'avif.worker-B3xQe9Lp.js'
+  assert.ok(NAME.test(wasm) && NAME.test(worker))
+  const prev = tree({
+    'own-assets.txt': [wasm, worker, 'index-old.js'].join('\n') + '\n',
+    [`dist/assets/${wasm}`]: 'wasm-bytes', [`dist/assets/${worker}`]: 'w', 'dist/assets/index-old.js': 'i',
+  })
+  const own = tree({ 'index-new.js': 'n' })
+  const out = outDir()
+  carry({ previous: prev, own, out, release: 'v2', previousRelease: 'v1' })
+  assert.deepEqual(lines(join(out, 'carried-assets.txt')).sort(), [worker, wasm, 'index-old.js'].sort())
+  assert.equal(readFileSync(join(out, 'assets', wasm), 'utf8'), 'wasm-bytes')
+})
+
 test('denetim yanlış çıktıyı yakalar: eksik taşıma, kendi adının taşınması, önceki imaj verilip okunmaması', () => {
   const prev = tree({ 'dist/assets/index-A.js': 'a', 'dist/assets/Lazy-A.js': 'la' })
   const own = tree({ 'index-B.js': 'b' })

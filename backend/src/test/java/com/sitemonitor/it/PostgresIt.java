@@ -90,7 +90,7 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
      */
     public record BootRun(SchemaPatchRunner.Summary patches, List<String> schemaToolProblems,
                           List<String> errorLogs, List<String> silentlySkippedPatches, int patchDebugLines, long millis,
-                          DeferredIndexBuilder.Result deferredIndexes) {}
+                          DeferredIndexBuilder.Result deferredIndexes, List<String> warnLogs) {}
 
     /** {@code -D} önce, ortam değişkeni sonra; URL ya da kullanıcı yoksa {@code null}. */
     public static Config config() {
@@ -243,7 +243,7 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
         }
         DeferredIndexBuilder.Result deferred = awaitDeferredIndexes(ctx, deferredBefore);
         return new Opened(ctx, new BootRun(after, capture.schemaToolProblems(), capture.errors(), capture.skippedPatches(),
-                capture.patchDebugLines(), ms, deferred));
+                capture.patchDebugLines(), ms, deferred, capture.warns()));
     }
 
     /**
@@ -349,6 +349,8 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
 
         private final List<String> schemaTool = Collections.synchronizedList(new ArrayList<>());
         private final List<String> errors = Collections.synchronizedList(new ArrayList<>());
+        /** Kökteki tüm WARN+ satırları (alan şema yamalarının uyarısız koştuğunun kanıtı, kapı incelemesi 2026-11-15). */
+        private final List<String> warns = Collections.synchronizedList(new ArrayList<>());
         private final List<String> skippedPatches = Collections.synchronizedList(new ArrayList<>());
         private final java.util.concurrent.atomic.AtomicInteger patchDebugLines = new java.util.concurrent.atomic.AtomicInteger();
         private volatile Logger root;
@@ -369,6 +371,7 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
                         || logger.startsWith("org.hibernate.engine.jdbc.spi.SqlExceptionHelper");
                 if (hibernateSchema) schemaTool.add(line);
                 if (e.getLevel().isGreaterOrEqual(Level.ERROR)) errors.add(line);
+                warns.add(line);
             }
         };
 
@@ -426,6 +429,7 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
 
         List<String> schemaToolProblems() { synchronized (schemaTool) { return List.copyOf(schemaTool); } }
         List<String> errors() { synchronized (errors) { return List.copyOf(errors); } }
+        List<String> warns() { synchronized (warns) { return List.copyOf(warns); } }
         List<String> skippedPatches() { synchronized (skippedPatches) { return List.copyOf(skippedPatches); } }
         int patchDebugLines() { return patchDebugLines.get(); }
     }

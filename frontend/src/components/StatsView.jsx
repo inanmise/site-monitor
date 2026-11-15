@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../utils/importWithDeadline.js'
 import { CalendarPlus, Grid3x3, Inbox, Info, Plus, RefreshCw, SearchX } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
@@ -204,7 +205,7 @@ export default function StatsView({
   const onShowUpcoming = () => { setKpi('d30'); setSort('days_remaining|asc'); reveal() }
   const clearSearch = () => { setQInput(''); setQ('') }
   const clearAll = () => { setKpi(null); clearSearch(); setIssuers([]); clearWidget(); setSec(null); setWeek(null) }
-  const exportCsv = () => downloadCsv(stampedName('certificate-statistics'), statsCsv(filtered, t, dtm))
+  const exportCsv = () => { if (downloadCsv(stampedName('certificate-statistics'), statsCsv(filtered, t, dtm)) === false) toast.error(t('inv.downloadFailed')) }
 
   const [refreshing, setRefreshing] = useState(false)
   const refresh = async () => {
@@ -253,7 +254,7 @@ export default function StatsView({
   const doExport = async (kind) => {
     setExporting(kind)
     try {
-      const mod = await import('./stats/statsExport.js')
+      const mod = await importWithDeadline(() => import('./stats/statsExport.js'))
       const sheets = {
         summary: summaryRows({ t, kpi: kpiCounts(certs), exec, security: securityCounts(certs), renewal: src.renewal.data,
           filters: chips.map((c) => c.label).join(' · ') || null }),

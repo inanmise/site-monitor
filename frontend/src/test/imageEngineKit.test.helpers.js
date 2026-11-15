@@ -248,8 +248,9 @@ const FAKE_MAGIC = [0x46, 0x4b, 0x45, 0x21]
  * Sahte kayıplı kodlayıcı: kaliteye göre değerleri kaba adımlara yuvarlar, zlib ile sıkıştırır. Gerçek kodlayıcı gibi
  * kalite düştükçe dosya küçülür ve benzerlik azalır (tek yönlü). `encodes` kodlama sayacıdır.
  */
-export function fakePlatform({ webp = true, failDecode = false } = {}) {
-  const stats = { encodes: 0, decodes: 0, regionDecodes: 0, closed: 0, prepared: 0, sessionsClosed: 0 }
+export function fakePlatform({ webp = true, failDecode = false, avif = null } = {}) {
+  const stats = { encodes: 0, decodes: 0, regionDecodes: 0, closed: 0, prepared: 0, sessionsClosed: 0, avifPrepared: 0, avifEncodes: 0,
+    avifQualities: [] }
   const lossy = (image, mime, quality) => {
     const q = Math.round(quality * 100)
     const step = Math.max(1, Math.round((100 - q) / 3))
@@ -319,6 +320,8 @@ export function fakePlatform({ webp = true, failDecode = false } = {}) {
     },
     async decodeRegions(blob, rects, expectW, expectH) {
       stats.regionDecodes += 1
+      // AVIF'i çözemeyen tarayıcı benzetimi
+      if (avif && avif.decodable === false && blob.type === 'image/avif') throw new EngineError('DECODE_FAILED', { reason: 'decoder' })
       const img = await unpack(blob)
       if (img.width !== expectW || img.height !== expectH) throw new EngineError('ENCODE_FAILED', { reason: 'size_mismatch' })
       return rects.map((r) => {
@@ -330,6 +333,40 @@ export function fakePlatform({ webp = true, failDecode = false } = {}) {
         return out
       })
     },
+  }
+  // AVIF (2026-11-15): `avif` verilirse platform AVIF'i "destekler" — kodlayıcı aynı sahte kayıplı kodlayıcıdır (MIME
+  // image/avif). { available = true, prepareError, encodeError, decodable = true, blocked, clock, encodeMs }
+  //  • `blocked`: platformun `avifBlocked()` yanıtı (yakın zamandaki yükleme hatasının nedeni, ör. 'asset_missing')
+  //  • `clock` ({ t }) + `encodeMs` (sayı ya da piksel → ms): her AVIF kodlaması sahte saati ilerletir; istenen süre sınırı
+  //    (`timeoutMs`, gerçek istemci gibi 90 sn'ye kırpılır) aşılırsa saat sınır kadar ilerler ve süre hatası atılır
+  if (avif) {
+    stats.avifTimeouts = []
+    platform.avifAvailable = async () => avif.available !== false
+    if (avif.blocked !== undefined) platform.avifBlocked = () => avif.blocked
+    platform.prepareAvif = async (image, tuning) => {
+      stats.avifPrepared += 1
+      stats.avifTuning = tuning
+      if (avif.prepareError) throw avif.prepareError
+      return {
+        async encode(mime, quality, opts) {
+          stats.avifEncodes += 1
+          stats.avifQualities.push(Math.round(quality * 100))
+          stats.avifTimeouts.push(opts?.timeoutMs ?? null)
+          if (avif.encodeError) throw avif.encodeError
+          if (avif.clock && avif.encodeMs) {
+            const ms = typeof avif.encodeMs === 'function' ? avif.encodeMs(image.width * image.height) : avif.encodeMs
+            const cap = Math.min(90_000, opts?.timeoutMs ?? Infinity)
+            if (ms > cap) {
+              avif.clock.t += cap
+              throw new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: cap < 90_000 ? 'time_budget' : 'encode_timeout' })
+            }
+            avif.clock.t += ms
+          }
+          return lossy(image, mime, quality)
+        },
+        close() { stats.sessionsClosed += 1 },
+      }
+    }
   }
   return platform
 }

@@ -8,14 +8,14 @@ import { Spinner } from '../../../ui/Progress.jsx'
 import { formatNumber, formatSize, plural } from '../resourceScanModel.js'
 import { TOUCH, WRAP } from '../ResourceScanParts.jsx'
 import { useImageTool, useTopic } from './ImageToolContext.jsx'
-import { BULK_MAX_IMAGES, UNAVAILABLE_REASONS, bulkPlan, suggestedWidth } from './imageToolModel.js'
+import { BULK_MAX_IMAGES, UNAVAILABLE_REASONS, bulkPlan, formatUnavailableKey, suggestedWidth } from './imageToolModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Switch } from '@/components/shadcn/switch'
 import { cn } from '@/lib/utils'
 
-const BULK_FORMATS = ['keep', 'webp', 'smallest']
+const BULK_FORMATS = ['keep', 'webp', 'avif', 'smallest']
 
 /**
  * "Büyük görselleri optimize edip indir (ZIP)" düğmesi (2026-11-14, kullanıcı kararı 4) — görsel etkisi kartında ve
@@ -57,7 +57,9 @@ function BulkDialog({ ctx, items, finding, onClose }) {
   // Alınamayacaklar nedenine göre sayılır (hepsi `missing.txt`'ye yazılır — sessizce atlanmaz)
   const reasons = UNAVAILABLE_REASONS.map((r) => [r, skipped.filter((s) => s.reason === r).length]).filter(([, n]) => n > 0)
   const webp = support.webp === true
+  const avif = support.avif === true
   const supportKnown = support.state === 'ready'
+  const off = (f) => supportKnown && ((f === 'webp' && !webp) || (f === 'avif' && !avif))
   const blocker = !canRun ? 'no_permission' : !itemsKept ? 'items_gone' : null
 
   const start = () => {
@@ -113,11 +115,11 @@ function BulkDialog({ ctx, items, finding, onClose }) {
               </div>
             </div>
             <Field label={t('prs.it.set.format')} name="bulkFormat" className="mb-0"
-              hint={supportKnown && !webp ? t('prs.it.set.webpOff') : t(`prs.it.set.formatHint.${format}`)}>
+              hint={formatUnavailableKey(format, support) ? t(formatUnavailableKey(format, support)) : t(`prs.it.set.formatHint.${format}`)}>
               {({ id, describedBy }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} value={format} data-slot="prs-it-bulk-format" className="pointer-coarse:h-10"
                   onChange={(e) => setFormat(e.target.value)}>
-                  {BULK_FORMATS.map((f) => <NativeSelectOption key={f} value={f} disabled={f === 'webp' && supportKnown && !webp}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>)}
+                  {BULK_FORMATS.map((f) => <NativeSelectOption key={f} value={f} disabled={off(f)}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>)}
                 </NativeSelect>
               )}
             </Field>

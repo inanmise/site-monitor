@@ -4,11 +4,12 @@ import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 // Ayarlar → Teknik hata raporu — kanal özetini dışa aktarma (2026-10-17, E22): "Dışa aktar" → CSV / Excel (.xlsx), SÜZÜLMÜŞ +
 // SIRALANMIŞ listenin TÜMÜ (görünen sayfa değil), başlık satırı + ekrandaki metinler; bilinmeyen değer "Bilinmiyor".
-const dl = vi.hoisted(() => ({ csv: [], blob: [] }))
+const dl = vi.hoisted(() => ({ csv: [], blob: [], fail: false }))
 vi.mock('../utils/csvExport.js', async (orig) => ({
   ...(await orig()),
-  downloadCsv: (name, csv) => { dl.csv.push({ name, csv }) },
-  downloadBlob: (name, blob) => { dl.blob.push({ name, blob }) },
+  // `fail`: tarayıcı indirmeyi başlatamadı (gerçek yardımcılar o zaman false döner — 2026-11-15)
+  downloadCsv: (name, csv) => { dl.csv.push({ name, csv }); return dl.fail ? false : true },
+  downloadBlob: (name, blob) => { dl.blob.push({ name, blob }); return dl.fail ? false : true },
 }))
 const xl = vi.hoisted(() => ({ sheets: [], throwWith: null, loaded: 0 }))
 vi.mock('../utils/xlsxWriter.js', async (orig) => {
@@ -56,7 +57,7 @@ async function openExport() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  dl.csv = []; dl.blob = []; xl.sheets = []; xl.throwWith = null
+  dl.csv = []; dl.blob = []; dl.fail = false; xl.sheets = []; xl.throwWith = null
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   api.teams.directory.mockResolvedValue({ success: true, data: [] })
   api.admin.techErrorSettings.mockResolvedValue({ success: true, data: {
@@ -91,6 +92,19 @@ describe('Ayarlar → Teknik hata raporu — dışa aktarma', () => {
     expect(lines[2][0]).toBe('Kanal 01')
     expect(lines[32]).toEqual(['Mobil', 'Dijital Kanallar', 'Evet', 'Evet', 'Tanımlı', '2', '1', 'Gönderildi', 'Onaylandı'])
     expect(lines[33]).toEqual(['POS', 'Ödeme Sistemleri', 'Hayır', 'Hayır', 'Eksik — rapor gönderilemez', '0', '0', 'Dönem raporu yok', '—'])
+  })
+
+  it('tarayıcı indirmeyi başlatamazsa (CSV ve Excel) hata tostu — sessiz kalmaz (2026-11-15, prod kapısı)', async () => {
+    dl.fail = true
+    render(<TechErrorReportSettings />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="tes-channel"]')).toHaveLength(25))
+    await openExport()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'CSV (.csv)' }))
+    expect(await screen.findByText('Dosya hazırlandı ama tarayıcı indirmeyi başlatamadı. Tarayıcının indirme iznini kontrol edip yeniden deneyin.')).toBeInTheDocument()
+    await openExport()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Excel (.xlsx)' }))
+    await waitFor(() => expect(screen.getAllByText('Dosya hazırlandı ama tarayıcı indirmeyi başlatamadı. Tarayıcının indirme iznini kontrol edip yeniden deneyin.').length).toBeGreaterThanOrEqual(1))
+    await waitFor(() => expect(dl.blob).toHaveLength(1))
   })
 
   it('süzgeç uygulanınca yalnız süzülenler yazılır (arama + durum)', async () => {

@@ -169,17 +169,19 @@ describe('9 / 12 — "İndir" satırı: karşılaştırma, durum bölgesi; elle 
 })
 
 describe('8 — duyarlı set: çıktı biçimi açık seçilir, set tek türdür', () => {
-  const open = ({ format = 'keep', type = 'gif', webp = true } = {}) => {
-    const store = createImageToolStore({ fetchImage: vi.fn(), engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp }) }), download: vi.fn(() => true) })
-    eng.engineSupport.mockResolvedValue({ worker: true, webp })
+  const open = ({ format = 'keep', type = 'gif', webp = true, avif = false } = {}) => {
+    const store = createImageToolStore({ fetchImage: vi.fn(), engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp, avif }) }), download: vi.fn(() => true) })
+    eng.engineSupport.mockResolvedValue({ worker: true, webp, avif })
     return render(<ResponsiveSetDialog name="Animasyon.gif" base="Animasyon" blob={blobOf(400 * 1024)} format={format}
       info={{ width: 1000, height: 600, type, hasAlpha: false }} store={store} onClose={() => {}} />)
   }
 
   it('"aynı biçim" / "en küçük" yolu yok; panel "aynı biçim"deyse varsayılan WebP; her genişlik o biçimde üretilir', async () => {
-    expect(SET_FORMATS).toEqual(['webp', 'jpeg', 'png'])
+    expect(SET_FORMATS).toEqual(['webp', 'avif', 'jpeg', 'png'])
     open()
-    await waitFor(() => expect([...slot('prs-it-rs-format').options].map((o) => o.value)).toEqual(['webp', 'jpeg', 'png']))
+    await waitFor(() => expect([...slot('prs-it-rs-format').options].map((o) => o.value)).toEqual(['webp', 'avif', 'jpeg', 'png']))
+    // tarayıcı AVIF üretemiyor (destek avif:false) → seçenek görünür ama kapalı
+    await waitFor(() => expect([...slot('prs-it-rs-format').options].find((o) => o.value === 'avif').disabled).toBe(true))
     expect(slot('prs-it-rs-format').value).toBe('webp')
     fireEvent.click(slot('prs-it-rs-go'))
     await waitFor(() => expect(eng.processImage).toHaveBeenCalledTimes(3))
@@ -194,6 +196,27 @@ describe('8 — duyarlı set: çıktı biçimi açık seçilir, set tek türdür
     expect(defaultSetFormat('keep', { type: 'gif' }, false)).toBe('png')
     expect(defaultSetFormat('keep', { type: 'jpeg', hasAlpha: true }, false)).toBe('png')
     expect(defaultSetFormat('keep', { type: 'jpeg' }, false)).toBe('jpeg')
+    // AVIF (2026-11-15): panel AVIF'teyse ve tarayıcı üretebiliyorsa (ya da bilinmiyorsa) AVIF; üretemiyorsa WebP / yedek
+    expect(defaultSetFormat('avif', { type: 'jpeg' }, true, true)).toBe('avif')
+    expect(defaultSetFormat('avif', { type: 'jpeg' }, true, null)).toBe('avif')
+    expect(defaultSetFormat('avif', { type: 'jpeg' }, true, false)).toBe('webp')
+    expect(defaultSetFormat('avif', { type: 'png' }, false, false)).toBe('png')
+  })
+
+  it('AVIF seti: varsayılan <picture> (önce <source type="image/avif">, yedek <img> özgün); <img> seçilirse uyarı', async () => {
+    open({ format: 'avif', type: 'jpeg', avif: true })
+    await waitFor(() => expect(slot('prs-it-rs-format').value).toBe('avif'))
+    expect([...slot('prs-it-rs-format').options].find((o) => o.value === 'avif').disabled).toBe(false)
+    fireEvent.click(slot('prs-it-rs-go'))
+    await waitFor(() => expect(eng.processImage).toHaveBeenCalledTimes(3))
+    expect(eng.processImage.mock.calls.map((c) => c[1].format)).toEqual(['avif', 'avif', 'avif'])
+    await waitFor(() => expect(document.body.textContent).toContain('<source type="image/avif"'))
+    expect(document.body.textContent).toMatch(/<img src="Animasyon\.gif"/)
+    expect(document.querySelector('[data-slot="prs-it-rs-avif-picture"]')).toBeNull()
+    const imgOpt = [...document.querySelectorAll('[data-slot="prs-it-rs-kind"] button, [data-slot="prs-it-rs-kind"] [role="radio"]')]
+      .find((b) => /img/i.test(b.textContent) || b.getAttribute('value') === 'img')
+    fireEvent.click(imgOpt)
+    await waitFor(() => expect(document.querySelector('[data-slot="prs-it-rs-avif-picture"]')).not.toBeNull())
   })
 })
 

@@ -553,6 +553,8 @@ public class MonitoringController {
         if (!com.sitemonitor.service.baseline.BaselineTypes.supported(type)) return notFound("Bilinmeyen izleme türü");
         BaselineRef ref = resolveBaselineMonitor(type, id);
         if (ref == null) return notFound("İzleme bulunamadı");
+        ResponseEntity<Map<String, Object>> hidden = hiddenMonitor(session, ref.teamId());
+        if (hidden != null) return hidden;
         if (!canOperateTeam(session, ref.teamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
         var res = baselineConfigService.save(type, id, body == null ? java.util.Map.of() : body);
         if (!res.ok()) {
@@ -863,6 +865,7 @@ public class MonitoringController {
         String kwPrevRequestFp = entity instanceof KeywordMonitor kwBefore ? keywordRequestFingerprint(kwBefore) : null;
         // Dinamik taban hedefi geri yüklemeden ÖNCE (hata taraması 2026-11-13 #7: güncellemeyle aynı örnek temizliği)
         String baselineTargetBefore = baselineTargetOf(resolved, entity);
+        List<Object> psGrowthDefBefore = entity instanceof com.sitemonitor.model.PageSpeedMonitor psPre ? pageSpeedGrowthDefinition(psPre) : null;
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
         if (!skippedFields.isEmpty()) maskedSkipped = maskedSkipped.stream().filter(f -> !"rulesJson".equals(f)).toList();
@@ -982,6 +985,8 @@ public class MonitoringController {
         // Geri alma da bir GÜNCELLEMEDİR: kaydın "son değiştiren/son değişiklik" künyesi
         // güncellenmezse kart, geri almayı yapan kişiyi ve zamanı hiç göstermez.
         touchUpdated(entity, session);
+        // Sayfa hızı ölçüm tanımı değiştiyse büyüme referansı KAYITTAN ÖNCE sıfırlanır (güncellemeyle aynı sıra ve gerekçe)
+        if (entity instanceof com.sitemonitor.model.PageSpeedMonitor psNow) pageSpeedResetGrowthIfChanged(id, psGrowthDefBefore, psNow);
         if (dbq != null) {
             // Ad tüm takımlarda tekil (K1): ad geri dönüyorsa denetim + kayıt aynı ad kilidi altında; yarış = 409
             boolean nameChanged = dbqOldName != null && !dbqOldName.equals(dbq.getName());
@@ -1066,7 +1071,11 @@ public class MonitoringController {
         return switch (kind) {
             case MonitorHistoryService.HTTP -> ((HttpMonitor) entity).getUrl();
             case MonitorHistoryService.KEYWORD -> ((KeywordMonitor) entity).getUrl();
-            case MonitorHistoryService.PAGESPEED -> ((com.sitemonitor.model.PageSpeedMonitor) entity).getUrl();
+            case MonitorHistoryService.PAGESPEED -> {
+                // Ölçüm kipi yük süresi düzeyini değiştirir (inceleme 2026-11-15) — güncellemeyle aynı kural
+                var m = (com.sitemonitor.model.PageSpeedMonitor) entity;
+                yield Boolean.TRUE.equals(m.getExtendedMeasurement()) ? m.getUrl() + "|ext" : m.getUrl();
+            }
             case MonitorHistoryService.PING -> ((com.sitemonitor.model.PingMonitor) entity).getHost();
             case MonitorHistoryService.PORT -> {
                 var m = (com.sitemonitor.model.PortMonitor) entity;
@@ -1896,6 +1905,18 @@ public class MonitoringController {
 
     private ResponseEntity<Map<String, Object>> notFound(String msg) {
         return ResponseEntity.status(404).body(Map.of("success", false, "error", msg));
+    }
+
+    /**
+     * Görünmeyen izleme YOK sayılır (kapı incelemesi 2026-11-15): çalıştırma / yazma uçları önce görüş kapsamını
+     * ({@link SessionScope#canViewMonitoring}) sorar — görünmeyen izleme 404 (403 varlığı sızdırıyordu; kimliği tahmin eden
+     * kullanıcı başka takımın izlemesinin VARLIĞINI öğreniyordu, her deneme bir ACCESS_DENIED kaydı yazıyordu). Görünüp
+     * çalıştırılamayan izleme (VIEW paylaşımı, 7/24 operatörü) 403 kalır. {@code PageResourceImageController} deseni.
+     * Görünüyorsa null.
+     */
+    private ResponseEntity<Map<String, Object>> hiddenMonitor(HttpSession session, Long teamId) {
+        return SessionScope.canViewMonitoring(session, teamId) ? null
+                : notFound(com.sitemonitor.util.Msg.t("İzleme bulunamadı", "Monitor not found"));
     }
 
     /**
@@ -2826,6 +2847,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return findLivePort(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()));
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = portChecker.check(m);
@@ -3394,6 +3417,8 @@ public class MonitoringController {
             // tetikleyebiliyordu. Zararı da ölçülmüştü: takım yöneticisi toplu kontrole bastığında
             // her satır 403 dönüyor ve GlobalExceptionHandler her biri için ACCESS_DENIED denetim
             // kaydı yazıyordu — 40 monitörlük sayfada tek tıklama 40 sahte güvenlik olayı.
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = dnsChecker.check(m.getDomain(), m.getRecordType());
@@ -3819,6 +3844,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerKeyword(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return keywordMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // Beklentili kontrol (2026-10-04): zamanlanmış turla AYNI tanım (kw sözleşmesi §13) ve AYNI karar ({@code ok} kontrolde).
             Map<String, Object> r = keywordChecker.check(keywordSpecFor(m));
@@ -5184,6 +5211,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerHttp(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return httpMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // İLK kontrol burada koşar: kullanıcı sonucu ANINDA görsün (kart boş dönmesin).
             // Gelişmiş istek alanı yoksa (NONE) denetleyicinin eski girişi — istek/karar birebir eskisi (2026-10-01).
@@ -5638,6 +5667,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPage(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pageMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // H1c: per-monitör cooldown — sayfa kontrolü (main + N kaynak) pahalıdır; art arda tetik request-thread'i tüketmesin.
             long nowMs = System.currentTimeMillis();
@@ -5730,7 +5761,9 @@ public class MonitoringController {
             // Madde 11 / 12: tür bütçeleri ve asgari sayfa boyutu eşiği
             "maxJsKb", "maxImgKb", "maxFontKb", "maxThirdPartyKb", "minPageKb",
             // 2026-11-15 (Sayfa Hızı 2. sürüm madde 14): zamanlama penceresi / cron (sentetik izlemeyle aynı kolonlar)
-            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson" };
+            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson",
+            // 2026-11-15 (Sayfa Hızı 2c, madde 10 / 13): genişletilmiş ölçüm + büyüme alarmı
+            "extendedMeasurement", "growthBytesPct", "growthRequestsPct", "growthBytesBand" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -5764,6 +5797,7 @@ public class MonitoringController {
         // kuralla aynı (kayıtlı değer yerine yeni kaydın varsayılanı); kendi kapsamıyla oluşturanda hiçbir şey değişmez.
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.PageSpeedMonitor());
         requirePageSpeedBudgets(body, null);   // tür bütçeleri + asgari boyut (2026-11-14): 400 alan hatası, yan etkiden ÖNCE
+        requirePageSpeedGrowth(body, null);    // büyüme alarmı (2026-11-15): 400 alan hatası, yan etkiden ÖNCE
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, null);   // madde 14: 400, yan etkiden ÖNCE
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
@@ -5779,8 +5813,12 @@ public class MonitoringController {
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
         applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
+        // Genişletilmiş ölçüm (2026-11-15, madde 10): YENİ izleme varsayılan AÇIK doğar; gövde açıkça false derse kapalı
+        // (Kopyala klasik kaynağın kipini taşır). Mevcut izlemelere dokunulmaz (null = kapalı).
+        m.setExtendedMeasurement(true);
         applyPageSpeedFields(m, body, session);
         if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14: kolonlar + etkin aralık
+        m.setGrowthSince(now);   // büyüme referansı bu tanımla başlar (inceleme 2026-11-15)
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
@@ -5801,9 +5839,13 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
             requirePageSpeedBudgets(body, m);   // tür bütçeleri + asgari boyut (2026-11-14): alarm kapatma / kayıttan ÖNCE
+            requirePageSpeedGrowth(body, m);    // büyüme alarmı (2026-11-15): alarm kapatma / kayıttan ÖNCE
             // Madde 14: zamanlama doğrulaması da alarm kapatma / kayıttan ÖNCE; plan sıfırlama kararı için önceki tanım
             com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, m);
             com.sitemonitor.model.PageSpeedMonitor psBefore = pageSpeedScheduleCopy(m);
+            // Ölçüm tanımı + kip DEĞİŞİMDEN ÖNCE (inceleme 2026-11-15): büyüme referansı ve dinamik yük tabanı bunlara bağlı
+            List<Object> psGrowthDefBefore = pageSpeedGrowthDefinition(m);
+            boolean psExtBefore = Boolean.TRUE.equals(m.getExtendedMeasurement());
             if (body.get("name") != null) m.setName((String) body.get("name"));
             if (body.get("url")  != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -5819,10 +5861,16 @@ public class MonitoringController {
             applyPageSpeedFields(m, body, session);
             if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14
             m.setUpdatedAt(ISO.format(Instant.now()));
+            // Referans sıfırlama KAYITTAN ÖNCE (ayrı, hedefli yazım): yazım düşerse kayıt da yapılmaz (500, tutarlı); kayıt düşerse
+            // gereksiz bir sıfırlama kalır (temkinli taraf) — tersi "kaydedildi ama eski referansla sahte büyüme alarmı" olurdu
+            pageSpeedResetGrowthIfChanged(m.getId(), psGrowthDefBefore, m);
             com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
             boolean psReplanned = pageSpeedReplanIfChanged(psBefore, saved);   // madde 14: önce ya da sonra zamanlamalıysa plan sıfırlanır
-            if (baselineConfigService != null && _before != null && _before.get("url") != null
-                    && !_before.get("url").toString().equals(saved.getUrl()))   // URL (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+            boolean psUrlChanged = _before != null && _before.get("url") != null && !_before.get("url").toString().equals(saved.getUrl());
+            // Ölçüm kipi de yük süresinin DÜZEYİNİ değiştirir (genişletilmiş = CSS içi kaynaklar + ertelenen görseller): kip
+            // değişince dinamik yük tabanının eski örnekleri yeni düzeye karışmasın — URL değişimiyle aynı (inceleme 2026-11-15)
+            boolean psModeChanged = psExtBefore != Boolean.TRUE.equals(saved.getExtendedMeasurement());
+            if (baselineConfigService != null && (psUrlChanged || psModeChanged))   // taban çizgisi hedefi değişti → eski örnekler karışmasın
                 baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS)));
@@ -5933,13 +5981,19 @@ public class MonitoringController {
                 new CsvColumn<>("first_party_bytes", com.sitemonitor.model.PageSpeedCheck::getFirstPartyBytes),
                 new CsvColumn<>("third_party_bytes", com.sitemonitor.model.PageSpeedCheck::getThirdPartyBytes),
                 new CsvColumn<>("undecided_metrics", com.sitemonitor.model.PageSpeedCheck::getUndecidedMetrics),
-                new CsvColumn<>("download_ms", com.sitemonitor.model.PageSpeedCheck::getDownloadMs)), response);
+                new CsvColumn<>("download_ms", com.sitemonitor.model.PageSpeedCheck::getDownloadMs),
+                // 2026-11-15 (Sayfa Hızı 2c): ölçüm kipi ve türü — boş = klasik kip / zamanlanmış
+                new CsvColumn<>("extended", com.sitemonitor.model.PageSpeedCheck::getExtended),
+                new CsvColumn<>("manual", com.sitemonitor.model.PageSpeedCheck::getManual),
+                new CsvColumn<>("recheck", com.sitemonitor.model.PageSpeedCheck::getRecheck)), response);
     }
 
     @PostMapping("/pagespeed/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerPageSpeed(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pageSpeedMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // Per-monitör cooldown: bir ölçüm ana sayfa + onlarca kaynak isteği demek; art arda tetik
             // request-thread'lerini tüketir (sayfa bütünlüğündeki H1c ile aynı gerekçe).
@@ -6018,6 +6072,7 @@ public class MonitoringController {
         out.put("tls_ms",         r.phases() == null ? null : r.phases().tlsMs());
         out.put("server_ms",      r.phases() == null ? null : r.phases().serverMs());
         putBreakdown(out, r.breakdown());
+        out.put("extended",       r.extended());   // 2026-11-15: deneme genişletilmiş kipte mi ölçüldü
         out.put("error",          r.error());
         List<Map<String, Object>> rows = new ArrayList<>();
         List<PageSpeedCheckerService.Measured> heavy = new ArrayList<>(r.resources());
@@ -6124,6 +6179,8 @@ public class MonitoringController {
             // Alt sınır bayraklarının üçü de (inceleme 2026-11-15): kaynak tavanı ve bayt tavanı da ölçümü kısmi yapar
             cm.put("capped", c.getCapped());
             cm.put("bytes_truncated", c.getBytesTruncated());
+            // Ölçüm kipi (2026-11-15): kipleri farklı iki ölçümün toplamları karşılaştırılamaz (arayüz yön göstermez)
+            cm.put("extended", Boolean.TRUE.equals(c.getExtended()));
             out.put("check", cm);
         }
         out.put("resources", rows.stream().filter(r -> id.equals(r.getMonitorId())).map(this::resourceToMap).toList());
@@ -6163,7 +6220,7 @@ public class MonitoringController {
             java.io.Writer w = new java.io.OutputStreamWriter(response.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8);
             w.write(0xFEFF);
             w.write(com.sitemonitor.util.Csv.row("url", "type", "bytes", "truncated", "duration_ms", "http_status",
-                    "third_party", "failed", "checked_at"));
+                    "third_party", "failed", "checked_at", "found_in"));
             int rows = 0;
             for (int pno = 0; rows < PAGESPEED_RES_CSV_MAX; pno++) {
                 org.springframework.data.domain.Pageable pg = PageRequest.of(pno, 1000);
@@ -6175,7 +6232,8 @@ public class MonitoringController {
                     if (!id.equals(r.getMonitorId())) continue;
                     boolean f = r.getStatusCode() == null || r.getStatusCode() >= 400;
                     w.write(com.sitemonitor.util.Csv.row(r.getUrl(), r.getType(), r.getBytes(), Boolean.TRUE.equals(r.getTruncated()),
-                            r.getDurationMs(), r.getStatusCode(), Boolean.TRUE.equals(r.getThirdParty()), f, r.getCheckedAt()));
+                            r.getDurationMs(), r.getStatusCode(), Boolean.TRUE.equals(r.getThirdParty()), f, r.getCheckedAt(),
+                            r.getFoundIn()));
                     if (++rows >= PAGESPEED_RES_CSV_MAX) break;
                 }
                 if (chunk.size() < 1000) break;
@@ -6268,7 +6326,37 @@ public class MonitoringController {
         }
         Map<String, Object> out = new LinkedHashMap<>(buildResponseSeries(projected, range[0], range[1], false));
         out.put("metric", metric);
+        // Ölçüm kipi değişimleri (2026-11-15, madde 10): grafiğin olay katmanında NÖTR işaret — iki yanındaki toplamlar
+        // karşılaştırılamaz. Yalnız sayfa alınabilen ölçümler arasında; bu izlemede hiç değişim yoksa boş liste.
+        out.put("changes", pageSpeedModeChanges(raw, 6, 5));
         return ok(out);
+    }
+
+    /**
+     * Ölçüm kipi değişimleri (2026-11-15, Sayfa Hızı 2c): satırlar YENİDEN ESKİYE gelir ({@code [0]} = zaman); {@code extCol}
+     * kip kolonu, {@code okCol} "sayfa alındı" kolonu. Eskiden yeniye yürünür, alınabilen ardışık iki ölçümün kipi farklıysa
+     * {@code {at, event: "MODE", fields: ["extendedMeasurement"], extended}} — grafiğin olay katmanı biçimi. Kolonu olmayan satır
+     * (eski test / sürüm) atlanır; en çok 100 işaret (en yeniler).
+     */
+    static List<Map<String, Object>> pageSpeedModeChanges(List<Object[]> rowsNewestFirst, int extCol, int okCol) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rowsNewestFirst == null) return out;
+        Boolean prev = null;
+        for (int i = rowsNewestFirst.size() - 1; i >= 0; i--) {
+            Object[] r = rowsNewestFirst.get(i);
+            if (r == null || r.length <= Math.max(extCol, okCol) || !Boolean.TRUE.equals(r[okCol])) continue;
+            boolean ext = Boolean.TRUE.equals(r[extCol]);
+            if (prev != null && prev != ext) {
+                Map<String, Object> c = new LinkedHashMap<>();
+                c.put("at", r[0] == null ? null : r[0].toString());
+                c.put("event", "MODE");
+                c.put("fields", List.of("extendedMeasurement"));
+                c.put("extended", ext);
+                out.add(c);
+            }
+            prev = ext;
+        }
+        return out.size() > 100 ? new ArrayList<>(out.subList(out.size() - 100, out.size())) : out;
     }
 
     /**
@@ -6311,6 +6399,8 @@ public class MonitoringController {
         });
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("points", points);
+        // Ölçüm kipi değişimleri (2026-11-15): grafik altında nötr not — toplamlar iki yanda karşılaştırılamaz
+        out.put("mode_changes", pageSpeedModeChanges(raw, 7, 8));
         out.put("bucket_len", len);
         out.put("from", range[0]);
         out.put("to", range[1]);
@@ -6366,6 +6456,13 @@ public class MonitoringController {
         applyKbThreshold(body, "maxFontKb",       m::setMaxFontKb);
         applyKbThreshold(body, "maxThirdPartyKb", m::setMaxThirdPartyKb);
         applyKbThreshold(body, "minPageKb",       m::setMinPageKb);
+        // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, madde 10 / 13) — biçim requirePageSpeedGrowth'ta doğrulandı
+        // TRUE ya da null (inceleme 2026-11-15): kapalı kip 2c öncesi izlemelerle AYNI değerde (null) saklanır — eski bir
+        // izlemenin ilk düzenlemesinde formun gönderdiği false geçmişe / denetime sahte "— → Hayır" satırı yazmasın
+        if (body.get("extendedMeasurement") instanceof Boolean b) m.setExtendedMeasurement(b ? Boolean.TRUE : null);
+        applyGrowthPct(body, "growthBytesPct",    m::setGrowthBytesPct);
+        applyGrowthPct(body, "growthRequestsPct", m::setGrowthRequestsPct);
+        if (body.containsKey("growthBytesBand")) m.setGrowthBytesBand(Boolean.TRUE.equals(body.get("growthBytesBand")) ? Boolean.TRUE : null);
 
         if (body.containsKey("userAgent")) m.setUserAgent(blank(body.get("userAgent")) ? null : body.get("userAgent").toString().trim());
         if (body.get("sendDnt") instanceof Boolean b) m.setSendDnt(b);
@@ -6400,6 +6497,69 @@ public class MonitoringController {
         if (body.containsKey("customHeaders") && SessionScope.isGlobalAdmin(session)) {
             String raw = blank(body.get("customHeaders")) ? null : body.get("customHeaders").toString();
             m.setCustomHeadersEnc(raw == null ? null : secretCipher.encrypt(raw));
+        }
+    }
+
+    /**
+     * Büyüme referansının bağlı olduğu ÖLÇÜM TANIMI (inceleme 2026-11-15): URL, ölçüm kipi, izleyici hariç tutma + desenleri,
+     * User-Agent, özel başlıklar, temel kimlik. Başlık / parola ŞİFRELİ değerle karşılaştırılır — form bunları yalnız yazılınca
+     * gönderir; aynı değer yeniden yazılırsa referans (temkinli tarafta) sıfırlanır.
+     */
+    static List<Object> pageSpeedGrowthDefinition(com.sitemonitor.model.PageSpeedMonitor m) {
+        if (m == null) return null;
+        return java.util.Arrays.asList(m.getUrl(), Boolean.TRUE.equals(m.getExtendedMeasurement()),
+                Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns(), m.getUserAgent(),
+                m.getCustomHeadersEnc(), m.getBasicAuthUser(), m.getBasicAuthPassEnc());
+    }
+
+    /**
+     * Ölçüm tanımı değiştiyse büyüme referansı "şimdi"den başlar (hedefli UPDATE — varlık kaydı bu kolonu yazmaz): eski
+     * sayfanın / eski kipin ölçümleri yeni tanımın 7 günlük referansı olmaz, eşik ve bant yeni ölçümler birikene dek karar
+     * vermez (D-7). Okunamayan önceki tanım (null) değişmiş sayılmaz.
+     */
+    private void pageSpeedResetGrowthIfChanged(Long id, List<Object> before, com.sitemonitor.model.PageSpeedMonitor after) {
+        if (id == null || before == null || after == null) return;
+        if (Objects.equals(before, pageSpeedGrowthDefinition(after))) return;
+        pageSpeedMonitorRepo.updateGrowthSince(id, ISO.format(Instant.now()));
+    }
+
+    /** Büyüme yüzdesi: sayı (1–1000) → tam sayı, açık null / boş → kapalı, yoksa dokunma. Doğrulama {@link #requirePageSpeedGrowth}. */
+    private static void applyGrowthPct(Map<String, Object> body, String key, java.util.function.Consumer<Integer> setter) {
+        if (!body.containsKey(key)) return;
+        Object v = body.get(key);
+        if (v == null || (v instanceof String s && s.isBlank())) { setter.accept(null); return; }
+        if (v instanceof Number n && n.doubleValue() >= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MIN
+                && n.doubleValue() <= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MAX) setter.accept(n.intValue());
+    }
+
+    static final String[] PAGESPEED_GROWTH_FIELDS = {"growthBytesPct", "growthRequestsPct"};
+
+    /**
+     * Büyüme alarmı yüzdeleri (2026-11-15, madde 13): 1 ile 1000 arası TAM sayı ya da boş (kapalı). Gelmeyen ya da kayıtlı
+     * değerle AYNI alan yeniden denetlenmez (eski kayıt düzenlenebilir kalır). {@code growthBytesBand} / {@code extendedMeasurement}
+     * yalnız mantıksal kabul eder. Hata → 400 {@code VALIDATION_FAILED} + alan. Yan etkiden ÖNCE çağrılır.
+     */
+    static void requirePageSpeedGrowth(Map<String, Object> body, com.sitemonitor.model.PageSpeedMonitor stored) {
+        if (body == null) return;
+        for (String key : PAGESPEED_GROWTH_FIELDS) {
+            if (!body.containsKey(key)) continue;
+            Object v = body.get(key);
+            if (v == null || (v instanceof String s && s.isBlank())) continue;
+            Integer old = stored == null ? null
+                    : "growthBytesPct".equals(key) ? stored.getGrowthBytesPct() : stored.getGrowthRequestsPct();
+            if (v instanceof Number n && old != null && n.doubleValue() == old.doubleValue()) continue;
+            boolean ok = v instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())
+                    && n.doubleValue() >= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MIN
+                    && n.doubleValue() <= com.sitemonitor.service.page.PageSpeedRules.GROWTH_PCT_MAX;
+            if (!ok) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key,
+                    com.sitemonitor.util.Msg.t("Büyüme eşiği 1 ile 1000 arasında bir tam sayı (yüzde) olmalı ya da boş bırakılmalı.",
+                            "The growth threshold must be a whole percentage between 1 and 1000, or left empty."));
+        }
+        for (String key : new String[]{"growthBytesBand", "extendedMeasurement"}) {
+            if (!body.containsKey(key)) continue;
+            Object v = body.get(key);
+            if (v != null && !(v instanceof Boolean)) throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key,
+                    com.sitemonitor.util.Msg.t("Bu alan açık ya da kapalı olmalı.", "This field must be on or off."));
         }
     }
 
@@ -6497,6 +6657,7 @@ public class MonitoringController {
         im.put("third_party", x.thirdParty());
         im.put("failed", x.failed());
         im.put("truncated", x.truncated());
+        if (x.foundIn() != null) im.put("found_in", x.foundIn());   // genişletilmiş ölçüm: başvuran stil
         return im;
     }
 
@@ -6515,6 +6676,8 @@ public class MonitoringController {
         // Alınamadı mı (ölçüm motorunun kuralı: durum kodu yok ya da ≥ 400) — süzgeçle aynı tanım (2026-11-14)
         im.put("failed", r.getStatusCode() == null || r.getStatusCode() >= 400);
         im.put("checked_at", r.getCheckedAt());
+        // Genişletilmiş ölçüm (2026-11-15): kaynağı başvuran stil dosyası (satır içi stil → sayfa); null = HTML öğesi / eski satır
+        im.put("found_in", r.getFoundIn());
         return im;
     }
 
@@ -6548,6 +6711,11 @@ public class MonitoringController {
         item.put("max_font_kb",          m.getMaxFontKb());
         item.put("max_third_party_kb",   m.getMaxThirdPartyKb());
         item.put("min_page_kb",          m.getMinPageKb());
+        // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, madde 10 / 13) — null = kapalı
+        item.put("extended_measurement", Boolean.TRUE.equals(m.getExtendedMeasurement()));
+        item.put("growth_bytes_pct",     m.getGrowthBytesPct());
+        item.put("growth_requests_pct",  m.getGrowthRequestsPct());
+        item.put("growth_bytes_band",    Boolean.TRUE.equals(m.getGrowthBytesBand()));
         item.put("user_agent",           m.getUserAgent());
         item.put("send_dnt",             m.getSendDnt());
         item.put("exclude_trackers",     m.getExcludeTrackers());
@@ -6613,6 +6781,8 @@ public class MonitoringController {
             item.put("undecided_metrics", blank(latest.getUndecidedMetrics()) ? List.of()
                                        : List.of(latest.getUndecidedMetrics().split(",")));
             item.put("download_ms",    latest.getDownloadMs());
+            // Son ölçümün kipi (2026-11-15): genişletilmiş mi (null = klasik ya da eski satır)
+            item.put("extended",       Boolean.TRUE.equals(latest.getExtended()));
             item.put("error",          latest.getErrorMessage());
             item.put("last_check",     latest.getCheckedAt());
         }
@@ -7060,6 +7230,8 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         DbQueryMonitor m = dbqRepo().findById(id).orElse(null);
         if (m == null) return notFound(com.sitemonitor.util.Msg.t("Veritabanı sorgu izlemesi bulunamadı.", "Database query monitor not found."));
+        ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+        if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
         if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
         // İzleme başına bekleme: her elle kontrol hedef veritabanına bir sorgu demek; art arda tetik onu yormasın.
         long nowMs = System.currentTimeMillis();
@@ -7491,7 +7663,22 @@ public class MonitoringController {
     /** Eşik denemesinin okuduğu en çok satır (90 gün × dakikalık izleme sığar) ve süre bütçesi. */
     static final int DBQUERY_BACKTEST_MAX_ROWS = 150_000, DBQUERY_BACKTEST_PAGE = 2_000;
     static final long DBQUERY_BACKTEST_BUDGET_MS = 15_000;
+    /** Eşik denemesinde tutulan satırların karakter tavanı (kural JSON'u + karma) — bellek sınırı; aşınca en eski kısım kesilir. */
+    static final long DBQUERY_BACKTEST_MAX_CHARS = 32L * 1024 * 1024;
+    /** Okuma süre bütçesi (ms) ve satır tavanı — testte değiştirilebilir. */
+    long dbqBacktestBudgetMs = DBQUERY_BACKTEST_BUDGET_MS;
+    int dbqBacktestMaxRows = DBQUERY_BACKTEST_MAX_ROWS;
     static final Set<Integer> DBQUERY_BACKTEST_DAYS = Set.of(7, 30, 90);
+    /**
+     * Pod başına aynı anda koşan eşik denemesi (arka uç inceleme 2026-11-15): bir deneme okuduğu satırları değerlendirmeden
+     * önce bellekte tutar (≤ {@value #DBQUERY_BACKTEST_MAX_ROWS} satır / {@value #DBQUERY_BACKTEST_MAX_CHARS} karakter ≈
+     * 100 MB) — kullanıcı başına dakika sınırı tek başına birkaç kullanıcının aynı anda yarım GB tutmasını önlemez. Dolu →
+     * beklemeden 429 {@code DBQUERY_BACKTEST_BUSY} + {@code Retry-After}; reddedilen istek kullanıcının dakika hakkını harcamaz.
+     */
+    static final int DBQUERY_BACKTEST_CONCURRENCY = 2;
+    static final long DBQUERY_BACKTEST_BUSY_RETRY_S = 5;
+    /** Yük sınırı (pod belleği) — testte izinler tutulabilir. */
+    final java.util.concurrent.Semaphore dbqBacktestSlots = new java.util.concurrent.Semaphore(DBQUERY_BACKTEST_CONCURRENCY);
 
     /**
      * Geriye dönük eşik denemesi (r177, Ö-8): SAKLI zamanlanmış çalıştırmaların kural ölçümleri YENİ kurallarla yeniden
@@ -7552,8 +7739,25 @@ public class MonitoringController {
         if (rules.isEmpty() && !errs.containsKey("rules") && errs.keySet().stream().noneMatch(k -> k.startsWith("rules")))
             errs.put("rules", com.sitemonitor.util.Msg.t("Denenecek en az bir kural gerekli.", "At least one rule is needed to try."));
         throwDbqErrors(errs, null, null);
-        dbqBacktestRate(session);
+        // Eşzamanlılık kapısı ÖNCE: dolu kapının reddi dakika hakkından düşmez; hak dolu ise izin hemen bırakılır
+        if (!dbqBacktestSlots.tryAcquire()) {
+            throw DbQueryApiException.tooMany("DBQUERY_BACKTEST_BUSY", com.sitemonitor.util.Msg.t(
+                    "Eşik denemesi şu an yoğun (bu sunucuda aynı anda en çok " + DBQUERY_BACKTEST_CONCURRENCY
+                            + " deneme koşar); birkaç saniye sonra yeniden deneyin.",
+                    "Threshold tries are busy right now (at most " + DBQUERY_BACKTEST_CONCURRENCY
+                            + " run at once on this server); try again in a few seconds."), DBQUERY_BACKTEST_BUSY_RETRY_S);
+        }
+        try {
+            dbqBacktestRate(session);
+            return dbqRunBacktest(id, mon, rules, logic, days);
+        } finally {
+            dbqBacktestSlots.release();
+        }
+    }
 
+    /** Eşik denemesinin okuma + değerlendirme gövdesi — çağıran eşzamanlılık iznini tutar. */
+    private ResponseEntity<Map<String, Object>> dbqRunBacktest(Long id, DbQueryMonitor mon, List<DbQueryRules.Rule> rules,
+                                                               String logic, int days) {
         Instant now = Instant.now();
         Instant from = now.minus(java.time.Duration.ofDays(days));
         DbQueryCheckRepository checks = dbqCheckRepo();
@@ -7569,42 +7773,91 @@ public class MonitoringController {
             if (oldest != null && oldest.isBefore(readStart)) readStart = oldest;
         }
         String readFrom = ISO.format(readStart);
-        // Satır tavanı EN ESKİ kısmı keser (en yeni çalıştırmalar her zaman değerlendirilir): tavandan fazla satır varsa okuma,
-        // yeniden eskiye sıradaki tavan konumundaki satırdan başlar
+        // Okuma YENİDEN ESKİYE (kapı incelemesi 2026-11-15): satır tavanı, bellek tavanı ya da süre bütçesi biterse kesilen
+        // EN ESKİ kısımdır — en yeni çalıştırmalar her zaman değerlendirilir. Okunan satırlar (checked_at, id) sırasına dizilip
+        // beslenir (deneme ileri yönlü durumludur; bellek tavanı + pod başına eşzamanlılık kapısı). Sayfalar
+        // (monitor_id, checked_at) dizininden okunur.
         boolean truncated = false;
-        List<String> cut = checks.backtestNewestFrom(id, readFrom,
-                PageRequest.of(DBQUERY_BACKTEST_MAX_ROWS - 1, 1));
-        if (cut != null && !cut.isEmpty() && cut.get(0) != null && cut.get(0).compareTo(readFrom) > 0) {
-            readFrom = cut.get(0);
-            truncated = true;
-        }
-        com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
-                rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
-        long deadline = System.currentTimeMillis() + DBQUERY_BACKTEST_BUDGET_MS;
-        long after = 0;
-        int read = 0;
+        List<Object[]> buf = new ArrayList<>();
+        long chars = 0;
+        String upper = DbQueryCheckRepository.BACKTEST_NO_UPPER;
+        String lastHash = null;   // ardışık satırların sorgu karması çoğunlukla aynı → tek nesne tutulur (bellek)
+        long deadline = System.currentTimeMillis() + dbqBacktestBudgetMs;
+        read:
         while (true) {
-            List<Object[]> page = checks.backtestPage(id, readFrom, after, DBQUERY_BACKTEST_PAGE);
-            if (page == null || page.isEmpty()) break;
-            for (Object[] r : page) {
-                long rid = r[0] instanceof Number n ? n.longValue() : 0L;
-                after = Math.max(after, rid);
-                Instant at = com.sitemonitor.service.dbquery.DbQueryCheckerService.parseIso(r[1] == null ? null : r[1].toString());
-                bt.accept(new com.sitemonitor.service.dbquery.DbQueryBacktest.Row(rid, at, !Boolean.FALSE.equals(r[2]),
-                        r[4] == null ? null : r[4].toString(), DbQueryEvaluator.fromJson(r[5] == null ? null : r[5].toString())));
-                read++;
-            }
-            if (page.size() < DBQUERY_BACKTEST_PAGE) break;
-            // Güvenlik sınırı (tavan yukarıda en eskiyi kesti; aynı anlı satırlar için bir sayfa pay)
-            if (read >= DBQUERY_BACKTEST_MAX_ROWS + DBQUERY_BACKTEST_PAGE || System.currentTimeMillis() > deadline) {
+            List<Object[]> page;
+            try {
+                page = checks.backtestPageDesc(id, readFrom, upper, DBQUERY_BACKTEST_PAGE);
+            } catch (org.springframework.dao.DataAccessException e) {
+                if (buf.isEmpty()) throw e;   // ilk sayfa okunamadı: deneme yapılamadı (hata yanıtı)
+                log.info("Eşik denemesi sayfası okunamadı (izleme {}): {} — okunan en yeni {} satır değerlendirilir",
+                        id, e.getClass().getSimpleName(), buf.size());
                 truncated = true;
                 break;
             }
+            if (page == null || page.isEmpty()) break;
+            boolean full = page.size() >= DBQUERY_BACKTEST_PAGE;
+            int keep = page.size();
+            String last = page.get(keep - 1)[1] == null ? null : page.get(keep - 1)[1].toString();
+            if (full && last != null) {
+                // Sondaki aynı anlı satırlar bırakılır; sonraki sayfa o andan (dahil) başlar → aynı saniyedeki satır kaybolmaz
+                while (keep > 0 && last.equals(String.valueOf(page.get(keep - 1)[1]))) keep--;
+                if (keep == 0) {   // tüm sayfa aynı saniye (tek izlemede olanaksız): ilerleme yok → kısmi bitir
+                    truncated = true;
+                    break;
+                }
+            }
+            for (int i = 0; i < keep; i++) {
+                Object[] r = page.get(i);
+                if (buf.size() >= dbqBacktestMaxRows || chars >= DBQUERY_BACKTEST_MAX_CHARS) {
+                    truncated = true;   // tavan dolu ve daha eski satır var
+                    // En eski saniye ya tamamen alınır ya hiç (inceleme 2026-11-15): aynı anlı satırlar sorguda sırasız
+                    // gelir; kesim o saniyenin ortasına düşerse hangisinin kaldığı değişirdi. Hepsi silinecekse dokunulmaz.
+                    String cutAt = String.valueOf(r[1]);
+                    int k = buf.size();
+                    while (k > 0 && cutAt.equals(String.valueOf(buf.get(k - 1)[1]))) k--;
+                    if (k > 0) buf.subList(k, buf.size()).clear();
+                    break read;
+                }
+                if (r[4] != null && r[4].equals(lastHash)) r[4] = lastHash;
+                else lastHash = r[4] == null ? null : r[4].toString();
+                r[3] = null;   // durum metni denemede kullanılmaz
+                buf.add(r);
+                chars += 64L + (r[4] == null ? 0 : r[4].toString().length()) + (r[5] == null ? 0 : r[5].toString().length());
+            }
+            if (!full) break;
+            upper = last;
+            if (System.currentTimeMillis() > deadline) {
+                truncated = true;
+                break;
+            }
+        }
+        // Zaman sırası (checked_at, id) — aynı saniyedeki satırlar kimlikle sıralanır (inceleme 2026-11-15: sayfa sorgusu
+        // aynı anlı satırları belirsiz sırada döner; değişim kuralının "önceki" satırı denemeden denemeye değişebilirdi)
+        buf.sort(BACKTEST_ROW_ORDER);
+        com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
+                rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
+        for (int i = 0; i < buf.size(); i++) {
+            Object[] r = buf.get(i);
+            buf.set(i, null);   // beslenen satır bırakılır (bellek)
+            long rid = r[0] instanceof Number n ? n.longValue() : 0L;
+            Instant at = com.sitemonitor.service.dbquery.DbQueryCheckerService.parseIso(r[1] == null ? null : r[1].toString());
+            bt.accept(new com.sitemonitor.service.dbquery.DbQueryBacktest.Row(rid, at, !Boolean.FALSE.equals(r[2]),
+                    r[4] == null ? null : r[4].toString(), DbQueryEvaluator.fromJson(r[5] == null ? null : r[5].toString())));
         }
         Map<String, Object> out = bt.report(truncated);
         out.put("days", days);
         return ok(out);
     }
+
+    /** Eşik denemesi satırlarının besleme sırası: {@code checked_at} artan, eşitlikte {@code id} artan. */
+    static final java.util.Comparator<Object[]> BACKTEST_ROW_ORDER = (a, b) -> {
+        int c = String.valueOf(a[1]).compareTo(String.valueOf(b[1]));
+        if (c != 0) return c;
+        long ia = a[0] instanceof Number n ? n.longValue() : 0L;
+        long ib = b[0] instanceof Number n ? n.longValue() : 0L;
+        return Long.compare(ia, ib);
+    };
 
     /**
      * Etkileşimli sorgu denetimi kapısı (dbq2 inceleme O3): {@code sql-check} / {@code sql-fix} zamanlanmış çalıştırmalarla
@@ -9361,6 +9614,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerScripted(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "execute");
         return scriptedMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             long nowMs = System.currentTimeMillis();
             long cooldownMs = appSettings.getInt("site.monitor.scripted.manual-cooldown-seconds", 20) * 1000L;
@@ -10800,6 +11055,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerDomain(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // Yük sınırı (2026-11-15, M1): canlı sorguyla AYNI izleme penceresi (izleme başına dakikada 6, iki yol birlikte sayılır).
             // Kullanıcı penceresi / eşzamanlılık reddi YOK — sayfanın toplu "Şimdi kontrol et"i her izleme için bir istek atar.
@@ -11281,6 +11538,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> triggerPing(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
         return pingMonitorRepo.findById(id).map(m -> {
+            ResponseEntity<Map<String, Object>> hiddenResp = hiddenMonitor(session, m.getTeamId());
+            if (hiddenResp != null) return hiddenResp;   // görünmeyen izleme: 404 (varlık sızmaz)
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             Map<String, Object> r = pingChecker.check(m.getHost(), m.getIpVersion(),
                     m.getPacketCount() != null ? m.getPacketCount() : 4,

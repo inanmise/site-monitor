@@ -603,7 +603,8 @@ public class StatusPageService {
             s.put("types", ordered);
             boolean problem = DEGRADED.equals(state) || PARTIAL_OUTAGE.equals(state) || MAJOR_OUTAGE.equals(state);
             s.put("since", problem ? since : null);
-            s.put("uptime_7d", uptimeSeen ? Math.round(upOk * 10000.0 / upTotal) / 100.0 : null);
+            // Hata varken ASLA 100 (AvailabilityMath; kapı incelemesi 2026-11-15)
+            s.put("uptime_7d", uptimeSeen ? com.sitemonitor.util.AvailabilityMath.pct(upTotal, upOk, 2) : null);
             s.put(K_SVC_WINDOWS, maintenanceEnds);   // izdüşümde görülebilen pencerelerden maintenance_until'e dönüşür
             s.put(K_MONITORS, monitors);             // izdüşümde kapsam dışı kullanıcıdan çıkarılır
             return s;

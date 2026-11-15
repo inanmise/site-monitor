@@ -94,6 +94,14 @@ describe("kanal görünümü — Excel'e aktar", () => {
     expect(await screen.findByText('Excel dosyası indirildi: mobil-2025-2026-degerler.xlsx')).toBeInTheDocument()
   })
 
+  it('tarayıcı indirmeyi başlatamazsa "indirildi" denmez, hata tostu (2026-11-15, prod kapısı)', async () => {
+    writer.download.mockReturnValueOnce(false)
+    render(<TechErrorReportsPage />)
+    fireEvent.click(await xlsxButton())
+    expect(await screen.findByText('Dosya hazırlandı ama tarayıcı indirmeyi başlatamadı. Tarayıcının indirme iznini kontrol edip yeniden deneyin.')).toBeInTheDocument()
+    expect(screen.queryByText(/Excel dosyası indirildi/)).toBeNull()
+  })
+
   it('yıl süzgeci seçiliyse yalnız o yıl istenir ve dosya adında o yıl yazar', async () => {
     render(<TechErrorReportsPage />)
     await xlsxButton()

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Download, Mail, Eye, Send, CheckCircle, XCircle, MinusCircle, Clock, HelpCircle,
   ExternalLink, ShieldAlert } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
+import { isUnsureResult } from '../../utils/unsureResult.js'
 import { useT } from '../../i18n/index.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
@@ -254,10 +255,18 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
         if (r.sent) toast.success(t('sml.resendOk', r.new_log_id)); else toast.error(t('sml.resendFailed', r.status || ''))
         load(true)
         if (detailId === row.id) setDetailId(null)
+      } else if (isUnsureResult(r)) {
+        // Sonuç bilinmiyor (zaman aşımı / ağ geçidi / bağlantı kopması — inceleme 2026-11-15): posta gitmiş OLABİLİR.
+        // Günlük yeniden okunur; ikinci tıklama aynı postayı ikinci kez gönderebileceği için önce yeni satır kontrol edilir
+        toast.error(t('sml.resendUnknown'), { details: r })
+        load(true)
       } else {
         toast.error(t(`sml.resendReason.${r?.error}`) === `sml.resendReason.${r?.error}` ? (r?.error || t('mon.loadError')) : t(`sml.resendReason.${r?.error}`))
       }
-    } catch (e) { toast.error(String(e?.message || e)) } finally { setBusy(false) }
+    } catch (e) {
+      if (isUnsureResult(e)) { toast.error(t('sml.resendUnknown'), { details: e }); load(true) }
+      else toast.error(String(e?.message || e))
+    } finally { setBusy(false) }
   }
 
   const windowText = f.range === 'custom'

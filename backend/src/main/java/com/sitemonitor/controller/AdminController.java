@@ -2253,6 +2253,12 @@ public class AdminController {
         return ok(Map.of("data", saved));
     }
 
+    /**
+     * Tek işlemde okunur ve yazılır (kapı incelemesi 2026-11-15): okunan varlık YÖNETİLİR, kayıt yalnız değişen kolonları yazar
+     * ({@code @DynamicUpdate}) — işlem dışı okunan ayrık varlığın {@code save} (merge) ile yazılması, bu arada toplu işlemle
+     * değişen {@code active} / {@code min_alert_level} / {@code team_id} değerini eski haline döndürüyordu.
+     */
+    @Transactional
     @PutMapping("/contacts/{id}")
     public ResponseEntity<Map<String, Object>> updateContact(
             @PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {

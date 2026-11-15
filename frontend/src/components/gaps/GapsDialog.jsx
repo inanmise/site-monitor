@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { importWithDeadline, isImportTimeout } from '../../utils/importWithDeadline.js'
 import {
   ArrowRight, BellRing, CalendarClock, ChevronDown, CircleCheck, ClipboardCopy, ClipboardList, Database, Download, EyeOff, LayoutGrid,
   ListTodo, Plus, RefreshCw, RotateCcw, Sparkles, UserPlus, UserRound, Users, Wrench,
@@ -76,12 +77,12 @@ export default function GapsDialog({
     if (!ready || exporting) return
     setExporting(true)
     try {
-      const mod = await import('./gapsExport.js')
+      const mod = await importWithDeadline(() => import('./gapsExport.js'))
       const ok = kind === 'copy' ? await mod.copyGaps(gaps, t, { at, ask }) : mod.downloadGapsXlsx(gaps, t, { at })
       if (kind === 'copy') toast[ok ? 'success' : 'error'](t(ok ? 'gaps.export.copied' : 'gaps.export.copyFailed'))
       else if (!ok) toast.error(t('gaps.export.downloadFailed'))
-    } catch {
-      toast.error(t('gaps.export.failed'))
+    } catch (e) {
+      toast.error(isImportTimeout(e) ? e.message : t('gaps.export.failed'))
     } finally {
       setExporting(false)
     }

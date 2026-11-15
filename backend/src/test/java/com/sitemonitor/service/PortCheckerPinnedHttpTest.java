@@ -6,7 +6,6 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -54,12 +53,19 @@ import static org.mockito.Mockito.when;
 class PortCheckerPinnedHttpTest {
 
     private static PortCheckerService serviceResolving(String host, InetAddress to) {
+        return serviceResolving(host, to, -1);
+    }
+
+    /** {@code tlsPortToo}: bu (geçici) port da TLS sayılır — sabit 8443'e bağlanmadan HTTPS yolunu sınar. */
+    private static PortCheckerService serviceResolving(String host, InetAddress to, int tlsPortToo) {
         SsrfGuard guard = mock(SsrfGuard.class);
         when(guard.validate(anyString())).thenAnswer(inv -> {
             if (!host.equals(inv.getArgument(0))) throw new SsrfGuard.UnresolvableHostException("çözümlenemeyen host: " + inv.getArgument(0));
             return List.of(to);
         });
-        return new PortCheckerService(guard);
+        return new PortCheckerService(guard) {
+            @Override boolean tlsPort(int port) { return port == tlsPortToo || super.tlsPort(port); }
+        };
     }
 
     @Test
@@ -106,10 +112,11 @@ class PortCheckerPinnedHttpTest {
     }
 
     @Test
-    @DisplayName("HTTPS (8443) + IPv4: TLS el sıkışması SNI = host ADIYLA ve Host başlığıyla → open=true")
+    @DisplayName("HTTPS + IPv4: TLS el sıkışması SNI = host ADIYLA ve Host başlığıyla → open=true (geçici port, atlanmaz)")
     void https_ipv4_sendsSniAndHost() throws Exception {
-        SSLServerSocket ss = bind8443();
-        Assumptions.assumeTrue(ss != null, "8443 yerelde kullanılamıyor — test atlandı");
+        SSLServerSocket ss = bindTls();
+        assertThat(ss).as("yerel TLS sunucusu kurulamadı").isNotNull();
+        int port = ss.getLocalPort();
         AtomicReference<String> sni = new AtomicReference<>();
         AtomicReference<String> host = new AtomicReference<>();
         Thread t = new Thread(() -> {
@@ -124,21 +131,21 @@ class PortCheckerPinnedHttpTest {
                 while ((line = in.readLine()) != null && !line.isEmpty()) {
                     if (line.regionMatches(true, 0, "Host:", 0, 5)) host.set(line.substring(5).trim());
                 }
-                boolean right = "vhost.test".equals(sni.get()) && "vhost.test:8443".equals(host.get());
+                boolean right = "vhost.test".equals(sni.get()) && ("vhost.test:" + port).equals(host.get());
                 OutputStream out = s.getOutputStream();
                 out.write((right ? "HTTP/1.1 200 OK\r\n" : "HTTP/1.1 421 Misdirected Request\r\n")
                         .concat("Content-Length: 0\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
                 out.flush();
             } catch (Exception ignore) { /* test sonucu iddialarda */ }
-        }, "sni-8443");
+        }, "sni-tls");
         t.setDaemon(true);
         t.start();
         try {
-            Map<String, Object> r = serviceResolving("vhost.test", InetAddress.getLoopbackAddress())
-                    .check("vhost.test", 8443, 5_000, "HTTP", "/", null, "v4", false);
+            Map<String, Object> r = serviceResolving("vhost.test", InetAddress.getLoopbackAddress(), port)
+                    .check("vhost.test", port, 5_000, "HTTP", "/", null, "v4", false);
             t.join(10_000);
             assertThat(sni.get()).isEqualTo("vhost.test");
-            assertThat(host.get()).isEqualTo("vhost.test:8443");
+            assertThat(host.get()).isEqualTo("vhost.test:" + port);
             assertThat(r.get("open")).as("error=%s", r.get("error")).isEqualTo(true);
         } finally {
             ss.close();
@@ -176,7 +183,7 @@ class PortCheckerPinnedHttpTest {
         assertThat(PortCheckerService.hostHeader("[::1]", 80)).isEqualTo("[::1]");
     }
 
-    private static SSLServerSocket bind8443() {
+    private static SSLServerSocket bindTls() {
         try {
             Security.addProvider(new BouncyCastleProvider());
             KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
@@ -197,7 +204,7 @@ class PortCheckerPinnedHttpTest {
             ctx.init(kmf.getKeyManagers(), null, new SecureRandom());
             SSLServerSocket ss = (SSLServerSocket) ctx.getServerSocketFactory().createServerSocket();
             ss.setReuseAddress(false);
-            ss.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 8443));
+            ss.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));   // geçici port: 8443 meşgulse test atlanmasın
             ss.setSoTimeout(15_000);
             return ss;
         } catch (Exception e) {

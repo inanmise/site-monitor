@@ -2,6 +2,7 @@
 // çözümü, "asla daha kötü" kuralı. Kodlayıcı dışarıdan verilir (testte sahte kodlayıcı) — her arama KODLAMA SAYISIYLA
 // sınırlıdır.
 
+import { JOB_TIMEOUT_MS } from './errors.js'
 import { drive, runSteps } from './steps.js'
 
 /**
@@ -11,16 +12,64 @@ import { drive, runSteps } from './steps.js'
  * ucuna (90) denk gelir; WebP aynı benzerliğe ≈ 8–12 puan yüksek kalitede ulaşır.
  */
 export const SIMILARITY_TARGET = 0.984
+
+// ── AVIF (2026-11-15) ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Kodlayıcı: @jsquash/avif 2.1.1 (libavif v1.0.1 + aom, tek iş parçacıklı WASM) — `quality` 0..100 (libavif'in kalite →
+// niceleyici eşlemesi), 4:2:0, 8 bit. Kalite ölçeği tuval kodlayıcılarınınkinden FARKLIDIR; aralık ve taban gerçek
+// tarayıcıda aynı benzerlik hedefiyle (SIMILARITY_TARGET) ayarlandı — bkz. e2e/image-engine.spec.js "AVIF".
+// Kalibrasyon (2026-11-15, Chromium, 1400 px'e indirilmiş 6 gerçek fotoğraf, hız 6): 0,984'e ulaşan AVIF kalitesi
+// 60 / 63 / 66 / 68 / 74 / 84 (yumuşak → ince dokulu); o noktada AVIF, otomatik JPEG'den %26–44, otomatik WebP'den
+// %7–35 küçük. Süre: 1,2 MP'de tek kodlama 1,5–4 sn, otomatik arama 7–18 sn; 8,3 MP'de tek kodlama ≈ 12 sn.
+/** Otomatik kalite arama aralığı (AVIF ölçeği): gerçek fotoğraflar 60–84'te hedefi tuttu; düz görseller 60'ın altında. */
+export const AVIF_QUALITY_MIN = 40
+export const AVIF_QUALITY_MAX = 85
+/** Hedef boyut kipinde AVIF kalitesinin inebileceği taban (JPEG'deki gibi aralığın 10 altı). */
+export const AVIF_TARGET_FLOOR = 30
+/** Tarayıcı AVIF çözemezse (benzerlik ölçülemez) kullanılan sabit kalite: kalibrasyondaki gerekli kalitelerin ortancası. */
+export const AVIF_FALLBACK_QUALITY = 68
+/** AVIF kalite aramasında en çok kodlama: [40, 85] aralığını tam sayıya iner (⌈log2 46⌉ = 6). */
+export const AVIF_SEARCH_ENCODES = 6
+/** libavif hızı (0 en yavaş / en küçük … 10 en hızlı); @jsquash varsayılanı. */
+export const AVIF_SPEED = 6
+/**
+ * Bu piksel sayısının üstündeki çıktı AVIF'e kodlanmaz (AVIF_TOO_LARGE): 8,3 MP ≈ 12 sn ölçüldü → 12 MP ≈ 18 sn; 3 kat
+ * yavaş bir makinede de tek kodlama 90 sn sınırının içinde kalır, WASM belleği (≈ 4 × piksel + kodlayıcı) sınırlanır.
+ */
+export const AVIF_MAX_PIXELS = 12_000_000
+
+// ── AVIF süre bütçesi (inceleme 2026-11-15) ───────────────────────────────────────────────────────────────────────────
+// Ana iş parçacığı işi JOB_TIMEOUT_MS (5 dk) dolunca Worker'ı sonlandırır — o zaman JPEG / WebP adayları da kaybolurdu. Tek
+// AVIF kodlaması 12 MP'de ≈ 17 sn (geliştirici makinesi), 3 kat yavaş makinede ≈ 55 sn: arama + hedef boyut adımları süreyi
+// aşabilir. Bu yüzden AVIF'in her yüklemesi / kodlaması işin başlangıcından sayılan bir SON ANA bağlıdır; kodlamadan önce
+// kalan süre, ölçülen hızdan kestirilen kodlama süresine yetmiyorsa AVIF o noktada bırakılır (not AVIF_TIME_LIMIT) ve her
+// kodlamanın süre sınırı kalan süreyle kısaltılır. AVIF'in ardından AVIF dışı iş kalıyorsa ("en küçük" — PNG adayı ve hedef
+// boyut aramaları) AVIF adayı daha erken bir son ana bağlıdır.
+/** AVIF işinin (aday + hedef boyut araması) bitmesi gereken an — işin başından (JOB_TIMEOUT_MS'den 60 sn önce). */
+export const AVIF_JOB_DEADLINE_MS = JOB_TIMEOUT_MS - 60_000
+/** Ardından AVIF dışı iş kalan işlerde ("en küçük" ya da hedef boyut) AVIF ADAYININ bitmesi gereken an — işin başından. */
+export const AVIF_CANDIDATE_DEADLINE_MS = 150_000
+/** Bir AVIF kodlaması için kalması gereken en az süre (hız henüz ölçülmemişken de). */
+export const AVIF_MIN_ENCODE_BUDGET_MS = 3_000
+/** Kestirim payı: ölçülen hız × piksel × bu kat (kalite / içerik farkı). */
+export const AVIF_ESTIMATE_MARGIN = 1.25
+/** Hedef boyut kipinde AVIF için kalite ikili arama adımı (tuval kodlayıcılarında 4) — AVIF kodlaması pahalı. */
+export const AVIF_TARGET_STEPS = 2
+/** Hedef boyut kipinde AVIF için en çok ölçü küçültme adımı (tuval kodlayıcılarında MAX_DIM_STEPS). */
+export const AVIF_MAX_DIM_STEPS = 2
 /**
  * Otomatik kalite arama aralığı (tarayıcı kodlayıcısının 1–100 ölçeği). Taban 60: altında düz geçişlerde blok /
  * bantlanma görünür olur ve SSIM düz bölgedeki bu bozulmaya az duyarlıdır. Tavan 90: üstünde dosya hızla büyür
  * (kalite 95 ≈ kalite 90'ın 1,5 katı), görünür kazanç yoktur.
  */
-export const QUALITY_RANGE = Object.freeze({ jpeg: Object.freeze([60, 90]), webp: Object.freeze([60, 90]) })
+export const QUALITY_RANGE = Object.freeze({ jpeg: Object.freeze([60, 90]), webp: Object.freeze([60, 90]),
+  avif: Object.freeze([AVIF_QUALITY_MIN, AVIF_QUALITY_MAX]) })
 /** Hedef boyut kipinde kalitenin inebileceği taban (altında ÖLÇÜ küçültülür: küçük ama temiz görsel, büyük ama bloklu olandan iyidir). */
 export const TARGET_QUALITY_FLOOR = 50
+/** Biçime göre hedef boyut tabanı: AVIF'in kalite ölçeği tuval kodlayıcılarından farklıdır (aynı kalite sayısı ≠ aynı görünüm). */
+export const targetQualityFloor = (type) => (type === 'avif' ? AVIF_TARGET_FLOOR : TARGET_QUALITY_FLOOR)
 /** Bir kalite aramasında en çok kodlama. */
 export const MAX_SEARCH_ENCODES = 8
+
 /** Hedef boyut kipinde en çok ölçü küçültme adımı. */
 export const MAX_DIM_STEPS = 6
 /**
@@ -83,38 +132,56 @@ export async function bestQualityUnder(encodeQ, lo, hi, targetBytes, maxSteps = 
 }
 
 /**
- * İstenen biçimi, kaynağı ve tarayıcının WebP kodlayabilmesini çıktı adaylarına çevirir.
+ * İstenen biçimi, kaynağı ve tarayıcının WebP / AVIF kodlayabilmesini çıktı adaylarına çevirir.
+ * `avif`: null = platformda AVIF yok (bugünkü davranış BİREBİR — not eklenmez, AVIF denenmez); 'ok' = denenebilir;
+ * bir not kodu ('AVIF_UNAVAILABLE' | 'AVIF_TOO_LARGE' | 'AVIF_NOT_MEASURED') = denenemez, neden bu not.
+ * AVIF istenip üretilemezse yedek: WebP (yoksa JPEG / saydamsa PNG) + not.
  * @returns {{ list: string[], notes: string[] }}
  */
-export function resolveFormats(format, sourceType, hasAlpha, webpOk) {
+export function resolveFormats(format, sourceType, hasAlpha, webpOk, avif = null) {
   const fallback = hasAlpha ? 'png' : 'jpeg'
   const webp = () => (webpOk ? { list: ['webp'], notes: [] } : { list: [fallback], notes: ['WEBP_UNAVAILABLE'] })
+  const avifNote = avif && avif !== 'ok' ? avif : 'AVIF_UNAVAILABLE'
+  const avifOrFallback = () => {
+    if (avif === 'ok') return { list: ['avif'], notes: [] }
+    const w = webp()
+    return { list: w.list, notes: [avifNote, ...w.notes] }
+  }
   if (format === 'jpeg') return { list: ['jpeg'], notes: [] }
   if (format === 'png') return { list: ['png'], notes: [] }
   if (format === 'webp') return webp()
+  if (format === 'avif') return avifOrFallback()
   if (format === 'smallest') {
     const list = hasAlpha ? ['png'] : ['jpeg', 'png']
     if (webpOk) list.push('webp')
-    return { list, notes: webpOk ? [] : ['WEBP_UNAVAILABLE'] }
+    if (avif === 'ok') list.push('avif')
+    const notes = webpOk ? [] : ['WEBP_UNAVAILABLE']
+    if (avif && avif !== 'ok') notes.push(avif)
+    return { list, notes }
   }
   // keep: kaynağın biçimi; yazamadığımız biçimler en yakın eşdeğere
   if (sourceType === 'jpeg') return { list: ['jpeg'], notes: [] }
   if (sourceType === 'png' || sourceType === 'gif' || sourceType === 'bmp') return { list: ['png'], notes: [] }
-  return webp()                  // webp, avif
+  if (sourceType === 'avif' && avif !== null) return avifOrFallback()
+  return webp()                  // webp, avif (platformda AVIF yoksa)
 }
 
 /**
- * "En küçük biçim": yarışa giren adaylardan EN KÜÇÜK dosya. Kayıplı adaylar (JPEG / WebP) her zaman yarışır — her biri
- * kendi kalite aramasının (ya da istenen sabit kalitenin) sonucudur; arama aralığın üst ucunda bitse bile adaydır.
+ * "En küçük biçim": yarışa giren adaylardan EN KÜÇÜK dosya. JPEG / WebP adayları her zaman yarışır — her biri kendi
+ * kalite aramasının (ya da istenen sabit kalitenin) sonucudur; arama aralığın üst ucunda bitse bile adaydır.
  * PNG adayı yalnız eşiği tutturuyorsa yarışır (birebir palet / gerçek renk = 1; titreşimli palet ölçülen benzerlikle):
- * rengi azaltılmış bir fotoğraf PNG'si, biraz küçük diye "eşdeğer" JPEG'in önüne geçmesin. Yarışan yoksa (yalnız
- * eşik altı PNG) benzerliği en yüksek olan döner. Eşitlikte liste sırası (jpeg, png, webp) korunur.
+ * rengi azaltılmış bir fotoğraf PNG'si, biraz küçük diye "eşdeğer" JPEG'in önüne geçmesin. AVIF adayı eşiğin altında
+ * kaldıysa (aralığının üst ucu 85 eşiğe yetmedi) YALNIZ eşiği tutturan başka aday yoksa yarışır (inceleme 2026-11-15):
+ * eşik altı AVIF, eşiği tutan JPEG / WebP'yi küçük diye geçmesin. Yarışan yoksa (yalnız eşik altı PNG) benzerliği en
+ * yüksek olan döner. Eşitlikte liste sırası (jpeg, png, webp, avif) korunur.
  * @param {{ type: string, size: number, similarity: number|null }[]} candidates
  */
 export function pickSmallest(candidates, threshold = SIMILARITY_TARGET) {
   if (!candidates.length) return null
   const sim = (c) => (c.similarity == null ? 1 : c.similarity)
-  const eligible = candidates.filter((c) => c.type !== 'png' || sim(c) >= threshold)
+  const meets = (c) => sim(c) >= threshold
+  const anyMeets = candidates.some(meets)
+  const eligible = candidates.filter((c) => (c.type === 'png' || (c.type === 'avif' && anyMeets) ? meets(c) : true))
   if (eligible.length) return eligible.reduce((best, c) => (c.size < best.size ? c : best))
   return candidates.reduce((best, c) => (sim(c) > sim(best) ? c : best))
 }

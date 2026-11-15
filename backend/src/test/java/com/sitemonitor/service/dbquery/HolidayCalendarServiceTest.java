@@ -141,7 +141,7 @@ class HolidayCalendarServiceTest {
         }
 
         @Test
-        @DisplayName("boş tablo: 2026–2027 günleri yazılır (arife dahil), nişan yazılır, takvim bayatlatılır; ikinci tur hiçbir şey yazmaz")
+        @DisplayName("boş tablo: 2026–2035 günleri yazılır (arife dahil), nişan yazılır, takvim bayatlatılır; ikinci tur hiçbir şey yazmaz")
         void seedsEmptyTableOnce() {
             JdbcTemplate j = jdbc("holidayseed1");
             HolidayCalendarService cal = mock(HolidayCalendarService.class);
@@ -173,14 +173,15 @@ class HolidayCalendarServiceTest {
         }
 
         @Test
-        @DisplayName("tohum günleri: geçerli, tekil, 2026–2027, arife adlı; ayrıştırıcı kurallarından geçer")
+        @DisplayName("tohum günleri: geçerli, tekil, 2026–2035, arife adlı; ayrıştırıcı kurallarından geçer")
         void seedDaysAreValid() {
             List<Map<String, Object>> raw = new ArrayList<>();
             for (String[] d : HolidayCalendarSeed.DAYS) raw.add(Map.of("day", d[0], "name", d[1]));
             List<HolidayCalendarService.Day> parsed = HolidayCalendarService.parse(raw);
             assertThat(parsed).hasSize(HolidayCalendarSeed.DAYS.size());
-            assertThat(parsed).allSatisfy(d -> assertThat(d.day()).matches("202[67]-\\d\\d-\\d\\d"));
-            assertThat(parsed.stream().filter(d -> d.name().contains("arife")).count()).isEqualTo(6);
+            assertThat(parsed).allSatisfy(d -> assertThat(d.day()).matches("20(2[6-9]|3[0-5])-\\d\\d-\\d\\d"));
+            // 10 yıl × (Ramazan + Kurban + Cumhuriyet arifesi) + 2033'ün ikinci Ramazan arifesi
+            assertThat(parsed.stream().filter(d -> d.name().contains("arife")).count()).isEqualTo(31);
         }
     }
 }

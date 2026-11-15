@@ -245,12 +245,14 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
     if (nextData) setData(nextData)
     closePlan(nextData)
   }
-  function exportIcs() { downloadIcs('renewal-plan.ics', buildIcs(icsEvents(list, t), { calName: t('forecast.icsCal') })) }
+  function exportIcs() {
+    if (downloadIcs('renewal-plan.ics', buildIcs(icsEvents(list, t), { calName: t('forecast.icsCal') })) === false) toast.error(t('inv.downloadFailed'))
+  }
   function exportCsv() {
     try {
       // BOM + CRLF; kaçış + formül nötrleme utils/csv.js'te. İndirme ortak (utils/csvExport — öneri 29; dosya aynı).
-      downloadCsv(`renewal-plan-${today}.csv`, '﻿' + csvBody(csvRows(list, t)))
-    } catch { /* jsdom */ }
+      if (downloadCsv(`renewal-plan-${today}.csv`, '﻿' + csvBody(csvRows(list, t))) === false) toast.error(t('inv.downloadFailed'))
+    } catch { toast.error(t('inv.downloadFailed')) }
   }
   async function copyLink() { if (await copyText(window.location.href)) toast.success(t('inv.copied')); else toast.error(t('inv.copyFailed')) }
   function pageLink(params) {

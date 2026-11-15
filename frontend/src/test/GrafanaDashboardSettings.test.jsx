@@ -169,6 +169,16 @@ describe('GrafanaDashboardSettings', () => {
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(2))
   })
 
+  it('tarayıcı indirmeyi başlatamazsa başarı tostu YOK, hata tostu (2026-11-15, prod kapısı)', async () => {
+    await mount()
+    const blob = new Blob(['{}'], { type: 'application/json' })
+    api.admin.downloadGrafanaDashboard.mockResolvedValue({ success: true, blob, name: 'pano.json' })
+    downloadBlob.mockReturnValueOnce(false)
+    fireEvent.click(screen.getByRole('button', { name: 'JSON indir' }))
+    expect(await screen.findByText('Dosya hazırlandı ama tarayıcı indirmeyi başlatamadı. Tarayıcının indirme iznini kontrol edip yeniden deneyin.')).toBeInTheDocument()
+    expect(screen.queryByText(/pano\.json/)).toBeNull()
+  })
+
   it('indirme hatası tost olarak söylenir, dosya inmez', async () => {
     await mount()
     api.admin.downloadGrafanaDashboard.mockResolvedValue({ success: false, status: 403, error: 'Grafana panosu ayarlarını yalnız global yöneticiler değiştirebilir ve indirebilir.' })

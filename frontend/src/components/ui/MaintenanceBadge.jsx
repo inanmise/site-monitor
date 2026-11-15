@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Wrench } from 'lucide-react'
 import { api } from '../../api/client'
+import { INFLIGHT_JOIN_MAX_MS } from '../../utils/timedFetch.js'
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
@@ -9,20 +10,27 @@ import { cn } from '@/lib/utils'
 // Başarısız yanıt da 60 sn hatırlanır (2026-10-09): eskiden yalnız başarı önbelleğe giriyordu, uç düşükken her kart
 // her bağlanışında yeniden istek atıyordu (liste kaydırma / sayfa değişimi = istek fırtınası).
 const FAIL_TTL_MS = 60000
-let _cache = null, _at = 0, _inflight = null, _failAt = 0
+let _cache = null, _at = 0, _inflight = null, _inflightAt = 0, _failAt = 0
 async function getActive() {
   if (_cache && Date.now() - _at < 30000) return _cache
   if (_failAt && Date.now() - _failAt < FAIL_TTL_MS) return _cache || { all: false, targets: [] }
-  if (_inflight) return _inflight
+  // Yaşlı süren isteğe katılınmaz (2026-11-15): bitmeyen bir söz rozetleri sonsuza dek bekletemez
+  if (_inflight && Date.now() - _inflightAt < INFLIGHT_JOIN_MAX_MS) return _inflight
   const call = api?.monitoring?.maintenance?.active
   if (typeof call !== 'function') return { all: false, targets: [] }   // API yoksa (ör. test mock'u) sessizce no-op
-  _inflight = call()
+  const mine = Promise.resolve(call())
     .then(res => {
+      if (_inflight !== mine) return _cache || { all: false, targets: [] }   // yerini yenisi aldı: geç yanıt yazılmaz
       _inflight = null
       if (res?.success) { _cache = res.data || { all: false, targets: [] }; _at = Date.now(); _failAt = 0 } else _failAt = Date.now()
       return _cache || { all: false, targets: [] }
     })
-    .catch(() => { _inflight = null; _failAt = Date.now(); return _cache || { all: false, targets: [] } })
+    .catch(() => {
+      if (_inflight === mine) { _inflight = null; _failAt = Date.now() }
+      return _cache || { all: false, targets: [] }
+    })
+  _inflight = mine
+  _inflightAt = Date.now()
   return _inflight
 }
 

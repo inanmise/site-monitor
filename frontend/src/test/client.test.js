@@ -106,14 +106,16 @@ describe('request timeout resilience', () => {
     vi.useRealTimers()
   })
 
-  it('uzun-süren çağrılar (runScheduler) abort edilmez — timeout sinyali eklenmez', async () => {
+  // 2026-11-15 (kullanıcı kuralı "zaman aşımı olmayan istek yok"): yazmalar da sonlu süre taşır — eskiden bu test
+  // "yazmaya sinyal eklenmez" diyordu; artık her istek son tarih sinyaliyle gider (ayrıntı: clientWriteTimeout.test.js)
+  it('yazma çağrısı (runScheduler) da son tarih sinyaliyle gider', async () => {
     mockFetch({ success: true })
     await api.runScheduler()
-    expect(global.fetch.mock.calls[0][1].signal).toBeUndefined()
+    expect(global.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
   })
 
   // 2026-10-08 ("zaman aşımı olmayan servis çağrısı" denetimi): okuma istekleri artık sonsuza dek asılı kalmaz
-  it('okuma isteği (GET) varsayılan 90 sn sonra yumuşak "timeout" ile döner; yazma ve açık 0 sınırsız kalır', async () => {
+  it('okuma isteği (GET) varsayılan 90 sn sonra yumuşak "timeout" ile döner; canlı kontrol AÇIK, sonlu süre taşır', async () => {
     vi.useFakeTimers()
     global.fetch = vi.fn((url, opts) => new Promise((_, reject) => {
       opts?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
@@ -131,8 +133,8 @@ describe('request timeout resilience', () => {
     vi.useRealTimers()
 
     mockFetch({ success: true })
-    await api.checkDomainPreview('a.example.com')   // canlı kontrol: açık timeoutMs: 0
-    expect(global.fetch.mock.calls[0][1].signal).toBeUndefined()
+    await api.checkDomainPreview('a.example.com')   // canlı kontrol: açık, sonlu LIVE_CHECK_TIMEOUT_MS (2026-11-15)
+    expect(global.fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
   })
 
   it('çağıranın iptal sinyali varsayılan süre sınırıyla EZİLMEZ — iptal isteğe ulaşır', async () => {

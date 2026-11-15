@@ -289,7 +289,7 @@ public class HttpCheckerService {
                 pinned = caAutoPinService.pinFromServer(uri.getHost(), port, "http-check");
             }
         } catch (Exception e) {
-            log.debug("Auto-pin URL parse failed for {}: {}", url, e.getMessage());
+            log.debug("Auto-pin URL parse failed for {}: {}", SecretMask.logUrl(url), e.getMessage());
         }
         // Redirect hedefi farklı bir host'ta reddedilmiş olabilir — TM'in kaydettiği hedefleri de pinle.
         for (String hp : caAutoPinService.recentTrustFailuresSince("http-check", trustWatermark)) {
@@ -414,7 +414,7 @@ public class HttpCheckerService {
             trace.elapsedMs = ms;
             if (trace.resolvedIps.isEmpty()) lateResolve(trace);   // DNS'e hiç gelinmediyse/pin yoksa hedef IP'yi şimdi çöz (JVM önbelleği — ucuz)
             result.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forException(trace, e)));
-            log.debug("HTTP check failed for {}: {}", url, e.getMessage());
+            log.debug("HTTP check failed for {}: {}", SecretMask.logUrl(url), e.getMessage());
         }
         return new Attempt(result, failure);
     }

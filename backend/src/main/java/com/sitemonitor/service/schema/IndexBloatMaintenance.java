@@ -403,6 +403,8 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
             return Report.notLocked(clock.getAsLong() - t0);
         }
         current = db;
+        // Bağlantı koparsa (08xxx) koşu YENİ oturuma geçer: kapanış ve kilit bırakma o oturumda yapılır
+        IndexCatalog[] ref = { db };
         try {
             if (!acquire(db)) {
                 log.info("İndeks bakımı bu gece atlandı: indeks kilidi (SMIDXBLD) {} dk içinde alınamadı — başka bir pod indeks"
@@ -411,9 +413,9 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
             }
             boolean[] held = { true };
             try {
-                return maintainLocked(db, t0, deadline, held);
+                return maintainLocked(ref, t0, deadline, held);
             } finally {
-                if (held[0]) db.unlock(DeferredIndexBuilder.LOCK_KEY);
+                if (held[0]) ref[0].unlock(DeferredIndexBuilder.LOCK_KEY);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -423,11 +425,12 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
             return new Report(true, 0, 0, List.of(), List.of(), 0, 0, 0, 0, true, clock.getAsLong() - t0, 0);
         } finally {
             current = null;
-            db.close();
+            ref[0].close();
         }
     }
 
-    private Report maintainLocked(IndexCatalog db, long t0, long deadline, boolean[] held) throws SQLException {
+    private Report maintainLocked(IndexCatalog[] ref, long t0, long deadline, boolean[] held) throws SQLException {
+        IndexCatalog db = ref[0];
         int[] left = dropLeftovers(db, tables);
         boolean stopped = left[2] > 0;   // bir kalıntı düşürmesi başka oturumu beklettiği için bırakıldı → bu gece bu kadar
         Set<String> skip = activeSkips(db);
@@ -480,17 +483,27 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
             } catch (SQLException e) {
                 failed.add(s.name());
                 long elapsed = clock.getAsLong() - start;
+                boolean lost = !(e instanceof BlockingOthersException) && JdbcIndexCatalog.connectionLost(e);
+                if (lost) {
+                    // Ölü oturumda ne bütçe atlaması yazılır ne kalıntı düşürülür: YENİ oturum + kilit; bu gece burada biter
+                    log.warn("Şişmiş indeks yeniden kurulurken veritabanı bağlantısı koptu: {} ON {} ({} dk sonra) — yeni oturumda"
+                            + " kalıntı temizlenir, bu gecenin koşusu burada biter: {}", s.name(), s.table(), elapsed / 60_000,
+                            DeferredIndexBuilder.firstLine(e));
+                    stopped = true;
+                    db = stopping() ? null : reopenAfterLoss(ref, held);
+                }
                 if (e instanceof BlockingOthersException) {
                     log.warn("Şişmiş indeks yeniden kurma başka bir oturumu bekletiyordu, bırakıldı: {} ON {} ({}) — bu gecenin"
                             + " koşusu burada biter, kalanlar sonraki gece", s.name(), s.table(), ((BlockingOthersException) e).reason());
                     stopped = true;
                 } else if (!stopping() && budgetTimeout(e, elapsed, remaining)) {
-                    markBudgetSkip(db, s, elapsed);
-                } else {
+                    if (db != null) markBudgetSkip(db, s, elapsed);
+                } else if (!lost) {
                     log.warn("Şişmiş indeks yeniden kurulamadı (sonraki gece yeniden denenecek): {} ON {} — {}{}", s.name(),
                             s.table(), timeoutKind(e), DeferredIndexBuilder.firstLine(e));
                 }
                 if (stopping()) { stopped = true; break; }
+                if (db == null) break;   // yeni oturum açılamadı / kilit alınamadı: kalıntı sonraki koşuda (açılış taraması da)
                 int[] l = dropLeftovers(db, List.of(s.table()));   // yarıda kalan _ccnew / _ccold hemen
                 left[0] += l[0];
                 left[1] += l[1];
@@ -519,8 +532,52 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
      * cezalandırmasın — ertesi gece o indeks zaten başa geçer). Kapanış iptali çağıranda ayrıca elenir.
      */
     boolean budgetTimeout(SQLException e, long elapsedMs, long statementMs) {
-        if (e instanceof BlockingOthersException || !"57014".equals(e.getSQLState())) return false;
+        if (e instanceof BlockingOthersException) return false;
+        // Bağlantı kopması (08xxx, ör. istemci soket sınırı) bütçenin dörtte üçünden SONRA geldiyse aynı sayılır (kapı
+        // incelemesi 2026-11-15): aksi hâlde 7 günlük atlama hiç yazılmaz ve aynı indeks her gece yeniden denenirdi.
+        if (JdbcIndexCatalog.connectionLost(e)) return elapsedMs >= budgetMs * 3 / 4 && statementMs >= budgetMs * 3 / 4;
+        if (!"57014".equals(e.getSQLState())) return false;
         return elapsedMs >= statementMs - 1_000L && statementMs >= budgetMs * 3 / 4;
+    }
+
+    /**
+     * Bağlantı koptu: ölü oturum kapatılır (kilidi sunucu süreci bitince düşer — {@link JdbcIndexCatalog} o oturumu kimliğiyle
+     * yeni bağlantıdan SONLANDIRIR, kilit hemen düşer), YENİ oturum açılır ve SMIDXBLD sınırlı beklenerek yeniden alınır. Dönüş: yeni oturum ya da
+     * null (açılamadı / kilit alınamadı / kapanış). Yeni oturum {@code ref[0]}'a yazılır — kapanış ve kilit bırakma onda.
+     */
+    private IndexCatalog reopenAfterLoss(IndexCatalog[] ref, boolean[] held) {
+        held[0] = false;
+        try {
+            ref[0].close();
+        } catch (RuntimeException ignore) {
+            // ölü oturum
+        }
+        IndexCatalog fresh;
+        try {
+            fresh = catalogs.open();
+        } catch (SQLException | RuntimeException e) {
+            log.warn("İndeks bakımı: kopan bağlantının ardından yeni oturum açılamadı — kalıntı sonraki koşuda temizlenir: {}",
+                    DeferredIndexBuilder.firstLine(e));
+            return null;
+        }
+        ref[0] = fresh;
+        current = fresh;
+        try {
+            if (!acquire(fresh)) {
+                log.warn("İndeks bakımı: kopan bağlantının ardından indeks kilidi (SMIDXBLD) {} dk içinde yeniden alınamadı —"
+                        + " kalıntı sonraki koşuda temizlenir", LOCK_WAIT_MS / 60_000);
+                return null;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (SQLException | RuntimeException e) {
+            log.warn("İndeks bakımı: yeni oturumda kilit alınamadı — kalıntı sonraki koşuda temizlenir: {}",
+                    DeferredIndexBuilder.firstLine(e));
+            return null;
+        }
+        held[0] = true;
+        return fresh;
     }
 
     /** Bütçe içinde bitemeyen indeksi 7 gün küme genelinde atlatır (tek WARN; nişan her pod'dan okunur). */
@@ -651,6 +708,7 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
         String st = e.getSQLState();
         if ("55P03".equals(st)) return "kilit / eski işlem beklemesi lock_timeout'u aştı: ";
         if ("57014".equals(st)) return "süre bütçesi doldu ya da iptal edildi: ";
+        if (JdbcIndexCatalog.connectionLost(e)) return "veritabanı bağlantısı koptu: ";
         return "";
     }
 }

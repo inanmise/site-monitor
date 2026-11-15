@@ -138,6 +138,8 @@ export default function PageSpeedMonitorCard({
 /** Ölçer dışı ihlal anahtarı → eşiğin adı (formdaki alan etiketleri: "JavaScript bütçesi", "Asgari sayfa boyutu"). */
 const BREACH_LABEL = {
   MINSIZE: 'pspd.minPageKb', JS: 'pspd.maxJsKb', IMG: 'pspd.maxImgKb', FONT: 'pspd.maxFontKb', THIRD: 'pspd.maxThirdPartyKb',
+  // Büyüme alarmı (2026-11-15): önceki haftanın medyanına göre + öğrenilen bant
+  GROWSIZE: 'pspd.growthBytes', GROWREQ: 'pspd.growthRequests', SIZEBAND: 'pspd.growthBand',
 }
 
 /**

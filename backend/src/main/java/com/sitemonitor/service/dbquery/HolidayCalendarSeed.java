@@ -2,6 +2,7 @@ package com.sitemonitor.service.dbquery;
 
 import com.sitemonitor.service.SchedulerService;
 import com.sitemonitor.service.StandaloneMonitorDeletionBackfill;
+import com.sitemonitor.service.evalstate.EvalStateSql;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -11,22 +12,25 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TEK SEFERLİK tatil takvimi tohumu (2026-10-31, veritabanı sorgu izlemesi): {@code holiday_days} BOŞKEN 2026 ve 2027
- * Türkiye resmî tatillerini yazar — "tatillerde çalışma" seçeneği ilk günden anlamlı olsun. Tablo doluysa (yönetici takvimi
- * kendisi kurmuş) hiçbir satıra dokunulmaz, yalnız nişan yazılır.
+ * TEK SEFERLİK tatil takvimi tohumu (2026-10-31, veritabanı sorgu izlemesi): {@code holiday_days} BOŞKEN Türkiye resmî
+ * tatillerini yazar — "tatillerde çalışma" seçeneği ilk günden anlamlı olsun. Tablo doluysa (yönetici takvimi kendisi
+ * kurmuş) hiçbir satıra dokunulmaz, yalnız nişan yazılır. 2026-11-15'ten beri veri kümesi 2026–2035'tir
+ * ({@link HolidayCalendarDataset}); nişanı ÖNCEKİ sürümde yazılmış kurulumlara eksik yılları
+ * {@link HolidayCalendarTenYearFill} ekler (bu tohumun nişanını bekler — ikisi yarışmaz).
  *
  * <p>CLAUDE.md "One-time DATA fixes" kuralı: açılış yolunda DEĞİL (açılıştan 3 dk sonra, sonra saatte bir, nişan yazılana
  * dek), kendi {@code scheduler_lock} kilidi altında; nişan ({@code schema_patch_markers}) kilit İÇİNDE yeniden okunur ve
  * YALNIZ başarıda yazılır; pod başına en çok {@value #MAX_ATTEMPTS} başarısız deneme.
  *
- * <p><b>Dini bayram tarihleri doğrulanmalı:</b> Ramazan ve Kurban bayramı günleri Diyanet İşleri Başkanlığı takviminden
- * alınmıştır (2026: Ramazan 20–22 Mart, Kurban 27–30 Mayıs; 2027: Ramazan 9–11 Mart, Kurban 16–19 Mayıs); resmî tatil
- * kararnamesi farklı ilan ederse yönetici Ayarlar → Platform → Tatil takviminden düzeltir. Arife yarım günü TAM gün sayılır
- * (adında "arife (yarım gün)").
+ * <p><b>Dini bayram tarihleri:</b> Ramazan ve Kurban bayramı günleri Diyanet İşleri Başkanlığı takviminden alınmıştır
+ * (kaynak ve erişim tarihi {@link HolidayCalendarDataset}'te); resmî tatil kararnamesi farklı ilan ederse yönetici
+ * Ayarlar → Platform → Tatil takviminden düzeltir. Arife yarım günü TAM gün sayılır (adında "arife (yarım gün)").
  */
 @Slf4j
 @Service
@@ -40,41 +44,14 @@ public class HolidayCalendarSeed {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
-    /** Tohum günleri (gün → ad). Aynı güne iki tatil düşerse (2027-05-19) tek satır, iki ad. */
-    static final List<String[]> DAYS = List.of(
-            new String[]{"2026-01-01", "Yılbaşı"},
-            new String[]{"2026-03-19", "Ramazan Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2026-03-20", "Ramazan Bayramı 1. gün"},
-            new String[]{"2026-03-21", "Ramazan Bayramı 2. gün"},
-            new String[]{"2026-03-22", "Ramazan Bayramı 3. gün"},
-            new String[]{"2026-04-23", "Ulusal Egemenlik ve Çocuk Bayramı"},
-            new String[]{"2026-05-01", "Emek ve Dayanışma Günü"},
-            new String[]{"2026-05-19", "Atatürk'ü Anma, Gençlik ve Spor Bayramı"},
-            new String[]{"2026-05-26", "Kurban Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2026-05-27", "Kurban Bayramı 1. gün"},
-            new String[]{"2026-05-28", "Kurban Bayramı 2. gün"},
-            new String[]{"2026-05-29", "Kurban Bayramı 3. gün"},
-            new String[]{"2026-05-30", "Kurban Bayramı 4. gün"},
-            new String[]{"2026-07-15", "Demokrasi ve Milli Birlik Günü"},
-            new String[]{"2026-08-30", "Zafer Bayramı"},
-            new String[]{"2026-10-28", "Cumhuriyet Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2026-10-29", "Cumhuriyet Bayramı"},
-            new String[]{"2027-01-01", "Yılbaşı"},
-            new String[]{"2027-03-08", "Ramazan Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2027-03-09", "Ramazan Bayramı 1. gün"},
-            new String[]{"2027-03-10", "Ramazan Bayramı 2. gün"},
-            new String[]{"2027-03-11", "Ramazan Bayramı 3. gün"},
-            new String[]{"2027-04-23", "Ulusal Egemenlik ve Çocuk Bayramı"},
-            new String[]{"2027-05-01", "Emek ve Dayanışma Günü"},
-            new String[]{"2027-05-15", "Kurban Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2027-05-16", "Kurban Bayramı 1. gün"},
-            new String[]{"2027-05-17", "Kurban Bayramı 2. gün"},
-            new String[]{"2027-05-18", "Kurban Bayramı 3. gün"},
-            new String[]{"2027-05-19", "Kurban Bayramı 4. gün · Atatürk'ü Anma, Gençlik ve Spor Bayramı"},
-            new String[]{"2027-07-15", "Demokrasi ve Milli Birlik Günü"},
-            new String[]{"2027-08-30", "Zafer Bayramı"},
-            new String[]{"2027-10-28", "Cumhuriyet Bayramı arifesi — arife (yarım gün)"},
-            new String[]{"2027-10-29", "Cumhuriyet Bayramı"});
+    /**
+     * Tohum günleri (gün → ad): 2026–2035 resmî tatilleri, {@link HolidayCalendarDataset#DAYS} (kaynak ve erişim tarihi
+     * orada). Aynı güne iki tatil düşerse (2027-05-19, 2029-04-23, 2033-01-01) tek satır, iki ad.
+     */
+    static final List<String[]> DAYS = HolidayCalendarDataset.DAYS;
+
+    /** Her deyim için sorgu zaman aşımı (sn) — kilit bekleyen bir yazma işi süresiz takılmasın. */
+    static final int QUERY_TIMEOUT_SECONDS = 15;
 
     private final JdbcTemplate jdbc;
     private final ObjectProvider<SchedulerService> scheduler;
@@ -83,7 +60,7 @@ public class HolidayCalendarSeed {
     private volatile boolean doneSeen;
 
     public HolidayCalendarSeed(JdbcTemplate jdbc, ObjectProvider<SchedulerService> scheduler, HolidayCalendarService calendar) {
-        this.jdbc = jdbc;
+        this.jdbc = EvalStateSql.withQueryTimeout(jdbc, QUERY_TIMEOUT_SECONDS);
         this.scheduler = scheduler;
         this.calendar = calendar;
     }
@@ -115,14 +92,74 @@ public class HolidayCalendarSeed {
      * karar VERMEZ — ne "bitti" der ne tohum yazar).
      */
     Boolean markerState() {
+        return markerState(jdbc, KEY);
+    }
+
+    /** Bir nişanın üç durumlu okuması ({@link HolidayCalendarTenYearFill} de kullanır): TRUE / FALSE / null = okunamadı. */
+    static Boolean markerState(JdbcTemplate jdbc, String key) {
         try {
             jdbc.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
-            Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class, KEY);
+            Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class, key);
             return n != null && n > 0;
         } catch (RuntimeException e) {
-            log.debug("Tatil takvimi tohum nişanı okunamadı: {}", e.getMessage());
+            log.debug("Tatil takvimi nişanı okunamadı ({}): {}", key, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Takvime gün yazıldı — tatil kaydının ({@code HolidayCalendarController.save}) yaptığının aynısı: özet bayatlar (bu pod +
+     * önbellek veri yolu {@code holidays}) ve tatile bakan zamanlamalı izlemelerin (veritabanı sorgusu, sentetik, Sayfa Hızı)
+     * planı yeniden kurulur. Hiçbir adım fırlatmaz.
+     */
+    static void announceCalendarChange(HolidayCalendarService calendar, SchedulerService s) {
+        try {
+            calendar.invalidate();
+        } catch (RuntimeException e) {
+            log.warn("Tatil takvimi özeti bayatlatılamadı — 60 sn içinde kendiliğinden tazelenir: {}", e.getClass().getSimpleName());
+        }
+        if (s == null) return;
+        try {
+            s.dbQueryCalendarChanged();
+        } catch (RuntimeException e) {
+            log.warn("Tatil takvimi değişikliği sorgu izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    e.getClass().getSimpleName());
+        }
+        try {
+            s.scriptedCalendarChanged();
+        } catch (RuntimeException e) {
+            log.warn("Tatil takvimi değişikliği senaryo izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    e.getClass().getSimpleName());
+        }
+        try {
+            s.pageSpeedCalendarChanged();
+        } catch (RuntimeException e) {
+            log.warn("Tatil takvimi değişikliği Sayfa Hızı izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Bir yılın günlerini TEK deyimle yazar — yalnız o yılın {@code holiday_days}'te HİÇ satırı yoksa (koşul deyimin içinde:
+     * araya giren elle kayıt yılı korur). Yıl ya bütünüyle yazılır ya hiç (yarıda kesilen iş yarım yıl bırakmaz). Dönüş:
+     * yazılan satır sayısı.
+     */
+    static int insertYearIfEmpty(JdbcTemplate jdbc, int year, List<String[]> rows, String now) {
+        if (rows == null || rows.isEmpty()) return 0;
+        StringBuilder sql = new StringBuilder("INSERT INTO holiday_days (holiday_date, name, created_at, created_by_name) "
+                + "SELECT v.d, v.n, CAST(? AS VARCHAR(30)), CAST(? AS VARCHAR(255)) FROM (VALUES ");
+        List<Object> args = new ArrayList<>();
+        args.add(now);
+        args.add(ACTOR);
+        for (int i = 0; i < rows.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("(CAST(? AS VARCHAR(10)), CAST(? AS VARCHAR(120)))");
+            args.add(rows.get(i)[0]);
+            args.add(rows.get(i)[1]);
+        }
+        sql.append(") AS v(d, n) WHERE NOT EXISTS (SELECT 1 FROM holiday_days h WHERE h.holiday_date LIKE ?)");
+        args.add(year + "-%");
+        return jdbc.update(sql.toString(), args.toArray());
     }
 
     /** Kilit altında: tablo boşsa tohum günlerini yazar, sonra nişanı. Dönüş: yazılan gün sayısı (0 = tablo doluydu). */
@@ -135,20 +172,19 @@ public class HolidayCalendarSeed {
         int written = 0;
         if (existing == null || existing == 0) {
             String now = ISO.format(Instant.now());
-            for (String[] d : DAYS) {
-                // Koşullu ekleme: yarışta (elle kayıt) aynı gün çift satır üretmez — gün birincil anahtardır.
-                written += jdbc.update("INSERT INTO holiday_days (holiday_date, name, created_at, created_by_name) "
-                        + "SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM holiday_days WHERE holiday_date = ?)",
-                        d[0], d[1], now, ACTOR, d[0]);
+            // Yıl yıl, her yıl TEK deyim (yarıda kesilirse yarım yıl kalmaz; eksik yılları HolidayCalendarTenYearFill ekler)
+            for (Map.Entry<Integer, List<String[]>> year : HolidayCalendarDataset.byYear().entrySet()) {
+                written += insertYearIfEmpty(jdbc, year.getKey(), year.getValue(), now);
             }
         }
         jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
                 KEY, ISO.format(Instant.now()), written);
         doneSeen = true;
         if (written > 0) {
-            calendar.invalidate();
-            log.info("Tatil takvimi tohumlandı: {} gün (2026–2027 resmî tatiller; dini bayram tarihleri Diyanet takvimiyle "
-                    + "doğrulanmalı — Ayarlar → Platform → Tatil takvimi)", written);
+            announceCalendarChange(calendar, scheduler.getIfAvailable());
+            log.info("Tatil takvimi tohumlandı: {} gün ({}–{} resmî tatiller, Diyanet takvimi; resmî karar farklıysa "
+                    + "Ayarlar → Platform → Tatil takviminden düzeltin)", written, HolidayCalendarDataset.FIRST_YEAR,
+                    HolidayCalendarDataset.LAST_YEAR);
         } else {
             log.info("Tatil takvimi tohumu atlandı: takvim zaten dolu (yöneticinin kaydına dokunulmadı)");
         }

@@ -136,7 +136,8 @@ public class RenewalTimelinessStatsService {
             w.put("after_expiry", after);
             w.put("last_minute", lastMinute);
             w.put("lapses", ls.size());
-            w.put("on_time_pct", denom == 0 ? null : Math.round(1000.0 * before / denom) / 10.0);
+            // Geç yenileme / süresi dolan varken ASLA 100 (AvailabilityMath; kapı incelemesi 2026-11-15)
+            w.put("on_time_pct", onTimePct(before, denom));
             windows.add(w);
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -148,4 +149,9 @@ public class RenewalTimelinessStatsService {
     }
 
     private static String str(Object v) { return v == null ? null : String.valueOf(v); }
+
+    /** Zamanında yenileme oranı (tek ondalık) — payda 0 → null; geç kalan varken ASLA 100 ({@code AvailabilityMath}). */
+    static Double onTimePct(long before, long denom) {
+        return com.sitemonitor.util.AvailabilityMath.pct(denom, before, 1);
+    }
 }

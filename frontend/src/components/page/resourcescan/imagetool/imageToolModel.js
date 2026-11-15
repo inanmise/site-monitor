@@ -38,15 +38,19 @@ export const PROJECTION_MAX_IMAGES = 200
 export const MISSING_FILE = 'missing.txt'
 const BOM = String.fromCharCode(0xfeff)
 
-/** Araç ayarlarının seçenekleri (motorun dışa aktardığı listelerle AYNI — test motor listesini okur). */
-export const FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'smallest'])
+/**
+ * Araç ayarlarının seçenekleri (motorun dışa aktardığı listelerle AYNI KÜME — test motor listesini okur). Sıra ekran
+ * sırasıdır: motor AVIF'i listesinin sonuna ekledi (2026-11-15), seçimde "en küçük"ten önce gösterilir.
+ */
+export const FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'avif', 'smallest'])
 export const METHODS = Object.freeze(['none', 'scale', 'fit', 'cover', 'thumb'])
 export const QUALITY_MODES = Object.freeze(['auto', 'manual', 'target'])
 export const PHASES = Object.freeze(['decode', 'resize', 'encode', 'search'])
 /** Motor not kodları (sözleşme §2 `NOTE_CODES`) — her biri TR + EN metin taşır (`prs.it.note.<KOD>`). */
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE',
   'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED', 'SMART_CROP',
-  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
+  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED', 'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE',
+  'AVIF_NOT_MEASURED', 'AVIF_TIME_LIMIT'])
 /** Motor hata kodları (sözleşme §2 `ERROR_CODES`) — her biri TR + EN metin taşır (`prs.it.eng.<KOD>`). */
 export const ENGINE_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED', 'BROWSER_UNSUPPORTED',
   'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
@@ -615,6 +619,19 @@ const UNSUPPORTED_KEYS = Object.freeze({
  * (`errors.js`) yardım ettiği yerde kullanılır: algılanan tür (SVG / PDF / TIFF / HEIC / boş), dosya boyutu ve sınır,
  * piksel ölçüsü ve sınırlar, zaman aşımı / bellek / üretilemeyen biçim. Ham neden kodu (`reason`) hiçbir zaman yazılmaz.
  */
+/**
+ * Seçilen biçim bu tarayıcıda üretilemiyorsa gösterilecek uyarının metin anahtarı; yoksa null (inceleme 2026-11-15).
+ * AVIF ÖNCE değerlendirilir (Safari: WebP üretemez ama AVIF'i WASM ile üretir — AVIF seçiliyken "WebP üretemiyor"
+ * denmez); WebP uyarısı yalnız WebP ya da "en küçük" seçiliyken. Destek bilinmiyorsa (`state` ≠ ready) uyarı yok.
+ * @param {string} format @param {{ state?: string, webp?: boolean, avif?: boolean }} support
+ */
+export function formatUnavailableKey(format, support) {
+  if (support?.state !== 'ready') return null
+  if (format === 'avif') return support.avif === true ? null : 'prs.it.set.avifOff'
+  if ((format === 'webp' || format === 'smallest') && support.webp !== true) return 'prs.it.set.webpOff'
+  return null
+}
+
 export function engineProblemText(code, params, t, locale) {
   const p = params && typeof params === 'object' ? params : {}
   if (code === 'UNSUPPORTED_FORMAT') return t(UNSUPPORTED_KEYS[typeof p.detected === 'string' ? p.detected : ''] || 'prs.it.eng.UNSUPPORTED_FORMAT')
@@ -639,6 +656,8 @@ export function engineProblemText(code, params, t, locale) {
   if (code === 'DECODE_FAILED' && reason === 'timeout') return t('prs.it.eng.DECODE_FAILED.timeout')
   if (code === 'BROWSER_UNSUPPORTED' && reason === 'memory') return t('prs.it.eng.BROWSER_UNSUPPORTED.memory')
   if (code === 'BROWSER_UNSUPPORTED' && reason === 'stale_bundle') return t('prs.it.eng.BROWSER_UNSUPPORTED.stale')
+  // AVIF kodlayıcı dosyası sunucudan alınamadı (yalnız açık AVIF isteğinde iş düşer): "sayfa güncellendi" DEĞİL
+  if (code === 'BROWSER_UNSUPPORTED' && reason === 'avif' && p.detail === 'asset_missing') return t('prs.it.eng.BROWSER_UNSUPPORTED.avifAsset')
   if (code === 'ENCODE_FAILED' && reason === 'timeout') return t('prs.it.eng.ENCODE_FAILED.timeout')
   if (code === 'ENCODE_FAILED' && reason === 'unsupported_type') return t('prs.it.eng.ENCODE_FAILED.type')
   return t(ENGINE_CODES.includes(code) ? `prs.it.eng.${code}` : 'prs.it.eng.other')

@@ -3,6 +3,7 @@ import { LogIn, XCircle, ShieldAlert, Download, Users, Globe, Clock, MapPin } fr
 import { useT } from '../../../i18n/index.jsx'
 import { formatDateSec } from '../../../api/client'
 import ModalShell from '../../ui/ModalShell.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
@@ -71,6 +72,7 @@ export function eventsCsv(rows, t, { masked = false } = {}) {
 
 export default function EventListModal({ kind, title, rows: rowsIn, byName = new Map(), winLabel, identityMasked = false, onClose, onUser }) {
   const t = useT()
+  const toast = useToast()
   const isAnom = kind === 'anomalies', isFailed = kind === 'failed'
   const [f, setF] = useState({ q: '', team: '', outcome: '', flag: '' })
   const patch = (p) => setF((x) => ({ ...x, ...p }))
@@ -98,7 +100,7 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
   return (
     <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Icon} size="xl" scrollBody
       footer={<>
-        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t, { masked: identityMasked }))}><Download size={14} /> {t('uact.exportEvents')}</Button>
+        <Button type="button" variant="secondary" onClick={() => { if (downloadCsv(stampedName(kind), eventsCsv(rows, t, { masked: identityMasked })) === false) toast.error(t('inv.downloadFailed')) }}><Download size={14} /> {t('uact.exportEvents')}</Button>
         <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
       </>}>
       <p className={cn(MUTED_SM, 'mb-2')}>{winLabel}{all.length >= 500 ? ` · ${t('uact.eventsCapped', 500)}` : ''}</p>

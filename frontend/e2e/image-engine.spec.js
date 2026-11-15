@@ -31,7 +31,7 @@ test.describe('görsel motoru — gerçek tarayıcı', () => {
       out.infos.gif = await engine.inspectImage(gen.animatedGif())
       return out
     })
-    expect(r.support).toEqual({ worker: true, webp: true })
+    expect(r.support).toEqual({ worker: true, webp: true, avif: true })
     expect(r.infos.jpeg).toMatchObject({ type: 'jpeg', width: 640, height: 480, hasAlpha: false, animated: false })
     expect(r.infos.png).toMatchObject({ type: 'png', width: 300, height: 200, hasAlpha: true, animated: false })
     expect(r.infos.webp).toMatchObject({ type: 'webp', width: 320, height: 240 })
@@ -368,11 +368,14 @@ test.describe('görsel motoru — gerçek tarayıcı', () => {
     expect(r.webp.quality).toBeGreaterThanOrEqual(60)
     expect(r.webp.quality).toBeLessThanOrEqual(90)
     expect(r.webp.bytes).toBeLessThan(r.photoBytes / 3)
-    expect(['jpeg', 'webp']).toContain(r.smallest.type)
+    // 2026-11-15: tarayıcı AVIF üretebiliyorsa "en küçük" AVIF'i de yarıştırır (çoğu zaman o kazanır)
+    expect(['jpeg', 'webp', 'avif']).toContain(r.smallest.type)
     expect(r.smallest.bytes).toBeLessThanOrEqual(Math.min(r.webp.bytes, r.jpeg.bytes) + 16)
     expect(r.smallest.bytes).toBeLessThan(r.png.bytes)
-    expect(['png', 'webp']).toContain(r.logoSmallest.type)                                  // saydam: JPEG aday değil
-    expect(r.logoCorner[3]).toBe(0)
+    expect(['png', 'webp', 'avif']).toContain(r.logoSmallest.type)                          // saydam: JPEG aday değil
+    // saydam köşe saydam kalır (AVIF'in saydamlık katmanı da kayıplıdır: en çok birkaç düzey)
+    if (r.logoSmallest.type === 'avif') expect(r.logoCorner[3]).toBeLessThanOrEqual(3)
+    else expect(r.logoCorner[3]).toBe(0)
     expect(r.logoSmallest.bytes).toBeLessThan(r.logoBytes)
     expect(r.logoSmallest.original.hasAlpha).toBe(true)
   })
@@ -868,7 +871,7 @@ test.describe('görsel motoru — bağımsız inceleme düzeltmeleri (2026-11-14
       const support = await engine.engineSupport()
       return { support, res: sum(await engine.processImage(await gen.logo(40, 30), {})) }
     })
-    expect(fallback.support).toEqual({ worker: false, webp: true })
+    expect(fallback.support).toEqual({ worker: false, webp: true, avif: false })
     expect(fallback.res.type).toBe('png')
     await page.unrouteAll({ behavior: 'ignoreErrors' })
 
@@ -902,5 +905,303 @@ test.describe('görsel motoru — bağımsız inceleme düzeltmeleri (2026-11-14
     // Yerelde parçalı ≈ 0,25 sn, parçasız ≈ 0,5 sn en uzun aralık; CI (2 vCPU) birkaç kat yavaş — sınır geniş tutulur.
     // Ayırt edici kapı birim testtedir (imageEngineCooperative.test.js: bekleme sayısı + birebir aynı sonuç).
     expect(r.beat.worst).toBeLessThan(1200)
+  })
+
+  // ── AVIF (2026-11-15): GERÇEK kodlayıcı (libavif / aom WASM, @jsquash/avif) ayrı Worker'da ─────────────────────
+  // Ağ sayımı bağlam düzeyinde: iç içe Worker'ın (motor Worker'ı → AVIF Worker'ı) istekleri de görülür.
+  // Geliştirme sunucusunda `?url` / `?worker&url` içe aktarmaları da istek olur (üretimde derlemede çözülür) —
+  // sayılan yalnız GERÇEK indirme: WASM dosyasının kendisi ve AVIF Worker betiği
+  const isWasm = (url) => /avif_enc[^/?]*\.wasm$/.test(url)
+  const isAvifWorker = (url) => /avif\.worker[^/]*\.js/.test(url) && !/[?&]url(&|$)/.test(url)
+  function countAvif(context) {
+    const seen = { wasm: 0, worker: 0 }
+    context.on('request', (r) => {
+      if (isWasm(r.url())) seen.wasm += 1
+      if (isAvifWorker(r.url())) seen.worker += 1
+    })
+    return seen
+  }
+  test('AVIF: kodlayıcı YALNIZ istenince yüklenir; gerçek AVIF (ftyp avif) üretilir, tarayıcıda doğru ölçüyle çözülür, JPEG\'den küçüktür', async ({ page, context }) => {
+    test.setTimeout(240000)
+    const seen = countAvif(context)
+    await open(page)
+    // AVIF'siz işler (ve destek sorgusu) kodlayıcıyı YÜKLEMEZ
+    const plain = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const src = await gen.photo(1200, 800, 'image/jpeg', 0.97)
+      return { support: await engine.engineSupport(), jpeg: sum(await engine.processImage(src, { format: 'jpeg' })),
+        webp: sum(await engine.processImage(src, { format: 'webp' })) }
+    })
+    expect(plain.support).toEqual({ worker: true, webp: true, avif: true })
+    expect(seen).toEqual({ wasm: 0, worker: 0 })
+    const r = await page.evaluate(async () => {
+      // ISO-BMFF ftyp kutusu: ana marka + uyumlu markalar
+      const ftyp = async (blob) => {
+        const b = new Uint8Array(await blob.slice(0, 64).arrayBuffer())
+        const str = (o, n) => String.fromCharCode(...b.subarray(o, o + n))
+        if (str(4, 4) !== 'ftyp') return null
+        const len = (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]
+        const brands = []
+        for (let o = 16; o + 4 <= Math.min(len, 64); o += 4) brands.push(str(o, 4))
+        return { major: str(8, 4), brands }
+      }
+      const { engine, gen, pixels, sum } = window.__ie
+      const src = await gen.photo(1200, 800, 'image/jpeg', 0.97)
+      const t0 = performance.now()
+      const avif = await engine.processImage(src, { format: 'avif' })
+      const ms = performance.now() - t0
+      const px = await pixels(avif.blob)
+      const avif2 = await engine.processImage(src, { format: 'avif', quality: 60 })
+      return { avif: sum(avif), avif2: sum(avif2), ftyp: await ftyp(avif.blob), dims: [px.width, px.height], ms }
+    })
+    r.jpeg = plain.jpeg
+    r.webp = plain.webp
+    console.log(`AVIF 1200×800: ${r.avif.bytes} B (kalite ${r.avif.quality}, benzerlik ${r.avif.similarity}) ${Math.round(r.ms)} ms; JPEG ${r.jpeg.bytes} B (q ${r.jpeg.quality}, ${r.jpeg.similarity}); WebP ${r.webp.bytes} B (q ${r.webp.quality}, ${r.webp.similarity})`)
+    expect(r.avif).toMatchObject({ type: 'avif', mime: 'image/avif', blobType: 'image/avif', width: 1200, height: 800, kept: false })
+    expect(r.avif.bytes).toBe(r.avif.blobSize)
+    expect(r.ftyp.major).toBe('avif')
+    expect(r.dims).toEqual([1200, 800])
+    expect(r.avif.notes.filter((n) => n.startsWith('AVIF_'))).toEqual([])
+    expect(r.avif.similarity).toBeGreaterThanOrEqual(0.97)
+    // aynı benzerlik hedefinde (otomatik kalite) AVIF JPEG'den belirgin küçük
+    expect(r.avif.bytes).toBeLessThan(r.jpeg.bytes * 0.85)
+    expect(r.avif.analysis.candidates.map((c) => c.type)).toEqual(['avif'])
+    expect(r.avif.analysis.output).toMatchObject({ bitDepth: 8 })
+    expect(r.avif2).toMatchObject({ type: 'avif', quality: 60 })
+    // kodlayıcı yalnız AVIF işinde, BİR kez indirildi (ikinci AVIF işi aynı Worker'ı kullanır)
+    expect(seen.wasm).toBe(1)
+    expect(seen.worker).toBe(1)
+  })
+
+  test('AVIF: saydamlık korunur; "en küçük" AVIF\'i de yarıştırır', async ({ page }) => {
+    test.setTimeout(240000)
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, pixels, sum } = window.__ie
+      const logo = await gen.logo(400, 240)
+      const a = await engine.processImage(logo, { format: 'avif' })
+      const px = await pixels(a.blob)
+      const photo = await gen.photo(900, 600, 'image/jpeg', 0.97)
+      const s = await engine.processImage(photo, { format: 'smallest' })
+      return { a: sum(a), corner: px.at(2, 2), body: px.at(Math.round(400 * 0.3), 120), s: sum(s) }
+    })
+    expect(r.a).toMatchObject({ type: 'avif', width: 400, height: 240 })
+    expect(r.a.original.hasAlpha).toBe(true)
+    expect(r.corner[3]).toBeLessThan(8)                                   // saydam köşe saydam kaldı
+    expect(r.body[3]).toBeGreaterThan(247)                                // logo gövdesi opak
+    const types = r.s.analysis.candidates.map((c) => c.type)
+    expect(types).toContain('avif')
+    expect(types).toContain('webp')
+    const smallest = Math.min(...r.s.analysis.candidates.map((c) => c.bytes))
+    expect(r.s.bytes).toBeLessThanOrEqual(smallest)
+  })
+
+  test('AVIF İPTAL: kodlama sürerken iş anında kesilir (Worker\'lar sonlanır); sonraki AVIF işi yeni kodlayıcıyla çalışır', async ({ page }) => {
+    test.setTimeout(240000)
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, failure, sum } = window.__ie
+      const big = await gen.photo(3000, 2000, 'image/jpeg', 0.95)
+      const ac = new AbortController()
+      let onEncoding
+      const encoding = new Promise((res) => { onEncoding = res })
+      const running = failure(engine.processImage(big, { format: 'avif' }, { signal: ac.signal,
+        onProgress: (phase) => { if (phase === 'search' || phase === 'encode') onEncoding() } }))
+      await Promise.race([encoding, new Promise((res) => setTimeout(res, 60000))])
+      await new Promise((res) => setTimeout(res, 400))
+      const tAbort = performance.now()
+      ac.abort()
+      const first = await running
+      const cancelMs = performance.now() - tAbort
+      const after = sum(await engine.processImage(await gen.photo(600, 400, 'image/jpeg', 0.95), { format: 'avif', quality: 55 }))
+      return { first, cancelMs, after }
+    })
+    console.log(`AVIF iptali: söz ${r.cancelMs.toFixed(1)} ms içinde reddedildi`)
+    expect(r.first).toMatchObject({ code: 'CANCELLED' })
+    expect(r.cancelMs).toBeLessThan(1000)
+    expect(r.after).toMatchObject({ type: 'avif', width: 600, height: 400 })
+  })
+
+  test('AVIF KODLAYICI DOSYASI (inceleme 2026-11-15): 404 bir kez → yeniden denenir, iş biter; hep 404 → yalnız açık AVIF düşer (AVIF e özgü), motor kilitlenmez; 500 → WebP + not', async ({ page, context }) => {
+    test.setTimeout(240000)
+    // 1) Yuvarlanan dağıtım: WASM isteği BİR KEZ eski pod'a düşer (404), sonraki istek dosyayı bulur — "en küçük" sonuç
+    //    verir (AVIF dahil), ardından JPEG işi de çalışır; motor "eski paket" kilidine girmez
+    let wasmCalls = 0
+    await context.route(/avif_enc[^/?]*\.wasm$/, (route) => {
+      wasmCalls += 1
+      return wasmCalls === 1 ? route.fulfill({ status: 404, body: 'yok' }) : route.continue()
+    })
+    await open(page)
+    const once = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const src = await gen.photo(300, 200)
+      let small = null
+      let firstErr = null
+      try { small = sum(await engine.processImage(src, { format: 'smallest' })) } catch (e) { firstErr = { code: e?.code, params: e?.params } }
+      const jpeg = sum(await engine.processImage(src, { format: 'jpeg' }))
+      return { small, firstErr, jpeg, support: await engine.engineSupport() }
+    })
+    expect(once.firstErr).toBeNull()
+    expect(['jpeg', 'webp', 'avif', 'png']).toContain(once.small.type)
+    expect(once.small.analysis.candidates.map((c) => c.type)).toContain('avif')        // yeniden deneme dosyayı buldu
+    expect(once.jpeg).toMatchObject({ type: 'jpeg' })
+    expect(once.support).not.toHaveProperty('staleBundle')
+    expect(wasmCalls).toBeGreaterThanOrEqual(2)
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // 2) Dosya hep 404: "en küçük" AVIF'siz biter (not); açık AVIF isteği AVIF'e özgü hatayla düşer — "eski paket"
+    //    DEĞİL; ardından JPEG işi çalışır, destek kilitlenmez
+    await context.route(/avif_enc[^/?]*\.wasm$/, (route) => route.fulfill({ status: 404, body: 'yok' }))
+    await open(page)
+    const gone = await page.evaluate(async () => {
+      const { engine, gen, sum, failure } = window.__ie
+      const src = await gen.photo(300, 200)
+      const small = sum(await engine.processImage(src, { format: 'smallest' }))
+      const err = await failure(engine.processImage(src, { format: 'avif' }))
+      const jpeg = sum(await engine.processImage(src, { format: 'jpeg' }))
+      return { small, err, jpeg, support: await engine.engineSupport() }
+    })
+    expect(gone.small.notes).toContain('AVIF_UNAVAILABLE')
+    expect(gone.small.analysis.candidates.map((c) => c.type)).not.toContain('avif')
+    expect(gone.err).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
+    expect(gone.jpeg).toMatchObject({ type: 'jpeg' })
+    expect(gone.support).not.toHaveProperty('staleBundle')
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+
+    // 3) 500: geçici sunucu hatası — istek WebP'ye döner, "en küçük" AVIF'siz biter (not ile)
+    await context.route(/avif_enc[^/?]*\.wasm$/, (route) => route.fulfill({ status: 500, body: 'hata' }))
+    await open(page)
+    const flaky = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const src = await gen.photo(300, 200)
+      return { req: sum(await engine.processImage(src, { format: 'avif' })), small: sum(await engine.processImage(src, { format: 'smallest' })) }
+    })
+    expect(flaky.req).toMatchObject({ type: 'webp' })
+    expect(flaky.req.notes).toContain('AVIF_UNAVAILABLE')
+    expect(flaky.small.notes).toContain('AVIF_UNAVAILABLE')
+    expect(flaky.small.analysis.candidates.map((c) => c.type)).not.toContain('avif')
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+  })
+
+  test('AVIF + CSP: ürünün script-src\'si (\'self\' \'wasm-unsafe-eval\') yeter; WASM derlemesine izin yoksa AVIF denenmez (WebP + not)', async ({ page, context }) => {
+    test.setTimeout(180000)
+    const withCsp = (csp) => context.route(/^http:\/\/[^/]+\/(?!@vite\/client)/, async (route) => {
+      const res = await route.fetch()
+      await route.fulfill({ response: res, headers: { ...res.headers(), 'content-security-policy': csp } })
+    })
+    await withCsp("script-src 'self' 'wasm-unsafe-eval'")
+    await open(page)
+    const ok = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      return { support: await engine.engineSupport(), r: sum(await engine.processImage(await gen.photo(300, 200), { format: 'avif', quality: 60 })) }
+    })
+    expect(ok.support.avif).toBe(true)
+    expect(ok.r).toMatchObject({ type: 'avif' })
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+
+    await withCsp("script-src 'self'")
+    await open(page)
+    const blocked = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      return { support: await engine.engineSupport(), r: sum(await engine.processImage(await gen.photo(300, 200), { format: 'avif' })) }
+    })
+    expect(blocked.support).toMatchObject({ worker: true, webp: true, avif: false })
+    expect(blocked.r).toMatchObject({ type: 'webp' })
+    expect(blocked.r.notes).toContain('AVIF_UNAVAILABLE')
+    await context.unrouteAll({ behavior: 'ignoreErrors' })
+  })
+
+  // ── Piksel yoğunluğu (PPI, 2026-11-15): kaynağınki yeniden kodlanmış JPEG / PNG'ye AYNEN yazılır ──────────────
+  test('PPI: 300 dpi JPEG (JFIF) ve PNG (pHYs) → JPEG / PNG çıktısı 300 dpi taşır (boyutlansa da); WebP\'de alan yok', async ({ page }) => {
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer())
+      const crcTable = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0 } return t })()
+      const crc = (b) => { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = crcTable[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0 }
+      const u32 = (v) => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255]
+      // tarayıcının JPEG'i: JFIF APP0 birimsiz (0, 1:1) — yoğunluk alanları yamanır
+      const jfif = async (blob, units, x, y) => {
+        const b = await bytesOf(blob)
+        if (String.fromCharCode(...b.subarray(6, 11)) !== 'JFIF\0') throw new Error('JFIF yok')
+        b[13] = units; b[14] = x >> 8; b[15] = x & 255; b[16] = y >> 8; b[17] = y & 255
+        return new Blob([b], { type: 'image/jpeg' })
+      }
+      // tuvalin PNG'si: IHDR'nin hemen ardına pHYs (metre başına, birim 1) eklenir
+      const phys = async (blob, ppm) => {
+        const b = await bytesOf(blob)
+        const body = new Uint8Array([0x70, 0x48, 0x59, 0x73, ...u32(ppm), ...u32(ppm), 1])
+        const chunk = new Uint8Array([...u32(9), ...body, ...u32(crc(body))])
+        return new Blob([b.subarray(0, 33), chunk, b.subarray(33)], { type: 'image/png' })
+      }
+      // çıktıdan yoğunluk: JPEG → JFIF { units, x, y }; PNG → pHYs { ppm, unit, crcOk, beforeIdat }
+      const density = async (blob) => {
+        const b = await bytesOf(blob)
+        if (b[0] === 0xff && b[1] === 0xd8) {
+          let i = 2
+          for (let g = 0; g < 400 && i + 4 <= b.length; g++) {
+            const len = (b[i + 2] << 8) | b[i + 3]
+            if (b[i + 1] === 0xe0 && String.fromCharCode(...b.subarray(i + 4, i + 9)) === 'JFIF\0') {
+              const s = i + 4
+              return { jfif: { units: b[s + 7], x: (b[s + 8] << 8) | b[s + 9], y: (b[s + 10] << 8) | b[s + 11] } }
+            }
+            if (b[i + 1] === 0xda) break
+            i += 2 + len
+          }
+          return { jfif: null }
+        }
+        if (b[0] === 0x89 && b[1] === 0x50) {
+          let o = 8
+          let idatSeen = false
+          for (let g = 0; g < 10000 && o + 12 <= b.length; g++) {
+            const len = ((b[o] << 24) >>> 0) + ((b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3])
+            const type = String.fromCharCode(...b.subarray(o + 4, o + 8))
+            if (type === 'IDAT') idatSeen = true
+            if (type === 'pHYs') {
+              const d = o + 8
+              const stored = (((b[d + 9] << 24) >>> 0) + ((b[d + 10] << 16) | (b[d + 11] << 8) | b[d + 12])) >>> 0
+              return { phys: { ppm: ((b[d] << 24) >>> 0) + ((b[d + 1] << 16) | (b[d + 2] << 8) | b[d + 3]), unit: b[d + 8],
+                crcOk: stored === crc(b.subarray(o + 4, o + 8 + len)), beforeIdat: !idatSeen } }
+            }
+            o += 12 + len
+          }
+          return { phys: null }
+        }
+        return { none: true }
+      }
+      const jpeg300 = await jfif(await gen.photo(800, 600, 'image/jpeg', 0.95), 1, 300, 300)
+      const jpegCm = await jfif(await gen.photo(400, 300, 'image/jpeg', 0.95), 2, 118, 118)
+      const png300 = await phys(await gen.logo(400, 240), 11811)
+      const plainPng = await gen.logo(400, 240)
+      const run = async (blob, opts) => { const res = await engine.processImage(blob, opts); return { s: sum(res), d: await density(res.blob) } }
+      return {
+        inJpeg: await engine.inspectImage(jpeg300),
+        jj: await run(jpeg300, { format: 'jpeg', resize: { method: 'scale', width: 400 } }),
+        jp: await run(jpeg300, { format: 'png', resize: { method: 'scale', width: 200 } }),
+        pp: await run(png300, { format: 'png' }),
+        pj: await run(png300, { format: 'jpeg', resize: { method: 'scale', width: 200 } }),
+        pw: await run(png300, { format: 'webp' }),
+        cm: await run(jpegCm, { format: 'jpeg', resize: { method: 'scale', width: 200 } }),
+        plain: await run(plainPng, { format: 'png' }),
+        plainJ: await run(plainPng, { format: 'jpeg' }),
+        target: await run(jpeg300, { format: 'jpeg', targetBytes: 30_000 }),
+      }
+    })
+    expect(r.jj.d.jfif).toEqual({ units: 1, x: 300, y: 300 })
+    expect(r.jj.s).toMatchObject({ width: 400 })
+    expect(r.jj.s.analysis.output.ppi).toEqual({ x: 300, y: 300 })
+    expect(r.jp.d.phys).toEqual({ ppm: 11811, unit: 1, crcOk: true, beforeIdat: true })
+    expect(r.pp.d.phys).toEqual({ ppm: 11811, unit: 1, crcOk: true, beforeIdat: true })
+    expect(r.pj.d.jfif).toEqual({ units: 1, x: 300, y: 300 })
+    expect(r.pw.d).toEqual({ none: true })
+    expect(r.pw.s.analysis.output.ppi).toBeNull()
+    expect(r.pw.s.analysis.input.ppi).toEqual({ x: 300, y: 300 })
+    expect(r.cm.d.jfif).toEqual({ units: 2, x: 118, y: 118 })                  // dpcm kaynağı dpcm kalır
+    expect(r.plain.d.phys).toBeNull()                                          // kaynakta yoğunluk yok → eklenmez
+    expect(r.plainJ.d.jfif.units).toBe(0)
+    // bayt hesabı yazılan son dosyayla: bildirilen boyut = Blob boyutu; hedef boyut aşılmaz
+    for (const k of ['jj', 'jp', 'pp', 'pj', 'pw', 'cm', 'plain', 'target']) expect(r[k].s.bytes, k).toBe(r[k].s.blobSize)
+    expect(r.target.s.bytes).toBeLessThanOrEqual(30_000)
+    expect(r.target.d.jfif).toEqual({ units: 1, x: 300, y: 300 })
   })
 })

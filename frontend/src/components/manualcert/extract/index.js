@@ -24,6 +24,19 @@ async function readBytes(file) {
   })
 }
 
+/**
+ * Ana iş parçacığı yedeğinin çekirdek parçasını süre sınırıyla yükler (2026-11-15, prod kapısı incelemesi — "zaman aşımı
+ * olmayan bekleme yok"): parça isteği asılı kalırsa sihirbaz sonsuza dek "ayıklanıyor"da kalmaz, `TIMEOUT` sonucuna düşer.
+ * Bu dosya hiçbir şeyi STATİK içe aktarmaz (manualCertExtractLazy kapısı) — ortak `importWithDeadline` yerine yerel yarış;
+ * zamanlayıcı her durumda söker, süre dolduktan sonra gelen ret yarışın işleyicisinde kalır (işlenmemiş ret yok).
+ */
+const CORE_TIMED_OUT = Symbol('extract-core-timeout')
+function importCore(ms) {
+  let timer
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(CORE_TIMED_OUT), ms) })
+  return Promise.race([import('./core.js'), deadline]).finally(() => clearTimeout(timer))
+}
+
 /** İlerleme dinleyicisini güvenle çağırır (dinleyici hatası ayıklamayı durdurmaz). */
 function emit(onProgress, p) {
   if (typeof onProgress !== 'function') return
@@ -101,7 +114,9 @@ export async function extractCertificates({ file = null, text = null, password =
     if (out?.timeout) return failure(head, { reason: 'TIMEOUT', seconds: Math.round(timeoutMs / 1000) })
     if (out) return out
   }
-  const { extractCore } = await import('./core.js')
+  const core = await importCore(timeoutMs)
+  if (core === CORE_TIMED_OUT) return failure(head, { reason: 'TIMEOUT', seconds: Math.round(timeoutMs / 1000) })
+  const { extractCore } = core
   if (signal?.aborted) return cancelled()
   let out
   try {

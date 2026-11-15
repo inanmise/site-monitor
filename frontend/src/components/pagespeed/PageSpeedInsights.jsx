@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Info } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
-import { api } from '../../api/client'
+import { api, formatDateSec } from '../../api/client'
 import { formatBytes } from '../../utils/formatBytes.js'
 import { ProgressBar, LoadingBlock } from '../ui/Progress.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
@@ -169,9 +169,20 @@ function TypeSeries({ monitorId, t }) {
           </Button>
         </div>
       ) : (
-        <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
-          <PageSpeedTypeChart points={state.data?.points} truncated={state.data?.truncated === true} />
-        </Suspense>
+        <>
+          <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
+            <PageSpeedTypeChart points={state.data?.points} truncated={state.data?.truncated === true} />
+          </Suspense>
+          {/* Ölçüm kipi değişimi (2026-11-15, genişletilmiş ölçüm): iki yandaki toplamlar karşılaştırılamaz — nötr not */}
+          {Array.isArray(state.data?.mode_changes) && state.data.mode_changes.length > 0 && (
+            <p data-slot="pspd-type-mode-changes" className="m-0 mt-2 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
+              <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                {t('pspd.ins.modeChanged', state.data.mode_changes.map((c) => formatDateSec(c.at)).join(', '))}
+              </span>
+            </p>
+          )}
+        </>
       )}
     </section>
   )

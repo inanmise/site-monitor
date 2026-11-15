@@ -1571,16 +1571,7 @@ public class PageResourceScanService {
     }
 
     private static String decodeText(byte[] body, String contentType) {
-        Charset cs = StandardCharsets.UTF_8;
-        if (contentType != null) {
-            int i = contentType.toLowerCase(Locale.ROOT).indexOf("charset=");
-            if (i >= 0) {
-                String name = contentType.substring(i + 8).split(";", 2)[0].replace("\"", "").trim();
-                try { cs = Charset.forName(name); } catch (RuntimeException ignore) { /* bilinmeyen kodlama → UTF-8 */ }
-            }
-        }
-        int n = Math.min(body.length, PageResourceDiscovery.MAX_CSS_CHARS);
-        return new String(body, 0, n, cs);
+        return PageResourceDiscovery.decodeCssText(body, contentType);   // tek kural (Sayfa Hızı genişletilmiş ölçümüyle ortak)
     }
 
     // ── Derin analiz (algoritma 3) yardımcıları ────────────────────────────────────────────
@@ -1877,7 +1868,7 @@ public class PageResourceScanService {
             if (f.status() < 200 || f.status() >= 300 || f.body() == null || f.truncated()) return null;
             MeasurePlan plan = measurePlan(it, f.body(), f.bytes());
             if (!plan.measurable()) {
-                log.debug("Kaynak analizi görsel kazancı ölçülmedi ({}): {}", plan.skipReason(), PageFetchCore.sanitize(it.url));
+                log.debug("Kaynak analizi görsel kazancı ölçülmedi ({}): {}", plan.skipReason(), com.sitemonitor.service.SecretMask.logUrl(it.url));
                 return null;
             }
             long wait2 = Math.max(1, Math.min(10_000L, phaseEnd - clock.getAsLong()));

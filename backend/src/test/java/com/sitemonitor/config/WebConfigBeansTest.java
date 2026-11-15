@@ -154,7 +154,9 @@ class WebConfigBeansTest {
         List<Object> regs = (List<Object>) ReflectionTestUtils.getField(registry, "registrations");
         assertThat(regs).hasSize(2);
         assertThat(cfg.originCheckFilter()).isNotNull();
-        assertThat(cfg.loginHelpBodyLimitFilter()).isNotNull();
+        // /api/login-help gövde sınırı tek kaynakta: PublicBodyLimitFilter (eski ayrı WebConfig süzgeci kaldırıldı)
+        assertThat(java.util.Arrays.stream(WebConfig.class.getDeclaredMethods()).map(java.lang.reflect.Method::getName))
+                .doesNotContain("loginHelpBodyLimitFilter");
         assertThat(WebConfig.isRevalidatableStatic(null)).isFalse();
     }
 }

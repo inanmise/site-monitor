@@ -46,6 +46,26 @@ class ActivityTimelineComputeTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: kesinti varken erişilebilirlik ASLA %100 değil (30 000 kontrolde 1 kesinti → 99,99)")
+    void availabilityNeverHundredWithOutage() {
+        List<Row> rows = new ArrayList<>();
+        Instant t = FROM;
+        for (int i = 0; i < 30_000; i++) {
+            String status = i == 15_000 ? "ERROR" : "SUCCESS";
+            rows.add(new Row(seq++, t.toString().replace("Z", ""), "SCHEDULED_CHECK", status, 100L, null, null, null));
+            t = t.plusSeconds(1);
+        }
+        Map<String, Object> m = ActivityTimelineService.compute(rows, FROM, TO, NOW, false);
+        assertThat((Double) m.get("availability_pct")).isEqualTo(99.99);
+        assertThat((Double) m.get("healthy_pct")).isEqualTo(99.99);
+        // Saf kural: 129 600 kontrolde 2..6 eksik → 100 değil; eksiksiz → 100
+        for (int down = 2; down <= 6; down++) {
+            assertThat(ActivityTimelineService.pct(129_600 - down, 129_600)).isLessThan(100.0);
+        }
+        assertThat(ActivityTimelineService.pct(129_600, 129_600)).isEqualTo(100.0);
+    }
+
+    @Test
     @DisplayName("kesinti: ilk down → ilk up; araya giren warn / unknown bitirmez; neden en sık olan; alarm bağlanır; MTTR")
     void outagesAndMttr() {
         List<Row> rows = List.of(

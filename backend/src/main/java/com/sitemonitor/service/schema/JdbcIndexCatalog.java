@@ -25,6 +25,7 @@ import java.util.Map;
  */
 final class JdbcIndexCatalog implements IndexCatalog {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JdbcIndexCatalog.class);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     /** Tablonun indeksleri — anahtar + INCLUDE sütun adları {@code indkey} sırasıyla (ifade konumu boş dize). */
@@ -114,29 +115,83 @@ final class JdbcIndexCatalog implements IndexCatalog {
     @FunctionalInterface
     interface WatchStarter { DdlBlockWatch start(int pid, long maxMs) throws SQLException; }
 
+    /**
+     * Bağlantısı kopan KENDİ oturumumuzu YENİ bir bağlantıdan durdurur (arka uç inceleme 2026-11-15): kimlik ({@code pid} +
+     * {@code backend_start}) biliniyorsa {@code pg_terminate_backend} — oturum düzeyindeki SMIDXBLD kilidi ancak sunucu süreci
+     * bitince düşer; {@code pg_cancel_backend} yalnız deyimi keser, ölü TCP akışını sunucu uzun süre fark etmeyebilir ve
+     * yeni oturumun kilit beklemesi boşa geçerdi. Kimlik okunamadıysa (null) yalnız deyim iptal edilir — pid yeniden
+     * kullanılmışsa BAŞKA bir oturum asla sonlandırılmaz. Dönüş: sonlandırıldı (true) / yalnız iptal ya da eşleşmedi (false).
+     */
+    @FunctionalInterface
+    interface OrphanCanceller { boolean stop(int pid, String backendStart) throws SQLException; }
+
+    /** Oturum kimliğinin ikinci yarısı: sunucu sürecinin başlangıç anı (metin; {@code timestamptz} olarak geri okunur). */
+    static final String SQL_BACKEND_START = "SELECT backend_start::text FROM pg_stat_activity WHERE pid = pg_backend_pid()";
+
+    /** Yalnız kimliği (pid + başlangıç anı) tutan oturum sonlandırılır; satır yoksa (süreç bitmiş / pid başkasının) iş yok. */
+    static final String SQL_TERMINATE_OWN = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            + " WHERE pid = ? AND backend_start = CAST(? AS timestamptz)";
+
+    /**
+     * İstemci soket sınırının DDL'in {@code statement_timeout}'undan fazlası (kapı incelemesi 2026-11-15). Havuz dışı oturum
+     * veri kaynağının özelliklerini (Helm {@code DB_SOCKET_TIMEOUT_SECONDS} → {@code socketTimeout=1800}) kopyalar; 45 dk'lık
+     * bir REINDEX 30. dakikada istemcide 08006 ile kesiliyor, bekçi duruyor ve sunucu DDL'i (SHARE UPDATE EXCLUSIVE +
+     * SMIDXBLD tutarak) gözetimsiz sürdürüyordu. Her {@link #executeBounded} soket sınırını deyim süresi + bu pay yapar ve
+     * sonra eski değere döndürür: deyim önce sunucuda biter (57014) ya da bekçi iptal eder — istemci soketi önce kesmez.
+     */
+    static final long NETWORK_SLACK_MS = 60_000L;
+
+    private static final java.util.concurrent.Executor DIRECT = Runnable::run;
+
     private final DeferredIndexBuilder.JdbcSession session;
     private final Connection conn;
     private final WatchStarter watches;
+    private final OrphanCanceller orphans;
     /** Süren DDL deyimi — kapanışta {@link #cancel()} başka iş parçacığından iptal eder. */
     private volatile Statement running;
     private int backendPid = -1;
+    /** Oturumun sunucu süreci başlangıcı (metin) — öksüz oturumu kimliğiyle sonlandırmak için; okunamadıysa null. */
+    private String backendStart;
 
-    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session, WatchStarter watches) {
+    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session, WatchStarter watches, OrphanCanceller orphans) {
         this.session = session;
         this.conn = session.connection();
         this.watches = watches;
+        this.orphans = orphans;
     }
 
     static JdbcIndexCatalog open(DataSource ds) throws SQLException {
         return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.open(ds),
-                (pid, maxMs) -> DdlBlockWatch.start(JdbcProbe.open(ds), pid, maxMs));
+                (pid, maxMs) -> DdlBlockWatch.start(JdbcProbe.open(ds), pid, maxMs),
+                (pid, start) -> {
+                    JdbcProbe p = JdbcProbe.open(ds);
+                    try { return p.stopOwn(pid, start); } finally { p.close(); }
+                });
+    }
+
+    /** Birim testleri: verilen bağlantı (sahte) üzerinde katalog. */
+    static JdbcIndexCatalog of(Connection conn, WatchStarter watches, OrphanCanceller orphans) {
+        return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.wrap(conn, false), watches, orphans);
+    }
+
+    /** {@code executeBounded} süresince istemci soket sınırı: deyim süresi + {@link #NETWORK_SLACK_MS} (int'e sığdırılır). */
+    static int networkTimeoutMs(long statementMs) {
+        long s = Math.max(1L, statementMs);
+        return (int) Math.min(Integer.MAX_VALUE, s >= Integer.MAX_VALUE ? Integer.MAX_VALUE : s + NETWORK_SLACK_MS);   // taşmaz
+    }
+
+    /** Bağlantı koptu mu (08xxx; 08000 = bekçi / soket sınırı kurulamadı, DDL hiç koşmadı — kopma değil). */
+    static boolean connectionLost(SQLException e) {
+        String st = e == null ? null : e.getSQLState();
+        return st != null && st.startsWith("08") && !"08000".equals(st);
     }
 
     /** Bekçinin ayrı bağlantısı (havuz dışı, otomatik commit, 3 sn deyim süresi). */
     static final class JdbcProbe implements DdlBlockWatch.Probe {
         private final DeferredIndexBuilder.JdbcSession session;
 
-        private JdbcProbe(DeferredIndexBuilder.JdbcSession session) { this.session = session; }
+        /** Birim testleri de sahte oturumla kurar. */
+        JdbcProbe(DeferredIndexBuilder.JdbcSession session) { this.session = session; }
 
         static JdbcProbe open(DataSource ds) throws SQLException {
             DeferredIndexBuilder.JdbcSession s = DeferredIndexBuilder.JdbcSession.open(ds);
@@ -163,6 +218,22 @@ final class JdbcIndexCatalog implements IndexCatalog {
             try (PreparedStatement ps = session.connection().prepareStatement("SELECT pg_cancel_backend(?)")) {
                 ps.setInt(1, pid);
                 ps.execute();
+            }
+        }
+
+        /**
+         * Öksüz KENDİ oturumumuz: kimlik biliniyorsa {@link #SQL_TERMINATE_OWN} (oturum ve SMIDXBLD kilidi biter), bilinmiyorsa
+         * yalnız deyim iptali (eski davranış). Dönüş: bir oturum sonlandırıldı mı.
+         */
+        boolean stopOwn(int pid, String backendStart) throws SQLException {
+            if (backendStart == null || backendStart.isBlank()) {
+                cancel(pid);
+                return false;
+            }
+            try (PreparedStatement ps = session.connection().prepareStatement(SQL_TERMINATE_OWN)) {
+                ps.setInt(1, pid);
+                ps.setString(2, backendStart);
+                try (ResultSet rs = ps.executeQuery()) { return rs.next() && rs.getBoolean(1); }
             }
         }
 
@@ -333,7 +404,16 @@ final class JdbcIndexCatalog implements IndexCatalog {
             throw new SQLException("indeks DDL bekçisi başlatılamadı — DDL koşulmadı: " + DeferredIndexBuilder.firstLine(e),
                     "08000", e);
         }
+        int previousNetworkMs = -1;
         try (Statement st = conn.createStatement()) {
+            // Soket sınırı deyim süresinden uzun (NETWORK_SLACK_MS): kurulamazsa DDL KOŞULMAZ (istemci erken kesebilirdi)
+            try {
+                previousNetworkMs = conn.getNetworkTimeout();
+                conn.setNetworkTimeout(DIRECT, networkTimeoutMs(stmtMs));
+            } catch (SQLException | RuntimeException e) {
+                throw new SQLException("indeks DDL soket sınırı ayarlanamadı — DDL koşulmadı: " + DeferredIndexBuilder.firstLine(e),
+                        "08000", e);
+            }
             st.execute("SET lock_timeout = " + Math.max(1L, lockTimeoutMs));
             st.execute("SET statement_timeout = " + stmtMs);
             running = st;
@@ -343,6 +423,7 @@ final class JdbcIndexCatalog implements IndexCatalog {
                 watch.stop();
                 String fired = watch.firedReason();
                 if (fired != null) throw new BlockingOthersException(fired, e);
+                if (connectionLost(e)) cancelOrphan(e);
                 throw e;
             } finally {
                 running = null;
@@ -355,16 +436,46 @@ final class JdbcIndexCatalog implements IndexCatalog {
             } catch (SQLException ignore) {
                 // bağlantı koptuysa oturum zaten kapanıyor
             }
+            if (previousNetworkMs >= 0) {
+                try { conn.setNetworkTimeout(DIRECT, previousNetworkMs); } catch (SQLException ignore) { /* kopuk oturum */ }
+            }
         }
     }
 
-    /** Bu oturumun sunucu süreci (bekçi onu bekleyenleri arar, gerekirse iptal eder). */
+    /**
+     * Bağlantı koptu ama sunucu süreci DDL'i sürdürüyor olabilir (istemci soketi kapandı, sunucu bunu ancak yazınca görür):
+     * kilitleri ve oturum düzeyindeki SMIDXBLD'yi gözetimsiz tutmasın diye KENDİ oturumumuz YENİ bir bağlantıdan, kimliği
+     * (pid + {@code backend_start}) eşleşerek sonlandırılır ({@link OrphanCanceller}). Başarısızlık yutulur (sunucudaki
+     * {@code statement_timeout} deyimi yine sınırlar). Kalıntı (_ccnew) çağıranın yeni oturumunda düşürülür.
+     */
+    private void cancelOrphan(SQLException cause) {
+        int pid = backendPid;
+        if (pid <= 0) return;
+        try {
+            boolean terminated = orphans.stop(pid, backendStart);
+            log.warn("İndeks DDL'i sürerken veritabanı bağlantısı koptu ({}) — sunucudaki oturum yeni bağlantıdan {} (pid {})",
+                    DeferredIndexBuilder.firstLine(cause),
+                    terminated ? "sonlandırıldı (indeks kilidi düştü)" : backendStart == null
+                            ? "yalnız deyim iptal edildi (oturum kimliği okunamamıştı)" : "aranıp bulunamadı (zaten bitmiş)",
+                    pid);
+        } catch (SQLException | RuntimeException e) {
+            log.warn("İndeks DDL'i sürerken bağlantı koptu; sunucudaki oturum durdurulamadı (pid {}): {} — deyim kendi"
+                    + " statement_timeout'unda biter", pid, DeferredIndexBuilder.firstLine(e));
+        }
+    }
+
+    /** Bu oturumun sunucu süreci (bekçi onu bekleyenleri arar, gerekirse iptal eder) + en iyi çabayla başlangıç anı. */
     private int backendPid() throws SQLException {
         if (backendPid > 0) return backendPid;
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery("SELECT pg_backend_pid()")) {
             backendPid = rs.next() ? rs.getInt(1) : -1;
         }
         if (backendPid <= 0) throw new SQLException("pg_backend_pid okunamadı");
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(SQL_BACKEND_START)) {
+            backendStart = rs != null && rs.next() ? rs.getString(1) : null;
+        } catch (SQLException | RuntimeException e) {
+            backendStart = null;   // kimlik yarım: öksüz durumda yalnız deyim iptal edilir (başka oturum asla sonlanmaz)
+        }
         return backendPid;
     }
 

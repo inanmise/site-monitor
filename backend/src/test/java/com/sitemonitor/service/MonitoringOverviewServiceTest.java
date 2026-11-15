@@ -69,6 +69,15 @@ class MonitoringOverviewServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: başarı oranı hata varken ASLA %100 (2 000 koşumda 1 hata → 99,9)")
+    void successRateNeverHundredWithFailure() {
+        assertThat(MonitoringOverviewService.successRate(2000, 1)).isEqualTo(99.9);
+        assertThat(MonitoringOverviewService.successRate(2000, 0)).isEqualTo(100.0);
+        assertThat(MonitoringOverviewService.successRate(10, 1)).isEqualTo(90.0);
+        assertThat(MonitoringOverviewService.successRate(0, 0)).isNull();
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     @DisplayName("HTTP: aktif/duraklatılmış/düşük/eski/bilinmiyor türetilir; pencere sayımı ve açık alarm hedefe bağlanır; kapsam dışı takım görünmez")
     void httpSummaryAndRows() {

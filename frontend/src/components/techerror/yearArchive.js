@@ -1,3 +1,5 @@
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
+
 /**
  * KANALIN YIL ARŞİVİ — ZIP (2026-10-17, kullanıcı onayı C12). Bir yılın bütün raporlarının PDF'leri SIRAYLA (her seferinde
  * tek istek) alınır ve tarayıcıda tek ZIP'e paketlenir. Sunucu pod başına aynı anda en çok 2 PDF üretir; doluysa 429
@@ -331,7 +333,8 @@ export async function runArchive(plan, {
         req.done()
       }
       if (signal?.aborted) return ABORTED
-      if (!res?.success && req.timedOut()) {
+      // İstemcinin kendi son tarihi (fetchTechErrorPdf, 2026-11-15) önce dolarsa da "zaman aşımı" ("başarısız" değil)
+      if (!res?.success && (req.timedOut() || res?.timedOut === true)) {
         missing.push({ item, reason: 'timeout', status: 0, error: null })
         break
       }
@@ -381,7 +384,8 @@ export async function runArchive(plan, {
  * @param {{ load?: () => Promise<object> }} [opts] test kancası
  */
 export async function createArchiveZip(channelName, { load = () => import('fflate') } = {}) {
-  const { Zip, ZipPassThrough, strToU8 } = await load()
+  // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği arşivi sonsuza dek "hazırlanıyor"da bırakmaz
+  const { Zip, ZipPassThrough, strToU8 } = await importWithDeadline(load)
   let parts = []
   let failure = null
   let closed = false

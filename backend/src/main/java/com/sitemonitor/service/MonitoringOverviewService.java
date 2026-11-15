@@ -727,9 +727,12 @@ public class MonitoringOverviewService {
         }
     }
 
-    /** Başarı oranı (%, tek ondalık) — koşum yoksa null. Tür, satır ve toplam AYNI yuvarlamayı kullanır. */
+    /**
+     * Başarı oranı (%, tek ondalık) — koşum yoksa null. Tür, satır ve toplam AYNI yuvarlamayı kullanır. Hata varken ASLA
+     * 100 ({@link com.sitemonitor.util.AvailabilityMath}; kapı incelemesi 2026-11-15: 2 000 koşumda 1 hata "%100,0").
+     */
     static Double successRate(long checks, long failed) {
-        return checks > 0 ? Math.round((checks - failed) * 1000.0 / checks) / 10.0 : null;
+        return checks > 0 ? com.sitemonitor.util.AvailabilityMath.pct(checks, Math.max(0L, checks - failed), 1) : null;
     }
 
     private static int rank(String level) {

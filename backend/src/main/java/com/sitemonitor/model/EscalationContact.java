@@ -15,6 +15,9 @@ import lombok.NoArgsConstructor;
 @Table(name = "escalation_contacts")
 @Data
 @NoArgsConstructor
+// Yalnız değişen kolonlar yazılır (kapı incelemesi 2026-11-15): tekil düzenleme (AdminController.updateContact, tek
+// işlemde oku-yaz) aynı anda yapılan toplu etkin / seviye / takım yazımını (EscalationContactRepository.bulkSet*) geri almaz.
+@org.hibernate.annotations.DynamicUpdate
 public class EscalationContact {
 
     @Id

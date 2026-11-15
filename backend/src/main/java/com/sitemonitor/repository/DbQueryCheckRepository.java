@@ -59,16 +59,33 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
          + "AND c.checkedAt >= :from AND " + MonitorIndexSort.UNTIL_C + " ORDER BY c.monitorId ASC, c.checkedAt ASC, c.id ASC LIMIT 50")
     List<DbQueryCheck> findScheduledOkBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
 
+    /** Eşik denemesi sayfa sorgusunun deyim zaman aşımı (ms) — tek sayfa uzun sürerse deneme kısmi biter. */
+    String BACKTEST_PAGE_TIMEOUT_MS = "5000";
+    /** Eşik denemesinde ilk sayfanın üst sınırı ("üst sınır yok"). */
+    String BACKTEST_NO_UPPER = "9999-12-31T23:59:59";
+
     /**
-     * Geriye dönük eşik denemesi (r177): zamanlanmış satırların hafif izdüşümü — {@code [id, checkedAt, ok, status, sqlHash,
-     * ruleResultsJson]}, anahtar küme sayfalı ({@code id > :afterId}, kimlik sırası). Satır verisi yok (kontrol satırında hiç yok).
+     * Geriye dönük eşik denemesi (r177; kapı incelemesi 2026-11-15): zamanlanmış satırların hafif izdüşümü — {@code [id,
+     * checkedAt, ok, status, sqlHash, ruleResultsJson]}, YENİDEN ESKİYE, {@code checkedAt <= :upper} anahtar sayfalı (aynı
+     * saniyedeki satırlar: çağıran sayfanın sondaki aynı anlı satırlarını bırakır, sonraki sayfa o andan başlar).
+     *
+     * <p>Plan: tek izleme kuralı ({@code monitorId IN (:id, :id)} + {@code ORDER BY monitorId DESC, checkedAt DESC}) →
+     * {@code (monitor_id, checked_at)} dizininden geri tarama + LIMIT, sıralama yok. Eski {@code id > :afterId ORDER BY id}
+     * birincil anahtarı tarayıp başka izlemelerin satırlarını süzüyordu (ilk sayfa 3,7 sn). Üst sınır BİLEREK düz
+     * {@code <=} (UNTIL_C değil): anahtar sınırı GENEL planda da dizin koşulu kalmalı — UNTIL biçiminin VEYA'sı orada süzgeç
+     * olur ve her sayfa en yeni satırdan başlayıp öncekileri yeniden okurdu (sayfa sayısının karesi). Genel plan
+     * {@code DbQueryBacktestPostgresTest} ile denetlenir. Okuma yeniden eskiye: süre / bellek bütçesi bitince EN YENİ
+     * çalıştırmalar değerlendirilmiş olur (çağıran satırları {@code (checked_at, id)} sırasına dizip besler — aynı saniyedeki
+     * satırların sorgu sırası belirsizdir). Satır verisi yok.</p>
      */
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = BACKTEST_PAGE_TIMEOUT_MS))
     @Query("SELECT c.id, c.checkedAt, c.ok, c.status, c.sqlHash, c.ruleResultsJson FROM DbQueryCheck c "
-         + "WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.id > :afterId "
+         + "WHERE c.monitorId IN (:id, :id) AND c.checkedAt >= :from AND c.checkedAt <= :upper "
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.id ASC LIMIT :limit")
-    List<Object[]> backtestPage(@Param("id") Long monitorId, @Param("from") String from, @Param("afterId") Long afterId,
-                                @Param("limit") int limit);
+         + "ORDER BY c.monitorId DESC, c.checkedAt DESC LIMIT :limit")
+    List<Object[]> backtestPageDesc(@Param("id") Long monitorId, @Param("from") String from, @Param("upper") String upper,
+                                    @Param("limit") int limit);
 
     /**
      * Eşik denemesi (dbq2 inceleme D1): pencere başından ({@code before}) ÖNCEKİ zamanlanmış, sorgusu çalışmış satırların
@@ -79,15 +96,6 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
          + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
          + "AND c.checkedAt < :before ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC")
     List<String> backtestRunsBefore(@Param("id") Long monitorId, @Param("before") String before, Pageable page);
-
-    /**
-     * Eşik denemesi satır tavanı (dbq2 inceleme D1): {@link #backtestPage} kümesinin (zamanlanmış satırlar, hatalı dahil)
-     * YENİDEN ESKİYE sırasında sayfanın konumundaki satırın anı — tavanın EN ESKİ kısmı kesmesi için okumanın başlangıcı.
-     */
-    @Query("SELECT c.checkedAt FROM DbQueryCheck c WHERE c.monitorId IN (:id, :id) AND c.checkedAt >= :from "
-         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
-         + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC")
-    List<String> backtestNewestFrom(@Param("id") Long monitorId, @Param("from") String from, Pageable page);
 
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     default Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p) {
@@ -216,8 +224,13 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
          + "ORDER BY c.monitorId DESC, c.checkedAt DESC, c.id DESC LIMIT :limit")
     List<Object[]> recentScheduledSummary(@Param("id") Long monitorId, @Param("limit") int limit);
 
-    /** İzleme silinince çalıştırma geçmişini de temizle. */
+    /**
+     * İzleme silinince çalıştırma geçmişini de temizle — TOPLU silme (kapı incelemesi 2026-11-15): türetilmiş {@code deleteBy…} her satırı varlık olarak yükleyip tek tek siler
+     * (on binlerce satır, TEXT kolonlarıyla, istek işleminde); tek {@code DELETE} deyimi. Kapı
+     * {@code CheckRepositoryBulkDeleteGateTest}.
+     */
     @Transactional
     @Modifying
-    int deleteByMonitorId(Long monitorId);
+    @Query("DELETE FROM DbQueryCheck c WHERE c.monitorId = :id")
+    int deleteByMonitorId(@Param("id") Long monitorId);
 }

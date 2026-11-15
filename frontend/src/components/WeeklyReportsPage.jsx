@@ -29,6 +29,7 @@ import WeeklyReminderStatus from './weekly/WeeklyReminderStatus.jsx'
 import WeeklyReportList, { WeeklyListToolbar } from './weekly/WeeklyReportList.jsx'
 import WeeklyReportCreate from './weekly/WeeklyReportCreate.jsx'
 import WeeklyExportMenu from './weekly/WeeklyExportMenu.jsx'
+import { isUnsureResult } from '../utils/unsureResult.js'
 import LinkField from './weekly/WeeklyLinkField.jsx'
 import { MdField, NumInput } from './weekly/WeeklyMdField.jsx'
 import { DomainWorkEditor, DomainWorkView } from './weekly/WeeklyDomainSection.jsx'
@@ -704,6 +705,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     }
   }
 
+  /**
+   * Yan etkili eylemin (onay, yeniden gönderim) sonucu bilinmiyor (istemci zaman aşımı, ağ geçidi 502–504, bağlantı
+   * kopması — inceleme 2026-11-15): işlem sunucuda tamamlanmış olabilir. Rapor ve liste YENİDEN OKUNUR, kullanıcıya
+   * "tekrar denemeden önce kontrol edin" denir — körlemesine yeniden deneme ikinci postayı gönderebilirdi.
+   */
+  function unsureOutcome(res, reportId) {
+    toast.error(t('wr.resultUnknown'), { details: res })
+    if (reportId != null) loadReport(reportId)
+    loadList()
+  }
+
   async function approve() {
     const ok = await showConfirm({
       title: t('wr.approveConfirmTitle'),
@@ -718,11 +730,15 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       if (res?.success) {
         mailOutcomeToast(res.mail_status, 'approved')
         loadReport(report.id); loadList()
+      } else if (isUnsureResult(res)) {
+        // Sonuç bilinmiyor (inceleme 2026-11-15): onay sunucuda tamamlanmış olabilir — rapor yeniden okunur
+        unsureOutcome(res, report.id)
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
     } catch (e) {
-      failToast(e)
+      if (isUnsureResult(e)) unsureOutcome(e, report.id)
+      else failToast(e)
     } finally {
       setBusy(false)
     }
@@ -735,8 +751,10 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     setBusy(true)
     try {
       const res = await api.weeklyReports.approve(id)
-      if (res?.success) { mailOutcomeToast(res.mail_status, 'approved'); loadList() } else toast.error(res?.error || t('wr.actionFailed'))
-    } catch (e) { failToast(e) } finally { setBusy(false) }
+      if (res?.success) { mailOutcomeToast(res.mail_status, 'approved'); loadList() }
+      else if (isUnsureResult(res)) unsureOutcome(res, null)
+      else toast.error(res?.error || t('wr.actionFailed'))
+    } catch (e) { if (isUnsureResult(e)) unsureOutcome(e, null); else failToast(e) } finally { setBusy(false) }
   }
   async function approveSelected() {
     const ids = [...selectedIds].filter((id) => reports.find((r) => r.id === id)?.status === 'PENDING_APPROVAL')
@@ -781,7 +799,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   }
   function downloadYearCsv() {
     const name = (tid) => isAdmin ? (teams.find((tm) => tm.id === tid)?.name ?? '') : (teamName ?? '')
-    downloadCsv(buildYearCsv(displayedReports, name, t), `haftalik-raporlar-${year}.csv`)
+    if (downloadCsv(buildYearCsv(displayedReports, name, t), `haftalik-raporlar-${year}.csv`) === false) toast.error(t('inv.downloadFailed'))
   }
 
   // Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT)
@@ -824,11 +842,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       if (res?.success) {
         mailOutcomeToast(res.mail_status, 'resend')
         loadReport(report.id); loadList()
+      } else if (isUnsureResult(res)) {
+        // Sonuç bilinmiyor (inceleme 2026-11-15): posta gitmiş olabilir — ikinci tıklama müdüre ikinci kez gönderirdi.
+        // Rapor ve posta geçmişi yeniden okunur; metin önce kontrol etmeyi söyler
+        unsureOutcome(res, report.id)
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
     } catch (e) {
-      failToast(e)
+      if (isUnsureResult(e)) unsureOutcome(e, report.id)
+      else failToast(e)
     } finally {
       setBusy(false)
     }
@@ -1110,7 +1133,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       <Button type="button" variant="outline" size="icon" onClick={refreshAll} title={t('app.refresh')} aria-label={t('app.refresh')} className="sm:flex-none">
         <RefreshCcw aria-hidden="true" />
       </Button>
-      <WeeklyExportMenu onListCsv={downloadYearCsv} listCount={displayedReports.length} yearData={completion} />
+      <WeeklyExportMenu onListCsv={downloadYearCsv} listCount={displayedReports.length} yearData={completion}
+        onDownloadFailed={() => toast.error(t('inv.downloadFailed'))} />
       {!isAudit && (
         <Button type="button" data-tour="wr-new" onClick={() => openCreate()}>
           <Plus aria-hidden="true" /> {t('wr.newReport')}

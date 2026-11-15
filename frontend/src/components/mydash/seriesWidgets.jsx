@@ -358,12 +358,17 @@ export function AvailabilityWeekWidget({ frame, refreshKey }) {
     : s.unsupported ? t('mydash.series.unsupported')
     : !s.valid ? null
     : !known ? t('mydash.avail.tone.noData')
+    : s.partial ? t('mydash.avail.tone.partial')
     : s.meets ? t('mydash.avail.tone.ok') : t('mydash.avail.tone.below')
-  const gap = known && !s.meets ? Math.max(0, s.target - s.pct) : 0
+  const gap = known && s.meets === false ? Math.max(0, s.target - s.pct) : 0
+  const missingTypes = s.unavailableTypes.map((x) => typeLabel(x, t)).join(', ')
+  // Büyük sayının rengi kutu tonunu izler: kısmi yanıt (`muted` — bir tür okunamadı) gri kalır, turuncuya düşmez
+  // (inceleme 2026-11-15); yalnız gerçek "hedefin biraz altı" (`warning`) turuncudur
   const center = (<>
-    <span className={cn('font-semibold tabular-nums leading-none', frame.tv ? 'text-4xl' : 'text-3xl',
-      !known ? 'text-muted-foreground' : s.tone === 'success' ? 'text-success' : s.tone === 'danger' ? 'text-destructive'
-        : 'text-amber-700 dark:text-amber-300')}>{known ? pctText : '—'}</span>
+    <span data-slot="mydash-avail-number" data-tone={known ? s.tone : 'muted'}
+      className={cn('font-semibold tabular-nums leading-none', frame.tv ? 'text-4xl' : 'text-3xl',
+        !known || s.tone === 'muted' ? 'text-muted-foreground' : s.tone === 'success' ? 'text-success'
+          : s.tone === 'danger' ? 'text-destructive' : 'text-amber-700 dark:text-amber-300')}>{known ? pctText : '—'}</span>
     <span className={cn('mt-1 text-muted-foreground', frame.tv ? 'text-base' : 'text-xs')}>
       {s.target != null ? t('mydash.avail.target', targetText) : t('mydash.avail.tone.noData')}
     </span>
@@ -393,6 +398,11 @@ export function AvailabilityWeekWidget({ frame, refreshKey }) {
           {!known ? (
             <Empty tone="muted" icon={CircleHelp} tv={frame.tv}
               text={t(s.monitors === 0 && s.unmeasured === 0 ? 'mydash.avail.noMonitors' : 'mydash.avail.noData')} />
+          ) : s.partial ? (
+            <p className={cn('m-0 text-muted-foreground [overflow-wrap:anywhere]', frame.tv ? 'text-base' : 'text-sm')}
+              data-slot="mydash-avail-partial">
+              {missingTypes ? t('mydash.avail.partial', missingTypes) : t('mydash.avail.partialUnknown')}
+            </p>
           ) : (
             <p className={cn('m-0 [overflow-wrap:anywhere]', frame.tv ? 'text-base' : 'text-sm',
               s.meets ? 'text-success' : gap > AVAIL_DANGER_GAP ? 'text-destructive' : 'text-amber-700 dark:text-amber-300')}

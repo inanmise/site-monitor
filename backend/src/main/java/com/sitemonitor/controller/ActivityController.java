@@ -46,6 +46,8 @@ public class ActivityController {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final int MINI_HISTORY = 6;
+    /** Mini-geçmiş için okunan satır — kapsam dışı satırlar elendikten sonra {@link #MINI_HISTORY} kalır. */
+    static final int MINI_HISTORY_READ = 30;
 
     /**
      * Sayfalı akış. 2026-11-05 (aktivite zenginleştirmesi E) EKLEMELİ süzgeçler: {@code status} CSV, serbest ISO
@@ -283,11 +285,16 @@ public class ActivityController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("data", toDto(a));
-        // Aynı monitörün son birkaç kontrolü (mini-geçmiş) — yalnız monitorId varsa.
+        // Aynı monitörün son birkaç kontrolü (mini-geçmiş) — yalnız monitorId varsa. Satırlar LİSTEYLE aynı kapsamdan
+        // süzülür (kapı incelemesi 2026-11-15): izleme başka takıma taşınınca yeni takımın kontrolleri (hedef, özet, hata)
+        // eski takımın açık kaydına sızıyordu. Görünmeyen satırlar elendiği için MINI_HISTORY_READ satır okunur.
         List<Map<String, Object>> recent = List.of();
         if (a.getMonitorId() != null) {
-            recent = repo.findRecentForMonitor(a.getMonitorType(), a.getMonitorId(), PageRequest.of(0, MINI_HISTORY))
-                    .stream().map(ActivityController::toDto).toList();
+            recent = repo.findRecentForMonitor(a.getMonitorType(), a.getMonitorId(), PageRequest.of(0, MINI_HISTORY_READ))
+                    .stream()
+                    .filter(r -> SessionScope.canViewMonitoring(session, r.getTeamId()))
+                    .limit(MINI_HISTORY)
+                    .map(ActivityController::toDto).toList();
         }
         body.put("recent", recent);
         body.put("timestamp", now());

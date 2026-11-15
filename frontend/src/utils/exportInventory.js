@@ -3,6 +3,8 @@ import { drawBrandHeader } from './pdfBrand.js'
 import { INVENTORY_FLAGS } from './inventoryFlags.js'
 import { csvCell } from './csv.js'
 import { downloadBlob } from './csvExport.js'
+import { timedFetch } from './timedFetch.js'
+import { importWithDeadline } from './importWithDeadline.js'
 
 
 const teamName = (id, teams) =>
@@ -144,9 +146,12 @@ function estimateDomainBlockHeight(it) {
   return h
 }
 
+/** Yerel varlık (yazı tipi) indirmesinin süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde. */
+const ASSET_FETCH_TIMEOUT_MS = 30_000
+
 async function fetchAsBase64(url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to load ${url}`)
+  const res = await timedFetch(url, {}, ASSET_FETCH_TIMEOUT_MS)
+  if (!res.ok) { res.done(); throw new Error(`Failed to load ${url}`) }
   const buf = await res.arrayBuffer()
   // Chunked conversion to avoid call-stack overflow for large files
   const bytes = new Uint8Array(buf)
@@ -172,11 +177,11 @@ export async function registerRobotoFont(doc) {
 
 /* ── PDF — per-domain detail (mirrors show modal) ─────────── */
 export async function exportInventoryPdf(items, teams, t) {
-  const { jsPDF } = await import('jspdf')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
   // autotable v5 ARTIK eklenti DEĞİL: doc.autoTable(...) metodu kaldırıldı, tablo
   // fonksiyona dokümanı vererek çizilir. Yükseltmenin sebebi jspdf 2.x/3.x zincirindeki
   // kritik + yüksek CVE'lerdi (npm audit prod bağımlılıklarında 3 bulgu veriyordu).
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   // Embed Roboto with Latin Extended (covers Turkish glyphs ş ğ ç ö ü ı İ)

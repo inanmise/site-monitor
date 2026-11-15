@@ -136,7 +136,7 @@ export default function UsersTable({ days, channel, onChannelChange, refreshKey,
       const r = await api.loginMethodsAdmin.statsUsers({ days, q: q || null, channel: channel || null, sort, export: 1 })
       if (!r?.success) { toast.error(r?.error || t('lm.stats.users.err')); return }
       const { headers, rows } = usersCsv(r.data?.items || [], t, locale)
-      downloadCsv(stampedName(`sitemonitor-login-users-${days}d`), toCsv(headers, rows))
+      if (downloadCsv(stampedName(`sitemonitor-login-users-${days}d`), toCsv(headers, rows)) === false) toast.error(t('inv.downloadFailed'))
     } catch (e) {
       toast.error(e?.message || t('lm.stats.users.err'))
     } finally {

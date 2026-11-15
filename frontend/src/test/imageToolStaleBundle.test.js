@@ -8,7 +8,7 @@ import { engineSupport, isEngineError, processImage, decodeForPreview, inspectIm
 
 describe('engineClient — motor modülü yüklenemezse bayat paket', () => {
   it('destek staleBundle: true; işlemler BROWSER_UNSUPPORTED { reason: stale_bundle } fırlatır (ağ hatası metni değil)', async () => {
-    expect(await engineSupport()).toEqual({ worker: false, webp: false, staleBundle: true })
+    expect(await engineSupport()).toEqual({ worker: false, webp: false, avif: false, staleBundle: true })
     for (const call of [() => processImage(new Blob(['x']), {}, {}), () => decodeForPreview(new Blob(['x']), {}), () => inspectImage(new Blob(['x']))]) {
       const err = await call().then(() => null, (e) => e)
       expect(isEngineError(err)).toBe(true)

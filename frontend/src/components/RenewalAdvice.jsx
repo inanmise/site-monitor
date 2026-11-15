@@ -206,16 +206,17 @@ export default function RenewalAdvice({ onSelectDomain, canPlanRow }) {
     tone: a.priority === 'critical' ? 'bad' : a.priority === 'warning' ? 'warn' : 'info', onClick: () => openCert(a.domain),
   }))
   function exportIcs() {
-    downloadIcs('sertifika-yenilemeleri.ics', buildIcs(filtered.filter((a) => a.not_after).map((a) => {
+    const started = downloadIcs('sertifika-yenilemeleri.ics', buildIcs(filtered.filter((a) => a.not_after).map((a) => {
       const tx = adviceText(a)
       return { uid: `cert-${a.domain}-${localDayKey(a.not_after)}`, date: a.not_after, summary: `${t('renewal.icsPrefix')} ${a.domain}`, description: `${tx.message}\n${tx.action || ''}` }
     }), { calName: t('renewal.icsCal') }))
+    if (started === false) toast.error(t('inv.downloadFailed'))
   }
   function exportCsv() {
     const head = ['domain', 'priority', 'reason', 'days_remaining', 'not_after', 'team', 'tier', 'group', 'tags', 'issuer', 'action']
     const rows = filtered.map((a) => [a.domain, a.priority, a.code, a.days_remaining ?? '', a.not_after ? formatDateOnly(a.not_after) : '', a.team_name || '', a.tier ?? '', a.group_name || '', a.tags || '', a.issuer_cn || '', adviceText(a).action || ''])
     const csv = '﻿' + csvRows([head, ...rows])
-    downloadCsv('yenileme-onerileri.csv', csv)   // ortak indirme (öneri 29): hata yutulur, dosya aynı
+    if (downloadCsv('yenileme-onerileri.csv', csv) === false) toast.error(t('inv.downloadFailed'))   // ortak indirme (öneri 29): başlatılamazsa söylenir
   }
 
   // ── Yükleniyor: gerçek yerleşimle aynı boyda iskelet (zıplama yok) ──

@@ -212,9 +212,10 @@ class MonitoringControllerTest {
                     new com.sitemonitor.service.baseline.BaselineConfigService.SaveResult(true, false, java.util.Map.of()));
             when(baselineConfigService.view("port", 7L)).thenReturn(java.util.Map.of("enabled", false));
 
+            // Türev satırın etkin takımı (9) bu üyeye GÖRÜNMEZ → 404 (kapı incelemesi 2026-11-15: görünmeyen izleme yok sayılır)
             mvc.perform(put("/api/monitoring/baseline/port/7").session(memberOf(5L))
                     .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isNotFound());
             verify(baselineConfigService, never()).save(anyString(), anyLong(), any());
 
             mvc.perform(put("/api/monitoring/baseline/port/7").session(memberOf(9L))
@@ -3502,14 +3503,65 @@ class MonitoringControllerTest {
         verifyNothingSaved(type);
     }
 
-    @org.junit.jupiter.params.ParameterizedTest(name = "POST {0}/check: yabancı takım → 403")
-    @org.junit.jupiter.params.provider.MethodSource("writeEndpoints")
-    @DisplayName("IDOR: her türün elle kontrol ucu başka takımın monitörünü TETİKLEMEZ")
-    void triggerCheck_foreignTeam_forbidden(String type, String url) throws Exception {
-        stubForeignMonitor(type);
+    /** Elle kontrol uçlarının tümü (10 tür) — görünmeyen izleme 404, görünen ama çalıştırılamayan 403. */
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> triggerEndpoints() {
+        return java.util.stream.Stream.concat(writeEndpoints(), java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("page",      "/api/monitoring/page/5"),
+            org.junit.jupiter.params.provider.Arguments.of("pagespeed", "/api/monitoring/pagespeed/5"),
+            org.junit.jupiter.params.provider.Arguments.of("dbquery",   "/api/monitoring/dbquery/5"),
+            org.junit.jupiter.params.provider.Arguments.of("scripted",  "/api/monitoring/scripted/5")));
+    }
 
-        mvc.perform(post(url + "/check").session(sessionWithTeam("USER", 1L)))
-                .andExpect(status().isForbidden());
+    /** {@link #stubForeignMonitor} + elle kontrol uçlarının ek türleri (takım 2). */
+    private void stubForeignTriggerMonitor(String type) {
+        switch (type) {
+            case "page" -> {
+                var m = new com.sitemonitor.model.PageMonitor();
+                m.setId(5L); m.setUrl("https://x.com"); m.setTeamId(2L);
+                when(pageMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "pagespeed" -> {
+                var m = new com.sitemonitor.model.PageSpeedMonitor();
+                m.setId(5L); m.setUrl("https://x.com"); m.setTeamId(2L);
+                when(pageSpeedMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "dbquery" -> {
+                var m = new com.sitemonitor.model.DbQueryMonitor();
+                m.setId(5L); m.setName("q"); m.setTeamId(2L);
+                when(dbQueryMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            case "scripted" -> {
+                var m = new com.sitemonitor.model.ScriptedMonitor();
+                m.setId(5L); m.setName("s"); m.setTeamId(2L);
+                when(scriptedMonitorRepo.findById(5L)).thenReturn(Optional.of(m));
+            }
+            default -> stubForeignMonitor(type);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "POST {0}/check: görünmeyen izleme → 404")
+    @org.junit.jupiter.params.provider.MethodSource("triggerEndpoints")
+    @DisplayName("IDOR + varlık sızıntısı (kapı 2026-11-15): her türün elle kontrol ucu başka takımın izlemesini TETİKLEMEZ ve VARLIĞINI söylemez (404, 403 değil)")
+    void trigger_invisibleMonitor_404(String type, String url) throws Exception {
+        stubForeignTriggerMonitor(type);
+        MockHttpSession u = sessionWithTeam("USER", 1L);
+        u.setAttribute("viewTeamIds", List.of(1L));
+
+        mvc.perform(post(url + "/check").session(u)).andExpect(status().isNotFound());
+        verify(auditService, never()).recordAction(eq("MONITOR_TRIGGER"), any(jakarta.servlet.http.HttpSession.class), anyString(), any(), any(), any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "POST {0}/check: yalnız GÖRÜNTÜLEME paylaşımı → 403")
+    @org.junit.jupiter.params.provider.MethodSource("triggerEndpoints")
+    @DisplayName("görünen ama çalıştırılamayan izleme (VIEW paylaşımı) 403 kalır — tetiklenmez")
+    void trigger_visibleNotExecutable_403(String type, String url) throws Exception {
+        stubForeignTriggerMonitor(type);
+        MockHttpSession u = sessionWithTeam("USER", 1L);
+        u.setAttribute("viewTeamIds", List.of(1L));
+        u.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(2L)));
+
+        mvc.perform(post(url + "/check").session(u)).andExpect(status().isForbidden());
+        verify(auditService, never()).recordAction(eq("MONITOR_TRIGGER"), any(jakarta.servlet.http.HttpSession.class), anyString(), any(), any(), any());
     }
 
     // ══ Değişiklik geçmişi uçları ═════════════════════════════════════════════
@@ -4963,6 +5015,36 @@ class MonitoringControllerTest {
 
         mvc.perform(get("/api/monitoring/pagespeed/404/waterfall").session(session("ADMIN")))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("PS2: şelale — BAŞKA izlemenin ölçüm kimliği (checkId) hiçbir şey sızdırmaz: faz yok, kaynak yok, sayım bu izlemeyle sınırlı")
+    void pageSpeedWaterfall_foreignCheckId_noCheckLeak() throws Exception {
+        when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psMon(1L, "https://a.com", 1L)));
+        // 55 = izleme 99'un ölçümü; depo yanlışlıkla başka izlemenin satırını döndürse bile yanıt onu süzer
+        var foreignCheck = new com.sitemonitor.model.PageSpeedCheck();
+        foreignCheck.setMonitorId(99L);
+        foreignCheck.setCheckedAt("2026-11-15T09:09:09");
+        foreignCheck.setHtmlMs(4321);
+        foreignCheck.setTtfbMs(8765);
+        when(pageSpeedCheckRepo.findById(55L)).thenReturn(Optional.of(foreignCheck));
+        var foreignRow = new com.sitemonitor.model.PageSpeedResource();
+        foreignRow.setMonitorId(99L); foreignRow.setCheckId(55L); foreignRow.setUrl("https://gizli.example/secret.js");
+        foreignRow.setStartMs(5);
+        when(pageSpeedResourceRepo.waterfall(eq(1L), eq(55L), anyInt())).thenReturn(List.of(foreignRow));
+        when(pageSpeedResourceRepo.countByMonitorIdAndCheckId(1L, 55L)).thenReturn(0L);
+
+        String body = mvc.perform(get("/api/monitoring/pagespeed/1/waterfall?checkId=55").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.check").doesNotExist())
+                .andExpect(jsonPath("$.data.resources.length()").value(0))
+                .andExpect(jsonPath("$.data.total").value(0))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("gizli.example").doesNotContain("2026-11-15T09:09:09")
+                .doesNotContain("4321").doesNotContain("8765");
+        // Sorgular bu izlemeyle sınırlı (SQL düzeyinde monitor_id = 1)
+        verify(pageSpeedResourceRepo).waterfall(1L, 55L, MonitoringController.PAGESPEED_WATERFALL_MAX + 1);
+        verify(pageSpeedResourceRepo).countByMonitorIdAndCheckId(1L, 55L);
     }
 
     // ── Sayfa Hızı zenginleştirme 1. sürüm (2026-11-14) ─────────────────────────────────────────────────────────────────
@@ -9090,7 +9172,11 @@ class MonitoringControllerTest {
                     "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":" + measures[i]
                             + ",\"fingerprint\":\"" + fp + "\"}]"});
         }
-        when(dbQueryCheckRepo.backtestPage(eq(94L), anyString(), eq(0L), anyInt())).thenReturn(page);
+        // Depo YENİDEN ESKİYE döner (kapı incelemesi 2026-11-15); denetleyici ters çevirip zaman sırasıyla besler
+        List<Object[]> desc = new java.util.ArrayList<>(page);
+        java.util.Collections.reverse(desc);
+        when(dbQueryCheckRepo.backtestPageDesc(eq(94L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                anyInt())).thenReturn(desc);
         var json = org.springframework.http.MediaType.APPLICATION_JSON;
         MockHttpSession owner = dbqUser(1L);
         owner.setAttribute("username", "r177-backtest");
@@ -9139,8 +9225,7 @@ class MonitoringControllerTest {
         when(dbQueryMonitorRepo.findById(95L)).thenReturn(Optional.of(mon));
         when(dbQueryCheckRepo.backtestRunsBefore(eq(95L), anyString(), any())).thenReturn(
                 List.of("2026-09-30T23:55:00", "2026-09-30T23:50:00", "2026-01-02T00:00:00"));
-        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of());
-        when(dbQueryCheckRepo.backtestPage(eq(95L), anyString(), anyLong(), anyInt())).thenReturn(List.of());
+        when(dbQueryCheckRepo.backtestPageDesc(eq(95L), anyString(), anyString(), anyInt())).thenReturn(List.of());
         var json = org.springframework.http.MediaType.APPLICATION_JSON;
         MockHttpSession owner = dbqUser(1L);
         owner.setAttribute("username", "dbq2-d1-backtest");
@@ -9153,21 +9238,8 @@ class MonitoringControllerTest {
         verify(dbQueryCheckRepo).backtestRunsBefore(eq(95L), anyString(), pg.capture());
         assertThat(pg.getValue().getPageSize()).isEqualTo(20);
         assertThat(pg.getValue().getOffset()).isZero();
-        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-01-02T00:00:00"), eq(0L), anyInt());
-        // Tavan konumu: 150 000. en yeni satır
-        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> cp =
-                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
-        verify(dbQueryCheckRepo).backtestNewestFrom(eq(95L), eq("2026-01-02T00:00:00"), cp.capture());
-        assertThat(cp.getValue().getOffset()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_MAX_ROWS - 1L);
-        assertThat(cp.getValue().getPageSize()).isEqualTo(1);
-
-        // Tavandan fazla satır: okuma tavan konumundaki satırdan başlar (EN YENİ satırlar değerlendirilir), truncated
-        org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
-        when(dbQueryCheckRepo.backtestNewestFrom(eq(95L), anyString(), any())).thenReturn(List.of("2026-10-30T12:00:00"));
-        mvc.perform(post("/api/monitoring/dbquery/95/backtest").session(owner).contentType(json).content("{\"days\":7}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.truncated").value(true));
-        verify(dbQueryCheckRepo).backtestPage(eq(95L), eq("2026-10-30T12:00:00"), eq(0L), anyInt());
+        verify(dbQueryCheckRepo).backtestPageDesc(eq(95L), eq("2026-01-02T00:00:00"),
+                eq(DbQueryCheckRepository.BACKTEST_NO_UPPER), anyInt());
 
         // Akıllı kural yoksa sayıyla geri bakış yok
         org.mockito.Mockito.clearInvocations(dbQueryCheckRepo);
@@ -9175,6 +9247,180 @@ class MonitoringControllerTest {
                         .content("{\"days\":7,\"rules\":[{\"id\":\"r\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":5}]}"))
                 .andExpect(status().isOk());
         verify(dbQueryCheckRepo, never()).backtestRunsBefore(anyLong(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("2026-11-15 kapı: eşik denemesi süre bütçesi / satır tavanı biterse EN YENİ çalıştırmalar değerlendirilir (okuma yeniden eskiye)")
+    void dbquery_backtest_deadlineKeepsNewest() throws Exception {
+        var mon = dbqMonitor(96L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":1000}]");
+        when(dbQueryMonitorRepo.findById(96L)).thenReturn(Optional.of(mon));
+        String hash = MonitoringController.dbqSqlHash(mon.getSqlText());
+        String fp = com.sitemonitor.service.dbquery.DbQueryRules.fingerprint(
+                com.sitemonitor.service.dbquery.DbQueryRules.fromJson(mon.getRulesJson()).get(0));
+        java.time.Instant now = java.time.Instant.now();
+        java.time.format.DateTimeFormatter iso = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC);
+        // İlk (EN YENİ) tam sayfa: ölçü 100 (eşik 40 → ihlal); daha eski sayfa: ölçü 1 (ihlal yok) — hiç okunmamalı
+        int page = MonitoringController.DBQUERY_BACKTEST_PAGE;
+        List<Object[]> newest = new java.util.ArrayList<>();
+        for (int i = 0; i < page; i++) {
+            newest.add(new Object[]{(long) (10_000 - i), iso.format(now.minusSeconds(60L * (i + 1))), Boolean.TRUE, "OK", hash,
+                    "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":100,\"fingerprint\":\"" + fp + "\"}]"});
+        }
+        List<Object[]> older = new java.util.ArrayList<>();
+        for (int i = 0; i < 1500; i++) {   // son (yarım) sayfa
+            older.add(new Object[]{(long) (5_000 - i), iso.format(now.minusSeconds(60L * (page + i + 1))), Boolean.TRUE, "OK", hash,
+                    "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":1,\"fingerprint\":\"" + fp + "\"}]"});
+        }
+        when(dbQueryCheckRepo.backtestPageDesc(eq(96L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                anyInt())).thenReturn(newest);
+        // Sonraki sayfa son satırın anından (dahil) başlar — son satır bir sonraki sayfanın başında yeniden gelir
+        List<Object[]> olderWithTie = new java.util.ArrayList<>();
+        olderWithTie.add(newest.get(page - 1));
+        olderWithTie.addAll(older);
+        when(dbQueryCheckRepo.backtestPageDesc(eq(96L), anyString(), eq((String) newest.get(page - 1)[1]),
+                anyInt())).thenReturn(olderWithTie);
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String req = "{\"days\":7,\"rules\":[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]}";
+        long savedBudget = controller.dbqBacktestBudgetMs;
+        int savedMax = controller.dbqBacktestMaxRows;
+        try {
+            // Süre bütçesi ilk sayfadan sonra biter → yalnız EN YENİ sayfa değerlendirilir (hepsi ihlal), kısmi. Sayfanın son
+            // satırı (aynı anlı kuyruk) bir sonraki sayfaya bırakılır → ilk sayfadan page − 1 satır
+            controller.dbqBacktestBudgetMs = -1;
+            MockHttpSession owner = dbqUser(1L);
+            owner.setAttribute("username", "gate-backtest-deadline");
+            mvc.perform(post("/api/monitoring/dbquery/96/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(page - 1))
+                    .andExpect(jsonPath("$.data.would_breach.warning").value(page - 1))
+                    .andExpect(jsonPath("$.data.truncated").value(true))
+                    .andExpect(jsonPath("$.data.to").value((String) newest.get(0)[1]));
+            // Bütçe yeterli: iki sayfa da okunur, sayfa sınırındaki satır BİR KEZ sayılır (yeniden eskiye + ters besleme)
+            controller.dbqBacktestBudgetMs = savedBudget;
+            MockHttpSession owner3 = dbqUser(1L);
+            owner3.setAttribute("username", "gate-backtest-full");
+            mvc.perform(post("/api/monitoring/dbquery/96/backtest").session(owner3).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(page + 1500))
+                    .andExpect(jsonPath("$.data.would_breach.warning").value(page))
+                    .andExpect(jsonPath("$.data.truncated").value(false));
+            // Satır tavanı (3) → en yeni 3 satır, kısmi
+            controller.dbqBacktestBudgetMs = savedBudget;
+            controller.dbqBacktestMaxRows = 3;
+            MockHttpSession owner2 = dbqUser(1L);
+            owner2.setAttribute("username", "gate-backtest-cap");
+            mvc.perform(post("/api/monitoring/dbquery/96/backtest").session(owner2).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(3))
+                    .andExpect(jsonPath("$.data.would_breach.warning").value(3))
+                    .andExpect(jsonPath("$.data.truncated").value(true));
+        } finally {
+            controller.dbqBacktestBudgetMs = savedBudget;
+            controller.dbqBacktestMaxRows = savedMax;
+        }
+    }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: aynı saniyedeki satırlar kimlik sırasıyla beslenir (sayfa sırası ne olursa olsun aynı sonuç)")
+    void dbquery_backtest_sameSecondRowsFedByIdOrder() throws Exception {
+        var mon = dbqMonitor(97L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]");
+        when(dbQueryMonitorRepo.findById(97L)).thenReturn(Optional.of(mon));
+        String hash = MonitoringController.dbqSqlHash(mon.getSqlText());
+        String fp = com.sitemonitor.service.dbquery.DbQueryRules.fingerprint(
+                com.sitemonitor.service.dbquery.DbQueryRules.fromJson(mon.getRulesJson()).get(0));
+        java.time.Instant now = java.time.Instant.now();
+        java.time.format.DateTimeFormatter iso = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC);
+        String t1 = iso.format(now.minusSeconds(7200)), t2 = iso.format(now.minusSeconds(3600));
+        java.util.function.BiFunction<Long, Integer, Object[]> row = (rid, measure) -> new Object[]{rid,
+                rid == 4L ? t2 : t1, Boolean.TRUE, "OK", hash,
+                "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":" + measure
+                        + ",\"fingerprint\":\"" + fp + "\"}]"};
+        // id 2 (ihlal) ve id 3 (temiz) AYNI saniyede, id 4 (ihlal) sonra. Kimlik sırası: ihlal, temiz, ihlal → 2 alarm.
+        // Ters (3, 2) beslenseydi: temiz, ihlal, ihlal → 1 alarm. Depo iki sırayla da dönebilir (belirsiz) → sonuç hep 2.
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String req = "{\"days\":7}";
+        int n = 0;
+        for (List<Object[]> desc : List.of(
+                List.of(row.apply(4L, 100), row.apply(2L, 100), row.apply(3L, 1)),
+                List.of(row.apply(4L, 100), row.apply(3L, 1), row.apply(2L, 100)))) {
+            when(dbQueryCheckRepo.backtestPageDesc(eq(97L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                    anyInt())).thenReturn(new java.util.ArrayList<>(desc));
+            MockHttpSession owner = dbqUser(1L);
+            owner.setAttribute("username", "gate-backtest-ties-" + (n++));
+            mvc.perform(post("/api/monitoring/dbquery/97/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(3))
+                    .andExpect(jsonPath("$.data.would_breach.warning").value(2))
+                    .andExpect(jsonPath("$.data.would_open_alarms").value(2));
+        }
+        // Satır tavanı kesimi aynı saniyenin ORTASINA düşerse o saniye bütünüyle dışarıda kalır (belirsiz yarım saniye yok)
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        int savedMax = controller.dbqBacktestMaxRows;
+        try {
+            controller.dbqBacktestMaxRows = 2;
+            when(dbQueryCheckRepo.backtestPageDesc(eq(97L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                    anyInt())).thenReturn(new java.util.ArrayList<>(
+                    List.of(row.apply(4L, 100), row.apply(2L, 100), row.apply(3L, 1))));
+            MockHttpSession owner = dbqUser(1L);
+            owner.setAttribute("username", "gate-backtest-ties-cap");
+            mvc.perform(post("/api/monitoring/dbquery/97/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(1))
+                    .andExpect(jsonPath("$.data.truncated").value(true));
+        } finally {
+            controller.dbqBacktestMaxRows = savedMax;
+        }
+    }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: eşik denemesi pod başına en çok 2 eşzamanlı — dolu 429 DBQUERY_BACKTEST_BUSY + Retry-After, dakika hakkı harcanmaz, izin her yolda bırakılır")
+    void dbquery_backtest_concurrencyLimit() throws Exception {
+        var mon = dbqMonitor(98L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]");
+        when(dbQueryMonitorRepo.findById(98L)).thenReturn(Optional.of(mon));
+        when(dbQueryCheckRepo.backtestPageDesc(eq(98L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String req = "{\"days\":7}";
+        MockHttpSession owner = dbqUser(1L);
+        owner.setAttribute("username", "gate-backtest-busy");
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        controller.dbqBacktestSlots.acquire(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        try {
+            for (int i = 0; i < 8; i++)
+                mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                        .andExpect(status().is(429))
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BACKTEST_BUSY"))
+                        .andExpect(jsonPath("$.retry_after_seconds").value(5))
+                        .andExpect(header().string("Retry-After", "5"));
+            verify(dbQueryCheckRepo, never()).backtestPageDesc(eq(98L), anyString(), anyString(), anyInt());
+        } finally {
+            controller.dbqBacktestSlots.release(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        }
+        // Reddedilen 8 çağrı dakika hakkından düşmedi: 6 deneme koşar, 7.'si RATE_LIMITED
+        for (int i = 0; i < MonitoringController.DBQUERY_BACKTEST_PER_MINUTE; i++)
+            mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                .andExpect(status().is(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        // İlk sayfa okunamadı (hata yanıtı) → izin yine bırakılır
+        when(dbQueryCheckRepo.backtestPageDesc(eq(98L), anyString(), anyString(), anyInt()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        MockHttpSession other = dbqUser(1L);
+        other.setAttribute("username", "gate-backtest-busy-err");
+        mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(other).contentType(json).content(req))
+                .andExpect(status().is5xxServerError());
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
     }
 
     @Test

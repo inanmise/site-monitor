@@ -279,7 +279,7 @@ public class KeywordCheckerService {
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             putFailure(result, e, trail, timeoutMs, proxied);
             if (spec.changeDetect() && !result.containsKey("content_changed")) result.put("change_skipped", CHANGE_SKIP_INCOMPLETE);
-            log.debug("Keyword check failed for {}: {}", url, e.getMessage());
+            log.debug("Keyword check failed for {}: {}", SecretMask.logUrl(url), e.getMessage());
         }
         return result;
     }

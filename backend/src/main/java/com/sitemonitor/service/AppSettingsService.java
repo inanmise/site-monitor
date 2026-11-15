@@ -87,10 +87,22 @@ public class AppSettingsService {
         return v != null ? v : fallback;
     }
 
+    /**
+     * Çalışma anı OKUMA sınırları (2026-11-15, prod kapısı incelemesi): kayıtta aralık dışı değer zaten 400 alır, ama ortam
+     * değişkeni (application.properties eşlemesi) ya da kural gelmeden önce yazılmış bir kayıt aralık dışında olabilir —
+     * okuyan her yer (anahtarı doğrudan okuyan uçlar dahil) sınır içinde görür. Anahtar → {en az, en çok}.
+     */
+    private static final Map<String, int[]> INT_READ_CLAMPS = Map.of(
+            ScriptedCheckerService.MANUAL_WAIT_KEY,
+            new int[]{ScriptedCheckerService.MANUAL_WAIT_MIN_SEC, ScriptedCheckerService.MANUAL_WAIT_MAX_SEC});
+
     public int getInt(String key, int fallback) {
         String v = resolve(key);
         if (v == null) return fallback;
-        try { return Integer.parseInt(v.trim()); } catch (Exception e) { return fallback; }
+        int n;
+        try { n = Integer.parseInt(v.trim()); } catch (Exception e) { return fallback; }
+        int[] bounds = INT_READ_CLAMPS.get(key);
+        return bounds == null ? n : Math.max(bounds[0], Math.min(bounds[1], n));
     }
 
     public boolean getBoolean(String key, boolean fallback) {
@@ -414,6 +426,17 @@ public class AppSettingsService {
                 if (!ThemeCatalog.isKnown(id)) {
                     throw new IllegalArgumentException(Msg.t("Temalar: bilinmeyen tema: ", "Themes: unknown theme: ") + id);
                 }
+            }
+        }
+        // Elle k6 kontrolünün sonuç bekleme süresi (2026-11-15, prod kapısı incelemesi): 1–90 sn — uç istemcinin 120 sn'lik
+        // yazma sınırından ÖNCE yanıt vermeli (aksi hâlde kullanıcı "sonuç bilinmiyor" görür, koşum yine olur).
+        if (ScriptedCheckerService.MANUAL_WAIT_KEY.equals(s.key())) {
+            Integer v = null;
+            try { v = Integer.parseInt(val.trim()); } catch (NumberFormatException ignore) { /* aşağıdaki INT kuralı söyler */ }
+            if (v != null && (v < ScriptedCheckerService.MANUAL_WAIT_MIN_SEC || v > ScriptedCheckerService.MANUAL_WAIT_MAX_SEC)) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("scripted_manual_wait_seconds", Msg.t(
+                        "Elle k6 kontrolünün sonuç bekleme süresi 1–90 saniye olmalı: tarayıcı isteği 120 saniyede keser, sunucu ondan önce yanıt vermeli.",
+                        "The manual k6 check result wait must be 1–90 seconds: the browser stops waiting at 120 seconds, so the server must answer before that."));
             }
         }
         // Alan adı aktif kurtarma aralığı (2026-11-15): 0 (pasif) ya da 10 sn – 1 sa.

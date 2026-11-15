@@ -149,7 +149,7 @@ public class ChainValidationService {
             }
             log.info("Resolved proxy from env URL: {}:{}", proxyHost, proxyPort);
         } catch (Exception e) {
-            log.warn("Failed to parse proxy URL '{}': {}", url, e.getMessage());
+            log.warn("Failed to parse proxy URL '{}': {}", SecretMask.logUrl(url), e.getMessage());
         }
     }
 
@@ -423,7 +423,7 @@ public class ChainValidationService {
                     // AD sertifikalarındaki "ldap + http" çiftinde http adresi sınırdan etkilenmez.
                     boolean network = isHttpUrl(url);
                     if (network && (downloads >= MAX_CRL_DOWNLOADS || System.currentTimeMillis() >= loopDeadline)) {
-                        log.debug("CRL dağıtım noktası atlandı (indirme/süre sınırı): {}", url);
+                        log.debug("CRL dağıtım noktası atlandı (indirme/süre sınırı): {}", SecretMask.logUrl(url));
                         continue;
                     }
                     if (network) downloads++;
@@ -518,7 +518,7 @@ public class ChainValidationService {
         // gürültünün içinde kayboluyor. Şema reddi DEBUG, gerçek başarısızlıklar WARN kalır.
         String scheme = url == null ? "" : url.toLowerCase(Locale.ROOT);
         if (!scheme.startsWith("http://") && !scheme.startsWith("https://")) {
-            log.debug("CRL atlandı (desteklenmeyen şema): {}", url);
+            log.debug("CRL atlandı (desteklenmeyen şema): {}", SecretMask.logUrl(url));
             attempts.add(new RevocationReason.Attempt("CRL", url, RevocationReason.FAIL_SCHEME, null));
             return null;
         }
@@ -544,7 +544,7 @@ public class ChainValidationService {
                 conn.disconnect();
             }
         } catch (Exception e) {
-            log.warn("CRL download failed {}: {}", url, e.getMessage());
+            log.warn("CRL download failed {}: {}", SecretMask.logUrl(url), e.getMessage());
             attempts.add(failure("CRL", url, e));
             return null;
         }
@@ -553,7 +553,7 @@ public class ChainValidationService {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
             return (X509CRL) cf.generateCRL(new java.io.ByteArrayInputStream(der));
         } catch (Exception e) {
-            log.warn("CRL download failed {}: {}", url, e.getMessage());
+            log.warn("CRL download failed {}: {}", SecretMask.logUrl(url), e.getMessage());
             attempts.add(new RevocationReason.Attempt("CRL", url, RevocationReason.FAIL_BAD_RESPONSE, null));
             return null;
         }

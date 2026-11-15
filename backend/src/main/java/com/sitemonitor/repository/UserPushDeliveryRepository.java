@@ -395,5 +395,6 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
      */
     @Modifying
     @Transactional
-    int deleteByCreatedAtBefore(String cutoff);
+    @Query("DELETE FROM UserPushDelivery d WHERE d.createdAt < :cutoff")
+    int deleteByCreatedAtBefore(@Param("cutoff") String cutoff);
 }

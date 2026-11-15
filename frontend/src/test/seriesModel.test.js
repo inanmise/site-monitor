@@ -294,6 +294,16 @@ describe('7 günlük erişilebilirlik', () => {
     expect(availabilitySummary(week({ target_pct: null }))).toMatchObject({ tone: 'muted', meets: null, targetFraction: null })
   })
 
+  it('kısmi yanıt (bir tür okunamadı): hüküm yok, ton gri — hedefin üstünde de altında da asla yeşil / kırmızı değil', () => {
+    const up = availabilitySummary(week({ partial: true, meets_target: null, unmeasured: null, unavailable_types: ['ping', 'dns', 7] }))
+    expect(up).toMatchObject({ valid: true, partial: true, meets: null, tone: 'muted', pct: 99.97, unmeasured: null })
+    expect(up.unavailableTypes).toEqual(['ping', 'dns'])
+    const down = availabilitySummary(week({ availability_pct: 97, partial: true, meets_target: null, unavailable_types: ['http'] }))
+    expect(down).toMatchObject({ partial: true, meets: null, tone: 'muted', pct: 97 })
+    // alan yoksa (eski sunucu) bugünkü davranış
+    expect(availabilitySummary(week())).toMatchObject({ partial: false, unavailableTypes: [] })
+  })
+
   it('hüküm sunucunun alanından; alan yoksa değer ve hedeften', () => {
     // sunucu "hedefte değil" diyorsa (yuvarlanmamış değer hedefin altında) gösterilen eşit değer yeşile çevirmez
     expect(availabilitySummary(week({ availability_pct: 99.9, meets_target: false }))).toMatchObject({ meets: false, tone: 'warning' })

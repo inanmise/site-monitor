@@ -51,7 +51,16 @@ public class PageSpeedCheckerService {
      */
     public record Measured(String url, String type, long bytes, long durationMs,
                            Integer statusCode, boolean thirdParty, boolean failed,
-                           boolean truncated, Long startMs) {
+                           boolean truncated, Long startMs, String foundIn) {
+
+        /**
+         * Başvuran stil yok (2026-11-15 öncesi imza). {@code foundIn} (genişletilmiş ölçüm): kaynağı başvuran stil dosyasının
+         * yönlendirme SONRASI adresi; satır içi stilden bulunduysa sayfanın adresi; HTML öğesinden geldiyse null.
+         */
+        public Measured(String url, String type, long bytes, long durationMs, Integer statusCode, boolean thirdParty,
+                        boolean failed, boolean truncated, Long startMs) {
+            this(url, type, bytes, durationMs, statusCode, thirdParty, failed, truncated, startMs, null);
+        }
 
         /**
          * Başlangıç anı bilinmeyen satır (eski imza — testler ve geriye uyum). {@code startMs} (2026-11-15, Sayfa Hızı 2.
@@ -76,9 +85,25 @@ public class PageSpeedCheckerService {
                          HttpPhaseProbe.Phases phases, int skippedLazy,
                          com.sitemonitor.service.failure.CheckFailure failure,
                          boolean timeTruncated, TypeBreakdown breakdown,
-                         List<String> undecided, Long downloadMs) {
+                         List<String> undecided, Long downloadMs, boolean extended, PageSpeedRules.Growth growth) {
 
         public boolean reachable() { return "OK".equals(status) || "SLOW".equals(status); }
+
+        /**
+         * Genişletilmiş kip ve büyüme referansı yok (2026-11-15 öncesi tam imza) — test ve geriye uyum. {@code extended}: ölçüm
+         * genişletilmiş kipte yapıldı (madde 10); {@code growth}: büyüme karşılaştırmasının referansı (madde 13; null =
+         * okunmadı / büyüme eşiği yok).
+         */
+        public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
+                      long totalBytes, int requestCount, int failedCount, boolean capped,
+                      boolean bytesTruncated, List<String> breached, String error, List<Measured> resources,
+                      HttpPhaseProbe.Phases phases, int skippedLazy,
+                      com.sitemonitor.service.failure.CheckFailure failure,
+                      boolean timeTruncated, TypeBreakdown breakdown, List<String> undecided, Long downloadMs) {
+            this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
+                    breached, error, resources, phases, skippedLazy, failure, timeTruncated, breakdown, undecided, downloadMs,
+                    false, null);
+        }
 
         /** Kararsız eşik ve indirme süresi yok (inceleme öncesi imza) — test ve geriye uyum. */
         public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
@@ -88,7 +113,8 @@ public class PageSpeedCheckerService {
                       com.sitemonitor.service.failure.CheckFailure failure,
                       boolean timeTruncated, TypeBreakdown breakdown) {
             this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
-                    breached, error, resources, phases, skippedLazy, failure, timeTruncated, breakdown, List.of(), null);
+                    breached, error, resources, phases, skippedLazy, failure, timeTruncated, breakdown, List.of(), null,
+                    false, null);
         }
 
         /** Süre tavanı yok, kırılım yok (2026-11-14 öncesi tam imza) — test ve geriye uyum. */
@@ -98,7 +124,7 @@ public class PageSpeedCheckerService {
                       HttpPhaseProbe.Phases phases, int skippedLazy,
                       com.sitemonitor.service.failure.CheckFailure failure) {
             this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped, bytesTruncated,
-                    breached, error, resources, phases, skippedLazy, failure, false, null, List.of(), null);
+                    breached, error, resources, phases, skippedLazy, failure, false, null, List.of(), null, false, null);
         }
 
         /**
@@ -116,7 +142,14 @@ public class PageSpeedCheckerService {
             TypeBreakdown b = breakdown;
             return new PageSpeedRules.Measurement((int) totalMs, serverTtfbMs(), totalBytes, requestCount,
                     b == null ? null : b.jsBytes(), b == null ? null : b.imgBytes(), b == null ? null : b.fontBytes(),
-                    b == null ? null : b.thirdPartyBytes(), lowerBound());
+                    b == null ? null : b.thirdPartyBytes(), lowerBound(), growth);
+        }
+
+        /** Aynı ölçüm, yeni karar alanlarıyla (büyüme uygulandıktan sonra: durum, ihlaller, kararsızlar, referans). */
+        Result decided(String newStatus, List<String> newBreached, List<String> newUndecided, PageSpeedRules.Growth g) {
+            return new Result(newStatus, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount, capped,
+                    bytesTruncated, newBreached, error, resources, phases, skippedLazy, failure, timeTruncated, breakdown,
+                    newUndecided, downloadMs, extended, g);
         }
 
         /** Nedensiz biçim (2026-10-05 öncesi tam imza) — ölçüm sonucu, test ve geriye uyum. */
@@ -145,6 +178,39 @@ public class PageSpeedCheckerService {
     public record TypeBreakdown(long htmlBytes, long jsBytes, int jsCount, long cssBytes, int cssCount,
                                 long imgBytes, int imgCount, long fontBytes, int fontCount,
                                 long otherBytes, int otherCount, long firstPartyBytes, long thirdPartyBytes) {}
+
+    /**
+     * Büyüme alarmını ölçüme uygular (2026-11-15, madde 13 — saf): önceki 7 günün TAM, aynı kipteki zamanlanmış ölçümlerinden
+     * referans ({@link PageSpeedRules#growthOf}, bant açıksa {@link PageSpeedRules#bandVerdict}) kurulur ve eşikler büyüme
+     * referansıyla YENİDEN değerlendirilir (ihlaller, kararsızlar, durum). Sayfa alınamadıysa ya da izlemede büyüme eşiği
+     * yoksa sonuç aynen döner. {@code samples} null = geçmiş okunamadı → büyüme eşikleri BİLİNMİYOR (ihlal de sağlık da değil).
+     */
+    public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples) {
+        return withGrowth(res, m, samples, false);
+    }
+
+    /**
+     * {@link #withGrowth(Result, PageSpeedMonitor, List)} + geçmişin TAM okunup okunmadığı ({@code complete}: okuma sınıra
+     * takılmadı → örnekler referans penceresinin tamamı; bant kontrollü uyumu buna bakar — {@link PageSpeedRules#bandVerdict}).
+     */
+    public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples, boolean complete) {
+        if (res == null || m == null || !res.reachable() || !growthConfigured(m)) return res;
+        PageSpeedRules.Growth g = samples == null ? PageSpeedRules.Growth.NONE : PageSpeedRules.growthOf(samples);
+        if (Boolean.TRUE.equals(m.getGrowthBytesBand()) && samples != null)
+            g = g.withBand(PageSpeedRules.bandVerdict(res.totalBytes(), samples, complete));
+        Result withRef = res.decided(res.status(), res.breached(), res.undecided(), g);
+        List<String> breached = PageSpeedRules.evaluate(m, withRef.measurement());
+        List<String> undecided = PageSpeedRules.undecided(m, withRef.measurement(), breached);
+        return withRef.decided(breached.isEmpty() ? "OK" : "SLOW", breached, undecided, g);
+    }
+
+    /** İzlemede büyüme eşiği (yüzde ya da bant) tanımlı mı — değilse geçmiş HİÇ okunmaz. */
+    public static boolean growthConfigured(PageSpeedMonitor m) {
+        if (m == null) return false;
+        return (m.getGrowthBytesPct() != null && m.getGrowthBytesPct() > 0)
+                || (m.getGrowthRequestsPct() != null && m.getGrowthRequestsPct() > 0)
+                || Boolean.TRUE.equals(m.getGrowthBytesBand());
+    }
 
     /** {@link #normalizeType} türünü kırılım kovasına indirger: js | css | img | font | other. */
     public static String bucketOf(String type) {
@@ -209,7 +275,12 @@ public class PageSpeedCheckerService {
                 PageSpeedRules.exclusion(Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns()),
                 PageSpeedRules.basicAuthHeader(m.getBasicAuthUser(), pass),
                 PageSpeedRules.parseHeaders(decryptSecret(m.getCustomHeadersEnc())),
-                m, viaProxyFor(m));
+                m, viaProxyFor(m), maxCheckSeconds(), extendedOf(m));
+    }
+
+    /** Genişletilmiş ölçüm açık mı (null = kapalı — mevcut izlemeler kullanıcı açana dek klasik kipte kalır). */
+    public static boolean extendedOf(PageSpeedMonitor m) {
+        return m != null && Boolean.TRUE.equals(m.getExtendedMeasurement());
     }
 
     /** İzlemenin vekil kararı: null/OFF → doğrudan (varsayılan); AUTO/ON → {@link ProxyPolicyService}. Bean yoksa doğrudan. */
@@ -233,7 +304,7 @@ public class PageSpeedCheckerService {
                 PageSpeedRules.exclusion(Boolean.TRUE.equals(draft.getExcludeTrackers()), draft.getTrackerPatterns()),
                 PageSpeedRules.basicAuthHeader(draft.getBasicAuthUser(), pass),
                 PageSpeedRules.parseHeaders(decryptSecret(draft.getCustomHeadersEnc())),
-                null, viaProxyFor(draft));   // eşik değerlendirmesi yok
+                null, viaProxyFor(draft), maxCheckSeconds(), extendedOf(draft));   // eşik değerlendirmesi yok
     }
 
     /**
@@ -255,7 +326,7 @@ public class PageSpeedCheckerService {
                 PageSpeedRules.exclusion(Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns()),
                 PageSpeedRules.basicAuthHeader(m.getBasicAuthUser(), pass),
                 PageSpeedRules.parseHeaders(decryptSecret(m.getCustomHeadersEnc())),
-                m, viaProxy, cap);
+                m, viaProxy, cap, extendedOf(m));
     }
 
     /** İzlemenin gönderdiği User-Agent (izleme ayarı, yoksa sistem varsayılanı) — tanılamanın ham ölçümü aynısını gönderir. */
@@ -272,14 +343,7 @@ public class PageSpeedCheckerService {
 
     private Result measure(String url, int timeoutMs, int concurrency, String userAgent, boolean dnt,
                            Predicate<String> exclude, String basicAuth, Map<String, String> customHeaders,
-                           PageSpeedMonitor thresholds, boolean viaProxy) {
-        return measure(url, timeoutMs, concurrency, userAgent, dnt, exclude, basicAuth, customHeaders, thresholds, viaProxy,
-                maxCheckSeconds());
-    }
-
-    private Result measure(String url, int timeoutMs, int concurrency, String userAgent, boolean dnt,
-                           Predicate<String> exclude, String basicAuth, Map<String, String> customHeaders,
-                           PageSpeedMonitor thresholds, boolean viaProxy, int maxSeconds) {
+                           PageSpeedMonitor thresholds, boolean viaProxy, int maxSeconds, boolean extended) {
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL: istek atılmaz ve alarm açılmaz.
         if (!MonitorUrls.isCheckable(url)) {
             return new Result("CONFIG_ERROR", null, 0, 0, 0, 0, 0, 0, false, false,
@@ -322,14 +386,25 @@ public class PageSpeedCheckerService {
         // Bu bir "iyileştirme" değil DOĞRULUK meselesi — envanter tavanı eskiden link'lere
         // harcanıyordu (link ağırlıklı bir sayfada gerçek kaynaklar hiç ölçülmüyordu) ve responsive
         // görsellerin her varyantı ayrı sayıldığı için sayfa ağırlığı katbekat şişiyordu.
-        PageFetchCore.Inventory inv =
-                core.inventoryDetailed(main.body(), url, url, exclude, PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
+        PageFetchCore.Inventory inv = core.inventoryDetailed(main.body(), url, url, exclude,
+                extended ? PageFetchCore.InventoryOptions.AS_BROWSER_LOADS_EXTENDED : PageFetchCore.InventoryOptions.AS_BROWSER_LOADS);
         List<PageFetchCore.Resource> loadable = inv.resources();
         // Tavan artık YALNIZ indirilen kaynaklara bakıyor, yani "ölçüm kısmi" uyarısı gerçekten
         // kısmi olduğunda çıkıyor.
         boolean capped = inv.capped();
 
-        Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy, start);
+        Weighed weighed;
+        if (extended) {
+            // Genişletilmiş ölçüm (2026-11-15, madde 10): stil dosyalarının başvurduğu kaynaklar dalga dalga (en çok 2 kat)
+            // planlanır; sayılan nesneler Brotli ile istenir. Envanter (istek sayısı / tür adedi) planlanan HER kaynağı içerir.
+            Extended ex = weighExtended(inv, url, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy,
+                    start, exclude);
+            weighed = ex.weighed();
+            loadable = ex.planned();
+            capped = capped || ex.capped();
+        } else {
+            weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy, start);
+        }
         List<Measured> measured = weighed.rows();
 
         long totalBytes = main.bytes();
@@ -355,7 +430,7 @@ public class PageSpeedCheckerService {
         Long downloadMs = main.bodyMs() >= 0 ? main.bodyMs() : null;
         Result unrated = new Result("OK", main.status(), main.ttfbMs(), main.durationMs(), totalMs,
                 totalBytes, requestCount, failed, capped, bytesTruncated, List.of(), null, measured,
-                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, List.of(), downloadMs);
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, List.of(), downloadMs, extended, null);
         List<String> breached = thresholds == null ? List.of()
                 : PageSpeedRules.evaluate(thresholds, unrated.measurement());
         // Kanıtlanamayan tanımlı eşikler (inceleme B1): kısmi ölçümde eşiğin altında kalan bayt değeri, ölçülemeyen TTFB …
@@ -366,7 +441,193 @@ public class PageSpeedCheckerService {
         String status = breached.isEmpty() ? "OK" : "SLOW";
         return new Result(status, main.status(), main.ttfbMs(), main.durationMs(), totalMs,
                 totalBytes, requestCount, failed, capped, bytesTruncated, breached, null, measured,
-                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, undecided, downloadMs);
+                phases, inv.skippedLazy(), null, weighed.timeCut(), breakdown, undecided, downloadMs, extended, null);
+    }
+
+    // ── Genişletilmiş ölçüm (2026-11-15, Sayfa Hızı 2c madde 10) ─────────────────────────────────────────────
+
+    /** Stil başvurularının izlendiği en çok kat (kaynak analiziyle aynı: sayfa stili → @import → @import). */
+    static final int CSS_DEPTH = 2;
+
+    /** Genişletilmiş ölçümün sonucu: tartım + planlanan HER kaynak (istek sayısı / tür adedi) + kaynak tavanı doldu mu. */
+    record Extended(Weighed weighed, List<PageFetchCore.Resource> planned, boolean capped) {}
+
+    /** Planlanan tek kaynak: envanter satırı, kat, başvuran (stil adresi; satır içi stil → sayfa; HTML öğesi → null). */
+    record Planned(PageFetchCore.Resource res, int depth, String foundIn) {}
+
+    /** Tartılan tek kaynak + (stil ise ve kat izin veriyorsa) başvuruları ve yönlendirme SONRASI adresi. */
+    record Weighed1(Measured row, List<com.sitemonitor.service.page.scan.PageResourceDiscovery.Candidate> refs, String base) {}
+
+    /** Stil gövdesi açılırken çözülen bayt tavanı (kaynak analizinin stil ayarıyla aynı). */
+    private static final PageFetchCore.ScanTuning CSS_TUNING = new PageFetchCore.ScanTuning(null, PageFetchCore.ACCEPT_ENCODING,
+            PageFetchCore.MAX_BODY_BYTES, com.sitemonitor.service.page.scan.PageResourceDiscovery.MAX_CSS_CHARS);
+
+    /**
+     * Dalga dalga tartım: dalga 0 = envanter + satır içi stillerin başvuruları; sonraki dalgalar = önceki dalgadaki stil
+     * dosyalarının başvuruları (en çok {@value #CSS_DEPTH} kat). Aynı adres bir kez (parçasız anahtar), izlemenin hariç tutma
+     * kuralı her yeni adrese uygulanır, planlanan toplam kaynak sayfa başına kaynak tavanıyla sınırlı (aşım → {@code capped}).
+     * Süre / bayt bütçesi ve eşzamanlılık kapısı TÜM dalgalarda ortak — klasik tartımla aynı kurallar.
+     */
+    private Extended weighExtended(PageFetchCore.Inventory inv, String url, String rootHost, int timeoutMs, int concurrency,
+                                   String userAgent, Map<String, String> headers, long deadline, boolean viaProxy, long loadStart,
+                                   Predicate<String> exclude) {
+        int cap = Math.max(1, inv.cap());
+        java.util.Set<String> known = new java.util.HashSet<>();
+        known.add(com.sitemonitor.service.page.scan.PageResourceDiscovery.key(url));
+        List<Planned> all = new ArrayList<>();
+        List<Planned> wave = new ArrayList<>();
+        boolean[] capped = {false};
+        for (PageFetchCore.Resource r : inv.resources()) {
+            known.add(com.sitemonitor.service.page.scan.PageResourceDiscovery.key(r.url()));
+            Planned p = new Planned(r, 0, null);
+            all.add(p);
+            wave.add(p);
+        }
+        String inlineBase = inv.baseUrl() != null ? inv.baseUrl() : url;
+        for (String css : inv.inlineCss()) {
+            for (var c : com.sitemonitor.service.page.scan.PageResourceDiscovery.cssRefs(css, inlineBase)) {
+                plan(c, 0, url, url, known, exclude, all, wave, cap, capped);
+            }
+        }
+        PageFetchCore.FetchOptions countOpts = PageFetchCore.FetchOptions
+                .weigh(timeoutMs, userAgent).withHeaders(headers).withProxy(viaProxy);
+        PageFetchCore.FetchOptions cssOpts = PageFetchCore.FetchOptions
+                .body(timeoutMs, userAgent).withHeaders(headers).counting().withProxy(viaProxy);
+        WeighState st = new WeighState(concurrency, maxTotalMeasuredBytes());
+        List<Measured> rows = new ArrayList<>();
+        for (int depth = 0; !wave.isEmpty() && depth <= CSS_DEPTH; depth++) {
+            final int d = depth;
+            List<Weighed1> done = weighWave(wave, p -> weighOneExtended(p, rootHost, countOpts, cssOpts, loadStart, d), st, deadline);
+            List<Planned> next = new ArrayList<>();
+            for (Weighed1 w : done) {
+                rows.add(w.row());
+                if (w.refs() == null || w.refs().isEmpty() || d >= CSS_DEPTH) continue;
+                for (var c : w.refs()) plan(c, d + 1, w.base(), url, known, exclude, all, next, cap, capped);
+            }
+            wave = next;
+        }
+        List<PageFetchCore.Resource> planned = new ArrayList<>(all.size());
+        for (Planned p : all) planned.add(p.res());
+        return new Extended(new Weighed(rows, st.spent.get() >= st.budget, st.timeCut.get()), planned, capped[0]);
+    }
+
+    /** Başvuruyu planlar: bilinen / hariç tutulan / tavan dışı adres eklenmez (tavan aşımı işaretlenir). */
+    private static void plan(com.sitemonitor.service.page.scan.PageResourceDiscovery.Candidate c, int depth, String foundIn,
+                             String pageUrl, java.util.Set<String> known, Predicate<String> exclude, List<Planned> all,
+                             List<Planned> out, int cap, boolean[] capped) {
+        if (c == null || c.url() == null) return;
+        String k = c.url();
+        if (known.contains(k)) return;
+        if (exclude != null) {
+            boolean ex;
+            try { ex = exclude.test(k); } catch (RuntimeException e) { ex = false; }
+            if (ex) { known.add(k); return; }
+        }
+        if (all.size() >= cap) { capped[0] = true; return; }
+        known.add(k);
+        Planned p = new Planned(new PageFetchCore.Resource(k, typeOfCategory(c.category()), pageUrl), depth, foundIn);
+        all.add(p);
+        out.add(p);
+    }
+
+    /** Stil başvurusu kategorisi → envanter türü (kırılım kovası): yazı tipi, görsel, stil, diğer. */
+    static String typeOfCategory(String category) {
+        if (category == null) return "OTHER";
+        return switch (category) {
+            case com.sitemonitor.service.page.scan.PageResourceDiscovery.FONT -> "FONT";
+            case com.sitemonitor.service.page.scan.PageResourceDiscovery.IMAGE -> "IMG";
+            case com.sitemonitor.service.page.scan.PageResourceDiscovery.CSS -> "CSS";
+            default -> "OTHER";
+        };
+    }
+
+    /**
+     * Genişletilmiş tartım: stil dosyası (kat izin veriyorsa) gövdesiyle istenir ({@code gzip, deflate} — Brotli çözücü yok),
+     * başvuruları yönlendirme SONRASI adrese göre çıkarılır, gövde hemen atılır; diğer her nesne yalnız SAYILIR ve
+     * {@code br} ile istenir (tarayıcının telden aldığı bayt).
+     */
+    private Weighed1 weighOneExtended(Planned p, String rootHost, PageFetchCore.FetchOptions countOpts,
+                                      PageFetchCore.FetchOptions cssOpts, long loadStart, int depth) {
+        long startMs = Math.max(0L, System.currentTimeMillis() - loadStart);
+        PageFetchCore.Resource r = p.res();
+        boolean parseCss = "CSS".equalsIgnoreCase(r.type()) && depth < CSS_DEPTH;
+        PageFetchCore.Fetch f;
+        List<com.sitemonitor.service.page.scan.PageResourceDiscovery.Candidate> refs = null;
+        String base = null;
+        if (parseCss) {
+            PageFetchCore.MetaFetch mf = core.fetchWithMeta(r.url(), "GET", cssOpts, 0, CSS_TUNING);
+            f = mf.fetch();
+            if (f.body() != null && !f.blocked() && f.status() >= 200 && f.status() < 300) {
+                base = mf.meta() != null && mf.meta().finalUrl() != null ? mf.meta().finalUrl() : r.url();
+                String text = com.sitemonitor.service.page.scan.PageResourceDiscovery.decodeCssText(f.body(),
+                        mf.meta() == null ? null : mf.meta().contentType());
+                refs = com.sitemonitor.service.page.scan.PageResourceDiscovery.cssRefs(text, base);
+            }
+        } else {
+            f = core.fetch(r.url(), "GET", countOpts, PageFetchCore.ACCEPT_ENCODING_COUNT);
+        }
+        boolean thirdParty = !publicSuffixService.sameSite(PageFetchCore.hostOf(r.url()), rootHost);
+        boolean failed = f.blocked() || f.status() == 0 || f.status() >= 400;
+        Measured row = new Measured(r.url(), r.type(), f.bytes(), f.durationMs(), f.status() == 0 ? null : f.status(),
+                thirdParty, failed, f.truncated(), startMs, p.foundIn());
+        return new Weighed1(row, refs, base);
+    }
+
+    /** Dalgalar arası ortak tartım durumu: eşzamanlılık kapısı, bayt bütçesi, süre tavanı işareti. */
+    private static final class WeighState {
+        final Semaphore gate;
+        final long budget;
+        final java.util.concurrent.atomic.AtomicLong spent = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicBoolean timeCut = new java.util.concurrent.atomic.AtomicBoolean();
+
+        WeighState(int concurrency, long budget) {
+            this.gate = new Semaphore(Math.max(1, concurrency));
+            this.budget = budget;
+        }
+    }
+
+    /**
+     * Bir dalgayı sınırlı eşzamanlılıkla, ortak süre ve bayt bütçesine saygılı tartar ({@link #weighAll} ile aynı kurallar:
+     * kapının önünde ve içinde süre / bütçe denetimi, toplama döngüsünde kalan süre kadar bekleme — süre dolunca kalanlar
+     * bırakılır ve işaretlenir). Asla süresiz beklemez.
+     */
+    private List<Weighed1> weighWave(List<Planned> wave, java.util.function.Function<Planned, Weighed1> fn, WeighState st,
+                                     long deadline) {
+        List<CompletableFuture<Weighed1>> futures = new ArrayList<>(wave.size());
+        for (Planned p : wave) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                if (System.currentTimeMillis() > deadline) { st.timeCut.set(true); return null; }
+                if (st.spent.get() >= st.budget) return null;
+                try {
+                    st.gate.acquire();
+                    try {
+                        if (System.currentTimeMillis() > deadline) { st.timeCut.set(true); return null; }
+                        if (st.spent.get() >= st.budget) return null;
+                        Weighed1 w = fn.apply(p);
+                        st.spent.addAndGet(w.row().bytes());
+                        return w;
+                    } finally { st.gate.release(); }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }, core.executor()));
+        }
+        List<Weighed1> out = new ArrayList<>(wave.size());
+        for (CompletableFuture<Weighed1> f : futures) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) { st.timeCut.set(true); break; }
+            try {
+                Weighed1 x = f.get(remaining, TimeUnit.MILLISECONDS);
+                if (x != null) out.add(x);
+            } catch (java.util.concurrent.TimeoutException te) {
+                st.timeCut.set(true);
+                break;
+            } catch (Exception e) {
+                /* bu kaynak düştü → atla, ölçümün geri kalanı geçerli */
+            }
+        }
+        return out;
     }
 
     /**

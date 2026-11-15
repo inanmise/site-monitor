@@ -11,7 +11,7 @@ import {
  * geliyorsa) yönetici yıl özeti — yazdır / PDF (bağımsız A4 belge) ve CSV. Eskiden bu düğmeler liste çubuğunda ve
  * tamamlama panosunun içindeydi (pano kapalıyken görünmüyordu).
  */
-export default function WeeklyExportMenu({ onListCsv, listCount = 0, yearData }) {
+export default function WeeklyExportMenu({ onListCsv, listCount = 0, yearData, onDownloadFailed }) {
   const t = useT()
   const hasYear = !!yearData?.teams?.length
   return (
@@ -33,7 +33,9 @@ export default function WeeklyExportMenu({ onListCsv, listCount = 0, yearData })
             <DropdownMenuItem onSelect={() => printYearSummary(yearData, t)} title={t('wr.yearSummaryPrintTitle')}>
               <Printer aria-hidden="true" /> {t('wr.yearSummaryPrint')}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => downloadYearSummaryCsv(yearData, t)} title={t('wr.yearSummaryCsvTitle')}>
+            {/* Tarayıcı indirmeyi başlatamadıysa çağıran söyler (`onDownloadFailed`; inceleme 2026-11-15) */}
+            <DropdownMenuItem onSelect={() => { if (downloadYearSummaryCsv(yearData, t) === false) onDownloadFailed?.() }}
+              title={t('wr.yearSummaryCsvTitle')}>
               <FileSpreadsheet aria-hidden="true" /> {t('wr.yearSummaryCsv')}
             </DropdownMenuItem>
           </>

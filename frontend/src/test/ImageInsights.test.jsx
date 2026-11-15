@@ -65,6 +65,19 @@ describe('görsel aracı — ayrıntılı karşılaştırma bölümü', () => {
     expect(container.querySelector('[data-slot="prs-it-insights"]')).toBeNull()
   })
 
+  it('AVIF sabit kalite (benzerlik ölçülemedi — inceleme 2026-11-15): "ikili arama / SSIM hedefi" DENMEZ, sabit kalite söylenir', () => {
+    const fixed = summary({
+      type: 'avif', quality: 68, colors: null, similarity: null, notes: ['AVIF_NOT_MEASURED'],
+      analysis: { candidates: [{ type: 'avif', bytes: 4_000, quality: 68 }], qualityMode: 'fixed', resampled: false },
+    })
+    render(<ImageInsights result={fixed} />)
+    fireEvent.click(slot('prs-it-insights-toggle'))
+    const step = slots('prs-it-ins-step').find((s) => s.getAttribute('data-code') === 'QUALITY_SEARCH')
+    expect(step.textContent).toMatch(/sabit kalite 68/)
+    expect(step.textContent).not.toMatch(/ikili arama|SSIM/)
+    expect(document.body.textContent).not.toMatch(/prs\.it\.ins|undefined|NaN/)
+  })
+
   it('İngilizce: satır ve adım metinleri İngilizce', () => {
     localStorage.setItem(LANG_STORAGE_KEY, 'en')
     render(<ImageInsights result={summary()} />)

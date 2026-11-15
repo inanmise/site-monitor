@@ -10,6 +10,7 @@ import { usePagination } from '../../../hooks/usePagination.js'
 import { downloadCsv, stampedName } from '../../../utils/csvExport.js'
 import { parseUtc } from '../../../utils/incidentMeta.js'
 import ModalShell from '../../ui/ModalShell.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
@@ -125,6 +126,7 @@ function RowsSkeleton({ label }) {
 
 /** Haftalık erişilebilirlik gönderim logları — özet, süzgeçler, günlere gruplanmış liste ve e-posta ayrıntısı. */
 export default function WeeklyAvailLogsModal({ t, onClose }) {
+  const toast = useToast()
   const locale = useDateLocale()
   const [limit, setLimit] = useState(WA_LIMITS[0])
   const [state, setState] = useState({ loading: true, error: null, rows: null })
@@ -186,7 +188,9 @@ export default function WeeklyAvailLogsModal({ t, onClose }) {
     setKind((cur) => (cur === key ? '' : key))
   }
 
-  const exportCsv = () => downloadCsv(stampedName(t('waLogs.csvFile')), waCsv(filtered, { t, fmt: (s) => formatDate(s) }))
+  const exportCsv = () => {
+    if (downloadCsv(stampedName(t('waLogs.csvFile')), waCsv(filtered, { t, fmt: (s) => formatDate(s) })) === false) toast.error(t('inv.downloadFailed'))
+  }
 
   // Liste kabı ≥ 720 px tablo, daha dar kartlar; ölçüm yoksa (jsdom) tablo.
   const [measureRef, listWidth] = useElementWidth()

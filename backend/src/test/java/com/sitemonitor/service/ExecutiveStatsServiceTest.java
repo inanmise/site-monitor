@@ -219,6 +219,34 @@ class ExecutiveStatsServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("2026-11-15 kapı: SLA ihlali KESİN orandan — 43 200 kontrolde 44 hata (%99,8981, up_pct 99,90) hedef 99,9'un altında sayılır; gösterim hedefin altında")
+    void slaBreachUsesExactRatio() {
+        when(sparklineService.availabilityAll(eq("http"), anyInt())).thenReturn(new java.util.LinkedHashMap<>(Map.of(
+                10L, Map.of("n", 43200, "fail", 44, "up_pct", 99.90, "bad_hours", 3),
+                11L, Map.of("n", 43200, "fail", 43, "up_pct", 99.90, "bad_hours", 1))));   // 43 157 / 43 200 = %99,9004 → karşılar
+        Map<String, Object> sla = m(svc.build(t -> true), "sla");
+        assertThat(sla).containsEntry("monitors", 2).containsEntry("breaches", 1);
+        List<Map<String, Object>> worst = (List<Map<String, Object>>) sla.get("worst");
+        assertThat(worst).hasSize(1);
+        assertThat(worst.get(0)).containsEntry("id", 10L).containsEntry("checks", 43200L).containsEntry("failed", 44L);
+        assertThat((Double) worst.get(0).get("up_pct")).isLessThan(99.9).isEqualTo(99.89);
+        List<Map<String, Object>> byTeam = (List<Map<String, Object>>) sla.get("by_team");
+        assertThat(byTeam).extracting(x -> x.get("team_id"), x -> x.get("breaches"))
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(1L, 1), org.assertj.core.groups.Tuple.tuple(2L, 0));
+    }
+
+    @Test
+    @DisplayName("2026-11-15 kapı: hedef altı gösterim — aşağı kesilir, hedefe eşitse bir adım iner, hata varken asla 100")
+    void belowTargetPctRule() {
+        assertThat(ExecutiveStatsService.belowTargetPct(43200, 44, 99.9)).isEqualTo(99.89);
+        assertThat(ExecutiveStatsService.belowTargetPct(100000, 100, 99.95)).isEqualTo(99.90);
+        assertThat(ExecutiveStatsService.belowTargetPct(1000000, 1, 100.0)).isEqualTo(99.99);
+        assertThat(ExecutiveStatsService.belowTargetPct(100, 5, 99.9)).isEqualTo(95.0);
+        assertThat(ExecutiveStatsService.belowTargetPct(0, 0, 99.9)).isNull();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("2026-11-13 inceleme: izleme okuma izni yok → en kötü SLA satırı ad / kimlik / takım taşımaz (yalnız tür + yüzde), ad sorgusu yok; ayrı bellek anahtarı")
     void slaWorstWithoutMonitoringPermission() {
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "execCacheMs", 60_000L);

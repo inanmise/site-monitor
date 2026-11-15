@@ -283,16 +283,21 @@ export function exactPct(checks, failed) {
  */
 export function availabilitySummary(data) {
   const base = { hidden: false, unsupported: false, valid: false, pct: null, target: null, meets: null, days: 7, monitors: 0,
-    unmeasured: 0, belowTarget: 0, checks: 0, failed: 0, worst: [], byType: [], fraction: null, targetFraction: null, tone: 'muted' }
+    unmeasured: 0, belowTarget: 0, checks: 0, failed: 0, worst: [], byType: [], fraction: null, targetFraction: null, tone: 'muted',
+    partial: false, unavailableTypes: [] }
   if (!data || typeof data !== 'object') return base
   if (data.unsupported === true) return { ...base, unsupported: true }
   if (data.visible === false) return { ...base, hidden: true }
   if (!('availability_pct' in data) || !('target_pct' in data)) return base
   const shown = num(data.availability_pct), target = num(data.target_pct)
   const exact = exactPct(data.checks, data.failed)
+  // Kısmi yanıt (2026-11-15, prod kapısı): bir tür okunamadıysa oran yalnız okunan türlerden gelir — hedefte / altında
+  // hükmü KANITLANAMAZ (okunamayan türün kontrolleri oranı iki yöne de değiştirebilir) → hüküm yok, ton gri, asla yeşil.
+  const partial = data.partial === true
+  const unavailableTypes = Array.isArray(data.unavailable_types) ? data.unavailable_types.filter((x) => typeof x === 'string') : []
   const serverMeets = typeof data.meets_target === 'boolean' ? data.meets_target : null
   const exactMeets = exact != null && target != null ? exact >= target : null
-  const meets = shown == null || target == null ? null
+  const meets = partial || shown == null || target == null ? null
     : serverMeets === false || exactMeets === false ? false
     : serverMeets ?? exactMeets ?? shown >= target
   const value = exact ?? shown   // tonu belirleyen değer (kesin)
@@ -311,12 +316,12 @@ export function availabilitySummary(data) {
     .map((x) => ({ type: x.type, monitors: n(x.monitors), pct: num(x.availability_pct), belowTarget: n(x.below_target) }))
   const scale = gaugeScale(target)
   return {
-    ...base, valid: true, pct, target, meets, days: n(data.days) || 7, monitors: n(data.monitors),
+    ...base, valid: true, pct, target, meets, partial, unavailableTypes, days: n(data.days) || 7, monitors: n(data.monitors),
     // null = sunucu bilmiyor (aktif envanter okunamadı) — 0 ile karıştırılmaz
     unmeasured: num(data.unmeasured),
     belowTarget: n(data.below_target), checks: n(data.checks), failed: n(data.failed), worst, byType,
     fraction: gaugeFraction(pct, target),
     targetFraction: target == null ? null : Math.min(1, Math.max(0, (target - scale.lo) / (scale.hi - scale.lo))),
-    tone: shown == null || target == null ? 'muted' : meets ? 'success' : value >= target - AVAIL_DANGER_GAP ? 'warning' : 'danger',
+    tone: partial || shown == null || target == null ? 'muted' : meets ? 'success' : value >= target - AVAIL_DANGER_GAP ? 'warning' : 'danger',
   }
 }

@@ -278,7 +278,7 @@ Bu bölüm, platformun üretimde ve yerel geliştirmede nasıl konumlandığın�
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Ingress (nginx)                                          │  │
 │  │  <uygulama-adresi>  ── TLS sonlandırma                    │  │
-│  │  proxy-read-timeout 60s  ·  max body 1 MB  ·  ssl-redirect│  │
+│  │  proxy-read-timeout 960s · max body 16 MB  ·  ssl-redirect│  │
 │  └───────────────────────────┬───────────────────────────────┘  │
 │                              ↓                                  │
 │  ┌───────────────────────────────────────────────────────────┐  │

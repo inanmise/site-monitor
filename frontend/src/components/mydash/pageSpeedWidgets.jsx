@@ -32,6 +32,7 @@ const unknownText = (t, n) => (n === 1 ? t('mydash.psp.unknownCount.one') : t('m
 const METRIC_KEY = {
   LOAD: 'pspd.mLoad', TTFB: 'pspd.mTtfb', SIZE: 'pspd.mSize', REQUESTS: 'pspd.mRequests', MINSIZE: 'pspd.minPageKb',
   JS: 'pspd.type.js', IMG: 'pspd.type.img', FONT: 'pspd.type.font', THIRD: 'pspd.res.party.third',
+  GROWSIZE: 'pspd.growthBytes', GROWREQ: 'pspd.growthRequests', SIZEBAND: 'pspd.growthBand',
 }
 
 /**

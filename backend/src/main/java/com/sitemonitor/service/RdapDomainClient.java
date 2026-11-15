@@ -466,7 +466,7 @@ public class RdapDomainClient {
             bootstrapTldCount = map.size();
             return map;
         } catch (Exception e) {
-            log.warn("IANA RDAP bootstrap alınamadı ({}), rdap.org fallback kullanılacak: {}", url, e.getMessage());
+            log.warn("IANA RDAP bootstrap alınamadı ({}), rdap.org fallback kullanılacak: {}", SecretMask.logUrl(url), e.getMessage());
             return null;   // başarısız → çağıran eski cache'i (varsa) korur; yoksa doğrudan fallback
         }
     }

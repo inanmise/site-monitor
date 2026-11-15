@@ -73,7 +73,7 @@ public class RunbookNoteService {
                     .orElse(null);
             return text == null || text.isBlank() ? null : text;
         } catch (Exception e) {
-            log.warn("Rehber notu okunamadı ({} {}) — bildirim notsuz gider: {}", key.type(), key.target(), e.toString());
+            log.warn("Rehber notu okunamadı ({} {}) — bildirim notsuz gider: {}", key.type(), SecretMask.logUrl(key.target()), e.toString());
             return null;
         }
     }

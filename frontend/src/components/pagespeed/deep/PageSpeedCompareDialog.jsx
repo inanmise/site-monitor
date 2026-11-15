@@ -128,6 +128,7 @@ export default function PageSpeedCompareDialog({ options, initialB = '', readSna
               </Table>
             </div>
             {cmp.partial && <p data-slot="pspd-cmp-partial" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('pspd.cmp.partial')}</p>}
+            {cmp.modeDiffers && <p data-slot="pspd-cmp-mode" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('pspd.cmp.modeDiffers')}</p>}
             {!cmp.resourcesKnown ? (
               <p data-slot="pspd-cmp-nores" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('pspd.cmp.noResources')}</p>
             ) : (

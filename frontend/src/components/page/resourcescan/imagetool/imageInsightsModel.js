@@ -10,7 +10,9 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 export const INSIGHT_RECS = Object.freeze(['NEXT_GEN', 'SVG', 'BANNER_WIDTH', 'CONTENT_WIDTH', 'QUALITY_HIGH', 'JPEG_RESAVE', 'BANDING'])
 /** "Nasıl yaptık" adım kodları. */
 export const HOW_STEPS = Object.freeze(['LOCAL', 'KEPT', 'CROPPED', 'RESIZED', 'QUALITY_SEARCH', 'BROWSER_ENCODER', 'PNG_PALETTE',
-  'PNG_LOSSLESS', 'METADATA', 'COLOR_PROFILE'])
+  'PNG_LOSSLESS', 'METADATA', 'COLOR_PROFILE', 'AVIF_ENCODER'])
+/** Hedef boyut kipinde AVIF kalitesinin tabanı (motor `search.js` AVIF_TARGET_FLOOR — test motorun değerini okur). */
+export const AVIF_TARGET_FLOOR = 30
 /** Afiş / içerik görseli genişlik eşikleri (px). */
 export const BANNER_MAX_WIDTH = 1920
 export const CONTENT_MAX_WIDTH = 1200
@@ -35,6 +37,8 @@ export function analysisSummary(a) {
     return {
       bitDepth: num(f.bitDepth), colorModel: COLOR_MODELS.includes(f.colorModel) ? f.colorModel : null, ppi, ppiChecked, jpeg,
       paletteSize: num(f.paletteSize), lossless: typeof f.lossless === 'boolean' ? f.lossless : null,
+      // AVIF'in renk alt örneklemesi (av1C); JPEG'inki `jpeg.subsampling`
+      subsampling: SUBSAMPLINGS.includes(f.subsampling) ? f.subsampling : null,
     }
   }
   const candidates = (Array.isArray(a.candidates) ? a.candidates : []).filter(isObj).slice(0, 5)
@@ -45,7 +49,10 @@ export function analysisSummary(a) {
   return {
     input: facts(a.input), output: facts(a.output), colors, candidates,
     svgCandidate: a.svgCandidate === true, banding: a.banding === 'bit_depth' || a.banding === 'palette' ? a.banding : null,
-    qualityMode: ['auto', 'manual', 'target'].includes(a.qualityMode) ? a.qualityMode : null,
+    // 'fixed' (inceleme 2026-11-15): AVIF'in benzerliği ölçülemedi (tarayıcı AVIF açamıyor) — arama yapılmadı, sabit kalite
+    qualityMode: ['auto', 'manual', 'target', 'fixed'].includes(a.qualityMode) ? a.qualityMode : null,
+    // Bu görsel bu tarayıcıda AVIF'e kodlanabilir miydi (motor yazmadıysa — eski sonuç / AVIF'siz ortam — null)
+    avifPossible: typeof a.avifPossible === 'boolean' ? a.avifPossible : null,
     resampled: typeof a.resampled === 'boolean' ? a.resampled : null,
     sharpened: typeof a.sharpened === 'boolean' ? a.sharpened : null,
   }
@@ -122,7 +129,9 @@ export function insightRows(sum, t, locale) {
   const notStored = t('prs.it.ins.notStored')
   // "Kayıtlı değil" yalnız yoğunluğun yazıldığı başlık okunduysa; okunmadıysa (AVIF, yalnız EXIF'te, tarama sınırı) "—"
   const ppiOf = (f) => (f ? (ppiText(f, t, locale) || (f.ppiChecked ? notStored : null)) : null)
-  push('ppi', ppiOf(a?.input), ppiOf(a?.output))
+  // Kaynakta yoğunluk varken WebP / AVIF çıktısı: bu biçimlerde yoğunluk alanı YOK (motor yazamaz) — "kayıtlı değil" denmez
+  const noField = !sum.kept && (sum.type === 'webp' || sum.type === 'avif') && a?.input?.ppi != null
+  push('ppi', ppiOf(a?.input), noField ? t('prs.it.ins.ppiNoField') : ppiOf(a?.output))
   const bppB = bitsPerPixel(o.bytes, o.width, o.height)
   const bppA = bitsPerPixel(sum.bytes, sum.width, sum.height)
   push('bpp', bppB === null ? null : formatNumber(bppB, locale, 2), bppA === null ? null : formatNumber(bppA, locale, 2))
@@ -134,12 +143,14 @@ export function insightRows(sum, t, locale) {
     ?? (sum.colors ? t('prs.it.ins.paletteOf', t('prs.it.ins.model.palette'), formatNumber(sum.colors, locale)) : null))
   const qIn = a?.input?.jpeg?.quality
   const qOut = sum.kept ? qIn : (sum.quality ?? a?.output?.jpeg?.quality ?? null)
+  // AVIF kalitesi kendi ölçeğindedir (JPEG kalitesiyle kıyaslanmasın diye etiketlenir)
+  const qOutText = (v) => (sum.type === 'avif' && !sum.kept ? t('prs.it.ins.qualityAvif', formatNumber(v, locale)) : formatNumber(v, locale))
   if (qIn != null || (qOut != null && !sum.kept)) {
     push('quality', qIn != null ? t('prs.it.ins.qualityEst', formatNumber(qIn, locale)) : null,
-      qOut != null ? (sum.quality != null && !sum.kept ? formatNumber(qOut, locale) : t('prs.it.ins.qualityEst', formatNumber(qOut, locale))) : null)
+      qOut != null ? (sum.quality != null && !sum.kept ? qOutText(qOut) : t('prs.it.ins.qualityEst', formatNumber(qOut, locale))) : null)
   }
-  const ssIn = a?.input?.jpeg?.subsampling
-  const ssOut = sum.kept ? ssIn : a?.output?.jpeg?.subsampling
+  const ssIn = a?.input?.jpeg?.subsampling ?? a?.input?.subsampling
+  const ssOut = sum.kept ? ssIn : (a?.output?.jpeg?.subsampling ?? a?.output?.subsampling)
   if (ssIn || ssOut) push('subsampling', ssIn || null, ssOut || null)
   return rows
 }
@@ -174,9 +185,15 @@ export function insightRecommendations(sum) {
   const type = sum.kept ? sum.original?.type : sum.type
   const tried = new Set((a?.candidates || []).map((c) => c.type))
   const notes = new Set(sum.notes || [])
-  // Tarayıcı WebP kodlayamıyorsa öneri bu tarayıcıda uygulanamaz — gösterilmez
-  if ((type === 'jpeg' || type === 'png') && !tried.has('webp') && !(a?.svgCandidate) && !notes.has('WEBP_UNAVAILABLE')) {
-    out.push({ code: 'NEXT_GEN', params: [] })
+  // Yeni nesil biçim: DENENMEMİŞ ve bu tarayıcıda üretilebilen biçimler. WebP: tarayıcı kodlayamıyorsa (WEBP_UNAVAILABLE)
+  // önerilmez. AVIF: yalnız motor "bu görsel burada AVIF'e kodlanabilir" dediyse (avifPossible) ve denenmediyse — denenip
+  // büyük çıktıysa ya da üretilemediyse (AVIF_* notu) önerilmez
+  if (!(a?.svgCandidate) && (type === 'jpeg' || type === 'png' || type === 'webp')) {
+    const fmts = []
+    if (type !== 'webp' && !tried.has('webp') && !notes.has('WEBP_UNAVAILABLE')) fmts.push('webp')
+    if (a?.avifPossible === true && !tried.has('avif') && !notes.has('AVIF_UNAVAILABLE') && !notes.has('AVIF_TOO_LARGE')
+      && !notes.has('AVIF_NOT_MEASURED') && !notes.has('AVIF_TIME_LIMIT')) fmts.push('avif')
+    if (fmts.length) out.push({ code: 'NEXT_GEN', params: fmts })
   }
   if (a?.svgCandidate) out.push({ code: 'SVG', params: [] })
   if (w !== null && w > BANNER_MAX_WIDTH) out.push({ code: 'BANNER_WIDTH', params: [w, BANNER_MAX_WIDTH] })
@@ -203,8 +220,11 @@ export function howWeDid(sum) {
     const resampled = a?.resampled ?? (sum.resized && !sum.cropped)
     if (resampled) out.push({ code: 'RESIZED', params: [sum.width, sum.height, a?.sharpened === true] })
     if (sum.type === 'jpeg' || sum.type === 'webp') {
-      out.push({ code: 'QUALITY_SEARCH', params: [sum.quality, a?.qualityMode ?? null] })
+      out.push({ code: 'QUALITY_SEARCH', params: [sum.quality, a?.qualityMode ?? null, sum.type] })
       out.push({ code: 'BROWSER_ENCODER', params: [sum.type === 'jpeg' ? (sum.analysis?.output?.jpeg?.subsampling ?? null) : null, sum.type] })
+    } else if (sum.type === 'avif') {
+      out.push({ code: 'QUALITY_SEARCH', params: [sum.quality, a?.qualityMode ?? null, 'avif'] })
+      out.push({ code: 'AVIF_ENCODER', params: [sum.analysis?.output?.subsampling ?? null] })
     } else if (sum.type === 'png') {
       // "Piksel verisi değişmedi" yalnız ölçü / kırpma / saydam renk yuvarlaması / profil dönüşümü yoksa
       const untouched = !sum.resized && !sum.cropped && !notes.has('ALPHA_COLORS_ROUNDED') && !notes.has('COLOR_PROFILE_CONVERTED')

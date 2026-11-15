@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
+import { importWithDeadline, isImportTimeout } from '../utils/importWithDeadline.js'
 import { Link2, ShieldCheck, ExternalLink, Layers, List, Users, Folder, FileDown, FileSpreadsheet } from 'lucide-react'
 import { api, formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -60,11 +61,11 @@ export default function SharedCertificateModal({ domain, onClose, onSelectDomain
     if (!d || busy) return
     setBusy(kind)
     try {
-      const mod = await import('./sharedcert/sharedCertExport.js')
+      const mod = await importWithDeadline(() => import('./sharedcert/sharedCertExport.js'))
       if (kind === 'pdf') await mod.exportSharedPdf(d, view, t)
       else mod.exportSharedXlsx(d, view, t)
-    } catch {
-      toast.error(t('shc.exportFailed'))
+    } catch (e) {
+      toast.error(isImportTimeout(e) ? e.message : e?.code === 'DOWNLOAD_FAILED' ? t('inv.downloadFailed') : t('shc.exportFailed'))
     } finally {
       setBusy(null)
     }

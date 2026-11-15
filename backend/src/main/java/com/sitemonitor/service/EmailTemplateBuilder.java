@@ -1647,7 +1647,7 @@ public class EmailTemplateBuilder {
             String[] p = line.split("\t", -1);
             if (p.length < 4) continue;
             out.add(new PsRow(p[0], p[1], p[2], "1".equals(p[3]), p.length > 4 && "1".equals(p[4])));
-            if (out.size() >= 12) break;   // sınırlı (dokuz anahtar + bant)
+            if (out.size() >= 16) break;   // sınırlı (on iki anahtar + bant)
         }
         return out;
     }
@@ -1664,8 +1664,27 @@ public class EmailTemplateBuilder {
             case "IMG" -> "Görseller";
             case "FONT" -> "Yazı tipleri";
             case "THIRD" -> "Üçüncü taraf";
+            case "GROWSIZE" -> "Sayfa ağırlığı büyümesi";
+            case "GROWREQ" -> "İstek sayısı artışı";
+            case "SIZEBAND" -> "Sayfa ağırlığı (öğrenilen bant)";
             default -> key;
         };
+    }
+
+    /** Büyüme satırı mı (eşik hücresi {@code yüzde|medyan} ya da bant {@code alt|üst|up}). */
+    private static boolean psGrowth(String key) {
+        return "GROWSIZE".equals(key) || "GROWREQ".equals(key) || "SIZEBAND".equals(key);
+    }
+
+    /** Büyüme satırının birimi: istek sayısında yok, diğerlerinde KB. */
+    private static String psGrowthUnit(String key) {
+        return "GROWREQ".equals(key) ? " istek" : " KB";
+    }
+
+    /** {@code yüzde|medyan} hücresinin parçaları (eksik parça boş dizi). */
+    private static String[] psParts(String cell) {
+        String[] p = (cell == null ? "" : cell).split("\\|", -1);
+        return new String[]{p.length > 0 ? p[0] : "", p.length > 1 ? p[1] : "", p.length > 2 ? p[2] : ""};
     }
 
     private static String psUnit(String key) {
@@ -1687,17 +1706,44 @@ public class EmailTemplateBuilder {
             if (!lo.isEmpty() && !hi.isEmpty()) return lo + " – " + hi + " ms";
             return hi.isEmpty() ? (lo.isEmpty() ? "—" : "≥ " + lo + " ms") : "≤ " + hi + " ms";
         }
+        if (psGrowth(r.key())) {
+            String[] p = psParts(r.threshold());
+            // Bant: "≤ üst KB"; kuruluyorsa "bant kuruluyor". Büyüme: "+%20'den fazla büyümez".
+            if ("SIZEBAND".equals(r.key())) return p[1].isEmpty() ? "bant kuruluyor" : "≤ " + p[1] + " KB";
+            return "en çok +" + p[0] + " % (önceki haftaya göre)";
+        }
         return ("MINSIZE".equals(r.key()) ? "≥ " : "≤ ") + r.threshold() + psUnit(r.key());
     }
 
     static String psMeasuredText(PsRow r) {
         if (r.measured() == null || r.measured().isBlank()) return "—";
-        return (r.lowerBound() ? "≥ " : "") + r.measured() + psUnit(r.key());
+        if ("GROWSIZE".equals(r.key()) || "GROWREQ".equals(r.key())) {
+            // "önceki hafta medyanı X → şimdi Y (+Z %)" — medyan yoksa yalnız şimdiki değer
+            String median = psParts(r.threshold())[1];
+            String now = (r.lowerBound() ? "≥ " : "") + r.measured() + psGrowthUnit(r.key());
+            if (median.isEmpty()) return "şimdi " + now;
+            String pct = "";
+            try {
+                long m = Long.parseLong(median), v = Long.parseLong(r.measured());
+                if (m > 0) {
+                    long g = Math.floorDiv((v - m) * 100L, m);
+                    pct = " (" + (g >= 0 ? "+" : "") + g + " %)";
+                }
+            } catch (NumberFormatException ignore) { /* yüzde yazılmaz */ }
+            return "önceki hafta medyanı " + median + psGrowthUnit(r.key()) + " → şimdi " + now + pct;
+        }
+        return (r.lowerBound() ? "≥ " : "") + r.measured() + (psGrowth(r.key()) ? " KB" : psUnit(r.key()));
     }
 
     static String psStateText(PsRow r) {
         if (r.measured() == null || r.measured().isBlank()) return "Ölçülemedi";
         if ("BAND".equals(r.key())) return r.breached() ? "Bant dışında" : "Bant içinde";
+        if ("SIZEBAND".equals(r.key())) {
+            if (r.breached()) return "Bandın üstünde";
+            return psParts(r.threshold())[1].isEmpty() ? "Karşılaştırılamadı (bant kuruluyor)" : "Bant içinde";
+        }
+        if (("GROWSIZE".equals(r.key()) || "GROWREQ".equals(r.key())) && !r.breached() && psParts(r.threshold())[1].isEmpty())
+            return "Karşılaştırılamadı (önceki haftada yeterli tam ölçüm yok)";
         return r.breached() ? ("MINSIZE".equals(r.key()) ? "Beklenenden küçük" : "Aşıldı") : "Eşik içinde";
     }
 

@@ -135,6 +135,42 @@ for (const vp of VIEWPORTS) {
   })
 }
 
+// Kullanıcının işini bölmez (2026-11-15, CI hatası: pencere açık "İşlemler" menüsünün üstüne açılıp odağı alıyor, kipsiz
+// menü kapanıyordu — alarm iletimi testinde "Sürdür" seçilemeden menü DOM'dan kopuyordu). Açık menü varken pencere açılmaz,
+// menü yerinde kalır; kullanıcı durunca (≥ 2 sn girdi yok) açılır.
+test('eksikler penceresi açık menünün üstüne açılmaz; menü kapanıp kullanıcı durunca açılır (1280)', async ({ browser }) => {
+  test.setTimeout(120_000)
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const page = await context.newPage()
+  await mockApi(page, { role: 'USER', globalAdmin: false, teamIds: [1], perms: { 'data_quality.view': { view: true } }, gaps: true })
+  await page.route((u) => new URL(u).pathname === '/api/me', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      success: true, username: 'demo', system_role: 'USER', global_admin: false, weekly_reports_visible: true,
+      team_id: 1, team_name: 'Takım A', team_ids: [1], team_names: ['Takım A'], manage_team_ids: [],
+      email: null, phone: '', tour: { status: 'dismissed', version: 99 },
+    }),
+  }))
+  await page.goto('/?tab=dashboard')
+  // Kullanıcı menüsünü hemen aç ve AÇIK tut (eksik okuması menü açıkken biter)
+  const trigger = page.locator('[data-slot="user-menu-trigger"]').filter({ visible: true }).first()
+  await trigger.click()
+  const menu = page.getByRole('menu')
+  await expect(menu).toBeVisible()
+  // Okuma bitti (özet yayınlandı → menüdeki "Eksiklerim" sayacı) — eski kodda pencere TAM bu anda açılır, menü kapanırdı
+  await expect(menu.locator('[data-slot="user-menu-gaps-count"]')).toBeVisible({ timeout: 30_000 })
+  await page.waitForTimeout(1_500)   // birkaç bakış aralığı (500 ms): pencere hâlâ beklemeli
+  await expect(menu).toBeVisible()
+  await expect(page.locator(DIALOG)).toHaveCount(0)
+  // Menü kapanır (Escape bir girdi): pencere sessizlik süresi (2 sn) dolmadan açılmaz, sonra açılır
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  const closedAt = Date.now()
+  await expect(page.locator(DIALOG)).toHaveAttribute('data-status', 'ready', { timeout: 15_000 })
+  expect(Date.now() - closedAt, 'pencere sessizlik beklemeden açıldı').toBeGreaterThanOrEqual(1_500)
+  await context.close()
+})
+
 // Zenginleştirme (2026-11-15, A–F paketleri): veri kalitesi dışı takım eksikleri, bekleyen işler, takıma göre görünüm,
 // tek eksiği gizleme, "1 hafta sonra hatırlat" ve yerinde düzeltme düğmesi — gerçek uzunlukta AD adlarıyla, üç boyutta.
 const LONG_TEAM = 'Dijital Kanallar ve Mobil Bankacılık Altyapı Yönetimi (Kurumsal Teknoloji / Uygulama Destek)'

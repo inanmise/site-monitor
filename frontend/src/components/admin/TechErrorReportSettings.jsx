@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import {
   CheckCircle2, ChevronDown, CircleAlert, Download, ExternalLink, EyeOff, FileClock, FileSpreadsheet, FileText, FileWarning, Landmark,
   MailWarning, Radio, RefreshCw, Search, Users, X,
@@ -251,7 +252,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [exporting, setExporting] = useState(false)
   function exportCsv() {
     const { header, rows } = exportTable(visible, t)
-    downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows))
+    // Tarayıcı indirmeyi başlatamadıysa söylenir (2026-11-15, prod kapısı: sessizce hiçbir şey olmuyordu)
+    if (downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows)) === false) toast.error(t('inv.downloadFailed'))
   }
   async function exportXlsx() {
     if (exporting) return
@@ -261,7 +263,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       const { buildXlsx, XLSX_MIME } = await loadXlsxWriter()
       const bytes = buildXlsx([{ name: t('te.set.export.sheet'), rows: [header, ...rows], freezeHeader: true, autoFilter: true,
         widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
-      downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
+      if (downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME })) === false) toast.error(t('inv.downloadFailed'))
     } catch (e) {
       // API dışı hata (bayat paket "Failed to fetch dynamically imported module", bellek, çalışma kitabı): tostta yalnız
       // çevrilmiş metin, teknik metin "Teknik ayrıntı"da (hata sözleşmesi)
@@ -482,7 +484,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
 let xlsxWriterPromise = null
 function loadXlsxWriter() {
   if (!xlsxWriterPromise) {
-    xlsxWriterPromise = import('../../utils/xlsxWriter.js').catch((e) => { xlsxWriterPromise = null; throw e })
+    // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği menüyü / düğmeyi sonsuza dek meşgul bırakmaz
+    xlsxWriterPromise = importWithDeadline(() => import('../../utils/xlsxWriter.js')).catch((e) => { xlsxWriterPromise = null; throw e })
   }
   return xlsxWriterPromise
 }

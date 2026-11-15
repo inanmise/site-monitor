@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
@@ -195,6 +197,22 @@ describe('SmtpLogView', () => {
     const dlg2 = await screen.findByRole('dialog')
     fireEvent.click(within(dlg2).getByRole('button', { name: /Yeniden gönder|Resend/ }))
     await screen.findByText(/Alarm çözülmüş|The alert is resolved/)
+  })
+
+  it.each([
+    ['ağ geçidi 504', () => smtpLog.resend.mockResolvedValueOnce({ success: false, status: 504, error: 'Ağ geçidi zaman aşımı' })],
+    ['istemci zaman aşımı', () => smtpLog.resend.mockResolvedValueOnce({ success: false, status: 0, code: 'REQUEST_TIMEOUT', error: 'Zaman aşımı' })],
+    ['ağ kopması', () => smtpLog.resend.mockRejectedValueOnce(Object.assign(new Error('Sunucuya ulaşılamadı'), { status: 0, code: 'NETWORK_ERROR' }))],
+  ])('yeniden gönder — sonuç bilinmiyor (%s): "kontrol edin" metni + günlük yeniden okunur (inceleme 2026-11-15)', async (_n, arrange) => {
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
+    await screen.findByText('550 5.1.1 mailbox unavailable')
+    const before = smtpLog.search.mock.calls.length
+    arrange()
+    fireEvent.click(document.querySelectorAll('[data-action="resend"]')[0])
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByRole('button', { name: /Yeniden gönder|Resend/ }))
+    await screen.findByText((c) => c === TR['sml.resendUnknown'] || c === EN['sml.resendUnknown'])
+    await waitFor(() => expect(smtpLog.search.mock.calls.length).toBeGreaterThan(before))
   })
 
   it('CSV: export ucu süzgeçle çağrılır, dosya indirilir (BOM + başlık satırı), toast satır sayısını söyler', async () => {

@@ -135,11 +135,28 @@ export function overBudgetMeters(meters, exclude = 'load') {
   return (Array.isArray(meters) ? meters : []).filter((mt) => mt.key !== exclude && mt.tone === 'crit')
 }
 
+/** Karara bağlanamayan eşik listesi dolu mu (dizi — liste satırı — ya da virgüllü metin — geçmiş satırı). */
+export function hasUndecided(v) {
+  if (Array.isArray(v)) return v.some(x => typeof x === 'string' && x.trim() !== '')
+  return typeof v === 'string' && v.split(',').some(x => x.trim() !== '')
+}
+
+/**
+ * Görünen durum (inceleme 2026-11-15): sunucunun "OK"si, kanıtlı aşım YOKKEN tanımlı bir eşik karara bağlanamadıysa
+ * (kısmi ölçüm, ölçülemeyen TTFB, büyüme referansı henüz birikiyor — undecided_metrics) "UNDECIDED" olur: yeşil "Normal"
+ * DEĞİL, nötr "henüz karar verilemedi". Aşım varsa sunucunun kararı (SLOW / DOWN) olduğu gibi kalır.
+ */
+export function pageSpeedStatusOf(m) {
+  const s = m?.status
+  if (s !== 'OK') return s
+  return hasUndecided(m?.undecided_metrics) ? 'UNDECIDED' : 'OK'
+}
+
 /**
  * Ölçer DIŞI ihlaller (inceleme F2): tür bütçeleri (JS / görsel / font / üçüncü taraf) ve asgari boyut — dört ölçerde
  * görünmedikleri için kart ve kompakt neden satırı bunları ayrıca adlandırır. Sıra sunucunun BREACH_KEYS sırası.
  */
-export const EXTRA_BREACH_KEYS = ['MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD']
+export const EXTRA_BREACH_KEYS = ['MINSIZE', 'JS', 'IMG', 'FONT', 'THIRD', 'GROWSIZE', 'GROWREQ', 'SIZEBAND']
 export function extraBreaches(m) {
   const b = new Set(Array.isArray(m?.breached_metrics) ? m.breached_metrics.map((k) => String(k).trim().toUpperCase()) : [])
   return EXTRA_BREACH_KEYS.filter((k) => b.has(k))

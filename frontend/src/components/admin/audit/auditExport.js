@@ -1,4 +1,8 @@
 import { downloadBlob } from '../../../utils/csvExport.js'
+import { isAbortish, timedFetch } from '../../../utils/timedFetch.js'
+
+/** Dışa aktarımın istemci süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde, 3 dk. */
+export const AUDIT_EXPORT_TIMEOUT_MS = 180_000
 
 /**
  * Denetim dışa aktarımını İNDİRİR — `window.open` yerine fetch + blob.
@@ -12,19 +16,29 @@ import { downloadBlob } from '../../../utils/csvExport.js'
  * alınan URL Safari / iPad'de indirmeyi başlatmıyordu ama "dışa aktarıldı" yazıyordu. Tarayıcı indirmeyi başlatamazsa
  * `{ ok: false, status: -1 }`.
  *
- * @returns {Promise<{ ok: boolean, status: number }>}  ağ hatasında status 0
+ * <p>Süre sınırı (2026-11-15): istek VE gövde {@link AUDIT_EXPORT_TIMEOUT_MS} ile sınırlı; süre dolunca
+ * `{ ok: false, status: 0, timedOut: true }` (çağıran "çok uzun sürdü" der, meşgul durum kalkar).
+ *
+ * @returns {Promise<{ ok: boolean, status: number, timedOut?: boolean }>}  ağ hatasında status 0
  */
-export async function downloadAuditExport(url, fallbackName) {
+export async function downloadAuditExport(url, fallbackName, timeoutMs = AUDIT_EXPORT_TIMEOUT_MS) {
+  let res
   try {
-    const res = await fetch(url, { credentials: 'include' })
+    res = await timedFetch(url, { credentials: 'include' }, timeoutMs)
+  } catch (e) {
+    return isAbortish(e) ? { ok: false, status: 0, timedOut: true } : { ok: false, status: 0 }
+  }
+  try {
     if (!res.ok) return { ok: false, status: res.status }
     const blob = await res.blob()
-    const disp = res.headers.get('Content-Disposition') || ''
+    const disp = res.headers?.get?.('Content-Disposition') || ''
     const match = /filename="?([^";]+)"?/.exec(disp)
     if (!downloadBlob(match ? match[1] : fallbackName, blob)) return { ok: false, status: -1 }
     return { ok: true, status: res.status }
-  } catch {
-    return { ok: false, status: 0 }
+  } catch (e) {
+    return isAbortish(e) ? { ok: false, status: 0, timedOut: true } : { ok: false, status: 0 }
+  } finally {
+    res.done()
   }
 }
 

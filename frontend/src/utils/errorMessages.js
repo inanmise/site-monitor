@@ -21,6 +21,7 @@ const TEXTS = {
     network: 'Sunucuya ulaşılamadı. İnternet ya da VPN bağlantınız kopmuş olabilir ya da sunucu şu an yeniden başlıyor olabilir. Bağlantınızı kontrol edip birkaç saniye sonra tekrar deneyin.',
     offline: 'İnternet bağlantınız yok görünüyor, bu yüzden istek gönderilemedi. Bağlantınız (ya da VPN) geri geldiğinde işlemi tekrar deneyin.',
     timeout: 'Sunucu zamanında yanıt vermedi; sunucu yoğun ya da bağlantınız yavaş olabilir. İşlem arka planda tamamlanmış olabilir: sayfayı yenileyip sonucu kontrol edin, gerekirse tekrar deneyin.',
+    chunkTimeout: 'Bu işlem için gereken uygulama parçası {0} saniyede indirilemedi; bağlantınız yavaş ya da kesintili olabilir. Sayfayı yenileyip işlemi tekrar deneyin.',
     aborted: 'İstek tamamlanmadan iptal edildi (sayfadan ayrıldınız ya da işlemi durdurdunuz). Hâlâ gerekiyorsa işlemi yeniden başlatın.',
     nonJson: 'Sunucudan beklenmeyen bir yanıt geldi (veri yerine bir web sayfası). Araya giren bir ağ geçidi, bakım sayfası ya da süresi dolmuş bir oturum olabilir. Sayfayı yenileyip tekrar deneyin; sorun sürerse sistem yöneticilerine bildirin.',
     http400: 'İstek kabul edilmedi: gönderilen bilgilerden biri eksik ya da geçersiz. Formdaki alanları kontrol edip tekrar deneyin.',
@@ -48,6 +49,7 @@ const TEXTS = {
     network: 'Couldn’t reach the server. Your internet or VPN connection may have dropped, or the server may be restarting right now. Check your connection and try again in a few seconds.',
     offline: 'You appear to be offline, so the request couldn’t be sent. Try again once your internet (or VPN) connection is back.',
     timeout: 'The server didn’t respond in time; it may be busy or your connection may be slow. The action may still have completed in the background: reload the page to check, then try again if needed.',
+    chunkTimeout: 'The part of the app this action needs didn’t download within {0} seconds; your connection may be slow or interrupted. Reload the page and try the action again.',
     aborted: 'The request was cancelled before it finished (you left the page or stopped the action). Start it again if you still need it.',
     nonJson: 'The server sent an unexpected response (a web page instead of data). A gateway, a maintenance page or an expired session may be in the way. Reload the page and try again; if it keeps happening, tell the system administrators.',
     http400: 'The request was not accepted: some of the information sent is missing or invalid. Check the fields in the form and try again.',
@@ -150,6 +152,14 @@ export function networkMessage({ lang, kind = 'network', offline } = {}) {
   if (kind === 'aborted') return text(lang, 'aborted')
   const isOffline = offline ?? (typeof navigator !== 'undefined' && navigator.onLine === false)
   return text(lang, isOffline ? 'offline' : 'network')
+}
+
+/**
+ * Tıklamayla yüklenen bir kod parçası (dinamik `import()`) süre sınırında inmedi (2026-11-15, prod kapısı incelemesi —
+ * `utils/importWithDeadline.js`). `seconds` metne yazılır.
+ */
+export function chunkTimeoutMessage({ lang, seconds } = {}) {
+  return text(lang, 'chunkTimeout', seconds)
 }
 
 /** JSON olmayan yanıt (proxy HTML hata sayfası, boş gövde): 4xx/5xx durum metnine, aksi halde "beklenmeyen yanıt"a düşer. */

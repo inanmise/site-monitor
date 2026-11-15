@@ -381,5 +381,7 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
      * (bkz. {@code RepositoryWriteTransactionGuardTest}). Dönüş silinen satır sayısıdır.
      */
     @Transactional
-    int deleteByCreatedAtBefore(String cutoff);
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("DELETE FROM MonitorChangeLog l WHERE l.createdAt < :cutoff")
+    int deleteByCreatedAtBefore(@Param("cutoff") String cutoff);
 }

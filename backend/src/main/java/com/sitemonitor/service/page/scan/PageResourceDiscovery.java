@@ -464,6 +464,24 @@ public final class PageResourceDiscovery {
         return out;
     }
 
+    /**
+     * Stil gövdesi → metin (TEK kural; kaynak analizi ve Sayfa Hızı genişletilmiş ölçümü ortak): {@code Content-Type}'ın
+     * {@code charset}'i, bilinmiyorsa UTF-8; en çok {@value #MAX_CSS_CHARS} bayt çözülür. Null gövde → boş metin.
+     */
+    public static String decodeCssText(byte[] body, String contentType) {
+        if (body == null) return "";
+        java.nio.charset.Charset cs = java.nio.charset.StandardCharsets.UTF_8;
+        if (contentType != null) {
+            int i = contentType.toLowerCase(Locale.ROOT).indexOf("charset=");
+            if (i >= 0) {
+                String name = contentType.substring(i + 8).split(";", 2)[0].replace("\"", "").trim();
+                try { cs = java.nio.charset.Charset.forName(name); } catch (RuntimeException ignore) { /* bilinmeyen kodlama → UTF-8 */ }
+            }
+        }
+        int n = Math.min(body.length, MAX_CSS_CHARS);
+        return new String(body, 0, n, cs);
+    }
+
     private static int min3(int a, int b, int c) {
         int m = Integer.MAX_VALUE;
         if (a >= 0) m = Math.min(m, a);

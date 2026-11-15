@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../../../utils/importWithDeadline.js'
 import {
   ChartSpline, CircleAlert, FileSpreadsheet, FileText, Globe, History, Hourglass, Images, Info, Layers, LayoutDashboard, Link2, List,
   ListChecks, Play, RefreshCw, RotateCw, ScanSearch, Square, TriangleAlert,
@@ -490,7 +491,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     if (!d?.scan || exporting) return
     setExporting(kind)
     try {
-      const mod = await import('./resourceScanExport.js')
+      const mod = await importWithDeadline(() => import('./resourceScanExport.js'))
       const args = { monitor, scan: d.scan, analysis: d.analysis, items: d.items_kept === false ? null : (enriched ?? d.items), t, locale,
         detailRuns: hist.data?.limits?.detail_runs ?? 20,
         // prs3 F3: yönetici özeti — bütçe değerlendirmesi ve önceki tamamlanmış analizle karşılaştırma

@@ -10,8 +10,8 @@ vi.mock('../api/client', () => ({
     users: { directory: vi.fn() },
   }),
 }))
-const dl = vi.hoisted(() => ({ calls: [] }))
-vi.mock('../utils/csvExport.js', async (orig) => ({ ...(await orig()), downloadText: (...a) => { dl.calls.push(a) } }))
+const dl = vi.hoisted(() => ({ calls: [], result: undefined }))
+vi.mock('../utils/csvExport.js', async (orig) => ({ ...(await orig()), downloadText: (...a) => { dl.calls.push(a); return dl.result } }))
 
 import { api } from '../api/client'
 import { activePeople, ownerOptions } from '../components/incidenthistory/postmortem/ActionItemParts.jsx'
@@ -43,6 +43,7 @@ const base = (over = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks()
   dl.calls = []
+  dl.result = undefined
   api.incidents.postmortem.mockResolvedValue({ success: true, data: base() })
   api.users.directory.mockResolvedValue({ success: true, data: [{ id: 'u-7', display_name: LONG }, { id: 'u-8', username: 'kullanici.b' }] })
   api.incidents.savePostmortem.mockImplementation(async (_id, body) => ({ success: true, data: { ...base().postmortem, exists: true, version: 1, ...body } }))
@@ -182,6 +183,15 @@ describe('PostmortemModal', () => {
     expect(dl.calls).toHaveLength(1)
     expect(dl.calls[0][0]).toBe('postmortem-7-odeme-kesintisi.md')
     expect(dl.calls[0][1]).toContain('Alarm eşiğini düşür')
+  })
+
+  it('Markdown indirmesi tarayıcıda başlatılamazsa hata söylenir (inceleme 2026-11-15)', async () => {
+    dl.result = false
+    render(<PostmortemModal incident={incident} onClose={() => {}} />)
+    await waitFor(() => expect(section('summary')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-slot="pm-export"]'))
+    expect(dl.calls).toHaveLength(1)
+    expect(await screen.findByText(/browser didn’t start the download|tarayıcı indirmeyi başlatamadı/i)).toBeInTheDocument()
   })
 
   it('kaydedilmemiş değişiklikle kapatma onay ister', async () => {

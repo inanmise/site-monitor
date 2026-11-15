@@ -4,7 +4,7 @@ import Field from '../../../ui/Field.jsx'
 import SegmentedControl from '../../../ui/SegmentedControl.jsx'
 import { formatNumber } from '../resourceScanModel.js'
 import { WRAP } from '../ResourceScanParts.jsx'
-import { FORMATS, METHODS, QUALITY_MODES, pngPaletteColors } from './imageToolModel.js'
+import { FORMATS, METHODS, QUALITY_MODES, formatUnavailableKey, pngPaletteColors } from './imageToolModel.js'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
@@ -33,7 +33,11 @@ export default function ImageSettingsFields({
   const err = (k) => (errors?.[k] ? t(errors[k].key, ...(errors[k].args || []).map((a) => (typeof a === 'number' ? formatNumber(a, locale) : a))) : undefined)
   const s = value
   const webp = support?.webp === true
+  const avif = support?.avif === true
   const supportKnown = support?.state === 'ready'
+  // Bu tarayıcıda üretilemeyen biçim (destek BİLİNİYORSA kapalı; bilinmiyorken seçilebilir — motor yine yedekle döner)
+  const off = (f) => supportKnown && ((f === 'webp' && !webp) || (f === 'avif' && !avif))
+  const offKey = formatUnavailableKey(s.format, support)
   const sized = s.method !== 'none'
   const both = s.method === 'fit' || s.method === 'cover' || s.method === 'thumb'
   const maxSide = limits?.maxSide ?? 30_000
@@ -43,15 +47,15 @@ export default function ImageSettingsFields({
     <div data-slot="prs-it-settings" className="flex min-w-0 flex-col">
       {sections.format && (
         <Field label={t('prs.it.set.format')} name="format"
-          hint={supportKnown && !webp ? t('prs.it.set.webpOff')
-            : ['jpeg', 'png', 'webp'].includes(s.format) ? `${t(`prs.it.set.formatHint.${s.format}`)} ${t('prs.it.set.formatConvertNote')}`
+          hint={offKey ? t(offKey)
+            : ['jpeg', 'png', 'webp', 'avif'].includes(s.format) ? `${t(`prs.it.set.formatHint.${s.format}`)} ${t('prs.it.set.formatConvertNote')}`
               : t(`prs.it.set.formatHint.${s.format}`)}>
           {({ id, describedBy }) => (
             <NativeSelect id={id} aria-describedby={describedBy} value={s.format} disabled={disabled} data-slot="prs-it-format"
               className={TOUCH_INPUT} onChange={(e) => onChange({ format: e.target.value })}>
               {FORMATS.map((f) => (
-                <NativeSelectOption key={f} value={f} disabled={f === 'webp' && supportKnown && !webp}>
-                  {t(`prs.it.set.format.${f}`)}{f === 'webp' && supportKnown && !webp ? ` — ${t('prs.it.set.webpOffShort')}` : ''}
+                <NativeSelectOption key={f} value={f} disabled={off(f)}>
+                  {t(`prs.it.set.format.${f}`)}{off(f) ? ` — ${t('prs.it.set.webpOffShort')}` : ''}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -72,6 +76,7 @@ export default function ImageSettingsFields({
           {s.qualityMode === 'manual' && (
             <Field label={t('prs.it.set.qualityValue', formatNumber(s.quality, locale))} name="quality" error={err('quality')}
               hint={s.format === 'jpeg' || s.format === 'webp' ? undefined
+                : s.format === 'avif' ? t('prs.it.set.qualityAvif')
                 : pngPaletteColors(s.quality) === null ? t('prs.it.set.qualityPngLossless')
                   : t('prs.it.set.qualityPngPalette', formatNumber(Number(s.quality), locale), formatNumber(pngPaletteColors(s.quality), locale))}>
               {({ labelId, describedBy }) => (

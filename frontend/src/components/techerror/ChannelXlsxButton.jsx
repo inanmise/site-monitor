@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react'
+import { importWithDeadline, isImportTimeout } from '../../utils/importWithDeadline.js'
 import { FileSpreadsheet, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
@@ -73,10 +74,17 @@ export default function ChannelXlsxButton({ channel, year, blocked = false, onBu
       }
       let out
       try {
-        const mod = await import('./channelExport.js')
+        const mod = await importWithDeadline(() => import('./channelExport.js'))
         out = mod.exportChannelXlsx(res.data, { channel, year, t, fmtDate: (iso) => fmtDateTime(iso, lang) })
       } catch (e) {
-        toast.error(t('te.xlsx.buildFailedText'), { details: { code: clientErrorCode('XLSX_BUILD_FAILED', e) } })
+        // Parça süre sınırında inmediyse özgül metin (inceleme 2026-11-15); yoksa eski yapım hatası metni
+        if (isImportTimeout(e)) toast.error(e.message, { details: e })
+        else toast.error(t('te.xlsx.buildFailedText'), { details: { code: clientErrorCode('XLSX_BUILD_FAILED', e) } })
+        return
+      }
+      // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (2026-11-15, prod kapısı)
+      if (out?.ok === false) {
+        toast.error(t('inv.downloadFailed'))
         return
       }
       toast.success(t('te.xlsx.done', out.name))

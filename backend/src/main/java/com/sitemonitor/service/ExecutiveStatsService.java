@@ -232,21 +232,31 @@ public class ExecutiveStatsService {
                 Map<Long, Map<String, Object>> avail = MonitorSparklineService.subset(sparklineService.availabilityAll(type, WINDOW_DAYS), ids);
                 for (Map.Entry<Long, Map<String, Object>> en : avail.entrySet()) {
                     Object up = en.getValue().get("up_pct");
-                    if (!(up instanceof Double d)) continue;
+                    if (!(up instanceof Double)) continue;
+                    long n = en.getValue().get("n") instanceof Number nn ? nn.longValue() : 0L;
+                    long fail = en.getValue().get("fail") instanceof Number ff ? ff.longValue() : 0L;
+                    // Hüküm KESİN orandan (kapı incelemesi 2026-11-15): yuvarlanmış up_pct (99,8981 → "99,90") hedef 99,9'u
+                    // karşılıyor görünüyor, ihlal sayılmıyordu. AvailabilityWeekService ile TEK kural.
+                    Boolean meets = AvailabilityWeekService.meetsTarget(n, fail, target);
+                    if (meets == null) continue;
                     monitors++;
                     Long tid = teams.get(en.getKey());
                     int[] bt = slaByTeam.computeIfAbsent(tid == null ? -1L : tid, k -> new int[2]);
                     bt[0]++;
-                    if (d < target) {
+                    if (!meets) {
                         breaches++; bt[1]++;
                         Map<String, Object> w = new LinkedHashMap<>();
-                        w.put("type", type); w.put("id", en.getKey()); w.put("up_pct", d); w.put("bad_hours", en.getValue().get("bad_hours"));
+                        // Gösterilen değer AŞAĞI kesilir ve hedefin altında kalır — hedef altı izleme "%99,90" yazmaz
+                        w.put("type", type); w.put("id", en.getKey()); w.put("up_pct", belowTargetPct(n, fail, target));
+                        w.put("bad_hours", en.getValue().get("bad_hours"));
+                        w.put("checks", n); w.put("failed", fail);
                         w.put("team_id", tid);
                         worst.add(w);
                     }
                 }
             }
-            worst.sort(Comparator.comparingDouble((Map<String, Object> m) -> (Double) m.get("up_pct"))
+            // En düşük KESİN oran önce (gösterimde eşit görünen iki izleme de doğru sıralanır)
+            worst.sort(Comparator.comparingDouble((Map<String, Object> m) -> exactRatio((Long) m.get("checks"), (Long) m.get("failed")))
                     .thenComparing(m -> String.valueOf(m.get("type"))).thenComparing(m -> (Long) m.get("id")));
             List<Map<String, Object>> top = new ArrayList<>(worst.subList(0, Math.min(5, worst.size())));
             if (monitorsVisible) nameWorst(top);
@@ -290,6 +300,26 @@ public class ExecutiveStatsService {
         out.put("window_days", WINDOW_DAYS);
         out.put("generated_at", ISO.format(Instant.now()));
         return out;
+    }
+
+    /** Kesin başarı oranı (0..1) — sıralama için; kontrol yoksa 1. */
+    private static double exactRatio(Long checks, Long failed) {
+        long n = checks == null ? 0L : checks, f = failed == null ? 0L : failed;
+        return n <= 0 ? 1.0 : (double) (n - Math.min(f, n)) / n;
+    }
+
+    /**
+     * Hedef ALTI bir izlemenin gösterilen yüzdesi (2 hane): kesin oran AŞAĞI kesilir; yine de hedefe eşit / üstündeyse
+     * (örn. 99,90 tam hedefte) bir adım (0,01) aşağı iner — hedef altı izleme asla "hedefi karşılıyor" gibi okunmaz.
+     * İstemcideki {@code seriesModel.belowTargetPct} ile aynı kural.
+     */
+    static Double belowTargetPct(long checks, long failed, double target) {
+        if (checks <= 0) return null;
+        long ok = Math.max(0L, checks - Math.min(failed, checks));
+        java.math.BigDecimal pct = java.math.BigDecimal.valueOf(ok).multiply(java.math.BigDecimal.valueOf(100))
+                .divide(java.math.BigDecimal.valueOf(checks), 2, java.math.RoundingMode.DOWN);
+        if (pct.compareTo(java.math.BigDecimal.valueOf(target)) >= 0) pct = pct.subtract(new java.math.BigDecimal("0.01"));
+        return pct.max(java.math.BigDecimal.ZERO).doubleValue();
     }
 
     /** Görünür takım anahtarları (SY, sonra UG; aynıysa bir kez; görülemeyen atlanır; hiçbiri yoksa takımsız -1). */

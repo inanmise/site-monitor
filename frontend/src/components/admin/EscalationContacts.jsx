@@ -338,7 +338,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
           <Button variant="outline" title={t('ec.exportCsv')} onClick={() => {
             const rows = filteredContacts.map(c => [c.name, c.email, teamMap[c.team_id] || '', roleLabelMap[c.role] || c.role, levelLabelMap[c.min_alert_level] || c.min_alert_level,
               c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive'), contactDelay(c) ?? ''])
-            downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive'), t('ec.colDelay')], rows))
+            if (downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive'), t('ec.colDelay')], rows)) === false) toast.error(t('inv.downloadFailed'))
           }}><Download aria-hidden="true" /> {t('ec.exportCsv')}</Button>
           {canManage && <Button variant="success" onClick={openAdd}><UserPlus aria-hidden="true" /> {t('ec.addBtn')}</Button>}
         </div>

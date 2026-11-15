@@ -315,9 +315,9 @@ public class PageCheckerService {
                 }
             }
         }
-        if (capped) log.warn("Crawl {} — {} toplam-kaynak capine ulaşıldı, kalan atlandı", sanitize(url), maxTotalResources);
-        else if (System.currentTimeMillis() >= deadline) log.warn("Crawl {} — deadline'a ulaşıldı, kısmi sonuç", sanitize(url));
-        else if (!queue.isEmpty()) log.debug("Crawl {} — {} sayfa limiti, {} kuyrukta bırakıldı", sanitize(url), maxPages, queue.size());
+        if (capped) log.warn("Crawl {} — {} toplam-kaynak capine ulaşıldı, kalan atlandı", SecretMask.logUrl(url), maxTotalResources);
+        else if (System.currentTimeMillis() >= deadline) log.warn("Crawl {} — deadline'a ulaşıldı, kısmi sonuç", SecretMask.logUrl(url));
+        else if (!queue.isEmpty()) log.debug("Crawl {} — {} sayfa limiti, {} kuyrukta bırakıldı", SecretMask.logUrl(url), maxPages, queue.size());
 
         long ms = System.currentTimeMillis() - start;
         return summarize(allIssues, totalResources, Math.max(1, pagesCrawled), first.status(), ms, rootHash, rootBytes);
@@ -519,7 +519,7 @@ public class PageCheckerService {
                     if (!path.isEmpty()) disallow.add(path);
                 }
             }
-        } catch (Exception e) { log.debug("robots.txt okunamadı {}: {}", sanitize(url), e.getMessage()); }
+        } catch (Exception e) { log.debug("robots.txt okunamadı {}: {}", SecretMask.logUrl(url), e.getMessage()); }
         return disallow;
     }
 
@@ -534,7 +534,7 @@ public class PageCheckerService {
                 String loc = m.group(1).trim();
                 if (isHttp(loc) && sameSite(hostOf(loc), rootHost)) seeds.add(stripFragment(loc));
             }
-        } catch (Exception e) { log.debug("sitemap.xml okunamadı {}: {}", sanitize(url), e.getMessage()); }
+        } catch (Exception e) { log.debug("sitemap.xml okunamadı {}: {}", SecretMask.logUrl(url), e.getMessage()); }
         return seeds;
     }
 

@@ -1,3 +1,5 @@
+import { importWithDeadline } from '../../../../utils/importWithDeadline.js'
+
 /**
  * Görsel motoru bağdaştırıcısı (2026-11-14, kaynak analizi "Görsel aracı" — sözleşme §2).
  *
@@ -33,7 +35,9 @@ async function engineModule() {
 /** Motor modülü — tek sefer yüklenir; yükleme BAŞARISIZ olursa (bayat paket) sonraki çağrı yeniden dener. */
 export function loadEngine() {
   if (!modulePromise) {
-    modulePromise = import('../../../../utils/imageEngine/index.js').catch((e) => {
+    // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği araç işlemlerini sonsuza dek bekletmez — süre dolunca
+    // yükleme başarısız sayılır (arayüz "sayfa güncellendi, yenileyin" der; yenileme asılı isteği de bırakır)
+    modulePromise = importWithDeadline(() => import('../../../../utils/imageEngine/index.js')).catch((e) => {
       modulePromise = null
       throw e
     })
@@ -52,7 +56,8 @@ export async function engineLimits() {
 }
 
 /**
- * Bu tarayıcı ne yapabiliyor: `{ worker, webp }`. Sayfa eski sürümden kalmışsa (motor ya da onun parçaları sunucuda yok)
+ * Bu tarayıcı ne yapabiliyor: `{ worker, webp, avif }` (`avif` = AVIF denenebilir; kodlayıcı yüklenmeden ucuz denetim —
+ * eski motor alanı göndermezse false). Sayfa eski sürümden kalmışsa (motor ya da onun parçaları sunucuda yok)
  * EK alan `staleBundle: true` — arayüz "sayfa güncellendi, yenileyin" der. Motor yüklenemezse de öyledir.
  */
 export async function engineSupport() {
@@ -60,13 +65,13 @@ export async function engineSupport() {
   try {
     m = await loadEngine()
   } catch {
-    return { worker: false, webp: false, staleBundle: true }
+    return { worker: false, webp: false, avif: false, staleBundle: true }
   }
   try {
     const s = await m.engineSupport()
-    return { worker: s?.worker === true, webp: s?.webp === true, ...(s?.staleBundle === true ? { staleBundle: true } : {}) }
+    return { worker: s?.worker === true, webp: s?.webp === true, avif: s?.avif === true, ...(s?.staleBundle === true ? { staleBundle: true } : {}) }
   } catch {
-    return { worker: false, webp: false }
+    return { worker: false, webp: false, avif: false }
   }
 }
 

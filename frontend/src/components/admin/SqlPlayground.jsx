@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import {
   BookMarked, BookmarkPlus, Database, DatabaseZap, Eraser, FileCode2, Gauge, History, ListTree, Network, OctagonX, PanelLeft, Play,
   ScanSearch, ShieldCheck, Table2, TableProperties, WandSparkles,
@@ -410,7 +411,7 @@ export default function SqlPlayground() {
       const body = unwrapExportJson(r.json)
       if (!body) { toast.error(t('sql.exp.failed')); return }
       const cols = body.columns ?? resultColumns(body.rows)
-      const { downloadSqlExcel } = await import('./sql/sqlExcelExport.js')
+      const { downloadSqlExcel } = await importWithDeadline(() => import('./sql/sqlExcelExport.js'))
       if (!downloadSqlExcel(body.rows, cols, columnTypes(body.rows, cols), 'sql')) { toast.error(t('sql.res.downloadFailed')); return }
       const renamedNote = body.renamed?.length
         ? ` ${t('sql.exp.dupRenamed', body.renamed.slice(0, 5).map((x) => `${x.from} → ${x.to}`).join(', ') + (body.renamed.length > 5 ? ` +${body.renamed.length - 5}` : ''))}`

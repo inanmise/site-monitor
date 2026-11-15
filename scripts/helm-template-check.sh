@@ -29,13 +29,27 @@
 #  12. ephemeral-storage request / limit ve /var/log emptyDir sizeLimit her ortamda; /tmp sizeLimit yalnız verilince.
 #  13. DB_POOL_MIN (varsayılan 5; > dbPoolMax ya da sayı değil → BAŞARISIZ) ve config.extraEnv render edilir;
 #      ConfigMap / container env / Secret anahtarıyla çakışan ya da geçersiz adlı extraEnv → BAŞARISIZ.
+#   Prod kapısı 2026-11-15:
+#  14. Ingress render eden her ortamda vekil sınırları uygulamanınkinden DAR değil: nginx proxy-body-size ≥
+#      spring.servlet.multipart.max-request-size (backend application.properties'ten okunur), proxy-read-timeout ≥
+#      MIN_PROXY_TIMEOUT_S; haproxy.router.openshift.io/timeout varsa ≥ MIN_PROXY_TIMEOUT_S; prod (master) haproxy
+#      zaman aşımını taşır (OpenShift Ingress'ten ürettiği Route'a ek açıklamaları kopyalar; varsayılan 30 sn).
+#  15. postgresql.enabled=true → render BAŞARISIZ (paketli PostgreSQL alt chart'ı kaldırıldı; DB_HOST var olmayan bir
+#      host'a giderdi).
 set -uo pipefail
 
 HELM="${HELM:-helm}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$ROOT/helm/site-monitor"
 VALUES="$CHART/values.yaml"
+APP_PROPS="$ROOT/backend/src/main/resources/application.properties"
 SPRING_BUDGET_S=91
+# En uzun istekler: istemcinin LONG_JOB_TIMEOUT_MS (900 sn) sınırına dek beklediği yönetim işleri — gizli anahtar yeniden
+# şifreleme (sunucu bütçesi 8 dk), toplu kullanıcı pasifleştirme (≤ 5000 kişi), elle saklama koşusu, yönetici özeti
+# gönderimi / testi, envanter içe aktarımı, takım LDAP eşitlemesi; canlı kontroller ≤ 420 sn (port HTTP "Test" ≤ 360 sn,
+# k6 testi ≤ 210 sn), SQL Playground dışa aktarımı ≤ 600 sn. 960 sn 900 sn'ye pay bırakır. Daha dar bir vekil bu akışları
+# keser: sunucu işi bitirir, arayüz "sonuç bilinmiyor" der.
+MIN_PROXY_TIMEOUT_S=960
 fail=0
 err() { echo "::error::$*"; fail=1; }
 ok()  { echo "  ok: $*"; }
@@ -109,6 +123,7 @@ default_out="$LAST_OUT"
 check_env "master (prod)"   -f "$CHART/environments/master.yaml"
 master_out="$LAST_OUT"
 check_env "develop"         -f "$CHART/environments/develop.yaml"
+develop_out="$LAST_OUT"
 check_env "release (staging)" -f "$CHART/environments/release.yaml"
 release_out="$LAST_OUT"
 
@@ -286,6 +301,65 @@ for n in $names; do
   if render --set "config.extraEnv.$n=x" >/dev/null 2>&1; then err "config.extraEnv.$n render OLDU (container env / Secret anahtarı reddedilmeli)"; fi
 done
 [ "$cnt" -ge 19 ] && ok "config.extraEnv: $cnt container env / Secret adının hepsi reddedilir" || err "container env / Secret adları okunamadı (yalnız $cnt)"
+
+# ── 14: Ingress vekil sınırları ≥ uygulamanınkiler (prod kapısı 2026-11-15) ────────────────────
+echo "── Ingress vekil sınırları (prod kapısı 2026-11-15)"
+# boyut → bayt (nginx: 16m / 512k / 1g / sayı = bayt; Spring: 12MB / 512KB / 10GB; 1024 tabanı ikisinde de)
+size_bytes() {
+  local v="${1//\"/}" n u
+  n="$(sed -n 's/^\([0-9][0-9]*\).*/\1/p' <<<"$v")"; u="$(sed -n 's/^[0-9][0-9]*\([A-Za-z]*\)$/\1/p' <<<"$v" | tr 'A-Z' 'a-z')"
+  [ -n "$n" ] || { echo ""; return; }
+  case "$u" in ""|b) echo "$n" ;; k|kb) echo $((n * 1024)) ;; m|mb) echo $((n * 1024 * 1024)) ;;
+    g|gb) echo $((n * 1024 * 1024 * 1024)) ;; *) echo "" ;; esac
+}
+# HAProxy süre → saniye (birimsiz değer HAProxy'de MİLİSANİYEDİR)
+haproxy_seconds() {
+  local v="${1//\"/}" n u
+  n="$(sed -n 's/^\([0-9][0-9]*\).*/\1/p' <<<"$v")"; u="$(sed -n 's/^[0-9][0-9]*\([a-z]*\)$/\1/p' <<<"$v")"
+  [ -n "$n" ] || { echo ""; return; }
+  case "$u" in us) echo $((n / 1000000)) ;; ""|ms) echo $((n / 1000)) ;; s) echo "$n" ;; m) echo $((n * 60)) ;;
+    h) echo $((n * 3600)) ;; d) echo $((n * 86400)) ;; *) echo "" ;; esac
+}
+ann_of() { sed -n "s|^    $2: \(.*\)\$|\1|p" <<<"$(doc_of Ingress "$1")" | head -1 | tr -d '"'; }
+app_max="$(sed -n 's/^spring\.servlet\.multipart\.max-request-size=\(.*\)$/\1/p' "$APP_PROPS" | head -1)"
+# ${ENV:12MB} biçimi de okunur (varsayılan değer)
+app_max="$(sed 's/^\${[^:]*:\(.*\)}$/\1/' <<<"$app_max")"
+app_max_b="$(size_bytes "$app_max")"
+if [ -z "$app_max_b" ]; then err "application.properties'te spring.servlet.multipart.max-request-size okunamadı ('$app_max')"; fi
+for name in values.yaml master develop release; do
+  case "$name" in values.yaml) o="$default_out" ;; master) o="$master_out" ;; develop) o="$develop_out" ;; release) o="$release_out" ;; esac
+  if ! grep -q '^kind: Ingress' <<<"$o"; then ok "$name: Ingress render edilmiyor (sınır denetimi yok)"; continue; fi
+  body="$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-body-size')"
+  rt="$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-read-timeout')"
+  hp="$(ann_of "$o" 'haproxy.router.openshift.io/timeout')"
+  if [ -n "$body" ]; then
+    b="$(size_bytes "$body")"
+    if [ "$body" = "0" ]; then ok "$name: proxy-body-size 0 (sınırsız)"
+    elif [ -n "$b" ] && [ -n "$app_max_b" ] && [ "$b" -ge "$app_max_b" ]; then ok "$name: proxy-body-size $body ≥ uygulama $app_max"
+    else err "$name: nginx proxy-body-size '$body' < uygulamanın multipart max-request-size $app_max (yüklemeler vekilde 413 alır)"; fi
+  elif [ "$name" = "master" ]; then err "master: nginx proxy-body-size tanımsız (nginx varsayılanı 1m)"
+  else ok "$name: proxy-body-size yok (nginx varsayılanı 1m — Ingress nginx ile sunuluyorsa ekleyin)"; fi
+  if [ -n "$rt" ] && [ "$rt" -ge "$MIN_PROXY_TIMEOUT_S" ] 2>/dev/null; then ok "$name: proxy-read-timeout ${rt}s ≥ ${MIN_PROXY_TIMEOUT_S}s"
+  else err "$name: nginx proxy-read-timeout '${rt:-yok}' < ${MIN_PROXY_TIMEOUT_S}s (900 sn'ye dek süren yönetim işleri — anahtar yeniden şifreleme, toplu pasifleştirme, saklama koşusu, yönetici özeti gönderimi — vekilde kesilir)"; fi
+  if [ -n "$hp" ]; then
+    s="$(haproxy_seconds "$hp")"
+    if [ -n "$s" ] && [ "$s" -ge "$MIN_PROXY_TIMEOUT_S" ]; then ok "$name: haproxy.router.openshift.io/timeout $hp ≥ ${MIN_PROXY_TIMEOUT_S}s"
+    else err "$name: haproxy.router.openshift.io/timeout '$hp' < ${MIN_PROXY_TIMEOUT_S}s (birimsiz değer milisaniyedir)"; fi
+  elif [ "$name" = "master" ]; then err "master: haproxy.router.openshift.io/timeout yok (OpenShift Route varsayılanı 30 sn)"; fi
+done
+# Denetimin kendisi: dar değerler gerçekten yakalanıyor mu (eski 1m / 60 sn)
+o="$(render --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-body-size=1m' --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-read-timeout=60' --set-string 'ingress.annotations.haproxy\.router\.openshift\.io/timeout=900000')"
+b="$(size_bytes "$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-body-size')")"; rt="$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-read-timeout')"
+s="$(haproxy_seconds "$(ann_of "$o" 'haproxy.router.openshift.io/timeout')")"
+if [ "$b" = "1048576" ] && [ "$rt" = "60" ] && [ "$s" = "900" ] && [ "$b" -lt "${app_max_b:-0}" ] && [ "$s" -lt "$MIN_PROXY_TIMEOUT_S" ]; then ok "denetim kendini sınar: 1m / 60 / 900000 (ms) dar okunur"
+else err "denetim kendini sınayamadı: 1m → '$b', 60 → '$rt', 900000 → '$s' sn"; fi
+
+# ── 15: postgresql.enabled ──────────────────────────────────────────────────────────────────
+echo "── postgresql.enabled (prod kapısı 2026-11-15)"
+expect_fail "postgresql.enabled=true (alt chart kaldırıldı)" "postgresql.enabled=true is no longer supported" \
+  --set postgresql.enabled=true
+expect_fail "postgresql.enabled=true + existingSecret" "postgresql.enabled=true is no longer supported" \
+  --set postgresql.enabled=true --set secret.existingSecret=x
 
 if [ "$fail" -ne 0 ]; then
   echo "Helm şablon denetimi BAŞARISIZ."

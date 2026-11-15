@@ -5,6 +5,7 @@ import { ProgressBar } from './Progress.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { dateLocale, formatPercent } from '../../i18n/dateLocale.js'
 import { toUtc } from '../../utils/localDay.js'
+import { belowTargetPct, exactPct, floorPct2 } from '../mydash/seriesModel.js'
 import { Button } from '@/components/shadcn/button'
 import {
   Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger,
@@ -41,7 +42,35 @@ export default function MonitorSpark({ spark, unit = 'ms', sla = null, slaTarget
   )
 }
 
-/** 24 saatlik yüzde tonu (eski .mspark-up.is-ok/warn/bad eşikleri). */
+/**
+ * Kesin oran (2026-11-15, prod kapısı): sunucunun `up_pct`'si İKİ ONDALIĞA YUKARI yuvarlanmış gösterim değeridir —
+ * 43 200 kontrolde 44 hata = %99,8981 ama `up_pct` 99,90 gelir ve hedef 99,9 "tutuldu" (yeşil) görünüyordu. Kontrol
+ * (`n`) ve hata (`fail`) sayıları geldiyse karar ONLARDAN verilir; gelmediyse (eski sunucu) `up_pct` (bugünkü kural).
+ */
+export function exactUpPct(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  if (!(Number(entry.n) > 0) || entry.fail == null || !Number.isFinite(Number(entry.fail))) return entry.up_pct ?? null
+  return exactPct(entry.n, entry.fail)
+}
+
+/** Kesin orana göre hedefin altında mı? Hedef ya da oran bilinmiyorsa false ("altında" iddia edilmez). */
+export function belowTarget(entry, target) {
+  if (target == null) return false
+  const v = exactUpPct(entry)
+  return v != null && v < target
+}
+
+/**
+ * Gösterilecek yüzde: hedefin altındaki değer kesin orandan iki ondalığa AŞAĞI kesilir ({@link belowTargetPct}) — hedefin
+ * altındaki değer asla hedefte ya da üstünde yazılmaz ("99,90 ↓ · hedef 99,9" yan yana gelmez); hedefte / hedefsiz
+ * değer sunucunun gösterim değeridir.
+ */
+export function shownUpPct(entry, target) {
+  if (!entry || entry.up_pct == null) return null
+  return belowTarget(entry, target) ? belowTargetPct(exactUpPct(entry), target) : entry.up_pct
+}
+
+/** 24 saatlik yüzde tonu (eski .mspark-up.is-ok/warn/bad eşikleri) — kesin orandan (2026-11-15). */
 function upTone(up) {
   if (up == null) return 'none'
   return up >= 99.9 ? 'ok' : up >= 99 ? 'warn' : 'bad'
@@ -57,8 +86,11 @@ function TrendRow({ spark, unit }) {
   const t = useT()
   const series = (spark.buckets || []).map((b) => (b.ms == null ? 0 : b.ms))
   const last = spark.last || []
-  const up = spark.up_pct
-  const tone = upTone(up)
+  // Ton kesin orandan (2026-11-15); yuvarlanmış değer başka bir ton eşiğini geçiyorsa (99,8981 → "99,9" yeşil) aşağı
+  // kesilerek yazılır — ton ile yazılan sayı çelişmez; aksi hâlde sunucunun gösterim değeri
+  const exact = exactUpPct(spark)
+  const tone = upTone(exact)
+  const up = spark.up_pct != null && exact != null && upTone(spark.up_pct) !== tone ? floorPct2(exact) : spark.up_pct
   // Son kovanın HAM değeri: çizgi için null → 0 yapılıyor ama son saatte ölçüm yoksa "0ms" yazmak yanlış
   // (düşen her izleme kartında "0ms" görünüyordu — 2026-09-27, ping kart ajanı bulgusu). Ölçüm yoksa gösterilmez.
   const lastBucket = (spark.buckets || []).at(-1)
@@ -111,7 +143,8 @@ export function slotText(h) {
 export function windowState(w, target) {
   if (!w || !w.n) return 'none'
   if (!(w.fail > 0)) return 'ok'
-  return target != null && w.up_pct != null && w.up_pct < target ? 'bad' : 'warn'
+  // Kesin oran (2026-11-15): yuvarlanmış up_pct (99,90) hedef 99,9'u "tuttu" sanılmasın
+  return belowTarget(w, target) ? 'bad' : 'warn'
 }
 
 const DOT = {
@@ -145,9 +178,10 @@ function AvailabilityLine({ sla, target, days, rowLabel }) {
   const worst = useMemo(() => (wins ? worstWindow(wins) : null), [wins])
   const selected = wins ? (wins.find((w) => w.days === (picked ?? worst)) ?? wins[wins.length - 1]) : null
 
-  const below = target != null && sla.up_pct < target
+  // Hüküm kesin orandan (n / fail), gösterim hedef altında aşağı kesilmiş (2026-11-15, prod kapısı)
+  const below = belowTarget(sla, target)
   const met = target != null && !below
-  const pct = formatPercent(sla.up_pct.toFixed(2))
+  const pct = formatPercent(shownUpPct(sla, target).toFixed(2))
   const verdict = target == null ? null : below ? t('spark.winBelow', target) : t('spark.targetMet', target)
   const name = [t('spark.availDays', days), pct, verdict].filter(Boolean).join(' · ')
 
@@ -219,7 +253,7 @@ function PeriodRow({ w, target, selected, onSelect }) {
         <Dot state={state} />
         <span className="font-medium text-foreground">{periodName(t, w)}</span>
         <span className={cn('ml-auto font-semibold tabular-nums', TEXT_TONE[tone])}>
-          {w.n && w.up_pct != null ? formatPercent(w.up_pct.toFixed(2)) : '—'}
+          {w.n && w.up_pct != null ? formatPercent(shownUpPct(w, target).toFixed(2)) : '—'}
         </span>
       </span>
       <ProgressBar value={w.n && w.up_pct != null ? w.up_pct : 0} max={100} size="sm" decorative tone={BAR_TONE[state]} />

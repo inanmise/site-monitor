@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { loadNocFormOptions, resetNocFormOptionsCache } from './forms/useNocFormOptions.js'
 import { NOC_COVERAGE_EVENT } from '../../utils/nocCoverageEvent.js'
+import { INFLIGHT_JOIN_MAX_MS } from '../../utils/timedFetch.js'
 
 /**
  * PAYLAŞILAN 7/24 durumu (2026-09-28) — tür anahtarları + kullanılabilir grup hükmü + gruplar + en düşük seviye; kart ve
@@ -25,6 +26,7 @@ const RETRY_MS = 60_000
 const EMPTY = Object.freeze({ status: 'idle', data: null, at: 0 })
 let snapshot = EMPTY
 let inflight = null
+let inflightAt = 0
 let generation = 0   // sıfırlama/geçersizleme uçuştaki eski yanıtı geçersiz kılar
 const listeners = new Set()
 
@@ -41,9 +43,12 @@ function isFresh(now = Date.now()) {
 
 /** Depoyu (gerekirse) tazeler; `force` = tazelik beklemeden. Uçuşta istek varsa ona katılır. */
 export function refreshNocState(force = false) {
-  if (inflight) return inflight
+  // Yaşlı süren isteğe katılınmaz (2026-11-15, ikinci savunma): kuşak ilerler, geç yanıt yazılmaz, yeni istek başlar
+  if (inflight && Date.now() - inflightAt < INFLIGHT_JOIN_MAX_MS) return inflight
+  if (inflight) { generation++; inflight = null }
   if (!force && isFresh()) return Promise.resolve(snapshot)
   const gen = generation
+  inflightAt = Date.now()
   // Bilinçli olarak 'loading' YAYINLANMAZ: yüzlerce kart aynı karede abone olurken her yayın hepsini yeniden çizerdi;
   // veri gelene dek 'idle' ile görünüm aynı (iki durumlu, iddiasız).
   inflight = Promise.resolve()

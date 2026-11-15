@@ -511,8 +511,9 @@ public class ActivityTimelineService {
         };
     }
 
-    private static Double pct(long part, long whole) {
-        return Math.round(part * 10_000.0 / whole) / 100.0;
+    /** 2 haneli yüzde — eksik varken ASLA 100 (kapı incelemesi 2026-11-15: 129 600 kontrolde 2 kesinti "%100" yazıyordu). */
+    static Double pct(long part, long whole) {
+        return com.sitemonitor.util.AvailabilityMath.pct(whole, part, 2);
     }
 
     private static String topKey(Map<String, Integer> counts) {

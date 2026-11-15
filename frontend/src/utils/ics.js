@@ -37,12 +37,18 @@ export function buildIcs(events, { prodId = '-//Site Monitor//Certificate Renewa
   return lines.map(fold).join('\r\n') + '\r\n'
 }
 
-/** Tarayıcıda indir — same-origin veri, sunucu isteği yok. */
+/**
+ * Tarayıcıda indir — same-origin veri, sunucu isteği yok. Dönüş (2026-11-15, prod kapısı incelemesi): indirme başlatıldıysa
+ * `true`, başlatılamadıysa (jsdom / eski tarayıcı / kısıtlı görünüm) `false` — çağıran başarı yerine hatayı söyler.
+ */
 export function downloadIcs(filename, ics) {
   try {
     const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch { /* jsdom/eski tarayıcı */ }
+    return true
+  } catch {
+    return false   // jsdom / eski tarayıcı
+  }
 }

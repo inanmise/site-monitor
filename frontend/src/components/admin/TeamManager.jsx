@@ -732,9 +732,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       return [tm.name, tm.email, leader, teamManagerLabel(tm) || '',
         tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? '',
         gaps.join('; ')] })
-    downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
+    const ok = downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
       t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim(),
       t('team.csvGaps')], rows))
+    if (ok === false) toast.error(t('inv.downloadFailed'))
   }
 
   // ── Satır / kart parçaları — tablo ve kart görünümü AYNI parçaları çizer ──

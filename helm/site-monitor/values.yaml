@@ -70,10 +70,27 @@ ingress:
   tls:
     enabled: true
     secretName: site-monitor-tls
+  # Proxy limits must not be NARROWER than the application's own (prod gate 2026-11-15; v1.0.0 had 1m / 60 s):
+  #  - body size >= spring.servlet.multipart.max-request-size (12MB, application.properties). 16m leaves room so an
+  #    oversize upload is refused by the app with its own 413 PAYLOAD_TOO_LARGE message, not by the proxy's HTML page.
+  #  - read timeout >= the longest request the app serves. The admin jobs wait up to the client's LONG_JOB_TIMEOUT_MS
+  #    (900 s): secret re-encryption (8-minute server budget), bulk user deactivation (<= 5000 users), the manual
+  #    retention run, the executive summary send / test / run, inventory import, team LDAP resync; live checks up to the
+  #    client's 420 s (port HTTP "Test" up to 360 s, k6 test up to 210 s), report PDFs / mail previews up to 300 s,
+  #    SQL Playground export up to 600 s. 960 s leaves margin over 900 s. A shorter proxy limit cuts the request while
+  #    the server keeps working: the server finishes, the UI only says "result unknown".
+  #  - haproxy.router.openshift.io/timeout: on OpenShift a Route generated from this Ingress takes over the Ingress
+  #    annotations (only when the OpenShift router serves the Ingress); the router's default is 30 s. A hand-made Route
+  #    (helm/site-monitor/docs/openshift-install.md Option A) needs:
+  #    oc annotate route <name> haproxy.router.openshift.io/timeout=960s --overwrite
+  #    Any proxy in front (prod: NetScaler -> OpenShift) needs the same >= 960 s idle / response time.
+  #    The nginx.* keys only matter when an NGINX ingress controller serves the Ingress (Option B); other controllers
+  #    ignore unknown annotations. scripts/helm-template-check.sh fails a render below these floors.
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    haproxy.router.openshift.io/timeout: "960s"
 
 # Application configuration (non-sensitive)
 config:
@@ -467,24 +484,26 @@ topologySpreadConstraints:
     whenUnsatisfiable: ScheduleAnyway
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PostgreSQL subchart (Bitnami) — disabled by default
-# When enabled=true, the chart deploys a bundled PostgreSQL instance.
-# DB_HOST, DB_NAME, DB_USER are auto-resolved; set auth.password below.
-# When enabled=false (default), configure external DB via config.dbHost etc.
+# PostgreSQL — UNUSED. The bundled Bitnami subchart was removed (Chart.yaml); nothing deploys a database
+# any more. Every environment uses an EXTERNAL / managed PostgreSQL: set config.dbHost / dbPort / dbName /
+# dbUser and secret.dbPassword (or existingSecret). postgresql.enabled=true FAILS `helm template` (it used to
+# render DB_HOST "<release>-postgresql", a host that does not exist). The block below is kept only so old
+# value files that still carry it keep parsing; none of it reaches a pod.
+# pg_stat_statements (System Health → database analytics) is a DBA task on the external server:
+# shared_preload_libraries = 'pg_stat_statements' + a database restart. The app tries CREATE EXTENSION at
+# start (best effort) and falls back to the SQL Playground history (sql_query_history) until then.
 # ─────────────────────────────────────────────────────────────────────────────
 postgresql:
   enabled: false
   auth:
     database: certmonitor
     username: certmonitor
-    password: ""  # required when postgresql.enabled=true
+    password: ""
   primary:
     persistence:
       enabled: true
       size: 8Gi
-    # DB-geneli SQL istatistikleri (Sistem Sağlığı → Veritabanı analitiği) için pg_stat_statements.
-    # shared_preload_libraries restart gerektirir; uygulama açılışta CREATE EXTENSION'ı best-effort dener.
-    # Bu eklenti yoksa analitik, sql_query_history (Playground) fallback'ine düşer.
+    # UNUSED (no subchart) — what a DBA would set on the external server, kept as documentation.
     extendedConfiguration: |
       shared_preload_libraries = 'pg_stat_statements'
       pg_stat_statements.track = top

@@ -40,12 +40,15 @@ describe('görsel aracı derin karşılaştırma — model', () => {
       colors: { count: 12 }, svgCandidate: 'true', banding: 'other',
     })
     expect(s.input).toEqual({ bitDepth: null, colorModel: null, ppi: null, ppiChecked: false,
-      jpeg: { quality: 90, subsampling: null, progressive: null }, paletteSize: null, lossless: null })
+      jpeg: { quality: 90, subsampling: null, progressive: null }, paletteSize: null, lossless: null, subsampling: null })
     expect(s.qualityMode).toBeNull()
+    expect(s.avifPossible).toBeNull()
     expect(s.resampled).toBeNull()
     expect(analysisSummary({ qualityMode: 'manual', resampled: true, sharpened: false }))
       .toMatchObject({ qualityMode: 'manual', resampled: true, sharpened: false })
     expect(analysisSummary({ qualityMode: 'x' }).qualityMode).toBeNull()
+    // 'fixed' (inceleme 2026-11-15): AVIF benzerliği ölçülemedi — arama yapılmadı
+    expect(analysisSummary({ qualityMode: 'fixed' }).qualityMode).toBe('fixed')
     expect(s.output).toBeNull()
     expect(s.candidates).toHaveLength(4)   // ilk 5'ten gif atıldı
     expect(s.colors).toEqual({ count: 12, atLeast: false })
@@ -79,11 +82,24 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     expect(by.aspect.changed).toBe(false)
     expect(by.pixels.before).toBe('3,84 MP')
     expect(by.ppi.before).toBe('72 PPI')
-    expect(by.ppi.after).toBe('Kayıtlı değil')
-    // başlık okunmadıysa (ppiChecked yok) "kayıtlı değil" denmez
-    const unchecked = engineResult()
+    // WebP çıktısında yoğunluk alanı YOK (motor yazamaz) — kaynakta yoğunluk varken "kayıtlı değil" denmez (2026-11-15)
+    expect(by.ppi.after).toBe('Bu biçimde yoğunluk alanı yok')
+    // JPEG çıktısında başlık okunduysa ve yoğunluk yoksa "Kayıtlı değil"; başlık okunmadıysa (ppiChecked yok) "—"
+    const jpegOut = engineResult({ type: 'jpeg' })
+    expect(Object.fromEntries(insightRows(resultSummary(jpegOut), t, 'tr').map((r) => [r.key, r])).ppi.after).toBe('Kayıtlı değil')
+    const unchecked = engineResult({ type: 'jpeg' })
     unchecked.analysis = { ...unchecked.analysis, output: { ...unchecked.analysis.output, ppiChecked: false } }
     expect(Object.fromEntries(insightRows(resultSummary(unchecked), t, 'tr').map((r) => [r.key, r])).ppi.after).toBe('—')
+    // korunan JPEG çıktısı yoğunluğu taşır → değer aynen
+    const kept300 = engineResult({ type: 'jpeg' })
+    kept300.analysis = { ...kept300.analysis, input: { ...kept300.analysis.input, ppi: { x: 300, y: 300 } },
+      output: { ...kept300.analysis.output, ppi: { x: 300, y: 300 } } }
+    const k300 = Object.fromEntries(insightRows(resultSummary(kept300), t, 'tr').map((r) => [r.key, r])).ppi
+    expect([k300.before, k300.after, k300.changed]).toEqual(['300 PPI', '300 PPI', false])
+    // kaynakta yoğunluk yoksa WebP çıktısı için "alan yok" denmez (söylenecek bir kayıp yok)
+    const noDensity = engineResult()
+    noDensity.analysis = { ...noDensity.analysis, input: { ...noDensity.analysis.input, ppi: null } }
+    expect(Object.fromEntries(insightRows(resultSummary(noDensity), t, 'tr').map((r) => [r.key, r])).ppi.after).not.toBe('Bu biçimde yoğunluk alanı yok')
     // sıkıştırma oranı iki tarafta tek taban (kaynak saydam değil → 3 kanal)
     expect(by.compression.after).toBe('1:41')
     // boyut bilinmiyorsa "—"
@@ -161,6 +177,47 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     for (const r of [...insightRecommendations(wide), ...insightRecommendations(resultSummary(logo))]) expect(INSIGHT_RECS).toContain(r.code)
   })
 
+  it('AVIF (2026-11-15): özet AVIF adayını ve av1C alt örneklemesini okur; öneri / adım / kalite satırı AVIF ölçeğinde', () => {
+    const avif = engineResult({ type: 'avif', bytes: 120_000, quality: 62 })
+    avif.analysis = {
+      ...avif.analysis,
+      output: { bitDepth: 8, colorModel: 'rgb', ppi: null, ppiChecked: false, jpeg: null, subsampling: '4:2:0' },
+      candidates: [...avif.analysis.candidates, { type: 'avif', bytes: 120_000, quality: 62, colors: null, similarity: 0.985 }],
+      avifPossible: true, qualityMode: 'auto',
+    }
+    const sum = resultSummary(avif)
+    expect(sum.analysis.output.subsampling).toBe('4:2:0')
+    expect(sum.analysis.avifPossible).toBe(true)
+    expect(sum.analysis.candidates.map((c) => c.type)).toEqual(['jpeg', 'webp', 'png', 'avif'])
+    const steps = howWeDid(sum)
+    expect(steps.map((s) => s.code)).toEqual(['LOCAL', 'RESIZED', 'QUALITY_SEARCH', 'AVIF_ENCODER', 'METADATA'])
+    expect(steps.find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([62, 'auto', 'avif'])
+    expect(steps.find((s) => s.code === 'AVIF_ENCODER').params).toEqual(['4:2:0'])
+    for (const s of steps) expect(HOW_STEPS).toContain(s.code)
+    const by = Object.fromEntries(insightRows(sum, t, 'tr').map((r) => [r.key, r]))
+    expect(by.quality.after).toBe('62 (AVIF ölçeği)')
+    expect(by.subsampling.after).toBe('4:2:0')
+    expect(by.ppi.after).toBe('Bu biçimde yoğunluk alanı yok')
+    expect(insightRecommendations(sum).map((r) => r.code)).not.toContain('NEXT_GEN')
+
+    // JPEG çıktı: AVIF bu görselde mümkündü ama denenmedi → öneri WebP + AVIF; denendiyse ya da not varsa AVIF önerilmez
+    const jpeg = engineResult({ type: 'jpeg', quality: 76 })
+    jpeg.analysis = { ...jpeg.analysis, candidates: [{ type: 'jpeg', bytes: 240_000, quality: 76 }], avifPossible: true }
+    expect(insightRecommendations(resultSummary(jpeg)).find((r) => r.code === 'NEXT_GEN').params).toEqual(['webp', 'avif'])
+    jpeg.analysis.avifPossible = false
+    expect(insightRecommendations(resultSummary(jpeg)).find((r) => r.code === 'NEXT_GEN').params).toEqual(['webp'])
+    const webpOut = engineResult()
+    webpOut.analysis = { ...webpOut.analysis, avifPossible: true }
+    expect(insightRecommendations(resultSummary(webpOut)).find((r) => r.code === 'NEXT_GEN').params).toEqual(['avif'])
+    for (const n of ['AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED', 'AVIF_TIME_LIMIT']) {
+      const x = engineResult({ notes: [n] })
+      x.analysis = { ...x.analysis, avifPossible: true }
+      expect(insightRecommendations(resultSummary(x)).map((r) => r.code), n).not.toContain('NEXT_GEN')
+    }
+    // AVIF platformu yok (eski motor / ana iş parçacığı): alan null → AVIF hiç önerilmez
+    expect(insightRecommendations(resultSummary(engineResult())).map((r) => r.code)).not.toContain('NEXT_GEN')
+  })
+
   it('howWeDid: yalnız geçilen adımlar; korunan özgünde silinmeyen üstveri için cümle yok', () => {
     const steps = howWeDid(resultSummary(engineResult()))
     expect(steps.map((s) => s.code)).toEqual(['LOCAL', 'RESIZED', 'QUALITY_SEARCH', 'BROWSER_ENCODER', 'METADATA'])
@@ -187,7 +244,11 @@ describe('görsel aracı derin karşılaştırma — model', () => {
     const ss = howWeDid(resultSummary(sharp))
     expect(ss.map((s) => s.code).slice(0, 3)).toEqual(['LOCAL', 'CROPPED', 'RESIZED'])
     expect(ss.find((s) => s.code === 'RESIZED').params).toEqual([1920, 1280, true])
-    expect(ss.find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([74, 'target'])
+    expect(ss.find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([74, 'target', 'webp'])   // 3. = biçim (AVIF metni ayrılır)
+    // AVIF sabit kalite (tarayıcı AVIF açamadı): adımın kipi 'fixed' — "ikili aramayla bulundu" denmesin
+    const fixed = engineResult({ type: 'avif', quality: 68, notes: ['AVIF_NOT_MEASURED'] })
+    fixed.analysis = { ...fixed.analysis, qualityMode: 'fixed' }
+    expect(howWeDid(resultSummary(fixed)).find((s) => s.code === 'QUALITY_SEARCH').params).toEqual([68, 'fixed', 'avif'])
     const sameSize = engineResult({ resized: false })
     sameSize.analysis = { ...sameSize.analysis, resampled: false }
     expect(howWeDid(resultSummary(sameSize)).map((s) => s.code)).not.toContain('RESIZED')
@@ -202,6 +263,9 @@ describe('görsel aracı derin karşılaştırma — model', () => {
       'prs.it.ins.how.QUALITY_SEARCH_NONE', 'prs.it.ins.how.BROWSER_ENCODER_SS', 'prs.it.ins.how.BROWSER_ENCODER_WEBP',
       'prs.it.ins.how.METADATA_KEPT', 'prs.it.ins.how.METADATA_REMOVED', 'prs.it.ins.how.RESIZED_PLAIN', 'prs.it.ins.how.QUALITY_MANUAL',
       'prs.it.ins.how.QUALITY_TARGET', 'prs.it.ins.how.PNG_LOSSLESS_PROCESSED', 'prs.it.ins.belowTarget',
+      'prs.it.ins.rec.NEXT_GEN_WEBP', 'prs.it.ins.rec.NEXT_GEN_AVIF', 'prs.it.ins.how.AVIF_ENCODER_SS', 'prs.it.ins.how.QUALITY_TARGET_AVIF',
+      'prs.it.ins.how.QUALITY_FIXED_AVIF',
+      'prs.it.ins.qualityAvif', 'prs.it.ins.ppiNoField',
       ...['size', 'dims', 'aspect', 'pixels', 'ppi', 'bpp', 'compression', 'color', 'quality', 'subsampling'].map((k) => `prs.it.ins.row.${k}`),
       ...['gray', 'gray-alpha', 'rgb', 'rgba', 'palette', 'cmyk'].map((k) => `prs.it.ins.model.${k}`),
     ]

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import { Download, FileText, FileSpreadsheet } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
@@ -13,7 +14,7 @@ import {
 import { EXPORT_MAX, EXPORT_RANGE, excelSheet, exportFileName, exportRangeProblem, unwrapExportJson } from './activityExport.js'
 
 /** xlsxWriter yalnız Excel istenince yüklenir (açılış parçasına girmez — lazyChunks kapısı). */
-const loadXlsxWriter = () => import('../../utils/xlsxWriter.js')
+const loadXlsxWriter = () => importWithDeadline(() => import('../../utils/xlsxWriter.js'))
 
 /** Eski pod (bu uç yok): `GET /api/activity/{id}` `export`'u kimlik sanıp 400 `INVALID_PARAMETER` döner (inceleme FR D2). */
 const isOldServer = (res) => {

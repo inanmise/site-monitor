@@ -7,6 +7,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { isUnsureResult } from '../../utils/unsureResult.js'
 import { usePagination } from '../../hooks/usePagination.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import Field from '../ui/Field.jsx'
@@ -126,10 +127,16 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
       } else if (isListChanged(res)) {
         setError({ message: t('ubd.listChanged', res.current_count ?? '?'), listChanged: true })
       } else {
-        setError({ message: res?.error || 'Error' })
+        // Sonuç bilinmiyor (2026-11-15): istemci zaman aşımı, ağ kopması ya da ağ geçidinin kestiği istek (durum 0 /
+        // 502–504) — işlem sunucuda tamamlanmış olabilir. Geçmiş tazelenir ki tamamlanan işlem listede görünsün; yeniden
+        // "Uygula" sunucuda listenin değiştiğini söyler (beklenen sayı tutmaz), iki kez uygulanmaz.
+        const unsure = isUnsureResult(res)
+        setError({ message: res?.error || 'Error', unsure })
+        if (unsure) loadHistory()
       }
     } catch (e) {
-      setError({ message: e?.message || 'Error' })
+      setError({ message: e?.message || 'Error', unsure: true })
+      loadHistory()
     } finally { setBusy(false) }
   }
 
@@ -149,9 +156,14 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
         if ((d.failed ?? 0) > 0) toast.error(msg); else toast.success(msg)
         loadHistory()
       } else {
-        toast.error(res?.error || 'Error')
+        // Sonuç bilinmiyorsa (zaman aşımı / ağ geçidi) "kontrol edin" metni; her durumda geçmiş yeniden okunur
+        toast.error(isUnsureResult(res) ? t('ubd.resultUnknown') : (res?.error || 'Error'), { details: res })
         loadHistory()
       }
+    } catch (e) {
+      // Ağ kopması: geri alma sunucuda tamamlanmış olabilir — geçmiş yeniden okunur
+      toast.error(t('ubd.resultUnknown'), { details: e })
+      loadHistory()
     } finally { setUndoingId(null) }
   }
 
@@ -202,6 +214,13 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
         {error && (
           <div data-slot="ubd-error" data-list-changed={error.listChanged ? 'true' : undefined} className="flex min-w-0 flex-col gap-2">
             <AlertBanner tone="danger" role="alert" className="mb-0">{error.message}</AlertBanner>
+            {error.unsure && (
+              <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]" data-slot="ubd-result-unknown">
+                {t('ubd.resultUnknown')}
+              </p>
+            )}
+            {/* Onay adımında geçmiş listesi yok — sonuç bilinmiyorsa tazelenen liste burada gösterilir */}
+            {error.unsure && step !== 'criteria' && <HistoryList history={history} t={t} onUndo={undo} undoingId={undoingId} />}
             {error.listChanged && (
               <Button type="button" variant="outline" onClick={runPreview} disabled={busy} data-slot="ubd-refresh"
                 className="self-start max-sm:h-10 max-sm:w-full pointer-coarse:h-10">
