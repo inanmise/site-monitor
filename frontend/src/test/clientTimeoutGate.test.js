@@ -29,6 +29,12 @@ const ALLOWED = {
   // clearTimeout. Motorun kamu arayüzü yalnız hafif modüllerini statik içe aktarabilir (lazyChunks kapısı) — timedFetch
   // alınamaz; AbortSignal.timeout eski Safari'de yok. Süre sınırı VAR, kapı yalnız kaynağını tanıyamıyor.
   'utils/imageEngine/index.js': 1,
+  // AVIF Worker'ının WASM indirmesi (get): çağıranın WASM_FETCH_TIMEOUT_MS (25 sn) zamanlayıcılı AbortController sinyali.
+  // Worker paketi motorun hafif modülleri dışında içe aktarma yapmaz (lazyChunks) — süre sınırı VAR, kapı kaynağını tanımaz.
+  'utils/imageEngine/avif.worker.js': 1,
+  // AVIF Worker betiği "sunucuda yok mu" HEAD denetimi (workerScriptGone): STALE_CHECK_TIMEOUT_MS zamanlayıcılı AbortController
+  // + finally'de clearTimeout — index.js'teki bundleGone ile aynı kalıp.
+  'utils/imageEngine/avifClient.js': 1,
 }
 
 function walk(dir, out = []) {
