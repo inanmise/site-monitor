@@ -567,11 +567,19 @@ public class WeeklyReportController {
             + "<form method='post' action='/api/weekly-reports/approve-link/reject'>"
             + "<input type='hidden' name='token' value='" + esc(token) + "'>"
             + "<div class='alt'>İade nedeni (opsiyonel)</div>"
-            + "<textarea name='reason' rows='3' class='ta' placeholder='Ekibe iletilecek kısa düzeltme notu…'></textarea>"
+            + "<textarea name='reason' rows='3' class='ta' maxlength='" + REJECT_NOTE_MAX
+            + "' placeholder='Ekibe iletilecek kısa düzeltme notu…'></textarea>"
             + "<button type='submit' class='btn2'>↩ İade Et</button>"
             + "</form>";
         return htmlPage("Haftalık Rapor Onayı", body, "#15803d");
     }
+
+    /**
+     * E-posta bağlantısındaki iade notunun tarayıcı sınırı (arka uç inceleme 2026-11-15): uygulama içi yorum sınırıyla aynı
+     * ({@link WeeklyReportService#COMMENT_MAX}); 2000 Türkçe karakter URL kodlu ≤ ~24 KB — oturumsuz form gövdesi sınırının
+     * (64 KiB, {@code PublicBodyLimitFilter}) altında kalır.
+     */
+    static final int REJECT_NOTE_MAX = WeeklyReportService.COMMENT_MAX;
 
     /** Onayla butonu POST eder → token ile onay. (GET değil; e-posta ön-yüklemesi onaylamaz.) */
     @PostMapping(value = "/approve-link/confirm", produces = MediaType.TEXT_HTML_VALUE)

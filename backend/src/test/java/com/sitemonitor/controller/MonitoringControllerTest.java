@@ -9325,6 +9325,105 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 arka uç inceleme: aynı saniyedeki satırlar kimlik sırasıyla beslenir (sayfa sırası ne olursa olsun aynı sonuç)")
+    void dbquery_backtest_sameSecondRowsFedByIdOrder() throws Exception {
+        var mon = dbqMonitor(97L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]");
+        when(dbQueryMonitorRepo.findById(97L)).thenReturn(Optional.of(mon));
+        String hash = MonitoringController.dbqSqlHash(mon.getSqlText());
+        String fp = com.sitemonitor.service.dbquery.DbQueryRules.fingerprint(
+                com.sitemonitor.service.dbquery.DbQueryRules.fromJson(mon.getRulesJson()).get(0));
+        java.time.Instant now = java.time.Instant.now();
+        java.time.format.DateTimeFormatter iso = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC);
+        String t1 = iso.format(now.minusSeconds(7200)), t2 = iso.format(now.minusSeconds(3600));
+        java.util.function.BiFunction<Long, Integer, Object[]> row = (rid, measure) -> new Object[]{rid,
+                rid == 4L ? t2 : t1, Boolean.TRUE, "OK", hash,
+                "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":" + measure
+                        + ",\"fingerprint\":\"" + fp + "\"}]"};
+        // id 2 (ihlal) ve id 3 (temiz) AYNI saniyede, id 4 (ihlal) sonra. Kimlik sırası: ihlal, temiz, ihlal → 2 alarm.
+        // Ters (3, 2) beslenseydi: temiz, ihlal, ihlal → 1 alarm. Depo iki sırayla da dönebilir (belirsiz) → sonuç hep 2.
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String req = "{\"days\":7}";
+        int n = 0;
+        for (List<Object[]> desc : List.of(
+                List.of(row.apply(4L, 100), row.apply(2L, 100), row.apply(3L, 1)),
+                List.of(row.apply(4L, 100), row.apply(3L, 1), row.apply(2L, 100)))) {
+            when(dbQueryCheckRepo.backtestPageDesc(eq(97L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                    anyInt())).thenReturn(new java.util.ArrayList<>(desc));
+            MockHttpSession owner = dbqUser(1L);
+            owner.setAttribute("username", "gate-backtest-ties-" + (n++));
+            mvc.perform(post("/api/monitoring/dbquery/97/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(3))
+                    .andExpect(jsonPath("$.data.would_breach.warning").value(2))
+                    .andExpect(jsonPath("$.data.would_open_alarms").value(2));
+        }
+        // Satır tavanı kesimi aynı saniyenin ORTASINA düşerse o saniye bütünüyle dışarıda kalır (belirsiz yarım saniye yok)
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        int savedMax = controller.dbqBacktestMaxRows;
+        try {
+            controller.dbqBacktestMaxRows = 2;
+            when(dbQueryCheckRepo.backtestPageDesc(eq(97L), anyString(), eq(DbQueryCheckRepository.BACKTEST_NO_UPPER),
+                    anyInt())).thenReturn(new java.util.ArrayList<>(
+                    List.of(row.apply(4L, 100), row.apply(2L, 100), row.apply(3L, 1))));
+            MockHttpSession owner = dbqUser(1L);
+            owner.setAttribute("username", "gate-backtest-ties-cap");
+            mvc.perform(post("/api/monitoring/dbquery/97/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.runs").value(1))
+                    .andExpect(jsonPath("$.data.truncated").value(true));
+        } finally {
+            controller.dbqBacktestMaxRows = savedMax;
+        }
+    }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: eşik denemesi pod başına en çok 2 eşzamanlı — dolu 429 DBQUERY_BACKTEST_BUSY + Retry-After, dakika hakkı harcanmaz, izin her yolda bırakılır")
+    void dbquery_backtest_concurrencyLimit() throws Exception {
+        var mon = dbqMonitor(98L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]");
+        when(dbQueryMonitorRepo.findById(98L)).thenReturn(Optional.of(mon));
+        when(dbQueryCheckRepo.backtestPageDesc(eq(98L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        String req = "{\"days\":7}";
+        MockHttpSession owner = dbqUser(1L);
+        owner.setAttribute("username", "gate-backtest-busy");
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        controller.dbqBacktestSlots.acquire(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        try {
+            for (int i = 0; i < 8; i++)
+                mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                        .andExpect(status().is(429))
+                        .andExpect(jsonPath("$.code").value("DBQUERY_BACKTEST_BUSY"))
+                        .andExpect(jsonPath("$.retry_after_seconds").value(5))
+                        .andExpect(header().string("Retry-After", "5"));
+            verify(dbQueryCheckRepo, never()).backtestPageDesc(eq(98L), anyString(), anyString(), anyInt());
+        } finally {
+            controller.dbqBacktestSlots.release(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        }
+        // Reddedilen 8 çağrı dakika hakkından düşmedi: 6 deneme koşar, 7.'si RATE_LIMITED
+        for (int i = 0; i < MonitoringController.DBQUERY_BACKTEST_PER_MINUTE; i++)
+            mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(owner).contentType(json).content(req))
+                .andExpect(status().is(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+        // İlk sayfa okunamadı (hata yanıtı) → izin yine bırakılır
+        when(dbQueryCheckRepo.backtestPageDesc(eq(98L), anyString(), anyString(), anyInt()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        MockHttpSession other = dbqUser(1L);
+        other.setAttribute("username", "gate-backtest-busy-err");
+        mvc.perform(post("/api/monitoring/dbquery/98/backtest").session(other).contentType(json).content(req))
+                .andExpect(status().is5xxServerError());
+        assertThat(controller.dbqBacktestSlots.availablePermits()).isEqualTo(MonitoringController.DBQUERY_BACKTEST_CONCURRENCY);
+    }
+
+    @Test
     @DisplayName("dbq2 O1: hiç dolamayacak taban kayıtta 400 rules[N].min_samples; günü bölmeyen aralık + mevsim → engellemeyen ANOMALY_SEASON_RARE uyarısı")
     void dbquery_create_smartRuleRetentionAndSeasonWarning() throws Exception {
         when(appSettings.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));

@@ -662,6 +662,28 @@ public final class DeferredIndexBuilder {
             return new JdbcSession(conn, pooled);
         }
 
+        /** Havuz dışı oturumun giriş / bağlanma sınırı (sn) — veri kaynağı kendi değerini taşıyorsa o geçerli. */
+        static final String OFF_POOL_LOGIN_TIMEOUT_S = "10";
+        static final String OFF_POOL_CONNECT_TIMEOUT_S = "10";
+
+        /**
+         * Havuz dışı bağlantının özellikleri: veri kaynağınınkiler (Helm {@code socketTimeout} dahil) + kullanıcı / parola +
+         * uygulama adı + giriş ve bağlanma sınırı (arka uç inceleme 2026-11-15). Hikari kendi bağlantılarında giriş süresini
+         * {@code connectionTimeout} ile sınırlar; bu yol {@code DriverManager}'a gider ve pgjdbc'nin varsayılanı
+         * {@code loginTimeout=0} (sınırsız) — yarı ölü ağda kimlik doğrulama {@code socketTimeout} (1800 sn) kadar bekleyebilirdi.
+         * Veri kaynağı (ya da JDBC adresi) değer verdiyse dokunulmaz.
+         */
+        static Properties offPoolProperties(Properties dsProps, String user, String password) {
+            Properties p = new Properties();
+            if (dsProps != null) p.putAll(dsProps);
+            if (user != null) p.setProperty("user", user);
+            if (password != null) p.setProperty("password", password);
+            p.putIfAbsent("ApplicationName", "sitemonitor-deferred-index");
+            p.putIfAbsent("loginTimeout", OFF_POOL_LOGIN_TIMEOUT_S);
+            p.putIfAbsent("connectTimeout", OFF_POOL_CONNECT_TIMEOUT_S);
+            return p;
+        }
+
         static JdbcSession open(DataSource ds) throws SQLException {
             if (ds == null) throw new SQLException("DataSource yok");
             Connection c = null;
@@ -669,12 +691,8 @@ public final class DeferredIndexBuilder {
                 if (ds.isWrapperFor(HikariDataSource.class)) {
                     HikariDataSource h = ds.unwrap(HikariDataSource.class);
                     if (h.getJdbcUrl() != null) {
-                        Properties p = new Properties();
-                        p.putAll(h.getDataSourceProperties());
-                        if (h.getUsername() != null) p.setProperty("user", h.getUsername());
-                        if (h.getPassword() != null) p.setProperty("password", h.getPassword());
-                        p.putIfAbsent("ApplicationName", "sitemonitor-deferred-index");
-                        c = DriverManager.getConnection(h.getJdbcUrl(), p);
+                        c = DriverManager.getConnection(h.getJdbcUrl(),
+                                offPoolProperties(h.getDataSourceProperties(), h.getUsername(), h.getPassword()));
                     }
                 }
             } catch (Exception e) {

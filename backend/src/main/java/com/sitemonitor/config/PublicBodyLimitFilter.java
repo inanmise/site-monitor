@@ -31,7 +31,10 @@ import java.util.Map;
  * {@code Content-Length} sınırı aşıyorsa gövde OKUNMADAN 413; uzunluk yoksa (chunked) akış SAYILIR ve sınır aşılınca okuma
  * {@link BodyLimitExceededException} ile kesilir (Jackson onu okunamayan gövde olarak sarar → 413).</p>
  *
- * <p>Yalnız gövde taşıyan yöntemler (POST / PUT / PATCH / DELETE); listede olmayan yol dokunulmadan geçer.</p>
+ * <p>Yalnız gövde taşıyan yöntemler (POST / PUT / PATCH / DELETE); listede olmayan yol dokunulmadan geçer. E-posta onay
+ * bağlantılarının form gönderimleri ({@code …/approve-link/confirm|reject}) tarayıcıda açık bir sayfadır: sınır aşımı
+ * onlara JSON değil kısa bir HTML sayfasıyla anlatılır (arka uç inceleme 2026-11-15). Bu tek süzgeç {@code /api/login-help}
+ * sınırının da TEK kaynağıdır (eski ayrı {@code WebConfig.loginHelpBodyLimitFilter} kaldırıldı).</p>
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 5)
@@ -39,8 +42,11 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
 
     /** Giriş / çıkış / kodla giriş / e-posta onay bağlantıları — gövde birkaç yüz bayt. */
     static final long SMALL_BYTES = 64L * 1024;
-    /** Giriş sayfası "sorun bildir": en fazla 5 ekran görüntüsü × 2 MiB base64 (LoginHelpController) + metin payı. */
-    static final long LOGIN_HELP_BYTES = 12L * 1024 * 1024;
+    /**
+     * Giriş sayfası "sorun bildir": en fazla 5 ekran görüntüsü × 1 MB (çözülmüş; base64 ≈ 1,37 M karakter) + metin ≤ ~7 KB
+     * (LoginHelpController) ≈ 7 MB → 8 MiB rahat tavan. Tek sınır (eski ayrı süzgeç de 8 MiB'ti).
+     */
+    static final long LOGIN_HELP_BYTES = 8L * 1024 * 1024;
     /** Çökme bildirimi: hata metni ≤ 10 000, bağlam haritası ≤ 10 000 öğe (ClientErrorController) — 2 MiB bol. */
     static final long CLIENT_ERROR_BYTES = 2L * 1024 * 1024;
 
@@ -55,6 +61,18 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
             Map.entry("/api/tech-error-reports/approve-link/reject", SMALL_BYTES),
             Map.entry("/api/login-help", LOGIN_HELP_BYTES),
             Map.entry("/api/client-error-report", CLIENT_ERROR_BYTES));
+
+    /** Tarayıcı form gönderimi olan onay bağlantısı uçları — sınır aşımı HTML sayfasıyla yanıtlanır. */
+    private static final java.util.Set<String> HTML_FORM_PATHS = java.util.Set.of(
+            "/api/weekly-reports/approve-link/confirm",
+            "/api/weekly-reports/approve-link/reject",
+            "/api/tech-error-reports/approve-link/confirm",
+            "/api/tech-error-reports/approve-link/reject");
+
+    /** Sınır aşımı HTML sayfasıyla mı anlatılır (onay bağlantısı formu). */
+    static boolean htmlFormPath(String path) {
+        return path != null && HTML_FORM_PATHS.contains(path);
+    }
 
     /** Yolun gövde sınırı; sınırsız (liste dışı) → -1. */
     static long capFor(String path) {
@@ -73,10 +91,12 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        long cap = capFor(RequestPathFirewallFilter.lookupPath(request));
+        String path = RequestPathFirewallFilter.lookupPath(request);
+        long cap = capFor(path);
         long declared = request.getContentLengthLong();
         if (cap >= 0 && declared > cap) {
-            tooLarge(request, response, cap);
+            if (htmlFormPath(path)) tooLargeHtml(request, response);
+            else tooLarge(request, response, cap);
             return;
         }
         chain.doFilter(cap < 0 ? request : new Capped(request, cap), response);
@@ -94,6 +114,54 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
         String json = "{\"success\":false,\"code\":\"PAYLOAD_TOO_LARGE\",\"error\":\"" + escape(msg) + "\""
                 + (rid == null ? "" : ",\"request_id\":\"" + escape(rid) + "\"") + "}";
         response.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Onay bağlantısı formunun sınır aşımı: tarayıcıda ham JSON yerine kısa bir HTML sayfası (form alanları {@code maxlength}
+     * taşır — buraya yalnız elle uzatılmış gönderim düşer). Kişisel / teknik bilgi yok; satır içi betik yok (CSP).
+     */
+    static void tooLargeHtml(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setStatus(413);
+        response.setContentType("text/html");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Cache-Control", "no-store");
+        String title = Msg.t(request, "Gönderilen form çok büyük", "The form sent is too large");
+        String msg = Msg.t(request,
+                "Karar kaydedilmedi — formdaki not izin verilen uzunluğu aşıyor. Tarayıcıda geri dönüp notu kısaltın ve"
+                        + " yeniden gönderin.",
+                "The decision was not saved — the note in the form is longer than allowed. Go back in the browser, shorten"
+                        + " the note and send it again.");
+        String lang = Msg.t(request, "tr", "en");
+        String rid = CorrelationIdFilter.current();
+        String html = "<!DOCTYPE html><html lang='" + lang + "'><head><meta charset='UTF-8'>"
+                + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                + "<title>" + htmlEscape(title) + " — Site Monitor</title>"
+                + "<style>body{margin:0;background:#eef1f4;font-family:'Segoe UI',-apple-system,Arial,sans-serif;color:#1F2937}"
+                + ".card{max-width:480px;margin:56px auto;background:#fff;border-radius:14px;padding:26px 28px;"
+                + "border:1px solid #E5E8EC;box-shadow:0 10px 40px rgba(15,27,45,.14)}"
+                + "h1{font-size:20px;margin:0 0 10px}p{font-size:14px;line-height:1.7;color:#475569;margin:0}"
+                + ".rid{margin-top:14px;font-size:11px;color:#94a3b8}</style></head><body><div class='card'>"
+                + "<h1>" + htmlEscape(title) + "</h1><p>" + htmlEscape(msg) + "</p>"
+                + (rid == null ? "" : "<p class='rid'>" + htmlEscape(rid) + "</p>")
+                + "</div></body></html>";
+        response.getOutputStream().write(html.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String htmlEscape(String s) {
+        if (s == null) return "";
+        StringBuilder b = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '&' -> b.append("&amp;");
+                case '<' -> b.append("&lt;");
+                case '>' -> b.append("&gt;");
+                case '"' -> b.append("&quot;");
+                case '\'' -> b.append("&#39;");
+                default -> b.append(c);
+            }
+        }
+        return b.toString();
     }
 
     private static String escape(String s) {

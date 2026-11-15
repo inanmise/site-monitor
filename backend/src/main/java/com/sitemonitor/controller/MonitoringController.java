@@ -7669,6 +7669,16 @@ public class MonitoringController {
     long dbqBacktestBudgetMs = DBQUERY_BACKTEST_BUDGET_MS;
     int dbqBacktestMaxRows = DBQUERY_BACKTEST_MAX_ROWS;
     static final Set<Integer> DBQUERY_BACKTEST_DAYS = Set.of(7, 30, 90);
+    /**
+     * Pod başına aynı anda koşan eşik denemesi (arka uç inceleme 2026-11-15): bir deneme okuduğu satırları değerlendirmeden
+     * önce bellekte tutar (≤ {@value #DBQUERY_BACKTEST_MAX_ROWS} satır / {@value #DBQUERY_BACKTEST_MAX_CHARS} karakter ≈
+     * 100 MB) — kullanıcı başına dakika sınırı tek başına birkaç kullanıcının aynı anda yarım GB tutmasını önlemez. Dolu →
+     * beklemeden 429 {@code DBQUERY_BACKTEST_BUSY} + {@code Retry-After}; reddedilen istek kullanıcının dakika hakkını harcamaz.
+     */
+    static final int DBQUERY_BACKTEST_CONCURRENCY = 2;
+    static final long DBQUERY_BACKTEST_BUSY_RETRY_S = 5;
+    /** Yük sınırı (pod belleği) — testte izinler tutulabilir. */
+    final java.util.concurrent.Semaphore dbqBacktestSlots = new java.util.concurrent.Semaphore(DBQUERY_BACKTEST_CONCURRENCY);
 
     /**
      * Geriye dönük eşik denemesi (r177, Ö-8): SAKLI zamanlanmış çalıştırmaların kural ölçümleri YENİ kurallarla yeniden
@@ -7729,8 +7739,25 @@ public class MonitoringController {
         if (rules.isEmpty() && !errs.containsKey("rules") && errs.keySet().stream().noneMatch(k -> k.startsWith("rules")))
             errs.put("rules", com.sitemonitor.util.Msg.t("Denenecek en az bir kural gerekli.", "At least one rule is needed to try."));
         throwDbqErrors(errs, null, null);
-        dbqBacktestRate(session);
+        // Eşzamanlılık kapısı ÖNCE: dolu kapının reddi dakika hakkından düşmez; hak dolu ise izin hemen bırakılır
+        if (!dbqBacktestSlots.tryAcquire()) {
+            throw DbQueryApiException.tooMany("DBQUERY_BACKTEST_BUSY", com.sitemonitor.util.Msg.t(
+                    "Eşik denemesi şu an yoğun (bu sunucuda aynı anda en çok " + DBQUERY_BACKTEST_CONCURRENCY
+                            + " deneme koşar); birkaç saniye sonra yeniden deneyin.",
+                    "Threshold tries are busy right now (at most " + DBQUERY_BACKTEST_CONCURRENCY
+                            + " run at once on this server); try again in a few seconds."), DBQUERY_BACKTEST_BUSY_RETRY_S);
+        }
+        try {
+            dbqBacktestRate(session);
+            return dbqRunBacktest(id, mon, rules, logic, days);
+        } finally {
+            dbqBacktestSlots.release();
+        }
+    }
 
+    /** Eşik denemesinin okuma + değerlendirme gövdesi — çağıran eşzamanlılık iznini tutar. */
+    private ResponseEntity<Map<String, Object>> dbqRunBacktest(Long id, DbQueryMonitor mon, List<DbQueryRules.Rule> rules,
+                                                               String logic, int days) {
         Instant now = Instant.now();
         Instant from = now.minus(java.time.Duration.ofDays(days));
         DbQueryCheckRepository checks = dbqCheckRepo();
@@ -7747,12 +7774,14 @@ public class MonitoringController {
         }
         String readFrom = ISO.format(readStart);
         // Okuma YENİDEN ESKİYE (kapı incelemesi 2026-11-15): satır tavanı, bellek tavanı ya da süre bütçesi biterse kesilen
-        // EN ESKİ kısımdır — en yeni çalıştırmalar her zaman değerlendirilir. Okunan satırlar ters çevrilip zaman sırasıyla
-        // beslenir (deneme ileri yönlü durumludur). Sayfalar (monitor_id, checked_at) dizininden okunur.
+        // EN ESKİ kısımdır — en yeni çalıştırmalar her zaman değerlendirilir. Okunan satırlar (checked_at, id) sırasına dizilip
+        // beslenir (deneme ileri yönlü durumludur; bellek tavanı + pod başına eşzamanlılık kapısı). Sayfalar
+        // (monitor_id, checked_at) dizininden okunur.
         boolean truncated = false;
         List<Object[]> buf = new ArrayList<>();
         long chars = 0;
         String upper = DbQueryCheckRepository.BACKTEST_NO_UPPER;
+        String lastHash = null;   // ardışık satırların sorgu karması çoğunlukla aynı → tek nesne tutulur (bellek)
         long deadline = System.currentTimeMillis() + dbqBacktestBudgetMs;
         read:
         while (true) {
@@ -7782,8 +7811,17 @@ public class MonitoringController {
                 Object[] r = page.get(i);
                 if (buf.size() >= dbqBacktestMaxRows || chars >= DBQUERY_BACKTEST_MAX_CHARS) {
                     truncated = true;   // tavan dolu ve daha eski satır var
+                    // En eski saniye ya tamamen alınır ya hiç (inceleme 2026-11-15): aynı anlı satırlar sorguda sırasız
+                    // gelir; kesim o saniyenin ortasına düşerse hangisinin kaldığı değişirdi. Hepsi silinecekse dokunulmaz.
+                    String cutAt = String.valueOf(r[1]);
+                    int k = buf.size();
+                    while (k > 0 && cutAt.equals(String.valueOf(buf.get(k - 1)[1]))) k--;
+                    if (k > 0) buf.subList(k, buf.size()).clear();
                     break read;
                 }
+                if (r[4] != null && r[4].equals(lastHash)) r[4] = lastHash;
+                else lastHash = r[4] == null ? null : r[4].toString();
+                r[3] = null;   // durum metni denemede kullanılmaz
                 buf.add(r);
                 chars += 64L + (r[4] == null ? 0 : r[4].toString().length()) + (r[5] == null ? 0 : r[5].toString().length());
             }
@@ -7794,9 +7832,12 @@ public class MonitoringController {
                 break;
             }
         }
+        // Zaman sırası (checked_at, id) — aynı saniyedeki satırlar kimlikle sıralanır (inceleme 2026-11-15: sayfa sorgusu
+        // aynı anlı satırları belirsiz sırada döner; değişim kuralının "önceki" satırı denemeden denemeye değişebilirdi)
+        buf.sort(BACKTEST_ROW_ORDER);
         com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
                 rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
-        for (int i = buf.size() - 1; i >= 0; i--) {
+        for (int i = 0; i < buf.size(); i++) {
             Object[] r = buf.get(i);
             buf.set(i, null);   // beslenen satır bırakılır (bellek)
             long rid = r[0] instanceof Number n ? n.longValue() : 0L;
@@ -7808,6 +7849,15 @@ public class MonitoringController {
         out.put("days", days);
         return ok(out);
     }
+
+    /** Eşik denemesi satırlarının besleme sırası: {@code checked_at} artan, eşitlikte {@code id} artan. */
+    static final java.util.Comparator<Object[]> BACKTEST_ROW_ORDER = (a, b) -> {
+        int c = String.valueOf(a[1]).compareTo(String.valueOf(b[1]));
+        if (c != 0) return c;
+        long ia = a[0] instanceof Number n ? n.longValue() : 0L;
+        long ib = b[0] instanceof Number n ? n.longValue() : 0L;
+        return Long.compare(ia, ib);
+    };
 
     /**
      * Etkileşimli sorgu denetimi kapısı (dbq2 inceleme O3): {@code sql-check} / {@code sql-fix} zamanlanmış çalıştırmalarla

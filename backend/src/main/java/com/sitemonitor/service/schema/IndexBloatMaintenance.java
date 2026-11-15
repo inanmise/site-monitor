@@ -541,8 +541,8 @@ public class IndexBloatMaintenance implements SchedulingConfigurer {
     }
 
     /**
-     * Bağlantı koptu: ölü oturum kapatılır (kilidi sunucu süreci bitince düşer — {@link JdbcIndexCatalog} süren DDL'i yeni
-     * bağlantıdan iptal eder), YENİ oturum açılır ve SMIDXBLD sınırlı beklenerek yeniden alınır. Dönüş: yeni oturum ya da
+     * Bağlantı koptu: ölü oturum kapatılır (kilidi sunucu süreci bitince düşer — {@link JdbcIndexCatalog} o oturumu kimliğiyle
+     * yeni bağlantıdan SONLANDIRIR, kilit hemen düşer), YENİ oturum açılır ve SMIDXBLD sınırlı beklenerek yeniden alınır. Dönüş: yeni oturum ya da
      * null (açılamadı / kilit alınamadı / kapanış). Yeni oturum {@code ref[0]}'a yazılır — kapanış ve kilit bırakma onda.
      */
     private IndexCatalog reopenAfterLoss(IndexCatalog[] ref, boolean[] held) {

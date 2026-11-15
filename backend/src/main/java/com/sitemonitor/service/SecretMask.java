@@ -317,6 +317,10 @@ public final class SecretMask {
      * dizesi ve parça {@code ?…} ile kesilir (adı ne olursa olsun — {@code code=}, {@code sig=}, {@code X-Amz-Signature} …
      * {@link #maskUrlQuery}'nin ad listesinde yok), satır sonları boşluk, en çok {@value #LOG_URL_MAX} karakter. Yol kalır
      * (teşhis); yola gömülü sır ({@code /hooks/<belirteç>}) günlükte görünür. Doğrusal tarama; null → null.
+     *
+     * <p><b>Kimlik bilgisi = SON {@code @}'a kadar</b> (arka uç inceleme 2026-11-15, {@code AlarmFeedRows.stripUrl} kuralı):
+     * parolası {@code /}, {@code ?} ya da {@code #} içeren (ham, kodlanmamış) adreste yetki bölümü ilk ayraçta biter
+     * sanılırsa parola günlüğe düşerdi ({@code https://u:pa/ss@h/x}, {@code https://u:p?ss@h}). {@link #userinfoEnd}.</p>
      */
     public static String logUrl(String url) {
         if (url == null) return null;
@@ -326,12 +330,7 @@ public final class SecretMask {
         int sch = url.indexOf("://");
         if (sch > 0 && sch <= 16 && isScheme(url, sch)) {
             out.append(url, 0, sch + 3);
-            i = sch + 3;
-            int authEnd = i;
-            while (authEnd < n && url.charAt(authEnd) != '/' && url.charAt(authEnd) != '?' && url.charAt(authEnd) != '#') authEnd++;
-            for (int k = authEnd - 1; k >= i; k--) {
-                if (url.charAt(k) == '@') { i = k + 1; break; }   // kimlik bilgisi atılır
-            }
+            i = userinfoEnd(url, sch + 3);   // kimlik bilgisi atılır
         }
         for (; i < n; i++) {
             char c = url.charAt(i);
@@ -340,6 +339,58 @@ public final class SecretMask {
             out.append(c == '\n' || c == '\r' || c == '\t' ? ' ' : c);
         }
         return out.toString();
+    }
+
+    /**
+     * Yetki bölümü {@code hs}'den başlayan adreste kimlik bilgisinin bittiği yer (sonrası ana makine), yoksa {@code hs}. Doğrusal.
+     * <ol>
+     *   <li>Olağan (RFC): yetki bölümü ilk {@code / ? #} ayracına dek; içinde {@code @} varsa kimlik bilgisi onun SONUNCUSUNA
+     *       kadardır ({@code user:pass@host/yol?e=a@b} — sorgudaki {@code @} karışmaz).</li>
+     *   <li>Yetki bölümünde {@code @} yok ama sonra var — iki okuma: parolada HAM ayraç ({@code u:pa/ss@h},
+     *       {@code u:p?ss@h}) ya da yol / sorgu içinde {@code @} ({@code h/x?e=a@b}). Yetki bölümünde {@code :} yoksa ya da
+     *       {@code :}'dan sonra ayraca dek yalnız 1–5 rakam varsa (ana makine:kapı; IPv6'da köşeli ayraçtan sonra bakılır)
+     *       {@code @} yol / sorgudadır → kimlik bilgisi yok. Aksi hâlde parola ayraç içerir: ayraçtan sonraki İLK {@code @}'tan
+     *       başlayıp ilk {@code ? #}'e dek görülen SON {@code @}'a kadar atılır ({@code u:pa/b@c@h/p} → {@code h/p};
+     *       {@code u:pa/ss@h/x?e=a@b} → {@code h/x}).</li>
+     * </ol>
+     * Kalan belirsizlikler (ham, RFC dışı adres): {@code :}'dan sonra yalnız rakam gelen ve ardından ayraç taşıyan parola
+     * ({@code u:1234/x@h}) kapı sanılır; hem {@code @} hem ayraç taşıyan parolanın {@code @}'tan sonraki parçası görünebilir.
+     */
+    static int userinfoEnd(String url, int hs) {
+        int n = url.length();
+        int authEnd = hs;
+        while (authEnd < n) {
+            char c = url.charAt(authEnd);
+            if (c == '/' || c == '?' || c == '#') break;
+            authEnd++;
+        }
+        for (int k = authEnd - 1; k >= hs; k--) {
+            if (url.charAt(k) == '@') return k + 1;   // olağan: user:pass@host
+        }
+        int first = url.indexOf('@', authEnd);
+        if (first < 0) return hs;                     // kimlik bilgisi yok
+        int from = hs;
+        if (hs < n && url.charAt(hs) == '[') {        // IPv6 ana makine: iki nokta köşeli ayraçtan sonra aranır
+            int close = url.indexOf(']', hs);
+            if (close >= 0 && close < authEnd) from = close + 1;
+        }
+        int colon = -1;
+        for (int k = from; k < authEnd; k++) {
+            if (url.charAt(k) == ':') { colon = k; break; }
+        }
+        if (colon < 0) return hs;                     // ana makine + yol / sorgu: '@' orada
+        int digits = authEnd - colon - 1;
+        boolean port = digits >= 1 && digits <= 5;
+        for (int k = colon + 1; port && k < authEnd; k++) port = url.charAt(k) >= '0' && url.charAt(k) <= '9';
+        if (port) return hs;                          // ana makine:kapı + yol / sorgu
+        // Parola ham ayraç içeriyor: ilk '@'tan sonraki ilk '?' / '#'e dek görülen son '@'a kadar atılır
+        int last = first;
+        for (int k = first + 1; k < n; k++) {
+            char c = url.charAt(k);
+            if (c == '?' || c == '#') break;
+            if (c == '@') last = k;
+        }
+        return last + 1;
     }
 
     /** {@link #logUrl} — bir anahtar kümesinin her öğesi (öksüz alarm anahtarları). */

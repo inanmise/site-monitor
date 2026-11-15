@@ -130,4 +130,34 @@ class LogUrlMaskingGateTest {
         assertThat(SecretMask.logUrl(longUrl)).hasSize(SecretMask.LOG_URL_MAX + 1).endsWith("…");
         assertThat(SecretMask.logUrls(List.of("https://u:p@h/x?y=1"))).containsExactly("https://h/x?…");
     }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: parolası / ? # içeren ham adreste kimlik bilgisi SON @'a kadar atılır (parola günlüğe düşmez)")
+    void logUrlPasswordWithDelimiters() {
+        assertThat(SecretMask.logUrl("https://u:pa/ss@h/x")).isEqualTo("https://h/x");
+        assertThat(SecretMask.logUrl("https://u:p?ss@h")).isEqualTo("https://h");
+        assertThat(SecretMask.logUrl("https://u:p#ss@h/y?z=1")).isEqualTo("https://h/y?…");
+        assertThat(SecretMask.logUrl("https://u:pa/ss?x@h:8443/p")).isEqualTo("https://h:8443/p");
+        assertThat(SecretMask.logUrl("https://u:pa/b@c@h.example/p")).isEqualTo("https://h.example/p");
+        assertThat(SecretMask.logUrl("https://u:p@[::1]:8443/x")).isEqualTo("https://[::1]:8443/x");
+        for (String u : List.of("https://u:pa/ss@h/x", "https://u:p?ss@h", "https://u:p#ss@h/y?z=1", "https://u:pa/ss?x@h:8443/p"))
+            assertThat(SecretMask.logUrl(u)).as(u).doesNotContain("pa").doesNotContain("ss").doesNotContain("u:");
+        // Ayraçlı parola + sorguda e-posta: kimlik bilgisi ilk ana makineye kadar; sorgudaki '@' ana makine sanılmaz
+        assertThat(SecretMask.logUrl("https://u:pa/ss@h/x?e=a@b.com")).isEqualTo("https://h/x?…");
+        // Olağan kimlik bilgisi + sorguda e-posta (RFC): ana makine korunur
+        assertThat(SecretMask.logUrl("https://user:pass@h.example/p?email=x@y.com")).isEqualTo("https://h.example/p?…");
+        assertThat(SecretMask.logUrl("https://u@h/x?e=a@b")).isEqualTo("https://h/x?…");
+        // '@' yol / sorgudaysa kimlik bilgisi değildir: ana makine (ve kapı) korunur, sorgu kesilir
+        assertThat(SecretMask.logUrl("https://h/x?e=a@b.com")).isEqualTo("https://h/x?…");
+        assertThat(SecretMask.logUrl("https://h:8443/api?email=a@b.com")).isEqualTo("https://h:8443/api?…");
+        assertThat(SecretMask.logUrl("https://h:8443?email=a@b.com")).isEqualTo("https://h:8443?…");
+        assertThat(SecretMask.logUrl("https://[::1]:8443/x?e=a@b")).isEqualTo("https://[::1]:8443/x?…");
+        assertThat(SecretMask.logUrl("https://[::1]/x?e=a@b")).isEqualTo("https://[::1]/x?…");
+        assertThat(SecretMask.logUrl("https://h.example/u/@me")).isEqualTo("https://h.example/u/@me");
+        // Doğrusal: uzun ayraç dizisi + '@' sınırlı sürede
+        String hostile = "https://" + "a:".repeat(50_000) + "/".repeat(50_000) + "@h/x";
+        long t0 = System.nanoTime();
+        assertThat(SecretMask.logUrl(hostile)).isEqualTo("https://h/x");
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(2_000);
+    }
 }

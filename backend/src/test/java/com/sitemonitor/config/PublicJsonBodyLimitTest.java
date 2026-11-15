@@ -203,6 +203,59 @@ class PublicJsonBodyLimitTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 arka uç inceleme: /api/login-help için TEK sınır 8 MiB (meşru ≤ ~7 MB geçer, eski ayrı süzgeç yok)")
+    void loginHelpSingleCap() throws Exception {
+        assertThat(PublicBodyLimitFilter.LOGIN_HELP_BYTES).isEqualTo(8L * 1024 * 1024);
+        assertThat(PublicBodyLimitFilter.capFor("/api/login-help")).isEqualTo(8L * 1024 * 1024);
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/login-help");
+        req.setContentType("application/json");
+        req.setContent(new byte[(int) PublicBodyLimitFilter.LOGIN_HELP_BYTES + 1]);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AtomicBoolean called = new AtomicBoolean();
+        new PublicBodyLimitFilter().doFilter(req, res, (r, s) -> called.set(true));
+        assertThat(res.getStatus()).isEqualTo(413);
+        assertThat(res.getContentAsString(StandardCharsets.UTF_8)).contains("\"code\":\"PAYLOAD_TOO_LARGE\"")
+                .contains("8192 KB");
+        assertThat(called).isFalse();
+    }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: onay bağlantısı formunun sınır aşımı tarayıcıda HTML sayfası (ham JSON değil); diğer uçlar JSON kalır")
+    void approvalLinkFormOverCap_isHtmlPage() throws Exception {
+        for (String path : List.of("/api/weekly-reports/approve-link/reject", "/api/weekly-reports/approve-link/confirm",
+                "/api/tech-error-reports/approve-link/reject", "/api/tech-error-reports/approve-link/confirm")) {
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", path);
+            req.setContentType("application/x-www-form-urlencoded");
+            req.setContent(new byte[(int) PublicBodyLimitFilter.SMALL_BYTES + 1]);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            AtomicBoolean called = new AtomicBoolean();
+            new PublicBodyLimitFilter().doFilter(req, res, (r, s) -> called.set(true));
+            assertThat(res.getStatus()).as(path).isEqualTo(413);
+            assertThat(res.getContentType()).as(path).startsWith("text/html");
+            assertThat(res.getHeader("Cache-Control")).isEqualTo("no-store");
+            String body = res.getContentAsString(StandardCharsets.UTF_8);
+            assertThat(body).as(path).startsWith("<!DOCTYPE html>").contains("Gönderilen form çok büyük").contains("Karar kaydedilmedi")
+                    .doesNotContain("PAYLOAD_TOO_LARGE").doesNotContain("<script");
+            assertThat(called).isFalse();
+        }
+        // İngilizce arayüz
+        MockHttpServletRequest en = new MockHttpServletRequest("POST", "/api/weekly-reports/approve-link/reject");
+        en.addHeader("X-Lang", "en");
+        en.setContent(new byte[(int) PublicBodyLimitFilter.SMALL_BYTES + 1]);
+        MockHttpServletResponse enRes = new MockHttpServletResponse();
+        new PublicBodyLimitFilter().doFilter(en, enRes, (r, s) -> { });
+        assertThat(enRes.getContentAsString(StandardCharsets.UTF_8)).contains("The form sent is too large").contains("lang='en'");
+        // Sınır içindeki form gövdesi dokunulmadan geçer
+        MockHttpServletRequest ok = new MockHttpServletRequest("POST", "/api/weekly-reports/approve-link/reject");
+        ok.setContent("token=t&reason=Eksik".getBytes(StandardCharsets.UTF_8));
+        AtomicBoolean passed = new AtomicBoolean();
+        new PublicBodyLimitFilter().doFilter(ok, new MockHttpServletResponse(), (r, s) -> passed.set(true));
+        assertThat(passed).isTrue();
+        assertThat(PublicBodyLimitFilter.htmlFormPath("/api/login")).isFalse();
+        assertThat(PublicBodyLimitFilter.htmlFormPath(null)).isFalse();
+    }
+
+    @Test
     @DisplayName("üretim ve test application.properties aynı Jackson okuma sınırlarını taşır; sınırlar meşru gövdelerin üstünde")
     void productionAndTestPropertiesAgree() throws IOException {
         Properties main = load(Path.of("src/main/resources/application.properties"));

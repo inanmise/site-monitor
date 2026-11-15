@@ -141,34 +141,8 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(httpMetricsInterceptor).addPathPatterns("/api/**");
     }
 
-    /** Public /api/login-help gövde üst sınırı — 5 görsel × ~1.4MB base64 + JSON overhead ≈ 7MB → 8MB rahat tavan. */
-    private static final long LOGIN_HELP_MAX_BODY_BYTES = 8L * 1024 * 1024;
-
-    /**
-     * Kimliksiz /api/login-help endpoint'ine dev JSON gövdesi gönderilip Jackson'ın onu belleğe alması
-     * (heap/OOM) engellenir. Content-Length ile kaba, O(1) kontrol; yalnız o path'te çalışır (shouldNotFilter).
-     * Chunked-without-length nadir → asıl decode koruması controller'daki base64 uzunluk sınırı + rate-limit.
-     */
-    @Bean
-    public OncePerRequestFilter loginHelpBodyLimitFilter() {
-        return new OncePerRequestFilter() {
-            @Override
-            protected boolean shouldNotFilter(HttpServletRequest request) {
-                return !"/api/login-help".equals(request.getServletPath());
-            }
-            @Override
-            protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
-                    throws ServletException, IOException {
-                if (req.getContentLengthLong() > LOGIN_HELP_MAX_BODY_BYTES) {
-                    res.setStatus(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE); // 413
-                    res.setContentType("application/json;charset=UTF-8");
-                    res.getWriter().write("{\"success\":false,\"error\":\"İçerik boyutu çok büyük\"}");
-                    return;
-                }
-                chain.doFilter(req, res);
-            }
-        };
-    }
+    // /api/login-help (ve diğer oturumsuz uçlar) gövde sınırı: PublicBodyLimitFilter — tek sınır, proje hata zarfı
+    // (code + request_id), chunked gövde de sayılır. Eski ayrı 8 MiB süzgeci kaldırıldı (arka uç inceleme 2026-11-15).
 
     @Bean
     public OncePerRequestFilter securityHeadersFilter() {

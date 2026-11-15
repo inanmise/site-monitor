@@ -544,6 +544,9 @@ class WeeklyReportControllerTest {
                 .andExpect(content().string(containsString("Raporu Onayla")))
                 .andExpect(content().string(containsString("İade Et")))
                 .andExpect(content().string(containsString("name='reason'")))
+                // 2026-11-15 arka uç inceleme: not tarayıcıda 2000 karakterle sınırlı — URL kodlu gövde oturumsuz form
+                // sınırının (64 KiB) altında kalır, uzun yapıştırma ham JSON 413 görmez
+                .andExpect(content().string(containsString("maxlength='" + WeeklyReportService.COMMENT_MAX + "'")))
                 .andExpect(content().string(containsString("approve-link/reject")))
                 // Sayfa meta'sı + favicon seti (2026-10-08): girişsiz sayfa da açıklama ve marka ikonunu taşır
                 .andExpect(content().string(containsString("<meta name='description' content='Site Monitor haftalık")))

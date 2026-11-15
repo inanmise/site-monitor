@@ -271,7 +271,7 @@ class AvailabilityWeekServiceTest {
     }
 
     @Test
-    @DisplayName("2026-11-15 kapı: bir tür okunamazsa YALNIZ o tür atlanır ve söylenir (partial + unavailable_types), hüküm ve ölçülmemiş sayısı bilinmiyor; kısmi görüntü saklanmaz")
+    @DisplayName("2026-11-15 kapı: bir tür okunamazsa YALNIZ o tür atlanır ve söylenir (partial + unavailable_types), hüküm ve ölçülmemiş sayısı bilinmiyor; kısmi görüntü yalnız 5 sn tutulur")
     void oneTypeUnreadable_isPartial() {
         AvailabilityWeekService cached = service(60_000);
         monitor("http", 1, 5L, "A", 1_000, 0, 0);
@@ -283,9 +283,29 @@ class AvailabilityWeekServiceTest {
                 .containsEntry("unavailable_types", List.of("ping"));
         assertThat(first.get("meets_target")).as("kısmi toplam filo hükmü vermez").isNull();
         assertThat(first.get("unmeasured")).isNull();
-        Map<String, Object> second = cached.build(ALL);   // aynı TTL: kısmi görüntü bellekte değil → tam
+        // 5 sn içinde: kısmi görüntü bellekten (yeniden hesaplanmaz — yavaş dönemde her yoklama 20 sn beklemesin)
+        memoClock[0] += AvailabilityWeekService.PARTIAL_CACHE_MS - 1;
+        Map<String, Object> again = cached.build(ALL);
+        assertThat(again).containsEntry("partial", true).containsEntry("monitors", 1L);
+        verify(sparklineService, times(1)).availabilityAll(eq("ping"), anyInt());
+        // 5 sn sonra: yeniden okunur → tam (tam görüntü normal ömrünü alır)
+        memoClock[0] += 2;
+        Map<String, Object> second = cached.build(ALL);
         assertThat(second).containsEntry("monitors", 2L).containsEntry("partial", false)
                 .containsEntry("unavailable_types", List.of()).containsEntry("meets_target", true);
+        memoClock[0] += 30_000;
+        assertThat(cached.build(ALL)).containsEntry("partial", false);
+        verify(sparklineService, times(2)).availabilityAll(eq("ping"), anyInt());
+    }
+
+    @Test
+    @DisplayName("2026-11-15 arka uç inceleme: tür süre aşımı günlüğü tür başına dakikada bir (yavaş dönemde her yoklama satır yazmaz)")
+    void timeoutLogIsRateLimitedPerType() {
+        assertThat(svc.shouldLogTimeout("ping", 1_000)).isTrue();
+        assertThat(svc.shouldLogTimeout("ping", 1_000 + 59_999)).isFalse();
+        assertThat(svc.shouldLogTimeout("http", 1_500)).as("başka tür ayrı sayılır").isTrue();
+        assertThat(svc.shouldLogTimeout("ping", 1_000 + AvailabilityWeekService.TIMEOUT_LOG_EVERY_MS)).isTrue();
+        assertThat(svc.shouldLogTimeout("ping", 500)).as("saat geri gitti: yazılır, kilitlenmez").isTrue();
     }
 
     @Test
@@ -326,10 +346,11 @@ class AvailabilityWeekServiceTest {
         } finally {
             release.countDown();
         }
-        // Arka plandaki okuma biter → sonraki yoklama tam
+        // Arka plandaki okuma biter → kısmi görüntünün kısa ömrü (5 sn) dolunca sonraki yoklama tam
         long until = System.currentTimeMillis() + 5_000;
         Map<String, Object> full;
         do {
+            memoClock[0] += AvailabilityWeekService.PARTIAL_CACHE_MS;
             full = s.build(ALL);
             if (Boolean.FALSE.equals(full.get("partial"))) break;
             Thread.sleep(20);

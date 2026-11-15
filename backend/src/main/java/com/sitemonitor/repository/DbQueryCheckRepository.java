@@ -75,7 +75,8 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
      * {@code <=} (UNTIL_C değil): anahtar sınırı GENEL planda da dizin koşulu kalmalı — UNTIL biçiminin VEYA'sı orada süzgeç
      * olur ve her sayfa en yeni satırdan başlayıp öncekileri yeniden okurdu (sayfa sayısının karesi). Genel plan
      * {@code DbQueryBacktestPostgresTest} ile denetlenir. Okuma yeniden eskiye: süre / bellek bütçesi bitince EN YENİ
-     * çalıştırmalar değerlendirilmiş olur (çağıran ters çevirip zaman sırasıyla besler). Satır verisi yok.</p>
+     * çalıştırmalar değerlendirilmiş olur (çağıran satırları {@code (checked_at, id)} sırasına dizip besler — aynı saniyedeki
+     * satırların sorgu sırası belirsizdir). Satır verisi yok.</p>
      */
     @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
             name = "jakarta.persistence.query.timeout", value = BACKTEST_PAGE_TIMEOUT_MS))

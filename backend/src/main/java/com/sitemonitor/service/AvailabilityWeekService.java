@@ -58,8 +58,9 @@ import java.util.function.Predicate;
  * Süresinde gelmeyen ya da okunamayan tür ATLANIR ve yanıtta {@code unavailable_types} + {@code partial: true} ile söylenir;
  * o türün izlemeleri toplamda YOKTUR, {@code meets_target} ve {@code unmeasured} bilinmiyor (null) olur — kısmi toplam asla
  * "filonun tamamı" gibi hüküm vermez. Süresinde bitmeyen okuma arka planda sürer ve ortak SLA önbelleğini ısıtır; sonraki
- * yoklama tamdır. Kısmi görüntü bellekte tutulmaz. Okunabilen hiçbir tür yoksa {@link UnavailableException} (denetleyici
- * 503). Rollup tabanlı yeniden yazım (tür başına 30 günlük ham tarama yerine saatlik özet) ayrı bir izleme işidir.
+ * yoklama tamdır. Kısmi görüntü yalnız {@link #PARTIAL_CACHE_MS} (5 sn) tutulur (arka uç inceleme 2026-11-15: yavaş veritabanı
+ * döneminde her yoklama yeniden hesaplayıp isteği 20 sn bekletmesin); süre aşımı günlüğü tür başına dakikada bir INFO.
+ * Okunabilen hiçbir tür yoksa {@link UnavailableException} (denetleyici 503). Rollup tabanlı yeniden yazım (tür başına 30 günlük ham tarama yerine saatlik özet) ayrı bir izleme işidir.
  */
 @Service
 @RequiredArgsConstructor
@@ -85,6 +86,18 @@ public class AvailabilityWeekService {
 
     /** Final değil: birim testi saat enjekte edilmiş bellekle değiştirir. */
     private TtlMemo<OrgWeek> orgMemo = new TtlMemo<>(2);
+
+    /**
+     * Kısmi görüntünün (bir tür okunamadı / süresinde gelmedi) bellek ömrü — kısa: arka planda süren okuma bitince sonraki
+     * yoklama tam görüntüyü alır; ama yavaş dönemde her yoklama yeniden hesaplamaz (istek ≤ tür süre sınırı bekler).
+     */
+    static final long PARTIAL_CACHE_MS = 5_000L;
+    /** Tür süre aşımı INFO günlüğünün aralığı (tür başına). */
+    static final long TIMEOUT_LOG_EVERY_MS = 60_000L;
+    /** Tür başına son süre aşımı günlüğü (ms) — yavaş dönemde her yoklama satır yazmasın. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> timeoutLoggedAt = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Saat — birim testi değiştirir. */
+    java.util.function.LongSupplier logClock = System::currentTimeMillis;
 
     /** SLA verisi okunamadı — denetleyici 503 döner (kutu "okunamadı" der, asla %0 / %100). */
     public static class UnavailableException extends RuntimeException {
@@ -193,8 +206,10 @@ public class AvailabilityWeekService {
     public Map<String, Object> build(Predicate<Long> canViewTeam) {
         // Kart SLA ucu (MonitorSparklineController.SLA_TARGET_KEY) ve İstatistikler SLA bloğuyla aynı canlı ayar
         double target = appSettings.getDouble("site.monitor.sla.target-pct", 99.9);
-        // Kısmi görüntü (bir tür okunamadı / süresinde gelmedi) bellekte TUTULMAZ — sonraki yoklama yeniden dener
-        OrgWeek org = orgMemo.get(ORG_KEY, cacheMs, false, this::load, w -> w.unavailableTypes().isEmpty() ? Long.MAX_VALUE : 0L);
+        // Kısmi görüntü (bir tür okunamadı / süresinde gelmedi) yalnız PARTIAL_CACHE_MS tutulur — sonraki yoklama kısa süre
+        // sonra yeniden dener, ama yavaş dönemde her yoklama 20 sn beklemez (arka uç inceleme 2026-11-15)
+        OrgWeek org = orgMemo.get(ORG_KEY, cacheMs, false, this::load,
+                w -> w.unavailableTypes().isEmpty() ? Long.MAX_VALUE : PARTIAL_CACHE_MS);
         boolean partial = !org.unavailableTypes().isEmpty();
 
         Map<String, Acc> byType = new LinkedHashMap<>();
@@ -294,8 +309,10 @@ public class AvailabilityWeekService {
                 long left = Math.max(0L, deadline - System.nanoTime());
                 read = en.getValue().get(left, java.util.concurrent.TimeUnit.NANOSECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
-                log.info("7 günlük erişilebilirlik: {} türü {} ms içinde okunamadı — tür atlandı (okuma arka planda sürüyor)",
-                        type, budget);
+                if (shouldLogTimeout(type, logClock.getAsLong())) {
+                    log.info("7 günlük erişilebilirlik: {} türü {} ms içinde okunamadı — tür atlandı (okuma arka planda sürüyor;"
+                            + " bu tür için dakikada bir yazılır)", type, budget);
+                }
                 unavailable.add(type);
                 continue;
             } catch (InterruptedException e) {
@@ -328,6 +345,20 @@ public class AvailabilityWeekService {
             throw new UnavailableException(new IllegalStateException("okunamayan türler: " + unavailable));
         }
         return new OrgWeek(rows, ISO.format(Instant.now()), List.copyOf(unavailable));
+    }
+
+    /** Tür süre aşımı günlüğe yazılsın mı: tür başına {@link #TIMEOUT_LOG_EVERY_MS} içinde en çok bir kez (tavanlı harita). */
+    boolean shouldLogTimeout(String type, long nowMs) {
+        if (timeoutLoggedAt.size() > 64) timeoutLoggedAt.clear();   // tür sayısı küçük; savunma tavanı
+        boolean[] log = {false};
+        timeoutLoggedAt.compute(type, (k, last) -> {
+            if (last == null || nowMs - last >= TIMEOUT_LOG_EVERY_MS || nowMs < last) {
+                log[0] = true;
+                return nowMs;
+            }
+            return last;
+        });
+        return log[0];
     }
 
     /** 30 günlük ortak sonucun 7 günlük dönemi ({@code windows[days = 7]}); yoksa (izleme sonradan eklendi) null. */
