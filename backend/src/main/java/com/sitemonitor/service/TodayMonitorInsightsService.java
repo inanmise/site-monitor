@@ -336,7 +336,8 @@ public class TodayMonitorInsightsService {
             // Veritabanı sorgusu (2026-10-31): vade kendi zamanlamasından (cron / pencere / tatil) — aralığın katı kuralı
             // gece / hafta sonu bekleyen izlemeyi "bayat" sayardı. Planlı çalışma (next_run_at) + pay geçmediyse bayat değil.
             // Zamanlamalı sentetik izleme (k6r D2, 2026-10-31): aynı planlı koşum kuralı — pencere dışında beklemek bayatlık değil
-            if (m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm)) {
+            // Sayfa Hızı zamanlaması (2026-11-15, madde 14) da aynı kural
+            if (m instanceof com.sitemonitor.model.PlannedSchedule sm && ScriptedSchedule.hasPlan(sm)) {
                 // Pencerede kontrol yoksa: izleme pencere İÇİNDE yaratıldıysa yaratılış anından ölçülür (koşmayan yeni izleme de
                 // planlı koşumu kaçırınca gecikmiş görünür — k6r inceleme #3, bilinmeyen yeşil olmasın); pencereden ÖNCE
                 // yaratıldıysa son kontrol bilinmez (aylık cron 7 günlük pencerede kontrol göstermeyebilir) → yalnız plan kuralı.

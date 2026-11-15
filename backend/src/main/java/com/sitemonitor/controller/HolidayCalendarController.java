@@ -80,6 +80,13 @@ public class HolidayCalendarController {
                 log.warn("Tatil takvimi değişikliği senaryo izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
                         e.getClass().getSimpleName());
             }
+            // Sayfa Hızı 2. sürüm madde 14 (2026-11-15): zamanlamalı Sayfa Hızı izlemeleri de aynı kuralla
+            try {
+                if (scheduler != null) scheduler.pageSpeedCalendarChanged();
+            } catch (RuntimeException e) {
+                log.warn("Tatil takvimi değişikliği Sayfa Hızı izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                        e.getClass().getSimpleName());
+            }
         }
         return ok(view(session));
     }
@@ -126,6 +133,13 @@ public class HolidayCalendarController {
                 if (scheduler != null) scheduler.scriptedCalendarChanged();
             } catch (RuntimeException e) {
                 log.warn("Tatil takvimi değişikliği senaryo izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                        e.getClass().getSimpleName());
+            }
+            // Sayfa Hızı 2. sürüm madde 14 (2026-11-15): zamanlamalı Sayfa Hızı izlemeleri de aynı kuralla
+            try {
+                if (scheduler != null) scheduler.pageSpeedCalendarChanged();
+            } catch (RuntimeException e) {
+                log.warn("Tatil takvimi değişikliği Sayfa Hızı izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
                         e.getClass().getSimpleName());
             }
         }

@@ -17130,6 +17130,8 @@ export const EN = {
   'pspd.modalNew': 'New Page Speed Monitor', 'pspd.modalEdit': 'Edit Page Speed Monitor',
   'pspd.url': 'Page URL', 'pspd.urlHint': 'The full address of the page to measure. If you leave out the scheme, https:// is added.',
   'pspd.name': 'Name', 'pspd.team': 'Team', 'pspd.group': 'Group',
+  'pspd.scheduleTitle': 'Schedule',
+  'pspd.scheduleHint': 'How often to measure: at a fixed interval or by a cron expression; optionally measure only in allowed hours and skip blocked windows, holidays and the days you pick. The shortest interval is 5 minutes.',
   'pspd.thresholdsTitle': 'Alert thresholds',
   'pspd.thresholdsHint': "All are optional: a metric you leave blank raises no alerts. The threshold value itself is allowed — only going above it counts as a breach. TTFB is the first byte of the check's own request (redirects included).",
   'pspd.maxLoadMs': 'Max load time', 'pspd.maxTtfbMs': 'Max TTFB',

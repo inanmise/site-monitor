@@ -26,7 +26,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "pagespeed_monitors")
 @Data
 @NoArgsConstructor
-public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
+public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget, PlannedSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -57,6 +57,41 @@ public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, Noc
     /** İstek başına zaman aşımı (ana sayfa + her alt kaynak). */
     @Column(name = "timeout_ms")
     private Integer timeoutMs = 10000;
+
+    // ── Zamanlama penceresi / cron (2026-11-15, Sayfa Hızı 2. sürüm madde 14 — sentetik izleme (k6r D2) ve dbquery ile AYNI
+    // kolon adları ve kural: DbQuerySchedule). Hepsi null = düz aralık (bugünkü yol; plan yok, next_run_at okunmaz). ─────
+
+    /** {@code INTERVAL} | {@code CRON}; null = INTERVAL. */
+    @Column(name = "schedule_mode", length = 10)
+    private String scheduleMode;
+
+    /** CRON kipinde 5 / 6 alanlı ifade ya da makro (@hourly, @daily, @weekly, @monthly). */
+    @Column(name = "cron_expression", length = 120)
+    private String cronExpression;
+
+    /** İzinli pencereler JSON {@code [{"days":[1..7],"from":"HH:mm","to":"HH:mm"}]}; null = her an. */
+    @Column(name = "windows_json", columnDefinition = "TEXT")
+    private String windowsJson;
+
+    /** Yasak pencereler JSON (aynı biçim). */
+    @Column(name = "blackout_json", columnDefinition = "TEXT")
+    private String blackoutJson;
+
+    /** Tatil takviminde (holiday_days) yer alan günlerde ölçme; null = false. */
+    @Column(name = "skip_holidays")
+    private Boolean skipHolidays;
+
+    /** Ek ölçülmeyecek tarihler JSON {@code ["2026-12-31", …]}. */
+    @Column(name = "skip_dates_json", columnDefinition = "TEXT")
+    private String skipDatesJson;
+
+    /**
+     * Bir sonraki planlı ölçüm (UTC ISO) — YALNIZ zamanlayıcının hedefli UPDATE'i yazar ({@code updatable = false}: varlık
+     * kaydı bayat okumayla planı geri yazmasın). Yalnız zamanlamalı izlemede anlamlıdır; zamanlama değişince sıfırlama
+     * {@code SchedulerService.pageSpeedScheduleChanged}.
+     */
+    @Column(name = "next_run_at", length = 30, updatable = false)
+    private String nextRunAt;
 
     // ── Alarm eşikleri ────────────────────────────────────────────────────────
     // HEPSİ opsiyoneldir: null bırakılan eşik alarm ÜRETMEZ. Böylece kullanıcı yalnız umursadığı

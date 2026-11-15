@@ -478,7 +478,8 @@ public class MonitoringOverviewService {
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
             else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq ? isDbQueryStale(dq, nowI)
-                    : m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm)
+                    // Zamanlamalı sentetik izleme (k6r D2) ve Sayfa Hızı (2026-11-15, madde 14): planlı çalışma kuralı
+                    : m instanceof com.sitemonitor.model.PlannedSchedule sm && ScriptedSchedule.hasPlan(sm)
                             ? isScriptedStale(sm, checkedAt, nowI, holidays())
                     : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             // Veritabanı sorgusu (r177, H-2): sorgu çalıştı ama kural değerlendirilemedi — yeşil SAYILMAZ (nötr "değerlendirilemedi")
@@ -595,7 +596,7 @@ public class MonitoringOverviewService {
      * planlı koşum ({@code next_run_at}) + pay geçtiyse gecikmiş. Düz aralıktaki izleme bu kurala girmez (çağıran
      * {@code ScriptedSchedule.hasPlan} ile ayırır; bugünkü aralık kuralı).
      */
-    public static boolean isScriptedStale(com.sitemonitor.model.ScriptedMonitor m, Instant now) {
+    public static boolean isScriptedStale(com.sitemonitor.model.PlannedSchedule m, Instant now) {
         return m != null && isDbQueryStale(m.getNextRunAt(), now);
     }
 
@@ -608,7 +609,7 @@ public class MonitoringOverviewService {
 
     /**
      * Zamanlamalı sentetik izleme gecikmiş mi (k6r inceleme #3, 2026-10-31): planlı çalışma kuralı
-     * ({@link #isScriptedStale(com.sitemonitor.model.ScriptedMonitor, Instant)}) YA DA son kontrolden sonraki ilk planlı koşum
+     * ({@link #isScriptedStale(com.sitemonitor.model.PlannedSchedule, Instant)}) YA DA son kontrolden sonraki ilk planlı koşum
      * + {@link #SCRIPTED_MISSED_RUN_GRACE_SECONDS} geçti ve yeni kontrol yok. İkinci kural şarttır: geçici atlamada (havuz dolu,
      * k6 yok, dosya okuma engeli) plan ({@code next_run_at}) her dönem ileri yazıldığından birinci kural tek başına koşmayan
      * izlemeyi son eski sonuçla "güncel" (yeşil) gösterirdi. Son kontrol okunamazsa / yoksa yalnız birinci kural (çağıran
@@ -616,7 +617,7 @@ public class MonitoringOverviewService {
      *
      * @param lastCheckedAt son kontrol anı (UTC, "yyyy-MM-ddTHH:mm:ss"; "Z" / kesir / boşluk da okunur)
      */
-    public static boolean isScriptedStale(com.sitemonitor.model.ScriptedMonitor m, String lastCheckedAt, Instant now,
+    public static boolean isScriptedStale(com.sitemonitor.model.PlannedSchedule m, String lastCheckedAt, Instant now,
                                           Set<java.time.LocalDate> holidays) {
         if (m == null || now == null) return false;
         if (isDbQueryStale(m.getNextRunAt(), now)) return true;
