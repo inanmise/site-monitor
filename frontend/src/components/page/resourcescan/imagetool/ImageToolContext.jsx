@@ -28,10 +28,11 @@ export function useTopic(store, topic, read) {
  * pencereyi kapatma — onu sessizce iptal etmez). Çıkışta (oturum sıfırlama) depo hemen kapanır. (StrictMode'da etki iki
  * kez koşar: ilk temizlik boştaki depoyu kapatır → ikinci koşuda yenisi kurulur.)
  */
-export function useImageToolStore(monitorId) {
+export function useImageToolStore(monitorId, fetchImage = null) {
+  // `fetchImage` (isteğe bağlı, KARARLI olmalı): Sayfa Hızı köprüsü kendi ucunu verir (2026-11-15); yoksa kaynak analizi ucu
   const make = useCallback(() => createImageToolStore({
-    fetchImage: (scanId, url, signal) => api.monitoring.resourceScanImage(monitorId, scanId, url, { signal }),
-  }), [monitorId])
+    fetchImage: fetchImage || ((scanId, url, signal) => api.monitoring.resourceScanImage(monitorId, scanId, url, { signal })),
+  }), [monitorId, fetchImage])
   const [store, setStore] = useState(make)
   useEffect(() => {
     let s = store

@@ -78,7 +78,13 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     // 2026-11-13: SQL Playground Excel'i (ekran sonucu + sunucuda tam dışa aktarım) — tek tembel modül; SqlPlayground ve
     // sonuç paneli onu YALNIZ tıklamada import() ile alır (aşağıda)
     const SQL_EXPORT = 'components/admin/sql/sqlExcelExport.js'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT].sort())
+    // 2026-11-15: Sayfa Hızı performans raporu (Excel / PDF) — PageSpeedDeepTab onu YALNIZ tıklamada import() ile alır (aşağıda)
+    const PAGESPEED_REPORT = 'components/pagespeed/deep/pageSpeedReport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT].sort())
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /pageSpeedReport(\.js)?$/.test(s))).map((x) => x.rel),
+      'Sayfa Hızı raporu statik içe aktarılmaz').toEqual([])
+    expect(FILES.filter(({ src }) => /import\(\s*'\.\/pageSpeedReport\.js'\s*\)/.test(src)).map((x) => x.rel))
+      .toEqual(['components/pagespeed/deep/PageSpeedDeepTab.jsx'])
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)sqlExcelExport(\.js)?$/.test(s))).map((x) => x.rel),
       'SQL dışa aktarım modülü statik içe aktarılmaz').toEqual([])
     expect(FILES.filter(({ src }) => /import\(\s*'\.\/(sql\/)?sqlExcelExport\.js'\s*\)/.test(src)).map((x) => x.rel).sort())

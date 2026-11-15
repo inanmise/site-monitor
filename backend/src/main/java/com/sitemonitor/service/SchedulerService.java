@@ -1633,6 +1633,8 @@ public class SchedulerService {
         // İnceleme düzeltmeleri (2026-11-14): kararsız eşikler (B1) + HTML gövdesinin inme süresi (B6d).
         patch("ALTER TABLE pagespeed_checks ADD COLUMN undecided_metrics VARCHAR(60)");
         patch("ALTER TABLE pagespeed_checks ADD COLUMN download_ms INTEGER");
+        // Sayfa Hızı 2. sürüm (2026-11-15): şelale — kaynağın isteğinin sayfa yükü başlangıcına göre atılma anı (NULL = eski satır)
+        patch("ALTER TABLE pagespeed_resources ADD COLUMN start_ms INTEGER");
 
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
@@ -9227,6 +9229,7 @@ public class SchedulerService {
         row.setType(PageSpeedCheckerService.normalizeType(x.type()));
         row.setBytes(x.bytes());
         row.setDurationMs((int) x.durationMs());
+        row.setStartMs(x.startMs() == null ? null : (int) Math.min(Integer.MAX_VALUE, x.startMs()));
         row.setStatusCode(x.statusCode());
         row.setThirdParty(x.thirdParty());
         row.setTruncated(x.truncated());

@@ -61,6 +61,13 @@ public class PageSpeedResource {
     @Column(name = "duration_ms")
     private Integer durationMs;
 
+    /**
+     * İsteğin sayfa yükünün başlangıcından kaç ms sonra atıldığı (2026-11-15, şelale görünümü). NULL = bu sürümden önce
+     * yazılmış satır (şelale çizilmez).
+     */
+    @Column(name = "start_ms")
+    private Integer startMs;
+
     @Column(name = "status_code")
     private Integer statusCode;
 

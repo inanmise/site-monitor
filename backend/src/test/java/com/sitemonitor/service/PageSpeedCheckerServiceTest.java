@@ -475,6 +475,22 @@ class PageSpeedCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("Şelale (2026-11-15): her kaynağın başlangıç anı ölçülür — ana HTML'den SONRA (≥ ana isteğin süresi), toplam sürenin içinde")
+    void eachResourceCarriesItsStartOffset() {
+        var r = checker.check(monitor("/"));
+        assertThat(r.resources()).isNotEmpty().allSatisfy(x -> {
+            assertThat(x.startMs()).isNotNull();
+            assertThat(x.startMs()).isGreaterThanOrEqualTo(0L);
+            assertThat(x.startMs()).isLessThanOrEqualTo(r.totalMs());
+        });
+        // Kaynaklar ana sayfa indikten sonra istenir: en erken kaynak ana HTML süresinden önce başlamaz
+        long earliest = r.resources().stream().mapToLong(PageSpeedCheckerService.Measured::startMs).min().orElseThrow();
+        assertThat(earliest).isGreaterThanOrEqualTo(r.htmlMs() - 5);
+        // Eski 8 bileşenli kurucu: başlangıç bilinmiyor
+        assertThat(new PageSpeedCheckerService.Measured("u", "JS", 1, 1, 200, false, false, false).startMs()).isNull();
+    }
+
+    @Test
     @DisplayName("Tracker hariç tutma AÇIKken tracker ne indirilir ne sayılır")
     void trackerExclusionRemovesResourceFromMeasurement() {
         PageSpeedMonitor m = monitor("/");
