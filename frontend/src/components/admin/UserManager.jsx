@@ -441,7 +441,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     if (ids.length === 0 && !u.team_locked) return <span className="text-muted-foreground">—</span>
     return (
       <span className={cn(CARD_LAYER, 'flex flex-wrap items-center gap-1')} onClick={(e) => e.stopPropagation()}>
-        {ids.map((id) => <TeamBadge key={id} teamId={id} teamName={teamMap[id]} size={11} />)}
+        {ids.map((id) => <TeamBadge key={id} wrap teamId={id} teamName={teamMap[id]} size={11} />)}
         {u.team_locked && lockBadge('team', t('usr.teamLockedTitle'))}
       </span>
     )
@@ -496,7 +496,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           // Kartın GERÇEK düğmesi: ::after tüm kartı örter (stretched button — MonitorCard deseni)
           <Button type="button" variant="ghost" data-user-open={u.id} onClick={() => setViewUser(u)}
             aria-label={t('a11y.openRow', nameOf(u))}
-            className="h-auto justify-start rounded-none p-0 text-left text-[0.97em] font-bold text-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50 dark:hover:bg-transparent">
+            className="h-auto justify-start rounded-none p-0 text-left text-[0.97em] font-bold whitespace-normal text-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50 dark:hover:bg-transparent">
             <span className="min-w-0 [overflow-wrap:anywhere]">{nameOf(u)}</span>
           </Button>
         ) : (
@@ -626,23 +626,23 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             <SearchableSelect value={fField} onChange={setFField} ariaLabel={t('usr.fieldLabel')}
               options={SEARCH_FIELDS.map((f) => ({ value: f, label: t('usr.field.' + f) }))} />
           </span>
-          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="h-8" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="h-8 pointer-coarse:h-10" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} aria-hidden="true" /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
           </Button>
           {/* Kayıtlı görünümler (B7, 2026-11-12): geçerli süzgeç+sıralama anlık görüntüsünü kişisel tercihlere kaydet / uygula */}
           <SavedViewsMenu listKey="admin-users" snapshot={() => viewFromFilters(filters)} onApply={applyView}
-            size="sm" className="h-8" labelClassName="hidden sm:inline" />
+            size="sm" className="h-8 pointer-coarse:h-10" labelClassName="hidden sm:inline" />
           <span className="text-[0.84em] whitespace-nowrap text-muted-foreground" aria-live="polite">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
         </div>
         {chips.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5" data-testid="um-chips">
             {chips.map((c) => (
               <Button key={c.key} type="button" variant="outline" size="xs" data-chip={c.key} onClick={c.clear}
-                aria-label={t('usr.chipRemove', c.label)} className="h-7 gap-1 rounded-full border-primary/40 bg-primary/5 pr-1.5 pl-2.5 font-normal">
+                aria-label={t('usr.chipRemove', c.label)} className="h-7 gap-1 rounded-full border-primary/40 bg-primary/5 pr-1.5 pl-2.5 font-normal pointer-coarse:h-10">
                 {c.label}<X aria-hidden="true" className="size-3.5 opacity-70" />
               </Button>
             ))}
-            <Button type="button" variant="ghost" size="xs" className="h-7" onClick={clearFilters}>{t('inv.filterClear')}</Button>
+            <Button type="button" variant="ghost" size="xs" className="h-7 pointer-coarse:h-10" onClick={clearFilters}>{t('inv.filterClear')}</Button>
           </div>
         )}
         {filtersOpen && (

@@ -345,7 +345,8 @@ export default function CertInventoryReportSettings() {
           {(noRecipients || dirty) && <span id={blockedId} className="text-xs text-muted-foreground">{noRecipients ? t('cir.noRecipientsNote') : t('cir.runSaveFirst')}</span>}
         </div>
         <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
-          <Input type="email" value={testEmail} placeholder={t('cir.testPlaceholder')} aria-label={t('cir.sendTest')} className="min-w-0 flex-1"
+          {/* `flex-1` yalnız satır düzeninde (sm+): telefondaki sütun düzeninde yükseklik tabanını 0 yapıp kutuyu 31 px'e ezerdi */}
+          <Input type="email" value={testEmail} placeholder={t('cir.testPlaceholder')} aria-label={t('cir.sendTest')} className="min-w-0 sm:flex-1"
             onChange={e => setTestEmail(e.target.value)} />
           <Button variant="secondary" onClick={sendTest} className="shrink-0"
             disabled={sending || !testEmail.includes('@')} aria-busy={sending || undefined}>

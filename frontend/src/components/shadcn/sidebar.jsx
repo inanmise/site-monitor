@@ -525,6 +525,14 @@ const SidebarMenuButton = React.forwardRef(function SidebarMenuButton({
 }, ref) {
   const Comp = asChild ? Slot.Root : "button"
   const { isMobile, state } = useSidebar()
+  // Proje eki (2026-11-15, yayın öncesi e2e B): ipucu yalnız daraltılmış masaüstü kenar çubuğunda anlamlı. Gizliyken
+  // (açık kenar çubuğu, telefon çekmecesi) Radix ipucu odakla AÇILIP görünmez bir katman olarak duruyordu — çekmece
+  // açılınca odak ilk menü düğmesine gelir, ilk Escape bu gizli ipucunu kapatıyor, çekmece ancak İKİNCİ Escape'le
+  // kapanıyordu. Gizliyken ipucu denetimli olarak hep kapalı (aynı ağaç: düğme yeniden bağlanmaz, odak kaybolmaz).
+  const tooltipHidden = state !== "collapsed" || isMobile
+  const [tooltipOpen, setTooltipOpen] = React.useState(false)
+  // Gizliyken durum güncellenmez (her odakta yeniden çizim yok); gizlenince açık kalmış ipucu durumu sıfırlanır
+  React.useEffect(() => { if (tooltipHidden) setTooltipOpen(false) }, [tooltipHidden])
 
   const button = (
     <Comp
@@ -549,12 +557,12 @@ const SidebarMenuButton = React.forwardRef(function SidebarMenuButton({
   }
 
   return (
-    <Tooltip>
+    <Tooltip open={!tooltipHidden && tooltipOpen} onOpenChange={tooltipHidden ? undefined : setTooltipOpen}>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       <TooltipContent
         side="right"
         align="center"
-        hidden={state !== "collapsed" || isMobile}
+        hidden={tooltipHidden}
         {...tooltip}
       />
     </Tooltip>

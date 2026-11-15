@@ -16,10 +16,12 @@ import { KINDS, LEVELS, LEVEL_DOT } from './whoNotifiedModel.js'
  *
  * <p>Yerleşim KAP genişliğine göre (`@container`): Yönetim Paneli içeriği 768 px tablette kenar çubuğu açıkken
  * ~440 px — pencere kırılma noktası orada yanıltır. Kap ≥ 576 px (@xl) iki sütun, altında tek sütun.
- * Telefonda seçiciler ve parçalı kontroller tam genişlik, dokunma hedefleri 40 px (md+ 32–36 px).
+ * Telefonda seçiciler ve parçalı kontroller tam genişlik, dokunma hedefleri 40 px; md+ yalnız İNCE işaretçide 32–36 px —
+ * dokunmatik tablette (768) 40 px kalır (2026-11-15, yayın öncesi e2e B). Seçicilerde `min-h`: uzun takım adı sarar
+ * (`wrapLabels`, tetik `h-auto`), sabit yükseklik onu kesmesin.
  */
-const SELECT_TOUCH = '[&_[role=combobox]]:h-10 md:[&_[role=combobox]]:h-9'
-const SEGMENT_TOUCH = 'w-full sm:w-fit [&>[data-slot=toggle-group-item]]:h-10 [&>[data-slot=toggle-group-item]]:flex-1 sm:[&>[data-slot=toggle-group-item]]:flex-none md:[&>[data-slot=toggle-group-item]]:h-8'
+const SELECT_TOUCH = '[&_[role=combobox]]:min-h-10 md:pointer-fine:[&_[role=combobox]]:min-h-9'
+const SEGMENT_TOUCH = 'w-full sm:w-fit [&>[data-slot=toggle-group-item]]:h-10 [&>[data-slot=toggle-group-item]]:flex-1 sm:[&>[data-slot=toggle-group-item]]:flex-none md:pointer-fine:[&>[data-slot=toggle-group-item]]:h-8'
 
 export default function ScenarioForm({
   teams, teamId, onTeamChange, level, onLevelChange, kind, onKindChange,
@@ -61,14 +63,14 @@ export default function ScenarioForm({
       <CardContent className="grid grid-cols-1 gap-x-6 gap-y-4 px-4 sm:px-6 @xl:grid-cols-2">
         <Field label={t('sim.team')} className={cn('mb-0 min-w-0', SELECT_TOUCH)}>
           {({ id }) => (
-            <SearchableSelect id={id} value={teamId} onChange={onTeamChange} placeholder={t('sim.pickTeam')}
+            <SearchableSelect id={id} value={teamId} onChange={onTeamChange} placeholder={t('sim.pickTeam')} wrapLabels
               searchThreshold={6} options={teamOptions} />
           )}
         </Field>
         <Field label={t('wn.groupOptional')} className={cn('mb-0 min-w-0', SELECT_TOUCH)}
           hint={noGroups ? t('wn.groupNone') : t('wn.groupHint')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={groupId} onChange={onGroupChange} placeholder={t('sim.groupDefault')}
+            <SearchableSelect id={id} value={groupId} onChange={onGroupChange} placeholder={t('sim.groupDefault')} wrapLabels
               disabled={!teamId || noGroups} searchThreshold={8} options={groupOptions} />
           )}
         </Field>
@@ -87,7 +89,7 @@ export default function ScenarioForm({
         {showUg && (
           <Field label={t('wn.ugTeam')} className={cn('mb-0 min-w-0', SELECT_TOUCH)} hint={t('wn.ugTeamHint')}>
             {({ id }) => (
-              <SearchableSelect id={id} value={ugTeamId} onChange={onUgTeamChange} placeholder={t('wn.ugNone')}
+              <SearchableSelect id={id} value={ugTeamId} onChange={onUgTeamChange} placeholder={t('wn.ugNone')} wrapLabels
                 disabled={!teamId} searchThreshold={6} options={ugOptions} />
             )}
           </Field>

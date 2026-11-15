@@ -111,20 +111,6 @@ async function weeklyMock(page, opts = {}) {
   return state
 }
 
-/**
- * BİLİNEN ÜRÜN HATALARI (prod kapısı raporunda; düzeltilince buradan çıkarılır — CLAUDE.md "Names and long text are never clipped"):
- *  - Takım rozeti `wrap` almadan kullanılıyor: düzenleyici başlığında (WeeklyReportsPage.jsx:1334) uzun AD takım adı 390 / 768'de
- *    üç noktayla kesiliyor; oluşturma ekranının Takım adımında (WeeklyReportCreate.jsx:197, `inline-flex w-fit`) ad kartın ve
- *    ekranın dışına taşıp kenar çubuğu içeriğinde kırpılıyor.
- *  - Sayı alanı etiketi `truncate` (weekly/WeeklyMdField.jsx:304): 768 dokunmatikte "In progress", "Postmortem Records" kesiliyor.
- *  - Dokunma hedefi (CLAUDE.md "Mobile web is a requirement", ≥ 40 px): bağlantı alanının "Bağlantı ekle" düğmesi
- *    (weekly/WeeklyLinkField.jsx:167, `size="icon-xs"`) dokunmatikte 24×24; başlıktaki takım rozeti (ui/TeamBadge.jsx:25,
- *    `after:-inset-y-2.5` → 18 + 20 px) 38 px.
- */
-const KNOWN_CLIP = [/span\.truncate @(page-meta>)?team-badge /, /^label\[label\].*\[own box\]/]
-const KNOWN_SMALL = [/@page-meta>team-badge \d+×38 "Show members of team/, /@wr-link-field>wr-link-input>input-group-addon>button 24×24 "Add link/]
-const KNOWN = { allowClip: KNOWN_CLIP, allowSmall: KNOWN_SMALL }
-
 const deferred = () => { let release; const gate = new Promise((r) => { release = r }); return { gate, release } }
 const toast = (page, re) => page.locator('[data-sonner-toast]').filter({ hasText: re })
 
@@ -149,7 +135,7 @@ for (const vp of VIEWPORTS) {
       await screen.getByText('Start from last week\'s notes').click()
       const cta = screen.locator('[data-slot="wr-create-submit"]')
       await expect(cta).toBeEnabled({ timeout: 10_000 })
-      await checkLayout(page, `create@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `create@${vp.name}`)
       await cta.click()
       await expect.poll(() => state.creates.length).toBe(1)
       expect(state.creates[0]).toEqual({ year: PREV.year, week_no: PREV.week, carry_notes: true })
@@ -159,7 +145,7 @@ for (const vp of VIEWPORTS) {
       await expect(err).toHaveText(TEAM_ID_ERROR)
       await expect(screen.locator('[data-field="team_id"]')).toHaveAttribute('data-invalid', 'true')
       await expect(screen).toBeVisible()
-      await checkLayout(page, `create error@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `create error@${vp.name}`)
     })
 
     test('kaydet: PUT version taşır; kayıt uçuştayken yazılan kaybolmaz ve yeni sürümle gönderilir', async ({ page }) => {
@@ -175,7 +161,7 @@ for (const vp of VIEWPORTS) {
       const urgent = page.getByLabel('Urgent', { exact: true })
       const high = page.getByLabel('High', { exact: true })
       await expect(urgent).toBeEnabled({ timeout: 10_000 })   // kilit alındı → düzenlenebilir
-      await checkLayout(page, `editor@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `editor@${vp.name}`)
       const saveState = bar.locator('[data-slot="wr-save-state"]')
       const saveBtn = bar.getByRole('button', { name: 'Save draft', exact: true })
       await expect(saveBtn).toBeDisabled()
@@ -257,7 +243,7 @@ for (const vp of VIEWPORTS) {
       const bar = page.locator('[data-slot="wr-actions"]')
       const approveBtn = bar.getByRole('button', { name: 'Approve', exact: true })
       await expect(approveBtn).toBeEnabled({ timeout: 20_000 })
-      await checkLayout(page, `pending editor@${vp.name}`, undefined, KNOWN)
+      await checkLayout(page, `pending editor@${vp.name}`)
       const expected = [
         /Report approved — mail sent to the manager/,
         /Report approved; the e-mail to the manager could not be delivered yet and the system will retry shortly/,

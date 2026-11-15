@@ -12,11 +12,6 @@ import { test, expect } from '@playwright/test'
 import { mockApi, MONITORS } from './support/monitorMocks.js'
 import { VIEWPORTS, json, pathIs, checkLayout, recordRequests } from './support/layoutAudit.js'
 
-// BİLİNEN HATA (gerçek Inter fontuyla 768 dokunmatik tablette görüldü): "Erişim yok" panelinin hızlı bağlantı başlığı
-// ("Monitoring Overview") üç sütunlu ızgarada kartına sığmıyor — `ItemTitle` hem `w-fit` hem `truncate`
-// (notfound/NotFoundQuickLinks.jsx:28), metin kartın ve ana alanın dışına taşıyor. Sararak göstermek gerekir.
-const KNOWN_NF_CLIPS = [/\[item-title\][^@]*@nf-links>item-group>nf-link>item-content>item-title /]
-
 const READ_ALL = { 'monitoring.read': { view: true }, 'alerts.read': { view: true }, 'data_quality.view': { view: true }, 'monitoring.crud': { view: true, edit: true } }
 const SCOPE = { global_admin: false, monitoring_all: false, noc_operator: false, noc_console: false }
 
@@ -129,10 +124,7 @@ for (const vp of VIEWPORTS) {
           await expect(dupButtons).toHaveCount(0)
           await expect(cards.getByRole('button', { name: /— (Delete|Sil)$/ })).toHaveCount(0)
         }
-        // ÜRÜN HATASI (rapor edildi, 2026-11-15): "Bu izleme nasıl ve nereden yapılıyor?" kutusunun tetiği
-        // (ui/MonitorHowBox.jsx — `h-auto py-2`, dokunmatik taban yok) dokunmatikte 37 px; bilinçli olarak ölçüm dışı.
-        await checkLayout(page, `${role.key} http sayfası @${vp.name}`, null,
-          { allowSmall: [/"(How and where are these checks|Bu izleme nasıl ve nereden)/] })
+        await checkLayout(page, `${role.key} http sayfası @${vp.name}`, null)
 
         // ── İzleme detayı: alarm iletimi rozeti izin yokken İSTEK ATMAZ ──
         await cards.first().locator('[data-monitor-open]').first().click()
@@ -165,7 +157,7 @@ for (const vp of VIEWPORTS) {
           await expect(panel.locator('[data-slot="not-found-title"]')).toHaveText(/access|erişim/i)
           await page.waitForTimeout(800)
           expect(hasPrefix(log, FORBIDDEN_PREFIX[tab]), `${role.key}: ${tab} ucu çağrıldı`).toBe(false)
-          await checkLayout(page, `${role.key} ${tab} erişim yok @${vp.name}`, '[data-slot="not-found-panel"]', { allowClip: KNOWN_NF_CLIPS })
+          await checkLayout(page, `${role.key} ${tab} erişim yok @${vp.name}`, '[data-slot="not-found-panel"]')
         }
       })
     }

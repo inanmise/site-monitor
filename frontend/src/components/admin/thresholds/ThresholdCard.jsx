@@ -27,13 +27,14 @@ export default function ThresholdCard({ row, title, impact, defaultReAlert, canE
 
   const actions = canEdit ? (
     <div data-slot="threshold-actions" className={cn('flex items-center gap-2', phone && 'w-full')}>
-      <Button type="button" variant="outline" size={phone ? 'lg' : 'sm'} className={cn(phone && 'flex-1')}
+      {/* Dokunmatik tablette de 40 px (2026-11-15, yayın öncesi e2e B — yalnız telefonda büyüyordu) */}
+      <Button type="button" variant="outline" size={phone ? 'lg' : 'sm'} className={cn(phone && 'flex-1', 'pointer-coarse:h-10')}
         onClick={onEdit} aria-label={t('a11y.rowAction', row._builtin ? t('thr.setUp') : t('thr.edit'), title)}>
         <Pencil aria-hidden="true" /> {row._builtin ? t('thr.setUp') : t('thr.edit')}
       </Button>
       {tier != null && (
         <Button type="button" variant="outline" size={phone ? 'icon-lg' : 'icon-sm'} title={t('thr.delete')}
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive pointer-coarse:size-10"
           onClick={onDelete} aria-label={t('a11y.rowAction', t('thr.delete'), title)}>
           <Trash2 aria-hidden="true" />
         </Button>

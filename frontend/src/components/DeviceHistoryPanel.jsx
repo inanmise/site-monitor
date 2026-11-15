@@ -297,7 +297,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                   </div>
                 </div>
                 {!isAdminView && (
-                  <Button type="button" variant="ghost" size="sm" className="shrink-0 text-muted-foreground hover:text-foreground"
+                  <Button type="button" variant="ghost" size="sm" className="shrink-0 text-muted-foreground hover:text-foreground pointer-coarse:h-10"
                     aria-label={t('a11y.rowAction', row.ua_summary || t('dev.genericSession'), t('dev.revokeAction'))}
                     onClick={() => revokeRemembered(row)}>
                     {t('dev.revokeAction')}
@@ -342,7 +342,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                           <div className="dev-detail-line">
                             <span className="dev-detail-key">{t('dev.ip')}</span>
                             <span className="dev-mono">{row.ip}</span>
-                            <CopyButton value={row.ip} label={t('dev.copyIp')} copiedLabel={t('err.copied')} />
+                            <CopyButton value={row.ip} label={t('dev.copyIp')} copiedLabel={t('err.copied')} className="pointer-coarse:size-10" />
                           </div>
                         )}
                         {row.org && (
@@ -357,7 +357,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                           </div>
                         )}
                         {!isAdminView && (
-                          <Button type="button" variant="outline" size="xs" className="hover:border-destructive hover:text-destructive"
+                          <Button type="button" variant="outline" size="xs" className="hover:border-destructive hover:text-destructive pointer-coarse:h-10"
                             aria-label={t('a11y.rowAction', formatDateSec(row.at), t('dev.reportAction'))}
                             onClick={() => reportLogin(row)}>
                             <ShieldAlert size={13} aria-hidden="true" />{t('dev.reportAction')}
@@ -381,7 +381,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
       {/* ── 4. Başarısız denemeler ──────────────────────────────────────── */}
       <section className="dev-section">
-        <Button type="button" variant="ghost" className="h-auto justify-start gap-1.5 px-1 py-1 text-[.95em] font-bold has-[>svg]:px-1"
+        <Button type="button" variant="ghost" className="h-auto justify-start gap-1.5 px-1 py-1 text-[.95em] font-bold has-[>svg]:px-1 pointer-coarse:min-h-10"
           aria-expanded={failedOpen} onClick={() => setFailedOpen(o => !o)}>
           <ChevronRight size={15} aria-hidden="true" className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', failedOpen && 'rotate-90')} />
           {t('dev.failedTitle')}
@@ -425,14 +425,14 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
       {/* ── Güvenlik eylemleri ──────────────────────────────────────────── */}
       {!isAdminView && (
       <section className="dev-actions">
-        <Button type="button" variant="destructive" size="sm" onClick={logoutOthers}>
+        <Button type="button" variant="destructive" size="sm" className="pointer-coarse:h-10" onClick={logoutOthers}>
           <LogOut size={13} />{t('dev.logoutOthersAction')}
         </Button>
         {/* Eskiden yalniz METINDI: "parolani da degistir" diyip kullaniciyi kendi basina
             birakiyordu. Akis App seviyesinde (selfPwdModalOpen) ve prop ile geliyor;
             gelmezse metne duseriz — panel her durumda calisir. */}
         {onChangePassword ? (
-          <Button type="button" variant="secondary" size="sm" onClick={onChangePassword}>
+          <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={onChangePassword}>
             <KeyRound size={13} />{t('dev.changePasswordAction')}
           </Button>
         ) : (

@@ -395,7 +395,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                 return (
                   <li key={c.error_class}>
                     <Button type="button" variant="ghost" aria-pressed={on}
-                      className={cn('grid h-auto w-full grid-cols-[110px_1fr_36px] items-center gap-2 border border-transparent px-1.5 py-1 text-left font-normal hover:border-primary hover:bg-primary/5',
+                      className={cn('grid h-auto w-full grid-cols-[110px_1fr_36px] items-center gap-2 border border-transparent px-1.5 py-1 text-left font-normal hover:border-primary hover:bg-primary/5 pointer-coarse:min-h-10',
                         on && 'border-primary bg-primary/5')}
                       onClick={() => patch({ errorClass: on ? '' : c.error_class })}>
                       <span className="truncate text-[0.82em] font-semibold">{t(`sml.cls.${c.error_class}`)}</span>
@@ -441,7 +441,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                   <TableRow key={x.domain} data-state={f.domain === x.domain ? 'selected' : undefined}
                     className={cn(f.domain === x.domain && miniActive)}>
                     <TableCell className={MINI_NAME}><Button type="button" variant="link" size="xs" className={LINK_BTN} onClick={() => patch({ domain: f.domain === x.domain ? '' : x.domain })}>{x.domain}</Button>
-                      {x.team_name && <div><TeamBadge teamId={x.team_id} teamName={x.team_name} /></div>}</TableCell>
+                      {x.team_name && <div><TeamBadge wrap teamId={x.team_id} teamName={x.team_name} /></div>}</TableCell>
                     <TableCell className={cn(MINI_TD, MINI_NUM)}>{x.total}</TableCell><TableCell className={cn(MINI_TD, MINI_NUM, x.failed > 0 && BAD)}>{x.failed}</TableCell>
                     <TableCell className={cn(MINI_TD, MINI_DATE, 'text-xs')}>{x.last_failed_at ? formatDate(x.last_failed_at) : '—'}</TableCell>
                   </TableRow>
@@ -477,7 +477,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                   onClick={() => setDetailId(row.id)}
                   onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setDetailId(row.id) } }}>
                   <TableCell className={cn(TD, 'w-[140px] font-mono whitespace-nowrap text-muted-foreground')}>{formatDate(row.sent_at)}</TableCell>
-                  <TableCell className={cn(TD, 'hidden md:table-cell')}>{row.team_name ? <span className="inline-flex" onClick={(e) => e.stopPropagation()}><TeamBadge teamId={row.team_id} teamName={row.team_name} /></span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className={cn(TD, 'hidden whitespace-normal md:table-cell')}>{row.team_name ? <span className="inline-flex max-w-full min-w-0" onClick={(e) => e.stopPropagation()}><TeamBadge wrap teamId={row.team_id} teamName={row.team_name} /></span> : <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className={cn(TD, 'hidden max-w-[150px] truncate font-mono text-xs whitespace-nowrap md:table-cell')} title={row.domain || ''}>{row.domain || '—'}</TableCell>
                   <TableCell className={TD}>
                     <div className="leading-tight font-semibold">{row.recipient_name || '—'}</div>
@@ -492,13 +492,13 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                   <TableCell className={cn(TD, 'whitespace-nowrap')} onClick={(e) => e.stopPropagation()}>
                     <span className="inline-flex gap-1">
                       <SimpleTooltip content={t('health.emailDetail')}>
-                        <Button type="button" variant="secondary" size="icon-sm"
+                        <Button type="button" variant="secondary" size="icon-sm" className="pointer-coarse:size-10"
                           aria-label={t('a11y.rowAction', `${row.subject || '—'} · ${formatDate(row.sent_at)}`, t('health.emailDetail'))}
                           onClick={() => setDetailId(row.id)}><Eye size={13} /></Button>
                       </SimpleTooltip>
                       {canResend && row.kind === 'FAILED' && (
                         <SimpleTooltip content={t('sml.resend')}>
-                          <Button type="button" variant="secondary" size="icon-sm" data-action="resend" disabled={busy}
+                          <Button type="button" variant="secondary" size="icon-sm" className="pointer-coarse:size-10" data-action="resend" disabled={busy}
                             aria-label={t('a11y.rowAction', `${row.subject || '—'} · ${formatDate(row.sent_at)}`, t('sml.resend'))}
                             onClick={() => resend(row)}><Send size={13} /></Button>
                         </SimpleTooltip>
@@ -551,7 +551,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
                       <LevelBadge level={detail.alert.level} />
                       <b>{detail.alert.domain}</b> <span className="text-muted-foreground">{detail.alert.type}</span>
                       {detail.alert.resolved ? <ToneBadge tone="success">{t('sml.alertResolved')}</ToneBadge> : <ToneBadge tone="danger">{t('sml.alertOpen')}</ToneBadge>}
-                      {detail.team_name && <TeamBadge teamId={detail.team_id} teamName={detail.team_name} />}
+                      {detail.team_name && <TeamBadge wrap teamId={detail.team_id} teamName={detail.team_name} />}
                     </span>
                   </MetaRow>
                 )}

@@ -1355,7 +1355,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
             meta={(
               <>
                 <Badge variant="secondary" className="h-6 font-mono">{isoWeekLabel(report.report_year, report.week_no)}</Badge>
-                <TeamBadge teamId={report.team_id} teamName={String(teamLabel(report.team_id) ?? '')} />
+                <TeamBadge wrap teamId={report.team_id} teamName={String(teamLabel(report.team_id) ?? '')} />
                 <WeeklyStatusBadge status={report.status} sentAt={report.sent_at} />
                 <SaveState editable={editable} dirty={dirty} busy={busy} lastAutoSave={lastAutoSave} conflict={conflict} />
               </>

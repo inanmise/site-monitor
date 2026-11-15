@@ -11,7 +11,7 @@
 //    FAILED sınıfları (`data-outcome`), başarısızda ham durum "teknik ayrıntı"da.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
-import { VIEWPORTS, json, pathIs, checkLayout, expectInViewport, audit, settle } from './support/layoutAudit.js'
+import { VIEWPORTS, json, pathIs, checkLayout, expectInViewport } from './support/layoutAudit.js'
 
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const toast = (page, re) => page.locator('[data-sonner-toast]').filter({ hasText: re })
@@ -47,8 +47,9 @@ async function generalRoutes(page, { scoped = false } = {}) {
     puts.push(body)
     const v = body.values || {}
     if (v[K.max] != null && Number(v[K.max]) < 20) {
-      return json({ success: false, code: 'VALIDATION_FAILED', field: K.max, fields: { [K.max]: 'x' },
-        error: 'Maximum threads must be at least the core thread count (20) — enter 20 or more.' }, 400)(route)
+      // Sunucu gövdesi (GlobalExceptionHandler.FieldValidationException): `field` + `fields` aynı iletiyi taşır
+      const msg = 'Maximum threads must be at least the core thread count (20) — enter 20 or more.'
+      return json({ success: false, code: 'VALIDATION_FAILED', field: K.max, fields: { [K.max]: msg }, error: msg }, 400)(route)
     }
     items = items.map((it) => (it.key in v ? { ...it, value: v[it.key] } : it))
     return json({ success: true, message: 'Settings saved — applied live.', data: items })(route)
@@ -118,32 +119,6 @@ const openClass = async (page, cls) => {
   await expect(trigger).toHaveAttribute('aria-expanded', 'true')
 }
 
-// BİLİNEN ÜRÜN BULGULARI (2026-11-15 prod kapısı raporunda; düzeltilene dek yalnız BU öğeler muaf — liste yalnız küçülür).
-// Her muafiyet eşleşmesi `[known-bug …]` satırıyla test çıktısına yazılır:
-//  - PolicyRow hızlı seçim çipleri (Button size xs, 36×24 px) ve satır aç/kapa oku (icon-sm, 32 px) dokunmatikte 40 px'e
-//    büyümüyor;
-//  - Haftalık e-posta arşiv tablosunun "Görüntüle" düğmeleri (Button size sm) dokunmatikte 32 px;
-//  - PolicyRow ölçüm kümesi (satır / boyut / aralık / silinebilir) 1280 dizüstünde xl ızgarasına sığmıyor, satırın
-//    `overflow-hidden` kabında kesiliyor (içerik sütunu ~750 px < ızgara asgarisi ~780 px);
-//  - test alıcı kutuları (SMTP, haftalık, envanter raporu) telefonda `flex-col` içinde `flex-1` → 31 px yükseklik;
-//  - NativeSelect dokunmatikte 36 px (shadcn tabanında `pointer-coarse:h-10` yok) — envanter raporu zamanlama seçicileri;
-//  - Haftalık e-posta takım seçicisi (SearchableSelect, `wrapLabels` yok) uzun takım adını `truncate` ile kesiyor.
-const RET_SMALL_OK = [/policy-row.*"(30|90|180|365|730)"$/, /policy-row>button \d+×\d+ "(activity_log|port_checks|monitor_check_jobs)"$/]
-const HISTORY_VIEW_SMALL = /table-cell>button \d+×\d+ "View — /
-const RET_CLIP_OK = [/\[ancestor \(div\[policy-row\]/]
-const TEST_INPUT_SMALL = (name) => new RegExp('^input\\[input\\].*"' + name + '"$')
-const NATIVE_SELECT_SMALL = /^select\[native-select\]/
-const PICKER_CLIP = /searchable-select>popover-trigger \[own box\]/
-
-/** checkLayout + bilinen bulguya uyan muaf öğeleri çıktıya yazar (rapor için kanıt). */
-async function checkLayoutNoting(page, label, rootSel, opts = {}) {
-  await settle(page)
-  const m = await page.evaluate(audit, rootSel)
-  for (const c of m.clipped) if ((opts.allowClip || []).some((re) => re.test(c))) console.log(`[known-bug clip] ${label}: ${c}`)
-  for (const c of m.small) if ((opts.allowSmall || []).some((re) => re.test(c))) console.log(`[known-bug small] ${label}: ${c}`)
-  await checkLayout(page, label, rootSel, opts)
-}
-
 // ── Haftalık erişilebilirlik / envanter raporu ────────────────────────────────────────────────────────────────────────
 const OUTCOMES = [
   { cls: 'sent', status: 'SENT', success: true },
@@ -179,16 +154,30 @@ for (const vp of VIEWPORTS) {
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(toast(page, /Settings saved — applied live/)).toBeVisible()
 
-      // 2) Sunucu 400 VALIDATION_FAILED → metin görünür, değişiklik korunur (yeniden denenebilir)
-      await root.locator(`[data-setting-key="${K.max}"] input`).fill('10')
+      // 2) Sunucu 400 VALIDATION_FAILED (`field` = ayar anahtarı) → metin ALANIN ALTINDA (aria-invalid, aria-describedby),
+      //    tost da var; değişiklik korunur (yeniden denenebilir); alan düzenlenince kendi hatası kalkar
+      const maxBox = root.locator(`[data-setting-key="${K.max}"]`)
+      const maxInput = maxBox.locator('input')
+      await maxInput.fill('10')
       await bar.getByRole('button', { name: /^\s*(Save|Kaydet)$/ }).click()
       await expect.poll(() => puts.length).toBe(2)
       expect(puts[1]).toEqual({ values: { [K.max]: '10' } })
       await expect(toast(page, /Maximum threads must be at least the core thread count/)).toBeVisible()
+      await expect(maxBox.locator(`[data-field="${K.max}"]`)).toHaveAttribute('data-invalid', 'true')
+      await expect(maxBox).toContainText('Maximum threads must be at least the core thread count (20)')
+      await expect(maxInput).toHaveAttribute('aria-invalid', 'true')
+      const describedBy = await maxInput.getAttribute('aria-describedby')
+      expect(describedBy, 'hata metni alana bağlı').toBeTruthy()
+      const errText = await page.evaluate((ids) => ids.split(/\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' '), describedBy)
+      expect(errText).toContain('Maximum threads must be at least the core thread count')
       await expect(bar).toHaveAttribute('data-dirty', 'true')
-      await expect(root.locator(`[data-setting-key="${K.max}"] input`)).toHaveValue('10')
+      await expect(maxInput).toHaveValue('10')
+      await checkLayout(page, `general server field error@${vp.name}`, ROOT_GENERAL)
+      await maxInput.fill('11')
+      await expect(maxBox).not.toContainText('Maximum threads must be at least the core thread count (20)')
+      await expect(maxInput).not.toHaveAttribute('aria-invalid', 'true')
       await bar.getByRole('button', { name: /Discard|Vazgeç/ }).click()
-      await expect(root.locator(`[data-setting-key="${K.max}"] input`)).toHaveValue('50')
+      await expect(maxInput).toHaveValue('50')
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
 
       // 3) Ortam adı biçim hatası: hata alanın ALTINDA, kayıt isteği gitmez
@@ -255,7 +244,7 @@ for (const vp of VIEWPORTS) {
       await expect(row).toHaveAttribute('data-changed', 'true')
       const sticky = root.locator('[data-slot="retention-sticky-bar"]')
       await expect(sticky).toContainText(/1 pending changes|1 bekleyen/)
-      await checkLayoutNoting(page, `retention dirty@${vp.name}`, ROOT_RET, { allowSmall: RET_SMALL_OK, allowClip: RET_CLIP_OK })
+      await checkLayout(page, `retention dirty@${vp.name}`, ROOT_RET)
       await sticky.getByRole('button', { name: /Review and save|Gözden geçir/ }).click()
       const review = page.locator('[data-slot="retention-review"]')
       await expect(review).toHaveAttribute('data-tone', 'danger')
@@ -299,7 +288,7 @@ for (const vp of VIEWPORTS) {
       expect(state.puts[2]).toEqual({ values: { [HOLD_KEY]: 'true' } })
       await expect(root.locator('[data-testid="ret-hold-banner"]')).toBeVisible()
       await expect(root.getByRole('button', { name: /^(Purge now|Şimdi temizle)$/ })).toBeDisabled()
-      await checkLayoutNoting(page, `retention hold@${vp.name}`, ROOT_RET, { allowSmall: RET_SMALL_OK, allowClip: RET_CLIP_OK })
+      await checkLayout(page, `retention hold@${vp.name}`, ROOT_RET)
       await page.screenshot({ path: `test-results/settings-retention-${vp.name}.png`, fullPage: false })
     })
 
@@ -333,7 +322,7 @@ for (const vp of VIEWPORTS) {
       await send.click()
       await expect.poll(() => sends.length).toBe(2)
       await expect(root).toContainText('The mail server refused the connection')
-      await checkLayoutNoting(page, `smtp@${vp.name}`, '[data-testid="smtp-settings"]', { allowSmall: [TEST_INPUT_SMALL('Recipient email address')] })
+      await checkLayout(page, `smtp@${vp.name}`, '[data-testid="smtp-settings"]')
     })
 
     test('Weekly availability test send: SENT / QUEUED / SKIPPED / NO_RECIPIENT / FAILED classes', async ({ page }) => {
@@ -371,8 +360,7 @@ for (const vp of VIEWPORTS) {
       }
       expect(sends).toHaveLength(5)
       expect(sends[0]).toEqual({ teamId: '1', email: 'ops@example.com' })
-      await checkLayoutNoting(page, `weeklyavail@${vp.name}`, '[data-testid="weeklyavail-settings"]',
-        { allowClip: [PICKER_CLIP], allowSmall: [TEST_INPUT_SMALL('Send test email'), HISTORY_VIEW_SMALL] })
+      await checkLayout(page, `weeklyavail@${vp.name}`, '[data-testid="weeklyavail-settings"]')
     })
 
     test('Certificate inventory report "Send now": outcome classes from data.outcome', async ({ page }) => {
@@ -408,8 +396,7 @@ for (const vp of VIEWPORTS) {
       }
       expect(runs).toBe(5)
       await expect(root.locator('[data-testid="cir-history"] [data-status="failed"]')).toBeVisible()
-      await checkLayoutNoting(page, `certinvreport@${vp.name}`, '[data-testid="certinv-report-settings"]',
-        { allowSmall: [NATIVE_SELECT_SMALL, TEST_INPUT_SMALL('Send test')] })
+      await checkLayout(page, `certinvreport@${vp.name}`, '[data-testid="certinv-report-settings"]')
     })
   })
 }

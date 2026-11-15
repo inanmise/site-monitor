@@ -26,7 +26,9 @@ export default function NotFoundQuickLinks({ onNavigate, headingId }) {
               onClick={onNavigate ? (e) => { e.preventDefault(); onNavigate(tab) } : undefined}>
               <ItemMedia variant="icon"><Icon /></ItemMedia>
               <ItemContent className="min-w-0">
-                <ItemTitle className="truncate">{t(labelKey)}</ItemTitle>
+                {/* Başlık KESİLMEZ, sarar: `w-fit` + `truncate` 768'de üç sütunlu ızgarada "Monitoring Overview"ı kartın dışına
+                    taşırıyordu (2026-11-15, yayın öncesi e2e B) */}
+                <ItemTitle className="w-auto min-w-0 [overflow-wrap:anywhere]">{t(labelKey)}</ItemTitle>
                 <ItemDescription className="line-clamp-none">{t(descKey)}</ItemDescription>
               </ItemContent>
               <ItemActions className="sm:hidden"><ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" /></ItemActions>

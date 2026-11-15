@@ -241,3 +241,25 @@ test.describe('mweb süpürmesi — tablet menü öğeleri', () => {
     await check(page, 'görünümler menüsü@tablet', '[role="menu"]')
   })
 })
+
+// Telefon menü çekmecesi TEK Escape ile kapanır (2026-11-15, yayın öncesi e2e B bulgu 31): çekmece açılınca odak ilk menü
+// düğmesine gelir; o düğmenin (yalnız daraltılmış masaüstünde anlamlı) ipucu odakla açılıp GÖRÜNMEZ bir katman olarak
+// duruyor, ilk Escape'i yutuyordu (shadcn/sidebar.jsx SidebarMenuButton — gizliyken ipucu denetimli kapalı).
+test.describe('mweb süpürmesi — telefon menü çekmecesi', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  test('tek Escape çekmeceyi kapatır; gizli ipucu katmanı yok', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/?tab=monitoring')
+    const trigger = page.locator('[data-slot="mobile-top-bar"] [data-sidebar="trigger"]')
+    const sheet = page.locator('[data-slot="sidebar"][data-mobile="true"]')
+    for (const how of ['tap', 'keyboard']) {
+      if (how === 'tap') await trigger.tap({ timeout: 20_000 })
+      else { await trigger.focus(); await page.keyboard.press('Enter') }
+      await expect(sheet).toBeVisible()
+      await page.waitForTimeout(400)   // açılış geçişi + odak
+      expect(await page.locator('[data-slot="tooltip-content"], [role="tooltip"]').count(), `${how}: gizli ipucu katmanı`).toBe(0)
+      await page.keyboard.press('Escape')
+      await expect(sheet, `${how}: tek Escape`).toBeHidden()
+    }
+  })
+})
