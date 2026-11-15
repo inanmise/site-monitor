@@ -420,6 +420,53 @@ class DomainCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: izlemenin alan adı düzenlenince eski alan adının satırı taban DEĞİL — sahte DOMAINMON_CHANGED (olası hijack) açılmaz; yeni satır kendi alan adını taşır")
+    void domainEdited_oldDomainRowIsNotBaseline() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        Map<String, Object> now = new HashMap<>(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        now.put("registrar", "Other Registrar");
+        now.put("nameservers", List.of("ns1.other.org"));
+        when(rdap.lookup(eq("example.net"), any())).thenReturn(now);
+        // Son zamanlanmış satır ESKİ alan adının (example.com) — farklı registrar ve ad sunucusu
+        com.sitemonitor.model.DomainCheck old = row("ns1.example.com", null);
+        old.setCheckedDomain("example.com");
+        when(checkRepo.findLatestScheduledWithData(anyLong())).thenReturn(java.util.Optional.of(old));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(21L); m.setDomain("example.net");
+
+        Map<String, Object> r = svc.check(m);
+
+        assertThat(r.get("changed")).as("başka alan adının satırıyla karşılaştırma yapılmaz").isEqualTo(false);
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainCheck.class);
+        org.mockito.Mockito.verify(checkRepo).save(saved.capture());
+        assertThat(saved.getValue().getChanged()).isFalse();
+        assertThat(saved.getValue().getChangeState()).isNull();
+        assertThat(saved.getValue().getCheckedDomain()).isEqualTo("example.net");
+    }
+
+    @Test
+    @DisplayName("2026-11-15: AYNI alan adının satırı (büyük/küçük harf farkı dahil) ve eski satır (checked_domain NULL) yine taban — gerçek değişiklik algılanır")
+    void sameDomainOrLegacyRow_stillBaseline() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        Map<String, Object> now = new HashMap<>(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        now.put("nameservers", List.of("ns9.evil.org"));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(now);
+        com.sitemonitor.model.DomainCheck same = row("ns1.example.com", null);
+        same.setCheckedDomain("EXAMPLE.com");
+        com.sitemonitor.model.DomainCheck legacy = row("ns1.example.com", null);   // checked_domain NULL
+        when(checkRepo.findLatestScheduledWithData(anyLong()))
+                .thenReturn(java.util.Optional.of(same), java.util.Optional.of(legacy));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(22L); m.setDomain("example.com");
+
+        assertThat(svc.check(m).get("changed")).isEqualTo(true);
+        assertThat(svc.check(m).get("changed")).isEqualTo(true);
+    }
+
+    @Test
     @DisplayName("D-b10: elle kontrol değişikliği YANITTA gösterir ama satıra changed=false yazar — aynı değişiklik geçmişte iki kez 'değişti' olmaz")
     void manualCheck_showsChange_butPersistsUnchanged() {
         lenient().when(whois.anySourceEnabled()).thenReturn(false);

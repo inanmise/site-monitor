@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   addDays, blacklistEntriesOf, dayDiff, eppListOf, intervalHours, locksOf, nextStepsOf, planBlockOf, rawJsonOf, rawRecordOf,
-  relativeDays, timelineOf, todayKey,
+  relativeDays, sameExpiryDay, timelineOf, todayKey,
 } from '../components/domain/detail/domainDetailModel.js'
 import { localDayKey } from '../utils/localDay.js'
 import { blacklistOf } from '../components/domain/domainCardModel.js'
@@ -9,6 +9,17 @@ import { blacklistOf } from '../components/domain/domainCardModel.js'
 // Tarihler BUGÜNE göre kurulur (kayan pencereye karşı sabit tarih = zaman bombası); saat dilimi bağımsız.
 const TODAY = todayKey()
 const day = (n) => addDays(TODAY, n)
+
+describe('domainDetailModel — sameExpiryDay (hatırlatma serisi kimliği, 2026-11-15)', () => {
+  it('RDAP damgası ve WHOIS tarihi aynı gün; farklı gün, boş değer ve ISO olmayan değer', () => {
+    expect(sameExpiryDay('2026-12-01T04:00:00Z', '2026-12-01')).toBe(true)
+    expect(sameExpiryDay('2026-12-01', '2026-12-01T23:59:59.000Z')).toBe(true)
+    expect(sameExpiryDay('2026-12-01T04:00:00Z', '2026-12-02')).toBe(false)
+    expect(sameExpiryDay(null, '2026-12-01')).toBe(false)
+    expect(sameExpiryDay('2026-12-01', '')).toBe(false)
+    expect(sameExpiryDay('14-Aug-2025', '14-Aug-2025')).toBe(true)
+  })
+})
 
 describe('domainDetailModel — gün aritmetiği', () => {
   it('addDays / dayDiff yerel gün anahtarında simetrik; bozuk anahtar null', () => {

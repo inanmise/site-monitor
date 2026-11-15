@@ -139,6 +139,9 @@ const STATUS_TEXT = {
   up: 'text-success', warn: 'text-amber-700 dark:text-amber-400', down: 'text-destructive', unknown: 'text-muted-foreground',
 }
 
+/** Sunucunun alanın altına yazılan doğrulama hataları (MonitoringController updateDomain / applyDomainFields, 2026-11-15). */
+const SERVER_FIELDS = ['domain', 'thresholdsCsv']
+
 /** Varsayılan takım listesi KARARLI (2026-11-06, PF4 O2): prop verilmezse her çizimde yeni `[]` kart ızgarası belleğini bozardı. */
 const NO_TEAMS = Object.freeze([])
 export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
@@ -416,6 +419,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         ? await api.monitoring.createDomainMonitor(payload)
         : await api.monitoring.updateDomainMonitor(modal.id, payload)
       await load(); setSaving(false)
+      // Sunucunun alan hatası alanın ALTINDA (2026-11-15): geçersiz / mükerrer alan adı ve bozuk hatırlatma eşikleri.
+      if (!res?.success && SERVER_FIELDS.includes(res?.field) && res?.error) { fe.check({ [res.field]: res.error }); return }
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       noc.done(res.data?.id)
       // Sunucu alan adini KAYITLI alan adina (eTLD+1) indirger: kayit bilgisi bir HOST'a degil
@@ -888,10 +893,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} type="number" min="1" value={form.criticalDays} disabled={routingLock}
             onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} />}
         </FormField>
-        <FormField full label={t('dom.thresholds')} hint={t('dom.thresholdsHint')}>
+        <FormField full label={t('dom.thresholds')} hint={t('dom.thresholdsHint')} {...fe.fieldProps('thresholdsCsv')}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.thresholdsCsv} placeholder="60,30,14,7,3,1"
-              onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} />
+              onChange={e => { setForm(f => ({ ...f, thresholdsCsv: e.target.value })); fe.clear('thresholdsCsv') }} />
           )}
         </FormField>
         <FormField full label={t('dom.checkTimeout')} hint={t('dom.checkTimeoutHint')}>

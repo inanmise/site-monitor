@@ -21,7 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { WHOIS_PROVIDER_LABEL, dnssecOf, fmtExpiry, nsOf, sourceTag } from '../domainCardModel.js'
 import {
-  blacklistEntriesOf, eppListOf, fmtClock, locksOf, rawJsonOf, relativeDays, sourceFamily, timelineOf,
+  blacklistEntriesOf, eppListOf, fmtClock, locksOf, rawJsonOf, relativeDays, sameExpiryDay, sourceFamily, timelineOf,
 } from './domainDetailModel.js'
 
 /**
@@ -404,7 +404,7 @@ function RemindersSection({ d, rem, remError, remPager }) {
         <div data-slot="domain-reminders" className="flex min-w-0 flex-col gap-3">
           <ul aria-label={t('domdet.remThresholds')} className="m-0 flex min-w-0 list-none flex-wrap gap-2 p-0">
             {(rem.thresholds || []).map((th) => {
-              const hit = items.find((x) => x.threshold_days === th && x.expiry_date === d.expiry_date)
+              const hit = items.find((x) => x.threshold_days === th && sameExpiryDay(x.expiry_date, d.expiry_date))
               const cls = hit ? remClass(hit.status) : (d.days_remaining != null && d.days_remaining <= th ? 'due' : 'pending')
               const state = hit ? `${t('dreg.remStatus_' + hit.status)} · ${formatDateSec(hit.sent_at)}`
                 : cls === 'due' ? t('domdet.remDue') : t('dreg.remPending')
@@ -435,9 +435,11 @@ function RemindersSection({ d, rem, remError, remPager }) {
                       <p className="tabular-nums">
                         {formatDateSec(x.sent_at)} · {t('dreg.remRow', x.threshold_days, x.days_remaining ?? '—')} · <span className="font-medium">{t('dreg.remStatus_' + x.status)}</span>
                       </p>
-                      {(x.recipients || x.push_queued != null) && (
+                      {(x.recipients || x.recipient_count > 0 || x.push_queued != null) && (
                         <Why>
-                          {x.recipients ? `→ ${x.recipients}` : ''}{x.recipients && x.push_queued != null ? ' · ' : ''}{x.push_queued != null ? `push ${x.push_queued}` : ''}
+                          {x.recipients ? `→ ${x.recipients}`
+                            : x.recipient_count > 0 ? t('dreg.remRecipientsHidden', x.recipient_count) : ''}
+                          {(x.recipients || x.recipient_count > 0) && x.push_queued != null ? ' · ' : ''}{x.push_queued != null ? `push ${x.push_queued}` : ''}
                         </Why>
                       )}
                     </div>

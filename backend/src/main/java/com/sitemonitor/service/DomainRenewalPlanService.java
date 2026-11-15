@@ -77,7 +77,10 @@ public class DomainRenewalPlanService {
             if (expiry == null || expiry.isBlank()) return false;
             String base = m.getRenewalPlannedExpiry();
             if (base == null || base.isBlank()) return false;   // kıyas tabanı yok (plan bitiş bilinmeden konmuş) → elle kapatılır
-            if (expiry.compareTo(base) <= 0) return false;      // ISO sözlük sırası = zaman sırası (aynı biçim)
+            // Bitiş GÜNÜ karşılaştırılır (2026-11-15): taban WHOIS'ten "2026-12-01", kontrol RDAP'tan "2026-12-01T04:00:00Z"
+            // gelince ham metin sözlük sırasında "sonra" sayılıyor, AYNI bitiş "yenileme tespit edildi" diye planı kapatıyordu.
+            String day = DomainNames.expiryDay(expiry), baseDay = DomainNames.expiryDay(base);
+            if (day.compareTo(baseDay) <= 0) return false;      // ISO gün sözlük sırası = zaman sırası
             Map<String, Object> before = snapshot(m);
             String plannedAt = m.getRenewalPlannedAt();
             clear(m);

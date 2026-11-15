@@ -199,6 +199,13 @@ public class DomainCheckerService {
             var prevOpt = manual
                     ? checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(monitorId, "NONE")
                     : checkRepo.findLatestScheduledWithData(monitorId);
+            // Taban BAŞKA bir alan adının satırıysa (izlemenin alan adı düzenlendi) karşılaştırma yok (2026-11-15): eski alan
+            // adının registrar / ad sunucusu farkı "olası hijack" DOMAINMON_CHANGED alarmı açıyordu (elle kapanır). Sonraki tur
+            // bu satırı taban alır. checked_domain NULL = eski satır → bugünkü kural.
+            if (prevOpt.isPresent() && prevOpt.get().getCheckedDomain() != null
+                    && !prevOpt.get().getCheckedDomain().equalsIgnoreCase(reg)) {
+                prevOpt = java.util.Optional.empty();
+            }
             if (prevOpt.isPresent()) {
                 DomainCheck prev = prevOpt.get();
                 StringBuilder ch = new StringBuilder();
@@ -280,6 +287,7 @@ public class DomainCheckerService {
         try {
             DomainCheck dc = new DomainCheck();
             dc.setMonitorId(monitorId);
+            dc.setCheckedDomain(out.get("domain") instanceof String d ? d : null);   // değişiklik tabanının kimliği (2026-11-15)
             dc.setSource((String) out.get("source"));
             dc.setWhoisProvider((String) out.get("whois_provider"));
             dc.setStatus((String) out.get("status"));

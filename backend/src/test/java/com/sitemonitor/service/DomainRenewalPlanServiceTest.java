@@ -99,4 +99,19 @@ class DomainRenewalPlanServiceTest {
         // Plansız izleme: hiçbir şey olmaz
         assertThat(svc.onCheckResult(monitor(), renewed)).isFalse();
     }
+
+    @Test
+    @DisplayName("2026-11-15: taban WHOIS tarihi, kontrol RDAP damgası (AYNI bitiş) → plan kapanmaz; gerçek yenileme yine kapatır")
+    void onCheckResult_sourceFlipSameDay_keepsPlan() {
+        DomainMonitor m = monitor();
+        svc.plan(m, "2026-10-15", "n", "2026-11-22", session());                          // taban WHOIS yedeğinden
+        Map<String, Object> rdapSame = new HashMap<>(Map.of("expiry_date", "2026-11-22T04:00:00Z"));
+        assertThat(svc.onCheckResult(m, rdapSame)).isFalse();
+        assertThat(m.getRenewalPlannedAt()).isEqualTo("2026-10-15");
+        verify(activityLog, never()).recordLifecycle(any(), any(), any(), any(), any(), eq("RENEWAL_DETECTED"), any(), any());
+
+        Map<String, Object> renewed = new HashMap<>(Map.of("expiry_date", "2027-11-22T04:00:00Z"));
+        assertThat(svc.onCheckResult(m, renewed)).isTrue();
+        assertThat(m.getRenewalPlannedAt()).isNull();
+    }
 }

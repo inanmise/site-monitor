@@ -10,6 +10,7 @@ vi.mock('../utils/exportInventory.js', () => ({
 }))
 
 import { exportDomainsCsv } from '../utils/exportDomains.js'
+import { localDayKey } from '../utils/localDay.js'
 
 const t = (k, ...a) => k + (a.length ? '(' + a.join(',') + ')' : '')
 
@@ -54,6 +55,26 @@ describe('exportDomainsCsv', () => {
     expect(a).toHaveLength(head.length)
     expect(a.slice(-2)).toEqual(['dom.on', 'Hafta Sonu Vardiyası'])
     expect(b.slice(-2)).toEqual(['dom.off', ''])
+  })
+
+  it('2026-11-15: alarm seviyesi KOD değil ekran dilinde; kara liste sayısı kanıttan ("?" değil); bitiş kartın YEREL günü', async () => {
+    const tr = (k) => ({ 'notify.level.HIGH': 'Yüksek', 'dom.blListed': 'Listede ({n} liste)' })[k] ?? k
+    exportDomainsCsv([{
+      domain: 'a.example.com', status: 'WARNING', active_alarm: true, alarm_level: 'HIGH',
+      blacklist_status: 'LISTED', blacklist_detail: 'zen.spamhaus.org=192.0.2.1 → 127.0.0.2; bl.spamcop.net=192.0.2.1',
+      expiry_date: '2027-03-15T23:59:59Z',
+    }, {
+      domain: 'b.example.com', status: 'OK', active_alarm: true, alarm_level: 'ODD', blacklist_status: 'LISTED',
+    }], tr)
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(await captured.blob.arrayBuffer()))
+    const [, a, b] = text.split('\r\n')
+    expect(a).toContain('Yüksek')
+    expect(a).not.toMatch(/(^|,)HIGH(,|$)/)
+    expect(a).toContain('Listede (2 liste)')
+    expect(a).not.toContain('?')
+    expect(a.split(',')[6]).toBe(localDayKey('2027-03-15T23:59:59Z'))   // kartla aynı gün (fmtExpiry / expiryKey)
+    expect(b).toContain('ODD')              // bilinmeyen kod olduğu gibi
+    expect(b).toContain('Listede (? liste)')   // kanıt yoksa "?" kalır
   })
 
   it('boş liste: 0 döner ve dosya üretmez', () => {

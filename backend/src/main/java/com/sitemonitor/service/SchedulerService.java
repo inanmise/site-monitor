@@ -1451,6 +1451,8 @@ public class SchedulerService {
         patch("ALTER TABLE uptime_checks ADD COLUMN failure_detail TEXT");
         patch("ALTER TABLE domain_checks ADD COLUMN failure_reason VARCHAR(48)");
         patch("ALTER TABLE domain_checks ADD COLUMN failure_detail TEXT");
+        // Alan adı düzenlenince eski alan adının satırı değişiklik tabanı olmasın (2026-11-15, DomainCheck.checkedDomain).
+        patch("ALTER TABLE domain_checks ADD COLUMN checked_domain VARCHAR(255)");
         // Sertifika geçmişi: checker'ın hesaplayıp attığı aşama + çözümlenen IP'ler (yalnız hatalı kontrolde dolu).
         patch("ALTER TABLE certificate_checks ADD COLUMN error_stage VARCHAR(32)");
         patch("ALTER TABLE certificate_checks ADD COLUMN resolved_ips TEXT");

@@ -3,6 +3,7 @@ import { drawBrandHeader } from './pdfBrand.js'
 import { csvCell } from './csv.js'
 import { eppLabel } from './domainEpp.js'
 import { registerRobotoFont, triggerDownload, dateStamp } from './exportInventory.js'
+import { localDayKey } from './localDay.js'
 
 /**
  * Alan Adı Süre Bitişi listesi dışa aktarımı (2026-09-22, denetim madde D) — envanter dışa aktarımıyla aynı desen
@@ -13,11 +14,24 @@ import { registerRobotoFont, triggerDownload, dateStamp } from './exportInventor
 const lockLabel = (v, t) => v === 'BOTH' ? t('dom.lockBoth') : v === 'SERVER' ? t('dom.lockServer')
   : v === 'CLIENT' ? t('dom.lockClient') : v === 'NONE' ? t('dom.lockNone') : t('dom.lockUnknown')
 const dnssecLabel = (v, t) => v === 'signed' ? t('dreg.dnssecSigned') : v === 'unsigned' ? t('dreg.dnssecUnsigned') : t('dreg.dnssecUnknown')
-const blLabel = (v, t) => v === 'CLEAN' ? t('dom.blClean') : v === 'LISTED' ? t('dom.blListed').replace('{n}', '?')
+// Liste sayısı kanıttan (2026-11-15): eskiden "{n}" yerine "?" yazılıyordu ("Listede (? liste)"). Kanıt `;` / satır sonu
+// ayraçlı (DnsblCheckerService; kart modelinin blacklistOf kuralı); okunamazsa "?" kalır.
+const blListCount = (detail) => String(detail || '').split(/;|\r?\n/).map((x) => x.trim()).filter(Boolean).length
+const blLabel = (v, t, detail) => v === 'CLEAN' ? t('dom.blClean')
+  : v === 'LISTED' ? t('dom.blListed').replace('{n}', blListCount(detail) || '?')
   : v === 'SKIPPED' ? t('dom.blSkipped') : t('dom.blUnknown')
+/** Alarm seviyesi KOD değil ekran dilinde (2026-11-15): "CRITICAL" yerine "Kritik"; bilinmeyen kod olduğu gibi. */
+const levelLabel = (level, t) => {
+  if (!level) return null
+  const k = `notify.level.${level}`
+  const v = t(k)
+  return v && v !== k ? v : level
+}
 const statusLabel = (s, t) => s === 'OK' ? t('dom.stOk') : s === 'WARNING' ? t('dom.stWarning') : s === 'CRITICAL' ? t('dom.stCritical') : t('dom.stUnknown')
 const list = (v) => Array.isArray(v) ? v : String(v || '').split(',').map(x => x.trim()).filter(Boolean)
-const day = (iso) => (iso ? String(iso).substring(0, 10) : '')
+// Kartın gösterdiği YEREL gün (2026-11-15): RDAP "…T23:59:59Z" İstanbul'da ertesi gündür; `.substring(0, 10)` dışa
+// aktarımda kartın tarihinden bir gün erken yazıyordu (domainCardModel.expiryKey ile aynı kural).
+const day = (iso) => (iso ? (localDayKey(String(iso)) || '') : '')
 
 function columns(t) {
   return [t('dom.domain'), t('dom.name'), t('dom.team'), t('dom.group'), t('dom.colStatus'), t('dom.daysLeft'), t('dom.expiry'),
@@ -33,10 +47,11 @@ export const nocGroupsCell = (ids, names = {}) => (Array.isArray(ids) ? ids : []
 function row(m, t, nocNames) {
   return [m.domain, m.name || '', m.team_name || '', m.group_name || '', statusLabel(m.status, t),
     m.days_remaining ?? '', day(m.expiry_date), day(m.registration_date), day(m.last_changed), m.registrar || '',
-    m.registrar_iana_id || '', m.source || '', lockLabel(m.transfer_lock, t), dnssecLabel(m.dnssec, t), blLabel(m.blacklist_status, t),
+    m.registrar_iana_id || '', m.source || '', lockLabel(m.transfer_lock, t), dnssecLabel(m.dnssec, t),
+    blLabel(m.blacklist_status, t, m.blacklist_detail),
     list(m.status_codes).map(eppLabel).join(' | '), list(m.nameservers).join(' | '),
     m.ns_resolves == null ? '' : (m.ns_resolves ? t('dom.on') : t('dom.off')),
-    m.active_alarm ? (m.alarm_level || t('dom.on')) : t('dom.off'),
+    m.active_alarm ? (levelLabel(m.alarm_level, t) || t('dom.on')) : t('dom.off'),
     m.checked_at ? formatDate(m.checked_at) : '',
     m.noc_notify ? t('dom.on') : t('dom.off'), nocGroupsCell(m.noc_group_ids, nocNames)]
 }
@@ -64,7 +79,8 @@ export async function exportDomainsPdf(items, t) {
   const head = [[t('dom.domain'), t('dom.team'), t('dom.colStatus'), t('dom.daysLeft'), t('dom.expiry'), t('dom.registrar'),
     t('dom.transferLock'), 'DNSSEC', t('dom.blacklist'), t('dom.source'), t('dom.lastCheck')]]
   const body = items.map(m => [m.domain, m.team_name || '', statusLabel(m.status, t), m.days_remaining ?? '—', day(m.expiry_date) || '—',
-    m.registrar || '—', lockLabel(m.transfer_lock, t), dnssecLabel(m.dnssec, t), blLabel(m.blacklist_status, t), m.source || '—',
+    m.registrar || '—', lockLabel(m.transfer_lock, t), dnssecLabel(m.dnssec, t), blLabel(m.blacklist_status, t, m.blacklist_detail),
+    m.source || '—',
     m.checked_at ? formatDate(m.checked_at) : '—'])
   autoTable(doc, {
     head, body, startY: y, margin: { left: MARGIN, right: MARGIN },

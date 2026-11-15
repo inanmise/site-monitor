@@ -11,6 +11,12 @@ import java.util.List;
 
 public interface DomainExpiryReminderRepository extends JpaRepository<DomainExpiryReminder, Long> {
     boolean existsByMonitorIdAndExpiryDateAndThresholdDays(Long monitorId, String expiryDate, Integer thresholdDays);
+
+    /**
+     * Eşik satırı var mı — bitişin KİMLİK GÜNÜYLE ({@code DomainNames.expiryDay}, 2026-11-15): satır ham bitişi saklar
+     * (RDAP zaman damgası ya da WHOIS tarihi); aynı günün iki biçimi de aynı seriye sayılır.
+     */
+    boolean existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(Long monitorId, Integer thresholdDays, String expiryDay);
     List<DomainExpiryReminder> findTop50ByMonitorIdOrderBySentAtDesc(Long monitorId);
 
     /** İzleme silinince izleri de gider (yetim satır kalmasın). Yazan türetilmiş sorgu → @Transactional şart. */
