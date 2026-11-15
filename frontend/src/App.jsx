@@ -89,6 +89,7 @@ import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import { LastLoginNotice } from './components/LastLoginInfo.jsx'
+import GapsPrompt from './components/gaps/GapsPrompt.jsx'
 import { LoadingBlock, Spinner } from './components/ui/Progress.jsx'
 import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
@@ -2146,6 +2147,9 @@ export default function App() {
         <ThemePreviewBar />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />
+        {/* Giriş sonrası eksikler penceresi (2026-11-15): profil + kendi takımlarının veri kalitesi; menüden de açılır */}
+        <GapsPrompt username={user} myTeamIds={myTeamIds} manageTeamIds={manageTeamIds} globalAdmin={globalAdmin}
+          prefsSettled={prefsCtl.status === 'ready' || prefsCtl.status === 'failed'} />
         <div className="app-body">
 
           {/* Genel Bakış: sayfa başlığı + eylem çubuğu (ui/PageHeader, 2026-09-27 kullanıcı isteği). "Şimdi Kontrol Et"

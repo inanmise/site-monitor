@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import {
   ChevronsUpDown, Users, MonitorSmartphone, Settings, Bug, Lock, Compass, Sun, Moon, Languages, LogOut, BookOpenText,
-  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard, Check,
+  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard, Check, ClipboardList,
 } from 'lucide-react'
+import { openGapsDialog } from '../gaps/gapsBus.js'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { formatDate } from '../../api/client'
@@ -217,6 +218,7 @@ export default function NavUser({
                   {multiTeam && <Row icon={<Users />} onSelect={pick(onOpenTeams)}>{t('nav.myTeams', myTeams.length)}</Row>}
                   <Row icon={<MonitorSmartphone />} onSelect={pick(() => onGo('myactivity'))}>{t('dev.navLink')}</Row>
                   {isAdmin && <Row icon={<Settings />} onSelect={pick(() => onGo('settings'))}>{t('nav.settings')}</Row>}
+                  <Row icon={<ClipboardList />} onSelect={pick(openGapsDialog)} data-slot="user-menu-gaps">{t('gaps.menu')}</Row>
                   <Row icon={<Lock />} onSelect={pick(onChangePassword)}>{t('nav.changePassword')}</Row>
                 </div>
                 <div data-slot="user-menu-group" data-group="help">
@@ -289,6 +291,8 @@ export default function NavUser({
                 {/* Ayarlar: rol ADMIN — global admin VE kapsamlı müdür (2026-09-10 ürün kararı; sır yüzeyleri AdminSettings
                     içinde kilitli, backend GLOBAL_ONLY/requireNotScopedAdmin uygular). */}
                 {isAdmin && <Item icon={<Settings />} onSelect={() => onGo('settings')}>{t('nav.settings')}</Item>}
+                <Item icon={<ClipboardList />} data-slot="user-menu-gaps"
+                  onSelect={() => { openedDialog.current = true; openGapsDialog() }}>{t('gaps.menu')}</Item>
                 <Item icon={<Lock />} onSelect={onChangePassword}>{t('nav.changePassword')}</Item>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
