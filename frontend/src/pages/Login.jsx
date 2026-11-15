@@ -366,7 +366,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
               <span className="lp-footer-meta">
                 {brand('footer_text', `v${appVersion} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
               </span>
-              <Button type="button" variant="ghost" size="sm" className="lp-lang-btn" onClick={toggleLang}
+              <Button type="button" variant="ghost" size="sm" className="lp-lang-btn pointer-coarse:h-10" onClick={toggleLang}
                 disabled={!!langPending} aria-busy={langPending ? true : undefined}>
                 {langPending ? <Spinner size={16} inline label={t('nav.langLoading')} /> : <Globe />}
                 {lang === 'tr' ? 'English' : 'Türkçe'}
@@ -534,7 +534,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="lp-eye"
+                    className="lp-eye pointer-coarse:after:absolute pointer-coarse:after:-inset-1 pointer-coarse:after:content-['']"
                     onClick={() => setShowPass(p => !p)}
                     tabIndex={-1}
                     aria-label={showPass ? t('login.hidePass') : t('login.showPass')}
@@ -581,7 +581,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
               Soruyu blok yapmak konumu her genişlikte ve her dilde sabitler. */}
           <p className="lp-help">
             <span className="lp-help-text">{t('login.helpText')}</span>
-            <Button type="button" variant="link" className="lp-help-link" onClick={openHelp}>
+            <Button type="button" variant="link" className="lp-help-link relative pointer-coarse:after:absolute pointer-coarse:after:-inset-y-3 pointer-coarse:after:content-['']" onClick={openHelp}>
               {t('login.helpLink')}
             </Button>
           </p>

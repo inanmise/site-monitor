@@ -58,7 +58,7 @@ export default function AdviceCard({ item, t, text, codeLabel, shared, plan, onO
 
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <Button type="button" variant="link" data-slot="rn-domain" title={t('renewal.openCert')}
-              className="h-auto min-w-0 shrink justify-start p-0 text-left text-base font-semibold [overflow-wrap:anywhere] whitespace-normal text-foreground hover:text-primary"
+              className="h-auto min-w-0 shrink justify-start p-0 text-left text-base font-semibold [overflow-wrap:anywhere] whitespace-normal text-foreground hover:text-primary pointer-coarse:min-h-10"
               onClick={() => onOpen(item.domain)}>
               {host}
             </Button>
@@ -84,13 +84,13 @@ export default function AdviceCard({ item, t, text, codeLabel, shared, plan, onO
               )}
               {item.group_name && (
                 <Button type="button" variant="outline" size="xs" onClick={() => onFilterGroup(item.group_name)}
-                  aria-label={t('renewal.filterBy', item.group_name)} className="h-6 rounded-full font-normal text-muted-foreground pointer-coarse:h-8">
+                  aria-label={t('renewal.filterBy', item.group_name)} className="h-6 rounded-full font-normal text-muted-foreground pointer-coarse:h-10">
                   <FolderOpen aria-hidden="true" />{item.group_name}
                 </Button>
               )}
               {tagsOf(item).map((tag) => (
                 <Button key={tag} type="button" variant="outline" size="xs" onClick={() => onFilterTag(tag)}
-                  aria-label={t('renewal.filterBy', tag)} className="h-6 rounded-full font-normal text-muted-foreground pointer-coarse:h-8">
+                  aria-label={t('renewal.filterBy', tag)} className="h-6 rounded-full font-normal text-muted-foreground pointer-coarse:h-10">
                   <Tag aria-hidden="true" />{tag}
                 </Button>
               ))}

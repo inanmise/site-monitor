@@ -149,8 +149,9 @@ function SingleContext({ ctx, nowMs }) {
       <div className="flex min-w-0 items-start gap-2.5">
         <AlertTypeIcon type={ctx.alertType} />
         <div className="min-w-0 flex-1">
-          <p data-slot="action-note-target" title={ctx.title} className="m-0 truncate font-mono text-sm leading-snug font-semibold">{ctx.title}</p>
-          {ctx.subtitle && <p title={ctx.subtitle} className="m-0 truncate font-mono text-xs text-muted-foreground">{ctx.subtitle}</p>}
+          {/* Hedef ve alt satır KESİLMEZ, sarar (dokunmatikte title açılmaz — 2026-11-15 yayın öncesi e2e kapısı). */}
+          <p data-slot="action-note-target" title={ctx.title} className="m-0 font-mono text-sm leading-snug font-semibold [overflow-wrap:anywhere]">{ctx.title}</p>
+          {ctx.subtitle && <p title={ctx.subtitle} className="m-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{ctx.subtitle}</p>}
           <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
             <AlertLevelBadge level={ctx.level} />
             {ctx.acknowledged && <AckBadge />}

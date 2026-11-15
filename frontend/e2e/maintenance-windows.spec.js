@@ -9,22 +9,6 @@ import { test, expect } from '@playwright/test'
 import { mockApi, MONITORS } from './support/monitorMocks.js'
 import { GATE_VIEWPORTS, expectLayout, expectInViewport, json } from './support/gateChecks.js'
 
-/**
- * ÜRÜN HATALARI, raporlandı (yayın öncesi kapı 2026-11-15) — bu ölçümler kapıdan dışarıda tutulur:
- *  - İzleme seçicisinde uzun izleme adı TEK SATIRDA kesilir (`MaintenanceTargetPicker.jsx` `mtp-item-name` `truncate`).
- *  - Dokunmatikte 40 px altı: üst düğmeler Yenile / Hızlı pencere / Yeni pencere 32 px (`MaintenanceWindowsPage.jsx`
- *    size="sm"), görünüm sekmeleri 29 px (aynı dosya TabsTrigger), tablo satırı simge eylemleri 32 px
- *    (`maintenance/MaintenanceList.jsx` InlineActions size="icon-sm", tablet).
- *  - İzleme seçicisi (`monitoring/MaintenanceTargetPicker.jsx`), dokunmatikte: tür sekmeleri 34 px (`py-1.5`), izleme satırları
- *    28 px (`py-1`), "Bu türün tümünü seç" 32 px (size="sm"); telefonda (390) arama kutusu aynı satırdaki bu düğmenin yanında
- *    ~20 px genişliğe ezilir (`InputGroup className="h-8 min-w-0 flex-1"` — temel genişlik yok, satır kaydırmıyor).
- */
-const KNOWN_CLIP = [/\[mtp-item-name\]/]
-const KNOWN_SMALL = [/^button\[button\] "(Refresh|Quick window|New window)" \d+x32$/, /^button\[tabs-trigger\] "(List|Agenda|Calendar)" \d+x29$/,
-  /^button\[button\] "(Haftalık ağ bakımı|Ödeme altyapısı gece yama penc)[^"]*" 32x32$/]
-const PICKER_KNOWN_SMALL = [/^button\[tabs-trigger\] "[^"]*" \d+x34$/, /^button\[mtp-item\] "[^"]*" \d+x28$/,
-  /^button\[button\] "Select every [^"]*" \d+x32$/, /^input\[input-group-control\] "Search in this type…" \d+x40$/]
-
 const ahead = (h) => new Date(Date.now() + h * 3_600_000).toISOString().slice(0, 19)
 const WINDOWS = [
   { id: 1, name: 'Ödeme altyapısı gece yama penceresi (Kurumsal ve Bireysel Bankacılık Uçları)', description: 'Veritabanı yama penceresi — tüm ödeme uçları',
@@ -111,7 +95,7 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(dlg.locator('[data-slot="mw-targets"]')).toContainText('Select at least one monitor (or all)')
       await expect(dlg.locator('[data-slot="field"][data-invalid="true"]').filter({ hasText: 'Start time is required' })).toHaveCount(1)
       expect(sink.posts).toHaveLength(0)
-      await expectLayout(page, '[role="dialog"]', { touch: vp.touch, allowClip: KNOWN_CLIP, allowSmall: PICKER_KNOWN_SMALL, label: `bakım formu hatalar @${vp.name}` })
+      await expectLayout(page, '[role="dialog"]', { touch: vp.touch, label: `bakım formu hatalar @${vp.name}` })
 
       // Hedefli tek seferlik pencere
       await dlg.getByRole('textbox', { name: /^Name/ }).fill('Ödeme API sürüm geçişi')
@@ -147,7 +131,7 @@ for (const vp of GATE_VIEWPORTS) {
       await page.goto('/?tab=maintenance')
       const list = page.locator('[data-slot="mw-list"]')
       await expect(list.locator('[data-id="1"]')).toBeVisible({ timeout: 60_000 })
-      await expectLayout(page, '[data-slot="maintenance-page"]', { touch: vp.touch, allowSmall: KNOWN_SMALL, label: `bakım listesi @${vp.name}` })
+      await expectLayout(page, '[data-slot="maintenance-page"]', { touch: vp.touch, label: `bakım listesi @${vp.name}` })
 
       await rowAction(page, WINDOWS[0], 'Pause')
       await expect.poll(() => sink.paused).toEqual([1])

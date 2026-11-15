@@ -96,15 +96,16 @@ function AlarmTitle({ row, t }) {
     <span className="flex min-w-0 items-start gap-2">
       <AlertTypeIcon type={row.alert_type} className="mt-0.5 shrink-0" />
       <span className="flex min-w-0 flex-col gap-0.5">
-        <a href={alertHref(row)} data-slot="noc-con-alert-link" className="line-clamp-2 font-semibold text-foreground [overflow-wrap:anywhere] hover:underline"
+        {/* İzleme adı KESİLMEZ (sarar); dokunmatikte bağlantı en az 40 px yüksek (2026-11-15 yayın öncesi e2e kapısı). */}
+        <a href={alertHref(row)} data-slot="noc-con-alert-link" className="font-semibold text-foreground [overflow-wrap:anywhere] hover:underline pointer-coarse:flex pointer-coarse:min-h-10 pointer-coarse:items-center"
           title={t('noc.con.openAlert', name)} onClick={(e) => goOnPlainClick(e, 'alerthistory', { alert: String(row.id) })}>
           {name}
         </a>
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          {row.monitor?.name && row.monitor.name !== row.domain && <span className="truncate [overflow-wrap:anywhere]" title={row.domain}>{row.domain}</span>}
+          {row.monitor?.name && row.monitor.name !== row.domain && <span className="min-w-0 [overflow-wrap:anywhere]">{row.domain}</span>}
           <span>{alertTypeLabel(t, row.alert_type)}</span>
           {mon && (
-            <a href={monitorHref(row)} className="inline-flex items-center gap-0.5 text-primary hover:underline"
+            <a href={monitorHref(row)} className="inline-flex items-center gap-0.5 text-primary hover:underline pointer-coarse:min-h-10"
               onClick={(e) => goOnPlainClick(e, mon.tab, mon.params)} aria-label={t('noc.con.openMonitor', name)}>
               <ExternalLink aria-hidden="true" className="size-3" />{t('noc.con.monitor')}
             </a>

@@ -119,10 +119,14 @@ function audit(rootSel) {
       if (b.getAttribute('data-slot') === 'input-group-control') { const g = b.closest('[data-slot="input-group"]'); if (g) h = Math.max(h, g.getBoundingClientRect().height) }
       const af = getComputedStyle(b, '::after')
       if (af.position === 'absolute' && af.content !== 'none') {
+        // Mutlak konumlu ::after kutunun DOLGU kutusuna göre yerleşir (kenarlık hariç): `-inset-3` 1 px kenarlıklı 16 px
+        // onay kutusunda 14 + 24 = 38 px'tir, 40 değil (2026-11-15 — eski ölçü kenarlık kutusunu kullanıp bunu kaçırıyordu).
+        // Tarayıcı kullanılan boyu veriyorsa o, vermiyorsa dolgu kutusu + taşmalar.
         const ah = parseFloat(af.height); const aw = parseFloat(af.width)
-        if (ah > 0) h = Math.max(h, ah)
-        if (aw > 0) w = Math.max(w, aw)
-        h = Math.max(h, r.height - Math.min(0, parseFloat(af.top) || 0) - Math.min(0, parseFloat(af.bottom) || 0))
+        const padH = r.height - (parseFloat(s.borderTopWidth) || 0) - (parseFloat(s.borderBottomWidth) || 0)
+        const padW = r.width - (parseFloat(s.borderLeftWidth) || 0) - (parseFloat(s.borderRightWidth) || 0)
+        h = Math.max(h, ah > 0 ? ah : padH - Math.min(0, parseFloat(af.top) || 0) - Math.min(0, parseFloat(af.bottom) || 0))
+        w = Math.max(w, aw > 0 ? aw : padW - Math.min(0, parseFloat(af.left) || 0) - Math.min(0, parseFloat(af.right) || 0))
       }
       const iconOnly = !(b.textContent || '').trim()
       if (h < 39.5 || (iconOnly && w < 39.5)) {

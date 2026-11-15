@@ -11,15 +11,6 @@ import { test, expect } from '@playwright/test'
 import { mockApi, RENEWAL_ADVICE } from './support/monitorMocks.js'
 import { GATE_VIEWPORTS, expectLayout, expectInViewport, json } from './support/gateChecks.js'
 
-/**
- * ÜRÜN HATALARI, raporlandı (yayın öncesi kapı 2026-11-15) — dokunmatikte 40 px altı, kapıdan dışarıda tutulur:
- * grup / etiket süzgeç çipleri 32 px (`renewal/AdviceCard.jsx` `pointer-coarse:h-8`), kart başlığındaki alan adı düğmesi
- * 24 px (`rn-domain`, `h-auto p-0`; aynı eylem kartın "Sertifikayı aç" düğmesinde 40 px), tablette süzgeç tetikleri 32 px
- * (`ui/FacetedFilter.jsx`, renewal araç çubuğu).
- */
-const KNOWN_SMALL = [/^button\[button\] "Filter by [^"]*" \d+x32$/, /^button\[rn-domain\] "[^"]*" \d+x24$/,
-  /^button\[popover-trigger\] "(Reason|Team|Group|Tag)" \d+x32$/]
-
 const PERMS = { 'inventory.list': { view: true }, 'inventory.crud': { view: true, edit: true } }
 const PLAN_DOMAIN = 'auth.example.com'      // takım 1, 28 gün — hızlı seçimler bitişten önce
 const CLEAR_DOMAIN = 'm.example.com'        // takım 1, 33 gün — sunucuda kayıtlı plan
@@ -80,7 +71,7 @@ for (const vp of GATE_VIEWPORTS) {
       await page.goto('/?tab=renewal')
       const root = page.locator('[data-slot="renewal-advice"]')
       await expect(root.locator('[data-slot="rn-list"]')).toBeVisible({ timeout: 60_000 })
-      await expectLayout(page, '[data-slot="renewal-advice"]', { touch: vp.touch, allowSmall: KNOWN_SMALL, label: `yenileme listesi @${vp.name}` })
+      await expectLayout(page, '[data-slot="renewal-advice"]', { touch: vp.touch, label: `yenileme listesi @${vp.name}` })
 
       // ── Plan kaydet
       const planCard = card(page, PLAN_DOMAIN)
@@ -137,7 +128,7 @@ for (const vp of GATE_VIEWPORTS) {
       await refresh.click()
       await expect.poll(() => sink.listCalls).toBeGreaterThan(n)
       await expect(clearCard.locator('[data-slot="rn-planned"]')).toContainText('Planned for', { timeout: 15_000 })
-      await expectLayout(page, '[data-slot="renewal-advice"]', { touch: vp.touch, allowSmall: KNOWN_SMALL, label: `yenileme listesi sonrası @${vp.name}` })
+      await expectLayout(page, '[data-slot="renewal-advice"]', { touch: vp.touch, label: `yenileme listesi sonrası @${vp.name}` })
     })
 
     test('kapsamlı yönetici: plan yalnız yönettiği takımın satırında; izin yoksa hiçbirinde', async ({ page }) => {
