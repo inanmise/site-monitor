@@ -12,11 +12,12 @@ import { downloadCsv as downloadCsvFile } from '../../utils/csvExport.js'
  * sözleşmesi; indirme ortak `utils/csvExport.downloadCsv(ad, csv)` (öneri 29 — dosya aynı).
  */
 export function downloadCsv(csv, fileName) {
-  downloadCsvFile(fileName, '﻿' + csv)
+  return downloadCsvFile(fileName, '﻿' + csv)
 }
 
+/** `false` = tarayıcı indirmeyi başlatamadı (çağıran söyler — inceleme 2026-11-15). */
 export function downloadYearSummaryCsv(data, t) {
-  downloadCsv(buildYearSummaryCsv(data, t), `haftalik-yil-ozeti-${data?.year ?? ''}.csv`)
+  return downloadCsv(buildYearSummaryCsv(data, t), `haftalik-yil-ozeti-${data?.year ?? ''}.csv`)
 }
 
 /** Gizli iframe: uygulama CSS'inden bağımsız, A4 yatay tek sayfa; yazdırma bitince kaldırılır. */

@@ -8,6 +8,7 @@ import { navigateTo } from '../../utils/navigate.js'
 import { flushUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import { downloadCsv, stampedName, toCsv } from '../../utils/csvExport.js'
 import ModalShell from '../ui/ModalShell.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
@@ -186,6 +187,7 @@ function RuleSection({ rule, onGo }) {
  */
 export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
   const t = useT()
+  const toast = useToast()
   const [state, setState] = useState({ loading: true, error: null, data: null })
   const [q, setQ] = useState('')
   const [severity, setSeverity] = useState('')
@@ -221,7 +223,7 @@ export default function DataQualityTeamDetail({ teamKey, teamName, onClose }) {
 
   const exportCsv = () => {
     const [headers, ...rows] = csvRowsOf(data?.rules, t)
-    downloadCsv(stampedName(`veri-kalitesi-${unassigned ? 'sahipsiz' : (head.id ?? 'takim')}`), toCsv(headers, rows))
+    if (downloadCsv(stampedName(`veri-kalitesi-${unassigned ? 'sahipsiz' : (head.id ?? 'takim')}`), toCsv(headers, rows)) === false) toast.error(t('inv.downloadFailed'))
   }
 
   // Önem süzgeci: her seçenek kusurlu KURAL sayısını taşır (ör. "Yüksek (2)") — hangi düğmenin boş olduğu görünür.

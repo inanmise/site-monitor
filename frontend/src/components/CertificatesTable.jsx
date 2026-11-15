@@ -226,7 +226,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   })
 
   function download(name, csv) {
-    downloadCsv(name, '﻿' + csv)   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29, dosya aynı)
+    if (downloadCsv(name, '﻿' + csv) === false) toast.error(t('inv.downloadFailed'))   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29)
   }
   async function copyRowLink(domain) {
     const u = new URL(window.location.href)

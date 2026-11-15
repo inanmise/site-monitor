@@ -8490,6 +8490,7 @@ export const EN = {
   'ubd.apply': 'Deactivate {0} users',
   'ubd.applying': 'Deactivating…',
   'ubd.listChanged': 'The list has changed — {0} users match the criteria now. Refresh the preview and confirm again.',
+  'ubd.resultUnknown': 'The result is unknown: the operation may have completed on the server. The recent bulk operations list was reloaded — check it there before trying again.',
   'ubd.refreshPreview': 'Refresh preview',
   'ubd.result.title': 'Operation complete',
   'ubd.result.partial': 'Operation complete; some users couldn’t be deactivated',
@@ -9680,6 +9681,7 @@ export const EN = {
   'sml.resendTitle': 'Resend email',
   'sml.resendConfirm': 'The same content will be sent again to {0}: "{1}". A new log entry is created and the action is audited. Continue?',
   'sml.resendOk': 'Resent (log #{0})',
+  'sml.resendUnknown': 'The result is unknown: the connection ended before the server answered, so the email may already have been sent. The send log was reloaded — check it for a new delivery row before resending.',
   'sml.resendFailed': 'The email couldn’t be resent (status: {0}). Open the delivery record for details, check the SMTP settings and try again.',
   'sml.resendReason.NOT_FAILED': 'Only failed deliveries can be resent',
   'sml.resendReason.ALERT_RESOLVED': 'The alert is resolved — a stale warning will not be sent',
@@ -12202,6 +12204,7 @@ export const EN = {
   'wr.resend':           'Resend',
   'wr.resendConfirm':    'The approved report will be re-sent to the manager (CC: team); no re-approval is needed. Continue?',
   'wr.resendOk':         'Report re-sent to the manager',
+  'wr.resultUnknown':   'The result is unknown: the connection ended before the server answered, so the action may have completed. The report was reloaded — check its status and mail history before trying again.',
   'wr.actionFailed':     'The weekly report action couldn’t be completed; the report’s status may have changed. Reload the page and try again.',
   'wr.uploadImage':      'Upload Image',
   'wr.uploading':        'Uploading…',
@@ -19562,7 +19565,7 @@ export const EN = {
   'help.set.site.monitor.scripted.manual-cooldown-seconds':
     'What it does: The minimum wait between manual runs of a saved scenario.\nBenefit: Repeated clicking cannot fill the k6 pool and delay the scheduled runs.\nRecommended: 20 seconds (the default), or 60 for long-running scripts.',
   'help.set.site.monitor.scripted.manual-wait-seconds':
-    'What it does: How long the interface waits for a manual run before letting it continue in the background. Queuing is kept 5 seconds shorter than this: if the k6 pool\'s share for manual checks does not free up in time, the check is not run and the interface says so straight away.\nBenefit: A long scenario does not lock up the browser; the result appears in the list when it is ready.\nRecommended: 25 seconds (the default). Keep it below your proxy\'s timeout.',
+    'What it does: How long the interface waits for a manual run before letting it continue in the background. Queuing is kept 5 seconds shorter than this: if the k6 pool\'s share for manual checks does not free up in time, the check is not run and the interface says so straight away.\nBenefit: A long scenario does not lock up the browser; the result appears in the list when it is ready.\nRecommended: 25 seconds (the default). Allowed: 1–90 seconds (the browser stops waiting at 120 seconds). Keep it below your proxy\'s timeout.',
   'help.set.site.monitor.scripted.max-procs':
     'What it does: Limits how many processor cores the k6 subprocess may use (the Go runtime\'s GOMAXPROCS).\nBenefit: A single scenario cannot claim every core and slow the other checks down.\nRecommended: 1 (the default). Zero or an empty value removes the limit, which is not advisable on a single pod.',
   'help.set.site.monitor.scripted.max-requests-per-run':

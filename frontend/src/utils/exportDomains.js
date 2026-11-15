@@ -1,4 +1,5 @@
 import { formatDate } from '../api/client'
+import { importWithDeadline } from './importWithDeadline.js'
 import { drawBrandHeader } from './pdfBrand.js'
 import { csvCell } from './csv.js'
 import { eppLabel } from './domainEpp.js'
@@ -65,8 +66,8 @@ export function exportDomainsCsv(items, t, nocNames = {}) {
 }
 
 export async function exportDomainsPdf(items, t) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const MARGIN = 32

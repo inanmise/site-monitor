@@ -3,6 +3,7 @@ import { ArrowLeft, ChartLine, CircleAlert, Download, Info, ListFilter, Radio, R
 import { api } from '../../../api/client'
 import { useLanguage, useT } from '../../../i18n/index.jsx'
 import PageHeader from '../../ui/PageHeader.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import SearchableSelect from '../../ui/SearchableSelect.jsx'
@@ -393,6 +394,7 @@ function InactiveBadge({ className }) {
 /** Bir alanın kartı: başlık + CSV, çizgi grafiği + anahtar, ay × kanal tablosu ya da kanal kartları. */
 function FieldPanel({ field, data, lang, onOpenReport }) {
   const t = useT()
+  const toast = useToast()
   const uid = useId()
   const [showHidden, setShowHidden] = useState(false)
   const [wrapRef, width] = useElementWidth()
@@ -403,7 +405,7 @@ function FieldPanel({ field, data, lang, onOpenReport }) {
 
   function exportCsv() {
     const { headers, rows } = csvTable(data, field, lang, t('te.an.colMonth'), t('te.an.csvInactive'))
-    downloadCsv(csvFileName(field, data?.months), toCsv(headers, rows))
+    if (downloadCsv(csvFileName(field, data?.months), toCsv(headers, rows)) === false) toast.error(t('inv.downloadFailed'))
   }
 
   return (

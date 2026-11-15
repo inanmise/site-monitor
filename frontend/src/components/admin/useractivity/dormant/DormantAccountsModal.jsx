@@ -3,6 +3,7 @@ import { Download, ExternalLink, ListChecks, RefreshCw, SearchX, ShieldAlert, Us
 import { useT } from '../../../../i18n/index.jsx'
 import { formatDateSec } from '../../../../api/client'
 import ModalShell from '../../../ui/ModalShell.jsx'
+import { useToast } from '../../../ui/Toast.jsx'
 import PaginationBar from '../../../ui/PaginationBar.jsx'
 import StatusBlock from '../../../ui/StatusBlock.jsx'
 import AlertBanner from '../../../ui/AlertBanner.jsx'
@@ -49,6 +50,7 @@ export default function DormantAccountsModal({
   data, error = false, isAdmin = false, globalAdmin = false, refreshing = false, onClose, onUser, onRefresh,
 }) {
   const t = useT()
+  const toast = useToast()
   const width = useViewportWidth()
   const wide = width >= WIDE_MIN
   const phone = width < PHONE_MAX
@@ -102,7 +104,7 @@ export default function DormantAccountsModal({
         '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]')}
       footer={<div className="flex w-full gap-2 sm:w-auto">
         <Button type="button" variant="secondary" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} disabled={!rows.length}
-          data-slot="dormant-export" onClick={() => downloadCsv(stampedName('dormant-accounts'), dormantCsv(rows, t))}>
+          data-slot="dormant-export" onClick={() => { if (downloadCsv(stampedName('dormant-accounts'), dormantCsv(rows, t)) === false) toast.error(t('inv.downloadFailed')) }}>
           <Download size={14} aria-hidden="true" /> <span className="truncate">{t('dorm.export')}</span>
         </Button>
         <Button type="button" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} onClick={onClose}>{t('app.dismiss')}</Button>

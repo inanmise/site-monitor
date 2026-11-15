@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline, isImportTimeout } from '../../utils/importWithDeadline.js'
 import {
   AlertTriangle, Atom, CalendarClock, CircleHelp, Download, FileSpreadsheet, FileText, Hash, Hourglass, Layers, RefreshCw,
   ScanSearch, ShieldCheck, ShieldX, Sheet,
@@ -102,7 +103,7 @@ export default function CryptoInventoryView() {
     if (!data || busy) return
     setBusy(kind)
     try {
-      const mod = await import('./cryptoInventoryExport.js')
+      const mod = await importWithDeadline(() => import('./cryptoInventoryExport.js'))
       let n
       if (kind === 'pdf') n = await mod.exportCryptoPdf(data, visible, filters, t, teamName)
       else if (kind === 'xlsx') n = mod.exportCryptoXlsx(data, visible, filters, t, teamName)
@@ -110,8 +111,9 @@ export default function CryptoInventoryView() {
       toast.success(t('cinv.exportDone', n))
       // Düzenleyici iz (CRYPTO_INVENTORY_EXPORT) — en iyi çaba, indirmeyi engellemez
       Promise.resolve(api.cryptoInventory.auditExport({ format: kind, rows: n, filtered })).catch(() => { /* iz yazılamadı */ })
-    } catch {
-      toast.error(t('cinv.exportFailed'))
+    } catch (e) {
+      // Özgül metin (inceleme 2026-11-15): parça süre sınırında inmedi / tarayıcı indirmeyi başlatmadı
+      toast.error(isImportTimeout(e) ? e.message : e?.code === 'DOWNLOAD_FAILED' ? t('inv.downloadFailed') : t('cinv.exportFailed'))
     } finally {
       setBusy(null)
     }

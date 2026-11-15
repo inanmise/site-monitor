@@ -211,6 +211,39 @@ describe('BulkDeactivateWizard', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it.each([
+    ['ağ geçidi 504', () => api.admin.bulkDeactivate.mockResolvedValueOnce({ success: false, status: 504, error: 'Ağ geçidi zaman aşımı' })],
+    ['durum 0 (istemci zaman aşımı)', () => api.admin.bulkDeactivate.mockResolvedValueOnce({ success: false, status: 0, code: 'REQUEST_TIMEOUT', error: 'Zaman aşımı' })],
+    ['502 (künyeden)', () => api.admin.bulkDeactivate.mockResolvedValueOnce(Object.defineProperty({ success: false, error: 'Bad gateway' },
+      'errorInfo', { value: { status: 502 }, enumerable: false }))],
+    ['ağ kopması (istisna)', () => api.admin.bulkDeactivate.mockRejectedValueOnce(Object.assign(new Error('Sunucuya ulaşılamadı'), { status: 0, code: 'NETWORK_ERROR' }))],
+  ])('sonuç bilinmiyor (%s): "sonuç bilinmiyor" notu + geçmiş yeniden okunur ve onay adımında gösterilir (inceleme 2026-11-15)', async (_n, arrange) => {
+    arrange()
+    api.admin.bulkOperations
+      .mockResolvedValueOnce({ success: true, data: { operations: [] } })
+      .mockResolvedValueOnce({ success: true, data: { operations: [
+        { id: 77, status: 'DONE', created_at: '2026-11-15T10:00:00Z', actor: 'ADMIN1', ok_count: 3, criteria: { scope: 'all' }, can_undo: true },
+      ] } })
+    renderWizard()
+    await toConfirm()
+    fireEvent.change(within(dialog()).getByLabelText(/Onaylamak için 3 yazın|Type 3 to confirm/), { target: { value: '3' } })
+    fireEvent.click(btn(/3 kullanıcıyı pasife al|Deactivate 3 users/))
+    await waitFor(() => expect(dialog().querySelector('[data-slot="ubd-result-unknown"]')).not.toBeNull())
+    await waitFor(() => expect(api.admin.bulkOperations).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(dialog().querySelector('[data-slot="ubd-error"] [data-slot="ubd-history"] [data-op="77"]')).not.toBeNull())
+  })
+
+  it('kesin ret (400) "sonuç bilinmiyor" demez, geçmişi yeniden okumaz', async () => {
+    api.admin.bulkDeactivate.mockResolvedValueOnce({ success: false, status: 400, code: 'VALIDATION_FAILED', error: 'Geçersiz ölçüt' })
+    renderWizard()
+    await toConfirm()
+    fireEvent.change(within(dialog()).getByLabelText(/Onaylamak için 3 yazın|Type 3 to confirm/), { target: { value: '3' } })
+    fireEvent.click(btn(/3 kullanıcıyı pasife al|Deactivate 3 users/))
+    expect(await within(dialog()).findByText('Geçersiz ölçüt')).toBeInTheDocument()
+    expect(dialog().querySelector('[data-slot="ubd-result-unknown"]')).toBeNull()
+    expect(api.admin.bulkOperations).toHaveBeenCalledTimes(1)
+  })
+
   it('409 liste değişti: mesaj + "Önizlemeyi yenile" → önizleme yeniden alınır, onay metni sıfırlanır', async () => {
     api.admin.bulkDeactivate.mockResolvedValueOnce({ success: false, code: 'BULK_LIST_CHANGED', current_count: 4, error: 'Liste değişti' })
     renderWizard()

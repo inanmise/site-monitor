@@ -4,6 +4,7 @@ import { INVENTORY_FLAGS } from './inventoryFlags.js'
 import { csvCell } from './csv.js'
 import { downloadBlob } from './csvExport.js'
 import { timedFetch } from './timedFetch.js'
+import { importWithDeadline } from './importWithDeadline.js'
 
 
 const teamName = (id, teams) =>
@@ -176,11 +177,11 @@ export async function registerRobotoFont(doc) {
 
 /* ── PDF — per-domain detail (mirrors show modal) ─────────── */
 export async function exportInventoryPdf(items, teams, t) {
-  const { jsPDF } = await import('jspdf')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
   // autotable v5 ARTIK eklenti DEĞİL: doc.autoTable(...) metodu kaldırıldı, tablo
   // fonksiyona dokümanı vererek çizilir. Yükseltmenin sebebi jspdf 2.x/3.x zincirindeki
   // kritik + yüksek CVE'lerdi (npm audit prod bağımlılıklarında 3 bulgu veriyordu).
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   // Embed Roboto with Latin Extended (covers Turkish glyphs ş ğ ç ö ü ı İ)

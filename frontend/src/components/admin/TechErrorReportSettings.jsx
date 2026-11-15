@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import {
   CheckCircle2, ChevronDown, CircleAlert, Download, ExternalLink, EyeOff, FileClock, FileSpreadsheet, FileText, FileWarning, Landmark,
   MailWarning, Radio, RefreshCw, Search, Users, X,
@@ -483,7 +484,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
 let xlsxWriterPromise = null
 function loadXlsxWriter() {
   if (!xlsxWriterPromise) {
-    xlsxWriterPromise = import('../../utils/xlsxWriter.js').catch((e) => { xlsxWriterPromise = null; throw e })
+    // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği menüyü / düğmeyi sonsuza dek meşgul bırakmaz
+    xlsxWriterPromise = importWithDeadline(() => import('../../utils/xlsxWriter.js')).catch((e) => { xlsxWriterPromise = null; throw e })
   }
   return xlsxWriterPromise
 }

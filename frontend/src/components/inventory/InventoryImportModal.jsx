@@ -65,7 +65,7 @@ export default function InventoryImportModal({ onClose, onDone }) {
   }
   function downloadTemplate() {
     // BOM'lu UTF-8; ortak indirme (utils/csvExport \u2014 \u00F6neri 29, dosya ayn\u0131)
-    downloadCsv('site-monitor-inventory-template.csv', '\uFEFF' + importTemplateCsv())
+    if (downloadCsv('site-monitor-inventory-template.csv', '\uFEFF' + importTemplateCsv()) === false) setError(t('inv.downloadFailed'))
   }
 
   const rows = result?.rows || plan?.rows || []

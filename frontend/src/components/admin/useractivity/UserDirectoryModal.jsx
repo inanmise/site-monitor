@@ -135,7 +135,7 @@ export default function UserDirectoryModal({ data, initial = {}, isAdmin, global
       // Altlık telefonda da TEK satır (iki tam genişlik düğme alt alta listeye ~50 px daha az yer bırakıyordu).
       footer={<div className="flex w-full gap-2 sm:w-auto">
         <Button type="button" variant="secondary" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} disabled={!rows.length}
-          onClick={() => downloadCsv(stampedName('users'), directoryCsv(rows, t))}>
+          onClick={() => { if (downloadCsv(stampedName('users'), directoryCsv(rows, t)) === false) toast.error(t('inv.downloadFailed')) }}>
           <Download size={14} aria-hidden="true" /> <span className="truncate">{t('uact.exportDirectory')}</span>
         </Button>
         <Button type="button" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} onClick={onClose}>{t('app.dismiss')}</Button>

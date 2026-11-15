@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * HAFTALIK RAPOR ONAY AKIŞI — uygulamanın en büyük dosyası (1600+ satır, 13 yazma ucu) ve buraya
@@ -123,6 +125,23 @@ describe('WeeklyReportsPage — onay akışı', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: /^Approve$|^Onayla$/i }))[0])
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
+    expect(toastMock.success).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['ağ geçidi 504', () => api.weeklyReports.approve.mockResolvedValue({ success: false, status: 504, error: 'Ağ geçidi zaman aşımı' })],
+    ['istemci zaman aşımı', () => api.weeklyReports.approve.mockResolvedValue({ success: false, status: 0, code: 'REQUEST_TIMEOUT', error: 'Zaman aşımı' })],
+    ['ağ kopması', () => api.weeklyReports.approve.mockRejectedValue(Object.assign(new Error('Sunucuya ulaşılamadı'), { status: 0, code: 'NETWORK_ERROR' }))],
+  ])('approve sonucu bilinmiyor (%s): "kontrol edin" metni + rapor ve liste yeniden okunur (inceleme 2026-11-15)', async (_n, arrange) => {
+    arrange()
+    await openReport()
+    const getBefore = api.weeklyReports.get.mock.calls.length
+    const listBefore = api.weeklyReports.list.mock.calls.length
+    fireEvent.click((await screen.findAllByRole('button', { name: /^Approve$|^Onayla$/i }))[0])
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
+    expect([TR['wr.resultUnknown'], EN['wr.resultUnknown']]).toContain(toastMock.error.mock.calls[0][0])
+    await waitFor(() => expect(api.weeklyReports.get.mock.calls.length).toBeGreaterThan(getBefore))
+    await waitFor(() => expect(api.weeklyReports.list.mock.calls.length).toBeGreaterThan(listBefore))
     expect(toastMock.success).not.toHaveBeenCalled()
   })
 

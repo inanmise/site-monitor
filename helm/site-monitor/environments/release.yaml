@@ -40,11 +40,11 @@ ingress:
   tls:
     enabled: true
     secretName: site-monitor-staging-tls
-  # proxy-body-size / haproxy timeout come from values.yaml (maps merge); the read timeout must stay >= 135 s like prod
+  # proxy-body-size / haproxy timeout come from values.yaml (maps merge); the read timeout must stay >= 960 s like prod
   # (reasons in values.yaml next to the same keys).
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "135"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
 
 resources:
   requests:

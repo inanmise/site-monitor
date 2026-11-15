@@ -711,7 +711,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     // Ortak kaçış: formül nötrleme + CR/LF tırnaklama (utils/csv.js). Satır sonu CRLF ve
     // başta BOM — Excel Türkçe karakterleri ancak öyle doğru açıyor (envanter dışa aktarımıyla aynı). Gövde csvRows,
     // indirme ortak downloadCsv (öneri 29 — dosya baytları ve adı aynı).
-    downloadCsv(`page-issues-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...issues.map(r => head.map(k => r[k]))]))
+    if (downloadCsv(`page-issues-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...issues.map(r => head.map(k => r[k]))])) === false) toast.error(t('inv.downloadFailed'))
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)

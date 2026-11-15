@@ -1,4 +1,5 @@
 import { formatDate } from '../../api/client'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import { downloadBlob } from '../../utils/csvExport.js'
 import { drawBrandHeader } from '../../utils/pdfBrand.js'
 import { registerRobotoFont } from '../../utils/exportInventory.js'
@@ -24,8 +25,8 @@ export function exportStatsXlsx(sheets, t) {
 
 /** Tek sayfa PDF özeti (A4 yatay): marka başlığı, özet tablosu, takım karnesi (ilk 25 satır). */
 export async function exportStatsPdf(sheets, t) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const MARGIN = 32

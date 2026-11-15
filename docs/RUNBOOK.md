@@ -558,7 +558,7 @@ indirir (`POST /api/monitoring/page/{id}/resource-scans/{scanId}/image`; Sayfa H
 `POST /api/monitoring/pagespeed/{id}/image`): **her istek izlenen siteye giden yeni bir GET'tir** (izlemenin vekil kararıyla,
 her yönlendirme adımında güvenlik kuralı). Yalnız o taramanın (ya da Sayfa Hızı ölçümünün) kaydettiği görsel adresi kabul
 edilir — başka adres 404, dışarıya istek gitmez. Sınırlar: görsel başına 25 MiB (aşan 413), toplam süre ≤ 130 sn
-(ingress / Route zaman aşımı en az 135 sn olmalı), pod başına aynı anda 4, kişi başına aynı anda 2 ve dakikada 60, hedef
+(ingress / Route / NetScaler zaman aşımı en az 960 sn olmalı — 900 sn'ye dek süren yönetim işleri için; bkz. PROD_DEPLOY_CHECKLIST "Route / NetScaler sınırları"), pod başına aynı anda 4, kişi başına aynı anda 2 ve dakikada 60, hedef
 host başına dakikada 30 (429). https → http yönlendirme izlenmez (502 `TLS_DOWNGRADE`). Başarılı her indirme
 `PAGE_RESOURCE_IMAGE_DOWNLOAD` denetim kaydı yazar. Görselin işlenmesi (küçültme, biçim) tamamen tarayıcıda yapılır;
 sunucuya dosya yüklenmez.

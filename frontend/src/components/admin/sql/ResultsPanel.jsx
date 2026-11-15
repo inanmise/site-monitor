@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { importWithDeadline } from '../../../utils/importWithDeadline.js'
 import {
   AlertOctagon, ArrowDown, ArrowUp, ArrowUpDown, BarChart3, Braces, CheckCircle2, ChevronDown, Clipboard, Columns3, Download,
   FileJson, FileSpreadsheet, GitCompare, Lock, TriangleAlert, OctagonX, Play, ScanSearch, Search, ServerCog, ShieldAlert, Sheet as SheetIcon,
@@ -179,7 +180,7 @@ export default function ResultsPanel({
   const exportFile = async (kind) => {
     if (kind === 'xlsx') {
       try {
-        const { downloadSqlExcel } = await import('./sqlExcelExport.js')
+        const { downloadSqlExcel } = await importWithDeadline(() => import('./sqlExcelExport.js'))
         if (!downloadSqlExcel(view, visibleCols, types, 'query')) { toast.error(t('sql.res.downloadFailed')); return }
       } catch (e) {
         const f = clientFailure(e, { fallback: t('sql.res.xlsxFailed'), chunk: t('te.pageUpdated') })

@@ -66,6 +66,20 @@ public class ScriptedCheckerService {
     /** Elle tetik ucunun sonucu bekleme süresi — uç ({@code MonitoringController.triggerScripted}) ile TEK anahtar. */
     public static final String MANUAL_WAIT_KEY = "site.monitor.scripted.manual-wait-seconds";
     public static final int MANUAL_WAIT_DEFAULT_SEC = 25;
+    /**
+     * {@link #MANUAL_WAIT_KEY} sınırları (2026-11-15, prod kapısı incelemesi): uç sonucu en çok bu kadar bekler. İstemci
+     * yazma isteğini 120 sn'de keser (`DEFAULT_WRITE_TIMEOUT_MS`); sınırsız değer ucun istemciden SONRA yanıt vermesine
+     * (kullanıcı "sonuç bilinmiyor" görür, koşum yine olur) yol açıyordu. Kayıtta 400, okumada kırpma
+     * ({@link AppSettingsService#getInt} — ortam değişkeni / eski kayıt da sınır içinde okunur).
+     */
+    public static final int MANUAL_WAIT_MIN_SEC = 1;
+    public static final int MANUAL_WAIT_MAX_SEC = 90;
+
+    /** Elle tetik ucunun bekleme süresi (sn), daima {@link #MANUAL_WAIT_MIN_SEC}–{@link #MANUAL_WAIT_MAX_SEC}. */
+    public static int manualWaitSeconds(AppSettingsService settings) {
+        int v = settings == null ? MANUAL_WAIT_DEFAULT_SEC : settings.getInt(MANUAL_WAIT_KEY, MANUAL_WAIT_DEFAULT_SEC);
+        return Math.max(MANUAL_WAIT_MIN_SEC, Math.min(MANUAL_WAIT_MAX_SEC, v));
+    }
     /** Elle koşumun sıra beklemesi ucun beklemesinden en az bu kadar KISA (sn) — "yürütülmedi" yanıtı uca yetişir. */
     static final int MANUAL_REPORT_MARGIN_SEC = 5;
     /** Elle koşum kotası dolu — kontrol YÜRÜTÜLMEDİ (SKIPPED); arayüz bunu i18n iletisiyle gösterir. */
@@ -997,7 +1011,7 @@ public class ScriptedCheckerService {
      * kontrolde onlarca izleme için ESKİ sonuç "yeni" sanılıyordu). Artık "yürütülmedi" yanıtı uca HER ZAMAN yetişir.
      */
     int manualQueueWaitSeconds(int timeoutSec) {
-        int endpointWait = Math.max(1, appSettings.getInt(MANUAL_WAIT_KEY, MANUAL_WAIT_DEFAULT_SEC));
+        int endpointWait = manualWaitSeconds(appSettings);
         return Math.max(0, Math.min(endpointWait - MANUAL_REPORT_MARGIN_SEC, timeoutSec + PERMIT_WAIT_MARGIN_SEC));
     }
 

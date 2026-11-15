@@ -185,7 +185,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
     } catch (e) { toast.error(e?.message || t('uact.loadError')) } finally { setAckBusy(null) }
   }
   function download(name, csv) {
-    downloadCsv(name, '﻿' + csv)   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29, dosya aynı)
+    if (downloadCsv(name, '﻿' + csv) === false) toast.error(t('inv.downloadFailed'))   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29)
     setExportOpen(false)
   }
   async function copyLink() {

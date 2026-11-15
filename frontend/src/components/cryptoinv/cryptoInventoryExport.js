@@ -1,6 +1,7 @@
 import { formatDate, formatDateSec } from '../../api/client'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import { drawBrandHeader } from '../../utils/pdfBrand.js'
-import { registerRobotoFont, triggerDownload } from '../../utils/exportInventory.js'
+import { downloadFailedError, registerRobotoFont, triggerDownload } from '../../utils/exportInventory.js'
 import { buildXlsx, XLSX_MIME } from '../../utils/xlsxWriter.js'
 import { downloadCsv, toCsv } from '../../utils/csvExport.js'
 import {
@@ -55,14 +56,14 @@ export function exportCryptoXlsx(data, rows, filters, t, teamName) {
 
 /** CSV: yalnız geçiş listesi (BOM'lu UTF-8, ortak csv kaçış/formül nötrleme). */
 export function exportCryptoCsv(rows, t) {
-  downloadCsv(exportFileName('csv'), toCsv(exportColumns(t), rows.map((r) => exportRow(r, t, FMT))))
+  if (downloadCsv(exportFileName('csv'), toCsv(exportColumns(t), rows.map((r) => exportRow(r, t, FMT)))) === false) throw downloadFailedError()
   return rows.length
 }
 
 /** PDF (A4 yatay): marka başlığı, künye (hazırlanma / veri tarihi / kapsam / süzgeç), özet, takımlar, tam liste. */
 export async function exportCryptoPdf(data, rows, filters, t, teamName) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const PAGE_W = doc.internal.pageSize.getWidth()

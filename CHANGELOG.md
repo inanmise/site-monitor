@@ -15,12 +15,22 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed (uygulama — prod kapısı 2026-11-15)
+- **⚠ Davranış:** `site.monitor.scripted.manual-wait-seconds` (elle k6 "Şimdi kontrol et" ucunun sonucu bekleme süresi)
+  artık **1–90 sn**: aralık dışı kayıt 400 alan hatası alır, aralık dışı ortam değeri / eski kayıt okunurken 90'a (ya da
+  1'e) kırpılır — tarayıcı yazma isteğini 120 sn'de keser, uç ondan önce yanıt vermeli. Varsayılan (25) değişmedi.
+
 ### Changed (chart — prod kapısı 2026-11-15)
 - **⚠ Ingress sınırları uygulamanınkinden dar değil:** `nginx.ingress.kubernetes.io/proxy-body-size` **16m** (1m'di; uygulama
-  `spring.servlet.multipart.max-request-size=12MB`), `proxy-read-timeout` **135** (60'tı; en uzun istekler ≤ 130 sn) ve
-  `haproxy.router.openshift.io/timeout: "135s"` (OpenShift Route varsayılanı 30 sn). Prod trafiği NetScaler → OpenShift:
-  elle oluşturulmuş Route'ta `oc annotate route <ad> haproxy.router.openshift.io/timeout=135s --overwrite`; NetScaler'da gövde
-  ≥ 12 MB ve zaman aşımı ≥ 135 sn. `scripts/helm-template-check.sh` daha dar değerle render'ı reddeder.
+  `spring.servlet.multipart.max-request-size=12MB`), `proxy-read-timeout` **960** (60'tı) ve
+  `haproxy.router.openshift.io/timeout: "960s"` (OpenShift Route varsayılanı 30 sn). En uzun istekler, istemcinin 900 sn'ye dek
+  beklediği yönetim işleridir: gizli anahtar yeniden şifreleme (sunucu bütçesi 8 dk), toplu kullanıcı pasifleştirme (≤ 5000
+  kişi), elle saklama koşusu, yönetici özeti gönderimi / testi, envanter içe aktarımı, takım LDAP eşitlemesi; canlı kontroller
+  ≤ 420 sn (port HTTP "Test" ≤ 360 sn, k6 testi ≤ 210 sn), SQL Playground dışa aktarımı ≤ 600 sn, rapor PDF'leri ≤ 300 sn.
+  Prod trafiği NetScaler → OpenShift: elle oluşturulmuş Route'ta
+  `oc annotate route <ad> haproxy.router.openshift.io/timeout=960s --overwrite`; NetScaler'da uygulamanın sanal sunucusunda
+  gövde ≥ 12 MB ve boşta / yanıt zaman aşımı ≥ 960 sn — daha kısa sınır bu akışları keser (sunucu işi bitirir, arayüz "sonuç
+  bilinmiyor" der). `scripts/helm-template-check.sh` daha dar değerle render'ı reddeder.
 - **⚠ Davranış (yalnız chart):** `postgresql.enabled=true` artık `helm template`'i durdurur — paketli PostgreSQL alt chart'ı
   kaldırılmıştı ve bu değer var olmayan bir `DB_HOST`'a işaret ediyordu (hiçbir ortam kullanmıyordu). Bütün ortamlar
   dış veritabanı kullanır (`config.dbHost` …); `pg_stat_statements` dış sunucuda DBA işidir.
@@ -52,7 +62,7 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   bulduğu görselin özgün baytlarını indirir (`POST /api/monitoring/page/{id}/resource-scans/{scanId}/image`; 20.205.0'dan
   beri Sayfa Hızı için `POST /api/monitoring/pagespeed/{id}/image`).
   - **⚠ Dış trafik:** her indirme izlenen siteye yeni bir GET'tir (≤ 25 MiB, toplam ≤ 130 sn, pod başına aynı anda 4, kişi
-    başına 2 ve dakikada 60, hedef host başına dakikada 30). Ingress / Route zaman aşımı ≥ 135 sn olmalı (aşağıda chart notu).
+    başına 2 ve dakikada 60, hedef host başına dakikada 30). Ingress / Route / NetScaler zaman aşımı ≥ 960 sn olmalı (yukarıda chart notu).
 - **Tüm site taraması (20.202.0, "Tüm siteyi tara").**
   - **⚠ Dış trafik:** bir koşu hedef siteye en çok 2500 sayfa / 150 dk / 7500 MB / 75 000 nesne indirir (2026-11-15'te 1000 /
     60 dk / 3000 MB / 30 000'den yükseltildi); önce `robots.txt`

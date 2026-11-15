@@ -30,7 +30,9 @@ import static org.assertj.core.api.Assertions.*;
         "site.monitor.executor.max-size=50",
         "site.monitor.executor.queue-capacity=5000",
         // Aralık dışı ortam değeri (teknik hata raporu onay hatırlatması 1–14): kayıtlı varsayılanın onu ezdiğini gösterir
-        "site.monitor.tech-error-report.approval-reminder-days=40"
+        "site.monitor.tech-error-report.approval-reminder-days=40",
+        // Aralık dışı ortam değeri (elle k6 sonuç beklemesi 1–90 sn): OKUMADA kırpılır (prod kapısı incelemesi 2026-11-15)
+        "site.monitor.scripted.manual-wait-seconds=500"
 })
 class AppSettingsServiceTest {
 
@@ -215,6 +217,30 @@ class AppSettingsServiceTest {
         assertThat(service.getInt("site.monitor.domain.recovery-interval-ms", -1)).isZero();
         service.save(values("site.monitor.domain.recovery-interval-ms", "120000"), "admin");
         assertThat(service.getInt("site.monitor.domain.recovery-interval-ms", -1)).isEqualTo(120000);
+    }
+
+    @Test
+    @DisplayName("elle k6 sonuç beklemesi: kayıtta 1–90 dışı 400 (alan hatası); okumada aralık dışı ortam değeri 90'a kırpılır")
+    void scriptedManualWait_boundsAndReadClamp() {
+        String key = ScriptedCheckerService.MANUAL_WAIT_KEY;
+        // Ortam değeri 500 → okuyan her yer (anahtarı doğrudan okuyan tetik ucu dahil) 90 görür: uç istemcinin 120 sn'lik
+        // yazma sınırından önce yanıt verir
+        assertThat(service.getInt(key, 25)).isEqualTo(ScriptedCheckerService.MANUAL_WAIT_MAX_SEC);
+        assertThat(ScriptedCheckerService.manualWaitSeconds(service)).isEqualTo(90);
+        for (String bad : new String[]{"0", "-5", "91", "600"}) {
+            assertThatThrownBy(() -> service.save(values(key, bad), "admin"))
+                    .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class)
+                    .hasMessageContaining("90");
+        }
+        assertThat(repo.findBySettingKey(key)).isEmpty();
+        service.save(values(key, "90"), "admin");
+        assertThat(service.getInt(key, -1)).isEqualTo(90);
+        service.save(values(key, "1"), "admin");
+        assertThat(service.getInt(key, -1)).isEqualTo(1);
+        service.save(values(key, "30"), "admin");
+        assertThat(service.getInt(key, -1)).isEqualTo(30);
+        // Başka bir tam sayı anahtarı kırpılmaz (kırpma yalnız listedeki anahtarlarda)
+        assertThat(service.getInt("site.monitor.tech-error-report.approval-reminder-days", -1)).isGreaterThan(0);
     }
 
     @Test

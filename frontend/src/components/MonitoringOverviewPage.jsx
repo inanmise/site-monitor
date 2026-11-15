@@ -8,6 +8,7 @@ import { useUserPrefs } from '../hooks/useUserPrefs.js'
 import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
 import SavedViewsMenu from './ui/SavedViewsMenu.jsx'
 import { useT, useDateLocale } from '../i18n/index.jsx'
+import { useToast } from './ui/Toast.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
@@ -122,6 +123,7 @@ function OverviewSkeleton({ label }) {
 
 export default function MonitoringOverviewPage() {
   const t = useT()
+  const toast = useToast()
   const locale = useDateLocale()
   const phone = useIsMobile()
   const listTitleId = useId()
@@ -310,7 +312,7 @@ export default function MonitoringOverviewPage() {
     const csv = overviewCsv(filtered, { t, locale,
       typeLabel: (k) => (TYPE_META[k] ? t(TYPE_META[k].labelKey) : k),
       statusLabel: (k) => t((STATUS_META[k] ?? STATUS_META.unknown).labelKey) })
-    downloadCsv(stampedName(t('mo.csv.file')), csv)
+    if (downloadCsv(stampedName(t('mo.csv.file')), csv) === false) toast.error(t('inv.downloadFailed'))
   }
 
   const kpiTip = (label) => t('mo.kpi.openSummary', label)

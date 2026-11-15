@@ -43,6 +43,8 @@ export function stampedName(base) {
  * downloadCsv'nin gövdesi (karakterizasyon testi) DEĞİŞMEDİ.
  */
 export function downloadText(filename, text, type = 'text/plain;charset=utf-8') {
+  // Dönüş (2026-11-15, prod kapısı incelemesi): indirme başlatıldıysa true, başlatılamadıysa false — çağıran başarı
+  // bildirimi göstermez, hatayı söyler (postmortem Markdown'ı, şema diyagramı SVG'si)
   try {
     const blob = new Blob([text], { type })
     const url = URL.createObjectURL(blob)
@@ -53,7 +55,10 @@ export function downloadText(filename, text, type = 'text/plain;charset=utf-8') 
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch { /* indirme ortamı yok */ }
+    return true
+  } catch {
+    return false   // indirme ortamı yok
+  }
 }
 
 /**

@@ -9,17 +9,26 @@ import { join, relative, sep } from 'node:path'
  *   <li>`timeoutMs: 0` YASAK — eskiden "sınırsız" demekti; artık `request()` sıfırı yönteme göre varsayılana çevirir, ama
  *       kaynakta görünmesi okuyanı yanıltır. Uzun süren uç sonlu, AÇIK bir değer verir (api/client.js LIVE_CHECK / REPORT /
  *       LONG_JOB / SQL_EXPORT sabitleri).</li>
- *   <li>Ham `fetch(` çağrısı YALNIZ bir sinyal (`signal`) taşıyorsa geçer — sinyal bir son tarihle bağlanmış olmalı
- *       (`utils/timedFetch.js` `timedFetch` / `deadlineSignal`, ya da kendi zamanlayıcılı AbortController). Gövdesi okunan
- *       her ham çağrı `timedFetch` kullanır (son tarih gövde okunana dek sürer).</li>
+ *   <li>Ham `fetch(` çağrısı — `window.fetch(`, `globalThis.fetch(`, `self.fetch(` ve basit takma adlar (`const f = fetch`)
+ *       dahil — YALNIZ son tarihli bir sinyalle geçer (inceleme 2026-11-15: yalnız `signal` kelimesi yetmez): çağrı
+ *       `raceSignal(` ile sarılıdır ya da sinyali `deadlineSignal(` / `timedFetch(` / `AbortSignal.timeout(` kaynaklıdır
+ *       (doğrudan argümanda ya da aynı dosyada o sinyali üreten tanımda). Gövdesi okunan her ham çağrı `timedFetch`
+ *       kullanır (son tarih gövde okunana dek sürer).</li>
  *   <li>`new XMLHttpRequest` yalnız `api/client.js`'te (yükleme taşıyıcısı — `request()`'in son tarih sinyalini dinler).</li>
+ *   <li>Bileşen / yardımcı dosyada çıplak `await import(` YASAK (inceleme 2026-11-15): asılı bir parça isteği düğmeyi
+ *       sonsuza dek meşgul bırakırdı. `utils/importWithDeadline.js` `importWithDeadline(() => import('…'))` kullanılır
+ *       (`import(` kaynakta kalır — tembel parça kapıları onu görür). React.lazy bileşen yüklemeleri kapsam dışı.</li>
  * </ol>
  *
  * <p>`ALLOWED` gerekçeli istisna listesidir ve YALNIZ küçülebilir: listedeki bir yer düzeltilince test bunu söyler, satır silinir.
  */
 const ROOT = join(process.cwd(), 'src')
 const ALLOWED = {
-  // dosya (src'ye göre, '/' ayırıcı) → izin verilen ihlal sayısı (gerekçe yorumda). Şu an istisna YOK.
+  // dosya (src'ye göre, '/' ayırıcı) → izin verilen ihlal sayısı (gerekçe yorumda).
+  // Görsel motorunun "bayat paket mi" HEAD denetimi (bundleGone): kendi 5 sn zamanlayıcılı AbortController'ı + finally'de
+  // clearTimeout. Motorun kamu arayüzü yalnız hafif modüllerini statik içe aktarabilir (lazyChunks kapısı) — timedFetch
+  // alınamaz; AbortSignal.timeout eski Safari'de yok. Süre sınırı VAR, kapı yalnız kaynağını tanıyamıyor.
+  'utils/imageEngine/index.js': 1,
 }
 
 function walk(dir, out = []) {
@@ -126,50 +135,101 @@ function callArgs(src, openIdx) {
   return src.slice(openIdx, end)
 }
 
+const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** Son tarihli sinyal kaynakları — doğrudan argümanda ya da sinyali üreten tanımda geçmeli. */
+const DEADLINE_SOURCE = /\b(?:deadlineSignal|timedFetch|raceSignal)\s*\(|\bAbortSignal\s*\.\s*timeout\s*\(/
+
+/**
+ * `fetch` çağrısının sinyali son tarihli mi: çağrı `raceSignal(` ile sarılı; ya da argümanda son tarih kaynağı var; ya da
+ * argümandaki `signal` değerinin kök tanımlayıcısı (`dl.signal` → `dl`, `{ signal }` → `signal`) aynı dosyada son tarih
+ * kaynağından üretilir (`const dl = deadlineSignal(…)`, `const { signal } = deadlineSignal(…)`). Doğrusal tarama (sınırlı
+ * pencereler; tanım araması tanımlayıcı başına tek geçiş).
+ */
+function deadlineBound(src, callStart, args) {
+  if (/\braceSignal\s*\(\s*$/.test(src.slice(Math.max(0, callStart - 40), callStart))) return true
+  if (DEADLINE_SOURCE.test(args)) return true
+  const roots = []
+  for (const m of args.matchAll(/\bsignal\s*:\s*([A-Za-z_$][\w$]*)/g)) roots.push(m[1])
+  if (/[{,]\s*signal\s*[,}]/.test(args)) roots.push('signal')
+  return roots.some((id) => {
+    const name = esc(id)
+    const direct = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*=\\s*(?:await\\s+)?([^\\n;]{0,200})`, 'g')
+    for (const d of src.matchAll(direct)) if (DEADLINE_SOURCE.test(d[1])) return true
+    const destr = new RegExp(`\\b(?:const|let|var)\\s*\\{[^}\\n]{0,200}\\b${name}\\b[^}\\n]{0,200}\\}\\s*=\\s*(?:await\\s+)?([^\\n;]{0,200})`, 'g')
+    for (const d of src.matchAll(destr)) if (DEADLINE_SOURCE.test(d[1])) return true
+    return false
+  })
+}
+
 /** Bir kaynak metindeki ihlaller: `[{ kind, line }]`. */
 export function violations(rawSrc, file = '') {
   // Ön süzgeç: ilgili simge geçmeyen dosya (ör. büyük sözlükler) taranmaz
-  if (!/fetch|timeoutMs|XMLHttpRequest/.test(rawSrc)) return []
+  if (!/fetch|timeoutMs|XMLHttpRequest|await\s+import/.test(rawSrc)) return []
   const src = codeOnly(rawSrc)
   const out = []
   const lineOf = (idx) => src.slice(0, idx).split('\n').length
   for (const m of src.matchAll(/timeoutMs\s*:\s*0(?![\d_.xXbBoOeE])/g)) out.push({ kind: 'timeoutMs: 0', line: lineOf(m.index) })
-  for (const m of src.matchAll(/(^|[^.\w$])fetch\s*\(/g)) {
+  // Ham fetch adları: fetch, window. / globalThis. / self.fetch ve basit takma adlar (`const f = fetch`, `= window.fetch`)
+  const aliases = [...src.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:(?:window|globalThis|self)\s*\.\s*)?fetch\b(?!\s*\()/g)]
+    .map((m) => m[1]).filter((n) => n !== 'fetch')
+  const names = ['fetch', ...new Set(aliases)].map(esc).join('|')
+  const callRe = new RegExp(`(^|[^.\\w$])((?:(?:window|globalThis|self)\\s*\\.\\s*)?(?:${names})\\s*\\()`, 'g')
+  for (const m of src.matchAll(callRe)) {
+    const callStart = m.index + m[1].length
     const open = m.index + m[0].length - 1
-    if (!/\bsignal\b/.test(callArgs(src, open))) out.push({ kind: 'fetch( sinyalsiz', line: lineOf(open) })
+    const args = callArgs(src, open)
+    if (!/\bsignal\b/.test(args)) out.push({ kind: 'fetch( sinyalsiz', line: lineOf(open) })
+    else if (!deadlineBound(src, callStart, args)) out.push({ kind: 'fetch( son tarihsiz sinyal', line: lineOf(open) })
   }
   if (!file.endsWith('api/client.js')) {
     for (const m of src.matchAll(/new\s+XMLHttpRequest\b/g)) out.push({ kind: 'XMLHttpRequest', line: lineOf(m.index) })
   }
-  return out
+  for (const m of src.matchAll(/\bawait\s+import\s*\(/g)) out.push({ kind: 'await import( süresiz', line: lineOf(m.index) })
+  return out.sort((a, b) => a.line - b.line)
 }
 
 describe('zaman aşımı kapısı (kaynak tarama)', () => {
-  it('kendini sınar: sıfır süre, sinyalsiz fetch ve XHR yakalanır; yorum içi ve sinyalli çağrı geçer', () => {
+  it('kendini sınar: sıfır süre, sinyalsiz / son tarihsiz fetch, takma adlar, XHR ve çıplak await import( yakalanır', () => {
     const bad = [
       "request('/x', { timeoutMs: 0 })",
       "const r = await fetch('/api/a')",
       "fetch(url, { method: 'POST', body })",
       'const x = new XMLHttpRequest()',
+      "window.fetch('/w')",
+      "globalThis.fetch(u, { signal: caller })",
+      "self.fetch(u)",
+      'const ac = new AbortController()',
+      "await fetch(u, { signal: ac.signal })",
+      'const f = fetch',
+      "f('/alias')",
+      "const mod = await import('./x.js')",
     ].join('\n')
-    expect(violations(bad, 'src/x.js').map((v) => v.kind)).toEqual(['timeoutMs: 0', 'fetch( sinyalsiz', 'fetch( sinyalsiz', 'XMLHttpRequest'])
+    expect(violations(bad, 'src/x.js').map((v) => v.kind)).toEqual(['timeoutMs: 0', 'fetch( sinyalsiz', 'fetch( sinyalsiz',
+      'XMLHttpRequest', 'fetch( sinyalsiz', 'fetch( son tarihsiz sinyal', 'fetch( sinyalsiz', 'fetch( son tarihsiz sinyal',
+      'fetch( sinyalsiz', 'await import( süresiz'])
     const good = [
-      '// fetch(\'/api/eski\') ve timeoutMs: 0 yorumda',
+      "// fetch('/api/eski') ve timeoutMs: 0 yorumda; await import('./y')",
       '/* fetch(url) */',
       "request('/x', { timeoutMs: 20_000 })",
-      "await fetch(u, { signal: ac.signal })",
+      'const dl = deadlineSignal(null, 3000)',
+      "await fetch(u, { signal: dl.signal })",
+      'const { signal, done } = deadlineSignal(caller, 5000)',
+      "await window.fetch(u, { signal })",
+      "await raceSignal(fetch(u, { signal: sig }), sig)",
+      "fetch(u, { signal: AbortSignal.timeout(5000) })",
       'await timedFetch(u, {}, 3000)',
       'src.fetch()',
       "const s = 'fetch(' + x",
       'const re = /fetch\\(/; const t = `timeoutMs: 0 ${a}`',
-      "const d = a / b; fetch(u, { signal })",
+      "const mod = await importWithDeadline(() => import('./x.js'))",
+      "const Lazy = lazy(() => import('./Page.jsx'))",
     ].join('\n')
     expect(violations(good, 'src/y.js')).toEqual([])
     // Konum korunur: dizge / yorum örtüldükten sonra satır numarası doğru
     expect(violations("// x\n'a'\nfetch('/b')", 'src/z.js')).toEqual([{ kind: 'fetch( sinyalsiz', line: 3 }])
   })
 
-  it('src/** içinde sıfır süre, sinyalsiz ham fetch ve client dışı XHR yok (istisna listesi yalnız küçülür)', () => {
+  it('src/** içinde sıfır süre, son tarihsiz ham fetch, client dışı XHR ve çıplak await import( yok (istisna listesi yalnız küçülür)', () => {
     const found = {}
     for (const f of walk(ROOT)) {
       const rel = relative(ROOT, f).split(sep).join('/')
@@ -179,7 +239,7 @@ describe('zaman aşımı kapısı (kaynak tarama)', () => {
     const over = Object.entries(found)
       .filter(([rel, v]) => v.length > (ALLOWED[rel] || 0))
       .map(([rel, v]) => `${rel}: ${v.map((x) => `${x.kind} @${x.line}`).join(', ')}`)
-    expect(over, 'Süresiz istek: sonlu bir timeoutMs ya da utils/timedFetch.js kullanın').toEqual([])
+    expect(over, 'Süresiz istek: sonlu bir timeoutMs, utils/timedFetch.js ya da utils/importWithDeadline.js kullanın').toEqual([])
     const stale = Object.entries(ALLOWED).filter(([rel, n]) => (found[rel]?.length || 0) < n).map(([rel]) => rel)
     expect(stale, 'İstisna düzeldi: ALLOWED listesinden düşürün (liste yalnız küçülür)').toEqual([])
   }, 60_000)   // ~1 400 dosya okunur (normalde ~2 sn); yoğun makinede varsayılan 15 sn yetmeyebilir

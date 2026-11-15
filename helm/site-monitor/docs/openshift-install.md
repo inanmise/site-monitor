@@ -89,12 +89,15 @@ oc create route edge site-monitor \
   --service=site-monitor-sitemonitor-chart \
   --hostname=site-monitor.apps.<cluster-domain> \
   -n site-monitor
-# The HAProxy router cuts requests after 30 s by default; the longest requests take up to ~130 s
-# (manual page-integrity check and SQL Playground export up to 120 s, resource-analysis image
-# download up to 130 s, keyword / database-query tests). Raise the route timeout above that:
-oc annotate route site-monitor haproxy.router.openshift.io/timeout=135s --overwrite -n site-monitor
+# The HAProxy router cuts requests after 30 s by default. The longest requests are admin jobs the
+# client waits for up to 900 s (secret re-encryption with an 8-minute server budget, bulk user
+# deactivation, the manual retention run, executive summary send / test, inventory import, team LDAP
+# resync); live checks take up to 420 s (port HTTP "Test" up to 360 s, k6 test up to 210 s), report
+# PDFs up to 300 s, SQL Playground export up to 600 s. Raise the route timeout above all of them:
+oc annotate route site-monitor haproxy.router.openshift.io/timeout=960s --overwrite -n site-monitor
 # NetScaler (or any proxy in front of the router) needs the same: request body >= 12 MB (the app's
-# multipart max-request-size) and server / idle timeout >= 135 s (docs/PROD_DEPLOY_CHECKLIST.md).
+# multipart max-request-size) and server / idle timeout >= 960 s (docs/PROD_DEPLOY_CHECKLIST.md).
+# A shorter limit cuts these flows at the proxy: the server finishes the job, the UI says "result unknown".
 ```
 
 ### Option B — NGINX Ingress Operator
@@ -106,8 +109,8 @@ oc get ingresscontroller -n openshift-ingress-operator
 ```
 
 Use `ingressClassName: nginx` in values (already the default). The chart's Ingress carries
-`nginx.ingress.kubernetes.io/proxy-body-size: "16m"`, `proxy-read-timeout: "135"` and
-`haproxy.router.openshift.io/timeout: "135s"` (the last one only matters when the OpenShift router serves
+`nginx.ingress.kubernetes.io/proxy-body-size: "16m"`, `proxy-read-timeout: "960"` and
+`haproxy.router.openshift.io/timeout: "960s"` (the last one only matters when the OpenShift router serves
 the Ingress and generates a Route from it — the Route takes over the Ingress annotations).
 
 ---

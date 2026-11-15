@@ -337,9 +337,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       }
       if ((res.page ?? p) + 1 >= (res.total_pages ?? 0)) break
     }
-    downloadCsv(stampedName('kullanicilar'), toCsv(
+    const started = downloadCsv(stampedName('kullanicilar'), toCsv(
       [t('usr.formUsername'), t('usr.formDisplay'), t('usr.colEmail'), t('usr.colPhone'), t('usr.formEmployeeId'), t('usr.colRole'), t('usr.colOrgRole'),
        t('usr.colTeam'), t('usr.colActive'), t('usr.authSourceTitle'), t('usr.colLastLogin'), t('usr.colCreated'), t('usr.colTitle'), t('usr.colDept')], rows))
+    // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (inceleme 2026-11-15)
+    if (started === false) { toast.error(t('inv.downloadFailed')); return }
     toast.success(t('usr.exportDone', rows.length))
   }
 

@@ -207,7 +207,8 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
 
   const exportMd = () => {
     const md = buildMarkdown({ incident, postmortem: { ...pm, ...form }, actions, timeline, t, fmt: formatDate })
-    downloadText(markdownFileName(incident), md, 'text/markdown;charset=utf-8')
+    // Tarayıcı indirmeyi başlatamadıysa söylenir (inceleme 2026-11-15)
+    if (downloadText(markdownFileName(incident), md, 'text/markdown;charset=utf-8') === false) toast.error(t('inv.downloadFailed'))
   }
 
   const footer = (

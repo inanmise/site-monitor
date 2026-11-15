@@ -43,6 +43,9 @@ const CASES = [
   ['teknik hata PDF (arşiv) — sinyalsiz', () => api.techErrors.pdfBlob(5), REPORT_TIMEOUT_MS],
   ['yönetici özeti PDF', () => api.executiveSummary.downloadPdf({ month: '2026-10' }), REPORT_TIMEOUT_MS],
   ['yönetici özeti PDF (canlı)', () => api.executiveSummary.downloadPdf({ month: '2026-10', live: true }), LONG_JOB_TIMEOUT_MS],
+  // Sunucu `live` olmadan da gönderilmemiş ayı canlı hesaplar → okuma da DAİMA 5 dk (inceleme 2026-11-15)
+  ['yönetici özeti okuma (live yok)', () => api.executiveSummary.get({ month: '2026-10' }), REPORT_TIMEOUT_MS],
+  ['yönetici özeti okuma (canlı)', () => api.executiveSummary.get({ month: '2026-10', live: true }), REPORT_TIMEOUT_MS],
   ['haftalık kesinti PDF', () => api.admin.downloadWeeklyOutagePdf(3, 0), REPORT_TIMEOUT_MS],
   ['Grafana panosu JSON', () => api.admin.downloadGrafanaDashboard(), DEFAULT_READ_TIMEOUT_MS],
   ['şablon önizleme PDF', () => api.techErrors.templatePreviewPdf(1, { sections: [] }), REPORT_TIMEOUT_MS],

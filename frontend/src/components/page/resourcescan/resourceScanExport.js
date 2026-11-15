@@ -1,4 +1,5 @@
 import { formatDate } from '../../../api/client'
+import { importWithDeadline } from '../../../utils/importWithDeadline.js'
 import { drawBrandHeader } from '../../../utils/pdfBrand.js'
 import { registerRobotoFont, triggerDownload } from '../../../utils/exportInventory.js'
 import { buildXlsx, XLSX_MIME } from '../../../utils/xlsxWriter.js'
@@ -85,8 +86,8 @@ export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, loca
  * öneriler, türler, en büyük görseller, üçüncü taraflar, notlar, nesneler.
  */
 export async function exportResourceScanPdf({ monitor, scan, analysis, items, t, locale, detailRuns = 20, budget = null, prev = null, processed = null }) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const MARGIN = 36

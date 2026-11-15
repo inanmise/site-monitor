@@ -324,7 +324,11 @@ export default function MonitorChangesConsole({ globalViewer = false }) {
         if (batch.length < EXPORT_PAGE) break
       }
       const out = all.slice(0, EXPORT_CAP)
-      downloadCsv(stampedName('monitor-changes'), changesCsv(out, t, formatDateSec))
+      // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (inceleme 2026-11-15)
+      if (downloadCsv(stampedName('monitor-changes'), changesCsv(out, t, formatDateSec)) === false) {
+        toastRef.current.error(t('inv.downloadFailed'))
+        return
+      }
       if (total > EXPORT_CAP) toastRef.current.info(t('chg.exportCapped', EXPORT_CAP, total))
       else toastRef.current.success(t('chg.exportDone', out.length))
     } catch (e) {

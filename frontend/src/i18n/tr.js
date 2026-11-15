@@ -8505,6 +8505,7 @@ export const TR = {
   'ubd.apply': '{0} kullanıcıyı pasife al',
   'ubd.applying': 'Pasife alınıyor…',
   'ubd.listChanged': 'Liste değişti — şimdi {0} kullanıcı ölçüte uyuyor. Önizlemeyi yenileyip yeniden onaylayın.',
+  'ubd.resultUnknown': 'Sonuç bilinmiyor: işlem sunucuda tamamlanmış olabilir. Son toplu işlemler listesi yeniden okundu — tekrar denemeden önce oradan kontrol edin.',
   'ubd.refreshPreview': 'Önizlemeyi yenile',
   'ubd.result.title': 'İşlem tamamlandı',
   'ubd.result.partial': 'İşlem tamamlandı; bazı kullanıcılar pasife alınamadı',
@@ -9696,6 +9697,7 @@ export const TR = {
   'sml.resendTitle': 'E-postayı yeniden gönder',
   'sml.resendConfirm': 'Aynı içerik {0} adresine yeniden gönderilecek: "{1}". Yeni bir log satırı oluşur ve denetim kaydına yazılır. Devam?',
   'sml.resendOk': 'Yeniden gönderildi (log #{0})',
+  'sml.resendUnknown': 'Sonuç bilinmiyor: sunucu yanıt vermeden bağlantı kesildi, e-posta gönderilmiş olabilir. Gönderim günlüğü yeniden okundu — yeniden göndermeden önce yeni bir gönderim satırı oluşup oluşmadığını kontrol edin.',
   'sml.resendFailed': 'E-posta yeniden gönderilemedi (durum: {0}). Ayrıntılar için gönderim kaydını açın; SMTP ayarlarını kontrol edip tekrar deneyin.',
   'sml.resendReason.NOT_FAILED': 'Yalnız başarısız gönderimler yeniden gönderilebilir',
   'sml.resendReason.ALERT_RESOLVED': 'Alarm çözülmüş — bayat uyarı gönderilmez',
@@ -12218,6 +12220,7 @@ export const TR = {
   'wr.resend':           'Tekrar Gönder',
   'wr.resendConfirm':    'Onaylı rapor müdüre (CC: takım) tekrar gönderilecek; yeniden onay gerekmez. Devam edilsin mi?',
   'wr.resendOk':         'Rapor müdüre tekrar gönderildi',
+  'wr.resultUnknown':   'Sonuç bilinmiyor: sunucu yanıt vermeden bağlantı kesildi, işlem tamamlanmış olabilir. Rapor yeniden okundu — tekrar denemeden önce raporun durumunu ve e-posta geçmişini kontrol edin.',
   'wr.actionFailed':     'Haftalık rapor işlemi tamamlanamadı; raporun durumu bu arada değişmiş olabilir. Sayfayı yenileyip tekrar deneyin.',
   'wr.uploadImage':      'Görsel Yükle',
   'wr.uploading':        'Yükleniyor…',
@@ -19591,7 +19594,7 @@ export const TR = {
   'help.set.site.monitor.scripted.manual-cooldown-seconds':
     'Ne işe yarar: Kayıtlı bir senaryonun elle çalıştırılmaları arasındaki en az bekleme.\nFaydası: Üst üste tıklama k6 havuzunu doldurup zamanlanmış koşumları bekletmez.\nÖnerilen değer: 20 saniye (varsayılan). Script uzun sürüyorsa 60.',
   'help.set.site.monitor.scripted.manual-wait-seconds':
-    'Ne işe yarar: Elle çalıştırmada arayüzün sonucu kaç saniye bekleyeceği; aşılırsa koşum arka planda sürer. Sıra beklemesi bu sürenin 5 saniye altında tutulur: k6 havuzunun elle kontrol payı o sürede boşalmazsa kontrol yürütülmez ve arayüz bunu hemen söyler.\nFaydası: Uzun bir senaryo tarayıcıyı kilitlemez; sonuç geldiğinde listede görünür.\nÖnerilen değer: 25 saniye (varsayılan). Vekil sunucu (proxy) zaman aşımınızın altında kalmalıdır.',
+    'Ne işe yarar: Elle çalıştırmada arayüzün sonucu kaç saniye bekleyeceği; aşılırsa koşum arka planda sürer. Sıra beklemesi bu sürenin 5 saniye altında tutulur: k6 havuzunun elle kontrol payı o sürede boşalmazsa kontrol yürütülmez ve arayüz bunu hemen söyler.\nFaydası: Uzun bir senaryo tarayıcıyı kilitlemez; sonuç geldiğinde listede görünür.\nÖnerilen değer: 25 saniye (varsayılan). İzin verilen aralık: 1–90 saniye (tarayıcı 120 saniyede beklemeyi bırakır). Vekil sunucu (proxy) zaman aşımınızın altında kalmalıdır.',
   'help.set.site.monitor.scripted.max-procs':
     'Ne işe yarar: k6 alt sürecinin kullanabileceği işlemci sayısı (Go çalışma zamanının GOMAXPROCS değeri).\nFaydası: Tek bir senaryo sunucunun tüm çekirdeklerini kaplayıp diğer kontrolleri yavaşlatamaz.\nÖnerilen değer: 1 (varsayılan). 0 ya da boş değer sınırı kaldırır; tek pod kurulumda tavsiye edilmez.',
   'help.set.site.monitor.scripted.max-requests-per-run':

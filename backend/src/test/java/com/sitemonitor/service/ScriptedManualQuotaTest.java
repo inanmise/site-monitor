@@ -220,5 +220,12 @@ class ScriptedManualQuotaTest {
         }
         when(settings.getInt(ScriptedCheckerService.MANUAL_WAIT_KEY, ScriptedCheckerService.MANUAL_WAIT_DEFAULT_SEC)).thenReturn(25);
         assertThat(svc.manualQueueWaitSeconds(60)).as("varsayılan: 25 sn uç → 20 sn sıra").isEqualTo(20);
+        // Sınır (prod kapısı incelemesi 2026-11-15): uç en çok 90 sn bekler — istemcinin 120 sn'lik yazma sınırından önce
+        when(settings.getInt(ScriptedCheckerService.MANUAL_WAIT_KEY, ScriptedCheckerService.MANUAL_WAIT_DEFAULT_SEC)).thenReturn(500);
+        assertThat(ScriptedCheckerService.manualWaitSeconds(settings)).isEqualTo(ScriptedCheckerService.MANUAL_WAIT_MAX_SEC);
+        assertThat(svc.manualQueueWaitSeconds(180)).as("500 sn ayarı 90'a kırpılır → 85 sn sıra").isEqualTo(85);
+        when(settings.getInt(ScriptedCheckerService.MANUAL_WAIT_KEY, ScriptedCheckerService.MANUAL_WAIT_DEFAULT_SEC)).thenReturn(-3);
+        assertThat(ScriptedCheckerService.manualWaitSeconds(settings)).isEqualTo(ScriptedCheckerService.MANUAL_WAIT_MIN_SEC);
+        assertThat(ScriptedCheckerService.manualWaitSeconds(null)).isEqualTo(ScriptedCheckerService.MANUAL_WAIT_DEFAULT_SEC);
     }
 }

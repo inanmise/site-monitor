@@ -73,19 +73,24 @@ ingress:
   # Proxy limits must not be NARROWER than the application's own (prod gate 2026-11-15; v1.0.0 had 1m / 60 s):
   #  - body size >= spring.servlet.multipart.max-request-size (12MB, application.properties). 16m leaves room so an
   #    oversize upload is refused by the app with its own 413 PAYLOAD_TOO_LARGE message, not by the proxy's HTML page.
-  #  - read timeout >= the longest request the app serves: manual page-integrity check up to 120 s, SQL Playground export
-  #    up to 120 s, resource-analysis image download up to 130 s, keyword / database-query tests. 135 s leaves margin.
+  #  - read timeout >= the longest request the app serves. The admin jobs wait up to the client's LONG_JOB_TIMEOUT_MS
+  #    (900 s): secret re-encryption (8-minute server budget), bulk user deactivation (<= 5000 users), the manual
+  #    retention run, the executive summary send / test / run, inventory import, team LDAP resync; live checks up to the
+  #    client's 420 s (port HTTP "Test" up to 360 s, k6 test up to 210 s), report PDFs / mail previews up to 300 s,
+  #    SQL Playground export up to 600 s. 960 s leaves margin over 900 s. A shorter proxy limit cuts the request while
+  #    the server keeps working: the server finishes, the UI only says "result unknown".
   #  - haproxy.router.openshift.io/timeout: on OpenShift a Route generated from this Ingress takes over the Ingress
   #    annotations (only when the OpenShift router serves the Ingress); the router's default is 30 s. A hand-made Route
   #    (helm/site-monitor/docs/openshift-install.md Option A) needs:
-  #    oc annotate route <name> haproxy.router.openshift.io/timeout=135s --overwrite
+  #    oc annotate route <name> haproxy.router.openshift.io/timeout=960s --overwrite
+  #    Any proxy in front (prod: NetScaler -> OpenShift) needs the same >= 960 s idle / response time.
   #    The nginx.* keys only matter when an NGINX ingress controller serves the Ingress (Option B); other controllers
   #    ignore unknown annotations. scripts/helm-template-check.sh fails a render below these floors.
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "135"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-    haproxy.router.openshift.io/timeout: "135s"
+    haproxy.router.openshift.io/timeout: "960s"
 
 # Application configuration (non-sensitive)
 config:

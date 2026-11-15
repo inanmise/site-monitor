@@ -343,7 +343,7 @@ export default function K6EngineSettings() {
 
   function exportCsv(rows, scan) {
     const { header, rows: body } = csvTable(rows, t, lang)
-    downloadCsv(csvFileName(scan?.id), toCsv(header, body))
+    if (downloadCsv(csvFileName(scan?.id), toCsv(header, body)) === false) toast.error(t('inv.downloadFailed'))
   }
 
   if (state.status === 'loading' && !data) {

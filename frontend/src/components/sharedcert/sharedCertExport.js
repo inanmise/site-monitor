@@ -1,4 +1,5 @@
 import { formatDate, formatDateSec } from '../../api/client'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import { drawBrandHeader } from '../../utils/pdfBrand.js'
 import { registerRobotoFont, triggerDownload } from '../../utils/exportInventory.js'
 import { buildXlsx, XLSX_MIME } from '../../utils/xlsxWriter.js'
@@ -23,8 +24,8 @@ export function exportSharedXlsx(data, by, t) {
 
 /** PDF (A4 yatay): marka başlığı, sertifika bilgisi, alan adı tablosu — gruplu görünümde bölüm başlık satırlarıyla. */
 export async function exportSharedPdf(data, by, t) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  const { jsPDF } = await importWithDeadline(() => import('jspdf'))
+  const { default: autoTable } = await importWithDeadline(() => import('jspdf-autotable'))
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const MARGIN = 36

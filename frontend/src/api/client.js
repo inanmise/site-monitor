@@ -1155,8 +1155,10 @@ export const api = {
       if (live) qs.set('live', '1')
       if (fresh) qs.set('fresh', '1')
       const s = qs.toString()
-      // Canlı hesap (`live`) sunucuda süre bütçesizdir → 5 dk (2026-11-15); saklı görüntü okuma varsayılanı
-      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true, ...(live ? { timeoutMs: REPORT_TIMEOUT_MS } : {}) })
+      // Süre sınırı DAİMA 5 dk (2026-11-15, prod kapısı incelemesi): sunucu `live` OLMADAN da canlı hesaplar — gönderilmemiş
+      // her ay ve içinde bulunulan ay için (ExecutiveSummaryService.get: kayıt yalnız gönderilmiş geçmiş ayda okunur); o hesap
+      // sunucuda süre bütçesizdir. Okuma varsayılanı (90 sn) gönderilmemiş bir ayı ekranda yarıda bırakırdı.
+      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true, timeoutMs: REPORT_TIMEOUT_MS })
     },
     // Takım özeti alıcıları (2026-10-10): global yönetici her takım, takım müdürü yönettiği takımlar.
     teams: () => request('/executive-summary/teams', { withStatus: true }),
@@ -1315,7 +1317,8 @@ export const api = {
     },
     /**
      * Şablon önizleme PDF'i (R19): düzenleyicideki GÜNCEL taslak (kaydedilmemiş olabilir) örnek değerlerle; hiçbir şey
-     * yazılmaz. Blob döner — açma / indirme çağıranda (yeni sekme). PDF üretimi uzun sürebilir: süre sınırı yok.
+     * yazılmaz. Blob döner — açma / indirme çağıranda (yeni sekme). PDF üretimi uzun sürebilir; istek ve gövde yine de
+     * sonlu bir son tarihle sınırlıdır (`timeoutMs`, varsayılan REPORT_TIMEOUT_MS = 5 dk).
      * Hata: sunucu metni + kod + alan (400 VALIDATION_FAILED → `field: 'template'`); ağ hatasında metin yok (çağıran söyler).
      */
     templatePreviewPdf: async (channelId, template, { timeoutMs = REPORT_TIMEOUT_MS } = {}) => {

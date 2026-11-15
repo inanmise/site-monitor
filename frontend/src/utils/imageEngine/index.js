@@ -14,7 +14,7 @@
 // hata BROWSER_UNSUPPORTED { reason: 'stale_bundle' } olur — arayüz "sayfa güncellendi, yenileyin" diyebilsin. Ayrım:
 // Worker HİÇ ileti göndermeden düştüyse / çekirdek içe aktarılamadıysa bu paketin KENDİ dosyası (import.meta.url)
 // sunucuya sorulur: 404 / 410 → eski paket; erişilebiliyorsa gerçek Worker hatası (`worker_failed`).
-import { AVIF_FAIL_COOLDOWN_MS, ENGINE_LIMITS, ERROR_CODES, EngineError, JOB_TIMEOUT_MS, toEngineError } from './errors.js'
+import { AVIF_FAIL_COOLDOWN_MS, ENGINE_LIMITS, ERROR_CODES, EngineError, JOB_TIMEOUT_MS, toEngineError, withTimeout } from './errors.js'
 import { normalizeOptions } from './options.js'
 import { checkLimits, probeBlob } from './probe.js'
 import { decodeBitmap } from './platform.js'
@@ -44,13 +44,19 @@ let avifBlock = null
 /** İleti göndermiş (betiği yüklenmiş) Worker'lar. */
 const spoke = new WeakSet()
 const STALE_CHECK_TIMEOUT_MS = 5000
+/** Ana iş parçacığı yedeğinin çekirdek parçasını indirme sınırı (inceleme 2026-11-15). */
+const CORE_LOAD_TIMEOUT_MS = 60_000
 
 const cancelled = () => new EngineError('CANCELLED')
 const staleError = () => new EngineError('BROWSER_UNSUPPORTED', { reason: 'stale_bundle' })
 function loadCore() {
   if (!corePromise) {
     // Başarısız içe aktarma bellekte tutulmaz (geçici ağ hatasından sonra yeniden denenebilsin)
-    corePromise = import('./core.js').catch((e) => { corePromise = null; throw e })
+    // Süre sınırlı (inceleme 2026-11-15, "zaman aşımı olmayan bekleme yok"): ana iş parçacığı yedeğinin çekirdek parçası
+    // asılı kalırsa iş / destek denetimi sonsuza dek beklemez. Süre dolması "bayat paket" gibi ele alınır (arayüz
+    // "sayfayı yenileyin" der) — yenileme asılı isteği de bırakır. withTimeout hafif errors.js'ten (statik içe aktarma
+    // listesi değişmez — lazyChunks kapısı)
+    corePromise = withTimeout(import('./core.js'), CORE_LOAD_TIMEOUT_MS, staleError).catch((e) => { corePromise = null; throw e })
   }
   return corePromise
 }

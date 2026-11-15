@@ -234,7 +234,10 @@ describe('WeeklyReportsPage — PKG-8b hata düzeltmeleri', () => {
     api.weeklyReports.approve.mockRejectedValue(Object.assign(new Error('Sunucuya ulaşılamadı'), { status: 0 }))
     renderPage({ globalAdmin: true })
     fireEvent.click((await screen.findAllByRole('button', { name: /^(Approve|Onayla)$/ }))[0])
-    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Sunucuya ulaşılamadı'))
+    // prod kapısı 2026-11-15: ağ hatasında onayın sunucuya ulaşıp ulaşmadığı bilinmez —
+    // ham hata metni yerine "sonuç bilinmiyor" iletisi gösterilir ve rapor yeniden okunur.
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith(EN['wr.resultUnknown'], expect.anything()))
+    expect(toastMock.success).not.toHaveBeenCalled()
   })
 
   it('UIA-G5: gönderim geçmişinde "SKIPPED: pasif kullanıcı" HATA değil "atlandı" rozetidir', async () => {

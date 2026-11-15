@@ -1,3 +1,5 @@
+import { importWithDeadline } from '../../../../utils/importWithDeadline.js'
+
 /**
  * AKIŞ ZIP yazıcısı (2026-11-14, görsel aracı) — kanal raporlarının yıl arşivi deseni (`techerror/yearArchive.js`):
  * `fflate` `Zip` + `ZipPassThrough` (sıkıştırmasız — görseller zaten sıkıştırılmış). Her dosya gelir gelmez arşive
@@ -9,7 +11,8 @@
  * @param {{ load?: () => Promise<object> }} [opts] test kancası
  */
 export async function createZipWriter({ load = () => import('fflate') } = {}) {
-  const { Zip, ZipPassThrough, strToU8 } = await load()
+  // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği ZIP'i sonsuza dek "hazırlanıyor"da bırakmaz
+  const { Zip, ZipPassThrough, strToU8 } = await importWithDeadline(load)
   let parts = []
   let failure = null
   let closed = false

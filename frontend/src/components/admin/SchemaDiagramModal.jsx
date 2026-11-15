@@ -163,12 +163,15 @@ export default function SchemaDiagramModal({
         typeLabel: shortType, unrelatedLabel: t('sql.diag.unrelatedGroup', model.stats.isolated),
         moreLabel: (n) => t('sql.diag.moreCols', n),
       })
-      if (kind === 'svg') downloadText(stampedFile('schema-diagram', 'svg'), svg, 'image/svg+xml')
+      let started
+      if (kind === 'svg') started = downloadText(stampedFile('schema-diagram', 'svg'), svg, 'image/svg+xml')
       else {
         const blob = await svgToPngBlob(svg, Math.ceil(model.width), Math.ceil(model.height))
         if (!blob) throw new Error('png')
-        downloadBlob(stampedFile('schema-diagram', 'png'), blob)
+        started = downloadBlob(stampedFile('schema-diagram', 'png'), blob)
       }
+      // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (inceleme 2026-11-15)
+      if (started === false) { toast.error(t('inv.downloadFailed')); return }
       toast.success(t('sql.diag.exported', kind.toUpperCase()))
     } catch {
       toast.error(t('sql.diag.exportFailed'))

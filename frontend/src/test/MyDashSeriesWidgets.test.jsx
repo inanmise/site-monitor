@@ -524,6 +524,10 @@ describe('Panom — 7 günlük erişilebilirlik', () => {
     expect(q('availability_week', 'mydash-avail-partial')).toHaveTextContent(/Ping/)
     expect(q('availability_week', 'mydash-avail-partial')).toHaveTextContent(/DNS/)
     expect(q('availability_week', 'mydash-gauge')).toHaveAttribute('data-tone', 'muted')
+    // Büyük sayı da gri — kısmi yanıtta turuncu ("hedefin biraz altı") rengine düşmez (inceleme 2026-11-15)
+    const num = q('availability_week', 'mydash-avail-number')
+    expect(num).toHaveClass('text-muted-foreground')
+    expect(num.className).not.toMatch(/text-amber|text-success|text-destructive/)
   })
 
   it('ölçüm yok → gri "ölçüm yok" (yeşil değil), yay ve hedef çentiği çizilmez; izleme yoksa ayrı metin', async () => {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { importWithDeadline } from '../utils/importWithDeadline.js'
 import {
   Siren, Info, UserCheck, CheckCircle2, OctagonAlert, Users, UserX, RotateCcw, FilterX, Download, FileText, FileSpreadsheet,
   Activity, Keyboard, Sparkles, X,
@@ -56,7 +57,7 @@ const VIEW_KEY = 'sm.incidents.view'
 const OPEN_SAMPLE = 200
 const REFRESH_MS = 60_000
 /** xlsxWriter yalnız Excel istenince yüklenir (açılış parçasına girmez — lazyChunks kapısı). */
-const loadXlsxWriter = () => import('../utils/xlsxWriter.js')
+const loadXlsxWriter = () => importWithDeadline(() => import('../utils/xlsxWriter.js'))
 /** Okunamayan sayı "—" (asla 0). */
 const shown = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : '—')
 /** Toplu işlem satır sonuçları (sunucu kodları) — bilinmeyen "unknown". */

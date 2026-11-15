@@ -88,17 +88,19 @@ ingress:
   tls:
     enabled: true
     secretName: site-monitor-tls
-  # Prod gate 2026-11-15: 1m / 60 s (since v1.0.0) were narrower than the app (12MB uploads, requests up to ~130 s) —
-  # reasons in values.yaml next to the same keys. Prod traffic is NetScaler -> OpenShift: the effective limits are
-  # NetScaler's and the OpenShift Route's. A Route OpenShift generates from this Ingress takes over these annotations;
-  # a hand-made Route needs `oc annotate route <name> haproxy.router.openshift.io/timeout=135s --overwrite`
+  # Prod gate 2026-11-15: 1m / 60 s (since v1.0.0) were narrower than the app (12MB uploads, admin jobs that run up to
+  # the client's 900 s limit) — reasons in values.yaml next to the same keys. Prod traffic is NetScaler -> OpenShift:
+  # the effective limits are NetScaler's and the OpenShift Route's, so the NetScaler virtual server of the app must
+  # allow >= 960 s idle / response time too (otherwise long admin jobs are cut there: the server finishes, the UI says
+  # "result unknown"). A Route OpenShift generates from this Ingress takes over these annotations; a hand-made Route
+  # needs `oc annotate route <name> haproxy.router.openshift.io/timeout=960s --overwrite`
   # (docs/PROD_DEPLOY_CHECKLIST.md "Route / NetScaler sınırları"). A private values file that sets
   # ingress.annotations overrides these keys one by one (maps merge).
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "135"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
-    haproxy.router.openshift.io/timeout: "135s"
+    haproxy.router.openshift.io/timeout: "960s"
 
 # Prod gate 2026-09-26 (owner decision): memory limit 1536Mi -> 3Gi, request 512Mi -> 1.5Gi.
 # Why: with -XX:MaxRAMPercentage=75 (values.yaml javaOpts) the heap ceiling was ~1152Mi of a

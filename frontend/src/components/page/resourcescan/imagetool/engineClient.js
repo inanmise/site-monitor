@@ -1,3 +1,5 @@
+import { importWithDeadline } from '../../../../utils/importWithDeadline.js'
+
 /**
  * Görsel motoru bağdaştırıcısı (2026-11-14, kaynak analizi "Görsel aracı" — sözleşme §2).
  *
@@ -33,7 +35,9 @@ async function engineModule() {
 /** Motor modülü — tek sefer yüklenir; yükleme BAŞARISIZ olursa (bayat paket) sonraki çağrı yeniden dener. */
 export function loadEngine() {
   if (!modulePromise) {
-    modulePromise = import('../../../../utils/imageEngine/index.js').catch((e) => {
+    // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği araç işlemlerini sonsuza dek bekletmez — süre dolunca
+    // yükleme başarısız sayılır (arayüz "sayfa güncellendi, yenileyin" der; yenileme asılı isteği de bırakır)
+    modulePromise = importWithDeadline(() => import('../../../../utils/imageEngine/index.js')).catch((e) => {
       modulePromise = null
       throw e
     })

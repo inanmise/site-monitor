@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Activity, Award, BellOff, BellRing, Download, Info, Mail, UserPlus, Users, UserX, Webhook } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import MonitorStatsBar from '../../MonitorStatsBar.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import CollapsibleSection from '../../ui/CollapsibleSection.jsx'
@@ -29,7 +30,7 @@ function exportCsv(view, data, level, t) {
     reason: (code, ch) => (ch === 'push' ? pushReasonText(t, code) : EMAIL_EXCLUDE_REASONS.includes(code) ? t(`wn.reason.${code}`) : code),
   })
   const slug = String(data?.team_name || 'takim').toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'takim'
-  downloadBlob(`kim-bilgilendirilir-${slug}-${String(data?.level || level).toLowerCase()}.csv`,
+  return downloadBlob(`kim-bilgilendirilir-${slug}-${String(data?.level || level).toLowerCase()}.csv`,
     new Blob(['\ufeff' + csvRows(rows)], { type: 'text/csv;charset=utf-8' }))
 }
 
@@ -49,6 +50,7 @@ function reveal(el) {
  */
 export default function SimResult({ data, level, kind, refreshing = false, onNavigate, navParams }) {
   const t = useT()
+  const toast = useToast()
   const view = buildView(data)
   const [excludedOpen, setExcludedOpen] = useState(false)
   const [pushFilter, setPushFilter] = useState('all')
@@ -93,7 +95,7 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
         <Badge variant="outline" className="gap-1.5 font-medium"><KindIcon aria-hidden="true" />{kindLabel}</Badge>
         {refreshing && <Spinner size={14} label={t('sim.loading')} />}
         <Button type="button" variant="outline" size="sm" data-slot="wn-export" className="ml-auto h-10 md:h-8 pointer-coarse:h-10"
-          onClick={() => exportCsv(view, data, level, t)}>
+          onClick={() => { if (exportCsv(view, data, level, t) === false) toast.error(t('inv.downloadFailed')) }}>
           <Download aria-hidden="true" /> {t('wn.export')}
         </Button>
       </div>

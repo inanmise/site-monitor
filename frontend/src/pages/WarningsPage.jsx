@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
+import { useToast } from '../components/ui/Toast.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { downloadCsv } from '../utils/csvExport.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
@@ -86,6 +87,7 @@ export default function WarningsPage({
   onOpenCert, onOpenHealth, onPlanRenewal, canPlan, cardActions, onMailFailure, onCheckAll, checkingAll = false, checkProgress = null,
 }) {
   const t = useT()
+  const toast = useToast()
   const isMobile = useIsMobile()
   // Kart/tablo kararı KAP genişliğinden (tablette kenar çubuğu açıkken içerik ~440 px) — Vade Takvimi ile aynı
   const [listWidth, listRef] = useElementWidthState()
@@ -213,8 +215,8 @@ export default function WarningsPage({
   function exportCsv() {
     try {
       // İndirme ortak (utils/csvExport — öneri 29): Blob + DOM'da tıklama + 1 sn sonra iptal; dosya ve ad aynı.
-      downloadCsv(`certificates-needing-attention-${new Date().toISOString().slice(0, 10)}.csv`, attentionCsv(items, t))
-    } catch { /* jsdom / kısıtlı ortam */ }
+      if (downloadCsv(`certificates-needing-attention-${new Date().toISOString().slice(0, 10)}.csv`, attentionCsv(items, t)) === false) toast.error(t('inv.downloadFailed'))
+    } catch { toast.error(t('inv.downloadFailed')) }
   }
 
   const loading = data.rows === null && !data.error

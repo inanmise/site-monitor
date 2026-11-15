@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useT } from '../../i18n/index.jsx'
@@ -26,7 +27,9 @@ function useWhitepaper(lang) {
   useEffect(() => {
     if (cache[key] != null) return undefined
     let alive = true
-    LOADERS[key]()
+    // Süre sınırlı (inceleme 2026-11-15): asılı parça isteği çekmeceyi sonsuza dek "yükleniyor"da bırakmaz — süre dolunca
+    // başarısız yükleme gibi '' (tam kılavuza bağlantı)
+    importWithDeadline(LOADERS[key])
       .then((m) => { cache[key] = m.default; if (alive) setLoaded({ key, text: m.default }) })
       .catch(() => { if (alive) setLoaded({ key, text: '' }) })
     return () => { alive = false }

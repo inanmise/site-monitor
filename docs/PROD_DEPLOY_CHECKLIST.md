@@ -99,13 +99,18 @@ Arayüzden: menüdeki sürüm çipi ya da Sistem Sağlığı → Sürüm & Dağ�
   oc get ingress -n "$NS"
   oc get ingresscontroller -n openshift-ingress-operator
   ```
-  Beklenen: Route zaman aşımı **≥ 135 sn**. Ek açıklama yoksa HAProxy yönlendiricisinin varsayılanı **30 sn**'dir ve uzun
-  istekler yarıda kesilir: elle sayfa bütünlüğü kontrolü (≤ 120 sn), SQL Playground dışa aktarımı (≤ 120 sn), anahtar kelime /
-  veritabanı sorgusu "Test", kaynak analizi görsel indirmesi (≤ 130 sn). Düzeltme (Route Ingress'ten üretildiyse Ingress'in
-  ek açıklamasını taşır — chart artık `haproxy.router.openshift.io/timeout: "135s"` yazar; elle oluşturulmuş Route'ta):
-  `oc annotate route <ad> -n "$NS" haproxy.router.openshift.io/timeout=135s --overwrite`.
+  Beklenen: Route zaman aşımı **≥ 960 sn**. Ek açıklama yoksa HAProxy yönlendiricisinin varsayılanı **30 sn**'dir ve uzun
+  istekler yarıda kesilir. En uzunları, istemcinin 900 sn'ye dek beklediği yönetim işleridir: gizli anahtar yeniden şifreleme
+  (sunucu bütçesi 8 dk), toplu kullanıcı pasifleştirme (≤ 5000 kişi), elle saklama (retention) koşusu, yönetici özeti gönderimi /
+  testi / "Şimdi gönder", envanter içe aktarımı, takım LDAP eşitlemesi; ardından canlı kontroller (≤ 420 sn — port HTTP "Test"
+  ≤ 360 sn, k6 testi ≤ 210 sn), SQL Playground dışa aktarımı (≤ 600 sn), rapor PDF'leri / e-posta önizlemesi (≤ 300 sn).
+  Düzeltme (Route Ingress'ten üretildiyse Ingress'in ek açıklamasını taşır — chart artık
+  `haproxy.router.openshift.io/timeout: "960s"` yazar; elle oluşturulmuş Route'ta):
+  `oc annotate route <ad> -n "$NS" haproxy.router.openshift.io/timeout=960s --overwrite`.
   **NetScaler (ağ ekibi):** en büyük istek gövdesi **≥ 12 MB** (uygulamanın `spring.servlet.multipart.max-request-size=12MB`'ı —
-  haftalık rapor görselleri, kanal raporu görselleri, sertifika dosyası yükleme) ve sunucu / boşta zaman aşımı **≥ 135 sn**.
+  haftalık rapor görselleri, kanal raporu görselleri, sertifika dosyası yükleme) ve uygulamanın sanal sunucusunda sunucu / boşta
+  / yanıt zaman aşımı **≥ 960 sn**. Daha kısa bir sınır yukarıdaki yönetim akışlarını NetScaler'da keser: sunucu işi bitirir,
+  arayüz yalnız "sonuç bilinmiyor — sayfayı yenileyip kontrol edin" der (ikinci tıklama aynı işi yeniden başlatabilir).
   Biri dar kalıyorsa ya düzeltilir ya da "uzun istekler kesilir / büyük yükleme reddedilir" bilinçli kabul edilip kaydedilir.
 - [ ] **[ENGEL] Dağıtımdan HEMEN önce (T-5 dk) uzun işlem yok.** Açılışta Hibernate `ddl-auto` yeni kolonları
       `ALTER TABLE … ADD COLUMN` ile ekler — bu deyim **`lock_timeout` olmadan** koşar (şema yamalarının 20 sn sınırı ona
@@ -784,8 +789,8 @@ ulaşmadı. Bu dağıtım onu **ilk kez** uygular — aşağıdaki değişiklikl
 - [ ] Ayarlar → Genel: `site.monitor.system-admin.email` dolu; kurumsal CA paketi
       (`site.monitor.trust.ca-bundle-pem`) DB'de dolu (master.yaml'da `caBundlePem` yok).
 - [ ] Yapılandırma sağlığı kartı yeşil.
-- [ ] NetScaler / Route zaman aşımı ve gövde sınırı: yukarıdaki **"Route / NetScaler sınırları"** maddesi (≥ 135 sn, ≥ 12 MB).
-      Chart'ın Ingress'i v1.0.0'dan beri 1m / 60 sn yazıyordu; 2026-11-15'ten beri 16m / 135 sn + OpenShift Route zaman aşımı.
+- [ ] NetScaler / Route zaman aşımı ve gövde sınırı: yukarıdaki **"Route / NetScaler sınırları"** maddesi (≥ 960 sn, ≥ 12 MB).
+      Chart'ın Ingress'i v1.0.0'dan beri 1m / 60 sn yazıyordu; 2026-11-15'ten beri 16m / 960 sn + OpenShift Route zaman aşımı.
 
 ## Sırası — tek komut
 
@@ -803,8 +808,8 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   --set config.logLevel=DEBUG \
   --dry-run=server | grep -E 'image:|replicas:|terminationGracePeriodSeconds|sleep [0-9]|DB_POOL_MAX|DB_POOL_MIN|NO_PROXY|CORS_ALLOWED|LOG_LEVEL|LOG_FORMAT|DB_HOST|SPRING_SESSION_STORE_TYPE|ephemeral-storage|proxy-body-size|proxy-read-timeout|haproxy.router'
 # Beklenen (prod, tek pod): replicas: 1, terminationGracePeriodSeconds: 120, sleep 10, DB_POOL_MAX "30", DB_POOL_MIN "5",
-# SPRING_SESSION_STORE_TYPE "jdbc", LOG_FORMAT "json" (ya da bilinçli "text"), proxy-body-size 16m, proxy-read-timeout "135",
-# haproxy.router.openshift.io/timeout 135s
+# SPRING_SESSION_STORE_TYPE "jdbc", LOG_FORMAT "json" (ya da bilinçli "text"), proxy-body-size 16m, proxy-read-timeout "960",
+# haproxy.router.openshift.io/timeout 960s
 
 # 2) Gerçek dağıtım — AYNI komut, --dry-run yerine --atomic --wait --timeout
 helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \

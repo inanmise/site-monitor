@@ -136,6 +136,16 @@ describe('SchemaDiagramModal', () => {
     expect((svg.match(/<g transform=/g) || []).length).toBe(6)
   })
 
+  it('dışa aktar → SVG: tarayıcı indirmeyi başlatamazsa başarı DEĞİL, hata söylenir (inceleme 2026-11-15)', async () => {
+    URL.createObjectURL = vi.fn(() => { throw new Error('blocked') })
+    URL.revokeObjectURL = vi.fn()
+    setup()
+    pressMenuTrigger(screen.getByRole('button', { name: /^(Export|Dışa aktar)$/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download as SVG|SVG olarak indir/ }))
+    expect(await screen.findByText(/browser didn’t start the download|tarayıcı indirmeyi başlatamadı/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Diagram downloaded|Diyagram .* olarak indirildi/)).toBeNull()
+  })
+
   it('telefon: varsayılan LİSTE görünümü — başvurduğu / ona başvuranlar; ilişkiye dokunmak o tabloyu vurgular', async () => {
     mobile.on = true
     setup()

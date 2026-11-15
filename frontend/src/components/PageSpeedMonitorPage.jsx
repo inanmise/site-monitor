@@ -839,7 +839,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     if (!resources.length) return
     const head = ['url', 'type', 'bytes', 'duration_ms', 'http_status', 'third_party', 'checked_at']
     // BOM + CRLF; gövde csvRows, indirme ortak downloadCsv (öneri 29 — dosya baytları ve adı aynı).
-    downloadCsv(`pagespeed-resources-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...resources.map(r => head.map(k => r[k]))]))
+    if (downloadCsv(`pagespeed-resources-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...resources.map(r => head.map(k => r[k]))])) === false) toast.error(t('inv.downloadFailed'))
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)

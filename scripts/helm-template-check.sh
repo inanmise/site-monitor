@@ -44,9 +44,12 @@ CHART="$ROOT/helm/site-monitor"
 VALUES="$CHART/values.yaml"
 APP_PROPS="$ROOT/backend/src/main/resources/application.properties"
 SPRING_BUDGET_S=91
-# En uzun istek: kaynak analizi görsel indirmesi ≤ 130 sn (PageResourceImageService.TOTAL_BUDGET_MAX_MS), elle sayfa
-# bütünlüğü kontrolü ve SQL Playground dışa aktarımı ≤ 120 sn — 135 sn pay bırakır.
-MIN_PROXY_TIMEOUT_S=135
+# En uzun istekler: istemcinin LONG_JOB_TIMEOUT_MS (900 sn) sınırına dek beklediği yönetim işleri — gizli anahtar yeniden
+# şifreleme (sunucu bütçesi 8 dk), toplu kullanıcı pasifleştirme (≤ 5000 kişi), elle saklama koşusu, yönetici özeti
+# gönderimi / testi, envanter içe aktarımı, takım LDAP eşitlemesi; canlı kontroller ≤ 420 sn (port HTTP "Test" ≤ 360 sn,
+# k6 testi ≤ 210 sn), SQL Playground dışa aktarımı ≤ 600 sn. 960 sn 900 sn'ye pay bırakır. Daha dar bir vekil bu akışları
+# keser: sunucu işi bitirir, arayüz "sonuç bilinmiyor" der.
+MIN_PROXY_TIMEOUT_S=960
 fail=0
 err() { echo "::error::$*"; fail=1; }
 ok()  { echo "  ok: $*"; }
@@ -337,7 +340,7 @@ for name in values.yaml master develop release; do
   elif [ "$name" = "master" ]; then err "master: nginx proxy-body-size tanımsız (nginx varsayılanı 1m)"
   else ok "$name: proxy-body-size yok (nginx varsayılanı 1m — Ingress nginx ile sunuluyorsa ekleyin)"; fi
   if [ -n "$rt" ] && [ "$rt" -ge "$MIN_PROXY_TIMEOUT_S" ] 2>/dev/null; then ok "$name: proxy-read-timeout ${rt}s ≥ ${MIN_PROXY_TIMEOUT_S}s"
-  else err "$name: nginx proxy-read-timeout '${rt:-yok}' < ${MIN_PROXY_TIMEOUT_S}s (120–130 sn süren istekler — elle sayfa kontrolü, SQL dışa aktarımı, görsel indirme — vekilde kesilir)"; fi
+  else err "$name: nginx proxy-read-timeout '${rt:-yok}' < ${MIN_PROXY_TIMEOUT_S}s (900 sn'ye dek süren yönetim işleri — anahtar yeniden şifreleme, toplu pasifleştirme, saklama koşusu, yönetici özeti gönderimi — vekilde kesilir)"; fi
   if [ -n "$hp" ]; then
     s="$(haproxy_seconds "$hp")"
     if [ -n "$s" ] && [ "$s" -ge "$MIN_PROXY_TIMEOUT_S" ]; then ok "$name: haproxy.router.openshift.io/timeout $hp ≥ ${MIN_PROXY_TIMEOUT_S}s"
@@ -345,11 +348,11 @@ for name in values.yaml master develop release; do
   elif [ "$name" = "master" ]; then err "master: haproxy.router.openshift.io/timeout yok (OpenShift Route varsayılanı 30 sn)"; fi
 done
 # Denetimin kendisi: dar değerler gerçekten yakalanıyor mu (eski 1m / 60 sn)
-o="$(render --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-body-size=1m' --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-read-timeout=60' --set-string 'ingress.annotations.haproxy\.router\.openshift\.io/timeout=130000')"
+o="$(render --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-body-size=1m' --set-string 'ingress.annotations.nginx\.ingress\.kubernetes\.io/proxy-read-timeout=60' --set-string 'ingress.annotations.haproxy\.router\.openshift\.io/timeout=900000')"
 b="$(size_bytes "$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-body-size')")"; rt="$(ann_of "$o" 'nginx.ingress.kubernetes.io/proxy-read-timeout')"
 s="$(haproxy_seconds "$(ann_of "$o" 'haproxy.router.openshift.io/timeout')")"
-if [ "$b" = "1048576" ] && [ "$rt" = "60" ] && [ "$s" = "130" ] && [ "$b" -lt "${app_max_b:-0}" ]; then ok "denetim kendini sınar: 1m / 60 / 130000 (ms) dar okunur"
-else err "denetim kendini sınayamadı: 1m → '$b', 60 → '$rt', 130000 → '$s' sn"; fi
+if [ "$b" = "1048576" ] && [ "$rt" = "60" ] && [ "$s" = "900" ] && [ "$b" -lt "${app_max_b:-0}" ] && [ "$s" -lt "$MIN_PROXY_TIMEOUT_S" ]; then ok "denetim kendini sınar: 1m / 60 / 900000 (ms) dar okunur"
+else err "denetim kendini sınayamadı: 1m → '$b', 60 → '$rt', 900000 → '$s' sn"; fi
 
 # ── 15: postgresql.enabled ──────────────────────────────────────────────────────────────────
 echo "── postgresql.enabled (prod kapısı 2026-11-15)"
