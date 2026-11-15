@@ -218,6 +218,19 @@ class AvailabilityWeekServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 CI yarışı: tamamlanmış tür okuması uçuş haritasında KALMAZ — hemen ardından gelen istek yeni eklenen izlemeyi görür (bayat okuma yeniden kullanılmaz)")
+    void completedReadIsNeverReused() {
+        for (int i = 1; i <= 40; i++) {
+            Map<String, Object> out = svc.build(ALL);
+            assertThat(out).containsEntry("monitors", (long) (i - 1));
+            Map<?, ?> inflight = (Map<?, ?>) ReflectionTestUtils.getField(svc, "inflight");
+            assertThat(inflight).as("istek döndüğünde uçuş haritası boş (tur %d)", i).isEmpty();
+            monitor("http", i, 5L, "İzleme " + i, 1_000, 0, 0);
+        }
+        assertThat(svc.build(ALL)).containsEntry("monitors", 40L);
+    }
+
+    @Test
     @DisplayName("hedef altı hüküm KESİN orandan: 199.791 / 200.000 = %99,8955 → gösterim 99,90 ama hedef 99,9'un ALTINDA (asla yeşil değil); tam hedefte olan hedefte")
     void verdictFromTheExactRatio() {
         monitor("http", 1, 5L, "Sınırda", 200_000, 209, 3);   // 199.791 başarılı
