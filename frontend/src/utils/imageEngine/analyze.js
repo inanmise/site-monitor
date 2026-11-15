@@ -39,7 +39,8 @@ const i32le = (b, i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] <<
 const round1 = (v) => Math.round(v * 10) / 10
 
 function empty() {
-  return { bitDepth: null, colorModel: null, ppi: null, jpeg: null, paletteSize: null, lossless: null }
+  // ppiChecked: yoğunluğun yazıldığı başlık gerçekten okundu mu (okunmadıysa "kayıtlı değil" denmez — bilinmiyor)
+  return { bitDepth: null, colorModel: null, ppi: null, ppiChecked: false, jpeg: null, paletteSize: null, lossless: null }
 }
 
 /**
@@ -65,6 +66,7 @@ function jpegFacts(b, n) {
   let i = 2
   let seg = 0
   let lumaTable = null
+  let lumaEightBit = false
   while (i + 4 <= n && seg < MAX_SEGMENTS) {
     if (b[i] !== 0xff) { i += 1; continue }
     const marker = b[i + 1]
@@ -80,6 +82,7 @@ function jpegFacts(b, n) {
       const units = b[s + 7]
       const x = u16be(b, s + 8)
       const y = u16be(b, s + 10)
+      out.ppiChecked = true
       if (x > 0 && y > 0 && (units === 1 || units === 2)) {
         out.ppi = units === 1 ? { x, y } : { x: round1(x * 2.54), y: round1(y * 2.54) }
       }
@@ -94,6 +97,7 @@ function jpegFacts(b, n) {
         if (p + 1 + size > end) break
         if (tq === 0 && lumaTable == null) {
           lumaTable = new Uint16Array(64)
+          lumaEightBit = !pq
           for (let k = 0; k < 64; k++) lumaTable[k] = pq ? u16be(b, p + 1 + k * 2) : b[p + 1 + k]
         }
         p += 1 + size
@@ -122,8 +126,11 @@ function jpegFacts(b, n) {
     }
     i = end
   }
-  if (out.jpeg && lumaTable) out.jpeg.quality = estimateJpegQuality(lumaTable)
-  else if (lumaTable) out.jpeg = { quality: estimateJpegQuality(lumaTable), subsampling: null, progressive: null, components: null }
+  // 8 bitlik tabloda 255'e kırpılmış değer (çok düşük kalite) varsa tahmin güvenilmez → bilinmiyor
+  const clamped = lumaTable && lumaEightBit && lumaTable.some((v) => v >= 255)
+  const quality = lumaTable && !clamped ? estimateJpegQuality(lumaTable) : null
+  if (out.jpeg && lumaTable) out.jpeg.quality = quality
+  else if (lumaTable) out.jpeg = { quality, subsampling: null, progressive: null, components: null }
   return out
 }
 
@@ -151,6 +158,7 @@ function pngFacts(b, n) {
     } else if (type === 'PLTE') {
       out.paletteSize = Math.floor(len / 3)
     } else if (type === 'IDAT' || type === 'IEND') {
+      out.ppiChecked = true                                      // pHYs IDAT'tan önce gelir: başlık tümüyle okundu
       break
     }
     i = d + len + 4
@@ -164,6 +172,7 @@ function gifFacts(b, n) {
   out.lossless = true
   out.colorModel = 'palette'
   out.bitDepth = 8
+  out.ppiChecked = true                                           // GIF yoğunluk saklamaz
   if (n >= 13 && (b[10] & 0x80)) out.paletteSize = 2 ** ((b[10] & 0x07) + 1)
   return out
 }
@@ -194,13 +203,25 @@ function webpFacts(b, n) {
 function bmpFacts(b, n) {
   const out = empty()
   out.lossless = true
-  if (n < 46) return out
-  const bpp = u16le(b, 28)
-  out.bitDepth = bpp >= 24 ? 8 : bpp || null
-  out.colorModel = bpp <= 8 ? 'palette' : bpp === 32 ? 'rgba' : 'rgb'
-  const x = i32le(b, 38)
-  const y = i32le(b, 42)
-  if (x > 0 && y > 0) out.ppi = { x: round1(x * 0.0254), y: round1(y * 0.0254) }
+  if (n < 26) return out
+  const hdr = u32le(b, 14)                                        // bilgi başlığı boyu: 12 = OS/2 çekirdek, ≥ 40 = Windows
+  let bpp
+  if (hdr === 12) {
+    bpp = u16le(b, 24)
+    out.ppiChecked = true                                         // çekirdek başlıkta yoğunluk alanı yok
+  } else if (hdr >= 40 && n >= 46) {
+    bpp = u16le(b, 28)
+    const x = i32le(b, 38)
+    const y = i32le(b, 42)
+    if (x > 0 && y > 0) out.ppi = { x: round1(x * 0.0254), y: round1(y * 0.0254) }
+    out.ppiChecked = true
+  } else {
+    return out
+  }
+  // Kanal başına bit: 24 / 32 → 8; 16 bit (5-6-5 / 5-5-5) kanal başına 8'den AZ → bilinmiyor; ≤ 8 paletli
+  out.bitDepth = bpp === 24 || bpp === 32 ? 8 : bpp > 0 && bpp <= 8 ? bpp : null
+  // 32 bitte dördüncü kanal çoğu zaman kullanılmaz (X8R8G8B8): saydamlık bilinmiyor
+  out.colorModel = bpp > 0 && bpp <= 8 ? 'palette' : bpp === 16 || bpp === 24 ? 'rgb' : null
   return out
 }
 
@@ -239,7 +260,7 @@ export function countColors(rgba, width, height) {
     const key = a === 0 ? -1 : ((rgba[o] << 16) | (rgba[o + 1] << 8) | rgba[o + 2]) * 4 + (a === 255 ? 0 : a < 128 ? 1 : 2)
     if (a !== 0) visible += 1
     seen.set(key, (seen.get(key) || 0) + 1)
-    if (seen.size >= COLOR_COUNT_CAP) return { count: COLOR_COUNT_CAP, atLeast: true, dominant: null, dominantShare: null }
+    if (seen.size >= COLOR_COUNT_CAP) return { count: COLOR_COUNT_CAP, atLeast: true, dominant: null, dominantShare: null, visible: null }
   }
   // Baskın renkler: görünür örneklerin en az %1'ini kaplayan renkler (kenar yumuşatmasının yüzlerce ara rengi sayılmaz)
   let dominant = 0
@@ -248,7 +269,7 @@ export function countColors(rgba, width, height) {
     if (key === -1 || visible === 0) continue
     if (n / visible >= DOMINANT_MIN_SHARE) { dominant += 1; covered += n }
   }
-  return { count: seen.size, atLeast: false, dominant, dominantShare: visible === 0 ? null : covered / visible }
+  return { count: seen.size, atLeast: false, dominant, dominantShare: visible === 0 ? null : covered / visible, visible }
 }
 
 /**
@@ -258,6 +279,8 @@ export function countColors(rgba, width, height) {
  */
 export function svgCandidate(colors, width, height) {
   if (!colors || colors.count == null || colors.atLeast) return false
+  // Tümüyle saydam ya da tek düz renkli yer tutucu logo değildir: en az bir görünür piksel ve en az iki renk (saydam dahil)
+  if (colors.visible === 0 || colors.count < 2) return false
   const side = Math.max(width, height)
   if (!(side >= 16 && side <= SVG_MAX_SIDE)) return false
   if (colors.count <= SVG_MAX_COLORS) return true
@@ -268,8 +291,10 @@ export function svgCandidate(colors, width, height) {
 /**
  * Bantlaşma riski: 16 bit kaynak 8 bite indi, ya da paletli PNG'ye az renkle (≤ 64) inildi ve benzerlik hedefin altında.
  */
-export function bandingRisk({ inputBitDepth, outputType, outputColors, similarity }) {
-  if (inputBitDepth != null && inputBitDepth > 8) return 'bit_depth'
+export function bandingRisk({ inputBitDepth, outputBitDepth = null, outputType, outputColors, similarity }) {
+  // 8'den derin kaynak gerçekten 8 bite (ya da 8 bitlik kayıplı biçime) indiyse; korunan özgünde / 16 bit çıktıda değil
+  const outEight = outputBitDepth != null ? outputBitDepth <= 8 : (outputType === 'jpeg' || outputType === 'webp')
+  if (inputBitDepth != null && inputBitDepth > 8 && outEight) return 'bit_depth'
   if (outputType === 'png' && outputColors != null && outputColors > 0 && outputColors <= 64
     && similarity != null && similarity < 0.985) return 'palette'
   return null

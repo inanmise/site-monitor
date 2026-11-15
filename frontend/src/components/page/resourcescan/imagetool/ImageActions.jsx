@@ -165,9 +165,11 @@ function Actions({ ctx, item, className, showSuggestion }) {
             {entry.problem.kind === 'server' && <ErrorDetails info={entry.problem.res} />}
           </span>
         )}
-        {entry.result && !busy && <ResultLine result={entry.result} t={t} locale={locale} />}
+        {entry.result && !busy && <ResultLine result={entry.result} t={t} locale={locale} insights={false} />}
         {entry.original?.tlsVerified === false && !busy && <TlsUnverifiedNote t={t} />}
       </div>
+      {/* Ayrıntılı karşılaştırma canlı bölgenin DIŞINDA: açılınca tüm tablo okunmasın */}
+      {entry.result && !busy && <ImageInsights result={entry.result} />}
       {custom && (
         <CustomSizeDialog item={item} suggestion={suggestion} store={store} scanId={scanId} onClose={() => setCustom(false)}
           onTool={(settings) => toTool(settings)} />
@@ -215,7 +217,7 @@ export function TlsUnverifiedNote({ t, className }) {
 }
 
 /** İşlem sonucu: gerçek önce → sonra boyutu + kazanç, ölçü / biçim, benzerlik (ölçüldüyse) ve motorun notları. */
-export function ResultLine({ result, t, locale, className }) {
+export function ResultLine({ result, t, locale, className, insights = true }) {
   const meta = resultMeta(result, t, locale)
   const sim = similarityText(result, locale)
   const tone = resultTone(result)
@@ -241,7 +243,7 @@ export function ResultLine({ result, t, locale, className }) {
       )}
     </span>
     {/* Ayrıntılı karşılaştırma: sonuç satırının KARDEŞİ (blok içerik span içinde olmasın) */}
-    <ImageInsights result={result} />
+    {insights && <ImageInsights result={result} />}
     </>
   )
 }

@@ -62,6 +62,14 @@ describe('readImageFacts — JPEG', () => {
     expect(readImageFacts(jpegHeader({ density: { units: 2, x: 118, y: 118 } }), 'jpeg').ppi).toEqual({ x: 299.7, y: 299.7 })
     expect(readImageFacts(jpegHeader({ density: { units: 0, x: 1, y: 1 } }), 'jpeg').ppi).toBeNull()
     expect(readImageFacts(jpegHeader({ density: null }), 'jpeg').ppi).toBeNull()
+    // yoğunluk yalnız JFIF başlığı okunduysa "kontrol edildi": birimsiz JFIF → kayıtlı değil; JFIF yok → bilinmiyor
+    expect(readImageFacts(jpegHeader({ density: { units: 0, x: 1, y: 1 } }), 'jpeg').ppiChecked).toBe(true)
+    expect(readImageFacts(jpegHeader({ density: null }), 'jpeg').ppiChecked).toBe(false)
+    // 8 bitlik tabloda 255'e kırpılmış değer: tahmin güvenilmez → kalite bilinmiyor
+    expect(readImageFacts(jpegHeader({ quality: 10 }), 'jpeg').jpeg.quality).toBeNull()
+    // PNG: pHYs IDAT'tan önce gelir → IDAT'a ulaşıldıysa kontrol edildi; yarıda kesilen başlık → bilinmiyor
+    expect(readImageFacts(pngHeader(), 'png')).toMatchObject({ ppi: null, ppiChecked: true })
+    expect(readImageFacts(pngHeader().slice(0, 33), 'png').ppiChecked).toBe(false)
   })
 
   it('estimateJpegQuality sınırları: 1–100, bozuk tablo null', () => {
@@ -88,8 +96,21 @@ describe('readImageFacts — diğer türler', () => {
     expect(readImageFacts(riff('VP8 ', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 'webp')).toMatchObject({ lossless: false, colorModel: 'rgb' })
     expect(readImageFacts(riff('VP8L', [0x2f, 0, 0, 0, 0x10]), 'webp')).toMatchObject({ lossless: true, colorModel: 'rgba' })
     const bmp = new Uint8Array(54)
-    bmp[0] = 0x42; bmp[1] = 0x4d; bmp[28] = 24; bmp[38] = 0x13; bmp[39] = 0x0b; bmp[42] = 0x13; bmp[43] = 0x0b
-    expect(readImageFacts(bmp, 'bmp')).toMatchObject({ bitDepth: 8, colorModel: 'rgb', ppi: { x: 72, y: 72 } })
+    bmp[0] = 0x42; bmp[1] = 0x4d; bmp[14] = 40; bmp[28] = 24; bmp[38] = 0x13; bmp[39] = 0x0b; bmp[42] = 0x13; bmp[43] = 0x0b
+    expect(readImageFacts(bmp, 'bmp')).toMatchObject({ bitDepth: 8, colorModel: 'rgb', ppi: { x: 72, y: 72 }, ppiChecked: true })
+    // 16 bit (5-6-5): kanal başına 8'den az → bit derinliği bilinmiyor; 32 bit: dördüncü kanal belirsiz → renk modeli bilinmiyor
+    const b16 = bmp.slice(); b16[28] = 16
+    expect(readImageFacts(b16, 'bmp')).toMatchObject({ bitDepth: null, colorModel: 'rgb' })
+    const b32 = bmp.slice(); b32[28] = 32
+    expect(readImageFacts(b32, 'bmp')).toMatchObject({ bitDepth: 8, colorModel: null })
+    // OS/2 çekirdek başlığı (12 bayt): bpp 24. bayttan, yoğunluk alanı yok (yine de "okundu")
+    const core = new Uint8Array(26); core[0] = 0x42; core[1] = 0x4d; core[14] = 12; core[24] = 8
+    expect(readImageFacts(core, 'bmp')).toMatchObject({ bitDepth: 8, colorModel: 'palette', ppi: null, ppiChecked: true })
+    // tanınmayan başlık boyu → hiçbir şey uydurulmaz
+    const odd = bmp.slice(); odd[14] = 20
+    expect(readImageFacts(odd, 'bmp')).toMatchObject({ bitDepth: null, colorModel: null, ppiChecked: false })
+    // GIF yoğunluk saklamaz: kontrol edildi sayılır
+    expect(readImageFacts(gif, 'gif').ppiChecked).toBe(true)
   })
 
   it('bozuk / rastgele bayt: fırlatmaz, tanınmayan alan null; döngüler hızlı biter', () => {
@@ -102,20 +123,21 @@ describe('readImageFacts — diğer türler', () => {
     const ffs = new Uint8Array(600_000).fill(0xff)
     expect(() => readImageFacts(ffs, 'jpeg')).not.toThrow()
     expect(Date.now() - t0).toBeLessThan(2000)
-    expect(readImageFacts(null, 'jpeg')).toEqual({ bitDepth: null, colorModel: null, ppi: null, jpeg: null, paletteSize: null, lossless: null })
+    expect(readImageFacts(null, 'jpeg')).toEqual({ bitDepth: null, colorModel: null, ppi: null, ppiChecked: false, jpeg: null, paletteSize: null,
+      lossless: null })
     expect(readImageFacts(new Uint8Array(4), 'png').bitDepth).toBeNull()
   })
 })
 
 describe('renk sayımı, SVG adaylığı, bantlaşma', () => {
   it('düz renk 1, saydamlık ayrı; çok renkli görsel tavanda durur', () => {
-    expect(countColors(solid(20, 20, [10, 20, 30]), 20, 20)).toEqual({ count: 1, atLeast: false, dominant: 1, dominantShare: 1 })
+    expect(countColors(solid(20, 20, [10, 20, 30]), 20, 20)).toEqual({ count: 1, atLeast: false, dominant: 1, dominantShare: 1, visible: 400 })
     const logo = logoWithAlpha(64, 64)
     const c = countColors(logo, 64, 64)
     expect(c.count).toBeGreaterThanOrEqual(2)
     expect(c.atLeast).toBe(false)
     const photo = photoLike(400, 400, 3, 40)
-    expect(countColors(photo, 400, 400)).toEqual({ count: COLOR_COUNT_CAP, atLeast: true, dominant: null, dominantShare: null })
+    expect(countColors(photo, 400, 400)).toEqual({ count: COLOR_COUNT_CAP, atLeast: true, dominant: null, dominantShare: null, visible: null })
     expect(countColors(null, 10, 10)).toEqual({ count: null, atLeast: false })
     // baskın renk: 2 düz renk + 150 seyrek kenar rengi (her biri tek piksel) → 2 baskın, pay yüksek
     const W = 100
@@ -145,6 +167,10 @@ describe('renk sayımı, SVG adaylığı, bantlaşma', () => {
     expect(svgCandidate({ count: 300, atLeast: false, dominant: 12, dominantShare: 0.95 }, 256, 128)).toBe(false)
     expect(svgCandidate({ count: 300, atLeast: false, dominant: 3, dominantShare: 0.9 }, 8, 8)).toBe(false)
     expect(svgCandidate({ count: null, atLeast: false }, 256, 128)).toBe(false)
+    // tümüyle saydam ya da tek düz renk logo değildir
+    expect(svgCandidate({ count: 1, atLeast: false, dominant: 0, dominantShare: null, visible: 0 }, 256, 128)).toBe(false)
+    expect(svgCandidate({ count: 1, atLeast: false, dominant: 1, dominantShare: 1, visible: 400 }, 256, 128)).toBe(false)
+    expect(svgCandidate({ count: 2, atLeast: false, dominant: 1, dominantShare: 1, visible: 200 }, 256, 128)).toBe(true)
   })
 
   it('bandingRisk: 16 bit kaynak; az renkli palet + benzerlik düşük', () => {
@@ -153,6 +179,10 @@ describe('renk sayımı, SVG adaylığı, bantlaşma', () => {
     expect(bandingRisk({ inputBitDepth: 8, outputType: 'png', outputColors: 32, similarity: 0.99 })).toBeNull()
     expect(bandingRisk({ inputBitDepth: 8, outputType: 'png', outputColors: 200, similarity: 0.9 })).toBeNull()
     expect(bandingRisk({ inputBitDepth: null, outputType: 'webp' })).toBeNull()
+    // 16 bit kaynak 16 bit PNG olarak kaldıysa ya da çıktı derinliği bilinmeyen PNG ise bantlaşma uyarısı yok
+    expect(bandingRisk({ inputBitDepth: 16, outputBitDepth: 16, outputType: 'png' })).toBeNull()
+    expect(bandingRisk({ inputBitDepth: 16, outputType: 'png' })).toBeNull()
+    expect(bandingRisk({ inputBitDepth: 16, outputBitDepth: 8, outputType: 'png' })).toBe('bit_depth')
   })
 })
 
