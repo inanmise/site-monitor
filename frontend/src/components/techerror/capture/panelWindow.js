@@ -107,6 +107,25 @@ export function hasOpenDialog(doc = globalThis.document) {
 }
 
 /**
+ * Belgede açık bir AÇILIR KATMAN (menü, açılır kutu, seçici listesi) var mı? Radix bunları yalnız açıkken çizer
+ * (`[data-radix-popper-content-wrapper]` sarmalayıcısı; açılır menü `role="menu"`). Kendiliğinden açılan bir pencere
+ * (eksikler penceresi, 2026-11-15) açık menünün üstüne açılmasın diye okunur: modal pencere odağı alınca kipsiz menü
+ * "dışarıya odak" sayıp kapanır — kullanıcının seçmek üzere olduğu işlem elinden gider.
+ * İPUCU (tooltip) sayılmaz: menü kapanınca odak tetiğe döner ve odaktaki tetiğin ipucu açık KALIR — ipucu sayılsaydı
+ * bekleyen pencere hiç açılmazdı (bir şey seçilmiyor, kaybedilecek iş yok).
+ */
+export function hasOpenPopup(doc = globalThis.document) {
+  try {
+    for (const el of doc.querySelectorAll('[data-radix-popper-content-wrapper], [role="menu"]')) {
+      if (el.hidden || el.closest('[hidden]')) continue
+      if (el.querySelector('[role="tooltip"], [data-slot="tooltip-content"]')) continue
+      return true
+    }
+  } catch { /* belge yok */ }
+  return false
+}
+
+/**
  * Panelden "Ana pencerede aç" (inceleme 2026-10-18): açan pencere hâlâ SiteMonitor'deyse ona İLETİ gönderilir
  * (`postMessage`, hedef köken = bu köken) — açan pencere raporu UYGULAMA İÇİNDE açar (`App`, `onOpenReportRequest`):
  * sayfa yeniden yüklenmez, uygulamanın geçiş kuralları geçerlidir. Açan pencere isteği alınca HEMEN yanıt verir (gezinmeden

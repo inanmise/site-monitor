@@ -296,6 +296,35 @@ describe('AlertForwardManager', () => {
     expect(await screen.findByText(/e-mail: 2, push: 1/)).toBeTruthy()
   })
 
+  it('açık "İşlemler" menüsü arka plan yenilemesi gelince kapanmaz ve yeniden kurulmaz (aynı DOM öğesi); "Sürdür" seçilebilir', async () => {
+    render(<AlertForwardManager />)
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    // Duraklatmanın arka plan yenilemesi elde tutulur — menü AÇIKKEN gelecek
+    let release
+    api.alertForwards.list.mockImplementation(() => new Promise((r) => { release = r }))
+    api.alertForwards.update.mockResolvedValueOnce({ success: true, data: { ...ROWS[0], version: 3, enabled: false, state: 'paused' },
+      info: { requested: false, emails: 0, push: 0, muted: false } })
+    pressMenuTrigger(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: EN['fwd.pause'] }))
+    await waitFor(() => expect(rowOf(1)).toHaveAttribute('data-state', 'paused'))
+    await waitFor(() => expect(release).toBeTypeOf('function'))
+    await waitFor(() => expect(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) })).not.toBeDisabled())
+    pressMenuTrigger(within(rowOf(1)).getByRole('button', { name: new RegExp(EN['fwd.actions']) }))
+    const resume = await screen.findByRole('menuitem', { name: EN['fwd.resume'] })
+    const menu = screen.getByRole('menu')
+    // Yenileme gelir: sunucudan YENİ satır nesneleri (aynı kimlik, aynı sürüm)
+    release(listResponse({ items: [{ ...ROWS[0], version: 3, enabled: false, state: 'paused' }, ROWS[1], ROWS[2]] }))
+    await waitFor(() => expect(document.querySelector('[data-slot="fwd-refresh"]')).not.toBeDisabled())
+    expect(menu.isConnected).toBe(true)
+    expect(resume.isConnected).toBe(true)
+    expect(screen.getByRole('menuitem', { name: EN['fwd.resume'] })).toBe(resume)
+    expect(resume).not.toHaveAttribute('data-disabled')
+    api.alertForwards.update.mockResolvedValueOnce({ success: true, data: { ...ROWS[0], version: 4, enabled: true, state: 'active' },
+      info: { requested: true, emails: 1, push: 0, muted: false } })
+    fireEvent.click(resume)
+    await waitFor(() => expect(api.alertForwards.update).toHaveBeenLastCalledWith(1, { enabled: true, version: 3 }))
+  })
+
   it('sürdürmede bilgi istendi ama kimseye gitmediyse uyarı; sistem bakımı susturduysa ayrı metin', async () => {
     api.alertForwards.list.mockResolvedValue(listResponse({ items: [{ ...ROWS[0], enabled: false, state: 'paused' }] }))
     render(<AlertForwardManager />)

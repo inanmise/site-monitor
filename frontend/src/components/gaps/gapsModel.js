@@ -48,6 +48,30 @@ export const CLOSE_QUIET_MS = 12 * 60 * 60 * 1000
 export const GAPS_SESSION_KEY = 'sm.gaps.session'
 /** Kendiliğinden gösterme öncesi bekleme (sayfa otursun, başka pencere açılmışsa sorulmaz). */
 export const AUTO_PROMPT_DELAY_MS = 1500
+/**
+ * Kendiliğinden gösterme kullanıcının işini BÖLMEZ (2026-11-15, CI'da yakalanan hata: pencere açık bir "İşlemler" menüsünün
+ * üstüne açılıyor, odağı alıyor, kipsiz menü kapanıyordu — kullanıcı "Sürdür"e basamadan menü elinden gidiyordu). Kullanıcı
+ * en az bu kadar süredir dokunmamış / tuşa basmamış / kaydırmamış ve açık bir menü / açılır kutu yoksa pencere açılır.
+ */
+export const AUTO_QUIET_MS = 2000
+/** Sessizlik beklenirken yeniden bakma aralığı. */
+export const AUTO_DEFER_POLL_MS = 500
+/**
+ * Sessizlik bekleme üst sınırı: kullanıcı bu kadar süre boyunca kesintisiz çalıştıysa bu oturumda kendiliğinden açılmaz
+ * (kullanıcı menüsündeki "Eksiklerim" her zaman açar) — bekleme süresiz değil.
+ */
+export const AUTO_DEFER_MAX_MS = 60_000
+
+/**
+ * Kullanıcı şu an bir şeyle uğraşıyor mu (kendiliğinden pencere beklesin mi)? Açık menü / açılır kutu varsa ya da son
+ * girdinin üstünden {@link AUTO_QUIET_MS}'ten az geçtiyse evet. Zamanlar tekdüze saatten (`performance.now`); saat geri
+ * gitmiş gibi görünürse (son girdi "gelecekte") temkinli: uğraşıyor sayılır.
+ */
+export function userInteracting({ now, lastInputAt, popupOpen }) {
+  if (popupOpen) return true
+  if (lastInputAt == null || !Number.isFinite(lastInputAt) || !Number.isFinite(now)) return false
+  return now - lastInputAt < AUTO_QUIET_MS
+}
 /** Kullanıcı tercihindeki (yerel ayna) anahtar — UserPreferencesService.LOCAL_KEYS ile aynı. */
 export const GAPS_STATE_KEY = 'sm.gaps.state'
 /** Veri kalitesi dışı denetim adları (okunamadı / yetki yok notları). */

@@ -3,15 +3,16 @@ import { api } from '../../api/client'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { onSessionReset } from '../../utils/sessionResetBus.js'
 import { applyTabView, navigateTo } from '../../utils/navigate.js'
-import { hasOpenDialog } from '../techerror/capture/panelWindow.js'
+import { hasOpenDialog, hasOpenPopup } from '../techerror/capture/panelWindow.js'
 import { useTour } from '../tour/TourProvider.jsx'
 import { decideAutoStart } from '../tour/tourEngine.js'
 import { MAIN_STEPS } from '../tour/tourSteps.js'
 import { onGapsRefreshRequest, onOpenGapsDialog, publishGapsSummary } from './gapsBus.js'
 import {
-  AUTO_MAX_AGE_MS, AUTO_PROMPT_DELAY_MS, GAP_CATEGORIES, GAPS_SESSION_KEY, GAPS_STATE_KEY, MAX_LOADED_TEAMS, MAX_TEAMS,
+  AUTO_DEFER_MAX_MS, AUTO_DEFER_POLL_MS, AUTO_MAX_AGE_MS, AUTO_PROMPT_DELAY_MS, GAP_CATEGORIES, GAPS_SESSION_KEY, GAPS_STATE_KEY,
+  MAX_LOADED_TEAMS, MAX_TEAMS,
   collectGaps, dismissState, hideState, markSeen, readSession, readState, seenDiff, shouldAutoCheck, shouldPrompt, snoozeState,
-  unhideState,
+  unhideState, userInteracting,
 } from './gapsModel.js'
 import { askWho } from './gapsProfile.js'
 import { contextOf, loadGapSources, loadMoreTeams, teamNameOf } from './gapsSources.js'
@@ -21,6 +22,10 @@ const GapsFix = lazy(() => import('./GapsFix.jsx'))
 
 /** Bu sekmede kendiliğinden gösterme kararı verildi mi (oturum sıfırlanınca unutulur). */
 const PROMPTED_KEY = 'sm.gaps.prompted'
+/** Kullanıcının "uğraşıyor" sayıldığı girdiler (kendiliğinden yol beklerken dinlenir; pencere açılınca / vazgeçilince bırakılır). */
+const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'touchstart']
+const INPUT_LISTEN = { capture: true, passive: true }
+const monoNow = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
 const IDLE = { status: 'idle', src: null, at: null, dq: 'unknown', diff: null, extraTeams: [], loadingMore: false }
 
 function readStored() {
@@ -116,6 +121,10 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   const autoFor = useRef(null)        // bu kullanıcı için kendiliğinden yol başlatıldı mı (bağımlılık değişince yinelenmez)
   const userActed = useRef(false)     // kullanıcı menüden açtı / kapattı → kendiliğinden yol pencereyi AÇMAZ
   const seenFor = useRef(null)        // "son görülen" kaydının yazıldığı okuma (her okumada bir kez)
+  const lastInput = useRef(null)      // kullanıcının son girdisi (tekdüze saat) — kendiliğinden yol sessizlik bekler
+  const inputWatch = useRef(null)     // girdi dinleyicilerini kaldıran işlev (yalnız kendiliğinden yol sürerken kurulu)
+  const deferTimer = useRef(null)     // sessizlik beklerken bir sonraki bakış
+  const autoGen = useRef(0)           // kendiliğinden yolun kuşağı: çıkış / unmount eski bekleyişi geçersiz kılar
   const inputs = useRef({ myTeamIds, manageTeamIds })
   inputs.current = { myTeamIds, manageTeamIds }
   const extraRef = useRef([])          // elle eklenen takımlar (yenilemede yeniden denetlenir)
@@ -135,10 +144,25 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   canRef.current = can
   extraRef.current = state.extraTeams
 
+  /** Kendiliğinden yol boyunca kullanıcı girdisini izle (bir kez kurulur; pasif, yakalama evresi). */
+  const watchInput = useCallback(() => {
+    if (inputWatch.current || typeof window === 'undefined') return
+    const mark = () => { lastInput.current = monoNow() }
+    for (const type of INPUT_EVENTS) window.addEventListener(type, mark, INPUT_LISTEN)
+    inputWatch.current = () => { for (const type of INPUT_EVENTS) window.removeEventListener(type, mark, INPUT_LISTEN) }
+  }, [])
+  /** Kendiliğinden yol bitti (açıldı / vazgeçildi / iptal): dinleyiciler ve bekleyen bakış kaldırılır. */
+  const stopAuto = useCallback(() => {
+    clearTimeout(deferTimer.current)
+    deferTimer.current = null
+    inputWatch.current?.()
+    inputWatch.current = null
+  }, [])
+
   useEffect(() => {
     alive.current = true
-    return () => { alive.current = false; seq.current += 1 }
-  }, [])
+    return () => { alive.current = false; seq.current += 1; autoGen.current += 1; stopAuto() }
+  }, [stopAuto])
 
   const hidden = useMemo(() => readStored().hidden, [stateRev, state.src])  // eslint-disable-line react-hooks/exhaustive-deps
   const gaps = useMemo(() => collectFrom(state.src, state.extraTeams, username, hidden),
@@ -214,25 +238,51 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   // Kendiliğinden gösterme: girişten (bu sekmede) bir kez, yetkiler VE kişisel tercihler okununca (başka cihazda verilen
   // "gösterme" / "sonra hatırlat" kararı sunucudan gelsin), kısa beklemeden sonra. Ertelendiyse, bu oturumda kapatıldıysa
   // ya da başka sekme yakın zamanda denetlediyse AĞA ÇIKILMAZ. Karşılama turu açılacaksa / açıksa bu girişte sorulmaz.
+  // Kullanıcının işini bölmez: pencere ancak kullanıcı AUTO_QUIET_MS süredir girdi vermemişken ve açık menü / açılır kutu
+  // yokken açılır; o ana dek AUTO_DEFER_POLL_MS aralıkla bakılır, AUTO_DEFER_MAX_MS dolarsa bu oturumda açılmaz.
   useEffect(() => {
     if (!enabled || !username || !permsLoaded || !prefsSettled || promptedFor(username) || autoFor.current === username) return undefined
+    watchInput()
+    const gen = autoGen.current
+    let fired = false
     const timer = setTimeout(async () => {
+      fired = true
       if (!alive.current || autoFor.current === username) return
       autoFor.current = username
       markPrompted(username)
-      if (tourBusy(tourRef.current)) return
-      if (!shouldAutoCheck(readStored(), readSessionStore(), Date.now())) return
+      const live = () => alive.current && gen === autoGen.current && !userActed.current
+      const giveUp = () => { if (gen === autoGen.current) stopAuto() }
+      if (tourBusy(tourRef.current)) return giveUp()
+      if (!shouldAutoCheck(readStored(), readSessionStore(), Date.now())) return giveUp()
       const started = Date.now()
       const g = await load()
-      if (!g || !alive.current || userActed.current) return
+      if (!g || !live()) return giveUp()
       writeSessionStore({ checkedAt: Date.now() })
-      if (Date.now() - started > AUTO_MAX_AGE_MS) return       // geç kalan okuma kullanıcının işini bölmesin
-      if (!shouldPrompt(readStored(), g.marks, Date.now())) return
-      if (tourBusy(tourRef.current) || hasOpenDialog()) return  // başka pencere açık: bu oturumda sorulmaz (menüden açılır)
-      setOpen(true)
+      if (Date.now() - started > AUTO_MAX_AGE_MS) return giveUp()       // geç kalan okuma kullanıcının işini bölmesin
+      if (!shouldPrompt(readStored(), g.marks, Date.now())) return giveUp()
+      const until = monoNow() + AUTO_DEFER_MAX_MS
+      const tryOpen = () => {
+        deferTimer.current = null
+        if (!live()) return giveUp()
+        if (tourBusy(tourRef.current) || hasOpenDialog()) return giveUp()  // başka pencere açık: bu oturumda sorulmaz (menüden açılır)
+        const now = monoNow()
+        if (userInteracting({ now, lastInputAt: lastInput.current, popupOpen: hasOpenPopup() })) {
+          if (now >= until) return giveUp()          // kullanıcı kesintisiz çalışıyor: bu oturumda sorulmaz (menüden açılır)
+          deferTimer.current = setTimeout(tryOpen, AUTO_DEFER_POLL_MS)
+          return undefined
+        }
+        giveUp()
+        if (!shouldPrompt(readStored(), g.marks, Date.now())) return undefined  // beklerken başka sekmede ertelendi / gösterme
+        setOpen(true)
+        return undefined
+      }
+      return tryOpen()
     }, AUTO_PROMPT_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [enabled, username, permsLoaded, prefsSettled, load])
+    return () => {
+      clearTimeout(timer)
+      if (!fired) stopAuto()     // zamanlayıcı çalışmadıysa dinleyici de kalmasın (etki yeniden kurulursa yeniden bağlanır)
+    }
+  }, [enabled, username, permsLoaded, prefsSettled, load, watchInput, stopAuto])
 
   // Menüden açma: her zaman (erteleme / gösterme seçimi yok sayılır), taze okuma
   useEffect(() => onOpenGapsDialog(() => {
@@ -264,6 +314,9 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
   useEffect(() => onSessionReset(() => {
     try { sessionStorage.removeItem(PROMPTED_KEY) } catch { /* yok */ }
     seq.current += 1
+    autoGen.current += 1        // sessizlik bekleyen kendiliğinden açılış düşer (önceki oturumun okuması)
+    stopAuto()
+    lastInput.current = null
     autoFor.current = null
     userActed.current = false
     seenFor.current = null
@@ -271,7 +324,7 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
     setFix(null)
     setState(IDLE)
     publishGapsSummary(null)
-  }), [])
+  }), [stopAuto])
 
   const close = useCallback(() => {
     userActed.current = true

@@ -4,7 +4,7 @@ import {
 } from '../components/techerror/capture/imageSync.js'
 import {
   OPEN_REPORT_ACK, OPEN_REPORT_ANSWER_WINDOW_MS, OPEN_REPORT_REQUEST, OPEN_REPORT_TIMEOUT_MS, OPEN_RESULT_BLOCKED, OPEN_RESULT_OPENED,
-  PANEL_FEATURES, hasOpenDialog, imagesPanelReportFromSearch, imagesPanelUrl, isReportEditorSearch, onOpenReportRequest,
+  PANEL_FEATURES, hasOpenDialog, hasOpenPopup, imagesPanelReportFromSearch, imagesPanelUrl, isReportEditorSearch, onOpenReportRequest,
   openImagesPanel, openInMainWindow, panelWindowName, reportEditorUrl,
 } from '../components/techerror/capture/panelWindow.js'
 
@@ -255,6 +255,27 @@ describe('Görsel paneli penceresi', () => {
     doc.body.innerHTML = '<div aria-modal="true"></div>'
     expect(hasOpenDialog(doc)).toBe(true)
     expect(hasOpenDialog(null)).toBe(false)
+  })
+
+  it('hasOpenPopup: açık Radix açılır katmanı (popper sarmalayıcısı) ya da menü sayılır; ipucu, gizli / kapalı (çizilmemiş) sayılmaz', () => {
+    const doc = document.implementation.createHTMLDocument('x')
+    expect(hasOpenPopup(doc)).toBe(false)
+    doc.body.innerHTML = '<div hidden><div role="menu"></div></div><div data-radix-popper-content-wrapper hidden></div>'
+    expect(hasOpenPopup(doc)).toBe(false)
+    doc.body.insertAdjacentHTML('beforeend', '<div data-radix-popper-content-wrapper><div role="listbox"></div></div>')
+    expect(hasOpenPopup(doc)).toBe(true)
+    doc.body.innerHTML = '<div role="menu"><div role="menuitem">Sürdür</div></div>'
+    expect(hasOpenPopup(doc)).toBe(true)
+    // pencere açılır katman değildir (ayrı kural: hasOpenDialog)
+    doc.body.innerHTML = '<div role="dialog" aria-modal="true"></div>'
+    expect(hasOpenPopup(doc)).toBe(false)
+    // ipucu sayılmaz: menü kapanınca odaktaki tetiğin ipucu açık kalır (Radix ipucu = popper + role="tooltip")
+    doc.body.innerHTML = '<div data-radix-popper-content-wrapper><div data-slot="tooltip-content">Kullanıcı ayarları'
+      + '<span role="tooltip">Kullanıcı ayarları</span></div></div>'
+    expect(hasOpenPopup(doc)).toBe(false)
+    doc.body.insertAdjacentHTML('beforeend', '<div data-radix-popper-content-wrapper><div role="menu"></div></div>')
+    expect(hasOpenPopup(doc)).toBe(true)
+    expect(hasOpenPopup(null)).toBe(false)
   })
 
   it('isReportEditorSearch: yalnız bu raporun düzenleyicisi', () => {

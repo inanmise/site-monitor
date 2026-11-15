@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
-  CLOSE_QUIET_MS, DEADLINE, GAP_CATEGORIES, MAX_DISMISSED, MAX_HIDDEN, MAX_ITEMS_PER_GAP, MAX_SEEN, MAX_TEAMS, RECHECK_MS,
+  AUTO_DEFER_MAX_MS, AUTO_DEFER_POLL_MS, AUTO_QUIET_MS, CLOSE_QUIET_MS, DEADLINE, GAP_CATEGORIES, MAX_DISMISSED, MAX_HIDDEN,
+  MAX_ITEMS_PER_GAP, MAX_SEEN, MAX_TEAMS, RECHECK_MS,
   SNOOZE_MS, SNOOZE_WEEK_MS, collectGaps, dismissState, formatSeen, groupByTeam, hashKey, hideState, markSeen, ownTeamIds,
   parseSeen, profileGaps, readSession, readState, seenDiff, shouldAutoCheck, shouldPrompt, snoozeState, teamGaps, unhideState,
-  withDeadline,
+  userInteracting, withDeadline,
 } from '../components/gaps/gapsModel.js'
 import { LOCAL_PREF_KEYS, MAX_LOCAL_VALUE } from '../hooks/userPrefsModel.js'
 import { PERSONAL_PREFIXES } from '../utils/personalStorage.js'
@@ -295,5 +296,19 @@ describe('eksikler penceresi — model', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('kullanıcı uğraşıyor mu: açık menü / açılır kutu ya da son girdiden AUTO_QUIET_MS geçmediyse evet; girdi yoksa hayır', () => {
+    expect(userInteracting({ now: 10_000, lastInputAt: null, popupOpen: false })).toBe(false)
+    expect(userInteracting({ now: 10_000, lastInputAt: null, popupOpen: true })).toBe(true)
+    expect(userInteracting({ now: 10_000, lastInputAt: 10_000 - AUTO_QUIET_MS + 1, popupOpen: false })).toBe(true)
+    expect(userInteracting({ now: 10_000, lastInputAt: 10_000 - AUTO_QUIET_MS, popupOpen: false })).toBe(false)
+    expect(userInteracting({ now: 10_000, lastInputAt: 10_000 - AUTO_QUIET_MS - 5000, popupOpen: true })).toBe(true)
+    // saat geri gitmiş gibi (son girdi "gelecekte"): temkinli — uğraşıyor sayılır
+    expect(userInteracting({ now: 10_000, lastInputAt: 12_000, popupOpen: false })).toBe(true)
+    expect(userInteracting({ now: Number.NaN, lastInputAt: 1, popupOpen: false })).toBe(false)
+    // bekleme sınırlı ve aralıklı: sınır, sessizlik süresinden çok uzun; bakış aralığı sessizlikten kısa
+    expect(AUTO_DEFER_MAX_MS).toBeGreaterThan(AUTO_QUIET_MS * 10)
+    expect(AUTO_DEFER_POLL_MS).toBeLessThan(AUTO_QUIET_MS)
   })
 })
