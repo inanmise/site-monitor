@@ -25,7 +25,7 @@ const BASE_VIEW = {
 }
 
 let saved = null
-async function mock(page, view = BASE_VIEW) {
+async function mock(page, view = BASE_VIEW, { oldServer = false } = {}) {
   saved = null
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
@@ -40,7 +40,13 @@ async function mock(page, view = BASE_VIEW) {
     else if (p === '/api/admin/users') body = { success: true, data: USERS }
     else if (p === '/api/admin/teams/1/users') body = { success: true, data: USERS }
     else if (p === '/api/oncall/current') body = { success: true, data: [{ team_id: 1, user_id: 2, name: LONG_A, until: '2026-10-12T06:00:00', active: true, override: false }] }
-    else if (p === '/api/oncall/teams/1' && req.method() === 'PUT') {
+    else if (p === '/api/oncall/teams/1' && req.method() === 'PUT' && oldServer) {
+      // eski pod: yalnız-bildirim gövdesini çizelge kaydı sanar ve "ilk devir" ister
+      saved = JSON.parse(req.postData() || '{}')
+      await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ success: false,
+        code: 'VALIDATION_FAILED', field: 'anchor', error: 'İlk devir anını tarih ve saatiyle girin (yyyy-AA-GG SS:dd).' }) })
+      return
+    } else if (p === '/api/oncall/teams/1' && req.method() === 'PUT') {
       saved = JSON.parse(req.postData() || '{}')
       body = { success: true, data: { ...view, weekly_notice: { ...view.weekly_notice, ...(saved.weekly_notice || {}) },
         weekly_notice_next: '2026-11-18T06:15:00' } }
@@ -127,6 +133,21 @@ for (const vp of VIEWPORTS) {
       await page.locator('[data-slot="oncall-save"]').click()
       await expect.poll(() => saved).toEqual({ weekly_notice: { enabled: true, push: false, day: 3, time: '09:15' } })
       await expect(sec.locator('[data-slot="oncall-wn-next"]')).not.toContainText(/recalculated|yeniden hesaplanır/)
+    })
+
+    test('eski sunucu (dağıtım sürüyor): "bu sürüm tanımıyor" uyarısı sığar, anlamsız ilk devir hatası çıkmaz', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mock(page, BASE_VIEW, { oldServer: true })
+      const sec = await openModal(page)
+      await sec.getByRole('switch', { name: /every week|Her hafta/ }).click()
+      await page.locator('[data-slot="oncall-save"]').click()
+      const warn = sec.locator('[data-slot="oncall-wn-oldserver"]')
+      await expect(warn).toBeVisible()
+      await expect(warn).toContainText(/does not know|henüz tanımıyor/)
+      expect(saved).toEqual({ weekly_notice: { enabled: true } })
+      expect(await page.evaluate(overflowX, '[data-slot="oncall-weekly-notice"]'), 'taşan öğe').toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="oncall-weekly-notice"]'), 'kırpılan metin').toEqual([])
+      await expect(sec.getByText(/İlk devir anını/)).toHaveCount(0)
     })
 
     test('çizelge kapalıyken anahtar kilitli ve nedeni yazılı', async ({ page }) => {

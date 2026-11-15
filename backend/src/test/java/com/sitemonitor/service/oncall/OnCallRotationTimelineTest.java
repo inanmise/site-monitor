@@ -64,6 +64,23 @@ class OnCallRotationTimelineTest {
     }
 
     @Test
+    @DisplayName("tavan sessizce kesmez: sığmayan (birleştirilmiş) parça sayısı döner; kesilmeyen çizelgede 0")
+    void omittedCount() {
+        OnCallRotation.Config daily = new OnCallRotation.Config(true, 1, LocalDateTime.parse("2026-11-01T09:00"), List.of(1L, 2L, 3L));
+        OnCallRotation.Timeline all = OnCallRotation.timelineCounted(daily, List.of(), MON, NEXT_MON, 50);
+        assertThat(all.slots()).hasSize(8);
+        assertThat(all.omitted()).isZero();
+        OnCallRotation.Timeline cut = OnCallRotation.timelineCounted(daily, List.of(), MON, NEXT_MON, 3);
+        assertThat(cut.slots()).hasSize(3);
+        assertThat(cut.omitted()).isEqualTo(5);
+        // tek kişilik rotasyon tek parçaya birleşir: tavan 1 olsa da kesilen yok
+        OnCallRotation.Config one = new OnCallRotation.Config(true, 1, LocalDateTime.parse("2026-11-01T09:00"), List.of(5L));
+        assertThat(OnCallRotation.timelineCounted(one, List.of(), MON, NEXT_MON, 1).omitted()).isZero();
+        // timeline() aynı kesik listeyi döner
+        assertThat(OnCallRotation.timeline(daily, List.of(), MON, NEXT_MON, 3)).isEqualTo(cut.slots());
+    }
+
+    @Test
     @DisplayName("rotasyon hafta ortasında başlıyorsa önce boş parça")
     void anchorInsideWeek() {
         OnCallRotation.Config c = new OnCallRotation.Config(true, 7, LocalDateTime.parse("2026-11-19T09:00"), List.of(1L));

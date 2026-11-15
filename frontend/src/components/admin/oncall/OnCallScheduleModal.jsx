@@ -18,7 +18,8 @@ import { Input } from '@/components/shadcn/input'
 import { ItemGroup, Item } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import {
-  MAX_MEMBERS, addMember, anchorToUtc, buildSaveBody, hasMissingMembers, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
+  MAX_MEMBERS, addMember, anchorToUtc, buildSaveBody, hasMissingMembers, isDirty, move, noticeNotSupported, toForm, utcToAnchor, validate,
+  validateOverride,
 } from './oncallModel.js'
 import WeeklyNoticeSection from './WeeklyNoticeSection.jsx'
 
@@ -93,8 +94,18 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
     if (Object.keys(errs).length) return
     setSaving(true)
     try {
-      const res = await api.oncall.save(team.id, buildSaveBody(form, base, { configured: view?.configured !== false }))
+      const body = buildSaveBody(form, base, { configured: view?.configured !== false })
+      const res = await api.oncall.save(team.id, body)
       if (!alive.current) return
+      // Eski pod (dağıtım sürüyor): bildirim ayarını tanımadı — sessiz kayıp ya da "ilk devir" hatası yerine açık uyarı
+      if (noticeNotSupported(body, res)) {
+        toast.error(t('oncall.wn.oldServer'), 9000)
+        if (res?.success) {
+          apply(res.data)
+          onSaved?.()
+        } else setErrors({ _noticeOld: true })
+        return
+      }
       if (res?.success) {
         apply(res.data)
         toast.success(t('oncall.saved'))
@@ -216,7 +227,7 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
               onChange={(notice) => {
                 set({ notice })
                 setErrors((e) => ({ ...e, 'weekly_notice.mail': undefined, 'weekly_notice.time': undefined, 'weekly_notice.day': undefined,
-                  'weekly_notice.push': undefined, 'weekly_notice.enabled': undefined, _serverField: undefined }))
+                  'weekly_notice.push': undefined, 'weekly_notice.enabled': undefined, _serverField: undefined, _noticeOld: undefined }))
               }} />
 
             <div className={SECTION} data-field="members">

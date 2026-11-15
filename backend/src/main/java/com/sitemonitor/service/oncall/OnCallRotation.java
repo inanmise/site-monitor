@@ -80,8 +80,24 @@ public final class OnCallRotation {
      * ({@link #MAX_TIMELINE} tavanlı). Yer değiştirme listesi çağıranın verdiği kadardır (sınırlı sorgu).
      */
     public static List<Slot> timeline(Config c, List<Override> overrides, Instant from, Instant to, int max) {
+        return timelineCounted(c, overrides, from, to, max).slots();
+    }
+
+    /**
+     * Zaman çizelgesi + sığmayan parça sayısı (inceleme 2026-11-15: tavan sessizce kesiyordu). {@code omitted} = tavandan
+     * sonra gelen (birleştirilmiş) parça adedi; 0 = tamamı listede.
+     */
+    public record Timeline(List<Slot> slots, int omitted) {
+        public Timeline {
+            slots = slots == null ? List.of() : List.copyOf(slots);
+            omitted = Math.max(0, omitted);
+        }
+    }
+
+    /** {@link #timeline} ile aynı kural; ayrıca tavanı aşan parçaları sayar (döngüler aynı sınırlarla). */
+    public static Timeline timelineCounted(Config c, List<Override> overrides, Instant from, Instant to, int max) {
         List<Slot> out = new ArrayList<>();
-        if (from == null || to == null || !to.isAfter(from)) return out;
+        if (from == null || to == null || !to.isAfter(from)) return new Timeline(out, 0);
         int cap = Math.max(1, Math.min(max, MAX_TIMELINE));
         java.util.TreeSet<Instant> cuts = new java.util.TreeSet<>();
         cuts.add(from);
@@ -105,20 +121,31 @@ public final class OnCallRotation {
             }
         }
         Instant prev = null;
+        int omitted = 0;
+        Slot lastOmitted = null;            // tavandan sonraki son parça (birleşme kuralı sayımda da geçerli)
         for (Instant cut : cuts) {
             if (prev != null) {
                 Slot s = current(c, overrides, prev);
-                Slot last = out.isEmpty() ? null : out.get(out.size() - 1);
-                if (last != null && java.util.Objects.equals(last.userId(), s.userId()) && last.override() == s.override()) {
-                    out.set(out.size() - 1, new Slot(last.userId(), last.start(), cut, last.override(), last.overrideId()));
+                if (omitted > 0) {
+                    if (!(java.util.Objects.equals(lastOmitted.userId(), s.userId()) && lastOmitted.override() == s.override())) {
+                        omitted++;
+                        lastOmitted = s;
+                    }
                 } else {
-                    if (out.size() >= cap) break;
-                    out.add(new Slot(s.userId(), prev, cut, s.override(), s.override() ? s.overrideId() : null));
+                    Slot last = out.isEmpty() ? null : out.get(out.size() - 1);
+                    if (last != null && java.util.Objects.equals(last.userId(), s.userId()) && last.override() == s.override()) {
+                        out.set(out.size() - 1, new Slot(last.userId(), last.start(), cut, last.override(), last.overrideId()));
+                    } else if (out.size() >= cap) {
+                        omitted = 1;
+                        lastOmitted = s;
+                    } else {
+                        out.add(new Slot(s.userId(), prev, cut, s.override(), s.override() ? s.overrideId() : null));
+                    }
                 }
             }
             prev = cut;
         }
-        return out;
+        return new Timeline(out, omitted);
     }
 
     /**

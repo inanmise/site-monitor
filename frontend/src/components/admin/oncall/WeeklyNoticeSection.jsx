@@ -1,6 +1,5 @@
 import { useId } from 'react'
 import { BellRing, Info } from 'lucide-react'
-import { formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import Field from '../../ui/Field.jsx'
 import ToneBadge from '../ToneBadge.jsx'
@@ -11,12 +10,20 @@ import { Input } from '@/components/shadcn/input'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { cn } from '@/lib/utils'
 import {
-  NOTICE_DAYS, NOTICE_REASONS, NOTICE_STATUSES, noticeChanges, noticeNextState, noticeStatusTone, noticeUsable,
+  NOTICE_DAYS, istanbulParts, noticeChanges, noticeLastView, noticeNextState, noticeStatusTone, noticeUsable, weekKeyText,
 } from './oncallModel.js'
 
 const SECTION = 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3 sm:p-4'
 /** Sunucunun e-posta sınıfı → etiket anahtarı (ham SMTP metni gelmez). */
-const MAIL_KEY = { delivered: 'oncall.wn.mailOutcome.sent', skipped: 'oncall.wn.mailOutcome.skip', failed: 'oncall.wn.mailOutcome.notSent', off: 'oncall.wn.mailOutcome.off' }
+const MAIL_KEY = {
+  delivered: 'oncall.wn.mailOutcome.sent', queued: 'oncall.wn.mailOutcome.queued', skipped: 'oncall.wn.mailOutcome.skip',
+  failed: 'oncall.wn.mailOutcome.notSent', off: 'oncall.wn.mailOutcome.off',
+}
+/** Push sınıfı → etiket anahtarı (statik — dinamik anahtar yok). */
+const PUSH_KEY = {
+  people: 'oncall.wn.pushOutcome.people', off: 'oncall.wn.pushOutcome.off', notSent: 'oncall.wn.pushOutcome.notSent',
+  none: 'oncall.wn.pushOutcome.none',
+}
 const H = 'm-0 text-sm font-semibold'
 
 /** Kanal satırı — shadcn Checkbox + bağlı Label; dokunmatikte satır en az 40 px (kutunun kendi ::after alanı da 40 px). */
@@ -59,8 +66,10 @@ export default function WeeklyNoticeSection({ form, base, view, canEdit, errors,
   const next = view?.weekly_notice_next
   const nextState = noticeNextState(next)
   const last = view?.weekly_notice_last
-  const lastStatus = NOTICE_STATUSES.includes(last?.status) ? last.status : null
-  const lastReason = NOTICE_REASONS.includes(last?.reason) ? last.reason : null
+  const lv = noticeLastView(last)
+  const lastStatus = lv?.status || null
+  const nextParts = istanbulParts(next)
+  const atParts = istanbulParts(last?.at)
 
   return (
     <div className={SECTION} data-slot="oncall-weekly-notice">
@@ -89,6 +98,11 @@ export default function WeeklyNoticeSection({ form, base, view, canEdit, errors,
           label={t('oncall.wn.push')} hint={t('oncall.wn.pushHint')} />
         {channelErr && <p className="m-0 text-sm font-medium text-destructive" role="alert">{channelErr}</p>}
       </fieldset>
+      {errors?._noticeOld && (
+        <p data-slot="oncall-wn-oldserver" role="alert" className="m-0 text-sm font-medium text-destructive [overflow-wrap:anywhere]">
+          {t('oncall.wn.oldServer')}
+        </p>
+      )}
 
       <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label={t('oncall.wn.day')} error={err('weekly_notice.day')} name="weekly_notice.day" className="mb-0">
@@ -116,7 +130,9 @@ export default function WeeklyNoticeSection({ form, base, view, canEdit, errors,
             : !savedEnabled ? t('oncall.wn.nextOff')
               : view?.weekly_notice_unreadable ? t('oncall.wn.unreadable')
                 : nextState === 'soon' ? t('oncall.wn.nextSoon')
-                  : nextState === 'scheduled' ? formatDate(next) : t('oncall.wn.nextUnknown')}
+                  : nextState === 'scheduled' && nextParts
+                    ? t('oncall.wn.nextAt', t(`oncall.wn.dayName.${nextParts.dow}`), nextParts.date, nextParts.time)
+                    : t('oncall.wn.nextUnknown')}
         </div>
         <div data-slot="oncall-wn-last" data-status={lastStatus || undefined} className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="font-semibold">{t('oncall.wn.lastLabel')}</span>
@@ -127,13 +143,23 @@ export default function WeeklyNoticeSection({ form, base, view, canEdit, errors,
                   <ToneBadge tone={noticeStatusTone(lastStatus)} className="rounded-md whitespace-normal">
                     {lastStatus ? t(`oncall.wn.status.${lastStatus}`) : t('oncall.wn.status.other')}
                   </ToneBadge>
-                  <span className="tabular-nums">{t('oncall.wn.lastWeek', last.week || '—')}</span>
-                  {last.at && <span className="text-muted-foreground tabular-nums">· {formatDate(last.at)}</span>}
-                  {lastReason && <span className="w-full [overflow-wrap:anywhere] text-muted-foreground">{t(`oncall.wn.reason.${lastReason}`)}</span>}
-                  {(last.mail || Number.isFinite(last.push_count)) && (
-                    <span className="w-full [overflow-wrap:anywhere] text-muted-foreground">
+                  <span className="tabular-nums">{t('oncall.wn.lastWeek', weekKeyText(last.week) || '—')}</span>
+                  {atParts && <span className="text-muted-foreground tabular-nums">· {atParts.date} {atParts.time}</span>}
+                  {lv.reason && <span className="w-full [overflow-wrap:anywhere] text-muted-foreground">{t(`oncall.wn.reason.${lv.reason}`)}</span>}
+                  {lv.retry === 'pending' && (
+                    <span data-slot="oncall-wn-retry" data-retry="pending" className="w-full [overflow-wrap:anywhere] text-muted-foreground">
+                      {t('oncall.wn.retryPending', String(lv.attempts ?? '—'), String(lv.maxAttempts ?? '—'))}
+                    </span>
+                  )}
+                  {lv.retry === 'done' && (
+                    <span data-slot="oncall-wn-retry" data-retry="done" className="w-full [overflow-wrap:anywhere] text-muted-foreground">
+                      {lastStatus === 'PARTIAL' ? t('oncall.wn.retryDonePartial') : t('oncall.wn.retryDone')}
+                    </span>
+                  )}
+                  {(last.mail || lv.push) && (
+                    <span data-slot="oncall-wn-channels" className="w-full [overflow-wrap:anywhere] text-muted-foreground">
                       {t('oncall.wn.lastChannels', MAIL_KEY[last.mail] ? t(MAIL_KEY[last.mail]) : '—',
-                        Number.isFinite(last.push_count) ? String(last.push_count) : '—')}
+                        lv.push && PUSH_KEY[lv.push.kind] ? t(PUSH_KEY[lv.push.kind], lv.push.arg) : '—')}
                     </span>
                   )}
                 </>
