@@ -51,7 +51,8 @@ export function useBulkCreate({ create, baseBody, baseName, initialProfileId, de
   const runningRef = useRef(false)   // aynı karede iki tıklama iki koşu başlatmasın (D5)
   // Bileşen kapanınca (geri tuşu, sekme değişimi, oturum sonu) kalan satırlar GÖNDERİLMEZ (D5)
   useEffect(() => () => { stopRef.current = true }, [])
-  const run = async (profiles) => {
+  // bodyOverride: kayıtta 7/24 onayı "Evet" dediyse 7/24 açık gövde (2026-11-15); yoksa sayfanın gövdesi
+  const run = async (profiles, bodyOverride = null) => {
     if (runningRef.current) return null
     // Önizleme ile koşu AYNI listeden (ilk MAX_BULK bağlantı; O6)
     const plan = bulkPlan(pattern, baseName, bulkCandidates(profiles).filter((p) => selected.has(p.id)))
@@ -61,7 +62,7 @@ export function useBulkCreate({ create, baseBody, baseName, initialProfileId, de
     setRunning(true)
     setRows(plan.map((r) => ({ profileId: r.profile.id, name: r.name, status: 'pending' })))
     try {
-      let results = await runBulk(plan, baseBody, create, {
+      let results = await runBulk(plan, bodyOverride || baseBody, create, {
         onRow: (i, row) => setRows((cur) => (cur ? cur.map((x, k) => (k === i ? row : x)) : cur)),
         shouldStop: () => stopRef.current,
       })

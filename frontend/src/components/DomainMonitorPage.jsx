@@ -53,6 +53,7 @@ import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026
 import ModalShell from './ui/ModalShell.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { loadNocGroupNames } from './noc/forms/useNocFormOptions.js'
 import { Button } from '@/components/shadcn/button'
@@ -302,6 +303,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   // Alan adında kritik gün eşiği de yönlendirmedir (inceleme 6: alarm SEVİYESİNİ belirler) — yeni kayıtta AYAR varsayılanı
   const defaultCriticalDays = defaults?.criticalDays ?? emptyForm.criticalDays
   useEffect(() => {
@@ -381,6 +383,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
     })) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'DOMAIN', monitorId: modal === 'new' ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true)
     try {
       const payload = {
@@ -390,7 +397,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
+        nocNotify: noc.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
         warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
         intervalSeconds: Number(form.intervalSeconds), active: form.active,
@@ -410,6 +417,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         : await api.monitoring.updateDomainMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      noc.done(res.data?.id)
       // Sunucu alan adini KAYITLI alan adina (eTLD+1) indirger: kayit bilgisi bir HOST'a degil
       // alan adinin kendisine aittir (RDAP/WHOIS'te www.x.com diye bir kayit yoktur). Alan
       // altindaki ipucu bunu yaziyor ama surpriz KAYDETTIKTEN sonra yasaniyor: kullanici
@@ -933,6 +941,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <ChangeNoteField t={t} id="domain-change-note" value={changeNote} onChange={setChangeNote} />
       )}
       {diagModal}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

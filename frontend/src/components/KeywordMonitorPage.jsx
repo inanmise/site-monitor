@@ -43,6 +43,7 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -381,6 +382,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   // Özel posta konusu da yönlendirme sayılır (kw sözleşmesi §8.3): paylaşımla yazılan takıma yeni kayıtta boş (standart konu)
   // Kuralların kritik eşiği de alarm SEVİYESİNİ belirler (sunucu: KEYWORD_SHARED_LOCKED, alan `rules`) — kopyadan gelen eşik kalkar
   useEffect(() => {
@@ -562,7 +564,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     // Yeni kayıt (Kopyala dahil) TAM yük; düzenleme YALNIZ değişen alanlar (B14, "Before a feature counts as done" madde 9) —
     // aynı izlemeyi açık tutan başka bir yöneticinin o arada kaydettiği alan (toplu duraklatma, taşıma …) geri yazılmaz.
     // Sırlar yalnız yazıldıysa; başlıklar yalnız global admin'den (sunucu: isGlobalAdmin).
-    const payload = keywordPayload(sendableForm(form), isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
+    let payload = keywordPayload(sendableForm(form), isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'KEYWORD', monitorId: isNew ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
+    // Evet: yük 7/24 açık formdan yeniden kurulur (düzenlemede yalnız değişen alanlar — nocNotify artık değişti)
+    if (noc.asked && noc.nocNotify) payload = keywordPayload(sendableForm(noc.apply(form)), isNew ? null : formFrom(modal), { isNew, globalAdmin, routingBody })
     if (!isNew && Object.keys(payload).length === 0) { toast.info(t('keyword.adv.noChanges')); closeEdit(); return }
     // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
     if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -578,6 +587,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         if (hasRenderableField(fieldErrs)) { showFormErrors(fieldErrs); return }
         toast.error(res?.error || 'Error'); return
       }
+      noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
       // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
       setSelected((prev) => mergeSavedRow(prev, res.data))
@@ -1102,6 +1112,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           <div className="whitespace-pre-line">{t('keyword.cacheBustExamples')}</div>
         </div>
       </ModalShell>
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

@@ -53,6 +53,8 @@ export const LOCAL_PREF_KEYS = Object.freeze([
   'sm.checkRun.teams',
   // Tema (2026-10-05, ürün kararı): kişinin seçimi sonraki oturumlarda (başka cihazda da) aynı temayla açılır.
   'site-monitor-theme',
+  // Kayıtta 7/24 onayı (2026-11-15): "bu izleme için bir daha sorma" listesi — başka cihazda da sorulmaz.
+  'sm.noc.noAsk',
 ])
 
 /** Tema tercihinin localStorage anahtarı — ThemeProvider (i18n/theme.jsx) ile aynı. */

@@ -48,6 +48,7 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -280,6 +281,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
@@ -356,6 +358,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
       ...advErrors,
     })) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'HTTP', monitorId: modal === 'new' ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true)
     try {
       const payload = {
@@ -372,7 +379,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         active: form.active,
-        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),
+        nocNotify: noc.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),
         // Gelişmiş istek (2026-10-01): YALNIZ değişen alanlar (yeni/kopya: boştan farklı olanlar) + yazılmış sırlar.
         // Bölüme dokunulmadıysa hiçbir anahtar eklenmez → yük 2026-10-01 öncesiyle birebir aynı.
         ...httpAdvancedPayload(form, modal === 'new' ? ADV_EMPTY : advFormFrom(modal), { canEditHeaders: globalAdmin }),
@@ -384,6 +391,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         : await api.monitoring.updateHttpMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
       // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
       setSelected((prev) => mergeSavedRow(prev, res.data))
@@ -799,6 +807,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="http-change-note" value={changeNote} onChange={setChangeNote} />
       )}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

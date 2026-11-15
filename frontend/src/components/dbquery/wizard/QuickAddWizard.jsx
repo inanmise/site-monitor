@@ -18,6 +18,7 @@ import SearchableSelect from '../../ui/SearchableSelect.jsx'
 import TagInput from '../../ui/TagInput.jsx'
 import NotifyChannels from '../../ui/NotifyChannels.jsx'
 import NocNotifyField from '../../noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from '../../noc/forms/useNocSaveConfirm.jsx'
 import { useDialog } from '../../ui/Dialog.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
@@ -65,6 +66,7 @@ export default function QuickAddWizard({
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [form, setForm] = useState(initialForm)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   const initialJson = useRef(JSON.stringify(toPayload(initialForm)))
   const [step, setStep] = useState('connection')
   const [furthest, setFurthest] = useState('connection')
@@ -328,16 +330,24 @@ export default function QuickAddWizard({
     setBanner(null)
     const invalid = firstInvalidStep(form, ctx)
     if (invalid) { showErrors(translateErrors(invalid.errors, t), invalid.step); return }
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → pencere açık kalır.
+    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: false })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((f) => ({ ...f, nocNotify: true }))
+    const sendForm = noc.apply(form)
     if (bulkOn) {
-      const results = await bulk.run(connLoad.list)
-      if (results) onSaved?.(results.filter((r) => r.status === 'ok').map((r) => ({ id: r.id, name: r.name })), { bulk: results })
+      const results = await bulk.run(connLoad.list, sendForm !== form ? toPayload(sendForm) : null)
+      if (results) {
+        for (const r of results) if (r.status === 'ok') noc.done(r.id)
+        onSaved?.(results.filter((r) => r.status === 'ok').map((r) => ({ id: r.id, name: r.name })), { bulk: results })
+      }
       return
     }
     savingRef.current = true
     setSaving(true)
     try {
-      const res = await api.monitoring.createDbQueryMonitor(toPayload(form))
-      if (res?.success) { onSaved?.([res.data], { response: res }); onClose?.(); return }
+      const res = await api.monitoring.createDbQueryMonitor(toPayload(sendForm))
+      if (res?.success) { noc.done(res.data?.id); onSaved?.([res.data], { response: res }); onClose?.(); return }
       const { fields, violations, plan } = serverFieldErrors(res)
       if (violations) setSqlViolations(violations)
       if (plan) setPlanResult(plan)
@@ -529,6 +539,7 @@ export default function QuickAddWizard({
             bulkLocked={bulk.running || !!bulk.rows} />
         )}
       </div>
+      {nocConfirm.dialog}
     </ModalShell>
   )
 }
