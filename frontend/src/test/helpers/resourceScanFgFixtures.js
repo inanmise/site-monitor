@@ -182,3 +182,41 @@ export function trendData() {
     ],
   }
 }
+
+/**
+ * Tüm site taraması (2026-11-15): 31 — 40 sayfa (2'si önceki taramadan), kuyruk bitmedi; 30 taranmayan sayfa listelendi
+ * (biri çok uzun adres), toplam 34. `over` site bloğunun alanlarını ezer.
+ */
+export function fullSiteDetail(id = 31, over = {}) {
+  const d = siteDetail(id, { scan: { crawl: 'full', pages_count: 40, progress: { done: 400, total: 400, pages_done: 40, pages_total: 40 } } })
+  const pages = [d.analysis.site.pages[0]]
+  for (let i = 1; i < 40; i++) {
+    pages.push({ url: `https://www.example.com/sayfa-${i}`, status: 'ok', grade: 60 + (i % 30), letter: 'C', load_ms: 1000 + i * 10,
+      page_bytes: 100_000, requests: 20, scores: { security: 60, seo: 80, accessibility: 70 }, top_recs: [], unique_bytes: 1000,
+      shared_count: 2, ...(i <= 2 ? { from_scan: 29 } : {}) })
+  }
+  const unscanned = []
+  for (let i = 0; i < 30; i++) {
+    unscanned.push({ url: i === 0 ? LONG(7) : `https://www.example.com/bekleyen-${i}`, source: i % 2 ? 'sitemap' : 'link', reason: 'PAGES' })
+  }
+  const site = {
+    ...d.analysis.site, pages,
+    totals: { pages: 40, scanned: 40, failed: 0, skipped: 0, avg_grade: 72, total_unique_bytes: 900_000, shared: 3 },
+    incomplete: true,
+    crawl: { mode: 'full', max_pages: 1000, max_seconds: 3600, discovered: 74, from_links: 50, from_sitemap: 22, dropped: 0,
+      stop_reason: 'PAGES', complete: false, prior_pages: 2, resumed_from: 29,
+      sitemap: { found: true, from_robots: true, files: 2, files_read: 2, urls: 60, added: 22, truncated: false,
+        errors: ['https://www.example.com/sitemap-eski.xml'] } },
+    unscanned, unscanned_total: 34,
+    ...over,
+  }
+  return { ...d, analysis: { ...d.analysis, site } }
+}
+
+/** Geçmiş: başta 31 tüm site taraması (40 / 74 sayfa), sonra `fgHistory`; tüm site sınırları sunucudan gelir. */
+export function fullSiteHistory(extraLimits = { full_site_max_pages: 1000, full_site_max_seconds: 3600 }) {
+  const h = fgHistory({ extraLimits })
+  const row = scanSummary(31, { started_at: '2026-11-02T09:00:00', finished_at: '2026-11-02T09:40:00', algorithm_version: 3, scope: 'site',
+    crawl: 'full', pages_count: 40, budget_status: 'none', progress: { done: 400, total: 400, pages_done: 40, pages_total: 74 } })
+  return { ...h, items: [row, ...h.items] }
+}

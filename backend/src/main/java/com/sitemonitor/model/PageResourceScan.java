@@ -189,4 +189,15 @@ public class PageResourceScan {
 
     @Column(name = "pages_total")
     private Integer pagesTotal;
+
+    /** Tüm site taraması (2026-11-15): "full"; diğer taramalarda NULL. */
+    @Column(name = "site_crawl", length = 10)
+    private String siteCrawl;
+
+    /**
+     * Tüm site taramasının sürdürme noktası (JSON: önceki sayfa satırları, taranan adresler, kuyruk). API'ye hiç dönmez;
+     * yalnız "kaldığı yerden sürdür" okur.
+     */
+    @Column(name = "site_checkpoint", columnDefinition = "TEXT")
+    private String siteCheckpoint;
 }

@@ -20,6 +20,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
+import ImageInsights from './ImageInsights.jsx'
 
 const ITEM = 'pointer-coarse:min-h-10 whitespace-normal [overflow-wrap:anywhere]'
 
@@ -164,9 +165,11 @@ function Actions({ ctx, item, className, showSuggestion }) {
             {entry.problem.kind === 'server' && <ErrorDetails info={entry.problem.res} />}
           </span>
         )}
-        {entry.result && !busy && <ResultLine result={entry.result} t={t} locale={locale} />}
+        {entry.result && !busy && <ResultLine result={entry.result} t={t} locale={locale} insights={false} />}
         {entry.original?.tlsVerified === false && !busy && <TlsUnverifiedNote t={t} />}
       </div>
+      {/* Ayrıntılı karşılaştırma canlı bölgenin DIŞINDA: açılınca tüm tablo okunmasın */}
+      {entry.result && !busy && <ImageInsights result={entry.result} />}
       {custom && (
         <CustomSizeDialog item={item} suggestion={suggestion} store={store} scanId={scanId} onClose={() => setCustom(false)}
           onTool={(settings) => toTool(settings)} />
@@ -214,13 +217,14 @@ export function TlsUnverifiedNote({ t, className }) {
 }
 
 /** İşlem sonucu: gerçek önce → sonra boyutu + kazanç, ölçü / biçim, benzerlik (ölçüldüyse) ve motorun notları. */
-export function ResultLine({ result, t, locale, className }) {
+export function ResultLine({ result, t, locale, className, insights = true }) {
   const meta = resultMeta(result, t, locale)
   const sim = similarityText(result, locale)
   const tone = resultTone(result)
   const saving = savingPctOf(result)
   // Ölçü öznitelikleri motorun sonucundan (sınama ve inceleme için: ekrandaki sayı motorun sayısı mı?)
   return (
+    <>
     <span data-slot="prs-it-result" data-kept={result.kept ? 'true' : undefined} data-tone={tone}
       data-bytes={result.bytes ?? undefined} data-before={result.original?.bytes ?? undefined} data-saving={saving ?? undefined}
       data-similarity={result.similarity ?? undefined} className={cn('flex min-w-0 flex-col gap-1', className)}>
@@ -238,6 +242,9 @@ export function ResultLine({ result, t, locale, className }) {
         </span>
       )}
     </span>
+    {/* Ayrıntılı karşılaştırma: sonuç satırının KARDEŞİ (blok içerik span içinde olmasın) */}
+    {insights && <ImageInsights result={result} />}
+    </>
   )
 }
 

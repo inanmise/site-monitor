@@ -2,6 +2,7 @@
 // platform, tarayıcıda platform.js). Sıra: seçenekler → başlık (sınırlar çözmeden ÖNCE) → üstveri → çöz → ölçü planı
 // (akıllı kırpma / nesne) → şerit şerit doğrusal ışıkta küçült + netleştir → biçim adayları → hedef boyut → üstveri →
 // "asla daha kötü" → sonuç. Her arama kodlama sayısıyla, her döngü sabitlerle sınırlıdır.
+import { FACTS_SCAN_BYTES, bandingRisk, countColors, readImageFacts, svgCandidate } from './analyze.js'
 import { ENGINE_LIMITS, EngineError, MIME, MIN_TARGET_SIDE, NOTE_CODES } from './errors.js'
 import { normalizeOptions } from './options.js'
 import { checkLimits, probeBytes, readBlob } from './probe.js'
@@ -136,11 +137,13 @@ async function materialise(src, plan, background, ctx) {
   let sawPartial = false
   let push
   let finish = () => {}
+  let sharpAmount = 0
   if (identity) {
     let y = 0
     push = (strip, n) => { out.set(strip.subarray(0, n * win.w * 4), y * outW * 4); y += n }
   } else {
-    const sharp = createSharpener(outW, outH, sharpenAmount(Math.min(outW / win.w, outH / win.h)),
+    sharpAmount = sharpenAmount(Math.min(outW / win.w, outH / win.h))
+    const sharp = createSharpener(outW, outH, sharpAmount,
       (y, row) => out.set(row, y * outW * 4))
     const rs = createResampler({ srcW: win.w, srcH: win.h, dstW: outW, dstH: outH, onRow: (y, row) => sharp.push(row) })
     push = (strip, n) => { for (let r = 0; r < n; r++) rs.pushRow(strip, r * win.w * 4) }
@@ -157,7 +160,7 @@ async function materialise(src, plan, background, ctx) {
   }
   finish()
   return { data: out, width: outW, height: outH, hasAlpha: identity ? sawAlpha : hasTransparency(out, outW * outH), sourceAlpha: sawAlpha,
-    partialAlpha: sawPartial }
+    partialAlpha: sawPartial, resampled: !identity, sharpened: sharpAmount > 0 }
 }
 
 /** 0 < a < 255 olan piksel var mı (tarayıcı bunları önçarpımlı saklar: renk değerleri yuvarlanır). */
@@ -521,6 +524,8 @@ export async function processCore(blob, rawOptions, env) {
   try { bytes = await readBlob(blob) } catch { throw new EngineError('DECODE_FAILED', { reason: 'read' }) }
   const info = probeBytes(bytes, bytes.length)               // tür + ölçü sınırı: ÇÖZMEDEN önce
   const meta = readMetadata(bytes, info.type)
+  // Derin karşılaştırma (2026-11-15): kaynağın başlık bilgileri (bit derinliği, PPI, JPEG kalite tahmini …) — fırlatmaz
+  const inputFacts = readImageFacts(bytes, info.type)
   bytes = null
   ctx.progress('decode', 0)
   await ctx.checkpoint()
@@ -573,7 +578,13 @@ export async function processCore(blob, rawOptions, env) {
   }
   const candidates = formats.list.map((t) => made.get(t)).filter(Boolean)        // eşitlikte liste sırası (jpeg, png, webp)
   if (!candidates.length) candidates.push(await runPng(work, { kind: 'auto' }, pngText.text, ctx))
+  // Derin karşılaştırma: denenen her biçimin boyutu (yalnız sayı — Blob tutulmaz) ve çalışılan görselin renk sayısı
+  const tried = candidates.map((c) => ({ type: c.type, bytes: c.size, quality: c.quality ?? null, colors: c.colors ?? null,
+    similarity: c.similarity == null ? null : Math.round(c.similarity * 10000) / 10000,
+    belowTarget: c.similarity != null && c.similarity < SIMILARITY_TARGET }))
+  const colors = countColors(work.data, work.width, work.height)
   let final = smallest ? pickSmallest(candidates, SIMILARITY_TARGET) : candidates[0]
+  let fittedForTarget = false
 
   // Hedef boyut: kaliteyi, sonra ölçüyü düşür (üstveri payı hedeften düşülür)
   if (opts.targetBytes != null && final.size > opts.targetBytes) {
@@ -587,6 +598,7 @@ export async function processCore(blob, rawOptions, env) {
       }
     }
     final = pickForTarget(fitted, opts.targetBytes)
+    fittedForTarget = true
   }
   final = { ...final, notes: [...final.notes] }
 
@@ -627,9 +639,13 @@ export async function processCore(blob, rawOptions, env) {
       if (notes.has('WEBP_UNAVAILABLE')) keptNotes.add('WEBP_UNAVAILABLE')
       if (notes.has('NOT_UPSCALED')) keptNotes.add('NOT_UPSCALED')
       if (opts.targetBytes != null && k.size > opts.targetBytes) keptNotes.add('TARGET_NOT_REACHED')
+      const keptFacts = k.bytes ? readImageFacts(k.bytes, info.type) : inputFacts
       return { blob: k.bytes ? new Blob([k.bytes], { type: mime }) : null, type: info.type, mime, width: srcW, height: srcH,
         bytes: k.size, original, savingPct: savingPct(sourceBytes, k.size), quality: null, colors: null, similarity: 1,
-        resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes) }
+        resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes),
+        analysis: buildAnalysis({ inputFacts, outputFacts: keptFacts, colors, tried, width: srcW, height: srcH,
+          outputType: info.type, outputColors: null, similarity: 1, outputBitDepth: inputFacts?.bitDepth ?? null,
+          qualityMode: null, resampled: false, sharpened: false }) }
     }
   }
 
@@ -645,11 +661,43 @@ export async function processCore(blob, rawOptions, env) {
   if (info.icc) notes.add('COLOR_PROFILE_CONVERTED')
   const outMime = MIME[final.type]
   const outBlob = final.blob || new Blob([final.bytes], { type: outMime })
+  let outputFacts
+  try {
+    // Yalnız baş kısım okunur (tüm çıktıyı ikinci kez belleğe almadan — 50 MP görselde onlarca MB)
+    outputFacts = readImageFacts(final.bytes || await readBlob(outBlob.slice(0, FACTS_SCAN_BYTES)), final.type)
+  } catch {
+    outputFacts = readImageFacts(null, final.type)
+  }
+  // Kalite nasıl seçildi: hedef boyut araması / kullanıcının verdiği sayı / otomatik (benzerlik hedefi)
+  const qualityMode = fittedForTarget ? 'target' : typeof opts.quality === 'number' ? 'manual' : 'auto'
+  const reshaped = final.width !== work.width || final.height !== work.height   // hedef boyut için ayrıca küçültüldü
+  const analysis = buildAnalysis({ inputFacts, outputFacts, colors, tried, width: final.width, height: final.height,
+    outputType: final.type, outputColors: final.colors ?? null, similarity: similarityOut, outputBitDepth: outputFacts?.bitDepth ?? null,
+    qualityMode, resampled: work.resampled === true || reshaped, sharpened: reshaped ? null : work.sharpened === true })
   return {
     blob: outBlob, type: final.type, mime: outMime, width: final.width, height: final.height, bytes: final.size, original,
     savingPct: savingPct(sourceBytes, final.size), quality: final.quality, colors: final.colors,
     similarity: similarityOut == null ? null : Math.round(similarityOut * 10000) / 10000,
     resized: final.width !== srcW || final.height !== srcH, cropped: !!plan.cropped, kept: false, notes: orderNotes(notes),
+    analysis,
+  }
+}
+
+/**
+ * Derin karşılaştırma alanı (ek alan; eski çağıran görmezden gelir): kaynak ve çıktının başlık bilgileri, çıktı ölçüsündeki
+ * renk sayısı, denenen biçimler, SVG adaylığı ve bantlaşma riski. Değer bilinmiyorsa null.
+ */
+function buildAnalysis({ inputFacts, outputFacts, colors, tried, width, height, outputType, outputColors, similarity, outputBitDepth = null,
+  qualityMode = null, resampled = null, sharpened = null }) {
+  return {
+    input: inputFacts,
+    output: outputFacts,
+    colors,
+    candidates: tried,
+    svgCandidate: svgCandidate(colors, width, height),
+    banding: bandingRisk({ inputBitDepth: inputFacts?.bitDepth ?? null, outputBitDepth, outputType, outputColors, similarity }),
+    // "Nasıl yaptık" yalnız gerçekten olanı söylesin: kalite kipi, yeniden örnekleme, netleştirme (null = bilinmiyor)
+    qualityMode, resampled, sharpened,
   }
 }
 

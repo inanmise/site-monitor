@@ -205,6 +205,11 @@ public final class AppSettingsCatalog {
         // (sn, 120–900; D-5) — PageResourceScanService.siteLimits, aralık dışı → varsayılan.
         new Setting("site.monitor.page.resource-scan.max-pages",          "monitoring", Type.INT),
         new Setting("site.monitor.page.resource-scan.site-max-seconds",   "monitoring", Type.INT),
+        // Tüm site taraması (2026-11-15)
+        new Setting("site.monitor.page.resource-scan.full-site-max-pages",   "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.full-site-max-seconds", "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.full-site-max-objects", "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.full-site-max-total-mb", "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.pagespeed.resource-concurrency",    "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.user-agent",              "monitoring", Type.STRING),

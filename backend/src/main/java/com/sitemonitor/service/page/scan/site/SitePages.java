@@ -117,7 +117,7 @@ public final class SitePages {
         if (n != null) seen.add(n);
     }
 
-    private static boolean safeTest(Predicate<String> p, String u) {
+    static boolean safeTest(Predicate<String> p, String u) {
         try {
             return p.test(u);
         } catch (RuntimeException e) {
@@ -299,6 +299,65 @@ public final class SitePages {
         // YALNIZ ana sayfanın kendi kırpılmasıdır — bu alan onu değiştirmez.
         site.put("incomplete", anyCapped(pages));
         return site;
+    }
+
+    /**
+     * Tüm site taraması (2026-11-15): {@link #section(List)} + önceki taramadan devralınan sayfa satırları ({@code prior} —
+     * ana sayfa satırından SONRA, her biri {@code from_scan} taşır) + {@code extra} anahtarları bölüme eklenir ({@code crawl},
+     * {@code unscanned}, {@code unscanned_total}). Sayımlar ({@code pages}, {@code scanned}, {@code failed}, {@code skipped},
+     * {@code avg_grade}) TÜM satırlar üzerinden; ortak nesne ve {@code total_unique_bytes} yalnız bu taramanın sayfalarından
+     * ({@code totals.unique_scope = "this_run"} devralınan satır varken). {@code incomplete}: taranmayan adres kaldıysa da true.
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> section(List<Page> pages, List<Map<String, Object>> prior, Map<String, Object> extra) {
+        Map<String, Object> site = section(pages);
+        List<Map<String, Object>> rows = new ArrayList<>((List<Map<String, Object>>) site.get("pages"));
+        if (prior != null && !prior.isEmpty()) {
+            int at = Math.min(1, rows.size());
+            rows.addAll(at, prior);
+            Map<String, Object> totals = new LinkedHashMap<>((Map<String, Object>) site.get("totals"));
+            int scanned = 0, failed = 0, skipped = 0, graded = 0;
+            long sum = 0;
+            for (Map<String, Object> r : rows) {
+                Object st = r.get("status");
+                if (DONE.equals(st)) {
+                    scanned++;
+                    if (r.get("grade") instanceof Number g) { graded++; sum += g.longValue(); }
+                } else if (FAILED.equals(st)) failed++;
+                else skipped++;
+            }
+            totals.put("pages", rows.size());
+            totals.put("scanned", scanned);
+            totals.put("failed", failed);
+            totals.put("skipped", skipped);
+            totals.put("avg_grade", graded == 0 ? null : (int) Math.round((double) sum / graded));
+            totals.put("unique_scope", "this_run");
+            site.put("totals", totals);
+        }
+        site.put("pages", rows);
+        if (prior != null) {
+            for (Map<String, Object> r : prior) {
+                // Devralınan satır taranmamış ya da kısmi ölçülmüşse site analizi de eksik
+                if (SKIPPED.equals(r.get("status")) || Boolean.TRUE.equals(r.get("capped"))) {
+                    site.put("incomplete", true);
+                    break;
+                }
+            }
+        }
+        if (extra != null) {
+            site.putAll(extra);
+            if (extra.get("unscanned_total") instanceof Number n && n.intValue() > 0) site.put("incomplete", true);
+            // Keşif eksikliği / adres tavanı burada sayılmaz: tarama özeti kendi uyarısıyla söyler (sayfa "kısmi ölçüm" uyarısı
+            // yanlış neden göstermesin)
+        }
+        return site;
+    }
+
+    /** Tek sayfanın görüntü satırı (ortak / tekil bayt bu sayfanın kendi nesnelerine göre — denetim noktası için). */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> row(Page p) {
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) (List<?>) section(List.of(p)).get("pages");
+        return rows.isEmpty() ? new LinkedHashMap<>() : rows.get(0);
     }
 
     /** Taranan (tamamlanan) sayfa sayısı — özet satırının {@code pages_count}'u. */
