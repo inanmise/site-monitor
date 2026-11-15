@@ -630,8 +630,8 @@ Prod 20.185'ten eskiyse geçerlidir (satırın sürümünden eskiyse o satır). 
       İlk tahmin en az 7 günlük görüntüden sonra.
 - [ ] Kendi kendini izleme **9 kontrol** gösterir (`check_queue` anahtar kapalıyken "uygulanmaz", `db_capacity` kapasite
       girilene dek "uygulanmaz"); `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/api/public/health/watchdog` → 200.
-- [ ] **Grafana panosu revizyon 17** (`GrafanaDashboardGenerator.DASHBOARD_REVISION`; sayfa hızı, taban çizgisi benimseme,
-      veritabanı boyutu / dolmaya kalan gün panelleri) — Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+- [ ] **Grafana panosu revizyon 18** (`GrafanaDashboardGenerator.DASHBOARD_REVISION`; sayfa hızı, sayfa hızı büyüme eşikleri,
+      taban çizgisi benimseme, veritabanı boyutu / dolmaya kalan gün panelleri) — Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
       İş ölçümleri yalnız `METRICS_EXPORT_TOKEN` tanımlıysa `/metrics/sitemonitor`'dadır.
 - [ ] **(< 20.208)** İlk saatte Bildirim Geçmişi'nde `DOMAINMON_UNKNOWN` çözüm postaları beklenir; ~1 saat sonra yukarıdaki açık
       alarm sorgusunu yeniden koşup karşılaştırın (`DOMAINMON_UNKNOWN` düşer; `KEYWORD%` / `HTTP%` / `PAGESPEED%` sayılarında
