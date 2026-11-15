@@ -17159,6 +17159,8 @@ export const TR = {
   'pspd.modalNew': 'Yeni Sayfa Hızı İzlemesi', 'pspd.modalEdit': 'Sayfa Hızı İzlemesini Düzenle',
   'pspd.url': 'Sayfa URL\'i', 'pspd.urlHint': 'Ölçülecek sayfanın tam adresi. Şema yazılmazsa https:// eklenir.',
   'pspd.name': 'Ad', 'pspd.team': 'Takım', 'pspd.group': 'Grup',
+  'pspd.scheduleTitle': 'Zamanlama',
+  'pspd.scheduleHint': 'Ölçüm sıklığı: belirli aralıkla ya da cron ifadesiyle; isterseniz yalnız izinli saatlerde ölçün, yasak pencerelerde, tatillerde ve seçtiğiniz günlerde atlayın. En kısa aralık 5 dakikadır.',
   'pspd.thresholdsTitle': 'Alarm eşikleri',
   'pspd.thresholdsHint': 'Hepsi opsiyoneldir: boş bıraktığınız metrik alarm ÜRETMEZ. Eşiğin tam değeri ihlal sayılmaz, yalnız üstü sayılır. TTFB, kontrolün kendi isteğinin ilk baytıdır (yönlendirmeler dahil).',
   'pspd.maxLoadMs': 'Azami yükleme süresi', 'pspd.maxTtfbMs': 'Azami TTFB',

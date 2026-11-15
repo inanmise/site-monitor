@@ -1,4 +1,4 @@
-import { AlertTriangle, Info } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Info } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { formatPercent, formatRatePercent } from '../../i18n/dateLocale.js'
@@ -16,6 +16,7 @@ import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter,
   MonitorCardRich, MonitorCardPending, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
+import { isScheduled, scheduleText } from '../scripted/scriptedCardModel.js'
 import { breachWeek, budgetCompliance, complianceTone, extraBreaches, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
 
 /**
@@ -115,6 +116,8 @@ export default function PageSpeedMonitorCard({
             <BudgetComplianceChip sla={sla} days={slaDays} budgetDefined={m.budget_defined} />
             {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
             <BreachWeekChip w7={week7} w14={week14} />
+            {/* Zamanlama (2. sürüm madde 14): yalnız cron / pencere / tatil / atlanan gün varken — düz aralıkta çip yok */}
+            <ScheduleChip monitor={m} />
           </div>
         </MonitorCardRich>
       </MonitorCardContent>
@@ -361,6 +364,20 @@ const TREND_TONE = {
  * Haftalık eşik üstü çipi: "Bu hafta eşik aşımı: 6 · ▲4 geçen haftaya göre". Açıklama (ne sayılıyor, iki haftanın
  * ham sayıları) dokunmatikte de açılan HintPopover'da — eski satır yalnız fareyle açılan ipucu taşıyordu.
  */
+/** Zamanlamalı izlemenin çipi: cron metni / aralık + süzgeç ekleri; uzun metin sarar, kesilmez. Düz aralıkta çizilmez. */
+function ScheduleChip({ monitor }) {
+  const t = useT()
+  if (!isScheduled(monitor)) return null
+  const text = scheduleText(monitor, t)
+  if (!text) return null
+  return (
+    <Badge variant="outline" data-slot="pspd-schedule-chip" data-schedule={monitor.schedule_mode === 'CRON' ? 'cron' : 'filtered'}
+      className="h-auto min-h-5 max-w-full gap-1.5 overflow-visible whitespace-normal rounded-md px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground [overflow-wrap:anywhere]">
+      <CalendarClock aria-hidden="true" />{text}
+    </Badge>
+  )
+}
+
 function BreachWeekChip({ w7, w14 }) {
   const t = useT()
   const w = breachWeek(w7, w14)

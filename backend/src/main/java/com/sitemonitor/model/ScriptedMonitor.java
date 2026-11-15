@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "scripted_monitors")
 @Data
 @NoArgsConstructor
-public class ScriptedMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
+public class ScriptedMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget, PlannedSchedule {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

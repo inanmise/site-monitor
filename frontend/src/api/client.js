@@ -2927,6 +2927,11 @@ export const api = {
     scriptedSchedulePreview: (schedule, { signal } = {}) => request('/monitoring/scripted/schedule-preview', {
       method: 'POST', body: JSON.stringify(schedule), withStatus: true, ...(signal ? { signal } : {}),
     }),
+    // Sayfa Hızı zamanlama önizlemesi (2026-11-15, 2. sürüm madde 14): aynı gövde / yanıt; en kısa aralık 5 dk
+    // Süre sınırı (zaman aşımsız istek yok): önizleme salt okunur bir hesaptır, 20 sn'de yanıt yoksa "bilinmiyor"
+    pageSpeedSchedulePreview: (schedule, { signal } = {}) => request('/monitoring/pagespeed/schedule-preview', {
+      method: 'POST', body: JSON.stringify(schedule), withStatus: true, timeoutMs: 20_000, ...(signal ? { signal } : {}),
+    }),
     // Bağlantı teşhisi: aynı hedefe vekil/CA kombinasyonlarıyla k6 sondası — "Java çekiyor,
     // k6 çekmiyor" ayrımını ÖLÇER. İzleme havuzunu tüketmez (ayrı semafor), bacaklar sırayla koşar.
     diagnoseScripted:      (id, url) => request(`/monitoring/scripted/${id}/diagnose`,
