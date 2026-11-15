@@ -66,6 +66,7 @@ import { MAX_RULES } from './dbquery/ruleModel.js'
 import { bulkCounts, bulkSummaryText, hasUnfinished } from './dbquery/bulkCreateModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -371,6 +372,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   // Bildirim yönlendirmesi kilidi (paylaşım): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt.
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
   // Paylaşımla düzenlenen kayıtta BAĞLANTI da değişmez: bağlantılar takım belgesidir, paylaşımla görünmez (api §2).
   // K2: aynı kilit sorgu, kurallar, kural birleşimi, maske / mail kolonları, satırları maile ekle, konu şablonu, yavaş
@@ -668,10 +670,20 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       sql_text: !form.sqlText.trim() && t('dbq.form.sqlRequired'),
     })) return
     const isNew = modal === 'new'
-    const full = payloadFromForm(form)
     // Düzenlemede YALNIZ değişen alanlar (aynı izlemeyi açık tutan başkasının kaydı sessizce geri dönmesin).
-    const body = isNew ? full : changedFieldGroups(full, payloadFromForm(formFrom(modal)))
-    if (changeNote.trim()) body.changeNote = changeNote.trim()
+    const bodyOf = (f) => {
+      const full = payloadFromForm(f)
+      const b = isNew ? full : changedFieldGroups(full, payloadFromForm(formFrom(modal)))
+      if (changeNote.trim()) b.changeNote = changeNote.trim()
+      return b
+    }
+    let body = bodyOf(form)
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: isNew ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
+    if (noc.asked && noc.nocNotify) body = bodyOf(noc.apply(form))   // Evet: 7/24 açık
     if (!isNew && Object.keys(body).length === 0) { toast.info(t('dbq.form.noChanges')); closeEditNow(); return }
     setSaving(true)
     try {
@@ -679,6 +691,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         ? await api.monitoring.createDbQueryMonitor(body)
         : await api.monitoring.updateDbQueryMonitor(modal.id, body)
       if (!res?.success) { applyServerErrors(res, 'dbq.form.saveFailed'); return }
+      noc.done(res.data?.id)
       await load()
       setSelected((prev) => mergeSavedRow(prev, res.data))
       const planWarn = res.plan_warning || res.data?.plan_warning
@@ -702,7 +715,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
    * Uzun formdan "Birden çok bağlantı için oluştur" (B4): kaydetmeyle aynı istemci doğrulaması (bağlantı hariç — her satır
    * kendi bağlantısını alır), sonra formun gövdesiyle toplu oluşturma penceresi.
    */
-  function openBulkFromForm() {
+  async function openBulkFromForm() {
     const purposeLen = form.purpose.trim().length
     if (fe.check({
       name: !form.name.trim() && t('mon.fieldRequired'),
@@ -712,7 +725,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       purpose: (purposeLen < PURPOSE_MIN || purposeLen > PURPOSE_MAX) && t('dbq.form.purposeLength', PURPOSE_MIN, PURPOSE_MAX),
       sql_text: !form.sqlText.trim() && t('dbq.form.sqlRequired'),
     })) return
-    const body = payloadFromForm(form)
+    // Kayıtta 7/24 onayı (2026-11-15): toplu oluşturma da bir kayıttır — Evet → gövde 7/24 açık
+    const noc = await nocConfirm.ask({ type: 'DBQUERY', monitorId: null, nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
+    const body = payloadFromForm(noc.apply(form))
     setBulkOpen({ baseBody: body, baseName: form.name.trim(), teamId: Number(form.teamId), dbType: form.dbType || null, profileId: form.profileId, results: null })
   }
   /**
@@ -1070,6 +1087,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           draft={{ sql_text: form.sqlText, purpose: form.purpose, rules: form.rules, rule_logic: form.ruleLogic, db_type: form.dbType || null }}
           onSaved={() => toast.success(t('dbq.form.templateSaved'))} />
       )}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

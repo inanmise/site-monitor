@@ -49,6 +49,7 @@ import PageSpeedMonitorCard from './pagespeed/PageSpeedMonitorCard.jsx'
 import { budgetFor } from './pagespeed/pageSpeedCardModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
@@ -426,6 +427,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
@@ -525,15 +527,22 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
     })) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'PAGESPEED', monitorId: modal === 'new' ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true)
     try {
       const payload = payloadFromForm()
+      payload.nocNotify = noc.nocNotify   // 7/24 onayı: Evet → açık
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
       const res = modal === 'new'
         ? await api.monitoring.createPageSpeedMonitor(payload)
         : await api.monitoring.updatePageSpeedMonitor(modal.id, payload)
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
       // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
       setSelected((prev) => mergeSavedRow(prev, res.data))
@@ -1076,6 +1085,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="pagespeed-change-note" value={changeNote} onChange={setChangeNote} />
       )}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

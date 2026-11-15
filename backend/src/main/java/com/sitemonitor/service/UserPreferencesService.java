@@ -110,7 +110,9 @@ public class UserPreferencesService {
             "sm.incidents.view", "incidents-banner-dismissed",
             "sm.warnings.view", "uptime-scope",
             "sm.checkRun.teams",
-            "site-monitor-theme");
+            "site-monitor-theme",
+            // Kayıtta 7/24 onayı (2026-11-15): bu izleme için bir daha sorma listesi
+            "sm.noc.noAsk");
 
     /** Önekli aileler (liste başına sayfa boyutu, izleme türü başına "Şimdi Kontrol Et" takım seçimi). */
     public static final List<String> LOCAL_PREFIXES = List.of("sm.pageSize.", "sm.checkRun.teams.");
