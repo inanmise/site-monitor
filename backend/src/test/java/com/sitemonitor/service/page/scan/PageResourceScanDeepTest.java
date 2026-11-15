@@ -203,7 +203,7 @@ class PageResourceScanDeepTest {
         Map<String, Object> one = run();
         Map<String, Object> scan = get(one, "scan");
         assertThat(scan.get("status")).isEqualTo("DONE");
-        assertThat(scan.get("algorithm_version")).isEqualTo(3);
+        assertThat(scan.get("algorithm_version")).isEqualTo(4);
         assertThat((Long) scan.get("js_bytes")).isEqualTo((long) APP_JS.getBytes(StandardCharsets.UTF_8).length
                 + 2L * JQUERY.getBytes(StandardCharsets.UTF_8).length);
         assertThat((Long) scan.get("css_bytes")).isEqualTo(CSS.length());
@@ -214,7 +214,7 @@ class PageResourceScanDeepTest {
         assertThat(scan.get("scope")).isEqualTo("page");
 
         Map<String, Object> analysis = get(one, "analysis");
-        assertThat(analysis.get("algorithm_version")).isEqualTo(3);
+        assertThat(analysis.get("algorithm_version")).isEqualTo(4);
 
         // A — oluşturmayı engelleyenler + kullanılmayan önyükleme + host ölçümü
         Map<String, Object> loading = get(analysis, "loading");

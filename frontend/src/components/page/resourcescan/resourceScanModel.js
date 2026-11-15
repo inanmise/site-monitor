@@ -63,6 +63,12 @@ export const REC_TEXT = {
   SLOW_SERVER: { title: ['ttfb_ms'], body: ['ttfb_ms', 'limit_ms'] },
   UNCOMPRESSED_TEXT: { title: ['count'], body: ['bytes'] },
   NO_CACHE: { title: ['count'], body: [] },
+  // algoritma 4 (2026-11-15): önbellek sınıfları — NO_CACHE yalnız eski analizlerde
+  CACHE_NO_STORE: { title: ['count'], body: [] },
+  CACHE_NONE: { title: ['count'], body: [] },
+  CACHE_SHORT: { title: ['count'], body: [] },
+  CACHE_REVALIDATE: { title: ['count'], body: [] },
+  CACHE_HEURISTIC: { title: ['count'], body: [] },
   BROKEN_RESOURCES: { title: ['count'], body: [] },
   HEAVY_JS: { title: ['bytes'], body: ['bytes', 'count'] },
   HEAVY_CSS: { title: ['bytes'], body: ['bytes', 'count'] },
@@ -127,6 +133,11 @@ export const REC_PLURAL = {
   OVERSIZED_IMAGE_DIMENSIONS: { title: 'count', body: 'count' },
   UNCOMPRESSED_TEXT: { title: 'count', body: 'count' },
   NO_CACHE: { title: 'count', body: 'count' },
+  CACHE_NO_STORE: { title: 'count', body: 'count' },
+  CACHE_NONE: { title: 'count', body: 'count' },
+  CACHE_SHORT: { title: 'count', body: 'count' },
+  CACHE_REVALIDATE: { title: 'count', body: 'count' },
+  CACHE_HEURISTIC: { title: 'count', body: 'count' },
   BROKEN_RESOURCES: { title: 'count', body: 'count' },
   HEAVY_JS: { body: 'count' },
   HEAVY_CSS: { body: 'count' },
@@ -200,10 +211,12 @@ export const FINDING_CODES = [
   'BROKEN_RESOURCES', 'BROKEN_LINKS',
   // prs3 (algoritma 3) — güvenlik bulguları kırıklardan hemen sonra
   'VULNERABLE_LIBRARY', 'MIXED_CONTENT', 'SOURCE_MAP_EXPOSED', 'MISSING_SRI',
-  'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'NO_CACHE', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
+  'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'CACHE_NO_STORE', 'CACHE_NONE', 'NO_CACHE', 'CACHE_SHORT', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
   'OVERSIZED_IMAGE_DIMENSIONS', 'REDIRECTED_OBJECTS', 'LARGE_DOCUMENTS', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS',
   // prs3 — yükleme, israf, görsel / font
   'RENDER_BLOCKING', 'DUPLICATE', 'UNMINIFIED', 'NO_VALIDATOR', 'MISSING_DIMENSIONS', 'NOT_LAZY', 'ANIMATED_GIF', 'FONT_DISPLAY_MISSING',
+  // algoritma 4 — her ziyarette doğrulanan / ömrü tarayıcı tahmini (yarım puan; bilgi tonu)
+  'CACHE_REVALIDATE', 'CACHE_HEURISTIC',
 ]
 export const FINDING_SET = new Set(FINDING_CODES)
 /** Bulgu rozetinin tonu — kırık tehlike, düzeltilecek uyarı, katkı / bilgi nötr (bilinmeyen asla yeşil değil). */
@@ -216,6 +229,8 @@ export const FINDING_TONE = {
   VULNERABLE_LIBRARY: 'danger', MIXED_CONTENT: 'danger', SOURCE_MAP_EXPOSED: 'danger', MISSING_SRI: 'warning',
   RENDER_BLOCKING: 'warning', DUPLICATE: 'warning', UNMINIFIED: 'warning', NO_VALIDATOR: 'info', MISSING_DIMENSIONS: 'warning',
   NOT_LAZY: 'info', ANIMATED_GIF: 'warning', FONT_DISPLAY_MISSING: 'warning',
+  // algoritma 4: tamamı yeniden inenler uyarı; ucuz 304 / tarayıcı tahmini bilgi
+  CACHE_NO_STORE: 'warning', CACHE_NONE: 'warning', CACHE_SHORT: 'warning', CACHE_REVALIDATE: 'info', CACHE_HEURISTIC: 'info',
 }
 /**
  * Öneri kodu → nesne bulgu kodu (prs3): yeni önerilerin bir kısmı nesneye FARKLI adla yazılır (DUPLICATE_RESOURCES →
@@ -329,6 +344,28 @@ export function formatTtl(seconds, locale) {
   if (n < 3600) return `${formatNumber(Math.round(n / 60), locale)} ${tr ? 'dk' : 'min'}`
   if (n < 86_400) return `${formatNumber(Math.round(n / 3600), locale)} ${tr ? 'sa' : 'h'}`
   return `${formatNumber(Math.round(n / 86_400), locale)} ${tr ? 'g' : 'd'}`
+}
+
+/**
+ * Önbellek sınıfları (algoritma 4, 2026-11-15; sunucu `CachePolicy.CLASSES`, aynı sıra — iyiden kötüye). Nesne satırının
+ * `cache_class`'ı; ESKİ analizde alan yoktur → eski ömür metni (`cacheState`), sınıf UYDURULMAZ.
+ */
+export const CACHE_CLASSES = ['stored', 'short', 'revalidate', 'heuristic', 'none', 'no_store']
+/** Sınıfın tonu: saklanan iyi, ucuz 304 / tarayıcı tahmini bilgi, kısa uyarı, hiç / saklanmayan tehlike. */
+export const CACHE_CLASS_TONE = {
+  stored: 'success', short: 'warning', revalidate: 'info', heuristic: 'info', none: 'danger', no_store: 'danger',
+}
+/** Sınıf → nesne bulgu kodu (sunucu `CACHE_CLASS_CODE`); saklananın bulgusu yok. */
+export const CACHE_CLASS_FINDING = {
+  short: 'CACHE_SHORT', revalidate: 'CACHE_REVALIDATE', heuristic: 'CACHE_HEURISTIC', none: 'CACHE_NONE', no_store: 'CACHE_NO_STORE',
+}
+/** Önbellekle ilgili tüm bulgu kodları (eski NO_CACHE dahil) — nötr ömür rozeti bunlardan biri varken gösterilmez. */
+export const CACHE_FINDINGS = new Set(['NO_CACHE', ...Object.values(CACHE_CLASS_FINDING)])
+
+/** Nesnenin kaydedilmiş önbellek sınıfı (bilinen değer) ya da null (eski analiz / ölçülmedi). */
+export function cacheClassOf(item) {
+  const c = item?.cache_class
+  return CACHE_CLASSES.includes(c) ? c : null
 }
 
 /** Önbellek durumu: `none` (başlık yok), `nostore` (-1: no-store / no-cache), `ttl` (saniye). */
@@ -1014,7 +1051,7 @@ export const SCORE_RECS = {
   server_response: ['SLOW_SERVER'],
   render_blocking: ['RENDER_BLOCKING_RESOURCES', 'MISSING_PRECONNECT'],
   compression: ['UNCOMPRESSED_TEXT'],
-  caching: ['NO_CACHE'],
+  caching: ['CACHE_NONE', 'CACHE_NO_STORE', 'CACHE_SHORT', 'CACHE_REVALIDATE', 'CACHE_HEURISTIC', 'NO_CACHE'],
   errors: ['BROKEN_RESOURCES'],
 }
 
@@ -1256,7 +1293,8 @@ export const REC_AREA = {
   SLOW_SERVER: 'loading', TOO_MANY_REQUESTS: 'loading', REDIRECTED_OBJECTS: 'loading', SLOW_OBJECTS: 'loading', THIRD_PARTY_HEAVY: 'loading',
   RENDER_BLOCKING_RESOURCES: 'loading', MISSING_PRECONNECT: 'loading', UNUSED_PRELOAD: 'loading', UNUSED_PRECONNECT: 'loading',
   MANY_HOSTS: 'loading', HTTP1_ONLY: 'loading',
-  UNCOMPRESSED_TEXT: 'waste', NO_CACHE: 'waste', HEAVY_JS: 'waste', HEAVY_CSS: 'waste', OVERSIZED_PAGE: 'waste',
+  UNCOMPRESSED_TEXT: 'waste', NO_CACHE: 'waste', CACHE_NO_STORE: 'waste', CACHE_NONE: 'waste', CACHE_SHORT: 'waste',
+  CACHE_REVALIDATE: 'waste', CACHE_HEURISTIC: 'waste', HEAVY_JS: 'waste', HEAVY_CSS: 'waste', OVERSIZED_PAGE: 'waste',
   DUPLICATE_RESOURCES: 'waste', DUPLICATE_LIBRARIES: 'waste', UNMINIFIED_ASSETS: 'waste', SOURCE_MAP_EXPOSED: 'waste', HEAVY_HTML: 'waste',
   LARGE_DOM: 'waste', INLINE_DATA_URI: 'waste', SHORT_CACHE_VERSIONED: 'waste', NO_VALIDATOR: 'waste',
   LARGE_IMAGES: 'media', MODERN_IMAGE_FORMAT: 'media', OVERSIZED_IMAGE_DIMENSIONS: 'media', HEAVY_FONTS: 'media',
@@ -1569,8 +1607,13 @@ export function cachingView(waste) {
   const buckets = counts.map((r) => ({ ...r, share: total > 0 && r.count !== null ? (r.count / total) * 100 : null }))
   const cdn = isObj(c.cdn) ? { hit: num(c.cdn.hit), miss: num(c.cdn.miss), unknown: num(c.cdn.unknown) } : null
   const vs = listOf(c, 'versioned_short')
+  // Algoritma 4: sınıf sayıları (birinci taraf önbelleklenebilir durağan nesneler — önbellek puanıyla aynı küme); yoksa null
+  const cl = isObj(c.classes) ? c.classes : null
+  const classes = cl ? CACHE_CLASSES.map((k) => ({ key: k, count: num(cl[k]), finding: CACHE_CLASS_FINDING[k] || null })) : null
   return {
-    buckets, total, noValidator: num(c.no_validator), cdn,
+    buckets, total, noValidator: num(c.no_validator), cdn, classes,
+    classTotal: classes ? classes.reduce((sum, r) => sum + (r.count ?? 0), 0) : null,
+    repeatRequests: num(c.repeat_visit_requests),
     versionedShort: vs ? { ...vs, rows: vs.rows.filter((r) => strOrNull(r?.url)).map((r) => ({ url: r.url, ttlS: num(r.ttl_s) })) } : null,
     repeatBytes: num(c.repeat_visit_bytes), repeatPct: num(c.repeat_visit_pct),
   }
@@ -2055,8 +2098,20 @@ export function verdictText(item, t) {
 /** Kararın tonu: kırık tehlike; doğrulanamadı / engellendi / indirilmedi NÖTR (amber değil — kırık değiller). */
 export const verdictTone = (item) => (verdictOf(item) === 'broken' ? 'danger' : 'muted')
 
-/** Önbellek metni (dışa aktarım ve kart). */
+/**
+ * Önbellek metni (dışa aktarım, kart, nesne ayrıntısı). Algoritma 4 nesnesinde SINIFTAN (`cache_class`): saklanan / kısa
+ * ömrüyle, ömrü verilmemiş tarayıcı tahminiyle (varsa), diğerleri sınıf adıyla. Sınıfsız (eski) nesnede eski ömür metni.
+ */
 export function cacheText(item, t, locale) {
+  const cls = cacheClassOf(item)
+  if (cls) {
+    const ttl = num(item?.cache_ttl_s)
+    if (cls === 'stored' && ttl !== null && ttl >= 0) return t('prs.obj.cacheTtl', formatTtl(ttl, locale))
+    if (cls === 'short' && ttl !== null && ttl > 0) return t('prs.obj.cacheShortTtl', formatTtl(ttl, locale))
+    const est = num(item?.cache_heuristic_s)
+    if (cls === 'heuristic' && est !== null) return t('prs.obj.cacheHeuristicTtl', formatTtl(est, locale))
+    return t(`prs.cache.class.${cls}`)
+  }
   const st = cacheState(item?.cache_ttl_s)
   if (st === 'none') return t('prs.obj.cacheNone')
   if (st === 'nostore') return t('prs.obj.cacheNoStore')

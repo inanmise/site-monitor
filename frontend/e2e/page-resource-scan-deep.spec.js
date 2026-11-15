@@ -8,7 +8,7 @@
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 import { scanDetailV2, scanHistory } from '../src/test/helpers/resourceScanFixtures.js'
-import { scanDetailV3 } from '../src/test/helpers/resourceScanFixturesV3.js'
+import { scanDetailV3, scanDetailV4 } from '../src/test/helpers/resourceScanFixturesV3.js'
 
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true },
@@ -21,23 +21,23 @@ const ROOT = '[data-slot="prs-root"]'
 const AREAS = ['loading', 'waste', 'media', 'security', 'seo', 'a11y']
 const json = (body, status = 200) => (route) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
-/** Geçmiş: 12 ve 9 algoritma 3, 10 algoritma 2 (eski). */
-function history() {
+/** Geçmiş: 12 ve 9 algoritma 3 (v4: 4), 10 algoritma 2 (eski). */
+function history(v4 = false) {
   const h = scanHistory()
-  return { ...h, items: h.items.map((s) => (s.status !== 'DONE' ? s : { ...s, algorithm_version: s.id === 10 ? 2 : 3 })) }
+  return { ...h, items: h.items.map((s) => (s.status !== 'DONE' ? s : { ...s, algorithm_version: s.id === 10 ? 2 : v4 ? 4 : 3 })) }
 }
-function detailOf(id) {
+function detailOf(id, v4 = false) {
   if (id === 10) return scanDetailV2(10, { scan: { grade: 64, grade_letter: 'D', algorithm_version: 2 } })
   if (id === 11) return { scan: scanHistory().items[1], analysis: null, items: null, items_kept: false }
-  return scanDetailV3(id)
+  return v4 ? scanDetailV4(id) : scanDetailV3(id)
 }
 
-async function routes(page) {
+async function routes(page, { v4 = false } = {}) {
   await mockApi(page)
-  await page.route((u) => new URL(u).pathname === '/api/monitoring/page/100/resource-scans', json({ success: true, data: history() }))
+  await page.route((u) => new URL(u).pathname === '/api/monitoring/page/100/resource-scans', json({ success: true, data: history(v4) }))
   await page.route((u) => /^\/api\/monitoring\/page\/100\/resource-scans\/\d+$/.test(new URL(u).pathname), (route) => {
     const id = Number(new URL(route.request().url()).pathname.split('/').pop())
-    return json({ success: true, data: detailOf(id) })(route)
+    return json({ success: true, data: detailOf(id, v4) })(route)
   })
 }
 
@@ -100,6 +100,7 @@ for (const vp of VIEWPORTS) {
   test.describe(`Kaynak analizi → derin analiz (A–E) — ${vp.name} ${vp.width}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
 
+    const check0 = (page, dlg, stage) => checker(page, dlg)(stage)
     const checker = (page, dlg, sel = DIALOG, rootSel = ROOT) => async (stage) => {
       await page.waitForTimeout(250)
       const m = await page.evaluate(measure, sel)
@@ -209,6 +210,39 @@ for (const vp of VIEWPORTS) {
       await expect(od.locator('[data-slot="prs-od-http"]')).toContainText('HTTP/2')
       await checker(page, od, OD_DIALOG, OD_DIALOG)('nesne ayrıntısı (derin)')
       await page.screenshot({ path: `test-results/page-resource-scan-deep-${vp.name}.png`, fullPage: false })
+    })
+
+    test('algoritma 4: önbellek sınıfları — israf alanında sınıf listesi → sınıf bulgusuyla nesneler → ayrıntıda sınıf; sığar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page, { v4: true })
+      await page.goto('/?tab=page&monitor=100&mtab=resources&prs=12&prs_v=audit-waste')
+      const dlg = page.locator(DIALOG)
+      const root = dlg.locator(ROOT)
+      const audit = root.locator('[data-slot="prs-audit"]')
+      await expect(audit).toHaveAttribute('data-area', 'waste', { timeout: 20_000 })
+      const classes = root.locator('[data-slot="prs-b-cache-class"]')
+      // sıfır olan sınıf (none) listelenmez: saklanan, kısa, doğrulanan, ömrü verilmemiş, no-store
+      await expect(classes).toHaveCount(5)
+      await expect(classes.nth(0)).toHaveAttribute('data-class', 'stored')
+      await expect(root.locator('[data-slot="prs-b-cache-class"][data-class="stored"] [data-slot="prs-deep-show-objects"]')).toHaveCount(0)
+      await expect(root.locator('[data-slot="prs-deep-tile"][data-key="repeatReq"]')).toContainText('21')
+      await root.locator('[data-slot="prs-b-cache-classes"]').scrollIntoViewIfNeeded()
+      await checker(page, dlg)('israf: önbellek sınıfları')
+
+      // Doğrulanan sınıfın "Nesneleri göster" → bulgu süzgeciyle 10 nesne
+      await root.locator('[data-slot="prs-b-cache-class"][data-class="revalidate"] [data-slot="prs-deep-show-objects"]').click()
+      await expect(root.locator('[data-slot="prs-objects"]')).toBeVisible()
+      await expect(root.locator('[data-slot="prs-obj"]')).toHaveCount(10)
+      await expect(root.locator('[data-slot="prs-obj"] [data-finding="CACHE_REVALIDATE"]')).toHaveCount(10)
+      await expect(root.locator('[data-slot="prs-obj"] [data-finding="NO_CACHE"]')).toHaveCount(0)
+      await check0(page, dlg, 'nesneler (her ziyarette doğrulanan)')
+
+      // Nesne ayrıntısı: sınıf satırı (ad + anlam) ve ETag
+      await root.locator('[data-slot="prs-obj"]').first().locator('[data-slot="prs-obj-open"]').click()
+      const od = page.locator(OD_DIALOG)
+      await expect(od.locator('[data-slot="prs-od-cache-class"] [data-cache-class="revalidate"]')).toBeVisible()
+      await expect(od.locator('[data-slot="prs-od-headers"]')).toContainText('ETag')
+      await checker(page, od, OD_DIALOG, OD_DIALOG)('nesne ayrıntısı (önbellek sınıfı)')
     })
 
     test('eski (algoritma 2) analiz: kutucuklar "bu analizde yok", denetim yeniden analiz önerir; sığar', async ({ page }) => {

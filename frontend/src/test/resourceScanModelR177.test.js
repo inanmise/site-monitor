@@ -76,9 +76,10 @@ describe('bulgular — eski kayıtta sunucu kuralıyla (r177 H2)', () => {
     expect(f(rows, 'cdn.js')).toEqual([])
     rows = withFindings(items, [{ code: 'HEAVY_JS' }, { code: 'THIRD_PARTY_HEAVY' }])
     expect(f(rows, 'r.js')).toContain('HEAVY_JS')
-    // THIRD_PARTY_HEAVY sayfa düzeyi öneri — nesneye bulgu olarak YAZILMAZ (sunucu r177: 13 nesne kodu; prs3 algoritma 3: +12 = 25)
+    // THIRD_PARTY_HEAVY sayfa düzeyi öneri — nesneye bulgu olarak YAZILMAZ (sunucu r177: 13 nesne kodu; prs3 algoritma 3: +12 = 25;
+    // algoritma 4 önbellek sınıfları: +5 = 30)
     expect(f(rows, 'cdn.js')).toEqual(['HEAVY_JS'])
-    expect(FINDING_CODES).toHaveLength(25)
+    expect(FINDING_CODES).toHaveLength(30)
     expect(FINDING_CODES).not.toContain('THIRD_PARTY_HEAVY')
   })
 

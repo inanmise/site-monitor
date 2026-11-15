@@ -129,3 +129,62 @@ export function withTrendBusy(res) {
   r.data.truncated = true
   return r
 }
+
+/**
+ * Algoritma 4 (2026-11-15, önbellek sınıfları) örneği — gerçek #1 dökümünden türetilmiş: sürüm 4, nesnelerde `cache_class`
+ * (+ sezgiselde `cache_heuristic_s`, başlıklarda doğrulayıcı / Pragma), eski `NO_CACHE` bulgu / önerisinin yerinde sınıf başına
+ * `CACHE_*`, `waste.caching.classes` + `repeat_visit_requests`. Sınıf ataması (sunucu kuralına uygun başlıklarla):
+ * app.js no-store, async.js her ziyarette doğrulanan (ETag), old.js kısa ömür (300 sn), kullanilmayan.png ömrü verilmemiş
+ * (Last-Modified), print.css Pragma: no-cache + ETag (doğrulanan), kalan önbelleksizler `none`, ömürlüler `stored`.
+ */
+export function withCacheClassesV4(data) {
+  const d = clone(data)
+  d.scan.algorithm_version = 4
+  d.analysis.algorithm_version = 4
+  const set = (end, cls, extra = {}) => {
+    const it = d.items.find((i) => i.url.endsWith(end))
+    Object.assign(it, { cache_class: cls }, extra.item || {})
+    if (extra.headers) it.headers = { ...(it.headers || {}), ...extra.headers }
+    return it
+  }
+  const code = {
+    short: 'CACHE_SHORT', revalidate: 'CACHE_REVALIDATE', heuristic: 'CACHE_HEURISTIC', none: 'CACHE_NONE', no_store: 'CACHE_NO_STORE',
+  }
+  for (const it of d.items) {
+    if (it.category === 'HTML' || !it.page_load) continue
+    const ttl = it.cache_ttl_s
+    it.cache_class = ttl !== null && ttl >= 3600 ? 'stored' : 'none'
+  }
+  set('/js/app.js', 'no_store', { headers: { cache_control: 'no-store' } })
+  set('/js/async.js', 'revalidate', { item: { cache_ttl_s: -1 }, headers: { cache_control: 'no-cache', etag: '"a1"' } })
+  set('/js/old.js', 'short', { item: { cache_ttl_s: 300 }, headers: { cache_control: 'max-age=300' } })
+  set('/img/kullanilmayan.png', 'heuristic', { item: { cache_heuristic_s: 259_200 }, headers: { last_modified: 'Sun, 01 Nov 2026 10:00:00 GMT' } })
+  set('/css/print.css', 'revalidate', { item: { cache_ttl_s: -1 }, headers: { pragma: 'no-cache', etag: '"p1"' } })
+  const counts = { stored: 0, short: 0, revalidate: 0, heuristic: 0, none: 0, no_store: 0 }
+  const byCode = {}
+  for (const it of d.items) {
+    if (!Array.isArray(it.findings)) continue
+    const had = it.findings.includes('NO_CACHE')
+    it.findings = it.findings.filter((c) => c !== 'NO_CACHE')
+    if (it.third_party || !it.cache_class || it.category === 'HTML' || !it.page_load || it.status < 200 || it.status >= 300) continue
+    counts[it.cache_class]++
+    const c = code[it.cache_class]
+    if (!c || !(had || it.cache_class !== 'none')) continue
+    it.findings.push(c)
+    // NO_VALIDATOR: none / no_store nesnede yok (sunucu kuralı); doğrulanan / sezgiselin doğrulayıcısı var
+    if (it.cache_class !== 'short') it.findings = it.findings.filter((x) => x !== 'NO_VALIDATOR')
+    ;(byCode[c] = byCode[c] || []).push(it.url)
+  }
+  const noValidator = d.items.filter((i) => (i.findings || []).includes('NO_VALIDATOR'))
+  const recs = d.analysis.recommendations.filter((r) => r.code !== 'NO_CACHE').map((r) => (r.code !== 'NO_VALIDATOR' ? r
+    : { ...r, params: { count: noValidator.length }, item_count: noValidator.length, item_urls: noValidator.map((i) => i.url).slice(0, 10) }))
+  d.analysis.waste.caching.no_validator = noValidator.length
+  for (const [c, urls] of Object.entries(byCode)) {
+    recs.push({ code: c, severity: urls.length >= 10 && !['CACHE_REVALIDATE', 'CACHE_HEURISTIC'].includes(c) ? 'medium' : 'low',
+      params: { count: urls.length }, saving_bytes: null, saving_ms: null, item_urls: urls.slice(0, 10), item_count: urls.length, finding: c })
+  }
+  d.analysis.recommendations = recs
+  d.analysis.waste.caching.classes = counts
+  d.analysis.waste.caching.repeat_visit_requests = 17
+  return d
+}

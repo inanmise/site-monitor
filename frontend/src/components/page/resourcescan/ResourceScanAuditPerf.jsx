@@ -1,7 +1,7 @@
 import { Ban, Copy, Database, FileCode2, Image as ImageIcon, Link2, Map as MapIcon, Server, Signal, Type } from 'lucide-react'
 import { ProgressBar } from '../../ui/Progress.jsx'
 import {
-  CACHE_BUCKET_TONE, areaData, areaUnreadable, cacheText, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
+  CACHE_BUCKET_TONE, CACHE_CLASS_TONE, areaData, areaUnreadable, cacheText, cachingView, dupKindText, duplicateRows, fontView, formatMs, formatNumber, formatPct,
   formatSize, hintMore, hintRows, HINT_STATE_TONE, hostReasonText, hostRows, htmlStats, imageIssueGroups, isHttp1, libraryVersionRows, plural,
   profileRows, rbKindText, rbReasonText, renderBlockingView, sourceMapRows, unminifiedRows,
 } from './resourceScanModel.js'
@@ -344,6 +344,7 @@ function CachingBlock({ data, ctx }) {
               </ul>
             </div>
           ) : <EmptyLine>{t('prs.deep.cache.noBuckets')}</EmptyLine>}
+          <CacheClasses v={v} ctx={ctx} />
           <StatTiles tiles={[
             { k: 'novalidator', label: t('prs.deep.cache.noValidator'), value: formatNumber(v.noValidator, locale),
               tone: (v.noValidator ?? 0) > 0 ? 'warning' : undefined, sub: t('prs.deep.cache.noValidatorSub') },
@@ -351,6 +352,9 @@ function CachingBlock({ data, ctx }) {
               sub: t('prs.deep.cache.cdnUnknown', formatNumber(v.cdn.unknown, locale)) },
             { k: 'repeat', label: t('prs.deep.cache.repeat'), value: v.repeatBytes != null ? `~${fmtSize(v.repeatBytes, locale)}` : '—',
               sub: <><KindBadge kind="estimate" t={t} /> {v.repeatPct != null ? t('prs.deep.cache.repeatSub', formatPct(v.repeatPct, locale, 0)) : t('prs.deep.cache.repeatSubUnknown')}</> },
+            // Algoritma 4: ikinci ziyarette yine istek gereken nesne (doğrulanan nesne gövdesiz 304 de olsa bir istektir)
+            v.repeatRequests != null && { k: 'repeatReq', label: t('prs.deep.cache.repeatRequests'),
+              value: `~${formatNumber(v.repeatRequests, locale)}`, sub: <><KindBadge kind="estimate" t={t} /> {t('prs.deep.cache.repeatRequestsSub')}</> },
           ]} />
           {v.versionedShort && v.versionedShort.rows.length > 0 && (
             <div className="flex min-w-0 flex-col gap-1.5">
@@ -369,6 +373,40 @@ function CachingBlock({ data, ctx }) {
         </>
       )}
     </Section>
+  )
+}
+
+/**
+ * Algoritma 4 önbellek sınıfları (birinci taraf önbelleklenebilir durağan nesneler — önbellek puanıyla aynı küme): her
+ * sınıfın adı, sayısı, pratik anlamı ve "Nesneleri göster". Eski analizde (sınıf sayısı yok) hiçbir şey çizilmez.
+ */
+function CacheClasses({ v, ctx }) {
+  const { t, locale } = ctx
+  if (!v.classes) return null
+  const rows = v.classes.filter((c) => (c.count ?? 0) > 0)
+  return (
+    <div data-slot="prs-b-cache-classes" className="flex min-w-0 flex-col gap-1.5">
+      <h5 className="m-0 text-[11px] font-semibold tracking-[.04em] text-muted-foreground uppercase max-sm:text-xs">{t('prs.deep.cache.classesTitle')}</h5>
+      <p className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('prs.deep.cache.classesDesc')}</p>
+      {rows.length === 0 ? <EmptyLine>{t('prs.deep.cache.classesNone')}</EmptyLine> : (
+        <ul className="m-0 flex min-w-0 list-none flex-col gap-2 p-0">
+          {rows.map((c) => (
+            <li key={c.key} data-slot="prs-b-cache-class" data-class={c.key} data-count={c.count}
+              className="flex min-w-0 flex-col gap-1 rounded-md border border-border p-2">
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <SmallBadge tone={CACHE_CLASS_TONE[c.key]}>{t(`prs.cache.class.${c.key}`)}</SmallBadge>
+                <span className="text-xs text-foreground tabular-nums">{plural(t, 'prs.deep.cache.classCount', c.count, formatNumber(c.count, locale))}</span>
+              </span>
+              <span className={cn('text-xs text-muted-foreground', WRAP)}>{t(`prs.cache.why.${c.key}`)}</span>
+              {c.finding && (
+                <ShowObjectsButton count={ctx.findingCount(c.finding)} onClick={() => ctx.onShowFinding?.(c.finding)} t={t} locale={locale}
+                  label={t(`prs.cache.class.${c.key}`)} />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

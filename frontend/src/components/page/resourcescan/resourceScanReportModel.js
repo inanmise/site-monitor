@@ -1,5 +1,5 @@
 import {
-  CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, algorithmVersion, areaUnreadable, categoryLabel, categoryScoreRows as screenCategoryScoreRows,
+  CACHE_CLASSES, CATEGORIES, KB, NOT_PAGE_LOAD, SEVERITIES, algorithmVersion, areaUnreadable, categoryLabel, categoryScoreRows as screenCategoryScoreRows,
   cookieIssueText, deltasComparable,
   dupKindText, formatMs, formatNumber, formatPct, formatSize, gradeLetter, headerIssueText, hostReasonText, httpVersionText,
   plural, problemText, rbKindText, rbReasonText, recTextKey, recommendationArgs, sriKindText, toMs, vulnSeverityText,
@@ -934,6 +934,11 @@ export function executiveSections(analysis, t, locale) {
       const c = W.caching
       const b = isObj(c.buckets) ? c.buckets : {}
       lines.push(t('prs.pdf.waste.cacheBuckets', n(b.none ?? 0), n(b.lt_1h ?? 0), n(b.lt_1d ?? 0), n(b.lt_7d ?? 0), n(b.ge_7d ?? 0)))
+      // Algoritma 4: önbellek sınıfları (yalnız sunucu yazdıysa — eski analizde satır yok, sayı uydurulmaz)
+      if (isObj(c.classes)) {
+        const cl = c.classes
+        lines.push(t('prs.pdf.waste.cacheClasses', ...CACHE_CLASSES.map((k) => n(num(cl[k]) ?? 0))))
+      }
       if (num(c.repeat_visit_bytes) !== null) {
         lines.push(t('prs.pdf.waste.repeatVisit', sz(c.repeat_visit_bytes), formatPct(c.repeat_visit_pct, locale, 0)))
       }
@@ -1139,6 +1144,12 @@ export function deepSheets(analysis, t, locale) {
       block(rows, t('prs.pdf.xl.caching'), [t('prs.pdf.xl.bucket'), t('prs.export.col.count')],
         [['none', b.none], ['lt_1h', b.lt_1h], ['lt_1d', b.lt_1d], ['lt_7d', b.lt_7d], ['ge_7d', b.ge_7d]]
           .map(([k, v]) => [t(`prs.pdf.cache.${k}`), num(v) ?? 0]))
+      // Algoritma 4: önbellek sınıfları (ham kod asla yazılmaz — sınıf adı ve pratik anlamı)
+      if (isObj(W.caching.classes)) {
+        const cl = W.caching.classes
+        block(rows, t('prs.pdf.xl.cacheClasses'), [t('prs.pdf.xl.cacheClass'), t('prs.export.col.count'), t('prs.pdf.xl.detail')],
+          CACHE_CLASSES.map((k) => [t(`prs.cache.class.${k}`), num(cl[k]) ?? 0, t(`prs.cache.why.${k}`)]))
+      }
     }
     sheets.push({ key: 'waste', name: t('prs.pdf.sheet.waste'), rows, widths: [40, 80, 18] })
   }

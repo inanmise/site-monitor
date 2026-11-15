@@ -53,11 +53,18 @@ import static com.sitemonitor.service.page.scan.PageResourceDiscovery.MEDIA;
  * 1): TTFB yalnız son adımın ilk baytı (yönlendirmeler ayrı), kırık kararı Sayfa Bütünlüğü izlemesiyle aynı (yalnız
  * {@code broken} hata puanına ve BROKEN_* önerilerine girer; doğrulanamayan / engellenen girmez), indirilmeyen medya
  * hiçbir toplama girmez, görsel kazancı ölçülen görsellerde ölçülmüş. Not formülü ya da girdisi değişirse sürüm ARTAR.
+ *
+ * <p><b>Algoritma 4 (2026-11-15, önbellek sınıfları):</b> önbellek bileşeni nesnenin {@link CachePolicy} sınıfından puanlanır
+ * — her ziyarette doğrulanan (ETag / Last-Modified ile ucuz 304) ve ömrü verilmemiş ama {@code Last-Modified} taşıyan
+ * (tarayıcı tahmini) nesneler YARIM puan alır; tek {@code NO_CACHE} önerisinin yerini sınıf başına öneriler alır
+ * ({@code CACHE_NO_STORE}, {@code CACHE_NONE}, {@code CACHE_SHORT}, {@code CACHE_REVALIDATE}, {@code CACHE_HEURISTIC}).
+ * {@code NO_CACHE} yalnız eski analizlerde okunur. Sınıfsız nesne (eski kayıt / elle kurulan test nesnesi) eski ömür
+ * kuralıyla puanlanır ({@link CachePolicy#creditOf}).
  */
 public final class PageResourceAnalyzer {
 
     /** Analiz algoritmasının sürümü — farklı sürümlü iki analiz karşılaştırılırken arayüz uyarır. */
-    public static final int ALGORITHM_VERSION = 3;
+    public static final int ALGORITHM_VERSION = 4;
 
     public static final int PARALLEL = 6;
 
@@ -96,7 +103,16 @@ public final class PageResourceAnalyzer {
             "BROKEN_LINKS", "LARGE_DOCUMENTS", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS",
             // ── algoritma 3 (öneri kodundan farklı adlılar DeepRec.finding ile gelir) ──
             "RENDER_BLOCKING", "DUPLICATE", "UNMINIFIED", "SOURCE_MAP_EXPOSED", "NO_VALIDATOR", "MISSING_DIMENSIONS",
-            "NOT_LAZY", "ANIMATED_GIF", "FONT_DISPLAY_MISSING", "MISSING_SRI", "VULNERABLE_LIBRARY", "MIXED_CONTENT");
+            "NOT_LAZY", "ANIMATED_GIF", "FONT_DISPLAY_MISSING", "MISSING_SRI", "VULNERABLE_LIBRARY", "MIXED_CONTENT",
+            // ── algoritma 4 (önbellek sınıfları; NO_CACHE yalnız eski analizlerde) ──
+            "CACHE_NO_STORE", "CACHE_NONE", "CACHE_SHORT", "CACHE_REVALIDATE", "CACHE_HEURISTIC");
+
+    /** Önbellek sınıfı → öneri / bulgu kodu (algoritma 4); {@code stored} için öneri yok. */
+    public static final Map<String, String> CACHE_CLASS_CODE = Map.of(
+            CachePolicy.NO_STORE, "CACHE_NO_STORE", CachePolicy.NONE, "CACHE_NONE", CachePolicy.SHORT, "CACHE_SHORT",
+            CachePolicy.REVALIDATE, "CACHE_REVALIDATE", CachePolicy.HEURISTIC, "CACHE_HEURISTIC");
+    /** Bu sayıda (ve üstü) nesne olunca {@code CACHE_NO_STORE} / {@code CACHE_NONE} / {@code CACHE_SHORT} orta önemde. */
+    public static final int CACHE_MANY = 10;
 
     /** Ağırlıklar (sıra = arayüzdeki sıra). */
     public static final Map<String, Integer> WEIGHTS;
@@ -355,9 +371,9 @@ public final class PageResourceAnalyzer {
         int compressionPct = texts.isEmpty() ? 100
                 : (int) Math.round(100.0 * texts.stream().filter(i -> i.compressed).count() / texts.size());
         List<ScanItem> statics = page.stream().filter(PageResourceAnalyzer::cacheableStatic).toList();
+        // Algoritma 4: sınıftan (CachePolicy) — sınıfsız nesnede eski ömür kuralıyla birebir
         int cachingPct = statics.isEmpty() ? 100 : (int) Math.round(statics.stream()
-                .mapToDouble(i -> i.cacheTtlS == null ? 0 : i.cacheTtlS >= CACHE_GOOD_S ? 1.0 : i.cacheTtlS >= CACHE_OK_S ? 0.5 : 0)
-                .sum() * 100.0 / statics.size());
+                .mapToDouble(CachePolicy::creditOf).sum() * 100.0 / statics.size());
 
         List<Map<String, Object>> scores = new ArrayList<>();
         Map<String, Integer> s = new LinkedHashMap<>();
@@ -578,10 +594,19 @@ public final class PageResourceAnalyzer {
                     params("count", plain.size(), "bytes", bytes), save, transferMs(save, BPS_4G), plain));
         }
 
-        List<ScanItem> noCache = page.stream().filter(PageResourceAnalyzer::cacheableStatic)
-                .filter(i -> i.cacheTtlS == null || i.cacheTtlS < CACHE_OK_S).toList();
-        if (!noCache.isEmpty()) {
-            out.add(rec("NO_CACHE", noCache.size() >= 10 ? "medium" : "low", params("count", noCache.size()), null, null, noCache));
+        // Algoritma 4: sınıf başına öneri (bkz. CachePolicy). Sınıfsız nesne ömürden eski kurala düşer (none / short).
+        Map<String, List<ScanItem>> byClass = new LinkedHashMap<>();
+        for (ScanItem i : page) {
+            if (!cacheableStatic(i)) continue;
+            String code = CACHE_CLASS_CODE.get(CachePolicy.classOf(i));
+            if (code != null) byClass.computeIfAbsent(code, k -> new ArrayList<>()).add(i);
+        }
+        for (Map.Entry<String, List<ScanItem>> e : byClass.entrySet()) {
+            String code = e.getKey();
+            List<ScanItem> list = e.getValue();
+            boolean revalidated = "CACHE_REVALIDATE".equals(code) || "CACHE_HEURISTIC".equals(code);
+            String severity = revalidated || list.size() < CACHE_MANY ? "low" : "medium";
+            out.add(rec(code, severity, params("count", list.size()), null, null, list));
         }
 
         heavy(out, "HEAVY_JS", page, JS, HEAVY_JS_BYTES, Integer.MAX_VALUE, 3 * HEAVY_JS_BYTES);
@@ -805,6 +830,11 @@ public final class PageResourceAnalyzer {
                 || ct.contains("svg");
     }
 
+    /** {@link #cacheableStatic} — derin bölümler için (önbellek sınıf sayıları puanla AYNI kümeden). */
+    public static boolean cacheableStaticObject(ScanItem i) {
+        return cacheableStatic(i);
+    }
+
     /** Önbelleklenebilir durağan nesne: birinci taraf, 2xx, stil / betik / görsel / yazı tipi / medya / simge. */
     static boolean cacheableStatic(ScanItem i) {
         if (i.thirdParty || i.status < 200 || i.status >= 300) return false;
@@ -851,6 +881,8 @@ public final class PageResourceAnalyzer {
     public static final Set<String> RECOMMENDATION_CODES = Set.copyOf(new HashSet<>(List.of(
             "LARGE_IMAGES", "MODERN_IMAGE_FORMAT", "OVERSIZED_IMAGE_DIMENSIONS", "OVERSIZED_PAGE", "TOO_MANY_REQUESTS",
             "SLOW_SERVER", "UNCOMPRESSED_TEXT", "NO_CACHE", "BROKEN_RESOURCES", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS",
+            // ── algoritma 4 (NO_CACHE yalnız eski analizlerde) ──
+            "CACHE_NO_STORE", "CACHE_NONE", "CACHE_SHORT", "CACHE_REVALIDATE", "CACHE_HEURISTIC",
             "THIRD_PARTY_HEAVY", "SLOW_OBJECTS", "REDIRECTED_OBJECTS", "BROKEN_LINKS", "LARGE_DOCUMENTS", "ALL_GOOD",
             // ── algoritma 3 ──
             "RENDER_BLOCKING_RESOURCES", "MISSING_PRECONNECT", "UNUSED_PRELOAD", "UNUSED_PRECONNECT", "MANY_HOSTS",

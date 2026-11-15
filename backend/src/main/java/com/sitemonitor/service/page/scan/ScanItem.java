@@ -42,6 +42,13 @@ public final class ScanItem {
     public boolean compressed;
     /** max-age saniyesi; no-store / no-cache → -1; başlık yok → null. */
     public Long cacheTtlS;
+    /**
+     * Önbellek sınıfı ({@link CachePolicy#CLASSES}; algoritma 4, 2026-11-15) — yanıt başlıklarından; yanıt yoksa / eski kayıtta
+     * null (okuyan taraf eski ömür kuralına düşer, sınıf UYDURULMAZ).
+     */
+    public String cacheClass;
+    /** {@link CachePolicy#HEURISTIC} sınıfında tarayıcının tahmini ömrü (sn, yalnız gösterim); diğerlerinde null. */
+    public Long cacheHeuristicS;
     public Integer width;
     public Integer height;
     public int redirects;
@@ -141,6 +148,8 @@ public final class ScanItem {
         c.thirdParty = thirdParty;
         c.compressed = compressed;
         c.cacheTtlS = cacheTtlS;
+        c.cacheClass = cacheClass;
+        c.cacheHeuristicS = cacheHeuristicS;
         c.width = width;
         c.height = height;
         c.redirects = redirects;
@@ -187,6 +196,9 @@ public final class ScanItem {
         m.put("third_party", thirdParty);
         m.put("compressed", compressed);
         m.put("cache_ttl_s", cacheTtlS);
+        // algoritma 4: yalnız varsa (eski kayıtta yok — okuyan eski ömür kuralına düşer)
+        if (cacheClass != null) m.put("cache_class", cacheClass);
+        if (cacheHeuristicS != null) m.put("cache_heuristic_s", cacheHeuristicS);
         m.put("width", width);
         m.put("height", height);
         m.put("redirects", redirects);
@@ -220,7 +232,8 @@ public final class ScanItem {
      * Saklanan nesne satırından ({@code items_json} — {@link #toMap()} / {@link #toDeepMap()} çıktısı) nesneyi geri kurar
      * (2026-11-14, "not ne olurdu?" projeksiyonu: analiz saklanan nesnelerin KOPYASI üzerinde yeniden koşar). Saklanmayan
      * alanlar varsayılanında kalır: {@code parent} (çağıran {@code found_in}'den bağlar), {@code seq}, {@code redirectMs},
-     * tam {@code contentHash} (ilk 16 karakter saklanır), {@code gifFrames}, {@code h3Advertised}, {@code validator}. Türü
+     * tam {@code contentHash} (ilk 16 karakter saklanır), {@code gifFrames}, {@code h3Advertised}. {@code validator} kaydedilen
+     * {@code etag} / {@code last_modified} başlıklarından çıkarılır (algoritma 4 önbellek puanı için). Türü
      * beklenenden farklı alan yok sayılır (bozuk kayıt fırlatmaz); türetilen {@code suggested_*} okunmaz.
      */
     @SuppressWarnings("unchecked")
@@ -241,6 +254,9 @@ public final class ScanItem {
         it.thirdParty = Boolean.TRUE.equals(m.get("third_party"));
         it.compressed = Boolean.TRUE.equals(m.get("compressed"));
         it.cacheTtlS = m.get("cache_ttl_s") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+        String cls = str(m.get("cache_class"));
+        it.cacheClass = cls != null && CachePolicy.CLASSES.contains(cls) ? cls : null;
+        it.cacheHeuristicS = m.get("cache_heuristic_s") instanceof Number n ? Long.valueOf(n.longValue()) : null;
         it.width = intObj(m.get("width"));
         it.height = intObj(m.get("height"));
         it.redirects = (int) num(m.get("redirects"), 0);
@@ -257,6 +273,8 @@ public final class ScanItem {
                 if (e.getKey() instanceof String k) copy.put(k, e.getValue() == null ? null : String.valueOf(e.getValue()));
             }
             it.headers = copy;
+            // Doğrulayıcı saklanmaz; kaydedilen başlıklardan çıkar (yalnız derin yakalamada yazılırlar — çekimdeki kuralla aynı)
+            it.validator = copy.get("etag") != null || copy.get("last_modified") != null;
         }
         if (m.get("findings") instanceof java.util.Collection<?> f) {
             for (Object o : f) if (o instanceof String s) it.findings.add(s);

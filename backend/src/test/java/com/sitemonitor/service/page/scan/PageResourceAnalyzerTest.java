@@ -169,7 +169,7 @@ class PageResourceAnalyzerTest {
         List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
         List<Object> codes = recs.stream().map(m -> m.get("code")).toList();
         assertThat(codes).contains("BROKEN_RESOURCES", "LARGE_IMAGES", "OVERSIZED_PAGE", "SLOW_SERVER", "MODERN_IMAGE_FORMAT",
-                "OVERSIZED_IMAGE_DIMENSIONS", "UNCOMPRESSED_TEXT", "NO_CACHE", "HEAVY_JS", "THIRD_PARTY_HEAVY", "SLOW_OBJECTS",
+                "OVERSIZED_IMAGE_DIMENSIONS", "UNCOMPRESSED_TEXT", "CACHE_NONE", "HEAVY_JS", "THIRD_PARTY_HEAVY", "SLOW_OBJECTS",
                 "REDIRECTED_OBJECTS", "BROKEN_LINKS", "LARGE_DOCUMENTS").doesNotContain("ALL_GOOD");
         assertThat(PageResourceAnalyzer.RECOMMENDATION_CODES).containsAll(codes.stream().map(String::valueOf).toList());
         // önem sırası: önce high
@@ -251,7 +251,7 @@ class PageResourceAnalyzerTest {
         h.redirectMs = 2000;
         items.add(h);
         PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
-        assertThat(r.analysis().get("algorithm_version")).isEqualTo(3);
+        assertThat(r.analysis().get("algorithm_version")).isEqualTo(4);
         assertThat(r.analysis().keySet().iterator().next()).isEqualTo("algorithm_version");
         Map<String, Object> timing = get(r.analysis(), "timing");
         assertThat(timing).containsEntry("ttfb_ms", 300L).containsEntry("redirect_count", 2).containsEntry("redirect_ms", 2000L);
@@ -344,8 +344,10 @@ class PageResourceAnalyzerTest {
         List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
         Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
         for (Map<String, Object> m : recs) by.put((String) m.get("code"), m);
-        assertThat(by.get("NO_CACHE").get("item_count")).isEqualTo(12);
-        assertThat((List<?>) by.get("NO_CACHE").get("item_urls")).hasSize(10);
+        assertThat(by.get("CACHE_NONE").get("item_count")).isEqualTo(12);
+        assertThat((List<?>) by.get("CACHE_NONE").get("item_urls")).hasSize(10);
+        assertThat(by.get("CACHE_NONE").get("severity")).as("≥ 10 nesne → orta").isEqualTo("medium");
+        assertThat(by).doesNotContainKey("NO_CACHE");
         assertThat(by.get("SLOW_SERVER").get("item_count")).as("sayfa düzeyi").isNull();
         assertThat(big.findings).contains("LARGE_IMAGES", "OVERSIZED_IMAGE_DIMENSIONS", "SLOW_OBJECTS");
         assertThat(items.get(0).findings).as("HTML: sıkıştırılmamış metin; SLOW_SERVER nesneye yazılmaz")

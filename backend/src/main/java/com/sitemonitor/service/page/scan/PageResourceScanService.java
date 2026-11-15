@@ -38,7 +38,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -1384,7 +1383,17 @@ public class PageResourceScanService {
         it.thirdParty = !first;
         String enc = meta.contentEncoding();
         it.compressed = enc != null && !enc.isBlank() && !"identity".equalsIgnoreCase(enc.trim());
-        it.cacheTtlS = cacheTtl(meta.cacheControl(), meta.expires(), meta.date(), clock.getAsLong());
+        PageFetchCore.ScanMeta scan = meta.scan();
+        // Algoritma 4: önbellek sınıfı yalnız yanıt geldiyse ve doğrulayıcı (ETag / Last-Modified) bilgisi yakalandıysa —
+        // yoksa sınıf yazılmaz (eski ömür kuralına düşülür), uydurulmaz.
+        CachePolicy.Policy cache = CachePolicy.classify(meta.cacheControl(), scan == null ? null : scan.pragma(),
+                meta.expires(), meta.date(), scan == null ? null : scan.etag(), scan == null ? null : scan.lastModified(),
+                clock.getAsLong());
+        it.cacheTtlS = cache.ttlS();
+        if (scan != null && f.status() > 0) {
+            it.cacheClass = cache.cacheClass();
+            it.cacheHeuristicS = cache.heuristicS();
+        }
         it.redirects = meta.redirects();
         it.finalUrl = meta.redirects() > 0 ? meta.finalUrl() : null;
         if (PageResourceDiscovery.IMAGE.equals(it.category) || PageResourceDiscovery.FAVICON.equals(it.category)) {
@@ -1487,6 +1496,7 @@ public class PageResourceScanService {
             if (sm.etag() != null) h.put("etag", clipHeader(sm.etag()));
             if (sm.lastModified() != null) h.put("last_modified", clipHeader(sm.lastModified()));
             if (sm.age() != null) h.put("age", clipHeader(sm.age()));
+            if (sm.pragma() != null) h.put("pragma", clipHeader(sm.pragma()));
             if (sm.altSvc() != null) h.put("alt_svc", clipHeader(sm.altSvc()));
             String cdn = cdnCache(meta.xCache(), sm.age());
             if (cdn != null) h.put("cdn_cache", cdn);
@@ -1548,40 +1558,12 @@ public class PageResourceScanService {
     }
 
     /**
-     * Önbellek süresi (sn): {@code no-store} / {@code no-cache} → -1, {@code max-age=N} → N, yoksa {@code Expires} −
-     * {@code Date} (yoksa şimdi), hiçbiri yoksa null. Bozuk değer null.
+     * Önbellek süresi (sn): {@code no-store} / çıplak {@code no-cache} → -1, {@code max-age=N} → N (ilk geçen; sayısal değilse
+     * 0 = bayat), yoksa {@code Expires} − {@code Date} (yoksa şimdi; bozuk {@code Expires} → 0), hiçbiri yoksa null. Kural
+     * {@link CachePolicy#classify}'dadır (tek kaynak).
      */
     static Long cacheTtl(String cacheControl, String expires, String date, long nowMs) {
-        if (cacheControl != null) {
-            boolean noCache = false;
-            Long maxAge = null;
-            for (String part : cacheControl.toLowerCase(Locale.ROOT).split(",")) {
-                String d = part.trim();
-                if (d.equals("no-store") || d.equals("no-cache")) noCache = true;
-                else if (d.startsWith("max-age=")) {
-                    try {
-                        maxAge = Math.max(0L, Long.parseLong(d.substring(8).replace("\"", "").trim()));
-                    } catch (NumberFormatException ignore) { /* bozuk değer */ }
-                }
-            }
-            if (noCache) return -1L;
-            if (maxAge != null) return maxAge;
-        }
-        if (expires != null && !expires.isBlank()) {
-            try {
-                long exp = ZonedDateTime.parse(expires.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
-                long ref = nowMs;
-                if (date != null && !date.isBlank()) {
-                    try {
-                        ref = ZonedDateTime.parse(date.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli();
-                    } catch (RuntimeException ignore) { /* Date bozuk → şimdi */ }
-                }
-                return Math.max(0L, (exp - ref) / 1000L);
-            } catch (RuntimeException e) {
-                return 0L;   // "Expires: 0" / "-1" — süresi geçmiş sayılır
-            }
-        }
-        return null;
+        return CachePolicy.ttl(cacheControl, null, expires, date, nowMs);
     }
 
     private static String decodeText(byte[] body, String contentType) {

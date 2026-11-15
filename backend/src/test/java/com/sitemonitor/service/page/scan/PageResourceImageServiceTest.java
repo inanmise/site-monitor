@@ -262,6 +262,17 @@ class PageResourceImageServiceTest {
                 default -> { body = "missing".getBytes(); status = 404; ct = "text/plain"; }
             }
             ex.getResponseHeaders().add("Content-Type", ct);
+            // Algoritma 4 önbellek sınıfları: doğrulayıcılı kısa ömür (puanı doğrulayıcıya bağlı — projeksiyon onu kaydedilen
+            // başlıklardan geri kurmalı), her ziyarette doğrulanan, ömrü verilmemiş (Last-Modified)
+            switch (path) {
+                case "/s.css" -> { ex.getResponseHeaders().add("Cache-Control", "max-age=600"); ex.getResponseHeaders().add("ETag", "\"s1\""); }
+                case "/a.js" -> {
+                    ex.getResponseHeaders().add("Cache-Control", "no-cache");
+                    ex.getResponseHeaders().add("Last-Modified", "Sun, 01 Nov 2026 10:00:00 GMT");
+                }
+                case "/noise.png" -> ex.getResponseHeaders().add("Last-Modified", "Sun, 01 Nov 2026 10:00:00 GMT");
+                default -> { }
+            }
             ex.sendResponseHeaders(status, body.length);
             try (OutputStream os = ex.getResponseBody()) { os.write(body); }
         });
@@ -680,6 +691,16 @@ class PageResourceImageServiceTest {
             assertThat(mine.get("lost")).as(s.get("key") + " kaybı").isEqualTo(s.get("lost"));
         }
         assertThat(after).isEqualTo(before);
+        // Algoritma 4: kaydedilen nesne satırlarında sınıf var; taban (önbellek puanı dahil) bunlardan birebir kuruldu
+        List<Map<String, Object>> storedItems = get(one, "items");
+        Map<String, Object> css = storedItems.stream().filter(i -> ((String) i.get("url")).endsWith("/s.css")).findFirst().orElseThrow();
+        assertThat(css).containsEntry("cache_class", "short");
+        assertThat(storedItems.stream().filter(i -> ((String) i.get("url")).endsWith("/a.js")).findFirst().orElseThrow())
+                .containsEntry("cache_class", "revalidate");
+        assertThat(storedItems.stream().filter(i -> ((String) i.get("url")).endsWith("/noise.png")).findFirst().orElseThrow())
+                .containsEntry("cache_class", "heuristic");
+        assertThat(((Number) scoreOf(before, "caching").get("score")).intValue()).as("doğrulayıcılı kısa ömür yarım puan aldı")
+                .isGreaterThan(0);
         assertThat(p.data()).containsEntry("applied", 0).containsEntry("ignored", 0).containsEntry("capped", false)
                 .containsEntry("algorithm_version", PageResourceAnalyzer.ALGORITHM_VERSION)
                 .containsEntry("reused_components", List.of("render_blocking"));
